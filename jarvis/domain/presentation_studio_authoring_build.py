@@ -37,6 +37,8 @@ from jarvis.domain.presentation_studio_art_direction import (
 from jarvis.domain.presentation_studio_authoring import (
     DRAFT_RATIONALE_PREFIX, AuthoringBrief, DraftAction, DraftItem, PresentationDraft, Problem,
 )
+from jarvis.domain.presentation_studio_authoring_remotion import THEME_PROP, apply_theme
+from jarvis.domain.presentation_studio_engine import DEFAULT_ENGINE, Engine
 from jarvis.domain.presentation_studio_checks import PresentationStudioError
 from jarvis.domain.presentation_studio_scene import StudioScene, check_scene
 from jarvis.domain.presentation_studio_score import (
@@ -144,14 +146,24 @@ def _item_dict(item: DraftItem, item_id: str, scene_id: str, cue_id: str | None,
         "recovery": "continue_item", "recovery_point_id": None, "next_item_id": next_id, "loop": None}
 
 
+def _themed(draft: PresentationDraft, key: str | None) -> bool:
+    """The scene is shown by a Remotion source of this draft that declares the reserved `theme` prop: its art direction travels as data."""
+
+    bundle = next((b for b in draft.bundles if b.key == key), None) if key is not None else None
+    return bundle is not None and bundle.is_remotion and THEME_PROP in bundle.bundle.manifest.raw.get("inputs", {}).get("props", {}).get("properties", {})
+
+
 def _scenes_for(draft: PresentationDraft, scene_ids: Mapping[str, str], pins: Mapping[str, PrefabRef],
-                patch: Mapping[str, Mapping[str, Any]], where: str, problems: list[Problem]) -> tuple[StudioScene, ...]:
+                patch: Mapping[str, Mapping[str, Any]], where: str, problems: list[Problem], profile: Any = None) -> tuple[StudioScene, ...]:
     out: list[StudioScene] = []
     for scene in draft.scenes:
         pin = pins[scene.bundle_key] if scene.bundle_key is not None else scene.scene.prefab
         change = patch.get(scene.key, {})
         try:
             merged = {name: {**getattr(scene.scene, name), **change[name]} for name in ("props", "data") if name in change}
+            if profile is not None and _themed(draft, scene.bundle_key):
+                # Slice 15: the art direction of THIS variant is the scene's `theme` (under what the scene or the candidate sets).
+                merged["props"] = apply_theme(merged.get("props", scene.scene.props), profile)
             out.append(replace(scene.scene, scene_id=scene_ids[scene.key], prefab=pin,
                                **({"title": change["title"]} if "title" in change else {}), **merged))
         except PresentationStudioError as exc:
@@ -160,9 +172,12 @@ def _scenes_for(draft: PresentationDraft, scene_ids: Mapping[str, str], pins: Ma
 
 
 def build_presentation(brief: AuthoringBrief, draft: PresentationDraft, pins: Mapping[str, PrefabRef], now: datetime,
-                       actor: str) -> BuiltPresentation:
+                       actor: str, engine: Engine = DEFAULT_ENGINE) -> BuiltPresentation:
     """Allocates the ids and assembles the documents. `pins` maps each bundle key to the pin the scenes will carry (the real
-    published pin when Core writes, the candidate's own provisional pin when it only checks). Raises `BuildFailure`."""
+    published pin when Core writes, the candidate's own provisional pin when it only checks). Raises `BuildFailure`.
+
+    `engine` (Remotion Slice 15): the engine of the Presentation, `remotion` unless a caller says otherwise (an agent draft is Remotion,
+    always: Core's authoring refuses an HTML source or pin before it gets here)."""
 
     problems: list[Problem] = []
     pid = new_presentation_id()
@@ -177,7 +192,7 @@ def build_presentation(brief: AuthoringBrief, draft: PresentationDraft, pins: Ma
     for position, direction in enumerate(draft.directions, start=1):
         vid = root_id if position == 1 else new_variant_id()
         where = f"candidate:{position}/" if exploratory else ""
-        scenes = _scenes_for(draft, scene_ids, pins, direction.patch, where, problems)
+        scenes = _scenes_for(draft, scene_ids, pins, direction.patch, where, problems, direction.profile)
         if len(scenes) != len(draft.scenes):
             continue  # reported above; nothing more can be assembled for this direction
         art = new_art_direction_document(pid, vid, direction.profile, now) if direction.profile is not None else None
@@ -189,8 +204,7 @@ def build_presentation(brief: AuthoringBrief, draft: PresentationDraft, pins: Ma
         built.append(BuiltVariant(variant, score, art, exploratory, position))
     if problems:
         raise BuildFailure(tuple(problems))
-    # Remotion Slice 02: HTML prefab scenes are Slidecar sources, so the engine stays the legacy default here; Slice 15 (Remotion one-shot authoring) is what makes the agent draft `remotion`.
-    presentation = Presentation(pid, brief.title, root_id, count, tuple(entries), brief.resources, 1, at, at)
+    presentation = Presentation(pid, brief.title, root_id, count, tuple(entries), brief.resources, 1, at, at, engine=engine)
     result = BuiltPresentation(presentation, tuple(built), scene_ids)
     try:
         result.view()  # the index and the variants say the same thing (check_consistency, the graph invariant)

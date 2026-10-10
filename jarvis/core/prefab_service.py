@@ -595,13 +595,20 @@ class PrefabService:
 
     # ------------------------------------------------------------ validation
 
-    def validate_candidate(self, candidate: object) -> CandidateValidation:
-        """Validation sans écriture (`prefab_validate`) : toutes les erreurs vues, ou l'empreinte."""
+    def validate_candidate(self, candidate: object, *, core_written: bool = False) -> CandidateValidation:
+        """Validation sans écriture (`prefab_validate`) : toutes les erreurs vues, ou l'empreinte.
+
+        `core_written` (Remotion Slice 15) : refuse aussi, comme `save`, les champs de catalogue que seul Core écrit (provenance amont vérifiée,
+        licence du moteur) : un appelant qui valide AVANT de publier voit le refus de `save` à l'avance, pas après la première publication."""
 
         try:
             bundle = parse_candidate(candidate)
+            if core_written:
+                self._check_core_written_fields(bundle, self._entries_of(bundle.manifest.prefab_id))
         except PrefabDefinitionError as exc:
             return CandidateValidation(False, exc.errors)
+        except PrefabStoreError as exc:
+            return CandidateValidation(False, (exc.message,))
         return CandidateValidation(True, (), bundle.fingerprint())
 
     async def holds_verified_import(self, *, commit: str, archive_sha256: str, source_sha256: str) -> bool:

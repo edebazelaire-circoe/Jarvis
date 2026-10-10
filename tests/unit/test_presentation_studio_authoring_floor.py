@@ -112,7 +112,7 @@ async def test_the_floor_levels_are_the_documented_ones(env):
 async def test_colours_numbers_and_tables_are_data_not_placeholders(env):
     brief, draft = fa.brief("directed"), fa.good_deck()                          # a dark art direction: white is the natural accent
     scene = draft["scenes"][3]
-    scene["props"]["accent"] = "#ffffff"
+    scene["props"]["theme"] = {"accent": "#ffffff"}
     scene["data"]["body"] = "Budget total de 1000000 euros sur l'annee"
     assert (await env.check(brief, draft)).body["report"]["ok"] is True
     from tests.fakes.presentation_studio_art_direction import base_dict
@@ -121,7 +121,7 @@ async def test_colours_numbers_and_tables_are_data_not_placeholders(env):
     for entry in draft["score"]["items"]:
         entry["visual"] = []                                                     # the fixture's orange would not keep contrast on it
     scene = draft["scenes"][3]
-    scene["props"]["accent"] = "#000000"
+    scene["props"]["theme"] = {"accent": "#000000"}
     scene["data"]["body"] = "Resultats : " + " ; ".join(f"M{n}: 1.5 / 2.25 / 3" for n in range(1, 13))
     report = (await env.check(brief, draft)).body["report"]
     assert report["ok"] is True, report["failures"]                              # black text, a 12-row numeric table
@@ -198,10 +198,14 @@ def test_risky_constructs_are_named_by_kind():
 
 
 async def test_a_published_source_with_a_network_call_is_refused_and_a_clean_one_is_not(env):
-    brief, draft = fa.violate("behavior_risky")
+    """Remotion Slice 15: the lint in front of the wall is the Slice 06 static guard, run when the source is parsed. It is not a craft rule, so it
+    refuses in EVERY workflow (the HTML `behavior_risky` lint, still true of a stored Slidecar variant, was a warning for a light candidate)."""
+
+    brief, draft = fa.violate("prefab_invalid")
     out = await env.check(*[brief, draft])
-    assert codes(out.body["report"]) == {"behavior_risky"} and "network" in out.body["report"]["failures"][0]["message"]
+    failure = out.body["report"]["failures"][0]
+    assert codes(out.body["report"]) == {"prefab_invalid"} and "network_api" in failure["message"] and "src/Scene.tsx" in failure["message"]
     b2, d2 = fa.exploratory(3)
-    d2["prefabs"][0]["candidate"]["behavior"] = "jarvis.on('init', function () { new WebSocket('wss://x.example'); });"
+    dict(fa.VIOLATIONS)["prefab_invalid"](b2, d2)
     report = (await env.check(b2, d2)).body["report"]
-    assert report["ok"] is True and "behavior_risky" in codes(report, "warnings")        # a warning for an exploratory candidate
+    assert report["ok"] is False and "prefab_invalid" in codes(report)               # an error for an exploratory candidate too

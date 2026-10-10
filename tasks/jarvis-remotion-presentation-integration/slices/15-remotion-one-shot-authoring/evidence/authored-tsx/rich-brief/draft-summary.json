@@ -1,0 +1,172 @@
+{
+ "note": "The sources the real model wrote in the committed run (synthetic briefs). Core adds src/jarvis-kit.ts and the theme prop.",
+ "bundles": {
+  "cover": {
+   "files": [
+    "src/Scene.tsx"
+   ],
+   "composition": {
+    "width": 1280,
+    "height": 720,
+    "fps": 30,
+    "duration_in_frames": 300
+   },
+   "props": {
+    "type": "object",
+    "properties": {
+     "headline": {
+      "type": "string",
+      "max_length": 80,
+      "default": "Titre"
+     }
+    }
+   },
+   "data": {
+    "type": "object",
+    "required": [
+     "subtitle"
+    ],
+    "properties": {
+     "subtitle": {
+      "type": "string",
+      "max_length": 120
+     }
+    }
+   }
+  },
+  "figure": {
+   "files": [
+    "src/Scene.tsx"
+   ],
+   "composition": {
+    "width": 1280,
+    "height": 720,
+    "fps": 30,
+    "duration_in_frames": 300
+   },
+   "props": {
+    "type": "object",
+    "properties": {
+     "headline": {
+      "type": "string",
+      "max_length": 80,
+      "default": "Titre"
+     }
+    }
+   },
+   "data": {
+    "type": "object",
+    "required": [
+     "figure",
+     "caption"
+    ],
+    "properties": {
+     "figure": {
+      "type": "string",
+      "max_length": 16
+     },
+     "caption": {
+      "type": "text",
+      "max_length": 200
+     }
+    }
+   }
+  },
+  "list": {
+   "files": [
+    "src/Scene.tsx"
+   ],
+   "composition": {
+    "width": 1280,
+    "height": 720,
+    "fps": 30,
+    "duration_in_frames": 300
+   },
+   "props": {
+    "type": "object",
+    "properties": {
+     "headline": {
+      "type": "string",
+      "max_length": 80,
+      "default": "Titre"
+     }
+    }
+   },
+   "data": {
+    "type": "object",
+    "required": [
+     "items"
+    ],
+    "properties": {
+     "items": {
+      "type": "array",
+      "max_items": 6,
+      "items": {
+       "type": "string",
+       "max_length": 90
+      }
+     }
+    }
+   }
+  }
+ },
+ "scenes": [
+  {
+   "key": "ouverture",
+   "role": "opening",
+   "bundle": "cover",
+   "controls": [
+    "props.headline"
+   ],
+   "anchors": null
+  },
+  {
+   "key": "chiffre",
+   "role": "body",
+   "bundle": "figure",
+   "controls": [
+    "props.headline"
+   ],
+   "anchors": null
+  },
+  {
+   "key": "bilan",
+   "role": "body",
+   "bundle": "list",
+   "controls": [
+    "props.headline"
+   ],
+   "anchors": null
+  },
+  {
+   "key": "risques",
+   "role": "body",
+   "bundle": "list",
+   "controls": [
+    "props.headline"
+   ],
+   "anchors": null
+  },
+  {
+   "key": "decision",
+   "role": "body",
+   "bundle": "list",
+   "controls": [
+    "props.headline"
+   ],
+   "anchors": null
+  },
+  {
+   "key": "cloture",
+   "role": "closing",
+   "bundle": "cover",
+   "controls": [
+    "props.headline"
+   ],
+   "anchors": null
+  }
+ ],
+ "art_direction": {
+  "mode": "fallback"
+ }
+}

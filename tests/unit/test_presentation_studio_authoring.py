@@ -19,15 +19,22 @@ from jarvis.domain.presentation_studio import (
 )
 from jarvis.domain.presentation_studio_art_direction import parse_art_direction
 from jarvis.domain.presentation_studio_authoring import (
-    DRAFT_RATIONALE_PREFIX, MAX_DRAFT_SCENES, Workflow, parse_brief, parse_draft,
+    DRAFT_RATIONALE_PREFIX, MAX_DRAFT_SCENES, Workflow, parse_brief, parse_draft as _parse_draft,
 )
 from jarvis.domain.presentation_studio_authoring_build import (
     BuildFailure, build_presentation, provisional_pins, require_art_directions, validate_built,
 )
 from jarvis.domain.presentation_studio_score import parse_score
 from tests.fakes import presentation_studio_fake_author as fa
+from tests.fakes.remotion_authoring import engine_pin
 
 NOW = datetime(2026, 10, 8, 9, 0, tzinfo=timezone.utc)
+
+
+def parse_draft(raw, brief):
+    """`parse_draft` with the engine pin Core gives it (Slice 15): a Remotion generator object needs one."""
+
+    return _parse_draft(raw, brief, engine_pin())
 
 
 def parsed(workflow="directed", draft=None, **brief_changes):
@@ -148,11 +155,11 @@ def test_a_malformed_draft_names_what_is_wrong(edit, expect):
 
 def test_a_bundle_nobody_uses_and_a_prefab_that_is_not_valid_are_problems():
     draft = fa.good_deck()
-    draft["prefabs"].append({"key": "spare", "candidate": fa.slide_bundle(fa.NAMESPACE + "spare")})
+    draft["prefabs"].append(fa.prefab_entry("spare"))
     _, result = parsed(draft=draft)
     assert [p.where for p in result.problems] == ["bundle:spare"] and "no scene uses it" in result.problems[0].message
     draft = fa.good_deck()
-    draft["prefabs"][0]["candidate"]["template"] = "<script>alert(1)</script>"
+    draft["prefabs"][0]["remotion"]["files"]["src/Scene.tsx"] += "export const x = <script>alert(1)</script>;\n"
     _, result = parsed(draft=draft)
     assert result.problems[0].code == "prefab_invalid" and result.problems[0].where == "bundle:slide"
 
@@ -287,7 +294,7 @@ def test_the_built_documents_are_the_stored_documents_and_parse_back_whole():
 
 def test_a_dry_run_pin_and_a_real_pin_both_build_and_the_real_one_is_used():
     brief, draft, _ = built()
-    real = {"slide": PrefabRef(fa.SLIDE, 7)}
+    real = {"slide": PrefabRef(fa.SLIDE, 7), "cover": PrefabRef(fa.COVER, 7)}
     result = build_presentation(brief, draft, real, NOW, "brain")
     assert {s.prefab.version for s in result.variants[0].variant.scenes} == {7}
     assert result.presentation.variants[0].created_by == "brain"
@@ -313,7 +320,8 @@ def test_validate_built_judges_scenes_and_score_against_the_manifests_and_names_
     assert {p.code for p in problems} == {"pin_unknown"} and problems[0].where == "scene:s01"
     # a manifest that no longer declares a curated control path
     raw = copy.deepcopy(dict(next(iter(manifests.values())).raw))
-    del raw["inputs"]["props"]["properties"]["accent"]
+    del raw["inputs"]["props"]["properties"]["theme"]["properties"]["accent"]
+    del raw["sample"]["props"]["theme"]["accent"]
     narrower = {k: parse_manifest(raw) for k in manifests}
     problems = validate_built(result, narrower)
     assert problems and {p.code for p in problems} <= {"scene_incompatible", "score_incompatible"}

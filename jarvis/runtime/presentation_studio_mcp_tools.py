@@ -107,9 +107,11 @@ class CoreCaller:
         except ConnectionError as exc:
             raise CoreProtocolError(503, "core_unreachable", str(exc)) from None
         except TimeoutError:
-            # Remotion Slice 21 (QA B2): `asyncio.TimeoutError` is `TimeoutError`; aiohttp's total timeout too. The outcome of a write is UNKNOWN
-            # (a render may be queued): a coded error, never an empty one, and the model is told to read the state before trying again.
-            raise CoreProtocolError(504, "core_timeout", "Core did not answer in time; the outcome is unknown") from None
+            # ONE clause, BEFORE `aiohttp.ClientError` (aiohttp's ServerTimeoutError is both). `asyncio.TimeoutError` is `TimeoutError`; the total
+            # timeout of aiohttp too. The outcome of a write is UNKNOWN (a render may be queued, an assembly may have been written): a coded error,
+            # never the empty `Error executing tool ...:` the first real-model trace of Remotion Slice 15 showed; read the state before trying again.
+            raise CoreProtocolError(504, "core_timeout", "Core did not answer in time; the outcome is unknown: read the state first "
+                                                        "(presentation_inspect, remotion_status for a render) before trying again") from None
         except aiohttp.ClientError as exc:
             raise CoreProtocolError(503, "core_unreachable", f"Core est injoignable ({type(exc).__name__})") from None
 
@@ -1090,7 +1092,7 @@ class PresentationTools:
             # Le rapport complet, tel quel : le modèle corrige tout en une fois (consigne du planificateur).
             return self._ok("silent", status="refused" if status == "refused" else "checked", ok_gate=False, report=report,
                             workflow=result.get("workflow"), note="Corrige tout ce qui est listé puis resoumets (3 tours au plus).")
-        picked = {k: result.get(k) for k in ("presentation_id", "variant_ids", "scene_ids", "art_direction_id", "score_id", "provenance",
+        picked = {k: result.get(k) for k in ("presentation_id", "engine", "variant_ids", "scene_ids", "art_direction_id", "score_id", "provenance",
                                              "workflow", "candidates", "variant_id", "fallback") if k in result}
         say = None
         if op != "check":

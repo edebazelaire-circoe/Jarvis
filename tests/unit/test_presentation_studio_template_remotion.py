@@ -514,3 +514,28 @@ async def test_the_brain_cannot_give_a_licence_acknowledgement_or_keep_assets_ev
     for extra in ({"licence_ack": ["GPL-3.0"]}, {"keep_assets": True}):
         await world.refused(world.promote(world.body("scene", scenes=pick(S1), actor="brain", **extra)), C.INVALID_PRESENTATION)
     assert world.template_files() == {} and not list((world.env.data / LIBRARY_DIR).glob("studio-template.*"))
+
+
+async def test_a_brand_in_the_theme_font_is_a_project_term_that_blocks_a_source_repeating_it(tmp_path):
+    """Remotion Slice 15 (QA P5): the reserved `props.theme` is the art direction as data. Its closed tokens are not project words, but
+    `font_heading` / `font_body` are free text: a brand name there is registered as a project term, so a source that hard-codes the same brand
+    is a blocking `project_content` finding (it would have left the project inside a template), and the value itself never reaches the record."""
+
+    from jarvis.domain.presentation_studio_authoring_remotion import generate_source
+    from tests.fakes.presentation_studio_fake_author import SLIDE_TSX, slide_bundle
+    from tests.fakes.remotion_authoring import ENGINE
+
+    brand = "Zorblaxia Grotesk Display"
+    spec = slide_bundle(tsx=SLIDE_TSX + f'export const family = "{brand}";' + chr(10))["remotion"]
+    candidate = generate_source("hero", spec, ENGINE, "bundle:hero").candidate
+    candidate["manifest"]["id"] = "lab.remo"
+    world = World(tmp_path)
+    await world.env.prefabs.start()
+    await world.env.prefabs.save(candidate, actor="user")
+    body = remo_body(S1)
+    body["props"] = {"headline": TITLE_VALUE, "theme": {"font_heading": f'"{brand}", serif', "easing": "ease_out", "transition": "fade"}}
+    body["data"] = {"body": "Corps du texte projet"}
+    body["controls"] = [{"control_id": "headline", "path": "props.headline", "label": "Titre", "group": "content"}]
+    world = await world.open(bodies=[body])
+    plan = await world.plan(world.body("presentation", scenes=pick(S1, dimensions=(), parameters=("headline",)), keep_assets=True))
+    assert plan["ok"] is False and any(f["code"] == "project_content" for f in plan["findings"]), plan["findings"]

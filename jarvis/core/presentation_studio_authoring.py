@@ -22,6 +22,14 @@ afterwards is adopted or deleted here (the Slice 16 convention: orphans are repo
 reload, spoken retouches) into one version. An assembly publishes each id once, so there is nothing to merge: the coalescer would
 only add its quiet period. `PrefabService.save` is the retention-aware path the coalescer itself ends in.
 
+**Remotion (Slice 15).** The drafts this service accepts are **Remotion drafts**: a source is the generator object `{remotion: {...}}`
+(`presentation_studio_authoring_remotion.py`) or a Remotion candidate, a pinned scene is a Remotion source, the Presentation is created with
+engine `remotion`. An HTML (Slidecar) source or pin is `prefab_engine_mismatch`, never converted and never a fallback. Before anything is
+written every Remotion source is **compiled** by the Slice 05 compiler (`tsx_compile`, diagnostics with file, line, column); a runtime that
+cannot compile is a typed `presentation_studio_engine_unavailable` (409), not a degraded draft. Live Board references the sources declare are
+resolved against the Boards the user works with (`authorised_boards`, derived HERE from the active Board, never from the declaration), and
+an inspiration the draft names is accepted only when Core verified its upstream provenance (`derived_from` records the lineage).
+
 **Actor.** The body carries `actor` (`user` | `brain`); it is written as the creator of the variants. The Control Center relay
 forces `user`; `brain` reaches Core only through the tool layer of Slice 21 (the same rule as the edit API).
 
@@ -35,12 +43,19 @@ draft at `info` with its codes, an unreferenced prefab version left by a failed 
 
 from __future__ import annotations
 
-from collections.abc import Awaitable, Callable, Mapping
+import asyncio
+from collections.abc import Awaitable, Callable, Collection, Mapping
 from dataclasses import dataclass, field
 import hashlib
+import time
 from typing import Any, Protocol
 
-from jarvis.domain.prefab import CreatorActor, PrefabManifest, PrefabRef, canonical_json
+from jarvis.core.prefab_service import annotate_provenance
+from jarvis.domain.prefab import CreatorActor, PrefabManifest, PrefabRef, canonical_json, parse_remotion_bundle
+from jarvis.domain.presentation_live_refs import LIVE_REFS_PATH, LiveRef, LiveRefError, parse_declaration
+from jarvis.domain.presentation_studio_engine import Engine
+from jarvis.domain.remotion_compile import CompileErrorCode, RemotionCompileError
+from jarvis.domain.remotion_source import EnginePin
 from jarvis.domain.presentation_studio_art_direction import parse_art_direction
 from jarvis.domain.presentation_studio_authoring import (
     BUNDLE_NAMESPACE, AuthoringBrief, PresentationDraft, Problem, Workflow, parse_brief, parse_draft, safe_text,
@@ -59,16 +74,24 @@ from jarvis.ports.prefabs import PrefabStoreError, PrefabStoreErrorCode
 
 #: Deterministic stop points for the real kill drills (`Popen.kill()`): called with the step that has just been done.
 Checkpoint = Callable[[str], None]
+#: Wall-clock budget of the compilations of one draft (the compiler itself bounds each at 60 s): past it the remaining sources are
+#: reported as not compiled, which blocks, instead of holding the request for 16 times the bound.
+COMPILE_BUDGET_S = 100.0
+MAX_DIAGNOSTIC_TEXT = 240
 ACTORS = frozenset({"user", "brain"})
 #: Ids one catalogue search can report (`PrefabService.MAX_SEARCH_LIMIT`).
 ORPHAN_SEARCH_LIMIT = 50
 MAX_REPORTED = 20
+ENGINE_MISMATCH_BUNDLE = ("an HTML source is a Slidecar source, and Slidecar is the user's experiment: write the scene as a Remotion source "
+                          "(`{remotion: {title, files, props, data}}`)")
+ENGINE_MISMATCH_PIN = ("this scene pins an HTML (Slidecar) prefab: an agent draft pins Remotion sources only (search the library for a "
+                       "Remotion source, or write one with the `remotion` generator object)")
 
 
 class AuthoringPrefabs(Protocol):
     """What authoring asks the prefab authority (`jarvis.core.prefab_service.PrefabService` is the only implementation)."""
 
-    def validate_candidate(self, candidate: object) -> Any: ...
+    def validate_candidate(self, candidate: object, *, core_written: bool = False) -> Any: ...
 
     async def save(self, candidate: object, *, actor: CreatorActor | str, derived_from: PrefabRef | None = None) -> Any: ...
 
@@ -76,8 +99,24 @@ class AuthoringPrefabs(Protocol):
 
     async def get(self, prefab_id: str, version: int | None = None) -> Any: ...
 
+    async def remotion_source(self, prefab_id: str, version: int) -> Any: ...
+
     async def search(self, query: str | None = None, *, family: str | None = None, class_filter: Any = None,
                      limit: int = 20) -> Any: ...
+
+
+class SceneCompiler(Protocol):
+    """What authoring asks the Remotion compiler (`jarvis.adapters.remotion_compiler.RemotionCompiler`): synchronous, run in a thread."""
+
+    def unavailable_reason(self) -> str | None: ...
+
+    def compile_scene(self, source: Any, *, minify: bool = True) -> Any: ...
+
+
+class LiveRefReader(Protocol):
+    """What authoring asks the live-reference resolver (`jarvis.core.presentation_live_refs.LiveRefResolver`)."""
+
+    async def resolve_all(self, refs: Any, *, authorised_boards: Collection[str], expected: Mapping[str, str] | None = None) -> Mapping[str, Any]: ...
 
 
 PinIndex = Callable[[], Awaitable[Mapping[Any, frozenset[tuple[str, int]]]]]
@@ -105,6 +144,13 @@ class _Prepared:
     #: Manifests of the existing pins the scenes name, by `(id, version)` (the draft bundles are not here: they have no version yet).
     pinned: dict[tuple[str, int], PrefabManifest] = field(default_factory=dict)
     digests: dict[str, str] = field(default_factory=dict)
+    #: One row per compiled source (`key`, `cache_key`, `reused`, `duration_ms`): what the delivered provenance reports.
+    compiled: list[dict[str, Any]] = field(default_factory=list)
+    #: The reason the engine cannot judge a Remotion draft at all (no compiler, runtime not ready): a 409, not a quality finding.
+    engine_unavailable: str | None = None
+    #: Inspirations Core confirmed, by bundle key: `{id, version, upstream, license, commit}` (provenance, never content).
+    inspirations: dict[str, dict[str, Any]] = field(default_factory=dict)
+    skipped: tuple[str, ...] = ()
 
 
 def parse_request(raw: object) -> tuple[str, object, object]:
@@ -161,7 +207,16 @@ class PresentationStudioAuthoring:
     `PresentationStudioVariants`, pour le contrôle de graphe après livraison ; `pins` : `PresentationStudioVariants.pin_index`."""
 
     def __init__(self, studio: Any, prefabs: AuthoringPrefabs, *, variants: Any | None = None, pins: PinIndex | None = None,
-                 checkpoint: Checkpoint | None = None, registry: Any | None = None) -> None:
+                 checkpoint: Checkpoint | None = None, registry: Any | None = None, compiler: SceneCompiler | None = None,
+                 engine_pin: Callable[[], EnginePin] | None = None, live_refs: LiveRefReader | None = None,
+                 boards: Callable[[], Awaitable[Collection[str]]] | None = None) -> None:
+        #: Slice 15. `compiler` : the Remotion compiler (absent: a Remotion draft is `engine_unavailable`); `engine_pin` : the engine set the
+        #: generated sources declare (absent: the generator object is refused); `live_refs` + `boards` : the resolver and the Boards the user
+        #: works with (absent: a draft with live references cannot be judged, said in `skipped`, and the references block as unresolved).
+        self._compiler = compiler
+        self._engine_pin = engine_pin
+        self._live_refs = live_refs
+        self._boards = boards
         #: `registry` : `StudioPinRegistry` (Slice 06). `reconcile` asks it, so "unreferenced" means held by NO pin source (variant
         #: documents live and archived, undo stacks, live windows, in-flight holds), the same definition that retention uses.
         self._registry = registry
@@ -199,6 +254,13 @@ class PresentationStudioAuthoring:
     async def _assemble(self, raw: object) -> AuthoringOutcome:
         prepared = await self._prepare(raw)
         report, brief, draft, built = prepared.report, prepared.brief, prepared.draft, prepared.built
+        if prepared.engine_unavailable is not None:
+            self._trace("core.presentation_studio.authoring_engine_unavailable", "Brouillon Remotion non juge: le compilateur est indisponible",
+                        level="warning", data={**self._report_data(report), "reason": prepared.engine_unavailable[:160]})
+            return AuthoringOutcome("refused", {"workflow": report.workflow_name, "report": report.to_dict(), "error": {
+                "code": C.ENGINE_UNAVAILABLE.value,
+                "message": clip(f"the Remotion engine cannot compile this draft ({prepared.engine_unavailable}); nothing was written and no other "
+                                "engine takes over: repair Remotion, then resubmit")}}, 409)
         if not report.ok or brief is None or draft is None or built is None:
             self._trace("core.presentation_studio.authoring_refused", "Brouillon refuse par la porte de qualite",
                         data=self._report_data(report))
@@ -229,14 +291,16 @@ class PresentationStudioAuthoring:
         await self._verify(final, serious=serious)
         self._trace("core.presentation_studio.authoring_delivered", "Presentation livree en une transaction",
                     data={"presentation_id": pid, "workflow": brief.workflow.value, "variants": len(final.variants),
-                          "scenes": len(draft.scenes), "bundles": len(published), "warnings": len(report.warnings)})
+                          "scenes": len(draft.scenes), "bundles": len(published), "warnings": len(report.warnings),
+                          "engine": final.presentation.engine.value, "compiled": len(prepared.compiled),
+                          "inspirations": len(prepared.inspirations)})
         return AuthoringOutcome("delivered", self._delivered(prepared, final, published), 201)
 
     async def _publish(self, draft: PresentationDraft, actor: str, published: list[dict[str, Any]]) -> dict[str, PrefabRef]:
         pins: dict[str, PrefabRef] = {}
         for index, bundle in enumerate(draft.bundles, start=1):
             try:
-                publication = await self._prefabs.save(bundle.candidate, actor=CreatorActor(actor))
+                publication = await self._prefabs.save(bundle.candidate, actor=CreatorActor(actor), derived_from=bundle.inspiration)
             except PrefabStoreError as exc:
                 fault = exc.code is PrefabStoreErrorCode.STORAGE_IO
                 raise PresentationStudioError(
@@ -246,7 +310,8 @@ class PresentationStudioAuthoring:
             published.append({"key": bundle.key, "id": publication.prefab_id, "version": publication.version,
                               "fingerprint": publication.fingerprint,
                               # an id the Studio already had: a new immutable version of it, earlier presentations keep their pin
-                              "revision": publication.provenance.origin.value == "revision"})
+                              "revision": publication.provenance.origin.value == "revision",
+                              "origin": publication.provenance.origin.value})
             self._pause(f"published:{index}")
         return pins
 
@@ -257,7 +322,7 @@ class PresentationStudioAuthoring:
         manifests = dict(prepared.pinned)
         for pin in pins.values():
             manifests[(pin.prefab_id, pin.version)] = await self._manifest(pin.prefab_id, pin.version)
-        final = build_presentation(prepared.brief, prepared.draft, pins, self._studio.now(), prepared.actor)
+        final = build_presentation(prepared.brief, prepared.draft, pins, self._studio.now(), prepared.actor, Engine.REMOTION)
         problems = validate_built(final, manifests)
         if problems:
             raise BuildFailure(tuple(problems))
@@ -334,9 +399,19 @@ class PresentationStudioAuthoring:
                 continue
             if pin[0].startswith(BUNDLE_NAMESPACE):
                 parsed = (await self._prefabs.get(*pin)).entry.bundle          # the stored sources: no frame runtime needed
+                if parsed is not None and parsed.is_remotion and not parsed.holds_bytes:
+                    # The catalogue keeps a Remotion version's manifest and inventory only: the gate reads its bytes (re-checked by the
+                    # prefab authority against the inventory, and by the Slice 06 guards).
+                    try:
+                        source = await self._prefabs.remotion_source(*pin)
+                    except PrefabStoreError as exc:
+                        problems.append(Problem("pin_unknown", f"scene:{pin[0]}@{pin[1]}", f"the stored source is not readable ({exc.code.value})"))
+                        continue
+                    parsed = parse_remotion_bundle(manifests[pin].raw, source.files)
                 sources.append((f"{pin[0]}@{pin[1]}", {"manifest": dict(parsed.manifest.raw), **parsed.files()}, parsed))
         draft, brief, built = draft_from_stored(view.presentation, variant, score, art, sources)
-        report = check_first_draft(draft, brief, manifests_by_scene(variant, manifests), built, problems=tuple(problems),
+        report = await asyncio.to_thread(
+            check_first_draft, draft, brief, manifests_by_scene(variant, manifests), built, problems=tuple(problems),
                                    not_judged=NOT_JUDGED)
         base = {"presentation_id": pid, "variant_id": vid, "report": report.to_dict()}
         if not report.ok:
@@ -366,7 +441,7 @@ class PresentationStudioAuthoring:
             return _Prepared(actor, _problem_report(None, problems, stage="brief", declared=declared))
         digests = {"brief": _digest(brief_raw), "draft": _digest(draft_raw)}
         try:
-            parsed = parse_draft(draft_raw, brief)
+            parsed = parse_draft(draft_raw, brief, self._engine_pin() if self._engine_pin is not None else None)
         except (OverflowError, RecursionError, ValueError, TypeError, MemoryError) as exc:   # net behind scan_json: never a 500
             problem = Problem("draft_schema", "draft", f"the draft could not be analysed ({type(exc).__name__})")
             return _Prepared(actor, _problem_report(brief.workflow, [problem], stage="schema", strict=brief.strict_content), brief,
@@ -397,7 +472,13 @@ class PresentationStudioAuthoring:
                     problems.append(Problem("pin_unknown", f"scene:{scene.key}", exc.message))
                     continue
                 pinned[(pin.prefab_id, pin.version)] = manifest
+            if manifest.source is None:
+                problems.append(Problem("prefab_engine_mismatch", f"scene:{scene.key}", ENGINE_MISMATCH_PIN))
             manifests[scene.key] = manifest
+        extra: list[Problem] = []
+        prepared = _Prepared(actor, None, brief, draft, None, pinned, digests)           # type: ignore[arg-type] - report set below
+        if not problems:
+            await self._remotion_checks(draft, extra, prepared)
         built: BuiltPresentation | None = None
         if not problems:
             try:
@@ -405,8 +486,127 @@ class PresentationStudioAuthoring:
             except (OverflowError, RecursionError, ValueError, TypeError) as exc:     # net: never a 500 on a hostile number
                 built, more = None, [Problem("draft_schema", "draft", f"the draft could not be assembled ({type(exc).__name__})")]
             problems.extend(more)
-        report = check_first_draft(draft, brief, manifests, built, problems=tuple(problems))
-        return _Prepared(actor, report, brief, draft, built if not problems else None, pinned, digests)
+        # Off the event loop: the gate reads author-controlled text (the lint is linear and has its own budget; this keeps Core responsive anyway).
+        report = await asyncio.to_thread(check_first_draft, draft, brief, manifests, built, problems=(*problems, *extra), skipped=prepared.skipped)
+        prepared.report, prepared.built = report, built if not problems else None
+        return prepared
+
+    # ------------------------------------------------------------ Remotion checks (Slice 15)
+
+    async def _remotion_checks(self, draft: PresentationDraft, problems: list[Problem], prepared: _Prepared) -> None:
+        """Compile every Remotion source, resolve its live Board references, confirm its inspiration. All problems are collected (the
+        brain fixes them in one round); none of this writes anything."""
+
+        await self._compile(draft, problems, prepared)
+        await self._resolve_live_refs(draft, problems, prepared)
+        await self._confirm_inspirations(draft, problems, prepared)
+
+    async def _compile(self, draft: PresentationDraft, problems: list[Problem], prepared: _Prepared) -> None:
+        sources = [b for b in draft.bundles if b.is_remotion]
+        if not sources:
+            return
+        reason = "no Remotion compiler is configured on this Core" if self._compiler is None else self._compiler.unavailable_reason()
+        if reason:
+            prepared.engine_unavailable = reason
+            problems.append(Problem("tsx_compile", "draft", f"{CompileErrorCode.RUNTIME_UNAVAILABLE.value}: {reason}"[:300]))
+            return
+        assert self._compiler is not None
+        deadline = time.monotonic() + COMPILE_BUDGET_S
+        for bundle in sources:
+            where = f"bundle:{bundle.key}"
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                problems.append(Problem("tsx_compile_budget", where, "compile budget exhausted: this source was not compiled, send fewer sources"))
+                continue
+            try:
+                # Bounded by what is LEFT of the budget (the typed client waits `AUTHORING_TIMEOUT_S`, above it): never a compile that outlives the request.
+                artifact = await asyncio.wait_for(asyncio.to_thread(self._compiler.compile_scene, bundle.bundle.remotion_source()), remaining)
+            except TimeoutError:
+                problems.append(Problem("tsx_compile_budget", where, f"this source was still compiling when the {COMPILE_BUDGET_S:g} s budget ended: "
+                                                                     "send fewer or smaller sources"))
+                continue
+            except RemotionCompileError as exc:
+                rows = tuple({"file": d.file, "line": d.line, "column": d.column, "text": " ".join(str(d.text).split())[:MAX_DIAGNOSTIC_TEXT]}
+                             for d in exc.diagnostics[:10])
+                if exc.code is CompileErrorCode.RUNTIME_UNAVAILABLE:
+                    prepared.engine_unavailable = exc.message
+                problems.append(Problem("tsx_compile", where, f"{exc.code.value}: {exc.message}", rows))
+                self._trace("core.presentation_studio.authoring_compile_refused", "Source Remotion refusee a la compilation", level="info",
+                            data={"bundle": bundle.key, "code": exc.code.value, "diagnostics": len(rows)})
+                continue
+            except Exception as exc:  # noqa: BLE001 - argued: a compiler fault is reported as a typed finding and logged at error, never a 500 or a silent pass
+                problems.append(Problem("tsx_compile", where, f"{CompileErrorCode.COMPILER_FAILED.value}: the compiler failed ({type(exc).__name__})"))
+                self._trace("core.presentation_studio.authoring_compile_failed", "Echec du compilateur Remotion", level="error",
+                            data={"bundle": bundle.key, "error": type(exc).__name__})
+                continue
+            public = artifact.to_public() if hasattr(artifact, "to_public") else {}
+            prepared.compiled.append({"key": bundle.key, "cache_key": public.get("cache_key"), "reused": bool(public.get("reused")),
+                                      "duration_ms": public.get("duration_ms"), "bytes": sum(f.get("bytes", 0) for f in public.get("files", []))})
+        self._trace("core.presentation_studio.authoring_compiled", "Sources Remotion compilees avant ecriture", data={
+            "sources": len(sources), "compiled": len(prepared.compiled), "refused": len(sources) - len(prepared.compiled),
+            "reused": sum(1 for row in prepared.compiled if row["reused"])})
+
+    async def _resolve_live_refs(self, draft: PresentationDraft, problems: list[Problem], prepared: _Prepared) -> None:
+        """Each source's `src/live-refs.json` against the Boards the user works with. Default deny: with no resolver or no Board context the
+        references are reported as unresolved (never assumed fine)."""
+
+        declared: list[tuple[str, tuple[LiveRef, ...]]] = []
+        for bundle in draft.bundles:
+            if not bundle.is_remotion or LIVE_REFS_PATH not in bundle.bundle.sources:
+                continue
+            try:
+                refs = parse_declaration(bundle.bundle.sources[LIVE_REFS_PATH])
+            except LiveRefError:
+                continue                                       # the gate reports tsx_live_ref_invalid
+            if refs:
+                declared.append((bundle.key, refs))
+        if not declared:
+            return
+        if self._live_refs is None or self._boards is None:
+            prepared.skipped = (*prepared.skipped, "tsx_live_ref_unresolved")
+            problems.extend(Problem("tsx_live_ref_unresolved", f"bundle:{key}",
+                                    f"{len(refs)} live reference(s) cannot be checked: this Core has no Board context to authorise them")
+                            for key, refs in declared)
+            return
+        authorised = frozenset(await self._boards())
+        for key, refs in declared:
+            resolved = await self._live_refs.resolve_all(refs, authorised_boards=authorised)
+            bad = [(name, getattr(item.state, "value", str(item.state))) for name, item in resolved.items() if not item.usable]
+            if bad:
+                problems.append(Problem("tsx_live_ref_unresolved", f"bundle:{key}", "live reference(s) not usable: " + ", ".join(
+                    f"{name} ({state})" for name, state in bad[:6])))
+        self._trace("core.presentation_studio.authoring_live_refs", "References vivantes de Board verifiees", data={
+            "sources": len(declared), "references": sum(len(refs) for _, refs in declared), "authorised_boards": len(authorised)})
+
+    async def _confirm_inspirations(self, draft: PresentationDraft, problems: list[Problem], prepared: _Prepared) -> None:
+        """An inspiration is an existing Remotion source whose upstream Core verified (Slice 18). Nothing is copied and nothing is chosen
+        for the author: the draft names it, Core confirms it exists and is attested, and the lineage is recorded."""
+
+        for bundle in draft.bundles:
+            ref = bundle.inspiration
+            if ref is None:
+                continue
+            where = f"bundle:{bundle.key}"
+            try:
+                detail = await self._prefabs.get(ref.prefab_id, ref.version)
+            except PrefabStoreError as exc:
+                problems.append(Problem("tsx_inspiration_unconfirmed", where, f"the inspiration is not readable ({exc.code.value})"))
+                continue
+            found = detail.entry.bundle
+            if found is None or not found.is_remotion:
+                problems.append(Problem("tsx_inspiration_unconfirmed", where, "the inspiration is not a Remotion source"))
+                continue
+            view = found.manifest.catalog_view(parameters=False)
+            annotate_provenance(view, found, detail.siblings)
+            upstream = view.get("upstream")
+            if not isinstance(upstream, dict) or not upstream.get("commit"):
+                problems.append(Problem("tsx_inspiration_unconfirmed", where,
+                                        "the inspiration has no Core-verified upstream provenance: import the template first (an upstream "
+                                        "template is optional inspiration only when its provenance is confirmed)"))
+                continue
+            prepared.inspirations[bundle.key] = {
+                "id": ref.prefab_id, "version": ref.version, "upstream": upstream.get("name"), "commit": upstream.get("commit"),
+                "license": upstream.get("license") or view.get("license"), "verified_intact": bool(upstream.get("verified_intact"))}
 
     def _check_bundles(self, draft: PresentationDraft, problems: list[Problem]) -> dict[str, PrefabManifest]:
         """Namespace, one bundle per id, and the prefab authority's own verdict (`PrefabService.validate_candidate`)."""
@@ -421,7 +621,9 @@ class PresentationStudioAuthoring:
             if bundle.prefab_id in seen:
                 problems.append(Problem("prefab_invalid", where, f"bundles {seen[bundle.prefab_id]!r} and {bundle.key!r} share one prefab id"))
             seen[bundle.prefab_id] = bundle.key
-            verdict = self._prefabs.validate_candidate(bundle.candidate)
+            if not bundle.is_remotion:
+                problems.append(Problem("prefab_engine_mismatch", where, ENGINE_MISMATCH_BUNDLE))
+            verdict = self._prefabs.validate_candidate(bundle.candidate, core_written=True)
             if not verdict.ok:
                 problems.append(Problem("prefab_invalid", where, "; ".join(verdict.errors[:2]) or "refused by the prefab authority"))
             manifests[bundle.key] = bundle.bundle.manifest
@@ -435,7 +637,7 @@ class PresentationStudioAuthoring:
         for manifest in by_bundle.values():
             manifests[(manifest.prefab_id, manifest.version)] = manifest
         try:
-            built = build_presentation(brief, draft, provisional_pins(draft), self._studio.now(), actor)
+            built = build_presentation(brief, draft, provisional_pins(draft), self._studio.now(), actor, Engine.REMOTION)
         except BuildFailure as exc:
             return None, list(exc.problems)
         return built, validate_built(built, manifests)
@@ -461,8 +663,11 @@ class PresentationStudioAuthoring:
                                 "origin": b.art.profile.provenance.origin.value if b.art else None,
                                 "fallback": bool(b.art and b.art.profile.provenance.fallback),
                                 "confidence": b.art.profile.provenance.confidence if b.art else None} for b in final.variants],
-            "prefabs": published, "gate": {"errors": 0, "warnings": len(prepared.report.warnings)}}
-        return {"workflow": brief.workflow.value, "presentation_id": final.presentation.presentation_id,
+            "prefabs": published, "gate": {"errors": 0, "warnings": len(prepared.report.warnings)},
+            "engine": final.presentation.engine.value, "compiled": prepared.compiled,
+            "inspirations": [{"bundle": key, **row} for key, row in prepared.inspirations.items()]}
+        return {"workflow": brief.workflow.value, "engine": final.presentation.engine.value,
+                "presentation_id": final.presentation.presentation_id,
                 "active_variant_id": final.presentation.active_variant_id, "variants": variants, "scenes": scenes,
                 "prefabs": published, "report": prepared.report.to_dict(), "provenance": provenance}
 

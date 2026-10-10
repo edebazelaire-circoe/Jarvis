@@ -63,15 +63,19 @@ def presentation_studio_findings(root: Path = ROOT) -> list[str]:
     attached = {p.program_id for p in registry.programs if any(step.prompt_id == PROMPT_ID for step in p.steps)}
     if not declaring or attached != declaring:
         found.append(f"planner attached to {sorted(attached)} but the presentation tools are declared by {sorted(declaring)}")
-    evidence = root / "tasks" / "jarvis-interactive-presentation-studio" / "slices"
+    # Remotion Slice 15: the planner now writes Remotion scenes, so the evidence that counts is the one gathered with THIS planner, in the
+    # Remotion handoff. The HTML planner's evidence of `jarvis-interactive-presentation-studio` (Slices 11 and 22) stays as history.
+    evidence = root / "tasks" / "jarvis-remotion-presentation-integration" / "slices" / "15-remotion-one-shot-authoring" / "evidence"
     recorded: dict[str, str] = {}
-    rig = evidence / "11-authoring-planner-first-draft" / "evidence" / "fake-author-rig.json"
+    rig = evidence / "fake-author-rig.json"
     if rig.is_file():
-        recorded["scripted rig (Slice 11)"] = json.loads(rig.read_text(encoding="utf-8"))["prompt"]["fingerprint"]
-    for path in sorted((evidence / "22-end-to-end-hardening" / "evidence").glob("authoring-real-traces*.json")):
+        recorded["scripted rig (Slice 15)"] = json.loads(rig.read_text(encoding="utf-8"))["prompt"]["fingerprint"]
+    for path in sorted(evidence.glob("authoring-real-traces*.json")):
         recorded[path.name] = json.loads(path.read_text(encoding="utf-8")).get("planner_fingerprint", "")
-    if "scripted rig (Slice 11)" not in recorded:
-        found.append("the Slice 11 rig evidence is missing")
+    if "scripted rig (Slice 15)" not in recorded:
+        found.append("the Slice 15 rig evidence is missing")
+    if not any(name.startswith("authoring-real-traces") for name in recorded):
+        found.append("the Slice 15 real-model authoring traces are missing (release gate: re-run for Remotion scenes)")
     for name, fingerprint in recorded.items():
         if fingerprint != PROMPT_FINGERPRINT:
             found.append(f"evidence {name} was gathered with planner fingerprint {fingerprint[:12]!r}, the code has {PROMPT_FINGERPRINT[:12]!r}")

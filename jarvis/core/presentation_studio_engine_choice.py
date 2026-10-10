@@ -32,8 +32,7 @@ MAX_EVENTS = 100
 #: Why a stored Slidecar document exists, as far as Core can tell (the creation diagnostic says who; the document itself carries only the engine).
 USE_REASONS = {
     "human": "stored engine is slidecar: created by the user as an experiment in this Core run",
-    "agent_authored": "stored engine is slidecar: assembled by agent authoring (HTML scenes) until Slice 15",
-    "legacy": "stored engine is slidecar: legacy document (created before the engine was recorded, or by an earlier run)",
+    "legacy": "stored engine is slidecar: legacy document (created before the engine was recorded, by agent authoring before Remotion scenes, or by an earlier run)",
 }
 #: Une utilisation répétée du même moteur sur la même Presentation et la même action n'est journalisée qu'une fois par minute :
 #: une modification par seconde ne doit pas noyer le registre, la première utilisation et chaque reprise après pause restent vues.
@@ -73,7 +72,7 @@ class EngineChoice:
     def __init__(self, diagnostics: DiagnosticSink | None, ledger: SlidecarLedger | None = None) -> None:
         self._diagnostics = diagnostics
         self.ledger = ledger or SlidecarLedger()
-        #: presentation id -> `human` | `agent_authored`, for documents created in THIS run; the rest read as `legacy`.
+        #: presentation id -> `human`, for documents created in THIS run; the rest read as `legacy` (Slice 15: an agent never makes a Slidecar).
         self.origins: dict[str, str] = {}
 
     def parse(self, raw: object) -> CreateRequest:

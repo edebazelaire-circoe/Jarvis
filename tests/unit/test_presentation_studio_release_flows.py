@@ -234,7 +234,7 @@ async def test_journey_compare_mix_and_promote_a_template_then_reuse_it(world):
         assert (await world.core.call("GET", f"/{pid}/variants/{ids[n]}"))[1] == sources[n]
     provenance = await world.tools.inspect("composition", presentation_id=pid, variant_id=mixed["variant_id"])
     assert {d["dimension"] for d in provenance["dimensions"]} == {"scenes", "narrative", "motion", "art_direction"}
-    # promote the mixed variant as a template: plan lists the choices, nothing is published until the explicit promote
+    # promote the mixed variant as a template (Remotion Slice 19 owns the promotion of Remotion scenes)
     plan_request = {"kind": "presentation", "title": "Revue type", "slug": "revue-type"}
     planned = await world.tools.template("plan", presentation_id=pid, variant_id=mixed["variant_id"], plan=plan_request)
     assert planned["plan"]["selection_required"] is True and (await world.tools.inspect("templates"))["templates"]["total"] == 0

@@ -27,9 +27,11 @@ make "no fallback" and "no forced conversion" contradict each other, and a varia
   store) writes `"engine": "slidecar"`; nothing else changes. It is **not** a fallback: nothing was ever asked of Remotion for it.
   It is edited in its own engine only; it is never converted.
 - A **new** presentation (`new_presentation`, the `POST` create route) is `remotion`.
-- The authoring planner (`presentation_draft_assemble`) still assembles **HTML prefab scenes**, which are Slidecar sources: it keeps the legacy engine until
-  Slice 15 (Remotion one-shot authoring) produces Remotion scenes and flips it. Labelling HTML scenes `remotion` would be a lie the engine gate would then
-  have to refuse.
+- The authoring planner (`presentation_draft_assemble`) assembles **Remotion scenes** since Remotion Slice 15 and creates the Presentation with engine
+  `remotion` (`build_presentation`, `create_assembled`). Until then it assembled HTML prefab scenes, which are Slidecar sources, and kept the legacy engine
+  (labelling HTML scenes `remotion` would have been a lie the engine gate would have to refuse). It now **refuses** an HTML source or pin
+  (`prefab_engine_mismatch`) and `create_assembled` refuses a document that names Slidecar: Slidecar is made only by the human experiment path.
+  Decks the planner assembled as Slidecar before Slice 15 are legacy documents: read and edited in Slidecar as before, never converted.
 - Engine is immutable after creation in this Slice (no field in an update body). A conversion, if ever wanted, is a new Slice with its own contract.
 
 Frozen-source / export manifests carry `EngineIdentity.to_dict()`: `{engine, engine_version, capabilities}` (version `null` until the adapter pins one;
@@ -135,9 +137,9 @@ a NEW Slidecar document titled `<source> (Slidecar)` with no scene (a Remotion s
 | --- | --- | --- |
 | `engine_chosen` | info | a Human named an engine (Remotion or Slidecar) |
 | `engine_selection_refused` | warning | a non-Human named an engine, or an unknown actor; `{requested, actor, code}` (a typo such as `Slidecar` or a missing confirmation is NOT a policy refusal: `engine_request_invalid`, info) |
-| `slidecar_created` | info | after the write: `{engine: slidecar, presentation_id, actor, reason}`. `actor: human` with the line the person typed (or a default), **or `actor: agent`, reason `agent authoring (HTML scenes) until Slice 15`** for a draft the authoring planner assembled (`create_assembled`: its scenes are HTML prefabs, so its engine is truthfully `slidecar`; flipped by Slice 15) |
+| `slidecar_created` | info | after the write: `{engine: slidecar, presentation_id, actor, reason}`, `actor: human` with the line the person typed (or a default). **Never `actor: agent` since Slice 15**: the carve-out of the Slice 20 rework (a draft the planner assembled from HTML scenes, reason `agent authoring (HTML scenes) until Slice 15`) is closed; an assembled draft is a Remotion document and its `core.presentation_studio.created` diagnostic carries `{engine: remotion, actor: agent}` |
 | `slidecar_experiment_created` | info | the copy: adds `derived_from`, `source_engine`; the source is untouched |
-| `slidecar_used` | info | a stored Slidecar document is played, edited or previewed (`StudioEngineGate` call sites, once per presentation and action per minute); `origin` and `reason` are truthful: `human` (created by the user in this Core run), `agent_authored` (assembled by agent authoring in this run), `legacy` (anything else: an older document or an earlier run: Core cannot tell more, the document carries only its engine) |
+| `slidecar_used` | info | a stored Slidecar document is played, edited or previewed (`StudioEngineGate` call sites, once per presentation and action per minute); `origin` and `reason` are truthful: `human` (created by the user in this Core run), `legacy` (anything else: an older document, an older agent-assembled deck, or an earlier run: Core cannot tell more, the document carries only its engine). `agent_authored` existed between the Slice 20 rework and Slice 15 and no longer does |
 
 `GET /v1/presentation-studio/engine` (relayed read-only) returns `{default_engine, engines: {slidecar, remotion: {ready, reason, repair}}, experimental, slidecar: {events, total, kept, durable: false}}`:
 the journal ring (100 entries, process memory) is for display; what survives a restart is the document's own `engine`, in every listing, shown as a badge.

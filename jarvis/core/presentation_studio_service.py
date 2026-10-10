@@ -479,6 +479,13 @@ class PresentationStudioService:
                         f"scene {scene.scene_id}: source_revision and last_valid_pin are owned by the hot reload: an assembled "
                         "scene starts at 0 with no fallback")
             pins[variant_id] = variant_pins(variant.scenes)
+        # Slice 15 (Remotion): the planner assembles Remotion sources, so an agent draft is a `remotion` document. The carve-out of the
+        # Slice 20 rework (an agent-assembled Slidecar, `slidecar_created` actor `agent`) is closed: Slidecar is made only by the human
+        # experiment path. A document that names Slidecar here is a defect of the caller, refused BEFORE anything is written.
+        assembled = self._parse_stored(parse_presentation, manifest, "assembled presentation")
+        if assembled.engine is Engine.SLIDECAR:
+            raise PresentationStudioError(
+                C.ENGINE_SELECTION_REFUSED, "an assembled draft is never a Slidecar document: Slidecar is the human experiment path")
         registered: dict[str, frozenset[tuple[str, int]]] = {}
         try:
             async with self._lock:
@@ -495,17 +502,9 @@ class PresentationStudioService:
                 for variant_id, before in registered.items():
                     self._pins.restore_variant(presentation_id, variant_id, before)
             raise
-        # Slice 20 (QA F2): the planner still assembles HTML scenes, i.e. Slidecar documents (carve-out until Slice 15). Not a human choice, not
-        # silent: the same diagnostic, actor `agent`, and the origin the later `slidecar_used` lines quote.
-        assembled = self._parse_stored(parse_presentation, manifest, "assembled presentation")
-        if assembled.engine is Engine.SLIDECAR:
-            self._choice.remember_origin(presentation_id, "agent_authored")
-            self._choice.note("slidecar_created", {"engine": Engine.SLIDECAR.value, "presentation_id": presentation_id, "actor": "agent",
-                                                   "reason": "agent authoring (HTML scenes) until Slice 15"},
-                              "Presentation Slidecar assemblee par l'agent (scenes HTML, jusqu'a la Slice 15)")
         self._trace("core.presentation_studio.created", "Presentation assemblee creee",
                     data={"presentation_id": presentation_id, "variants": len(variants), "scores": len(scores),
-                          "art_directions": len(art_directions)})
+                          "art_directions": len(art_directions), "engine": assembled.engine.value, "actor": "agent"})
 
     async def save_presentation(self, presentation_id: str, raw: object) -> Presentation:
         self._require_ids(presentation_id)

@@ -22,7 +22,7 @@ from __future__ import annotations
 from aiohttp import web
 
 from jarvis.domain.presentation_studio_authoring import MAX_AUTHORING_BODY_BYTES
-from jarvis.protocol.client import AUTHORING_PREFIX
+from jarvis.protocol.client import AUTHORING_PREFIX, AUTHORING_TIMEOUT_S
 from jarvis.runtime.presentation_studio_relay import PresentationStudioRelayRoutes
 
 AUTHORING_ROUTE = "/api/presentation-studio/authoring"
@@ -37,4 +37,4 @@ class PresentationStudioAuthoringRelayRoutes(PresentationStudioRelayRoutes):
     MAX_BODY_BYTES = MAX_AUTHORING_BODY_BYTES
 
     def routes(self) -> list[web.RouteDef]:
-        return [web.post(AUTHORING_ROUTE + path, self._forced(path, action, prefix=AUTHORING_PREFIX)) for path, action in _PATHS]
+        return [web.post(AUTHORING_ROUTE + path, self._forced(path, action, prefix=AUTHORING_PREFIX, timeout_s=AUTHORING_TIMEOUT_S)) for path, action in _PATHS]
