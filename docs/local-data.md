@@ -325,6 +325,12 @@ référencés ; aucun chemin de la machine, rien lu hors du paquet à la réouve
   (déplace, ne supprime jamais) vers `prefabs/.archive/` celles que rien n'épingle, et seulement quand l'index
   des épinglages est complet ([prefabs.md](prefabs.md#retention-of-studio-scene-sources))
 
+- **Modèles de présentation (Slice 20, Remotion Slice 19)** : `presentation_templates/ptp_<12 hex>.json`, un fichier JSON par modèle,
+  créé une fois, jamais réécrit ni supprimé par Core. Un modèle de **présentation** (document v2) porte ses sources de scène
+  **intégrées** (`embedded`, dans les 256 Kio d'un document du Studio) et le squelette de sa partition : ce n'est donc plus un simple index
+  de versions de bibliothèque, il se sauvegarde avec la racine de données et jamais dans le dépôt. Rien n'est publié dans `prefabs/`
+  par la promotion d'une présentation ; les prefabs `presentation-studio.p<...>.s<...>` n'apparaissent qu'à l'instanciation.
+
 ## Base de scène disparue sous son `-wal`
 
 Si `scene.sqlite3` manque alors que `scene.sqlite3-wal` est là, Core renomme le

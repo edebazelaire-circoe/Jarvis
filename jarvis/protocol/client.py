@@ -1244,6 +1244,17 @@ class LocalCoreClient:
 
         return await self._template("POST", f"/{quote(template_id, safe='')}/instantiate", body=dict(body or {}))
 
+    async def presentation_studio_upgrades(self, presentation_id: str, variant_id: str) -> dict[str, Any]:
+        """`GET .../variants/{id}/upgrades` (Remotion Slice 19) : les scenes dont le pin n'est pas la derniere version saine ; n'ecrit rien."""
+
+        return await self._studio("GET", f"/{quote(presentation_id, safe='')}/variants/{quote(variant_id, safe='')}/upgrades")
+
+    async def presentation_studio_upgrade_try(self, presentation_id: str, variant_id: str, body: Mapping[str, Any]) -> dict[str, Any]:
+        """`POST .../variants/{id}/upgrades/try` : une variante enfant dont la scene prend la version choisie (201)."""
+
+        return await self._studio("POST", f"/{quote(presentation_id, safe='')}/variants/{quote(variant_id, safe='')}/upgrades/try",
+                                  body=dict(body))
+
     async def forward_json(self, method: str, path: str, *, params: QueryParams | None = None,
                            body: bytes | None = None, timeout_s: float | None = None) -> tuple[int, Any]:
         """Relais transparent d'une requête `/v1/boards*`, `/v1/sessions*` (proxy du Control Center, Slice 04b)

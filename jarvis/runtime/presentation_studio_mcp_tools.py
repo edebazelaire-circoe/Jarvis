@@ -991,12 +991,24 @@ class PresentationTools:
             presentation_id = await self._presentation(tool, pid)
             variant_id = await self._variant(tool, presentation_id, vid)
             request = {k: v for k, v in dict(plan or {}).items() if v is not None}
+            # Remotion Slice 19 (QA B1): a licence acknowledgement and the keeping of assets are the USER's own acts, never the brain's,
+            # whatever the plan says; and a promotion only follows a request of the user (the attested turn, as for a presentation start).
+            owned = sorted(k for k in ("licence_ack", "keep_assets") if k in request)
+            if owned:
+                raise self._refuse(tool, "presentation_studio_template_user_only",
+                                   f"{' et '.join(owned)} : l'utilisateur seul reconnaît une licence ou garde des médias (depuis la page) ; dis-lui ce que le plan montre.")
+            if op == "promote" and not await self._addressed_user_turn():
+                raise self._refuse(tool, "presentation_studio_template_user_only",
+                                   "promote : seulement sur une demande de l'utilisateur dans ce tour ; le plan reste permis.")
             request["actor"] = BRAIN_ACTOR
             if op == "plan":
                 result = await self._c(lambda c: c.presentation_studio_template_plan(presentation_id, variant_id, request))
                 return self._ok(status="planned", plan=self._template_plan_view(result), presentation_id=presentation_id, variant_id=variant_id)
             result = await self._c(lambda c: c.presentation_studio_template_promote(presentation_id, variant_id, request))
-            return self._ok("say", say="Le modèle est publié dans la bibliothèque.", status="promoted", template_id=result.get("template_id"),
+            library = result.get("published_to_library") is True   # Remotion Slice 19: a whole presentation is ONE record, nothing goes to the library
+            return self._ok("say", say="Le modèle est publié dans la bibliothèque." if library
+                            else "Le modèle est enregistré ; aucune scène n'est publiée dans la bibliothèque.",
+                            status="promoted", template_id=result.get("template_id"), published_to_library=library,
                             prefabs=capped([_drop_none({"id": p.get("id"), "version": p.get("version"), "published": p.get("published")})
                                             for p in result.get("prefabs") or [] if isinstance(p, Mapping)], 12),
                             findings=(result.get("findings") or [])[:6])
@@ -1014,7 +1026,7 @@ class PresentationTools:
             made = await self._c(lambda c: c.presentation_studio_template_instantiate(str(tid), request))
             return self._ok("say", say="Le modèle est instancié.", status="instantiated", presentation_id=made.get("presentation_id"),
                             variant_id=made.get("variant_id"), scene_ids=(made.get("scene_ids") or [])[:48],
-                            art_direction_id=made.get("art_direction_id"))
+                            art_direction_id=made.get("art_direction_id"), score_id=made.get("score_id"))
         raise self._refuse(tool, "unknown_op", f"op inconnue : {clip(op, 30)} (plan, promote, instantiate).")
 
     @staticmethod
@@ -1026,7 +1038,9 @@ class PresentationTools:
                   for s in plan.get("scenes") or [] if isinstance(s, Mapping)]
         return _drop_none({"ok": plan.get("ok"), "kind": plan.get("kind"), "slug": plan.get("slug"), "selection_required": plan.get("selection_required"),
                            "scenes": capped(scenes, 24), "would_publish": plan.get("would_publish"), "findings": (plan.get("findings") or [])[:8],
-                           "blocking": plan.get("blocking"), "untrusted": ["scenes.items.controls.items.label"]})
+                           "publishes_to_library": plan.get("publishes_to_library"),
+                           "licences": {clip(str(k), 64): capped([str(w)[:12] for w in v], 8) for k, v in list((plan.get("licences") or {}).items())[:8]} or None,
+                           "blocking": plan.get("blocking"), "untrusted": ["scenes.items.controls.items.label", "licences"]})
 
     # ------------------------------------------------------------------ rédaction (planificateur de la Slice 11)
 

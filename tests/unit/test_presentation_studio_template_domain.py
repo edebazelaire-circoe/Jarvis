@@ -345,7 +345,7 @@ def test_a_document_with_an_unknown_key_or_a_wrong_field_is_refused(change):
 
 def test_a_newer_schema_is_refused_with_its_own_code():
     document = make_template().to_document()
-    document["schema_version"] = 2
+    document["schema_version"] = 3
     with pytest.raises(PresentationStudioError) as caught:
         parse_template(document)
     assert caught.value.code is C.UNSUPPORTED_SCHEMA_VERSION and document["schema"] == SCHEMA_TEMPLATE

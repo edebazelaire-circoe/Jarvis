@@ -188,3 +188,17 @@ Observed by running and reading, not copied from the snapshot above.
 - Unit evidence: `tests/unit/test_presentation_render_domain.py` (44), `_service.py` (43), `_runner.py` (35), `test_render_guard.py` (6, real Node), `_routes.py` (23, real Core), `_relay.py` (5), `_docs.py` (12), `test_workspace_presentations_js.py` (+8). Neighbours listed in LOG.md "Slice 16".
 - Not evidenced: audio of an exported video (never listened to), a player other than ffprobe/Chrome's `<video>`, macOS/Linux, a Chrome other than 154, Edge, a live Jarvis (never started), voice/Tool Brain entry points (Slices 20-21), the Human check HV-16-01.
 - Rework (QA REWORK, 2026-10-10): `evidence/real-render.json` now also covers `sandbox` (chrome://sandbox ON/OFF probe, typed sandbox failure; `sandbox-probe.json`), `burst` (40 concurrent requests -> 8 accepted) and `two_cores` (render lock); `test_presentation_render_real.py` 2 tests (the second opens a > 8 MiB 4K render whole through the Control Center relay); LOG.md "Slice 16 rework" lists B1, M2, M3, P4-P8 and the counts.
+
+
+# Slice 19 evidence (2026-10-10, code `4fd71fcb`, branch `task/jarvis-remotion-presentation-integration-s19`)
+
+| Claim | Where it is proven |
+| --- | --- |
+| A whole presentation is promoted as ONE record, nothing is published to the shared library, sources embedded by content hash | `tests/unit/test_presentation_studio_template_service.py::test_a_whole_variant_is_promoted_as_one_artefact_and_publishes_no_scene_to_the_library`, `test_presentation_studio_template_remotion.py::test_a_remotion_presentation_is_one_artefact_with_embedded_sources_and_publishes_nothing` |
+| Remotion promotion: TSX untouched, engine-tagged v3 catalog, guards refuse, leaks block (project, Board, path, content) | `test_presentation_studio_template_remotion.py` (first 6 tests) |
+| Modified imports are never promoted as verified; forged embedded claims refused before anything is created | `test_a_modified_import_can_never_be_promoted_as_verified`, `test_an_embedded_intact_import_is_reverified_at_instantiation_and_a_forged_claim_is_refused` |
+| Restrictive upstream licence needs a named acknowledgement (library scene and presentation record) | `test_a_restrictive_upstream_licence_needs_an_explicit_named_acknowledgement`, `test_a_restrictive_licence_also_gates_a_presentation_template` |
+| Score skeleton, no words, instantiated | `test_presentation_studio_template_score.py`, `test_the_score_travels_as_a_skeleton_without_speech_cues_or_control_values`, `test_presentation_studio_release_flows.py::test_journey_compare_mix_and_promote_a_template_then_reuse_it` |
+| Newer-version notice is read-only; a trial is a child variant; the original is byte-identical; nothing rebound; incompatible/non-native versions refused; retention keeps both pins; declined trial rolls back | `tests/unit/test_presentation_studio_upgrades.py`, `_upgrades_routes.py` |
+| The same, in a real Chrome against an isolated Core and the real Control Center | `tests/unit/test_presentation_studio_explorer_upgrades_browser.py` ; screenshots `tasks/jarvis-remotion-presentation-integration/slices/19-promotion-pins-and-upgrades/evidence/upgrades-*.png` |
+| Contracts | `docs/presentation-studio.md` (*Template and prefab promotion contract*, *Newer prefab versions and trial variants*), `docs/prefabs.md`, `docs/remotion-import.md` section 11, `docs/local-data.md` |

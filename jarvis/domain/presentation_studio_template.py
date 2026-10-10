@@ -24,7 +24,7 @@ import secrets
 from typing import Any
 
 from jarvis.domain.prefab import PrefabRef, canonical_json
-from jarvis.domain.presentation_studio import PRESENTATION_ID, VARIANT_ID
+from jarvis.domain.presentation_studio import MAX_DOCUMENT_BYTES, PRESENTATION_ID, VARIANT_ID
 from jarvis.domain.presentation_studio_checks import (
     PresentationStudioError, PresentationStudioErrorCode as C, _check_int, _check_title, _exact_keys, _fail, is_scene_id,
 )
@@ -33,10 +33,20 @@ from jarvis.domain.presentation_studio_template_sanitize import DA_SECTIONS
 from jarvis.domain.presentation_studio_variants import _check_stamp
 
 SCHEMA_TEMPLATE = "jarvis.presentation_studio.template"
-TEMPLATE_SCHEMA_VERSION = 1
+#: 1 : composition seule (scenes epinglees dans la bibliotheque). 2 (Slice 19) : le modele d'une presentation porte ses sources
+#: **integrees** (`embedded`, par empreinte de contenu), une squelette de partition (`score`) et un bloc `catalog`. Un document s'ecrit
+#: a la plus basse version qui l'exprime ; un lecteur qui ne connait que la version 1 refuse la 2 (`unsupported_schema_version`).
+TEMPLATE_SCHEMA_VERSION = 2
+#: Les cles qui n'existent qu'a partir de la version 2.
+V2_KEYS = frozenset({"score", "embedded", "catalog"})
 TEMPLATE_ID = re.compile(r"ptp_[0-9a-f]{12}\Z")
 MAX_TEMPLATES = 512
-MAX_TEMPLATE_BYTES = 256 * 1024
+#: Le plafond REEL d'un document du Studio (`dump_document`, lecture du magasin) : un modele n'a pas de plafond a lui. Le plan mesure le
+#: document SERIALISE contre lui (`embedded_too_large` dit quelle part pese), il ne s'appuie sur aucune autre constante.
+MAX_TEMPLATE_BYTES = MAX_DOCUMENT_BYTES
+MAX_LICENCE_ACKS = 8
+#: As long as an upstream `license` can be (`prefab_catalog.MAX_UPSTREAM_TEXT`): an acknowledgement must be able to name any licence the plan shows.
+MAX_LICENCE_NAME = 120
 MAX_DESCRIPTION = 600
 MAX_TAGS = 8
 MAX_LABEL = 40
@@ -44,6 +54,7 @@ NAMESPACE = "studio-template."
 SLUG_TEMPLATE = re.compile(r"[a-z][a-z0-9-]{0,23}\Z")
 TAG = re.compile(r"[a-z0-9][a-z0-9_-]{0,23}\Z")
 MOTIF_MODES = ("strip", "keep")
+CONTENT_HASH = re.compile(r"[0-9a-f]{64}\Z")
 
 
 class TemplateKind(StrEnum):
@@ -115,13 +126,19 @@ class PromoteRequest:
     scenes: tuple[SceneSelection, ...] | None
     art_direction: DaSelection | None
     expected_revision: int | None
+    #: Slice 19 : les licences (telles que le plan les montre) que l'utilisateur reconnait explicitement pour des sources amont a licence
+    #: non redistribuable ou non declaree. Jamais un booleen aveugle : une chaine qui ne correspond a aucune licence du plan n'ouvre rien.
+    licence_ack: tuple[str, ...] = ()
+    #: Slice 19 : garder les assets (`public/**`) d'une source Remotion qui n'est pas un import intact (medias possibles du projet).
+    keep_assets: bool = False
 
 
 def parse_promote(raw: object, *, strict: bool) -> PromoteRequest:
     """Corps d'un plan (`strict=False` : la selection peut manquer, le plan decrit alors les candidats) ou d'une promotion (`strict`)."""
 
     data = _exact_keys(raw, "template promotion", {"kind", "title", "slug"},
-                       frozenset({"actor", "description", "tags", "scenes", "art_direction", "expected_revision"}))
+                       frozenset({"actor", "description", "tags", "scenes", "art_direction", "expected_revision", "licence_ack",
+                                  "keep_assets"}))
     try:
         kind = TemplateKind(data["kind"])
     except ValueError:
@@ -141,6 +158,13 @@ def parse_promote(raw: object, *, strict: bool) -> PromoteRequest:
     expected = data.get("expected_revision")
     if expected is not None:
         _check_int("expected_revision", expected, 1, 2**31 - 1)
+    acks = data.get("licence_ack", [])
+    if not isinstance(acks, list) or len(acks) > MAX_LICENCE_ACKS or len(set(acks)) != len(acks) \
+            or not all(isinstance(a, str) and a and len(a) <= MAX_LICENCE_NAME and a == a.strip() and a.isprintable() for a in acks):
+        raise _fail(f"licence_ack must be at most {MAX_LICENCE_ACKS} distinct licence names, as the plan shows them")
+    keep_assets = data.get("keep_assets", False)
+    if type(keep_assets) is not bool:
+        raise _fail("keep_assets must be true or false")
 
     scenes: tuple[SceneSelection, ...] | None = None
     if "scenes" in data:
@@ -169,7 +193,7 @@ def parse_promote(raw: object, *, strict: bool) -> PromoteRequest:
             raise _fail("art_direction.motifs must be 'strip' or 'keep'")
         da = DaSelection(tuple(sections), motifs == "keep")
     _check_shape(kind, scenes, da, strict=strict)
-    return PromoteRequest(kind, actor, data["title"], slug, description, tuple(tags), scenes, da, expected)
+    return PromoteRequest(kind, actor, data["title"], slug, description, tuple(tags), scenes, da, expected, tuple(acks), keep_assets)
 
 
 def _check_shape(kind: TemplateKind, scenes: tuple[SceneSelection, ...] | None, da: DaSelection | None, *, strict: bool) -> None:
@@ -223,6 +247,10 @@ class TemplateScene:
     key: str
     label: str
     scene: StudioScene
+    #: Slice 19 : empreinte (sha256 hex) de la source integree que cette scene emploie (`StudioTemplate.embedded`), ou `None` quand
+    #: `scene.prefab` est une version de la bibliotheque partagee. Avec une source integree, `scene.prefab` n'est qu'un emplacement
+    #: du modele (jamais resolu) ; l'instanciation publie une source propre a la presentation neuve.
+    source: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -246,20 +274,46 @@ class StudioTemplate:
     created_by: str
     created_at: str
     revision: int = 1
+    #: Slice 19 (document v2) : le squelette de partition (`{start_item_id, items, cues: [], sequences: [], recovery_points: []}` sur les
+    #: emplacements `template_scene_id`), sans parole, sans repere, sans sequence ni valeur de controle ; `None` sans partition.
+    score: Mapping[str, Any] | None = None
+    #: Slice 19 (v2) : `{sha256: candidat}` : les sources de scene **privees a ce modele**, absentes de la bibliotheque partagee. Un
+    #: candidat est `{manifest, template, style, behavior}` (HTML) ou `{manifest, sources, assets}` (Remotion).
+    embedded: Mapping[str, Any] | None = None
+    #: Slice 19 (v2) : le bloc de catalogue de l'enregistrement lui-meme : `type: presentation`, compatibilite par moteur, licences
+    #: reconnues, amont. Meme vocabulaire que `catalog` d'un manifeste v3, jamais le catalogue d'un autre prefab.
+    catalog: Mapping[str, Any] | None = None
+
+    @property
+    def schema_version(self) -> int:
+        return 2 if (self.score is not None or self.embedded is not None or self.catalog is not None) else 1
 
     def to_document(self) -> dict[str, Any]:
-        return {"schema": SCHEMA_TEMPLATE, "schema_version": TEMPLATE_SCHEMA_VERSION, "template_id": self.template_id,
+        rows = []
+        for s in self.scenes:
+            row = {"key": s.key, "label": s.label, "scene": s.scene.to_dict()}
+            if s.source is not None:
+                row["source"] = s.source
+            rows.append(row)
+        body = {"schema": SCHEMA_TEMPLATE, "schema_version": self.schema_version, "template_id": self.template_id,
                 "kind": self.kind.value, "title": self.title, "description": self.description, "tags": list(self.tags),
-                "scenes": [{"key": s.key, "label": s.label, "scene": s.scene.to_dict()} for s in self.scenes],
+                "scenes": rows,
                 "art_direction": None if self.art_direction is None else dict(self.art_direction),
                 "parameters": [dict(p) for p in self.parameters], "prefabs": [p.to_dict() for p in self.prefabs],
                 "report": dict(self.report), "derived_from": dict(self.derived_from), "created_by": self.created_by,
                 "created_at": self.created_at, "revision": self.revision}
+        if self.schema_version == 2:
+            body.update({"score": None if self.score is None else dict(self.score),
+                         "embedded": None if self.embedded is None else dict(self.embedded),
+                         "catalog": None if self.catalog is None else dict(self.catalog)})
+        return body
 
     def summary(self) -> dict[str, Any]:
         return {"template_id": self.template_id, "kind": self.kind.value, "title": self.title, "description": self.description,
                 "tags": list(self.tags), "scene_count": len(self.scenes), "parameter_count": len(self.parameters),
                 "has_art_direction": self.art_direction is not None, "prefabs": [p.to_dict() for p in self.prefabs],
+                "has_score": self.score is not None, "embedded_sources": len(self.embedded or ()),
+                "engine": None if self.catalog is None else dict(self.catalog.get("compatibility", {})),
                 "created_at": self.created_at, "created_by": self.created_by}
 
     def canonical(self) -> str:
@@ -276,8 +330,11 @@ def parse_template(raw: object) -> StudioTemplate:
     if isinstance(raw, dict) and raw.get("schema") == SCHEMA_TEMPLATE and isinstance(raw.get("schema_version"), int) \
             and raw["schema_version"] > TEMPLATE_SCHEMA_VERSION:
         raise PresentationStudioError(C.UNSUPPORTED_SCHEMA_VERSION, "this template was written by a newer JARVIS")
-    data = _exact_keys(raw, "template", set(_KEYS))
-    if data["schema"] != SCHEMA_TEMPLATE or data["schema_version"] != TEMPLATE_SCHEMA_VERSION:
+    version = raw.get("schema_version") if isinstance(raw, dict) else None
+    if type(version) is not int or version not in (1, TEMPLATE_SCHEMA_VERSION):
+        raise _fail("template: unknown schema")
+    data = _exact_keys(raw, "template", set(_KEYS), frozenset(V2_KEYS) if version == 2 else frozenset())
+    if data["schema"] != SCHEMA_TEMPLATE:
         raise _fail("template: unknown schema")
     if not is_template_id(data["template_id"]):
         raise _fail("template_id is not a valid id")
@@ -294,11 +351,14 @@ def parse_template(raw: object) -> StudioTemplate:
         raise _fail("template scenes must be a list of at most 64")
     scenes = []
     for n, row in enumerate(rows):
-        item = _exact_keys(row, f"scenes[{n}]", {"key", "label", "scene"})
+        item = _exact_keys(row, f"scenes[{n}]", {"key", "label", "scene"}, frozenset({"source"}) if version == 2 else frozenset())
         if not isinstance(item["key"], str) or not SLUG.fullmatch(item["key"]):
             raise _fail(f"scenes[{n}].key is malformed")
+        source = item.get("source")
+        if source is not None and not (isinstance(source, str) and CONTENT_HASH.fullmatch(source)):
+            raise _fail(f"scenes[{n}].source is not a content hash")
         scenes.append(TemplateScene(item["key"], _line("label", item["label"], MAX_LABEL, empty=True),
-                                    StudioScene.from_dict(item["scene"], f"template scene {item['key']}")))
+                                    StudioScene.from_dict(item["scene"], f"template scene {item['key']}"), source))
     prefabs = []
     for entry in data["prefabs"] if isinstance(data["prefabs"], list) else ():
         prefabs.append(PrefabRef.from_dict(entry, "prefabs[]"))
@@ -314,9 +374,33 @@ def parse_template(raw: object) -> StudioTemplate:
         raise _fail("created_by is malformed")
     _check_stamp("created_at", data["created_at"])
     _check_int("revision", data["revision"], 1, 2**31 - 1)
+    score, embedded, catalog = (_optional_object(data, name) for name in ("score", "embedded", "catalog"))
+    if embedded is not None and (not all(isinstance(k, str) and CONTENT_HASH.fullmatch(k) and isinstance(v, dict)
+                                        for k, v in embedded.items())
+                                 or any(sc.source is not None and sc.source not in embedded for sc in scenes)):
+        raise _fail("embedded sources are malformed or a scene names a source the record does not hold")
+    if embedded is not None:  # integrity: the key IS the hash of what it holds, recomputed, never trusted
+        from jarvis.domain.presentation_studio_template_remotion import content_hash
+
+        for key, candidate in embedded.items():
+            try:
+                good = content_hash(candidate) == key
+            except (KeyError, TypeError, AttributeError):
+                good = False
+            if not good:
+                raise PresentationStudioError(C.CORRUPT_DOCUMENT, f"embedded source {key[:12]} does not match its content hash: the record was altered")
+    if embedded is None and any(sc.source is not None for sc in scenes):
+        raise _fail("a scene names an embedded source and the record holds none")
     return StudioTemplate(data["template_id"], kind, data["title"], data["description"], tuple(data["tags"]), tuple(scenes), art,
                           tuple(dict(p) for p in data["parameters"]), tuple(prefabs), data["report"], data["derived_from"],
-                          data["created_by"], data["created_at"], data["revision"])
+                          data["created_by"], data["created_at"], data["revision"], score, embedded, catalog)
+
+
+def _optional_object(data: Mapping[str, Any], name: str) -> Mapping[str, Any] | None:
+    value = data.get(name)
+    if value is not None and not isinstance(value, dict):
+        raise _fail(f"{name} is malformed")
+    return value
 
 
 def template_scene_dicts(template: StudioTemplate, new_id: Any) -> list[dict[str, Any]]:

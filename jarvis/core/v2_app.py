@@ -81,6 +81,7 @@ from jarvis.core.presentation_studio_compare import PresentationStudioCompare
 from jarvis.core.presentation_studio_composition import PresentationStudioComposition
 from jarvis.core.presentation_studio_scene_variants import PresentationStudioSceneVariants
 from jarvis.core.presentation_studio_template import PresentationStudioTemplates
+from jarvis.core.presentation_studio_upgrades import PresentationStudioUpgrades
 from jarvis.core.presentation_studio_presenter import PresentationStudioPresenter
 from jarvis.core.presentation_studio_reload import (
     DEFAULT_MAX_WAIT_S as STUDIO_RELOAD_MAX_WAIT_S, DEFAULT_QUIET_S as STUDIO_RELOAD_QUIET_S,
@@ -488,6 +489,10 @@ class JarvisCoreApplication:
         self.presentation_studio_templates = PresentationStudioTemplates(
             self.presentation_studio, self.prefabs, FilePresentationTemplateStore(root), edit=self.presentation_studio_edit,
             diagnostics=diagnostics)
+        # Nouvelle version d'un prefab epingle (Remotion Slice 19) : avis en lecture seule, essai dans une variante enfant (branche de la
+        # Slice 16), jamais de mise a jour automatique ni de pin remplace sans variante.
+        self.presentation_studio_upgrades = PresentationStudioUpgrades(
+            self.presentation_studio, self.presentation_studio_variants, self.prefabs, edit=self.presentation_studio_edit)
         # Slice 06 x Slice 12 : le rechargement lit la position de la lecture et patche la fenetre `studio-stage-<run_id>` que
         # le stage de la lecture lui a liee (`stage_observer`) ; une scene non affichee est seulement re-epinglee.
         self.presentation_studio_reload.bind_playback(self.presentation_studio_playback)
