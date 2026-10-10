@@ -70,7 +70,7 @@ def test_the_route_table_and_the_relay_surface():
     relay = PresentationStudioRelayRoutes(transport=lambda: None, journal=None)  # type: ignore[arg-type]
     # Slice 12 adds the playback verbs under /playback (their own table: test_presentation_studio_playback_routes.py)
     mapped = {(r.method, "/v1/presentation-studio" + r.path[len("/api/presentation-studio"):]) for r in relay.routes()
-              if not r.path.startswith("/api/presentation-studio/playback")}
+              if not r.path.startswith("/api/presentation-studio/playback") and "/rail" not in r.path}  # the rail has its own contract: test_presentation_studio_rail.py
     assert mapped <= set(routes)
     # the page reads, and writes only through the edit API and the hot reload (Slice 06): no PUT, no raw validate. Remotion Slice 20 adds
     # exactly two Human-only writes: the create (the only door that names an engine) and the Slidecar copy ("experiment"), both with the actor forced.

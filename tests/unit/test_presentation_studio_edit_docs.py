@@ -69,7 +69,7 @@ def test_the_relay_routes_are_the_documented_ones():
     for route in relay.routes():
         if (route.method == "POST" and not route.path.startswith("/api/presentation-studio/playback")   # Slice 12: its own contract
                 and route.path != "/api/presentation-studio/presentations"                                # Slice 20: docs/presentation-engine.md
-                and not route.path.endswith("/experiment")):
+                and not route.path.endswith("/experiment") and "/rail" not in route.path):   # the rail: its own docs section
             assert f"`POST {route.path}`" in section, route.path
     assert "no `PUT`" in section and "actor forced to `user`" in section
     assert "READ_GUARDED_ROUTES" in section

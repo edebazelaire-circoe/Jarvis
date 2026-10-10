@@ -18,7 +18,7 @@
      rapporteur de ce que la page constate (`POST .../rail/display-state`), pour que `presentation_inspect target rail` ne devine rien.
 
    Quand il est visible : dans un Board de nature « présentation », en mode d'interaction PRESENTATION, dès qu'un agent travaille ou qu'un
-   problème attend, quand la fenêtre ou le Studio sont ouverts, ou si l'utilisateur l'a épinglé (bouton PRS du dock). Épinglé « masqué », il
+   problème attend, quand la fenêtre ou le Studio sont ouverts, ou si l'utilisateur l'a épinglé (Alt+Maj+P : automatique, toujours visible, masqué). Épinglé « masqué », il
    ne se montre que sur demande du cerveau. Pendant le Studio (explorateur de variantes, fenêtré) il se range en colonne à gauche de
    l'explorateur, hors de la zone rendue inerte : la voix et le rail restent utilisables.
 
@@ -29,7 +29,7 @@
 (function(root){
   'use strict';
 
-  const DOM=Object.freeze({hostId:'presentationRail',styleId:'presentationRailStyle',dockId:'openPresentationRail'});
+  const DOM=Object.freeze({hostId:'presentationRail',styleId:'presentationRailStyle'});
   const ROUTE='/api/presentation-studio/rail';
   const STATE_ROUTE=ROUTE+'/display-state';
   const act=pid=>`/api/presentation-studio/presentations/${encodeURIComponent(pid)}/rail`;
@@ -610,8 +610,10 @@ html.jvr-studio.jvr-slim #${DOM.hostId}{width:44px}
     const rail=createRail({document,window,toast:typeof toast==='function'?toast:null});
     root.JarvisPresentationRail=Object.freeze({gate:rail.gate,refresh:rail.refresh,state:rail.state,setPref:rail.setPref,cyclePref:rail.cyclePref,run:rail.run,
       model:rail.model,render:rail.render});
-    const dock=document.getElementById(DOM.dockId);
-    if(dock)dock.addEventListener('click',()=>{
+    /* Pas de bouton au dock (sa géométrie est comptée pour dix outils, y compris celle du thème Cosmos) : Alt+Maj+P fait tourner automatique / toujours visible / masqué. */
+    document.addEventListener('keydown',event=>{
+      if(!(event.altKey&&event.shiftKey&&!event.ctrlKey&&!event.metaKey&&(event.key==='P'||event.key==='p')))return;
+      event.preventDefault();
       const pref=rail.cyclePref();
       if(typeof toast==='function')toast({title:'Rail des présentations',sub:pref==='auto'?'Automatique : visible dans un Board de présentation ou quand un agent travaille.':pref==='shown'?'Toujours visible.':'Masqué (le cerveau peut le rouvrir).',kind:'info'});
     });

@@ -478,7 +478,7 @@ class PresentationStudioEditService:
             try:
                 listener(context.presentation_id, code)
             except Exception as exc:  # noqa: BLE001 - a display listener never changes an edit's outcome
-                self._trace("core.presentation_studio.failure_listener_failed", "Abonne d'echec en echec", level="warning",
+                self._trace("core.presentation_studio.commit_listener_failed", "Abonne d'echec en echec", level="warning",
                             data={"error_class": type(exc).__name__})
         if self._events is None:
             return

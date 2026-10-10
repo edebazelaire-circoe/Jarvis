@@ -3340,7 +3340,7 @@ Status: implemented. Owners: `jarvis/core/presentation_studio_rail.py` (Core: fl
 presentation: a monogram tile (hue from the id), a short title (22 characters, full title in the tooltip) and a status dot. Several presentations live in parallel: an agent can
 correct one while the user looks at another. The dot is **blue** (an agent is working on it), **green** (finished, or nobody touched it) or **orange** (a problem happened; the
 tooltip says what; it stays until acknowledged or until the next work). The header carries the voice state (the voice stays usable while anything is displayed), a focus switch
-and a collapse button; the `PRS` dock button cycles *automatic / always / hidden*.
+and a collapse button; **Alt+Shift+P** cycles *automatic / always / hidden* (no dock button: the dock geometry, the Cosmos theme included, is computed for ten tools).
 
 **When it is visible** (pure rule `shouldShow`): preference `shown`; or, in `auto`, at least one presentation and (the active Board's nature is `presentation` (`/api/status.boards.active.board_kind`),
 or the interaction mode is `presentation`, or an agent works or a problem waits, or the window or the Studio is open). Preference `hidden` shows it only when the brain asks (`rail_show`).

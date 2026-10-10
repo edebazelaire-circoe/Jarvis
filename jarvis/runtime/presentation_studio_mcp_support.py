@@ -101,6 +101,7 @@ SENTENCES: dict[str, str] = {
     "presentation_studio_unknown_control": "Ce contrôle n'existe pas sur cette scène : prends un control_id de presentation_inspect (target scene).",
     "presentation_studio_unknown_scene_variant": "Cette variante de scène n'existe pas : prends son id dans presentation_inspect (target scene).",
     "presentation_studio_unknown_score": "Cette variante n'a pas de partition : elle ne peut pas être jouée.",
+    "presentation_archived": "Cette présentation est archivée : restaure-la d'abord (presentation_library restore), avec l'accord de l'utilisateur.",
     "presentation_studio_stale_revision": "L'état a bougé depuis ta lecture : relis avec presentation_inspect puis recommence.",
     "presentation_studio_confirmation_required": "Archiver demande la confirmation d'un plan : appelle d'abord archive_plan et fais valider l'ensemble par l'utilisateur.",
     "presentation_studio_confirmation_stale": "Le plan a changé ou expiré : refais archive_plan et fais revalider.",
