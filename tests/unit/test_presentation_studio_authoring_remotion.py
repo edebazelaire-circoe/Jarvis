@@ -18,6 +18,7 @@ from jarvis.core import presentation_studio_authoring as authoring_module
 from jarvis.domain.prefab import parse_candidate
 from jarvis.domain.presentation_studio_art_direction import parse_art_direction
 from jarvis.domain.presentation_studio_authoring import parse_brief, parse_draft
+from jarvis.domain.presentation_studio_authoring_kit import KIT_PATH, KIT_SOURCE
 from jarvis.domain.presentation_studio_authoring_remotion import (
     NEUTRAL_THEME, THEME_PROP, THEME_SCHEMA, apply_theme, generate_source, source_id, theme_values,
 )
@@ -227,14 +228,12 @@ async def test_the_compile_findings_come_with_every_other_finding_in_one_round(e
 
 async def test_every_source_is_compiled_once_per_judgement_and_the_count_is_reported(env):
     brief, draft = fa.brief("directed"), fa.good_deck(3)
-    draft["prefabs"].append(fa.prefab_entry("second"))
-    draft["scenes"][1]["prefab"] = {"bundle": "second"}
     brief["duration_target_s"] = 150
     draft["score"]["items"] = draft["score"]["items"][:3]
     out = await env.assemble(brief, draft)
     assert out.status == "delivered", out.body.get("report", {}).get("failures")
     compiled = out.to_dict()["provenance"]["compiled"]
-    assert [row["key"] for row in compiled] == ["slide", "second"] and len(env.compiler.calls) == 2
+    assert [row["key"] for row in compiled] == ["slide", "cover"] and len(env.compiler.calls) == 2
     done = env.sink.of("core.presentation_studio.authoring_compiled")[-1][1]
     assert done["sources"] == 2 and done["compiled"] == 2 and done["refused"] == 0
 
@@ -464,3 +463,171 @@ def test_the_tools_did_not_grow_and_no_draft_tool_names_an_engine():
         body = source[source.index(f"async def {name}("):]
         body = body[:body.index("@mcp.tool") if "@mcp.tool" in body else len(body)]
         assert "engine" not in body.lower(), name
+
+
+# ------------------------------------------------------------------ the motion kit, the storyboard and the layouts
+
+def test_core_adds_the_motion_kit_to_every_generated_source_and_the_brain_cannot_provide_one():
+    made = generate_source("hero", fa.slide_bundle()["remotion"], ENGINE, "x")
+    source = parse_candidate(made.candidate).remotion_source()
+    assert source.files[KIT_PATH].decode("utf-8") == KIT_SOURCE and KIT_PATH in source.block.modules
+    for word in ("progress", "enterStyle", "size", "enter_ms", "stagger_ms", "easing", "transition"):
+        assert word in KIT_SOURCE
+    raw = fa.slide_bundle()["remotion"]
+    raw["files"][KIT_PATH] = "export const progress = () => 1;"
+    from jarvis.domain.presentation_studio_checks import PresentationStudioError
+    with pytest.raises(PresentationStudioError) as caught:
+        generate_source("hero", raw, ENGINE, "bundle:hero.remotion")
+    assert "added by Core" in caught.value.message
+
+
+def test_the_kit_is_not_the_authors_code_so_it_cannot_hide_a_dead_prop_or_count_as_a_module():
+    from jarvis.domain.presentation_studio_authoring_tsx import mentions, tsx_facts
+
+    facts = tsx_facts({"src/Scene.tsx": "export default function Scene() { return null; }", KIT_PATH: KIT_SOURCE})
+    assert facts.code_modules == 1 and not mentions(facts, "easing") and not mentions(facts, "stagger_ms") and facts.color_literals == 0
+
+
+async def test_a_declared_prop_that_only_the_kit_mentions_is_still_a_dead_control(env):
+    brief, draft = fa.brief("directed"), fa.good_deck()
+    draft["prefabs"][0]["remotion"]["props"]["properties"]["easing"] = {"type": "string", "max_length": 20, "default": "ease_out"}
+    report = (await env.check(brief, draft)).body["report"]
+    assert "tsx_props_unread" in codes(report)
+
+
+def test_the_theme_carries_the_transition_of_the_direction():
+    from tests.fakes.presentation_studio_art_direction import base_profile
+
+    profile = base_profile()
+    assert theme_values(profile)["transition"] == profile.motion.transition.value and THEME_SCHEMA["properties"]["transition"]["type"] == "string"
+
+
+def test_every_layout_of_the_guide_is_a_complete_valid_source_that_reads_the_theme_and_the_kit():
+    from jarvis.domain.presentation_studio_authoring_gate import check_first_draft
+    from jarvis.domain.presentation_studio_authoring_guide import draft_guide, example, layouts
+
+    assert set(layouts()) == {"cover", "figure", "list"} and set(draft_guide()["layouts"]) == {"cover", "figure", "list"}
+    assert "storyboard" in draft_guide() and "jarvis-kit" in draft_guide()["storyboard"]
+    contents = {"cover": {"subtitle": "Une ligne pour situer le propos"},
+                "figure": {"figure": "42", "caption": "Le dossier compte quarante-deux fichiers au total"},
+                "list": {"items": ["Premier point utile", "Deuxieme point utile", "Troisieme point utile"]}}
+    for name, layout in layouts().items():
+        pair = example()
+        pair["draft"]["prefabs"] = [{"key": "slide", "remotion": layout["remotion"]}]
+        pair["draft"]["scenes"][0].update(props={"headline": "Titre de la scene"}, data=contents[name])
+        brief = parse_brief(pair["brief"])
+        parsed = parse_draft(pair["draft"], brief, engine_pin())
+        assert parsed.draft is not None, (name, parsed.problems)
+        manifests = {s.key: next(b.bundle.manifest for b in parsed.draft.bundles if b.key == s.bundle_key) for s in parsed.draft.scenes}
+        report = check_first_draft(parsed.draft, brief, manifests, None)
+        assert report.ok and not report.findings, (name, [f.to_dict() for f in report.findings])
+        text = layout["remotion"]["files"]["src/Scene.tsx"]
+        assert "props.theme" in text and "./jarvis-kit" in text
+
+
+async def test_a_deck_drawn_by_one_source_gets_the_storyboard_warning_and_a_two_source_deck_does_not(env):
+    brief, draft = fa.violate("tsx_layout_monotone")
+    out = await env.assemble(brief, draft)
+    assert out.status == "delivered" and "tsx_layout_monotone" in {w["code"] for w in out.to_dict()["report"]["warnings"]}
+    brief, draft = fa.brief("directed"), fa.good_deck()
+    report = (await env.check(brief, draft)).body["report"]
+    assert report["warnings"] == [] and report["stats"]["remotion_bundles"] == 2
+    four = fa.violate("tsx_layout_monotone")
+    four[1]["scenes"] = four[1]["scenes"][:4]
+    four[1]["score"]["items"] = four[1]["score"]["items"][:4]
+    four[0]["duration_target_s"] = 200
+    assert "tsx_layout_monotone" not in codes((await env.check(*four)).body["report"], "warnings")      # four scenes: not yet a monotone deck
+
+
+def test_the_library_sample_is_completed_with_the_required_keys_the_brain_left_out():
+    layout = __import__("jarvis.domain.presentation_studio_authoring_guide", fromlist=["layouts"]).layouts()["figure"]["remotion"]
+    manifest = parse_candidate(generate_source("fig", layout, ENGINE, "x").candidate).manifest.raw
+    assert manifest["sample"]["data"] == {"figure": "Exemple", "caption": "Exemple"} and manifest["sample"]["props"][THEME_PROP] == NEUTRAL_THEME
+
+
+# ------------------------------------------------------------------ the client waits for the compiler (found by the real-model trace)
+
+async def test_the_authoring_client_waits_longer_than_the_compile_budget_and_a_timeout_is_said_not_blank(monkeypatch):
+    """The first real-model run lost its first `assemble` after exactly 10.1 s: the default timeout of `LocalCoreClient` cut a cold compile of
+    three sources, and the model saw `Error executing tool ...:` with nothing after the colon. The authoring requests now wait for the
+    compile budget, and a timeout that still happens is a coded refusal with a sentence."""
+
+    from jarvis.protocol import client as client_module
+    from jarvis.protocol.client import AUTHORING_TIMEOUT_S, CoreProtocolError, LocalCoreClient
+    from jarvis.runtime.presentation_studio_mcp_tools import CoreCaller
+
+    assert AUTHORING_TIMEOUT_S > authoring_module.COMPILE_BUDGET_S >= 60
+    seen = {}
+
+    class Session:
+        def request(self, method, url, **kwargs):
+            seen.update(kwargs)
+            raise TimeoutError()
+
+    client = LocalCoreClient(host="127.0.0.1", port=1, token="t" * 48)
+
+    async def http():
+        return Session()
+
+    monkeypatch.setattr(client, "_http", http)
+    with pytest.raises(TimeoutError):
+        await client.presentation_studio_authoring_assemble({"brief": {}, "draft": {}})
+    assert seen["timeout"].total == AUTHORING_TIMEOUT_S and client_module.AUTHORING_PREFIX in "/v1/presentation-studio/authoring"
+
+    class Transport:
+        async def replay_on_401(self, fn):
+            return await fn(client)
+
+    caller = CoreCaller.__new__(CoreCaller)
+    caller._transport = Transport()
+    with pytest.raises(CoreProtocolError) as caught:
+        await caller.call(lambda c: c.presentation_studio_authoring_assemble({"brief": {}, "draft": {}}))
+    assert caught.value.code == "core_timeout" and "issue est inconnue" in caught.value.message
+
+
+async def test_the_control_center_relay_waits_for_the_compiler_too():
+    from aiohttp import web
+    from aiohttp.test_utils import TestClient, TestServer
+
+    from jarvis.protocol.client import AUTHORING_TIMEOUT_S
+    from jarvis.runtime.presentation_studio_authoring_relay import AUTHORING_ROUTE, PresentationStudioAuthoringRelayRoutes
+
+    class Journal:
+        def emit(self, *args, **kwargs):
+            return None
+
+    seen = []
+    relay = PresentationStudioAuthoringRelayRoutes(transport=lambda: None, journal=Journal())    # type: ignore[arg-type]
+
+    async def forward(method, path, *, action, params, body, timeout_s):
+        seen.append((path, timeout_s, json.loads(body)["actor"]))
+        return 200, {"status": "checked"}
+
+    relay._forward = forward                                                                      # type: ignore[method-assign]
+    app = web.Application()
+    app.add_routes(relay.routes())
+    async with TestClient(TestServer(app)) as client:
+        for verb in ("check", "assemble", "finalize"):
+            response = await client.post(f"{AUTHORING_ROUTE}/{verb}", json={"brief": {}, "draft": {}, "actor": "brain"})
+            assert response.status == 200
+    assert [timeout for _, timeout, _ in seen] == [AUTHORING_TIMEOUT_S] * 3 and {actor for *_, actor in seen} == {"user"}
+
+
+def test_the_tsx_lint_costs_milliseconds_on_hostile_sources_and_is_memoised():
+    """The gate runs in Core's event loop on a source the author controls (256 KiB a module): no pattern may be quadratic."""
+
+    import time
+
+    from jarvis.domain.presentation_studio_authoring_tsx import tsx_facts
+
+    hostile = {"open comments": "/*" * 120_000, "open template": "`a" * 120_000, "open string": '"a' * 120_000, "wide gaps": (">" + " " * 50 + "\n") * 4_000,
+               "braces": ("{" + " " * 50) * 4_000, "rgb": "rgb(" * 50_000, "props": "props " * 40_000, "text nodes": "<a>b</a>" * 30_000,
+               "interpolations": "interpolate(" * 20_000, "slashes": "/" * 240_000, "quotes": "'\"`/" * 60_000}
+    for name, text in hostile.items():
+        started = time.monotonic()
+        tsx_facts({"src/Scene.tsx": text})
+        assert time.monotonic() - started < 1.0, name
+    started = time.monotonic()
+    for _ in range(50):
+        tsx_facts({"src/Scene.tsx": hostile["interpolations"]})
+    assert time.monotonic() - started < 0.5, "the second reading of the same source is a lookup"

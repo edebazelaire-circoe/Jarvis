@@ -108,6 +108,10 @@ class CoreCaller:
             raise CoreProtocolError(503, "core_unreachable", str(exc)) from None
         except aiohttp.ClientError as exc:
             raise CoreProtocolError(503, "core_unreachable", f"Core est injoignable ({type(exc).__name__})") from None
+        except TimeoutError:
+            # An empty "Error executing tool" is what the model used to see (real-model trace, Remotion Slice 15): say what happened.
+            raise CoreProtocolError(504, "core_timeout", "Core n'a pas repondu a temps: l'issue est inconnue, relis l'etat "
+                                                        "(presentation_inspect) avant de renvoyer") from None
 
     async def close(self) -> None:
         await self._transport.close()

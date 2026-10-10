@@ -46,6 +46,30 @@ export default function Scene(props: {headline: string; reveal: boolean; stagger
 """
 
 
+#: A second layout for the opening and the closing of a deck (the storyboard gives a layout to each kind of scene). Same props and data as the
+#: slide, a different drawing; it uses the kit Core adds (`./jarvis-kit`), the slide does not (both paths are exercised).
+COVER_TSX = """import React from "react";
+import {AbsoluteFill, useCurrentFrame, useVideoConfig} from "remotion";
+import {enterStyle, progress, size} from "./jarvis-kit";
+
+export default function Scene(props: {headline: string; reveal: boolean; stagger_ms: number; density: string;
+                                      data: {body: string; figure?: number}; theme: Record<string, any>}) {
+  const frame = useCurrentFrame();
+  const {fps} = useVideoConfig();
+  const theme = props.theme;
+  const gap = props.density === "compact" ? theme.gap / 2 : theme.gap;
+  const lead = props.reveal ? progress(frame, fps, {...theme, stagger_ms: props.stagger_ms}, 1) : 1;
+  return (
+    <AbsoluteFill style={{background: theme.background, color: theme.text, fontFamily: theme.font_body, padding: 120, justifyContent: "center", gap}}>
+      <h1 style={{color: theme.accent, fontFamily: theme.font_heading, fontWeight: theme.heading_weight, fontSize: size(96, theme), margin: 0, ...enterStyle(progress(frame, fps, theme, 0), theme)}}>{props.headline}</h1>
+      <p style={{color: theme.body, fontSize: size(40, theme), margin: 0, opacity: lead}}>{props.data.body}</p>
+      {props.data.figure !== undefined ? <span style={{color: theme.muted}}>{props.data.figure}</span> : null}
+    </AbsoluteFill>
+  );
+}
+"""
+
+
 def slide_bundle(*, tsx: str | None = None, body_max: int = 600, files: dict[str, str] | None = None, duration_in_frames: int = 300) -> dict[str, Any]:
     """The generator object of one Remotion source (Slice 15): a slide with a headline, a body, a figure, a reveal flag, a stagger and a
     density (all curated); the accent is the art direction's (`props.theme.accent`). `{"key": "slide", **slide_bundle()}` is a draft entry."""
@@ -81,14 +105,16 @@ def candidate(prefab_id: str, *, tsx: str | None = None, props: dict[str, Any] |
         sample=sample or {"props": {}, "data": {"body": "Exemple"}})
 
 
-def _slide_id() -> str:
+def _slide_id(key: str = "slide", **changes: Any) -> str:
     from jarvis.domain.presentation_studio_authoring_remotion import generate_source
     from tests.fakes.remotion_authoring import ENGINE
-    return generate_source("slide", slide_bundle()["remotion"], ENGINE, "slide").prefab_id
+    return generate_source(key, slide_bundle(**changes)["remotion"], ENGINE, key).prefab_id
 
 
 #: The prefab id Core derives for the default slide source (content-addressed under the Studio namespace).
 SLIDE = _slide_id()
+#: ... and for the cover source of the storyboard of `good_deck`.
+COVER = _slide_id("cover", tsx=COVER_TSX)
 
 
 def html_slide_bundle(prefab_id: str = NAMESPACE + "slide", *, animated: bool = True, guarded: bool = True, body_max: int = 600) -> dict[str, Any]:
@@ -206,7 +232,11 @@ def good_deck(count: int = 12, *, da: dict | None = None) -> dict[str, Any]:
         motion = [{"kind": "control_set", "control_id": "stagger", "value": 120}] if index else []
         items.append(item(key, line, ms=50_000, cue=cue, motion=motion,
                           visual=[{"kind": "control_set", "control_id": "accent", "value": "#ff7a00"}] if index % 2 else []))
-    return {"prefabs": [prefab_entry()], "scenes": scenes, "score": {"items": items},
+    # The storyboard: a cover layout for the opening and the closing, the slide for the body (two sources for twelve scenes).
+    for entry in scenes:
+        if entry["role"] != "body":
+            entry["prefab"] = {"bundle": "cover"}
+    return {"prefabs": [prefab_entry(), prefab_entry("cover", tsx=COVER_TSX)], "scenes": scenes, "score": {"items": items},
             "art_direction": da or signals_da()}
 
 
@@ -217,6 +247,7 @@ def html_deck(count: int = 12, *, da: dict | None = None) -> dict[str, Any]:
     draft = good_deck(count, da=da)
     draft["prefabs"] = [{"key": "slide", "candidate": html_slide_bundle()}]
     for entry in draft["scenes"]:
+        entry["prefab"] = {"bundle": "slide"}
         for control in entry["controls"]:
             if control["path"] == "props.theme.accent":
                 control["path"] = "props.accent"
@@ -450,6 +481,14 @@ def _monolith(b: dict[str, Any], d: dict[str, Any]) -> None:
     d["prefabs"][0]["remotion"]["files"]["src/Scene.tsx"] = SLIDE_TSX + "\n".join(f"export const row{n} = {n};" for n in range(260)) + "\n"
 
 
+def _monotone(b: dict[str, Any], d: dict[str, Any]) -> None:
+    """Every scene drawn by the one slide source: a deck with no storyboard (the cover source is dropped)."""
+
+    d["prefabs"] = [d["prefabs"][0]]
+    for entry in d["scenes"]:
+        entry["prefab"] = {"bundle": "slide"}
+
+
 def _color_literals(b: dict[str, Any], d: dict[str, Any]) -> None:
     d["prefabs"][0]["remotion"]["files"]["src/Scene.tsx"] += "export const swatches = ['#111111', '#222222', '#333333', '#444444', '#555555'];\n"
 
@@ -510,6 +549,7 @@ WARNING_VIOLATIONS: tuple[tuple[str, Mutation], ...] = (
     ("tsx_props_undeclared", _undeclared_prop),
     ("tsx_interpolate_unclamped", _unclamped),
     ("tsx_monolith", _monolith),
+    ("tsx_layout_monotone", _monotone),
     ("tsx_color_hardcoded", _color_literals),
 )
 

@@ -35,7 +35,7 @@ EVIDENCE = (Path(__file__).resolve().parents[2] / "tasks" / "jarvis-remotion-pre
 NOT_IN_THE_TABLE = ("brief_invalid", "draft_schema", "document_invalid", "scene_unbound", "candidates_count",
                     "candidates_not_divergent", "placeholder_allowed", "motion_unguarded", "behavior_risky", "tsx_live_ref_invalid",
                     "tsx_live_ref_unresolved", "tsx_inspiration_unconfirmed", "tsx_static_scene", "tsx_props_undeclared",
-                    "tsx_interpolate_unclamped", "tsx_monolith", "tsx_color_hardcoded")
+                    "tsx_interpolate_unclamped", "tsx_monolith", "tsx_color_hardcoded", "tsx_layout_monotone")
 
 
 def _attached_programs() -> list[str]:

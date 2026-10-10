@@ -59,6 +59,8 @@ STUDIO_PREFIX = "/v1/presentation-studio/presentations"  # = un élément de FOR
 PLAYBACK_PREFIX = "/v1/presentation-studio/playback"  # lecture (Slice 12) : aussi dans FORWARDABLE_PREFIXES
 TEMPLATES_PREFIX = "/v1/presentation-studio/templates"  # modeles reutilisables (Slice 20) : aussi dans FORWARDABLE_PREFIXES
 AUTHORING_PREFIX = "/v1/presentation-studio/authoring"  # planificateur d'ecriture (Slice 11) : aussi dans FORWARDABLE_PREFIXES
+#: Longest an authoring request may take (Remotion Slice 15): the compile budget of the service (120 s) plus the write and some slack.
+AUTHORING_TIMEOUT_S = 150.0
 #: Plus grande réponse binaire relayée : la borne par réponse de Core (`MAX_PAYLOAD_CHUNK_BYTES`).
 MAX_FORWARDED_PAYLOAD_BYTES = 8 * 1024 * 1024
 #: En-têtes de la réponse binaire de Core rendus tels quels par le relais.
@@ -1032,8 +1034,10 @@ class LocalCoreClient:
 
     async def _studio_authoring(self, verb: str, request: Mapping[str, Any]) -> dict[str, Any]:
         session = await self._http()
-        async with session.request("POST", f"{self.base_url}{AUTHORING_PREFIX}/{verb}", headers=self.headers,
-                                   json=dict(request)) as response:
+        # Remotion Slice 15: `check`/`assemble` compile every Remotion source before answering (the compiler bounds each at 60 s and the
+        # service stops after `COMPILE_BUDGET_S`); the 10 s default of this client would cut a cold compile and leave the outcome unknown.
+        async with session.request("POST", f"{self.base_url}{AUTHORING_PREFIX}/{verb}", headers=self.headers, json=dict(request),
+                                   timeout=aiohttp.ClientTimeout(total=AUTHORING_TIMEOUT_S)) as response:
             if response.status == 400:
                 try:
                     data = await response.json()

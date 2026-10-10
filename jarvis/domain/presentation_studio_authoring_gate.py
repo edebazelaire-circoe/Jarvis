@@ -77,6 +77,8 @@ HEADROOM = 0.75
 #: (`ARM_LOOKAHEAD` ahead), a user who jumps lands in a neighbourhood, so the lint looks a little wider than the set.
 CUE_WINDOW = ARM_LOOKAHEAD + 2
 MAX_FINDINGS_PER_RULE = 5
+#: Scenes from which one source for all of them is a monotone deck (`tsx_layout_monotone`): a story has an opening, figures, lists, a close.
+MONOTONE_SCENES = 5
 MAX_FINDINGS = 60
 
 ERROR, WARNING, OFF = "error", "warning", "off"
@@ -166,6 +168,7 @@ RULES: tuple[Rule, ...] = (
     Rule("tsx_props_unread", E, E, W, "every prop and data key the manifest declares is read by the source (a dead control edits nothing)"),
     Rule("tsx_props_undeclared", W, W, O, "every prop the entry module reads is declared in the manifest (otherwise no control can reach it)"),
     Rule("tsx_monolith", W, W, O, f"a scene over {MONOLITH_LINES} lines is split into modules (`src/lib/*.tsx`)"),
+    Rule("tsx_layout_monotone", W, W, O, f"a deck of {MONOTONE_SCENES} scenes or more does not show them all through one source: the storyboard gives a layout to each kind of scene"),
     Rule("tsx_anchor_range", E, E, E, "an anchor's `at_ms` falls inside the composition (duration_in_frames / fps)"),
     Rule("tsx_live_ref_invalid", E, E, E, "`src/live-refs.json` follows the Slice 09 grammar (`board:<id>/memory/<path>` or `/artifact/<id>`)"),
     Rule("tsx_live_ref_unresolved", E, E, W, "every live Board reference resolves for the Boards the user works with (`authorised_boards`, default deny)"),
@@ -775,6 +778,12 @@ def _tsx(sink: _Sink, draft: PresentationDraft, brief: AuthoringBrief, *_: Any) 
                 parse_declaration(b.bundle.sources[LIVE_REFS_PATH])
             except LiveRefError as exc:
                 sink.add("tsx_live_ref_invalid", where, f"{LIVE_REFS_PATH}: {exc.code.value}")
+    if sink.ran("tsx_layout_monotone") and len(draft.scenes) >= MONOTONE_SCENES:
+        shown = {s.bundle_key for s in draft.scenes}
+        if len(shown) == 1 and None not in shown and next(iter(shown)) in facts:
+            sink.add("tsx_layout_monotone", f"bundle:{next(iter(shown))}",
+                     f"all {len(draft.scenes)} scenes use this one source: write 2 to 4 sources, one per kind of scene (opening, key figure, list, "
+                     "close), sharing the theme and the kit")
     if sink.ran("tsx_anchor_range"):
         for scene in draft.scenes:
             bundle = next((b for b in remotion if b.key == scene.bundle_key), None)

@@ -1,0 +1,2188 @@
+{
+  "kind": "authoring real-model traces (Remotion scenes)",
+  "model": "sonnet",
+  "planner_fingerprint": "e9661305d6a8834c47f9b8f4c0b30592b2f5d2d1df9b954d8e8cd98e5c51866f",
+  "planner_id": "presentation_studio.authoring.planner",
+  "prompt_program": "conversation_display_studio_session",
+  "scenarios": [
+    {
+      "control_center_requests": [],
+      "end_state": {
+        "created": [
+          {
+            "variants": [
+              {
+                "armable_cues": 6,
+                "art_direction": "generated (fallback)",
+                "cues": 6,
+                "draft": null,
+                "engine": "remotion",
+                "presenters": [
+                  "user"
+                ],
+                "remotion_sources": [
+                  {
+                    "colour_literals": 0,
+                    "duration_s": 10.0,
+                    "entry_lines": 17,
+                    "hard_coded_words": 0,
+                    "modules": 1,
+                    "props_read": [
+                      "headline",
+                      "theme"
+                    ],
+                    "reads_frame": true,
+                    "reads_theme": true,
+                    "remotion": true,
+                    "theme_in_scene": true,
+                    "unclamped": 0
+                  },
+                  {
+                    "colour_literals": 0,
+                    "duration_s": 10.0,
+                    "entry_lines": 17,
+                    "hard_coded_words": 0,
+                    "modules": 1,
+                    "props_read": [
+                      "headline",
+                      "theme"
+                    ],
+                    "reads_frame": true,
+                    "reads_theme": true,
+                    "remotion": true,
+                    "theme_in_scene": true,
+                    "unclamped": 0
+                  },
+                  {
+                    "colour_literals": 0,
+                    "duration_s": 10.0,
+                    "entry_lines": 20,
+                    "hard_coded_words": 0,
+                    "modules": 1,
+                    "props_read": [
+                      "headline",
+                      "theme"
+                    ],
+                    "reads_frame": true,
+                    "reads_theme": true,
+                    "remotion": true,
+                    "theme_in_scene": true,
+                    "unclamped": 0
+                  },
+                  {
+                    "colour_literals": 0,
+                    "duration_s": 10.0,
+                    "entry_lines": 20,
+                    "hard_coded_words": 0,
+                    "modules": 1,
+                    "props_read": [
+                      "headline",
+                      "theme"
+                    ],
+                    "reads_frame": true,
+                    "reads_theme": true,
+                    "remotion": true,
+                    "theme_in_scene": true,
+                    "unclamped": 0
+                  },
+                  {
+                    "colour_literals": 0,
+                    "duration_s": 10.0,
+                    "entry_lines": 17,
+                    "hard_coded_words": 0,
+                    "modules": 1,
+                    "props_read": [
+                      "headline",
+                      "theme"
+                    ],
+                    "reads_frame": true,
+                    "reads_theme": true,
+                    "remotion": true,
+                    "theme_in_scene": true,
+                    "unclamped": 0
+                  },
+                  {
+                    "colour_literals": 0,
+                    "duration_s": 10.0,
+                    "entry_lines": 17,
+                    "hard_coded_words": 0,
+                    "modules": 1,
+                    "props_read": [
+                      "headline",
+                      "theme"
+                    ],
+                    "reads_frame": true,
+                    "reads_theme": true,
+                    "remotion": true,
+                    "theme_in_scene": true,
+                    "unclamped": 0
+                  }
+                ],
+                "scene_titles": [
+                  "Ouverture du trimestre",
+                  "Chiffre d'affaires",
+                  "Marge et lancements",
+                  "Deux risques",
+                  "Décision attendue",
+                  "Clôture"
+                ],
+                "scene_words": [
+                  10,
+                  14,
+                  15,
+                  15,
+                  11,
+                  8
+                ],
+                "scenes": 6,
+                "score_items": 6,
+                "spoken_lines": 0,
+                "state": "live"
+              }
+            ]
+          }
+        ],
+        "pre_existing_untouched": true,
+        "presentations_created": 1
+      },
+      "metrics": {
+        "archive_calls": 0,
+        "compile_refusals": 0,
+        "cost_usd": 0.1292,
+        "draft_calls": 1,
+        "failure_codes_seen": [],
+        "gate_rounds_until_delivered": 1,
+        "question_budget": 3,
+        "refused_rounds": 0,
+        "scenes_containing_todo": 0,
+        "tool_calls": 3,
+        "tsx_codes_seen": [],
+        "turns_with_a_question": 0
+      },
+      "model": "sonnet",
+      "scenario": "rich-brief",
+      "turns": [
+        {
+          "calls": [
+            {
+              "arguments": {
+                "max_results": 5,
+                "query": "select:mcp__jarvis-presentation__presentation_inspect,mcp__jarvis-presentation__presentation_draft_assemble,mcp__jarvis-presentation__presentation_draft_check"
+              },
+              "is_error": false,
+              "n": 1,
+              "speech": null,
+              "status": null,
+              "tool": "ToolSearch"
+            },
+            {
+              "arguments": {
+                "target": "draft_guide"
+              },
+              "is_error": false,
+              "n": 2,
+              "speech": "silent",
+              "status": null,
+              "tool": "presentation_inspect"
+            },
+            {
+              "arguments": {
+                "brief": {
+                  "audience": "Direction commerciale",
+                  "duration_target_s": 300,
+                  "language": "fr",
+                  "must_cover": [
+                    "Chiffre d'affaires en hausse de 12 %",
+                    "Marge stable sur le trimestre",
+                    "Trois lancements tenus",
+                    "Deux risques : fournisseur unique et support sous tension",
+                    "Décision à prendre sur le budget de recrutement"
+                  ],
+                  "purpose": "Présenter les résultats du T3 à la direction commerciale et obtenir une décision sur le budget de recrutement",
+                  "speech": "user",
+                  "title": "<text>",
+                  "tone": [
+                    "sobre",
+                    "factuel"
+                  ],
+                  "workflow": "directed"
+                },
+                "draft": {
+                  "art_direction": {
+                    "mode": "fallback"
+                  },
+                  "prefabs": [
+                    {
+                      "key": "cover",
+                      "remotion": {
+                        "composition": {
+                          "duration_in_frames": 300,
+                          "fps": 30,
+                          "height": 720,
+                          "width": 1280
+                        },
+                        "data": {
+                          "properties": {
+                            "subtitle": {
+                              "max_length": 120,
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "subtitle"
+                          ],
+                          "type": "object"
+                        },
+                        "files": {
+                          "src/Scene.tsx": "import React from \"react\";\nimport {AbsoluteFill, useCurrentFrame, useVideoConfig} from \"remotion\";\nimport {enterStyle, progress, size} from \"./jarvis-kit\";\n\nexport default function Scene(props: {headline: string; data: {subtitle: string}; theme: Record<string, any>}) {\n  const frame = useCurrentFrame();\n  const {fps} = useVideoConfig();\n  const theme = props.theme;\n  return (\n    <AbsoluteFill sty"
+                        },
+                        "props": {
+                          "properties": {
+                            "headline": {
+                              "default": "Titre",
+                              "max_length": 80,
+                              "type": "string"
+                            }
+                          },
+                          "type": "object"
+                        },
+                        "sample": {
+                          "data": {
+                            "subtitle": "Sous-titre"
+                          },
+                          "props": {
+                            "headline": "Titre"
+                          }
+                        },
+                        "title": "<text>"
+                      }
+                    },
+                    {
+                      "key": "figure",
+                      "remotion": {
+                        "composition": {
+                          "duration_in_frames": 300,
+                          "fps": 30,
+                          "height": 720,
+                          "width": 1280
+                        },
+                        "data": {
+                          "properties": {
+                            "caption": {
+                              "max_length": 200,
+                              "type": "text"
+                            },
+                            "figure": {
+                              "max_length": 16,
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "figure",
+                            "caption"
+                          ],
+                          "type": "object"
+                        },
+                        "files": {
+                          "src/Scene.tsx": "import React from \"react\";\nimport {AbsoluteFill, useCurrentFrame, useVideoConfig} from \"remotion\";\nimport {enterStyle, progress, size} from \"./jarvis-kit\";\n\nexport default function Scene(props: {headline: string; data: {figure: string; caption: string}; theme: Record<string, any>}) {\n  const frame = useCurrentFrame();\n  const {fps} = useVideoConfig();\n  const theme = props.theme;\n  return (\n    <A"
+                        },
+                        "props": {
+                          "properties": {
+                            "headline": {
+                              "default": "Titre",
+                              "max_length": 80,
+                              "type": "string"
+                            }
+                          },
+                          "type": "object"
+                        },
+                        "sample": {
+                          "data": {
+                            "caption": "Légende",
+                            "figure": "1"
+                          },
+                          "props": {
+                            "headline": "Titre"
+                          }
+                        },
+                        "title": "<text>"
+                      }
+                    },
+                    {
+                      "key": "list",
+                      "remotion": {
+                        "composition": {
+                          "duration_in_frames": 300,
+                          "fps": 30,
+                          "height": 720,
+                          "width": 1280
+                        },
+                        "data": {
+                          "properties": {
+                            "items": {
+                              "items": {
+                                "max_length": 90,
+                                "type": "string"
+                              },
+                              "max_items": 6,
+                              "type": "array"
+                            }
+                          },
+                          "required": [
+                            "items"
+                          ],
+                          "type": "object"
+                        },
+                        "files": {
+                          "src/Scene.tsx": "import React from \"react\";\nimport {AbsoluteFill, useCurrentFrame, useVideoConfig} from \"remotion\";\nimport {enterStyle, progress, size} from \"./jarvis-kit\";\n\nexport default function Scene(props: {headline: string; data: {items: string[]}; theme: Record<string, any>}) {\n  const frame = useCurrentFrame();\n  const {fps} = useVideoConfig();\n  const theme = props.theme;\n  return (\n    <AbsoluteFill styl"
+                        },
+                        "props": {
+                          "properties": {
+                            "headline": {
+                              "default": "Titre",
+                              "max_length": 80,
+                              "type": "string"
+                            }
+                          },
+                          "type": "object"
+                        },
+                        "sample": {
+                          "data": {
+                            "items": [
+                              "Premier point",
+                              "Deuxième point",
+                              "Troisième point"
+                            ]
+                          },
+                          "props": {
+                            "headline": "Titre"
+                          }
+                        },
+                        "title": "<text>"
+                      }
+                    }
+                  ],
+                  "scenes": [
+                    {
+                      "anchors": [],
+                      "controls": [
+                        {
+                          "bounds": {
+                            "max_length": 80
+                          },
+                          "control_id": "headline",
+                          "group": "content",
+                          "label": "<text>",
+                          "meaning": "Le titre principal de la présentation",
+                          "path": "props.headline"
+                        }
+                      ],
+                      "data": {
+                        "subtitle": "Direction commerciale : bilan, risques et une décision à prendre"
+                      },
+                      "key": "ouverture",
+                      "prefab": {
+                        "bundle": "cover"
+                      },
+                      "props": {
+                        "headline": "Résultats du troisième trimestre"
+                      },
+                      "role": "opening",
+                      "title": "<text>"
+                    },
+                    {
+                      "anchors": [],
+                      "controls": [
+                        {
+                          "bounds": {
+                            "max_length": 80
+                          },
+                          "control_id": "headline",
+                          "group": "content",
+                          "label": "<text>",
+                          "meaning": "Le titre au-dessus du chiffre",
+                          "path": "props.headline"
+                        }
+                      ],
+                      "data": {
+                        "caption": "Le chiffre d'affaires progresse de douze pour cent sur le troisième trimestre.",
+                        "figure": "+12 %"
+                      },
+                      "key": "chiffre_affaires",
+                      "prefab": {
+                        "bundle": "figure"
+                      },
+                      "props": {
+                        "headline": "Chiffre d'affaires du trimestre"
+                      },
+                      "role": "body",
+                      "title": "<text>"
+                    },
+                    {
+                      "anchors": [],
+                      "controls": [
+                        {
+                          "bounds": {
+                            "max_length": 80
+                          },
+                          "control_id": "headline",
+                          "group": "content",
+                          "label": "<text>",
+                          "meaning": "Le titre de la liste des acquis",
+                          "path": "props.headline"
+                        }
+                      ],
+                      "data": {
+                        "items": [
+                          "Marge stable sur le trimestre",
+                          "Trois lancements tenus",
+                          "Une croissance obtenue sans dégrader la marge"
+                        ]
+                      },
+                      "key": "marge_lancements",
+                      "prefab": {
+                        "bundle": "list"
+                      },
+                      "props": {
+                        "headline": "Marge stable, lancements tenus"
+                      },
+                      "role": "body",
+                      "title": "<text>"
+                    },
+                    {
+                      "anchors": [],
+                      "controls": [
+                        {
+                          "bounds": {
+                            "max_length": 80
+                          },
+                          "control_id": "headline",
+                          "group": "content",
+                          "label": "<text>",
+                          "meaning": "Le titre de la liste des risques",
+                          "path": "props.headline"
+                        }
+                      ],
+                      "data": {
+                        "items": [
+                          "Fournisseur unique : une dépendance à réduire",
+                          "Support sous tension : une capacité à protéger"
+                        ]
+                      },
+                      "key": "risques",
+                      "prefab": {
+                        "bundle": "list"
+                      },
+                      "props": {
+                        "headline": "Deux risques à suivre"
+                      },
+                      "role": "body",
+                      "title": "<text>"
+                    },
+                    {
+                      "anchors": [],
+                      "controls": [
+                        {
+                          "bounds": {
+                            "max_length": 80
+                          },
+                          "control_id": "headline",
+                          "group": "content",
+                          "label": "<text>",
+                          "meaning": "Le sujet de la décision à prendre",
+                          "path": "props.headline"
+                        }
+                      ],
+                      "data": {
+                        "caption": "Nous attendons votre arbitrage sur le budget de recrutement.",
+                        "figure": "1 décision"
+                      },
+                      "key": "decision",
+                      "prefab": {
+                        "bundle": "figure"
+                      },
+                      "props": {
+                        "headline": "Budget de recrutement"
+                      },
+                      "role": "body",
+                      "title": "<text>"
+                    },
+                    {
+                      "anchors": [],
+                      "controls": [
+                        {
+                          "bounds": {
+                            "max_length": 80
+                          },
+                          "control_id": "headline",
+                          "group": "content",
+                          "label": "<text>",
+                          "meaning": "Le titre de la dernière scène",
+                          "path": "props.headline"
+                        }
+                      ],
+                      "data": {
+                        "subtitle": "Merci à la direction commerciale pour votre attention"
+                      },
+                      "key": "cloture",
+                      "prefab": {
+                        "bundle": "cover"
+                      },
+                      "props": {
+                        "headline": "Questions et échanges"
+                      },
+                      "role": "closing",
+                      "title": "<text>"
+                    }
+                  ],
+                  "score": {
+                    "items": [
+                      {
+                        "cue": {
+                          "armable": true,
+                          "label": "<text>",
+                          "phrases": [
+                            "commençons par le bilan du troisième trimestre"
+                          ]
+                        },
+                        "note": "<text>",
+                        "presenter": "user",
+                        "scene": "ouverture",
+                        "target_duration_ms": 30000
+                      },
+                      {
+                        "cue": {
+                          "armable": true,
+                          "label": "<text>",
+                          "phrases": [
+                            "le chiffre d'affaires progresse de douze pour cent"
+                          ]
+                        },
+                        "note": "<text>",
+                        "presenter": "user",
+                        "scene": "chiffre_affaires",
+                        "target_duration_ms": 55000
+                      },
+                      {
+                        "cue": {
+                          "armable": true,
+                          "label": "<text>",
+                          "phrases": [
+                            "la marge reste stable sur le trimestre"
+                          ]
+                        },
+                        "note": "<text>",
+                        "presenter": "user",
+                        "scene": "marge_lancements",
+                        "target_duration_ms": 55000
+                      },
+                      {
+                        "cue": {
+                          "armable": true,
+                          "label": "<text>",
+                          "phrases": [
+                            "venons-en aux deux risques à surveiller"
+                          ]
+                        },
+                        "note": "<text>",
+                        "presenter": "user",
+                        "scene": "risques",
+                        "target_duration_ms": 60000
+                      },
+                      {
+                        "cue": {
+                          "armable": true,
+                          "label": "<text>",
+                          "phrases": [
+                            "passons à la décision sur le recrutement"
+                          ]
+                        },
+                        "note": "<text>",
+                        "presenter": "user",
+                        "scene": "decision",
+                        "target_duration_ms": 60000
+                      },
+                      {
+                        "cue": {
+                          "armable": true,
+                          "label": "<text>",
+                          "phrases": [
+                            "je vous laisse la parole pour vos questions"
+                          ]
+                        },
+                        "note": "<text>",
+                        "presenter": "user",
+                        "scene": "cloture",
+                        "target_duration_ms": 40000
+                      }
+                    ]
+                  }
+                }
+              },
+              "is_error": false,
+              "n": 3,
+              "speech": "say",
+              "status": "delivered",
+              "tool": "presentation_draft_assemble"
+            }
+          ],
+          "cost_usd": 0.1291783,
+          "drafts": [
+            {
+              "failures": [],
+              "is_error": false,
+              "stage": "complete",
+              "stats": {
+                "armable_cues": 6,
+                "bundles": 3,
+                "cues": 6,
+                "estimated_duration_s": 300,
+                "items": 6,
+                "max_scene_words": 22,
+                "remotion_bundles": 3,
+                "scenes": 6,
+                "target_duration_s": 300,
+                "variants": 1
+              },
+              "status": "delivered",
+              "tool": "presentation_draft_assemble",
+              "warnings": [],
+              "workflow": "directed"
+            }
+          ],
+          "duration_ms": 37928,
+          "final_answer": "La présentation est créée : 6 scènes pour 5 minutes, et le contrôle qualité est passé sans erreur ni avertissement. Elle suit cet ordre : ouverture, chiffre d'affaires à plus 12 %, marge stable et trois lancements tenus, les deux risques, la décision sur le budget de recrutement, puis les questions.\n\nC'est vous qui présentez, donc je reste silencieux. Chaque scène a une phrase de déclenchement que",
+          "final_answer_chars": 707,
+          "is_error": false,
+          "question_marks_in_final_answer": 0,
+          "session_id": "8550a003-019e-407a-9cbe-816c86224881",
+          "spoken_blocks": 2,
+          "turns": 4,
+          "usage": {
+            "cache_creation_input_tokens": 14732,
+            "cache_read_input_tokens": 77043,
+            "input_tokens": 8,
+            "output_tokens": 6253
+          },
+          "user": "Prépare-moi une présentation de 6 scènes, 5 minutes, pour la direction commerciale, sur les résultats du troisième trimestre : chiffre d'affaires en hausse de 12 %, marge stable, trois lancements tenus, deux risques (fournisseur unique, support sous tension) et une décision à prendre sur le budget de recrutement. Ton sobre, en français. C'est moi qui présente, tu restes silencieux."
+        }
+      ],
+      "workflow_expected": "directed"
+    },
+    {
+      "control_center_requests": [],
+      "end_state": {
+        "created": [
+          {
+            "variants": [
+              {
+                "armable_cues": 0,
+                "art_direction": "generated",
+                "cues": 0,
+                "draft": null,
+                "engine": "remotion",
+                "presenters": [
+                  "jarvis"
+                ],
+                "remotion_sources": [
+                  {
+                    "colour_literals": 0,
+                    "duration_s": 10.0,
+                    "entry_lines": 17,
+                    "hard_coded_words": 0,
+                    "modules": 1,
+                    "props_read": [
+                      "headline",
+                      "theme"
+                    ],
+                    "reads_frame": true,
+                    "reads_theme": true,
+                    "remotion": true,
+                    "theme_in_scene": true,
+                    "unclamped": 0
+                  },
+                  {
+                    "colour_literals": 0,
+                    "duration_s": 10.0,
+                    "entry_lines": 17,
+                    "hard_coded_words": 0,
+                    "modules": 1,
+                    "props_read": [
+                      "headline",
+                      "theme"
+                    ],
+                    "reads_frame": true,
+                    "reads_theme": true,
+                    "remotion": true,
+                    "theme_in_scene": true,
+                    "unclamped": 0
+                  },
+                  {
+                    "colour_literals": 0,
+                    "duration_s": 10.0,
+                    "entry_lines": 17,
+                    "hard_coded_words": 0,
+                    "modules": 1,
+                    "props_read": [
+                      "headline",
+                      "theme"
+                    ],
+                    "reads_frame": true,
+                    "reads_theme": true,
+                    "remotion": true,
+                    "theme_in_scene": true,
+                    "unclamped": 0
+                  }
+                ],
+                "scene_titles": [
+                  "Des repas frais, livrés à vélo",
+                  "Rapide et sans émission",
+                  "Rejoignez la tournée"
+                ],
+                "scene_words": [
+                  14,
+                  14,
+                  13
+                ],
+                "scenes": 3,
+                "score_items": 3,
+                "spoken_lines": 3,
+                "state": "live"
+              },
+              {
+                "armable_cues": 0,
+                "art_direction": "generated",
+                "cues": 0,
+                "draft": null,
+                "engine": "remotion",
+                "presenters": [
+                  "jarvis"
+                ],
+                "remotion_sources": [
+                  {
+                    "colour_literals": 0,
+                    "duration_s": 10.0,
+                    "entry_lines": 17,
+                    "hard_coded_words": 0,
+                    "modules": 1,
+                    "props_read": [
+                      "headline",
+                      "theme"
+                    ],
+                    "reads_frame": true,
+                    "reads_theme": true,
+                    "remotion": true,
+                    "theme_in_scene": true,
+                    "unclamped": 0
+                  },
+                  {
+                    "colour_literals": 0,
+                    "duration_s": 10.0,
+                    "entry_lines": 17,
+                    "hard_coded_words": 0,
+                    "modules": 1,
+                    "props_read": [
+                      "headline",
+                      "theme"
+                    ],
+                    "reads_frame": true,
+                    "reads_theme": true,
+                    "remotion": true,
+                    "theme_in_scene": true,
+                    "unclamped": 0
+                  },
+                  {
+                    "colour_literals": 0,
+                    "duration_s": 10.0,
+                    "entry_lines": 17,
+                    "hard_coded_words": 0,
+                    "modules": 1,
+                    "props_read": [
+                      "headline",
+                      "theme"
+                    ],
+                    "reads_frame": true,
+                    "reads_theme": true,
+                    "remotion": true,
+                    "theme_in_scene": true,
+                    "unclamped": 0
+                  }
+                ],
+                "scene_titles": [
+                  "Des repas frais, livrés à vélo",
+                  "Rapide et sans émission",
+                  "Rejoignez la tournée"
+                ],
+                "scene_words": [
+                  14,
+                  14,
+                  13
+                ],
+                "scenes": 3,
+                "score_items": 3,
+                "spoken_lines": 3,
+                "state": "live"
+              },
+              {
+                "armable_cues": 0,
+                "art_direction": "generated",
+                "cues": 0,
+                "draft": null,
+                "engine": "remotion",
+                "presenters": [
+                  "jarvis"
+                ],
+                "remotion_sources": [
+                  {
+                    "colour_literals": 0,
+                    "duration_s": 10.0,
+                    "entry_lines": 17,
+                    "hard_coded_words": 0,
+                    "modules": 1,
+                    "props_read": [
+                      "headline",
+                      "theme"
+                    ],
+                    "reads_frame": true,
+                    "reads_theme": true,
+                    "remotion": true,
+                    "theme_in_scene": true,
+                    "unclamped": 0
+                  },
+                  {
+                    "colour_literals": 0,
+                    "duration_s": 10.0,
+                    "entry_lines": 17,
+                    "hard_coded_words": 0,
+                    "modules": 1,
+                    "props_read": [
+                      "headline",
+                      "theme"
+                    ],
+                    "reads_frame": true,
+                    "reads_theme": true,
+                    "remotion": true,
+                    "theme_in_scene": true,
+                    "unclamped": 0
+                  },
+                  {
+                    "colour_literals": 0,
+                    "duration_s": 10.0,
+                    "entry_lines": 17,
+                    "hard_coded_words": 0,
+                    "modules": 1,
+                    "props_read": [
+                      "headline",
+                      "theme"
+                    ],
+                    "reads_frame": true,
+                    "reads_theme": true,
+                    "remotion": true,
+                    "theme_in_scene": true,
+                    "unclamped": 0
+                  }
+                ],
+                "scene_titles": [
+                  "Des repas frais, livrés à vélo",
+                  "Rapide et sans émission",
+                  "Rejoignez la tournée"
+                ],
+                "scene_words": [
+                  14,
+                  14,
+                  13
+                ],
+                "scenes": 3,
+                "score_items": 3,
+                "spoken_lines": 3,
+                "state": "live"
+              },
+              {
+                "armable_cues": 0,
+                "art_direction": "generated",
+                "cues": 0,
+                "draft": null,
+                "engine": "remotion",
+                "presenters": [
+                  "jarvis"
+                ],
+                "remotion_sources": [
+                  {
+                    "colour_literals": 0,
+                    "duration_s": 10.0,
+                    "entry_lines": 17,
+                    "hard_coded_words": 0,
+                    "modules": 1,
+                    "props_read": [
+                      "headline",
+                      "theme"
+                    ],
+                    "reads_frame": true,
+                    "reads_theme": true,
+                    "remotion": true,
+                    "theme_in_scene": true,
+                    "unclamped": 0
+                  },
+                  {
+                    "colour_literals": 0,
+                    "duration_s": 10.0,
+                    "entry_lines": 17,
+                    "hard_coded_words": 0,
+                    "modules": 1,
+                    "props_read": [
+                      "headline",
+                      "theme"
+                    ],
+                    "reads_frame": true,
+                    "reads_theme": true,
+                    "remotion": true,
+                    "theme_in_scene": true,
+                    "unclamped": 0
+                  },
+                  {
+                    "colour_literals": 0,
+                    "duration_s": 10.0,
+                    "entry_lines": 17,
+                    "hard_coded_words": 0,
+                    "modules": 1,
+                    "props_read": [
+                      "headline",
+                      "theme"
+                    ],
+                    "reads_frame": true,
+                    "reads_theme": true,
+                    "remotion": true,
+                    "theme_in_scene": true,
+                    "unclamped": 0
+                  }
+                ],
+                "scene_titles": [
+                  "Des repas frais, livrés à vélo",
+                  "Rapide et sans émission",
+                  "Rejoignez la tournée"
+                ],
+                "scene_words": [
+                  14,
+                  14,
+                  13
+                ],
+                "scenes": 3,
+                "score_items": 3,
+                "spoken_lines": 3,
+                "state": "live"
+              },
+              {
+                "armable_cues": 0,
+                "art_direction": "generated",
+                "cues": 0,
+                "draft": null,
+                "engine": "remotion",
+                "presenters": [
+                  "jarvis"
+                ],
+                "remotion_sources": [
+                  {
+                    "colour_literals": 0,
+                    "duration_s": 10.0,
+                    "entry_lines": 17,
+                    "hard_coded_words": 0,
+                    "modules": 1,
+                    "props_read": [
+                      "headline",
+                      "theme"
+                    ],
+                    "reads_frame": true,
+                    "reads_theme": true,
+                    "remotion": true,
+                    "theme_in_scene": true,
+                    "unclamped": 0
+                  },
+                  {
+                    "colour_literals": 0,
+                    "duration_s": 10.0,
+                    "entry_lines": 17,
+                    "hard_coded_words": 0,
+                    "modules": 1,
+                    "props_read": [
+                      "headline",
+                      "theme"
+                    ],
+                    "reads_frame": true,
+                    "reads_theme": true,
+                    "remotion": true,
+                    "theme_in_scene": true,
+                    "unclamped": 0
+                  },
+                  {
+                    "colour_literals": 0,
+                    "duration_s": 10.0,
+                    "entry_lines": 17,
+                    "hard_coded_words": 0,
+                    "modules": 1,
+                    "props_read": [
+                      "headline",
+                      "theme"
+                    ],
+                    "reads_frame": true,
+                    "reads_theme": true,
+                    "remotion": true,
+                    "theme_in_scene": true,
+                    "unclamped": 0
+                  }
+                ],
+                "scene_titles": [
+                  "Des repas frais, livrés à vélo",
+                  "Rapide et sans émission",
+                  "Rejoignez la tournée"
+                ],
+                "scene_words": [
+                  14,
+                  14,
+                  13
+                ],
+                "scenes": 3,
+                "score_items": 3,
+                "spoken_lines": 3,
+                "state": "live"
+              }
+            ]
+          }
+        ],
+        "pre_existing_untouched": true,
+        "presentations_created": 1
+      },
+      "metrics": {
+        "archive_calls": 0,
+        "compile_refusals": 0,
+        "cost_usd": 0.1792,
+        "draft_calls": 1,
+        "failure_codes_seen": [],
+        "gate_rounds_until_delivered": 1,
+        "question_budget": 1,
+        "refused_rounds": 0,
+        "scenes_containing_todo": 0,
+        "tool_calls": 4,
+        "tsx_codes_seen": [],
+        "turns_with_a_question": 0
+      },
+      "model": "sonnet",
+      "scenario": "vague-exploratory",
+      "turns": [
+        {
+          "calls": [
+            {
+              "arguments": {
+                "max_results": 3,
+                "query": "select:Agent"
+              },
+              "is_error": false,
+              "n": 1,
+              "speech": null,
+              "status": null,
+              "tool": "ToolSearch"
+            }
+          ],
+          "cost_usd": 0.020389400000000002,
+          "drafts": [],
+          "duration_ms": 8925,
+          "final_answer": "Je n'ai pas pu lancer de sous-agent de fond ici, donc je ne fabrique pas encore la présentation. Voici déjà cinq directions très différentes, à l'oral.\n\nUn : Néon nocturne. Fond noir, traînées lumineuses de vélo dans la ville, couleurs électriques. Un style énergique et urbain, pour une start-up qui joue la vitesse.\n\nDeux : Papier et marché. Tons crème, textures de papier, illustrations dessinées ",
+          "final_answer_chars": 1177,
+          "is_error": false,
+          "question_marks_in_final_answer": 0,
+          "session_id": "db0730b2-70d6-4647-a483-b777c100b37c",
+          "spoken_blocks": 1,
+          "turns": 2,
+          "usage": {
+            "cache_creation_input_tokens": 1951,
+            "cache_read_input_tokens": 33774,
+            "input_tokens": 4,
+            "output_tokens": 920
+          },
+          "user": "Je ne sais pas trop ce que je veux. Propose-moi plusieurs directions visuelles très différentes pour présenter ma start-up de livraison de repas à vélo. Donne-moi des idées, je choisirai."
+        },
+        {
+          "calls": [
+            {
+              "arguments": {
+                "max_results": 3,
+                "query": "select:mcp__jarvis-presentation__presentation_inspect,mcp__jarvis-presentation__presentation_draft_assemble"
+              },
+              "is_error": false,
+              "n": 1,
+              "speech": null,
+              "status": null,
+              "tool": "ToolSearch"
+            },
+            {
+              "arguments": {
+                "kind": "exploratory",
+                "target": "draft_guide"
+              },
+              "is_error": false,
+              "n": 2,
+              "speech": "silent",
+              "status": null,
+              "tool": "presentation_inspect"
+            },
+            {
+              "arguments": {
+                "brief": {
+                  "audience": "Investisseurs et partenaires",
+                  "duration_target_s": 45,
+                  "language": "fr",
+                  "must_cover": [
+                    "livraison de repas à vélo",
+                    "rapide et sans émission",
+                    "repas frais livrés en ville"
+                  ],
+                  "purpose": "Choisir une direction visuelle pour présenter la start-up",
+                  "speech": "jarvis",
+                  "title": "<text>",
+                  "tone": [
+                    "énergique",
+                    "crédible"
+                  ],
+                  "workflow": "exploratory"
+                },
+                "draft": {
+                  "candidates": [
+                    {
+                      "art_direction": {
+                        "mode": "profile",
+                        "profile": {
+                          "dataviz": {
+                            "emphasis": "single_accent",
+                            "grid": "subtle",
+                            "labels": "direct",
+                            "mode": "categorical",
+                            "series": [
+                              "#be123c",
+                              "#b45309",
+                              "#0b6bcb",
+                              "#c2410c",
+                              "#0f766e"
+                            ]
+                          },
+                          "imagery": {
+                            "icons": "rounded",
+                            "illustration": "hand_drawn",
+                            "motifs": [
+                              "hands",
+                              "daylight"
+                            ],
+                            "photo": "documentary",
+                            "treatment": "natural"
+                          },
+                          "motion": {
+                            "easing": "standard",
+                            "emphasis_ms": 320,
+                            "enter_ms": 480,
+                            "exit_ms": 320,
+                            "reduced_motion": "fade_only",
+                            "stagger_ms": 80,
+                            "tempo": "calm",
+                            "transition": "fade"
+                          },
+                          "name": "Direction 1 - Warm human",
+                          "palette": {
+                            "accent": "#be123c",
+                            "accent_alt": "#b45309",
+                            "background": "#fdf6ee",
+                            "gradients": [
+                              {
+                                "angle": 160,
+                                "gradient_id": "backdrop",
+                                "kind": "linear",
+                                "stops": [
+                                  {
+                                    "at": 0,
+                                    "color": "#fdf6ee"
+                                  },
+                                  {
+                                    "at": 100,
+                                    "color": "#fffaf3"
+                                  }
+                                ],
+                                "text_token": "text"
+                              }
+                            ],
+                            "muted": "#6a5444",
+                            "surface": "#fffaf3",
+                            "surface_opacity": 96,
+                            "text": "<text>"
+                          },
+                          "provenance": {
+                            "confidence": 0.4,
+                            "fallback": false,
+                            "notes": [
+                              "Divergent candidate 1 of 6: Warm human.",
+                              "Chosen to differ on palette, typography, shape, density, motion and imagery."
+                            ],
+                            "origin": "generated",
+                            "sections": {}
+                          },
+                          "references": [],
+                          "shapes": {
+                            "elevation": "soft",
+                            "radius_px": 14,
+                            "stroke_px": 1
+                          },
+                          "spacing": {
+                            "density": "airy",
+                            "margin": "standard"
+                          },
+                          "typography": {
+                            "body": {
+                              "preferred": null,
+                              "stack": "system_sans"
+                            },
+                            "body_weight": 400,
+                            "heading": {
+                              "preferred": null,
+                              "stack": "old_style_serif"
+                            },
+                            "heading_weight": 700,
+                            "label_case": "none",
+                            "scale_ratio": "balanced",
+                            "text_size": "large"
+                          }
+                        }
+                      },
+                      "rationale": "<text>",
+                      "title": "<text>"
+                    },
+                    {
+                      "art_direction": {
+                        "mode": "profile",
+                        "profile": {
+                          "dataviz": {
+                            "emphasis": "multi",
+                            "grid": "subtle",
+                            "labels": "legend",
+                            "mode": "categorical",
+                            "series": [
+                              "#ff4d6d",
+                              "#00f5d4",
+                              "#38bdf8",
+                              "#fb923c",
+                              "#34d399"
+                            ]
+                          },
+                          "imagery": {
+                            "icons": "filled",
+                            "illustration": "isometric",
+                            "motifs": [
+                              "gradient",
+                              "motion"
+                            ],
+                            "photo": "abstract",
+                            "treatment": "duotone"
+                          },
+                          "motion": {
+                            "easing": "snappy",
+                            "emphasis_ms": 200,
+                            "enter_ms": 200,
+                            "exit_ms": 120,
+                            "reduced_motion": "fade_only",
+                            "stagger_ms": 40,
+                            "tempo": "lively",
+                            "transition": "scale"
+                          },
+                          "name": "Direction 2 - Bold contrast",
+                          "palette": {
+                            "accent": "#ff4d6d",
+                            "accent_alt": "#00f5d4",
+                            "background": "#10002b",
+                            "gradients": [
+                              {
+                                "angle": 160,
+                                "gradient_id": "backdrop",
+                                "kind": "linear",
+                                "stops": [
+                                  {
+                                    "at": 0,
+                                    "color": "#10002b"
+                                  },
+                                  {
+                                    "at": 100,
+                                    "color": "#240046"
+                                  }
+                                ],
+                                "text_token": "text"
+                              }
+                            ],
+                            "muted": "#c4a7e7",
+                            "surface": "#240046",
+                            "surface_opacity": 100,
+                            "text": "<text>"
+                          },
+                          "provenance": {
+                            "confidence": 0.4,
+                            "fallback": false,
+                            "notes": [
+                              "Divergent candidate 2 of 6: Bold contrast.",
+                              "Chosen to differ on palette, typography, shape, density, motion and imagery."
+                            ],
+                            "origin": "generated",
+                            "sections": {}
+                          },
+                          "references": [],
+                          "shapes": {
+                            "elevation": "dramatic",
+                            "radius_px": 10,
+                            "stroke_px": 2
+                          },
+                          "spacing": {
+                            "density": "balanced",
+                            "margin": "narrow"
+                          },
+                          "typography": {
+                            "body": {
+                              "preferred": null,
+                              "stack": "system_sans"
+                            },
+                            "body_weight": 400,
+                            "heading": {
+                              "preferred": null,
+                              "stack": "condensed_sans"
+                            },
+                            "heading_weight": 800,
+                            "label_case": "uppercase",
+                            "scale_ratio": "dramatic",
+                            "text_size": "xlarge"
+                          }
+                        }
+                      },
+                      "rationale": "<text>",
+                      "title": "<text>"
+                    },
+                    {
+                      "art_direction": {
+                        "mode": "profile",
+                        "profile": {
+                          "dataviz": {
+                            "emphasis": "single_accent",
+                            "grid": "none",
+                            "labels": "direct",
+                            "mode": "categorical",
+                            "series": [
+                              "#1d4ed8",
+                              "#c2410c",
+                              "#0b6bcb",
+                              "#0f766e",
+                              "#7e22ce"
+                            ]
+                          },
+                          "imagery": {
+                            "icons": "sharp",
+                            "illustration": "line",
+                            "motifs": [
+                              "portrait",
+                              "texture"
+                            ],
+                            "photo": "editorial",
+                            "treatment": "high_contrast"
+                          },
+                          "motion": {
+                            "easing": "ease_out",
+                            "emphasis_ms": 200,
+                            "enter_ms": 320,
+                            "exit_ms": 200,
+                            "reduced_motion": "fade_only",
+                            "stagger_ms": 40,
+                            "tempo": "measured",
+                            "transition": "slide"
+                          },
+                          "name": "Direction 3 - Editorial bold",
+                          "palette": {
+                            "accent": "#1d4ed8",
+                            "accent_alt": "#c2410c",
+                            "background": "#fbf7f0",
+                            "gradients": [
+                              {
+                                "angle": 160,
+                                "gradient_id": "backdrop",
+                                "kind": "linear",
+                                "stops": [
+                                  {
+                                    "at": 0,
+                                    "color": "#fbf7f0"
+                                  },
+                                  {
+                                    "at": 100,
+                                    "color": "#fffdf8"
+                                  }
+                                ],
+                                "text_token": "text"
+                              }
+                            ],
+                            "muted": "#5c5047",
+                            "surface": "#fffdf8",
+                            "surface_opacity": 96,
+                            "text": "<text>"
+                          },
+                          "provenance": {
+                            "confidence": 0.4,
+                            "fallback": false,
+                            "notes": [
+                              "Divergent candidate 3 of 6: Editorial bold.",
+                              "Chosen to differ on palette, typography, shape, density, motion and imagery."
+                            ],
+                            "origin": "generated",
+                            "sections": {}
+                          },
+                          "references": [],
+                          "shapes": {
+                            "elevation": "flat",
+                            "radius_px": 0,
+                            "stroke_px": 2
+                          },
+                          "spacing": {
+                            "density": "airy",
+                            "margin": "wide"
+                          },
+                          "typography": {
+                            "body": {
+                              "preferred": null,
+                              "stack": "transitional_serif"
+                            },
+                            "body_weight": 400,
+                            "heading": {
+                              "preferred": null,
+                              "stack": "transitional_serif"
+                            },
+                            "heading_weight": 800,
+                            "label_case": "uppercase",
+                            "scale_ratio": "dramatic",
+                            "text_size": "large"
+                          }
+                        }
+                      },
+                      "rationale": "<text>",
+                      "title": "<text>"
+                    },
+                    {
+                      "art_direction": {
+                        "mode": "profile",
+                        "profile": {
+                          "dataviz": {
+                            "emphasis": "single_accent",
+                            "grid": "subtle",
+                            "labels": "direct",
+                            "mode": "categorical",
+                            "series": [
+                              "#0f766e",
+                              "#5b4bd6",
+                              "#0b6bcb",
+                              "#c2410c",
+                              "#7e22ce"
+                            ]
+                          },
+                          "imagery": {
+                            "icons": "outline",
+                            "illustration": "flat",
+                            "motifs": [
+                              "people",
+                              "workplace"
+                            ],
+                            "photo": "documentary",
+                            "treatment": "natural"
+                          },
+                          "motion": {
+                            "easing": "standard",
+                            "emphasis_ms": 320,
+                            "enter_ms": 480,
+                            "exit_ms": 320,
+                            "reduced_motion": "fade_only",
+                            "stagger_ms": 80,
+                            "tempo": "calm",
+                            "transition": "fade"
+                          },
+                          "name": "Direction 5 - Corporate calm",
+                          "palette": {
+                            "accent": "#0f766e",
+                            "accent_alt": "#5b4bd6",
+                            "background": "#f7f9fb",
+                            "gradients": [
+                              {
+                                "angle": 160,
+                                "gradient_id": "backdrop",
+                                "kind": "linear",
+                                "stops": [
+                                  {
+                                    "at": 0,
+                                    "color": "#f7f9fb"
+                                  },
+                                  {
+                                    "at": 100,
+                                    "color": "#ffffff"
+                                  }
+                                ],
+                                "text_token": "text"
+                              }
+                            ],
+                            "muted": "#4a5b68",
+                            "surface": "#ffffff",
+                            "surface_opacity": 96,
+                            "text": "<text>"
+                          },
+                          "provenance": {
+                            "confidence": 0.4,
+                            "fallback": false,
+                            "notes": [
+                              "Divergent candidate 5 of 6: Corporate calm.",
+                              "Chosen to differ on palette, typography, shape, density, motion and imagery."
+                            ],
+                            "origin": "generated",
+                            "sections": {}
+                          },
+                          "references": [],
+                          "shapes": {
+                            "elevation": "soft",
+                            "radius_px": 6,
+                            "stroke_px": 1
+                          },
+                          "spacing": {
+                            "density": "balanced",
+                            "margin": "standard"
+                          },
+                          "typography": {
+                            "body": {
+                              "preferred": null,
+                              "stack": "humanist_sans"
+                            },
+                            "body_weight": 400,
+                            "heading": {
+                              "preferred": null,
+                              "stack": "humanist_sans"
+                            },
+                            "heading_weight": 600,
+                            "label_case": "none",
+                            "scale_ratio": "balanced",
+                            "text_size": "normal"
+                          }
+                        }
+                      },
+                      "rationale": "<text>",
+                      "title": "<text>"
+                    },
+                    {
+                      "art_direction": {
+                        "mode": "profile",
+                        "profile": {
+                          "dataviz": {
+                            "emphasis": "multi",
+                            "grid": "none",
+                            "labels": "direct",
+                            "mode": "categorical",
+                            "series": [
+                              "#7c3aed",
+                              "#e11d48",
+                              "#0b6bcb",
+                              "#c2410c",
+                              "#0f766e"
+                            ]
+                          },
+                          "imagery": {
+                            "icons": "rounded",
+                            "illustration": "hand_drawn",
+                            "motifs": [
+                              "shapes",
+                              "characters"
+                            ],
+                            "photo": "abstract",
+                            "treatment": "natural"
+                          },
+                          "motion": {
+                            "easing": "snappy",
+                            "emphasis_ms": 200,
+                            "enter_ms": 200,
+                            "exit_ms": 120,
+                            "reduced_motion": "fade_only",
+                            "stagger_ms": 40,
+                            "tempo": "lively",
+                            "transition": "scale"
+                          },
+                          "name": "Direction 6 - Playful bright",
+                          "palette": {
+                            "accent": "#7c3aed",
+                            "accent_alt": "#e11d48",
+                            "background": "#fffbeb",
+                            "gradients": [
+                              {
+                                "angle": 160,
+                                "gradient_id": "backdrop",
+                                "kind": "linear",
+                                "stops": [
+                                  {
+                                    "at": 0,
+                                    "color": "#fffbeb"
+                                  },
+                                  {
+                                    "at": 100,
+                                    "color": "#ffffff"
+                                  }
+                                ],
+                                "text_token": "text"
+                              }
+                            ],
+                            "muted": "#5b4b8a",
+                            "surface": "#ffffff",
+                            "surface_opacity": 96,
+                            "text": "<text>"
+                          },
+                          "provenance": {
+                            "confidence": 0.4,
+                            "fallback": false,
+                            "notes": [
+                              "Divergent candidate 6 of 6: Playful bright.",
+                              "Chosen to differ on palette, typography, shape, density, motion and imagery."
+                            ],
+                            "origin": "generated",
+                            "sections": {}
+                          },
+                          "references": [],
+                          "shapes": {
+                            "elevation": "soft",
+                            "radius_px": 20,
+                            "stroke_px": 2
+                          },
+                          "spacing": {
+                            "density": "airy",
+                            "margin": "standard"
+                          },
+                          "typography": {
+                            "body": {
+                              "preferred": null,
+                              "stack": "rounded_sans"
+                            },
+                            "body_weight": 400,
+                            "heading": {
+                              "preferred": null,
+                              "stack": "rounded_sans"
+                            },
+                            "heading_weight": 700,
+                            "label_case": "none",
+                            "scale_ratio": "comfortable",
+                            "text_size": "large"
+                          }
+                        }
+                      },
+                      "rationale": "<text>",
+                      "title": "<text>"
+                    }
+                  ],
+                  "prefabs": [
+                    {
+                      "key": "slide",
+                      "remotion": {
+                        "composition": {
+                          "duration_in_frames": 300,
+                          "fps": 30,
+                          "height": 720,
+                          "width": 1280
+                        },
+                        "data": {
+                          "properties": {
+                            "body": {
+                              "max_length": 600,
+                              "type": "text"
+                            }
+                          },
+                          "required": [
+                            "body"
+                          ],
+                          "type": "object"
+                        },
+                        "description": "Une diapositive: un titre et un texte, aux couleurs de la direction artistique.",
+                        "files": {
+                          "src/Scene.tsx": "import React from \"react\";\nimport {AbsoluteFill, useCurrentFrame, useVideoConfig} from \"remotion\";\nimport {enterStyle, progress, size} from \"./jarvis-kit\";\n\nexport default function Scene(props: {headline: string; data: {body: string}; theme: Record<string, any>}) {\n  const frame = useCurrentFrame();\n  const {fps} = useVideoConfig();\n  const theme = props.theme;\n  return (\n    <AbsoluteFill style={"
+                        },
+                        "props": {
+                          "properties": {
+                            "headline": {
+                              "default": "Titre",
+                              "max_length": 80,
+                              "type": "string"
+                            }
+                          },
+                          "type": "object"
+                        },
+                        "sample": {
+                          "data": {
+                            "body": "Exemple"
+                          },
+                          "props": {
+                            "headline": "Titre"
+                          }
+                        },
+                        "title": "<text>"
+                      }
+                    }
+                  ],
+                  "scenes": [
+                    {
+                      "anchors": [
+                        {
+                          "anchor_id": "detail",
+                          "at_ms": 3000,
+                          "control_id": "accent",
+                          "label": "<text>"
+                        }
+                      ],
+                      "controls": [
+                        {
+                          "bounds": {
+                            "max_length": 60
+                          },
+                          "control_id": "headline",
+                          "group": "content",
+                          "label": "<text>",
+                          "meaning": "Le titre affiché en haut",
+                          "path": "props.headline"
+                        },
+                        {
+                          "control_id": "accent",
+                          "group": "visual",
+                          "label": "<text>",
+                          "meaning": "Couleur du titre",
+                          "path": "props.theme.accent"
+                        }
+                      ],
+                      "data": {
+                        "body": "Notre livraison de repas à vélo apporte des plats frais en ville, sans attendre."
+                      },
+                      "key": "promesse",
+                      "prefab": {
+                        "bundle": "slide"
+                      },
+                      "props": {
+                        "headline": "Des repas frais, livrés à vélo"
+                      },
+                      "role": "opening",
+                      "title": "<text>"
+                    },
+                    {
+                      "anchors": [
+                        {
+                          "anchor_id": "detail",
+                          "at_ms": 3000,
+                          "control_id": "accent",
+                          "label": "<text>"
+                        }
+                      ],
+                      "controls": [
+                        {
+                          "bounds": {
+                            "max_length": 60
+                          },
+                          "control_id": "headline",
+                          "group": "content",
+                          "label": "<text>",
+                          "meaning": "Le titre affiché en haut",
+                          "path": "props.headline"
+                        },
+                        {
+                          "control_id": "accent",
+                          "group": "visual",
+                          "label": "<text>",
+                          "meaning": "Couleur du titre",
+                          "path": "props.theme.accent"
+                        }
+                      ],
+                      "data": {
+                        "body": "Le vélo traverse les embouteillages : une livraison rapide et sans émission de gaz."
+                      },
+                      "key": "avantage",
+                      "prefab": {
+                        "bundle": "slide"
+                      },
+                      "props": {
+                        "headline": "Rapide et sans émission"
+                      },
+                      "role": "body",
+                      "title": "<text>"
+                    },
+                    {
+                      "anchors": [
+                        {
+                          "anchor_id": "detail",
+                          "at_ms": 3000,
+                          "control_id": "accent",
+                          "label": "<text>"
+                        }
+                      ],
+                      "controls": [
+                        {
+                          "bounds": {
+                            "max_length": 60
+                          },
+                          "control_id": "headline",
+                          "group": "content",
+                          "label": "<text>",
+                          "meaning": "Le titre affiché en haut",
+                          "path": "props.headline"
+                        },
+                        {
+                          "control_id": "accent",
+                          "group": "visual",
+                          "label": "<text>",
+                          "meaning": "Couleur du titre",
+                          "path": "props.theme.accent"
+                        }
+                      ],
+                      "data": {
+                        "body": "Ensemble, faisons rouler des repas frais livrés en ville, partout et chaque jour."
+                      },
+                      "key": "suite",
+                      "prefab": {
+                        "bundle": "slide"
+                      },
+                      "props": {
+                        "headline": "Rejoignez la tournée"
+                      },
+                      "role": "closing",
+                      "title": "<text>"
+                    }
+                  ],
+                  "score": {
+                    "items": [
+                      {
+                        "presenter": "jarvis",
+                        "scene": "promesse",
+                        "target_duration_ms": 15000,
+                        "text": "<text>"
+                      },
+                      {
+                        "presenter": "jarvis",
+                        "scene": "avantage",
+                        "target_duration_ms": 15000,
+                        "text": "<text>"
+                      },
+                      {
+                        "presenter": "jarvis",
+                        "scene": "suite",
+                        "target_duration_ms": 15000,
+                        "text": "<text>"
+                      }
+                    ]
+                  }
+                }
+              },
+              "is_error": false,
+              "n": 3,
+              "speech": "say",
+              "status": "delivered",
+              "tool": "presentation_draft_assemble"
+            }
+          ],
+          "cost_usd": 0.15879880000000002,
+          "drafts": [
+            {
+              "failures": [],
+              "is_error": false,
+              "stage": "complete",
+              "stats": {
+                "armable_cues": 0,
+                "bundles": 1,
+                "cues": 0,
+                "estimated_duration_s": 45,
+                "items": 3,
+                "max_scene_words": 26,
+                "remotion_bundles": 1,
+                "scenes": 3,
+                "target_duration_s": 45,
+                "variants": 5
+              },
+              "status": "delivered",
+              "tool": "presentation_draft_assemble",
+              "warnings": [],
+              "workflow": "exploratory"
+            }
+          ],
+          "duration_ms": 37074,
+          "final_answer": "C'est fait : les cinq directions sont dans le studio, chacune sur le même mini-récit de trois scènes (la promesse, l'avantage, la suite). Elles s'appellent Papier et marché, Néon nocturne, Éditorial et données, Minimalisme écolo et Pop et couleurs. Le contrôle qualité est passé sans erreur ni avertissement.\n\nTrois choses à savoir. J'ai supposé que tu présentes à des investisseurs, et je n'ai pas i",
+          "final_answer_chars": 694,
+          "is_error": false,
+          "question_marks_in_final_answer": 0,
+          "session_id": "db0730b2-70d6-4647-a483-b777c100b37c",
+          "spoken_blocks": 1,
+          "turns": 4,
+          "usage": {
+            "cache_creation_input_tokens": 15847,
+            "cache_read_input_tokens": 82954,
+            "input_tokens": 8,
+            "output_tokens": 6671
+          },
+          "user": "Crée-les dans le studio pour que je puisse les comparer."
+        }
+      ],
+      "workflow_expected": "exploratory"
+    },
+    {
+      "control_center_requests": [],
+      "end_state": {
+        "created": [
+          {
+            "variants": [
+              {
+                "armable_cues": 0,
+                "art_direction": "generated (fallback)",
+                "cues": 0,
+                "draft": null,
+                "engine": "remotion",
+                "presenters": [
+                  "jarvis"
+                ],
+                "remotion_sources": [
+                  {
+                    "colour_literals": 0,
+                    "duration_s": 15.0,
+                    "entry_lines": 17,
+                    "hard_coded_words": 0,
+                    "modules": 1,
+                    "props_read": [
+                      "headline",
+                      "theme"
+                    ],
+                    "reads_frame": true,
+                    "reads_theme": true,
+                    "remotion": true,
+                    "theme_in_scene": true,
+                    "unclamped": 0
+                  }
+                ],
+                "scene_titles": [
+                  "Dossier Contrats : 42 fichiers"
+                ],
+                "scene_words": [
+                  9
+                ],
+                "scenes": 1,
+                "score_items": 1,
+                "spoken_lines": 1,
+                "state": "live"
+              }
+            ]
+          }
+        ],
+        "pre_existing_untouched": true,
+        "presentations_created": 1
+      },
+      "metrics": {
+        "archive_calls": 0,
+        "compile_refusals": 0,
+        "cost_usd": 0.0656,
+        "draft_calls": 1,
+        "failure_codes_seen": [],
+        "gate_rounds_until_delivered": 1,
+        "question_budget": 0,
+        "refused_rounds": 0,
+        "scenes_containing_todo": 0,
+        "tool_calls": 3,
+        "tsx_codes_seen": [],
+        "turns_with_a_question": 0
+      },
+      "model": "sonnet",
+      "scenario": "one-shot-report",
+      "turns": [
+        {
+          "calls": [
+            {
+              "arguments": {
+                "max_results": 2,
+                "query": "select:mcp__jarvis-presentation__presentation_inspect,mcp__jarvis-presentation__presentation_draft_assemble"
+              },
+              "is_error": false,
+              "n": 1,
+              "speech": null,
+              "status": null,
+              "tool": "ToolSearch"
+            },
+            {
+              "arguments": {
+                "target": "draft_guide"
+              },
+              "is_error": false,
+              "n": 2,
+              "speech": "silent",
+              "status": null,
+              "tool": "presentation_inspect"
+            },
+            {
+              "arguments": {
+                "brief": {
+                  "audience": "Moi",
+                  "duration_target_s": 15,
+                  "language": "fr",
+                  "must_cover": [
+                    "Le dossier Contrats compte 42 fichiers : 30 documents, 10 tableurs et 2 présentations"
+                  ],
+                  "purpose": "Afficher le résultat du comptage des fichiers du dossier Contrats",
+                  "speech": "jarvis",
+                  "title": "<text>",
+                  "tone": [
+                    "sobre",
+                    "direct"
+                  ],
+                  "workflow": "one_shot"
+                },
+                "draft": {
+                  "art_direction": {
+                    "mode": "fallback"
+                  },
+                  "prefabs": [
+                    {
+                      "key": "figure",
+                      "remotion": {
+                        "composition": {
+                          "duration_in_frames": 450,
+                          "fps": 30,
+                          "height": 720,
+                          "width": 1280
+                        },
+                        "data": {
+                          "properties": {
+                            "caption": {
+                              "max_length": 200,
+                              "type": "text"
+                            },
+                            "figure": {
+                              "max_length": 16,
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "figure",
+                            "caption"
+                          ],
+                          "type": "object"
+                        },
+                        "files": {
+                          "src/Scene.tsx": "import React from \"react\";\nimport {AbsoluteFill, useCurrentFrame, useVideoConfig} from \"remotion\";\nimport {enterStyle, progress, size} from \"./jarvis-kit\";\n\nexport default function Scene(props: {headline: string; data: {figure: string; caption: string}; theme: Record<string, any>}) {\n  const frame = useCurrentFrame();\n  const {fps} = useVideoConfig();\n  const theme = props.theme;\n  return (\n    <A"
+                        },
+                        "props": {
+                          "properties": {
+                            "headline": {
+                              "default": "Titre",
+                              "max_length": 80,
+                              "type": "string"
+                            }
+                          },
+                          "type": "object"
+                        },
+                        "title": "<text>"
+                      }
+                    }
+                  ],
+                  "scenes": [
+                    {
+                      "anchors": [
+                        {
+                          "anchor_id": "detail",
+                          "at_ms": 3000,
+                          "control_id": "accent",
+                          "label": "<text>"
+                        }
+                      ],
+                      "controls": [
+                        {
+                          "bounds": {
+                            "max_length": 60
+                          },
+                          "control_id": "headline",
+                          "group": "content",
+                          "label": "<text>",
+                          "meaning": "Le titre affiché au-dessus du chiffre",
+                          "path": "props.headline"
+                        },
+                        {
+                          "control_id": "accent",
+                          "group": "visual",
+                          "label": "<text>",
+                          "meaning": "Couleur du chiffre clé",
+                          "path": "props.theme.accent"
+                        }
+                      ],
+                      "data": {
+                        "caption": "30 documents, 10 tableurs et 2 présentations",
+                        "figure": "42 fichiers"
+                      },
+                      "key": "rapport",
+                      "prefab": {
+                        "bundle": "figure"
+                      },
+                      "props": {
+                        "headline": "Le dossier Contrats compte"
+                      },
+                      "role": "single",
+                      "title": "<text>"
+                    }
+                  ],
+                  "score": {
+                    "items": [
+                      {
+                        "presenter": "jarvis",
+                        "scene": "rapport",
+                        "target_duration_ms": 15000,
+                        "text": "<text>"
+                      }
+                    ]
+                  }
+                }
+              },
+              "is_error": false,
+              "n": 3,
+              "speech": "say",
+              "status": "delivered",
+              "tool": "presentation_draft_assemble"
+            }
+          ],
+          "cost_usd": 0.0655912,
+          "drafts": [
+            {
+              "failures": [],
+              "is_error": false,
+              "stage": "complete",
+              "stats": {
+                "armable_cues": 0,
+                "bundles": 1,
+                "cues": 0,
+                "estimated_duration_s": 15,
+                "items": 1,
+                "max_scene_words": 17,
+                "remotion_bundles": 1,
+                "scenes": 1,
+                "target_duration_s": 15,
+                "variants": 1
+              },
+              "status": "delivered",
+              "tool": "presentation_draft_assemble",
+              "warnings": [],
+              "workflow": "one_shot"
+            }
+          ],
+          "duration_ms": 14337,
+          "final_answer": "C'est fait. La diapositive affiche « 42 fichiers » en grand, avec « 30 documents, 10 tableurs et 2 présentations » en dessous. Je n'avais pas d'outil pour la déléguer, donc je l'ai créée moi-même. Elle a passé le contrôle sans avertissement. Je n'ai trouvé aucune charte graphique, donc elle utilise le style par défaut.",
+          "final_answer_chars": 320,
+          "is_error": false,
+          "question_marks_in_final_answer": 0,
+          "session_id": "445e48c8-371e-4a12-9a6a-e845ff15c8ee",
+          "spoken_blocks": 1,
+          "turns": 4,
+          "usage": {
+            "cache_creation_input_tokens": 9635,
+            "cache_read_input_tokens": 76152,
+            "input_tokens": 8,
+            "output_tokens": 1942
+          },
+          "user": "Fais-moi tout de suite une présentation d'une seule diapositive qui affiche le résultat : le dossier Contrats compte 42 fichiers, soit 30 documents, 10 tableurs et 2 présentations."
+        }
+      ],
+      "workflow_expected": "one_shot"
+    }
+  ],
+  "slice": 15,
+  "total_calls": 10,
+  "total_cost_usd": 0.374
+}

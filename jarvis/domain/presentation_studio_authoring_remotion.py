@@ -34,6 +34,7 @@ from typing import Any
 from jarvis.domain.prefab import PrefabRef, canonical_json
 from jarvis.domain.presentation_live_refs import LiveRef, LiveRefError, parse_declaration, LIVE_REFS_PATH
 from jarvis.domain.presentation_studio_art_direction import ArtDirectionProfile
+from jarvis.domain.presentation_studio_authoring_kit import KIT_PATH, KIT_SOURCE, KIT_VERSION
 from jarvis.domain.presentation_studio_checks import _exact_keys, _fail
 from jarvis.domain.remotion_source import (
     ASSET_ROOT, COMPOSITION_ID, DEFAULT_ENTRY, MODULE_ROOT, Composition, EnginePin, build_candidate,
@@ -57,7 +58,7 @@ NEUTRAL_THEME: dict[str, Any] = {
     "background": "#0b1020", "text": "#e8ecf4", "accent": "#6ee7ff", "muted": "#9aa4b8", "body": "#cfd6e4",
     "surface": "rgba(255,255,255,0.08)", "font_heading": "system-ui, sans-serif", "font_body": "system-ui, sans-serif",
     "heading_weight": 700, "body_weight": 400, "radius": 12, "gap": 24, "scale": 1.0, "enter_ms": 400, "stagger_ms": 80,
-    "easing": "ease_out"}
+    "easing": "ease_out", "transition": "fade"}
 
 
 def _theme_schema() -> dict[str, Any]:
@@ -70,7 +71,8 @@ def _theme_schema() -> dict[str, Any]:
         "font_body": text("font_body", 200), "heading_weight": whole("heading_weight", 100, 900),
         "body_weight": whole("body_weight", 100, 900), "radius": whole("radius", 0, 64), "gap": whole("gap", 0, 96),
         "scale": {"type": "number", "min": 0.5, "max": 2.0, "default": NEUTRAL_THEME["scale"]},
-        "enter_ms": whole("enter_ms", 0, 5000), "stagger_ms": whole("stagger_ms", 0, 2000), "easing": text("easing", 24)}}
+        "enter_ms": whole("enter_ms", 0, 5000), "stagger_ms": whole("stagger_ms", 0, 2000), "easing": text("easing", 24),
+        "transition": text("transition", 16)}}
 
 
 THEME_SCHEMA = _theme_schema()
@@ -88,7 +90,7 @@ def theme_values(profile: ArtDirectionProfile) -> dict[str, Any]:
         "font_body": typography.body.css(), "heading_weight": typography.heading_weight, "body_weight": typography.body_weight,
         "radius": profile.shapes.radius_px, "gap": int(variables["--jv-gap"].removesuffix("px")),
         "scale": float(variables["--jv-scale"]), "enter_ms": motion.enter_ms, "stagger_ms": motion.stagger_ms,
-        "easing": motion.easing.value}
+        "easing": motion.easing.value, "transition": motion.transition.value}
 
 
 def apply_theme(props: Mapping[str, Any], profile: ArtDirectionProfile | None, patch: Mapping[str, Any] | None = None) -> dict[str, Any]:
@@ -169,6 +171,8 @@ def _files(raw: object, where: str, live_declared: bool) -> dict[str, str]:
             raise _fail(f"{where}: modules live under {MODULE_ROOT} (assets go in `assets`, under {ASSET_ROOT})")
         if not isinstance(body, str):
             raise _fail(f"{where}: every module is text")
+    if KIT_PATH in raw:
+        raise _fail(f"{where}: {KIT_PATH} is added by Core (the motion kit of the art direction): import it, do not provide it")
     if live_declared and LIVE_REFS_PATH in raw:
         raise _fail(f"{where}: {LIVE_REFS_PATH} is written from `live_refs`: give one or the other")
     return dict(raw)
@@ -181,6 +185,39 @@ def _props_schema(raw: object, where: str) -> dict[str, Any]:
     if THEME_PROP in schema.get("properties", {}):
         raise _fail(f"{where}: `{THEME_PROP}` is reserved: Core declares it and fills it from the art direction")
     return {**schema, "properties": {**schema.get("properties", {}), THEME_PROP: THEME_SCHEMA}}
+
+
+def _example_of(schema: object, depth: int = 0) -> Any:
+    """A valid value for a schema node, for the library's sample: the author writes the real content in the scenes, not in a sample."""
+
+    if not isinstance(schema, dict) or depth > 4:
+        return None
+    kind = schema.get("type")
+    if "default" in schema:
+        return schema["default"]
+    if kind in ("string", "text"):
+        return "Exemple"[: int(schema.get("max_length", 7))]
+    if kind in ("integer", "number"):
+        return schema.get("min", 0)
+    if kind == "boolean":
+        return False
+    if kind == "color":
+        return "#000000"
+    if kind == "enum":
+        return (schema.get("values") or [None])[0]
+    if kind == "array":
+        return []
+    if kind == "object":
+        required = schema.get("required") or []
+        return {name: _example_of(sub, depth + 1) for name, sub in (schema.get("properties") or {}).items() if name in required}
+    return None
+
+
+def _sample(schema: object, given: object) -> dict[str, Any]:
+    """The author's sample, completed with a valid value for every REQUIRED key it left out."""
+
+    base = _example_of(schema)
+    return {**(base if isinstance(base, dict) else {}), **(given if isinstance(given, dict) else {})}
 
 
 def generate_source(key: str, raw: object, pin: EnginePin, where: str) -> GeneratedSource:
@@ -196,6 +233,7 @@ def generate_source(key: str, raw: object, pin: EnginePin, where: str) -> Genera
         raise _fail(f"{where}.description must be one printable line of at most {MAX_DESCRIPTION} characters")
     refs_raw, refs = _live_refs(data.get("live_refs"), f"{where}.live_refs")
     files: dict[str, Any] = _files(data["files"], f"{where}.files", bool(refs_raw))
+    files[KIT_PATH] = KIT_SOURCE
     if refs_raw:
         files[LIVE_REFS_PATH] = json.dumps({"format": "jarvis.live-refs/1", "refs": refs_raw}, indent=2, ensure_ascii=False) + "\n"
     assets = data.get("assets", {})
@@ -215,12 +253,12 @@ def generate_source(key: str, raw: object, pin: EnginePin, where: str) -> Genera
     sample_props = {**dict(sample.get("props", {})), THEME_PROP: dict(NEUTRAL_THEME)} if isinstance(sample.get("props", {}), dict) else None
     if sample_props is None:
         raise _fail(f"{where}.sample.props must be an object")
-    prefab_id = source_id(key, title, files, props, composition.to_dict())
+    prefab_id = source_id(key, title, files, props, {**composition.to_dict(), "kit": KIT_VERSION})
     catalog = {"type": "composition", "compatibility": {"remotion": "native", "slidecar": "unsupported"}, "stack": list(CATALOG_STACK),
                "dependencies": [{"name": "remotion", "version": pin.version}]}
     candidate = build_candidate(
         prefab_id=prefab_id, title=title, composition=composition, engine=pin, files=files, props=props, data=data.get("data"),
-        sample={"props": sample_props, "data": dict(sample.get("data", {}))}, description=description, catalog=catalog)
+        sample={"props": _sample(props, sample_props), "data": _sample(data.get("data"), sample.get("data"))}, description=description, catalog=catalog)
     return GeneratedSource(candidate, prefab_id, refs, _inspiration(data.get("inspiration"), f"{where}.inspiration"))
 
 

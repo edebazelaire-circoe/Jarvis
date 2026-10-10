@@ -125,7 +125,7 @@ async def test_the_brain_fixes_and_resubmits_and_the_second_round_delivers(env):
     assert (await env.assemble(brief, draft)).status == "refused"
     draft["scenes"][2]["data"]["body"] = "La hausse vient surtout des abonnements annuels."
     out = await env.assemble(brief, draft)
-    assert out.status == "delivered" and len(env.folders()) == 1 and env.prefab_versions() == {fa.SLIDE: ["1"]}
+    assert out.status == "delivered" and len(env.folders()) == 1 and env.prefab_versions() == {fa.SLIDE: ["1"], fa.COVER: ["1"]}
 
 
 async def test_a_dry_run_writes_and_publishes_nothing_even_for_a_perfect_draft(env):
@@ -286,7 +286,8 @@ async def test_a_failure_while_storing_leaves_the_published_versions_unreference
     monkeypatch.undo()
     assert (await env.assemble(brief, draft)).status == "delivered"                          # the retry works and pins version 2
     report = await env.authoring.reconcile()
-    assert report["unreferenced_prefabs"] == [{"id": fa.SLIDE, "version": 1}] and report["unreferenced_count"] == 1
+    assert sorted(report["unreferenced_prefabs"], key=lambda r: r["id"]) == sorted(
+        [{"id": fa.SLIDE, "version": 1}, {"id": fa.COVER, "version": 1}], key=lambda r: r["id"]) and report["unreferenced_count"] == 2
 
 
 async def test_a_stored_presentation_that_fails_its_read_back_is_an_error_and_is_never_deleted(env, monkeypatch):
@@ -385,7 +386,7 @@ async def test_diagnostics_follow_the_error_handling_contract(env):
     assert kinds == ["core.presentation_studio.authoring_compiled", "core.presentation_studio.authoring_checked",
                      "core.presentation_studio.authoring_compiled", "core.presentation_studio.authoring_delivered"]
     delivered = env.sink.of("core.presentation_studio.authoring_delivered")[0][1]
-    assert delivered["variants"] == 1 and delivered["scenes"] == 12 and delivered["bundles"] == 1
+    assert delivered["variants"] == 1 and delivered["scenes"] == 12 and delivered["bundles"] == 2        # the storyboard: a cover source and a slide source
     assert all(level == "info" for kind, level, _ in env.sink.rows if kind.startswith("core.presentation_studio.authoring"))
     assert not [row for row in env.sink.rows if row[1] == "error"]
 

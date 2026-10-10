@@ -294,7 +294,7 @@ def test_the_built_documents_are_the_stored_documents_and_parse_back_whole():
 
 def test_a_dry_run_pin_and_a_real_pin_both_build_and_the_real_one_is_used():
     brief, draft, _ = built()
-    real = {"slide": PrefabRef(fa.SLIDE, 7)}
+    real = {"slide": PrefabRef(fa.SLIDE, 7), "cover": PrefabRef(fa.COVER, 7)}
     result = build_presentation(brief, draft, real, NOW, "brain")
     assert {s.prefab.version for s in result.variants[0].variant.scenes} == {7}
     assert result.presentation.variants[0].created_by == "brain"

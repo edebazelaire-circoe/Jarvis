@@ -12,9 +12,13 @@ untrusted prose and never echoes). Pure: no I/O, no clock.
 
 from __future__ import annotations
 
+from collections import OrderedDict
 from collections.abc import Mapping
 from dataclasses import dataclass
+import hashlib
 import re
+
+from jarvis.domain.presentation_studio_authoring_kit import KIT_PATH
 
 #: Modules that are code (a `.json` module is data: it does not draw, animate or read props).
 CODE_SUFFIXES = (".tsx", ".ts", ".jsx", ".js")
@@ -27,13 +31,17 @@ MAX_COLOR_LITERALS = 3
 MAX_LITERAL_WORDS = 3
 MAX_LITERALS = 40
 _INTERPOLATE_WINDOW = 600
+#: `interpolate(` calls examined (a scene has a handful; a hostile source with thousands must not cost seconds of the event loop).
+MAX_INTERPOLATE_CALLS = 400
+#: Facts kept for the sources of recent judgements (the gate asks for the same source several times in one pass).
+_CACHE_SIZE = 32
 
 # One pass that keeps strings and drops comments (so `"http://x"` is not a comment and `// "text"` is not a literal).
 _TOKENS = re.compile(r"""//[^\n]*|/\*.*?\*/|"(?:\\.|[^"\\\n])*"|'(?:\\.|[^'\\\n])*'|`(?:\\.|[^`\\])*`""", re.DOTALL)
 _JSX_TEXT = re.compile(r">([^<>{}\n;=()]{3,200})<")
-_JSX_TEXT_LINES = re.compile(r">\s*\n([^<>{}=;()]{3,300})\n\s*<")
+_JSX_TEXT_LINES = re.compile(r">\s{0,40}\n([^<>{}=;()]{3,300})\n\s{0,40}<")
 _ATTR_TEXT = re.compile(r"""\b(?:alt|title|aria-label|label|placeholder|caption|subtitle|heading)=(?:\{\s*)?(?P<q>["'])(?P<text>[^"'\n]{3,200})(?P=q)""")
-_EXPR_TEXT = re.compile(r"""\{\s*(?P<q>["'])(?P<text>[^"'\n]{3,200})(?P=q)\s*\}""")
+_EXPR_TEXT = re.compile(r"""\{\s{0,40}(?P<q>["'])(?P<text>[^"'\n]{3,200})(?P=q)\s{0,40}\}""")
 _LETTER_WORD = re.compile(r"[^\W\d_]{2,}", re.UNICODE)
 _FRAME = re.compile(r"\buseCurrentFrame\s*\(|<\s*(?:Sequence|Series)\b")
 # The `theme` PROP: `props.theme`, `p.theme`, `["theme"]` or a destructured `{theme}`; a local variable called theme is not the art direction.
@@ -94,7 +102,7 @@ def _interpolations(code: str) -> tuple[int, int]:
 
     calls = unclamped = 0
     position = 0
-    while (start := code.find("interpolate(", position)) != -1:
+    while calls < MAX_INTERPOLATE_CALLS and (start := code.find("interpolate(", position)) != -1:
         position = start + 12
         if start and (code[start - 1].isalnum() or code[start - 1] == "_"):
             continue                                                  # `myinterpolate(`
@@ -122,10 +130,31 @@ def _props_read(entry: str) -> frozenset[str]:
     return frozenset(names)
 
 
-def tsx_facts(modules: Mapping[str, str], entry: str = "src/Scene.tsx") -> TsxFacts:
-    """Facts of the code modules of one Remotion source (`modules`: path -> text)."""
+_CACHE: "OrderedDict[str, TsxFacts]" = OrderedDict()
 
-    code = {path: strip_comments(text) for path, text in modules.items() if path.endswith(CODE_SUFFIXES)}
+
+def tsx_facts(modules: Mapping[str, str], entry: str = "src/Scene.tsx") -> TsxFacts:
+    """Facts of the code modules of one Remotion source (`modules`: path -> text). Memoised by content: the gate reads the same source
+    several times in one pass, and a source costs a few milliseconds to read."""
+
+    digest = hashlib.sha256()
+    for path in sorted(modules):
+        digest.update(path.encode("utf-8", "replace") + b"\x00" + modules[path].encode("utf-8", "replace") + b"\x00")
+    key = digest.hexdigest() + entry
+    cached = _CACHE.get(key)
+    if cached is not None:
+        _CACHE.move_to_end(key)
+        return cached
+    facts = _read(modules, entry)
+    _CACHE[key] = facts
+    while len(_CACHE) > _CACHE_SIZE:
+        _CACHE.popitem(last=False)
+    return facts
+
+
+def _read(modules: Mapping[str, str], entry: str) -> TsxFacts:
+    # The kit Core adds (`jarvis-kit.ts`) is not the author's code: it would hide a dead prop that shares a theme word and count as a module.
+    code = {path: strip_comments(text) for path, text in modules.items() if path.endswith(CODE_SUFFIXES) and path != KIT_PATH}
     joined = "\n".join(code.values())
     colours = {c.lower() for c in _HEX.findall(joined)} | {re.sub(r"\s+", "", c) for c in _RGB.findall(joined)}
     literals: list[str] = []

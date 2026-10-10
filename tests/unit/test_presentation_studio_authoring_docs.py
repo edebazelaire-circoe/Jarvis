@@ -15,10 +15,10 @@ from jarvis.domain import presentation_studio_authoring_gate as gate
 from jarvis.domain import presentation_studio_authoring_policy as policy
 
 ROOT = Path(__file__).resolve().parents[2]
-#: The 14 rules Remotion Slice 15 added (documented in `presentation-studio.md` and listed in the Remotion handoff's evidence index).
+#: The 15 rules Remotion Slice 15 added (documented in `presentation-studio.md` and listed in the Remotion handoff's evidence index).
 REMOTION_RULES = frozenset({"prefab_engine_mismatch", "tsx_compile", "tsx_theme_unread", "tsx_color_hardcoded", "tsx_text_hardcoded",
                             "tsx_static_scene", "tsx_interpolate_unclamped", "tsx_props_unread", "tsx_props_undeclared", "tsx_monolith",
-                            "tsx_anchor_range", "tsx_live_ref_invalid", "tsx_live_ref_unresolved", "tsx_inspiration_unconfirmed"})
+                            "tsx_anchor_range", "tsx_layout_monotone", "tsx_live_ref_invalid", "tsx_live_ref_unresolved", "tsx_inspiration_unconfirmed"})
 TASK = ROOT / "tasks" / "jarvis-interactive-presentation-studio"
 
 
@@ -36,7 +36,7 @@ def test_the_rule_table_in_the_page_is_the_rule_table_in_the_code():
     rows = re.findall(r"^\| `([a-z_]+)` \| (error|warning|off) \| (error|warning|off) \| (error|warning|off) \| (.+) \|$",
                       section(), flags=re.MULTILINE)
     documented = {code: (one, directed, exploratory, summary) for code, one, directed, exploratory, summary in rows}
-    assert len(documented) == len(rows) == len(gate.RULES) == 62
+    assert len(documented) == len(rows) == len(gate.RULES) == 63
     for rule in gate.RULES:
         assert documented[rule.code] == (rule.one_shot, rule.directed, rule.exploratory, rule.summary), rule.code
 
@@ -146,7 +146,7 @@ def test_the_operations_note_exists_and_makes_no_claim_the_code_does_not_keep():
                    "/api/presentation-studio/authoring/check", "/v1/presentation-studio/authoring/reconcile",
                    "authoring_unreferenced", "jamais adoptées ni supprimées", "ne prouvent pas"):
         assert needle in note, needle
-    assert "40" in note and len(gate.RULES) == 62
+    assert "40" in note and len(gate.RULES) == 63
 
 
 def test_the_concept_and_levels_rows_say_slice_11_is_implemented_and_the_policy_items_are_updated():

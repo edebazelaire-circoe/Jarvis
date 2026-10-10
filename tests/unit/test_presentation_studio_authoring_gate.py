@@ -103,7 +103,7 @@ async def test_the_report_is_deterministic_and_never_echoes_the_authors_words(en
 # ------------------------------------------------------------------ the rule table
 
 def test_the_rule_table_is_complete_consistent_and_documents_the_exploratory_subset():
-    assert len({r.code for r in RULES}) == len(RULES) == 62
+    assert len({r.code for r in RULES}) == len(RULES) == 63
     for rule in RULES:
         assert rule.summary and {rule.one_shot, rule.directed, rule.exploratory} <= {ERROR, WARNING, OFF}
     validation = {"brief_invalid", "draft_schema", "prefab_invalid", "prefab_namespace", "pin_unknown", "scene_incompatible",
@@ -233,7 +233,7 @@ async def test_a_document_past_three_quarters_of_its_cap_is_refused_before_it_ca
     # 48 scenes of ~2.8 KB + the theme prop each (~0.7 KB): the variant document (~230 KiB) passes 75 % of the 256 KiB cap while every payload keeps its own headroom
     brief = fa.brief("directed", duration_target_s=None)
     draft = fa.good_deck()
-    draft["prefabs"][0] = fa.prefab_entry(body_max=12_000)
+    draft["prefabs"] = [fa.prefab_entry(body_max=12_000)]
     filler = ("abcdefghijklmnopqrstuvwxyz" * 200)[:2_800]
     draft["scenes"] = [dict(fa.scene(f"s{n:02d}", "opening" if n == 1 else "closing" if n == 48 else "body",
                                      f"Chapitre {n} du recit", filler), long_form=True) for n in range(1, 49)]

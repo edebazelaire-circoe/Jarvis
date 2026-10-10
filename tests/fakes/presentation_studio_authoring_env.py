@@ -59,7 +59,7 @@ class AuthoringEnv:
         self.authoring: PresentationStudioAuthoring
 
     async def start(self, *, checkpoint=None, store=None, compiler: Any = "scripted", live_refs: Any = None,
-                    boards: Any = None) -> "AuthoringEnv":
+                    boards: Any = None, pin: Any = None) -> "AuthoringEnv":
         """`compiler`: the Remotion compiler (default a `ScriptedCompiler`, `None` for a Core without one); `live_refs`/`boards`: the
         Board context (default none: a draft with live references cannot be judged)."""
 
@@ -73,7 +73,7 @@ class AuthoringEnv:
         self.variants = PresentationStudioVariants(self.studio, diagnostics=self.sink, secret=b"k" * 32)
         self.authoring = PresentationStudioAuthoring(self.studio, self.prefabs, variants=self.variants,
                                                      pins=self.variants.pin_index, checkpoint=checkpoint, registry=self.pin_registry,
-                                                     compiler=self.compiler, engine_pin=engine_pin, live_refs=live_refs, boards=boards)
+                                                     compiler=self.compiler, engine_pin=pin or engine_pin, live_refs=live_refs, boards=boards)
         return self
 
     async def assemble_legacy_html(self, brief: dict, draft: dict, *, actor: str = "user"):

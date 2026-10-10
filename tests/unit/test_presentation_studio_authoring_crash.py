@@ -109,7 +109,7 @@ async def test_a_kill_after_the_bundle_is_published_leaves_a_reported_unreferenc
 async def test_a_kill_with_the_documents_built_but_not_stored_is_the_same_state(root):
     kill_at(root, "documents_ready", request())
     env = await AuthoringEnv(root).start()
-    assert env.folders() == [] and env.prefab_versions() == {fa.SLIDE: ["1"]}
+    assert env.folders() == [] and env.prefab_versions() == {fa.SLIDE: ["1"], fa.COVER: ["1"]}       # both sources of the storyboard were published
     assert (await env.studio.list_presentations()).presentations == ()
 
 
