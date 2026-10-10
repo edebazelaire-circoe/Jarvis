@@ -703,6 +703,38 @@ non-JavaScript code; and the browser-side channels the CSP cannot close (WebRTC,
 GET navigation) remain for a hostile scene. Whatever the scene can read (its own source, `defaultProps`) can leave through those channels:
 that is why the user must confirm, per opening, knowing the provenance.
 
+### 20. Upstream Remotion template import: verified origin, audited dependencies, Core-written provenance
+
+Status: delivered (handoff `jarvis-remotion-presentation-integration`, Slice 18); exercised over the real network, with the real compiler
+and in a real Chrome. Full contract, code table and evidence: [remotion-import.md](remotion-import.md).
+
+Importing a template is Core fetching code written by someone else. The import never runs that code; it reads it as text, and the
+result is an ordinary Remotion source, so control 18 (the sandbox) is still the execution boundary. The import adds the controls on
+what is accepted and what is claimed about it:
+
+- **Verified origins only.** HTTPS to `github.com` repositories of an owner in a user-set allowlist (default `remotion-dev`;
+  `control-center-settings.json` > `remotion_import.allowed_owners`, read at each import). The download URL is built from a validated
+  owner/repository and a **full commit SHA** (never a branch or tag), against `codeload.github.com`. Hosts are not configurable; no
+  arbitrary URL, no `http`, no credentials/port, no preview MP4 or page as a source. Redirects (at most 3) are never followed
+  automatically: each must stay on GitHub over HTTPS and on the same repository. Size (12 MiB), time (30 s) and one import at a time
+  are bounded. Only Core fetches (a port with a fake for tests); untrusted scene code has no network.
+- **Hostile archives refused whole.** In-memory stream, no disk: symlinks, hardlinks, devices, `..`/absolute/backslash paths, second
+  roots, duplicate names (case-folded), decompression bombs and an archive that does not attest the pinned commit.
+- **Dependencies are what the source reaches, not what `package.json` claims.** Only `react`, `remotion` (the locked shared tree) are
+  admitted; any other reached package is refused with its name and importer. `package.json`, lockfiles and scripts are never copied or run.
+  No npm, no adapter.
+- **Licence is the template's, recorded apart from Remotion's.** Reviewed redistributable SPDX licences only; unlicensed, unknown,
+  copyleft, non-commercial, Remotion's own or a file/`package.json` conflict are refused. The licence text travels with the source.
+- **Provenance is Core-written.** `catalog.upstream.{commit, archive_sha256, imported_at, changes}` can only be written by the importer
+  (`PrefabService.save` refuses them elsewhere), so a library entry cannot claim a verification that did not happen.
+- **Scoped to one presentation.** The result is a `presentation-studio.*` prefab version; there is no request field to publish to the
+  shared library (promotion is a separate, explicit step, Slice 19). No route reaches the Control Center, the brain or an MCP tool.
+
+**Not claimed**: the import graph is read by pattern, not by a TypeScript parser (the compiler and control 18 are the backstop); licence
+detection is by text and is not legal advice; Remotion's company-licence obligation is recorded, not assessed; assets are covered by
+the repository licence only; GitHub (and the pinned commit staying available) is trusted for availability, not for content (the archive
+SHA-256 and attested commit are recorded).
+
 ## Residual risks / non-goals
 
 - Bare Hands traces are never pruned and are not encrypted at rest; a user who recorded a diagnostic session leaves scalar interaction data in `runtime/barehands-traces/` until they delete it by hand.

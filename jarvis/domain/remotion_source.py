@@ -428,8 +428,13 @@ def decode_candidate_files(sources: object, assets: object) -> dict[str, bytes]:
 def build_candidate(*, prefab_id: str, title: str, composition: Composition, engine: EnginePin,
                     files: Mapping[str, str | bytes], entry: str = DEFAULT_ENTRY, props: Mapping[str, Any] | None = None,
                     data: Mapping[str, Any] | None = None, sample: Mapping[str, Any] | None = None, family: str = "scene",
-                    description: str = "", default_size: tuple[float, float] | None = None) -> dict[str, Any]:
-    """Candidat `{manifest, sources, assets}` (manifeste v2) pour `PrefabService.save` / `parse_candidate`.
+                    description: str = "", default_size: tuple[float, float] | None = None,
+                    catalog: Mapping[str, Any] | None = None) -> dict[str, Any]:
+    """Candidat `{manifest, sources, assets}` (manifeste v2, ou v3 avec `catalog`) pour `PrefabService.save` / `parse_candidate`.
+
+    `catalog` : bloc de catalogue (`docs/prefabs.md` > Manifest v3) ; absent, le manifeste reste en v2 octet pour octet ; présent,
+    il passe en v3 (règle : la plus basse version qui exprime le manifeste). C'est ainsi que l'importeur amont (Slice 18) pose
+    licence, dépendances et provenance.
 
     `files` : `{chemin: texte}` pour `src/**`, `{chemin: octets}` pour `public/**`. Le numéro de version du manifeste est
     un espace réservé : Core attribue le vrai à la publication. Les listes de chemins sont triées (forme canonique).
@@ -451,6 +456,9 @@ def build_candidate(*, prefab_id: str, title: str, composition: Composition, eng
                    "data": dict(data or {"type": "object", "properties": {}})},
         "sample": dict(sample or {"props": {}, "data": {}}),
         "source": SourceBlock(engine, entry, composition, tuple(modules), tuple(assets)).to_dict()}
+    if catalog is not None:
+        manifest["schema_version"] = 3
+        manifest["catalog"] = json.loads(json.dumps(catalog))
     return {"manifest": manifest, "sources": {path: files[path] for path in modules},
             "assets": {path: base64.b64encode(files[path] if isinstance(files[path], bytes) else files[path].encode("utf-8")
                                               ).decode("ascii") for path in assets}}

@@ -582,8 +582,12 @@ class PrefabService:
     # ------------------------------------------------------------ publication
 
     async def save(self, candidate: object, *, actor: CreatorActor | str,
-                   derived_from: PrefabRef | None = None) -> Publication:
-        """Publie un prefab custom : neuf (`custom`/`fork`) ou nouvelle version (`revision`). Jamais une base."""
+                   derived_from: PrefabRef | None = None, verified_import: bool = False) -> Publication:
+        """Publie un prefab custom : neuf (`custom`/`fork`) ou nouvelle version (`revision`). Jamais une base.
+
+        `verified_import` : posé par l'importeur amont de Core SEUL (Slice 18). Les clés `commit`, `archive_sha256`, `imported_at`
+        et `changes` de `catalog.upstream` attestent une vérification (archive lue, commit attesté) : un candidat qui les porte
+        sans passer par l'importeur est refusé, sinon n'importe quelle porte pourrait se déclarer « vérifiée »."""
 
         try:
             creator = CreatorActor(actor)
@@ -596,6 +600,8 @@ class PrefabService:
         except PrefabDefinitionError as exc:
             raise _definition_error(exc) from None
         prefab_id = bundle.manifest.prefab_id
+        claimed = bundle.manifest.catalog.upstream if bundle.manifest.catalog is not None else None
+        claims_verified = claimed is not None and bool(claimed.commit or claimed.archive_sha256 or claimed.imported_at or claimed.changes)
         if bundle.manifest.prefab_class is PrefabClass.BASE:
             self._trace("core.prefab.save_refused", "Publication d'une base refusée hors de la porte d'édition",
                         level="warning", data={"prefab_id": prefab_id, "actor": creator.value})
@@ -605,6 +611,13 @@ class PrefabService:
         async with self._write_lock:
             await self._refresh()
             known = self._entries_of(prefab_id)
+            if claims_verified and not verified_import:
+                # Une révision peut REPORTER la provenance de sa version précédente telle quelle (édition d'une source importée) ;
+                # rien d'autre ne peut l'écrire ou la changer.
+                previous = known[-1].manifest if known else None
+                if previous is None or previous.catalog is None or previous.catalog.upstream != claimed:
+                    raise PrefabStoreError(_C.INVALID_DEFINITION, "catalog.upstream: commit, archive_sha256, imported_at and changes are "
+                                                                  "written by the upstream importer only, not declared by hand")
             if known:
                 if derived_from is not None and derived_from.prefab_id != prefab_id:
                     raise PrefabStoreError(_C.INVALID_DEFINITION, f"{prefab_id} already exists: a revision derives "
