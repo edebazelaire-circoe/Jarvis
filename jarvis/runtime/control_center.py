@@ -116,6 +116,7 @@ from jarvis.runtime.prefab_relay import GUARDED_PREFIXES as PREFAB_GUARDED_PREFI
 from jarvis.runtime.remotion_relay import GUARDED_PREFIXES as REMOTION_GUARDED_PREFIXES, STAGE_ROUTE as REMOTION_STAGE_ROUTE, RemotionRelayRoutes
 from jarvis.runtime.presentation_studio_scene_variants_relay import PresentationStudioSceneVariantsRelayRoutes
 from jarvis.runtime.presentation_studio_template_relay import PresentationStudioTemplateRelayRoutes
+from jarvis.runtime.presentation_studio_upgrades_relay import PresentationStudioUpgradesRelayRoutes
 from jarvis.runtime.presentation_studio_authoring_relay import PresentationStudioAuthoringRelayRoutes
 from jarvis.runtime.presentation_studio_compose_relay import PresentationStudioComposeRelayRoutes
 from jarvis.runtime.presentation_studio_variants_relay import PresentationStudioVariantsRelayRoutes
@@ -1347,6 +1348,7 @@ class ControlCenter:
             transport=lambda: self.sessions, journal=self.journal)
         # Modeles reutilisables (Slice 20): plan, promotion, liste, lecture, instanciation; acteur force a `user`.
         self.studio_template_routes = PresentationStudioTemplateRelayRoutes(transport=lambda: self.sessions, journal=self.journal)
+        self.studio_upgrades_routes = PresentationStudioUpgradesRelayRoutes(transport=lambda: self.sessions, journal=self.journal)
         # Planificateur d'ecriture (Slice 11): verifier / assembler un brouillon, acteur force a `user`.
         self.studio_authoring_routes = PresentationStudioAuthoringRelayRoutes(transport=lambda: self.sessions, journal=self.journal)
         # Explorateur de variantes (Slice 18) : canal de commandes (ouvrir / fermer par la voix ou un agent) + miroir d'etat de la page.
@@ -1468,6 +1470,7 @@ class ControlCenter:
             *self.studio_compose_routes.routes(),
             *self.studio_scene_variants_routes.routes(),
             *self.studio_template_routes.routes(),
+            *self.studio_upgrades_routes.routes(),
             *self.studio_authoring_routes.routes(),
             *self.studio_explorer.routes(),
             *self.studio_turn.routes(),
