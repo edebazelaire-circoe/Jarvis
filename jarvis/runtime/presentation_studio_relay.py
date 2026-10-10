@@ -24,6 +24,9 @@ Core rendus tels quels, erreurs et résultats `refused`/`stale` compris ; Core i
 | `POST /api/presentation-studio/presentations` | idem (Slice 20, **creation**), **`actor` force a `user`** ; corps `{title, engine?, experimental_confirmed?, reason?}` : la SEULE porte par laquelle un moteur est nomme ; `slidecar` exige `experimental_confirmed: true` |
 | `POST .../presentations/{presentation_id}/experiment` | idem (Slice 20) : copie « experience Slidecar » = NOUVEAU document, **`actor` force a `user`** ; corps `{experimental_confirmed, reason?}` |
 | `GET /api/presentation-studio/engine` | `GET /v1/presentation-studio/engine` (Slice 20) : moteur par defaut, etat de chaque moteur, registre des usages de Slidecar |
+| `GET /api/presentation-studio/rail` | `GET /v1/presentation-studio/rail` : le rail (toutes les presentations, `hidden`, `archived`, `work`, `ui`) |
+| `POST /api/presentation-studio/rail/display-state` | idem : ce que la page constate (rail visible, fenetre ouverte) |
+| `POST .../presentations/{presentation_id}/rail` | idem, **`actor` force a `user`** ; `{action: hide|show|archive|restore|rename|acknowledge, confirmed?, title?}` |
 | `GET /api/presentation-studio/playback` | `GET /v1/presentation-studio/playback` : « où en est-on » (Slice 12) |
 | `POST /api/presentation-studio/playback/{verb}` | idem, **`actor` forcé à `user`** ; `verb` : `start stop pause resume next previous goto detour return reveal hide edit skip_sequence play advance` (Slices 12, 23) |
 
@@ -76,6 +79,11 @@ _READ_ROUTES = (
     ("GET", "studio_art_direction", "/{presentation_id}/variants/{variant_id}/art-direction"),
 )
 PLAYBACK_ROUTE = "/api/presentation-studio/playback"
+#: Rail des presentations : la liste (lecture), le rapport de la page (ecran) et les gestes persistants (acteur force `user`).
+RAIL_ROUTE = "/api/presentation-studio/rail"
+CORE_RAIL = "/v1/presentation-studio/rail"
+RAIL_ACT_PATH = "/{presentation_id}/rail"
+RAIL_KEYS = frozenset({"action", "confirmed", "title", "actor"})
 ENGINE_ROUTE = "/api/presentation-studio/engine"
 CORE_ENGINE = "/v1/presentation-studio/engine"
 EXPERIMENT_PATH = "/{presentation_id}/experiment"
@@ -107,6 +115,9 @@ class PresentationStudioRelayRoutes(CaptureRelayRoutes):
                 web.post(STUDIO_ROUTE, self._forced("", "studio_create", allowed=CREATE_KEYS, door_key="engine")),
                 web.post(STUDIO_ROUTE + EXPERIMENT_PATH, self._forced(EXPERIMENT_PATH, "studio_experiment", allowed=EXPERIMENT_KEYS, door_key="")),
                 web.get(ENGINE_ROUTE, self._relay("studio_engine", CORE_ENGINE)),
+                web.get(RAIL_ROUTE, self._relay("studio_rail", CORE_RAIL)),
+                web.post(RAIL_ROUTE + "/display-state", self._relay("studio_rail_display_state", CORE_RAIL + "/display-state")),
+                web.post(STUDIO_ROUTE + RAIL_ACT_PATH, self._forced(RAIL_ACT_PATH, "studio_rail_act", allowed=RAIL_KEYS)),
                 web.post(STUDIO_ROUTE + "/mount-reports", self._relay("studio_mount_report", CORE_PREFIX + "/mount-reports")),
                 web.get(PLAYBACK_ROUTE, self._relay("studio_playback", PLAYBACK_PREFIX)),
                 web.get(f"{PLAYBACK_ROUTE}/preload", self._relay("studio_playback_preload", PLAYBACK_PREFIX + "/preload")),

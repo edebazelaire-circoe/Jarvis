@@ -56,6 +56,8 @@ from jarvis.ports.presentation_studio import StoreProblem, StoreScan, SweepRepor
 
 STORE_DIR = "presentations"
 MANIFEST_FILE = "presentation.json"
+#: Etat d'affichage dans le rail (masquee, archivee) : un fichier a cote du manifeste, jamais dedans (aucun bump de schema).
+RAIL_FILE = "rail.json"
 VARIANTS_DIR = "variants"
 ARCHIVE_DIR = "archive"
 SCORES_DIR = "scores"
@@ -536,6 +538,32 @@ class FilePresentationStudioStore:
             raise _unsafe(exc, f"{presentation_id}/{art_direction_id}") from None
         except OSError as exc:
             raise _io(exc, f"{presentation_id}/{art_direction_id}") from None
+
+    def read_rail(self, presentation_id: str) -> str:
+        """Texte de `rail.json` ; chaine vide si la presentation n'a jamais ete masquee ni archivee (absent n'est pas une erreur)."""
+
+        _check_ids(presentation_id)
+        folder = self._folder(presentation_id)
+        if folder is None:
+            raise PresentationStudioError(C.UNKNOWN_PRESENTATION, f"{presentation_id} is not in the store")
+        try:
+            return _read_text(folder / RAIL_FILE, f"{presentation_id}/{RAIL_FILE}", missing=C.UNKNOWN_VARIANT)
+        except PresentationStudioError as exc:
+            if exc.code is C.UNKNOWN_VARIANT:
+                return ""
+            raise
+
+    def write_rail(self, presentation_id: str, text: str) -> None:
+        _check_ids(presentation_id)
+        folder = self._folder(presentation_id)
+        if folder is None:
+            raise PresentationStudioError(C.UNKNOWN_PRESENTATION, f"{presentation_id} is not in the store")
+        try:
+            self._note_flush(_write_file(folder / RAIL_FILE, text), "rail")
+        except safe_folders.SafeFolderError as exc:
+            raise _unsafe(exc, presentation_id) from None
+        except OSError as exc:
+            raise _io(exc, presentation_id) from None
 
     def write_manifest(self, presentation_id: str, text: str) -> None:
         _check_ids(presentation_id)

@@ -39,6 +39,7 @@
     describeRefusal,planModel,sameSet,readPrefs,writePrefs,MAX_RATIONALE_BYTES}=Core;
 
   const GRAPH_POLL_MS=10000;
+  const VBAR_MAX=40;
   const COMMAND_POLL_WAIT_S=25;
   const COMMAND_POLL_TIMEOUT_MS=30000;
   const COMMAND_MIN_GAP_MS=1000;
@@ -336,7 +337,12 @@
       ui.sceneBadge=el('span','jvx-chip');
       sceneLine.appendChild(ui.prevScene);sceneLine.appendChild(ui.nextScene);sceneLine.appendChild(ui.sceneTitle);sceneLine.appendChild(ui.sceneRole);sceneLine.appendChild(ui.sceneBadge);
       ui.sceneCount=el('span','');
-      note.appendChild(sceneLine);note.appendChild(ui.sceneCount);
+      /* Jouer : la MÊME route que la voix et le lecteur (`JarvisStudioPlayer.startRun` puis `goto`), en répétition silencieuse. La lecture ferme le Studio (un seul outil à la fois). */
+      ui.playBox=el('div','jvx-play');
+      ui.playScene=button('Jouer cette slide','jvx-btn',()=>{playFromStudio('scene')},{icon:'play',attrs:{title:'Lancer la lecture en répétition à partir de cette slide (le Studio se ferme)'}});
+      ui.playAll=button('Tout jouer','jvx-btn',()=>{playFromStudio('all')},{icon:'play',attrs:{title:"Lancer toute la présentation d'un coup, de la première slide (le Studio se ferme)"}});
+      ui.playBox.appendChild(ui.playScene);ui.playBox.appendChild(ui.playAll);
+      note.appendChild(sceneLine);note.appendChild(ui.sceneCount);note.appendChild(ui.playBox);
       ui.strip=el('div','jvx-strip');
       attrs(ui.strip,{role:'listbox','aria-label':'Scènes de la variante','aria-orientation':'horizontal'});
       const bottom=el('div','jvx-bottom');
@@ -344,7 +350,8 @@
       ui.actions=el('div','jvx-actions');attrs(ui.actions,{role:'toolbar','aria-label':'Actions sur la variante choisie'});
       bottom.appendChild(ui.meta);bottom.appendChild(ui.actions);
       ui.upgrades=upgrades.buildSection();
-      preview.appendChild(wrap);preview.appendChild(note);preview.appendChild(ui.strip);preview.appendChild(bottom);preview.appendChild(ui.upgrades);
+      ui.vbar=el('div','jvx-vbar');attrs(ui.vbar,{role:'toolbar',tabindex:'-1','aria-label':'Variantes vivantes : choisir celle à regarder'});
+      preview.appendChild(ui.vbar);preview.appendChild(wrap);preview.appendChild(note);preview.appendChild(ui.strip);preview.appendChild(bottom);preview.appendChild(ui.upgrades);
       ui.preview=preview;
       body.appendChild(treePane);body.appendChild(preview);body.appendChild(cmp.buildRoot());
       ui.live=el('div','jvx-sr');attrs(ui.live,{role:'status','aria-live':'polite','aria-atomic':'true'});
@@ -436,6 +443,72 @@
       ui.archiveToggle.setAttribute('aria-controls',ui.archiveTree.element.id||(ui.archiveTree.element.id=uid('archive')));
       ui.archiveTree.element.hidden=!S.archivedOpen;
       ui.archiveTree.setData({forest:S.archived,ctx:treeContext('archived'),emptyText:dead?'':'Rien dans l\'archive : « Archiver… » met une branche de côté, elle se restaure ici.'});
+      renderVariantBar();
+    }
+    /* La barre des variantes : chaque variante vivante est une pastille numérotée (la variante active porte un point vert), un clic la choisit ; `[` et `]` passent à la
+       précédente / suivante. L'arbre à gauche reste le lieu des branches ET le chemin du clavier (la barre n'ajoute aucun arrêt de tabulation : `tabindex=-1`, la suite
+       Tab de l'arbre vers la scène est inchangée) ; la barre est le moyen de FEUILLETER les variantes à la souris ou aux touches `[` `]` sans quitter l'aperçu. */
+    function liveNodes(){
+      const nodes=S.graph?S.graph.nodes.filter(n=>n&&n.state==='live'&&typeof n.variant_id==='string'):[];
+      return nodes.sort((a,b)=>(Number(a.variant_number)||0)-(Number(b.variant_number)||0));
+    }
+    function renderVariantBar(){
+      if(!ui.vbar)return;
+      const focused=ui.vbar.contains(doc.activeElement)?doc.activeElement.dataset.id:null;
+      clear(ui.vbar);
+      const nodes=liveNodes();
+      ui.vbar.hidden=nodes.length<2;
+      if(nodes.length<2)return;
+      ui.vbar.appendChild(el('span','jvx-vbar-label',`Variantes ${nodes.length}`));
+      for(const node of nodes.slice(0,VBAR_MAX)){
+        const b=el('button','jvx-vchip');
+        attrs(b,{type:'button',tabindex:'-1','aria-pressed':node.variant_id===S.selectedId?'true':'false','data-id':node.variant_id,'data-active':S.graph.activeId===node.variant_id?'true':'false',
+          title:`#${node.variant_number} ${cleanLine(node.title,60)}${S.graph.activeId===node.variant_id?' (active)':''}`,
+          'aria-label':`Variante ${node.variant_number}, ${cleanLine(node.title,60)}${S.graph.activeId===node.variant_id?', active':''}`});
+        b.appendChild(el('span','',`#${node.variant_number}`));
+        b.appendChild(el('span','jvx-vchip-t jvx-bidi',cleanLine(node.title,24)));
+        b.addEventListener('click',()=>selectVariant(node.variant_id,{}));
+        ui.vbar.appendChild(b);
+        if(focused===node.variant_id)b.focus({preventScroll:true});
+      }
+      if(nodes.length>VBAR_MAX)ui.vbar.appendChild(el('span','jvx-vbar-label',`+${nodes.length-VBAR_MAX} dans l'arbre`));
+      const current=ui.vbar.querySelector('[aria-pressed="true"]');
+      if(current&&typeof current.scrollIntoView==='function'){try{current.scrollIntoView({block:'nearest',inline:'nearest'})}catch(_error){/* intentional: scrolling is a courtesy */}}
+    }
+    function stepVariant(delta){
+      const nodes=liveNodes();
+      if(nodes.length<2)return false;
+      const index=Math.max(0,nodes.findIndex(n=>n.variant_id===S.selectedId));
+      const next=nodes[Math.max(0,Math.min(nodes.length-1,index+delta))];
+      if(!next||next.variant_id===S.selectedId)return true;
+      selectVariant(next.variant_id,{});
+      return true;
+    }
+    /* Jouer depuis le Studio : répétition silencieuse (`rehearsal`) de la variante choisie. `scene` : à partir de la slide regardée ; `all` : du début.
+       La lecture est démarrée par le lecteur de la page (mêmes routes que la voix) ; le Studio se ferme dès qu'elle est appliquée. */
+    async function playFromStudio(mode){
+      const player=root.JarvisStudioPlayer;
+      const node=nodeOf(S.selectedId);
+      if(!player||typeof player.startRun!=='function'){say('failed',"Le lecteur n'est pas chargé dans cette page.");return}
+      if(!node||node.state!=='live'){say('info','Choisissez une variante vivante à jouer.');return}
+      if(S.busy||S.writing){say('info','Une opération est en cours : attendez la fin avant de lancer la lecture.');return}
+      const sceneId=mode==='scene'?S.preview.sceneId:null;
+      if(mode==='scene'&&(!sceneId||S.preview.variantId!==node.variant_id)){say('info',"Aucune slide n'est affichée : attendez l'aperçu.");return}
+      log('play_requested',{mode,variant_id:node.variant_id,scene_id:sceneId});
+      say('info',mode==='scene'?'Lecture à partir de cette slide…':'Lecture de toute la présentation…');
+      const pw=root.JarvisPresentationWindow;
+      let result=null;
+      try{result=pw&&typeof pw.startRun==='function'?await pw.startRun(S.pid,'rehearsal',{variant_id:node.variant_id}):await player.startRun(S.pid,'rehearsal',{variant_id:node.variant_id})}
+      catch(error){say('failed',`Lecture impossible : ${describe(error)}`);return}
+      if(!result||result.status!=='applied'){
+        const why=result&&(result.message||result.reason)||"la commande n'a pas abouti";
+        say('failed',`Lecture refusée : ${cleanLine(why,160)}`);log('play_refused',{mode,reason:result&&result.reason||null},'warn');return;
+      }
+      if(sceneId){
+        try{await player.command('goto',{scene_id:sceneId})}
+        catch(error){log('play_goto_failed',{error:describe(error)},'warn')}
+      }
+      close({reason:'run_started'});
     }
     function ensureFocus(kind){
       const forest=kind==='live'?S.live:S.archived;
@@ -655,6 +728,7 @@
       ui.sceneBadge.textContent=scene&&scene.locals>1?`${scene.locals} variantes locales`:'';
       ui.sceneBadge.title='Variantes locales de cette scène (elles restent hors de l\'arbre tant qu\'on ne les promeut pas)';
       ui.sceneCount.textContent=scene?`Scène ${index+1} sur ${p.scenes.length}`:'';
+      if(ui.playBox){ui.playScene.setAttribute('aria-disabled',scene?'false':'true');ui.playAll.setAttribute('aria-disabled',p.status==='ready'&&p.scenes.length?'false':'true')}
       ui.prevScene.setAttribute('aria-disabled',index>0?'false':'true');
       ui.nextScene.setAttribute('aria-disabled',index>=0&&index<p.scenes.length-1?'false':'true');
       ui.stage.setAttribute('aria-label',scene?`Aperçu, scène ${index+1} sur ${p.scenes.length} : ${scene.title}`:'Aperçu');
@@ -1078,6 +1152,7 @@
       /* Aucune touche tapée dans l'explorateur ne doit atteindre les raccourcis de la page derrière. */
       const t=event.target;
       const typing=t&&(t.isContentEditable||['INPUT','TEXTAREA','SELECT'].includes(String(t.tagName||'').toUpperCase()));
+      if(!typing&&!S.dialog&&!S.menu&&!event.ctrlKey&&!event.metaKey&&!event.altKey&&(event.key==='['||event.key===']')&&stepVariant(event.key===']'?1:-1)){event.preventDefault();event.stopPropagation();return}
       if(!typing&&!event.ctrlKey&&!event.metaKey&&event.key.length===1)event.stopPropagation();
     }
 
@@ -1085,6 +1160,8 @@
        ouvert, Échap et Tab sont donc aussi lus en capture sur le document : la page derrière est inerte, il n'y a rien d'autre à qui les laisser. */
     function onDocKey(event){
       if(!S.open||ui.host.contains(event.target))return;
+      /* Le rail des présentations (et son menu, ses boîtes) vit à côté du Studio : ses touches ne sont pas les nôtres. */
+      if(event.target&&typeof event.target.closest==='function'&&event.target.closest('[data-keep-live]'))return;
       if(event.key==='Escape'){onHostKey(event);return}
       if(event.key==='Tab'){
         event.preventDefault();
@@ -1169,7 +1246,7 @@
       S.opener=opts.opener||doc.activeElement;
       S.open=true;S.loading={label:'Chargement du graphe',at:now()};
       ui.host.hidden=false;
-      inerted=Array.from(doc.body.children).filter(n=>n!==ui.host&&!n.inert&&String(n.tagName).toUpperCase()!=='SCRIPT'&&!(n.classList&&n.classList.contains('toasts')));
+      inerted=Array.from(doc.body.children).filter(n=>n!==ui.host&&!n.inert&&String(n.tagName).toUpperCase()!=='SCRIPT'&&!(n.classList&&n.classList.contains('toasts'))&&!(n.hasAttribute&&n.hasAttribute('data-keep-live')));
       for(const n of inerted)n.inert=true;
       if(!ui.bound){doc.addEventListener('fullscreenchange',onFullscreenChange);ui.bound=true}
       doc.addEventListener('keydown',onDocKey,true);
@@ -1178,6 +1255,11 @@
       playbackTimer=every(checkPlayback,PLAYBACK_CHECK_MS);
       pollTimer=every(pollGraph,GRAPH_POLL_MS);
       log('opened',{presentation_id:S.pid,via:opts.via||'api'});
+      /* Dit à la page que le Studio est ouvert : le rail des présentations se range à gauche du Studio, la voix et le rail restent utilisables. */
+      if(typeof win.dispatchEvent==='function'&&typeof win.CustomEvent==='function'){
+        try{win.dispatchEvent(new win.CustomEvent('jarvis:studio-explorer-opened',{detail:{presentation_id:S.pid}}))}
+        catch(error){log('opened_event_failed',{error:describe(error)},'warn')}
+      }
       /* Le plein écran se demande tout de suite : on est encore dans le geste de l'utilisateur quand il y en a un. */
       const wantFullscreen=opts.fullscreen!==false;
       const fullscreenDone=wantFullscreen?requestFullscreen(opts.arm_s):Promise.resolve({state:'not_requested'});

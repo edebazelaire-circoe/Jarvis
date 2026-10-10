@@ -552,9 +552,14 @@ PRESENTATION = ServerMeta(
             parameter_rules=(_IDS_RULE, "target scene exige scene_id", "target template exige template_id"),
             output_notes=("liste bornée : {items, total} ; titres et étiquettes d'auteur listés dans untrusted ; la partition est rendue sans ses textes",)),
         "presentation_view": ToolMeta(
-            "Explorateur et plein écran", "write", True, "single_request", "untyped",
-            parameter_rules=("explorer_open : refusé pendant une lecture", "needs_gesture=true : un clic de l'utilisateur est attendu, le plein écran n'est pas actif"),
+            "Studio, fenêtre, rail et plein écran", "write", True, "single_request", "untyped",
+            parameter_rules=("explorer_open (le Studio) : refusé pendant une lecture", "needs_gesture=true : un clic de l'utilisateur est attendu, le plein écran n'est pas actif",
+                             "window_open / rail_* : demande d'écran, relire inspect target rail"),
             output_notes=(_SILENT_NOTE, "mode : windowed, fullscreen_armed ou fullscreen, constaté par la page")),
+        "presentation_library": ToolMeta(
+            "Rail : masquer, archiver, renommer", "destructive", True, "single_request", "untyped",
+            parameter_rules=(_IDS_RULE, "archive : confirmed=true après le oui de l'utilisateur (restaurable, rien n'est supprimé)", "rename exige title"),
+            output_notes=(_SILENT_NOTE, "hidden / archived : l'état persistant après l'opération")),
         "presentation_play": ToolMeta(
             "Lire, répéter, naviguer", "write", False, "single_request", "untyped",
             parameter_rules=(_IDS_RULE, "goto : exactement un de item_id, scene_id, position", "reveal / hide : anchor_id",

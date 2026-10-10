@@ -99,6 +99,12 @@ class PresentationStudioStore(Protocol):
     def write_variant(self, presentation_id: str, variant_id: str, text: str) -> None:
         """Remplace (ou crée) une variante, atomiquement : l'ancien texte entier ou le nouveau, jamais un mélange."""
 
+    def read_rail(self, presentation_id: str) -> str:
+        """Texte de `rail.json` (masquee / archivee dans le rail), `""` s'il n'existe pas."""
+
+    def write_rail(self, presentation_id: str, text: str) -> None:
+        """Remplace `rail.json`, atomiquement. Un fichier a cote du manifeste : le manifeste (schema) ne bouge pas."""
+
     def write_manifest(self, presentation_id: str, text: str) -> None:
         """Remplace `presentation.json`, atomiquement. Écrit **en dernier** quand une opération touche plusieurs fichiers."""
 

@@ -37,7 +37,7 @@ async def test_the_status_names_the_active_board_and_the_open_session(stack):
     boards = await _boards(stack.control)
 
     assert boards["available"] is True and boards["error"] is None
-    assert boards["active"] == {"board_id": DEFAULT_BOARD_ID, "title": boards["active"]["title"]}
+    assert boards["active"] == {"board_id": DEFAULT_BOARD_ID, "title": boards["active"]["title"], "board_kind": boards["active"]["board_kind"]}
     assert boards["active"]["title"]
     assert boards["jarvis_session_id"] == current.session.jarvis_session_id
     assert {"board_id": DEFAULT_BOARD_ID, "lifecycle": "foreground", "agent_cli": boards["bindings"][0]["agent_cli"],
@@ -56,7 +56,7 @@ async def test_a_switch_made_elsewhere_reaches_the_status_with_the_left_board_wo
 
     boards = await _boards(stack.control)
 
-    assert boards["active"] == {"board_id": b, "title": "Projet B"}
+    assert boards["active"] == {"board_id": b, "title": "Projet B", "board_kind": boards["active"]["board_kind"]}
     lifecycles = {row["board_id"]: row["lifecycle"] for row in boards["bindings"]}
     assert lifecycles == {DEFAULT_BOARD_ID: "background_running", b: "foreground"}
 

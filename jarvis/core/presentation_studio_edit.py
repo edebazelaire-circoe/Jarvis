@@ -110,9 +110,16 @@ class PresentationStudioEditService:
         self._new_variant_id = new_variant_id
         self._sources: deque[SourceRequestRecord] = deque(maxlen=MAX_SOURCE_REQUESTS)
         self._listeners: list[CommitListener] = []
+        self._failure_listeners: list[Callable[[str, str], None]] = []
 
     def add_commit_listener(self, listener: CommitListener) -> None:
         self._listeners.append(listener)
+
+    def add_failure_listener(self, listener: Callable[[str, str], None]) -> None:
+        """Un abonne synchrone `(presentation_id, code)` appele quand une ecriture d'edition tombe en panne (le rail : pastille orange).
+        Une panne d'abonne est tracee, jamais propagee."""
+
+        self._failure_listeners.append(listener)
 
     # ------------------------------------------------------------ lecture
 
@@ -467,6 +474,12 @@ class PresentationStudioEditService:
             return None
 
     def _events_failed(self, context: "_Context", code: str, revision: int) -> None:
+        for listener in tuple(self._failure_listeners):
+            try:
+                listener(context.presentation_id, code)
+            except Exception as exc:  # noqa: BLE001 - a display listener never changes an edit's outcome
+                self._trace("core.presentation_studio.failure_listener_failed", "Abonne d'echec en echec", level="warning",
+                            data={"error_class": type(exc).__name__})
         if self._events is None:
             return
         try:

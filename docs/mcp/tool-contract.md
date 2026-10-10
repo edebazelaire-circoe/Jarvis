@@ -112,7 +112,7 @@ ever enters a descriptor.
 | `scene` | Étoiles / Scène | all `jarvis-display` tools |
 | `settings` | Réglages | `settings_describe`, `settings_get`, `settings_set` (`jarvis-console`) |
 | `workspace` | Boards et mémoire | the twenty `jarvis-workspace` tools (§10.12): the nine Board/Session tools (§10.9, moved from `jarvis-console`), Session history, Board inspection, Board memory, Board-artifact links, plus the five `jarvis-memory` tools (§10.16: memory and knowledge search, read, propose) |
-| `presentation` | Présentations | the twelve `jarvis-presentation` tools (§10.15): inspect, explorer and full screen, playback, semantic edits, undo, variants, comparison, composition, templates, drafting |
+| `presentation` | Présentations | the thirteen `jarvis-presentation` tools (§10.15): inspect, explorer and full screen, playback, semantic edits, undo, variants, comparison, composition, templates, drafting |
 | `capture` | Captures et preuves | the nine `jarvis-capture` tools (§10.11): Contexts, recordings, screenshots, evidence search and transcript reads |
 | `barehands` | Bare Hands | all 16 `jarvis-barehands` tools (`barehands_*` and `calibration_*`, §6) |
 | `external` | Externe | `jarvis-drive` (decision below); *(plugin amendment, implemented by Slice 04)* every managed plugin server |
@@ -1374,9 +1374,9 @@ and execution: [../tool-brain-contracts.md](../tool-brain-contracts.md) section 
 
 ### 10.15 Interactive-presentation-studio, Slice 21 - `jarvis-presentation` (Presentation Studio operations)
 
-Twelve tools, one closed `op` per domain, all `output.format = untyped` (a bounded JSON object with `speech`, see below), no `ui_surface`
+Thirteen tools, one closed `op` per domain, all `output.format = untyped` (a bounded JSON object with `speech`, see below), no `ui_surface`
 (they are not Tool Brain operations). Reference and examples: [../presentation-studio.md](../presentation-studio.md) > *Agent and voice operations*.
-`presentation_inspect` (read), `presentation_view`, `presentation_play`, `presentation_edit`, `presentation_undo`, `presentation_variant` (destructive class:
+`presentation_inspect` (read), `presentation_view`, `presentation_library` (rail: hide, archive with the user's yes, rename; added by the presentation rail rework, see presentation-studio.md > *Rail des presentations*; context budget 16 849 -> 18 495 B, ceiling 18 600, whole-surface ceiling 111 500), `presentation_play`, `presentation_edit`, `presentation_undo`, `presentation_variant` (destructive class:
 archive), `presentation_compare`, `presentation_compose`, `presentation_template`, `presentation_draft_check` (read), `presentation_draft_assemble`,
 `presentation_draft_finalize` (the three operation names the Slice 11 planner prompt already used). Measured 16 849 bytes of model-visible context
 (budget 17 100); the whole-surface budget `DECLARED_CONTEXT_BUDGET_BYTES` rose from 84 000 to 101 075 for this server only (83 475 + 17 100 + 500 margin).
@@ -1409,7 +1409,7 @@ Tests: `tests/unit/test_memory_mcp.py`.
 
 ### 10.17 Jarvis-remotion-presentation-integration, Slice 21 - `jarvis-remotion` (Remotion capability for the brain)
 
-A **separate** server (category `presentation`, `condition = scene.enabled`, no `ui_surface`) so the `jarvis-presentation` budget (17 100 B, twelve tools) is untouched.
+A **separate** server (category `presentation`, `condition = scene.enabled`, no `ui_surface`) so the `jarvis-presentation` budget (18 600 B, thirteen tools) is untouched.
 Six tools, `output.format = untyped`: `remotion_status` (read: `capability` with the default engine read-only, `studio`, `exports`, `export`), `remotion_setup`
 (`install` / `repair`), `remotion_studio` (read class: returns a pointer to the Control Center card, never opens), `remotion_export` (`start` / `cancel`),
 `remotion_import` (`plan` / `execute`), `remotion_upgrades` (`notices` / `try`). Reference, guards and tests: [../remotion-runtime.md](../remotion-runtime.md) section 13.

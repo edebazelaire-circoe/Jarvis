@@ -44,6 +44,7 @@ FORWARDABLE_PREFIXES = ("/v1/boards", "/v1/sessions", "/v1/mcp/plugins", "/v1/mc
                         "/v1/prefabs", "/v1/presentation-studio/presentations", "/v1/presentation-studio/playback",
                         "/v1/presentation-studio/authoring", "/v1/presentation-studio/templates",
                         "/v1/presentation-studio/engine",  # vue du moteur, lecture seule (remotion-integration S20)
+                        "/v1/presentation-studio/rail",  # rail des presentations : liste, etat de travail, rapport d'ecran (relais `presentation_studio_relay.py`)
                         "/v1/memory/", "/v1/remotion/",
                         # Carte Remotion du Control Center (jarvis-remotion-presentation-integration, Slice 11) : l'état de la capacité et le
                         # Studio optionnel ; le relais (`remotion_studio_relay.py`) n'appelle que six adresses, jamais l'installation.
@@ -830,6 +831,30 @@ class LocalCoreClient:
         """`GET .../presentations` : `{presentations: [résumé], problems: [{presentation_id, code, message}]}`."""
 
         return await self._studio("GET", "", params=None if limit is None else {"limit": str(limit)})
+
+    async def presentation_studio_rail(self) -> dict[str, Any]:
+        """`GET /v1/presentation-studio/rail` : toutes les presentations avec `hidden`, `archived`, `work` (bleu/vert/orange) et `ui`."""
+
+        session = await self._http()
+        async with session.get(f"{self.base_url}/v1/presentation-studio/rail", headers=self.headers) as response:
+            return await self._json(response)
+
+    async def presentation_studio_rail_act(self, presentation_id: str, body: Mapping[str, Any]) -> dict[str, Any]:
+        """`POST .../presentations/{id}/rail` `{action: hide|show|archive|restore|rename|acknowledge, actor, confirmed?, title?}`."""
+
+        return await self._studio("POST", f"/{quote(presentation_id, safe='')}/rail", body=dict(body))
+
+    async def presentation_studio_work(self, presentation_id: str, body: Mapping[str, Any]) -> dict[str, Any]:
+        """`POST .../presentations/{id}/work` `{event: begin|success|failure|ack, label?, code?, message?}` : etat de travail (memoire de Core)."""
+
+        return await self._studio("POST", f"/{quote(presentation_id, safe='')}/work", body=dict(body))
+
+    async def presentation_studio_rail_display(self, body: Mapping[str, Any]) -> dict[str, Any]:
+        """`POST /v1/presentation-studio/rail/display` `{action, presentation_id?}` : une demande d'ecran que la page applique."""
+
+        session = await self._http()
+        async with session.post(f"{self.base_url}/v1/presentation-studio/rail/display", headers=self.headers, json=dict(body)) as response:
+            return await self._json(response)
 
     async def presentation_studio_create(self, title: str) -> dict[str, Any]:
         """`POST .../presentations` `{title}` : `{presentation, variants}` (variante n° 1 active)."""

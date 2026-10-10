@@ -360,7 +360,7 @@ async def test_a_complete_flow_with_the_keyboard_alone(tmp_path):
         assert json.loads(reads["after_escape"]) == {"dialog": None, "focus": "treeitem"}, "Escape cancels the rename and the focus is back on the row"
         assert reads["after_rename_focus"] == "treeitem"
         assert reads["after_tabs"] != "treeitem" and "button" not in reads["after_tabs"].lower() or True
-        assert reads["scene_after_keys"] == S3
+        assert reads["scene_after_keys"] == S3, (reads["after_tabs"], reads["scene_after_keys"])
         assert reads["back_in_tree"] == "treeitem"
         assert json.loads(reads["menu"]) == [True, "Brancher"] and json.loads(reads["after_menu"]) == [False, "treeitem"]
         assert reads["dialog_focus"] == "Annuler"
@@ -453,7 +453,7 @@ async def test_the_workspace_fills_the_screen_at_three_sizes_with_nothing_clippe
         geometry = """(()=>{
           const r=s=>{const e=document.querySelector('#jvStudioExplorer '+s);if(!e)return null;const b=e.getBoundingClientRect();return [Math.round(b.left),Math.round(b.top),Math.round(b.right),Math.round(b.bottom)]};
           const body=r('.jvx-body');
-          return {hostRect:(()=>{const b=document.querySelector('#jvStudioExplorer').getBoundingClientRect();return [b.left,b.top,b.right,b.bottom]})(),
+          return {docked:document.documentElement.classList.contains('jvr-studio'),hostRect:(()=>{const b=document.querySelector('#jvStudioExplorer').getBoundingClientRect();return [b.left,b.top,b.right,b.bottom]})(),
             body,tree:r('.jvx-treepane'),stage:r('.jvx-stage'),strip:r('.jvx-strip'),actions:r('.jvx-actions'),meta:r('.jvx-meta'),close:r('.jvx-top-actions .jvx-btn:last-child'),
             overflowX:document.documentElement.scrollWidth>innerWidth,docScroll:[document.documentElement.scrollWidth,innerWidth],
             hostScroll:[document.querySelector('#jvStudioExplorer').scrollHeight,document.querySelector('#jvStudioExplorer').clientHeight]}})()"""
@@ -473,7 +473,8 @@ async def test_the_workspace_fills_the_screen_at_three_sizes_with_nothing_clippe
         reads = result["reads"]
         assert "failed" not in reads, reads.get("failed")
         geo = reads["geometry"]
-        assert geo["hostRect"] == [0, 0, width, height], "the workspace covers the whole screen"
+        # The presentation rail docks as a column to the left of the windowed Studio (rail rework): the workspace covers the rest of the screen.
+        assert geo["docked"] is (width >= 900) and geo["hostRect"] == [0 if width < 900 else 60 if width < 1100 else 188, 0, width, height],             "the workspace covers the whole screen right of the docked rail (a strip of tiles on a narrow screen, no rail below 900 px)"
         assert geo["overflowX"] is False and geo["hostScroll"][0] <= geo["hostScroll"][1] + 1, f"nothing scrolls the workspace itself: {geo}"
         for key in ("tree", "stage", "strip", "actions", "meta", "close"):
             box = geo[key]

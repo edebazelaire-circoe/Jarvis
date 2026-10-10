@@ -1,13 +1,14 @@
 """Serveur MCP stdio « jarvis-presentation » : le Presentation Studio pour le cerveau (jarvis-interactive-presentation-studio, Slice 21).
 
-Douze outils sémantiques, une opération fermée (`op`) par domaine, des ids lus dans l'état. **Une façade, jamais un propriétaire** :
+Treize outils sémantiques, une opération fermée (`op`) par domaine, des ids lus dans l'état. **Une façade, jamais un propriétaire** :
 Core possède la présentation, ses variantes, sa lecture ; la page possède l'explorateur et le plein écran. Ce serveur est la **seule porte
 `brain`** : il pose l'acteur `brain` lui-même et n'envoie jamais l'origine d'un démarrage (voir `presentation_studio_mcp_tools`).
 
 | Outil | Rôle |
 | --- | --- |
 | `presentation_inspect` | état courant et ids valides (lecture ciblée : présentations, variantes, scène, partition, historique, lecture, comparaison, modèles) |
-| `presentation_view` | explorateur de variantes, plein écran (explorateur, scène de lecture) |
+| `presentation_view` | Studio (explorateur de variantes), fenêtre d'une présentation, rail, plein écran (explorateur, scène de lecture) |
+| `presentation_library` | rail : masquer / afficher, archiver / restaurer (avec accord), renommer, acquitter la pastille orange |
 | `presentation_play` | lire, répéter, naviguer (scène, partition, ancres) |
 | `presentation_edit` | éditions sémantiques et variantes de scène (ordres fermés, révision de base) |
 | `presentation_undo` | annuler / rétablir (`expected_entry_id` lu dans l'historique) |
@@ -169,8 +170,8 @@ def build_server(target: PresentationMcpTarget | None = None, *, tools: Presenta
     @mcp.tool(annotations=tool_annotations(SERVER_NAME, "presentation_inspect"))
     async def presentation_inspect(
         target: Annotated[Literal["overview", "presentation", "variant", "scene", "score", "history", "playback", "compare", "composition",
-                                  "templates", "template", "explorer", "choices", "draft_guide"],
-                          Field(description="Quoi lire. overview : présentations + lecture + explorateur ; presentation : graphe des variantes ; "
+                                  "templates", "template", "explorer", "choices", "draft_guide", "rail"],
+                          Field(description="Quoi lire. overview : présentations (masquée, archivée, travail) + lecture + explorateur ; rail : état du rail et de l'écran ; presentation : graphe des variantes ; "
                                             "variant : scènes ; scene : contrôles, bornes, variantes de scène ; score : items sans texte ; "
                                             "choices : tous les ids valides ; draft_guide : clés exactes et exemple valide d'un brouillon.")],
         presentation_id: PresentationId = None,
@@ -186,17 +187,31 @@ def build_server(target: PresentationMcpTarget | None = None, *, tools: Presenta
 
     @mcp.tool(annotations=tool_annotations(SERVER_NAME, "presentation_view"))
     async def presentation_view(
-        op: Annotated[Literal["explorer_open", "explorer_close", "stage_fullscreen_enter", "fullscreen_exit"],
-                      Field(description="Explorateur de variantes ; plein écran de la scène de lecture ; sortie du plein écran.")],
+        op: Annotated[Literal["explorer_open", "explorer_close", "stage_fullscreen_enter", "fullscreen_exit", "window_open", "window_close",
+                              "rail_show", "rail_hide"],
+                      Field(description="explorer_open : le Studio d'édition (toutes les slides, variantes) ; window_open : la fenêtre de la "
+                                        "présentation ; rail_show / rail_hide : le rail ; plein écran de la scène de lecture ; sortie du plein écran.")],
         presentation_id: PresentationId = None,
         variant_id: VariantId = None,
-        fullscreen: Annotated[bool, Field(description="explorer_open : demander le plein écran.")] = True,
+        fullscreen: Annotated[bool, Field(description="explorer_open : demander le plein écran (faux : le Studio reste à côté du rail).")] = True,
     ) -> dict[str, Any]:
-        """Ouvrir ou fermer l'explorateur de variantes, entrer ou sortir du plein écran.
+        """Ouvrir ou fermer le Studio (explorateur de variantes), la fenêtre d'une présentation, le rail ; plein écran.
 
-        Le plein écran exige un clic de l'utilisateur : needs_gesture=true veut dire qu'il n'y est pas encore. Refusé pendant une lecture
-        (explorateur)."""
+        Le plein écran exige un clic de l'utilisateur : needs_gesture=true veut dire qu'il n'y est pas encore. Le Studio est refusé pendant
+        une lecture. window_* et rail_* sont des demandes d'écran : relis presentation_inspect target rail. Une archivée ne s'ouvre pas."""
         return await studio.view(op, presentation_id=presentation_id, variant_id=variant_id, fullscreen=fullscreen)
+
+    @mcp.tool(annotations=tool_annotations(SERVER_NAME, "presentation_library"))
+    async def presentation_library(
+        op: Annotated[Literal["hide", "show", "archive", "restore", "rename", "acknowledge"],
+                      Field(description="hide / show : retirer de / remettre dans le rail ; archive / restore : supprimer (restaurable) / rendre ; "
+                                        "rename ; acknowledge : effacer la pastille orange.")],
+        presentation_id: PresentationId = None,
+        title: Annotated[str | None, Field(max_length=80, description="rename : le nouveau titre, une ligne.")] = None,
+        confirmed: Annotated[bool | None, Field(description="archive : l'utilisateur a dit oui.")] = None,
+    ) -> dict[str, Any]:
+        """Gérer une présentation dans le rail : masquer, archiver, renommer. Archiver demande d'abord l'accord de l'utilisateur."""
+        return await studio.library(op, presentation_id=presentation_id, title=title, confirmed=confirmed)
 
     @mcp.tool(annotations=tool_annotations(SERVER_NAME, "presentation_play"))
     async def presentation_play(

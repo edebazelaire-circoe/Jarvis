@@ -1304,7 +1304,7 @@
       pendingDrafts:[...sessions.values()].filter((s)=>s.dirty).map((s)=>s.id)});
 
     return Object.freeze({install,open,close,toggle,destroy,view,stats:()=>Object.assign({},stats),refresh:()=>loadPresentations(),
-      checkAvailability,pollReloads,selectScene:chooseScene,selectTab,runHistory,loadScene,
+      checkAvailability,pollReloads,selectScene:chooseScene,selectTab,runHistory,loadScene,selectPresentation,
       widget:(id)=>widgets.get(id)||null,element:()=>ui.root,dockButton:()=>ui.dock,previewHost:()=>previewHost});
   }
 

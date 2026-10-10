@@ -562,6 +562,13 @@ STUDIO_EXPLORER_SCRIPT_MARKER = "/*__CONTROL_CENTER_PRESENTATION_STUDIO_EXPLORER
 # Lecture d'une presentation (studio, Slice 12) : bande d'etat + clavier sur l'hote du stage ; apres le plein ecran qu'il pilote.
 STUDIO_PLAYER_SCRIPT_FILE = "control_center_presentation_studio_player.js"
 STUDIO_PLAYER_SCRIPT_MARKER = "/*__CONTROL_CENTER_PRESENTATION_STUDIO_PLAYER_JS__*/"
+#: Rail permanent des presentations et fenetre d'une presentation : le rail (bord gauche, a droite de la palette) liste toutes les presentations avec
+#: leur pastille d'etat (bleu : un agent travaille, vert : termine, orange : probleme), le clic droit offre Ouvrir / Studio / Editer / Jouer / Masquer /
+#: Renommer / Supprimer (archiver) ; la fenetre est le lecteur flottant non modal. Apres le lecteur, l'inspecteur et l'explorateur qu'ils lisent a la demande.
+PRESENTATION_WINDOW_SCRIPT_FILE = "control_center_presentation_window.js"
+PRESENTATION_WINDOW_SCRIPT_MARKER = "/*__CONTROL_CENTER_PRESENTATION_WINDOW_JS__*/"
+PRESENTATION_RAIL_SCRIPT_FILE = "control_center_presentation_rail.js"
+PRESENTATION_RAIL_SCRIPT_MARKER = "/*__CONTROL_CENTER_PRESENTATION_RAIL_JS__*/"
 # Inspecteur d'edition (studio, Slice 07) : panneau du dock `INS`, widgets generes de l'introspection, ecritures par le relais.
 # Apres la bande de lecture dont il lit l'etat (`JarvisStudioPlayer.view()`) pour se cacher entierement pendant une lecture.
 # Trois fichiers, dans cet ordre : fonctions pures + CSS, widgets générés, contrôleur (le seul qui s'installe et publie `window.JarvisStudioInspector`).
@@ -2303,6 +2310,14 @@ class ControlCenter:
             page.with_name(STUDIO_PLAYER_SCRIPT_FILE).read_text(encoding="utf-8"),
         )
         html = html.replace(
+            PRESENTATION_WINDOW_SCRIPT_MARKER,
+            page.with_name(PRESENTATION_WINDOW_SCRIPT_FILE).read_text(encoding="utf-8"),
+        )
+        html = html.replace(
+            PRESENTATION_RAIL_SCRIPT_MARKER,
+            page.with_name(PRESENTATION_RAIL_SCRIPT_FILE).read_text(encoding="utf-8"),
+        )
+        html = html.replace(
             STUDIO_INSPECTOR_CORE_SCRIPT_MARKER,
             page.with_name(STUDIO_INSPECTOR_CORE_SCRIPT_FILE).read_text(encoding="utf-8"),
         )
@@ -2632,7 +2647,7 @@ class ControlCenter:
         foreground = self.board_brains.foreground
         return {
             "available": active.supported and board is not None,
-            "active": {"board_id": board.get("board_id"), "title": board.get("title")} if board else None,
+            "active": {"board_id": board.get("board_id"), "title": board.get("title"), "board_kind": board.get("board_kind")} if board else None,
             "jarvis_session_id": foreground.jarvis_session_id,
             "bindings": [
                 {"board_id": row["board_id"], "lifecycle": row["lifecycle"], "agent_cli": row["agent_cli"],

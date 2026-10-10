@@ -47,7 +47,7 @@ untime/control_center_presentation_studio_explorer_compare*.js, ..._compose.js |
 | Template / promotion | scene, DA or motion promoted: a scene's reusable code published to the shared prefab library; a whole presentation promoted as ONE `ptp_` artefact (embedded sources, score skeleton, catalog block), nothing published to the library; Remotion-aware; project content stripped or parameterized, provenance and licence kept | `jarvis/domain/presentation_studio_template{,_sanitize,_remotion,_score}.py`, `core/presentation_studio_template{,_embed}.py`, `adapters/file_presentation_template_store.py` | [Template and prefab promotion contract](#template-and-prefab-promotion-contract-level-3-slice-20), Slice 20, Remotion Slice 19 | **implemented (Level 3)** |
 | Newer prefab version, trial variant | a pinned scene is told a newer immutable version exists; "try it" creates a child variant; never an auto-upgrade, adoption is explicit | `jarvis/core/presentation_studio_upgrades.py`, `protocol/presentation_studio_upgrades_routes.py`, `runtime/presentation_studio_upgrades_relay.py` | [Newer prefab versions and trial variants](#newer-prefab-versions-and-trial-variants-level-3-remotion-slice-19), Remotion Slice 19 | **implemented (Level 3)** |
 | Generic fullscreen surface | real browser fullscreen of a host element; armed request + user gesture; explicit `needs_gesture` / `unsupported` | `jarvis/domain/surface_fullscreen.py`, `runtime/control_center_fullscreen.js` | Slice 03 | implemented (Level 3) |
-| Agent / voice operations | one MCP server `jarvis-presentation`, twelve `presentation_*` tools, ids read from the state (`presentation_inspect`), the only `brain` door, destructive gestures behind the canonical confirmation | `jarvis/runtime/presentation_studio_mcp{,_tools,_support}.py`, `runtime/presentation_studio_turn.py` | Slice 21, [Agent and voice operations](#agent-and-voice-operations-level-3-slice-21), [mcp/tool-contract.md](mcp/tool-contract.md) | **implemented (Level 3)**; real-model traces: 5 scenarios, limited |
+| Agent / voice operations | one MCP server `jarvis-presentation`, thirteen `presentation_*` tools, ids read from the state (`presentation_inspect`), the only `brain` door, destructive gestures behind the canonical confirmation | `jarvis/runtime/presentation_studio_mcp{,_tools,_support}.py`, `runtime/presentation_studio_turn.py` | Slice 21, [Agent and voice operations](#agent-and-voice-operations-level-3-slice-21), [mcp/tool-contract.md](mcp/tool-contract.md) | **implemented (Level 3)**; real-model traces: 5 scenarios, limited |
 
 Exact names (ids, routes, events, tools): `tasks/jarvis-interactive-presentation-studio/docs/09-canonical-names.md`; the Presentation ids, routes, error codes and storage tree are now stated in the contract section below (Slice 02).
 
@@ -169,6 +169,7 @@ Versioning is therefore per file (`schema_version` + `UPGRADES`), not `_MIGRATIO
 
 ```
 <data_root>/presentations/<presentation_id>/presentation.json
+<data_root>/presentations/<presentation_id>/rail.json            # rail display state: hidden, archived (no schema bump, see *Rail des presentations*)
 <data_root>/presentations/<presentation_id>/variants/<variant_id>.json
 <data_root>/presentations/<presentation_id>/scores/<score_id>.json     # Slice 10
 <data_root>/presentations/<presentation_id>/art_directions/<art_direction_id>.json   # Slice 09
@@ -3327,18 +3328,130 @@ Rules for the tool layer: it sets `actor: "brain"` itself, never from the model'
 | item matching by text similarity | not done: `item_id`, then scene and rank |
 | orphan `compositions/*.json` after a hard stop | harmless; not listed by the reconciliation report yet (variant and linked-document orphans are) |
 
+## Rail des presentations (Level 3, display rework)
+
+Status: implemented. Owners: `jarvis/core/presentation_studio_rail.py` (Core: flags, work state, screen requests), `jarvis/adapters/file_presentation_studio_store.py`
+(`read_rail` / `write_rail`), `jarvis/protocol/presentation_studio_rail_routes.py` (Core routes), `jarvis/runtime/presentation_studio_relay.py` (relay, actor forced to `user`),
+`control_center_presentation_rail.js` (the rail), `control_center_presentation_window.js` (the window), `control_center_presentation_studio_explorer.js` (the Studio), and the
+`presentation_*` MCP tools. Conformance: `tests/unit/test_presentation_studio_rail.py` (real Core, real file store, MCP tools),
+`tests/unit/test_control_center_presentation_rail_browser.py` (real Chrome, served page, in-page relay double).
+
+**What the user sees.** A discreet column at the left edge, just right of the tool palette (`#barehandsPalette`, 64 px at 18 px; the rail starts at 94 px), that lists every
+presentation: a monogram tile (hue from the id), a short title (22 characters, full title in the tooltip) and a status dot. Several presentations live in parallel: an agent can
+correct one while the user looks at another. The dot is **blue** (an agent is working on it), **green** (finished, or nobody touched it) or **orange** (a problem happened; the
+tooltip says what; it stays until acknowledged or until the next work). The header carries the voice state (the voice stays usable while anything is displayed), a focus switch
+and a collapse button; the `PRS` dock button cycles *automatic / always / hidden*.
+
+**When it is visible** (pure rule `shouldShow`): preference `shown`; or, in `auto`, at least one presentation and (the active Board's nature is `presentation` (`/api/status.boards.active.board_kind`),
+or the interaction mode is `presentation`, or an agent works or a problem waits, or the window or the Studio is open). Preference `hidden` shows it only when the brain asks (`rail_show`).
+Collapsed, it is a strip of tiles with their dots.
+
+### Persistent state: hidden and archived (file store, no schema bump)
+
+The new notion lives at presentation level (until now only a scene or an anchor could be hidden). It is stored in `<data_root>/presentations/<presentation_id>/rail.json`,
+**beside** `presentation.json`, written atomically like every other document (`_write_file`: temporary, `fsync`, `replace_with_retry`, folder flush):
+
+```json
+{"schema": "jarvis.presentation_studio.rail", "schema_version": 1, "hidden": false, "archived": false, "hidden_at": null, "archived_at": null}
+```
+
+Why a sidecar and not a field of `presentation.json`: the manifest is `schema_version` 3 with the unknown-key refusal, so a field would be a version bump, an `UPGRADES` step, fixtures and a
+format a *downgraded* JARVIS refuses; a display preference is not part of the presentation's content and must not change its `revision` (a hide never makes an in-flight edit stale). A missing file
+means *visible, not archived*. A newer `schema_version` or an unreadable file is reported in the `problems` of the rail listing (the presentation still lists, as visible), never guessed.
+There is no `_MIGRATIONS` entry (this is a file store, not `jarvis.sqlite3`; see *Storage*), and `*.<8 hex>.tmp` leftovers are swept by the existing startup sweep.
+
+- **Hide / show**: the presentation leaves (returns to) the rail. It stays readable, playable and listed by `presentation_inspect`. The rail keeps it under a folded *Masquees* group.
+- **Archive** ("Supprimer", restorable): the presentation leaves the rail (folded *Archivees* group), and refuses to be opened, studied or played until restored. **Nothing is deleted**: the folder, its
+  variants and its documents stay as they were. Refused while the presentation is being played (`presentation_studio_variant_in_playback`). The Control Center asks for a confirmation
+  first (Cancel by default); the brain must pass `confirmed=true` after the user said yes, or Core answers `presentation_studio_confirmation_required`.
+- **Rename**: the existing revisioned save (`PUT` presentation), title trimmed and bounded (80). Unchanged title: `changed: false`, no write.
+
+### Work state (memory only)
+
+`PresentationWorkTracker` keeps, per presentation, `working` / `done` / `problem` with a monotonic clock. Runtime state is never persisted (same rule as playback state): a Core restart forgets it, every
+presentation is `done` again.
+
+| Event | Source | Effect |
+| --- | --- | --- |
+| `begin` | an MCP tool that writes (`presentation_edit`, `_undo`, `_variant`, `_compose`, `_template`, `_draft_assemble`, `_draft_finalize`) with a known presentation | `working`, valid 90 s |
+| `success` | the same tool, on success (also for a refusal the agent corrects: stale revision, unknown id, confirmation, refused draft) | `working` for 20 s more, then `done` |
+| `failure` | the same tool, on a real failure (Core down, storage, corrupt document, engine unavailable...), or the edit service failing a write | `problem`, with code and message, until `ack` or the next `begin` |
+| `ack` | the user ("Acquitter le probleme") or `presentation_library acknowledge` | back to `done` |
+| edit commit | `edit_committed` (commit listener) | prolongs a work in progress; **never starts one** (the user's own edit is not agent work) |
+
+Plan-only operations (`plan`, `archive_plan`, `check`, scene previews) do not count as work. `presentation_draft_assemble` has no id before the call: its success lights the dot of the new presentation.
+The tracker's `revision` counts visible changes (the listing carries it as `work_revision`).
+
+### Screen requests (memory only)
+
+The brain asks, Core remembers the last numbered request (`ui.request`: `open_window`, `close_window`, `show_rail`, `hide_rail`; `fresh` for 30 s), the page applies each `seq` once and reports what it
+sees (`rail_visible`, `window_open`, `presentation_id`, `applied_seq`) to `ui.reported`, a dated mirror (`reported_s_ago`): the tool answers `requested`, never "done", and `presentation_inspect target rail`
+(`screen`) is how to confirm. A request older than its freshness window is not replayed by a page that loads later.
+
+### Routes
+
+| Method | Core route | Body -> answer |
+| --- | --- | --- |
+| GET | `/v1/presentation-studio/rail` | `{presentations: [{...summary, hidden, archived, work: {state, label, age_s, code?, message?}}], problems, work_revision, ui, playing}`, visible then hidden then archived, newest first |
+| POST | `/v1/presentation-studio/presentations/{id}/rail` | `{action: hide|show|archive|restore|rename|acknowledge, actor?: user|brain, confirmed?, title?}` -> `{presentation_id, action, changed, hidden, archived, restorable}` |
+| POST | `/v1/presentation-studio/presentations/{id}/work` | `{event: begin|success|failure|ack, label?, code?, message?}` -> `{presentation_id, work}` (brain door, not relayed) |
+| POST | `/v1/presentation-studio/rail/display` | `{action, presentation_id?}` -> `{seq, request, reported}` (brain door, not relayed) |
+| POST | `/v1/presentation-studio/rail/display-state` | `{rail_visible, window_open, presentation_id, applied_seq?}` -> same (page report, relayed) |
+
+The Control Center relays `GET /api/presentation-studio/rail`, `POST /api/presentation-studio/rail/display-state` and `POST .../presentations/{id}/rail` (actor **forced to `user`**).
+Typed client: `LocalCoreClient.presentation_studio_rail`, `_rail_act`, `_work`, `_rail_display`. Errors reuse the existing codes (`presentation_studio_invalid`, `_unknown_presentation`,
+`_confirmation_required`, `_variant_in_playback`, `_corrupt_document`, `_unsupported_schema_version`); diagnostic `core.presentation_studio.rail_changed` (id, action, actor, changed).
+
+### The page
+
+- **Click** = the presentation's window (`JarvisPresentationWindow`): a floating, non-modal player (draggable, resizable) on the **active variant**, one slide at a time with the slide strip, buttons *Plein ecran* (the host goes
+  full screen through `JarvisFullscreen`, arrows / Space / Home / End / F / Esc), *Jouer* (`JarvisStudioPlayer.startRun(id, 'user_presenter')`, the window closes, the real stage takes over), *Studio*, *Fermer*. It re-reads
+  every 5 s: a new variant revision (an agent correcting) or another active variant replaces the display, keeping the slide when it still exists. Its dot follows the work state. It writes nothing (preview frame).
+- **Right click** (or the Menu key, Shift+F10) = **Ouvrir** (window), **Ouvrir le Studio** (the variant explorer, windowed, next to the rail), **Editer** (window + the Inspector panel `INS` selected on this presentation),
+  **Jouer** (`user_presenter`), **Masquer / Afficher dans le rail**, **Renommer...** (F2), **Acquitter le probleme** (only when orange), **Supprimer...** (Delete; archive, with confirmation, restorable).
+  An archived row offers only **Restaurer**. Unavailable entries say why (a run is in progress; this one is being played). The menu and the dialogs belong to the rail (above the Studio, which would hide the page's shared menu).
+- **Focus**: when a presentation turns `working` and nothing is open, its window opens (once per work episode; never over a window the user opened, never during a run or the Studio). The header's focus switch turns it off.
+- **Studio next to the rail**: while the explorer is open windowed, the rail docks as a column at the left of the Studio (`html.jvr-studio`), outside the area made inert (`data-keep-live`), with its voice indicator:
+  the user keeps talking to JARVIS while looking at all slides. Open it with `fullscreen: false`; full screen still works but hides the rail (a full-screen element hides everything else).
+
+### Studio additions (variant explorer)
+
+The explorer is the editing workspace (all slides, variant switching, a precise slide). Added: a **variant bar** above the preview (one numbered chip per live variant, green point on the active one, a click chooses it;
+`[` and `]` step to the previous / next variant; the tree stays the place of branches); **Jouer cette slide** (rehearsal, silent, from the slide being looked at) and **Tout jouer** (from the first slide), both through the
+same playback routes as the voice (`start` with `variant_id` then `goto scene_id`); the Studio closes when the run is applied (one tool at a time, as before). Smoothness of the playback itself is not part of this section.
+
+### MCP (extending the existing tools)
+
+| Tool | Addition |
+| --- | --- |
+| `presentation_inspect` | `overview` rows carry `hidden`, `archived`, `work`, `problem`; `target: rail` also gives `playing` and `screen` (the page's dated report) |
+| `presentation_view` | `window_open` (id), `window_close`, `rail_show`, `rail_hide` (screen requests, answer `requested`); `explorer_open` is the Studio; refused for an archived presentation (`presentation_archived`) |
+| `presentation_play` | `start` refused for an archived presentation |
+| `presentation_library` (new, 13th tool) | `hide`, `show`, `archive` (`confirmed=true` after the user's yes), `restore`, `rename` (`title`), `acknowledge` |
+
+Context budget: `jarvis-presentation` 16 849 -> 18 495 bytes (ceiling 18 600), whole native surface ceiling 110 000 -> 111 500 (deliberate, recorded in `test_mcp_catalog.py` and the tool contract).
+
+### Limits and left to do
+
+- The work state is as good as the tools that report it: an agent that edits through another route (a shell, a source edit through `presentation_edit` is covered) shows green. A restart of Core forgets blue and orange.
+- A screen request is eventually applied (the page polls every 2 s busy, 4 s idle, 20 s hidden tab) and has no receipt; the brain reads `target rail` to confirm.
+- The monogram is a tile, not a rendered thumbnail of the first slide (a real thumbnail needs a render pass per presentation).
+- "Jouer" from the rail uses the `user_presenter` role (the user presents, PRESENTATION mode); rehearsal with Jarvis speaking stays in the player band and the voice tools.
+- The Studio in full screen hides the rail (browser rule); the windowed Studio is the mode that keeps rail and voice visible.
+
 ## Agent and voice operations (Level 3, Slice 21)
 
-Status: implemented by Slice 21. Owners: `jarvis/runtime/presentation_studio_mcp.py` (the FastMCP server `jarvis-presentation`, 12 tools), `presentation_studio_mcp_tools.py` (the logic, `PresentationTools`), `presentation_studio_mcp_support.py` (targets, errors, confirmation ledger), `presentation_studio_turn.py` (turn attestation in the Control Center), `jarvis/runtime/mcp_tool_meta.py` (`PRESENTATION`), the brain prompt `BRAIN_PRESENTATION_PROMPT` plus the Slice 11 planner prompt in the `*_display_studio_*` programs. Conformance: `tests/unit/test_presentation_studio_mcp{,_ops,_policy,_trace}.py`, `test_tool_brain_studio_ownership.py`, `test_mcp_catalog.py`, `test_brain_capability_parity.py`. Evidence: `tasks/jarvis-interactive-presentation-studio/slices/21-agent-voice-operations/evidence/`.
+Status: implemented by Slice 21. Owners: `jarvis/runtime/presentation_studio_mcp.py` (the FastMCP server `jarvis-presentation`, 13 tools), `presentation_studio_mcp_tools.py` (the logic, `PresentationTools`), `presentation_studio_mcp_support.py` (targets, errors, confirmation ledger), `presentation_studio_turn.py` (turn attestation in the Control Center), `jarvis/runtime/mcp_tool_meta.py` (`PRESENTATION`), the brain prompt `BRAIN_PRESENTATION_PROMPT` plus the Slice 11 planner prompt in the `*_display_studio_*` programs. Conformance: `tests/unit/test_presentation_studio_mcp{,_ops,_policy,_trace}.py`, `test_tool_brain_studio_ownership.py`, `test_mcp_catalog.py`, `test_brain_capability_parity.py`. Evidence: `tasks/jarvis-interactive-presentation-studio/slices/21-agent-voice-operations/evidence/`.
 
-There is **no natural-language router and no second UI scheduler**: the brain (Claude) understands the sentence, and calls one of twelve semantic tools with ids it read from the state. A tool is a facade: it calls the Core route (typed `LocalCoreClient`) or the Control Center command channel that already owns the operation, so voice and interface reach the same canonical state through the same validation. The server is the **only `brain` door**: it sets `actor: "brain"` itself (no tool has an `actor` or `origin` argument; a catalogue test fails if one appears), where the Control Center relay forces `user`.
+There is **no natural-language router and no second UI scheduler**: the brain (Claude) understands the sentence, and calls one of thirteen semantic tools with ids it read from the state. A tool is a facade: it calls the Core route (typed `LocalCoreClient`) or the Control Center command channel that already owns the operation, so voice and interface reach the same canonical state through the same validation. The server is the **only `brain` door**: it sets `actor: "brain"` itself (no tool has an `actor` or `origin` argument; a catalogue test fails if one appears), where the Control Center relay forces `user`.
 
-### The twelve tools
+### The thirteen tools
 
 | Tool | `op` / `target` | Calls | Class |
 | --- | --- | --- | --- |
 | `presentation_inspect` | `overview`, `presentation` (variant graph with numbers), `variant` (scenes), `scene` (controls, bounds, current values, scene-local variants), `score` (items **without** `text` / `note`), `history`, `playback`, `compare`, `composition`, `templates`, `template`, `explorer` (dated mirror + full-screen state), `choices` (every valid id), `draft_guide` (exact brief and draft keys and a valid example to adapt; `kind: exploratory` adds six computed, divergent art-direction profiles; no Core call) | the Core reads, the Control Center mirrors | read |
-| `presentation_view` | `explorer_open` (`variant_id?`, `fullscreen?`), `explorer_close`, `stage_fullscreen_enter`, `fullscreen_exit` | `POST /api/presentation-studio/explorer/commands`, `POST /api/fullscreen/commands` | write |
+| `presentation_view` | `explorer_open` (the Studio; `variant_id?`, `fullscreen?`), `explorer_close`, `stage_fullscreen_enter`, `fullscreen_exit`, `window_open` (`presentation_id`), `window_close`, `rail_show`, `rail_hide` | `POST /api/presentation-studio/explorer/commands`, `POST /api/fullscreen/commands`, `POST /v1/presentation-studio/rail/display` | write |
+| `presentation_library` | `hide`, `show`, `archive` (`confirmed=true` after the user's yes), `restore`, `rename` (`title`), `acknowledge` | `POST .../presentations/{id}/rail` | destructive class (archive; nothing is deleted) |
 | `presentation_play` | `start` (`role`, `jarvis_speaks?`), `stop`, `pause`, `resume`, `next`, `previous`, `goto` (one of `item_id`, `scene_id`, `position`), `reveal`, `hide`, `return` | `POST .../playback/{verb}` | write |
 | `presentation_edit` | `ops` (1..16; `control.set`, `control.reset`, `scene.remove`, `scene.reorder`, `scene.rename`, `scene.source_request`, `scene_variant.create`, `scene_variant.rename`, `scene_variant.select`, `scene_variant.delete`), `revision?`, `mode` `preview` or `commit`, `confirmation?` | `POST .../variants/{id}/edits` | write |
 | `presentation_undo` | `direction` `undo` or `redo`, `confirmation?` | `GET .../history`, then `POST .../undo` with `expected_entry_id` | write |

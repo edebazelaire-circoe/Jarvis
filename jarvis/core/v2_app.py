@@ -93,6 +93,7 @@ from jarvis.core.presentation_studio_service import PresentationStudioService
 from jarvis.core.presentation_studio_stage import SceneStage, StageLedger
 from jarvis.core.presentation_studio_variant_events import StudioVariantEvents
 from jarvis.core.presentation_studio_variants import PresentationStudioVariants
+from jarvis.core.presentation_studio_rail import PresentationRail
 from jarvis.core.presentation_working_set import PresentationWorkingSetStore
 from jarvis.core.scene_capture import SceneCaptureBroker
 from jarvis.core.scene_file_watcher import SceneFileWatcher
@@ -479,6 +480,16 @@ class JarvisCoreApplication:
             events=StudioPlaybackEvents(self.conversation_event_emitter, lambda: self.brain.live_conversation_id()))
         # Slice 16 x Slice 12 : la lecture reste liee a sa variante; archiver la variante jouee est refuse.
         self.presentation_studio_variants.bind_playback(self.presentation_studio_playback)
+        # Rail permanent des presentations : masquer / archiver (rail.json a cote du manifeste), etat de travail en memoire (bleu / vert /
+        # orange, alimente par les outils du cerveau, `edit_committed` et les echecs d'edition) et demandes d'ecran du cerveau.
+        self.presentation_studio_rail = PresentationRail(self.presentation_studio)
+        self.presentation_studio_rail.bind_playback(self.presentation_studio_playback)
+
+        async def _rail_edit_committed(presentation_id: str, _variant_id: str, _revision: int, _origin: object | None) -> None:
+            self.presentation_studio_rail.on_edit_committed(presentation_id)
+
+        self.presentation_studio_edit.add_commit_listener(_rail_edit_committed)
+        self.presentation_studio_edit.add_failure_listener(self.presentation_studio_rail.on_edit_failed)
         # Variantes locales d'une scene (Slice 17): lecture, apercu en memoire (la lecture montre l'apercu sur la fenetre de
         # scene, en pause seulement), promotion par l'operation de branche de la Slice 16. Les ecritures sont des operations
         # d'edition (`scene_variant.*`), donc la meme porte que la voix.

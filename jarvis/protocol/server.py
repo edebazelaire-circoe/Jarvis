@@ -46,6 +46,7 @@ from jarvis.protocol.prefab_routes import PrefabProtocolRoutes
 from jarvis.protocol.memory_routes import MemoryProtocolRoutes
 from jarvis.protocol.presentation_studio_playback_routes import PresentationStudioPlaybackRoutes
 from jarvis.protocol.presentation_studio_authoring_routes import PresentationStudioAuthoringRoutes
+from jarvis.protocol.presentation_studio_rail_routes import PresentationStudioRailRoutes
 from jarvis.protocol.presentation_studio_routes import PresentationStudioProtocolRoutes
 from jarvis.protocol.presentation_studio_scene_variants_routes import PresentationStudioSceneVariantsRoutes
 from jarvis.protocol.presentation_studio_compose_routes import PresentationStudioComposeRoutes
@@ -274,6 +275,8 @@ class LocalProtocolServer:
             *PresentationStudioProtocolRoutes(self.core).routes(),
             # Graphe des variantes (Slice 16) : `presentation_studio_variants_routes.py`.
             *PresentationStudioVariantsRoutes(self.core).routes(),
+            # Rail des presentations (masquer, archiver, renommer, etat de travail, demandes d'ecran) : `presentation_studio_rail_routes.py`.
+            *PresentationStudioRailRoutes(self.core).routes(),
             # Comparaison et composition de variantes (Slice 19) : `presentation_studio_compose_routes.py`.
             *PresentationStudioComposeRoutes(self.core).routes(),
             # Variantes locales d'une scene (Slice 17) : `presentation_studio_scene_variants_routes.py`.

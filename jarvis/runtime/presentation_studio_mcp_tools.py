@@ -64,6 +64,17 @@ OPERATION_EVENTS: dict[str, str | None] = {
     "presentation_draft_finalize": EVENT_VARIANT, "presentation_play": EVENT_PLAYBACK,
 }
 
+#: Rail des presentations : les outils qui ECRIVENT du travail d'agent allument la pastille bleue de la presentation, un echec reel la passe
+#: en orange (docs/presentation-studio.md > *Rail des presentations*). Les ops de plan et de verification n'ecrivent rien.
+WORK_TOOLS = frozenset({"presentation_edit", "presentation_undo", "presentation_variant", "presentation_compose", "presentation_template",
+                        "presentation_draft_assemble", "presentation_draft_finalize"})
+WORK_READ_OPS = frozenset({"plan", "archive_plan", "check", "scene_preview", "scene_cancel_preview"})
+#: Un refus que l'agent corrige lui-meme (id, revision, confirmation, brouillon) n'est pas « un probleme » pour l'utilisateur.
+BENIGN_PREFIXES = ("invalid_", "unknown_", "presentation_studio_unknown_", "presentation_studio_invalid",
+                   "presentation_studio_stale_revision", "presentation_studio_confirmation_", "presentation_studio_draft_refused",
+                   "presentation_studio_composition_refused", "presentation_studio_value_refused", "presentation_id_required",
+                   "variant_id_required", "presentation_studio_scene_incompatible", "presentation_studio_active_variant_protected")
+
 PLAY_NAVIGATION = frozenset({"pause", "resume", "next", "previous", "goto", "reveal", "hide", "return", "stop"})
 PLAY_SCOPES = ("manual", "scene", "all")
 #: Ordres de scène qui s'écrivent par `presentation_edit` (le vocabulaire fermé de Slice 05 et 17, sans les formes d'annulation).
@@ -231,12 +242,25 @@ class PresentationTools:
         correlation_id = uuid.uuid4().hex[:12]
         started = self._clock()
         key = f"{tool}.{op}" if f"{tool}.{op}" in OPERATION_EVENTS else tool
+        works = tool in WORK_TOOLS and op not in WORK_READ_OPS
+        known = ids.get("presentation_id") if is_presentation_id(ids.get("presentation_id")) else None
+        if works and known:
+            await self._work(known, "begin", label=tool)
         try:
             result = await body()
         except PresentationToolError as exc:
             self._emit("presentation_studio.tool_failed", f"{tool}.{op} : {exc.code}", level="warning",
                        data={"tool": tool, "op": op, "code": exc.code, "correlation_id": correlation_id, **ids})
+            if works and known:
+                if str(exc.code).startswith(BENIGN_PREFIXES):
+                    await self._work(known, "success", label=tool)  # the agent corrects and retries: the work goes on, no alarm
+                else:
+                    await self._work(known, "failure", label=tool, code=str(exc.code), message=str(exc))
             raise
+        if works:
+            target = known or (result.get("presentation_id") if is_presentation_id(result.get("presentation_id")) else None)
+            if target:
+                await self._work(target, "success", label=tool)
         revision = result.get("revision") if isinstance(result.get("revision"), int) else None
         # The ids the call really acted on (defaults come from the state), so the line can be matched to the canonical event.
         resolved = {name: result[name] for name in ("presentation_id", "variant_id") if isinstance(result.get(name), str)}
@@ -245,6 +269,16 @@ class PresentationTools:
             "event": OPERATION_EVENTS.get(key), "ms": round((self._clock() - started) * 1000), **{**ids, **resolved}})
         result.setdefault("op", op)
         return result
+
+    async def _work(self, presentation_id: str, event: str, *, label: str | None = None, code: str | None = None,
+                    message: str | None = None) -> None:
+        """Dire a Core que l'agent travaille sur cette presentation (pastille du rail). Meilleur effort : jamais un echec d'outil."""
+
+        body = _drop_none({"event": event, "label": label, "code": code and clip(code, 40), "message": message and clip(message, 160)})
+        try:
+            await self._core.call(lambda c: c.presentation_studio_work(presentation_id, body))
+        except Exception:  # noqa: BLE001 - argued: a coloured dot must never fail the edit it describes (Core down => the tool fails by itself)
+            pass
 
     @staticmethod
     def _ok(speech: str = "silent", say: str | None = None, **data: Any) -> dict[str, Any]:
@@ -326,6 +360,8 @@ class PresentationTools:
         tool = "presentation_inspect"
         if target == "overview":
             return await self._overview()
+        if target == "rail":
+            return await self._rail_view()
         if target == "draft_guide":
             return self._ok(**draft_guide(kind))
         if target == "playback":
@@ -377,10 +413,48 @@ class PresentationTools:
         summary.setdefault("phase", "idle")
         return summary
 
+    async def _rail_listing(self) -> dict[str, Any] | None:
+        """Le rail de Core (drapeaux et etat de travail), ou `None` : la liste simple suffit quand le rail ne repond pas."""
+
+        try:
+            found = await self._core.call(lambda c: c.presentation_studio_rail())
+        except Exception:  # noqa: BLE001 - argued: the rail is an enrichment of the overview, never a reason to refuse it
+            return None
+        return found if isinstance(found, Mapping) and isinstance(found.get("presentations"), list) else None
+
+    @staticmethod
+    def _rail_row(p: Mapping[str, Any]) -> dict[str, Any]:
+        work = p.get("work") if isinstance(p.get("work"), Mapping) else {}
+        return _drop_none({"presentation_id": p.get("presentation_id"), "title": clip(p.get("title")),
+                           "active_variant_id": p.get("active_variant_id"), "variant_count": p.get("variant_count"),
+                           "hidden": True if p.get("hidden") else None, "archived": True if p.get("archived") else None,
+                           "work": work.get("state"), "work_label": work.get("label") or None,
+                           "problem": clip(work.get("message"), 120) if work.get("state") == "problem" else None})
+
+    async def _rail_view(self) -> dict[str, Any]:
+        found = await self._rail_listing()
+        if found is None:
+            raise self._refuse("presentation_inspect", "rail_unavailable", "le rail de Core ne répond pas : relis presentation_inspect target overview.")
+        rows = [self._rail_row(p) for p in found["presentations"] if isinstance(p, Mapping)]
+        ui = found.get("ui") if isinstance(found.get("ui"), Mapping) else {}
+        reported = ui.get("reported") if isinstance(ui.get("reported"), Mapping) else None
+        return self._ok(presentations=capped(rows), playing=found.get("playing"), problems=(found.get("problems") or [])[:5],
+                        screen=_drop_none({k: reported.get(k) for k in ("rail_visible", "window_open", "presentation_id", "reported_s_ago")})
+                        if reported else {"note": "aucune page n'a encore rapporté l'état du rail"},
+                        work_states="working = un agent édite (bleu) ; done = terminé (vert) ; problem = un échec à voir (orange)",
+                        untrusted=["title"])
+
     async def _overview(self) -> dict[str, Any]:
-        listed = await self._c(lambda c: c.presentation_studio_list(limit=MAX_LISTED))
-        rows = [{"presentation_id": p.get("presentation_id"), "title": clip(p.get("title")), "active_variant_id": p.get("active_variant_id"),
-                 "variant_count": p.get("variant_count")} for p in listed.get("presentations") or [] if isinstance(p, Mapping)]
+        rail = await self._rail_listing()
+        if rail is not None:
+            rows = [self._rail_row(p) for p in rail["presentations"] if isinstance(p, Mapping)]
+            problems_source: Mapping[str, Any] = rail
+        else:
+            listed = await self._c(lambda c: c.presentation_studio_list(limit=MAX_LISTED))
+            rows = [{"presentation_id": p.get("presentation_id"), "title": clip(p.get("title")), "active_variant_id": p.get("active_variant_id"),
+                     "variant_count": p.get("variant_count")} for p in listed.get("presentations") or [] if isinstance(p, Mapping)]
+            problems_source = listed
+        listed = problems_source
         playback = self._playback_summary(await self._playback_view())
         mirror = await self._explorer_mirror()
         explorer = _drop_none({"state": mirror.get("state"), "mode": mirror.get("mode"), "presentation_id": mirror.get("presentation_id"),
@@ -533,8 +607,11 @@ class PresentationTools:
         tool = "presentation_view"
         if self._cc is None:
             raise self._refuse(tool, "control_center_unreachable", sentence_for("control_center_unreachable"))
+        if op in ("window_open", "window_close", "rail_show", "rail_hide"):
+            return await self._screen_request(tool, op, presentation_id)
         if op == "explorer_open":
             pid = await self._presentation(tool, presentation_id)
+            await self._refuse_if_archived(tool, pid)
             vid = None if variant_id is None else await self._variant(tool, pid, variant_id)
             request = _drop_none({"action": "open", "presentation_id": pid, "variant_id": vid, "fullscreen": bool(fullscreen)})
             status, receipt = await self._cc.request("POST", "/api/presentation-studio/explorer/commands", request, timeout_s=30.0)
@@ -553,6 +630,30 @@ class PresentationTools:
         if op == "fullscreen_exit":
             return self._fullscreen_receipt(op, *await self._cc.request("POST", "/api/fullscreen/commands", {"action": "exit"}))
         raise self._refuse(tool, "unknown_op", f"op inconnue : {clip(op, 30)}.")
+
+    async def _refuse_if_archived(self, tool: str, presentation_id: str) -> None:
+        """Une presentation archivee ne s'ouvre ni ne se joue : on la restaure d'abord (presentation_library restore)."""
+
+        found = await self._rail_listing()
+        for row in (found or {}).get("presentations") or []:
+            if isinstance(row, Mapping) and row.get("presentation_id") == presentation_id and row.get("archived"):
+                raise self._refuse(tool, "presentation_archived", "cette présentation est archivée : restaure-la d'abord "
+                                                                   "(presentation_library op restore), avec l'accord de l'utilisateur.")
+
+    async def _screen_request(self, tool: str, op: str, presentation_id: str | None) -> dict[str, Any]:
+        """Fenetre d'une presentation et rail : une demande d'ecran que la page applique dans la seconde (pas de recu : relis `inspect rail`)."""
+
+        body: dict[str, Any] = {"action": {"window_open": "open_window", "window_close": "close_window",
+                                           "rail_show": "show_rail", "rail_hide": "hide_rail"}[op]}
+        if op == "window_open":
+            pid = await self._presentation(tool, presentation_id)
+            await self._refuse_if_archived(tool, pid)
+            body["presentation_id"] = pid
+        answer = await self._c(lambda c: c.presentation_studio_rail_display(body))
+        request = answer.get("request") if isinstance(answer.get("request"), Mapping) else {}
+        return self._ok("silent", status="requested", presentation_id=body.get("presentation_id"), seq=request.get("seq"),
+                        note="demande posée : la page l'applique dans la seconde ; lis presentation_inspect target rail (screen) pour le constater. "
+                             "Le plein écran exige un clic de l'utilisateur.")
 
     def _page_refusal(self, tool_op: str, status: int, body: Any) -> PresentationToolError:
         code = "http_%d" % status
@@ -626,6 +727,7 @@ class PresentationTools:
             if role not in ("user_presenter", "jarvis_presenter", "rehearsal"):
                 raise self._refuse(tool, "invalid_role", "role : user_presenter, jarvis_presenter ou rehearsal.")
             presentation_id = await self._presentation(tool, pid)
+            await self._refuse_if_archived(tool, presentation_id)
             request.update(presentation_id=presentation_id, role=role)
             if vid is not None:
                 request["variant_id"] = await self._variant(tool, presentation_id, vid)
@@ -661,6 +763,39 @@ class PresentationTools:
             raise self._refuse(tool, reason, f"{sentence_for(reason, message)} ({message})" if message else sentence_for(reason), state=view.get("phase"))
         # Démarrer, arrêter, naviguer : l'écran montre le résultat, rien à dire (Jarvis dit ses lignes de partition par son propre chemin).
         return self._ok("silent", status=status, state=view)
+
+    # ------------------------------------------------------------------ rail : masquer, archiver, renommer (niveau présentation)
+
+    async def library(self, op: str, *, presentation_id: str | None = None, title: str | None = None,
+                      confirmed: bool | None = None) -> dict[str, Any]:
+        async def body() -> dict[str, Any]:
+            return await self._library(op, presentation_id, title, confirmed)
+
+        return await self._run("presentation_library", op, {"presentation_id": presentation_id}, body)
+
+    async def _library(self, op: str, pid: str | None, title: str | None, confirmed: bool | None) -> dict[str, Any]:
+        tool = "presentation_library"
+        if op not in ("hide", "show", "archive", "restore", "rename", "acknowledge"):
+            raise self._refuse(tool, "unknown_op", f"op inconnue : {clip(op, 30)}.")
+        presentation_id = await self._presentation(tool, pid)
+        request: dict[str, Any] = {"action": op, "actor": BRAIN_ACTOR}
+        if op == "rename":
+            if not isinstance(title, str) or not title.strip():
+                raise self._refuse(tool, "invalid_title", "rename exige title (une ligne, 80 caractères au plus).")
+            request["title"] = title
+        if op == "archive":
+            if confirmed is not True:
+                raise self._refuse(tool, "presentation_studio_confirmation_required",
+                                   "archiver retire la présentation du rail et de la lecture (restaurable) : demande d'abord son accord à "
+                                   "l'utilisateur, puis recommence avec confirmed=true.")
+            request["confirmed"] = True
+        answer = await self._c(lambda c: c.presentation_studio_rail_act(presentation_id, request))
+        say = None
+        if op == "archive":
+            say = "La présentation est archivée ; elle se restaure à tout moment."
+        return self._ok("say" if say else "silent", say=say, presentation_id=presentation_id, status=op,
+                        changed=answer.get("changed"), hidden=answer.get("hidden"), archived=answer.get("archived"),
+                        title=clip(answer.get("title")) if op == "rename" else None, revision=answer.get("revision"))
 
     # ------------------------------------------------------------------ édition sémantique
 

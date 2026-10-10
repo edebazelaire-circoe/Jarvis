@@ -381,6 +381,7 @@
     next:['M9 6l6 6-6 6'],
     alert:['M12 5l8 14H4z','M12 10v4','M12 17v.01'],
     compare:['M4 5h7v14H4z','M13 5h7v14h-7z'],
+    play:['M8 5l11 7-11 7z'],
   });
 
   /* ------------------------------------------------------------------ feuille de style */
@@ -503,6 +504,18 @@ html:has(#${HOST_ID}:not([hidden])) #jvFullscreenPrompt{top:auto;bottom:18px;lef
 #${HOST_ID} .jvx-stage-note{display:flex;align-items:center;justify-content:space-between;gap:12px;color:var(--jvx-mute);font-size:13px;min-width:0}
 #${HOST_ID} .jvx-scene-line{display:flex;align-items:center;gap:10px;min-width:0;flex:1 1 auto}
 #${HOST_ID} .jvx-scene-title{color:var(--jvx-ink);font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+#${HOST_ID} .jvx-play{display:inline-flex;gap:8px;flex:none}
+#${HOST_ID} .jvx-play .jvx-btn{min-height:30px;padding:0 10px;font-size:12px}
+#${HOST_ID} .jvx-play .jvx-btn svg{width:13px;height:13px}
+#${HOST_ID} .jvx-vbar{display:flex;align-items:center;gap:6px;overflow-x:auto;padding:2px 2px 8px;scrollbar-width:thin;scrollbar-color:var(--jvx-line-strong) transparent;min-height:34px}
+@media (max-height:680px){#${HOST_ID} .jvx-vbar{display:none}}
+#${HOST_ID} .jvx-vbar-label{flex:none;color:var(--jvx-mute);font-size:11px;letter-spacing:.1em;text-transform:uppercase;padding-right:4px}
+#${HOST_ID} .jvx-vchip{flex:none;display:inline-flex;align-items:center;gap:6px;min-height:28px;padding:0 10px;border-radius:999px;border:1px solid var(--jvx-line);background:var(--jvx-surface);
+  font:600 12px/1 ui-monospace,Consolas,monospace;color:var(--jvx-ink)}
+#${HOST_ID} .jvx-vchip:hover{border-color:var(--jvx-line-strong)}
+#${HOST_ID} .jvx-vchip[aria-pressed="true"]{border-color:var(--jvx-accent);background:color-mix(in srgb,var(--jvx-accent) 16%,transparent)}
+#${HOST_ID} .jvx-vchip[data-active="true"]::after{content:'';width:6px;height:6px;border-radius:50%;background:var(--jvx-ok)}
+#${HOST_ID} .jvx-vchip-t{max-width:120px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font:500 12px/1 system-ui,"Segoe UI",sans-serif;color:var(--jvx-mute)}
 #${HOST_ID} .jvx-strip{display:flex;gap:8px;overflow-x:auto;padding:2px 2px 6px;scrollbar-width:thin;scrollbar-color:var(--jvx-line-strong) transparent}
 #${HOST_ID} .jvx-scene{flex:none;display:flex;flex-direction:column;gap:2px;width:150px;padding:8px 10px;text-align:left;border-radius:9px;border:1px solid var(--jvx-line);
   background:var(--jvx-surface)}

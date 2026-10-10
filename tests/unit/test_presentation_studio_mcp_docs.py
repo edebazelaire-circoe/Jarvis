@@ -23,7 +23,7 @@ def test_every_tool_is_in_the_reference_the_prompt_and_the_planner_mapping():
     for name in server.TOOL_NAMES:
         assert f"`{name}`" in text, name
         assert name in BRAIN_PRESENTATION_PROMPT, name
-    assert len(server.TOOL_NAMES) == 12 and "twelve" in text
+    assert len(server.TOOL_NAMES) == 13 and "thirteen" in text
     # the three operation names of the Slice 11 planner are tools, one to one
     assert {OP_CHECK, OP_ASSEMBLE, OP_FINALIZE} <= set(server.TOOL_NAMES)
 
