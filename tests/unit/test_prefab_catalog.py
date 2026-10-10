@@ -349,7 +349,8 @@ async def test_core_route_extensions_filter_validate_and_stay_opt_in(tmp_path):
 # ------------------------------------------------------------------ Slice 18 : provenance vérifiée et licence du moteur
 
 VERIFIED = {"name": "someone/demo", "url": "https://github.com/someone/demo", "license": "MIT", "commit": "a" * 40,
-            "archive_sha256": "b" * 64, "imported_at": "2026-10-10T12:00:00Z", "changes": ["entry generated", "deps mapped"]}
+            "archive_sha256": "b" * 64, "imported_at": "2026-10-10T12:00:00Z", "changes": ["entry generated", "deps mapped"],
+            "source_sha256": "c" * 64}
 
 
 def test_the_upstream_block_carries_the_importer_keys_and_the_runtime_licence_is_separate():
@@ -364,7 +365,7 @@ def test_the_upstream_block_carries_the_importer_keys_and_the_runtime_licence_is
     assert declared.upstream.verified is False and derive_catalog(block=declared, family="scene", remotion=True)["runtime_license"] is None
 
 
-@pytest.mark.parametrize("bad", [{"commit": "main"}, {"commit": "A" * 40}, {"archive_sha256": "b" * 63}, {"imported_at": "yesterday"},
+@pytest.mark.parametrize("bad", [{"commit": "main"}, {"commit": "A" * 40}, {"archive_sha256": "b" * 63}, {"source_sha256": "c" * 63}, {"imported_at": "yesterday"},
                                  {"changes": "one line"}, {"changes": [""]}, {"changes": ["x"] * 17}, {"changes": [5]}])
 def test_malformed_importer_keys_are_refused(bad):
     block, errors = parse_catalog_block({**CATALOG, "upstream": {**VERIFIED, **bad}})

@@ -21,7 +21,7 @@ Une requête dit `repo_url` (`https://github.com/<propriétaire>/<dépôt>`) et 
 | Schéma | HTTPS seulement (certificat vérifié, contexte par défaut) ; pas d'identifiants, de port, de requête ni de fragment. |
 | Propriétaires | Liste blanche réglable, défaut `remotion-dev` : `control-center-settings.json` du dossier d'exécution, clé `remotion_import.allowed_owners` (liste de noms GitHub), relue à **chaque** import (un changement s'applique sans redémarrage). Une entrée illisible est écartée, une liste vide ou absente retombe sur le défaut. |
 | Redirections | Au plus 3, **jamais suivies automatiquement** ; chacune doit rester en HTTPS, sur `github.com` ou `codeload.github.com`, sans identifiants ni port, et sur le chemin du **même dépôt** (un dépôt transféré vers un autre propriétaire n'est pas suivi). Sinon `redirect_refused`, et aucune deuxième connexion n'est ouverte. |
-| Bornes | Archive ≤ 12 Mio (annoncée puis comptée en lisant), délai global 30 s (10 s par lecture), aucun proxy ni identifiant, un seul import à la fois (`import_busy`). |
+| Bornes | Archive ≤ 12 Mio (annoncée puis comptée en lisant), délai global 30 s (chaque lecture est bornée par `min(10 s, temps restant)` : un seul morceau lent ne dépasse pas l'échéance), aucun proxy ni identifiant, un seul import à la fois (`import_busy`). |
 
 Bornes de lecture (domaine, `jarvis/domain/remotion_upstream.py`) : 6000 membres au plus, 96 Mio décompressés au plus (la décompression est plafonnée pendant le flux : une bombe ne remplit pas la mémoire), 24 Mio de fichiers lus au plus.
 
@@ -33,7 +33,8 @@ Bornes de lecture (domaine, `jarvis/domain/remotion_upstream.py`) : 6000 membres
 - un chemin absolu, avec `..`, segment vide ou `.`, antislash, lecteur ou NUL (« zip-slip ») ; plusieurs dossiers racines (`archive_path`) ;
 - deux membres de même nom, casse comprise (`archive_duplicate`) ;
 - trop de membres ou une décompression au-delà de la borne (`archive_too_large`) ; un flux illisible ou tronqué (`archive_invalid`) ;
-- un **commit non attesté** : GitHub écrit le SHA dans l'en-tête pax global (`comment`) ; absent ou différent du SHA demandé : `archive_commit_mismatch`.
+- un **commit non attesté** : GitHub écrit le SHA dans l'en-tête pax global (`comment`) ; absent ou différent du SHA demandé : `archive_commit_mismatch`. **Ce que cela prouve, et ce que cela ne prouve pas** : seulement que GitHub a répété le SHA demandé. Les objets d'un réseau de forks peuvent être servis sous le chemin d'un propriétaire autorisé (non testé ici) : **la liste blanche protège le propriétaire, pas le commit**. Une vérification d'accessibilité du commit depuis une branche du dépôt est une suite possible (Issue 04).
+- une lecture trop longue : **échéance** de 20 s pour la lecture de l'archive (décompression comprise, tampon linéaire : 80 Mio de zéros dans 90 Kio se traversent en moins d'une seconde), `import_timeout`.
 
 Seuls les fichiers dont l'importeur a besoin sont lus (`src/**`, `public/**` nommés par `staticFile`, licence, `package.json`). Le SHA-256 de l'archive est enregistré (`archive_sha256`).
 
@@ -44,15 +45,15 @@ Deux licences, deux champs :
 - `catalog.license` : l'identifiant SPDX de la licence **du modèle**, lu dans le fichier `LICENSE*`/`COPYING*` de la racine (du sous-dossier du projet d'abord), sinon dans `package.json`. Le texte est recopié dans `src/upstream/license.json` pour que l'attribution voyage avec la source.
 - `catalog.runtime_license` : la licence du **moteur** (`Remotion License (company licence may be required)`), écrite telle quelle. Jarvis n'évalue pas l'obligation d'une licence d'entreprise de l'utilisateur : il la **consigne**.
 
-Licences redistribuables (`PERMITTED_LICENCES`) : `MIT`, `Apache-2.0`, `BSD-2-Clause`, `BSD-3-Clause`, `ISC`, `0BSD`, `Unlicense`, `CC0-1.0`. Tout le reste est refusé, avec un code propre :
+Licences redistribuables (`PERMITTED_LICENCES`) : `MIT`, `Apache-2.0`, `BSD-2-Clause`, `BSD-3-Clause`, `ISC`, `0BSD`, `Unlicense`, `CC0-1.0`. **Reconnaissance exacte** : le texte du fichier, une fois normalisé (minuscules, ponctuation retirée, titre, paragraphe de copyright et « all rights reserved » retirés), doit être **identique** au texte canonique de la licence (empreintes `CANONICAL_LICENCE_HASHES`, calculées sur les textes de l'API de licences de GitHub gardés dans `tests/fakes/licenses/`). Un paragraphe ajouté (clause « Commons », « usage personnel seulement », « aucune vidéo monétisée »...) fait que le texte n'est plus reconnu : `license_restricted` si un mot de restriction y figure, sinon `license_unknown`. **Tous** les fichiers de licence de la racine (`LICENSE*`, `LICENCE*`, `COPYING*`, `UNLICENSE*`) sont examinés et doivent dire la même chose (un `LICENSE` MIT ne cache pas un `LICENSE.md` GPL ; deux licences permises différentes, `LICENSE-MIT` et `LICENSE-APACHE`, sont un `license_conflict` : l'expression « MIT OR Apache-2.0 » n'est pas portée). Tout le reste est refusé, avec un code propre :
 
 | Cas | Code |
 | --- | --- |
 | aucun fichier et aucune déclaration | `license_missing` |
 | `UNLICENSED` ou « see license in LICENSE » sans fichier (tous droits réservés) | `license_unlicensed` |
-| GPL, AGPL, LGPL, MPL, EUPL, SSPL, BUSL, EPL, CDDL, Creative Commons (hors CC0), « non commercial », ou la licence de Remotion elle-même | `license_restricted` |
-| texte inconnu, ou déclaration hors liste | `license_unknown` |
-| le fichier dit une chose et `package.json` une autre | `license_conflict` |
+| GPL, AGPL, LGPL, MPL, EUPL, SSPL, BUSL, EPL, CDDL, Creative Commons (hors CC0 exact), « non commercial », restriction d'usage ajoutée, ou la licence de Remotion elle-même | `license_restricted` |
+| texte qui n'est pas exactement une licence examinée, ou déclaration hors liste | `license_unknown` |
+| les fichiers se contredisent, ou le fichier dit une chose et `package.json` une autre | `license_conflict` |
 
 Constat réel ([§ 10](#10-preuves)) : les modèles `template-empty` et `template-helloworld` de `remotion-dev` déclarent `UNLICENSED` et renvoient le lecteur à la licence de Remotion : ils sont **refusés**. `template-three` porte un fichier MIT et un `package.json` `UNLICENSED` : refusé en `license_conflict`.
 
@@ -65,13 +66,13 @@ L'import ne regarde pas ce que `package.json` annonce mais ce que la source **at
 | `react`, `react/jsx-runtime`, `react/jsx-dev-runtime`, `remotion` | admis : la version est celle du **jeu verrouillé** de la capacité (`catalog.dependencies` porte `react` et `remotion` aux versions épinglées ; la plage déclarée par le modèle est dite dans `changes`) |
 | tout autre paquet (`three`, `zod`, `roughjs`, `@remotion/*` autre que `remotion`, `react-dom`, modules Node) | **refusé** `dependency_refused`, avec le paquet, le fichier qui l'importe et la plage déclarée |
 
-Un import de style ou de média (`./x.css`, `./a.png`) est refusé `import_unsupported_file` (le compilateur importe des modules ; les médias passent par `staticFile`), un import qui sort de `src/` `import_outside_source`, un import introuvable `import_unresolved`. Il n'y a **pas d'adaptateur** : la liste auditée est exactement `SCENE_ALLOWED_IMPORTS` ([remotion-source.md](remotion-source.md) §5) ; l'élargir exige d'exposer le module dans `host.js` et de le revoir ici. Une dépendance déclarée mais jamais atteinte (outils, `zod` d'un `Root` non repris, `@remotion/cli`) est **écartée et listée** dans `changes`. Un `remotion` déclaré d'une autre version majeure est refusé (`remotion_version_incompatible`) ; un `react` d'une autre majeure est un avertissement (`warnings`). Les scripts (`postinstall`...) ne sont jamais lus ni lancés.
+**Lecture prudente** : les imports sont cherchés dans le texte sans commentaires **et** dans le texte brut, sans exiger d'espaces (`import{a}from'zod'`, `export*from'zod'`, `require('zod')`, `import('zod')`), car un `/*` au milieu d'un texte JSX (`<p>/*</p>`) n'est pas un commentaire mais ferait taire la suite. Conséquence assumée : un `import` en commentaire d'un paquet hors liste refuse aussi ; un import relatif trouvé seulement dans le texte brut est suivi s'il existe (jamais de module silencieusement écarté). Un import de style ou de média (`./x.css`, `./a.png`) est refusé `import_unsupported_file` (le compilateur importe des modules ; les médias passent par `staticFile`), un import qui sort de `src/` `import_outside_source`, un import introuvable `import_unresolved`. Il n'y a **pas d'adaptateur** : la liste auditée est exactement `SCENE_ALLOWED_IMPORTS` ([remotion-source.md](remotion-source.md) §5) ; l'élargir exige d'exposer le module dans `host.js` et de le revoir ici. Une dépendance déclarée mais jamais atteinte (outils, `zod` d'un `Root` non repris, `@remotion/cli`) est **écartée et listée** dans `changes`. Un `remotion` déclaré d'une autre version majeure est refusé (`remotion_version_incompatible`) ; un `react` d'une autre majeure est un avertissement (`warnings`). Les scripts (`postinstall`...) ne sont jamais lus ni lancés.
 
 ## 6. Composition et entrée générée
 
 Un projet Remotion déclare ses compositions dans un `Root` (`<Composition id component durationInFrames fps width height defaultProps />`), pas par un `export default`. Le plan :
 
-1. cherche les balises `<Composition>` dans `src/` (commentaires ignorés) ; une seule : retenue, plusieurs : `composition_id` obligatoire (`composition_ambiguous`, ids listés), inconnue : `no_composition` ;
+1. cherche les balises `<Composition>` dans `src/` (commentaires retirés pour cette recherche) ; une seule : retenue, plusieurs : `composition_id` obligatoire (`composition_ambiguous`, ids listés), inconnue : `no_composition` ;
 2. lit `width`, `height`, `fps`, `durationInFrames` : littéraux, constantes numériques uniques (`const FPS = 24`) ou arithmétique simple de ceux-là ; sinon `composition_unresolved` et l'appelant les donne dans `composition` (aucune valeur n'est devinée) ;
 3. génère `src/Scene.tsx` (`src/JarvisEntry.tsx` si le dépôt a déjà un `Scene.tsx`) : il importe le composant (par le même import que le `Root`, ou depuis le fichier qui l'exporte) et rend `createElement(Composant, {...defaultProps, ...props})`. Les `defaultProps` du `Root` sont recopiés avec leurs imports ; une constante locale du `Root` ne peut pas l'être (`default_props_unresolved`) ; un composant venu d'un paquet ou non exporté est refusé (`component_unresolved`) ;
 4. ne reprend que les modules **atteignables** (le `Root`, `index.ts`, `remotion.config.ts` restent dehors) et les fichiers de `public/` dont un `staticFile("nom")` littéral donne le nom. Un `staticFile` calculé ou un fichier manquant est un **avertissement** (la scène ne le trouvera pas), jamais un fichier deviné.
@@ -80,7 +81,7 @@ Puis le candidat passe par `parse_candidate`, donc par les **gardes de la Slice 
 
 ## 7. Provenance : écrite et vérifiée par Core
 
-`catalog.upstream` (prefabs.md) gagne quatre clés **écrites seulement par l'importeur** (`VERIFIED_UPSTREAM_KEYS`) :
+`catalog.upstream` (prefabs.md) gagne cinq clés **écrites seulement par l'importeur** (`VERIFIED_UPSTREAM_KEYS`), et `catalog.runtime_license` l'est aussi :
 
 | Clé | Contenu |
 | --- | --- |
@@ -88,8 +89,11 @@ Puis le candidat passe par `parse_candidate`, donc par les **gardes de la Slice 
 | `archive_sha256` | SHA-256 de l'archive téléchargée |
 | `imported_at` | date d'import UTC (`AAAA-MM-JJTHH:MM:SSZ`) |
 | `changes` | ≤ 16 lignes : entrée générée, composition lue, modules et assets gardés ou écartés, dépendances (plage déclarée -> version du jeu verrouillé), licence |
+| `source_sha256` | `source_digest` de l'ENSEMBLE EXACT de fichiers écrit dans la version (chemins triés + SHA-256 de chaque contenu) |
 
-avec `name` (`propriétaire/dépôt`), `url`, `license` (SPDX du modèle), `author` (propriétaire), et `ref` (libellé libre optionnel de la requête). **Vérification** : un candidat qui porte ces clés et ne vient pas de l'importeur est refusé par `PrefabService.save` (« written by the upstream importer only ») ; une **révision** d'une version importée peut reporter la provenance de sa version précédente **à l'identique** (édition d'une source importée) et rien d'autre. Les versions restent immuables ; une modification ultérieure est une nouvelle version dont `changes` n'est pas réécrit.
+avec `name` (`propriétaire/dépôt`), `url`, `license` (SPDX du modèle), `author` (propriétaire), et `ref` (libellé libre optionnel de la requête). **Ce que Core écrit et ce que l'auteur déclare** : ces six champs (les cinq clés et `runtime_license`) sont écrits par Core ; le reste du catalogue (type, pile, `license` d'un prefab qui n'est pas un import) est déclaré par l'auteur. **Vérification** : un candidat qui porte l'un de ces champs et ne vient pas de l'importeur est refusé par `PrefabService.save` **et** par `edit_base` (« written by the upstream importer only »), sauf une révision qui reporte ceux de sa version précédente **à l'identique**.
+
+**Intégrité (jamais de blanchiment)** : reporter la provenance n'est pas la garantir. La vue de catalogue (`GET /v1/prefabs/{id}[/{version}]?catalog=1`, lignes de liste comprises) compare l'empreinte des fichiers COURANTS de la version (calculée depuis son inventaire, sans relire d'octet) à `source_sha256` et ajoute à `upstream` : `verified_intact` (`true` : fichiers exactement ceux de l'import) et, sinon, `modified_files` (chemins ajoutés, retirés ou changés par rapport à la version d'origine, ≤ 32 ; `null` si cette version n'est plus lisible). Une version modifiée n'est jamais présentée comme « vérifiée » : la carte de la bibliothèque (Slice 17) écrit « Importé de cet amont : fichiers intacts, vérifié par Core » ou « Importé de cet amont : modifié depuis l'import » (origine, date, commit et fichiers modifiés restent visibles comme **historique**). Une révision qui rend les octets d'origine est de nouveau intacte : l'empreinte, pas l'histoire, décide. Les versions restent immuables ; `changes` n'est pas réécrit.
 
 ## 8. Service, routes et codes
 
@@ -97,10 +101,10 @@ avec `name` (`propriétaire/dépôt`), `url`, `license` (SPDX du modèle), `auth
 
 | Méthode | Route | Corps | Réponse |
 | --- | --- | --- | --- |
-| POST | `/v1/remotion/imports/plan` | `{repo_url, commit, composition_id?, subdir?, composition?, title?, ref?}` | `{plan, validated: true, publishes: false}` : télécharge, vérifie, analyse, valide ; n'écrit rien |
+| POST | `/v1/remotion/imports/plan` | `{repo_url, commit, composition_id?, subdir?, composition?, title?, ref?}` | `{plan, guards_passed: true, compiled: false, publishes: false}` : télécharge, vérifie, analyse, passe les gardes ; n'écrit rien |
 | POST | `/v1/remotion/imports` | idem + `presentation_id`, `scene_id?` | `{imported, scope: "presentation", presentation_id, scene_id, prefab: {prefab_id, version, fingerprint}, plan, published_to_library: false}` |
 
-`subdir` désigne le projet dans un monorepo ; `composition` = `{width, height, fps, duration_in_frames}` donnés à la main quand le code ne les rend pas lisibles. Le plan public (`ImportPlan.to_public()`) ne contient aucun octet de source, aucun chemin du poste.
+`subdir` désigne le projet dans un monorepo ; `composition` = `{width, height, fps, duration_in_frames}` donnés à la main quand le code ne les rend pas lisibles. `guards_passed` dit ce qui a été vérifié (manifeste, bornes, gardes de la Slice 06) ; `compiled: false` dit ce qui ne l'a PAS été : le plan ne compile pas, la compilation est le premier usage (une erreur `compile_*` y reste possible). Un import vers une présentation inconnue est refusé **avant** tout téléchargement. Le plan public (`ImportPlan.to_public()`) ne contient aucun octet de source, aucun chemin du poste.
 
 Refus : `{"error": {"code", "message", "details"?}}`. Codes et statuts :
 
@@ -114,6 +118,7 @@ Refus : `{"error": {"code", "message", "details"?}}`. Codes et statuts :
 | `fetch_failed` | 502 | HTTP non 200 (404 : commit inconnu de ce dépôt), erreur réseau ou TLS |
 | `fetch_timeout` | 504 | délai global dépassé |
 | `fetch_too_large` | 413 | archive au-delà de la borne |
+| `import_timeout` | 504 | lecture de l'archive ou analyse du texte au-delà de l'échéance (20 s) |
 | `presentation_not_found` | 404 | la présentation n'existe pas |
 | `import_busy` | 409 | un autre import est en cours |
 | `import_storage_failed` | 500 | la bibliothèque n'a pas pu écrire |
@@ -160,8 +165,8 @@ Tests sans réseau : `tests/unit/test_remotion_upstream.py` (origine, archive ho
 
 ## 11. Limites et risques résiduels
 
-- **Lecture statique** : le graphe d'imports est trouvé par expressions régulières sur le texte (commentaires retirés, chaînes respectées), pas par un analyseur TypeScript. Un `import` fabriqué pour échapper à la lecture est tout de même refusé par le compilateur (imports nus hors liste, `compile_import_refused`) et par les gardes de la Slice 06 : l'analyse est un diagnostic précoce, pas la frontière. La frontière d'exécution reste le bac à sable ([remotion-isolation.md](remotion-isolation.md)).
-- **Licence** : détectée par le texte (mots-clés), pas par un identifiant SPDX signé ; un texte inhabituel est refusé (`license_unknown`) plutôt qu'accepté. Aucune licence séparée n'est cherchée pour les fichiers de `public/` : un asset est couvert par la licence du dépôt, et le plan le dit dans `changes`. Les marques et les polices ne sont pas examinées. Pas un avis juridique.
+- **Lecture statique** : le graphe d'imports est trouvé par expressions régulières (texte sans commentaires et texte brut, quantificateurs bornés, échéance de 20 s pour toute l'analyse : `import_timeout`), pas par un analyseur TypeScript. Un `import` fabriqué pour échapper à la lecture est tout de même refusé par le compilateur (imports nus hors liste, `compile_import_refused`) et par les gardes de la Slice 06 : l'analyse est un diagnostic précoce, pas la frontière. La frontière d'exécution reste le bac à sable ([remotion-isolation.md](remotion-isolation.md)).
+- **Licence** : reconnue par comparaison EXACTE avec les textes canoniques (un texte inhabituel est refusé `license_unknown`, jamais accepté « à peu près ») ; un fichier de licence légèrement reformaté (copyright sur deux paragraphes, mise en forme) peut être refusé à tort ; pas un identifiant SPDX signé. Aucune licence séparée n'est cherchée pour les fichiers de `public/` : un asset est couvert par la licence du dépôt, et le plan le dit dans `changes`. Les marques et les polices ne sont pas examinées. Pas un avis juridique.
 - **Licence de Remotion** : consignée, non examinée (l'obligation d'une licence d'entreprise dépend de l'utilisateur).
 - **GitHub seulement** ; pas de ZIP importé, pas d'URL libre. Un dépôt privé n'est pas accessible (aucun jeton n'est transmis).
 - **Composition** : les `defaultProps` qui référencent une constante locale du `Root`, les `calculateMetadata`, les `lazyComponent` et les paramètres calculés ne sont pas transportés ; le plan le dit ou refuse. Le schéma de props de la scène importée est vide (`inputs.props` sans propriété) : les contrôles de la partition ne la pilotent pas encore.

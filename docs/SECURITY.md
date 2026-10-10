@@ -719,14 +719,21 @@ what is accepted and what is claimed about it:
   automatically: each must stay on GitHub over HTTPS and on the same repository. Size (12 MiB), time (30 s) and one import at a time
   are bounded. Only Core fetches (a port with a fake for tests); untrusted scene code has no network.
 - **Hostile archives refused whole.** In-memory stream, no disk: symlinks, hardlinks, devices, `..`/absolute/backslash paths, second
-  roots, duplicate names (case-folded), decompression bombs and an archive that does not attest the pinned commit.
+  roots, duplicate names (case-folded), decompression bombs (linear, capped, 20 s deadline: `import_timeout`) and an archive that does
+  not attest the pinned commit. "Attested" only proves GitHub echoed the requested SHA: objects of a fork network can be served under
+  an allowed owner's path (not tested), so **the allowlist protects the owner, not the commit** (reachability check: Issue 04).
 - **Dependencies are what the source reaches, not what `package.json` claims.** Only `react`, `remotion` (the locked shared tree) are
-  admitted; any other reached package is refused with its name and importer. `package.json`, lockfiles and scripts are never copied or run.
+  admitted; any other reached package is refused with its name and importer. Imports are looked for in the text with and without
+  comments, without requiring spaces, so a fake comment (`<p>/*</p>`) cannot hide one; an analysis deadline (20 s) bounds hostile text. `package.json`, lockfiles and scripts are never copied or run.
   No npm, no adapter.
-- **Licence is the template's, recorded apart from Remotion's.** Reviewed redistributable SPDX licences only; unlicensed, unknown,
-  copyleft, non-commercial, Remotion's own or a file/`package.json` conflict are refused. The licence text travels with the source.
-- **Provenance is Core-written.** `catalog.upstream.{commit, archive_sha256, imported_at, changes}` can only be written by the importer
-  (`PrefabService.save` refuses them elsewhere), so a library entry cannot claim a verification that did not happen.
+- **Licence is the template's, recorded apart from Remotion's.** The licence text must be EXACTLY a reviewed one (normalised comparison
+  with canonical MIT, BSD-2/3, ISC, Apache-2.0, 0BSD, Unlicense, CC0 texts: an added "Commons Clause" / "personal use only" paragraph is
+  refused); every licence file must agree. Unlicensed, unknown, copyleft, non-commercial, Remotion's own or a file/`package.json`
+  conflict are refused. The licence text travels with the source.
+- **Provenance is Core-written, and never laundered.** `catalog.upstream.{commit, archive_sha256, imported_at, changes, source_sha256}` and
+  `catalog.runtime_license` can only be written by the importer (`PrefabService.save` and `edit_base` refuse them elsewhere; a revision may
+  only carry them unchanged). Carrying is not vouching: the catalog view recomputes the digest of the CURRENT files and reports
+  `verified_intact` or "modified since import" with the modified file list; the original origin stays as history only.
 - **Scoped to one presentation.** The result is a `presentation-studio.*` prefab version; there is no request field to publish to the
   shared library (promotion is a separate, explicit step, Slice 19). No route reaches the Control Center, the brain or an MCP tool.
 

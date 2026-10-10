@@ -8,7 +8,9 @@ from __future__ import annotations
 
 import gzip
 import io
+from pathlib import Path
 import tarfile
+import time
 
 import pytest
 
@@ -20,7 +22,7 @@ from jarvis.domain.remotion_upstream import (
     UpstreamErrorCode as E, UpstreamOrigin, UpstreamRefusal, classify_licence, normalise_owners, parse_origin, read_tar_source,
     redirect_refusal,
 )
-from tests.fakes.upstream_archive import GPL, MIT, REMOTION_LICENCE, SHA, good_project, link, make_tarball
+from tests.fakes.upstream_archive import GPL, MIT, REMOTION_LICENCE, SHA, good_project, licence_text, link, make_tarball
 
 OWNERS = ("remotion-dev", "someone")
 ORIGIN = UpstreamOrigin("remotion-dev", "demo", SHA)
@@ -63,6 +65,11 @@ def test_every_unlisted_or_malformed_origin_is_refused_with_a_typed_code(url, co
     assert refusal(parse_origin, url, SHA, OWNERS).code == code
 
 
+@pytest.mark.parametrize("repo", ["...", "..", "-", "---", "_", "."])
+def test_repository_names_made_only_of_punctuation_are_refused(repo):
+    assert refusal(parse_origin, f"https://github.com/remotion-dev/{repo}", SHA, OWNERS).code == E.ORIGIN_INVALID
+
+
 @pytest.mark.parametrize("commit", ["main", "v4.0.0", "a1b2c3", SHA.upper(), SHA[:-1], SHA + "0", "", None, 123])
 def test_only_a_full_lowercase_sha_pins_a_commit(commit):
     assert refusal(parse_origin, "https://github.com/remotion-dev/demo", commit, OWNERS).code == E.COMMIT_NOT_PINNED
@@ -89,6 +96,9 @@ def test_the_allowlist_is_settings_data_and_tolerant():
     ("https://codeload.github.com:444/remotion-dev/demo/x", False),
     ("https://raw.githubusercontent.com/remotion-dev/demo/main/x", False),
     ("file:///etc/passwd", False),
+    ("https://codeload.github.com/remotion-dev/demo/../other/tar.gz/x", False),
+    ("https://codeload.github.com/remotion-dev/demo/tar.gz/../../../other/repo", False),
+    ("https://codeload.github.com/remotion-dev//demo/tar.gz/x", True),
 ])
 def test_a_redirect_must_stay_on_github_https_and_on_the_same_repository(location, ok):
     assert (redirect_refusal(ORIGIN, location) is None) is ok
@@ -172,18 +182,39 @@ def file_licence(text: str, package: dict | None = None):
     return classify_licence({"LICENSE": text.encode()}, package)
 
 
-@pytest.mark.parametrize("text, spdx", [
-    (MIT, "MIT"),
-    ("Apache License\nVersion 2.0, January 2004\n http://www.apache.org/licenses/\n", "Apache-2.0"),
-    ("Redistribution and use in source and binary forms, with or without modification, are permitted provided that: "
-     "Neither the name of the copyright holder nor the names of its contributors may be used", "BSD-3-Clause"),
-    ("Redistribution and use in source and binary forms, with or without modification, are permitted provided that the following", "BSD-2-Clause"),
-    ("Permission to use, copy, modify, and/or distribute this software for any purpose with or without fee is hereby granted, "
-     "provided that the above copyright notice and this permission notice appear in all copies.", "ISC"),
-    ("This is free and unencumbered software released into the public domain.", "Unlicense"),
+FIXTURES = sorted(p.stem for p in (Path(__file__).resolve().parents[1] / "fakes" / "licenses").glob("*.txt"))
+
+
+def test_the_canonical_texts_cover_every_permitted_licence_and_nothing_else():
+    assert set(FIXTURES) == up.PERMITTED_LICENCES == set(up.CANONICAL_LICENCE_HASHES)
+
+
+@pytest.mark.parametrize("spdx", FIXTURES)
+def test_a_canonical_licence_text_is_identified_whatever_its_copyright_line_title_or_line_endings(spdx):
+    text = licence_text(spdx, "Jane Doe and contributors")
+    assert file_licence(text).spdx == spdx
+    assert file_licence(text.replace("\n", "\r\n")).spdx == spdx
+    if spdx not in ("Apache-2.0", "CC0-1.0", "Unlicense"):
+        without_title = text.split("\n\n", 1)[1]
+        assert file_licence(without_title).spdx == spdx
+        assert file_licence(without_title.replace("2026", "2019-2026")).spdx == spdx
+
+
+@pytest.mark.parametrize("extra", [
+    "Commons Clause License Condition v1.0\n\nWithout limiting other conditions in the License, the grant of rights under the License will not include, and the License does not grant to you, the right to Sell the Software.",
+    "Personal use only: you may not use this software in a commercial product.",
+    "No monetised videos: videos made with this software must not earn money.",
+    "You must credit the author in every video title.",
+    "THE SOFTWARE MAY NOT BE USED FOR WEAPONS.",
 ])
-def test_a_reviewed_licence_text_is_identified_as_its_spdx_id(text, spdx):
-    assert file_licence(text).spdx == spdx and spdx in up.PERMITTED_LICENCES
+@pytest.mark.parametrize("spdx", ["MIT", "BSD-3-Clause", "ISC", "Apache-2.0"])
+def test_a_known_licence_with_an_extra_paragraph_is_never_accepted(spdx, extra):
+    text = licence_text(spdx)
+    with_extra_after = text.rstrip("\n") + "\n\n" + extra + "\n"
+    with_extra_before = extra + "\n\n" + text
+    for candidate in (with_extra_after, with_extra_before):
+        error = refusal(file_licence, candidate)
+        assert error.code in (E.LICENSE_UNKNOWN, E.LICENSE_RESTRICTED), (spdx, extra[:30])
 
 
 @pytest.mark.parametrize("text, code", [
@@ -195,9 +226,20 @@ def test_a_reviewed_licence_text_is_identified_as_its_spdx_id(text, spdx):
     ("Free for non-commercial use only.", E.LICENSE_RESTRICTED),
     (REMOTION_LICENCE, E.LICENSE_RESTRICTED),
     ("All rights reserved. Do whatever you want, probably.", E.LICENSE_UNKNOWN),
+    ("MIT", E.LICENSE_UNKNOWN),
 ])
 def test_copyleft_commercial_remotion_and_unknown_licences_are_refused(text, code):
     assert refusal(file_licence, text).code == code
+
+
+def test_every_licence_file_is_examined_and_they_must_agree():
+    mit, apache = licence_text("MIT").encode(), licence_text("Apache-2.0").encode()
+    # LICENSE = MIT accepted, LICENSE.md = GPL hidden behind it: refused
+    assert refusal(classify_licence, {"LICENSE": mit, "LICENSE.md": GPL.encode()}, None).code == E.LICENSE_RESTRICTED
+    assert refusal(classify_licence, {"LICENSE": mit, "COPYING": b"unreviewed terms"}, None).code == E.LICENSE_UNKNOWN
+    assert refusal(classify_licence, {"LICENSE": mit, "LICENSE-APACHE": apache}, None).code == E.LICENSE_CONFLICT
+    assert classify_licence({"LICENSE": mit, "LICENSE.md": mit, "LICENSE-MIT": mit}, None).spdx == "MIT"
+    assert classify_licence({"LICENSE-MIT": mit}, None).spdx == "MIT"
 
 
 def test_without_a_licence_file_only_a_permitted_package_json_declaration_counts():
@@ -217,9 +259,9 @@ def test_a_file_and_a_package_json_that_disagree_are_refused_and_the_remotion_li
     assert up.REMOTION_RUNTIME_LICENCE.startswith("Remotion License") and "Remotion" not in up.PERMITTED_LICENCES
 
 
-def test_only_a_root_level_licence_file_name_is_a_licence_file():
-    assert all(up.is_licence_file(name) for name in ("LICENSE", "LICENSE.md", "license.txt", "COPYING", "UNLICENSE"))
-    assert not up.is_licence_file("node_modules/x/LICENSE") and not up.is_licence_file("src/LICENSE")
+def test_a_root_level_licence_file_name_is_a_licence_file_and_nested_ones_are_not():
+    assert all(up.is_licence_file(name) for name in ("LICENSE", "LICENSE.md", "license.txt", "COPYING", "UNLICENSE", "LICENSE-MIT", "LICENCE"))
+    assert not up.is_licence_file("node_modules/x/LICENSE") and not up.is_licence_file("src/LICENSE") and not up.is_licence_file("README.md")
 
 
 # ------------------------------------------------------------------ téléchargeur HTTPS (faux HTTPSConnection)
@@ -319,3 +361,95 @@ def test_the_download_is_bounded_by_size_declared_or_streamed_and_by_a_global_de
 def test_the_fake_fetcher_records_every_request():
     fake = FakeUpstreamFetcher({ORIGIN.archive_url: b"x"})
     assert fake.fetch(ORIGIN).data == b"x" and fake.requests == [ORIGIN.archive_url]
+
+
+# ------------------------------------------------------------------ temps et CPU : entrées piégées
+
+class ZeroReader:
+    """Un membre de `size` octets nuls produit à la demande : une bombe sans jamais la tenir en mémoire."""
+
+    def __init__(self, size: int) -> None:
+        self.left = size
+
+    def read(self, n: int = -1) -> bytes:
+        n = self.left if n < 0 else min(n, self.left)
+        self.left -= n
+        return bytes(n)
+
+
+def bomb(size: int, *, extra: dict | None = None) -> bytes:
+    buffer = io.BytesIO()
+    packed = gzip.GzipFile(fileobj=buffer, mode="wb", compresslevel=9, mtime=0)
+    with tarfile.open(fileobj=packed, mode="w", format=tarfile.PAX_FORMAT, pax_headers={"comment": SHA}) as archive:
+        info = tarfile.TarInfo(f"demo-{SHA}/data/zeros.bin")
+        info.size = size
+        archive.addfile(info, ZeroReader(size))
+        for name, body in (extra or {}).items():
+            member = tarfile.TarInfo(f"demo-{SHA}/{name}")
+            member.size = len(body)
+            archive.addfile(member, io.BytesIO(body))
+    packed.close()
+    return buffer.getvalue()
+
+
+def test_a_large_unselected_member_is_skipped_in_linear_time():
+    data = bomb(80 * 1024 * 1024, extra={"src/a.ts": b"export const a = 1;"})
+    assert len(data) < 200 * 1024
+    started = time.monotonic()
+    read = read_tar_source(data, expected_commit=SHA, select=lambda p, s: 1024 if p.startswith("src/") else None)
+    assert time.monotonic() - started < 3.0, "80 MiB of zeros cost 84 s while the buffer was copied at every read"
+    assert read.files == {"src/a.ts": b"export const a = 1;"}
+
+
+def test_a_bomb_past_the_unpacked_limit_is_refused_fast():
+    data = bomb(up.MAX_UNPACKED_BYTES + 8 * 1024 * 1024)
+    started = time.monotonic()
+    assert refusal(read_tar_source, data, expected_commit=SHA, select=lambda p, s: None).code == E.ARCHIVE_TOO_LARGE
+    assert time.monotonic() - started < 3.0
+
+
+def test_the_read_deadline_is_hard_and_typed():
+    data = make_tarball(good_project())
+    ticks = iter(range(0, 1000, 10))
+    error = refusal(read_tar_source, data, expected_commit=SHA, select=lambda p, s: 1 << 20, deadline_s=5.0, clock=lambda: next(ticks))
+    assert error.code == E.IMPORT_TIMEOUT
+    assert refusal(read_tar_source, data, expected_commit=SHA, select=lambda p, s: 1 << 20, deadline_s=-1.0).code == E.IMPORT_TIMEOUT
+
+
+def test_the_gunzip_buffer_is_linear_for_many_small_reads():
+    payload = bytes(range(256)) * 4096  # 1 MiB
+    stream = up._BoundedGunzip(gzip.compress(payload), 4 * 1024 * 1024)
+    out = bytearray()
+    started = time.monotonic()
+    while True:
+        chunk = stream.read(512)
+        if not chunk:
+            break
+        out += chunk
+    assert bytes(out) == payload and time.monotonic() - started < 2.0
+
+
+def test_a_single_slow_read_cannot_outlive_the_download_deadline(monkeypatch):
+    """P3 : le délai d'UNE lecture suit le temps qu'il reste (read1 + `settimeout(min(10, restant))`), pas seulement le contrôle entre deux."""
+
+    timeouts: list[float] = []
+    now = [0.0]
+
+    class Sock:
+        def settimeout(self, value):
+            timeouts.append(value)
+
+    class Response(FakeResponse):
+        def read1(self, size=-1):
+            now[0] += 4.0  # chaque morceau « prend » 4 s
+            return super().read(size)
+
+    script = Script(Response(200, chunks=[b"a", b"b", b"c", b"d"]))
+    monkeypatch.setattr(fetcher_module.http.client, "HTTPSConnection", lambda *a, **k: _with_sock(script.factory(*a, **k), Sock()))
+    error = refusal(HttpsUpstreamFetcher(deadline_s=10.0, clock=lambda: now[0]).fetch, ORIGIN)
+    assert error.code == E.FETCH_TIMEOUT and timeouts and all(0 < t <= 10.0 for t in timeouts) and timeouts == sorted(timeouts, reverse=True)
+
+
+def _with_sock(connection, sock):
+    connection.sock = sock
+    return connection

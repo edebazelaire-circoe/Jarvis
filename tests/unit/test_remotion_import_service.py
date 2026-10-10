@@ -26,7 +26,7 @@ from jarvis.domain.remotion_upstream import UpstreamOrigin, UpstreamRefusal
 from jarvis.ports.prefabs import PrefabStoreError
 from jarvis.protocol.remotion_import_routes import PREFIX, RemotionImportProtocolRoutes
 from tests.fakes.prefabs import install_version
-from tests.fakes.remotion_scene import ENGINE
+from tests.fakes.remotion_scene import ENGINE, scene_candidate
 from tests.fakes.upstream_archive import GPL, SHA, good_project, link, make_tarball
 
 NOW = datetime(2026, 10, 10, 12, 0, tzinfo=timezone.utc)
@@ -90,7 +90,7 @@ def library_folders(world) -> list[str]:
 
 async def test_a_plan_downloads_validates_and_writes_nothing(world):
     answer = await world.service.plan({k: v for k, v in body().items() if k != "presentation_id"})
-    assert answer["publishes"] is False and answer["validated"] is True and answer["plan"]["license"]["spdx"] == "MIT"
+    assert answer["publishes"] is False and answer["guards_passed"] is True and answer["compiled"] is False and answer["plan"]["license"]["spdx"] == "MIT"
     assert world.fetcher.requests == [ORIGIN.archive_url]
     assert library_folders(world) == []
     assert "core.remotion_import.planned" in world.recorder.kinds()
@@ -211,7 +211,7 @@ async def test_only_one_import_runs_at_a_time(world):
     first = asyncio.create_task(service.plan(body()))
     await asyncio.sleep(0.05)
     assert (await refusal(service.plan(body()))).code == "import_busy"
-    assert (await first)["validated"] is True
+    assert (await first)["guards_passed"] is True
     gate.set()
 
 
@@ -229,30 +229,140 @@ async def test_no_other_door_can_write_the_verified_provenance_keys(world):
     forged["manifest"]["id"] = "presentation-studio.p0123456789ab.scccccccccccc"
     with pytest.raises(PrefabStoreError) as caught:
         await world.prefabs.save(forged, actor="user")
-    assert "importer only" in caught.value.message and plan_candidate["validated"]
+    assert "importer only" in caught.value.message and plan_candidate["guards_passed"]
     # même un agent qui « décrit » une provenance vérifiable pour un prefab neuf est refusé ; la déclarer sans les clés vérifiées est permis
     declared = json.loads(json.dumps(forged))
-    for key in ("commit", "archive_sha256", "imported_at", "changes"):
+    for key in ("commit", "archive_sha256", "imported_at", "changes", "source_sha256"):
         declared["manifest"]["catalog"]["upstream"].pop(key)
+    declared["manifest"]["catalog"].pop("runtime_license")
     assert (await world.prefabs.save(declared, actor="user")).version == 1
     assert manifest.catalog.upstream.verified
 
 
-async def test_a_revision_may_carry_the_previous_provenance_unchanged_but_not_alter_it(world):
-    result = await world.service.import_template(body(scene_id="pss_dddddddddddd"))
-    prefab_id = result["prefab"]["prefab_id"]
-    source = (await world.prefabs.get(prefab_id, 1)).to_dict(include_source=True)
-    manifest = (await world.prefabs.manifest(prefab_id, 1)).raw
+async def revised(world, prefab_id, *, edit="// edited by someone else\n", path="src/lib/Badge.tsx", replace=False, actor="brain"):
+    """Une révision de la source importée, publiée par `PrefabService.save` SANS l'importeur (le sondage du QA : un agent remplace du code)."""
+
     from jarvis.domain.remotion_import import analyse_archive, parse_import_request
     request = parse_import_request(body(), allowed_owners=("someone",), need_presentation=True)
     candidate = analyse_archive(make_tarball(good_project()), request, engine=ENGINE, imported_at=NOW).candidate
     candidate["manifest"]["id"] = prefab_id
-    candidate["sources"]["src/lib/Badge.tsx"] += "// edited by the user\n"
-    assert (await world.prefabs.save(candidate, actor="user")).version == 2
-    candidate["manifest"]["catalog"]["upstream"]["commit"] = "f" * 40
+    candidate["sources"][path] = edit if replace else candidate["sources"][path] + edit
+    return candidate, (await world.prefabs.save(candidate, actor=actor)).version
+
+
+async def test_a_revision_carries_the_origin_but_is_never_reported_intact(world):
+    """B1 (laundering) : la provenance reportée ne vaut pas « vérifié » : la vue compare l'empreinte des fichiers courants à celle de
+    l'import, dit « modifié depuis l'import » et nomme les fichiers ; l'origine reste comme historique."""
+
+    result = await world.service.import_template(body(scene_id="pss_dddddddddddd"))
+    prefab_id = result["prefab"]["prefab_id"]
+    first = (await world.prefabs.get(prefab_id, 1)).to_dict(catalog=True)["catalog"]["upstream"]
+    assert first["verified_intact"] is True and "modified_files" not in first and len(first["source_sha256"]) == 64
+    candidate, version = await revised(world, prefab_id, edit="export const Badge = () => { return null; };\n", replace=True)
+    assert version == 2
+    for row in ((await world.prefabs.get(prefab_id, 2)).to_dict(catalog=True)["catalog"]["upstream"],
+                next(row for row in await world.prefabs.search("", with_catalog=True, limit=50) if row.prefab_id == prefab_id).catalog["upstream"]):
+        assert row["verified_intact"] is False and row["modified_files"] == ["src/lib/Badge.tsx"]
+        # l'historique d'origine reste, daté, mais plus rien ne l'affirme pour ces fichiers
+        assert row["commit"] == SHA and row["imported_at"] == "2026-10-10T12:00:00Z" and row["changes"] == first["changes"]
+        assert row["archive_sha256"] == first["archive_sha256"] and row["source_sha256"] == first["source_sha256"]
+    assert (await world.prefabs.get(prefab_id, 1)).to_dict(catalog=True)["catalog"]["upstream"]["verified_intact"] is True
+    # ajouter ou retirer un fichier est aussi une modification
+    extra = json.loads(json.dumps(candidate))
+    extra["sources"]["src/lib/Extra.ts"] = "export const extra = 1;\n"
+    extra["manifest"]["source"]["modules"] = sorted([*extra["manifest"]["source"]["modules"], "src/lib/Extra.ts"])
+    assert (await world.prefabs.save(extra, actor="user")).version == 3
+    third = (await world.prefabs.get(prefab_id, 3)).to_dict(catalog=True)["catalog"]["upstream"]
+    assert third["verified_intact"] is False and third["modified_files"] == ["src/lib/Badge.tsx", "src/lib/Extra.ts"]
+    # une révision qui REVIENT aux octets de l'import est de nouveau intacte (l'empreinte, pas l'histoire, décide)
+    back = json.loads(json.dumps(candidate))
+    back["sources"]["src/lib/Badge.tsx"] = (await world.prefabs.remotion_source(prefab_id, 1)).text("src/lib/Badge.tsx")
+    assert (await world.prefabs.save(back, actor="user")).version == 4
+    assert (await world.prefabs.get(prefab_id, 4)).to_dict(catalog=True)["catalog"]["upstream"]["verified_intact"] is True
+
+
+async def test_a_revision_cannot_alter_the_origin_or_the_digest_only_carry_them(world):
+    result = await world.service.import_template(body(scene_id="pss_eeeeeeeeeeee"))
+    prefab_id = result["prefab"]["prefab_id"]
+    candidate, _ = await revised(world, prefab_id)
+    for key, value in (("commit", "f" * 40), ("source_sha256", "e" * 64), ("archive_sha256", "d" * 64), ("imported_at", "2030-01-01T00:00:00Z"),
+                       ("changes", ["nothing happened"])):
+        forged = json.loads(json.dumps(candidate))
+        forged["manifest"]["catalog"]["upstream"][key] = value
+        with pytest.raises(PrefabStoreError) as caught:
+            await world.prefabs.save(forged, actor="brain")
+        assert "importer only" in caught.value.message, key
+    stripped = json.loads(json.dumps(candidate))
+    stripped["manifest"]["catalog"]["upstream"] = {"name": "x/y", "url": "https://github.com/x/y"}
+    with pytest.raises(PrefabStoreError):  # the engine licence cannot stay behind a dropped origin: both are Core-written
+        await world.prefabs.save(stripped, actor="brain")
+    stripped["manifest"]["catalog"].pop("runtime_license")
+    assert (await world.prefabs.save(stripped, actor="brain")).version == 3  # dropping the claim is allowed: nothing is asserted anymore
+    assert "verified_intact" not in (await world.prefabs.get(prefab_id, 3)).to_dict(catalog=True)["catalog"]["upstream"]
+
+
+async def test_the_runtime_licence_is_core_written_like_the_upstream_keys(world):
+    plain = scene_candidate("presentation-studio.p000000000009.s000000000009")
+    plain["manifest"] = {**plain["manifest"], "schema_version": 3, "catalog": {
+        "type": "composition", "compatibility": {"remotion": "native"}, "stack": ["react"], "license": "MIT",
+        "runtime_license": "Remotion License (company licence may be required)"}}
+    with pytest.raises(PrefabStoreError) as caught:
+        await world.prefabs.save(plain, actor="user")
+    assert "runtime_license" in caught.value.message
+    plain["manifest"]["catalog"].pop("runtime_license")  # the author's own licence stays author-declared
+    assert (await world.prefabs.save(plain, actor="user")).version == 1
+    result = await world.service.import_template(body(scene_id="pss_ffffffffffff"))
+    candidate, _ = await revised(world, result["prefab"]["prefab_id"])
+    candidate["manifest"]["catalog"]["runtime_license"] = "Something else"
     with pytest.raises(PrefabStoreError):
         await world.prefabs.save(candidate, actor="user")
-    assert source and manifest
+
+
+async def test_edit_base_cannot_write_the_core_written_provenance_either(world):
+    from tests.fakes.prefabs import candidate as html_candidate
+
+    async def witness(text):
+        return "evt-1"
+
+    prefabs = PrefabService(FilePrefabLibrary(world.data.parent / "package", world.data), user_utterance_witness=witness,
+                            clock=lambda: NOW)
+    forged = html_candidate(id="jarvis.counter", title="Base counter")
+    forged["manifest"] = {**forged["manifest"], "schema_version": 3, "catalog": {
+        "type": "component", "compatibility": {"slidecar": "native"}, "stack": ["html"],
+        "upstream": {"name": "x/y", "url": "https://github.com/x/y", "commit": SHA, "archive_sha256": "a" * 64,
+                     "imported_at": "2026-10-10T12:00:00Z", "source_sha256": "b" * 64, "changes": ["trust me"]}}}
+    request = "Please change the base counter prefab so that it reads better for me"
+    with pytest.raises(PrefabStoreError) as caught:
+        await prefabs.edit_base("jarvis.counter", forged, user_request=request, confirmed_by_user=True)
+    assert "importer only" in caught.value.message
+    forged["manifest"]["catalog"].pop("upstream")
+    forged["manifest"]["catalog"]["runtime_license"] = "Remotion License"
+    with pytest.raises(PrefabStoreError):
+        await prefabs.edit_base("jarvis.counter", forged, user_request=request, confirmed_by_user=True)
+
+
+async def test_the_presentation_is_checked_before_any_download(world):
+    error = await refusal(world.service.import_template(body(presentation_id="pst_" + "f" * 32)))
+    assert error.code == "presentation_not_found" and world.fetcher.requests == [] and library_folders(world) == []
+
+
+async def test_a_busy_refusal_is_journaled_too(world):
+    class Slow(FakeUpstreamFetcher):
+        def fetch(self, origin):
+            import time
+            time.sleep(0.2)
+            return super().fetch(origin)
+
+    slow = Slow()
+    slow.add(ORIGIN, make_tarball(good_project()))
+    service = RemotionImportService(slow, world.prefabs, FakeStudio(), engine=lambda: ENGINE, allowed_owners=lambda: ("someone",),
+                                    diagnostics=world.recorder)
+    first = asyncio.create_task(service.plan(body()))
+    await asyncio.sleep(0.05)
+    assert (await refusal(service.plan(body()))).code == "import_busy"
+    await first
+    assert any(kind == "core.remotion_import.refused" and data["code"] == "import_busy" for kind, _, data in world.recorder.events)
+    assert status_of("import_timeout") == 504
 
 
 # ------------------------------------------------------------------ routes

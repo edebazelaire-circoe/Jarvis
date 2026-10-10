@@ -33,7 +33,7 @@ from jarvis.ports.v2 import DiagnosticSink
 HTTP_STATUS: Mapping[str, int] = {
     E.REQUEST_INVALID: 400, E.ORIGIN_INVALID: 400, E.COMMIT_NOT_PINNED: 400, E.ORIGIN_NOT_ALLOWED: 403,
     E.REDIRECT_REFUSED: 502, E.FETCH_FAILED: 502, E.FETCH_TIMEOUT: 504, E.FETCH_TOO_LARGE: 413,
-    "presentation_not_found": 404, "import_storage_failed": 500, "import_busy": 409,
+    "presentation_not_found": 404, "import_storage_failed": 500, "import_busy": 409, E.IMPORT_TIMEOUT: 504,
 }
 
 
@@ -60,16 +60,13 @@ class RemotionImportService:
 
     async def plan(self, raw: object) -> dict[str, Any]:
         plan, _ = await self._plan(raw, need_presentation=False)
-        return {"plan": plan.to_public(), "validated": True, "publishes": False}
+        # `guards_passed` : manifeste, bornes et gardes de la Slice 06 ont accepté la source. `compiled: false` : le plan ne compile pas
+        # (esbuild peut encore refuser un import que l'analyse n'a pas vu : la compilation est le premier usage, `compile_*`).
+        return {"plan": plan.to_public(), "guards_passed": True, "compiled": False, "publishes": False}
 
     async def import_template(self, raw: object) -> dict[str, Any]:
-        plan, request = await self._plan(raw, need_presentation=True)
+        plan, request = await self._plan(raw, need_presentation=True, before_fetch=self._require_presentation)
         presentation_id = request.presentation_id
-        try:
-            await self._studio.get(presentation_id)
-        except PresentationStudioError as exc:
-            self._refused("presentation_not_found", request, str(exc)[:120])
-            raise UpstreamRefusal("presentation_not_found", f"presentation {presentation_id} is not available: {str(exc)[:160]}") from None
         scene_id = request.scene_id or new_scene_id()
         prefab_id = source_prefab_id(presentation_id, scene_id)
         candidate = dict(plan.candidate)
@@ -88,13 +85,25 @@ class RemotionImportService:
                 "prefab": {"prefab_id": publication.prefab_id, "version": publication.version, "fingerprint": publication.fingerprint},
                 "plan": plan.to_public(), "published_to_library": False}
 
-    async def _plan(self, raw: object, *, need_presentation: bool):
+    async def _require_presentation(self, request: Any) -> None:
+        """La présentation existe AVANT tout téléchargement : un import vers une présentation inconnue n'ouvre aucune connexion."""
+
+        try:
+            await self._studio.get(request.presentation_id)
+        except PresentationStudioError as exc:
+            raise UpstreamRefusal("presentation_not_found",
+                                  f"presentation {request.presentation_id} is not available: {str(exc)[:160]}") from None
+
+    async def _plan(self, raw: object, *, need_presentation: bool, before_fetch=None):
         if self._lock.locked():
+            self._refused("import_busy", None, "another import is running")
             raise UpstreamRefusal("import_busy", "another import is running: retry when it is done")
         async with self._lock:
             request = None
             try:
                 request = parse_import_request(raw, allowed_owners=self._owners(), need_presentation=need_presentation)
+                if before_fetch is not None:
+                    await before_fetch(request)
                 fetched = await asyncio.to_thread(self._fetcher.fetch, request.origin)
                 engine = self._engine()
                 stamp = self._clock()

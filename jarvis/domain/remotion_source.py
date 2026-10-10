@@ -310,12 +310,18 @@ def file_hashes(files: Mapping[str, bytes]) -> dict[str, str]:
     return {path: sha256_hex(files[path]) for path in sorted(files)}
 
 
+def digest_of_hashes(hashes: Mapping[str, str]) -> str:
+    """`source_digest` à partir des seules empreintes `{chemin: sha256}` (l'inventaire d'une version : aucun octet n'est relu)."""
+
+    canonical = json.dumps(dict(sorted(hashes.items())), sort_keys=True, separators=(",", ":"), ensure_ascii=True)
+    return hashlib.sha256(canonical.encode("ascii")).hexdigest()
+
+
 def source_digest(files: Mapping[str, bytes]) -> str:
     """Empreinte déterministe de l'ensemble : chemins triés + SHA-256 de chaque contenu. Indépendante de l'ordre,
     du moment et de l'endroit où la source vit (donc de l'id et de la version du prefab)."""
 
-    canonical = json.dumps(file_hashes(files), sort_keys=True, separators=(",", ":"), ensure_ascii=True)
-    return hashlib.sha256(canonical.encode("ascii")).hexdigest()
+    return digest_of_hashes(file_hashes(files))
 
 
 def parse_source(block: SourceBlock, files: Mapping[str, bytes]) -> RemotionSource:

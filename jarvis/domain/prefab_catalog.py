@@ -45,11 +45,12 @@ MAX_URL = 300
 
 CATALOG_KEYS = frozenset({"type", "compatibility", "stack", "dependencies", "license", "upstream", "runtime_license"})
 CATALOG_REQUIRED = frozenset({"type", "compatibility", "stack"})
-UPSTREAM_KEYS = frozenset({"name", "url", "ref", "license", "author", "commit", "archive_sha256", "imported_at", "changes"})
+UPSTREAM_KEYS = frozenset({"name", "url", "ref", "license", "author", "commit", "archive_sha256", "imported_at", "changes",
+                           "source_sha256"})
 UPSTREAM_REQUIRED = frozenset({"name", "url"})
 #: Clés que SEUL l'importeur de Core écrit (Slice 18, `docs/remotion-import.md`) : elles attestent une vérification (archive
 #: lue, commit attesté, empreinte calculée). Un candidat venu d'une autre porte qui les porte est refusé (`PrefabService.save`).
-VERIFIED_UPSTREAM_KEYS = frozenset({"commit", "archive_sha256", "imported_at", "changes"})
+VERIFIED_UPSTREAM_KEYS = frozenset({"commit", "archive_sha256", "imported_at", "changes", "source_sha256"})
 MAX_CHANGES = 16
 _SHA1 = re.compile(r"[0-9a-f]{40}\Z")
 _SHA256 = re.compile(r"[0-9a-f]{64}\Z")
@@ -93,17 +94,21 @@ class Upstream:
     archive_sha256: str = ""
     imported_at: str = ""
     changes: tuple[str, ...] = ()
+    #: Empreinte (`source_digest`) de l'ENSEMBLE EXACT de fichiers écrit à l'import : une version dont les fichiers ne la rendent plus
+    #: n'est plus « intacte » (`PrefabService`, `verified_intact`) ; la provenance d'origine reste, datée, comme historique.
+    source_sha256: str = ""
 
     @property
     def verified(self) -> bool:
         """Vrai quand les clés de vérification sont posées (donc écrites par l'importeur, jamais déclarées à la main)."""
 
-        return bool(self.commit and self.archive_sha256 and self.imported_at)
+        return bool(self.commit and self.archive_sha256 and self.imported_at and self.source_sha256)
 
     def to_dict(self) -> dict[str, Any]:
         body: dict[str, Any] = {key: value for key, value in (
             ("name", self.name), ("url", self.url), ("ref", self.ref), ("license", self.license), ("author", self.author),
-            ("commit", self.commit), ("archive_sha256", self.archive_sha256), ("imported_at", self.imported_at)) if value}
+            ("commit", self.commit), ("archive_sha256", self.archive_sha256), ("imported_at", self.imported_at),
+            ("source_sha256", self.source_sha256)) if value}
         if self.changes:
             body["changes"] = list(self.changes)
         return body
@@ -220,14 +225,14 @@ def _parse_upstream(raw: object, errors: list[str]) -> Upstream | None:
         errors.append(f"catalog.upstream: {bad or ['url']} must be one line of at most {MAX_UPSTREAM_TEXT} characters "
                       "(url: http or https)")
         return None
-    shapes = (("commit", _SHA1), ("archive_sha256", _SHA256), ("imported_at", _IMPORTED_AT))
+    shapes = (("commit", _SHA1), ("archive_sha256", _SHA256), ("imported_at", _IMPORTED_AT), ("source_sha256", _SHA256))
     wrong = [key for key, pattern in shapes if key in raw and not pattern.fullmatch(raw[key])]
     changes = raw.get("changes", [])
     if (not isinstance(changes, list) or len(changes) > MAX_CHANGES
             or any(not _line(item, MAX_UPSTREAM_TEXT) for item in changes)):
         wrong.append("changes")
     if wrong:
-        errors.append(f"catalog.upstream: {wrong} are malformed (commit: 40 hex, archive_sha256: 64 hex, imported_at: "
+        errors.append(f"catalog.upstream: {wrong} are malformed (commit: 40 hex, archive_sha256 / source_sha256: 64 hex, imported_at: "
                       f"YYYY-MM-DDTHH:MM:SSZ, changes: at most {MAX_CHANGES} lines)")
         return None
     return Upstream(**{key: (tuple(raw[key]) if key == "changes" else raw[key]) for key in raw})

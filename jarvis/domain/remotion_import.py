@@ -18,20 +18,22 @@ n'est lu que comme TEXTE. Le plan s'appuie sur ce que la source atteint réellem
 from __future__ import annotations
 
 import ast
+import functools
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from datetime import datetime
 import json
 import posixpath
 import re
+import time
 from typing import Any
 
 from jarvis.domain.prefab import PrefabDefinitionError, parse_candidate
 from jarvis.domain.presentation_studio import is_presentation_id
 from jarvis.domain.remotion_compile import SCENE_ALLOWED_IMPORTS
 from jarvis.domain.remotion_source import (
-    ASSET_EXTENSIONS, ASSET_ROOT, COMPOSITION_ID, MAX_ASSET_BYTES, MAX_MODULE_BYTES, MODULE_EXTENSIONS, MODULE_ROOT, Composition,
-    EnginePin, RemotionSourceError, build_candidate, sha256_hex, source_digest,
+    ASSET_EXTENSIONS, ASSET_ROOT, COMPOSITION_ID, MAX_ASSET_BYTES, MAX_ASSETS_TOTAL_BYTES, MAX_MODULE_BYTES, MODULE_EXTENSIONS,
+    MODULE_ROOT, Composition, EnginePin, RemotionSourceError, build_candidate, sha256_hex, source_digest,
 )
 from jarvis.domain.remotion_upstream import (
     MAX_LICENCE_BYTES, REMOTION_RUNTIME_LICENCE, TarContent, UpstreamErrorCode, UpstreamOrigin, UpstreamRefusal, classify_licence,
@@ -46,18 +48,34 @@ FALLBACK_ENTRY_NAME = "src/JarvisEntry.tsx"
 LICENCE_MODULE = "src/upstream/license.json"
 _RESOLVE_EXTENSIONS = (".tsx", ".ts", ".jsx", ".js", ".json")
 STACK = ("react", "remotion", "typescript")
-# `import` / `require` au milieu d'une chaîne ou d'une propriété (`x.import`) n'est pas une instruction.
+# `import` / `require` au milieu d'une chaîne ou d'une propriété (`x.import`) n'est pas une instruction. Les espaces sont optionnels
+# (`import{a}from'zod'`, `export*from'zod'` sont des imports) et les quantificateurs bornés (aucun retour sur trace quadratique).
 _NIS = r"""(?<![\w$."'`])"""
-_IMPORT_FROM = re.compile(_NIS + r"""import\s+(?!type\b)(?:[^;'"`]*?\sfrom\s*|\s*)(['"])([^'"\n]+)\1""")
-_EXPORT_FROM = re.compile(_NIS + r"""export\s+(?!type\b)(?:\*(?:\s+as\s+[\w$]+)?|\{[^}]*\})\s*from\s*(['"])([^'"\n]+)\1""")
-_REQUIRE = re.compile(_NIS + r"""require\s*\(\s*(['"])([^'"\n]+)\1\s*\)""")
-_DYNAMIC = re.compile(_NIS + r"""import\s*\(\s*(['"])([^'"\n]+)\1\s*\)""")
+_IMPORT_FROM = re.compile(_NIS + r"""import(?![\w$])(?!\s*type\b)\s*(?:[^;'"`]{0,400}?from\s*|\s*)(['"])([^'"\n]{1,300})\1""")
+_EXPORT_FROM = re.compile(_NIS + r"""export(?![\w$])(?!\s*type\b)\s*(?:\*(?:\s*as\s+[\w$]+)?|\{[^}]{0,2000}\})\s*from\s*(['"])([^'"\n]{1,300})\1""")
+_REQUIRE = re.compile(_NIS + r"""require\s*\(\s*(['"])([^'"\n]{1,300})\1\s*\)""")
+_DYNAMIC = re.compile(_NIS + r"""import\s*\(\s*(['"])([^'"\n]{1,300})\1\s*\)""")
 _STATIC_FILE = re.compile(r"""\bstaticFile\s*\(\s*(['"`])([^'"`$\n]*)\1\s*\)""")
 _STATIC_FILE_ANY = re.compile(r"\bstaticFile\s*\(")
-_IMPORT_STATEMENT = re.compile(r"""\bimport\s+(?!type\b)([^;'"`]*?)\sfrom\s*(['"])([^'"\n]+)\2""")
+_IMPORT_STATEMENT = re.compile(_NIS + r"""import(?![\w$])(?!\s*type\b)\s*([^;'"`]{0,400}?)\s*from\s*(['"])([^'"\n]{1,300})\2""")
 _IDENT = re.compile(r"[A-Za-z_$][\w$]*")
 _JS_WORDS = frozenset({"true", "false", "null", "undefined", "as", "const", "satisfies", "typeof", "new", "NaN", "Infinity", "Math",
                        "Object", "Array", "String", "Number", "Boolean", "JSON", "Date", "Symbol", "Map", "Set"})
+
+
+#: Échéance de toute l'analyse (CPU) : un texte piégé ne tient pas Core plus longtemps (`import_timeout`).
+ANALYSIS_BUDGET_S = 20.0
+MAX_EXPRESSION_CHARS = 200
+
+
+class _Budget:
+    def __init__(self, seconds: float, clock=time.monotonic) -> None:
+        self._clock = clock
+        self._limit = clock() + seconds
+
+    def check(self) -> None:
+        if self._clock() > self._limit:
+            raise UpstreamRefusal(UpstreamErrorCode.IMPORT_TIMEOUT, "analysing the template took too long")
 
 
 class ImportErrorCode(UpstreamErrorCode):
@@ -172,32 +190,41 @@ class ImportPlan:
 
 # ------------------------------------------------------------------ lecture de l'archive
 
-def _selector(subdir: str, *, assets: frozenset[str] | None):
-    """Quels fichiers lire. Première passe : licence, `package.json`, modules (`assets=None`). Seconde : les assets nommés."""
+class _Selector:
+    """Quels fichiers lire, en UNE passe : licences, `package.json`, modules, et les assets de `public/` dans la limite d'un budget
+    souple (`MAX_ASSETS_TOTAL_BYTES`) ; ce qui ne tient pas est noté (`skipped`) et refusé seulement si une scène le nomme."""
 
-    base = f"{subdir}/" if subdir else ""
+    def __init__(self, subdir: str) -> None:
+        self.base = f"{subdir}/" if subdir else ""
+        self.assets_total = 0
+        self.skipped: set[str] = set()
 
-    def select(path: str, size: int) -> int | None:
-        if assets is not None:
-            name = path.removeprefix(base + ASSET_ROOT) if path.startswith(base + ASSET_ROOT) else None
-            return MAX_ASSET_BYTES if name is not None and name in assets else None
+    def __call__(self, path: str, size: int) -> int | None:
+        base = self.base
         if is_licence_file(path) or (base and path.startswith(base) and is_licence_file(path.removeprefix(base))):
             return MAX_LICENCE_BYTES
         if path in (base + "package.json", "package.json"):
             return MAX_PACKAGE_JSON_BYTES
         if path.startswith(base + MODULE_ROOT) and posixpath.splitext(path)[1].lower() in MODULE_EXTENSIONS:
             return MAX_MODULE_BYTES
+        if path.startswith(base + ASSET_ROOT) and posixpath.splitext(path)[1].lower() in ASSET_EXTENSIONS:
+            if size <= MAX_ASSET_BYTES and self.assets_total + size <= MAX_ASSETS_TOTAL_BYTES:
+                self.assets_total += size
+                return MAX_ASSET_BYTES
+            self.skipped.add(path)
         return None
 
-    return select
 
-
-def analyse_archive(data: bytes, request: ImportRequest, *, engine: EnginePin, imported_at: datetime) -> ImportPlan:
+def analyse_archive(data: bytes, request: ImportRequest, *, engine: EnginePin, imported_at: datetime,
+                    budget_s: float = ANALYSIS_BUDGET_S, clock=time.monotonic) -> ImportPlan:
     """Archive vérifiée -> plan. `UpstreamRefusal` (codes de `ImportErrorCode`) à la première cause établie, sinon le plan."""
 
     origin, subdir = request.origin, request.subdir
     base = f"{subdir}/" if subdir else ""
-    first = read_tar_source(data, expected_commit=origin.commit, select=_selector(subdir, assets=None))
+    budget = _Budget(budget_s, clock)
+    selector = _Selector(subdir)
+    first = read_tar_source(data, expected_commit=origin.commit, select=selector, deadline_s=budget_s, clock=clock)
+    budget.check()
     package = _package_json(first.files, base)
     modules = {path.removeprefix(base): body.decode("utf-8", errors="strict") if _decodable(body) else None
                for path, body in first.files.items() if path.startswith(base + MODULE_ROOT)}
@@ -212,12 +239,12 @@ def analyse_archive(data: bytes, request: ImportRequest, *, engine: EnginePin, i
         licence_files.update({name.removeprefix(base): body for name, body in first.files.items()
                               if name.startswith(base) and is_licence_file(name.removeprefix(base))})
     licence = classify_licence(licence_files, package)
-    tag = _choose_composition(texts, request)
-    settings = _composition_settings(tag, texts, request)
+    tag = _choose_composition(texts, request, budget)
+    settings = _composition_settings(tag, _constants_of(texts, budget), request)
     entry_name = ENTRY_NAME if ENTRY_NAME not in texts else FALLBACK_ENTRY_NAME
     wrapper, wrapper_imports = _wrapper(tag, texts, entry_name, origin)
     all_modules = {**texts, entry_name: wrapper}
-    reachable, bare_imports, assets_named, dynamic = _reach(entry_name, all_modules, first, base)
+    reachable, bare_imports, assets_named, dynamic = _reach(entry_name, all_modules, first, base, budget)
     _check_dependencies(bare_imports, package)
     kept_modules = {path: all_modules[path] for path in sorted(reachable)}
     kept_modules[LICENCE_MODULE] = json.dumps(
@@ -225,16 +252,15 @@ def analyse_archive(data: bytes, request: ImportRequest, *, engine: EnginePin, i
         indent=2, ensure_ascii=True) + "\n"
     asset_paths: dict[str, bytes] = {}
     warnings: list[str] = []
-    if assets_named:
-        second = read_tar_source(data, expected_commit=origin.commit, select=_selector(subdir, assets=frozenset(assets_named)))
-        for name in sorted(assets_named):
-            full = base + ASSET_ROOT + name
-            if full in second.files and posixpath.splitext(name)[1].lower() in ASSET_EXTENSIONS:
-                asset_paths[ASSET_ROOT + name] = second.files[full]
-            elif full in second.oversize:
-                raise UpstreamRefusal(ImportErrorCode.FILE_TOO_LARGE, f"staticFile({name!r}): the asset is larger than {MAX_ASSET_BYTES} bytes")
-            else:
-                warnings.append(f"staticFile({name!r}) names a file missing from public/ or of an unsupported type: the scene will not find it")
+    for name in sorted(assets_named):
+        full = base + ASSET_ROOT + name
+        if full in first.files and posixpath.splitext(name)[1].lower() in ASSET_EXTENSIONS:
+            asset_paths[ASSET_ROOT + name] = first.files[full]
+        elif full in first.oversize or full in selector.skipped:
+            raise UpstreamRefusal(ImportErrorCode.FILE_TOO_LARGE,
+                                  f"staticFile({name!r}): the asset is larger than {MAX_ASSET_BYTES} bytes or past the {MAX_ASSETS_TOTAL_BYTES} bytes budget")
+        else:
+            warnings.append(f"staticFile({name!r}) names a file missing from public/ or of an unsupported type: the scene will not find it")
     if dynamic:
         warnings.append(f"{dynamic} staticFile call(s) with a computed name: those assets cannot be known, none was copied")
     dependencies = _dependency_map(bare_imports, engine, package, warnings)
@@ -249,6 +275,7 @@ def analyse_archive(data: bytes, request: ImportRequest, *, engine: EnginePin, i
     composition = settings
     title = request.title or f"{origin.repo} - {composition.composition_id}"
     files: dict[str, str | bytes] = {**kept_modules, **asset_paths}
+    byte_files = {path: (body if isinstance(body, bytes) else body.encode("utf-8")) for path, body in files.items()}
     stamp = imported_at.strftime("%Y-%m-%dT%H:%M:%SZ")
     catalog = {
         "type": "composition", "compatibility": {"remotion": "native", "slidecar": "unsupported"}, "stack": list(STACK),
@@ -257,6 +284,7 @@ def analyse_archive(data: bytes, request: ImportRequest, *, engine: EnginePin, i
         "upstream": {k: v for k, v in (("name", origin.name), ("url", origin.repository_url), ("ref", request.ref),
                                        ("license", licence.spdx), ("author", origin.owner), ("commit", origin.commit),
                                        ("archive_sha256", sha256_hex(data)), ("imported_at", stamp),
+                                       ("source_sha256", source_digest(byte_files)),
                                        ("changes", list(changes))) if v},
     }
     try:
@@ -274,7 +302,6 @@ def analyse_archive(data: bytes, request: ImportRequest, *, engine: EnginePin, i
         raise UpstreamRefusal(ImportErrorCode.SOURCE_GUARD if guard else ImportErrorCode.SOURCE_INVALID,
                               "the imported source is refused by the Jarvis source guards" if guard
                               else "the imported source does not fit the Jarvis source layout", tuple(exc.errors[:20])) from None
-    byte_files = {path: (body if isinstance(body, bytes) else body.encode("utf-8")) for path, body in files.items()}
     return ImportPlan(
         request=request, archive_sha256=sha256_hex(data), archive_bytes=len(data), licence=licence.to_dict(), composition=composition,
         dependencies=tuple(dependencies), dropped_dependencies=tuple(dropped_dependencies),
@@ -304,6 +331,7 @@ def _package_json(files: Mapping[str, bytes], base: str) -> Mapping[str, Any] | 
 
 # ------------------------------------------------------------------ texte JavaScript : commentaires, balises
 
+@functools.lru_cache(maxsize=96)
 def strip_comments(text: str) -> str:
     """Retire `//` et `/* */` hors chaînes (les numéros de ligne restent : un commentaire devient des espaces)."""
 
@@ -367,9 +395,11 @@ class CompositionTag:
         return value.strip().strip("'\"`") if kind in ("str", "expr") else ""
 
 
-def find_composition_tags(texts: Mapping[str, str]) -> list[CompositionTag]:
+def find_composition_tags(texts: Mapping[str, str], budget: _Budget | None = None) -> list[CompositionTag]:
     tags: list[CompositionTag] = []
     for path in sorted(texts):
+        if budget is not None:
+            budget.check()
         clean = strip_comments(texts[path])
         for match in re.finditer(r"<Composition(?=[\s/>])", clean):
             attrs = _read_attrs(clean, match.end())
@@ -415,8 +445,8 @@ def _read_attrs(text: str, i: int) -> dict[str, tuple[str, str]] | None:
     return None
 
 
-def _choose_composition(texts: Mapping[str, str], request: ImportRequest) -> CompositionTag:
-    tags = find_composition_tags(texts)
+def _choose_composition(texts: Mapping[str, str], request: ImportRequest, budget: _Budget | None = None) -> CompositionTag:
+    tags = find_composition_tags(texts, budget)
     ids = sorted({tag.id for tag in tags if tag.id})
     if not tags:
         raise UpstreamRefusal(ImportErrorCode.NO_COMPOSITION, "no <Composition id=... component=...> found in src/: not a Remotion project")
@@ -431,24 +461,33 @@ def _choose_composition(texts: Mapping[str, str], request: ImportRequest) -> Com
     return next(tag for tag in tags if tag.id == ids[0])
 
 
-def _constant(name: str, texts: Mapping[str, str]) -> int | None:
-    values = set()
-    pattern = re.compile(rf"\bconst\s+{re.escape(name)}\s*(?::\s*number\s*)?=\s*([0-9][0-9_]*)\s*(?:;|\n|,)")
+_CONSTANT = re.compile(r"\bconst\s+([A-Za-z_$][\w$]*)\s*(?::\s*number\s*)?=\s*([0-9][0-9_]{0,12})\s*(?:;|\n|,)")
+
+
+def _constants_of(texts: Mapping[str, str], budget: _Budget | None = None) -> dict[str, int | None]:
+    """`{nom: valeur}` des `const NOM = <entier>` du projet (un seul balayage) ; `None` quand deux valeurs différentes se disputent le nom."""
+
+    found: dict[str, int | None] = {}
     for text in texts.values():
-        for found in pattern.findall(strip_comments(text)):
-            values.add(int(found.replace("_", "")))
-    return next(iter(values)) if len(values) == 1 else None
+        if budget is not None:
+            budget.check()
+        for name, raw in _CONSTANT.findall(strip_comments(text)):
+            value = int(raw.replace("_", ""))
+            if name not in found:
+                found[name] = value
+            elif found[name] != value:
+                found[name] = None
+    return found
 
 
-def _number(expr: str, texts: Mapping[str, str]) -> int | None:
-    """Entier d'une expression : littéral, constante numérique unique, ou arithmétique de ceux-là. Sinon `None`."""
+def _number(expr: str, constants: Mapping[str, int | None]) -> int | None:
+    """Entier d'une expression : littéral, constante numérique unique, ou arithmétique de ceux-là. Sinon `None` (jamais d'exception :
+    expression trop longue ou trop profonde, `RecursionError` comprise)."""
 
-    substituted = _IDENT.sub(lambda m: str(_constant(m.group(0), texts)) if _constant(m.group(0), texts) is not None else m.group(0), expr)
-    if not re.fullmatch(r"[0-9_\s+\-*/()]+", substituted):
+    if len(expr) > MAX_EXPRESSION_CHARS:
         return None
-    try:
-        tree = ast.parse(substituted.replace("_", "").strip(), mode="eval")
-    except SyntaxError:
+    substituted = _IDENT.sub(lambda m: str(constants[m.group(0)]) if constants.get(m.group(0)) is not None else m.group(0), expr)
+    if not re.fullmatch(r"[0-9_\s+\-*/()]+", substituted):
         return None
 
     def walk(node: ast.AST) -> float:
@@ -465,17 +504,19 @@ def _number(expr: str, texts: Mapping[str, str]) -> int | None:
         raise ValueError
 
     try:
-        value = walk(tree)
-    except (ValueError, ZeroDivisionError):
+        value = walk(ast.parse(substituted.replace("_", "").strip(), mode="eval"))
+    except (SyntaxError, ValueError, ZeroDivisionError, RecursionError, MemoryError, OverflowError):
         return None
-    return int(value) if value == value and value == int(value) else None
+    return int(value) if value == value and abs(value) < 1e12 and value == int(value) else None
 
 
-def _composition_settings(tag: CompositionTag, texts: Mapping[str, str], request: ImportRequest) -> Composition:
+def _composition_settings(tag: CompositionTag, constants: Mapping[str, int | None], request: ImportRequest) -> Composition:
+    if not COMPOSITION_ID.fullmatch(tag.id):
+        raise UpstreamRefusal(ImportErrorCode.COMPOSITION_UNRESOLVED, "a composition id must match [A-Za-z][A-Za-z0-9-]{0,63}")
     found: dict[str, int | None] = {}
     for attr, key in (("width", "width"), ("height", "height"), ("fps", "fps"), ("durationInFrames", "duration_in_frames")):
         kind, value = tag.attrs.get(attr, ("", ""))
-        found[key] = _number(value, texts) if kind in ("expr", "str") and value else None
+        found[key] = _number(value, constants) if kind in ("expr", "str") and value else None
     given = request.composition
     if given is not None:
         found = {key: (getattr(given, key) if getattr(given, key) is not None else found[key]) for key in found}
@@ -510,6 +551,12 @@ def _imports_of(text: str) -> dict[str, tuple[str, str]]:
         elif clause and _IDENT.fullmatch(clause.split(",")[0].strip()):
             bindings[clause.split(",")[0].strip()] = (spec, "default")
     return bindings
+
+
+def _comment_safe(text: str) -> str:
+    """Un id venu du code amont dans un commentaire généré : une ligne, caractères simples (aucun saut de ligne ni `*/`)."""
+
+    return re.sub(r"[^A-Za-z0-9_-]", "?", text)[:64]
 
 
 def _relative(from_dir: str, target_path: str) -> str:
@@ -582,7 +629,7 @@ def _wrapper(tag: CompositionTag, texts: Mapping[str, str], entry_name: str, ori
         body = "{...defaultProps, ...props}"
         notes.append("defaultProps")
     lines.append("")
-    lines.append(f"// Entry generated by the Jarvis importer from {origin.name}@{origin.commit[:12]}, composition {tag.id}.")
+    lines.append(f"// Entry generated by the Jarvis importer from {origin.name}@{origin.commit[:12]}, composition {_comment_safe(tag.id)}.")
     lines.append("export default function ImportedScene(props: Record<string, unknown>) {")
     lines.append(f"  return createElement({component} as any, {body});")
     lines.append("}")
@@ -600,8 +647,11 @@ def _resolve(from_dir: str, spec: str, texts: Mapping[str, str]) -> str | None:
     return next((c for c in candidates if c in texts), None)
 
 
-def specifiers(text: str) -> list[str]:
-    clean = strip_comments(text)
+def specifiers(text: str, *, comments_stripped: bool = True) -> list[str]:
+    """Spécificateurs d'import du texte. `comments_stripped=False` lit le texte BRUT : un `/*` au milieu d'un texte JSX
+    (`<p>/*</p>`) n'est pas un commentaire, mais ferait taire tout ce qui suit dans le texte nettoyé."""
+
+    clean = strip_comments(text) if comments_stripped else text
     found: list[str] = []
     for pattern in (_IMPORT_FROM, _EXPORT_FROM, _REQUIRE, _DYNAMIC):
         found += [m.group(2) for m in pattern.finditer(clean)]
@@ -613,7 +663,7 @@ def _package_of(spec: str) -> str:
     return "/".join(parts[:2]) if spec.startswith("@") else parts[0]
 
 
-def _reach(entry: str, modules: Mapping[str, str], archive: TarContent, base: str):
+def _reach(entry: str, modules: Mapping[str, str], archive: TarContent, base: str, budget: _Budget | None = None):
     reachable: set[str] = set()
     bare: dict[str, list[str]] = {}
     assets: set[str] = set()
@@ -625,12 +675,22 @@ def _reach(entry: str, modules: Mapping[str, str], archive: TarContent, base: st
         if path in reachable:
             continue
         reachable.add(path)
+        if budget is not None:
+            budget.check()
         text = modules[path]
         clean = strip_comments(text)
         for match in _STATIC_FILE.finditer(clean):
             assets.add(match.group(2).lstrip("/"))
         dynamic += len(_STATIC_FILE_ANY.findall(clean)) - len(_STATIC_FILE.findall(clean))
-        for spec in specifiers(text):
+        strict = specifiers(text)
+        # Le texte brut ajoute les imports qu'un faux commentaire cacherait : un paquet refusé l'est même s'il n'apparaît que là
+        # (prudence : un `import` en commentaire d'un paquet hors liste refuse aussi), un relatif trouvé là est suivi s'il existe.
+        for spec in dict.fromkeys(strict + specifiers(text, comments_stripped=False)):
+            if spec not in strict and spec.startswith("."):
+                hidden = _resolve(posixpath.dirname(path), spec, modules)
+                if hidden is not None:
+                    queue.append(hidden)
+                continue
             if spec.startswith("."):
                 target = _resolve(posixpath.dirname(path), spec, modules)
                 if target is not None:

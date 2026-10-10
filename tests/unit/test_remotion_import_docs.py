@@ -37,7 +37,8 @@ def test_every_failure_code_and_its_http_status_is_documented():
 
 def test_the_documented_bounds_are_the_code_bounds():
     assert f"Archive ≤ {up.MAX_DOWNLOAD_BYTES // (1024 * 1024)} Mio" in DOC
-    assert f"délai global {int(fetcher.DEFAULT_DEADLINE_S)} s ({int(fetcher.SOCKET_TIMEOUT_S)} s par lecture)" in DOC
+    assert f"délai global {int(fetcher.DEFAULT_DEADLINE_S)} s" in DOC and f"min({int(fetcher.SOCKET_TIMEOUT_S)} s, temps restant)" in DOC
+    assert f"échéance** de {int(up.READ_DEADLINE_S)} s" in DOC and f"(20 s)" in DOC and ri.ANALYSIS_BUDGET_S == up.READ_DEADLINE_S
     assert f"Au plus {up.MAX_REDIRECTS}" in DOC
     assert f"{up.MAX_ENTRIES} membres au plus" in DOC and f"{up.MAX_UNPACKED_BYTES // (1024 * 1024)} Mio décompressés" in DOC
     assert f"{up.MAX_READ_BYTES // (1024 * 1024)} Mio de fichiers lus" in DOC
@@ -88,3 +89,11 @@ def test_the_files_the_doc_cites_exist_and_the_security_section_links_back():
         assert (ROOT / "docs" / link).is_file(), link
     assert "### 20. Upstream Remotion template import" in SECURITY and "remotion-import.md" in SECURITY
     assert "remotion-import.md" in PREFABS
+
+
+def test_the_library_card_never_calls_a_modified_import_verified():
+    js = (ROOT / "jarvis" / "runtime" / "control_center_prefabs.js").read_text(encoding="utf-8")
+    assert "verified_intact===true" in js and "modifié depuis l’import" in js and "modified_files" in js
+    assert "verified_intact" in DOC and "modified_files" in DOC and "modifié depuis l'import" in DOC
+    assert "protège le propriétaire, pas le commit" in DOC and "protects the owner, not the commit" in SECURITY
+    assert (ROOT / "tasks" / "jarvis-remotion-presentation-integration" / "Issues" / "04-upstream-commit-reachability.md").is_file()

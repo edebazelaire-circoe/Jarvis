@@ -16,8 +16,11 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import io
+import posixpath
+import hashlib
 import re
 import tarfile
+import time
 from typing import Any, Iterator, Mapping, Protocol
 from urllib.parse import urlsplit
 import zlib
@@ -35,10 +38,12 @@ MAX_DOWNLOAD_BYTES = 12 * 1024 * 1024
 MAX_UNPACKED_BYTES = 96 * 1024 * 1024
 MAX_ENTRIES = 6000
 MAX_READ_BYTES = 24 * 1024 * 1024
+#: Échéance de lecture de l'archive (décompression comprise) : une archive piégée ne tient pas l'import plus longtemps.
+READ_DEADLINE_S = 20.0
 MAX_PATH_LENGTH = 240
 
 _OWNER = re.compile(r"[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})\Z")
-_REPO = re.compile(r"[A-Za-z0-9._-]{1,100}\Z")
+_REPO = re.compile(r"(?=.*[A-Za-z0-9])[A-Za-z0-9._-]{1,100}\Z")
 _SHA = re.compile(r"[0-9a-f]{40}\Z")
 _SUBDIR = re.compile(r"[A-Za-z0-9._-]+(?:/[A-Za-z0-9._-]+){0,5}\Z")
 
@@ -67,6 +72,7 @@ class UpstreamErrorCode:
     LICENSE_UNLICENSED = "license_unlicensed"
     LICENSE_RESTRICTED = "license_restricted"
     LICENSE_CONFLICT = "license_conflict"
+    IMPORT_TIMEOUT = "import_timeout"
 
 
 class UpstreamRefusal(ValueError):
@@ -183,7 +189,8 @@ def redirect_refusal(origin: UpstreamOrigin, location: str) -> str | None:
     host = (parts.hostname or "").lower()
     if host not in REDIRECT_HOSTS:
         return f"redirect to host {host[:60]!r} is not allowed"
-    if not parts.path.lower().startswith(origin.path_prefix()):
+    path = posixpath.normpath(parts.path).lower() + "/" if ".." not in parts.path.split("/") else ""
+    if not path.startswith(origin.path_prefix()):
         return "redirect leaves the pinned repository"
     return None
 
@@ -202,40 +209,54 @@ class TarContent:
 
 
 class _BoundedGunzip:
-    """Flux gzip -> octets, plafonné : une bombe de décompression lève `archive_too_large` au lieu de remplir la mémoire."""
+    """Flux gzip -> octets, plafonné et PRESSÉ : une bombe de décompression lève `archive_too_large` au lieu de remplir la mémoire, et
+    l'échéance de l'import (`deadline`, horloge monotone) lève `import_timeout`. Linéaire : un tampon `bytearray` dont on retire la tête
+    (jamais de recopie du reste), des tranches de décompression bornées par la demande."""
 
-    def __init__(self, data: bytes, limit: int) -> None:
-        self._source = io.BytesIO(data)
+    def __init__(self, data: bytes, limit: int, deadline: float | None = None, clock=time.monotonic) -> None:
+        self._source = memoryview(data)
+        self._at = 0
         self._z = zlib.decompressobj(wbits=31)
-        self._buffer = b""
+        self._buffer = bytearray()
         self._total = 0
         self._limit = limit
+        self._deadline = deadline
+        self._clock = clock
         self._done = False
 
+    def _check_time(self) -> None:
+        if self._deadline is not None and self._clock() > self._deadline:
+            raise UpstreamRefusal(UpstreamErrorCode.IMPORT_TIMEOUT, "reading the archive took too long")
+
     def read(self, size: int = -1) -> bytes:
-        while (size < 0 or len(self._buffer) < size) and not self._done:
-            chunk = self._source.read(64 * 1024)
-            if not chunk:
-                self._done = True
-                try:
-                    out = self._z.flush()
-                except zlib.error:
-                    raise UpstreamRefusal(UpstreamErrorCode.ARCHIVE_INVALID, "archive is not a complete gzip stream") from None
-                self._buffer += out
-                self._total += len(out)
-                break
+        want = size if size >= 0 else self._limit + 1
+        while len(self._buffer) < want and not self._done:
+            self._check_time()
             try:
-                out = self._z.decompress(chunk, self._limit - self._total + 1)
+                if self._z.unconsumed_tail:
+                    feed = self._z.unconsumed_tail
+                elif self._at < len(self._source):
+                    feed = self._source[self._at:self._at + 64 * 1024].tobytes()
+                    self._at += len(feed)
+                else:
+                    self._done = True
+                    out = self._z.flush()
+                    self._total += len(out)
+                    self._buffer += out
+                    if not self._z.eof:
+                        raise UpstreamRefusal(UpstreamErrorCode.ARCHIVE_INVALID, "archive is not a complete gzip stream")
+                    break
+                out = self._z.decompress(feed, max(want - len(self._buffer), 64 * 1024))
             except zlib.error:
                 raise UpstreamRefusal(UpstreamErrorCode.ARCHIVE_INVALID, "archive is not a valid gzip stream") from None
             self._total += len(out)
-            if self._total > self._limit or self._z.unconsumed_tail:
+            if self._total > self._limit:
                 raise UpstreamRefusal(UpstreamErrorCode.ARCHIVE_TOO_LARGE, f"archive unpacks to more than {self._limit} bytes")
             self._buffer += out
-        if size < 0:
-            data, self._buffer = self._buffer, b""
-        else:
-            data, self._buffer = self._buffer[:size], self._buffer[size:]
+            if self._z.eof and not self._z.unconsumed_tail:
+                self._done = True
+        data = bytes(self._buffer[:want])
+        del self._buffer[:want]
         return data
 
 
@@ -244,7 +265,8 @@ class Selector(Protocol):
         """Taille maximale à LIRE pour ce fichier (chemin relatif à la racine du dépôt), `None` = ne pas le lire."""
 
 
-def read_tar_source(data: bytes, *, expected_commit: str, select: Selector) -> TarContent:
+def read_tar_source(data: bytes, *, expected_commit: str, select: Selector, deadline_s: float = READ_DEADLINE_S,
+                    clock=time.monotonic) -> TarContent:
     """Lit un `tar.gz` de GitHub (`codeload`) en mémoire, en flux. Refuse l'archive entière (`UpstreamRefusal`) pour :
     lien symbolique ou physique, périphérique, chemin absolu / `..` / antislash / lecteur / NUL, deux membres au même nom (casse
     comprise), plusieurs racines, plus de `MAX_ENTRIES` membres, plus de `MAX_UNPACKED_BYTES` décompressés, commit attesté
@@ -253,7 +275,8 @@ def read_tar_source(data: bytes, *, expected_commit: str, select: Selector) -> T
 
     if len(data) > MAX_DOWNLOAD_BYTES:
         raise UpstreamRefusal(UpstreamErrorCode.FETCH_TOO_LARGE, f"archive is {len(data)} bytes, at most {MAX_DOWNLOAD_BYTES}")
-    stream = _BoundedGunzip(data, MAX_UNPACKED_BYTES)
+    deadline = clock() + deadline_s
+    stream = _BoundedGunzip(data, MAX_UNPACKED_BYTES, deadline, clock)
     files: dict[str, bytes] = {}
     paths: list[str] = []
     oversize: set[str] = set()
@@ -262,12 +285,14 @@ def read_tar_source(data: bytes, *, expected_commit: str, select: Selector) -> T
     read_total = 0
     entries = 0
     try:
-        archive = tarfile.open(fileobj=stream, mode="r|")  # type: ignore[arg-type]
+        archive = tarfile.open(fileobj=stream, mode="r|", bufsize=1024 * 1024)  # type: ignore[arg-type]
     except tarfile.TarError:
         raise UpstreamRefusal(UpstreamErrorCode.ARCHIVE_INVALID, "archive is not a tar stream") from None
     try:
         with archive:
             for member in _members(archive):
+                if clock() > deadline:
+                    raise UpstreamRefusal(UpstreamErrorCode.IMPORT_TIMEOUT, "reading the archive took too long")
                 entries += 1
                 if entries > MAX_ENTRIES:
                     raise UpstreamRefusal(UpstreamErrorCode.ARCHIVE_TOO_LARGE, f"archive has more than {MAX_ENTRIES} entries")
@@ -357,23 +382,80 @@ class Licence:
 #: Identifiants SPDX redistribuables. Tout le reste est refusé : on n'élargit que par une revue de licence écrite ici.
 PERMITTED_LICENCES = frozenset({"MIT", "Apache-2.0", "BSD-2-Clause", "BSD-3-Clause", "ISC", "0BSD", "Unlicense", "CC0-1.0"})
 _RESTRICTED_SPDX = re.compile(r"(?i)(gpl|agpl|lgpl|mpl|eupl|cddl|epl|sspl|busl|-nc|noncommercial|-nd|remotion)")
-LICENCE_FILES = ("license", "license.md", "license.txt", "licence", "licence.md", "licence.txt", "copying", "copying.md", "unlicense")
 MAX_LICENCE_BYTES = 32 * 1024
+MAX_LICENCE_FILES = 8
+
+#: Empreintes SHA-256 des textes CANONIQUES (mots normalisés : minuscules, ponctuation retirée, titre, ligne de copyright et
+#: « all rights reserved » retirés ; Apache-2.0 : jusqu'à « END OF TERMS AND CONDITIONS »), calculées sur les textes de l'API de
+#: licences de GitHub (`tests/fakes/licenses/*.txt`, vérifiées par `test_remotion_upstream`). Un texte qui n'est pas EXACTEMENT l'un
+#: d'eux (un paragraphe de plus, une clause « Commons », « usage personnel »...) n'est pas reconnu.
+CANONICAL_LICENCE_HASHES: dict[str, tuple[str, ...]] = {
+    "0BSD": ("25a274d52b3014d9bd64e0f3362fd279ac1655f163d5c518f6b9f6c43354802c",),
+    "Apache-2.0": ("e80c728dad9283541363fd9f60e4c0527fadc838f92f45f514c14da7f0a481ad",
+                   "594673f8fe0542761280c31fa6f0d1eca9f491e533af6c2c1fef40b1c4229b47"),
+    "BSD-2-Clause": ("a56fee4b2f66331ed54da4950ef9c9391453fd1490b4d8ea202bc29683bcbd30",),
+    "BSD-3-Clause": ("9b83d3dee0616d07b82a272dd9bf5134a9f402b750f5ee6188458073b0a32ff2",),
+    "CC0-1.0": ("96bdc7f63190fb4bd1ae584b890300ed7517d858b34c945642a3b9b2f1612a5f",),
+    "ISC": ("217da0747cec63a2e734185db11cbaa819bcd9e5b83cd12f812128fffe66e26a",),
+    "MIT": ("0cf21bdfd1964a97a8615e128534845826afbc887edc95aa5c925cbf64386b5c",),
+    "Unlicense": ("fd1b07be5f4f94926b6ea4df3943b05ab90c1a1f3b1a3d574ae7ab58bca58fff",),
+}
+_TITLES = ("the mit license", "mit license", "the isc license", "isc license", "bsd 2 clause license", "bsd 3 clause license",
+           "the bsd 2 clause license", "the bsd 3 clause license", "bsd 2 clause simplified license", "bsd 3 clause new or revised license",
+           "zero clause bsd license", "bsd zero clause license", "the unlicense", "unlicense")
+#: Mots qui font d'un texte AUTRE chose qu'une permission générale : restriction d'usage ajoutée à une licence connue.
+_RESTRICTION_WORDS = re.compile(r"commons clause|personal use|non commercial|noncommercial|not for commercial|no commercial|monetis|monetiz|"
+                                r"educational use only|may not sell|you may not use|without the prior written permission|"
+                                r"for non profit|research use only|evaluation only")
+_END_OF_APACHE = "end of terms and conditions"
 
 
 def is_licence_file(relative_path: str) -> bool:
-    return "/" not in relative_path and relative_path.lower() in LICENCE_FILES
+    """Un fichier de licence à la racine (ou du sous-dossier du projet) : `LICENSE`, `LICENSE.md`, `LICENSE-MIT`, `COPYING`, `UNLICENSE`..."""
+
+    name = relative_path.lower()
+    return "/" not in relative_path and len(name) <= 40 and name.startswith(("license", "licence", "copying", "unlicense"))
 
 
 def _words(text: str) -> str:
     return re.sub(r"[^a-z0-9]+", " ", text.lower()).strip()
 
 
+def canonical_words(text: str) -> str:
+    """Mots du corps d'une licence : paragraphes de copyright et « all rights reserved » retirés, titre connu retiré."""
+
+    paragraphs = re.split(r"\n\s*\n", text.replace("\r", ""))
+    kept = [p for p in paragraphs if not re.match(r"\s*(copyright|\(c\)|©)", p, re.I)]
+    kept = [re.sub(r"(?im)^\s*all rights reserved\.?\s*$", "", p) for p in kept]
+    words = _words("\n\n".join(kept))
+    for title in sorted(_TITLES, key=len, reverse=True):
+        if words.startswith(title + " "):
+            return words[len(title) + 1:]
+    return words
+
+
+def canonical_key(text: str) -> str | None:
+    """SPDX d'un texte QUI EST un texte canonique (aucune différence autre que titre, copyright, mise en forme), sinon `None`."""
+
+    words = canonical_words(text)
+    cut = words.find(_END_OF_APACHE)
+    candidates = [words]  # Apache-2.0 : le texte entier avec son annexe, ou le corps seul (rien après « END OF TERMS »)
+    if cut >= 0 and not words[cut + len(_END_OF_APACHE):].strip():
+        candidates.append(words[:cut + len(_END_OF_APACHE)])
+    for candidate in candidates:
+        digest = hashlib.sha256(candidate.encode("utf-8")).hexdigest()
+        for spdx, known in CANONICAL_LICENCE_HASHES.items():
+            if digest in known:
+                return spdx
+    return None
+
+
 def classify_licence_text(text: str) -> str | None:
-    """SPDX d'un texte de licence connu, `RESTRICTED:<nom>` pour une licence reconnue mais refusée, `None` = inconnue."""
+    """SPDX d'un texte de licence reconnu EXACTEMENT, `RESTRICTED:<nom>` pour une licence reconnue mais refusée ou un texte qui
+    ajoute une restriction, `None` = inconnue. Une licence connue AVEC un paragraphe de plus n'est jamais acceptée."""
 
     w = _words(text)
-    if "remotion license" in w or "company license" in w and "remotion" in w:
+    if "remotion license" in w or ("company license" in w and "remotion" in w):
         return "RESTRICTED:Remotion-License"
     for needle, name in (("gnu affero general public license", "AGPL"), ("gnu lesser general public license", "LGPL"),
                          ("gnu general public license", "GPL"), ("mozilla public license", "MPL"),
@@ -382,46 +464,40 @@ def classify_licence_text(text: str) -> str | None:
                          ("eclipse public license", "EPL"), ("common development and distribution license", "CDDL")):
         if needle in w:
             return f"RESTRICTED:{name}"
-    if "creative commons" in w and "cc0" not in w and "zero" not in w:
+    exact = canonical_key(text)
+    if exact is not None:
+        return exact
+    if "creative commons" in w:
         return "RESTRICTED:Creative-Commons"
-    if "noncommercial" in w or "non commercial" in w:
-        return "RESTRICTED:NonCommercial"
-    if "apache license" in w and "version 2 0" in w:
-        return "Apache-2.0"
-    if "permission is hereby granted free of charge" in w and "the software is provided as is" in w:
-        return "MIT"
-    if "redistribution and use in source and binary forms" in w:
-        if "neither the name" in w or "the names of its contributors" in w:
-            return "BSD-3-Clause"
-        return "BSD-2-Clause"
-    if "permission to use copy modify and or distribute this software for any purpose with or without fee" in w:
-        return "ISC" if "provided that the above copyright notice" in w else "0BSD"
-    if "this is free and unencumbered software released into the public domain" in w:
-        return "Unlicense"
-    if "cc0 1 0 universal" in w or "creative commons zero" in w:
-        return "CC0-1.0"
+    if _RESTRICTION_WORDS.search(w):
+        return "RESTRICTED:Added-Restriction"
     return None
 
 
 def classify_licence(files: Mapping[str, bytes], package_json: Mapping[str, Any] | None) -> Licence:
-    """Licence DU MODÈLE (jamais celle de Remotion) : le fichier du dépôt d'abord, `package.json` ensuite. Lève `UpstreamRefusal`
-    (`license_*`) quand elle n'est pas redistribuable ou pas établie. Un désaccord fichier / `package.json` est refusé aussi."""
+    """Licence DU MODÈLE (jamais celle de Remotion) : TOUS les fichiers de licence sont examinés et doivent dire la même chose, puis
+    `package.json` doit être d'accord. Lève `UpstreamRefusal` (`license_*`) quand elle n'est pas redistribuable ou pas établie."""
 
     declared = package_json.get("license") if isinstance(package_json, Mapping) else None
     declared = declared.strip() if isinstance(declared, str) else ""
-    texts = [(name, files[name]) for name in sorted(files) if is_licence_file(name)]
-    from_file: str | None = None
-    text = ""
+    texts = [(name, files[name]) for name in sorted(files) if is_licence_file(name)][:MAX_LICENCE_FILES]
+    verdicts: dict[str, str] = {}
+    first_text = ""
     for name, body in texts:
-        verdict = classify_licence_text(body.decode("utf-8", errors="replace"))
+        text = body.decode("utf-8", errors="replace")
+        verdict = classify_licence_text(text)
         if verdict is None:
             raise UpstreamRefusal(UpstreamErrorCode.LICENSE_UNKNOWN,
-                                  f"{name}: the licence text is not one of the reviewed licences {sorted(PERMITTED_LICENCES)}")
+                                  f"{name}: the licence text is not exactly one of the reviewed licences {sorted(PERMITTED_LICENCES)}")
         if verdict.startswith("RESTRICTED:"):
             raise UpstreamRefusal(UpstreamErrorCode.LICENSE_RESTRICTED,
                                   f"{name}: licence {verdict.split(':', 1)[1]} does not allow redistribution as a Jarvis prefab")
-        from_file, text = verdict, body.decode("utf-8", errors="replace")[:MAX_LICENCE_BYTES]
-        break
+        verdicts[name] = verdict
+        first_text = first_text or text[:MAX_LICENCE_BYTES]
+    if len(set(verdicts.values())) > 1:
+        raise UpstreamRefusal(UpstreamErrorCode.LICENSE_CONFLICT,
+                              "the licence files disagree: " + ", ".join(f"{name}={spdx}" for name, spdx in sorted(verdicts.items())))
+    from_file = next(iter(verdicts.values()), None)
     if declared.upper() in ("UNLICENSED", "SEE LICENSE IN LICENSE") and from_file is None:
         raise UpstreamRefusal(UpstreamErrorCode.LICENSE_UNLICENSED,
                               f"package.json declares {declared!r} and the repository has no licence file: nothing allows redistribution")
@@ -429,7 +505,7 @@ def classify_licence(files: Mapping[str, bytes], package_json: Mapping[str, Any]
         if declared and declared.upper() not in ("SEE LICENSE IN LICENSE", from_file.upper()):
             raise UpstreamRefusal(UpstreamErrorCode.LICENSE_CONFLICT,
                                   f"the licence file reads {from_file} but package.json declares {declared!r}: the author contradicts themselves")
-        return Licence(from_file, "file", text)
+        return Licence(from_file, "file", first_text)
     if not declared:
         raise UpstreamRefusal(UpstreamErrorCode.LICENSE_MISSING,
                               "the repository has no licence file and package.json declares no licence: all rights are reserved by default")

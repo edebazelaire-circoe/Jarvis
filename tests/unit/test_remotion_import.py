@@ -156,10 +156,64 @@ def test_require_dynamic_import_and_reexport_of_a_refused_package_are_all_seen()
         refused(project(src__lib__Badge_dot_tsx=body + "\nexport const Badge = () => null;\n"), E.DEPENDENCY_REFUSED)
 
 
-def test_type_only_imports_and_imports_in_comments_or_strings_are_not_dependencies():
-    body = ("import type {A} from 'three';\n// import x from 'lodash'\n/* import y from 'three' */\n"
-            "export const s = \"import z from 'three'\";\nexport const Badge = () => null;\n")
+def test_type_only_imports_and_imports_in_strings_are_not_dependencies():
+    body = "import type {A} from 'three';\nexport const s = \"import z from 'three'\";\nexport const Badge = () => null;\n"
     assert "src/lib/Badge.tsx" in plan_of(project(src__lib__Badge_dot_tsx=body)).modules
+
+
+def test_a_commented_out_import_of_a_refused_package_refuses_too_because_comments_can_be_faked():
+    """Prudence documentée : un `/*` dans un texte JSX n'est pas un commentaire ; lire aussi le texte brut évite de se laisser cacher un import."""
+
+    for comment in ("// import x from 'lodash'", "/* import y from 'three' */"):
+        refused(project(src__lib__Badge_dot_tsx=comment + "\nexport const Badge = () => null;\n"), E.DEPENDENCY_REFUSED)
+
+
+@pytest.mark.parametrize("statement", [
+    "import{a}from'zod';", "import {a}from'zod';", "import a from'zod';", 'import*as a from"zod";', "export*from'zod';",
+    "export{a}from'zod';", "export * as ns from'zod';", "const m=require('zod');", "const m=import('zod');", "import'zod';",
+    "import\n{a}\nfrom\n'zod';",
+])
+def test_imports_written_without_spaces_are_seen(statement):
+    refused(project(src__lib__Badge_dot_tsx=statement + "\nexport const Badge = () => null;\n"), E.DEPENDENCY_REFUSED)
+
+
+def test_an_import_hidden_behind_a_fake_comment_in_jsx_text_is_still_seen():
+    body = ("export const Badge = () => <p>/*</p>;\nimport x from 'zod';\n"
+            "/* a real comment closes the fake one */\nexport const other = 1;\n")
+    refused(project(src__lib__Badge_dot_tsx=body), E.DEPENDENCY_REFUSED)
+    same_line = "export const Badge = () => <p>/*</p>; import{x}from'zod'; /* */\n"
+    refused(project(src__lib__Badge_dot_tsx=same_line), E.DEPENDENCY_REFUSED)
+
+
+def test_a_relative_import_without_spaces_is_followed_and_never_silently_dropped():
+    files = project(src__lib__Badge_dot_tsx="import{Extra}from'./Extra';export const Badge = () => <Extra/>;\n",
+                    src__lib__Extra_dot_tsx="export const Extra = () => null;\n")
+    plan = plan_of(files)
+    assert "src/lib/Extra.tsx" in plan.modules
+    hidden = project(src__lib__Badge_dot_tsx="export const Badge = () => <p>/*</p>;\nimport{Extra}from'./Extra';\n/* */\n",
+                     src__lib__Extra_dot_tsx="export const Extra = () => null;\n")
+    assert "src/lib/Extra.tsx" in plan_of(hidden).modules
+    refused(project(src__lib__Badge_dot_tsx="import{Extra}from'./Missing';export const Badge = () => null;\n"), E.IMPORT_UNRESOLVED)
+
+
+def test_the_generated_comment_never_breaks_out_of_its_line_and_an_invalid_composition_id_is_refused():
+    from jarvis.domain.remotion_import import _comment_safe
+    nl = chr(10)
+    hostile = "A" + nl + "*/ import evil from x; //"
+    assert nl not in _comment_safe(hostile) and "*/" not in _comment_safe(hostile) and len(_comment_safe("x" * 500)) == 64
+    single = ('import {Composition} from "remotion"; import {Demo} from "./Demo"; export const Root = () => <Composition id="Bad' + nl
+              + 'Id" component={Demo} durationInFrames={9} fps={30} width={10} height={10} />;')
+    refused(project(src__Root_dot_tsx=single), E.COMPOSITION_UNRESOLVED)
+
+
+
+def test_the_verified_block_records_the_digest_of_the_exact_files_written():
+    from jarvis.domain.remotion_source import source_digest
+    plan = plan_of(good_project())
+    files = {**{path: body.encode() for path, body in plan.candidate["sources"].items()},
+             **{path: __import__("base64").b64decode(body) for path, body in plan.candidate["assets"].items()}}
+    upstream = plan.candidate["manifest"]["catalog"]["upstream"]
+    assert upstream["source_sha256"] == source_digest(files) == plan.source_digest and len(files) == len(plan.modules) + len(plan.assets)
 
 
 def test_another_remotion_major_is_refused_and_another_react_major_is_a_warning():
@@ -313,3 +367,65 @@ def test_composition_tags_are_found_with_nested_braces_and_strings_with_gt_signs
     texts = {"src/Root.tsx": '<Composition id="A" component={A} defaultProps={{a: {b: "}>"}}} durationInFrames={3} fps={30} width={1} height={1} />'}
     (tag,) = find_composition_tags(texts)
     assert tag.id == "A" and tag.attrs["durationInFrames"] == ("expr", "3") and tag.attrs["defaultProps"][1].startswith("{a: {b:")
+
+
+# ------------------------------------------------------------------ temps et CPU
+
+import time
+
+
+def timed(call, limit=3.0):
+    started = time.monotonic()
+    try:
+        return call()
+    finally:
+        assert time.monotonic() - started < limit, f"took {time.monotonic() - started:.1f}s"
+
+
+def test_a_3000_term_expression_is_a_typed_refusal_not_a_500():
+    root = ROOT_TWO.replace("width={800}", "width={" + "+".join(["1"] * 3000) + "}")
+    error = timed(lambda: refused(project(src__Root_dot_tsx=root), E.COMPOSITION_UNRESOLVED, composition_id="Other"))
+    assert "width" in error.message
+    deep = ROOT_TWO.replace("width={800}", "width={" + "(" * 900 + "1" + ")" * 900 + "}")
+    timed(lambda: refused(project(src__Root_dot_tsx=deep), E.COMPOSITION_UNRESOLVED, composition_id="Other"))
+    from jarvis.domain.remotion_import import _number
+    assert _number("+".join(["1"] * 50), {}) == 50 and _number("1+" * 150 + "1", {}) is None
+
+
+def test_many_constants_and_identifiers_cost_one_scan_not_one_per_identifier():
+    consts = "".join(f"export const C{i} = {i + 1};\n" for i in range(3000))
+    expr = "+".join(f"C{i}" for i in range(0, 40))
+    root = ROOT_TWO.replace("export const FPS = 24;", consts + "export const FPS = 24;").replace("width={800}", "width={" + expr + "}")
+    big = project(src__Root_dot_tsx=root)
+    for i in range(20):
+        big[f"src/pad{i}.ts"] = "export const pad = 1;\n" + ("// filler line to make the module big\n" * 4000)
+    plan = timed(lambda: plan_of(big, composition_id="Other"))
+    assert plan.composition.width == sum(range(1, 41))
+
+
+HOSTILE = [
+    "import " * 30000, "import{" * 30000, "export " * 30000, "import a from " * 15000, "import " + "x," * 60000, "require(" * 30000,
+    "export{" * 20000, "<Composition " * 20000, "'" * 200000, "/*" * 100000, "//" * 100000,
+]
+
+
+@pytest.mark.parametrize("hostile", HOSTILE, ids=[f"hostile{index}" for index in range(len(HOSTILE))])
+def test_pathological_module_text_is_bounded_in_time(hostile):
+    body = hostile[:250_000] + "\nexport const Badge = () => null;\n"
+    files = project(src__lib__Badge_dot_tsx=body)
+    timed(lambda: _outcome(files), limit=8.0)
+
+
+def _outcome(files):
+    try:
+        plan_of(files)
+    except UpstreamRefusal:
+        pass
+
+
+def test_the_whole_analysis_has_a_typed_deadline():
+    ticks = iter(range(0, 10_000, 10))
+    data = make_tarball(good_project())
+    with pytest.raises(UpstreamRefusal) as caught:
+        analyse_archive(data, request(), engine=ENGINE, imported_at=NOW, budget_s=5.0, clock=lambda: next(ticks))
+    assert caught.value.code == E.IMPORT_TIMEOUT

@@ -6,27 +6,21 @@ from __future__ import annotations
 import gzip
 import io
 import tarfile
+from pathlib import Path
 from typing import Mapping
 
 SHA = "a1b2c3d4e5f60718293a4b5c6d7e8f9012345678"
-MIT = """MIT License
+LICENSES = Path(__file__).parent / "licenses"
 
-Copyright (c) 2026 Example Authors
 
-Permission is hereby granted, free of charge, to any person obtaining a copy
-of this software and associated documentation files (the "Software"), to deal
-in the Software without restriction, including without limitation the rights
-to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-copies of the Software, and to permit persons to whom the Software is
-furnished to do so, subject to the following conditions:
+def licence_text(spdx: str, holder: str = "Example Authors") -> str:
+    """Le texte CANONIQUE (API de licences de GitHub) avec une ligne de copyright remplie : ce que contient un vrai `LICENSE`."""
 
-The above copyright notice and this permission notice shall be included in all
-copies or substantial portions of the Software.
+    return (LICENSES / f"{spdx}.txt").read_text(encoding="utf-8").replace("[year]", "2026").replace("[fullname]", holder).replace(
+        "[yyyy]", "2026").replace("[name of copyright owner]", holder)
 
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.
-"""
+
+MIT = licence_text("MIT")
 GPL = "GNU GENERAL PUBLIC LICENSE\nVersion 3, 29 June 2007\n\nEveryone is permitted to copy and distribute verbatim copies\n"
 REMOTION_LICENCE = "Remotion License\n\nNote that for some entities a company license is needed.\n"
 

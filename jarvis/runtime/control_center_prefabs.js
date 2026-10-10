@@ -1337,6 +1337,18 @@ if(typeof module!=='undefined'&&module.exports)module.exports=JarvisPrefabLibrar
       replace(D.sections,catalogSection(detail),h('div',{class:'pfb-two'},inputs,evs),versionsSection(detail,lineage));
     });
   }
+  /* Provenance ÉCRITE PAR CORE (import amont, Slice 18) : « intact » seulement si les fichiers courants sont exactement ceux de l'import ;
+     sinon « modifié depuis l'import », la provenance d'origine restant visible comme historique, jamais comme garantie. */
+  function upstreamStamp(up){
+    const where=`commit ${String(up.commit).slice(0,7)}, importé le ${String(up.imported_at||'').slice(0,10)}`;
+    if(up.verified_intact===true)return h('span',{class:'pfb-upstamp is-intact'},
+      h('strong',{text:' Importé de cet amont'}),h('span',{text:` (${where}) · fichiers intacts : vérifié par Core.`}));
+    const files=Array.isArray(up.modified_files)?up.modified_files:null;
+    return h('span',{class:'pfb-upstamp is-modified'},
+      h('strong',{text:' Importé de cet amont — modifié depuis l’import'}),
+      h('span',{text:` (origine : ${where}). Provenance d’origine conservée à titre d’historique, plus vérifiée pour ces fichiers.`}),
+      files&&files.length?h('span',{class:'pfb-cmeans',text:` Fichiers modifiés : ${files.join(', ')}.`}):null);
+  }
   /* Contrat du catalogue d'UNE version : type, compatibilité par moteur, pile, dépendances, licence, amont ; les paramètres
      éditables ne s'ouvrent qu'à la demande (<details>). Un contrat « déduit » (version publiée avant le bloc `catalog`) le dit. */
   function catalogSection(detail){
@@ -1365,7 +1377,7 @@ if(typeof module!=='undefined'&&module.exports)module.exports=JarvisPrefabLibrar
         row('Licence',c.license?h('span',{text:c.license}):h('span',{class:'pfb-none',text:'non déclarée'})),
         row('Amont',up?h('span',{class:'pfb-up'},h('strong',{text:up.name}),up.ref?h('span',{text:` @ ${up.ref}`}):null,
             h('code',{class:'pfb-upurl',text:up.url}),up.license?h('span',{text:` · licence ${up.license}`}):null,up.author?h('span',{text:` · ${up.author}`}):null,
-            h('span',{class:'pfb-cmeans',text:' Déclaré par l’auteur de la version ; Core ne l’a pas vérifié.'}))
+            up.commit?upstreamStamp(up):h('span',{class:'pfb-cmeans',text:' Déclaré par l’auteur de la version ; Core ne l’a pas vérifié.'}))
           :h('span',{class:'pfb-none',text:'aucun (créé sur ce poste)'}))),
       h('details',{class:'pfb-params',id:'pfbParams'},
         h('summary',{text:`Paramètres éditables (${params.length})`}),

@@ -60,10 +60,15 @@ class HttpsUpstreamFetcher:
                 if declared and declared.isdigit() and int(declared) > MAX_DOWNLOAD_BYTES:
                     raise UpstreamRefusal(E.FETCH_TOO_LARGE, f"the archive is {declared} bytes, at most {MAX_DOWNLOAD_BYTES}")
                 body = bytearray()
+                read = getattr(response, "read1", response.read)  # une lecture partielle : le délai se vérifie à chaque morceau
                 while True:
-                    if self._clock() - started > self._deadline_s:
+                    left = self._deadline_s - (self._clock() - started)
+                    if left <= 0:
                         raise UpstreamRefusal(E.FETCH_TIMEOUT, f"the download took more than {self._deadline_s:.0f} s")
-                    chunk = response.read(64 * 1024)
+                    sock = getattr(connection, "sock", None)
+                    if sock is not None:  # le délai d'UNE lecture suit le temps qu'il reste, jamais plus de SOCKET_TIMEOUT_S
+                        sock.settimeout(min(SOCKET_TIMEOUT_S, left))
+                    chunk = read(64 * 1024)
                     if not chunk:
                         break
                     body += chunk
