@@ -1,21 +1,21 @@
 {
-  "verdict": "PASSED",
-  "head": "61fd17c90eb425044f5b811ca78a80978f3a991a",
+  "verdict": "FAILED",
+  "head": "3c31fe11c3bdfdc663780b6441d7a177fd54334d",
   "tree_dirty": false,
   "platform": "Windows-11-10.0.26200-SP0",
   "node": "v24.18.0",
   "chrome": "chrome 154.0.8037.99",
   "remotion": "4.0.534",
-  "elapsed_s": 340.3,
+  "elapsed_s": 217.4,
   "timings": {
-    "mp4_s": 102.6,
-    "still_s": 10.3,
-    "pdf_s": 15.5,
-    "cancel_to_stopped_s": 2.4
+    "mp4_s": 13.1,
+    "still_s": 8.3,
+    "pdf_s": 9.9,
+    "cancel_to_stopped_s": 1.1
   },
   "disk": {
-    "free_before_mb": 19188,
-    "free_after_mb": 18713
+    "free_before_mb": 17495,
+    "free_after_mb": 17618
   },
   "facts": {
     "availability": {
@@ -23,14 +23,15 @@
       "reason": null,
       "browser": "chrome 154.0.8037.99",
       "concurrency": 1,
-      "max_queued": 8
+      "max_jobs": 8,
+      "active_jobs": 0
     },
     "mp4_metadata": {
       "render_browser": "chrome 154.0.8037.99",
       "render_codec": "h264",
       "render_composition": "Scene",
       "render_crf": 23,
-      "render_egress_denied": 41,
+      "render_egress_denied": 39,
       "render_engine": "4.0.534",
       "render_engine_drift": false,
       "render_engine_lock_sha256": "acff3cd562fd6f426040aed8b60cce840b23befe7bac71604d0c7614b8762fbe",
@@ -41,17 +42,18 @@
       "render_frame_start": 0,
       "render_height": 720,
       "render_image_format": "mp4",
-      "render_job_id": "rj_6dad4006a71d",
+      "render_job_id": "rj_bd0a1305ad40",
       "render_output_sha256": "a644b7403787e4e1198e92ddd6ebfbdfe54eaffe260101ddb32215470a5b8e8f",
       "render_pixel_format": "yuv420p",
       "render_prefab_id": "presentation-studio.p000000000001.s000000000001",
       "render_prefab_version": 1,
+      "render_sandbox": true,
       "render_scale": 1.0,
       "render_scene_id": "pss_000000000001",
       "render_settings_sha256": "b788f79defd4c5b69db8542cd535eaf69103e930443f7c773b03feb0d5bbb100",
       "render_source_digest": "4d1fc317dc730ff6c367c49f3bc02b709d7c1c9103b1cd3c28ddb39ee3c4753b",
       "render_verified_by": "ffprobe",
-      "render_wall_ms": 102317,
+      "render_wall_ms": 12867,
       "render_width": 1280
     },
     "mp4_ffprobe": {
@@ -66,7 +68,7 @@
     "still_metadata": {
       "render_browser": "chrome 154.0.8037.99",
       "render_composition": "Scene",
-      "render_egress_denied": 11,
+      "render_egress_denied": 13,
       "render_engine": "4.0.534",
       "render_engine_drift": false,
       "render_engine_lock_sha256": "acff3cd562fd6f426040aed8b60cce840b23befe7bac71604d0c7614b8762fbe",
@@ -76,22 +78,23 @@
       "render_frames": "45",
       "render_height": 720,
       "render_image_format": "png",
-      "render_job_id": "rj_d6ffd1bb4745",
+      "render_job_id": "rj_4f8b2facfdbe",
       "render_output_sha256": "610c92464e1bdc9d90eebff8c5651b8c1a03512ebda89a9b8058a01aefbaaad0",
       "render_prefab_id": "presentation-studio.p000000000001.s000000000001",
       "render_prefab_version": 1,
+      "render_sandbox": true,
       "render_scale": 1.0,
       "render_scene_id": "pss_000000000001",
       "render_settings_sha256": "02ce34790c31077f7b39ba9be1b922aef17d9d738695a7759ab9c63e76c45e1d",
       "render_source_digest": "4d1fc317dc730ff6c367c49f3bc02b709d7c1c9103b1cd3c28ddb39ee3c4753b",
       "render_verified_by": "png",
-      "render_wall_ms": 10017,
+      "render_wall_ms": 8223,
       "render_width": 1280
     },
     "pdf_metadata": {
       "render_browser": "chrome 154.0.8037.99",
       "render_composition": "Scene",
-      "render_egress_denied": 20,
+      "render_egress_denied": 22,
       "render_engine": "4.0.534",
       "render_engine_drift": false,
       "render_engine_lock_sha256": "acff3cd562fd6f426040aed8b60cce840b23befe7bac71604d0c7614b8762fbe",
@@ -101,20 +104,108 @@
       "render_frames": "0,45,89",
       "render_height": 720,
       "render_image_format": "jpeg",
-      "render_job_id": "rj_9cc8b5a5fc13",
+      "render_job_id": "rj_a2d272669e67",
       "render_output_sha256": "25149d8af1407d367b986ca2f615a82d8d4663852e8b22bb25afe5b6c668650d",
       "render_pages": 3,
       "render_prefab_id": "presentation-studio.p000000000001.s000000000001",
       "render_prefab_version": 1,
+      "render_sandbox": true,
       "render_scale": 1.0,
       "render_scene_id": "pss_000000000001",
       "render_settings_sha256": "14fa739504e435d2be87eee586cda78e873c634349472a41b973e1602f09711f",
       "render_source_digest": "4d1fc317dc730ff6c367c49f3bc02b709d7c1c9103b1cd3c28ddb39ee3c4753b",
       "render_verified_by": "pdf",
-      "render_wall_ms": 15324,
+      "render_wall_ms": 9519,
       "render_width": 1280
     },
-    "egress_denied_mp4": 41,
+    "egress_denied_mp4": 39,
+    "sandbox_probe": {
+      "sandbox_on": {
+        "rows": [
+          {
+            "type": "GPU",
+            "sandbox": "GPU",
+            "lockdown": "Limited",
+            "integrity": "S-1-16-4096 Low"
+          },
+          {
+            "type": "Utility",
+            "sandbox": "Not Sandboxed",
+            "lockdown": "",
+            "integrity": ""
+          },
+          {
+            "type": "Utility",
+            "sandbox": "Service",
+            "lockdown": "Lockdown",
+            "integrity": "S-1-16-0 Untrusted"
+          },
+          {
+            "type": "Renderer",
+            "sandbox": "Renderer",
+            "lockdown": "Lockdown",
+            "integrity": "S-1-16-0 Untrusted"
+          },
+          {
+            "type": "Renderer",
+            "sandbox": "Renderer",
+            "lockdown": "Lockdown",
+            "integrity": "S-1-16-0 Untrusted"
+          },
+          {
+            "type": "Renderer",
+            "sandbox": "Renderer",
+            "lockdown": "Lockdown",
+            "integrity": "S-1-16-0 Untrusted"
+          }
+        ],
+        "guard_sandbox_flag": true,
+        "error": null
+      },
+      "opt_out": {
+        "rows": [
+          {
+            "type": "GPU",
+            "sandbox": "Not Sandboxed",
+            "lockdown": "",
+            "integrity": ""
+          },
+          {
+            "type": "Utility",
+            "sandbox": "Not Sandboxed",
+            "lockdown": "",
+            "integrity": ""
+          },
+          {
+            "type": "Utility",
+            "sandbox": "Not Sandboxed",
+            "lockdown": "",
+            "integrity": ""
+          },
+          {
+            "type": "Renderer",
+            "sandbox": "Not Sandboxed",
+            "lockdown": "",
+            "integrity": ""
+          },
+          {
+            "type": "Renderer",
+            "sandbox": "Not Sandboxed",
+            "lockdown": "",
+            "integrity": ""
+          },
+          {
+            "type": "Renderer",
+            "sandbox": "Not Sandboxed",
+            "lockdown": "",
+            "integrity": ""
+          }
+        ],
+        "guard_sandbox_flag": false,
+        "error": null
+      },
+      "chrome": "chrome 154.0.8037.99"
+    },
     "reconcile_report": {
       "killed": 1,
       "failed": 1,
@@ -126,9 +217,9 @@
       "tcp_connections": 0,
       "udp_packets": 0,
       "denied_by_sample": {
-        "net_exfil": 24,
-        "link_hints": 15,
-        "webrtc_exfil": 13
+        "net_exfil": 25,
+        "link_hints": 17,
+        "webrtc_exfil": 14
       },
       "states": {
         "net_exfil": "complete",
@@ -139,7 +230,7 @@
     "hostile_control": {
       "http_hits": 16,
       "tcp_connections": 2,
-      "udp_packets": 6
+      "udp_packets": 3
     }
   },
   "checks": [
@@ -151,10 +242,10 @@
     {
       "check": "mp4: job complete",
       "ok": true,
-      "elapsed_s": 102.6,
+      "elapsed_s": 13.1,
       "size": 24712,
       "verified_by": "ffprobe",
-      "progress_samples": 393,
+      "progress_samples": 51,
       "phases": [
         "bundling",
         "complete",
@@ -185,6 +276,10 @@
       "ok": true
     },
     {
+      "check": "mp4: rendered with Chrome's process sandbox ON (recorded on the derivative and in the job view)",
+      "ok": true
+    },
+    {
       "check": "mp4: rendered_from the snapshot",
       "ok": true
     },
@@ -206,14 +301,14 @@
     {
       "check": "still: job complete",
       "ok": true,
-      "elapsed_s": 10.3,
+      "elapsed_s": 8.3,
       "size": 26212,
       "verified_by": "png",
-      "progress_samples": 40,
+      "progress_samples": 33,
       "phases": [
         "bundling",
         "complete",
-        "opening_browser",
+        "done",
         "preparing",
         "queued",
         "rendering",
@@ -239,6 +334,10 @@
       "ok": true
     },
     {
+      "check": "still: rendered with Chrome's process sandbox ON (recorded on the derivative and in the job view)",
+      "ok": true
+    },
+    {
       "check": "still: rendered_from the snapshot",
       "ok": true
     },
@@ -249,19 +348,20 @@
     {
       "check": "pdf: job complete",
       "ok": true,
-      "elapsed_s": 15.5,
+      "elapsed_s": 9.9,
       "size": 54674,
       "verified_by": "pdf",
-      "progress_samples": 60,
+      "progress_samples": 39,
       "phases": [
         "bundling",
         "complete",
+        "done",
         "opening_browser",
         "preparing",
         "queued",
         "rendering",
         "selecting_composition",
-        "verifying"
+        "storing"
       ],
       "error": [
         null,
@@ -280,6 +380,10 @@
     },
     {
       "check": "pdf: payload sha256 equals the recorded one",
+      "ok": true
+    },
+    {
+      "check": "pdf: rendered with Chrome's process sandbox ON (recorded on the derivative and in the job view)",
       "ok": true
     },
     {
@@ -313,7 +417,7 @@
     {
       "check": "cancel: job cancelled, derivative failed with a stable code, no final file",
       "ok": true,
-      "seconds": 2.4,
+      "seconds": 1.1,
       "state": "cancelled",
       "artifact_state": "failed",
       "code": "presentation_render_cancelled",
@@ -349,15 +453,76 @@
       "ok": true
     },
     {
+      "check": "sandbox ON: chrome://sandbox reports every Renderer process sandboxed (Lockdown / Untrusted)",
+      "ok": true,
+      "renderers": [
+        {
+          "type": "Renderer",
+          "sandbox": "Renderer",
+          "lockdown": "Lockdown",
+          "integrity": "S-1-16-0 Untrusted"
+        },
+        {
+          "type": "Renderer",
+          "sandbox": "Renderer",
+          "lockdown": "Lockdown",
+          "integrity": "S-1-16-0 Untrusted"
+        },
+        {
+          "type": "Renderer",
+          "sandbox": "Renderer",
+          "lockdown": "Lockdown",
+          "integrity": "S-1-16-0 Untrusted"
+        }
+      ],
+      "guard": true
+    },
+    {
+      "check": "explicit opt-out: the same probe reports the Renderer processes NOT sandboxed (so the probe sees the difference)",
+      "ok": true,
+      "renderers": [
+        {
+          "type": "Renderer",
+          "sandbox": "Not Sandboxed",
+          "lockdown": "",
+          "integrity": ""
+        },
+        {
+          "type": "Renderer",
+          "sandbox": "Not Sandboxed",
+          "lockdown": "",
+          "integrity": ""
+        },
+        {
+          "type": "Renderer",
+          "sandbox": "Not Sandboxed",
+          "lockdown": "",
+          "integrity": ""
+        }
+      ]
+    },
+    {
+      "check": "a browser that cannot start (sandbox on) is a typed visible failure and is not retried without the sandbox",
+      "ok": true,
+      "code": "presentation_render_sandbox_unavailable",
+      "detail": "Chrome could not start with its process sandbox ON. If this machine cannot create the sandbox, set JARVIS_REMOTION_RENDER_NO_SANDBOX=1 to render without it (an explicit choice: the scene code then run"
+    },
+    {
+      "check": "a browser that cannot start (opt-out) is a typed visible failure and is not retried without the sandbox",
+      "ok": true,
+      "code": "presentation_render_browser_unavailable",
+      "detail": "Error: Failed to launch the browser process! node:internal/modules/cjs/loader:1520 throw err; ^ Error: Cannot find module '<path>' at Module._resolveFilename (node:internal/modules/cjs/loader:1517:15)"
+    },
+    {
       "check": "restart: a render is running in a separate Core-like process",
       "ok": true,
-      "job": "rj_f0b3d8dd7ac3"
+      "job": "rj_b1185565f36f"
     },
     {
       "check": "restart: the 'Core' is dead and its render process is still alive (an orphan)",
       "ok": true,
-      "ref": "27944:134360706433386160",
-      "progress": "{\"phase\":\"rendering\",\"frames_done\":9,\"frames_total\":90,\"updated_ms\":1791597053613,\"bundle_percent\":100,\"encoded_frames\":0}",
+      "ref": "10332:134360741202311567",
+      "progress": "{\"phase\":\"rendering\",\"frames_done\":5,\"frames_total\":90,\"updated_ms\":1791600528942,\"bundle_percent\":100,\"encoded_frames\":0}",
       "result_written": false
     },
     {
@@ -458,7 +623,7 @@
       "stale": true,
       "renders": [
         {
-          "artifact_id": "jart_ccf21294c9f6448a95ccf511c883d8d1",
+          "artifact_id": "jart_141f04aff8384bf1bff3d8d21c420602",
           "kind": "presentation_still",
           "state": "complete",
           "format": "still",
@@ -497,6 +662,48 @@
       "detail": "the render exceeded its 6 s limit"
     },
     {
+      "check": "burst: 40 concurrent requests -> 8 accepted, 32 queue_full, no derivative for a refused one",
+      "ok": true,
+      "accepted": 8,
+      "refused": 32,
+      "derivatives": 8
+    },
+    {
+      "check": "burst: an identical request returns the existing job (deduplicated), creating nothing",
+      "ok": true
+    },
+    {
+      "check": "burst: every accepted job ends terminal after the cancels, nothing left",
+      "ok": true,
+      "alive": []
+    },
+    {
+      "check": "two Cores: the first Core is rendering",
+      "ok": true
+    },
+    {
+      "check": "two Cores: the second Core kills and recovers NOTHING of the first one's render, and refuses to render itself",
+      "ok": true,
+      "report": {
+        "killed": 0,
+        "failed": 0,
+        "partial": 0,
+        "kept": 0,
+        "locked": true
+      },
+      "refused": "presentation_render_locked"
+    },
+    {
+      "check": "two Cores: once the first Core is dead its lock is taken over and the orphan is recovered",
+      "ok": true,
+      "report": {
+        "killed": 1,
+        "failed": 1,
+        "partial": 0,
+        "kept": 0
+      }
+    },
+    {
       "check": "hostile scenes (fetch, XHR, WebSocket, beacon, Image, CSS url, preconnect, WebRTC) render normally",
       "ok": true,
       "states": {
@@ -530,60 +737,63 @@
       "check": "guarded: the denied requests are COUNTED and recorded on the derivative (render_egress_denied > 0)",
       "ok": true,
       "denied": {
-        "net_exfil": 24,
-        "link_hints": 15,
-        "webrtc_exfil": 13
+        "net_exfil": 25,
+        "link_hints": 17,
+        "webrtc_exfil": 14
       }
     },
     {
       "check": "a frozen source that no longer passes today's static guards is revalidated and refused at render time (no browser launched)",
-      "ok": true,
-      "state": "failed",
-      "phase": "failed",
-      "code": "presentation_render_source_refused",
-      "detail": "the frozen source no longer passes validation: guard: added after the freeze: the word ATTACKER is now forbidden"
+      "ok": false,
+      "state": "complete",
+      "phase": "complete",
+      "code": null,
+      "detail": ""
     },
     {
       "check": "negative control (browser arguments not rewritten): the sinks DO receive traffic, so the harness would see a leak",
       "ok": true,
       "http_hits": 16,
       "tcp_connections": 2,
-      "udp_packets": 6
+      "udp_packets": 3
     }
   ],
   "runs": [
     {
       "scenarios": [
         "happy",
-        "cancel_and_kill"
+        "cancel_and_kill",
+        "sandbox"
       ],
-      "head": "61fd17c90eb425044f5b811ca78a80978f3a991a",
+      "head": "3c31fe11c3bdfdc663780b6441d7a177fd54334d",
       "tree_dirty": false,
-      "elapsed_s": 203.7,
-      "disk_free_before_mb": 19188,
-      "disk_free_after_mb": 18895
+      "elapsed_s": 112.9,
+      "disk_free_before_mb": 17495,
+      "disk_free_after_mb": 17480
     },
     {
       "scenarios": [
         "core_death",
+        "two_cores",
         "refusals",
-        "bounds"
+        "bounds",
+        "burst"
       ],
-      "head": "61fd17c90eb425044f5b811ca78a80978f3a991a",
+      "head": "3c31fe11c3bdfdc663780b6441d7a177fd54334d",
       "tree_dirty": false,
-      "elapsed_s": 61.3,
-      "disk_free_before_mb": 18890,
-      "disk_free_after_mb": 18797
+      "elapsed_s": 49.0,
+      "disk_free_before_mb": 17480,
+      "disk_free_after_mb": 17608
     },
     {
       "scenarios": [
         "hostile"
       ],
-      "head": "61fd17c90eb425044f5b811ca78a80978f3a991a",
+      "head": "3c31fe11c3bdfdc663780b6441d7a177fd54334d",
       "tree_dirty": false,
-      "elapsed_s": 75.3,
-      "disk_free_before_mb": 18793,
-      "disk_free_after_mb": 18713
+      "elapsed_s": 55.5,
+      "disk_free_before_mb": 17608,
+      "disk_free_after_mb": 17618
     }
   ]
 }

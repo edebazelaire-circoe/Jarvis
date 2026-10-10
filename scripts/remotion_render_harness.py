@@ -659,7 +659,7 @@ class Harness:
                 rsrc.SOURCE_GUARDS = (*guards, lambda source: ["added after the freeze: the word ATTACKER is now forbidden"]
                                       if any("ATTACKER" in text for text in source.module_texts().values()) else [])
                 try:
-                    again = await service.submit(snap, "still", {"frame": 10})
+                    again = await service.submit(snap, "still", {"frame": 10}, deduplicate=False)  # the identical render exists: force a fresh one
                     refusal = await self.wait_done(service, again["job_id"])
                 finally:
                     rsrc.SOURCE_GUARDS = guards
