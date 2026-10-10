@@ -68,9 +68,43 @@ today in the Slice's own files, opt-in real-runtime tests included (they skip wi
 
 Command: `python -m pytest -p no:cacheprovider -q --no-header -rfE <files>`, foreground, chunks of about 40 files (20 or 10 for the slow browser files),
 the three `JARVIS_*` shell variables of the agent environment unset, no `JARVIS_LIVE_*` opt-in, the repository venv. Raw logs are not committed (they hold
-local paths); the table is the record. See *Final regression* below for the numbers of the last full pass.
+local paths); the table is the record. 
+The last full pass ran on head `87bfe0d4` (every product change of this Slice already in; the evidence runs of the next section ran on `b667b25b`, which
+differs only by evidence files, the `verify_release` regex fix and the gate test). Baseline for "inherited" is
+`slices/01-final-branch-conformance/BASELINE.md` (`de7b9c59`: 711 files, 19 087 passed, 17 failed, 50 skipped).
 
-FINAL_REGRESSION_PLACEHOLDER
+| Suite | Files | Passed | Failed | Skipped |
+| --- | ---: | ---: | ---: | ---: |
+| `tests/unit` | 729 | **20 683** | **15** (all in `BASELINE.md`) | 68 |
+| `tests/integration` | 76 | **650** (+1 on rerun) | 2: one in `BASELINE.md`, one flake that passes alone | 26 |
+| `tests/e2e` | 1 | 1 | 0 | 0 |
+| **Total** | **806** | **21 334** (+1) | **17** (16 inherited, 1 flake) | 94 |
+
+(The baseline said 79 integration files; `git ls-tree` of `de7b9c59` lists 76, as today: the baseline's count was a miscount, its 651 passed matches.)
+
+Every failure, classified (the numbers are those of `BASELINE.md`):
+
+| Test | Class |
+| --- | --- |
+| `test_app::test_the_control_center_receives_a_tools_gateway_target_built_from_core_settings` (#1) | inherited |
+| `test_barehands_interaction_js` x2 (#2, #3) | inherited |
+| `test_brain_capability_parity::...documented_in_the_brain_prompt` (#4) | inherited (`ui_intent_publish`) |
+| `test_brain_delegation::...starts_with_the_rule...` (#5) | inherited |
+| `test_control_center_voice_architecture::test_async_browser_render_does_not_restore_a_previous_panel` (#6) | inherited |
+| `test_interaction_mode_hud_browser::test_le_mouvement_reduit_arrete_vraiment_le_halo` (#7) | inherited |
+| `test_scene_artifacts::...byte_identical` (#9), `test_scene_query_tools::...byte_identical` (#11), `test_scene_group_drag_js` (#10) | inherited |
+| `test_tool_brain_choices::...single_metadata_copy` (#12), `test_tool_brain_intents` x3 (#13 to #15) | inherited (Tool Brain `ui_intent_publish` channel) |
+| `test_wake_word_settings_browser[cosmos]` (#16; the file takes 8.7 minutes alone) | inherited |
+| `integration/test_settings_redesign_migration` (#17) | inherited |
+| `integration/test_conversation_event_rollout_gate` | **flake, not ours**: the planted private value `4242` is a substring of a random event id (`cev-424248b0...`); passes alone (4 s) |
+
+`BASELINE.md` #8 (`test_memory_context`, flaky) did not fail this time.
+
+The first pass of the same suite, run before the fixes of this Slice, found what the last pass no longer shows: 2 reds that were **ours** (the engine card
+`confirm` and the inspector loop bound, fixed, defects 3 and 4) and 3 failures that pass alone, classified as load-sensitive flakes, not fixed:
+`test_presentation_studio_crash` (the kill-a-writer drill left a `*.tmp` once or twice in four runs; `file_presentation_studio_store.py` is byte-identical to
+`main`), `test_presentation_studio_reload_browser::test_a_good_edit_reloads_only_the_affected_frame...` (23 pass alone in 4 minutes) and the
+`conversation_event` id collision above.
 
 ### Real-runtime tests (opt-in) against the freshly installed private runtime
 
