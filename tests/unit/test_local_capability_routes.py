@@ -256,6 +256,9 @@ def test_every_registered_local_capability_route_is_documented():
     # Le Studio Remotion optionnel (Slice 11) est un préfixe FRÈRE, documenté dans `remotion-studio.md` et gardé par son propre test.
     from jarvis.protocol.remotion_studio_routes import RemotionStudioProtocolRoutes
     sibling = {route.path for route in RemotionStudioProtocolRoutes(object()).routes()}
+    # Le rendu / export (Slice 16) est un autre préfixe FRÈRE (`remotion-render.md`, test `test_presentation_render_routes.py`).
+    from jarvis.protocol.presentation_render_routes import PresentationRenderProtocolRoutes
+    sibling |= {route.path for route in PresentationRenderProtocolRoutes(object()).routes()}
     for path in registered:
         assert path in docs, f"{path} is registered but not quoted in docs/local-capabilities.md or docs/remotion-runtime.md"
     for quoted in set(re.findall(r"/v1/local-capabilities[A-Za-z0-9_{}/-]*", docs)):
