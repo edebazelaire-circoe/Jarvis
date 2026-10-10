@@ -1907,8 +1907,10 @@ scene:
 | --- | --- |
 | `sources` | `{path: text}` replaces or adds a module under `src/**`; `{path: null}` deletes it |
 | `assets` | `{path: base64}` replaces or adds an asset under `public/**`; `{path: null}` deletes it (at most 2 Mi base64 characters per edit: large assets do not travel through this door) |
-| `manifest` | optional full manifest (inputs, sample, `source.composition`...); Core **recomputes** `source.modules` / `source.assets` from the files, the agent never maintains them |
+| `manifest` | optional full manifest (inputs, sample, `source.composition`, `source.entry`...); Core **recomputes** `source.modules` / `source.assets` from the files, the agent never maintains them. **Core-owned, never settable by an edit:** `source.engine` (the pin the source was written for), the whole `catalog` block (licence, upstream, `runtime_license`, `source_sha256` and every other provenance field written by Core) and `schema_version`: they always come from the base version (a v3 base keeps its `catalog` even when the manifest is omitted or resent without it), and a manifest that carries them with a different value is refused with `presentation_studio_invalid` naming the key (nothing built, nothing published). Resending the base's own value is allowed. `fps`, duration, size, `inputs` and `entry` change only through the validated path (`entry` must be one of the modules; `inputs` are checked against the controls and anchors by the carry-over rules) |
 | `restore_version` | `{id, version}` alone: republish an earlier version as a **new** revision (undo / redo, below) |
+
+**Who may send it.** The user too: the Control Center relay forwards Remotion source bodies (actor forced to `user`, its own smaller body cap), so a source edit is not agent-only. The agent rate limit (10 per scene per minute) applies to the `brain` actor only, as for HTML; a user retouch is never limited.
 
 Sending `template` / `style` / `behavior` for a Remotion scene (or `sources` / `assets` for a Slidecar scene) is a typed refusal that
 names the right keys. The request body cap on the Core route is `MAX_REMOTION_BODY_BYTES` (about 4.1 Mi); the Control Center relay keeps
@@ -1955,7 +1957,9 @@ the live scene, the in-flight hold) for as long as they are pinned; a version no
 is the stated limit of undo depth (the 16 newest are always kept).
 
 **Concurrency.** Unchanged and now exercised with a slow build: composition (hence the build) is serialized per source id by the
-compose lock; two edits from one basis: one wins, the other is `stale` (its published version stays unpinned and harmless; if both
+compose lock; the request's basis is judged **again** when its turn comes (a stale request that waited builds and publishes nothing),
+and a request waits at most `DEFAULT_COMPOSE_QUEUE_S` = 75 s for its turn, then gets the typed busy error
+`presentation_studio_scene_reloading` (409, retry; journal `reload_busy`), never an endless queue; two edits from one basis: one wins, the other is `stale` (its published version stays unpinned and harmless; if both
 raced on the scene's very first fork the loser is re-submitted as a revision of the id the winner just created, not refused);
 a burst composes on the draft, each retouch is built, one version is published and every caller gets the same outcome; a broken
 retouch inside a burst leaves no trace in the draft. The agent rate limit (10 per scene per minute) applies.
@@ -1971,8 +1975,9 @@ engine detail (`test_remotion_source_edit_docs.py` pins the facts above to the l
 **Residual risks.** No TypeScript type checking (esbuild only; adding `typescript` to the lock is a Slice 19 decision); a render error
 after the first frame is not a rollback; a scene that renders but is visually wrong is only judged by the Human; Windows and
 Chrome only were exercised; undo targets outside the scene's own versions do not survive a Core restart; assets in an edit are capped
-at 2 Mi base64; the build runs under the per-source compose lock (up to the compile timeout, 60 s) so a later edit of the same scene
-waits for it.
+at 2 Mi base64; the build runs under the per-source compose lock, so a later edit of the same scene waits for it: at most the scene compile
+timeout (60 s; the shared `host.js` is **not** built under the lock any more: `check_build` compiles the scene only, a cold host
+(up to 120 s) is built by the first `describe`), and a waiter gives up after 75 s with the busy error above.
 
 ### Source requests (`scene.source_request`): durability decision
 

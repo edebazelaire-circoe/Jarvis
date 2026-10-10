@@ -49,3 +49,12 @@ def test_documented_constants_are_the_code_s():
 def test_no_new_agent_tool_was_added_for_this():
     catalog = (ROOT / "jarvis" / "runtime" / "presentation_studio_mcp_tools.py").read_text(encoding="utf-8")
     assert "source-edits" not in catalog and "restore_version" not in catalog and "no new MCP tool" in SECTION
+
+
+def test_the_queue_bound_and_the_core_owned_manifest_keys_are_documented_as_coded():
+    from jarvis.core.presentation_studio_reload import DEFAULT_COMPOSE_QUEUE_S
+    assert DEFAULT_COMPOSE_QUEUE_S == 75.0 and "`DEFAULT_COMPOSE_QUEUE_S` = 75 s" in SECTION and "reload_busy" in SECTION
+    for key in ("source.engine", "catalog", "schema_version", "runtime_license", "source_sha256"):
+        assert key in SECTION
+    assert "the user too" in SECTION.lower() and "brain` actor only" in SECTION
+    assert "compiles the scene only" in SECTION and "75 s with the busy error" in SECTION

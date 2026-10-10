@@ -80,6 +80,9 @@ from jarvis.ports.v2 import DiagnosticSink
 DEFAULT_MOUNT_DEADLINE_S = 8.0
 #: Rafale : le brouillon part apres un silence (reglage du Studio, plus court que le defaut du coalesceur de la 01a pour un
 #: retour « live coding » ; le plafond de duree garde la borne de versions par minute de la rafale).
+#: Attente maximale d'une edition derriere une autre de la MEME scene (composition + compilation, <= 60 s la scene) : au-dela, une erreur
+#: typee « occupe » (`presentation_studio_scene_reloading`, a refaire), jamais une file sans fin (Slice 14).
+DEFAULT_COMPOSE_QUEUE_S = 75.0
 DEFAULT_QUIET_S = 0.4
 DEFAULT_MAX_WAIT_S = 4.0
 #: Attente bornee des editions en vol a l'arret de Core.
@@ -140,12 +143,14 @@ class PresentationStudioReloadService:
                  edits: PresentationStudioEditService | None = None, mounts: MountBook | None = None,
                  playback: PlaybackProbe | None = None, events: Any | None = None,
                  diagnostics: DiagnosticSink | None = None, mount_deadline_s: float = DEFAULT_MOUNT_DEADLINE_S,
-                 monotonic: Callable[[], float] = time.monotonic, builder: SourceBuilder | None = None) -> None:
+                 monotonic: Callable[[], float] = time.monotonic, builder: SourceBuilder | None = None,
+                 compose_queue_s: float = DEFAULT_COMPOSE_QUEUE_S) -> None:
         self._studio, self._prefabs, self._coalescer, self._stage = studio, prefabs, coalescer, stage
         self._pins, self._edits, self._mounts = pins, edits, mounts or MountBook()
         self._playback, self._events, self._diagnostics = playback, events, diagnostics
         self._deadline_s, self._monotonic = mount_deadline_s, monotonic
         self._build = RemotionBuildGate(builder, diagnostics=diagnostics)
+        self._queue_s = compose_queue_s
         self._restorable: dict[tuple[str, str, str], deque[PrefabRef]] = {}
         self._locks: dict[tuple[str, str, str], asyncio.Lock] = {}
         self._drafts: dict[str, dict[str, Any]] = {}
@@ -287,11 +292,31 @@ class PresentationStudioReloadService:
         # ---- phase 1: compose, validate, publish. Composition is serialized PER SOURCE ID so a retouche of a burst is always
         # built on the previous one (the draft), never on the pin: the coalescer keeps the LAST candidate, which must
         # therefore contain every earlier one. Publication itself is not under any lock, so the burst can merge.
-        async with self._compose_lock(source_id):
+        compose = self._compose_lock(source_id)
+        try:
+            await asyncio.wait_for(compose.acquire(), self._queue_s)
+        except TimeoutError:
+            self._trace("core.presentation_studio.reload_busy", "Edition en attente trop longtemps derriere une autre de la scene",
+                        level="warning", data={"presentation_id": presentation_id, "scene_id": scene.scene_id,
+                                               "waited_s": self._queue_s})
+            raise PresentationStudioError(
+                C.SCENE_RELOADING, f"another edit of this scene has been composing or building for more than {self._queue_s:g} s: "
+                                   "retry in a few seconds") from None
+        try:
+            # The basis is judged AGAIN once the turn comes: while this request waited, an earlier one may have landed, and a stale
+            # request must not build or publish anything (Slice 14: a build is costly).
+            variant = await self._studio.get_variant(presentation_id, variant_id)
+            scene = variant_scene(variant, request.scene_id)
+            if request.basis_revision != variant.revision:
+                return self._stale(presentation_id, variant, scene, request,
+                                   f"the variant moved to revision {variant.revision} while this edit waited its turn: read it again, "
+                                   "then retry")
             gated = await self._gate(presentation_id, variant, scene, request, source_id)
             if isinstance(gated, ReloadResult):
                 return gated
             self._draft_users[source_id] = self._draft_users.get(source_id, 0) + 1
+        finally:
+            compose.release()
         candidate, carry_reset = gated
         try:
             try:

@@ -163,3 +163,26 @@ def test_a_build_failure_is_a_refusal_with_422_and_its_diagnostics_on_the_wire()
 
 def test_nothing_sensible_is_accepted_for_empty_inputs():
     assert parse_remotion_edit(None, None) == ({}, {})
+
+
+def test_core_owned_manifest_parts_come_from_the_base_and_a_different_value_is_refused_by_name():
+    manifest, files = base()
+    manifest["schema_version"], manifest["catalog"] = 3, {"license": "MIT", "upstream": {"name": "a"}}
+    sent = json.loads(json.dumps(manifest))
+    del sent["catalog"]
+    del sent["source"]["engine"]
+    candidate, _ = compose((manifest, files), manifest=sent)
+    assert candidate["manifest"]["catalog"] == manifest["catalog"] and candidate["manifest"]["source"]["engine"] == manifest["source"]["engine"]
+    for mutate, key in ((lambda m: m["catalog"].update(license="GPL"), "manifest.catalog"),
+                        (lambda m: m["source"]["engine"].update(version="9.9.9"), "source.engine"),
+                        (lambda m: m.update(schema_version=2), "schema_version")):
+        other = json.loads(json.dumps(manifest))
+        mutate(other)
+        with pytest.raises(PresentationStudioError) as caught:
+            compose((manifest, files), manifest=other)
+        assert key in caught.value.message and caught.value.code is C.INVALID_PRESENTATION
+    plain = json.loads(json.dumps(sent))
+    plain["catalog"] = {"license": "MIT"}
+    manifest_v2, files_v2 = base()
+    with pytest.raises(PresentationStudioError):   # a base without a catalog cannot be given one
+        compose((manifest_v2, files_v2), manifest={**manifest_v2, "catalog": {"license": "MIT"}})

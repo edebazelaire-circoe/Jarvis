@@ -152,10 +152,12 @@ class Rig:
     """Voir l'en-tete du module. `await Rig(tmp_path).open()` puis `rig.edit(...)`."""
 
     def __init__(self, tmp_path: Path, *, mount_deadline_s: float = 2.0, quiet_s: float = 0.02, max_wait_s: float = 0.1,
-                 conversation: str | None = "conv-1", existing: bool = False, builder: Any = None) -> None:
+                 conversation: str | None = "conv-1", existing: bool = False, builder: Any = None,
+                 reload_options: dict | None = None) -> None:
         """`existing=True` : rouvre les dossiers d'une vie precedente (apres un arret brutal) au lieu d'en creer."""
 
         self.tmp, self.existing, self.builder = tmp_path, existing, builder
+        self.reload_options = reload_options or {}
         self.package, self.data = tmp_path / "package", tmp_path / "data"
         if not existing:
             for folder in (self.package, self.data):
@@ -191,7 +193,8 @@ class Rig:
         self.stage = StageWindows(self.scene, diagnostics=self.sink)
         self.reload = PresentationStudioReloadService(
             self.studio, self.prefabs, self.coalescer, self.stage, pins=self.pins, edits=self.edits,
-            events=self.events, diagnostics=self.sink, mount_deadline_s=self.mount_deadline_s, builder=self.builder)
+            events=self.events, diagnostics=self.sink, mount_deadline_s=self.mount_deadline_s, builder=self.builder,
+            **self.reload_options)
         # The REAL playback runtime (Slice 12) owns the stage window: a run creates `studio-stage-<run_id>` and tells the
         # reload (`stage_observer`) which scene it shows; the reload reads its position (`PlaybackProbe`).
         self.stage_scene = SceneStage(self.scene, StageLedger(FileStageLedger(self.tmp), diagnostics=self.sink), diagnostics=self.sink)

@@ -117,8 +117,8 @@ class RemotionPlayerService:
 
     async def check_build(self, source: Any) -> dict[str, Any]:
         """Compile une source candidate (`RemotionSource` deja validee) AVANT toute publication : le garde de l'edition de source
-        (Slice 14, `presentation_studio_remotion_gate`). Meme compilateur, meme cle de cache que `describe` : ce que le Player
-        lira ensuite est deja la, la compilation est gratuite. Ne monte rien, n'ouvre aucun ecouteur. Leve comme `describe`
+        (Slice 14, `presentation_studio_remotion_gate`). Meme compilateur, meme cle de cache que `describe` : la scene que le
+        Player lira ensuite est deja la, la compilation est gratuite. Ne monte rien, n'ouvre aucun ecouteur. Leve comme `describe`
         (`engine_unavailable`, `RemotionCompileError` typee avec fichier, ligne, colonne) ; jamais un repli."""
 
         state = self.availability()
@@ -126,7 +126,8 @@ class RemotionPlayerService:
             raise PresentationStudioError(C.ENGINE_UNAVAILABLE, f"remotion is unavailable: {state.reason}. Repair: {state.repair}")
         assert self._compiler is not None
         try:
-            await self._run_blocking(self._compiler.compile_host)
+            # Only the SCENE is built here (<= 60 s): the shared `host.js` is keyed by the installed tree and was built when the scene
+            # that is playing was described; a cold host (120 s) is built by `describe`, never while an edit holds the compose lock.
             scene = await self._run_blocking(self._compiler.compile_scene, source)
         except RemotionCompileError as exc:
             if exc.code is CompileErrorCode.RUNTIME_UNAVAILABLE:

@@ -323,3 +323,124 @@ async def test_undo_works_while_the_previous_edit_is_still_unconfirmed(tmp_path)
         assert scene_of(await rig.variant()).last_valid_pin == second.prefab
     finally:
         await rig.close()
+
+
+# ------------------------------------------------------------------ polish (QA): what an edit cannot set, queue, preserved state
+
+CATALOG = {"type": "composition", "compatibility": {"remotion": "native", "slidecar": "adapter"},
+           "stack": ["react", "remotion", "typescript"],
+           "dependencies": [{"name": "remotion", "version": "4.0.534"}],
+           "license": "MIT",
+           "upstream": {"name": "remotion-dev/template", "url": "https://github.com/remotion-dev/template", "ref": "v4"}}
+
+
+async def base_manifest(rig) -> dict:
+    return json.loads(json.dumps((await rig.prefabs.get(BASE, 1)).entry.manifest.raw))
+
+
+@pytest.mark.parametrize(("change", "key"), [
+    (lambda m: m["source"]["engine"].update(version="9.9.9"), "source.engine"),
+    (lambda m: m["source"]["engine"].update(lock_sha256="0" * 64), "source.engine"),
+    (lambda m: m.update(schema_version=3, catalog=dict(CATALOG)), "manifest.catalog"),
+    (lambda m: m.update(schema_version=1), "schema_version"),
+], ids=["engine-version", "engine-lock", "catalog-added", "schema-version"])
+async def test_an_edit_cannot_set_the_engine_pin_the_catalog_or_the_schema_version(rig, change, key):
+    manifest = await base_manifest(rig)
+    change(manifest)
+    with pytest.raises(PresentationStudioError) as caught:
+        await rig.edit({"manifest": manifest})
+    assert caught.value.code is C.INVALID_PRESENTATION and key in caught.value.message and "Core" in caught.value.message
+    assert rig.fake.calls == [] and scene_of(await rig.variant()).prefab == PrefabRef(BASE, 1)
+
+
+async def test_a_v3_base_keeps_its_catalog_and_engine_whatever_the_edit_sends(tmp_path):
+    rig = await RemotionRig(tmp_path, catalog=CATALOG).open()
+    try:
+        base = await base_manifest(rig)
+        assert base["catalog"]["upstream"]["ref"] == "v4" and base["schema_version"] == 3
+        plain = await rig.edit({"sources": {"src/Scene.tsx": NEW_SCENE}})
+        sent = {k: v for k, v in base.items() if k not in ("catalog", "source")}          # a manifest that forgets catalog and engine
+        sent["source"] = {k: v for k, v in base["source"].items() if k != "engine"}
+        sent["source"]["composition"] = {**base["source"]["composition"], "fps": 24}
+        with_manifest = await rig.edit({"manifest": sent, "sources": {"src/lib/Title.tsx": EDITED_TITLE}})
+        for result in (plain, with_manifest):
+            assert result.status is S.RELOADED, result.to_dict()
+            manifest = (await rig.prefabs.get(result.prefab.prefab_id, result.prefab.version)).entry.manifest.raw
+            assert manifest["catalog"] == base["catalog"] and manifest["source"]["engine"] == base["source"]["engine"]
+            assert manifest["schema_version"] == 3
+        assert manifest["source"]["composition"]["fps"] == 24, "fps changes through the validated path"
+        resent = await rig.edit({"manifest": json.loads(json.dumps(manifest)), "sources": {"src/lib/Title.tsx": TITLE_TSX}})
+        assert resent.status is S.RELOADED, "resending the base's own catalog and engine is allowed (same value)"
+    finally:
+        await rig.close()
+
+
+async def test_the_entry_must_be_a_module_and_new_inputs_are_checked_against_the_controls(rig):
+    manifest = await base_manifest(rig)
+    manifest["source"]["entry"] = "src/missing.tsx"
+    refused = await rig.edit({"manifest": manifest})
+    assert refused.status is S.REFUSED_VALIDATION and refused.code == C.SOURCE_INVALID.value and "source.entry" in refused.message
+    manifest = await base_manifest(rig)
+    manifest["inputs"]["props"]["properties"]["title"] = {"type": "integer", "default": 1, "min": 0, "max": 5}
+    manifest["sample"]["props"]["title"] = 1
+    incompatible = await rig.edit({"manifest": manifest})
+    assert incompatible.status is S.REFUSED_VALIDATION and incompatible.code == C.SCENE_INCOMPATIBLE.value
+    assert rig.fake.calls == [], "refused before any build"
+
+
+async def test_a_stale_request_that_waited_for_the_compose_lock_builds_and_publishes_nothing(rig):
+    source_id = f"presentation-studio.p{rig.pid[4:16]}.s{SID[4:16]}"
+    lock = rig.reload._compose_lock(source_id)
+    await lock.acquire()                                           # another edit is composing / building
+    revision = (await rig.variant()).revision
+    waiting = asyncio.ensure_future(rig.edit({"sources": {"src/Scene.tsx": NEW_SCENE}}, revision=revision))
+    await asyncio.sleep(0.05)
+    moved = await rig.edits.edit(rig.pid, rig.vid, {"actor": "user", "mode": "commit", "basis": {"variant_revision": revision},
+                                                     "ops": [{"op": "control.set", "scene_id": SID, "control_id": "headline", "value": "Autre"}]})
+    assert moved.status.value == "applied"
+    lock.release()
+    result = await waiting
+    assert result.status is S.STALE and "waited its turn" in result.message, result.to_dict()
+    assert rig.fake.calls == [] and not any(p.startswith("presentation-studio.") for p in rig.prefabs_ids())
+
+
+async def test_an_edit_that_waits_too_long_behind_another_gets_a_typed_busy_error(tmp_path):
+    rig = await RemotionRig(tmp_path, reload_options={"compose_queue_s": 0.2}).open()
+    try:
+        lock = rig.reload._compose_lock(f"presentation-studio.p{rig.pid[4:16]}.s{SID[4:16]}")
+        await lock.acquire()
+        with pytest.raises(PresentationStudioError) as caught:
+            await rig.edit({"sources": {"src/Scene.tsx": NEW_SCENE}})
+        assert caught.value.code is C.SCENE_RELOADING and "retry" in caught.value.message
+        assert "core.presentation_studio.reload_busy" in rig.sink.kinds()
+        lock.release()
+        assert (await rig.edit({"sources": {"src/Scene.tsx": NEW_SCENE}})).status is S.RELOADED, "the scene is not stuck afterwards"
+    finally:
+        await rig.close()
+
+
+async def test_a_builder_that_reports_the_runtime_itself_as_unavailable_is_the_engine_refusal_not_a_build_failure(rig):
+    rig.fake.runtime_down = True
+    result = await rig.edit({"sources": {"src/Scene.tsx": NEW_SCENE}})
+    assert result.status is S.REFUSED_VALIDATION and result.code == C.ENGINE_UNAVAILABLE.value and result.diagnostics == ()
+    assert "compile_runtime_unavailable" in result.message
+
+
+async def test_live_values_and_the_playback_position_survive_a_staged_swap_of_a_remotion_scene(rig):
+    """The window shows values the frame committed (unsaved preview values) and a run is playing: the swap carries the first over to
+    the new frame and never moves the second (the follower re-applies the segment to the new Player: test_remotion_timeline_js)."""
+
+    from jarvis.domain.scene import SceneActor, SceneCommand, SceneObjectFields, SceneOp, ScenePrefabRef
+    before = rig.playback.position(rig.pid)
+    snapshot = await rig.scene.snapshot()
+    stage = snapshot.get_object(rig.stage_object_id())
+    block = stage.payload.prefab
+    live = ScenePrefabRef(block.prefab_id, block.version, {**block.props, "title": "Aperçu non enregistré"}, block.data)
+    await rig.scene.apply(SceneCommand(op=SceneOp.PATCH_OBJECT, actor=SceneActor.USER, object_id=stage.object_id,
+                                       fields=SceneObjectFields(payload=stage.payload.__class__(title=stage.payload.title, prefab=live))))
+    result = await rig.edit({"sources": {"src/Scene.tsx": NEW_SCENE}})
+    assert result.status is S.RELOADED and result.preserved["playback"] == before and result.preserved["playback_unchanged"] is True
+    assert rig.playback.position(rig.pid) == before
+    shown = await rig.stage_block()
+    assert shown.prefab_id.startswith("presentation-studio.") and shown.props["title"] == "Aperçu non enregistré", "unsaved preview values carried"
+    assert scene_of(await rig.variant()).props["title"] == "Bonjour", "the authored value was not rewritten"

@@ -458,3 +458,15 @@ async def test_a_remotion_scene_that_never_renders_fails_after_the_proof_delay_i
       return {before,outcomes:outcomes.map(o=>[o.outcome,o.reason]),message:outcomes[0]&&outcomes[0].message};
     """)
     assert result["before"] == 0 and result["outcomes"] == [["failed", "timeout"]] and "first frame" in result["message"]
+
+
+async def test_a_staged_remotion_frame_receives_the_windows_current_values_when_its_page_is_up(tmp_path):
+    """Slice 14: the hot reload patches the window with the values to keep (live preview values included); the new page of the scene gets
+    exactly those, from the host, when it says `shell` (before any render): nothing the user was previewing is lost by the swap."""
+
+    result = _remotion(tmp_path, r"""
+      status('shell');
+      const sent=frameOf().contentWindow.posted.map(p=>p.message).filter(m=>m.type==='props');
+      return {sent};
+    """)
+    assert [m["props"] for m in result["sent"]] == [{"label": "Count"}] and result["sent"][0]["data"] == {"count": 3, "notes": "**bold** note"}

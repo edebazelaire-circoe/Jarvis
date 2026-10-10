@@ -10,6 +10,7 @@ prefab est une SOURCE Remotion (`lab.remotion@1`, publiee par le vrai `PrefabSer
 from __future__ import annotations
 
 import asyncio
+import copy
 from typing import Any
 
 from jarvis.domain.presentation_studio_checks import PresentationStudioError, PresentationStudioErrorCode as C
@@ -44,7 +45,7 @@ class FakeBuilder:
 
     def __init__(self, delay_s: float = 0.0) -> None:
         self.calls: list[dict[str, Any]] = []
-        self.delay_s, self.unavailable = delay_s, False
+        self.delay_s, self.unavailable, self.runtime_down = delay_s, False, False
         self.active = self.peak = 0
 
     async def check_build(self, source: Any) -> dict[str, Any]:
@@ -54,6 +55,8 @@ class FakeBuilder:
             self.calls.append({"digest": source.digest, "modules": source.module_texts(), "assets": sorted(source.block.assets)})
             if self.delay_s:
                 await asyncio.sleep(self.delay_s)
+            if self.runtime_down:   # a builder that reports the capability itself as unavailable (the compile error code)
+                raise RemotionCompileError(CompileErrorCode.RUNTIME_UNAVAILABLE, "the Remotion runtime is not ready")
             if self.unavailable:
                 raise PresentationStudioError(C.ENGINE_UNAVAILABLE, "remotion is unavailable: the capability needs repair")
             for path, text in source.module_texts().items():
@@ -71,7 +74,8 @@ class FakeBuilder:
 class RemotionRig(Rig):
     """Deux scenes Remotion (SID, SID2) de la meme source `lab.remotion@1`."""
 
-    def __init__(self, tmp_path, *, builder: Any = "default", **options: Any) -> None:
+    def __init__(self, tmp_path, *, builder: Any = "default", catalog: dict | None = None, **options: Any) -> None:
+        self.catalog = catalog
         self.fake = FakeBuilder() if builder == "default" else builder
         super().__init__(tmp_path, builder=self.fake, **options)
 
@@ -80,8 +84,10 @@ class RemotionRig(Rig):
 
     async def seed(self) -> None:
         files = {"src/Scene.tsx": SCENE_TSX, "src/lib/Title.tsx": TITLE_TSX}
-        await self.prefabs.save(scene_candidate(BASE, engine=ENGINE, title="Base Remotion", files=files, props=PROPS_SCHEMA,
-                                                sample=SAMPLE), actor="user")
+        candidate = scene_candidate(BASE, engine=ENGINE, title="Base Remotion", files=files, props=PROPS_SCHEMA, sample=SAMPLE)
+        if self.catalog is not None:   # a v3 base (Slice 17/18 provenance): licence, upstream...
+            candidate["manifest"] = {**candidate["manifest"], "schema_version": 3, "catalog": copy.deepcopy(self.catalog)}
+        await self.prefabs.save(candidate, actor="user")
 
     def prefabs_ids(self) -> list[str]:
         from jarvis.adapters.file_prefab_library import LIBRARY_DIR

@@ -126,14 +126,37 @@ def compose_remotion_candidate(base_manifest: Mapping[str, Any], base_files: Map
     if problems:
         return None, problems[:5]
     merged = copy.deepcopy(dict(manifest if manifest is not None else base_manifest))
-    new_block = dict(merged.get("source") if isinstance(merged.get("source"), Mapping) else block)
+    sent_block = merged.get("source") if isinstance(merged.get("source"), Mapping) else None
+    if manifest is not None:
+        _refuse_core_owned(base_manifest, manifest, sent_block)
+    new_block = dict(sent_block if sent_block is not None else block)
+    new_block["engine"] = copy.deepcopy(block.get("engine"))   # the pin the source was written for: Core's, never the request's
     new_block["modules"], new_block["assets"] = sorted(modules), sorted(declared_assets)
     merged["source"] = new_block
+    merged["schema_version"] = base_manifest.get("schema_version", merged.get("schema_version"))
+    if "catalog" in base_manifest:   # licence, upstream, runtime licence, source digest: provenance written by Core, always the base's
+        merged["catalog"] = copy.deepcopy(base_manifest["catalog"])
+    else:
+        merged.pop("catalog", None)
     merged["id"] = prefab_id
     merged.setdefault("version", base_manifest.get("version", 1))
     return {"manifest": merged,
             "sources": {path: files[path].decode("utf-8", errors="surrogatepass") for path in sorted(modules) if path in files},
             "assets": {path: base64.b64encode(files[path]).decode("ascii") for path in sorted(declared_assets) if path in files}}, []
+
+
+def _refuse_core_owned(base: Mapping[str, Any], sent: Mapping[str, Any], sent_block: Mapping[str, Any] | None) -> None:
+    """Une edition ne pose ni le moteur de la source (`source.engine`), ni le bloc `catalog` (licence, amont, empreinte de source,
+    toute la provenance ecrite par Core), ni la version de schema : un manifeste qui les porte AUTREMENT que la base est refuse, nomme.
+    Les omettre est permis (la base les fournit). fps, duree, taille, entrees et point d'entree changent par le chemin valide du candidat."""
+
+    if "catalog" in sent and sent["catalog"] != base.get("catalog"):
+        raise _fail("manifest.catalog is written by Core (licence, upstream, runtime_license, source_sha256...): an edit cannot set it; "
+                    "omit it")
+    if "schema_version" in sent and sent["schema_version"] != base.get("schema_version"):
+        raise _fail("manifest.schema_version is Core's: an edit cannot change it; omit it")
+    if sent_block is not None and "engine" in sent_block and sent_block["engine"] != (base.get("source") or {}).get("engine"):
+        raise _fail("manifest.source.engine is the pin the source was written for, Core's: an edit cannot set it; omit it")
 
 
 def candidate_files(candidate: Mapping[str, Any]) -> dict[str, bytes]:
