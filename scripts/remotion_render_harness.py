@@ -606,7 +606,7 @@ async def amain(args: argparse.Namespace) -> int:
     free_after = shutil.disk_usage(work).free
     ok = all(c["ok"] for c in harness.checks)
     head = sh(["git", "-C", str(ROOT), "rev-parse", "HEAD"]).strip()
-    dirty = bool(sh(["git", "-C", str(ROOT), "status", "--porcelain"]).strip())
+    dirty = bool(sh(["git", "-C", str(ROOT), "status", "--porcelain", "--", ".", ":!tasks"]).strip())  # the evidence files themselves are not product code
     report = {"verdict": "PASSED" if ok else "FAILED", "head": head, "tree_dirty": dirty, "platform": platform.platform(),
               "node": sh(["node", "--version"]).strip(), "chrome": (harness.facts.get("availability") or {}).get("browser"),
               "remotion": "4.0.534", "elapsed_s": round(time.monotonic() - started, 1), "timings": harness.timings,
