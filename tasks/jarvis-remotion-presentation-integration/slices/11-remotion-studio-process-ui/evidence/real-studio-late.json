@@ -9,7 +9,7 @@
     "chrome": "154.0.8037.99",
     "head": "f11e241a",
     "dirty": false,
-    "core": "127.77.0.9:63030 (isolated), data root C:\\Users\\Clarice\\AppData\\Local\\Temp\\s11\\root",
+    "core": "127.77.0.9:63030 (isolated), data root <home>\\AppData\\Local\\Temp\\s11\\root",
     "idle_seconds": 60.9,
     "guard_exit": {
       "launch": "3d595e094e7753c2",

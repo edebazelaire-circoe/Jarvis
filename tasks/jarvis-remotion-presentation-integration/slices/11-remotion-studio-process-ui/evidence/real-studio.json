@@ -9,7 +9,7 @@
     "chrome": "154.0.8037.99",
     "head": "4dbb18cd",
     "dirty": false,
-    "core": "127.77.0.9:56691 (isolated), data root C:\\Users\\Clarice\\AppData\\Local\\Temp\\s11\\root",
+    "core": "127.77.0.9:56691 (isolated), data root <home>\\AppData\\Local\\Temp\\s11\\root",
     "studio_processes": [
       {
         "pid": 25912,

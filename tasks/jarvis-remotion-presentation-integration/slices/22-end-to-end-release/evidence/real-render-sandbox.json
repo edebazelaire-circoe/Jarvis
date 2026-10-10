@@ -1,0 +1,179 @@
+{
+  "verdict": "PASSED",
+  "head": "b67322bd163681ca38441d7cb043fe514e6e70eb",
+  "tree_dirty": true,
+  "platform": "Windows-11-10.0.26200-SP0",
+  "node": "v24.18.0",
+  "chrome": null,
+  "remotion": "4.0.534",
+  "elapsed_s": 21.4,
+  "timings": {},
+  "disk": {
+    "free_before_mb": 13807,
+    "free_after_mb": 13764
+  },
+  "facts": {
+    "sandbox_probe": {
+      "sandbox_on": {
+        "rows": [
+          {
+            "type": "GPU",
+            "sandbox": "GPU",
+            "lockdown": "Limited",
+            "integrity": "S-1-16-4096 Low"
+          },
+          {
+            "type": "Utility",
+            "sandbox": "Not Sandboxed",
+            "lockdown": "",
+            "integrity": ""
+          },
+          {
+            "type": "Utility",
+            "sandbox": "Service",
+            "lockdown": "Lockdown",
+            "integrity": "S-1-16-0 Untrusted"
+          },
+          {
+            "type": "Renderer",
+            "sandbox": "Renderer",
+            "lockdown": "Lockdown",
+            "integrity": "S-1-16-0 Untrusted"
+          },
+          {
+            "type": "Renderer",
+            "sandbox": "Renderer",
+            "lockdown": "Lockdown",
+            "integrity": "S-1-16-0 Untrusted"
+          },
+          {
+            "type": "Renderer",
+            "sandbox": "Renderer",
+            "lockdown": "Lockdown",
+            "integrity": "S-1-16-0 Untrusted"
+          }
+        ],
+        "guard_sandbox_flag": true,
+        "error": null
+      },
+      "opt_out": {
+        "rows": [
+          {
+            "type": "GPU",
+            "sandbox": "Not Sandboxed",
+            "lockdown": "",
+            "integrity": ""
+          },
+          {
+            "type": "Utility",
+            "sandbox": "Not Sandboxed",
+            "lockdown": "",
+            "integrity": ""
+          },
+          {
+            "type": "Utility",
+            "sandbox": "Not Sandboxed",
+            "lockdown": "",
+            "integrity": ""
+          },
+          {
+            "type": "Renderer",
+            "sandbox": "Not Sandboxed",
+            "lockdown": "",
+            "integrity": ""
+          },
+          {
+            "type": "Renderer",
+            "sandbox": "Not Sandboxed",
+            "lockdown": "",
+            "integrity": ""
+          },
+          {
+            "type": "Renderer",
+            "sandbox": "Not Sandboxed",
+            "lockdown": "",
+            "integrity": ""
+          }
+        ],
+        "guard_sandbox_flag": false,
+        "error": null
+      },
+      "chrome": "chrome 154.0.8037.99"
+    }
+  },
+  "checks": [
+    {
+      "check": "sandbox ON: chrome://sandbox reports every Renderer process sandboxed (Lockdown / Untrusted)",
+      "ok": true,
+      "renderers": [
+        {
+          "type": "Renderer",
+          "sandbox": "Renderer",
+          "lockdown": "Lockdown",
+          "integrity": "S-1-16-0 Untrusted"
+        },
+        {
+          "type": "Renderer",
+          "sandbox": "Renderer",
+          "lockdown": "Lockdown",
+          "integrity": "S-1-16-0 Untrusted"
+        },
+        {
+          "type": "Renderer",
+          "sandbox": "Renderer",
+          "lockdown": "Lockdown",
+          "integrity": "S-1-16-0 Untrusted"
+        }
+      ],
+      "guard": true
+    },
+    {
+      "check": "explicit opt-out: the same probe reports the Renderer processes NOT sandboxed (so the probe sees the difference)",
+      "ok": true,
+      "renderers": [
+        {
+          "type": "Renderer",
+          "sandbox": "Not Sandboxed",
+          "lockdown": "",
+          "integrity": ""
+        },
+        {
+          "type": "Renderer",
+          "sandbox": "Not Sandboxed",
+          "lockdown": "",
+          "integrity": ""
+        },
+        {
+          "type": "Renderer",
+          "sandbox": "Not Sandboxed",
+          "lockdown": "",
+          "integrity": ""
+        }
+      ]
+    },
+    {
+      "check": "a browser that cannot start (sandbox on) is a typed visible failure and is not retried without the sandbox",
+      "ok": true,
+      "code": "presentation_render_sandbox_unavailable",
+      "detail": "Chrome could not start with its process sandbox ON. If this machine cannot create the sandbox, set JARVIS_REMOTION_RENDER_NO_SANDBOX=1 to render without it (an explicit choice: the scene code then run"
+    },
+    {
+      "check": "a browser that cannot start (opt-out) is a typed visible failure and is not retried without the sandbox",
+      "ok": true,
+      "code": "presentation_render_browser_unavailable",
+      "detail": "Error: Failed to launch the browser process! node:internal/modules/cjs/loader:1520 throw err; ^ Error: Cannot find module '<path>' at Module._resolveFilename (node:internal/modules/cjs/loader:1517:15)"
+    }
+  ],
+  "runs": [
+    {
+      "scenarios": [
+        "sandbox"
+      ],
+      "head": "b67322bd163681ca38441d7cb043fe514e6e70eb",
+      "tree_dirty": true,
+      "elapsed_s": 21.4,
+      "disk_free_before_mb": 13807,
+      "disk_free_after_mb": 13764
+    }
+  ]
+}

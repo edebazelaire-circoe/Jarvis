@@ -103,7 +103,7 @@ async def test_assets_of_a_source_that_is_not_an_import_need_an_explicit_keep(tm
 
 @pytest.mark.parametrize("leak", ["project id", "path", "content", "board"])
 async def test_hard_coded_project_material_in_tsx_blocks_the_promotion_and_the_tsx_is_not_rewritten(tmp_path, leak):
-    comment = {"project id": "// from pss_0000000000a1", "path": "// C:\\Users\\Clarice\\q3.png",
+    comment = {"project id": "// from pss_0000000000a1", "path": "// C:\\Users\\Alice\\q3.png",
                "content": f"// {TITLE_VALUE}", "board": "// board_9f8e7d6c5b4a"}[leak]
     files = scene_files()
     files["src/lib/Title.tsx"] += comment + "\n"
@@ -112,7 +112,7 @@ async def test_hard_coded_project_material_in_tsx_blocks_the_promotion_and_the_t
     plan = await world.plan(world.body("scene", scenes=pick(S1), keep_assets=True))
     blocking = [f for f in plan["findings"] if f["blocking"]]
     assert plan["ok"] is False and blocking and all(f["where"].startswith("scene:s1.source.src/lib/Title.tsx") for f in blocking)
-    assert TITLE_VALUE not in json.dumps(plan) and "Clarice" not in json.dumps(plan), "findings carry counts, never the value"
+    assert TITLE_VALUE not in json.dumps(plan) and "Alice" not in json.dumps(plan), "findings carry counts, never the value"
     await world.refused(world.promote(world.body("scene", scenes=pick(S1), keep_assets=True)), C.TEMPLATE_LEAK)
     assert (world.library_files(), world.template_files()) == before
 
@@ -403,7 +403,7 @@ async def test_the_scanner_knows_the_real_board_grammar_unicode_tricks_svg_text_
         "board_dash_underscore": "// board_9f8e-7d6c_5b4a3c2d",
         "live_ref": "// board:board_abc123def/memory/notes.md",
         "fullwidth_id": "// ｐｓｓ_0000000000a1",
-        "fullwidth_path": "// Ｃ:\\Users\\Clarice\\q3.png",
+        "fullwidth_path": "// Ｃ:\\Users\\Alice\\q3.png",
     }
     for name, line in cases.items():
         files = scene_files()

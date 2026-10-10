@@ -1,0 +1,89 @@
+{
+  "environment": {
+    "branch_head_at_run": "38a3ea8f6291a6e8094b3ed1b697eec7514c5a72",
+    "tracked_files_modified": false,
+    "os": "Windows-11-10.0.26200-SP0",
+    "python": "3.14.6",
+    "node": "v24.18.0",
+    "npm": "11.16.0",
+    "work_dir": "<home>\\AppData\\Local\\Temp\\jrs22",
+    "run_at": "2026-10-10T07:26:44.563082+00:00"
+  },
+  "fresh": {
+    "install_seconds": 36.8,
+    "install": {
+      "status": "ready",
+      "install_status": "installed",
+      "process_status": "stopped",
+      "health": "healthy",
+      "installed": {
+        "@remotion/bundler": "4.0.534",
+        "@remotion/cli": "4.0.534",
+        "@remotion/player": "4.0.534",
+        "react": "19.3.0",
+        "react-dom": "19.3.0",
+        "remotion": "4.0.534"
+      },
+      "last_error_code": null,
+      "last_error_detail": "",
+      "install_attempts": 1
+    },
+    "disk_bytes": 270327870,
+    "disk_mb": 270.3,
+    "health_seconds": 0.5,
+    "health": {
+      "status": "ready",
+      "install_status": "installed",
+      "process_status": "stopped",
+      "health": "healthy",
+      "installed": {
+        "@remotion/bundler": "4.0.534",
+        "@remotion/cli": "4.0.534",
+        "@remotion/player": "4.0.534",
+        "react": "19.3.0",
+        "react-dom": "19.3.0",
+        "remotion": "4.0.534"
+      },
+      "last_error_code": null,
+      "last_error_detail": "",
+      "install_attempts": 1
+    },
+    "install_record": {
+      "schema": 1,
+      "installed": {
+        "@remotion/bundler": "4.0.534",
+        "@remotion/cli": "4.0.534",
+        "@remotion/player": "4.0.534",
+        "react": "19.3.0",
+        "react-dom": "19.3.0",
+        "remotion": "4.0.534"
+      },
+      "shipped_sha256": {
+        "package.json": "5370510efb6de4fbb9592e37c372ef9ea7e344676ab21c840ab54af0084d489c",
+        "package-lock.json": "acff3cd562fd6f426040aed8b60cce840b23befe7bac71604d0c7614b8762fbe",
+        "runtime-host.mjs": "0b8b7117e1c79d0d7c75e14d36587a4252f206268ea0fe9f01e6dc8ba936e687"
+      },
+      "lock_sha256": "acff3cd562fd6f426040aed8b60cce840b23befe7bac71604d0c7614b8762fbe",
+      "fingerprint": "4e2796beb0c45acc2de3efb5b380e852279513034cd8dfe14aece4fc77f2dd8a",
+      "platform": "win32-x64",
+      "installed_at": "2026-10-10T09:27:08+0200",
+      "duration_s": 22.9
+    },
+    "node_modules_count": 150,
+    "events": [
+      "local_capability.install",
+      "local_capability.install.done",
+      "local_capability.health"
+    ]
+  },
+  "noop": {
+    "seconds": 0.0,
+    "attempts_before": 1,
+    "attempts_after": 1,
+    "status": "ready",
+    "events": [
+      "local_capability.install",
+      "local_capability.install.noop"
+    ]
+  }
+}

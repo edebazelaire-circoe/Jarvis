@@ -15,7 +15,13 @@ const [runtime, browserPath, output] = process.argv.slice(2);
     chromiumOptions: { gl: null, headless: true }, logLevel: 'warn' });
   const page = await browser.newPage({ context: () => null, logLevel: 'warn', indent: false, pageIndex: 0, onBrowserLog: null, onLog: () => undefined });
   await page.goto({ url: 'chrome://sandbox', timeout: 20000 });
-  const text = await page.evaluate(() => document.body.innerText);
+  // Slice 22: chrome://sandbox fills its table after the page loads; a cold browser could be read before any process row existed (flaky "no Renderer").
+  let text = '';
+  for (let waited = 0; waited < 15000; waited += 250) {
+    text = await page.evaluate(() => document.body.innerText);
+    if (/	Renderer	/.test(String(text))) break;
+    await new Promise((resolve) => setTimeout(resolve, 250));
+  }
   fs.writeFileSync(output, JSON.stringify({ sandbox_page: String(text).slice(0, 2500), sandbox_flag_in_guard: guard.state.sandbox, browser_launches: guard.state.browserLaunches }));
   await browser.close({ silent: true });
   proxy.close();

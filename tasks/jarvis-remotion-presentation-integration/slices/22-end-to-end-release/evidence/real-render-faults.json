@@ -1,0 +1,238 @@
+{
+  "verdict": "PASSED",
+  "head": "b67322bd163681ca38441d7cb043fe514e6e70eb",
+  "tree_dirty": true,
+  "platform": "Windows-11-10.0.26200-SP0",
+  "node": "v24.18.0",
+  "chrome": null,
+  "remotion": "4.0.534",
+  "elapsed_s": 70.4,
+  "timings": {
+    "cancel_to_stopped_s": 1.3
+  },
+  "disk": {
+    "free_before_mb": 13844,
+    "free_after_mb": 13845
+  },
+  "facts": {
+    "reconcile_report": {
+      "killed": 1,
+      "failed": 1,
+      "partial": 0,
+      "kept": 0
+    }
+  },
+  "checks": [
+    {
+      "check": "cancel: the view says cancel is requested while the process still runs",
+      "ok": true
+    },
+    {
+      "check": "cancel: job cancelled, derivative failed with a stable code, no final file",
+      "ok": true,
+      "seconds": 1.3,
+      "state": "cancelled",
+      "artifact_state": "failed",
+      "code": "presentation_render_cancelled",
+      "final": false
+    },
+    {
+      "check": "cancel: the whole process tree is gone (identity-checked ref, no process carries the job id)",
+      "ok": true,
+      "alive": []
+    },
+    {
+      "check": "stop(): a reference with the wrong creation time does not kill the program that owns the pid",
+      "ok": true
+    },
+    {
+      "check": "stop(): the right reference does",
+      "ok": true
+    },
+    {
+      "check": "kill: a render killed from outside fails visibly (code, detail), no final file, nothing left",
+      "ok": true,
+      "code": "presentation_render_failed",
+      "detail": "exit code 1"
+    },
+    {
+      "check": "kill (node only): orphaned Chrome is swept, derivative failed, no final file",
+      "ok": true,
+      "alive": [],
+      "log": []
+    },
+    {
+      "check": "after cancel and kills the queue still works",
+      "ok": true
+    },
+    {
+      "check": "restart: a render is running in a separate Core-like process",
+      "ok": true,
+      "job": "rj_57cd6731d6a8"
+    },
+    {
+      "check": "restart: the 'Core' is dead and its render process is still alive (an orphan)",
+      "ok": true,
+      "ref": "23648:134360922783113120",
+      "progress": "{\"phase\":\"rendering\",\"frames_done\":7,\"frames_total\":90,\"updated_ms\":1791618687161,\"bundle_percent\":100,\"encoded_frames\":0}",
+      "result_written": false
+    },
+    {
+      "check": "restart: before recovery the derivative is still pending",
+      "ok": true
+    },
+    {
+      "check": "restart: generic recovery leaves the render derivative to its owner",
+      "ok": true
+    },
+    {
+      "check": "restart: reconcile kills the orphan, fails the derivative as interrupted, no final file, nothing left",
+      "ok": true,
+      "report": {
+        "killed": 1,
+        "failed": 1,
+        "partial": 0,
+        "kept": 0
+      },
+      "code": "presentation_render_interrupted"
+    },
+    {
+      "check": "restart: a new render works after the recovery",
+      "ok": true
+    },
+    {
+      "check": "refusal: unknown snapshot id",
+      "ok": true,
+      "code": "presentation_render_snapshot_invalid",
+      "expected": "presentation_render_snapshot_invalid"
+    },
+    {
+      "check": "refusal: an Artifact that is not a snapshot",
+      "ok": true,
+      "code": "presentation_render_snapshot_invalid",
+      "expected": "presentation_render_snapshot_invalid"
+    },
+    {
+      "check": "refusal: a bad format",
+      "ok": true,
+      "code": "presentation_studio_invalid",
+      "expected": "presentation_studio_invalid"
+    },
+    {
+      "check": "refusal: an unknown setting",
+      "ok": true,
+      "code": "presentation_render_invalid",
+      "expected": "presentation_render_invalid"
+    },
+    {
+      "check": "refusal: a frame outside the scene",
+      "ok": true,
+      "code": "presentation_render_invalid",
+      "expected": "presentation_render_invalid"
+    },
+    {
+      "check": "refusal: a reversed range",
+      "ok": true,
+      "code": "presentation_render_invalid",
+      "expected": "presentation_render_invalid"
+    },
+    {
+      "check": "refusal: a setting that does not apply to the format",
+      "ok": true,
+      "code": "presentation_render_invalid",
+      "expected": "presentation_render_invalid"
+    },
+    {
+      "check": "refusal: a tampered snapshot.zip (hash differs)",
+      "ok": true,
+      "code": "presentation_render_snapshot_invalid",
+      "expected": "presentation_render_snapshot_invalid"
+    },
+    {
+      "check": "refusal: an installed engine that differs from the frozen one",
+      "ok": true,
+      "code": "presentation_render_engine_mismatch",
+      "expected": "presentation_render_engine_mismatch"
+    },
+    {
+      "check": "refusal: the Remotion capability is not installed",
+      "ok": true,
+      "code": "presentation_render_runtime_unavailable",
+      "expected": "presentation_render_runtime_unavailable"
+    },
+    {
+      "check": "refusal: unknown job id is a typed 404",
+      "ok": true
+    },
+    {
+      "check": "stale: exporting an outdated revision is refused (nothing frozen, nothing rendered)",
+      "ok": true,
+      "code": "presentation_studio_stale_revision"
+    },
+    {
+      "check": "stale: the old snapshot still renders, and the Board data says stale: true with its render listed",
+      "ok": true,
+      "stale": true,
+      "renders": [
+        {
+          "artifact_id": "jart_232a151c187546a897747b34bb39eed3",
+          "kind": "presentation_still",
+          "state": "complete",
+          "format": "still",
+          "size_bytes": 24299,
+          "error_code": null,
+          "width": 1280,
+          "height": 720,
+          "duration_ms": null,
+          "scene_id": "pss_000000000001",
+          "settings_sha256": "bf65e7669e7f72753e8d8632721b640c13993e4715dfffd6afb925003417a4c7",
+          "flat": true,
+          "board_ids": [
+            "default"
+          ]
+        }
+      ]
+    },
+    {
+      "check": "two Cores: the first Core is rendering",
+      "ok": true
+    },
+    {
+      "check": "two Cores: the second Core kills and recovers NOTHING of the first one's render, and refuses to render itself",
+      "ok": true,
+      "report": {
+        "killed": 0,
+        "failed": 0,
+        "partial": 0,
+        "kept": 0,
+        "locked": true
+      },
+      "refused": "presentation_render_locked"
+    },
+    {
+      "check": "two Cores: once the first Core is dead its lock is taken over and the orphan is recovered",
+      "ok": true,
+      "report": {
+        "killed": 1,
+        "failed": 1,
+        "partial": 0,
+        "kept": 0
+      }
+    }
+  ],
+  "runs": [
+    {
+      "scenarios": [
+        "cancel_and_kill",
+        "core_death",
+        "two_cores",
+        "refusals"
+      ],
+      "head": "b67322bd163681ca38441d7cb043fe514e6e70eb",
+      "tree_dirty": true,
+      "elapsed_s": 70.4,
+      "disk_free_before_mb": 13844,
+      "disk_free_after_mb": 13845
+    }
+  ]
+}
