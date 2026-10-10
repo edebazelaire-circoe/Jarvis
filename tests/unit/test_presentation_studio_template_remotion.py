@@ -13,7 +13,7 @@ import pytest
 
 from jarvis.adapters.file_prefab_library import LIBRARY_DIR
 from jarvis.domain import remotion_source
-from jarvis.domain.presentation_studio import PresentationStudioErrorCode as C
+from jarvis.domain.presentation_studio import PresentationStudioError, PresentationStudioErrorCode as C
 from jarvis.domain.remotion_source import source_digest
 from tests.fakes.remotion_scene import PNG_1X1, scene_candidate, scene_files
 from tests.unit.presentation_studio_template_world import PROJECT_TITLE, World
@@ -271,15 +271,6 @@ async def test_a_restrictive_licence_also_gates_a_presentation_template(tmp_path
     assert document["catalog"]["licence_ack"] == ["CC-BY-NC-4.0"] and document["catalog"]["licences"] == ["CC-BY-NC-4.0"]
 
 
-async def test_embedded_sources_over_the_cap_block_the_promotion(tmp_path, monkeypatch):
-    from jarvis.core import presentation_studio_template as core
-
-    world = await remotion_world(tmp_path)
-    monkeypatch.setattr(core, "MAX_EMBEDDED_BYTES", 100)
-    plan = await world.plan(world.body("presentation", scenes=pick(S1, S2), keep_assets=True))
-    assert "embedded_too_large" in {f["code"] for f in plan["findings"] if f["blocking"]}
-
-
 # ------------------------------------------------------------------ la partition : un squelette, jamais la parole
 
 
@@ -333,3 +324,193 @@ async def test_instantiating_twice_gives_two_presentations_with_their_own_source
     ids = {r["prefab"]["id"] for made in (one, two) for r in made["rendered"]}
     assert one["presentation_id"] != two["presentation_id"] and len(ids) == 4, "no source id is shared or reused between presentations"
     assert len(world.template_files()) == 1, "instantiating never touches the record"
+
+
+# ------------------------------------------------------------------ Remotion Slice 19, rework QA : taille reelle, provenance ancree, scanner, licence, rollback
+
+
+def heavy_files(*sizes_kb: int) -> dict:
+    files = scene_files()
+    for n, kb in enumerate(sizes_kb):
+        files[f"src/lib/Heavy{n}.tsx"] = "export const note = 1;\n" + "".join(f"// {'x' * 94}\n" for _ in range(kb * 10))
+    return files
+
+
+async def test_the_plan_measures_the_serialized_record_against_the_real_cap_and_says_which_part_weighs(tmp_path):
+    """QA B2 probe: 240 + 200 + 200 KB of modules used to read `ok` in the plan and fail at the write."""
+
+    world = await remotion_world(tmp_path, files=heavy_files(240, 200, 200))
+    body = world.body("presentation", scenes=pick(S1, S2), keep_assets=True)
+    plan = await world.plan(body)
+    blocking = [f for f in plan["findings"] if f["blocking"]]
+    assert plan["ok"] is False and [f["code"] for f in blocking] == ["embedded_too_large"]
+    assert "262144" in blocking[0]["message"] and "embedded sources weigh" in blocking[0]["message"]
+    before = (world.library_files(), world.template_files())
+    await world.refused(world.promote(body), C.TEMPLATE_LEAK)
+    assert (world.library_files(), world.template_files()) == before, "nothing written, no LIMIT error after the fact"
+
+
+async def test_a_record_close_to_the_real_cap_is_planned_written_read_and_instantiated(tmp_path):
+    world = await remotion_world(tmp_path, files=heavy_files(75, 75, 75))
+    body = world.body("presentation", scenes=pick(S1, S2), keep_assets=True)
+    assert (await world.plan(body))["ok"] is True
+    answer = await world.promote(body)
+    (path,) = (world.env.root / "presentation_templates").glob("*.json")
+    size = path.stat().st_size
+    assert 205_000 < size <= 256 * 1024, size
+    made = await world.templates.instantiate(answer["template_id"], {"title": "Lourd"})
+    assert all(r["problems"] == [] for r in made["rendered"])
+
+
+async def test_a_hand_edited_record_cannot_forge_a_verified_import_even_when_self_consistent(tmp_path):
+    """QA a: files edited, `source_sha256` recomputed, a fake commit, the content hash recomputed: consistent, but nothing Core holds witnesses it."""
+
+    from jarvis.domain.presentation_studio_template_remotion import content_hash
+    from jarvis.domain.remotion_source import decode_candidate_files
+
+    files = scene_files()
+    world = await remotion_world(tmp_path, files=files, cat=catalog(files), verified=True)
+    answer = await world.promote(world.body("presentation", scenes=pick(S1, S2)))
+    path = world.env.root / "presentation_templates" / f"{answer['template_id']}.json"
+    document = json.loads(path.read_text(encoding="utf-8"))
+    ((old, candidate),) = document["embedded"].items()
+    candidate["sources"]["src/lib/Title.tsx"] += "// edited by hand\n"
+    up = candidate["manifest"]["catalog"]["upstream"]
+    up["source_sha256"] = source_digest(decode_candidate_files(candidate["sources"], candidate["assets"]))
+    up["commit"] = "c" * 40
+    document["embedded"] = {content_hash(candidate): candidate}
+    for row in document["scenes"]:
+        row["source"] = content_hash(candidate)
+    path.write_text(json.dumps(document), encoding="utf-8")
+    made = await world.templates.instantiate(answer["template_id"], {"title": "Forge coherent"})
+    assert {p["provenance"] for p in made["provenance"]} == {"declared_not_reverified"}, "told to the user, not hidden"
+    pin = made["rendered"][0]["prefab"]
+    view = (await world.env.prefabs.get(pin["id"], pin["version"])).to_dict(catalog=True)["catalog"]
+    assert "verified_intact" not in view["upstream"] and "commit" not in view["upstream"] and not view.get("runtime_license")
+    assert view["upstream"]["name"] == "acme/tpl", "the origin stays a declaration"
+
+
+async def test_a_genuine_embedded_import_is_reverified_against_what_the_library_holds(tmp_path):
+    files = scene_files()
+    world = await remotion_world(tmp_path, files=files, cat=catalog(files), verified=True)
+    answer = await world.promote(world.body("presentation", scenes=pick(S1, S2)))
+    made = await world.templates.instantiate(answer["template_id"], {"title": "Authentique"})
+    assert {p["provenance"] for p in made["provenance"]} == {"verified"}
+
+
+async def test_the_scanner_knows_the_real_board_grammar_unicode_tricks_svg_text_and_the_words_of_the_score(tmp_path):
+    cases = {
+        "board_dash_underscore": "// board_9f8e-7d6c_5b4a3c2d",
+        "live_ref": "// board:board_abc123def/memory/notes.md",
+        "fullwidth_id": "// ｐｓｓ_0000000000a1",
+        "fullwidth_path": "// Ｃ:\\Users\\Clarice\\q3.png",
+    }
+    for name, line in cases.items():
+        files = scene_files()
+        files["src/lib/Title.tsx"] += line + "\n"
+        (tmp_path / name).mkdir()
+        world = await remotion_world(tmp_path / name, files=files)
+        plan = await world.plan(world.body("scene", scenes=pick(S1), keep_assets=True))
+        assert plan["ok"] is False and any(f["blocking"] and f["where"].startswith("scene:s1.source.src/lib/Title.tsx") for f in plan["findings"]), name
+    svg = b'<svg xmlns="http://www.w3.org/2000/svg"><title>Chiffre trimestriel</title></svg>'
+    files = scene_files()
+    files["public/logo.svg"] = svg
+    (tmp_path / "svg").mkdir()
+    world = await remotion_world(tmp_path / "svg", files=files)
+    plan = await world.plan(world.body("scene", scenes=pick(S1), keep_assets=True))
+    assert any(f["code"] == "project_content" and f["where"].endswith("public/logo.svg") for f in plan["findings"]), "SVG text and metadata are scanned"
+
+
+async def test_what_the_score_says_counts_as_project_content_in_the_sources(tmp_path):
+    files = scene_files()
+    files["src/lib/Title.tsx"] += '// "Passons maintenant aux resultats du trimestre"\n'
+    world = await remotion_world(tmp_path, files=files)
+    variant = await world.studio.get_variant(world.pid, world.vid)
+    body = {"start_item_id": "psi_000000000001", "items": [{"item_id": "psi_000000000001", "scene_id": S1, "presenter": "jarvis", "kind": "speech",
+                                                              "text": "Passons maintenant aux resultats du trimestre"}],
+            "cues": [], "sequences": [], "recovery_points": []}
+    await world.studio.create_score(world.pid, world.vid, {"expected_variant_revision": variant.revision, **body})
+    plan = await world.plan(world.body("presentation", scenes=pick(S1, S2), keep_assets=True))
+    assert any(f["code"] == "project_content" and "Title.tsx" in f["where"] for f in plan["findings"] if f["blocking"])
+
+
+async def test_a_failure_after_the_presentation_exists_marks_it_names_it_and_deletes_nothing(tmp_path, monkeypatch):
+    """QA f: three failure points. Core has no deletion of a presentation or a prefab: the half-made presentation is marked and named."""
+
+    from tests.unit.test_presentation_studio_score_service import score_body
+
+    world = await World(tmp_path).open()
+    variant = await world.studio.get_variant(world.pid, world.vid)
+    await world.studio.create_score(world.pid, world.vid, {"expected_variant_revision": variant.revision, **score_body()})
+    scored = await world.promote(world.body("presentation", slug="note"))
+    for step, name in (("save_variant", "save_variant"), ("art_direction", "create_fallback_art_direction"), ("create_score", "create_score")):
+        real = getattr(world.studio, name)
+
+        async def boom(*args, **kwargs):
+            raise PresentationStudioError(C.STORAGE_IO, "disk full")
+
+        monkeypatch.setattr(world.studio, name, boom)
+        before = {p["presentation_id"] for p in (await world.studio.list_presentations()).presentations}
+        error = await world.refused(world.templates.instantiate(scored["template_id"], {"title": f"Echec {step}"}), C.STORAGE_IO)
+        monkeypatch.setattr(world.studio, name, real)
+        created = [p for p in (await world.studio.list_presentations()).presentations if p["presentation_id"] not in before]
+        assert len(created) == 1 and created[0]["presentation_id"] in error.message, step
+        assert created[0]["title"].startswith("[instantiation échouée] "), "visible in the list"
+        assert "nothing was deleted" in error.message
+    rows = [r for r in world.sink.rows if r[0] == "core.presentation_studio.template_instantiation_failed"]
+    assert len(rows) == 3 and all(r[1] == "warning" for r in rows)
+    assert len(world.template_files()) == 1, "the record is untouched"
+
+
+async def test_a_failure_while_installing_embedded_sources_leaves_unpinned_prefabs_and_a_marked_presentation(tmp_path, monkeypatch):
+    world = await remotion_world(tmp_path)
+    answer = await world.promote(world.body("presentation", scenes=pick(S1, S2), keep_assets=True))
+    real = world.env.prefabs.save
+    calls = {"n": 0}
+
+    async def second_save_fails(candidate, **kwargs):
+        calls["n"] += 1
+        if calls["n"] == 2:
+            from jarvis.ports.prefabs import PrefabStoreError, PrefabStoreErrorCode
+
+            raise PrefabStoreError(PrefabStoreErrorCode.STORAGE_IO, "disk full")
+        return await real(candidate, **kwargs)
+
+    monkeypatch.setattr(world.env.prefabs, "save", second_save_fails)
+    error = await world.refused(world.templates.instantiate(answer["template_id"], {"title": "Moitie"}), C.STORAGE_IO)
+    assert "[instantiation échouée]" in error.message and "nothing was deleted" in error.message
+    listed = (await world.studio.list_presentations()).presentations
+    assert any(p["title"].startswith("[instantiation échouée] ") for p in listed)
+
+
+async def test_a_duplicate_key_or_nan_in_a_record_is_corruption_and_the_hash_of_every_source_is_checked(tmp_path):
+    world = await remotion_world(tmp_path)
+    answer = await world.promote(world.body("presentation", scenes=pick(S1, S2), keep_assets=True))
+    path = world.env.root / "presentation_templates" / f"{answer['template_id']}.json"
+    text = path.read_text(encoding="utf-8")
+    path.write_text(text.replace('"kind": "presentation",', '"kind": "presentation", "kind": "presentation",', 1), encoding="utf-8")
+    await world.refused(world.templates.get_template(answer["template_id"]), C.CORRUPT_DOCUMENT)
+    path.write_text(text.replace('"revision": 1', '"revision": NaN'), encoding="utf-8")
+    await world.refused(world.templates.get_template(answer["template_id"]), C.CORRUPT_DOCUMENT)
+    document = json.loads(text)
+    ((key, candidate),) = document["embedded"].items()
+    candidate["sources"]["src/Scene.tsx"] += "// tampered\n"
+    path.write_text(json.dumps(document), encoding="utf-8")
+    error = await world.refused(world.templates.get_template(answer["template_id"]), C.CORRUPT_DOCUMENT)
+    assert "content hash" in error.message
+
+
+def test_licence_names_can_be_as_long_as_an_upstream_licence():
+    from jarvis.domain.presentation_studio_template import MAX_LICENCE_NAME, parse_promote
+
+    assert MAX_LICENCE_NAME == 120
+    request = parse_promote({"kind": "scene", "title": "x", "slug": "x", "licence_ack": ["L" * 120]}, strict=False)
+    assert request.licence_ack == ("L" * 120,)
+
+
+async def test_the_brain_cannot_give_a_licence_acknowledgement_or_keep_assets_even_straight_to_core(tmp_path):
+    files = scene_files()
+    world = await remotion_world(tmp_path, files=files, cat=catalog(files, licence="GPL-3.0", verified=False))
+    for extra in ({"licence_ack": ["GPL-3.0"]}, {"keep_assets": True}):
+        await world.refused(world.promote(world.body("scene", scenes=pick(S1), actor="brain", **extra)), C.INVALID_PRESENTATION)
+    assert world.template_files() == {} and not list((world.env.data / LIBRARY_DIR).glob("studio-template.*"))

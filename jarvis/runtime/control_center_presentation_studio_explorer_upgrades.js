@@ -59,10 +59,16 @@
     if(n.reloading)blocked="Cette scène attend la confirmation de son rechargement à chaud : réessayez dans un instant.";
     else if(n.engine_ok===false)blocked=`Essai impossible : ${problemText(n.problem||'presentation_studio_engine_unsupported')}.`;
     else if(n.fits===false)blocked=`Essai impossible : ${problemText(n.problem)}. Rien n'est adapté à votre place.`;
-    return {sceneId:n.scene_id,title:cleanLine((titles&&titles[n.scene_id])||'',80)||'(scène sans titre)',
+    /* QA B3 : une licence qui change ou qui demande une décision n'est jamais cachée derrière un « Compatible » vert. */
+    const ackName=typeof n.licence_ack_required==='string'&&n.licence_ack_required?cleanLine(n.licence_ack_required,120):null;
+    const shown=v=>cleanLine(v||'non déclarée',40);
+    const licenceChip=n.licence_changed===true?{text:`Licence modifiée : ${shown(n.pinned_licence)} → ${shown(n.latest_licence)}`,tone:'warn'}
+      :ackName?{text:`Licence à reconnaître : ${ackName}`,tone:'warn'}:null;
+    return {sceneId:n.scene_id,ackName,title:cleanLine((titles&&titles[n.scene_id])||'',80)||'(scène sans titre)',
       version:`${shortPrefab} · v${n.pinned_version} → v${n.latest_version}${more}`,latest:n.latest_version,blocked,
       chips:[
         n.reloading?{text:'Rechargement en cours',tone:'warn'}:n.engine_ok===false?{text:'Moteur : non utilisable',tone:'warn'}:n.fits===false?{text:'Incompatible',tone:'warn'}:{text:'Compatible',tone:'ok'},
+        ...(licenceChip?[licenceChip]:[]),
         ...(n.latest_catalog&&n.latest_catalog.upstream&&n.latest_catalog.upstream.verified_intact===true?[{text:'Import vérifié intact',tone:'ok'}]:[]),
       ],
       trials:Array.isArray(n.trials)?n.trials.map(t=>({variantId:t.variant_id,number:t.variant_number,version:t.version})):[]};
@@ -70,7 +76,8 @@
 
   function createUpgrades(ctx){
     const {doc,el,attrs,clear,button,log,announce,call,now,later,cancelLater}=ctx;
-    const st={variantId:null,signature:'',status:'idle',data:null,error:null,since:0,generation:0,loadedAt:0,open:false};
+    const st={variantId:null,signature:'',status:'idle',data:null,error:null,since:0,generation:0,loadedAt:0,open:false,acked:new Set()};
+    const ackKey=(notice,m)=>`${notice.scene_id}|${notice.latest_version}|${m.ackName}`;
     let section=null,count=null,statusLine=null,list=null,retry=null,tick=null,toggle=null,body=null,deferred=null;
 
     function buildSection(){
@@ -105,7 +112,7 @@
     function render(){
       if(!section)return;
       const data=st.data;
-      const focused=list.contains(doc.activeElement)&&doc.activeElement.dataset?doc.activeElement.dataset.scene:null;   /* un rendu ne vole pas le focus */
+      const focused=list.contains(doc.activeElement)&&doc.activeElement.dataset?`${doc.activeElement.dataset.kind}|${doc.activeElement.dataset.scene}`:null;   /* un rendu ne vole pas le focus */
       clear(list);
       if(st.status==='idle'){hide();return}
       if(st.status==='loading'){
@@ -137,17 +144,30 @@
         for(const c of m.chips){const chip=el('span','jvx-chip',c.text);if(c.tone)chip.setAttribute('data-tone',c.tone);chips.appendChild(chip)}
         what.appendChild(chips);
         if(m.blocked)what.appendChild(el('span','jvx-upg-ver',m.blocked));
+        const acked=!m.ackName||st.acked.has(ackKey(notice,m));
+        if(m.ackName&&!m.blocked){
+          const label=el('label','jvx-check');
+          const box=doc.createElement('input');
+          box.type='checkbox';box.checked=acked;box.dataset.scene=m.sceneId;box.dataset.kind='ack';
+          box.addEventListener('change',()=>{if(box.checked)st.acked.add(ackKey(notice,m));else st.acked.delete(ackKey(notice,m));render()});
+          label.appendChild(box);
+          label.appendChild(el('span','',`Je reconnais la licence « ${m.ackName} » de cette version`));
+          what.appendChild(label);
+          if(focused===`ack|${m.sceneId}`)later(()=>box.focus({preventScroll:true}),0);
+        }
         const act=el('div','jvx-upg-act');
         const go=button('Essayer dans une nouvelle variante',null,()=>{
           if(ctx.busy()){ctx.say('info','Une opération est déjà en cours.');return}
           if(m.blocked){ctx.say('refused',m.blocked);return}
+          if(!acked){ctx.say('refused',`La licence de cette version (« ${m.ackName} ») change ou demande une décision : cochez que vous la reconnaissez, rien n'est créé sans cela.`);return}
           tryVersion(notice,m);
         },{icon:'fork'});
-        go.dataset.scene=m.sceneId;
+        go.dataset.scene=m.sceneId;go.dataset.kind='try';
         if(m.blocked){go.setAttribute('aria-disabled','true');go.title=m.blocked}
+        else if(!acked){go.setAttribute('aria-disabled','true');go.title=`Cochez d'abord la licence « ${m.ackName} » : elle change ou demande une décision.`}
         else go.title=`Crée une variante d'essai avec la version ${m.latest} de cette scène ; la variante choisie ne change pas.`;
         act.appendChild(go);
-        if(focused&&focused===m.sceneId)later(()=>go.focus({preventScroll:true}),0);
+        if(focused===`try|${m.sceneId}`)later(()=>go.focus({preventScroll:true}),0);
         for(const trial of m.trials){
           const open=button(`Essai #${trial.number} (v${trial.version})`,null,()=>ctx.select(trial.variantId),{attrs:{title:'Aller à la variante d\'essai pour la comparer ou l\'activer'}});
           act.appendChild(open);
@@ -205,7 +225,8 @@
       let created=null;
       const done=await ctx.perform('upgrade_try',`Essai de la version ${model.latest}`,async()=>{
         created=await call('POST',ctx.variantPath(node.variant_id,'/upgrades/try'),
-          {scene_id:notice.scene_id,version:notice.latest_version,expected_variant_revision:st.data&&st.data.variant_revision});
+          Object.assign({scene_id:notice.scene_id,version:notice.latest_version,expected_variant_revision:st.data&&st.data.variant_revision},
+            model.ackName?{licence_ack:[model.ackName]}:{}));
         return true;
       });
       if(done&&!done.error){

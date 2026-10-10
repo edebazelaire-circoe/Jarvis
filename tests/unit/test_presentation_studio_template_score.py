@@ -132,21 +132,30 @@ def test_v2_keys_inside_a_v1_document_and_unknown_versions_are_refused():
 
 
 def test_a_scene_cannot_name_a_source_the_record_does_not_hold():
-    document = minimal(schema_version=2, score=None, catalog=None, embedded={"a" * 64: {"manifest": {}}}, kind="presentation")
+    from jarvis.domain.presentation_studio_template_remotion import content_hash
+
+    candidate = {"manifest": {}, "template": "", "style": "", "behavior": ""}
+    key = content_hash(candidate)
+    document = minimal(schema_version=2, score=None, catalog=None, embedded={key: candidate}, kind="presentation")
     scene = copy.deepcopy(_scene_row())
     scene["source"] = "b" * 64
     document["scenes"] = [scene]
     with pytest.raises(PresentationStudioError):
         parse_template(document)
+    scene["source"] = key
+    assert parse_template(document).scenes[0].source == key
+    document["embedded"] = {"a" * 64: candidate}   # a key that is not the hash of what it holds
     scene["source"] = "a" * 64
-    assert parse_template(document).scenes[0].source == "a" * 64
+    with pytest.raises(PresentationStudioError) as caught:
+        parse_template(document)
+    assert caught.value.code is C.CORRUPT_DOCUMENT
 
 
 def _scene_row() -> dict:
     return {"key": "s1", "label": "", "scene": data.scenes()[0].to_dict()}
 
 
-@pytest.mark.parametrize("value", [["MIT", "MIT"], [""], ["x" * 65], "MIT", [1], list("abcdefghi")])
+@pytest.mark.parametrize("value", [["MIT", "MIT"], [""], ["x" * 121], "MIT", [1], list("abcdefghi")])
 def test_licence_ack_is_a_short_list_of_distinct_names(value):
     with pytest.raises(PresentationStudioError):
         parse_promote({"kind": "scene", "title": "x", "slug": "x", "licence_ack": value}, strict=False)

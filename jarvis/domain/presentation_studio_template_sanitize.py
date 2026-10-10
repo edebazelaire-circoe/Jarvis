@@ -25,6 +25,7 @@ from collections.abc import Iterator, Mapping, Sequence
 from dataclasses import dataclass
 import copy
 import re
+import unicodedata
 from typing import Any
 
 from jarvis.domain.prefab import (
@@ -46,7 +47,7 @@ PENDING_ID = "studio-template.pending"
 
 _PROJECT_ID = re.compile(
     r"\b(?:pst|psv|pss|psx|psc|psi|psa)_[0-9a-f]{6,}\b|\bpresentation-studio\.[a-z0-9][a-z0-9._-]*|"
-    r"\buser-prefab-[0-9a-f]+|\bstudio-stage-[\w-]+|\bboard_[0-9a-z]{6,}|\bjart_[0-9a-z_]{8,}", re.IGNORECASE)
+    r"\buser-prefab-[0-9a-f]+|\bstudio-stage-[\w-]+|\bboard_[0-9a-z][0-9a-z_-]{5,100}|\bboard:[^\s/\"']{1,128}/(?:memory|artifact)/|\bjart_[0-9a-z_]{8,}", re.IGNORECASE)
 _LOCAL_PATH = re.compile(
     r"\b[a-z]:[\\/]|(?:^|[\s\"'(=])/(?:users|home|var|etc|tmp|mnt|root)/|\.jarvis\b|file:/{2,3}|~[\\/]|\\\\[\w.-]+\\",
     re.IGNORECASE)
@@ -69,7 +70,9 @@ class Finding:
 
 
 def normalise(text: str) -> str:
-    return _SPACES.sub(" ", text.casefold()).strip()
+    """NFKC first (full-width letters, ligatures and compatibility forms read as what they look like), then case and spaces."""
+
+    return _SPACES.sub(" ", unicodedata.normalize("NFKC", text).casefold()).strip()
 
 
 def is_term(text: str) -> bool:
@@ -209,6 +212,7 @@ def scan_text(where: str, text: str, terms: frozenset[str], *, urls: bool = Fals
     (avertissements) dans un texte. Les messages portent des comptes."""
 
     found: list[Finding] = []
+    text = unicodedata.normalize("NFKC", text)   # a full-width `ｐｓｓ_...` or `Ｃ:\\` is the same id or path to the eye and to the platform
     n = len(_PROJECT_ID.findall(text))
     if n:
         found.append(Finding("project_identifier", where, f"{n} project identifier(s) (presentation, scene, variant, Board, artifact or studio prefab ids)"))

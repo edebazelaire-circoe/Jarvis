@@ -52,7 +52,8 @@ def test_every_diagnostic_kind_the_service_emits_is_documented():
 def test_every_field_of_a_notice_and_every_refusal_code_is_documented():
     code = source("jarvis", "core", "presentation_studio_upgrades.py")
     for field in ("scene_id", "prefab_id", "pinned_version", "latest_version", "newer_count", "newer_versions", "reloading", "fits", "problem",
-                  "engine_ok", "latest_catalog", "trials", "unavailable", "auto_upgrade"):
+                  "engine_ok", "latest_catalog", "trials", "unavailable", "auto_upgrade", "pinned_licence", "latest_licence", "licence_changed",
+                  "licence_ack_required"):
         assert f'"{field}"' in code and field in SECTION, field
     for refusal in ("scene_incompatible", "engine_unsupported", "prefab_unavailable", "scene_reloading", "stale_revision", "score_incompatible",
                     "limit_reached", "invalid"):

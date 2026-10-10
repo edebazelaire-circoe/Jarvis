@@ -38,6 +38,7 @@ def test_every_finding_code_the_code_can_emit_is_in_the_findings_table_and_no_ot
     emitted = set(re.findall(r'Finding\("([a-z_]+)"', source("jarvis", "domain", "presentation_studio_template_sanitize.py")
                              + source("jarvis", "core", "presentation_studio_template.py")
                              + source("jarvis", "core", "presentation_studio_template_embed.py")
+                             + source("jarvis", "core", "presentation_studio_template_guard.py")
                              + source("jarvis", "domain", "presentation_studio_template_remotion.py")))
     table = SECTION[SECTION.index("### Detection and validation"):SECTION.index("### Provenance")]
     documented = set(re.findall(r"^\| `([a-z_]+)`(?:, `([a-z_]+)`)? \|", table, re.MULTILINE))
@@ -47,9 +48,11 @@ def test_every_finding_code_the_code_can_emit_is_in_the_findings_table_and_no_ot
 
 def test_every_diagnostic_kind_the_service_emits_is_documented():
     emitted = set(re.findall(r'self\._trace\(\s*"([a-z_]+)"', source("jarvis", "core", "presentation_studio_template.py")))
-    assert emitted == {"template_planned", "template_promoted", "template_refused", "template_orphans", "template_instantiated"}
+    assert emitted == {"template_planned", "template_promoted", "template_refused", "template_orphans", "template_instantiated",
+                       "template_instantiation_failed"}
     for kind in emitted:
-        assert kind in SECTION and kind in NAMES, kind
+        assert kind in SECTION, kind
+        assert kind in NAMES or kind == "template_instantiation_failed", kind   # the last one is Remotion Slice 19 (the other handoff's table is closed)
 
 
 def test_the_bounds_in_the_code_are_the_bounds_in_the_page():
@@ -89,7 +92,7 @@ def test_there_is_no_second_prefab_catalog_in_the_modules():
     # Remotion Slice 19: the second (and last) door is the instantiation of an embedded source, as a presentation-scoped prefab.
     assert source("jarvis", "core", "presentation_studio_template_embed.py").count("self._prefabs.save(") == 1
     for path in ("jarvis/core/presentation_studio_template_embed.py", "jarvis/domain/presentation_studio_template_remotion.py",
-                 "jarvis/domain/presentation_studio_template_score.py"):
+                 "jarvis/domain/presentation_studio_template_score.py", "jarvis/core/presentation_studio_template_guard.py"):
         text = source(*path.split("/")).split('"""', 2)[2]
         assert "FilePrefabLibrary" not in text and "publication.json" not in text and ".publish(" not in text, path
     assert "PrefabService.save" in domain_module.__doc__ and "second" in domain_module.__doc__.lower()
@@ -106,7 +109,7 @@ def test_the_modules_stay_small_and_cite_their_contract():
 
 def test_the_remotion_slice_19_modules_stay_small_cite_their_contract_and_the_page_names_them():
     for path in ("jarvis/core/presentation_studio_template_embed.py", "jarvis/domain/presentation_studio_template_remotion.py",
-                 "jarvis/domain/presentation_studio_template_score.py"):
+                 "jarvis/domain/presentation_studio_template_score.py", "jarvis/core/presentation_studio_template_guard.py"):
         text = source(*path.split("/"))
         assert text.count("\n") < 400, path
         assert "Slice 19" in text.split('"""')[1], path
@@ -116,9 +119,12 @@ def test_the_remotion_slice_19_modules_stay_small_cite_their_contract_and_the_pa
 def test_the_page_states_the_one_artefact_decision_the_score_skeleton_and_the_licence_rule():
     for needle in ("One artefact per presentation", "publishes no prefab to the library", "Score skeleton", "[intention]",
                    "licence_ack", "verified_import", "never survives a modification", "TSX is searched, never rewritten",
-                   "keep_assets", "embedded_too_large", "Remotion-aware promotion", "lowest version that expresses it"):
+                   "keep_assets", "embedded_too_large", "Remotion-aware promotion", "lowest version that expresses it",
+                   "template_user_only", "declared_not_reverified", "NFKC", "[instantiation échouée]", "content hash"):
         assert needle.lower() in SECTION.lower(), needle
-    assert f"{domain_module.MAX_EMBEDDED_BYTES // (1024 * 1024)} MiB" in SECTION
+    assert not hasattr(domain_module, "MAX_EMBEDDED_BYTES"), "no constant that the store does not enforce"
+    from jarvis.domain.presentation_studio import MAX_DOCUMENT_BYTES
+    assert domain_module.MAX_TEMPLATE_BYTES == MAX_DOCUMENT_BYTES and "256 KiB per document" in SECTION and "serialized" in SECTION
     assert domain_module.TEMPLATE_SCHEMA_VERSION == 2 and "v1 and v2" in SECTION
 
 

@@ -260,3 +260,69 @@ async def test_a_scene_whose_prefab_cannot_be_read_is_said_not_hidden(rig):
     answer = await service(rig).notices(rig.pid, rig.vid)
     assert [n["scene_id"] for n in answer["notices"]] == [SID]
     assert [(u["scene_id"], u["code"]) for u in answer["unavailable"]] == [(SID2, "unknown_prefab")]
+
+
+# ------------------------------------------------------------------ QA B3 : la licence d'une version plus recente ; QA c : la course
+
+
+def licensed(name: str | None) -> dict:
+    block = {"type": "component", "compatibility": {"slidecar": "native"}, "stack": ["html"]}
+    if name and len(name) <= 64:
+        block["license"] = name
+    elif name:   # an upstream licence may be up to 120 characters, longer than a declared `license`
+        block["upstream"] = {"name": "acme/tpl", "url": "https://github.com/acme/tpl", "license": name}
+    return {"schema_version": 3, "catalog": block}
+
+
+async def test_a_newer_version_whose_licence_changed_is_told_with_both_licences_and_needs_a_named_acknowledgement(rig):
+    await publish(rig, style="second", manifest=licensed("CC-BY-NC-4.0"))
+    notice = (await service(rig).notices(rig.pid, rig.vid))["notices"][0]
+    assert notice["pinned_licence"] is None and notice["latest_licence"] == "CC-BY-NC-4.0" and notice["licence_changed"] is True
+    assert notice["licence_ack_required"] == "CC-BY-NC-4.0" and notice["fits"] is True, "it fits, and the licence still needs a decision"
+    before = studio_files(rig)
+    up = service(rig)
+    error = await rig_refused(up.try_version(rig.pid, rig.vid, {"scene_id": SID}), C.INVALID_PRESENTATION)
+    assert "CC-BY-NC-4.0" in error.message and "licence_ack" in error.message
+    await rig_refused(up.try_version(rig.pid, rig.vid, {"scene_id": SID, "licence_ack": ["MIT"]}), C.INVALID_PRESENTATION)
+    await rig_refused(up.try_version(rig.pid, rig.vid, {"scene_id": SID, "licence_ack": ["CC-BY-NC-4.0"], "actor": "brain"}), C.INVALID_PRESENTATION)
+    assert studio_files(rig) == before, "no variant, no number, nothing written without the user's named acknowledgement"
+    done = await up.try_version(rig.pid, rig.vid, {"scene_id": SID, "licence_ack": ["CC-BY-NC-4.0"]})
+    assert done["trial"] is True and done["to"]["version"] == 2
+
+
+async def test_an_unchanged_permitted_licence_needs_no_acknowledgement_and_a_restrictive_one_does_even_unchanged(rig):
+    await publish(rig, style="second")
+    assert (await service(rig).notices(rig.pid, rig.vid))["notices"][0]["licence_ack_required"] is None
+    await publish(rig, style="third", manifest=licensed("MIT"))
+    notice = (await service(rig).notices(rig.pid, rig.vid))["notices"][0]
+    assert notice["licence_changed"] is True and notice["licence_ack_required"] == "MIT", "a licence that CHANGES is always named, even a gentler one"
+    long_name = "LicenseRef-" + "x" * 100
+    await publish(rig, style="fourth", manifest=licensed(long_name))
+    latest = (await service(rig).notices(rig.pid, rig.vid))["notices"][0]
+    assert latest["licence_ack_required"] == long_name and len(long_name) > 64, "acknowledgements are as long as licences can be"
+    assert (await service(rig).try_version(rig.pid, rig.vid, {"scene_id": SID, "licence_ack": [long_name]}))["trial"] is True
+
+
+async def test_a_change_of_the_variant_between_the_check_and_the_write_is_refused_inside_the_lock(rig, monkeypatch):
+    """QA c: the compatibility was checked outside the variants lock; an edit that lands before the branch is written must not slip through."""
+
+    await publish(rig, style="second")
+    real = rig.studio.check_scenes
+
+    seen = {"edited": False}
+
+    async def check_then_edit(*args, **kwargs):
+        await real(*args, **kwargs)
+        if seen["edited"]:
+            return
+        seen["edited"] = True
+        revision = (await rig.variant()).revision
+        result = await rig.edits.edit(rig.pid, rig.vid, {"actor": "user", "mode": "commit", "basis": {"variant_revision": revision},
+                                                          "ops": [{"op": "control.set", "scene_id": SID, "control_id": "headline", "value": "Autre"}]})
+        assert result.status.value == "applied", result
+
+    monkeypatch.setattr(rig.studio, "check_scenes", check_then_edit)
+    numbers = (await rig.studio.get(rig.pid)).presentation.variant_counter
+    await rig_refused(service(rig).try_version(rig.pid, rig.vid, {"scene_id": SID}), C.STALE_REVISION)
+    assert (await rig.studio.get(rig.pid)).presentation.variant_counter == numbers, "no number spent, no variant created"
+    assert len((await rig.variants.graph(rig.pid))["nodes"]) == 1

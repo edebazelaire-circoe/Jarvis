@@ -22,23 +22,23 @@ import asyncio
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-import json
 from typing import Any
 
 from jarvis.core.presentation_studio_template_embed import (
     EmbeddedSources, complete_remotion, inventory, note_licence, prefab_error as _prefab_error, record_catalog,
 )
+from jarvis.core.presentation_studio_template_guard import blank, mark_failed, record_size_finding, spoken_words
 from jarvis.domain.prefab import (
     PrefabInstanceRef, PrefabRef, canonical_json, is_remotion_manifest, with_version,
 )
 from jarvis.domain.presentation_studio import (
-    PresentationStudioError, PresentationStudioErrorCode as C, dump_document, new_scene_id, stamp,
+    PresentationStudioError, PresentationStudioErrorCode as C, dump_document, load_document, new_scene_id, stamp,
 )
 from jarvis.domain.presentation_studio_authoring import safe_text, scan_json
 from jarvis.domain.presentation_studio_checks import _fail
 from jarvis.domain.presentation_studio_scene import StudioScene
 from jarvis.domain.presentation_studio_template import (
-    MAX_EMBEDDED_BYTES, MAX_TEMPLATES, DaSelection, PromoteRequest, SceneSelection, StudioTemplate, TemplateKind, TemplateScene,
+    MAX_TEMPLATES, DaSelection, PromoteRequest, SceneSelection, StudioTemplate, TemplateKind, TemplateScene,
     new_template_id, parse_instantiate, parse_promote, parse_template, prefab_id_for, template_scene_dicts,
     template_scene_id,
 )
@@ -46,7 +46,7 @@ from jarvis.domain.presentation_studio_template_sanitize import (
     LOOK_TYPES, Finding, SceneBuild, SelectionError, build_scene, compose_profile, content_terms, content_values,
     decorate_manifest, leaf_role, leaves, sanitize_da_sections, scan_text, scan_value,
 )
-from jarvis.domain.presentation_studio_template_remotion import content_hash, embedded_bytes, licence_findings
+from jarvis.domain.presentation_studio_template_remotion import content_hash, licence_findings
 from jarvis.domain.presentation_studio_template_score import instantiate_score, score_skeleton
 from jarvis.ports.prefabs import PrefabStoreError, PrefabStoreErrorCode as PC
 from jarvis.ports.v2 import DiagnosticSink
@@ -177,6 +177,8 @@ class PresentationStudioTemplates:
         if request.expected_revision is not None and request.expected_revision != variant.revision:
             raise PresentationStudioError(C.STALE_REVISION, f"the variant is at revision {variant.revision}, not "
                                                             f"{request.expected_revision}: read it again, then retry")
+        if request.actor != "user" and (request.licence_ack or request.keep_assets):
+            raise _fail("licence_ack and keep_assets are the user's own acknowledgement: only the actor 'user' may give them")
         a = _Analysis(request, presentation_id, variant_id, variant.revision,
                       discovery=request.scenes is None and request.kind is TemplateKind.PRESENTATION)
         a.findings.extend(scan_text("request", f"{request.title}\n{request.description}\n{' '.join(request.tags)}\n"
@@ -230,8 +232,11 @@ class PresentationStudioTemplates:
             except PrefabStoreError as exc:
                 raise _prefab_error(exc) from None
             fetched.append((pick, scene, scene.prefab, detail["manifest"], detail["files"], tsx))
+        if variant.score_id is not None:
+            a.score_doc = (await self._studio.get_score(a.presentation_id, variant.variant_id))["score"]
+        spoken = spoken_words(a.score_doc)
         terms = content_terms(
-            [*project, *(v for _, sc, _, man, _, _ in fetched for v in
+            [*project, *spoken, *(v for _, sc, _, man, _, _ in fetched for v in
                          (sc.title, sc.section, sc.preview.caption, sc.preview.alt,
                           *content_values(man, sc.controls, sc.props, sc.data)))])
         a.terms = terms
@@ -254,19 +259,21 @@ class PresentationStudioTemplates:
                 note_licence(a, item, manifest)
         await self._group(a)
         if a.embed:
-            total = sum(embedded_bytes(self._candidate(a, g)) for g in a.groups)
-            if total > MAX_EMBEDDED_BYTES:
-                a.findings.append(Finding("embedded_too_large", "record", f"the embedded sources weigh {total} bytes, at most "
-                                          f"{MAX_EMBEDDED_BYTES}: promote the heavy scene to the library on its own"))
             await self._carry_score(a)
+            self._size_finding(a)
+
+    def _size_finding(self, a: _Analysis) -> None:
+        try:
+            found = record_size_finding(self._document(a, "ptp_000000000000", {}).to_document())
+        except (PresentationStudioError, KeyError):
+            return  # another finding already says why the record cannot be drawn
+        a.findings.extend([found] if found else [])
 
     async def _carry_score(self, a: _Analysis) -> None:
         """Slice 19: the template carries the SKELETON of the score (no speech, cue, sequence or control value)."""
 
-        variant = await self._studio.get_variant(a.presentation_id, a.variant_id)
-        if variant.score_id is None:
+        if a.score_doc is None:
             return
-        a.score_doc = (await self._studio.get_score(a.presentation_id, variant.variant_id))["score"]
         slots = {item.selection.scene_id: template_scene_id("ptp_000000000000", n) for n, item in enumerate(a.scenes)}
         try:
             score_skeleton(a.score_doc, slot_of=slots, template_id="ptp_000000000000")
@@ -473,7 +480,7 @@ class PresentationStudioTemplates:
         # real project id left in the score would still be found.
         slots = {row.scene.scene_id for row in template.scenes} | {i["item_id"] for i in (template.score or {}).get("items", ())}
         if body.get("score") is not None:
-            body["score"] = _blank(body["score"], slots)
+            body["score"] = blank(body["score"], slots)
         for row in body["scenes"]:
             row["scene"].pop("scene_id")  # a record-local slot (`template_scene_id`), regenerated by every instantiation
         for candidate in (body.get("embedded") or {}).values():
@@ -562,15 +569,16 @@ class PresentationStudioTemplates:
         if not request.title:
             raise _fail("a presentation template needs a title for the new presentation")
         if template.embedded:
-            self._embedded.precheck(template)  # before anything is created: a source today's guards refuse leaves no half presentation
+            await self._embedded.precheck(template)  # before anything is created: a source today's guards refuse leaves no half presentation
         view = await self._studio.create({"title": request.title})
         pid, vid = view.presentation.presentation_id, view.presentation.active_variant_id
         try:
             variant = await self._studio.get_variant(pid, vid)
+            states: list[dict[str, str]] = []
             fresh = iter([new_scene_id() for _ in template.scenes])
             scenes = template_scene_dicts(template, lambda: next(fresh))
             if template.embedded:
-                refs = await self._embedded.install(template, pid, [w["scene_id"] for w in scenes], request.actor)
+                refs, states = await self._embedded.install(template, pid, [w["scene_id"] for w in scenes], request.actor)
                 for wire, ref in zip(scenes, refs):
                     wire["prefab"] = ref.to_dict()
             saved = await self._studio.save_variant(pid, vid, {
@@ -591,10 +599,16 @@ class PresentationStudioTemplates:
                 made = await self._studio.create_score(pid, vid, {"expected_variant_revision": current.revision, **content})
                 score_id = made["score"]["score_id"]
             rendered = [await self._studio.describe_scene(pid, vid, s["scene_id"]) for s in scenes]
-        except PresentationStudioError as exc:
-            raise PresentationStudioError(exc.code, f"{exc.message} (presentation {pid} was created and is incomplete)") from None
+        except Exception as exc:  # noqa: BLE001 - whatever stopped the build, the half-made presentation is marked and named, then the cause is raised
+            marked, code = await mark_failed(self._studio, pid, request.title, exc)
+            self._trace("template_instantiation_failed", "Instanciation interrompue : la presentation est signalee, rien n'est supprime",
+                        level="warning", data={"presentation_id": pid, "code": code})
+            if not isinstance(exc, PresentationStudioError):
+                raise
+            raise PresentationStudioError(exc.code, f"{exc.message} (presentation {pid} was created and is incomplete: {marked})") from None
         return {"presentation_id": pid, "variant_id": vid, "scene_ids": [s["scene_id"] for s in scenes], "score_id": score_id,
                 "art_direction_id": art["art_direction"]["art_direction_id"],
+                "provenance": states,
                 "rendered": [{"scene_id": r["scene_id"], "prefab": r["prefab"], "payload": r["payload"], "problems": r["problems"]}
                              for r in rendered]}
 
@@ -638,9 +652,10 @@ class PresentationStudioTemplates:
     async def _load(self, template_id: str) -> StudioTemplate:
         text = await asyncio.to_thread(self._store.read, template_id)
         try:
-            return parse_template(json.loads(text))
-        except (ValueError, TypeError):
+            raw = load_document(text)   # the strict loader of every Studio document: a duplicate key or NaN is corruption, not a quiet merge (QA e)
+        except PresentationStudioError:
             raise PresentationStudioError(C.CORRUPT_DOCUMENT, f"{template_id}: not a readable template document") from None
+        return parse_template(raw)
 
     @staticmethod
     def _require_ids(presentation_id: str, variant_id: str) -> None:
@@ -660,16 +675,6 @@ class PresentationStudioTemplates:
 
 def dump_template(template: StudioTemplate) -> str:
     return dump_document(template.to_document())
-
-
-def _blank(value: Any, slots: set[str]) -> Any:
-    if isinstance(value, str):
-        return "" if value in slots else value
-    if isinstance(value, list):
-        return [_blank(v, slots) for v in value]
-    if isinstance(value, dict):
-        return {k: _blank(v, slots) for k, v in value.items()}
-    return value
 
 
 def _guard_scan(raw: object) -> None:

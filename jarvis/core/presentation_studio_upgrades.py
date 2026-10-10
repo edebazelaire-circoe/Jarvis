@@ -30,6 +30,7 @@ from dataclasses import replace
 from typing import Any
 
 from jarvis.domain.prefab import PrefabRef
+from jarvis.domain.presentation_studio_template_remotion import LICENCE_NOT_DECLARED, licence_of
 from jarvis.domain.presentation_studio import (
     PresentationStudioError, PresentationStudioErrorCode as C, PresentationVariant, _check_title, is_presentation_id,
     is_variant_id,
@@ -90,7 +91,9 @@ class PresentationStudioUpgrades:
         problem, engine_ok = await self._fits(presentation_id, scene, latest)
         view = (await self._prefabs.get(latest.prefab_id, latest.version)).to_dict(catalog=True)["catalog"]
         upstream = view.get("upstream") or {}
-        return {"scene_id": scene.scene_id, "prefab_id": pin.prefab_id, "pinned_version": pin.version,
+        pinned_licence, latest_licence, must_name = await self._licences(pin, latest)
+        return {"pinned_licence": pinned_licence, "latest_licence": latest_licence, "licence_changed": pinned_licence != latest_licence,
+                "licence_ack_required": must_name,"scene_id": scene.scene_id, "prefab_id": pin.prefab_id, "pinned_version": pin.version,
                 "latest_version": latest.version, "newer_count": len(newer), "newer_versions": newer[:MAX_LISTED_VERSIONS],
                 "reloading": scene.last_valid_pin is not None, "fits": problem is None, "problem": problem,
                 "engine_ok": engine_ok,
@@ -98,6 +101,21 @@ class PresentationStudioUpgrades:
                                    "license": view.get("license"),
                                    "upstream": None if not upstream else {
                                        "name": upstream.get("name"), "verified_intact": upstream.get("verified_intact")}}}
+
+    async def _licences(self, pin: PrefabRef, target: PrefabRef) -> tuple[str | None, str | None, str | None]:
+        """`(licence epinglee, licence de la version visee, nom a reconnaitre ou None)` (QA B3). Une licence qui CHANGE se reconnait toujours,
+        meme pour une plus permissive ; une licence non redistribuable ou non declaree d'un amont aussi."""
+
+        def read(manifest: Any) -> tuple[str | None, str | None]:
+            block = manifest.raw.get("catalog") or {}
+            upstream = block.get("upstream") if isinstance(block.get("upstream"), dict) else {}
+            return (block.get("license") or upstream.get("license") or "").strip() or None, licence_of(manifest.raw)
+
+        before, _ = read(await self._prefabs.manifest(pin.prefab_id, pin.version))
+        after, restrictive = read(await self._prefabs.manifest(target.prefab_id, target.version))
+        if before != after:
+            return before, after, after or LICENCE_NOT_DECLARED
+        return before, after, restrictive
 
     async def _fits(self, presentation_id: str, scene: StudioScene, latest: PrefabRef) -> tuple[str | None, bool]:
         """`(raison de l'incompatibilite ou None, utilisable par le moteur)` ; jamais d'exception : c'est une information."""
@@ -136,7 +154,7 @@ class PresentationStudioUpgrades:
         actor?, expected_variant_revision?}` ; il n'y a pas de `activate` : un essai n'est jamais active par lui-meme."""
 
         _require(presentation_id, variant_id)
-        data = _exact_keys(raw, "trial", {"scene_id"}, frozenset({"version", "title", "actor", "expected_variant_revision"}))
+        data = _exact_keys(raw, "trial", {"scene_id"}, frozenset({"version", "title", "actor", "expected_variant_revision", "licence_ack"}))
         if not is_scene_id(data["scene_id"]):
             raise PresentationStudioError(C.UNKNOWN_SCENE, "unknown scene id")
         actor = data.get("actor", "user")
@@ -148,6 +166,12 @@ class PresentationStudioUpgrades:
             _check_int("expected_variant_revision", data["expected_variant_revision"], 1, 2**31 - 1)
         if data.get("title") is not None:
             _check_title("title", data["title"])
+        acks = data.get("licence_ack", [])
+        if not isinstance(acks, list) or len(acks) > 8 or not all(isinstance(a, str) and a and len(a) <= 120 and a == a.strip() and a.isprintable() for a in acks):
+            raise _fail("licence_ack must be at most 8 licence names of at most 120 characters, as the notice shows them")
+        if acks and actor != "user":
+            raise _fail("licence_ack is the user's own acknowledgement: only the actor 'user' may give it")
+        data = {**data, "licence_ack": acks}
         try:
             return await self._try(presentation_id, variant_id, data, actor)
         except PresentationStudioError as exc:
@@ -171,6 +195,9 @@ class PresentationStudioUpgrades:
                                                              "show it (or wait for its report), then try a version")
         pin = scene.prefab
         target = await self._target(pin, data.get("version"))
+        _, _, must_name = await self._licences(pin, target)
+        if must_name is not None and must_name not in data["licence_ack"]:
+            raise _fail(f"the licence changes or needs a decision (it reads '{clip_text(must_name)}'): name it in licence_ack to try this version")
         trial = replace(scene, prefab=target, source_revision=scene.source_revision + 1)
         # What the original scene is checked against is NOT guessed here: the new version either holds the scene's values and
         # controls (and is native for the engine) or the trial is refused with the reason. Nothing is rebound silently.
@@ -185,7 +212,7 @@ class PresentationStudioUpgrades:
         body = {"title": data.get("title") or f"Essai v{target.version}", "source_variant_id": variant_id, "actor": actor,
                 "rationale": reason, "activate": False}
         answer = await self._variants.create_branch(
-            presentation_id, body, transform=lambda base: _repinned(base, scene.scene_id, pin, target))
+            presentation_id, body, transform=lambda base: _repinned(base, scene.scene_id, pin, target, source.revision))
         self._trace("upgrade_trial_created", "Essai d'une version plus recente dans une variante neuve",
                     data={"presentation_id": presentation_id, "source_variant_id": variant_id, "scene_id": scene.scene_id,
                           "prefab_id": pin.prefab_id, "from_version": pin.version, "to_version": target.version,
@@ -216,10 +243,18 @@ def _require(presentation_id: str, variant_id: str) -> None:
         raise PresentationStudioError(C.UNKNOWN_VARIANT, "unknown variant id")
 
 
-def _repinned(base: PresentationVariant, scene_id: str, pin: PrefabRef, target: PrefabRef) -> PresentationVariant:
+def clip_text(text: str) -> str:
+    return "".join(ch for ch in text if ch.isprintable())[:120]
+
+
+def _repinned(base: PresentationVariant, scene_id: str, pin: PrefabRef, target: PrefabRef, revision: int) -> PresentationVariant:
     """Pure : la copie de la source dont UNE scene prend la nouvelle version. Refus si la copie ne porte plus le pin attendu (la
     source a bouge depuis la lecture) : jamais un pin remplace a l'aveugle."""
 
+    # Runs INSIDE the variants lock: what was checked outside (values, controls, engine, score) held for this exact revision of the source.
+    if base.revision != revision:
+        raise PresentationStudioError(C.STALE_REVISION, f"the variant moved from revision {revision} to {base.revision} while the new version was "
+                                                        "being checked: read it again, then retry")
     scenes = []
     for scene in base.scenes:
         if scene.scene_id == scene_id:

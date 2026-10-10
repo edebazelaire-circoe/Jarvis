@@ -132,3 +132,44 @@ return {notice:noticeText(),live:world.live.length-before,busy:ex_busy(),kind:q(
 function ex_busy(){return q('.jvx-busy')&&!q('.jvx-busy').hidden}
 """)
     assert "ne tiennent pas dans cette version" in out["notice"] and out["live"] == 0 and out["kind"] == "refused"
+
+
+LICENCE_NOTICE = """Object.assign(""" + NOTICE + """,{pinned_licence:'MIT',latest_licence:'CC-BY-NC-4.0',licence_changed:true,licence_ack_required:'CC-BY-NC-4.0'})"""
+
+
+def test_a_licence_that_changes_is_a_warning_chip_and_the_trial_waits_for_a_ticked_acknowledgement(tmp_path):
+    out = run_ui(tmp_path, """
+seed(3);
+world.upgrades={[vid(1)]:[""" + LICENCE_NOTICE + """]};
+const {ex}=await opened();
+q('.jvx-upg-toggle').click();
+const chips=qa('.jvx-upg-chips .jvx-chip').map(c=>[c.textContent,c.getAttribute('data-tone')]);
+const box=q('.jvx-upg-row input');
+const label=q('.jvx-upg-row .jvx-check').textContent;
+const go=()=>q('.jvx-upg-act .jvx-btn');
+const disabledBefore=go().getAttribute('aria-disabled');const titleBefore=go().title;
+go().click();await env.advance(200);
+const postsUnticked=world.calls.filter(c=>c.method==='POST').length;const noticeUnticked=noticeText();
+box.checked=true;box.dispatchEvent(new (require(process.env.JARVIS_EXPLORER_DOM).FakeEvent)('change'));await env.advance(50);
+const disabledAfter=go().getAttribute('aria-disabled');
+go().click();await env.advance(300);await env.advance(300);
+return {chips,label,disabledBefore,titleBefore,postsUnticked,noticeUnticked,disabledAfter,tries:(world.tries||[]).map(t=>t.body),errors:env.errors};
+""")
+    assert out["chips"][0] == ["Compatible", "ok"] and out["chips"][1] == ["Licence modifiée : MIT → CC-BY-NC-4.0", "warn"], \
+        "a green Compatible never stands alone when the licence changed"
+    assert "Je reconnais la licence « CC-BY-NC-4.0 »" in out["label"]
+    assert out["disabledBefore"] == "true" and "Cochez d'abord la licence" in out["titleBefore"]
+    assert out["postsUnticked"] == 0 and "cochez que vous la reconnaissez" in out["noticeUnticked"], "nothing is created without the tick, and it says why"
+    assert out["disabledAfter"] is None
+    assert out["tries"] == [{"scene_id": "pss_000000000001", "version": 3, "expected_variant_revision": 1, "licence_ack": ["CC-BY-NC-4.0"]}]
+    assert out["errors"] == []
+
+
+def test_a_restrictive_unchanged_licence_is_named_without_a_change_chip(tmp_path):
+    out = run_ui(tmp_path, """
+seed(2);
+world.upgrades={[vid(1)]:[Object.assign(""" + NOTICE + """,{pinned_licence:'GPL-3.0',latest_licence:'GPL-3.0',licence_changed:false,licence_ack_required:'GPL-3.0'})]};
+await opened();
+return {chips:qa('.jvx-upg-chips .jvx-chip').map(c=>c.textContent)};
+""")
+    assert out["chips"] == ["Compatible", "Licence à reconnaître : GPL-3.0"]

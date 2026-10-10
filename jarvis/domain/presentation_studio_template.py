@@ -24,7 +24,7 @@ import secrets
 from typing import Any
 
 from jarvis.domain.prefab import PrefabRef, canonical_json
-from jarvis.domain.presentation_studio import PRESENTATION_ID, VARIANT_ID
+from jarvis.domain.presentation_studio import MAX_DOCUMENT_BYTES, PRESENTATION_ID, VARIANT_ID
 from jarvis.domain.presentation_studio_checks import (
     PresentationStudioError, PresentationStudioErrorCode as C, _check_int, _check_title, _exact_keys, _fail, is_scene_id,
 )
@@ -41,10 +41,12 @@ TEMPLATE_SCHEMA_VERSION = 2
 V2_KEYS = frozenset({"score", "embedded", "catalog"})
 TEMPLATE_ID = re.compile(r"ptp_[0-9a-f]{12}\Z")
 MAX_TEMPLATES = 512
-MAX_TEMPLATE_BYTES = 2 * 1024 * 1024
-#: Octets decodes (modules + assets) des sources integrees d'un modele ; au-dela, le constat `embedded_too_large` interdit la promotion.
-MAX_EMBEDDED_BYTES = 1024 * 1024
+#: Le plafond REEL d'un document du Studio (`dump_document`, lecture du magasin) : un modele n'a pas de plafond a lui. Le plan mesure le
+#: document SERIALISE contre lui (`embedded_too_large` dit quelle part pese), il ne s'appuie sur aucune autre constante.
+MAX_TEMPLATE_BYTES = MAX_DOCUMENT_BYTES
 MAX_LICENCE_ACKS = 8
+#: As long as an upstream `license` can be (`prefab_catalog.MAX_UPSTREAM_TEXT`): an acknowledgement must be able to name any licence the plan shows.
+MAX_LICENCE_NAME = 120
 MAX_DESCRIPTION = 600
 MAX_TAGS = 8
 MAX_LABEL = 40
@@ -158,7 +160,7 @@ def parse_promote(raw: object, *, strict: bool) -> PromoteRequest:
         _check_int("expected_revision", expected, 1, 2**31 - 1)
     acks = data.get("licence_ack", [])
     if not isinstance(acks, list) or len(acks) > MAX_LICENCE_ACKS or len(set(acks)) != len(acks) \
-            or not all(isinstance(a, str) and a and len(a) <= 64 and a == a.strip() and a.isprintable() for a in acks):
+            or not all(isinstance(a, str) and a and len(a) <= MAX_LICENCE_NAME and a == a.strip() and a.isprintable() for a in acks):
         raise _fail(f"licence_ack must be at most {MAX_LICENCE_ACKS} distinct licence names, as the plan shows them")
     keep_assets = data.get("keep_assets", False)
     if type(keep_assets) is not bool:
@@ -377,6 +379,16 @@ def parse_template(raw: object) -> StudioTemplate:
                                         for k, v in embedded.items())
                                  or any(sc.source is not None and sc.source not in embedded for sc in scenes)):
         raise _fail("embedded sources are malformed or a scene names a source the record does not hold")
+    if embedded is not None:  # integrity: the key IS the hash of what it holds, recomputed, never trusted
+        from jarvis.domain.presentation_studio_template_remotion import content_hash
+
+        for key, candidate in embedded.items():
+            try:
+                good = content_hash(candidate) == key
+            except (KeyError, TypeError, AttributeError):
+                good = False
+            if not good:
+                raise PresentationStudioError(C.CORRUPT_DOCUMENT, f"embedded source {key[:12]} does not match its content hash: the record was altered")
     if embedded is None and any(sc.source is not None for sc in scenes):
         raise _fail("a scene names an embedded source and the record holds none")
     return StudioTemplate(data["template_id"], kind, data["title"], data["description"], tuple(data["tags"]), tuple(scenes), art,

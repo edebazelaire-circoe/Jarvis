@@ -584,9 +584,10 @@ PRESENTATION = ServerMeta(
             output_notes=("conflicts : code, dimension, message, fix, rendus tels quels", "une composition ne détruit rien (archive pour revenir)")),
         "presentation_template": ToolMeta(
             "Modèles réutilisables", "write", False, "single_request", "untyped",
-            parameter_rules=("plan ne publie rien ; promote exige la sélection explicite choisie d'après le plan",
+            parameter_rules=("plan ne publie rien ; promote exige la sélection explicite choisie d'après le plan ET une demande de l'utilisateur dans ce tour",
+                             "licence_ack et keep_assets sont refusés au cerveau (presentation_studio_template_user_only)",
                              "instantiate : template_id lu dans presentation_inspect target templates"),
-            output_notes=("la promotion publie dans la bibliothèque partagée de prefabs",)),
+            output_notes=("une présentation devient UN modèle (aucune scène publiée) ; une scène seule, sur demande, va dans la bibliothèque partagée",)),
         "presentation_draft_check": ToolMeta(
             "Vérifier un brouillon", "read", True, "none", "untyped",
             output_notes=("le rapport complet (failures, warnings, stage) tel que Core le rend",)),

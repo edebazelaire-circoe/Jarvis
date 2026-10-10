@@ -239,6 +239,7 @@ async def test_journey_compare_mix_and_promote_a_template_then_reuse_it(world):
     planned = await world.tools.template("plan", presentation_id=pid, variant_id=mixed["variant_id"], plan=plan_request)
     assert planned["plan"]["selection_required"] is True and (await world.tools.inspect("templates"))["templates"]["total"] == 0
     chosen = [{"scene_id": s["scene_id"], "dimensions": ["accent"], "parameters": ["headline"]} for s in planned["plan"]["scenes"]["items"]]
+    await attest(world)   # QA B1: a promotion only follows a request of the user in this turn (the same attestation as a presentation start)
     promoted = await world.tools.template("promote", presentation_id=pid, variant_id=mixed["variant_id"], plan={**plan_request, "scenes": chosen})
     assert promoted["status"] == "promoted" and promoted["template_id"]
     listing = await world.tools.inspect("templates")

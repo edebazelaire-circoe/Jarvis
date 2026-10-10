@@ -142,3 +142,27 @@ async def test_the_core_application_wires_the_service(tmp_path):
         service = app.presentation_studio_upgrades
         assert service._prefabs is app.prefabs and service._studio is app.presentation_studio
         assert service._variants is app.presentation_studio_variants and service._edit is app.presentation_studio_edit
+
+
+async def test_a_licence_change_is_in_the_notice_and_the_trial_needs_the_named_acknowledgement_over_http_and_through_the_relay(tmp_path):
+    async with Core(tmp_path) as core:
+        prefabs = core.stack.core.prefabs
+        base = (await prefabs.get("jarvis.window")).to_dict(include_source=True)
+        await prefabs.save({"manifest": {**base["manifest"], "id": "lab.window"}, **base["files"]}, actor="user")
+        catalog = {"type": "component", "compatibility": {"slidecar": "native"}, "stack": ["html"], "license": "CC-BY-NC-4.0"}
+        files = dict(base["files"])
+        files["style"] += "\n/* v2 */"
+        await prefabs.save({"manifest": {**base["manifest"], "id": "lab.window", "schema_version": 3, "catalog": catalog}, **files}, actor="user")
+        pid, vid = await presentation(core)
+        status, notices = await core.call("GET", at(pid, vid))
+        row = notices["notices"][0]
+        assert status == 200 and row["licence_changed"] is True and row["latest_licence"] == "CC-BY-NC-4.0" and row["licence_ack_required"] == "CC-BY-NC-4.0"
+        before = tree(core, pid)
+        status, refused = await core.call("POST", at(pid, vid, "/try"), json={"scene_id": S1})
+        assert (status, refused["error"]["code"]) == (400, "presentation_studio_invalid") and "licence_ack" in refused["error"]["message"]
+        assert tree(core, pid) == before
+        status, brain = await core.call("POST", at(pid, vid, "/try"), json={"scene_id": S1, "actor": "brain", "licence_ack": ["CC-BY-NC-4.0"]})
+        assert (status, brain["error"]["code"]) == (400, "presentation_studio_invalid") and tree(core, pid) == before
+        status, done, _ = await core.stack.call("POST", STUDIO_ROUTE + at(pid, vid, "/try"),
+                                                json={"scene_id": S1, "actor": "brain", "licence_ack": ["CC-BY-NC-4.0"]})
+        assert status == 201 and done["trial"] is True and done["node"]["created_by"] == "user", "the page is the user: it may acknowledge"

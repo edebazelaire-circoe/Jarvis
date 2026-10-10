@@ -327,7 +327,7 @@ référencés ; aucun chemin de la machine, rien lu hors du paquet à la réouve
 
 - **Modèles de présentation (Slice 20, Remotion Slice 19)** : `presentation_templates/ptp_<12 hex>.json`, un fichier JSON par modèle,
   créé une fois, jamais réécrit ni supprimé par Core. Un modèle de **présentation** (document v2) porte ses sources de scène
-  **intégrées** (`embedded`, jusqu'à 1 Mio décodé, 2 Mio par fichier) et le squelette de sa partition : ce n'est donc plus un simple index
+  **intégrées** (`embedded`, dans les 256 Kio d'un document du Studio) et le squelette de sa partition : ce n'est donc plus un simple index
   de versions de bibliothèque, il se sauvegarde avec la racine de données et jamais dans le dépôt. Rien n'est publié dans `prefabs/`
   par la promotion d'une présentation ; les prefabs `presentation-studio.p<...>.s<...>` n'apparaissent qu'à l'instanciation.
 

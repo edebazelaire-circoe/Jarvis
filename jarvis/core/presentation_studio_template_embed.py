@@ -69,7 +69,7 @@ class EmbeddedSources:
     def __init__(self, prefabs: Any) -> None:
         self._prefabs = prefabs
 
-    def precheck(self, template: StudioTemplate) -> None:
+    async def precheck(self, template: StudioTemplate) -> None:
         """Avant toute ecriture : chaque source integree passe encore la validation et les gardes d'aujourd'hui (une garde posee depuis
         la promotion refuse la source ici, sans presentation a moitie creee)."""
 
@@ -77,22 +77,27 @@ class EmbeddedSources:
             check = self._prefabs.validate_candidate(self._with_id(candidate, "presentation-studio.p000000000000.s000000000000"))
             if not check.ok:
                 raise PresentationStudioError(C.SOURCE_INVALID, f"embedded source {digest[:12]} is refused today: {check.errors[0][:200]}")
-            self._verified(candidate)
+            await self._provenance(candidate)
 
     async def install(self, template: StudioTemplate, presentation_id: str, scene_ids: Sequence[str],
-                      actor: str) -> list[PrefabRef]:
+                      actor: str) -> tuple[list[PrefabRef], list[dict[str, str]]]:
         """Un prefab propre a la presentation par scene (deux scenes de meme source = deux ids de meme contenu)."""
 
         refs: list[PrefabRef] = []
+        states: list[dict[str, str]] = []
         for row, scene_id in zip(template.scenes, scene_ids):
             assert row.source is not None
             candidate = self._with_id((template.embedded or {})[row.source], source_prefab_id(presentation_id, scene_id))
+            state = await self._provenance(candidate)
+            if state == "declared_not_reverified":
+                candidate = self._declared_only(candidate)
             try:
-                publication = await self._prefabs.save(candidate, actor=actor, verified_import=self._verified(candidate))
+                publication = await self._prefabs.save(candidate, actor=actor, verified_import=state == "verified")
             except PrefabStoreError as exc:
                 raise prefab_error(exc) from None
             refs.append(PrefabRef(publication.prefab_id, publication.version))
-        return refs
+            states.append({"scene_id": scene_id, "provenance": state})
+        return refs, states
 
     @staticmethod
     def _with_id(candidate: Mapping[str, Any], prefab_id: str) -> dict[str, Any]:
@@ -101,9 +106,39 @@ class EmbeddedSources:
         return out
 
     @staticmethod
+    def _declared_only(candidate: Mapping[str, Any]) -> dict[str, Any]:
+        """The same source with the importer-written keys removed: its origin stays a declaration, never a verification."""
+
+        out = copy.deepcopy(dict(candidate))
+        block = out["manifest"].get("catalog") or {}
+        for key in ("commit", "archive_sha256", "imported_at", "changes", "source_sha256"):
+            (block.get("upstream") or {}).pop(key, None)
+        block.pop("runtime_license", None)
+        return out
+
+    async def _provenance(self, candidate: Mapping[str, Any]) -> str:
+        """`none` (no claim), `verified` (the files match AND the library still holds the original verified import) or
+        `declared_not_reverified` (the files match the claim, but nothing Core holds witnesses it: a hand-edited record can be self-consistent).
+        A claim the files contradict is refused (`corrupt_document`)."""
+
+        if not self._claims(candidate):
+            return "none"
+        up = (candidate["manifest"].get("catalog") or {}).get("upstream") or {}
+        self._verified(candidate)   # raises when the files contradict the claim
+        held = await self._prefabs.holds_verified_import(commit=str(up.get("commit", "")), archive_sha256=str(up.get("archive_sha256", "")),
+                                                         source_sha256=str(up.get("source_sha256", "")))
+        return "verified" if held else "declared_not_reverified"
+
+    @staticmethod
+    def _claims(candidate: Mapping[str, Any]) -> bool:
+        block = candidate["manifest"].get("catalog") or {}
+        up = block.get("upstream") or {}
+        return any(up.get(k) for k in ("commit", "archive_sha256", "imported_at", "changes", "source_sha256")) \
+            or bool(block.get("runtime_license"))
+
+    @staticmethod
     def _verified(candidate: Mapping[str, Any]) -> bool:
-        """Les clefs de verification de l'importeur survivent seulement si les fichiers integres rendent `source_sha256` (recalcule
-        ici). Un enregistrement qui les revendique sans les meriter est refuse : il ne peut pas forger une provenance verifiee."""
+        """The importer's keys survive only if the embedded files give back `source_sha256` (recomputed here)."""
 
         block = candidate["manifest"].get("catalog") or {}
         up = block.get("upstream") or {}
@@ -134,6 +169,9 @@ def complete_remotion(a: Any, item: Any, tsx: Any, manifest: Mapping[str, Any]) 
     item.build.candidate.update(candidate_of(promoted, modules, assets))
     for path in sorted(modules):
         found.extend(scan_text(f"{where}.source.{path}", modules[path], a.terms, urls=True))
+    for path in sorted(assets):   # an SVG is text: its title, desc and metadata can carry project words (other binaries are not read)
+        if path.lower().endswith(".svg"):
+            found.extend(scan_text(f"{where}.source.{path}", assets[path].decode("utf-8", errors="replace"), a.terms, urls=True))
     if assets and not intact and not a.request.keep_assets:
         found.append(Finding("assets_need_acknowledgement", f"{where}.source",
                              f"{len(assets)} asset(s) of public/ may be project media: pass keep_assets: true to keep them"))
