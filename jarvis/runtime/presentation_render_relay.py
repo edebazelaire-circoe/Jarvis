@@ -38,6 +38,14 @@ class PresentationRenderRelayRoutes(RemotionStudioRelayRoutes):
                 web.get(jobs + "/{job_id}", self._read_job()), web.post(jobs, self._create()),
                 web.post(jobs + "/{job_id}/cancel", self._cancel())]
 
+    def _read(self, core_path: str) -> Callable[[web.Request], Awaitable[web.Response]]:
+        async def handler(request: web.Request) -> web.Response:
+            if request.query:
+                return _envelope(400, "presentation_render_invalid", "unexpected query parameters")
+            status, payload = await self._forward("GET", core_path, action="read", timeout_s=READ_TIMEOUT_S)
+            return self._answer(status, payload)
+        return handler
+
     def _read_job(self) -> Callable[[web.Request], Awaitable[web.Response]]:
         async def handler(request: web.Request) -> web.Response:
             if request.query:
