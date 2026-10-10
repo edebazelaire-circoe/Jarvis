@@ -90,14 +90,14 @@ async def test_plan_promote_list_read_and_instantiate_over_http(tmp_path):
         pid, vid, _ = await new_presentation(core)
         before = tree(core, pid)
         status, plan = await core.call("POST", at(pid, vid, "/plan"), json=promotion())
-        assert status == 200 and plan["ok"] is True and plan["would_publish"] == ["studio-template.fiche-1"]
+        assert status == 200 and plan["ok"] is True and plan["would_publish"] == [] and plan["publishes_to_library"] is False
         assert tree(core, pid) == before, "a plan writes nothing"
         status, empty = await core_templates(core, "GET")
         assert status == 200 and empty["count"] == 0
 
         status, done = await core.call("POST", at(pid, vid), json=promotion())
         assert status == 201 and done["kind"] == "presentation" and done["template_id"].startswith("ptp_")
-        assert done["prefabs"] == [{"id": "studio-template.fiche-1", "version": 1, "published": True, "reused": False}]
+        assert done["prefabs"] == [] and done["published_to_library"] is False, "one artefact: nothing goes to the shared library"
         assert {p["control_id"] for p in done["parameters"]} == {"density", "body"}
         assert done["derived_from"]["presentation_id"] == pid and tree(core, pid) == before
 
@@ -106,7 +106,8 @@ async def test_plan_promote_list_read_and_instantiate_over_http(tmp_path):
         status, filtered = await core_templates(core, "GET", "?kind=scene")
         assert filtered["count"] == 0
         status, read = await core_templates(core, "GET", "/" + done["template_id"])
-        assert status == 200 and read["template"]["kind"] == "presentation" and read["prefab_availability"][0]["available"] is True
+        assert status == 200 and read["template"]["kind"] == "presentation" and read["prefab_availability"] == []
+        assert read["summary"]["embedded_sources"] == 1 and not list(core.stack.data_root.rglob("studio-template.*"))
 
         status, made = await core_templates(core, "POST", f"/{done['template_id']}/instantiate", json={"title": "Reprise"})
         assert status == 201 and len(made["scene_ids"]) == 2 and made["presentation_id"] != pid
