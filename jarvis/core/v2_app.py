@@ -428,7 +428,8 @@ class JarvisCoreApplication:
         self.studio_stage = StageWindows(self.scene, diagnostics=diagnostics)
         self.presentation_studio_reload = PresentationStudioReloadService(
             self.presentation_studio, self.prefabs, self.prefab_drafts, self.studio_stage, pins=self.studio_pins,
-            edits=self.presentation_studio_edit, events=studio_events, diagnostics=diagnostics)
+            edits=self.presentation_studio_edit, events=studio_events, diagnostics=diagnostics,
+            builder=self.remotion_player)
         # Événements des cadres (Slice 04) : `state` écrit `prefab.data` par le
         # réducteur (acteur `user`, `basis` contrôlée sous le verrou de la
         # scène), `notify` est consigné ; aucun n'exécute d'outil.

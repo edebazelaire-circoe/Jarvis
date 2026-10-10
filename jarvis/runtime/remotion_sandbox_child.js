@@ -114,12 +114,29 @@
       playerRef={current:null};
     }
     root.render(React.createElement(Player,{
-      ref:function(instance){playerRef.current=instance;if(instance){attachClock(instance);applyPending()}},component:scene.component,durationInFrames:mounted.composition.durationInFrames,fps:mounted.composition.fps,
+      ref:function(instance){playerRef.current=instance;if(instance){attachClock(instance);applyPending()}},component:guarded(React,scene.component),durationInFrames:mounted.composition.durationInFrames,fps:mounted.composition.fps,
       compositionWidth:mounted.composition.width,compositionHeight:mounted.composition.height,inputProps:mounted.props,
       initiallyMuted:true,controls:false,clickToPlay:false,doubleClickToFullscreen:false,spaceKeyToPlayOrPause:false,loop:true,
-      style:{width:'100%',height:'100%'},
-      onError:function(error){report('error',{message:String(error&&error.message||error)})}
+      style:{width:'100%',height:'100%'}
     }));
+  }
+
+  /* Slice 14 : le Player de Remotion n'a PAS de propriété `onError` (l'erreur d'un composant passe par l'émetteur du lecteur, avant que
+     la référence du lecteur ne soit posée : personne n'écoute encore). Une scène qui lève au rendu doit pourtant etre dite a l'hote (un
+     rechargement a chaud la refuse alors au lieu de l'echanger contre la bonne) : une frontiere d'erreur autour du composant de la scene,
+     creee une seule fois (une identite stable, sinon chaque changement de proprietes remonterait la scene). */
+  let guardedFor=null,guardedComponent=null;
+  function guarded(React,component){
+    if(guardedFor===component)return guardedComponent;
+    class Boundary extends React.Component{
+      constructor(props){super(props);this.state={failed:false}}
+      static getDerivedStateFromError(){return {failed:true}}
+      componentDidCatch(error){report('error',{message:String(error&&error.message||error)})}
+      render(){return this.state.failed?null:this.props.children}
+    }
+    guardedComponent=function GuardedScene(props){return React.createElement(Boundary,null,React.createElement(component,props))};
+    guardedFor=component;
+    return guardedComponent;
   }
 
   function applyPending(){
@@ -169,7 +186,7 @@
         break;
       case 'teardown':
         try{if(root)root.unmount()}catch(_e){}
-        root=null;playerRef=null;mounted=null;pending.playing=null;pending.seek=null;pending.until=null;until=null;attached=null;
+        root=null;playerRef=null;mounted=null;pending.playing=null;pending.seek=null;pending.until=null;until=null;attached=null;guardedFor=null;guardedComponent=null;
         break;
       default:break;
     }

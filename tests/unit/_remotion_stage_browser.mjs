@@ -7,7 +7,8 @@
    Environnement : CDP_VIEWPORT=LxH (1280x720 par défaut).
    Actions (champ `scope` : "page" par défaut, ou "sandbox" pour le cadre du bac à sable) :
      {eval}, {wait: ms}, {click: selecteur}, {clickAt: [x,y]}, {clickExpr: expr -> {x,y} de la page}, {key: nom}, {value: nom, expr, scope?}, {until: expr, ms, scope?}, {size: [w,h]},
-     {shot: chemin.png}, {http: {method, url, headers?, json?}, as: nom} (requête de Node, pour parler à Core entre deux étapes).
+     {shot: chemin.png}, {http: {method, url, headers?, json?, basisFrom?}, as: nom} (requête de Node, pour parler à Core entre deux étapes ;
+     `basisFrom` : URL d'une variante, sa révision du moment est écrite dans `json.basis.variant_revision`, Slice 14).
    Sortie : {reads, console, errors, targets}. Chrome est tué avec ses enfants, le profil effacé. */
 import {execFileSync, spawn} from 'node:child_process';
 import {mkdtempSync, rmSync, writeFileSync} from 'node:fs';
@@ -125,6 +126,10 @@ try{
         writeFileSync(action.shot,Buffer.from(shot.data,'base64'));
       }else if(action.http!==undefined){
         const h=action.http;
+        if(h.basisFrom){
+          const current=await (await fetch(h.basisFrom,{headers:h.headers||{}})).json();
+          h.json.basis={...(h.json.basis||{}),variant_revision:current.revision};
+        }
         const response=await fetch(h.url,{method:h.method||'GET',headers:{...(h.headers||{}),...(h.json!==undefined?{'Content-Type':'application/json'}:{})},
           body:h.json!==undefined?JSON.stringify(h.json):undefined});
         let body=null;try{body=await response.json()}catch(_e){body=null}

@@ -79,6 +79,8 @@ def test_the_route_table_has_the_fixed_segment_before_the_id():
         ("POST", PREFIX + "/{presentation_id}/variants/{variant_id}/edits"),
         # Slice 06: hot reload of a scene source, recent reloads (the page's mount reports are a separate, relayed route)
         ("POST", PREFIX + "/{presentation_id}/variants/{variant_id}/source-edits"),
+        # Slice 14: the agent reads the scene source before proposing a file edit
+        ("GET", PREFIX + "/{presentation_id}/variants/{variant_id}/scenes/{scene_id}/source"),
         ("GET", PREFIX + "/{presentation_id}/reloads"),
         # Slice 08: the bounded undo history (memory only); an undo is an edit through the same service
         ("GET", PREFIX + "/{presentation_id}/variants/{variant_id}/history"),

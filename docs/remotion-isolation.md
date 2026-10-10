@@ -2,6 +2,7 @@
 
 Handoff `jarvis-remotion-presentation-integration`, Slice 06. **Statut : contrat (Level 2) et implémentation (Level 3) livrés ; éprouvés dans un vrai Chrome contre un corpus de scènes hostiles compilées par le vrai compilateur** ([preuve](#8-preuves)). Le montage du Player dans Jarvis et le service des fichiers par un second écouteur de Core sont livrés par la Slice 10 ([§ 10](#10-slice-10--monter-le-cadre-dans-jarvis)). Ce que ce document ne fait pas : édition à chaud (Slice 14) ; les variables typées et l'édition rapide (Slice 13) sont au [§ 12](#12-slice-13--variables-typées-et-inputprops-validées), import d'un gabarit amont (Slice 18). Rien ici ne démarre, n'arrête ni ne relance Core, le Control Center, la voix ou ai-visualizer.
 Handoff `jarvis-remotion-presentation-integration`, Slice 06. **Statut : contrat (Level 2) et implémentation (Level 3) livrés ; éprouvés dans un vrai Chrome contre un corpus de scènes hostiles compilées par le vrai compilateur** ([preuve](#8-preuves)). Le montage du Player dans Jarvis et le service des fichiers par un second écouteur de Core sont livrés par la Slice 10 ([§ 10](#10-slice-10--monter-le-cadre-dans-jarvis)). Ce que ce document ne fait pas : pont de contrôles (Slice 13), édition à chaud (Slice 14), import d'un gabarit amont (livré par la Slice 18 : [remotion-import.md](remotion-import.md)). Rien ici ne démarre, n'arrête ni ne relance Core, le Control Center, la voix ou ai-visualizer.
+Handoff `jarvis-remotion-presentation-integration`, Slice 06. **Statut : contrat (Level 2) et implémentation (Level 3) livrés ; éprouvés dans un vrai Chrome contre un corpus de scènes hostiles compilées par le vrai compilateur** ([preuve](#8-preuves)). Le montage du Player dans Jarvis et le service des fichiers par un second écouteur de Core sont livrés par la Slice 10 ([§ 10](#10-slice-10--monter-le-cadre-dans-jarvis)). Ce que ce document ne fait pas : édition à chaud (Slice 14, livrée : § 13 ci-dessous et `presentation-studio.md`) ; les variables typées et l'édition rapide (Slice 13) sont au [§ 12](#12-slice-13--variables-typées-et-inputprops-validées), import d'un gabarit amont (Slice 18). Rien ici ne démarre, n'arrête ni ne relance Core, le Control Center, la voix ou ai-visualizer.
 
 Termes : la **source** d'une scène est un prefab Remotion v2 ([remotion-source.md](remotion-source.md)) ; le **bundle** est le `scene.js` compilé (Slice 05) ; le **cadre** est l'`<iframe>` qui l'exécute ; l'**hôte** est la page qui l'encadre (le Control Center) ; le **bac à sable** est le cadre plus l'origine, la CSP et le protocole décrits ici. Le précédent côté navigateur est le bac à sable des prefabs HTML ([SECURITY.md](SECURITY.md) § 16) : même idée (`sandbox="allow-scripts"` exactement, CSP fermée, `postMessage` versionné, source vérifiée), étendue à une origine dédiée parce qu'ici le code est du JavaScript complet (React, Remotion) et non un gabarit de quelques lignes.
 
@@ -347,3 +348,26 @@ La voix (acteur `brain`, outils MCP) et l'interface (acteur `user`) envoient la 
 - **`data` sort désormais vers la scène** (clé `data`) : c'est du contenu de diapositive, borné par le même schéma ; les canaux résiduels du § 9 s'appliquent comme aux `props`.
 - **Édition pendant une lecture** : `playback/edit` met la lecture en pause avant de valider (comportement existant de la Slice 12) ; une édition de contrôle par `variants/{id}/edits` ne la touche pas.
 - Les événements d'état et de notification d'une scène Remotion (`events`) restent refusés par le manifeste v2 : le pont est **entrant** (valeurs vers le Player), jamais sortant.
+
+## 13. Slice 14 : édition de source, compilation avant publication, erreur de rendu
+
+Contrat de l'édition : [presentation-studio.md](presentation-studio.md) > *Hot reload contract* > *Remotion sources*. Ce qui touche l'isolation :
+
+- **Rien de nouveau n'exécute le code d'une scène hors du bac à sable.** Le garde de compilation (`RemotionBuildGate`) ne fait que **compiler** (esbuild
+  dans le processus géré de la capacité, fichiers virtuels, imports « nus » limités à `SCENE_ALLOWED_IMPORTS`, § 5 de `remotion-source.md`) une source
+  que `validate_candidate` a déjà passée aux `SOURCE_GUARDS` (§ 3) ; il ne l'exécute pas. Une édition d'agent ne gagne donc aucun privilège : mêmes
+  gardes que la publication, mêmes bornes, même cache. Testé de bout en bout avec le vrai compilateur : syntaxe, `import "fs"` utilisé (refusé par le
+  compilateur, `compile_import_refused`), export par défaut manquant, `window.fetch` (refusé par la garde `realm_access` avant toute compilation).
+- **Les diagnostics ne sortent que ce que le compilateur sait de la source** : `file` est un chemin de la source, jamais du poste (test : ni `:\` ni
+  `node_modules` dans le message) ; le journal `reload_build_refused` porte le code et un compte, jamais un texte de source.
+- **Frontière d'erreur autour du composant de la scène** (`guarded` dans `remotion_sandbox_child.js`) : le `Player` de Remotion n'a pas de propriété
+  `onError`, l'erreur d'un composant passe par l'émetteur du lecteur avant que la référence existe. L'amorce enveloppe donc le composant dans une classe
+  `Boundary` (identité stable : un changement de propriétés ne remonte pas la scène) dont `componentDidCatch` dit `error` à l'hôte par le canal déjà
+  borné (`report`, au plus `maxReportsPerSecond`), et rend `null`. Aucun nouveau type de message.
+- **Prouvé de montage** (`control_center_prefab_host.js`) : pour une scène Remotion, `ready` de la page de scène veut dire « bac à sable chargé », plus
+  « monté ». L'hôte attend le premier `clock` du lecteur (posé après le premier rendu validé ; l'erreur de rendu, elle, arrive avant) puis `SETTLE_MS` ;
+  sans premier `clock` dans `RENDER_PROOF_MS` (10 s) la scène échoue (`timeout`, « did not render a first frame »). Pour un cadre « staged » (échange à
+  chaud), l'échec laisse l'ancien cadre à l'écran et Core ramène le pin (`presentation_studio_mount_failed`). Défaut trouvé par l'épreuve réelle : avant
+  cela, une scène qui compilait mais levait au rendu était rapportée « montée » et remplaçait la bonne.
+- **Risques résiduels** : une erreur après la première image reste une erreur de la scène vivante (bande « Recharger la scène »), pas un retour arrière ; pas
+  de contrôle de types ; une scène qui boucle sans lever est rattrapée par le chien de garde du § 10, pas par l'édition.

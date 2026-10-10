@@ -3514,6 +3514,25 @@ Invoke-RestMethod -Method Post -Headers $h "$u/close"
   `python scripts/remotion_studio_harness.py --part early|late --work-dir <dossier court sous Temp> --evidence <fichier.json>` (deux passes de ≈ 6 minutes).
   Verdict `PASSED` attendu.
 
+#### Édition de source d'une scène Remotion par un agent (Slice 14)
+
+Une scène Remotion se modifie par `POST /v1/presentation-studio/presentations/<id>/variants/<id>/source-edits` (jeton porteur, comme les autres routes
+de Core) : l'agent lit d'abord la source (`GET .../scenes/<scene_id>/source`), puis envoie `files: {sources: {"src/Scene.tsx": "<texte>"}}`
+(`null` supprime un fichier, `assets` pour `public/**`, `restore_version` pour annuler ou rétablir). Contrat : [presentation-studio.md](presentation-studio.md)
+> *Remotion sources*. Aucun outil MCP n'a été ajouté : le cerveau garde `scene.source_request` ; le sous-agent délégué appelle cette route.
+
+- **Une source qui ne compile pas n'est jamais publiée** : réponse **422**, `error.code = presentation_studio_source_build_failed`, `diagnostics`
+  `[{file, line, column, text}]` ; la version à l'écran continue de jouer. Moteur non prêt : 400 `presentation_studio_engine_unavailable` avec la réparation
+  (capacité locale Remotion, docs/remotion-runtime.md) ; jamais un repli sur Slidecar.
+- **Une scène qui compile mais lève au rendu** est publiée puis rejetée au montage : `409 rolled_back` (`presentation_studio_mount_failed`), le pin revient
+  à la dernière version valide, l'ancien cadre n'a pas quitté l'écran. La version rejetée reste dans `prefabs/` (immuable, non épinglée) jusqu'à la rétention.
+- **Journal** (`core.presentation_studio.*`) : `reload_built` (info, chemin normal), `reload_build_refused` (warning), `reload_published`, `reload_rolled_back`.
+  `GET .../presentations/<id>/reloads` liste les derniers rechargements (statut, code, nombre de constats).
+- **Occupé** : une édition qui attend plus de 75 s derrière une autre de la même scène reçoit `409 presentation_studio_scene_reloading` (à refaire). Un manifeste d'édition ne peut ni changer `source.engine`, ni le bloc `catalog`, ni `schema_version` (400 `presentation_studio_invalid`, la clé est nommée).
+- **Rien à redémarrer** : pas de migration, pas de nouvelle variable d'environnement ; le code est pris au prochain démarrage de Core.
+- **Preuve réelle rejouable** (Core isolé, jamais le JARVIS vivant) : `python scripts/remotion_player_harness.py --runtime-dir <runtime/> --slice 14
+  --test tests/unit/test_remotion_source_edit_realpage_browser.py --evidence tasks/jarvis-remotion-presentation-integration/slices/14-source-edit-hmr-and-agents/evidence`.
+
 #### Isolation du code d'une scène Remotion (Slice 06)
 
 Contrat : [remotion-isolation.md](remotion-isolation.md) ; sécurité : SECURITY.md § 18. Le code d'une scène est hostile par
