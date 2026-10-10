@@ -280,6 +280,32 @@ async def test_a_package_without_defaults_still_renders_with_the_instance_values
     assert render_props(package, scene) == {"title": "B"}
 
 
+DATA_SCHEMA = {"type": "object", "properties": {"body": {"type": "string", "default": "corps par défaut", "max_length": 200},
+                                                "figure": {"type": "integer", "default": 7, "min": 0, "max": 100}}}
+
+
+async def test_the_data_input_travels_with_the_props_into_a_render(world):
+    """Slice 22 (release journey): an authored scene reads `props.data.*`; the render must hand it the same `data` the Player does (frozen
+    manifest defaults under the frozen instance values), or the export of every authored deck fails with a TypeError in the browser."""
+
+    package, *_ = await frozen_package(world, props={"title": "A"}, data_schema=DATA_SCHEMA, data={"body": "texte figé"})
+    scene = choose_scene(package, None)
+    row = next(r for r in package.manifest["prefabs"] if r["prefab_id"] == scene.prefab_id)
+    assert row["data_defaults"] == {"body": "corps par défaut", "figure": 7}
+    assert render_props(package, scene) == {"title": "A", "accent": "#3366ff", "data": {"body": "texte figé", "figure": 7}}
+    _, props = plan_files(package, scene)
+    assert props["data"]["body"] == "texte figé"
+
+
+async def test_a_scene_without_data_gets_no_data_key_and_an_older_snapshot_still_renders(world):
+    package, *_ = await frozen_package(world, props={"title": "A"})
+    scene = choose_scene(package, None)
+    assert "data" not in render_props(package, scene), "a scene that declares no data input is rendered exactly as before"
+    row = next(r for r in package.manifest["prefabs"] if r["prefab_id"] == scene.prefab_id)
+    row.pop("data_defaults", None)  # a snapshot frozen before the data defaults were recorded
+    assert "data" not in render_props(package, scene)
+
+
 async def test_the_frozen_source_is_revalidated_by_todays_guards(world, monkeypatch):
     from jarvis.domain import remotion_source as rsrc
     package, *_ = await frozen_package(world)

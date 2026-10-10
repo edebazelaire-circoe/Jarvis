@@ -299,8 +299,12 @@ class PresentationPackager:
                 files[f"{root}/source.json"] = canonical_json(source.block.to_dict())
                 # Défauts des propriétés figés avec la source (Slice 16) : le rendu part du paquet seul, jamais du manifeste vivant.
                 defaults, _problems = validate_value(manifest.props, {}, "props")
+                # Slice 22 (release journey): the `data` input travels with the props (`inputProps.data`); the render must start from the same
+                # defaults as the Player, or a scene that reads `props.data.*` (every authored scene) fails at render time.
+                data_defaults, _data_problems = validate_value(manifest.data, {}, "data")
                 row.update(kind="remotion", source_digest=source.digest, engine=source.block.engine.to_dict(),
-                           props_defaults=defaults if isinstance(defaults, dict) else {})
+                           props_defaults=defaults if isinstance(defaults, dict) else {},
+                           data_defaults=data_defaults if isinstance(data_defaults, dict) else {})
                 refs = parse_declaration(source.files[LIVE_REFS_PATH]) if LIVE_REFS_PATH in source.files else ()
                 resolved = await self._resolver.resolve_all(refs, authorised_boards=allowed)
                 for item in resolved.values():

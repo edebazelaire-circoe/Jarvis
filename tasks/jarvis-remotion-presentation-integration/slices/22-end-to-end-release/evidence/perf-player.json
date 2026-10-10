@@ -1,0 +1,370 @@
+{
+ "label": "player",
+ "command": [
+  "python.exe",
+  "scripts/remotion_player_harness.py",
+  "--runtime-dir",
+  "runtime",
+  "--evidence",
+  "tasks/jarvis-remotion-presentation-integration/slices/22-end-to-end-release/evidence/player",
+  "--slice",
+  "22",
+  "--report",
+  "real-player.json"
+ ],
+ "exit_code": 0,
+ "seconds": 91.6,
+ "interval_s": 2.0,
+ "sampled": 36,
+ "peak_working_set_mb": 1019.3,
+ "peak_processes": 20,
+ "process_names_seen": [
+  "chrome.exe",
+  "conhost.exe",
+  "esbuild.exe",
+  "node.exe",
+  "python.exe",
+  "taskkill.exe"
+ ],
+ "samples": [
+  {
+   "t": 0.5,
+   "processes": 3,
+   "working_set_mb": 46.0,
+   "by_name": {
+    "python.exe": 3
+   }
+  },
+  {
+   "t": 3.0,
+   "processes": 3,
+   "working_set_mb": 124.7,
+   "by_name": {
+    "python.exe": 3
+   }
+  },
+  {
+   "t": 5.5,
+   "processes": 15,
+   "working_set_mb": 717.2,
+   "by_name": {
+    "chrome.exe": 11,
+    "node.exe": 1,
+    "python.exe": 3
+   }
+  },
+  {
+   "t": 8.4,
+   "processes": 17,
+   "working_set_mb": 790.0,
+   "by_name": {
+    "chrome.exe": 13,
+    "node.exe": 1,
+    "python.exe": 3
+   }
+  },
+  {
+   "t": 11.0,
+   "processes": 16,
+   "working_set_mb": 899.7,
+   "by_name": {
+    "chrome.exe": 12,
+    "node.exe": 1,
+    "python.exe": 3
+   }
+  },
+  {
+   "t": 13.5,
+   "processes": 16,
+   "working_set_mb": 911.0,
+   "by_name": {
+    "chrome.exe": 12,
+    "node.exe": 1,
+    "python.exe": 3
+   }
+  },
+  {
+   "t": 16.2,
+   "processes": 17,
+   "working_set_mb": 948.1,
+   "by_name": {
+    "chrome.exe": 13,
+    "node.exe": 1,
+    "python.exe": 3
+   }
+  },
+  {
+   "t": 18.8,
+   "processes": 4,
+   "working_set_mb": 203.9,
+   "by_name": {
+    "node.exe": 1,
+    "python.exe": 3
+   }
+  },
+  {
+   "t": 21.3,
+   "processes": 4,
+   "working_set_mb": 203.9,
+   "by_name": {
+    "node.exe": 1,
+    "python.exe": 3
+   }
+  },
+  {
+   "t": 23.9,
+   "processes": 15,
+   "working_set_mb": 804.4,
+   "by_name": {
+    "chrome.exe": 11,
+    "node.exe": 1,
+    "python.exe": 3
+   }
+  },
+  {
+   "t": 26.5,
+   "processes": 4,
+   "working_set_mb": 209.5,
+   "by_name": {
+    "node.exe": 1,
+    "python.exe": 3
+   }
+  },
+  {
+   "t": 29.1,
+   "processes": 4,
+   "working_set_mb": 187.3,
+   "by_name": {
+    "node.exe": 1,
+    "python.exe": 3
+   }
+  },
+  {
+   "t": 31.7,
+   "processes": 16,
+   "working_set_mb": 828.3,
+   "by_name": {
+    "chrome.exe": 11,
+    "node.exe": 1,
+    "python.exe": 3,
+    "taskkill.exe": 1
+   }
+  },
+  {
+   "t": 34.2,
+   "processes": 4,
+   "working_set_mb": 210.8,
+   "by_name": {
+    "node.exe": 1,
+    "python.exe": 3
+   }
+  },
+  {
+   "t": 36.8,
+   "processes": 12,
+   "working_set_mb": 416.1,
+   "by_name": {
+    "chrome.exe": 8,
+    "node.exe": 1,
+    "python.exe": 3
+   }
+  },
+  {
+   "t": 39.4,
+   "processes": 16,
+   "working_set_mb": 873.7,
+   "by_name": {
+    "chrome.exe": 12,
+    "node.exe": 1,
+    "python.exe": 3
+   }
+  },
+  {
+   "t": 42.1,
+   "processes": 16,
+   "working_set_mb": 896.9,
+   "by_name": {
+    "chrome.exe": 12,
+    "node.exe": 1,
+    "python.exe": 3
+   }
+  },
+  {
+   "t": 44.7,
+   "processes": 15,
+   "working_set_mb": 867.6,
+   "by_name": {
+    "chrome.exe": 11,
+    "node.exe": 1,
+    "python.exe": 3
+   }
+  },
+  {
+   "t": 47.3,
+   "processes": 14,
+   "working_set_mb": 796.8,
+   "by_name": {
+    "chrome.exe": 10,
+    "node.exe": 1,
+    "python.exe": 3
+   }
+  },
+  {
+   "t": 50.0,
+   "processes": 4,
+   "working_set_mb": 209.7,
+   "by_name": {
+    "node.exe": 1,
+    "python.exe": 3
+   }
+  },
+  {
+   "t": 52.6,
+   "processes": 3,
+   "working_set_mb": 153.1,
+   "by_name": {
+    "python.exe": 3
+   }
+  },
+  {
+   "t": 55.2,
+   "processes": 3,
+   "working_set_mb": 153.1,
+   "by_name": {
+    "python.exe": 3
+   }
+  },
+  {
+   "t": 57.8,
+   "processes": 6,
+   "working_set_mb": 237.7,
+   "by_name": {
+    "chrome.exe": 2,
+    "node.exe": 1,
+    "python.exe": 3
+   }
+  },
+  {
+   "t": 60.4,
+   "processes": 19,
+   "working_set_mb": 932.1,
+   "by_name": {
+    "chrome.exe": 12,
+    "conhost.exe": 1,
+    "esbuild.exe": 1,
+    "node.exe": 2,
+    "python.exe": 3
+   }
+  },
+  {
+   "t": 63.0,
+   "processes": 17,
+   "working_set_mb": 958.5,
+   "by_name": {
+    "chrome.exe": 13,
+    "node.exe": 1,
+    "python.exe": 3
+   }
+  },
+  {
+   "t": 65.8,
+   "processes": 16,
+   "working_set_mb": 884.9,
+   "by_name": {
+    "chrome.exe": 12,
+    "node.exe": 1,
+    "python.exe": 3
+   }
+  },
+  {
+   "t": 68.6,
+   "processes": 4,
+   "working_set_mb": 213.3,
+   "by_name": {
+    "node.exe": 1,
+    "python.exe": 3
+   }
+  },
+  {
+   "t": 71.2,
+   "processes": 3,
+   "working_set_mb": 155.1,
+   "by_name": {
+    "python.exe": 3
+   }
+  },
+  {
+   "t": 73.8,
+   "processes": 3,
+   "working_set_mb": 154.9,
+   "by_name": {
+    "python.exe": 3
+   }
+  },
+  {
+   "t": 76.3,
+   "processes": 3,
+   "working_set_mb": 154.9,
+   "by_name": {
+    "python.exe": 3
+   }
+  },
+  {
+   "t": 78.9,
+   "processes": 17,
+   "working_set_mb": 891.6,
+   "by_name": {
+    "chrome.exe": 12,
+    "node.exe": 2,
+    "python.exe": 3
+   }
+  },
+  {
+   "t": 81.5,
+   "processes": 20,
+   "working_set_mb": 1019.3,
+   "by_name": {
+    "chrome.exe": 16,
+    "node.exe": 1,
+    "python.exe": 3
+   }
+  },
+  {
+   "t": 84.0,
+   "processes": 17,
+   "working_set_mb": 942.7,
+   "by_name": {
+    "chrome.exe": 13,
+    "node.exe": 1,
+    "python.exe": 3
+   }
+  },
+  {
+   "t": 86.5,
+   "processes": 4,
+   "working_set_mb": 215.1,
+   "by_name": {
+    "node.exe": 1,
+    "python.exe": 3
+   }
+  },
+  {
+   "t": 89.0,
+   "processes": 4,
+   "working_set_mb": 215.1,
+   "by_name": {
+    "node.exe": 1,
+    "python.exe": 3
+   }
+  },
+  {
+   "t": 91.6,
+   "processes": 0,
+   "working_set_mb": 0.0,
+   "by_name": {}
+  }
+ ],
+ "when": "2026-10-10T08:03:45+00:00",
+ "platform": "win32",
+ "note": "working set counts shared pages once per process: an upper bound of the footprint, not private memory; the wrapper process and PowerShell sampler are not in the tree"
+}

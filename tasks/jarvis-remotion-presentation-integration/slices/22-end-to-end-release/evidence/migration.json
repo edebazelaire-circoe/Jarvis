@@ -1,0 +1,849 @@
+{
+ "head": "13515334f7446aa54de14e7ce9aa4cfa5cba14c8",
+ "when": "2026-10-10T08:27:50+00:00",
+ "old_build": "de7b9c59",
+ "roots": {
+  "v7": {
+   "state_version_before": 7,
+   "scene_version_before": 1,
+   "rows_before": {
+    "artifact_relations": 1,
+    "artifacts": 3,
+    "back_brain_advisories": 0,
+    "board_conversation_bindings": 4,
+    "brain_current_sources": 0,
+    "brain_invalidated_dependencies": 0,
+    "brain_outcome_selections": 0,
+    "brain_outcomes": 0,
+    "brain_sources": 0,
+    "captures": 0,
+    "conversation_events": 0,
+    "conversations": 4,
+    "devices": 1,
+    "jarvis_sessions": 2,
+    "jobs": 0,
+    "live_sessions": 0,
+    "mcp_credentials": 0,
+    "mcp_plugins": 0,
+    "notifications": 0,
+    "scheduled_items": 0,
+    "schema_version": 1,
+    "session_activity": 14,
+    "session_contexts": 3,
+    "turns": 2,
+    "voice_conversation_snapshots": 0,
+    "voice_history_projections": 0,
+    "work_boards": 4
+   },
+   "presentation_files": 20,
+   "core": {
+    "label": "v7",
+    "list_status": 200,
+    "listed": [
+     {
+      "id": "04",
+      "engine": "slidecar",
+      "schema": null
+     },
+     {
+      "id": "03",
+      "engine": "slidecar",
+      "schema": null
+     },
+     {
+      "id": "02",
+      "engine": "slidecar",
+      "schema": null
+     },
+     {
+      "id": "01",
+      "engine": "slidecar",
+      "schema": null
+     }
+    ],
+    "list_problems": [],
+    "get_status": {
+     "1": 200,
+     "2": 200,
+     "3": 200,
+     "4": 200
+    },
+    "engine_overview": {
+     "default_engine": "remotion",
+     "remotion_ready": false,
+     "remotion_reason": "the Remotion capability is not_installed; install or repair it from the local capabilities (POST /v1/local-capabilities/remotion/install or repair)",
+     "slidecar_used_total": 0
+    },
+    "legacy_play": {
+     "status": 200,
+     "phase": "playing",
+     "error": null
+    },
+    "legacy_stage_objects": 1,
+    "legacy_stage_prefab": "lab.counter",
+    "new_document": {
+     "status": 201,
+     "engine": "remotion"
+    },
+    "new_document_play": {
+     "status": 409,
+     "code": "presentation_studio_engine_unavailable"
+    },
+    "clean_stop": true,
+    "core_log_tail": "Jarvis Core v0.2 ready on http://127.77.0.9:54365\n"
+   },
+   "state_version_after": 8,
+   "scene_version_after": 1,
+   "backups": [
+    "jarvis.sqlite3.v7.bak"
+   ],
+   "rows_after": {
+    "artifact_relations": 1,
+    "artifacts": 3,
+    "back_brain_advisories": 0,
+    "board_artifact_links": 0,
+    "board_conversation_bindings": 4,
+    "brain_current_sources": 0,
+    "brain_invalidated_dependencies": 0,
+    "brain_outcome_selections": 0,
+    "brain_outcomes": 0,
+    "brain_sources": 0,
+    "captures": 0,
+    "conversation_events": 2,
+    "conversations": 4,
+    "devices": 1,
+    "jarvis_sessions": 2,
+    "jobs": 0,
+    "live_sessions": 0,
+    "mcp_credentials": 0,
+    "mcp_plugins": 0,
+    "notifications": 0,
+    "scheduled_items": 1,
+    "schema_version": 1,
+    "session_activity": 15,
+    "session_contexts": 3,
+    "turns": 2,
+    "voice_conversation_snapshots": 0,
+    "voice_history_projections": 0,
+    "work_boards": 4
+   },
+   "presentation_files_changed": [],
+   "presentation_files_added": [],
+   "new_documents_created_by_the_probe": [
+    "pst_af6d461e63053f9fb4db6ca26ff2f888"
+   ],
+   "prefab_files_changed": []
+  },
+  "v8": {
+   "state_version_before": 8,
+   "scene_version_before": 1,
+   "rows_before": {
+    "artifact_relations": 1,
+    "artifacts": 3,
+    "back_brain_advisories": 0,
+    "board_artifact_links": 0,
+    "board_conversation_bindings": 4,
+    "brain_current_sources": 0,
+    "brain_invalidated_dependencies": 0,
+    "brain_outcome_selections": 0,
+    "brain_outcomes": 0,
+    "brain_sources": 0,
+    "captures": 0,
+    "conversation_events": 0,
+    "conversations": 4,
+    "devices": 1,
+    "jarvis_sessions": 2,
+    "jobs": 0,
+    "live_sessions": 0,
+    "mcp_credentials": 0,
+    "mcp_plugins": 0,
+    "notifications": 0,
+    "scheduled_items": 0,
+    "schema_version": 1,
+    "session_activity": 14,
+    "session_contexts": 3,
+    "turns": 2,
+    "voice_conversation_snapshots": 0,
+    "voice_history_projections": 0,
+    "work_boards": 4
+   },
+   "presentation_files": 20,
+   "core": {
+    "label": "v8",
+    "list_status": 200,
+    "listed": [
+     {
+      "id": "04",
+      "engine": "slidecar",
+      "schema": null
+     },
+     {
+      "id": "03",
+      "engine": "slidecar",
+      "schema": null
+     },
+     {
+      "id": "02",
+      "engine": "slidecar",
+      "schema": null
+     },
+     {
+      "id": "01",
+      "engine": "slidecar",
+      "schema": null
+     }
+    ],
+    "list_problems": [],
+    "get_status": {
+     "1": 200,
+     "2": 200,
+     "3": 200,
+     "4": 200
+    },
+    "engine_overview": {
+     "default_engine": "remotion",
+     "remotion_ready": false,
+     "remotion_reason": "the Remotion capability is not_installed; install or repair it from the local capabilities (POST /v1/local-capabilities/remotion/install or repair)",
+     "slidecar_used_total": 0
+    },
+    "legacy_play": {
+     "status": 200,
+     "phase": "playing",
+     "error": null
+    },
+    "legacy_stage_objects": 1,
+    "legacy_stage_prefab": "lab.counter",
+    "new_document": {
+     "status": 201,
+     "engine": "remotion"
+    },
+    "new_document_play": {
+     "status": 409,
+     "code": "presentation_studio_engine_unavailable"
+    },
+    "clean_stop": true,
+    "core_log_tail": "Jarvis Core v0.2 ready on http://127.77.0.9:51680\n"
+   },
+   "state_version_after": 8,
+   "scene_version_after": 1,
+   "backups": [],
+   "rows_after": {
+    "artifact_relations": 1,
+    "artifacts": 3,
+    "back_brain_advisories": 0,
+    "board_artifact_links": 0,
+    "board_conversation_bindings": 4,
+    "brain_current_sources": 0,
+    "brain_invalidated_dependencies": 0,
+    "brain_outcome_selections": 0,
+    "brain_outcomes": 0,
+    "brain_sources": 0,
+    "captures": 0,
+    "conversation_events": 2,
+    "conversations": 4,
+    "devices": 1,
+    "jarvis_sessions": 2,
+    "jobs": 0,
+    "live_sessions": 0,
+    "mcp_credentials": 0,
+    "mcp_plugins": 0,
+    "notifications": 0,
+    "scheduled_items": 1,
+    "schema_version": 1,
+    "session_activity": 15,
+    "session_contexts": 3,
+    "turns": 2,
+    "voice_conversation_snapshots": 0,
+    "voice_history_projections": 0,
+    "work_boards": 4
+   },
+   "presentation_files_changed": [],
+   "presentation_files_added": [],
+   "new_documents_created_by_the_probe": [
+    "pst_092bbcc0835aaaf81e074bf9dc04d555"
+   ],
+   "prefab_files_changed": []
+  }
+ },
+ "checks": {
+  "v7: Core started on the pre-task root and stopped cleanly": {
+   "ok": true,
+   "detail": {
+    "label": "v7",
+    "list_status": 200,
+    "listed": [
+     {
+      "id": "04",
+      "engine": "slidecar",
+      "schema": null
+     },
+     {
+      "id": "03",
+      "engine": "slidecar",
+      "schema": null
+     },
+     {
+      "id": "02",
+      "engine": "slidecar",
+      "schema": null
+     },
+     {
+      "id": "01",
+      "engine": "slidecar",
+      "schema": null
+     }
+    ],
+    "list_problems": [],
+    "get_status": {
+     "1": 200,
+     "2": 200,
+     "3": 200,
+     "4": 200
+    },
+    "engine_overview": {
+     "default_engine": "remotion",
+     "remotion_ready": false,
+     "remotion_reason": "the Remotion capability is not_installed; install or repair it from the local capabilities (POST /v1/local-capabilities/remotion/install or repair)",
+     "slidecar_used_total": 0
+    },
+    "legacy_play": {
+     "status": 200,
+     "phase": "playing",
+     "error": null
+    },
+    "legacy_stage_objects": 1,
+    "legacy_stage_prefab": "lab.counter",
+    "new_document": {
+     "status": 201,
+     "engine": "remotion"
+    },
+    "new_document_play": {
+     "status": 409,
+     "code": "presentation_studio_engine_unavailable"
+    },
+    "clean_stop": true,
+    "core_log_tail": "Jarvis Core v0.2 ready on http://127.77.0.9:54365\n"
+   }
+  },
+  "v7: state database is at schema 8 after start": {
+   "ok": true,
+   "detail": 8
+  },
+  "v7: scene database stays at schema 1 (no migration, no backup)": {
+   "ok": true,
+   "detail": {
+    "state_version_before": 7,
+    "scene_version_before": 1,
+    "rows_before": {
+     "artifact_relations": 1,
+     "artifacts": 3,
+     "back_brain_advisories": 0,
+     "board_conversation_bindings": 4,
+     "brain_current_sources": 0,
+     "brain_invalidated_dependencies": 0,
+     "brain_outcome_selections": 0,
+     "brain_outcomes": 0,
+     "brain_sources": 0,
+     "captures": 0,
+     "conversation_events": 0,
+     "conversations": 4,
+     "devices": 1,
+     "jarvis_sessions": 2,
+     "jobs": 0,
+     "live_sessions": 0,
+     "mcp_credentials": 0,
+     "mcp_plugins": 0,
+     "notifications": 0,
+     "scheduled_items": 0,
+     "schema_version": 1,
+     "session_activity": 14,
+     "session_contexts": 3,
+     "turns": 2,
+     "voice_conversation_snapshots": 0,
+     "voice_history_projections": 0,
+     "work_boards": 4
+    },
+    "presentation_files": 20,
+    "core": {
+     "label": "v7",
+     "list_status": 200,
+     "listed": [
+      {
+       "id": "04",
+       "engine": "slidecar",
+       "schema": null
+      },
+      {
+       "id": "03",
+       "engine": "slidecar",
+       "schema": null
+      },
+      {
+       "id": "02",
+       "engine": "slidecar",
+       "schema": null
+      },
+      {
+       "id": "01",
+       "engine": "slidecar",
+       "schema": null
+      }
+     ],
+     "list_problems": [],
+     "get_status": {
+      "1": 200,
+      "2": 200,
+      "3": 200,
+      "4": 200
+     },
+     "engine_overview": {
+      "default_engine": "remotion",
+      "remotion_ready": false,
+      "remotion_reason": "the Remotion capability is not_installed; install or repair it from the local capabilities (POST /v1/local-capabilities/remotion/install or repair)",
+      "slidecar_used_total": 0
+     },
+     "legacy_play": {
+      "status": 200,
+      "phase": "playing",
+      "error": null
+     },
+     "legacy_stage_objects": 1,
+     "legacy_stage_prefab": "lab.counter",
+     "new_document": {
+      "status": 201,
+      "engine": "remotion"
+     },
+     "new_document_play": {
+      "status": 409,
+      "code": "presentation_studio_engine_unavailable"
+     },
+     "clean_stop": true,
+     "core_log_tail": "Jarvis Core v0.2 ready on http://127.77.0.9:54365\n"
+    },
+    "state_version_after": 8,
+    "scene_version_after": 1,
+    "backups": [
+     "jarvis.sqlite3.v7.bak"
+    ],
+    "rows_after": {
+     "artifact_relations": 1,
+     "artifacts": 3,
+     "back_brain_advisories": 0,
+     "board_artifact_links": 0,
+     "board_conversation_bindings": 4,
+     "brain_current_sources": 0,
+     "brain_invalidated_dependencies": 0,
+     "brain_outcome_selections": 0,
+     "brain_outcomes": 0,
+     "brain_sources": 0,
+     "captures": 0,
+     "conversation_events": 2,
+     "conversations": 4,
+     "devices": 1,
+     "jarvis_sessions": 2,
+     "jobs": 0,
+     "live_sessions": 0,
+     "mcp_credentials": 0,
+     "mcp_plugins": 0,
+     "notifications": 0,
+     "scheduled_items": 1,
+     "schema_version": 1,
+     "session_activity": 15,
+     "session_contexts": 3,
+     "turns": 2,
+     "voice_conversation_snapshots": 0,
+     "voice_history_projections": 0,
+     "work_boards": 4
+    },
+    "presentation_files_changed": [],
+    "presentation_files_added": [],
+    "new_documents_created_by_the_probe": [
+     "pst_af6d461e63053f9fb4db6ca26ff2f888"
+    ],
+    "prefab_files_changed": []
+   }
+  },
+  "v7: the migration made exactly the documented backup jarvis.sqlite3.v7.bak": {
+   "ok": true,
+   "detail": [
+    "jarvis.sqlite3.v7.bak"
+   ]
+  },
+  "v7: the backup holds the OLD schema (7) and the old row counts": {
+   "ok": true,
+   "detail": 7
+  },
+  "v7: every pre-task row survived the migration": {
+   "ok": true,
+   "detail": {}
+  },
+  "v7: four legacy presentations are listed and read as slidecar": {
+   "ok": true,
+   "detail": [
+    {
+     "id": "04",
+     "engine": "slidecar",
+     "schema": null
+    },
+    {
+     "id": "03",
+     "engine": "slidecar",
+     "schema": null
+    },
+    {
+     "id": "02",
+     "engine": "slidecar",
+     "schema": null
+    },
+    {
+     "id": "01",
+     "engine": "slidecar",
+     "schema": null
+    }
+   ]
+  },
+  "v7: no presentation file was rewritten or added by reading and playing them": {
+   "ok": true,
+   "detail": [
+    [],
+    []
+   ]
+  },
+  "v7: the user prefab library is byte-identical": {
+   "ok": true,
+   "detail": []
+  },
+  "v7: a legacy presentation still PLAYS (as Slidecar: an HTML prefab on the stage)": {
+   "ok": true,
+   "detail": {
+    "status": 200,
+    "phase": "playing",
+    "error": null
+   }
+  },
+  "v7: a brand-new document is Remotion and is refused (typed, no fallback) without a runtime": {
+   "ok": true,
+   "detail": {
+    "status": 409,
+    "code": "presentation_studio_engine_unavailable"
+   }
+  },
+  "v7: the Slidecar ledger is read before the play (0): reading legacy documents is not a use": {
+   "ok": true,
+   "detail": {
+    "default_engine": "remotion",
+    "remotion_ready": false,
+    "remotion_reason": "the Remotion capability is not_installed; install or repair it from the local capabilities (POST /v1/local-capabilities/remotion/install or repair)",
+    "slidecar_used_total": 0
+   }
+  },
+  "v8: Core started on the pre-task root and stopped cleanly": {
+   "ok": true,
+   "detail": {
+    "label": "v8",
+    "list_status": 200,
+    "listed": [
+     {
+      "id": "04",
+      "engine": "slidecar",
+      "schema": null
+     },
+     {
+      "id": "03",
+      "engine": "slidecar",
+      "schema": null
+     },
+     {
+      "id": "02",
+      "engine": "slidecar",
+      "schema": null
+     },
+     {
+      "id": "01",
+      "engine": "slidecar",
+      "schema": null
+     }
+    ],
+    "list_problems": [],
+    "get_status": {
+     "1": 200,
+     "2": 200,
+     "3": 200,
+     "4": 200
+    },
+    "engine_overview": {
+     "default_engine": "remotion",
+     "remotion_ready": false,
+     "remotion_reason": "the Remotion capability is not_installed; install or repair it from the local capabilities (POST /v1/local-capabilities/remotion/install or repair)",
+     "slidecar_used_total": 0
+    },
+    "legacy_play": {
+     "status": 200,
+     "phase": "playing",
+     "error": null
+    },
+    "legacy_stage_objects": 1,
+    "legacy_stage_prefab": "lab.counter",
+    "new_document": {
+     "status": 201,
+     "engine": "remotion"
+    },
+    "new_document_play": {
+     "status": 409,
+     "code": "presentation_studio_engine_unavailable"
+    },
+    "clean_stop": true,
+    "core_log_tail": "Jarvis Core v0.2 ready on http://127.77.0.9:51680\n"
+   }
+  },
+  "v8: state database is at schema 8 after start": {
+   "ok": true,
+   "detail": 8
+  },
+  "v8: scene database stays at schema 1 (no migration, no backup)": {
+   "ok": true,
+   "detail": {
+    "state_version_before": 8,
+    "scene_version_before": 1,
+    "rows_before": {
+     "artifact_relations": 1,
+     "artifacts": 3,
+     "back_brain_advisories": 0,
+     "board_artifact_links": 0,
+     "board_conversation_bindings": 4,
+     "brain_current_sources": 0,
+     "brain_invalidated_dependencies": 0,
+     "brain_outcome_selections": 0,
+     "brain_outcomes": 0,
+     "brain_sources": 0,
+     "captures": 0,
+     "conversation_events": 0,
+     "conversations": 4,
+     "devices": 1,
+     "jarvis_sessions": 2,
+     "jobs": 0,
+     "live_sessions": 0,
+     "mcp_credentials": 0,
+     "mcp_plugins": 0,
+     "notifications": 0,
+     "scheduled_items": 0,
+     "schema_version": 1,
+     "session_activity": 14,
+     "session_contexts": 3,
+     "turns": 2,
+     "voice_conversation_snapshots": 0,
+     "voice_history_projections": 0,
+     "work_boards": 4
+    },
+    "presentation_files": 20,
+    "core": {
+     "label": "v8",
+     "list_status": 200,
+     "listed": [
+      {
+       "id": "04",
+       "engine": "slidecar",
+       "schema": null
+      },
+      {
+       "id": "03",
+       "engine": "slidecar",
+       "schema": null
+      },
+      {
+       "id": "02",
+       "engine": "slidecar",
+       "schema": null
+      },
+      {
+       "id": "01",
+       "engine": "slidecar",
+       "schema": null
+      }
+     ],
+     "list_problems": [],
+     "get_status": {
+      "1": 200,
+      "2": 200,
+      "3": 200,
+      "4": 200
+     },
+     "engine_overview": {
+      "default_engine": "remotion",
+      "remotion_ready": false,
+      "remotion_reason": "the Remotion capability is not_installed; install or repair it from the local capabilities (POST /v1/local-capabilities/remotion/install or repair)",
+      "slidecar_used_total": 0
+     },
+     "legacy_play": {
+      "status": 200,
+      "phase": "playing",
+      "error": null
+     },
+     "legacy_stage_objects": 1,
+     "legacy_stage_prefab": "lab.counter",
+     "new_document": {
+      "status": 201,
+      "engine": "remotion"
+     },
+     "new_document_play": {
+      "status": 409,
+      "code": "presentation_studio_engine_unavailable"
+     },
+     "clean_stop": true,
+     "core_log_tail": "Jarvis Core v0.2 ready on http://127.77.0.9:51680\n"
+    },
+    "state_version_after": 8,
+    "scene_version_after": 1,
+    "backups": [],
+    "rows_after": {
+     "artifact_relations": 1,
+     "artifacts": 3,
+     "back_brain_advisories": 0,
+     "board_artifact_links": 0,
+     "board_conversation_bindings": 4,
+     "brain_current_sources": 0,
+     "brain_invalidated_dependencies": 0,
+     "brain_outcome_selections": 0,
+     "brain_outcomes": 0,
+     "brain_sources": 0,
+     "captures": 0,
+     "conversation_events": 2,
+     "conversations": 4,
+     "devices": 1,
+     "jarvis_sessions": 2,
+     "jobs": 0,
+     "live_sessions": 0,
+     "mcp_credentials": 0,
+     "mcp_plugins": 0,
+     "notifications": 0,
+     "scheduled_items": 1,
+     "schema_version": 1,
+     "session_activity": 15,
+     "session_contexts": 3,
+     "turns": 2,
+     "voice_conversation_snapshots": 0,
+     "voice_history_projections": 0,
+     "work_boards": 4
+    },
+    "presentation_files_changed": [],
+    "presentation_files_added": [],
+    "new_documents_created_by_the_probe": [
+     "pst_092bbcc0835aaaf81e074bf9dc04d555"
+    ],
+    "prefab_files_changed": []
+   }
+  },
+  "v8: no migration, no backup": {
+   "ok": true,
+   "detail": []
+  },
+  "v8: every pre-task row survived the migration": {
+   "ok": true,
+   "detail": {}
+  },
+  "v8: four legacy presentations are listed and read as slidecar": {
+   "ok": true,
+   "detail": [
+    {
+     "id": "04",
+     "engine": "slidecar",
+     "schema": null
+    },
+    {
+     "id": "03",
+     "engine": "slidecar",
+     "schema": null
+    },
+    {
+     "id": "02",
+     "engine": "slidecar",
+     "schema": null
+    },
+    {
+     "id": "01",
+     "engine": "slidecar",
+     "schema": null
+    }
+   ]
+  },
+  "v8: no presentation file was rewritten or added by reading and playing them": {
+   "ok": true,
+   "detail": [
+    [],
+    []
+   ]
+  },
+  "v8: the user prefab library is byte-identical": {
+   "ok": true,
+   "detail": []
+  },
+  "v8: a legacy presentation still PLAYS (as Slidecar: an HTML prefab on the stage)": {
+   "ok": true,
+   "detail": {
+    "status": 200,
+    "phase": "playing",
+    "error": null
+   }
+  },
+  "v8: a brand-new document is Remotion and is refused (typed, no fallback) without a runtime": {
+   "ok": true,
+   "detail": {
+    "status": 409,
+    "code": "presentation_studio_engine_unavailable"
+   }
+  },
+  "v8: the Slidecar ledger is read before the play (0): reading legacy documents is not a use": {
+   "ok": true,
+   "detail": {
+    "default_engine": "remotion",
+    "remotion_ready": false,
+    "remotion_reason": "the Remotion capability is not_installed; install or repair it from the local capabilities (POST /v1/local-capabilities/remotion/install or repair)",
+    "slidecar_used_total": 0
+   }
+  }
+ },
+ "first_save_by_new_build": {
+  "saved_variant_id": "psv_00000000000000000000000000000001",
+  "variant_status": 200,
+  "presentation_status": 200,
+  "variant_schema_version_on_disk": 5,
+  "presentation_schema_version_on_disk": 3
+ },
+ "old_build_on_the_root_left_by_the_new_one": {
+  "jarvis_from": "old-build",
+  "rows": {
+   "P1": {
+    "manifest": "read",
+    "variant": "read"
+   },
+   "P2": {
+    "manifest": "read",
+    "variant": "read"
+   },
+   "P3": {
+    "manifest": "read",
+    "variant": "read"
+   },
+   "P4": {
+    "manifest": "PresentationStudioError: presentation_studio_unsupported_schema_version: jarvis.presentation_studio.presentation is schema_version 3, this JARVIS reads up to 2: upda",
+    "variant": "PresentationStudioError: presentation_studio_unsupported_schema_version: jarvis.presentation_studio.variant is schema_version 5, this JARVIS reads up to 4: update JA"
+   },
+   "state": {
+    "open": "ok",
+    "query_artifacts": "ArtifactStoreError: artifacts row 'jart_c8733ef41c094f7caf9a9bb2864152d7' is unreadable: ArtifactError: kind is not a ArtifactKind: 'presentation_snapshot'"
+   }
+  }
+ },
+ "saved_document_backups": [
+  "presentation.json.v2.bak"
+ ],
+ "rollback_statement": {
+  "documents_saved_by_the_new_build_are_refused_by_the_old_build": true,
+  "untouched_documents_still_read_by_the_old_build": true,
+  "old_build_on_a_database_with_the_new_artifact_kinds": {
+   "open": "ok",
+   "query_artifacts": "ArtifactStoreError: artifacts row 'jart_c8733ef41c094f7caf9a9bb2864152d7' is unreadable: ArtifactError: kind is not a ArtifactKind: 'presentation_snapshot'"
+  }
+ },
+ "verdict": "PASSED"
+}

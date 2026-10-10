@@ -1,0 +1,1245 @@
+{
+  "scenario": "play_edit_switch_fullscreen",
+  "screenshots": [
+    "windowed.png",
+    "fullscreen.png"
+  ],
+  "reads": {
+    "until:!!document.querySelector('iframe[data-remotion-stage]') && !!document.querySelec": true,
+    "title": "Premier",
+    "frame_a": 35,
+    "frame_b": 62,
+    "shell": {
+      "phase": "ready",
+      "mounted": true,
+      "playing": true,
+      "frame": 61,
+      "duration": 90,
+      "killedReason": null,
+      "generation": 1,
+      "muted": true,
+      "propsRefused": 0,
+      "lastProblems": [],
+      "supervisor": {
+        "ready": true,
+        "killed": false,
+        "reason": null,
+        "startedAt": 1791619343802,
+        "pending": null,
+        "pendingSince": 1791619346067,
+        "lastPingAt": 1791619346067,
+        "lastFrame": 61,
+        "violations": 0,
+        "accepted": 13,
+        "refused": {},
+        "foreign": 0,
+        "reports": [],
+        "windowStart": 1791619346068,
+        "windowCount": 1,
+        "pongs": 3,
+        "childDropped": 0,
+        "lastHeapMb": 5,
+        "muted": true,
+        "floodStreak": 0,
+        "violationsReported": 0,
+        "errorsReported": 0,
+        "clocks": 9,
+        "clockDropped": 0,
+        "clockWindow": [
+          1791619345037,
+          1791619345303,
+          1791619345571,
+          1791619345836
+        ],
+        "lastClock": {
+          "frame": 55,
+          "playing": true
+        }
+      }
+    },
+    "isolation": {
+      "href": "http://127.77.0.2:56747/",
+      "parent": "SecurityError",
+      "storage": "SecurityError",
+      "origin": "null"
+    },
+    "frames": 1,
+    "frame_id_before": 1,
+    "edit1": {
+      "status": 200,
+      "body": {
+        "status": "applied",
+        "command": "edit",
+        "state": {
+          "phase": "paused",
+          "running": true,
+          "run_id": "c9e3e526af47",
+          "role": "user_presenter",
+          "jarvis_speaks": false,
+          "position": {
+            "index": 1,
+            "of": 2
+          },
+          "scene": {
+            "scene_id": "pss_000000000001",
+            "title": "Premier",
+            "section": "",
+            "number": 1,
+            "of": 2
+          },
+          "item": {
+            "item_id": "psi_000000000001",
+            "label": "",
+            "presenter": "user",
+            "kind": "speech",
+            "timing": "soft",
+            "interruption": "allow",
+            "recovery": "continue_item"
+          },
+          "speaking": null,
+          "silence": false,
+          "revealed": [],
+          "elapsed": {
+            "item_ms": 8303,
+            "item_target_ms": null,
+            "item_over_target": false,
+            "run_ms": 8303,
+            "run_estimated_ms": 0
+          },
+          "owner": "user",
+          "armed": 0,
+          "generation": 0,
+          "pending": null,
+          "problems": [],
+          "next": {
+            "item_label": "",
+            "scene_title": "Second",
+            "presenter": "user",
+            "cue": null
+          },
+          "detour": null,
+          "sequence": null,
+          "untrusted": [
+            "scene.title",
+            "scene.section",
+            "item.label",
+            "next.item_label",
+            "next.scene_title"
+          ],
+          "presentation_id": "pst_006641f5d00030c5b62599ea708534ae",
+          "variant_id": "psv_32db83dc9fced1477aae32f0ef18a57a",
+          "stage_object_id": "studio-stage-c9e3e526af47",
+          "art_direction": "fallback",
+          "notices": [],
+          "mode": "presentation",
+          "follower": "waiting",
+          "presenter": {
+            "speaks": false,
+            "lines": 0,
+            "interrupted": false,
+            "problem": null,
+            "line": null,
+            "sequence": null
+          }
+        },
+        "edit": {
+          "status": "applied",
+          "mode": "commit",
+          "actor": "user",
+          "presentation_id": "pst_006641f5d00030c5b62599ea708534ae",
+          "variant_id": "psv_32db83dc9fced1477aae32f0ef18a57a",
+          "basis": {
+            "variant_revision": 4
+          },
+          "revision": 5,
+          "committed": true,
+          "changed": true,
+          "tier": "control",
+          "ops": [
+            {
+              "scene_id": "pss_000000000001",
+              "control_id": "headline",
+              "before": "Premier",
+              "was_set": true,
+              "after": "Titre modifié",
+              "is_set": true,
+              "changed": true,
+              "index": 0,
+              "op": "control.set",
+              "tier": "control"
+            },
+            {
+              "scene_id": "pss_000000000001",
+              "control_id": "accent",
+              "before": "#3366ff",
+              "was_set": true,
+              "after": "#ff0000",
+              "is_set": true,
+              "changed": true,
+              "index": 1,
+              "op": "control.set",
+              "tier": "control"
+            },
+            {
+              "scene_id": "pss_000000000001",
+              "control_id": "fade",
+              "before": 10,
+              "was_set": true,
+              "after": 60,
+              "is_set": true,
+              "changed": true,
+              "index": 2,
+              "op": "control.set",
+              "tier": "control"
+            }
+          ],
+          "undo": {
+            "available": true,
+            "presentation_id": "pst_006641f5d00030c5b62599ea708534ae",
+            "variant_id": "psv_32db83dc9fced1477aae32f0ef18a57a",
+            "restores_revision": 4,
+            "applies_at_revision": 5,
+            "ops": [
+              {
+                "op": "scene.restore_values",
+                "scene_id": "pss_000000000001",
+                "props": {
+                  "title": "Titre modifié",
+                  "accent": "#ff0000",
+                  "fade": 10
+                },
+                "data": {}
+              },
+              {
+                "op": "scene.restore_values",
+                "scene_id": "pss_000000000001",
+                "props": {
+                  "title": "Titre modifié",
+                  "accent": "#3366ff",
+                  "fade": 10
+                },
+                "data": {}
+              },
+              {
+                "op": "scene.restore_values",
+                "scene_id": "pss_000000000001",
+                "props": {
+                  "title": "Premier",
+                  "accent": "#3366ff",
+                  "fade": 10
+                },
+                "data": {}
+              }
+            ],
+            "bytes": 559
+          },
+          "source_requests": [],
+          "source_requests_dropped": 0
+        }
+      }
+    },
+    "until:document.querySelector('#title') && document.querySelector('#title').textContent": true,
+    "after_edit": {
+      "title": "Titre modifié",
+      "color": "rgb(255, 0, 0)",
+      "fade": "60"
+    },
+    "rapid1": {
+      "status": 200,
+      "body": {
+        "status": "applied",
+        "command": "edit",
+        "state": {
+          "phase": "paused",
+          "running": true,
+          "run_id": "c9e3e526af47",
+          "role": "user_presenter",
+          "jarvis_speaks": false,
+          "position": {
+            "index": 1,
+            "of": 2
+          },
+          "scene": {
+            "scene_id": "pss_000000000001",
+            "title": "Premier",
+            "section": "",
+            "number": 1,
+            "of": 2
+          },
+          "item": {
+            "item_id": "psi_000000000001",
+            "label": "",
+            "presenter": "user",
+            "kind": "speech",
+            "timing": "soft",
+            "interruption": "allow",
+            "recovery": "continue_item"
+          },
+          "speaking": null,
+          "silence": false,
+          "revealed": [],
+          "elapsed": {
+            "item_ms": 8303,
+            "item_target_ms": null,
+            "item_over_target": false,
+            "run_ms": 8303,
+            "run_estimated_ms": 0
+          },
+          "owner": "user",
+          "armed": 0,
+          "generation": 0,
+          "pending": null,
+          "problems": [],
+          "next": {
+            "item_label": "",
+            "scene_title": "Second",
+            "presenter": "user",
+            "cue": null
+          },
+          "detour": null,
+          "sequence": null,
+          "untrusted": [
+            "scene.title",
+            "scene.section",
+            "item.label",
+            "next.item_label",
+            "next.scene_title"
+          ],
+          "presentation_id": "pst_006641f5d00030c5b62599ea708534ae",
+          "variant_id": "psv_32db83dc9fced1477aae32f0ef18a57a",
+          "stage_object_id": "studio-stage-c9e3e526af47",
+          "art_direction": "fallback",
+          "notices": [],
+          "mode": "presentation",
+          "follower": "waiting",
+          "presenter": {
+            "speaks": false,
+            "lines": 0,
+            "interrupted": false,
+            "problem": null,
+            "line": null,
+            "sequence": null
+          }
+        },
+        "edit": {
+          "status": "applied",
+          "mode": "commit",
+          "actor": "user",
+          "presentation_id": "pst_006641f5d00030c5b62599ea708534ae",
+          "variant_id": "psv_32db83dc9fced1477aae32f0ef18a57a",
+          "basis": {
+            "variant_revision": 5
+          },
+          "revision": 6,
+          "committed": true,
+          "changed": true,
+          "tier": "control",
+          "ops": [
+            {
+              "scene_id": "pss_000000000001",
+              "control_id": "accent",
+              "before": "#ff0000",
+              "was_set": true,
+              "after": "#00ff00",
+              "is_set": true,
+              "changed": true,
+              "index": 0,
+              "op": "control.set",
+              "tier": "control"
+            }
+          ],
+          "undo": {
+            "available": true,
+            "presentation_id": "pst_006641f5d00030c5b62599ea708534ae",
+            "variant_id": "psv_32db83dc9fced1477aae32f0ef18a57a",
+            "restores_revision": 5,
+            "applies_at_revision": 6,
+            "ops": [
+              {
+                "op": "scene.restore_values",
+                "scene_id": "pss_000000000001",
+                "props": {
+                  "title": "Titre modifié",
+                  "accent": "#ff0000",
+                  "fade": 60
+                },
+                "data": {}
+              }
+            ],
+            "bytes": 298
+          },
+          "source_requests": [],
+          "source_requests_dropped": 0
+        }
+      }
+    },
+    "rapid2": {
+      "status": 200,
+      "body": {
+        "status": "applied",
+        "command": "edit",
+        "state": {
+          "phase": "paused",
+          "running": true,
+          "run_id": "c9e3e526af47",
+          "role": "user_presenter",
+          "jarvis_speaks": false,
+          "position": {
+            "index": 1,
+            "of": 2
+          },
+          "scene": {
+            "scene_id": "pss_000000000001",
+            "title": "Premier",
+            "section": "",
+            "number": 1,
+            "of": 2
+          },
+          "item": {
+            "item_id": "psi_000000000001",
+            "label": "",
+            "presenter": "user",
+            "kind": "speech",
+            "timing": "soft",
+            "interruption": "allow",
+            "recovery": "continue_item"
+          },
+          "speaking": null,
+          "silence": false,
+          "revealed": [],
+          "elapsed": {
+            "item_ms": 8303,
+            "item_target_ms": null,
+            "item_over_target": false,
+            "run_ms": 8303,
+            "run_estimated_ms": 0
+          },
+          "owner": "user",
+          "armed": 0,
+          "generation": 0,
+          "pending": null,
+          "problems": [],
+          "next": {
+            "item_label": "",
+            "scene_title": "Second",
+            "presenter": "user",
+            "cue": null
+          },
+          "detour": null,
+          "sequence": null,
+          "untrusted": [
+            "scene.title",
+            "scene.section",
+            "item.label",
+            "next.item_label",
+            "next.scene_title"
+          ],
+          "presentation_id": "pst_006641f5d00030c5b62599ea708534ae",
+          "variant_id": "psv_32db83dc9fced1477aae32f0ef18a57a",
+          "stage_object_id": "studio-stage-c9e3e526af47",
+          "art_direction": "fallback",
+          "notices": [],
+          "mode": "presentation",
+          "follower": "waiting",
+          "presenter": {
+            "speaks": false,
+            "lines": 0,
+            "interrupted": false,
+            "problem": null,
+            "line": null,
+            "sequence": null
+          }
+        },
+        "edit": {
+          "status": "applied",
+          "mode": "commit",
+          "actor": "user",
+          "presentation_id": "pst_006641f5d00030c5b62599ea708534ae",
+          "variant_id": "psv_32db83dc9fced1477aae32f0ef18a57a",
+          "basis": {
+            "variant_revision": 6
+          },
+          "revision": 7,
+          "committed": true,
+          "changed": true,
+          "tier": "control",
+          "ops": [
+            {
+              "scene_id": "pss_000000000001",
+              "control_id": "accent",
+              "before": "#00ff00",
+              "was_set": true,
+              "after": "#0000ff",
+              "is_set": true,
+              "changed": true,
+              "index": 0,
+              "op": "control.set",
+              "tier": "control"
+            }
+          ],
+          "undo": {
+            "available": true,
+            "presentation_id": "pst_006641f5d00030c5b62599ea708534ae",
+            "variant_id": "psv_32db83dc9fced1477aae32f0ef18a57a",
+            "restores_revision": 6,
+            "applies_at_revision": 7,
+            "ops": [
+              {
+                "op": "scene.restore_values",
+                "scene_id": "pss_000000000001",
+                "props": {
+                  "title": "Titre modifié",
+                  "accent": "#00ff00",
+                  "fade": 60
+                },
+                "data": {}
+              }
+            ],
+            "bytes": 298
+          },
+          "source_requests": [],
+          "source_requests_dropped": 0
+        }
+      }
+    },
+    "rapid3": {
+      "status": 200,
+      "body": {
+        "status": "applied",
+        "command": "edit",
+        "state": {
+          "phase": "paused",
+          "running": true,
+          "run_id": "c9e3e526af47",
+          "role": "user_presenter",
+          "jarvis_speaks": false,
+          "position": {
+            "index": 1,
+            "of": 2
+          },
+          "scene": {
+            "scene_id": "pss_000000000001",
+            "title": "Premier",
+            "section": "",
+            "number": 1,
+            "of": 2
+          },
+          "item": {
+            "item_id": "psi_000000000001",
+            "label": "",
+            "presenter": "user",
+            "kind": "speech",
+            "timing": "soft",
+            "interruption": "allow",
+            "recovery": "continue_item"
+          },
+          "speaking": null,
+          "silence": false,
+          "revealed": [],
+          "elapsed": {
+            "item_ms": 8303,
+            "item_target_ms": null,
+            "item_over_target": false,
+            "run_ms": 8303,
+            "run_estimated_ms": 0
+          },
+          "owner": "user",
+          "armed": 0,
+          "generation": 0,
+          "pending": null,
+          "problems": [],
+          "next": {
+            "item_label": "",
+            "scene_title": "Second",
+            "presenter": "user",
+            "cue": null
+          },
+          "detour": null,
+          "sequence": null,
+          "untrusted": [
+            "scene.title",
+            "scene.section",
+            "item.label",
+            "next.item_label",
+            "next.scene_title"
+          ],
+          "presentation_id": "pst_006641f5d00030c5b62599ea708534ae",
+          "variant_id": "psv_32db83dc9fced1477aae32f0ef18a57a",
+          "stage_object_id": "studio-stage-c9e3e526af47",
+          "art_direction": "fallback",
+          "notices": [],
+          "mode": "presentation",
+          "follower": "waiting",
+          "presenter": {
+            "speaks": false,
+            "lines": 0,
+            "interrupted": false,
+            "problem": null,
+            "line": null,
+            "sequence": null
+          }
+        },
+        "edit": {
+          "status": "applied",
+          "mode": "commit",
+          "actor": "user",
+          "presentation_id": "pst_006641f5d00030c5b62599ea708534ae",
+          "variant_id": "psv_32db83dc9fced1477aae32f0ef18a57a",
+          "basis": {
+            "variant_revision": 7
+          },
+          "revision": 8,
+          "committed": true,
+          "changed": true,
+          "tier": "control",
+          "ops": [
+            {
+              "scene_id": "pss_000000000001",
+              "control_id": "accent",
+              "before": "#0000ff",
+              "was_set": true,
+              "after": "#ffff00",
+              "is_set": true,
+              "changed": true,
+              "index": 0,
+              "op": "control.set",
+              "tier": "control"
+            }
+          ],
+          "undo": {
+            "available": true,
+            "presentation_id": "pst_006641f5d00030c5b62599ea708534ae",
+            "variant_id": "psv_32db83dc9fced1477aae32f0ef18a57a",
+            "restores_revision": 7,
+            "applies_at_revision": 8,
+            "ops": [
+              {
+                "op": "scene.restore_values",
+                "scene_id": "pss_000000000001",
+                "props": {
+                  "title": "Titre modifié",
+                  "accent": "#0000ff",
+                  "fade": 60
+                },
+                "data": {}
+              }
+            ],
+            "bytes": 298
+          },
+          "source_requests": [],
+          "source_requests_dropped": 0
+        }
+      }
+    },
+    "rapid4": {
+      "status": 200,
+      "body": {
+        "status": "applied",
+        "command": "edit",
+        "state": {
+          "phase": "paused",
+          "running": true,
+          "run_id": "c9e3e526af47",
+          "role": "user_presenter",
+          "jarvis_speaks": false,
+          "position": {
+            "index": 1,
+            "of": 2
+          },
+          "scene": {
+            "scene_id": "pss_000000000001",
+            "title": "Premier",
+            "section": "",
+            "number": 1,
+            "of": 2
+          },
+          "item": {
+            "item_id": "psi_000000000001",
+            "label": "",
+            "presenter": "user",
+            "kind": "speech",
+            "timing": "soft",
+            "interruption": "allow",
+            "recovery": "continue_item"
+          },
+          "speaking": null,
+          "silence": false,
+          "revealed": [],
+          "elapsed": {
+            "item_ms": 8303,
+            "item_target_ms": null,
+            "item_over_target": false,
+            "run_ms": 8303,
+            "run_estimated_ms": 0
+          },
+          "owner": "user",
+          "armed": 0,
+          "generation": 0,
+          "pending": null,
+          "problems": [],
+          "next": {
+            "item_label": "",
+            "scene_title": "Second",
+            "presenter": "user",
+            "cue": null
+          },
+          "detour": null,
+          "sequence": null,
+          "untrusted": [
+            "scene.title",
+            "scene.section",
+            "item.label",
+            "next.item_label",
+            "next.scene_title"
+          ],
+          "presentation_id": "pst_006641f5d00030c5b62599ea708534ae",
+          "variant_id": "psv_32db83dc9fced1477aae32f0ef18a57a",
+          "stage_object_id": "studio-stage-c9e3e526af47",
+          "art_direction": "fallback",
+          "notices": [],
+          "mode": "presentation",
+          "follower": "waiting",
+          "presenter": {
+            "speaks": false,
+            "lines": 0,
+            "interrupted": false,
+            "problem": null,
+            "line": null,
+            "sequence": null
+          }
+        },
+        "edit": {
+          "status": "applied",
+          "mode": "commit",
+          "actor": "user",
+          "presentation_id": "pst_006641f5d00030c5b62599ea708534ae",
+          "variant_id": "psv_32db83dc9fced1477aae32f0ef18a57a",
+          "basis": {
+            "variant_revision": 8
+          },
+          "revision": 9,
+          "committed": true,
+          "changed": true,
+          "tier": "control",
+          "ops": [
+            {
+              "scene_id": "pss_000000000001",
+              "control_id": "fade",
+              "before": 60,
+              "was_set": true,
+              "after": 5,
+              "is_set": true,
+              "changed": true,
+              "index": 0,
+              "op": "control.set",
+              "tier": "control"
+            }
+          ],
+          "undo": {
+            "available": true,
+            "presentation_id": "pst_006641f5d00030c5b62599ea708534ae",
+            "variant_id": "psv_32db83dc9fced1477aae32f0ef18a57a",
+            "restores_revision": 8,
+            "applies_at_revision": 9,
+            "ops": [
+              {
+                "op": "scene.restore_values",
+                "scene_id": "pss_000000000001",
+                "props": {
+                  "title": "Titre modifié",
+                  "accent": "#ffff00",
+                  "fade": 60
+                },
+                "data": {}
+              }
+            ],
+            "bytes": 298
+          },
+          "source_requests": [],
+          "source_requests_dropped": 0
+        }
+      }
+    },
+    "rapid5": {
+      "status": 200,
+      "body": {
+        "status": "applied",
+        "command": "edit",
+        "state": {
+          "phase": "paused",
+          "running": true,
+          "run_id": "c9e3e526af47",
+          "role": "user_presenter",
+          "jarvis_speaks": false,
+          "position": {
+            "index": 1,
+            "of": 2
+          },
+          "scene": {
+            "scene_id": "pss_000000000001",
+            "title": "Premier",
+            "section": "",
+            "number": 1,
+            "of": 2
+          },
+          "item": {
+            "item_id": "psi_000000000001",
+            "label": "",
+            "presenter": "user",
+            "kind": "speech",
+            "timing": "soft",
+            "interruption": "allow",
+            "recovery": "continue_item"
+          },
+          "speaking": null,
+          "silence": false,
+          "revealed": [],
+          "elapsed": {
+            "item_ms": 8303,
+            "item_target_ms": null,
+            "item_over_target": false,
+            "run_ms": 8303,
+            "run_estimated_ms": 0
+          },
+          "owner": "user",
+          "armed": 0,
+          "generation": 0,
+          "pending": null,
+          "problems": [],
+          "next": {
+            "item_label": "",
+            "scene_title": "Second",
+            "presenter": "user",
+            "cue": null
+          },
+          "detour": null,
+          "sequence": null,
+          "untrusted": [
+            "scene.title",
+            "scene.section",
+            "item.label",
+            "next.item_label",
+            "next.scene_title"
+          ],
+          "presentation_id": "pst_006641f5d00030c5b62599ea708534ae",
+          "variant_id": "psv_32db83dc9fced1477aae32f0ef18a57a",
+          "stage_object_id": "studio-stage-c9e3e526af47",
+          "art_direction": "fallback",
+          "notices": [],
+          "mode": "presentation",
+          "follower": "waiting",
+          "presenter": {
+            "speaks": false,
+            "lines": 0,
+            "interrupted": false,
+            "problem": null,
+            "line": null,
+            "sequence": null
+          }
+        },
+        "edit": {
+          "status": "applied",
+          "mode": "commit",
+          "actor": "user",
+          "presentation_id": "pst_006641f5d00030c5b62599ea708534ae",
+          "variant_id": "psv_32db83dc9fced1477aae32f0ef18a57a",
+          "basis": {
+            "variant_revision": 9
+          },
+          "revision": 10,
+          "committed": true,
+          "changed": true,
+          "tier": "control",
+          "ops": [
+            {
+              "scene_id": "pss_000000000001",
+              "control_id": "accent",
+              "before": "#ffff00",
+              "was_set": true,
+              "after": "#ff00ff",
+              "is_set": true,
+              "changed": true,
+              "index": 0,
+              "op": "control.set",
+              "tier": "control"
+            }
+          ],
+          "undo": {
+            "available": true,
+            "presentation_id": "pst_006641f5d00030c5b62599ea708534ae",
+            "variant_id": "psv_32db83dc9fced1477aae32f0ef18a57a",
+            "restores_revision": 9,
+            "applies_at_revision": 10,
+            "ops": [
+              {
+                "op": "scene.restore_values",
+                "scene_id": "pss_000000000001",
+                "props": {
+                  "title": "Titre modifié",
+                  "accent": "#ffff00",
+                  "fade": 5
+                },
+                "data": {}
+              }
+            ],
+            "bytes": 298
+          },
+          "source_requests": [],
+          "source_requests_dropped": 0
+        }
+      }
+    },
+    "until:getComputedStyle(document.querySelector('#title')).color==='rgb(255, 0, 255)'": true,
+    "after_rapid": {
+      "color": "rgb(255, 0, 255)",
+      "fade": "5"
+    },
+    "generation_after_edits": 1,
+    "same_frame": 1,
+    "pause": true,
+    "paused_a": 80,
+    "paused_b": 80,
+    "seek": true,
+    "until:Number(document.querySelector('#frame').textContent)===45": true,
+    "seeked": 45,
+    "resume": {
+      "status": 200,
+      "body": {
+        "status": "applied",
+        "command": "resume",
+        "state": {
+          "phase": "playing",
+          "running": true,
+          "run_id": "c9e3e526af47",
+          "role": "user_presenter",
+          "jarvis_speaks": false,
+          "position": {
+            "index": 1,
+            "of": 2
+          },
+          "scene": {
+            "scene_id": "pss_000000000001",
+            "title": "Premier",
+            "section": "",
+            "number": 1,
+            "of": 2
+          },
+          "item": {
+            "item_id": "psi_000000000001",
+            "label": "",
+            "presenter": "user",
+            "kind": "speech",
+            "timing": "soft",
+            "interruption": "allow",
+            "recovery": "continue_item"
+          },
+          "speaking": null,
+          "silence": false,
+          "revealed": [],
+          "elapsed": {
+            "item_ms": 8305,
+            "item_target_ms": null,
+            "item_over_target": false,
+            "run_ms": 8305,
+            "run_estimated_ms": 0
+          },
+          "owner": "user",
+          "armed": 0,
+          "generation": 0,
+          "pending": null,
+          "problems": [],
+          "next": {
+            "item_label": "",
+            "scene_title": "Second",
+            "presenter": "user",
+            "cue": null
+          },
+          "detour": null,
+          "sequence": null,
+          "untrusted": [
+            "scene.title",
+            "scene.section",
+            "item.label",
+            "next.item_label",
+            "next.scene_title"
+          ],
+          "presentation_id": "pst_006641f5d00030c5b62599ea708534ae",
+          "variant_id": "psv_32db83dc9fced1477aae32f0ef18a57a",
+          "stage_object_id": "studio-stage-c9e3e526af47",
+          "art_direction": "fallback",
+          "notices": [],
+          "mode": "presentation",
+          "follower": "absent",
+          "presenter": {
+            "speaks": false,
+            "lines": 0,
+            "interrupted": false,
+            "problem": null,
+            "line": null,
+            "sequence": null
+          }
+        }
+      }
+    },
+    "next": {
+      "status": 200,
+      "body": {
+        "status": "applied",
+        "command": "next",
+        "state": {
+          "phase": "playing",
+          "running": true,
+          "run_id": "c9e3e526af47",
+          "role": "user_presenter",
+          "jarvis_speaks": false,
+          "position": {
+            "index": 2,
+            "of": 2
+          },
+          "scene": {
+            "scene_id": "pss_000000000002",
+            "title": "Second",
+            "section": "",
+            "number": 2,
+            "of": 2
+          },
+          "item": {
+            "item_id": "psi_000000000002",
+            "label": "",
+            "presenter": "user",
+            "kind": "speech",
+            "timing": "soft",
+            "interruption": "allow",
+            "recovery": "continue_item"
+          },
+          "speaking": null,
+          "silence": false,
+          "revealed": [],
+          "elapsed": {
+            "item_ms": 4,
+            "item_target_ms": null,
+            "item_over_target": false,
+            "run_ms": 8315,
+            "run_estimated_ms": 0
+          },
+          "owner": "user",
+          "armed": 0,
+          "generation": 0,
+          "pending": null,
+          "problems": [],
+          "next": null,
+          "detour": null,
+          "sequence": null,
+          "untrusted": [
+            "scene.title",
+            "scene.section",
+            "item.label"
+          ],
+          "presentation_id": "pst_006641f5d00030c5b62599ea708534ae",
+          "variant_id": "psv_32db83dc9fced1477aae32f0ef18a57a",
+          "stage_object_id": "studio-stage-c9e3e526af47",
+          "art_direction": "fallback",
+          "notices": [],
+          "mode": "presentation",
+          "follower": "absent",
+          "presenter": {
+            "speaks": false,
+            "lines": 0,
+            "interrupted": false,
+            "problem": null,
+            "line": null,
+            "sequence": null
+          }
+        }
+      }
+    },
+    "second": "Second",
+    "until:document.querySelectorAll('iframe[data-remotion-stage]').length===1": true,
+    "frames_after_next": 1,
+    "previous": {
+      "status": 200,
+      "body": {
+        "status": "applied",
+        "command": "previous",
+        "state": {
+          "phase": "playing",
+          "running": true,
+          "run_id": "c9e3e526af47",
+          "role": "user_presenter",
+          "jarvis_speaks": false,
+          "position": {
+            "index": 1,
+            "of": 2
+          },
+          "scene": {
+            "scene_id": "pss_000000000001",
+            "title": "Premier",
+            "section": "",
+            "number": 1,
+            "of": 2
+          },
+          "item": {
+            "item_id": "psi_000000000001",
+            "label": "",
+            "presenter": "user",
+            "kind": "speech",
+            "timing": "soft",
+            "interruption": "allow",
+            "recovery": "continue_item"
+          },
+          "speaking": null,
+          "silence": false,
+          "revealed": [],
+          "elapsed": {
+            "item_ms": 4,
+            "item_target_ms": null,
+            "item_over_target": false,
+            "run_ms": 8921,
+            "run_estimated_ms": 0
+          },
+          "owner": "user",
+          "armed": 0,
+          "generation": 0,
+          "pending": null,
+          "problems": [],
+          "next": {
+            "item_label": "",
+            "scene_title": "Second",
+            "presenter": "user",
+            "cue": null
+          },
+          "detour": null,
+          "sequence": null,
+          "untrusted": [
+            "scene.title",
+            "scene.section",
+            "item.label",
+            "next.item_label",
+            "next.scene_title"
+          ],
+          "presentation_id": "pst_006641f5d00030c5b62599ea708534ae",
+          "variant_id": "psv_32db83dc9fced1477aae32f0ef18a57a",
+          "stage_object_id": "studio-stage-c9e3e526af47",
+          "art_direction": "fallback",
+          "notices": [],
+          "mode": "presentation",
+          "follower": "absent",
+          "presenter": {
+            "speaks": false,
+            "lines": 0,
+            "interrupted": false,
+            "problem": null,
+            "line": null,
+            "sequence": null
+          }
+        }
+      }
+    },
+    "back": "Titre modifié",
+    "until:document.querySelector('iframe[data-remotion-stage]').contentWindow.__remotionSt": true,
+    "muted_before": true,
+    "muted_after": false,
+    "until:!!document.fullscreenElement": true,
+    "fullscreen": {
+      "on": true,
+      "shell": [
+        1280,
+        720
+      ],
+      "sandbox": [
+        1280,
+        720
+      ],
+      "vw": 1280,
+      "vh": 720
+    },
+    "until:!document.fullscreenElement": true,
+    "after_fullscreen": {
+      "on": false,
+      "phase": "ready"
+    }
+  },
+  "console": [
+    "frame info [prefabs] prefabs.installed {}",
+    "frame info [capture] capture_rail.status_received {\"open\":0}",
+    "frame info [studio-inspector] hidden {\"reason\":\"playback\"}",
+    "frame info [scène] scene.enabled Object",
+    "frame info [barehands] profil de calibration relu aucune mesure",
+    "frame info [scène] scene.role Object",
+    "frame info [scène] scene.loop_started Object",
+    "frame info [scène] scene.snapshot_loaded Object",
+    "frame info [scène] scene.prefab_mounted Object",
+    "frame info [scène] scene.resolver_committed Object",
+    "frame info [remotion.stage.ready] Object",
+    "frame warning Note: Some companies are required to obtain a license to use Remotion. See: https://remotion.dev/license\nPass the `acknowledgeRemotionLicense` prop to `<Player />` function to make this message disappear.",
+    "frame info [studio] studio.stage_ready {\"object_id\":\"studio-stage-c9e3e526af47\"}",
+    "frame info [studio-reload] mount_reported {\"object_id\":\"studio-stage-c9e3e526af47\",\"prefab\":\"presentation-studio.p000000000001.s000000000001@1\",\"outcome\":\"mounted\",\"reason\":null,\"matched\":false,\"attempt\":1}",
+    "frame info [scène] scene.prefab_mounted Object",
+    "frame info [remotion.stage.ready] Object",
+    "frame warning Note: Some companies are required to obtain a license to use Remotion. See: https://remotion.dev/license\nPass the `acknowledgeRemotionLicense` prop to `<Player />` function to make this message disappear.",
+    "frame warning [scène] scene.prefab_swapped Object",
+    "frame info [studio-reload] mount_reported {\"object_id\":\"studio-stage-c9e3e526af47\",\"prefab\":\"presentation-studio.p000000000001.s000000000002@1\",\"outcome\":\"mounted\",\"reason\":null,\"matched\":false,\"attempt\":1}",
+    "frame info [scène] scene.prefab_mounted Object",
+    "frame info [remotion.stage.ready] Object",
+    "frame warning Note: Some companies are required to obtain a license to use Remotion. See: https://remotion.dev/license\nPass the `acknowledgeRemotionLicense` prop to `<Player />` function to make this message disappear.",
+    "frame warning [scène] scene.prefab_swapped Object",
+    "frame info [studio-reload] mount_reported {\"object_id\":\"studio-stage-c9e3e526af47\",\"prefab\":\"presentation-studio.p000000000001.s000000000001@1\",\"outcome\":\"mounted\",\"reason\":null,\"matched\":false,\"attempt\":1}",
+    "frame info [fullscreen] fullscreen.state_changed {\"from\":\"exited\",\"to\":\"entered\",\"event\":\"browser_entered\"}",
+    "frame info [fullscreen] fullscreen.entered {\"id\":null,\"object_id\":\"studio-stage-c9e3e526af47\",\"keys\":\"host\",\"display_selection\":\"not_requested\"}",
+    "frame info [studio-inspector] hidden {\"reason\":\"fullscreen\"}",
+    "frame info [fullscreen] fullscreen.state_changed {\"from\":\"entered\",\"to\":\"exited\",\"event\":\"browser_exited\"}",
+    "frame info [fullscreen] fullscreen.exited {\"object_id\":\"studio-stage-c9e3e526af47\"}",
+    "frame info [studio-inspector] hidden {\"reason\":\"playback\"}"
+  ],
+  "errors": [],
+  "journal": [
+    "background.store_loaded",
+    "barehands.mcp_unconfigured",
+    "core.artifact.recovery",
+    "core.board.default_created",
+    "core.board.interaction_mode.restore_skipped",
+    "core.capture.recovery",
+    "core.context.workspace_ready",
+    "core.conversation_events.emitter_started",
+    "core.conversation_events.user_backfill",
+    "core.prefab.catalog_loaded",
+    "core.prefab.saved",
+    "core.presentation_studio.art_direction_resolved",
+    "core.presentation_studio.created",
+    "core.presentation_studio.edit_committed",
+    "core.presentation_studio.engine_resolved",
+    "core.presentation_studio.mount_reported",
+    "core.presentation_studio.pins_ready",
+    "core.presentation_studio.playback_edit",
+    "core.presentation_studio.playback_follower_absent",
+    "core.presentation_studio.playback_plan_refreshed",
+    "core.presentation_studio.playback_reclaimed",
+    "core.presentation_studio.playback_started",
+    "core.presentation_studio.playback_transition",
+    "core.presentation_studio.presenter_attached",
+    "core.presentation_studio.presenter_resumed",
+    "core.presentation_studio.recovered",
+    "core.presentation_studio.saved",
+    "core.presentation_studio.scenes_checked",
+    "core.presentation_studio.score_loaded",
+    "core.presentation_studio.stage_shown",
+    "core.presentation_studio.started",
+    "core.remotion_player.described",
+    "core.scene.loaded",
+    "core.scene.projection_reconciled",
+    "core.scene.restart_marked",
+    "core.session.opened",
+    "core.transcript.recovery",
+    "fullscreen.state_changed",
+    "interaction.mode.applied",
+    "local_capability.reconcile",
+    "local_capability.service.reconciled",
+    "mcp.plugins.started",
+    "presentation_studio.request.relayed",
+    "remotion.compile.done",
+    "remotion.compile.reused",
+    "remotion.sandbox.listening",
+    "remotion.stage.ready",
+    "scene.display_mcp_unconfigured"
+  ]
+}

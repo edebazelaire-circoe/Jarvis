@@ -1,0 +1,869 @@
+{
+ "label": "studio-early",
+ "command": [
+  "python.exe",
+  "scripts/remotion_studio_harness.py",
+  "--work-dir",
+  "jrs22s",
+  "--evidence",
+  "tasks/jarvis-remotion-presentation-integration/slices/22-end-to-end-release/evidence/real-studio.json",
+  "--part",
+  "early"
+ ],
+ "exit_code": 0,
+ "seconds": 286.0,
+ "interval_s": 3.0,
+ "sampled": 79,
+ "peak_working_set_mb": 2242.8,
+ "peak_processes": 31,
+ "process_names_seen": [
+  "chrome.exe",
+  "conhost.exe",
+  "esbuild.exe",
+  "node.exe",
+  "powershell.exe",
+  "python.exe",
+  "taskkill.exe",
+  "updater.exe"
+ ],
+ "samples": [
+  {
+   "t": 0.6,
+   "processes": 1,
+   "working_set_mb": 33.4,
+   "by_name": {
+    "python.exe": 1
+   }
+  },
+  {
+   "t": 4.2,
+   "processes": 1,
+   "working_set_mb": 47.5,
+   "by_name": {
+    "python.exe": 1
+   }
+  },
+  {
+   "t": 8.0,
+   "processes": 1,
+   "working_set_mb": 48.7,
+   "by_name": {
+    "python.exe": 1
+   }
+  },
+  {
+   "t": 11.5,
+   "processes": 4,
+   "working_set_mb": 119.5,
+   "by_name": {
+    "conhost.exe": 1,
+    "python.exe": 3
+   }
+  },
+  {
+   "t": 15.1,
+   "processes": 5,
+   "working_set_mb": 267.2,
+   "by_name": {
+    "conhost.exe": 1,
+    "powershell.exe": 1,
+    "python.exe": 3
+   }
+  },
+  {
+   "t": 18.7,
+   "processes": 6,
+   "working_set_mb": 265.6,
+   "by_name": {
+    "conhost.exe": 2,
+    "node.exe": 1,
+    "python.exe": 3
+   }
+  },
+  {
+   "t": 22.3,
+   "processes": 6,
+   "working_set_mb": 276.5,
+   "by_name": {
+    "conhost.exe": 2,
+    "node.exe": 1,
+    "python.exe": 3
+   }
+  },
+  {
+   "t": 26.0,
+   "processes": 6,
+   "working_set_mb": 478.9,
+   "by_name": {
+    "conhost.exe": 2,
+    "node.exe": 1,
+    "python.exe": 3
+   }
+  },
+  {
+   "t": 30.2,
+   "processes": 6,
+   "working_set_mb": 496.8,
+   "by_name": {
+    "conhost.exe": 2,
+    "node.exe": 1,
+    "python.exe": 3
+   }
+  },
+  {
+   "t": 33.7,
+   "processes": 6,
+   "working_set_mb": 497.9,
+   "by_name": {
+    "conhost.exe": 2,
+    "node.exe": 1,
+    "python.exe": 3
+   }
+  },
+  {
+   "t": 37.5,
+   "processes": 6,
+   "working_set_mb": 345.9,
+   "by_name": {
+    "conhost.exe": 2,
+    "node.exe": 1,
+    "python.exe": 3
+   }
+  },
+  {
+   "t": 41.1,
+   "processes": 6,
+   "working_set_mb": 339.8,
+   "by_name": {
+    "conhost.exe": 2,
+    "node.exe": 1,
+    "python.exe": 3
+   }
+  },
+  {
+   "t": 44.7,
+   "processes": 4,
+   "working_set_mb": 191.0,
+   "by_name": {
+    "conhost.exe": 1,
+    "python.exe": 3
+   }
+  },
+  {
+   "t": 48.2,
+   "processes": 7,
+   "working_set_mb": 305.0,
+   "by_name": {
+    "conhost.exe": 2,
+    "node.exe": 1,
+    "powershell.exe": 1,
+    "python.exe": 3
+   }
+  },
+  {
+   "t": 51.8,
+   "processes": 8,
+   "working_set_mb": 343.6,
+   "by_name": {
+    "conhost.exe": 3,
+    "node.exe": 2,
+    "python.exe": 3
+   }
+  },
+  {
+   "t": 55.3,
+   "processes": 8,
+   "working_set_mb": 358.0,
+   "by_name": {
+    "conhost.exe": 3,
+    "node.exe": 2,
+    "python.exe": 3
+   }
+  },
+  {
+   "t": 58.9,
+   "processes": 6,
+   "working_set_mb": 276.1,
+   "by_name": {
+    "conhost.exe": 2,
+    "node.exe": 1,
+    "python.exe": 3
+   }
+  },
+  {
+   "t": 62.5,
+   "processes": 6,
+   "working_set_mb": 293.4,
+   "by_name": {
+    "conhost.exe": 2,
+    "node.exe": 1,
+    "python.exe": 3
+   }
+  },
+  {
+   "t": 66.0,
+   "processes": 6,
+   "working_set_mb": 312.5,
+   "by_name": {
+    "conhost.exe": 2,
+    "node.exe": 1,
+    "python.exe": 3
+   }
+  },
+  {
+   "t": 69.6,
+   "processes": 6,
+   "working_set_mb": 321.4,
+   "by_name": {
+    "conhost.exe": 2,
+    "node.exe": 1,
+    "python.exe": 3
+   }
+  },
+  {
+   "t": 73.1,
+   "processes": 6,
+   "working_set_mb": 329.7,
+   "by_name": {
+    "conhost.exe": 2,
+    "node.exe": 1,
+    "python.exe": 3
+   }
+  },
+  {
+   "t": 76.7,
+   "processes": 6,
+   "working_set_mb": 336.2,
+   "by_name": {
+    "conhost.exe": 2,
+    "node.exe": 1,
+    "python.exe": 3
+   }
+  },
+  {
+   "t": 80.3,
+   "processes": 6,
+   "working_set_mb": 338.1,
+   "by_name": {
+    "conhost.exe": 2,
+    "node.exe": 1,
+    "python.exe": 3
+   }
+  },
+  {
+   "t": 83.8,
+   "processes": 6,
+   "working_set_mb": 339.7,
+   "by_name": {
+    "conhost.exe": 2,
+    "node.exe": 1,
+    "python.exe": 3
+   }
+  },
+  {
+   "t": 87.3,
+   "processes": 6,
+   "working_set_mb": 346.2,
+   "by_name": {
+    "conhost.exe": 2,
+    "node.exe": 1,
+    "python.exe": 3
+   }
+  },
+  {
+   "t": 90.9,
+   "processes": 6,
+   "working_set_mb": 351.9,
+   "by_name": {
+    "conhost.exe": 2,
+    "node.exe": 1,
+    "python.exe": 3
+   }
+  },
+  {
+   "t": 94.5,
+   "processes": 7,
+   "working_set_mb": 464.5,
+   "by_name": {
+    "conhost.exe": 2,
+    "esbuild.exe": 1,
+    "node.exe": 1,
+    "python.exe": 3
+   }
+  },
+  {
+   "t": 98.0,
+   "processes": 8,
+   "working_set_mb": 883.2,
+   "by_name": {
+    "conhost.exe": 2,
+    "esbuild.exe": 1,
+    "node.exe": 1,
+    "powershell.exe": 1,
+    "python.exe": 3
+   }
+  },
+  {
+   "t": 101.6,
+   "processes": 10,
+   "working_set_mb": 1096.9,
+   "by_name": {
+    "conhost.exe": 3,
+    "esbuild.exe": 1,
+    "node.exe": 1,
+    "python.exe": 5
+   }
+  },
+  {
+   "t": 105.3,
+   "processes": 20,
+   "working_set_mb": 1636.7,
+   "by_name": {
+    "chrome.exe": 10,
+    "conhost.exe": 3,
+    "esbuild.exe": 1,
+    "node.exe": 1,
+    "python.exe": 5
+   }
+  },
+  {
+   "t": 108.9,
+   "processes": 25,
+   "working_set_mb": 1906.0,
+   "by_name": {
+    "chrome.exe": 15,
+    "conhost.exe": 3,
+    "esbuild.exe": 1,
+    "node.exe": 1,
+    "python.exe": 5
+   }
+  },
+  {
+   "t": 112.4,
+   "processes": 20,
+   "working_set_mb": 1100.2,
+   "by_name": {
+    "chrome.exe": 11,
+    "conhost.exe": 3,
+    "node.exe": 1,
+    "python.exe": 5
+   }
+  },
+  {
+   "t": 116.1,
+   "processes": 21,
+   "working_set_mb": 1464.7,
+   "by_name": {
+    "chrome.exe": 11,
+    "conhost.exe": 3,
+    "esbuild.exe": 1,
+    "node.exe": 1,
+    "python.exe": 5
+   }
+  },
+  {
+   "t": 119.7,
+   "processes": 22,
+   "working_set_mb": 1635.4,
+   "by_name": {
+    "chrome.exe": 11,
+    "conhost.exe": 3,
+    "esbuild.exe": 1,
+    "node.exe": 1,
+    "powershell.exe": 1,
+    "python.exe": 5
+   }
+  },
+  {
+   "t": 123.3,
+   "processes": 19,
+   "working_set_mb": 1070.3,
+   "by_name": {
+    "chrome.exe": 10,
+    "conhost.exe": 3,
+    "node.exe": 1,
+    "python.exe": 5
+   }
+  },
+  {
+   "t": 127.0,
+   "processes": 24,
+   "working_set_mb": 1502.5,
+   "by_name": {
+    "chrome.exe": 10,
+    "conhost.exe": 3,
+    "esbuild.exe": 1,
+    "node.exe": 1,
+    "python.exe": 5,
+    "updater.exe": 4
+   }
+  },
+  {
+   "t": 130.6,
+   "processes": 17,
+   "working_set_mb": 985.7,
+   "by_name": {
+    "chrome.exe": 10,
+    "conhost.exe": 2,
+    "python.exe": 5
+   }
+  },
+  {
+   "t": 134.2,
+   "processes": 27,
+   "working_set_mb": 1528.7,
+   "by_name": {
+    "chrome.exe": 20,
+    "conhost.exe": 2,
+    "python.exe": 5
+   }
+  },
+  {
+   "t": 137.8,
+   "processes": 31,
+   "working_set_mb": 1623.9,
+   "by_name": {
+    "chrome.exe": 24,
+    "conhost.exe": 2,
+    "python.exe": 5
+   }
+  },
+  {
+   "t": 141.4,
+   "processes": 26,
+   "working_set_mb": 1482.6,
+   "by_name": {
+    "chrome.exe": 19,
+    "conhost.exe": 2,
+    "python.exe": 5
+   }
+  },
+  {
+   "t": 145.2,
+   "processes": 30,
+   "working_set_mb": 1559.2,
+   "by_name": {
+    "chrome.exe": 23,
+    "conhost.exe": 2,
+    "python.exe": 5
+   }
+  },
+  {
+   "t": 148.8,
+   "processes": 25,
+   "working_set_mb": 1439.9,
+   "by_name": {
+    "chrome.exe": 18,
+    "conhost.exe": 2,
+    "python.exe": 5
+   }
+  },
+  {
+   "t": 152.5,
+   "processes": 25,
+   "working_set_mb": 1442.2,
+   "by_name": {
+    "chrome.exe": 18,
+    "conhost.exe": 2,
+    "python.exe": 5
+   }
+  },
+  {
+   "t": 156.1,
+   "processes": 29,
+   "working_set_mb": 1506.2,
+   "by_name": {
+    "chrome.exe": 18,
+    "conhost.exe": 2,
+    "python.exe": 5,
+    "updater.exe": 4
+   }
+  },
+  {
+   "t": 159.7,
+   "processes": 25,
+   "working_set_mb": 1443.8,
+   "by_name": {
+    "chrome.exe": 18,
+    "conhost.exe": 2,
+    "python.exe": 5
+   }
+  },
+  {
+   "t": 163.4,
+   "processes": 25,
+   "working_set_mb": 1437.8,
+   "by_name": {
+    "chrome.exe": 18,
+    "conhost.exe": 2,
+    "python.exe": 5
+   }
+  },
+  {
+   "t": 167.0,
+   "processes": 24,
+   "working_set_mb": 1377.7,
+   "by_name": {
+    "chrome.exe": 17,
+    "conhost.exe": 2,
+    "python.exe": 5
+   }
+  },
+  {
+   "t": 170.6,
+   "processes": 24,
+   "working_set_mb": 1378.1,
+   "by_name": {
+    "chrome.exe": 17,
+    "conhost.exe": 2,
+    "python.exe": 5
+   }
+  },
+  {
+   "t": 174.2,
+   "processes": 24,
+   "working_set_mb": 1378.3,
+   "by_name": {
+    "chrome.exe": 17,
+    "conhost.exe": 2,
+    "python.exe": 5
+   }
+  },
+  {
+   "t": 177.8,
+   "processes": 24,
+   "working_set_mb": 1379.1,
+   "by_name": {
+    "chrome.exe": 17,
+    "conhost.exe": 2,
+    "python.exe": 5
+   }
+  },
+  {
+   "t": 181.4,
+   "processes": 24,
+   "working_set_mb": 1380.8,
+   "by_name": {
+    "chrome.exe": 17,
+    "conhost.exe": 2,
+    "python.exe": 5
+   }
+  },
+  {
+   "t": 185.0,
+   "processes": 24,
+   "working_set_mb": 1377.2,
+   "by_name": {
+    "chrome.exe": 17,
+    "conhost.exe": 2,
+    "python.exe": 5
+   }
+  },
+  {
+   "t": 188.6,
+   "processes": 24,
+   "working_set_mb": 1378.7,
+   "by_name": {
+    "chrome.exe": 17,
+    "conhost.exe": 2,
+    "python.exe": 5
+   }
+  },
+  {
+   "t": 192.2,
+   "processes": 24,
+   "working_set_mb": 1374.7,
+   "by_name": {
+    "chrome.exe": 17,
+    "conhost.exe": 2,
+    "python.exe": 5
+   }
+  },
+  {
+   "t": 195.9,
+   "processes": 24,
+   "working_set_mb": 1463.0,
+   "by_name": {
+    "chrome.exe": 17,
+    "conhost.exe": 2,
+    "python.exe": 5
+   }
+  },
+  {
+   "t": 199.6,
+   "processes": 24,
+   "working_set_mb": 1468.7,
+   "by_name": {
+    "chrome.exe": 17,
+    "conhost.exe": 2,
+    "python.exe": 5
+   }
+  },
+  {
+   "t": 203.2,
+   "processes": 26,
+   "working_set_mb": 1588.9,
+   "by_name": {
+    "chrome.exe": 17,
+    "conhost.exe": 3,
+    "node.exe": 1,
+    "python.exe": 5
+   }
+  },
+  {
+   "t": 206.8,
+   "processes": 27,
+   "working_set_mb": 1908.8,
+   "by_name": {
+    "chrome.exe": 17,
+    "conhost.exe": 3,
+    "esbuild.exe": 1,
+    "node.exe": 1,
+    "python.exe": 5
+   }
+  },
+  {
+   "t": 210.5,
+   "processes": 27,
+   "working_set_mb": 2077.5,
+   "by_name": {
+    "chrome.exe": 17,
+    "conhost.exe": 3,
+    "esbuild.exe": 1,
+    "node.exe": 1,
+    "python.exe": 5
+   }
+  },
+  {
+   "t": 214.2,
+   "processes": 27,
+   "working_set_mb": 2199.7,
+   "by_name": {
+    "chrome.exe": 17,
+    "conhost.exe": 3,
+    "esbuild.exe": 1,
+    "node.exe": 1,
+    "python.exe": 5
+   }
+  },
+  {
+   "t": 217.8,
+   "processes": 27,
+   "working_set_mb": 2220.8,
+   "by_name": {
+    "chrome.exe": 17,
+    "conhost.exe": 3,
+    "esbuild.exe": 1,
+    "node.exe": 1,
+    "python.exe": 5
+   }
+  },
+  {
+   "t": 221.5,
+   "processes": 27,
+   "working_set_mb": 1966.5,
+   "by_name": {
+    "chrome.exe": 17,
+    "conhost.exe": 3,
+    "esbuild.exe": 1,
+    "node.exe": 1,
+    "python.exe": 5
+   }
+  },
+  {
+   "t": 225.1,
+   "processes": 27,
+   "working_set_mb": 1980.5,
+   "by_name": {
+    "chrome.exe": 17,
+    "conhost.exe": 3,
+    "esbuild.exe": 1,
+    "node.exe": 1,
+    "python.exe": 5
+   }
+  },
+  {
+   "t": 228.8,
+   "processes": 27,
+   "working_set_mb": 1969.4,
+   "by_name": {
+    "chrome.exe": 17,
+    "conhost.exe": 3,
+    "esbuild.exe": 1,
+    "node.exe": 1,
+    "python.exe": 5
+   }
+  },
+  {
+   "t": 232.4,
+   "processes": 27,
+   "working_set_mb": 1983.3,
+   "by_name": {
+    "chrome.exe": 17,
+    "conhost.exe": 3,
+    "esbuild.exe": 1,
+    "node.exe": 1,
+    "python.exe": 5
+   }
+  },
+  {
+   "t": 236.1,
+   "processes": 27,
+   "working_set_mb": 1985.6,
+   "by_name": {
+    "chrome.exe": 17,
+    "conhost.exe": 3,
+    "esbuild.exe": 1,
+    "node.exe": 1,
+    "python.exe": 5
+   }
+  },
+  {
+   "t": 239.8,
+   "processes": 27,
+   "working_set_mb": 1963.6,
+   "by_name": {
+    "chrome.exe": 17,
+    "conhost.exe": 3,
+    "esbuild.exe": 1,
+    "node.exe": 1,
+    "python.exe": 5
+   }
+  },
+  {
+   "t": 243.4,
+   "processes": 29,
+   "working_set_mb": 2129.8,
+   "by_name": {
+    "chrome.exe": 19,
+    "conhost.exe": 3,
+    "esbuild.exe": 1,
+    "node.exe": 1,
+    "python.exe": 5
+   }
+  },
+  {
+   "t": 246.9,
+   "processes": 29,
+   "working_set_mb": 2207.6,
+   "by_name": {
+    "chrome.exe": 19,
+    "conhost.exe": 3,
+    "esbuild.exe": 1,
+    "node.exe": 1,
+    "python.exe": 5
+   }
+  },
+  {
+   "t": 250.7,
+   "processes": 26,
+   "working_set_mb": 1675.9,
+   "by_name": {
+    "chrome.exe": 19,
+    "conhost.exe": 2,
+    "python.exe": 5
+   }
+  },
+  {
+   "t": 254.3,
+   "processes": 26,
+   "working_set_mb": 1674.3,
+   "by_name": {
+    "chrome.exe": 19,
+    "conhost.exe": 2,
+    "python.exe": 5
+   }
+  },
+  {
+   "t": 257.8,
+   "processes": 26,
+   "working_set_mb": 1667.2,
+   "by_name": {
+    "chrome.exe": 19,
+    "conhost.exe": 2,
+    "python.exe": 5
+   }
+  },
+  {
+   "t": 261.5,
+   "processes": 28,
+   "working_set_mb": 1779.8,
+   "by_name": {
+    "chrome.exe": 19,
+    "conhost.exe": 3,
+    "node.exe": 1,
+    "python.exe": 5
+   }
+  },
+  {
+   "t": 265.3,
+   "processes": 29,
+   "working_set_mb": 2111.2,
+   "by_name": {
+    "chrome.exe": 19,
+    "conhost.exe": 3,
+    "esbuild.exe": 1,
+    "node.exe": 1,
+    "python.exe": 5
+   }
+  },
+  {
+   "t": 269.1,
+   "processes": 29,
+   "working_set_mb": 2125.2,
+   "by_name": {
+    "chrome.exe": 19,
+    "conhost.exe": 3,
+    "esbuild.exe": 1,
+    "node.exe": 1,
+    "python.exe": 5
+   }
+  },
+  {
+   "t": 272.9,
+   "processes": 29,
+   "working_set_mb": 2242.8,
+   "by_name": {
+    "chrome.exe": 19,
+    "conhost.exe": 3,
+    "esbuild.exe": 1,
+    "node.exe": 1,
+    "python.exe": 5
+   }
+  },
+  {
+   "t": 276.6,
+   "processes": 26,
+   "working_set_mb": 1665.1,
+   "by_name": {
+    "chrome.exe": 19,
+    "conhost.exe": 2,
+    "python.exe": 5
+   }
+  },
+  {
+   "t": 280.2,
+   "processes": 26,
+   "working_set_mb": 1672.6,
+   "by_name": {
+    "chrome.exe": 19,
+    "conhost.exe": 2,
+    "python.exe": 5
+   }
+  },
+  {
+   "t": 283.7,
+   "processes": 17,
+   "working_set_mb": 955.7,
+   "by_name": {
+    "chrome.exe": 9,
+    "conhost.exe": 2,
+    "python.exe": 5,
+    "taskkill.exe": 1
+   }
+  }
+ ],
+ "when": "2026-10-10T08:15:40+00:00",
+ "platform": "win32",
+ "note": "working set counts shared pages once per process: an upper bound of the footprint, not private memory; the wrapper process and PowerShell sampler are not in the tree"
+}

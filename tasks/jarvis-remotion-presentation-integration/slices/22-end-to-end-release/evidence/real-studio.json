@@ -1,0 +1,296 @@
+{
+  "verdict": "PASSED",
+  "notes": {
+    "started": "2026-10-10T08:10:55+00:00",
+    "platform": "Windows-11-10.0.26200-SP0",
+    "free_gb": 14.2,
+    "python": "3.14.6",
+    "node": "v24.18.0",
+    "chrome": "154.0.8037.99",
+    "head": "13515334",
+    "dirty": true,
+    "core": "127.77.0.9:55217 (isolated), data root C:\\Users\\Clarice\\AppData\\Local\\Temp\\jrs22s\\root",
+    "studio_processes": [
+      {
+        "pid": 22692,
+        "ppid": 21904
+      }
+    ],
+    "leftover_processes_killed": 0,
+    "final_orphans_killed_by_harness": []
+  },
+  "checks": {
+    "0.core_start_launches_no_studio": {
+      "ok": true,
+      "detail": ""
+    },
+    "1.real_install_ready": {
+      "ok": true,
+      "detail": {
+        "status": "ready",
+        "seconds": 32.4,
+        "error": null
+      }
+    },
+    "2.open_without_the_acknowledgement_is_a_400_and_starts_nothing": {
+      "ok": true,
+      "detail": "remotion_studio_ack_required"
+    },
+    "2.unknown_scene_refused_nothing_started": {
+      "ok": true,
+      "detail": "remotion_studio_source_unavailable"
+    },
+    "3.open_ready": {
+      "ok": true,
+      "detail": {
+        "seconds": 48.7,
+        "url": "http://127.0.0.1:57201/",
+        "error": null,
+        "log": []
+      }
+    },
+    "3.studio_processes_found": {
+      "ok": true,
+      "detail": [
+        22692
+      ]
+    },
+    "4.listens_on_loopback_only": {
+      "ok": true,
+      "detail": [
+        "127.0.0.1:57201",
+        "127.0.0.1:62186"
+      ]
+    },
+    "4.lan_address_refuses_the_studio_port": {
+      "ok": true,
+      "detail": {
+        "lan": "192.168.0.185",
+        "refused": true
+      }
+    },
+    "4.csp_on_studio_responses": {
+      "ok": true,
+      "detail": ""
+    },
+    "5.chrome_shows_scene_A1": {
+      "ok": true,
+      "detail": "Bonjour A1"
+    },
+    "5.hmr_updates_open_page_without_reload": {
+      "ok": true,
+      "detail": {
+        "sync_call_s": 0.15,
+        "visible_after_s": 0.94
+      }
+    },
+    "5.sync_view_counts_the_refresh": {
+      "ok": true,
+      "detail": {
+        "status": 200,
+        "body": "ok"
+      }
+    },
+    "5.page_csp_blocks_foreign_fetch_and_image": {
+      "ok": true,
+      "detail": {
+        "fetch": "blocked",
+        "violations": [
+          "connect-src https://example.com/x",
+          "img-src http://192.0.2.1/p.png"
+        ]
+      }
+    },
+    "5b.studio_page_cannot_reach_the_control_center_or_another_local_port": {
+      "ok": true,
+      "detail": {
+        "probes": {
+          "cc_post_nocors": "blocked",
+          "cc_post_cors": "blocked",
+          "cc_get_nocors": "blocked",
+          "dev_post_nocors": "blocked",
+          "cc_ws": "blocked",
+          "form": "submitted"
+        },
+        "dummy_hits": 0,
+        "csp_violations": [
+          "connect-src http://127.0.0.1:61957/api/local-capabilities/remotion/studio/close",
+          "connect-src http://127.0.0.1:61957/api/live/stop",
+          "connect-src http://127.0.0.1:61957/api/status",
+          "connect-src http://127.0.0.1:55674/dev-reload",
+          "connect-src ws://127.0.0.1:61957/"
+        ]
+      }
+    },
+    "5b.control_center_refuses_a_studio_origin_even_if_the_csp_were_bypassed": {
+      "ok": true,
+      "detail": [
+        403,
+        403,
+        403,
+        403
+      ]
+    },
+    "5b.studio_refuses_foreign_origin_posts_and_foreign_hosts": {
+      "ok": true,
+      "detail": {
+        "foreign_origin_post": 403,
+        "rebinding_host": 403
+      }
+    },
+    "6.one_studio_per_profile_scene_switch_in_place": {
+      "ok": true,
+      "detail": {
+        "reused": true,
+        "pids_unchanged": true,
+        "shows": "yes"
+      }
+    },
+    "7.work_copy_is_read_only": {
+      "ok": true,
+      "detail": ""
+    },
+    "7.outside_edit_is_reported": {
+      "ok": true,
+      "detail": {
+        "modified_files": [
+          "src/Scene.tsx"
+        ],
+        "edits_saved": 0
+      }
+    },
+    "7.outside_edit_saved_aside_before_refresh": {
+      "ok": true,
+      "detail": ""
+    },
+    "7.prefab_library_never_receives_the_studio_copy": {
+      "ok": true,
+      "detail": ""
+    },
+    "8.restart_replaces_the_whole_tree": {
+      "ok": true,
+      "detail": {
+        "old_gone": true,
+        "new": [
+          12248
+        ]
+      }
+    },
+    "8.external_kill_is_seen_as_process_exited": {
+      "ok": true,
+      "detail": "remotion_studio_process_exited"
+    },
+    "8.open_recovers_from_failed": {
+      "ok": true,
+      "detail": "ready"
+    },
+    "9.close_leaves_no_node_process_and_no_port": {
+      "ok": true,
+      "detail": {
+        "stop_reason": "user"
+      }
+    },
+    "10.ui_card_shows_stopped_studio_and_the_published_scenes": {
+      "ok": true,
+      "detail": {
+        "scene_options": 3
+      }
+    },
+    "10.ui_card_never_started_the_studio_by_itself": {
+      "ok": true,
+      "detail": ""
+    },
+    "10.ui_agent_authored_scene_gets_the_strong_confirmation_and_cancel_launches_nothing": {
+      "ok": true,
+      "detail": {
+        "title": "Ouvrir une scène que vous n’avez pas écrite ?",
+        "body": "Sans bac à sable : la scène s’exécute dans votre navigateur avec les droits d’une page web, pas dans le lecteur isolé de Jarvis.Même origine que l’API du Studio : elle peut appeler cette API (lecture de sa copie de travail).Données : sa source et ses paramètres peuvent sortir de ce poste (le Studio bloque les connexions, mais pas tous les canaux d’un navigateur).Version : Scène C1 · v1Provenance : créée sur ce poste · auteur : un agent de JarvisAttention : cette version n’a pas été écrite par vous (agent, système ou import) et n’a peut-être pas été relue. Ne l’ouvrez que si vous lui faites confiance.",
+        "go": "Ouvrir le Studio sur cette scène",
+        "danger": true
+      }
+    },
+    "10.ui_own_scene_confirmation_names_the_risk_and_the_provenance": {
+      "ok": true,
+      "detail": {
+        "title": "Ouvrir cette scène hors du bac à sable ?",
+        "body": "Sans bac à sable : la scène s’exécute dans votre navigateur avec les droits d’une page web, pas dans le lecteur isolé de Jarvis.Même origine que l’API du Studio : elle peut appeler cette API (lecture de sa copie de travail).Données : sa source et ses paramètres peuvent sortir de ce poste (le Studio bloque les connexions, mais pas tous les canaux d’un navigateur).Version : Scène A2 · v2Provenance : nouvelle version d’une scène · auteur : vous",
+        "go": "Ouvrir le Studio sur cette scène",
+        "danger": false
+      }
+    },
+    "10.ui_shows_progress_elapsed_time_and_deadline_while_starting": {
+      "ok": true,
+      "detail": {
+        "samples": 9,
+        "first": [
+          {
+            "chip": "Démarrage…",
+            "act": "Démarrage du Studio… 2 s écoulées, 2 min au plus.",
+            "busy": "Ouverture du Studio…",
+            "open": true
+          }
+        ],
+        "last": {
+          "chip": "Prêt",
+          "act": "127.0.0.1:59643 · aucune fenêtre ouverte · arrêt automatique dans 59 s",
+          "busy": "",
+          "open": false
+        }
+      }
+    },
+    "10.ui_ready_state_links_the_loopback_studio": {
+      "ok": true,
+      "detail": {
+        "link": "http://127.0.0.1:59643/"
+      }
+    },
+    "10.ui_link_opens_the_studio_in_a_separate_window": {
+      "ok": true,
+      "detail": [
+        "http://127.0.0.1:59643/Scene",
+        "http://127.0.0.1:61957/"
+      ]
+    },
+    "10.ui_counters_tick_without_rebuilding_the_card_or_the_live_region": {
+      "ok": true,
+      "detail": {
+        "same_card": true,
+        "same_live": true,
+        "counter_moved": true
+      }
+    },
+    "10.ui_sync_button_refreshes_the_scene": {
+      "ok": true,
+      "detail": ""
+    },
+    "10.ui_failure_is_explained_with_its_code": {
+      "ok": true,
+      "detail": "Le processus du Studio a disparu (fenêtre fermée hors de Jarvis ou plantage). Rouvrez-le. remotion_studio_process_exited"
+    },
+    "10.ui_restart_then_close": {
+      "ok": true,
+      "detail": "Fermé à votre demande."
+    },
+    "10.ui_card_fits_a_phone_width": {
+      "ok": true,
+      "detail": {
+        "w": 346,
+        "right": 368,
+        "vw": 390,
+        "sw": 390
+      }
+    },
+    "10.ui_no_script_exception_and_no_remotion_console_error": {
+      "ok": true,
+      "detail": {
+        "exceptions": 0,
+        "console": []
+      }
+    },
+    "end.no_node_process_left_under_the_work_dir": {
+      "ok": true,
+      "detail": []
+    }
+  },
+  "finished": "2026-10-10T08:15:40+00:00"
+}
