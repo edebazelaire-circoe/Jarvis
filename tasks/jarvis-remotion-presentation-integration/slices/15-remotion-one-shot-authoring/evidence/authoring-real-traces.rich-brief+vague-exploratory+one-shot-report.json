@@ -1,7 +1,7 @@
 {
   "kind": "authoring real-model traces (Remotion scenes)",
   "model": "sonnet",
-  "planner_fingerprint": "e9661305d6a8834c47f9b8f4c0b30592b2f5d2d1df9b954d8e8cd98e5c51866f",
+  "planner_fingerprint": "1c3275b6255d913dc5955278d20596a2229f06fc805ec6011c56b3731ab4347a",
   "planner_id": "presentation_studio.authoring.planner",
   "prompt_program": "conversation_display_studio_session",
   "scenarios": [
@@ -88,7 +88,7 @@
                   {
                     "colour_literals": 0,
                     "duration_s": 10.0,
-                    "entry_lines": 17,
+                    "entry_lines": 20,
                     "hard_coded_words": 0,
                     "modules": 1,
                     "props_read": [
@@ -119,20 +119,20 @@
                   }
                 ],
                 "scene_titles": [
-                  "Ouverture du trimestre",
-                  "Chiffre d'affaires",
-                  "Marge et lancements",
-                  "Deux risques",
-                  "Décision attendue",
-                  "Clôture"
+                  "Résultats du troisième trimestre",
+                  "Chiffre d'affaires en hausse de 12 %",
+                  "Marge stable et trois lancements tenus",
+                  "Deux risques à surveiller",
+                  "Décision sur le budget de recrutement",
+                  "Questions et décision"
                 ],
                 "scene_words": [
-                  10,
-                  14,
-                  15,
-                  15,
                   11,
-                  8
+                  13,
+                  19,
+                  15,
+                  22,
+                  7
                 ],
                 "scenes": 6,
                 "score_items": 6,
@@ -148,14 +148,14 @@
       "metrics": {
         "archive_calls": 0,
         "compile_refusals": 0,
-        "cost_usd": 0.1292,
+        "cost_usd": 0.1897,
         "draft_calls": 1,
         "failure_codes_seen": [],
         "gate_rounds_until_delivered": 1,
         "question_budget": 3,
         "refused_rounds": 0,
         "scenes_containing_todo": 0,
-        "tool_calls": 3,
+        "tool_calls": 4,
         "tsx_codes_seen": [],
         "turns_with_a_question": 0
       },
@@ -166,8 +166,8 @@
           "calls": [
             {
               "arguments": {
-                "max_results": 5,
-                "query": "select:mcp__jarvis-presentation__presentation_inspect,mcp__jarvis-presentation__presentation_draft_assemble,mcp__jarvis-presentation__presentation_draft_check"
+                "max_results": 3,
+                "query": "select:Agent"
               },
               "is_error": false,
               "n": 1,
@@ -177,10 +177,21 @@
             },
             {
               "arguments": {
-                "target": "draft_guide"
+                "max_results": 3,
+                "query": "select:mcp__jarvis-presentation__presentation_inspect,mcp__jarvis-presentation__presentation_draft_assemble"
               },
               "is_error": false,
               "n": 2,
+              "speech": null,
+              "status": null,
+              "tool": "ToolSearch"
+            },
+            {
+              "arguments": {
+                "target": "draft_guide"
+              },
+              "is_error": false,
+              "n": 3,
               "speech": "silent",
               "status": null,
               "tool": "presentation_inspect"
@@ -193,12 +204,12 @@
                   "language": "fr",
                   "must_cover": [
                     "Chiffre d'affaires en hausse de 12 %",
-                    "Marge stable sur le trimestre",
+                    "Marge stable",
                     "Trois lancements tenus",
                     "Deux risques : fournisseur unique et support sous tension",
                     "Décision à prendre sur le budget de recrutement"
                   ],
-                  "purpose": "Présenter les résultats du T3 à la direction commerciale et obtenir une décision sur le budget de recrutement",
+                  "purpose": "Présenter les résultats du troisième trimestre et obtenir une décision sur le budget de recrutement",
                   "speech": "user",
                   "title": "<text>",
                   "tone": [
@@ -248,7 +259,7 @@
                         },
                         "sample": {
                           "data": {
-                            "subtitle": "Sous-titre"
+                            "subtitle": "Exemple"
                           },
                           "props": {
                             "headline": "Titre"
@@ -298,8 +309,8 @@
                         },
                         "sample": {
                           "data": {
-                            "caption": "Légende",
-                            "figure": "1"
+                            "caption": "Exemple",
+                            "figure": "+1 %"
                           },
                           "props": {
                             "headline": "Titre"
@@ -349,9 +360,7 @@
                         "sample": {
                           "data": {
                             "items": [
-                              "Premier point",
-                              "Deuxième point",
-                              "Troisième point"
+                              "Exemple"
                             ]
                           },
                           "props": {
@@ -364,21 +373,20 @@
                   ],
                   "scenes": [
                     {
-                      "anchors": [],
                       "controls": [
                         {
                           "bounds": {
-                            "max_length": 80
+                            "max_length": 60
                           },
                           "control_id": "headline",
                           "group": "content",
                           "label": "<text>",
-                          "meaning": "Le titre principal de la présentation",
+                          "meaning": "Le titre affiché en grand",
                           "path": "props.headline"
                         }
                       ],
                       "data": {
-                        "subtitle": "Direction commerciale : bilan, risques et une décision à prendre"
+                        "subtitle": "Point pour la direction commerciale : bilan, risques et décision attendue"
                       },
                       "key": "ouverture",
                       "prefab": {
@@ -391,11 +399,10 @@
                       "title": "<text>"
                     },
                     {
-                      "anchors": [],
                       "controls": [
                         {
                           "bounds": {
-                            "max_length": 80
+                            "max_length": 60
                           },
                           "control_id": "headline",
                           "group": "content",
@@ -405,10 +412,10 @@
                         }
                       ],
                       "data": {
-                        "caption": "Le chiffre d'affaires progresse de douze pour cent sur le troisième trimestre.",
+                        "caption": "Chiffre d'affaires en hausse de 12 % sur le troisième trimestre",
                         "figure": "+12 %"
                       },
-                      "key": "chiffre_affaires",
+                      "key": "chiffre",
                       "prefab": {
                         "bundle": "figure"
                       },
@@ -419,27 +426,26 @@
                       "title": "<text>"
                     },
                     {
-                      "anchors": [],
                       "controls": [
                         {
                           "bounds": {
-                            "max_length": 80
+                            "max_length": 60
                           },
                           "control_id": "headline",
                           "group": "content",
                           "label": "<text>",
-                          "meaning": "Le titre de la liste des acquis",
+                          "meaning": "Le titre de la liste du bilan",
                           "path": "props.headline"
                         }
                       ],
                       "data": {
                         "items": [
                           "Marge stable sur le trimestre",
-                          "Trois lancements tenus",
-                          "Une croissance obtenue sans dégrader la marge"
+                          "Trois lancements tenus conformément au plan",
+                          "Une croissance qui n'a pas dégradé la rentabilité"
                         ]
                       },
-                      "key": "marge_lancements",
+                      "key": "bilan",
                       "prefab": {
                         "bundle": "list"
                       },
@@ -450,11 +456,10 @@
                       "title": "<text>"
                     },
                     {
-                      "anchors": [],
                       "controls": [
                         {
                           "bounds": {
-                            "max_length": 80
+                            "max_length": 60
                           },
                           "control_id": "headline",
                           "group": "content",
@@ -465,7 +470,7 @@
                       ],
                       "data": {
                         "items": [
-                          "Fournisseur unique : une dépendance à réduire",
+                          "Fournisseur unique : une dépendance à surveiller",
                           "Support sous tension : une capacité à protéger"
                         ]
                       },
@@ -474,45 +479,46 @@
                         "bundle": "list"
                       },
                       "props": {
-                        "headline": "Deux risques à suivre"
+                        "headline": "Deux risques à surveiller"
                       },
                       "role": "body",
                       "title": "<text>"
                     },
                     {
-                      "anchors": [],
                       "controls": [
                         {
                           "bounds": {
-                            "max_length": 80
+                            "max_length": 60
                           },
                           "control_id": "headline",
                           "group": "content",
                           "label": "<text>",
-                          "meaning": "Le sujet de la décision à prendre",
+                          "meaning": "Le titre de la liste de décision",
                           "path": "props.headline"
                         }
                       ],
                       "data": {
-                        "caption": "Nous attendons votre arbitrage sur le budget de recrutement.",
-                        "figure": "1 décision"
+                        "items": [
+                          "Décision à prendre sur le budget de recrutement",
+                          "Arbitrage attendu de la direction commerciale",
+                          "Lien à discuter avec le support sous tension"
+                        ]
                       },
                       "key": "decision",
                       "prefab": {
-                        "bundle": "figure"
+                        "bundle": "list"
                       },
                       "props": {
-                        "headline": "Budget de recrutement"
+                        "headline": "Décision : budget de recrutement"
                       },
                       "role": "body",
                       "title": "<text>"
                     },
                     {
-                      "anchors": [],
                       "controls": [
                         {
                           "bounds": {
-                            "max_length": 80
+                            "max_length": 60
                           },
                           "control_id": "headline",
                           "group": "content",
@@ -522,14 +528,14 @@
                         }
                       ],
                       "data": {
-                        "subtitle": "Merci à la direction commerciale pour votre attention"
+                        "subtitle": "Décision attendue sur le budget de recrutement"
                       },
                       "key": "cloture",
                       "prefab": {
                         "bundle": "cover"
                       },
                       "props": {
-                        "headline": "Questions et échanges"
+                        "headline": "Merci, place aux questions"
                       },
                       "role": "closing",
                       "title": "<text>"
@@ -542,7 +548,7 @@
                           "armable": true,
                           "label": "<text>",
                           "phrases": [
-                            "commençons par le bilan du troisième trimestre"
+                            "commençons par le bilan du trimestre"
                           ]
                         },
                         "note": "<text>",
@@ -555,33 +561,33 @@
                           "armable": true,
                           "label": "<text>",
                           "phrases": [
-                            "le chiffre d'affaires progresse de douze pour cent"
+                            "le chiffre d'affaires progresse nettement"
                           ]
                         },
                         "note": "<text>",
                         "presenter": "user",
-                        "scene": "chiffre_affaires",
-                        "target_duration_ms": 55000
+                        "scene": "chiffre",
+                        "target_duration_ms": 50000
                       },
                       {
                         "cue": {
                           "armable": true,
                           "label": "<text>",
                           "phrases": [
-                            "la marge reste stable sur le trimestre"
+                            "côté marge et lancements"
                           ]
                         },
                         "note": "<text>",
                         "presenter": "user",
-                        "scene": "marge_lancements",
-                        "target_duration_ms": 55000
+                        "scene": "bilan",
+                        "target_duration_ms": 60000
                       },
                       {
                         "cue": {
                           "armable": true,
                           "label": "<text>",
                           "phrases": [
-                            "venons-en aux deux risques à surveiller"
+                            "venons-en aux deux risques"
                           ]
                         },
                         "note": "<text>",
@@ -594,7 +600,7 @@
                           "armable": true,
                           "label": "<text>",
                           "phrases": [
-                            "passons à la décision sur le recrutement"
+                            "il nous faut maintenant décider du recrutement"
                           ]
                         },
                         "note": "<text>",
@@ -607,7 +613,7 @@
                           "armable": true,
                           "label": "<text>",
                           "phrases": [
-                            "je vous laisse la parole pour vos questions"
+                            "j'ouvre maintenant les questions"
                           ]
                         },
                         "note": "<text>",
@@ -620,13 +626,13 @@
                 }
               },
               "is_error": false,
-              "n": 3,
+              "n": 4,
               "speech": "say",
               "status": "delivered",
               "tool": "presentation_draft_assemble"
             }
           ],
-          "cost_usd": 0.1291783,
+          "cost_usd": 0.1896623,
           "drafts": [
             {
               "failures": [],
@@ -638,7 +644,7 @@
                 "cues": 6,
                 "estimated_duration_s": 300,
                 "items": 6,
-                "max_scene_words": 22,
+                "max_scene_words": 32,
                 "remotion_bundles": 3,
                 "scenes": 6,
                 "target_duration_s": 300,
@@ -650,19 +656,19 @@
               "workflow": "directed"
             }
           ],
-          "duration_ms": 37928,
-          "final_answer": "La présentation est créée : 6 scènes pour 5 minutes, et le contrôle qualité est passé sans erreur ni avertissement. Elle suit cet ordre : ouverture, chiffre d'affaires à plus 12 %, marge stable et trois lancements tenus, les deux risques, la décision sur le budget de recrutement, puis les questions.\n\nC'est vous qui présentez, donc je reste silencieux. Chaque scène a une phrase de déclenchement que",
-          "final_answer_chars": 707,
+          "duration_ms": 39990,
+          "final_answer": "La présentation est créée : six scènes, cinq minutes, sans parole de ma part, c'est vous qui présentez. J'ai ajouté une phrase de déclenchement par scène pour vous suivre. Je n'ai pas pu confier le travail à un sous-agent, je l'ai donc fait moi-même.\n\nVoici l'enchaînement :\n1. Couverture.\n2. Le chiffre d'affaires, avec le « +12 % » en grand.\n3. La marge stable et les trois lancements tenus.\n4. Les",
+          "final_answer_chars": 834,
           "is_error": false,
           "question_marks_in_final_answer": 0,
-          "session_id": "8550a003-019e-407a-9cbe-816c86224881",
-          "spoken_blocks": 2,
-          "turns": 4,
+          "session_id": "848dc188-8c5a-4134-b1fd-6b3bad2efc13",
+          "spoken_blocks": 1,
+          "turns": 5,
           "usage": {
-            "cache_creation_input_tokens": 14732,
-            "cache_read_input_tokens": 77043,
-            "input_tokens": 8,
-            "output_tokens": 6253
+            "cache_creation_input_tokens": 29397,
+            "cache_read_input_tokens": 80343,
+            "input_tokens": 10,
+            "output_tokens": 6402
           },
           "user": "Prépare-moi une présentation de 6 scènes, 5 minutes, pour la direction commerciale, sur les résultats du troisième trimestre : chiffre d'affaires en hausse de 12 %, marge stable, trois lancements tenus, deux risques (fournisseur unique, support sous tension) et une décision à prendre sur le budget de recrutement. Ton sobre, en français. C'est moi qui présente, tu restes silencieux."
         }
@@ -735,14 +741,14 @@
                   }
                 ],
                 "scene_titles": [
-                  "Des repas frais, livrés à vélo",
-                  "Rapide et sans émission",
-                  "Rejoignez la tournée"
+                  "Des repas livrés à vélo",
+                  "Zéro émission, vraiment rapide",
+                  "Des restaurants partenaires"
                 ],
                 "scene_words": [
-                  14,
-                  14,
-                  13
+                  15,
+                  18,
+                  14
                 ],
                 "scenes": 3,
                 "score_items": 3,
@@ -809,14 +815,14 @@
                   }
                 ],
                 "scene_titles": [
-                  "Des repas frais, livrés à vélo",
-                  "Rapide et sans émission",
-                  "Rejoignez la tournée"
+                  "Des repas livrés à vélo",
+                  "Zéro émission, vraiment rapide",
+                  "Des restaurants partenaires"
                 ],
                 "scene_words": [
-                  14,
-                  14,
-                  13
+                  15,
+                  18,
+                  14
                 ],
                 "scenes": 3,
                 "score_items": 3,
@@ -883,14 +889,14 @@
                   }
                 ],
                 "scene_titles": [
-                  "Des repas frais, livrés à vélo",
-                  "Rapide et sans émission",
-                  "Rejoignez la tournée"
+                  "Des repas livrés à vélo",
+                  "Zéro émission, vraiment rapide",
+                  "Des restaurants partenaires"
                 ],
                 "scene_words": [
-                  14,
-                  14,
-                  13
+                  15,
+                  18,
+                  14
                 ],
                 "scenes": 3,
                 "score_items": 3,
@@ -957,14 +963,14 @@
                   }
                 ],
                 "scene_titles": [
-                  "Des repas frais, livrés à vélo",
-                  "Rapide et sans émission",
-                  "Rejoignez la tournée"
+                  "Des repas livrés à vélo",
+                  "Zéro émission, vraiment rapide",
+                  "Des restaurants partenaires"
                 ],
                 "scene_words": [
-                  14,
-                  14,
-                  13
+                  15,
+                  18,
+                  14
                 ],
                 "scenes": 3,
                 "score_items": 3,
@@ -1031,14 +1037,14 @@
                   }
                 ],
                 "scene_titles": [
-                  "Des repas frais, livrés à vélo",
-                  "Rapide et sans émission",
-                  "Rejoignez la tournée"
+                  "Des repas livrés à vélo",
+                  "Zéro émission, vraiment rapide",
+                  "Des restaurants partenaires"
                 ],
                 "scene_words": [
-                  14,
-                  14,
-                  13
+                  15,
+                  18,
+                  14
                 ],
                 "scenes": 3,
                 "score_items": 3,
@@ -1054,7 +1060,7 @@
       "metrics": {
         "archive_calls": 0,
         "compile_refusals": 0,
-        "cost_usd": 0.1792,
+        "cost_usd": 0.1856,
         "draft_calls": 1,
         "failure_codes_seen": [],
         "gate_rounds_until_delivered": 1,
@@ -1072,7 +1078,7 @@
           "calls": [
             {
               "arguments": {
-                "max_results": 3,
+                "max_results": 1,
                 "query": "select:Agent"
               },
               "is_error": false,
@@ -1082,21 +1088,21 @@
               "tool": "ToolSearch"
             }
           ],
-          "cost_usd": 0.020389400000000002,
+          "cost_usd": 0.0224111,
           "drafts": [],
-          "duration_ms": 8925,
-          "final_answer": "Je n'ai pas pu lancer de sous-agent de fond ici, donc je ne fabrique pas encore la présentation. Voici déjà cinq directions très différentes, à l'oral.\n\nUn : Néon nocturne. Fond noir, traînées lumineuses de vélo dans la ville, couleurs électriques. Un style énergique et urbain, pour une start-up qui joue la vitesse.\n\nDeux : Papier et marché. Tons crème, textures de papier, illustrations dessinées ",
-          "final_answer_chars": 1177,
+          "duration_ms": 9169,
+          "final_answer": "Je n'ai pas d'outil pour lancer un sous-agent ici, donc je te donne les directions à l'oral, sans rien construire pour l'instant.\n\nPremière direction, l'énergie urbaine : fond sombre, néons vifs, mouvement rapide et gros chiffres. On y sent la vitesse de la ville et du vélo, pour un public investisseur ou jeune.\n\nDeuxième direction, le frais du marché : couleurs chaudes, textures de papier, photos",
+          "final_answer_chars": 1278,
           "is_error": false,
           "question_marks_in_final_answer": 0,
-          "session_id": "db0730b2-70d6-4647-a483-b777c100b37c",
+          "session_id": "1eadd487-e0df-4403-b821-64f723220c5e",
           "spoken_blocks": 1,
           "turns": 2,
           "usage": {
-            "cache_creation_input_tokens": 1951,
-            "cache_read_input_tokens": 33774,
+            "cache_creation_input_tokens": 2677,
+            "cache_read_input_tokens": 33051,
             "input_tokens": 4,
-            "output_tokens": 920
+            "output_tokens": 839
           },
           "user": "Je ne sais pas trop ce que je veux. Propose-moi plusieurs directions visuelles très différentes pour présenter ma start-up de livraison de repas à vélo. Donne-moi des idées, je choisirai."
         },
@@ -1104,7 +1110,7 @@
           "calls": [
             {
               "arguments": {
-                "max_results": 3,
+                "max_results": 2,
                 "query": "select:mcp__jarvis-presentation__presentation_inspect,mcp__jarvis-presentation__presentation_draft_assemble"
               },
               "is_error": false,
@@ -1127,20 +1133,19 @@
             {
               "arguments": {
                 "brief": {
-                  "audience": "Investisseurs et partenaires",
+                  "audience": "Moi",
                   "duration_target_s": 45,
                   "language": "fr",
                   "must_cover": [
                     "livraison de repas à vélo",
-                    "rapide et sans émission",
-                    "repas frais livrés en ville"
+                    "zéro émission",
+                    "restaurants partenaires"
                   ],
                   "purpose": "Choisir une direction visuelle pour présenter la start-up",
                   "speech": "jarvis",
                   "title": "<text>",
                   "tone": [
-                    "énergique",
-                    "crédible"
+                    "inspire"
                   ],
                   "workflow": "exploratory"
                 },
@@ -1738,7 +1743,7 @@
                           "control_id": "headline",
                           "group": "content",
                           "label": "<text>",
-                          "meaning": "Le titre affiché en haut",
+                          "meaning": "Le titre affiche en haut",
                           "path": "props.headline"
                         },
                         {
@@ -1750,14 +1755,14 @@
                         }
                       ],
                       "data": {
-                        "body": "Notre livraison de repas à vélo apporte des plats frais en ville, sans attendre."
+                        "body": "Notre start-up fait de la livraison de repas à vélo, du restaurant jusqu'à votre porte."
                       },
-                      "key": "promesse",
+                      "key": "accroche",
                       "prefab": {
                         "bundle": "slide"
                       },
                       "props": {
-                        "headline": "Des repas frais, livrés à vélo"
+                        "headline": "Des repas livrés à vélo"
                       },
                       "role": "opening",
                       "title": "<text>"
@@ -1779,7 +1784,7 @@
                           "control_id": "headline",
                           "group": "content",
                           "label": "<text>",
-                          "meaning": "Le titre affiché en haut",
+                          "meaning": "Le titre affiche en haut",
                           "path": "props.headline"
                         },
                         {
@@ -1791,14 +1796,14 @@
                         }
                       ],
                       "data": {
-                        "body": "Le vélo traverse les embouteillages : une livraison rapide et sans émission de gaz."
+                        "body": "Chaque trajet à vélo évite bruit et pollution : zéro émission en centre-ville, et des repas encore chauds."
                       },
-                      "key": "avantage",
+                      "key": "impact",
                       "prefab": {
                         "bundle": "slide"
                       },
                       "props": {
-                        "headline": "Rapide et sans émission"
+                        "headline": "Zéro émission, vraiment rapide"
                       },
                       "role": "body",
                       "title": "<text>"
@@ -1820,7 +1825,7 @@
                           "control_id": "headline",
                           "group": "content",
                           "label": "<text>",
-                          "meaning": "Le titre affiché en haut",
+                          "meaning": "Le titre affiche en haut",
                           "path": "props.headline"
                         },
                         {
@@ -1832,14 +1837,14 @@
                         }
                       ],
                       "data": {
-                        "body": "Ensemble, faisons rouler des repas frais livrés en ville, partout et chaque jour."
+                        "body": "Nous travaillons avec des restaurants partenaires du quartier, pour des repas frais et locaux."
                       },
-                      "key": "suite",
+                      "key": "partenaires",
                       "prefab": {
                         "bundle": "slide"
                       },
                       "props": {
-                        "headline": "Rejoignez la tournée"
+                        "headline": "Des restaurants partenaires"
                       },
                       "role": "closing",
                       "title": "<text>"
@@ -1849,19 +1854,19 @@
                     "items": [
                       {
                         "presenter": "jarvis",
-                        "scene": "promesse",
+                        "scene": "accroche",
                         "target_duration_ms": 15000,
                         "text": "<text>"
                       },
                       {
                         "presenter": "jarvis",
-                        "scene": "avantage",
+                        "scene": "impact",
                         "target_duration_ms": 15000,
                         "text": "<text>"
                       },
                       {
                         "presenter": "jarvis",
-                        "scene": "suite",
+                        "scene": "partenaires",
                         "target_duration_ms": 15000,
                         "text": "<text>"
                       }
@@ -1876,7 +1881,7 @@
               "tool": "presentation_draft_assemble"
             }
           ],
-          "cost_usd": 0.15879880000000002,
+          "cost_usd": 0.16320189999999998,
           "drafts": [
             {
               "failures": [],
@@ -1888,7 +1893,7 @@
                 "cues": 0,
                 "estimated_duration_s": 45,
                 "items": 3,
-                "max_scene_words": 26,
+                "max_scene_words": 27,
                 "remotion_bundles": 1,
                 "scenes": 3,
                 "target_duration_s": 45,
@@ -1900,19 +1905,19 @@
               "workflow": "exploratory"
             }
           ],
-          "duration_ms": 37074,
-          "final_answer": "C'est fait : les cinq directions sont dans le studio, chacune sur le même mini-récit de trois scènes (la promesse, l'avantage, la suite). Elles s'appellent Papier et marché, Néon nocturne, Éditorial et données, Minimalisme écolo et Pop et couleurs. Le contrôle qualité est passé sans erreur ni avertissement.\n\nTrois choses à savoir. J'ai supposé que tu présentes à des investisseurs, et je n'ai pas i",
-          "final_answer_chars": 694,
+          "duration_ms": 38148,
+          "final_answer": "C'est créé : j'ai mis cinq directions dans le studio, avec trois scènes chacune. Elles racontent la même histoire : la livraison de repas à vélo, le zéro émission et les restaurants partenaires.\n\nIl y a le marché chaleureux, l'énergie urbaine, l'affiche rétro, le minimalisme écolo et la carte joyeuse. Pour la carte, j'ai gardé l'esprit joyeux et coloré, mais ce n'est pas encore une vraie carte ani",
+          "final_answer_chars": 498,
           "is_error": false,
           "question_marks_in_final_answer": 0,
-          "session_id": "db0730b2-70d6-4647-a483-b777c100b37c",
+          "session_id": "1eadd487-e0df-4403-b821-64f723220c5e",
           "spoken_blocks": 1,
           "turns": 4,
           "usage": {
-            "cache_creation_input_tokens": 15847,
-            "cache_read_input_tokens": 82954,
+            "cache_creation_input_tokens": 16029,
+            "cache_read_input_tokens": 82688,
             "input_tokens": 8,
-            "output_tokens": 6671
+            "output_tokens": 6839
           },
           "user": "Crée-les dans le studio pour que je puisse les comparer."
         }
@@ -1953,10 +1958,10 @@
                   }
                 ],
                 "scene_titles": [
-                  "Dossier Contrats : 42 fichiers"
+                  "Dossier Contrats"
                 ],
                 "scene_words": [
-                  9
+                  15
                 ],
                 "scenes": 1,
                 "score_items": 1,
@@ -1972,14 +1977,14 @@
       "metrics": {
         "archive_calls": 0,
         "compile_refusals": 0,
-        "cost_usd": 0.0656,
+        "cost_usd": 0.0741,
         "draft_calls": 1,
         "failure_codes_seen": [],
         "gate_rounds_until_delivered": 1,
         "question_budget": 0,
         "refused_rounds": 0,
         "scenes_containing_todo": 0,
-        "tool_calls": 3,
+        "tool_calls": 4,
         "tsx_codes_seen": [],
         "turns_with_a_question": 0
       },
@@ -1990,8 +1995,8 @@
           "calls": [
             {
               "arguments": {
-                "max_results": 2,
-                "query": "select:mcp__jarvis-presentation__presentation_inspect,mcp__jarvis-presentation__presentation_draft_assemble"
+                "max_results": 1,
+                "query": "select:Agent"
               },
               "is_error": false,
               "n": 1,
@@ -2001,10 +2006,21 @@
             },
             {
               "arguments": {
-                "target": "draft_guide"
+                "max_results": 2,
+                "query": "select:mcp__jarvis-presentation__presentation_inspect,mcp__jarvis-presentation__presentation_draft_assemble"
               },
               "is_error": false,
               "n": 2,
+              "speech": null,
+              "status": null,
+              "tool": "ToolSearch"
+            },
+            {
+              "arguments": {
+                "target": "draft_guide"
+              },
+              "is_error": false,
+              "n": 3,
               "speech": "silent",
               "status": null,
               "tool": "presentation_inspect"
@@ -2018,7 +2034,7 @@
                   "must_cover": [
                     "Le dossier Contrats compte 42 fichiers : 30 documents, 10 tableurs et 2 présentations"
                   ],
-                  "purpose": "Afficher le résultat du comptage des fichiers du dossier Contrats",
+                  "purpose": "Afficher le nombre de fichiers du dossier Contrats et leur répartition",
                   "speech": "jarvis",
                   "title": "<text>",
                   "tone": [
@@ -2033,7 +2049,7 @@
                   },
                   "prefabs": [
                     {
-                      "key": "figure",
+                      "key": "chiffre",
                       "remotion": {
                         "composition": {
                           "duration_in_frames": 450,
@@ -2071,6 +2087,15 @@
                           },
                           "type": "object"
                         },
+                        "sample": {
+                          "data": {
+                            "caption": "Exemple de légende",
+                            "figure": "1"
+                          },
+                          "props": {
+                            "headline": "Titre"
+                          }
+                        },
                         "title": "<text>"
                       }
                     }
@@ -2100,20 +2125,20 @@
                           "control_id": "accent",
                           "group": "visual",
                           "label": "<text>",
-                          "meaning": "Couleur du chiffre clé",
+                          "meaning": "Couleur du grand chiffre",
                           "path": "props.theme.accent"
                         }
                       ],
                       "data": {
-                        "caption": "30 documents, 10 tableurs et 2 présentations",
-                        "figure": "42 fichiers"
+                        "caption": "Le dossier Contrats compte 42 fichiers : 30 documents, 10 tableurs et 2 présentations.",
+                        "figure": "42"
                       },
                       "key": "rapport",
                       "prefab": {
-                        "bundle": "figure"
+                        "bundle": "chiffre"
                       },
                       "props": {
-                        "headline": "Le dossier Contrats compte"
+                        "headline": "Dossier Contrats : fichiers au total"
                       },
                       "role": "single",
                       "title": "<text>"
@@ -2132,13 +2157,13 @@
                 }
               },
               "is_error": false,
-              "n": 3,
+              "n": 4,
               "speech": "say",
               "status": "delivered",
               "tool": "presentation_draft_assemble"
             }
           ],
-          "cost_usd": 0.0655912,
+          "cost_usd": 0.0741451,
           "drafts": [
             {
               "failures": [],
@@ -2150,7 +2175,7 @@
                 "cues": 0,
                 "estimated_duration_s": 15,
                 "items": 1,
-                "max_scene_words": 17,
+                "max_scene_words": 20,
                 "remotion_bundles": 1,
                 "scenes": 1,
                 "target_duration_s": 15,
@@ -2162,19 +2187,19 @@
               "workflow": "one_shot"
             }
           ],
-          "duration_ms": 14337,
-          "final_answer": "C'est fait. La diapositive affiche « 42 fichiers » en grand, avec « 30 documents, 10 tableurs et 2 présentations » en dessous. Je n'avais pas d'outil pour la déléguer, donc je l'ai créée moi-même. Elle a passé le contrôle sans avertissement. Je n'ai trouvé aucune charte graphique, donc elle utilise le style par défaut.",
-          "final_answer_chars": 320,
+          "duration_ms": 15423,
+          "final_answer": "C'est fait : la présentation d'une seule diapositive est créée. Elle affiche un grand « 42 » avec la répartition : 30 documents, 10 tableurs et 2 présentations. Je n'avais pas d'outil pour la déléguer à un sous-agent, donc je l'ai construite moi-même. Les couleurs viennent d'une direction artistique générée par défaut, faute de charte trouvée.",
+          "final_answer_chars": 345,
           "is_error": false,
           "question_marks_in_final_answer": 0,
-          "session_id": "445e48c8-371e-4a12-9a6a-e845ff15c8ee",
+          "session_id": "702acdd8-3b40-4562-8ee1-d2b74b6d0b4a",
           "spoken_blocks": 1,
-          "turns": 4,
+          "turns": 5,
           "usage": {
-            "cache_creation_input_tokens": 9635,
-            "cache_read_input_tokens": 76152,
-            "input_tokens": 8,
-            "output_tokens": 1942
+            "cache_creation_input_tokens": 10723,
+            "cache_read_input_tokens": 94031,
+            "input_tokens": 10,
+            "output_tokens": 2183
           },
           "user": "Fais-moi tout de suite une présentation d'une seule diapositive qui affiche le résultat : le dossier Contrats compte 42 fichiers, soit 30 documents, 10 tableurs et 2 présentations."
         }
@@ -2183,6 +2208,6 @@
     }
   ],
   "slice": 15,
-  "total_calls": 10,
-  "total_cost_usd": 0.374
+  "total_calls": 12,
+  "total_cost_usd": 0.4494
 }

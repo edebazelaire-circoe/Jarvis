@@ -50,7 +50,9 @@ _HEX = re.compile(r"#(?:[0-9a-fA-F]{6}|[0-9a-fA-F]{3})\b")
 _RGB = re.compile(r"\brgba?\(\s*\d{1,3}\s*,\s*\d{1,3}\s*,\s*\d{1,3}(?:\s*,\s*[0-9.]{1,5})?\s*\)")
 _PROPS_DOT = re.compile(r"\bprops\s*\.\s*([A-Za-z_]\w{0,39})")
 _PROPS_BRACKET = re.compile(r"""\bprops\s*\[\s*["']([A-Za-z_]\w{0,39})["']\s*\]""")
-_DESTRUCTURE = re.compile(r"(?:function\s+\w{0,40}\s*\(|=\s*\(|\bconst\s+)\s*\{([^{}]{0,400})\}\s*(?::[^)=]{0,200})?(?:\)\s*(?:=>|:|\{)|=\s*props\b)")
+# Only the ENTRY component's own parameter: `export default function Scene({title, accent}) {`. A `const {a} = props` is usually a helper
+# component's (the lint cannot tell whose), and a wrong "undeclared prop" finding is worse than a missed one.
+_DESTRUCTURE = re.compile(r"export\s+default\s+function\s+\w{0,40}\s*\(\s*\{([^{}]{0,400})\}")
 _NAME = re.compile(r"[A-Za-z_]\w{0,39}")
 
 

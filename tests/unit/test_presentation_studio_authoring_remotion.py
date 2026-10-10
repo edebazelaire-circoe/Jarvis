@@ -631,3 +631,17 @@ def test_the_tsx_lint_costs_milliseconds_on_hostile_sources_and_is_memoised():
     for _ in range(50):
         tsx_facts({"src/Scene.tsx": hostile["interpolations"]})
     assert time.monotonic() - started < 0.5, "the second reading of the same source is a lookup"
+
+
+def test_a_helper_components_props_are_not_the_scenes_props():
+    """Found by the real-model trace: a `compare` source destructured `const {title, items, color} = props` in a helper component, and the lint
+    reported six undeclared props. Only `props.x` and the entry component's own parameter count."""
+
+    from jarvis.domain.presentation_studio_authoring_tsx import tsx_facts
+
+    helper = ('export default function Scene(props: {headline: string}) { return <Column {...props} />; }\n'
+              'function Column(props: any) { const {title, items, color} = props; return <b>{title}{items}{color}</b>; }\n')
+    assert tsx_facts({"src/Scene.tsx": helper}).props_read == frozenset()
+    own = "export default function Scene({headline, accent}: {headline: string; accent: string}) { return <b>{headline}{accent}</b>; }\n"
+    assert tsx_facts({"src/Scene.tsx": own}).props_read == frozenset({"headline", "accent"})
+    assert tsx_facts({"src/Scene.tsx": "export default function Scene(p: any) { return <b>{props.title}</b>; }"}).props_read == frozenset({"title"})
