@@ -43,13 +43,14 @@ def test_the_documented_routes_are_the_registered_ones():
     assert PREFIX == "/v1/local-capabilities/remotion/studio"
 
 
-def test_the_relayed_control_center_routes_are_documented_and_installation_is_not_relayed():
+def test_the_relayed_control_center_routes_are_documented_and_only_install_and_repair_are_relayed_besides_the_studio():
     for path in (relay.CAPABILITY_ROUTE, relay.STUDIO_ROUTE):
         assert path in DOC
     for action in relay._WRITES:
         assert action in DOC
-    assert len(relay.RemotionStudioRelayRoutes(transport=lambda: None, journal=None).routes()) == 6
-    assert "Aucune installation ni désinstallation n'est relayée" in DOC and relay.START_TIMEOUT_S == 150.0 and "150 s" in DOC
+    assert len(relay.RemotionStudioRelayRoutes(transport=lambda: None, journal=None).routes()) == 8
+    assert relay._CAPABILITY_WRITES == ("install", "repair") and "install|repair" in DOC
+    assert "Aucune désinstallation ni mise à jour n'est relayée" in DOC and relay.START_TIMEOUT_S == 150.0 and "150 s" in DOC
 
 
 def test_the_documented_bounds_are_the_code_bounds():

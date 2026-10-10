@@ -99,7 +99,9 @@ reads hit the disk every time (the file is the truth, also after a restart). Rou
 | Method | Core route | Body -> answer |
 | --- | --- | --- |
 | GET | `/v1/presentation-studio/presentations[?limit]` | `{presentations: [{presentation_id, title, active_variant_id, variant_count, resource_count, engine, revision, updated_at}], problems: [{presentation_id, code, message}]}` |
-| POST | `/v1/presentation-studio/presentations` | `{title}` -> 201 `{presentation, variants}` (variant #1, empty, active) |
+| POST | `/v1/presentation-studio/presentations` | `{title}` -> 201 `{presentation, variants}` (variant #1, empty, active, engine `remotion`); Remotion Slice 20: also `{title, engine, actor, experimental_confirmed?, reason?}`, `engine` only with `actor: user` (set by the Control Center relay), else 403 `presentation_studio_engine_selection_refused` ([presentation-engine.md](presentation-engine.md)) |
+| POST | `/v1/presentation-studio/presentations/{presentation_id}/experiment` | Slice 20: `{actor, experimental_confirmed, reason?}` -> 201, a NEW Slidecar document (`<title> (Slidecar)`, no scene); the source is not modified |
+| GET | `/v1/presentation-studio/engine` | Slice 20: `{default_engine, engines: {slidecar, remotion: {ready, reason, repair}}, experimental, slidecar: {events, total, kept, durable}}`, read-only |
 | POST | `/v1/presentation-studio/presentations/validate` | `{presentation, variants}` in disk format -> `{ok, errors: [{code, message}]}` (first error only), nothing written |
 | GET | `/v1/presentation-studio/presentations/{presentation_id}` | `{presentation, variants}` |
 | PUT | `/v1/presentation-studio/presentations/{presentation_id}` | `{expected_revision, title, active_variant_id, resources}` -> the `presentation` document |
@@ -3069,6 +3071,14 @@ Status: implemented by Slice 13 of `jarvis-remotion-presentation-integration`. C
 | Rendering | A simple edit never renders, exports or recompiles: the sandbox document stays the same (measured in a real Chrome). |
 
 Bridge direction: **inbound only** (values to the Player). A Remotion manifest still declares no `events`; nothing flows from untrusted scene code to Core. Seek, play, pause, cue and frame mapping belong to Slice 12 and are not changed here. Wire additions (all additive): `props {props, data?}` between the scene window and the scene page; the `props_rejected` report event; the playback descriptor's `input_contract`. The brain does not see `kind` / `engine` / `support` in the voice tools today (they are in the introspection rows); it learns that a parameter is not carried from the `control.set` refusal. Left out on purpose: per-parameter engine labels declared in the manifest (needs a manifest version 4), because the current rules are derived from the type.
+
+## Engine choice and Slidecar experiment (Level 3, Remotion handoff Slice 20)
+
+Contract: [presentation-engine.md](presentation-engine.md) › *Human engine control*. A Presentation created by the plain create route is Remotion. **Agent-assembled drafts (`presentation_draft_assemble`) are Slidecar until Slice 15**: their scenes are HTML prefabs, so the engine is truthfully `slidecar`; each is journaled as `slidecar_created` with actor `agent`. Only a person, from the Control Center card « Présentations · moteur »
+(onglet « Plugins externes » du dialogue MCP), can create a Slidecar one, behind « Expérimental : Slidecar » with its warning and a confirmation; the relay sets the actor, no agent tool has an engine.
+The engine never changes after creation; « Dupliquer en expérience Slidecar » makes a new, empty Slidecar document and leaves the source alone. Listings (`engine`) and the card show a badge
+(`Remotion`, `Slidecar · expérimental`); each Slidecar creation, copy and use is a `core.presentation_studio.slidecar_*` diagnostic and a line of the card's « Journal Slidecar ». When Remotion cannot play, the
+card and the stage window say why, with `Installer Remotion` / `Réparer Remotion` when the capability can be fixed from the page: nothing else plays in its place.
 
 ## Reused owners (do not rebuild)
 

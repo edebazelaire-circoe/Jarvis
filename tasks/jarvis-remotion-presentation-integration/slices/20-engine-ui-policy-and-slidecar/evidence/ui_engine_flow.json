@@ -1,0 +1,210 @@
+{
+  "reads": {
+    "opened": true,
+    "chips": [
+      "Défaut : Remotion",
+      "Remotion : Indisponible",
+      "Slidecar : 0 document"
+    ],
+    "diag": "\n        Ce Core n’a pas de moteur RemotionRaison : ce Core n’a pas d’adaptateur Remotion (aucun magasin de capacités locales branché) this Core has no Remotion adapter (no local capability store is wired)\n        Ce Core a été lancé sans l’environnement Remotion (banc d’essai ou script).Lancez Core normalement, ou configurez JARVIS_REMOTION_SANDBOX_PORT.\n        Aucune présentation Slidecar n’est affichée à la place : une présentation Remotion ne joue qu’avec Remotion.\n        ",
+    "diag_action": false,
+    "warn_visible_when_closed": false,
+    "after_remotion": [
+      {
+        "title": "Plan Remotion",
+        "engine": "remotion",
+        "badge": "Remotion",
+        "copy": true
+      }
+    ],
+    "warn_visible_when_open": true,
+    "warn_text": "Expérimental. Slidecar est expérimental : pas de séquence image par image, pas d’export MP4. Le moteur d’une présentation ne change jamais après sa création. Aucun repli : si Remotion tombe en panne, rien ne joue à sa place.",
+    "confirm_title": "Créer une présentation Slidecar (expérimental) ?",
+    "confirm_text": "Expérimental : Slidecar est expérimental : pas de séquence image par image, pas d’export MP4. Le moteur d’une présentation ne change jamais après sa création. Aucun repli : si Remotion tombe en panne, rien ne joue à sa place.Journalisé : cette création est inscrite dans le journal des diagnostics (moteur, acteur, raison).",
+    "after_cancel": [
+      {
+        "title": "Plan Remotion",
+        "engine": "remotion",
+        "badge": "Remotion",
+        "copy": true
+      }
+    ],
+    "after_slidecar": [
+      {
+        "title": "Essai Slidecar",
+        "engine": "slidecar",
+        "badge": "Slidecar · expérimental",
+        "copy": false
+      },
+      {
+        "title": "Plan Remotion",
+        "engine": "remotion",
+        "badge": "Remotion",
+        "copy": true
+      }
+    ],
+    "slidecar_chip": "Slidecar : 1 document · 1 au journal",
+    "copy_confirm": "Expérimental : Slidecar est expérimental : pas de séquence image par image, pas d’export MP4. Le moteur d’une présentation ne change jamais après sa création. Aucun repli : si Remotion tombe en panne, rien ne joue à sa place.Journalisé : cette création est inscrite dans le journal des diagnostics (moteur, acteur, raison).Nouveau document : « Plan Remotion » n’est pas modifiée ; la copie est vide (une scène Remotion ne s’exécute pas en Slidecar).",
+    "after_copy": [
+      {
+        "title": "Plan Remotion (Slidecar)",
+        "engine": "slidecar",
+        "badge": "Slidecar · expérimental",
+        "copy": false
+      },
+      {
+        "title": "Essai Slidecar",
+        "engine": "slidecar",
+        "badge": "Slidecar · expérimental",
+        "copy": false
+      },
+      {
+        "title": "Plan Remotion",
+        "engine": "remotion",
+        "badge": "Remotion",
+        "copy": true
+      }
+    ],
+    "journal": [
+      "2026-10-10T01:22:54+00:00 Copie « expérience » · pst_98af50d7… · copie de pst_91d0751d… · acteur : vous · raison : expérience demandée par l'utilisateur dans le Control Center",
+      "2026-10-10T01:22:54+00:00 Création · pst_79aece19… · acteur : vous · raison : comparer le rendu"
+    ],
+    "journal_title": "Journal Slidecar (2)",
+    "opened2": true,
+    "after_reload": [
+      {
+        "title": "Plan Remotion (Slidecar)",
+        "engine": "slidecar",
+        "badge": "Slidecar · expérimental",
+        "copy": false
+      },
+      {
+        "title": "Essai Slidecar",
+        "engine": "slidecar",
+        "badge": "Slidecar · expérimental",
+        "copy": false
+      },
+      {
+        "title": "Plan Remotion",
+        "engine": "remotion",
+        "badge": "Remotion",
+        "copy": true
+      }
+    ],
+    "narrow": {
+      "fits": true,
+      "left": 22,
+      "right": 368,
+      "vw": 390
+    }
+  },
+  "posts": [
+    {
+      "method": "POST",
+      "url": "/api/presentation-studio/presentations",
+      "body": "{\"title\":\"Plan Remotion\"}",
+      "json": {
+        "title": "Plan Remotion"
+      }
+    },
+    {
+      "method": "POST",
+      "url": "/api/presentation-studio/presentations",
+      "body": "{\"title\":\"Essai Slidecar\",\"engine\":\"slidecar\",\"experimental_confirmed\":true,\"reason\":\"comparer le rendu\"}",
+      "json": {
+        "title": "Essai Slidecar",
+        "engine": "slidecar",
+        "experimental_confirmed": true,
+        "reason": "comparer le rendu"
+      }
+    },
+    {
+      "method": "POST",
+      "url": "/api/presentation-studio/presentations/pst_91d0751db88a0b99b311b1484e47fdfd/experiment",
+      "body": "{\"experimental_confirmed\":true}",
+      "json": {
+        "experimental_confirmed": true
+      }
+    }
+  ],
+  "core_listing": [
+    {
+      "presentation_id": "pst_98af50d77c9bdf67c47f7916ebcfb362",
+      "title": "Plan Remotion (Slidecar)",
+      "active_variant_id": "psv_74faceb75175173429bb10118675340a",
+      "variant_count": 1,
+      "resource_count": 0,
+      "engine": "slidecar",
+      "revision": 1,
+      "updated_at": "2026-10-10T01:22:54.747603Z"
+    },
+    {
+      "presentation_id": "pst_79aece19800586dd83ea8b721684f0a5",
+      "title": "Essai Slidecar",
+      "active_variant_id": "psv_53d4ae2feb386b6a6261495ba30753d1",
+      "variant_count": 1,
+      "resource_count": 0,
+      "engine": "slidecar",
+      "revision": 1,
+      "updated_at": "2026-10-10T01:22:54.374073Z"
+    },
+    {
+      "presentation_id": "pst_91d0751db88a0b99b311b1484e47fdfd",
+      "title": "Plan Remotion",
+      "active_variant_id": "psv_330ffc14c3c6a126871a266be6c44b61",
+      "variant_count": 1,
+      "resource_count": 0,
+      "engine": "remotion",
+      "revision": 1,
+      "updated_at": "2026-10-10T01:22:52.541335Z"
+    }
+  ],
+  "core_events": [
+    {
+      "kind": "core.presentation_studio.engine_chosen",
+      "message": "Moteur choisi par l'utilisateur",
+      "level": "info",
+      "data": {
+        "engine": "slidecar",
+        "actor": "human",
+        "experimental": true
+      }
+    },
+    {
+      "kind": "core.presentation_studio.slidecar_created",
+      "message": "Presentation Slidecar creee (experimental, choix explicite de l'utilisateur)",
+      "level": "info",
+      "data": {
+        "engine": "slidecar",
+        "presentation_id": "pst_79aece19800586dd83ea8b721684f0a5",
+        "actor": "human",
+        "reason": "comparer le rendu",
+        "at": "2026-10-10T01:22:54+00:00"
+      }
+    },
+    {
+      "kind": "core.presentation_studio.engine_chosen",
+      "message": "Moteur choisi par l'utilisateur",
+      "level": "info",
+      "data": {
+        "engine": "slidecar",
+        "actor": "human",
+        "experimental": true
+      }
+    },
+    {
+      "kind": "core.presentation_studio.slidecar_experiment_created",
+      "message": "Copie Slidecar (experience) creee; la source n'a pas ete modifiee",
+      "level": "info",
+      "data": {
+        "engine": "slidecar",
+        "presentation_id": "pst_98af50d77c9bdf67c47f7916ebcfb362",
+        "derived_from": "pst_91d0751db88a0b99b311b1484e47fdfd",
+        "source_engine": "remotion",
+        "actor": "human",
+        "reason": "expérience demandée par l'utilisateur dans le Control Center",
+        "at": "2026-10-10T01:22:54+00:00"
+      }
+    }
+  ]
+}

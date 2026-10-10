@@ -56,7 +56,10 @@ def variant_body(variant: dict, **changes) -> dict:
 def test_the_route_table_has_the_fixed_segment_before_the_id():
     routes = [(route.method, route.path) for route in PresentationStudioProtocolRoutes(object()).routes()]
     assert routes == [
-        ("GET", PREFIX), ("POST", PREFIX), ("POST", PREFIX + "/validate"), ("POST", PREFIX + "/mount-reports"),
+        ("GET", PREFIX), ("POST", PREFIX), ("POST", PREFIX + "/validate"),
+        ("GET", "/v1/presentation-studio/engine"),  # Slice 20: read-only engine view, outside the presentations prefix
+        ("POST", PREFIX + "/mount-reports"),
+        ("POST", PREFIX + "/{presentation_id}/experiment"),  # Slice 20: new Slidecar document, the source is untouched
         ("GET", PREFIX + "/{presentation_id}"),
         ("PUT", PREFIX + "/{presentation_id}"), ("GET", PREFIX + "/{presentation_id}/variants/{variant_id}"),
         ("PUT", PREFIX + "/{presentation_id}/variants/{variant_id}"),

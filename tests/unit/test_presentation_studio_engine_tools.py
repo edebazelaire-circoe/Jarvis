@@ -58,10 +58,17 @@ def test_the_guard_would_catch_a_leak():
     assert any(FORBIDDEN.search(value) for value in enum_values(leaked))
 
 
-def test_the_agent_modules_and_the_create_route_never_route_an_engine():
+def test_the_agent_modules_never_route_an_engine():
     root = Path(__file__).resolve().parents[2] / "jarvis"
     for relative in ("runtime/presentation_studio_mcp.py", "runtime/presentation_studio_mcp_tools.py",
-                     "runtime/presentation_studio_mcp_support.py", "runtime/presentation_studio_relay.py",
-                     "protocol/presentation_studio_routes.py"):
+                     "runtime/presentation_studio_mcp_support.py", "adapters/control_center_brain.py"):
         text = (root / relative).read_text(encoding="utf-8")
-        assert not re.search(r"presentation_studio_engine|EngineSelectionPolicy|\bengine\s*=", text), relative
+        assert not re.search(r"presentation_studio_engine|EngineSelectionPolicy|engine\s*=|experimental_confirmed|experiment", text), relative
+
+
+def test_the_http_routes_forward_the_body_and_never_decide_the_engine():
+    """Slice 20: the create route carries the Human path (`engine` + `actor: user`) but only the service, through the policy, decides."""
+
+    root = Path(__file__).resolve().parents[2] / "jarvis"
+    text = (root / "protocol/presentation_studio_routes.py").read_text(encoding="utf-8")
+    assert not re.search(r"EngineSelectionPolicy|POLICY|engine\s*=|Engine\.", text)

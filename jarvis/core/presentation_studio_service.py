@@ -56,7 +56,7 @@ from jarvis.domain.prefab import canonical_json
 from jarvis.domain.presentation_studio import (
     MAX_PRESENTATIONS, MAX_VALIDATION_ERRORS, Presentation, PresentationStudioError, PresentationStudioErrorCode as C,
     PresentationUpdate, PresentationVariant, PresentationView, StudioScene, VariantUpdate, clip, dump_document, is_presentation_id,
-    is_variant_id, load_document, new_presentation, parse_create, parse_presentation, parse_presentation_update,
+    is_variant_id, load_document, new_presentation, parse_presentation, parse_presentation_update,
     parse_variant, parse_variant_update, stamp, validate_documents,
 )
 from jarvis.core.presentation_studio_scene_catalog import SceneCatalog
@@ -75,7 +75,9 @@ from jarvis.domain.presentation_studio_art_direction_authoring import (
 )
 from jarvis.domain.presentation_studio_checks import _check_int, _exact_keys
 from jarvis.core.presentation_studio_engine_gate import StudioEngineGate
-from jarvis.domain.presentation_studio_engine import EngineResolution
+from jarvis.core.presentation_studio_engine_choice import EngineChoice
+from jarvis.domain.presentation_studio_engine import Engine, EngineResolution
+from jarvis.domain.presentation_studio_engine_request import experiment_title
 from jarvis.domain.v2 import utc_now
 from jarvis.ports.presentation_studio import PrefabCatalog, PresentationStudioStore
 from jarvis.ports.v2 import DiagnosticSink
@@ -188,6 +190,8 @@ class PresentationStudioService:
                  clock: Clock = utc_now, prefabs: PrefabCatalog | None = None,
                  pins: StudioPinRegistry | None = None, engine_gate: StudioEngineGate | None = None) -> None:
         self._store = store
+        #: Remotion Slice 20 : le choix humain du moteur a la creation et le registre des usages de Slidecar.
+        self._choice = EngineChoice(diagnostics)
         #: Remotion Slice 10 : porte du moteur (`presentation_studio_engine_gate`). Absente (tests, Core headless sans moteur
         #: rapporte) : aucune lecture de disponibilite, comportement d'avant la Slice 10.
         self._engine_gate = engine_gate
@@ -379,7 +383,23 @@ class PresentationStudioService:
         return await self._guard("create", None, self._create(raw))
 
     async def _create(self, raw: object) -> PresentationView:
-        view = new_presentation(parse_create(raw), self._clock())
+        request = self._choice.parse(raw)
+        # Slice 20 : le moteur vient de la politique, jamais du corps seul (acteur humain exigé pour en nommer un).
+        engine = self._choice.decide(request)
+        view = await self._store_new(request.title, engine)
+        presentation_id = view.presentation.presentation_id
+        self._trace("core.presentation_studio.created", "Presentation creee",
+                    data={"presentation_id": presentation_id, "variant_id": view.presentation.active_variant_id,
+                          "engine": engine.value})
+        if engine is Engine.SLIDECAR:
+            self._choice.remember_origin(presentation_id, "human")
+            self._choice.note("slidecar_created", {"engine": engine.value, "presentation_id": presentation_id,
+                                                   "actor": request.actor.value, "reason": request.reason},
+                              "Presentation Slidecar creee (experimental, choix explicite de l'utilisateur)")
+        return view
+
+    async def _store_new(self, title: str, engine: Engine) -> PresentationView:
+        view = new_presentation(title, self._clock(), engine=engine)
         presentation_id = view.presentation.presentation_id
         async with self._lock:
             scan = await self._run("create", presentation_id, self._store.scan)
@@ -388,9 +408,40 @@ class PresentationStudioService:
             await self._run("create", presentation_id, self._store.create, presentation_id,
                             dump_document(view.presentation.to_document()),
                             {v.variant_id: dump_document(v.to_document()) for v in view.variants})
-        self._trace("core.presentation_studio.created", "Presentation creee",
-                    data={"presentation_id": presentation_id, "variant_id": view.presentation.active_variant_id})
         return view
+
+    async def create_experiment(self, source_id: str, raw: object) -> PresentationView:
+        """Slice 20 : « dupliquer en expérience Slidecar ». Un NOUVEAU document Slidecar (titre de la source + « (Slidecar) », aucune
+        scène : une source Remotion n'est pas native en Slidecar). La source n'est ni lue en écriture ni modifiée ni convertie."""
+
+        return await self._guard("create_experiment", source_id, self._create_experiment(source_id, raw))
+
+    async def _create_experiment(self, source_id: str, raw: object) -> PresentationView:
+        self._require_ids(source_id)
+        body = _exact_keys(raw, "experiment", {"actor", "experimental_confirmed"}, frozenset({"reason"}))
+        source = await self._load_presentation(source_id)
+        request = self._choice.parse({"title": experiment_title(source.title), "engine": Engine.SLIDECAR.value, **body})
+        engine = self._choice.decide(request)
+        view = await self._store_new(request.title, engine)
+        self._choice.remember_origin(view.presentation.presentation_id, "human")
+        self._choice.note("slidecar_experiment_created",
+                          {"engine": engine.value, "presentation_id": view.presentation.presentation_id, "derived_from": source_id,
+                           "source_engine": source.engine.value, "actor": request.actor.value, "reason": request.reason},
+                          "Copie Slidecar (experience) creee; la source n'a pas ete modifiee")
+        self._trace("core.presentation_studio.created", "Presentation creee",
+                    data={"presentation_id": view.presentation.presentation_id,
+                          "variant_id": view.presentation.active_variant_id, "engine": engine.value})
+        return view
+
+    def engine_overview(self) -> dict[str, Any]:
+        """Slice 20 (`GET /v1/presentation-studio/engine`) : le moteur par defaut, l'etat de chacun tel que son adaptateur le rapporte
+        et le registre des usages de Slidecar. Lecture seule; ne lance, n'installe ni ne sonde rien."""
+
+        states = self._engine_gate.states() if self._engine_gate is not None else {}
+        engines = {engine.value: ({"ready": state.ready, "reason": state.reason, "repair": state.repair} if state else None)
+                   for engine, state in ((e, states.get(e)) for e in Engine)}
+        return {"default_engine": self._choice.default_engine(), "engines": engines, "experimental": [Engine.SLIDECAR.value],
+                "slidecar": self._choice.ledger.view()}
 
     async def require_room(self) -> None:
         """`limit_reached` when the store already holds `MAX_PRESENTATIONS` : asked by the authoring planner BEFORE it publishes
@@ -444,6 +495,14 @@ class PresentationStudioService:
                 for variant_id, before in registered.items():
                     self._pins.restore_variant(presentation_id, variant_id, before)
             raise
+        # Slice 20 (QA F2): the planner still assembles HTML scenes, i.e. Slidecar documents (carve-out until Slice 15). Not a human choice, not
+        # silent: the same diagnostic, actor `agent`, and the origin the later `slidecar_used` lines quote.
+        assembled = self._parse_stored(parse_presentation, manifest, "assembled presentation")
+        if assembled.engine is Engine.SLIDECAR:
+            self._choice.remember_origin(presentation_id, "agent_authored")
+            self._choice.note("slidecar_created", {"engine": Engine.SLIDECAR.value, "presentation_id": presentation_id, "actor": "agent",
+                                                   "reason": "agent authoring (HTML scenes) until Slice 15"},
+                              "Presentation Slidecar assemblee par l'agent (scenes HTML, jusqu'a la Slice 15)")
         self._trace("core.presentation_studio.created", "Presentation assemblee creee",
                     data={"presentation_id": presentation_id, "variants": len(variants), "scores": len(scores),
                           "art_directions": len(art_directions)})
@@ -499,6 +558,8 @@ class PresentationStudioService:
 
         async def resolve() -> EngineResolution:
             presentation = await self._load_presentation(presentation_id)
+            if presentation.engine is Engine.SLIDECAR:
+                self._choice.note_use(presentation_id, action, self._choice.origins.get(presentation_id, "legacy"))
             return gate.require(presentation.engine, action, presentation_id=presentation_id)
 
         return await self._guard("require_engine", presentation_id, resolve())

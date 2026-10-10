@@ -707,6 +707,15 @@ non-JavaScript code; and the browser-side channels the CSP cannot close (WebRTC,
 GET navigation) remain for a hostile scene. Whatever the scene can read (its own source, `defaultProps`) can leave through those channels:
 that is why the user must confirm, per opening, knowing the provenance.
 
+### Choix du moteur de présentation (Remotion handoff, Slice 20)
+
+Contrat : [presentation-engine.md](presentation-engine.md) › *Human engine control*. Seule une action humaine nomme un moteur ; Remotion est le défaut, Slidecar une expérience confirmée et journalisée.
+
+- **Déclaration, pas authentification.** Core ne peut pas prouver qu'une requête vient de la page : `actor` est une valeur du corps. Le relais du Control Center la **remplace** par `user` ; le serveur MCP du cerveau envoie `brain` et n'a aucun outil de moteur (test de parité) ; Core refuse tout moteur nommé par un autre acteur (ou sans acteur).
+- **Barrière d'accès occasionnel, pas une frontière.** Sur les routes qui nomment un moteur (`POST /api/presentation-studio/presentations` avec `engine`, `.../{id}/experiment`) et sur `POST /api/local-capabilities/remotion/install|repair`, le relais exige `Sec-Fetch-Site: same-origin` (envoyé par tout navigateur pour un fetch de la page ; absent de curl, d'un script Python, d'un outil Bash) en plus de la garde de la Slice 11 (Host et Origin de boucle locale, jamais `cross-site`). Un client qui forge l'en-tête passe : un vrai garde-fou exigerait un secret que le cerveau ne peut pas lire (même compte, même disque : hors de cette Slice).
+- **Pas de repli.** Un moteur indisponible est une erreur visible avec sa raison ; jamais l'autre moteur. Les anciens documents lus comme `slidecar` ne sont jamais réécrits par une lecture ; la première sauvegarde garde l'ancien manifeste (`.bak`).
+- **Contenu affiché** : titres, raisons et messages du journal Slidecar entrent dans la carte par échappement (test dynamique avec des titres et raisons hostiles dans Chrome).
+
 ## Residual risks / non-goals
 
 - Bare Hands traces are never pruned and are not encrypted at rest; a user who recorded a diagnostic session leaves scalar interaction data in `runtime/barehands-traces/` until they delete it by hand.

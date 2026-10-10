@@ -43,6 +43,7 @@ FORWARDABLE_PREFIXES = ("/v1/boards", "/v1/sessions", "/v1/mcp/plugins", "/v1/mc
                         "/v1/contexts", "/v1/captures", "/v1/artifacts", "/v1/activity", "/v1/workspace/",
                         "/v1/prefabs", "/v1/presentation-studio/presentations", "/v1/presentation-studio/playback",
                         "/v1/presentation-studio/authoring", "/v1/presentation-studio/templates",
+                        "/v1/presentation-studio/engine",  # vue du moteur, lecture seule (remotion-integration S20)
                         "/v1/memory/", "/v1/remotion/",
                         # Carte Remotion du Control Center (jarvis-remotion-presentation-integration, Slice 11) : l'état de la capacité et le
                         # Studio optionnel ; le relais (`remotion_studio_relay.py`) n'appelle que six adresses, jamais l'installation.

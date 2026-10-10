@@ -685,6 +685,9 @@ MCP_PLUGINS_SCRIPT_MARKER = "/*__CONTROL_CENTER_MCP_PLUGINS_JS__*/"
 #: Carte « Remotion » et Studio optionnel (jarvis-remotion-presentation-integration, Slice 11) : dans l'onglet des plugins externes.
 REMOTION_STUDIO_SCRIPT_FILE = "control_center_remotion_studio.js"
 REMOTION_STUDIO_SCRIPT_MARKER = "/*__CONTROL_CENTER_REMOTION_STUDIO_JS__*/"
+#: Carte « Présentations · moteur » (Slice 20) : choix humain du moteur, diagnostic d'un Remotion en panne, journal Slidecar.
+STUDIO_ENGINE_SCRIPT_FILE = "control_center_presentation_studio_engine.js"
+STUDIO_ENGINE_SCRIPT_MARKER = "/*__CONTROL_CENTER_PRESENTATION_STUDIO_ENGINE_JS__*/"
 #: Sessions & Boards (board-memory-workspace-inspector, Slice 07) : vue plein
 #: écran du dock `WSP` — état courant, historique des Sessions, tous les Boards,
 #: relations, mémoire d'un Board (lecture et écriture), Artefacts et provenance.
@@ -2364,6 +2367,9 @@ class ControlCenter:
         )
         html = html.replace(
             REMOTION_STUDIO_SCRIPT_MARKER, page.with_name(REMOTION_STUDIO_SCRIPT_FILE).read_text(encoding="utf-8")
+        )
+        html = html.replace(
+            STUDIO_ENGINE_SCRIPT_MARKER, page.with_name(STUDIO_ENGINE_SCRIPT_FILE).read_text(encoding="utf-8")
         )
         html = html.replace(
             WORKSPACE_SCRIPT_MARKER, page.with_name(WORKSPACE_SCRIPT_FILE).read_text(encoding="utf-8")

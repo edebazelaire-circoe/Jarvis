@@ -10,9 +10,11 @@ telles quelles vers Core (statut et JSON, erreurs comprises) ; c'est `control_ce
 | `POST /api/local-capabilities/remotion/studio/open` | `POST .../studio/open` | 150 s (démarrage ≤ 120 s) |
 | `POST /api/local-capabilities/remotion/studio/restart` | `POST .../studio/restart` | 150 s |
 | `POST /api/local-capabilities/remotion/studio/sync\\|close` | `POST .../studio/sync\\|close` | 40 s |
+| `POST /api/local-capabilities/remotion/install` ou `repair` | `POST /v1/local-capabilities/remotion/install` ou `repair` | 40 s (Slice 20) |
 
-Seules ces six adresses existent : aucune installation, aucun arrêt de la capacité, aucun chemin libre n'est relayé d'ici (ces
-opérations restent une action explicite sur Core, `docs/remotion-runtime.md` §7). Toutes les méthodes sont gardées (Host et origine
+Seules ces huit adresses existent : aucun arrêt ni désinstallation de la capacité, aucun chemin libre n'est relayé d'ici. Depuis la
+Slice 20, `install` et `repair` le sont (corps vide imposé, jamais celui de la page) : c'est le geste « réparer » de la carte
+d'erreur du moteur, précédé d'une confirmation dans la page (`docs/remotion-runtime.md` §7). Toutes les méthodes sont gardées (Host et origine
 de boucle locale, `READ_GUARDED_ROUTES`) : ces routes lancent un processus.
 
 Core injoignable ou non configuré : 503 `core_unreachable` / `core_unconfigured` ; délai dépassé : 504 `core_timeout` (l'issue est
@@ -38,6 +40,8 @@ READ_TIMEOUT_S = 10.0
 SHORT_TIMEOUT_S = 40.0
 START_TIMEOUT_S = 150.0
 MAX_BODY_BYTES = 2048
+#: Slice 20 : les deux seules operations de la capacite relayees (le geste « installer / reparer » apres une panne visible).
+_CAPABILITY_WRITES = ("install", "repair")
 _WRITES = {"open": START_TIMEOUT_S, "restart": START_TIMEOUT_S, "sync": SHORT_TIMEOUT_S, "close": SHORT_TIMEOUT_S}
 
 
@@ -54,6 +58,7 @@ class RemotionStudioRelayRoutes:
     def routes(self) -> list[web.RouteDef]:
         routes = [web.get(CAPABILITY_ROUTE, self._read(CORE_CAPABILITY)), web.get(STUDIO_ROUTE, self._read(CORE_STUDIO))]
         routes += [web.post(f"{STUDIO_ROUTE}/{action}", self._write(action, timeout)) for action, timeout in _WRITES.items()]
+        routes += [web.post(f"{CAPABILITY_ROUTE}/{op}", self._capability_write(op)) for op in _CAPABILITY_WRITES]
         return routes
 
     @staticmethod
@@ -91,6 +96,26 @@ class RemotionStudioRelayRoutes:
                                level="info" if status < 400 else "warning",
                                data={"action": action, "status": status, "code": error.get("code") if isinstance(error, dict) else None,
                                      "studio_status": studio.get("status") if isinstance(studio, dict) else None})
+            return self._answer(status, payload)
+        return handler
+
+    def _capability_write(self, operation: str) -> Callable[[web.Request], Awaitable[web.Response]]:
+        async def handler(request: web.Request) -> web.Response:
+            if request.query:
+                return _envelope(400, "remotion_studio_invalid", "unexpected query parameters")
+            # Slice 20 (QA F1) : seulement depuis la page (`Sec-Fetch-Site: same-origin`, toujours envoye par un navigateur, jamais par curl).
+            if request.headers.get("Sec-Fetch-Site") != "same-origin":
+                self._journal.emit("remotion_studio.capability_door_refused", f"Capacite Remotion : {operation} refuse, requete hors de la page",
+                                   level="warning", data={"action": f"capability_{operation}", "sec_fetch_site": request.headers.get("Sec-Fetch-Site")})
+                return _envelope(403, "forbidden_origin", "install and repair can only be started from the Control Center page (same-origin request required)")
+            # Le corps de la page n'est jamais transmis : l'operation n'a pas de parametre (`docs/local-capabilities.md` §7).
+            status, payload = await self._forward("POST", f"{CORE_CAPABILITY}/{operation}", action=f"capability_{operation}",
+                                                  body=b"{}", timeout_s=SHORT_TIMEOUT_S)
+            error = payload.get("error") if isinstance(payload, dict) else None
+            self._journal.emit("remotion_studio.relayed", f"Capacite Remotion : {operation} relayé à Core (HTTP {status})",
+                               level="info" if status < 400 else "warning",
+                               data={"action": f"capability_{operation}", "status": status,
+                                     "code": error.get("code") if isinstance(error, dict) else None})
             return self._answer(status, payload)
         return handler
 

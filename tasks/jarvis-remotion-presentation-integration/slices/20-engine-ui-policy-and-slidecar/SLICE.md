@@ -62,3 +62,7 @@ Coding agents must follow `/caveman` and `/coding-guideline` where relevant. Fro
 Evidence: `docs/06-branch-compliance-audit.md` section "Final-head audit" (R-numbers, risks, redundancy table).
 
 - **Split**: the policy enforcement (no engine argument on any agent tool, typed errors, no fallback) moves to Slice 02 as tests; this Slice keeps the Human-only experimental toggle, its visibility/logging, repair guidance UI and the persisted-engine-identity migration for existing documents (legacy documents read as `slidecar`, see Slice 02 amendment). Order: after 10 and 13 as before, but its tests depend on Slice 02, not on a late Slice.
+
+
+## PM addendum after Slice 20 QA (2026-10-10)
+"Ordinary presentation always uses Remotion" reads: every presentation created by the plain create route, and every one a human creates without the experiment, is Remotion. Agent-assembled drafts (`presentation_draft_assemble`, HTML scenes) are `slidecar` until Slice 15 flips the assembler (see its PM addendum); they are journaled as `slidecar_created` with actor `agent`, and their use is quoted truthfully. The engine-naming doors of the Control Center relay additionally require `Sec-Fetch-Site: same-origin` (casual-access barrier, `docs/SECURITY.md`).
