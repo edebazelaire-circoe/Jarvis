@@ -234,32 +234,27 @@ async def test_journey_compare_mix_and_promote_a_template_then_reuse_it(world):
         assert (await world.core.call("GET", f"/{pid}/variants/{ids[n]}"))[1] == sources[n]
     provenance = await world.tools.inspect("composition", presentation_id=pid, variant_id=mixed["variant_id"])
     assert {d["dimension"] for d in provenance["dimensions"]} == {"scenes", "narrative", "motion", "art_direction"}
-    # promote the mixed variant as a template: plan lists the choices, nothing is published until the explicit promote
+    # promote the mixed variant as a template (Remotion Slice 19 owns the promotion of Remotion scenes)
     plan_request = {"kind": "presentation", "title": "Revue type", "slug": "revue-type"}
     planned = await world.tools.template("plan", presentation_id=pid, variant_id=mixed["variant_id"], plan=plan_request)
     assert planned["plan"]["selection_required"] is True and (await world.tools.inspect("templates"))["templates"]["total"] == 0
     chosen = [{"scene_id": s["scene_id"], "dimensions": ["accent"], "parameters": ["headline"]} for s in planned["plan"]["scenes"]["items"]]
+    await attest(world)   # QA B1: a promotion only follows a request of the user in this turn (the same attestation as a presentation start)
     promoted = await world.tools.template("promote", presentation_id=pid, variant_id=mixed["variant_id"], plan={**plan_request, "scenes": chosen})
     assert promoted["status"] == "promoted" and promoted["template_id"]
     listing = await world.tools.inspect("templates")
     assert listing["templates"]["total"] == 1
-    # reuse: instantiate into a brand new presentation (scenes + art direction; the score is documented as NOT promoted)
+    assert promoted["published_to_library"] is False and promoted["prefabs"]["total"] == 0, "a presentation is ONE artefact (Remotion Slice 19)"
+    # reuse: instantiate into a brand new presentation (scenes + art direction + the score SKELETON: structure, never the words)
     made = await world.tools.template("instantiate", template_id=promoted["template_id"], title="Revue du T4")
-    assert made["status"] == "instantiated" and len(made["scene_ids"]) == 6 and made["art_direction_id"]
+    assert made["status"] == "instantiated" and len(made["scene_ids"]) == 6 and made["art_direction_id"] and made["score_id"]
     new_pid, new_vid = made["presentation_id"], made["variant_id"]
     await attest(world)
-    with pytest.raises(PresentationToolError) as caught:
-        await world.tools.play("start", role="rehearsal", presentation_id=new_pid, variant_id=new_vid)
-    assert caught.value.code == "presentation_studio_unknown_score", "no score came with the template: a typed refusal, not a broken run"
     _, fresh = await world.core.call("GET", f"/{new_pid}/variants/{new_vid}")
-    items = [{"item_id": f"psi_{n:012x}", "scene_id": s["scene_id"], "presenter": "user", "kind": "speech", "note": "A dire"}
-             for n, s in enumerate(fresh["scenes"], 1)]
-    for index, item in enumerate(items[:-1]):
-        item["next_item_id"] = items[index + 1]["item_id"]
-    status, score = await world.core.call("POST", f"/{new_pid}/variants/{new_vid}/score", json={
-        "expected_variant_revision": fresh["revision"], "start_item_id": items[0]["item_id"], "items": items, "cues": [],
-        "sequences": [], "recovery_points": []})
-    assert status == 201, score
+    status, carried = await world.core.call("GET", f"/{new_pid}/variants/{new_vid}/score")
+    assert status == 200 and carried["problems"] == [] and len(carried["score"]["items"]) == 6, "the items of the mixed variant score came as a skeleton"
+    assert all(i["text"] == "" and i["cue_id"] is None for i in carried["score"]["items"]) and carried["score"]["cues"] == []
+    assert {i["scene_id"] for i in carried["score"]["items"]} <= {s["scene_id"] for s in fresh["scenes"]}
     started = await world.tools.play("start", role="rehearsal", presentation_id=new_pid, variant_id=new_vid)
     assert started["state"]["phase"] == "playing" and started["state"]["position"]["of"] == 6
     await world.tools.play("stop")

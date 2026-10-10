@@ -138,7 +138,9 @@ function makeCore(options){
   const nameOf=(path)=>path.split('.').slice(1).join('.');
   const rows=()=>defs.map((d)=>{const k=nameOf(d.path);const set=Object.prototype.hasOwnProperty.call(st.values,k);
     const row={control_id:d.control_id,label:d.label,group:d.group,meaning:d.meaning,path:d.path,type:d.type,widget:d.widget,required:d.required,
-      bounds:d.bounds,default:d.default,current:set?st.values[k]:d.default,is_set:set};return row});
+      bounds:d.bounds,default:d.default,current:set?st.values[k]:d.default,is_set:set};
+    if(d.support){row.kind=d.kind;row.engine=d.engine;row.support=d.support}   // Slice 13 : le genre et ce que le moteur ne porte pas
+    return row});
   const variantDoc=()=>({variant_id:'psv_1',revision:st.revision,title:'Version A',scenes:st.sceneIds.map((id,i)=>({scene_id:id,title:i?'Chiffres':'Ouverture',section:i?'':'Début',
     prefab:{id:'lab.dial',version:1},props:Object.assign({},st.values),data:{body:'Bonjour'}}))});
   const problem=(d,v)=>{

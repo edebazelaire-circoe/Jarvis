@@ -401,7 +401,8 @@ def test_discovery_answers_what_is_editable_with_resolved_semantic_controls():
     assert by_id["headline"] == {
         "control_id": "headline", "label": "Titre", "group": "content", "meaning": "Texte principal du compteur",
         "path": "props.label", "type": "string", "widget": "text_line", "required": False,
-        "bounds": {"max_length": 40}, "default": "Count", "current": "Visiteurs", "is_set": True}
+        "bounds": {"max_length": 40}, "default": "Count", "current": "Visiteurs", "is_set": True,
+        "kind": "text", "engine": "slidecar", "support": {"status": "supported", "reason": ""}}
     assert by_id["accent_color"]["widget"] == "color" and by_id["accent_color"]["current"] == "#6ee7ff"  # manifest default
     assert by_id["accent_color"]["is_set"] is False
     assert by_id["density"]["bounds"] == {"choices": ["compact"]} and by_id["density"]["widget"] == "choice"
@@ -482,21 +483,21 @@ def test_rich_scenes_round_trip_through_the_variant_document_and_its_text_form()
     variant = ps.parse_variant(variant_with(scenes))
     assert variant.scenes[0] == full_scene() and variant.to_document()["scenes"] == scenes
     again = ps.parse_variant(ps.load_document(ps.dump_document(variant.to_document())))
-    assert again == variant and variant.to_document()["schema_version"] == ps.VARIANT_SCHEMA_VERSION == 4
-    assert ps.SCHEMA_VERSION == 2  # Slice 04 left it at 1; Slice 16 added the variant graph metadata (manifest v2)
+    assert again == variant and variant.to_document()["schema_version"] == ps.VARIANT_SCHEMA_VERSION == 5
+    assert ps.SCHEMA_VERSION == 3  # Slice 04 left it at 1; Slice 16 added the variant graph metadata (manifest v2); Remotion Slice 02 added the engine (v3)
 
 
 def test_an_old_variant_with_bare_pins_is_upgraded_and_a_v1_reader_contract_is_kept():
     v1 = json.loads(open("tests/fixtures/presentation_studio/variant.v1.json", encoding="utf-8").read())
     assert v1["schema_version"] == 1 and set(v1["scenes"][0]) == {"scene_id", "prefab"}
     upgraded = ps.upgrade_document(v1, ps.SCHEMA_VARIANT)
-    assert upgraded["schema_version"] == ps.VARIANT_SCHEMA_VERSION == 4 and upgraded["scenes"][0]["controls"] == []
+    assert upgraded["schema_version"] == ps.VARIANT_SCHEMA_VERSION == 5 and upgraded["scenes"][0]["controls"] == []
     assert upgraded["scenes"][0]["source_revision"] == 0 and upgraded["scenes"][0]["last_valid_pin"] is None
     assert "scene_variants" not in upgraded["scenes"][0]  # Slice 17: the identity step adds no key
     assert v1["schema_version"] == 1 and "controls" not in v1["scenes"][0]  # the input is never mutated
-    assert set(ps.UPGRADES[ps.SCHEMA_VARIANT]) == {1, 2, 3} and set(ps.UPGRADES[ps.SCHEMA_PRESENTATION]) == {1}
-    refused(lambda: ps.upgrade_document({**v1, "schema_version": 5}, ps.SCHEMA_VARIANT),
-            C.UNSUPPORTED_SCHEMA_VERSION, "schema_version 5")
+    assert set(ps.UPGRADES[ps.SCHEMA_VARIANT]) == {1, 2, 3, 4} and set(ps.UPGRADES[ps.SCHEMA_PRESENTATION]) == {1, 2}
+    refused(lambda: ps.upgrade_document({**v1, "schema_version": 6}, ps.SCHEMA_VARIANT),
+            C.UNSUPPORTED_SCHEMA_VERSION, "schema_version 6")
 
 
 def test_a_scene_inside_a_variant_is_refused_with_the_scene_path():

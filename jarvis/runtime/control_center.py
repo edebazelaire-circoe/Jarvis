@@ -113,8 +113,10 @@ from jarvis.runtime.capture_relay import GUARDED_PREFIXES as CAPTURE_GUARDED_PRE
 from jarvis.runtime.memory_relay import GUARDED_PREFIXES as MEMORY_GUARDED_PREFIXES, MemoryRelayRoutes, memory_settings_section
 from jarvis.runtime.memory_settings import MemorySettingsError, apply_memory_settings
 from jarvis.runtime.prefab_relay import GUARDED_PREFIXES as PREFAB_GUARDED_PREFIXES, PrefabRelayRoutes
+from jarvis.runtime.remotion_relay import GUARDED_PREFIXES as REMOTION_GUARDED_PREFIXES, STAGE_ROUTE as REMOTION_STAGE_ROUTE, RemotionRelayRoutes
 from jarvis.runtime.presentation_studio_scene_variants_relay import PresentationStudioSceneVariantsRelayRoutes
 from jarvis.runtime.presentation_studio_template_relay import PresentationStudioTemplateRelayRoutes
+from jarvis.runtime.presentation_studio_upgrades_relay import PresentationStudioUpgradesRelayRoutes
 from jarvis.runtime.presentation_studio_authoring_relay import PresentationStudioAuthoringRelayRoutes
 from jarvis.runtime.presentation_studio_compose_relay import PresentationStudioComposeRelayRoutes
 from jarvis.runtime.presentation_studio_variants_relay import PresentationStudioVariantsRelayRoutes
@@ -127,6 +129,8 @@ from jarvis.runtime.memory_relay import MEMORY_BRAIN_GUARDED_PREFIXES, MemoryBra
 from jarvis.runtime.workspace_relay import GUARDED_PREFIXES as WORKSPACE_GUARDED_PREFIXES, WorkspaceRelayRoutes
 from jarvis.runtime.core_sessions import CoreSessionTransport, is_unsupported
 from jarvis.runtime.mcp_plugin_routes import PLUGINS_ROUTE as MCP_PLUGINS_ROUTE, McpPluginRoutes
+from jarvis.runtime.presentation_render_relay import PresentationRenderRelayRoutes
+from jarvis.runtime.remotion_studio_relay import GUARDED_PREFIXES as REMOTION_STUDIO_GUARDED_PREFIXES, RemotionStudioRelayRoutes
 from jarvis.domain.workspace_board import BoardConversationBinding, BoardError, BoardErrorCode, InteractionModeOrigin
 from jarvis.runtime.work_view import CORE_UNREACHABLE, NOT_CONFIGURED, CoreWorkView, unavailable_payload
 from jarvis.protocol import scene_wire
@@ -296,7 +300,8 @@ AGENT_BINDINGS_ROUTE = "/api/agent/bindings"
 READ_GUARDED_ROUTES = (CONVERSATIONS_ROUTE, TESTLAB_ROUTE, BAREHANDS_COMMANDS_ROUTE_PREFIX, FULLSCREEN_ROUTE_PREFIX,
                        BAREHANDS_CALIBRATION_SESSION_ROUTE, BAREHANDS_BENCHMARKS_ROUTE, AGENT_BINDINGS_ROUTE,
                        MCP_PLUGINS_ROUTE, *CAPTURE_GUARDED_PREFIXES, *WORKSPACE_GUARDED_PREFIXES, *MEMORY_BRAIN_GUARDED_PREFIXES,
-                       *PREFAB_GUARDED_PREFIXES, *STUDIO_GUARDED_PREFIXES, *MEMORY_GUARDED_PREFIXES)
+                       *PREFAB_GUARDED_PREFIXES, *REMOTION_GUARDED_PREFIXES, *STUDIO_GUARDED_PREFIXES, *MEMORY_GUARDED_PREFIXES,
+                       *REMOTION_STUDIO_GUARDED_PREFIXES)
 #: Corps de `POST /api/agent/bindings/activate` : une liaison sérialisée, bornée.
 AGENT_BINDING_MAX_BYTES = 8 * 1024
 #: Adoption de la liaison foreground au démarrage : Core peut démarrer après
@@ -329,7 +334,31 @@ def _authority_host(authority: str) -> str | None:
     return host.lower()
 
 
-def _loopback_refusal(origin: str | None, host_header: str | None, fetch_site: str | None) -> str | None:
+def _authority_port(authority: str, scheme: str = "http") -> int | None:
+    """Port explicite de `host[:port]` / `[v6][:port]`, sinon le port par défaut du schéma ; None si illisible."""
+
+    tail = authority.rsplit("]", 1)[1] if authority.startswith("[") else (authority.partition(":")[1] + authority.partition(":")[2])
+    if not tail:
+        return 443 if scheme.lower() == "https" else 80
+    digits = tail[1:] if tail.startswith(":") else ""
+    return int(digits) if digits.isascii() and digits.isdigit() and int(digits) <= 65535 else None
+
+
+def _foreign_port_refusal(origin: str | None, host_header: str | None) -> str | None:
+    """Un `Origin` de boucle locale n'est accepté que s'il porte le port du Control Center lui-même (celui de l'en-tête `Host`) :
+    une page servie par un AUTRE service local (le Studio Remotion, un serveur de développement) n'est pas le Control Center."""
+
+    if origin is None:
+        return None
+    scheme, separator, authority = origin.partition("://")
+    if not separator:
+        return "forbidden origin"
+    origin_port, host_port = _authority_port(authority, scheme), _authority_port(host_header or "")
+    return None if origin_port is not None and origin_port == host_port else "origin is another local service"
+
+
+def _loopback_refusal(origin: str | None, host_header: str | None, fetch_site: str | None, *, mutating: bool = False,
+                      fetch_mode: str | None = None) -> str | None:
     """Why a conversation history request is refused, or None.
 
     Exact comparison after splitting the port, no URL parser quirks:
@@ -344,34 +373,48 @@ def _loopback_refusal(origin: str | None, host_header: str | None, fetch_site: s
             return "forbidden origin"
     if _authority_host(host_header or "") not in LOOPBACK_HOSTS:
         return "forbidden host"
-    return None
+    site = (fetch_site or "").strip().lower()
+    if mutating and site == "same-site":
+        return "same-site request from another local service"
+    if site == "same-site" and (fetch_mode or "").strip().lower() == "navigate":
+        # Une page d'un autre service local qui NAVIGUE vers une route gardée (`location = ...`) consommerait un état (file de commandes, lecture
+        # longue). La page du Control Center elle-même est `same-origin` (jamais `same-site`), donc non concernée.
+        return "same-site navigation from another local service"
+    return _foreign_port_refusal(origin, host_header)
 
 
 _CSP_HOST = re.compile(r"[a-z0-9.-]+|\[[0-9a-f:.]+\]")
 
 
-def frame_src_policy(visualizer_url: str | None) -> str:
+def frame_src_policy(visualizer_url: str | None, stage_url: str | None = None) -> str:
     """`Content-Security-Policy` of the Control Center page: `frame-src` only.
 
-    The page frames exactly one thing by URL, the configured visualizer, so
-    `frame-src` allows that origin alone (`'none'` without a visualizer).
+    The page frames the configured visualizer by URL, so `frame-src` allows that
+    origin (`'none'` without a visualizer). Since the Remotion Slice 10 it frames
+    one more thing: its own Remotion stage document (`stage_url`, an exact
+    `scheme://host:port/remotion-stage`, a PATH source, not `'self'`: a frame can
+    navigate to that one document and to no other page of the Control Center).
+    The Remotion sandbox origin is NOT here: only the stage document mounts the
+    sandboxed frame, and its own `frame-src` names that origin alone
+    (`remotion_relay.stage_csp`, docs/remotion-isolation.md section 4).
     Prefab frames are `srcdoc` documents, which `frame-src` does not govern,
     but every navigation of a frame (`location.href`, a link) is checked
     against it: a prefab frame cannot load another page (docs/prefabs.md ›
     *Containment*, SECURITY.md §16). Nothing else on the page is restricted.
     """
+    sources: list[str] = []
     try:
         parsed = urlparse(visualizer_url or "")
         port = parsed.port
+        host = parsed.hostname or ""
+        shown = f"[{host}]" if ":" in host else host
+        if parsed.scheme in {"http", "https"} and "@" not in parsed.netloc and host and _CSP_HOST.fullmatch(shown):
+            sources.append(f"{parsed.scheme}://{shown}" + (f":{port}" if port is not None else ""))
     except ValueError:
-        return "frame-src 'none'"
-    host = parsed.hostname or ""
-    if parsed.scheme not in {"http", "https"} or "@" in parsed.netloc or not host:
-        return "frame-src 'none'"
-    shown = f"[{host}]" if ":" in host else host
-    if not _CSP_HOST.fullmatch(shown):
-        return "frame-src 'none'"
-    return f"frame-src {parsed.scheme}://{shown}" + (f":{port}" if port is not None else "")
+        pass
+    if stage_url:
+        sources.append(stage_url)
+    return "frame-src " + (" ".join(sources) if sources else "'none'")
 
 
 #: En-tête d'un refus d'enregistrement (HTTP 400) portant son code stable.
@@ -512,6 +555,8 @@ STUDIO_EXPLORER_COMPARE_SCRIPT_FILE = "control_center_presentation_studio_explor
 STUDIO_EXPLORER_COMPARE_SCRIPT_MARKER = "/*__CONTROL_CENTER_PRESENTATION_STUDIO_EXPLORER_COMPARE_JS__*/"
 STUDIO_EXPLORER_COMPOSE_SCRIPT_FILE = "control_center_presentation_studio_explorer_compose.js"
 STUDIO_EXPLORER_COMPOSE_SCRIPT_MARKER = "/*__CONTROL_CENTER_PRESENTATION_STUDIO_EXPLORER_COMPOSE_JS__*/"
+STUDIO_EXPLORER_UPGRADES_SCRIPT_FILE = "control_center_presentation_studio_explorer_upgrades.js"
+STUDIO_EXPLORER_UPGRADES_SCRIPT_MARKER = "/*__CONTROL_CENTER_PRESENTATION_STUDIO_EXPLORER_UPGRADES_JS__*/"
 STUDIO_EXPLORER_SCRIPT_FILE = "control_center_presentation_studio_explorer.js"
 STUDIO_EXPLORER_SCRIPT_MARKER = "/*__CONTROL_CENTER_PRESENTATION_STUDIO_EXPLORER_JS__*/"
 # Lecture d'une presentation (studio, Slice 12) : bande d'etat + clavier sur l'hote du stage ; apres le plein ecran qu'il pilote.
@@ -590,6 +635,9 @@ PREFAB_PROTOCOL_SCRIPT_FILE = "control_center_prefab_protocol.js"
 PREFAB_PROTOCOL_SCRIPT_MARKER = "/*__CONTROL_CENTER_PREFAB_PROTOCOL_JS__*/"
 PREFAB_HOST_SCRIPT_FILE = "control_center_prefab_host.js"
 PREFAB_HOST_SCRIPT_MARKER = "/*__CONTROL_CENTER_PREFAB_HOST_JS__*/"
+#: Cadre de la scène Remotion (Slice 10), avant l'hôte : l'hôte le délègue pour un paquet `{kind: "remotion"}`.
+REMOTION_FRAME_SCRIPT_FILE = "control_center_remotion_frame.js"
+REMOTION_FRAME_SCRIPT_MARKER = "/*__CONTROL_CENTER_REMOTION_FRAME_JS__*/"
 SCENE_PAGE_SCRIPT_FILE = "control_center_scene_page.js"
 SCENE_PAGE_SCRIPT_MARKER = "/*__CONTROL_CENTER_SCENE_PAGE_JS__*/"
 #: Interactions de l'utilisateur (Slice 08) : géométrie, menu, archivage
@@ -638,6 +686,12 @@ MCP_INSPECTOR_SCRIPT_MARKER = "/*__CONTROL_CENTER_MCP_INSPECTOR_JS__*/"
 #: lecture seule et le rendu de détail de l'inspecteur, donc inséré APRÈS lui.
 MCP_PLUGINS_SCRIPT_FILE = "control_center_mcp_plugins.js"
 MCP_PLUGINS_SCRIPT_MARKER = "/*__CONTROL_CENTER_MCP_PLUGINS_JS__*/"
+#: Carte « Remotion » et Studio optionnel (jarvis-remotion-presentation-integration, Slice 11) : dans l'onglet des plugins externes.
+REMOTION_STUDIO_SCRIPT_FILE = "control_center_remotion_studio.js"
+REMOTION_STUDIO_SCRIPT_MARKER = "/*__CONTROL_CENTER_REMOTION_STUDIO_JS__*/"
+#: Carte « Présentations · moteur » (Slice 20) : choix humain du moteur, diagnostic d'un Remotion en panne, journal Slidecar.
+STUDIO_ENGINE_SCRIPT_FILE = "control_center_presentation_studio_engine.js"
+STUDIO_ENGINE_SCRIPT_MARKER = "/*__CONTROL_CENTER_PRESENTATION_STUDIO_ENGINE_JS__*/"
 #: Sessions & Boards (board-memory-workspace-inspector, Slice 07) : vue plein
 #: écran du dock `WSP` — état courant, historique des Sessions, tous les Boards,
 #: relations, mémoire d'un Board (lecture et écriture), Artefacts et provenance.
@@ -1265,6 +1319,10 @@ class ControlCenter:
             transport=lambda: self.sessions, journal=self.journal,
             loopback_host=lambda host: _authority_host(host or "") in LOOPBACK_HOSTS,
         )
+        # Studio Remotion optionnel (jarvis-remotion-presentation-integration, Slice 11) : relais de la carte Remotion vers Core.
+        self.remotion_studio_routes = RemotionStudioRelayRoutes(transport=lambda: self.sessions, journal=self.journal)
+        # Export d'une présentation gelée (Slice 16) : relais de la vue Artefacts d'un Board vers le rendu de Core.
+        self.presentation_render_routes = PresentationRenderRelayRoutes(transport=lambda: self.sessions, journal=self.journal)
         # Contexts, captures, Artifacts (Slice 09 session-context-recording) : relais
         # vers Core, sans état propre ; transport relu à chaque requête.
         self.capture_routes = CaptureRelayRoutes(transport=lambda: self.sessions, journal=self.journal)
@@ -1274,6 +1332,16 @@ class ControlCenter:
         # Catalogue des prefabs (Slice 03 prefab-foundation) : relais des lectures, transport relu à chaque requête.
         self.memory_routes = MemoryRelayRoutes(transport=lambda: self.sessions, journal=self.journal)
         self.prefab_routes = PrefabRelayRoutes(transport=lambda: self.sessions, journal=self.journal)
+        # Scène Remotion (jarvis-remotion-presentation-integration, Slice 10) : page de la scène (CSP `frame-src` du bac à sable
+        # seul), relais du descripteur de lecture, compte rendu de la page. Aucun jeton de Core n'entre dans la page.
+        runtime_folder = Path(__file__).resolve().parent
+        self.remotion_routes = RemotionRelayRoutes(
+            transport=lambda: self.sessions, journal=self.journal,
+            # Slice 13 : le validateur d'inputProps voyage avec le protocole (deux IIFE, même emplacement de la page de scène).
+            protocol_js=(runtime_folder / "remotion_sandbox_protocol.js").read_text(encoding="utf-8") + "\n"
+            + (runtime_folder / "control_center_remotion_props.js").read_text(encoding="utf-8"),
+            stage_js=(runtime_folder / "control_center_remotion_stage.js").read_text(encoding="utf-8"),
+            page_template=(runtime_folder / "control_center_remotion_stage.html").read_text(encoding="utf-8"))
         # Presentation Studio (jarvis-interactive-presentation-studio, Slice 05) : lectures + API d'édition, acteur forcé à `user`.
         self.studio_routes = PresentationStudioRelayRoutes(transport=lambda: self.sessions, journal=self.journal)
         # Graphe des variantes (Slice 16): meme surface gardee, acteur force a `user`, archivage sans plan refuse par le relais.
@@ -1285,6 +1353,7 @@ class ControlCenter:
             transport=lambda: self.sessions, journal=self.journal)
         # Modeles reutilisables (Slice 20): plan, promotion, liste, lecture, instanciation; acteur force a `user`.
         self.studio_template_routes = PresentationStudioTemplateRelayRoutes(transport=lambda: self.sessions, journal=self.journal)
+        self.studio_upgrades_routes = PresentationStudioUpgradesRelayRoutes(transport=lambda: self.sessions, journal=self.journal)
         # Planificateur d'ecriture (Slice 11): verifier / assembler un brouillon, acteur force a `user`.
         self.studio_authoring_routes = PresentationStudioAuthoringRelayRoutes(transport=lambda: self.sessions, journal=self.journal)
         # Explorateur de variantes (Slice 18) : canal de commandes (ouvrir / fermer par la voix ou un agent) + miroir d'etat de la page.
@@ -1319,6 +1388,9 @@ class ControlCenter:
             # relais vers Core, écritures comprises, et retour OAuth. Toujours
             # aucune route d'exécution d'outil (`call_tool` vit dans Core).
             *self.mcp_plugin_routes.routes(),
+            # Carte « Remotion » : état de la capacité et Studio optionnel (Slice 11), six adresses relayées vers Core.
+            *self.remotion_studio_routes.routes(),
+            *self.presentation_render_routes.routes(),
             web.get("/api/models", self.models),
             web.get("/api/cli/agents", self.cli_agents),
             web.get("/api/routing/candidates", self.routing_candidates),
@@ -1398,11 +1470,13 @@ class ControlCenter:
             *self.memory_routes.routes(),
             *self.memory_brain_routes.routes(),
             *self.prefab_routes.routes(),
+            *self.remotion_routes.routes(),
             *self.studio_routes.routes(),
             *self.studio_variants_routes.routes(),
             *self.studio_compose_routes.routes(),
             *self.studio_scene_variants_routes.routes(),
             *self.studio_template_routes.routes(),
+            *self.studio_upgrades_routes.routes(),
             *self.studio_authoring_routes.routes(),
             *self.studio_explorer.routes(),
             *self.studio_turn.routes(),
@@ -1967,7 +2041,9 @@ class ControlCenter:
             # read-sensitive: every method is guarded, and the Host must be loopback
             # too (DNS rebinding).
             refusal = _loopback_refusal(request.headers.get("Origin"), request.headers.get("Host"),
-                                        request.headers.get("Sec-Fetch-Site"))
+                                        request.headers.get("Sec-Fetch-Site"),
+                                        mutating=request.method not in {"GET", "HEAD", "OPTIONS"},
+                                        fetch_mode=request.headers.get("Sec-Fetch-Mode"))
             if refusal is not None:
                 if request.path == FULLSCREEN_ROUTE_PREFIX or request.path.startswith(FULLSCREEN_ROUTE_PREFIX + "/"):
                     # Même forme de refus que le canal frère, avec **son** code (`fullscreen_*`).
@@ -1996,6 +2072,9 @@ class ControlCenter:
                     # rend déjà `_barehands_error`.
                     if not request.path.startswith(SCENE_CAPTURE_ROUTE_PREFIX):
                         raise web.HTTPForbidden(text="invalid origin")
+                if host in LOOPBACK_HOSTS and (_foreign_port_refusal(origin, request.headers.get("Host")) is not None
+                                               or (request.headers.get("Sec-Fetch-Site") or "").strip().lower() in {"same-site", "cross-site"}):
+                    host = None  # une page d'un autre service local (autre port) : refusée comme une origine étrangère
                 if host not in LOOPBACK_HOSTS:
                     if request.path.startswith(SCENE_CAPTURE_ROUTE_PREFIX):
                         # Même forme d'erreur que les autres refus de la route de capture.
@@ -2011,6 +2090,11 @@ class ControlCenter:
         d'aiohttp dont leurs clients dépendent.
         """
 
+        if RemotionStudioRelayRoutes.owns(request.path):  # Slice 11 : mêmes refus codés, sous `/api/local-capabilities/remotion`
+            try:
+                return await handler(request)
+            except (web.HTTPMethodNotAllowed, web.HTTPNotFound) as exc:
+                return RemotionStudioRelayRoutes.refusal(exc)
         if not (request.path == MCP_ROUTE_PREFIX or request.path.startswith(MCP_ROUTE_PREFIX + "/")):
             return await handler(request)
         if McpPluginRoutes.owns(request.path):
@@ -2122,8 +2206,7 @@ class ControlCenter:
             await self._runner.cleanup()
             self._runner = None
 
-    async def index(self, request: web.Request) -> web.Response:
-        del request
+    async def index(self, request: web.Request | None) -> web.Response:
         page = Path(__file__).with_name("control_center.html")
         html = page.read_text(encoding="utf-8")
         # Logique pure du panneau Agents, tenue dans son propre fichier pour que
@@ -2207,6 +2290,7 @@ class ControlCenter:
             (STUDIO_EXPLORER_COMPARE_CORE_SCRIPT_MARKER, STUDIO_EXPLORER_COMPARE_CORE_SCRIPT_FILE),
             (STUDIO_EXPLORER_COMPARE_SCRIPT_MARKER, STUDIO_EXPLORER_COMPARE_SCRIPT_FILE),
             (STUDIO_EXPLORER_COMPOSE_SCRIPT_MARKER, STUDIO_EXPLORER_COMPOSE_SCRIPT_FILE),
+            (STUDIO_EXPLORER_UPGRADES_SCRIPT_MARKER, STUDIO_EXPLORER_UPGRADES_SCRIPT_FILE),
         ):
             html = html.replace(marker, page.with_name(file_name).read_text(encoding="utf-8"))
         html = html.replace(
@@ -2265,6 +2349,9 @@ class ControlCenter:
             PREFAB_PROTOCOL_SCRIPT_MARKER, page.with_name(PREFAB_PROTOCOL_SCRIPT_FILE).read_text(encoding="utf-8")
         )
         html = html.replace(
+            REMOTION_FRAME_SCRIPT_MARKER, page.with_name(REMOTION_FRAME_SCRIPT_FILE).read_text(encoding="utf-8")
+        )
+        html = html.replace(
             PREFAB_HOST_SCRIPT_MARKER, page.with_name(PREFAB_HOST_SCRIPT_FILE).read_text(encoding="utf-8")
         )
         html = html.replace(
@@ -2289,6 +2376,12 @@ class ControlCenter:
             MCP_PLUGINS_SCRIPT_MARKER, page.with_name(MCP_PLUGINS_SCRIPT_FILE).read_text(encoding="utf-8")
         )
         html = html.replace(
+            REMOTION_STUDIO_SCRIPT_MARKER, page.with_name(REMOTION_STUDIO_SCRIPT_FILE).read_text(encoding="utf-8")
+        )
+        html = html.replace(
+            STUDIO_ENGINE_SCRIPT_MARKER, page.with_name(STUDIO_ENGINE_SCRIPT_FILE).read_text(encoding="utf-8")
+        )
+        html = html.replace(
             WORKSPACE_SCRIPT_MARKER, page.with_name(WORKSPACE_SCRIPT_FILE).read_text(encoding="utf-8")
         )
         html = html.replace(
@@ -2306,7 +2399,15 @@ class ControlCenter:
                 html,
             )
         return web.Response(text=html, content_type="text/html",
-                            headers={"Content-Security-Policy": frame_src_policy(self.visualizer_url)})
+                            headers={"Content-Security-Policy": frame_src_policy(self.visualizer_url, self._stage_url(request))})
+
+    @staticmethod
+    def _stage_url(request: web.Request | None) -> str | None:
+        """`scheme://host:port/remotion-stage` of THIS page, when it was reached by a loopback authority (else no stage frame)."""
+
+        if request is None or _authority_host(request.host or "") not in LOOPBACK_HOSTS:
+            return None
+        return f"{request.scheme}://{request.host}{REMOTION_STAGE_ROUTE}"
 
     async def status(self, request: web.Request) -> web.Response:
         del request
@@ -5493,7 +5594,8 @@ class ControlCenter:
         attributes = {"jarvis-display": "display_mcp", "jarvis-barehands": "barehands_mcp",
                       "jarvis-console": "console_mcp", "jarvis-tools": "tools_mcp",
                       "jarvis-capture": "capture_mcp", "jarvis-workspace": "workspace_mcp", "jarvis-memory": "memory_mcp",
-                      "jarvis-drive": "drive_mcp", "jarvis-presentation": "presentation_mcp"}
+                      "jarvis-drive": "drive_mcp", "jarvis-presentation": "presentation_mcp",
+                      "jarvis-remotion": "presentation_mcp"}
         facts: dict[str, dict[str, Any]] = {}
         for meta in mcp_catalog.SERVERS:
             attribute = attributes.get(meta.server)

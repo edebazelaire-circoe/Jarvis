@@ -74,7 +74,7 @@ def test_the_reset_cases_name_every_field_of_the_reset_descriptor():
 def test_the_decisions_are_recorded_with_their_reasons():
     section = reload_section()
     assert "**Decision: no new `jv:1` message pair" in section and "type-confusion" in section
-    assert "**Not durable, on purpose.**" in section and "Revisit when Slice 21" in section
+    assert "**Not durable, on purpose.**" in section and "Amended by the Remotion Slice 21 rework" in section and "Revisit if requests must outlive a restart" in section
     assert "The `presentation-studio.` namespace is now reserved" in section
     for needle in ("Crash consistency", "kill between any two steps", "`start_service`", "no window and no run"):
         assert needle in section, needle

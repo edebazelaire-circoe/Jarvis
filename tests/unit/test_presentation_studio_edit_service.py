@@ -36,8 +36,11 @@ def op_set(scene_id, control_id, value, **extra):
     return {"op": "control.set", "scene_id": scene_id, "control_id": control_id, "value": value, **extra}
 
 
-def request(revision, *ops, actor="user", mode="commit"):
-    return {"actor": actor, "mode": mode, "basis": {"variant_revision": revision}, "ops": list(ops)}
+def request(revision, *ops, actor="user", mode="commit", origin=None):
+    body = {"actor": actor, "mode": mode, "basis": {"variant_revision": revision}, "ops": list(ops)}
+    if origin is not None:
+        body["origin"] = origin
+    return body
 
 
 class Events:
@@ -407,7 +410,8 @@ async def test_retrying_after_stale_converges_with_no_lost_update(rig):
 async def test_a_source_request_is_classified_and_recorded_only_at_commit(rig):
     revision = (await rig.variant()).revision
     digest = rig.digest()
-    result = await rig.run(revision, {"op": "scene.source_request", "scene_id": SID, "intent": "make the number glow"}, actor="brain")
+    result = await rig.run(revision, {"op": "scene.source_request", "scene_id": SID, "intent": "make the number glow"}, actor="brain",
+                           origin="explicit_user_request")
     assert result.status is EditStatus.APPLIED and result.tier.value == "source" and result.changed is False
     assert result.revision == revision and rig.digest() == digest and result.undo is None
     ((record,)) = rig.edit.pending_source_requests()
@@ -419,6 +423,31 @@ async def test_a_source_request_is_classified_and_recorded_only_at_commit(rig):
     # the intent is in no diagnostic row and no event
     everything = json.dumps(rig.sink.rows, default=str) + json.dumps(rig.emitter.recorded, default=str)
     assert "glow" not in everything and "number" not in everything
+
+
+async def test_the_brain_records_a_source_request_only_with_the_origin_of_a_user_request(rig):
+    """Remotion Slice 21 (QA B1): no origin, no record; a preview records nothing and is not refused; the user needs no origin."""
+
+    revision = (await rig.variant()).revision
+    op = {"op": "scene.source_request", "scene_id": SID, "intent": "make the number glow"}
+    refused = await rig.run(revision, op, actor="brain")
+    assert refused.status is EditStatus.REFUSED and refused.code == "presentation_studio_source_request_required"
+    assert refused.http_status == 403 and refused.refusal_kind == "authority" and rig.edit.pending_source_requests() == ()
+    preview = await rig.run(revision, op, actor="brain", mode="preview")
+    assert preview.status is EditStatus.APPLIED and rig.edit.pending_source_requests() == ()
+    user = await rig.run(revision, op, actor="user")
+    assert user.status is EditStatus.APPLIED
+    ((record,)) = rig.edit.pending_source_requests()
+    assert (record.actor, record.origin) == ("user", "explicit_user_request") and record.created_at > 0
+    brain = await rig.run(revision, op, actor="brain", origin="explicit_user_request")
+    assert brain.status is EditStatus.APPLIED and rig.edit.pending_source_requests()[-1].origin == "explicit_user_request"
+
+
+async def test_an_origin_other_than_a_user_request_is_not_a_request(rig):
+    from jarvis.domain.presentation_studio_checks import PresentationStudioError
+    revision = (await rig.variant()).revision
+    with pytest.raises(PresentationStudioError):
+        await rig.run(revision, {"op": "scene.source_request", "scene_id": SID, "intent": "x"}, actor="brain", origin="brain_spontaneous")
 
 
 async def test_source_requests_are_bounded_and_scoped_by_presentation(rig):

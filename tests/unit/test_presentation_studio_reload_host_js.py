@@ -405,3 +405,68 @@ async def test_two_hundred_swaps_leave_one_frame_and_no_timer_listener_or_staged
     assert stats["bundles"] <= 64 and result["iframes"] == 1 and result["listeners"] == 1 and result["timers"] == 0
     assert result["outcomes"] == {"mounted": 133, "failed": 67}
     assert result["counters"]["starts"] == 201 and result["counters"]["mounted"] == 134 and result["counters"]["failed"] == 67
+
+
+# ------------------------------------------------------------------ Slice 14 : a Remotion scene is mounted when it RENDERED
+
+REMOTION_BUNDLE = {"bundles": {"lab.remotion@1": {"kind": "remotion", "id": "lab.remotion", "version": 1, "title": "Scene"}}}
+
+
+def _remotion(tmp_path, body):
+    return run_node(tmp_path, r"""
+      const outcomes=[];
+      const c=clock(),doc=new FakeDocument(),win=new FakeWindow(),logs=[];
+      const host=H.createPrefabHost({document:doc,window:win,now:c.now,setTimeout:c.setTimeout,clearTimeout:c.clearTimeout,
+        log:(k,d)=>logs.push({key:k,data:d}),onOutcome:(o)=>outcomes.push(o),
+        fetchBundle:(id,v)=>Promise.resolve(JSON.parse(JSON.stringify(D.bundles[`${id}@${v}`])))});
+      const s=doc.createElement('div');doc.body.appendChild(s);
+      const frameOf=()=>s.children.filter(n=>n.tagName==='IFRAME').pop();
+      const status=(phase,extra)=>win.dispatch({source:frameOf().contentWindow,origin:win.location&&win.location.origin,
+        data:Object.assign({rsh:1,type:'status',phase},extra||{})});
+      const clockMsg=()=>win.dispatch({source:frameOf().contentWindow,origin:win.location&&win.location.origin,
+        data:{rsh:1,type:'clock',frame:0,playing:true,duration:90,fps:30}});
+      host.mount(s,instance('obj_1',{prefab:{id:'lab.remotion',version:1}}));await flush();
+    """ + body, REMOTION_BUNDLE)
+
+
+async def test_a_remotion_scene_is_mounted_only_after_its_player_rendered_a_first_frame(tmp_path):
+    result = _remotion(tmp_path, r"""
+      status('ready');
+      c.advance(H.SETTLE_MS+50);const readyOnly=outcomes.length;      // sandbox loaded, nothing rendered yet: not mounted
+      clockMsg();c.advance(H.SETTLE_MS-1);const justBefore=outcomes.length;
+      c.advance(1);
+      return {readyOnly,justBefore,outcomes:outcomes.map(o=>o.outcome)};
+    """)
+    assert (result["readyOnly"], result["justBefore"], result["outcomes"]) == (0, 0, ["mounted"])
+
+
+async def test_a_remotion_scene_that_throws_at_render_is_a_failed_outcome_not_a_mounted_one(tmp_path):
+    result = _remotion(tmp_path, r"""
+      status('ready');
+      status('scene_error',{message:'Error: boom at render'});      // the sandbox boundary reports BEFORE the first clock
+      clockMsg();c.advance(5000);
+      return {outcomes:outcomes.map(o=>[o.outcome,o.reason,o.message])};
+    """)
+    assert result["outcomes"] == [["failed", "frame", "Error: boom at render"]]
+
+
+async def test_a_remotion_scene_that_never_renders_fails_after_the_proof_delay_instead_of_waiting_forever(tmp_path):
+    result = _remotion(tmp_path, r"""
+      status('ready');
+      c.advance(9999);const before=outcomes.length;
+      c.advance(2);
+      return {before,outcomes:outcomes.map(o=>[o.outcome,o.reason]),message:outcomes[0]&&outcomes[0].message};
+    """)
+    assert result["before"] == 0 and result["outcomes"] == [["failed", "timeout"]] and "first frame" in result["message"]
+
+
+async def test_a_staged_remotion_frame_receives_the_windows_current_values_when_its_page_is_up(tmp_path):
+    """Slice 14: the hot reload patches the window with the values to keep (live preview values included); the new page of the scene gets
+    exactly those, from the host, when it says `shell` (before any render): nothing the user was previewing is lost by the swap."""
+
+    result = _remotion(tmp_path, r"""
+      status('shell');
+      const sent=frameOf().contentWindow.posted.map(p=>p.message).filter(m=>m.type==='props');
+      return {sent};
+    """)
+    assert [m["props"] for m in result["sent"]] == [{"label": "Count"}] and result["sent"][0]["data"] == {"count": 3, "notes": "**bold** note"}

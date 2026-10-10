@@ -13,6 +13,7 @@ données, qui ne sont jamais partagées par git.
 | fichiers des Artifacts (audio, vidéo, captures…) | `artifacts/<artifact_id>/` |
 | bibliothèque de prefabs de fenêtre de cette installation ([prefabs.md](prefabs.md)) | `prefabs/<prefab_id>/<version>/` |
 | Presentations du Studio : un dossier par Presentation, un fichier par variante, les variantes archivées dans `archive/` ([presentation-studio.md](presentation-studio.md)) | `presentations/<presentation_id>/{presentation.json, variants/<variant_id>.json, archive/<variant_id>.json}` |
+| capacités locales installables : état (`state.json`) et dossier `runtime/` propre à chaque capacité, hors plugins MCP ([local-capabilities.md](local-capabilities.md)) | `local_capabilities/<capability_id>/{state.json, runtime/}` |
 | contexte global du cerveau, géré par l'agent ([context-global.md](context-global.md)) | `CONTEXT_GLOBAL/` |
 
 La racine par défaut est
@@ -218,6 +219,11 @@ bibliothèque par installation, donc par racine de données : les worktrees et
 (`jarvis/prefabs/base/`), jamais ici, sauf leurs versions publiées par la
 porte d'édition de base. Adaptateur : `jarvis/adapters/file_prefab_library.py`.
 
+**Sources de scènes Remotion** (Slice 05, [remotion-source.md](remotion-source.md)) : même dossier, mêmes règles ; une version porte
+  `manifest.json` (`schema_version` 2), `publication.json`, `src/**` et `public/**` à la place des trois fichiers HTML. Jamais de
+  `node_modules` ni de `package.json` : l'unique arbre de dépendances est `local_capabilities/remotion/runtime/` ([remotion-runtime.md](remotion-runtime.md)). Le
+  **cache de compilation** (`local_capabilities/remotion/compiled/<clé>/`) est dérivé et reconstructible : à ne pas sauvegarder, à supprimer sans risque. Les **dossiers de travail d'un rendu** (`local_capabilities/remotion/runtime/render/jobs/<job>/`, [remotion-render.md](remotion-render.md)) sont éphémères : effacés à la fin de chaque rendu, sauf quelques Kio de traces ; le résultat d'un export est un Artifact (`artifacts/<id>/render.mp4`), pas ce dossier.
+
 - **une version publiée n'est jamais réécrite** : Core écrit dans
   `prefabs/.staging-<16 hex>/` puis renomme le dossier ; un arrêt brutal
   laisse au pire un `.staging-*`, retiré au démarrage suivant
@@ -251,6 +257,17 @@ un fichier JSON par document, **pas une base SQLite** (aucune migration de
 [presentation-studio.md](presentation-studio.md#storage-decision-a-file-store-recorded-by-slice-02)).
 Une racine par installation, donc par racine de données : les worktrees et
 `jarvis-dst` ont la leur. Adaptateur : `jarvis/adapters/file_presentation_studio_store.py`.
+
+**Source éditable et copies figées (Remotion, Slice 07).** Ce dossier reste la
+seule maison de la source éditable : elle n'est jamais déplacée ni copiée dans
+`artifacts/`. Ses copies figées (snapshot) et leurs rendus (MP4, image, PDF) sont
+des Artifacts : fichiers sous `artifacts/<artifact_id>/` (chemin relatif au
+`payload_ref`, jamais absolu), lignes dans `jarvis.sqlite3` (schéma inchangé,
+v8). Supprimer une Presentation ne supprime pas ses snapshots ; supprimer un
+snapshot ne touche pas la source ([presentation-artifacts.md](presentation-artifacts.md)).
+Le `snapshot.zip` (Slice 09) est autonome : source exacte de chaque pin, documents, et copie des éléments de Board
+référencés ; aucun chemin de la machine, rien lu hors du paquet à la réouverture
+([paquet](presentation-artifacts.md#snapshot-package-slice-09), [références vivantes](presentation-live-refs.md)).
 
 - **jamais un fichier à moitié écrit** : chaque document s'écrit dans un
   temporaire de même dossier, `fsync`, puis remplacement atomique ; un arrêt
@@ -307,6 +324,12 @@ Une racine par installation, donc par racine de données : les worktrees et
   sources de scène sont des prefabs `presentation-studio.p<12 hex>.s<12 hex>` dans `prefabs/` ; Core archive
   (déplace, ne supprime jamais) vers `prefabs/.archive/` celles que rien n'épingle, et seulement quand l'index
   des épinglages est complet ([prefabs.md](prefabs.md#retention-of-studio-scene-sources))
+
+- **Modèles de présentation (Slice 20, Remotion Slice 19)** : `presentation_templates/ptp_<12 hex>.json`, un fichier JSON par modèle,
+  créé une fois, jamais réécrit ni supprimé par Core. Un modèle de **présentation** (document v2) porte ses sources de scène
+  **intégrées** (`embedded`, dans les 256 Kio d'un document du Studio) et le squelette de sa partition : ce n'est donc plus un simple index
+  de versions de bibliothèque, il se sauvegarde avec la racine de données et jamais dans le dépôt. Rien n'est publié dans `prefabs/`
+  par la promotion d'une présentation ; les prefabs `presentation-studio.p<...>.s<...>` n'apparaissent qu'à l'instanciation.
 
 ## Base de scène disparue sous son `-wal`
 

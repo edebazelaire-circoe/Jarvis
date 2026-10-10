@@ -41,10 +41,14 @@ def draft_from_stored(presentation: Presentation, variant: PresentationVariant, 
     """`(draft, brief, built)` for the gate. `bundles`: `(key, candidate, parsed)` of the Studio-namespace sources the scenes pin."""
 
     count = len(variant.scenes)
+    held = {key for key, _, _ in bundles}
+    # A scene whose pin is one of the stored sources read for the gate is linked to it (Slice 15: the Remotion rules read the source of the
+    # scene they judge: its text literals, its composition against the anchors).
     scenes = tuple(
         DraftScene(scene.scene_id,
                    SceneRole.SINGLE if count == 1 else SceneRole.OPENING if n == 0 else SceneRole.CLOSING if n == count - 1 else SceneRole.BODY,
-                   scene, None, long_form=True, cut=True)
+                   scene, f"{scene.prefab.prefab_id}@{scene.prefab.version}" if f"{scene.prefab.prefab_id}@{scene.prefab.version}" in held else None,
+                   long_form=True, cut=True)
         for n, scene in enumerate(variant.scenes))
     cues = {cue.cue_id: cue for cue in score.cues}
     items = []

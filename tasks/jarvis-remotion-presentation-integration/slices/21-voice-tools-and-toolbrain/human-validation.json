@@ -1,0 +1,12 @@
+{
+  "checks": [
+    {
+      "id": "HV-21-01",
+      "instruction": "Avec la voix réelle de ce poste (Core, Control Center et voix lancés par l'utilisateur), dire « installe Remotion », « exporte en MP4 », « ouvre le Studio sur la deuxième scène » et « passe en Slidecar » ; vérifier que seul le premier et le deuxième lancent un travail visible, que le Studio ne s'ouvre pas sans le clic de confirmation dans la carte, et que le moteur ne change pas.",
+      "requires_evidence_first": true,
+      "status": "open",
+      "order": 5,
+      "evidence": "docs/remotion-integration-release.md#human-checks"
+    }
+  ]
+}

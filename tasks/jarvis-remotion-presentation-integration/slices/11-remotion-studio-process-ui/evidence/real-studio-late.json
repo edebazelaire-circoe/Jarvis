@@ -1,0 +1,87 @@
+{
+  "verdict": "PASSED",
+  "notes": {
+    "started": "2026-10-09T23:02:27+00:00",
+    "platform": "Windows-11-10.0.26200-SP0",
+    "free_gb": 31.3,
+    "python": "3.14.6",
+    "node": "v24.18.0",
+    "chrome": "154.0.8037.99",
+    "head": "f11e241a",
+    "dirty": false,
+    "core": "127.77.0.9:63030 (isolated), data root <home>\\AppData\\Local\\Temp\\s11\\root",
+    "idle_seconds": 60.9,
+    "guard_exit": {
+      "launch": "3d595e094e7753c2",
+      "reason": "parent_gone",
+      "at": 1791587240149
+    },
+    "leftover_processes_killed": 0,
+    "final_orphans_killed_by_harness": []
+  },
+  "checks": {
+    "0.core_start_launches_no_studio": {
+      "ok": true,
+      "detail": ""
+    },
+    "1.real_install_ready": {
+      "ok": true,
+      "detail": {
+        "status": "ready",
+        "seconds": 28.4,
+        "error": null
+      }
+    },
+    "11.idle_timeout_stops_the_studio_by_itself": {
+      "ok": true,
+      "detail": {
+        "seconds_after_last_window_closed": 60.9,
+        "reason": "idle_timeout"
+      }
+    },
+    "12.restarted_core_adopts_the_surviving_studio": {
+      "ok": true,
+      "detail": {
+        "survived_kill": true,
+        "status": "ready"
+      }
+    },
+    "12.adopted_studio_outlives_the_old_cores_grace_period": {
+      "ok": true,
+      "detail": {
+        "still_running_after_s": 75,
+        "same_pids": true
+      }
+    },
+    "12.studio_ends_itself_when_core_never_comes_back": {
+      "ok": true,
+      "detail": {
+        "seconds_after_core_death": 62.7
+      }
+    },
+    "12.graceful_core_stop_closes_the_studio_itself": {
+      "ok": true,
+      "detail": {
+        "opened": true,
+        "graceful_exit": true,
+        "orphans": [],
+        "reason": "core_stopped"
+      }
+    },
+    "13.busy_configured_port_is_a_typed_refusal": {
+      "ok": true,
+      "detail": "remotion_studio_port_unavailable"
+    },
+    "14.uninstall_stops_the_studio_first": {
+      "ok": true,
+      "detail": {
+        "capability": "not_installed"
+      }
+    },
+    "end.no_node_process_left_under_the_work_dir": {
+      "ok": true,
+      "detail": []
+    }
+  },
+  "finished": "2026-10-09T23:07:51+00:00"
+}

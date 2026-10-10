@@ -1,0 +1,199 @@
+{
+  "kind": "remotion real-model traces",
+  "model": "sonnet",
+  "prompt_program": "conversation_display_studio_session",
+  "remotion_prompt_chars": 1568,
+  "scenarios": [
+    {
+      "attestation_reads": 0,
+      "attested_turn": false,
+      "capability_at_end": "not_installed",
+      "capability_at_start": "not_installed",
+      "capability_requests": [],
+      "engine_at_end": {
+        "default": "remotion",
+        "presentations": [
+          "remotion"
+        ]
+      },
+      "model": "sonnet",
+      "render_job_at_end": null,
+      "scenario": "install-ambient",
+      "server_journal": [],
+      "turns": [
+        {
+          "calls": [],
+          "cost_usd": 0.0135235,
+          "duration_ms": 1925,
+          "final_answer": "L'environnement Remotion n'est pas installé sur ce poste, et la présentation ouverte en a besoin. Je n'ai rien lancé, car l'installation doit venir de vous. Voulez-vous que je l'installe maintenant ?",
+          "final_answer_chars": 199,
+          "is_error": false,
+          "session_id": "226d6918-ca1a-42c5-9778-74e5e39ac4df",
+          "spoken_blocks": 1,
+          "turns": 1,
+          "usage": {
+            "cache_creation_input_tokens": 2656,
+            "cache_read_input_tokens": 15555,
+            "input_tokens": 2,
+            "output_tokens": 134
+          },
+          "user": "[Tour ouvert par Core, pas par l'utilisateur] Le travail de fond signale que l'environnement Remotion n'est pas installé sur ce poste et que la présentation ouverte en a besoin. Décide de la suite."
+        }
+      ]
+    },
+    {
+      "attestation_reads": 1,
+      "attested_turn": true,
+      "capability_at_end": "ready",
+      "capability_at_start": "ready",
+      "capability_requests": [
+        {
+          "body_keys": null,
+          "method": "GET",
+          "path": "/v1/local-capabilities/remotion"
+        },
+        {
+          "body_keys": [
+            "expected_presentation_revision",
+            "expected_variant_revision",
+            "format",
+            "presentation_id",
+            "variant_id"
+          ],
+          "method": "POST",
+          "path": "/v1/local-capabilities/remotion/render/jobs"
+        }
+      ],
+      "engine_at_end": {
+        "default": "remotion",
+        "presentations": [
+          "remotion"
+        ]
+      },
+      "model": "sonnet",
+      "render_job_at_end": "queued",
+      "scenario": "studio-then-export",
+      "server_journal": [
+        {
+          "kind": "presentation_studio.tool",
+          "op": "variant",
+          "speech": "silent",
+          "tool": "presentation_inspect"
+        },
+        {
+          "kind": "remotion_mcp.tool",
+          "op": "open",
+          "status": "needs_user",
+          "tool": "remotion_studio"
+        },
+        {
+          "kind": "remotion_mcp.tool",
+          "op": "start",
+          "status": "queued",
+          "tool": "remotion_export"
+        }
+      ],
+      "turns": [
+        {
+          "calls": [
+            {
+              "arguments": {
+                "max_results": 5,
+                "query": "select:mcp__jarvis-remotion__remotion_studio,mcp__jarvis-presentation__presentation_inspect"
+              },
+              "is_error": false,
+              "n": 1,
+              "speech": null,
+              "status": null,
+              "tool": "ToolSearch"
+            },
+            {
+              "arguments": {
+                "target": "variant"
+              },
+              "is_error": false,
+              "n": 2,
+              "speech": "silent",
+              "status": null,
+              "tool": "presentation_inspect"
+            },
+            {
+              "arguments": {
+                "presentation_id": "<pst1>",
+                "scene_id": "<pss1>",
+                "variant_id": "<psv1>"
+              },
+              "is_error": false,
+              "n": 3,
+              "speech": "say",
+              "status": "needs_user",
+              "tool": "remotion:remotion_studio"
+            }
+          ],
+          "cost_usd": 0.0320328,
+          "duration_ms": 6662,
+          "final_answer": "Je ne peux pas l'ouvrir à ta place. Va dans l'onglet « Plugins MCP » du Control Center, clique sur « Ouvrir le Studio » dans la carte « Remotion · Studio », puis confirme. La scène « Deux » est déjà ciblée. Elle tourne hors du bac à sable, donc la confirmation vient de toi.",
+          "final_answer_chars": 274,
+          "is_error": false,
+          "session_id": "4cc8795f-3729-404f-8bf2-7c6696b113cf",
+          "spoken_blocks": 1,
+          "turns": 4,
+          "usage": {
+            "cache_creation_input_tokens": 4731,
+            "cache_read_input_tokens": 72928,
+            "input_tokens": 8,
+            "output_tokens": 580
+          },
+          "user": "Ouvre le Studio sur la deuxième scène."
+        },
+        {
+          "calls": [
+            {
+              "arguments": {
+                "max_results": 1,
+                "query": "select:mcp__jarvis-remotion__remotion_export"
+              },
+              "is_error": false,
+              "n": 1,
+              "speech": null,
+              "status": null,
+              "tool": "ToolSearch"
+            },
+            {
+              "arguments": {
+                "format": "mp4",
+                "op": "start",
+                "presentation_id": "<pst1>",
+                "user_request": "Exporte ma présentation en MP4.",
+                "variant_id": "<psv1>"
+              },
+              "is_error": false,
+              "n": 2,
+              "speech": "say",
+              "status": "queued",
+              "tool": "remotion:remotion_export"
+            }
+          ],
+          "cost_usd": 0.049549499999999996,
+          "duration_ms": 4747,
+          "final_answer": "L'export MP4 est lancé et en file d'attente. Tu peux suivre sa progression dans la vue Artefacts du Board. Je ne reste pas à l'attendre, mais demande-moi l'état quand tu veux.",
+          "final_answer_chars": 175,
+          "is_error": false,
+          "session_id": "4cc8795f-3729-404f-8bf2-7c6696b113cf",
+          "spoken_blocks": 1,
+          "turns": 3,
+          "usage": {
+            "cache_creation_input_tokens": 1843,
+            "cache_read_input_tokens": 62327,
+            "input_tokens": 6,
+            "output_tokens": 390
+          },
+          "user": "Exporte ma présentation en MP4."
+        }
+      ]
+    }
+  ],
+  "slice": 21,
+  "total_calls": 5,
+  "total_cost_usd": 0.0951
+}

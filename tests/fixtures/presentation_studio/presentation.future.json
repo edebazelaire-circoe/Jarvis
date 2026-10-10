@@ -1,6 +1,6 @@
 {
   "schema": "jarvis.presentation_studio.presentation",
-  "schema_version": 3,
+  "schema_version": 4,
   "presentation_id": "pst_00000000000000000000000000000001",
   "title": "Bilan trimestriel",
   "active_variant_id": "psv_00000000000000000000000000000002",

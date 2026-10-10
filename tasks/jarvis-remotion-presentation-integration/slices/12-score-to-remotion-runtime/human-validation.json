@@ -1,0 +1,12 @@
+{
+  "checks": [
+    {
+      "id": "HV-12-01",
+      "instruction": "Verify a real spoken presentation follows score and pause/recovery as intended.",
+      "requires_evidence_first": true,
+      "status": "open",
+      "order": 3,
+      "evidence": "docs/remotion-integration-release.md#human-checks"
+    }
+  ]
+}

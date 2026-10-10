@@ -157,7 +157,7 @@ const world=(over)=>{
   const timers=[];
   const o=over||{};
   const client=W.createClient({fetchImpl:server.fetch,setTimer:(fn,ms)=>{timers.push(fn);return timers.length},clearTimer:()=>{}});
-  const manager=W.createManager({client,log:(level,event,data)=>logs.push({level,event,data}),switchBoard:o.switchBoard||null,
+  const manager=W.createManager({client,log:(level,event,data)=>logs.push({level,event,data}),switchBoard:o.switchBoard||null,openStudioSource:o.openStudioSource||null,
     ...(o.now?{now:o.now}:{})});
   const html=()=>W.panelHtml(manager.state);
   const posts=()=>server.calls.filter(c=>c.method!=='GET');

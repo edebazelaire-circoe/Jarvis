@@ -1,0 +1,98 @@
+{
+ "note": "The sources the real model wrote in the committed run (synthetic briefs). Core adds src/jarvis-kit.ts and the theme prop.",
+ "bundles": {
+  "slide": {
+   "files": [
+    "src/Scene.tsx"
+   ],
+   "composition": {
+    "width": 1280,
+    "height": 720,
+    "fps": 30,
+    "duration_in_frames": 300
+   },
+   "props": {
+    "type": "object",
+    "properties": {
+     "headline": {
+      "type": "string",
+      "max_length": 80,
+      "default": "Titre"
+     }
+    }
+   },
+   "data": {
+    "type": "object",
+    "required": [
+     "body"
+    ],
+    "properties": {
+     "body": {
+      "type": "text",
+      "max_length": 600
+     }
+    }
+   }
+  }
+ },
+ "scenes": [
+  {
+   "key": "accroche",
+   "role": "opening",
+   "bundle": "slide",
+   "controls": [
+    "props.headline",
+    "props.theme.accent"
+   ],
+   "anchors": [
+    {
+     "anchor_id": "detail",
+     "label": "Detail",
+     "control_id": "accent",
+     "at_ms": 3000
+    }
+   ]
+  },
+  {
+   "key": "impact",
+   "role": "body",
+   "bundle": "slide",
+   "controls": [
+    "props.headline",
+    "props.theme.accent"
+   ],
+   "anchors": [
+    {
+     "anchor_id": "detail",
+     "label": "Detail",
+     "control_id": "accent",
+     "at_ms": 3000
+    }
+   ]
+  },
+  {
+   "key": "partenaires",
+   "role": "closing",
+   "bundle": "slide",
+   "controls": [
+    "props.headline",
+    "props.theme.accent"
+   ],
+   "anchors": [
+    {
+     "anchor_id": "detail",
+     "label": "Detail",
+     "control_id": "accent",
+     "at_ms": 3000
+    }
+   ]
+  }
+ ],
+ "art_direction": [
+  "profile",
+  "profile",
+  "profile",
+  "profile",
+  "profile"
+ ]
+}

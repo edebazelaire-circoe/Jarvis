@@ -152,10 +152,12 @@ class Rig:
     """Voir l'en-tete du module. `await Rig(tmp_path).open()` puis `rig.edit(...)`."""
 
     def __init__(self, tmp_path: Path, *, mount_deadline_s: float = 2.0, quiet_s: float = 0.02, max_wait_s: float = 0.1,
-                 conversation: str | None = "conv-1", existing: bool = False) -> None:
+                 conversation: str | None = "conv-1", existing: bool = False, builder: Any = None,
+                 reload_options: dict | None = None) -> None:
         """`existing=True` : rouvre les dossiers d'une vie precedente (apres un arret brutal) au lieu d'en creer."""
 
-        self.tmp, self.existing = tmp_path, existing
+        self.tmp, self.existing, self.builder = tmp_path, existing, builder
+        self.reload_options = reload_options or {}
         self.package, self.data = tmp_path / "package", tmp_path / "data"
         if not existing:
             for folder in (self.package, self.data):
@@ -191,7 +193,8 @@ class Rig:
         self.stage = StageWindows(self.scene, diagnostics=self.sink)
         self.reload = PresentationStudioReloadService(
             self.studio, self.prefabs, self.coalescer, self.stage, pins=self.pins, edits=self.edits,
-            events=self.events, diagnostics=self.sink, mount_deadline_s=self.mount_deadline_s)
+            events=self.events, diagnostics=self.sink, mount_deadline_s=self.mount_deadline_s, builder=self.builder,
+            **self.reload_options)
         # The REAL playback runtime (Slice 12) owns the stage window: a run creates `studio-stage-<run_id>` and tells the
         # reload (`stage_observer`) which scene it shows; the reload reads its position (`PlaybackProbe`).
         self.stage_scene = SceneStage(self.scene, StageLedger(FileStageLedger(self.tmp), diagnostics=self.sink), diagnostics=self.sink)
@@ -210,6 +213,7 @@ class Rig:
             return self
         view = await self.studio.create({"title": "Atelier"})
         self.pid, self.vid = view.presentation.presentation_id, view.presentation.active_variant_id
+        await self.seed()
         await self.save_scenes([scene_body(), scene_body(SID2, title="Milieu")] if scenes is None else scenes)
         await self.rebuild_pins()
         if host:
@@ -218,6 +222,9 @@ class Rig:
         if show:
             await self.play()
         return self
+
+    async def seed(self) -> None:
+        """Crochet des bancs derives (Slice 14 : une source Remotion publiee avant les scenes) ; rien par defaut."""
 
     def _run_id(self) -> str:
         return secrets.token_hex(6)       # as in production: an id of a killed life is a tombstone and is never reused
@@ -262,7 +269,23 @@ class Rig:
     def request(self, revision: int, files: dict, *, scene_id: str = SID, actor: str = "user", **extra) -> dict:
         return {"actor": actor, "basis": {"variant_revision": revision}, "scene_id": scene_id, "files": files, **extra}
 
-    async def edit(self, files: dict, *, scene_id: str = SID, revision: int | None = None, **extra):
+    async def record_request(self, scene_id: str = SID, *, actor: str = "user", origin: str | None = None) -> str:
+        """Remotion Slice 21 (QA B1): a pending source request, as the edit API records it (a user's by default), and its id."""
+
+        revision = (await self.variant()).revision
+        body = {"actor": actor, "mode": "commit", "basis": {"variant_revision": revision},
+                "ops": [{"op": "scene.source_request", "scene_id": scene_id, "intent": "test request"}]}
+        if origin is not None:
+            body["origin"] = origin
+        done = await self.edits.edit(self.pid, self.vid, body)
+        return done.source_requests[0]["request_id"]
+
+    async def edit(self, files: dict, *, scene_id: str = SID, revision: int | None = None, auto_request: bool = True, **extra):
+        """A source edit. A `brain` edit without a `request_id` gets a pending request recorded for it first (the Core rule of the Slice 21
+        rework: the brain edits only for a pending request of the user); `auto_request=False` sends it as it is (the refusal tests)."""
+
+        if extra.get("actor") == "brain" and auto_request and "request_id" not in extra and getattr(self, "edits", None) is not None:
+            extra["request_id"] = await self.record_request(scene_id)
         if revision is None:
             revision = (await self.variant()).revision
         return await self.reload.apply_source_edit(self.pid, self.vid, self.request(revision, files, scene_id=scene_id, **extra))

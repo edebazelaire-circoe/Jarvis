@@ -31,7 +31,7 @@ def test_the_key_lists_are_the_parsers_own_and_the_example_uses_no_other_key():
     assert set(example()["brief"]) <= set(guide["brief"]["required"]) | set(guide["brief"]["optional"])
     assert set(example()["draft"]) <= set(DRAFT_KEYS["required"]) | set(DRAFT_KEYS["optional"])
     assert parse_brief(example()["brief"]).workflow.value == "one_shot"
-    assert len(json.dumps(guide, ensure_ascii=False).encode("utf-8")) < 6_000, "read on demand, but still bounded"
+    assert len(json.dumps(guide, ensure_ascii=False).encode("utf-8")) < 12_000, "read on demand, but still bounded (Slice 15 added three layouts)"
 
 
 def test_a_returned_guide_is_a_copy_and_the_planner_prompt_names_it():

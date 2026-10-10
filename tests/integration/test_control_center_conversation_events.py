@@ -146,9 +146,13 @@ async def test_conversation_reads_refuse_foreign_origins_and_hosts(tmp_path, hea
 
 async def test_loopback_origins_are_accepted(tmp_path):
     async with control_center(tmp_path, free_port(), view=False) as (_, client, _):
-        for origin in ("http://127.0.0.1:17654", "http://localhost:17654", "http://[::1]:17654"):
+        port = client.port  # l'origine légitime porte le port du Control Center lui-même (Slice 11 : un autre port local est un autre service)
+        for origin in (f"http://127.0.0.1:{port}", f"http://localhost:{port}", f"http://[::1]:{port}"):
             status, body = await get(client, "/api/conversations", headers={"Origin": origin})
             assert (status, body["code"]) == (503, "not_configured")
+        for origin in (f"http://127.0.0.1:{port + 1}", f"http://localhost:{port + 1}", "http://127.0.0.1:17654" if port != 17654 else "http://127.0.0.1:1"):
+            status, body = await get(client, "/api/conversations", headers={"Origin": origin})
+            assert (status, body["code"]) == (403, "forbidden_origin"), origin
 
 
 async def test_core_down_is_an_explicit_error_journaled_once_then_recovery(tmp_path):

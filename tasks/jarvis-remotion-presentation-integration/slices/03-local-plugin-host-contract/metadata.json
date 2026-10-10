@@ -1,0 +1,14 @@
+{
+  "slice_id": "03",
+  "title": "Installable local capability vs remote MCP plugins",
+  "dependencies": [
+    "01"
+  ],
+  "task_type": null,
+  "task_type_resolution_required": true,
+  "requires_caveman": false,
+  "requires_coding_guideline": false,
+  "frontend": false,
+  "requires_impeccable": false,
+  "claude_for_frontend_when_available": false
+}

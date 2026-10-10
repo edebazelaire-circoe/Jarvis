@@ -205,14 +205,14 @@ async def test_a_newer_stored_document_is_refused_and_never_overwritten(tmp_path
     service = make(tmp_path, sink)
     view = await service.create({"title": "A"})
     manifest, variant_file = stored_paths(tmp_path, view)
-    future = {**json.loads(variant_file.read_text(encoding="utf-8")), "schema_version": 5, "new_in_v5": True}
+    future = {**json.loads(variant_file.read_text(encoding="utf-8")), "schema_version": 6, "new_in_v6": True}
     variant_file.write_text(json.dumps(future), encoding="utf-8")
     snapshot = variant_file.read_bytes()
     pid, vid = view.presentation.presentation_id, view.variants[0].variant_id
     for call in (service.get(pid), service.get_variant(pid, vid),
                  service.save_variant(pid, vid, variant_update(view.variants[0].to_document()))):
         error = await refused(call, C.UNSUPPORTED_SCHEMA_VERSION)
-        assert "schema_version 5" in error.message and "left untouched" in error.message
+        assert "schema_version 6" in error.message and "left untouched" in error.message
     assert variant_file.read_bytes() == snapshot
     assert "core.presentation_studio.failed" in sink.kinds("error")
 
@@ -251,7 +251,7 @@ async def test_listing_shows_every_readable_presentation_and_names_each_unreadab
     future = await service.create({"title": "Future"})
     stored_paths(tmp_path, broken)[0].write_text("{nope", encoding="utf-8")
     manifest = stored_paths(tmp_path, future)[0]
-    manifest.write_text(manifest.read_text(encoding="utf-8").replace('"schema_version": 2', '"schema_version": 9'),
+    manifest.write_text(manifest.read_text(encoding="utf-8").replace('"schema_version": 3', '"schema_version": 9'),
                         encoding="utf-8")
     (tmp_path / "presentations" / "strange-folder").mkdir()
     listing = await service.list_presentations()
@@ -261,7 +261,7 @@ async def test_listing_shows_every_readable_presentation_and_names_each_unreadab
                         future.presentation.presentation_id: C.UNSUPPORTED_SCHEMA_VERSION.value}
     assert sink.kinds("error").count("core.presentation_studio.unreadable") == 2
     assert listing.presentations[0].keys() == {"presentation_id", "title", "active_variant_id", "variant_count",
-                                               "resource_count", "revision", "updated_at"}
+                                               "resource_count", "engine", "revision", "updated_at"}
     assert a and b
 
 

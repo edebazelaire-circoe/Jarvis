@@ -88,6 +88,9 @@
 (function(root){
   'use strict';
   const P=root.JarvisPrefabProtocol||(typeof require==='function'?require('./control_center_prefab_protocol.js'):null);
+  /* Scène Remotion (Slice 10) : un paquet `{kind: "remotion"}` est délégué à la page de la scène (`control_center_remotion_frame.js`). */
+  const R=root.JarvisRemotionFrame||(typeof require==='function'?require('./control_center_remotion_frame.js'):null);
+  const REMOTION_READY_TIMEOUT_MS=165000;
   const LIVE_CAP=24;
   const READY_TIMEOUT_MS=3000;
   const TEARDOWN_MS=50;
@@ -98,6 +101,10 @@
   const RESIZE_COALESCE_MS=16;
   const BUNDLE_CACHE_CAP=64;
   const SETTLE_MS=250;
+  /* Scène Remotion (Slice 14) : `ready` de la page de scène dit que le bac à sable est chargé, pas que la scène a RENDU. Le premier `clock` du
+     lecteur (posé à son montage, après le premier rendu ; une erreur de rendu arrive avant lui) en est la preuve ; sans lui dans ce délai, la
+     scène n'est pas montée. */
+  const RENDER_PROOF_MS=10000;
   const STYLE_ID='jv-prefab-host-style';
   const DEFAULT_THEME=Object.freeze({name:'scene',accent:'#6ee7ff',text:'#dcecf4',muted:'#8aa5b3',surface:'rgba(4,10,15,.88)',scale:1});
   const LIVE_STATES=new Set(['loading','ready','error']);
@@ -112,6 +119,7 @@
 .sc-prefab-note{margin:0 13px 10px;font:11.5px/1.45 ui-monospace,SFMono-Regular,Consolas,monospace;color:var(--sc-muted,#8aa5b3)}
 .sc-prefab-loading::after{content:'';display:inline-block;width:1.2em;text-align:left;animation:sc-prefab-dots 1.2s steps(4,end) infinite}
 @keyframes sc-prefab-dots{0%{content:''}25%{content:'.'}50%{content:'..'}75%{content:'...'}}
+.sc-prefab-warning{padding:5px 8px;border-left:2px solid #ffc861;color:#ffe3b0}
 .sc-prefab-paused{padding:10px 11px;border:1px dashed var(--sc-edge,rgba(151,191,209,.16));border-radius:6px}
 .sc-prefab-paused-title{display:block;color:var(--sc-ink,#dcecf4);font-weight:600;overflow-wrap:anywhere}
 .sc-prefab-error{display:flex;align-items:flex-start;gap:10px;margin:0 13px 8px;padding:7px 9px;border-radius:6px;
@@ -122,6 +130,7 @@
   color:#ffe4e8;font:inherit;cursor:pointer}
 .sc-prefab-retry:hover{background:rgba(255,107,125,.16)}
 .sc-prefab-retry:focus-visible{outline:1px solid var(--sc-ink,#dcecf4);outline-offset:1px}
+.sc-remotion-frame{flex:0 0 auto;height:auto;min-height:150px;aspect-ratio:16/9;background:#000}
 .sc-prefab-staged{position:absolute;left:0;top:0;visibility:hidden;pointer-events:none}
 @media (prefers-reduced-motion:reduce){.sc-prefab-loading::after{animation:none;content:'...'}}
 `;
@@ -276,6 +285,17 @@
       rec.slot.insertBefore(band,rec.slot.firstChild||null);
     }
 
+    function setNotice(rec,text){
+      if(rec.noticeEl&&rec.noticeEl.parentNode===rec.slot)rec.slot.removeChild(rec.noticeEl);
+      rec.noticeEl=null;
+      if(!text||rec.staged)return;
+      const line=element('p','sc-prefab-note sc-prefab-warning',text);
+      line.setAttribute('role','status');
+      rec.slot.insertBefore(line,rec.slot.firstChild||null);
+      rec.noticeEl=line;
+      frameLog(rec,'scene.prefab_notice',{reason:'props_refused'});   // no value, no preview
+    }
+
     function clearBand(rec){
       if(rec.band&&rec.band.parentNode===rec.slot)rec.slot.removeChild(rec.band);
       rec.band=null;rec.bandText=null;rec.bandReason=null;
@@ -293,7 +313,9 @@
       }catch(error){safeLog('scene.prefab_outcome_failed',{object_id:rec.objectId,prefab:rec.key,error:describe(error)})}
     }
 
-    function fail(rec,message,reason){
+    /* `quiet` : l'état est déjà dit EN ENTIER par le cadre lui-même (page de la scène Remotion : raison, détails, « Recharger la scène ») ;
+       la bande dupliquerait le message dans une petite fenêtre et lui prendrait la place. Le rapport et les compteurs restent. */
+    function fail(rec,message,reason,quiet){
       totals.errors++;
       reportOutcome(rec,'failed',reason||'error',message);
       if(rec.staged){
@@ -304,7 +326,7 @@
       }
       if(rec.state!=='paused')rec.state='error';
       clearNote(rec);
-      showBand(rec,message,reason||'error');
+      if(!quiet)showBand(rec,message,reason||'error');
       frameLog(rec,'scene.prefab_error',{message,reason:reason||'error'});
     }
 
@@ -314,7 +336,7 @@
     function violate(rec,message,reason){
       const iframe=rec.iframe;
       rec.iframe=null;rec.ready=false;
-      cancel(rec.readyTimer);cancel(rec.settleTimer);rec.settleTimer=null;
+      cancel(rec.readyTimer);cancel(rec.settleTimer);rec.settleTimer=null;cancel(rec.renderTimer);rec.renderTimer=null;
       cancel(rec.resizeTimer);rec.resizeTimer=null;rec.pendingHeight=null;
       if(iframe&&iframe.parentNode)iframe.parentNode.removeChild(iframe);
       fail(rec,message,reason);
@@ -325,9 +347,10 @@
     function start(rec){
       rec.generation++;
       const generation=rec.generation;
-      cancel(rec.readyTimer);cancel(rec.settleTimer);rec.settleTimer=null;
+      cancel(rec.readyTimer);cancel(rec.settleTimer);rec.settleTimer=null;cancel(rec.renderTimer);rec.renderTimer=null;
       if(!rec.staged)clearSlot(rec.slot);
       rec.band=null;rec.note=null;rec.ready=false;rec.bundle=null;rec.events=new Map();
+      rec.remotion=false;rec.shellUp=false;
       rec.logs=0;rec.errorsIn=[];rec.outcomeSent=false;
       rec.counters.starts++;totals.starts++;
       const iframe=element('iframe',rec.staged?'sc-prefab-frame sc-prefab-staged':'sc-prefab-frame');
@@ -349,6 +372,7 @@
       const pending=loadBundle(rec.prefab);
       pending.then((bundle)=>{
         if(rec.generation!==generation||!owned(rec))return;
+        if(bundle&&bundle.kind==='remotion'){startRemotion(rec,generation,iframe,bundle);return}
         let srcdoc;
         try{srcdoc=P.buildSrcdoc(bundle)}catch(error){
           forgetBundle(rec.key,pending);
@@ -372,13 +396,112 @@
       });
     }
 
+    /* Une source Remotion n'a pas de paquet HTML : le cadre est la page de la scène (`/remotion-stage`), qui monte le bac à sable
+       isolé, compile à la demande et dit elle-même chaque état (compteur, échec typé, cadre retiré). L'hôte garde le cycle de vie
+       (génération, bande d'erreur « Recharger », rapport `onOutcome`, pause, démontage). Jamais de repli HTML. */
+    let incarnations=0;
+    function startRemotion(rec,generation,old,bundle){
+      cancel(rec.readyTimer);
+      if(!R){fail(rec,'the Remotion frame module is not loaded','bundle');return}
+      rec.remotion=true;rec.shellUp=false;rec.bundle=bundle;rec.events=new Map();
+      rec.rendered=false;cancel(rec.renderTimer);rec.renderTimer=null;
+      const frame=R.createFrame(doc,rec.prefab,rec.title?`${rec.title} (scène Remotion ${rec.key})`:`Scène Remotion ${rec.key}`);
+      if(rec.staged)frame.className+=' sc-prefab-staged';
+      if(old&&old.parentNode)old.parentNode.replaceChild(frame,old);
+      rec.iframe=frame;
+      setNote(rec,'sc-prefab-loading',`Chargement de la scène Remotion ${rec.key}`);
+      let loads=0;
+      frame.addEventListener('load',()=>{
+        if(rec.generation!==generation||rec.iframe!==frame)return;
+        if(++loads>1)violate(rec,'the Remotion stage navigated away from its document','navigation');
+      });
+      rec.readyTimer=later(()=>{
+        if(rec.generation!==generation||rec.ready||!owned(rec)||rec.state==='error')return;
+        fail(rec,`the Remotion scene did not become ready within ${REMOTION_READY_TIMEOUT_MS/1000} s`,'timeout');
+      },REMOTION_READY_TIMEOUT_MS);
+    }
+
+    function onRemotionStatus(rec,event){
+      const view=rec.iframe;
+      const origin=win.location&&win.location.origin;
+      if(event&&event.data&&event.data.type==='clock'){   /* position du lecteur (Slice 12) : gardée, bornée, jamais envoyée à Core */
+        const clock=R.parseClock(event,view,origin);
+        if(!clock.ok){drop(rec,clock.reason);return}
+        rec.clock=Object.assign({at:now()},clock.clock);
+        if(!rec.rendered){   // the first clock: the Player committed its first render (a render error would have come first)
+          rec.rendered=true;cancel(rec.renderTimer);rec.renderTimer=null;
+          if(rec.state==='ready')settle(rec);
+        }
+        return;
+      }
+      const parsed=R.parseStatus(event,view,origin);
+      if(!parsed.ok){drop(rec,parsed.reason);return}
+      const status=parsed.status;
+      switch(status.phase){
+        case 'shell':
+          rec.shellUp=true;
+          post(rec,R.hostMessage('props',{props:rec.props,data:rec.data}));   // the values the stage window shows now
+          break;
+        case 'mounting':
+          if(status.composition)fitComposition(rec,status.composition);
+          break;
+        case 'ready':
+          cancel(rec.readyTimer);
+          if(status.composition)fitComposition(rec,status.composition);
+          rec.incarnation=++incarnations;
+          rec.clock=null;
+          rec.ready=true;
+          clearNote(rec);
+          if(rec.bandReason==='timeout'||rec.state==='error'){clearBand(rec)}
+          rec.state='ready';
+          if(rec.rendered)settle(rec);
+          else{
+            const generation=rec.generation;
+            cancel(rec.renderTimer);
+            rec.renderTimer=later(()=>{
+              rec.renderTimer=null;
+              if(!owned(rec)||rec.generation!==generation||rec.rendered||rec.outcomeSent)return;
+              fail(rec,`the scene did not render a first frame within ${RENDER_PROOF_MS/1000} s`,'timeout');
+            },RENDER_PROOF_MS);
+          }
+          break;
+        case 'failed':case 'killed':
+          cancel(rec.readyTimer);
+          fail(rec,status.message||status.title||status.phase,status.phase==='killed'?'killed':(status.reason||'failed'),true);
+          break;
+        case 'notice':          // Slice 13 : refused values — a transient warning, never fail() and never an outcome for Core
+          setNotice(rec,status.message||'');
+          break;
+        case 'scene_error':
+          if(withinRate(rec,rec.errorsIn,ERROR_RATE))fail(rec,status.message||'scene error','frame');
+          break;
+        default:break;   // 'preparing': the stage shows its own live counter
+      }
+    }
+
+    function fitComposition(rec,composition){
+      const frame=rec.iframe;
+      if(!frame||!frame.style)return;
+      frame.style.height='auto';
+      frame.style.aspectRatio=`${composition.width} / ${composition.height}`;
+      if(typeof frame.getBoundingClientRect==='function'){
+        const box=frame.getBoundingClientRect();
+        /* The window takes the height the composition needs at its current width (never the height a cramped window left it). */
+        const height=box.width>0?Math.round(box.width*composition.height/composition.width):Math.round(box.height);
+        if(height>0&&!rec.staged){
+          rec.height=height;
+          try{if(typeof d.onResize==='function')d.onResize(rec.objectId,height)}catch(_error){/* intentional: layout hint only */}
+        }
+      }
+    }
+
     function departure(rec){
       const iframe=rec.iframe;
       rec.iframe=null;
-      cancel(rec.readyTimer);cancel(rec.settleTimer);rec.settleTimer=null;
+      cancel(rec.readyTimer);cancel(rec.settleTimer);rec.settleTimer=null;cancel(rec.renderTimer);rec.renderTimer=null;
       cancel(rec.resizeTimer);rec.resizeTimer=null;rec.pendingHeight=null;
       if(!iframe)return;
-      if(rec.ready)post(rec,P.hostMessage('teardown'),iframe);
+      if(rec.ready)post(rec,rec.remotion?R.hostMessage('teardown'):P.hostMessage('teardown'),iframe);
       rec.ready=false;
       departing.add(iframe);
       later(()=>{
@@ -514,7 +637,7 @@
         props:P.cloneJson(instance.props||{}),data:P.cloneJson(instance.data||{}),
         theme:Object.assign({},baseTheme,instance.theme||{}),state:'loading',generation:0,lastDraw:now(),
         outputs:[],errorsIn:[],dropped:0,rateLimited:0,height:0,pendingHeight:null,resizeTimer:null,sentData:null,
-        iframe:null,readyTimer:null,logs:0,outcomeSent:false,settleTimer:null,staged:false,next:null,
+        iframe:null,readyTimer:null,renderTimer:null,rendered:false,logs:0,outcomeSent:false,settleTimer:null,staged:false,next:null,
         counters:counters||{starts:0,mounted:0,failed:0,remounts:0}};
       rec.propsJson=json(rec.props);rec.dataJson=json(rec.data);rec.themeJson=json(rec.theme);
       return rec;
@@ -534,6 +657,7 @@
       if(texts.props===rec.propsJson&&texts.data===rec.dataJson&&texts.theme===rec.themeJson)return false;
       rec.props=JSON.parse(texts.props);rec.data=JSON.parse(texts.data);rec.theme=nextTheme;
       rec.propsJson=texts.props;rec.dataJson=texts.data;rec.themeJson=texts.theme;
+      if(rec.remotion){if(rec.shellUp)post(rec,R.hostMessage('props',{props:rec.props,data:rec.data}));return true}
       if(rec.ready&&post(rec,P.hostMessage('update',hostFields(rec))))rec.sentData=P.cloneJson(rec.data);
       return true;
     }
@@ -734,6 +858,7 @@
     function onMessage(event){
       const rec=find(event&&event.source);
       if(!rec)return;  // not one of our frames (another iframe of the page): not ours to judge
+      if(rec.remotion){onRemotionStatus(rec,event);return}
       if(event.origin!=='null'){drop(rec,'origin is not opaque');return}
       const parsed=P.parseFrameMessage(event.data);
       if(!parsed.ok){drop(rec,parsed.reason);return}
@@ -769,6 +894,37 @@
       },SETTLE_MS);
     }
 
+    /* Ordres de lecture d'une scène Remotion (play, pause, seek) et repères (cue) : sans effet, `false`, sur un autre prefab. */
+    function control(objectId,action,frame,until){
+      const rec=frames.get(objectId);
+      if(!rec||!rec.remotion||!rec.ready)return false;
+      const fields={action};
+      if(Number.isInteger(frame))fields.frame=frame;
+      if(action==='play'&&Number.isInteger(until))fields.until=until;
+      rec.clock=null;   // the old position no longer describes the player we just ordered
+      return post(rec,R.hostMessage('control',fields));
+    }
+
+    /* Dernière position rapportée par le lecteur (`{frame, playing, duration, fps, at}`), ou `null` : conseil pour la ligne de temps. */
+    /* The incarnation of the Player behind a Remotion window: a number that is new every time the stage page says `ready` (first mount,
+       staged hot-reload swap, "Recharger la scène", watchdog restart). The timeline follower watches it: a new Player knows nothing of the
+       order its predecessor was given. `null` before the first `ready`. */
+    function frame(objectId){
+      const rec=frames.get(objectId);
+      return rec&&rec.remotion&&rec.incarnation?rec.incarnation:null;
+    }
+
+    function clock(objectId){
+      const rec=frames.get(objectId);
+      return rec&&rec.remotion&&rec.clock?Object.assign({},rec.clock):null;
+    }
+
+    function cue(objectId,name,frame){
+      const rec=frames.get(objectId);
+      if(!rec||!rec.remotion||!rec.ready)return false;
+      return post(rec,R.hostMessage('cue',{name,frame}));
+    }
+
     function stats(){
       let paused=0,ready=0,errors=0,loading=0,staging=0;
       for(const rec of frames.values()){
@@ -786,7 +942,7 @@
       for(const objectId of Array.from(frames.keys()))unmount(objectId);
     }
 
-    return Object.freeze({mount,update,unmount,pause,resume,touch,reload,stats,destroy,
+    return Object.freeze({mount,update,unmount,pause,resume,touch,reload,stats,destroy,control,cue,clock,frame,
       has:(objectId)=>frames.has(objectId),
       counters:(objectId)=>{const rec=frames.get(objectId);return rec?Object.assign({},rec.counters):null},
       pendingKey:(objectId)=>{const rec=frames.get(objectId);return rec&&rec.next?rec.next.key:null},

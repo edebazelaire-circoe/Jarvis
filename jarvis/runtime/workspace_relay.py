@@ -47,6 +47,8 @@ _ROUTES = (
     ("GET", "workspace_relations", "/relations", None),
     ("GET", "workspace_artifacts", "/artifacts", None),
     ("GET", "workspace_artifact_relations", "/artifacts/{artifact_id}/relations", None),
+    ("GET", "workspace_presentation_sources", "/boards/{board_id}/presentation-sources", None),
+    ("GET", "workspace_presentation_source", "/presentation-sources/{presentation_id}", None),
     ("GET", "workspace_memory_tree", "/boards/{board_id}/memory/tree", DISK_TIMEOUT_S),
     ("GET", "workspace_memory_stat", "/boards/{board_id}/memory/stat", None),
     ("GET", "workspace_memory_read", "/boards/{board_id}/memory/read", DISK_TIMEOUT_S),

@@ -148,6 +148,13 @@ class ArtifactKind(StrEnum):
     DESCRIPTION = "description"
     #: Autre preuve dérivée (résumé, observation, extrait).
     DERIVED = "derived"
+    #: Remotion Slice 07 : copie figée et autonome d'une variante de Presentation à une révision précise. La source
+    #: éditable n'est PAS un Artifact ; seules ces copies et leurs rendus le sont (`presentation_artifacts.py`).
+    PRESENTATION_SNAPSHOT = "presentation_snapshot"
+    #: Rendus d'un snapshot (Slice 07 ; produits par la Slice 16) : vidéo MP4, image fixe, PDF.
+    PRESENTATION_VIDEO = "presentation_video"
+    PRESENTATION_STILL = "presentation_still"
+    PRESENTATION_PDF = "presentation_pdf"
 
 
 class ArtifactState(StrEnum):
@@ -177,6 +184,8 @@ class ArtifactRelationKind(StrEnum):
     DESCRIBED_FROM = "described_from"
     #: Toute autre dérivation (résumé, observation).
     DERIVED_FROM = "derived_from"
+    #: Rendu (MP4, image fixe, PDF) d'un snapshot de Presentation (Remotion Slice 07). Toujours vers un snapshot `complete`.
+    RENDERED_FROM = "rendered_from"
 
 
 # ------------------------------------------------------------------ identifiants et chemins

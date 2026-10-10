@@ -97,6 +97,7 @@
 #${PANEL_ID} .jvi-row.is-dirty{border-left-color:var(--accent,#6ee7ff);background:rgba(110,231,255,.06)}
 #${PANEL_ID} .jvi-row.is-saved{border-left-color:var(--ok,#68e0a0)}
 #${PANEL_ID} .jvi-row.is-bad{border-left-color:var(--danger,#ff6577)}
+#${PANEL_ID} .jvi-row.is-unsupported{opacity:.72;border-left-style:dashed}
 #${PANEL_ID} .jvi-row.is-busy{opacity:.78}
 #${PANEL_ID} .jvi-head{display:flex;align-items:center;gap:8px;min-width:0}
 #${PANEL_ID} .jvi-label{flex:1 1 auto;min-width:0;font-weight:600;overflow-wrap:anywhere}

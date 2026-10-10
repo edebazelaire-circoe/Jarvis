@@ -52,13 +52,29 @@ from jarvis.core.credential_vault import CredentialVault
 from jarvis.core.drive_service import DriveService
 from jarvis.core.interaction_mode import InteractionModeService
 from jarvis.core.memory_wiring import MemoryWiring
+from jarvis.core.local_capability_host import LocalCapabilityHost
+from jarvis.core.presentation_studio_engine_gate import StudioEngineGate
+from jarvis.core.remotion_player import RemotionPlayerService
+from jarvis.domain.presentation_studio_engine import Engine, EngineAvailability
+from jarvis.ports.remotion import RemotionFactory
+from jarvis.core.local_capability_service import LocalCapabilityService
+from jarvis.core.remotion_studio_service import RemotionStudioService, prefab_source_provider
+from jarvis.ports.remotion_render import RenderRunner
+from jarvis.ports.remotion_studio import StudioRunner
 from jarvis.core.mcp_plugin_service import McpPluginService
+from jarvis.domain.remotion_capability import remotion_manifest
+from jarvis.ports.local_capabilities import CapabilityRunner, LocalCapabilityStore
 from jarvis.core.prefab_draft_coalescer import PrefabDraftCoalescer
 from jarvis.core.prefab_events import PrefabEventService
 from jarvis.core.prefab_service import PrefabService
+from jarvis.core.presentation_artifacts import PresentationArtifacts
+from jarvis.core.presentation_live_refs import LiveRefResolver
+from jarvis.core.presentation_render_service import PresentationRenderService
+from jarvis.core.presentation_snapshot_packager import PresentationPackager
 from jarvis.core.presentation_studio_autosave import PresentationStudioHistory
 from jarvis.core.presentation_studio_edit import PresentationStudioEditService
 from jarvis.core.presentation_studio_events import StudioEditEvents, StudioPlaybackEvents, StudioPresenterEvents
+from jarvis.core.presentation_live_refs import LiveRefResolver
 from jarvis.core.presentation_studio_authoring import PresentationStudioAuthoring
 from jarvis.core.presentation_studio_pins import StudioPinRegistry
 from jarvis.core.presentation_studio_playback import PresentationStudioPlaybackService
@@ -66,6 +82,7 @@ from jarvis.core.presentation_studio_compare import PresentationStudioCompare
 from jarvis.core.presentation_studio_composition import PresentationStudioComposition
 from jarvis.core.presentation_studio_scene_variants import PresentationStudioSceneVariants
 from jarvis.core.presentation_studio_template import PresentationStudioTemplates
+from jarvis.core.presentation_studio_upgrades import PresentationStudioUpgrades
 from jarvis.core.presentation_studio_presenter import PresentationStudioPresenter
 from jarvis.core.presentation_studio_reload import (
     DEFAULT_MAX_WAIT_S as STUDIO_RELOAD_MAX_WAIT_S, DEFAULT_QUIET_S as STUDIO_RELOAD_QUIET_S,
@@ -110,6 +127,11 @@ class CoreHealth:
     detail: str = ""
 
 
+#: Fail closed: the engine gate exists unless a caller explicitly opts out (`engine_gate=False`, or this default patched by the test
+#: conftest for the historical worlds that pair HTML scenes with the Remotion default engine).
+ENGINE_GATE_DEFAULT = True
+
+
 class JarvisCoreApplication:
     """Long-lived provider-neutral v0.2 application container.
 
@@ -118,7 +140,7 @@ class JarvisCoreApplication:
     or Windows UI dependency.
     """
 
-    def __init__(self, *, data_root: Path, timezone: str = "Europe/Paris", calendar_backend=None, drive_backend=None, brain_backend=None, notification_delivery=None, workers=None, diagnostics: DiagnosticSink | None = None, supersede_stale_replies: bool = False, brain_turn_budget_s: float = DEFAULT_TURN_BUDGET_S, live_sideband_closer=None, live_provider_max_session_s: float | None = None, work_attention_wake_interval_s: float = DEFAULT_WAKE_INTERVAL_S, scene_repository: SceneRepository | None = None, scene_restart_grace_s: float = RESTART_GRACE_S, scene_capture_store: SceneCaptureStore | None = None, sealer: Sealer | None = None, connector: RemoteMcpConnector | None = None, mcp_allow_loopback_http: bool = False, capture_sources: CaptureSourceRegistry | None = None, capture_repairs: Mapping[CaptureChannel, CaptureRepair] | None = None, recording_transcription: Callable[[], TranscriptionBackend | None] | None = None, context_enrichment: Callable[[], ContextEnrichmentModel | None] | None = None, context_enrichment_enabled: bool = True, file_change_notifier_factory=None, agenda_settings: Callable[[], AgendaSettings] | None = None, agenda_tick_s: float = DEFAULT_AGENDA_TICK_S, agenda_clock: Callable[[], datetime] | None = None, memory: MemoryWiring | None = None) -> None:
+    def __init__(self, *, data_root: Path, timezone: str = "Europe/Paris", calendar_backend=None, drive_backend=None, brain_backend=None, notification_delivery=None, workers=None, diagnostics: DiagnosticSink | None = None, supersede_stale_replies: bool = False, brain_turn_budget_s: float = DEFAULT_TURN_BUDGET_S, live_sideband_closer=None, live_provider_max_session_s: float | None = None, work_attention_wake_interval_s: float = DEFAULT_WAKE_INTERVAL_S, scene_repository: SceneRepository | None = None, scene_restart_grace_s: float = RESTART_GRACE_S, scene_capture_store: SceneCaptureStore | None = None, sealer: Sealer | None = None, connector: RemoteMcpConnector | None = None, mcp_allow_loopback_http: bool = False, capture_sources: CaptureSourceRegistry | None = None, capture_repairs: Mapping[CaptureChannel, CaptureRepair] | None = None, recording_transcription: Callable[[], TranscriptionBackend | None] | None = None, context_enrichment: Callable[[], ContextEnrichmentModel | None] | None = None, context_enrichment_enabled: bool = True, file_change_notifier_factory=None, agenda_settings: Callable[[], AgendaSettings] | None = None, agenda_tick_s: float = DEFAULT_AGENDA_TICK_S, agenda_clock: Callable[[], datetime] | None = None, memory: MemoryWiring | None = None, local_capability_runner: CapabilityRunner | None = None, local_capability_store: LocalCapabilityStore | None = None, remotion: RemotionFactory | None = None, engine_gate: bool | None = None, remotion_studio_runner: StudioRunner | None = None, remotion_studio_idle_s: float | None = None, upstream_fetcher=None, upstream_engine=None, remotion_import_owners=None, remotion_render_runner: RenderRunner | None = None, authoring_compiler=None, authoring_engine_pin=None) -> None:
         root = Path(data_root).resolve()
         # Slice 07 (board-session) : tout diagnostic qui nomme une conversation
         # liée porte son `board_id` (alertes d'arrière-plan attribuées). Le
@@ -181,6 +203,17 @@ class JarvisCoreApplication:
             mcp_store, CredentialVault(mcp_store, sealer, diagnostics=diagnostics), connector=connector,
             diagnostics=diagnostics, allow_loopback_http=mcp_allow_loopback_http,
         )
+        # Capacités locales installables (Remotion ; handoff jarvis-remotion-presentation-integration, Slice 04,
+        # `docs/local-capabilities.md`) : AUCUN lancement au démarrage (l'installation est une action explicite
+        # par route) ; seul `reconcile()` s'exécute dans `start()`. Sans `local_capability_runner` (tests, Core
+        # headless), l'hôte répond `runner_unavailable` : ni npm, ni réseau, ni processus.
+        # Le magasin concret (fichiers) est injecté par `app.py` (racine de composition) : le coeur n'importe aucun
+        # adaptateur pour cela. Sans magasin (tests, Core headless) : `None`, les routes répondent `runner_unavailable`.
+        capability_host = None if local_capability_store is None else LocalCapabilityHost(
+            local_capability_store, runner=local_capability_runner, manifests={"remotion": remotion_manifest()},
+            diagnostics=diagnostics)
+        self.local_capabilities: LocalCapabilityService | None = None if capability_host is None else LocalCapabilityService(
+            capability_host, diagnostics=diagnostics)
         self.conversations = ConversationService(self.state, self.history)
         # Mémoire à long terme (handoff jarvis-memory-intelligence-knowledge, Slice 05) : le magasin canonique,
         # le rappel et le constructeur du bloc `memory` viennent de `jarvis/core/memory_wiring.py`
@@ -258,9 +291,10 @@ class JarvisCoreApplication:
         # Inspection du workspace (handoff board-memory-workspace-inspector, Slice 04) :
         # lectures sans effet de bord sur les magasins canoniques (même base, même
         # connexion), servies par `jarvis/protocol/workspace_routes.py`.
+        self.board_artifact_links = SQLiteBoardArtifactLinks(self.state)  # one instance: workspace and presentation bridge
         self.workspace = WorkspaceService(
             boards=SQLiteBoardRepository(self.state), contexts=SQLiteContextRepository(self.state),
-            artifacts=self.artifacts, links=SQLiteBoardArtifactLinks(self.state), memory=FileBoardMemoryStore(root),
+            artifacts=self.artifacts, links=self.board_artifact_links, memory=FileBoardMemoryStore(root),
             authority=self.speech_authority, diagnostics=diagnostics)
         if attributing is not None:
             attributing.resolve = self.sessions.cached_board_of
@@ -312,6 +346,35 @@ class JarvisCoreApplication:
             runtime=FilePrefabRuntime(prefab_package / "runtime"),
             pin_registry=self.studio_pins,
         )
+        # Moteur Remotion (handoff jarvis-remotion-presentation-integration, Slice 10) : compilateur de la capacité locale (prêt
+        # seulement si la capacité est `ready`/`running`), écouteur du bac à sable (ouvert à la demande, jamais au démarrage),
+        # service de lecture et porte du moteur. Sans capacité locale (tests, Core headless) ou sans écouteur configuré, le moteur
+        # `remotion` rapporte « indisponible » avec sa raison : un document `remotion` ne se joue ni ne s'édite alors, et rien
+        # d'autre (Slidecar) ne joue à sa place (`docs/presentation-engine.md`).
+        composition = None if remotion is None else remotion(capability_host, local_capability_store, local_capability_runner, diagnostics)
+        remotion_compiler = None if composition is None else composition.compiler
+        self.remotion_sandbox = None if composition is None else composition.sandbox
+        self.remotion_player = RemotionPlayerService(self.prefabs, remotion_compiler, self.remotion_sandbox, diagnostics=diagnostics,
+                                                     problem=None if composition is None else composition.problem)
+        # La porte du moteur est FERMÉE par défaut (Slice 10, reprise QA) : un Core construit sans la composition Remotion (banc de
+        # test virtuel, scripts) rapporte « aucun adaptateur Remotion » et refuse de jouer, d'éditer ou de prévisualiser un document
+        # `remotion` ; il ne joue jamais du HTML à sa place. Se passer de la porte est un choix EXPLICITE (`engine_gate=False`) : les
+        # mondes de test historiques (HTML par défaut) le font par `tests/conftest.py`, jamais un Core lancé par `jarvis/app.py`.
+        use_gate = engine_gate if engine_gate is not None else (remotion is not None or ENGINE_GATE_DEFAULT)
+        self.studio_engine_gate = None if not use_gate else StudioEngineGate(
+            lambda: {Engine.SLIDECAR: EngineAvailability(True), Engine.REMOTION: self.remotion_player.availability()},
+            diagnostics=diagnostics)
+        # Studio Remotion OPTIONNEL (Slice 11, `docs/remotion-studio.md`) : processus supplémentaire de la capacité locale Remotion,
+        # lancé seulement par `POST /v1/local-capabilities/remotion/studio/open` (jamais au démarrage, jamais par l'aperçu).
+        # Il ne reçoit de la bibliothèque que des octets en lecture seule ; arrêté avec Core et avant tout changement de la capacité.
+        self.remotion_studio: RemotionStudioService | None = None
+        if remotion_studio_runner is not None and self.local_capabilities is not None:
+            capabilities = self.local_capabilities
+            self.remotion_studio = RemotionStudioService(
+                remotion_studio_runner, source_provider=prefab_source_provider(self.prefabs),
+                capability_status=lambda: str(capabilities.host.status("remotion").get("status")),
+                diagnostics=diagnostics, **({} if remotion_studio_idle_s is None else {"idle_timeout_s": remotion_studio_idle_s}))
+            capabilities.before_operation = self._stop_studio_before
         # Presentations du Studio (handoff jarvis-interactive-presentation-studio, Slice 02) : magasin de fichiers
         # `<data_root>/presentations/` (jamais SQLite : pas de migration, `docs/presentation-studio.md`), Core seul
         # écrivain. Indépendant de la scène : un état d'exécution (fenêtre, lecture) n'y entre jamais.
@@ -320,7 +383,15 @@ class JarvisCoreApplication:
                 "core.presentation_studio.folder_flush_refused",
                 "Le systeme de fichiers refuse le vidage du dossier apres un remplacement: un commit survit a un arret du processus, "
                 "pas forcement a une coupure de courant", level="warning", data={"scope": scope})), diagnostics=diagnostics,
-                                                             prefabs=self.prefabs, pins=self.studio_pins)
+                                                             prefabs=self.prefabs, pins=self.studio_pins,
+                                                             engine_gate=self.studio_engine_gate)
+        # Import d'un modele Remotion amont (Slice 18, `docs/remotion-import.md`) : seul Core parle au reseau, par un port. Sans
+        # `upstream_fetcher` et `upstream_engine` (le jeu de paquets livre ; tests, Core headless) il n'y a pas d'importeur : les routes repondent 503, rien n'est telecharge.
+        self.remotion_import = None
+        if upstream_fetcher is not None and upstream_engine is not None:
+            from jarvis.core.remotion_import_service import RemotionImportService
+            self.remotion_import = RemotionImportService(upstream_fetcher, self.prefabs, self.presentation_studio, engine=upstream_engine,
+                                                         allowed_owners=remotion_import_owners, diagnostics=diagnostics)
         # API d'édition sémantique (Slice 05) : une porte pour la voix (`brain`) et l'interface (`user`). La conversation
         # vivante est lue à chaque fait (`self.brain` n'existe pas encore ici).
         studio_events = StudioEditEvents(self.conversation_event_emitter, lambda: self.brain.live_conversation_id())
@@ -340,9 +411,37 @@ class JarvisCoreApplication:
         # Planificateur d'ecriture (Slice 11): verifie et assemble le brouillon que le cerveau soumet en UNE transaction (prefabs
         # publies sous `presentation-studio.`, puis la Presentation entiere par un seul renommage de dossier). Aucun outil MCP ici: ils
         # viennent avec la Slice 21; le relais du Control Center force l'acteur `user`.
+        # Remotion Slice 15 : l'agent redige des sources Remotion. Le compilateur de la capacite locale les compile avant toute ecriture
+        # (absent -> `engine_unavailable`, jamais un repli), l'empreinte du jeu de paquets livre est celle que declarent les sources
+        # generees, et les references vivantes d'une scene sont lues pour le SEUL Board actif (`authorised_boards` est derive ici, jamais de
+        # la declaration de la scene).
+        self.live_refs = LiveRefResolver(boards=SQLiteBoardRepository(self.state), memory=FileBoardMemoryStore(root),
+                                         artifacts=self.artifacts, links=self.board_artifact_links, diagnostics=diagnostics)
         self.presentation_studio_authoring = PresentationStudioAuthoring(
             self.presentation_studio, self.prefabs, variants=self.presentation_studio_variants,
-            pins=self.presentation_studio_variants.pin_index, registry=self.studio_pins)
+            pins=self.presentation_studio_variants.pin_index, registry=self.studio_pins, compiler=authoring_compiler or remotion_compiler,
+            engine_pin=authoring_engine_pin or (None if composition is None else composition.engine_pin), live_refs=self.live_refs, boards=self._authorised_boards)
+        # Pont Presentation -> Artifacts (Remotion Slice 08) : sans etat propre ; la table `board_artifact_links` reste l'unique
+        # proprietaire de « quels Boards montrent cette source » (`docs/presentation-artifacts.md`). Le workspace le lit.
+        self.presentation_artifacts = PresentationArtifacts(
+            self.presentation_studio, self.artifacts, self.board_artifact_links, diagnostics=diagnostics)
+        self.workspace.bind_presentations(self.presentation_artifacts)
+        # Gel en paquet autonome (Slice 09) et rendu / export (Slice 16) : le paquet est la SEULE entrée d'un rendu. Le rendu n'existe que si
+        # un runner est injecté ET que la capacité locale Remotion existe (jamais un effet du démarrage : un rendu est une demande explicite).
+        self.presentation_packager = PresentationPackager(
+            studio=self.presentation_studio, artifacts=self.artifacts, snapshots=self.presentation_artifacts, prefabs=self.prefabs,
+            resolver=LiveRefResolver(boards=SQLiteBoardRepository(self.state), memory=FileBoardMemoryStore(root), artifacts=self.artifacts,
+                                     links=self.board_artifact_links, diagnostics=diagnostics),
+            runtime=None if remotion_render_runner is None else (
+                lambda: (lambda engine: None if engine is None else engine.to_dict())(remotion_render_runner.installed_engine())),
+            diagnostics=diagnostics)
+        self.presentation_render: PresentationRenderService | None = None
+        if remotion_render_runner is not None and self.local_capabilities is not None:
+            render_capabilities = self.local_capabilities
+            self.presentation_render = PresentationRenderService(
+                artifacts=self.artifacts, snapshots=self.presentation_artifacts, packager=self.presentation_packager,
+                runner=remotion_render_runner, installed_engine=remotion_render_runner.installed_engine,
+                capability_status=lambda: str(render_capabilities.host.status("remotion").get("status")), diagnostics=diagnostics)
         self.scene = SceneService(
             scene_repository or SQLiteSceneRepository(root / "state" / "scene.sqlite3"),
             diagnostics=diagnostics,
@@ -358,7 +457,8 @@ class JarvisCoreApplication:
         self.studio_stage = StageWindows(self.scene, diagnostics=diagnostics)
         self.presentation_studio_reload = PresentationStudioReloadService(
             self.presentation_studio, self.prefabs, self.prefab_drafts, self.studio_stage, pins=self.studio_pins,
-            edits=self.presentation_studio_edit, events=studio_events, diagnostics=diagnostics)
+            edits=self.presentation_studio_edit, events=studio_events, diagnostics=diagnostics,
+            builder=self.remotion_player)
         # Événements des cadres (Slice 04) : `state` écrit `prefab.data` par le
         # réducteur (acteur `user`, `basis` contrôlée sous le verrou de la
         # scène), `notify` est consigné ; aucun n'exécute d'outil.
@@ -375,7 +475,7 @@ class JarvisCoreApplication:
         self.presentation_studio_playback = PresentationStudioPlaybackService(
             self.presentation_studio, self.presentation_studio_edit, self.presentation_studio_stage,
             self.interaction_mode, bus=self.events, diagnostics=diagnostics, stage_observer=self.studio_stage,
-            gate=self.presentation_studio, detour_validator=self.prefabs,
+            gate=self.presentation_studio, detour_validator=self.prefabs, timeline_source=self.prefabs,
             events=StudioPlaybackEvents(self.conversation_event_emitter, lambda: self.brain.live_conversation_id()))
         # Slice 16 x Slice 12 : la lecture reste liee a sa variante; archiver la variante jouee est refuse.
         self.presentation_studio_variants.bind_playback(self.presentation_studio_playback)
@@ -397,6 +497,10 @@ class JarvisCoreApplication:
         self.presentation_studio_templates = PresentationStudioTemplates(
             self.presentation_studio, self.prefabs, FilePresentationTemplateStore(root), edit=self.presentation_studio_edit,
             diagnostics=diagnostics)
+        # Nouvelle version d'un prefab epingle (Remotion Slice 19) : avis en lecture seule, essai dans une variante enfant (branche de la
+        # Slice 16), jamais de mise a jour automatique ni de pin remplace sans variante.
+        self.presentation_studio_upgrades = PresentationStudioUpgrades(
+            self.presentation_studio, self.presentation_studio_variants, self.prefabs, edit=self.presentation_studio_edit)
         # Slice 06 x Slice 12 : le rechargement lit la position de la lecture et patche la fenetre `studio-stage-<run_id>` que
         # le stage de la lecture lui a liee (`stage_observer`) ; une scene non affichee est seulement re-epinglee.
         self.presentation_studio_reload.bind_playback(self.presentation_studio_playback)
@@ -559,7 +663,13 @@ class JarvisCoreApplication:
             await self.transcripts.recover(recovered.partial + recovered.complete, recent=self.captures.recent)
             # Artifacts restés `pending` d'une vie précédente -> `partial` ou
             # `failed`, avant tout écrivain (Slice 04). Ne lève pas.
-            await self.artifacts.recover_pending(owned=self.transcripts.owns)
+            # Les rendus de présentation `pending` (Slice 16) ont leur propre reprise (un `.partial` de vidéo n'est jamais promu à l'aveugle) :
+            # ils sont laissés ici, puis `reconcile` tue un processus de rendu orphelin et les rend `failed` / `partial`. Ne lève pas.
+            render_owner = None if self.presentation_render is None else PresentationRenderService.owns
+            await self.artifacts.recover_pending(
+                owned=self.transcripts.owns if render_owner is None else lambda artifact: self.transcripts.owns(artifact) or render_owner(artifact))
+            if self.presentation_render is not None:
+                await self.presentation_render.reconcile()
             # Après les reprises : le worker reprend depuis le curseur de chaque Context.
             self.context_enrichment.start()
             await self.boards.start(ensure_default=False)
@@ -567,6 +677,12 @@ class JarvisCoreApplication:
             # `disconnected` avant toute route. Ne lève pas (registre illisible :
             # journalisé, chaque route le rendra 500).
             await self.mcp_plugins.start()
+            # Capacités locales : une installation « en cours » d'une vie précédente devient `failed`/`install_interrupted`,
+            # un processus disparu devient `crashed`. N'installe, ne lance, n'arrête rien. Ne lève pas.
+            if self.local_capabilities is not None:
+                await asyncio.to_thread(self.local_capabilities.reconcile)
+            if self.remotion_studio is not None:
+                await self.remotion_studio.reconcile()
             # Ne lève pas : un refus est journalisé et la scène reste
             # indisponible pendant que le reste de Core démarre. Fichier
             # distinct de `state` : indépendante du rattrapage ci-dessus.
@@ -646,6 +762,12 @@ class JarvisCoreApplication:
             except Exception:
                 pass
             raise
+
+    async def _authorised_boards(self) -> frozenset[str]:
+        """Boards a presentation's live references may read (Remotion Slice 15, `docs/presentation-live-refs.md`): the Board the user is
+        working with, nothing else. Derived here, in trusted Core code, never from the declaration of a scene."""
+
+        return frozenset({await self.boards.active_board_id()})
 
     async def _recent_user_turn(self, turn: BrainTurnInput) -> str:
         """Le tour utilisateur précédent de la conversation : il aide un rappel à résoudre les pronoms d'une phrase courte."""
@@ -947,9 +1069,29 @@ class JarvisCoreApplication:
         await self.memory.stop()
         # Aucune écriture de plugin en vol à la fermeture ; connexions fermées ≤ 5 s (Slice 03).
         await self.mcp_plugins.stop()
+        # Une installation npm en vol est interrompue (arbre tué, état `failed`, reprise par `repair`) ; ne lève pas.
+        if self.presentation_render is not None:
+            await self.presentation_render.stop()  # annule le rendu en cours (arbre tué), les travaux en file échouent `interrupted`
+        if self.remotion_studio is not None:
+            await self.remotion_studio.stop()
+        if self.local_capabilities is not None:
+            await self.local_capabilities.stop()
+        # L'écouteur du bac à sable Remotion (ouvert à la demande) est fermé avec Core.
+        if self.remotion_sandbox is not None:
+            await self.remotion_sandbox.stop()
         await self.state.close()
         self.health.status = "stopped"
         self._stopped.set()
+
+    def _stop_studio_before(self, _capability_id: str, _operation: str) -> None:
+        """Crochet de `LocalCapabilityService` : le Studio d'abord ; un arrêt raté refuse l'opération (code `stop_failed`)."""
+
+        from jarvis.domain.local_capabilities import LocalCapabilityError, LocalCapabilityErrorCode
+        from jarvis.domain.remotion_studio import StudioError
+        try:
+            self.remotion_studio.stop_for_capability_change()
+        except StudioError as exc:
+            raise LocalCapabilityError(LocalCapabilityErrorCode.STOP_FAILED, f"the Remotion Studio could not be stopped: {exc.code.value}") from None
 
     async def wait(self) -> None:
         await self._stopped.wait()

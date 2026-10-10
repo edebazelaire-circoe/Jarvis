@@ -43,7 +43,11 @@ FORWARDABLE_PREFIXES = ("/v1/boards", "/v1/sessions", "/v1/mcp/plugins", "/v1/mc
                         "/v1/contexts", "/v1/captures", "/v1/artifacts", "/v1/activity", "/v1/workspace/",
                         "/v1/prefabs", "/v1/presentation-studio/presentations", "/v1/presentation-studio/playback",
                         "/v1/presentation-studio/authoring", "/v1/presentation-studio/templates",
-                        "/v1/memory/")
+                        "/v1/presentation-studio/engine",  # vue du moteur, lecture seule (remotion-integration S20)
+                        "/v1/memory/", "/v1/remotion/",
+                        # Carte Remotion du Control Center (jarvis-remotion-presentation-integration, Slice 11) : l'état de la capacité et le
+                        # Studio optionnel ; le relais (`remotion_studio_relay.py`) n'appelle que six adresses, jamais l'installation.
+                        "/v1/local-capabilities/remotion")
 #: Seule route relayée en octets (`forward_bytes`) : le payload d'un Artifact, pour l'interface.
 PAYLOAD_ROUTE_SUFFIX = "/payload"
 #: Paramètres de requête relayés : un mapping, ou des paires (un paramètre répété garde chaque valeur).
@@ -55,6 +59,8 @@ STUDIO_PREFIX = "/v1/presentation-studio/presentations"  # = un élément de FOR
 PLAYBACK_PREFIX = "/v1/presentation-studio/playback"  # lecture (Slice 12) : aussi dans FORWARDABLE_PREFIXES
 TEMPLATES_PREFIX = "/v1/presentation-studio/templates"  # modeles reutilisables (Slice 20) : aussi dans FORWARDABLE_PREFIXES
 AUTHORING_PREFIX = "/v1/presentation-studio/authoring"  # planificateur d'ecriture (Slice 11) : aussi dans FORWARDABLE_PREFIXES
+#: Longest an authoring request may take (Remotion Slice 15): the compile budget of the service (120 s) plus the write and some slack.
+AUTHORING_TIMEOUT_S = 150.0
 #: Plus grande réponse binaire relayée : la borne par réponse de Core (`MAX_PAYLOAD_CHUNK_BYTES`).
 MAX_FORWARDED_PAYLOAD_BYTES = 8 * 1024 * 1024
 #: En-têtes de la réponse binaire de Core rendus tels quels par le relais.
@@ -1028,8 +1034,10 @@ class LocalCoreClient:
 
     async def _studio_authoring(self, verb: str, request: Mapping[str, Any]) -> dict[str, Any]:
         session = await self._http()
-        async with session.request("POST", f"{self.base_url}{AUTHORING_PREFIX}/{verb}", headers=self.headers,
-                                   json=dict(request)) as response:
+        # Remotion Slice 15: `check`/`assemble` compile every Remotion source before answering (the compiler bounds each at 60 s and the
+        # service stops after `COMPILE_BUDGET_S`); the 10 s default of this client would cut a cold compile and leave the outcome unknown.
+        async with session.request("POST", f"{self.base_url}{AUTHORING_PREFIX}/{verb}", headers=self.headers, json=dict(request),
+                                   timeout=aiohttp.ClientTimeout(total=AUTHORING_TIMEOUT_S)) as response:
             if response.status == 400:
                 try:
                     data = await response.json()
@@ -1240,6 +1248,77 @@ class LocalCoreClient:
 
         return await self._template("POST", f"/{quote(template_id, safe='')}/instantiate", body=dict(body or {}))
 
+    async def presentation_studio_upgrades(self, presentation_id: str, variant_id: str) -> dict[str, Any]:
+        """`GET .../variants/{id}/upgrades` (Remotion Slice 19) : les scenes dont le pin n'est pas la derniere version saine ; n'ecrit rien."""
+
+        return await self._studio("GET", f"/{quote(presentation_id, safe='')}/variants/{quote(variant_id, safe='')}/upgrades")
+
+    async def presentation_studio_upgrade_try(self, presentation_id: str, variant_id: str, body: Mapping[str, Any]) -> dict[str, Any]:
+        """`POST .../variants/{id}/upgrades/try` : une variante enfant dont la scene prend la version choisie (201)."""
+
+        return await self._studio("POST", f"/{quote(presentation_id, safe='')}/variants/{quote(variant_id, safe='')}/upgrades/try",
+                                  body=dict(body))
+
+    # ---- Capacite Remotion pour le serveur `jarvis-remotion` (Remotion Slice 21) : memes routes de Core que les cartes du Control Center.
+    # Aucune de ces methodes n'ouvre le Studio (l'accuse de la scene sans bac a sable est a l'utilisateur) ni ne choisit un moteur.
+
+    async def _remotion(self, method: str, path: str, *, body: Mapping[str, Any] | None = None, timeout_s: float = 10.0) -> dict[str, Any]:
+        session = await self._http()
+        options: dict[str, Any] = {} if body is None else {"json": dict(body)}
+        async with session.request(method, self.base_url + path, headers=self.headers, timeout=aiohttp.ClientTimeout(total=timeout_s),
+                                   **options) as response:
+            return await self._json(response)
+
+    async def remotion_capability(self) -> dict[str, Any]:
+        """`GET /v1/local-capabilities/remotion` : `{capability}` (jamais un lancement)."""
+
+        return await self._remotion("GET", "/v1/local-capabilities/remotion")
+
+    async def remotion_studio_status(self) -> dict[str, Any]:
+        """`GET .../remotion/studio` : `{studio}` (jamais un lancement)."""
+
+        return await self._remotion("GET", "/v1/local-capabilities/remotion/studio")
+
+    async def presentation_studio_engine(self) -> dict[str, Any]:
+        """`GET /v1/presentation-studio/engine` : le moteur par defaut et l'etat de chacun, lecture seule."""
+
+        return await self._remotion("GET", "/v1/presentation-studio/engine")
+
+    async def remotion_render_availability(self) -> dict[str, Any]:
+        """`GET .../remotion/render` : `{render: {ready, reason, ...}}`."""
+
+        return await self._remotion("GET", "/v1/local-capabilities/remotion/render")
+
+    async def remotion_render_jobs(self) -> dict[str, Any]:
+        """`GET .../remotion/render/jobs` : `{jobs}`, les plus recents d'abord."""
+
+        return await self._remotion("GET", "/v1/local-capabilities/remotion/render/jobs")
+
+    async def remotion_render_job(self, job_id: str) -> dict[str, Any]:
+        """`GET .../render/jobs/{id}` : `{job}`."""
+
+        return await self._remotion("GET", f"/v1/local-capabilities/remotion/render/jobs/{quote(job_id, safe='')}")
+
+    async def remotion_render_create(self, body: Mapping[str, Any]) -> dict[str, Any]:
+        """`POST .../render/jobs` : 202 `{job}` (en file ; l'Artifact derive existe `pending`)."""
+
+        return await self._remotion("POST", "/v1/local-capabilities/remotion/render/jobs", body=body, timeout_s=65.0)
+
+    async def remotion_render_cancel(self, job_id: str) -> dict[str, Any]:
+        """`POST .../render/jobs/{id}/cancel` : `{job}`."""
+
+        return await self._remotion("POST", f"/v1/local-capabilities/remotion/render/jobs/{quote(job_id, safe='')}/cancel", body={}, timeout_s=45.0)
+
+    async def remotion_import_plan(self, body: Mapping[str, Any]) -> dict[str, Any]:
+        """`POST /v1/remotion/imports/plan` : telecharge et analyse, n'ecrit rien."""
+
+        return await self._remotion("POST", "/v1/remotion/imports/plan", body=body, timeout_s=90.0)
+
+    async def remotion_import(self, body: Mapping[str, Any]) -> dict[str, Any]:
+        """`POST /v1/remotion/imports` : un prefab Remotion propre a la presentation (jamais la bibliotheque partagee)."""
+
+        return await self._remotion("POST", "/v1/remotion/imports", body=body, timeout_s=90.0)
+
     async def forward_json(self, method: str, path: str, *, params: QueryParams | None = None,
                            body: bytes | None = None, timeout_s: float | None = None) -> tuple[int, Any]:
         """Relais transparent d'une requête `/v1/boards*`, `/v1/sessions*` (proxy du Control Center, Slice 04b)
@@ -1397,6 +1476,24 @@ class LocalCoreClient:
 
         session = await self._http()
         async with session.post(self._mcp_plugin_url(plugin_id, "/refresh"), headers=self.headers) as response:
+            return await self._json(response)
+
+    # ------------------- Capacités locales installables (jarvis-remotion-presentation-integration, Slice 04)
+    # `docs/local-capabilities.md` §7. Refus en `CoreProtocolError` (`local_capability_*`) ; un échec d'opération est la vue.
+
+    async def list_local_capabilities(self) -> dict[str, Any]:
+        """`GET /v1/local-capabilities` : `{capabilities}`."""
+
+        session = await self._http()
+        async with session.get(self.base_url + "/v1/local-capabilities", headers=self.headers) as response:
+            return await self._json(response)
+
+    async def local_capability_action(self, capability_id: str, operation: str) -> dict[str, Any]:
+        """`POST /v1/local-capabilities/{id}/{operation}` : `{capability}` (200 finie, 202 en cours : relire par `GET`)."""
+
+        session = await self._http()
+        url = self.base_url + f"/v1/local-capabilities/{quote(capability_id, safe='')}/{quote(operation, safe='')}"
+        async with session.post(url, headers=self.headers) as response:
             return await self._json(response)
 
     async def complete_mcp_oauth(self, *, state: str, code: str | None = None, iss: str | None = None,

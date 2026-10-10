@@ -55,6 +55,7 @@ publications sont sérialisées par un verrou. Miroir diagnostic
 from __future__ import annotations
 
 import asyncio
+import hashlib
 from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass
 from datetime import datetime
@@ -66,13 +67,16 @@ from jarvis.domain.prefab import (
     MAX_VERSIONS_PER_ID, RETENTION_KEEP_LAST, RETENTION_TRIGGER_VERSIONS, is_retention_id,
     MIN_USER_REQUEST_CHARS, WITNESS_PREFIX, BaseEditRecord, CreatorActor, PrefabBundle, PrefabClass,
     PrefabDefinitionError, PrefabInstanceRef, PrefabManifest, PrefabRef, Provenance, ProvenanceOrigin, Publication,
-    clip_message, decode_json_text, format_published_at, is_prefab_id, parse_bundle, parse_candidate, prefab_class,
-    validate_value, with_version,
+    clip_message, decode_json_text, format_published_at, is_prefab_id, parse_candidate, parse_stored_bundle, prefab_class, renumber,
+    validate_value,
 )
+from jarvis.domain.remotion_source import RemotionSource, RemotionSourceError, digest_of_hashes, parse_source
 from jarvis.core.prefab_retention import (
     PIN_REGISTRY_TIMEOUT_SECONDS, RETENTION_ID_GRACE_SECONDS, checked_pins, retirable_versions,
 )
 from jarvis.core.prefab_witness import quote_problem
+from jarvis.domain.prefab_catalog import SemanticType, matches as catalog_matches
+from jarvis.domain.presentation_studio_engine import Engine
 from jarvis.domain.prompt_registry import fingerprint
 from jarvis.domain.v2 import utc_now
 from jarvis.ports.prefabs import (
@@ -136,6 +140,39 @@ class CatalogVersion:
         return row
 
 
+MAX_MODIFIED_FILES = 32
+
+
+def _bundle_digest(bundle: PrefabBundle | None) -> str | None:
+    """`source_digest` d'une version Remotion, depuis son inventaire (aucun octet relu), `None` pour un prefab HTML."""
+
+    if bundle is None or not bundle.is_remotion:
+        return None
+    return digest_of_hashes({path: digest for path, (_, digest) in bundle.inventory.items()})
+
+
+def annotate_provenance(view: dict[str, Any], bundle: PrefabBundle | None, siblings: tuple["CatalogVersion", ...]) -> None:
+    """Ajoute à `view["upstream"]` d'un import vérifié ce que Core PEUT affirmer : `verified_intact` (les fichiers courants sont
+    exactement ceux écrits à l'import, `source_sha256`) et, sinon, `modified_files` (chemins ajoutés, retirés ou changés par rapport à
+    la version d'origine, `None` si cette version n'est plus lisible). La provenance d'origine reste, comme historique, dans tous
+    les cas : rien ici ne la réécrit."""
+
+    upstream = view.get("upstream") if isinstance(view, dict) else None
+    if not isinstance(upstream, dict) or not upstream.get("source_sha256"):
+        return
+    upstream["verified_intact"] = _bundle_digest(bundle) == upstream["source_sha256"]
+    if upstream["verified_intact"] or bundle is None:
+        return
+    original = next((entry.bundle for entry in siblings if entry.bundle is not None and _bundle_digest(entry.bundle) == upstream["source_sha256"]), None)
+    if original is None:
+        upstream["modified_files"] = None
+        return
+    now = {path: digest for path, (_, digest) in bundle.inventory.items()}
+    then = {path: digest for path, (_, digest) in original.inventory.items()}
+    changed = sorted(path for path in now.keys() | then.keys() if now.get(path) != then.get(path))
+    upstream["modified_files"] = changed[:MAX_MODIFIED_FILES]
+
+
 @dataclass(frozen=True, slots=True)
 class PrefabSummary:
     """Ligne de catalogue (`GET /v1/prefabs`, `prefab_search`)."""
@@ -150,12 +187,18 @@ class PrefabSummary:
     input_names: tuple[str, ...]
     event_names: tuple[str, ...]
     base_edited: bool
+    #: Contrat sémantique de la dernière version (`PrefabManifest.catalog_view`). Hors de `to_dict()` : les lignes que lit
+    #: le cerveau (`prefab_search`) ne grossissent pas ; le Control Center le demande avec `?catalog=1`.
+    catalog: dict[str, Any] | None = None
 
-    def to_dict(self) -> dict[str, Any]:
-        return {"id": self.prefab_id, "latest_version": self.latest_version, "versions": list(self.versions),
+    def to_dict(self, *, catalog: bool = False) -> dict[str, Any]:
+        body = {"id": self.prefab_id, "latest_version": self.latest_version, "versions": list(self.versions),
                 "title": self.title, "family": self.family, "class": self.prefab_class.value,
                 "description": self.description, "input_names": list(self.input_names),
                 "event_names": list(self.event_names), "base_edited": self.base_edited}
+        if catalog:
+            body["catalog"] = self.catalog
+        return body
 
 
 @dataclass(frozen=True, slots=True)
@@ -165,8 +208,10 @@ class PrefabDetail:
     entry: CatalogVersion
     latest_version: int
     history: tuple[dict[str, Any], ...]
+    #: Les autres versions de l'id (pour dire QUELS fichiers ont changé depuis l'import) ; hors de `to_dict()`.
+    siblings: tuple["CatalogVersion", ...] = ()
 
-    def to_dict(self, *, include_source: bool = False) -> dict[str, Any]:
+    def to_dict(self, *, include_source: bool = False, catalog: bool = False) -> dict[str, Any]:
         bundle, publication = self.entry.bundle, self.entry.publication
         assert bundle is not None and publication is not None
         body: dict[str, Any] = {"id": self.entry.prefab_id, "version": self.entry.version,
@@ -174,8 +219,13 @@ class PrefabDetail:
                                 "class": prefab_class(self.entry.prefab_id).value,
                                 "manifest": dict(bundle.manifest.raw), "publication": publication.to_dict(),
                                 "history": list(self.history)}
+        if catalog:
+            body["catalog"] = bundle.manifest.catalog_view(parameters=True)
+            annotate_provenance(body["catalog"], bundle, self.siblings)
         if include_source:
             body["files"] = bundle.files()
+            if bundle.is_remotion:  # catalogue entries hold no contents: sizes and digests only
+                body["inventory"] = {path: {"bytes": size, "sha256": digest} for path, (size, digest) in bundle.inventory.items()}
         return body
 
 
@@ -303,8 +353,8 @@ class PrefabService:
             status = VersionStatus.UNREADABLE if exc.code is _C.STORAGE_IO else VersionStatus.TAMPERED
             return refused(status, exc.message)
         try:
-            bundle = parse_bundle(decode_json_text(files.manifest, MAX_MANIFEST_BYTES, "manifest"), files.template,
-                                  files.style, files.behavior)
+            bundle = parse_stored_bundle(decode_json_text(files.manifest, MAX_MANIFEST_BYTES, "manifest"),
+                                         files.template, files.style, files.behavior, files.inventory)
         except PrefabDefinitionError as exc:
             return refused(VersionStatus.TAMPERED, f"definition on disk is invalid: {exc.errors[0]}")
         if (bundle.manifest.prefab_id, bundle.manifest.version) != (prefab_id, version):
@@ -374,12 +424,21 @@ class PrefabService:
         raise PrefabStoreError(_C.UNKNOWN_VERSION, f"{prefab_id} has no version {version}")
 
     async def search(self, query: str | None = None, *, family: str | None = None,
-                     class_filter: PrefabClass | str | None = None,
+                     class_filter: PrefabClass | str | None = None, semantic_type: str | None = None,
+                     engine: str | None = None, stack: str | None = None, with_catalog: bool = False,
                      limit: int = DEFAULT_SEARCH_LIMIT) -> tuple[PrefabSummary, ...]:
         """Lignes du catalogue classées par pertinence (puis id) ; relit le catalogue (listage).
 
-        `class_filter` : `base` ou `custom` (le `class` de `prefab_search`).
+        `class_filter` : `base` ou `custom` (le `class` de `prefab_search`). `semantic_type`, `engine` (compatible =
+        `native` ou `adapter`), `stack` : contrat sémantique de la dernière version (Slice 17).
         """
+
+        if semantic_type is not None and semantic_type not in {item.value for item in SemanticType}:
+            raise PrefabStoreError(_C.INVALID_DEFINITION, f"type must be one of {[item.value for item in SemanticType]}")
+        if engine is not None and engine not in {item.value for item in Engine}:
+            raise PrefabStoreError(_C.INVALID_DEFINITION, f"engine must be one of {[item.value for item in Engine]}")
+        if stack is not None and not (isinstance(stack, str) and 0 < len(stack) <= 24):
+            raise PrefabStoreError(_C.INVALID_DEFINITION, "stack must be a token of at most 24 characters")
 
         if query is not None and (not isinstance(query, str) or len(query) > MAX_QUERY_CHARS):
             raise PrefabStoreError(_C.INVALID_DEFINITION,
@@ -391,12 +450,18 @@ class PrefabService:
         except ValueError:
             raise PrefabStoreError(_C.INVALID_DEFINITION, "class must be 'base' or 'custom'") from None
         await self._refresh()
+        filtered = any(item is not None for item in (semantic_type, engine, stack))
         terms = (query or "").casefold().split()
         rows: list[tuple[int, PrefabSummary]] = []
         for prefab_id in sorted({key[0] for key in self._catalog}):
-            summary = self._summary(prefab_id)
-            if summary is None or (family is not None and summary.family != family) \
-                    or (wanted_class is not None and summary.prefab_class is not wanted_class):
+            summary = self._summary(prefab_id, catalog=with_catalog or filtered)
+            if summary is None:
+                continue
+            if family is not None and summary.family != family:
+                continue
+            if wanted_class is not None and summary.prefab_class is not wanted_class:
+                continue
+            if filtered and not catalog_matches(summary.catalog, kind=semantic_type, engine=engine, stack=stack):
                 continue
             score = self._score(summary, terms)
             if score is not None:
@@ -404,7 +469,13 @@ class PrefabService:
         rows.sort(key=lambda item: (-item[0], item[1].prefab_id))
         return tuple(summary for _, summary in rows[:limit])
 
-    def _summary(self, prefab_id: str) -> PrefabSummary | None:
+    @staticmethod
+    def _catalog_row(entry: "CatalogVersion", siblings: list["CatalogVersion"]) -> dict[str, Any]:
+        view = entry.bundle.manifest.catalog_view(parameters=False)  # type: ignore[union-attr]
+        annotate_provenance(view, entry.bundle, tuple(siblings))  # type: ignore[arg-type]
+        return view
+
+    def _summary(self, prefab_id: str, *, catalog: bool = False) -> PrefabSummary | None:
         entries = self._entries_of(prefab_id)
         healthy = [entry for entry in entries if entry.ok]
         if not healthy:
@@ -417,7 +488,7 @@ class PrefabService:
             prefab_class=manifest.prefab_class, description=manifest.description,
             input_names=tuple(f"props.{name}" for name in manifest.props.properties)
             + tuple(f"data.{name}" for name in manifest.data.properties),
-            event_names=tuple(manifest.events),
+            event_names=tuple(manifest.events), catalog=self._catalog_row(healthy[-1], healthy) if catalog else None,
             base_edited=any(entry.publication is not None
                             and entry.publication.provenance.origin is ProvenanceOrigin.BASE_EDIT for entry in healthy))
 
@@ -452,7 +523,7 @@ class PrefabService:
         entry = await self._lookup(prefab_id, version)
         healthy = [item for item in self._entries_of(prefab_id) if item.ok]
         return PrefabDetail(entry, healthy[-1].version if healthy else entry.version,
-                            tuple(item.history_row() for item in self._entries_of(prefab_id)))
+                            tuple(item.history_row() for item in self._entries_of(prefab_id)), tuple(healthy))
 
     async def manifest(self, prefab_id: str, version: int) -> PrefabManifest:
         """Manifeste d'une version exacte et saine (événements, Slice 04) ; `PrefabStoreError` sinon."""
@@ -461,6 +532,16 @@ class PrefabService:
         assert entry.manifest is not None
         return entry.manifest
 
+    async def remotion_composition(self, prefab_id: str, version: int) -> dict[str, Any] | None:
+        """La composition **déclarée** par une version Remotion (`{id, width, height, fps, duration_in_frames}`), ou `None` pour un
+        prefab HTML. Lit le manifeste seulement : ni octet de source, ni compilation (Slice 12, ligne de temps de la partition).
+        `PrefabStoreError` pour une version inconnue ou altérée."""
+
+        entry = await self._lookup(prefab_id, version)
+        if entry.bundle is None or not entry.bundle.is_remotion or entry.bundle.manifest.source is None:
+            return None
+        return dict(entry.bundle.manifest.source.composition.to_dict())
+
     async def bundle(self, prefab_id: str, version: int) -> dict[str, Any]:
         """Ce qu'un cadre exécute : manifeste, sources, et le runtime `{version, shim, shell_css}` (Slice 03)."""
 
@@ -468,9 +549,37 @@ class PrefabService:
             raise PrefabStoreError(_C.UNKNOWN_VERSION, "a bundle names an exact version")
         entry = await self._lookup(prefab_id, version)
         assert entry.bundle is not None
+        if entry.bundle.is_remotion:
+            raise PrefabStoreError(_C.INVALID_DEFINITION, f"{prefab_id}@{version} is a Remotion source: it has no HTML "
+                                                          "frame bundle (use remotion_source and the Remotion compiler)")
         return {"id": prefab_id, "version": version, "fingerprint": entry.fingerprint,
                 "manifest": dict(entry.bundle.manifest.raw), "files": entry.bundle.files(),
                 "runtime": await self._runtime_files()}
+
+    async def remotion_source(self, prefab_id: str, version: int) -> RemotionSource:
+        """Source d'une version Remotion exacte et saine (bloc + octets de chaque fichier) : l'entrée de la compilation
+        (`docs/remotion-source.md`). Les octets sont **relus à la demande** (le catalogue n'en garde aucun) puis comparés aux
+        SHA-256 de l'inventaire : une version modifiée depuis le dernier balayage est `tampered`. `invalid_definition` pour un
+        prefab HTML ou pour une source qu'une garde de la Slice 06 refuse. Aucune écriture, aucun processus."""
+
+        if version is None:
+            raise PrefabStoreError(_C.UNKNOWN_VERSION, "a Remotion source names an exact version")
+        entry = await self._lookup(prefab_id, version)
+        assert entry.bundle is not None
+        if not entry.bundle.is_remotion:
+            raise PrefabStoreError(_C.INVALID_DEFINITION, f"{prefab_id}@{version} is an HTML prefab, not a Remotion source")
+        assert entry.bundle.manifest.source is not None
+        sources = await asyncio.to_thread(self._library.read_sources, entry.root, prefab_id, version)
+        changed = sorted(path for path, data in sources.items()
+                         if entry.bundle.inventory.get(path, (None, None))[1] != hashlib.sha256(data).hexdigest())
+        if changed or set(sources) != set(entry.bundle.inventory):
+            self._trace("core.prefab.tampered", "Source Remotion modifiée depuis le dernier balayage", level="warning",
+                        data={"prefab_id": prefab_id, "version": version, "files": len(changed)})
+            raise PrefabStoreError(_C.TAMPERED, f"{prefab_id}@{version}: source files changed since the catalogue was loaded")
+        try:
+            return parse_source(entry.bundle.manifest.source, sources)
+        except RemotionSourceError as exc:
+            raise PrefabStoreError(_C.INVALID_DEFINITION, f"{prefab_id}@{version}: {exc.errors[0]}", errors=exc.errors) from None
 
     async def _runtime_files(self) -> dict[str, str]:
         if self._runtime is None:
@@ -486,14 +595,34 @@ class PrefabService:
 
     # ------------------------------------------------------------ validation
 
-    def validate_candidate(self, candidate: object) -> CandidateValidation:
-        """Validation sans écriture (`prefab_validate`) : toutes les erreurs vues, ou l'empreinte."""
+    def validate_candidate(self, candidate: object, *, core_written: bool = False) -> CandidateValidation:
+        """Validation sans écriture (`prefab_validate`) : toutes les erreurs vues, ou l'empreinte.
+
+        `core_written` (Remotion Slice 15) : refuse aussi, comme `save`, les champs de catalogue que seul Core écrit (provenance amont vérifiée,
+        licence du moteur) : un appelant qui valide AVANT de publier voit le refus de `save` à l'avance, pas après la première publication."""
 
         try:
             bundle = parse_candidate(candidate)
+            if core_written:
+                self._check_core_written_fields(bundle, self._entries_of(bundle.manifest.prefab_id))
         except PrefabDefinitionError as exc:
             return CandidateValidation(False, exc.errors)
+        except PrefabStoreError as exc:
+            return CandidateValidation(False, (exc.message,))
         return CandidateValidation(True, (), bundle.fingerprint())
+
+    async def holds_verified_import(self, *, commit: str, archive_sha256: str, source_sha256: str) -> bool:
+        """Core still HOLDS a healthy version whose importer-written provenance names this commit, archive and file digest (Remotion Slice 19,
+        QA a). A record that merely says so is not a witness: only the library's own copy is."""
+
+        if not self._scanned:
+            await self._refresh()
+        for entry in list(self._catalog.values()):
+            upstream = entry.manifest.catalog.upstream if entry.ok and entry.manifest is not None and entry.manifest.catalog else None
+            if upstream is not None and upstream.verified and (upstream.commit, upstream.archive_sha256, upstream.source_sha256) == (
+                    commit, archive_sha256, source_sha256) and _bundle_digest(entry.bundle) == source_sha256:
+                return True
+        return False
 
     async def validate_instance(self, ref: PrefabInstanceRef) -> InstanceValidation:
         """Port `PrefabInstanceValidator` : version saine, `props`/`data` valides, défauts appliqués."""
@@ -515,8 +644,12 @@ class PrefabService:
     # ------------------------------------------------------------ publication
 
     async def save(self, candidate: object, *, actor: CreatorActor | str,
-                   derived_from: PrefabRef | None = None) -> Publication:
-        """Publie un prefab custom : neuf (`custom`/`fork`) ou nouvelle version (`revision`). Jamais une base."""
+                   derived_from: PrefabRef | None = None, verified_import: bool = False) -> Publication:
+        """Publie un prefab custom : neuf (`custom`/`fork`) ou nouvelle version (`revision`). Jamais une base.
+
+        `verified_import` : posé par l'importeur amont de Core SEUL (Slice 18). Les clés `commit`, `archive_sha256`, `imported_at`
+        et `changes` de `catalog.upstream` attestent une vérification (archive lue, commit attesté) : un candidat qui les porte
+        sans passer par l'importeur est refusé, sinon n'importe quelle porte pourrait se déclarer « vérifiée »."""
 
         try:
             creator = CreatorActor(actor)
@@ -538,6 +671,8 @@ class PrefabService:
         async with self._write_lock:
             await self._refresh()
             known = self._entries_of(prefab_id)
+            if not verified_import:
+                self._check_core_written_fields(bundle, known)
             if known:
                 if derived_from is not None and derived_from.prefab_id != prefab_id:
                     raise PrefabStoreError(_C.INVALID_DEFINITION, f"{prefab_id} already exists: a revision derives "
@@ -596,6 +731,7 @@ class PrefabService:
             if bundle.manifest.prefab_id != prefab_id:
                 raise PrefabStoreError(_C.INVALID_DEFINITION, f"candidate manifest id {bundle.manifest.prefab_id} "
                                                               f"differs from {prefab_id}")
+            self._check_core_written_fields(bundle, known)  # une base `jarvis.*` ne porte jamais de provenance qu'elle n'a pas
             record = BaseEditRecord(user_request.strip(), f"{WITNESS_PREFIX}{event_id}")  # type: ignore[union-attr]
             provenance = Provenance(ProvenanceOrigin.BASE_EDIT, creator,
                                     PrefabRef(prefab_id, known[-1].version), record)
@@ -605,6 +741,28 @@ class PrefabService:
                                            "derived_from": known[-1].version, "witness": record.witness,
                                            "request_chars": len(record.user_request)})
         return publication
+
+    @staticmethod
+    def _check_core_written_fields(bundle: PrefabBundle, known: list[CatalogVersion]) -> None:
+        """Champs de catalogue ÉCRITS PAR CORE (l'importeur amont, Slice 18) : `catalog.upstream.{commit, archive_sha256, imported_at,
+        changes, source_sha256}` et `catalog.runtime_license`. Le reste du catalogue (type, pile, `license` d'un prefab de l'auteur)
+        est déclaré par l'auteur. Une révision peut REPORTER ces champs tels quels ; ce qui est reporté n'est pas « intact » pour
+        autant : la vue de catalogue compare l'empreinte des fichiers courants à `source_sha256` (`verified_intact`)."""
+
+        catalog = bundle.manifest.catalog
+        if catalog is None:
+            return
+        upstream = catalog.upstream
+        claims = (upstream is not None and bool(upstream.commit or upstream.archive_sha256 or upstream.imported_at or upstream.changes
+                                                or upstream.source_sha256)) or bool(catalog.runtime_license)
+        if not claims:
+            return
+        previous = known[-1].manifest if known else None
+        before = previous.catalog if previous is not None else None
+        if before is None or before.upstream != upstream or before.runtime_license != catalog.runtime_license:
+            raise PrefabStoreError(_C.INVALID_DEFINITION,
+                                   "catalog.upstream (commit, archive_sha256, imported_at, changes, source_sha256) and catalog.runtime_license "
+                                   "are written by the upstream importer only, not declared by hand")
 
     @staticmethod
     def _names_of(prefab_id: str, known: list[CatalogVersion]) -> list[str]:
@@ -656,8 +814,7 @@ class PrefabService:
                                                      f"vivantes{note}. Enregistre la source sous un nouvel id "
                                                      "(derived_from la dernière version).")
         try:
-            numbered = parse_bundle(with_version(bundle.manifest.raw, version), bundle.template, bundle.style,
-                                    bundle.behavior)
+            numbered = renumber(bundle, version)
             publication = Publication(prefab_id, version, numbered.fingerprint(), format_published_at(self._clock()),
                                       provenance)
         except PrefabDefinitionError as exc:

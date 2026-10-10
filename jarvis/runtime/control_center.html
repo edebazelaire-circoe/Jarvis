@@ -974,11 +974,12 @@ details.rd[open]>summary{margin-bottom:14px}
 .mcpv-tabs button[aria-selected=true] .mcpi-n{background:rgba(110,231,255,.14);color:var(--accent)}
 .mcpv-tabs button:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
 .mcpi[data-view=plugins] :is(.mcpi-search,#mcpiExpandAll,#mcpiRefresh,#mcpiStatus,#mcpiNotice,.mcpi-main){display:none}
-.mcpp{grid-row:3;display:grid;grid-template-rows:auto minmax(0,1fr);min-height:0}
+.mcpp{grid-row:3;display:grid;grid-template-rows:auto auto minmax(0,1fr);min-height:0}
 .mcpp[hidden]{display:none}
 .mcpp-bar{display:flex;flex-wrap:wrap;align-items:center;gap:8px 10px;padding:10px 18px;border-bottom:1px solid var(--line);background:rgba(4,9,13,.55)}
 .mcpp-bar .tl-status{flex:1 1 220px}
-.mcpp-body{overflow:auto;min-height:0;padding:16px 22px 56px}
+.mcpp-bar{grid-row:1}
+.mcpp-body{grid-row:3;overflow:auto;min-height:0;padding:16px 22px 56px}
 .mcpp-body>*{max-width:1180px;margin-left:auto;margin-right:auto}
 .mcpp button.action:not(.small){padding:7px 12px;font-size:12.5px}
 .mcpp button.action.primary{border-color:rgba(110,231,255,.5);color:var(--accent)}
@@ -1080,6 +1081,40 @@ details.rd[open]>summary{margin-bottom:14px}
   .mcpp-mhead .mcpp-switch{grid-column:1/-1;justify-self:start}
   .mcpp-add,.mcpp-cred{padding:12px}
 }
+/* ---------- Carte « Remotion » et Studio optionnel (Slice 11, control_center_remotion_studio.js) ----------
+   Au-dessus des cartes de plugins, dans le même onglet : même carte (`.mcpp-card`), mêmes puces et même bouton. Une seule
+   bande, jamais plus haute que son contenu, qui défile avec le journal replié. */
+.rms-stack{grid-row:2}
+.rms{padding:12px 22px 0;max-width:1180px;width:100%;margin:0 auto;box-sizing:border-box}
+.rms-card{max-width:760px}
+/* Carte « Présentations · moteur » (Slice 20, control_center_presentation_studio_engine.js) : mêmes classes, quelques ajouts. */
+.sve-new{display:flex;flex-wrap:wrap;align-items:end;gap:8px 10px}
+.sve-new .rms-scene{flex:1 1 240px}
+.rms-scene input{min-height:32px;max-width:100%;padding:0 8px;border:1px solid var(--line);border-radius:6px;background:#0b141a;color:var(--text);font:inherit;font-size:12.5px}
+.rms-scene input:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.sve-exp[open]{display:grid;gap:8px}
+.sve-warn{padding:8px 10px;border:1px solid rgba(255,184,92,.45);border-radius:6px;color:#f5d9b0;background:rgba(255,184,92,.06)}
+.sve-list{list-style:none;margin:0;padding:0;display:grid;gap:6px}
+.sve-row{display:flex;flex-wrap:wrap;align-items:center;gap:6px 10px;padding:7px 9px;border:1px solid var(--line);border-radius:6px}
+.sve-problem{border-color:rgba(255,101,119,.4);margin-top:6px}
+.sve-row[data-engine=slidecar]{border-color:rgba(255,184,92,.4)}
+.sve-title{flex:1 1 180px;min-width:0;overflow-wrap:anywhere;font-size:12.5px;color:var(--text)}
+.sve-events{list-style:none;margin:6px 0 0;padding:0;display:grid;gap:3px;font-size:11.5px;line-height:1.5;color:#c6dbe4}
+.sve-events time{color:var(--muted);font-variant-numeric:tabular-nums}
+.sve-diag strong{color:var(--text)}
+.rms-scene{display:grid;gap:4px;font-size:11.5px;color:var(--muted)}
+.rms-scene select{min-height:32px;max-width:100%;padding:0 8px;border:1px solid var(--line);border-radius:6px;background:#0b141a;color:var(--text);font:inherit;font-size:12.5px}
+.rms-scene select:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.rms-scene select:disabled{opacity:.6;cursor:wait}
+.rms-none,.rms-hint{margin:0;font-size:11.5px;line-height:1.5;color:var(--muted)}
+.rms-link{margin:0;font-size:12.5px}
+.rms-err{margin:0}
+.rms-busy{margin:6px 0 0;min-height:1em;font-size:11.5px;color:var(--muted);font-variant-numeric:tabular-nums}
+.rms-busy:empty{display:none}
+.rms-log{margin:6px 0 0;max-height:150px;overflow:auto;padding:8px 10px;border:1px solid var(--line);border-radius:6px;background:#04090d;font-size:11px;line-height:1.5;color:#c6dbe4;white-space:pre-wrap;overflow-wrap:anywhere}
+.rms button.action.primary{border-color:rgba(110,231,255,.5);color:var(--accent)}
+.rms button.action.danger{border-color:rgba(255,101,119,.45);color:var(--danger)}
+.rms button.action:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
 @media(prefers-reduced-motion:reduce){.mcpp-card,.mcpp-track,.mcpp-knob{transition:none}.mcpp-spin{animation:none}}
 /* ---------- Sessions & Boards (plein écran) ----------
    Gestionnaire profond du workspace (`docs/boards.md`, « Control Center
@@ -1201,6 +1236,14 @@ details.rd[open]>summary{margin-bottom:14px}
 .wsp-tree>li{padding:6px 0 6px 10px;font-size:12.5px;line-height:1.55}
 .wsp-tree>li.is-current{box-shadow:inset 2px 0 0 var(--accent)}
 .wsp-rel{list-style:none;margin:0;padding:0}
+/* Présentations d'un Board : une carte par source, l'arbre source -> copie figée -> rendus dedans. */
+.wsp-psrc{margin-bottom:12px;padding:10px 14px 6px;border:1px solid var(--line);border-radius:8px;background:#060d12}
+.wsp-psrc .wsp-tree{margin-top:8px}
+.wsp-psrc .wsp-line>.action{margin-left:auto}
+.wsp-psrc .wsp-tree .action{margin-left:6px}
+.wsp-thumb{display:block;max-width:100%;height:auto;margin:6px 0;border:1px solid var(--line);border-radius:6px;background:#000}
+.wsp-export{display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin:8px 0;padding:8px 10px;border:1px solid var(--line);border-radius:6px;background:#091218}
+.wsp-export-form{margin:8px 0}
 .wsp-rel-board{padding:9px 12px;margin-bottom:8px;border:1px solid var(--line);border-radius:7px}
 .wsp-rel-board.is-current{border-color:rgba(110,231,255,.45)}
 /* Mémoire : fichiers à gauche, fichier ouvert à droite. */
@@ -1283,6 +1326,27 @@ button.wsp-ename:hover{color:var(--accent)}
 .pfb-field input::placeholder,.pfb-field textarea::placeholder{color:#7f9dac}
 .pfb-field textarea{resize:vertical;line-height:1.5;min-height:64px}
 .pfb-field input:hover,.pfb-field select:hover,.pfb-field textarea:hover{border-color:#24485c}
+.pfb-semantic{grid-column:1/-1;display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px}
+.pfb-cat{display:flex;flex-wrap:wrap;gap:4px;min-width:0}
+.pfb-badge.is-type{color:#d2e6ef;border-color:rgba(210,230,239,.32);background:rgba(210,230,239,.04);text-transform:none;letter-spacing:.02em}
+.pfb-badge.is-sup-native{color:var(--ok);border-color:rgba(104,224,160,.5);background:rgba(104,224,160,.06);text-transform:none;letter-spacing:.02em}
+.pfb-badge.is-sup-adapter{color:var(--warn);border-color:rgba(255,184,92,.55);background:rgba(255,184,92,.07);text-transform:none;letter-spacing:.02em}
+.pfb-badge.is-sup-unsupported{color:#a9c0cb;border-style:dashed;border-color:rgba(113,144,160,.55);text-transform:none;letter-spacing:.02em}
+.pfb-cdl{display:grid;grid-template-columns:max-content minmax(0,1fr);gap:10px 18px;margin:8px 0 14px;font-size:12.5px;line-height:1.5;color:#c6dbe4}
+.pfb-cdl dt{margin:0;font-size:10.5px;letter-spacing:.12em;text-transform:uppercase;color:var(--muted);padding-top:2px}
+.pfb-cdl dd{margin:0;min-width:0;overflow-wrap:anywhere}
+.pfb-cmeans{color:var(--muted)}
+.pfb-csup,.pfb-cdeps{list-style:none;margin:0;padding:0;display:grid;gap:4px}
+.pfb-csup li{display:flex;flex-wrap:wrap;align-items:center;gap:4px 6px}
+.pfb-csup svg{width:13px;height:13px}
+.pfb-csup .is-sup-native svg,.pfb-csup .is-sup-native strong{color:var(--ok)}
+.pfb-csup .is-sup-adapter svg{color:var(--warn)}
+.pfb-up{display:flex;flex-wrap:wrap;gap:4px 8px;align-items:baseline}
+.pfb-upurl{display:block;flex-basis:100%}
+.pfb-params{margin:4px 0 18px;border:1px solid var(--line);border-radius:8px;padding:8px 12px;background:#060d12}
+.pfb-params>summary{cursor:pointer;font-size:12.5px;color:var(--text)}
+.pfb-params[open]>summary{margin-bottom:8px}
+@media (max-width:760px){.pfb-semantic{grid-template-columns:1fr}.pfb-cdl{grid-template-columns:1fr;gap:2px}.pfb-cdl dd{margin-bottom:8px}}
 .pfb-kinds{grid-column:1/-1;display:flex;flex-wrap:wrap;gap:5px}
 .pfb-kind{display:inline-flex;align-items:center;gap:6px;min-height:30px;padding:0 9px;border:1px solid var(--line);border-radius:6px;background:#060d12;color:#a9c0cb;font:inherit;font-size:11.5px;cursor:pointer;transition:border-color .15s,background-color .15s,color .15s}
 .pfb-kind svg{width:13px;height:13px}
@@ -1691,6 +1755,10 @@ button.wsp-ename:hover{color:var(--accent)}
       <button type="button" class="action small" id="mcppRefresh">Actualiser</button>
       <button type="button" class="action small primary" id="mcppAdd">Ajouter un plugin</button>
     </div>
+    <div class="rms-stack">
+      <div class="rms" id="sveCard" aria-label="Présentations : moteur par défaut, Slidecar expérimental, diagnostic et réparation"></div>
+      <div class="rms" id="rmsCard" aria-label="Remotion : environnement local et Studio optionnel"></div>
+    </div>
     <div class="mcpp-body" id="mcppBody"></div>
     <p class="sr" id="mcppHelp">Serveurs MCP distants ajoutés par leur adresse. Chaque carte : état de la connexion et de l’accès, interrupteur d’activation, nombre d’outils, bouton Gérer. Échap revient d’un cran, puis ferme.</p>
     <div class="sr" id="mcppAnnounce" aria-live="polite"></div>
@@ -1726,6 +1794,11 @@ button.wsp-ename:hover{color:var(--accent)}
       <div class="pfb-tools">
         <label class="pfb-field"><span>Rechercher <kbd aria-hidden="true">/</kbd></span><input type="search" id="pfbSearch" aria-label="Rechercher un prefab" placeholder="checklist, tableau, todo…" autocomplete="off" spellcheck="false" maxlength="120"></label>
         <label class="pfb-field"><span>Famille</span><select id="pfbFamily" aria-label="Famille"></select></label>
+        <div class="pfb-semantic" role="group" aria-label="Type, moteur et pile technique">
+          <label class="pfb-field"><span>Type</span><select id="pfbType" aria-label="Type"></select></label>
+          <label class="pfb-field"><span>Compatible</span><select id="pfbEngine" aria-label="Moteur compatible"></select></label>
+          <label class="pfb-field"><span>Pile</span><select id="pfbStack" aria-label="Pile technique"></select></label>
+        </div>
         <div class="pfb-kinds" id="pfbKinds" role="group" aria-label="Nature des prefabs"></div>
         <p class="pfb-count" id="pfbCount" aria-live="polite"></p>
       </div>
@@ -2180,6 +2253,7 @@ const STATUS={
    (`control_center_prefab_protocol.js`) puis l'hôte des cadres sandboxés
    (`control_center_prefab_host.js`, seul module qui pose le document d'un cadre). */
 /*__CONTROL_CENTER_PREFAB_PROTOCOL_JS__*/
+/*__CONTROL_CENTER_REMOTION_FRAME_JS__*/
 /*__CONTROL_CENTER_PREFAB_HOST_JS__*/
 /*__CONTROL_CENTER_SCENE_PAGE_JS__*/
 /* Plein écran générique d'une surface (studio de présentation, Slice 03) : API Fullscreen du navigateur
@@ -2200,6 +2274,7 @@ const STATUS={
 /*__CONTROL_CENTER_PRESENTATION_STUDIO_EXPLORER_COMPARE_CORE_JS__*/
 /*__CONTROL_CENTER_PRESENTATION_STUDIO_EXPLORER_COMPARE_JS__*/
 /*__CONTROL_CENTER_PRESENTATION_STUDIO_EXPLORER_COMPOSE_JS__*/
+/*__CONTROL_CENTER_PRESENTATION_STUDIO_EXPLORER_UPGRADES_JS__*/
 /*__CONTROL_CENTER_PRESENTATION_STUDIO_EXPLORER_JS__*/
 /* Lecture d'une présentation (studio de présentation, Slice 12) : bande d'état et clavier sur l'hôte du stage, mêmes
    routes que la voix (`/api/presentation-studio/playback`), plein écran par `JarvisFullscreen` : `control_center_presentation_studio_player.js`. */
@@ -2226,6 +2301,12 @@ const STATUS={
    lecture seule et le rendu de détail ; il utilise `toast` et `confirmDialog`,
    déclarations de fonction remontées de ce même `<script>`. */
 /*__CONTROL_CENTER_MCP_PLUGINS_JS__*/
+/* Carte « Présentations · moteur » (Slice 20 de jarvis-remotion-presentation-integration), au-dessus de la carte Remotion :
+   `control_center_presentation_studio_engine.js`. Il utilise `toast` et `confirmDialog`, déclarations de fonction remontées de ce même `<script>`. */
+/*__CONTROL_CENTER_PRESENTATION_STUDIO_ENGINE_JS__*/
+/* Carte « Remotion » et Studio optionnel (Slice 11 de jarvis-remotion-presentation-integration), en tête du même onglet :
+   `control_center_remotion_studio.js`. Il utilise `toast`, déclaration de fonction remontée de ce même `<script>`. */
+/*__CONTROL_CENTER_REMOTION_STUDIO_JS__*/
 /* Sessions & Boards (board-memory-workspace-inspector, Slice 07) : vue plein
    écran du dock `WSP`. Sa bascule de Board est celle du contrôle Boards, lue
    au clic (`window.JarvisBoards`, `window.JarvisBoardsControl`). */

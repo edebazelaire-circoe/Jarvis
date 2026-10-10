@@ -624,6 +624,157 @@ second owner is a failed test, not a silent state.
   extra, a missing or altered model or a dead engine is said in
   `runtime/trace.jsonl` and leaves F9 usable.
 
+### 18. Remotion scene sandbox: untrusted TSX/JS never gets Jarvis authority
+
+> Slice 13 addendum: the manifest `data` block (user slide content) now reaches the scene, under the reserved `inputProps` key `data`, after the same
+> validation as `props` ([remotion-isolation.md](remotion-isolation.md) section 12). It can leave through the same residual channels as `props` (section 9: DNS
+> prefetch, bare TCP connect). Never put a secret in a manifest `props` or `data` value.
+
+Status: contract and implementation delivered (handoff `jarvis-remotion-presentation-integration`, Slice 06); proven in a real
+Chrome against a hostile corpus, **not yet mounted** (the Player is Slice 10). Full contract, rule list, protocol and evidence:
+[remotion-isolation.md](remotion-isolation.md).
+
+A Remotion scene is TSX/JS written by the brain, a model or an imported template. It is **untrusted**, so the boundary is the
+browser, not a content check:
+
+- **Dedicated origin.** The compiled `scene.js` only runs in a page served by a second loopback listener on **another address
+  and port** than Core (cookies are shared between ports of one host, so a port alone is refused in code). The listener serves
+  only non-secret compile output, sets no cookie and never receives a Core token.
+- **`<iframe sandbox="allow-scripts">`, exactly** (never `allow-same-origin`, `allow-popups`, `allow-top-navigation`,
+  `allow-forms`, `allow-modals`), mirrored by the CSP `sandbox` directive so the document is sandboxed even opened top-level.
+- **CSP as a header:** `default-src 'none'`, scripts by per-response nonce plus `integrity` (no `unsafe-eval`, no
+  `unsafe-inline` script), `connect-src 'none'`, `frame-src`/`worker-src`/`object-src 'none'`, images/media/fonts from the origin
+  only, `frame-ancestors` the Control Center only. Every file is served `nosniff`, with a type fixed by its extension, a
+  sandboxing CSP (an SVG opened as a document runs nothing) and no cookie.
+- **Narrow channel.** `postMessage` protocol `rs: 1` (typed, exact fields, bounded, source-checked, origin-checked). A hostile
+  frame is a data source: more than 20 refused messages, a message flood lasting 3 seconds, a missing `pong` for 3 s, or a
+  reported JS heap above 768 MB removes the frame; the host page stays responsive (the frame is another process). The
+  watchdog and the heap report are **best-effort against naive or accidental abuse only**: the scene shares the frame's JS
+  realm and can answer pings, forge a `pong` or redefine `performance.memory`. A huge `postMessage` (tens of MB and up) stalls
+  the host for the duration of the structured clone before any handler runs; the host cannot prevent that.
+- **Static filter first** (`SOURCE_GUARDS`, at publication and at every re-read; every pattern is bounded and scanned under a
+  time budget that refuses, never hangs): forbidden network/eval/worker/global APIs,
+  external resources, active SVG content, asset signature mismatches. It is a filter, **not** a boundary: the evidence corpus
+  contains, for each attack, a version written to pass it.
+- **Compile side.** The compiler never runs scene code; its Node child gets an allow-listed environment (no `*_KEY`, `*_TOKEN`),
+  a 1 GB V8 heap cap, a deadline and a killed process tree. Template archives are read in memory, bounded, and may only hold
+  `src/**` and `public/**`; no `package.json`, no implicit `npm install`.
+
+**Not claimed: "no network exfiltration".** The sandbox guarantees that a scene holds **no Jarvis secret** (token, cookie, storage,
+tools, Core) and cannot act as Jarvis. `connect-src 'none'` closes fetch/XHR/WebSocket/beacon/prefetch/preload, but two channels
+stay open: `<link rel=dns-prefetch>` (a DNS name chosen by the scene) and `<link rel=preconnect>` (a bare TCP connection to a
+chosen host:port, also a blind port probe of the workstation and LAN). Measured in Chrome 154: neither the CSP nor
+`X-DNS-Prefetch-Control: off` nor `allow=""` closes them. WebRTC (no CSP directive) is closed only in-realm, best-effort, by
+the bootstrap removing `RTCPeerConnection` before scene code runs. Whatever the host gives the scene (`inputProps`, assets)
+can leave through these channels: never pass a scene data more sensitive than the slide content.
+
+Also residual: Chrome-only evidence; CPU burn by a still-responsive scene is not detected; a scene can draw a fake form inside
+its own frame (it cannot submit or leave it); the native memory of the compiler child is not capped;
+`Access-Control-Allow-Origin: *` on script/font files of the dedicated origin (keys are 128-bit content hashes). The page that
+mounts the frame must carry `frame-src <sandbox origin>` alone (Slice 10 implements and tests it). See remotion-isolation.md
+section 9.
+
+### 19. Remotion Studio (optional dev server): a hardened process, not a sandbox
+
+Status: contract and implementation delivered (handoff `jarvis-remotion-presentation-integration`, Slice 11, QA rework applied); proven
+against the real `remotion studio`, an isolated Core and Control Center and a real Chrome. Contract and evidence:
+[remotion-studio.md](remotion-studio.md).
+
+The stock Studio binds `0.0.0.0`/`::`, its HTTP API can start a package manager, an editor, a terminal or a coding agent, and the
+scene's code runs in the Studio tab **on the same origin as that API** (no iframe sandbox, unlike the Player of section 18). It is
+therefore opt-in and wrapped by a preload guard that runs inside the Studio process:
+
+- **Explicit, informed request only.** Core routes `open`, `restart` and `sync` of another scene refuse (400
+  `remotion_studio_ack_required`) without `acknowledge_unsandboxed_scene: true`; the Control Center sends it only after a confirmation
+  that names the risk and shows the exact version's provenance (stronger for a version not written by the user). No brain, MCP or agent
+  path can open the Studio (tested).
+- **Loopback only**: every TCP `listen` is rewritten to `127.0.0.1`/`::1` (measured: the LAN address refuses the port).
+- **No path from a Studio page to the Control Center or any other local service**: CSP `connect-src 'self'` only; the Control Center
+  refuses a loopback `Origin` whose port is not its own and any mutating `Sec-Fetch-Site: same-site|cross-site` request; the Studio refuses
+  foreign `Origin` on mutating requests and WebSockets, and foreign `Host` (DNS rebinding). Each layer is proven alone, in a real Chrome.
+- **No egress**: outbound TCP off the loopback is refused before any DNS (a caller-supplied `lookup` is ignored); DNS names (`dns`,
+  `dns.promises`, `Resolver`) and UDP (`dgram.createSocket`, `dgram.Socket`) are refused; Worker threads get the same guard. Every
+  refusal is counted and shown on the card.
+- **No child process** except the pinned esbuild service the TSX loader needs: package install, editor, terminal, agent, render are refused.
+- **Read-only working copy** of exactly the selected scene's `src/**` and `public/**` (no data root, no Board, no secret, allow-listed
+  environment); paths are validated (no `..`, drive, backslash, empty segment); edits made anyway are set aside, never published; links
+  planted in it are removed, never followed; the tool cache is wiped at each launch.
+- **No orphan**: identity by `pid:creation time` and a per-launch identifier; Core stop closes it; if the Core declared in `parent.json`
+  (pid and creation time, rewritten by a Core that adopts the Studio) is gone for 60 s the guard ends the process; an idle ceiling ends it too.
+
+**Not claimed**: the guard is JavaScript inside the process, not an OS sandbox. Not covered: `process.binding`, native modules and any
+non-JavaScript code; and the browser-side channels the CSP cannot close (WebRTC, `dns-prefetch`/`preconnect` link hints, `<a ping>`,
+GET navigation) remain for a hostile scene. Whatever the scene can read (its own source, `defaultProps`) can leave through those channels:
+that is why the user must confirm, per opening, knowing the provenance.
+
+### Choix du moteur de présentation (Remotion handoff, Slice 20)
+
+Contrat : [presentation-engine.md](presentation-engine.md) › *Human engine control*. Seule une action humaine nomme un moteur ; Remotion est le défaut, Slidecar une expérience confirmée et journalisée.
+
+- **Déclaration, pas authentification.** Core ne peut pas prouver qu'une requête vient de la page : `actor` est une valeur du corps. Le relais du Control Center la **remplace** par `user` ; le serveur MCP du cerveau envoie `brain` et n'a aucun outil de moteur (test de parité) ; Core refuse tout moteur nommé par un autre acteur (ou sans acteur).
+- **Barrière d'accès occasionnel, pas une frontière.** Sur les routes qui nomment un moteur (`POST /api/presentation-studio/presentations` avec `engine`, `.../{id}/experiment`) et sur `POST /api/local-capabilities/remotion/install|repair`, le relais exige `Sec-Fetch-Site: same-origin` (envoyé par tout navigateur pour un fetch de la page ; absent de curl, d'un script Python, d'un outil Bash) en plus de la garde de la Slice 11 (Host et Origin de boucle locale, jamais `cross-site`). Un client qui forge l'en-tête passe : un vrai garde-fou exigerait un secret que le cerveau ne peut pas lire (même compte, même disque : hors de cette Slice).
+- **Pas de repli.** Un moteur indisponible est une erreur visible avec sa raison ; jamais l'autre moteur. Les anciens documents lus comme `slidecar` ne sont jamais réécrits par une lecture ; la première sauvegarde garde l'ancien manifeste (`.bak`).
+- **Contenu affiché** : titres, raisons et messages du journal Slidecar entrent dans la carte par échappement (test dynamique avec des titres et raisons hostiles dans Chrome).
+### 20. Upstream Remotion template import: verified origin, audited dependencies, Core-written provenance
+
+Status: delivered (handoff `jarvis-remotion-presentation-integration`, Slice 18); exercised over the real network, with the real compiler
+and in a real Chrome. Full contract, code table and evidence: [remotion-import.md](remotion-import.md).
+
+Importing a template is Core fetching code written by someone else. The import never runs that code; it reads it as text, and the
+result is an ordinary Remotion source, so control 18 (the sandbox) is still the execution boundary. The import adds the controls on
+what is accepted and what is claimed about it:
+
+- **Verified origins only.** HTTPS to `github.com` repositories of an owner in a user-set allowlist (default `remotion-dev`;
+  `control-center-settings.json` > `remotion_import.allowed_owners`, read at each import). The download URL is built from a validated
+  owner/repository and a **full commit SHA** (never a branch or tag), against `codeload.github.com`. Hosts are not configurable; no
+  arbitrary URL, no `http`, no credentials/port, no preview MP4 or page as a source. Redirects (at most 3) are never followed
+  automatically: each must stay on GitHub over HTTPS and on the same repository. Size (12 MiB), time (30 s) and one import at a time
+  are bounded. Only Core fetches (a port with a fake for tests); untrusted scene code has no network.
+- **Hostile archives refused whole.** In-memory stream, no disk: symlinks, hardlinks, devices, `..`/absolute/backslash paths, second
+  roots, duplicate names (case-folded), decompression bombs (linear, capped, 20 s deadline: `import_timeout`) and an archive that does
+  not attest the pinned commit. "Attested" only proves GitHub echoed the requested SHA: objects of a fork network can be served under
+  an allowed owner's path (not tested), so **the allowlist protects the owner, not the commit** (reachability check: Issue 04).
+- **Dependencies are what the source reaches, not what `package.json` claims.** Only `react`, `remotion` (the locked shared tree) are
+  admitted; any other reached package is refused with its name and importer. Imports are looked for in the text with and without
+  comments, without requiring spaces, so a fake comment (`<p>/*</p>`) cannot hide one; an analysis deadline (20 s) bounds hostile text. `package.json`, lockfiles and scripts are never copied or run.
+  No npm, no adapter.
+- **Licence is the template's, recorded apart from Remotion's.** The licence text must be EXACTLY a reviewed one (normalised comparison
+  with canonical MIT, BSD-2/3, ISC, Apache-2.0, 0BSD, Unlicense, CC0 texts: an added "Commons Clause" / "personal use only" paragraph is
+  refused); every licence file must agree. Unlicensed, unknown, copyleft, non-commercial, Remotion's own or a file/`package.json`
+  conflict are refused. The licence text travels with the source.
+- **Provenance is Core-written, and never laundered.** `catalog.upstream.{commit, archive_sha256, imported_at, changes, source_sha256}` and
+  `catalog.runtime_license` can only be written by the importer (`PrefabService.save` and `edit_base` refuse them elsewhere; a revision may
+  only carry them unchanged). Carrying is not vouching: the catalog view recomputes the digest of the CURRENT files and reports
+  `verified_intact` or "modified since import" with the modified file list; the original origin stays as history only.
+- **Scoped to one presentation.** The result is a `presentation-studio.*` prefab version; there is no request field to publish to the
+  shared library (promotion is a separate, explicit step, Slice 19). No route reaches the Control Center, the brain or an MCP tool.
+
+**Not claimed**: the import graph is read by pattern, not by a TypeScript parser (the compiler and control 18 are the backstop); licence
+detection is by text and is not legal advice; Remotion's company-licence obligation is recorded, not assessed; assets are covered by
+the repository licence only; GitHub (and the pinned commit staying available) is trusted for availability, not for content (the archive
+SHA-256 and attested commit are recorded).
+### 20. Presentation render (headless Chrome on a frozen scene): an isolated process, not an OS sandbox
+
+Status: contract and implementation delivered (handoff `jarvis-remotion-presentation-integration`, Slice 16); proven against the real pinned Remotion, the installed Chrome,
+a real Core and Control Center, with local HTTP/TCP/UDP sinks and a negative control. Contract and evidence: [remotion-render.md](remotion-render.md).
+
+A render **executes the scene's code** in a headless browser, so it has the threat model of section 18 with one more property: nothing can be assumed from an iframe. What holds it:
+
+- **Input**: only a verified `complete` snapshot (package hash and every member checked), re-validated by today's static guards; never the live source, library or Boards.
+- **Process environment**: allow-list, no proxy variable, no `JARVIS_*` secret; `TEMP` is the job folder; the job folder holds the frozen source and two generated files.
+- **Node guard** (`render-guard.cjs`): loopback-only `listen`, no outbound TCP/DNS/UDP, no child process except the pinned package binaries (by real path) and the chosen browser.
+- **Browser arguments rewritten at launch** (Remotion's `direct://` proxy and `--proxy-bypass-list=*` are replaced): a denial proxy that lets through only the render server,
+  `<-loopback>` so the browser cannot reach Core or any other local service, `--host-resolver-rules=MAP * ~NOTFOUND`, WebRTC without non-proxied UDP. Every denial is counted
+  (`egress.json`, recorded on the derivative as `render_egress_denied`).
+- **Bounds**: one render at a time, deadline, job-folder size, free disk, output size; cancel and timeout kill the whole tree after an identity check (`pid:creation time`);
+  a leftover browser of a dead Node is swept by the job id on its command line; start-up recovery kills an orphan and fails its derivative.
+- **Fail-closed launch**: the final browser arguments must all be on an allowlist (an argument a future Remotion adds, `--disable-web-security`, another proxy... refuses the launch: `presentation_render_guard_unexpected_args`); only the chosen browser and the pinned compositor/esbuild binaries may be spawned (a Remotion-downloaded Chrome cannot bypass the rewrite); a render whose guard recorded no rewritten launch is rejected.
+- **One Core per data root**: `render/core.lock`; a second live Core kills and recovers nothing.
+- **No download**: the browser is the installed Chrome/Edge (`JARVIS_REMOTION_RENDER_BROWSER`), never a silent fetch of a binary.
+
+Not claimed: the process runs with the user's file rights (no dedicated account or Job Object); Chrome's own process sandbox stays ON (the guard strips Remotion's `--no-sandbox`; proven with `chrome://sandbox`: Renderer processes `Lockdown`/`Untrusted`) unless the user sets `JARVIS_REMOTION_RENDER_NO_SANDBOX=1`, and Chrome's network service is not sandboxed on Windows by default; the guard is JavaScript, so native code and
+`process.binding` escape it; a browser vulnerability defeats the whole boundary. Whatever the scene receives (its props, `public/` files, copied live data) can be read by it.
+
 ## Residual risks / non-goals
 
 - Bare Hands traces are never pruned and are not encrypted at rest; a user who recorded a diagnostic session leaves scalar interaction data in `runtime/barehands-traces/` until they delete it by hand.
@@ -632,6 +783,8 @@ second owner is a failed test, not a silent state.
 - OpenAI is an online provider in this V1; requests leave the machine according to provider/API policy.
 - Barehands (the upstream board) and ai-visualizer are third-party AGPL software; operational/distribution license obligations require legal review for commercial packaging. Bare Hands, the native subsystem, carries none of that code and none of that obligation — see § 14.
 - The patched Barehands board page still contains upstream inline JavaScript/styles and therefore CSP allows inline execution.
+- Remotion scene sandbox (control 18): the static source filter is bypassable by design (the sandbox is the boundary); only Chrome 154 on Windows 11 was exercised; a browser without site isolation would let a spinning scene freeze its host page.
+- Presentation render (control 20): the render process runs with the user's file rights and Chrome's network service runs unsandboxed on Windows (Chrome's default; the renderers are sandboxed unless the user opts out with `JARVIS_REMOTION_RENDER_NO_SANDBOX=1`); only Chrome 154 on Windows 11 was exercised; the denial proxy also counts the browser's own background requests (`render_egress_denied` > 0 does not mean a scene tried to leave).
 - A fully compromised local user account can read process memory/environment, modify Python code, or replace the interpreter; V1 does not attempt to defend against a hostile OS account.
 - There is no cryptographic code signing of this Jarvis ZIP.
 - Confirmation is conversational, not OS-level privileged authorization.

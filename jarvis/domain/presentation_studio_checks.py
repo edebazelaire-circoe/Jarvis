@@ -67,6 +67,9 @@ class PresentationStudioErrorCode(StrEnum):
     VALUE_REFUSED = "presentation_studio_value_refused"
     #: Le candidat de source (manifeste, gabarit, style, comportement) est refuse par la validation des prefabs (Slice 06).
     SOURCE_INVALID = "presentation_studio_source_invalid"
+    #: Le candidat est valide mais la source Remotion ne COMPILE pas (syntaxe, import refuse, entree sans export par defaut...) :
+    #: rien n'est publie, la version precedente continue de jouer ; `diagnostics` dit fichier, ligne, colonne (Slice 14).
+    SOURCE_BUILD_FAILED = "presentation_studio_source_build_failed"
     #: Le cadre n'a pas pu monter la nouvelle source : le pin est revenu a la derniere version valide (Slice 06).
     MOUNT_FAILED = "presentation_studio_mount_failed"
     #: La fenetre « stage » n'a pas pu etre mise a jour : le pin est revenu a la derniere version valide (Slice 06).
@@ -78,6 +81,10 @@ class PresentationStudioErrorCode(StrEnum):
     SCENE_RELOADING = "presentation_studio_scene_reloading"
     #: Trop d'editions de source de l'agent (`brain`) sur cette scene dans la fenetre : a refaire plus tard (Slice 06, QA-1).
     SOURCE_EDIT_RATE = "presentation_studio_source_edit_rate"
+    #: Remotion Slice 21 (QA B1) : l'agent (`brain`) n'edite une source que pour une demande de source EN ATTENTE, enregistree dans un tour de
+    #: l'utilisateur (`origin: explicit_user_request`), pour cette presentation, cette variante et cette scene ; il n'enregistre pas de
+    #: demande sans cette origine. Absente, inconnue, expiree ou d'une autre scene : « demande a renouveler ».
+    SOURCE_REQUEST_REQUIRED = "presentation_studio_source_request_required"
     #: Aucun historique d'annulation pour cette variante (mémoire seulement : redémarrage, anneau abandonné ou évincé) (Slice 08).
     HISTORY_UNAVAILABLE = "presentation_studio_history_unavailable"
     #: Rien à annuler / à rétablir (Slice 08).
@@ -118,6 +125,12 @@ class PresentationStudioErrorCode(StrEnum):
     TEMPLATE_LEAK = "presentation_studio_template_leak"
     #: Une promotion sans le choix explicite des dimensions et parametres (Slice 20).
     TEMPLATE_SELECTION_REQUIRED = "presentation_studio_template_selection_required"
+    #: The presentation's own engine is not ready (not installed, crashed, unhealthy): the real reason and repair are in the message. NEVER answered by running the other engine (Remotion Slice 02).
+    ENGINE_UNAVAILABLE = "presentation_studio_engine_unavailable"
+    #: The engine cannot do this (a capability or a source it does not support): reported, not guessed or flattened (Remotion Slice 02).
+    ENGINE_UNSUPPORTED = "presentation_studio_engine_unsupported"
+    #: The caller may not choose an engine (an agent never does; only a person may pick Slidecar) (Remotion Slice 02).
+    ENGINE_SELECTION_REFUSED = "presentation_studio_engine_selection_refused"
 
 
 _C = PresentationStudioErrorCode
@@ -142,11 +155,13 @@ HTTP_STATUS: Mapping[PresentationStudioErrorCode, int] = {
     _C.UNKNOWN_CONTROL: 404,
     _C.VALUE_REFUSED: 400,
     _C.SOURCE_INVALID: 400,
+    _C.SOURCE_BUILD_FAILED: 422,
     _C.MOUNT_FAILED: 409,
     _C.STAGE_FAILED: 409,
     _C.RELOAD_UNAVAILABLE: 409,
     _C.SCENE_RELOADING: 409,
     _C.SOURCE_EDIT_RATE: 429,
+    _C.SOURCE_REQUEST_REQUIRED: 403,
     _C.HISTORY_UNAVAILABLE: 409,
     _C.HISTORY_EMPTY: 409,
     _C.HISTORY_STALE: 409,
@@ -167,6 +182,9 @@ HTTP_STATUS: Mapping[PresentationStudioErrorCode, int] = {
     _C.UNKNOWN_TEMPLATE: 404,
     _C.TEMPLATE_LEAK: 409,
     _C.TEMPLATE_SELECTION_REQUIRED: 400,
+    _C.ENGINE_UNAVAILABLE: 409,
+    _C.ENGINE_UNSUPPORTED: 409,
+    _C.ENGINE_SELECTION_REFUSED: 403,
 }
 
 

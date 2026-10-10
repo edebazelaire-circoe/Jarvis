@@ -1,0 +1,827 @@
+{
+  "scenario": "authoring_e2e",
+  "screenshots": [
+    "scene_1.png",
+    "scene_2.png",
+    "scene_3.png",
+    "scene_4.png",
+    "scene_1_edited.png"
+  ],
+  "reads": {
+    "until:!!document.querySelector('iframe[data-remotion-stage]') && !!document.querySelec": true,
+    "until:(document.querySelector('h1')||{}).textContent==='Revue du trimestre'": true,
+    "until:getComputedStyle(document.querySelector('h1')).opacity==='1'": true,
+    "look_1": {
+      "title": "Revue du trimestre",
+      "body": "Resultats, risques et priorites du troisieme trimestre.",
+      "color": "rgb(255, 122, 0)",
+      "ground": "rgb(11, 16, 32)",
+      "font": "\"Playfair Display\", Georgia, \"Times New Roman\", Times, serif",
+      "opacity": "1",
+      "mark": "0.5229657436533095"
+    },
+    "next_1": {
+      "status": 200,
+      "body": {
+        "status": "applied",
+        "command": "next",
+        "state": {
+          "phase": "playing",
+          "running": true,
+          "run_id": "eaa208e59f4d",
+          "role": "user_presenter",
+          "jarvis_speaks": false,
+          "position": {
+            "index": 2,
+            "of": 4
+          },
+          "scene": {
+            "scene_id": "pss_4938a497fd7f",
+            "title": "Le trimestre en un coup d'oeil",
+            "section": "",
+            "number": 2,
+            "of": 4
+          },
+          "item": {
+            "item_id": "psi_707d5736965a",
+            "label": "",
+            "presenter": "user",
+            "kind": "speech",
+            "timing": "soft",
+            "interruption": "allow",
+            "recovery": "continue_item"
+          },
+          "speaking": null,
+          "silence": false,
+          "revealed": [],
+          "elapsed": {
+            "item_ms": 20,
+            "item_target_ms": 50000,
+            "item_over_target": false,
+            "run_ms": 3158,
+            "run_estimated_ms": 200000
+          },
+          "owner": "user",
+          "armed": 0,
+          "generation": 0,
+          "pending": null,
+          "problems": [],
+          "next": {
+            "item_label": "",
+            "scene_title": "Chiffre d'affaires",
+            "presenter": "user",
+            "cue": null
+          },
+          "detour": null,
+          "sequence": null,
+          "untrusted": [
+            "scene.title",
+            "scene.section",
+            "item.label",
+            "next.item_label",
+            "next.scene_title"
+          ],
+          "presentation_id": "pst_681228c96496e1ab8059e399e90a0d42",
+          "variant_id": "psv_cba156bd957a5f018092f4e50f32bf50",
+          "stage_object_id": "studio-stage-eaa208e59f4d",
+          "art_direction": "checked",
+          "notices": [],
+          "mode": "presentation",
+          "timeline": {
+            "scene_id": "pss_4938a497fd7f",
+            "composition_id": "Scene",
+            "fps": 30,
+            "duration_frames": 300,
+            "anchor_id": null,
+            "from_frame": 0,
+            "until_frame": 89,
+            "playing": true,
+            "seq": 2,
+            "play_ms": 0,
+            "tolerance_ms": 500,
+            "problems": []
+          },
+          "follower": "waiting",
+          "presenter": {
+            "speaks": false,
+            "lines": 0,
+            "interrupted": false,
+            "problem": null,
+            "line": null,
+            "sequence": null
+          }
+        }
+      }
+    },
+    "until:(document.querySelector('h1')||{}).textContent===\"Le trimestre en un coup d'oeil": true,
+    "look_2": {
+      "title": "Le trimestre en un coup d'oeil",
+      "body": "Chiffre d'affaires en hausse de douze pour cent, marge stable, trois lancements tenus.",
+      "color": "rgb(255, 122, 0)",
+      "ground": "rgb(11, 16, 32)",
+      "font": "\"Playfair Display\", Georgia, \"Times New Roman\", Times, serif",
+      "opacity": "1",
+      "mark": "0.32873033354429537"
+    },
+    "next_2": {
+      "status": 200,
+      "body": {
+        "status": "applied",
+        "command": "next",
+        "state": {
+          "phase": "playing",
+          "running": true,
+          "run_id": "eaa208e59f4d",
+          "role": "user_presenter",
+          "jarvis_speaks": false,
+          "position": {
+            "index": 3,
+            "of": 4
+          },
+          "scene": {
+            "scene_id": "pss_9fa4724aafe8",
+            "title": "Chiffre d'affaires",
+            "section": "",
+            "number": 3,
+            "of": 4
+          },
+          "item": {
+            "item_id": "psi_b8c81e38f1ff",
+            "label": "",
+            "presenter": "user",
+            "kind": "speech",
+            "timing": "soft",
+            "interruption": "allow",
+            "recovery": "continue_item"
+          },
+          "speaking": null,
+          "silence": false,
+          "revealed": [],
+          "elapsed": {
+            "item_ms": 11,
+            "item_target_ms": 50000,
+            "item_over_target": false,
+            "run_ms": 4702,
+            "run_estimated_ms": 200000
+          },
+          "owner": "user",
+          "armed": 0,
+          "generation": 0,
+          "pending": null,
+          "problems": [],
+          "next": {
+            "item_label": "",
+            "scene_title": "Merci",
+            "presenter": "user",
+            "cue": null
+          },
+          "detour": null,
+          "sequence": null,
+          "untrusted": [
+            "scene.title",
+            "scene.section",
+            "item.label",
+            "next.item_label",
+            "next.scene_title"
+          ],
+          "presentation_id": "pst_681228c96496e1ab8059e399e90a0d42",
+          "variant_id": "psv_cba156bd957a5f018092f4e50f32bf50",
+          "stage_object_id": "studio-stage-eaa208e59f4d",
+          "art_direction": "checked",
+          "notices": [],
+          "mode": "presentation",
+          "timeline": {
+            "scene_id": "pss_9fa4724aafe8",
+            "composition_id": "Scene",
+            "fps": 30,
+            "duration_frames": 300,
+            "anchor_id": null,
+            "from_frame": 0,
+            "until_frame": 89,
+            "playing": true,
+            "seq": 3,
+            "play_ms": 0,
+            "tolerance_ms": 500,
+            "problems": []
+          },
+          "follower": "waiting",
+          "presenter": {
+            "speaks": false,
+            "lines": 0,
+            "interrupted": false,
+            "problem": null,
+            "line": null,
+            "sequence": null
+          }
+        }
+      }
+    },
+    "until:(document.querySelector('h1')||{}).textContent===\"Chiffre d'affaires\"": true,
+    "look_3": {
+      "title": "Chiffre d'affaires",
+      "body": "Hausse portee par les abonnements annuels, les ventes ponctuelles reculent legerement.",
+      "color": "rgb(255, 122, 0)",
+      "ground": "rgb(11, 16, 32)",
+      "font": "\"Playfair Display\", Georgia, \"Times New Roman\", Times, serif",
+      "opacity": "1",
+      "mark": "0.32873033354429537"
+    },
+    "next_3": {
+      "status": 200,
+      "body": {
+        "status": "applied",
+        "command": "next",
+        "state": {
+          "phase": "playing",
+          "running": true,
+          "run_id": "eaa208e59f4d",
+          "role": "user_presenter",
+          "jarvis_speaks": false,
+          "position": {
+            "index": 4,
+            "of": 4
+          },
+          "scene": {
+            "scene_id": "pss_425e26c927c3",
+            "title": "Merci",
+            "section": "",
+            "number": 4,
+            "of": 4
+          },
+          "item": {
+            "item_id": "psi_a11acebd42cf",
+            "label": "",
+            "presenter": "user",
+            "kind": "speech",
+            "timing": "soft",
+            "interruption": "allow",
+            "recovery": "continue_item"
+          },
+          "speaking": null,
+          "silence": false,
+          "revealed": [],
+          "elapsed": {
+            "item_ms": 11,
+            "item_target_ms": 50000,
+            "item_over_target": false,
+            "run_ms": 4936,
+            "run_estimated_ms": 200000
+          },
+          "owner": "user",
+          "armed": 0,
+          "generation": 0,
+          "pending": null,
+          "problems": [],
+          "next": null,
+          "detour": null,
+          "sequence": null,
+          "untrusted": [
+            "scene.title",
+            "scene.section",
+            "item.label"
+          ],
+          "presentation_id": "pst_681228c96496e1ab8059e399e90a0d42",
+          "variant_id": "psv_cba156bd957a5f018092f4e50f32bf50",
+          "stage_object_id": "studio-stage-eaa208e59f4d",
+          "art_direction": "checked",
+          "notices": [],
+          "mode": "presentation",
+          "timeline": {
+            "scene_id": "pss_425e26c927c3",
+            "composition_id": "Scene",
+            "fps": 30,
+            "duration_frames": 300,
+            "anchor_id": null,
+            "from_frame": 0,
+            "until_frame": 89,
+            "playing": true,
+            "seq": 4,
+            "play_ms": 0,
+            "tolerance_ms": 500,
+            "problems": []
+          },
+          "follower": "waiting",
+          "presenter": {
+            "speaks": false,
+            "lines": 0,
+            "interrupted": false,
+            "problem": null,
+            "line": null,
+            "sequence": null
+          }
+        }
+      }
+    },
+    "until:(document.querySelector('h1')||{}).textContent==='Merci'": true,
+    "look_4": {
+      "title": "Merci",
+      "body": "Questions et discussion.",
+      "color": "rgb(255, 122, 0)",
+      "ground": "rgb(11, 16, 32)",
+      "font": "\"Playfair Display\", Georgia, \"Times New Roman\", Times, serif",
+      "opacity": "1",
+      "mark": "0.1969213783379763"
+    },
+    "back": {
+      "status": 200,
+      "body": {
+        "status": "applied",
+        "command": "previous",
+        "state": {
+          "phase": "playing",
+          "running": true,
+          "run_id": "eaa208e59f4d",
+          "role": "user_presenter",
+          "jarvis_speaks": false,
+          "position": {
+            "index": 3,
+            "of": 4
+          },
+          "scene": {
+            "scene_id": "pss_9fa4724aafe8",
+            "title": "Chiffre d'affaires",
+            "section": "",
+            "number": 3,
+            "of": 4
+          },
+          "item": {
+            "item_id": "psi_b8c81e38f1ff",
+            "label": "",
+            "presenter": "user",
+            "kind": "speech",
+            "timing": "soft",
+            "interruption": "allow",
+            "recovery": "continue_item"
+          },
+          "speaking": null,
+          "silence": false,
+          "revealed": [],
+          "elapsed": {
+            "item_ms": 61,
+            "item_target_ms": 50000,
+            "item_over_target": false,
+            "run_ms": 6013,
+            "run_estimated_ms": 200000
+          },
+          "owner": "user",
+          "armed": 0,
+          "generation": 0,
+          "pending": null,
+          "problems": [],
+          "next": {
+            "item_label": "",
+            "scene_title": "Merci",
+            "presenter": "user",
+            "cue": null
+          },
+          "detour": null,
+          "sequence": null,
+          "untrusted": [
+            "scene.title",
+            "scene.section",
+            "item.label",
+            "next.item_label",
+            "next.scene_title"
+          ],
+          "presentation_id": "pst_681228c96496e1ab8059e399e90a0d42",
+          "variant_id": "psv_cba156bd957a5f018092f4e50f32bf50",
+          "stage_object_id": "studio-stage-eaa208e59f4d",
+          "art_direction": "checked",
+          "notices": [],
+          "mode": "presentation",
+          "timeline": {
+            "scene_id": "pss_9fa4724aafe8",
+            "composition_id": "Scene",
+            "fps": 30,
+            "duration_frames": 300,
+            "anchor_id": null,
+            "from_frame": 0,
+            "until_frame": 89,
+            "playing": true,
+            "seq": 5,
+            "play_ms": 0,
+            "tolerance_ms": 500,
+            "problems": []
+          },
+          "follower": "waiting",
+          "presenter": {
+            "speaks": false,
+            "lines": 0,
+            "interrupted": false,
+            "problem": null,
+            "line": null,
+            "sequence": null
+          }
+        }
+      }
+    },
+    "before_edit": {
+      "title": "Chiffre d'affaires",
+      "body": "Hausse portee par les abonnements annuels, les ventes ponctuelles reculent legerement.",
+      "color": "rgb(255, 122, 0)",
+      "ground": "rgb(11, 16, 32)",
+      "font": "\"Playfair Display\", Georgia, \"Times New Roman\", Times, serif",
+      "opacity": "0",
+      "mark": "0.8218910541394693"
+    },
+    "edit": {
+      "status": 200,
+      "body": {
+        "status": "applied",
+        "command": "edit",
+        "state": {
+          "phase": "paused",
+          "running": true,
+          "run_id": "eaa208e59f4d",
+          "role": "user_presenter",
+          "jarvis_speaks": false,
+          "position": {
+            "index": 3,
+            "of": 4
+          },
+          "scene": {
+            "scene_id": "pss_9fa4724aafe8",
+            "title": "Chiffre d'affaires",
+            "section": "",
+            "number": 3,
+            "of": 4
+          },
+          "item": {
+            "item_id": "psi_b8c81e38f1ff",
+            "label": "",
+            "presenter": "user",
+            "kind": "speech",
+            "timing": "soft",
+            "interruption": "allow",
+            "recovery": "continue_item"
+          },
+          "speaking": null,
+          "silence": false,
+          "revealed": [],
+          "elapsed": {
+            "item_ms": 328,
+            "item_target_ms": 50000,
+            "item_over_target": false,
+            "run_ms": 6280,
+            "run_estimated_ms": 200000
+          },
+          "owner": "user",
+          "armed": 0,
+          "generation": 0,
+          "pending": null,
+          "problems": [],
+          "next": {
+            "item_label": "",
+            "scene_title": "Merci",
+            "presenter": "user",
+            "cue": null
+          },
+          "detour": null,
+          "sequence": null,
+          "untrusted": [
+            "scene.title",
+            "scene.section",
+            "item.label",
+            "next.item_label",
+            "next.scene_title"
+          ],
+          "presentation_id": "pst_681228c96496e1ab8059e399e90a0d42",
+          "variant_id": "psv_cba156bd957a5f018092f4e50f32bf50",
+          "stage_object_id": "studio-stage-eaa208e59f4d",
+          "art_direction": "checked",
+          "notices": [],
+          "mode": "presentation",
+          "timeline": {
+            "scene_id": "pss_9fa4724aafe8",
+            "composition_id": "Scene",
+            "fps": 30,
+            "duration_frames": 300,
+            "anchor_id": null,
+            "from_frame": 0,
+            "until_frame": 89,
+            "playing": false,
+            "seq": 5,
+            "play_ms": 267,
+            "tolerance_ms": 500,
+            "problems": []
+          },
+          "follower": "waiting",
+          "presenter": {
+            "speaks": false,
+            "lines": 0,
+            "interrupted": false,
+            "problem": null,
+            "line": null,
+            "sequence": null
+          }
+        },
+        "edit": {
+          "status": "applied",
+          "mode": "commit",
+          "actor": "user",
+          "presentation_id": "pst_681228c96496e1ab8059e399e90a0d42",
+          "variant_id": "psv_cba156bd957a5f018092f4e50f32bf50",
+          "basis": {
+            "variant_revision": 1
+          },
+          "revision": 2,
+          "committed": true,
+          "changed": true,
+          "tier": "control",
+          "ops": [
+            {
+              "scene_id": "pss_9fa4724aafe8",
+              "control_id": "accent",
+              "before": "#ff7a00",
+              "was_set": true,
+              "after": "#00ff00",
+              "is_set": true,
+              "changed": true,
+              "index": 0,
+              "op": "control.set",
+              "tier": "control"
+            }
+          ],
+          "undo": {
+            "available": true,
+            "presentation_id": "pst_681228c96496e1ab8059e399e90a0d42",
+            "variant_id": "psv_cba156bd957a5f018092f4e50f32bf50",
+            "restores_revision": 1,
+            "applies_at_revision": 2,
+            "ops": [
+              {
+                "op": "scene.restore_values",
+                "scene_id": "pss_9fa4724aafe8",
+                "props": {
+                  "headline": "Chiffre d'affaires",
+                  "theme": {
+                    "background": "#0b1020",
+                    "text": "#e8ecf4",
+                    "accent": "#ff7a00",
+                    "muted": "#9aa4b8",
+                    "body": "#c7cbd4",
+                    "surface": "rgba(36,0,70,0.96)",
+                    "font_heading": "\"Playfair Display\", Georgia, \"Times New Roman\", Times, serif",
+                    "font_body": "\"Inter\", system-ui, -apple-system, \"Segoe UI\", Roboto, Helvetica, Arial, sans-serif",
+                    "heading_weight": 800,
+                    "body_weight": 400,
+                    "radius": 8,
+                    "gap": 6,
+                    "scale": 1.3,
+                    "enter_ms": 200,
+                    "stagger_ms": 40,
+                    "easing": "snappy",
+                    "transition": "scale"
+                  }
+                },
+                "data": {
+                  "body": "Hausse portee par les abonnements annuels, les ventes ponctuelles reculent legerement."
+                }
+              }
+            ],
+            "bytes": 830
+          },
+          "source_requests": [],
+          "source_requests_dropped": 0
+        }
+      }
+    },
+    "until:getComputedStyle(document.querySelector('h1')).color==='rgb(0, 255, 0)'": true,
+    "after_edit": {
+      "title": "Chiffre d'affaires",
+      "body": "Hausse portee par les abonnements annuels, les ventes ponctuelles reculent legerement.",
+      "color": "rgb(0, 255, 0)",
+      "ground": "rgb(11, 16, 32)",
+      "font": "\"Playfair Display\", Georgia, \"Times New Roman\", Times, serif",
+      "opacity": "0.222222",
+      "mark": "0.8218910541394693"
+    },
+    "frames": 1,
+    "shell": {
+      "phase": "ready",
+      "mounted": true,
+      "playing": true,
+      "frame": 7,
+      "duration": 300,
+      "killedReason": null,
+      "generation": 1,
+      "muted": true,
+      "propsRefused": 0,
+      "lastProblems": [],
+      "supervisor": {
+        "ready": true,
+        "killed": false,
+        "reason": null,
+        "startedAt": 1791603491283,
+        "pending": null,
+        "pendingSince": 1791603491536,
+        "lastPingAt": 1791603491536,
+        "lastFrame": 3,
+        "violations": 0,
+        "accepted": 5,
+        "refused": {},
+        "foreign": 0,
+        "reports": [],
+        "windowStart": 1791603491283,
+        "windowCount": 5,
+        "pongs": 1,
+        "childDropped": 0,
+        "lastHeapMb": 15,
+        "muted": true,
+        "floodStreak": 0,
+        "violationsReported": 0,
+        "errorsReported": 0,
+        "clocks": 3,
+        "clockDropped": 0,
+        "clockWindow": [
+          1791603491412,
+          1791603491412,
+          1791603491688
+        ],
+        "lastClock": {
+          "frame": 7,
+          "playing": true
+        }
+      }
+    }
+  },
+  "delivered": {
+    "engine": "remotion",
+    "workflow": "directed",
+    "scenes": [
+      {
+        "scene_key": "s01",
+        "scene_id": "pss_d0aaeef04a54",
+        "title": "Revue du trimestre",
+        "prefab": {
+          "id": "presentation-studio.rm-cover-239ec16b",
+          "version": 1
+        },
+        "controls": [
+          "headline",
+          "accent",
+          "stagger"
+        ],
+        "anchors": [
+          "detail"
+        ]
+      },
+      {
+        "scene_key": "s02",
+        "scene_id": "pss_4938a497fd7f",
+        "title": "Le trimestre en un coup d'oeil",
+        "prefab": {
+          "id": "presentation-studio.rm-slide-c896f159",
+          "version": 1
+        },
+        "controls": [
+          "headline",
+          "accent",
+          "stagger"
+        ],
+        "anchors": [
+          "detail"
+        ]
+      },
+      {
+        "scene_key": "s03",
+        "scene_id": "pss_9fa4724aafe8",
+        "title": "Chiffre d'affaires",
+        "prefab": {
+          "id": "presentation-studio.rm-slide-c896f159",
+          "version": 1
+        },
+        "controls": [
+          "headline",
+          "accent",
+          "stagger"
+        ],
+        "anchors": [
+          "detail"
+        ]
+      },
+      {
+        "scene_key": "s04",
+        "scene_id": "pss_425e26c927c3",
+        "title": "Merci",
+        "prefab": {
+          "id": "presentation-studio.rm-cover-239ec16b",
+          "version": 1
+        },
+        "controls": [
+          "headline",
+          "accent",
+          "stagger"
+        ],
+        "anchors": [
+          "detail"
+        ]
+      }
+    ]
+  },
+  "provenance": {
+    "workflow": "directed",
+    "actor": "brain",
+    "brief_digest": "9a948995d943d2b2",
+    "draft_digest": "dc2b3b8a6254815e",
+    "resources": 2,
+    "art_directions": [
+      {
+        "variant_id": "psv_cba156bd957a5f018092f4e50f32bf50",
+        "origin": "inferred",
+        "fallback": false,
+        "confidence": 0.85
+      }
+    ],
+    "prefabs": [
+      {
+        "key": "slide",
+        "id": "presentation-studio.rm-slide-c896f159",
+        "version": 1,
+        "fingerprint": "6db11203afebff0adc0bd0329f5068fe51a5ed9a2be2bf30e5a551a3a97f1c01",
+        "revision": false,
+        "origin": "custom"
+      },
+      {
+        "key": "cover",
+        "id": "presentation-studio.rm-cover-239ec16b",
+        "version": 1,
+        "fingerprint": "620d0eb7b8896be571593e3816f92ecf0e7254e7829ae908a2a96e3357f5f9cf",
+        "revision": false,
+        "origin": "custom"
+      }
+    ],
+    "gate": {
+      "errors": 0,
+      "warnings": 1
+    },
+    "engine": "remotion",
+    "compiled": [
+      {
+        "key": "slide",
+        "cache_key": "scene-51fd41599ca7a0a9916ea6ca42c6a8a7",
+        "reused": false,
+        "duration_ms": 237,
+        "bytes": 1872
+      },
+      {
+        "key": "cover",
+        "cache_key": "scene-321e524ac8bd010772455edc6381bd4d",
+        "reused": false,
+        "duration_ms": 144,
+        "bytes": 2603
+      }
+    ],
+    "inspirations": []
+  },
+  "art_direction_palette": {
+    "background": "#0b1020",
+    "surface": "#240046",
+    "surface_opacity": 96,
+    "text": "#e8ecf4",
+    "muted": "#9aa4b8",
+    "accent": "#ff7a00",
+    "accent_alt": null,
+    "gradients": [
+      {
+        "gradient_id": "backdrop",
+        "kind": "linear",
+        "angle": 160,
+        "stops": [
+          {
+            "color": "#0b1020",
+            "at": 0
+          },
+          {
+            "color": "#240046",
+            "at": 100
+          }
+        ],
+        "text_token": "text"
+      }
+    ]
+  },
+  "console": [
+    "frame info [studio-reload] mount_reported {\"object_id\":\"studio-stage-eaa208e59f4d\",\"prefab\":\"presentation-studio.rm-cover-239ec16b@1\",\"outcome\":\"mounted\",\"reason\":null,\"matched\":false,\"attempt\":1}",
+    "frame info [scène] scene.prefab_mounted Object",
+    "frame info [remotion.stage.ready] Object",
+    "frame warning Note: Some companies are required to obtain a license to use Remotion. See: https://remotion.dev/license\nPass the `acknowledgeRemotionLicense` prop to `<Player />` function to make this message disappear.",
+    "frame info [scène] timeline.segment Object",
+    "frame warning [scène] scene.prefab_swapped Object",
+    "frame info [studio-reload] mount_reported {\"object_id\":\"studio-stage-eaa208e59f4d\",\"prefab\":\"presentation-studio.rm-slide-c896f159@1\",\"outcome\":\"mounted\",\"reason\":null,\"matched\":false,\"attempt\":1}",
+    "frame info [scène] timeline.segment Object",
+    "frame info [scène] timeline.segment Object",
+    "frame info [scène] scene.prefab_mounted Object",
+    "frame info [remotion.stage.ready] Object",
+    "frame warning Note: Some companies are required to obtain a license to use Remotion. See: https://remotion.dev/license\nPass the `acknowledgeRemotionLicense` prop to `<Player />` function to make this message disappear.",
+    "frame warning [scène] scene.prefab_swapped Object",
+    "frame info [studio-reload] mount_reported {\"object_id\":\"studio-stage-eaa208e59f4d\",\"prefab\":\"presentation-studio.rm-cover-239ec16b@1\",\"outcome\":\"mounted\",\"reason\":null,\"matched\":false,\"attempt\":1}",
+    "frame info [scène] timeline.segment Object",
+    "frame info [scène] scene.prefab_mounted Object",
+    "frame info [remotion.stage.ready] Object",
+    "frame warning Note: Some companies are required to obtain a license to use Remotion. See: https://remotion.dev/license\nPass the `acknowledgeRemotionLicense` prop to `<Player />` function to make this message disappear.",
+    "frame warning [scène] scene.prefab_swapped Object",
+    "frame info [studio-reload] mount_reported {\"object_id\":\"studio-stage-eaa208e59f4d\",\"prefab\":\"presentation-studio.rm-slide-c896f159@1\",\"outcome\":\"mounted\",\"reason\":null,\"matched\":false,\"attempt\":1}"
+  ],
+  "errors": []
+}

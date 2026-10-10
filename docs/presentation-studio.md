@@ -12,7 +12,7 @@ Every other row is `planned` unless it says otherwise. Written by Slice 01 (cont
 | Existing thing | Where | Relation |
 | --- | --- | --- |
 | PRESENTATION **interaction mode** (ambient lane, explicit address, silence by default) | [presentation-mode.md](presentation-mode.md) and its owner pages | The Studio **consumes** it; it never loosens its authority rules (ambient speech has no authority, explicit address wins) |
-| **Artifact** (capture evidence, `jart_` ids) | [artifacts.md](artifacts.md) | A Presentation is not an Artifact; no `Artifact*` name is reused |
+| **Artifact** (capture evidence, `jart_` ids) | [artifacts.md](artifacts.md) | A Presentation is not an Artifact; no `Artifact*` name is reused. Its **frozen snapshots and renders** are Artifacts and link back to it with version/variant provenance: [presentation-artifacts.md](presentation-artifacts.md) |
 | **Prefab** (sandboxed HTML/CSS/JS window definition) | [prefabs.md](prefabs.md) | Each Studio scene is rendered by a prefab instance; the Studio adds no renderer and no catalog |
 | **Scene** (the single global constellation scene) | [scene-model.md](scene-model.md) | A Studio *logical scene* is not a scene-service object; only the displayed one is a `window` |
 
@@ -23,13 +23,16 @@ Every other row is `planned` unless it says otherwise. Written by Slice 01 (cont
 | Presentation | durable aggregate: variants, resource refs, active variant | `jarvis/domain/presentation_studio.py`, `core/presentation_studio_service.py`, store `adapters/file_presentation_studio_store.py` | [Presentation contract](#presentation-contract-level-3) below, Slice 02 | **implemented (Level 3)** |
 | Presentation Variant | creative branch of a whole presentation; immutable id, monotonic display number, title, provenance; graph, branch, switch, archive / restore | `jarvis/domain/presentation_studio_variants.py`, `core/presentation_studio_variants.py` | [Variant graph and operations contract](#variant-graph-and-operations-contract-level-3) below, Slice 16 | **implemented (Level 3)** |
 | Studio scene + control | logical scene pinned to a prefab `(id, version)`; curated typed controls bound to manifest inputs; score anchors; preview metadata; introspection | `jarvis/domain/presentation_studio_scene.py`, `core/presentation_studio_scene_catalog.py` | [Scene and control contract](#scene-and-control-contract-level-3) below, Slice 04 | **implemented (Level 3)** |
+| Presentation engine (Slidecar / Remotion) | the one engine that plays, edits and exports a presentation; capability matrix; `EngineSelectionPolicy` (Remotion forced default, legacy documents read as Slidecar, only a person may pick Slidecar, no fallback); typed engine failures; compatibility triage native / adapter / unsupported; manifest engine metadata | `jarvis/domain/presentation_studio_engine.py`, `engine` field of `Presentation` | [presentation-engine.md](presentation-engine.md), Remotion Slice 02 | **Level 2 contract, domain Level 3**; adapters and runtime wiring: later Slices |
+| Remotion scene source (storage, module layout, compile) | a Remotion scene is a pin `(prefab_id, version)` on a **new bundle kind of the existing versioned prefab library** (manifest `schema_version` 2: `src/**`, `public/**`, composition, engine pin); one shared Node tree; scene identity (`scene_id`) and `ScoreAnchor` unchanged; pins, retention and rollback reused; compile contract TSX -> browser bundle (host + scene, content-keyed cache, typed failures) | `jarvis/domain/remotion_source.py`, `jarvis/domain/remotion_compile.py`, `jarvis/adapters/remotion_compiler.py`, `PrefabService.remotion_source` | [remotion-source.md](remotion-source.md), Remotion Slice 05 | **Level 2 contract, domain and adapter Level 3** (real compile proven); isolation, Player host, hot edit, catalogue: later Slices |
+| Source vs Artifacts (parent, snapshot, derivatives, Boards) | the editable Presentation stays the logical parent (`SourceRef`); frozen snapshots and MP4/still/PDF renders are terminal Artifacts with typed provenance; one owner of Board visibility (the Artifact link table, not `Board.artifact_refs`); stale revisions refused | `jarvis/domain/presentation_artifacts.py`, `jarvis/core/presentation_artifacts.py` | [presentation-artifacts.md](presentation-artifacts.md), Remotion Slice 07 | **Level 2 contract, domain and service Level 3**; routes, screens, packager, renders: later Slices |
 | Scene-local variant | lightweight alternative of one scene inside a variant | `presentation_studio_variants.py` | Slice 17 | planned |
 | Semantic edit (3 tiers) | control patch / structural patch / source edit; one layer for voice and GUI; preview vs commit | `jarvis/domain/presentation_studio_edit.py`, `core/presentation_studio_edit.py`, `core/presentation_studio_events.py`, `runtime/presentation_studio_relay.py` | [Semantic edit contract](#semantic-edit-contract-level-3) below, Slice 05 | **implemented (Level 3)** |
 | Scene hot reload | scene-local rebuild with state preservation and rollback | `jarvis/domain/presentation_studio_reload.py`, `core/presentation_studio_reload.py`, `presentation_studio_reload_stage.py`, `presentation_studio_mounts.py`, `presentation_studio_pins.py`, `runtime/control_center_presentation_studio_reload.js` | [Hot reload contract](#hot-reload-contract-level-3-slice-06) | Level 3 (Slice 06) |
 | Edit inspector (GUI) | contextual dock panel generated from the controls introspection: widget per type, bounds, default / reset, preview while dragging and one commit on release, typed refusals, stale / reload states, undo / redo, hidden in playback, read-only art direction chip | `runtime/control_center_presentation_studio_inspector.js` (+ read-only relay `GET .../art-direction`) | [Edit inspector UI](#edit-inspector-ui-level-3-slice-07), Slice 07 | **implemented (Level 3)** (look and feel on a real screen: Human check) |
 | Autosave + undo | every acknowledged commit is durable (no buffer, no second path); restart recovery of the active variant; bounded in-memory undo/redo ring per variant; pins held by undo entries | `domain/presentation_studio_history.py`, `core/presentation_studio_autosave.py` | [Persistence and undo contract](#persistence-and-undo-contract-level-3) below, Slice 08 | **implemented (Level 3)** |
 | Art direction | structured profile with provenance (provided / inferred / generated), contrast checked in numbers, theme mapping, deterministic fallback, divergent candidates, derivation from extracted signals | `jarvis/domain/presentation_studio_art_direction.py`, `jarvis/domain/presentation_studio_art_direction_authoring.py` (stored by the Slice 02 store and service) | [Art direction contract](#art-direction-contract-level-3) and [authoring policy](#art-direction-authoring-policy-for-slice-11) below, Slice 09 | **implemented (Level 3)** (the authoring planner that drives it is [Authoring contract](#authoring-contract-slice-11), Slice 11; the tools are Slice 21) |
-| Authoring planner | the brief and the one-transaction draft the brain submits; workflow choice (`one_shot` / `directed` / `exploratory`); question budget; first-draft quality gate (48 coded rules); atomic assembly of the whole Presentation; registered planner prompt | `jarvis/domain/presentation_studio_authoring*.py`, `core/presentation_studio_authoring.py`, `protocol/presentation_studio_authoring_routes.py`, `runtime/presentation_studio_authoring_relay.py` | [Authoring contract](#authoring-contract-slice-11), Slice 11 | **implemented (Level 3)** (real-model trace: Slices 21, 22) |
+| Authoring planner | the brief and the one-transaction draft the brain submits; workflow choice (`one_shot` / `directed` / `exploratory`); question budget; first-draft quality gate (66 coded rules, 18 of them for Remotion sources); atomic assembly of the whole Presentation; Remotion scene generator (Slice 15); registered planner prompt | `jarvis/domain/presentation_studio_authoring*.py`, `core/presentation_studio_authoring.py`, `protocol/presentation_studio_authoring_routes.py`, `runtime/presentation_studio_authoring_relay.py` | [Authoring contract](#authoring-contract-slice-11), Slice 11; [Remotion scenes](#remotion-scenes-the-generator-slice-15), Remotion Slice 15 | **implemented (Level 3)** (real-model trace: Slices 21, 22; re-run for Remotion scenes by Slice 15) |
 | Score, cues, timing | multi-track score, explicit silence, armable finite-set cues, closed reversible actions, soft/locked timing, recovery points | `jarvis/domain/presentation_studio_score.py` (stored by the Slice 02 store and service) | [Score and cue contract](#score-and-cue-contract-level-3) below, Slice 10 | **implemented (Level 3)** |
 | Playback runtime | roles (user presenter / Jarvis presenter / rehearsal), position, detours, "where are we", stage window, armed-cue delivery | `jarvis/domain/presentation_studio_playback.py`, `presentation_studio_armed_set.py`, `core/presentation_studio_playback.py`, `core/presentation_studio_stage.py`, `runtime/control_center_presentation_studio_player.js` | [Playback runtime contract](#playback-runtime-contract-level-3-slice-12), Slice 12 | **implemented (Level 3)** |
 | Armed cue following | ambient speech may only satisfy a pre-armed cue id, bound to a pre-authorized reversible action (the Core to Voice delivery contract is decided and implemented by Slice 12) | `jarvis/domain/presentation_studio_cues.py`, `runtime/presentation_studio_cue_follower.py` | Slice 13 + amendment of [presentation-addressed-turn.md](presentation-addressed-turn.md) section 12 | planned |
@@ -37,10 +40,12 @@ Every other row is `planned` unless it says otherwise. Written by Slice 01 (cont
 | Jarvis presenter, locked sequences | scripted speech through the existing speech path (`announce_notice`), outside PRESENTATION; deterministic locked-sequence executor on a monotonic clock; interruption policy and recovery; visible failures | `jarvis/core/presentation_studio_presenter.py`, `jarvis/domain/presentation_studio_sequence.py`, `jarvis/domain/presentation_studio_line.py` | [Jarvis presenter and locked sequences](#jarvis-presenter-and-locked-sequences-level-3-slice-14) below, Slice 14 (speech authority: Slice 01c) | **implemented (Level 3)** (audible proof: Human check) |
 | Rehearsal | practice, pause-edit-resume, no durable transcript | playback runtime | Slice 15 | **planned as a Slice, never implemented as one**: the behaviours exist through Slices 12, 01c and 21 (the `rehearsal` role, "where are we", pause-edit-resume, `goto`, `previous`) and are proven end to end by Slice 22; a section-loop command is missing ([release report](presentation-studio-release.md)) |
 | End-to-end hardening, release gates | journeys, injected faults, leak counters, privacy, release verifier, real-model authoring traces | `tests/unit/presentation_studio_release_world.py`, `scripts/verify_release.py`, `jarvis/domain/presentation_studio_authoring_guide.py` | [Final report, acceptance and contract index](presentation-studio-release.md), Slice 22 | **machine gates green; physical acceptance open** (Human checks H-1 to H-11) |
+| Remotion end-to-end release gate | one real journey (authoring, play with cues, props edit, source edit with rollback, freeze, export, import, promotion, newer-version trial), fault injection, no-fallback and privacy-boundary verification, migration, performance | `tests/unit/test_remotion_release_flows.py`, `test_remotion_release_faults.py`, `test_remotion_no_fallback_privacy.py`, `scripts/verify_release.py` (`remotion_release_findings`) | [Remotion release report](remotion-integration-release.md), Remotion Slice 22 | **machine gates green; physical acceptance, voice and the Remotion licence decision open** |
 | Variant Explorer (UI) | fullscreen dark workspace: branch tree, live preview of the selected variant, activate / branch / rename / archive (plan + token) / restore, context menu; opened by voice through a command channel; never the source of truth | `jarvis/runtime/control_center_presentation_studio_explorer{,_core,_widgets}.js`, `jarvis/domain/presentation_studio_explorer.py`, `runtime/presentation_studio_explorer_commands.py` | [Variant Explorer interaction contract](#variant-explorer-interaction-contract-level-3-slice-18) (Slice 18) | **Level 3** |
 | Variant compare / mix | side-by-side, synchronized navigation, selective composition into a new child | `jarvis/domain/presentation_studio_compare.py`, `presentation_studio_composition.py`, `core/presentation_studio_compare.py`, `presentation_studio_composition.py`, `protocol/presentation_studio_compose_routes.py`, `runtime/presentation_studio_compose_relay.py` | [Comparison and semantic composition contract](#comparison-and-semantic-composition-contract-level-3-slice-19-backend), Slice 19 | **implemented (Level 3, backend + explorer panes UI)**; [UI contract](#comparison-and-composition-in-the-explorer-slice-19-interface), 
 untime/control_center_presentation_studio_explorer_compare*.js, ..._compose.js |
-| Template / promotion | whole-variant, scene, DA or motion promoted: reusable code published to the shared prefab library, composition in a `ptp_` document, project content stripped or parameterized, provenance kept | `jarvis/domain/presentation_studio_template{,_sanitize}.py`, `core/presentation_studio_template.py`, `adapters/file_presentation_template_store.py` | [Template and prefab promotion contract](#template-and-prefab-promotion-contract-level-3-slice-20), Slice 20 | **implemented (Level 3)** |
+| Template / promotion | scene, DA or motion promoted: a scene's reusable code published to the shared prefab library; a whole presentation promoted as ONE `ptp_` artefact (embedded sources, score skeleton, catalog block), nothing published to the library; Remotion-aware; project content stripped or parameterized, provenance and licence kept | `jarvis/domain/presentation_studio_template{,_sanitize,_remotion,_score}.py`, `core/presentation_studio_template{,_embed}.py`, `adapters/file_presentation_template_store.py` | [Template and prefab promotion contract](#template-and-prefab-promotion-contract-level-3-slice-20), Slice 20, Remotion Slice 19 | **implemented (Level 3)** |
+| Newer prefab version, trial variant | a pinned scene is told a newer immutable version exists; "try it" creates a child variant; never an auto-upgrade, adoption is explicit | `jarvis/core/presentation_studio_upgrades.py`, `protocol/presentation_studio_upgrades_routes.py`, `runtime/presentation_studio_upgrades_relay.py` | [Newer prefab versions and trial variants](#newer-prefab-versions-and-trial-variants-level-3-remotion-slice-19), Remotion Slice 19 | **implemented (Level 3)** |
 | Generic fullscreen surface | real browser fullscreen of a host element; armed request + user gesture; explicit `needs_gesture` / `unsupported` | `jarvis/domain/surface_fullscreen.py`, `runtime/control_center_fullscreen.js` | Slice 03 | implemented (Level 3) |
 | Agent / voice operations | one MCP server `jarvis-presentation`, twelve `presentation_*` tools, ids read from the state (`presentation_inspect`), the only `brain` door, destructive gestures behind the canonical confirmation | `jarvis/runtime/presentation_studio_mcp{,_tools,_support}.py`, `runtime/presentation_studio_turn.py` | Slice 21, [Agent and voice operations](#agent-and-voice-operations-level-3-slice-21), [mcp/tool-contract.md](mcp/tool-contract.md) | **implemented (Level 3)**; real-model traces: 5 scenarios, limited |
 
@@ -56,7 +61,7 @@ playback and of any UI**; nothing here imports the scene service, the prefab ser
 
 | Document | Holds (references, never copies) |
 | --- | --- |
-| `Presentation` (`presentation.json`) | `presentation_id` `pst_<32 hex>`, `title` (<= 80, one printable line), `active_variant_id`, `variant_counter` (last number handed out, monotone, never reused), the variant index of live nodes (1..64: `{variant_id, variant_number}` plus, since Slice 16 and manifest v2, `rationale`, `created_by`, `sources`, `preview_id`), `archived` (Slice 16: nodes whose file was moved to `archive/`, <= 128), `resources` (<= 64, `{kind, locator, title}`), `revision`, `created_at`, `updated_at` |
+| `Presentation` (`presentation.json`) | `presentation_id` `pst_<32 hex>`, `title` (<= 80, one printable line), `active_variant_id`, `variant_counter` (last number handed out, monotone, never reused), the variant index of live nodes (1..64: `{variant_id, variant_number}` plus, since Slice 16 and manifest v2, `rationale`, `created_by`, `sources`, `preview_id`), `archived` (Slice 16: nodes whose file was moved to `archive/`, <= 128), `resources` (<= 64, `{kind, locator, title}`), `engine` (`slidecar` | `remotion`, manifest v3: the one engine of this presentation, see [presentation-engine.md](presentation-engine.md)), `revision`, `created_at`, `updated_at` |
 | `PresentationVariant` (`variants/<variant_id>.json`) | `variant_id` `psv_<32 hex>`, `variant_number`, `title`, `parent_variant_id` (the tree edge; cycles refused; the graph operations are Slice 16), ordered `scenes` (<= 64) of `{scene_id: pss_<12 hex>, prefab: {id, version}}`, `art_direction_id` (`psd_<12 hex>` or null; the profile is behind it, see *Art direction contract*), `score_id` (`psr_<12 hex>` or null; the score document is behind it, see *Score and cue contract*), `revision`, timestamps |
 
 - A scene is the logical scene id and the **exact** prefab pin `(id, version)` (`PrefabRef`, `jarvis/domain/prefab.py`) plus, since Slice 04, its instance values and curated controls (see *Scene and control contract*).
@@ -75,7 +80,7 @@ playback and of any UI**; nothing here imports the scene service, the prefab ser
 
 ### Versioning and compatibility
 
-Every document carries `{"schema": "jarvis.presentation_studio.presentation" | "jarvis.presentation_studio.variant", "schema_version": n}`; `n` is 2 for the Presentation (Slice 16 added the node metadata and `archived`: see *Variant graph and operations contract*) and 2 for the variant (Slice 04 added scene fields: see *Scene and control contract*, Versioning).
+Every document carries `{"schema": "jarvis.presentation_studio.presentation" | "jarvis.presentation_studio.variant", "schema_version": n}`; `n` is 3 for the Presentation (Slice 16 added the node metadata and `archived`: see *Variant graph and operations contract*; Remotion Slice 02 added `engine`: see [presentation-engine.md](presentation-engine.md)) and 2 for the variant (Slice 04 added scene fields: see *Scene and control contract*, Versioning).
 
 - A document with a **newer** `schema_version` than this JARVIS reads is refused (`presentation_studio_unsupported_schema_version`, HTTP 409), never read best-effort. The file is left untouched: a save reads the stored
   document first, so a newer file is never overwritten by an older JARVIS. The listing names it in `problems`.
@@ -95,8 +100,10 @@ reads hit the disk every time (the file is the truth, also after a restart). Rou
 
 | Method | Core route | Body -> answer |
 | --- | --- | --- |
-| GET | `/v1/presentation-studio/presentations[?limit]` | `{presentations: [{presentation_id, title, active_variant_id, variant_count, resource_count, revision, updated_at}], problems: [{presentation_id, code, message}]}` |
-| POST | `/v1/presentation-studio/presentations` | `{title}` -> 201 `{presentation, variants}` (variant #1, empty, active) |
+| GET | `/v1/presentation-studio/presentations[?limit]` | `{presentations: [{presentation_id, title, active_variant_id, variant_count, resource_count, engine, revision, updated_at}], problems: [{presentation_id, code, message}]}` |
+| POST | `/v1/presentation-studio/presentations` | `{title}` -> 201 `{presentation, variants}` (variant #1, empty, active, engine `remotion`); Remotion Slice 20: also `{title, engine, actor, experimental_confirmed?, reason?}`, `engine` only with `actor: user` (set by the Control Center relay), else 403 `presentation_studio_engine_selection_refused` ([presentation-engine.md](presentation-engine.md)) |
+| POST | `/v1/presentation-studio/presentations/{presentation_id}/experiment` | Slice 20: `{actor, experimental_confirmed, reason?}` -> 201, a NEW Slidecar document (`<title> (Slidecar)`, no scene); the source is not modified |
+| GET | `/v1/presentation-studio/engine` | Slice 20: `{default_engine, engines: {slidecar, remotion: {ready, reason, repair}}, experimental, slidecar: {events, total, kept, durable}}`, read-only |
 | POST | `/v1/presentation-studio/presentations/validate` | `{presentation, variants}` in disk format -> `{ok, errors: [{code, message}]}` (first error only), nothing written |
 | GET | `/v1/presentation-studio/presentations/{presentation_id}` | `{presentation, variants}` |
 | PUT | `/v1/presentation-studio/presentations/{presentation_id}` | `{expected_revision, title, active_variant_id, resources}` -> the `presentation` document |
@@ -139,6 +146,9 @@ reads hit the disk every time (the file is the truth, also after a restart). Rou
 | `presentation_studio_unknown_template` | 404 | no template of that `ptp_` id in the template store (Slice 20) |
 | `presentation_studio_template_leak` | 409 | a promotion would keep project content or references (a finding is blocking), or the final record still holds a trace: nothing was written; the plan lists every finding (Slice 20) |
 | `presentation_studio_template_selection_required` | 400 | a promotion without the explicit choice of dimensions and parameters, or a presentation template that does not cover every scene (Slice 20) |
+| `presentation_studio_engine_unavailable` | 409 | the presentation's own engine is not ready (not installed, unhealthy): the adapter's real reason and repair are in the message; the other engine is never run instead (Remotion Slice 02, [presentation-engine.md](presentation-engine.md)) |
+| `presentation_studio_engine_unsupported` | 409 | the engine cannot do this capability, or a source declares `unsupported` for it: reported, never guessed or flattened (Remotion Slice 02) |
+| `presentation_studio_engine_selection_refused` | 403 | the caller may not choose an engine: an agent never does, only a person may pick Slidecar (Remotion Slice 02) |
 | `presentation_studio_unsupported_schema_version` | 409 | stored document newer than this JARVIS; file untouched |
 | `presentation_studio_corrupt_document` | 409 | stored document unreadable, oversize, linked, inconsistent, or an indexed variant missing |
 | `presentation_studio_already_exists`, `presentation_studio_limit_reached` | 409 | id taken; 256 presentations, 64 variants/scenes/resources, or a 256 KiB document exceeded |
@@ -236,7 +246,7 @@ name, `<root>_<name>` on a collision) for the author or Slice 19 to curate; it i
 
 ### Score anchors and preview
 
-A `ScoreAnchor` is `{anchor_id, label, control_id?}`: a named hook the score (Slice 10) may bind a cue or a timing to. It carries
+A `ScoreAnchor` is `{anchor_id, label, control_id?, at_ms?}` (`at_ms`: its place on a Remotion scene timeline, in milliseconds from the start of the composition, see *Remotion timeline bridge*; the authoring draft accepts it, `anchors` in the planner guide): a named hook the score (Slice 10) may bind a cue or a timing to. It carries
 no tool, command or free text, and its `control_id` must be declared in the same scene, so the set of things a cue can name on a
 scene is closed and pre-authored (R5). Slice 10 binds cues and actions to anchors (*Score and cue contract*): `reveal` / `hide` name an `anchor_id` of the scene.
 
@@ -271,7 +281,7 @@ reach that cap before 64 scenes.
 {presentation_id, variant_id, variant_revision, scene_id, order, title, section,
  prefab: {id, version}, preview: {caption, alt},
  controls: [{control_id, label, group, meaning, path, type, widget, required, bounds, default, current, is_set}],
- anchors: [{anchor_id, label, control_id}], payload: {bytes, limit, remaining},
+ anchors: [{anchor_id, label, control_id, at_ms?}], payload: {bytes, limit, remaining},
  stage: {mode: "patch_stable_window", prefab_key}, problems: [string]}
 ```
 
@@ -283,7 +293,7 @@ unless the scene or its stored values change.
 
 ### Versioning
 
-The variant document is now `schema_version` **4** (Slice 06 took 3, Slice 17 took 4: see *Scene-local variant contract*); the Presentation manifest is 2 since Slice 16 (`CURRENT_VERSIONS`). `UPGRADES[variant][1]`
+The variant document is now `schema_version` **5** (Slice 06 took 3, Slice 17 took 4: see *Scene-local variant contract*; Remotion Slice 12 took 5 for the anchor `at_ms`: see *Remotion timeline bridge*); the Presentation manifest is 3 (Slice 16 took 2, Remotion Slice 02 took 3; `CURRENT_VERSIONS`). `UPGRADES[variant][1]`
 fills the Slice 04 fields of each v1 scene with their defaults (`title ""`, `section ""`, `props {}`, `data {}`, no controls, no
 anchors, empty preview) and `UPGRADES[variant][2]` (Slice 06) adds `source_revision 0` and `last_valid_pin null` to each scene: nothing an
 older file said is reinterpreted, an old file is read through the steps and rewritten as v3 by the next save (reading never rewrites), and a
@@ -655,8 +665,8 @@ The brain names scenes, bundles and candidates with **slugs of its own** (`[a-z]
 
 | Part | Shape | Reuses |
 | --- | --- | --- |
-| `prefabs` (<= 16) | `[{key, candidate: {manifest, template, style, behavior}}]` new sources; ids under `presentation-studio.`, one bundle per id, every bundle used | `PrefabService.validate_candidate` / `parse_candidate` |
-| `scenes` (<= 48, 1..) | `{key, role, title, prefab: {bundle} or {id, version}, section?, props?, data?, controls?, anchors?, alt?, long_form?, cut?}`; `role` `opening` / `body` / `closing` / `single` | `StudioScene`, `StudioControl`, `ScoreAnchor` (Slice 04) |
+| `prefabs` (<= 16) | `[{key, remotion: {title, files: {"src/Scene.tsx": TSX, ...}, props, data?, sample?, composition?, assets?, live_refs?, inspiration?}}]` new **Remotion** sources (the generator object, [below](#remotion-scenes-the-generator-slice-15)), or `[{key, candidate: {manifest, sources, assets}}]` an explicit Remotion candidate; ids under `presentation-studio.`, one bundle per id, every bundle used. An HTML candidate `{manifest, template, style, behavior}` is parsed but refused by Core (`prefab_engine_mismatch`) | `PrefabService.validate_candidate` / `parse_candidate`, `remotion_source.build_candidate` |
+| `scenes` (<= 48, 1..) | `{key, role, title, prefab: {bundle} or {id, version} (a Remotion source), section?, props?, data?, controls?, anchors? (`at_ms` places an anchor on the Remotion timeline), alt?, long_form?, cut?}`; `role` `opening` / `body` / `closing` / `single` | `StudioScene`, `StudioControl`, `ScoreAnchor` (Slice 04) |
 | `score.items` (<= 150, ordered) | `{scene, presenter, text xor note, label?, cue?, visual?, motion?, target_duration_ms?, interruption?}`; a cue is `{label, armable, phrases?, semantics?}`; actions are the closed set `control_set` / `reveal` / `hide` / `scene_goto` (motion: `control_set` only), naming a scene key (default: the item's own). The order is the chain; **locked sequences and loops are not authored in a first draft** (add them afterwards) | `ScoreItem`, `CuePredicate`, `ActionRef` (Slice 10) |
 | `art_direction` (serious) | `{mode: "profile", profile}`, `{mode: "signals", signals}` (inspect then derive), or `{mode: "fallback"}` (reads the brief) | `parse_profile`, `derive_from_signals`, `generate_fallback_profile` (Slice 09) |
 | `candidates` (exploratory, 2..6) | `{title, rationale <= 240, art_direction?, scenes_patch?: {scene key: {title?, props?, data?}}}` over the shared scenes and score | `diverge` (Slice 09) for the divergence, the Slice 16 graph for the result |
@@ -745,11 +755,79 @@ Deterministic and explainable: each finding has a `code`, a `severity` (`error` 
 | `behavior_risky` | error | error | warning | a published source has no network call, eval, dynamic import, javascript: or remote reference (a lint; the host sandbox is the wall) |
 | `payload_headroom` | error | error | warning | a scene payload uses at most 75 % of its cap |
 | `document_headroom` | error | error | warning | a document uses at most 75 % of its size cap |
+| **Remotion sources (Slice 15)** | | | | |
+| `prefab_engine_mismatch` | error | error | error | an agent draft publishes and pins Remotion sources only: an HTML (Slidecar) source is refused, never converted |
+| `tsx_compile` | error | error | error | every Remotion scene compiles (Slice 5 compiler) before anything is written; the diagnostics name file, line and column |
+| `tsx_compile_budget` | error | error | error | the sources of a draft compile inside the compile time budget (what is not compiled in time is refused, never waved through) |
+| `tsx_lint_budget` | error | error | error | the lint of a Remotion source stays inside its time budget (a source it cannot read in time is refused, never waved through) |
+| `tsx_theme_unread` | error | error | warning | a Remotion source declares and reads the `theme` prop: it is how the art direction reaches the scene |
+| `tsx_color_hardcoded` | warning | warning | off | at most 3 colour literals in the source (the palette is the art direction's, with its contrast) |
+| `tsx_text_hardcoded` | error | error | warning | visible sentences are props or data, not literals in the source (controls edit them, the content rules read them) |
+| `tsx_static_scene` | warning | warning | off | a Remotion scene is a function of time: it reads the frame, a sequence or a spring |
+| `tsx_interpolate_unclamped` | warning | warning | off | an `interpolate` call states its `extrapolate` option (clamp after the range) |
+| `tsx_props_unread` | error | error | warning | every prop and data key the manifest declares is read by the source (a dead control edits nothing) |
+| `tsx_props_undeclared` | warning | warning | off | every prop the entry module reads is declared in the manifest (otherwise no control can reach it) |
+| `tsx_monolith` | warning | warning | off | a scene over 250 lines is split into modules (`src/lib/*.tsx`) |
+| `tsx_layout_monotone` | warning | warning | off | a deck of 5 scenes or more does not show them all through one source: the storyboard gives a layout to each kind of scene |
+| `tsx_anchor_range` | error | error | error | an anchor's `at_ms` falls inside the composition (duration_in_frames / fps) |
+| `tsx_anchor_untimed` | error | error | warning | an anchor of a Remotion scene has an `at_ms` after the first frame (else the scene holds on its first frame, usually blank, until the anchor is revealed) |
+| `tsx_live_ref_invalid` | error | error | error | `src/live-refs.json` follows the Slice 09 grammar (`board:<id>/memory/<path>` or `/artifact/<id>`) |
+| `tsx_live_ref_unresolved` | error | error | warning | every live Board reference resolves for the Boards the user works with (`authorised_boards`, default deny) |
+| `tsx_inspiration_unconfirmed` | error | error | error | an inspiration names an existing Remotion source whose upstream provenance Core verified |
 | **Exploratory shape** | | | | |
 | `candidates_count` | off | off | error | 2 to 6 candidates |
 | `candidates_not_divergent` | off | off | error | candidates differ by at least 0.2 (Slice 09 distance) |
 
-Thresholds are constants (`MAX_CONTROLS_PER_SCENE` 12, `MAX_SCENE_WORDS` 120, `LONG_FORM_WORDS` 600, `DURATION_TOLERANCE` 0.35, `HEADROOM` 0.75, `CUE_WINDOW` = `ARM_LOOKAHEAD` + 2 items, `MAX_FINDINGS_PER_RULE` 5, `MIN_SCENE_WORDS` 3 with `MIN_BODY_WORDS` 2 outside the title, `MIN_LINE_WORDS` 3, `MUST_COVER_THRESHOLD` 0.6) and the planner prompt interpolates them. Notes on the heuristics: the *transition* rule reads the art direction `motion.transition`, a motion action on the entering item, or the scene's `cut: true` attestation; the *reduced-motion* rule reads the published source (CSS animation or transition, `requestAnimationFrame`, Web Animations) and wants a `prefers-reduced-motion` guard, since the DA contract already forces a fallback on the theme but not on a source; the *contrast* rule judges colours the author **set** (scene values, `control_set` values) against every variant's background, a colour left at the prefab default is drawn from the DA theme; a cue is judged among items at most `CUE_WINDOW` apart, not across the whole deck. The content floor counts *meaningful words* (runs of at least two letters; digits, punctuation, ellipsis, emoji and single letters carry none; a number counts half a word so a table of figures is content; a CJK run counts one word per two characters; an underscore separates words), so `...`, `a`, `Oui`, a row of emoji and a title alone under an empty body are `content_thin`; texts and titles that differ only by digits, case or spacing are `filler_numeric_variants`. A colour literal, a URL, a number and a numeric table cell are **data, never a placeholder** (`#ffffff`, `1000000`, `M1: 1.5 / 2.25`), and the character-variety kinds need a mostly-alphabetic text. `cue_stopword_phrase` reuses the Slice 10 lint (`phrase_weakness`, one place) whose stop-word list was extended with ordinary fillers ("et puis voila", "oui bon d'accord", "next slide please", "ok on continue"); `prochaine diapo` stays distinctive. `behavior_risky` lints a brain-authored source for network calls, `eval`, dynamic `import()`, `javascript:` and remote references; it is a lint in front of the wall, the host sandbox (`allow-scripts`, opaque origin, CSP) remains the wall, and an endless loop in a behavior still hangs its own frame.
+Thresholds are constants (`MAX_CONTROLS_PER_SCENE` 12, `MAX_SCENE_WORDS` 120, `LONG_FORM_WORDS` 600, `DURATION_TOLERANCE` 0.35, `HEADROOM` 0.75, `CUE_WINDOW` = `ARM_LOOKAHEAD` + 2 items, `MAX_FINDINGS_PER_RULE` 5, `MIN_SCENE_WORDS` 3 with `MIN_BODY_WORDS` 2 outside the title, `MIN_LINE_WORDS` 3, `MUST_COVER_THRESHOLD` 0.6; Remotion Slice 15: `MONOLITH_LINES` 250, `MAX_COLOR_LITERALS` 3, `MAX_LITERAL_WORDS` 3) and the planner prompt interpolates them. Notes on the heuristics: the *transition* rule reads the art direction `motion.transition`, a motion action on the entering item, or the scene's `cut: true` attestation; the *reduced-motion* rule reads the published source (CSS animation or transition, `requestAnimationFrame`, Web Animations) and wants a `prefers-reduced-motion` guard, since the DA contract already forces a fallback on the theme but not on a source; the *contrast* rule judges colours the author **set** (scene values, `control_set` values) against every variant's background, a colour left at the prefab default is drawn from the DA theme; a cue is judged among items at most `CUE_WINDOW` apart, not across the whole deck. The content floor counts *meaningful words* (runs of at least two letters; digits, punctuation, ellipsis, emoji and single letters carry none; a number counts half a word so a table of figures is content; a CJK run counts one word per two characters; an underscore separates words), so `...`, `a`, `Oui`, a row of emoji and a title alone under an empty body are `content_thin`; texts and titles that differ only by digits, case or spacing are `filler_numeric_variants`. A colour literal, a URL, a number and a numeric table cell are **data, never a placeholder** (`#ffffff`, `1000000`, `M1: 1.5 / 2.25`), and the character-variety kinds need a mostly-alphabetic text. `cue_stopword_phrase` reuses the Slice 10 lint (`phrase_weakness`, one place) whose stop-word list was extended with ordinary fillers ("et puis voila", "oui bon d'accord", "next slide please", "ok on continue"); `prochaine diapo` stays distinctive. `behavior_risky` lints a brain-authored source for network calls, `eval`, dynamic `import()`, `javascript:` and remote references; it is a lint in front of the wall, the host sandbox (`allow-scripts`, opaque origin, CSP) remains the wall, and an endless loop in a behavior still hangs its own frame.
+
+### Remotion scenes: the generator (Slice 15)
+
+Status: **Level 3 for the deterministic side** (generator, theme binding, compile validation, engine policy, live-reference check, inspiration check, 18 rules, scripted rig). Handoff `jarvis-remotion-presentation-integration`, Slice 15. **The same three tools, the same brief, the same gate, the same assembler**: `presentation_draft_check`, `_assemble` and `_finalize` are unchanged (the `jarvis-presentation` tool budget is untouched, `test_mcp_catalog`); what changed is what a scene *is*. Modules: `jarvis/domain/presentation_studio_authoring_remotion.py` (generator, `theme`), `jarvis/domain/presentation_studio_authoring_tsx.py` (the TSX lint), the Remotion rules in `presentation_studio_authoring_gate.py`, `core/presentation_studio_authoring.py` (compile, engine policy, live references, inspiration). Tests: `test_presentation_studio_authoring_remotion*.py`, the scripted rig `tests/fakes/presentation_studio_fake_author.py` + `tests/fakes/remotion_authoring.py`.
+
+Who does what. The **brain** (an LLM or a sub-agent) writes the TSX and the content schema, through the draft tools; **Core** builds the manifest, allocates the id, writes the catalog block, binds the art direction, compiles, judges and stores. Nothing the brain wrote runs in Core: the TSX is text that the Slice 05 compiler turns into a bundle (esbuild, no execution) and that the Slice 06 sandbox runs, hostile by default.
+
+**The generator object** replaces the HTML `candidate` in `prefabs[]`:
+
+| Key | Rule |
+| --- | --- |
+| `title` (required), `description?` | one printable line (80 / 200) |
+| `files` (required) | `{"src/Scene.tsx": TSX, "src/lib/X.tsx": TSX, "src/data.json": JSON, ...}`: text modules under `src/`, the entry `src/Scene.tsx` exports a default React component. Imports are `react` and `remotion` only (Slice 05 / 06 limits: 64 modules of 256 KiB, no `package.json`, no network, no `window`) |
+| `props`, `data?` | the content schema, `{type: object, properties: {...}}`, the manifest `inputs` of the Slice 13 controls. `props.theme` is reserved |
+| `sample?` | `{props?, data?}` shown by the library; `theme` is added |
+| `composition?` | `{width, height, fps, duration_in_frames}` (defaults 1280 x 720, 30 fps, 150 frames); declared, never read from the code |
+| `assets?` | `{public/<name>: base64}` (Slice 05 asset limits, signature-checked by Slice 06) |
+| `live_refs?` | `[{name, ref}]`, <= 8: written by Core as `src/live-refs.json` ([live references](#live-board-references-and-authorised_boards)) |
+| `inspiration?` | `{id, version}` of an existing Remotion source ([inspiration](#inspiration-is-optional-and-attested)) |
+
+An explicit Remotion candidate `{manifest, sources, assets}` is still accepted (its id is the author's, `presentation-studio.*`); it has no `theme` prop, so the gate raises `tsx_theme_unread`.
+
+**The art direction reaches the scene as data: the reserved `theme` prop.** A Remotion scene gets no CSS variable from the host (the sandbox has none), so Core declares `props.theme` in every generated manifest (colours `background`, `text`, `accent`, `muted`, `body`, strings `surface`, `font_heading`, `font_body`, `easing`, `transition`, integers `heading_weight`, `body_weight`, `radius`, `gap`, `enter_ms`, `stagger_ms`, number `scale`) and fills it, per variant, from **that variant's** art direction (`theme_values`: only tokens the art direction already validated, contrast included). The source reads `props.theme.accent`; the scene stores the whole object. Consequences: an exploratory candidate's divergent art direction really changes how the shared scene looks (the candidate differs by `theme`, exactly as a Slice 16 branch differs by its DA); a control can edit one token (`props.theme.accent`) and the Slice 13 bridge delivers it; what a scene (or a candidate's `scenes_patch`) sets in `theme` wins over the direction, key by key; a serious draft with no art direction is refused as before (`da_missing`). The gate never reads the theme as prose (`content_props`), and the cost is about 0.7 KiB per scene in each variant document (`document_headroom` counts it).
+
+**The motion kit.** Core adds `src/jarvis-kit.ts` (fixed text, `presentation_studio_authoring_kit.py`, versioned) to every generated source: `progress(frame, fps, theme, index)` is the direction's `enter_ms` / `stagger_ms` / `easing` as a 0..1 value, `enterStyle(p, theme)` its `transition` (`none`, `fade`, `slide`, `scale`, `wipe`) as a style, `size(px, theme)` its text scale. A scene that imports it moves the way its variant's art direction says, and two candidates of an exploratory request move differently; the brain may ignore it and may not provide any module or folder named `jarvis-kit` (any extension, any case, `index.*`: esbuild resolves `./jarvis-kit` through all of them and tries `.tsx` before `.ts`), and the gate does not read it as the author's code (it would hide a dead prop). **Storyboard**: `presentation_inspect draft_guide` returns, besides the one-scene example, three ready layouts (`cover`, `figure`, `list`, each a complete generator object that the tests run through the gate and the real compiler) and the instruction to decide each scene's role and layout before writing: 2 to 4 sources, one per kind of scene, sharing the theme and the kit. The library `sample` is completed by Core with a valid value for every required key the brain left out.
+
+**Core adds, the brain does not write**: the prefab id `presentation-studio.rm-<key>-<8 hex of the content>` (inside the retention namespace; the same content is the same id and a new immutable version), the manifest v3 with the `catalog` block (`type: composition`, Remotion `native`, Slidecar `unsupported`, stack `react remotion typescript`, the shipped engine as dependency; **never** an `upstream` block, only the importer writes provenance of an upstream template), the `source.engine` pin of the shipped set, the `theme` prop. The version number is Core's, as before.
+
+**Compile validation before anything is written** (`tsx_compile`). `check` and `assemble` compile every Remotion source with the Slice 05 compiler (in a thread; one budget of 100 s per draft, each compile bounded by what is LEFT of it: a source still compiling when it ends, or never started, is `tsx_compile_budget`; the compiler itself bounds a source at 60 s) and merge the result into the report: a scene that does not compile is a finding with the compiler's code (`compile_source_error`, `compile_import_refused`, `compile_entry_invalid`, ...) and `diagnostics` `[{file, line, column, text}]` (<= 10, a path *of the source*, text clipped), next to every other finding, so the brain fixes everything in one round. The compiled bundle is cached by content: the player compiles the published version for free. The typed client waits `AUTHORING_TIMEOUT_S` (150 s) for `check` / `assemble` instead of its 10 s default (the first real-model run lost its first `assemble` after exactly 10.1 s to a cold compile of three sources, and the model saw an empty `Error executing tool`); a timeout that still happens reaches the model as `core_timeout` with a sentence (the outcome is unknown: read the state before resubmitting). **A runtime that cannot compile is not a quality finding**: with no compiler or a capability that is not `ready`, `assemble` answers 409 `presentation_studio_engine_unavailable` with the repair message, `check` reports `tsx_compile` with `compile_runtime_unavailable`, nothing is written, and **nothing else takes over** (no Slidecar, no uncompiled draft). The compile step does not execute the scene (esbuild transforms text); the isolation guards of Slice 06 run when the source is parsed, so a network call or a realm access is `prefab_invalid` (`file:line: code`), in every workflow (`behavior_risky` and `motion_unguarded` remain for a stored HTML variant only: Remotion animation is computed from the frame number, the static guard refuses `while (true)`).
+
+**Engine policy** (`prefab_engine_mismatch`). An agent draft publishes and pins Remotion sources only: an HTML candidate, or a scene pinning an HTML prefab (`lab.counter`, a `jarvis.*` base), is refused with the full report, never converted and never replaced by a Slidecar. The Presentation is created with engine `remotion` (`build_presentation(engine=...)` defaults to the forced default). `finalize` still judges a stored Slidecar variant (legacy decks and old exploratory candidates stay finalizable); nothing existing is converted.
+
+**Lint safety** (QA B1): the first version stripped comments with `/\*.*?\*/` and a backtick branch, quadratic on `"/* " * 87k` (96 s) and on an unterminated template with escapes (300 s). Comments and strings now go through a hand-written single-pass scanner (`strip_comments`: an unterminated comment or template consumes the rest of the input, an unterminated quote ends at its line); every other pattern is quantifier-bounded and never crosses a newline over author text; the whole read of a source has a time budget (`TSX_LINT_BUDGET_S`, 2 s) that **fails closed** (`tsx_lint_budget`); `check_first_draft` runs off the event loop (`asyncio.to_thread`). The tests run eighteen hostile shapes at 256 KiB and require under a second each. **Known misses of the lint** (it is a floor, a miss only means a finding is not raised; the Slice 06 guards and the sandbox are the wall): text after `//` inside JSX text is read as a comment; a URL in JSX text is skipped as not prose; sentences held in `const` strings and then rendered are not literals; template-literal prose is not read; `tsx_theme_unread` is satisfied by a property access `props.theme` / `x.theme` / `["theme"]` or the entry's destructured `{theme}` (a helper module that receives `theme` as a parameter is not counted) and no longer by an object literal `{theme: 1}`, but `foo.theme` of an unrelated object still passes; `tsx_props_undeclared` only sees `props.x` and the entry's own parameter.
+
+**Publishing is all-or-nothing in practice**: every candidate is validated (`validate_candidate(core_written=True)`: the same refusal of Core-written catalog fields as `save`) BEFORE the first publication, so a forged `catalog.upstream` on the second bundle is a `prefab_invalid` finding of `check`, never a publish-time failure after the first bundle was written.
+
+**The TSX rules** (table above, 18 with the engine policy) are a floor over a lint (`presentation_studio_authoring_tsx.py`: comment-stripping, bounded patterns, no parser; a miss only means a warning is not raised): `tsx_theme_unread` (the source declares and reads `props.theme`), `tsx_color_hardcoded` (more than `MAX_COLOR_LITERALS` 3 colour literals bypass the direction's contrast), `tsx_text_hardcoded` (sentences of more than `MAX_LITERAL_WORDS` 3 words written in the JSX instead of `props`/`data`: controls cannot edit them), `tsx_static_scene` (never reads the frame), `tsx_interpolate_unclamped`, `tsx_props_unread` / `tsx_props_undeclared` (a declared key nothing reads is a dead control; a prop read but not declared has no control), `tsx_monolith` (one module over `MONOLITH_LINES` 250), `tsx_anchor_range` (an anchor's `at_ms` inside the composition), `tsx_anchor_untimed` (an anchor with no `at_ms` after the first frame makes the Slice 12 timeline hold the scene on frame 0 until it is revealed: a scene that enters from opacity 0 stays blank; found by looking at the first real screenshot, the DOM colours were right), `tsx_layout_monotone` (five scenes or more all drawn by one source: no storyboard), plus the three Core-run rules. Text written in the TSX is not invisible to the content rules: the placeholder, density (`text_density`, `content_thin`), `must_cover_missing` and `language_mismatch` rules read the JSX text literals of the scene's source as well (not `repeated_filler`: a footer shared by every scene is chrome). The reserved `theme` prop is excluded from prose.
+
+#### Live Board references and `authorised_boards`
+
+`live_refs` (or a `src/live-refs.json` the author wrote) follows the Slice 09 grammar ([presentation-live-refs.md](presentation-live-refs.md); `tsx_live_ref_invalid` if not). At `check` and `assemble` Core resolves each reference with `LiveRefResolver.resolve_all` and **`authorised_boards` derived in trusted Core code from the Board context**: `{active Board}` (`JarvisCoreApplication._authorised_boards`), never from the declaration. A reference to another Board is `not_authorised` (the same state as a missing one, no existence oracle) and a state other than `ok` is `tsx_live_ref_unresolved` (a warning for a light exploratory candidate). A Core with no resolver or no Board context cannot judge: the rule is listed in `skipped` and the references block (default deny). The brain is expected to look at the Board context (memory, Artifacts) *before* asking the user for a missing field (`PLANNER_PROMPT` section 2). **Delivery of the resolved data to a playing scene is not part of this Slice** (the packager and the sandbox `props` payload of Slice 09 are not wired to the Player yet): a generated scene must render its own fallback content when the data is absent.
+
+#### Inspiration is optional and attested
+
+`inspiration {id, version}` names an existing Remotion source the author drew on (an upstream template imported by Slice 18, or any library source). Core accepts it only when the source exists, is Remotion, and carries a **Core-verified** upstream provenance (`catalog.upstream.commit`, written only by the importer); otherwise `tsx_inspiration_unconfirmed` and the draft is refused. Accepted, the lineage is recorded as the published prefab's `derived_from` (origin `fork`) and in the delivered `provenance.inspirations` (`id`, `version`, `upstream`, `commit`, `license`, `verified_intact`). Nothing is copied or chosen for the author, no tool selects a template, and the licence of the source stays the importer's record: an upstream template is never applied unless it was selected and its provenance confirmed ([remotion-import.md](remotion-import.md)).
+
+#### Finalize, variants, scripted rig, real-model gate
+
+`finalize` re-reads a stored Remotion source from disk (`PrefabService.remotion_source`: the catalogue keeps no bytes, the inventory is re-checked) and runs the `directed` gate on it, the Remotion rules included. Exploratory candidates stay what they were (shared scenes, divergent art direction as `theme`, `scenes_patch` for the rest). The deterministic **scripted rig** (`tests/fakes/presentation_studio_fake_author.py`: `good_one_shot`, `good_deck`, `exploratory`, one mutation per error rule in `VIOLATIONS`, one per warning rule in `WARNING_VIOLATIONS`, `ScriptedCompiler`) replaces the model in tests; its redacted evidence is `slices/15-remotion-one-shot-authoring/evidence/fake-author-rig.{json,md}`. **A scripted rig is not a trace of Claude**: the release gate ([presentation-studio-release.md](presentation-studio-release.md)) was re-run for Remotion scenes by this Slice, with the planner fingerprint the code now has.
 
 ### Routes, client, relay
 
@@ -1357,7 +1435,7 @@ Not done: dropping the fields a stored content shares with the scene's pin metad
 
 ### Schema: variant document v4, an additive and independent step
 
-`VARIANT_SCHEMA_VERSION` is **4**; `UPGRADES[variant][3]` is the **identity** (a v3 scene has no set, and "no set" is the absence of the key). The key lives **in the scene**, under its own name
+`VARIANT_SCHEMA_VERSION` is **5** (Remotion Slice 12: the anchor `at_ms`; `UPGRADES[variant][4]` is also the identity); `UPGRADES[variant][3]` is the **identity** (a v3 scene has no set, and "no set" is the absence of the key). The key lives **in the scene**, under its own name
 `scene_variants`; nothing else in the scene changed. A JARVIS that only knows v3 refuses a v4 file untouched (`unsupported_schema_version`).
 **Merge rule with Slice 06, done**: Slice 06 owns v3 (per-scene `source_revision` / `last_valid_pin`), this Slice took v4. The two additions touch different scene keys and neither step reads the
 other's key. Fixtures: `variant.v3.json` (Slice 06, input of the upgrade tests) and `variant.v4.json` (current). `StudioScene` keeps the Slice 06 fields in front and `scene_variants` last.
@@ -1375,7 +1453,7 @@ other's key. Fixtures: `variant.v3.json` (Slice 06, input of the upgrade tests) 
   refused `presentation_studio_scene_reloading`; `rename` and `delete` move no pin and go through. A promote takes the scene on its last valid pin like any branch (`scenes_for_copy`), then selects.
 - **A select that changes the pin** is an ordinary write that moves the scene's pin: Slice 06's `own_scene_fields` counts it (`source_revision` + 1, `last_valid_pin` cleared). Its undo is a select that moves the pin back and counts again:
   the counter only grows, so the byte-exact undo of the Size section holds for the contents and not for that counter.
-- **Authoring (Slice 11):** `assemble` and `finalize` neither produce nor read `scene_variants`: an assembled scene has none, and the 48-rule gate judges drafts, not stored sets.
+- **Authoring (Slice 11):** `assemble` and `finalize` neither produce nor read `scene_variants`: an assembled scene has none, and the 66-rule gate judges drafts, not stored sets.
 
 ### Routes
 
@@ -1421,9 +1499,12 @@ label, a rationale and a local variant id are never an attribute. Promote reuses
 
 ## Template and prefab promotion contract (Level 3, Slice 20)
 
-Status: implemented by Slice 20. Conformance: `tests/unit/test_presentation_studio_template_{domain,service,routes,docs}.py`. Owner modules:
+Status: implemented by Slice 20; extended by Remotion Slice 19 (Remotion-aware promotion, one artefact per presentation, score skeleton, licence and provenance gates).
+Conformance: `tests/unit/test_presentation_studio_template_{domain,service,remotion,routes,docs}.py`. Owner modules:
 `jarvis/domain/presentation_studio_template.py` (requests, document, ids), `jarvis/domain/presentation_studio_template_sanitize.py` (pure: roles,
-placeholders, detection, parameterization), `jarvis/core/presentation_studio_template.py` (`PresentationStudioTemplates`, the only door),
+placeholders, detection, parameterization), `jarvis/domain/presentation_studio_template_remotion.py` (pure: TSX candidate, catalog block, licence, content hash),
+`jarvis/domain/presentation_studio_template_score.py` (pure: score skeleton), `jarvis/core/presentation_studio_template_embed.py` (record catalog, embedded sources
+installed at instantiation), `jarvis/core/presentation_studio_template_guard.py` (serialized-size finding, words of the score, marking of a half-made presentation), `jarvis/core/presentation_studio_template.py` (`PresentationStudioTemplates`, the only door),
 `jarvis/adapters/file_presentation_template_store.py`, `jarvis/protocol/presentation_studio_template_routes.py`,
 `jarvis/runtime/presentation_studio_template_relay.py`, client methods `presentation_studio_template_*` on `LocalCoreClient`.
 The acceptance sentence: *a retained creative result can be reused in a future presentation without carrying accidental project-specific state.*
@@ -1432,14 +1513,15 @@ The acceptance sentence: *a retained creative result can be reused in a future p
 
 | Material | Where it lives | Why |
 | --- | --- | --- |
-| reusable **code** of a scene (manifest, template, style, behavior) | the **shared prefab library**, published by `PrefabService.save` under `studio-template.<slug>[-<n>]` (origin `fork`, `derived_from` = the project prefab version it was promoted from, actor `user` or `brain`) | the library is the one catalog of prefab definitions ([prefabs.md](prefabs.md#publication-and-provenance-publicationjson-jarvisprefabpublication-v1)); the namespace is not the reserved `presentation-studio.` one, so it is a normal library entry the prefab view lists and forks |
-| the **composition** (which library versions, in which order, neutral values, chosen controls, art direction sections) | one document `ptp_<12 hex>.json` in `<data_root>/presentation_templates/` | the library cannot hold a deck, a DA or a motion pattern; this file is an index of library versions plus data, never a definition (an unknown key such as `manifest` or `template` is refused on read) |
+| reusable **code** of **one scene** (`kind: scene`: manifest, template, style, behavior; or a Remotion source: manifest, `src/**`, `public/**`) | the **shared prefab library**, published by `PrefabService.save` under `studio-template.<slug>` (origin `fork`, `derived_from` = the project prefab version it was promoted from, actor `user` or `brain`) | the library is the one catalog of prefab definitions ([prefabs.md](prefabs.md#publication-and-provenance-publicationjson-jarvisprefabpublication-v1)); the namespace is not the reserved `presentation-studio.` one, so it is a normal library entry the prefab view lists and forks. Only an explicit request for that scene gets here |
+| the sources of the scenes of a **whole presentation** (`kind: presentation`) | **inside the `ptp_` record**, `embedded`, keyed by the SHA-256 of the sanitized candidate; **never** published to the library | decision of the Project Manager (Remotion Slice 19): promoting a presentation publishes ONE artefact, not one library prefab per scene (512 ids, no deletion). The embedded sources are private to the template: not listed, not searchable, not forkable from the library |
+| the **composition** (which sources, in which order, neutral values, chosen controls, art direction sections, the score skeleton) | one document `ptp_<12 hex>.json` in `<data_root>/presentation_templates/` | the library cannot hold a deck, a DA or a motion pattern; at the top level this file holds no definition (an unknown key such as `manifest` or `template` is refused on read); definitions exist only inside `embedded` (document v2) |
 | art direction and motion | only in the composition document (`art_direction.sections`) | the shared library model supports prefabs only; a DA is never published as a prefab |
 | the project it came from | `derived_from` of the document and `publication.json` of each prefab (ids and versions only) | provenance, never read when a template is instantiated |
 
 ### Four kinds, one flow
 
-`kind` is `presentation` (a whole variant: every scene, optionally selected DA sections), `scene` (one scene), `art_direction` (chosen sections of the variant's DA) or
+`kind` is `presentation` (a whole variant: every scene, optionally selected DA sections; **one artefact, nothing published to the library**), `scene` (one scene, published to the library), `art_direction` (chosen sections of the variant's DA) or
 `motion` (the `motion` section alone). The flow is the same for the four: **plan** (read-only; describes candidates, roles, planned prefab ids, findings), the caller chooses,
 **promote** (analysis again, then writes), **instantiate** (a template becomes new work through the existing doors).
 
@@ -1471,8 +1553,8 @@ in group `content`. On a copy of the manifest:
 
 The promoted manifest carries a new id, the caller's title (80), description (600, plus a generic sentence) and tags (`presentation-template`, then the caller's, at most 8), **no aliases** (they name
 the original) and the generic events of the source. A curated control `default` and a scene `title`, `section` and preview `caption`/`alt` are dropped (they are the project's words); the
-template scene keeps `props`/`data` placeholders, the chosen controls, and the anchors whose control survived. Scenes whose sanitized candidate is identical **share one library prefab**
-(`studio-template.<slug>-<n>`, `n` by first appearance; a `scene` template is `studio-template.<slug>`): the library has 512 ids and no deletion.
+template scene keeps `props`/`data` placeholders, the chosen controls, and the anchors whose control survived. Scenes of a `presentation` template whose sanitized candidate is identical
+**share one embedded source** (one content hash, `n` by first appearance in the plan); a `scene` template is the library entry `studio-template.<slug>`.
 
 ### Detection and validation (the gate)
 
@@ -1480,7 +1562,7 @@ template scene keeps `props`/`data` placeholders, the chosen controls, and the a
 
 | Code | Blocking | Meaning |
 | --- | :---: | --- |
-| `project_identifier` | yes | a `pst_ psv_ pss_ psx_ psc_ psi_ psa_` id, a `presentation-studio.*` prefab id, a `user-prefab-*` or `studio-stage-*` handle |
+| `project_identifier` | yes | a `pst_ psv_ pss_ psx_ psc_ psi_ psa_` id, a `presentation-studio.*` prefab id, a `user-prefab-*` or `studio-stage-*` handle, a `board_*` Board id or a `jart_*` artifact id (Slice 19) |
 | `local_path` | yes | a drive path, a home/`tmp` path, `.jarvis`, `file:`, `~/`, a UNC path |
 | `project_content` | yes | a string of the project (scene content values, titles, sections, captions, the presentation's resource locators and titles, kept DA motifs) is still present, after case/space normalisation; strings shorter than 6 characters without a space or digit are not searched |
 | `prefab_invalid` | yes | `PrefabService.validate_candidate` refuses the candidate (first error, `safe_text`-redacted) |
@@ -1488,6 +1570,13 @@ template scene keeps `props`/`data` placeholders, the chosen controls, and the a
 | `placeholder_unfit` | yes | the neutral values do not fit the source schema (the source needs a default) |
 | `art_direction_unfit` | yes | the chosen DA sections do not stand alone over the deterministic fallback profile (select the sections they depend on, for example `palette` with `dataviz`) |
 | `external_url`, `embedded_asset` | no | a hard-coded external URL or a `data:` asset over 2 KiB in the source: kept, reported |
+| `engine_not_native` | yes | a source whose catalog does not declare its own engine as `native` (Remotion Slice 10 rule: `adapter` is declared, not usable) |
+| `assets_need_acknowledgement` | yes | a Remotion source that is not an intact import has `public/**` assets that could be project media: `keep_assets: true` keeps them |
+| `licence_acknowledgement_required` | yes | an upstream (imported or declared) whose licence is not one of the reviewed redistributable ones, or is not declared: name it in `licence_ack` |
+| `licence_acknowledged` | no | the same, acknowledged by name |
+| `upstream_verification_dropped` | no | the files differ from the verified import: the Core-written keys are not carried, the origin stays a declaration |
+| `embedded_too_large` | yes | the serialized record would exceed the 256 KiB a stored document holds; the finding names the part that weighs (embedded sources, score) |
+| `score_unfit` | yes | the score does not reduce to a stand-alone skeleton |
 
 The detection is a repository heuristic (normalised substring comparison), **not a proof**: reworded, split or encoded content is not seen. After publication, `_verify` re-reads every cited
 `(id, version)` from the library (healthy, not `presentation-studio.*`) and validates every template scene's neutral values with `PrefabService.validate_instance`: no broken project-local
@@ -1499,18 +1588,54 @@ Each library prefab: `publication.json` `origin: fork`, `derived_from` the proje
 `report {stripped: {content_values, defaults, look_reset, controls_dropped, anchors_dropped, references_dropped, motifs_dropped, sections_dropped}, scenes, prefabs}`. Provenance may name a project
 version the retention later archives; nothing reads it back.
 
-### Reusable presentation template document (`jarvis.presentation_studio.template` v1)
+### The brain and promotion (Remotion Slice 19, QA B1)
+
+"The user alone requests" a promotion: through the agent door (`presentation_template`, actor `brain`) **`plan` is allowed** (it writes nothing), **`promote` is refused unless the turn is attested as an addressed user turn** (the same attestation as a presentation start, `presentation_studio_turn.py`; refusal `presentation_studio_template_user_only`), and
+**`licence_ack` and `keep_assets` are refused to the brain whatever the turn** (same code, tool layer; Core also refuses them from any actor other than `user`, `presentation_studio_invalid`): a licence is acknowledged, and media kept, by the user from the page. Licence strings the brain reads in a plan are clipped (64 characters, 8 places) and listed as untrusted. The tool description, `ToolMeta` and the brain prompt say the same.
+
+### Remotion-aware promotion (Remotion Slice 19)
+
+A Remotion scene (`schema_version` 2 or 3, [remotion-source.md](remotion-source.md)) is promoted inside the same service (`PresentationStudioTemplates`), by the same plan / promote / instantiate, not by a second one:
+
+- The source is read **as text** through `PrefabService.remotion_source`, which runs `SOURCE_GUARDS` (the isolation guards) on every read: a source a guard refuses today is `presentation_studio_source_invalid`, nothing written. The sanitized candidate goes through `PrefabService.validate_candidate` (so the guards run again on what would be published). TSX never gains a filesystem, secret or tool privilege: it is never executed here.
+- The **parameters** of a Remotion scene are its manifest `inputs.props` / `inputs.data`; they take exactly the dimension / parameter selection and the neutralisation above. The **modules** are searched like any source (project ids, Board ids `board_*`, artifact ids `jart_*`, local paths, project content strings): a finding is blocking and names the module path and a count. **The TSX is never rewritten automatically**: a silent edit of code nobody reviewed is worse than a refusal; the author fixes the module and promotes again.
+- The promoted manifest is `schema_version` 3 with an engine-tagged `catalog` ([prefabs.md](prefabs.md#manifest-v3-and-the-semantic-catalog-schema_version-3-slice-17)): `type` and `compatibility` of the source (a source without a block gets `composition`, `remotion: native`, `slidecar: unsupported`, stack `react remotion typescript`), dependencies, licence and upstream carried. A source that does not declare its engine `native` is refused (`engine_not_native`).
+- `public/**` assets are kept without a question only for an **intact import** (they are upstream's own); otherwise `keep_assets: true` is an explicit choice, because an image may be project media.
+
+### One artefact per presentation (Remotion Slice 19)
+
+Decision of the Project Manager: `kind: presentation` writes the `ptp_` document and **nothing else**; not one scene is published to the shared library unless the user asks for that scene (`kind: scene`). The record carries (a) the document skeleton (scenes with neutral values, chosen controls, anchors), the art direction sections and the **score skeleton**, and (b) `embedded`: `{sha256: candidate}` for each distinct sanitized scene source, HTML `{manifest, template, style, behavior}` or Remotion `{manifest, sources, assets (base64)}`. Each scene row names its source by `source: <sha256>`; its `scene.prefab` is a record-local slot named like a library id (`studio-template.<slug>[-<n>]`, version 1) that is never resolved, like `scene_id`. `catalog` is the record's own block: `type: presentation`, `compatibility` per engine (`native` only when **every** scene is), `stack`, `licences`, `upstreams` (public declarations), `licence_ack`.
+
+**Instantiate** (`kind: presentation`): every embedded source is first re-validated with today's guards and its provenance re-verified (below) **before anything is created**; then the new Presentation is created and **one presentation-scoped prefab per scene** (`presentation-studio.p<presentation>.s<scene>`, the retention namespace) is published through `PrefabService.save`, pinned by the scene, with `source_revision 0`. Two scenes that shared a source get two ids of the same content. The library is not touched beyond those ids. A failure after the Presentation was created (installing a source, saving the variant, the art direction, the score) is raised with its id and the presentation is **marked**: its title starts with `[instantiation échouée]` and a `template_instantiation_failed` warning is journaled. Nothing is deleted (Core cannot delete a presentation nor a prefab): the published presentation-scoped sources stay unpinned and the retention archives them after an hour. If even the marking fails, the error says so.
+
+### Score skeleton (Remotion Slice 19)
+
+A presentation template carries the **structure** of the score, never its words (`presentation_studio_template_score.py`): order, presenter, kind, `target_duration_ms`, timing policy, interruption, declared loops, each item's `scene_goto`, on the template's scene slots. Removed and counted in `report.score_dropped`: `label`, `text` and `note` (every speaking item gets the placeholder `[intention]` as a **`note`**, never as `text`, because a `text` is spoken word for word), `cue_id` and all cues (their phrases are speech), locked sequences (the host item becomes an ordinary soft item, duration kept), recovery points, and every `control_set` / `reveal` / `hide` / `sequence` action. The skeleton is checked with the score validator (`parse_content`); an item that cannot stand alone is `score_unfit`. Instantiation gives fresh item ids and the new scene ids and creates the score with `create_score` (the answer has `score_id`). The user then writes the words; nothing is spoken until they do.
+
+### Licence and provenance (Remotion Slice 19)
+
+- **Verified provenance never survives a modification.** The Core-written keys of `catalog.upstream` (`commit`, `archive_sha256`, `imported_at`, `changes`, `source_sha256`) and `catalog.runtime_license` ([remotion-import.md](remotion-import.md)) are carried by a promotion **only if** the digest of the actual files, recomputed by Core, equals `source_sha256` (an intact import); the publication then goes through the importer's gate (`verified_import`). A modified source loses them (`upstream_verification_dropped`) and keeps `name`, `url`, `ref`, `license`, `author` as a declaration: `verified_intact` is absent, never `true`. For an embedded source the claim is **recomputed again at instantiation** and **anchored**: it stays `verified` only if the files still give `source_sha256` **and** the library still HOLDS a healthy version whose importer-written provenance names the same commit, archive and digest (`PrefabService.holds_verified_import`). A record that claims a verified import its files do not match is refused `presentation_studio_corrupt_document` before anything is created; a hand-edited record that is self-consistent (files, digest, a made-up commit) is installed with the importer's keys removed and reported as `provenance: declared_not_reverified` per scene in the answer. If the original import has been archived by the retention, a genuine record reads `declared_not_reverified` too: honest, not alarming.
+- **Licences.** An upstream whose licence is not one of the reviewed redistributable ones (`PERMITTED_LICENCES`: MIT, Apache-2.0, BSD-2-Clause, BSD-3-Clause, ISC, 0BSD, Unlicense, CC0-1.0), or is not declared (shown as `not-declared`), is not promoted until the request names that licence: `licence_ack: ["GPL-3.0"]`. The plan lists `licences: {name: [scene keys]}` and each blocking finding quotes the name, so the acknowledgement is an informed, visible act, not a boolean. The same rule covers library prefabs (`scene`) and presentation records; the acknowledgement is stored in the record (`catalog.licence_ack`). A source with no upstream is the user's own work and needs nothing. Jarvis does not give legal advice: it records the licence and who acknowledged it.
+- **Compatibility is carried, not upgraded.** `compatibility` stays what the source declared; a record is `native` for an engine only when all its scenes are.
+
+### Reusable presentation template document (`jarvis.presentation_studio.template` v1 and v2)
 
 ```
-{schema, schema_version: 1, template_id: "ptp_<12 hex>", kind, title, description, tags,
- scenes: [{key: "s1", label, scene: <StudioScene: prefab pin to studio-template.*, neutral props/data, chosen controls, anchors, empty title/section/preview>}],
+{schema, schema_version: 1 | 2, template_id: "ptp_<12 hex>", kind, title, description, tags,
+ scenes: [{key: "s1", label, scene: <StudioScene: prefab pin to studio-template.* (v1) or a record-local slot (v2 with source), neutral props/data, chosen controls, anchors, empty title/section/preview>,
+           source?: "<sha256>"  (v2)}],
  art_direction: null | {sections: {<section>: <closed-vocabulary dict>}},
  parameters: [{scene_key, control_id, kind: "dimension"|"parameter", role: "look"|"content", type, group, label}],
- prefabs: [{id, version}], report, derived_from, created_by, created_at, revision: 1}
+ prefabs: [{id, version}], report, derived_from, created_by, created_at, revision: 1,
+ score?: null | {start_item_id, items, cues: [], sequences: [], recovery_points: []},   (v2)
+ embedded?: null | {"<sha256>": {manifest, template, style, behavior} | {manifest, sources, assets}},   (v2)
+ catalog?: null | {type: "presentation", compatibility, stack, licences, upstreams, licence_ack}}   (v2)
 ```
 
-A template scene's `scene_id` is a record-local slot (`template_scene_id`), regenerated by every instantiation. At most 512 templates, 256 KiB per document; a newer schema is refused untouched
-(`unsupported_schema_version`); the file is created once and never rewritten or deleted by Core.
+A document is written at the **lowest version that expresses it**: a `scene`, `art_direction` or `motion` template stays v1 byte for byte; a `presentation` template is v2. The document is read with the strict loader of every Studio document (a duplicate key or `NaN` is `presentation_studio_corrupt_document`), and every embedded source's key is **recomputed** from its content (`content hash`): an edited source under an old key is `corrupt_document`, never trusted. A reader that only knows v1 refuses v2 untouched
+(`unsupported_schema_version`); v2 keys inside a v1 document are refused. A template scene's `scene_id` is a record-local slot (`template_scene_id`), regenerated by every instantiation. At most 512 templates, 256 KiB per document
+(the real cap of every Studio document: embedded sources have no cap of their own, the plan measures the **serialized** record and `embedded_too_large` says how much the embedded sources weigh); a newer schema is refused untouched; the file is created once and never rewritten or deleted by Core. `GET /templates/{id}` lists `embedded` as an inventory
+(`{engine, modules, assets, bytes}`), it does not ship the sources.
 
 ### Routes and the operation surface (for the agent tools of Slice 21)
 
@@ -1518,10 +1643,10 @@ Core `/v1/presentation-studio`, Control Center `/api/presentation-studio` (same 
 
 | Method | Route | Body -> answer |
 | --- | --- | --- |
-| POST | `/presentations/{presentation_id}/variants/{variant_id}/templates/plan` | `{kind, title, slug, description?, tags?, scenes?: [{scene_id, label?, dimensions, parameters}], art_direction?: {sections, motifs?}, actor?, expected_revision?}` -> 200 `{ok, kind, presentation_id, variant_id, variant_revision, slug, title, selection_required, scenes: [{scene_id, key, source, prefab_id, shared_with, prefab_state: new\|reused\|taken, controls: [{control_id, label, group, path, type, role, eligible_dimension}], kept, stripped}], art_direction, would_publish, findings, blocking}` ; writes nothing |
-| POST | `/presentations/{presentation_id}/variants/{variant_id}/templates` | the same body, selection mandatory -> 201 `{template_id, template (summary), kind, prefabs: [{id, version, published, reused}], scenes, parameters, findings (non-blocking), derived_from}` |
+| POST | `/presentations/{presentation_id}/variants/{variant_id}/templates/plan` | `{kind, title, slug, description?, tags?, scenes?: [{scene_id, label?, dimensions, parameters}], art_direction?: {sections, motifs?}, actor?, expected_revision?, licence_ack?: [name], keep_assets?: bool}` -> 200 `{ok, kind, presentation_id, variant_id, variant_revision, slug, title, selection_required, scenes: [{scene_id, key, source, engine, verified_import, prefab_id, shared_with, prefab_state: new\|reused\|taken\|embedded, controls: [{control_id, label, group, path, type, role, eligible_dimension}], kept, stripped}], art_direction, publishes_to_library, embedded: [{hash, scenes}], score, licences, would_publish, findings, blocking}` ; writes nothing |
+| POST | `/presentations/{presentation_id}/variants/{variant_id}/templates` | the same body, selection mandatory -> 201 `{template_id, template (summary), kind, published_to_library, prefabs: [{id, version, published, reused}] (empty for a presentation), scenes, parameters, findings (non-blocking), derived_from}` |
 | GET | `/templates[?kind=]` | `{templates: [summary], count, problems: [{template_id, code}], limit}` |
-| GET | `/templates/{template_id}` | `{template, summary, prefab_availability: [{id, version, available}]}` |
+| GET | `/templates/{template_id}` | `{template (embedded as an inventory), summary, prefab_availability: [{id, version, available}]}` |
 | POST | `/templates/{template_id}/instantiate` | `{title?, presentation_id?, variant_id?, expected_revision?, actor?}` -> 201 by kind, below |
 
 Stable ids: `ptp_<12 hex>` (template), `studio-template.<slug>[-n]` (library prefab, version from the library), `s1..sn` (scene key inside a template). The typed client methods are
@@ -1530,7 +1655,7 @@ A Core service call is `app.presentation_studio_templates.{plan, promote, list_t
 
 Instantiation by kind (all through existing doors, so the same validation, revision and undo rules): `presentation` -> `title` required; a new Presentation (`create`), its variant filled by `save_variant`
 (new scene ids, `source_revision 0`), the template's DA sections over the deterministic fallback (`create_art_direction`) or the fallback itself (`create_fallback_art_direction`); the answer lists
-`presentation_id, variant_id, scene_ids, art_direction_id, rendered: [{scene_id, prefab, payload, problems}]` (`describe_scene`: payload budget and instance problems of every scene). A failure after the
+`presentation_id, variant_id, scene_ids, score_id (null without a score skeleton), art_direction_id, rendered: [{scene_id, prefab, payload, problems}]` (`describe_scene`: payload budget and instance problems of every scene); embedded sources are installed first (see *One artefact per presentation*). A failure after the
 Presentation was created is raised with the new id in the message (a Presentation cannot be deleted by Core). `scene` -> `presentation_id, variant_id, expected_revision` required; one `scene.add`
 op through the edit API (undoable, `STALE_REVISION` when the variant moved). `art_direction`/`motion` -> same three fields; the sections are laid over the destination's current DA (its
 name, references and other sections are kept, the laid sections are marked `provided`) or create one. Every instantiation first verifies the cited library versions.
@@ -1546,22 +1671,105 @@ name, references and other sections are kept, the laid sections are marked `prov
 | the shared library refuses (definition, id or version limit, disk) | `presentation_studio_source_invalid` 400, `presentation_studio_limit_reached` 409, `presentation_studio_storage_io` 500, with the library's own code in the message |
 | a failure between the publications and the document | prefabs stay published (the library has no deletion), a `template_orphans` `warning` row names them; repeating the **same** promotion reuses them (same id, same content: no new version) and writes the document |
 | an unknown, damaged or newer template | `presentation_studio_unknown_template` 404 / listed in `problems` / `presentation_studio_unsupported_schema_version` 409 |
-| a cited library version missing or tampered at instantiation | `presentation_studio_prefab_unavailable` 409, nothing created |
+| a cited library version missing or tampered at instantiation (`scene` templates; a presentation template cites none) | `presentation_studio_prefab_unavailable` 409, nothing created |
+| an embedded source today's guards refuse, or whose claimed verified import its files do not match | `presentation_studio_source_invalid` 400 / `presentation_studio_corrupt_document` 409, checked before the new Presentation is created |
+| a restrictive or undeclared upstream licence not acknowledged, assets not kept, a source not native for its engine | blocking findings, `presentation_studio_template_leak` 409, nothing written |
 
 ### Observability
 
-`core.presentation_studio.{template_planned, template_promoted, template_refused, template_orphans, template_instantiated}`: ids, counts, kinds and finding codes; never a title, a slug, a
+`core.presentation_studio.{template_planned, template_promoted, template_refused, template_orphans, template_instantiated, template_instantiation_failed}`: ids, counts, kinds and finding codes; never a title, a slug, a
 label, a value or a string of the project. The relay journal (`presentation_studio.request.relayed`) notes the action, status and code.
 
 ### Decisions and limits (recorded)
 
-- **One library id per unique sanitized source, not per scene**: the library has 512 ids and no deletion; a promotion of a deck of identical-looking scenes costs one.
+- **One artefact per presentation (Remotion Slice 19)**: a `presentation` promotion publishes no prefab to the library; identical sanitized scenes share one embedded source. A `scene` promotion keeps one library id per unique source (the library has 512 ids and no deletion).
 - **Retry reuses, it never forks again**: an existing id whose latest version has the same fingerprint is reused; any other content under that id is `prefab_id_taken`.
 - **DA and motion are composition data, not prefabs**: the shared library model has no representation for them. They are laid over a deterministic fallback profile; a section that does not stand alone is refused at promotion, not at use.
-- **Not promoted**: the score and its cues (they name scene and anchor ids of the project), scene-local variants (only the selected content is promoted), linked resources of the presentation, undo history.
-- **Library versions of a template are custom ids, not retention ids**: `studio-template.*` is never archived by the Slice 01a retention, so templates register no pin source.
+- **Not promoted**: the words of the score, its cues, locked sequences and control values (the **skeleton** is, since Slice 19), scene-local variants (only the selected content is promoted), linked resources of the presentation, undo history.
+- **TSX is searched, never rewritten**: a hard-coded project string, id or path in a module is a blocking finding. The scanner **NFKC-normalises** text first (a full-width `ｐｓｓ_…` or `Ｃ:\` is seen), knows the real Board id grammar (`board_` + letters, digits, `-`, `_`) and `board:<id>/memory|artifact/…` live references, searches the **words of the score** (speech, notes, labels, cue phrases, sequence steps) as project content, and reads the text of kept **SVG** assets. Still not seen: reworded, split, base64 or otherwise encoded content, text inside raster images, metadata of non-SVG binaries; `keep_assets` stays a human choice.
+- **Embedded sources are copies**: a later fix to the original scene source is not seen by an existing template; promote again. A template record is at most 256 KiB, so a heavy Remotion scene (several large modules, images) does not fit an embedded record: promote that scene on its own as a library prefab.
+- **Library versions of a scene template are custom ids, not retention ids**: `studio-template.*` is never archived by the Slice 01a retention, so templates register no pin source. Embedded sources are not library versions: nothing to pin until they are installed as presentation-scoped prefabs, which the variants' pins then retain.
 - **A promoted prefab is a normal library entry**: it can be forked or revised through the prefab view; a template pins the exact version it was promoted at.
 - **Not run in a real browser**: the instantiated scenes are validated and described (payload budget, instance validation) by the same gates as any scene; a pixel-level drill of a promoted template belongs to Slice 22.
+
+## Newer prefab versions and trial variants (Level 3, Remotion Slice 19)
+
+Status: implemented by Remotion Slice 19 (decisions D9 and D10 of the handoff). Conformance: `tests/unit/test_presentation_studio_upgrades{,_routes}.py`,
+`test_presentation_studio_explorer_upgrades_{js,browser}.py`. Owner modules: `jarvis/core/presentation_studio_upgrades.py` (`PresentationStudioUpgrades`, the only door),
+`jarvis/protocol/presentation_studio_upgrades_routes.py`, `jarvis/runtime/presentation_studio_upgrades_relay.py`, `jarvis/runtime/control_center_presentation_studio_explorer_upgrades.js`,
+client methods `presentation_studio_upgrades` and `presentation_studio_upgrade_try` on `LocalCoreClient`.
+
+**The rule.** A scene pins one exact, immutable `(prefab_id, version)`. When the same id later receives a newer healthy version (a source edit made in another variant, a library revision), the
+pin **does not move**. Core only *tells* the user, and the user may *try* the newer version in a new variant. Nothing is upgraded automatically, nothing is rebound silently, nothing is
+published to the shared library, and the original variant is not written. Adoption is a separate, explicit act: activate the trial variant, or compare and compose it with the existing tools
+([comparison and composition](#comparison-and-semantic-composition-contract-level-3-slice-19-backend)). "Newer" means a newer **local** immutable version of the same id: no network is consulted,
+an upstream that moved on is not seen (re-import it, [remotion-import.md](remotion-import.md)).
+
+### The notice (read-only)
+
+`GET /v1/presentation-studio/presentations/{presentation_id}/variants/{variant_id}/upgrades` (Control Center: `/api/presentation-studio/presentations/...`, same suffix). No query. Answer:
+`{presentation_id, variant_id, variant_revision, notices, count, unavailable, trials, auto_upgrade: false}`, a notice being
+`{scene_id, prefab_id, pinned_version, latest_version, newer_count, newer_versions (at most 8, newest first), reloading, fits, problem, engine_ok, pinned_licence, latest_licence, licence_changed, licence_ack_required, latest_catalog: {type, compatibility, license, upstream: {name, verified_intact}}, trials}`.
+
+| Field | Meaning |
+| --- | --- |
+| `fits` / `problem` | the scene's values and controls hold in the latest version (`SceneCatalog.check`); otherwise `problem` is the refusal code (`presentation_studio_scene_incompatible`...). Nothing is adapted for the user. |
+| `engine_ok` | the latest version is `native` for the Presentation's engine (`require_native_pin`, the Remotion Slice 10 rule: `adapter` is declared, not usable). |
+| `pinned_licence`, `latest_licence`, `licence_changed`, `licence_ack_required` | the licence of the pinned and of the newest version (`catalog.license`, else the upstream's). A licence that **changes** (even to a gentler one) or an upstream licence that is not a reviewed redistributable one, or not declared, is `licence_ack_required: "<name>"` (`not-declared` for none): a green "compatible" never stands for a licence decision. |
+| `reloading` | the scene runs a source not yet seen mounted (`last_valid_pin`): a trial is refused until it is confirmed. |
+| `latest_catalog` | the public catalog block of the latest version, read, never written; `verified_intact` is Core's recomputed statement (Slice 18), absent for a declared upstream. |
+| `trials`, `trials[]` | trial variants already opened from this variant: `{variant_id, variant_number, scene_id, prefab_id, version, active}`, found from the creation reason (`Essai de <id> v<n> pour la scène <pss_>`, a label: not trusted as a fact beyond the listing). |
+| `unavailable` | scenes whose prefab id cannot be read (`{scene_id, prefab_id, code}`): said, never hidden. |
+
+A scene on the latest version has no notice. **Nothing calls the route by itself**: the explorer reads it when a variant is selected, when its revision changes and at most every 30 s while open.
+
+### The trial
+
+`POST .../variants/{variant_id}/upgrades/try` `{scene_id, version?, title?, actor?, expected_variant_revision?, licence_ack?: [name]}` (a key such as `activate` is an unknown key: **a trial is never activated by itself**). `version` defaults to the
+latest healthy one and must be **newer** than the pin and healthy. 201: the branch answer of the variant graph contract (`variant, node, linked, ...`) plus `{trial: true, adopted: false, scene_id, from, to}`.
+
+Order, all before the first write: the source variant is read, the scene must exist and not be reloading, `expected_variant_revision` is compared, the target version is checked, then
+`check_scenes` (pin exists, values valid, controls in the manifest, **native for the engine**) and the score regression check run on the repinned scene; then the existing branch operation
+(`PresentationStudioVariants.create_branch(transform=...)`) writes a child whose **one** scene takes the new pin (`source_revision + 1`, hot-reload fields cleared) and everything else is a copy
+(values, controls, anchors, local variants, linked art direction and score). A copy that no longer pins the expected version, or whose variant is no longer at the revision the checks ran against (an edit landed between the check and the write: `transform` runs INSIDE the variants lock and compares the revision), is `presentation_studio_stale_revision`; nothing is written and no number is spent (`test_a_change_of_the_variant_between_the_check_and_the_write_is_refused_inside_the_lock`).
+
+| Failure | Behaviour |
+| --- | --- |
+| `licence_ack_required` and the request does not name that licence in `licence_ack` (or the actor is not `user`: the acknowledgement is the user's own act) | `presentation_studio_invalid` 400 quoting the licence, nothing written |
+| the new version does not hold the scene's values or controls | `presentation_studio_scene_incompatible` 400, nothing written (no variant, no number spent) |
+| not native for the engine (`unsupported` or `adapter`) | `presentation_studio_engine_unsupported` 409, nothing written |
+| the version is not newer than the pin / an unknown key / not an id | `presentation_studio_invalid` 400 |
+| no healthy version of that number | `presentation_studio_prefab_unavailable` 409 |
+| the scene is waiting for the confirmation of a hot reload | `presentation_studio_scene_reloading` 409 |
+| the variant moved (`expected_variant_revision`) or the source pin changed | `presentation_studio_stale_revision` 409 |
+| the new version would unresolve score references | `presentation_studio_score_incompatible` 400 |
+| 64 live variants | `presentation_studio_limit_reached` 409 (the branch rule) |
+
+### Pins and retention
+
+Nothing new for the retention: the original variant keeps its old pin, the trial carries the new one, and the `StudioPinRegistry` (live **and archived** variants, written through the single variant
+write door) keeps both versions while both variants exist. A trial pins the **latest** version at its creation, which the retention never retires before it is superseded; after that, the pin
+index of the trial protects it exactly as any variant pin. Archiving the trial releases its pin only with the variant ([variant graph contract](#variant-graph-and-operations-contract-level-3)).
+Proof: `test_retention_keeps_the_old_pin_and_the_trial_pin_while_the_trial_exists` (40 versions of a studio id with both pins held, the unpinned old ones archived, never deleted).
+
+### In the Variant Explorer
+
+A zone under the metadata of the selected **live** variant, hidden when no scene has a newer version. Collapsed by default to one line (`Versions plus récentes`, `3 scènes`, "Une version plus récente existe ; rien n'a été changé.", `Relire`) so the preview keeps its room; a click on the title opens one row per scene:
+scene title, `prefab · v1 → v3 (2 versions plus récentes)`, a chip (`Compatible` / `Incompatible` / `Moteur : non utilisable` / `Rechargement en cours`, plus `Import vérifié intact` when Core says so),
+a **warning chip** when the licence changed (`Licence modifiée : MIT → CC-BY-NC-4.0`) or needs a decision (`Licence à reconnaître : …`), with a checkbox « Je reconnais la licence « X » de cette version » that the button waits for (the request then carries `licence_ack`), the button **Essayer dans une nouvelle variante** (inactive buttons say why, on screen and in the title, and never adapt anything), and one `Essai #n (vX)` button per trial already open (selects it so it can be compared or activated).
+Rule Zero: the search shows `Recherche des versions plus récentes… N s`, an error is said with Core's reason, "rien n'a été modifié" and `Relire`; an attempt runs under the explorer's busy bar with its counter and ends with a notice
+(`Variante d'essai #n créée avec la version V : la variante #m n'a pas changé…`), logged (`[studio-explorer] upgrades_loaded|upgrades_failed|upgrade_try_created`, `obsClientLog` for failures); the new variant is selected, never activated.
+The page sends no actor (the relay forces `user`) and no `activate`.
+
+### Observability and limits
+
+`core.presentation_studio.upgrade_checked` (ids, counts), `upgrade_trial_created` (ids, versions), `upgrade_trial_refused` (ids, code): never a title or a value.
+
+- **Local versions only**: an upstream template that changed on GitHub is a re-import (new import, new commit), not a notice.
+- **One scene at a time**: a trial repins one scene; trying the same version on several scenes is one trial per scene (or a branch plus semantic edits).
+- **A trial that is later edited** keeps the creation reason as its label; the listing in `trials` is a convenience, not a proof the variant still pins that version.
+- **No tool for the agent**: the surface is the page and the routes; no `presentation_*` operation or tool budget changed (`test_mcp_catalog`). A later Slice may expose it through `presentation_template`-style ops.
+- **Not covered by a real model**; the browser proof is a real Chrome against an isolated Core (`JARVIS_EXPLORER_SHOTS` leaves screenshots).
 
 ## Playback roles and speech authority (Level 3, Slice 01c, decision A)
 
@@ -1691,7 +1899,8 @@ request -> [phase 1, no lock]  read pin + source -> compose candidate -> GATE (b
   A cheap syntax pre-check is not feasible in Python (there is no JavaScript parser in this process; the only real parser is the
   browser's) and it is deliberately not faked: a regex "check" would refuse valid code and miss real errors. The cost of a bad
   edit is therefore one inert published version, bounded by the library's `version_limit` and by the agent rate limit below;
-  retention archives the unpinned ones.
+  retention archives the unpinned ones. **For a Remotion scene this is not true any more**: there is a real parser (esbuild), so
+  the gate includes a build and a source that does not compile is never published ([Remotion sources](#remotion-sources-slice-14)).
 - **Agent rate limit.** The `brain` actor may send at most `BRAIN_EDIT_LIMIT` = 10 source edits per scene per
   `BRAIN_EDIT_WINDOW_S` = 60 s; the 11th gets the typed error `presentation_studio_source_edit_rate` (HTTP 429, retry after the
   stated number of seconds; a request the limit refuses does not extend the window). The `user` actor is never limited: its
@@ -1722,7 +1931,7 @@ request -> [phase 1, no lock]  read pin + source -> compose candidate -> GATE (b
 | `reloaded_state_reset` | 200 | as `reloaded`, but some studio-owned values could not be kept: `reset` names them (keys, control ids, anchor ids; never a value) | persistent warning band listing the names |
 | `repinned` | 200 | published and pinned; **no stage window shows this scene**, nothing was reloaded; the pin waits to be seen mounted | persistent info band |
 | `pending_mount` | 202 | the page did not report within `DEFAULT_MOUNT_DEADLINE_S` (8 s); the pin and its fallback stay, a late report confirms or rolls back | persistent warning band |
-| `refused_validation` | 400 | refused **before any publication** (code `presentation_studio_source_invalid`, `_scene_incompatible`, `_score_incompatible`, `_limit_reached`); nothing changed | persistent error band |
+| `refused_validation` | 400 | refused **before any publication** (422 for a Remotion build failure; code `presentation_studio_source_invalid`, `_scene_incompatible`, `_score_incompatible`, `_limit_reached`, and for a Remotion scene `_source_build_failed` with `diagnostics`, `_engine_unavailable`); nothing changed | persistent error band |
 | `rolled_back` | 409 | a step failed after the pin moved (`presentation_studio_mount_failed` with the host's short `reason`, or `_stage_failed`): the pin is back on the last valid version | persistent error band, plus a toast |
 | `stale` | 409 | the variant moved (or the scene's pin changed) since the caller's basis: read again, retry | warning band |
 | `degraded` | 409 | the mount failed **and** the rollback could not be completed (the stage window could not be put back after `STAGE_RESTORE_ATTEMPTS` = 3 tries, or the previous pin could not be written): the scene keeps the new version **and its fallback** (`last_valid_pin`); a later report, a reload or a restart repairs it | persistent error band |
@@ -1879,15 +2088,125 @@ Tested on one real stack (`test_presentation_studio_authoring_reload.py`):
   `newest - live` of one id and is counted nowhere else, so nothing is counted twice and an archived version is never
   "unreferenced" (it is archived, not live).
 
+### Remotion sources (Slice 14)
+
+The same door (`POST .../source-edits`), the same phases and the same result states apply to a scene whose pin is a **Remotion source**
+(manifest v2, `docs/remotion-source.md`). What is different is the body and the gate; nothing else was rebuilt (`apply_source_edit`,
+`PrefabDraftCoalescer`, the per-scene lock, `last_valid_pin`, `plan_carry_over`, the mount report and the staged swap are the HTML
+path's own). Module map: `jarvis/domain/presentation_studio_remotion_edit.py` (pure: request keys, candidate composition,
+diagnostic text), `jarvis/core/presentation_studio_remotion_gate.py` (`RemotionBuildGate`: the build step), the `check_build`
+method of `RemotionPlayerService` (the real compiler), conformance in `tests/unit/test_remotion_source_edit_{domain,service,routes,
+real,realpage_browser,docs}.py` and `test_presentation_studio_reload_host_js.py`.
+
+**Agent workflow, no new tool.** The brain records the intent with the existing `scene.source_request` (no new MCP tool: the
+`jarvis-presentation` budget is unchanged, `test_mcp_catalog`). A delegated sub-agent then (1) **reads** the scene's source with
+`GET .../variants/{variant_id}/scenes/{scene_id}/source` (`{engine, prefab, source_revision, basis, manifest, sources: {path: text},
+assets: {path: {bytes, sha256}}}`, never asset bytes), (2) **proposes** files with `POST .../source-edits`, `actor: "brain"`, the
+`basis` it read and the `request_id` of the recorded request (**required for the brain** since the Slice 21 rework: [Source requests](#source-requests-scenesource_request-durability-decision); the request is closed when the edit stands). `files` for a Remotion
+scene:
+
+| Key | Meaning |
+| --- | --- |
+| `sources` | `{path: text}` replaces or adds a module under `src/**`; `{path: null}` deletes it |
+| `assets` | `{path: base64}` replaces or adds an asset under `public/**`; `{path: null}` deletes it (at most 2 Mi base64 characters per edit: large assets do not travel through this door) |
+| `manifest` | optional full manifest (inputs, sample, `source.composition`, `source.entry`...); Core **recomputes** `source.modules` / `source.assets` from the files, the agent never maintains them. **Core-owned, never settable by an edit:** `source.engine` (the pin the source was written for), the whole `catalog` block (licence, upstream, `runtime_license`, `source_sha256` and every other provenance field written by Core) and `schema_version`: they always come from the base version (a v3 base keeps its `catalog` even when the manifest is omitted or resent without it), and a manifest that carries them with a different value is refused with `presentation_studio_invalid` naming the key (nothing built, nothing published). Resending the base's own value is allowed. `fps`, duration, size, `inputs` and `entry` change only through the validated path (`entry` must be one of the modules; `inputs` are checked against the controls and anchors by the carry-over rules) |
+| `restore_version` | `{id, version}` alone: republish an earlier version as a **new** revision (undo / redo, below) |
+
+**Who may send it.** The user too: the Control Center relay forwards Remotion source bodies (actor forced to `user`, its own smaller body cap), so a source edit is not agent-only. The agent rate limit (10 per scene per minute) applies to the `brain` actor only, as for HTML; a user retouch is never limited.
+
+Sending `template` / `style` / `behavior` for a Remotion scene (or `sources` / `assets` for a Slidecar scene) is a typed refusal that
+names the right keys. The request body cap on the Core route is `MAX_REMOTION_BODY_BYTES` (about 4.1 Mi); the Control Center relay keeps
+its smaller cap (the page edits through controls; source edits come from the agent).
+
+**The gate, before anything is published.** Phase 1 composes the candidate from the pin's bytes (re-read and re-guarded by
+`PrefabService.remotion_source`) plus the request, then, in this order: reserved property names; `validate_candidate` (path rules,
+extensions, bounds, `SOURCE_GUARDS` isolation guards, manifest and composition including the frame count: an invalid frame count is a
+`presentation_studio_source_invalid` refusal, never a Player surprise); the studio values against the new manifest (controls, anchors
+and values are carried over **by name**, `allow_state_reset` names what no longer fits, exactly as for HTML); the score; and last, the
+costly step, **the build**: `RemotionBuildGate` asks the real compiler (esbuild in the managed process of the Remotion capability,
+`docs/remotion-source.md` section 5) to build the composed source. Content already seen is free (same content, same cache key) and a
+source that passes warms exactly the cache entry the Player will read.
+
+| Outcome of the build | Result |
+| --- | --- |
+| compiles | the edit continues (publish through the coalescer, pin, stage patch, mount report, confirm) |
+| does not compile (syntax, refused import, no default export, timeout, bundle too large) | `refused_validation`, code `presentation_studio_source_build_failed`, **HTTP 422**, `diagnostics: [{file, line, column, text}]` (also under `error.diagnostics`) and the first three in `message` as `src/Scene.tsx:12:5 ...`; `file` is a path **of the source**, never of the machine. **Nothing is published, pinned or patched**: the previous version keeps playing, there is no inert bad version to archive, the burst draft is untouched |
+| engine not ready (capability to repair, no Remotion adapter wired) | `refused_validation`, code `presentation_studio_engine_unavailable`, with the repair; the source is **not** published blind and **no other engine** plays instead |
+
+There is no Slidecar fallback anywhere on this path (`docs/presentation-engine.md`): a failed build is a typed, visible error.
+
+**A scene that compiles but throws when it renders.** esbuild strips types and does not run the scene, so the build cannot see
+a render-time `throw` (nor a TypeScript type error: no `typescript` is in the pinned lock). Two changes make the staged swap catch it:
+(1) the sandbox boot script wraps the scene component in one stable React error boundary that reports `error` to the host (the
+Remotion `Player` has **no** `onError` prop; its error event fires before anyone can listen, so before this a throwing scene was
+reported as mounted); (2) for a Remotion frame the host no longer counts `ready` (sandbox loaded) as mounted: it waits for the
+Player's first `clock` (committed first render; a render error is reported **before** it) and then `SETTLE_MS`; with no first clock
+within `RENDER_PROOF_MS` = 10 s the frame fails (`timeout`). The candidate then fails beside the live frame, the mount report says
+`failed`, and the existing rollback puts the last valid pin back (`rolled_back`, `presentation_studio_mount_failed`): the old frame
+never left the screen. The failed version stays published (immutable, unpinned, archived by retention). An error that appears
+**after** the first frame (frame 50 throws) is a runtime error of the live scene: the in-place failure band with "Recharger la scene",
+not a hot-reload rollback.
+
+**Undo / redo.** The undo ring of the Slice 08 records `/edits` operations only; a source edit is not in it (it is a new immutable
+version, not an inverse operation). Undoing a source edit is a source edit: `files: {restore_version: {id, version}}` republishes the
+content of that earlier version as a **new** revision through the same gate, build and swap. The previous version is `previous` in the
+result, the undone one is `published` (redo = restore that). Accepted targets: the scene's own source versions
+(`presentation-studio.p..s..`) and the pins the scene was reloaded **from** (kept in memory, 16 per scene, so the first edit can be
+undone back to the base prefab; lost at restart, then only the scene's own versions can be restored). A version that retention
+archived or that is altered is a typed refusal (`cannot be restored`), nothing is guessed. History is linear: nothing is rewritten or
+deleted, version numbers only grow. The versions are protected from retention by the existing pin sources (variants, `last_valid_pin`,
+the live scene, the in-flight hold) for as long as they are pinned; a version nothing pins can be archived after 32 live versions, which
+is the stated limit of undo depth (the 16 newest are always kept).
+
+**Concurrency.** Unchanged and now exercised with a slow build: composition (hence the build) is serialized per source id by the
+compose lock; the request's basis is judged **again** when its turn comes (a stale request that waited builds and publishes nothing),
+and a request waits at most `DEFAULT_COMPOSE_QUEUE_S` = 75 s for its turn, then gets the typed busy error
+`presentation_studio_scene_reloading` (409, retry; journal `reload_busy`), never an endless queue; two edits from one basis: one wins, the other is `stale` (its published version stays unpinned and harmless; if both
+raced on the scene's very first fork the loser is re-submitted as a revision of the id the winner just created, not refused);
+a burst composes on the draft, each retouch is built, one version is published and every caller gets the same outcome; a broken
+retouch inside a burst leaves no trace in the draft. The agent rate limit (10 per scene per minute) applies.
+
+**`@remotion/codemods`: not used.** Decision with evidence: the pinned lock (`jarvis/capabilities/remotion/package-lock.json`)
+carries `@remotion/codemods` 4.0.534 only as a transitive dependency of `@remotion/cli` / `@remotion/studio`; its `exports` are `.`
+and `./resolve-composition-component-location` (there is **no** `./sdk` subpath in 4.0.534; `@remotion/sdk` is a different package),
+and its transforms rewrite files on disk for the Studio (Babel + recast). Our sources are virtual (bytes in the prefab library) and
+an agent edits whole modules, so a codemod adds a second, unproven writer for no capability the request keys lack. Skipped: if a
+future version ships an SDK worth wrapping it enters behind a versioned optional adapter after a proof run, like every other
+engine detail (`test_remotion_source_edit_docs.py` pins the facts above to the lock).
+
+**Residual risks.** No TypeScript type checking (esbuild only; adding `typescript` to the lock is a Slice 19 decision); a render error
+after the first frame is not a rollback; a scene that renders but is visually wrong is only judged by the Human; Windows and
+Chrome only were exercised; undo targets outside the scene's own versions do not survive a Core restart; assets in an edit are capped
+at 2 Mi base64; the build runs under the per-source compose lock, so a later edit of the same scene waits for it: at most the scene compile
+timeout (60 s; the shared `host.js` is **not** built under the lock any more: `check_build` compiles the scene only, a cold host
+(up to 120 s) is built by the first `describe`), and a waiter gives up after 75 s with the busy error above.
+
 ### Source requests (`scene.source_request`): durability decision
 
 **Not durable, on purpose.** The ring of 64 in memory stays (`pending_source_requests`, eviction is a `warning` row), and a
 source edit that carries `request_id` closes the request (`fulfil_source_request`). Reasons: the intent is free text that must
 not reach a file or a journal; a request without a producer has no consumer until the agent surface (Slice 21) exists, and AI
 code generation is out of scope here; after a restart a stale request is misleading because the scene moved on; losing one is
-visible (eviction row, `durable: false` in every result) and costs only a repeated sentence. An unknown or evicted
-`request_id` never blocks an edit. Revisit when Slice 21 needs requests to outlive a restart (then a bounded, content-free
-index in a file store).
+visible (eviction row, `durable: false` in every result) and costs only a repeated sentence. Revisit if requests must outlive a restart
+(then a bounded, content-free index in a file store).
+
+**Amended by the Remotion Slice 21 rework (QA B1): for the `brain`, a pending request IS the authority of a source edit.** The Slice 06
+rule « an unknown or evicted `request_id` never blocks an edit » now holds for the **user** only (the Control Center relay forces the actor
+`user`; the user needs no request). For the actor `brain`:
+
+1. Core **records** a brain `scene.source_request` only when the edit body carries `origin: "explicit_user_request"` (committed edits; a preview
+   records nothing). The `jarvis-presentation` MCP server sets it only after the Control Center attests an addressed user turn; without it Core
+   answers 403 `presentation_studio_source_request_required` (a `refused` edit result, `refusal_kind: authority`). The record keeps `origin`
+   (`explicit_user_request` always for a user's own request) and a monotonic `created_at`.
+2. `POST .../source-edits` with `actor: "brain"` **requires** the `request_id` of a pending record for the same presentation, variant and
+   scene whose `origin` is `explicit_user_request`; otherwise 403 `presentation_studio_source_request_required`, before any composition, build
+   or rate-limit charge. Messages say « demande à renouveler » (unknown, satisfied, evicted, lost at a restart, expired, another scene).
+3. The record stays pending until an edit **stands** (`reloaded`, `reloaded_state_reset`, `repinned`): a refused build, a `stale` basis or a
+   rolled-back mount keep it, so a retouch works with the same `request_id`. It expires after 30 minutes (`SOURCE_REQUEST_TTL_S`, monotonic
+   clock) and is lost at a restart (memory only, unchanged).
+4. **Remaining limit, said plainly**: Core trusts the `actor` and `origin` fields of a body presented with the Core token. A holder of the
+   token can forge both, so this stops an ambient or spontaneous brain (a turn nobody addressed, a sub-agent launched on a whim, an honest
+   brain skipping the step) but not a hostile process that has the token. The token is the boundary for that case, as for every `/v1` route.
 
 ### Concurrency
 
@@ -1911,7 +2230,8 @@ late rollback) and never announces the history on the first poll.
 
 | Method | Core route | Control Center relay (read-guarded) |
 | --- | --- | --- |
-| POST | `/v1/presentation-studio/presentations/{presentation_id}/variants/{variant_id}/source-edits` | `POST /api/presentation-studio/presentations/{presentation_id}/variants/{variant_id}/source-edits`, actor forced to `user`; body `{actor, basis: {variant_revision}, scene_id, files: {manifest?, template?, style?, behavior?}, request_id?, allow_state_reset?}`; the result above (HTTP per status) |
+| POST | `/v1/presentation-studio/presentations/{presentation_id}/variants/{variant_id}/source-edits` | `POST /api/presentation-studio/presentations/{presentation_id}/variants/{variant_id}/source-edits`, actor forced to `user`; body `{actor, basis: {variant_revision}, scene_id, files: {manifest?, template?, style?, behavior?} or, for a Remotion scene (Slice 14), {manifest?, sources?, assets?} or {restore_version}, request_id?, allow_state_reset?}`; the result above (HTTP per status) |
+| GET | `/v1/presentation-studio/presentations/{presentation_id}/variants/{variant_id}/scenes/{scene_id}/source` | Core only (the agent's read before an edit, Slice 14); `{scene_id, engine, prefab, source_revision, basis, manifest, sources, assets}` (Remotion) or `{..., files}` (Slidecar) |
 | POST | `/v1/presentation-studio/presentations/mount-reports` | `POST /api/presentation-studio/presentations/mount-reports`; body `{object_id, prefab: {id, version}, outcome: mounted or failed, reason?, message?}` -> `{matched, waiting, resolved, scenes: [{scene_id, source_revision}]}` (the scene revisions the report settled) |
 | GET | `/v1/presentation-studio/presentations/{presentation_id}/reloads` | `GET /api/presentation-studio/presentations/{presentation_id}/reloads`; `{reloads, pending, stats}` |
 
@@ -1922,8 +2242,8 @@ The relay forwards no `PUT` and no create: a page changes a Presentation only th
 | Typed client | `LocalCoreClient.presentation_studio_source_edit` (returns every outcome; an error envelope raises `CoreProtocolError`), `LocalCoreClient.presentation_studio_reloads` (the mount-report route is called by the page and the relay, not by a typed client method; there is no stage route any more: the playback shows the scene) |
 | Control Center relay | the routes above under `/api/presentation-studio/...`, **actor forced to `user`** on `source-edits`, read-guarded (`Origin: null`, a frame, can neither edit nor report) |
 | Event | `system.presentation_studio.scene_reloaded` (actor `system`, instant, diagnostic, content forbidden; `status`, `code`, `reason`, `revision` = source revision, `source` = actor, `tier` = `source`) |
-| Diagnostics (`core.presentation_studio.<kind>`; ids, statuses, codes, counts, never values) | `reload_published`, `reload_applied`, `reload_refused`, `reload_stale`, `reload_pending` (warning), `reload_rolled_back` (warning), `reload_late` (a mount report that arrived after the call returned; warning when it rolled back), `reload_failed` (error), `reload_confirm_failed`, `reload_rollback_failed` (error), `reload_rate_limited`, `reload_restore_unvalidated`, `reload_announce_failed` (warning), `reload_unverified` (warning, at start), `reload_flush_failed`, `reload_close_timeout`, `reload_recover_failed`, `mount_reported`, `stage_unreadable`, `playback_unreadable`, `pins_ready`, `pins_degraded` (error), `source_request_fulfilled`, `event_failed` |
-| Error codes added | `presentation_studio_source_invalid` (400), `presentation_studio_mount_failed` (409), `presentation_studio_stage_failed` (409), `presentation_studio_reload_unavailable` (409), `presentation_studio_scene_reloading` (409), `presentation_studio_source_edit_rate` (429) |
+| Diagnostics (`core.presentation_studio.<kind>`; ids, statuses, codes, counts, never values) | `reload_published`, `reload_applied`, `reload_refused`, `reload_stale`, `reload_pending` (warning), `reload_rolled_back` (warning), `reload_late` (a mount report that arrived after the call returned; warning when it rolled back), `reload_failed` (error), `reload_confirm_failed`, `reload_rollback_failed` (error), `reload_rate_limited`, `reload_restore_unvalidated`, `reload_announce_failed` (warning), `reload_unverified` (warning, at start), `reload_built` (Slice 14: the source compiled before publication), `reload_build_refused` (warning: code, compile code, number of diagnostics, never a source text), `reload_flush_failed`, `reload_close_timeout`, `reload_recover_failed`, `mount_reported`, `stage_unreadable`, `playback_unreadable`, `pins_ready`, `pins_degraded` (error), `source_request_fulfilled`, `event_failed` |
+| Error codes added | `presentation_studio_source_invalid` (400), `presentation_studio_mount_failed` (409), `presentation_studio_stage_failed` (409), `presentation_studio_reload_unavailable` (409), `presentation_studio_scene_reloading` (409), `presentation_studio_source_edit_rate` (429), `presentation_studio_source_build_failed` (422, Slice 14) |
 
 ### Limits and known gaps
 
@@ -2041,6 +2361,8 @@ Python-only (not an HTTP surface): `notify(kind, ...)` for the timeline owner (`
 
 One stable `window` object per run, `studio-stage-<run_id>`, created once and then **patched** with the next scene's `prefab` block (`PATCH_OBJECT` inside `SceneService.apply_if`, actor `user`): a version change remounts the frame, a props/data change is a `host.update`. A payload already on screen is not written again (a frame's own state survives a resume). An archived id keeps its tombstone and cannot be reused, so the id carries the run id, and a stage the user closed is re-created under `-1`, `-2`... (the old id leaves the ledger, the state says `notices: ["stage_closed_by_user"]` and the band says so; after `MAX_STAGE_REOPENS` 3 reopenings in one run the sync fails `stage_closed`: the run pauses with that problem instead of fighting the user, and a `resume` reopens it once more). Core cannot import the brain-side `SceneDisplayTools`; `SceneStage` sends the same scene commands. Studio objects are categories `studio_stage` and `studio_aux`. **Tool Brain:** studio tools have no `ui_surface` and keep working when the Tool Brain owns the screen; with `JARVIS_TOOL_BRAIN` off (default) nothing else writes these objects; the arbiter test of Slice 21 must refuse the Tool Brain adapters on these two categories (open point recorded in the handoff).
 
+**Remotion scenes on the stage (Remotion Slice 10).** A scene whose pin is a Remotion source ([remotion-source.md](remotion-source.md)) is shown by the SAME stage window object (same owner, same patch rules, same pin registry, same ledger and reclaim): the window host reads the pinned version's bundle, finds `{kind: "remotion"}` and mounts the Control Center's stage page (`/remotion-stage`), which mounts the sandboxed Player ([remotion-isolation.md](remotion-isolation.md) section 10). `props` changes are messages (a colour, a title or a duration changes in one frame, no render, no remount; `data` is not passed); a prefab id/version change prepares the next scene's frame beside the live one and swaps. **Engine gate**: `play`, `edit` and `preview` of a `remotion` Presentation call `require_engine` first; without a ready adapter they fail with `presentation_studio_engine_unavailable` and the stage is never created, never a Slidecar window ([presentation-engine.md](presentation-engine.md)). Failure states (preparing with a live counter, engine unavailable with its repair, compile error with file:line:column, frame removed by the watchdog with a reload action) are drawn in the window itself. Fullscreen is unchanged (a user gesture on the host element; the physical Esc key is a Human check, [OPERATIONS.md](OPERATIONS.md)); sound starts muted and needs a real click inside the scene.
+
 **Scene variant preview (Slice 17).** The stage window can also show a *preview state*: a scene rendered in memory with a scene-local variant selected, started by the user while the run is paused (`show_preview`, `end_preview`). It is memory only, ends on cancel, timeout, any playback command, a committed edit, stop or crash, and always repaints the canonical scene; `where` carries `preview: {scene_id, scene_variant_id}` while it lasts (see *Scene-local variant contract*).
 
 ### Auxiliary resources: stager rules, always retired
@@ -2095,13 +2417,85 @@ Tested with a fake follower over the real `/v1/events` WebSocket (`test_presenta
 
 ### Observability
 
-Diagnostics `core.presentation_studio.{playback_started, playback_transition, playback_refused, playback_stopped, playback_crashed, playback_stage_failed, playback_edit, playback_mode_decision, playback_mode_changed, playback_plan_refreshed, playback_plan_problems, playback_art_direction_changed, playback_reclaimed, playback_reclaim_failed, playback_aux_retire_failed, playback_stage_release_failed, playback_foreign_stop_failed, playback_invariant_broken, mode_restore_failed, armed_set_pulled, armed_publish_failed, cue_report_duplicate, cue_report_refused, event_failed, stage_shown, aux_staged, aux_revealed, archived, archive_already_gone, stage_ledger_unreadable, stage_ledger_unwritable, stage_ledger_overflow, stage_ledger_quarantined, stage_ledger_quarantine_failed, stage_ledger_scan_reclaimed, stage_reopened, playback_detour_invalid, playback_detour_validator_failed, playback_follower_absent, playback_observer_failed, playback_stage_bind_failed (Slice 06: the reload observer failed to bind, the run goes on), overlay_rendered, commit_listener_failed, preview_shown, preview_ended, preview_timeout_failed}`: ids, codes, counts, phases; never a title, a phrase, a note or an error message from the author. One canonical event, `system.presentation_studio.playback_changed` (actor `system`, instant, diagnostic, content forbidden): `status` in `started`, `stopped`, `paused`, `resumed`, `detour`, `returned`, `ended`, `stage_failed`, `edit_committed`, plus `presentation_id`, `variant_id`, `role`, `depth`; identity `(run_id, sequence)`; recorded only with a live conversation. Movement (next, previous, cues) is deliberately not an event.
+Diagnostics `core.presentation_studio.{playback_started, playback_transition, playback_refused, playback_stopped, playback_crashed, playback_stage_failed, playback_edit, playback_mode_decision, playback_mode_changed, playback_plan_refreshed, playback_plan_problems, playback_art_direction_changed, playback_reclaimed, playback_reclaim_failed, playback_aux_retire_failed, playback_stage_release_failed, playback_foreign_stop_failed, playback_invariant_broken, mode_restore_failed, armed_set_pulled, armed_publish_failed, cue_report_duplicate, cue_report_refused, event_failed, stage_shown, aux_staged, aux_revealed, archived, archive_already_gone, stage_ledger_unreadable, stage_ledger_unwritable, stage_ledger_overflow, stage_ledger_quarantined, stage_ledger_quarantine_failed, stage_ledger_scan_reclaimed, stage_reopened, playback_detour_invalid, playback_detour_engine_refused (Slice 10: a detour block that is not native for the Presentation engine), playback_detour_validator_failed, playback_follower_absent, playback_observer_failed, playback_stage_bind_failed (Slice 06: the reload observer failed to bind, the run goes on), overlay_rendered, commit_listener_failed, preview_shown, preview_ended, preview_timeout_failed, timeline_resolved (Remotion Slice 12: a frame map was computed for the scene on the stage), timeline_unresolved (error: its composition could not be read, the scene plays unguided)}`: ids, codes, counts, phases; never a title, a phrase, a note or an error message from the author. One canonical event, `system.presentation_studio.playback_changed` (actor `system`, instant, diagnostic, content forbidden): `status` in `started`, `stopped`, `paused`, `resumed`, `detour`, `returned`, `ended`, `stage_failed`, `edit_committed`, plus `presentation_id`, `variant_id`, `role`, `depth`; identity `(run_id, sequence)`; recorded only with a live conversation. Movement (next, previous, cues) is deliberately not an event.
 
 ### Human checks and known limits
 
 **Fullscreen key gap (known, not fixed in the product).** The browser sets `document.fullscreenElement` one frame before it fires `fullscreenchange`; the fullscreen module binds its host key listener and focuses the host on that event, so a key sent in that single frame (a voice-armed entry followed at once by a key) is dropped by both layers. A person cannot hit it, and the module cannot bind earlier without guessing the browser's answer (`fullscreenchange` is the truth, `docs/presentation-studio.md` > fullscreen). Tests therefore wait for `JarvisFullscreen.state().state === 'entered'` and the host focus before sending keys.
 
 Human-only: the physical Esc key leaving fullscreen (and that it does not also pause), a second screen, the look on a projector, and cue following on an OpenAI ambient stack (Slice 13). Recipe: [OPERATIONS.md](OPERATIONS.md), *Lecture d'une présentation*. Limits: a state a prefab frame writes into the stage window (a click in a counter) is not canonical: a payload already on screen is not rewritten (so a resume keeps it), but the next scene's patch replaces `props`/`data` as a whole. Playback resolves and opens no `ResourceReference` and no `file:`/`scheme:` locator (the Slice 02/04 locator carry-forward is a Slice 11 resolver concern: nothing here dereferences one). PRESENTATION is unavailable on the `legacy`/`duplex` voice architectures; Core cannot see the architecture, so such a run **starts** and the cue follower never pulls: the run says `follower: absent` after 10 s and continues in manual mode (see *Armed-cue delivery*); a stored `ResourceReference` cannot be shown as a detour (only prefab windows); starting a run is exposed to the page through the API (`JarvisStudioPlayer.startRun`) but the explorer UI that offers it is Slice 18.
+
+## Remotion timeline bridge (Level 3, Remotion handoff Slice 12)
+
+Handoff `jarvis-remotion-presentation-integration`, Slice 12. **Status: contract (Level 2) and implementation (Level 3) delivered; proved in a real Chrome against an isolated Core** (`tests/unit/test_remotion_timeline_realpage_browser.py`, evidence `tasks/jarvis-remotion-presentation-integration/slices/12-score-to-remotion-runtime/evidence/`). Wire-level detail (sandbox messages, drift follower): [remotion-isolation.md](remotion-isolation.md) section 11.
+
+**This is an adapter, not a second score.** `Score` / `ScoreItem` / `LockedSequence`, the closed playback table and the sequence clock (*Playback runtime contract*, *Jarvis presenter and locked sequences*) stay the only masters: who speaks, which cue fires, the order, interruption / detour / return, silence, `skip_sequence`. Nothing in this section can speak, call a tool, fire or arm a cue, or move a position. It **describes** what the Remotion Player should do for the state the score is in, and the browser applies it.
+
+### Anchors get a place on the scene timeline
+
+A `ScoreAnchor` is `{anchor_id, label, control_id?, at_ms?}`. `at_ms` (integer, 0..108 000 000) is where the anchor falls **in milliseconds from the start of the composition**; it is written only when set (an anchor from before serialises byte for byte as before) and **the variant document moves to `schema_version` 5**: `UPGRADES[variant][4]` is the identity, a JARVIS that only reads v4 refuses a v5 file (`unsupported_schema_version`, file untouched) instead of failing on an unknown key. Milliseconds, not frames: the position survives a new version of the scene with another frame rate or duration. An anchor with no `at_ms` is spread evenly (`i * duration // n`). Mixed timed and untimed anchors are accepted and reported (`timeline_anchors_partly_timed`); two anchors on the same frame are reported (`timeline_anchors_share_frame`, the first has nothing to play); a position after the end is clamped to the last frame and reported (`timeline_anchor_clamped`). A report is a notice in the band (French text in the player), never a refusal: the run goes on.
+
+### Frame mapping (`domain/remotion_timeline.py`, pure)
+
+- Source of truth: the **manifest** of the pinned version (`PrefabService.remotion_composition(id, version)` reads `source.composition`: `id`, `fps`, `duration_in_frames`; no source byte read, no compilation, `None` for an HTML prefab). The scene code is never consulted.
+- `frame = clamp((at_ms * fps + 500) // 1000, 0, duration - 1)`. Integers only (**`fps` is an integer 1..120, as the source manifest declares it: 29.97 or 23.976 cannot be expressed**, declare 30 or 24), deterministic, bounded (`fps` 1..120, `duration` 1..108 000, else `TimelineError` and the scene plays unguided with `timeline_unresolved`).
+- Anchors resolve **by `scene_id` and `anchor_id`**; the map is rebuilt from the scene current anchors and the current pin, so a hot reload or a new version carries the anchors over (tested: same `at_ms`, other `fps` / `duration`).
+- The timeline is cut by the anchors, sorted by frame, into **segments** `[start, until]`. The segment of anchor `a` starts on the frame of `a` and ends on the frame **before the next anchor** (the last one on the last frame). The **entry segment** (nothing revealed) runs from frame 0 to the frame before the first anchor (a hold on frame 0 when the first anchor is on frame 0).
+
+### What the score asks for
+
+For the scene on the stage the playhead is the **furthest revealed anchor, by timeline position (furthest wins, not the most recent reveal)** (a manual reveal of an earlier anchor while a later one is revealed does not move the playhead back: hide the later ones to go back) (`reveal` / `hide` folded over the played items, the started steps of a locked sequence and the manual overrides: the existing `progress_of`). Revealing an anchor opens its segment; `hide`, `previous` and `goto` fall back to the furthest anchor still revealed (reversible, like every fold of the score). The `reveal` steps of a locked sequence therefore move the playhead at the sequence clock own beat (the Core clock stays master).
+
+Core puts the answer in the playback view (`GET .../playback`, the route the band polls) as `timeline`, only when the scene on the stage is a Remotion scene **with anchors** and the run is active:
+
+| Field | Meaning |
+| --- | --- |
+| `scene_id`, `composition_id`, `fps`, `duration_frames` | from the stage scene and the manifest |
+| `anchor_id` | the playhead anchor, `null` for the entry segment |
+| `from_frame`, `until_frame` | the segment; `until_frame` is where the Player stops **by itself** |
+| `playing` | `true` only while the run is `playing` (pause, detour, resuming and ended hold) and the segment has frames to play |
+| `seq` | grows only when the segment changes (same segment after pause / resume: same `seq`) |
+| `play_ms` | time played in this segment by the Core monotonic clock, pauses excluded (`SegmentClock`, observed on every transition and every view) |
+| `tolerance_ms`, `problems` | drift tolerance (500 ms), anchor findings (above) |
+
+A scene without anchors, an HTML scene and a Core wired without a `timeline_source` have **no** `timeline` key and behave exactly as before (a Remotion scene plays on its own, Slice 10). The view stays under `MAX_VIEW_BYTES` (tested). The `where` tool of the agent keeps its own key list: the brain never receives the timeline.
+
+### What the browser does (`JarvisRemotionFrame.createTimelineFollower`, one per page)
+
+The band announces each view that carries a `timeline` (and one empty message when it disappears) to the scene window as the DOM event `jarvis:studio-timeline`; the follower of the window applies it to the frame it owns (`prefabHost.control(objectId, action, frame, until)`). While a timeline is active the band polls every 500 ms instead of 1.5 s.
+
+| Core says | Follower orders |
+| --- | --- |
+| new `seq`, `playing` | `play` from `from_frame`, `until` `until_frame` |
+| new `seq`, not playing (hold, paused) | `pause` on `from_frame` |
+| same `seq`, pause | `pause` (no frame: hold where the Player is) |
+| same `seq`, resume | `play` with `until`, **no frame** (continue, never back to the anchor; a Player already on the stop frame stays there) |
+| same view again | nothing (idempotent) |
+| frame not ready | retried by the 500 ms tick of the follower until it is |
+| the host mounted another frame for the window (hot-reload swap, "Recharger la scène", watchdog restart) | the segment is applied again to the new Player (the follower watches the identity of the mounted frame; the new Player also reports its position at mount) |
+| no position report for 6 ticks while Core says playing | the order is sent again (at most 3 times per segment), then left alone |
+
+**Drift against the master clock.** The `play_ms` of Core minus the start latency (what it already was when the follower seeked) is where a Player started on time would be. If the reported Player position is behind that by more than `tolerance_ms`, the follower re-seeks to the expected frame (still with `until`): at most one correction per second, at most 5 per segment, then it gives up for the segment and says so once (`timeline.drift_uncorrectable`). A Player that is **ahead** is left alone (it waits on its stop frame; counted, not corrected); a stale (more than 1.5 s) or missing report corrects nothing; a paused Core corrects nothing. The Player frame never goes back to Core.
+
+### Browser log keys (console, level in brackets)
+
+`timeline.segment` [info] (a segment was applied: `object_id`, `anchor_id`, `from`, `until`, `playing`); `timeline.drift_corrected` [info] (`drift_frames`, `to`); `timeline.drift_uncorrectable` [warn] (gave up for the segment); `timeline.resent` [warn] (the Player stayed silent, the order was sent again, at most 3 times); `timeline.invalid` [warn] (a `timeline` from Core that fails the bounds: ignored); `timeline.control_failed` [warn] (the host refused an order); `studio.timeline_event_failed` [warn] (the band could not announce the timeline); `scene.timeline_failed` [error] (the window could not apply it). Core side: `core.presentation_studio.timeline_resolved`, `timeline_unresolved` (*Playback runtime contract*, Observability).
+
+### Security and authority
+
+- The sandbox reports its position with a typed `clock {frame, playing}` message (rate-limited at both ends, bounded to the composition by the stage page, relayed to the window at most 4 times a second). It is **advice from untrusted code**: validated (exact keys, integers in range, the sender window checked), refused and counted by the watchdog when malformed (`bad_clock`), and used for one thing only, a catch-up seek **inside the own segment of the scene**. A lying scene can make its own Player seek within its segment at most 5 times; it cannot move the score, fire a cue, speak or reach Core (the position is never sent to Core).
+- The Player and the scene never trigger a cue, a line or a tool. Cues stay the armed set of Core and its typed reports (`/cues/satisfied`, *Cue following contract*), spontaneous ambient text still cannot execute an action, and `skip_sequence` still always leaves a sequence. Pause, detour, return and who-speaks are decided by the playback machine exactly as for Slidecar; the timeline only reflects them.
+
+### Unsupported or limited, said explicitly
+
+- No timeline for a scene with no anchors (it plays freely), for HTML scenes, or when the composition cannot be read (`timeline_unresolved` notice, the run continues unguided).
+- A `control_set` / `scene_goto` / `reveal` bound to a control (`control_id`) still goes through the existing overlay (Slice 13 owns Remotion props and controls); the timeline only reads the anchor.
+- No sub-frame or audio-accurate sync: the grain is a frame (1/fps), the latency of the follower is the 500 ms poll (visible: the first frame of a segment can appear up to about 0.5 s after the reveal; the speech starts at the reveal). The audio of a scene is muted until a user gesture in the frame (Slice 10).
+- The position the score holds is not persisted (R6): a page opened mid-run joins at the start of the current segment.
+
+### Tests
+
+`tests/unit/test_remotion_timeline.py` (mapping, segments, clock, carry-over, locked-sequence folds, anchor shape), `test_remotion_timeline_service.py` (the service on the real Slice 12 bench), `test_remotion_timeline_composition.py`, `test_remotion_timeline_js.py` (follower, drift, spoofed and stale reports, stage relay), `test_remotion_sandbox_child_js.py` (stop frame, rate), protocol cases in `test_remotion_sandbox_protocol_js.py`, band cases in `test_presentation_studio_player_js.py`; regression net unchanged and green: `test_presentation_studio_sequence*`, `_playback_*`. Real Chrome: `test_remotion_timeline_realpage_browser.py` via `scripts/remotion_player_harness.py --test tests/unit/test_remotion_timeline_realpage_browser.py --slice 12 --report real-timeline.json`.
 
 ## Jarvis presenter and locked sequences (Level 3, Slice 14)
 
@@ -2362,6 +2756,10 @@ Owner modules: `jarvis/runtime/control_center_presentation_studio_explorer_core.
 `jarvis/runtime/presentation_studio_explorer_commands.py` (`ExplorerCommandBroker`, `PresentationStudioExplorerRoutes`). Page markers and files are the three
 `STUDIO_EXPLORER_*_SCRIPT_{FILE,MARKER}` pairs of `control_center.py`. **No Core code changed**: the explorer is a view of the graph of Slice 16 and of the
 documents of Slices 04 / 09 / 17, and it writes only through the canonical operations of the relay.
+
+**Newer prefab versions (Remotion Slice 19).** Under the metadata of a live variant the explorer shows, collapsed, a zone that tells which scenes pin a version older than the latest healthy one and offers the single gesture
+"Essayer dans une nouvelle variante" (the notice is read-only, the trial creates a child variant, nothing is upgraded or activated by itself): see [Newer prefab versions and trial variants](#newer-prefab-versions-and-trial-variants-level-3-remotion-slice-19).
+The module is `control_center_presentation_studio_explorer_upgrades.js` (marker `STUDIO_EXPLORER_UPGRADES_SCRIPT_{FILE,MARKER}`); it reads no variant while a write is in flight, like the preview.
 
 **The explorer is never the source of truth.** The tree is the graph of Core (`GET .../graph?archived=1`), read again after **every** operation (and every 10 s,
 so a branch made by voice appears; the change is announced). An action that fails, is refused or finds the graph stale says so on screen and assumes nothing.
@@ -2972,6 +3370,32 @@ Run by `python -m tests.replay.presentation_studio_mcp_real_trace` (real `claude
 - Voice-undo confirmation and destructive confirmations are enforced by token binding and the prompt; a model that says "oui" for the user cannot be told from the user by the tools (same trust level as `confirm` of `scene_update_many`).
 - Physical checks (a spoken session in PRESENTATION mode, full screen on a projector) are Human checks.
 
+## Typed variables and fast edits (Level 3, Remotion Slice 13)
+
+Status: implemented by Slice 13 of `jarvis-remotion-presentation-integration`. Conformance: `tests/unit/test_remotion_controls.py`, `test_remotion_input_props.py` (with `tests/fixtures/remotion_input_props_cases.json`, played by Python **and** JavaScript), `test_remotion_stage_js.py`, `test_presentation_studio_inspector_behaviour_js.py`, `test_remotion_controls_docs.py`, and the opt-in real-Chrome `test_remotion_controls_realpage_browser.py`. Owner: `jarvis/domain/remotion_controls.py` (pure) and, in the browser, `jarvis/runtime/control_center_remotion_props.js`. Isolation side of the contract: [remotion-isolation.md](remotion-isolation.md) section 12.
+
+**There is no second editor and no second schema.** A Remotion composition's props schema **is** the manifest's `inputs.props` / `inputs.data` ([remotion-source.md](remotion-source.md)); its editable parameters are the existing `StudioControl`s (`props.<key>` / `data.<key>`) with their curated group, default and bounds; the durable change is the existing `control.set` / `control.reset` op (CONTROL tier, CAS by `basis.variant_revision` and `if_current`). The voice (actor `brain`, MCP tools) and the inspector (actor `user`) send **that same op**; both end in the same variant write, the same commit listener and the same Player update.
+
+| Concern | Rule |
+| --- | --- |
+| Kind of a control | `describe_control` adds `kind` (`color`, `text`, `spacing`, `timing`, `motion`, `data`, `value`), read from the manifest type, the `data.` root, the curated group and the property name. Nothing is stored. |
+| Engine support | `describe_control` adds `engine` and `support {status, reason}`. A parameter the scene's engine cannot carry (Remotion: `url` type, a props key named `data`, and any object or list that holds either) is **tagged `unsupported` with Core's reason**, listed, greyed and inert in the inspector, **refused by `control.set`** (`presentation_studio_value_refused`: "not supported by the remotion engine: ..."), left out of the `inputProps` contract (`withheld`). `control.reset` stays allowed. |
+| Parity | A Slidecar scene and a Remotion scene of the same schema list the same controls with the same shape; only `engine` and `support` differ (tested). |
+| What reaches the Player | `inputProps` = manifest `props` (defaults filled) + manifest `data` under the reserved key `data` when the manifest declares any. Built and validated **before** they cross to the sandbox: manifest type and bounds, no function / symbol / `undefined` / non-finite number / non-plain object, no `__proto__` / `constructor` / `prototype` key at any depth, depth 8, 2 000 values, 64 KiB. The page then applies the sandbox's own budget calculation to the merged object, so what the page accepts the sandbox accepts. A refusal sends nothing, the scene keeps its last valid values, and the refusal is counted, journalled without the value and shown as a transient amber notice in the scene window (never a failure band or a failed outcome); the next accepted values clear it. `data` the contract does not carry is ignored and reported, not validated. |
+| Preview versus saved | A preview (`mode: preview`, or the inspector's local preview frame) never writes and is never saved. A `commit` writes the variant (source model) if the basis revision and the expected value are current; otherwise it is `stale` and nothing changes. The Player follows the saved state by `props` messages (coalesced, last wins) without remounting. |
+| Reset | `control.reset`: the curated default is written explicitly, else the key is unset and the manifest default applies. Undoable like any edit. |
+| Rendering | A simple edit never renders, exports or recompiles: the sandbox document stays the same (measured in a real Chrome). |
+
+Bridge direction: **inbound only** (values to the Player). A Remotion manifest still declares no `events`; nothing flows from untrusted scene code to Core. Seek, play, pause, cue and frame mapping belong to Slice 12 and are not changed here. Wire additions (all additive): `props {props, data?}` between the scene window and the scene page; the `props_rejected` report event; the playback descriptor's `input_contract`. The brain does not see `kind` / `engine` / `support` in the voice tools today (they are in the introspection rows); it learns that a parameter is not carried from the `control.set` refusal. Left out on purpose: per-parameter engine labels declared in the manifest (needs a manifest version 4), because the current rules are derived from the type.
+
+## Engine choice and Slidecar experiment (Level 3, Remotion handoff Slice 20)
+
+Contract: [presentation-engine.md](presentation-engine.md) › *Human engine control*. A Presentation created by the plain create route is Remotion. **Agent-assembled drafts (`presentation_draft_assemble`) are Remotion since Slice 15**: the planner writes Remotion sources, refuses an HTML (Slidecar) source or pin (`prefab_engine_mismatch`), and the one door that stores an assembled draft (`create_assembled`) refuses a document that names Slidecar. The Slice 20 carve-out (an agent-assembled Slidecar journaled `slidecar_created` with actor `agent`) no longer exists; the `created` diagnostic of an assembled draft carries `engine: remotion, actor: agent`. Older agent-assembled Slidecar decks on disk are legacy documents (`origin: legacy`), read as before and never converted. Only a person, from the Control Center card « Présentations · moteur »
+(onglet « Plugins externes » du dialogue MCP), can create a Slidecar one, behind « Expérimental : Slidecar » with its warning and a confirmation; the relay sets the actor, no agent tool has an engine.
+The engine never changes after creation; « Dupliquer en expérience Slidecar » makes a new, empty Slidecar document and leaves the source alone. Listings (`engine`) and the card show a badge
+(`Remotion`, `Slidecar · expérimental`); each Slidecar creation, copy and use is a `core.presentation_studio.slidecar_*` diagnostic and a line of the card's « Journal Slidecar ». When Remotion cannot play, the
+card and the stage window say why, with `Installer Remotion` / `Réparer Remotion` when the capability can be fixed from the page: nothing else plays in its place.
+
 ## Reused owners (do not rebuild)
 
 | Need | Existing owner | Contract |
@@ -3035,6 +3459,8 @@ What later Slices may rely on, and nothing else:
 | Scene-local variants (set per scene, selection as a permutation, preview, promote, bounds, pins) | 0-1 | 3 (**done**, Slice 17) |
 | Variant explorer UI (tree, preview, actions, command channel, fullscreen, keyboard, a11y) | 0-1 | 3 (**done**, Slice 18; the physical fullscreen checks are Human checks) |
 | Variant comparison and semantic composition (compare set, logical scene mapping, composition request, typed conflicts, per-dimension provenance) | 0-1 | 3 (**done**, Slice 19 backend and explorer panes UI; physical checks are Human checks) |
-| cue matching, rehearsal, promotion, agent operations | 0-1 | 3 each |
+| Cue matching, template and prefab promotion, agent and voice operations | 0-1 | 3 (**done**, Slices 13, 20, 21) |
+| Rehearsal (section loop, restart-a-section, dedicated runbook) | 0-1 | 3 (**not delivered as a Slice**: the `rehearsal` role, `goto`, `previous` and "where are we" exist through Slices 12, 01c and 21; the section loop and the runbook do not, see [presentation-studio-release.md](presentation-studio-release.md)) |
+| Presentation engine semantics (identity on the document, policy, capability matrix, typed failures, compatibility triage) | 0 | 2 contract + domain conformance (**done**, Remotion Slice 02; adapters and runtime gates: later Slices) |
 
 There is no `docs/CONTEXT.md` or documentation-level registry in this repository: the level of a concept is stated in its page header (`Status: Level N`), as in [presentation-mode.md](presentation-mode.md).

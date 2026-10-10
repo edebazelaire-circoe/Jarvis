@@ -33,6 +33,8 @@
   const ROUTE='/api/presentation-studio/playback';
   const COMMAND_TIMEOUT_MS=10000;
   const POLL_ACTIVE_MS=1500;
+  /* Une scène Remotion pilotée par la partition (`view.timeline`, Slice 12) : la position change à la vitesse de la parole, on lit plus vite. */
+  const POLL_TIMELINE_MS=500;
   /* Repos : un GET de ~100 octets toutes les 5 s vers le Core local (12 par minute), seulement tant que l'onglet est visible.
      C'est le prix pour qu'une lecture démarrée par la voix apparaisse sans action : plus lent, elle arriverait en retard. */
   const POLL_IDLE_MS=5000;
@@ -77,6 +79,11 @@
     aux_stage_failed:'La ressource annexe n\'a pas pu s\'afficher.',score_problems:'La partition ne correspond plus aux scènes : corrigez-la.',
     art_direction_changed:'La direction artistique a changé pendant la lecture.',
     anchor_control_not_toggle:'Une ancre pilote un réglage qui n\'est pas un interrupteur : le repère est suivi, pas l\'image.',
+    /* Ligne de temps Remotion (Slice 12) : ce que la partition demande à une scène Remotion et que la ligne de temps ne tient pas. */
+    timeline_unresolved:'La durée de la scène Remotion est introuvable : elle se joue sans suivre les ancres de la partition.',
+    timeline_anchor_clamped:'Une ancre tombe après la fin de la scène Remotion : elle a été ramenée à la dernière image.',
+    timeline_anchors_share_frame:'Deux ancres de la scène Remotion tombent sur la même image : la première n\'a aucun tronçon à jouer.',
+    timeline_anchors_partly_timed:'Seules certaines ancres de la scène Remotion ont une position (at_ms) : les autres sont réparties à parts égales.',
     stage_closed_by_user:'Vous avez fermé la fenêtre de scène : elle a été rouverte.',
     stage_closed:'La fenêtre de scène a été fermée trop souvent : la lecture ne la rouvre plus (reprenez pour la rouvrir).',
     /* Jarvis présente (Slice 14) : pourquoi la voix n'a pas pu dire la ligne ; « Continuer » réessaie. */
@@ -396,9 +403,19 @@
         try{win.dispatchEvent(new win.CustomEvent('jarvis:studio-playback',{detail:{running:view.running===true}}))}
         catch(error){log('warn','studio.playback_event_failed',{error:String(error&&error.message||error)})}
       }
+      announceTimeline(was);
       prepareStage();
       if(notice&&notice.until!==null&&now()>=notice.until)notice=null;
       render();
+    }
+    /* Ligne de temps de la partition (Slice 12) : dite à la fenêtre de scène (qui possède le cadre Remotion) à chaque vue qui en porte une,
+       et une dernière fois, vide, quand elle disparaît. La vue vient de Core ; la fenêtre ne renvoie rien. */
+    function announceTimeline(was){
+      const has=!!view.timeline,had=!!(was&&was.timeline);
+      if(!has&&!had)return;
+      if(typeof win.dispatchEvent!=='function'||typeof win.CustomEvent!=='function')return;
+      try{win.dispatchEvent(new win.CustomEvent('jarvis:studio-timeline',{detail:{object_id:view.stage_object_id||null,timeline:has?view.timeline:null}}))}
+      catch(error){log('warn','studio.timeline_event_failed',{error:String(error&&error.message||error)})}
     }
     function setNotice(text,kind,ms){notice={text,kind:kind||'info',until:ms?now()+ms:null};render()}
 
@@ -436,7 +453,7 @@
     function schedule(){
       if(!started||!visible)return;
       if(pollTimer!==null)clearT(pollTimer);
-      const base=activeRun()?POLL_ACTIVE_MS:POLL_IDLE_MS;
+      const base=activeRun()?(view.timeline?POLL_TIMELINE_MS:POLL_ACTIVE_MS):POLL_IDLE_MS;
       const delay=failures?Math.min(POLL_BACKOFF_MAX_MS,base*Math.pow(2,failures-1)):base;
       pollTimer=setT(async()=>{pollTimer=null;await refresh();schedule()},delay);
     }
@@ -604,7 +621,7 @@
       startRun:(presentationId,role,extra)=>command('start',Object.assign({presentation_id:presentationId,role},extra||{}))};
   }
 
-  const api=Object.freeze({ROUTE,KEYS,ROLE_LABEL,PHASE_LABEL,REFUSALS,PROBLEMS,FOLLOWER_ABSENT,COMMAND_TIMEOUT_MS,POLL_ACTIVE_MS,POLL_IDLE_MS,
+  const api=Object.freeze({ROUTE,KEYS,ROLE_LABEL,PHASE_LABEL,REFUSALS,PROBLEMS,FOLLOWER_ABSENT,COMMAND_TIMEOUT_MS,POLL_ACTIVE_MS,POLL_TIMELINE_MS,POLL_IDLE_MS,
     BAND_ID,STYLE,STYLE_ID,createStudioPlayer,clock});
   root.JarvisStudioPlayerCore=api;
   if(typeof module!=='undefined'&&module.exports)module.exports=api;

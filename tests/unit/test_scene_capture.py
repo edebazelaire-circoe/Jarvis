@@ -408,7 +408,9 @@ async def test_the_control_center_upload_route_checks_origin_size_shape_and_id_b
         assert garbage.status == 400 and (await garbage.json())["error"]["code"] == "invalid_png"
         assert (await client.post(route, data=png(1920, 1080))).status == 400
         assert transport.calls == []
-        ok = await client.post(route, data=png(), headers={"Origin": "http://127.0.0.1:1234", "Content-Type": "image/png"})
+        other_port = await client.post(route, data=png(), headers={"Origin": f"http://127.0.0.1:{client.port + 1}", "Content-Type": "image/png"})
+        assert other_port.status == 403, "another local service is not the Control Center page (Slice 11, B1)"
+        ok = await client.post(route, data=png(), headers={"Origin": f"http://127.0.0.1:{client.port}", "Content-Type": "image/png"})
         assert ok.status == 200 and (await ok.json())["capture_id"] == capture_id
         assert transport.calls == [(capture_id, len(png()))]
         assert (await client.get(route)).status == 405  # aucune route ne demande ni ne lit une capture

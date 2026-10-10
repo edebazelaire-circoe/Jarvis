@@ -1,0 +1,59 @@
+{
+  "scenario": "real_refusals",
+  "screenshots": [],
+  "refusals": [
+    {
+      "repo": "remotion-dev/template-empty",
+      "commit": "f9d71061a3c263bdcc01ac943fbc58fd51206d41",
+      "code": "license_unlicensed",
+      "message": "package.json declares 'UNLICENSED' and the repository has no licence file: nothing allows redistribution"
+    },
+    {
+      "repo": "remotion-dev/template-helloworld",
+      "commit": "04da7cc8402722a7c8fa496d810f0196fd092dd6",
+      "code": "license_unlicensed",
+      "message": "package.json declares 'UNLICENSED' and the repository has no licence file: nothing allows redistribution"
+    },
+    {
+      "repo": "remotion-dev/template-three",
+      "commit": "aa9cd28f063959547bb5fa5fd83208538cb5831b",
+      "code": "license_conflict",
+      "message": "the licence file reads MIT but package.json declares 'UNLICENSED': the author contradicts themselves"
+    },
+    {
+      "repo": "remotion-dev/highlighter",
+      "commit": "c18ea3d443a0f10028f46117bc7b14efb545a2e0",
+      "code": "dependency_refused",
+      "message": "the scene imports 6 package(s) outside the audited list ['react', 'react/jsx-runtime', 'react/jsx-dev-runtime', 'remotion']",
+      "details": [
+        "@remotion/paths (not exposed by the shared Remotion tree; imported by src/render-annotation.tsx; declared 4.0.487)",
+        "roughjs/bin/core (not part of the audited list; imported by src/Annotation.tsx; declared ^4.6.6)",
+        "roughjs/bin/core.js (not part of the audited list; imported by src/rough.ts; declared ^4.6.6)",
+        "roughjs/bin/geometry (not part of the audited list; imported by src/render-annotation.tsx; declared ^4.6.6)",
+        "roughjs/bin/renderer.js (not part of the audited list; imported by src/render-annotation.tsx; declared ^4.6.6)",
+        "zod (not part of the audited list; imported by src/types.ts; declared 4.3.6)"
+      ]
+    },
+    {
+      "repo": "lifeprompt-team/remotion-scenes",
+      "commit": "02c7a84241da7010b5f59c420b0110aafd1d6f0d",
+      "code": "dependency_refused",
+      "message": "the scene imports 1 package(s) outside the audited list ['react', 'react/jsx-runtime', 'react/jsx-dev-runtime', 'remotion']",
+      "details": [
+        "@remotion/google-fonts/Inter (not exposed by the shared Remotion tree; imported by src/common/fonts.ts; declared ^4.0.0)"
+      ]
+    },
+    {
+      "repo": "lifeprompt-team/remotion-scenes",
+      "allowlist": [
+        "remotion-dev"
+      ],
+      "code": "origin_not_allowed",
+      "message": "owner 'lifeprompt-team' is not in the import allowlist ['remotion-dev']: add it in the settings first",
+      "details": [
+        "remotion-dev"
+      ]
+    }
+  ],
+  "published_after_refusals": 0
+}

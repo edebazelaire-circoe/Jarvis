@@ -56,7 +56,10 @@ def variant_body(variant: dict, **changes) -> dict:
 def test_the_route_table_has_the_fixed_segment_before_the_id():
     routes = [(route.method, route.path) for route in PresentationStudioProtocolRoutes(object()).routes()]
     assert routes == [
-        ("GET", PREFIX), ("POST", PREFIX), ("POST", PREFIX + "/validate"), ("POST", PREFIX + "/mount-reports"),
+        ("GET", PREFIX), ("POST", PREFIX), ("POST", PREFIX + "/validate"),
+        ("GET", "/v1/presentation-studio/engine"),  # Slice 20: read-only engine view, outside the presentations prefix
+        ("POST", PREFIX + "/mount-reports"),
+        ("POST", PREFIX + "/{presentation_id}/experiment"),  # Slice 20: new Slidecar document, the source is untouched
         ("GET", PREFIX + "/{presentation_id}"),
         ("PUT", PREFIX + "/{presentation_id}"), ("GET", PREFIX + "/{presentation_id}/variants/{variant_id}"),
         ("PUT", PREFIX + "/{presentation_id}/variants/{variant_id}"),
@@ -76,6 +79,8 @@ def test_the_route_table_has_the_fixed_segment_before_the_id():
         ("POST", PREFIX + "/{presentation_id}/variants/{variant_id}/edits"),
         # Slice 06: hot reload of a scene source, recent reloads (the page's mount reports are a separate, relayed route)
         ("POST", PREFIX + "/{presentation_id}/variants/{variant_id}/source-edits"),
+        # Slice 14: the agent reads the scene source before proposing a file edit
+        ("GET", PREFIX + "/{presentation_id}/variants/{variant_id}/scenes/{scene_id}/source"),
         ("GET", PREFIX + "/{presentation_id}/reloads"),
         # Slice 08: the bounded undo history (memory only); an undo is an edit through the same service
         ("GET", PREFIX + "/{presentation_id}/variants/{variant_id}/history"),
@@ -97,7 +102,7 @@ async def test_the_token_is_required(tmp_path):
 async def test_the_full_lifecycle_over_http(tmp_path):
     async with Core(tmp_path) as core:
         status, created = await core.call("POST", "", json={"title": "Atelier"})
-        assert status == 201 and created["presentation"]["schema_version"] == 2
+        assert status == 201 and created["presentation"]["schema_version"] == 3
         pid = created["presentation"]["presentation_id"]
         variant = created["variants"][0]
         vid = variant["variant_id"]
@@ -179,7 +184,7 @@ async def test_a_future_document_is_a_409_that_leaves_the_file_alone_and_the_lis
         _, created = await core.call("POST", "", json={"title": "A"})
         pid, variant = created["presentation"]["presentation_id"], created["variants"][0]
         path = tmp_path / "data" / "presentations" / pid / "variants" / f"{variant['variant_id']}.json"
-        path.write_text(json.dumps({**variant, "schema_version": 5}), encoding="utf-8")
+        path.write_text(json.dumps({**variant, "schema_version": 6}), encoding="utf-8")
         snapshot = path.read_bytes()
         status, body = await core.call("PUT", f"/{pid}/variants/{variant['variant_id']}", json=variant_body(variant))
         assert (status, body["error"]["code"]) == (409, "presentation_studio_unsupported_schema_version")
@@ -187,7 +192,7 @@ async def test_a_future_document_is_a_409_that_leaves_the_file_alone_and_the_lis
         status, body = await core.call("GET", "")
         assert status == 200 and body["presentations"][0]["presentation_id"] == pid  # the manifest itself is fine
         status, body = await core.call("GET", f"/{pid}")
-        assert status == 409 and "schema_version 5" in body["error"]["message"]
+        assert status == 409 and "schema_version 6" in body["error"]["message"]
 
 
 async def test_error_messages_never_carry_an_absolute_path(tmp_path):

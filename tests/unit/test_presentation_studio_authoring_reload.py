@@ -46,10 +46,10 @@ class Stack:
         await self.scene.close()
 
     async def deck(self, count: int = 3):
-        out = await self.env.assemble(fa.brief("directed", duration_target_s=count * 50), fa.good_deck(count))
-        assert out.status == "delivered", out.body.get("report", {}).get("failures")
-        body = out.to_dict()
-        view = await self.env.studio.get(body["presentation_id"])
+        # The hot reload of Slice 06 edits HTML sources: its deck is a LEGACY Slidecar document (the planner now writes Remotion, whose reload is
+        # the source-edit Slice 14), built the way the planner built it before Slice 15.
+        built = await self.env.assemble_legacy_html(fa.brief("directed", duration_target_s=count * 50), fa.html_deck(count))
+        view = await self.env.studio.get(built.presentation.presentation_id)
         return view.presentation.presentation_id, view.variants[0]
 
     def edit(self, pid, variant, scene_id, files, **extra):
@@ -67,7 +67,7 @@ async def stack(tmp_path):
 async def test_an_assembled_deck_is_a_valid_v3_document_set_owned_by_nobody_yet(stack):
     pid, variant = await stack.deck()
     document = json.loads((stack.env.studio_root / "presentations" / pid / "variants" / f"{variant.variant_id}.json").read_text(encoding="utf-8"))
-    assert document["schema_version"] == VARIANT_SCHEMA_VERSION == 4  # v3 is Slice 06 (the two fields below), v4 Slice 17 (no scene_variants key)
+    assert document["schema_version"] == VARIANT_SCHEMA_VERSION == 5  # v5 Remotion Slice 12 (anchor at_ms); v3 is Slice 06 (the two fields below), v4 Slice 17 (no scene_variants key)
     assert all("scene_variants" not in s for s in document["scenes"])
     assert all(s["source_revision"] == 0 and s["last_valid_pin"] is None for s in document["scenes"])
     assert all(s.source_revision == 0 and s.last_valid_pin is None for s in variant.scenes)
@@ -102,7 +102,8 @@ async def test_a_failed_assembly_write_puts_the_registry_back(stack, monkeypatch
     monkeypatch.setattr(stack.env.studio._store, "create", broken)
     before = dict(stack.pins._variants)
     with pytest.raises(PresentationStudioError):
-        await stack.env.studio.create_assembled(new_pid, (folder / "presentation.json").read_text(encoding="utf-8"), texts, {}, {})
+        await stack.env.studio.create_assembled(new_pid, (folder / "presentation.json").read_text(encoding="utf-8").replace(
+            '"engine": "slidecar"', '"engine": "remotion"'), texts, {}, {})
     assert dict(stack.pins._variants) == before                                                  # nothing left registered
 
 

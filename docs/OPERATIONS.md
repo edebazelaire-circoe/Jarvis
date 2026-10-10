@@ -2233,7 +2233,7 @@ l'aperçu, chaque action contre un vrai Core, le clavier seul, l'arbre d'accessi
 ### Assemblage d'une présentation (studio, Slice 11)
 
 Contrat : [presentation-studio.md](presentation-studio.md#authoring-contract-slice-11). Le cerveau soumet **un** brouillon (brief, scènes, partition,
-direction artistique) ; Core le vérifie avec une porte de qualité (48 règles codées, tableau dans le contrat) puis le stocke en **une seule transaction**.
+direction artistique) ; Core le vérifie avec une porte de qualité (66 règles codées, tableau dans le contrat ; 18 sont celles des sources Remotion, Slice 15) puis le stocke en **une seule transaction**.
 L'outil MCP est `presentation_view` (Slice 21, `explorer_open` / `explorer_close`) : il appelle ces deux routes ; le relais du Control Center force l'acteur `user`.
 
 - **Vérifier sans rien écrire** : `POST /api/presentation-studio/authoring/check` rend le rapport (`failures` bloquent, `warnings` informent, `skipped` dit
@@ -2251,6 +2251,10 @@ L'outil MCP est `presentation_view` (Slice 21, `explorer_open` / `explorer_close
 - **Adopter une direction d'un brouillon exploratoire** : `POST /api/presentation-studio/authoring/finalize` (la porte `directed` sur la variante stockée ; sans elle, rien ne garantit qu'un candidat léger soit un exposé complet). `activate` seul reste le choix de l'utilisateur.
 - **Ce que les tests automatiques ne prouvent pas** : que le vrai modèle suive la politique (appels d'outils, questions posées, qualité du premier jet). C'est la porte des Slices 21 et 22 ;
   la preuve de cette Slice est un banc scripté (`tasks/jarvis-interactive-presentation-studio/slices/11-authoring-planner-first-draft/evidence/`), pas une trace de Claude.
+- **Scènes Remotion (Slice 15)** : le brouillon est rédigé en TSX (`prefabs[].remotion`), compilé par Core **avant toute écriture** ; une scène qui ne compile pas est un constat `tsx_compile`
+  avec fichier, ligne et colonne, jamais un repli. Si Remotion n'est pas prêt (non installé, à réparer), `assemble` répond 409 `presentation_studio_engine_unavailable` et n'écrit rien : réparer la
+  capacité (carte « Présentations · moteur »), puis renvoyer le brouillon. Les références vivantes d'une scène ne lisent que le Board actif. Preuves : banc scripté
+  `tasks/jarvis-remotion-presentation-integration/slices/15-remotion-one-shot-authoring/evidence/` et trace réelle du modèle (`authoring-real-traces*.json`, empreinte du planificateur à jour).
 
 ### Lecture d'une présentation (studio, Slice 12) : vérification humaine
 
@@ -2284,6 +2288,90 @@ ne prouve pas est à regarder une fois, sur un vrai poste, dans une instance iso
 
 Après un arrêt brutal, une fenêtre `studio-stage-*` ou `studio-aux-*` encore visible est un défaut à signaler avec la ligne `playback_reclaim_failed` du
 journal ; ne pas la supprimer à la main avant d'avoir copié `scene.sqlite3` (règle du dépôt).
+
+### Scène Remotion jouée par Jarvis (Remotion Slice 10) : vérification humaine
+
+Contrat : [remotion-isolation.md](remotion-isolation.md) § 10, [presentation-engine.md](presentation-engine.md) (porte du moteur). Les tests
+automatiques jouent une scène Remotion de bout en bout dans un vrai Chrome sans tête contre un Core isolé (lecture, couleur/titre/durée à chaud, passage de
+scène en scène, plein écran, son sur un vrai geste, moteur indisponible, erreur de compilation, cadre figé retiré, navigation refusée par `frame-src`) :
+`python scripts/remotion_player_harness.py --runtime-dir <racine>/local_capabilities/remotion/runtime --evidence <dossier>`
+(réutilise une installation existante par jonction, n'en installe jamais une). Jamais sur le Jarvis vivant : une instance isolée (`JARVIS_DATA_ROOT`,
+`JARVIS_CORE_PORT`, `JARVIS_UI_PORT`, `JARVIS_REMOTION_SANDBOX_PORT` à part). À regarder une fois sur un vrai poste, avec la capacité Remotion installée
+(§ « Capacité locale Remotion ») :
+
+1. **Lecture** : créer une présentation (moteur Remotion par défaut), y mettre une scène Remotion, lancer « Vous présentez » : la fenêtre de scène affiche
+   « Préparation de la scène Remotion… N s » (le premier lancement compile, jusqu'à 2 minutes), puis la scène joue en boucle, sans clic.
+2. **Son** : la scène démarre muette (« Son coupé · cliquez la scène pour l'activer ») ; un clic DANS la scène (pas ailleurs) active le son si elle en a ; noter
+   si le son sort bien des haut-parleurs voulus (jamais écouté par les tests).
+3. **Plein écran** : « Plein écran » dans la bande (un clic) ; la scène remplit l'écran ; **Échap** (la vraie touche) en sort sans changer l'état de la lecture ;
+   avec un second écran, l'invite « gestion des fenêtres » est celle de Chrome.
+4. **Édition à chaud** : pendant la lecture, demander à la voix de changer la couleur ou le titre : le changement se voit tout de suite, sans nouveau rendu
+   ni clignotement, la lecture reste éditable.
+5. **Moteur absent** : désinstaller la capacité (`POST /v1/local-capabilities/remotion/uninstall`, instance isolée), lancer la lecture : réponse « moteur
+   Remotion indisponible » avec la réparation, aucune fenêtre de scène, **jamais** une scène HTML à la place ; réinstaller, relancer : elle joue.
+6. **Scène figée** : une scène qui boucle sans fin est retirée au bout de 3 s avec sa raison et « Recharger la scène » ; la page reste utilisable.
+7. **Origine** : ouvrir le Control Center par `http://127.0.0.1:<port>/` (pas `localhost`) : l'origine du bac à sable n'autorise que cet hôte.
+
+### Moteur des présentations : Remotion par défaut, Slidecar en expérience (Remotion Slice 20) : exploitation et vérification humaine
+
+Contrat : [presentation-engine.md](presentation-engine.md) › *Human engine control*. Où : Control Center, « Outils MCP » > « Plugins externes », carte « Présentations · moteur ».
+
+- **Lire l'état** : trois pastilles (`Défaut : Remotion`, `Remotion : Prêt | Indisponible`, `Slidecar : N documents · M au journal`) ; chaque présentation porte son badge de moteur
+  (le moteur est fixé à la création et ne change jamais).
+- **Remotion indisponible** : la carte donne la raison réelle de l'adaptateur et le geste. `Installer Remotion` (≈ 270 Mo, une fois par poste) ou `Réparer Remotion` appellent
+  les opérations `install` / `repair` de la capacité locale (après confirmation, temps écoulé affiché, 15 min au plus) ; les réglages de bac à sable invalides
+  (`JARVIS_REMOTION_SANDBOX_HOST` / `_PORT`) et un Core sans moteur demandent un geste de votre part (corriger, relancer Core vous-même : rien ne se relance seul). **Jamais** une
+  présentation Slidecar à la place d'une Remotion.
+- **Créer en Slidecar** : seulement dans « Expérimental : Slidecar » (avertissement, confirmation). Chaque création, copie « expérience » et usage d'un document Slidecar est un diagnostic
+  `core.presentation_studio.slidecar_created | slidecar_experiment_created | slidecar_used` (moteur, acteur, raison) ; la carte montre les 20 dernières lignes (registre en mémoire depuis le
+  démarrage de Core ; le badge du document, lui, est durable). Une tentative de nommer un moteur sans passer par la page est `engine_selection_refused` (warning).
+- **Anciennes présentations** (sans champ moteur) : lues comme Slidecar, jamais converties ; à la première sauvegarde l'ancien manifeste est gardé une fois dans `presentation.json.v<N>.bak`.
+
+Vérification humaine (une fois, instance isolée : ports et `JARVIS_DATA_ROOT` à part, jamais le JARVIS vivant) :
+
+1. Ouvrir la carte : Remotion par défaut. Créer une présentation sans rien d'autre : badge `Remotion`. (Un brouillon assemblé par l'agent est `Remotion` depuis la Slice 15 : le planificateur écrit des scènes Remotion et refuse une source HTML ; les anciens brouillons d'agent déjà sur disque sont des documents `Slidecar · expérimental` hérités, lus comme avant, jamais convertis.)
+2. Ouvrir « Expérimental : Slidecar », lire l'avertissement, créer, **annuler** la confirmation (rien n'est créé), recréer et confirmer : badge `Slidecar · expérimental`, ligne « Création » au journal.
+3. « Dupliquer en expérience Slidecar » sur une présentation Remotion : un nouveau document `... (Slidecar)`, la source inchangée.
+4. Casser Remotion (désinstaller la capacité ou changer le port du bac à sable) : la carte dit pourquoi et propose le bon geste ; lancer la lecture d'une présentation Remotion : erreur visible, rien d'autre ne joue.
+5. Recharger la page : mêmes badges.
+
+### Scène Remotion conduite par la partition (Remotion Slice 12) : vérification humaine
+
+Contrat : [presentation-studio.md](presentation-studio.md) › *Remotion timeline bridge*, [remotion-isolation.md](remotion-isolation.md) § 11. Les tests
+automatiques jouent une scène à trois ancres dans un vrai Chrome sans tête contre un Core isolé (segment d'entrée, ancre révélée, cue, pause, reprise, retour,
+faux rapport de position) :
+`python scripts/remotion_player_harness.py --runtime-dir <racine>/local_capabilities/remotion/runtime --evidence <dossier> --test tests/unit/test_remotion_timeline_realpage_browser.py --slice 12 --report real-timeline.json`.
+Jamais sur le Jarvis vivant. À regarder une fois sur un vrai poste (ancres posées avec `at_ms` sur la scène) :
+
+1. **Suivre la parole** : lancer « Jarvis présente » sur une présentation dont une scène Remotion a des ancres ; à chaque ancre révélée l'animation repart de
+   son repère et s'arrête seule avant le suivant. Noter si le décalage (jusqu'à ~0,5 s, la bande lit Core toutes les 500 ms) est acceptable avec la voix.
+2. **Cue vocale** : dire la phrase d'une cue armée : la scène passe au segment suivant en même temps que la présentation (la cue vient du suiveur, jamais de la scène).
+3. **Pause / reprise** : Pause (bande ou clavier) fige l'image ; Reprise continue là où elle était, sans repartir du repère.
+4. **Séquence verrouillée** : une séquence dont les étapes révèlent des ancres de la scène : l'animation suit le rythme de la séquence ; la sortie de séquence
+   (`S`) libère la scène.
+5. **Son** : la piste sonore de la scène reste muette jusqu'à un clic dans la scène (Slice 10) ; écouter si elle suit les segments (jamais écouté par les tests).
+
+### Présentation rédigée par l'agent en Remotion (Remotion Slice 15) : exploitation et vérification humaine
+
+Contrat : [presentation-studio.md](presentation-studio.md#remotion-scenes-the-generator-slice-15). Les mêmes trois outils (`presentation_draft_check`, `_assemble`, `_finalize`) : le cerveau écrit des **scènes Remotion
+en TSX** (objet `prefabs[].remotion`), Core les compile avant d'écrire quoi que ce soit.
+
+- **Prérequis** : la capacité Remotion est prête (carte « Présentations · moteur »). Sinon `assemble` répond 409 `presentation_studio_engine_unavailable` avec la raison, n'écrit rien, et aucun autre moteur ne prend le relais :
+  installer ou réparer la capacité, puis renvoyer le brouillon.
+- **Une scène qui ne compile pas** est un constat `tsx_compile` (fichier, ligne, colonne) dans le rapport complet ; l'agent corrige et renvoie (3 tours au plus). Aucune version de prefab n'a été publiée.
+- **Ce que l'agent ne peut pas faire** : créer une présentation Slidecar (refus `prefab_engine_mismatch`, `create_assembled` refuse un document Slidecar) ; lire un Board autre que le Board actif par une référence vivante ;
+  se prévaloir d'un modèle amont dont la provenance n'est pas vérifiée par Core.
+- **Journal** (`core.presentation_studio.*`, ids, codes et comptes, jamais le texte du brouillon) : `authoring_compiled` (sources, compilées, refusées, réutilisées du cache), `authoring_compile_refused`, `authoring_engine_unavailable`
+  (`warning`), `authoring_live_refs`, `authoring_delivered` (`engine`, `compiled`, `inspirations`), `created` (`engine: remotion`, `actor: agent`).
+
+Vérification humaine (une fois, instance isolée : ports et `JARVIS_DATA_ROOT` à part, jamais le JARVIS vivant ; la capacité Remotion installée) :
+
+1. Demander à l'agent un exposé de six scènes sur un sujet que vous connaissez (public, durée, ton). Il doit lire le guide (`presentation_inspect draft_guide`), puis livrer en une transaction : badge `Remotion` sur la présentation, aucune ligne `Slidecar` au journal.
+2. Jouer la présentation (« Vous présentez ») : les scènes ont des mises en page **différentes** selon leur rôle (couverture, chiffre clé, liste), les couleurs et les polices sont celles de la direction artistique, les éléments entrent avec son mouvement (durée, décalage, transition). Juger si ce premier jet est
+   présentable : c'est un jugement humain, la porte ne prouve que le plancher (item H-15-1).
+3. Changer la couleur d'accent depuis l'inspecteur (le contrôle `props.theme.accent`) : la scène en cours change de couleur sans se recharger.
+4. Demander « des idées de styles » : les directions sont des brouillons ; ouvrir deux d'entre elles dans l'explorateur : la même scène est dessinée différemment (fond, accent, polices), et `finalize` n'adopte une direction que si elle passe la porte `directed`.
+5. Avec Remotion désinstallé : redemander un exposé : refus visible 409, rien d'écrit, pas de Slidecar.
 
 ### Inspecteur d'édition d'une présentation (studio, Slice 07) : vérification humaine
 
@@ -3374,6 +3462,180 @@ seulement : **aucun outil n'est exécuté d'ici** (contrat
 La console du navigateur garde `mcp.inspector.failed` (code, statut, message)
 pour chaque échec vu par la vue ; côté serveur, les refus du catalogue sont
 déjà journalisés (`mcp.catalog_failed`).
+
+> **Capacités locales (pas des plugins MCP).** Un runtime installé sur le poste
+> (première cible : Remotion) a son propre cycle de vie — installation unique,
+> versions épinglées, santé, réparation, processus enfant — décrit dans
+> [local-capabilities.md](local-capabilities.md). Le socle n'exécute ni réseau
+> ni npm par défaut (`runner_unavailable`) et ne démarre jamais Core ni le
+> Control Center : un redémarrage éventuel reste à l'utilisateur.
+
+#### Capacité locale Remotion (installation unique)
+
+Contrat complet : [remotion-runtime.md](remotion-runtime.md). Jarvis n'installe Remotion
+**que sur demande** ; démarrer Core ne télécharge rien. Prérequis du poste, que Jarvis
+vérifie sans les installer : Node.js ≥ 20.0.0 et npm ≥ 9 sur le `PATH`, Windows x64
+(macOS et Linux pris en charge mais non éprouvés), ≈ 1,5 Go libres, accès à
+`registry.npmjs.org`. Tout est installé **une fois** sous
+`<racine de données>/local_capabilities/remotion/runtime/` (≈ 270 Mo) : jamais dans le
+dépôt, jamais en global, jamais par présentation. Core en marche, le jeton est dans
+`<runtime_root>\core.token` (`JARVIS_CORE_TOKEN_FILE`) :
+
+```powershell
+$t = (Get-Content runtime\core.token -Raw).Trim(); $h = @{ Authorization = "Bearer $t" }
+$u = "http://127.77.0.1:17653/v1/local-capabilities/remotion"
+Invoke-RestMethod -Method Post -Headers $h "$u/install"        # 200 si fini en 2 s, sinon 202 : l'installation continue
+Invoke-RestMethod -Headers $h $u                               # relire jusqu'à status = ready (ou install_failed)
+Invoke-RestMethod -Method Post -Headers $h "$u/health"         # sonde (paquets présents, intacts, chargeables)
+Invoke-RestMethod -Method Post -Headers $h "$u/repair"         # réinstalle depuis le verrou si malsain ou interrompu
+Invoke-RestMethod -Method Post -Headers $h "$u/uninstall"      # vide runtime/ ; sources et assets des présentations intacts
+```
+
+Lire la réponse : `status` (`not_installed`, `installing`, `ready`, `running`, `repair_needed`,
+`install_failed`, `crashed`, `disabled`), `last_error_code` et `last_error_detail` (jeton puis
+explication, tableau §3 de remotion-runtime.md : `node_too_old`, `install_offline`,
+`install_permission_denied`, `install_disk_full`, `install_timeout`...). Après un arrêt de
+Core pendant l'installation, le prochain démarrage de Core affiche `install_failed` /
+`install_interrupted` : lancer `repair`. La carte « Remotion · Studio » du Control Center (onglet « Plugins externes » du dialogue MCP) montre l'état de
+l'environnement ; l'installation reste cette action explicite. Vérification sur un poste neuf, hors profil vivant :
+`python scripts/remotion_install_harness.py --work-dir <dossier temporaire court> --evidence <fichier.json>`
+(vrai réseau, vrai npm, racine de données privée ; ne touche pas à Core).
+
+#### Studio Remotion optionnel (Slice 11)
+
+Contrat : [remotion-studio.md](remotion-studio.md) ; sécurité : SECURITY.md § 19. Le Studio (`remotion studio`, rechargement à chaud) est une
+**fenêtre à part, ouverte seulement sur demande** : Core, l'aperçu et le Control Center ne le lancent jamais. Un seul par poste ; il ne
+sert que la source de la scène choisie, en copie de travail en lecture seule sous `<racine>/local_capabilities/remotion/runtime/studio/work/`,
+sur `127.0.0.1` (port libre, ou `JARVIS_REMOTION_STUDIO_PORT`). Prérequis : la capacité Remotion `ready` (section précédente) et au moins une
+scène Remotion publiée dans la bibliothèque.
+
+- **Depuis le Control Center** : dialogue MCP, onglet « Plugins externes », carte « Remotion · Studio » : choisir la scène, **Ouvrir le Studio**,
+  **lire et confirmer** le dialogue (la scène s'exécute sans bac à sable ; l'origine de la version y est indiquée, avertissement renforcé pour une
+  scène qui n'est pas de vous), attendre le démarrage (30 à 50 s à froid, 2 min au plus, compteur affiché), puis **Ouvrir la fenêtre du Studio**. **Actualiser la scène** recopie la dernière
+  version publiée (le Studio se recharge sans redémarrer), **Relancer**, **Fermer le Studio**. Arrêt automatique après 30 minutes sans fenêtre
+  ouverte (`JARVIS_REMOTION_STUDIO_IDLE_S`, 60 à 86400 s).
+- **Depuis PowerShell** (jeton comme pour la capacité) :
+
+```powershell
+$u = "http://127.77.0.1:17653/v1/local-capabilities/remotion/studio"
+Invoke-RestMethod -Headers $h $u                                                              # état, jamais un lancement
+Invoke-RestMethod -Method Post -Headers $h "$u/open" -ContentType application/json -Body '{"prefab_id":"<id>","version":<n>,"acknowledge_unsandboxed_scene":true}'
+Invoke-RestMethod -Method Post -Headers $h "$u/sync"                                          # rechargement à chaud de la scène courante
+Invoke-RestMethod -Method Post -Headers $h "$u/restart" -ContentType application/json -Body '{"acknowledge_unsandboxed_scene":true}'
+Invoke-RestMethod -Method Post -Headers $h "$u/close"
+```
+
+- **Lire un échec** : `status: failed`, `last_error_code` (`remotion_studio_*`, tableau §4 du contrat) et `diagnostics` (fin du journal du Studio).
+  `process_exited` : le processus a disparu (fenêtre fermée hors de Jarvis, plantage) ; `start_timeout` : webpack n'a pas fini en 2 min ;
+  `runtime_unavailable` : installer ou réparer la capacité ; `port_unavailable` : le port imposé est pris ; `ack_required` : l'accusé manque (la
+  carte l'envoie après sa confirmation) ; `state_unreadable` : mettre `studio/state.json` de côté (jamais l'écraser), puis réessayer ;
+  `local_capability_stop_failed` à l'`uninstall`/`update` : le Studio n'a pas pu être arrêté, fermer le processus à la main puis recommencer.
+- **Modifier dans le Studio ne modifie pas la scène** : la copie est en lecture seule ; ce qui est changé malgré tout est mis de côté dans
+  `studio/edits/` à la fermeture et avant chaque synchronisation, jamais écrit dans la bibliothèque.
+- **Le Studio est réduit** : le garde refuse toute connexion hors du poste, tout processus enfant (donc ni rendu, ni installation de paquet,
+  ni « ouvrir dans l'éditeur » depuis le Studio) ; ne l'ouvrir que sur une scène connue (contrat §11).
+- **Redémarrage** : pour charger les routes et la carte après une mise à jour de Jarvis, Core et le Control Center doivent être relancés ;
+  c'est à l'utilisateur de le faire (aucun agent ne le fait).
+- **Rejouer la preuve** (hors profil vivant, Chrome et Node requis, ≈ 8 minutes, ≈ 600 Mo) :
+  `python scripts/remotion_studio_harness.py --part early|late --work-dir <dossier court sous Temp> --evidence <fichier.json>` (deux passes de ≈ 6 minutes).
+  Verdict `PASSED` attendu.
+
+#### Édition de source d'une scène Remotion par un agent (Slice 14)
+
+Une scène Remotion se modifie par `POST /v1/presentation-studio/presentations/<id>/variants/<id>/source-edits` (jeton porteur, comme les autres routes
+de Core) : l'agent lit d'abord la source (`GET .../scenes/<scene_id>/source`), puis envoie `files: {sources: {"src/Scene.tsx": "<texte>"}}`
+(`null` supprime un fichier, `assets` pour `public/**`, `restore_version` pour annuler ou rétablir). Contrat : [presentation-studio.md](presentation-studio.md)
+> *Remotion sources*. Aucun outil MCP n'a été ajouté : le cerveau garde `scene.source_request` ; le sous-agent délégué appelle cette route.
+
+**Le `request_id` est obligatoire (acteur `brain`, Slice 21)** : le cerveau enregistre `scene.source_request` lui-même, dans le tour de l'utilisateur, et passe au sous-agent le `request_id` rendu ; le sous-agent l'envoie dans `POST .../source-edits` (`"request_id": "psq_..."`) et **n'appelle pas** `scene.source_request`. Sans demande en attente pour CETTE scène, Core répond **403 `presentation_studio_source_request_required`** (« demande à renouveler ») : inconnue, déjà satisfaite, expirée (30 minutes), perdue au redémarrage de Core ou d'une autre scène. La demande reste en attente tant qu'aucune édition n'a réussi : un refus de compilation se retouche avec le même `request_id`. L'utilisateur (relais du Control Center) n'en a pas besoin.
+
+- **Une source qui ne compile pas n'est jamais publiée** : réponse **422**, `error.code = presentation_studio_source_build_failed`, `diagnostics`
+  `[{file, line, column, text}]` ; la version à l'écran continue de jouer. Moteur non prêt : 400 `presentation_studio_engine_unavailable` avec la réparation
+  (capacité locale Remotion, docs/remotion-runtime.md) ; jamais un repli sur Slidecar.
+- **Une scène qui compile mais lève au rendu** est publiée puis rejetée au montage : `409 rolled_back` (`presentation_studio_mount_failed`), le pin revient
+  à la dernière version valide, l'ancien cadre n'a pas quitté l'écran. La version rejetée reste dans `prefabs/` (immuable, non épinglée) jusqu'à la rétention.
+- **Journal** (`core.presentation_studio.*`) : `reload_built` (info, chemin normal), `reload_build_refused` (warning), `reload_published`, `reload_rolled_back`.
+  `GET .../presentations/<id>/reloads` liste les derniers rechargements (statut, code, nombre de constats).
+- **Occupé** : une édition qui attend plus de 75 s derrière une autre de la même scène reçoit `409 presentation_studio_scene_reloading` (à refaire). Un manifeste d'édition ne peut ni changer `source.engine`, ni le bloc `catalog`, ni `schema_version` (400 `presentation_studio_invalid`, la clé est nommée).
+- **Rien à redémarrer** : pas de migration, pas de nouvelle variable d'environnement ; le code est pris au prochain démarrage de Core.
+- **Preuve réelle rejouable** (Core isolé, jamais le JARVIS vivant) : `python scripts/remotion_player_harness.py --runtime-dir <runtime/> --slice 14
+  --test tests/unit/test_remotion_source_edit_realpage_browser.py --evidence tasks/jarvis-remotion-presentation-integration/slices/14-source-edit-hmr-and-agents/evidence`.
+#### Export d'une présentation : MP4, image, PDF (Slice 16)
+
+Contrat : [remotion-render.md](remotion-render.md) ; sécurité : SECURITY.md § 20. Un export **rend une copie figée** (jamais la source vivante, jamais une valeur de contrôle) et
+enregistre un Artifact relié à cette copie. Prérequis : la capacité Remotion `ready` (installation unique, section « Capacité locale Remotion ») et un Chrome ou Edge installé
+(sinon `JARVIS_REMOTION_RENDER_BROWSER` ; un navigateur n'est **jamais** téléchargé).
+
+- **Depuis le Control Center** : bouton `WSP` → Artefacts → choisir le Board → sous la copie figée d'une présentation Remotion, « Exporter cette copie » (MP4, image, PDF). Le
+  panneau dit la phase, les images faites, les secondes écoulées, le délai, et offre **Annuler l'export**. À la fin le rendu apparaît sous la copie, avec ses dimensions, sa
+  durée, un aperçu et la mention « export à plat : non éditable » ; **Ouvrir la source** / **Ouvrir la variante** (au-dessus) mènent à l'origine éditable.
+- **Depuis PowerShell** (jeton comme pour la capacité) :
+
+```powershell
+$u = "http://127.77.0.1:17653/v1/local-capabilities/remotion/render"
+Invoke-RestMethod -Headers $h $u                                   # prêt ? pourquoi pas ? (lecture seule, ne lance rien)
+$job = (Invoke-RestMethod -Method Post -Headers $h "$u/jobs" -ContentType application/json -Body '{"snapshot_id":"<jart_ps_...>","format":"mp4","settings":{"frame_end":59}}').job
+Invoke-RestMethod -Headers $h "$u/jobs/$($job.job_id)"            # état, phase, images, secondes, délai
+Invoke-RestMethod -Method Post -Headers $h "$u/jobs/$($job.job_id)/cancel"
+# figer ET rendre en une demande (révisions exactes, Boards autorisés explicitement) :
+#   {"format":"still","presentation_id":"pst_...","variant_id":"psv_...","expected_presentation_revision":2,"expected_variant_revision":3,"authorised_boards":["<board>"],"settings":{"frame":45}}
+```
+
+- **Lire un échec** : la vue du travail et le dérivé `failed` portent le même `error_code` (`presentation_render_*`, tableau §8 du contrat) et `error_detail` ; `log_tail` donne les
+  dernières lignes du processus. `browser_unavailable` : installer Chrome ou poser `JARVIS_REMOTION_RENDER_BROWSER` ; `runtime_unavailable` : installer ou réparer la capacité ;
+  `engine_mismatch` : le Remotion installé n'est plus celui du gel, refiger puis rendre ; `source_refused` : une garde d'isolation plus récente refuse la source gelée ;
+  `sandbox_unavailable` : Chrome n'a pas démarré avec son bac à sable (le message dit pourquoi) ; seulement si ce poste ne peut vraiment pas le créer, poser `JARVIS_REMOTION_RENDER_NO_SANDBOX=1` (la scène s'exécute alors sans le bac à sable de Chrome : choix explicite, jamais fait par Jarvis) ;
+  `locked` : un autre Core vivant tient les rendus de cette racine de données (ne lancer qu'un Core par racine) ; `guard_unexpected_args` : une version de Remotion lance Chrome avec un argument que le garde ne connaît pas (refusé par sécurité : signaler, ne pas contourner) ;
+  `disk_low` / `disk_full` : libérer de la place (un rendu veut 1,5 Gio libres) ; `timeout` : rendre une plage plus courte (`frame_start`/`frame_end`) ou une échelle plus
+  basse ; `interrupted` : Core ou le poste s'est arrêté pendant le rendu (aucun fichier n'est promu : recommencer).
+- **Où sont les fichiers** : le payload de l'Artifact (`<racine>/artifacts/<id>/render.mp4|still.png|render.pdf`) ; les dossiers de travail sont sous
+  `<racine>/local_capabilities/remotion/runtime/render/jobs/<id>/` et sont effacés à la fin (restent `job.json`, `render.log`, `result.json`, `egress.json`, quelques Kio).
+- **Redémarrage** : un Core qui redémarre pendant un rendu tue le processus orphelin et marque le dérivé `failed` (`interrupted`) ; pour charger les routes après une mise à
+  jour de Jarvis, Core et le Control Center doivent être relancés, ce que fait l'utilisateur (aucun agent ne le fait).
+- **Rejouer la preuve** (hors profil vivant, Node et Chrome requis, ≈ 6 minutes) :
+  `python scripts/remotion_render_harness.py --work-dir <dossier court sous Temp> --runtime-dir <runtime> --evidence <fichier.json>` ; de bout en bout dans un vrai navigateur :
+  `JARVIS_REMOTION_RUNTIME_DIR=<runtime> pytest tests/unit/test_presentation_render_real.py`.
+- **À regarder une fois sur le poste réel** (vérification humaine, non automatisable) : lire le MP4 exporté dans un lecteur vidéo (image, mouvement, **son** si la scène en a : jamais
+  écouté par les tests), ouvrir le PDF dans un lecteur, comparer l'image fixe à l'aperçu du Player, vérifier que « Ouvrir la source » rouvre bien la présentation d'origine.
+
+#### Isolation du code d'une scène Remotion (Slice 06)
+
+Contrat : [remotion-isolation.md](remotion-isolation.md) ; sécurité : SECURITY.md § 18. Le code d'une scène est hostile par
+défaut. **Rien n'est encore monté** (le Player est la Slice 10) : Core, le Control Center et la voix n'y changent rien, aucun
+redémarrage n'est requis par cette Slice.
+
+- **Une publication est refusée** (`invalid_definition`, constats `chemin:ligne: code - explication`) : lire le constat, corriger
+  la source (par exemple lire un fichier par `staticFile()` au lieu d'une URL, calculer une animation à partir du numéro d'image
+  au lieu d'une boucle) et publier une nouvelle version. Les codes sont listés au § 3 du contrat.
+- **Une version ancienne est refusée à la relecture** après l'ajout d'une garde : ses fichiers sont intacts sur disque (rien
+  n'est réécrit) ; la rejouer exige une nouvelle version corrigée.
+- **Un compilateur trop gourmand** : le processus Node de compilation est plafonné à 1 Go de tas et 60 s ; le dépassement donne
+  `compile_compiler_failed` ou `compile_timeout` sans toucher à Core.
+- **Rejouer la preuve** (hors profil vivant, Chrome et Node requis, 2 à 3 minutes, racine de données et profil Chrome jetables) :
+  `python scripts/remotion_isolation_harness.py --work-dir <dossier court> --runtime-dir <racine>/local_capabilities/remotion/runtime --evidence <fichier.json>`.
+  Verdict `PASSED` attendu ; les vérifications échouées sont nommées dans le fichier.
+
+#### Remotion : release de bout en bout (Slice 22)
+
+Rapport, preuves, contrats et vérifications humaines : [remotion-integration-release.md](remotion-integration-release.md). Ce que cette section ajoute pour
+l'opérateur :
+
+- **Avant la première utilisation de ce build, copier** `<racine de données>/presentations/`, `prefabs/` et `state/` : une variante sauvée par le nouveau build
+  est réécrite sans copie de ses anciens octets et l'ancien build refuse ces fichiers ; une base qui contient des Artifacts `presentation_snapshot|video|still|pdf`
+  n'est plus listable par l'ancien build (rapport, « Migration and rollback »). Aucune migration SQLite n'est attendue (`jarvis.sqlite3` reste au schéma 8,
+  `scene.sqlite3` au schéma 1) ; sur une base plus ancienne, la sauvegarde automatique `<base>.v<ancienne version>.bak` est faite au démarrage de Core.
+- **Redémarrage, à faire par l'utilisateur** (aucun agent ne le fait) : Core, puis le Control Center, puis la session de l'agent (nouveau serveur MCP
+  `jarvis-remotion`). L'installation de Remotion reste un geste explicite : démarrer Core ne télécharge rien.
+- **Rejouer la porte de livraison** (poste isolé, jamais le profil vivant ; Node et Chrome requis ; `JARVIS_REMOTION_RUNTIME_DIR` = le dossier `runtime/` d'une
+  installation) : `python scripts/verify_release.py` (suite complète puis `remotion_release_findings` : tests de livraison présents, preuves `PASSED`, rapport complet,
+  balayage de confidentialité) ; le parcours : `pytest tests/unit/test_remotion_release_flows.py` (≈ 1 min) ; les fautes : `pytest tests/unit/test_remotion_release_faults.py` ;
+  le non-repli et la frontière de confidentialité : `pytest tests/unit/test_remotion_no_fallback_privacy.py` ; la migration :
+  `python scripts/remotion_migration_probe.py --work-dir <dossier court sous Temp> --evidence <fichier.json>` ; les mesures :
+  `python scripts/remotion_perf_wrap.py --label <nom> --out <fichier.json> -- <commande>` et `python scripts/remotion_latency_probe.py --runtime-dir <runtime> --evidence <fichier.json>`.
+- **Si l'export d'une présentation rédigée échoue avec `TypeError ... reading 'body'`** : le build ne porte pas le correctif de la Slice 22 (le rendu ne passait pas
+  l'entrée `data` à la composition) ; mettre à jour. Un snapshot gelé avant le correctif se rend correctement (les défauts de `data` sont recalculés depuis les valeurs figées de la scène).
+- **Fuite de confidentialité dans les preuves** : `python tasks/jarvis-remotion-presentation-integration/slices/22-end-to-end-release/evidence/privacy_sweep.py`
+  (`--fix` remplace le dossier personnel et le nom d'utilisateur par `<home>` / `<user>` ; une adresse ou un jeton se retire à la main).
 
 #### Plugins MCP externes (onglet « Plugins externes » du même dialogue)
 

@@ -1,0 +1,12 @@
+{
+  "checks": [
+    {
+      "id": "HV-11-01",
+      "instruction": "Verify Studio opens alongside Jarvis and closes without losing live edits.",
+      "requires_evidence_first": true,
+      "status": "open",
+      "order": 6,
+      "evidence": "docs/remotion-integration-release.md#human-checks"
+    }
+  ]
+}

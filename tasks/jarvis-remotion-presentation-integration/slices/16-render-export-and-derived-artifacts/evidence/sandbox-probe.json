@@ -1,0 +1,87 @@
+{
+  "sandbox_on": {
+    "rows": [
+      {
+        "type": "GPU",
+        "sandbox": "GPU",
+        "lockdown": "Limited",
+        "integrity": "S-1-16-4096 Low"
+      },
+      {
+        "type": "Utility",
+        "sandbox": "Not Sandboxed",
+        "lockdown": "",
+        "integrity": ""
+      },
+      {
+        "type": "Utility",
+        "sandbox": "Service",
+        "lockdown": "Lockdown",
+        "integrity": "S-1-16-0 Untrusted"
+      },
+      {
+        "type": "Renderer",
+        "sandbox": "Renderer",
+        "lockdown": "Lockdown",
+        "integrity": "S-1-16-0 Untrusted"
+      },
+      {
+        "type": "Renderer",
+        "sandbox": "Renderer",
+        "lockdown": "Lockdown",
+        "integrity": "S-1-16-0 Untrusted"
+      },
+      {
+        "type": "Renderer",
+        "sandbox": "Renderer",
+        "lockdown": "Lockdown",
+        "integrity": "S-1-16-0 Untrusted"
+      }
+    ],
+    "guard_sandbox_flag": true,
+    "error": null
+  },
+  "opt_out": {
+    "rows": [
+      {
+        "type": "GPU",
+        "sandbox": "Not Sandboxed",
+        "lockdown": "",
+        "integrity": ""
+      },
+      {
+        "type": "Utility",
+        "sandbox": "Not Sandboxed",
+        "lockdown": "",
+        "integrity": ""
+      },
+      {
+        "type": "Utility",
+        "sandbox": "Not Sandboxed",
+        "lockdown": "",
+        "integrity": ""
+      },
+      {
+        "type": "Renderer",
+        "sandbox": "Not Sandboxed",
+        "lockdown": "",
+        "integrity": ""
+      },
+      {
+        "type": "Renderer",
+        "sandbox": "Not Sandboxed",
+        "lockdown": "",
+        "integrity": ""
+      },
+      {
+        "type": "Renderer",
+        "sandbox": "Not Sandboxed",
+        "lockdown": "",
+        "integrity": ""
+      }
+    ],
+    "guard_sandbox_flag": false,
+    "error": null
+  },
+  "chrome": "chrome 154.0.8037.99"
+}

@@ -20,11 +20,13 @@ from jarvis.domain.presentation_studio_authoring_gate import (
 )
 from tests.fakes import presentation_studio_fake_author as fa
 from tests.fakes.presentation_studio_authoring_env import AuthoringEnv
+from tests.fakes.remotion_authoring import engine_pin
 from tests.unit.test_presentation_studio_authoring import NOW
 
 #: What each violation raises as an ERROR, besides nothing else (a rule can drag a sibling along; the sibling is named here).
 EXPECTED_ERRORS = {
     "scene_no_score": {"scene_no_score", "notes_missing"},
+    "prefab_namespace": {"prefab_namespace", "tsx_theme_unread"},     # a hand-written candidate bypasses the generator, so the theme prop too
 }
 
 
@@ -41,7 +43,7 @@ def judge(brief: dict, draft: dict):
     """The gate with its full context (manifests + the provisional documents), no I/O: what the service gives it."""
 
     b = parse_brief(brief)
-    parsed = parse_draft(draft, b)
+    parsed = parse_draft(draft, b, engine_pin())
     assert parsed.draft is not None, parsed.problems
     manifests = {s.key: next(x.bundle.manifest for x in parsed.draft.bundles if x.key == s.bundle_key)
                  for s in parsed.draft.scenes if s.bundle_key}
@@ -82,10 +84,10 @@ async def test_the_careless_author_is_caught_with_the_right_code(env, code):
 async def test_a_refused_draft_lists_every_failure_not_the_first(env):
     brief, draft = fa.violate("placeholder_text")
     fa.VIOLATIONS and dict(fa.VIOLATIONS)["cue_weak"](brief, draft)
-    dict(fa.VIOLATIONS)["motion_unguarded"](brief, draft)
+    dict(fa.VIOLATIONS)["tsx_text_hardcoded"](brief, draft)
     dict(fa.VIOLATIONS)["duration_off"](brief, draft)
     report = (await env.check(brief, draft)).body["report"]
-    assert {"placeholder_text", "cue_weak", "motion_unguarded", "duration_off"} <= codes(report)
+    assert {"placeholder_text", "cue_weak", "tsx_text_hardcoded", "duration_off"} <= codes(report)
 
 
 async def test_the_report_is_deterministic_and_never_echoes_the_authors_words(env):
@@ -101,7 +103,7 @@ async def test_the_report_is_deterministic_and_never_echoes_the_authors_words(en
 # ------------------------------------------------------------------ the rule table
 
 def test_the_rule_table_is_complete_consistent_and_documents_the_exploratory_subset():
-    assert len({r.code for r in RULES}) == len(RULES) == 48
+    assert len({r.code for r in RULES}) == len(RULES) == 66
     for rule in RULES:
         assert rule.summary and {rule.one_shot, rule.directed, rule.exploratory} <= {ERROR, WARNING, OFF}
     validation = {"brief_invalid", "draft_schema", "prefab_invalid", "prefab_namespace", "pin_unknown", "scene_incompatible",
@@ -135,9 +137,9 @@ async def test_an_exploratory_draft_still_needs_its_structure_but_a_strict_one_g
     b, d = fa.exploratory(3)
     d["scenes"][2]["role"] = "body"                      # no closing
     d["score"]["items"].pop()                            # a scene with no score item
-    d["prefabs"][0]["candidate"] = fa.slide_bundle(guarded=False)
+    dict(fa.VIOLATIONS)["tsx_compile"](b, d)             # a scene that does not compile blocks in every column
     report = (await env.check(b, d)).body["report"]
-    assert report["ok"] is False and {"arc_incomplete", "scene_no_score", "motion_unguarded"} <= codes(report)
+    assert report["ok"] is False and {"arc_incomplete", "scene_no_score", "tsx_compile"} <= codes(report)
     b, d = fa.exploratory(3)
     d["scenes"][1].update(title="Alpha", props={"headline": "-"}, data={"body": "..."})
     assert (await env.check(b, d)).body["report"]["ok"] is True                  # light: a warning
@@ -155,7 +157,7 @@ async def test_an_exploratory_draft_still_needs_its_structure_but_a_strict_one_g
 
 async def test_a_gate_without_context_says_which_rules_it_could_not_run():
     brief = parse_brief(fa.brief("directed"))
-    draft = parse_draft(fa.good_deck(), brief).draft
+    draft = parse_draft(fa.good_deck(), brief, engine_pin()).draft
     report = check_first_draft(draft, brief).to_dict()
     assert report["ok"] is True
     assert {"cue_ambiguous", "payload_headroom", "document_headroom", "control_unbounded", "contrast_low"} <= set(report["skipped"])
@@ -200,7 +202,7 @@ async def test_text_density_has_a_long_form_escape_that_is_declared(env):
     brief, draft = fa.violate("text_density")
     draft["scenes"][3]["long_form"] = True
     report = (await env.check(brief, draft)).body["report"]
-    assert report["ok"] is True and visible_words(parse_draft(draft, parse_brief(brief)).draft.scenes[3]) > MAX_SCENE_WORDS
+    assert report["ok"] is True and visible_words(parse_draft(draft, parse_brief(brief), engine_pin()).draft.scenes[3]) > MAX_SCENE_WORDS
     assert LONG_FORM_WORDS > MAX_SCENE_WORDS
 
 
@@ -215,8 +217,9 @@ async def test_a_scene_near_the_word_cap_is_a_warning_not_an_error(env):
 async def test_headroom_rules_read_the_real_payload_and_document_sizes(env):
     brief, draft = fa.good_one_shot()
     wide = fa.slide_bundle(body_max=12_000)
-    wide["manifest"]["inputs"]["data"]["properties"]["notes"] = {"type": "text", "max_length": 12_000, "default": ""}
-    draft["prefabs"][0]["candidate"] = wide
+    wide["remotion"]["data"]["properties"]["notes"] = {"type": "text", "max_length": 12_000, "default": ""}
+    wide["remotion"]["files"] = {"src/Scene.tsx": fa.SLIDE_TSX + "export const notesKey = 'notes';\n"}
+    draft["prefabs"][0] = {"key": "slide", **wide}
     draft["scenes"][0]["long_form"] = True
     # two long words (no density, no filler) that together take 13 000 of the 16 384 payload bytes
     draft["scenes"][0]["data"] = {"body": ("abcdefghijklmnopqrstuvwxyz" * 500)[:11_000], "notes": ("zyxwvutsrqponmlkjihgfedcba" * 100)[:2_000]}
@@ -227,11 +230,11 @@ async def test_headroom_rules_read_the_real_payload_and_document_sizes(env):
 
 
 async def test_a_document_past_three_quarters_of_its_cap_is_refused_before_it_cannot_be_stored(env):
-    # 48 scenes of ~3.6 KB: the variant document (~230 KiB) passes 75 % of the 256 KiB cap while every payload keeps its own headroom
+    # 48 scenes of ~2.8 KB + the theme prop each (~0.7 KB): the variant document (~230 KiB) passes 75 % of the 256 KiB cap while every payload keeps its own headroom
     brief = fa.brief("directed", duration_target_s=None)
     draft = fa.good_deck()
-    draft["prefabs"][0]["candidate"] = fa.slide_bundle(body_max=12_000)
-    filler = ("abcdefghijklmnopqrstuvwxyz" * 200)[:3_600]
+    draft["prefabs"] = [fa.prefab_entry(body_max=12_000)]
+    filler = ("abcdefghijklmnopqrstuvwxyz" * 200)[:2_800]
     draft["scenes"] = [dict(fa.scene(f"s{n:02d}", "opening" if n == 1 else "closing" if n == 48 else "body",
                                      f"Chapitre {n} du recit", filler), long_form=True) for n in range(1, 49)]
     draft["score"]["items"] = [fa.item(s["key"], f"Voici le chapitre numero {n}", ms=10_000) for n, s in enumerate(draft["scenes"], 1)]
@@ -335,7 +338,7 @@ async def test_a_jarvis_item_with_only_an_intention_is_a_warning(env):
 async def test_a_scene_with_neither_controls_nor_content_is_unbound(env):
     brief, draft = fa.violate("placeholder_text")
     draft["scenes"][2]["data"]["body"] = "Une marge stable malgre la hausse des couts"
-    draft["prefabs"][0]["candidate"]["manifest"]["inputs"]["data"]["required"] = []      # a prefab that can show nothing
+    draft["prefabs"][0]["remotion"]["data"]["required"] = []      # a prefab that can show nothing
     scene = draft["scenes"][5]
     scene.update(controls=[], anchors=[], props={}, data={})
     draft["score"]["items"][5].update(visual=[], motion=[])                                # its score no longer names a control

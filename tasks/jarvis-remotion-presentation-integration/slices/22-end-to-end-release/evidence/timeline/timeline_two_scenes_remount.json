@@ -1,0 +1,81 @@
+{
+  "scenario": "timeline_two_scenes_remount",
+  "screenshots": [],
+  "reads": {
+    "until:!!document.querySelector('iframe[data-remotion-stage]') && !!document.querySelec": true,
+    "until:Number(document.querySelector('#frame').textContent)>=29": true,
+    "s1_entry": 29,
+    "next1": {
+      "status": 200,
+      "timeline": {
+        "scene_id": "pss_000000000001",
+        "composition_id": "Scene",
+        "fps": 30,
+        "duration_frames": 150,
+        "anchor_id": "intro",
+        "from_frame": 30,
+        "until_frame": 74,
+        "playing": true,
+        "seq": 2,
+        "play_ms": 1,
+        "tolerance_ms": 500,
+        "problems": []
+      }
+    },
+    "until:Number(document.querySelector('#frame').textContent)>=74": true,
+    "s1_intro": 74,
+    "next2": {
+      "status": 200,
+      "timeline": {
+        "scene_id": "pss_000000000002",
+        "composition_id": "Scene",
+        "fps": 30,
+        "duration_frames": 150,
+        "anchor_id": "intro",
+        "from_frame": 30,
+        "until_frame": 74,
+        "playing": true,
+        "seq": 3,
+        "play_ms": 0,
+        "tolerance_ms": 500,
+        "problems": []
+      }
+    },
+    "s2_intro": 74,
+    "s2_title": "Deux",
+    "until:!document.querySelector('iframe[data-remotion-stage]').contentDocument.querySele": true,
+    "until:document.querySelector('iframe[data-remotion-stage]').contentWindow.__remotionSt": true,
+    "after_a": 74,
+    "after_b": 74,
+    "remounted": true,
+    "next3": {
+      "status": 200,
+      "timeline": {
+        "scene_id": "pss_000000000002",
+        "composition_id": "Scene",
+        "fps": 30,
+        "duration_frames": 150,
+        "anchor_id": "middle",
+        "from_frame": 75,
+        "until_frame": 119,
+        "playing": true,
+        "seq": 4,
+        "play_ms": 1,
+        "tolerance_ms": 500,
+        "problems": []
+      }
+    },
+    "until:Number(document.querySelector('#frame').textContent)>=75": true,
+    "until:Number(document.querySelector('#frame').textContent)>=119": true,
+    "s2_middle": 119
+  },
+  "console": [
+    "frame info [scène] timeline.segment Object",
+    "frame info [scène] timeline.segment Object",
+    "frame info [scène] timeline.segment Object",
+    "frame info [scène] timeline.segment Object",
+    "frame info [scène] timeline.segment Object",
+    "frame info [scène] timeline.segment Object"
+  ],
+  "errors": []
+}

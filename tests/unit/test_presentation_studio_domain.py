@@ -43,12 +43,13 @@ def view_documents() -> dict:
 # ------------------------------------------------------------------ aller-retour
 
 def test_fixture_documents_round_trip_byte_for_byte_semantically():
-    presentation = ps.parse_presentation(fixture("presentation.v2.json"))
-    variant = ps.parse_variant(fixture("variant.v4.json"))
-    assert presentation.to_document() == fixture("presentation.v2.json")
-    assert variant.to_document() == fixture("variant.v4.json")
+    presentation = ps.parse_presentation(fixture("presentation.v3.json"))
+    variant = ps.parse_variant(fixture("variant.v5.json"))
+    assert presentation.to_document() == fixture("presentation.v3.json")
+    assert variant.to_document() == fixture("variant.v5.json")
+    assert ps.parse_variant(fixture("variant.v4.json")) == variant      # Remotion Slice 12: v4 -> v5 is the identity (no anchor has a position)
     # a Slice 04 file (v2), a Slice 06 file (v3, no local variants) and a Slice 02 file (v1, bare pins) are read through the upgrade
-    # steps and rewritten as v4, nothing reinterpreted: a scene never hot reloaded is at source_revision 0 with no fallback pin,
+    # steps and rewritten as v5, nothing reinterpreted: a scene never hot reloaded is at source_revision 0 with no fallback pin,
     # and "no scene_variants key" (Slice 17) means no set
     assert ps.parse_variant(fixture("variant.v3.json")) == variant
     assert ps.parse_variant(fixture("variant.v2.json")) == variant
@@ -57,7 +58,7 @@ def test_fixture_documents_round_trip_byte_for_byte_semantically():
     old_manifest = ps.parse_presentation(fixture("presentation.v1.json"))
     assert [e.variant_number for e in old_manifest.variants] == [1, 2] and old_manifest.archived == ()
     assert {e.created_by for e in old_manifest.variants} == {"system"} and old_manifest.variant_counter == 2
-    assert old.to_document() == fixture("variant.v4.json") and old == variant
+    assert old.to_document() == fixture("variant.v5.json") and old == variant
     assert [s.prefab for s in old.scenes] == [s.prefab for s in variant.scenes]
     assert variant.scenes[0].prefab.version == 2 and variant.scenes[1].prefab.prefab_id == "jarvis.window"
     assert [r.locator for r in presentation.resources] == ["https://example.org/rapport", "doc:drive-file-1"]
@@ -267,7 +268,7 @@ def test_the_domain_stores_no_prefab_definition_fields():
 
 def test_a_newer_schema_version_is_refused_not_read_best_effort():
     error = refused(lambda: ps.parse_presentation(fixture("presentation.future.json")),
-                    C.UNSUPPORTED_SCHEMA_VERSION, "schema_version 3")
+                    C.UNSUPPORTED_SCHEMA_VERSION, "schema_version 4")
     assert "left untouched" in error.message and error.status == 409
 
 
@@ -290,8 +291,8 @@ def test_a_missing_upgrade_step_is_corruption_not_a_guess():
                                         upgrades={ps.SCHEMA_PRESENTATION: {}}), C.CORRUPT_DOCUMENT, "no upgrade step")
 
 
-def test_current_version_is_two_and_every_schema_has_an_upgrade_table():
-    assert ps.SCHEMA_VERSION == 2 and set(ps.UPGRADES) == {ps.SCHEMA_PRESENTATION, ps.SCHEMA_VARIANT, ps.SCHEMA_SCORE,
+def test_current_version_is_three_and_every_schema_has_an_upgrade_table():
+    assert ps.SCHEMA_VERSION == 3 and set(ps.UPGRADES) == {ps.SCHEMA_PRESENTATION, ps.SCHEMA_VARIANT, ps.SCHEMA_SCORE,
                                                     ps.SCHEMA_ART_DIRECTION}
 
 

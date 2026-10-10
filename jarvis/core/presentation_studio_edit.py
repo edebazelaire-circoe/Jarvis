@@ -34,6 +34,7 @@ intention. Une panne (disque, document corrompu) est tracée en `error` par le s
 from __future__ import annotations
 
 from collections import deque
+import time
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass, replace
 from typing import Any, Protocol
@@ -45,7 +46,7 @@ from jarvis.domain.presentation_studio_checks import PresentationStudioError, Pr
 from jarvis.domain.presentation_studio import stamp
 from jarvis.domain.presentation_studio_edit import (
     UNSAFE_KEYS, ControlReset, ControlSet, EditMode, EditPlan, EditRefusal, EditRequest, EditResult, EditStatus,
-    MAX_OPS, RestoreValues, SceneAdd, SceneSetControls, SceneVariantSelect, SourceRequestRecord, StudioActor,
+    EXPLICIT_USER_REQUEST, MAX_OPS, RestoreValues, SceneAdd, SceneSetControls, SceneVariantSelect, SourceRequestRecord, StudioActor,
     actor_refusal, apply_ops, parse_edit_request, scenes_changed, undo_record,
 )
 from jarvis.domain.presentation_studio_score import check_score, parse_score
@@ -57,6 +58,8 @@ from jarvis.ports.v2 import DiagnosticSink
 #: Demandes de source gardées en mémoire (bornées : la plus ancienne cède). Mémoire seulement, par conception :
 #: la reconstruction est la Slice 06, aucun schéma de fichier n'est ajouté ici.
 MAX_SOURCE_REQUESTS = 64
+#: Remotion Slice 21 (QA B1): une demande de source reste en attente 30 minutes (horloge monotone) ; au-delà, « demande à renouveler ».
+SOURCE_REQUEST_TTL_S = 1800.0
 
 
 class EditHistory(Protocol):
@@ -96,7 +99,9 @@ class PresentationStudioEditService:
     def __init__(self, studio: PresentationStudioService, *, diagnostics: DiagnosticSink | None = None,
                  events: Any | None = None, new_id: Callable[[], str] = new_scene_id,
                  history: EditHistory | None = None,
-                 new_variant_id: Callable[[], str] = new_scene_variant_id) -> None:
+                 new_variant_id: Callable[[], str] = new_scene_variant_id,
+                 clock: Callable[[], float] = time.monotonic) -> None:
+        self._clock = clock
         self._studio = studio
         self._diagnostics = diagnostics
         self._events = events
@@ -119,6 +124,7 @@ class PresentationStudioEditService:
         control or the pinned manifest refuses is refused here. `ops` may exceed `MAX_OPS`: they are applied in order,
         in chunks, each chunk on the output of the previous one. A base that moved is `stale`."""
 
+        await self._studio.require_engine(presentation_id, "preview")  # the Presentation's own engine, or engine_unavailable
         variant = await self._studio.get_variant(presentation_id, variant_id)
         if basis_revision != variant.revision:
             return OverlayRender(EditStatus.STALE, code=C.STALE_REVISION.value,
@@ -159,6 +165,35 @@ class PresentationStudioEditService:
         """Les demandes de niveau 3 enregistrées (les plus anciennes d'abord), pour la Slice 06."""
 
         return tuple(r for r in self._sources if presentation_id is None or r.presentation_id == presentation_id)
+
+    def claim_source_request(self, request_id: str | None, presentation_id: str, variant_id: str, scene_id: str) -> SourceRequestRecord:
+        """Remotion Slice 21 (QA B1): la demande de source EN ATTENTE qui autorise une edition de source de `brain` sur cette scene.
+
+        Elle doit exister (memoire seulement : un redemarrage ou une eviction la perd), avoir ete enregistree pour CETTE presentation, variante et
+        scene dans un tour de l'utilisateur (`origin: explicit_user_request`) et ne pas etre expiree (`SOURCE_REQUEST_TTL_S`). Sinon
+        `presentation_studio_source_request_required` : « demande a renouveler ». Lire n'est pas consommer : la demande reste en attente jusqu'a
+        une edition REUSSIE (`fulfil_source_request`), donc une edition refusee a la compilation se retouche avec la meme demande."""
+
+        renew = "renew it: the brain records scene.source_request again in a turn of the user, then edits with the new request_id"
+        if not request_id:
+            raise PresentationStudioError(C.SOURCE_REQUEST_REQUIRED, f"a source edit of the brain needs the request_id of a pending source request; {renew}")
+        record = next((r for r in self._sources if r.request_id == request_id), None)
+        if record is None:
+            raise PresentationStudioError(C.SOURCE_REQUEST_REQUIRED, f"no pending source request {request_id} (unknown, already satisfied, evicted or "
+                                                                      f"lost at a restart); {renew}")
+        if self._clock() - record.created_at > SOURCE_REQUEST_TTL_S:
+            self._drop_source_request(request_id)
+            raise PresentationStudioError(C.SOURCE_REQUEST_REQUIRED, f"source request {request_id} expired after {int(SOURCE_REQUEST_TTL_S // 60)} minutes; {renew}")
+        if (record.presentation_id, record.variant_id, record.scene_id) != (presentation_id, variant_id, scene_id):
+            raise PresentationStudioError(C.SOURCE_REQUEST_REQUIRED, f"source request {request_id} was recorded for another presentation, variant or scene; {renew}")
+        if record.origin != EXPLICIT_USER_REQUEST:
+            raise PresentationStudioError(C.SOURCE_REQUEST_REQUIRED, f"source request {request_id} does not come from a request of the user; {renew}")
+        return record
+
+    def _drop_source_request(self, request_id: str) -> None:
+        kept = [record for record in self._sources if record.request_id != request_id]
+        self._sources.clear()
+        self._sources.extend(kept)
 
     def fulfil_source_request(self, request_id: str) -> bool:
         """Retire une demande de source de la file en memoire une fois qu'une edition de source la satisfait
@@ -225,13 +260,14 @@ class PresentationStudioEditService:
         (le service de lecture reconnaît ainsi sa propre édition par identité, pas par un drapeau global)."""
 
         request = parse_edit_request(raw, new_id=self._new_id)
+        await self._studio.require_engine(presentation_id, "edit")  # the Presentation's own engine, or engine_unavailable
         variant = await self._studio.get_variant(presentation_id, variant_id)
         context = _Context(presentation_id, variant_id, request, step, origin)
         if request.basis_revision != variant.revision:
             return self._not_applied(context, variant.revision, EditStatus.STALE, C.STALE_REVISION,
                                      f"the variant is at revision {variant.revision}, not {request.basis_revision}: "
                                      "read it again, then retry")
-        refusal = actor_refusal(request.actor, request.ops)
+        refusal = actor_refusal(request.actor, request.ops, origin=request.origin, recording=request.mode is EditMode.COMMIT)
         if refusal is not None:
             return replace(self._refused(context, variant.revision, refusal), refusal_kind="authority")
         manifests = await self._studio.guarded("edit_manifests", presentation_id, self._manifests(variant, request))
@@ -374,8 +410,9 @@ class PresentationStudioEditService:
         """Garde les demandes (mémoire, bornée) et dit combien de plus anciennes ont dû céder : jamais en silence."""
 
         ids = [o["request_id"] for o in plan.outcomes if o.get("effect") == "recorded_only"]
+        origin = EXPLICIT_USER_REQUEST if context.request.actor is StudioActor.USER else context.request.origin
         records = tuple(SourceRequestRecord(request_id, context.presentation_id, context.variant_id, op.scene_id,
-                                            op.intent, context.request.actor.value, context.request.basis_revision)
+                                            op.intent, context.request.actor.value, context.request.basis_revision, origin, self._clock())
                         for request_id, op in zip(ids, plan.sources))
         dropped = max(0, len(self._sources) + len(records) - MAX_SOURCE_REQUESTS)
         self._sources.extend(records)

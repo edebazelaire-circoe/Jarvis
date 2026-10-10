@@ -205,7 +205,7 @@ async def test_the_files_after_every_kill_are_whole_json_and_the_variant_names_o
         rig = await reopen(root)
         try:
             document = json.loads(rig.variant_file().read_text(encoding="utf-8"))
-            assert document["schema_version"] == 4
+            assert document["schema_version"] == 5
             for entry in document["scenes"]:
                 for pin in (entry["prefab"], entry["last_valid_pin"]):
                     if pin is not None:

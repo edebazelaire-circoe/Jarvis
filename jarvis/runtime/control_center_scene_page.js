@@ -1777,6 +1777,22 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
     studio.hostOutcome(info).catch((error)=>consoleLog('error','scene.studio_outcome_failed',{object_id:info&&info.object_id,error:errorText(error)}));
   }
 
+  /* Ligne de temps de la partition pour une scène Remotion (Slice 12) : la bande de lecture (`jarvis:studio-timeline`, vue de Core)
+     dit où le lecteur doit être ; `JarvisRemotionFrame.createTimelineFollower` l'applique au cadre de CETTE page (aller au segment,
+     jouer jusqu'à son image d'arrêt, pause, rattrapage). Rien n'est renvoyé à Core. Créé au premier événement. */
+  let timelineFollower=null;
+  function onStudioTimeline(event){
+    try{
+      if(timelineFollower===null){
+        const R=window.JarvisRemotionFrame;
+        if(!R||typeof R.createTimelineFollower!=='function')return;
+        timelineFollower=R.createTimelineFollower({getHost:prefabs,log:(level,key,data)=>consoleLog(level==='warn'?'warn':'info',key,data)});
+      }
+      timelineFollower.apply(event&&event.detail);
+    }catch(error){consoleLog('error','scene.timeline_failed',{error:errorText(error)})}
+  }
+  window.addEventListener('jarvis:studio-timeline',onStudioTimeline);
+
   /* Monter, mettre à jour ou démonter le cadre d'un nœud dessiné
      (`JarvisPrefabHost.syncScene`) : `props`/`data` changent par message (diff
      par chaîne JSON dans l'hôte), jamais par un nouveau dessin ; remontage

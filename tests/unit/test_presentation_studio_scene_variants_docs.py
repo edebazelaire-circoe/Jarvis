@@ -69,8 +69,8 @@ def test_the_diagnostics_the_code_emits_are_documented():
 
 def test_the_schema_decision_and_the_merge_rule_with_slice_06_are_written():
     text = section()
-    assert ps.VARIANT_SCHEMA_VERSION == 4 and set(ps.UPGRADES[ps.SCHEMA_VARIANT]) == {1, 2, 3}
-    for needle in ("`VARIANT_SCHEMA_VERSION` is **4**", "`UPGRADES[variant][3]` is the **identity**", "Merge rule with Slice 06, done",
+    assert ps.VARIANT_SCHEMA_VERSION == 5 and set(ps.UPGRADES[ps.SCHEMA_VARIANT]) == {1, 2, 3, 4}
+    for needle in ("`VARIANT_SCHEMA_VERSION` is **5**", "`UPGRADES[variant][3]` is the **identity**", "Merge rule with Slice 06, done",
                    "One pin function", "held_pins()", "presentation_studio_scene_reloading", "live scene only", "refused while ANY scene", "`current_id`", "`selected` would have been the natural key"):
         assert needle in text, needle
     graph = page("presentation-studio.md")

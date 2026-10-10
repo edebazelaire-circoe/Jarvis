@@ -8,8 +8,10 @@ cette Slice (Slice 05+ : acteur forcé `user`). Contrat :
 
 | Méthode | Route | Réponse |
 | --- | --- | --- |
-| GET | `/v1/presentation-studio/presentations[?limit]` | `{presentations: [{presentation_id, title, active_variant_id, variant_count, resource_count, revision, updated_at}], problems: [{presentation_id, code, message}]}` (`limit` ≤ 256) |
-| POST | `/v1/presentation-studio/presentations` | corps `{title}` -> 201 `{presentation, variants}` (variante n° 1 active) |
+| GET | `/v1/presentation-studio/presentations[?limit]` | `{presentations: [{presentation_id, title, active_variant_id, variant_count, resource_count, engine, revision, updated_at}], problems: [{presentation_id, code, message}]}` (`limit` ≤ 256) |
+| POST | `/v1/presentation-studio/presentations` | corps `{title}` (agent, script : moteur Remotion) ou, Slice 20, `{title, engine, actor, experimental_confirmed?, reason?}` (`engine` n'est accepte que si `actor` vaut `user`, pose par le relais du Control Center ; sinon 403 `presentation_studio_engine_selection_refused`; `slidecar` exige `experimental_confirmed: true`) -> 201 `{presentation, variants}` (variante n° 1 active) |
+| POST | `/v1/presentation-studio/presentations/{presentation_id}/experiment` | Slice 20 : corps `{actor, experimental_confirmed, reason?}` -> 201, un NOUVEAU document Slidecar (titre de la source + « (Slidecar) », sans scene); la source n'est pas modifiee |
+| GET | `/v1/presentation-studio/engine` | Slice 20 : `{default_engine, engines: {slidecar, remotion: {ready, reason, repair}}, experimental, slidecar: {events, total, kept, durable}}`; lecture seule |
 | POST | `/v1/presentation-studio/presentations/validate` | corps `{presentation, variants}` (format disque) -> `{ok, errors: [{code, message}]}` ; rien n'est écrit |
 | GET | `/v1/presentation-studio/presentations/{presentation_id}` | `{presentation, variants}` |
 | PUT | `/v1/presentation-studio/presentations/{presentation_id}` | corps `{expected_revision, title, active_variant_id, resources}` -> le document `presentation` |
@@ -25,7 +27,8 @@ cette Slice (Slice 05+ : acteur forcé `user`). Contrat :
 | POST | `/v1/presentation-studio/presentations/{presentation_id}/variants/{variant_id}/art-direction/fallback` | Slice 09 : corps `{expected_variant_revision, seed_context?}` -> 201 `{art_direction}` générée de repli (`provenance.fallback`) |
 | POST | `/v1/presentation-studio/presentations/{presentation_id}/variants/{variant_id}/art-direction/candidates` | Slice 09 : corps `{count 1..6, seed_context?}` -> `{base, base_profile, candidates}` ; **calculé, rien n'est écrit** (POST parce qu'il porte un corps) |
 | GET | `.../variants/{variant_id}/scenes/{scene_id}/control-suggestions` | Slice 05 : `{basis, declared, proposals, truncated, apply}` ; propose, n'écrit rien |
-| POST | `.../variants/{variant_id}/source-edits` | Slice 06 : corps `{actor, basis: {variant_revision}, scene_id, files: {manifest?, template?, style?, behavior?}, request_id?, allow_state_reset?}` -> le resultat de rechargement a chaud (`reloaded` / `reloaded_state_reset` / `repinned` 200, `pending_mount` 202, `refused_validation` 400, `stale` et `rolled_back` 409 ; toujours `{status, prefab, previous, source_revision, mounted, reset, preserved, ...}`, plus `{error: {code, message}}` quand ce n'est pas un succes) |
+| GET | `.../variants/{variant_id}/scenes/{scene_id}/source` | Slice 14 : la source du pin de la scene, ce qu'un agent lit avant d'editer : `{scene_id, prefab, source_revision, basis, manifest, engine, sources, assets}` (Remotion : modules en texte, assets en inventaire) ou `{..., files}` (Slidecar) |
+| POST | `.../variants/{variant_id}/source-edits` | Slice 06 : corps `{actor, basis: {variant_revision}, scene_id, files: {manifest?, template?, style?, behavior?} ou, pour une scene Remotion (Slice 14), {manifest?, sources?: {chemin: texte ou null}, assets?: {chemin: base64 ou null}} ou {restore_version: {id, version}}, request_id?, allow_state_reset?}` -> le resultat de rechargement a chaud (`reloaded` / `reloaded_state_reset` / `repinned` 200, `pending_mount` 202, `refused_validation` 400, `stale` et `rolled_back` 409 ; toujours `{status, prefab, previous, source_revision, mounted, reset, preserved, ...}`, plus `{error: {code, message}}` quand ce n'est pas un succes) |
 | POST | `/v1/presentation-studio/presentations/mount-reports` | Slice 06 : corps `{object_id, prefab: {id, version}, outcome: mounted or failed, reason?, message?}` -> `{matched, waiting, resolved, scenes: [{scene_id, source_revision}]}` : ce que l'hote a observe pour un cadre `presentation-studio.*` |
 | GET | `.../presentations/{presentation_id}/reloads` | Slice 06 : `{reloads: [...], pending: [...], stats}` les derniers rechargements (sans contenu) et les scenes dont le pin n'est pas encore vu monte |
 | POST | `.../variants/{variant_id}/edits` | Slice 05 : corps `{actor, mode: preview or commit, basis: {variant_revision}, ops: [...]}` -> le résultat d'édition (`status` `applied` 200, `stale` 409, `refused` 400/404 avec son code ; toujours `{status, mode, committed, changed, tier, ops, undo, source_requests, revision}`, et `{error: {code, message}}` quand ce n'est pas `applied`) |
@@ -56,6 +59,7 @@ from jarvis.domain.presentation_studio import (
     MAX_DOCUMENT_BYTES, MAX_PRESENTATIONS, PresentationStudioError,
 )
 from jarvis.domain.presentation_studio_reload import MAX_SOURCE_BODY_BYTES
+from jarvis.domain.presentation_studio_remotion_edit import MAX_REMOTION_BODY_BYTES
 from jarvis.protocol.capture_routes import _int, _only, error_response
 from jarvis.domain.presentation_studio_edit import MAX_EDIT_BODY_BYTES
 from jarvis.domain.presentation_studio_history import MAX_HISTORY_BODY_BYTES
@@ -63,6 +67,7 @@ from jarvis.protocol.strict_json import loads_strict_json, read_bounded
 
 Handler = Callable[[web.Request], Awaitable[web.StreamResponse]]
 PREFIX = "/v1/presentation-studio/presentations"
+ENGINE_ROUTE = "/v1/presentation-studio/engine"
 #: Corps d'une validation : une Presentation et jusqu'à 64 variantes (échappement JSON compris).
 MAX_VALIDATE_BODY_BYTES = 16 * MAX_DOCUMENT_BYTES
 
@@ -80,7 +85,10 @@ class PresentationStudioProtocolRoutes:
             web.post(PREFIX, g(self.create)),
             # Segment fixe d'abord : jamais pris pour un `{presentation_id}`.
             web.post(PREFIX + "/validate", g(self.validate)),
+            # Slice 20 : la vue du moteur (par defaut, etat, registre Slidecar), lecture seule, hors du prefixe des Presentations.
+            web.get(ENGINE_ROUTE, g(self.engine)),
             web.post(PREFIX + "/mount-reports", g(self.mount_report)),
+            web.post(PREFIX + "/{presentation_id}/experiment", g(self.experiment)),
             web.get(PREFIX + "/{presentation_id}", g(self.get)),
             web.put(PREFIX + "/{presentation_id}", g(self.save_presentation)),
             web.get(PREFIX + "/{presentation_id}/variants/{variant_id}", g(self.get_variant)),
@@ -101,6 +109,7 @@ class PresentationStudioProtocolRoutes:
                     g(self.control_suggestions)),
             web.post(PREFIX + "/{presentation_id}/variants/{variant_id}/edits", g(self.edit)),
             web.post(PREFIX + "/{presentation_id}/variants/{variant_id}/source-edits", g(self.source_edit)),
+            web.get(PREFIX + "/{presentation_id}/variants/{variant_id}/scenes/{scene_id}/source", g(self.scene_source)),
             web.get(PREFIX + "/{presentation_id}/reloads", g(self.reloads)),
             web.get(PREFIX + "/{presentation_id}/variants/{variant_id}/history", g(self.history)),
             web.post(PREFIX + "/{presentation_id}/variants/{variant_id}/undo", g(self.undo)),
@@ -149,6 +158,16 @@ class PresentationStudioProtocolRoutes:
     async def create(self, request: web.Request) -> web.Response:
         view = await self._service.create(await self._body(request))
         return web.json_response(view.to_dict(), status=201)
+
+    async def experiment(self, request: web.Request) -> web.Response:
+        """Slice 20 : copie « experience Slidecar » d'une Presentation (nouveau document, la source n'est pas touchee)."""
+
+        view = await self._service.create_experiment(request.match_info["presentation_id"], await self._body(request))
+        return web.json_response(view.to_dict(), status=201)
+
+    async def engine(self, request: web.Request) -> web.Response:
+        _only(request, set())
+        return web.json_response(self._service.engine_overview())
 
     async def validate(self, request: web.Request) -> web.Response:
         return web.json_response(self._service.validate(await self._body(request, MAX_VALIDATE_BODY_BYTES)))
@@ -234,8 +253,16 @@ class PresentationStudioProtocolRoutes:
 
         result = await self._core.presentation_studio_reload.apply_source_edit(
             request.match_info["presentation_id"], request.match_info["variant_id"],
-            await self._body(request, MAX_SOURCE_BODY_BYTES))
+            await self._body(request, max(MAX_SOURCE_BODY_BYTES, MAX_REMOTION_BODY_BYTES)))
         return web.json_response(result.to_dict(), status=result.http_status)
+
+    async def scene_source(self, request: web.Request) -> web.Response:
+        """La source du pin de la scene (Slice 14) : ce qu'un agent lit avant de proposer une edition de source."""
+
+        _only(request, set())
+        info = request.match_info
+        return web.json_response(await self._core.presentation_studio_reload.read_source(
+            info["presentation_id"], info["variant_id"], info["scene_id"]))
 
     async def mount_report(self, request: web.Request) -> web.Response:
         return web.json_response(await self._core.presentation_studio_reload.handle_mount_report(

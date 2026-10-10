@@ -67,6 +67,22 @@ class SceneCatalog:
         if problem is not None:
             raise PresentationStudioError(C.SCENE_INCOMPATIBLE, problem)
 
+    async def require_native(self, scene: StudioScene, engine: Any, gate: Any) -> None:
+        """Scene-vs-engine at scene-add (Remotion Slice 10): the pinned source must be `native` for the Presentation's engine."""
+
+        await self.require_native_pin(scene.prefab.prefab_id, scene.prefab.version, engine, gate,
+                                      what=f"scene {scene.scene_id} ({scene.prefab.prefab_id}@{scene.prefab.version})")
+
+    async def require_native_pin(self, prefab_id: str, version: int, engine: Any, gate: Any, *, what: str) -> None:
+        """The same check for any block that can reach the stage (a scene, a detour block, a preview): `native` only."""
+
+        try:
+            manifest = await self._prefabs.manifest(prefab_id, version)
+        except PrefabStoreError as exc:
+            code = C.STORAGE_IO if exc.code is PrefabStoreErrorCode.STORAGE_IO else C.PREFAB_UNAVAILABLE
+            raise PresentationStudioError(code, f"{what}: {exc.code.value}: {exc.message}") from exc
+        gate.require_native(manifest.catalog_view(parameters=False)["compatibility"], engine, what=what)
+
     async def describe(self, scene: StudioScene, order: int) -> dict[str, Any]:
         """`describe_scene`. Contrôles incompatibles : `scene_incompatible`. Valeurs d'instance incomplètes (une donnée
         requise encore absente) : la scène se décrit quand même, avec ce détail dans `problems`, pour qu'on puisse la régler."""

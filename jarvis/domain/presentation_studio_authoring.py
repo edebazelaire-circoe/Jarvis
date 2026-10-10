@@ -31,7 +31,10 @@ import re
 from typing import Any
 
 from jarvis.domain.prefab import PrefabBundle, PrefabDefinitionError, PrefabRef, canonical_json, parse_candidate
+from jarvis.domain.presentation_live_refs import LiveRef
 from jarvis.domain.presentation_studio import MAX_RESOURCES, resource_from_dict
+from jarvis.domain.presentation_studio_authoring_remotion import generate_source
+from jarvis.domain.remotion_source import EnginePin
 from jarvis.domain.presentation_studio_art_direction import ArtDirectionProfile, parse_profile
 from jarvis.domain.presentation_studio_art_direction_authoring import (
     MAX_DIVERGE, SeedContext, derive_from_signals, generate_fallback_profile, parse_design_signals,
@@ -245,11 +248,23 @@ def parse_brief(raw: object) -> AuthoringBrief:
 
 @dataclass(frozen=True, slots=True)
 class DraftBundle:
-    """A new prefab source the draft publishes (a `PrefabService` candidate). `bundle` is its parsed form."""
+    """A new prefab source the draft publishes (a `PrefabService` candidate). `bundle` is its parsed form.
+
+    Remotion Slice 15: an agent draft publishes Remotion sources (`bundle.is_remotion`). `generated` says Core built the candidate from the
+    brain's `{remotion: {...}}` generator object (the theme prop, the catalog block and the id are Core's); `live_refs` are the Board
+    references the source declares (grammar-checked here, authorised and resolved by Core); `inspiration` the existing source the author
+    names as its inspiration (confirmed by Core, never copied)."""
 
     key: str
     candidate: Mapping[str, Any]
     bundle: PrefabBundle
+    generated: bool = False
+    live_refs: tuple[LiveRef, ...] = ()
+    inspiration: PrefabRef | None = None
+
+    @property
+    def is_remotion(self) -> bool:
+        return self.bundle.is_remotion
 
     @property
     def prefab_id(self) -> str:
@@ -388,6 +403,8 @@ class Problem:
     code: str
     where: str
     message: str
+    #: Optional structured rows that travel with the finding (compiler diagnostics: `{file, line, column, text}`), bounded by the producer.
+    detail: tuple[Mapping[str, Any], ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -566,8 +583,11 @@ def _waits_on(entry: object, failed: set[str]) -> bool:
     return isinstance(ref, dict) and ref.get("bundle") in failed
 
 
-def parse_draft(raw: object, brief: AuthoringBrief) -> ParsedDraft:
-    """The whole submission, every problem collected (at most `MAX_PROBLEMS`). `draft` is set only when there is none."""
+def parse_draft(raw: object, brief: AuthoringBrief, engine_pin: EnginePin | None = None) -> ParsedDraft:
+    """The whole submission, every problem collected (at most `MAX_PROBLEMS`). `draft` is set only when there is none.
+
+    `engine_pin` (Remotion Slice 15): the engine set the generated sources declare (`shipped_engine_pin()`); without it a `remotion`
+    generator object is a schema problem (a draft is never half-understood)."""
 
     c = _Collector()
     for message in scan_json(raw):
@@ -584,7 +604,7 @@ def parse_draft(raw: object, brief: AuthoringBrief) -> ParsedDraft:
     failed_bundles: set[str] = set()
     for i, entry in enumerate(c.guard("draft.prefabs", lambda: _list("draft.prefabs", data.get("prefabs", []), MAX_DRAFT_BUNDLES)) or []):
         where = f"bundle:{i + 1}"
-        body = c.guard(where, lambda e=entry, w=where: _exact_keys(e, w, {"key", "candidate"}))
+        body = c.guard(where, lambda e=entry, w=where: _exact_keys(e, w, {"key"}, frozenset({"candidate", "remotion"})))
         if body is None:
             continue
         key = c.guard(where, lambda b=body, w=where: _slug(f"{w}.key", b["key"]))
@@ -593,9 +613,26 @@ def parse_draft(raw: object, brief: AuthoringBrief) -> ParsedDraft:
         if key in bundles:
             c.add("draft_schema", f"bundle:{key}", "the same bundle key appears twice")
             continue
-        parsed = c.guard(f"bundle:{key}", lambda b=body: parse_candidate(b["candidate"]), code="prefab_invalid")
+        if ("candidate" in body) == ("remotion" in body):
+            c.add("draft_schema", f"bundle:{key}", "a bundle is either `remotion` (the generator object) or `candidate`, exactly one")
+            failed_bundles.add(key)
+            continue
+        generated = None
+        if "remotion" in body:
+            if engine_pin is None:
+                c.add("draft_schema", f"bundle:{key}", "no Remotion engine is available to build this source")
+                failed_bundles.add(key)
+                continue
+            generated = c.guard(f"bundle:{key}", lambda b=body, k=key: generate_source(k, b["remotion"], engine_pin, f"bundle:{k}.remotion"))
+            if generated is None:
+                failed_bundles.add(key)
+                continue
+        candidate = generated.candidate if generated is not None else body["candidate"]
+        parsed = c.guard(f"bundle:{key}", lambda cand=candidate: parse_candidate(cand), code="prefab_invalid")
         if parsed is not None:
-            bundles[key] = DraftBundle(key, body["candidate"], parsed)
+            bundles[key] = DraftBundle(key, candidate, parsed, generated is not None,
+                                       generated.live_refs if generated is not None else (),
+                                       generated.inspiration if generated is not None else None)
         else:
             failed_bundles.add(key)
 

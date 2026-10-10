@@ -59,6 +59,9 @@ from jarvis.domain.presentation_studio_roles import (
     plan_mode_entry, requirements,
 )
 from jarvis.domain.presentation_studio_score import parse_score
+from jarvis.domain.remotion_timeline import (
+    UNRESOLVED as TIMELINE_UNRESOLVED, FrameMap, SegmentClock, build_frame_map, target_segment, timeline_wire,
+)
 from jarvis.domain.scene import ScenePrefabRef
 from jarvis.domain.v2 import ProtocolEnvelope
 from jarvis.ports.v2 import DiagnosticSink
@@ -153,7 +156,8 @@ class PresentationStudioPlaybackService(ScenePreviewMixin):
                  monotonic: Callable[[], float] = time.monotonic,
                  new_run_id: Callable[[], str] = lambda: secrets.token_hex(6),
                  armed_ttl_s: float = ARMED_SET_TTL_S, detour_validator: DetourValidator | None = None,
-                 follower_grace_s: float = FOLLOWER_GRACE_S, stage_observer: Any | None = None) -> None:
+                 follower_grace_s: float = FOLLOWER_GRACE_S, stage_observer: Any | None = None,
+                 timeline_source: Any | None = None) -> None:
         if gate is None or not callable(getattr(gate, "require_art_direction", None)):
             raise ValueError("the playback service needs an art direction gate (PresentationStudioService.require_art_direction)")
         self._studio, self._edit, self._stage, self._mode = studio, edit, stage, mode
@@ -162,6 +166,11 @@ class PresentationStudioPlaybackService(ScenePreviewMixin):
         self._detour_validator, self._follower_grace_s = detour_validator, follower_grace_s
         #: Slice 06 (hot reload) : sait quelle fenetre affiche quelle scene (`bind`/`unbind`), pour patcher CETTE fenetre.
         self._stage_observer = stage_observer
+        #: Slice 12 (Remotion) : `async remotion_composition(prefab_id, version) -> dict | None` (`PrefabService`). Sans lui, aucune ligne de temps.
+        self._timeline_source = timeline_source
+        self._tl_map: FrameMap | None = None
+        self._tl_clock = SegmentClock()
+        self._compositions: dict[tuple[str, int], dict[str, Any] | None] = {}
         self._lock = asyncio.Lock()
         self._state: PlaybackState = idle_state()
         self._plan: PlaybackPlan | None = None
@@ -505,6 +514,7 @@ class PresentationStudioPlaybackService(ScenePreviewMixin):
                         data={"command": name, "problems": problems[:3]})
         previous = self._state
         self._state = state
+        self._timeline_view()
         self._trace("playback_transition", "Transition de lecture", data={
             "command": name, "from": previous.phase.value, "to": state.phase.value, "position": state.position + 1,
             "run_id": state.run_id, "generation": state.generation})
@@ -577,6 +587,12 @@ class PresentationStudioPlaybackService(ScenePreviewMixin):
     async def _validate_detour(self, block: Any) -> PlaybackResult | None:
         """Before ANY state change: a block the catalogue does not accept is refused (422), the run is untouched."""
 
+        try:  # the engine first: a detour block that the Presentation's engine cannot use never reaches the stage
+            await self._studio.require_native_pin(self._presentation_id, block.prefab_id, block.version, what=f"detour block {block.key}")
+        except PresentationStudioError as exc:
+            self._trace("playback_detour_engine_refused", "Detour refuse : bloc non natif pour le moteur", level="warning",
+                        data={"code": exc.code.value, "prefab": block.key})
+            return self._refused("detour", RefusalCode.DETOUR_INVALID, exc.message, extra={"prefab_code": exc.code.value})
         if self._detour_validator is None:
             return None
         ref = PrefabInstanceRef(block.prefab_id, block.version, block.props, block.data)
@@ -608,9 +624,14 @@ class PresentationStudioPlaybackService(ScenePreviewMixin):
         if self._state.active:
             return self._refused("start", RefusalCode.ALREADY_RUNNING, "a presentation is already running")
         presentation_id = request.presentation_id
+        # Engine gate (Remotion Slice 10): BEFORE anything is compiled, staged or switched. The Presentation's own engine must
+        # be ready, else `engine_unavailable` with the adapter's reason; nothing plays in its place (no Slidecar for `remotion`).
+        await self._studio.require_engine(presentation_id, "play")
         variant_id = request.variant_id or (await self._studio.get(presentation_id)).presentation.active_variant_id
         variant = await self._studio.get_variant(presentation_id, variant_id)
         plan, scenes = await self._compile(presentation_id, variant_id, variant)
+        # Every STORED scene (and local variant) must be native for the engine, not only the ones an edit changed (Slice 10 rework).
+        await self._studio.require_native_scenes(presentation_id, variant.scenes)
         serious = request.role is not StudioRole.REHEARSAL
         resolution = await self._gate.require_art_direction(presentation_id, variant_id, serious=serious)
         # `checked` / `fallback`: a DA was resolved; `none`: an exploratory run (rehearsal) with no DA, said as such.
@@ -644,6 +665,8 @@ class PresentationStudioPlaybackService(ScenePreviewMixin):
             self._follower_pulled, self._follower_warned = False, False
             self._follower_started_s, self._reopens_seen = self._monotonic(), 0
             self._reports.clear()
+            self._tl_map = None
+            self._tl_clock.reset()   # a new run never inherits the played time of the previous one (Slice 12)
             await self._reclaim_leftovers()
             self._stage.begin(run_id)
             transition = apply(plan, self._state, PlaybackEvent(
@@ -771,12 +794,80 @@ class PresentationStudioPlaybackService(ScenePreviewMixin):
                 if render.status is not EditStatus.APPLIED:
                     raise StageError(render.code or "overlay_refused", render.message or "the overlay was refused")
                 shown = next(s for s in render.scenes if s.scene_id == scene_id)
+        await self._require_native_on_stage(shown.prefab.prefab_id, shown.prefab.version, f"scene {scene_id}")
         await self._stage.show(shown.payload())
         self._bind_stage(scene_id)
+        await self._resolve_timeline(scene_id, shown)
         reopens = getattr(self._stage, "reopens", 0)
         if reopens > self._reopens_seen:  # the user closed the stage window: it was brought back, and the band says so
             self._reopens_seen = reopens
             self._notice("stage_closed_by_user")
+
+    async def _resolve_timeline(self, scene_id: str, shown: Any) -> None:
+        """Slice 12 : la table d'images de la scène montrée (`None` : une scène HTML, ou sans ancre, ne reçoit aucune ligne de temps).
+        La composition vient du manifeste du pin (`remotion_composition`), jamais du code de la scène ; un échec est dit (journal +
+        constat `timeline_unresolved`) et la scène se joue alors comme en Slice 10, sans pilotage."""
+
+        self._tl_map = None
+        if self._timeline_source is None:
+            return
+        scene = self._scenes[scene_id]
+        pin = (shown.prefab.prefab_id, shown.prefab.version)
+        try:
+            if pin not in self._compositions:
+                self._compositions[pin] = await self._timeline_source.remotion_composition(*pin)
+            composition = self._compositions[pin]
+            fmap = None if composition is None else build_frame_map(scene_id, composition, shown.anchors or scene.anchors)
+        except Exception as exc:  # noqa: BLE001 - captured as an error row + a visible notice: the scene then plays unguided (Slice 10)
+            self._notice(TIMELINE_UNRESOLVED)
+            self._trace("timeline_unresolved", "Ligne de temps Remotion non resolue", level="error",
+                        data={"scene_id": scene_id, "prefab": f"{pin[0]}@{pin[1]}", "error_class": type(exc).__name__,
+                              "error": _clip(exc)})
+            return
+        self._tl_map = fmap
+        if fmap is not None:
+            for code in fmap.problems:
+                self._notice(code)
+            self._trace("timeline_resolved", "Ligne de temps Remotion calculee", data={
+                "scene_id": scene_id, "composition_id": fmap.composition_id, "fps": fmap.fps, "frames": fmap.duration_frames,
+                "anchors": len(fmap.marks), "problems": list(fmap.problems)})
+        self._timeline_view()
+
+    def _timeline_view(self) -> dict[str, Any] | None:
+        """La ligne de temps que le navigateur applique au lecteur : une **description** de l'etat de la partition (jamais un ordre
+        de parler ni un outil). Aussi appelee a chaque transition pour que le temps joue du segment exclue les pauses."""
+
+        fmap, plan, state = self._tl_map, self._plan, self._state
+        if fmap is None or plan is None or not state.active or fmap.scene_id != stage_scene_id(plan, state):
+            self._tl_clock.reset()   # the scene left the timeline: its played time does not wait for it to come back
+            return None
+        revealed = {anchor for scene, anchor in progress_of(plan, state).revealed if scene == fmap.scene_id}
+        segment = target_segment(fmap, revealed)
+        cap_ms = -(-(segment.until - segment.start + 1) * 1000 // fmap.fps)
+        key = (fmap.scene_id, fmap.composition_id, segment.anchor_id, segment.start, segment.until, fmap.fps)
+        seq, play_ms = self._tl_clock.observe(key, state.phase is Phase.PLAYING, self._ms(), cap_ms)
+        return timeline_wire(fmap, segment, playing=state.phase is Phase.PLAYING, seq=seq, play_ms=play_ms)
+
+    async def _retime(self) -> None:
+        """After the plan or a pin moved without a new stage sync (a hot reload patches the window itself): rebuild the frame map of the
+        scene on the stage from the pin and the anchors as they are now."""
+
+        if self._plan is None or not self._state.active:
+            return
+        scene_id = stage_scene_id(self._plan, self._state)
+        scene = self._scenes.get(scene_id)
+        self._compositions.clear()   # a manifest read is cheap; a reload must never be answered from a memory of the old version
+        if scene is not None:
+            await self._resolve_timeline(scene_id, scene)
+
+    async def _require_native_on_stage(self, prefab_id: str, version: int, what: str) -> None:
+        """Last door before the stage: whatever path chose this block (an edit, a hot reload, a scene-variant selection, a score
+        overlay), it is `native` for the Presentation's engine or it is not shown (`StageError`: the run pauses with the real cause)."""
+
+        try:
+            await self._studio.require_native_pin(self._presentation_id, prefab_id, version, what=f"{what} ({prefab_id}@{version})")
+        except PresentationStudioError as exc:
+            raise StageError(exc.code.value, exc.message) from exc
 
     def _bind_stage(self, scene_id: str) -> None:
         """Dit au rechargement a chaud quelle fenetre (`studio-stage-<run_id>[-<n>]`) affiche quelle scene. Ne leve jamais."""
@@ -812,6 +903,7 @@ class PresentationStudioPlaybackService(ScenePreviewMixin):
         if aux.aux_id in self._aux_objects:
             return
         title, block = self._aux_blocks[aux.aux_id]
+        await self._require_native_on_stage(block.prefab_id, block.version, f"detour block {aux.aux_id}")
         object_id = await self._stage.stage_aux(aux.aux_id, title, block)
         self._aux_objects[aux.aux_id] = object_id
         await self._stage.reveal_aux(object_id)
@@ -874,6 +966,7 @@ class PresentationStudioPlaybackService(ScenePreviewMixin):
             "position": self._state.position + 1, "problem": problem})
         if Effect.ARM_CHANGED in transition.effects:
             await self._publish_armed()
+        await self._retime()   # the pin or the anchors may have moved (hot reload): the frame map follows
         self._wake()
 
     def _add_problem(self, code: str) -> None:
@@ -1036,6 +1129,9 @@ class PresentationStudioPlaybackService(ScenePreviewMixin):
                      "art_direction": self._art_direction if state.active else None,
                      "notices": list(self._notices), "mode": self._required_mode.value if self._required_mode else None})
         if state.active:
+            timeline = self._timeline_view()
+            if timeline is not None:
+                view["timeline"] = timeline
             view["follower"] = self._follower()
             extension = self._presenter_view() if self._presenter_view is not None else None
             if extension is not None:

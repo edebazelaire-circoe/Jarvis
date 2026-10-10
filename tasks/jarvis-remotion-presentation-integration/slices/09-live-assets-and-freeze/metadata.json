@@ -1,0 +1,16 @@
+{
+  "slice_id": "09",
+  "title": "Live Board references and immutable freeze",
+  "dependencies": [
+    "05",
+    "06",
+    "08"
+  ],
+  "task_type": null,
+  "task_type_resolution_required": true,
+  "requires_caveman": true,
+  "requires_coding_guideline": true,
+  "frontend": false,
+  "requires_impeccable": false,
+  "claude_for_frontend_when_available": false
+}

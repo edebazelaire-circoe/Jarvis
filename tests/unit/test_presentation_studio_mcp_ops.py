@@ -291,3 +291,32 @@ async def test_a_template_plan_lists_the_choices_and_nothing_is_published(world)
     refusal = await refused(world.tools.template("promote", plan={"kind": "presentation", "title": "Modele", "slug": "modele"}))
     assert refusal.code.startswith("presentation_studio_")
     assert (await refused(world.tools.template("instantiate", template_id="ptp_nope"))).code == "invalid_id"
+
+
+async def test_the_brain_can_neither_acknowledge_a_licence_nor_keep_assets_nor_promote_without_a_user_turn(world):
+    """QA B1: `licence_ack`, `keep_assets` and `promote` are the user's. The plan stays permitted; no value of the plan reaches Core."""
+
+    base = {"kind": "presentation", "title": "Modele", "slug": "modele"}
+    for extra in ({"licence_ack": ["GPL-3.0"]}, {"keep_assets": True}):
+        for op in ("plan", "promote"):
+            world.cc.answers[ATTESTED] = (200, {"ok": True, "addressed_user_turn": True})   # even in a user turn: these two are never the brain's
+            refusal = await refused(world.tools.template(op, plan={**base, **extra}))
+            assert refusal.code == "presentation_studio_template_user_only", (op, extra)
+    assert world.spy.named("presentation_studio_template_plan") == [] and world.spy.named("presentation_studio_template_promote") == []
+    world.cc.answers[ATTESTED] = (200, {"ok": True, "addressed_user_turn": False})
+    refusal = await refused(world.tools.template("promote", plan={**base, "scenes": []}))
+    assert refusal.code == "presentation_studio_template_user_only" and world.spy.named("presentation_studio_template_promote") == []
+    planned = await world.tools.template("plan", plan=base)      # the plan needs no attestation: it writes nothing
+    assert planned["status"] == "planned"
+    world.cc.answers[ATTESTED] = (200, {"ok": True, "addressed_user_turn": True})
+    scenes = [{"scene_id": s["scene_id"], "dimensions": [], "parameters": []} for s in planned["plan"]["scenes"]["items"]]
+    reached = await refused(world.tools.template("promote", plan={**base, "scenes": scenes}))
+    assert reached.code == "presentation_studio_template_leak", "in an attested user turn the call REACHES Core (which then judges the content)"
+    (args, _), = world.spy.named("presentation_studio_template_promote")[-1:]
+    assert args[2]["actor"] == "brain" and "licence_ack" not in args[2] and "keep_assets" not in args[2]
+
+
+async def test_a_licence_string_in_a_plan_is_clipped_and_marked_untrusted_for_the_brain(world):
+    plan = world.tools._template_plan_view({"ok": False, "licences": {"L" * 300: ["scene:s1"] * 20, "MIT": ["scene:s2"]}, "scenes": [], "findings": []})
+    assert all(len(name) <= 64 for name in plan["licences"]) and "licences" in plan["untrusted"]
+    assert all(len(rows["items"] if isinstance(rows, dict) else rows) <= 8 for rows in plan["licences"].values())

@@ -106,6 +106,12 @@ class CoreCaller:
             return await self._transport.replay_on_401(fn)
         except ConnectionError as exc:
             raise CoreProtocolError(503, "core_unreachable", str(exc)) from None
+        except TimeoutError:
+            # ONE clause, BEFORE `aiohttp.ClientError` (aiohttp's ServerTimeoutError is both). `asyncio.TimeoutError` is `TimeoutError`; the total
+            # timeout of aiohttp too. The outcome of a write is UNKNOWN (a render may be queued, an assembly may have been written): a coded error,
+            # never the empty `Error executing tool ...:` the first real-model trace of Remotion Slice 15 showed; read the state before trying again.
+            raise CoreProtocolError(504, "core_timeout", "Core did not answer in time; the outcome is unknown: read the state first "
+                                                        "(presentation_inspect, remotion_status for a render) before trying again") from None
         except aiohttp.ClientError as exc:
             raise CoreProtocolError(503, "core_unreachable", f"Core est injoignable ({type(exc).__name__})") from None
 
@@ -688,6 +694,14 @@ class PresentationTools:
         if mode not in ("preview", "commit"):
             raise self._refuse(tool, "invalid_mode", "mode : preview ou commit.")
         wire = self._edit_wire(tool, ops)
+        # Remotion Slice 21: a structural source change starts a sub-agent edit of the scene's source. It only follows a request of the user in
+        # this turn (the attested turn, as for a presentation start or a promotion): no ambient or system-opened turn can mutate a source.
+        user_origin = False
+        if mode == "commit" and any(o["op"] == "scene.source_request" for o in wire):
+            user_origin = await self._addressed_user_turn()
+            if not user_origin:
+                raise self._refuse(tool, "presentation_studio_source_request_user_only",
+                                   "scene.source_request : seulement sur une demande de l'utilisateur dans ce tour ; propose-le, il le demandera.")
         presentation_id = await self._presentation(tool, pid)
         variant_id = await self._variant(tool, presentation_id, vid)
         removed = sorted(str(o["scene_id"]) for o in wire if o["op"] == "scene.remove")
@@ -706,6 +720,9 @@ class PresentationTools:
         if basis is None:
             basis = (await self._c(lambda c: c.presentation_studio_variant(presentation_id, variant_id))).get("revision")
         request = {"actor": BRAIN_ACTOR, "mode": mode, "basis": {"variant_revision": basis}, "ops": wire}
+        if user_origin:
+            # Core records a brain source request only with this origin, and a brain source edit later needs that record (QA B1).
+            request["origin"] = "explicit_user_request"
         result = await self._c(lambda c: c.presentation_studio_edit(presentation_id, variant_id, request))
         status = result.get("status")
         if status in ("stale", "refused"):
@@ -718,9 +735,14 @@ class PresentationTools:
                     for o in result.get("ops") or [] if isinstance(o, Mapping)][:16]
         if removed and mode == "commit":
             self.ledger.consume(str(confirmation))
+        recorded = result.get("source_requests") or None
+        # Remotion Slice 21 (real-model trace): the brain delegated BEFORE recording and told the sub-agent to record it, which an unattended
+        # background turn can no longer do. The result says what is left to do and who does it.
+        next_step = ("Demande de source enregistrée (rien n'est encore changé à l'écran) : un sous-agent d'arrière-plan lit la source et envoie "
+                     "édite avec ce request_id, valable 30 minutes (docs/OPERATIONS.md) ; il n'appelle pas scene.source_request.") if recorded and mode == "commit" else None
         return self._ok("silent", status=status, mode=mode, committed=result.get("committed"), changed=result.get("changed"),
                         revision=result.get("revision"), tier=result.get("tier"), results=outcomes,
-                        undoable=bool(undo.get("available")) or None, source_requests=result.get("source_requests") or None,
+                        undoable=bool(undo.get("available")) or None, source_requests=recorded, next_step=next_step,
                         presentation_id=presentation_id, variant_id=variant_id)
 
     async def undo(self, direction: str = "undo", *, presentation_id: str | None = None, variant_id: str | None = None,
@@ -991,12 +1013,24 @@ class PresentationTools:
             presentation_id = await self._presentation(tool, pid)
             variant_id = await self._variant(tool, presentation_id, vid)
             request = {k: v for k, v in dict(plan or {}).items() if v is not None}
+            # Remotion Slice 19 (QA B1): a licence acknowledgement and the keeping of assets are the USER's own acts, never the brain's,
+            # whatever the plan says; and a promotion only follows a request of the user (the attested turn, as for a presentation start).
+            owned = sorted(k for k in ("licence_ack", "keep_assets") if k in request)
+            if owned:
+                raise self._refuse(tool, "presentation_studio_template_user_only",
+                                   f"{' et '.join(owned)} : l'utilisateur seul reconnaît une licence ou garde des médias (depuis la page) ; dis-lui ce que le plan montre.")
+            if op == "promote" and not await self._addressed_user_turn():
+                raise self._refuse(tool, "presentation_studio_template_user_only",
+                                   "promote : seulement sur une demande de l'utilisateur dans ce tour ; le plan reste permis.")
             request["actor"] = BRAIN_ACTOR
             if op == "plan":
                 result = await self._c(lambda c: c.presentation_studio_template_plan(presentation_id, variant_id, request))
                 return self._ok(status="planned", plan=self._template_plan_view(result), presentation_id=presentation_id, variant_id=variant_id)
             result = await self._c(lambda c: c.presentation_studio_template_promote(presentation_id, variant_id, request))
-            return self._ok("say", say="Le modèle est publié dans la bibliothèque.", status="promoted", template_id=result.get("template_id"),
+            library = result.get("published_to_library") is True   # Remotion Slice 19: a whole presentation is ONE record, nothing goes to the library
+            return self._ok("say", say="Le modèle est publié dans la bibliothèque." if library
+                            else "Le modèle est enregistré ; aucune scène n'est publiée dans la bibliothèque.",
+                            status="promoted", template_id=result.get("template_id"), published_to_library=library,
                             prefabs=capped([_drop_none({"id": p.get("id"), "version": p.get("version"), "published": p.get("published")})
                                             for p in result.get("prefabs") or [] if isinstance(p, Mapping)], 12),
                             findings=(result.get("findings") or [])[:6])
@@ -1014,7 +1048,7 @@ class PresentationTools:
             made = await self._c(lambda c: c.presentation_studio_template_instantiate(str(tid), request))
             return self._ok("say", say="Le modèle est instancié.", status="instantiated", presentation_id=made.get("presentation_id"),
                             variant_id=made.get("variant_id"), scene_ids=(made.get("scene_ids") or [])[:48],
-                            art_direction_id=made.get("art_direction_id"))
+                            art_direction_id=made.get("art_direction_id"), score_id=made.get("score_id"))
         raise self._refuse(tool, "unknown_op", f"op inconnue : {clip(op, 30)} (plan, promote, instantiate).")
 
     @staticmethod
@@ -1026,7 +1060,9 @@ class PresentationTools:
                   for s in plan.get("scenes") or [] if isinstance(s, Mapping)]
         return _drop_none({"ok": plan.get("ok"), "kind": plan.get("kind"), "slug": plan.get("slug"), "selection_required": plan.get("selection_required"),
                            "scenes": capped(scenes, 24), "would_publish": plan.get("would_publish"), "findings": (plan.get("findings") or [])[:8],
-                           "blocking": plan.get("blocking"), "untrusted": ["scenes.items.controls.items.label"]})
+                           "publishes_to_library": plan.get("publishes_to_library"),
+                           "licences": {clip(str(k), 64): capped([str(w)[:12] for w in v], 8) for k, v in list((plan.get("licences") or {}).items())[:8]} or None,
+                           "blocking": plan.get("blocking"), "untrusted": ["scenes.items.controls.items.label", "licences"]})
 
     # ------------------------------------------------------------------ rédaction (planificateur de la Slice 11)
 
@@ -1056,7 +1092,7 @@ class PresentationTools:
             # Le rapport complet, tel quel : le modèle corrige tout en une fois (consigne du planificateur).
             return self._ok("silent", status="refused" if status == "refused" else "checked", ok_gate=False, report=report,
                             workflow=result.get("workflow"), note="Corrige tout ce qui est listé puis resoumets (3 tours au plus).")
-        picked = {k: result.get(k) for k in ("presentation_id", "variant_ids", "scene_ids", "art_direction_id", "score_id", "provenance",
+        picked = {k: result.get(k) for k in ("presentation_id", "engine", "variant_ids", "scene_ids", "art_direction_id", "score_id", "provenance",
                                              "workflow", "candidates", "variant_id", "fallback") if k in result}
         say = None
         if op != "check":

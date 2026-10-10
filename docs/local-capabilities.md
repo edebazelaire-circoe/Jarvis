@@ -1,0 +1,99 @@
+# Capacités locales installables
+
+Handoff `jarvis-remotion-presentation-integration`, Slice 03. **Statut : contrat (Level 2) et socle d'hôte (Level 3) livrés (Slice 03) ; première capacité réelle : Remotion (Slice 04, [remotion-runtime.md](remotion-runtime.md)), branchée dans Core par des routes explicites (§7).** Le socle seul, sans runner injecté, n'exécute rien.
+
+Une **capacité locale** est un runtime que Jarvis installe **une seule fois par profil d'exécution** (racine de données du poste, [local-data.md](local-data.md)), épingle à des versions exactes, surveille et dont il gère le processus enfant. Ce n'est **pas** un plugin MCP.
+
+## 1. Pourquoi un registre frère, pas un plugin MCP
+
+| | Plugin MCP distant ([mcp/plugins.md](mcp/plugins.md)) | Capacité locale (ce document) |
+| --- | --- | --- |
+| Définition | URL `https://…`, `transport = streamable_http` seulement (`jarvis/domain/mcp_plugins.py`) | manifeste : composants épinglés, exigences du poste, point d'entrée **logique** |
+| Transport | `streamable_http` | `local_process` (jamais `streamable_http`) |
+| Secrets | coffre scellé DPAPI, OAuth | aucun : ni coffre, ni OAuth, ni endpoint, ni jeton |
+| Stockage | `jarvis.sqlite3` v4 (`mcp_plugins`) | fichiers `local_capabilities/<id>/` sous la racine de données, **pas de schéma SQLite, donc pas de migration** |
+| Codes d'erreur | `mcp_*` (`McpErrorCode`) | `local_capability_*` (`LocalCapabilityErrorCode`), aucun commun |
+| Accès du modèle | passerelle `jarvis-tools` | aucun par défaut ; une capacité n'expose jamais ses outils par `jarvis-tools` |
+
+Les deux familles ne partagent aucun code d'exécution : `tests/unit/test_local_capability_host.py` prouve que la pile locale n'importe rien de la pile des plugins distants, et que les espaces de codes sont disjoints. Le sens des plugins distants ne change pas ; un serveur stdio d'opérateur (`jarvis-drive`, [mcp/plugins.md](mcp/plugins.md) §11) reste hors de ce registre.
+
+**Une seule carte pour l'utilisateur.** La vue publique (`public_view`) porte `family = "local_capability"` et un `status` unique ; la carte du Control Center (`jarvis/runtime/control_center_mcp_plugins.js`) pourra afficher les deux familles côte à côte en lisant `family`/`transport`, sans que l'une prenne les routes ou les champs de l'autre. La carte elle-même est un travail de Slice ultérieure (04 pour la première capacité) : ici, seul le contrat de données est figé.
+
+## 2. Modèle
+
+`CapabilityManifest` (`jarvis/domain/local_capabilities.py`, `new_manifest`) :
+
+- `capability_id` : slug minuscule de 32 caractères au plus, jamais `jarvis-*` (espace des serveurs natifs) ni un nom de périphérique Windows (`con`, `prn`, `aux`, `nul`, `com1-9`, `lpt1-9`) ;
+- `components` : paquets **épinglés à une version exacte** (`1.2.3`, pré-version admise). `^`, `~`, `*`, plage et `latest` sont refusés ; un nom de composant sans segment `..`, `.` ou vide ; `components` doit être un mapping (sinon `local_capability_invalid`) ;
+- `requirements` : exigences du poste, aujourd'hui `node` avec un minimum exact. Le runner les **vérifie**, il n'installe jamais Node ;
+- `entrypoint` : nom logique résolu par le runner. Un manifeste ne porte ni chemin, ni ligne de commande.
+
+`CapabilityState` (un par capacité) a quatre axes indépendants : `install_status`, `process_status`, `health`, `enabled` (booléen JSON réel, sinon état refusé), plus `installed_components` (ce qui est réellement sur le disque), `process_ref` (pid opaque, pour reconnaître un orphelin), `last_error_code` (code stable) / `last_error_detail` (texte borné à 300 caractères, sur une ligne) et `install_attempts` (preuve du « une seule fois »).
+
+`status` n'est qu'un résumé dérivé (`derive_status`), jamais stocké : `not_installed`, `installing`, `uninstalling`, `install_failed`, `disabled`, `repair_needed` (installée mais malsaine), `crashed`, `starting`, `running`, `stopping`, `ready` (installée, saine, arrêtée). `list_status` ajoute `state_unreadable` pour une capacité dont le `state.json` est illisible (entrée typée par capacité ; les saines restent listées).
+
+### Machine à états
+
+Installation : `not_installed → installing → installed | failed` ; `installed|failed → installing` (mise à jour, réparation, reprise) ; `installed|failed → uninstalling → not_installed | failed`.
+Processus : `stopped → starting → running | crashed | stopped | stopping` ; `running → stopping | crashed` ; `stopping → stopped | crashed` ; `crashed → starting | stopping | stopped`.
+Invariants (`check_invariants`) : un processus n'existe que sur une capacité `installed` ; une capacité désactivée n'a pas de processus actif. Toute transition illégale lève `local_capability_internal_error` ; un état stocké qui viole un invariant est refusé, pas deviné.
+
+## 3. Sémantique des opérations (`LocalCapabilityHost`, `jarvis/core/local_capability_host.py`)
+
+| Opération | Effet |
+| --- | --- |
+| `install` | **Une fois.** Déjà `installed` aux versions épinglées : aucun appel au runner (`install.noop`). Installée à d'autres versions : refus `update_required`, jamais de mise à jour implicite. Reprend après un `failed`. |
+| `update` | Aligne sur les versions épinglées du manifeste (`register` d'un nouveau manifeste, puis `update`). Arrête d'abord le processus. |
+| `repair` | Sonde ; saine **et** processus non planté : rien. Sinon réinstalle **tout** aux versions épinglées. Une capacité saine mais `crashed` est donc réinstallée en entier : si l'on veut seulement relancer, appeler `start` (qui relance un `crashed`) avant `repair`. |
+| `check_health` | Sonde (`verify`) ; détecte un processus disparu (`process_exited`, état `crashed`). |
+| `start` / `stop` | Idempotents. `start` refuse : non installée, désactivée, versions à mettre à jour. Un échec de lancement donne `crashed` + `start_failed` ; un échec d'arrêt donne `crashed` + `stop_failed` (orphelin possible, **dit**, jamais présenté comme arrêté). |
+| `disable` / `enable` | `disable` arrête puis désactive ; `enable` réactive **sans lancer**. |
+| `uninstall` | Arrête, retire ce que le runner a posé, garde l'enregistrement (`not_installed`). |
+| `reconcile` | Au démarrage de Core : une installation « en cours » devient `failed` / `install_interrupted` ; un processus noté vivant mais disparu devient `crashed`. N'installe, ne lance, n'arrête rien. Un `state.json` illisible est rapporté, jamais réécrit. |
+
+Une opération à la fois par capacité : la seconde reçoit `local_capability_busy` (pas de file). Le verrou est **dans le processus** : un seul Core par racine de données (comme pour les bases SQLite) ; aucun verrou entre processus. Chaque étape est écrite **avant** l'effet suivant, donc un arrêt de Core laisse un état vrai. **Un état `installing` ou `uninstalling` qui survit à son opération signifie « interrompue »** (aucun Core ne l'exécute plus). `reconcile` le convertit en `failed` / `install_interrupted`, mais **`reconcile` est appelé une fois au démarrage de Core** (Slice 04, §7) : l'état `installing` d'une vie précédente y devient `failed` / `install_interrupted`. Un hôte construit sans Core (harnais, tests) doit l'appeler lui-même ; sans cela l'état reste affiché `installing` jusqu'à la prochaine `install`, `update`, `repair` ou `uninstall`, qui le traitent comme interrompu.
+
+**Échecs.** Un échec du runner (exigence manquante, installateur, versions différentes de l'épinglage, santé, lancement, arrêt, désinstallation) est écrit comme **état typé** et **renvoyé** dans la vue (`status`, `last_error_code`, `last_error_detail`) et journalisé (`local_capability.<op>.failed`, niveau `error`). Un refus de précondition (inconnue, occupée, non installée, désactivée, mise à jour requise) lève `LocalCapabilityError`. Une exception inattendue du runner est journalisée (niveau `error`) avec son type et devient le code de l'opération, jamais « inconnu » ; une exception non typée hors du runner devient `internal_error`, journalisée une fois. `store_failed` et `internal_error` sont des **erreurs** (`<op>.failed`), pas des refus (`refused`, niveau `warning`).
+
+**Texte libre sûr.** `last_error_detail`, les journaux et les erreurs ne portent ni chemin absolu (disque, UNC, `~`, POSIX) ni secret (`Bearer …`, `token=…`, `sk-…`) : `bound_detail` les remplace par `<path>` / `<redacted>` avant de borner (300 caractères, une ligne). Les erreurs du stockage et du runner passent toutes par là.
+
+**Arrêt prudent.** Si `is_alive` lève pendant un arrêt (`stop`, `disable`, `uninstall`, `update`, `repair`), la vivacité est inconnue : le runner est **quand même** appelé pour arrêter ; s'il échoue, l'état est `crashed` + `stop_failed` et `runtime/` n'est pas touché. « Non vivant » ne vaut que pour la sonde passive (`check_health`, `reconcile`).
+
+**État illisible : récupération.** Un `state.json` corrompu n'est jamais réécrit par l'hôte. `status`/opérations lèvent `store_failed` ; `list_status` rend une entrée `state_unreadable` pour cette seule capacité. Pour réparer : arrêter Core, **mettre le fichier de côté** (le copier ou le renommer `state.json.bad`, jamais l'écraser sans copie), puis relancer Core et appeler `install` (l'absence d'état vaut `not_installed`) ou `repair`. Un enfant éventuel orphelin n'est plus suivi : le chercher à la main avant de réinstaller.
+
+Codes : `unknown`, `invalid`, `busy`, `not_installed`, `disabled`, `update_required`, `requirement_missing`, `install_failed`, `install_offline`, `install_permission_denied`, `install_timeout`, `install_integrity_failed`, `install_disk_full` (Slice 04 : causes d'échec d'installation corrigeables), `install_interrupted`, `uninstall_failed`, `health_failed`, `start_failed`, `stop_failed`, `process_exited`, `runner_unavailable`, `store_failed`, `internal_error` (préfixe `local_capability_`).
+
+## 4. Qui lance le processus enfant
+
+**Core**, via un `CapabilityRunner` injecté (`jarvis/ports/local_capabilities.py`) : un seul propriétaire, qui connaît la racine de données du poste et peut réconcilier au démarrage. Pas d'assistant du Control Center : le Control Center ne fait que lire la vue et demander des opérations par des routes de Core (Slice ultérieure). Cela respecte la règle du dépôt (`CLAUDE.md`) : ni le socle ni ses tests ne démarrent, ne relancent ou n'arrêtent Core, le Control Center ou la voix.
+
+- Le socle ne câble **aucun runner par défaut** : `UnavailableRunner` répond `runner_unavailable`. Aucun réseau, npm ni processus n'est exécuté par défaut. Les tests injectent un faux. `jarvis/app.py` injecte le magasin de fichiers (le coeur n'importe aucun adaptateur) et le runner réel de Remotion (`NodeCapabilityRunner`, [remotion-runtime.md](remotion-runtime.md)), **construit sans rien exécuter** : l'installation reste une action explicite.
+- Le runner n'écrit que dans `runtime_dir`, `<data_root>/local_capabilities/<id>/runtime/`, et ne retire que ce qu'il y a posé. Il n'a aucune permission sur les dossiers de projets, de Boards ou d'Artifacts, ni sur la mémoire de Jarvis.
+- Le code source d'une présentation (TSX/JS non fiable) ne gagne **aucun** privilège Jarvis : il ne tourne que dans le processus enfant, sans variables d'environnement secrètes, ce que la Slice 06 (isolation) doit prouver pour Remotion.
+- Tester sur un bac à sable ou un worktree avec sa racine (`JARVIS_DATA_ROOT`), jamais sur le profil vivant.
+
+## 5. Stockage
+
+`<data_root>/local_capabilities/<capability_id>/state.json` (écriture atomique : fichier temporaire unique, `fsync`, remplacement) et `runtime/`. Hors du dépôt, une racine par copie du dépôt ([local-data.md](local-data.md)). `runtime_dir()` crée le dossier `runtime/` au besoin (effet de bord documenté, limité à ce dossier ; les lectures `status`/`list_status` ne l'appellent pas). Aucune table : aucune migration (`CLAUDE.md`). `state.json` n'est jamais versionné.
+
+## 6. Ce qui reste à faire
+
+- Carte du Control Center : **première carte livrée par la Slice 11** (état de l'environnement Remotion et Studio optionnel, [remotion-studio.md](remotion-studio.md) §8) ; une carte générique pour toute capacité, et les boutons d'installation, restent à la Slice 20 ([Issue 02](../tasks/jarvis-remotion-presentation-integration/Issues/02-local-capability-deferred-wiring.md) point a).
+- Contrôle de licence Remotion (autre contrat).
+- Fait en Slice 04 : manifeste et runner Remotion, exigences de poste, sonde de santé réelle, routes de Core, `reconcile` au démarrage de Core.
+
+## 7. Routes de Core (Slice 04)
+
+`jarvis/protocol/local_capability_routes.py`, derrière le jeton porteur de Core ; façade `jarvis/core/local_capability_service.py` (threads, réponse 202 des opérations longues). Détail, codes HTTP et recette : [remotion-runtime.md](remotion-runtime.md) §7.
+
+| Méthode | Route |
+| --- | --- |
+| GET | `/v1/local-capabilities` |
+| GET | `/v1/local-capabilities/{capability_id}` |
+| POST | `/v1/local-capabilities/{capability_id}/{operation}` |
+
+Au démarrage de Core, seul `reconcile()` est appelé : jamais une installation, un lancement ni un arrêt. Client : `LocalCoreClient.list_local_capabilities`, `local_capability_action`.
+
+Un travail de rendu (Slice 16, `/v1/local-capabilities/remotion/render/jobs`, [remotion-render.md](remotion-render.md)) est un autre travail de la même capacité : un seul à la fois, annulable, jamais lancé par le démarrage ni par une édition. Un processus supplémentaire optionnel d'une capacité (le Studio Remotion, Slice 11) vit sous son propre préfixe frère `/v1/local-capabilities/remotion/studio` ([remotion-studio.md](remotion-studio.md)) ; `LocalCapabilityService.before_operation` l'arrête avant `update`, `repair`, `uninstall` ou `disable`.
+
+Tests : `tests/unit/test_local_capability_host.py`, `test_node_capability_runner.py`, `test_process_tree.py`, `test_remotion_lifecycle.py`, `test_local_capability_routes.py`.
