@@ -43,7 +43,8 @@ Every other row is `planned` unless it says otherwise. Written by Slice 01 (cont
 | Variant Explorer (UI) | fullscreen dark workspace: branch tree, live preview of the selected variant, activate / branch / rename / archive (plan + token) / restore, context menu; opened by voice through a command channel; never the source of truth | `jarvis/runtime/control_center_presentation_studio_explorer{,_core,_widgets}.js`, `jarvis/domain/presentation_studio_explorer.py`, `runtime/presentation_studio_explorer_commands.py` | [Variant Explorer interaction contract](#variant-explorer-interaction-contract-level-3-slice-18) (Slice 18) | **Level 3** |
 | Variant compare / mix | side-by-side, synchronized navigation, selective composition into a new child | `jarvis/domain/presentation_studio_compare.py`, `presentation_studio_composition.py`, `core/presentation_studio_compare.py`, `presentation_studio_composition.py`, `protocol/presentation_studio_compose_routes.py`, `runtime/presentation_studio_compose_relay.py` | [Comparison and semantic composition contract](#comparison-and-semantic-composition-contract-level-3-slice-19-backend), Slice 19 | **implemented (Level 3, backend + explorer panes UI)**; [UI contract](#comparison-and-composition-in-the-explorer-slice-19-interface), 
 untime/control_center_presentation_studio_explorer_compare*.js, ..._compose.js |
-| Template / promotion | whole-variant, scene, DA or motion promoted: reusable code published to the shared prefab library, composition in a `ptp_` document, project content stripped or parameterized, provenance kept | `jarvis/domain/presentation_studio_template{,_sanitize}.py`, `core/presentation_studio_template.py`, `adapters/file_presentation_template_store.py` | [Template and prefab promotion contract](#template-and-prefab-promotion-contract-level-3-slice-20), Slice 20 | **implemented (Level 3)** |
+| Template / promotion | scene, DA or motion promoted: a scene's reusable code published to the shared prefab library; a whole presentation promoted as ONE `ptp_` artefact (embedded sources, score skeleton, catalog block), nothing published to the library; Remotion-aware; project content stripped or parameterized, provenance and licence kept | `jarvis/domain/presentation_studio_template{,_sanitize,_remotion,_score}.py`, `core/presentation_studio_template{,_embed}.py`, `adapters/file_presentation_template_store.py` | [Template and prefab promotion contract](#template-and-prefab-promotion-contract-level-3-slice-20), Slice 20, Remotion Slice 19 | **implemented (Level 3)** |
+| Newer prefab version, trial variant | a pinned scene is told a newer immutable version exists; "try it" creates a child variant; never an auto-upgrade, adoption is explicit | `jarvis/core/presentation_studio_upgrades.py`, `protocol/presentation_studio_upgrades_routes.py`, `runtime/presentation_studio_upgrades_relay.py` | [Newer prefab versions and trial variants](#newer-prefab-versions-and-trial-variants-level-3-remotion-slice-19), Remotion Slice 19 | **implemented (Level 3)** |
 | Generic fullscreen surface | real browser fullscreen of a host element; armed request + user gesture; explicit `needs_gesture` / `unsupported` | `jarvis/domain/surface_fullscreen.py`, `runtime/control_center_fullscreen.js` | Slice 03 | implemented (Level 3) |
 | Agent / voice operations | one MCP server `jarvis-presentation`, twelve `presentation_*` tools, ids read from the state (`presentation_inspect`), the only `brain` door, destructive gestures behind the canonical confirmation | `jarvis/runtime/presentation_studio_mcp{,_tools,_support}.py`, `runtime/presentation_studio_turn.py` | Slice 21, [Agent and voice operations](#agent-and-voice-operations-level-3-slice-21), [mcp/tool-contract.md](mcp/tool-contract.md) | **implemented (Level 3)**; real-model traces: 5 scenarios, limited |
 
@@ -1429,9 +1430,12 @@ label, a rationale and a local variant id are never an attribute. Promote reuses
 
 ## Template and prefab promotion contract (Level 3, Slice 20)
 
-Status: implemented by Slice 20. Conformance: `tests/unit/test_presentation_studio_template_{domain,service,routes,docs}.py`. Owner modules:
+Status: implemented by Slice 20; extended by Remotion Slice 19 (Remotion-aware promotion, one artefact per presentation, score skeleton, licence and provenance gates).
+Conformance: `tests/unit/test_presentation_studio_template_{domain,service,remotion,routes,docs}.py`. Owner modules:
 `jarvis/domain/presentation_studio_template.py` (requests, document, ids), `jarvis/domain/presentation_studio_template_sanitize.py` (pure: roles,
-placeholders, detection, parameterization), `jarvis/core/presentation_studio_template.py` (`PresentationStudioTemplates`, the only door),
+placeholders, detection, parameterization), `jarvis/domain/presentation_studio_template_remotion.py` (pure: TSX candidate, catalog block, licence, content hash),
+`jarvis/domain/presentation_studio_template_score.py` (pure: score skeleton), `jarvis/core/presentation_studio_template_embed.py` (record catalog, embedded sources
+installed at instantiation), `jarvis/core/presentation_studio_template.py` (`PresentationStudioTemplates`, the only door),
 `jarvis/adapters/file_presentation_template_store.py`, `jarvis/protocol/presentation_studio_template_routes.py`,
 `jarvis/runtime/presentation_studio_template_relay.py`, client methods `presentation_studio_template_*` on `LocalCoreClient`.
 The acceptance sentence: *a retained creative result can be reused in a future presentation without carrying accidental project-specific state.*
@@ -1440,14 +1444,15 @@ The acceptance sentence: *a retained creative result can be reused in a future p
 
 | Material | Where it lives | Why |
 | --- | --- | --- |
-| reusable **code** of a scene (manifest, template, style, behavior) | the **shared prefab library**, published by `PrefabService.save` under `studio-template.<slug>[-<n>]` (origin `fork`, `derived_from` = the project prefab version it was promoted from, actor `user` or `brain`) | the library is the one catalog of prefab definitions ([prefabs.md](prefabs.md#publication-and-provenance-publicationjson-jarvisprefabpublication-v1)); the namespace is not the reserved `presentation-studio.` one, so it is a normal library entry the prefab view lists and forks |
-| the **composition** (which library versions, in which order, neutral values, chosen controls, art direction sections) | one document `ptp_<12 hex>.json` in `<data_root>/presentation_templates/` | the library cannot hold a deck, a DA or a motion pattern; this file is an index of library versions plus data, never a definition (an unknown key such as `manifest` or `template` is refused on read) |
+| reusable **code** of **one scene** (`kind: scene`: manifest, template, style, behavior; or a Remotion source: manifest, `src/**`, `public/**`) | the **shared prefab library**, published by `PrefabService.save` under `studio-template.<slug>` (origin `fork`, `derived_from` = the project prefab version it was promoted from, actor `user` or `brain`) | the library is the one catalog of prefab definitions ([prefabs.md](prefabs.md#publication-and-provenance-publicationjson-jarvisprefabpublication-v1)); the namespace is not the reserved `presentation-studio.` one, so it is a normal library entry the prefab view lists and forks. Only an explicit request for that scene gets here |
+| the sources of the scenes of a **whole presentation** (`kind: presentation`) | **inside the `ptp_` record**, `embedded`, keyed by the SHA-256 of the sanitized candidate; **never** published to the library | decision of the Project Manager (Remotion Slice 19): promoting a presentation publishes ONE artefact, not one library prefab per scene (512 ids, no deletion). The embedded sources are private to the template: not listed, not searchable, not forkable from the library |
+| the **composition** (which sources, in which order, neutral values, chosen controls, art direction sections, the score skeleton) | one document `ptp_<12 hex>.json` in `<data_root>/presentation_templates/` | the library cannot hold a deck, a DA or a motion pattern; at the top level this file holds no definition (an unknown key such as `manifest` or `template` is refused on read); definitions exist only inside `embedded` (document v2) |
 | art direction and motion | only in the composition document (`art_direction.sections`) | the shared library model supports prefabs only; a DA is never published as a prefab |
 | the project it came from | `derived_from` of the document and `publication.json` of each prefab (ids and versions only) | provenance, never read when a template is instantiated |
 
 ### Four kinds, one flow
 
-`kind` is `presentation` (a whole variant: every scene, optionally selected DA sections), `scene` (one scene), `art_direction` (chosen sections of the variant's DA) or
+`kind` is `presentation` (a whole variant: every scene, optionally selected DA sections; **one artefact, nothing published to the library**), `scene` (one scene, published to the library), `art_direction` (chosen sections of the variant's DA) or
 `motion` (the `motion` section alone). The flow is the same for the four: **plan** (read-only; describes candidates, roles, planned prefab ids, findings), the caller chooses,
 **promote** (analysis again, then writes), **instantiate** (a template becomes new work through the existing doors).
 
@@ -1479,8 +1484,8 @@ in group `content`. On a copy of the manifest:
 
 The promoted manifest carries a new id, the caller's title (80), description (600, plus a generic sentence) and tags (`presentation-template`, then the caller's, at most 8), **no aliases** (they name
 the original) and the generic events of the source. A curated control `default` and a scene `title`, `section` and preview `caption`/`alt` are dropped (they are the project's words); the
-template scene keeps `props`/`data` placeholders, the chosen controls, and the anchors whose control survived. Scenes whose sanitized candidate is identical **share one library prefab**
-(`studio-template.<slug>-<n>`, `n` by first appearance; a `scene` template is `studio-template.<slug>`): the library has 512 ids and no deletion.
+template scene keeps `props`/`data` placeholders, the chosen controls, and the anchors whose control survived. Scenes of a `presentation` template whose sanitized candidate is identical
+**share one embedded source** (one content hash, `n` by first appearance in the plan); a `scene` template is the library entry `studio-template.<slug>`.
 
 ### Detection and validation (the gate)
 
@@ -1488,7 +1493,7 @@ template scene keeps `props`/`data` placeholders, the chosen controls, and the a
 
 | Code | Blocking | Meaning |
 | --- | :---: | --- |
-| `project_identifier` | yes | a `pst_ psv_ pss_ psx_ psc_ psi_ psa_` id, a `presentation-studio.*` prefab id, a `user-prefab-*` or `studio-stage-*` handle |
+| `project_identifier` | yes | a `pst_ psv_ pss_ psx_ psc_ psi_ psa_` id, a `presentation-studio.*` prefab id, a `user-prefab-*` or `studio-stage-*` handle, a `board_*` Board id or a `jart_*` artifact id (Slice 19) |
 | `local_path` | yes | a drive path, a home/`tmp` path, `.jarvis`, `file:`, `~/`, a UNC path |
 | `project_content` | yes | a string of the project (scene content values, titles, sections, captions, the presentation's resource locators and titles, kept DA motifs) is still present, after case/space normalisation; strings shorter than 6 characters without a space or digit are not searched |
 | `prefab_invalid` | yes | `PrefabService.validate_candidate` refuses the candidate (first error, `safe_text`-redacted) |
@@ -1496,6 +1501,13 @@ template scene keeps `props`/`data` placeholders, the chosen controls, and the a
 | `placeholder_unfit` | yes | the neutral values do not fit the source schema (the source needs a default) |
 | `art_direction_unfit` | yes | the chosen DA sections do not stand alone over the deterministic fallback profile (select the sections they depend on, for example `palette` with `dataviz`) |
 | `external_url`, `embedded_asset` | no | a hard-coded external URL or a `data:` asset over 2 KiB in the source: kept, reported |
+| `engine_not_native` | yes | a source whose catalog does not declare its own engine as `native` (Remotion Slice 10 rule: `adapter` is declared, not usable) |
+| `assets_need_acknowledgement` | yes | a Remotion source that is not an intact import has `public/**` assets that could be project media: `keep_assets: true` keeps them |
+| `licence_acknowledgement_required` | yes | an upstream (imported or declared) whose licence is not one of the reviewed redistributable ones, or is not declared: name it in `licence_ack` |
+| `licence_acknowledged` | no | the same, acknowledged by name |
+| `upstream_verification_dropped` | no | the files differ from the verified import: the Core-written keys are not carried, the origin stays a declaration |
+| `embedded_too_large` | yes | the embedded sources of a presentation weigh more than 1 MiB decoded |
+| `score_unfit` | yes | the score does not reduce to a stand-alone skeleton |
 
 The detection is a repository heuristic (normalised substring comparison), **not a proof**: reworded, split or encoded content is not seen. After publication, `_verify` re-reads every cited
 `(id, version)` from the library (healthy, not `presentation-studio.*`) and validates every template scene's neutral values with `PrefabService.validate_instance`: no broken project-local
@@ -1507,18 +1519,49 @@ Each library prefab: `publication.json` `origin: fork`, `derived_from` the proje
 `report {stripped: {content_values, defaults, look_reset, controls_dropped, anchors_dropped, references_dropped, motifs_dropped, sections_dropped}, scenes, prefabs}`. Provenance may name a project
 version the retention later archives; nothing reads it back.
 
-### Reusable presentation template document (`jarvis.presentation_studio.template` v1)
+### Remotion-aware promotion (Remotion Slice 19)
+
+A Remotion scene (`schema_version` 2 or 3, [remotion-source.md](remotion-source.md)) is promoted inside the same service (`PresentationStudioTemplates`), by the same plan / promote / instantiate, not by a second one:
+
+- The source is read **as text** through `PrefabService.remotion_source`, which runs `SOURCE_GUARDS` (the isolation guards) on every read: a source a guard refuses today is `presentation_studio_source_invalid`, nothing written. The sanitized candidate goes through `PrefabService.validate_candidate` (so the guards run again on what would be published). TSX never gains a filesystem, secret or tool privilege: it is never executed here.
+- The **parameters** of a Remotion scene are its manifest `inputs.props` / `inputs.data`; they take exactly the dimension / parameter selection and the neutralisation above. The **modules** are searched like any source (project ids, Board ids `board_*`, artifact ids `jart_*`, local paths, project content strings): a finding is blocking and names the module path and a count. **The TSX is never rewritten automatically**: a silent edit of code nobody reviewed is worse than a refusal; the author fixes the module and promotes again.
+- The promoted manifest is `schema_version` 3 with an engine-tagged `catalog` ([prefabs.md](prefabs.md#manifest-v3-and-the-semantic-catalog-schema_version-3-slice-17)): `type` and `compatibility` of the source (a source without a block gets `composition`, `remotion: native`, `slidecar: unsupported`, stack `react remotion typescript`), dependencies, licence and upstream carried. A source that does not declare its engine `native` is refused (`engine_not_native`).
+- `public/**` assets are kept without a question only for an **intact import** (they are upstream's own); otherwise `keep_assets: true` is an explicit choice, because an image may be project media.
+
+### One artefact per presentation (Remotion Slice 19)
+
+Decision of the Project Manager: `kind: presentation` writes the `ptp_` document and **nothing else**; not one scene is published to the shared library unless the user asks for that scene (`kind: scene`). The record carries (a) the document skeleton (scenes with neutral values, chosen controls, anchors), the art direction sections and the **score skeleton**, and (b) `embedded`: `{sha256: candidate}` for each distinct sanitized scene source, HTML `{manifest, template, style, behavior}` or Remotion `{manifest, sources, assets (base64)}`. Each scene row names its source by `source: <sha256>`; its `scene.prefab` is a record-local slot (never resolved, like `scene_id`). `catalog` is the record's own block: `type: presentation`, `compatibility` per engine (`native` only when **every** scene is), `stack`, `licences`, `upstreams` (public declarations), `licence_ack`.
+
+**Instantiate** (`kind: presentation`): every embedded source is first re-validated with today's guards and its provenance re-verified (below) **before anything is created**; then the new Presentation is created and **one presentation-scoped prefab per scene** (`presentation-studio.p<presentation>.s<scene>`, the retention namespace) is published through `PrefabService.save`, pinned by the scene, with `source_revision 0`. Two scenes that shared a source get two ids of the same content. The library is not touched beyond those ids. A failure after the Presentation was created is raised with its id (as before).
+
+### Score skeleton (Remotion Slice 19)
+
+A presentation template carries the **structure** of the score, never its words (`presentation_studio_template_score.py`): order, presenter, kind, `target_duration_ms`, timing policy, interruption, declared loops, each item's `scene_goto`, on the template's scene slots. Removed and counted in `report.score_dropped`: `label`, `text` and `note` (every speaking item gets the placeholder `[intention]` as a **`note`**, never as `text`, because a `text` is spoken word for word), `cue_id` and all cues (their phrases are speech), locked sequences (the host item becomes an ordinary soft item, duration kept), recovery points, and every `control_set` / `reveal` / `hide` / `sequence` action. The skeleton is checked with the score validator (`parse_content`); an item that cannot stand alone is `score_unfit`. Instantiation gives fresh item ids and the new scene ids and creates the score with `create_score` (the answer has `score_id`). The user then writes the words; nothing is spoken until they do.
+
+### Licence and provenance (Remotion Slice 19)
+
+- **Verified provenance never survives a modification.** The Core-written keys of `catalog.upstream` (`commit`, `archive_sha256`, `imported_at`, `changes`, `source_sha256`) and `catalog.runtime_license` ([remotion-import.md](remotion-import.md)) are carried by a promotion **only if** the digest of the actual files, recomputed by Core, equals `source_sha256` (an intact import); the publication then goes through the importer's gate (`verified_import`). A modified source loses them (`upstream_verification_dropped`) and keeps `name`, `url`, `ref`, `license`, `author` as a declaration: `verified_intact` is absent, never `true`. For an embedded source the claim is **recomputed again at instantiation**; a record that claims a verified import its files do not match is refused `presentation_studio_corrupt_document` before anything is created.
+- **Licences.** An upstream whose licence is not one of the reviewed redistributable ones (`PERMITTED_LICENCES`: MIT, Apache-2.0, BSD-2-Clause, BSD-3-Clause, ISC, 0BSD, Unlicense, CC0-1.0), or is not declared (shown as `not-declared`), is not promoted until the request names that licence: `licence_ack: ["GPL-3.0"]`. The plan lists `licences: {name: [scene keys]}` and each blocking finding quotes the name, so the acknowledgement is an informed, visible act, not a boolean. The same rule covers library prefabs (`scene`) and presentation records; the acknowledgement is stored in the record (`catalog.licence_ack`). A source with no upstream is the user's own work and needs nothing. Jarvis does not give legal advice: it records the licence and who acknowledged it.
+- **Compatibility is carried, not upgraded.** `compatibility` stays what the source declared; a record is `native` for an engine only when all its scenes are.
+
+### Reusable presentation template document (`jarvis.presentation_studio.template` v1 and v2)
 
 ```
-{schema, schema_version: 1, template_id: "ptp_<12 hex>", kind, title, description, tags,
- scenes: [{key: "s1", label, scene: <StudioScene: prefab pin to studio-template.*, neutral props/data, chosen controls, anchors, empty title/section/preview>}],
+{schema, schema_version: 1 | 2, template_id: "ptp_<12 hex>", kind, title, description, tags,
+ scenes: [{key: "s1", label, scene: <StudioScene: prefab pin to studio-template.* (v1) or a record-local slot (v2 with source), neutral props/data, chosen controls, anchors, empty title/section/preview>,
+           source?: "<sha256>"  (v2)}],
  art_direction: null | {sections: {<section>: <closed-vocabulary dict>}},
  parameters: [{scene_key, control_id, kind: "dimension"|"parameter", role: "look"|"content", type, group, label}],
- prefabs: [{id, version}], report, derived_from, created_by, created_at, revision: 1}
+ prefabs: [{id, version}], report, derived_from, created_by, created_at, revision: 1,
+ score?: null | {start_item_id, items, cues: [], sequences: [], recovery_points: []},   (v2)
+ embedded?: null | {"<sha256>": {manifest, template, style, behavior} | {manifest, sources, assets}},   (v2)
+ catalog?: null | {type: "presentation", compatibility, stack, licences, upstreams, licence_ack}}   (v2)
 ```
 
-A template scene's `scene_id` is a record-local slot (`template_scene_id`), regenerated by every instantiation. At most 512 templates, 256 KiB per document; a newer schema is refused untouched
-(`unsupported_schema_version`); the file is created once and never rewritten or deleted by Core.
+A document is written at the **lowest version that expresses it**: a `scene`, `art_direction` or `motion` template stays v1 byte for byte; a `presentation` template is v2. A reader that only knows v1 refuses v2 untouched
+(`unsupported_schema_version`); v2 keys inside a v1 document are refused. A template scene's `scene_id` is a record-local slot (`template_scene_id`), regenerated by every instantiation. At most 512 templates, 2048 KiB per document
+(embedded sources are capped at 1 MiB decoded, `embedded_too_large`); a newer schema is refused untouched; the file is created once and never rewritten or deleted by Core. `GET /templates/{id}` lists `embedded` as an inventory
+(`{engine, modules, assets, bytes}`), it does not ship the sources.
 
 ### Routes and the operation surface (for the agent tools of Slice 21)
 
@@ -1526,10 +1569,10 @@ Core `/v1/presentation-studio`, Control Center `/api/presentation-studio` (same 
 
 | Method | Route | Body -> answer |
 | --- | --- | --- |
-| POST | `/presentations/{presentation_id}/variants/{variant_id}/templates/plan` | `{kind, title, slug, description?, tags?, scenes?: [{scene_id, label?, dimensions, parameters}], art_direction?: {sections, motifs?}, actor?, expected_revision?}` -> 200 `{ok, kind, presentation_id, variant_id, variant_revision, slug, title, selection_required, scenes: [{scene_id, key, source, prefab_id, shared_with, prefab_state: new\|reused\|taken, controls: [{control_id, label, group, path, type, role, eligible_dimension}], kept, stripped}], art_direction, would_publish, findings, blocking}` ; writes nothing |
-| POST | `/presentations/{presentation_id}/variants/{variant_id}/templates` | the same body, selection mandatory -> 201 `{template_id, template (summary), kind, prefabs: [{id, version, published, reused}], scenes, parameters, findings (non-blocking), derived_from}` |
+| POST | `/presentations/{presentation_id}/variants/{variant_id}/templates/plan` | `{kind, title, slug, description?, tags?, scenes?: [{scene_id, label?, dimensions, parameters}], art_direction?: {sections, motifs?}, actor?, expected_revision?, licence_ack?: [name], keep_assets?: bool}` -> 200 `{ok, kind, presentation_id, variant_id, variant_revision, slug, title, selection_required, scenes: [{scene_id, key, source, engine, verified_import, prefab_id, shared_with, prefab_state: new\|reused\|taken\|embedded, controls: [{control_id, label, group, path, type, role, eligible_dimension}], kept, stripped}], art_direction, publishes_to_library, embedded: [{hash, scenes}], score, licences, would_publish, findings, blocking}` ; writes nothing |
+| POST | `/presentations/{presentation_id}/variants/{variant_id}/templates` | the same body, selection mandatory -> 201 `{template_id, template (summary), kind, published_to_library, prefabs: [{id, version, published, reused}] (empty for a presentation), scenes, parameters, findings (non-blocking), derived_from}` |
 | GET | `/templates[?kind=]` | `{templates: [summary], count, problems: [{template_id, code}], limit}` |
-| GET | `/templates/{template_id}` | `{template, summary, prefab_availability: [{id, version, available}]}` |
+| GET | `/templates/{template_id}` | `{template (embedded as an inventory), summary, prefab_availability: [{id, version, available}]}` |
 | POST | `/templates/{template_id}/instantiate` | `{title?, presentation_id?, variant_id?, expected_revision?, actor?}` -> 201 by kind, below |
 
 Stable ids: `ptp_<12 hex>` (template), `studio-template.<slug>[-n]` (library prefab, version from the library), `s1..sn` (scene key inside a template). The typed client methods are
@@ -1538,7 +1581,7 @@ A Core service call is `app.presentation_studio_templates.{plan, promote, list_t
 
 Instantiation by kind (all through existing doors, so the same validation, revision and undo rules): `presentation` -> `title` required; a new Presentation (`create`), its variant filled by `save_variant`
 (new scene ids, `source_revision 0`), the template's DA sections over the deterministic fallback (`create_art_direction`) or the fallback itself (`create_fallback_art_direction`); the answer lists
-`presentation_id, variant_id, scene_ids, art_direction_id, rendered: [{scene_id, prefab, payload, problems}]` (`describe_scene`: payload budget and instance problems of every scene). A failure after the
+`presentation_id, variant_id, scene_ids, score_id (null without a score skeleton), art_direction_id, rendered: [{scene_id, prefab, payload, problems}]` (`describe_scene`: payload budget and instance problems of every scene); embedded sources are installed first (see *One artefact per presentation*). A failure after the
 Presentation was created is raised with the new id in the message (a Presentation cannot be deleted by Core). `scene` -> `presentation_id, variant_id, expected_revision` required; one `scene.add`
 op through the edit API (undoable, `STALE_REVISION` when the variant moved). `art_direction`/`motion` -> same three fields; the sections are laid over the destination's current DA (its
 name, references and other sections are kept, the laid sections are marked `provided`) or create one. Every instantiation first verifies the cited library versions.
@@ -1554,7 +1597,9 @@ name, references and other sections are kept, the laid sections are marked `prov
 | the shared library refuses (definition, id or version limit, disk) | `presentation_studio_source_invalid` 400, `presentation_studio_limit_reached` 409, `presentation_studio_storage_io` 500, with the library's own code in the message |
 | a failure between the publications and the document | prefabs stay published (the library has no deletion), a `template_orphans` `warning` row names them; repeating the **same** promotion reuses them (same id, same content: no new version) and writes the document |
 | an unknown, damaged or newer template | `presentation_studio_unknown_template` 404 / listed in `problems` / `presentation_studio_unsupported_schema_version` 409 |
-| a cited library version missing or tampered at instantiation | `presentation_studio_prefab_unavailable` 409, nothing created |
+| a cited library version missing or tampered at instantiation (`scene` templates; a presentation template cites none) | `presentation_studio_prefab_unavailable` 409, nothing created |
+| an embedded source today's guards refuse, or whose claimed verified import its files do not match | `presentation_studio_source_invalid` 400 / `presentation_studio_corrupt_document` 409, checked before the new Presentation is created |
+| a restrictive or undeclared upstream licence not acknowledged, assets not kept, a source not native for its engine | blocking findings, `presentation_studio_template_leak` 409, nothing written |
 
 ### Observability
 
@@ -1563,11 +1608,13 @@ label, a value or a string of the project. The relay journal (`presentation_stud
 
 ### Decisions and limits (recorded)
 
-- **One library id per unique sanitized source, not per scene**: the library has 512 ids and no deletion; a promotion of a deck of identical-looking scenes costs one.
+- **One artefact per presentation (Remotion Slice 19)**: a `presentation` promotion publishes no prefab to the library; identical sanitized scenes share one embedded source. A `scene` promotion keeps one library id per unique source (the library has 512 ids and no deletion).
 - **Retry reuses, it never forks again**: an existing id whose latest version has the same fingerprint is reused; any other content under that id is `prefab_id_taken`.
 - **DA and motion are composition data, not prefabs**: the shared library model has no representation for them. They are laid over a deterministic fallback profile; a section that does not stand alone is refused at promotion, not at use.
-- **Not promoted**: the score and its cues (they name scene and anchor ids of the project), scene-local variants (only the selected content is promoted), linked resources of the presentation, undo history.
-- **Library versions of a template are custom ids, not retention ids**: `studio-template.*` is never archived by the Slice 01a retention, so templates register no pin source.
+- **Not promoted**: the words of the score, its cues, locked sequences and control values (the **skeleton** is, since Slice 19), scene-local variants (only the selected content is promoted), linked resources of the presentation, undo history.
+- **TSX is searched, never rewritten**: a hard-coded project string, id or path in a module is a blocking finding. Reworded, split or encoded content is not seen (same heuristic as for HTML). Assets are not scanned (binary): `keep_assets` is a human choice.
+- **Embedded sources are copies**: a later fix to the original scene source is not seen by an existing template; promote again. A template record up to 2 MiB is read whole by `list_templates` (512 records at most).
+- **Library versions of a scene template are custom ids, not retention ids**: `studio-template.*` is never archived by the Slice 01a retention, so templates register no pin source. Embedded sources are not library versions: nothing to pin until they are installed as presentation-scoped prefabs, which the variants' pins then retain.
 - **A promoted prefab is a normal library entry**: it can be forked or revised through the prefab view; a template pins the exact version it was promoted at.
 - **Not run in a real browser**: the instantiated scenes are validated and described (payload budget, instance validation) by the same gates as any scene; a pixel-level drill of a promoted template belongs to Slice 22.
 

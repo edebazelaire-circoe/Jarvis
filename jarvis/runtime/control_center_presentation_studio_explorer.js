@@ -32,6 +32,7 @@
   const CmpCore=root.JarvisStudioExplorerCompareCore||(typeof require==='function'?require('./control_center_presentation_studio_explorer_compare_core.js'):null);
   const Cmp=root.JarvisStudioExplorerCompare||(typeof require==='function'?require('./control_center_presentation_studio_explorer_compare.js'):null);
   const Compose=root.JarvisStudioExplorerCompose||(typeof require==='function'?require('./control_center_presentation_studio_explorer_compose.js'):null);
+  const Upgrades=root.JarvisStudioExplorerUpgrades||(typeof require==='function'?require('./control_center_presentation_studio_explorer_upgrades.js'):null);
   const {ROUTE,PLAYBACK_ROUTE,COMMAND_ROUTE,STATE_ROUTE,HOST_ID,OBJECT_ID,PREVIEW_OBJECT_ID,STYLE_ID,ROW_H,MAX_DEPTH_SHOWN,INDENT_PX,TYPEAHEAD_MS,PAGE_TOKEN,PAGE_TOKEN_HEADER,
     REQUEST_TIMEOUT_MS,READ_TIMEOUT_MS,PLAYBACK_CHECK_MS,LONG_PRESS_MS,PREVIEW_SETTLE_MS,NOTICE_MS,COMMAND_REFUSALS,ICONS,CSS,MAX_LIVE,MAX_ARCHIVED,
     cleanLine,checkTitle,checkRationale,rationaleBytes,relativeTime,absoluteTime,creatorLabel,shortId,buildForest,subtreeIds,flatten,windowOf,treeKey,
@@ -142,7 +143,7 @@
     function ensureStyle(){
       if(!doc||typeof doc.getElementById!=='function'||doc.getElementById(STYLE_ID))return;
       const style=doc.createElement('style');
-      style.id=STYLE_ID;style.textContent=CSS+(Cmp&&Cmp.CSS||'');
+      style.id=STYLE_ID;style.textContent=CSS+(Cmp&&Cmp.CSS||'')+(Upgrades&&Upgrades.CSS||'');
       (doc.head||doc.body).appendChild(style);
     }
 
@@ -257,6 +258,12 @@
     }
 
     /* -------------------------------------------------------------- construction de la page */
+    /* Nouvelle version d'un prefab épinglé (Remotion Slice 19) : avis et essai en variante, module à part ; l'essai est une écriture (occupation, relecture du graphe). */
+    const upgrades=Upgrades.createUpgrades({doc,el,attrs,clear,button,later,cancelLater,every,stopEvery,now,log,announce,call,readTimeout:READ_TIMEOUT_MS,
+      variantPath:(id,tail)=>variantPath(id,tail),node:()=>nodeOf(S.selectedId),scenes:()=>S.preview.variantId===S.selectedId?S.preview.scenes:[],
+      busy:()=>!!S.busy,say:(kind,text)=>say(kind,text),select:id=>{if(nodeOf(id))selectVariant(id,{focus:true})},
+      perform:(op,label,fn)=>perform(op,label,fn),after:(id,message)=>after(id,message),describe:error=>describeRefusal(error.info||error,{op:'upgrades'})});
+
     function build(){
       if(ui.host)return ui.host;
       ensureStyle();
@@ -336,7 +343,8 @@
       ui.meta=el('div','jvx-meta');
       ui.actions=el('div','jvx-actions');attrs(ui.actions,{role:'toolbar','aria-label':'Actions sur la variante choisie'});
       bottom.appendChild(ui.meta);bottom.appendChild(ui.actions);
-      preview.appendChild(wrap);preview.appendChild(note);preview.appendChild(ui.strip);preview.appendChild(bottom);
+      ui.upgrades=upgrades.buildSection();
+      preview.appendChild(wrap);preview.appendChild(note);preview.appendChild(ui.strip);preview.appendChild(bottom);preview.appendChild(ui.upgrades);
       ui.preview=preview;
       body.appendChild(treePane);body.appendChild(preview);body.appendChild(cmp.buildRoot());
       ui.live=el('div','jvx-sr');attrs(ui.live,{role:'status','aria-live':'polite','aria-atomic':'true'});
@@ -462,6 +470,7 @@
         isActive:!!node&&S.graph.activeId===node.variant_id,isPlaying:!!node&&runningVariantId()===node.variant_id,
         score:node&&preview.variantId===node.variant_id&&preview.doc?(preview.doc.score_id?'Partition liée':'Sans partition'):null,
         art:node&&S.art.variantId===node.variant_id?S.art:{state:'idle'}});
+      upgrades.sync(node,S.graph?S.graph.revision:null);
     }
     function actionModel(node){
       const live=S.live?S.live.size:0;
@@ -1283,6 +1292,7 @@
           if(S.selectedId)schedulePreview();
         }else renderTrees();
         cmp.onPoll();
+        upgrades.onPoll();
       }catch(error){
         graphFailures+=1;
         if(graphFailures===2)say('failed',`Core ne répond plus : l'arbre affiché peut être périmé (${describeRefusal(error.info||error,{op:'graph'}).text})`,{action:{label:'Relire',run:()=>refresh()}});
@@ -1313,7 +1323,7 @@
     const api={
       open,close,isOpen:()=>S.open,refresh,
       selection:()=>S.open&&cmp.isActive()&&cmp.view()?cmp.view().variant_ids.slice():S.open&&S.selectedId?[S.selectedId]:[],
-      compare:cmp,compose,
+      compare:cmp,compose,upgrades,
       onSelectionChange(fn){selectionListeners.add(fn);return()=>selectionListeners.delete(fn)},
       select:(id)=>{if(S.open&&nodeOf(id))selectVariant(id,{focus:true})},
       runAction:(act,id)=>runAction(act,id||S.selectedId,{}),

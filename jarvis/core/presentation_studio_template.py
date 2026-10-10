@@ -570,7 +570,7 @@ class PresentationStudioTemplates:
             fresh = iter([new_scene_id() for _ in template.scenes])
             scenes = template_scene_dicts(template, lambda: next(fresh))
             if template.embedded:
-                refs = await self._embedded.publish(template, pid, [w["scene_id"] for w in scenes], request.actor)
+                refs = await self._embedded.install(template, pid, [w["scene_id"] for w in scenes], request.actor)
                 for wire, ref in zip(scenes, refs):
                     wire["prefab"] = ref.to_dict()
             saved = await self._studio.save_variant(pid, vid, {

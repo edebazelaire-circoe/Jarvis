@@ -79,7 +79,7 @@ class EmbeddedSources:
                 raise PresentationStudioError(C.SOURCE_INVALID, f"embedded source {digest[:12]} is refused today: {check.errors[0][:200]}")
             self._verified(candidate)
 
-    async def publish(self, template: StudioTemplate, presentation_id: str, scene_ids: Sequence[str],
+    async def install(self, template: StudioTemplate, presentation_id: str, scene_ids: Sequence[str],
                       actor: str) -> list[PrefabRef]:
         """Un prefab propre a la presentation par scene (deux scenes de meme source = deux ids de meme contenu)."""
 

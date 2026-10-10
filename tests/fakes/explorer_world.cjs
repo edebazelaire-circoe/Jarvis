@@ -97,6 +97,25 @@ function makeWorld(env,options){
       const doc=world.doc(id);
       return doc?json(200,doc):err(404,'presentation_studio_unknown_variant','unknown variant');
     }
+    /* Remotion Slice 19: `world.upgrades` = {variant_id: [notice]} (defaut : aucune version plus recente) ; l'essai cree un enfant, la source est intacte. */
+    if(seg[1]==='variants'&&seg[3]==='upgrades'&&seg.length===4&&method==='GET'){
+      const node=world.live.find(n=>n.variant_id===id);
+      if(!node)return err(404,'presentation_studio_unknown_variant','unknown');
+      const notices=(world.upgrades&&world.upgrades[id]||[]).map(n=>Object.assign({trials:[]},n));
+      return json(200,{presentation_id:PID,variant_id:id,variant_revision:node.revision,notices,count:notices.length,unavailable:[],trials:[],auto_upgrade:false});
+    }
+    if(seg[1]==='variants'&&seg[3]==='upgrades'&&seg[4]==='try'&&method==='POST'){
+      const stale=check(body);if(stale)return stale;
+      const source=world.live.find(n=>n.variant_id===id);
+      if(!source)return err(404,'presentation_studio_unknown_variant','unknown');
+      const row=(world.upgrades&&world.upgrades[id]||[]).find(n=>n.scene_id===body.scene_id);
+      if(!row)return err(400,'presentation_studio_invalid','nothing newer');
+      if(row.fits===false)return err(400,'presentation_studio_scene_incompatible','does not fit');
+      world.revision+=1;
+      const node=world.add(source.variant_id,{title:'Essai v'+body.version,rationale:'trial of '+row.prefab_id+' v'+body.version+' for scene '+body.scene_id,created_by:'user',scene_count:source.scene_count});
+      world.tries=(world.tries||[]).concat([{source:id,node:node.variant_id,body}]);
+      return json(201,{node:Object.assign({},node),activated:false,trial:true,adopted:false,source_variant_id:source.variant_id,presentation_revision:world.revision,scene_id:body.scene_id});
+    }
     if(seg[1]==='variants'&&seg[3]==='art-direction'&&method==='GET'){
       const art=world.art.get(id);
       return art?json(200,{art_direction:art}):err(404,'presentation_studio_unknown_art_direction','none');
