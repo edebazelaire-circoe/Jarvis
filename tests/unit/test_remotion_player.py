@@ -287,13 +287,10 @@ async def test_an_html_prefab_that_declares_remotion_adapter_is_refused_in_a_rem
 
 
 async def test_a_remotion_source_that_declares_slidecar_adapter_is_refused_in_a_slidecar_document(studio, prefabs, monkeypatch):
-    import functools
-    from jarvis.core import presentation_studio_service as module
-    monkeypatch.setattr(module, "new_presentation", functools.partial(module.new_presentation, engine=Engine.SLIDECAR))
     other = "presentation-studio.p000000000001.s000000000002"
     await prefabs.save(remotion_slidecar_adapter_candidate(other), actor="user")
     service = studio(EngineAvailability(True))
-    view = await service.create({"title": "Legacy"})
+    view = await service.create({"title": "Legacy", "engine": "slidecar", "actor": "user", "experimental_confirmed": True})
     assert view.presentation.engine is Engine.SLIDECAR
     pid, vid = view.presentation.presentation_id, view.presentation.active_variant_id
     with pytest.raises(PresentationStudioError) as caught:
