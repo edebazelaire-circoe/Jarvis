@@ -75,7 +75,7 @@ Jamais : `node_modules`, `package.json`, `package-lock.json`, `tsconfig.json`, `
 - Un lecteur d'avant la Slice 05 lit toujours tout l'HTML et **refuse** une v2 (`schema must be … version 1` : la version est `tampered`, tracée `core.prefab.tampered`, le catalogue continue). Ce comportement est figé dans `test_an_old_reader_refuses_a_remotion_version_and_still_reads_every_html_one`. Le balayage de bibliothèque d'un lecteur ancien ne plante donc pas sur un dossier v2.
 - Un lecteur actuel lit v1 et v2.
 
-Clés du manifeste v2 = clés v1 **moins `files`, plus `source`** (les autres, `inputs`, `sample`, `scene`, `family`, `tags`, `aliases`, restent identiques et servent donc les paramètres éditables, la recherche et l'aperçu). `events` doit être vide (les événements d'état/notification sont ceux des cadres HTML ; le pont de contrôles Remotion est la Slice 13).
+Clés du manifeste v2 = clés v1 **moins `files`, plus `source`** (les autres, `inputs`, `sample`, `scene`, `family`, `tags`, `aliases`, restent identiques et servent donc les paramètres éditables, la recherche et l'aperçu). `events` doit être vide (les événements d'état/notification sont ceux des cadres HTML ; le pont de contrôles de la Slice 13 est **entrant** seulement : valeurs vers le Player, voir [remotion-isolation.md](remotion-isolation.md) § 12).
 
 ```json
 "source": {

@@ -5,7 +5,7 @@
 | `GET /remotion-stage?id=<prefab>&v=<version>` | la page de la scène : un document de confiance qui monte le bac à sable. Son en-tête est **`Content-Security-Policy: frame-src <origine du bac à sable>` et rien d'autre** (`embedder_frame_src`) ; `frame-src 'none'` quand Core ne configure aucun bac à sable. Jamais l'origine du visualiseur ni de Core. |
 | `GET /api/remotion/sandbox` | relais de `GET /v1/remotion/sandbox` (état du moteur, origine du bac à sable) |
 | `GET /api/remotion/player/{prefab_id}/{version}` | relais de `GET /v1/remotion/player/...` (compile à la demande : délai de 150 s) |
-| `POST /api/remotion/report` | la page de la scène rend compte (`ready`, `failed`, `killed`, `violation`, `scene_error`) ; le Control Center journalise `remotion.sandbox.killed`, `remotion.stage.*` ; corps borné, champs d'une liste fermée |
+| `POST /api/remotion/report` | la page de la scène rend compte (`ready`, `failed`, `killed`, `violation`, `scene_error`, `props_rejected`) ; le Control Center journalise `remotion.sandbox.killed`, `remotion.stage.*` ; corps borné, champs d'une liste fermée |
 
 Toutes les routes sont gardées comme `/api/prefabs` : Host de boucle locale, Origin de boucle locale s'il existe, jamais
 `Sec-Fetch-Site: cross-site` (`READ_GUARDED_ROUTES`). Un cadre de bac à sable (origine opaque) ne peut donc rien lire ici.
@@ -36,7 +36,9 @@ MAX_REPORT_BYTES = 2048
 #: Au plus 60 comptes rendus par minute (une page qui boucle ne remplit pas le journal).
 REPORT_WINDOW_S = 60.0
 MAX_REPORTS_PER_WINDOW = 60
-REPORT_EVENTS = frozenset({"ready", "failed", "killed", "violation", "scene_error"})
+#: Les refus de valeurs (`props_rejected`) ont leur propre seau, petit.
+MAX_REJECTIONS_PER_WINDOW = 10
+REPORT_EVENTS = frozenset({"ready", "failed", "killed", "violation", "scene_error", "props_rejected"})
 _PREFAB_ID = re.compile(r"[a-z0-9][a-z0-9._-]{0,127}\Z")
 _TOKEN = re.compile(r"[A-Za-z0-9_.:-]{0,60}\Z")
 
@@ -53,6 +55,7 @@ class RemotionRelayRoutes(CaptureRelayRoutes):
     def __init__(self, *, transport: Any, journal: RuntimeJournal, protocol_js: str, stage_js: str, page_template: str) -> None:
         super().__init__(transport=transport, journal=journal)
         self._reports: deque[float] = deque()
+        self._rejections: deque[float] = deque()
         close_tag, safe_tag = "</" + "script", "<\\/" + "script"
         self._page = (page_template.replace("/*__REMOTION_PROTOCOL_JS__*/", protocol_js.replace(close_tag, safe_tag))
                       .replace("/*__REMOTION_STAGE_JS__*/", stage_js.replace(close_tag, safe_tag)))
@@ -88,15 +91,18 @@ class RemotionRelayRoutes(CaptureRelayRoutes):
             return _error(403, "forbidden_origin", "a Remotion report comes from the Control Center's own page")
         if request.content_type != "application/json":
             return _error(415, "unsupported_media_type", "a Remotion report is application/json")
-        now = time.monotonic()
-        while self._reports and now - self._reports[0] >= REPORT_WINDOW_S:
-            self._reports.popleft()
-        if len(self._reports) >= MAX_REPORTS_PER_WINDOW:
-            return _error(429, "rate_limited", "too many Remotion reports: try again in a minute")
-        self._reports.append(now)
         raw = await request.content.read(MAX_REPORT_BYTES + 1)
         if len(raw) > MAX_REPORT_BYTES:
             return _error(413, "too_large", "a Remotion report is small")
+        # Slice 13: a storm of refused values has its own small bucket and can never crowd out a `killed` or `failed` report.
+        rejection = b'"props_rejected"' in raw
+        bucket, limit = (self._rejections, MAX_REJECTIONS_PER_WINDOW) if rejection else (self._reports, MAX_REPORTS_PER_WINDOW)
+        now = time.monotonic()
+        while bucket and now - bucket[0] >= REPORT_WINDOW_S:
+            bucket.popleft()
+        if len(bucket) >= limit:
+            return _error(429, "rate_limited", "too many Remotion reports: try again in a minute")
+        bucket.append(now)
         try:
             body = json.loads(raw)
         except ValueError:
@@ -116,6 +122,6 @@ class RemotionRelayRoutes(CaptureRelayRoutes):
         if isinstance(body.get("message"), str):
             data["message"] = re.sub(r"[\x00-\x1f]", " ", body["message"])[:200]
         kind = "remotion.sandbox.killed" if event == "killed" else f"remotion.stage.{event}"
-        level = "warning" if event in ("failed", "killed", "violation", "scene_error") else "info"
+        level = "warning" if event in ("failed", "killed", "violation", "scene_error", "props_rejected") else "info"
         self._journal.emit(kind, f"Scene Remotion : {event}", level=level, data=data)
         return web.json_response({"ok": True})

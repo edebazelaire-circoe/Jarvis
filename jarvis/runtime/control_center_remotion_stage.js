@@ -21,6 +21,8 @@
 (function(root){
   'use strict';
   const P=root.RemotionSandboxProtocol||(typeof require==='function'?require('./remotion_sandbox_protocol.js'):null);
+  /* Slice 13 : les inputProps sont construites et validées contre le contrat du descripteur AVANT de traverser vers le bac à sable. */
+  const B=root.RemotionInputProps||(typeof require==='function'?require('./control_center_remotion_props.js'):null);
   const SHELL=1;
   const TICK_MS=250;
   const PREPARE_DEADLINE_MS=150000;
@@ -44,7 +46,7 @@
     if(!event||event.source!==parentWindow||event.origin!==origin)return {ok:false,reason:'foreign'};
     const data=event.data;
     if(!plainObject(data)||data.rsh!==SHELL||!PARENT_TYPES.includes(data.type))return {ok:false,reason:'bad_message'};
-    const allowed={props:['props'],control:['action','frame','until'],cue:['name','frame'],teardown:[]}[data.type];
+    const allowed={props:['props','data'],control:['action','frame','until'],cue:['name','frame'],teardown:[]}[data.type];
     for(const key of Object.keys(data))if(key!=='rsh'&&key!=='type'&&!allowed.includes(key))return {ok:false,reason:'extra_field'};
     return {ok:true,message:data};
   }
@@ -86,7 +88,7 @@
     const cancel=d.clearTimeout||((id)=>clearTimeout(id));
     const every=d.setInterval||((fn,ms)=>setInterval(fn,ms));
     const stopEvery=d.clearInterval||((id)=>clearInterval(id));
-    const state={phase:'shell',generation:0,props:{},descriptor:null,iframe:null,supervisor:null,tickTimer:null,prepareTimer:null,
+    const state={phase:'shell',generation:0,props:{},data:{},noticed:false,propsRefused:0,lastProblems:[],descriptor:null,iframe:null,supervisor:null,tickTimer:null,prepareTimer:null,
       prepareSince:0,counterTimer:null,propsTimer:null,sent:'',playing:false,frame:0,frameAt:0,lastPong:0,clockSentAt:-1e9,mounted:false,
       killedReason:null,duration:0,fps:30,hideTimer:null,lastSupervisor:null,muted:true,controller:null,barTimer:null};
     const ui={};
@@ -333,9 +335,10 @@
     function sandboxReady(generation){
       const descriptor=state.descriptor;
       try{
-        const props=Object.assign({},descriptor.defaults||{},state.props);
-        postToFrame(state.iframe,P.hostMessage('init',{composition:descriptor.composition,props}));
-        state.sent=JSON.stringify(state.props);
+        const built=B.buildInputProps(descriptor.input_contract,state.props,state.data);
+        if(!built.ok)throw new Error(built.problems.join('; '));
+        postToFrame(state.iframe,P.hostMessage('init',{composition:descriptor.composition,props:built.inputProps}));
+        state.sent=JSON.stringify(built.inputProps);
       }catch(error){
         fail(generation,{code:'props_refused',message:`Les valeurs de la scène sont refusées par le bac à sable : ${describe(error)}`,
           diagnostics:[],errors:[],title:'Valeurs de la scène refusées',lead:'Le bac à sable a refusé les valeurs de la scène (trop grosses ou mal formées).'});
@@ -403,17 +406,32 @@
       return true;
     }
 
-    function setProps(props){
+    function setProps(props,data){
       state.props=props;
+      if(data!==undefined)state.data=data;
       if(!state.mounted)return;
       /* Coalescé : au plus un message `props` par 16 ms, le dernier gagne (changement rapide de couleur ou de durée). */
       if(state.propsTimer)return;
       state.propsTimer=later(()=>{
         state.propsTimer=null;
-        const text=JSON.stringify(state.props);
-        if(!state.mounted||!state.iframe||text===state.sent)return;
+        if(!state.mounted||!state.iframe)return;
+        /* Validé avant de traverser : une valeur refusée n'atteint jamais le bac à sable, la dernière valeur valide reste affichée. */
+        const built=B.buildInputProps(state.descriptor.input_contract,state.props,state.data);
+        if(!built.ok){
+          state.propsRefused++;state.lastProblems=built.problems;
+          d.log('warn','remotion.stage.props_rejected',{problems:built.problems.slice(0,3)});
+          report('props_rejected',{diagnostics:built.problems.length});
+          /* Un avis, pas un échec : la scène continue de jouer ses dernières valeurs valides ; la fenêtre l'affiche à titre transitoire. */
+          state.noticed=true;
+          tellParent({phase:'notice',message:`Valeurs refusées, la scène garde les précédentes : ${built.problems[0]}`.slice(0,300)});
+          return;
+        }
+        state.lastProblems=[];
+        if(state.noticed){state.noticed=false;tellParent({phase:'notice',message:''})}   // the next accepted values clear the notice
+        const text=JSON.stringify(built.inputProps);
+        if(text===state.sent)return;
         try{
-          postToFrame(state.iframe,P.hostMessage('props',{props:Object.assign({},state.descriptor.defaults||{},state.props)}));
+          postToFrame(state.iframe,P.hostMessage('props',{props:built.inputProps}));
           state.sent=text;
         }catch(error){d.log('warn','remotion.stage.props_refused',{error:describe(error)});tellParent({phase:'scene_error',message:`props refused: ${describe(error)}`.slice(0,300)})}
       },PROPS_COALESCE_MS);
@@ -435,7 +453,7 @@
       if(!parsed.ok)return;
       const m=parsed.message;
       switch(m.type){
-        case 'props':if(plainObject(m.props))setProps(m.props);break;
+        case 'props':if(plainObject(m.props)&&(m.data===undefined||plainObject(m.data)))setProps(m.props,m.data);break;
         case 'control':
           if(['play','pause','seek'].includes(m.action))control(m.action,m.frame,m.until);
           break;
@@ -463,6 +481,7 @@
 
     return {start,prepare,control,setProps,state:()=>({phase:state.phase,mounted:state.mounted,playing:state.playing,frame:state.frame,
       duration:state.duration,killedReason:state.killedReason,generation:state.generation,muted:state.muted,
+      propsRefused:state.propsRefused,lastProblems:state.lastProblems.slice(0,3),
       supervisor:state.supervisor?state.supervisor.state():state.lastSupervisor||null})};
   }
 

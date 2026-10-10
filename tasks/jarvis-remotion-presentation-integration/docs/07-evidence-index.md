@@ -153,3 +153,10 @@ Observed by running and reading, not copied from the snapshot above.
 - Unit evidence (no browser): `tests/unit/test_remotion_timeline.py` (17), `test_remotion_timeline_service.py` (10), `test_remotion_timeline_composition.py` (3), `test_remotion_timeline_js.py` (22, node), `test_remotion_sandbox_child_js.py` (7, node), `test_remotion_sandbox_protocol_js.py` (16), `test_presentation_studio_player_js.py` (30). Regression net unchanged and green: `test_presentation_studio_sequence*`, `_playback_*`. Counts and neighbours: LOG.md entry "Slice 12".
 - Not evidenced: audio through speakers or sync with speech, physical Esc, a second screen, macOS/Linux, a Chrome other than 154, a live Jarvis (never started), the planner/voice tools setting `at_ms` (Slices 15 and 21), Remotion props and controls through the score (Slice 13).
 
+
+## Slice 13 - Typed variables and fast edits (2026-10-10, branch `task/jarvis-remotion-presentation-integration-s13`, base `dcfa565d`)
+
+- Contract: `docs/remotion-isolation.md` section 12, `docs/presentation-studio.md` "Typed variables and fast edits", `docs/prefabs.md` (typed variables per engine), `docs/remotion-source.md`.
+- Real-machine evidence: `slices/13-remotion-controls-bridge/evidence/real-slice-13.json` (+ `typed_controls.json`, `controls_before.png`, `controls_after.png`) produced by `scripts/remotion_player_harness.py --slice 13 --test tests/unit/test_remotion_controls_realpage_browser.py` at head `24b368dc` (clean tracked tree), isolated Core, real Chrome, never the live Jarvis.
+- Unit evidence: `tests/unit/test_remotion_input_props.py` (+ `tests/fixtures/remotion_input_props_cases.json`, Python and JavaScript), `test_remotion_controls.py`, `test_remotion_controls_docs.py`, `test_remotion_stage_js.py`, `test_presentation_studio_inspector_behaviour_js.py`, `test_remotion_relay.py`, `test_remotion_player.py`.
+- Not evidenced: per-parameter engine labels in the manifest (not built), a Chrome other than 154, macOS/Linux, a live Jarvis.

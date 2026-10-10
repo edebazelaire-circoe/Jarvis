@@ -64,6 +64,7 @@ def main() -> int:
         print(f"not an installed Remotion runtime: {runtime}", file=sys.stderr)
         return 2
     evidence.mkdir(parents=True, exist_ok=True)
+    report_name = "real-player.json" if options.slice == 10 else f"real-slice-{options.slice}.json"
     for stale in evidence.glob("*.json"):
         if stale.name == options.report or options.report == "real-player.json":
             stale.unlink()

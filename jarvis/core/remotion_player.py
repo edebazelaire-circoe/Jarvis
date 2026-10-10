@@ -24,8 +24,8 @@ from collections.abc import Callable
 from typing import Any
 
 from jarvis.domain.presentation_studio_checks import PresentationStudioError, PresentationStudioErrorCode as C
-from jarvis.domain.presentation_studio_engine import EngineAvailability
-from jarvis.domain.prefab import validate_value
+from jarvis.domain.presentation_studio_engine import Engine, EngineAvailability
+from jarvis.domain.remotion_controls import build_input_props, input_contract
 from jarvis.domain.remotion_compile import CompileErrorCode, RemotionCompileError
 from jarvis.ports.v2 import DiagnosticSink
 from jarvis.ports.remotion import SandboxBindError
@@ -97,7 +97,8 @@ class RemotionPlayerService:
             raise PresentationStudioError(C.ENGINE_UNAVAILABLE, f"remotion is unavailable: {exc}. Repair: free the port or set "
                                                                 "JARVIS_REMOTION_SANDBOX_PORT") from exc
         composition = source.block.composition
-        defaults, _problems = validate_value(manifest.props, {}, "props")
+        contract = input_contract(manifest, Engine.REMOTION)
+        defaults = build_input_props(contract, {}, {})
         self._trace("described", "Scene Remotion prete a etre jouee", data={
             "prefab_id": prefab_id, "version": version, "scene_key": scene.cache_key, "host_key": host.cache_key,
             "reused": scene.reused, "compile_ms": scene.duration_ms, "engine_drift": scene.engine_drift})
@@ -107,7 +108,9 @@ class RemotionPlayerService:
             "embedder_origin": self._sandbox.embedder_origin,
             "composition": {"id": composition.composition_id, "width": composition.width, "height": composition.height,
                             "fps": composition.fps, "durationInFrames": composition.duration_in_frames},
-            "defaults": defaults if isinstance(defaults, dict) else {},
+            # Slice 13 : le contrat des `inputProps` (schémas du manifeste moins ce que Remotion ne porte pas, liste `withheld`) ;
+            # la page de scène valide contre lui AVANT de rien envoyer au bac à sable. `defaults` : les inputProps sans valeur.
+            "input_contract": contract, "defaults": defaults.input_props,
             "compiled": {"scene": scene.to_public(), "host": {"cache_key": host.cache_key, "reused": host.reused}},
             "engine_drift": scene.engine_drift,
         }

@@ -1328,7 +1328,9 @@ class ControlCenter:
         runtime_folder = Path(__file__).resolve().parent
         self.remotion_routes = RemotionRelayRoutes(
             transport=lambda: self.sessions, journal=self.journal,
-            protocol_js=(runtime_folder / "remotion_sandbox_protocol.js").read_text(encoding="utf-8"),
+            # Slice 13 : le validateur d'inputProps voyage avec le protocole (deux IIFE, même emplacement de la page de scène).
+            protocol_js=(runtime_folder / "remotion_sandbox_protocol.js").read_text(encoding="utf-8") + "\n"
+            + (runtime_folder / "control_center_remotion_props.js").read_text(encoding="utf-8"),
             stage_js=(runtime_folder / "control_center_remotion_stage.js").read_text(encoding="utf-8"),
             page_template=(runtime_folder / "control_center_remotion_stage.html").read_text(encoding="utf-8"))
         # Presentation Studio (jarvis-interactive-presentation-studio, Slice 05) : lectures + API d'édition, acteur forcé à `user`.
