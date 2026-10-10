@@ -121,7 +121,7 @@ Six adresses relaient **telles quelles** vers Core (`jarvis/runtime/remotion_stu
 | POST `/api/local-capabilities/remotion/studio/restart` | POST `.../studio/restart` | 150 s |
 | POST `/api/local-capabilities/remotion/studio/sync` | POST `.../studio/sync` | 40 s |
 | POST `/api/local-capabilities/remotion/studio/close` | POST `.../studio/close` | 40 s |
- **Aucune installation ni désinstallation n'est relayée d'ici** : elles restent une action explicite sur Core ([remotion-runtime.md](remotion-runtime.md) §7). Le client de Core n'accepte que le préfixe `/v1/local-capabilities/remotion`.
+ **Aucune désinstallation ni mise à jour n'est relayée d'ici** : elles restent une action explicite sur Core ([remotion-runtime.md](remotion-runtime.md) §7). Depuis la Slice 20, seules `install` et `repair` le sont (`POST /api/local-capabilities/remotion/install|repair`, corps vide imposé), pour le geste de la carte « Présentations · moteur ». Le client de Core n'accepte que le préfixe `/v1/local-capabilities/remotion`.
 
 La carte (`control_center_remotion_studio.js`) est en tête de l'onglet « Plugins externes » du dialogue MCP, au-dessus des cartes de plugins (la « carte unique » de [local-capabilities.md](local-capabilities.md) §1) : état de l'environnement Remotion, état du Studio, choix de la scène (scènes Remotion de la bibliothèque, `?engine=remotion`), boutons **Ouvrir le Studio**, **Actualiser la scène**, **Relancer**, **Fermer le Studio**.
 

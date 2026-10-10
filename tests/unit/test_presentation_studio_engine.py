@@ -78,14 +78,19 @@ def test_the_summary_makes_the_engine_observable():
     assert ps.new_presentation("x", NOW).presentation.summary()["engine"] == "remotion"
 
 
-async def test_the_service_creates_remotion_and_a_create_body_cannot_carry_an_engine(tmp_path):
+async def test_the_service_creates_remotion_and_an_engine_without_the_human_actor_is_refused(tmp_path):
+    """Slice 02 pinned "unknown keys"; Slice 20 gives the create body a Human path, so an agent-shaped body naming an engine is the policy's refusal."""
+
     service = PresentationStudioService(FilePresentationStudioStore(tmp_path), clock=lambda: NOW)
     view = await service.create({"title": "Atelier"})
     assert view.presentation.engine is Engine.REMOTION
     for body in ({"title": "x", "engine": "slidecar"}, {"title": "x", "engine": "remotion"}):
         with pytest.raises(PresentationStudioError) as caught:
             await service.create(body)
-        assert caught.value.code is C.INVALID_PRESENTATION and "unknown keys" in caught.value.message
+        assert caught.value.code is C.ENGINE_SELECTION_REFUSED and "only a person" in caught.value.message
+    with pytest.raises(PresentationStudioError) as caught:
+        await service.create({"title": "x", "owner": "someone"})
+    assert caught.value.code is C.INVALID_PRESENTATION and "unknown keys" in caught.value.message
     again = await service.get(view.presentation.presentation_id)
     assert again.presentation.engine is Engine.REMOTION
 

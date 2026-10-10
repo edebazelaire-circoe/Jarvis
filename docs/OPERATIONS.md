@@ -2308,6 +2308,29 @@ scène en scène, plein écran, son sur un vrai geste, moteur indisponible, erre
 6. **Scène figée** : une scène qui boucle sans fin est retirée au bout de 3 s avec sa raison et « Recharger la scène » ; la page reste utilisable.
 7. **Origine** : ouvrir le Control Center par `http://127.0.0.1:<port>/` (pas `localhost`) : l'origine du bac à sable n'autorise que cet hôte.
 
+### Moteur des présentations : Remotion par défaut, Slidecar en expérience (Remotion Slice 20) : exploitation et vérification humaine
+
+Contrat : [presentation-engine.md](presentation-engine.md) › *Human engine control*. Où : Control Center, « Outils MCP » > « Plugins externes », carte « Présentations · moteur ».
+
+- **Lire l'état** : trois pastilles (`Défaut : Remotion`, `Remotion : Prêt | Indisponible`, `Slidecar : N documents · M au journal`) ; chaque présentation porte son badge de moteur
+  (le moteur est fixé à la création et ne change jamais).
+- **Remotion indisponible** : la carte donne la raison réelle de l'adaptateur et le geste. `Installer Remotion` (≈ 270 Mo, une fois par poste) ou `Réparer Remotion` appellent
+  les opérations `install` / `repair` de la capacité locale (après confirmation, temps écoulé affiché, 15 min au plus) ; les réglages de bac à sable invalides
+  (`JARVIS_REMOTION_SANDBOX_HOST` / `_PORT`) et un Core sans moteur demandent un geste de votre part (corriger, relancer Core vous-même : rien ne se relance seul). **Jamais** une
+  présentation Slidecar à la place d'une Remotion.
+- **Créer en Slidecar** : seulement dans « Expérimental : Slidecar » (avertissement, confirmation). Chaque création, copie « expérience » et usage d'un document Slidecar est un diagnostic
+  `core.presentation_studio.slidecar_created | slidecar_experiment_created | slidecar_used` (moteur, acteur, raison) ; la carte montre les 20 dernières lignes (registre en mémoire depuis le
+  démarrage de Core ; le badge du document, lui, est durable). Une tentative de nommer un moteur sans passer par la page est `engine_selection_refused` (warning).
+- **Anciennes présentations** (sans champ moteur) : lues comme Slidecar, jamais converties ; à la première sauvegarde l'ancien manifeste est gardé une fois dans `presentation.json.v<N>.bak`.
+
+Vérification humaine (une fois, instance isolée : ports et `JARVIS_DATA_ROOT` à part, jamais le JARVIS vivant) :
+
+1. Ouvrir la carte : Remotion par défaut. Créer une présentation sans rien d'autre : badge `Remotion`.
+2. Ouvrir « Expérimental : Slidecar », lire l'avertissement, créer, **annuler** la confirmation (rien n'est créé), recréer et confirmer : badge `Slidecar · expérimental`, ligne « Création » au journal.
+3. « Dupliquer en expérience Slidecar » sur une présentation Remotion : un nouveau document `... (Slidecar)`, la source inchangée.
+4. Casser Remotion (désinstaller la capacité ou changer le port du bac à sable) : la carte dit pourquoi et propose le bon geste ; lancer la lecture d'une présentation Remotion : erreur visible, rien d'autre ne joue.
+5. Recharger la page : mêmes badges.
+
 ### Scène Remotion conduite par la partition (Remotion Slice 12) : vérification humaine
 
 Contrat : [presentation-studio.md](presentation-studio.md) › *Remotion timeline bridge*, [remotion-isolation.md](remotion-isolation.md) § 11. Les tests

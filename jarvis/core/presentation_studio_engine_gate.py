@@ -46,6 +46,11 @@ class StudioEngineGate:
                     data={"engine": engine.value, "action": action, "presentation_id": presentation_id})
         return resolution
 
+    def states(self) -> Mapping[Engine, EngineAvailability]:
+        """Ce que chaque adaptateur rapporte maintenant (lecture seule, rien n'est lance); pour la vue du Control Center."""
+
+        return self._availability()
+
     def require_native(self, declared: Mapping[Any, Any] | None, engine: Engine, *, what: str) -> Support:
         """A source may be used only when it is `native` for the engine; `adapter` is declared, not usable yet."""
 

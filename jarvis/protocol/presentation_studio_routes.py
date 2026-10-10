@@ -9,7 +9,9 @@ cette Slice (Slice 05+ : acteur forcé `user`). Contrat :
 | Méthode | Route | Réponse |
 | --- | --- | --- |
 | GET | `/v1/presentation-studio/presentations[?limit]` | `{presentations: [{presentation_id, title, active_variant_id, variant_count, resource_count, engine, revision, updated_at}], problems: [{presentation_id, code, message}]}` (`limit` ≤ 256) |
-| POST | `/v1/presentation-studio/presentations` | corps `{title}` -> 201 `{presentation, variants}` (variante n° 1 active) |
+| POST | `/v1/presentation-studio/presentations` | corps `{title}` (agent, script : moteur Remotion) ou, Slice 20, `{title, engine, actor, experimental_confirmed?, reason?}` (`engine` n'est accepte que si `actor` vaut `user`, pose par le relais du Control Center ; sinon 403 `presentation_studio_engine_selection_refused`; `slidecar` exige `experimental_confirmed: true`) -> 201 `{presentation, variants}` (variante n° 1 active) |
+| POST | `/v1/presentation-studio/presentations/{presentation_id}/experiment` | Slice 20 : corps `{actor, experimental_confirmed, reason?}` -> 201, un NOUVEAU document Slidecar (titre de la source + « (Slidecar) », sans scene); la source n'est pas modifiee |
+| GET | `/v1/presentation-studio/engine` | Slice 20 : `{default_engine, engines: {slidecar, remotion: {ready, reason, repair}}, experimental, slidecar: {events, total, kept, durable}}`; lecture seule |
 | POST | `/v1/presentation-studio/presentations/validate` | corps `{presentation, variants}` (format disque) -> `{ok, errors: [{code, message}]}` ; rien n'est écrit |
 | GET | `/v1/presentation-studio/presentations/{presentation_id}` | `{presentation, variants}` |
 | PUT | `/v1/presentation-studio/presentations/{presentation_id}` | corps `{expected_revision, title, active_variant_id, resources}` -> le document `presentation` |
@@ -63,6 +65,7 @@ from jarvis.protocol.strict_json import loads_strict_json, read_bounded
 
 Handler = Callable[[web.Request], Awaitable[web.StreamResponse]]
 PREFIX = "/v1/presentation-studio/presentations"
+ENGINE_ROUTE = "/v1/presentation-studio/engine"
 #: Corps d'une validation : une Presentation et jusqu'à 64 variantes (échappement JSON compris).
 MAX_VALIDATE_BODY_BYTES = 16 * MAX_DOCUMENT_BYTES
 
@@ -80,7 +83,10 @@ class PresentationStudioProtocolRoutes:
             web.post(PREFIX, g(self.create)),
             # Segment fixe d'abord : jamais pris pour un `{presentation_id}`.
             web.post(PREFIX + "/validate", g(self.validate)),
+            # Slice 20 : la vue du moteur (par defaut, etat, registre Slidecar), lecture seule, hors du prefixe des Presentations.
+            web.get(ENGINE_ROUTE, g(self.engine)),
             web.post(PREFIX + "/mount-reports", g(self.mount_report)),
+            web.post(PREFIX + "/{presentation_id}/experiment", g(self.experiment)),
             web.get(PREFIX + "/{presentation_id}", g(self.get)),
             web.put(PREFIX + "/{presentation_id}", g(self.save_presentation)),
             web.get(PREFIX + "/{presentation_id}/variants/{variant_id}", g(self.get_variant)),
@@ -149,6 +155,16 @@ class PresentationStudioProtocolRoutes:
     async def create(self, request: web.Request) -> web.Response:
         view = await self._service.create(await self._body(request))
         return web.json_response(view.to_dict(), status=201)
+
+    async def experiment(self, request: web.Request) -> web.Response:
+        """Slice 20 : copie « experience Slidecar » d'une Presentation (nouveau document, la source n'est pas touchee)."""
+
+        view = await self._service.create_experiment(request.match_info["presentation_id"], await self._body(request))
+        return web.json_response(view.to_dict(), status=201)
+
+    async def engine(self, request: web.Request) -> web.Response:
+        _only(request, set())
+        return web.json_response(self._service.engine_overview())
 
     async def validate(self, request: web.Request) -> web.Response:
         return web.json_response(self._service.validate(await self._body(request, MAX_VALIDATE_BODY_BYTES)))

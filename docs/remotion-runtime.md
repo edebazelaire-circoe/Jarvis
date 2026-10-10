@@ -106,6 +106,8 @@ Les quatre opérations longues répondent **200** si elles finissent en 2 s, sin
 
 Au démarrage de Core, **seul** `reconcile()` s'exécute (une installation « en cours » devient `install_failed` / `install_interrupted`, un enfant disparu devient `crashed`) : rien n'est installé, lancé ni arrêté. Contrat testé : `tests/unit/test_local_capability_routes.py`.
 
+**Depuis le Control Center (Slice 20)** : `install` et `repair` (et eux seuls : ni `uninstall`, ni `update`, ni `disable`) sont relayés par `POST /api/local-capabilities/remotion/install|repair`, corps vide imposé, mêmes gardes de boucle locale que le reste de la famille ; c'est le geste de la carte « Présentations · moteur » quand Remotion ne peut pas jouer (confirmation d'abord, `docs/presentation-engine.md` › *Human engine control*). Contrat testé : `tests/unit/test_control_center_remotion_studio.py`.
+
 ## 8. Désinstaller, désactiver : ce qui est protégé
 
 `uninstall` arrête le processus puis vide `runtime/` (sans suivre aucun lien symbolique ni jonction, avec reprise des fichiers verrouillés) et garde `state.json` (`not_installed`). `disable` arrête le processus et marque la capacité désactivée ; `enable` ne relance rien. Aucune de ces opérations ne lit ni n'écrit hors de `local_capabilities/remotion/` : les sources et les assets des présentations (`<racine>/presentation/...`, stockage du Studio) sont intacts, ce que le harnais et les tests vérifient octet par octet. Réinstaller restitue un environnement identique sans toucher aux présentations.

@@ -62,12 +62,14 @@ async def test_the_body_goes_through_unchanged_and_core_errors_are_returned_as_t
         await client.close()
 
 
-async def test_nothing_else_is_relayed_no_install_no_free_path_and_queries_are_refused(tmp_path):
+async def test_nothing_else_is_relayed_no_uninstall_no_free_path_and_queries_are_refused(tmp_path):
     core = RecordingCore()
     client = await client_for(tmp_path, core)
     try:
-        for method, path, status in (("POST", "/api/local-capabilities/remotion/install", 404), ("POST", "/api/local-capabilities/remotion/uninstall", 404),
-                                     ("POST", STUDIO + "/../install", 404),
+        for method, path, status in (("POST", "/api/local-capabilities/remotion/uninstall", 404), ("POST", "/api/local-capabilities/remotion/disable", 404),
+                                     ("POST", "/api/local-capabilities/remotion/update", 404), ("GET", "/api/local-capabilities/remotion/repair", 405),
+                                     ("POST", "/api/local-capabilities/remotion/repair?x=1", 400),
+                                     ("POST", STUDIO + "/../uninstall", 404),
                                      ("DELETE", STUDIO, 405), ("PUT", STUDIO + "/open", 405), ("GET", STUDIO + "/open", 405),
                                      ("GET", STUDIO + "?x=1", 400)):
             response = await client.request(method, path)
@@ -78,6 +80,27 @@ async def test_nothing_else_is_relayed_no_install_no_free_path_and_queries_are_r
         big = await client.post(STUDIO + "/open", data=b"x" * 3000)
         assert big.status == 400
         assert core.calls == []
+    finally:
+        await client.close()
+
+
+async def test_install_and_repair_are_the_only_capability_writes_and_never_forward_the_page_body(tmp_path):
+    """Slice 20: the repair gesture of the engine error card. Empty `{}` body to Core whatever the page sent; same guard as the rest."""
+
+    core = RecordingCore((202, {"capability": {"status": "installing"}}))
+    client = await client_for(tmp_path, core)
+    try:
+        for operation in ("install", "repair"):
+            core.calls.clear()
+            response = await client.post(f"/api/local-capabilities/remotion/{operation}", data=b'{"path":"C:/evil","force":true}')
+            assert response.status == 202
+            [call] = core.calls
+            assert (call["method"], call["path"], call["body"], call["timeout_s"]) == (
+                "POST", f"{CORE}/{operation}", b"{}", SHORT_TIMEOUT_S)
+            core.calls.clear()
+            for headers in ({"Origin": "https://evil.example"}, {"Host": "evil.example"}, {"Sec-Fetch-Site": "cross-site"}):
+                assert (await client.post(f"/api/local-capabilities/remotion/{operation}", headers=headers)).status == 403
+            assert core.calls == []
     finally:
         await client.close()
 
@@ -301,7 +324,7 @@ async def test_the_whole_chain_reaches_a_real_core_through_the_real_transport(tm
         assert opened.status == 200 and body["studio"]["status"] == "ready" and body["studio"]["url"].startswith("http://127.0.0.1:")
         closed = await (await client.post(STUDIO + "/close")).json()
         assert closed["studio"]["status"] == "stopped"
-        assert (await client.post("/api/local-capabilities/remotion/install")).status == 404, "the install stays an explicit Core action"
+        assert (await client.post("/api/local-capabilities/remotion/uninstall")).status == 404, "uninstall stays an explicit Core action (Slice 20 relays only install and repair)"
     finally:
         await client.close()
         await sessions.close()

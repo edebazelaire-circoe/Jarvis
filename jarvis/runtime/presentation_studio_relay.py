@@ -21,13 +21,16 @@ Core rendus tels quels, erreurs et résultats `refused`/`stale` compris ; Core i
 | `GET .../variants/{variant_id}/history` | idem (Slice 08) |
 | `GET .../variants/{variant_id}/art-direction` | idem (Slice 07, **lecture seule** : le chip de l'inspecteur ; création, remplacement, repli et candidates restent hors du relais) |
 | `POST .../variants/{variant_id}/undo` et `.../redo` | idem, **`actor` forcé à `user`** (Slice 08) |
+| `POST /api/presentation-studio/presentations` | idem (Slice 20, **creation**), **`actor` force a `user`** ; corps `{title, engine?, experimental_confirmed?, reason?}` : la SEULE porte par laquelle un moteur est nomme ; `slidecar` exige `experimental_confirmed: true` |
+| `POST .../presentations/{presentation_id}/experiment` | idem (Slice 20) : copie « experience Slidecar » = NOUVEAU document, **`actor` force a `user`** ; corps `{experimental_confirmed, reason?}` |
+| `GET /api/presentation-studio/engine` | `GET /v1/presentation-studio/engine` (Slice 20) : moteur par defaut, etat de chaque moteur, registre des usages de Slidecar |
 | `GET /api/presentation-studio/playback` | `GET /v1/presentation-studio/playback` : « où en est-on » (Slice 12) |
 | `POST /api/presentation-studio/playback/{verb}` | idem, **`actor` forcé à `user`** ; `verb` : `start stop pause resume next previous goto detour return reveal hide edit` (Slice 12) |
 
 **Jamais relayés** à la page : `GET .../playback/armed` (les phrases des cues armées) et `POST .../cues/satisfied` (le suiveur
 de cues parle à Core directement, avec le jeton porteur ; la page n'a aucune raison d'en lire le contenu).
 
-**Une seule porte d'écriture.** Le relais n'expose ni `PUT` de variante, ni création, ni validation brute : la page ne peut
+**Une seule porte d'écriture** (hors création Slice 20 ci-dessus). Le relais n'expose ni `PUT` de variante, ni validation brute : la page ne peut
 modifier une Presentation que par l'API d'édition (niveaux 1 et 2, `/edits`, et son annuler/rétablir, qui en est une édition) ou par
 le rechargement à chaud (niveau 3, `/source-edits`), donc avec les mêmes refus, la même base (`basis`) et le même enregistrement
 d'annulation que la voix. `mount-reports` n'écrit pas de document : il dit ce que le navigateur a vu. Le corps doit être un objet
@@ -73,6 +76,12 @@ _READ_ROUTES = (
     ("GET", "studio_art_direction", "/{presentation_id}/variants/{variant_id}/art-direction"),
 )
 PLAYBACK_ROUTE = "/api/presentation-studio/playback"
+ENGINE_ROUTE = "/api/presentation-studio/engine"
+CORE_ENGINE = "/v1/presentation-studio/engine"
+EXPERIMENT_PATH = "/{presentation_id}/experiment"
+#: Slice 20 : les cles que la page peut envoyer. `actor` est toleree (comme sur les autres routes) mais REMPLACEE par `user`; `engine` seulement a la creation.
+CREATE_KEYS = frozenset({"title", "engine", "experimental_confirmed", "reason", "actor"})
+EXPERIMENT_KEYS = frozenset({"experimental_confirmed", "reason", "actor"})
 EDIT_PATH = "/{presentation_id}/variants/{variant_id}/edits"
 SOURCE_EDIT_PATH = "/{presentation_id}/variants/{variant_id}/source-edits"
 #: Une édition de source attend la rafale, la publication et le rapport de montage (8 s) : plus que le délai ordinaire.
@@ -95,15 +104,19 @@ class PresentationStudioRelayRoutes(CaptureRelayRoutes):
                   for method, action, path in _READ_ROUTES),
                 *(web.post(STUDIO_ROUTE + path, self._forced(path, action, timeout_s=timeout))
                   for path, action, timeout in _WRITE_ROUTES),
+                web.post(STUDIO_ROUTE, self._forced("", "studio_create", allowed=CREATE_KEYS)),
+                web.post(STUDIO_ROUTE + EXPERIMENT_PATH, self._forced(EXPERIMENT_PATH, "studio_experiment", allowed=EXPERIMENT_KEYS)),
+                web.get(ENGINE_ROUTE, self._relay("studio_engine", CORE_ENGINE)),
                 web.post(STUDIO_ROUTE + "/mount-reports", self._relay("studio_mount_report", CORE_PREFIX + "/mount-reports")),
                 web.get(PLAYBACK_ROUTE, self._relay("studio_playback", PLAYBACK_PREFIX)),
                 *(web.post(f"{PLAYBACK_ROUTE}/{verb.value}", self._forced(f"/{verb.value}", f"studio_playback_{verb.value}",
                                                                            prefix=PLAYBACK_PREFIX))
                   for verb in Verb)]
 
-    def _forced(self, path: str, action: str, *, prefix: str = CORE_PREFIX, timeout_s: float | None = None):
+    def _forced(self, path: str, action: str, *, prefix: str = CORE_PREFIX, timeout_s: float | None = None,
+                allowed: frozenset[str] | None = None):
         async def handler(request: web.Request) -> web.Response:
-            return await self._forward_forced(request, path, action, prefix=prefix, timeout_s=timeout_s)
+            return await self._forward_forced(request, path, action, prefix=prefix, timeout_s=timeout_s, allowed=allowed)
 
         return handler
 
@@ -113,7 +126,8 @@ class PresentationStudioRelayRoutes(CaptureRelayRoutes):
         return await self._forward_forced(request, EDIT_PATH, "studio_edit")
 
     async def _forward_forced(self, request: web.Request, template: str, action: str, *,
-                              prefix: str = CORE_PREFIX, timeout_s: float | None = None) -> web.Response:
+                              prefix: str = CORE_PREFIX, timeout_s: float | None = None,
+                              allowed: frozenset[str] | None = None) -> web.Response:
         """Une écriture du Studio (édition, source, annuler, rétablir, lecture) : corps objet, `actor` remplacé par `user`, résultat de Core rendu tel quel."""
 
         if request.query:
@@ -125,6 +139,11 @@ class PresentationStudioRelayRoutes(CaptureRelayRoutes):
             return _error(400, "invalid_request", str(exc))
         if not isinstance(body, dict):
             return _error(400, "invalid_request", "body must be a JSON object")
+        if allowed is not None:
+            # Slice 20 : la page ne parle que de ce que la route prevoit; son `actor`, s'il y en a un, est ecrase juste apres.
+            extra = sorted(set(body) - allowed)
+            if extra:
+                return _error(400, "invalid_request", f"unexpected keys {', '.join(extra[:6])}; allowed {', '.join(sorted(allowed))}")
         body["actor"] = "user"
         path = prefix + template.format(**{k: quote(v, safe="") for k, v in request.match_info.items()})
         forced = json.dumps(body, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
