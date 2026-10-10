@@ -2,12 +2,16 @@
   "slice": 18,
   "test": "tests/unit/test_remotion_import_real.py",
   "handoff": "jarvis-remotion-presentation-integration",
-  "when": "2026-10-10T01:02:03+00:00",
+  "when": "2026-10-10T01:36:04+00:00",
   "repository": {
-    "head": "f38f351c4c499c4c5296eee494b7810b8eff797f",
+    "head": "1416457fb157b8d72971913a34184b60f08460ae",
     "branch": "task/jarvis-remotion-presentation-integration-s18",
-    "tracked_tree_clean": true,
-    "dirty_files": []
+    "tracked_tree_clean": false,
+    "dirty_files": [
+      "M tasks/jarvis-remotion-presentation-integration/slices/18-upstream-template-import/evidence/imported.png",
+      " D tasks/jarvis-remotion-presentation-integration/slices/18-upstream-template-import/evidence/real-import.json",
+      " M tasks/jarvis-remotion-presentation-integration/slices/18-upstream-template-import/evidence/real_import_render.json"
+    ]
   },
   "environment": {
     "platform": "Windows-11-10.0.26200-SP0",
@@ -18,11 +22,11 @@
   },
   "pytest": {
     "returncode": 0,
-    "seconds": 18.8,
+    "seconds": 40.4,
     "summary": [
       "PASSED tests/unit/test_remotion_import_real.py::test_real_templates_from_github_are_refused_for_their_exact_reason",
       "PASSED tests/unit/test_remotion_import_real.py::test_a_real_mit_template_is_imported_compiled_and_rendered_in_the_sandbox_page",
-      "2 passed in 17.52s"
+      "2 passed in 36.93s"
     ]
   },
   "scenarios": [
