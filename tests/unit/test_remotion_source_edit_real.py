@@ -33,9 +33,11 @@ async def world(stack: RemotionStack) -> tuple[str, str, str]:
 
 
 async def edit(stack: RemotionStack, variants: str, files: dict, **extra):
+    # Slice 21 (B1): an edit by the brain needs a pending request recorded in a user turn (covered by test_remotion_mcp_ownership);
+    # this test is about the real compiler gate, so it edits as the user, like the Control Center relay does.
     _, variant = await stack.call("GET", variants)
     return await stack.call("POST", variants + "/source-edits", json={
-        "actor": "brain", "basis": {"variant_revision": variant["revision"]}, "scene_id": S1, "files": files, **extra})
+        "actor": "user", "basis": {"variant_revision": variant["revision"]}, "scene_id": S1, "files": files, **extra})
 
 
 async def test_the_real_compiler_gates_the_edit_and_a_failed_build_never_publishes(tmp_path):
