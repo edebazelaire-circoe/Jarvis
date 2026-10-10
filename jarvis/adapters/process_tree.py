@@ -125,6 +125,18 @@ def spawn_detached(argv: Sequence[str], *, cwd: Path, env: Mapping[str, str], lo
     return proc.pid
 
 
+def spawn_tracked(argv: Sequence[str], *, cwd: Path, env: Mapping[str, str], log_path: Path) -> subprocess.Popen:
+    """Comme `spawn_detached`, mais rend la poignée : l'appelant lit le code de sortie et ne peut pas confondre le pid avec un autre
+    programme tant qu'il la tient (rendu Remotion, Slice 16)."""
+
+    log = open(log_path, "ab")
+    try:
+        return subprocess.Popen(list(argv), cwd=str(cwd), env=dict(env), stdin=subprocess.DEVNULL, stdout=log,
+                                stderr=subprocess.STDOUT, creationflags=_creationflags(), start_new_session=not IS_WINDOWS)
+    finally:
+        log.close()  # l'enfant a hérité de sa propre poignée
+
+
 # ------------------------------------------------------------- vivacité d'un pid
 
 def _windows_open(pid: int):

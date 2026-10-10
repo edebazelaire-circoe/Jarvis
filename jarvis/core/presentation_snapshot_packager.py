@@ -38,6 +38,7 @@ from typing import Any
 
 from jarvis.core.presentation_live_refs import LiveRefResolver
 from jarvis.domain.artifacts import Artifact, ArtifactError, ArtifactErrorCode, ArtifactState
+from jarvis.domain.prefab import validate_value
 from jarvis.domain.presentation_artifacts import (
     MAX_SNAPSHOT_ATTEMPTS, SourceProvenance, require_current, snapshot_artifact_id,
 )
@@ -282,7 +283,10 @@ class PresentationPackager:
                 for path, body in source.files.items():
                     files[f"{root}/{path}"] = body
                 files[f"{root}/source.json"] = canonical_json(source.block.to_dict())
-                row.update(kind="remotion", source_digest=source.digest, engine=source.block.engine.to_dict())
+                # Défauts des propriétés figés avec la source (Slice 16) : le rendu part du paquet seul, jamais du manifeste vivant.
+                defaults, _problems = validate_value(manifest.props, {}, "props")
+                row.update(kind="remotion", source_digest=source.digest, engine=source.block.engine.to_dict(),
+                           props_defaults=defaults if isinstance(defaults, dict) else {})
                 refs = parse_declaration(source.files[LIVE_REFS_PATH]) if LIVE_REFS_PATH in source.files else ()
                 resolved = await self._resolver.resolve_all(refs, authorised_boards=allowed)
                 for item in resolved.values():
