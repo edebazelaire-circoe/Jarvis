@@ -65,6 +65,8 @@ def main() -> int:
         return 2
     evidence.mkdir(parents=True, exist_ok=True)
     report_name = "real-player.json" if options.slice == 10 else f"real-slice-{options.slice}.json"
+    if options.report == "real-player.json" and options.slice != 10:
+        options.report = report_name  # Slice 13 : real-slice-13.json par défaut
     for stale in evidence.glob("*.json"):
         if stale.name == options.report or options.report == "real-player.json":
             stale.unlink()
