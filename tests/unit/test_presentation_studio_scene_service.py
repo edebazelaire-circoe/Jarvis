@@ -138,7 +138,7 @@ async def test_a_scene_with_an_existing_pin_valid_values_and_declared_controls_i
     assert saved.revision == 2 and saved.scenes[0].controls[1].bounds.max == 100
     assert saved.scenes[0].anchors[0].control_id == "start_count"
     stored = json.loads(env.variant_file(pid, vid).read_text(encoding="utf-8"))
-    assert stored["schema_version"] == 4 and stored["scenes"][0] == StudioScene.from_dict(scene_body()).to_dict()
+    assert stored["schema_version"] == 5 and stored["scenes"][0] == StudioScene.from_dict(scene_body()).to_dict()
     level, data = env.sink.of("core.presentation_studio.scenes_checked")[-1]
     assert level == "info" and data == {"presentation_id": pid, "variant_id": vid, "checked": 1, "unchanged": 0}
 
@@ -323,7 +323,7 @@ async def test_a_slice_02_variant_file_reads_as_bare_pins_and_is_rewritten_as_v3
     assert variant.scenes[0].prefab.prefab_id == "lab.counter" and variant.scenes[0].controls == ()
     assert json.loads(path.read_text(encoding="utf-8"))["schema_version"] == 1  # reading never rewrites
     await env.save(service, pid, vid, [scene_body()], title="Atelier v2")
-    assert json.loads(path.read_text(encoding="utf-8"))["schema_version"] == 4
+    assert json.loads(path.read_text(encoding="utf-8"))["schema_version"] == 5
 
 
 # ------------------------------------------------------------------ rework : une valeur de type different n'est pas "inchangee"

@@ -90,6 +90,7 @@
     attached=instance;
     instance.addEventListener('frameupdate',onFrameUpdate);
     ['play','pause','seeked','ended'].forEach(function(name){instance.addEventListener(name,function(){emitClock(true)})});
+    emitClock(true);   // the position at mount: a host that remounted this frame hears from it at once
   }
   /* `seek` : aller à l'image ; `play` / `pause` : aller d'abord à `frame` s'il est donné ; `play` avec `until` s'arrête sur cette image. */
   function applyControl(player,m){

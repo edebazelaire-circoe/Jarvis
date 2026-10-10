@@ -304,3 +304,49 @@ async def test_the_page_forwards_a_play_order_with_a_frame_and_a_stop_frame_clam
         {"rs": 1, "type": "control", "action": "play", "frame": 89, "until": 89},
         {"rs": 1, "type": "control", "action": "pause", "frame": 12},
         {"rs": 1, "type": "control", "action": "pause"}]
+
+
+# ------------------------------------------------------------------ QA rework: the host mounts another Player
+
+async def test_a_new_player_incarnation_gets_the_segment_applied_again(tmp_path):
+    """Hot-reload swap, \"Recharger la scène\", watchdog restart: the new Player is paused on frame 0 and was never ordered."""
+
+    result = run_stage_node(tmp_path, FOLLOWER + r"""
+      const b=bench();
+      let incarnation=1;b.host.frame=()=>incarnation;
+      b.show();
+      const same=b.show();
+      incarnation=2;                                         // the host says `ready` for another Player
+      const again=b.show();
+      incarnation=3;                                         // and once more, noticed by the tick this time
+      const ticked=b.follower.tick();
+      const hold=b.show({anchor_id:null,from_frame:0,until_frame:0,playing:false,seq:2});
+      incarnation=4;
+      const heldAgain=b.follower.tick();
+      return {same,again,ticked,hold,heldAgain,orders:b.orders.map(o=>[o.action,o.frame,o.until]),remounted:b.follower.stats().remounted};
+    """)
+    assert result["same"] == "same" and result["again"] == "segment" and result["hold"] == "segment"
+    assert result["orders"] == [["play", 180, 299], ["play", 180, 299], ["play", 180, 299], ["pause", 0, None], ["pause", 0, None]]
+    assert result["remounted"] == 3 and result["ticked"] in ("segment", "pending")
+
+
+async def test_a_player_that_stays_silent_is_ordered_again_a_few_times_then_left_alone(tmp_path):
+    result = run_stage_node(tmp_path, FOLLOWER + r"""
+      const b=bench();
+      b.show();
+      const seen=[];
+      for(let i=0;i<30;i++){b.advance(500);seen.push(b.follower.tick())}
+      return {orders:b.orders.length,resent:b.follower.stats().resent,warned:b.logs.filter(x=>x.k==='timeline.resent').length,
+              last:seen[seen.length-1]};
+    """)
+    assert result["orders"] == 1 + 3 and result["resent"] == 3 and result["warned"] == 3 and result["last"] == "no_clock"
+
+
+async def test_a_player_that_reports_is_never_ordered_again_for_silence(tmp_path):
+    result = run_stage_node(tmp_path, FOLLOWER + r"""
+      const b=bench();
+      b.show();
+      for(let i=0;i<20;i++){b.advance(500);b.report(180+Math.round(15*(i+1)),true,0);b.follower.tick()}
+      return {orders:b.orders.length,resent:b.follower.stats().resent};
+    """)
+    assert result == {"orders": 1, "resent": 0}

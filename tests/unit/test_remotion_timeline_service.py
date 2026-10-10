@@ -199,3 +199,44 @@ async def test_a_new_run_starts_its_played_time_at_zero_and_stop_leaves_no_timel
     rig.build(timeline_source=Compositions(COMP))
     applied(await rig.service.start(rig.start_body()))
     assert applied(await rig.run("next"))["timeline"]["play_ms"] == 0
+
+
+# ------------------------------------------------------------------ QA rework: reload, scene leaving the timeline
+
+async def test_a_hot_reload_carries_the_anchors_over_and_recomputes_the_frames(remotion):
+    from jarvis.domain.presentation_studio_reload import ReloadOrigin
+    rig, source = remotion
+    applied(await rig.service.start(rig.start_body()))
+    before = applied(await rig.run("next"))["timeline"]
+    assert (before["fps"], before["duration_frames"], before["from_frame"], before["until_frame"]) == (30, 300, 180, 299)
+    # The reload moved the pin to a version with another cadence and length; the stage window was patched by the reload itself.
+    source.answer = {**COMP, "fps": 60, "duration_in_frames": 1200}
+    variant = await rig.studio.get_variant(rig.pid, rig.vid)
+    saved = await rig.studio.save_variant(rig.pid, rig.vid, {
+        "expected_revision": variant.revision, "title": variant.title, "scenes": timed_scenes(),
+        "art_direction_id": variant.art_direction_id, "score_id": variant.score_id})
+    await rig.service._on_edit_committed(rig.pid, rig.vid, saved.revision, ReloadOrigin(S2, "confirm"))
+    after = rig.service.where()["timeline"]
+    assert (after["fps"], after["duration_frames"]) == (60, 1200)
+    assert after["anchor_id"] == "marker" and (after["from_frame"], after["until_frame"]) == (360, 1199)   # 6 s at 60 fps: same at_ms, new frame
+    assert after["seq"] > before["seq"] and after["playing"] is True and rig.service.where()["phase"] == "playing"
+
+
+async def test_played_time_does_not_survive_leaving_the_timeline_and_coming_back(tmp_path):
+    scenes = timed_scenes()
+    scenes[0] = {**scenes[0], "anchors": []}           # S1 has no anchor: it is not on the timeline
+    rig = await Rig(tmp_path).open(scenes=scenes)
+    rig.build(timeline_source=Compositions(COMP))
+    try:
+        applied(await rig.service.start(rig.start_body()))
+        assert "timeline" not in rig.service.where()
+        applied(await rig.run("next"))
+        rig.mono.t += 2
+        assert rig.service.where()["timeline"]["play_ms"] == 2000
+        applied(await rig.run("previous"))
+        assert "timeline" not in rig.service.where()
+        rig.mono.t += 5
+        again = applied(await rig.run("next"))["timeline"]
+        assert again["anchor_id"] == "marker" and again["play_ms"] == 0
+    finally:
+        await rig.close()

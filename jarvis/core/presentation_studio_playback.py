@@ -839,6 +839,7 @@ class PresentationStudioPlaybackService(ScenePreviewMixin):
 
         fmap, plan, state = self._tl_map, self._plan, self._state
         if fmap is None or plan is None or not state.active or fmap.scene_id != stage_scene_id(plan, state):
+            self._tl_clock.reset()   # the scene left the timeline: its played time does not wait for it to come back
             return None
         revealed = {anchor for scene, anchor in progress_of(plan, state).revealed if scene == fmap.scene_id}
         segment = target_segment(fmap, revealed)
@@ -846,6 +847,18 @@ class PresentationStudioPlaybackService(ScenePreviewMixin):
         key = (fmap.scene_id, fmap.composition_id, segment.anchor_id, segment.start, segment.until, fmap.fps)
         seq, play_ms = self._tl_clock.observe(key, state.phase is Phase.PLAYING, self._ms(), cap_ms)
         return timeline_wire(fmap, segment, playing=state.phase is Phase.PLAYING, seq=seq, play_ms=play_ms)
+
+    async def _retime(self) -> None:
+        """After the plan or a pin moved without a new stage sync (a hot reload patches the window itself): rebuild the frame map of the
+        scene on the stage from the pin and the anchors as they are now."""
+
+        if self._plan is None or not self._state.active:
+            return
+        scene_id = stage_scene_id(self._plan, self._state)
+        scene = self._scenes.get(scene_id)
+        self._compositions.clear()   # a manifest read is cheap; a reload must never be answered from a memory of the old version
+        if scene is not None:
+            await self._resolve_timeline(scene_id, scene)
 
     async def _require_native_on_stage(self, prefab_id: str, version: int, what: str) -> None:
         """Last door before the stage: whatever path chose this block (an edit, a hot reload, a scene-variant selection, a score
@@ -953,6 +966,7 @@ class PresentationStudioPlaybackService(ScenePreviewMixin):
             "position": self._state.position + 1, "problem": problem})
         if Effect.ARM_CHANGED in transition.effects:
             await self._publish_armed()
+        await self._retime()   # the pin or the anchors may have moved (hot reload): the frame map follows
         self._wake()
 
     def _add_problem(self, code: str) -> None:

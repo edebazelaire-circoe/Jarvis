@@ -141,3 +141,11 @@ def test_an_order_from_another_window_or_origin_is_ignored(tmp_path):
       console.log(JSON.stringify({calls:w.calls}));
     """)
     assert result["calls"] == []
+
+
+def test_a_player_that_just_mounted_reports_its_position_at_once(tmp_path):
+    result = run_child(tmp_path, r"""
+      const w=world();w.init();
+      console.log(JSON.stringify({clocks:w.clocks()}));
+    """)
+    assert result["clocks"] == [{"rs": 1, "type": "clock", "frame": 0, "playing": False}]

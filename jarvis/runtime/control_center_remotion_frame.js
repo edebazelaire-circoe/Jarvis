@@ -95,6 +95,9 @@
   const CORRECTION_GAP_MS=1000;
   const CLOCK_FRESH_MS=1500;
   const TICK_MS=500;
+  /* A frame that never reports (a fresh Player after a remount that missed the order): the order is sent again after this many ticks. */
+  const SILENT_TICKS=6;
+  const MAX_RESENDS=3;
 
   function validTimeline(tl){
     if(!plain(tl))return false;
@@ -109,11 +112,12 @@
     const log=deps.log||(()=>{});
     const every=deps.setInterval||((fn,ms)=>setInterval(fn,ms));
     const stopEvery=deps.clearInterval||((id)=>clearInterval(id));
-    const stats={applied:0,pending:0,invalid:0,corrections:0,gaveUp:0,ahead:0,cleared:0};
+    const stats={applied:0,pending:0,invalid:0,corrections:0,gaveUp:0,ahead:0,cleared:0,remounted:0,resent:0};
     let current=null;      // {objectId, tl, viewAt}
     let applied=null;      // {objectId, seq, playing, startedAt, lagMs, corrections, lastCorrectionAt, gaveUp}
     let timer=null;
 
+    function frameOf(host,objectId){return typeof host.frame==='function'?host.frame(objectId):undefined}
     function playMsNow(){
       const age=current.tl.playing?Math.max(0,now()-current.viewAt):0;
       return current.tl.play_ms+age;
@@ -144,10 +148,14 @@
       if(!host||typeof host.control!=='function')return 'no_host';
       current={objectId,tl,viewAt:now()};
       if(timer===null)timer=every(tick,TICK_MS);
+      /* The host mounted another frame for this window (hot-reload swap, "Recharger la scène", watchdog restart): a fresh Player sits
+         paused on frame 0 and knows nothing of the order we gave its predecessor, so the segment is applied again. */
+      if(applied!==null&&applied.objectId===objectId&&applied.frame!==frameOf(host,objectId)){stats.remounted++;applied=null}
       if(applied===null||applied.objectId!==objectId||applied.seq!==tl.seq){
         const ok=order(host,tl.playing?'play':'pause',tl.from_frame,tl.playing?tl.until_frame:undefined);
         if(!ok){stats.pending++;applied=null;return 'pending'}   // the frame is not ready yet: the tick tries again
-        applied={objectId,seq:tl.seq,playing:tl.playing,startedAt:now(),lagMs:tl.play_ms,corrections:0,lastCorrectionAt:-1e9,gaveUp:false};
+        applied={objectId,seq:tl.seq,playing:tl.playing,startedAt:now(),lagMs:tl.play_ms,corrections:0,lastCorrectionAt:-1e9,gaveUp:false,
+          frame:frameOf(host,objectId),silent:0,resends:0};
         stats.applied++;
         log('info','timeline.segment',{object_id:objectId,anchor_id:tl.anchor_id,from:tl.from_frame,until:tl.until_frame,playing:tl.playing});
         return 'segment';
@@ -168,10 +176,22 @@
       const host=deps.getHost();
       if(!host)return 'no_host';
       if(applied===null)return apply({object_id:current.objectId,timeline:current.tl});   // pending: try again
+      if(applied.frame!==frameOf(host,current.objectId)){stats.remounted++;applied=null;return apply({object_id:current.objectId,timeline:current.tl})}
       const tl=current.tl;
       if(!tl.playing||!applied.playing||typeof host.clock!=='function')return 'idle';
       const clock=host.clock(current.objectId);
-      if(!clock||now()-clock.at>CLOCK_FRESH_MS)return 'no_clock';
+      if(!clock||now()-clock.at>CLOCK_FRESH_MS){
+        /* Silence while Core says "playing": the order may never have reached this Player. Say it again, a few times, then leave it. */
+        if(++applied.silent>=SILENT_TICKS&&applied.resends<MAX_RESENDS){
+          const resends=applied.resends+1;
+          applied=null;
+          const again=apply({object_id:current.objectId,timeline:current.tl});
+          if(applied!==null){applied.resends=resends;stats.resent++;log('warn','timeline.resent',{object_id:current.objectId,resends})}
+          return again;
+        }
+        return 'no_clock';
+      }
+      applied.silent=0;
       const reported=clock.frame+(clock.playing?Math.round((now()-clock.at)*tl.fps/1000):0);
       const expected=expectedFrame();
       const tolerance=Math.max(1,Math.round(tl.tolerance_ms*tl.fps/1000));
@@ -198,7 +218,7 @@
   }
 
   const api=Object.freeze({SHELL,STAGE_PATH,PHASES,stageUrl,createFrame,hostMessage,parseStatus,parseClock,createTimelineFollower,validTimeline,
-    TIMELINE:Object.freeze({MAX_CORRECTIONS,CORRECTION_GAP_MS,CLOCK_FRESH_MS,TICK_MS})});
+    TIMELINE:Object.freeze({MAX_CORRECTIONS,CORRECTION_GAP_MS,CLOCK_FRESH_MS,TICK_MS,SILENT_TICKS,MAX_RESENDS})});
   root.JarvisRemotionFrame=api;
   if(typeof module!=='undefined'&&module.exports)module.exports=api;
 })(typeof globalThis!=='undefined'?globalThis:this);

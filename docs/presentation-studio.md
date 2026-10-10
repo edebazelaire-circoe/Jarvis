@@ -242,7 +242,7 @@ name, `<root>_<name>` on a collision) for the author or Slice 19 to curate; it i
 
 ### Score anchors and preview
 
-A `ScoreAnchor` is `{anchor_id, label, control_id?, at_ms?}` (`at_ms`: its place on a Remotion scene timeline, see *Remotion timeline bridge*): a named hook the score (Slice 10) may bind a cue or a timing to. It carries
+A `ScoreAnchor` is `{anchor_id, label, control_id?, at_ms?}` (`at_ms`: its place on a Remotion scene timeline, in milliseconds from the start of the composition, see *Remotion timeline bridge*; the authoring draft accepts it, `anchors` in the planner guide): a named hook the score (Slice 10) may bind a cue or a timing to. It carries
 no tool, command or free text, and its `control_id` must be declared in the same scene, so the set of things a cue can name on a
 scene is closed and pre-authored (R5). Slice 10 binds cues and actions to anchors (*Score and cue contract*): `reveal` / `hide` name an `anchor_id` of the scene.
 
@@ -277,7 +277,7 @@ reach that cap before 64 scenes.
 {presentation_id, variant_id, variant_revision, scene_id, order, title, section,
  prefab: {id, version}, preview: {caption, alt},
  controls: [{control_id, label, group, meaning, path, type, widget, required, bounds, default, current, is_set}],
- anchors: [{anchor_id, label, control_id}], payload: {bytes, limit, remaining},
+ anchors: [{anchor_id, label, control_id, at_ms?}], payload: {bytes, limit, remaining},
  stage: {mode: "patch_stable_window", prefab_key}, problems: [string]}
 ```
 
@@ -289,7 +289,7 @@ unless the scene or its stored values change.
 
 ### Versioning
 
-The variant document is now `schema_version` **4** (Slice 06 took 3, Slice 17 took 4: see *Scene-local variant contract*); the Presentation manifest is 3 (Slice 16 took 2, Remotion Slice 02 took 3; `CURRENT_VERSIONS`). `UPGRADES[variant][1]`
+The variant document is now `schema_version` **5** (Slice 06 took 3, Slice 17 took 4: see *Scene-local variant contract*; Remotion Slice 12 took 5 for the anchor `at_ms`: see *Remotion timeline bridge*); the Presentation manifest is 3 (Slice 16 took 2, Remotion Slice 02 took 3; `CURRENT_VERSIONS`). `UPGRADES[variant][1]`
 fills the Slice 04 fields of each v1 scene with their defaults (`title ""`, `section ""`, `props {}`, `data {}`, no controls, no
 anchors, empty preview) and `UPGRADES[variant][2]` (Slice 06) adds `source_revision 0` and `last_valid_pin null` to each scene: nothing an
 older file said is reinterpreted, an old file is read through the steps and rewritten as v3 by the next save (reading never rewrites), and a
@@ -1363,7 +1363,7 @@ Not done: dropping the fields a stored content shares with the scene's pin metad
 
 ### Schema: variant document v4, an additive and independent step
 
-`VARIANT_SCHEMA_VERSION` is **4**; `UPGRADES[variant][3]` is the **identity** (a v3 scene has no set, and "no set" is the absence of the key). The key lives **in the scene**, under its own name
+`VARIANT_SCHEMA_VERSION` is **5** (Remotion Slice 12: the anchor `at_ms`; `UPGRADES[variant][4]` is also the identity); `UPGRADES[variant][3]` is the **identity** (a v3 scene has no set, and "no set" is the absence of the key). The key lives **in the scene**, under its own name
 `scene_variants`; nothing else in the scene changed. A JARVIS that only knows v3 refuses a v4 file untouched (`unsupported_schema_version`).
 **Merge rule with Slice 06, done**: Slice 06 owns v3 (per-scene `source_revision` / `last_valid_pin`), this Slice took v4. The two additions touch different scene keys and neither step reads the
 other's key. Fixtures: `variant.v3.json` (Slice 06, input of the upgrade tests) and `variant.v4.json` (current). `StudioScene` keeps the Slice 06 fields in front and `scene_variants` last.
@@ -2119,18 +2119,18 @@ Handoff `jarvis-remotion-presentation-integration`, Slice 12. **Status: contract
 
 ### Anchors get a place on the scene timeline
 
-A `ScoreAnchor` is `{anchor_id, label, control_id?, at_ms?}`. `at_ms` (integer, 0..108 000 000) is where the anchor falls **in milliseconds from the start of the composition**; it is written only when set (an anchor from before serialises byte for byte as before; no document version moves). Milliseconds, not frames: the position survives a new version of the scene with another frame rate or duration. An anchor with no `at_ms` is spread evenly (`i * duration // n`). Mixed timed and untimed anchors are accepted and reported (`timeline_anchors_partly_timed`); two anchors on the same frame are reported (`timeline_anchors_share_frame`, the first has nothing to play); a position after the end is clamped to the last frame and reported (`timeline_anchor_clamped`). A report is a notice in the band (French text in the player), never a refusal: the run goes on.
+A `ScoreAnchor` is `{anchor_id, label, control_id?, at_ms?}`. `at_ms` (integer, 0..108 000 000) is where the anchor falls **in milliseconds from the start of the composition**; it is written only when set (an anchor from before serialises byte for byte as before) and **the variant document moves to `schema_version` 5**: `UPGRADES[variant][4]` is the identity, a JARVIS that only reads v4 refuses a v5 file (`unsupported_schema_version`, file untouched) instead of failing on an unknown key. Milliseconds, not frames: the position survives a new version of the scene with another frame rate or duration. An anchor with no `at_ms` is spread evenly (`i * duration // n`). Mixed timed and untimed anchors are accepted and reported (`timeline_anchors_partly_timed`); two anchors on the same frame are reported (`timeline_anchors_share_frame`, the first has nothing to play); a position after the end is clamped to the last frame and reported (`timeline_anchor_clamped`). A report is a notice in the band (French text in the player), never a refusal: the run goes on.
 
 ### Frame mapping (`domain/remotion_timeline.py`, pure)
 
 - Source of truth: the **manifest** of the pinned version (`PrefabService.remotion_composition(id, version)` reads `source.composition`: `id`, `fps`, `duration_in_frames`; no source byte read, no compilation, `None` for an HTML prefab). The scene code is never consulted.
-- `frame = clamp((at_ms * fps + 500) // 1000, 0, duration - 1)`. Integers only, deterministic, bounded (`fps` 1..120, `duration` 1..108 000, else `TimelineError` and the scene plays unguided with `timeline_unresolved`).
+- `frame = clamp((at_ms * fps + 500) // 1000, 0, duration - 1)`. Integers only (**`fps` is an integer 1..120, as the source manifest declares it: 29.97 or 23.976 cannot be expressed**, declare 30 or 24), deterministic, bounded (`fps` 1..120, `duration` 1..108 000, else `TimelineError` and the scene plays unguided with `timeline_unresolved`).
 - Anchors resolve **by `scene_id` and `anchor_id`**; the map is rebuilt from the scene current anchors and the current pin, so a hot reload or a new version carries the anchors over (tested: same `at_ms`, other `fps` / `duration`).
 - The timeline is cut by the anchors, sorted by frame, into **segments** `[start, until]`. The segment of anchor `a` starts on the frame of `a` and ends on the frame **before the next anchor** (the last one on the last frame). The **entry segment** (nothing revealed) runs from frame 0 to the frame before the first anchor (a hold on frame 0 when the first anchor is on frame 0).
 
 ### What the score asks for
 
-For the scene on the stage the playhead is the **furthest revealed anchor** (`reveal` / `hide` folded over the played items, the started steps of a locked sequence and the manual overrides: the existing `progress_of`). Revealing an anchor opens its segment; `hide`, `previous` and `goto` fall back to the furthest anchor still revealed (reversible, like every fold of the score). The `reveal` steps of a locked sequence therefore move the playhead at the sequence clock own beat (the Core clock stays master).
+For the scene on the stage the playhead is the **furthest revealed anchor, by timeline position (furthest wins, not the most recent reveal)** (a manual reveal of an earlier anchor while a later one is revealed does not move the playhead back: hide the later ones to go back) (`reveal` / `hide` folded over the played items, the started steps of a locked sequence and the manual overrides: the existing `progress_of`). Revealing an anchor opens its segment; `hide`, `previous` and `goto` fall back to the furthest anchor still revealed (reversible, like every fold of the score). The `reveal` steps of a locked sequence therefore move the playhead at the sequence clock own beat (the Core clock stays master).
 
 Core puts the answer in the playback view (`GET .../playback`, the route the band polls) as `timeline`, only when the scene on the stage is a Remotion scene **with anchors** and the run is active:
 
@@ -2158,8 +2158,14 @@ The band announces each view that carries a `timeline` (and one empty message wh
 | same `seq`, resume | `play` with `until`, **no frame** (continue, never back to the anchor; a Player already on the stop frame stays there) |
 | same view again | nothing (idempotent) |
 | frame not ready | retried by the 500 ms tick of the follower until it is |
+| the host mounted another frame for the window (hot-reload swap, "Recharger la scène", watchdog restart) | the segment is applied again to the new Player (the follower watches the identity of the mounted frame; the new Player also reports its position at mount) |
+| no position report for 6 ticks while Core says playing | the order is sent again (at most 3 times per segment), then left alone |
 
 **Drift against the master clock.** The `play_ms` of Core minus the start latency (what it already was when the follower seeked) is where a Player started on time would be. If the reported Player position is behind that by more than `tolerance_ms`, the follower re-seeks to the expected frame (still with `until`): at most one correction per second, at most 5 per segment, then it gives up for the segment and says so once (`timeline.drift_uncorrectable`). A Player that is **ahead** is left alone (it waits on its stop frame; counted, not corrected); a stale (more than 1.5 s) or missing report corrects nothing; a paused Core corrects nothing. The Player frame never goes back to Core.
+
+### Browser log keys (console, level in brackets)
+
+`timeline.segment` [info] (a segment was applied: `object_id`, `anchor_id`, `from`, `until`, `playing`); `timeline.drift_corrected` [info] (`drift_frames`, `to`); `timeline.drift_uncorrectable` [warn] (gave up for the segment); `timeline.resent` [warn] (the Player stayed silent, the order was sent again, at most 3 times); `timeline.invalid` [warn] (a `timeline` from Core that fails the bounds: ignored); `timeline.control_failed` [warn] (the host refused an order); `studio.timeline_event_failed` [warn] (the band could not announce the timeline); `scene.timeline_failed` [error] (the window could not apply it). Core side: `core.presentation_studio.timeline_resolved`, `timeline_unresolved` (*Playback runtime contract*, Observability).
 
 ### Security and authority
 
@@ -2171,7 +2177,6 @@ The band announces each view that carries a `timeline` (and one empty message wh
 - No timeline for a scene with no anchors (it plays freely), for HTML scenes, or when the composition cannot be read (`timeline_unresolved` notice, the run continues unguided).
 - A `control_set` / `scene_goto` / `reveal` bound to a control (`control_id`) still goes through the existing overlay (Slice 13 owns Remotion props and controls); the timeline only reads the anchor.
 - No sub-frame or audio-accurate sync: the grain is a frame (1/fps), the latency of the follower is the 500 ms poll (visible: the first frame of a segment can appear up to about 0.5 s after the reveal; the speech starts at the reveal). The audio of a scene is muted until a user gesture in the frame (Slice 10).
-- A manual reveal of an earlier anchor while a later one is revealed does not move the playhead back (furthest wins); hide the later anchors to go back.
 - The position the score holds is not persisted (R6): a page opened mid-run joins at the start of the current segment.
 
 ### Tests

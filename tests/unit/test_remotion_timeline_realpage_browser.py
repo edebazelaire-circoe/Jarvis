@@ -26,7 +26,7 @@ from jarvis.domain.remotion_source import Composition
 from tests.fakes.remotion_player_stack import RemotionStack, runtime_dir_from_env
 from tests.fakes.remotion_scene import scene_candidate
 from tests.unit.test_remotion_player_realpage_browser import (
-    PROPS, READY, SAMPLE, SANDBOX, SCENE_TSX, SHELL, STAGE, http_step, noise, record_evidence, run, scene,
+    PROPS, READY, SAMPLE, SANDBOX, SCENE_TSX, SHELL, STAGE, TITLE, http_step, noise, record_evidence, run, scene,
 )
 
 RUNTIME = runtime_dir_from_env()
@@ -204,3 +204,63 @@ async def test_the_score_drives_a_remotion_scene_through_its_anchors_a_cue_pause
             "page2": {"reads": compact(reads2), "console": [line for line in two["console"] if "timeline" in line][-30:], "errors": two["errors"]},
             "page3": {"reads": three["reads"]},
             "timeline_after_cue": middle, "journal": sorted(kinds)}, shot1, shot2)
+
+
+async def test_the_timeline_follows_the_score_across_two_anchored_scenes_in_one_page_and_after_a_remount(tmp_path):
+    """QA rework: scene to scene without reloading the page, then "Recharger la scène" (a new Player, paused on frame 0, never ordered)."""
+
+    async with RemotionStack(tmp_path, runtime_dir=RUNTIME) as stack:
+        await publish(stack, A, "Un")
+        await publish(stack, B, "Deux")
+        base = "/v1/presentation-studio/presentations"
+        _, created = await stack.call("POST", base, json={"title": "Deux scenes"})
+        pid, variant = created["presentation"]["presentation_id"], created["variants"][0]
+        vid = variant["variant_id"]
+        scenes = [{**scene(S1, A, "Un"), "anchors": ANCHORS}, {**scene(S2, B, "Deux"), "anchors": ANCHORS}]
+        status, saved = await stack.call("PUT", f"{base}/{pid}/variants/{vid}", json={
+            "expected_revision": variant["revision"], "title": variant["title"], "scenes": scenes,
+            "art_direction_id": variant["art_direction_id"], "score_id": variant["score_id"]})
+        assert status == 200, saved
+        items = [item(1, S1, "Un", 2), item(2, S1, "Intro", 3, visual=reveal("intro")),
+                 item(3, S2, "Deux", 4, visual=[{"kind": "reveal", "scene_id": S2, "anchor_id": "intro"}]),
+                 item(4, S2, "Milieu", None, visual=[{"kind": "reveal", "scene_id": S2, "anchor_id": "middle"}])]
+        status, made = await stack.call("POST", f"{base}/{pid}/variants/{vid}/score", json={
+            "expected_variant_revision": saved["revision"], "start_item_id": items[0]["item_id"], "items": items, "cues": [],
+            "sequences": [], "recovery_points": []})
+        assert status == 201, made
+        status, art = await stack.call("POST", f"{base}/{pid}/variants/{vid}/art-direction/fallback",
+                                       json={"expected_variant_revision": saved["revision"] + 1})
+        assert status == 201, art
+        status, started = await stack.start(pid)
+        assert status == 200, started
+        result = await run(stack.page_url, [
+            {"wait": 500}, READY, reached(29), {"wait": 900}, {"value": "s1_entry", "expr": FRAME, **SANDBOX},
+            http_step(stack, "next1", "POST", f"{PLAYBACK}/next", {"actor": "user"}),
+            reached(74), {"wait": 900}, {"value": "s1_intro", "expr": FRAME, **SANDBOX},
+            # scene to scene, the same page: S2 starts on ITS 'intro' segment, played to its stop frame
+            http_step(stack, "next2", "POST", f"{PLAYBACK}/next", {"actor": "user"}),
+            {"wait": 4000},
+            {"until": f"{FRAME}>=74", "ms": 20000, **SANDBOX}, {"wait": 900}, {"value": "s2_intro", "expr": FRAME, **SANDBOX},
+            {"value": "s2_title", "expr": TITLE, **SANDBOX},
+            # the Player is replaced (what "Recharger la scène" does): the page keeps its window, the new Player starts over
+            {"eval": f"{STAGE}.contentDocument.querySelector('.rs-frame').__mine=1"},
+            {"eval": f"{STAGE}.contentWindow.__remotionStage.prepare()"},
+            {"until": f"!{STAGE}.contentDocument.querySelector('.rs-frame') || !{STAGE}.contentDocument.querySelector('.rs-frame').__mine", "ms": 30000},
+            {"until": f"{SHELL}.phase==='ready'", "ms": 60000},
+            {"until": f"{FRAME}>=74", "ms": 30000, **SANDBOX}, {"wait": 1200}, {"value": "after_a", "expr": FRAME, **SANDBOX},
+            {"wait": 1200}, {"value": "after_b", "expr": FRAME, **SANDBOX},
+            {"value": "remounted", "expr": f"!{STAGE}.contentDocument.querySelector('.rs-frame').__mine"},
+            # the score still drives the new Player
+            http_step(stack, "next3", "POST", f"{PLAYBACK}/next", {"actor": "user"}),
+            {"until": f"{FRAME}>=75", "ms": 20000, **SANDBOX}, reached(119), {"wait": 900}, {"value": "s2_middle", "expr": FRAME, **SANDBOX},
+        ])
+        reads = result["reads"]
+        assert "failed" not in reads, reads
+        assert reads["s1_entry"] == 29 and reads["s1_intro"] == 74
+        assert reads["s2_intro"] == 74 and reads["s2_title"] == "Deux"
+        assert reads["remounted"] is True
+        assert reads["after_a"] == reads["after_b"] == 74, "the new Player was ordered again: it plays the segment and holds on its stop frame"
+        assert reads["s2_middle"] == 119
+        assert not noise(result), noise(result)
+        record_evidence("timeline_two_scenes_remount", {"reads": compact(reads), "console": [l for l in result["console"] if "timeline" in l][-30:],
+                                                           "errors": result["errors"]})
