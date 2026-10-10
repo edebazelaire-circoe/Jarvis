@@ -1697,7 +1697,8 @@ request -> [phase 1, no lock]  read pin + source -> compose candidate -> GATE (b
   A cheap syntax pre-check is not feasible in Python (there is no JavaScript parser in this process; the only real parser is the
   browser's) and it is deliberately not faked: a regex "check" would refuse valid code and miss real errors. The cost of a bad
   edit is therefore one inert published version, bounded by the library's `version_limit` and by the agent rate limit below;
-  retention archives the unpinned ones.
+  retention archives the unpinned ones. **For a Remotion scene this is not true any more**: there is a real parser (esbuild), so
+  the gate includes a build and a source that does not compile is never published ([Remotion sources](#remotion-sources-slice-14)).
 - **Agent rate limit.** The `brain` actor may send at most `BRAIN_EDIT_LIMIT` = 10 source edits per scene per
   `BRAIN_EDIT_WINDOW_S` = 60 s; the 11th gets the typed error `presentation_studio_source_edit_rate` (HTTP 429, retry after the
   stated number of seconds; a request the limit refuses does not extend the window). The `user` actor is never limited: its
@@ -1728,7 +1729,7 @@ request -> [phase 1, no lock]  read pin + source -> compose candidate -> GATE (b
 | `reloaded_state_reset` | 200 | as `reloaded`, but some studio-owned values could not be kept: `reset` names them (keys, control ids, anchor ids; never a value) | persistent warning band listing the names |
 | `repinned` | 200 | published and pinned; **no stage window shows this scene**, nothing was reloaded; the pin waits to be seen mounted | persistent info band |
 | `pending_mount` | 202 | the page did not report within `DEFAULT_MOUNT_DEADLINE_S` (8 s); the pin and its fallback stay, a late report confirms or rolls back | persistent warning band |
-| `refused_validation` | 400 | refused **before any publication** (code `presentation_studio_source_invalid`, `_scene_incompatible`, `_score_incompatible`, `_limit_reached`); nothing changed | persistent error band |
+| `refused_validation` | 400 (422 for `presentation_studio_source_build_failed`) | refused **before any publication** (code `presentation_studio_source_invalid`, `_scene_incompatible`, `_score_incompatible`, `_limit_reached`, and for a Remotion scene `_source_build_failed` with `diagnostics`, `_engine_unavailable`); nothing changed | persistent error band |
 | `rolled_back` | 409 | a step failed after the pin moved (`presentation_studio_mount_failed` with the host's short `reason`, or `_stage_failed`): the pin is back on the last valid version | persistent error band, plus a toast |
 | `stale` | 409 | the variant moved (or the scene's pin changed) since the caller's basis: read again, retry | warning band |
 | `degraded` | 409 | the mount failed **and** the rollback could not be completed (the stage window could not be put back after `STAGE_RESTORE_ATTEMPTS` = 3 tries, or the previous pin could not be written): the scene keeps the new version **and its fallback** (`last_valid_pin`); a later report, a reload or a restart repairs it | persistent error band |
@@ -1885,6 +1886,94 @@ Tested on one real stack (`test_presentation_studio_authoring_reload.py`):
   `newest - live` of one id and is counted nowhere else, so nothing is counted twice and an archived version is never
   "unreferenced" (it is archived, not live).
 
+### Remotion sources (Slice 14)
+
+The same door (`POST .../source-edits`), the same phases and the same result states apply to a scene whose pin is a **Remotion source**
+(manifest v2, `docs/remotion-source.md`). What is different is the body and the gate; nothing else was rebuilt (`apply_source_edit`,
+`PrefabDraftCoalescer`, the per-scene lock, `last_valid_pin`, `plan_carry_over`, the mount report and the staged swap are the HTML
+path's own). Module map: `jarvis/domain/presentation_studio_remotion_edit.py` (pure: request keys, candidate composition,
+diagnostic text), `jarvis/core/presentation_studio_remotion_gate.py` (`RemotionBuildGate`: the build step), the `check_build`
+method of `RemotionPlayerService` (the real compiler), conformance in `tests/unit/test_remotion_source_edit_{domain,service,routes,
+real,realpage_browser,docs}.py` and `test_presentation_studio_reload_host_js.py`.
+
+**Agent workflow, no new tool.** The brain records the intent with the existing `scene.source_request` (no new MCP tool: the
+`jarvis-presentation` budget is unchanged, `test_mcp_catalog`). A delegated sub-agent then (1) **reads** the scene's source with
+`GET .../variants/{variant_id}/scenes/{scene_id}/source` (`{engine, prefab, source_revision, basis, manifest, sources: {path: text},
+assets: {path: {bytes, sha256}}}`, never asset bytes), (2) **proposes** files with `POST .../source-edits`, `actor: "brain"`, the
+`basis` it read and the `request_id` of the recorded request (the request is closed when the edit stands). `files` for a Remotion
+scene:
+
+| Key | Meaning |
+| --- | --- |
+| `sources` | `{path: text}` replaces or adds a module under `src/**`; `{path: null}` deletes it |
+| `assets` | `{path: base64}` replaces or adds an asset under `public/**`; `{path: null}` deletes it (at most 2 Mi base64 characters per edit: large assets do not travel through this door) |
+| `manifest` | optional full manifest (inputs, sample, `source.composition`...); Core **recomputes** `source.modules` / `source.assets` from the files, the agent never maintains them |
+| `restore_version` | `{id, version}` alone: republish an earlier version as a **new** revision (undo / redo, below) |
+
+Sending `template` / `style` / `behavior` for a Remotion scene (or `sources` / `assets` for a Slidecar scene) is a typed refusal that
+names the right keys. The request body cap on the Core route is `MAX_REMOTION_BODY_BYTES` (about 4.1 Mi); the Control Center relay keeps
+its smaller cap (the page edits through controls; source edits come from the agent).
+
+**The gate, before anything is published.** Phase 1 composes the candidate from the pin's bytes (re-read and re-guarded by
+`PrefabService.remotion_source`) plus the request, then, in this order: reserved property names; `validate_candidate` (path rules,
+extensions, bounds, `SOURCE_GUARDS` isolation guards, manifest and composition including the frame count: an invalid frame count is a
+`presentation_studio_source_invalid` refusal, never a Player surprise); the studio values against the new manifest (controls, anchors
+and values are carried over **by name**, `allow_state_reset` names what no longer fits, exactly as for HTML); the score; and last, the
+costly step, **the build**: `RemotionBuildGate` asks the real compiler (esbuild in the managed process of the Remotion capability,
+`docs/remotion-source.md` section 5) to build the composed source. Content already seen is free (same content, same cache key) and a
+source that passes warms exactly the cache entry the Player will read.
+
+| Outcome of the build | Result |
+| --- | --- |
+| compiles | the edit continues (publish through the coalescer, pin, stage patch, mount report, confirm) |
+| does not compile (syntax, refused import, no default export, timeout, bundle too large) | `refused_validation`, code `presentation_studio_source_build_failed`, **HTTP 422**, `diagnostics: [{file, line, column, text}]` (also under `error.diagnostics`) and the first three in `message` as `src/Scene.tsx:12:5 ...`; `file` is a path **of the source**, never of the machine. **Nothing is published, pinned or patched**: the previous version keeps playing, there is no inert bad version to archive, the burst draft is untouched |
+| engine not ready (capability to repair, no Remotion adapter wired) | `refused_validation`, code `presentation_studio_engine_unavailable`, with the repair; the source is **not** published blind and **no other engine** plays instead |
+
+There is no Slidecar fallback anywhere on this path (`docs/presentation-engine.md`): a failed build is a typed, visible error.
+
+**A scene that compiles but throws when it renders.** esbuild strips types and does not run the scene, so the build cannot see
+a render-time `throw` (nor a TypeScript type error: no `typescript` is in the pinned lock). Two changes make the staged swap catch it:
+(1) the sandbox boot script wraps the scene component in one stable React error boundary that reports `error` to the host (the
+Remotion `Player` has **no** `onError` prop; its error event fires before anyone can listen, so before this a throwing scene was
+reported as mounted); (2) for a Remotion frame the host no longer counts `ready` (sandbox loaded) as mounted: it waits for the
+Player's first `clock` (committed first render; a render error is reported **before** it) and then `SETTLE_MS`; with no first clock
+within `RENDER_PROOF_MS` = 10 s the frame fails (`timeout`). The candidate then fails beside the live frame, the mount report says
+`failed`, and the existing rollback puts the last valid pin back (`rolled_back`, `presentation_studio_mount_failed`): the old frame
+never left the screen. The failed version stays published (immutable, unpinned, archived by retention). An error that appears
+**after** the first frame (frame 50 throws) is a runtime error of the live scene: the in-place failure band with "Recharger la scene",
+not a hot-reload rollback.
+
+**Undo / redo.** The undo ring of the Slice 08 records `/edits` operations only; a source edit is not in it (it is a new immutable
+version, not an inverse operation). Undoing a source edit is a source edit: `files: {restore_version: {id, version}}` republishes the
+content of that earlier version as a **new** revision through the same gate, build and swap. The previous version is `previous` in the
+result, the undone one is `published` (redo = restore that). Accepted targets: the scene's own source versions
+(`presentation-studio.p..s..`) and the pins the scene was reloaded **from** (kept in memory, 16 per scene, so the first edit can be
+undone back to the base prefab; lost at restart, then only the scene's own versions can be restored). A version that retention
+archived or that is altered is a typed refusal (`cannot be restored`), nothing is guessed. History is linear: nothing is rewritten or
+deleted, version numbers only grow. The versions are protected from retention by the existing pin sources (variants, `last_valid_pin`,
+the live scene, the in-flight hold) for as long as they are pinned; a version nothing pins can be archived after 32 live versions, which
+is the stated limit of undo depth (the 16 newest are always kept).
+
+**Concurrency.** Unchanged and now exercised with a slow build: composition (hence the build) is serialized per source id by the
+compose lock; two edits from one basis: one wins, the other is `stale` (its published version stays unpinned and harmless; if both
+raced on the scene's very first fork the loser is re-submitted as a revision of the id the winner just created, not refused);
+a burst composes on the draft, each retouch is built, one version is published and every caller gets the same outcome; a broken
+retouch inside a burst leaves no trace in the draft. The agent rate limit (10 per scene per minute) applies.
+
+**`@remotion/codemods`: not used.** Decision with evidence: the pinned lock (`jarvis/capabilities/remotion/package-lock.json`)
+carries `@remotion/codemods` 4.0.534 only as a transitive dependency of `@remotion/cli` / `@remotion/studio`; its `exports` are `.`
+and `./resolve-composition-component-location` (there is **no** `./sdk` subpath in 4.0.534; `@remotion/sdk` is a different package),
+and its transforms rewrite files on disk for the Studio (Babel + recast). Our sources are virtual (bytes in the prefab library) and
+an agent edits whole modules, so a codemod adds a second, unproven writer for no capability the request keys lack. Skipped: if a
+future version ships an SDK worth wrapping it enters behind a versioned optional adapter after a proof run, like every other
+engine detail (`test_remotion_source_edit_docs.py` pins the facts above to the lock).
+
+**Residual risks.** No TypeScript type checking (esbuild only; adding `typescript` to the lock is a Slice 19 decision); a render error
+after the first frame is not a rollback; a scene that renders but is visually wrong is only judged by the Human; Windows and
+Chrome only were exercised; undo targets outside the scene's own versions do not survive a Core restart; assets in an edit are capped
+at 2 Mi base64; the build runs under the per-source compose lock (up to the compile timeout, 60 s) so a later edit of the same scene
+waits for it.
+
 ### Source requests (`scene.source_request`): durability decision
 
 **Not durable, on purpose.** The ring of 64 in memory stays (`pending_source_requests`, eviction is a `warning` row), and a
@@ -1917,7 +2006,8 @@ late rollback) and never announces the history on the first poll.
 
 | Method | Core route | Control Center relay (read-guarded) |
 | --- | --- | --- |
-| POST | `/v1/presentation-studio/presentations/{presentation_id}/variants/{variant_id}/source-edits` | `POST /api/presentation-studio/presentations/{presentation_id}/variants/{variant_id}/source-edits`, actor forced to `user`; body `{actor, basis: {variant_revision}, scene_id, files: {manifest?, template?, style?, behavior?}, request_id?, allow_state_reset?}`; the result above (HTTP per status) |
+| POST | `/v1/presentation-studio/presentations/{presentation_id}/variants/{variant_id}/source-edits` | `POST /api/presentation-studio/presentations/{presentation_id}/variants/{variant_id}/source-edits`, actor forced to `user`; body `{actor, basis: {variant_revision}, scene_id, files: {manifest?, template?, style?, behavior?} or, for a Remotion scene (Slice 14), {manifest?, sources?, assets?} or {restore_version}, request_id?, allow_state_reset?}`; the result above (HTTP per status) |
+| GET | `/v1/presentation-studio/presentations/{presentation_id}/variants/{variant_id}/scenes/{scene_id}/source` | Core only (the agent's read before an edit, Slice 14); `{scene_id, engine, prefab, source_revision, basis, manifest, sources, assets}` (Remotion) or `{..., files}` (Slidecar) |
 | POST | `/v1/presentation-studio/presentations/mount-reports` | `POST /api/presentation-studio/presentations/mount-reports`; body `{object_id, prefab: {id, version}, outcome: mounted or failed, reason?, message?}` -> `{matched, waiting, resolved, scenes: [{scene_id, source_revision}]}` (the scene revisions the report settled) |
 | GET | `/v1/presentation-studio/presentations/{presentation_id}/reloads` | `GET /api/presentation-studio/presentations/{presentation_id}/reloads`; `{reloads, pending, stats}` |
 
@@ -1928,8 +2018,8 @@ The relay forwards no `PUT` and no create: a page changes a Presentation only th
 | Typed client | `LocalCoreClient.presentation_studio_source_edit` (returns every outcome; an error envelope raises `CoreProtocolError`), `LocalCoreClient.presentation_studio_reloads` (the mount-report route is called by the page and the relay, not by a typed client method; there is no stage route any more: the playback shows the scene) |
 | Control Center relay | the routes above under `/api/presentation-studio/...`, **actor forced to `user`** on `source-edits`, read-guarded (`Origin: null`, a frame, can neither edit nor report) |
 | Event | `system.presentation_studio.scene_reloaded` (actor `system`, instant, diagnostic, content forbidden; `status`, `code`, `reason`, `revision` = source revision, `source` = actor, `tier` = `source`) |
-| Diagnostics (`core.presentation_studio.<kind>`; ids, statuses, codes, counts, never values) | `reload_published`, `reload_applied`, `reload_refused`, `reload_stale`, `reload_pending` (warning), `reload_rolled_back` (warning), `reload_late` (a mount report that arrived after the call returned; warning when it rolled back), `reload_failed` (error), `reload_confirm_failed`, `reload_rollback_failed` (error), `reload_rate_limited`, `reload_restore_unvalidated`, `reload_announce_failed` (warning), `reload_unverified` (warning, at start), `reload_flush_failed`, `reload_close_timeout`, `reload_recover_failed`, `mount_reported`, `stage_unreadable`, `playback_unreadable`, `pins_ready`, `pins_degraded` (error), `source_request_fulfilled`, `event_failed` |
-| Error codes added | `presentation_studio_source_invalid` (400), `presentation_studio_mount_failed` (409), `presentation_studio_stage_failed` (409), `presentation_studio_reload_unavailable` (409), `presentation_studio_scene_reloading` (409), `presentation_studio_source_edit_rate` (429) |
+| Diagnostics (`core.presentation_studio.<kind>`; ids, statuses, codes, counts, never values) | `reload_published`, `reload_applied`, `reload_refused`, `reload_stale`, `reload_pending` (warning), `reload_rolled_back` (warning), `reload_late` (a mount report that arrived after the call returned; warning when it rolled back), `reload_failed` (error), `reload_confirm_failed`, `reload_rollback_failed` (error), `reload_rate_limited`, `reload_restore_unvalidated`, `reload_announce_failed` (warning), `reload_unverified` (warning, at start), `reload_built` (Slice 14: the source compiled before publication), `reload_build_refused` (warning: code, compile code, number of diagnostics, never a source text), `reload_flush_failed`, `reload_close_timeout`, `reload_recover_failed`, `mount_reported`, `stage_unreadable`, `playback_unreadable`, `pins_ready`, `pins_degraded` (error), `source_request_fulfilled`, `event_failed` |
+| Error codes added | `presentation_studio_source_invalid` (400), `presentation_studio_mount_failed` (409), `presentation_studio_stage_failed` (409), `presentation_studio_reload_unavailable` (409), `presentation_studio_scene_reloading` (409), `presentation_studio_source_edit_rate` (429), `presentation_studio_source_build_failed` (422, Slice 14) |
 
 ### Limits and known gaps
 

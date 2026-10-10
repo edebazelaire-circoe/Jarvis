@@ -29,6 +29,12 @@ Concurrence : sous un verrou **par scene** (seulement apres la publication, pour
 retouches d'une rafale partagent UNE publication et recoivent la meme issue (`merged`) ; deux editions de meme base :
 l'une gagne, l'autre est `stale`. Aucune attente du catalogue ni de l'hote ne tient le verrou du service des variantes.
 
+Scenes Remotion (handoff jarvis-remotion-presentation-integration, Slice 14) : meme chemin, meme verrou, memes issues. Le corps porte
+`sources` / `assets` / `restore_version` au lieu de `template` / `style` / `behavior`, et le garde de phase 1 ajoute, EN DERNIER, la
+compilation reelle de la source composee (`RemotionBuildGate`) : une source qui ne compile pas n'est jamais publiee
+(`presentation_studio_source_build_failed`, `diagnostics` fichier:ligne:colonne). Annuler / retablir = republier une version
+(`restore_version`). Contrat : `docs/presentation-studio.md` > *Remotion sources*.
+
 Observabilite : journaux `core.presentation_studio.reload_*` (ids, statuts, codes, comptes ; **jamais** une valeur, un
 texte de source ni le message d'un cadre) et l'evenement `system.presentation_studio.scene_reloaded`.
 """
