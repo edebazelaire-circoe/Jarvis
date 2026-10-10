@@ -8,10 +8,12 @@ proxy de refus qui ne laisse passer que le serveur de rendu et COMPTE le reste d
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 import shutil
 import subprocess
 import sys
+import time
 
 import pytest
 
@@ -73,6 +75,36 @@ const ask = (port, path, method) => new Promise((resolve) => {
 """
 
 
+def run_node(argv: list[str], env: dict, timeout: int = 120) -> subprocess.CompletedProcess:
+    """`node ...` retried once or twice when Windows answers « access denied » to the launch itself (antivirus scanning a fresh file)."""
+
+    for attempt in range(3):
+        try:
+            return subprocess.run([NODE, *argv], capture_output=True, text=True, timeout=timeout, env=env, check=False)
+        except PermissionError:
+            if attempt == 2:
+                raise
+            time.sleep(2)
+    raise AssertionError("unreachable")
+
+
+def place_executable(target: Path) -> None:
+    """A real executable under the fake `node_modules`: a hard link (no 80 MB copy), else a copy retried once or twice (an antivirus may hold the file)."""
+
+    try:
+        os.link(NODE, target)
+    except OSError:
+        for attempt in range(3):
+            try:
+                shutil.copyfile(NODE, target)
+                break
+            except PermissionError:
+                if attempt == 2:
+                    raise
+                time.sleep(1.5)
+    target.chmod(0o755)
+
+
 @pytest.fixture(scope="module")
 def run(tmp_path_factory):
     root = tmp_path_factory.mktemp("render-guard")
@@ -80,13 +112,14 @@ def run(tmp_path_factory):
     pinned_dir = runtime / "node_modules" / "@remotion" / "compositor-test"
     pinned_dir.mkdir(parents=True)
     pinned = pinned_dir / ("tool.exe" if sys.platform == "win32" else "tool")
-    shutil.copyfile(NODE, pinned)
-    pinned.chmod(0o755)
+    place_executable(pinned)
     job = root / "job"
     job.mkdir()
     env = {"PATH": str(Path(NODE).parent), "SYSTEMROOT": "C:\\Windows", "JARVIS_RENDER_DIR": str(job), "JARVIS_RENDER_RUNTIME": str(runtime),
            "JARVIS_RENDER_BROWSER": NODE, "GUARD": str(GUARD), "PINNED": str(pinned)}
-    result = subprocess.run([NODE, "--require", str(GUARD), "-e", SCRIPT], capture_output=True, text=True, timeout=120, env=env, check=False)
+    script = root / "probe.cjs"  # a file, not `-e`: a long inline script full of "taskkill"/"dgram" is what antivirus heuristics dislike
+    script.write_text(SCRIPT, encoding="utf-8")
+    result = run_node(["--require", str(GUARD), str(script)], env)
     assert result.returncode == 0, result.stderr[-1500:]
     out = json.loads(result.stdout.strip().splitlines()[-1])
     assert "crash" not in out, out
@@ -136,5 +169,5 @@ def test_the_browser_cannot_start_before_the_denial_proxy_exists(tmp_path):
     env = {"PATH": str(Path(NODE).parent), "SYSTEMROOT": "C:\\Windows", "JARVIS_RENDER_DIR": str(tmp_path), "JARVIS_RENDER_RUNTIME": str(tmp_path),
            "JARVIS_RENDER_BROWSER": NODE}
     script = "const cp=require('node:child_process');try{cp.spawn(process.execPath,['-v']);console.log('started')}catch(e){console.log(e.code)}"
-    result = subprocess.run([NODE, "--require", str(GUARD), "-e", script], capture_output=True, text=True, timeout=60, env=env, check=False)
+    result = run_node(["--require", str(GUARD), "-e", script], env, 60)
     assert result.stdout.strip() == "EACCES"

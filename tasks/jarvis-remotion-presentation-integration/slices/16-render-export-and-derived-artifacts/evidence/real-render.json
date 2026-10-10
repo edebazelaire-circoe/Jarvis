@@ -1,0 +1,589 @@
+{
+  "verdict": "PASSED",
+  "head": "61fd17c90eb425044f5b811ca78a80978f3a991a",
+  "tree_dirty": false,
+  "platform": "Windows-11-10.0.26200-SP0",
+  "node": "v24.18.0",
+  "chrome": "chrome 154.0.8037.99",
+  "remotion": "4.0.534",
+  "elapsed_s": 340.3,
+  "timings": {
+    "mp4_s": 102.6,
+    "still_s": 10.3,
+    "pdf_s": 15.5,
+    "cancel_to_stopped_s": 2.4
+  },
+  "disk": {
+    "free_before_mb": 19188,
+    "free_after_mb": 18713
+  },
+  "facts": {
+    "availability": {
+      "ready": true,
+      "reason": null,
+      "browser": "chrome 154.0.8037.99",
+      "concurrency": 1,
+      "max_queued": 8
+    },
+    "mp4_metadata": {
+      "render_browser": "chrome 154.0.8037.99",
+      "render_codec": "h264",
+      "render_composition": "Scene",
+      "render_crf": 23,
+      "render_egress_denied": 41,
+      "render_engine": "4.0.534",
+      "render_engine_drift": false,
+      "render_engine_lock_sha256": "acff3cd562fd6f426040aed8b60cce840b23befe7bac71604d0c7614b8762fbe",
+      "render_flat": true,
+      "render_format": "mp4",
+      "render_fps": 30,
+      "render_frame_end": 59,
+      "render_frame_start": 0,
+      "render_height": 720,
+      "render_image_format": "mp4",
+      "render_job_id": "rj_6dad4006a71d",
+      "render_output_sha256": "a644b7403787e4e1198e92ddd6ebfbdfe54eaffe260101ddb32215470a5b8e8f",
+      "render_pixel_format": "yuv420p",
+      "render_prefab_id": "presentation-studio.p000000000001.s000000000001",
+      "render_prefab_version": 1,
+      "render_scale": 1.0,
+      "render_scene_id": "pss_000000000001",
+      "render_settings_sha256": "b788f79defd4c5b69db8542cd535eaf69103e930443f7c773b03feb0d5bbb100",
+      "render_source_digest": "4d1fc317dc730ff6c367c49f3bc02b709d7c1c9103b1cd3c28ddb39ee3c4753b",
+      "render_verified_by": "ffprobe",
+      "render_wall_ms": 102317,
+      "render_width": 1280
+    },
+    "mp4_ffprobe": {
+      "codec_name": "h264",
+      "width": 1280,
+      "height": 720,
+      "r_frame_rate": "30/1",
+      "nb_read_frames": "60",
+      "duration": "2.000000",
+      "pix_fmt": "yuvj420p"
+    },
+    "still_metadata": {
+      "render_browser": "chrome 154.0.8037.99",
+      "render_composition": "Scene",
+      "render_egress_denied": 11,
+      "render_engine": "4.0.534",
+      "render_engine_drift": false,
+      "render_engine_lock_sha256": "acff3cd562fd6f426040aed8b60cce840b23befe7bac71604d0c7614b8762fbe",
+      "render_flat": true,
+      "render_format": "still",
+      "render_fps": 30,
+      "render_frames": "45",
+      "render_height": 720,
+      "render_image_format": "png",
+      "render_job_id": "rj_d6ffd1bb4745",
+      "render_output_sha256": "610c92464e1bdc9d90eebff8c5651b8c1a03512ebda89a9b8058a01aefbaaad0",
+      "render_prefab_id": "presentation-studio.p000000000001.s000000000001",
+      "render_prefab_version": 1,
+      "render_scale": 1.0,
+      "render_scene_id": "pss_000000000001",
+      "render_settings_sha256": "02ce34790c31077f7b39ba9be1b922aef17d9d738695a7759ab9c63e76c45e1d",
+      "render_source_digest": "4d1fc317dc730ff6c367c49f3bc02b709d7c1c9103b1cd3c28ddb39ee3c4753b",
+      "render_verified_by": "png",
+      "render_wall_ms": 10017,
+      "render_width": 1280
+    },
+    "pdf_metadata": {
+      "render_browser": "chrome 154.0.8037.99",
+      "render_composition": "Scene",
+      "render_egress_denied": 20,
+      "render_engine": "4.0.534",
+      "render_engine_drift": false,
+      "render_engine_lock_sha256": "acff3cd562fd6f426040aed8b60cce840b23befe7bac71604d0c7614b8762fbe",
+      "render_flat": true,
+      "render_format": "pdf",
+      "render_fps": 30,
+      "render_frames": "0,45,89",
+      "render_height": 720,
+      "render_image_format": "jpeg",
+      "render_job_id": "rj_9cc8b5a5fc13",
+      "render_output_sha256": "25149d8af1407d367b986ca2f615a82d8d4663852e8b22bb25afe5b6c668650d",
+      "render_pages": 3,
+      "render_prefab_id": "presentation-studio.p000000000001.s000000000001",
+      "render_prefab_version": 1,
+      "render_scale": 1.0,
+      "render_scene_id": "pss_000000000001",
+      "render_settings_sha256": "14fa739504e435d2be87eee586cda78e873c634349472a41b973e1602f09711f",
+      "render_source_digest": "4d1fc317dc730ff6c367c49f3bc02b709d7c1c9103b1cd3c28ddb39ee3c4753b",
+      "render_verified_by": "pdf",
+      "render_wall_ms": 15324,
+      "render_width": 1280
+    },
+    "egress_denied_mp4": 41,
+    "reconcile_report": {
+      "killed": 1,
+      "failed": 1,
+      "partial": 0,
+      "kept": 0
+    },
+    "hostile_guarded": {
+      "http_hits": [],
+      "tcp_connections": 0,
+      "udp_packets": 0,
+      "denied_by_sample": {
+        "net_exfil": 24,
+        "link_hints": 15,
+        "webrtc_exfil": 13
+      },
+      "states": {
+        "net_exfil": "complete",
+        "link_hints": "complete",
+        "webrtc_exfil": "complete"
+      }
+    },
+    "hostile_control": {
+      "http_hits": 16,
+      "tcp_connections": 2,
+      "udp_packets": 6
+    }
+  },
+  "checks": [
+    {
+      "check": "availability ready with a real browser",
+      "ok": true,
+      "browser": "chrome 154.0.8037.99"
+    },
+    {
+      "check": "mp4: job complete",
+      "ok": true,
+      "elapsed_s": 102.6,
+      "size": 24712,
+      "verified_by": "ffprobe",
+      "progress_samples": 393,
+      "phases": [
+        "bundling",
+        "complete",
+        "opening_browser",
+        "preparing",
+        "queued",
+        "rendering",
+        "selecting_composition",
+        "verifying"
+      ],
+      "error": [
+        null,
+        null
+      ],
+      "log": []
+    },
+    {
+      "check": "mp4: artifact complete, kind and payload",
+      "ok": true,
+      "kind": "presentation_video",
+      "size": 24712,
+      "width": 1280,
+      "height": 720,
+      "duration_ms": 2000
+    },
+    {
+      "check": "mp4: payload sha256 equals the recorded one",
+      "ok": true
+    },
+    {
+      "check": "mp4: rendered_from the snapshot",
+      "ok": true
+    },
+    {
+      "check": "mp4: independent ffprobe (h264, 1280x720, 30 fps, 60 frames, 2 s)",
+      "ok": true,
+      "codec_name": "h264",
+      "width": 1280,
+      "height": 720,
+      "r_frame_rate": "30/1",
+      "nb_read_frames": "60",
+      "duration": "2.000000",
+      "pix_fmt": "yuvj420p"
+    },
+    {
+      "check": "mp4: ftyp header",
+      "ok": true
+    },
+    {
+      "check": "still: job complete",
+      "ok": true,
+      "elapsed_s": 10.3,
+      "size": 26212,
+      "verified_by": "png",
+      "progress_samples": 40,
+      "phases": [
+        "bundling",
+        "complete",
+        "opening_browser",
+        "preparing",
+        "queued",
+        "rendering",
+        "selecting_composition"
+      ],
+      "error": [
+        null,
+        null
+      ],
+      "log": []
+    },
+    {
+      "check": "still: artifact complete, kind and payload",
+      "ok": true,
+      "kind": "presentation_still",
+      "size": 26212,
+      "width": 1280,
+      "height": 720,
+      "duration_ms": null
+    },
+    {
+      "check": "still: payload sha256 equals the recorded one",
+      "ok": true
+    },
+    {
+      "check": "still: rendered_from the snapshot",
+      "ok": true
+    },
+    {
+      "check": "still: PNG 1280x720",
+      "ok": true
+    },
+    {
+      "check": "pdf: job complete",
+      "ok": true,
+      "elapsed_s": 15.5,
+      "size": 54674,
+      "verified_by": "pdf",
+      "progress_samples": 60,
+      "phases": [
+        "bundling",
+        "complete",
+        "opening_browser",
+        "preparing",
+        "queued",
+        "rendering",
+        "selecting_composition",
+        "verifying"
+      ],
+      "error": [
+        null,
+        null
+      ],
+      "log": []
+    },
+    {
+      "check": "pdf: artifact complete, kind and payload",
+      "ok": true,
+      "kind": "presentation_pdf",
+      "size": 54674,
+      "width": 1280,
+      "height": 720,
+      "duration_ms": null
+    },
+    {
+      "check": "pdf: payload sha256 equals the recorded one",
+      "ok": true
+    },
+    {
+      "check": "pdf: rendered_from the snapshot",
+      "ok": true
+    },
+    {
+      "check": "pdf: header, 3 pages, flat",
+      "ok": true,
+      "pages": 3
+    },
+    {
+      "check": "still: same snapshot + same settings give the same settings hash and the same bytes",
+      "ok": true,
+      "sha": "610c92464e1bdc9d"
+    },
+    {
+      "check": "still: another frame gives other pixels",
+      "ok": true
+    },
+    {
+      "check": "job folders cleaned, no render process left",
+      "ok": true,
+      "alive": [],
+      "left": []
+    },
+    {
+      "check": "cancel: the view says cancel is requested while the process still runs",
+      "ok": true
+    },
+    {
+      "check": "cancel: job cancelled, derivative failed with a stable code, no final file",
+      "ok": true,
+      "seconds": 2.4,
+      "state": "cancelled",
+      "artifact_state": "failed",
+      "code": "presentation_render_cancelled",
+      "final": false
+    },
+    {
+      "check": "cancel: the whole process tree is gone (identity-checked ref, no process carries the job id)",
+      "ok": true,
+      "alive": []
+    },
+    {
+      "check": "stop(): a reference with the wrong creation time does not kill the program that owns the pid",
+      "ok": true
+    },
+    {
+      "check": "stop(): the right reference does",
+      "ok": true
+    },
+    {
+      "check": "kill: a render killed from outside fails visibly (code, detail), no final file, nothing left",
+      "ok": true,
+      "code": "presentation_render_failed",
+      "detail": "exit code 1"
+    },
+    {
+      "check": "kill (node only): orphaned Chrome is swept, derivative failed, no final file",
+      "ok": true,
+      "alive": [],
+      "log": []
+    },
+    {
+      "check": "after cancel and kills the queue still works",
+      "ok": true
+    },
+    {
+      "check": "restart: a render is running in a separate Core-like process",
+      "ok": true,
+      "job": "rj_f0b3d8dd7ac3"
+    },
+    {
+      "check": "restart: the 'Core' is dead and its render process is still alive (an orphan)",
+      "ok": true,
+      "ref": "27944:134360706433386160",
+      "progress": "{\"phase\":\"rendering\",\"frames_done\":9,\"frames_total\":90,\"updated_ms\":1791597053613,\"bundle_percent\":100,\"encoded_frames\":0}",
+      "result_written": false
+    },
+    {
+      "check": "restart: before recovery the derivative is still pending",
+      "ok": true
+    },
+    {
+      "check": "restart: generic recovery leaves the render derivative to its owner",
+      "ok": true
+    },
+    {
+      "check": "restart: reconcile kills the orphan, fails the derivative as interrupted, no final file, nothing left",
+      "ok": true,
+      "report": {
+        "killed": 1,
+        "failed": 1,
+        "partial": 0,
+        "kept": 0
+      },
+      "code": "presentation_render_interrupted"
+    },
+    {
+      "check": "restart: a new render works after the recovery",
+      "ok": true
+    },
+    {
+      "check": "refusal: unknown snapshot id",
+      "ok": true,
+      "code": "presentation_render_snapshot_invalid",
+      "expected": "presentation_render_snapshot_invalid"
+    },
+    {
+      "check": "refusal: an Artifact that is not a snapshot",
+      "ok": true,
+      "code": "presentation_render_snapshot_invalid",
+      "expected": "presentation_render_snapshot_invalid"
+    },
+    {
+      "check": "refusal: a bad format",
+      "ok": true,
+      "code": "presentation_studio_invalid",
+      "expected": "presentation_studio_invalid"
+    },
+    {
+      "check": "refusal: an unknown setting",
+      "ok": true,
+      "code": "presentation_render_invalid",
+      "expected": "presentation_render_invalid"
+    },
+    {
+      "check": "refusal: a frame outside the scene",
+      "ok": true,
+      "code": "presentation_render_invalid",
+      "expected": "presentation_render_invalid"
+    },
+    {
+      "check": "refusal: a reversed range",
+      "ok": true,
+      "code": "presentation_render_invalid",
+      "expected": "presentation_render_invalid"
+    },
+    {
+      "check": "refusal: a setting that does not apply to the format",
+      "ok": true,
+      "code": "presentation_render_invalid",
+      "expected": "presentation_render_invalid"
+    },
+    {
+      "check": "refusal: a tampered snapshot.zip (hash differs)",
+      "ok": true,
+      "code": "presentation_render_snapshot_invalid",
+      "expected": "presentation_render_snapshot_invalid"
+    },
+    {
+      "check": "refusal: an installed engine that differs from the frozen one",
+      "ok": true,
+      "code": "presentation_render_engine_mismatch",
+      "expected": "presentation_render_engine_mismatch"
+    },
+    {
+      "check": "refusal: the Remotion capability is not installed",
+      "ok": true,
+      "code": "presentation_render_runtime_unavailable",
+      "expected": "presentation_render_runtime_unavailable"
+    },
+    {
+      "check": "refusal: unknown job id is a typed 404",
+      "ok": true
+    },
+    {
+      "check": "stale: exporting an outdated revision is refused (nothing frozen, nothing rendered)",
+      "ok": true,
+      "code": "presentation_studio_stale_revision"
+    },
+    {
+      "check": "stale: the old snapshot still renders, and the Board data says stale: true with its render listed",
+      "ok": true,
+      "stale": true,
+      "renders": [
+        {
+          "artifact_id": "jart_ccf21294c9f6448a95ccf511c883d8d1",
+          "kind": "presentation_still",
+          "state": "complete",
+          "format": "still",
+          "size_bytes": 24299,
+          "error_code": null,
+          "width": 1280,
+          "height": 720,
+          "duration_ms": null,
+          "scene_id": "pss_000000000001",
+          "settings_sha256": "bf65e7669e7f72753e8d8632721b640c13993e4715dfffd6afb925003417a4c7",
+          "flat": true,
+          "board_ids": [
+            "default"
+          ]
+        }
+      ]
+    },
+    {
+      "check": "disk: less than the minimum free space fails before anything is written",
+      "ok": true,
+      "detail": "100 MiB free, a render needs at least 1536 MiB"
+    },
+    {
+      "check": "disk full while rendering: the process tree is killed, derivative failed, no final file",
+      "ok": true,
+      "detail": "the disk is nearly full"
+    },
+    {
+      "check": "size bound: a render folder that grows past its limit is killed",
+      "ok": true,
+      "detail": "the render folder grew past 3 MiB"
+    },
+    {
+      "check": "time bound: a render past its deadline is killed with a stated limit",
+      "ok": true,
+      "detail": "the render exceeded its 6 s limit"
+    },
+    {
+      "check": "hostile scenes (fetch, XHR, WebSocket, beacon, Image, CSS url, preconnect, WebRTC) render normally",
+      "ok": true,
+      "states": {
+        "net_exfil": "complete",
+        "link_hints": "complete",
+        "webrtc_exfil": "complete"
+      },
+      "errors": [
+        [
+          null,
+          null
+        ],
+        [
+          null,
+          null
+        ],
+        [
+          null,
+          null
+        ]
+      ]
+    },
+    {
+      "check": "guarded: the local HTTP service received 0 requests, the TCP sink 0 connections, the UDP sink 0 packets",
+      "ok": true,
+      "http": [],
+      "tcp": 0,
+      "udp": 0
+    },
+    {
+      "check": "guarded: the denied requests are COUNTED and recorded on the derivative (render_egress_denied > 0)",
+      "ok": true,
+      "denied": {
+        "net_exfil": 24,
+        "link_hints": 15,
+        "webrtc_exfil": 13
+      }
+    },
+    {
+      "check": "a frozen source that no longer passes today's static guards is revalidated and refused at render time (no browser launched)",
+      "ok": true,
+      "state": "failed",
+      "phase": "failed",
+      "code": "presentation_render_source_refused",
+      "detail": "the frozen source no longer passes validation: guard: added after the freeze: the word ATTACKER is now forbidden"
+    },
+    {
+      "check": "negative control (browser arguments not rewritten): the sinks DO receive traffic, so the harness would see a leak",
+      "ok": true,
+      "http_hits": 16,
+      "tcp_connections": 2,
+      "udp_packets": 6
+    }
+  ],
+  "runs": [
+    {
+      "scenarios": [
+        "happy",
+        "cancel_and_kill"
+      ],
+      "head": "61fd17c90eb425044f5b811ca78a80978f3a991a",
+      "tree_dirty": false,
+      "elapsed_s": 203.7,
+      "disk_free_before_mb": 19188,
+      "disk_free_after_mb": 18895
+    },
+    {
+      "scenarios": [
+        "core_death",
+        "refusals",
+        "bounds"
+      ],
+      "head": "61fd17c90eb425044f5b811ca78a80978f3a991a",
+      "tree_dirty": false,
+      "elapsed_s": 61.3,
+      "disk_free_before_mb": 18890,
+      "disk_free_after_mb": 18797
+    },
+    {
+      "scenarios": [
+        "hostile"
+      ],
+      "head": "61fd17c90eb425044f5b811ca78a80978f3a991a",
+      "tree_dirty": false,
+      "elapsed_s": 75.3,
+      "disk_free_before_mb": 18793,
+      "disk_free_after_mb": 18713
+    }
+  ]
+}
