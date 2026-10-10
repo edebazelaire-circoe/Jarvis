@@ -3491,6 +3491,42 @@ Invoke-RestMethod -Method Post -Headers $h "$u/close"
   `python scripts/remotion_studio_harness.py --part early|late --work-dir <dossier court sous Temp> --evidence <fichier.json>` (deux passes de ≈ 6 minutes).
   Verdict `PASSED` attendu.
 
+#### Export d'une présentation : MP4, image, PDF (Slice 16)
+
+Contrat : [remotion-render.md](remotion-render.md) ; sécurité : SECURITY.md § 20. Un export **rend une copie figée** (jamais la source vivante, jamais une valeur de contrôle) et
+enregistre un Artifact relié à cette copie. Prérequis : la capacité Remotion `ready` (installation unique, section « Capacité locale Remotion ») et un Chrome ou Edge installé
+(sinon `JARVIS_REMOTION_RENDER_BROWSER` ; un navigateur n'est **jamais** téléchargé).
+
+- **Depuis le Control Center** : bouton `WSP` → Artefacts → choisir le Board → sous la copie figée d'une présentation Remotion, « Exporter cette copie » (MP4, image, PDF). Le
+  panneau dit la phase, les images faites, les secondes écoulées, le délai, et offre **Annuler l'export**. À la fin le rendu apparaît sous la copie, avec ses dimensions, sa
+  durée, un aperçu et la mention « export à plat : non éditable » ; **Ouvrir la source** / **Ouvrir la variante** (au-dessus) mènent à l'origine éditable.
+- **Depuis PowerShell** (jeton comme pour la capacité) :
+
+```powershell
+$u = "http://127.77.0.1:17653/v1/local-capabilities/remotion/render"
+Invoke-RestMethod -Headers $h $u                                   # prêt ? pourquoi pas ? (lecture seule, ne lance rien)
+$job = (Invoke-RestMethod -Method Post -Headers $h "$u/jobs" -ContentType application/json -Body '{"snapshot_id":"<jart_ps_...>","format":"mp4","settings":{"frame_end":59}}').job
+Invoke-RestMethod -Headers $h "$u/jobs/$($job.job_id)"            # état, phase, images, secondes, délai
+Invoke-RestMethod -Method Post -Headers $h "$u/jobs/$($job.job_id)/cancel"
+# figer ET rendre en une demande (révisions exactes, Boards autorisés explicitement) :
+#   {"format":"still","presentation_id":"pst_...","variant_id":"psv_...","expected_presentation_revision":2,"expected_variant_revision":3,"authorised_boards":["<board>"],"settings":{"frame":45}}
+```
+
+- **Lire un échec** : la vue du travail et le dérivé `failed` portent le même `error_code` (`presentation_render_*`, tableau §8 du contrat) et `error_detail` ; `log_tail` donne les
+  dernières lignes du processus. `browser_unavailable` : installer Chrome ou poser `JARVIS_REMOTION_RENDER_BROWSER` ; `runtime_unavailable` : installer ou réparer la capacité ;
+  `engine_mismatch` : le Remotion installé n'est plus celui du gel, refiger puis rendre ; `source_refused` : une garde d'isolation plus récente refuse la source gelée ;
+  `disk_low` / `disk_full` : libérer de la place (un rendu veut 1,5 Gio libres) ; `timeout` : rendre une plage plus courte (`frame_start`/`frame_end`) ou une échelle plus
+  basse ; `interrupted` : Core ou le poste s'est arrêté pendant le rendu (aucun fichier n'est promu : recommencer).
+- **Où sont les fichiers** : le payload de l'Artifact (`<racine>/artifacts/<id>/render.mp4|still.png|render.pdf`) ; les dossiers de travail sont sous
+  `<racine>/local_capabilities/remotion/runtime/render/jobs/<id>/` et sont effacés à la fin (restent `job.json`, `render.log`, `result.json`, `egress.json`, quelques Kio).
+- **Redémarrage** : un Core qui redémarre pendant un rendu tue le processus orphelin et marque le dérivé `failed` (`interrupted`) ; pour charger les routes après une mise à
+  jour de Jarvis, Core et le Control Center doivent être relancés, ce que fait l'utilisateur (aucun agent ne le fait).
+- **Rejouer la preuve** (hors profil vivant, Node et Chrome requis, ≈ 6 minutes) :
+  `python scripts/remotion_render_harness.py --work-dir <dossier court sous Temp> --runtime-dir <runtime> --evidence <fichier.json>` ; de bout en bout dans un vrai navigateur :
+  `JARVIS_REMOTION_RUNTIME_DIR=<runtime> pytest tests/unit/test_presentation_render_real.py`.
+- **À regarder une fois sur le poste réel** (vérification humaine, non automatisable) : lire le MP4 exporté dans un lecteur vidéo (image, mouvement, **son** si la scène en a : jamais
+  écouté par les tests), ouvrir le PDF dans un lecteur, comparer l'image fixe à l'aperçu du Player, vérifier que « Ouvrir la source » rouvre bien la présentation d'origine.
+
 #### Isolation du code d'une scène Remotion (Slice 06)
 
 Contrat : [remotion-isolation.md](remotion-isolation.md) ; sécurité : SECURITY.md § 18. Le code d'une scène est hostile par
