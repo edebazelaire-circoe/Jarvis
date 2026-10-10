@@ -1,0 +1,33 @@
+{
+  "slice": 18,
+  "test": "tests/unit/test_remotion_import_real.py",
+  "handoff": "jarvis-remotion-presentation-integration",
+  "when": "2026-10-10T01:02:03+00:00",
+  "repository": {
+    "head": "f38f351c4c499c4c5296eee494b7810b8eff797f",
+    "branch": "task/jarvis-remotion-presentation-integration-s18",
+    "tracked_tree_clean": true,
+    "dirty_files": []
+  },
+  "environment": {
+    "platform": "Windows-11-10.0.26200-SP0",
+    "python": "3.14.6",
+    "node": "v24.18.0",
+    "chrome": "154.0.8037.99",
+    "runtime_dir_reused": "node_modules is a junction to an existing private install"
+  },
+  "pytest": {
+    "returncode": 0,
+    "seconds": 18.8,
+    "summary": [
+      "PASSED tests/unit/test_remotion_import_real.py::test_real_templates_from_github_are_refused_for_their_exact_reason",
+      "PASSED tests/unit/test_remotion_import_real.py::test_a_real_mit_template_is_imported_compiled_and_rendered_in_the_sandbox_page",
+      "2 passed in 17.52s"
+    ]
+  },
+  "scenarios": [
+    "real_import_render",
+    "real_refusals"
+  ],
+  "result": "PASSED"
+}
