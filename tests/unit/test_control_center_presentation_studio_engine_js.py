@@ -149,9 +149,9 @@ def test_the_browser_block_is_defensive_and_wired_to_the_visible_contract():
     assert "%%ACTIVITY%%" in browser and "fmtDuration((now-S.busySince)/1000)" in browser and "role=\"alert\"" in browser
     assert "finally{S.busy='';S.busySince=0}" in browser and "log('error','action_failed'" in browser
     # every creation of an experiment goes through the confirmation first
-    assert browser.index("confirm(C.confirmSlidecar('new'))") < browser.index("client.create({title,slidecar:true")
-    assert browser.index("confirm(C.confirmSlidecar('copy'") < browser.index("client.experiment(")
-    assert browser.index("confirm(C.confirmRepair(") < browser.index("client.repair(diagnosis.action)")
+    assert browser.index("askConfirmation(C.confirmSlidecar('new'))") < browser.index("client.create({title,slidecar:true")
+    assert browser.index("askConfirmation(C.confirmSlidecar('copy'") < browser.index("client.experiment(")
+    assert browser.index("askConfirmation(C.confirmRepair(") < browser.index("client.repair(diagnosis.action)")
     assert "S.rendered=''" in browser and "if(html===S.rendered)" in browser
 
 
