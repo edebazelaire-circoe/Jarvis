@@ -1,0 +1,289 @@
+{
+  "kind": "remotion real-model traces",
+  "model": "sonnet",
+  "prompt_program": "conversation_display_studio_session",
+  "remotion_prompt_chars": 1568,
+  "scenarios": [
+    {
+      "attestation_reads": 1,
+      "attested_turn": false,
+      "capability_at_end": "not_installed",
+      "capability_at_start": "not_installed",
+      "capability_requests": [],
+      "engine_at_end": {
+        "default": "remotion",
+        "presentations": [
+          "remotion"
+        ]
+      },
+      "model": "sonnet",
+      "render_job_at_end": null,
+      "scenario": "install-unattested",
+      "server_journal": [
+        {
+          "code": "remotion_user_turn_required",
+          "kind": "remotion_mcp.tool_failed",
+          "op": "install",
+          "tool": "remotion_setup"
+        },
+        {
+          "code": "remotion_user_turn_required",
+          "kind": "remotion_mcp.tool_failed",
+          "op": "install",
+          "tool": "remotion_setup"
+        }
+      ],
+      "turns": [
+        {
+          "calls": [
+            {
+              "arguments": {
+                "max_results": 2,
+                "query": "select:mcp__jarvis-remotion__remotion_setup,mcp__jarvis-remotion__remotion_status"
+              },
+              "is_error": false,
+              "n": 1,
+              "speech": null,
+              "status": null,
+              "tool": "ToolSearch"
+            },
+            {
+              "arguments": {
+                "op": "install",
+                "user_request": "Installe Remotion."
+              },
+              "code": "remotion_user_turn_required",
+              "is_error": true,
+              "n": 2,
+              "speech": null,
+              "status": null,
+              "tool": "remotion:remotion_setup"
+            }
+          ],
+          "cost_usd": 0.0212924,
+          "duration_ms": 5856,
+          "final_answer": "L'installation de Remotion a été refusée. Le serveur répond qu'il faut une demande de ta part dans le tour en cours, et il n'a pas reconnu ta phrase comme telle. Rien n'a été lancé. Redis-moi « installe Remotion » et je relance. Si ça refuse encore, je te dirai ce que le serveur répond.",
+          "final_answer_chars": 287,
+          "is_error": false,
+          "session_id": "c3412578-3848-4ab2-9966-db3258446c87",
+          "spoken_blocks": 1,
+          "turns": 3,
+          "usage": {
+            "cache_creation_input_tokens": 2855,
+            "cache_read_input_tokens": 53304,
+            "input_tokens": 6,
+            "output_tokens": 453
+          },
+          "user": "Installe Remotion."
+        }
+      ]
+    },
+    {
+      "attestation_reads": 0,
+      "attested_turn": true,
+      "capability_at_end": "ready",
+      "capability_at_start": "ready",
+      "capability_requests": [],
+      "engine_at_end": {
+        "default": "remotion",
+        "presentations": [
+          "remotion"
+        ]
+      },
+      "model": "sonnet",
+      "render_job_at_end": null,
+      "scenario": "slidecar-refusal",
+      "server_journal": [],
+      "turns": [
+        {
+          "calls": [],
+          "cost_usd": 0.012819500000000001,
+          "duration_ms": 1873,
+          "final_answer": "Le moteur de présentation ne se change pas par moi : c'est un réglage que seul toi peux modifier. Ouvre la carte « Présentations · moteur » dans le Control Center et choisis Slidecar. Je ne lance rien de mon côté.",
+          "final_answer_chars": 213,
+          "is_error": false,
+          "session_id": "034c75b2-2084-4634-94da-3f958dae15fd",
+          "spoken_blocks": 1,
+          "turns": 1,
+          "usage": {
+            "cache_creation_input_tokens": 2595,
+            "cache_read_input_tokens": 15555,
+            "input_tokens": 2,
+            "output_tokens": 88
+          },
+          "user": "Passe cette présentation en Slidecar."
+        }
+      ]
+    },
+    {
+      "attestation_reads": 1,
+      "attested_turn": true,
+      "capability_at_end": "ready",
+      "capability_at_start": "ready",
+      "capability_requests": [],
+      "engine_at_end": {
+        "default": "remotion",
+        "presentations": [
+          "remotion"
+        ]
+      },
+      "model": "sonnet",
+      "render_job_at_end": null,
+      "scenario": "props-then-source",
+      "server_journal": [
+        {
+          "kind": "presentation_studio.tool",
+          "op": "variant",
+          "speech": "silent",
+          "tool": "presentation_inspect"
+        },
+        {
+          "kind": "presentation_studio.tool",
+          "op": "scene",
+          "speech": "silent",
+          "tool": "presentation_inspect"
+        },
+        {
+          "kind": "presentation_studio.tool",
+          "op": "commit",
+          "speech": "silent",
+          "tool": "presentation_edit"
+        },
+        {
+          "kind": "presentation_studio.tool",
+          "op": "commit",
+          "speech": "silent",
+          "tool": "presentation_edit"
+        }
+      ],
+      "turns": [
+        {
+          "calls": [
+            {
+              "arguments": {
+                "max_results": 2,
+                "query": "select:mcp__jarvis-presentation__presentation_inspect,mcp__jarvis-presentation__presentation_edit"
+              },
+              "is_error": false,
+              "n": 1,
+              "speech": null,
+              "status": null,
+              "tool": "ToolSearch"
+            },
+            {
+              "arguments": {
+                "target": "variant"
+              },
+              "is_error": false,
+              "n": 2,
+              "speech": "silent",
+              "status": null,
+              "tool": "presentation_inspect"
+            },
+            {
+              "arguments": {
+                "scene_id": "<pss1>",
+                "target": "scene"
+              },
+              "is_error": false,
+              "n": 3,
+              "speech": "silent",
+              "status": null,
+              "tool": "presentation_inspect"
+            },
+            {
+              "arguments": {
+                "ops": [
+                  {
+                    "control_id": "body",
+                    "if_current": "<text>",
+                    "op": "control.set",
+                    "scene_id": "<pss1>",
+                    "value": "<text>"
+                  }
+                ],
+                "revision": 4
+              },
+              "is_error": false,
+              "n": 4,
+              "speech": "silent",
+              "status": "applied",
+              "tool": "presentation_edit"
+            }
+          ],
+          "cost_usd": 0.04122540000000001,
+          "duration_ms": 7632,
+          "final_answer": "C'est fait : la deuxième scène affiche maintenant « Bientôt ».",
+          "final_answer_chars": 62,
+          "is_error": false,
+          "session_id": "02393266-f2aa-4d43-a8b8-97b338daf0a3",
+          "spoken_blocks": 1,
+          "turns": 5,
+          "usage": {
+            "cache_creation_input_tokens": 6304,
+            "cache_read_input_tokens": 96794,
+            "input_tokens": 10,
+            "output_tokens": 631
+          },
+          "user": "Mets le texte de la deuxième scène à « Bientôt »."
+        },
+        {
+          "calls": [],
+          "cost_usd": 0.04528330000000001,
+          "duration_ms": 2442,
+          "final_answer": "Cette scène n'a pas de réglage de couleur, donc il faudrait modifier sa source. Quelle couleur veux-tu pour le titre ?",
+          "final_answer_chars": 118,
+          "is_error": false,
+          "session_id": "02393266-f2aa-4d43-a8b8-97b338daf0a3",
+          "spoken_blocks": 1,
+          "turns": 1,
+          "usage": {
+            "cache_creation_input_tokens": 97,
+            "cache_read_input_tokens": 21859,
+            "input_tokens": 2,
+            "output_tokens": 148
+          },
+          "user": "Change la couleur du titre de la deuxième scène."
+        },
+        {
+          "calls": [
+            {
+              "arguments": {
+                "ops": [
+                  {
+                    "intent": "<text>",
+                    "op": "scene.source_request",
+                    "scene_id": "<pss1>"
+                  }
+                ]
+              },
+              "is_error": false,
+              "n": 1,
+              "speech": "silent",
+              "status": "applied",
+              "tool": "presentation_edit"
+            }
+          ],
+          "cost_usd": 0.05508050000000001,
+          "duration_ms": 3651,
+          "final_answer": "J'ai transmis la demande : un sous-agent doit refaire la deuxième scène dans un style plus sobre, avec le texte « Bientôt ». Rien n'a encore changé à l'écran, et je n'ai pas de confirmation que la modification est faite.",
+          "final_answer_chars": 220,
+          "is_error": false,
+          "session_id": "02393266-f2aa-4d43-a8b8-97b338daf0a3",
+          "spoken_blocks": 1,
+          "turns": 2,
+          "usage": {
+            "cache_creation_input_tokens": 749,
+            "cache_read_input_tokens": 44132,
+            "input_tokens": 4,
+            "output_tokens": 238
+          },
+          "user": "Refais la deuxième scène avec un autre style, plus sobre."
+        }
+      ]
+    }
+  ],
+  "slice": 21,
+  "total_calls": 7,
+  "total_cost_usd": 0.1757
+}

@@ -601,6 +601,43 @@ PRESENTATION = ServerMeta(
     },
 )
 
+#: Capacité Remotion (jarvis-remotion-presentation-integration, Slice 21) : serveur séparé de `jarvis-presentation` (douze outils, budget plein). Façade
+#: sur les routes de Core que les cartes du Control Center appellent. Aucun `ui_surface` (pas une opération du Tool Brain), aucun paramètre de
+#: moteur, jamais l'accusé du Studio ni la licence : à l'utilisateur seul (docs/remotion-runtime.md §13).
+_USER_TURN_RULE = "seulement dans un tour adressé de l'utilisateur ET user_request (ses mots) ; sinon remotion_user_turn_required, rien n'est envoyé à Core"
+REMOTION = ServerMeta(
+    server="jarvis-remotion", module="jarvis.runtime.remotion_mcp", category="presentation",
+    condition="scene.enabled", registration="jarvis",
+    tools={
+        "remotion_status": ToolMeta(
+            "Lire l'état de Remotion", "read", True, "none", "untyped",
+            parameter_rules=("export exige job_id (rj_…) lu dans exports",),
+            output_notes=("capability rend aussi le moteur par défaut (lecture seule, jamais modifiable d'ici)", "liste bornée : {items, total}")),
+        "remotion_setup": ToolMeta(
+            "Installer ou réparer Remotion", "write", False, "single_request", "untyped",
+            parameter_rules=(_USER_TURN_RULE, "déjà prêt : already_ready, rien n'est lancé"),
+            output_notes=("longue : 202 côté Core, suivie dans la carte Remotion ; ne pas boucler",)),
+        "remotion_studio": ToolMeta(
+            "Demander l'ouverture du Studio", "read", True, "none", "untyped",
+            parameter_rules=("n'appelle jamais l'ouverture : needs_user, l'utilisateur ouvre et confirme dans la carte",),
+            output_notes=("scene.prefab : la source de la scène demandée",)),
+        "remotion_export": ToolMeta(
+            "Exporter ou annuler un export", "write", False, "single_request", "untyped",
+            parameter_rules=(_USER_TURN_RULE, "start : format mp4, still ou pdf ; réglages en liste fermée (pas de concurrency) ; aucun Board lu",
+                             "cancel exige job_id lu avec remotion_status"),
+            output_notes=("job : état, phase, pourcentage ; révisions lues dans Core à l'appel",)),
+        "remotion_import": ToolMeta(
+            "Importer un modèle amont", "write", False, "single_request", "untyped",
+            parameter_rules=(_USER_TURN_RULE, "commit : SHA complet donné par l'utilisateur", "execute exige un plan identique lu dans ce processus",
+                             "la liste blanche des propriétaires est un réglage de l'utilisateur (origin_not_allowed)"),
+            output_notes=("propre à la présentation, jamais la bibliothèque partagée ; licence et dépendances refusées rendues telles quelles",)),
+        "remotion_upgrades": ToolMeta(
+            "Versions plus récentes et essai", "write", False, "single_request", "untyped",
+            parameter_rules=("notices : lecture seule", "try : " + _USER_TURN_RULE, "licence à reconnaître : remotion_licence_user_only (l'utilisateur seul)"),
+            output_notes=("un essai est une variante enfant, jamais un remplacement",)),
+    },
+)
+
 # Mémoire à long terme et connaissance à la demande (memory-intelligence-knowledge, Slice 05b) : façade sur
 # `/api/memory/brain/*` du Control Center ; Core possède le budget (3 appels par tour), la portée et les candidats.
 _MEMORY_BUDGET_NOTE = "compte dans le budget de 3 appels d'outil mémoire par tour (memory_tool_budget_exceeded)"
@@ -634,7 +671,7 @@ MEMORY = ServerMeta(
 )
 
 #: Ordre d'affichage : catégorie (§3), puis ce tuple.
-SERVERS: tuple[ServerMeta, ...] = (DISPLAY, SURFACE, PRESENTATION, CONSOLE, WORKSPACE, MEMORY, CAPTURE, BAREHANDS, DRIVE, TOOLS)
+SERVERS: tuple[ServerMeta, ...] = (DISPLAY, SURFACE, PRESENTATION, REMOTION, CONSOLE, WORKSPACE, MEMORY, CAPTURE, BAREHANDS, DRIVE, TOOLS)
 _BY_SERVER = {meta.server: meta for meta in SERVERS}
 
 

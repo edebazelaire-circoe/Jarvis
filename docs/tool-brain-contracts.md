@@ -1397,3 +1397,16 @@ Core still has no speech projection (13.4), so real speech-bound behavior is pro
 an `active` start belongs to Jarvis until the owner is proven; the open S8 items (static Jarvis prompt wording about archiving,
 speculative staging bypassing the gate, a 20 s window after a Core crash restarted in `off`, check-then-act windows,
 "hide gradually") are unchanged; a redundant proposal for an effect already on screen is still queued (idempotent).
+
+## 19. Remotion agent verbs: ownership (jarvis-remotion-presentation-integration, Slice 21)
+
+The Tool Brain never executes the `jarvis-remotion` tools: they are `registration = "jarvis"` brain tools without a `ui_surface`, outside the scene capability adapters
+(section 15). Ownership is enforced where the gesture is made, with the mechanisms this contract already relies on:
+
+| Question | Owner / mechanism |
+| --- | --- |
+| Who owns the state a verb changes? | Core (capability, render jobs, imports, presentations); the Control Center cards stay the one UI owner. The tools call the same Core routes. |
+| Who may start an install, export, import, trial or source edit? | Only an addressed user turn: the Control Center attests it (`presentation_studio_turn.py`); a turn Core opens alone (`source: system`) or a non-addressed turn is refused before any Core call (`remotion_user_turn_required`, `presentation_studio_source_request_user_only`). Ambient lane and Tool Brain wakes are never an addressed user turn. |
+| Who may touch a stage object of the playback? | Unchanged: `studio_owned` in `tool_brain_executor.py` (section 16); none of the new verbs writes the scene. |
+| Who acknowledges the unsandboxed Studio scene, a licence, or picks the engine? | The user, in the page. No tool has these arguments; Core also refuses `licence_ack` from any actor but `user`. |
+| Where is it proven? | `tests/unit/test_remotion_mcp_tools.py`, `test_remotion_mcp_server.py`, `test_remotion_mcp_ownership.py`; real-model traces in the handoff `evidence/` index. |

@@ -56,7 +56,7 @@ CAPABILITIES: tuple[Capability, ...] = (
                ("jarvis-display",)),
     Capability("presentation", "présentation",
                "presentations (présentation: open, compare, edit and play slide-like decks, make variants of them)",
-               ("jarvis-presentation",)),
+               ("jarvis-presentation", "jarvis-remotion")),
     Capability("workspace", "Board",
                "Boards, Sessions and their memory (and long-term memory / knowledge search, jarvis-memory)",
                ("jarvis-workspace", "jarvis-memory")),

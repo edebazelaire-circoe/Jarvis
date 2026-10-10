@@ -202,3 +202,17 @@ Observed by running and reading, not copied from the snapshot above.
 | Newer-version notice is read-only; a trial is a child variant; the original is byte-identical; nothing rebound; incompatible/non-native versions refused; retention keeps both pins; declined trial rolls back | `tests/unit/test_presentation_studio_upgrades.py`, `_upgrades_routes.py` |
 | The same, in a real Chrome against an isolated Core and the real Control Center | `tests/unit/test_presentation_studio_explorer_upgrades_browser.py` ; screenshots `tasks/jarvis-remotion-presentation-integration/slices/19-promotion-pins-and-upgrades/evidence/upgrades-*.png` |
 | Contracts | `docs/presentation-studio.md` (*Template and prefab promotion contract*, *Newer prefab versions and trial variants*), `docs/prefabs.md`, `docs/remotion-import.md` section 11, `docs/local-data.md` |
+
+# Slice 21 evidence (2026-10-10, branch `task/jarvis-remotion-presentation-integration-s21`, base `122fdcfe`)
+
+| Claim | Where it is proven |
+| --- | --- |
+| A separate small server carries the Remotion verbs; `jarvis-presentation` budget (17 100 B) is untouched; the global gate rose deliberately | `tests/unit/test_mcp_catalog.py::test_the_remotion_server_lists_its_tools_in_order_within_its_budget`, `test_the_whole_native_surface_declared_to_the_brain_stays_within_its_budget` (measure: 5 178 B, global 109 726 B / 110 000), `docs/mcp/tool-contract.md` section 10.17 |
+| No install, repair, export, cancel, import or trial from a turn that is not an addressed user turn: zero Core calls | `tests/unit/test_remotion_mcp_tools.py` (`..._send_nothing_to_core`, 4 families), `test_remotion_mcp_server.py::test_over_the_wire_an_ambient_turn_cannot_install_export_import_or_try` |
+| A source request needs the same turn; a props edit does not | `tests/unit/test_remotion_mcp_ownership.py` (real Core) |
+| The Studio is never opened and never acknowledged by an agent; a licence is never acknowledged by the brain | `test_remotion_mcp_tools.py::test_studio_never_opens_and_never_acknowledges_...`, `..._licence_to_acknowledge_is_left_to_the_user`, `test_remotion_mcp_server.py::test_an_argument_the_model_must_never_send_is_refused_before_any_tool_runs`, `..._never_name_the_engine_selection_policy_or_the_unsandboxed_acknowledgement_route` (AST) |
+| No engine argument on any native tool | `test_remotion_mcp_server.py::test_no_native_tool_of_any_server_takes_an_engine_parameter`, `test_presentation_studio_engine_tools.py` |
+| Ids come from the state; typed Core failures are said as they are | `test_remotion_mcp_tools.py` (`invalid_id`, `invalid_version`, `presentation_render_*`, `origin_not_allowed`, `license_*`) |
+| Real-model behaviour of the brain with these tools (7 scenarios, 20 turns, $1.08) | `slices/21-voice-tools-and-toolbrain/evidence/remotion-real-traces.{md,json}` (final), `evidence/first-run/` (before the fixes), `evidence/trace-analysis.md` (findings T1-T6), harness `tests/replay/remotion_mcp_real_trace.py` |
+| Contracts | `docs/remotion-runtime.md` section 13, `docs/tool-brain-contracts.md` section 19, `docs/remotion-render.md`, `docs/remotion-import.md`, `docs/remotion-studio.md`, `docs/presentation-engine.md` |
+| Not evidenced | real voice (HV-21-01), a real Control Center page answering the attestation, the sub-agent's own `source-edits` call, real-model sessions for import and upgrades, real Remotion routes under the model (scripted capability stub) |

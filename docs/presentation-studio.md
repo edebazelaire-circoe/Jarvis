@@ -2033,7 +2033,7 @@ real,realpage_browser,docs}.py` and `test_presentation_studio_reload_host_js.py`
 `jarvis-presentation` budget is unchanged, `test_mcp_catalog`). A delegated sub-agent then (1) **reads** the scene's source with
 `GET .../variants/{variant_id}/scenes/{scene_id}/source` (`{engine, prefab, source_revision, basis, manifest, sources: {path: text},
 assets: {path: {bytes, sha256}}}`, never asset bytes), (2) **proposes** files with `POST .../source-edits`, `actor: "brain"`, the
-`basis` it read and the `request_id` of the recorded request (the request is closed when the edit stands). `files` for a Remotion
+`basis` it read and the `request_id` of the recorded request (**required for the brain** since the Slice 21 rework: [Source requests](#source-requests-scenesource_request-durability-decision); the request is closed when the edit stands). `files` for a Remotion
 scene:
 
 | Key | Meaning |
@@ -2118,9 +2118,26 @@ timeout (60 s; the shared `host.js` is **not** built under the lock any more: `c
 source edit that carries `request_id` closes the request (`fulfil_source_request`). Reasons: the intent is free text that must
 not reach a file or a journal; a request without a producer has no consumer until the agent surface (Slice 21) exists, and AI
 code generation is out of scope here; after a restart a stale request is misleading because the scene moved on; losing one is
-visible (eviction row, `durable: false` in every result) and costs only a repeated sentence. An unknown or evicted
-`request_id` never blocks an edit. Revisit when Slice 21 needs requests to outlive a restart (then a bounded, content-free
-index in a file store).
+visible (eviction row, `durable: false` in every result) and costs only a repeated sentence. Revisit if requests must outlive a restart
+(then a bounded, content-free index in a file store).
+
+**Amended by the Remotion Slice 21 rework (QA B1): for the `brain`, a pending request IS the authority of a source edit.** The Slice 06
+rule « an unknown or evicted `request_id` never blocks an edit » now holds for the **user** only (the Control Center relay forces the actor
+`user`; the user needs no request). For the actor `brain`:
+
+1. Core **records** a brain `scene.source_request` only when the edit body carries `origin: "explicit_user_request"` (committed edits; a preview
+   records nothing). The `jarvis-presentation` MCP server sets it only after the Control Center attests an addressed user turn; without it Core
+   answers 403 `presentation_studio_source_request_required` (a `refused` edit result, `refusal_kind: authority`). The record keeps `origin`
+   (`explicit_user_request` always for a user's own request) and a monotonic `created_at`.
+2. `POST .../source-edits` with `actor: "brain"` **requires** the `request_id` of a pending record for the same presentation, variant and
+   scene whose `origin` is `explicit_user_request`; otherwise 403 `presentation_studio_source_request_required`, before any composition, build
+   or rate-limit charge. Messages say « demande à renouveler » (unknown, satisfied, evicted, lost at a restart, expired, another scene).
+3. The record stays pending until an edit **stands** (`reloaded`, `reloaded_state_reset`, `repinned`): a refused build, a `stale` basis or a
+   rolled-back mount keep it, so a retouch works with the same `request_id`. It expires after 30 minutes (`SOURCE_REQUEST_TTL_S`, monotonic
+   clock) and is lost at a restart (memory only, unchanged).
+4. **Remaining limit, said plainly**: Core trusts the `actor` and `origin` fields of a body presented with the Core token. A holder of the
+   token can forge both, so this stops an ambient or spontaneous brain (a turn nobody addressed, a sub-agent launched on a whim, an honest
+   brain skipping the step) but not a hostile process that has the token. The token is the boundary for that case, as for every `/v1` route.
 
 ### Concurrency
 

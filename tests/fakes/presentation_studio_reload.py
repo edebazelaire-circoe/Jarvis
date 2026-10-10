@@ -269,7 +269,23 @@ class Rig:
     def request(self, revision: int, files: dict, *, scene_id: str = SID, actor: str = "user", **extra) -> dict:
         return {"actor": actor, "basis": {"variant_revision": revision}, "scene_id": scene_id, "files": files, **extra}
 
-    async def edit(self, files: dict, *, scene_id: str = SID, revision: int | None = None, **extra):
+    async def record_request(self, scene_id: str = SID, *, actor: str = "user", origin: str | None = None) -> str:
+        """Remotion Slice 21 (QA B1): a pending source request, as the edit API records it (a user's by default), and its id."""
+
+        revision = (await self.variant()).revision
+        body = {"actor": actor, "mode": "commit", "basis": {"variant_revision": revision},
+                "ops": [{"op": "scene.source_request", "scene_id": scene_id, "intent": "test request"}]}
+        if origin is not None:
+            body["origin"] = origin
+        done = await self.edits.edit(self.pid, self.vid, body)
+        return done.source_requests[0]["request_id"]
+
+    async def edit(self, files: dict, *, scene_id: str = SID, revision: int | None = None, auto_request: bool = True, **extra):
+        """A source edit. A `brain` edit without a `request_id` gets a pending request recorded for it first (the Core rule of the Slice 21
+        rework: the brain edits only for a pending request of the user); `auto_request=False` sends it as it is (the refusal tests)."""
+
+        if extra.get("actor") == "brain" and auto_request and "request_id" not in extra and getattr(self, "edits", None) is not None:
+            extra["request_id"] = await self.record_request(scene_id)
         if revision is None:
             revision = (await self.variant()).revision
         return await self.reload.apply_source_edit(self.pid, self.vid, self.request(revision, files, scene_id=scene_id, **extra))

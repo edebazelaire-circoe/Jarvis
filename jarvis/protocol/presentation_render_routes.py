@@ -13,8 +13,8 @@ porteur de Core obligatoire. Le chemin `.../render/jobs` a au moins quatre segme
 
 Corps d'une demande : `{"format": "mp4"|"still"|"pdf", "settings": {...}}` plus, au choix, `{"snapshot_id": "jart_ps_..."}` (rendre un snapshot déjà figé)
 OU `{"presentation_id", "variant_id", "expected_presentation_revision", "expected_variant_revision", "authorised_boards": [...]}` (figer cette
-variante, rejouable, puis la rendre ; `authorised_boards` absent = aucun Board lu). Aucun outil MCP, aucun chemin du cerveau : l'exportation est
-une action explicite de l'utilisateur.
+variante, rejouable, puis la rendre ; `authorised_boards` absent = aucun Board lu). Le cerveau n'exporte que par `remotion_export` (serveur `jarvis-remotion`, Slice 21), sur la demande de l'utilisateur
+dans le tour en cours et sans `authorised_boards` : l'exportation reste une action explicite de l'utilisateur.
 
 Refus : `{"error": {"code", "message"}}` ; codes `presentation_render_*` (400 invalide, 404 inconnu, 409 non prêt ou snapshot refusé, 429 file pleine,
 503 Core sans rendu) et les codes des registres traversés (`stale_revision`, `live_ref_*`, `artifact_*`). Un ÉCHEC de rendu n'est pas une erreur

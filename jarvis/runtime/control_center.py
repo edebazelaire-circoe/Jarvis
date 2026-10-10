@@ -5594,7 +5594,8 @@ class ControlCenter:
         attributes = {"jarvis-display": "display_mcp", "jarvis-barehands": "barehands_mcp",
                       "jarvis-console": "console_mcp", "jarvis-tools": "tools_mcp",
                       "jarvis-capture": "capture_mcp", "jarvis-workspace": "workspace_mcp", "jarvis-memory": "memory_mcp",
-                      "jarvis-drive": "drive_mcp", "jarvis-presentation": "presentation_mcp"}
+                      "jarvis-drive": "drive_mcp", "jarvis-presentation": "presentation_mcp",
+                      "jarvis-remotion": "presentation_mcp"}
         facts: dict[str, dict[str, Any]] = {}
         for meta in mcp_catalog.SERVERS:
             attribute = attributes.get(meta.server)

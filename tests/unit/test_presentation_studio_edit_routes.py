@@ -40,8 +40,11 @@ def op_set(scene_id, control_id, value, **extra):
     return {"op": "control.set", "scene_id": scene_id, "control_id": control_id, "value": value, **extra}
 
 
-def body(revision, *ops, actor="brain", mode="commit") -> dict:
-    return {"actor": actor, "mode": mode, "basis": {"variant_revision": revision}, "ops": list(ops)}
+def body(revision, *ops, actor="brain", mode="commit", origin=None) -> dict:
+    wire = {"actor": actor, "mode": mode, "basis": {"variant_revision": revision}, "ops": list(ops)}
+    if origin is not None:
+        wire["origin"] = origin
+    return wire
 
 
 async def new_presentation(core: Core, title: str = "Atelier") -> tuple[str, str, int]:
@@ -177,7 +180,8 @@ async def test_the_canonical_event_is_recorded_with_ids_and_never_content(tmp_pa
         pid, vid, revision = await new_presentation(core)
         result = await core.client.presentation_studio_edit(
             pid, vid, body(revision, op_set(S1, "body", "Texte secret"),
-                           {"op": "scene.source_request", "scene_id": S1, "intent": "ajoute une animation"}))
+                           {"op": "scene.source_request", "scene_id": S1, "intent": "ajoute une animation"},
+                           origin="explicit_user_request"))
         assert result["status"] == "applied"
         events = [e for e in seen if e.event_type is T.SYSTEM_PRESENTATION_STUDIO_EDIT_COMMITTED]
         assert len(events) == 1

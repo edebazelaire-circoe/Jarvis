@@ -257,6 +257,7 @@ class PresentationStudioReloadService:
         if self._closing:
             raise PresentationStudioError(C.RELOAD_UNAVAILABLE, "Core is stopping: no new source edit is accepted")
         request = parse_source_edit(raw)
+        self._require_pending_request(presentation_id, variant_id, request)
         self._admit(presentation_id, variant_id, request)
         self._inflight += 1
         self._idle.clear()
@@ -276,6 +277,22 @@ class PresentationStudioReloadService:
                 self._idle.set()
         self._finish(result, elapsed=self._monotonic() - started)
         return result
+
+    def _require_pending_request(self, presentation_id: str, variant_id: str, request: SourceEditRequest) -> None:
+        """Remotion Slice 21 (QA B1): un edition de source de `brain` cite une demande de source EN ATTENTE, enregistree pour cette scene dans un
+        tour de l'utilisateur (`claim_source_request`), sinon `presentation_studio_source_request_required` avant tout travail. L'utilisateur
+        (relais du Control Center, acteur force a `user`) n'est pas concerne. Sans service d'edition cable (montages de test), il n'y a pas de
+        registre a consulter."""
+
+        if request.actor is not StudioActor.BRAIN or self._edits is None:
+            return
+        try:
+            self._edits.claim_source_request(request.request_id, presentation_id, variant_id, request.scene_id)
+        except PresentationStudioError as exc:
+            self._trace("core.presentation_studio.reload_refused", "Edition de source de l'agent sans demande en attente", level="warning",
+                        data={"presentation_id": presentation_id, "variant_id": variant_id, "scene_id": request.scene_id,
+                              "code": exc.code.value, "actor": request.actor.value, "has_request_id": bool(request.request_id)})
+            raise
 
     def _admit(self, presentation_id: str, variant_id: str, request: SourceEditRequest) -> None:
         """Plafond par scene des editions de l'agent (`presentation_studio_reload_limits`)."""
