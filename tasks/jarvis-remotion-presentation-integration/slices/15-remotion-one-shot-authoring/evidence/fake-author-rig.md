@@ -2,15 +2,15 @@
 
 > Scripted rig, not a model trace. The real-model trace analysis (does Claude follow the policy, how many tool calls, do the questions stay in the budget, is the first draft respectable) is a required gate of Slices 21 and 22, re-run for Remotion scenes by Slice 15 (see the real-trace evidence of that Slice).
 
-Planner prompt `presentation_studio.authoring.planner`: 8229 characters, content fingerprint `57ad836d6570c979...` (path-independent: the registry's own `default_revision` also hashes the source path), operations `presentation_draft_check`, `presentation_draft_assemble`, `presentation_draft_finalize`, attached to a prompt program: True.
-Gate: 62 rules. Question cap: {'one_shot': 0, 'exploratory': 1, 'directed': 3}.
+Planner prompt `presentation_studio.authoring.planner`: 8520 characters, content fingerprint `e9661305d6a8834c...` (path-independent: the registry's own `default_revision` also hashes the source path), operations `presentation_draft_check`, `presentation_draft_assemble`, `presentation_draft_finalize`, attached to a prompt program: True.
+Gate: 63 rules. Question cap: {'one_shot': 0, 'exploratory': 1, 'directed': 3}.
 
 ## Scripted authors
 
 | Scenario | Workflow | Check ok | Assemble | Errors | Warnings | Variants (draft) | Scenes | Prefabs | DA origin |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | good one-shot (report display) | one_shot | True | delivered (201) | - | - | 1 (0) | 1 | 1 | generated |
-| good 12-scene directed deck | directed | True | delivered (201) | - | - | 1 (0) | 12 | 1 | inferred |
+| good 12-scene directed deck | directed | True | delivered (201) | - | - | 1 (0) | 12 | 2 | inferred |
 | exploratory, 3 divergent candidates | exploratory | True | delivered (201) | - | - | 3 (3) | 3 | 1 | generated, generated, generated |
 
 ## The careless author: one rule broken at a time
@@ -52,6 +52,6 @@ Gate: 62 rules. Question cap: {'one_shot': 0, 'exploratory': 1, 'directed': 3}.
 | `language_mismatch` | refused (400) | language_mismatch | True | False |
 | `prefab_invalid` | refused (400) | prefab_invalid | True | False |
 
-Rules exercised by their own unit tests rather than by this table: behavior_risky, brief_invalid, candidates_count, candidates_not_divergent, document_invalid, draft_schema, motion_unguarded, placeholder_allowed, scene_unbound, tsx_color_hardcoded, tsx_inspiration_unconfirmed, tsx_interpolate_unclamped, tsx_live_ref_invalid, tsx_live_ref_unresolved, tsx_monolith, tsx_props_undeclared, tsx_static_scene, and every warning-level rule.
+Rules exercised by their own unit tests rather than by this table: behavior_risky, brief_invalid, candidates_count, candidates_not_divergent, document_invalid, draft_schema, motion_unguarded, placeholder_allowed, scene_unbound, tsx_color_hardcoded, tsx_inspiration_unconfirmed, tsx_interpolate_unclamped, tsx_layout_monotone, tsx_live_ref_invalid, tsx_live_ref_unresolved, tsx_monolith, tsx_props_undeclared, tsx_static_scene, and every warning-level rule.
 
 Kill drills: see tests/unit/test_presentation_studio_authoring_crash.py (real Popen.kill at: before publication, after a published bundle, documents built, inside the store write x3, right after the commit).

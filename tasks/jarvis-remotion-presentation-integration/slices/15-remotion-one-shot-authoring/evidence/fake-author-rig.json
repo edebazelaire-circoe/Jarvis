@@ -2,8 +2,8 @@
   "disclaimer": "Scripted rig, not a model trace. The real-model trace analysis (does Claude follow the policy, how many tool calls, do the questions stay in the budget, is the first draft respectable) is a required gate of Slices 21 and 22, re-run for Remotion scenes by Slice 15 (see the real-trace evidence of that Slice).",
   "prompt": {
     "id": "presentation_studio.authoring.planner",
-    "fingerprint": "57ad836d6570c97907cc9618f2b68f746bde8a561e51c0fd74a4e584b15161f6",
-    "characters": 8229,
+    "fingerprint": "e9661305d6a8834c47f9b8f4c0b30592b2f5d2d1df9b954d8e8cd98e5c51866f",
+    "characters": 8520,
     "operations": [
       "presentation_draft_check",
       "presentation_draft_assemble",
@@ -12,7 +12,7 @@
     "attached_to_a_program": true,
     "attached_programs": 4
   },
-  "rules": 62,
+  "rules": 63,
   "question_cap": {
     "one_shot": 0,
     "exploratory": 1,
@@ -32,7 +32,7 @@
       "http": 201,
       "errors": [],
       "warnings": [],
-      "rules_checked": 47,
+      "rules_checked": 48,
       "skipped": [],
       "stats": {
         "scenes": 1,
@@ -65,7 +65,7 @@
       "http": 201,
       "errors": [],
       "warnings": [],
-      "rules_checked": 47,
+      "rules_checked": 48,
       "skipped": [],
       "stats": {
         "scenes": 12,
@@ -75,14 +75,14 @@
         "variants": 1,
         "estimated_duration_s": 600,
         "target_duration_s": 600,
-        "bundles": 1,
-        "remotion_bundles": 1,
+        "bundles": 2,
+        "remotion_bundles": 2,
         "max_scene_words": 28
       },
       "variants": 1,
       "draft_variants": 0,
       "scenes": 12,
-      "published_prefabs": 1,
+      "published_prefabs": 2,
       "da_origins": [
         "inferred"
       ],
@@ -521,6 +521,7 @@
     "tsx_color_hardcoded",
     "tsx_inspiration_unconfirmed",
     "tsx_interpolate_unclamped",
+    "tsx_layout_monotone",
     "tsx_live_ref_invalid",
     "tsx_live_ref_unresolved",
     "tsx_monolith",
