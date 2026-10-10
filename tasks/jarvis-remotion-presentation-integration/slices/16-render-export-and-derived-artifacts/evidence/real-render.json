@@ -1,21 +1,21 @@
 {
-  "verdict": "FAILED",
-  "head": "3c31fe11c3bdfdc663780b6441d7a177fd54334d",
+  "verdict": "PASSED",
+  "head": "4df3d83b208ddb10b3a08f9c197f08cd349f8ac6",
   "tree_dirty": false,
   "platform": "Windows-11-10.0.26200-SP0",
   "node": "v24.18.0",
   "chrome": "chrome 154.0.8037.99",
   "remotion": "4.0.534",
-  "elapsed_s": 217.4,
+  "elapsed_s": 226.7,
   "timings": {
-    "mp4_s": 13.1,
+    "mp4_s": 13.8,
     "still_s": 8.3,
-    "pdf_s": 9.9,
-    "cancel_to_stopped_s": 1.1
+    "pdf_s": 8.8,
+    "cancel_to_stopped_s": 1.3
   },
   "disk": {
-    "free_before_mb": 17495,
-    "free_after_mb": 17618
+    "free_before_mb": 17618,
+    "free_after_mb": 17577
   },
   "facts": {
     "availability": {
@@ -42,7 +42,7 @@
       "render_frame_start": 0,
       "render_height": 720,
       "render_image_format": "mp4",
-      "render_job_id": "rj_bd0a1305ad40",
+      "render_job_id": "rj_5f53b90b70cd",
       "render_output_sha256": "a644b7403787e4e1198e92ddd6ebfbdfe54eaffe260101ddb32215470a5b8e8f",
       "render_pixel_format": "yuv420p",
       "render_prefab_id": "presentation-studio.p000000000001.s000000000001",
@@ -53,7 +53,7 @@
       "render_settings_sha256": "b788f79defd4c5b69db8542cd535eaf69103e930443f7c773b03feb0d5bbb100",
       "render_source_digest": "4d1fc317dc730ff6c367c49f3bc02b709d7c1c9103b1cd3c28ddb39ee3c4753b",
       "render_verified_by": "ffprobe",
-      "render_wall_ms": 12867,
+      "render_wall_ms": 13653,
       "render_width": 1280
     },
     "mp4_ffprobe": {
@@ -78,7 +78,7 @@
       "render_frames": "45",
       "render_height": 720,
       "render_image_format": "png",
-      "render_job_id": "rj_4f8b2facfdbe",
+      "render_job_id": "rj_0361b17c2708",
       "render_output_sha256": "610c92464e1bdc9d90eebff8c5651b8c1a03512ebda89a9b8058a01aefbaaad0",
       "render_prefab_id": "presentation-studio.p000000000001.s000000000001",
       "render_prefab_version": 1,
@@ -88,7 +88,7 @@
       "render_settings_sha256": "02ce34790c31077f7b39ba9be1b922aef17d9d738695a7759ab9c63e76c45e1d",
       "render_source_digest": "4d1fc317dc730ff6c367c49f3bc02b709d7c1c9103b1cd3c28ddb39ee3c4753b",
       "render_verified_by": "png",
-      "render_wall_ms": 8223,
+      "render_wall_ms": 8226,
       "render_width": 1280
     },
     "pdf_metadata": {
@@ -104,7 +104,7 @@
       "render_frames": "0,45,89",
       "render_height": 720,
       "render_image_format": "jpeg",
-      "render_job_id": "rj_a2d272669e67",
+      "render_job_id": "rj_dda62650b482",
       "render_output_sha256": "25149d8af1407d367b986ca2f615a82d8d4663852e8b22bb25afe5b6c668650d",
       "render_pages": 3,
       "render_prefab_id": "presentation-studio.p000000000001.s000000000001",
@@ -115,7 +115,7 @@
       "render_settings_sha256": "14fa739504e435d2be87eee586cda78e873c634349472a41b973e1602f09711f",
       "render_source_digest": "4d1fc317dc730ff6c367c49f3bc02b709d7c1c9103b1cd3c28ddb39ee3c4753b",
       "render_verified_by": "pdf",
-      "render_wall_ms": 9519,
+      "render_wall_ms": 8735,
       "render_width": 1280
     },
     "egress_denied_mp4": 39,
@@ -242,10 +242,10 @@
     {
       "check": "mp4: job complete",
       "ok": true,
-      "elapsed_s": 13.1,
+      "elapsed_s": 13.8,
       "size": 24712,
       "verified_by": "ffprobe",
-      "progress_samples": 51,
+      "progress_samples": 54,
       "phases": [
         "bundling",
         "complete",
@@ -253,8 +253,7 @@
         "preparing",
         "queued",
         "rendering",
-        "selecting_composition",
-        "verifying"
+        "selecting_composition"
       ],
       "error": [
         null,
@@ -308,7 +307,7 @@
       "phases": [
         "bundling",
         "complete",
-        "done",
+        "opening_browser",
         "preparing",
         "queued",
         "rendering",
@@ -348,20 +347,18 @@
     {
       "check": "pdf: job complete",
       "ok": true,
-      "elapsed_s": 9.9,
+      "elapsed_s": 8.8,
       "size": 54674,
       "verified_by": "pdf",
-      "progress_samples": 39,
+      "progress_samples": 35,
       "phases": [
         "bundling",
         "complete",
-        "done",
         "opening_browser",
         "preparing",
         "queued",
         "rendering",
-        "selecting_composition",
-        "storing"
+        "selecting_composition"
       ],
       "error": [
         null,
@@ -417,7 +414,7 @@
     {
       "check": "cancel: job cancelled, derivative failed with a stable code, no final file",
       "ok": true,
-      "seconds": 1.1,
+      "seconds": 1.3,
       "state": "cancelled",
       "artifact_state": "failed",
       "code": "presentation_render_cancelled",
@@ -516,13 +513,13 @@
     {
       "check": "restart: a render is running in a separate Core-like process",
       "ok": true,
-      "job": "rj_b1185565f36f"
+      "job": "rj_12fd2788b9aa"
     },
     {
       "check": "restart: the 'Core' is dead and its render process is still alive (an orphan)",
       "ok": true,
-      "ref": "10332:134360741202311567",
-      "progress": "{\"phase\":\"rendering\",\"frames_done\":5,\"frames_total\":90,\"updated_ms\":1791600528942,\"bundle_percent\":100,\"encoded_frames\":0}",
+      "ref": "28868:134360743503436360",
+      "progress": "{\"phase\":\"rendering\",\"frames_done\":9,\"frames_total\":90,\"updated_ms\":1791600759278,\"bundle_percent\":100,\"encoded_frames\":0}",
       "result_written": false
     },
     {
@@ -623,7 +620,7 @@
       "stale": true,
       "renders": [
         {
-          "artifact_id": "jart_141f04aff8384bf1bff3d8d21c420602",
+          "artifact_id": "jart_7c13434c6687442696cba4ff959d28b4",
           "kind": "presentation_still",
           "state": "complete",
           "format": "still",
@@ -744,11 +741,11 @@
     },
     {
       "check": "a frozen source that no longer passes today's static guards is revalidated and refused at render time (no browser launched)",
-      "ok": false,
-      "state": "complete",
-      "phase": "complete",
-      "code": null,
-      "detail": ""
+      "ok": true,
+      "state": "failed",
+      "phase": "failed",
+      "code": "presentation_render_source_refused",
+      "detail": "the frozen source no longer passes validation: guard: added after the freeze: the word ATTACKER is now forbidden"
     },
     {
       "check": "negative control (browser arguments not rewritten): the sinks DO receive traffic, so the harness would see a leak",
@@ -765,11 +762,11 @@
         "cancel_and_kill",
         "sandbox"
       ],
-      "head": "3c31fe11c3bdfdc663780b6441d7a177fd54334d",
+      "head": "4df3d83b208ddb10b3a08f9c197f08cd349f8ac6",
       "tree_dirty": false,
-      "elapsed_s": 112.9,
-      "disk_free_before_mb": 17495,
-      "disk_free_after_mb": 17480
+      "elapsed_s": 116.0,
+      "disk_free_before_mb": 17618,
+      "disk_free_after_mb": 17566
     },
     {
       "scenarios": [
@@ -779,21 +776,21 @@
         "bounds",
         "burst"
       ],
-      "head": "3c31fe11c3bdfdc663780b6441d7a177fd54334d",
+      "head": "4df3d83b208ddb10b3a08f9c197f08cd349f8ac6",
       "tree_dirty": false,
-      "elapsed_s": 49.0,
-      "disk_free_before_mb": 17480,
-      "disk_free_after_mb": 17608
+      "elapsed_s": 52.8,
+      "disk_free_before_mb": 17565,
+      "disk_free_after_mb": 17572
     },
     {
       "scenarios": [
         "hostile"
       ],
-      "head": "3c31fe11c3bdfdc663780b6441d7a177fd54334d",
+      "head": "4df3d83b208ddb10b3a08f9c197f08cd349f8ac6",
       "tree_dirty": false,
-      "elapsed_s": 55.5,
-      "disk_free_before_mb": 17608,
-      "disk_free_after_mb": 17618
+      "elapsed_s": 57.9,
+      "disk_free_before_mb": 17573,
+      "disk_free_after_mb": 17577
     }
   ]
 }
