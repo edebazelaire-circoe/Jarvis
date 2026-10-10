@@ -170,6 +170,7 @@ RULES: tuple[Rule, ...] = (
     Rule("tsx_monolith", W, W, O, f"a scene over {MONOLITH_LINES} lines is split into modules (`src/lib/*.tsx`)"),
     Rule("tsx_layout_monotone", W, W, O, f"a deck of {MONOTONE_SCENES} scenes or more does not show them all through one source: the storyboard gives a layout to each kind of scene"),
     Rule("tsx_anchor_range", E, E, E, "an anchor's `at_ms` falls inside the composition (duration_in_frames / fps)"),
+    Rule("tsx_anchor_untimed", E, E, W, "an anchor of a Remotion scene has an `at_ms` after the first frame (else the scene holds on its first frame, usually blank, until the anchor is revealed)"),
     Rule("tsx_live_ref_invalid", E, E, E, "`src/live-refs.json` follows the Slice 09 grammar (`board:<id>/memory/<path>` or `/artifact/<id>`)"),
     Rule("tsx_live_ref_unresolved", E, E, W, "every live Board reference resolves for the Boards the user works with (`authorised_boards`, default deny)"),
     Rule("tsx_inspiration_unconfirmed", E, E, E, "an inspiration names an existing Remotion source whose upstream provenance Core verified"),
@@ -784,14 +785,20 @@ def _tsx(sink: _Sink, draft: PresentationDraft, brief: AuthoringBrief, *_: Any) 
             sink.add("tsx_layout_monotone", f"bundle:{next(iter(shown))}",
                      f"all {len(draft.scenes)} scenes use this one source: write 2 to 4 sources, one per kind of scene (opening, key figure, list, "
                      "close), sharing the theme and the kit")
-    if sink.ran("tsx_anchor_range"):
+    if sink.ran("tsx_anchor_range") or sink.ran("tsx_anchor_untimed"):
         for scene in draft.scenes:
             bundle = next((b for b in remotion if b.key == scene.bundle_key), None)
             if bundle is None:
                 continue
             composition = bundle.bundle.manifest.source.composition
             limit_ms = composition.duration_in_frames * 1000 // composition.fps
+            first_frame_ms = 500 // composition.fps          # `frame_of_ms` rounds to the nearest frame: below this an anchor IS frame 0
             for anchor in scene.scene.anchors:
+                if anchor.at_ms is None or anchor.at_ms <= first_frame_ms:
+                    sink.add("tsx_anchor_untimed", f"scene:{scene.key}",
+                             f"anchor {anchor.anchor_id} has no `at_ms` after the first frame: a Remotion scene with such an anchor stays on its first frame "
+                             "until the presenter reveals it (set `at_ms` after the entrance, e.g. 3000)")
+                    continue
                 if anchor.at_ms is not None and anchor.at_ms > limit_ms:
                     sink.add("tsx_anchor_range", f"scene:{scene.key}",
                              f"anchor {anchor.anchor_id} sits at {anchor.at_ms} ms, the composition lasts {limit_ms} ms: move it inside "

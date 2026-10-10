@@ -2233,7 +2233,7 @@ l'aperçu, chaque action contre un vrai Core, le clavier seul, l'arbre d'accessi
 ### Assemblage d'une présentation (studio, Slice 11)
 
 Contrat : [presentation-studio.md](presentation-studio.md#authoring-contract-slice-11). Le cerveau soumet **un** brouillon (brief, scènes, partition,
-direction artistique) ; Core le vérifie avec une porte de qualité (63 règles codées, tableau dans le contrat ; 15 sont celles des sources Remotion, Slice 15) puis le stocke en **une seule transaction**.
+direction artistique) ; Core le vérifie avec une porte de qualité (64 règles codées, tableau dans le contrat ; 16 sont celles des sources Remotion, Slice 15) puis le stocke en **une seule transaction**.
 L'outil MCP est `presentation_view` (Slice 21, `explorer_open` / `explorer_close`) : il appelle ces deux routes ; le relais du Control Center force l'acteur `user`.
 
 - **Vérifier sans rien écrire** : `POST /api/presentation-studio/authoring/check` rend le rapport (`failures` bloquent, `warnings` informent, `skipped` dit

@@ -30,8 +30,10 @@ PLAYBACK = "/v1/presentation-studio/playback"
 AUTHORING = "/v1/presentation-studio/authoring"
 LOOK = ("(()=>{const h=document.querySelector('h1');const p=document.querySelector('p');const root=h.parentElement;"
         "return {title:h.textContent,body:p.textContent,color:getComputedStyle(h).color,ground:getComputedStyle(root).backgroundColor,"
-        "font:getComputedStyle(h).fontFamily,mark:window.__authoringMark=window.__authoringMark||String(Math.random())}})()")
+        "font:getComputedStyle(h).fontFamily,opacity:getComputedStyle(h).opacity,mark:window.__authoringMark=window.__authoringMark||String(Math.random())}})()")
 TITLE = "(document.querySelector('h1')||{}).textContent"
+#: The entrance has played: the headline is fully opaque (until then it is mid-fade, and a held first frame would never get here).
+SETTLED = {"until": "getComputedStyle(document.querySelector('h1')).opacity==='1'", "ms": 15000, **SANDBOX}
 
 
 def rgb(hex_colour: str) -> str:
@@ -76,11 +78,11 @@ async def test_a_scripted_brief_becomes_a_multi_scene_remotion_presentation_that
         status, started = await stack.start(pid)
         assert status == 200 and started["state"]["phase"] == "playing", started
         shots = [str(tmp_path / f"scene_{n}.png") for n in range(1, 5)] + [str(tmp_path / "scene_1_edited.png")]
-        steps = [{"wait": 500}, READY, {"until": f"{TITLE}==={titles[0]!r}", "ms": 30000, **SANDBOX}, {"wait": 700},
+        steps = [{"wait": 500}, READY, {"until": f"{TITLE}==={titles[0]!r}", "ms": 30000, **SANDBOX}, SETTLED,
                  {"value": "look_1", "expr": LOOK, **SANDBOX}, {"shot": shots[0]}]
         for n in range(1, 4):
             steps += [http_step(stack, f"next_{n}", "POST", f"{PLAYBACK}/next", {"actor": "user"}),
-                      {"until": f"{TITLE}==={titles[n]!r}", "ms": 30000, **SANDBOX}, {"wait": 700},
+                      {"until": f"{TITLE}==={titles[n]!r}", "ms": 30000, **SANDBOX}, SETTLED,
                       {"value": f"look_{n + 1}", "expr": LOOK, **SANDBOX}, {"shot": shots[n]}]
         steps += [http_step(stack, "back", "POST", f"{PLAYBACK}/previous", {"actor": "user"}),
                   {"until": f"{TITLE}==={titles[2]!r}", "ms": 30000, **SANDBOX}]
@@ -99,6 +101,7 @@ async def test_a_scripted_brief_becomes_a_multi_scene_remotion_presentation_that
             assert look["title"] == titles[n - 1] and look["body"].strip(), look                       # its own words, from props and data
             assert look["color"] == accent and look["ground"] == ground, (n, look, accent, ground)     # the art direction is what is drawn
             assert look["font"], look
+            assert look["opacity"] == "1", look                  # the scene is VISIBLE (a scene held on frame 0 reads the right colours and shows nothing)
         assert reads["after_edit"]["color"] == "rgb(0, 255, 0)" and reads["before_edit"]["color"] == accent
         assert reads["after_edit"]["mark"] == reads["before_edit"]["mark"], "same sandbox document: an edit is not a remount"
         assert reads["after_edit"]["ground"] == ground and reads["frames"] == 1 and reads["shell"]["phase"] == "ready"
@@ -131,10 +134,11 @@ async def test_the_candidates_of_an_exploratory_request_are_drawn_in_their_own_d
             shots.append(shot)
             expected_title = title if number == 1 else f"Variante {number}"
             result = await run(stack.page_url, [{"wait": 500}, READY, {"until": f"{TITLE}==={expected_title!r}", "ms": 30000, **SANDBOX},
-                                                 {"wait": 700}, {"value": "look", "expr": LOOK, **SANDBOX}, {"shot": shot}])
+                                                 SETTLED, {"value": "look", "expr": LOOK, **SANDBOX}, {"shot": shot}])
             look = result["reads"]["look"]
             assert "failed" not in result["reads"], result["reads"]
             assert look["ground"] == rgb(palette["background"]) and look["color"] == rgb(palette["accent"]), (number, look, palette)
+            assert look["opacity"] == "1", look
             grounds.append((look["ground"], look["color"]))
             assert not noise(result), noise(result)
             status, stopped = await stack.call("POST", f"{PLAYBACK}/stop", json={"actor": "user"})

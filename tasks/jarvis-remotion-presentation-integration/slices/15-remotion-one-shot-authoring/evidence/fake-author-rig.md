@@ -2,8 +2,8 @@
 
 > Scripted rig, not a model trace. The real-model trace analysis (does Claude follow the policy, how many tool calls, do the questions stay in the budget, is the first draft respectable) is a required gate of Slices 21 and 22, re-run for Remotion scenes by Slice 15 (see the real-trace evidence of that Slice).
 
-Planner prompt `presentation_studio.authoring.planner`: 8520 characters, content fingerprint `e9661305d6a8834c...` (path-independent: the registry's own `default_revision` also hashes the source path), operations `presentation_draft_check`, `presentation_draft_assemble`, `presentation_draft_finalize`, attached to a prompt program: True.
-Gate: 63 rules. Question cap: {'one_shot': 0, 'exploratory': 1, 'directed': 3}.
+Planner prompt `presentation_studio.authoring.planner`: 8604 characters, content fingerprint `1c3275b6255d913d...` (path-independent: the registry's own `default_revision` also hashes the source path), operations `presentation_draft_check`, `presentation_draft_assemble`, `presentation_draft_finalize`, attached to a prompt program: True.
+Gate: 64 rules. Question cap: {'one_shot': 0, 'exploratory': 1, 'directed': 3}.
 
 ## Scripted authors
 
@@ -37,6 +37,7 @@ Gate: 63 rules. Question cap: {'one_shot': 0, 'exploratory': 1, 'directed': 3}.
 | `tsx_theme_unread` | refused (400) | tsx_theme_unread | True | False |
 | `tsx_props_unread` | refused (400) | tsx_props_unread | True | False |
 | `tsx_anchor_range` | refused (400) | tsx_anchor_range | True | False |
+| `tsx_anchor_untimed` | refused (400) | tsx_anchor_untimed | True | False |
 | `tsx_compile` | refused (400) | tsx_compile | True | False |
 | `prefab_engine_mismatch` | refused (400) | prefab_engine_mismatch | True | False |
 | `prefab_namespace` | refused (400) | prefab_namespace, tsx_theme_unread | True | False |

@@ -44,7 +44,7 @@ async def test_the_rig_proves_what_it_claims_and_claims_no_more():
     assert all(row["caught"] and row["assemble"] == "refused" and not row["written"] for row in result["careless_author"])
     covered = set(result["careless_author_covers"]) | set(NOT_IN_THE_TABLE)
     assert covered <= {r.code for r in RULES} and len(result["careless_author_covers"]) == len(fa.VIOLATIONS)
-    assert result["prompt"]["attached_to_a_program"] is True and result["prompt"]["attached_programs"] == 4 and result["rules"] == len(RULES) == 63
+    assert result["prompt"]["attached_to_a_program"] is True and result["prompt"]["attached_programs"] == 4 and result["rules"] == len(RULES) == 64
 
 
 def test_the_evidence_is_redacted_and_states_that_it_is_not_a_model_trace():

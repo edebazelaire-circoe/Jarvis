@@ -2,8 +2,8 @@
   "disclaimer": "Scripted rig, not a model trace. The real-model trace analysis (does Claude follow the policy, how many tool calls, do the questions stay in the budget, is the first draft respectable) is a required gate of Slices 21 and 22, re-run for Remotion scenes by Slice 15 (see the real-trace evidence of that Slice).",
   "prompt": {
     "id": "presentation_studio.authoring.planner",
-    "fingerprint": "e9661305d6a8834c47f9b8f4c0b30592b2f5d2d1df9b954d8e8cd98e5c51866f",
-    "characters": 8520,
+    "fingerprint": "1c3275b6255d913dc5955278d20596a2229f06fc805ec6011c56b3731ab4347a",
+    "characters": 8604,
     "operations": [
       "presentation_draft_check",
       "presentation_draft_assemble",
@@ -12,7 +12,7 @@
     "attached_to_a_program": true,
     "attached_programs": 4
   },
-  "rules": 63,
+  "rules": 64,
   "question_cap": {
     "one_shot": 0,
     "exploratory": 1,
@@ -331,6 +331,16 @@
       "written": false
     },
     {
+      "violated": "tsx_anchor_untimed",
+      "assemble": "refused",
+      "http": 400,
+      "errors": [
+        "tsx_anchor_untimed"
+      ],
+      "caught": true,
+      "written": false
+    },
+    {
       "violated": "tsx_compile",
       "assemble": "refused",
       "http": 400,
@@ -503,6 +513,7 @@
     "text_density",
     "transition_missing",
     "tsx_anchor_range",
+    "tsx_anchor_untimed",
     "tsx_compile",
     "tsx_props_unread",
     "tsx_text_hardcoded",

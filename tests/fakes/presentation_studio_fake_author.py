@@ -161,7 +161,7 @@ def controls() -> list[dict[str, Any]]:
 def scene(key: str, role: str, title: str, body: str, *, bundle: str = "slide", **extra: Any) -> dict[str, Any]:
     return {"key": key, "role": role, "title": title, "prefab": {"bundle": bundle},
             "props": {"headline": title[:60]}, "data": {"body": body}, "controls": controls(),
-            "anchors": [{"anchor_id": "detail", "label": "Detail", "control_id": "accent"}], **extra}
+            "anchors": [{"anchor_id": "detail", "label": "Detail", "control_id": "accent", "at_ms": 3000}], **extra}
 
 
 def item(scene_key: str, line: str, *, ms: int = 30_000, presenter: str = "jarvis", cue: dict | None = None,
@@ -248,6 +248,7 @@ def html_deck(count: int = 12, *, da: dict | None = None) -> dict[str, Any]:
     draft["prefabs"] = [{"key": "slide", "candidate": html_slide_bundle()}]
     for entry in draft["scenes"]:
         entry["prefab"] = {"bundle": "slide"}
+        entry["anchors"] = [{k: v for k, v in anchor.items() if k != "at_ms"} for anchor in entry["anchors"]]    # the legacy shape: no timeline
         for control in entry["controls"]:
             if control["path"] == "props.theme.accent":
                 control["path"] = "props.accent"
@@ -497,6 +498,12 @@ def _anchor_out_of_range(b: dict[str, Any], d: dict[str, Any]) -> None:
     d["scenes"][1]["anchors"] = [{"anchor_id": "detail", "label": "Detail", "control_id": "accent", "at_ms": 600_000}]
 
 
+def _anchor_untimed(b: dict[str, Any], d: dict[str, Any]) -> None:
+    """An anchor with no `at_ms`: the scene would hold on its first frame (blank when it enters from nothing) until the presenter reveals it."""
+
+    d["scenes"][1]["anchors"] = [{"anchor_id": "detail", "label": "Detail", "control_id": "accent"}]
+
+
 def _compile_error(b: dict[str, Any], d: dict[str, Any]) -> None:
     d["prefabs"][0]["remotion"]["files"]["src/Scene.tsx"] += "\nconst broken = (;\n"
 
@@ -526,6 +533,7 @@ VIOLATIONS: tuple[tuple[str, Mutation], ...] = (
     ("tsx_theme_unread", _theme_ignored),
     ("tsx_props_unread", _dead_prop),
     ("tsx_anchor_range", _anchor_out_of_range),
+    ("tsx_anchor_untimed", _anchor_untimed),
     ("tsx_compile", _compile_error),
     ("prefab_engine_mismatch", _html_source),
     ("prefab_namespace", _wrong_namespace),
