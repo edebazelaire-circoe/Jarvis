@@ -3,8 +3,9 @@
 A scene written by the brain is TypeScript, not data: the content rules of the first-draft gate (placeholder text, density, must-cover, language) read
 `props` and `data`, so text hidden in the source would escape them, and the Slice 13 controls only edit what the source reads from its props. This module is
 the **lint** that closes those gaps. It is deliberately *not* a parser (the same line as `remotion_isolation`: a regular expression over JavaScript is a
-filter, never a wall; the isolation guards and the sandbox are the wall). Every pattern is bounded (no unbounded repeat over author text), the input is
-bounded by the source limits (256 KiB a module), and a miss only means a warning is not raised: the gate is a FLOOR (`presentation-studio.md`).
+filter, never a wall; the isolation guards and the sandbox are the wall). Comments and strings go through a hand-written LINEAR scanner (`strip_comments`);
+every regular expression left is quantifier-bounded and never crosses a newline over author text; the whole read has a time budget (`TSX_LINT_BUDGET_S`) that
+fails closed (`tsx_lint_budget`); a miss only means a warning is not raised: the gate is a FLOOR (`presentation-studio.md`, *known misses*).
 
 `tsx_facts(modules)` returns a `TsxFacts` (all counts and names, never a copy of the author's text except `literals`, which the gate already treats as
 untrusted prose and never echoes). Pure: no I/O, no clock.
@@ -17,6 +18,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 import hashlib
 import re
+import time
 
 from jarvis.domain.presentation_studio_authoring_kit import KIT_PATH
 
@@ -35,17 +37,26 @@ _INTERPOLATE_WINDOW = 600
 MAX_INTERPOLATE_CALLS = 400
 #: Facts kept for the sources of recent judgements (the gate asks for the same source several times in one pass).
 _CACHE_SIZE = 32
+#: Seconds the lint may spend on ONE source (every phase is linear, so this is a safety net, not a working limit: a normal source takes milliseconds).
+#: Past it the source is not judged and the gate refuses it (`tsx_lint_budget`): it fails CLOSED.
+TSX_LINT_BUDGET_S = 2.0
 
-# One pass that keeps strings and drops comments (so `"http://x"` is not a comment and `// "text"` is not a literal).
-_TOKENS = re.compile(r"""//[^\n]*|/\*.*?\*/|"(?:\\.|[^"\\\n])*"|'(?:\\.|[^'\\\n])*'|`(?:\\.|[^`\\])*`""", re.DOTALL)
+
+class TsxBudgetError(Exception):
+    """The lint of one source ran past `TSX_LINT_BUDGET_S`."""
+
+# The comment / string scanner is a hand-written SINGLE PASS (`strip_comments`): no regular expression crosses a newline or backtracks over author text.
+_NEXT = re.compile(r"[\"'`/]")
+_STRING_END = {'"': re.compile(r"\\.|\"|\n", re.DOTALL), "'": re.compile(r"\\.|'|\n", re.DOTALL), "`": re.compile(r"\\.|`", re.DOTALL)}
 _JSX_TEXT = re.compile(r">([^<>{}\n;=()]{3,200})<")
 _JSX_TEXT_LINES = re.compile(r">\s{0,40}\n([^<>{}=;()]{3,300})\n\s{0,40}<")
 _ATTR_TEXT = re.compile(r"""\b(?:alt|title|aria-label|label|placeholder|caption|subtitle|heading)=(?:\{\s*)?(?P<q>["'])(?P<text>[^"'\n]{3,200})(?P=q)""")
 _EXPR_TEXT = re.compile(r"""\{\s{0,40}(?P<q>["'])(?P<text>[^"'\n]{3,200})(?P=q)\s{0,40}\}""")
 _LETTER_WORD = re.compile(r"[^\W\d_]{2,}", re.UNICODE)
 _FRAME = re.compile(r"\buseCurrentFrame\s*\(|<\s*(?:Sequence|Series)\b")
-# The `theme` PROP: `props.theme`, `p.theme`, `["theme"]` or a destructured `{theme}`; a local variable called theme is not the art direction.
-_THEME = re.compile(r"""\.\s*theme\b|\[\s*["']theme["']\s*\]|[{,]\s*theme\s*[,}:=]""")
+# The `theme` PROP: a property access `props.theme` / `p.theme` / `["theme"]`, or the entry's destructured `{theme}` (`props_read`). A bare local
+# variable or an object literal `{theme: 1}` is not the art direction.
+_THEME = re.compile(r"""\.\s*theme\b|\[\s*["']theme["']\s*\]""")
 _HEX = re.compile(r"#(?:[0-9a-fA-F]{6}|[0-9a-fA-F]{3})\b")
 _RGB = re.compile(r"\brgba?\(\s*\d{1,3}\s*,\s*\d{1,3}\s*,\s*\d{1,3}(?:\s*,\s*[0-9.]{1,5})?\s*\)")
 _PROPS_DOT = re.compile(r"\bprops\s*\.\s*([A-Za-z_]\w{0,39})")
@@ -77,7 +88,44 @@ class TsxFacts:
 
 
 def strip_comments(text: str) -> str:
-    return _TOKENS.sub(lambda m: m.group(0) if m.group(0)[0] in "\"'`" else " ", text)
+    """The text without its comments, strings kept (so `"http://x"` is not a comment and `// "text"` is not a literal). One pass, linear: an
+    unterminated comment or template literal consumes the rest of the input, an unterminated quote ends at its line."""
+
+    out: list[str] = []
+    position, size = 0, len(text)
+    while True:
+        found = _NEXT.search(text, position)
+        if found is None:
+            out.append(text[position:])
+            return "".join(out)
+        start, char = found.start(), found.group()
+        if char == "/":
+            follower = text[start + 1:start + 2]
+            if follower == "/":
+                end = text.find("\n", start)
+                out.append(text[position:start] + " ")
+                position = size if end < 0 else end
+            elif follower == "*":
+                end = text.find("*/", start + 2)
+                out.append(text[position:start] + " ")
+                position = size if end < 0 else end + 2
+            else:
+                out.append(text[position:start + 1])
+                position = start + 1
+            continue
+        pattern, cursor = _STRING_END[char], start + 1
+        while True:
+            closing = pattern.search(text, cursor)
+            if closing is None:
+                end = size
+                break
+            if closing.group()[0] == "\\":
+                cursor = closing.end()
+                continue
+            end = closing.start() if closing.group() == "\n" else closing.end()
+            break
+        out.append(text[position:end])
+        position = end
 
 
 def _words(text: str) -> int:
@@ -132,7 +180,7 @@ def _props_read(entry: str) -> frozenset[str]:
     return frozenset(names)
 
 
-_CACHE: "OrderedDict[str, TsxFacts]" = OrderedDict()
+_CACHE: "OrderedDict[str, TsxFacts | TsxBudgetError]" = OrderedDict()
 
 
 def tsx_facts(modules: Mapping[str, str], entry: str = "src/Scene.tsx") -> TsxFacts:
@@ -146,26 +194,41 @@ def tsx_facts(modules: Mapping[str, str], entry: str = "src/Scene.tsx") -> TsxFa
     cached = _CACHE.get(key)
     if cached is not None:
         _CACHE.move_to_end(key)
+        if isinstance(cached, TsxBudgetError):
+            raise cached
         return cached
-    facts = _read(modules, entry)
+    try:
+        facts: TsxFacts | TsxBudgetError = _read(modules, entry)
+    except TsxBudgetError as exc:
+        facts = exc
     _CACHE[key] = facts
     while len(_CACHE) > _CACHE_SIZE:
         _CACHE.popitem(last=False)
+    if isinstance(facts, TsxBudgetError):
+        raise facts
     return facts
 
 
 def _read(modules: Mapping[str, str], entry: str) -> TsxFacts:
     # The kit Core adds (`jarvis-kit.ts`) is not the author's code: it would hide a dead prop that shares a theme word and count as a module.
-    code = {path: strip_comments(text) for path, text in modules.items() if path.endswith(CODE_SUFFIXES) and path != KIT_PATH}
+    deadline = time.monotonic() + TSX_LINT_BUDGET_S
+    code: dict[str, str] = {}
+    for path, text in modules.items():
+        if path.endswith(CODE_SUFFIXES) and path != KIT_PATH:
+            code[path] = strip_comments(text)
+            if time.monotonic() > deadline:
+                raise TsxBudgetError(f"the lint of {len(code)} module(s) exceeded {TSX_LINT_BUDGET_S} s")
     joined = "\n".join(code.values())
     colours = {c.lower() for c in _HEX.findall(joined)} | {re.sub(r"\s+", "", c) for c in _RGB.findall(joined)}
     literals: list[str] = []
     for text in code.values():
         literals.extend(literal_texts(text))
     entry_code = code.get(entry, "")
+    if time.monotonic() > deadline:
+        raise TsxBudgetError(f"the lint exceeded {TSX_LINT_BUDGET_S} s")
     return TsxFacts(
         reads_frame=bool(_FRAME.search(joined)), unclamped_interpolations=_interpolations(joined)[1],
-        reads_theme=bool(_THEME.search(joined)), color_literals=len(colours), literals=tuple(literals[:MAX_LITERALS]),
+        reads_theme=bool(_THEME.search(joined)) or "theme" in _props_read(entry_code), color_literals=len(colours), literals=tuple(literals[:MAX_LITERALS]),
         props_read=_props_read(entry_code), mentions=joined, entry_lines=entry_code.count("\n") + 1 if entry_code else 0,
         code_modules=len(code))
 

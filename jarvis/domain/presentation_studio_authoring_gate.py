@@ -52,7 +52,7 @@ from jarvis.domain.presentation_studio_authoring_text import (  # noqa: F401 - r
 from jarvis.domain.presentation_studio_authoring_build import BuiltPresentation
 from jarvis.domain.presentation_studio_authoring_remotion import THEME_PROP
 from jarvis.domain.presentation_studio_authoring_tsx import (
-    MAX_COLOR_LITERALS, MONOLITH_LINES, TsxFacts, hard_coded_words, mentions, tsx_facts,
+    MAX_COLOR_LITERALS, MONOLITH_LINES, TsxBudgetError, TsxFacts, hard_coded_words, mentions, tsx_facts,
 )
 from jarvis.domain.presentation_studio_checks import PresentationStudioError
 from jarvis.domain.presentation_studio_playback import ARM_LOOKAHEAD
@@ -160,6 +160,8 @@ RULES: tuple[Rule, ...] = (
     # --- Remotion sources (Slice 15): the TSX of a scene, judged where the content and control rules cannot see it
     Rule("prefab_engine_mismatch", E, E, E, "an agent draft publishes and pins Remotion sources only: an HTML (Slidecar) source is refused, never converted"),
     Rule("tsx_compile", E, E, E, "every Remotion scene compiles (Slice 5 compiler) before anything is written; the diagnostics name file, line and column"),
+    Rule("tsx_compile_budget", E, E, E, "the sources of a draft compile inside the compile time budget (what is not compiled in time is refused, never waved through)"),
+    Rule("tsx_lint_budget", E, E, E, "the lint of a Remotion source stays inside its time budget (a source it cannot read in time is refused, never waved through)"),
     Rule("tsx_theme_unread", E, E, W, f"a Remotion source declares and reads the `{THEME_PROP}` prop: it is how the art direction reaches the scene"),
     Rule("tsx_color_hardcoded", W, W, O, f"at most {MAX_COLOR_LITERALS} colour literals in the source (the palette is the art direction's, with its contrast)"),
     Rule("tsx_text_hardcoded", E, E, W, "visible sentences are props or data, not literals in the source (controls edit them, the content rules read them)"),
@@ -443,8 +445,21 @@ def source_literals(draft: PresentationDraft) -> dict[str, tuple[str, ...]]:
     """Scene key -> the visible text literals of the Remotion source it shows (Slice 15). The content rules read `props` and `data`;
     a sentence written in the TSX would escape them, so the placeholder, density, must-cover and language rules read these too."""
 
-    by_bundle = {b.key: tsx_facts(b.bundle.files(), b.bundle.manifest.source.entry).literals for b in draft.bundles if b.is_remotion}
+    by_bundle = {key: facts.literals for key, facts in source_facts(draft).items() if facts is not None}
     return {s.key: by_bundle[s.bundle_key] for s in draft.scenes if s.bundle_key in by_bundle}
+
+
+def source_facts(draft: PresentationDraft) -> dict[str, TsxFacts | None]:
+    """Bundle key -> the facts of its Remotion source, or `None` when the lint ran out of its time budget (`tsx_lint_budget`)."""
+
+    out: dict[str, TsxFacts | None] = {}
+    for b in draft.bundles:
+        if b.is_remotion:
+            try:
+                out[b.key] = tsx_facts(b.bundle.files(), b.bundle.manifest.source.entry)
+            except TsxBudgetError:
+                out[b.key] = None
+    return out
 
 
 def _texts(draft: PresentationDraft, *, with_source: bool = False) -> Iterator[tuple[str, str, bool, str]]:
@@ -741,9 +756,12 @@ def _tsx(sink: _Sink, draft: PresentationDraft, brief: AuthoringBrief, *_: Any) 
     compilation, engine mismatch, live-ref resolution and inspiration are Core-run and arrive as problems."""
 
     remotion = [b for b in draft.bundles if b.is_remotion]
-    facts: dict[str, TsxFacts] = {b.key: tsx_facts(b.bundle.files(), b.bundle.manifest.source.entry) for b in remotion}
+    facts = source_facts(draft)
     for b in remotion:
         where, f = f"bundle:{b.key}", facts[b.key]
+        if f is None:
+            sink.add("tsx_lint_budget", where, "the lint could not read this source in time: simplify it (fewer or shorter modules, no pathological comments or strings)")
+            continue
         props, data = _declared(b)
         if sink.ran("tsx_theme_unread") and (THEME_PROP not in props or not f.reads_theme):
             sink.add("tsx_theme_unread", where, f"the source does not {'declare' if THEME_PROP not in props else 'read'} the `{THEME_PROP}` prop: "

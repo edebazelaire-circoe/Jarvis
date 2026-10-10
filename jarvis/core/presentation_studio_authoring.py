@@ -76,7 +76,7 @@ from jarvis.ports.prefabs import PrefabStoreError, PrefabStoreErrorCode
 Checkpoint = Callable[[str], None]
 #: Wall-clock budget of the compilations of one draft (the compiler itself bounds each at 60 s): past it the remaining sources are
 #: reported as not compiled, which blocks, instead of holding the request for 16 times the bound.
-COMPILE_BUDGET_S = 120.0
+COMPILE_BUDGET_S = 100.0
 MAX_DIAGNOSTIC_TEXT = 240
 ACTORS = frozenset({"user", "brain"})
 #: Ids one catalogue search can report (`PrefabService.MAX_SEARCH_LIMIT`).
@@ -91,7 +91,7 @@ ENGINE_MISMATCH_PIN = ("this scene pins an HTML (Slidecar) prefab: an agent draf
 class AuthoringPrefabs(Protocol):
     """What authoring asks the prefab authority (`jarvis.core.prefab_service.PrefabService` is the only implementation)."""
 
-    def validate_candidate(self, candidate: object) -> Any: ...
+    def validate_candidate(self, candidate: object, *, core_written: bool = False) -> Any: ...
 
     async def save(self, candidate: object, *, actor: CreatorActor | str, derived_from: PrefabRef | None = None) -> Any: ...
 
@@ -410,7 +410,8 @@ class PresentationStudioAuthoring:
                     parsed = parse_remotion_bundle(manifests[pin].raw, source.files)
                 sources.append((f"{pin[0]}@{pin[1]}", {"manifest": dict(parsed.manifest.raw), **parsed.files()}, parsed))
         draft, brief, built = draft_from_stored(view.presentation, variant, score, art, sources)
-        report = check_first_draft(draft, brief, manifests_by_scene(variant, manifests), built, problems=tuple(problems),
+        report = await asyncio.to_thread(
+            check_first_draft, draft, brief, manifests_by_scene(variant, manifests), built, problems=tuple(problems),
                                    not_judged=NOT_JUDGED)
         base = {"presentation_id": pid, "variant_id": vid, "report": report.to_dict()}
         if not report.ok:
@@ -485,7 +486,8 @@ class PresentationStudioAuthoring:
             except (OverflowError, RecursionError, ValueError, TypeError) as exc:     # net: never a 500 on a hostile number
                 built, more = None, [Problem("draft_schema", "draft", f"the draft could not be assembled ({type(exc).__name__})")]
             problems.extend(more)
-        report = check_first_draft(draft, brief, manifests, built, problems=(*problems, *extra), skipped=prepared.skipped)
+        # Off the event loop: the gate reads author-controlled text (the lint is linear and has its own budget; this keeps Core responsive anyway).
+        report = await asyncio.to_thread(check_first_draft, draft, brief, manifests, built, problems=(*problems, *extra), skipped=prepared.skipped)
         prepared.report, prepared.built = report, built if not problems else None
         return prepared
 
@@ -512,11 +514,17 @@ class PresentationStudioAuthoring:
         deadline = time.monotonic() + COMPILE_BUDGET_S
         for bundle in sources:
             where = f"bundle:{bundle.key}"
-            if time.monotonic() > deadline:
-                problems.append(Problem("tsx_compile", where, "compile budget exhausted: this source was not compiled, send fewer sources"))
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                problems.append(Problem("tsx_compile_budget", where, "compile budget exhausted: this source was not compiled, send fewer sources"))
                 continue
             try:
-                artifact = await asyncio.to_thread(self._compiler.compile_scene, bundle.bundle.remotion_source())
+                # Bounded by what is LEFT of the budget (the typed client waits `AUTHORING_TIMEOUT_S`, above it): never a compile that outlives the request.
+                artifact = await asyncio.wait_for(asyncio.to_thread(self._compiler.compile_scene, bundle.bundle.remotion_source()), remaining)
+            except TimeoutError:
+                problems.append(Problem("tsx_compile_budget", where, f"this source was still compiling when the {COMPILE_BUDGET_S:g} s budget ended: "
+                                                                     "send fewer or smaller sources"))
+                continue
             except RemotionCompileError as exc:
                 rows = tuple({"file": d.file, "line": d.line, "column": d.column, "text": " ".join(str(d.text).split())[:MAX_DIAGNOSTIC_TEXT]}
                              for d in exc.diagnostics[:10])
@@ -615,7 +623,7 @@ class PresentationStudioAuthoring:
             seen[bundle.prefab_id] = bundle.key
             if not bundle.is_remotion:
                 problems.append(Problem("prefab_engine_mismatch", where, ENGINE_MISMATCH_BUNDLE))
-            verdict = self._prefabs.validate_candidate(bundle.candidate)
+            verdict = self._prefabs.validate_candidate(bundle.candidate, core_written=True)
             if not verdict.ok:
                 problems.append(Problem("prefab_invalid", where, "; ".join(verdict.errors[:2]) or "refused by the prefab authority"))
             manifests[bundle.key] = bundle.bundle.manifest

@@ -103,7 +103,7 @@ async def test_the_report_is_deterministic_and_never_echoes_the_authors_words(en
 # ------------------------------------------------------------------ the rule table
 
 def test_the_rule_table_is_complete_consistent_and_documents_the_exploratory_subset():
-    assert len({r.code for r in RULES}) == len(RULES) == 64
+    assert len({r.code for r in RULES}) == len(RULES) == 66
     for rule in RULES:
         assert rule.summary and {rule.one_shot, rule.directed, rule.exploratory} <= {ERROR, WARNING, OFF}
     validation = {"brief_invalid", "draft_schema", "prefab_invalid", "prefab_namespace", "pin_unknown", "scene_incompatible",

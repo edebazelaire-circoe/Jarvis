@@ -478,7 +478,7 @@ def test_core_adds_the_motion_kit_to_every_generated_source_and_the_brain_cannot
     from jarvis.domain.presentation_studio_checks import PresentationStudioError
     with pytest.raises(PresentationStudioError) as caught:
         generate_source("hero", raw, ENGINE, "bundle:hero.remotion")
-    assert "added by Core" in caught.value.message
+    assert "is Core" in caught.value.message
 
 
 def test_the_kit_is_not_the_authors_code_so_it_cannot_hide_a_dead_prop_or_count_as_a_module():
@@ -613,35 +613,109 @@ async def test_the_control_center_relay_waits_for_the_compiler_too():
     assert [timeout for _, timeout, _ in seen] == [AUTHORING_TIMEOUT_S] * 3 and {actor for *_, actor in seen} == {"user"}
 
 
-def test_the_tsx_lint_costs_milliseconds_on_hostile_sources_and_is_memoised():
-    """The gate runs in Core's event loop on a source the author controls (256 KiB a module): no pattern may be quadratic."""
+def test_the_tsx_lint_is_linear_on_the_shapes_that_froze_core_and_is_memoised():
+    """QA B1: `/\\*.*?\\*/` and the backtick branch were quadratic (`"/* " * 87k` took 96 s, "`\\\\" * 131k took 300 s, `"/* \\n" * 20000` froze the loop 7.8 s).
+    The scanner is one pass; every shape below, at 256 KiB, must cost under a second."""
 
     import time
 
-    from jarvis.domain.presentation_studio_authoring_tsx import tsx_facts
+    from jarvis.domain.presentation_studio_authoring_tsx import strip_comments, tsx_facts
 
-    hostile = {"open comments": "/*" * 120_000, "open template": "`a" * 120_000, "open string": '"a' * 120_000, "wide gaps": (">" + " " * 50 + "\n") * 4_000,
-               "braces": ("{" + " " * 50) * 4_000, "rgb": "rgb(" * 50_000, "props": "props " * 40_000, "text nodes": "<a>b</a>" * 30_000,
-               "interpolations": "interpolate(" * 20_000, "slashes": "/" * 240_000, "quotes": "'\"`/" * 60_000}
+    n, bs = 256 * 1024, chr(92)
+    hostile = {"unterminated comment": "/* " * (n // 3), "unterminated comment per line": "/* \n" * (n // 4), "unterminated template": "`" + "a" * n,
+               "unterminated template with escapes": "`" + bs * (n // 2), "template, backslash pairs": ("`" + bs) * (n // 2),
+               "template per line": "`\n" * (n // 2), "open double quote": '"a' * (n // 2), "escapes in a string": '"' + bs * n,
+               "mixed openers": "/*`'\"//\n" * (n // 8), "wide gaps": (">" + " " * 50 + "\n") * 4_000, "braces": ("{" + " " * 50) * 4_000,
+               "rgb": "rgb(" * 50_000, "props": "props " * 40_000, "text nodes": "<a>b</a>" * 30_000, "interpolations": "interpolate(" * 20_000,
+               "slashes": "/" * n, "quotes": "'\"`/" * (n // 4), "one long line": "a" * n}
     for name, text in hostile.items():
         started = time.monotonic()
         tsx_facts({"src/Scene.tsx": text})
         assert time.monotonic() - started < 1.0, name
+    assert strip_comments('a // c\nb /* x */ "//k" `t/*` \'q\n z') == 'a  \nb   "//k" `t/*` \'q\n z'    # comments gone, strings and lines kept
+    assert strip_comments("x /* y") == "x  " and strip_comments("x `abc") == "x `abc"                    # unterminated: the rest of the input is consumed
     started = time.monotonic()
     for _ in range(50):
         tsx_facts({"src/Scene.tsx": hostile["interpolations"]})
     assert time.monotonic() - started < 0.5, "the second reading of the same source is a lookup"
 
 
-def test_a_helper_components_props_are_not_the_scenes_props():
-    """Found by the real-model trace: a `compare` source destructured `const {title, items, color} = props` in a helper component, and the lint
-    reported six undeclared props. Only `props.x` and the entry component's own parameter count."""
+async def test_a_source_the_lint_cannot_read_in_time_is_refused_not_waved_through(env, monkeypatch):
+    from jarvis.domain import presentation_studio_authoring_tsx as tsx
 
+    monkeypatch.setattr(tsx, "TSX_LINT_BUDGET_S", -1.0)
+    tsx._CACHE.clear()
+    try:
+        out = await env.assemble(*fa.good_one_shot())
+        assert out.status == "refused" and "tsx_lint_budget" in codes(out.body["report"])
+        assert env.folders() == [] and env.prefab_versions() == {}
+    finally:
+        tsx._CACHE.clear()
+
+
+async def test_the_gate_runs_off_the_event_loop(env, monkeypatch):
+    import threading
+
+    from jarvis.core import presentation_studio_authoring as module
+
+    seen = []
+    real = module.check_first_draft
+
+    def spy(*args, **kwargs):
+        seen.append(threading.current_thread() is threading.main_thread())
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(module, "check_first_draft", spy)
+    await env.check(*fa.good_one_shot())
+    assert seen == [False]
+
+
+async def test_a_forged_second_bundle_is_a_check_finding_and_nothing_is_published(env):
+    """QA P1: the slide is valid, the cover forges `catalog.upstream` (Core-written). `save` would refuse it AFTER the slide was published; the
+    verdict now comes first, as a finding, and nothing is written."""
+
+    brief, draft = fa.brief("directed"), fa.good_deck()
+    forged = attested_candidate("presentation-studio.forged-cover")
+    draft["prefabs"][1] = {"key": "cover", "candidate": forged}
+    report = (await env.check(brief, draft)).body["report"]
+    assert any(f["code"] == "prefab_invalid" and f["where"] == "bundle:cover" and "upstream" in f["message"] for f in report["failures"])
+    out = await env.assemble(brief, draft)
+    assert out.status == "refused" and env.folders() == [] and env.prefab_versions() == {}
+    assert not [row for row in env.sink.rows if row[0] == "core.prefab.saved"]
+
+
+async def test_each_compile_is_bounded_by_what_is_left_of_the_budget(env, monkeypatch):
+    import time
+
+    monkeypatch.setattr(authoring_module, "COMPILE_BUDGET_S", 0.3)
+
+    def slow(source, *, minify=True):
+        time.sleep(1.5)
+
+    monkeypatch.setattr(type(env.compiler), "compile_scene", lambda self, source, *, minify=True: slow(source))
+    started = time.monotonic()
+    report = (await env.check(*fa.good_one_shot())).body["report"]
+    assert time.monotonic() - started < 1.2, "the request does not wait for a compile that outlives the budget"
+    assert "tsx_compile_budget" in codes(report) and "budget" in report["failures"][0]["message"]
+
+
+@pytest.mark.parametrize("path", ["src/jarvis-kit.tsx", "src/jarvis-kit.js", "src/jarvis-kit.jsx", "src/jarvis-kit.mjs", "src/Jarvis-Kit.tsx",
+                                  "src/jarvis-kit/index.ts", "src/lib/JARVIS-KIT.ts", "src/jarvis-kit.ts"])
+def test_no_module_may_take_the_name_of_the_kit(path):
+    from jarvis.domain.presentation_studio_checks import PresentationStudioError
+
+    raw = fa.slide_bundle()["remotion"]
+    raw["files"][path] = "export const progress = () => 1;"
+    with pytest.raises(PresentationStudioError) as caught:
+        generate_source("hero", raw, ENGINE, "bundle:hero.remotion")
+    assert "jarvis-kit" in caught.value.message and "whatever the extension or case" in caught.value.message
+
+
+def test_reads_theme_needs_a_property_access_not_an_object_literal():
     from jarvis.domain.presentation_studio_authoring_tsx import tsx_facts
 
-    helper = ('export default function Scene(props: {headline: string}) { return <Column {...props} />; }\n'
-              'function Column(props: any) { const {title, items, color} = props; return <b>{title}{items}{color}</b>; }\n')
-    assert tsx_facts({"src/Scene.tsx": helper}).props_read == frozenset()
-    own = "export default function Scene({headline, accent}: {headline: string; accent: string}) { return <b>{headline}{accent}</b>; }\n"
-    assert tsx_facts({"src/Scene.tsx": own}).props_read == frozenset({"headline", "accent"})
-    assert tsx_facts({"src/Scene.tsx": "export default function Scene(p: any) { return <b>{props.title}</b>; }"}).props_read == frozenset({"title"})
+    fake = "export default function Scene() { const x = {theme: 1}; const theme = 2; return <b>{x.theme === 1 ? theme : 0}</b>; }"
+    assert tsx_facts({"src/Scene.tsx": "export default function Scene() { const theme = {theme: 1}; return <b>{theme}</b>; }"}).reads_theme is False
+    assert tsx_facts({"src/Scene.tsx": "export default function Scene(props: any) { return <b>{props.theme.accent}</b>; }"}).reads_theme is True
+    assert tsx_facts({"src/Scene.tsx": "export default function Scene({theme}: any) { return <b>{theme.accent}</b>; }"}).reads_theme is True
+    assert fake

@@ -34,7 +34,7 @@ from typing import Any
 from jarvis.domain.prefab import PrefabRef, canonical_json
 from jarvis.domain.presentation_live_refs import LiveRef, LiveRefError, parse_declaration, LIVE_REFS_PATH
 from jarvis.domain.presentation_studio_art_direction import ArtDirectionProfile
-from jarvis.domain.presentation_studio_authoring_kit import KIT_PATH, KIT_SOURCE, KIT_VERSION
+from jarvis.domain.presentation_studio_authoring_kit import KIT_NAME, KIT_PATH, KIT_SOURCE, KIT_VERSION
 from jarvis.domain.presentation_studio_checks import _exact_keys, _fail
 from jarvis.domain.remotion_source import (
     ASSET_ROOT, COMPOSITION_ID, DEFAULT_ENTRY, MODULE_ROOT, Composition, EnginePin, build_candidate,
@@ -171,8 +171,11 @@ def _files(raw: object, where: str, live_declared: bool) -> dict[str, str]:
             raise _fail(f"{where}: modules live under {MODULE_ROOT} (assets go in `assets`, under {ASSET_ROOT})")
         if not isinstance(body, str):
             raise _fail(f"{where}: every module is text")
-    if KIT_PATH in raw:
-        raise _fail(f"{where}: {KIT_PATH} is added by Core (the motion kit of the art direction): import it, do not provide it")
+    for path in raw:
+        # esbuild resolves `./jarvis-kit` through every extension and `index.*`, so the NAME is reserved, not one path (`.tsx` is tried before `.ts`).
+        if any(segment.lower().split(".")[0] == KIT_NAME for segment in path.split("/")):
+            raise _fail(f"{where}: the name `{KIT_NAME}` is Core's (the motion kit {KIT_PATH}): no module or folder of that name, whatever the extension or case; "
+                        "import the kit, do not provide one")
     if live_declared and LIVE_REFS_PATH in raw:
         raise _fail(f"{where}: {LIVE_REFS_PATH} is written from `live_refs`: give one or the other")
     return dict(raw)

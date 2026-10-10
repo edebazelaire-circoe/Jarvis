@@ -1,4 +1,53 @@
 {
+  "remotion_context": {
+    "live_refs_active_board": {
+      "assemble": "delivered",
+      "authorised_boards_seen": [
+        [
+          "default"
+        ]
+      ],
+      "references_resolved": 1
+    },
+    "live_refs_other_board": {
+      "assemble": "refused",
+      "errors": [
+        "tsx_live_ref_unresolved"
+      ],
+      "states": [
+        "not_authorised"
+      ]
+    },
+    "inspiration_verified": {
+      "assemble": "delivered",
+      "published_origin": "fork",
+      "inspirations": [
+        {
+          "upstream": "someone/demo",
+          "license": "MIT",
+          "verified_intact": false
+        }
+      ]
+    },
+    "inspiration_unverified": {
+      "assemble": "refused",
+      "errors": [
+        "tsx_inspiration_unconfirmed"
+      ]
+    },
+    "compile_refusal": {
+      "assemble": "refused",
+      "http": 400,
+      "code": "compile_source_error",
+      "diagnostic_fields": [
+        "column",
+        "file",
+        "line",
+        "text"
+      ],
+      "written_by_this_draft": false
+    }
+  },
   "disclaimer": "Scripted rig, not a model trace. The real-model trace analysis (does Claude follow the policy, how many tool calls, do the questions stay in the budget, is the first draft respectable) is a required gate of Slices 21 and 22, re-run for Remotion scenes by Slice 15 (see the real-trace evidence of that Slice).",
   "prompt": {
     "id": "presentation_studio.authoring.planner",
@@ -12,7 +61,7 @@
     "attached_to_a_program": true,
     "attached_programs": 4
   },
-  "rules": 64,
+  "rules": 66,
   "question_cap": {
     "one_shot": 0,
     "exploratory": 1,
@@ -530,9 +579,11 @@
     "placeholder_allowed",
     "scene_unbound",
     "tsx_color_hardcoded",
+    "tsx_compile_budget",
     "tsx_inspiration_unconfirmed",
     "tsx_interpolate_unclamped",
     "tsx_layout_monotone",
+    "tsx_lint_budget",
     "tsx_live_ref_invalid",
     "tsx_live_ref_unresolved",
     "tsx_monolith",

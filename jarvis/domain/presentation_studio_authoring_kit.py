@@ -11,7 +11,8 @@ The brain may import it or ignore it; it may not provide a module of the same pa
 
 from __future__ import annotations
 
-KIT_PATH = "src/jarvis-kit.ts"
+KIT_NAME = "jarvis-kit"
+KIT_PATH = f"src/{KIT_NAME}.ts"
 #: Bump when `KIT_SOURCE` changes: a new text is a new content, hence a new id for the same author source.
 KIT_VERSION = 1
 
@@ -60,4 +61,4 @@ export function size(px: number, theme: Theme): number {
 }
 '''
 
-__all__ = ["KIT_PATH", "KIT_SOURCE", "KIT_VERSION"]
+__all__ = ["KIT_NAME", "KIT_PATH", "KIT_SOURCE", "KIT_VERSION"]
