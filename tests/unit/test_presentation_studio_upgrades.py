@@ -121,7 +121,7 @@ async def test_trying_the_new_version_creates_a_child_variant_and_leaves_the_ori
     assert answer["from"] == {"id": "lab.counter", "version": 1} and answer["to"] == {"id": "lab.counter", "version": 2}
     trial_id = answer["node"]["variant_id"]
     assert trial_id != rig.vid and answer["node"]["parent_variant_id"] == rig.vid
-    assert answer["node"]["rationale"].startswith("trial of lab.counter v2 for scene " + SID)
+    assert answer["node"]["rationale"].startswith("Essai de lab.counter v2 pour la scène " + SID)
 
     assert rig.variant_file().read_bytes() == original, "the original variant is byte-identical"
     assert library_files(rig) == library, "a trial publishes no prefab and promotes nothing"
@@ -215,3 +215,48 @@ async def test_retention_keeps_the_old_pin_and_the_trial_pin_while_the_trial_exi
     assert (await rig.prefabs.get(source, 1)).entry.ok and (await rig.prefabs.get(source, 2)).entry.ok
     notice = next(n for n in (await service(rig).notices(rig.pid, rig.vid))["notices"] if n["scene_id"] == SID)
     assert notice["pinned_version"] == 1 and notice["latest_version"] == 40 and notice["trials"][0]["variant_id"] == trial
+
+
+# ------------------------------------------------------------------ renoncer, ancienne version epinglee, amont indisponible
+
+
+async def test_declining_a_trial_archives_the_child_and_the_original_keeps_working_untouched(rig):
+    """Rollback of an upgrade is not an undo of the original: there is nothing to undo there. The trial is archived like any variant."""
+
+    await publish(rig, style="second")
+    original = rig.variant_file().read_bytes()
+    trial = (await service(rig).try_version(rig.pid, rig.vid, {"scene_id": SID}))["node"]["variant_id"]
+    planned = await rig.variants.plan_archive(rig.pid, trial)
+    await rig.variants.archive(rig.pid, trial, {"confirmation": planned["confirmation"]})
+    assert rig.variant_file().read_bytes() == original and await pins(rig, rig.vid) == {SID: ("lab.counter", 1), SID2: ("lab.counter", 1)}
+    after = await service(rig).notices(rig.pid, rig.vid)
+    assert after["count"] == 2 and after["trials"] == [], "the notice is back to a plain notice, the old pin is still the pin"
+    again = await service(rig).try_version(rig.pid, rig.vid, {"scene_id": SID})   # a declined trial can be tried again, as a new variant
+    assert again["node"]["variant_number"] == 3, "numbers are never reused"
+
+
+async def test_the_old_pin_keeps_playing_after_newer_versions_and_the_notice_needs_no_network(rig):
+    """Pinned old version, upstream unavailable: the notice and the trial read only the local library; nothing else is consulted."""
+
+    for number in range(2, 6):
+        await publish(rig, style=f"v{number}")
+    assert (await rig.prefabs.get("lab.counter", 1)).entry.ok
+    answer = await service(rig).notices(rig.pid, rig.vid)
+    assert answer["notices"][0]["pinned_version"] == 1 and answer["notices"][0]["latest_version"] == 5
+    assert answer["notices"][0]["newer_versions"] == [5, 4, 3, 2] and answer["notices"][0]["newer_count"] == 4
+    described = await rig.studio.describe_scene(rig.pid, rig.vid, SID)
+    assert described["problems"] == [] and described["prefab"] == {"id": "lab.counter", "version": 1}, "the pinned version still renders"
+
+
+async def test_a_scene_whose_prefab_cannot_be_read_is_said_not_hidden(rig):
+    import shutil
+
+    await publish(rig, style="second")
+    other = source_prefab_id(rig.pid, SID2)
+    await publish(rig, other, style="own")
+    await rig.save_scenes([scene_body(SID), scene_body(SID2, prefab=(other, 1))])
+    shutil.rmtree(rig.data / LIBRARY_DIR / other)           # the id vanished from disk behind the catalogue's back
+    await rig.prefabs.start()
+    answer = await service(rig).notices(rig.pid, rig.vid)
+    assert [n["scene_id"] for n in answer["notices"]] == [SID]
+    assert [(u["scene_id"], u["code"]) for u in answer["unavailable"]] == [(SID2, "unknown_prefab")]

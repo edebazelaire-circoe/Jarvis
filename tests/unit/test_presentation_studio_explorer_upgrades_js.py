@@ -33,8 +33,10 @@ seed(3);
 world.upgrades={[vid(1)]:[""" + NOTICE + """]};
 const {ex}=await opened();
 const section=q('.jvx-upg');
-const row=q('.jvx-upg-row');
-const told={hidden:section.hidden,count:q('.jvx-upg .jvx-chip').textContent,scene:q('.jvx-upg-scene').textContent,ver:q('.jvx-upg-ver').textContent,
+const collapsed={body:q('.jvx-upg-body').hidden,aria:q('.jvx-upg-toggle').getAttribute('aria-expanded'),status:q('.jvx-upg-status').textContent};
+q('.jvx-upg-toggle').click();
+const expanded={body:q('.jvx-upg-body').hidden,aria:q('.jvx-upg-toggle').getAttribute('aria-expanded'),status:q('.jvx-upg-status').textContent};
+const told={collapsed,expanded,hidden:section.hidden,count:q('.jvx-upg .jvx-chip').textContent,scene:q('.jvx-upg-scene').textContent,ver:q('.jvx-upg-ver').textContent,
   chips:qa('.jvx-upg-chips .jvx-chip').map(c=>c.textContent),btn:q('.jvx-upg-act .jvx-btn').textContent,note:q('.jvx-upg-note').textContent};
 const writesBefore=world.calls.filter(c=>c.method!=='GET').length;
 await env.advance(40000);   /* time passes, polls run: still nothing is written without a click */
@@ -47,6 +49,9 @@ return {told,writesBefore,idle,tries:tries.map(t=>({source:t.source.slice(-2),bo
   activeStill:world.active.slice(-2),selected:ex.state().selected.slice(-2),notice:noticeText(),putCalls:world.calls.filter(c=>c.method==='PUT').length,
   revision:world.byId(vid(1)).revision,errors:env.errors};
 """)
+    assert out["told"]["collapsed"] == {"body": True, "aria": "false", "status": "Une version plus récente existe ; rien n'a été changé."}, \
+        "told, but out of the way: the stage keeps its room until the user opens the zone"
+    assert out["told"]["expanded"] == {"body": False, "aria": "true", "status": ""}
     assert out["told"]["hidden"] is False and out["told"]["count"] == "1 scène" and out["told"]["scene"] == "Scène 1 de 1"
     assert out["told"]["ver"] == "lab.dial · v1 → v3 (2 versions plus récentes)" and out["told"]["chips"] == ["Compatible"]
     assert out["told"]["btn"] == "Essayer dans une nouvelle variante" and "Rien n'est mis à jour tout seul" in out["told"]["note"]
@@ -102,9 +107,9 @@ const loading=q('.jvx-upg-status').textContent;
 await env.advance(3000);
 const ready=q('.jvx-upg-row')!==undefined&&q('.jvx-upg-row')!==null;
 world.failNext.push({match:u=>u.endsWith('/upgrades'),status:503,body:{error:{code:'presentation_studio_storage_io',message:'disque'}}});
-q('.jvx-upg .jvx-btn').click();            /* « Relire » */
+qa('.jvx-upg-head button')[1].click();     /* « Relire » */
 await env.advance(300);
-return {loading,ready,failed:q('.jvx-upg-status').textContent,tone:q('.jvx-upg-status').getAttribute('data-tone'),retry:q('.jvx-upg .jvx-btn').hidden,
+return {loading,ready,failed:q('.jvx-upg-status').textContent,tone:q('.jvx-upg-status').getAttribute('data-tone'),retry:qa('.jvx-upg-head button')[1].hidden,
   logs:env.logs.filter(l=>l[0]==='warn').map(l=>l[1])};
 """)
     assert out["loading"].startswith("Recherche des versions plus récentes…") and "2 s" in out["loading"] or "3 s" in out["loading"]

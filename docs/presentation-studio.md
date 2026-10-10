@@ -1530,7 +1530,7 @@ A Remotion scene (`schema_version` 2 or 3, [remotion-source.md](remotion-source.
 
 ### One artefact per presentation (Remotion Slice 19)
 
-Decision of the Project Manager: `kind: presentation` writes the `ptp_` document and **nothing else**; not one scene is published to the shared library unless the user asks for that scene (`kind: scene`). The record carries (a) the document skeleton (scenes with neutral values, chosen controls, anchors), the art direction sections and the **score skeleton**, and (b) `embedded`: `{sha256: candidate}` for each distinct sanitized scene source, HTML `{manifest, template, style, behavior}` or Remotion `{manifest, sources, assets (base64)}`. Each scene row names its source by `source: <sha256>`; its `scene.prefab` is a record-local slot (never resolved, like `scene_id`). `catalog` is the record's own block: `type: presentation`, `compatibility` per engine (`native` only when **every** scene is), `stack`, `licences`, `upstreams` (public declarations), `licence_ack`.
+Decision of the Project Manager: `kind: presentation` writes the `ptp_` document and **nothing else**; not one scene is published to the shared library unless the user asks for that scene (`kind: scene`). The record carries (a) the document skeleton (scenes with neutral values, chosen controls, anchors), the art direction sections and the **score skeleton**, and (b) `embedded`: `{sha256: candidate}` for each distinct sanitized scene source, HTML `{manifest, template, style, behavior}` or Remotion `{manifest, sources, assets (base64)}`. Each scene row names its source by `source: <sha256>`; its `scene.prefab` is a record-local slot named like a library id (`studio-template.<slug>[-<n>]`, version 1) that is never resolved, like `scene_id`. `catalog` is the record's own block: `type: presentation`, `compatibility` per engine (`native` only when **every** scene is), `stack`, `licences`, `upstreams` (public declarations), `licence_ack`.
 
 **Instantiate** (`kind: presentation`): every embedded source is first re-validated with today's guards and its provenance re-verified (below) **before anything is created**; then the new Presentation is created and **one presentation-scoped prefab per scene** (`presentation-studio.p<presentation>.s<scene>`, the retention namespace) is published through `PrefabService.save`, pinned by the scene, with `source_revision 0`. Two scenes that shared a source get two ids of the same content. The library is not touched beyond those ids. A failure after the Presentation was created is raised with its id (as before).
 
@@ -1617,6 +1617,83 @@ label, a value or a string of the project. The relay journal (`presentation_stud
 - **Library versions of a scene template are custom ids, not retention ids**: `studio-template.*` is never archived by the Slice 01a retention, so templates register no pin source. Embedded sources are not library versions: nothing to pin until they are installed as presentation-scoped prefabs, which the variants' pins then retain.
 - **A promoted prefab is a normal library entry**: it can be forked or revised through the prefab view; a template pins the exact version it was promoted at.
 - **Not run in a real browser**: the instantiated scenes are validated and described (payload budget, instance validation) by the same gates as any scene; a pixel-level drill of a promoted template belongs to Slice 22.
+
+## Newer prefab versions and trial variants (Level 3, Remotion Slice 19)
+
+Status: implemented by Remotion Slice 19 (decisions D9 and D10 of the handoff). Conformance: `tests/unit/test_presentation_studio_upgrades{,_routes}.py`,
+`test_presentation_studio_explorer_upgrades_{js,browser}.py`. Owner modules: `jarvis/core/presentation_studio_upgrades.py` (`PresentationStudioUpgrades`, the only door),
+`jarvis/protocol/presentation_studio_upgrades_routes.py`, `jarvis/runtime/presentation_studio_upgrades_relay.py`, `jarvis/runtime/control_center_presentation_studio_explorer_upgrades.js`,
+client methods `presentation_studio_upgrades` and `presentation_studio_upgrade_try` on `LocalCoreClient`.
+
+**The rule.** A scene pins one exact, immutable `(prefab_id, version)`. When the same id later receives a newer healthy version (a source edit made in another variant, a library revision), the
+pin **does not move**. Core only *tells* the user, and the user may *try* the newer version in a new variant. Nothing is upgraded automatically, nothing is rebound silently, nothing is
+published to the shared library, and the original variant is not written. Adoption is a separate, explicit act: activate the trial variant, or compare and compose it with the existing tools
+([comparison and composition](#comparison-and-semantic-composition-contract-level-3-slice-19-backend)). "Newer" means a newer **local** immutable version of the same id: no network is consulted,
+an upstream that moved on is not seen (re-import it, [remotion-import.md](remotion-import.md)).
+
+### The notice (read-only)
+
+`GET /v1/presentation-studio/presentations/{presentation_id}/variants/{variant_id}/upgrades` (Control Center: `/api/presentation-studio/presentations/...`, same suffix). No query. Answer:
+`{presentation_id, variant_id, variant_revision, notices, count, unavailable, trials, auto_upgrade: false}`, a notice being
+`{scene_id, prefab_id, pinned_version, latest_version, newer_count, newer_versions (at most 8, newest first), reloading, fits, problem, engine_ok, latest_catalog: {type, compatibility, license, upstream: {name, verified_intact}}, trials}`.
+
+| Field | Meaning |
+| --- | --- |
+| `fits` / `problem` | the scene's values and controls hold in the latest version (`SceneCatalog.check`); otherwise `problem` is the refusal code (`presentation_studio_scene_incompatible`...). Nothing is adapted for the user. |
+| `engine_ok` | the latest version is `native` for the Presentation's engine (`require_native_pin`, the Remotion Slice 10 rule: `adapter` is declared, not usable). |
+| `reloading` | the scene runs a source not yet seen mounted (`last_valid_pin`): a trial is refused until it is confirmed. |
+| `latest_catalog` | the public catalog block of the latest version, read, never written; `verified_intact` is Core's recomputed statement (Slice 18), absent for a declared upstream. |
+| `trials`, `trials[]` | trial variants already opened from this variant: `{variant_id, variant_number, scene_id, prefab_id, version, active}`, found from the creation reason (`Essai de <id> v<n> pour la scène <pss_>`, a label: not trusted as a fact beyond the listing). |
+| `unavailable` | scenes whose prefab id cannot be read (`{scene_id, prefab_id, code}`): said, never hidden. |
+
+A scene on the latest version has no notice. **Nothing calls the route by itself**: the explorer reads it when a variant is selected, when its revision changes and at most every 30 s while open.
+
+### The trial
+
+`POST .../variants/{variant_id}/upgrades/try` `{scene_id, version?, title?, actor?, expected_variant_revision?}` (a key such as `activate` is an unknown key: **a trial is never activated by itself**). `version` defaults to the
+latest healthy one and must be **newer** than the pin and healthy. 201: the branch answer of the variant graph contract (`variant, node, linked, ...`) plus `{trial: true, adopted: false, scene_id, from, to}`.
+
+Order, all before the first write: the source variant is read, the scene must exist and not be reloading, `expected_variant_revision` is compared, the target version is checked, then
+`check_scenes` (pin exists, values valid, controls in the manifest, **native for the engine**) and the score regression check run on the repinned scene; then the existing branch operation
+(`PresentationStudioVariants.create_branch(transform=...)`) writes a child whose **one** scene takes the new pin (`source_revision + 1`, hot-reload fields cleared) and everything else is a copy
+(values, controls, anchors, local variants, linked art direction and score). A copy that no longer pins the expected version (the source moved meanwhile) is `presentation_studio_stale_revision`.
+
+| Failure | Behaviour |
+| --- | --- |
+| the new version does not hold the scene's values or controls | `presentation_studio_scene_incompatible` 400, nothing written (no variant, no number spent) |
+| not native for the engine (`unsupported` or `adapter`) | `presentation_studio_engine_unsupported` 409, nothing written |
+| the version is not newer than the pin / an unknown key / not an id | `presentation_studio_invalid` 400 |
+| no healthy version of that number | `presentation_studio_prefab_unavailable` 409 |
+| the scene is waiting for the confirmation of a hot reload | `presentation_studio_scene_reloading` 409 |
+| the variant moved (`expected_variant_revision`) or the source pin changed | `presentation_studio_stale_revision` 409 |
+| the new version would unresolve score references | `presentation_studio_score_incompatible` 400 |
+| 64 live variants | `presentation_studio_limit_reached` 409 (the branch rule) |
+
+### Pins and retention
+
+Nothing new for the retention: the original variant keeps its old pin, the trial carries the new one, and the `StudioPinRegistry` (live **and archived** variants, written through the single variant
+write door) keeps both versions while both variants exist. A trial pins the **latest** version at its creation, which the retention never retires before it is superseded; after that, the pin
+index of the trial protects it exactly as any variant pin. Archiving the trial releases its pin only with the variant ([variant graph contract](#variant-graph-and-operations-contract-level-3)).
+Proof: `test_retention_keeps_the_old_pin_and_the_trial_pin_while_the_trial_exists` (40 versions of a studio id with both pins held, the unpinned old ones archived, never deleted).
+
+### In the Variant Explorer
+
+A zone under the metadata of the selected **live** variant, hidden when no scene has a newer version. Collapsed by default to one line (`Versions plus récentes`, `3 scènes`, "Une version plus récente existe ; rien n'a été changé.", `Relire`) so the preview keeps its room; a click on the title opens one row per scene:
+scene title, `prefab · v1 → v3 (2 versions plus récentes)`, a chip (`Compatible` / `Incompatible` / `Moteur : non utilisable` / `Rechargement en cours`, plus `Import vérifié intact` when Core says so),
+the button **Essayer dans une nouvelle variante** (inactive buttons say why, on screen and in the title, and never adapt anything), and one `Essai #n (vX)` button per trial already open (selects it so it can be compared or activated).
+Rule Zero: the search shows `Recherche des versions plus récentes… N s`, an error is said with Core's reason, "rien n'a été modifié" and `Relire`; an attempt runs under the explorer's busy bar with its counter and ends with a notice
+(`Variante d'essai #n créée avec la version V : la variante #m n'a pas changé…`), logged (`[studio-explorer] upgrades_loaded|upgrades_failed|upgrade_try_created`, `obsClientLog` for failures); the new variant is selected, never activated.
+The page sends no actor (the relay forces `user`) and no `activate`.
+
+### Observability and limits
+
+`core.presentation_studio.upgrade_checked` (ids, counts), `upgrade_trial_created` (ids, versions), `upgrade_trial_refused` (ids, code): never a title or a value.
+
+- **Local versions only**: an upstream template that changed on GitHub is a re-import (new import, new commit), not a notice.
+- **One scene at a time**: a trial repins one scene; trying the same version on several scenes is one trial per scene (or a branch plus semantic edits).
+- **A trial that is later edited** keeps the creation reason as its label; the listing in `trials` is a convenience, not a proof the variant still pins that version.
+- **No tool for the agent**: the surface is the page and the routes; no `presentation_*` operation or tool budget changed (`test_mcp_catalog`). A later Slice may expose it through `presentation_template`-style ops.
+- **Not covered by a real model**; the browser proof is a real Chrome against an isolated Core (`JARVIS_EXPLORER_SHOTS` leaves screenshots).
 
 ## Playback roles and speech authority (Level 3, Slice 01c, decision A)
 

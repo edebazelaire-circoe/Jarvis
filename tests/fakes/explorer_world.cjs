@@ -112,7 +112,7 @@ function makeWorld(env,options){
       if(!row)return err(400,'presentation_studio_invalid','nothing newer');
       if(row.fits===false)return err(400,'presentation_studio_scene_incompatible','does not fit');
       world.revision+=1;
-      const node=world.add(source.variant_id,{title:'Essai v'+body.version,rationale:'trial of '+row.prefab_id+' v'+body.version+' for scene '+body.scene_id,created_by:'user',scene_count:source.scene_count});
+      const node=world.add(source.variant_id,{title:'Essai v'+body.version,rationale:'Essai de '+row.prefab_id+' v'+body.version+' pour la scène '+body.scene_id,created_by:'user',scene_count:source.scene_count});
       world.tries=(world.tries||[]).concat([{source:id,node:node.variant_id,body}]);
       return json(201,{node:Object.assign({},node),activated:false,trial:true,adopted:false,source_variant_id:source.variant_id,presentation_revision:world.revision,scene_id:body.scene_id});
     }

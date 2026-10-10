@@ -308,3 +308,28 @@ async def test_the_score_travels_as_a_skeleton_without_speech_cues_or_control_va
     assert {i["scene_id"] for i in got["score"]["items"]} <= set(made["scene_ids"])
     assert got["score"]["items"][0]["item_id"] != "psi_000000000001"
 
+
+
+# ------------------------------------------------------------------ rien n'est ecrase
+
+
+async def test_promoting_twice_writes_two_records_and_never_rewrites_the_first(tmp_path):
+    world = await remotion_world(tmp_path)
+    body = world.body("presentation", scenes=pick(S1, S2), keep_assets=True)
+    first = await world.promote(body)
+    snapshot = dict(world.template_files())
+    library = world.library_files()
+    second = await world.promote(body)
+    assert first["template_id"] != second["template_id"] and len(world.template_files()) == 2
+    assert {k: v for k, v in world.template_files().items() if k in snapshot} == snapshot, "the first record is byte-identical"
+    assert world.library_files() == library
+
+
+async def test_instantiating_twice_gives_two_presentations_with_their_own_source_ids(tmp_path):
+    world = await remotion_world(tmp_path)
+    answer = await world.promote(world.body("presentation", scenes=pick(S1, S2), keep_assets=True))
+    one = await world.templates.instantiate(answer["template_id"], {"title": "Un"})
+    two = await world.templates.instantiate(answer["template_id"], {"title": "Deux"})
+    ids = {r["prefab"]["id"] for made in (one, two) for r in made["rendered"]}
+    assert one["presentation_id"] != two["presentation_id"] and len(ids) == 4, "no source id is shared or reused between presentations"
+    assert len(world.template_files()) == 1, "instantiating never touches the record"

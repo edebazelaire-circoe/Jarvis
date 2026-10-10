@@ -996,7 +996,10 @@ class PresentationTools:
                 result = await self._c(lambda c: c.presentation_studio_template_plan(presentation_id, variant_id, request))
                 return self._ok(status="planned", plan=self._template_plan_view(result), presentation_id=presentation_id, variant_id=variant_id)
             result = await self._c(lambda c: c.presentation_studio_template_promote(presentation_id, variant_id, request))
-            return self._ok("say", say="Le modèle est publié dans la bibliothèque.", status="promoted", template_id=result.get("template_id"),
+            library = result.get("published_to_library") is True   # Remotion Slice 19: a whole presentation is ONE record, nothing goes to the library
+            return self._ok("say", say="Le modèle est publié dans la bibliothèque." if library
+                            else "Le modèle est enregistré ; aucune scène n'est publiée dans la bibliothèque.",
+                            status="promoted", template_id=result.get("template_id"), published_to_library=library,
                             prefabs=capped([_drop_none({"id": p.get("id"), "version": p.get("version"), "published": p.get("published")})
                                             for p in result.get("prefabs") or [] if isinstance(p, Mapping)], 12),
                             findings=(result.get("findings") or [])[:6])
@@ -1014,7 +1017,7 @@ class PresentationTools:
             made = await self._c(lambda c: c.presentation_studio_template_instantiate(str(tid), request))
             return self._ok("say", say="Le modèle est instancié.", status="instantiated", presentation_id=made.get("presentation_id"),
                             variant_id=made.get("variant_id"), scene_ids=(made.get("scene_ids") or [])[:48],
-                            art_direction_id=made.get("art_direction_id"))
+                            art_direction_id=made.get("art_direction_id"), score_id=made.get("score_id"))
         raise self._refuse(tool, "unknown_op", f"op inconnue : {clip(op, 30)} (plan, promote, instantiate).")
 
     @staticmethod
@@ -1026,6 +1029,7 @@ class PresentationTools:
                   for s in plan.get("scenes") or [] if isinstance(s, Mapping)]
         return _drop_none({"ok": plan.get("ok"), "kind": plan.get("kind"), "slug": plan.get("slug"), "selection_required": plan.get("selection_required"),
                            "scenes": capped(scenes, 24), "would_publish": plan.get("would_publish"), "findings": (plan.get("findings") or [])[:8],
+                           "publishes_to_library": plan.get("publishes_to_library"), "licences": plan.get("licences") or None,
                            "blocking": plan.get("blocking"), "untrusted": ["scenes.items.controls.items.label"]})
 
     # ------------------------------------------------------------------ rédaction (planificateur de la Slice 11)

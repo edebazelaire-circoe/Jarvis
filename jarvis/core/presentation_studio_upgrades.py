@@ -42,8 +42,8 @@ from jarvis.ports.prefabs import PrefabStoreError
 #: Les versions plus recentes citees par scene (les plus recentes d'abord) ; le compte exact est toujours donne.
 MAX_LISTED_VERSIONS = 8
 #: Prefixe de la raison de creation d'un essai : l'avis retrouve ainsi les essais ouverts sans second registre.
-TRIAL_PREFIX = "trial of "
-_TRIAL = re.compile(r"trial of (?P<prefab>\S+) v(?P<version>\d+) for scene (?P<scene>pss_[0-9a-f]{12})")
+TRIAL_PREFIX = "Essai de "
+_TRIAL = re.compile(r"Essai de (?P<prefab>\S+) v(?P<version>\d+) pour la scène (?P<scene>pss_[0-9a-f]{12})")
 
 
 class PresentationStudioUpgrades:
@@ -180,8 +180,8 @@ class PresentationStudioUpgrades:
             if broken:
                 raise PresentationStudioError(C.SCORE_INCOMPATIBLE, f"the new version would leave {len(broken)} score reference(s) "
                                                                     f"unresolved (first: {broken[0]})")
-        reason = check_rationale(f"{TRIAL_PREFIX}{pin.prefab_id} v{target.version} for scene {scene.scene_id} "
-                                 f"(from v{pin.version}); the original variant is unchanged.")
+        reason = check_rationale(f"{TRIAL_PREFIX}{pin.prefab_id} v{target.version} pour la scène {scene.scene_id} "
+                                 f"(depuis v{pin.version}) ; la variante d'origine n'est pas modifiée.")
         body = {"title": data.get("title") or f"Essai v{target.version}", "source_variant_id": variant_id, "actor": actor,
                 "rationale": reason, "activate": False}
         answer = await self._variants.create_branch(

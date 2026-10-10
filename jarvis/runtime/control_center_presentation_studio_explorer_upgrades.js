@@ -21,6 +21,12 @@
 #${HOST_ID} .jvx-upg{display:grid;gap:8px;margin-top:12px;padding:12px 14px;border-radius:12px;border:1px solid color-mix(in srgb,var(--jvx-accent) 32%,transparent);background:var(--jvx-surface)}
 #${HOST_ID} .jvx-upg[hidden]{display:none}
 #${HOST_ID} .jvx-upg-head{display:flex;align-items:center;gap:10px;min-width:0;flex-wrap:wrap}
+#${HOST_ID} .jvx-upg-toggle{display:inline-flex;align-items:center;gap:8px;min-height:36px;padding:0 6px;border:0;border-radius:8px;background:transparent;color:var(--jvx-ink);text-align:left}
+#${HOST_ID} .jvx-upg-toggle:hover{background:color-mix(in srgb,var(--jvx-accent) 10%,transparent)}
+#${HOST_ID} .jvx-upg-toggle svg{width:14px;height:14px;flex:none}
+#${HOST_ID} .jvx-upg-toggle[aria-expanded="true"] svg{transform:rotate(90deg)}
+#${HOST_ID} .jvx-upg-body{display:grid;gap:8px}
+#${HOST_ID} .jvx-upg-body[hidden]{display:none}
 #${HOST_ID} .jvx-upg-title{margin:0;font-size:14px;font-weight:650}
 #${HOST_ID} .jvx-upg-note{margin:0;color:var(--jvx-mute);font-size:12.5px}
 #${HOST_ID} .jvx-upg-status{margin:0;color:var(--jvx-mute);font-size:13px;font-variant-numeric:tabular-nums}
@@ -64,8 +70,8 @@
 
   function createUpgrades(ctx){
     const {doc,el,attrs,clear,button,log,announce,call,now,later,cancelLater}=ctx;
-    const st={variantId:null,signature:'',status:'idle',data:null,error:null,since:0,generation:0,loadedAt:0};
-    let section=null,count=null,statusLine=null,list=null,retry=null,tick=null;
+    const st={variantId:null,signature:'',status:'idle',data:null,error:null,since:0,generation:0,loadedAt:0,open:false};
+    let section=null,count=null,statusLine=null,list=null,retry=null,tick=null,toggle=null,body=null;
 
     function buildSection(){
       if(section)return section;
@@ -73,18 +79,24 @@
       section.hidden=true;
       attrs(section,{'aria-label':'Versions plus récentes des scènes de la variante choisie'});
       const head=el('div','jvx-upg-head');
-      head.appendChild(el('h3','jvx-upg-title','Versions plus récentes'));
+      const bodyId=ctx.uid('upg');
+      toggle=button(null,'jvx-upg-toggle',()=>{st.open=!st.open;render()},{attrs:{'aria-expanded':'false','aria-controls':bodyId,title:'Afficher ou masquer les scènes dont une version plus récente existe'}});
+      toggle.appendChild(ctx.icon('chevron'));
+      toggle.appendChild(el('h3','jvx-upg-title','Versions plus récentes'));
       count=el('span','jvx-chip');
-      head.appendChild(count);
+      toggle.appendChild(count);
+      head.appendChild(toggle);
+      statusLine=el('span','jvx-upg-status');
+      attrs(statusLine,{role:'status','aria-live':'polite'});
+      head.appendChild(statusLine);
       retry=button('Relire',null,()=>{reload(true)},{attrs:{title:'Relire les versions disponibles (rien n\'est modifié)'}});
       head.appendChild(retry);
-      statusLine=el('p','jvx-upg-status');
-      attrs(statusLine,{role:'status','aria-live':'polite'});
+      body=el('div','jvx-upg-body');body.id=bodyId;
       list=el('ul','jvx-upg-list');
+      body.appendChild(el('p','jvx-upg-note',"Rien n'est mis à jour tout seul. Essayez une version dans une nouvelle variante, comparez-la, puis activez-la si elle vous convient : la variante d'origine ne change pas."));
+      body.appendChild(list);
       section.appendChild(head);
-      section.appendChild(el('p','jvx-upg-note',"Rien n'est mis à jour tout seul. Essayez une version dans une nouvelle variante, comparez-la, puis activez-la si elle vous convient : la variante d'origine ne change pas."));
-      section.appendChild(statusLine);
-      section.appendChild(list);
+      section.appendChild(body);
       return section;
     }
 
@@ -97,12 +109,12 @@
       clear(list);
       if(st.status==='idle'){hide();return}
       if(st.status==='loading'){
-        section.hidden=false;count.textContent='…';
+        section.hidden=false;count.textContent='…';body.hidden=true;toggle.setAttribute('aria-expanded','false');
         statusLine.textContent=`Recherche des versions plus récentes… ${seconds()} s`;statusLine.removeAttribute('data-tone');
         retry.hidden=true;return;
       }
       if(st.status==='error'){
-        section.hidden=false;count.textContent='!';retry.hidden=false;
+        section.hidden=false;count.textContent='!';retry.hidden=false;body.hidden=true;toggle.setAttribute('aria-expanded','false');
         statusLine.textContent=`${st.error} — rien n'a été modifié.`;statusLine.setAttribute('data-tone','warn');return;
       }
       retry.hidden=false;
@@ -110,7 +122,8 @@
       if(!notices.length){hide();return}    /* rien de plus récent : la zone n'existe pas (aucun bruit) */
       section.hidden=false;
       count.textContent=`${notices.length} scène${notices.length>1?'s':''}`;
-      statusLine.textContent='';statusLine.removeAttribute('data-tone');
+      body.hidden=!st.open;toggle.setAttribute('aria-expanded',st.open?'true':'false');
+      statusLine.textContent=st.open?'':"Une version plus récente existe ; rien n'a été changé.";statusLine.removeAttribute('data-tone');
       const titles={};
       for(const s of ctx.scenes())titles[s.id]=s.title;
       for(const notice of notices){
