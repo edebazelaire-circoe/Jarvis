@@ -66,14 +66,21 @@ def test_the_routes_and_the_journal_kinds_are_the_code_ones():
         assert f"core.remotion_import.{kind}" in service, kind
 
 
-def test_no_control_center_relay_agent_tool_or_brain_module_references_the_importer():
+#: Remotion Slice 21: the ONE agent door to the importer is the `jarvis-remotion` server (`remotion_import`, user turn + plan first, see
+#: `test_remotion_mcp_*`); these are the files that carry it (typed client, server, tools, metadata, brain prompt, refusal sentences).
+SLICE_21_AGENT_DOOR = ("remotion_mcp.py", "remotion_mcp_tools.py", "mcp_tool_meta.py", "claude_local.py", "client.py",
+                       "presentation_studio_mcp_support.py")
+
+
+def test_no_control_center_relay_or_page_references_the_importer_and_the_agent_door_is_the_one_server():
     for path in (ROOT / "jarvis").rglob("*"):
         if path.suffix not in (".py", ".js", ".mjs") or path.name.startswith("remotion_import") or "remotion_upstream" in path.name:
             continue
         text = path.read_text(encoding="utf-8", errors="replace")
         if "/v1/remotion/imports" in text or "remotion_import" in text:
             assert path.name in ("v2_app.py", "app.py", "server.py", "https_upstream_fetcher.py", "upstream_fetcher.py",
-                                 "fake_upstream_fetcher.py"), f"unexpected reference to the importer in {path.relative_to(ROOT)}"
+                                 "fake_upstream_fetcher.py", *SLICE_21_AGENT_DOOR), f"unexpected reference to the importer in {path.relative_to(ROOT)}"
+            assert not path.name.endswith("_relay.py") and path.suffix == ".py", "the page and its relays never reach the importer"
 
 
 def test_the_files_the_doc_cites_exist_and_the_security_section_links_back():

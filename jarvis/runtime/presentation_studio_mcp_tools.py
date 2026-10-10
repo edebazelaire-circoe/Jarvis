@@ -688,6 +688,11 @@ class PresentationTools:
         if mode not in ("preview", "commit"):
             raise self._refuse(tool, "invalid_mode", "mode : preview ou commit.")
         wire = self._edit_wire(tool, ops)
+        # Remotion Slice 21: a structural source change starts a sub-agent edit of the scene's source. It only follows a request of the user in
+        # this turn (the attested turn, as for a presentation start or a promotion): no ambient or system-opened turn can mutate a source.
+        if mode == "commit" and any(o["op"] == "scene.source_request" for o in wire) and not await self._addressed_user_turn():
+            raise self._refuse(tool, "presentation_studio_source_request_user_only",
+                               "scene.source_request : seulement sur une demande de l'utilisateur dans ce tour ; propose-le, il le demandera.")
         presentation_id = await self._presentation(tool, pid)
         variant_id = await self._variant(tool, presentation_id, vid)
         removed = sorted(str(o["scene_id"]) for o in wire if o["op"] == "scene.remove")

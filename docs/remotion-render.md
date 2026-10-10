@@ -18,7 +18,7 @@ Pages voisines : [presentation-artifacts.md](presentation-artifacts.md) (source,
 | **Le même rendu n'est pas refait.** | Un même (snapshot, réglages résolus) rend le travail en cours ou le rendu `complete` existant (`deduplicated: true`) ; deux demandes identiques simultanées font un seul travail. Un rendu échoué n'est jamais rendu comme doublon. |
 | **Un seul Core vivant par racine de données.** | `render/core.lock` (référence `pid:heure`) : un second Core vivant ne lance, ne reprend et ne tue aucun rendu (`presentation_render_locked`) ; le verrou d'un Core disparu est repris. |
 | **Le bac à sable du processus de Chrome reste actif.** | Remotion pose `--no-sandbox` ; le garde le retire (§4). `JARVIS_REMOTION_RENDER_NO_SANDBOX=1` est la seule sortie, un choix explicite de l'utilisateur ; un navigateur qui ne démarre pas avec le bac à sable le dit (`presentation_render_sandbox_unavailable`), jamais de relance silencieuse sans bac à sable. |
-| **Aucun outil MCP, aucun chemin du cerveau.** | L'export est une action explicite de l'utilisateur (routes de Core + relais du Control Center). Les budgets d'outils `jarvis-presentation` et `jarvis-workspace` sont inchangés ; les agents lisent les dérivés par `artifact_search` / `artifact_get` comme avant. |
+| **L'export est un geste de l'utilisateur ; le cerveau ne le fait que sur sa demande.** | Routes de Core + relais du Control Center pour la page ; depuis la Slice 21, `remotion_export` (serveur `jarvis-remotion`, [remotion-runtime.md](remotion-runtime.md) §13) appelle les MÊMES routes, seulement dans un tour adressé de l'utilisateur (attesté), `job_id` lu dans `remotion_status`, aucun `authorised_boards`, aucun réglage hors de la liste fermée `scene_id` / `frame_start` / `frame_end` / `frame` / `scale` / `crf`. Les budgets de `jarvis-presentation` et `jarvis-workspace` sont inchangés ; les agents lisent les dérivés par `artifact_search` / `artifact_get` comme avant. |
 
 ### PDF : évaluation et décision
 
@@ -130,7 +130,7 @@ Préfixe frère de la famille des capacités : `/v1/local-capabilities/remotion/
 | GET | `/v1/local-capabilities/remotion/render/jobs/{job_id}` | — | `{job: vue}` |
 | POST | `/v1/local-capabilities/remotion/render/jobs/{job_id}/cancel` | `{}` | `{job: vue}` |
 
-Pourquoi des routes et non un outil : l'export est une **action de l'utilisateur** qui lance un processus et écrit un Artifact ; les budgets d'outils des serveurs MCP internes sont contractuels et inchangés. Le gel (`authorised_boards`) passe par la même route : sans liste, aucun Board n'est lu (refus par défaut). Corps de plus de 8 Kio, champ en trop, paramètre de requête : `presentation_render_invalid`.
+Pourquoi des routes d'abord : l'export est une **action de l'utilisateur** qui lance un processus et écrit un Artifact ; les budgets d'outils des serveurs MCP internes sont contractuels (le verbe du cerveau vit dans le serveur séparé `jarvis-remotion`, Slice 21). Le gel (`authorised_boards`) passe par la même route : sans liste, aucun Board n'est lu (refus par défaut). Corps de plus de 8 Kio, champ en trop, paramètre de requête : `presentation_render_invalid`.
 
 | Code | HTTP | Cause |
 | --- | --- | --- |

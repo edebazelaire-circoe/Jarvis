@@ -199,6 +199,9 @@ def default_prompt_registry() -> PromptRegistry:
         # `jarvis-presentation` est réellement déclaré (avec l'affichage). Le planificateur de rédaction (Slice 11) la suit.
         _descriptor("backend.claude.conversation.presentation", claude_local, "BRAIN_PRESENTATION_PROMPT",
                     claude_local.BRAIN_PRESENTATION_PROMPT, apply_policy="read_only"),
+        # Capacité Remotion (Remotion Slice 21) : dans les mêmes programmes `studio`, juste après la consigne des présentations.
+        _descriptor("backend.claude.conversation.remotion", claude_local, "BRAIN_REMOTION_PROMPT",
+                    claude_local.BRAIN_REMOTION_PROMPT, apply_policy="read_only"),
         # Consigne Bare Hands (Slice 12) : seulement dans les programmes dont le
         # nom porte `barehands`, choisis quand `barehands_test_mode.enabled` est
         # vrai. Indépendante de la scène — les deux interrupteurs ne sont pas liés.
@@ -315,6 +318,7 @@ def default_prompt_registry() -> PromptRegistry:
             # Presentation Studio (Slice 21) : ses outils, puis le planificateur de rédaction de la Slice 11 (enregistré, enfin attaché).
             steps += [
                 PromptStep("backend.claude.conversation.presentation", "cli.append_system_prompt", separator="\n"),
+                PromptStep("backend.claude.conversation.remotion", "cli.append_system_prompt", separator="\n"),
                 PromptStep(presentation_studio_authoring_policy.PROMPT_ID, "cli.append_system_prompt", separator="\n"),
             ]
         if hands:

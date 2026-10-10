@@ -74,6 +74,7 @@ def _parser() -> argparse.ArgumentParser:
     # Boards, Sessions, mémoire et liens des Boards (board-memory-workspace-inspector, Slice 06) :
     # façade du cerveau sur `/api/boards*`, `/api/sessions*`, `/api/workspace/*`, sans interrupteur.
     sub.add_parser("presentation-mcp", help="Serve the brain Presentation Studio MCP tools over stdio")
+    sub.add_parser("remotion-mcp", help="Serve the brain Remotion capability MCP tools over stdio")
     sub.add_parser("memory-mcp", help="Serve the brain long-term memory and knowledge MCP tools over stdio")
     sub.add_parser("workspace-mcp", help="Serve the brain Board, Session and Board memory MCP tools over stdio")
     # Le banc d'essai Bare Hands (Slice 10) : rejouer une trace enregistrée sous
@@ -214,6 +215,12 @@ async def _memory_mcp() -> int:
 
 async def _workspace_mcp() -> int:
     from jarvis.runtime.workspace_mcp import serve_stdio
+
+    return await serve_stdio()
+
+
+async def _remotion_mcp() -> int:
+    from jarvis.runtime.remotion_mcp import serve_stdio
 
     return await serve_stdio()
 
@@ -1915,6 +1922,7 @@ async def _amain(argv: list[str] | None = None) -> int:
     if command == "workspace-mcp": return await _workspace_mcp()
     if command == "capture-mcp": return await _capture_mcp()
     if command == "presentation-mcp": return await _presentation_mcp()
+    if command == "remotion-mcp": return await _remotion_mcp()
     if command == "barehands-replay": return _barehands_replay(args)
     if command == "routing-hook":
         from jarvis.runtime.routing_hook import main as routing_hook_main

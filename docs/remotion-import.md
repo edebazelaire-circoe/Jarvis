@@ -97,7 +97,7 @@ avec `name` (`propriétaire/dépôt`), `url`, `license` (SPDX du modèle), `auth
 
 ## 8. Service, routes et codes
 
-`RemotionImportService` (`jarvis/core/remotion_import_service.py`, câblé dans `JarvisCoreApplication` quand un `upstream_fetcher` est fourni — `jarvis/app.py` le fournit ; sans lui les routes répondent 503). Deux routes de Core (jeton porteur), **aucune** route du Control Center, aucun outil MCP, aucun budget de contexte touché : un import est une demande explicite de l'utilisateur, jamais un geste de l'agent.
+`RemotionImportService` (`jarvis/core/remotion_import_service.py`, câblé dans `JarvisCoreApplication` quand un `upstream_fetcher` est fourni — `jarvis/app.py` le fournit ; sans lui les routes répondent 503). Deux routes de Core (jeton porteur), **aucune** route du Control Center : un import est une demande explicite de l'utilisateur. Depuis la Slice 21, `remotion_import` (serveur `jarvis-remotion`, [remotion-runtime.md](remotion-runtime.md) §13) appelle ces deux routes sur la demande de l'utilisateur dans le tour en cours (attesté, ses mots en `user_request`, SHA complet donné par lui, `execute` seulement après un `plan` identique) ; jamais un geste spontané de l'agent, jamais la bibliothèque partagée, et la liste blanche des propriétaires reste un réglage que l'agent ne peut pas écrire.
 
 | Méthode | Route | Corps | Réponse |
 | --- | --- | --- | --- |

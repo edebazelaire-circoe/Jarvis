@@ -59,7 +59,7 @@ This is what each engine is *designed* to do. Whether an engine is *ready* right
 
 Rules that bind later Slices:
 
-1. **No agent tool carries an engine (or actor) argument.** `jarvis-presentation` has none today and a parity test fails if one appears. Only a Human UI
+1. **No agent tool carries an engine (or actor) argument.** `jarvis-presentation` and `jarvis-remotion` (Slice 21: install, Studio pointer, export, import, upgrades; it only READS the default engine) have none, and a parity test over every native server fails if one appears. Only a Human UI
    action can pass `requested` to the policy (Slice 20: [Human engine control](#human-engine-control-slice-20)). A Core create body of `title` alone names nothing and is `remotion`; an `engine` is accepted only with the Human actor the Control Center relay sets.
 2. **No silent fallback, in any direction.** `resolve_engine(engine, availability)` returns the engine asked for or raises. It reads the state of that engine
    only. No function in the module maps one engine to another: an AST test scans every function of the module (`legacy_html_compatibility`, a fixed table, and `select`, the policy, are excluded by name), and a stricter one scans `resolve_engine` for any concrete engine.

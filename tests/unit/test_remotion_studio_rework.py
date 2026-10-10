@@ -150,13 +150,19 @@ def test_no_brain_mcp_or_agent_path_can_open_the_studio():
                "protocol/client.py", "core/local_capability_service.py", "capabilities/remotion/studio-guard.cjs",
                # Slice 16 (render): REUSE the Studio's pure helpers (`plan_workspace`, `safe_relative`) and subclass its relay's transport; none of
                # them can open the Studio (the render has its own routes, service and process: `docs/remotion-render.md`).
-               "adapters/remotion_render_runner.py", "domain/presentation_render_plan.py", "runtime/presentation_render_relay.py"}
+               "adapters/remotion_render_runner.py", "domain/presentation_render_plan.py", "runtime/presentation_render_relay.py",
+               # Slice 21 (`jarvis-remotion`): the agent surface only READS the Studio status (`remotion_studio_status`) and its `remotion_studio` tool returns a
+               # pointer to the card; it never calls `open` / `restart` / `sync` nor sends the acknowledgement (`test_remotion_mcp_server.py`, AST scan).
+               "runtime/remotion_mcp.py", "runtime/remotion_mcp_tools.py", "runtime/mcp_tool_meta.py", "runtime/claude_local.py"}
+    slice_21_agent_surface = {"runtime/remotion_mcp.py", "runtime/remotion_mcp_tools.py", "runtime/mcp_tool_meta.py"}
     users = {path.relative_to(root).as_posix() for path in root.rglob("*")
              if path.suffix in {".py", ".js", ".html", ".cjs", ".mjs"}
              and any(token in path.read_text(encoding="utf-8", errors="replace") for token in ("remotion_studio", "RemotionStudio", "remotion/studio"))}
     assert users <= allowed, sorted(users - allowed)
     for path in root.rglob("*.py"):
         name = path.relative_to(root).as_posix()
+        if name in slice_21_agent_surface:
+            continue
         if "tool_brain" in name or "mcp" in name or name.startswith(("brain", "core/brain", "core/tool")):
             assert "remotion_studio" not in path.read_text(encoding="utf-8", errors="replace"), name
 
