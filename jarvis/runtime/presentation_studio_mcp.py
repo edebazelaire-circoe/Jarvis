@@ -200,7 +200,7 @@ def build_server(target: PresentationMcpTarget | None = None, *, tools: Presenta
 
     @mcp.tool(annotations=tool_annotations(SERVER_NAME, "presentation_play"))
     async def presentation_play(
-        op: Literal["start", "stop", "pause", "resume", "next", "previous", "goto", "reveal", "hide", "return"],
+        op: Literal["start", "stop", "pause", "resume", "next", "previous", "goto", "reveal", "hide", "return", "play"],
         presentation_id: PresentationId = None,
         variant_id: VariantId = None,
         role: Annotated[Literal["user_presenter", "jarvis_presenter", "rehearsal"] | None, Field(description="start : qui présente.")] = None,
@@ -209,13 +209,17 @@ def build_server(target: PresentationMcpTarget | None = None, *, tools: Presenta
         scene_id: Annotated[str | None, Field(max_length=20, description="goto : pss_…")] = None,
         position: Annotated[int | None, Field(ge=1, le=256, description="goto : rang, 1 = premier.")] = None,
         anchor_id: Annotated[str | None, Field(max_length=40, description="reveal / hide : ancre de presentation_inspect target scene.")] = None,
+        scope: Annotated[Literal["manual", "scene", "all"] | None, Field(description="start / play : jusqu'où la lecture avance seule. scene = joue la slide courante d'un bout à l'autre puis tient sa dernière image ; all = enchaîne toutes les slides sans geste ; manual = rend la main (défaut de start).")] = None,
     ) -> dict[str, Any]:
         """Lire, répéter (rehearsal) ou naviguer dans une présentation.
+
+        « Joue la slide » = play avec scope scene ; « joue tout » / « lance la présentation en continu » = start avec scope all (ou play scope all
+        sur une lecture en cours, qui repart du début de la slide courante). Une lecture où Jarvis dit les lignes se cadence sur sa parole : pas de scope.
 
         start ne change jamais le mode d'interaction de ta propre initiative : s'il le faudrait, l'utilisateur lance la lecture (bouton du
         lecteur) ou passe d'abord dans le bon mode. Naviguer est un geste visuel : silence."""
         return await studio.play(op, presentation_id=presentation_id, variant_id=variant_id, role=role, jarvis_speaks=jarvis_speaks,
-                                 item_id=item_id, scene_id=scene_id, position=position, anchor_id=anchor_id)
+                                 item_id=item_id, scene_id=scene_id, position=position, anchor_id=anchor_id, scope=scope)
 
     @mcp.tool(annotations=tool_annotations(SERVER_NAME, "presentation_edit"))
     async def presentation_edit(

@@ -98,7 +98,7 @@ return {hidden:b.hidden,text:textOf(b),phase:b.getAttribute('data-phase'),over:b
                      "dites « passons a la suite »", "00:12 / 00:30"):
         assert fragment in out["text"], fragment
     assert out["over"] == "0" and out["pause"] is False
-    assert [label for label in out["labels"] if label] == ["◀ Précédent", "Pause", "Suivant ▶", "Plein écran",
+    assert [label for label in out["labels"] if label] == ["◀ Précédent", "Pause", "Suivant ▶", "▶ Slide", "▶▶ Tout", "Plein écran",
                                                            "Sortir de la séquence", "Arrêter", "Ouvrir l'explorateur de variantes", "Fermer"]
     assert out["exploreHidden"] is True, "the explorer door is never offered while a run plays"
     assert out["skipHidden"] is True, "the sequence exit only exists while a locked sequence owns the timeline"

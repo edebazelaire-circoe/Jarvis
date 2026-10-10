@@ -65,6 +65,7 @@ OPERATION_EVENTS: dict[str, str | None] = {
 }
 
 PLAY_NAVIGATION = frozenset({"pause", "resume", "next", "previous", "goto", "reveal", "hide", "return", "stop"})
+PLAY_SCOPES = ("manual", "scene", "all")
 #: Ordres de scène qui s'écrivent par `presentation_edit` (le vocabulaire fermé de Slice 05 et 17, sans les formes d'annulation).
 EDIT_OPS = ("control.set", "control.reset", "scene.remove", "scene.reorder", "scene.rename", "scene.source_request",
             "scene_variant.create", "scene_variant.rename", "scene_variant.select", "scene_variant.delete")
@@ -367,7 +368,7 @@ class PresentationTools:
 
     def _playback_summary(self, state: Mapping[str, Any]) -> dict[str, Any]:
         keys = ("phase", "role", "presentation_id", "variant_id", "stage_object_id", "position", "scene", "item", "speaking", "next",
-                "detour", "sequence", "elapsed", "armed", "follower", "mode", "art_direction", "notices", "problems", "preview",
+                "detour", "sequence", "elapsed", "armed", "follower", "mode", "scope", "art_direction", "notices", "problems", "preview",
                 "last_run")
         summary = {key: state[key] for key in keys if state.get(key) is not None}
         for part in ("scene", "item"):
@@ -603,17 +604,25 @@ class PresentationTools:
 
     async def play(self, op: str, *, presentation_id: str | None = None, variant_id: str | None = None, role: str | None = None,
                    jarvis_speaks: bool | None = None, item_id: str | None = None, scene_id: str | None = None,
-                   position: int | None = None, anchor_id: str | None = None) -> dict[str, Any]:
+                   position: int | None = None, anchor_id: str | None = None, scope: str | None = None) -> dict[str, Any]:
         async def body() -> dict[str, Any]:
-            return await self._play(op, presentation_id, variant_id, role, jarvis_speaks, item_id, scene_id, position, anchor_id)
+            return await self._play(op, presentation_id, variant_id, role, jarvis_speaks, item_id, scene_id, position, anchor_id, scope)
 
         return await self._run("presentation_play", op, {"presentation_id": presentation_id, "variant_id": variant_id}, body)
 
     async def _play(self, op: str, pid: str | None, vid: str | None, role: str | None, speaks: bool | None, item: str | None,
-                    scene: str | None, position: int | None, anchor: str | None) -> dict[str, Any]:
+                    scene: str | None, position: int | None, anchor: str | None, scope: str | None = None) -> dict[str, Any]:
         tool = "presentation_play"
         request: dict[str, Any] = {"actor": BRAIN_ACTOR}
-        if op == "start":
+        if scope is not None and op not in ("start", "play"):
+            raise self._refuse(tool, "invalid_scope", "scope : seulement avec start ou play.")
+        if scope is not None and scope not in PLAY_SCOPES:
+            raise self._refuse(tool, "invalid_scope", "scope : manual, scene ou all.")
+        if op == "play":
+            if scope is None:
+                raise self._refuse(tool, "invalid_scope", "play : donne scope (scene = la slide courante, all = tout, manual = rendre la main).")
+            request["scope"] = scope
+        elif op == "start":
             if role not in ("user_presenter", "jarvis_presenter", "rehearsal"):
                 raise self._refuse(tool, "invalid_role", "role : user_presenter, jarvis_presenter ou rehearsal.")
             presentation_id = await self._presentation(tool, pid)
@@ -622,6 +631,8 @@ class PresentationTools:
                 request["variant_id"] = await self._variant(tool, presentation_id, vid)
             if speaks is not None:
                 request["jarvis_speaks"] = bool(speaks)
+            if scope is not None:
+                request["scope"] = scope
             # L'origine n'est jamais un argument : elle vient du tour réel, attesté par le Control Center qui sert ce tour. Sans attestation,
             # on n'envoie rien et Core applique son défaut `brain_spontaneous`, qui ne change pas le mode (le démarrage est alors refusé).
             if await self._addressed_user_turn():

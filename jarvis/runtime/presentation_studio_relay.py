@@ -25,7 +25,7 @@ Core rendus tels quels, erreurs et résultats `refused`/`stale` compris ; Core i
 | `POST .../presentations/{presentation_id}/experiment` | idem (Slice 20) : copie « experience Slidecar » = NOUVEAU document, **`actor` force a `user`** ; corps `{experimental_confirmed, reason?}` |
 | `GET /api/presentation-studio/engine` | `GET /v1/presentation-studio/engine` (Slice 20) : moteur par defaut, etat de chaque moteur, registre des usages de Slidecar |
 | `GET /api/presentation-studio/playback` | `GET /v1/presentation-studio/playback` : « où en est-on » (Slice 12) |
-| `POST /api/presentation-studio/playback/{verb}` | idem, **`actor` forcé à `user`** ; `verb` : `start stop pause resume next previous goto detour return reveal hide edit` (Slice 12) |
+| `POST /api/presentation-studio/playback/{verb}` | idem, **`actor` forcé à `user`** ; `verb` : `start stop pause resume next previous goto detour return reveal hide edit skip_sequence play advance` (Slices 12, 23) |
 
 **Jamais relayés** à la page : `GET .../playback/armed` (les phrases des cues armées) et `POST .../cues/satisfied` (le suiveur
 de cues parle à Core directement, avec le jeton porteur ; la page n'a aucune raison d'en lire le contenu).
@@ -109,6 +109,7 @@ class PresentationStudioRelayRoutes(CaptureRelayRoutes):
                 web.get(ENGINE_ROUTE, self._relay("studio_engine", CORE_ENGINE)),
                 web.post(STUDIO_ROUTE + "/mount-reports", self._relay("studio_mount_report", CORE_PREFIX + "/mount-reports")),
                 web.get(PLAYBACK_ROUTE, self._relay("studio_playback", PLAYBACK_PREFIX)),
+                web.get(f"{PLAYBACK_ROUTE}/preload", self._relay("studio_playback_preload", PLAYBACK_PREFIX + "/preload")),
                 *(web.post(f"{PLAYBACK_ROUTE}/{verb.value}", self._forced(f"/{verb.value}", f"studio_playback_{verb.value}",
                                                                            prefix=PLAYBACK_PREFIX))
                   for verb in Verb)]

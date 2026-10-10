@@ -341,7 +341,8 @@ async def test_the_window_host_mounts_the_stage_page_for_a_remotion_bundle_and_n
     assert result["afterShell"] == [{"rsh": 1, "type": "props", "props": {"title": "Bonjour"}, "data": {"ignored": 1}}]
     assert result["ready"] == "ready" and result["afterUpdate"] == [{"title": "Bonjour"}, {"title": "Autre"}]
     assert result["controlled"] == [True, True, True, False]
-    assert result["sent"] == [{"rsh": 1, "type": "control", "action": "pause"}, {"rsh": 1, "type": "control", "action": "seek", "frame": 12},
+    assert result["sent"] == [{"rsh": 1, "type": "control", "action": "pause", "frame": 0},    # Slice 23: every Player starts paused on its first image
+                              {"rsh": 1, "type": "control", "action": "pause"}, {"rsh": 1, "type": "control", "action": "seek", "frame": 12},
                               {"rsh": 1, "type": "cue", "name": "reveal_title", "frame": 30}]
     assert result["dropped"] == 1 and result["style"] == "1280 / 720"
 

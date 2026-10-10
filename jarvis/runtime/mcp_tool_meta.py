@@ -558,8 +558,9 @@ PRESENTATION = ServerMeta(
         "presentation_play": ToolMeta(
             "Lire, répéter, naviguer", "write", False, "single_request", "untyped",
             parameter_rules=(_IDS_RULE, "goto : exactement un de item_id, scene_id, position", "reveal / hide : anchor_id",
-                             "start ne change jamais le mode d'interaction de sa propre initiative (mode_switch_refused)"),
-            output_notes=(_SILENT_NOTE, "state : « où en est-on » borné")),
+                             "start ne change jamais le mode d'interaction de sa propre initiative (mode_switch_refused)",
+                             "scope (start, play) : manual, scene ou all ; play exige scope ; pas de scope quand Jarvis dit les lignes"),
+            output_notes=(_SILENT_NOTE, "state : « où en est-on » borné, scope dit jusqu'où la lecture avance seule")),
         "presentation_edit": ToolMeta(
             "Éditer sémantiquement", "write", False, "single_request", "untyped",
             parameter_rules=(_IDS_RULE, "ops : 1 à 16, tout ou rien, vocabulaire fermé", "scene.remove : confirmation obligatoire (jeton du premier appel)",

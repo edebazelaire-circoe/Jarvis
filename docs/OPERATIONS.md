@@ -2285,6 +2285,11 @@ ne prouve pas est à regarder une fois, sur un vrai poste, dans une instance iso
 10. **Registre illisible** (instance isolée) : après un arrêt brutal, abîmer `state/presentation-studio-stage-ledger.json` (le tronquer), relancer Core : la
    scène n'a plus de fenêtre `studio-stage-*` / `studio-aux-*`, le fichier est resté à côté en `.corrupt-<horodatage>`, la ligne
    `stage_ledger_scan_reclaimed` dit combien d'objets ont été repris.
+11. **Lecture continue** (Slice 23, scènes Remotion) : dans la bande, « ▶▶ Tout » joue la présentation entière sans un geste (les slides s'enchaînent
+   sans écran blanc ni retour au début, une animation ne se rejoue pas pendant qu'une slide reste affichée) ; « ▶ Slide » joue la slide courante d'un
+   bout à l'autre puis tient sa dernière image sans passer à la suivante ; le bouton actif (surligné) rend la main. Pause arrête tout, Reprendre
+   continue. Automatisé dans un vrai Chrome : `tests/unit/test_remotion_continuity_realpage_browser.py` ; à regarder une fois à l'oeil sur un vrai
+   poste (fluidité réelle, GPU). Ceci demande de redémarrer Core et le Control Center (code des routes, du service et du navigateur).
 
 Après un arrêt brutal, une fenêtre `studio-stage-*` ou `studio-aux-*` encore visible est un défaut à signaler avec la ligne `playback_reclaim_failed` du
 journal ; ne pas la supprimer à la main avant d'avoir copié `scene.sqlite3` (règle du dépôt).

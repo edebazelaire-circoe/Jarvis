@@ -75,15 +75,15 @@ async def post(core: Core, path: str, body: dict | None = None, *, headers=AUTH)
 
 def test_the_core_route_table_and_what_the_relay_exposes():
     routes = [(r.method, r.path) for r in PresentationStudioPlaybackRoutes(object()).routes()]
-    assert routes == [("GET", PLAYBACK), ("GET", PLAYBACK + "/armed"), ("POST", PLAYBACK + "/{verb}"), ("POST", CUES)]
+    assert routes == [("GET", PLAYBACK), ("GET", PLAYBACK + "/armed"), ("GET", PLAYBACK + "/preload"), ("POST", PLAYBACK + "/{verb}"), ("POST", CUES)]
     relay = PresentationStudioRelayRoutes(transport=lambda: None, journal=None)  # type: ignore[arg-type]
     mapped = {(r.method, "/v1/presentation-studio" + r.path[len("/api/presentation-studio"):]) for r in relay.routes()
               if r.path.startswith(PLAYBACK_ROUTE)}
-    assert mapped == {("GET", PLAYBACK), *(("POST", f"{PLAYBACK}/{verb.value}") for verb in Verb)}
+    assert mapped == {("GET", PLAYBACK), ("GET", PLAYBACK + "/preload"), *(("POST", f"{PLAYBACK}/{verb.value}") for verb in Verb)}
     assert not any("armed" in path or "cues" in path for _, path in mapped), "phrases and cue reports are never relayed"
     assert PLAYBACK == PLAYBACK_PREFIX and PLAYBACK_PREFIX in FORWARDABLE_PREFIXES == client_module.FORWARDABLE_PREFIXES
     assert {v.value for v in Verb} == {"start", "stop", "pause", "resume", "next", "previous", "goto", "detour", "return",
-                                       "reveal", "hide", "edit", "skip_sequence"}
+                                       "reveal", "hide", "edit", "skip_sequence", "play", "advance"}
 
 
 # ------------------------------------------------------------------ Core

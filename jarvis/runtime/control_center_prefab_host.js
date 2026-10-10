@@ -35,6 +35,11 @@
      la version du cadre vivant (retour arrière de Core), rien n'est remonté. Hors de cet espace, la règle est inchangée :
      remontage immédiat sur changement de `(id, version)`. Le cadre « en attente » ne reçoit ni n'émet rien d'utile avant sa
      promotion (ses événements sont refusés) et ne change pas la hauteur de la fenêtre ;
+   - `deps.onLive(objectId)` (Slice 23) : un Player Remotion vient de devenir celui de la fenêtre (premier montage, échange à chaud, préchargé
+     promu) : le suiveur de ligne de temps applique tout de suite ce que Core a dit ; `deps.onClock(objectId)` : la position du lecteur vivant
+     vient d'arriver (l'image d'arrêt est vue quand elle est atteinte, pas au tick suivant) ;
+   - `host.preload(objectId, instance)` (Slice 23) : charge à côté, invisible et en pause sur l'image 0, la scène qui suit, pour que le passage
+     de l'une à l'autre n'attende ni compilation ni démarrage du bac à sable ; le `mount` de cette scène la prend alors sur-le-champ ;
    - `host.counters(objectId)` -> `{starts, mounted, failed, remounts}` de cet objet (survivent à un remontage de version,
      disparaissent au démontage) : les tests de fuite d'un rechargement répété lisent ça et `stats()` ;
    - `deps.postEvent(event)` : envoi d'un événement à Core (Slice 04) ; jamais
@@ -101,6 +106,11 @@
   const RESIZE_COALESCE_MS=16;
   const BUNDLE_CACHE_CAP=64;
   const SETTLE_MS=250;
+  /* Lecture continue (Slice 23) : un Player Remotion démarre PAUSÉ sur sa première image ; la ligne de temps de la partition (ou, à défaut,
+     ce délai) décide de la suite. Avant, il jouait depuis l'image 0 puis sautait à son segment : la scène se rejouait à chaque montage. */
+  const HOLD_GRACE_MS=450;
+  /* Après une mise à jour de valeurs d'un cadre préchargé, le temps de les rendre avant qu'il ne prenne la place du vivant. */
+  const PROPS_SETTLE_MS=120;
   /* Scène Remotion (Slice 14) : `ready` de la page de scène dit que le bac à sable est chargé, pas que la scène a RENDU. Le premier `clock` du
      lecteur (posé à son montage, après le premier rendu ; une erreur de rendu arrive avant lui) en est la preuve ; sans lui dans ce délai, la
      scène n'est pas montée. */
@@ -347,7 +357,8 @@
     function start(rec){
       rec.generation++;
       const generation=rec.generation;
-      cancel(rec.readyTimer);cancel(rec.settleTimer);rec.settleTimer=null;cancel(rec.renderTimer);rec.renderTimer=null;
+      cancel(rec.readyTimer);cancel(rec.settleTimer);rec.settleTimer=null;cancel(rec.renderTimer);rec.renderTimer=null;cancel(rec.holdTimer);rec.holdTimer=null;
+      rec.parked=false;
       if(!rec.staged)clearSlot(rec.slot);
       rec.band=null;rec.note=null;rec.ready=false;rec.bundle=null;rec.events=new Map();
       rec.remotion=false;rec.shellUp=false;
@@ -421,6 +432,23 @@
       },REMOTION_READY_TIMEOUT_MS);
     }
 
+    function notifyLive(rec){
+      if(typeof d.onLive!=='function')return;
+      try{d.onLive(rec.objectId)}catch(error){safeLog('scene.prefab_live_hook_failed',{object_id:rec.objectId,error:describe(error)})}
+    }
+
+    /* The Player is paused on frame 0 until something orders it. If nothing does within the grace period (a scene the score does not drive:
+       a hot reload, a window opened outside a run), it plays on its own, as a Remotion scene always did. */
+    function hold(rec){
+      const generation=rec.generation;
+      cancel(rec.holdTimer);
+      rec.holdTimer=later(()=>{
+        rec.holdTimer=null;
+        if(rec.generation!==generation||frames.get(rec.objectId)!==rec||rec.ordered||!rec.ready||rec.staged||!rec.iframe)return;
+        post(rec,R.hostMessage('control',{action:'play'}));
+      },HOLD_GRACE_MS);
+    }
+
     function onRemotionStatus(rec,event){
       const view=rec.iframe;
       const origin=win.location&&win.location.origin;
@@ -428,6 +456,9 @@
         const clock=R.parseClock(event,view,origin);
         if(!clock.ok){drop(rec,clock.reason);return}
         rec.clock=Object.assign({at:now()},clock.clock);
+        if(!rec.staged&&typeof d.onClock==='function'&&frames.get(rec.objectId)===rec){
+          try{d.onClock(rec.objectId)}catch(error){safeLog('scene.prefab_clock_hook_failed',{object_id:rec.objectId,error:describe(error)})}
+        }
         if(!rec.rendered){   // the first clock: the Player committed its first render (a render error would have come first)
           rec.rendered=true;cancel(rec.renderTimer);rec.renderTimer=null;
           if(rec.state==='ready')settle(rec);
@@ -449,8 +480,11 @@
           cancel(rec.readyTimer);
           if(status.composition)fitComposition(rec,status.composition);
           rec.incarnation=++incarnations;
-          rec.clock=null;
+          rec.clock=null;rec.ordered=false;
           rec.ready=true;
+          /* Starts paused on the first frame: the timeline (or the grace period) decides what it plays, nothing replays after a mount. */
+          post(rec,R.hostMessage('control',{action:'pause',frame:0}));
+          if(!rec.staged){hold(rec);notifyLive(rec)}
           clearNote(rec);
           if(rec.bandReason==='timeout'||rec.state==='error'){clearBand(rec)}
           rec.state='ready';
@@ -498,7 +532,7 @@
     function departure(rec){
       const iframe=rec.iframe;
       rec.iframe=null;
-      cancel(rec.readyTimer);cancel(rec.settleTimer);rec.settleTimer=null;cancel(rec.renderTimer);rec.renderTimer=null;
+      cancel(rec.readyTimer);cancel(rec.settleTimer);rec.settleTimer=null;cancel(rec.renderTimer);rec.renderTimer=null;cancel(rec.holdTimer);rec.holdTimer=null;
       cancel(rec.resizeTimer);rec.resizeTimer=null;rec.pendingHeight=null;
       if(!iframe)return;
       if(rec.ready)post(rec,rec.remotion?R.hostMessage('teardown'):P.hostMessage('teardown'),iframe);
@@ -542,7 +576,15 @@
       current.state='removed';
       try{if(next.height&&typeof d.onResize==='function')d.onResize(next.objectId,next.height)}catch(_error){/* intentional: layout hint only */}
       safeLog('scene.prefab_swapped',{object_id:next.objectId,prefab:next.key,mode});
+      if(next.remotion){hold(next);notifyLive(next)}   // the Player that waited paused on frame 0 behind the live one takes its orders now
       return true;
+    }
+
+    /* The staged frame replaces the live one (settled by itself, or taken by the `mount` of the scene it was preloaded for). */
+    function takeOver(rec){
+      if(!owned(rec)||rec.state!=='ready'||rec.outcomeSent||!rec.staged)return;
+      if(!promote(rec))return;
+      reportOutcome(rec,'mounted','','');
     }
 
     function post(rec,message,iframe){
@@ -605,8 +647,15 @@
           return false;
         }
         if(existing.next&&existing.next.key===key&&existing.next.slot===slot){
-          existing.next.title=instance.title||existing.next.title;
-          update(objectId,instance.props,instance.data,instance.theme);
+          const waiting=existing.next;
+          waiting.title=instance.title||waiting.title;
+          const changed=update(objectId,instance.props,instance.data,instance.theme);
+          if(waiting.preload){
+            /* The scene that was loaded ahead is now the one the window must show: no new load, it takes the place as soon as it is settled
+               (and, when its values moved, once it has rendered them). */
+            waiting.preload=false;
+            if(waiting.parked){waiting.parked=false;later(()=>takeOver(waiting),changed?PROPS_SETTLE_MS:0)}
+          }
           return false;
         }
         if(swapPrefix&&prefab.id.startsWith(swapPrefix)&&existing.slot===slot&&existing.state==='ready'){
@@ -632,12 +681,30 @@
       return true;
     }
 
+    /* Charge à côté la scène qui suit (Slice 23). Sans effet (`false`) : fenêtre absente ou pas prête, autre espace que `swapPrefix`, même
+       version que le cadre vivant, ou déjà en préparation. */
+    function preload(objectId,instance){
+      checkInstance(instance);
+      const existing=frames.get(objectId);
+      const prefab={id:instance.prefab.id,version:instance.prefab.version};
+      const key=`${prefab.id}@${prefab.version}`;
+      if(!existing||existing.state!=='ready'||!swapPrefix||!prefab.id.startsWith(swapPrefix)||existing.key===key)return false;
+      if(existing.next&&existing.next.key===key)return false;
+      dropNext(existing);
+      const staged=makeRec(objectId,prefab,key,existing.slot,instance,existing.counters);
+      staged.staged=true;staged.preload=true;
+      existing.next=staged;
+      start(staged);
+      safeLog('scene.prefab_preloaded',{object_id:objectId,prefab:key,mode});
+      return true;
+    }
+
     function makeRec(objectId,prefab,key,slot,instance,counters){
       const rec={objectId,prefab,key,slot,title:typeof instance.title==='string'?instance.title:'',
         props:P.cloneJson(instance.props||{}),data:P.cloneJson(instance.data||{}),
         theme:Object.assign({},baseTheme,instance.theme||{}),state:'loading',generation:0,lastDraw:now(),
         outputs:[],errorsIn:[],dropped:0,rateLimited:0,height:0,pendingHeight:null,resizeTimer:null,sentData:null,
-        iframe:null,readyTimer:null,renderTimer:null,rendered:false,logs:0,outcomeSent:false,settleTimer:null,staged:false,next:null,
+        iframe:null,readyTimer:null,renderTimer:null,rendered:false,logs:0,outcomeSent:false,settleTimer:null,holdTimer:null,staged:false,preload:false,parked:false,ordered:false,next:null,
         counters:counters||{starts:0,mounted:0,failed:0,remounts:0}};
       rec.propsJson=json(rec.props);rec.dataJson=json(rec.data);rec.themeJson=json(rec.theme);
       return rec;
@@ -889,6 +956,7 @@
       rec.settleTimer=later(()=>{
         rec.settleTimer=null;
         if(!owned(rec)||rec.generation!==generation||rec.state!=='ready'||rec.outcomeSent)return;
+        if(rec.staged&&rec.preload){rec.parked=true;return}   // loaded ahead: waits, paused on frame 0, for the scene it belongs to
         if(rec.staged&&!promote(rec))return;   // replaces the live frame first: "mounted" means "on screen"
         reportOutcome(rec,'mounted','','');
       },SETTLE_MS);
@@ -901,7 +969,7 @@
       const fields={action};
       if(Number.isInteger(frame))fields.frame=frame;
       if(action==='play'&&Number.isInteger(until))fields.until=until;
-      rec.clock=null;   // the old position no longer describes the player we just ordered
+      rec.clock=null;rec.ordered=true;   // the old position no longer describes the player we just ordered; the hold period is over
       return post(rec,R.hostMessage('control',fields));
     }
 
@@ -942,9 +1010,10 @@
       for(const objectId of Array.from(frames.keys()))unmount(objectId);
     }
 
-    return Object.freeze({mount,update,unmount,pause,resume,touch,reload,stats,destroy,control,cue,clock,frame,
+    return Object.freeze({mount,preload,update,unmount,pause,resume,touch,reload,stats,destroy,control,cue,clock,frame,
       has:(objectId)=>frames.has(objectId),
       counters:(objectId)=>{const rec=frames.get(objectId);return rec?Object.assign({},rec.counters):null},
+      parked:(objectId)=>{const rec=frames.get(objectId);return !!(rec&&rec.next&&rec.next.parked)},
       pendingKey:(objectId)=>{const rec=frames.get(objectId);return rec&&rec.next?rec.next.key:null},
       key:(objectId)=>{const rec=frames.get(objectId);return rec?rec.key:null},
       height:(objectId)=>{const rec=frames.get(objectId);return rec?rec.height:0},
@@ -1007,7 +1076,7 @@
     return host.update(id,prefab.props,prefab.data)?'update':'none';
   }
 
-  const api=Object.freeze({LIVE_CAP,SETTLE_MS,READY_TIMEOUT_MS,TEARDOWN_MS,OUTPUT_RATE,ERROR_RATE,RESIZE_COALESCE_MS,BUNDLE_CACHE_CAP,
+  const api=Object.freeze({LIVE_CAP,SETTLE_MS,HOLD_GRACE_MS,PROPS_SETTLE_MS,READY_TIMEOUT_MS,TEARDOWN_MS,OUTPUT_RATE,ERROR_RATE,RESIZE_COALESCE_MS,BUNDLE_CACHE_CAP,
     DEFAULT_THEME,SLOT_CLASS,createPrefabHost,bundleFetcher,sceneSlot,clearAround,placeAround,syncScene});
   root.JarvisPrefabHost=api;
   if(typeof module!=='undefined'&&module.exports)module.exports=api;

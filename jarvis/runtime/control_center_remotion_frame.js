@@ -89,8 +89,18 @@
   /* Ligne de temps de la partition (Slice 12, `docs/presentation-studio.md` > *Remotion timeline bridge*). Pur : la fenêtre de scène
      lui donne l'hôte des cadres (`getHost()`), l'horloge et le journal. Il applique la `timeline` que Core met dans la vue de lecture
      au lecteur Remotion : aller au segment, jouer jusqu'à son image d'arrêt, tenir à la pause, reprendre sans revenir en arrière.
-     Core reste maître : rien ne revient vers lui, et un rapport de position qui ment ne peut que provoquer un rattrapage borné DANS la
-     scène (au plus un par seconde, `MAX_CORRECTIONS` par segment). */
+     Core reste maître : un rapport de position qui ment ne peut que provoquer un rattrapage borné DANS la scène (au plus un par
+     seconde, `MAX_CORRECTIONS` par segment).
+
+     Lecture continue (Slice 23) :
+     - un ordre n'est donné qu'au cadre de SA scène (`timeline.prefab` = `id@version` contre `host.key`) : tant que la fenêtre montre
+       encore la scène précédente (la suivante charge à côté), rien n'est ordonné au cadre qui part (avant, il rejouait le segment de la
+       scène suivante) ;
+     - un cadre qui s'est ARRÊTÉ sur l'image d'arrêt n'est pas un cadre muet : il a dit `playing: false` et se tait légitimement (avant, le
+       silence le faisait relancer depuis le début du segment toutes les 3 s : l'animation se rejouait) ;
+     - en lecture enchaînée (`timeline.auto`), le suiveur DIT à la page quand un segment commence (`started`) et quand le lecteur a
+       réellement atteint son image d'arrêt (`done`, cadre vu en mouvement puis arrêté pile dessus) : la page le rend à Core, qui avance.
+       Aucun rattrapage par saut dans ce mode : un lecteur lent finit son segment, l'avance suit le lecteur et non l'horloge. */
   const MAX_CORRECTIONS=5;
   const CORRECTION_GAP_MS=1000;
   const CLOCK_FRESH_MS=1500;
@@ -98,13 +108,16 @@
   /* A frame that never reports (a fresh Player after a remount that missed the order): the order is sent again after this many ticks. */
   const SILENT_TICKS=6;
   const MAX_RESENDS=3;
+  /* A Player ordered to play that sits paused short of its stop frame this long is ordered again (auto mode: no drift correction exists). */
+  const STALLED_MS=2500;
 
   function validTimeline(tl){
     if(!plain(tl))return false;
     const int=(v,lo,hi)=>Number.isInteger(v)&&v>=lo&&v<=hi;
     return int(tl.fps,1,MAX_FPS)&&int(tl.duration_frames,1,MAX_FRAMES)&&int(tl.from_frame,0,tl.duration_frames-1)
       &&int(tl.until_frame,tl.from_frame,tl.duration_frames-1)&&int(tl.seq,0,1e9)&&int(tl.play_ms,0,1e10)&&int(tl.tolerance_ms,50,10000)
-      &&typeof tl.playing==='boolean';
+      &&typeof tl.playing==='boolean'&&(tl.auto===undefined||typeof tl.auto==='boolean')
+      &&(tl.prefab===undefined||(typeof tl.prefab==='string'&&tl.prefab.length>0&&tl.prefab.length<=200));
   }
 
   function createTimelineFollower(deps){
@@ -112,12 +125,13 @@
     const log=deps.log||(()=>{});
     const every=deps.setInterval||((fn,ms)=>setInterval(fn,ms));
     const stopEvery=deps.clearInterval||((id)=>clearInterval(id));
-    const stats={applied:0,pending:0,invalid:0,corrections:0,gaveUp:0,ahead:0,cleared:0,remounted:0,resent:0};
+    const stats={applied:0,pending:0,invalid:0,corrections:0,gaveUp:0,ahead:0,cleared:0,remounted:0,resent:0,swapWaits:0,started:0,done:0};
     let current=null;      // {objectId, tl, viewAt}
-    let applied=null;      // {objectId, seq, playing, startedAt, lagMs, corrections, lastCorrectionAt, gaveUp}
+    let applied=null;      // {objectId, seq, playing, startedAt, lagMs, corrections, lastCorrectionAt, gaveUp, frame, silent, resends, sawPlaying, done}
     let timer=null;
 
     function frameOf(host,objectId){return typeof host.frame==='function'?host.frame(objectId):undefined}
+    function keyOf(host,objectId){return typeof host.key==='function'?host.key(objectId):null}
     function playMsNow(){
       const age=current.tl.playing?Math.max(0,now()-current.viewAt):0;
       return current.tl.play_ms+age;
@@ -131,13 +145,23 @@
       try{return host.control(current.objectId,action,frame,until)===true}
       catch(error){log('warn','timeline.control_failed',{action,error:String(error&&error.message||error)});return false}
     }
+    /* What the page tells Core in a chained play: a segment began, a segment reached its stop frame. Never an order, only a fact. */
+    function say(event){
+      if(!current||!current.tl.auto||typeof deps.onSegment!=='function')return;
+      try{deps.onSegment({object_id:current.objectId,seq:current.tl.seq,scene_id:current.tl.scene_id,event})}
+      catch(error){log('warn','timeline.report_failed',{event,error:String(error&&error.message||error)})}
+    }
     function clear(){
       if(current!==null||applied!==null)stats.cleared++;
       current=null;applied=null;
       if(timer!==null){stopEvery(timer);timer=null}
     }
+    function fresh(host,objectId,tl){
+      return {objectId,seq:tl.seq,playing:tl.playing,startedAt:now(),lagMs:tl.play_ms,corrections:0,lastCorrectionAt:-1e9,gaveUp:false,
+        frame:frameOf(host,objectId),silent:0,resends:0,sawPlaying:false,done:false,orderedAt:now()};
+    }
 
-    /* `detail` : {object_id, timeline|null} (la vue de lecture). Rend l'issue : none, invalid, no_host, pending, segment, playing,
+    /* `detail` : {object_id, timeline|null} (la vue de lecture). Rend l'issue : none, invalid, no_host, pending, swap_wait, segment, playing,
        paused, same. Idempotent : le rappeler avec la même vue ne renvoie aucun ordre. */
     function apply(detail){
       const objectId=detail&&typeof detail.object_id==='string'?detail.object_id:null;
@@ -148,51 +172,80 @@
       if(!host||typeof host.control!=='function')return 'no_host';
       current={objectId,tl,viewAt:now()};
       if(timer===null)timer=every(tick,TICK_MS);
+      /* The window still shows the previous scene (the next one loads beside it): its Player is not ours to order. The order is given the moment
+         the host swaps the frames (`refresh`). */
+      const live=typeof tl.prefab==='string'?keyOf(host,objectId):null;
+      if(live&&live!==tl.prefab){stats.swapWaits++;return 'swap_wait'}
       /* The host mounted another frame for this window (hot-reload swap, "Recharger la scène", watchdog restart): a fresh Player sits
          paused on frame 0 and knows nothing of the order we gave its predecessor, so the segment is applied again. */
       if(applied!==null&&applied.objectId===objectId&&applied.frame!==frameOf(host,objectId)){stats.remounted++;applied=null}
       if(applied===null||applied.objectId!==objectId||applied.seq!==tl.seq){
         const ok=order(host,tl.playing?'play':'pause',tl.from_frame,tl.playing?tl.until_frame:undefined);
         if(!ok){stats.pending++;applied=null;return 'pending'}   // the frame is not ready yet: the tick tries again
-        applied={objectId,seq:tl.seq,playing:tl.playing,startedAt:now(),lagMs:tl.play_ms,corrections:0,lastCorrectionAt:-1e9,gaveUp:false,
-          frame:frameOf(host,objectId),silent:0,resends:0};
+        applied=fresh(host,objectId,tl);
         stats.applied++;
         log('info','timeline.segment',{object_id:objectId,anchor_id:tl.anchor_id,from:tl.from_frame,until:tl.until_frame,playing:tl.playing});
+        if(tl.playing){stats.started++;say('started')}
         return 'segment';
       }
       if(applied.playing!==tl.playing){
         const ok=order(host,tl.playing?'play':'pause',undefined,tl.playing?tl.until_frame:undefined);
         if(!ok)return 'pending';
         applied.playing=tl.playing;
+        if(tl.playing&&!applied.done)applied.orderedAt=now();
         return tl.playing?'playing':'paused';
       }
       return 'same';
     }
 
+    /* The host swapped or mounted a Player for this window: apply what the page last heard, now (not at the next tick). */
+    function refresh(objectId){
+      if(current===null||(objectId&&objectId!==current.objectId))return 'none';
+      return apply({object_id:current.objectId,timeline:current.tl});
+    }
+
+    function resend(){
+      const resends=applied.resends+1;
+      const wasDone=applied.done;
+      applied=null;
+      const again=apply({object_id:current.objectId,timeline:current.tl});
+      if(applied!==null){applied.resends=resends;applied.done=wasDone;stats.resent++;log('warn','timeline.resent',{object_id:current.objectId,resends})}
+      return again;
+    }
+
     /* Rattrapage : seulement quand le lecteur est EN RETARD sur l'horloge de Core de plus que la tolérance (un lecteur en avance
-       attend de lui-même sur l'image d'arrêt du segment : rien à corriger). Au plus un ordre par seconde, `MAX_CORRECTIONS` par segment. */
+       attend de lui-même sur l'image d'arrêt du segment : rien à corriger). Au plus un ordre par seconde, `MAX_CORRECTIONS` par segment.
+       Jamais en lecture enchaînée : là, l'avance suit le lecteur. */
     function tick(){
       if(current===null)return 'idle';
       const host=deps.getHost();
       if(!host)return 'no_host';
       if(applied===null)return apply({object_id:current.objectId,timeline:current.tl});   // pending: try again
+      const live=typeof current.tl.prefab==='string'?keyOf(host,current.objectId):null;
+      if(live&&live!==current.tl.prefab)return 'swap_wait';
       if(applied.frame!==frameOf(host,current.objectId)){stats.remounted++;applied=null;return apply({object_id:current.objectId,timeline:current.tl})}
       const tl=current.tl;
       if(!tl.playing||!applied.playing||typeof host.clock!=='function')return 'idle';
       const clock=host.clock(current.objectId);
-      if(!clock||now()-clock.at>CLOCK_FRESH_MS){
+      if(clock&&clock.playing)applied.sawPlaying=true;
+      /* The stop frame, reached by a Player seen moving and now halted exactly on it (a stale report of another segment cannot match both). */
+      if(clock&&!applied.done&&!clock.playing&&clock.frame===tl.until_frame&&(applied.sawPlaying||tl.until_frame===tl.from_frame)){
+        applied.done=true;stats.done++;say('done');return 'done';
+      }
+      if(applied.done)return 'done';
+      if(!clock){
         /* Silence while Core says "playing": the order may never have reached this Player. Say it again, a few times, then leave it. */
-        if(++applied.silent>=SILENT_TICKS&&applied.resends<MAX_RESENDS){
-          const resends=applied.resends+1;
-          applied=null;
-          const again=apply({object_id:current.objectId,timeline:current.tl});
-          if(applied!==null){applied.resends=resends;stats.resent++;log('warn','timeline.resent',{object_id:current.objectId,resends})}
-          return again;
-        }
+        if(++applied.silent>=SILENT_TICKS&&applied.resends<MAX_RESENDS)return resend();
         return 'no_clock';
       }
       applied.silent=0;
-      const reported=clock.frame+(clock.playing?Math.round((now()-clock.at)*tl.fps/1000):0);
+      if(tl.auto){
+        /* A halted Player short of its stop frame, long after the order: it never started (or stopped on its own). Order again, bounded. */
+        if(!clock.playing&&now()-applied.orderedAt>STALLED_MS&&now()-clock.at>STALLED_MS&&applied.resends<MAX_RESENDS)return resend();
+        return clock.playing?'ok':'halted';
+      }
+      if(now()-clock.at>CLOCK_FRESH_MS)return 'no_clock';
+      const reported=clock.frame+Math.round((now()-clock.at)*tl.fps/1000);
       const expected=expectedFrame();
       const tolerance=Math.max(1,Math.round(tl.tolerance_ms*tl.fps/1000));
       const drift=expected-reported;
@@ -212,13 +265,17 @@
       return 'corrected';
     }
 
-    return {apply,tick,clear,stats:()=>Object.assign({},stats),state:()=>({
+    /* The host heard the Player's position (it comes at most four times a second, and at once when the Player starts or stops): the stop frame
+       is noticed when it happens, not at the next tick. */
+    function onClock(objectId){return current!==null&&objectId===current.objectId&&applied!==null?tick():'none'}
+
+    return {apply,tick,clear,refresh,onClock,stats:()=>Object.assign({},stats),state:()=>({
       objectId:current?current.objectId:null,seq:applied?applied.seq:null,corrections:applied?applied.corrections:0,
-      gaveUp:applied?applied.gaveUp:false,pending:current!==null&&applied===null})};
+      gaveUp:applied?applied.gaveUp:false,done:applied?applied.done:false,pending:current!==null&&applied===null})};
   }
 
   const api=Object.freeze({SHELL,STAGE_PATH,PHASES,stageUrl,createFrame,hostMessage,parseStatus,parseClock,createTimelineFollower,validTimeline,
-    TIMELINE:Object.freeze({MAX_CORRECTIONS,CORRECTION_GAP_MS,CLOCK_FRESH_MS,TICK_MS,SILENT_TICKS,MAX_RESENDS})});
+    TIMELINE:Object.freeze({MAX_CORRECTIONS,CORRECTION_GAP_MS,CLOCK_FRESH_MS,TICK_MS,SILENT_TICKS,MAX_RESENDS,STALLED_MS})});
   root.JarvisRemotionFrame=api;
   if(typeof module!=='undefined'&&module.exports)module.exports=api;
 })(typeof globalThis!=='undefined'?globalThis:this);

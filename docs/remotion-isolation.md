@@ -292,6 +292,18 @@ La position est un **conseil d'un code non fiable** : elle n'arrive jamais à Co
 - **`frameupdate` du Player** est la source de l'arrêt : un navigateur qui étrangle l'onglet (arrière-plan) peut dépasser `until` d'une ou deux images avant que `seekTo(until)` ne remette le lecteur sur l'image d'arrêt.
 - Chrome 154 seul exercé (Windows 11) ; audio réel jamais écouté.
 
+### 11.7 Slice 23 : lecture continue (aucun message de plus côté bac à sable)
+
+Le protocole `rs: 1` et les messages `rsh: 1` ne changent PAS (mêmes champs exacts, mêmes bornes) ; ce qui change, c'est l'usage qu'en font l'hôte des cadres et le suiveur :
+
+- **Un Player démarre en pause sur l'image 0.** À `ready`, l'hôte envoie `control {action: pause, frame: 0}` (le Player de Remotion démarrait avant sur sa propre lancée, puis le suiveur l'envoyait à son segment : chaque montage rejouait l'ouverture). Si rien ne l'ordonne dans les 450 ms (`HOLD_GRACE_MS`), l'hôte envoie `play` : une scène hors partition joue seule comme avant. L'ordre d'un suiveur marque le cadre « ordonné » et annule ce délai.
+- **Un cadre de scène suivante est préchargé** à côté du vivant (`host.preload`, mêmes règles de confinement que l'échange à chaud de la Slice 06 : classe `sc-prefab-staged`, aucun événement accepté, hauteur de la fenêtre inchangée). Il reste en pause sur l'image 0 (`parked`) jusqu'à ce que le `mount` de SA scène le prenne (`takeOver`) ; l'ancien cadre est caché au même instant (`TEARDOWN_MS` pour son `teardown`).
+- **Le suiveur n'ordonne qu'au cadre de sa scène** : `timeline.prefab` (`id@version`) contre `host.key(objectId)`. Tant que la fenêtre montre encore la scène précédente, il attend (`swap_wait`) ; l'hôte l'appelle (`onLive`) dès qu'un Player devient celui de la fenêtre.
+- **Un Player arrêté n'est pas un Player muet.** Un `clock {playing: false}` reçu après un ordre de lecture est la preuve que le Player a répondu : la relance sur silence (`SILENT_TICKS`) ne vise plus que l'absence TOTALE de rapport depuis l'ordre. L'image d'arrêt (`frame === until_frame`, `playing: false`, après avoir vu le Player jouer) est notée dès l'arrivée du `clock` (`onClock`), pas au tick de 500 ms, et dite à la page (`jarvis:studio-segment`).
+- **Le sélecteur de bac à sable des épreuves** (`tests/unit/_remotion_stage_browser.mjs`, `scope: "sandbox"`) prend désormais le cadre vivant le plus ANCIEN : le cadre préchargé est plus récent que le visible.
+
+Risques résiduels : le premier affichage d'une scène (hors lecture continue) attend jusqu'à 450 ms sur son image 0 quand aucune ligne de temps ne vient ; une scène qui ne compile pas n'est découverte qu'à son tour (le cadre vivant reste affiché, avec l'erreur dite par la page de la scène une fois montée, comme pour un échange à chaud).
+
 ## 12. Slice 13 : variables typées et `inputProps` validées
 
 **Statut : contrat (Level 2) et implémentation (Level 3) livrés ; éprouvé dans un vrai Chrome sur un Core isolé** ([preuve](#126-tests-et-preuves)). Contrat produit : [presentation-studio.md](presentation-studio.md) > *Typed variables and fast edits*. Rien ici n'ajoute d'éditeur, de route ni de type de contrôle : la modification durable reste `control.set` / `control.reset` (CAS), le Player ne reçoit que des valeurs.

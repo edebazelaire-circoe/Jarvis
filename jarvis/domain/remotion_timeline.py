@@ -82,12 +82,14 @@ def frame_of_ms(ms: int, fps: int, duration_frames: int) -> int:
     return max(0, min(duration_frames - 1, (ms * fps + 500) // 1000))
 
 
-def build_frame_map(scene_id: str, composition: Mapping[str, Any], anchors: Sequence[Any]) -> FrameMap | None:
+def build_frame_map(scene_id: str, composition: Mapping[str, Any], anchors: Sequence[Any], *, whole_scene: bool = False) -> FrameMap | None:
     """`composition` : `{id, fps, duration_in_frames}` du manifeste (ou `{id, fps, durationInFrames}` du descripteur).
     `anchors` : les `ScoreAnchor` de la scène (`anchor_id`, `at_ms`). `None` si la scène n'a aucune ancre : rien ne la pilote,
-    elle se joue comme avant (Slice 10)."""
+    elle se joue comme avant (Slice 10). `whole_scene` (lecture enchaînée, Slice 23) : une scène sans ancre a quand même une ligne de
+    temps, d'un seul segment (de 0 à la dernière image) : elle se joue UNE fois et tient sa dernière image, au lieu de boucler, pour que
+    l'enchaînement sache quand elle a fini."""
 
-    if not anchors:
+    if not anchors and not whole_scene:
         return None
     comp_id = composition.get("id")
     fps = composition.get("fps")
@@ -99,6 +101,8 @@ def build_frame_map(scene_id: str, composition: Mapping[str, Any], anchors: Sequ
     if type(duration) is not int or not 1 <= duration <= MAX_DURATION_FRAMES:
         raise TimelineError(f"the composition duration must be an integer 1..{MAX_DURATION_FRAMES} frames")
     count = len(anchors)
+    if not anchors:
+        return FrameMap(scene_id, comp_id, fps, duration, ())
     marks: list[Mark] = []
     problems: set[str] = set()
     for index, anchor in enumerate(anchors):
@@ -129,6 +133,8 @@ def segment_for(fmap: FrameMap, anchor_id: str | None) -> Segment:
     ordered = _ordered(fmap)
     last = fmap.duration_frames - 1
     if anchor_id is None:
+        if not ordered:
+            return Segment(None, 0, last)   # a scene without anchor in a chained play: the whole composition, once
         first = ordered[0][0]
         return Segment(None, 0, max(0, first - 1))
     start = fmap.frame_of(anchor_id)
@@ -150,13 +156,19 @@ def target_segment(fmap: FrameMap, revealed: Collection[str]) -> Segment:
     return segment_for(fmap, None if best is None else best[2])
 
 
-def timeline_wire(fmap: FrameMap, segment: Segment, *, playing: bool, seq: int, play_ms: int) -> dict[str, Any]:
-    """La ligne de temps de la vue de lecture. Entiers, booléen et identifiants seulement ; une vingtaine d'octets par champ."""
+def timeline_wire(fmap: FrameMap, segment: Segment, *, playing: bool, seq: int, play_ms: int, prefab: str | None = None,
+                  auto: bool = False) -> dict[str, Any]:
+    """La ligne de temps de la vue de lecture. Entiers, booléen et identifiants seulement ; une vingtaine d'octets par champ.
+    `prefab` (`id@version`) : la source que la scène montre, pour que le navigateur n'ordonne qu'au cadre de CETTE scène (Slice 23) ;
+    `auto` : lecture enchaînée, le navigateur dit à Core quand le segment a vraiment fini."""
 
-    return {"scene_id": fmap.scene_id, "composition_id": fmap.composition_id, "fps": fmap.fps,
+    wire = {"scene_id": fmap.scene_id, "composition_id": fmap.composition_id, "fps": fmap.fps,
             "duration_frames": fmap.duration_frames, "anchor_id": segment.anchor_id, "from_frame": segment.start,
             "until_frame": segment.until, "playing": bool(playing and segment.until > segment.start), "seq": seq,
-            "play_ms": play_ms, "tolerance_ms": DRIFT_TOLERANCE_MS, "problems": list(fmap.problems)}
+            "play_ms": play_ms, "tolerance_ms": DRIFT_TOLERANCE_MS, "problems": list(fmap.problems), "auto": bool(auto)}
+    if prefab:
+        wire["prefab"] = prefab
+    return wire
 
 
 class SegmentClock:
@@ -173,6 +185,13 @@ class SegmentClock:
 
     def reset(self) -> None:
         self._key, self._acc, self._since = None, 0, None
+
+    def restart(self, now_ms: int, playing: bool) -> None:
+        """Le navigateur dit que le segment COMMENCE (son cadre était à charger) : le temps joué repart de zéro à cet instant, sans changer
+        `seq` (Slice 23)."""
+
+        self._acc = 0
+        self._since = now_ms if playing and self._key is not None else None
 
     def observe(self, key: object, playing: bool, now_ms: int, cap_ms: int) -> tuple[int, int]:
         """`(seq, play_ms)`. `key` identifie le segment (scène, ancre, images) : un autre `key` ouvre un nouveau segment."""

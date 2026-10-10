@@ -148,6 +148,24 @@ async def test_the_origin_is_not_an_argument_of_any_play_call(world):
         await world.tools.play("start", role="rehearsal", origin="explicit_user_request")  # type: ignore[call-arg]
 
 
+async def test_scope_goes_with_start_and_play_and_nowhere_else_and_play_needs_it(world):
+    world.cc.answers[("GET", "/api/presentation-studio/agent/turn")] = (200, {"ok": True, "addressed_user_turn": True})
+    started = await world.tools.play("start", role="rehearsal", scope="scene")
+    assert started["status"] == "applied" and started["state"]["scope"] == "scene"
+    start_call = world.spy.named("presentation_studio_playback")[-1][0]
+    assert start_call[0] == "start" and start_call[1]["scope"] == "scene" and start_call[1]["actor"] == "brain"
+    moved = await world.tools.play("play", scope="all")
+    assert moved["state"]["scope"] == "all"
+    play_call = world.spy.named("presentation_studio_playback")[-1][0]
+    assert play_call[0] == "play" and play_call[1] == {"actor": "brain", "scope": "all"}
+    handed = await world.tools.play("play", scope="manual")
+    assert handed["state"]["scope"] == "manual"
+    for bad in (dict(op="play"), dict(op="play", scope="everything"), dict(op="next", scope="all"), dict(op="stop", scope="scene")):
+        error = await refused(world.tools.play(bad.pop("op"), **bad))
+        assert error.code == "invalid_scope", bad
+    await world.tools.play("stop")
+
+
 # ------------------------------------------------------------------ édition sémantique et parité voix / interface
 
 async def test_a_control_set_changes_the_variant_and_matches_the_gui_path(world):

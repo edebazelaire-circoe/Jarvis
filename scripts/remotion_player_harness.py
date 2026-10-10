@@ -54,7 +54,7 @@ def main() -> int:
     parser.add_argument("--runtime-dir", required=True, help="dossier runtime/ d'une installation Remotion existante (avec node_modules)")
     parser.add_argument("--evidence", required=True, help="dossier de sortie (real-player.json, scénarios, captures)")
     parser.add_argument("--test", default="tests/unit/test_remotion_player_realpage_browser.py",
-                        help="l'épreuve réelle à lancer (Slice 12 : tests/unit/test_remotion_timeline_realpage_browser.py)")
+                        help="l'épreuve réelle à lancer (Slice 12 : tests/unit/test_remotion_timeline_realpage_browser.py ; Slice 23, lecture continue : tests/unit/test_remotion_continuity_realpage_browser.py)")
     parser.add_argument("--slice", type=int, default=10, help="numéro de Slice écrit dans le rapport")
     parser.add_argument("--report", default="real-player.json", help="nom du rapport (Slice 12 : real-timeline.json)")
     options = parser.parse_args()

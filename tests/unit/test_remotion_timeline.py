@@ -148,10 +148,23 @@ def test_the_wire_form_is_small_typed_and_a_hold_is_never_playing():
     wire = timeline_wire(fmap, segment_for(fmap, "middle"), playing=True, seq=3, play_ms=1500)
     assert wire == {"scene_id": "s1", "composition_id": "Intro-Scene", "fps": 30, "duration_frames": 300, "anchor_id": "middle",
                     "from_frame": 120, "until_frame": 239, "playing": True, "seq": 3, "play_ms": 1500,
-                    "tolerance_ms": DRIFT_TOLERANCE_MS, "problems": []}
+                    "tolerance_ms": DRIFT_TOLERANCE_MS, "problems": [], "auto": False}
     assert len(json.dumps(wire)) < 400
+    chained = timeline_wire(fmap, segment_for(fmap, "middle"), playing=True, seq=3, play_ms=1500, prefab="p.s@2", auto=True)
+    assert chained["auto"] is True and chained["prefab"] == "p.s@2" and len(json.dumps(chained)) < 450
     hold = build_frame_map("s1", COMP, anchors(("a", 0), ("b", 4000)))
     assert timeline_wire(hold, segment_for(hold, None), playing=True, seq=1, play_ms=0)["playing"] is False
+
+
+def test_a_scene_without_anchor_has_one_whole_segment_only_in_a_chained_play():
+    assert build_frame_map("s1", COMP, []) is None, "a manual run leaves such a scene to play on its own (Slice 10)"
+    whole = build_frame_map("s1", COMP, [], whole_scene=True)
+    assert whole is not None and whole.marks == () and whole.problems == ()
+    segment = target_segment(whole, set())
+    assert (segment.anchor_id, segment.start, segment.until) == (None, 0, COMP["duration_in_frames"] - 1)
+    assert timeline_wire(whole, segment, playing=True, seq=1, play_ms=0, auto=True)["playing"] is True
+    anchored = build_frame_map("s1", COMP, anchors(("a", 0), ("b", 4000)), whole_scene=True)
+    assert [m.anchor_id for m in anchored.marks] == ["a", "b"], "anchors, when there are some, still cut the scene"
 
 
 # ------------------------------------------------------------------ the segment clock
@@ -168,6 +181,18 @@ def test_the_clock_counts_played_time_only_and_a_new_segment_restarts_it():
     assert clock.observe("k2", True, 99_000, 5000) == (2, 5000)                      # capped at the segment length
     clock.reset()
     assert clock.observe("k2", True, 100_000, 5000) == (3, 0)                        # a new run never inherits, seq stays monotonic
+
+
+def test_a_restart_zeroes_the_played_time_without_changing_the_segment_number():
+    clock = SegmentClock()
+    assert clock.observe("k", True, 1000, 9000) == (1, 0)
+    assert clock.observe("k", True, 41_000, 9000) == (1, 9000)                       # 40 s of loading counted as played, capped
+    clock.restart(41_000, True)
+    assert clock.observe("k", True, 41_000, 9000) == (1, 0)
+    assert clock.observe("k", True, 42_500, 9000) == (1, 1500)
+    clock.restart(50_000, False)                                                      # restarted while paused: counts from the resume
+    assert clock.observe("k", False, 51_000, 9000) == (1, 0)
+    assert clock.observe("k", True, 52_000, 9000) == (1, 0) and clock.observe("k", True, 52_400, 9000) == (1, 400)
 
 
 def test_observing_twice_with_the_same_state_changes_nothing():

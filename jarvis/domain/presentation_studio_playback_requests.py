@@ -43,6 +43,19 @@ class Verb(StrEnum):
     EDIT = "edit"
     #: Provisional operator escape, user only (Slice 14 keeps it): leave a locked sequence and continue after it.
     SKIP_SEQUENCE = "skip_sequence"
+    #: Lecture continue (Slice 23) : `play {scope}` joue la scène courante (`scene`) ou tout ce qui suit (`all`) sans geste, `manual` rend la main.
+    PLAY = "play"
+    #: Lecture continue (Slice 23) : ce que la page dit d'un segment de la ligne de temps (`started`, `done`) ; jamais un ordre.
+    ADVANCE = "advance"
+
+
+class Scope(StrEnum):
+    """Jusqu'où une lecture avance seule. `manual` : jamais (le présentateur, ou une cue, avance). `scene` : jusqu'à la fin de la scène
+    courante, qui tient alors sa dernière image. `all` : de scène en scène jusqu'au dernier élément."""
+
+    MANUAL = "manual"
+    SCENE = "scene"
+    ALL = "all"
 
 
 def _exact(raw: object, name: str, required: set[str], optional: frozenset[str] = frozenset()) -> dict[str, Any]:
@@ -72,11 +85,19 @@ class StartRequest:
     role: StudioRole
     jarvis_speaks: bool | None
     origin: SwitchOrigin
+    scope: Scope = Scope.MANUAL
+
+
+def parse_scope(value: object) -> Scope:
+    try:
+        return Scope(value)
+    except ValueError:
+        raise ValueError(f"scope must be one of {', '.join(s.value for s in Scope)}") from None
 
 
 def parse_start(raw: object) -> StartRequest:
     data = _exact(raw, "start", {"actor", "presentation_id", "role"},
-                  frozenset({"variant_id", "jarvis_speaks", "origin"}))
+                  frozenset({"variant_id", "jarvis_speaks", "origin", "scope"}))
     actor = actor_of(data)
     if not isinstance(data["presentation_id"], str) or not _PRESENTATION.fullmatch(data["presentation_id"]):
         raise ValueError("presentation_id is not a valid presentation id")
@@ -99,7 +120,25 @@ def parse_start(raw: object) -> StartRequest:
         raise ValueError(f"origin must be one of {', '.join(o.value for o in SwitchOrigin)}") from None
     if actor is StudioActor.USER and origin is not SwitchOrigin.EXPLICIT_USER_REQUEST:
         raise ValueError("the user's own action is an explicit user request")
-    return StartRequest(actor, data["presentation_id"], variant, role, speaks, origin)
+    scope = parse_scope(data["scope"]) if "scope" in data else Scope.MANUAL
+    return StartRequest(actor, data["presentation_id"], variant, role, speaks, origin, scope)
+
+
+def parse_play(raw: object) -> tuple[StudioActor, Scope]:
+    data = _exact(raw, "play", {"actor", "scope"})
+    return actor_of(data), parse_scope(data["scope"])
+
+
+def parse_advance(raw: object) -> tuple[StudioActor, int, str]:
+    """`{actor, seq, event}` : la page dit qu'un segment (`seq` de la ligne de temps de la vue) a commencé ou a atteint son image d'arrêt."""
+
+    data = _exact(raw, "advance", {"actor", "seq", "event"})
+    seq = data["seq"]
+    if type(seq) is not int or not 0 <= seq <= 1_000_000_000:
+        raise ValueError("seq must be a non-negative integer")
+    if data["event"] not in ("started", "done"):
+        raise ValueError("event must be 'started' or 'done'")
+    return actor_of(data), seq, data["event"]
 
 
 def parse_actor_only(raw: object, name: str) -> StudioActor:

@@ -46,8 +46,8 @@ def test_the_bounds_in_the_code_are_the_bounds_in_the_page():
 def test_the_routes_verbs_statuses_and_codes_are_documented():
     text = section()
     routes = {(r.method, r.path) for r in PresentationStudioPlaybackRoutes(object()).routes()}
-    assert routes == {("GET", PLAYBACK), ("GET", PLAYBACK + "/armed"), ("POST", PLAYBACK + "/{verb}"), ("POST", CUES)}
-    for path in (PLAYBACK, PLAYBACK + "/armed", PLAYBACK + "/{verb}", CUES):
+    assert routes == {("GET", PLAYBACK), ("GET", PLAYBACK + "/armed"), ("GET", PLAYBACK + "/preload"), ("POST", PLAYBACK + "/{verb}"), ("POST", CUES)}
+    for path in (PLAYBACK, PLAYBACK + "/armed", PLAYBACK + "/preload", PLAYBACK + "/{verb}", CUES):
         assert path in text, path
     assert f"`{' '.join(v.value for v in Verb)}`" in text, "the verb list in the page is the Verb enum, in order"
     for code in (C.PLAYBACK_REFUSED, C.PLAYBACK_STAGE_FAILED, C.UNKNOWN_SCORE, C.SCORE_INCOMPATIBLE):
@@ -63,7 +63,7 @@ def test_the_relay_surface_is_documented_and_never_carries_the_armed_set_or_the_
     text = section()
     relay = PresentationStudioRelayRoutes(transport=lambda: None, journal=None)  # type: ignore[arg-type]
     mine = {(r.method, r.path) for r in relay.routes() if r.path.startswith("/api/presentation-studio/playback")}
-    assert mine == {("GET", "/api/presentation-studio/playback"),
+    assert mine == {("GET", "/api/presentation-studio/playback"), ("GET", "/api/presentation-studio/playback/preload"),
                     *(("POST", f"/api/presentation-studio/playback/{v.value}") for v in Verb)}
     assert "not relayed" in text and "forced" in text
     relay_doc = (ROOT / "jarvis/runtime/presentation_studio_relay.py").read_text(encoding="utf-8")

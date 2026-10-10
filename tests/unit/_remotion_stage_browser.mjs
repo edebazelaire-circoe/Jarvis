@@ -62,8 +62,10 @@ try{
     return r.result.value;
   };
   /* La session du bac à sable : celle des cadres hors processus dont l'adresse est une page `/page/<scène>/<hôte>`. */
+  /* Le plus ANCIEN encore vivant : depuis la Slice 23 la scène qui suit est préchargée à côté (cadre en pause, caché), donc plus récent que
+     le cadre visible ; un cadre qui part (retiré 50 ms après son remplaçant) est déjà fermé quand on le lit. */
   const sandboxSession=async()=>{
-    for(const sid of iframeSessions.slice().reverse()){
+    for(const sid of iframeSessions.slice()){
       try{if(String(await rawEval(sid,'location.href')).includes('/page/scene-'))return sid}catch(_e){/* cible fermée */}
     }
     return null;

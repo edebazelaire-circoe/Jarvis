@@ -8,7 +8,8 @@ n'écrivent une Presentation, sauf `edit`, qui passe par l'API d'édition de la 
 | Méthode | Route | Corps -> réponse |
 | --- | --- | --- |
 | GET | `/v1/presentation-studio/playback` | `{state}` : « où en est-on » borné (ou `{phase: idle, running: false}`) |
-| POST | `/v1/presentation-studio/playback/{verb}` | `verb` parmi `start stop pause resume next previous goto detour return reveal hide edit` ; corps à clés exactes, `actor` obligatoire -> `{status: applied, command, state, ...}` 200 ; `refused` 409 (`reason` = code stable de la machine) ; `stage_failed` 500 (la fenêtre n'a pas suivi : l'état dit pourquoi) |
+| POST | `/v1/presentation-studio/playback/{verb}` | `verb` parmi `start stop pause resume next previous goto detour return reveal hide edit skip_sequence play advance` (`start` accepte `scope` : `manual` (défaut), `scene`, `all` ; `play {scope}` règle la portée de la lecture en cours ; `advance {seq, event: started ou done}` : ce que la page dit d'un segment, jamais un ordre) ; corps à clés exactes, `actor` obligatoire -> `{status: applied, command, state, ...}` 200 ; `refused` 409 (`reason` = code stable de la machine) ; `stage_failed` 500 (la fenêtre n'a pas suivi : l'état dit pourquoi) |
+| GET | `/v1/presentation-studio/playback/preload` | **lecture continue (Slice 23)** : `{preload: {scene_id, title, prefab: {id, version, props, data}}}`, ou `{preload: null}` : la scène du prochain élément quand c'est une autre source (chargée à côté par la page, en pause) |
 | GET | `/v1/presentation-studio/playback/armed` | **suiveur de cues (Slice 13)** : `{run_id, generation, expires_in_s, cues: [{cue_id, phrases, semantics}], ambiguous}` ; une lecture renouvelle l'autorité du suiveur ; **non relayée** à la page |
 | POST | `/v1/presentation-studio/cues/satisfied` | corps exact `{run_id, generation, cue_id}` (aucun texte) -> `{status: fired}` 200 ; `{status: refused, code}` 409 (`stale_run`, `stale_generation`, `armed_set_expired`, `cue_not_armed`) ou 429 (`rate_limited`) ; un doublon rend la même réponse + `duplicate: true` |
 
@@ -43,6 +44,7 @@ class PresentationStudioPlaybackRoutes:
     def routes(self) -> list[web.RouteDef]:
         g = self._guarded
         return [web.get(PLAYBACK, g(self.state)), web.get(PLAYBACK + "/armed", g(self.armed)),
+                web.get(PLAYBACK + "/preload", g(self.preload)),
                 web.post(PLAYBACK + "/{verb}", g(self.command)), web.post(CUES, g(self.cue_satisfied))]
 
     @property
@@ -84,6 +86,12 @@ class PresentationStudioPlaybackRoutes:
     async def armed(self, request: web.Request) -> web.Response:
         _only(request, set())
         return web.json_response(self._service.armed_set())
+
+    async def preload(self, request: web.Request) -> web.Response:
+        """La scène qui suit (source et valeurs), à charger à côté pendant que l'actuelle joue ; `{preload: null}` quand il n'y en a pas."""
+
+        _only(request, set())
+        return web.json_response({"preload": self._service.preload_hint()})
 
     async def command(self, request: web.Request) -> web.Response:
         try:

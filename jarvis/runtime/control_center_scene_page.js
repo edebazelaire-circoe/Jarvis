@@ -1760,7 +1760,8 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
       prefabHost=PrefabHostApi.createPrefabHost({
         fetchBundle:PrefabHostApi.bundleFetcher((path,options)=>fetch(path,{...options,cache:'no-store'})),
         document,window,log:(key,data)=>consoleLog(key==='scene.prefab_mounted'?'info':'warn',key,data),
-        postEvent:postPrefabEvent,onResize:onPrefabResize,onOutcome:reportPrefabOutcome,swapPrefix:'presentation-studio.'});
+        postEvent:postPrefabEvent,onResize:onPrefabResize,onOutcome:reportPrefabOutcome,swapPrefix:'presentation-studio.',
+        onLive:(objectId)=>{if(timelineFollower)timelineFollower.refresh(objectId)},onClock:(objectId)=>{if(timelineFollower)timelineFollower.onClock(objectId)}});
     }catch(error){
       consoleLog('error','scene.prefab_host_failed',{error:errorText(error)});
       prefabHost=null;
@@ -1781,14 +1782,28 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
      dit où le lecteur doit être ; `JarvisRemotionFrame.createTimelineFollower` l'applique au cadre de CETTE page (aller au segment,
      jouer jusqu'à son image d'arrêt, pause, rattrapage). Rien n'est renvoyé à Core. Créé au premier événement. */
   let timelineFollower=null;
+  /* Ce que le suiveur DIT (début de segment, image d'arrêt atteinte, lecture enchaînée) : relayé à la bande de lecture, qui le rend à Core. */
+  function onSegmentReport(report){
+    window.dispatchEvent(new CustomEvent('jarvis:studio-segment',{detail:report}));
+  }
   function onStudioTimeline(event){
     try{
       if(timelineFollower===null){
         const R=window.JarvisRemotionFrame;
         if(!R||typeof R.createTimelineFollower!=='function')return;
-        timelineFollower=R.createTimelineFollower({getHost:prefabs,log:(level,key,data)=>consoleLog(level==='warn'?'warn':'info',key,data)});
+        timelineFollower=R.createTimelineFollower({getHost:prefabs,onSegment:onSegmentReport,log:(level,key,data)=>consoleLog(level==='warn'?'warn':'info',key,data)});
       }
-      timelineFollower.apply(event&&event.detail);
+      const detail=event&&event.detail;
+      /* La scène qui suit est chargée à côté, en pause, avant qu'on y passe (lecture continue) : le passage n'attend plus ni compilation ni démarrage. */
+      const ahead=detail&&detail.preload;
+      if(ahead&&detail.object_id&&ahead.prefab){
+        const host=prefabs();
+        if(host&&typeof host.preload==='function'){
+          host.preload(detail.object_id,{object_id:detail.object_id,prefab:{id:ahead.prefab.id,version:ahead.prefab.version},title:ahead.title,
+            props:ahead.props,data:ahead.data});
+        }
+      }
+      timelineFollower.apply(detail);
     }catch(error){consoleLog('error','scene.timeline_failed',{error:errorText(error)})}
   }
   window.addEventListener('jarvis:studio-timeline',onStudioTimeline);

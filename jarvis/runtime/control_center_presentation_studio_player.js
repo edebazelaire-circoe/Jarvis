@@ -21,6 +21,11 @@
    une interruption (« Continuer » : Jarvis reprend la ligne depuis son début, jamais à mi-phrase). Aucun texte de la partition
    n'arrive ici : Core ne renvoie que des états, des compteurs et des codes.
 
+   Slice 23 (lecture continue) : deux boutons discrets, « ▶ Slide » (jouer la scène courante d'un bout à l'autre) et « ▶▶ Tout » (enchaîner
+   toute la présentation), appellent `play {scope}` ; rappuyer sur celui qui est actif rend la main. La page dit à Core où en est le segment
+   joué (`jarvis:studio-segment` du suiveur -> `advance {seq, event}`, sans voyant ni file d'attente visible : un fait, pas une commande) et
+   charge à côté la scène qui suit (`GET .../playback/preload`, donnée au suiveur dans le même événement que la ligne de temps).
+
    Les titres, libellés et cues viennent du texte d'un auteur ou d'un modèle : ils ne passent que par `textContent`,
    jamais `innerHTML`, et jamais comme une consigne.
 
@@ -139,6 +144,8 @@
 #${BAND_ID} button:hover:not(:disabled){border-color:var(--accent,#6ee7ff)}
 #${BAND_ID} button:disabled{opacity:.5;cursor:default}
 #${BAND_ID} button:focus-visible{outline:2px solid var(--accent,#6ee7ff);outline-offset:2px}
+#${BAND_ID} .jvsp-play{min-width:34px;padding:0 9px;white-space:nowrap}
+#${BAND_ID} .jvsp-play[aria-pressed="true"]{border-color:var(--accent,#6ee7ff);color:var(--accent,#6ee7ff);background:rgba(110,231,255,.1)}
 #${BAND_ID} .jvsp-stop{margin-left:auto;border-color:var(--danger,#ff6577);color:var(--danger,#ff6577)}
 #${BAND_ID} .jvsp-keys{font-size:11px;color:var(--muted,#7190a0)}
 @media (forced-colors:active){#${BAND_ID}{border-color:CanvasText}}
@@ -187,6 +194,9 @@
     let unsubscribeNav=null;
     let dismissedRun=null;        /* run_id dont la bande « arrêtée » a été fermée à la main */
     let stoppedSeen=null;         /* {runId, at} : première fois qu'on voit cette fin */
+    let preloadKey=null;          /* la scène qui suit, telle que la vue la nomme ; sa source et ses valeurs viennent de `GET .../preload` */
+    let preloadData=null;
+    let preloadDirty=false;
     const ui={};
 
     /* ---------------------------------------------------------------- bande */
@@ -231,6 +241,11 @@
       ui.prev=button('◀ Précédent',()=>{command('previous')},'jvsp-prev');
       ui.pause=button('Pause',()=>{command(view.phase==='paused'?'resume':'pause')},'jvsp-pause');
       ui.nextBtn=button('Suivant ▶',()=>{command('next')},'jvsp-next');
+      /* Lecture continue : peu de texte, l'état est dans `aria-pressed`. */
+      ui.playScene=button('▶ Slide',()=>{chain('scene')},'jvsp-play');
+      ui.playScene.title='Jouer cette slide d\'un bout à l\'autre, puis tenir sa dernière image';
+      ui.playAll=button('▶▶ Tout',()=>{chain('all')},'jvsp-play');
+      ui.playAll.title='Jouer toute la présentation, slide après slide, sans s\'arrêter';
       ui.full=button('Plein écran',()=>{enterFullscreen()},'jvsp-full');
       ui.skip=button('Sortir de la séquence',()=>{command('skip_sequence')},'jvsp-skip');
       ui.skip.title='Votre issue de secours, toujours possible : quitte la séquence verrouillée et continue après elle';
@@ -239,7 +254,7 @@
       /* Explorateur de variantes (Slice 18) : proposé seulement quand rien ne joue (la bande « arrêtée »), jamais pendant une lecture. */
       ui.explore=button("Ouvrir l'explorateur de variantes",()=>{openExplorer()},'jvsp-explore');
       ui.explore.hidden=true;
-      [ui.prev,ui.pause,ui.nextBtn,ui.full,ui.skip,ui.stop,ui.explore,ui.dismiss].forEach(b=>actions.appendChild(b));
+      [ui.prev,ui.pause,ui.nextBtn,ui.playScene,ui.playAll,ui.full,ui.skip,ui.stop,ui.explore,ui.dismiss].forEach(b=>actions.appendChild(b));
       ui.keys=doc.createElement('div');ui.keys.className='jvsp-keys';
       ui.keys.textContent='← → Espace : naviguer · P ou Échap : pause · Début / Fin · S : quitter une séquence · cliquez la scène pour le clavier';
       [head,ui.where,ui.item,ui.seq,ui.next,ui.note,actions,ui.keys].forEach(n=>band.appendChild(n));
@@ -370,6 +385,12 @@
         ui.nextBtn.disabled=busy||phase==='detour'||phase==='paused'||phase==='resuming'||phase==='ended';
         ui.pause.disabled=busy||phase==='detour'||phase==='ended'||view.pending==='pause';
         ui.pause.textContent=phase==='paused'?(view.jarvis_speaks?'Continuer':'Reprendre'):view.pending==='pause'?'Pause demandée…':'Pause';
+        const chained=view.scope||'manual';
+        const silentRun=!view.jarvis_speaks;
+        ui.playScene.hidden=!silentRun;ui.playAll.hidden=!silentRun;
+        ui.playScene.setAttribute('aria-pressed',String(chained==='scene'));
+        ui.playAll.setAttribute('aria-pressed',String(chained==='all'));
+        ui.playScene.disabled=ui.playAll.disabled=busy||phase==='detour'||phase==='resuming';
         ui.skip.hidden=!view.sequence;
         ui.full.disabled=busy||!view.stage_object_id||!fullscreen;
         ui.stop.disabled=false;ui.stop.textContent='Arrêter';
@@ -384,7 +405,7 @@
         if(lost)lines.push(`Core ne répond plus depuis ${Math.round((now()-linkLostSince)/1000)} s.`);
         if(notice)lines.push(notice.text);
         ui.note.textContent=lines.join(' ');
-        [ui.prev,ui.pause,ui.nextBtn,ui.full,ui.skip,ui.stop].forEach(b=>{b.hidden=true});
+        [ui.prev,ui.pause,ui.nextBtn,ui.playScene,ui.playAll,ui.full,ui.skip,ui.stop].forEach(b=>{b.hidden=true});
         ui.voice.hidden=true;ui.seq.hidden=true;
         ui.explore.hidden=!view.presentation_id;ui.explore.disabled=false;
         ui.dismiss.hidden=false;ui.keys.hidden=true;
@@ -403,6 +424,7 @@
         try{win.dispatchEvent(new win.CustomEvent('jarvis:studio-playback',{detail:{running:view.running===true}}))}
         catch(error){log('warn','studio.playback_event_failed',{error:String(error&&error.message||error)})}
       }
+      syncPreload();
       announceTimeline(was);
       prepareStage();
       if(notice&&notice.until!==null&&now()>=notice.until)notice=null;
@@ -412,10 +434,27 @@
        et une dernière fois, vide, quand elle disparaît. La vue vient de Core ; la fenêtre ne renvoie rien. */
     function announceTimeline(was){
       const has=!!view.timeline,had=!!(was&&was.timeline);
-      if(!has&&!had)return;
+      if(!has&&!had&&!preloadDirty)return;
+      preloadDirty=false;
       if(typeof win.dispatchEvent!=='function'||typeof win.CustomEvent!=='function')return;
-      try{win.dispatchEvent(new win.CustomEvent('jarvis:studio-timeline',{detail:{object_id:view.stage_object_id||null,timeline:has?view.timeline:null}}))}
-      catch(error){log('warn','studio.timeline_event_failed',{error:String(error&&error.message||error)})}
+      try{
+        win.dispatchEvent(new win.CustomEvent('jarvis:studio-timeline',{detail:{object_id:view.stage_object_id||null,
+          timeline:has?view.timeline:null,preload:preloadData}}));
+      }catch(error){log('warn','studio.timeline_event_failed',{error:String(error&&error.message||error)})}
+    }
+    /* La scène qui suit (autre source) : sa source et ses valeurs sont lues UNE fois par scène annoncée, puis données au suiveur qui la charge à
+       côté, en pause. Un échec de lecture n'est qu'une optimisation perdue : la scène se chargera à son tour, comme avant. */
+    function syncPreload(){
+      const next=activeRun()?view.next_scene:null;
+      const key=next?`${next.scene_id}|${next.prefab}|${next.rev}`:null;
+      if(key===preloadKey)return;
+      preloadKey=key;preloadData=null;
+      if(!key)return;
+      call(`${ROUTE}/preload`,{method:'GET',timeoutMs:6000}).then(answer=>{
+        if(preloadKey!==key||answer.status!==200)return;
+        const hint=answer.body&&answer.body.preload;
+        if(hint&&hint.scene_id===next.scene_id&&hint.prefab){preloadData=hint;preloadDirty=true;announceTimeline(view)}
+      }).catch(error=>log('warn','studio.preload_failed',{error:messageOf(error)}));
     }
     function setNotice(text,kind,ms){notice={text,kind:kind||'info',until:ms?now()+ms:null};render()}
 
@@ -459,22 +498,29 @@
     }
 
     /* ---------------------------------------------------------------- commandes */
-    function command(verb,body){
-      if(queued>=QUEUE_MAX){stats.dropped++;log('warn','studio.command_dropped',{verb});return Promise.resolve(null)}
+    function command(verb,body,quiet){
+      if(!quiet&&queued>=QUEUE_MAX){stats.dropped++;log('warn','studio.command_dropped',{verb});return Promise.resolve(null)}
       queued++;
-      const run=queue.then(()=>send(verb,body||{}));
+      const run=queue.then(()=>send(verb,body||{},quiet===true));
       queue=run.catch(()=>null).then(()=>{queued--});
       return run;
     }
-    async function send(verb,body){
+    /* `quiet` : un fait que la page dit à Core (début / fin de segment), pas un geste de l'utilisateur : ni commande en vol dans la bande, ni toast,
+       ni avis ; l'état que Core rend est adopté (la scène suivante part sans attendre le prochain relevé), un échec n'est qu'une ligne de console. */
+    async function send(verb,body,quiet){
       stats.commands++;
-      inflight={verb,at:now()};
-      render();
+      if(!quiet){inflight={verb,at:now()};render()}
       try{
         const answer=await call(`${ROUTE}/${encodeURIComponent(verb)}`,{method:'POST',body:JSON.stringify(body),timeoutMs:COMMAND_TIMEOUT_MS});
         const payload=answer.body||{};
         if(answer.status===200&&payload.status==='applied'){
-          notice=null;adopt(payload.state);return payload;
+          if(!quiet)notice=null;
+          adopt(payload.state);return payload;
+        }
+        if(quiet){
+          if(payload.state)adopt(payload.state);
+          log('info','studio.report_not_applied',{verb,status:payload.status||answer.status,reason:payload.reason||null});
+          return payload;
         }
         if(payload.status==='refused'){   /* 409 (pas le moment) ou 422 (la demande elle-même est invalide) */
           stats.refused++;
@@ -496,14 +542,27 @@
         throw new Error(String(error.message||`HTTP ${answer.status}`)+(error.code?` (${error.code})`:''));
       }catch(error){
         stats.failed++;
+        if(quiet){log('warn','studio.report_failed',{verb,error:messageOf(error)});return null}
         const text=`${verb} impossible : ${messageOf(error)}`;
         setNotice(text,'problem',null);
         if(toast)toast({title:'Lecture : commande impossible',sub:messageOf(error),kind:'bad'});
         console.error('[studio] studio.command_failed '+JSON.stringify({verb,error:messageOf(error)}));
         return null;
       }finally{
-        inflight=null;render();
+        if(!quiet){inflight=null;render()}
       }
+    }
+
+    /* Lecture continue : le bouton actif rend la main (`manual`), l'autre règle la portée et rejoue la scène depuis son premier élément. */
+    function chain(scope){
+      if(!activeRun())return Promise.resolve(null);
+      return command('play',{scope:(view.scope||'manual')===scope?'manual':scope});
+    }
+    /* Ce que le suiveur de la scène dit d'un segment : un fait, rendu à Core tel quel (il le juge contre son propre segment et son horloge). */
+    function onSegment(event){
+      const detail=event&&event.detail;
+      if(!detail||!activeRun()||(detail.event!=='started'&&detail.event!=='done')||!Number.isInteger(detail.seq)||detail.seq<0)return;
+      command('advance',{seq:detail.seq,event:detail.event},true);
     }
 
     /* ---------------------------------------------------------------- clavier : sur l'élément hôte */
@@ -596,7 +655,7 @@
         unsubscribeNav=fullscreen.onNavigate(event=>{navigate(event&&event.action)});
       }
       ticker=setI(()=>{if(activeRun()||linkLostSince!==null||inflight)render()},1000);
-      if(typeof win.addEventListener==='function')win.addEventListener('resize',place);
+      if(typeof win.addEventListener==='function'){win.addEventListener('resize',place);win.addEventListener('jarvis:studio-segment',onSegment)}
       refresh().then(schedule);
     }
     function stop(){
@@ -604,7 +663,7 @@
       if(pollTimer!==null){clearT(pollTimer);pollTimer=null}
       if(ticker!==null){clearI(ticker);ticker=null}
       if(unsubscribeNav){unsubscribeNav();unsubscribeNav=null}
-      if(typeof win.removeEventListener==='function')win.removeEventListener('resize',place);
+      if(typeof win.removeEventListener==='function'){win.removeEventListener('resize',place);win.removeEventListener('jarvis:studio-segment',onSegment)}
       keyRoot().removeEventListener('keydown',onKeyCapture,true);
       stageEl=null;
     }
@@ -614,7 +673,7 @@
       if(started)refresh().then(schedule);
     }
 
-    return {start,stop,setVisible,refresh,command,navigate,handleKey,enterFullscreen,render,adopt,place,
+    return {start,stop,setVisible,refresh,command,navigate,handleKey,enterFullscreen,render,adopt,place,chain,onSegment,
       view:()=>view,band:()=>band,stageElement:()=>stageEl,stats:()=>Object.assign({},stats),
       state:()=>({inflight,failures,linkLostSince,notice,started,visible}),
       /* Pour l'explorateur de variantes (Slice 18) : démarre une lecture par la MÊME route que la voix. */
@@ -640,7 +699,7 @@
       toast:typeof toast==='function'?toast:null});
     document.addEventListener('visibilitychange',()=>player.setVisible(document.visibilityState!=='hidden'));
     window.JarvisStudioPlayer=Object.freeze({start:player.start,stop:player.stop,refresh:player.refresh,command:player.command,
-      startRun:player.startRun,navigate:player.navigate,enterFullscreen:player.enterFullscreen,view:player.view,stats:player.stats});
+      startRun:player.startRun,chain:player.chain,navigate:player.navigate,enterFullscreen:player.enterFullscreen,view:player.view,stats:player.stats});
     player.start();
   }
   /* Rattrapé ici : la page servie n'a qu'une balise <script> ; une levée emporterait la scène avec elle. */
