@@ -36,6 +36,7 @@ from jarvis.domain.presentation_studio_checks import (
     PresentationStudioError, PresentationStudioErrorCode as C, _check_int, _exact_keys, _fail, clip,
 )
 from jarvis.domain.presentation_studio_edit import StudioActor, unsafe_key_in
+from jarvis.domain.presentation_studio_remotion_edit import REMOTION_KEYS, RESTORE_KEY, parse_remotion_edit
 from jarvis.domain.presentation_studio_scene import StudioScene, check_scene
 
 #: Corps d'une requete de source : quatre fichiers (plafonds des prefabs) plus l'echappement JSON.
@@ -111,6 +112,15 @@ class SourceEditRequest:
     request_id: str | None = None
     #: Permet de remettre a zero les valeurs studio devenues incompatibles (sinon : refus). Jamais implicite.
     allow_state_reset: bool = False
+    #: Scene Remotion (Slice 14) : modules `src/**` a remplacer ou, avec `None`, a supprimer ; assets `public/**` en base64.
+    sources: Mapping[str, str | None] = field(default_factory=dict)
+    assets: Mapping[str, str | None] = field(default_factory=dict)
+    #: Annuler / retablir (Slice 14) : republier le contenu de cette version (`{id, version}`) comme NOUVELLE revision.
+    restore: PrefabRef | None = None
+
+    @property
+    def targets_remotion(self) -> bool:
+        return bool(self.sources or self.assets)
 
 
 def parse_source_edit(raw: object) -> SourceEditRequest:
@@ -126,25 +136,52 @@ def parse_source_edit(raw: object) -> SourceEditRequest:
         raise _fail("scene_id must be a string")
     files = data["files"]
     if not isinstance(files, dict) or not files:
-        raise _fail("files must be a non-empty object of manifest/template/style/behavior")
-    unknown = sorted(str(key)[:40] for key in files if key not in SOURCE_FILES)
+        raise _fail("files must be a non-empty object of manifest/template/style/behavior (Slidecar), "
+                    "sources/assets (Remotion) or restore_version")
+    allowed = (*SOURCE_FILES, *REMOTION_KEYS, RESTORE_KEY)
+    unknown = sorted(str(key)[:40] for key in files if key not in allowed)
     if unknown:
-        raise _fail(f"files: unknown keys {', '.join(unknown[:6])} (allowed: {', '.join(SOURCE_FILES)})")
+        raise _fail(f"files: unknown keys {', '.join(unknown[:6])} (allowed: {', '.join(allowed)})")
+    html_keys = [key for key in ("template", "style", "behavior") if key in files]
+    if html_keys and any(key in files for key in REMOTION_KEYS):
+        raise _fail("files: template/style/behavior edit a Slidecar scene, sources/assets a Remotion scene: not both")
+    restore = None
+    if RESTORE_KEY in files:
+        if len(files) != 1:
+            raise _fail("files.restore_version stands alone: it republishes a whole earlier version")
+        restore = _parse_restore(files[RESTORE_KEY])
     for name, value in files.items():
         if name == "manifest":
             if not isinstance(value, dict):
                 raise _fail("files.manifest must be a JSON object")
+        elif name in REMOTION_KEYS or name == RESTORE_KEY:
+            continue
         elif not isinstance(value, str):
             raise _fail(f"files.{name} must be a string")
         elif len(value.encode("utf-8", errors="surrogatepass")) > _LIMITS[name]:
             raise _fail(f"files.{name} exceeds {_LIMITS[name]} bytes")
+    sources, assets = parse_remotion_edit(files.get("sources"), files.get("assets"))
+    if not (sources or assets or restore or any(key in files for key in SOURCE_FILES)):
+        raise _fail("files names no change (sources and assets are empty)")
     request_id = data.get("request_id")
     if request_id is not None and (not isinstance(request_id, str) or not REQUEST_ID.fullmatch(request_id)):
         raise _fail("request_id must be a source request id (psq_ + 12 hex)")
     allow = data.get("allow_state_reset", False)
     if type(allow) is not bool:
         raise _fail("allow_state_reset must be a boolean")
-    return SourceEditRequest(actor, basis["variant_revision"], data["scene_id"], dict(files), request_id, allow)
+    return SourceEditRequest(actor, basis["variant_revision"], data["scene_id"],
+                             {key: value for key, value in files.items() if key in SOURCE_FILES}, request_id, allow,
+                             sources, assets, restore)
+
+
+def _parse_restore(raw: object) -> PrefabRef:
+    """`files.restore_version` : `{id, version}` d'un pin deja vu (jamais un chemin, jamais un contenu)."""
+
+    pin = _exact_keys(raw, "files.restore_version", {"id", "version"})
+    if not isinstance(pin["id"], str) or not pin["id"] or len(pin["id"]) > 128:
+        raise _fail("files.restore_version.id must be a prefab id")
+    _check_int("files.restore_version.version", pin["version"], 1, 2**31 - 1)
+    return PrefabRef(pin["id"], pin["version"])
 
 
 # ------------------------------------------------------------------ candidat
@@ -419,9 +456,14 @@ class ReloadResult:
     preserved: Mapping[str, Any] = field(default_factory=dict)
     #: Attente du rapport de montage, en secondes (pour la barre visible et les journaux).
     waited_s: float | None = None
+    #: Constats du compilateur d'une source Remotion refusee (`{file, line, column, text}`, <= 20) : `file` est un chemin DE LA
+    #: SOURCE, jamais un chemin du poste. Vide hors echec de compilation (Slice 14).
+    diagnostics: tuple[Mapping[str, Any], ...] = ()
 
     @property
     def http_status(self) -> int:
+        if self.code == C.SOURCE_BUILD_FAILED.value:
+            return 422
         return HTTP_STATUS[self.status]
 
     def to_dict(self) -> dict[str, Any]:
@@ -441,8 +483,12 @@ class ReloadResult:
             wire["message"] = self.message
         if self.reason:
             wire["reason"] = self.reason
+        if self.diagnostics:
+            wire["diagnostics"] = [dict(row) for row in self.diagnostics]
         if self.status not in (ReloadStatus.RELOADED, ReloadStatus.RELOADED_STATE_RESET, ReloadStatus.REPINNED):
             wire["error"] = {"code": self.code or self.status.value, "message": self.message or self.status.value}
+            if self.diagnostics:
+                wire["error"]["diagnostics"] = [dict(row) for row in self.diagnostics]
         return wire
 
 

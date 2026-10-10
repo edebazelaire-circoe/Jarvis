@@ -67,6 +67,9 @@ class PresentationStudioErrorCode(StrEnum):
     VALUE_REFUSED = "presentation_studio_value_refused"
     #: Le candidat de source (manifeste, gabarit, style, comportement) est refuse par la validation des prefabs (Slice 06).
     SOURCE_INVALID = "presentation_studio_source_invalid"
+    #: Le candidat est valide mais la source Remotion ne COMPILE pas (syntaxe, import refuse, entree sans export par defaut...) :
+    #: rien n'est publie, la version precedente continue de jouer ; `diagnostics` dit fichier, ligne, colonne (Slice 14).
+    SOURCE_BUILD_FAILED = "presentation_studio_source_build_failed"
     #: Le cadre n'a pas pu monter la nouvelle source : le pin est revenu a la derniere version valide (Slice 06).
     MOUNT_FAILED = "presentation_studio_mount_failed"
     #: La fenetre « stage » n'a pas pu etre mise a jour : le pin est revenu a la derniere version valide (Slice 06).
@@ -148,6 +151,7 @@ HTTP_STATUS: Mapping[PresentationStudioErrorCode, int] = {
     _C.UNKNOWN_CONTROL: 404,
     _C.VALUE_REFUSED: 400,
     _C.SOURCE_INVALID: 400,
+    _C.SOURCE_BUILD_FAILED: 422,
     _C.MOUNT_FAILED: 409,
     _C.STAGE_FAILED: 409,
     _C.RELOAD_UNAVAILABLE: 409,

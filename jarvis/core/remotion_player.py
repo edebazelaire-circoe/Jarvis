@@ -115,6 +115,25 @@ class RemotionPlayerService:
             "engine_drift": scene.engine_drift,
         }
 
+    async def check_build(self, source: Any) -> dict[str, Any]:
+        """Compile une source candidate (`RemotionSource` deja validee) AVANT toute publication : le garde de l'edition de source
+        (Slice 14, `presentation_studio_remotion_gate`). Meme compilateur, meme cle de cache que `describe` : ce que le Player
+        lira ensuite est deja la, la compilation est gratuite. Ne monte rien, n'ouvre aucun ecouteur. Leve comme `describe`
+        (`engine_unavailable`, `RemotionCompileError` typee avec fichier, ligne, colonne) ; jamais un repli."""
+
+        state = self.availability()
+        if not state.ready:
+            raise PresentationStudioError(C.ENGINE_UNAVAILABLE, f"remotion is unavailable: {state.reason}. Repair: {state.repair}")
+        assert self._compiler is not None
+        try:
+            await self._run_blocking(self._compiler.compile_host)
+            scene = await self._run_blocking(self._compiler.compile_scene, source)
+        except RemotionCompileError as exc:
+            if exc.code is CompileErrorCode.RUNTIME_UNAVAILABLE:
+                raise PresentationStudioError(C.ENGINE_UNAVAILABLE, f"remotion is unavailable: {exc.message}. Repair: {REPAIR}") from exc
+            raise
+        return scene.to_public()
+
     def _trace(self, kind: str, message: str, *, level: str = "info", data: dict[str, Any]) -> None:
         if self._diagnostics is None:
             return

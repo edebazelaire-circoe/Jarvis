@@ -101,6 +101,10 @@
   const RESIZE_COALESCE_MS=16;
   const BUNDLE_CACHE_CAP=64;
   const SETTLE_MS=250;
+  /* Scène Remotion (Slice 14) : `ready` de la page de scène dit que le bac à sable est chargé, pas que la scène a RENDU. Le premier `clock` du
+     lecteur (posé à son montage, après le premier rendu ; une erreur de rendu arrive avant lui) en est la preuve ; sans lui dans ce délai, la
+     scène n'est pas montée. */
+  const RENDER_PROOF_MS=10000;
   const STYLE_ID='jv-prefab-host-style';
   const DEFAULT_THEME=Object.freeze({name:'scene',accent:'#6ee7ff',text:'#dcecf4',muted:'#8aa5b3',surface:'rgba(4,10,15,.88)',scale:1});
   const LIVE_STATES=new Set(['loading','ready','error']);
@@ -332,7 +336,7 @@
     function violate(rec,message,reason){
       const iframe=rec.iframe;
       rec.iframe=null;rec.ready=false;
-      cancel(rec.readyTimer);cancel(rec.settleTimer);rec.settleTimer=null;
+      cancel(rec.readyTimer);cancel(rec.settleTimer);rec.settleTimer=null;cancel(rec.renderTimer);rec.renderTimer=null;
       cancel(rec.resizeTimer);rec.resizeTimer=null;rec.pendingHeight=null;
       if(iframe&&iframe.parentNode)iframe.parentNode.removeChild(iframe);
       fail(rec,message,reason);
@@ -343,7 +347,7 @@
     function start(rec){
       rec.generation++;
       const generation=rec.generation;
-      cancel(rec.readyTimer);cancel(rec.settleTimer);rec.settleTimer=null;
+      cancel(rec.readyTimer);cancel(rec.settleTimer);rec.settleTimer=null;cancel(rec.renderTimer);rec.renderTimer=null;
       if(!rec.staged)clearSlot(rec.slot);
       rec.band=null;rec.note=null;rec.ready=false;rec.bundle=null;rec.events=new Map();
       rec.remotion=false;rec.shellUp=false;
@@ -400,6 +404,7 @@
       cancel(rec.readyTimer);
       if(!R){fail(rec,'the Remotion frame module is not loaded','bundle');return}
       rec.remotion=true;rec.shellUp=false;rec.bundle=bundle;rec.events=new Map();
+      rec.rendered=false;cancel(rec.renderTimer);rec.renderTimer=null;
       const frame=R.createFrame(doc,rec.prefab,rec.title?`${rec.title} (scène Remotion ${rec.key})`:`Scène Remotion ${rec.key}`);
       if(rec.staged)frame.className+=' sc-prefab-staged';
       if(old&&old.parentNode)old.parentNode.replaceChild(frame,old);
@@ -423,6 +428,10 @@
         const clock=R.parseClock(event,view,origin);
         if(!clock.ok){drop(rec,clock.reason);return}
         rec.clock=Object.assign({at:now()},clock.clock);
+        if(!rec.rendered){   // the first clock: the Player committed its first render (a render error would have come first)
+          rec.rendered=true;cancel(rec.renderTimer);rec.renderTimer=null;
+          if(rec.state==='ready')settle(rec);
+        }
         return;
       }
       const parsed=R.parseStatus(event,view,origin);
@@ -445,7 +454,16 @@
           clearNote(rec);
           if(rec.bandReason==='timeout'||rec.state==='error'){clearBand(rec)}
           rec.state='ready';
-          settle(rec);
+          if(rec.rendered)settle(rec);
+          else{
+            const generation=rec.generation;
+            cancel(rec.renderTimer);
+            rec.renderTimer=later(()=>{
+              rec.renderTimer=null;
+              if(!owned(rec)||rec.generation!==generation||rec.rendered||rec.outcomeSent)return;
+              fail(rec,`the scene did not render a first frame within ${RENDER_PROOF_MS/1000} s`,'timeout');
+            },RENDER_PROOF_MS);
+          }
           break;
         case 'failed':case 'killed':
           cancel(rec.readyTimer);
@@ -480,7 +498,7 @@
     function departure(rec){
       const iframe=rec.iframe;
       rec.iframe=null;
-      cancel(rec.readyTimer);cancel(rec.settleTimer);rec.settleTimer=null;
+      cancel(rec.readyTimer);cancel(rec.settleTimer);rec.settleTimer=null;cancel(rec.renderTimer);rec.renderTimer=null;
       cancel(rec.resizeTimer);rec.resizeTimer=null;rec.pendingHeight=null;
       if(!iframe)return;
       if(rec.ready)post(rec,rec.remotion?R.hostMessage('teardown'):P.hostMessage('teardown'),iframe);
@@ -619,7 +637,7 @@
         props:P.cloneJson(instance.props||{}),data:P.cloneJson(instance.data||{}),
         theme:Object.assign({},baseTheme,instance.theme||{}),state:'loading',generation:0,lastDraw:now(),
         outputs:[],errorsIn:[],dropped:0,rateLimited:0,height:0,pendingHeight:null,resizeTimer:null,sentData:null,
-        iframe:null,readyTimer:null,logs:0,outcomeSent:false,settleTimer:null,staged:false,next:null,
+        iframe:null,readyTimer:null,renderTimer:null,rendered:false,logs:0,outcomeSent:false,settleTimer:null,staged:false,next:null,
         counters:counters||{starts:0,mounted:0,failed:0,remounts:0}};
       rec.propsJson=json(rec.props);rec.dataJson=json(rec.data);rec.themeJson=json(rec.theme);
       return rec;
