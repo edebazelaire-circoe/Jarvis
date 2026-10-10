@@ -1,0 +1,35 @@
+{
+  "slice": 15,
+  "test": "tests/unit/test_presentation_studio_authoring_remotion_browser.py",
+  "handoff": "jarvis-remotion-presentation-integration",
+  "when": "2026-10-10T03:38:32+00:00",
+  "repository": {
+    "head": "6b00292b34a6097887323265e81f465b773f149e",
+    "branch": "task/jarvis-remotion-presentation-integration-s15",
+    "tracked_tree_clean": true,
+    "dirty_files": []
+  },
+  "environment": {
+    "platform": "Windows-11-10.0.26200-SP0",
+    "python": "3.14.6",
+    "node": "v24.18.0",
+    "chrome": "154.0.8037.99",
+    "runtime_dir_reused": "node_modules is a junction to an existing private install"
+  },
+  "pytest": {
+    "returncode": 0,
+    "seconds": 31.2,
+    "summary": [
+      "PASSED tests/unit/test_presentation_studio_authoring_remotion_browser.py::test_a_scripted_brief_becomes_a_multi_scene_remotion_presentation_that_plays_in_the_art_direction",
+      "PASSED tests/unit/test_presentation_studio_authoring_remotion_browser.py::test_the_candidates_of_an_exploratory_request_are_drawn_in_their_own_direction",
+      "PASSED tests/unit/test_presentation_studio_authoring_remotion_browser.py::test_a_draft_that_does_not_compile_is_refused_with_file_line_column_and_nothing_is_written",
+      "3 passed in 30.02s"
+    ]
+  },
+  "scenarios": [
+    "authoring_e2e",
+    "authoring_exploratory",
+    "authoring_refused"
+  ],
+  "result": "PASSED"
+}

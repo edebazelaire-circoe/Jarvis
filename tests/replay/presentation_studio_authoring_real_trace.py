@@ -5,7 +5,7 @@ Slice 15: the Core behind the tools is a REAL Remotion Core (`RemotionStack`: th
 the sandbox listener), so the TSX the model writes is really compiled, and what is stored is judged (engine, Remotion scenes, TSX facts).
 Needs `JARVIS_REMOTION_RUNTIME_DIR` (an installed `runtime/`, reused by junction, never installed here).
 
-`python -m tests.replay.presentation_studio_authoring_real_trace [scenario ...] [--raw-dir=DIR] [--budget=USD]` runs the real Claude CLI
+`python -m tests.replay.presentation_studio_authoring_real_trace [scenario ...] [--raw-dir=DIR] [--budget=USD] [--tag=SHORT]` runs the real Claude CLI
 (`claude -p`, stream-json) with the very prompt program the brain gets (`conversation_display_studio_session`: base + display +
 `BRAIN_PRESENTATION_PROMPT` + the Slice 11 planner prompt), the real `jarvis-presentation` and `jarvis-display` MCP servers, against an
 ISOLATED in-process Core (random port, scratch data root, own token). The live JARVIS is never touched. The CLI has no built-in tool but
@@ -355,7 +355,7 @@ def render(result: dict[str, Any]) -> str:
     return "\n".join(lines) + "\n"
 
 
-async def main_async(names: list[str], raw_dir: Path, budget: float) -> int:
+async def main_async(names: list[str], raw_dir: Path, budget: float, tag: str) -> int:
     raw_dir.mkdir(parents=True, exist_ok=True)
     scenarios = []
     for name in names or list(SCENARIOS):
@@ -367,7 +367,7 @@ async def main_async(names: list[str], raw_dir: Path, budget: float) -> int:
               "scenarios": scenarios, "total_cost_usd": round(total, 4), "total_calls": sum(s["metrics"]["tool_calls"] for s in scenarios),
               "prompt_program": "conversation_display_studio_session"}
     EVIDENCE.mkdir(parents=True, exist_ok=True)
-    suffix = "" if not names else "." + "+".join(names)
+    suffix = "" if not names else "." + tag      # a short tag, not the scenario names: Windows paths of a doctored tree stay under the limit
     (EVIDENCE / f"authoring-real-traces{suffix}.json").write_text(json.dumps(result, indent=2, ensure_ascii=False, sort_keys=True) + "\n", encoding="utf-8")
     (EVIDENCE / f"authoring-real-traces{suffix}.md").write_text(render(result), encoding="utf-8")
     print(f"wrote traces, cost ${total:.2f}")
@@ -378,7 +378,8 @@ def main() -> int:
     args = [a for a in sys.argv[1:] if not a.startswith("--")]
     raw = Path(next((a.split("=", 1)[1] for a in sys.argv[1:] if a.startswith("--raw-dir=")), tempfile.gettempdir())) / "s22-real-raw"
     budget = float(next((a.split("=", 1)[1] for a in sys.argv[1:] if a.startswith("--budget=")), "1.00"))
-    return asyncio.run(main_async(args, raw, budget))
+    tag = next((a.split("=", 1)[1] for a in sys.argv[1:] if a.startswith("--tag=")), "+".join(args)[:24])
+    return asyncio.run(main_async(args, raw, budget, tag))
 
 
 if __name__ == "__main__":
