@@ -527,6 +527,10 @@ class PresentationRenderService:
                     if await self._run_blocking(self._runner.sweep, str(record["job_id"])):
                         report["killed"] += 1
                     await self._run_blocking(self._runner.cleanup, str(record["job_id"]))
+                    # the record says so too: a job handled here is never treated as running at the next start
+                    await self._run_blocking(self._runner.write_record, str(record["job_id"]),
+                                             {**{k: v for k, v in record.items() if k != "unreadable"}, "job_id": str(record["job_id"]),
+                                              "state": "failed", "error_code": C.INTERRUPTED.value})
             cursor = None
             for _ in range(10):
                 page = await self._artifacts.query(ArtifactQuery(kinds=tuple(sorted(RENDER_KINDS, key=lambda k: k.value)),

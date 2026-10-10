@@ -168,6 +168,8 @@ class Harness:
             self.check(f"{label}: artifact complete, kind and payload", artifact.state is ArtifactState.COMPLETE and artifact.size_bytes == len(data),
                        kind=artifact.kind.value, size=len(data), width=artifact.width, height=artifact.height, duration_ms=artifact.duration_ms)
             self.check(f"{label}: payload sha256 equals the recorded one", hashlib.sha256(data).hexdigest() == artifact.metadata["render_output_sha256"])
+            self.check(f"{label}: rendered with Chrome's process sandbox ON (recorded on the derivative and in the job view)",
+                       artifact.metadata["render_sandbox"] is True and done["sandbox"] is True)
             origins = await world.artifacts.relations(artifact.artifact_id, RelationDirection.ORIGINS)
             self.check(f"{label}: rendered_from the snapshot", [(r.relation.value, r.origin_artifact_id) for r in origins] == [("rendered_from", snapshot_id)])
             self.facts[label + "_metadata"] = dict(artifact.metadata)
@@ -188,7 +190,7 @@ class Harness:
                            pages=artifact.metadata.get("render_pages"))
                 (self.work / "evidence.pdf").write_bytes(data)
         # le même instantané, les mêmes réglages : mêmes images (le hash du MP4 peut varier d'un encodeur à l'autre, pas celui d'une image fixe)
-        again = await service.submit(snapshot_id, "still", {"frame": 45})
+        again = await service.submit(snapshot_id, "still", {"frame": 45}, deduplicate=False)  # forced: the point is to compare two real renders
         redo = await self.wait_done(service, again["job_id"])
         first = await world.artifacts.get(results["still"][0]["artifact_id"])
         second = await world.artifacts.get(redo["artifact_id"])
@@ -206,6 +208,126 @@ class Harness:
                 if p.name not in ("job.json", "render.log", "result.json", "egress.json")]
         self.check("job folders cleaned, no render process left", not alive and not left, alive=alive[:5], left=left[:5])
         await world.close()
+
+    # ------------------------------------------------------------------ rework: sandbox, burst, two Cores
+
+    async def sandbox(self) -> None:
+        root = self.work / "sandbox"
+        shutil.rmtree(root, ignore_errors=True)
+        root.mkdir(parents=True)
+        runner = RemotionRenderRunner(lambda: self.runtime)
+        browser = runner.find_browser()
+        job_id = "rj_5a4d00b0c5ab"
+        runner.prepare(job_id, {"x.txt": b"x"})
+        job = self.runtime / "render" / "jobs" / job_id
+        shutil.copyfile(ROOT / "scripts" / "remotion_sandbox_probe.cjs", job / "remotion_sandbox_probe.cjs")
+        summary = {}
+        for label, opt_out in (("sandbox_on", False), ("opt_out", True)):
+            env = {**{k: v for k, v in os.environ.items() if k.upper() in ("PATH", "SYSTEMROOT", "TEMP", "TMP", "USERPROFILE", "LOCALAPPDATA", "APPDATA")},
+                   "JARVIS_RENDER_DIR": str(job), "JARVIS_RENDER_RUNTIME": str(self.runtime), "JARVIS_RENDER_BROWSER": browser.path}
+            if opt_out:
+                env["JARVIS_REMOTION_RENDER_NO_SANDBOX"] = "1"
+            out = job / f"{label}.json"
+            done = subprocess.run(["node", "--require", str(job / "render-guard.cjs"), str(job / "remotion_sandbox_probe.cjs"), str(self.runtime), browser.path, str(out)],
+                                  capture_output=True, text=True, timeout=120, env=env, check=False)
+            report = json.loads(out.read_text(encoding="utf-8")) if out.is_file() else {"error": done.stderr[-300:]}
+            lines = [line.split("\t") for line in str(report.get("sandbox_page", "")).splitlines() if "\t" in line]
+            rows = [{"type": cols[1], "sandbox": cols[3], "lockdown": cols[4] if len(cols) > 4 else "", "integrity": cols[5] if len(cols) > 5 else ""}
+                    for cols in lines[1:] if len(cols) > 3]
+            summary[label] = {"rows": rows, "guard_sandbox_flag": report.get("sandbox_flag_in_guard"), "error": report.get("error")}
+        self.facts["sandbox_probe"] = {**summary, "chrome": browser.version}
+        (self.work / "sandbox-probe.json").write_text(json.dumps(self.facts["sandbox_probe"], indent=2), encoding="utf-8")
+        on = [r for r in summary["sandbox_on"]["rows"] if r["type"] == "Renderer"]
+        off = [r for r in summary["opt_out"]["rows"] if r["type"] == "Renderer"]
+        self.check("sandbox ON: chrome://sandbox reports every Renderer process sandboxed (Lockdown / Untrusted)",
+                   bool(on) and all(r["lockdown"] == "Lockdown" and "Untrusted" in r["integrity"] for r in on), renderers=on[:3], guard=summary["sandbox_on"]["guard_sandbox_flag"])
+        self.check("explicit opt-out: the same probe reports the Renderer processes NOT sandboxed (so the probe sees the difference)",
+                   bool(off) and all(r["sandbox"] == "Not Sandboxed" for r in off) and summary["opt_out"]["guard_sandbox_flag"] is False, renderers=off[:3])
+        shutil.rmtree(job, ignore_errors=True)
+        # a browser that cannot start with the sandbox says so, typed, and is NEVER retried unsandboxed
+        node_exe = shutil.which("node")
+        for label, env_extra, expected in (("sandbox on", {}, "presentation_render_sandbox_unavailable"),
+                                           ("opt-out", {"JARVIS_REMOTION_RENDER_NO_SANDBOX": "1"}, "presentation_render_browser_unavailable")):
+            world, _, _ = await self.build(f"sandbox-fail-{label.replace(' ', '-')}")
+            failing = RemotionRenderRunner(lambda: self.runtime, environ={**os.environ, "JARVIS_REMOTION_RENDER_BROWSER": node_exe, **env_extra})
+            service = PresentationRenderService(artifacts=world.artifacts, snapshots=world.snapshots, packager=world.packager, runner=failing,
+                                                installed_engine=failing.installed_engine, diagnostics=world.sink)
+            pid, vid = await world.new_presentation({"src/Scene.tsx": SCENE_TSX}, composition=COMPOSITION, engine=shipped_engine_pin(), props_schema=PROPS, sample=SAMPLE)
+            snapshot = (await world.freeze(pid, vid))["artifact_id"]
+            view = await service.submit(snapshot, "still", {"frame": 1})
+            done = await self.wait_done(service, view["job_id"], timeout=90)
+            artifact = await world.artifacts.get(done["artifact_id"])
+            detail = done["error_detail"] or ""
+            self.check(f"a browser that cannot start ({label}) is a typed visible failure and is not retried without the sandbox",
+                       done["state"] == "failed" and done["error_code"] == expected and artifact.state is ArtifactState.FAILED
+                       and ((expected.endswith("sandbox_unavailable") and "JARVIS_REMOTION_RENDER_NO_SANDBOX=1" in detail and "never retries" in detail)
+                            or expected.endswith("browser_unavailable")) and not self.no_final_file_for(world, artifact),
+                       code=done["error_code"], detail=detail[:200])
+            await world.close()
+
+    def no_final_file_for(self, world, artifact) -> bool:
+        return not self.no_final_file(world, artifact)
+
+    async def burst(self) -> None:
+        world, runner, service, pid, vid, snap = await self.plain_world("burst")
+        results = await asyncio.gather(*(service.submit(snap, "still", {"frame": index}) for index in range(40)), return_exceptions=True)
+        accepted = [r for r in results if isinstance(r, dict)]
+        refused = [r for r in results if isinstance(r, RenderError)]
+        derivs = (await world.artifacts.query(ArtifactQuery(kinds=(ArtifactKind.PRESENTATION_STILL,), limit=100))).items
+        self.check("burst: 40 concurrent requests -> 8 accepted, 32 queue_full, no derivative for a refused one",
+                   len(accepted) == 8 and len(refused) == 32 and {r.code.value for r in refused} == {"presentation_render_queue_full"}
+                   and len(derivs) == 8 and {d.artifact_id for d in derivs} == {r["artifact_id"] for r in accepted},
+                   accepted=len(accepted), refused=len(refused), derivatives=len(derivs))
+        again = await service.submit(snap, "still", {"frame": 0})
+        self.check("burst: an identical request returns the existing job (deduplicated), creating nothing", again["deduplicated"] is True and again["job_id"] in {r["job_id"] for r in accepted})
+        for job in accepted:
+            try:
+                await service.cancel(job["job_id"])
+            except RenderError:
+                pass
+        for job in accepted:
+            await self.wait_done(service, job["job_id"], timeout=90)
+        self.check("burst: every accepted job ends terminal after the cancels, nothing left", not jobs_alive(self.runtime, "render\\jobs"), alive=jobs_alive(self.runtime, "render\\jobs")[:3])
+        await world.close()
+
+    async def two_cores(self) -> None:
+        world, runner, service, pid, vid, snap = await self.plain_world("twocores")
+        await world.close()
+        known = {record.get("job_id") for record in RemotionRenderRunner(lambda: self.runtime).records()}
+        child = subprocess.Popen([sys.executable, str(Path(__file__)), "--child", str(self.work / "twocores"), "--runtime-dir", str(self.runtime),
+                                  "--snapshot", snap, "--work-dir", str(self.work), "--evidence", "unused"], cwd=str(ROOT))
+        end, ref = time.monotonic() + 150, ""
+        while time.monotonic() < end and not ref:
+            await asyncio.sleep(0.5)
+            for record in RemotionRenderRunner(lambda: self.runtime).records():
+                if record.get("process_ref") and record.get("state") == "running" and record.get("job_id") not in known:
+                    ref = record["process_ref"]
+        if not self.check("two Cores: the first Core is rendering", bool(ref)):
+            child.kill()
+            return
+        world2 = await PresentationWorld().open(self.work / "twocores", runtime={"remotion_version": "4.0.534"})
+        runner2 = RemotionRenderRunner(lambda: self.runtime)
+        second = PresentationRenderService(artifacts=world2.artifacts, snapshots=world2.snapshots, packager=world2.packager, runner=runner2,
+                                           installed_engine=runner2.installed_engine, diagnostics=world2.sink)
+        report = await second.reconcile()
+        page = await world2.artifacts.query(ArtifactQuery(kinds=(ArtifactKind.PRESENTATION_VIDEO,), limit=10))
+        try:
+            await second.submit(snap, "still", {"frame": 3})
+            refused = None
+        except RenderError as exc:
+            refused = exc.code.value
+        self.check("two Cores: the second Core kills and recovers NOTHING of the first one's render, and refuses to render itself",
+                   report.get("locked") is True and ref_alive(ref) and [a.state for a in page.items] == [ArtifactState.PENDING] and refused == "presentation_render_locked"
+                   and second.availability()["ready"] is False, report=report, refused=refused)
+        kill_core(child, self.work / "twocores" / "child.pid")
+        third = PresentationRenderService(artifacts=world2.artifacts, snapshots=world2.snapshots, packager=world2.packager, runner=runner2,
+                                          installed_engine=runner2.installed_engine, diagnostics=world2.sink)
+        report = await third.reconcile()
+        artifact = await world2.artifacts.get(page.items[0].artifact_id)
+        self.check("two Cores: once the first Core is dead its lock is taken over and the orphan is recovered",
+                   report.get("locked") is None and report["killed"] >= 1 and artifact.state is ArtifactState.FAILED and not ref_alive(ref), report=report)
+        await third.stop()
+        await world2.close()
 
     # ------------------------------------------------------------------ échecs
 
@@ -307,8 +429,7 @@ class Harness:
             except (OSError, ValueError):
                 pass
             await asyncio.sleep(0.3)
-        subprocess.run(["taskkill", "/PID", str(child.pid), "/F"], capture_output=True, check=False)  # no /T: the render survives its Core
-        child.wait(timeout=30)
+        kill_core(child, self.work / ("restart" if True else "") / "child.pid")  # no /T: the render survives its Core
         progress = (job_dir / "progress.json").read_text(encoding="utf-8") if (job_dir / "progress.json").is_file() else "(none)"
         self.check("restart: the 'Core' is dead and its render process is still alive (an orphan)", ref_alive(ref), ref=ref, progress=progress[:200],
                    result_written=(job_dir / "result.json").is_file())
@@ -331,6 +452,7 @@ class Harness:
                    code=artifact.error_code)
         again = await service2.submit(snap, "still", {"frame": 0})
         self.check("restart: a new render works after the recovery", (await self.wait_done(service2, again["job_id"]))["state"] == "complete")
+        await service2.stop()  # releases the render lock like a Core that stops
         await world2.close()
 
     async def refusals(self) -> None:
@@ -575,14 +697,31 @@ class Harness:
         httpd.shutdown()
 
 
+def kill_core(shim: subprocess.Popen, pid_file: Path) -> None:
+    """Tue le processus « Core » (l'interpréteur lui-même, pas son arbre : le rendu lui survit). Le `python.exe` d'un venv Windows est un lanceur
+    qui démarre le vrai interpréteur : tuer le lanceur seul laisserait le Core vivant (et son verrou)."""
+
+    try:
+        real = int(pid_file.read_text(encoding="utf-8").strip())
+    except (OSError, ValueError):
+        real = shim.pid
+    subprocess.run(["taskkill", "/PID", str(real), "/F"], capture_output=True, check=False)
+    try:
+        shim.wait(timeout=30)
+    except subprocess.TimeoutExpired:
+        subprocess.run(["taskkill", "/PID", str(shim.pid), "/F"], capture_output=True, check=False)
+
+
 async def child_main(args: argparse.Namespace) -> int:
     """Processus « Core » du scénario de reprise : demande un rendu lent puis attend d'être tué."""
 
     runtime = Path(args.runtime_dir)
+    (Path(args.child) / "child.pid").write_text(str(os.getpid()), encoding="utf-8")
     world = await PresentationWorld().open(Path(args.child), runtime={"remotion_version": "4.0.534"})
     runner = RemotionRenderRunner(lambda: runtime)
     service = PresentationRenderService(artifacts=world.artifacts, snapshots=world.snapshots, packager=world.packager, runner=runner,
                                         installed_engine=runner.installed_engine, diagnostics=world.sink)
+    await service.reconcile()  # takes the render lock exactly as a Core does at start
     await service.submit(args.snapshot, "mp4", {"scale": 2.0, "concurrency": 1})
     await asyncio.sleep(600)
     return 0
@@ -598,7 +737,8 @@ async def amain(args: argparse.Namespace) -> int:
     free_before = usage.free
     started = time.monotonic()
     scenarios = {"happy": harness.happy, "cancel_and_kill": harness.cancel_and_kill, "core_death": harness.core_death,
-                 "refusals": harness.refusals, "bounds": harness.bounds, "hostile": harness.hostile}
+                 "refusals": harness.refusals, "bounds": harness.bounds, "hostile": harness.hostile, "sandbox": harness.sandbox, "burst": harness.burst,
+                 "two_cores": harness.two_cores}
     for name, fn in scenarios.items():
         if args.only and name not in args.only:
             continue

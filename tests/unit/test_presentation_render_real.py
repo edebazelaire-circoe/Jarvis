@@ -190,3 +190,56 @@ async def test_the_board_exports_a_still_an_mp4_and_a_pdf_and_previews_them_in_a
         assert not any(p for p in (Path(RUNTIME) / "render" / "jobs").glob("*/work"))
     finally:
         await close(s)
+
+
+NOISE_TSX = '''import React from "react";
+import {AbsoluteFill, useCurrentFrame} from "remotion";
+export default function Scene(props: {title: string; accent: string}) {
+  const frame = useCurrentFrame();
+  return (
+    <AbsoluteFill style={{background: "#000"}}>
+      <svg width="100%" height="100%" xmlns="http://www.w3.org/2000/svg">
+        <filter id="n"><feTurbulence type="fractalNoise" baseFrequency="0.9" numOctaves="4" seed={frame + 1} /></filter>
+        <rect width="100%" height="100%" filter="url(#n)" />
+      </svg>
+    </AbsoluteFill>
+  );
+}
+'''
+
+
+async def test_a_render_larger_than_8_mib_is_rendered_and_opens_whole_through_the_control_center(tmp_path):
+    """4K noise still (incompressible, well over 8 MiB): the image link of the Board sends no Range header, Core refuses 8 MiB+ in one block, the relay streams it."""
+
+    s = await build(tmp_path)
+    try:
+        c = s.core
+        published = await c.prefabs.save(scene_candidate(SCENE, files={"src/Scene.tsx": NOISE_TSX}, composition=Composition("Scene", 1920, 1080, 30, 30),
+                                                         engine=shipped_engine_pin(), props=PROPS, sample={"props": {"title": "x"}, "data": {}}), actor="user")
+        home = (await c.boards.create({"title": "Grand rendu"})).board_id
+        await c.boards.switch(home)
+        created = await c.presentation_studio.create({"title": "Bruit"})
+        pid, vid = created.presentation.presentation_id, created.presentation.active_variant_id
+        variant = created.variants[0].to_document()
+        await c.presentation_studio.save_variant(pid, vid, {"expected_revision": variant["revision"], "title": variant["title"], "scenes": [
+            {"scene_id": "pss_000000000001", "prefab": {"id": SCENE, "version": published.version}}], "art_direction_id": None, "score_id": None})
+        view = await c.presentation_studio.get(pid)
+        snapshot = (await c.presentation_packager.freeze(pid, vid, expected_presentation_revision=view.presentation.revision,
+                                                         expected_variant_revision=view.variants[0].revision, authorised_boards={home}))["artifact_id"]
+        job = await c.presentation_render.submit(snapshot, "still", {"scale": 2.0, "frame": 3})
+        end = asyncio.get_running_loop().time() + 240
+        while c.presentation_render.get(job["job_id"])["state"] not in ("complete", "failed", "cancelled") and asyncio.get_running_loop().time() < end:
+            await asyncio.sleep(0.5)
+        done = c.presentation_render.get(job["job_id"])
+        assert done["state"] == "complete" and done["size_bytes"] > 8 * 1024 * 1024, done
+        artifact = await c.artifacts.get(done["artifact_id"])
+        on_disk = Path(c.artifacts.payload_path(artifact)).read_bytes()
+        assert (artifact.width, artifact.height) == (3840, 2160)
+        response = await s.cc.get(f"/api/artifacts/{done['artifact_id']}/payload")  # no Range: exactly what <img src> sends
+        body = await response.read()
+        assert response.status == 200 and response.headers["Content-Length"] == str(len(on_disk)) and body == on_disk
+        assert body[:8] == b"\x89PNG\r\n\x1a\n" and int.from_bytes(body[16:20], "big") == 3840
+        ranged = await s.cc.get(f"/api/artifacts/{done['artifact_id']}/payload", headers={"Range": "bytes=0-99"})
+        assert ranged.status == 206 and await ranged.read() == on_disk[:100]
+    finally:
+        await close(s)

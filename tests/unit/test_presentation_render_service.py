@@ -705,3 +705,9 @@ async def test_export_refuses_another_engine_before_freezing_anything(rig):
         await rig.service.export(presentation_id=pid, variant_id=vid, expected_presentation_revision=p, expected_variant_revision=v,
                                  authorised_boards=OK_BOARDS, render_format="still")
     assert await snapshots_count(rig) == before
+
+
+async def test_a_job_handled_by_reconcile_is_no_longer_recorded_as_running(rig):
+    rig.runner.records_on_disk = [{"job_id": "rj_0000000000cc", "state": "running", "process_ref": "7:8", "artifact_id": "jart_x"}]
+    await rig.service.reconcile()
+    assert rig.runner.written["rj_0000000000cc"]["state"] == "failed" and rig.runner.written["rj_0000000000cc"]["error_code"] == "presentation_render_interrupted"
