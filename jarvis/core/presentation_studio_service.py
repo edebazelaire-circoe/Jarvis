@@ -392,6 +392,7 @@ class PresentationStudioService:
                     data={"presentation_id": presentation_id, "variant_id": view.presentation.active_variant_id,
                           "engine": engine.value})
         if engine is Engine.SLIDECAR:
+            self._choice.remember_origin(presentation_id, "human")
             self._choice.note("slidecar_created", {"engine": engine.value, "presentation_id": presentation_id,
                                                    "actor": request.actor.value, "reason": request.reason},
                               "Presentation Slidecar creee (experimental, choix explicite de l'utilisateur)")
@@ -422,6 +423,7 @@ class PresentationStudioService:
         request = self._choice.parse({"title": experiment_title(source.title), "engine": Engine.SLIDECAR.value, **body})
         engine = self._choice.decide(request)
         view = await self._store_new(request.title, engine)
+        self._choice.remember_origin(view.presentation.presentation_id, "human")
         self._choice.note("slidecar_experiment_created",
                           {"engine": engine.value, "presentation_id": view.presentation.presentation_id, "derived_from": source_id,
                            "source_engine": source.engine.value, "actor": request.actor.value, "reason": request.reason},
@@ -493,6 +495,14 @@ class PresentationStudioService:
                 for variant_id, before in registered.items():
                     self._pins.restore_variant(presentation_id, variant_id, before)
             raise
+        # Slice 20 (QA F2): the planner still assembles HTML scenes, i.e. Slidecar documents (carve-out until Slice 15). Not a human choice, not
+        # silent: the same diagnostic, actor `agent`, and the origin the later `slidecar_used` lines quote.
+        assembled = self._parse_stored(parse_presentation, manifest, "assembled presentation")
+        if assembled.engine is Engine.SLIDECAR:
+            self._choice.remember_origin(presentation_id, "agent_authored")
+            self._choice.note("slidecar_created", {"engine": Engine.SLIDECAR.value, "presentation_id": presentation_id, "actor": "agent",
+                                                   "reason": "agent authoring (HTML scenes) until Slice 15"},
+                              "Presentation Slidecar assemblee par l'agent (scenes HTML, jusqu'a la Slice 15)")
         self._trace("core.presentation_studio.created", "Presentation assemblee creee",
                     data={"presentation_id": presentation_id, "variants": len(variants), "scores": len(scores),
                           "art_directions": len(art_directions)})
@@ -549,7 +559,7 @@ class PresentationStudioService:
         async def resolve() -> EngineResolution:
             presentation = await self._load_presentation(presentation_id)
             if presentation.engine is Engine.SLIDECAR:
-                self._choice.note_use(presentation_id, action)
+                self._choice.note_use(presentation_id, action, self._choice.origins.get(presentation_id, "legacy"))
             return gate.require(presentation.engine, action, presentation_id=presentation_id)
 
         return await self._guard("require_engine", presentation_id, resolve())

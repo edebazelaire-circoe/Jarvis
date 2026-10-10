@@ -232,3 +232,69 @@ async def test_a_broken_remotion_is_diagnosed_and_repaired_from_the_page_without
             Path(EVIDENCE).mkdir(parents=True, exist_ok=True)
             for shot in (shot_missing, shot_failed, shot_ok):
                 shutil.copyfile(shot, Path(EVIDENCE) / Path(shot).name)
+
+
+async def test_hostile_text_is_inert_unreadable_documents_are_visible_and_a_double_click_acts_once(tmp_path):
+    """QA F3 (problems are rows, not dropped), the dynamic XSS check (titles, reasons, journal, problems) and the double-dialog / double-submit guard."""
+
+    async with World(tmp_path) as world:
+        evil_title = '<img src=x onerror="window.__xss=1">'
+        evil_reason = '"><script>window.__xss=2</script><b id="pwn">x</b>'
+        status, made = await world.core_call("POST", "/v1/presentation-studio/presentations",
+                                             json={"title": evil_title, "engine": "slidecar", "actor": "user",
+                                                   "experimental_confirmed": True, "reason": evil_reason})
+        assert status == 201
+        _, broken = await world.core_call("POST", "/v1/presentation-studio/presentations", json={"title": "Cassée"})
+        manifest = world.manifest(broken["presentation"]["presentation_id"])
+        document = json.loads(manifest.read_text(encoding="utf-8"))
+        document["engine"] = "powerpoint"
+        manifest.write_text(json.dumps(document), encoding="utf-8")
+        before = manifest.read_bytes()
+        result = await drive(str(world.cc.make_url("/")), [
+            {"nav": True}, {"viewport": [1280, 900]}, {"read": "opened", "expr": OPEN},
+            {"until": "document.querySelectorAll('#sveList .sve-row').length===1", "ms": 10000},
+            {"click": "#sveLog summary"},
+            {"read": "rows", "expr": ROWS},
+            {"read": "problems", "expr": "Array.from(document.querySelectorAll('#sveProblems .sve-problem')).map(r=>r.textContent)"},
+            {"read": "journal", "expr": "Array.from(document.querySelectorAll('#sveLog .sve-events li')).map(l=>l.textContent)"},
+            {"read": "inert", "expr": "({xss:window.__xss===undefined,pwn:!document.getElementById('pwn'),"
+                                      "img:!document.querySelector('#sveCard img'),script:!document.querySelector('#sveCard script'),"
+                                      "titleLiteral:document.querySelector('#sveList .sve-title').textContent})"},
+            {"shot": str(tmp_path / "hostile.png")},
+            # double click on the Slidecar button: ONE dialog, ONE request
+            {"type": "#sveTitleInput", "text": "Double"},
+            {"click": "#sveExp summary"},
+            {"read": "dbl", "expr": "(()=>{const b=document.getElementById('sveCreateSlidecar');b.click();b.click();b.click();"
+                                    "return {open:!document.getElementById('confirmBack').hidden,confirming:JarvisStudioEngine.state.confirming}})()"},
+            {"click": "#confirmGo"},
+            {"until": "document.querySelectorAll('#sveList .sve-row').length===2", "ms": 8000},
+            # double submit of the Remotion form: ONE request
+            {"type": "#sveTitleInput", "text": "Un seul"},
+            {"read": "dbl_submit", "expr": "(()=>{const f=document.getElementById('sveNew');f.requestSubmit();f.requestSubmit();return true})()"},
+            {"until": "document.querySelectorAll('#sveList .sve-row').length===3", "ms": 8000},
+            {"wait": 500},
+            {"read": "final_rows", "expr": ROWS},
+        ], tmp_path)
+        reads = result["reads"]
+        assert reads["rows"][0]["title"] == evil_title and reads["rows"][0]["engine"] == "slidecar"
+        assert len(reads["problems"]) == 1 and "Document illisible" in reads["problems"][0] and "engine must be one of" in reads["problems"][0]
+        assert reads["inert"] == {"xss": True, "pwn": True, "img": True, "script": True, "titleLiteral": evil_title}
+        assert any(evil_reason in line for line in reads["journal"]), "the hostile reason is shown as text"
+        assert reads["dbl"] == {"open": True, "confirming": True}
+        created = [p["json"] for p in posts(result) if p["url"].endswith("/api/presentation-studio/presentations")]
+        assert [c["title"] for c in created] == ["Double", "Un seul"], created
+        assert len(reads["final_rows"]) == 3
+        assert manifest.read_bytes() == before, "an unreadable document is shown, never modified or converted"
+        assert result["reads"]["opened"] is True
+
+
+async def test_the_card_speaks_french_about_the_adapter_reason_and_keeps_the_technical_text(tmp_path):
+    async with World(tmp_path) as world:
+        result = await drive(str(world.cc.make_url("/")), [
+            {"nav": True}, {"viewport": [1280, 900]}, {"read": "opened", "expr": OPEN},
+            {"until": f"{TEXT('#sveDiag')}&&{TEXT('#sveDiag')}.includes('Raison')", "ms": 12000},
+            {"read": "diag", "expr": "Array.from(document.querySelectorAll('#sveDiag code')).map(c=>c.textContent)"},
+            {"read": "text", "expr": TEXT("#sveDiag")},
+        ], tmp_path)
+        assert "ce Core n’a pas d’adaptateur Remotion" in result["reads"]["text"]
+        assert any("no Remotion adapter" in code for code in result["reads"]["diag"]), "the technical reason stays visible"

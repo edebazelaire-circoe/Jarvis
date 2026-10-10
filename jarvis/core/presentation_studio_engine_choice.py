@@ -29,6 +29,12 @@ from jarvis.ports.v2 import DiagnosticSink
 
 TRACE = "core.presentation_studio"
 MAX_EVENTS = 100
+#: Why a stored Slidecar document exists, as far as Core can tell (the creation diagnostic says who; the document itself carries only the engine).
+USE_REASONS = {
+    "human": "stored engine is slidecar: created by the user as an experiment in this Core run",
+    "agent_authored": "stored engine is slidecar: assembled by agent authoring (HTML scenes) until Slice 15",
+    "legacy": "stored engine is slidecar: legacy document (created before the engine was recorded, or by an earlier run)",
+}
 #: Une utilisation répétée du même moteur sur la même Presentation et la même action n'est journalisée qu'une fois par minute :
 #: une modification par seconde ne doit pas noyer le registre, la première utilisation et chaque reprise après pause restent vues.
 USE_WINDOW_S = 60.0
@@ -67,6 +73,8 @@ class EngineChoice:
     def __init__(self, diagnostics: DiagnosticSink | None, ledger: SlidecarLedger | None = None) -> None:
         self._diagnostics = diagnostics
         self.ledger = ledger or SlidecarLedger()
+        #: presentation id -> `human` | `agent_authored`, for documents created in THIS run; the rest read as `legacy`.
+        self.origins: dict[str, str] = {}
 
     def parse(self, raw: object) -> CreateRequest:
         """`parse_create_request` + le journal d'un acteur inconnu (refuse a la lecture du corps, avant toute politique)."""
@@ -84,9 +92,12 @@ class EngineChoice:
             engine = POLICY.select(request.requested, request.actor)
             require_slidecar_confirmation(engine, request)
         except PresentationStudioError as exc:
-            self._emit("engine_selection_refused", "Choix de moteur refuse", level="warning",
-                       data={"requested": str(request.requested)[:40] if request.requested is not None else None,
-                             "actor": request.actor.value, "code": exc.code.value})
+            data = {"requested": str(request.requested)[:40] if request.requested is not None else None,
+                    "actor": request.actor.value, "code": exc.code.value}
+            if exc.code.value == "presentation_studio_engine_selection_refused":
+                self._emit("engine_selection_refused", "Choix de moteur refuse", level="warning", data=data)
+            else:  # a typo or a missing confirmation is a validation error of the caller, not a policy refusal
+                self._emit("engine_request_invalid", "Demande de moteur invalide", data=data)
             raise
         if request.requested is not None:
             self._emit("engine_chosen", "Moteur choisi par l'utilisateur",
@@ -97,13 +108,16 @@ class EngineChoice:
         row = self.ledger.add(kind, data)
         self._emit(kind, message, data=dict(data) | {"at": row["at"]})
 
-    def note_use(self, presentation_id: str, action: str) -> None:
+    def note_use(self, presentation_id: str, action: str, origin: str = "legacy") -> None:
         """Une Presentation Slidecar sert (lire, éditer, prévisualiser) : visible, jamais silencieux."""
 
         if self.ledger.should_note_use(presentation_id, action):
             self.note("slidecar_used", {"engine": Engine.SLIDECAR.value, "presentation_id": presentation_id, "action": action,
-                                        "reason": "the presentation's own stored engine is slidecar (chosen by the user at creation, or legacy)"},
+                                        "origin": origin, "reason": USE_REASONS.get(origin, USE_REASONS["legacy"])},
                       "Presentation Slidecar utilisee")
+
+    def remember_origin(self, presentation_id: str, origin: str) -> None:
+        self.origins[presentation_id] = origin
 
     def default_engine(self) -> str:
         return DEFAULT_ENGINE.value

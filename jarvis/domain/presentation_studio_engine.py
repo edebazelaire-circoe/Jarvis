@@ -120,9 +120,12 @@ class EngineSelectionPolicy:
         if who is not EngineActor.HUMAN:
             raise PresentationStudioError(
                 _C.ENGINE_SELECTION_REFUSED,
-                f"only a person can choose the engine of a presentation; a {who.value} cannot (asked: {engine.value}). "
+                f"only a person can choose the engine of a presentation; {_ARTICLE[who]} cannot (asked: {engine.value}). "
                 f"New presentations use {DEFAULT_ENGINE.value}.")
         return engine
+
+
+_ARTICLE = {EngineActor.AGENT: "an agent", EngineActor.SYSTEM: "the system", EngineActor.HUMAN: "a person"}
 
 
 def _actor(actor: object) -> EngineActor:

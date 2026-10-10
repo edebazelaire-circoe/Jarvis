@@ -166,3 +166,16 @@ async def test_the_served_page_carries_the_module_and_the_container_above_the_re
     assert STUDIO_ENGINE_SCRIPT_MARKER not in served and "JarvisStudioEngineCore" in served
     assert served.index('id="sveCard"') < served.index('id="rmsCard"') < served.index('id="mcppBody"')
     assert served.index('id="sveCard"') > served.index('id="mcpPlugins"')
+
+
+def test_adapter_reasons_are_translated_and_unknown_ones_stay_as_they_are(tmp_path):
+    out = run_node(tmp_path, """return ['the Remotion capability is not_installed; install it','the Remotion capability is repair_needed (x)',
+      'this Core has no Remotion adapter (no local capability store is wired)','this Core has no Remotion sandbox listener configured',
+      'the Remotion sandbox settings are invalid: port','something new'].map(C.frenchReason);""")
+    assert out[0].startswith("la capacité Remotion est non installée") and "à réparer" in out[1]
+    assert "adaptateur" in out[2] and "écouteur" in out[3] and "invalides" in out[4] and out[5] == "something new"
+
+
+def test_unreadable_documents_reach_the_view_model_and_are_not_dropped(tmp_path):
+    model = run_node(tmp_path, """return C.viewModel({engine:null,presentations:[],problems:[{presentation_id:'pst_x',code:'presentation_studio_corrupt_document',message:'m'}]},0);""")
+    assert model["problems"] == [{"id": "pst_x", "code": "presentation_studio_corrupt_document", "message": "m"}]

@@ -133,3 +133,50 @@ async def test_a_broken_remotion_is_reported_by_the_overview_and_never_answered_
     assert "runtime missing" in caught.value.message
     assert not [row for row in sink.rows if row["kind"].endswith(".slidecar_used")]
     assert service.engine_overview()["slidecar"]["total"] == 0
+
+
+# ------------------------------------------------------------------ QA F2: agent-assembled drafts are Slidecar, said and journaled as such
+
+def assembled_documents(engine: Engine):
+    from datetime import datetime, timezone
+    from jarvis.domain.presentation_studio import dump_document, new_presentation
+    view = new_presentation("Brouillon agent", datetime(2026, 10, 10, tzinfo=timezone.utc), engine=engine)
+    return view, dump_document(view.presentation.to_document()), {v.variant_id: dump_document(v.to_document()) for v in view.variants}
+
+
+async def test_an_agent_assembled_slidecar_draft_is_journaled_with_actor_agent_and_its_later_use_says_so(tmp_path):
+    sink = Sink()
+    gate = StudioEngineGate(lambda: {Engine.SLIDECAR: EngineAvailability(True), Engine.REMOTION: EngineAvailability(True)})
+    service = PresentationStudioService(FilePresentationStudioStore(tmp_path), diagnostics=sink, engine_gate=gate)
+    view, manifest, variants = assembled_documents(Engine.SLIDECAR)
+    pid = view.presentation.presentation_id
+    await service.create_assembled(pid, manifest, variants, {}, {})
+    [created] = [row for row in sink.rows if row["kind"].endswith(".slidecar_created")]
+    assert created["data"]["actor"] == "agent" and created["data"]["presentation_id"] == pid
+    assert created["data"]["reason"] == "agent authoring (HTML scenes) until Slice 15"
+    await service.require_engine(pid, "play")
+    [used] = [row for row in sink.rows if row["kind"].endswith(".slidecar_used")]
+    assert used["data"]["origin"] == "agent_authored" and "agent authoring" in used["data"]["reason"]
+    events = service.engine_overview()["slidecar"]["events"]
+    assert [e["kind"] for e in events] == ["slidecar_used", "slidecar_created"] and events[1]["actor"] == "agent"
+
+
+async def test_an_assembled_remotion_draft_is_not_a_slidecar_event(tmp_path):
+    sink = Sink()
+    service = PresentationStudioService(FilePresentationStudioStore(tmp_path), diagnostics=sink)
+    view, manifest, variants = assembled_documents(Engine.REMOTION)
+    await service.create_assembled(view.presentation.presentation_id, manifest, variants, {}, {})
+    assert not [row for row in sink.rows if "slidecar" in row["kind"]]
+
+
+async def test_the_use_reason_tells_human_created_from_agent_authored_from_legacy(tmp_path):
+    sink = Sink()
+    gate = StudioEngineGate(lambda: {Engine.SLIDECAR: EngineAvailability(True), Engine.REMOTION: EngineAvailability(True)})
+    service = PresentationStudioService(FilePresentationStudioStore(tmp_path), diagnostics=sink, engine_gate=gate)
+    human = await service.create({"title": "Essai", "engine": "slidecar", "actor": "user", "experimental_confirmed": True})
+    lay_out(tmp_path, *CASES[1][:3])
+    for pid in (human.presentation.presentation_id, PID):
+        await service.require_engine(pid, "play")
+    reasons = {row["data"]["presentation_id"]: (row["data"]["origin"], row["data"]["reason"]) for row in sink.rows if row["kind"].endswith(".slidecar_used")}
+    assert reasons[human.presentation.presentation_id][0] == "human" and "created by the user" in reasons[human.presentation.presentation_id][1]
+    assert reasons[PID][0] == "legacy" and "legacy document" in reasons[PID][1]

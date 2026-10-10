@@ -33,6 +33,7 @@ const JarvisStudioEngineCore=(function(){
 
   const ENGINE_LABEL=Object.freeze({remotion:{label:'Remotion',tone:'ok'},slidecar:{label:'Slidecar · expérimental',tone:'warn'}});
   const EVENT_LABEL=Object.freeze({slidecar_created:'Création',slidecar_experiment_created:'Copie « expérience »',slidecar_used:'Utilisation'});
+  const ACTOR_LABEL=Object.freeze({human:'vous',agent:'un agent (création automatique)'});
   const ACTION_LABEL=Object.freeze({play:'lecture',edit:'édition',preview:'aperçu',render_overlay:'édition'});
 
   const ERRORS=Object.freeze({
@@ -66,15 +67,28 @@ const JarvisStudioEngineCore=(function(){
     local_capability_health_failed:'L’environnement installé est abîmé. Réparez : il est refait depuis le verrou, sans toucher à vos présentations.',
   });
 
+  /* Raisons de l'adaptateur (anglais, dites telles quelles par Core) traduites pour l'écran ; l'original reste affiché à côté (code technique). */
+  const CAPABILITY_STATUS_FR=Object.freeze({not_installed:'non installée',installing:'en cours d’installation',install_failed:'en échec d’installation',
+    repair_needed:'à réparer',crashed:'arrêtée (processus planté)',disabled:'désactivée',ready:'prête',running:'prête'});
+  function frenchReason(reason){
+    const r=String(reason||'');
+    let m;
+    if(/no Remotion adapter/.test(r))return 'ce Core n’a pas d’adaptateur Remotion (aucun magasin de capacités locales branché)';
+    if(/no Remotion sandbox listener/.test(r))return 'ce Core n’a pas d’écouteur de bac à sable Remotion configuré';
+    if(/sandbox settings are invalid/.test(r))return 'les réglages du bac à sable Remotion sont invalides';
+    if((m=/the Remotion capability is ([a-z_]+)/.exec(r))&&CAPABILITY_STATUS_FR[m[1]])return `la capacité Remotion est ${CAPABILITY_STATUS_FR[m[1]]}`;
+    return r;
+  }
+
   /* Diagnostic d'un Remotion qui ne peut pas jouer. `remotion` : `{ready, reason, repair}` de Core ; `capability` : la vue de la
      capacité (ou null). Rend `{kind, title, reason, steps, action}` ; `action` est `install`, `repair` ou null (geste à faire soi-même). */
   function diagnose(remotion,capability){
     if(!remotion||remotion.ready)return null;
-    const reason=String(remotion.reason||'raison inconnue');
+    const reason=String(remotion.reason||'unknown reason');
     const status=capability&&capability.status;
     const code=capability&&capability.last_error_code||'';
     const detail=capability&&capability.last_error_detail||'';
-    const base={reason,repair:String(remotion.repair||''),detail,code};
+    const base={reason,reasonFr:frenchReason(reason),repair:String(remotion.repair||''),detail,code};
     if(/JARVIS_REMOTION_SANDBOX/.test(reason+' '+(remotion.repair||'')))
       return {...base,kind:'sandbox_settings',title:'Réglages du bac à sable Remotion invalides',action:null,
         steps:['Corrigez JARVIS_REMOTION_SANDBOX_HOST et JARVIS_REMOTION_SANDBOX_PORT (hôte de boucle locale, port libre).','Redémarrez Core vous-même : Jarvis ne se relance jamais seul.']};
@@ -103,7 +117,7 @@ const JarvisStudioEngineCore=(function(){
     if(event.action)parts.push(ACTION_LABEL[event.action]||String(event.action));
     if(event.presentation_id)parts.push(String(event.presentation_id).slice(0,12)+'…');
     if(event.derived_from)parts.push('copie de '+String(event.derived_from).slice(0,12)+'…');
-    if(event.actor)parts.push('acteur : '+(event.actor==='human'?'vous':String(event.actor)));
+    if(event.actor)parts.push('acteur : '+(ACTOR_LABEL[event.actor]||String(event.actor)));
     if(event.reason)parts.push('raison : '+String(event.reason));
     return parts.join(' · ');
   }
@@ -141,11 +155,12 @@ const JarvisStudioEngineCore=(function(){
     const ledger=engine&&engine.slidecar||{events:[],total:0,kept:0};
     const rows=(state.presentations||[]).map(row=>({id:row.presentation_id,title:row.title,engine:row.engine,badge:engineBadge(row.engine),
       variants:row.variant_count,revision:row.revision,canCopy:row.engine!=='slidecar'}));
+    const problems=(state.problems||[]).map(p=>({id:String(p.presentation_id||''),code:String(p.code||''),message:String(p.message||'')}));
     const slidecarCount=rows.filter(r=>r.engine==='slidecar').length;
     const model={defaultEngine:engine?engine.default_engine:'remotion',
       remotion:{known:!!remotion,ready:!!(remotion&&remotion.ready),reason:remotion?remotion.reason:'',tone:!remotion?'':remotion.ready?'ok':'bad',
         label:!remotion?'Inconnu':remotion.ready?'Prêt':'Indisponible'},
-      diagnosis:diagnose(remotion,state.capability),rows,slidecarCount,
+      diagnosis:diagnose(remotion,state.capability),rows,problems,slidecarCount,
       events:(ledger.events||[]).slice(0,20).map(e=>({at:e.at,line:eventLine(e)})),eventsTotal:ledger.total||0,eventsKept:ledger.kept||0,
       repair:null};
     const cap=state.capability;
@@ -199,7 +214,7 @@ const JarvisStudioEngineCore=(function(){
   }
 
   return {PRESENTATIONS,ENGINE,CAPABILITY,MAX_TITLE,REPAIR_LIMIT_S,POLL_FAST_MS,POLL_SLOW_MS,SLIDECAR_WARNING,ERRORS,CAPABILITY_FAILURES,
-    errorText,diagnose,engineBadge,eventLine,confirmSlidecar,confirmRepair,fmtDuration,viewModel,createClient};
+    errorText,frenchReason,diagnose,engineBadge,eventLine,confirmSlidecar,confirmRepair,fmtDuration,viewModel,createClient};
 })();
 
 if(typeof module!=='undefined'&&module.exports)module.exports=JarvisStudioEngineCore;
@@ -216,24 +231,26 @@ if(typeof module!=='undefined'&&module.exports)module.exports=JarvisStudioEngine
   const pane=document.getElementById('mcpPlugins');
   if(!host||!dialog||!pane)return;
   const client=C.createClient({fetchImpl:(path,options)=>window.fetch(path,options)});
-  const S={engine:null,presentations:[],capability:null,loading:false,busy:'',readError:null,actionError:null,notice:'',poll:null,clock:null,gen:0,
+  const S={engine:null,presentations:[],problems:[],confirming:false,capability:null,loading:false,busy:'',readError:null,actionError:null,notice:'',poll:null,clock:null,gen:0,
     rendered:'',title:'',reason:'',experimentalOpen:false,logOpen:false,repairStartedAt:0,busySince:0};
   const esc=v=>String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
   const log=(level,event,data)=>{const line=`[studio-engine] ${event} ${JSON.stringify(data||{})}`;
-    if(level==='error')console.error(line);else if(level==='warn')console.warn(line);else console.info(line)};
+    if(level==='error')console.error(line);else if(level==='warn')console.warn(line);else console.info(line);
+    /* Même canal que les cartes sœurs (`studio_explorer_*`) : le visualiseur d'erreurs de la page, quand elle en a un. */
+    try{if(level!=='info'&&typeof obsClientLog==='function')obsClientLog(level,level==='error'?'ERROR':'WARN',`studio_engine_${event}`,data||{})}catch(_){/* le journal ne casse pas la carte */}};
   const notify=spec=>{if(typeof toast==='function')toast(spec)};
   const visible=()=>!dialog.hidden&&!pane.hidden;
   const ACT='%%ACTIVITY%%';
 
   function render(){
     const now=Date.now();
-    const m=C.viewModel({engine:S.engine,presentations:S.presentations,capability:S.capability,repairStartedAt:S.repairStartedAt},now);
+    const m=C.viewModel({engine:S.engine,presentations:S.presentations,problems:S.problems,capability:S.capability,repairStartedAt:S.repairStartedAt},now);
     const busyText=S.busy?`${S.busy} ${C.fmtDuration((now-S.busySince)/1000)}`:'';
-    const btn=(id,label,enabled,cls='',extra='')=>`<button type="button" class="action small ${cls}" id="${id}"${enabled&&!S.busy?'':' disabled'}${extra}>${esc(label)}</button>`;
+    const btn=(id,label,enabled,cls='',extra='')=>`<button type="button" class="action small ${cls}" id="${esc(id)}"${enabled&&!S.busy?'':' disabled'}${extra}>${esc(label)}</button>`;
     const d=m.diagnosis;
     const repairing=m.repair?`<p class="mcpp-activity rms-activity" id="sveRepair"><span class="mcpp-spin" aria-hidden="true"></span><span id="sveRepairText">${ACT}</span></p>`:'';
     const diagnosis=d&&d.kind!=='installing'?`<div class="mcpp-lasterr rms-err sve-diag" role="alert" id="sveDiag"><span class="mcpp-dot" aria-hidden="true"></span><span>
-        <strong>${esc(d.title)}</strong><br>Raison : ${esc(d.reason)}${d.code?` <code>${esc(d.code)}</code>`:''}<br>
+        <strong>${esc(d.title)}</strong><br>Raison : ${esc(d.reasonFr)} <code>${esc(d.reason)}</code>${d.code?` <code>${esc(d.code)}</code>`:''}<br>
         ${d.steps.map(s=>esc(s)).join('<br>')}${d.detail?`<br><span class="rms-hint">Détail : ${esc(d.detail)}</span>`:''}<br>
         <span class="rms-hint">Aucune présentation Slidecar n’est affichée à la place : une présentation Remotion ne joue qu’avec Remotion.</span>
         ${d.action?`<br>${btn('sveRepairGo',d.action==='install'?'Installer Remotion':'Réparer Remotion',true,'primary')}`:''}</span></div>`:'';
@@ -245,6 +262,8 @@ if(typeof module!=='undefined'&&module.exports)module.exports=JarvisStudioEngine
         <span class="rms-hint">${r.variants} variante${r.variants>1?'s':''} · révision ${r.revision}</span>
         ${r.canCopy?btn('sveCopy-'+r.id,'Dupliquer en expérience Slidecar…',true,'',` data-copy="${esc(r.id)}" data-title="${esc(r.title)}"`):''}</li>`).join('')}</ul>`
       :`<p class="rms-none" id="sveNone">${S.engine?'Aucune présentation.':'Lecture des présentations…'}</p>`;
+    const problems=m.problems.length?`<ul class="sve-list sve-problems" id="sveProblems" role="alert" aria-label="Documents illisibles">${m.problems.map(p=>`<li class="sve-row sve-problem" data-id="${esc(p.id)}"><span class="sve-title">Document illisible : ${esc(p.id)}</span> <code>${esc(p.code)}</code>
+        <span class="rms-hint">${esc(p.message)} Le fichier n’est ni modifié ni converti ; corrigez-le ou mettez-le de côté.</span></li>`).join('')}</ul>`:'';
     const events=m.events.length?`<ul class="sve-events">${m.events.map(e=>`<li><time>${esc(e.at||'')}</time> ${esc(e.line)}</li>`).join('')}</ul>`
       :'<p class="rms-none">Aucun usage de Slidecar depuis le démarrage de Core.</p>';
     const html=`<article class="mcpp-card rms-card sve-card" data-state="${m.remotion.known&&!m.remotion.ready?'error':'on'}" aria-labelledby="sveTitle">
@@ -263,7 +282,7 @@ if(typeof module!=='undefined'&&module.exports)module.exports=JarvisStudioEngine
         <label class="rms-scene"><span>Pourquoi (facultatif, inscrit au journal)</span>
           <input id="sveReason" type="text" maxlength="160" aria-label="Raison de l’expérience Slidecar"${S.busy?' disabled':''}></label>
         ${btn('sveCreateSlidecar','Créer une présentation Slidecar…',true,'danger')}</details>
-      <div class="sve-listwrap" aria-label="Présentations et moteur de chacune">${rows}</div>
+      <div class="sve-listwrap" aria-label="Présentations et moteur de chacune">${rows}${problems}</div>
       <details class="mcpp-tech" id="sveLog"${S.logOpen?' open':''}><summary>Journal Slidecar (${m.eventsTotal})</summary>
         <p class="rms-hint">Création, copie et usage d’une présentation Slidecar : moteur, acteur, raison. Ce registre est en mémoire (depuis le démarrage de Core) ; le moteur de chaque document, lui, est durable : voir son badge.</p>${events}</details>
     </article>`;
@@ -301,7 +320,7 @@ if(typeof module!=='undefined'&&module.exports)module.exports=JarvisStudioEngine
     try{
       const [engine,list,capability]=await Promise.all([client.engine(),client.list(),client.capability()]);
       if(gen!==S.gen)return;
-      S.engine=engine;S.presentations=list.presentations||[];S.capability=capability;S.readError=null;
+      S.engine=engine;S.presentations=list.presentations||[];S.problems=list.problems||[];S.capability=capability;S.readError=null;
       if(capability&&capability.status!=='installing')S.repairStartedAt=0;
     }catch(error){
       S.readError={code:error.code||'network',text:C.errorText(error.code,error.message)||'Impossible de lire l’état du moteur.'};
@@ -335,6 +354,12 @@ if(typeof module!=='undefined'&&module.exports)module.exports=JarvisStudioEngine
   }
 
   async function confirm(spec){
+    /* Un second clic pendant que la boîte est ouverte n'en ouvre pas une deuxième (elle fermerait la première en « annuler »). */
+    if(S.confirming)return false;
+    S.confirming=true;
+    try{return await confirmInner(spec)}finally{S.confirming=false}
+  }
+  async function confirmInner(spec){
     if(typeof confirmDialog!=='function'){
       S.actionError={code:'confirmation_unavailable',text:'La confirmation n’est pas disponible dans cette page : rien n’a été créé.'};
       render();return false;
@@ -367,7 +392,7 @@ if(typeof module!=='undefined'&&module.exports)module.exports=JarvisStudioEngine
   },true);
   host.addEventListener('click',async event=>{
     const button=event.target.closest&&event.target.closest('button');
-    if(!button||button.disabled||S.busy)return;
+    if(!button||button.disabled||S.busy||S.confirming)return;
     if(button.id==='sveCreateSlidecar'){
       const title=(S.title||'').trim();
       if(!title){S.actionError={code:'title_required',text:'Donnez un titre à la présentation (champ du haut) avant de la créer.'};S.rendered='';render();return}

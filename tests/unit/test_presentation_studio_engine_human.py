@@ -93,8 +93,11 @@ class World:
         async with self.http.request(method, f"http://127.0.0.1:{self.port}{path}", headers=AUTH, **kw) as response:
             return response.status, await response.json(content_type=None)
 
-    async def page(self, method: str, path: str, body=None):
-        response = await self.cc.request(method, path, **({} if body is None else {"data": json.dumps(body)}))
+    async def page(self, method: str, path: str, body=None, *, headers: dict | None = None):
+        """What the page's own fetch sends: a browser always adds `Sec-Fetch-Site: same-origin` to a same-origin request."""
+
+        response = await self.cc.request(method, path, headers={"Sec-Fetch-Site": "same-origin", **(headers or {})},
+                                         **({} if body is None else {"data": json.dumps(body)}))
         return response.status, await response.json(content_type=None)
 
     def manifest(self, presentation_id: str) -> Path:
@@ -281,6 +284,64 @@ async def test_the_page_cannot_forge_the_actor_the_relay_replaces_it(tmp_path):
         status, answer = await w.page("POST", CC, {"title": "S", "engine": "slidecar", "actor": "brain", "experimental_confirmed": True})
         assert (status, answer["presentation"]["engine"]) == (201, "slidecar")
         assert w.sink.of(".slidecar_created")[0]["data"]["actor"] == "human"
+
+
+@pytest.mark.parametrize("headers", [{"Sec-Fetch-Site": ""}, {"Sec-Fetch-Site": "same-site"}, {"Sec-Fetch-Site": "none"}])
+async def test_a_script_without_the_browser_header_cannot_name_an_engine_through_the_relay(tmp_path, headers):
+    """QA F1: curl, a python client or an agent's shell send no `Sec-Fetch-Site: same-origin`. A casual-access barrier, not a boundary."""
+
+    async with World(tmp_path) as w:
+        for body in ({"title": "S", "engine": "slidecar", "experimental_confirmed": True}, {"title": "R", "engine": "remotion"}):
+            response = await w.cc.request("POST", CC, data=json.dumps(body), headers=headers)
+            answer = await response.json()
+            # `same-site` is already turned away by the generic Slice 11 guard (its own envelope); the others reach the typed refusal
+            assert response.status == 403, (body, headers)
+            assert headers["Sec-Fetch-Site"] == "same-site" or answer["error"]["code"] == "presentation_studio_engine_selection_refused"
+        status, made = await w.page("POST", CC, {"title": "Plan"})
+        source = made["presentation"]["presentation_id"]
+        response = await w.cc.request("POST", f"{CC}/{source}/experiment", data=json.dumps({"experimental_confirmed": True}), headers=headers)
+        answer = await response.json()
+        assert response.status == 403
+        assert headers["Sec-Fetch-Site"] == "same-site" or answer["error"]["code"] == "presentation_studio_engine_selection_refused"
+        listing = (await w.core_call("GET", PREFIX))[1]["presentations"]
+        assert [row["engine"] for row in listing] == ["remotion"], "nothing was created by the refused requests"
+        assert [row for row in w.sink.rows if row["kind"].endswith(".slidecar_created")] == []
+
+
+async def test_a_plain_create_without_an_engine_needs_no_browser_header_and_cross_site_is_still_refused_by_the_slice_11_guard(tmp_path):
+    async with World(tmp_path) as w:
+        response = await w.cc.request("POST", CC, data=json.dumps({"title": "Plan"}))
+        assert response.status == 201 and (await response.json())["presentation"]["engine"] == "remotion"
+        for headers in ({"Sec-Fetch-Site": "cross-site"}, {"Origin": "https://evil.example", "Sec-Fetch-Site": "same-origin"}, {"Host": "evil.example"}):
+            response = await w.cc.request("POST", CC, data=json.dumps({"title": "x", "engine": "slidecar", "experimental_confirmed": True}),
+                                          headers=headers)
+            assert response.status == 403, headers
+        assert len((await w.core_call("GET", PREFIX))[1]["presentations"]) == 1
+
+
+async def test_install_and_repair_also_need_the_same_origin_header(tmp_path):
+    from tests.unit.test_local_capability_host import FakeRunner
+    runner = FakeRunner()
+    async with World(tmp_path, capability_runner=runner) as w:
+        for operation in ("install", "repair"):
+            response = await w.cc.request("POST", f"/api/local-capabilities/remotion/{operation}")
+            assert response.status == 403 and (await response.json())["error"]["code"] == "forbidden_origin"
+        assert runner.calls == []
+        assert (await w.page("POST", "/api/local-capabilities/remotion/install"))[0] == 200
+
+
+async def test_a_typo_or_a_missing_confirmation_is_a_validation_error_not_a_policy_refusal_and_the_messages_are_whole(tmp_path):
+    async with World(tmp_path) as w:
+        for engine in ("Slidecar", " slidecar", "sidecar"):
+            status, answer = await w.core_call("POST", PREFIX, json={"title": "A", "engine": engine, "actor": "user", "experimental_confirmed": True})
+            assert status == 400 and answer["error"]["code"] == "presentation_studio_invalid", engine
+        status, answer = await w.core_call("POST", PREFIX, json={"title": "A", "engine": "slidecar", "actor": "user"})
+        assert status == 400 and answer["error"]["message"].endswith("if Remotion fails)") and "experimental_confirmed=true" in answer["error"]["message"]
+        assert w.sink.of(".engine_selection_refused") == []
+        assert len(w.sink.of(".engine_request_invalid")) == 4 and all(row["level"] == "info" for row in w.sink.of(".engine_request_invalid"))
+        status, answer = await w.core_call("POST", PREFIX, json={"title": "A", "engine": "slidecar"})
+        assert status == 403 and "an agent cannot" in answer["error"]["message"] and "a agent" not in answer["error"]["message"]
+        assert len(w.sink.of(".engine_selection_refused")) == 1
 
 
 async def test_the_page_default_is_remotion_and_unconfirmed_slidecar_is_refused_through_the_relay(tmp_path):

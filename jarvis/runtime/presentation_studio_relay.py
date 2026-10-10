@@ -104,8 +104,8 @@ class PresentationStudioRelayRoutes(CaptureRelayRoutes):
                   for method, action, path in _READ_ROUTES),
                 *(web.post(STUDIO_ROUTE + path, self._forced(path, action, timeout_s=timeout))
                   for path, action, timeout in _WRITE_ROUTES),
-                web.post(STUDIO_ROUTE, self._forced("", "studio_create", allowed=CREATE_KEYS)),
-                web.post(STUDIO_ROUTE + EXPERIMENT_PATH, self._forced(EXPERIMENT_PATH, "studio_experiment", allowed=EXPERIMENT_KEYS)),
+                web.post(STUDIO_ROUTE, self._forced("", "studio_create", allowed=CREATE_KEYS, door_key="engine")),
+                web.post(STUDIO_ROUTE + EXPERIMENT_PATH, self._forced(EXPERIMENT_PATH, "studio_experiment", allowed=EXPERIMENT_KEYS, door_key="")),
                 web.get(ENGINE_ROUTE, self._relay("studio_engine", CORE_ENGINE)),
                 web.post(STUDIO_ROUTE + "/mount-reports", self._relay("studio_mount_report", CORE_PREFIX + "/mount-reports")),
                 web.get(PLAYBACK_ROUTE, self._relay("studio_playback", PLAYBACK_PREFIX)),
@@ -114,9 +114,10 @@ class PresentationStudioRelayRoutes(CaptureRelayRoutes):
                   for verb in Verb)]
 
     def _forced(self, path: str, action: str, *, prefix: str = CORE_PREFIX, timeout_s: float | None = None,
-                allowed: frozenset[str] | None = None):
+                allowed: frozenset[str] | None = None, door_key: str | None = None):
         async def handler(request: web.Request) -> web.Response:
-            return await self._forward_forced(request, path, action, prefix=prefix, timeout_s=timeout_s, allowed=allowed)
+            return await self._forward_forced(request, path, action, prefix=prefix, timeout_s=timeout_s, allowed=allowed,
+                                              door_key=door_key)
 
         return handler
 
@@ -127,7 +128,7 @@ class PresentationStudioRelayRoutes(CaptureRelayRoutes):
 
     async def _forward_forced(self, request: web.Request, template: str, action: str, *,
                               prefix: str = CORE_PREFIX, timeout_s: float | None = None,
-                              allowed: frozenset[str] | None = None) -> web.Response:
+                              allowed: frozenset[str] | None = None, door_key: str | None = None) -> web.Response:
         """Une écriture du Studio (édition, source, annuler, rétablir, lecture) : corps objet, `actor` remplacé par `user`, résultat de Core rendu tel quel."""
 
         if request.query:
@@ -144,6 +145,14 @@ class PresentationStudioRelayRoutes(CaptureRelayRoutes):
             extra = sorted(set(body) - allowed)
             if extra:
                 return _error(400, "invalid_request", f"unexpected keys {', '.join(extra[:6])}; allowed {', '.join(sorted(allowed))}")
+        # Slice 20 (QA F1) : une route qui NOMME un moteur (creation avec `engine`, copie « experience ») n'est ouverte qu'a la page elle-meme.
+        # Un navigateur envoie toujours `Sec-Fetch-Site: same-origin` pour un fetch de la page ; curl, un script ou un outil Bash n'en
+        # envoient pas. Barriere d'acces occasionnel, PAS une frontiere : un client qui forge l'en-tete passe (docs/SECURITY.md).
+        if door_key is not None and (door_key == "" or door_key in body) and request.headers.get("Sec-Fetch-Site") != "same-origin":
+            self._journal.emit(f"{self.JOURNAL_PREFIX}.engine_door_refused", "Choix de moteur refuse : requete qui ne vient pas de la page",
+                               level="warning", data={"action": action, "sec_fetch_site": request.headers.get("Sec-Fetch-Site")})
+            return _error(403, "presentation_studio_engine_selection_refused",
+                          "the engine can only be chosen from the Control Center page itself (same-origin request required)")
         body["actor"] = "user"
         path = prefix + template.format(**{k: quote(v, safe="") for k, v in request.match_info.items()})
         forced = json.dumps(body, ensure_ascii=False, separators=(",", ":")).encode("utf-8")

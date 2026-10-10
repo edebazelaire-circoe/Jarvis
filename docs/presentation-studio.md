@@ -3074,7 +3074,7 @@ Bridge direction: **inbound only** (values to the Player). A Remotion manifest s
 
 ## Engine choice and Slidecar experiment (Level 3, Remotion handoff Slice 20)
 
-Contract: [presentation-engine.md](presentation-engine.md) › *Human engine control*. A new Presentation is Remotion. Only a person, from the Control Center card « Présentations · moteur »
+Contract: [presentation-engine.md](presentation-engine.md) › *Human engine control*. A Presentation created by the plain create route is Remotion. **Agent-assembled drafts (`presentation_draft_assemble`) are Slidecar until Slice 15**: their scenes are HTML prefabs, so the engine is truthfully `slidecar`; each is journaled as `slidecar_created` with actor `agent`. Only a person, from the Control Center card « Présentations · moteur »
 (onglet « Plugins externes » du dialogue MCP), can create a Slidecar one, behind « Expérimental : Slidecar » with its warning and a confirmation; the relay sets the actor, no agent tool has an engine.
 The engine never changes after creation; « Dupliquer en expérience Slidecar » makes a new, empty Slidecar document and leaves the source alone. Listings (`engine`) and the card show a badge
 (`Remotion`, `Slidecar · expérimental`); each Slidecar creation, copy and use is a `core.presentation_studio.slidecar_*` diagnostic and a line of the card's « Journal Slidecar ». When Remotion cannot play, the

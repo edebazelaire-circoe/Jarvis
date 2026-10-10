@@ -2325,7 +2325,7 @@ Contrat : [presentation-engine.md](presentation-engine.md) › *Human engine con
 
 Vérification humaine (une fois, instance isolée : ports et `JARVIS_DATA_ROOT` à part, jamais le JARVIS vivant) :
 
-1. Ouvrir la carte : Remotion par défaut. Créer une présentation sans rien d'autre : badge `Remotion`.
+1. Ouvrir la carte : Remotion par défaut. Créer une présentation sans rien d'autre : badge `Remotion`. (Un brouillon assemblé par l'agent est `Slidecar · expérimental` jusqu'à la Slice 15 : ses scènes sont du HTML ; il est journalisé avec l'acteur « un agent ».)
 2. Ouvrir « Expérimental : Slidecar », lire l'avertissement, créer, **annuler** la confirmation (rien n'est créé), recréer et confirmer : badge `Slidecar · expérimental`, ligne « Création » au journal.
 3. « Dupliquer en expérience Slidecar » sur une présentation Remotion : un nouveau document `... (Slidecar)`, la source inchangée.
 4. Casser Remotion (désinstaller la capacité ou changer le port du bac à sable) : la carte dit pourquoi et propose le bon geste ; lancer la lecture d'une présentation Remotion : erreur visible, rien d'autre ne joue.

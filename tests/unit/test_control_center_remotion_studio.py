@@ -92,12 +92,15 @@ async def test_install_and_repair_are_the_only_capability_writes_and_never_forwa
     try:
         for operation in ("install", "repair"):
             core.calls.clear()
-            response = await client.post(f"/api/local-capabilities/remotion/{operation}", data=b'{"path":"C:/evil","force":true}')
+            response = await client.post(f"/api/local-capabilities/remotion/{operation}", data=b'{"path":"C:/evil","force":true}',
+                                         headers={"Sec-Fetch-Site": "same-origin"})
             assert response.status == 202
             [call] = core.calls
             assert (call["method"], call["path"], call["body"], call["timeout_s"]) == (
                 "POST", f"{CORE}/{operation}", b"{}", SHORT_TIMEOUT_S)
             core.calls.clear()
+            no_header = await client.post(f"/api/local-capabilities/remotion/{operation}")
+            assert no_header.status == 403 and (await no_header.json())["error"]["code"] == "forbidden_origin"
             for headers in ({"Origin": "https://evil.example"}, {"Host": "evil.example"}, {"Sec-Fetch-Site": "cross-site"}):
                 assert (await client.post(f"/api/local-capabilities/remotion/{operation}", headers=headers)).status == 403
             assert core.calls == []

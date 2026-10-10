@@ -103,6 +103,11 @@ class RemotionStudioRelayRoutes:
         async def handler(request: web.Request) -> web.Response:
             if request.query:
                 return _envelope(400, "remotion_studio_invalid", "unexpected query parameters")
+            # Slice 20 (QA F1) : seulement depuis la page (`Sec-Fetch-Site: same-origin`, toujours envoye par un navigateur, jamais par curl).
+            if request.headers.get("Sec-Fetch-Site") != "same-origin":
+                self._journal.emit("remotion_studio.capability_door_refused", f"Capacite Remotion : {operation} refuse, requete hors de la page",
+                                   level="warning", data={"action": f"capability_{operation}", "sec_fetch_site": request.headers.get("Sec-Fetch-Site")})
+                return _envelope(403, "forbidden_origin", "install and repair can only be started from the Control Center page (same-origin request required)")
             # Le corps de la page n'est jamais transmis : l'operation n'a pas de parametre (`docs/local-capabilities.md` §7).
             status, payload = await self._forward("POST", f"{CORE_CAPABILITY}/{operation}", action=f"capability_{operation}",
                                                   body=b"{}", timeout_s=SHORT_TIMEOUT_S)

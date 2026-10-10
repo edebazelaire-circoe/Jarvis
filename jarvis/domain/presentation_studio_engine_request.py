@@ -65,8 +65,8 @@ def require_slidecar_confirmation(engine: Engine, request: CreateRequest) -> Non
     if engine is Engine.SLIDECAR and not request.confirmed:
         raise PresentationStudioError(
             _C.INVALID_PRESENTATION,
-            "slidecar is experimental: the creation must carry experimental_confirmed=true after the warning was read. "
-            + SLIDECAR_WARNING)
+            "slidecar is experimental: send experimental_confirmed=true once the warning is read (no frame-by-frame motion, no MP4 export, "
+            "the engine never changes, no fallback if Remotion fails)")
 
 
 def experiment_title(source_title: str) -> str:

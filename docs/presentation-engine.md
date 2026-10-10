@@ -112,8 +112,12 @@ Who can name an engine, where, and what is recorded. Code: `jarvis/domain/presen
 `jarvis-presentation` MCP server and the brain adapter never contain the confirmation flag or the experiment route (source scan), and the authoring planner creates through `create_assembled`, which takes no engine.
 
 **Honest limit.** `actor` is a declaration, not an authentication, the same threat model as `display_mcp.py` and `docs/SECURITY.md`: the brain runs under the same account as Core and could read
-`core.token` and forge `actor: user` on a raw HTTP call. The guarantee is for an honest caller: no tool, no prompt and no relay path of the brain can carry an engine, and a forged body on any
-non-Human route (`PUT` presentation, variant, edits, source-edits, undo, redo) is refused as an unknown key. A real boundary would need a credential the brain cannot read; that is out of this Slice.
+`core.token` and forge `actor: user` on a raw HTTP call to Core. A second door, the Control Center relay, forces `actor: user` itself, so any local process that can reach the Control Center port could
+name Slidecar through it. Two casual-access barriers narrow that, neither a boundary: the Slice 11 guard (loopback Host, loopback Origin, never `Sec-Fetch-Site: cross-site`) and, on the routes that
+**name an engine** (create with `engine`, `/experiment`) and on `install|repair`, a required `Sec-Fetch-Site: same-origin` (a browser always sends it for the page's own fetch; curl, a python client
+or an agent's shell do not, and get 403 `presentation_studio_engine_selection_refused` / `forbidden_origin`). A client that forges that header passes. The guarantee is for an honest caller: no tool,
+no prompt and no relay path of the brain can carry an engine, and a forged body on any non-Human route (`PUT` presentation, variant, edits, source-edits, undo, redo) is refused as an unknown key. A real
+boundary would need a credential the brain cannot read; that is out of this Slice.
 
 **Slidecar is an explicit experiment.** Creating one needs `experimental_confirmed: true` on top of the Human actor (`400` otherwise, the message carries the warning). The page shows it only inside a
 closed « Expérimental : Slidecar » area with the warning text always visible when opened, then a confirmation dialog (risk, no fallback, journaled). Cancelling sends nothing.
@@ -126,10 +130,10 @@ a NEW Slidecar document titled `<source> (Slidecar)` with no scene (a Remotion s
 | Kind | Level | When |
 | --- | --- | --- |
 | `engine_chosen` | info | a Human named an engine (Remotion or Slidecar) |
-| `engine_selection_refused` | warning | a non-Human named an engine, or an unknown actor; `{requested, actor, code}` |
-| `slidecar_created` | info | after the write: `{engine: slidecar, presentation_id, actor: human, reason}` (`reason` = the line the person typed, or a default) |
+| `engine_selection_refused` | warning | a non-Human named an engine, or an unknown actor; `{requested, actor, code}` (a typo such as `Slidecar` or a missing confirmation is NOT a policy refusal: `engine_request_invalid`, info) |
+| `slidecar_created` | info | after the write: `{engine: slidecar, presentation_id, actor, reason}`. `actor: human` with the line the person typed (or a default), **or `actor: agent`, reason `agent authoring (HTML scenes) until Slice 15`** for a draft the authoring planner assembled (`create_assembled`: its scenes are HTML prefabs, so its engine is truthfully `slidecar`; flipped by Slice 15) |
 | `slidecar_experiment_created` | info | the copy: adds `derived_from`, `source_engine`; the source is untouched |
-| `slidecar_used` | info | a stored Slidecar document is played, edited or previewed (`StudioEngineGate` call sites, once per presentation and action per minute) |
+| `slidecar_used` | info | a stored Slidecar document is played, edited or previewed (`StudioEngineGate` call sites, once per presentation and action per minute); `origin` and `reason` are truthful: `human` (created by the user in this Core run), `agent_authored` (assembled by agent authoring in this run), `legacy` (anything else: an older document or an earlier run: Core cannot tell more, the document carries only its engine) |
 
 `GET /v1/presentation-studio/engine` (relayed read-only) returns `{default_engine, engines: {slidecar, remotion: {ready, reason, repair}}, experimental, slidecar: {events, total, kept, durable: false}}`:
 the journal ring (100 entries, process memory) is for display; what survives a restart is the document's own `engine`, in every listing, shown as a badge.
