@@ -32,6 +32,7 @@ everything else is unchanged and shipped.
 | `jarvis-console` | `jarvis/runtime/settings_mcp.py` (`build_server`) | 3 | always (no switch: it carries the other switches, `control_center.py` `_configure_agent`) | Control Center settings API (the nine Board/Session tools of §10.9 moved to `jarvis-workspace`, §10.12) |
 | `jarvis-workspace` *(board-memory-workspace-inspector, Slice 06, §10.12)* | `jarvis/runtime/workspace_mcp.py` (`build_server`) | 20 | always for the Claude conversation profile (no switch, like the console); never Codex | Control Center `/api/boards*`, `/api/sessions*` (`board_routes.py`), `/api/workspace/*` (`workspace_relay.py`) |
 | `jarvis-presentation` *(interactive-presentation-studio, Slice 21, §10.15)* | `jarvis/runtime/presentation_studio_mcp.py` (`build_server`) | 12 | with the display: `scene.enabled` true and Core target known; Claude conversation profile only | Core `/v1/presentation-studio/*` (actor `brain`, set by the server) and the Control Center explorer / full-screen / turn-attestation routes |
+| `jarvis-remotion` *(jarvis-remotion-presentation-integration, Slice 21, §10.17)* | `jarvis/runtime/remotion_mcp.py` (`build_server`) | 6 | with `jarvis-presentation` (`scene.enabled`, same target); Claude conversation profile only | Core `/v1/local-capabilities/remotion*`, `/v1/remotion/imports*`, `/v1/presentation-studio/.../upgrades*`, `/v1/presentation-studio/engine` (read), the same routes as the Control Center cards; Control Center `/api/presentation-studio/agent/turn` (attestation) |
 | `jarvis-memory` *(memory-intelligence-knowledge, Slice 05b, §10.16)* | `jarvis/runtime/memory_mcp.py` (`build_server`) | 5 | always for the Claude conversation profile (no switch); never Codex, never the reflex or voice model | Control Center `/api/memory/brain/*` (`memory_relay.py`), relay of Core `/v1/memory/*` |
 | `jarvis-capture` *(session-context-recording, Slice 09, §10.11)* | `jarvis/runtime/capture_mcp.py` (`build_server`) | 9 | always for the Claude conversation profile (no switch, like the console); never Codex | Control Center `/api/contexts*`, `/api/captures*`, `/api/artifacts*` (relay of Core, `capture_relay.py`) |
 | `jarvis-barehands` | `jarvis/runtime/barehands_mcp.py:475` (`build_server`) | 16 | `barehands.enabled` true (`control_center.py:1225-1240`) | Control Center `/api/barehands/commands` (five lifecycle tools, `barehands_test`, ten `calibration_*` tools, §6) |
@@ -1405,3 +1406,15 @@ tool calls `/api/memory/brain/*` on the Control Center (`jarvis/runtime/memory_r
 - Diagnostics (`core.memory.tool_called`, `memory.tool`) carry the tool, counts and codes, never the query or the text.
 
 Tests: `tests/unit/test_memory_mcp.py`.
+
+### 10.17 Jarvis-remotion-presentation-integration, Slice 21 - `jarvis-remotion` (Remotion capability for the brain)
+
+A **separate** server (category `presentation`, `condition = scene.enabled`, no `ui_surface`) so the `jarvis-presentation` budget (17 100 B, twelve tools) is untouched.
+Six tools, `output.format = untyped`: `remotion_status` (read: `capability` with the default engine read-only, `studio`, `exports`, `export`), `remotion_setup`
+(`install` / `repair`), `remotion_studio` (read class: returns a pointer to the Control Center card, never opens), `remotion_export` (`start` / `cancel`),
+`remotion_import` (`plan` / `execute`), `remotion_upgrades` (`notices` / `try`). Reference, guards and tests: [../remotion-runtime.md](../remotion-runtime.md) section 13.
+Parameter rules carried by `ToolMeta`: every write verb needs an addressed user turn (attested) and `user_request`; ids are read from state; no engine, actor,
+acknowledgement, licence acknowledgement, `authorised_boards` or `concurrency` parameter exists (the closed schemas are `additionalProperties: false`).
+Measured 5 178 B of model-visible context (budget `REMOTION_CONTEXT_BUDGET_BYTES` 5 400); the whole-surface budget `DECLARED_CONTEXT_BUDGET_BYTES` rose from 105 000 to 110 000
+for this server only (104 548 + 5 178 = 109 726, 274 B margin), a deliberate raise recorded in the handoff LOG. The server config is written by `ClaudeLocalAgent._remotion_mcp_args`
+next to `jarvis-presentation`'s and the brain prompt block is `BRAIN_REMOTION_PROMPT` (program step `backend.claude.conversation.remotion`, `studio` programs only).

@@ -126,6 +126,40 @@ SENTENCES: dict[str, str] = {
                             "l'utilisateur doit lancer cette lecture lui-même (bouton du lecteur) ou le demander à voix haute."),
     "control_center_unreachable": "Le Control Center est injoignable : l'interface de JARVIS doit tourner.",
     "core_unreachable": "Core est injoignable : rien n'a été lu ni fait.",
+    # jarvis-remotion (Remotion Slice 21) : les mêmes routes de Core que les cartes du Control Center ; le refus dit quoi dire à l'utilisateur.
+    "presentation_studio_source_request_required": ("Core n'édite une source pour le cerveau que sur une demande de source EN ATTENTE, enregistrée dans un tour de "
+                                                    "l'utilisateur pour cette scène : demande à renouveler (scene.source_request dans le tour de l'utilisateur)."),
+    "core_timeout": ("Core n'a pas répondu à temps : l'issue est inconnue, relis l'état avant de réessayer (remotion_status exports pour un export, "
+                     "presentation_inspect pour une présentation) : un travail a pu partir."),
+    "remotion_user_turn_required": "Ce tour n'est pas une demande de l'utilisateur : rien n'est lancé. Dis en une phrase que tu le fais dès qu'il le demande ; ne réessaie pas.",
+    "remotion_user_request_required": "user_request : recopie les mots de l'utilisateur qui demandent ce geste (obligatoire).",
+    "remotion_licence_user_only": "La licence se reconnaît par l'utilisateur seul, depuis la page (case « Je reconnais la licence »). Lis-lui la licence et laisse-le faire.",
+    "remotion_import_plan_first": "Importer exige un plan identique, lu dans ce processus : appelle d'abord op plan avec la même demande.",
+    "local_capability_busy": "Une opération est déjà en cours sur Remotion : relis remotion_status (target capability), ne relance rien.",
+    "local_capability_invalid": "Cette opération n'est pas permise ici : lis remotion_status (target capability).",
+    "presentation_render_runtime_unavailable": "Remotion n'est pas prêt sur ce poste : propose à l'utilisateur de l'installer ou de le réparer (remotion_setup, sur sa demande).",
+    "presentation_render_browser_unavailable": "Aucun Chrome ni Edge sur ce poste : l'export vidéo est impossible, dis-le tel quel.",
+    "presentation_render_queue_full": "Huit exports sont déjà en cours ou en attente : attends qu'un s'achève ou annule-en un (remotion_export cancel, sur demande).",
+    "presentation_render_disk_low": "Il reste moins de 1,5 Gio de disque : l'export ne part pas. Dis-le à l'utilisateur.",
+    "presentation_render_unknown_job": "Cet export n'existe pas (ou a été oublié par Core) : prends un job_id de remotion_status (target exports).",
+    "presentation_render_not_cancellable": "Cet export est déjà terminé ou en finalisation : rien à annuler.",
+    "presentation_render_unknown_scene": "La scène n'est pas dans la copie figée, ou plusieurs scènes Remotion existent : donne settings.scene_id lu avec presentation_inspect.",
+    "presentation_render_invalid": "Demande d'export refusée : format mp4, still ou pdf, réglages dans leurs bornes (voir le message de Core).",
+    "presentation_render_snapshot_invalid": "La copie figée est refusée par Core : rien n'a été exporté. Dis le motif tel quel.",
+    "presentation_render_source_refused": "La source de la scène ne passe plus les gardes d'isolation : rien n'a été exporté. Dis-le tel quel.",
+    "presentation_render_engine_mismatch": "La version de Remotion installée n'est pas celle de la présentation : l'utilisateur peut réparer l'environnement.",
+    "presentation_render_locked": "Un autre Core tient le verrou des exports de ce dossier de données : rien n'est lancé.",
+    "origin_not_allowed": ("Dépôt hors de la liste autorisée par l'utilisateur : elle s'édite à la main dans control-center-settings.json (clé remotion_import.allowed_owners, "
+                           "aucune interface), jamais par toi. Ne contourne pas, dis-le."),
+    "commit_not_pinned": "Il faut le SHA complet du commit (40 caractères hexadécimaux), donné par l'utilisateur : n'en invente pas.",
+    "presentation_not_found": "Cette présentation n'existe pas : prends un presentation_id de presentation_inspect.",
+    "import_busy": "Un autre import est en cours : réessaie plus tard.",
+    "license_missing": "Le modèle n'a aucune licence : l'import est refusé, dis-le tel quel.",
+    "license_unknown": "Licence hors de celles examinées : l'import est refusé, dis laquelle.",
+    "license_unlicensed": "Modèle « tous droits réservés » : l'import est refusé.",
+    "license_restricted": "Licence restrictive (copyleft, non commerciale ou celle de Remotion) : l'import est refusé.",
+    "license_conflict": "La licence du fichier et celle de package.json divergent : l'import est refusé.",
+    "dependency_refused": "Dépendance hors de la liste auditée : l'import est refusé, nomme-la.",
 }
 
 

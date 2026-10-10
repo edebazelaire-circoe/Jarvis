@@ -25,6 +25,17 @@ def request(revision: int, files: dict, *, scene_id: str = S1, actor: str = "use
     return {"actor": actor, "basis": {"variant_revision": revision}, "scene_id": scene_id, "files": files, **extra}
 
 
+async def pending(core: Core, pid: str, vid: str, scene_id: str = S1) -> str:
+    """Remotion Slice 21 (QA B1): a pending source request as the user's edit API records it, and its id (a brain edit cites one)."""
+
+    _, current = await core.call("GET", f"/{pid}/variants/{vid}")
+    status, done = await core.call("POST", f"/{pid}/variants/{vid}/edits", json={
+        "actor": "user", "mode": "commit", "basis": {"variant_revision": current["revision"]},
+        "ops": [{"op": "scene.source_request", "scene_id": scene_id, "intent": "test"}]})
+    assert status == 200, done
+    return done["source_requests"][0]["request_id"]
+
+
 async def start_run(core: Core, pid: str, vid: str) -> tuple[str, int]:
     """A REAL playback run (Slice 12) of the first scene: its stage window `studio-stage-<run_id>` and the variant revision."""
 
@@ -91,7 +102,11 @@ async def test_the_typed_client_returns_every_outcome_and_raises_on_envelopes(tm
     async with Core(tmp_path) as core:
         pid, vid, revision = await new_presentation(core)
         client = core.client
-        done = await client.presentation_studio_source_edit(pid, vid, request(revision, {"style": STYLE}, actor="brain"))
+        with pytest.raises(CoreProtocolError) as caught:       # the brain needs a pending request (Slice 21 rework)
+            await client.presentation_studio_source_edit(pid, vid, request(revision, {"style": STYLE}, actor="brain"))
+        assert (caught.value.status, caught.value.code) == (403, "presentation_studio_source_request_required")
+        done = await client.presentation_studio_source_edit(pid, vid, request(revision, {"style": STYLE}, actor="brain",
+                                                                              request_id=await pending(core, pid, vid)))
         assert done["status"] == "repinned" and done["actor"] == "brain"
         refused = await client.presentation_studio_source_edit(pid, vid, request(done["revision"], {"template": "<iframe></iframe>"}))
         assert refused["status"] == "refused_validation"
@@ -301,10 +316,12 @@ async def test_the_agent_rate_limit_is_a_typed_429_over_http_and_the_user_is_not
         url = f"/{pid}/variants/{vid}/source-edits"
         for index in range(2):
             _, current = await core.call("GET", f"/{pid}/variants/{vid}")
-            status, _ = await core.call("POST", url, json=request(current["revision"], {"style": f"p{{color:#a0000{index}}}"}, actor="brain"))
+            status, _ = await core.call("POST", url, json=request(current["revision"], {"style": f"p{{color:#a0000{index}}}"}, actor="brain",
+                                                                  request_id=await pending(core, pid, vid)))
             assert status == 200
         _, current = await core.call("GET", f"/{pid}/variants/{vid}")
-        status, refused = await core.call("POST", url, json=request(current["revision"], {"style": "p{color:red}"}, actor="brain"))
+        status, refused = await core.call("POST", url, json=request(current["revision"], {"style": "p{color:red}"}, actor="brain",
+                                                                    request_id=await pending(core, pid, vid)))
         assert status == 429 and refused["error"]["code"] == "presentation_studio_source_edit_rate"
         status, user = await core.call("POST", url, json=request(current["revision"], {"style": "p{color:red}"}, actor="user"))
         assert status == 200 and user["status"] in ("repinned", "reloaded")
@@ -328,8 +345,33 @@ async def test_the_rate_limit_follows_the_verified_channel_not_the_actor_a_body_
         direct = f"/{pid}/variants/{vid}/source-edits"
         for index in range(2):                                                                       # a direct caller is what it claims
             _, current = await core.call("GET", f"/{pid}/variants/{vid}")
-            status, _ = await core.call("POST", direct, json=request(current["revision"], {"style": f"p{{color:#c0000{index}}}"}, actor="brain"))
+            status, _ = await core.call("POST", direct, json=request(current["revision"], {"style": f"p{{color:#c0000{index}}}"}, actor="brain",
+                                                                     request_id=await pending(core, pid, vid)))
             assert status == 200
         _, current = await core.call("GET", f"/{pid}/variants/{vid}")
-        status, refused = await core.call("POST", direct, json=request(current["revision"], {"style": "p{color:red}"}, actor="brain"))
+        status, refused = await core.call("POST", direct, json=request(current["revision"], {"style": "p{color:red}"}, actor="brain",
+                                                                       request_id=await pending(core, pid, vid)))
         assert status == 429 and refused["error"]["code"] == "presentation_studio_source_edit_rate"
+
+
+async def test_over_http_a_brain_source_edit_needs_a_pending_request_of_the_user_and_the_relay_user_does_not(tmp_path):
+    """Remotion Slice 21 (QA B1): coded 403 for none / unknown / another scene; accepted with a pending one; the relay's user needs none."""
+
+    async with Core(tmp_path) as core:
+        pid, vid, _ = await new_presentation(core)
+        url = f"/{pid}/variants/{vid}/source-edits"
+        _, current = await core.call("GET", f"/{pid}/variants/{vid}")
+        for extra in ({}, {"request_id": "psq_0000000000ff"}):
+            status, refused = await core.call("POST", url, json=request(current["revision"], {"style": "p{color:red}"}, actor="brain", **extra))
+            assert status == 403 and refused["error"]["code"] == "presentation_studio_source_request_required", extra
+        other = await pending(core, pid, vid, scene_id=S1)
+        _, current = await core.call("GET", f"/{pid}/variants/{vid}")
+        status, refused = await core.call("POST", url, json=request(current["revision"], {"style": "p{color:red}"}, actor="brain",
+                                                                    scene_id="pss_00000000ffff", request_id=other))
+        assert status in (403, 404), refused                        # an unknown scene is refused (404) or the request is not its own (403)
+        status, done = await core.call("POST", url, json=request(current["revision"], {"style": "p{color:#0a0b0c}"}, actor="brain", request_id=other))
+        assert status == 200 and done["request_id"] == other
+        _, current = await core.call("GET", f"/{pid}/variants/{vid}")
+        status, relayed, _ = await core.stack.call("POST", f"{RELAY}/{pid}/variants/{vid}/source-edits", json=request(
+            current["revision"], {"style": "p{color:#0d0e0f}"}, actor="brain"))
+        assert status == 200 and relayed["actor"] == "user"

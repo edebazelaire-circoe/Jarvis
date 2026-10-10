@@ -132,6 +132,7 @@ La carte (`control_center_remotion_studio.js`) est en tête de l'onglet « Plugi
 
 ## 9. Ce que le Studio n'est pas
 
+- Pas un outil du cerveau : `remotion_studio` ([remotion-runtime.md](remotion-runtime.md) §13, Slice 21) rend seulement où cliquer ; l'accusé « cette scène tourne sans le bac à sable » est un geste de l'utilisateur dans la page, et le cerveau ne l'envoie jamais.
 - Pas un moteur de rendu : le rendu et l'export sont la Slice 16 ([remotion-render.md](remotion-render.md), processus et garde propres, à partir d'un snapshot figé) ; le garde du Studio refuse les processus enfants, donc le bouton « Render » du Studio échoue visiblement.
 - Pas un éditeur qui écrit dans la bibliothèque : ses modifications sont mises de côté, jamais publiées.
 - Pas un lieu d'exécution isolé comme le Player : la scène y tourne dans l'onglet du Studio (§11).

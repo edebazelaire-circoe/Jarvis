@@ -3547,6 +3547,8 @@ de Core) : l'agent lit d'abord la source (`GET .../scenes/<scene_id>/source`), p
 (`null` supprime un fichier, `assets` pour `public/**`, `restore_version` pour annuler ou rétablir). Contrat : [presentation-studio.md](presentation-studio.md)
 > *Remotion sources*. Aucun outil MCP n'a été ajouté : le cerveau garde `scene.source_request` ; le sous-agent délégué appelle cette route.
 
+**Le `request_id` est obligatoire (acteur `brain`, Slice 21)** : le cerveau enregistre `scene.source_request` lui-même, dans le tour de l'utilisateur, et passe au sous-agent le `request_id` rendu ; le sous-agent l'envoie dans `POST .../source-edits` (`"request_id": "psq_..."`) et **n'appelle pas** `scene.source_request`. Sans demande en attente pour CETTE scène, Core répond **403 `presentation_studio_source_request_required`** (« demande à renouveler ») : inconnue, déjà satisfaite, expirée (30 minutes), perdue au redémarrage de Core ou d'une autre scène. La demande reste en attente tant qu'aucune édition n'a réussi : un refus de compilation se retouche avec le même `request_id`. L'utilisateur (relais du Control Center) n'en a pas besoin.
+
 - **Une source qui ne compile pas n'est jamais publiée** : réponse **422**, `error.code = presentation_studio_source_build_failed`, `diagnostics`
   `[{file, line, column, text}]` ; la version à l'écran continue de jouer. Moteur non prêt : 400 `presentation_studio_engine_unavailable` avec la réparation
   (capacité locale Remotion, docs/remotion-runtime.md) ; jamais un repli sur Slidecar.

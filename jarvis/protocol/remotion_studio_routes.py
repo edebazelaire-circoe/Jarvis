@@ -12,7 +12,7 @@ Remotion, pas une capacité de plus) ; jeton porteur de Core obligatoire comme t
 | POST | `.../studio/restart` | `{"acknowledge_unsandboxed_scene": true}` | `{studio: vue}` |
 
 `open`, `restart` et `sync` d'une AUTRE scène exigent l'accusé explicite : sans lui, 400 `remotion_studio_ack_required` et rien n'est lancé
-(la scène tourne sans le bac à sable du Player). Aucun chemin du cerveau, d'un outil MCP ni d'un agent n'appelle ces routes.
+(la scène tourne sans le bac à sable du Player). Aucun chemin du cerveau, d'un outil MCP ni d'un agent n'appelle ces routes : `remotion_studio` (Slice 21) rend un pointeur vers la carte, l'accusé est à l'utilisateur.
 
 Refus : `{"error": {"code": "remotion_studio_*", "message"}}` : 400 invalide, 404 source inconnue, 409 occupé / non ouvert /
 environnement Remotion non prêt, 503 Core sans Studio. Un ÉCHEC de démarrage n'est pas une erreur HTTP : c'est la vue

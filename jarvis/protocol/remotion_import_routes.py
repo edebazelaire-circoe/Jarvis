@@ -1,7 +1,7 @@
 """Routes de Core : import d'un modèle Remotion amont (handoff jarvis-remotion-presentation-integration, Slice 18 ; `docs/remotion-import.md`).
 
-Servies par `LocalProtocolServer` (jeton porteur). Aucune route du Control Center, aucun outil MCP ni cerveau : l'import est une
-demande explicite de l'utilisateur, jamais un geste de l'agent.
+Servies par `LocalProtocolServer` (jeton porteur). Aucune route du Control Center : l'import est une demande explicite de l'utilisateur. Le cerveau ne l'appelle que par
+`remotion_import` (serveur `jarvis-remotion`, Slice 21), dans le tour de l'utilisateur, jamais de sa propre initiative.
 
 | Méthode | Route | Corps | Réponse |
 | --- | --- | --- | --- |

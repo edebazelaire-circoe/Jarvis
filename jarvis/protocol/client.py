@@ -1259,6 +1259,66 @@ class LocalCoreClient:
         return await self._studio("POST", f"/{quote(presentation_id, safe='')}/variants/{quote(variant_id, safe='')}/upgrades/try",
                                   body=dict(body))
 
+    # ---- Capacite Remotion pour le serveur `jarvis-remotion` (Remotion Slice 21) : memes routes de Core que les cartes du Control Center.
+    # Aucune de ces methodes n'ouvre le Studio (l'accuse de la scene sans bac a sable est a l'utilisateur) ni ne choisit un moteur.
+
+    async def _remotion(self, method: str, path: str, *, body: Mapping[str, Any] | None = None, timeout_s: float = 10.0) -> dict[str, Any]:
+        session = await self._http()
+        options: dict[str, Any] = {} if body is None else {"json": dict(body)}
+        async with session.request(method, self.base_url + path, headers=self.headers, timeout=aiohttp.ClientTimeout(total=timeout_s),
+                                   **options) as response:
+            return await self._json(response)
+
+    async def remotion_capability(self) -> dict[str, Any]:
+        """`GET /v1/local-capabilities/remotion` : `{capability}` (jamais un lancement)."""
+
+        return await self._remotion("GET", "/v1/local-capabilities/remotion")
+
+    async def remotion_studio_status(self) -> dict[str, Any]:
+        """`GET .../remotion/studio` : `{studio}` (jamais un lancement)."""
+
+        return await self._remotion("GET", "/v1/local-capabilities/remotion/studio")
+
+    async def presentation_studio_engine(self) -> dict[str, Any]:
+        """`GET /v1/presentation-studio/engine` : le moteur par defaut et l'etat de chacun, lecture seule."""
+
+        return await self._remotion("GET", "/v1/presentation-studio/engine")
+
+    async def remotion_render_availability(self) -> dict[str, Any]:
+        """`GET .../remotion/render` : `{render: {ready, reason, ...}}`."""
+
+        return await self._remotion("GET", "/v1/local-capabilities/remotion/render")
+
+    async def remotion_render_jobs(self) -> dict[str, Any]:
+        """`GET .../remotion/render/jobs` : `{jobs}`, les plus recents d'abord."""
+
+        return await self._remotion("GET", "/v1/local-capabilities/remotion/render/jobs")
+
+    async def remotion_render_job(self, job_id: str) -> dict[str, Any]:
+        """`GET .../render/jobs/{id}` : `{job}`."""
+
+        return await self._remotion("GET", f"/v1/local-capabilities/remotion/render/jobs/{quote(job_id, safe='')}")
+
+    async def remotion_render_create(self, body: Mapping[str, Any]) -> dict[str, Any]:
+        """`POST .../render/jobs` : 202 `{job}` (en file ; l'Artifact derive existe `pending`)."""
+
+        return await self._remotion("POST", "/v1/local-capabilities/remotion/render/jobs", body=body, timeout_s=65.0)
+
+    async def remotion_render_cancel(self, job_id: str) -> dict[str, Any]:
+        """`POST .../render/jobs/{id}/cancel` : `{job}`."""
+
+        return await self._remotion("POST", f"/v1/local-capabilities/remotion/render/jobs/{quote(job_id, safe='')}/cancel", body={}, timeout_s=45.0)
+
+    async def remotion_import_plan(self, body: Mapping[str, Any]) -> dict[str, Any]:
+        """`POST /v1/remotion/imports/plan` : telecharge et analyse, n'ecrit rien."""
+
+        return await self._remotion("POST", "/v1/remotion/imports/plan", body=body, timeout_s=90.0)
+
+    async def remotion_import(self, body: Mapping[str, Any]) -> dict[str, Any]:
+        """`POST /v1/remotion/imports` : un prefab Remotion propre a la presentation (jamais la bibliotheque partagee)."""
+
+        return await self._remotion("POST", "/v1/remotion/imports", body=body, timeout_s=90.0)
+
     async def forward_json(self, method: str, path: str, *, params: QueryParams | None = None,
                            body: bytes | None = None, timeout_s: float | None = None) -> tuple[int, Any]:
         """Relais transparent d'une requête `/v1/boards*`, `/v1/sessions*` (proxy du Control Center, Slice 04b)
