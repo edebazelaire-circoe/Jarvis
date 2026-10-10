@@ -270,8 +270,12 @@ class RemotionRenderRunner:
         self._rotate_log(job)
         elapsed = self._clock() - started
         result = self._read_json(job / "result.json") or {}
-        egress = result.get("egress") if isinstance(result.get("egress"), dict) else (self._read_json(job / "egress.json") or {})
+        egress = self._read_json(job / "egress.json") or {}  # snake_case, rewritten by the guard at every denial
         tail = self._log_tail(job)
+        if code or proc.returncode != 0 or result.get("ok") is not True:
+            swept = self.sweep(job_id)  # Chrome may outlive a killed or crashed Node parent
+            if swept:
+                tail = [*tail, f"swept {swept} leftover process tree(s) of this render"][-8:]
         if code:
             return RunOutcome(False, code, detail, egress=egress, elapsed_s=elapsed, log_tail=tail)
         if proc.returncode == 0 and result.get("ok") is True:
@@ -379,6 +383,44 @@ class RemotionRenderRunner:
                 _remove_tree(Path(entry.path))
         except OSError:
             pass
+
+    def prune(self, keep: int) -> int:
+        """Ne garde que les `keep` dossiers de travail les plus récents (traces `job.json`, journal) : les autres sont effacés."""
+
+        try:
+            jobs = sorted((e for e in os.scandir(self._jobs) if e.is_dir() and _JOB_ID.fullmatch(e.name)), key=lambda e: e.stat().st_mtime)
+        except OSError:
+            return 0
+        old = jobs[: max(0, len(jobs) - keep)]
+        for entry in old:
+            _remove_tree(Path(entry.path))
+        return len(old)
+
+    def sweep(self, job_id: str) -> int:
+        """Tue ce qui reste de CE travail quand son processus Node a disparu avant ses enfants (Chrome, compositeur) : le navigateur porte
+        `--user-data-dir=<dossier du travail>/tmp/...`, donc l'identifiant unique du travail dans sa ligne de commande. Rend le nombre
+        d'arbres tués. Jamais un processus qui ne porte pas cet identifiant ; ne lève pas (un balayage raté est journalisé par l'appelant)."""
+
+        self.job_dir(job_id)  # forme de l'identifiant vérifiée
+        pids: list[int] = []
+        try:
+            if process_tree.IS_WINDOWS:
+                script = (f"Get-CimInstance Win32_Process | Where-Object {{ $_.CommandLine -like '*{job_id}*' -and $_.ProcessId -ne $PID }}"
+                          " | ForEach-Object { $_.ProcessId }")
+                out = subprocess.run(["powershell", "-NoProfile", "-NonInteractive", "-Command", script], capture_output=True, text=True,
+                                     timeout=30, check=False, creationflags=process_tree._creationflags()).stdout
+            else:
+                out = subprocess.run(["pgrep", "-f", job_id], capture_output=True, text=True, timeout=15, check=False).stdout
+        except (OSError, subprocess.SubprocessError):
+            return 0
+        for token in out.split():
+            if token.isdigit() and int(token) not in (os.getpid(), os.getppid()):
+                pids.append(int(token))
+        killed = 0
+        for pid in pids:
+            if process_tree.pid_exists(pid) and process_tree.kill_tree(pid):
+                killed += 1
+        return killed
 
     def stop(self, process_ref: str) -> bool:
         parsed = process_tree.parse_process_ref(process_ref)

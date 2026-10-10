@@ -124,7 +124,7 @@ class PresentationRenderProtocolRoutes:
     async def cancel(self, request: web.Request) -> web.StreamResponse:
         if await self._body(request):
             raise RenderError(C.INVALID, "cancel takes an empty body")
-        return web.json_response({"job": self._service().cancel(request.match_info["job_id"])})
+        return web.json_response({"job": await self._service().cancel(request.match_info["job_id"])})
 
     async def create(self, request: web.Request) -> web.StreamResponse:
         service = self._service()

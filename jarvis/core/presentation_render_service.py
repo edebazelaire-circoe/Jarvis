@@ -199,7 +199,11 @@ class PresentationRenderService:
     def jobs(self) -> list[dict[str, Any]]:
         return [job.view(position=self._position(job.job_id)) for job in sorted(self._jobs.values(), key=lambda j: -j.created)]
 
-    def cancel(self, job_id: str) -> dict[str, Any]:
+    async def cancel(self, job_id: str) -> dict[str, Any]:
+        """File d'attente : le travail est retiré, son dérivé `failed` (`presentation_render_cancelled`) AVANT de répondre. En cours : le
+        signal est posé, la vue dit `cancel_requested` et le processus (arbre entier) est tué dans la seconde ; l'état terminal n'apparaît
+        qu'une fois le dérivé lui-même terminal."""
+
         job = self._jobs.get(job_id)
         if job is None:
             raise RenderError(C.UNKNOWN_JOB, "no such render job in this Core run")
@@ -212,15 +216,8 @@ class PresentationRenderService:
                 self._queue.remove(job_id)
             except ValueError:
                 pass
-            asyncio.get_running_loop().create_task(self._finish_queued_cancel(job))
-            job.state, job.phase = JobState.CANCELLED, "cancelled"  # visible at once; the Artifact is failed just after
-            job.error_code = C.CANCELLED.value
-            job.finished = time.time()
+            await self._fail_job(job, C.CANCELLED.value, "cancelled before it started")
         return job.view(position=self._position(job_id))
-
-    async def _finish_queued_cancel(self, job: RenderJob) -> None:
-        await self._fail_artifact(job, C.CANCELLED.value)
-        await self._record(job)
 
     # ------------------------------------------------------------------ travail
 
@@ -238,7 +235,8 @@ class PresentationRenderService:
                 await self._execute(job)
             except asyncio.CancelledError:
                 job.cancel.set()  # the render thread cannot be cancelled: this makes it kill the process tree
-                await asyncio.shield(self._fail_job(job, C.INTERRUPTED.value, "Core stopped while the render was running"))
+                if not job.state.terminal:  # a job that already completed is never turned into a failure by the shutdown
+                    await asyncio.shield(self._fail_job(job, C.INTERRUPTED.value, "Core stopped while the render was running"))
                 raise
             except Exception as exc:  # noqa: BLE001 - argued: any defect becomes a typed failure of THIS job; the worker serves the next one
                 self._trace("internal_error", "Défaut inattendu pendant un rendu", level="error",
@@ -332,10 +330,13 @@ class PresentationRenderService:
             "egress_denied": denied})
 
     async def _fail_job(self, job: RenderJob, code: str, detail: str) -> None:
+        """Dérivé `failed` d'abord, état terminal du travail ensuite : qui voit `failed` / `cancelled` lit un dérivé déjà terminal."""
+
         cancelled = code == C.CANCELLED.value
-        job.state = JobState.CANCELLED if cancelled else JobState.FAILED
-        job.phase, job.error_code, job.error_detail, job.finished = ("cancelled" if cancelled else "failed"), code, clean_detail(detail), time.time()
+        job.error_code, job.error_detail = code, clean_detail(detail)
         await self._fail_artifact(job, code)
+        job.phase, job.finished = ("cancelled" if cancelled else "failed"), time.time()
+        job.state = JobState.CANCELLED if cancelled else JobState.FAILED
         await self._record(job)
         self._trace("cancelled" if cancelled else "failed", "Rendu de présentation annulé" if cancelled else "Rendu de présentation échoué",
                     level="warning" if cancelled else "error", data={"job_id": job.job_id, "artifact_id": job.artifact_id, "code": code,
@@ -364,6 +365,8 @@ class PresentationRenderService:
         report = {"killed": 0, "failed": 0, "partial": 0, "kept": 0}
         try:
             for record in await self._run_blocking(self._runner.records):
+                if record.get("state") in ("complete", "failed", "cancelled"):
+                    continue  # finished before the previous stop: nothing runs, nothing to kill
                 ref = str(record.get("process_ref") or "")
                 if ref and await self._run_blocking(self._runner.alive, ref):
                     if await self._run_blocking(self._runner.stop, ref):
@@ -373,6 +376,8 @@ class PresentationRenderService:
                         self._trace("orphan_unkillable", "Un processus de rendu orphelin n'a pas pu être arrêté", level="error",
                                     data={"job_id": record.get("job_id")})
                 if record.get("job_id"):
+                    if await self._run_blocking(self._runner.sweep, str(record["job_id"])):
+                        report["killed"] += 1
                     await self._run_blocking(self._runner.cleanup, str(record["job_id"]))
             cursor = None
             for _ in range(10):
@@ -394,6 +399,7 @@ class PresentationRenderService:
         except Exception as exc:  # noqa: BLE001 - argued: Core keeps starting; the failure is journalled with its type
             self._trace("reconcile_failed", "Reprise des rendus interrompue", level="error",
                         data={"exception": type(exc).__name__, "detail": clean_detail(exc)})
+        await self._run_blocking(self._runner.prune, KEEP_FINISHED * 5)
         self._trace("reconciled", "Reprise des rendus", level="warning" if any(report.values()) else "info", data=report)
         return report
 

@@ -66,7 +66,8 @@ class PresentationWorld:
         self.links = SQLiteBoardArtifactLinks(self.state)
         self.memory = FileBoardMemoryStore(root / "boards_root")
         self.studio = PresentationStudioService(FilePresentationStudioStore(root / "studio"))
-        install_version(root / "package", "jarvis.counter", title="Base counter")
+        if not (root / "package" / "jarvis.counter").exists():
+            install_version(root / "package", "jarvis.counter", title="Base counter")
         self.prefabs = PrefabService(FilePrefabLibrary(root / "package", root / "prefabs"), diagnostics=self.sink, clock=lambda: T0)
         self.snapshots = PresentationArtifacts(self.studio, self.artifacts, self.links, diagnostics=self.sink)
         self.resolver = LiveRefResolver(boards=self.boards, memory=self.memory, artifacts=self.artifacts, links=self.links,

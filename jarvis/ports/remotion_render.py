@@ -66,6 +66,12 @@ class RenderRunner(Protocol):
 
     def cleanup(self, job_id: str) -> None: ...
 
+    def prune(self, keep: int) -> int:
+        """Efface les plus anciens dossiers de travail au-delà de `keep` ; rend le nombre effacé."""
+
+    def sweep(self, job_id: str) -> int:
+        """Tue les processus qui portent l'identifiant de ce travail et ont survécu à leur parent ; rend le nombre d'arbres tués."""
+
     def stop(self, process_ref: str) -> bool:
         """Tue l'arbre si (et seulement si) la référence désigne toujours notre processus ; vrai si plus rien ne vit."""
 
