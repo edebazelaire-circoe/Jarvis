@@ -172,6 +172,7 @@ class Harness:
             self.check(f"{label}: rendered_from the snapshot", [(r.relation.value, r.origin_artifact_id) for r in origins] == [("rendered_from", snapshot_id)])
             self.facts[label + "_metadata"] = dict(artifact.metadata)
             if label == "mp4":
+                shutil.copyfile(payload, self.work / "evidence.mp4")
                 probe = json.loads(sh([str(ffprobe), "-v", "error", "-count_frames", "-show_streams", "-show_format", "-of", "json", payload]))
                 stream = probe["streams"][0]
                 self.facts["mp4_ffprobe"] = {k: stream.get(k) for k in ("codec_name", "width", "height", "r_frame_rate", "nb_read_frames", "duration", "pix_fmt")}
@@ -610,9 +611,24 @@ async def amain(args: argparse.Namespace) -> int:
               "node": sh(["node", "--version"]).strip(), "chrome": (harness.facts.get("availability") or {}).get("browser"),
               "remotion": "4.0.534", "elapsed_s": round(time.monotonic() - started, 1), "timings": harness.timings,
               "disk": {"free_before_mb": free_before >> 20, "free_after_mb": free_after >> 20}, "facts": harness.facts, "checks": harness.checks}
-    Path(args.evidence).parent.mkdir(parents=True, exist_ok=True)
-    Path(args.evidence).write_text(json.dumps(report, indent=2, default=str), encoding="utf-8")
-    print(report["verdict"], f"{sum(c['ok'] for c in harness.checks)}/{len(harness.checks)}")
+    out = Path(args.evidence)
+    out.parent.mkdir(parents=True, exist_ok=True)
+    run = {"scenarios": list(args.only or scenarios), "head": head, "tree_dirty": dirty, "elapsed_s": report["elapsed_s"],
+           "disk_free_before_mb": free_before >> 20, "disk_free_after_mb": free_after >> 20}
+    report["runs"] = [run]
+    if args.append and out.is_file():  # the scenarios are run in chunks (a long run is fragile on a loaded machine): one report, every run listed
+        before = json.loads(out.read_text(encoding="utf-8"))
+        report["runs"] = [*before.get("runs", []), run]
+        report["checks"] = [*before["checks"], *harness.checks]
+        report["timings"] = {**before.get("timings", {}), **harness.timings}
+        report["facts"] = {**before.get("facts", {}), **harness.facts}
+        report["elapsed_s"] = round(before.get("elapsed_s", 0) + report["elapsed_s"], 1)
+        report["disk"] = {"free_before_mb": before["disk"]["free_before_mb"], "free_after_mb": free_after >> 20}
+        report["chrome"] = report["chrome"] or before.get("chrome")
+        ok = all(c["ok"] for c in report["checks"])
+        report["verdict"] = "PASSED" if ok else "FAILED"
+    out.write_text(json.dumps(report, indent=2, default=str), encoding="utf-8")
+    print(report["verdict"], f"{sum(c['ok'] for c in report['checks'])}/{len(report['checks'])}")
     return 0 if ok else 1
 
 
@@ -622,6 +638,7 @@ if __name__ == "__main__":
     parser.add_argument("--runtime-dir", default=os.environ.get("JARVIS_REMOTION_RUNTIME_DIR", ""))
     parser.add_argument("--evidence", required=True)
     parser.add_argument("--only", nargs="*")
+    parser.add_argument("--append", action="store_true", help="add this run to an existing evidence file")
     parser.add_argument("--child")
     parser.add_argument("--snapshot")
     ns = parser.parse_args()
