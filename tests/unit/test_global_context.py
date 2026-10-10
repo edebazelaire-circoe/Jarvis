@@ -6,6 +6,7 @@ from pathlib import Path
 import pytest
 
 from jarvis.adapters import global_context
+from jarvis.runtime.claude_local import launched_append_prompt
 from jarvis.adapters.global_context import (
     MANIFEST_NAME,
     ManifestError,
@@ -141,7 +142,7 @@ async def test_the_voice_agent_assembles_grants_and_names_the_folder(tmp_path, m
     await agent.start()
 
     argv, kwargs = launches[0]
-    prompt = argv[argv.index("--append-system-prompt") + 1]
+    prompt = launched_append_prompt(argv)
     assert prompt.startswith(claude_local.cli_prompt_argument(BRAIN_SYSTEM_PROMPT, argv[0]).rstrip())
     assert "CONTEXTE GLOBAL" in prompt and "Monsieur" in prompt
     assert str(root) in argv[argv.index("--add-dir") + 1:]

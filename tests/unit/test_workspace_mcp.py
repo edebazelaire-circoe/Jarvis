@@ -29,6 +29,7 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
+from jarvis.runtime.claude_local import launched_append_prompt  # noqa: E402
 from jarvis.runtime.workspace_mcp import (  # noqa: E402
     SERVER_NAME,
     TOOL_NAMES,
@@ -1170,7 +1171,7 @@ async def test_only_the_conversation_brain_declares_jarvis_workspace_and_the_gat
     assert SENTINEL not in paths[1].read_text(encoding="utf-8")
     gateway = json.loads(paths[3].read_text(encoding="utf-8"))["mcpServers"]["jarvis-tools"]
     assert gateway["env"][ENV_NATIVE_SERVERS] == "jarvis-console,jarvis-workspace,jarvis-capture"
-    assert BRAIN_WORKSPACE_PROMPT.strip() in conversation[conversation.index("--append-system-prompt") + 1]
+    assert BRAIN_WORKSPACE_PROMPT.strip() in launched_append_prompt(conversation)
     assert _config_paths(job) == [], "a background job never receives the native servers"
 
 

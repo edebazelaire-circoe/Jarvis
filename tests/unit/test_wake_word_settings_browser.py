@@ -225,8 +225,8 @@ async def test_la_section_est_rendue_avec_ses_defauts_et_n_ecrit_rien(served, tm
     assert first["sens"] == "0.5" and first["range"] == "0.5"
     assert first["cooldown"] == "2000"
     assert first["pill"] == {"kind": "disabled", "text": "Désactivé"}
-    assert "ouvre un micro au repos" in first["text"]
-    assert "faux positifs" in first["text"] and "faux négatifs" in first["text"]
+    assert "Ouvre un micro au repos" in first["text"]
+    assert "faux réveils" in first["text"] and "ne pas vous entendre" in first["text"]
     assert "80" in first["text"] and "30000" in first["text"]
     assert first["restart"] is None, "pas de bandeau avant le moindre enregistrement"
     assert first["saveDisabled"] is False
@@ -239,7 +239,7 @@ async def test_la_section_est_rendue_avec_ses_defauts_et_n_ecrit_rien(served, tm
     assert second["keyword"] == "hey_jarvis"
     assert "non commercial" in second["license"] and "hey_jarvis" in second["license"]
     assert "wakeword" in second["text"]
-    assert "Picovoice" not in second["text"].split("Ce que ce fournisseur exige")[1][:400]
+    assert "Picovoice" not in second["text"].split("Prérequis :")[1].split("Porcupine (clé")[0]
 
     # Lire n'écrit rien : ni fichier, ni requête autre que GET, ni exception de page.
     assert not served.settings_file.exists()
@@ -337,7 +337,7 @@ async def test_une_valeur_refusee_affiche_son_code_traduit_et_garde_la_saisie(se
     assert first["error"]["code"] == "wake_word_sensitivity_out_of_range"
     assert first["error"]["role"] == "alert"
     assert "comprise entre 0 et 1" in first["error"]["text"], "le code est dit en français"
-    assert "Rien n’a été modifié" in first["error"]["text"]
+    assert "Rien n’a changé" in first["error"]["text"]
     assert first["sens"] == "1.5", "la saisie est conservée, pas remplacée par la valeur du serveur"
     assert first["enabled"] is True, "l'interrupteur coché aussi"
     assert first["invalid"] == ["ww_sensitivity", "ww_sensitivity_value"]
@@ -444,14 +444,17 @@ async def test_la_section_reste_lisible_dans_chaque_theme(served, tmp_path, them
 # ======================================================================
 
 
+HELP_STOPS = 6  # activer, moteur, phrase, sensibilité, pause, détecteur
+
+
 async def test_tout_se_fait_au_clavier_avec_des_noms_et_un_focus_visible(served):
     order = ["ww_enabled", "ww_provider", "ww_keyword", "ww_sensitivity", "ww_sensitivity_value",
              "ww_cooldown", "ww_save", "ww_detector_read"]
     out = await drive(served.url, [{"width": 1440, "height": 900, "actions": [
         *OPEN,
         eval_("document.getElementById('ww_enabled').focus();document.activeElement.id"),
-        *[named(key("Tab"), f"fwd{n}") for n in range(len(order) - 1)],
-        *[named(key("Tab", shift=True), f"back{n}") for n in range(2)],
+        *[named(key("Tab"), f"fwd{n}") for n in range(len(order) - 1 + HELP_STOPS)],
+        *[named(key("Tab", shift=True), f"back{n}") for n in range(3)],
         eval_("document.getElementById('ww_enabled').focus();1"),
         key(" "),                                                       # Espace coche l'interrupteur
         eval_("document.getElementById('ww_enabled').checked", "checked"),
@@ -476,8 +479,10 @@ async def test_tout_se_fait_au_clavier_avec_des_noms_et_un_focus_visible(served)
     step = out["steps"][0]
     focused = {a["id"]: a["focused"] for a in step["actions"] if a.get("id", "").startswith(("fwd", "back"))}
 
-    assert [focused[f"fwd{n}"] for n in range(len(order) - 1)] == order[1:], focused
-    assert [focused["back0"], focused["back1"]] == ["ww_save", "ww_cooldown"]
+    # Chaque « ? » est un arrêt de plus, ignoré ici : seul l'ordre des contrôles compte.
+    controls = lambda names: [i for i in names if not i.startswith("wwHelpBtn")]
+    assert controls(focused[f"fwd{n}"] for n in range(len(order) - 1 + HELP_STOPS)) == order[1:], focused
+    assert controls(focused[f"back{n}"] for n in range(3)) == ["ww_save", "ww_cooldown"], focused
     assert got(step, "checked") is True, "Espace coche l'interrupteur"
     assert float(got(step, "sens")) > 0.5, "la flèche droite fait monter le curseur et la valeur exacte suit"
     ring = got(step, "ring")
@@ -641,8 +646,7 @@ async def test_la_page_dit_que_le_dernier_enregistrement_l_emporte(served):
     ]}])
     hint = got(out["steps"][0], "hint")
     assert hint is not None
-    assert hint["text"] == ("Enregistre les cinq réglages à la fois ; si un autre onglet est ouvert, "
-                            "le dernier enregistrement l’emporte.")
+    assert hint["text"] == "Les cinq réglages partent ensemble ; le dernier enregistrement l’emporte."
     assert hint["below"] is True and "wwSaveHint" in hint["desc"]
 
 

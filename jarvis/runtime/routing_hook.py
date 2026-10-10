@@ -49,6 +49,7 @@ from jarvis.runtime import agent_routing, cli_catalog, credentials, loadout_snap
 from jarvis.runtime.catalog_view import ProviderCatalogSnapshot
 from jarvis.runtime.journal import RuntimeJournal
 from jarvis.runtime.model_catalog import ModelCatalog, filter_by_role
+from jarvis.runtime.presentation_playbooks import PLAYBOOK_ROLES, with_playbook
 
 #: Outils du CLI qui lancent un sous-agent. Mêmes noms que ceux que le suivi
 #: des tâches reconnaît (`agent_tasks.AGENT_TOOLS`).
@@ -102,8 +103,12 @@ def _markers(text: str) -> tuple[int, str | None]:
         return first.end(), word
     if routing.is_profile(word):
         second = _BRACKET.match(text, first.end())
-        if second is not None and second.group(1).strip().lower() in LOADOUT_ROLES:
-            return second.end(), second.group(1).strip().lower()
+        if second is not None:
+            name = second.group(1).strip().lower()
+            if name in LOADOUT_ROLES:
+                return second.end(), name
+            if name in PLAYBOOK_ROLES:  # consommé pour l'affichage, sans rôle de loadout
+                return second.end(), None
     return first.end(), None
 
 
@@ -113,6 +118,29 @@ def read_role(tool_input: Mapping[str, Any]) -> str | None:
         role = _markers(str(tool_input.get(key) or ""))[1]
         if role is not None:
             return role
+    return None
+
+
+_LEADING_BRACKET = re.compile(r"\s*\[\s*([A-Za-z_-]{2,24})\s*\]")
+
+
+def read_playbook_role(tool_input: Mapping[str, Any]) -> str | None:
+    """Le rôle de production (`presentation-brief`, `-author`, `-review`) annoncé en tête, ou `None`.
+
+    Trois marqueurs de tête au plus, dans l'ordre où le cerveau les écrit : `[general] [presentation-brief] ...`
+    ou `[presentation-author] ...`.
+    """
+    for key in ("description", "prompt"):
+        text = str(tool_input.get(key) or "")
+        position = 0
+        for _ in range(3):
+            match = _LEADING_BRACKET.match(text, position)
+            if match is None:
+                break
+            word = match.group(1).strip().lower()
+            if word in PLAYBOOK_ROLES:
+                return word
+            position = match.end()
     return None
 
 
@@ -158,6 +186,9 @@ def charter_input(event: Mapping[str, Any]) -> dict[str, Any] | None:
     # relit la consigne après coup, et la charte ne doit pas l'enterrer.
     head = brief[:_markers(brief)[0]]
     signed = head + sign_brief(brief[len(head):])
+    # La méthode de production d'une présentation : apposée ici, sur l'appel lui-même, parce qu'un sous-agent ne
+    # voit pas le prompt du cerveau et que ce prompt demande des consignes courtes.
+    signed = with_playbook(signed, read_playbook_role(tool_input)) or signed
     return None if signed == brief else {"prompt": signed}
 
 

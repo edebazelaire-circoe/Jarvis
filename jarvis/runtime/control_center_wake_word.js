@@ -314,6 +314,7 @@
   /* `state` : la dernière réponse de la route. `form` : ce qui est tapé (survit
      à un refus). `saved` : un enregistrement a réussi depuis le chargement de la
      page (en mémoire seulement : le bandeau ne dit pas que Voice a redémarré). */
+  const PROVIDER_CHOICE=Object.freeze({porcupine:'Porcupine (clé Picovoice)',openwakeword:'openWakeWord (local, sans clé)'});
   const view={state:null,form:null,loading:false,loadError:null,busy:false,error:null,saved:null,
     detector:null,detectorBusy:false,generation:0};
 
@@ -331,6 +332,40 @@
     for(const child of children||[])if(child)el.append(child);
     return el;
   }
+
+  /* Bulle d'aide : un « ? » qui montre son texte au survol, au focus clavier
+     et au clic (tactile). Le texte est lié au bouton par aria-describedby. */
+  let helpSeq=0;
+  function help(label,text){
+    const id='wwTip'+(++helpSeq);
+    const button=node('button',{type:'button',id:'wwHelpBtn'+helpSeq,className:'ww-help','aria-label':'Aide : '+label,'aria-describedby':id,'aria-expanded':'false',text:'?'});
+    const tip=node('span',{className:'ww-tip',id,role:'tooltip'},Array.isArray(text)?text:[document.createTextNode(String(text))]);
+    const wrap=node('span',{className:'ww-helpwrap'},[button,tip]);
+    button.addEventListener('click',event=>{
+      event.preventDefault();
+      const open=!wrap.classList.contains('open');
+      document.querySelectorAll('#wakeWordSettings .ww-helpwrap.open').forEach(w=>{w.classList.remove('open');w.firstChild.setAttribute('aria-expanded','false')});
+      if(open){wrap.classList.add('open');button.setAttribute('aria-expanded','true')}
+    });
+    wrap.addEventListener('keydown',event=>{
+      if(event.key==='Escape'&&wrap.classList.contains('open')){event.stopPropagation();wrap.classList.remove('open');button.setAttribute('aria-expanded','false')}
+    });
+    return wrap;
+  }
+
+  /* Libellé + bulle d'aide, sur une ligne. */
+  function labelRow(forId,text,helpText){
+    return node('div',{className:'ww-labelrow'},[node('label',{for:forId,text}),helpText?help(text,helpText):null]);
+  }
+
+  /* Phrase courte affichée dans l'état ; le texte complet de `describe` va dans la bulle. */
+  const STATE_SHORT=Object.freeze({
+    foreign:'Réglage d’une version plus récente : lecture seule.',
+    unreadable:'Réglage illisible : valeurs par défaut.',
+    enabled:'Activé. S’applique au prochain démarrage de Voice.',
+    disabled:'Désactivé. Le micro reste fermé au repos.',
+    unknown:'Réglage illisible.',
+  });
 
   /* Région vivante stable, hors de la section redessinée. */
   let liveEl=null;
@@ -361,8 +396,10 @@
     const section=node('section',{id:SECTION_ID,'aria-labelledby':'wwTitle','data-wake-word':''});
     section.append(
       node('h3',{id:'wwTitle',text:'Mot d’éveil'}),
-      node('div',{className:'hint',style:'margin-bottom:14px',
-        text:'Réveiller JARVIS en prononçant son nom, sans toucher le clavier. La touche manuelle reste toujours disponible.'}),
+      node('div',{className:'hint ww-lead',style:'margin-bottom:14px'},[
+        document.createTextNode('Réveillez JARVIS à la voix. '),
+        help('Mot d’éveil','Prononcez la phrase de réveil pour démarrer l’écoute, sans toucher le clavier. La touche manuelle reste toujours disponible.'),
+      ]),
     );
     if(view.loading&&!view.state){
       section.append(node('div',{className:'empty',role:'status',text:'Chargement…'}));
@@ -390,11 +427,11 @@
     /* État effectif, lu du serveur. */
     section.append(node('div',{className:`notice ${model.tone==='bad'?'bad':model.tone==='warn'?'':'info'}`,id:'wwState','data-ww-state':model.kind},[
       node('div',{className:'row',style:'gap:8px;align-items:center;flex-wrap:wrap'},[
-        node('strong',{text:'État effectif'}),
+        node('strong',{text:'État'}),
         node('span',{className:`tag ${model.tone}`,id:'wwPill','data-ww-pill':model.kind,text:model.pill}),
+        help('État',model.detail+(model.serverState?' Selon le serveur : '+model.serverState+'.':'')),
       ]),
-      node('div',{className:'hint',text:model.detail}),
-      model.serverState?node('div',{className:'hint','data-ww-server-state':'',text:'Selon le serveur : '+model.serverState}):null,
+      node('div',{className:'hint',text:STATE_SHORT[model.kind]||model.title}),
     ]));
     if(model.problems.length){
       const list=node('ul',{className:'ww-list','data-ww-problems':''});
@@ -416,8 +453,11 @@
     enabled.addEventListener('change',()=>{view.form.enabled=enabled.checked;noteEdited()});
     /* La case est DANS son libellé : toute la ligne (>= 24 px) est la cible. */
     section.append(node('div',{className:'field'},[
-      node('label',{for:'ww_enabled',className:'ww-check'},[enabled,node('span',{text:'Activer le mot d’éveil'})]),
-      node('div',{className:'hint',id:'wwEnabledHint',text:'Désactivé par défaut. Activé, cela ouvre un micro au repos : JARVIS écoute en permanence tant que Voice tourne, pour détecter le mot d’éveil. L’analyse se fait sur cet ordinateur et le son n’est pas enregistré.'}),
+      node('div',{className:'ww-labelrow'},[
+        node('label',{for:'ww_enabled',className:'ww-check'},[enabled,node('span',{text:'Activer le mot d’éveil'})]),
+        help('Activer le mot d’éveil','Ouvre un micro au repos : JARVIS écoute en continu tant que Voice tourne, pour repérer la phrase de réveil. L’analyse se fait sur cet ordinateur ; le son n’est pas enregistré.'),
+      ]),
+      node('span',{className:'ww-sr',id:'wwEnabledHint',text:'Ouvre un micro au repos tant que Voice tourne.'}),
     ]));
 
     /* Fournisseur. */
@@ -425,7 +465,7 @@
     const provider=node('select',{id:'ww_provider','data-ww-field':'provider','aria-describedby':describedWith('provider','wwProviderHint'),
       'aria-invalid':invalid('provider'),disabled:frozen});
     for(const id of [Logic.PROVIDER_PORCUPINE,Logic.PROVIDER_OPENWAKEWORD])
-      provider.append(node('option',{value:id,text:Logic.PROVIDER_LABEL[id],selected:form.provider===id}));
+      provider.append(node('option',{value:id,text:PROVIDER_CHOICE[id],selected:form.provider===id}));
     provider.value=form.provider;
     provider.addEventListener('change',()=>{
       view.form=Logic.changeProvider(view.form,provider.value,view.state);
@@ -433,11 +473,11 @@
     });
     const requires=node('ul',{className:'ww-list'});
     for(const line of info.requires)requires.append(node('li',{text:line}));
-    const hintChildren=[node('div',{text:'Ce que ce fournisseur exige :'}),requires];
-    if(info.license)hintChildren.push(node('div',{className:'notice','data-ww-license':'',style:'margin:8px 0 0'},[node('strong',{text:info.license})]));
+    const tipChildren=[document.createTextNode('Programme qui reconnaît la phrase. Prérequis :'),requires];
+    if(info.license)tipChildren.push(node('div',{'data-ww-license':'',style:'margin-top:6px'},[node('strong',{text:info.license})]));
     section.append(node('div',{className:'field'},[
-      node('label',{for:'ww_provider',text:'Fournisseur'}),provider,
-      node('div',{className:'hint',id:'wwProviderHint'},hintChildren),
+      labelRow('ww_provider','Moteur',tipChildren),provider,
+      node('span',{className:'ww-sr',id:'wwProviderHint',text:info.requires.join(' ')}),
     ]));
 
     /* Mot d'éveil : liste fermée pour openWakeWord, champ validé pour Porcupine. */
@@ -465,8 +505,8 @@
       });
     }
     section.append(node('div',{className:'field'},[
-      node('label',{for:'ww_keyword',text:'Mot d’éveil'}),keyword,
-      node('div',{className:'hint',id:'wwKeywordHint',text:keywordHintText(advice)}),
+      labelRow('ww_keyword','Phrase de réveil',keywordHelp()),keyword,
+      node('div',{className:advice?'hint':'ww-sr',id:'wwKeywordHint',text:keywordHintText(advice)}),
     ]));
 
     /* Sensibilité : curseur + saisie, qui disent la même valeur. */
@@ -484,10 +524,10 @@
     range.addEventListener('input',()=>{view.form.sensitivity=range.value;sensNumber.value=range.value;range.setAttribute('aria-valuetext',sensitivityWord(range.value));noteEdited()});
     sensNumber.addEventListener('input',()=>{view.form.sensitivity=sensNumber.value;showRange();noteEdited()});
     section.append(node('div',{className:'field'},[
-      node('label',{for:'ww_sensitivity',text:'Sensibilité'}),
+      labelRow('ww_sensitivity','Sensibilité',
+        `De ${b.sMin} à ${b.sMax} (0,5 par défaut). Plus haut : JARVIS vous entend plus facilement, mais se réveille parfois à tort (conversation, télévision). Plus bas : moins de faux réveils, mais il peut ne pas vous entendre. Le modèle openWakeWord est entraîné en anglais : avec un accent, essayez 0,7 à 0,8.`),
       node('div',{className:'ww-pair'},[range,sensNumber]),
-      node('div',{className:'hint',id:'wwSensitivityHint',
-        text:`De ${b.sMin} à ${b.sMax}, 0,5 par défaut. Plus haut, JARVIS se réveille plus facilement mais peut se réveiller à tort (faux positifs : une conversation, la télévision). Plus bas, il se réveille moins à tort mais peut ne pas vous entendre (faux négatifs).`}),
+      node('div',{className:'ww-scale',id:'wwSensitivityHint'},[node('span',{text:'Moins de faux réveils'}),node('span',{text:'Entend mieux'})]),
     ]));
 
     /* Délai anti-rebond. */
@@ -496,9 +536,9 @@
     cooldown.value=form.cooldown_ms;
     cooldown.addEventListener('input',()=>{view.form.cooldown_ms=cooldown.value;noteEdited()});
     section.append(node('div',{className:'field'},[
-      node('label',{for:'ww_cooldown',text:'Délai anti-rebond (ms)'}),cooldown,
-      node('div',{className:'hint',id:'wwCooldownHint',
-        text:`De ${b.cMin} à ${b.cMax} ms, 2000 par défaut. Après un réveil, le détecteur ignore les détections suivantes pendant ce délai. Trop court : réveils en double. Trop long : JARVIS semble sourd.`}),
+      labelRow('ww_cooldown','Pause après un réveil (ms)',
+        `De ${b.cMin} à ${b.cMax} ms (2000 par défaut). Après un réveil, les détections suivantes sont ignorées pendant ce délai. Trop court : réveils en double. Trop long : JARVIS semble sourd.`),cooldown,
+      node('span',{className:'ww-sr',id:'wwCooldownHint',text:`De ${b.cMin} à ${b.cMax} ms.`}),
     ]));
 
     /* Refus du serveur : le code, dit en français, et la saisie reste. */
@@ -510,7 +550,7 @@
         ]),
         node('div',{text:view.error.text}),
         view.error.detail?node('div',{className:'hint',text:'Détail du serveur : '+view.error.detail}):null,
-        node('div',{className:'hint',text:'Rien n’a été modifié. Votre saisie est conservée : corrigez-la puis réenregistrez.'}),
+        node('div',{className:'hint',text:'Rien n’a changé. Votre saisie est gardée.'}),
       ]));
     }
 
@@ -518,7 +558,7 @@
        (garde le focus clavier pendant l'écriture). */
     const save=node('button',{type:'button',className:'action primary',id:'ww_save','data-ww-save':'',disabled:frozen,
       'aria-describedby':'wwSaveHint','aria-disabled':view.busy?'true':null,'aria-busy':view.busy?'true':null,
-      text:view.busy?'Enregistrement…':'Enregistrer le mot d’éveil'});
+      text:view.busy?'Enregistrement…':'Enregistrer'});
     save.addEventListener('click',()=>{if(!view.busy)save_();});
     section.append(node('div',{className:'row',style:'gap:12px;align-items:center;flex-wrap:wrap;margin-bottom:6px'},[
       save,
@@ -526,13 +566,13 @@
     ]));
     /* Les cinq réglages partent ensemble, sans verrou : la route reste « dernier écrit gagne ». */
     section.append(node('div',{className:'hint',id:'wwSaveHint',style:'margin-bottom:18px',
-      text:'Enregistre les cinq réglages à la fois ; si un autre onglet est ouvert, le dernier enregistrement l’emporte.'}));
+      text:'Les cinq réglages partent ensemble ; le dernier enregistrement l’emporte.'}));
 
     if(view.saved)
       section.append(node('div',{className:'notice ww-restart',id:'wwRestart','data-ww-restart':''},[
         node('strong',{text:'Redémarrage de Voice requis'}),
-        node('div',{className:'hint',text:view.saved.message}),
-        node('div',{className:'hint',text:'Redémarrez Voice pour appliquer. Cette page ne peut pas le faire ni savoir quand c’est fait.'}),
+        node('div',{className:'hint',text:'Redémarrez Voice pour appliquer.'}),
+        help('Redémarrage',view.saved.message+' Cette page ne peut ni le faire ni savoir quand c’est fait.'),
       ]));
 
     section.append(detectorNode());
@@ -543,7 +583,13 @@
     return advice?advice.text
       :(view.form&&view.form.provider===Logic.PROVIDER_OPENWAKEWORD
         ?'Liste fermée : openWakeWord n’accepte que les modèles du catalogue.'
-        :'Un mot intégré à Porcupine : minuscules sans accent, mots séparés par une espace. Un mot inconnu de la bibliothèque est refusé au démarrage de Voice.');
+        :'Un mot intégré à Porcupine, en minuscules sans accent.');
+  }
+
+  function keywordHelp(){
+    return view.form&&view.form.provider===Logic.PROVIDER_OPENWAKEWORD
+      ?'Liste fermée : openWakeWord n’accepte que les modèles du catalogue. « hey_jarvis » se prononce à l’anglaise, « hé djarvis ».'
+      :'Un mot intégré à Porcupine : minuscules sans accent, mots séparés par une espace. Un mot inconnu est refusé au démarrage de Voice.';
   }
 
   function sensitivityWord(text){
@@ -557,15 +603,17 @@
     const result=view.detector;
     const button=node('button',{type:'button',className:'action small',id:'ww_detector_read','data-ww-detector':'',
       'aria-disabled':view.detectorBusy?'true':null,'aria-busy':view.detectorBusy?'true':null,
-      text:view.detectorBusy?'Lecture du journal…':'Relire le dernier événement'});
+      text:view.detectorBusy?'Lecture…':'Actualiser'});
     button.addEventListener('click',()=>{if(!view.detectorBusy)readDetector()});
     const box=node('div',{className:`notice ${result?(result.tone==='bad'?'bad':result.tone==='warn'?'':'info'):'info'}`,id:'wwDetector',
       'data-ww-detector-kind':result?result.kind:'unread'},[
-      result?node('strong',{text:result.title}):node('strong',{text:'Pas encore lu'}),
-      node('div',{className:'hint',text:result?result.detail:'Aucune API n’expose l’état du détecteur en direct. Cette page peut seulement relire son dernier événement dans le journal (démarré, arrêté, en panne) : la Slice de validation avec un vrai micro le confirmera.'}),
+      node('div',{className:'row',style:'gap:8px;align-items:center;flex-wrap:wrap'},[
+        node('strong',{text:result?result.title:'Pas encore lu'}),
+        help('Détecteur',result?result.detail:'Aucune API n’expose l’état du détecteur en direct : cette page relit seulement son dernier événement dans le journal (démarré, arrêté, en panne).'),
+      ]),
     ]);
     return node('div',{id:'wwHealth','aria-labelledby':'wwHealthTitle',style:'margin-top:6px'},[
-      node('h4',{id:'wwHealthTitle',text:'Détecteur : dernier événement connu'}),
+      node('h4',{id:'wwHealthTitle',text:'Détecteur'}),
       box,node('div',{className:'row',style:'margin-top:8px'},[button]),
     ]);
   }
@@ -707,6 +755,13 @@
   }
 
   const STYLE=`#wakeWordSettings .ww-list{margin:6px 0 0;padding-left:18px}
+#wakeWordSettings .ww-labelrow{display:flex;align-items:center;gap:8px;min-height:24px}
+#wakeWordSettings .ww-helpwrap{position:relative;display:inline-flex;vertical-align:middle}
+#wakeWordSettings .ww-help{width:24px;height:24px;min-height:24px;padding:0;border-radius:50%;border:1px solid var(--line);background:transparent;color:var(--muted);font:600 12px/1 inherit;cursor:help}
+#wakeWordSettings .ww-help:hover,#wakeWordSettings .ww-help:focus-visible,#wakeWordSettings .ww-helpwrap.open .ww-help{color:var(--text);border-color:var(--accent)}
+#wakeWordSettings .ww-tip{display:none;position:absolute;z-index:30;left:0;top:calc(100% + 6px);width:min(340px,72vw);padding:9px 11px;border:1px solid var(--accent);border-radius:6px;background:#0b1a22;color:var(--text);font-size:12px;line-height:1.5;font-weight:normal;letter-spacing:0;text-transform:none;box-shadow:0 6px 20px rgba(0,0,0,.5)}
+#wakeWordSettings .ww-helpwrap:hover .ww-tip,#wakeWordSettings .ww-helpwrap:focus-within .ww-tip,#wakeWordSettings .ww-helpwrap.open .ww-tip{display:block}
+#wakeWordSettings .ww-scale{display:flex;justify-content:space-between;font-size:11px;color:var(--muted)}
 #wakeWordSettings .ww-pair{display:flex;gap:12px;align-items:center}
 #wakeWordSettings .ww-pair input[type=range]{flex:1;width:auto;height:28px;min-height:28px;padding:0;accent-color:var(--accent)}
 #wakeWordSettings input[aria-invalid=true],#wakeWordSettings select[aria-invalid=true]{border-color:var(--danger)}
@@ -744,7 +799,7 @@
       if(typeof cleanupSettingsSurface==='function')cleanupSettingsSurface();
       SET.renderRevision=(SET.renderRevision||0)+1;
       modalSave.style.display='none';
-      modalSub.textContent='Le mot d’éveil est enregistré tout de suite et appliqué au prochain démarrage de Voice.';
+      modalSub.textContent='Enregistré tout de suite, appliqué au prochain démarrage de Voice.';
       /* Déjà dessiné et lu (par exemple `openSettings` rappelle `renderTab` quand
          les réglages généraux arrivent après un clic sur l'onglet) : relire sur place,
          sans effacer l'écran. */

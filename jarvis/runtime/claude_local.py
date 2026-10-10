@@ -47,6 +47,25 @@ def normalize_permission_mode(value: object) -> str:
     return mode if mode in PERMISSION_MODES else DEFAULT_PERMISSION_MODE
 
 
+# Présentation, vidéo, diaporama : le brain orchestre, il ne construit pas, et cette consigne est l'exception à
+# « quelques lignes de faits » : un sous-agent ne voit ni ce prompt ni le guide du planificateur, et une consigne
+# de cinq lignes produit une présentation sans contexte. La méthode de chaque rôle est apposée d'office sur la
+# consigne par le hook de routage (`presentation_playbooks`) : le brain n'a ni à la recopier ni à la résumer.
+PRESENTATION_PRODUCTION_RULE = (
+    "PRÉSENTATION, VIDÉO, DIAPORAMA : tu orchestres, tu ne construis jamais toi-même, et ici la qualité passe avant la "
+    "vitesse (30 minutes à 2 heures sont acceptables). Le guide de construction du planificateur s'adresse à l'agent "
+    "auteur, pas à toi. Étapes, toutes en sous-agents d'arrière-plan, une à la fois sauf les recherches : "
+    "1) si le Board ne contient pas assez de matière, des [general] [research] en parallèle ; "
+    "2) un [general] [presentation-brief] qui lit le Board (mémoire, rapports, résumé, session), la direction "
+    "artistique et les consignes de l'utilisateur, et écrit le dossier de production dans la mémoire du Board ; "
+    "3) tu lis son compte rendu : une question bloquante passe d'abord à l'utilisateur, une seule à la fois, avec ton choix par défaut ; "
+    "4) un [code] [presentation-author] qui construit depuis ce dossier ; "
+    "5) un [general] [presentation-review] qui critique le résultat : s'il y a des écarts, relance l'auteur avec sa liste. "
+    "Pour ces rôles, ta consigne reste courte et factuelle (les mots exacts de l'utilisateur, le chemin du dossier, "
+    "ce qui est attendu) : JARVIS ajoute lui-même à chaque agent sa méthode complète, ne la recopie ni ne la résume. "
+    "Dis en une phrase ce qui part et que cela prendra du temps, puis relaie chaque étape terminée."
+)
+
 # Consigne système du brain vocal, ajoutée au prompt système du CLI
 # (`--append-system-prompt`) : c'est le niveau le plus fort dont dispose
 # JARVIS, au-dessus du contexte répété à chaque tour. Le CLI traite les tours
@@ -74,6 +93,7 @@ Tu aiguilles, tu n'exécutes pas. Pendant que tu travailles, l'utilisateur ne pe
 - Quand un sous-agent te remonte une question, relaie-la en une phrase : une question bloquante passe avant le reste, une question ouverte attend un moment calme. La réponse de l'utilisateur repart en nouvelle consigne.
 - Quand sa demande peut se lire de deux façons, tranche avec lui tout de suite, en une question courte : tu es le seul à avoir le micro. Ne lance pas un chantier sur une lecture incertaine.
 - {PROFILE_RULE}
+- {PRESENTATION_PRODUCTION_RULE}
 - Dès le lancement, réponds en une phrase qui dit ce que tu as lancé, puis termine ton tour.
 - Tâche éphémère : un travail rapide dont l'utilisateur n'attend aucun compte rendu (faire une liste de tâches, nettoyer l'écran, ranger une fiche) se déclare en préfixant la description de l'Agent par {EPHEMERAL_MARKER}, suivi d'un espace, par exemple « {EPHEMERAL_MARKER} Liste des tâches ». Écris ce jeton exactement, en minuscules et avec ses accents : mal écrit, la tâche est traitée comme une tâche ordinaire. Elle s'affiche discrètement et disparaît d'elle-même ; quand elle réussit, rien n'est dit à l'oral, et tu n'as rien à annoncer. Jamais pour une recherche ou un travail dont l'utilisateur attend le résultat. Si elle échoue ou est interrompue, elle redevient une tâche ordinaire, visible et annoncée : relaie cet échec comme n'importe quel autre.
 - Quand un sous-agent ou une tâche de fond se termine, tu reçois une notification : relaie le résultat en une à trois phrases orales. Si elle ne mérite aucune annonce, réponds exactement {BRAIN_NOT_ADDRESSED_ANSWER} et rien d'autre : rien ne sera dit.
@@ -401,6 +421,40 @@ def cli_prompt_argument(text: str, command: str) -> str:
     if command.lower().endswith((".cmd", ".bat")):
         return " ".join(line.strip() for line in text.splitlines() if line.strip())
     return text
+
+
+#: Au-delà, la consigne ne passe plus en argument : `CreateProcess` refuse une ligne de commande de plus
+#: de 32 767 caractères, et l'erreur remonte comme « fichier introuvable » (WinError 206), prise à tort
+#: pour un CLI absent. Le programme `studio` seul pèse déjà plus de 31 000 caractères.
+PROMPT_ARGV_LIMIT = 16_000
+
+
+def append_prompt_args(text: str, executable: str, runtime_root: Path) -> list[str]:
+    """`--append-system-prompt <texte>`, ou `--append-system-prompt-file <chemin>` si le texte est long."""
+
+    import hashlib
+
+    prompt = cli_prompt_argument(text, executable)
+    if len(prompt) <= PROMPT_ARGV_LIMIT:
+        return ["--append-system-prompt", prompt]
+    folder = Path(runtime_root) / "prompts"
+    folder.mkdir(parents=True, exist_ok=True)
+    target = folder / f"append-{hashlib.sha256(prompt.encode('utf-8')).hexdigest()[:16]}.txt"
+    if not target.exists():
+        temporary = target.with_suffix(f".{uuid.uuid4().hex}.tmp")
+        temporary.write_text(prompt, encoding="utf-8")
+        os.replace(temporary, target)
+    return ["--append-system-prompt-file", str(target)]
+
+
+def launched_append_prompt(argv: list[str]) -> str | None:
+    """La consigne ajoutée d'un `argv` de lancement, qu'elle soit en argument ou dans son fichier."""
+
+    if "--append-system-prompt" in argv:
+        return argv[argv.index("--append-system-prompt") + 1]
+    if "--append-system-prompt-file" in argv:
+        return Path(argv[argv.index("--append-system-prompt-file") + 1]).read_text(encoding="utf-8")
+    return None
 
 
 # Budget d'un tour du brain. Au-delà, le tour est journalisé
@@ -1074,7 +1128,7 @@ class ClaudeLocalAgent:
                 variables=prompt_variables,
             )
             prompt = prompt_channel(prompt_resolution, "cli.append_system_prompt")
-            brain_args = ["--append-system-prompt", cli_prompt_argument(prompt, executable)]
+            brain_args = append_prompt_args(prompt, executable, self.runtime_root)
             # La politique d'aiguillage, déclarée au CLI sous forme de hook :
             # c'est le seul endroit où un modèle hors réglages peut être
             # corrigé avant que le sous-agent parte. Le prompt demande le

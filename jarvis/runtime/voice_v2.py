@@ -857,6 +857,9 @@ class PersistentVoiceRuntime:
                 reflex_require_work=self.reflex_require_work,
                 conversation_events=self.conversation_events,
                 interaction_mode=self.interaction_mode,
+                # Une entrée refusée (Duplex, legacy) laisse le mode sur PRESENTATION sans séance :
+                # la porte de parole ne retient que si une séance tourne vraiment.
+                presentation_session=lambda: self.presentation is not None and getattr(self.presentation, "stack", None) is not None,
                 # Slice 04b (board-session) : le Board actif change -> rebind.
                 on_voice_binding_changed=self.request_board_rebind,
                 # Slice 11 : lu **paresseusement**, comme le mode lui-même. Une
@@ -1595,6 +1598,10 @@ class PersistentVoiceRuntime:
         from jarvis.domain.voice_architecture import VoiceArchitectureId
         duplex = self.conversation_architecture is VoiceArchitectureId.DUPLEX
         if duplex and not self._live_idle_ready():
+            # Une parole en cours est de l'activité : sans ce réarmement le délai de 60 s expirait pendant
+            # un monologue et la session se coupait à la seconde où l'utilisateur se taisait.
+            if self._live_user_active():
+                self.activity.reset()
             return False
         if not duplex and getattr(self._bridge, "tool_in_flight", False):
             self._trace(
@@ -1616,6 +1623,18 @@ class PersistentVoiceRuntime:
         from jarvis.domain.voice_frontend import VoiceStopReason
         await self.mute(VoiceStopReason.IDLE)
         return True
+
+    def _live_user_active(self) -> bool:
+        """L'utilisateur parle, ou une parole est en cours de sortie : le délai repart de zéro."""
+        from jarvis.domain.live_idle import LiveIdleEvidence
+        evidence_reader = getattr(self._bridge, "live_idle_evidence", None)
+        if not callable(evidence_reader):
+            return False
+        try:
+            evidence = evidence_reader()
+        except Exception:
+            return False
+        return isinstance(evidence, LiveIdleEvidence) and (evidence.user_speaking or evidence.output_pending)
 
     def _live_idle_ready(self) -> bool:
         from jarvis.domain.live_idle import LiveIdleEvidence

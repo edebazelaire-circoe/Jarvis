@@ -597,6 +597,8 @@ async def _launch(monkeypatch, agent: ClaudeLocalAgent) -> list[str]:
 
 
 def _prompt(argv: list[str], flag: str) -> str:
+    if flag == "--append-system-prompt":
+        return claude_local.launched_append_prompt(argv)
     return argv[argv.index(flag) + 1]
 
 

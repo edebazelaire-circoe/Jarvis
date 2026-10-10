@@ -386,3 +386,27 @@ async def test_real_capture_local_speech_while_jarvis_silent_inhibits_idle(
     clock.advance(60)
     assert await runtime.check_timeout() is False
     assert stops == []
+
+
+async def test_a_long_monologue_does_not_expire_the_idle_delay_before_the_user_stops(monkeypatch):
+    """Parole continue de plus de 60 s : la session ne se coupe pas à la seconde où elle s'arrête."""
+
+    from jarvis.domain.live_idle import LiveIdleEvidence
+    from jarvis.domain.voice_frontend import VoiceStopReason
+
+    state = {"evidence": LiveIdleEvidence(True, True, True, False)}
+    runtime, clock, stops = idle_runtime(monkeypatch, state["evidence"])
+    monkeypatch.setattr(runtime._bridge, "live_idle_evidence", lambda: state["evidence"], raising=False)
+
+    for _ in range(4):
+        clock.advance(30)
+        assert await runtime.check_timeout() is False
+    assert stops == []
+
+    state["evidence"] = LiveIdleEvidence(True, True, False, False)
+    assert await runtime.check_timeout() is False
+    assert stops == []
+
+    clock.advance(60)
+    assert await runtime.check_timeout() is True
+    assert stops == [VoiceStopReason.IDLE]

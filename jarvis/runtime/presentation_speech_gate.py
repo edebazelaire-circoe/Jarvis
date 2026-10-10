@@ -123,6 +123,10 @@ class PresentationSpeechGate:
 
     mode: Callable[[], InteractionMode]
     trace: Callable[..., None] | None = None
+    #: Une séance PRESENTATION tourne-t-elle vraiment ? `None` : le mode seul décide (comportement
+    #: d'avant). Un refus d'entrée (Duplex, legacy) laisse le mode sur PRESENTATION sans séance :
+    #: sans cette lecture, la porte retenait toute parole alors que personne n'écoutait la salle.
+    session: Callable[[], bool] | None = None
     #: Classement d'un tour adressé. Champ plutôt qu'appel direct pour que la
     #: reprise sur panne ci-dessous soit atteignable par un test : une garde
     #: qu'on ne peut pas faire échouer n'est pas une garde, c'est un voeu.
@@ -141,7 +145,9 @@ class PresentationSpeechGate:
         même forme que celui supprimé autour du classement.
         """
 
-        return self.mode() is InteractionMode.PRESENTATION
+        if self.mode() is not InteractionMode.PRESENTATION:
+            return False
+        return self.session is None or bool(self.session())
 
     # -- tours ---------------------------------------------------------------
 

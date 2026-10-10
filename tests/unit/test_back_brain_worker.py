@@ -6,6 +6,7 @@ from pathlib import Path
 import pytest
 
 from jarvis.domain.back_brain import BackBrainProvenance, BackBrainWorkPayload
+from jarvis.runtime.claude_local import launched_append_prompt
 from jarvis.domain.speech_presentation import SpeechSource
 from jarvis.domain.v2 import Job
 from jarvis.runtime import cli_catalog
@@ -262,7 +263,7 @@ async def test_job_owns_a_fresh_wrapper_and_returns_only_full_terminal_result(ha
         if provider == "claude":
             assert "--chrome" not in argv
             assert argv[argv.index("--permission-mode") + 1] == "dontAsk"
-            assert argv[argv.index("--append-system-prompt") + 1] == JOB_RESULT_SYSTEM_PROMPT
+            assert launched_append_prompt(argv) == JOB_RESULT_SYSTEM_PROMPT
             assert BRAIN_SYSTEM_PROMPT not in argv
             hook = json.loads(argv[argv.index("--settings") + 1])
             assert str(tmp_path) in hook["hooks"]["PreToolUse"][0]["hooks"][0]["command"]

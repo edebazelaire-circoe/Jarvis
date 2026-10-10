@@ -18,6 +18,7 @@ import jsonschema
 import pytest
 
 from jarvis.runtime import capture_mcp
+from jarvis.runtime.claude_local import launched_append_prompt
 from jarvis.runtime.capture_mcp import (
     AMBIENT_NOTE, CONFIG_FILE_NAME, SERVER_NAME, TOOL_NAMES, CaptureTools, CaptureToolError, build_server,
     mcp_config, write_mcp_config,
@@ -253,7 +254,7 @@ async def test_the_conversation_brain_declares_jarvis_capture_and_the_gateway_li
     assert capture["args"] == ["-m", "jarvis", "capture-mcp"] and SENTINEL not in paths[1].read_text(encoding="utf-8")
     gateway = json.loads(paths[2].read_text(encoding="utf-8"))["mcpServers"]["jarvis-tools"]
     assert gateway["env"][ENV_NATIVE_SERVERS] == "jarvis-console,jarvis-capture"
-    assert BRAIN_CAPTURE_PROMPT.strip() in argv[argv.index("--append-system-prompt") + 1]
+    assert BRAIN_CAPTURE_PROMPT.strip() in launched_append_prompt(argv)
 
 
 async def test_a_capture_config_that_cannot_be_written_is_said_and_the_brain_still_starts(monkeypatch, tmp_path):

@@ -1206,3 +1206,22 @@ def test_aucun_site_de_production_ne_laisse_le_modele_nommer_sa_nature_de_parole
         for expression in expressions:
             if expression != "<default>":
                 value_positions(ast.parse(expression, mode="eval").body, f"{relative}: {expression}")
+
+
+def test_un_refus_d_entree_ne_rend_pas_la_voix_muette():
+    """Mode PRESENTATION sans séance (Duplex, legacy) : la porte laisse tout passer."""
+
+    journal = RecordingJournal()
+    running = {"session": False}
+    door = PresentationSpeechGate(mode=lambda: InteractionMode.PRESENTATION,
+                                  trace=lambda kind, message, *, level="info", data=None:
+                                  journal.emit(kind, message, level=level, data=data),
+                                  session=lambda: running["session"])
+    door.note_addressed_turn("montre-moi le bilan", correlation_id="c1")
+
+    assert not door.active
+    assert door.admit(correlation_id="c1", kind=SpeechKind.RESULT).admitted
+
+    running["session"] = True
+    assert door.active
+    assert not door.admit(correlation_id="c1", kind=SpeechKind.RESULT).admitted

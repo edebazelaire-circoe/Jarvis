@@ -395,6 +395,7 @@ class SpeechScheduler:
         user_speech_hold_s: float | None = None,
         conversation_events: ConversationEventRecorder | None = None,
         interaction_mode: InteractionModeObserver | None = None,
+        presentation_session: Callable[[], bool] | None = None,
         presentation_turns: object | None = None,
         on_voice_binding_changed: Callable[[str], object] | None = None,
         live_completion_grace_ms: int | None = None,
@@ -438,6 +439,7 @@ class SpeechScheduler:
         self.presentation = PresentationSpeechGate(
             mode=lambda: self.interaction_mode.mode if self.interaction_mode is not None else DEFAULT_INTERACTION_MODE,
             trace=self._trace,
+            session=presentation_session,
         )
         # Enregistreur synchrone et borné (`ConversationEventForwarder`) : jamais
         # d'attente ni d'exception sur le chemin de la parole. None : rien.

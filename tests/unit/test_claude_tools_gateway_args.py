@@ -14,6 +14,7 @@ from pathlib import Path
 import pytest
 
 from jarvis.runtime import claude_local, tools_gateway_mcp
+from jarvis.runtime.claude_local import launched_append_prompt
 from jarvis.runtime.barehands_mcp import SERVER_NAME as BAREHANDS_SERVER, BarehandsMcpTarget
 from jarvis.runtime.claude_local import BRAIN_TOOLS_PROMPT, ClaudeLocalAgent
 from jarvis.runtime.display_mcp import SERVER_NAME as DISPLAY_SERVER, DisplayMcpTarget
@@ -107,7 +108,7 @@ async def test_the_conversation_brain_gets_one_gateway_config_after_the_console_
     assert "--strict-mcp-config" not in argv
     starts = [e for e in read_jsonl_tail(tmp_path / "runtime" / "trace.jsonl", limit=20) if e["kind"] == "agent.start"]
     assert starts[-1]["data"]["tools_mcp"] is True
-    assert BRAIN_TOOLS_PROMPT.strip().splitlines()[0] in argv[argv.index("--append-system-prompt") + 1]
+    assert BRAIN_TOOLS_PROMPT.strip().splitlines()[0] in launched_append_prompt(argv)
 
 
 @pytest.mark.parametrize(("display", "hands", "expected"), [
@@ -175,7 +176,7 @@ async def test_a_gateway_config_that_cannot_be_written_is_journaled_and_the_brai
     assert agent.snapshot()["console_tools"] is True
     assert len(_config_paths(started[0])) == 1
     # Reprise QA S5 (F3, E20) : passerelle non déclarée ⇒ sa consigne n'est pas composée.
-    assert _TOOLS_HEADLINE not in started[0][started[0].index("--append-system-prompt") + 1]
+    assert _TOOLS_HEADLINE not in launched_append_prompt(started[0])
     assert agent.prompt_applications[-1]["program_id"] == "backend.claude.conversation.session"
     agent.process.returncode = 0  # type: ignore[union-attr]
     await agent.stop()
@@ -191,12 +192,12 @@ async def test_the_tools_layer_is_composed_only_when_the_gateway_is_declared(mon
     runtime = tmp_path / "runtime"
     plain = ClaudeLocalAgent(runtime_root=runtime, cwd=tmp_path, console_mcp=targets["console"])
     argv = await _launch(monkeypatch, plain)
-    assert _TOOLS_HEADLINE not in argv[argv.index("--append-system-prompt") + 1]
+    assert _TOOLS_HEADLINE not in launched_append_prompt(argv)
     assert plain.prompt_applications[-1]["program_id"] == "backend.claude.conversation.session"
     shown = ClaudeLocalAgent(runtime_root=runtime, cwd=tmp_path, console_mcp=targets["console"],
                              display_mcp=targets["display"], tools_mcp=targets["tools"])
     argv = await _launch(monkeypatch, shown)
-    assert _TOOLS_HEADLINE in argv[argv.index("--append-system-prompt") + 1]
+    assert _TOOLS_HEADLINE in launched_append_prompt(argv)
     assert shown.prompt_applications[-1]["program_id"] == "backend.claude.conversation.tools_display_session"
 
 
