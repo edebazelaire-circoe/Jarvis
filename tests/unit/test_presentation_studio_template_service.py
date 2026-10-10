@@ -56,7 +56,9 @@ async def test_the_plan_lists_the_candidates_and_writes_nothing(world):
     assert controls["accent"]["eligible_dimension"] is True and controls["accent"]["role"] == "look"
     assert controls["headline"]["eligible_dimension"] is False and controls["headline"]["role"] == "content"
     assert first["source"] == {"id": "lab.counter", "version": 1}
-    assert plan["would_publish"] == ["studio-template.rapport-1"]  # the two scenes share one sanitized source
+    # Slice 19 (PM decision): a whole presentation is ONE artefact; its sources are embedded, nothing goes to the shared library
+    assert plan["would_publish"] == [] and plan["publishes_to_library"] is False and first["prefab_state"] == "embedded"
+    assert len(plan["embedded"]) == 1 and plan["embedded"][0]["scenes"] == ["s1", "s2"]  # the two scenes share one sanitized source
     assert (world.library_files(), world.template_files(), world.project_files()) == before
     text = json.dumps(plan, ensure_ascii=False)
     for word in (*PROJECT_WORDS, PROJECT_TITLE, "#ff0000"):
@@ -184,24 +186,33 @@ async def test_a_presentation_resource_locator_is_content_of_the_project(tmp_pat
 
 # ------------------------------------------------------------------ presentation entiere, deduplication, derivation
 
-async def test_a_whole_variant_is_promoted_with_one_shared_prefab_per_sanitized_source(world):
+async def test_a_whole_variant_is_promoted_as_one_artefact_and_publishes_no_scene_to_the_library(world):
+    library = world.library_files()
     answer = await world.promote(world.body("presentation"))
-    assert [p["id"] for p in answer["prefabs"]] == ["studio-template.rapport-1"], "identical sanitized scenes share a prefab"
+    assert answer["prefabs"] == [] and answer["published_to_library"] is False
+    assert world.library_files() == library, "not one byte of the shared library changed"
     document = only_template(world)
+    assert document["schema_version"] == 2 and len(document["embedded"]) == 1, "identical sanitized scenes share one embedded source"
+    assert {row["source"] for row in document["scenes"]} == set(document["embedded"])
+    assert document["catalog"]["type"] == "presentation" and document["catalog"]["compatibility"] == {
+        "remotion": "unsupported", "slidecar": "native"}
     assert [s["key"] for s in document["scenes"]] == ["s1", "s2"] and document["kind"] == "presentation"
     assert document["derived_from"]["scenes"] == [
         {"key": "s1", "scene_id": S1, "prefab": {"id": "lab.counter", "version": 1}},
         {"key": "s2", "scene_id": S2, "prefab": {"id": "lab.counter", "version": 1}}]
     assert document["derived_from"]["presentation_id"] == world.pid
-    assert document["art_direction"] is None and document["prefabs"] == [{"id": "studio-template.rapport-1", "version": 1}]
+    assert document["art_direction"] is None and document["prefabs"] == []
 
 
-async def test_scenes_that_keep_different_looks_get_their_own_prefab(world):
+async def test_scenes_that_keep_different_looks_get_their_own_embedded_source(world):
     scenes = [{"scene_id": S1, "dimensions": ["accent"], "parameters": ["headline"]},
               {"scene_id": S2, "dimensions": [], "parameters": ["headline"]}]
-    answer = await world.promote(world.body("presentation", scenes=scenes))
-    assert [p["id"] for p in answer["prefabs"]] == ["studio-template.rapport-1", "studio-template.rapport-2"]
-    assert publication(world, "studio-template.rapport-2")["provenance"]["derived_from"] == {"id": "lab.counter", "version": 1}
+    library = world.library_files()
+    await world.promote(world.body("presentation", scenes=scenes))
+    document = only_template(world)
+    assert len(document["embedded"]) == 2 and document["scenes"][0]["source"] != document["scenes"][1]["source"]
+    assert world.library_files() == library
+    assert document["derived_from"]["scenes"][1]["prefab"] == {"id": "lab.counter", "version": 1}
 
 
 async def test_the_brain_actor_is_recorded_on_the_library_publication(world):
@@ -279,9 +290,13 @@ async def test_a_promoted_presentation_is_instantiated_into_a_new_presentation_t
     made = await world.templates.instantiate(answer["template_id"], {"title": "Nouveau rapport"})
     assert made["kind"] == "presentation" and made["presentation_id"] != world.pid
     assert len(made["scene_ids"]) == 2 and made["art_direction_id"].startswith("psd_")
+    ids = []
     for row in made["rendered"]:
         assert row["problems"] == [] and row["payload"]["bytes"] > 0
-        assert row["prefab"] == {"id": "studio-template.rapport-1", "version": 1}
+        # Slice 19: presentation-scoped prefabs (the reserved retention namespace), one per scene, never `studio-template.*`
+        assert row["prefab"]["id"].startswith("presentation-studio.p") and row["prefab"]["version"] == 1
+        ids.append(row["prefab"]["id"])
+    assert len(set(ids)) == 2 and not list((world.env.data / LIBRARY_DIR).glob("studio-template.*"))
     variant = await world.studio.get_variant(made["presentation_id"], made["variant_id"])
     scene = variant.scenes[0]
     assert scene.props["label"] == "[label]" and scene.props["accent"] == "#ff0000" and scene.data["count"] == 0
@@ -289,8 +304,8 @@ async def test_a_promoted_presentation_is_instantiated_into_a_new_presentation_t
     assert [c.control_id for c in scene.controls] == ["headline", "accent", "count"]
     stage = await world.studio.describe_scene(made["presentation_id"], made["variant_id"], scene.scene_id)
     assert stage["stage"]["mode"] == "patch_stable_window" and stage["problems"] == []
-    # the instantiated work is validated by the same gates as any scene: its prefab is a healthy version of the shared library
-    detail = await world.env.prefabs.get("studio-template.rapport-1", 1)
+    # the instantiated work is validated by the same gates as any scene: its prefab is a healthy version of the library
+    detail = await world.env.prefabs.get(ids[0], 1)
     assert detail.entry.ok
     assert world.project_files() == source_before, "instantiating never touches the source presentation"
 
@@ -312,11 +327,13 @@ async def test_a_promoted_scene_is_added_to_a_variant_through_the_edit_api(world
 
 
 async def test_instantiating_needs_every_library_version_the_template_cites(world):
-    answer = await world.promote(world.body("presentation"))
-    folder = world.env.data / LIBRARY_DIR / "studio-template.rapport-1" / "1" / "template.html"
+    answer = await world.promote(world.body("scene"))
+    folder = world.env.data / LIBRARY_DIR / "studio-template.rapport" / "1" / "template.html"
     folder.write_text(folder.read_text(encoding="utf-8") + "<!-- tampered -->", encoding="utf-8")
     await world.env.prefabs.start()  # rescan: the version no longer matches its publication
-    await world.refused(world.templates.instantiate(answer["template_id"], {"title": "X"}), C.PREFAB_UNAVAILABLE)
+    variant = await world.studio.get_variant(world.pid, world.vid)
+    body = {"presentation_id": world.pid, "variant_id": world.vid, "expected_revision": variant.revision}
+    await world.refused(world.templates.instantiate(answer["template_id"], body), C.PREFAB_UNAVAILABLE)
 
 
 # ------------------------------------------------------------------ direction artistique et mouvement
@@ -408,8 +425,9 @@ async def test_templates_are_listed_read_and_survive_a_restart(world):
     assert listing["count"] == 2 and {r["template_id"] for r in listing["templates"]} == {scene["template_id"], deck["template_id"]}
     assert [r["kind"] for r in (await restarted.list_templates("scene"))["templates"]] == ["scene"]
     got = await restarted.get_template(deck["template_id"])
-    assert got["template"]["template_id"] == deck["template_id"] and got["prefab_availability"] == [
-        {"id": "studio-template.deck-1", "version": 1, "available": True}]
+    assert got["template"]["template_id"] == deck["template_id"] and got["prefab_availability"] == []
+    (inventory,) = got["template"]["embedded"].values()
+    assert inventory["engine"] == "slidecar" and "files" in inventory and "template" not in inventory, "the answer lists, it does not ship"
     await world.refused(restarted.get_template("ptp_00000000dead"), C.UNKNOWN_TEMPLATE)
     await world.refused(restarted.get_template("../x"), C.INVALID_PRESENTATION)
     with pytest.raises(PresentationStudioError):

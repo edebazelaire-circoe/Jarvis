@@ -229,3 +229,225 @@ def test_a_refused_open_notice_is_a_live_alert_and_is_brought_into_view():
               / "control_center_workspace.js").read_text(encoding="utf-8")
     assert "S.notice!==lastNotice" in source and "note.scrollIntoView({block:'nearest'})" in source
     assert "role=\"${n.tone==='bad'?'alert':'status'}\"" in source
+
+
+# ------------------------------------------------------------------ Export (Remotion Slice 16)
+
+RENDER_JOBS = "/api/local-capabilities/remotion/render/jobs"
+EXPORT_SEED = r"""
+const SNAPID='jart_ps_'+'a'.repeat(32)+'_'+'b'.repeat(32)+'_p1_v1_a1';
+const JOBS='/api/local-capabilities/remotion/render/jobs',JOBID='rj_0123456789ab';
+const job=(over)=>Object.assign({job_id:JOBID,artifact_id:'jart_'+'e'.repeat(32),snapshot_id:SNAPID,state:'queued',phase:'queued',format:'mp4',
+  frames_done:0,frames_total:60,percent:0,elapsed_s:0,timeout_s:360,queue_position:null,cancel_requested:false,can_cancel:true,error_code:null,error_detail:null},over||{});
+/* Un gestionnaire dont les minuteries sont tenues à la main : une interrogation par `step()`. */
+const exporter=(over)=>{
+  const w=world(over);const timers=[];
+  const client=W.createClient({fetchImpl:w.server.fetch,setTimer:()=>1,clearTimer:()=>{}});
+  const logs=[];
+  const manager=W.createManager({client,log:(level,event,data)=>logs.push({level,event,data}),setTimer:(fn)=>{timers.push(fn);return timers.length}});
+  const S=manager.state;
+  const step=async()=>{const fn=timers.shift();if(fn)fn();await settle()};
+  const posts=()=>w.server.calls.filter(c=>c.method==='POST');
+  return {w,manager,S,logs,timers,step,posts,html:()=>W.panelHtml(S),
+    async openBoard(){seed(w,[group()]);manager.open();await settle();await manager.act('view',{view:'artifacts'});await settle();
+      await manager.act('artifacts-filter',{scope:'board',id:'board_a'});await settle()},
+    start(format){const p=manager.act('export-start',{snapshot:SNAPID,format:format||'mp4'});return p}};
+};
+"""
+
+
+def test_the_export_form_is_offered_only_for_a_complete_remotion_copy(tmp_path):
+    seen = run_node(tmp_path, SEED + EXPORT_SEED + r"""
+      const e=exporter();seed(e.w,[group(),
+        group({presentation_id:'pst_'+'d'.repeat(32),source_ref:'presentation:pst_'+'d'.repeat(32)},{artifact_id:'jart_ps_failed',state:'failed',error_code:'package_failed',renders:[]}),
+        group({presentation_id:'pst_'+'c'.repeat(32),source_ref:'presentation:pst_'+'c'.repeat(32)},{artifact_id:'jart_ps_html',engine:'slidecar',renders:[]})]);
+      e.manager.open();await settle();await e.manager.act('view',{view:'artifacts'});await settle();await e.manager.act('artifacts-filter',{scope:'board',id:'board_a'});await settle();
+      out({html:e.html()});
+    """)
+    html, text = seen["html"], _text(seen["html"])
+    assert html.count('data-form="export-start"') == 1 and f'name="snapshot" value="jart_ps_{"a" * 32}_{"b" * 32}_p1_v1_a1"' in html
+    assert "MP4 (vidéo)" in text and "Image (PNG)" in text and "PDF (pages-images, non éditable)" in text
+    assert "Exporter" in text and "Slidecar n’exporte pas" in text
+    assert 'value="mp4"' in html and 'value="still"' in html and 'value="pdf"' in html
+
+
+def test_starting_an_export_posts_the_exact_body_then_shows_what_runs_for_how_long_and_how_to_stop(tmp_path):
+    seen = run_node(tmp_path, SEED + EXPORT_SEED + r"""
+      const e=exporter();await e.openBoard();
+      e.w.server.plan[JOBS]={status:202,body:{job:job()}};
+      const p=e.start('mp4');await settle();
+      const starting=e.html();
+      const waitingDuring=e.manager.waiting();
+      e.w.server.plan[JOBS+'/'+JOBID]={status:200,body:{job:job({state:'running',phase:'rendering',frames_done:12,percent:20,elapsed_s:4,can_cancel:true})}};
+      await e.step();
+      const running=e.html();
+      e.w.server.plan[JOBS+'/'+JOBID]={status:200,body:{job:job({state:'queued',phase:'queued',queue_position:2})}};
+      await e.step();
+      const queued=e.html();
+      out({starting,waitingDuring,running,queued,posts:e.posts(),timers:e.timers.length});
+    """)
+    assert seen["posts"][0]["path"] == RENDER_JOBS and seen["posts"][0]["body"] == {"snapshot_id": f"jart_ps_{'a' * 32}_{'b' * 32}_p1_v1_a1", "format": "mp4"}
+    start = _text(seen["starting"])
+    assert "Export MP4 en cours" in start and seen["waitingDuring"] is True
+    assert 'data-wsp-since="' in seen["starting"] and 'role="status"' in seen["starting"] and 'aria-live="polite"' in seen["starting"]
+    assert 'data-form="export-start"' not in seen["starting"], "no second export of the same copy while one is running"
+    run = _text(seen["running"])
+    assert "Export MP4 en cours" in run and "Rendu des images" in run and "12/60 images (20 %)" in run and "délai 6 min au plus" in run
+    assert 'data-act="export-cancel"' in seen["running"] and "Annuler l’export" in run and 'data-wsp-since="' in seen["running"]
+    assert "2e en file" in _text(seen["queued"]) and "En file d’attente" in _text(seen["queued"])
+
+
+def test_a_finished_export_reads_the_presentations_again_and_a_failure_says_its_code_and_detail(tmp_path):
+    seen = run_node(tmp_path, SEED + EXPORT_SEED + r"""
+      const e=exporter();await e.openBoard();
+      e.w.server.plan[JOBS]={status:202,body:{job:job()}};
+      e.start('mp4');await settle();
+      const before=e.w.server.calls.filter(c=>c.path.includes('presentation-sources')).length;
+      e.w.server.plan[JOBS+'/'+JOBID]={status:200,body:{job:job({state:'complete',phase:'complete',percent:100,frames_done:60})}};
+      await e.step();await settle();
+      const done=e.html();const after=e.w.server.calls.filter(c=>c.path.includes('presentation-sources')).length;
+      const status1=e.S.exports[SNAPID].status;
+      await e.manager.act('export-dismiss',{snapshot:SNAPID});
+      const dismissed=e.html();
+      e.w.server.plan[JOBS]={status:202,body:{job:job({job_id:'rj_ffffffffffff'})}};
+      e.start('pdf');await settle();
+      e.w.server.plan[JOBS+'/rj_ffffffffffff']={status:200,body:{job:job({job_id:'rj_ffffffffffff',state:'failed',phase:'failed',error_code:'presentation_render_timeout',error_detail:'the render exceeded its 360 s limit'})}};
+      await e.step();await settle();
+      const failed=e.html();
+      out({before,after,done,status1,dismissed,failed,warned:e.logs.filter(l=>l.level==='warn').map(l=>l.event)});
+    """)
+    assert seen["after"] == seen["before"] + 1 and seen["status1"] == "done", "the render list is read from the server again"
+    assert "Export terminé" in _text(seen["done"]) and "jart_" + "e" * 32 in seen["done"]
+    assert 'data-form="export-start"' in seen["dismissed"] and "Export terminé" not in _text(seen["dismissed"])
+    failed = _text(seen["failed"])
+    assert "Export échoué" in failed and "presentation_render_timeout" in failed and "the render exceeded its 360 s limit" in failed
+    assert "workspace.export_finished" in seen["warned"], "a failed export is logged as a warning, not only shown"
+
+
+def test_cancel_posts_to_the_job_and_shows_cancelling_until_core_says_it_is_done(tmp_path):
+    seen = run_node(tmp_path, SEED + EXPORT_SEED + r"""
+      const e=exporter();await e.openBoard();
+      e.w.server.plan[JOBS]={status:202,body:{job:job({state:'running',phase:'rendering'})}};
+      e.start('mp4');await settle();
+      e.w.server.plan[JOBS+'/'+JOBID+'/cancel']={status:200,body:{job:job({state:'running',phase:'rendering',cancel_requested:true,can_cancel:false})}};
+      await e.manager.act('export-cancel',{snapshot:SNAPID});await settle();
+      const cancelling=e.html();
+      e.w.server.plan[JOBS+'/'+JOBID]={status:200,body:{job:job({state:'cancelled',phase:'cancelled',error_code:'presentation_render_cancelled',error_detail:'cancelled by the user'})}};
+      await e.step();await settle();
+      out({cancelling,final:e.html(),posts:e.posts().map(c=>c.path)});
+    """)
+    assert seen["posts"] == [RENDER_JOBS, f"{RENDER_JOBS}/rj_0123456789ab/cancel"]
+    assert "Annulation…" in _text(seen["cancelling"]) and 'data-act="export-cancel"' not in seen["cancelling"]
+    assert "Export annulé" in _text(seen["final"]) and "presentation_render_cancelled" in seen["final"]
+
+
+def test_a_refused_request_and_a_lost_job_are_said_never_swallowed(tmp_path):
+    seen = run_node(tmp_path, SEED + EXPORT_SEED + r"""
+      let e=exporter();await e.openBoard();
+      e.w.server.plan[JOBS]={status:409,body:{error:{code:'presentation_render_runtime_unavailable',message:'the Remotion capability is not_installed: install or repair it first'}}};
+      await e.start('mp4');await settle();
+      const refused=e.html();const refusedLogs=e.logs.filter(l=>l.event==='workspace.export_failed');
+      e=exporter();await e.openBoard();
+      e.w.server.plan[JOBS]={status:202,body:{job:job({state:'running',phase:'rendering'})}};
+      e.start('mp4');await settle();
+      e.w.server.plan[JOBS+'/'+JOBID]='network';
+      await e.step();const once=e.html();await e.step();await e.step();await settle();
+      const lost=e.html();
+      out({refused,refusedLogs,once,lost,status:e.S.exports[SNAPID].status,lostLogs:e.logs.filter(l=>l.event==='workspace.export_lost'||l.event==='workspace.export_poll_failed').length});
+    """)
+    refused = _text(seen["refused"])
+    assert "Export impossible" in refused and "presentation_render_runtime_unavailable" in refused and "not_installed" in refused and 'data-form="export-start"' in seen["refused"]
+    assert seen["refusedLogs"][0]["data"]["code"] == "presentation_render_runtime_unavailable"
+    assert "lecture de l’état en échec (1/3)" in _text(seen["once"])
+    assert seen["status"] == "error" and "Export impossible" in _text(seen["lost"]) and seen["lostLogs"] == 4  # three failed reads, then the loss
+
+
+def test_closing_the_panel_stops_the_polling_and_reopening_resumes_it(tmp_path):
+    seen = run_node(tmp_path, SEED + EXPORT_SEED + r"""
+      const e=exporter();await e.openBoard();
+      e.w.server.plan[JOBS]={status:202,body:{job:job({state:'running',phase:'rendering'})}};
+      e.start('mp4');await settle();
+      e.w.server.plan[JOBS+'/'+JOBID]={status:200,body:{job:job({state:'running',phase:'rendering',frames_done:5})}};
+      await e.step();
+      const polls=()=>e.w.server.calls.filter(c=>c.method==='GET'&&c.path.endsWith(JOBID)).length;
+      const before=polls();
+      e.manager.close();await e.step();await settle();
+      const whileClosed=polls();
+      e.manager.open();await settle();await e.step();await settle();
+      out({before,whileClosed,resumed:polls(),running:e.S.exports[SNAPID].status});
+    """)
+    assert seen["whileClosed"] == seen["before"] and seen["resumed"] == seen["before"] + 1 and seen["running"] == "running"
+
+
+def test_renders_show_what_they_are_a_preview_and_that_they_are_flat(tmp_path):
+    seen = run_node(tmp_path, SEED + r"""
+      const r=(kind,format,over)=>Object.assign({artifact_id:'jart_'+kind.length.toString(16).repeat(32).slice(0,32),kind,state:'complete',format,size_bytes:2048,board_ids:['board_a'],
+        width:1280,height:720,duration_ms:2000,scene_id:'pss_000000000001',settings_sha256:'f'.repeat(64),flat:true},over||{});
+      const w=world();seed(w,[group({},{renders:[r('presentation_video','mp4'),r('presentation_still','still',{duration_ms:null}),r('presentation_pdf','pdf',{duration_ms:null}),
+        r('presentation_video','mp4',{artifact_id:'jart_'+'9'.repeat(32),state:'pending',size_bytes:null,flat:null,width:null,height:null,duration_ms:null})]})]);
+      await openArtifacts(w);out({html:w.html()});
+    """)
+    html, text = seen["html"], _text(seen["html"])
+    assert html.count("<video ") == 1 and 'preload="none"' in html and "controls" in html, "a video never loads before the gesture"
+    assert html.count("<img ") == 1 and 'loading="lazy"' in html and html.count('class="wsp-thumb"') == 2
+    assert "Ouvrir le PDF" in text and 'target="_blank" rel="noopener"' in html
+    assert html.count("/payload") == 3, "the pending render has no preview"
+    assert "1280×720" in text and "2.0 s" in text and "scène pss_000000000001" in text
+    assert html.count("export à plat : non éditable, l’origine éditable est la source ci-dessus") == 3
+    assert f"empreinte {'f' * 64}" in html
+
+
+def test_the_page_may_call_the_render_routes_and_nothing_near_them(tmp_path):
+    seen = run_node(tmp_path, SEED + r"""
+      const J='/api/local-capabilities/remotion/render/jobs';
+      const ok=[['POST',J],['POST',J+'/rj_0123456789ab/cancel'],['GET',J+'/rj_0123456789ab'],['GET',J]];
+      const no=[['GET',J+'?limit=3'],['POST',J+'?x=1'],['POST',J+'/rj_0123456789ab'],['DELETE',J+'/rj_0123456789ab'],['PUT',J],['POST',J+'/a/b/cancel'],
+        ['POST','/api/local-capabilities/remotion/render'],['POST','/api/local-capabilities/remotion/studio/open'],['GET','/api/local-capabilities/remotion'],
+        ['POST','/api/local-capabilities/remotion/install'],['POST',J+'/../install'],['POST',J+'/%2e%2e/cancel'],['GET',J+'/rj_1?x=1']];
+      out({ok:ok.map(([m,p])=>W.allowed(m,p)),no:no.map(([m,p])=>W.allowed(m,p)),memory:W.allowed('POST','/api/workspace/boards/board_a/memory/write'),
+        other:W.allowed('POST','/api/workspace/boards/board_a/artifacts/x')});
+    """)
+    assert seen["ok"] == [True, True, True, True] and not any(seen["no"]) and seen["memory"] is True and seen["other"] is False
+
+
+def test_a_running_export_is_found_again_from_core_when_the_board_is_read(tmp_path):
+    """The export state lives in Core: a reloaded page, a reopened panel, an export started from PowerShell all show the running job."""
+
+    seen = run_node(tmp_path, SEED + EXPORT_SEED + r"""
+      const e=exporter();
+      e.w.server.plan[JOBS]={status:200,body:{jobs:[
+        job({state:'running',phase:'rendering',frames_done:30,percent:50,elapsed_s:12.4,can_cancel:true}),
+        job({job_id:'rj_aaaaaaaaaaaa',snapshot_id:'jart_ps_other',state:'complete',phase:'complete'}),
+        job({job_id:'rj_bbbbbbbbbbbb',snapshot_id:'jart_ps_failed',state:'failed',phase:'failed',error_code:'presentation_render_timeout'})]}};
+      e.w.server.plan[JOBS+'/'+JOBID]={status:200,body:{job:job({state:'running',phase:'rendering',frames_done:31,percent:51,elapsed_s:13.4})}};
+      await e.openBoard();
+      const restored=e.html();
+      await e.step();
+      out({restored,keys:Object.keys(e.S.exports),elapsedAtLeast:Date.now()-e.S.exports[SNAPID].started,logs:e.logs.map(l=>l.event),
+           polls:e.w.server.calls.filter(c=>c.method==='GET'&&c.path.endsWith(JOBID)).length});
+    """)
+    text = _text(seen["restored"])
+    assert seen["keys"] == [f"jart_ps_{'a' * 32}_{'b' * 32}_p1_v1_a1"], "only the unfinished job of a visible copy is restored"
+    assert "Export MP4 en cours" in text and "Rendu des images" in text and "30/60 images (50 %)" in text and 'data-act="export-cancel"' in seen["restored"]
+    assert seen["elapsedAtLeast"] >= 12000, "the counter continues from Core's elapsed seconds, it does not restart at 0"
+    assert "workspace.export_restored" in seen["logs"] and seen["polls"] == 1
+
+
+def test_a_core_without_a_render_service_does_not_break_the_board_and_is_logged(tmp_path):
+    seen = run_node(tmp_path, SEED + EXPORT_SEED + r"""
+      const e=exporter();
+      e.w.server.plan[JOBS]={status:503,body:{error:{code:'presentation_render_unavailable',message:'no render service'}}};
+      await e.openBoard();
+      out({html:e.html(),warns:e.logs.filter(l=>l.event==='workspace.export_restore_failed').map(l=>l.data.code),exports:Object.keys(e.S.exports)});
+    """)
+    assert seen["warns"] == ["presentation_render_unavailable"] and seen["exports"] == [] and 'data-form="export-start"' in seen["html"]
+
+
+def test_an_identical_export_says_nothing_was_redone(tmp_path):
+    seen = run_node(tmp_path, SEED + EXPORT_SEED + r"""
+      const e=exporter();await e.openBoard();
+      e.w.server.plan[JOBS]={status:202,body:{job:job({state:'complete',phase:'complete',percent:100,frames_done:60,deduplicated:true})}};
+      await e.start('mp4');await settle();
+      out({html:e.html(),posts:e.posts().length});
+    """)
+    assert "Export terminé" in _text(seen["html"]) and "rendu identique déjà existant, rien n’a été refait" in _text(seen["html"]) and seen["posts"] == 1

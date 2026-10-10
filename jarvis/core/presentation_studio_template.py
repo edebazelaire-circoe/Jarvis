@@ -22,14 +22,17 @@ import asyncio
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-import json
 from typing import Any
 
+from jarvis.core.presentation_studio_template_embed import (
+    EmbeddedSources, complete_remotion, inventory, note_licence, prefab_error as _prefab_error, record_catalog,
+)
+from jarvis.core.presentation_studio_template_guard import blank, mark_failed, record_size_finding, spoken_words
 from jarvis.domain.prefab import (
-    PrefabInstanceRef, PrefabRef, bundle_fingerprint, canonical_json, with_version,
+    PrefabInstanceRef, PrefabRef, canonical_json, is_remotion_manifest, with_version,
 )
 from jarvis.domain.presentation_studio import (
-    PresentationStudioError, PresentationStudioErrorCode as C, dump_document, new_scene_id, stamp,
+    PresentationStudioError, PresentationStudioErrorCode as C, dump_document, load_document, new_scene_id, stamp,
 )
 from jarvis.domain.presentation_studio_authoring import safe_text, scan_json
 from jarvis.domain.presentation_studio_checks import _fail
@@ -43,18 +46,13 @@ from jarvis.domain.presentation_studio_template_sanitize import (
     LOOK_TYPES, Finding, SceneBuild, SelectionError, build_scene, compose_profile, content_terms, content_values,
     decorate_manifest, leaf_role, leaves, sanitize_da_sections, scan_text, scan_value,
 )
+from jarvis.domain.presentation_studio_template_remotion import content_hash, licence_findings
+from jarvis.domain.presentation_studio_template_score import instantiate_score, score_skeleton
 from jarvis.ports.prefabs import PrefabStoreError, PrefabStoreErrorCode as PC
 from jarvis.ports.v2 import DiagnosticSink
 
 #: Les constats cites dans le message d'un refus (le plan les donne tous).
 MESSAGE_FINDINGS = 3
-_PREFAB_STATUS = {PC.INVALID_DEFINITION: C.SOURCE_INVALID, PC.VERSION_LIMIT: C.LIMIT_REACHED, PC.ID_LIMIT: C.LIMIT_REACHED,
-                  PC.STORAGE_IO: C.STORAGE_IO, PC.VERSION_EXISTS: C.ALREADY_EXISTS, PC.BASE_PROTECTED: C.SOURCE_INVALID}
-
-
-def _prefab_error(exc: PrefabStoreError) -> PresentationStudioError:
-    return PresentationStudioError(_PREFAB_STATUS.get(exc.code, C.PREFAB_UNAVAILABLE), f"shared library: {exc.code.value}: {exc.message}",
-                                   warn=exc.code is not PC.STORAGE_IO)
 
 
 @dataclass(slots=True)
@@ -65,6 +63,10 @@ class _Scene:
     source: PrefabRef
     build: SceneBuild
     files: Mapping[str, str]
+    #: Slice 19 : le manifeste promu (bloc `catalog` pose) est dans `build.candidate` ; `remotion` : la source lue (TSX), `verified` :
+    #: les clefs de verification de l'importeur survivent (fichiers intacts).
+    remotion: bool = False
+    verified: bool = False
 
 
 @dataclass(slots=True)
@@ -74,6 +76,8 @@ class _Group:
     prefab_id: str = ""
     #: `(version, identique)` quand l'id existe deja dans la bibliotheque.
     existing: tuple[int, bool] | None = None
+    #: Slice 19 : empreinte de contenu de la source integree (modele de presentation) ; `""` pour une publication de bibliotheque.
+    digest: str = ""
 
 
 @dataclass(slots=True)
@@ -96,10 +100,20 @@ class _Analysis:
     discovery: bool = False
     candidates: dict[str, list[dict[str, Any]]] = field(default_factory=dict)
     terms: frozenset[str] = frozenset()
+    #: Slice 19 : la partition de la variante (document), le squelette qu'elle donne et ses comptes retires.
+    score_doc: dict[str, Any] | None = None
+    #: Licences a reconnaitre : `{licence: [ou]}`.
+    licences: dict[str, list[str]] = field(default_factory=dict)
 
     @property
     def blocking(self) -> list[Finding]:
         return [f for f in self.findings if f.blocking]
+
+    @property
+    def embed(self) -> bool:
+        """Une presentation entiere : un seul artefact, ses sources integrees au modele, rien publie dans la bibliotheque."""
+
+        return self.request.kind is TemplateKind.PRESENTATION
 
 
 class PresentationStudioTemplates:
@@ -113,6 +127,7 @@ class PresentationStudioTemplates:
         self._diagnostics = diagnostics
         self._clock = clock or (lambda: datetime.now(timezone.utc))
         self._new_id = new_id
+        self._embedded = EmbeddedSources(prefabs)
         #: One promotion at a time: two concurrent promotions of the same slug must not both reach `PrefabService.save`.
         self._lock = asyncio.Lock()
 
@@ -138,16 +153,20 @@ class PresentationStudioTemplates:
             group = next(g for g in a.groups if item in g.members)
             scenes.append({
                 "scene_id": item.selection.scene_id, "key": item.key, "source": item.source.to_dict(),
-                "prefab_id": group.prefab_id, "shared_with": [m.key for m in group.members if m is not item],
-                "prefab_state": "new" if group.existing is None else "reused" if group.existing[1] else "taken",
+                "prefab_id": "" if a.embed else group.prefab_id, "shared_with": [m.key for m in group.members if m is not item],
+                "engine": "remotion" if item.remotion else "slidecar", "verified_import": item.verified,
+                "prefab_state": "embedded" if a.embed else "new" if group.existing is None else "reused" if group.existing[1] else "taken",
                 "controls": a.candidates.get(item.key, []),
                 "kept": {"dimensions": len(item.selection.dimensions), "parameters": len(item.selection.parameters)},
                 "stripped": dict(item.build.stripped)})
         da = None if a.da is None else {"sections": sorted(a.da.sections), "stripped": dict(a.da.counts)}
         return {"ok": not a.blocking, "kind": req.kind.value, "presentation_id": a.presentation_id, "variant_id": a.variant_id,
                 "variant_revision": a.revision, "slug": req.slug, "title": req.title, "selection_required": a.discovery,
-                "scenes": scenes, "art_direction": da,
-                "would_publish": [g.prefab_id for g in a.groups if g.existing is None],
+                "scenes": scenes, "art_direction": da, "publishes_to_library": not a.embed,
+                "embedded": [{"hash": g.digest, "scenes": [m.key for m in g.members]} for g in a.groups] if a.embed else [],
+                "score": None if a.score_doc is None else {"items": len(a.score_doc["items"]), "carried": "skeleton"},
+                "licences": {name: list(where) for name, where in a.licences.items()},
+                "would_publish": [] if a.embed else [g.prefab_id for g in a.groups if g.existing is None],
                 "findings": [f.to_dict() for f in a.findings], "blocking": len(a.blocking)}
 
     # ------------------------------------------------------------ analyse commune au plan et a la promotion
@@ -158,6 +177,8 @@ class PresentationStudioTemplates:
         if request.expected_revision is not None and request.expected_revision != variant.revision:
             raise PresentationStudioError(C.STALE_REVISION, f"the variant is at revision {variant.revision}, not "
                                                             f"{request.expected_revision}: read it again, then retry")
+        if request.actor != "user" and (request.licence_ack or request.keep_assets):
+            raise _fail("licence_ack and keep_assets are the user's own acknowledgement: only the actor 'user' may give them")
         a = _Analysis(request, presentation_id, variant_id, variant.revision,
                       discovery=request.scenes is None and request.kind is TemplateKind.PRESENTATION)
         a.findings.extend(scan_text("request", f"{request.title}\n{request.description}\n{' '.join(request.tags)}\n"
@@ -172,6 +193,7 @@ class PresentationStudioTemplates:
             a.da = await self._analyse_da(a, variant, request.art_direction, art_terms)
         elif request.kind is TemplateKind.ART_DIRECTION:
             a.discovery = True
+        a.findings.extend(licence_findings(a.licences, request.licence_ack))
         return a
 
     async def _analyse_scenes(self, a: _Analysis, variant: Any, project: list[Any]) -> None:
@@ -196,7 +218,7 @@ class PresentationStudioTemplates:
                 raise PresentationStudioError(C.UNKNOWN_SCENE, f"{p.scene_id} is not a scene of this variant")
         order = {s.scene_id: n for n, s in enumerate(variant.scenes)}
         picks.sort(key=lambda p: order[p.scene_id])
-        fetched: list[tuple[SceneSelection, StudioScene, PrefabRef, dict[str, Any], Mapping[str, str]]] = []
+        fetched: list[tuple[SceneSelection, StudioScene, PrefabRef, dict[str, Any], Mapping[str, str], Any]] = []
         for pick in picks:
             scene = by_id[pick.scene_id]
             if scene.last_valid_pin is not None:
@@ -204,33 +226,60 @@ class PresentationStudioTemplates:
                                               f"scene {scene.scene_id} has an unconfirmed hot reload: promote after it is confirmed")
             try:
                 detail = (await self._prefabs.get(scene.prefab.prefab_id, scene.prefab.version)).to_dict(include_source=True)
+                # Slice 19: a Remotion source is read as TEXT through the library's gate (the isolation guards run on every read).
+                tsx = await self._prefabs.remotion_source(scene.prefab.prefab_id, scene.prefab.version) \
+                    if is_remotion_manifest(detail["manifest"]) else None
             except PrefabStoreError as exc:
                 raise _prefab_error(exc) from None
-            if detail["manifest"].get("source") is not None:
-                # Remotion Slice 15: an agent now authors Remotion scenes. The promotion pipeline sanitises and parameterises HTML sources
-                # (template, style, behavior); promoting a Remotion source is the promotion Slice of the Remotion handoff. Said, typed, not a 500.
-                raise PresentationStudioError(
-                    C.ENGINE_UNSUPPORTED, f"scene {scene.scene_id} is a Remotion source: promoting a Remotion scene to a template is not "
-                                          "available yet, the scene stays a project source")
-            fetched.append((pick, scene, scene.prefab, detail["manifest"], detail["files"]))
+            fetched.append((pick, scene, scene.prefab, detail["manifest"], detail["files"], tsx))
+        if variant.score_id is not None:
+            a.score_doc = (await self._studio.get_score(a.presentation_id, variant.variant_id))["score"]
+        spoken = spoken_words(a.score_doc)
         terms = content_terms(
-            [*project, *(v for _, sc, _, man, _ in fetched for v in
+            [*project, *spoken, *(v for _, sc, _, man, _, _ in fetched for v in
                          (sc.title, sc.section, sc.preview.caption, sc.preview.alt,
                           *content_values(man, sc.controls, sc.props, sc.data)))])
         a.terms = terms
-        a.candidates = {f"s{n}": _candidates(sc, man) for n, (_, sc, _, man, _) in enumerate(fetched, 1)}
-        for n, (pick, scene, source, manifest, files) in enumerate(fetched, 1):
+        a.candidates = {f"s{n}": _candidates(sc, man) for n, (_, sc, _, man, _, _) in enumerate(fetched, 1)}
+        for n, (pick, scene, source, manifest, files, tsx) in enumerate(fetched, 1):
             key = f"s{n}"
             try:
-                build = build_scene(manifest=manifest, files=files, props=scene.props, data=scene.data, controls=scene.controls,
+                build = build_scene(manifest=manifest, files=None if tsx is not None else files, props=scene.props, data=scene.data, controls=scene.controls,
                                     anchors=[x.to_dict() for x in scene.anchors], dimensions=pick.dimensions,
                                     parameters=pick.parameters, terms=terms, key=key, title=request.title,
                                     description=request.description, tags=request.tags)
             except SelectionError as exc:
                 raise PresentationStudioError(C.INVALID_PRESENTATION, str(exc)) from None
-            a.scenes.append(_Scene(key, pick, scene, source, build, files))
+            item = _Scene(key, pick, scene, source, build, files, remotion=tsx is not None)
+            a.scenes.append(item)
             a.findings.extend(build.findings)
+            if tsx is not None:
+                complete_remotion(a, item, tsx, manifest)
+            else:
+                note_licence(a, item, manifest)
         await self._group(a)
+        if a.embed:
+            await self._carry_score(a)
+            self._size_finding(a)
+
+    def _size_finding(self, a: _Analysis) -> None:
+        try:
+            found = record_size_finding(self._document(a, "ptp_000000000000", {}).to_document())
+        except (PresentationStudioError, KeyError):
+            return  # another finding already says why the record cannot be drawn
+        a.findings.extend([found] if found else [])
+
+    async def _carry_score(self, a: _Analysis) -> None:
+        """Slice 19: the template carries the SKELETON of the score (no speech, cue, sequence or control value)."""
+
+        if a.score_doc is None:
+            return
+        slots = {item.selection.scene_id: template_scene_id("ptp_000000000000", n) for n, item in enumerate(a.scenes)}
+        try:
+            score_skeleton(a.score_doc, slot_of=slots, template_id="ptp_000000000000")
+        except (PresentationStudioError, KeyError):
+            a.findings.append(Finding("score_unfit", "score", "the score does not reduce to a stand-alone skeleton (an item names a "
+                                                              "scene outside the template): fix the score, then promote"))
 
     async def _group(self, a: _Analysis) -> None:
         """Les scenes de meme candidat assaini partagent un prefab (un id de la bibliotheque, pas un par scene)."""
@@ -240,8 +289,7 @@ class PresentationStudioTemplates:
             body = dict(item.build.candidate["manifest"])
             for ident in ("id", "title", "description", "tags"):
                 body.pop(ident, None)
-            digest = canonical_json({"m": body, "t": item.build.candidate["template"], "s": item.build.candidate["style"],
-                                     "b": item.build.candidate["behavior"]})
+            digest = canonical_json({"m": body, **{k: v for k, v in item.build.candidate.items() if k != "manifest"}})
             group = seen.get(digest)
             if group is None:
                 group = seen[digest] = _Group(len(seen) + 1, [])
@@ -251,10 +299,13 @@ class PresentationStudioTemplates:
         for group in a.groups:
             group.prefab_id = prefab_id_for(a.request.slug, None if single else group.number)
             candidate = self._candidate(a, group)
+            group.digest = content_hash(candidate) if a.embed else ""
             check = self._prefabs.validate_candidate(candidate)
             if not check.ok:
                 a.findings.append(Finding("prefab_invalid", f"prefab:{group.prefab_id}",
                                           "the shared library refuses the candidate: " + safe_text(check.errors[0])[:200]))
+                continue
+            if a.embed:  # one artefact: nothing is looked up, nothing is published in the shared library
                 continue
             try:
                 group.existing = await self._existing(group, candidate)
@@ -269,7 +320,7 @@ class PresentationStudioTemplates:
         title = a.request.title if len(a.groups) <= 1 else f"{a.request.title} ({group.number})"
         manifest = decorate_manifest(first["manifest"], prefab_id=group.prefab_id or "studio-template.pending", title=title,
                                      description=a.request.description, tags=a.request.tags)
-        return {"manifest": manifest, "template": first["template"], "style": first["style"], "behavior": first["behavior"]}
+        return {**first, "manifest": manifest}
 
     async def _existing(self, group: _Group, candidate: Mapping[str, Any]) -> tuple[int, bool] | None:
         try:
@@ -279,8 +330,8 @@ class PresentationStudioTemplates:
                 return None
             raise
         version = detail.entry.version
-        same = bundle_fingerprint(with_version(candidate["manifest"], version), candidate["template"], candidate["style"],
-                                  candidate["behavior"]) == detail.entry.fingerprint
+        same = self._prefabs.validate_candidate(
+            {**candidate, "manifest": with_version(candidate["manifest"], version)}).fingerprint == detail.entry.fingerprint
         return version, same
 
     async def _analyse_da(self, a: _Analysis, variant: Any, selection: DaSelection, terms: frozenset[str]) -> _Da:
@@ -332,7 +383,7 @@ class PresentationStudioTemplates:
         if net:
             raise PresentationStudioError(C.TEMPLATE_LEAK, f"the final record still holds project traces ({net[0].code} at "
                                                            f"{net[0].where}); nothing written")
-        published = await self._publish(analysis)
+        published = {} if analysis.embed else await self._publish(analysis)  # one artefact: the library is untouched
         versions = {pid: ref.version for pid, (ref, _) in published.items()}
         template = self._document(analysis, template_id, versions)
         await self._verify(template)
@@ -345,9 +396,11 @@ class PresentationStudioTemplates:
         self._trace("template_promoted", "Modele promu",
                     data={"template_id": template_id, "kind": request.kind.value, "presentation_id": presentation_id,
                           "variant_id": variant_id, "scenes": len(template.scenes), "prefabs": len(published),
+                          "embedded": len(template.embedded or ()), "score": template.score is not None,
                           "reused": sum(1 for _, reused in published.values() if reused),
                           "parameters": len(template.parameters)})
         return {"template": template.summary(), "template_id": template_id, "kind": request.kind.value,
+                "published_to_library": not analysis.embed and bool(published),
                 "prefabs": [{"id": pid, "version": ref.version, "published": not reused, "reused": reused}
                             for pid, (ref, reused) in published.items()],
                 "scenes": [{"key": s.key, "label": s.label, "prefab": s.scene.prefab.to_dict()} for s in template.scenes],
@@ -363,7 +416,8 @@ class PresentationStudioTemplates:
                 out[group.prefab_id] = (PrefabRef(group.prefab_id, group.existing[0]), True)
                 continue
             try:
-                publication = await self._prefabs.save(candidate, actor=a.request.actor, derived_from=group.members[0].source)
+                publication = await self._prefabs.save(candidate, actor=a.request.actor, derived_from=group.members[0].source,
+                                                       verified_import=group.members[0].verified)
             except PrefabStoreError as exc:
                 if out:
                     self._trace("template_orphans", "Promotion interrompue : des prefabs sont publies (la reprise les reutilise)",
@@ -377,15 +431,16 @@ class PresentationStudioTemplates:
         scenes: list[TemplateScene] = []
         params: list[dict[str, Any]] = []
         stripped: dict[str, int] = {}
+        embed = a.embed
         for index, item in enumerate(a.scenes):
             group = next(g for g in a.groups if item in g.members)
-            ref = PrefabRef(group.prefab_id, versions[group.prefab_id])
+            ref = PrefabRef(group.prefab_id, 1 if embed else versions[group.prefab_id])
             label = item.selection.label
             scene = StudioScene.from_dict({
                 "scene_id": template_scene_id(template_id, index), "prefab": ref.to_dict(), "title": "", "section": "",
                 "props": item.build.props, "data": item.build.data, "controls": list(item.build.controls),
                 "anchors": list(item.build.anchors), "preview": {}}, f"template scene {item.key}")
-            scenes.append(TemplateScene(item.key, label, scene))
+            scenes.append(TemplateScene(item.key, label, scene, group.digest if embed else None))
             by_id = {c.control_id: c for c in scene.controls}
             for control_id, role in item.build.roles.items():
                 params.append({"scene_key": item.key, "control_id": control_id, "kind": role["kind"], "role": role["role"],
@@ -398,22 +453,39 @@ class PresentationStudioTemplates:
             for name, count in a.da.counts.items():
                 stripped[name] = stripped.get(name, 0) + count
         prefabs = tuple(PrefabRef(pid, version) for pid, version in versions.items())
+        embedded = {g.digest: self._candidate(a, g) for g in a.groups} if embed else None
+        catalog = record_catalog([(i.remotion, self._candidate(a, next(g for g in a.groups if i in g.members))["manifest"])
+                                  for i in a.scenes], req.licence_ack) if embed else None
+        skeleton, score_report = None, None
+        if embed and a.score_doc is not None:
+            slots = {i.selection.scene_id: template_scene_id(template_id, n) for n, i in enumerate(a.scenes)}
+            skeleton, score_report = score_skeleton(a.score_doc, slot_of=slots, template_id=template_id)
         derived: dict[str, Any] = {"presentation_id": a.presentation_id, "variant_id": a.variant_id, "variant_revision": a.revision}
         if a.scenes:
             derived["scenes"] = [{"key": i.key, "scene_id": i.selection.scene_id, "prefab": i.source.to_dict()} for i in a.scenes]
         if a.da is not None and a.da.source_id:
             derived["art_direction_id"] = a.da.source_id
-        report = {"stripped": stripped, "scenes": len(scenes), "prefabs": len(prefabs)}
+        report: dict[str, Any] = {"stripped": stripped, "scenes": len(scenes), "prefabs": len(prefabs)}
+        if score_report is not None:
+            report["score_dropped"] = score_report
         return StudioTemplate(template_id, req.kind, req.title, req.description, req.tags, tuple(scenes), art, tuple(params),
-                              prefabs, report, derived, req.actor, stamp(self._clock()))
+                              prefabs, report, derived, req.actor, stamp(self._clock()), 1, skeleton, embedded, catalog)
 
     def _final_net(self, a: _Analysis, template: StudioTemplate) -> list[Finding]:
         """Tout le document, `derived_from` exclu (la seule trace admise du projet), contre identifiants, chemins et chaines."""
 
         body = template.to_document()
         body.pop("derived_from")
+        # The skeleton's ids are record-local slots (`template_scene_id`, `skeleton_item_id`), like a scene's own: blanked, so a
+        # real project id left in the score would still be found.
+        slots = {row.scene.scene_id for row in template.scenes} | {i["item_id"] for i in (template.score or {}).get("items", ())}
+        if body.get("score") is not None:
+            body["score"] = blank(body["score"], slots)
         for row in body["scenes"]:
             row["scene"].pop("scene_id")  # a record-local slot (`template_scene_id`), regenerated by every instantiation
+        for candidate in (body.get("embedded") or {}).values():
+            if "assets" in candidate:  # base64 of binary files: a string search over it means nothing (listed by path instead)
+                candidate["assets"] = sorted(candidate["assets"])
         return [f for f in scan_value("record", body, a.terms) if f.blocking]
 
     async def _verify(self, template: StudioTemplate) -> None:
@@ -427,6 +499,8 @@ class PresentationStudioTemplates:
             except PrefabStoreError as exc:
                 raise _prefab_error(exc) from None
         for item in template.scenes:
+            if item.source is not None:
+                continue  # embedded: published fresh at instantiation, checked by `EmbeddedSources.precheck`
             result = await self._prefabs.validate_instance(PrefabInstanceRef(
                 item.scene.prefab.prefab_id, item.scene.prefab.version, item.scene.props, item.scene.data))
             if not result.ok:
@@ -459,7 +533,10 @@ class PresentationStudioTemplates:
             except PrefabStoreError:
                 ok = False
             availability.append({**ref.to_dict(), "available": ok})
-        return {"template": template.to_document(), "summary": template.summary(), "prefab_availability": availability}
+        document = template.to_document()
+        if template.embedded:  # the answer lists what is embedded, it does not ship the sources
+            document["embedded"] = {h: inventory(c) for h, c in template.embedded.items()}
+        return {"template": document, "summary": template.summary(), "prefab_availability": availability}
 
     # ------------------------------------------------------------ instanciation
 
@@ -491,11 +568,19 @@ class PresentationStudioTemplates:
     async def _instantiate_presentation(self, template: StudioTemplate, request: Any) -> dict[str, Any]:
         if not request.title:
             raise _fail("a presentation template needs a title for the new presentation")
+        if template.embedded:
+            await self._embedded.precheck(template)  # before anything is created: a source today's guards refuse leaves no half presentation
         view = await self._studio.create({"title": request.title})
         pid, vid = view.presentation.presentation_id, view.presentation.active_variant_id
         try:
             variant = await self._studio.get_variant(pid, vid)
-            scenes = template_scene_dicts(template, new_scene_id)
+            states: list[dict[str, str]] = []
+            fresh = iter([new_scene_id() for _ in template.scenes])
+            scenes = template_scene_dicts(template, lambda: next(fresh))
+            if template.embedded:
+                refs, states = await self._embedded.install(template, pid, [w["scene_id"] for w in scenes], request.actor)
+                for wire, ref in zip(scenes, refs):
+                    wire["prefab"] = ref.to_dict()
             saved = await self._studio.save_variant(pid, vid, {
                 "expected_revision": variant.revision, "title": variant.title, "scenes": scenes, "art_direction_id": None,
                 "score_id": None})
@@ -506,11 +591,24 @@ class PresentationStudioTemplates:
             else:
                 art = await self._studio.create_fallback_art_direction(
                     pid, vid, {"expected_variant_revision": saved.revision, "seed_context": {"title": request.title}})
+            score_id = None
+            if template.score is not None:
+                current = await self._studio.get_variant(pid, vid)
+                slots = {row.scene.scene_id: wire["scene_id"] for row, wire in zip(template.scenes, scenes)}
+                content = instantiate_score(template.score, slots)
+                made = await self._studio.create_score(pid, vid, {"expected_variant_revision": current.revision, **content})
+                score_id = made["score"]["score_id"]
             rendered = [await self._studio.describe_scene(pid, vid, s["scene_id"]) for s in scenes]
-        except PresentationStudioError as exc:
-            raise PresentationStudioError(exc.code, f"{exc.message} (presentation {pid} was created and is incomplete)") from None
-        return {"presentation_id": pid, "variant_id": vid, "scene_ids": [s["scene_id"] for s in scenes],
+        except Exception as exc:  # noqa: BLE001 - whatever stopped the build, the half-made presentation is marked and named, then the cause is raised
+            marked, code = await mark_failed(self._studio, pid, request.title, exc)
+            self._trace("template_instantiation_failed", "Instanciation interrompue : la presentation est signalee, rien n'est supprime",
+                        level="warning", data={"presentation_id": pid, "code": code})
+            if not isinstance(exc, PresentationStudioError):
+                raise
+            raise PresentationStudioError(exc.code, f"{exc.message} (presentation {pid} was created and is incomplete: {marked})") from None
+        return {"presentation_id": pid, "variant_id": vid, "scene_ids": [s["scene_id"] for s in scenes], "score_id": score_id,
                 "art_direction_id": art["art_direction"]["art_direction_id"],
+                "provenance": states,
                 "rendered": [{"scene_id": r["scene_id"], "prefab": r["prefab"], "payload": r["payload"], "problems": r["problems"]}
                              for r in rendered]}
 
@@ -554,9 +652,10 @@ class PresentationStudioTemplates:
     async def _load(self, template_id: str) -> StudioTemplate:
         text = await asyncio.to_thread(self._store.read, template_id)
         try:
-            return parse_template(json.loads(text))
-        except (ValueError, TypeError):
+            raw = load_document(text)   # the strict loader of every Studio document: a duplicate key or NaN is corruption, not a quiet merge (QA e)
+        except PresentationStudioError:
             raise PresentationStudioError(C.CORRUPT_DOCUMENT, f"{template_id}: not a readable template document") from None
+        return parse_template(raw)
 
     @staticmethod
     def _require_ids(presentation_id: str, variant_id: str) -> None:

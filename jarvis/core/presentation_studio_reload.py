@@ -29,6 +29,12 @@ Concurrence : sous un verrou **par scene** (seulement apres la publication, pour
 retouches d'une rafale partagent UNE publication et recoivent la meme issue (`merged`) ; deux editions de meme base :
 l'une gagne, l'autre est `stale`. Aucune attente du catalogue ni de l'hote ne tient le verrou du service des variantes.
 
+Scenes Remotion (handoff jarvis-remotion-presentation-integration, Slice 14) : meme chemin, meme verrou, memes issues. Le corps porte
+`sources` / `assets` / `restore_version` au lieu de `template` / `style` / `behavior`, et le garde de phase 1 ajoute, EN DERNIER, la
+compilation reelle de la source composee (`RemotionBuildGate`) : une source qui ne compile pas n'est jamais publiee
+(`presentation_studio_source_build_failed`, `diagnostics` fichier:ligne:colonne). Annuler / retablir = republier une version
+(`restore_version`). Contrat : `docs/presentation-studio.md` > *Remotion sources*.
+
 Observabilite : journaux `core.presentation_studio.reload_*` (ids, statuts, codes, comptes ; **jamais** une valeur, un
 texte de source ni le message d'un cadre) et l'evenement `system.presentation_studio.scene_reloaded`.
 """
@@ -37,6 +43,7 @@ from __future__ import annotations
 
 import asyncio
 from collections import deque
+import hashlib
 from collections.abc import Callable, Iterable, Mapping
 from contextlib import nullcontext
 from dataclasses import dataclass, replace
@@ -45,6 +52,7 @@ from typing import Any, Protocol
 
 from jarvis.core.presentation_studio_edit import PresentationStudioEditService
 from jarvis.core.presentation_studio_mounts import MountBook
+from jarvis.core.presentation_studio_remotion_gate import RemotionBuildGate, SourceBuilder
 from jarvis.core.presentation_studio_reload_limits import BRAIN_EDIT_LIMIT, BRAIN_EDIT_WINDOW_S, SourceEditLimiter  # noqa: F401 - re-exported
 from jarvis.core.presentation_studio_pins import StudioPinRegistry
 from jarvis.core.presentation_studio_service import PresentationStudioService
@@ -55,6 +63,7 @@ from jarvis.domain.prefab import (
 )
 from jarvis.domain.presentation_studio import PresentationStudioError, PresentationVariant, clip
 from jarvis.domain.presentation_studio_edit import StudioActor
+from jarvis.domain.presentation_studio_remotion_edit import candidate_files, compose_remotion_candidate
 from jarvis.domain.presentation_studio_checks import PresentationStudioErrorCode as C
 from jarvis.domain.presentation_studio_reload import (
     MAX_RECENT_RELOADS, CarryOver, MountOutcome, MountReport, ReloadOrigin, ReloadResult, ReloadStatus, SourceEditRequest,
@@ -71,6 +80,9 @@ from jarvis.ports.v2 import DiagnosticSink
 DEFAULT_MOUNT_DEADLINE_S = 8.0
 #: Rafale : le brouillon part apres un silence (reglage du Studio, plus court que le defaut du coalesceur de la 01a pour un
 #: retour « live coding » ; le plafond de duree garde la borne de versions par minute de la rafale).
+#: Attente maximale d'une edition derriere une autre de la MEME scene (composition + compilation, <= 60 s la scene) : au-dela, une erreur
+#: typee « occupe » (`presentation_studio_scene_reloading`, a refaire), jamais une file sans fin (Slice 14).
+DEFAULT_COMPOSE_QUEUE_S = 75.0
 DEFAULT_QUIET_S = 0.4
 DEFAULT_MAX_WAIT_S = 4.0
 #: Attente bornee des editions en vol a l'arret de Core.
@@ -85,6 +97,7 @@ class ReloadPrefabs(Protocol):
 
     async def get(self, prefab_id: str, version: int | None = None) -> Any: ...
     async def manifest(self, prefab_id: str, version: int) -> PrefabManifest: ...
+    async def remotion_source(self, prefab_id: str, version: int) -> Any: ...
     def validate_candidate(self, candidate: object) -> Any: ...
 
 
@@ -107,17 +120,38 @@ class _Unverified:
     source_revision: int
 
 
+@dataclass(frozen=True, slots=True)
+class _Base:
+    """La source sur laquelle une edition se compose : manifeste brut + fichiers HTML (texte) OU fichiers Remotion (octets)."""
+
+    manifest: dict[str, Any]
+    html: dict[str, str] | None = None
+    files: dict[str, bytes] | None = None
+
+    @property
+    def remotion(self) -> bool:
+        return self.files is not None
+
+
+#: Versions anterieures d'une scene que l'on peut republier (annuler) : bornees, en memoire.
+MAX_RESTORABLE = 16
+
+
 class PresentationStudioReloadService:
     def __init__(self, studio: PresentationStudioService, prefabs: ReloadPrefabs, coalescer: PrefabDraftCoalescer,
                  stage: StageWindows, *, pins: StudioPinRegistry | None = None,
                  edits: PresentationStudioEditService | None = None, mounts: MountBook | None = None,
                  playback: PlaybackProbe | None = None, events: Any | None = None,
                  diagnostics: DiagnosticSink | None = None, mount_deadline_s: float = DEFAULT_MOUNT_DEADLINE_S,
-                 monotonic: Callable[[], float] = time.monotonic) -> None:
+                 monotonic: Callable[[], float] = time.monotonic, builder: SourceBuilder | None = None,
+                 compose_queue_s: float = DEFAULT_COMPOSE_QUEUE_S) -> None:
         self._studio, self._prefabs, self._coalescer, self._stage = studio, prefabs, coalescer, stage
         self._pins, self._edits, self._mounts = pins, edits, mounts or MountBook()
         self._playback, self._events, self._diagnostics = playback, events, diagnostics
         self._deadline_s, self._monotonic = mount_deadline_s, monotonic
+        self._build = RemotionBuildGate(builder, diagnostics=diagnostics)
+        self._queue_s = compose_queue_s
+        self._restorable: dict[tuple[str, str, str], deque[PrefabRef]] = {}
         self._locks: dict[tuple[str, str, str], asyncio.Lock] = {}
         self._drafts: dict[str, dict[str, Any]] = {}
         self._draft_users: dict[str, int] = {}
@@ -258,11 +292,31 @@ class PresentationStudioReloadService:
         # ---- phase 1: compose, validate, publish. Composition is serialized PER SOURCE ID so a retouche of a burst is always
         # built on the previous one (the draft), never on the pin: the coalescer keeps the LAST candidate, which must
         # therefore contain every earlier one. Publication itself is not under any lock, so the burst can merge.
-        async with self._compose_lock(source_id):
+        compose = self._compose_lock(source_id)
+        try:
+            await asyncio.wait_for(compose.acquire(), self._queue_s)
+        except TimeoutError:
+            self._trace("core.presentation_studio.reload_busy", "Edition en attente trop longtemps derriere une autre de la scene",
+                        level="warning", data={"presentation_id": presentation_id, "scene_id": scene.scene_id,
+                                               "waited_s": self._queue_s})
+            raise PresentationStudioError(
+                C.SCENE_RELOADING, f"another edit of this scene has been composing or building for more than {self._queue_s:g} s: "
+                                   "retry in a few seconds") from None
+        try:
+            # The basis is judged AGAIN once the turn comes: while this request waited, an earlier one may have landed, and a stale
+            # request must not build or publish anything (Slice 14: a build is costly).
+            variant = await self._studio.get_variant(presentation_id, variant_id)
+            scene = variant_scene(variant, request.scene_id)
+            if request.basis_revision != variant.revision:
+                return self._stale(presentation_id, variant, scene, request,
+                                   f"the variant moved to revision {variant.revision} while this edit waited its turn: read it again, "
+                                   "then retry")
             gated = await self._gate(presentation_id, variant, scene, request, source_id)
             if isinstance(gated, ReloadResult):
                 return gated
             self._draft_users[source_id] = self._draft_users.get(source_id, 0) + 1
+        finally:
+            compose.release()
         candidate, carry_reset = gated
         try:
             try:
@@ -339,11 +393,30 @@ class PresentationStudioReloadService:
                     request: SourceEditRequest, source_id: str) -> tuple[dict[str, Any], StateReset | None] | ReloadResult:
         """Le garde-fou « compilation / validation » AVANT toute publication : rien n'est publie si un controle echoue."""
 
-        base_manifest, base_files = await self._source_of(scene)
-        draft = self._drafts.get(source_id)
-        if draft is not None:  # a burst in progress: compose on top of it, so no retouch of the burst is lost
-            base_manifest, base_files = draft["manifest"], {k: draft[k] for k in ("template", "style", "behavior")}
-        candidate = compose_candidate(base_manifest, base_files, request.files, prefab_id=source_id)
+        current = await self._base_of(scene.prefab)
+        base = await self._edit_base(presentation_id, variant, scene, request, source_id, current)
+        if isinstance(base, ReloadResult):
+            return base
+        kind = "Remotion" if current.remotion else "Slidecar (HTML)"
+        wants_html = any(key in request.files for key in ("template", "style", "behavior"))
+        if (base.remotion != current.remotion or (request.targets_remotion and not current.remotion)
+                or (wants_html and current.remotion)):
+            return self._refused(presentation_id, variant, scene, request, C.SOURCE_INVALID,
+                                 f"this scene is a {kind} scene: " + ("send files.sources / files.assets (and manifest)"
+                                                                      if current.remotion else
+                                                                      "send files.template / style / behavior (and manifest)"))
+        if base.remotion:
+            composed, problems = compose_remotion_candidate(
+                base.manifest, base.files or {}, sources=request.sources, assets=request.assets,
+                manifest=request.files.get("manifest"), prefab_id=source_id)
+            if composed is None:
+                return self._refused(presentation_id, variant, scene, request, C.SOURCE_INVALID, "; ".join(problems))
+            candidate = composed
+        else:
+            candidate = compose_candidate(base.manifest, base.html or {}, request.files, prefab_id=source_id)
+        # The number is Core's, given at publication; here it only has to make the candidate's ref the CURRENT pin's number, so the
+        # carry-over below never sees a restored version's number as "another pin" (a restore composes on an older version).
+        candidate["manifest"]["version"] = scene.prefab.version
         unsafe = unsafe_manifest_key(candidate["manifest"])
         if unsafe is not None:
             return self._refused(presentation_id, variant, scene, request, C.SOURCE_INVALID,
@@ -353,7 +426,8 @@ class PresentationStudioReloadService:
             return self._refused(presentation_id, variant, scene, request, C.SOURCE_INVALID,
                                  "; ".join(verdict.errors[:MAX_PROBLEMS_IN_MESSAGE]) or "the candidate is invalid")
         try:
-            manifest = parse_candidate(candidate).manifest
+            parsed = parse_candidate(candidate)
+            manifest = parsed.manifest
         except PrefabDefinitionError as exc:  # validate_candidate just accepted it: a race with the validator, still refused
             return self._refused(presentation_id, variant, scene, request, C.SOURCE_INVALID, "; ".join(exc.errors[:3]))
         carried = plan_carry_over(scene, manifest, allow_reset=request.allow_state_reset)
@@ -369,19 +443,74 @@ class PresentationStudioReloadService:
         if new_problems:
             return self._refused(presentation_id, variant, scene, request, C.SCORE_INCOMPATIBLE,
                                  "the score would no longer match the scene: " + "; ".join(new_problems[:MAX_PROBLEMS_IN_MESSAGE]))
+        if base.remotion:  # the real build, last (the cheap checks first): a source that does not compile is never published
+            refusal = await self._build.check(parsed.remotion_source(), scene_id=scene.scene_id)
+            if refusal is not None:
+                return self._refused(presentation_id, variant, scene, request, refusal.code, refusal.message,
+                                     diagnostics=refusal.diagnostics)
         self._drafts[source_id] = candidate
         return candidate, carried.reset
 
-    async def _source_of(self, scene: StudioScene) -> tuple[dict[str, Any], dict[str, str]]:
-        """Manifeste brut et fichiers du pin courant de la scene (`PrefabStoreError` -> `prefab_unavailable`, comme le catalogue)."""
+    async def _edit_base(self, presentation_id: str, variant: PresentationVariant, scene: StudioScene, request: SourceEditRequest,
+                         source_id: str, current: _Base) -> _Base | ReloadResult:
+        """Sur quoi l'edition se compose : la version a restaurer (annuler / retablir), le brouillon de la rafale en cours, ou le
+        pin courant."""
+
+        if request.restore is not None:
+            target = request.restore
+            history = self._restorable.get((presentation_id, variant.variant_id, scene.scene_id), ())
+            if target.prefab_id != source_id and target not in history:
+                return self._refused(presentation_id, variant, scene, request, C.SOURCE_INVALID,
+                                     f"{target.prefab_id}@{target.version} is not a version this scene had: only the scene's own "
+                                     "source versions and the versions it was reloaded from can be restored")
+            try:
+                return await self._base_of(target)
+            except PresentationStudioError as exc:
+                if exc.code is not C.PREFAB_UNAVAILABLE:
+                    raise
+                return self._refused(presentation_id, variant, scene, request, C.SOURCE_INVALID,
+                                     f"{target.prefab_id}@{target.version} cannot be restored (archived, altered or never "
+                                     f"published): {exc.message}")
+        draft = self._drafts.get(source_id)
+        if draft is None:
+            return current
+        if "sources" in draft:  # a burst in progress: compose on top of it, so no retouch of the burst is lost
+            return _Base(draft["manifest"], None, candidate_files(draft))
+        return _Base(draft["manifest"], {k: draft[k] for k in ("template", "style", "behavior")})
+
+    async def _base_of(self, ref: PrefabRef) -> _Base:
+        """Manifeste brut et fichiers d'une version (`PrefabStoreError` -> `prefab_unavailable`, comme le catalogue). Une version
+        Remotion est relue a la demande, octets verifies et gardes d'isolation rejoues (`PrefabService.remotion_source`)."""
 
         try:
-            detail = await self._prefabs.get(scene.prefab.prefab_id, scene.prefab.version)
+            detail = await self._prefabs.get(ref.prefab_id, ref.version)
+            bundle = detail.entry.bundle
+            if bundle.is_remotion:
+                source = await self._prefabs.remotion_source(ref.prefab_id, ref.version)
+                return _Base(dict(bundle.manifest.raw), None, dict(source.files))
         except PrefabStoreError as exc:
             raise PresentationStudioError(
-                C.PREFAB_UNAVAILABLE, f"{scene.prefab.prefab_id}@{scene.prefab.version}: {exc.code.value}: {exc.message}") from exc
-        bundle = detail.entry.bundle
-        return dict(bundle.manifest.raw), dict(bundle.files())
+                C.PREFAB_UNAVAILABLE, f"{ref.prefab_id}@{ref.version}: {exc.code.value}: {exc.message}") from exc
+        return _Base(dict(bundle.manifest.raw), dict(bundle.files()))
+
+    async def read_source(self, presentation_id: str, variant_id: str, scene_id: str) -> dict[str, Any]:
+        """La source du pin de la scene, ce qu'un agent lit avant de proposer une edition : `GET .../scenes/{id}/source`.
+        Remotion : modules en texte, assets en inventaire (taille, SHA-256), jamais d'octets d'asset. Slidecar : les trois textes."""
+
+        variant = await self._studio.get_variant(presentation_id, variant_id)
+        scene = variant_scene(variant, scene_id)
+        base = await self._base_of(scene.prefab)
+        body: dict[str, Any] = {"scene_id": scene_id, "prefab": scene.prefab.to_dict(), "source_revision": scene.source_revision,
+                                "basis": {"variant_revision": variant.revision}, "manifest": base.manifest,
+                                "engine": "remotion" if base.remotion else "slidecar"}
+        if base.files is not None:
+            modules = sorted(str(path) for path in base.manifest["source"]["modules"])
+            body["sources"] = {path: base.files[path].decode("utf-8", errors="replace") for path in modules}
+            body["assets"] = {path: {"bytes": len(data), "sha256": hashlib.sha256(data).hexdigest()}
+                              for path, data in sorted(base.files.items()) if path not in modules}
+        else:
+            body["files"] = dict(base.html or {})
+        return body
 
     async def _publish(self, candidate: dict[str, Any], request: SourceEditRequest, scene: StudioScene,
                        source_id: str) -> Publication:
@@ -394,7 +523,18 @@ class PresentationStudioReloadService:
             if exc.code is not PC.UNKNOWN_PREFAB:
                 raise
             derived = scene.prefab if scene.prefab.prefab_id != source_id else None
-        return await self._coalescer.submit(candidate, actor=request.actor.value, derived_from=derived)
+        try:
+            return await self._coalescer.submit(candidate, actor=request.actor.value, derived_from=derived)
+        except PrefabStoreError as first:
+            if derived is None:
+                raise
+            # Two edits raced on the scene's FIRST version (Slice 14: a build between the check and the submit widens the
+            # window): if the other one created the id meanwhile, this one is a revision of it, not a second fork.
+            try:
+                await self._prefabs.get(source_id)
+            except PrefabStoreError:
+                raise first from None
+        return await self._coalescer.submit(candidate, actor=request.actor.value, derived_from=None)
 
     # ------------------------------------------------------------ phase 2
 
@@ -767,10 +907,12 @@ class PresentationStudioReloadService:
                 presentation_id, variant_id, scene.scene_id, scene.prefab, scene.last_valid_pin, scene.source_revision)
 
     def _refused(self, presentation_id: str, variant: PresentationVariant, scene: StudioScene, request: SourceEditRequest,
-                 code: C, message: str, *, published: PrefabRef | None = None) -> ReloadResult:
+                 code: C, message: str, *, published: PrefabRef | None = None,
+                 diagnostics: tuple[Mapping[str, Any], ...] = ()) -> ReloadResult:
         self._counters["refused"] += 1
         return self._make(ReloadStatus.REFUSED_VALIDATION, request, presentation_id, variant.variant_id, scene, variant.revision,
-                          prefab=scene.prefab, previous=scene.prefab, published=published, code=code.value, message=clip(message))
+                          prefab=scene.prefab, previous=scene.prefab, published=published, code=code.value, message=clip(message),
+                          diagnostics=diagnostics)
 
     def _stale(self, presentation_id: str, variant: PresentationVariant, scene: StudioScene, request: SourceEditRequest,
                message: str, *, published: PrefabRef | None = None) -> ReloadResult:
@@ -799,7 +941,8 @@ class PresentationStudioReloadService:
     def _make(self, status: ReloadStatus, request: SourceEditRequest, presentation_id: str, variant_id: str, scene: StudioScene,
               revision: int, *, prefab: PrefabRef | None, previous: PrefabRef | None, published: PrefabRef | None = None,
               code: str = "", message: str = "", reset: StateReset | None = None, mounted: bool | None = None,
-              playback_before: Mapping[str, Any] | None = None, waited_s: float | None = None, reason: str = "") -> ReloadResult:
+              playback_before: Mapping[str, Any] | None = None, waited_s: float | None = None, reason: str = "",
+              diagnostics: tuple[Mapping[str, Any], ...] = ()) -> ReloadResult:
         position = self._position(presentation_id)
         preserved = {"variant_id": variant_id, "scene_id": scene.scene_id, "playback": position,
                      "playback_unchanged": position == playback_before}
@@ -807,16 +950,23 @@ class PresentationStudioReloadService:
                               scene_id=scene.scene_id, basis_revision=request.basis_revision, revision=revision,
                               source_revision=scene.source_revision, prefab=prefab, previous=previous, published=published,
                               code=code, message=message, reason=reason, reset=reset, mounted=mounted,
-                              request_id=request.request_id, preserved=preserved, waited_s=waited_s)
+                              request_id=request.request_id, preserved=preserved, waited_s=waited_s, diagnostics=diagnostics)
         return result
 
     def _finish(self, result: ReloadResult, *, elapsed: float) -> None:
         reason = result.reason
         row = {k: v for k, v in result.to_dict().items() if k in ("presentation_id", "variant_id", "scene_id", "status", "source_revision", "code", "merged", "mounted", "prefab")}
-        row["message"] = result.message if result.status in (ReloadStatus.ROLLED_BACK, ReloadStatus.PENDING_MOUNT) else ""
+        row["message"] = result.message if (result.status in (ReloadStatus.ROLLED_BACK, ReloadStatus.PENDING_MOUNT)
+                                            or result.diagnostics) else ""
+        row["diagnostics"] = len(result.diagnostics)
         row["reason"] = reason or None
         row["reset"] = None if result.reset is None else result.reset.to_dict()
         self._recent.append(row)
+        if result.status.stood and result.previous is not None and result.previous != result.prefab:
+            history = self._restorable.setdefault((result.presentation_id, result.variant_id, result.scene_id),
+                                                  deque(maxlen=MAX_RESTORABLE))
+            if result.previous not in history:
+                history.append(result.previous)
         if result.status.stood and result.request_id and self._edits is not None:
             self._edits.fulfil_source_request(result.request_id)
         level = "warning" if result.status in (ReloadStatus.ROLLED_BACK, ReloadStatus.PENDING_MOUNT) else "info"

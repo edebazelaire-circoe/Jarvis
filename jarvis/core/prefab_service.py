@@ -604,6 +604,19 @@ class PrefabService:
             return CandidateValidation(False, exc.errors)
         return CandidateValidation(True, (), bundle.fingerprint())
 
+    async def holds_verified_import(self, *, commit: str, archive_sha256: str, source_sha256: str) -> bool:
+        """Core still HOLDS a healthy version whose importer-written provenance names this commit, archive and file digest (Remotion Slice 19,
+        QA a). A record that merely says so is not a witness: only the library's own copy is."""
+
+        if not self._scanned:
+            await self._refresh()
+        for entry in list(self._catalog.values()):
+            upstream = entry.manifest.catalog.upstream if entry.ok and entry.manifest is not None and entry.manifest.catalog else None
+            if upstream is not None and upstream.verified and (upstream.commit, upstream.archive_sha256, upstream.source_sha256) == (
+                    commit, archive_sha256, source_sha256) and _bundle_digest(entry.bundle) == source_sha256:
+                return True
+        return False
+
     async def validate_instance(self, ref: PrefabInstanceRef) -> InstanceValidation:
         """Port `PrefabInstanceValidator` : version saine, `props`/`data` valides, défauts appliqués."""
 

@@ -27,7 +27,7 @@ from jarvis.domain.results import TranscriptionResult
 from jarvis.protocol.server import LocalProtocolServer
 from jarvis.runtime.control_center import ControlCenter
 from jarvis.runtime.core_sessions import CoreSessionTransport
-from tests.fakes.remotion_authoring import ScriptedCompiler
+from tests.fakes.remotion_authoring import ScriptedCompiler, engine_pin
 
 TOKEN = "c" * 48
 RATE = 16_000
@@ -89,7 +89,7 @@ class CaptureStack:
         self.core = JarvisCoreApplication(
             data_root=self.data_root, capture_sources=fake_sources(),
             recording_transcription=(lambda: self.stt) if self.transcription else None,
-            authoring_compiler=ScriptedCompiler())   # Remotion Slice 15: an agent draft is compiled before it is written; no Node here
+            authoring_compiler=ScriptedCompiler(), authoring_engine_pin=engine_pin)   # Remotion Slice 15: an agent draft is compiled before it is written; no Node here
         await self.core.start()
         self.core.transcripts._poll_s = 0.05  # rattrapage rapide en test
         self.server = LocalProtocolServer(self.core, host="127.0.0.1", port=port, token=TOKEN)

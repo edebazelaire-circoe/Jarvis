@@ -25,6 +25,7 @@ from collections.abc import Iterator, Mapping, Sequence
 from dataclasses import dataclass
 import copy
 import re
+import unicodedata
 from typing import Any
 
 from jarvis.domain.prefab import (
@@ -46,7 +47,7 @@ PENDING_ID = "studio-template.pending"
 
 _PROJECT_ID = re.compile(
     r"\b(?:pst|psv|pss|psx|psc|psi|psa)_[0-9a-f]{6,}\b|\bpresentation-studio\.[a-z0-9][a-z0-9._-]*|"
-    r"\buser-prefab-[0-9a-f]+|\bstudio-stage-[\w-]+", re.IGNORECASE)
+    r"\buser-prefab-[0-9a-f]+|\bstudio-stage-[\w-]+|\bboard_[0-9a-z][0-9a-z_-]{5,100}|\bboard:[^\s/\"']{1,128}/(?:memory|artifact)/|\bjart_[0-9a-z_]{8,}", re.IGNORECASE)
 _LOCAL_PATH = re.compile(
     r"\b[a-z]:[\\/]|(?:^|[\s\"'(=])/(?:users|home|var|etc|tmp|mnt|root)/|\.jarvis\b|file:/{2,3}|~[\\/]|\\\\[\w.-]+\\",
     re.IGNORECASE)
@@ -69,7 +70,9 @@ class Finding:
 
 
 def normalise(text: str) -> str:
-    return _SPACES.sub(" ", text.casefold()).strip()
+    """NFKC first (full-width letters, ligatures and compatibility forms read as what they look like), then case and spaces."""
+
+    return _SPACES.sub(" ", unicodedata.normalize("NFKC", text).casefold()).strip()
 
 
 def is_term(text: str) -> bool:
@@ -209,9 +212,10 @@ def scan_text(where: str, text: str, terms: frozenset[str], *, urls: bool = Fals
     (avertissements) dans un texte. Les messages portent des comptes."""
 
     found: list[Finding] = []
+    text = unicodedata.normalize("NFKC", text)   # a full-width `ｐｓｓ_...` or `Ｃ:\\` is the same id or path to the eye and to the platform
     n = len(_PROJECT_ID.findall(text))
     if n:
-        found.append(Finding("project_identifier", where, f"{n} project identifier(s) (presentation, scene, variant or studio prefab ids)"))
+        found.append(Finding("project_identifier", where, f"{n} project identifier(s) (presentation, scene, variant, Board, artifact or studio prefab ids)"))
     n = len(_LOCAL_PATH.findall(text))
     if n:
         found.append(Finding("local_path", where, f"{n} local path or local-resource reference(s)"))
@@ -260,11 +264,12 @@ class SceneBuild:
     findings: tuple[Finding, ...]
 
 
-def build_scene(*, manifest: Mapping[str, Any], files: Mapping[str, str], props: Mapping[str, Any], data: Mapping[str, Any],
+def build_scene(*, manifest: Mapping[str, Any], files: Mapping[str, str] | None, props: Mapping[str, Any], data: Mapping[str, Any],
                 controls: Sequence[StudioControl], anchors: Sequence[Mapping[str, Any]], dimensions: Sequence[str],
                 parameters: Sequence[str], terms: frozenset[str], key: str, title: str, description: str,
                 tags: Sequence[str]) -> SceneBuild:
-    """Voir l'en-tete du module. `manifest` est le manifeste brut de la version epinglee ; rien n'est modifie en place."""
+    """Voir l'en-tete du module. `manifest` est le manifeste brut de la version epinglee ; rien n'est modifie en place. `files=None` :
+    une source Remotion (Slice 19) : le candidat n'a que le manifeste parametre, le service pose les modules (`template_remotion`)."""
 
     by_id = {c.control_id: c for c in controls}
     where = f"scene:{key}"
@@ -351,9 +356,11 @@ def build_scene(*, manifest: Mapping[str, Any], files: Mapping[str, str], props:
     stripped["controls_dropped"] = len(controls) - len(kept_controls)
     stripped["anchors_dropped"] = len(anchors) - len(kept_anchors)
 
-    candidate = {"manifest": raw, "template": files["template"], "style": files["style"], "behavior": files["behavior"]}
-    for part in ("template", "style", "behavior"):
-        findings.extend(scan_text(f"{where}.source.{part}", candidate[part], terms, urls=True))
+    candidate: dict[str, Any] = {"manifest": raw}
+    if files is not None:
+        candidate.update({"template": files["template"], "style": files["style"], "behavior": files["behavior"]})
+        for part in ("template", "style", "behavior"):
+            findings.extend(scan_text(f"{where}.source.{part}", candidate[part], terms, urls=True))
     findings.extend(scan_value(f"{where}.manifest", raw, terms))
     findings.extend(scan_value(f"{where}.controls", [kept_controls, kept_anchors], terms))
     return SceneBuild(candidate, sample["props"], sample["data"], tuple(kept_controls), tuple(kept_anchors), roles, stripped,
@@ -410,6 +417,8 @@ def content_values(manifest: Mapping[str, Any], controls: Sequence[StudioControl
     found: list[Any] = []
     for root in ("props", "data"):
         for leaf in leaves(manifest["inputs"][root], root):
+            if leaf.path == "props.theme" or leaf.path.startswith("props.theme."):
+                continue          # Remotion Slice 15: the art direction as data (fonts, easing, transition...), set by Core, never the project's words
             if leaf_role(leaf, bound.get(leaf.path)) == "content":
                 present, value = _get(trees[root], leaf.path)
                 if present:

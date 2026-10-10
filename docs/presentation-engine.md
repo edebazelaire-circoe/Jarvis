@@ -66,6 +66,10 @@ Rules that bind later Slices:
 2. **No silent fallback, in any direction.** `resolve_engine(engine, availability)` returns the engine asked for or raises. It reads the state of that engine
    only. No function in the module maps one engine to another: an AST test scans every function of the module (`legacy_html_compatibility`, a fixed table, and `select`, the policy, are excluded by name), and a stricter one scans `resolve_engine` for any concrete engine.
 3. A Remotion failure is a visible failure to fix, with the adapter's real reason and repair. Never a Slidecar result.
+   This includes an **edit** (Slice 14): a Remotion scene source that does not build is refused with the typed code
+   `presentation_studio_source_build_failed` (HTTP 422, `diagnostics` = `file:line:column`) before anything is published, and an
+   unready engine refuses the edit with `presentation_studio_engine_unavailable`; the version on screen keeps playing and no
+   Slidecar scene is ever substituted ([presentation-studio.md](presentation-studio.md) > *Hot reload contract* > *Remotion sources*).
 4. An opt-in Slidecar presentation is observable: the `engine` is in `Presentation.summary()` and so in every listing.
 
 ## Typed failures

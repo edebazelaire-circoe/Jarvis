@@ -206,7 +206,7 @@ async def test_journey_jarvis_presenter_locked_sequence_returns_the_timeline_and
 
 # ------------------------------------------------------------------ 4. compare, mix, promote
 
-async def test_journey_compare_mix_and_a_remotion_promotion_is_a_typed_refusal(world):
+async def test_journey_compare_mix_and_promote_a_template_then_reuse_it(world):
     deck = await assemble_deck(world, count=6)
     pid = deck.pid
     for title in ("Plus visuelle", "Plus courte", "Plus formelle"):
@@ -234,17 +234,30 @@ async def test_journey_compare_mix_and_a_remotion_promotion_is_a_typed_refusal(w
         assert (await world.core.call("GET", f"/{pid}/variants/{ids[n]}"))[1] == sources[n]
     provenance = await world.tools.inspect("composition", presentation_id=pid, variant_id=mixed["variant_id"])
     assert {d["dimension"] for d in provenance["dimensions"]} == {"scenes", "narrative", "motion", "art_direction"}
-    # promote the mixed variant as a template: Remotion Slice 15 - the deck the planner writes is Remotion, and promoting a Remotion source is
-    # the promotion Slice of the Remotion handoff. Today it is a typed refusal on BOTH doors (never a 500), and nothing is published; the
-    # HTML template pipeline (plan, promote, instantiate, replay) keeps its own suite (`test_presentation_studio_template_*`).
+    # promote the mixed variant as a template (Remotion Slice 19 owns the promotion of Remotion scenes)
     plan_request = {"kind": "presentation", "title": "Revue type", "slug": "revue-type"}
-    _, mixed_variant = await world.core.call("GET", f"/{pid}/variants/{mixed['variant_id']}")
-    chosen = [{"scene_id": s["scene_id"], "dimensions": ["accent"], "parameters": ["headline"]} for s in mixed_variant["scenes"]]
-    for verb, plan in (("plan", plan_request), ("promote", {**plan_request, "scenes": chosen})):
-        with pytest.raises(PresentationToolError) as caught:
-            await world.tools.template(verb, presentation_id=pid, variant_id=mixed["variant_id"], plan=plan)
-        assert caught.value.code == "presentation_studio_engine_unsupported" and "Remotion" in str(caught.value)
-    assert (await world.tools.inspect("templates"))["templates"]["total"] == 0
+    planned = await world.tools.template("plan", presentation_id=pid, variant_id=mixed["variant_id"], plan=plan_request)
+    assert planned["plan"]["selection_required"] is True and (await world.tools.inspect("templates"))["templates"]["total"] == 0
+    chosen = [{"scene_id": s["scene_id"], "dimensions": ["accent"], "parameters": ["headline"]} for s in planned["plan"]["scenes"]["items"]]
+    await attest(world)   # QA B1: a promotion only follows a request of the user in this turn (the same attestation as a presentation start)
+    promoted = await world.tools.template("promote", presentation_id=pid, variant_id=mixed["variant_id"], plan={**plan_request, "scenes": chosen})
+    assert promoted["status"] == "promoted" and promoted["template_id"]
+    listing = await world.tools.inspect("templates")
+    assert listing["templates"]["total"] == 1
+    assert promoted["published_to_library"] is False and promoted["prefabs"]["total"] == 0, "a presentation is ONE artefact (Remotion Slice 19)"
+    # reuse: instantiate into a brand new presentation (scenes + art direction + the score SKELETON: structure, never the words)
+    made = await world.tools.template("instantiate", template_id=promoted["template_id"], title="Revue du T4")
+    assert made["status"] == "instantiated" and len(made["scene_ids"]) == 6 and made["art_direction_id"] and made["score_id"]
+    new_pid, new_vid = made["presentation_id"], made["variant_id"]
+    await attest(world)
+    _, fresh = await world.core.call("GET", f"/{new_pid}/variants/{new_vid}")
+    status, carried = await world.core.call("GET", f"/{new_pid}/variants/{new_vid}/score")
+    assert status == 200 and carried["problems"] == [] and len(carried["score"]["items"]) == 6, "the items of the mixed variant score came as a skeleton"
+    assert all(i["text"] == "" and i["cue_id"] is None for i in carried["score"]["items"]) and carried["score"]["cues"] == []
+    assert {i["scene_id"] for i in carried["score"]["items"]} <= {s["scene_id"] for s in fresh["scenes"]}
+    started = await world.tools.play("start", role="rehearsal", presentation_id=new_pid, variant_id=new_vid)
+    assert started["state"]["phase"] == "playing" and started["state"]["position"]["of"] == 6
+    await world.tools.play("stop")
     # the source presentation is not touched by the promotion
     for n in (2, 3):
         assert (await world.core.call("GET", f"/{pid}/variants/{ids[n]}"))[1] == sources[n]

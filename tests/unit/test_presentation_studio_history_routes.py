@@ -34,7 +34,8 @@ def test_the_route_table_and_the_relay_surface_for_the_history():
         assert (method, f"{PREFIX}{HISTORY}/{tail}") in routes
     relay = PresentationStudioRelayRoutes(transport=lambda: None, journal=None)  # type: ignore[arg-type]
     mapped = {(r.method, "/v1/presentation-studio" + r.path[len("/api/presentation-studio"):]) for r in relay.routes()
-              if not r.path.startswith("/api/presentation-studio/playback")}   # Slice 12 playback verbs: test_presentation_studio_playback_routes
+              if not r.path.startswith("/api/presentation-studio/playback")   # Slice 12 playback verbs: test_presentation_studio_playback_routes
+              and not (r.method == "POST" and (r.path == "/api/presentation-studio/presentations" or r.path.endswith("/experiment")))}  # Slice 20: engine choice, docs/presentation-engine.md
     assert mapped <= routes
     assert {key for key in mapped if key[0] != "GET"} == {
         ("POST", f"{PREFIX}{HISTORY}/{tail}") for tail in ("edits", "undo", "redo", "source-edits")

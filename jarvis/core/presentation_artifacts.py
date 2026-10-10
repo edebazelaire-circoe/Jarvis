@@ -164,7 +164,8 @@ class PresentationArtifacts:
     # ------------------------------------------------------------ dériver
 
     async def begin_render(self, snapshot_id: str, render_format: RenderFormat | str, *,
-                           jarvis_session_id: str | None = None, context_id: str | None = None) -> Artifact:
+                           jarvis_session_id: str | None = None, context_id: str | None = None,
+                           metadata: Mapping[str, Any] | None = None) -> Artifact:
         """Dérivé `pending` d'un snapshot **complet** : relation `rendered_from` écrite dans la transaction de création.
 
         Snapshot inconnu (orphelin) : `artifact_not_found`. Pas un snapshot, ou pas complet : `invalid_relation`. Moteur du
@@ -179,7 +180,7 @@ class PresentationArtifacts:
         spec = RENDERS[fmt]
         artifact = await self._artifacts.create(
             kind=spec.kind, source=ARTIFACT_SOURCE, jarvis_session_id=jarvis_session_id, context_id=context_id,
-            payload_name=spec.payload_name, mime_type=spec.mime_type, metadata={"render_format": fmt.value},
+            payload_name=spec.payload_name, mime_type=spec.mime_type, metadata={**(metadata or {}), "render_format": fmt.value},
             origins=((ArtifactRelationKind.RENDERED_FROM, snapshot_id),))
         self._trace("core.presentation_artifacts.render_begun", "Rendu de présentation ouvert",
                     data={"artifact_id": artifact.artifact_id, "snapshot_id": snapshot_id, "format": fmt.value})
@@ -284,6 +285,11 @@ class PresentationArtifacts:
             renders.append({"artifact_id": render.artifact_id, "kind": render.kind.value, "state": render.state.value,
                             "format": render.metadata.get("render_format"), "size_bytes": render.size_bytes,
                             "error_code": render.error_code,
+                            # Slice 16 : what the render is (recorded with it, frozen at the terminal state), for the Board display.
+                            "width": render.width, "height": render.height, "duration_ms": render.duration_ms,
+                            "scene_id": render.metadata.get("render_scene_id"),
+                            "settings_sha256": render.metadata.get("render_settings_sha256"),
+                            "flat": render.metadata.get("render_flat"),
                             "board_ids": sorted(render_boards)})
         stale = None
         if live.get("exists"):

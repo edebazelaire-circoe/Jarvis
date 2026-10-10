@@ -31,7 +31,7 @@ function world(opts){
     emit(name,detail){(player.listeners[name]||[]).forEach(fn=>fn({detail}))}};
   const parent={postMessage(m,origin){posted.push({m:JSON.parse(JSON.stringify(m)),origin})}};
   const refs=[];
-  const H={react:{createElement:(type,props)=>({type,props})},
+  const H={react:{createElement:(type,props,...kids)=>({type,props:Object.assign({},props,kids.length?{children:kids.length===1?kids[0]:kids}:{})}),Component:class{constructor(props){this.props=props}}},
     'react-dom/client':{createRoot:()=>({render(el){refs.push(el);if(!o.noPlayer)el.props.ref(player)},unmount(){}})},
     '@remotion/player':{Player:'Player'}};
   const win={parent,__JARVIS_SANDBOX_CONFIG__:{staticBase:'/s',embedder:'http://h'},__JARVIS_HOST__:H,JarvisScene:{component:function(){}},
@@ -149,3 +149,25 @@ def test_a_player_that_just_mounted_reports_its_position_at_once(tmp_path):
       console.log(JSON.stringify({clocks:w.clocks()}));
     """)
     assert result["clocks"] == [{"rs": 1, "type": "clock", "frame": 0, "playing": False}]
+
+
+def test_a_scene_that_throws_at_render_is_reported_by_a_stable_error_boundary_around_it(tmp_path):
+    """Slice 14: the Player has no `onError` prop; without this boundary a render error was never told to the host, so a hot reload
+    swapped a broken scene in. The wrapper has a stable identity (a props change must not remount the scene)."""
+
+    result = run_child(tmp_path, r"""
+      const w=world();w.init();
+      const first=w.refs[0].props.component;
+      w.send({rs:1,type:'props',props:{a:1}});
+      const same=w.refs[w.refs.length-1].props.component===first;
+      const wrapper=first({x:1});                                  // GuardedScene -> <Boundary><scene/></Boundary>
+      const Boundary=wrapper.type, inner=wrapper.props.children;
+      const boundary=new Boundary(wrapper.props);
+      const before=boundary.render();
+      boundary.componentDidCatch(new Error('boom at render'));
+      boundary.state=Boundary.getDerivedStateFromError(new Error('x'));
+      const errors=w.posted.map(p=>p.m).filter(m=>m.type==='error');
+      console.log(JSON.stringify({same,sceneInside:inner.type===w.win.JarvisScene.component,renders:before===inner,
+        errors:errors.map(e=>e.message),afterFailure:boundary.render()}));
+    """)
+    assert result == {"same": True, "sceneInside": True, "renders": True, "errors": ["boom at render"], "afterFailure": None}

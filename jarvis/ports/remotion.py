@@ -49,6 +49,8 @@ class RemotionComposition:
     sandbox: SandboxListenerPort | None
     #: Why the engine cannot be composed (a bad `JARVIS_REMOTION_SANDBOX_*` setting): said as-is by `engine_unavailable`, Core still starts.
     problem: str | None = None
+    #: The engine set generated sources declare (`shipped_engine_pin`): the authoring planner needs it to build a Remotion candidate (Slice 15).
+    engine_pin: Callable[[], Any] | None = None
 
 
 #: `(capability_host, capability_store, capability_runner, diagnostics) -> RemotionComposition`

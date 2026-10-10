@@ -48,7 +48,7 @@ Real `JarvisCoreApplication` behind the real `LocalProtocolServer`, real file st
 | `test_journey_serious_deck_live_edit_variant_rehearsal_and_user_presenter` | assemble 12 scenes, live edit, undo of the brain's own edit, a branch edited without touching its parent, rehearsal in PRESENTATION and the user's mode given back, user-presenter run with armed cues and a fired cue, **Core restart**: deck, variant, graph intact, no run, no stage window |
 | `test_journey_rehearsal_section_where_am_i_edit_pause_resume_and_backtrack` | the Slice 15 behaviours: jump to a section, bounded "where are we", edit while rehearsing pauses and the stage follows, resume, backtrack, no transcript on disk |
 | `test_journey_jarvis_presenter_locked_sequence_returns_the_timeline_and_the_mode` | Jarvis-presenter run leaves PRESENTATION and gives it back; the speech stack that cannot take the line is a visible pause; a locked sequence runs on the real clock and returns the timeline |
-| `test_journey_compare_mix_and_a_remotion_promotion_is_a_typed_refusal` | four variants, four-up compare, focus, mix (narrative of one over the base of another, sources untouched, provenance per dimension); **Remotion Slice 15**: the deck the planner writes is Remotion, and promoting a Remotion scene to a template is a typed `presentation_studio_engine_unsupported` refusal on both doors (plan and promote), nothing published (the HTML template flow, instantiate included, is covered by `test_presentation_studio_template_service.py`; promoting Remotion sources is the promotion Slice) |
+| `test_journey_compare_mix_and_promote_a_template_then_reuse_it` | four variants, four-up compare, focus, mix (narrative of one over the base of another, sources untouched, provenance per dimension), template plan then promote, instantiate into a new presentation (Remotion Slice 19: the presentation template is ONE artefact and carries the score skeleton, `[intention]` notes to write), rehearse it |
 
 | Fault or regression (test) | Assertion |
 | --- | --- |
@@ -144,7 +144,7 @@ Order: machine findings first (done), then H-1 and H-4/H-5 on the real hardware,
 ## Known limits and open items (none waived)
 
 - Slice 15: no section-loop command; no dedicated rehearsal runbook (the behaviours are in the playback runbook).
-- A template carries scenes and art direction, **not the score** (documented in the Template contract): an instantiated presentation needs a score before it can be played. There is no brain tool to create a score on an existing variant other than the authoring planner; a person or the page can POST one.
+- ~~A template carries scenes and art direction, not the score.~~ **Closed by Remotion Slice 19**: a presentation template carries a score **skeleton** (order, presenter, timing, loops, scene gotos; no speech, cue, sequence or control value, every speaking item a `note` `[intention]`). The words, cues and sequences of the original are never carried: the user writes them before a rehearsal says anything.
 - Single writer: two Core processes on one data root are unsupported (Slices 02, 16).
 - The undo ring is memory only (lost at a restart by design; the saved state is complete).
 - Slice 21's known limits stand (`Limits and left to do`): turn attestation is per turn, score editing and `scene.add` are not offered to the agent.

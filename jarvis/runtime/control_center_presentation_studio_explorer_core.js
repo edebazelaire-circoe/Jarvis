@@ -288,6 +288,10 @@
     presentation_studio_unsupported_schema_version:{kind:'failed',text:"Un document de la présentation vient d'une version plus récente de JARVIS : Core refuse d'y toucher."},
     presentation_studio_storage_io:{kind:'failed',text:"Core n'a pas pu lire ou écrire les fichiers de la présentation. Rien n'a été modifié."},
     presentation_studio_invalid:{kind:'refused',text:"Core a refusé cette valeur."},
+    presentation_studio_scene_incompatible:{kind:'refused',text:"Les valeurs ou les réglages de la scène ne tiennent pas dans cette version : rien n'a été créé, rien n'est adapté à votre place."},
+    presentation_studio_engine_unsupported:{kind:'refused',text:"Cette version n'est pas native pour le moteur de la présentation (déclarée, non utilisable) : rien n'a été créé."},
+    presentation_studio_prefab_unavailable:{kind:'refused',text:"Cette version de la scène est introuvable ou altérée : rien n'a été créé."},
+    presentation_studio_score_incompatible:{kind:'refused',text:"Cette version laisserait des références de la partition sans réponse : rien n'a été créé."},
   });
   function limitText(op){
     if(op==='restore')return `Impossible de restaurer : ${MAX_LIVE} variantes vivantes au plus. Archivez des branches abandonnées d'abord.`;

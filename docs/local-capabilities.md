@@ -94,6 +94,6 @@ Codes : `unknown`, `invalid`, `busy`, `not_installed`, `disabled`, `update_requi
 
 Au démarrage de Core, seul `reconcile()` est appelé : jamais une installation, un lancement ni un arrêt. Client : `LocalCoreClient.list_local_capabilities`, `local_capability_action`.
 
-Un processus supplémentaire optionnel d'une capacité (le Studio Remotion, Slice 11) vit sous son propre préfixe frère `/v1/local-capabilities/remotion/studio` ([remotion-studio.md](remotion-studio.md)) ; `LocalCapabilityService.before_operation` l'arrête avant `update`, `repair`, `uninstall` ou `disable`.
+Un travail de rendu (Slice 16, `/v1/local-capabilities/remotion/render/jobs`, [remotion-render.md](remotion-render.md)) est un autre travail de la même capacité : un seul à la fois, annulable, jamais lancé par le démarrage ni par une édition. Un processus supplémentaire optionnel d'une capacité (le Studio Remotion, Slice 11) vit sous son propre préfixe frère `/v1/local-capabilities/remotion/studio` ([remotion-studio.md](remotion-studio.md)) ; `LocalCapabilityService.before_operation` l'arrête avant `update`, `repair`, `uninstall` ou `disable`.
 
 Tests : `tests/unit/test_local_capability_host.py`, `test_node_capability_runner.py`, `test_process_tree.py`, `test_remotion_lifecycle.py`, `test_local_capability_routes.py`.

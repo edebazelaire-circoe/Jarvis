@@ -3,7 +3,7 @@
 Status: **Level 2 contract** with a **Level 3 domain and Core service** (`jarvis/domain/presentation_artifacts.py`, `jarvis/core/presentation_artifacts.py`,
 conformance `tests/unit/test_presentation_artifacts*.py`). Written by Remotion Slice 07 (handoff `jarvis-remotion-presentation-integration`).
 Entry pages: [presentation-studio.md](presentation-studio.md), [artifacts.md](artifacts.md). Slice 08 wired the service into Core (`v2_app`),
-added two read routes and the Board manager display ([Board discoverability](#board-discoverability-slice-08)); Slice 09 builds the snapshot package ([Snapshot package](#snapshot-package-slice-09), live Board references: [presentation-live-refs.md](presentation-live-refs.md)), Slice 16 produces the renders. Nothing here starts Remotion.
+added two read routes and the Board manager display ([Board discoverability](#board-discoverability-slice-08)); Slice 09 builds the snapshot package ([Snapshot package](#snapshot-package-slice-09), live Board references: [presentation-live-refs.md](presentation-live-refs.md)), Slice 16 produces the renders ([remotion-render.md](remotion-render.md)). Nothing here starts Remotion.
 
 ## The three things, and who owns each
 
@@ -190,6 +190,23 @@ Frozen means frozen: editing, moving or deleting the Board item, the Board, or t
 successful reopen with the item deleted). Slidecar (HTML) presentations freeze without live references.
 
 Conformance: `tests/unit/test_presentation_live_refs.py` (pure), `tests/unit/test_presentation_freeze.py` (real registry, Board memory, Studio, prefab library).
+
+## Renders (Slice 16)
+
+Owner of the work: `PresentationRenderService` (`jarvis/core/presentation_render_service.py`), contract [remotion-render.md](remotion-render.md). **No storage, no table, no
+migration** (`jarvis.sqlite3` stays v8). What this page now guarantees about a derivative:
+
+- it is created `pending` by `begin_render(snapshot_id, format, metadata=...)` with its single `rendered_from` relation **in the creation transaction**; `metadata` carries the
+  resolved render settings (`render_*`, flat scalars, frozen with the terminal state; `render_format` cannot be overridden) and a `render_flat: true` marker: **an export is flat,
+  never presented as editable**; its editable origin is `source -> snapshot -> render` above;
+- it becomes `complete` only after a verified file went through the spool (`.partial` then rename); every other end is `failed` with a stable `presentation_render_*` code, an
+  interrupted one is recovered `failed` (`presentation_render_interrupted`) or `partial` (`artifact_recovered`, final file found but unverified), never a promoted half file;
+- the snapshot package also freezes, per Remotion pin, `props_defaults` (the manifest defaults), so a render starts from the package alone (a package frozen before this
+  Slice renders with the scene's own values only);
+- `describe_source` / `sources_of_board` list each render with `width`, `height`, `duration_ms`, `scene_id`, `settings_sha256` and `flat` besides `artifact_id`, `kind`, `state`,
+  `format`, `size_bytes`, `error_code`, `board_ids`.
+
+Conformance: `tests/unit/test_presentation_render_service.py`, `test_presentation_render_domain.py`, `test_presentation_render_real.py` (opt-in, real browser).
 
 ## Backward compatibility
 

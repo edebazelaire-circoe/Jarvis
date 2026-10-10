@@ -222,7 +222,7 @@ porte d'édition de base. Adaptateur : `jarvis/adapters/file_prefab_library.py`.
 **Sources de scènes Remotion** (Slice 05, [remotion-source.md](remotion-source.md)) : même dossier, mêmes règles ; une version porte
   `manifest.json` (`schema_version` 2), `publication.json`, `src/**` et `public/**` à la place des trois fichiers HTML. Jamais de
   `node_modules` ni de `package.json` : l'unique arbre de dépendances est `local_capabilities/remotion/runtime/` ([remotion-runtime.md](remotion-runtime.md)). Le
-  **cache de compilation** (`local_capabilities/remotion/compiled/<clé>/`) est dérivé et reconstructible : à ne pas sauvegarder, à supprimer sans risque.
+  **cache de compilation** (`local_capabilities/remotion/compiled/<clé>/`) est dérivé et reconstructible : à ne pas sauvegarder, à supprimer sans risque. Les **dossiers de travail d'un rendu** (`local_capabilities/remotion/runtime/render/jobs/<job>/`, [remotion-render.md](remotion-render.md)) sont éphémères : effacés à la fin de chaque rendu, sauf quelques Kio de traces ; le résultat d'un export est un Artifact (`artifacts/<id>/render.mp4`), pas ce dossier.
 
 - **une version publiée n'est jamais réécrite** : Core écrit dans
   `prefabs/.staging-<16 hex>/` puis renomme le dossier ; un arrêt brutal
@@ -324,6 +324,12 @@ référencés ; aucun chemin de la machine, rien lu hors du paquet à la réouve
   sources de scène sont des prefabs `presentation-studio.p<12 hex>.s<12 hex>` dans `prefabs/` ; Core archive
   (déplace, ne supprime jamais) vers `prefabs/.archive/` celles que rien n'épingle, et seulement quand l'index
   des épinglages est complet ([prefabs.md](prefabs.md#retention-of-studio-scene-sources))
+
+- **Modèles de présentation (Slice 20, Remotion Slice 19)** : `presentation_templates/ptp_<12 hex>.json`, un fichier JSON par modèle,
+  créé une fois, jamais réécrit ni supprimé par Core. Un modèle de **présentation** (document v2) porte ses sources de scène
+  **intégrées** (`embedded`, dans les 256 Kio d'un document du Studio) et le squelette de sa partition : ce n'est donc plus un simple index
+  de versions de bibliothèque, il se sauvegarde avec la racine de données et jamais dans le dépôt. Rien n'est publié dans `prefabs/`
+  par la promotion d'une présentation ; les prefabs `presentation-studio.p<...>.s<...>` n'apparaissent qu'à l'instanciation.
 
 ## Base de scène disparue sous son `-wal`
 

@@ -306,12 +306,12 @@ def build_server(target: PresentationMcpTarget | None = None, *, tools: Presenta
         template_id: Annotated[str | None, Field(max_length=20, description="instantiate : ptp_…")] = None,
         plan: Annotated[dict[str, Any] | None, Field(description=(
             "plan / promote : {kind, title, slug, description?, tags?, scenes?: [{scene_id, label?, dimensions, parameters}], art_direction?}. "
-            "Les dimensions et paramètres se choisissent d'après le plan, jamais par défaut."))] = None,
+            "Les dimensions et paramètres se choisissent d'après le plan, jamais par défaut. licence_ack et keep_assets sont refusés : à l'utilisateur seul."))] = None,
         title: Annotated[str | None, Field(max_length=120, description="instantiate (genre presentation).")] = None,
         destination_variant_id: Annotated[str | None, Field(max_length=40, description="instantiate scene / art_direction : variante cible.")] = None,
     ) -> dict[str, Any]:
         """Promouvoir une présentation, une scène, une direction ou un mouvement en modèle réutilisable (plan puis promote), ou instancier un
-        modèle (presentation_inspect target templates). Le plan ne publie rien."""
+        modèle (presentation_inspect target templates). Le plan ne publie rien ; promote seulement sur demande explicite de l'utilisateur."""
         return await studio.template(op, presentation_id=presentation_id, variant_id=variant_id, template_id=template_id, plan=plan, title=title,
                                      destination_variant_id=destination_variant_id)
 

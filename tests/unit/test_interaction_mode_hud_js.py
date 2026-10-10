@@ -1694,9 +1694,13 @@ def test_no_new_settings_surface(tmp_path):
     # Le Studio de presentation (jarvis-interactive-presentation-studio) a ses routes propres sous
     # `/api/presentation-studio/` : ce n'est pas la surface du mode PRESENTATION que ce test garde.
     studio = "/api/presentation-studio"
+    # Les lectures Board des sources de présentation (jarvis-remotion-presentation-integration, Slice 08) sont des
+    # routes du Workspace : elles montrent source → copie figée → rendus, elles ne règlent pas le mode.
+    workspace = ("/api/workspace/presentation-sources/", "/api/workspace/boards/{board_id}/presentation-sources")
     assert not [path for path in paths
                 if ("presentation" in path or "presence" in path)
-                and not (path == studio or path.startswith(studio + "/"))], paths
+                and not (path == studio or path.startswith(studio + "/")
+                         or path.startswith(workspace[0]) or path == workspace[1])], paths
 
     for name in ("interaction_mode_settings.py", "voice_settings_schema.py", "settings_mcp.py"):
         source = (RUNTIME / name).read_text(encoding="utf-8")

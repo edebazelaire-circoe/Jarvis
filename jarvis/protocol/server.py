@@ -40,6 +40,7 @@ from jarvis.protocol.capture_routes import CaptureProtocolRoutes
 from jarvis.protocol.local_capability_routes import LocalCapabilityProtocolRoutes
 from jarvis.protocol.remotion_import_routes import RemotionImportProtocolRoutes
 from jarvis.protocol.remotion_player_routes import RemotionPlayerProtocolRoutes
+from jarvis.protocol.presentation_render_routes import PresentationRenderProtocolRoutes
 from jarvis.protocol.remotion_studio_routes import RemotionStudioProtocolRoutes
 from jarvis.protocol.prefab_routes import PrefabProtocolRoutes
 from jarvis.protocol.memory_routes import MemoryProtocolRoutes
@@ -49,6 +50,7 @@ from jarvis.protocol.presentation_studio_routes import PresentationStudioProtoco
 from jarvis.protocol.presentation_studio_scene_variants_routes import PresentationStudioSceneVariantsRoutes
 from jarvis.protocol.presentation_studio_compose_routes import PresentationStudioComposeRoutes
 from jarvis.protocol.presentation_studio_template_routes import PresentationStudioTemplateRoutes
+from jarvis.protocol.presentation_studio_upgrades_routes import PresentationStudioUpgradesRoutes
 from jarvis.protocol.presentation_studio_variants_routes import PresentationStudioVariantsRoutes
 from jarvis.protocol.workspace_routes import WorkspaceProtocolRoutes
 from jarvis.core.scene_capture import SceneCaptureError
@@ -266,6 +268,8 @@ class LocalProtocolServer:
             *RemotionImportProtocolRoutes(self.core).routes(),
             # Studio Remotion optionnel (Slice 11) : `remotion_studio_routes.py`, préfixe frère `/v1/local-capabilities/remotion/studio`.
             *RemotionStudioProtocolRoutes(self.core).routes(),
+            # Rendu / export d'une présentation gelée (Slice 16) : `presentation_render_routes.py`, préfixe frère `.../remotion/render`.
+            *PresentationRenderProtocolRoutes(self.core).routes(),
             # Presentations du Studio (jarvis-interactive-presentation-studio, Slice 02) : `presentation_studio_routes.py`.
             *PresentationStudioProtocolRoutes(self.core).routes(),
             # Graphe des variantes (Slice 16) : `presentation_studio_variants_routes.py`.
@@ -276,6 +280,8 @@ class LocalProtocolServer:
             *PresentationStudioSceneVariantsRoutes(self.core).routes(),
             # Modeles reutilisables (Slice 20) : `presentation_studio_template_routes.py`.
             *PresentationStudioTemplateRoutes(self.core).routes(),
+            # Nouvelle version d'un prefab epingle, essai en variante (Remotion Slice 19) : `presentation_studio_upgrades_routes.py`.
+            *PresentationStudioUpgradesRoutes(self.core).routes(),
             # Planificateur d'ecriture (Slice 11): `presentation_studio_authoring_routes.py`, verifier / assembler un brouillon.
             *PresentationStudioAuthoringRoutes(self.core).routes(),
             # Lecture d'une Presentation (Slice 12) : `presentation_studio_playback_routes.py`, etat en memoire de Core.
