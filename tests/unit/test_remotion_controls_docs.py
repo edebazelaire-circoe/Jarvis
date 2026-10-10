@@ -1,4 +1,4 @@
-"""La section 11 de `docs/remotion-isolation.md` et *Typed variables and fast edits* de `docs/presentation-studio.md` (Slice 13) contre le code."""
+"""La section 12 de `docs/remotion-isolation.md` et *Typed variables and fast edits* de `docs/presentation-studio.md` (Slice 13) contre le code."""
 
 from __future__ import annotations
 
@@ -12,7 +12,7 @@ from jarvis.runtime.remotion_relay import REPORT_EVENTS
 
 ROOT = Path(__file__).resolve().parents[2]
 ISOLATION = (ROOT / "docs" / "remotion-isolation.md").read_text(encoding="utf-8")
-SECTION = ISOLATION[ISOLATION.index("## 11. Slice 13"):]
+SECTION = ISOLATION[ISOLATION.index("## 12. Slice 13"):]
 STUDIO = (ROOT / "docs" / "presentation-studio.md").read_text(encoding="utf-8")
 CONTRACT = STUDIO[STUDIO.index("## Typed variables and fast edits"):]
 CONTRACT = CONTRACT[:CONTRACT.index("\n## ", 10)]

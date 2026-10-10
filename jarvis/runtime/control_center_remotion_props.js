@@ -1,5 +1,5 @@
 /* Construction et validation des `inputProps` d'une scène Remotion, AVANT qu'elles traversent vers le bac à sable (handoff
-   jarvis-remotion-presentation-integration, Slice 13 ; `docs/remotion-isolation.md` § 11, `docs/presentation-studio.md` >
+   jarvis-remotion-presentation-integration, Slice 13 ; `docs/remotion-isolation.md` § 12, `docs/presentation-studio.md` >
    *Typed variables and fast edits*).
 
    Rejoue, côté navigateur, `jarvis/domain/remotion_controls.py::build_input_props` : même contrat (`input_contract` du descripteur de

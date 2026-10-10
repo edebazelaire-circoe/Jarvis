@@ -1,6 +1,6 @@
 """Variables typées partagées entre les contrôles d'une scène et les `inputProps` d'une composition Remotion (handoff
 jarvis-remotion-presentation-integration, Slice 13 ; contrat `docs/presentation-studio.md` > *Typed variables and fast edits*,
-`docs/remotion-isolation.md` § 11). Module PUR : aucune E/S.
+`docs/remotion-isolation.md` § 12). Module PUR : aucune E/S.
 
 Il n'y a **pas** de second éditeur ni de second schéma : le schéma des propriétés d'une composition Remotion EST le
 `inputs.props` / `inputs.data` du manifeste, et les contrôles sont les `StudioControl` existants (`props.<clé>` / `data.<clé>`).
