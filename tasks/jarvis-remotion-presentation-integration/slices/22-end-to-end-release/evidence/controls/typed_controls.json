@@ -13,7 +13,7 @@
       "stagger": "2",
       "series": "1",
       "padding": "8px",
-      "mark": "0.1179109117487972"
+      "mark": "0.25078285088974306"
     },
     "generation_before": 1,
     "edit1": {
@@ -24,7 +24,7 @@
         "state": {
           "phase": "paused",
           "running": true,
-          "run_id": "7135f6f0748c",
+          "run_id": "dcb0927c9aa8",
           "role": "user_presenter",
           "jarvis_speaks": false,
           "position": {
@@ -51,10 +51,10 @@
           "silence": false,
           "revealed": [],
           "elapsed": {
-            "item_ms": 2917,
+            "item_ms": 3013,
             "item_target_ms": null,
             "item_over_target": false,
-            "run_ms": 2917,
+            "run_ms": 3013,
             "run_estimated_ms": 0
           },
           "owner": "user",
@@ -70,9 +70,9 @@
             "scene.section",
             "item.label"
           ],
-          "presentation_id": "pst_c1453647dd4dfb9ba07592765ac7e8f8",
-          "variant_id": "psv_6e0c9ea0b5aff944fa938d58a7fbb076",
-          "stage_object_id": "studio-stage-7135f6f0748c",
+          "presentation_id": "pst_3617caa0da0cb5e8a5aef52c3ce5029b",
+          "variant_id": "psv_7f544059ce7160a4a890a9eff2b756c9",
+          "stage_object_id": "studio-stage-dcb0927c9aa8",
           "art_direction": "fallback",
           "notices": [],
           "mode": "presentation",
@@ -90,8 +90,8 @@
           "status": "applied",
           "mode": "commit",
           "actor": "user",
-          "presentation_id": "pst_c1453647dd4dfb9ba07592765ac7e8f8",
-          "variant_id": "psv_6e0c9ea0b5aff944fa938d58a7fbb076",
+          "presentation_id": "pst_3617caa0da0cb5e8a5aef52c3ce5029b",
+          "variant_id": "psv_7f544059ce7160a4a890a9eff2b756c9",
           "basis": {
             "variant_revision": 4
           },
@@ -169,8 +169,8 @@
           ],
           "undo": {
             "available": true,
-            "presentation_id": "pst_c1453647dd4dfb9ba07592765ac7e8f8",
-            "variant_id": "psv_6e0c9ea0b5aff944fa938d58a7fbb076",
+            "presentation_id": "pst_3617caa0da0cb5e8a5aef52c3ce5029b",
+            "variant_id": "psv_7f544059ce7160a4a890a9eff2b756c9",
             "restores_revision": 4,
             "applies_at_revision": 5,
             "ops": [
@@ -265,7 +265,7 @@
       "stagger": "5.5",
       "series": "3,1,4",
       "padding": "40px",
-      "mark": "0.1179109117487972"
+      "mark": "0.25078285088974306"
     },
     "too_big": {
       "status": 409,
@@ -275,7 +275,7 @@
         "state": {
           "phase": "paused",
           "running": true,
-          "run_id": "7135f6f0748c",
+          "run_id": "dcb0927c9aa8",
           "role": "user_presenter",
           "jarvis_speaks": false,
           "position": {
@@ -302,10 +302,10 @@
           "silence": false,
           "revealed": [],
           "elapsed": {
-            "item_ms": 2917,
+            "item_ms": 3013,
             "item_target_ms": null,
             "item_over_target": false,
-            "run_ms": 2917,
+            "run_ms": 3013,
             "run_estimated_ms": 0
           },
           "owner": "user",
@@ -321,9 +321,9 @@
             "scene.section",
             "item.label"
           ],
-          "presentation_id": "pst_c1453647dd4dfb9ba07592765ac7e8f8",
-          "variant_id": "psv_6e0c9ea0b5aff944fa938d58a7fbb076",
-          "stage_object_id": "studio-stage-7135f6f0748c",
+          "presentation_id": "pst_3617caa0da0cb5e8a5aef52c3ce5029b",
+          "variant_id": "psv_7f544059ce7160a4a890a9eff2b756c9",
+          "stage_object_id": "studio-stage-dcb0927c9aa8",
           "art_direction": "fallback",
           "notices": [],
           "mode": "presentation",
@@ -341,8 +341,8 @@
           "status": "refused",
           "mode": "commit",
           "actor": "user",
-          "presentation_id": "pst_c1453647dd4dfb9ba07592765ac7e8f8",
-          "variant_id": "psv_6e0c9ea0b5aff944fa938d58a7fbb076",
+          "presentation_id": "pst_3617caa0da0cb5e8a5aef52c3ce5029b",
+          "variant_id": "psv_7f544059ce7160a4a890a9eff2b756c9",
           "basis": {
             "variant_revision": 5
           },
@@ -379,7 +379,7 @@
         "state": {
           "phase": "paused",
           "running": true,
-          "run_id": "7135f6f0748c",
+          "run_id": "dcb0927c9aa8",
           "role": "user_presenter",
           "jarvis_speaks": false,
           "position": {
@@ -406,10 +406,10 @@
           "silence": false,
           "revealed": [],
           "elapsed": {
-            "item_ms": 2917,
+            "item_ms": 3013,
             "item_target_ms": null,
             "item_over_target": false,
-            "run_ms": 2917,
+            "run_ms": 3013,
             "run_estimated_ms": 0
           },
           "owner": "user",
@@ -425,9 +425,9 @@
             "scene.section",
             "item.label"
           ],
-          "presentation_id": "pst_c1453647dd4dfb9ba07592765ac7e8f8",
-          "variant_id": "psv_6e0c9ea0b5aff944fa938d58a7fbb076",
-          "stage_object_id": "studio-stage-7135f6f0748c",
+          "presentation_id": "pst_3617caa0da0cb5e8a5aef52c3ce5029b",
+          "variant_id": "psv_7f544059ce7160a4a890a9eff2b756c9",
+          "stage_object_id": "studio-stage-dcb0927c9aa8",
           "art_direction": "fallback",
           "notices": [],
           "mode": "presentation",
@@ -445,8 +445,8 @@
           "status": "refused",
           "mode": "commit",
           "actor": "user",
-          "presentation_id": "pst_c1453647dd4dfb9ba07592765ac7e8f8",
-          "variant_id": "psv_6e0c9ea0b5aff944fa938d58a7fbb076",
+          "presentation_id": "pst_3617caa0da0cb5e8a5aef52c3ce5029b",
+          "variant_id": "psv_7f544059ce7160a4a890a9eff2b756c9",
           "basis": {
             "variant_revision": 5
           },
@@ -483,7 +483,7 @@
         "state": {
           "phase": "paused",
           "running": true,
-          "run_id": "7135f6f0748c",
+          "run_id": "dcb0927c9aa8",
           "role": "user_presenter",
           "jarvis_speaks": false,
           "position": {
@@ -510,10 +510,10 @@
           "silence": false,
           "revealed": [],
           "elapsed": {
-            "item_ms": 2917,
+            "item_ms": 3013,
             "item_target_ms": null,
             "item_over_target": false,
-            "run_ms": 2917,
+            "run_ms": 3013,
             "run_estimated_ms": 0
           },
           "owner": "user",
@@ -529,9 +529,9 @@
             "scene.section",
             "item.label"
           ],
-          "presentation_id": "pst_c1453647dd4dfb9ba07592765ac7e8f8",
-          "variant_id": "psv_6e0c9ea0b5aff944fa938d58a7fbb076",
-          "stage_object_id": "studio-stage-7135f6f0748c",
+          "presentation_id": "pst_3617caa0da0cb5e8a5aef52c3ce5029b",
+          "variant_id": "psv_7f544059ce7160a4a890a9eff2b756c9",
+          "stage_object_id": "studio-stage-dcb0927c9aa8",
           "art_direction": "fallback",
           "notices": [],
           "mode": "presentation",
@@ -549,8 +549,8 @@
           "status": "refused",
           "mode": "commit",
           "actor": "user",
-          "presentation_id": "pst_c1453647dd4dfb9ba07592765ac7e8f8",
-          "variant_id": "psv_6e0c9ea0b5aff944fa938d58a7fbb076",
+          "presentation_id": "pst_3617caa0da0cb5e8a5aef52c3ce5029b",
+          "variant_id": "psv_7f544059ce7160a4a890a9eff2b756c9",
           "basis": {
             "variant_revision": 5
           },
@@ -586,7 +586,7 @@
       "stagger": "5.5",
       "series": "3,1,4",
       "padding": "40px",
-      "mark": "0.1179109117487972"
+      "mark": "0.25078285088974306"
     },
     "hostile_sent": 6,
     "after_hostile": {
@@ -596,7 +596,7 @@
       "stagger": "5.5",
       "series": "3,1,4",
       "padding": "40px",
-      "mark": "0.1179109117487972"
+      "mark": "0.25078285088974306"
     },
     "refused_count": 6,
     "notice_during": {
@@ -609,7 +609,7 @@
       "phase": "ready",
       "mounted": true,
       "playing": true,
-      "frame": 70,
+      "frame": 71,
       "duration": 90,
       "killedReason": null,
       "generation": 1,
@@ -622,17 +622,17 @@
         "ready": true,
         "killed": false,
         "reason": null,
-        "startedAt": 1791619467392,
+        "startedAt": 1791623549889,
         "pending": null,
-        "pendingSince": 1791619469898,
-        "lastPingAt": 1791619469898,
+        "pendingSince": 1791623552401,
+        "lastPingAt": 1791623552401,
         "lastFrame": 69,
         "violations": 0,
         "accepted": 15,
         "refused": {},
         "foreign": 0,
         "reports": [],
-        "windowStart": 1791619469649,
+        "windowStart": 1791623552201,
         "windowCount": 3,
         "pongs": 3,
         "childDropped": 0,
@@ -644,13 +644,13 @@
         "clocks": 11,
         "clockDropped": 0,
         "clockWindow": [
-          1791619469114,
-          1791619469381,
-          1791619469649,
-          1791619469916
+          1791623551669,
+          1791623551934,
+          1791623552201,
+          1791623552469
         ],
         "lastClock": {
-          "frame": 70,
+          "frame": 71,
           "playing": true
         }
       }
@@ -662,8 +662,8 @@
         "status": "stale",
         "mode": "commit",
         "actor": "user",
-        "presentation_id": "pst_c1453647dd4dfb9ba07592765ac7e8f8",
-        "variant_id": "psv_6e0c9ea0b5aff944fa938d58a7fbb076",
+        "presentation_id": "pst_3617caa0da0cb5e8a5aef52c3ce5029b",
+        "variant_id": "psv_7f544059ce7160a4a890a9eff2b756c9",
         "basis": {
           "variant_revision": 1
         },
@@ -692,7 +692,7 @@
         "state": {
           "phase": "paused",
           "running": true,
-          "run_id": "7135f6f0748c",
+          "run_id": "dcb0927c9aa8",
           "role": "user_presenter",
           "jarvis_speaks": false,
           "position": {
@@ -719,10 +719,10 @@
           "silence": false,
           "revealed": [],
           "elapsed": {
-            "item_ms": 2917,
+            "item_ms": 3013,
             "item_target_ms": null,
             "item_over_target": false,
-            "run_ms": 2917,
+            "run_ms": 3013,
             "run_estimated_ms": 0
           },
           "owner": "user",
@@ -738,9 +738,9 @@
             "scene.section",
             "item.label"
           ],
-          "presentation_id": "pst_c1453647dd4dfb9ba07592765ac7e8f8",
-          "variant_id": "psv_6e0c9ea0b5aff944fa938d58a7fbb076",
-          "stage_object_id": "studio-stage-7135f6f0748c",
+          "presentation_id": "pst_3617caa0da0cb5e8a5aef52c3ce5029b",
+          "variant_id": "psv_7f544059ce7160a4a890a9eff2b756c9",
+          "stage_object_id": "studio-stage-dcb0927c9aa8",
           "art_direction": "fallback",
           "notices": [],
           "mode": "presentation",
@@ -758,8 +758,8 @@
           "status": "stale",
           "mode": "commit",
           "actor": "user",
-          "presentation_id": "pst_c1453647dd4dfb9ba07592765ac7e8f8",
-          "variant_id": "psv_6e0c9ea0b5aff944fa938d58a7fbb076",
+          "presentation_id": "pst_3617caa0da0cb5e8a5aef52c3ce5029b",
+          "variant_id": "psv_7f544059ce7160a4a890a9eff2b756c9",
           "basis": {
             "variant_revision": 5
           },
@@ -795,7 +795,7 @@
       "stagger": "5.5",
       "series": "3,1,4",
       "padding": "40px",
-      "mark": "0.1179109117487972"
+      "mark": "0.25078285088974306"
     },
     "reset": {
       "status": 200,
@@ -805,7 +805,7 @@
         "state": {
           "phase": "paused",
           "running": true,
-          "run_id": "7135f6f0748c",
+          "run_id": "dcb0927c9aa8",
           "role": "user_presenter",
           "jarvis_speaks": false,
           "position": {
@@ -832,10 +832,10 @@
           "silence": false,
           "revealed": [],
           "elapsed": {
-            "item_ms": 2917,
+            "item_ms": 3013,
             "item_target_ms": null,
             "item_over_target": false,
-            "run_ms": 2917,
+            "run_ms": 3013,
             "run_estimated_ms": 0
           },
           "owner": "user",
@@ -851,9 +851,9 @@
             "scene.section",
             "item.label"
           ],
-          "presentation_id": "pst_c1453647dd4dfb9ba07592765ac7e8f8",
-          "variant_id": "psv_6e0c9ea0b5aff944fa938d58a7fbb076",
-          "stage_object_id": "studio-stage-7135f6f0748c",
+          "presentation_id": "pst_3617caa0da0cb5e8a5aef52c3ce5029b",
+          "variant_id": "psv_7f544059ce7160a4a890a9eff2b756c9",
+          "stage_object_id": "studio-stage-dcb0927c9aa8",
           "art_direction": "fallback",
           "notices": [],
           "mode": "presentation",
@@ -871,8 +871,8 @@
           "status": "applied",
           "mode": "commit",
           "actor": "user",
-          "presentation_id": "pst_c1453647dd4dfb9ba07592765ac7e8f8",
-          "variant_id": "psv_6e0c9ea0b5aff944fa938d58a7fbb076",
+          "presentation_id": "pst_3617caa0da0cb5e8a5aef52c3ce5029b",
+          "variant_id": "psv_7f544059ce7160a4a890a9eff2b756c9",
           "basis": {
             "variant_revision": 5
           },
@@ -908,8 +908,8 @@
           ],
           "undo": {
             "available": true,
-            "presentation_id": "pst_c1453647dd4dfb9ba07592765ac7e8f8",
-            "variant_id": "psv_6e0c9ea0b5aff944fa938d58a7fbb076",
+            "presentation_id": "pst_3617caa0da0cb5e8a5aef52c3ce5029b",
+            "variant_id": "psv_7f544059ce7160a4a890a9eff2b756c9",
             "restores_revision": 5,
             "applies_at_revision": 6,
             "ops": [
@@ -963,7 +963,7 @@
       "stagger": "5.5",
       "series": "3,1,4",
       "padding": "40px",
-      "mark": "0.1179109117487972"
+      "mark": "0.25078285088974306"
     },
     "until:document.querySelectorAll('.sc-prefab-warning').length===0": true,
     "notice_after": {
@@ -976,7 +976,7 @@
       "phase": "ready",
       "mounted": true,
       "playing": true,
-      "frame": 86,
+      "frame": 87,
       "duration": 90,
       "killedReason": null,
       "generation": 1,
@@ -987,17 +987,17 @@
         "ready": true,
         "killed": false,
         "reason": null,
-        "startedAt": 1791619467392,
+        "startedAt": 1791623549889,
         "pending": null,
-        "pendingSince": 1791619469898,
-        "lastPingAt": 1791619469898,
+        "pendingSince": 1791623552401,
+        "lastPingAt": 1791623552401,
         "lastFrame": 69,
         "violations": 0,
         "accepted": 17,
         "refused": {},
         "foreign": 0,
         "reports": [],
-        "windowStart": 1791619469649,
+        "windowStart": 1791623552201,
         "windowCount": 5,
         "pongs": 3,
         "childDropped": 0,
@@ -1009,13 +1009,13 @@
         "clocks": 13,
         "clockDropped": 0,
         "clockWindow": [
-          1791619469649,
-          1791619469916,
-          1791619470182,
-          1791619470448
+          1791623552201,
+          1791623552469,
+          1791623552734,
+          1791623553002
         ],
         "lastClock": {
-          "frame": 86,
+          "frame": 87,
           "playing": true
         }
       }
@@ -1039,8 +1039,8 @@
     "frame info [scène] scene.resolver_committed Object",
     "frame info [remotion.stage.ready] Object",
     "frame warning Note: Some companies are required to obtain a license to use Remotion. See: https://remotion.dev/license\nPass the `acknowledgeRemotionLicense` prop to `<Player />` function to make this message disappear.",
-    "frame info [studio-reload] mount_reported {\"object_id\":\"studio-stage-7135f6f0748c\",\"prefab\":\"presentation-studio.p000000000001.s000000000001@1\",\"outcome\":\"mounted\",\"reason\":null,\"matched\":false,\"attempt\":1}",
-    "frame info [studio] studio.stage_ready {\"object_id\":\"studio-stage-7135f6f0748c\"}",
+    "frame info [studio-reload] mount_reported {\"object_id\":\"studio-stage-dcb0927c9aa8\",\"prefab\":\"presentation-studio.p000000000001.s000000000001@1\",\"outcome\":\"mounted\",\"reason\":null,\"matched\":false,\"attempt\":1}",
+    "frame info [studio] studio.stage_ready {\"object_id\":\"studio-stage-dcb0927c9aa8\"}",
     "frame warning [remotion.stage.props_rejected] Object",
     "frame warning [scène] scene.prefab_notice Object",
     "frame warning [remotion.stage.props_rejected] Object",

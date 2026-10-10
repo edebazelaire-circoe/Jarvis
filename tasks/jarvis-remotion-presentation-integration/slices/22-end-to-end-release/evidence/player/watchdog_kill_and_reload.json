@@ -20,17 +20,17 @@
         "ready": false,
         "killed": true,
         "reason": "unresponsive",
-        "startedAt": 1791619372329,
-        "pending": "f72e79cec5cdf2295afb0aee68ecb668",
-        "pendingSince": 1791619373331,
-        "lastPingAt": 1791619373331,
+        "startedAt": 1791623475025,
+        "pending": "90f44316e2483f0ddcd360e7d7427442",
+        "pendingSince": 1791623476030,
+        "lastPingAt": 1791623476030,
         "lastFrame": -1,
         "violations": 0,
         "accepted": 0,
         "refused": {},
         "foreign": 0,
         "reports": [],
-        "windowStart": 1791619372329,
+        "windowStart": 1791623475025,
         "windowCount": 0,
         "pongs": 0,
         "childDropped": 0,
@@ -58,7 +58,7 @@
   "errors": [],
   "journal": [
     {
-      "ts": "2026-10-10T08:02:56.583184+00:00",
+      "ts": "2026-10-10T09:11:19.283961+00:00",
       "kind": "remotion.sandbox.killed",
       "level": "warning",
       "message": "Scene Remotion : killed",
@@ -66,12 +66,12 @@
         "event": "killed",
         "prefab_id": "presentation-studio.p000000000001.s000000000001",
         "reason": "unresponsive",
-        "detail": "3249",
+        "detail": "3251",
         "version": 1
       }
     },
     {
-      "ts": "2026-10-10T08:03:01.080717+00:00",
+      "ts": "2026-10-10T09:11:23.732367+00:00",
       "kind": "remotion.sandbox.killed",
       "level": "warning",
       "message": "Scene Remotion : killed",
@@ -79,7 +79,7 @@
         "event": "killed",
         "prefab_id": "presentation-studio.p000000000001.s000000000001",
         "reason": "unresponsive",
-        "detail": "3250",
+        "detail": "3245",
         "version": 1
       }
     }

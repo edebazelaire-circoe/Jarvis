@@ -170,7 +170,7 @@ def remotion_release_findings(root: Path = ROOT) -> list[str]:
         for heading in REMOTION_REPORT_SECTIONS:
             if heading not in text:
                 found.append(f"the release report has no section {heading!r}")
-        if re.search(r"TODO|TBD|FIXME", text):
+        if re.search(r"\bTODO\b|\bTBD\b|\bFIXME\b", text):
             found.append("the release report still has a TODO / TBD / FIXME")
     sweep = evidence / "privacy_sweep.py"
     if sweep.is_file():

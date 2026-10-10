@@ -3,7 +3,10 @@
     {
       "id": "HV-17-01",
       "instruction": "Approve shop-style browsing, taxonomy and detail-panel parameter discoverability.",
-      "requires_evidence_first": true
+      "requires_evidence_first": true,
+      "status": "open",
+      "order": 9,
+      "evidence": "docs/remotion-integration-release.md#human-checks"
     }
   ]
 }

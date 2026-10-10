@@ -3,7 +3,10 @@
     {
       "id": "HV-03-01",
       "instruction": "Accept local-capability installation UX in contrast to remote MCP plugin UX.",
-      "requires_evidence_first": true
+      "requires_evidence_first": true,
+      "status": "open",
+      "order": 1,
+      "evidence": "docs/remotion-integration-release.md#human-checks"
     }
   ]
 }

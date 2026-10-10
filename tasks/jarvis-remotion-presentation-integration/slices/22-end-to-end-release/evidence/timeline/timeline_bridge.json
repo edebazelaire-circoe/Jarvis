@@ -43,7 +43,7 @@
           "until_frame": 74,
           "playing": true,
           "seq": 2,
-          "play_ms": 2,
+          "play_ms": 1,
           "tolerance_ms": 500,
           "problems": []
         }
@@ -124,7 +124,7 @@
           "until_frame": 119,
           "playing": true,
           "seq": 5,
-          "play_ms": 1,
+          "play_ms": 2,
           "tolerance_ms": 500,
           "problems": []
         }
@@ -144,7 +144,7 @@
           "until_frame": 119,
           "playing": false,
           "seq": 5,
-          "play_ms": 667,
+          "play_ms": 776,
           "tolerance_ms": 500,
           "problems": []
         }
@@ -163,7 +163,7 @@
           "until_frame": 119,
           "playing": true,
           "seq": 5,
-          "play_ms": 668,
+          "play_ms": 776,
           "tolerance_ms": 500,
           "problems": []
         }
@@ -181,7 +181,7 @@
   "page3": {
     "reads": {
       "until:!!document.querySelector('iframe[data-remotion-stage]') && !!document.querySelec": true,
-      "free_a": 42,
+      "free_a": 43,
       "free_b": 70
     }
   },

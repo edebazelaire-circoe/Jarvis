@@ -85,12 +85,13 @@ def test_a_report_without_a_section_or_with_a_todo_is_a_finding(verifier, tmp_pa
     report.write_text(original.replace("## Residual risks", "## Something else"), encoding="utf-8")
     assert any("## Residual risks" in f for f in verifier.remotion_release_findings(root))
     report.write_text(original + "\nTODO: write this\n", encoding="utf-8")
-    assert any("TODO" in f for f in verifier.remotion_release_findings(root))
+    got = verifier.remotion_release_findings(root)
+    assert any("TODO" in f for f in got), got
 
 
 def test_a_home_path_planted_in_the_handoff_is_a_finding(verifier, tmp_path):
     root = doctored(tmp_path, verifier)
     task = root / TASK
     task.mkdir(parents=True, exist_ok=True)
-    (task / "LOG.md").write_text(f"ran in {Path.home()}\Temp\x\n", encoding="utf-8")
+    (task / "LOG.md").write_text("ran in " + str(Path.home()) + chr(92) + "Temp" + chr(92) + "x", encoding="utf-8")
     assert any("privacy sweep" in f for f in verifier.remotion_release_findings(root))

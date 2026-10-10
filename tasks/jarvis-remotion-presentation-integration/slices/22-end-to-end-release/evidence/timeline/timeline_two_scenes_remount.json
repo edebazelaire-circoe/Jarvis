@@ -60,7 +60,7 @@
         "until_frame": 119,
         "playing": true,
         "seq": 4,
-        "play_ms": 2,
+        "play_ms": 1,
         "tolerance_ms": 500,
         "problems": []
       }

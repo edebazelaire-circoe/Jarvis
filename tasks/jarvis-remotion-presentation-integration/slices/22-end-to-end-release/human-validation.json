@@ -2,8 +2,27 @@
   "checks": [
     {
       "id": "HV-22-01",
-      "instruction": "End-to-end acceptance on the intended installation: spoken edit, scene preview, Board assets and export.",
-      "requires_evidence_first": true
+      "instruction": "End-to-end acceptance on the intended installation, last: spoken edit, scene preview, Board assets and export (full dry run of the Remotion path after the restarts and the first install; includes the old Studio check H-9).",
+      "requires_evidence_first": true,
+      "status": "open",
+      "order": 12,
+      "evidence": "docs/remotion-integration-release.md#human-checks"
+    },
+    {
+      "id": "HV-22-02",
+      "instruction": "Before the first use of this build: copy presentations/, prefabs/ and state/ of the data root (a saved variant keeps no backup; the build before the task refuses saved documents and cannot list the new Artifact kinds), and record the Remotion licence decision (unexamined by the machine work). Nothing is installed or distributed before both are done.",
+      "requires_evidence_first": true,
+      "status": "open",
+      "order": 0,
+      "evidence": "docs/remotion-integration-release.md#migration-and-rollback"
+    },
+    {
+      "id": "HV-22-03",
+      "instruction": "Restart Core, then the Control Center, then the agent session yourself (no agent does it), install Remotion from the card, and read the card states; the old Studio checks H-1 to H-11 stay open and are not repaid by this task.",
+      "requires_evidence_first": true,
+      "status": "open",
+      "order": 1,
+      "evidence": "docs/remotion-integration-release.md#what-the-human-must-restart"
     }
   ]
 }

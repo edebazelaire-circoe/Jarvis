@@ -3,7 +3,10 @@
     {
       "id": "HV-00-01",
       "instruction": "Confirm the original working agent has finished and the branch may be used for follow-up integration.",
-      "requires_evidence_first": true
+      "requires_evidence_first": true,
+      "status": "open",
+      "order": 0,
+      "evidence": "docs/remotion-integration-release.md#human-checks"
     }
   ]
 }

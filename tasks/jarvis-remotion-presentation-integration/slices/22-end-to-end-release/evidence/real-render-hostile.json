@@ -1,16 +1,16 @@
 {
-  "verdict": "FAILED",
-  "head": "b67322bd163681ca38441d7cb043fe514e6e70eb",
-  "tree_dirty": true,
+  "verdict": "PASSED",
+  "head": "b667b25b800d4c7d87219744079c0d80fe83e17e",
+  "tree_dirty": false,
   "platform": "Windows-11-10.0.26200-SP0",
   "node": "v24.18.0",
   "chrome": null,
   "remotion": "4.0.534",
-  "elapsed_s": 92.2,
+  "elapsed_s": 86.8,
   "timings": {},
   "disk": {
-    "free_before_mb": 13845,
-    "free_after_mb": 13837
+    "free_before_mb": 12769,
+    "free_after_mb": 12761
   },
   "facts": {
     "hostile_guarded": {
@@ -19,8 +19,8 @@
       "udp_packets": 0,
       "denied_by_sample": {
         "net_exfil": 25,
-        "link_hints": 17,
-        "webrtc_exfil": 15
+        "link_hints": 18,
+        "webrtc_exfil": 14
       },
       "states": {
         "net_exfil": "complete",
@@ -35,7 +35,44 @@
     },
     "sandbox_probe": {
       "sandbox_on": {
-        "rows": [],
+        "rows": [
+          {
+            "type": "GPU",
+            "sandbox": "GPU",
+            "lockdown": "Limited",
+            "integrity": "S-1-16-4096 Low"
+          },
+          {
+            "type": "Utility",
+            "sandbox": "Not Sandboxed",
+            "lockdown": "",
+            "integrity": ""
+          },
+          {
+            "type": "Utility",
+            "sandbox": "Service",
+            "lockdown": "Lockdown",
+            "integrity": "S-1-16-0 Untrusted"
+          },
+          {
+            "type": "Renderer",
+            "sandbox": "Renderer",
+            "lockdown": "Lockdown",
+            "integrity": "S-1-16-0 Untrusted"
+          },
+          {
+            "type": "Renderer",
+            "sandbox": "Renderer",
+            "lockdown": "Lockdown",
+            "integrity": "S-1-16-0 Untrusted"
+          },
+          {
+            "type": "Renderer",
+            "sandbox": "Renderer",
+            "lockdown": "Lockdown",
+            "integrity": "S-1-16-0 Untrusted"
+          }
+        ],
         "guard_sandbox_flag": true,
         "error": null
       },
@@ -140,8 +177,8 @@
       "ok": true,
       "denied": {
         "net_exfil": 25,
-        "link_hints": 17,
-        "webrtc_exfil": 15
+        "link_hints": 18,
+        "webrtc_exfil": 14
       }
     },
     {
@@ -161,8 +198,27 @@
     },
     {
       "check": "sandbox ON: chrome://sandbox reports every Renderer process sandboxed (Lockdown / Untrusted)",
-      "ok": false,
-      "renderers": [],
+      "ok": true,
+      "renderers": [
+        {
+          "type": "Renderer",
+          "sandbox": "Renderer",
+          "lockdown": "Lockdown",
+          "integrity": "S-1-16-0 Untrusted"
+        },
+        {
+          "type": "Renderer",
+          "sandbox": "Renderer",
+          "lockdown": "Lockdown",
+          "integrity": "S-1-16-0 Untrusted"
+        },
+        {
+          "type": "Renderer",
+          "sandbox": "Renderer",
+          "lockdown": "Lockdown",
+          "integrity": "S-1-16-0 Untrusted"
+        }
+      ],
       "guard": true
     },
     {
@@ -209,11 +265,11 @@
         "hostile",
         "bounds"
       ],
-      "head": "b67322bd163681ca38441d7cb043fe514e6e70eb",
-      "tree_dirty": true,
-      "elapsed_s": 92.2,
-      "disk_free_before_mb": 13845,
-      "disk_free_after_mb": 13837
+      "head": "b667b25b800d4c7d87219744079c0d80fe83e17e",
+      "tree_dirty": false,
+      "elapsed_s": 86.8,
+      "disk_free_before_mb": 12769,
+      "disk_free_after_mb": 12761
     }
   ]
 }

@@ -3,7 +3,10 @@
     {
       "id": "HV-20-01",
       "instruction": "Verify normal Remotion mode, intentional Slidecar experiment and visible failure with no automatic fallback.",
-      "requires_evidence_first": true
+      "requires_evidence_first": true,
+      "status": "open",
+      "order": 11,
+      "evidence": "docs/remotion-integration-release.md#human-checks"
     }
   ]
 }

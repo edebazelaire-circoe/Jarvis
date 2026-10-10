@@ -11,38 +11,68 @@
   "tasks/jarvis-remotion-presentation-integration/slices/22-end-to-end-release/evidence/real-isolation.json"
  ],
  "exit_code": 0,
- "seconds": 445.5,
+ "seconds": 443.8,
  "interval_s": 2.0,
- "sampled": 173,
- "peak_working_set_mb": 1190.4,
+ "sampled": 175,
+ "peak_working_set_mb": 1140.2,
  "peak_processes": 17,
  "process_names_seen": [
   "chrome.exe",
-  "conhost.exe",
-  "esbuild.exe",
   "node.exe",
   "python.exe",
   "updater.exe"
  ],
  "samples": [
   {
-   "t": 0.7,
+   "t": 0.6,
    "processes": 1,
-   "working_set_mb": 33.9,
+   "working_set_mb": 33.4,
    "by_name": {
     "python.exe": 1
    }
   },
   {
-   "t": 5.8,
+   "t": 5.6,
    "processes": 1,
-   "working_set_mb": 46.0,
+   "working_set_mb": 45.6,
    "by_name": {
     "python.exe": 1
    }
   },
   {
-   "t": 10.9,
+   "t": 10.7,
+   "processes": 1,
+   "working_set_mb": 45.7,
+   "by_name": {
+    "python.exe": 1
+   }
+  },
+  {
+   "t": 15.7,
+   "processes": 1,
+   "working_set_mb": 45.7,
+   "by_name": {
+    "python.exe": 1
+   }
+  },
+  {
+   "t": 20.7,
+   "processes": 1,
+   "working_set_mb": 45.8,
+   "by_name": {
+    "python.exe": 1
+   }
+  },
+  {
+   "t": 25.7,
+   "processes": 1,
+   "working_set_mb": 45.9,
+   "by_name": {
+    "python.exe": 1
+   }
+  },
+  {
+   "t": 30.8,
    "processes": 1,
    "working_set_mb": 46.1,
    "by_name": {
@@ -50,23 +80,15 @@
    }
   },
   {
-   "t": 16.0,
+   "t": 35.9,
    "processes": 1,
-   "working_set_mb": 46.0,
+   "working_set_mb": 46.2,
    "by_name": {
     "python.exe": 1
    }
   },
   {
-   "t": 21.2,
-   "processes": 1,
-   "working_set_mb": 46.3,
-   "by_name": {
-    "python.exe": 1
-   }
-  },
-  {
-   "t": 26.3,
+   "t": 40.9,
    "processes": 1,
    "working_set_mb": 46.4,
    "by_name": {
@@ -74,7 +96,7 @@
    }
   },
   {
-   "t": 31.4,
+   "t": 45.9,
    "processes": 1,
    "working_set_mb": 46.5,
    "by_name": {
@@ -82,7 +104,7 @@
    }
   },
   {
-   "t": 36.5,
+   "t": 51.0,
    "processes": 1,
    "working_set_mb": 46.6,
    "by_name": {
@@ -90,7 +112,7 @@
    }
   },
   {
-   "t": 41.7,
+   "t": 56.0,
    "processes": 1,
    "working_set_mb": 46.7,
    "by_name": {
@@ -98,15 +120,15 @@
    }
   },
   {
-   "t": 46.9,
+   "t": 61.0,
    "processes": 1,
-   "working_set_mb": 46.9,
+   "working_set_mb": 46.8,
    "by_name": {
     "python.exe": 1
    }
   },
   {
-   "t": 52.0,
+   "t": 65.9,
    "processes": 1,
    "working_set_mb": 47.0,
    "by_name": {
@@ -114,7 +136,7 @@
    }
   },
   {
-   "t": 57.1,
+   "t": 71.0,
    "processes": 1,
    "working_set_mb": 47.1,
    "by_name": {
@@ -122,71 +144,7 @@
    }
   },
   {
-   "t": 62.2,
-   "processes": 1,
-   "working_set_mb": 47.2,
-   "by_name": {
-    "python.exe": 1
-   }
-  },
-  {
-   "t": 67.3,
-   "processes": 1,
-   "working_set_mb": 47.4,
-   "by_name": {
-    "python.exe": 1
-   }
-  },
-  {
-   "t": 72.4,
-   "processes": 1,
-   "working_set_mb": 47.5,
-   "by_name": {
-    "python.exe": 1
-   }
-  },
-  {
-   "t": 77.6,
-   "processes": 1,
-   "working_set_mb": 47.7,
-   "by_name": {
-    "python.exe": 1
-   }
-  },
-  {
-   "t": 82.8,
-   "processes": 1,
-   "working_set_mb": 47.8,
-   "by_name": {
-    "python.exe": 1
-   }
-  },
-  {
-   "t": 87.9,
-   "processes": 1,
-   "working_set_mb": 47.9,
-   "by_name": {
-    "python.exe": 1
-   }
-  },
-  {
-   "t": 93.0,
-   "processes": 1,
-   "working_set_mb": 46.9,
-   "by_name": {
-    "python.exe": 1
-   }
-  },
-  {
-   "t": 98.2,
-   "processes": 1,
-   "working_set_mb": 47.1,
-   "by_name": {
-    "python.exe": 1
-   }
-  },
-  {
-   "t": 103.3,
+   "t": 76.1,
    "processes": 1,
    "working_set_mb": 47.3,
    "by_name": {
@@ -194,7 +152,7 @@
    }
   },
   {
-   "t": 108.5,
+   "t": 81.2,
    "processes": 1,
    "working_set_mb": 47.4,
    "by_name": {
@@ -202,15 +160,7 @@
    }
   },
   {
-   "t": 113.6,
-   "processes": 1,
-   "working_set_mb": 47.6,
-   "by_name": {
-    "python.exe": 1
-   }
-  },
-  {
-   "t": 118.7,
+   "t": 86.4,
    "processes": 1,
    "working_set_mb": 47.7,
    "by_name": {
@@ -218,7 +168,15 @@
    }
   },
   {
-   "t": 123.9,
+   "t": 91.4,
+   "processes": 1,
+   "working_set_mb": 47.8,
+   "by_name": {
+    "python.exe": 1
+   }
+  },
+  {
+   "t": 96.5,
    "processes": 1,
    "working_set_mb": 47.9,
    "by_name": {
@@ -226,7 +184,7 @@
    }
   },
   {
-   "t": 129.0,
+   "t": 101.5,
    "processes": 1,
    "working_set_mb": 48.1,
    "by_name": {
@@ -234,7 +192,7 @@
    }
   },
   {
-   "t": 134.1,
+   "t": 106.6,
    "processes": 1,
    "working_set_mb": 48.2,
    "by_name": {
@@ -242,15 +200,7 @@
    }
   },
   {
-   "t": 139.2,
-   "processes": 1,
-   "working_set_mb": 48.3,
-   "by_name": {
-    "python.exe": 1
-   }
-  },
-  {
-   "t": 144.4,
+   "t": 111.6,
    "processes": 1,
    "working_set_mb": 48.4,
    "by_name": {
@@ -258,7 +208,15 @@
    }
   },
   {
-   "t": 149.5,
+   "t": 116.7,
+   "processes": 1,
+   "working_set_mb": 48.5,
+   "by_name": {
+    "python.exe": 1
+   }
+  },
+  {
+   "t": 121.7,
    "processes": 1,
    "working_set_mb": 48.6,
    "by_name": {
@@ -266,7 +224,7 @@
    }
   },
   {
-   "t": 154.6,
+   "t": 126.7,
    "processes": 1,
    "working_set_mb": 48.7,
    "by_name": {
@@ -274,15 +232,7 @@
    }
   },
   {
-   "t": 159.8,
-   "processes": 1,
-   "working_set_mb": 48.8,
-   "by_name": {
-    "python.exe": 1
-   }
-  },
-  {
-   "t": 164.9,
+   "t": 131.9,
    "processes": 1,
    "working_set_mb": 48.9,
    "by_name": {
@@ -290,7 +240,15 @@
    }
   },
   {
-   "t": 169.9,
+   "t": 137.0,
+   "processes": 1,
+   "working_set_mb": 49.0,
+   "by_name": {
+    "python.exe": 1
+   }
+  },
+  {
+   "t": 142.1,
    "processes": 1,
    "working_set_mb": 49.1,
    "by_name": {
@@ -298,7 +256,7 @@
    }
   },
   {
-   "t": 175.1,
+   "t": 147.2,
    "processes": 1,
    "working_set_mb": 49.2,
    "by_name": {
@@ -306,15 +264,7 @@
    }
   },
   {
-   "t": 180.2,
-   "processes": 1,
-   "working_set_mb": 49.3,
-   "by_name": {
-    "python.exe": 1
-   }
-  },
-  {
-   "t": 185.3,
+   "t": 152.2,
    "processes": 1,
    "working_set_mb": 49.4,
    "by_name": {
@@ -322,7 +272,7 @@
    }
   },
   {
-   "t": 190.4,
+   "t": 157.2,
    "processes": 1,
    "working_set_mb": 49.6,
    "by_name": {
@@ -330,7 +280,7 @@
    }
   },
   {
-   "t": 195.5,
+   "t": 162.3,
    "processes": 1,
    "working_set_mb": 49.7,
    "by_name": {
@@ -338,15 +288,15 @@
    }
   },
   {
-   "t": 200.6,
+   "t": 167.4,
    "processes": 1,
-   "working_set_mb": 49.9,
+   "working_set_mb": 49.8,
    "by_name": {
     "python.exe": 1
    }
   },
   {
-   "t": 205.8,
+   "t": 172.5,
    "processes": 1,
    "working_set_mb": 50.0,
    "by_name": {
@@ -354,7 +304,15 @@
    }
   },
   {
-   "t": 211.0,
+   "t": 177.6,
+   "processes": 1,
+   "working_set_mb": 50.1,
+   "by_name": {
+    "python.exe": 1
+   }
+  },
+  {
+   "t": 182.8,
    "processes": 1,
    "working_set_mb": 50.2,
    "by_name": {
@@ -362,7 +320,7 @@
    }
   },
   {
-   "t": 216.1,
+   "t": 187.8,
    "processes": 1,
    "working_set_mb": 50.3,
    "by_name": {
@@ -370,15 +328,15 @@
    }
   },
   {
-   "t": 221.3,
+   "t": 192.9,
    "processes": 1,
-   "working_set_mb": 50.4,
+   "working_set_mb": 50.5,
    "by_name": {
     "python.exe": 1
    }
   },
   {
-   "t": 226.5,
+   "t": 198.0,
    "processes": 1,
    "working_set_mb": 50.6,
    "by_name": {
@@ -386,7 +344,7 @@
    }
   },
   {
-   "t": 231.6,
+   "t": 203.1,
    "processes": 1,
    "working_set_mb": 50.7,
    "by_name": {
@@ -394,7 +352,7 @@
    }
   },
   {
-   "t": 236.8,
+   "t": 208.2,
    "processes": 1,
    "working_set_mb": 50.8,
    "by_name": {
@@ -402,15 +360,7 @@
    }
   },
   {
-   "t": 242.1,
-   "processes": 1,
-   "working_set_mb": 50.9,
-   "by_name": {
-    "python.exe": 1
-   }
-  },
-  {
-   "t": 247.2,
+   "t": 213.3,
    "processes": 1,
    "working_set_mb": 51.0,
    "by_name": {
@@ -418,38 +368,65 @@
    }
   },
   {
-   "t": 252.5,
-   "processes": 11,
-   "working_set_mb": 286.7,
+   "t": 218.4,
+   "processes": 1,
+   "working_set_mb": 51.1,
    "by_name": {
-    "chrome.exe": 10,
     "python.exe": 1
    }
   },
   {
-   "t": 257.6,
-   "processes": 15,
-   "working_set_mb": 780.8,
+   "t": 223.5,
+   "processes": 1,
+   "working_set_mb": 51.2,
    "by_name": {
-    "chrome.exe": 13,
-    "node.exe": 1,
     "python.exe": 1
    }
   },
   {
-   "t": 262.8,
-   "processes": 15,
-   "working_set_mb": 802.0,
+   "t": 228.6,
+   "processes": 1,
+   "working_set_mb": 51.4,
    "by_name": {
-    "chrome.exe": 13,
-    "node.exe": 1,
     "python.exe": 1
    }
   },
   {
-   "t": 268.0,
+   "t": 233.7,
+   "processes": 1,
+   "working_set_mb": 51.6,
+   "by_name": {
+    "python.exe": 1
+   }
+  },
+  {
+   "t": 238.8,
+   "processes": 1,
+   "working_set_mb": 51.6,
+   "by_name": {
+    "python.exe": 1
+   }
+  },
+  {
+   "t": 243.9,
+   "processes": 1,
+   "working_set_mb": 51.7,
+   "by_name": {
+    "python.exe": 1
+   }
+  },
+  {
+   "t": 249.0,
+   "processes": 1,
+   "working_set_mb": 51.8,
+   "by_name": {
+    "python.exe": 1
+   }
+  },
+  {
+   "t": 254.2,
    "processes": 14,
-   "working_set_mb": 771.3,
+   "working_set_mb": 753.2,
    "by_name": {
     "chrome.exe": 12,
     "node.exe": 1,
@@ -457,19 +434,39 @@
    }
   },
   {
-   "t": 273.1,
-   "processes": 13,
-   "working_set_mb": 729.8,
+   "t": 259.4,
+   "processes": 15,
+   "working_set_mb": 812.0,
    "by_name": {
-    "chrome.exe": 11,
+    "chrome.exe": 13,
     "node.exe": 1,
     "python.exe": 1
    }
   },
   {
-   "t": 278.3,
+   "t": 264.6,
+   "processes": 15,
+   "working_set_mb": 820.8,
+   "by_name": {
+    "chrome.exe": 13,
+    "node.exe": 1,
+    "python.exe": 1
+   }
+  },
+  {
+   "t": 269.6,
+   "processes": 14,
+   "working_set_mb": 774.4,
+   "by_name": {
+    "chrome.exe": 12,
+    "node.exe": 1,
+    "python.exe": 1
+   }
+  },
+  {
+   "t": 274.8,
    "processes": 17,
-   "working_set_mb": 770.7,
+   "working_set_mb": 798.5,
    "by_name": {
     "chrome.exe": 11,
     "node.exe": 1,
@@ -478,179 +475,9 @@
    }
   },
   {
-   "t": 283.4,
-   "processes": 12,
-   "working_set_mb": 681.9,
-   "by_name": {
-    "chrome.exe": 10,
-    "node.exe": 1,
-    "python.exe": 1
-   }
-  },
-  {
-   "t": 288.5,
-   "processes": 12,
-   "working_set_mb": 680.9,
-   "by_name": {
-    "chrome.exe": 10,
-    "node.exe": 1,
-    "python.exe": 1
-   }
-  },
-  {
-   "t": 293.7,
-   "processes": 12,
-   "working_set_mb": 685.4,
-   "by_name": {
-    "chrome.exe": 10,
-    "node.exe": 1,
-    "python.exe": 1
-   }
-  },
-  {
-   "t": 298.9,
-   "processes": 12,
-   "working_set_mb": 691.1,
-   "by_name": {
-    "chrome.exe": 10,
-    "node.exe": 1,
-    "python.exe": 1
-   }
-  },
-  {
-   "t": 304.1,
-   "processes": 12,
-   "working_set_mb": 691.6,
-   "by_name": {
-    "chrome.exe": 10,
-    "node.exe": 1,
-    "python.exe": 1
-   }
-  },
-  {
-   "t": 309.4,
-   "processes": 12,
-   "working_set_mb": 692.8,
-   "by_name": {
-    "chrome.exe": 10,
-    "node.exe": 1,
-    "python.exe": 1
-   }
-  },
-  {
-   "t": 314.6,
-   "processes": 12,
-   "working_set_mb": 697.0,
-   "by_name": {
-    "chrome.exe": 10,
-    "node.exe": 1,
-    "python.exe": 1
-   }
-  },
-  {
-   "t": 319.8,
-   "processes": 12,
-   "working_set_mb": 697.0,
-   "by_name": {
-    "chrome.exe": 10,
-    "node.exe": 1,
-    "python.exe": 1
-   }
-  },
-  {
-   "t": 325.0,
-   "processes": 12,
-   "working_set_mb": 696.8,
-   "by_name": {
-    "chrome.exe": 10,
-    "node.exe": 1,
-    "python.exe": 1
-   }
-  },
-  {
-   "t": 330.3,
-   "processes": 12,
-   "working_set_mb": 769.2,
-   "by_name": {
-    "chrome.exe": 10,
-    "node.exe": 1,
-    "python.exe": 1
-   }
-  },
-  {
-   "t": 335.4,
-   "processes": 12,
-   "working_set_mb": 705.4,
-   "by_name": {
-    "chrome.exe": 10,
-    "node.exe": 1,
-    "python.exe": 1
-   }
-  },
-  {
-   "t": 340.6,
-   "processes": 12,
-   "working_set_mb": 705.7,
-   "by_name": {
-    "chrome.exe": 10,
-    "node.exe": 1,
-    "python.exe": 1
-   }
-  },
-  {
-   "t": 345.8,
-   "processes": 12,
-   "working_set_mb": 706.4,
-   "by_name": {
-    "chrome.exe": 10,
-    "node.exe": 1,
-    "python.exe": 1
-   }
-  },
-  {
-   "t": 350.9,
-   "processes": 12,
-   "working_set_mb": 896.9,
-   "by_name": {
-    "chrome.exe": 10,
-    "node.exe": 1,
-    "python.exe": 1
-   }
-  },
-  {
-   "t": 356.2,
-   "processes": 12,
-   "working_set_mb": 897.3,
-   "by_name": {
-    "chrome.exe": 10,
-    "node.exe": 1,
-    "python.exe": 1
-   }
-  },
-  {
-   "t": 361.4,
-   "processes": 12,
-   "working_set_mb": 829.0,
-   "by_name": {
-    "chrome.exe": 10,
-    "node.exe": 1,
-    "python.exe": 1
-   }
-  },
-  {
-   "t": 366.5,
-   "processes": 12,
-   "working_set_mb": 826.2,
-   "by_name": {
-    "chrome.exe": 10,
-    "node.exe": 1,
-    "python.exe": 1
-   }
-  },
-  {
-   "t": 371.7,
+   "t": 279.9,
    "processes": 13,
-   "working_set_mb": 905.8,
+   "working_set_mb": 738.7,
    "by_name": {
     "chrome.exe": 11,
     "node.exe": 1,
@@ -658,9 +485,9 @@
    }
   },
   {
-   "t": 376.9,
+   "t": 285.1,
    "processes": 12,
-   "working_set_mb": 680.8,
+   "working_set_mb": 697.2,
    "by_name": {
     "chrome.exe": 10,
     "node.exe": 1,
@@ -668,9 +495,9 @@
    }
   },
   {
-   "t": 382.1,
+   "t": 290.3,
    "processes": 12,
-   "working_set_mb": 715.4,
+   "working_set_mb": 695.4,
    "by_name": {
     "chrome.exe": 10,
     "node.exe": 1,
@@ -678,9 +505,9 @@
    }
   },
   {
-   "t": 387.3,
+   "t": 295.4,
    "processes": 12,
-   "working_set_mb": 700.1,
+   "working_set_mb": 694.7,
    "by_name": {
     "chrome.exe": 10,
     "node.exe": 1,
@@ -688,9 +515,9 @@
    }
   },
   {
-   "t": 392.4,
+   "t": 300.6,
    "processes": 12,
-   "working_set_mb": 651.7,
+   "working_set_mb": 694.4,
    "by_name": {
     "chrome.exe": 10,
     "node.exe": 1,
@@ -698,9 +525,179 @@
    }
   },
   {
-   "t": 397.6,
+   "t": 305.7,
+   "processes": 12,
+   "working_set_mb": 696.4,
+   "by_name": {
+    "chrome.exe": 10,
+    "node.exe": 1,
+    "python.exe": 1
+   }
+  },
+  {
+   "t": 310.8,
+   "processes": 12,
+   "working_set_mb": 698.7,
+   "by_name": {
+    "chrome.exe": 10,
+    "node.exe": 1,
+    "python.exe": 1
+   }
+  },
+  {
+   "t": 315.9,
+   "processes": 12,
+   "working_set_mb": 703.0,
+   "by_name": {
+    "chrome.exe": 10,
+    "node.exe": 1,
+    "python.exe": 1
+   }
+  },
+  {
+   "t": 321.0,
+   "processes": 12,
+   "working_set_mb": 701.7,
+   "by_name": {
+    "chrome.exe": 10,
+    "node.exe": 1,
+    "python.exe": 1
+   }
+  },
+  {
+   "t": 326.1,
+   "processes": 12,
+   "working_set_mb": 707.8,
+   "by_name": {
+    "chrome.exe": 10,
+    "node.exe": 1,
+    "python.exe": 1
+   }
+  },
+  {
+   "t": 331.2,
+   "processes": 12,
+   "working_set_mb": 765.8,
+   "by_name": {
+    "chrome.exe": 10,
+    "node.exe": 1,
+    "python.exe": 1
+   }
+  },
+  {
+   "t": 336.2,
+   "processes": 13,
+   "working_set_mb": 720.8,
+   "by_name": {
+    "chrome.exe": 11,
+    "node.exe": 1,
+    "python.exe": 1
+   }
+  },
+  {
+   "t": 341.2,
+   "processes": 12,
+   "working_set_mb": 702.1,
+   "by_name": {
+    "chrome.exe": 10,
+    "node.exe": 1,
+    "python.exe": 1
+   }
+  },
+  {
+   "t": 346.3,
+   "processes": 13,
+   "working_set_mb": 1010.7,
+   "by_name": {
+    "chrome.exe": 11,
+    "node.exe": 1,
+    "python.exe": 1
+   }
+  },
+  {
+   "t": 351.4,
+   "processes": 12,
+   "working_set_mb": 892.0,
+   "by_name": {
+    "chrome.exe": 10,
+    "node.exe": 1,
+    "python.exe": 1
+   }
+  },
+  {
+   "t": 356.5,
+   "processes": 13,
+   "working_set_mb": 1140.2,
+   "by_name": {
+    "chrome.exe": 11,
+    "node.exe": 1,
+    "python.exe": 1
+   }
+  },
+  {
+   "t": 361.6,
+   "processes": 12,
+   "working_set_mb": 819.2,
+   "by_name": {
+    "chrome.exe": 10,
+    "node.exe": 1,
+    "python.exe": 1
+   }
+  },
+  {
+   "t": 366.9,
+   "processes": 12,
+   "working_set_mb": 819.3,
+   "by_name": {
+    "chrome.exe": 10,
+    "node.exe": 1,
+    "python.exe": 1
+   }
+  },
+  {
+   "t": 372.0,
+   "processes": 13,
+   "working_set_mb": 894.5,
+   "by_name": {
+    "chrome.exe": 11,
+    "node.exe": 1,
+    "python.exe": 1
+   }
+  },
+  {
+   "t": 377.0,
+   "processes": 12,
+   "working_set_mb": 670.1,
+   "by_name": {
+    "chrome.exe": 10,
+    "node.exe": 1,
+    "python.exe": 1
+   }
+  },
+  {
+   "t": 382.0,
+   "processes": 12,
+   "working_set_mb": 706.8,
+   "by_name": {
+    "chrome.exe": 10,
+    "node.exe": 1,
+    "python.exe": 1
+   }
+  },
+  {
+   "t": 387.0,
+   "processes": 12,
+   "working_set_mb": 704.1,
+   "by_name": {
+    "chrome.exe": 10,
+    "node.exe": 1,
+    "python.exe": 1
+   }
+  },
+  {
+   "t": 392.0,
    "processes": 11,
-   "working_set_mb": 609.8,
+   "working_set_mb": 613.1,
    "by_name": {
     "chrome.exe": 9,
     "node.exe": 1,
@@ -708,9 +705,9 @@
    }
   },
   {
-   "t": 402.7,
+   "t": 397.0,
    "processes": 11,
-   "working_set_mb": 606.6,
+   "working_set_mb": 616.6,
    "by_name": {
     "chrome.exe": 9,
     "node.exe": 1,
@@ -718,9 +715,19 @@
    }
   },
   {
-   "t": 407.8,
+   "t": 401.9,
+   "processes": 11,
+   "working_set_mb": 612.4,
+   "by_name": {
+    "chrome.exe": 9,
+    "node.exe": 1,
+    "python.exe": 1
+   }
+  },
+  {
+   "t": 407.0,
    "processes": 12,
-   "working_set_mb": 671.1,
+   "working_set_mb": 676.7,
    "by_name": {
     "chrome.exe": 10,
     "node.exe": 1,
@@ -728,9 +735,9 @@
    }
   },
   {
-   "t": 413.0,
+   "t": 412.0,
    "processes": 13,
-   "working_set_mb": 731.3,
+   "working_set_mb": 739.4,
    "by_name": {
     "chrome.exe": 11,
     "node.exe": 1,
@@ -738,9 +745,9 @@
    }
   },
   {
-   "t": 418.1,
+   "t": 417.0,
    "processes": 13,
-   "working_set_mb": 719.4,
+   "working_set_mb": 746.7,
    "by_name": {
     "chrome.exe": 11,
     "node.exe": 1,
@@ -748,9 +755,9 @@
    }
   },
   {
-   "t": 423.2,
+   "t": 422.3,
    "processes": 13,
-   "working_set_mb": 751.8,
+   "working_set_mb": 754.2,
    "by_name": {
     "chrome.exe": 11,
     "node.exe": 1,
@@ -758,9 +765,9 @@
    }
   },
   {
-   "t": 428.2,
+   "t": 427.3,
    "processes": 13,
-   "working_set_mb": 749.4,
+   "working_set_mb": 750.3,
    "by_name": {
     "chrome.exe": 11,
     "node.exe": 1,
@@ -768,9 +775,9 @@
    }
   },
   {
-   "t": 433.4,
+   "t": 432.3,
    "processes": 15,
-   "working_set_mb": 943.0,
+   "working_set_mb": 1003.9,
    "by_name": {
     "chrome.exe": 13,
     "node.exe": 1,
@@ -778,9 +785,9 @@
    }
   },
   {
-   "t": 438.5,
+   "t": 437.3,
    "processes": 13,
-   "working_set_mb": 752.9,
+   "working_set_mb": 754.5,
    "by_name": {
     "chrome.exe": 11,
     "node.exe": 1,
@@ -788,15 +795,15 @@
    }
   },
   {
-   "t": 443.6,
+   "t": 442.4,
    "processes": 1,
-   "working_set_mb": 51.4,
+   "working_set_mb": 124.4,
    "by_name": {
     "python.exe": 1
    }
   }
  ],
- "when": "2026-10-10T08:02:09+00:00",
+ "when": "2026-10-10T09:10:38+00:00",
  "platform": "win32",
  "note": "working set counts shared pages once per process: an upper bound of the footprint, not private memory; the wrapper process and PowerShell sampler are not in the tree"
 }

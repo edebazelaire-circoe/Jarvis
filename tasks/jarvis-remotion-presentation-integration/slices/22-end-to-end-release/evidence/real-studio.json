@@ -1,19 +1,19 @@
 {
   "verdict": "PASSED",
   "notes": {
-    "started": "2026-10-10T08:10:55+00:00",
+    "started": "2026-10-10T09:14:49+00:00",
     "platform": "Windows-11-10.0.26200-SP0",
-    "free_gb": 14.2,
+    "free_gb": 13.8,
     "python": "3.14.6",
     "node": "v24.18.0",
     "chrome": "154.0.8037.99",
-    "head": "13515334",
+    "head": "b667b25b",
     "dirty": true,
-    "core": "127.77.0.9:55217 (isolated), data root <home>\\AppData\\Local\\Temp\\jrs22s\\root",
+    "core": "127.77.0.9:57663 (isolated), data root <home>\\AppData\\Local\\Temp\\jrs22s\\root",
     "studio_processes": [
       {
-        "pid": 22692,
-        "ppid": 21904
+        "pid": 14692,
+        "ppid": 31740
       }
     ],
     "leftover_processes_killed": 0,
@@ -28,7 +28,7 @@
       "ok": true,
       "detail": {
         "status": "ready",
-        "seconds": 32.4,
+        "seconds": 26.4,
         "error": null
       }
     },
@@ -43,8 +43,8 @@
     "3.open_ready": {
       "ok": true,
       "detail": {
-        "seconds": 48.7,
-        "url": "http://127.0.0.1:57201/",
+        "seconds": 65.3,
+        "url": "http://127.0.0.1:58530/",
         "error": null,
         "log": []
       }
@@ -52,14 +52,14 @@
     "3.studio_processes_found": {
       "ok": true,
       "detail": [
-        22692
+        14692
       ]
     },
     "4.listens_on_loopback_only": {
       "ok": true,
       "detail": [
-        "127.0.0.1:57201",
-        "127.0.0.1:62186"
+        "127.0.0.1:53860",
+        "127.0.0.1:58530"
       ]
     },
     "4.lan_address_refuses_the_studio_port": {
@@ -80,8 +80,8 @@
     "5.hmr_updates_open_page_without_reload": {
       "ok": true,
       "detail": {
-        "sync_call_s": 0.15,
-        "visible_after_s": 0.94
+        "sync_call_s": 0.14,
+        "visible_after_s": 0.93
       }
     },
     "5.sync_view_counts_the_refresh": {
@@ -114,11 +114,11 @@
         },
         "dummy_hits": 0,
         "csp_violations": [
-          "connect-src http://127.0.0.1:61957/api/local-capabilities/remotion/studio/close",
-          "connect-src http://127.0.0.1:61957/api/live/stop",
-          "connect-src http://127.0.0.1:61957/api/status",
-          "connect-src http://127.0.0.1:55674/dev-reload",
-          "connect-src ws://127.0.0.1:61957/"
+          "connect-src http://127.0.0.1:51072/api/local-capabilities/remotion/studio/close",
+          "connect-src http://127.0.0.1:51072/api/live/stop",
+          "connect-src http://127.0.0.1:51072/api/status",
+          "connect-src http://127.0.0.1:51079/dev-reload",
+          "connect-src ws://127.0.0.1:51072/"
         ]
       }
     },
@@ -172,7 +172,7 @@
       "detail": {
         "old_gone": true,
         "new": [
-          12248
+          24416
         ]
       }
     },
@@ -221,7 +221,7 @@
     "10.ui_shows_progress_elapsed_time_and_deadline_while_starting": {
       "ok": true,
       "detail": {
-        "samples": 9,
+        "samples": 7,
         "first": [
           {
             "chip": "Démarrage…",
@@ -232,7 +232,7 @@
         ],
         "last": {
           "chip": "Prêt",
-          "act": "127.0.0.1:59643 · aucune fenêtre ouverte · arrêt automatique dans 59 s",
+          "act": "127.0.0.1:49910 · aucune fenêtre ouverte · arrêt automatique dans 1 min",
           "busy": "",
           "open": false
         }
@@ -241,14 +241,14 @@
     "10.ui_ready_state_links_the_loopback_studio": {
       "ok": true,
       "detail": {
-        "link": "http://127.0.0.1:59643/"
+        "link": "http://127.0.0.1:49910/"
       }
     },
     "10.ui_link_opens_the_studio_in_a_separate_window": {
       "ok": true,
       "detail": [
-        "http://127.0.0.1:59643/Scene",
-        "http://127.0.0.1:61957/"
+        "http://127.0.0.1:49910/Scene",
+        "http://127.0.0.1:51072/"
       ]
     },
     "10.ui_counters_tick_without_rebuilding_the_card_or_the_live_region": {
@@ -292,5 +292,5 @@
       "detail": []
     }
   },
-  "finished": "2026-10-10T08:15:40+00:00"
+  "finished": "2026-10-10T09:19:13+00:00"
 }

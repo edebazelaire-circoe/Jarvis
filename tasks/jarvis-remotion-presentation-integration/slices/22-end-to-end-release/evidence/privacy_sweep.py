@@ -127,7 +127,7 @@ def fix(root: Path = TASK) -> int:
     rules = rewrite_rules()
     changed = 0
     texts, _ = text_files(root)
-    for path in texts + (extra_files() if root == TASK else []):
+    for path in texts:  # le --fix ne touche que le dossier du handoff : les fichiers hors dossier sont du code, à corriger à la main
         raw = path.read_bytes()
         try:
             text = raw.decode("utf-8")

@@ -3,7 +3,10 @@
     {
       "id": "HV-19-01",
       "instruction": "Test explicit promotion and upgrade comparison under a realistic working deck.",
-      "requires_evidence_first": true
+      "requires_evidence_first": true,
+      "status": "open",
+      "order": 9,
+      "evidence": "docs/remotion-integration-release.md#human-checks"
     }
   ]
 }

@@ -2,27 +2,27 @@
  "steps": [
   {
    "step": "1_assemble_a_deck_with_the_real_compiler",
-   "seconds": 0.52
+   "seconds": 0.57
   },
   {
    "step": "2_start_the_run",
-   "seconds": 0.03
+   "seconds": 0.04
   },
   {
    "step": "3_props_edit_while_playing",
-   "seconds": 0.05
+   "seconds": 0.06
   },
   {
    "step": "4a_source_edit_good_build_and_repin",
-   "seconds": 0.64
+   "seconds": 0.7
   },
   {
    "step": "4b_source_edit_broken_is_refused",
-   "seconds": 0.15
+   "seconds": 0.17
   },
   {
    "step": "5_export_mp4",
-   "seconds": 32.93
+   "seconds": 32.42
   },
   {
    "step": "5_export_still",
@@ -30,19 +30,19 @@
   },
   {
    "step": "5_export_pdf",
-   "seconds": 7.21
+   "seconds": 7.22
   },
   {
    "step": "6_import_template_with_provenance",
-   "seconds": 0.37
+   "seconds": 0.14
   },
   {
    "step": "7a_scene_promotion_plan_writes_nothing",
-   "seconds": 0.02
+   "seconds": 0.03
   },
   {
    "step": "7b_scene_promotion_to_the_library",
-   "seconds": 0.08
+   "seconds": 0.07
   },
   {
    "step": "7c_presentation_promotion_one_artefact",

@@ -102,8 +102,8 @@ edit is built before it is published, a broken one is refused (`presentation_stu
 the previous source is restored byte for byte; the frozen snapshot is exported as MP4, still image and PDF by the real runner (each checked against its
 payload hash, with Chrome's sandbox on); an upstream template is imported (scoped to the deck, provenance recorded) and compiles; a scene is promoted to
 the library and a whole presentation as one artefact with nothing added to the shared library; a newer version of a pinned prefab is noticed and tried
-in a child variant while the original file stays byte-identical. Measured steps (`evidence/release-journey.json`): assemble 0.5 s, source edit 0.6 s,
-broken edit refused 0.15 s, MP4 33 s (first render, includes bundling), still 7 s, PDF 7 s, import 0.4 s, promotions under 0.1 s.
+in a child variant while the original file stays byte-identical. Measured steps (`evidence/release-journey.json`): assemble 0.6 s, source edit 0.7 s,
+broken edit refused 0.17 s, MP4 32 s (first render, includes bundling), still 7 s, PDF 7 s, import 0.14 s, promotions under 0.1 s.
 
 Together with `test_presentation_studio_release_flows.py` / `_release_faults.py` / `_release_gate.py` (the Studio journeys, which already run on
 Remotion drafts since Slice 15), the journey proves one-shot authoring, play with cues, live edit, source edit with rollback, freeze, export,
@@ -155,7 +155,7 @@ All under `tasks/jarvis-remotion-presentation-integration/slices/22-end-to-end-r
 | --- | --- | --- |
 | `real-install.json`, `perf-*.json` | `scripts/remotion_install_harness.py`, `scripts/remotion_perf_wrap.py` | install time and size; RAM and process count of each run |
 | `real-isolation.json` | `scripts/remotion_isolation_harness.py` | 44 checks PASSED: hostile corpus x (direct, evasive), channel counts at the sinks, negative controls and ablations |
-| `real-render-happy.json`, `real-render-faults.json`, `real-render-hostile.json`, `real-render-sandbox.json` | `scripts/remotion_render_harness.py` | MP4/still/PDF verified by ffprobe, cancel/kill/Core death/two Cores, refusals, bounds, hostile egress, Chrome sandbox probe |
+| `real-render-happy.json`, `real-render-faults.json`, `real-render-hostile.json` | `scripts/remotion_render_harness.py` | MP4/still/PDF verified by ffprobe, cancel/kill/Core death/two Cores, refusals, bounds, hostile egress, Chrome sandbox probe |
 | `real-studio.json`, `real-studio-late.json` | `scripts/remotion_studio_harness.py` | 39 + 10 checks: real `remotion studio`, guard, HMR, UI card, crash, idle, adoption |
 | `player/`, `edit/`, `controls/`, `timeline/` | `scripts/remotion_player_harness.py` | Player scenarios (7), source-edit swap latency, controls, timeline bridge |
 | `migration.json` | `scripts/remotion_migration_probe.py` | pre-task roots v7 and v8, Core startup, `.bak`, legacy play, old-build behaviour (23 checks) |
@@ -229,28 +229,28 @@ the numbers show the order of magnitude on this machine, not a benchmark.
 
 | Measure | Result | Documented bound |
 | --- | --- | --- |
-| Install, once (fresh `npm ci --ignore-scripts`, 297 locked packages) | 36.8 s (earlier runs 17.6 to 43 s); a second install 0 s | "about 270 MB", "1.5 GB free" required |
+| Install, once (fresh `npm ci --ignore-scripts`, 297 locked packages) | 36.8 s in the install harness; 24 to 53 s in the four other fresh installs of this Slice's runs (earlier Slices: 17.6 to 43 s); a second install 0 s | "about 270 MB", "1.5 GB free" required |
 | Disk of the runtime | 258 MB in 15 299 files (`node_modules` 204 MB, npm cache 53 MB) | about 270 MB |
-| Player cold start, Core side (compile `host.js` + `scene.js`, empty cache) | 0.8 and 1.5 s (two runs) | scene compile limit 60 s, host 120 s |
-| Player warm (cache hit) | 0.035 s | - |
-| Props edit round trip while playing (`playback/edit`, `control.set`) | median 0.06 s (n=5, max 0.07) | - |
-| Source edit, warm (build `scene.js`, publish, repin) | median 0.69 to 0.77 s (n=5 per run, max 0.79) | 60 s compile, 75 s wait behind another edit |
+| Player cold start, Core side (compile `host.js` + `scene.js`, empty cache) | 0.77 s (three runs: 0.76, 0.77, 1.47) | scene compile limit 60 s, host 120 s |
+| Player warm (cache hit) | 0.03 s | - |
+| Props edit round trip while playing (`playback/edit`, `control.set`) | median 0.04 to 0.06 s (n=5 per run, max 0.07) | - |
+| Source edit, warm (build `scene.js`, publish, repin) | median 0.65 to 0.77 s (n=5 per run, max 0.79) | 60 s compile, 75 s wait behind another edit |
 | Source edit to new pixels in a real page (frame swap, no page reload) | 0.18 to 0.44 s (`edit/source_edit_hmr.json`) | - |
-| Studio cold start (`remotion studio` ready) | 48.7 s (30 to 50 s documented) | 120 s start timeout |
-| Studio HMR after a scene sync | sync call 0.15 s, visible 0.94 s | - |
-| Render MP4 (60 frames 720p h264, 2 s) | 13.1 s alone; 33 s as the first render of a cold journey | job limit 600 s |
-| Render still / PDF (3 pages) | 9.2 s / 9.9 s alone; 7 s each in the journey | - |
-| Peak RAM and processes, render (Core-less runner, Chrome + ffmpeg + node) | 1 375 MB, 15 processes | one render at a time (concurrency 1, at most 2) |
-| Peak RAM and processes, Core + Studio (no browser of ours) | 1 033 MB, 9 processes | - |
-| Peak RAM and processes, Studio harness with a Chrome for the card | 2 243 MB, 31 processes (36 on the first run) | - |
-| Peak RAM, isolation harness (Chrome, hostile corpus) | 1 190 MB, 17 processes | Chrome heap cap 512 MB per probe |
-| Peak RAM, release journey (Core, compiler, renders) | 1 261 MB, 18 processes | - |
+| Studio cold start (`remotion studio` ready) | 48.7 s and 65.3 s (two runs; 30 to 50 s documented, so the upper end is exceeded under load) | 120 s start timeout |
+| Studio HMR after a scene sync | sync call 0.14 s, visible 0.93 s | - |
+| Render MP4 (60 frames 720p h264, 2 s) | 12.6 s alone; 32 s as the first render of a cold journey | job limit 600 s |
+| Render still / PDF (3 pages) | 7.3 s / 8.1 s alone; 7.2 s each in the journey | - |
+| Peak RAM and processes, render (Core-less runner, Chrome + ffmpeg + node) | 1 355 MB, 15 processes | one render at a time (concurrency 1, at most 2) |
+| Peak RAM and processes, Core + Studio (no browser of ours) | 951 MB, 8 processes | - |
+| Peak RAM and processes, Studio harness with a Chrome for the card | 2 235 MB, 31 processes | - |
+| Peak RAM, isolation harness (Chrome, hostile corpus) | 1 140 MB, 17 processes | Chrome heap cap 512 MB per probe |
+| Peak RAM, release journey (Core, compiler, renders) | 1 312 MB, 18 processes | - |
 | Output sizes of the test scene | MP4 24.7 KB, PNG 26 KB, PDF 54 KB | MP4/still/PDF bounds in `remotion-render.md` |
 | Compile cache / data root after the journey | `compiled/` 570 KB (the shared host bundle is 567 KB), `runtime/` small files 149 KB | cache prune at 64 entries or 1 GiB |
 | Render job folders | cleaned at the end (a few KB of `job.json`, `render.log`, `result.json`, `egress.json` stay) | retention 20 renders per snapshot |
 | Studio work copy | the scene's `src/` and `public/` only; the webpack cache is erased at each launch; at most 5 saved-edit folders | `MAX_SAVED_EDITS` 5 |
 
-Reading: nothing exceeded a documented bound. The cold render is dominated by bundling and the browser start. The Studio's 49 s cold start is the largest
+Reading: nothing exceeded a documented limit (timeouts, caps); one expectation was exceeded once (the Studio cold start, 65 s against the 30 to 50 s the docs expect, limit 120 s). The cold render is dominated by bundling and the browser start. The Studio's 49 to 65 s cold start is the largest
 wait a person sees; the card shows a live counter and a way out. Peak figures include the harness's own Chrome where noted.
 
 ## Migration and rollback
@@ -326,7 +326,7 @@ Consolidated from the Slices; none waived, none repaid by this one.
    asset has only the repository's licence.
 8. **Rollback** is partial after any save, freeze or export (above); variants keep no `.bak`.
 9. **Platforms**: Windows 11 and Chrome 154 only; macOS and Linux never run; Edge never exercised for renders.
-10. **Memory and disk**: working sets of 1 to 2.2 GB during a render or a Studio run on a 16 GB machine with 4.5 GB free; a render wants 1.5 GB free.
+10. **Memory and disk**: working sets of 1 to 2.2 GB (Studio with a browser) during a render or a Studio run on a 16 GB machine with 4.5 GB free; a render wants 1.5 GB free.
 11. **Quality is a person's judgement**: a first draft passes a gate floor (64 rules), real-model traces show 1 gate round per scenario, but whether a
     deck is presentable is `H-12`; the reduced-motion preference is not judged for Remotion scenes.
 12. **Remotion's licence is unexamined** (below).

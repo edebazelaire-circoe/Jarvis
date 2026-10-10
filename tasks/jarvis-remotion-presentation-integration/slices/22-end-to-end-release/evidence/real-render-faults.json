@@ -1,18 +1,18 @@
 {
   "verdict": "PASSED",
-  "head": "b67322bd163681ca38441d7cb043fe514e6e70eb",
-  "tree_dirty": true,
+  "head": "b667b25b800d4c7d87219744079c0d80fe83e17e",
+  "tree_dirty": false,
   "platform": "Windows-11-10.0.26200-SP0",
   "node": "v24.18.0",
   "chrome": null,
   "remotion": "4.0.534",
-  "elapsed_s": 70.4,
+  "elapsed_s": 62.8,
   "timings": {
     "cancel_to_stopped_s": 1.3
   },
   "disk": {
-    "free_before_mb": 13844,
-    "free_after_mb": 13845
+    "free_before_mb": 12768,
+    "free_after_mb": 12763
   },
   "facts": {
     "reconcile_report": {
@@ -68,13 +68,13 @@
     {
       "check": "restart: a render is running in a separate Core-like process",
       "ok": true,
-      "job": "rj_57cd6731d6a8"
+      "job": "rj_a70f9c4323fe"
     },
     {
       "check": "restart: the 'Core' is dead and its render process is still alive (an orphan)",
       "ok": true,
-      "ref": "23648:134360922783113120",
-      "progress": "{\"phase\":\"rendering\",\"frames_done\":7,\"frames_total\":90,\"updated_ms\":1791618687161,\"bundle_percent\":100,\"encoded_frames\":0}",
+      "ref": "2644:134360964513281725",
+      "progress": "{\"phase\":\"rendering\",\"frames_done\":7,\"frames_total\":90,\"updated_ms\":1791622858674,\"bundle_percent\":100,\"encoded_frames\":0}",
       "result_written": false
     },
     {
@@ -175,7 +175,7 @@
       "stale": true,
       "renders": [
         {
-          "artifact_id": "jart_232a151c187546a897747b34bb39eed3",
+          "artifact_id": "jart_d573776ade534703b7d278ebf40902fe",
           "kind": "presentation_still",
           "state": "complete",
           "format": "still",
@@ -228,11 +228,11 @@
         "two_cores",
         "refusals"
       ],
-      "head": "b67322bd163681ca38441d7cb043fe514e6e70eb",
-      "tree_dirty": true,
-      "elapsed_s": 70.4,
-      "disk_free_before_mb": 13844,
-      "disk_free_after_mb": 13845
+      "head": "b667b25b800d4c7d87219744079c0d80fe83e17e",
+      "tree_dirty": false,
+      "elapsed_s": 62.8,
+      "disk_free_before_mb": 12768,
+      "disk_free_after_mb": 12763
     }
   ]
 }

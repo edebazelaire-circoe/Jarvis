@@ -3,7 +3,10 @@
     {
       "id": "HV-15-01",
       "instruction": "Review subjective DA/first-draft quality and narration effectiveness.",
-      "requires_evidence_first": true
+      "requires_evidence_first": true,
+      "status": "open",
+      "order": 8,
+      "evidence": "docs/remotion-integration-release.md#human-checks"
     }
   ]
 }

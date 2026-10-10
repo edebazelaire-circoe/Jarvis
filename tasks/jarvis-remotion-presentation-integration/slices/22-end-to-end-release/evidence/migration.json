@@ -1,6 +1,6 @@
 {
- "head": "13515334f7446aa54de14e7ce9aa4cfa5cba14c8",
- "when": "2026-10-10T08:27:50+00:00",
+ "head": "b667b25b800d4c7d87219744079c0d80fe83e17e",
+ "when": "2026-10-10T09:02:49+00:00",
  "old_build": "de7b9c59",
  "roots": {
   "v7": {
@@ -90,7 +90,7 @@
      "code": "presentation_studio_engine_unavailable"
     },
     "clean_stop": true,
-    "core_log_tail": "Jarvis Core v0.2 ready on http://127.77.0.9:54365\n"
+    "core_log_tail": "Jarvis Core v0.2 ready on http://127.77.0.9:52562\n"
    },
    "state_version_after": 8,
    "scene_version_after": 1,
@@ -130,7 +130,7 @@
    "presentation_files_changed": [],
    "presentation_files_added": [],
    "new_documents_created_by_the_probe": [
-    "pst_af6d461e63053f9fb4db6ca26ff2f888"
+    "pst_9c37180e7fc65abf90c71bf94715d595"
    ],
    "prefab_files_changed": []
   },
@@ -222,7 +222,7 @@
      "code": "presentation_studio_engine_unavailable"
     },
     "clean_stop": true,
-    "core_log_tail": "Jarvis Core v0.2 ready on http://127.77.0.9:51680\n"
+    "core_log_tail": "Jarvis Core v0.2 ready on http://127.77.0.9:55042\n"
    },
    "state_version_after": 8,
    "scene_version_after": 1,
@@ -260,7 +260,7 @@
    "presentation_files_changed": [],
    "presentation_files_added": [],
    "new_documents_created_by_the_probe": [
-    "pst_092bbcc0835aaaf81e074bf9dc04d555"
+    "pst_01a6168b3f442839d07b2ef29bd762d5"
    ],
    "prefab_files_changed": []
   }
@@ -322,7 +322,7 @@
      "code": "presentation_studio_engine_unavailable"
     },
     "clean_stop": true,
-    "core_log_tail": "Jarvis Core v0.2 ready on http://127.77.0.9:54365\n"
+    "core_log_tail": "Jarvis Core v0.2 ready on http://127.77.0.9:52562\n"
    }
   },
   "v7: state database is at schema 8 after start": {
@@ -418,7 +418,7 @@
       "code": "presentation_studio_engine_unavailable"
      },
      "clean_stop": true,
-     "core_log_tail": "Jarvis Core v0.2 ready on http://127.77.0.9:54365\n"
+     "core_log_tail": "Jarvis Core v0.2 ready on http://127.77.0.9:52562\n"
     },
     "state_version_after": 8,
     "scene_version_after": 1,
@@ -458,7 +458,7 @@
     "presentation_files_changed": [],
     "presentation_files_added": [],
     "new_documents_created_by_the_probe": [
-     "pst_af6d461e63053f9fb4db6ca26ff2f888"
+     "pst_9c37180e7fc65abf90c71bf94715d595"
     ],
     "prefab_files_changed": []
    }
@@ -593,7 +593,7 @@
      "code": "presentation_studio_engine_unavailable"
     },
     "clean_stop": true,
-    "core_log_tail": "Jarvis Core v0.2 ready on http://127.77.0.9:51680\n"
+    "core_log_tail": "Jarvis Core v0.2 ready on http://127.77.0.9:55042\n"
    }
   },
   "v8: state database is at schema 8 after start": {
@@ -690,7 +690,7 @@
       "code": "presentation_studio_engine_unavailable"
      },
      "clean_stop": true,
-     "core_log_tail": "Jarvis Core v0.2 ready on http://127.77.0.9:51680\n"
+     "core_log_tail": "Jarvis Core v0.2 ready on http://127.77.0.9:55042\n"
     },
     "state_version_after": 8,
     "scene_version_after": 1,
@@ -728,7 +728,7 @@
     "presentation_files_changed": [],
     "presentation_files_added": [],
     "new_documents_created_by_the_probe": [
-     "pst_092bbcc0835aaaf81e074bf9dc04d555"
+     "pst_01a6168b3f442839d07b2ef29bd762d5"
     ],
     "prefab_files_changed": []
    }
@@ -830,7 +830,7 @@
    },
    "state": {
     "open": "ok",
-    "query_artifacts": "ArtifactStoreError: artifacts row 'jart_c8733ef41c094f7caf9a9bb2864152d7' is unreadable: ArtifactError: kind is not a ArtifactKind: 'presentation_snapshot'"
+    "query_artifacts": "ArtifactStoreError: artifacts row 'jart_c60315dff4fc4a1d8908ace9784b49b9' is unreadable: ArtifactError: kind is not a ArtifactKind: 'presentation_pdf'"
    }
   }
  },
@@ -842,7 +842,7 @@
   "untouched_documents_still_read_by_the_old_build": true,
   "old_build_on_a_database_with_the_new_artifact_kinds": {
    "open": "ok",
-   "query_artifacts": "ArtifactStoreError: artifacts row 'jart_c8733ef41c094f7caf9a9bb2864152d7' is unreadable: ArtifactError: kind is not a ArtifactKind: 'presentation_snapshot'"
+   "query_artifacts": "ArtifactStoreError: artifacts row 'jart_c60315dff4fc4a1d8908ace9784b49b9' is unreadable: ArtifactError: kind is not a ArtifactKind: 'presentation_pdf'"
   }
  },
  "verdict": "PASSED"

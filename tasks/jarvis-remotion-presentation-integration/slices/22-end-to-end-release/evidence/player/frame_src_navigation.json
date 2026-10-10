@@ -4,7 +4,7 @@
   "sink_requests": [
     "/"
   ],
-  "stage_policy": "frame-src http://127.77.0.2:53160",
+  "stage_policy": "frame-src http://127.77.0.2:57422",
   "reads": {
     "until:!!document.querySelector('iframe[data-remotion-stage]') && !!document.querySelec": true,
     "state": {
@@ -15,10 +15,10 @@
       "ready": true,
       "killed": true,
       "reason": "unresponsive",
-      "startedAt": 1791619394324,
-      "pending": "bc422a3a8b612a8120e7523e0138ea8c",
-      "pendingSince": 1791619394584,
-      "lastPingAt": 1791619394584,
+      "startedAt": 1791623495605,
+      "pending": "cd848757cd12017b13268979fae15506",
+      "pendingSince": 1791623495867,
+      "lastPingAt": 1791623495867,
       "lastFrame": -1,
       "violations": 4,
       "accepted": 1,
@@ -27,7 +27,7 @@
       },
       "foreign": 0,
       "reports": [],
-      "windowStart": 1791619394324,
+      "windowStart": 1791623495605,
       "windowCount": 5,
       "pongs": 0,
       "childDropped": 0,
@@ -41,6 +41,6 @@
       "clockWindow": [],
       "lastClock": null
     },
-    "sink": "http://127.0.0.3:55027"
+    "sink": "http://127.0.0.3:57419"
   }
 }

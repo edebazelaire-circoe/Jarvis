@@ -7,13 +7,13 @@
   "reads": {
     "until:!!document.querySelector('iframe[data-remotion-stage]') && !!document.querySelec": true,
     "title": "Premier",
-    "frame_a": 35,
-    "frame_b": 62,
+    "frame_a": 29,
+    "frame_b": 56,
     "shell": {
       "phase": "ready",
       "mounted": true,
       "playing": true,
-      "frame": 61,
+      "frame": 49,
       "duration": 90,
       "killedReason": null,
       "generation": 1,
@@ -24,19 +24,19 @@
         "ready": true,
         "killed": false,
         "reason": null,
-        "startedAt": 1791619343802,
+        "startedAt": 1791623447385,
         "pending": null,
-        "pendingSince": 1791619346067,
-        "lastPingAt": 1791619346067,
-        "lastFrame": 61,
+        "pendingSince": 1791623448888,
+        "lastPingAt": 1791623448888,
+        "lastFrame": 32,
         "violations": 0,
-        "accepted": 13,
+        "accepted": 12,
         "refused": {},
         "foreign": 0,
         "reports": [],
-        "windowStart": 1791619346068,
+        "windowStart": 1791623449456,
         "windowCount": 1,
-        "pongs": 3,
+        "pongs": 2,
         "childDropped": 0,
         "lastHeapMb": 5,
         "muted": true,
@@ -46,19 +46,19 @@
         "clocks": 9,
         "clockDropped": 0,
         "clockWindow": [
-          1791619345037,
-          1791619345303,
-          1791619345571,
-          1791619345836
+          1791623448655,
+          1791623448923,
+          1791623449189,
+          1791623449456
         ],
         "lastClock": {
-          "frame": 55,
+          "frame": 49,
           "playing": true
         }
       }
     },
     "isolation": {
-      "href": "http://127.77.0.2:56747/",
+      "href": "http://127.77.0.2:56430/",
       "parent": "SecurityError",
       "storage": "SecurityError",
       "origin": "null"
@@ -73,7 +73,7 @@
         "state": {
           "phase": "paused",
           "running": true,
-          "run_id": "c9e3e526af47",
+          "run_id": "fb81dd0b1cbd",
           "role": "user_presenter",
           "jarvis_speaks": false,
           "position": {
@@ -100,10 +100,10 @@
           "silence": false,
           "revealed": [],
           "elapsed": {
-            "item_ms": 8303,
+            "item_ms": 4825,
             "item_target_ms": null,
             "item_over_target": false,
-            "run_ms": 8303,
+            "run_ms": 4825,
             "run_estimated_ms": 0
           },
           "owner": "user",
@@ -126,9 +126,9 @@
             "next.item_label",
             "next.scene_title"
           ],
-          "presentation_id": "pst_006641f5d00030c5b62599ea708534ae",
-          "variant_id": "psv_32db83dc9fced1477aae32f0ef18a57a",
-          "stage_object_id": "studio-stage-c9e3e526af47",
+          "presentation_id": "pst_30c740f39d28178f88775bf979c9cd96",
+          "variant_id": "psv_7095b948679a704ad6567ef75d0357fc",
+          "stage_object_id": "studio-stage-fb81dd0b1cbd",
           "art_direction": "fallback",
           "notices": [],
           "mode": "presentation",
@@ -146,8 +146,8 @@
           "status": "applied",
           "mode": "commit",
           "actor": "user",
-          "presentation_id": "pst_006641f5d00030c5b62599ea708534ae",
-          "variant_id": "psv_32db83dc9fced1477aae32f0ef18a57a",
+          "presentation_id": "pst_30c740f39d28178f88775bf979c9cd96",
+          "variant_id": "psv_7095b948679a704ad6567ef75d0357fc",
           "basis": {
             "variant_revision": 4
           },
@@ -195,8 +195,8 @@
           ],
           "undo": {
             "available": true,
-            "presentation_id": "pst_006641f5d00030c5b62599ea708534ae",
-            "variant_id": "psv_32db83dc9fced1477aae32f0ef18a57a",
+            "presentation_id": "pst_30c740f39d28178f88775bf979c9cd96",
+            "variant_id": "psv_7095b948679a704ad6567ef75d0357fc",
             "restores_revision": 4,
             "applies_at_revision": 5,
             "ops": [
@@ -252,7 +252,7 @@
         "state": {
           "phase": "paused",
           "running": true,
-          "run_id": "c9e3e526af47",
+          "run_id": "fb81dd0b1cbd",
           "role": "user_presenter",
           "jarvis_speaks": false,
           "position": {
@@ -279,10 +279,10 @@
           "silence": false,
           "revealed": [],
           "elapsed": {
-            "item_ms": 8303,
+            "item_ms": 4825,
             "item_target_ms": null,
             "item_over_target": false,
-            "run_ms": 8303,
+            "run_ms": 4825,
             "run_estimated_ms": 0
           },
           "owner": "user",
@@ -305,9 +305,9 @@
             "next.item_label",
             "next.scene_title"
           ],
-          "presentation_id": "pst_006641f5d00030c5b62599ea708534ae",
-          "variant_id": "psv_32db83dc9fced1477aae32f0ef18a57a",
-          "stage_object_id": "studio-stage-c9e3e526af47",
+          "presentation_id": "pst_30c740f39d28178f88775bf979c9cd96",
+          "variant_id": "psv_7095b948679a704ad6567ef75d0357fc",
+          "stage_object_id": "studio-stage-fb81dd0b1cbd",
           "art_direction": "fallback",
           "notices": [],
           "mode": "presentation",
@@ -325,8 +325,8 @@
           "status": "applied",
           "mode": "commit",
           "actor": "user",
-          "presentation_id": "pst_006641f5d00030c5b62599ea708534ae",
-          "variant_id": "psv_32db83dc9fced1477aae32f0ef18a57a",
+          "presentation_id": "pst_30c740f39d28178f88775bf979c9cd96",
+          "variant_id": "psv_7095b948679a704ad6567ef75d0357fc",
           "basis": {
             "variant_revision": 5
           },
@@ -350,8 +350,8 @@
           ],
           "undo": {
             "available": true,
-            "presentation_id": "pst_006641f5d00030c5b62599ea708534ae",
-            "variant_id": "psv_32db83dc9fced1477aae32f0ef18a57a",
+            "presentation_id": "pst_30c740f39d28178f88775bf979c9cd96",
+            "variant_id": "psv_7095b948679a704ad6567ef75d0357fc",
             "restores_revision": 5,
             "applies_at_revision": 6,
             "ops": [
@@ -381,7 +381,7 @@
         "state": {
           "phase": "paused",
           "running": true,
-          "run_id": "c9e3e526af47",
+          "run_id": "fb81dd0b1cbd",
           "role": "user_presenter",
           "jarvis_speaks": false,
           "position": {
@@ -408,10 +408,10 @@
           "silence": false,
           "revealed": [],
           "elapsed": {
-            "item_ms": 8303,
+            "item_ms": 4825,
             "item_target_ms": null,
             "item_over_target": false,
-            "run_ms": 8303,
+            "run_ms": 4825,
             "run_estimated_ms": 0
           },
           "owner": "user",
@@ -434,9 +434,9 @@
             "next.item_label",
             "next.scene_title"
           ],
-          "presentation_id": "pst_006641f5d00030c5b62599ea708534ae",
-          "variant_id": "psv_32db83dc9fced1477aae32f0ef18a57a",
-          "stage_object_id": "studio-stage-c9e3e526af47",
+          "presentation_id": "pst_30c740f39d28178f88775bf979c9cd96",
+          "variant_id": "psv_7095b948679a704ad6567ef75d0357fc",
+          "stage_object_id": "studio-stage-fb81dd0b1cbd",
           "art_direction": "fallback",
           "notices": [],
           "mode": "presentation",
@@ -454,8 +454,8 @@
           "status": "applied",
           "mode": "commit",
           "actor": "user",
-          "presentation_id": "pst_006641f5d00030c5b62599ea708534ae",
-          "variant_id": "psv_32db83dc9fced1477aae32f0ef18a57a",
+          "presentation_id": "pst_30c740f39d28178f88775bf979c9cd96",
+          "variant_id": "psv_7095b948679a704ad6567ef75d0357fc",
           "basis": {
             "variant_revision": 6
           },
@@ -479,8 +479,8 @@
           ],
           "undo": {
             "available": true,
-            "presentation_id": "pst_006641f5d00030c5b62599ea708534ae",
-            "variant_id": "psv_32db83dc9fced1477aae32f0ef18a57a",
+            "presentation_id": "pst_30c740f39d28178f88775bf979c9cd96",
+            "variant_id": "psv_7095b948679a704ad6567ef75d0357fc",
             "restores_revision": 6,
             "applies_at_revision": 7,
             "ops": [
@@ -510,7 +510,7 @@
         "state": {
           "phase": "paused",
           "running": true,
-          "run_id": "c9e3e526af47",
+          "run_id": "fb81dd0b1cbd",
           "role": "user_presenter",
           "jarvis_speaks": false,
           "position": {
@@ -537,10 +537,10 @@
           "silence": false,
           "revealed": [],
           "elapsed": {
-            "item_ms": 8303,
+            "item_ms": 4825,
             "item_target_ms": null,
             "item_over_target": false,
-            "run_ms": 8303,
+            "run_ms": 4825,
             "run_estimated_ms": 0
           },
           "owner": "user",
@@ -563,9 +563,9 @@
             "next.item_label",
             "next.scene_title"
           ],
-          "presentation_id": "pst_006641f5d00030c5b62599ea708534ae",
-          "variant_id": "psv_32db83dc9fced1477aae32f0ef18a57a",
-          "stage_object_id": "studio-stage-c9e3e526af47",
+          "presentation_id": "pst_30c740f39d28178f88775bf979c9cd96",
+          "variant_id": "psv_7095b948679a704ad6567ef75d0357fc",
+          "stage_object_id": "studio-stage-fb81dd0b1cbd",
           "art_direction": "fallback",
           "notices": [],
           "mode": "presentation",
@@ -583,8 +583,8 @@
           "status": "applied",
           "mode": "commit",
           "actor": "user",
-          "presentation_id": "pst_006641f5d00030c5b62599ea708534ae",
-          "variant_id": "psv_32db83dc9fced1477aae32f0ef18a57a",
+          "presentation_id": "pst_30c740f39d28178f88775bf979c9cd96",
+          "variant_id": "psv_7095b948679a704ad6567ef75d0357fc",
           "basis": {
             "variant_revision": 7
           },
@@ -608,8 +608,8 @@
           ],
           "undo": {
             "available": true,
-            "presentation_id": "pst_006641f5d00030c5b62599ea708534ae",
-            "variant_id": "psv_32db83dc9fced1477aae32f0ef18a57a",
+            "presentation_id": "pst_30c740f39d28178f88775bf979c9cd96",
+            "variant_id": "psv_7095b948679a704ad6567ef75d0357fc",
             "restores_revision": 7,
             "applies_at_revision": 8,
             "ops": [
@@ -639,7 +639,7 @@
         "state": {
           "phase": "paused",
           "running": true,
-          "run_id": "c9e3e526af47",
+          "run_id": "fb81dd0b1cbd",
           "role": "user_presenter",
           "jarvis_speaks": false,
           "position": {
@@ -666,10 +666,10 @@
           "silence": false,
           "revealed": [],
           "elapsed": {
-            "item_ms": 8303,
+            "item_ms": 4825,
             "item_target_ms": null,
             "item_over_target": false,
-            "run_ms": 8303,
+            "run_ms": 4825,
             "run_estimated_ms": 0
           },
           "owner": "user",
@@ -692,9 +692,9 @@
             "next.item_label",
             "next.scene_title"
           ],
-          "presentation_id": "pst_006641f5d00030c5b62599ea708534ae",
-          "variant_id": "psv_32db83dc9fced1477aae32f0ef18a57a",
-          "stage_object_id": "studio-stage-c9e3e526af47",
+          "presentation_id": "pst_30c740f39d28178f88775bf979c9cd96",
+          "variant_id": "psv_7095b948679a704ad6567ef75d0357fc",
+          "stage_object_id": "studio-stage-fb81dd0b1cbd",
           "art_direction": "fallback",
           "notices": [],
           "mode": "presentation",
@@ -712,8 +712,8 @@
           "status": "applied",
           "mode": "commit",
           "actor": "user",
-          "presentation_id": "pst_006641f5d00030c5b62599ea708534ae",
-          "variant_id": "psv_32db83dc9fced1477aae32f0ef18a57a",
+          "presentation_id": "pst_30c740f39d28178f88775bf979c9cd96",
+          "variant_id": "psv_7095b948679a704ad6567ef75d0357fc",
           "basis": {
             "variant_revision": 8
           },
@@ -737,8 +737,8 @@
           ],
           "undo": {
             "available": true,
-            "presentation_id": "pst_006641f5d00030c5b62599ea708534ae",
-            "variant_id": "psv_32db83dc9fced1477aae32f0ef18a57a",
+            "presentation_id": "pst_30c740f39d28178f88775bf979c9cd96",
+            "variant_id": "psv_7095b948679a704ad6567ef75d0357fc",
             "restores_revision": 8,
             "applies_at_revision": 9,
             "ops": [
@@ -768,7 +768,7 @@
         "state": {
           "phase": "paused",
           "running": true,
-          "run_id": "c9e3e526af47",
+          "run_id": "fb81dd0b1cbd",
           "role": "user_presenter",
           "jarvis_speaks": false,
           "position": {
@@ -795,10 +795,10 @@
           "silence": false,
           "revealed": [],
           "elapsed": {
-            "item_ms": 8303,
+            "item_ms": 4825,
             "item_target_ms": null,
             "item_over_target": false,
-            "run_ms": 8303,
+            "run_ms": 4825,
             "run_estimated_ms": 0
           },
           "owner": "user",
@@ -821,9 +821,9 @@
             "next.item_label",
             "next.scene_title"
           ],
-          "presentation_id": "pst_006641f5d00030c5b62599ea708534ae",
-          "variant_id": "psv_32db83dc9fced1477aae32f0ef18a57a",
-          "stage_object_id": "studio-stage-c9e3e526af47",
+          "presentation_id": "pst_30c740f39d28178f88775bf979c9cd96",
+          "variant_id": "psv_7095b948679a704ad6567ef75d0357fc",
+          "stage_object_id": "studio-stage-fb81dd0b1cbd",
           "art_direction": "fallback",
           "notices": [],
           "mode": "presentation",
@@ -841,8 +841,8 @@
           "status": "applied",
           "mode": "commit",
           "actor": "user",
-          "presentation_id": "pst_006641f5d00030c5b62599ea708534ae",
-          "variant_id": "psv_32db83dc9fced1477aae32f0ef18a57a",
+          "presentation_id": "pst_30c740f39d28178f88775bf979c9cd96",
+          "variant_id": "psv_7095b948679a704ad6567ef75d0357fc",
           "basis": {
             "variant_revision": 9
           },
@@ -866,8 +866,8 @@
           ],
           "undo": {
             "available": true,
-            "presentation_id": "pst_006641f5d00030c5b62599ea708534ae",
-            "variant_id": "psv_32db83dc9fced1477aae32f0ef18a57a",
+            "presentation_id": "pst_30c740f39d28178f88775bf979c9cd96",
+            "variant_id": "psv_7095b948679a704ad6567ef75d0357fc",
             "restores_revision": 9,
             "applies_at_revision": 10,
             "ops": [
@@ -897,8 +897,8 @@
     "generation_after_edits": 1,
     "same_frame": 1,
     "pause": true,
-    "paused_a": 80,
-    "paused_b": 80,
+    "paused_a": 70,
+    "paused_b": 70,
     "seek": true,
     "until:Number(document.querySelector('#frame').textContent)===45": true,
     "seeked": 45,
@@ -910,7 +910,7 @@
         "state": {
           "phase": "playing",
           "running": true,
-          "run_id": "c9e3e526af47",
+          "run_id": "fb81dd0b1cbd",
           "role": "user_presenter",
           "jarvis_speaks": false,
           "position": {
@@ -937,10 +937,10 @@
           "silence": false,
           "revealed": [],
           "elapsed": {
-            "item_ms": 8305,
+            "item_ms": 4827,
             "item_target_ms": null,
             "item_over_target": false,
-            "run_ms": 8305,
+            "run_ms": 4827,
             "run_estimated_ms": 0
           },
           "owner": "user",
@@ -963,13 +963,13 @@
             "next.item_label",
             "next.scene_title"
           ],
-          "presentation_id": "pst_006641f5d00030c5b62599ea708534ae",
-          "variant_id": "psv_32db83dc9fced1477aae32f0ef18a57a",
-          "stage_object_id": "studio-stage-c9e3e526af47",
+          "presentation_id": "pst_30c740f39d28178f88775bf979c9cd96",
+          "variant_id": "psv_7095b948679a704ad6567ef75d0357fc",
+          "stage_object_id": "studio-stage-fb81dd0b1cbd",
           "art_direction": "fallback",
           "notices": [],
           "mode": "presentation",
-          "follower": "absent",
+          "follower": "waiting",
           "presenter": {
             "speaks": false,
             "lines": 0,
@@ -989,7 +989,7 @@
         "state": {
           "phase": "playing",
           "running": true,
-          "run_id": "c9e3e526af47",
+          "run_id": "fb81dd0b1cbd",
           "role": "user_presenter",
           "jarvis_speaks": false,
           "position": {
@@ -1016,10 +1016,10 @@
           "silence": false,
           "revealed": [],
           "elapsed": {
-            "item_ms": 4,
+            "item_ms": 3,
             "item_target_ms": null,
             "item_over_target": false,
-            "run_ms": 8315,
+            "run_ms": 4836,
             "run_estimated_ms": 0
           },
           "owner": "user",
@@ -1035,13 +1035,13 @@
             "scene.section",
             "item.label"
           ],
-          "presentation_id": "pst_006641f5d00030c5b62599ea708534ae",
-          "variant_id": "psv_32db83dc9fced1477aae32f0ef18a57a",
-          "stage_object_id": "studio-stage-c9e3e526af47",
+          "presentation_id": "pst_30c740f39d28178f88775bf979c9cd96",
+          "variant_id": "psv_7095b948679a704ad6567ef75d0357fc",
+          "stage_object_id": "studio-stage-fb81dd0b1cbd",
           "art_direction": "fallback",
           "notices": [],
           "mode": "presentation",
-          "follower": "absent",
+          "follower": "waiting",
           "presenter": {
             "speaks": false,
             "lines": 0,
@@ -1064,7 +1064,7 @@
         "state": {
           "phase": "playing",
           "running": true,
-          "run_id": "c9e3e526af47",
+          "run_id": "fb81dd0b1cbd",
           "role": "user_presenter",
           "jarvis_speaks": false,
           "position": {
@@ -1091,10 +1091,10 @@
           "silence": false,
           "revealed": [],
           "elapsed": {
-            "item_ms": 4,
+            "item_ms": 7,
             "item_target_ms": null,
             "item_over_target": false,
-            "run_ms": 8921,
+            "run_ms": 5420,
             "run_estimated_ms": 0
           },
           "owner": "user",
@@ -1117,13 +1117,13 @@
             "next.item_label",
             "next.scene_title"
           ],
-          "presentation_id": "pst_006641f5d00030c5b62599ea708534ae",
-          "variant_id": "psv_32db83dc9fced1477aae32f0ef18a57a",
-          "stage_object_id": "studio-stage-c9e3e526af47",
+          "presentation_id": "pst_30c740f39d28178f88775bf979c9cd96",
+          "variant_id": "psv_7095b948679a704ad6567ef75d0357fc",
+          "stage_object_id": "studio-stage-fb81dd0b1cbd",
           "art_direction": "fallback",
           "notices": [],
           "mode": "presentation",
-          "follower": "absent",
+          "follower": "waiting",
           "presenter": {
             "speaks": false,
             "lines": 0,
@@ -1160,6 +1160,9 @@
     }
   },
   "console": [
+    "frame info [attention] presentation_attention.installed {\"host\":\"toasts\",\"storage\":true}",
+    "frame info [studio-inspector] installed {\"dock\":true}",
+    "frame info [workspace] workspace.installed {}",
     "frame info [prefabs] prefabs.installed {}",
     "frame info [capture] capture_rail.status_received {\"open\":0}",
     "frame info [studio-inspector] hidden {\"reason\":\"playback\"}",
@@ -1172,24 +1175,21 @@
     "frame info [scène] scene.resolver_committed Object",
     "frame info [remotion.stage.ready] Object",
     "frame warning Note: Some companies are required to obtain a license to use Remotion. See: https://remotion.dev/license\nPass the `acknowledgeRemotionLicense` prop to `<Player />` function to make this message disappear.",
-    "frame info [studio] studio.stage_ready {\"object_id\":\"studio-stage-c9e3e526af47\"}",
-    "frame info [studio-reload] mount_reported {\"object_id\":\"studio-stage-c9e3e526af47\",\"prefab\":\"presentation-studio.p000000000001.s000000000001@1\",\"outcome\":\"mounted\",\"reason\":null,\"matched\":false,\"attempt\":1}",
+    "frame info [studio] studio.stage_ready {\"object_id\":\"studio-stage-fb81dd0b1cbd\"}",
+    "frame info [studio-reload] mount_reported {\"object_id\":\"studio-stage-fb81dd0b1cbd\",\"prefab\":\"presentation-studio.p000000000001.s000000000001@1\",\"outcome\":\"mounted\",\"reason\":null,\"matched\":false,\"attempt\":1}",
     "frame info [scène] scene.prefab_mounted Object",
     "frame info [remotion.stage.ready] Object",
     "frame warning Note: Some companies are required to obtain a license to use Remotion. See: https://remotion.dev/license\nPass the `acknowledgeRemotionLicense` prop to `<Player />` function to make this message disappear.",
     "frame warning [scène] scene.prefab_swapped Object",
-    "frame info [studio-reload] mount_reported {\"object_id\":\"studio-stage-c9e3e526af47\",\"prefab\":\"presentation-studio.p000000000001.s000000000002@1\",\"outcome\":\"mounted\",\"reason\":null,\"matched\":false,\"attempt\":1}",
+    "frame info [studio-reload] mount_reported {\"object_id\":\"studio-stage-fb81dd0b1cbd\",\"prefab\":\"presentation-studio.p000000000001.s000000000002@1\",\"outcome\":\"mounted\",\"reason\":null,\"matched\":false,\"attempt\":1}",
     "frame info [scène] scene.prefab_mounted Object",
     "frame info [remotion.stage.ready] Object",
     "frame warning Note: Some companies are required to obtain a license to use Remotion. See: https://remotion.dev/license\nPass the `acknowledgeRemotionLicense` prop to `<Player />` function to make this message disappear.",
     "frame warning [scène] scene.prefab_swapped Object",
-    "frame info [studio-reload] mount_reported {\"object_id\":\"studio-stage-c9e3e526af47\",\"prefab\":\"presentation-studio.p000000000001.s000000000001@1\",\"outcome\":\"mounted\",\"reason\":null,\"matched\":false,\"attempt\":1}",
+    "frame info [studio-reload] mount_reported {\"object_id\":\"studio-stage-fb81dd0b1cbd\",\"prefab\":\"presentation-studio.p000000000001.s000000000001@1\",\"outcome\":\"mounted\",\"reason\":null,\"matched\":false,\"attempt\":1}",
     "frame info [fullscreen] fullscreen.state_changed {\"from\":\"exited\",\"to\":\"entered\",\"event\":\"browser_entered\"}",
-    "frame info [fullscreen] fullscreen.entered {\"id\":null,\"object_id\":\"studio-stage-c9e3e526af47\",\"keys\":\"host\",\"display_selection\":\"not_requested\"}",
-    "frame info [studio-inspector] hidden {\"reason\":\"fullscreen\"}",
-    "frame info [fullscreen] fullscreen.state_changed {\"from\":\"entered\",\"to\":\"exited\",\"event\":\"browser_exited\"}",
-    "frame info [fullscreen] fullscreen.exited {\"object_id\":\"studio-stage-c9e3e526af47\"}",
-    "frame info [studio-inspector] hidden {\"reason\":\"playback\"}"
+    "frame info [fullscreen] fullscreen.entered {\"id\":null,\"object_id\":\"studio-stage-fb81dd0b1cbd\",\"keys\":\"host\",\"display_selection\":\"not_requested\"}",
+    "frame info [studio-inspector] hidden {\"reason\":\"fullscreen\"}"
   ],
   "errors": [],
   "journal": [
@@ -1211,7 +1211,6 @@
     "core.presentation_studio.mount_reported",
     "core.presentation_studio.pins_ready",
     "core.presentation_studio.playback_edit",
-    "core.presentation_studio.playback_follower_absent",
     "core.presentation_studio.playback_plan_refreshed",
     "core.presentation_studio.playback_reclaimed",
     "core.presentation_studio.playback_started",
