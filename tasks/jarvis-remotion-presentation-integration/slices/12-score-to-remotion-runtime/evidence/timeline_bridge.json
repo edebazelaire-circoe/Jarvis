@@ -43,13 +43,13 @@
           "until_frame": 74,
           "playing": true,
           "seq": 2,
-          "play_ms": 2,
+          "play_ms": 1,
           "tolerance_ms": 500,
           "problems": []
         }
       },
       "until:Number(document.querySelector('#frame').textContent)>=30 && Number(document.quer": true,
-      "intro_playing": 32,
+      "intro_playing": 31,
       "until:Number(document.querySelector('#frame').textContent)>=74": true,
       "intro_a": 74,
       "intro_b": 74,
@@ -103,7 +103,7 @@
           "until_frame": 149,
           "playing": true,
           "seq": 4,
-          "play_ms": 3,
+          "play_ms": 1,
           "tolerance_ms": 500,
           "problems": []
         }
@@ -124,13 +124,13 @@
           "until_frame": 119,
           "playing": true,
           "seq": 5,
-          "play_ms": 2,
+          "play_ms": 3,
           "tolerance_ms": 500,
           "problems": []
         }
       },
       "until:Number(document.querySelector('#frame').textContent)>=75 && Number(document.quer": true,
-      "back_playing": 75,
+      "back_playing": 76,
       "until:Number(document.querySelector('#frame').textContent)>=90": true,
       "pause_mid": {
         "status": 200,
@@ -144,7 +144,7 @@
           "until_frame": 119,
           "playing": false,
           "seq": 5,
-          "play_ms": 687,
+          "play_ms": 673,
           "tolerance_ms": 500,
           "problems": []
         }
@@ -163,12 +163,12 @@
           "until_frame": 119,
           "playing": true,
           "seq": 5,
-          "play_ms": 687,
+          "play_ms": 673,
           "tolerance_ms": 500,
           "problems": []
         }
       },
-      "after_resume": 110,
+      "after_resume": 108,
       "back_end": 119
     },
     "console": [
@@ -181,8 +181,8 @@
   "page3": {
     "reads": {
       "until:!!document.querySelector('iframe[data-remotion-stage]') && !!document.querySelec": true,
-      "free_a": 28,
-      "free_b": 55
+      "free_a": 40,
+      "free_b": 67
     }
   },
   "timeline_after_cue": {

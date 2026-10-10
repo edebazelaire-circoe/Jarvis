@@ -2,12 +2,17 @@
   "slice": 12,
   "test": "tests/unit/test_remotion_timeline_realpage_browser.py",
   "handoff": "jarvis-remotion-presentation-integration",
-  "when": "2026-10-09T23:54:28+00:00",
+  "when": "2026-10-10T00:31:01+00:00",
   "repository": {
-    "head": "5f24b1845b59ae9cf66f6b3fd753db4a51f363f0",
+    "head": "74eeed68b7375281d04c8291768f54b93cc23e43",
     "branch": "task/jarvis-remotion-presentation-integration-s12",
-    "tracked_tree_clean": true,
-    "dirty_files": []
+    "tracked_tree_clean": false,
+    "dirty_files": [
+      "M tasks/jarvis-remotion-presentation-integration/slices/12-score-to-remotion-runtime/evidence/end_hold.png",
+      " M tasks/jarvis-remotion-presentation-integration/slices/12-score-to-remotion-runtime/evidence/intro_hold.png",
+      " D tasks/jarvis-remotion-presentation-integration/slices/12-score-to-remotion-runtime/evidence/real-timeline.json",
+      " M tasks/jarvis-remotion-presentation-integration/slices/12-score-to-remotion-runtime/evidence/timeline_bridge.json"
+    ]
   },
   "environment": {
     "platform": "Windows-11-10.0.26200-SP0",
@@ -18,14 +23,16 @@
   },
   "pytest": {
     "returncode": 0,
-    "seconds": 49.5,
+    "seconds": 71.9,
     "summary": [
       "PASSED tests/unit/test_remotion_timeline_realpage_browser.py::test_the_score_drives_a_remotion_scene_through_its_anchors_a_cue_pause_resume_and_back",
-      "1 passed in 48.18s"
+      "PASSED tests/unit/test_remotion_timeline_realpage_browser.py::test_the_timeline_follows_the_score_across_two_anchored_scenes_in_one_page_and_after_a_remount",
+      "2 passed in 70.50s (0:01:10)"
     ]
   },
   "scenarios": [
-    "timeline_bridge"
+    "timeline_bridge",
+    "timeline_two_scenes_remount"
   ],
   "result": "PASSED"
 }
