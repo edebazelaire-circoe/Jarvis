@@ -3429,7 +3429,7 @@ same playback routes as the voice (`start` with `variant_id` then `goto scene_id
 | `presentation_play` | `start` refused for an archived presentation |
 | `presentation_library` (new, 13th tool) | `hide`, `show`, `archive` (`confirmed=true` after the user's yes), `restore`, `rename` (`title`), `acknowledge` |
 
-Context budget: `jarvis-presentation` 16 849 -> 18 495 bytes (ceiling 18 600), whole native surface ceiling 110 000 -> 111 500 (deliberate, recorded in `test_mcp_catalog.py` and the tool contract).
+Context budget: `jarvis-presentation` 16 849 -> 18 495 bytes (18 495 alone, 19 138 with the chained-playback `scope`; ceiling 19 300), whole native surface ceiling 110 000 -> 112 500 (deliberate, recorded in `test_mcp_catalog.py` and the tool contract).
 
 ### Limits and left to do
 
