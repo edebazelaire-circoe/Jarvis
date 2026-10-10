@@ -38,6 +38,7 @@ from typing import Any
 
 from jarvis.core.presentation_live_refs import LiveRefResolver
 from jarvis.domain.artifacts import Artifact, ArtifactError, ArtifactErrorCode, ArtifactState
+from jarvis.domain.prefab import validate_value
 from jarvis.domain.presentation_artifacts import (
     MAX_SNAPSHOT_ATTEMPTS, SourceProvenance, require_current, snapshot_artifact_id,
 )
@@ -110,6 +111,20 @@ class PresentationPackager:
             if pin == current:
                 payload = sandbox_payload(resolved)
         return {"refs": rows, "declaration_errors": errors, "authorised_boards": sorted(allowed), "payload": payload}
+
+    async def remotion_engines(self, presentation_id: str, variant_id: str) -> set[str]:
+        """Versions de Remotion que demandent les scènes Remotion COURANTES de cette variante (lecture seule, avant tout gel)."""
+
+        view = await self._studio.get(presentation_id)
+        variant = next((v for v in view.variants if v.variant_id == variant_id), None)
+        if variant is None:
+            raise PresentationStudioError(_C.UNKNOWN_VARIANT, "unknown or archived variant")
+        versions: set[str] = set()
+        for pin in sorted({(s.prefab.prefab_id, s.prefab.version) for s in variant.scenes}):
+            manifest = await self._prefabs.manifest(*pin)
+            if manifest.source is not None:
+                versions.add(manifest.source.engine.version)
+        return versions
 
     # ------------------------------------------------------------ geler
 
@@ -282,7 +297,10 @@ class PresentationPackager:
                 for path, body in source.files.items():
                     files[f"{root}/{path}"] = body
                 files[f"{root}/source.json"] = canonical_json(source.block.to_dict())
-                row.update(kind="remotion", source_digest=source.digest, engine=source.block.engine.to_dict())
+                # Défauts des propriétés figés avec la source (Slice 16) : le rendu part du paquet seul, jamais du manifeste vivant.
+                defaults, _problems = validate_value(manifest.props, {}, "props")
+                row.update(kind="remotion", source_digest=source.digest, engine=source.block.engine.to_dict(),
+                           props_defaults=defaults if isinstance(defaults, dict) else {})
                 refs = parse_declaration(source.files[LIVE_REFS_PATH]) if LIVE_REFS_PATH in source.files else ()
                 resolved = await self._resolver.resolve_all(refs, authorised_boards=allowed)
                 for item in resolved.values():

@@ -222,7 +222,7 @@ porte d'édition de base. Adaptateur : `jarvis/adapters/file_prefab_library.py`.
 **Sources de scènes Remotion** (Slice 05, [remotion-source.md](remotion-source.md)) : même dossier, mêmes règles ; une version porte
   `manifest.json` (`schema_version` 2), `publication.json`, `src/**` et `public/**` à la place des trois fichiers HTML. Jamais de
   `node_modules` ni de `package.json` : l'unique arbre de dépendances est `local_capabilities/remotion/runtime/` ([remotion-runtime.md](remotion-runtime.md)). Le
-  **cache de compilation** (`local_capabilities/remotion/compiled/<clé>/`) est dérivé et reconstructible : à ne pas sauvegarder, à supprimer sans risque.
+  **cache de compilation** (`local_capabilities/remotion/compiled/<clé>/`) est dérivé et reconstructible : à ne pas sauvegarder, à supprimer sans risque. Les **dossiers de travail d'un rendu** (`local_capabilities/remotion/runtime/render/jobs/<job>/`, [remotion-render.md](remotion-render.md)) sont éphémères : effacés à la fin de chaque rendu, sauf quelques Kio de traces ; le résultat d'un export est un Artifact (`artifacts/<id>/render.mp4`), pas ce dossier.
 
 - **une version publiée n'est jamais réécrite** : Core écrit dans
   `prefabs/.staging-<16 hex>/` puis renomme le dossier ; un arrêt brutal

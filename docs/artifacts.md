@@ -305,6 +305,13 @@ Served by Core (`jarvis/protocol/capture_routes.py`, facade
 | `DELETE /v1/artifacts/{id}[?cascade=true&origin=user\|brain]` | explicit delete (*Deletion* above) → `{deleted, orphan_folders}` |
 | `GET /v1/activity` | ledger tail of the **open** Session: `after_seq` cursor, `limit` 1..200 (default 50), `context_id` (`active` alias), `kind` (comma list) → `{events, latest_seq}`; ids and small codes only |
 
+## Presentation derivatives (Remotion Slice 16)
+
+The three derivative kinds `presentation_video`, `presentation_still` and `presentation_pdf` are written by the render service ([remotion-render.md](remotion-render.md)) through
+the rules above, unchanged: `pending` at the request, payload through the spool, `complete` only after a verified file, `failed` (stable code) otherwise, recovery of an
+interrupted render by the **owner** (`recover_pending(owned=...)` leaves them) as `failed` or, if the final file already existed, `partial`. Their lineage is one `rendered_from`
+relation to the snapshot; the render settings are acquisition metadata. They are flat exports and say so (`render_flat`).
+
 ## Boundaries
 
 - **Conversation events** (`docs/conversation-events.md`) stay the truth of the

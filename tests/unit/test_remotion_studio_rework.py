@@ -147,7 +147,10 @@ def test_no_brain_mcp_or_agent_path_can_open_the_studio():
     allowed = {"core/remotion_studio_service.py", "core/v2_app.py", "protocol/remotion_studio_routes.py", "app.py", "domain/remotion_studio.py",
                "ports/remotion_studio.py", "adapters/remotion_studio_runner.py", "runtime/remotion_studio_relay.py",
                "runtime/control_center_remotion_studio.js", "runtime/control_center.py", "runtime/control_center.html", "protocol/server.py",
-               "protocol/client.py", "core/local_capability_service.py", "capabilities/remotion/studio-guard.cjs"}
+               "protocol/client.py", "core/local_capability_service.py", "capabilities/remotion/studio-guard.cjs",
+               # Slice 16 (render): REUSE the Studio's pure helpers (`plan_workspace`, `safe_relative`) and subclass its relay's transport; none of
+               # them can open the Studio (the render has its own routes, service and process: `docs/remotion-render.md`).
+               "adapters/remotion_render_runner.py", "domain/presentation_render_plan.py", "runtime/presentation_render_relay.py"}
     users = {path.relative_to(root).as_posix() for path in root.rglob("*")
              if path.suffix in {".py", ".js", ".html", ".cjs", ".mjs"}
              and any(token in path.read_text(encoding="utf-8", errors="replace") for token in ("remotion_studio", "RemotionStudio", "remotion/studio"))}

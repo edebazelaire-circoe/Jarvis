@@ -37,6 +37,7 @@ code) ; jamais un corps. Une panne de Core : `capture.request.core_unreachable`.
 from __future__ import annotations
 
 import asyncio
+import json
 from collections.abc import Awaitable, Callable, Sequence
 from typing import Any
 from urllib.parse import quote
@@ -58,6 +59,8 @@ MAX_PROXY_BODY_BYTES = 64 * 1024
 WRITE_TIMEOUT_S = 45.0
 DELETE_TIMEOUT_S = 30.0
 PAYLOAD_TIMEOUT_S = 30.0
+#: Plus gros payload rendu au navigateur par blocs (`_stream_large`) : un rendu fait au plus 512 Mio (`docs/remotion-render.md`).
+MAX_STREAMED_PAYLOAD_BYTES = 1024 * 1024 * 1024
 
 
 def _error(status: int, code: str, message: str) -> web.Response:
@@ -194,4 +197,61 @@ class CaptureRelayRoutes:
         except Exception as exc:  # noqa: BLE001 - surfaced: 503 with the real cause, and journaled
             self._unreachable("artifact_payload", "GET", path, "core_unreachable", type(exc).__name__)
             return _error(503, "core_unreachable", f"Core is unreachable: {type(exc).__name__}: {str(exc)[:200]}")
+        if status == 413 and not request.headers.get("Range") and self._error_code(data) == "artifact_payload_too_large":
+            return await self._stream_large(request, transport, path)
         return web.Response(body=data, status=status, headers=headers)
+
+    @staticmethod
+    def _error_code(data: bytes) -> str | None:
+        try:
+            body = json.loads(data.decode("utf-8"))
+            return body["error"]["code"] if isinstance(body, dict) and isinstance(body.get("error"), dict) else None
+        except (ValueError, UnicodeDecodeError, KeyError, TypeError):
+            return None
+
+    async def _stream_large(self, request: web.Request, transport: Any, path: str) -> web.StreamResponse:
+        """Un payload de plus de 8 Mio demandé SANS plage (une balise `<img>`, un lien : le navigateur n'envoie pas de `Range`) : Core refuse (413) de le
+        rendre d'un bloc. Le relais le lit par plages de 8 Mio (`bytes=<pos>-`) et l'écrit au navigateur au fur et à mesure : jamais plus d'un bloc en
+        mémoire, `Content-Length` annoncé, borné à `MAX_STREAMED_PAYLOAD_BYTES`. Une panne en route ferme la connexion (le navigateur voit un fichier
+        tronqué, jamais un fichier complet en apparence) et est journalisée."""
+
+        try:
+            status, headers, first = await transport.forward_bytes(path, range_header="bytes=0-", timeout_s=PAYLOAD_TIMEOUT_S)
+            if status != 206:
+                return web.Response(body=first, status=status, headers=headers)
+            total = int(headers["Content-Range"].rsplit("/", 1)[1])
+        except asyncio.CancelledError:
+            raise
+        except (KeyError, ValueError, IndexError):
+            return _error(502, "payload_range_unreadable", "Core answered a range without a readable total")
+        except asyncio.TimeoutError:
+            self._unreachable("artifact_payload", "GET", path, "core_timeout", "TimeoutError")
+            return _error(504, "core_timeout", "Core did not send the payload in time")
+        except Exception as exc:  # noqa: BLE001 - surfaced: 503 with the real cause, and journaled
+            self._unreachable("artifact_payload", "GET", path, "core_unreachable", type(exc).__name__)
+            return _error(503, "core_unreachable", f"Core is unreachable: {type(exc).__name__}: {str(exc)[:200]}")
+        if total > MAX_STREAMED_PAYLOAD_BYTES:
+            return _error(502, "payload_too_large_for_relay", f"payload is {total} bytes, the relay streams at most {MAX_STREAMED_PAYLOAD_BYTES}")
+        response = web.StreamResponse(status=200, headers={
+            "Content-Type": headers.get("Content-Type", "application/octet-stream"), "Content-Length": str(total), "Accept-Ranges": "bytes",
+            "Cache-Control": "no-store", "X-Content-Type-Options": "nosniff",
+            **({"Content-Disposition": headers["Content-Disposition"]} if "Content-Disposition" in headers else {})})
+        await response.prepare(request)
+        position = len(first)
+        try:
+            await response.write(first)
+            while position < total:
+                status, _, block = await transport.forward_bytes(path, range_header=f"bytes={position}-", timeout_s=PAYLOAD_TIMEOUT_S)
+                if status != 206 or not block:
+                    raise ConnectionError(f"Core answered HTTP {status} at byte {position}")
+                await response.write(block)
+                position += len(block)
+            await response.write_eof()
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:  # noqa: BLE001 - surfaced: the connection is closed (truncated file) and the cause is journaled
+            self._journal.emit("capture.request.payload_stream_failed", "Payload long interrompu en route", level="warning",
+                               data={"path": path, "sent": position, "total": total, "exception_type": type(exc).__name__})
+            if request.transport is not None:
+                request.transport.close()
+        return response
