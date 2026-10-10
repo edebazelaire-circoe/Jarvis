@@ -18,7 +18,10 @@
   let dropped=0,root=null,playerRef=null,mounted=null,reportsThisSecond=0,reportWindow=Date.now();
   /* Ordres reçus avant que le Player existe (`init` puis `control` arrivent dans le même instant, le rendu de React est asynchrone) :
      gardés, appliqués au montage (Slice 10). */
-  const pending={playing:null,seek:null};
+  const pending={playing:null,seek:null,until:null};
+  /* Ligne de temps de la partition (Slice 12) : l'image sur laquelle le Player s'arrête de lui-même (`control.until`), et le rapport de
+     position (`clock`) : conseil pour l'hôte, plafonné à `maxClocksPerSecond`, jamais une décision. */
+  let until=null,clockAt=0,clockFrame=-1,clockPlaying=null,attached=null;
   let loaded=document.readyState==='complete';
 
   window.remotion_staticBase=CFG.staticBase;
@@ -61,6 +64,44 @@
     try{return playerRef&&playerRef.current?playerRef.current.getCurrentFrame():-1}catch(_e){return -1}
   }
 
+  function isPlaying(){
+    try{return playerRef&&playerRef.current?playerRef.current.isPlaying()===true:false}catch(_e){return false}
+  }
+  function emitClock(force){
+    const frame=currentFrame();
+    if(frame<0||frame>P.LIMITS.maxFrame)return;
+    const playing=isPlaying(),t=Date.now();
+    if(force?(t-clockAt<100&&frame===clockFrame&&playing===clockPlaying):t-clockAt<250)return;
+    clockAt=t;clockFrame=frame;clockPlaying=playing;
+    send('clock',{frame,playing});
+  }
+  function onFrameUpdate(event){
+    const player=playerRef&&playerRef.current;
+    const frame=event&&event.detail&&event.detail.frame;
+    if(player&&until!==null&&typeof frame==='number'&&frame>=until){
+      const stop=until;until=null;
+      try{player.pause();player.seekTo(stop)}catch(error){report('error',{message:String(error&&error.message||error)})}
+      emitClock(true);return;
+    }
+    emitClock(false);
+  }
+  function attachClock(instance){
+    if(attached===instance||!instance||typeof instance.addEventListener!=='function')return;
+    attached=instance;
+    instance.addEventListener('frameupdate',onFrameUpdate);
+    ['play','pause','seeked','ended'].forEach(function(name){instance.addEventListener(name,function(){emitClock(true)})});
+    emitClock(true);   // the position at mount: a host that remounted this frame hears from it at once
+  }
+  /* `seek` : aller à l'image ; `play` / `pause` : aller d'abord à `frame` s'il est donné ; `play` avec `until` s'arrête sur cette image. */
+  function applyControl(player,m){
+    if(m.action==='seek'){until=null;player.seekTo(m.frame);return}
+    if(m.frame!==undefined)player.seekTo(m.frame);
+    if(m.action==='pause'){until=null;player.pause();return}
+    until=m.until!==undefined?m.until:null;
+    if(until!==null&&(m.frame!==undefined?m.frame:currentFrame())>=until){player.seekTo(until);player.pause();until=null;return}
+    player.play();
+  }
+
   function render(){
     const H=globalThis.__JARVIS_HOST__;
     const scene=globalThis.JarvisScene;
@@ -73,7 +114,7 @@
       playerRef={current:null};
     }
     root.render(React.createElement(Player,{
-      ref:function(instance){playerRef.current=instance;if(instance)applyPending()},component:scene.component,durationInFrames:mounted.composition.durationInFrames,fps:mounted.composition.fps,
+      ref:function(instance){playerRef.current=instance;if(instance){attachClock(instance);applyPending()}},component:scene.component,durationInFrames:mounted.composition.durationInFrames,fps:mounted.composition.fps,
       compositionWidth:mounted.composition.width,compositionHeight:mounted.composition.height,inputProps:mounted.props,
       initiallyMuted:true,controls:false,clickToPlay:false,doubleClickToFullscreen:false,spaceKeyToPlayOrPause:false,loop:true,
       style:{width:'100%',height:'100%'},
@@ -85,8 +126,14 @@
     const player=playerRef&&playerRef.current;
     if(!player)return;
     try{
-      if(pending.seek!==null){const frame=pending.seek;pending.seek=null;player.seekTo(frame)}
-      if(pending.playing!==null){const wanted=pending.playing;pending.playing=null;if(wanted)player.play();else player.pause()}
+      const frame=pending.seek,wanted=pending.playing,stop=pending.until;
+      pending.seek=null;pending.playing=null;pending.until=null;
+      if(wanted===null){if(frame!==null)player.seekTo(frame);return}
+      /* One order, so the stop frame is compared with the frame we are going to, not with a position the Player has not reported yet. */
+      const order={action:wanted?'play':'pause'};
+      if(frame!==null)order.frame=frame;
+      if(wanted&&stop!==null)order.until=stop;
+      applyControl(player,order);
     }catch(error){report('error',{message:String(error&&error.message||error)})}
   }
 
@@ -106,12 +153,12 @@
       case 'control':
         try{
           const player=playerRef&&playerRef.current;
-          if(player){
-            if(message.action==='play')player.play();
-            else if(message.action==='pause')player.pause();
-            else player.seekTo(message.frame);
-          }else if(message.action==='seek')pending.seek=message.frame;
-          else pending.playing=message.action==='play';
+          if(player)applyControl(player,message);
+          else if(message.action==='seek')pending.seek=message.frame;
+          else{
+            pending.playing=message.action==='play';pending.until=message.until!==undefined?message.until:null;
+            if(message.frame!==undefined)pending.seek=message.frame;
+          }
         }catch(error){report('error',{message:String(error&&error.message||error)})}
         break;
       case 'cue':
@@ -122,7 +169,7 @@
         break;
       case 'teardown':
         try{if(root)root.unmount()}catch(_e){}
-        root=null;playerRef=null;mounted=null;pending.playing=null;pending.seek=null;
+        root=null;playerRef=null;mounted=null;pending.playing=null;pending.seek=null;pending.until=null;until=null;attached=null;
         break;
       default:break;
     }

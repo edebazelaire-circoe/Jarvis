@@ -53,6 +53,10 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--runtime-dir", required=True, help="dossier runtime/ d'une installation Remotion existante (avec node_modules)")
     parser.add_argument("--evidence", required=True, help="dossier de sortie (real-player.json, scénarios, captures)")
+    parser.add_argument("--test", default="tests/unit/test_remotion_player_realpage_browser.py",
+                        help="l'épreuve réelle à lancer (Slice 12 : tests/unit/test_remotion_timeline_realpage_browser.py)")
+    parser.add_argument("--slice", type=int, default=10, help="numéro de Slice écrit dans le rapport")
+    parser.add_argument("--report", default="real-player.json", help="nom du rapport (Slice 12 : real-timeline.json)")
     options = parser.parse_args()
     runtime = Path(options.runtime_dir).resolve()
     evidence = Path(options.evidence).resolve()
@@ -61,21 +65,22 @@ def main() -> int:
         return 2
     evidence.mkdir(parents=True, exist_ok=True)
     for stale in evidence.glob("*.json"):
-        stale.unlink()
+        if stale.name == options.report or options.report == "real-player.json":
+            stale.unlink()
     env = {**os.environ, "JARVIS_REMOTION_RUNTIME_DIR": str(runtime), "JARVIS_REMOTION_EVIDENCE_DIR": str(evidence)}
     for name in ("JARVIS_UI_PORT", "JARVIS_VISUALIZER_PORT", "JARVIS_CORE_HOST"):
         env.pop(name, None)  # the user's own ports never reach an isolated Core
     started = time.monotonic()
     done = subprocess.run([sys.executable, "-m", "pytest", "-p", "no:cacheprovider", "-q", "--no-header", "-rA",
-                           "tests/unit/test_remotion_player_realpage_browser.py"], cwd=ROOT, env=env, capture_output=True,
+                           options.test], cwd=ROOT, env=env, capture_output=True,
                           text=True, encoding="utf-8", errors="replace")
     elapsed = round(time.monotonic() - started, 1)
     summary = [line for line in done.stdout.splitlines() if re.match(r"(PASSED|FAILED|ERROR|SKIPPED)\b|\d+ (passed|failed)", line)]
     scenarios = {path.stem: json.loads(path.read_text(encoding="utf-8")) for path in sorted(evidence.glob("*.json"))
-                 if path.name != "real-player.json"}
+                 if path.name != options.report}
     status = run(["git", "status", "--porcelain", "--untracked-files=no"], cwd=ROOT)
     report = {
-        "slice": 10, "handoff": "jarvis-remotion-presentation-integration",
+        "slice": options.slice, "test": options.test, "handoff": "jarvis-remotion-presentation-integration",
         "when": datetime.now(timezone.utc).isoformat(timespec="seconds"),
         "repository": {"head": run(["git", "rev-parse", "HEAD"], cwd=ROOT), "branch": run(["git", "rev-parse", "--abbrev-ref", "HEAD"], cwd=ROOT),
                        "tracked_tree_clean": not status, "dirty_files": status.splitlines()[:20]},
@@ -85,7 +90,7 @@ def main() -> int:
         "scenarios": sorted(scenarios),
         "result": "PASSED" if done.returncode == 0 else "FAILED",
     }
-    (evidence / "real-player.json").write_text(json.dumps(report, indent=2, ensure_ascii=False), encoding="utf-8")
+    (evidence / options.report).write_text(json.dumps(report, indent=2, ensure_ascii=False), encoding="utf-8")
     print(json.dumps({k: report[k] for k in ("result", "scenarios")}, ensure_ascii=False))
     if done.returncode != 0:
         print(done.stdout[-3000:], file=sys.stderr)

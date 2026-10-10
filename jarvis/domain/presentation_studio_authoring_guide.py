@@ -118,7 +118,7 @@ def draft_guide(kind: str | None = None) -> dict[str, Any]:
                             "max_scenes": f"1..{MAX_DRAFT_SCENES}", "strict_content": "booleen (exploratory seulement)"}},
         "draft": {**DRAFT_KEYS,
                   "prefabs": "[{key, candidate: {manifest, template, style, behavior}}] ; id sous presentation-studio. ; ou epingle un prefab existant",
-                  "scenes": "[{key, role: opening|body|closing|single, title, prefab: {bundle: <key>} ou {id, version}, props, data, controls, anchors}]",
+                  "scenes": "[{key, role: opening|body|closing|single, title, prefab: {bundle: <key>} ou {id, version}, props, data, controls, anchors: [{anchor_id, label, control_id?, at_ms? (scene Remotion : ms depuis le debut de la composition)}]}]",
                   "score.items": "[{scene: <key>, presenter: jarvis|user|none, text (dit tel quel) OU note (intention), target_duration_ms, "
                                  "cue?: {label, armable, phrases}, visual?, motion?}]",
                   "art_direction": "{mode: fallback} | {mode: signals, signals: {sources, colors, fonts, radii}} | {mode: profile, profile}",

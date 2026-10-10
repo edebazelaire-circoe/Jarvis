@@ -383,6 +383,7 @@
     /* Une source Remotion n'a pas de paquet HTML : le cadre est la page de la scène (`/remotion-stage`), qui monte le bac à sable
        isolé, compile à la demande et dit elle-même chaque état (compteur, échec typé, cadre retiré). L'hôte garde le cycle de vie
        (génération, bande d'erreur « Recharger », rapport `onOutcome`, pause, démontage). Jamais de repli HTML. */
+    let incarnations=0;
     function startRemotion(rec,generation,old,bundle){
       cancel(rec.readyTimer);
       if(!R){fail(rec,'the Remotion frame module is not loaded','bundle');return}
@@ -406,6 +407,12 @@
     function onRemotionStatus(rec,event){
       const view=rec.iframe;
       const origin=win.location&&win.location.origin;
+      if(event&&event.data&&event.data.type==='clock'){   /* position du lecteur (Slice 12) : gardée, bornée, jamais envoyée à Core */
+        const clock=R.parseClock(event,view,origin);
+        if(!clock.ok){drop(rec,clock.reason);return}
+        rec.clock=Object.assign({at:now()},clock.clock);
+        return;
+      }
       const parsed=R.parseStatus(event,view,origin);
       if(!parsed.ok){drop(rec,parsed.reason);return}
       const status=parsed.status;
@@ -420,6 +427,8 @@
         case 'ready':
           cancel(rec.readyTimer);
           if(status.composition)fitComposition(rec,status.composition);
+          rec.incarnation=++incarnations;
+          rec.clock=null;
           rec.ready=true;
           clearNote(rec);
           if(rec.bandReason==='timeout'||rec.state==='error'){clearBand(rec)}
@@ -853,10 +862,28 @@
     }
 
     /* Ordres de lecture d'une scène Remotion (play, pause, seek) et repères (cue) : sans effet, `false`, sur un autre prefab. */
-    function control(objectId,action,frame){
+    function control(objectId,action,frame,until){
       const rec=frames.get(objectId);
       if(!rec||!rec.remotion||!rec.ready)return false;
-      return post(rec,R.hostMessage('control',action==='seek'?{action,frame}:{action}));
+      const fields={action};
+      if(Number.isInteger(frame))fields.frame=frame;
+      if(action==='play'&&Number.isInteger(until))fields.until=until;
+      rec.clock=null;   // the old position no longer describes the player we just ordered
+      return post(rec,R.hostMessage('control',fields));
+    }
+
+    /* Dernière position rapportée par le lecteur (`{frame, playing, duration, fps, at}`), ou `null` : conseil pour la ligne de temps. */
+    /* The incarnation of the Player behind a Remotion window: a number that is new every time the stage page says `ready` (first mount,
+       staged hot-reload swap, "Recharger la scène", watchdog restart). The timeline follower watches it: a new Player knows nothing of the
+       order its predecessor was given. `null` before the first `ready`. */
+    function frame(objectId){
+      const rec=frames.get(objectId);
+      return rec&&rec.remotion&&rec.incarnation?rec.incarnation:null;
+    }
+
+    function clock(objectId){
+      const rec=frames.get(objectId);
+      return rec&&rec.remotion&&rec.clock?Object.assign({},rec.clock):null;
     }
 
     function cue(objectId,name,frame){
@@ -882,7 +909,7 @@
       for(const objectId of Array.from(frames.keys()))unmount(objectId);
     }
 
-    return Object.freeze({mount,update,unmount,pause,resume,touch,reload,stats,destroy,control,cue,
+    return Object.freeze({mount,update,unmount,pause,resume,touch,reload,stats,destroy,control,cue,clock,frame,
       has:(objectId)=>frames.has(objectId),
       counters:(objectId)=>{const rec=frames.get(objectId);return rec?Object.assign({},rec.counters):null},
       pendingKey:(objectId)=>{const rec=frames.get(objectId);return rec&&rec.next?rec.next.key:null},

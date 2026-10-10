@@ -438,7 +438,7 @@ class JarvisCoreApplication:
         self.presentation_studio_playback = PresentationStudioPlaybackService(
             self.presentation_studio, self.presentation_studio_edit, self.presentation_studio_stage,
             self.interaction_mode, bus=self.events, diagnostics=diagnostics, stage_observer=self.studio_stage,
-            gate=self.presentation_studio, detour_validator=self.prefabs,
+            gate=self.presentation_studio, detour_validator=self.prefabs, timeline_source=self.prefabs,
             events=StudioPlaybackEvents(self.conversation_event_emitter, lambda: self.brain.live_conversation_id()))
         # Slice 16 x Slice 12 : la lecture reste liee a sa variante; archiver la variante jouee est refuse.
         self.presentation_studio_variants.bind_playback(self.presentation_studio_playback)

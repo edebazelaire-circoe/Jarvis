@@ -117,8 +117,8 @@ Mêmes principes que `jv: 1` des prefabs ([prefabs.md](prefabs.md)), un fichier 
 
 | Sens | Types (champs exacts, une clé de plus est un refus) |
 | --- | --- |
-| hôte -> cadre | `init {composition{id,width,height,fps,durationInFrames}, props}`, `props {props}`, `control {action: play\|pause\|seek, frame?}`, `cue {name, frame}`, `ping {n}`, `teardown {}` |
-| cadre -> hôte | `ready {}`, `pong {n, frame, dropped, heap?, muted?}`, `violation {directive, blocked}`, `error {message}` |
+| hôte -> cadre | `init {composition{id,width,height,fps,durationInFrames}, props}`, `props {props}`, `control {action: play\|pause\|seek, frame?, until?}`, `cue {name, frame}`, `ping {n}`, `teardown {}` |
+| cadre -> hôte | `ready {}`, `pong {n, frame, dropped, heap?, muted?}`, `clock {frame, playing}`, `violation {directive, blocked}`, `error {message}` |
 
 - **Contrôle de l'expéditeur** : côté hôte, `event.source === iframe.contentWindow` ; l'origine d'un cadre `sandbox` sans `allow-same-origin` est toujours la chaîne `"null"` et ne distingue personne, elle n'est qu'un second contrôle. Côté cadre : `event.source === window.parent` **et** `event.origin ===` l'origine de l'hôte (baked dans la page) ; le cadre n'envoie qu'à cette origine (`targetOrigin` explicite). Un cadre frère ne peut donc pas piloter la scène (prouvé).
 - **Bornes avant travail** : `jsonBudget` s'arrête dès que la borne est dépassée (cadre -> hôte 2 Kio, props 64 Kio, profondeur 8, 2 000 nœuds, JSON simple seulement, jamais une clé `__proto__`) ; une chaîne géante n'est pas parcourue. Les valeurs acceptées sont des **copies** fraîches et bornées. Composition : 16 à 7 680 px, 1 à 120 images/s, 1 à 108 000 images ; cue : nom `[a-z][a-z0-9_]{0,39}`.
@@ -211,7 +211,7 @@ Mesuré (`test_a_scene_that_navigates_to_an_origin_of_jarvis_sends_no_request` e
 
 `control_center_remotion_stage.js` reprend à la lettre le § 7 : cadre créé avec exactement `IFRAME_ATTRIBUTES` (`src` posé **avant** l'insertion, sinon le `load` de l'`about:blank` passerait pour une navigation) ; source de chaque message vérifiée par `createSupervisor(...).accept(event, iframe.contentWindow)` ; **`tick()` toutes les 250 ms tant qu'un cadre est monté** (arrêté au retrait) ; **`strongToken()` par défaut**, jamais un `token()` plus faible (test : 32 hexadécimaux) ; sur `kill`, cadre retiré, raison en clair (« La scène ne répond plus depuis 3 s », « trop de mémoire », « messages invalides », « ne s'est pas lancée dans les 10 s »), bouton « Recharger la scène », `remotion.sandbox.killed` journalisé ; un second `load` du cadre est une navigation (retrait). Ne passe au cadre que les `inputProps` (valeurs par défaut du manifeste sous les valeurs de la scène, `data` jamais) : **discipline des props**, voir § 10.8.
 
-Le protocole entre la fenêtre de stage et la page de scène (`rsh: 1`, même origine, source = `contentWindow`, champs exacts, `control_center_remotion_frame.js`) : fenêtre -> page `props`, `control {play|pause|seek}`, `cue`, `teardown` ; page -> fenêtre `status {phase: shell|preparing|mounting|ready|failed|killed|scene_error}`. Les valeurs changent par message (coalescé : au plus un `props` par 16 ms, la dernière gagne), jamais par un nouveau rendu ni un remontage : une édition de couleur, de titre ou de durée est visible en une image et la scène reste éditable. Le prefab host reste propriétaire du cycle de vie (génération, `onOutcome` du rechargement à chaud, pause LRU, démontage, échange « préparé à côté » des sources du Studio : le cadre de la scène suivante est préparé hors écran et ne remplace l'ancien qu'une fois prêt).
+Le protocole entre la fenêtre de stage et la page de scène (`rsh: 1`, même origine, source = `contentWindow`, champs exacts, `control_center_remotion_frame.js`) : fenêtre -> page `props`, `control {play|pause|seek}` (`frame?`, `until?`, Slice 12), `cue`, `teardown` ; page -> fenêtre `clock {frame, playing, duration, fps}` (Slice 12, § 11) et `status {phase: shell|preparing|mounting|ready|failed|killed|scene_error}`. Les valeurs changent par message (coalescé : au plus un `props` par 16 ms, la dernière gagne), jamais par un nouveau rendu ni un remontage : une édition de couleur, de titre ou de durée est visible en une image et la scène reste éditable. Le prefab host reste propriétaire du cycle de vie (génération, `onOutcome` du rechargement à chaud, pause LRU, démontage, échange « préparé à côté » des sources du Studio : le cadre de la scène suivante est préparé hors écran et ne remplace l'ancien qu'une fois prêt).
 
 ### 10.4 États visibles (jamais un repli, jamais un cadre vide)
 
@@ -250,3 +250,39 @@ La bande d'erreur de la fenêtre n'est **pas** doublée quand la page de scène 
 - **Fenêtre de stage petite par défaut** (comme toute fenêtre) : la scène s'y affiche avec bandes noires ; le plein écran est la vue de présentation.
 - **Chrome 154 seul exercé** (Windows 11) ; audio réel (haut-parleurs, scène avec piste sonore) jamais écouté ici ; Échap physique et plusieurs écrans : humain.
 - **Charge** : un cadre Remotion vivant est un processus de rendu ; le plafond de 24 cadres vivants du prefab host s'applique (les plus anciens passent en pause).
+
+## 11. Slice 12 : la ligne de temps de la partition (seek, lecture, pause, position)
+
+Handoff `jarvis-remotion-presentation-integration`, Slice 12. Le contrat côté partition (ancres, segments, ce que Core décrit) est dans [presentation-studio.md](presentation-studio.md) › *Remotion timeline bridge* ; ce chapitre est le côté bac à sable et navigateur. Ajouts **seulement additifs** au protocole `rs: 1` et `rsh: 1` ; tout ce qui existait garde sa forme.
+
+### 11.1 Messages ajoutés
+
+| Sens | Message | Règle |
+| --- | --- | --- |
+| hôte -> cadre | `control {action, frame?, until?}` | `seek` exige `frame` (inchangé) ; `play` et `pause` peuvent porter `frame` (aller à cette image, puis jouer ou tenir) ; `play` peut porter `until` : le lecteur s'arrête **de lui-même sur cette image** (>= `frame`), `pause` et `seek` n'en portent pas (refus `bad_until`). Entiers 0..108 000. |
+| cadre -> hôte | `clock {frame, playing}` | position du lecteur : `frame` entier 0..108 000, `playing` booléen, rien d'autre (`extra_field`). Envoyé au plus toutes les 250 ms pendant la lecture et à chaque `play` / `pause` / `seeked` / `ended` (au plus un par 100 ms si rien n'a changé). Plafond côté hôte : `maxClocksPerSecond` = 12 ; au-delà le rapport est jeté et compté (`clockDropped`), **sans infraction** (un lecteur bavard n'est pas un cadre hostile) ; un rapport malformé est une infraction (`bad_clock`, comptée par `maxViolations`). |
+| page de la scène -> fenêtre | `clock {frame, playing, duration, fps}` (`rsh: 1`) | la position bornée à `0..durée-1` par la page, au plus 4 par seconde, sauf changement d'état (lecture <-> pause, toujours dit). Même contrôle de source (`contentWindow` du cadre) et d'origine que `status`, champs exacts (`parseClock`). |
+| fenêtre -> page | `control {action, frame?, until?}` | même forme ; la page borne `frame` et `until` à la composition et n'envoie `until` que pour `play`. |
+
+### 11.2 Ce que fait le cadre (`remotion_sandbox_child.js`)
+
+`seek` oublie toute image d'arrêt ; `pause` aussi. `play` avec `until` pose l'image d'arrêt : sur l'événement `frameupdate` du Player, dès que l'image atteint `until`, le cadre fait `pause()` puis `seekTo(until)` (le lecteur tient exactement sur `until`, jamais une image au-delà) et rapporte la position. Un `play` dont l'image d'arrêt est déjà atteinte ne lit pas : il se place sur `until` et reste en pause. Un ordre reçu avant que le Player existe est gardé avec son image d'arrêt (comme `seek` / `play` l'étaient). Le lecteur rapporte sa position par `clock` ; `pong` garde `frame` (le chien de garde).
+
+### 11.3 Ce que fait la page de la scène et la fenêtre
+
+La page de la scène (`control_center_remotion_stage.js`) borne la position du `clock` à la composition, la garde (la barre de lecture l'affiche) et la relaie à la fenêtre (4 par seconde). L'hôte des cadres (`control_center_prefab_host.js`) garde la dernière position par fenêtre (`clock(objectId)` : `{frame, playing, duration, fps, at}`) et efface la position à chaque ordre (l'ancienne ne décrit plus le lecteur). `control(objectId, action, frame, until)` valide les entiers avant d'écrire. Le suiveur de la ligne de temps (`JarvisRemotionFrame.createTimelineFollower`, un par page de scène, `control_center_scene_page.js`) applique la vue de Core ; il est pur et testé sous node.
+
+### 11.4 Autorité et menace
+
+La position est un **conseil d'un code non fiable** : elle n'arrive jamais à Core, ne sert qu'à décider d'un rattrapage borné DANS le segment de la scène (une par seconde, cinq par segment, puis abandon dit une fois), et un rapport faux (image hors composition, type faux, clé en plus, expéditeur étranger, origine étrangère) est refusé et compté sans effet. Mesuré dans Chrome : une scène qui poste `clock {frame: 99999999}` ou `{frame: -3}` à son hôte est refusée par le chien de garde (`refused.bad_clock`), le lecteur ne bouge pas, le cadre n'est pas retiré (deux infractions sur vingt). La scène ne déclenche aucune cue, aucune parole, aucun outil : seule la partition de Core décide (`presentation-studio.md`).
+
+### 11.5 Tests et preuves
+
+`test_remotion_sandbox_protocol_js.py` (formes, plafond de `clock`), `test_remotion_sandbox_child_js.py` (le vrai script du cadre contre un faux Player), `test_remotion_timeline_js.py` (suiveur, dérive, rapports falsifiés ou périmés, relais de la page), `test_remotion_timeline_realpage_browser.py` (Chrome réel, Core isolé : segment d'entrée, ancre révélée, cue, pause, reprise, retour, faux rapport ; preuve `tasks/jarvis-remotion-presentation-integration/slices/12-score-to-remotion-runtime/evidence/real-timeline.json`).
+
+### 11.6 Risques résiduels de la Slice 12
+
+- **La position est une déclaration du cadre** : une scène hostile peut mentir (elle ne gagne que de provoquer, au plus cinq fois par segment, un `seek` de SON lecteur à une image de SON segment).
+- **Latence** : la vue de Core est lue toutes les 500 ms pendant une ligne de temps ; le début d'un segment peut paraître jusqu'à ~0,5 s après la révélation. Pas de synchronisation à l'image près avec l'audio.
+- **`frameupdate` du Player** est la source de l'arrêt : un navigateur qui étrangle l'onglet (arrière-plan) peut dépasser `until` d'une ou deux images avant que `seekTo(until)` ne remette le lecteur sur l'image d'arrêt.
+- Chrome 154 seul exercé (Windows 11) ; audio réel jamais écouté.

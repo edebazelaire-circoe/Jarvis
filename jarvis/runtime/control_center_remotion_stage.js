@@ -26,6 +26,7 @@
   const PREPARE_DEADLINE_MS=150000;
   const PROPS_COALESCE_MS=16;
   const CONTROL_HIDE_MS=2500;
+  const CLOCK_RELAY_MS=250;
   const PARENT_TYPES=Object.freeze(['props','control','cue','teardown']);
   const KILL_TEXT=Object.freeze({
     unresponsive:'La scène ne répond plus depuis 3 s : elle a été retirée.',
@@ -43,7 +44,7 @@
     if(!event||event.source!==parentWindow||event.origin!==origin)return {ok:false,reason:'foreign'};
     const data=event.data;
     if(!plainObject(data)||data.rsh!==SHELL||!PARENT_TYPES.includes(data.type))return {ok:false,reason:'bad_message'};
-    const allowed={props:['props'],control:['action','frame'],cue:['name','frame'],teardown:[]}[data.type];
+    const allowed={props:['props'],control:['action','frame','until'],cue:['name','frame'],teardown:[]}[data.type];
     for(const key of Object.keys(data))if(key!=='rsh'&&key!=='type'&&!allowed.includes(key))return {ok:false,reason:'extra_field'};
     return {ok:true,message:data};
   }
@@ -86,7 +87,7 @@
     const every=d.setInterval||((fn,ms)=>setInterval(fn,ms));
     const stopEvery=d.clearInterval||((id)=>clearInterval(id));
     const state={phase:'shell',generation:0,props:{},descriptor:null,iframe:null,supervisor:null,tickTimer:null,prepareTimer:null,
-      prepareSince:0,counterTimer:null,propsTimer:null,sent:'',playing:false,frame:0,frameAt:0,lastPong:0,mounted:false,
+      prepareSince:0,counterTimer:null,propsTimer:null,sent:'',playing:false,frame:0,frameAt:0,lastPong:0,clockSentAt:-1e9,mounted:false,
       killedReason:null,duration:0,fps:30,hideTimer:null,lastSupervisor:null,muted:true,controller:null,barTimer:null};
     const ui={};
 
@@ -300,6 +301,7 @@
         case 'pong':
           state.frame=message.frame;state.frameAt=now();state.lastPong=state.frameAt;state.muted=message.muted!==false;refreshBar();
           break;
+        case 'clock':onClock(message);break;
         case 'violation':
           report('violation',{directive:message.directive});
           d.log('warn','remotion.stage.csp_violation',{directive:message.directive,blocked:message.blocked.slice(0,120)});
@@ -311,6 +313,21 @@
           break;
         default:break;
       }
+    }
+
+    /* Position du lecteur (Slice 12) : conseil de l'iframe, jamais une vérité pour Core (il n'y va pas). Bornée à la durée de la
+       composition (un cadre qui ment ne sort pas de sa propre ligne de temps) et relayée à la fenêtre au plus 4 fois par seconde,
+       sauf changement d'état (lecture <-> pause), toujours dit. */
+    function onClock(message){
+      const frame=Math.max(0,Math.min(Math.max(state.duration-1,0),message.frame));
+      const changed=message.playing!==state.playing;
+      state.frame=frame;state.frameAt=now();state.playing=message.playing;
+      refreshBar();
+      const t=now();
+      if(!changed&&t-state.clockSentAt<CLOCK_RELAY_MS)return;
+      state.clockSentAt=t;
+      try{d.parentWindow.postMessage({rsh:SHELL,type:'clock',frame,playing:message.playing,duration:state.duration,fps:state.fps},d.origin)}
+      catch(error){d.log('warn','remotion.stage.parent_post_failed',{error:describe(error)})}
     }
 
     function sandboxReady(generation){
@@ -363,15 +380,22 @@
 
     /* ------------------------------------------------------------ ordres de la fenêtre parente */
 
-    function control(action,frame){
+    /* `frame` : où aller (seek, ou avant play / pause) ; `until` (play) : l'image où le lecteur s'arrête seul (Slice 12). */
+    function control(action,frame,until){
       if(!state.mounted||!state.iframe)return false;
+      const last=Math.max(state.duration-1,0);
+      const clamp=(value)=>Math.max(0,Math.min(last,Math.floor(value)));
       try{
         if(action==='seek'){
-          const target=Math.max(0,Math.min(state.duration-1,Math.floor(frame)));
+          const target=clamp(frame);
           postToFrame(state.iframe,P.hostMessage('control',{action:'seek',frame:target}));
           state.frame=target;state.frameAt=now();
         }else{
-          postToFrame(state.iframe,P.hostMessage('control',{action}));
+          const fields={action};
+          if(Number.isFinite(frame))fields.frame=clamp(frame);
+          if(action==='play'&&Number.isFinite(until))fields.until=Math.max(clamp(until),fields.frame===undefined?0:fields.frame);
+          postToFrame(state.iframe,P.hostMessage('control',fields));
+          if(fields.frame!==undefined)state.frame=fields.frame;
           state.playing=action==='play';state.frameAt=now();
         }
       }catch(error){d.log('warn','remotion.stage.control_failed',{action,error:describe(error)});return false}
@@ -413,7 +437,7 @@
       switch(m.type){
         case 'props':if(plainObject(m.props))setProps(m.props);break;
         case 'control':
-          if(['play','pause','seek'].includes(m.action))control(m.action,m.frame);
+          if(['play','pause','seek'].includes(m.action))control(m.action,m.frame,m.until);
           break;
         case 'cue':
           if(state.mounted&&state.iframe&&typeof m.name==='string'){

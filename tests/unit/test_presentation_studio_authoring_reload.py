@@ -67,7 +67,7 @@ async def stack(tmp_path):
 async def test_an_assembled_deck_is_a_valid_v3_document_set_owned_by_nobody_yet(stack):
     pid, variant = await stack.deck()
     document = json.loads((stack.env.studio_root / "presentations" / pid / "variants" / f"{variant.variant_id}.json").read_text(encoding="utf-8"))
-    assert document["schema_version"] == VARIANT_SCHEMA_VERSION == 4  # v3 is Slice 06 (the two fields below), v4 Slice 17 (no scene_variants key)
+    assert document["schema_version"] == VARIANT_SCHEMA_VERSION == 5  # v5 Remotion Slice 12 (anchor at_ms); v3 is Slice 06 (the two fields below), v4 Slice 17 (no scene_variants key)
     assert all("scene_variants" not in s for s in document["scenes"])
     assert all(s["source_revision"] == 0 and s["last_valid_pin"] is None for s in document["scenes"])
     assert all(s.source_revision == 0 and s.last_valid_pin is None for s in variant.scenes)

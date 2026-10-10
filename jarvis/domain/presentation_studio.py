@@ -69,7 +69,9 @@ SCHEMA_VERSION = 3
 #: clé `scene_variants` d'une scène (ses variantes locales). Règle de fusion : chaque Slice ajoute **sa** clé de scène, aucune ne
 #: lit celle de l'autre (fait : v3 rechargement, v4 variantes locales). Le manifeste `presentation.json` (v2, Slice 16) et le
 #: document de variante ont chacun leur numéro : ils ne bougent pas ensemble.
-VARIANT_SCHEMA_VERSION = 4
+#: v5 (Remotion Slice 12) autorise la clé `at_ms` d'une ancre (sa place sur la ligne de temps d'une scène Remotion) ; elle est absente tant
+#: qu'elle n'est pas posée (forme canonique), l'étape 4 -> 5 est l'identité.
+VARIANT_SCHEMA_VERSION = 5
 #: `Score` document (Slice 10, `presentation_studio_score.py`) : `scores/<score_id>.json`, version 1.
 SCHEMA_SCORE = "jarvis.presentation_studio.score"
 SCORE_SCHEMA_VERSION = 1
@@ -518,8 +520,15 @@ def _variant_v3_to_v4(document: dict[str, Any]) -> dict[str, Any]:
     return document
 
 
+def _variant_v4_to_v5(document: dict[str, Any]) -> dict[str, Any]:
+    """v4 -> v5 (Remotion Slice 12) : aucune ancre n'a de position. La clé `at_ms` d'une ancre est **absente** quand elle n'est pas posée
+    (forme canonique, octet pour octet) : l'étape n'écrit rien, elle ne fait qu'autoriser la clé (un JARVIS v4 refuse la v5, il ne la lit pas de travers)."""
+
+    return document
+
+
 UPGRADES: dict[str, dict[int, Callable[[dict[str, Any]], dict[str, Any]]]] = {
-    SCHEMA_PRESENTATION: {1: _presentation_v1_to_v2, 2: _presentation_v2_to_v3}, SCHEMA_VARIANT: {1: _variant_v1_to_v2, 2: _variant_v2_to_v3, 3: _variant_v3_to_v4},
+    SCHEMA_PRESENTATION: {1: _presentation_v1_to_v2, 2: _presentation_v2_to_v3}, SCHEMA_VARIANT: {1: _variant_v1_to_v2, 2: _variant_v2_to_v3, 3: _variant_v3_to_v4, 4: _variant_v4_to_v5},
     SCHEMA_SCORE: {}, SCHEMA_ART_DIRECTION: {}}
 
 

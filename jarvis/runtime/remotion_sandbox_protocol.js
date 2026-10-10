@@ -8,8 +8,8 @@
      est toujours la chaîne "null", donc elle ne distingue personne et n'est qu'un second contrôle.
    - `parseHostMessage(event, expectedSource, expectedOrigin)` : côté cadre, un message n'est accepté que du parent
      (`window.parent`) et de l'origine de l'hôte (un cadre frère ne peut pas lui parler).
-   - Types hôte->cadre : `init {composition, props}`, `props {props}`, `control {action, frame?}`, `cue {name, frame}`,
-     `ping {n}`, `teardown {}`. Cadre->hôte : `ready {}`, `pong {n, frame, dropped, heap?}`, `violation {directive, blocked}`,
+   - Types hôte->cadre : `init {composition, props}`, `props {props}`, `control {action, frame?, until?}`, `cue {name, frame}`,
+     `ping {n}`, `teardown {}`. Cadre->hôte : `ready {}`, `pong {n, frame, dropped, heap?}`, `clock {frame, playing}`, `violation {directive, blocked}`,
      `error {message}`. Champs EXACTS : une clé de plus est un refus.
    - Bornes AVANT travail : taille estimée (`jsonBudget` s'arrête dès que la borne est dépassée), profondeur, nombre de
      nœuds, types JSON seulement, jamais une clé `__proto__`. Une chaîne géante est refusée sans être parcourue.
@@ -20,21 +20,21 @@
   'use strict';
   const RS=1;
   const HOST_TYPES=Object.freeze(['init','props','control','cue','ping','teardown']);
-  const CHILD_TYPES=Object.freeze(['ready','pong','violation','error']);
+  const CHILD_TYPES=Object.freeze(['ready','pong','clock','violation','error']);
   const CONTROL_ACTIONS=Object.freeze(['play','pause','seek']);
   const LIMITS=Object.freeze({
     maxPropsBytes:64*1024, maxChildBytes:2048, maxDepth:8, maxNodes:2000, maxErrorChars:300, maxBlockedChars:120,
     maxFrame:108000, maxCompositionPx:7680, minCompositionPx:16, maxFps:120,
     maxChildMessagesPerSecond:200, maxViolations:20, pingEveryMs:1000, silentMs:3000, readyMs:10000,
-    maxReportsPerSecond:20, maxHeapMb:768, maxFloodSeconds:3
+    maxReportsPerSecond:20, maxHeapMb:768, maxFloodSeconds:3, maxClocksPerSecond:12
   });
   const NAME=/^[a-z][a-z0-9_]{0,39}$/;
   const TOKEN=/^[a-z0-9]{8,32}$/;
   const DIRECTIVE=/^[a-z][a-z-]{0,39}$/;
   const COMPOSITION_ID=/^[A-Za-z][A-Za-z0-9-]{0,63}$/;
   const FIELDS=Object.freeze({
-    init:['composition','props'], props:['props'], control:['action','frame'], cue:['name','frame'], ping:['n'], teardown:[],
-    ready:[], pong:['n','frame','dropped','heap','muted'], violation:['directive','blocked'], error:['message']
+    init:['composition','props'], props:['props'], control:['action','frame','until'], cue:['name','frame'], ping:['n'], teardown:[],
+    ready:[], pong:['n','frame','dropped','heap','muted'], clock:['frame','playing'], violation:['directive','blocked'], error:['message']
   });
 
   function isPlainObject(value){
@@ -107,8 +107,14 @@
       case 'control':
         if(!CONTROL_ACTIONS.includes(data.action))return refuse('bad_action');
         out.action=data.action;
+        /* Slice 12 (ligne de temps de la partition) : `seek` exige `frame` ; `play` et `pause` peuvent en porter un (aller à cette image,
+           puis jouer ou tenir) ; `until` (play seulement) : l'image sur laquelle le lecteur s'arrête de lui-même (>= `frame`). */
         if(data.action==='seek'){if(!isInt(data.frame,0,LIMITS.maxFrame))return refuse('bad_frame');out.frame=data.frame}
-        else if('frame' in data)return refuse('extra_field');
+        else if('frame' in data){if(!isInt(data.frame,0,LIMITS.maxFrame))return refuse('bad_frame');out.frame=data.frame}
+        if('until' in data){
+          if(data.action!=='play'||!isInt(data.until,0,LIMITS.maxFrame)||('frame' in data&&data.until<data.frame))return refuse('bad_until');
+          out.until=data.until;
+        }
         break;
       case 'cue':
         if(typeof data.name!=='string'||!NAME.test(data.name)||!isInt(data.frame,0,LIMITS.maxFrame))return refuse('bad_cue');
@@ -121,6 +127,9 @@
         if('heap' in data){if(!isInt(data.heap,-1,1e6))return refuse('bad_pong');out.heap=data.heap}
         if('muted' in data){if(typeof data.muted!=='boolean')return refuse('bad_pong');out.muted=data.muted}
         out.n=data.n;out.frame=data.frame;out.dropped=data.dropped;break;
+      case 'clock':
+        if(!isInt(data.frame,0,LIMITS.maxFrame)||typeof data.playing!=='boolean')return refuse('bad_clock');
+        out.frame=data.frame;out.playing=data.playing;break;
       case 'violation':
         if(typeof data.directive!=='string'||!DIRECTIVE.test(data.directive)||typeof data.blocked!=='string')return refuse('bad_violation');
         out.directive=data.directive;out.blocked=clean(data.blocked,LIMITS.maxBlockedChars);break;
@@ -173,7 +182,7 @@
     const limits=Object.assign({},LIMITS,options.limits||{});
     const now=options.now;
     const state={ready:false,killed:false,reason:null,startedAt:now(),pending:null,pendingSince:0,lastPingAt:-1e9,lastFrame:-1,violations:0,
-      accepted:0,refused:{},foreign:0,reports:[],windowStart:now(),windowCount:0,pongs:0,childDropped:0,lastHeapMb:-1,muted:true,floodStreak:0,violationsReported:0,errorsReported:0};
+      accepted:0,refused:{},foreign:0,reports:[],windowStart:now(),windowCount:0,pongs:0,childDropped:0,lastHeapMb:-1,muted:true,floodStreak:0,violationsReported:0,errorsReported:0,clocks:0,clockDropped:0,clockWindow:[],lastClock:null};
     function kill(reason,detail){
       if(state.killed)return;
       state.killed=true;state.reason=reason;
@@ -219,6 +228,13 @@
             // Chrome's per-process JS heap as the frame reports it (an upper bound only a hostile scene could hide, never invent).
             if(limits.maxHeapMb>0&&message.heap>limits.maxHeapMb)kill('memory',String(message.heap));
           }
+          break;
+        case 'clock':
+          /* Rapport de position du lecteur : conseil seulement (il ne va jamais jusqu'à Core). Plafonné : au-delà, jeté sans compter
+             une infraction (un lecteur qui bavarde n'est pas un cadre hostile), mais compté. */
+          state.clockWindow=state.clockWindow.filter(x=>t-x<1000);
+          if(state.clockWindow.length>=limits.maxClocksPerSecond){state.clockDropped+=1;return refuse('clock_rate')}
+          state.clockWindow.push(t);state.clocks+=1;state.lastClock={frame:message.frame,playing:message.playing};
           break;
         case 'violation':case 'error':
           state.reports=state.reports.filter(x=>t-x<1000);
