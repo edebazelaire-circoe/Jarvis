@@ -58,3 +58,42 @@ async def test_a_small_change_is_a_props_edit_that_needs_no_source_gesture(world
     assert result["committed"] is True
     ops = [o["op"] for a, k in world.spy.named("presentation_studio_edit") for o in a[2]["ops"]]
     assert ops == ["control.set"]
+
+
+# ---- Remotion Slice 21 rework (QA B1): Core is the authority, the tool layer only carries the attestation to it.
+
+async def _brain_source_edit(world: World, **extra):
+    variant = await world.client.presentation_studio_variant(world.pid, world.vid)
+    return await world.client.presentation_studio_source_edit(world.pid, world.vid, {
+        "actor": "brain", "basis": {"variant_revision": variant["revision"]}, "scene_id": S1, "files": {"style": "p{color:#102030}"}, **extra})
+
+
+async def test_the_tool_carries_the_attested_origin_and_core_ties_the_later_source_edit_to_that_record(world: World):
+    from jarvis.protocol.client import CoreProtocolError
+
+    world.cc.answers[ATTESTED] = (200, {"ok": True, "addressed_user_turn": True})
+    recorded = await world.tools.edit([SOURCE])
+    (args, _), = world.spy.named("presentation_studio_edit")
+    assert args[2]["origin"] == "explicit_user_request"
+    request_id = recorded["source_requests"][0]["request_id"]
+    with pytest.raises(CoreProtocolError) as caught:           # the sub-agent forgot the id: Core refuses, whatever the tool layer did
+        await _brain_source_edit(world)
+    assert (caught.value.status, caught.value.code) == (403, "presentation_studio_source_request_required")
+    done = await _brain_source_edit(world, request_id=request_id)
+    assert done["status"] in ("reloaded", "repinned", "reloaded_state_reset") and done["request_id"] == request_id
+    with pytest.raises(CoreProtocolError) as caught:           # consumed by the success: a second edit needs a renewed request
+        await _brain_source_edit(world, request_id=request_id)
+    assert caught.value.code == "presentation_studio_source_request_required"
+
+
+async def test_core_itself_refuses_to_record_a_brain_source_request_without_the_origin(world: World):
+    """A caller that bypasses the tool layer (a sub-agent with the Core token) gets no record, hence no later edit."""
+
+    variant = await world.client.presentation_studio_variant(world.pid, world.vid)
+    from jarvis.protocol.client import CoreProtocolError
+
+    with pytest.raises(CoreProtocolError) as caught:
+        await world.client.presentation_studio_edit(world.pid, world.vid, {
+            "actor": "brain", "mode": "commit", "basis": {"variant_revision": variant["revision"]}, "ops": [SOURCE]})
+    assert (caught.value.status, caught.value.code) == (403, "presentation_studio_source_request_required")
+    assert world.core.stack.core.presentation_studio_edit.pending_source_requests() == ()

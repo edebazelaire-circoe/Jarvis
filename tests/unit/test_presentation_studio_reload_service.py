@@ -465,19 +465,70 @@ async def test_nothing_new_is_accepted_after_close_and_the_pending_burst_is_publ
 
 # ------------------------------------------------------------------ demandes de source, evenements, bornes
 
-async def test_a_source_request_is_closed_by_the_edit_that_answers_it_and_never_blocks_one(rig):
+async def test_a_source_request_is_closed_by_the_edit_that_answers_it(rig):
     revision = (await rig.variant()).revision
-    recorded = await rig.edits.edit(rig.pid, rig.vid, {
-        "actor": "brain", "mode": "commit", "basis": {"variant_revision": revision},
-        "ops": [{"op": "scene.source_request", "scene_id": SID, "intent": "Make the title bigger"}]})
-    request_id = recorded.source_requests[0]["request_id"]
+    request_id = await rig.record_request(origin="explicit_user_request", actor="brain")
     assert [r.request_id for r in rig.edits.pending_source_requests()] == [request_id]
-    result = await rig.edit({"style": GOOD_STYLE}, request_id=request_id, actor="brain", revision=recorded.revision)
+    result = await rig.edit({"style": GOOD_STYLE}, request_id=request_id, actor="brain", revision=revision)
     assert result.status is S.RELOADED and result.request_id == request_id and result.actor.value == "brain"
+    assert rig.edits.pending_source_requests() == (), "consumed by the successful edit"
+
+
+# ---- Remotion Slice 21 (QA B1): this REPLACES the Slice 06 rule « a vanished request never blocks an edit » FOR THE BRAIN.
+# The brain edits a source only for a pending request recorded in a turn of the user, for this very scene; the user is never asked for one.
+
+async def test_a_brain_source_edit_without_a_pending_request_is_refused_before_any_work(rig):
+    before = len(rig.versions_of(scene_of(await rig.variant()).prefab.prefab_id))
+    for extra in ({}, {"request_id": "psq_0000000000ff"}):       # none, and one nobody recorded (evicted, restarted, already satisfied)
+        error = await refused(rig.edit({"style": GOOD_STYLE}, actor="brain", auto_request=False, **extra), C.SOURCE_REQUEST_REQUIRED)
+        assert HTTP_STATUS[error.code] == 403 and "renew" in error.message
+    assert len(rig.versions_of(scene_of(await rig.variant()).prefab.prefab_id)) == before, "nothing was composed or published"
+    assert rig.sink.of("core.presentation_studio.reload_refused")
+    assert not rig.sink.of("core.presentation_studio.reload_rate_limited")
+
+
+async def test_the_user_never_needs_a_pending_request(rig):
+    assert (await rig.edit({"style": GOOD_STYLE}, actor="user")).status is S.RELOADED
+    assert (await rig.edit({"style": "p{color:#010203}"}, actor="user", request_id="psq_0000000000ff")).status is S.RELOADED
+
+
+async def test_a_pending_request_is_good_for_its_own_scene_and_variant_only(rig):
+    request_id = await rig.record_request(SID, origin="explicit_user_request", actor="brain")
+    await refused(rig.edit({"style": GOOD_STYLE}, scene_id=SID2, actor="brain", request_id=request_id, auto_request=False), C.SOURCE_REQUEST_REQUIRED)
+    assert [r.request_id for r in rig.edits.pending_source_requests()] == [request_id], "a refused claim consumes nothing"
+    assert (await rig.edit({"style": GOOD_STYLE}, scene_id=SID, actor="brain", request_id=request_id)).status is S.RELOADED
+
+
+async def test_a_pending_request_survives_a_refused_build_and_a_stale_basis_and_is_consumed_by_the_success(rig):
+    request_id = await rig.record_request(origin="explicit_user_request", actor="brain")
+    stale = await rig.edit({"style": GOOD_STYLE}, actor="brain", request_id=request_id, revision=1)
+    assert stale.status is S.STALE
+    invalid = await rig.edit({"template": "<iframe></iframe>"}, actor="brain", request_id=request_id)
+    assert invalid.status is S.REFUSED_VALIDATION
+    assert [r.request_id for r in rig.edits.pending_source_requests()] == [request_id], "a retouch keeps working with the same request"
+    assert (await rig.edit({"style": GOOD_STYLE}, actor="brain", request_id=request_id)).status is S.RELOADED
+    await refused(rig.edit({"style": "p{color:red}"}, actor="brain", request_id=request_id, auto_request=False), C.SOURCE_REQUEST_REQUIRED)
+
+
+async def test_a_pending_request_expires_and_the_message_says_to_renew(rig):
+    from jarvis.core.presentation_studio_edit import SOURCE_REQUEST_TTL_S
+    clock = [1000.0]
+    rig.edits._clock = lambda: clock[0]
+    request_id = await rig.record_request(origin="explicit_user_request", actor="brain")
+    clock[0] += SOURCE_REQUEST_TTL_S - 1
+    probe = rig.edits.claim_source_request(request_id, rig.pid, rig.vid, SID)
+    assert probe.request_id == request_id, "still pending just before the deadline (reading does not consume)"
+    clock[0] += 2
+    error = await refused(rig.edit({"style": GOOD_STYLE}, actor="brain", request_id=request_id, auto_request=False), C.SOURCE_REQUEST_REQUIRED)
+    assert "expired after 30 minutes" in error.message and "renew" in error.message
     assert rig.edits.pending_source_requests() == ()
-    # an unknown (evicted, restarted) request id is not an error: the queue is not durable by decision
-    again = await rig.edit({"style": "p{color:red}"}, request_id="psq_0000000000ff")
-    assert again.status is S.RELOADED
+
+
+async def test_a_record_that_does_not_come_from_the_user_cannot_authorise_a_source_edit(rig):
+    from dataclasses import replace
+    request_id = await rig.record_request(origin="explicit_user_request", actor="brain")
+    rig.edits._sources[0] = replace(rig.edits._sources[0], origin=None)  # defence in depth: the registry's own field is what is read
+    await refused(rig.edit({"style": GOOD_STYLE}, actor="brain", request_id=request_id, auto_request=False), C.SOURCE_REQUEST_REQUIRED)
 
 
 async def test_events_and_journal_rows_carry_ids_and_codes_never_source_or_values(rig):

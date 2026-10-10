@@ -127,6 +127,10 @@ SENTENCES: dict[str, str] = {
     "control_center_unreachable": "Le Control Center est injoignable : l'interface de JARVIS doit tourner.",
     "core_unreachable": "Core est injoignable : rien n'a été lu ni fait.",
     # jarvis-remotion (Remotion Slice 21) : les mêmes routes de Core que les cartes du Control Center ; le refus dit quoi dire à l'utilisateur.
+    "presentation_studio_source_request_required": ("Core n'édite une source pour le cerveau que sur une demande de source EN ATTENTE, enregistrée dans un tour de "
+                                                    "l'utilisateur pour cette scène : demande à renouveler (scene.source_request dans le tour de l'utilisateur)."),
+    "core_timeout": ("Core n'a pas répondu à temps : l'issue est inconnue, relis l'état avant de réessayer (remotion_status exports pour un export, "
+                     "presentation_inspect pour une présentation) : un travail a pu partir."),
     "remotion_user_turn_required": "Ce tour n'est pas une demande de l'utilisateur : rien n'est lancé. Dis en une phrase que tu le fais dès qu'il le demande ; ne réessaie pas.",
     "remotion_user_request_required": "user_request : recopie les mots de l'utilisateur qui demandent ce geste (obligatoire).",
     "remotion_licence_user_only": "La licence se reconnaît par l'utilisateur seul, depuis la page (case « Je reconnais la licence »). Lis-lui la licence et laisse-le faire.",
@@ -145,7 +149,8 @@ SENTENCES: dict[str, str] = {
     "presentation_render_source_refused": "La source de la scène ne passe plus les gardes d'isolation : rien n'a été exporté. Dis-le tel quel.",
     "presentation_render_engine_mismatch": "La version de Remotion installée n'est pas celle de la présentation : l'utilisateur peut réparer l'environnement.",
     "presentation_render_locked": "Un autre Core tient le verrou des exports de ce dossier de données : rien n'est lancé.",
-    "origin_not_allowed": "Dépôt hors de la liste autorisée par l'utilisateur (réglage remotion_import.allowed_owners, à lui seul) : ne contourne pas, dis-le.",
+    "origin_not_allowed": ("Dépôt hors de la liste autorisée par l'utilisateur : elle s'édite à la main dans control-center-settings.json (clé remotion_import.allowed_owners, "
+                           "aucune interface), jamais par toi. Ne contourne pas, dis-le."),
     "commit_not_pinned": "Il faut le SHA complet du commit (40 caractères hexadécimaux), donné par l'utilisateur : n'en invente pas.",
     "presentation_not_found": "Cette présentation n'existe pas : prends un presentation_id de presentation_inspect.",
     "import_busy": "Un autre import est en cours : réessaie plus tard.",

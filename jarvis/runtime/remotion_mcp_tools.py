@@ -295,12 +295,13 @@ class RemotionTools(PresentationTools):
                             untrusted=["plan.license", "plan.warnings", "plan.origin.name"])
         presentation_id = await self._presentation(tool, pid)
         key = self._import_key(request) + (pid or "",)
-        token = self._import_tokens.get(key)
+        # The plan is spent BEFORE Core is called (QA P1): two parallel `execute` calls cannot both pass, and a failed or timed-out import is
+        # re-planned (the plan is cheap, a second import is not).
+        token = self._import_tokens.pop(key, None)
         if token is None or not self.ledger.check(key[0], token, key[1], pid or ""):
             raise self._refuse(tool, "remotion_import_plan_first", sentence_for("remotion_import_plan_first"))
         request["presentation_id"] = presentation_id
         done = await self._c(lambda c: c.remotion_import(request))
-        self._import_tokens.pop(key, None)
         prefab = done.get("prefab") if isinstance(done.get("prefab"), Mapping) else {}
         return self._ok("say", status="imported", presentation_id=presentation_id, scene_id=done.get("scene_id"),
                         prefab=_drop_none({"id": prefab.get("prefab_id"), "version": prefab.get("version")}),

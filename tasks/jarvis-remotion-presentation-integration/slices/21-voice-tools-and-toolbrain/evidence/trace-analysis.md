@@ -52,5 +52,5 @@ was not retried). Hidden failures: none; every refusal reached the final answer 
 
 ## Suggested follow-ups
 
-1. A typed `remotion_source` pair (read / edit) on `jarvis-remotion` that requires a pending `request_id` would give the structural route the same turn-bound ownership as the other verbs (the HTTP door of Slice 14 has no notion of turn). Needs a Core read of pending source requests; not done here (budget and Core change).
+1. (Done in the rework, QA B1, in Core rather than as a new tool: a brain source edit needs a pending request recorded in an attested turn.) Left as a possible later step: a typed `remotion_source` pair (read / edit) on `jarvis-remotion` that requires a pending `request_id` would give the structural route the same turn-bound ownership as the other verbs (the HTTP door of Slice 14 has no notion of turn). Needs a Core read of pending source requests; not done here (budget and Core change).
 2. A real-model session with a real sub-agent (Bash + Core token) for the structural edit, in the end-to-end Slice 22 run.

@@ -197,4 +197,4 @@ Rejouer la preuve (hors profil vivant) : `python scripts/remotion_render_harness
 - **Données vivantes de Board** : copiées sous `public/live/` mais non annoncées à la scène (aucun message `props` côté Player pour l'instant).
 - **Licence Remotion** non examinée ici (contrat distinct, [local-capabilities.md](local-capabilities.md) §6) ; le rendu ne déclare aucune licence.
 - **Les travaux terminés ne survivent pas en mémoire à un redémarrage** : l'Artifact dérivé, lui, oui ; l'interface relit l'état des travaux en cours seulement tant que la vue est ouverte.
-- **Pas d'outil vocal ni de commande de présentation** pour exporter : voix et Tool Brain sont les Slices 20-21.
+- **Voix** : « exporte en MP4 » passe par `remotion_export` (Slice 21, [remotion-runtime.md](remotion-runtime.md) §13), sur la demande de l'utilisateur dans le tour ; pas de commande de présentation dédiée ni de chemin du Tool Brain (il n'exécute que des outils de scène).

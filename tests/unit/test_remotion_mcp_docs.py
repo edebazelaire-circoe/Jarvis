@@ -16,7 +16,7 @@ def test_the_section_names_every_tool_and_every_guard():
         assert f"`{tool}`" in SECTION, tool
     for phrase in ("remotion_user_turn_required", "presentation_studio_source_request_user_only", "remotion_licence_user_only", "needs_user",
                    "n'appelle jamais `POST .../studio/open`", "user_request", "authorised_boards", "published_to_library: false",
-                   "remotion_import.allowed_owners", "Limite assumée", "110 000", "5 178", "next_step", "porte HTTP de la source"):
+                   "remotion_import.allowed_owners", "Limite assumée", "110 000", "5 178", "next_step", "est gardée par Core", "Attestation globale", "core_timeout", "control-center-settings.json", "presentation_studio_source_request_required"):
         assert phrase in SECTION, phrase
 
 
@@ -34,3 +34,12 @@ def test_the_tool_contract_and_the_tool_brain_contract_carry_the_server():
     assert "| `jarvis-remotion`" in contract and "### 10.17" in contract and "REMOTION_CONTEXT_BUDGET_BYTES" in contract
     brain = (DOCS / "tool-brain-contracts.md").read_text(encoding="utf-8")
     assert "## 19. Remotion agent verbs: ownership" in brain and "studio_owned" in brain and "remotion_user_turn_required" in brain
+
+
+def test_the_source_request_rule_is_amended_in_the_contract_and_the_runbook():
+    studio = (DOCS / "presentation-studio.md").read_text(encoding="utf-8")
+    assert "Amended by the Remotion Slice 21 rework" in studio and "a pending request IS the authority" in studio
+    assert "never blocks an edit. Revisit" not in studio, "the Slice 06 rule is gone for the brain"
+    assert "forge both" in studio and "SOURCE_REQUEST_TTL_S" in studio
+    operations = (DOCS / "OPERATIONS.md").read_text(encoding="utf-8")
+    assert "Le `request_id` est obligatoire (acteur `brain`, Slice 21)" in operations and "**n'appelle pas** `scene.source_request`" in operations

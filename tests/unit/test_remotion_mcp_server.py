@@ -175,15 +175,20 @@ def test_the_remotion_modules_never_name_the_engine_selection_policy_or_the_unsa
     assert not [n for n in dir(LocalCoreClient) if re.search(r"studio_open|studio_restart|set_engine|choose_engine|default_engine", n)]
 
 
-def test_the_allow_list_of_import_owners_is_not_a_setting_the_brain_can_write():
-    """`remotion_import.allowed_owners` est un fichier de réglages de l'utilisateur ; `settings_set` ne l'expose pas."""
+def test_the_allow_list_of_import_owners_and_the_engine_are_not_settings_the_brain_can_write():
+    """`remotion_import.allowed_owners` lives in `control-center-settings.json` (edited by hand, no UI); the BUILT settings catalogue that
+    `settings_describe` / `settings_set` work from lists nothing about Remotion imports, engines or owners, even when the file holds them."""
 
-    from pathlib import Path
+    from jarvis.runtime.settings_mcp import ConsoleMcpTarget, ConsoleSettingsTools
 
-    runtime = Path(__file__).resolve().parents[2] / "jarvis" / "runtime"
-    for name in ("settings_mcp.py", "agent_settings.py", "scene_settings.py", "interaction_mode_settings.py", "memory_settings.py",
-                 "voice_settings_schema.py", "wake_word_settings.py"):
-        assert "allowed_owners" not in (runtime / name).read_text(encoding="utf-8"), name
+    console = ConsoleSettingsTools(ConsoleMcpTarget("127.0.0.1", 1))
+    settings = {"remotion_import": {"allowed_owners": ["evil-owner"]}, "presentation_studio_engine": {"default": "slidecar"},
+                "remotion": {"engine": "slidecar"}, "engine": "slidecar"}
+    catalogue = console._catalog(settings, {})
+    assert len(catalogue) > 10, "the catalogue was really built"
+    for item in catalogue:
+        text = json.dumps(item, default=str).lower()
+        assert not re.search(r"remotion|engine|allowed_owners|slidecar|evil-owner", text), item["id"]
 
 
 # ------------------------------------------------------------------ déclaration au cerveau

@@ -106,6 +106,10 @@ class CoreCaller:
             return await self._transport.replay_on_401(fn)
         except ConnectionError as exc:
             raise CoreProtocolError(503, "core_unreachable", str(exc)) from None
+        except TimeoutError:
+            # Remotion Slice 21 (QA B2): `asyncio.TimeoutError` is `TimeoutError`; aiohttp's total timeout too. The outcome of a write is UNKNOWN
+            # (a render may be queued): a coded error, never an empty one, and the model is told to read the state before trying again.
+            raise CoreProtocolError(504, "core_timeout", "Core did not answer in time; the outcome is unknown") from None
         except aiohttp.ClientError as exc:
             raise CoreProtocolError(503, "core_unreachable", f"Core est injoignable ({type(exc).__name__})") from None
 
@@ -690,9 +694,12 @@ class PresentationTools:
         wire = self._edit_wire(tool, ops)
         # Remotion Slice 21: a structural source change starts a sub-agent edit of the scene's source. It only follows a request of the user in
         # this turn (the attested turn, as for a presentation start or a promotion): no ambient or system-opened turn can mutate a source.
-        if mode == "commit" and any(o["op"] == "scene.source_request" for o in wire) and not await self._addressed_user_turn():
-            raise self._refuse(tool, "presentation_studio_source_request_user_only",
-                               "scene.source_request : seulement sur une demande de l'utilisateur dans ce tour ; propose-le, il le demandera.")
+        user_origin = False
+        if mode == "commit" and any(o["op"] == "scene.source_request" for o in wire):
+            user_origin = await self._addressed_user_turn()
+            if not user_origin:
+                raise self._refuse(tool, "presentation_studio_source_request_user_only",
+                                   "scene.source_request : seulement sur une demande de l'utilisateur dans ce tour ; propose-le, il le demandera.")
         presentation_id = await self._presentation(tool, pid)
         variant_id = await self._variant(tool, presentation_id, vid)
         removed = sorted(str(o["scene_id"]) for o in wire if o["op"] == "scene.remove")
@@ -711,6 +718,9 @@ class PresentationTools:
         if basis is None:
             basis = (await self._c(lambda c: c.presentation_studio_variant(presentation_id, variant_id))).get("revision")
         request = {"actor": BRAIN_ACTOR, "mode": mode, "basis": {"variant_revision": basis}, "ops": wire}
+        if user_origin:
+            # Core records a brain source request only with this origin, and a brain source edit later needs that record (QA B1).
+            request["origin"] = "explicit_user_request"
         result = await self._c(lambda c: c.presentation_studio_edit(presentation_id, variant_id, request))
         status = result.get("status")
         if status in ("stale", "refused"):
@@ -727,7 +737,7 @@ class PresentationTools:
         # Remotion Slice 21 (real-model trace): the brain delegated BEFORE recording and told the sub-agent to record it, which an unattended
         # background turn can no longer do. The result says what is left to do and who does it.
         next_step = ("Demande de source enregistrée (rien n'est encore changé à l'écran) : un sous-agent d'arrière-plan lit la source et envoie "
-                     "source-edits avec ce request_id (docs/OPERATIONS.md) ; il n'appelle pas scene.source_request.") if recorded and mode == "commit" else None
+                     "édite avec ce request_id, valable 30 minutes (docs/OPERATIONS.md) ; il n'appelle pas scene.source_request.") if recorded and mode == "commit" else None
         return self._ok("silent", status=status, mode=mode, committed=result.get("committed"), changed=result.get("changed"),
                         revision=result.get("revision"), tier=result.get("tier"), results=outcomes,
                         undoable=bool(undo.get("available")) or None, source_requests=recorded, next_step=next_step,

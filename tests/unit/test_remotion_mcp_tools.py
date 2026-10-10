@@ -333,3 +333,113 @@ async def test_a_licence_name_read_from_core_is_clipped_and_marked_untrusted(tmp
     result = await tools.upgrades("notices")
     shown = result["notices"]["items"][0]["licence_ack_required"]
     assert len(shown) <= 64 and "untrusted" in result
+
+
+# ---- Remotion Slice 21 rework
+
+async def test_a_core_timeout_through_the_real_caller_is_a_coded_error_with_a_journal_row_and_no_duplicate_invitation(tmp_path):
+    """QA B2: `CoreCaller.call` used to let `TimeoutError` through as an empty error. Real `CoreCaller`, a client that times out on the write."""
+
+    import asyncio
+    from types import SimpleNamespace
+
+    from jarvis.runtime.journal import RuntimeJournal
+    from jarvis.runtime.presentation_studio_mcp_tools import CoreCaller
+    from jarvis.runtime.remotion_mcp_tools import RemotionTools
+    from tests.unit.presentation_studio_mcp_world import FakeCC
+    from tests.unit.remotion_mcp_world import addressed
+
+    class TimingOut(FakeRemotionCore):
+        async def remotion_render_create(self, body):
+            self._record("remotion_render_create", body)
+            raise asyncio.TimeoutError()
+
+    client = TimingOut()
+    caller = CoreCaller(SimpleNamespace(core_host="127.0.0.1", core_port=9, token_file=tmp_path / "token"))
+
+    async def replay(fn):                      # the transport's own replay, with our client: everything above it is the real code path
+        return await fn(client)
+
+    caller._transport.replay_on_401 = replay
+    (tmp_path / "journal").mkdir()
+    tools = RemotionTools(caller, addressed(FakeCC()), journal=RuntimeJournal(tmp_path / "journal"))
+    with pytest.raises(PresentationToolError) as caught:
+        await tools.export("start", format="mp4", user_request="exporte")
+    text = str(caught.value)
+    assert caught.value.code == "core_timeout" and "l'issue est inconnue" in text and "relis" in text and "remotion_status exports" in text
+    assert "Refus core_timeout" in text
+    assert "remotion_mcp.tool_failed" in journal_kinds(tmp_path)
+    for failure in (TimeoutError(), __import__("aiohttp").ServerTimeoutError("total")):
+        client.refusals.clear()
+
+        async def boom(body, _failure=failure):
+            raise _failure
+
+        client.remotion_render_create = boom
+        with pytest.raises(PresentationToolError) as again:
+            await tools.export("start", format="mp4", user_request="exporte")
+        assert again.value.code == "core_timeout"
+    await caller.close()
+
+
+async def test_a_timeout_of_a_presentation_tool_is_coded_too(tmp_path):
+    from types import SimpleNamespace
+
+    from jarvis.runtime.presentation_studio_mcp_tools import CoreCaller, PresentationTools
+
+    caller = CoreCaller(SimpleNamespace(core_host="127.0.0.1", core_port=9, token_file=tmp_path / "token"))
+
+    async def replay(fn):
+        class Slow:
+            async def presentation_studio_list(self, **_):
+                raise TimeoutError()
+        return await fn(Slow())
+
+    caller._transport.replay_on_401 = replay
+    with pytest.raises(PresentationToolError) as caught:
+        await PresentationTools(caller, None).inspect("overview")
+    assert caught.value.code == "core_timeout"
+    await caller.close()
+
+
+async def test_two_parallel_import_executes_reach_core_once_and_a_failed_import_must_be_planned_again(tmp_path):
+    import asyncio
+
+    tools, core, _ = make_tools(tmp_path, turn=True)
+    release = asyncio.Event()
+    original = core.remotion_import
+
+    async def slow(body):
+        await release.wait()
+        return await original(body)
+
+    core.remotion_import = slow
+    await tools.import_template("plan", user_request="importe", **IMPORT)
+    first = asyncio.ensure_future(tools.import_template("execute", user_request="importe", **IMPORT))
+    second = asyncio.ensure_future(tools.import_template("execute", user_request="importe", **IMPORT))
+    await asyncio.sleep(0)
+    await asyncio.sleep(0)
+    release.set()
+    results = await asyncio.gather(first, second, return_exceptions=True)
+    assert sum(1 for r in results if isinstance(r, dict)) == 1
+    assert sum(1 for r in results if isinstance(r, PresentationToolError) and r.code == "remotion_import_plan_first") == 1
+    assert len(core.named("remotion_import")) == 1
+    # a failed execute spends the plan too: the model plans again before a second try
+    core.remotion_import = original
+    core.refusals["remotion_import"] = refusal("import_busy", "busy")
+    await tools.import_template("plan", user_request="importe", **IMPORT)
+    with pytest.raises(PresentationToolError) as busy:
+        await tools.import_template("execute", user_request="importe", **IMPORT)
+    assert busy.value.code == "import_busy"
+    core.refusals.clear()
+    with pytest.raises(PresentationToolError) as spent:
+        await tools.import_template("execute", user_request="importe", **IMPORT)
+    assert spent.value.code == "remotion_import_plan_first"
+
+
+async def test_the_allow_list_refusal_says_where_the_user_edits_it(tmp_path):
+    tools, core, _ = make_tools(tmp_path, turn=True)
+    core.refusals["remotion_import_plan"] = refusal("origin_not_allowed", "owner not allowed")
+    with pytest.raises(PresentationToolError) as caught:
+        await tools.import_template("plan", user_request="importe", **IMPORT)
+    assert "control-center-settings.json" in str(caught.value) and "aucune interface" in str(caught.value)

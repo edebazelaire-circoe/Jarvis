@@ -77,6 +77,10 @@ MAX_EDIT_BODY_BYTES = 128 * 1024
 UNSAFE_KEYS = frozenset({"__proto__", "constructor", "prototype"})
 
 
+#: Origine d'une demande de source dite par l'appelant ; pour `user`, c'est toujours le cas (l'utilisateur est la demande).
+EXPLICIT_USER_REQUEST = "explicit_user_request"
+
+
 class StudioActor(StrEnum):
     """Qui édite. Le relais du Control Center force `user`, les outils MCP posent `brain` (`prefab_relay.py`)."""
 
@@ -413,6 +417,9 @@ class EditRequest:
     #: une écriture aveugle (le contraire de `expected_revision` de `PUT`).
     basis_revision: int
     ops: tuple[EditOp, ...]
+    #: Remotion Slice 21 : `explicit_user_request` quand l'appelant atteste que la demande vient d'un tour adresse de l'utilisateur (le serveur MCP
+    #: ne le pose qu'apres l'attestation du Control Center). Seule une demande de source de `brain` le lit.
+    origin: str | None = None
 
     @property
     def op_names(self) -> tuple[str, ...]:
@@ -420,7 +427,10 @@ class EditRequest:
 
 
 def parse_edit_request(raw: object, *, new_id: Callable[[], str] | None = None) -> EditRequest:
-    data = _exact_keys(raw, "edit", {"actor", "mode", "basis", "ops"})
+    data = _exact_keys(raw, "edit", {"actor", "mode", "basis", "ops"}, frozenset({"origin"}))
+    origin = data.get("origin")
+    if origin is not None and origin != EXPLICIT_USER_REQUEST:
+        raise _fail(f"origin, when given, must be '{EXPLICIT_USER_REQUEST}'")
     try:
         actor = StudioActor(data["actor"])
     except ValueError:
@@ -435,14 +445,19 @@ def parse_edit_request(raw: object, *, new_id: Callable[[], str] | None = None) 
     if not isinstance(ops, list) or not 1 <= len(ops) <= MAX_OPS:
         raise _fail(f"ops must be a list of 1..{MAX_OPS} operations")
     parsed = tuple(parse_op(op, f"ops[{i}]", new_id=new_id) for i, op in enumerate(ops))
-    return EditRequest(actor, mode, basis["variant_revision"], parsed)
+    return EditRequest(actor, mode, basis["variant_revision"], parsed, origin)
 
 
-def actor_refusal(actor: StudioActor, ops: Sequence[EditOp]) -> EditRefusal | None:
+def actor_refusal(actor: StudioActor, ops: Sequence[EditOp], *, origin: str | None = None, recording: bool = False) -> EditRefusal | None:
     allowed = ALLOWED_EDIT_OPS.get(actor, frozenset())
     for index, op in enumerate(ops):
         if op.NAME not in allowed:
             return EditRefusal(C.INVALID_PRESENTATION, f"actor {actor.value} may not request {op.NAME}", index=index)
+        # Remotion Slice 21 (QA B1): the brain RECORDS a source request only for a request of the user (attested by the caller), so a source
+        # edit can later be tied to it. A preview records nothing and is not refused.
+        if recording and actor is StudioActor.BRAIN and isinstance(op, SourceRequest) and origin != EXPLICIT_USER_REQUEST:
+            return EditRefusal(C.SOURCE_REQUEST_REQUIRED, "a source request of the brain is recorded only for a request of the user in this "
+                                                          f"turn (origin '{EXPLICIT_USER_REQUEST}'): propose it, the user will ask", index=index)
     return None
 
 
@@ -480,11 +495,15 @@ class SourceRequestRecord:
     actor: str
     #: Révision de la variante au moment de la demande.
     basis_revision: int
+    #: Remotion Slice 21 : `explicit_user_request` (toujours pour `user` ; pour `brain`, attestée par l'appelant), sinon `None`.
+    origin: str | None = None
+    #: Horloge monotone du service au moment de l'enregistrement (échéance d'une demande en attente).
+    created_at: float = 0.0
 
     def to_dict(self, *, with_intent: bool = True) -> dict[str, Any]:
         wire = {"request_id": self.request_id, "presentation_id": self.presentation_id, "variant_id": self.variant_id,
                 "scene_id": self.scene_id, "actor": self.actor, "basis_revision": self.basis_revision,
-                "tier": EditTier.SOURCE.value}
+                "tier": EditTier.SOURCE.value, "origin": self.origin}
         if with_intent:
             wire["intent"] = self.intent
         return wire
