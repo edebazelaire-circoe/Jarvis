@@ -1,0 +1,224 @@
+{
+ "label": "render-happy",
+ "command": [
+  "python.exe",
+  "scripts/remotion_render_harness.py",
+  "--work-dir",
+  "jrs22r",
+  "--runtime-dir",
+  "runtime",
+  "--evidence",
+  "tasks/jarvis-remotion-presentation-integration/slices/22-end-to-end-release/evidence/real-render-happy.json",
+  "--only",
+  "happy"
+ ],
+ "exit_code": 0,
+ "seconds": 44.3,
+ "interval_s": 2.0,
+ "sampled": 18,
+ "peak_working_set_mb": 1354.7,
+ "peak_processes": 15,
+ "process_names_seen": [
+  "chrome.exe",
+  "conhost.exe",
+  "esbuild.exe",
+  "ffmpeg.exe",
+  "git.exe",
+  "node.exe",
+  "python.exe"
+ ],
+ "samples": [
+  {
+   "t": 0.6,
+   "processes": 1,
+   "working_set_mb": 36.8,
+   "by_name": {
+    "python.exe": 1
+   }
+  },
+  {
+   "t": 3.2,
+   "processes": 4,
+   "working_set_mb": 455.2,
+   "by_name": {
+    "conhost.exe": 1,
+    "esbuild.exe": 1,
+    "node.exe": 1,
+    "python.exe": 1
+   }
+  },
+  {
+   "t": 5.8,
+   "processes": 4,
+   "working_set_mb": 605.5,
+   "by_name": {
+    "conhost.exe": 1,
+    "esbuild.exe": 1,
+    "node.exe": 1,
+    "python.exe": 1
+   }
+  },
+  {
+   "t": 8.3,
+   "processes": 15,
+   "working_set_mb": 1313.0,
+   "by_name": {
+    "chrome.exe": 9,
+    "conhost.exe": 2,
+    "esbuild.exe": 1,
+    "ffmpeg.exe": 1,
+    "node.exe": 1,
+    "python.exe": 1
+   }
+  },
+  {
+   "t": 10.9,
+   "processes": 15,
+   "working_set_mb": 1354.7,
+   "by_name": {
+    "chrome.exe": 9,
+    "conhost.exe": 2,
+    "esbuild.exe": 1,
+    "ffmpeg.exe": 1,
+    "node.exe": 1,
+    "python.exe": 1
+   }
+  },
+  {
+   "t": 13.4,
+   "processes": 1,
+   "working_set_mb": 52.5,
+   "by_name": {
+    "python.exe": 1
+   }
+  },
+  {
+   "t": 16.0,
+   "processes": 4,
+   "working_set_mb": 458.3,
+   "by_name": {
+    "conhost.exe": 1,
+    "esbuild.exe": 1,
+    "node.exe": 1,
+    "python.exe": 1
+   }
+  },
+  {
+   "t": 18.6,
+   "processes": 4,
+   "working_set_mb": 662.2,
+   "by_name": {
+    "conhost.exe": 1,
+    "esbuild.exe": 1,
+    "node.exe": 1,
+    "python.exe": 1
+   }
+  },
+  {
+   "t": 21.1,
+   "processes": 3,
+   "working_set_mb": 88.9,
+   "by_name": {
+    "conhost.exe": 1,
+    "node.exe": 1,
+    "python.exe": 1
+   }
+  },
+  {
+   "t": 23.7,
+   "processes": 4,
+   "working_set_mb": 466.4,
+   "by_name": {
+    "conhost.exe": 1,
+    "esbuild.exe": 1,
+    "node.exe": 1,
+    "python.exe": 1
+   }
+  },
+  {
+   "t": 26.3,
+   "processes": 4,
+   "working_set_mb": 685.1,
+   "by_name": {
+    "conhost.exe": 1,
+    "esbuild.exe": 1,
+    "node.exe": 1,
+    "python.exe": 1
+   }
+  },
+  {
+   "t": 28.9,
+   "processes": 1,
+   "working_set_mb": 52.6,
+   "by_name": {
+    "python.exe": 1
+   }
+  },
+  {
+   "t": 31.5,
+   "processes": 4,
+   "working_set_mb": 463.1,
+   "by_name": {
+    "conhost.exe": 1,
+    "esbuild.exe": 1,
+    "node.exe": 1,
+    "python.exe": 1
+   }
+  },
+  {
+   "t": 34.1,
+   "processes": 4,
+   "working_set_mb": 648.3,
+   "by_name": {
+    "conhost.exe": 1,
+    "esbuild.exe": 1,
+    "node.exe": 1,
+    "python.exe": 1
+   }
+  },
+  {
+   "t": 36.7,
+   "processes": 3,
+   "working_set_mb": 118.4,
+   "by_name": {
+    "conhost.exe": 1,
+    "node.exe": 1,
+    "python.exe": 1
+   }
+  },
+  {
+   "t": 39.2,
+   "processes": 4,
+   "working_set_mb": 469.7,
+   "by_name": {
+    "conhost.exe": 1,
+    "esbuild.exe": 1,
+    "node.exe": 1,
+    "python.exe": 1
+   }
+  },
+  {
+   "t": 41.8,
+   "processes": 4,
+   "working_set_mb": 712.2,
+   "by_name": {
+    "conhost.exe": 1,
+    "esbuild.exe": 1,
+    "node.exe": 1,
+    "python.exe": 1
+   }
+  },
+  {
+   "t": 44.3,
+   "processes": 2,
+   "working_set_mb": 63.9,
+   "by_name": {
+    "git.exe": 1,
+    "python.exe": 1
+   }
+  }
+ ],
+ "when": "2026-10-10T09:00:14+00:00",
+ "platform": "win32",
+ "note": "working set counts shared pages once per process: an upper bound of the footprint, not private memory; the wrapper process and PowerShell sampler are not in the tree"
+}

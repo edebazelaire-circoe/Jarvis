@@ -59,7 +59,7 @@ FRAMES = "document.querySelectorAll('iframe[data-remotion-stage]').length"
 BANDS = "document.querySelectorAll('.sc-prefab-error').length"
 
 
-def edit_files(stack: RemotionStack, variants: str, name: str, files: dict, actor: str = "brain") -> dict:
+def edit_files(stack: RemotionStack, variants: str, name: str, files: dict, actor: str = "user") -> dict:
     step = http_step(stack, name, "POST", variants + "/source-edits",
                      {"actor": actor, "basis": {"variant_revision": 0}, "scene_id": S1, "files": files})
     step["http"]["basisFrom"] = stack.core_url + variants

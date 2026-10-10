@@ -1,0 +1,309 @@
+{
+  "verdict": "PASSED",
+  "head": "b667b25b800d4c7d87219744079c0d80fe83e17e",
+  "tree_dirty": false,
+  "platform": "Windows-11-10.0.26200-SP0",
+  "node": "v24.18.0",
+  "chrome": "chrome 154.0.8037.99",
+  "remotion": "4.0.534",
+  "elapsed_s": 43.6,
+  "timings": {
+    "mp4_s": 12.6,
+    "still_s": 7.3,
+    "pdf_s": 8.1
+  },
+  "disk": {
+    "free_before_mb": 12769,
+    "free_after_mb": 12766
+  },
+  "facts": {
+    "availability": {
+      "ready": true,
+      "reason": null,
+      "browser": "chrome 154.0.8037.99",
+      "concurrency": 1,
+      "max_jobs": 8,
+      "active_jobs": 0
+    },
+    "mp4_metadata": {
+      "render_browser": "chrome 154.0.8037.99",
+      "render_codec": "h264",
+      "render_composition": "Scene",
+      "render_crf": 23,
+      "render_egress_denied": 47,
+      "render_engine": "4.0.534",
+      "render_engine_drift": false,
+      "render_engine_lock_sha256": "acff3cd562fd6f426040aed8b60cce840b23befe7bac71604d0c7614b8762fbe",
+      "render_flat": true,
+      "render_format": "mp4",
+      "render_fps": 30,
+      "render_frame_end": 59,
+      "render_frame_start": 0,
+      "render_height": 720,
+      "render_image_format": "mp4",
+      "render_job_id": "rj_3b7a06e4273f",
+      "render_output_sha256": "a644b7403787e4e1198e92ddd6ebfbdfe54eaffe260101ddb32215470a5b8e8f",
+      "render_pixel_format": "yuv420p",
+      "render_prefab_id": "presentation-studio.p000000000001.s000000000001",
+      "render_prefab_version": 1,
+      "render_sandbox": true,
+      "render_scale": 1.0,
+      "render_scene_id": "pss_000000000001",
+      "render_settings_sha256": "b788f79defd4c5b69db8542cd535eaf69103e930443f7c773b03feb0d5bbb100",
+      "render_source_digest": "4d1fc317dc730ff6c367c49f3bc02b709d7c1c9103b1cd3c28ddb39ee3c4753b",
+      "render_verified_by": "ffprobe",
+      "render_wall_ms": 12384,
+      "render_width": 1280
+    },
+    "mp4_ffprobe": {
+      "codec_name": "h264",
+      "width": 1280,
+      "height": 720,
+      "r_frame_rate": "30/1",
+      "nb_read_frames": "60",
+      "duration": "2.000000",
+      "pix_fmt": "yuvj420p"
+    },
+    "still_metadata": {
+      "render_browser": "chrome 154.0.8037.99",
+      "render_composition": "Scene",
+      "render_egress_denied": 12,
+      "render_engine": "4.0.534",
+      "render_engine_drift": false,
+      "render_engine_lock_sha256": "acff3cd562fd6f426040aed8b60cce840b23befe7bac71604d0c7614b8762fbe",
+      "render_flat": true,
+      "render_format": "still",
+      "render_fps": 30,
+      "render_frames": "45",
+      "render_height": 720,
+      "render_image_format": "png",
+      "render_job_id": "rj_4d2f6e1d8442",
+      "render_output_sha256": "610c92464e1bdc9d90eebff8c5651b8c1a03512ebda89a9b8058a01aefbaaad0",
+      "render_prefab_id": "presentation-studio.p000000000001.s000000000001",
+      "render_prefab_version": 1,
+      "render_sandbox": true,
+      "render_scale": 1.0,
+      "render_scene_id": "pss_000000000001",
+      "render_settings_sha256": "02ce34790c31077f7b39ba9be1b922aef17d9d738695a7759ab9c63e76c45e1d",
+      "render_source_digest": "4d1fc317dc730ff6c367c49f3bc02b709d7c1c9103b1cd3c28ddb39ee3c4753b",
+      "render_verified_by": "png",
+      "render_wall_ms": 7057,
+      "render_width": 1280
+    },
+    "pdf_metadata": {
+      "render_browser": "chrome 154.0.8037.99",
+      "render_composition": "Scene",
+      "render_egress_denied": 22,
+      "render_engine": "4.0.534",
+      "render_engine_drift": false,
+      "render_engine_lock_sha256": "acff3cd562fd6f426040aed8b60cce840b23befe7bac71604d0c7614b8762fbe",
+      "render_flat": true,
+      "render_format": "pdf",
+      "render_fps": 30,
+      "render_frames": "0,45,89",
+      "render_height": 720,
+      "render_image_format": "jpeg",
+      "render_job_id": "rj_caf2b72165e6",
+      "render_output_sha256": "25149d8af1407d367b986ca2f615a82d8d4663852e8b22bb25afe5b6c668650d",
+      "render_pages": 3,
+      "render_prefab_id": "presentation-studio.p000000000001.s000000000001",
+      "render_prefab_version": 1,
+      "render_sandbox": true,
+      "render_scale": 1.0,
+      "render_scene_id": "pss_000000000001",
+      "render_settings_sha256": "14fa739504e435d2be87eee586cda78e873c634349472a41b973e1602f09711f",
+      "render_source_digest": "4d1fc317dc730ff6c367c49f3bc02b709d7c1c9103b1cd3c28ddb39ee3c4753b",
+      "render_verified_by": "pdf",
+      "render_wall_ms": 7936,
+      "render_width": 1280
+    },
+    "egress_denied_mp4": 47
+  },
+  "checks": [
+    {
+      "check": "availability ready with a real browser",
+      "ok": true,
+      "browser": "chrome 154.0.8037.99"
+    },
+    {
+      "check": "mp4: job complete",
+      "ok": true,
+      "elapsed_s": 12.6,
+      "size": 24712,
+      "verified_by": "ffprobe",
+      "progress_samples": 49,
+      "phases": [
+        "bundling",
+        "complete",
+        "opening_browser",
+        "preparing",
+        "queued",
+        "rendering",
+        "selecting_composition",
+        "storing"
+      ],
+      "error": [
+        null,
+        null
+      ],
+      "log": []
+    },
+    {
+      "check": "mp4: artifact complete, kind and payload",
+      "ok": true,
+      "kind": "presentation_video",
+      "size": 24712,
+      "width": 1280,
+      "height": 720,
+      "duration_ms": 2000
+    },
+    {
+      "check": "mp4: payload sha256 equals the recorded one",
+      "ok": true
+    },
+    {
+      "check": "mp4: rendered with Chrome's process sandbox ON (recorded on the derivative and in the job view)",
+      "ok": true
+    },
+    {
+      "check": "mp4: rendered_from the snapshot",
+      "ok": true
+    },
+    {
+      "check": "mp4: independent ffprobe (h264, 1280x720, 30 fps, 60 frames, 2 s)",
+      "ok": true,
+      "codec_name": "h264",
+      "width": 1280,
+      "height": 720,
+      "r_frame_rate": "30/1",
+      "nb_read_frames": "60",
+      "duration": "2.000000",
+      "pix_fmt": "yuvj420p"
+    },
+    {
+      "check": "mp4: ftyp header",
+      "ok": true
+    },
+    {
+      "check": "still: job complete",
+      "ok": true,
+      "elapsed_s": 7.3,
+      "size": 26212,
+      "verified_by": "png",
+      "progress_samples": 29,
+      "phases": [
+        "bundling",
+        "complete",
+        "done",
+        "opening_browser",
+        "preparing",
+        "queued",
+        "selecting_composition"
+      ],
+      "error": [
+        null,
+        null
+      ],
+      "log": []
+    },
+    {
+      "check": "still: artifact complete, kind and payload",
+      "ok": true,
+      "kind": "presentation_still",
+      "size": 26212,
+      "width": 1280,
+      "height": 720,
+      "duration_ms": null
+    },
+    {
+      "check": "still: payload sha256 equals the recorded one",
+      "ok": true
+    },
+    {
+      "check": "still: rendered with Chrome's process sandbox ON (recorded on the derivative and in the job view)",
+      "ok": true
+    },
+    {
+      "check": "still: rendered_from the snapshot",
+      "ok": true
+    },
+    {
+      "check": "still: PNG 1280x720",
+      "ok": true
+    },
+    {
+      "check": "pdf: job complete",
+      "ok": true,
+      "elapsed_s": 8.1,
+      "size": 54674,
+      "verified_by": "pdf",
+      "progress_samples": 32,
+      "phases": [
+        "bundling",
+        "complete",
+        "preparing",
+        "queued",
+        "rendering",
+        "selecting_composition"
+      ],
+      "error": [
+        null,
+        null
+      ],
+      "log": []
+    },
+    {
+      "check": "pdf: artifact complete, kind and payload",
+      "ok": true,
+      "kind": "presentation_pdf",
+      "size": 54674,
+      "width": 1280,
+      "height": 720,
+      "duration_ms": null
+    },
+    {
+      "check": "pdf: payload sha256 equals the recorded one",
+      "ok": true
+    },
+    {
+      "check": "pdf: rendered with Chrome's process sandbox ON (recorded on the derivative and in the job view)",
+      "ok": true
+    },
+    {
+      "check": "pdf: rendered_from the snapshot",
+      "ok": true
+    },
+    {
+      "check": "pdf: header, 3 pages, flat",
+      "ok": true,
+      "pages": 3
+    },
+    {
+      "check": "still: same snapshot + same settings give the same settings hash and the same bytes",
+      "ok": true,
+      "sha": "610c92464e1bdc9d"
+    },
+    {
+      "check": "still: another frame gives other pixels",
+      "ok": true
+    },
+    {
+      "check": "job folders cleaned, no render process left",
+      "ok": true,
+      "alive": [],
+      "left": []
+    }
+  ],
+  "runs": [
+    {
+      "scenarios": [
+        "happy"
+      ],
+      "head": "b667b25b800d4c7d87219744079c0d80fe83e17e",
+      "tree_dirty": false,
+      "elapsed_s": 43.6,
+      "disk_free_before_mb": 12769,
+      "disk_free_after_mb": 12766
+    }
+  ]
+}

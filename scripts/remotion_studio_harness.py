@@ -641,7 +641,7 @@ async def main_async(args) -> int:
                 await ui_chrome.evaluate("document.getElementById('confirmGo').click(); true")
                 back = await ui_chrome.wait_for("document.getElementById('rmsStatus').textContent==='Prêt' && 'yes'", 150)
                 await ui_chrome.evaluate("document.getElementById('rmsClose').click(); true")
-                closed = await ui_chrome.wait_for("document.getElementById('rmsStatus').textContent==='Arrêté' && document.querySelector('.rms-hint') && document.querySelector('.rms-hint').textContent", 60)
+                closed = await ui_chrome.wait_for("document.getElementById('rmsStatus').textContent==='Arrêté' && ([...document.querySelectorAll('.rms-hint')].map(e=>e.textContent).find(t=>t.includes('Fermé à votre demande'))||false)", 60)
                 check("10.ui_restart_then_close", back == "yes" and bool(closed) and "Fermé à votre demande" in closed and not node_processes(marker), closed)
                 await ui_chrome.send("Emulation.setDeviceMetricsOverride", {"width": 390, "height": 844, "deviceScaleFactor": 2, "mobile": True})
                 await asyncio.sleep(1)

@@ -353,7 +353,7 @@ if(typeof module!=='undefined'&&module.exports)module.exports=JarvisStudioEngine
     S.rendered='';render();refresh();
   }
 
-  async function confirm(spec){
+  async function askConfirmation(spec){
     /* Un second clic pendant que la boîte est ouverte n'en ouvre pas une deuxième (elle fermerait la première en « annuler »). */
     if(S.confirming)return false;
     S.confirming=true;
@@ -396,14 +396,14 @@ if(typeof module!=='undefined'&&module.exports)module.exports=JarvisStudioEngine
     if(button.id==='sveCreateSlidecar'){
       const title=(S.title||'').trim();
       if(!title){S.actionError={code:'title_required',text:'Donnez un titre à la présentation (champ du haut) avant de la créer.'};S.rendered='';render();return}
-      if(!await confirm(C.confirmSlidecar('new')))return;
+      if(!await askConfirmation(C.confirmSlidecar('new')))return;
       act('Création (Slidecar)…',()=>client.create({title,slidecar:true,reason:(S.reason||'').trim()}),created('new'));
     }else if(button.dataset.copy){
-      if(!await confirm(C.confirmSlidecar('copy',button.dataset.title)))return;
+      if(!await askConfirmation(C.confirmSlidecar('copy',button.dataset.title)))return;
       act('Copie Slidecar…',()=>client.experiment(button.dataset.copy,(S.reason||'').trim()),created('copy'));
     }else if(button.id==='sveRepairGo'){
       const diagnosis=C.diagnose(S.engine&&S.engine.engines&&S.engine.engines.remotion,S.capability);
-      if(!diagnosis||!diagnosis.action||!await confirm(C.confirmRepair(diagnosis.action)))return;
+      if(!diagnosis||!diagnosis.action||!await askConfirmation(C.confirmRepair(diagnosis.action)))return;
       S.repairStartedAt=Date.now();
       act(diagnosis.action==='install'?'Installation de Remotion…':'Réparation de Remotion…',()=>client.repair(diagnosis.action),view=>{
         if(view)S.capability=view;

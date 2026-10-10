@@ -1,0 +1,275 @@
+{
+  "verdict": "PASSED",
+  "head": "b667b25b800d4c7d87219744079c0d80fe83e17e",
+  "tree_dirty": false,
+  "platform": "Windows-11-10.0.26200-SP0",
+  "node": "v24.18.0",
+  "chrome": null,
+  "remotion": "4.0.534",
+  "elapsed_s": 86.8,
+  "timings": {},
+  "disk": {
+    "free_before_mb": 12769,
+    "free_after_mb": 12761
+  },
+  "facts": {
+    "hostile_guarded": {
+      "http_hits": [],
+      "tcp_connections": 0,
+      "udp_packets": 0,
+      "denied_by_sample": {
+        "net_exfil": 25,
+        "link_hints": 18,
+        "webrtc_exfil": 14
+      },
+      "states": {
+        "net_exfil": "complete",
+        "link_hints": "complete",
+        "webrtc_exfil": "complete"
+      }
+    },
+    "hostile_control": {
+      "http_hits": 16,
+      "tcp_connections": 2,
+      "udp_packets": 3
+    },
+    "sandbox_probe": {
+      "sandbox_on": {
+        "rows": [
+          {
+            "type": "GPU",
+            "sandbox": "GPU",
+            "lockdown": "Limited",
+            "integrity": "S-1-16-4096 Low"
+          },
+          {
+            "type": "Utility",
+            "sandbox": "Not Sandboxed",
+            "lockdown": "",
+            "integrity": ""
+          },
+          {
+            "type": "Utility",
+            "sandbox": "Service",
+            "lockdown": "Lockdown",
+            "integrity": "S-1-16-0 Untrusted"
+          },
+          {
+            "type": "Renderer",
+            "sandbox": "Renderer",
+            "lockdown": "Lockdown",
+            "integrity": "S-1-16-0 Untrusted"
+          },
+          {
+            "type": "Renderer",
+            "sandbox": "Renderer",
+            "lockdown": "Lockdown",
+            "integrity": "S-1-16-0 Untrusted"
+          },
+          {
+            "type": "Renderer",
+            "sandbox": "Renderer",
+            "lockdown": "Lockdown",
+            "integrity": "S-1-16-0 Untrusted"
+          }
+        ],
+        "guard_sandbox_flag": true,
+        "error": null
+      },
+      "opt_out": {
+        "rows": [
+          {
+            "type": "GPU",
+            "sandbox": "Not Sandboxed",
+            "lockdown": "",
+            "integrity": ""
+          },
+          {
+            "type": "Utility",
+            "sandbox": "Not Sandboxed",
+            "lockdown": "",
+            "integrity": ""
+          },
+          {
+            "type": "Utility",
+            "sandbox": "Not Sandboxed",
+            "lockdown": "",
+            "integrity": ""
+          },
+          {
+            "type": "Renderer",
+            "sandbox": "Not Sandboxed",
+            "lockdown": "",
+            "integrity": ""
+          },
+          {
+            "type": "Renderer",
+            "sandbox": "Not Sandboxed",
+            "lockdown": "",
+            "integrity": ""
+          },
+          {
+            "type": "Renderer",
+            "sandbox": "Not Sandboxed",
+            "lockdown": "",
+            "integrity": ""
+          }
+        ],
+        "guard_sandbox_flag": false,
+        "error": null
+      },
+      "chrome": "chrome 154.0.8037.99"
+    }
+  },
+  "checks": [
+    {
+      "check": "disk: less than the minimum free space fails before anything is written",
+      "ok": true,
+      "detail": "100 MiB free, a render needs at least 1536 MiB"
+    },
+    {
+      "check": "disk full while rendering: the process tree is killed, derivative failed, no final file",
+      "ok": true,
+      "detail": "the disk is nearly full"
+    },
+    {
+      "check": "size bound: a render folder that grows past its limit is killed",
+      "ok": true,
+      "detail": "the render folder grew past 3 MiB"
+    },
+    {
+      "check": "time bound: a render past its deadline is killed with a stated limit",
+      "ok": true,
+      "detail": "the render exceeded its 6 s limit"
+    },
+    {
+      "check": "hostile scenes (fetch, XHR, WebSocket, beacon, Image, CSS url, preconnect, WebRTC) render normally",
+      "ok": true,
+      "states": {
+        "net_exfil": "complete",
+        "link_hints": "complete",
+        "webrtc_exfil": "complete"
+      },
+      "errors": [
+        [
+          null,
+          null
+        ],
+        [
+          null,
+          null
+        ],
+        [
+          null,
+          null
+        ]
+      ]
+    },
+    {
+      "check": "guarded: the local HTTP service received 0 requests, the TCP sink 0 connections, the UDP sink 0 packets",
+      "ok": true,
+      "http": [],
+      "tcp": 0,
+      "udp": 0
+    },
+    {
+      "check": "guarded: the denied requests are COUNTED and recorded on the derivative (render_egress_denied > 0)",
+      "ok": true,
+      "denied": {
+        "net_exfil": 25,
+        "link_hints": 18,
+        "webrtc_exfil": 14
+      }
+    },
+    {
+      "check": "a frozen source that no longer passes today's static guards is revalidated and refused at render time (no browser launched)",
+      "ok": true,
+      "state": "failed",
+      "phase": "failed",
+      "code": "presentation_render_source_refused",
+      "detail": "the frozen source no longer passes validation: guard: added after the freeze: the word ATTACKER is now forbidden"
+    },
+    {
+      "check": "negative control (browser arguments not rewritten): the sinks DO receive traffic, so the harness would see a leak",
+      "ok": true,
+      "http_hits": 16,
+      "tcp_connections": 2,
+      "udp_packets": 3
+    },
+    {
+      "check": "sandbox ON: chrome://sandbox reports every Renderer process sandboxed (Lockdown / Untrusted)",
+      "ok": true,
+      "renderers": [
+        {
+          "type": "Renderer",
+          "sandbox": "Renderer",
+          "lockdown": "Lockdown",
+          "integrity": "S-1-16-0 Untrusted"
+        },
+        {
+          "type": "Renderer",
+          "sandbox": "Renderer",
+          "lockdown": "Lockdown",
+          "integrity": "S-1-16-0 Untrusted"
+        },
+        {
+          "type": "Renderer",
+          "sandbox": "Renderer",
+          "lockdown": "Lockdown",
+          "integrity": "S-1-16-0 Untrusted"
+        }
+      ],
+      "guard": true
+    },
+    {
+      "check": "explicit opt-out: the same probe reports the Renderer processes NOT sandboxed (so the probe sees the difference)",
+      "ok": true,
+      "renderers": [
+        {
+          "type": "Renderer",
+          "sandbox": "Not Sandboxed",
+          "lockdown": "",
+          "integrity": ""
+        },
+        {
+          "type": "Renderer",
+          "sandbox": "Not Sandboxed",
+          "lockdown": "",
+          "integrity": ""
+        },
+        {
+          "type": "Renderer",
+          "sandbox": "Not Sandboxed",
+          "lockdown": "",
+          "integrity": ""
+        }
+      ]
+    },
+    {
+      "check": "a browser that cannot start (sandbox on) is a typed visible failure and is not retried without the sandbox",
+      "ok": true,
+      "code": "presentation_render_sandbox_unavailable",
+      "detail": "Chrome could not start with its process sandbox ON. If this machine cannot create the sandbox, set JARVIS_REMOTION_RENDER_NO_SANDBOX=1 to render without it (an explicit choice: the scene code then run"
+    },
+    {
+      "check": "a browser that cannot start (opt-out) is a typed visible failure and is not retried without the sandbox",
+      "ok": true,
+      "code": "presentation_render_browser_unavailable",
+      "detail": "Error: Failed to launch the browser process! node:internal/modules/cjs/loader:1520 throw err; ^ Error: Cannot find module '<path>' at Module._resolveFilename (node:internal/modules/cjs/loader:1517:15)"
+    }
+  ],
+  "runs": [
+    {
+      "scenarios": [
+        "sandbox",
+        "hostile",
+        "bounds"
+      ],
+      "head": "b667b25b800d4c7d87219744079c0d80fe83e17e",
+      "tree_dirty": false,
+      "elapsed_s": 86.8,
+      "disk_free_before_mb": 12769,
+      "disk_free_after_mb": 12761
+    }
+  ]
+}

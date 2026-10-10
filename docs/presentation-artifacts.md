@@ -202,7 +202,7 @@ migration** (`jarvis.sqlite3` stays v8). What this page now guarantees about a d
 - it becomes `complete` only after a verified file went through the spool (`.partial` then rename); every other end is `failed` with a stable `presentation_render_*` code, an
   interrupted one is recovered `failed` (`presentation_render_interrupted`) or `partial` (`artifact_recovered`, final file found but unverified), never a promoted half file;
 - the snapshot package also freezes, per Remotion pin, `props_defaults` (the manifest defaults), so a render starts from the package alone (a package frozen before this
-  Slice renders with the scene's own values only);
+  Slice renders with the scene's own values only); Slice 22 adds `data_defaults` (the manifest defaults of the `data` input) the same way, and the render hands the composition `inputProps.data` = defaults under the scene's frozen `data`;
 - `describe_source` / `sources_of_board` list each render with `width`, `height`, `duration_ms`, `scene_id`, `settings_sha256` and `flat` besides `artifact_id`, `kind`, `state`,
   `format`, `size_bytes`, `error_code`, `board_ids`.
 

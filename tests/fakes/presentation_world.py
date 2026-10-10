@@ -82,11 +82,14 @@ class PresentationWorld:
 
     async def new_presentation(self, files: dict[str, Any] | None = None, *, prefab_id: str = SCENE_PREFAB, composition=COMPOSITION,
                                engine=ENGINE, props: dict[str, Any] | None = None, sample: dict[str, Any] | None = None,
-                               props_schema: dict[str, Any] | None = None) -> tuple[str, str]:
+                               props_schema: dict[str, Any] | None = None, data_schema: dict[str, Any] | None = None,
+                               data: dict[str, Any] | None = None) -> tuple[str, str]:
         """Publie une scène Remotion réelle et crée une présentation d'une scène ; rend `(presentation_id, variant_id)`."""
 
         options: dict[str, Any] = {"files": files or scene_files(), "composition": composition, "engine": engine,
                                    "props": props_schema or PROPS_SCHEMA, "sample": sample or SAMPLE}
+        if data_schema is not None:
+            options["data"] = data_schema
         published = await self.prefabs.save(scene_candidate(prefab_id, **options), actor="user")
         created = await self.studio.create({"title": "Atelier"})
         pid, vid = created.presentation.presentation_id, created.presentation.active_variant_id
@@ -94,6 +97,8 @@ class PresentationWorld:
         scene: dict[str, Any] = {"scene_id": SCENE_ID, "prefab": {"id": prefab_id, "version": published.version}}
         if props:
             scene["props"] = props
+        if data:
+            scene["data"] = data
         await self.studio.save_variant(pid, vid, {
             "expected_revision": variant["revision"], "title": variant["title"], "scenes": [scene],
             "art_direction_id": None, "score_id": None})

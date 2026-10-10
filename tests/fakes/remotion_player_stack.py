@@ -18,7 +18,7 @@ from pathlib import Path
 import shutil
 import socket
 import subprocess
-from typing import Any
+from typing import Any, Callable
 
 from aiohttp.test_utils import TestServer
 
@@ -76,7 +76,9 @@ class RemotionStack:
     """`async with RemotionStack(tmp_path, runtime_dir=...) as stack`. `runtime_dir=None` : capacité absente (échec typé)."""
 
     def __init__(self, tmp_path: Path, *, runtime_dir: Path | None = None, visualizer_url: str | None = None,
-                 configure_sandbox: bool = True) -> None:
+                 configure_sandbox: bool = True, core_options: "Callable[[RemotionStack], dict[str, Any]] | None" = None) -> None:
+        #: Slice 22: extra `JarvisCoreApplication` arguments computed from the stack once its data root exists (render runner, importer...).
+        self.core_options = core_options
         self.tmp_path = tmp_path
         self.runtime_dir = runtime_dir
         self.visualizer_url = visualizer_url
@@ -93,7 +95,8 @@ class RemotionStack:
         self.core = JarvisCoreApplication(
             data_root=self.data_root, diagnostics=self.diagnostics,
             local_capability_store=FileLocalCapabilityStore(self.data_root), local_capability_runner=default_remotion_runner(),
-            remotion=remotion_factory(self.sandbox_settings) if self.configure_sandbox else None)
+            remotion=remotion_factory(self.sandbox_settings) if self.configure_sandbox else None,
+            **(self.core_options(self) if self.core_options else {}))
         await self.core.start()
         self.server = LocalProtocolServer(self.core, host="127.0.0.1", port=self.core_port, token=TOKEN)
         await self.server.start()

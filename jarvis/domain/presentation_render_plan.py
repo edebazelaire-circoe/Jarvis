@@ -70,6 +70,15 @@ def render_props(package: FrozenPackage, target: SceneTarget) -> dict[str, Any]:
     if not isinstance(instance, dict):
         raise RenderError(C.SNAPSHOT_INVALID, f"scene {target.scene_id}: props must be an object")
     props.update(instance)
+    # Slice 22: `data` is an input of the composition too (`inputProps.data`, as in the Player): the frozen defaults of the manifest, then the
+    # frozen values of the scene. A scene that does not use `data` (empty on both sides) gets no key, exactly as before.
+    data_defaults = row.get("data_defaults")
+    instance_data = scene.get("data", {})
+    if not isinstance(instance_data, dict):
+        raise RenderError(C.SNAPSHOT_INVALID, f"scene {target.scene_id}: data must be an object")
+    merged = {**(data_defaults if isinstance(data_defaults, dict) else {}), **instance_data}
+    if merged and "data" not in props:
+        props["data"] = merged
     return props
 
 

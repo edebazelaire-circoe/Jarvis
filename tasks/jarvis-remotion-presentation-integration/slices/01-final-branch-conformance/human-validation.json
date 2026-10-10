@@ -3,7 +3,10 @@
     {
       "id": "HV-01-01",
       "instruction": "Review any remaining product design deviations where branch implementation and confirmed user requirement conflict.",
-      "requires_evidence_first": true
+      "requires_evidence_first": true,
+      "status": "open",
+      "order": 0,
+      "evidence": "docs/remotion-integration-release.md#human-checks"
     }
   ]
 }

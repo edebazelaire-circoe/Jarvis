@@ -262,11 +262,11 @@ async def test_status_never_interleaves_with_a_sync():
 
 
 def test_diagnostics_never_carry_a_drive_user_or_unc_path():
-    samples = [r"Error at C:\Users\Clarice\AppData\x.js:1:2", "at C:/Users/Clarice/x.js", "\\\\?\\C:\\Users\\a\\b", "/c/Users/Clarice/x",
-               "/Users/clarice/x.js", "file:///C:/Users/a/b.js", r"(D:\Projects\z)", "~/x/y", "\\\\server\\share\\f", "/home/bob/app.js"]
+    samples = [r"Error at C:\Users\Alice\AppData\x.js:1:2", "at C:/Users/Alice/x.js", "\\\\?\\C:\\Users\\a\\b", "/c/Users/Alice/x",
+               "/Users/alice/x.js", "file:///C:/Users/a/b.js", r"(D:\Projects\z)", "~/x/y", "\\\\server\\share\\f", "/home/bob/app.js"]
     view = D.public_view(D.StudioState(diagnostics=samples), idle_timeout_s=60, now=0)
     text = " ".join(view["diagnostics"])
-    for needle in ("Clarice", "clarice", "Users", "Projects", "bob", "server", "share"):
+    for needle in ("Alice", "alice", "Users", "Projects", "bob", "server", "share"):
         assert needle not in text, needle
 
 

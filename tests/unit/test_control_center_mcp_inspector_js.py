@@ -623,8 +623,8 @@ def test_background_renders_keep_keyboard_focus_where_it_was(tmp_path, payload):
       control.gate=true;
       pick('mcpiSearch').value='select';listeners.mcpiSearch.input({});await settle();
       pick('mcpi-tab-scene').focus();
-      /* Assez de lâchers pour tout le catalogue réel (70 descripteurs depuis jarvis-workspace, S6 board-memory). */
-      for(let i=0;i<24;i++){release();await settle()}
+      /* Assez de lâchers pour tout le catalogue réel (101 descripteurs avec jarvis-remotion, Slice 21 ; la boucle borne seulement). */
+      for(let i=0;i<64;i++){release();await settle()}
       const r={tabFocus:focused,indexed:Object.values(I.state.details).filter(d=>d.state==='ok').length};
       /* Sans recherche : un descripteur arrivé ne retouche pas la barre d'onglets. */
       pick('mcpiSearch').value='';listeners.mcpiSearch.input({});await settle();
