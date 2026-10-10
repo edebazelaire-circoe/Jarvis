@@ -2,12 +2,17 @@
   "slice": 13,
   "test_file": "tests/unit/test_remotion_controls_realpage_browser.py",
   "handoff": "jarvis-remotion-presentation-integration",
-  "when": "2026-10-10T00:13:30+00:00",
+  "when": "2026-10-10T00:37:54+00:00",
   "repository": {
-    "head": "24b368dc657456ec99f69dee56fd684f1489041a",
+    "head": "105ab41d4917f4403283fd31318c13e656aa100b",
     "branch": "task/jarvis-remotion-presentation-integration-s13",
-    "tracked_tree_clean": true,
-    "dirty_files": []
+    "tracked_tree_clean": false,
+    "dirty_files": [
+      "M tasks/jarvis-remotion-presentation-integration/slices/13-remotion-controls-bridge/evidence/controls_after.png",
+      " M tasks/jarvis-remotion-presentation-integration/slices/13-remotion-controls-bridge/evidence/controls_before.png",
+      " D tasks/jarvis-remotion-presentation-integration/slices/13-remotion-controls-bridge/evidence/real-slice-13.json",
+      " M tasks/jarvis-remotion-presentation-integration/slices/13-remotion-controls-bridge/evidence/typed_controls.json"
+    ]
   },
   "environment": {
     "platform": "Windows-11-10.0.26200-SP0",
@@ -18,10 +23,10 @@
   },
   "pytest": {
     "returncode": 0,
-    "seconds": 22.3,
+    "seconds": 20.2,
     "summary": [
       "PASSED tests/unit/test_remotion_controls_realpage_browser.py::test_typed_variables_update_the_player_without_a_remount_or_a_render_and_unsafe_ones_never_cross",
-      "1 passed in 21.20s"
+      "1 passed in 18.84s"
     ]
   },
   "scenarios": [
