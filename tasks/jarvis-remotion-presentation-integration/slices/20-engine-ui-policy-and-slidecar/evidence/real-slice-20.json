@@ -1,0 +1,18 @@
+{
+  "slice": 20,
+  "code_head": "ed2e4642",
+  "tree": "clean (evidence directory only untracked)",
+  "chrome": "154.0.8037.99",
+  "node": "v24.18.0",
+  "os": "Windows-11-10.0.26200-SP0",
+  "isolation": "real JarvisCoreApplication + LocalProtocolServer + ControlCenter on free ports, tmp data root, scripted local-capability runner for the repair flow; never the live JARVIS",
+  "files": {
+    "engine_card.png": "Remotion unavailable (no adapter), diagnosis, no Slidecar",
+    "engine_confirm.png": "Slidecar confirmation dialog",
+    "engine_card_390.png": "390 px, badges, three documents",
+    "repair_missing.png": "runtime not installed -> Installer Remotion",
+    "repair_failed.png": "install failed, real failure + Reparer",
+    "repair_done.png": "Remotion ready after repair, no Slidecar",
+    "ui_engine_flow.json": "measured reads, exact POST bodies sent by the page, Core listing and diagnostics"
+  }
+}
