@@ -107,15 +107,13 @@ class CoreCaller:
         except ConnectionError as exc:
             raise CoreProtocolError(503, "core_unreachable", str(exc)) from None
         except TimeoutError:
-            # Remotion Slice 21 (QA B2): `asyncio.TimeoutError` is `TimeoutError`; aiohttp's total timeout too. The outcome of a write is UNKNOWN
-            # (a render may be queued): a coded error, never an empty one, and the model is told to read the state before trying again.
-            raise CoreProtocolError(504, "core_timeout", "Core did not answer in time; the outcome is unknown") from None
+            # ONE clause, BEFORE `aiohttp.ClientError` (aiohttp's ServerTimeoutError is both). `asyncio.TimeoutError` is `TimeoutError`; the total
+            # timeout of aiohttp too. The outcome of a write is UNKNOWN (a render may be queued, an assembly may have been written): a coded error,
+            # never the empty `Error executing tool ...:` the first real-model trace of Remotion Slice 15 showed; read the state before trying again.
+            raise CoreProtocolError(504, "core_timeout", "Core did not answer in time; the outcome is unknown: read the state first "
+                                                        "(presentation_inspect, remotion_status for a render) before trying again") from None
         except aiohttp.ClientError as exc:
             raise CoreProtocolError(503, "core_unreachable", f"Core est injoignable ({type(exc).__name__})") from None
-        except TimeoutError:
-            # An empty "Error executing tool" is what the model used to see (real-model trace, Remotion Slice 15): say what happened.
-            raise CoreProtocolError(504, "core_timeout", "Core n'a pas repondu a temps: l'issue est inconnue, relis l'etat "
-                                                        "(presentation_inspect) avant de renvoyer") from None
 
     async def close(self) -> None:
         await self._transport.close()

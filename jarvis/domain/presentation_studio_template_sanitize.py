@@ -36,6 +36,7 @@ from jarvis.domain.presentation_studio_scene import ControlGroup, StudioControl
 #: Types dont la valeur est un reglage d'aspect (jamais une phrase de l'auteur).
 LOOK_TYPES = frozenset({"number", "integer", "boolean", "color", "enum"})
 #: Leaves of the reserved `props.theme` (the art direction as data, Remotion Slice 15) that are closed-vocabulary tokens; the font names are free text.
+THEME_FONT_LEAVES = frozenset({"props.theme.font_heading", "props.theme.font_body"})
 THEME_CLOSED_LEAVES = frozenset({"background", "text", "accent", "muted", "body", "surface", "heading_weight", "body_weight", "radius", "gap",
                                  "scale", "enter_ms", "stagger_ms", "easing", "transition"})
 #: Une chaine plus courte n'est pas cherchee dans la source (un mot de quatre lettres y est presque toujours un mot-cle).
@@ -427,6 +428,9 @@ def content_values(manifest: Mapping[str, Any], controls: Sequence[StudioControl
                 present, value = _get(trees[root], leaf.path)
                 if present:
                     found.append(value)
+                    if leaf.path in THEME_FONT_LEAVES and isinstance(value, str):
+                        # The stack is `"Brand", Georgia, ...`: the brand alone is what a source would repeat (Remotion Slice 15, QA P5).
+                        found.extend(re.findall(r'"([^"]{4,60})"', value))
     return found
 
 

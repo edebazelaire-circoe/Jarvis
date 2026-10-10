@@ -582,7 +582,7 @@ async def test_the_authoring_client_waits_longer_than_the_compile_budget_and_a_t
     caller._transport = Transport()
     with pytest.raises(CoreProtocolError) as caught:
         await caller.call(lambda c: c.presentation_studio_authoring_assemble({"brief": {}, "draft": {}}))
-    assert caught.value.code == "core_timeout" and "issue est inconnue" in caught.value.message
+    assert caught.value.code == "core_timeout" and "outcome is unknown" in caught.value.message
 
 
 async def test_the_control_center_relay_waits_for_the_compiler_too():
