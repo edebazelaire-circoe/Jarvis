@@ -73,6 +73,9 @@ def _parser() -> argparse.ArgumentParser:
     sub.add_parser("capture-mcp", help="Serve the brain capture, context and evidence MCP tools over stdio")
     # Boards, Sessions, mémoire et liens des Boards (board-memory-workspace-inspector, Slice 06) :
     # façade du cerveau sur `/api/boards*`, `/api/sessions*`, `/api/workspace/*`, sans interrupteur.
+    sub.add_parser("presentation-mcp", help="Serve the brain Presentation Studio MCP tools over stdio")
+    sub.add_parser("remotion-mcp", help="Serve the brain Remotion capability MCP tools over stdio")
+    sub.add_parser("memory-mcp", help="Serve the brain long-term memory and knowledge MCP tools over stdio")
     sub.add_parser("workspace-mcp", help="Serve the brain Board, Session and Board memory MCP tools over stdio")
     # Le banc d'essai Bare Hands (Slice 10) : rejouer une trace enregistrée sous
     # plusieurs configurations et comparer des mesures, au lieu de changer un
@@ -204,8 +207,26 @@ async def _console_mcp() -> int:
     return await serve_stdio()
 
 
+async def _memory_mcp() -> int:
+    from jarvis.runtime.memory_mcp import serve_stdio
+
+    return await serve_stdio()
+
+
 async def _workspace_mcp() -> int:
     from jarvis.runtime.workspace_mcp import serve_stdio
+
+    return await serve_stdio()
+
+
+async def _remotion_mcp() -> int:
+    from jarvis.runtime.remotion_mcp import serve_stdio
+
+    return await serve_stdio()
+
+
+async def _presentation_mcp() -> int:
+    from jarvis.runtime.presentation_studio_mcp import serve_stdio
 
     return await serve_stdio()
 
@@ -643,6 +664,89 @@ def _announce_calendar_backend(core, runtime_root: Path) -> None:
     )
 
 
+def _remotion_sandbox_settings():
+    """Écouteur du bac à sable Remotion (Slice 10, `docs/remotion-isolation.md` § 10) : autre adresse (`127.77.0.2`) ET autre
+    port que Core et que le Control Center, jamais ouvert avant la première scène Remotion jouée. `embedder_origin` = le Control
+    Center, seul autorisé à encadrer le cadre. Réglages : `JARVIS_REMOTION_SANDBOX_HOST`, `JARVIS_REMOTION_SANDBOX_PORT`."""
+
+    from jarvis.runtime.remotion_sandbox_server import DEFAULT_HOST, DEFAULT_PORT, RemotionSandboxSettings
+    host = os.getenv("JARVIS_REMOTION_SANDBOX_HOST", DEFAULT_HOST).strip() or DEFAULT_HOST
+    port = int(os.getenv("JARVIS_REMOTION_SANDBOX_PORT", str(DEFAULT_PORT)))
+    return RemotionSandboxSettings(host=host, port=port, embedder_origin=_control_center_url())
+
+
+def _remotion_factory():
+    """Le moteur Remotion de ce Core (compilateur de la capacité locale + écouteur du bac à sable), injecté : Core n'importe aucun adaptateur."""
+
+    from jarvis.runtime.remotion_composition import safe_remotion_factory
+    return safe_remotion_factory(_remotion_sandbox_settings, report=lambda problem: print(f"Remotion engine unavailable: {problem}", file=sys.stderr))
+
+
+def _local_capability_runner():
+    """Runner réel des capacités locales (npm/Node pour Remotion, Slice 04). Construit sans rien exécuter : l'installation
+    reste une action explicite (`POST /v1/local-capabilities/{id}/install`), jamais un effet du démarrage de Core."""
+
+    from jarvis.adapters.node_capability_runner import default_remotion_runner
+    return default_remotion_runner()
+
+
+def _local_capability_store(data_root):
+    from jarvis.adapters.file_local_capability_store import FileLocalCapabilityStore
+    return FileLocalCapabilityStore(Path(data_root).resolve())
+
+
+def _remotion_studio_runner(data_root):
+    """Runner du Studio Remotion OPTIONNEL (Slice 11). Construit sans rien lancer : le Studio ne démarre que sur `POST
+    /v1/local-capabilities/remotion/studio/open`. Port imposé par `JARVIS_REMOTION_STUDIO_PORT`, sinon un port libre de boucle locale."""
+
+    from jarvis.adapters.remotion_studio_runner import RemotionStudioRunner
+    store = _local_capability_store(data_root)
+    return RemotionStudioRunner(lambda: store.runtime_dir("remotion"))
+
+
+def _upstream_fetcher():
+    """Telechargeur HTTPS de l'importeur de modeles Remotion (Slice 18) : jamais appele sans demande explicite de l'utilisateur."""
+
+    from jarvis.adapters.https_upstream_fetcher import HttpsUpstreamFetcher
+    return HttpsUpstreamFetcher()
+
+
+def _upstream_engine():
+    """Le jeu de paquets livre (version Remotion, React, empreinte du verrou) : ce que la source importee declare."""
+
+    from jarvis.adapters.remotion_compiler import shipped_engine_pin
+    return shipped_engine_pin
+
+
+def _remotion_import_owners(runtime_root: Path) -> tuple[str, ...]:
+    """Liste blanche des proprietaires GitHub dont un modele peut etre importe : `control-center-settings.json`, cle
+    `remotion_import.allowed_owners`, relue a chaque import (un reglage change sans redemarrage). Defaut : `remotion-dev`."""
+
+    from jarvis.domain.remotion_upstream import normalise_owners
+    block = _control_settings(runtime_root).get("remotion_import")
+    return normalise_owners(block.get("allowed_owners") if isinstance(block, dict) else None)
+
+
+def _remotion_render_runner(data_root):
+    """Runner du rendu / export de présentations (Slice 16). Construit sans rien lancer : un rendu ne part que d'une demande explicite
+    (`POST /v1/local-capabilities/remotion/render/jobs`), jamais du démarrage ni d'une édition."""
+
+    from jarvis.adapters.remotion_render_runner import RemotionRenderRunner
+    store = _local_capability_store(data_root)
+    return RemotionRenderRunner(lambda: store.runtime_dir("remotion"))
+
+
+def _remotion_studio_idle_s():
+    """Délai d'inactivité du Studio (`JARVIS_REMOTION_STUDIO_IDLE_S`, secondes, 60 à 86400) ; `None` = défaut (30 min)."""
+
+    raw = os.environ.get("JARVIS_REMOTION_STUDIO_IDLE_S", "").strip()
+    try:
+        seconds = float(raw) if raw else None
+    except ValueError:
+        return None  # valeur illisible : le défaut, jamais un Core qui ne démarre pas pour un réglage du Studio
+    return seconds if seconds is not None and 60.0 <= seconds <= 86400.0 else None
+
+
 def _adopt_legacy_data_root(settings):
     """Premier démarrage sur la racine locale (`jarvis/data_root.py`) : reprendre l'ancien `./data` du dépôt (voir `jarvis/data_root.py`).
 
@@ -684,6 +788,8 @@ async def _run_core_v2() -> int:
     # Plugins MCP (Slice 02) : DPAPI CurrentUser sous Windows, sinon coffre indisponible (aucun repli en clair).
     from jarvis.adapters.dpapi_sealer import default_sealer
     from jarvis.core.memory_maintenance import MemoryMaintenanceWorker
+    from jarvis.runtime.memory_composition import build_consolidation, build_default_memory_wiring
+    from jarvis.runtime.knowledge_wiring import wire_knowledge
     from jarvis.runtime.agent_settings import resolve_agent_execution
     from jarvis.runtime.back_brain_worker import BackBrainJobWorker
     from jarvis.core.v2_app import JarvisCoreApplication
@@ -697,10 +803,22 @@ async def _run_core_v2() -> int:
     delivery = WindowsNotificationDelivery() if os.name == "nt" and os.getenv("JARVIS_WINDOWS_NOTIFICATIONS", "0") in {"1", "true", "yes"} else NullNotificationDelivery()
     agent_execution = resolve_agent_execution(
         _control_settings(settings.runtime_root), cwd=ROOT, runtime_root=settings.runtime_root)
-    workers = {
-        "memory_maintenance": MemoryMaintenanceWorker(settings.data_root / "memory"),
-        "back_brain": BackBrainJobWorker(lambda: agent_execution),
-    }
+    # Mémoire à long terme (handoff jarvis-memory-intelligence-knowledge, Slice 05) : construite **une fois** ici.
+    # Un seul magasin canonique par processus : Core (rappel, routes `/v1/memory/*`) et le worker de maintenance
+    # le partagent, donc une promotion (Slice 02) atteint l'index dérivé. Une racine illisible ne bloque pas
+    # Core : le bloc `memory` de chaque tour est alors dégradé, et le worker n'est pas monté.
+    memory = build_default_memory_wiring(
+        settings.data_root, settings.runtime_root / "control-center-settings.json",
+        diagnostics=RuntimeJournal(settings.runtime_root))
+    # Slice 09 : Wiki + Skills, résolveur de loadouts, instantané du hook (réécrit si ça change).
+    wire_knowledge(memory, settings.data_root, settings.runtime_root, diagnostics=RuntimeJournal(settings.runtime_root))
+    workers = {"back_brain": BackBrainJobWorker(lambda: agent_execution)}
+    if memory.store is not None:
+        # Slice 04 : le pipeline de consolidation (candidats) est injecté dans le worker et les routes de revue.
+        consolidation = build_consolidation(
+            memory, settings.data_root / "memory", agent_execution=lambda: agent_execution,
+            control_settings=lambda: _control_settings(settings.runtime_root), diagnostics=RuntimeJournal(settings.runtime_root))
+        workers["memory_maintenance"] = MemoryMaintenanceWorker(settings.data_root / "memory", memory.store, consolidation)
     # Le journal runtime sert de puits de diagnostic à Core : sans lui, l'éviction
     # d'un abonné saturé du bus resterait invisible en production (Décision 25).
     brain_backend = _brain_backend_from_env()
@@ -716,7 +834,7 @@ async def _run_core_v2() -> int:
         )
     # Plugins MCP (Slice 03) : connecteur injecté, import gardé (extra `mcp` absent ⇒ None).
     mcp_loopback = _mcp_allow_loopback_http()
-    core = JarvisCoreApplication(data_root=settings.data_root, timezone=settings.timezone, calendar_backend=_calendar_backend_from_env(), drive_backend=_drive_backend_from_env(), brain_backend=brain_backend, notification_delivery=delivery, workers=workers, diagnostics=RuntimeJournal(settings.runtime_root), live_sideband_closer=live_closer, live_provider_max_session_s=PROVIDER_MAX_SESSION_SECONDS, scene_restart_grace_s=scene_grace_s, file_change_notifier_factory=FileChangeNotifier, scene_capture_store=FileSceneCaptureStore(settings.runtime_root / SCENE_CAPTURE_DIR), sealer=default_sealer(), connector=_mcp_connector(mcp_loopback, RuntimeJournal(settings.runtime_root)), mcp_allow_loopback_http=mcp_loopback, agenda_settings=lambda: load_agenda_settings(_control_settings(settings.runtime_root)), **_audio_recording_from_env(settings.runtime_root), **_brain_availability_from_env())
+    core = JarvisCoreApplication(data_root=settings.data_root, timezone=settings.timezone, calendar_backend=_calendar_backend_from_env(), drive_backend=_drive_backend_from_env(), brain_backend=brain_backend, notification_delivery=delivery, workers=workers, diagnostics=RuntimeJournal(settings.runtime_root), live_sideband_closer=live_closer, live_provider_max_session_s=PROVIDER_MAX_SESSION_SECONDS, scene_restart_grace_s=scene_grace_s, file_change_notifier_factory=FileChangeNotifier, scene_capture_store=FileSceneCaptureStore(settings.runtime_root / SCENE_CAPTURE_DIR), sealer=default_sealer(), connector=_mcp_connector(mcp_loopback, RuntimeJournal(settings.runtime_root)), mcp_allow_loopback_http=mcp_loopback, memory=memory, local_capability_runner=_local_capability_runner(), local_capability_store=_local_capability_store(settings.data_root), remotion=_remotion_factory(), remotion_studio_runner=_remotion_studio_runner(settings.data_root), remotion_studio_idle_s=_remotion_studio_idle_s(), remotion_render_runner=_remotion_render_runner(settings.data_root), upstream_fetcher=_upstream_fetcher(), upstream_engine=_upstream_engine(), remotion_import_owners=lambda: _remotion_import_owners(settings.runtime_root), agenda_settings=lambda: load_agenda_settings(_control_settings(settings.runtime_root)), **_audio_recording_from_env(settings.runtime_root), **_brain_availability_from_env())
     server = LocalProtocolServer(core, host=settings.core_host, port=settings.core_port, token=token)
     # Tool Brain (handoff jarvis-tool-brain-ui-orchestrator, Slice 5) : `JARVIS_TOOL_BRAIN=shadow` l'observe et
     # l'enregistre sans rien exécuter ; `off` (défaut) ne construit rien. Le cerveau principal n'est pas touché.
@@ -757,6 +875,7 @@ def _presentation_composition(
     audio_input_device,
     behaving_mode,
     timeline=None,
+    core=None,
 ):
     """Ce qu'il faut pour qu'une séance PRESENTATION puisse s'ouvrir.
 
@@ -898,6 +1017,8 @@ def _presentation_composition(
         # Slice 10 : chaque séance raconte ses préparations et ses points
         # d'attention dans la ligne de temps canonique.
         timeline=timeline,
+        # Slice 13 : le suiveur de cues du Studio tire l'ensemble armé de Core et lui rapporte `cue_satisfied`.
+        cue_core=core,
     )
 
 
@@ -1295,7 +1416,7 @@ async def _run_voice_v2() -> int:
             api_key=api_key, wake_key=wake_key, manual_key=manual_key,
             audio_input_device=audio_input_device,
             behaving_mode=lambda: voice_holder["voice"].interaction_mode.mode,
-            timeline=presentation_timeline,
+            timeline=presentation_timeline, core=core,
         )
     except Exception as exc:  # noqa: BLE001 - dit, jamais avalé, et jamais bloquant
         journal.emit(
@@ -1550,6 +1671,7 @@ async def _run_control_center_v2() -> int:
     # Center, pas Core : Bare Hands n'existe nulle part dans Core.
     from jarvis.runtime.barehands_mcp import BarehandsMcpTarget
     from jarvis.runtime.drive_mcp import DriveMcpTarget
+    from jarvis.runtime.presentation_studio_mcp_support import PresentationMcpTarget
     # Réglages : même Control Center, mais déclaré au cerveau en toutes
     # circonstances (voir `settings_mcp`).
     from jarvis.runtime.settings_mcp import ConsoleMcpTarget
@@ -1591,8 +1713,16 @@ async def _run_control_center_v2() -> int:
         console_mcp=ConsoleMcpTarget("127.0.0.1", ui_port, runtime_root),
         # `jarvis-workspace` (board-memory-workspace-inspector, Slice 06) : même Control Center.
         workspace_mcp=ConsoleMcpTarget("127.0.0.1", ui_port, runtime_root),
+        # `jarvis-memory` (memory-intelligence-knowledge, Slice 05b) : même Control Center.
+        memory_mcp=ConsoleMcpTarget("127.0.0.1", ui_port, runtime_root),
         # `jarvis-capture` (Slice 09) : même Control Center, même forme de cible.
         capture_mcp=ConsoleMcpTarget("127.0.0.1", ui_port, runtime_root),
+        # `jarvis-presentation` (interactive-presentation-studio, Slice 21) : Core pour les routes du Studio, ce Control Center
+        # pour l'explorateur et le plein écran ; déclaré avec l'affichage.
+        presentation_mcp=PresentationMcpTarget(
+            DisplayMcpTarget(core_host=settings.core_host, core_port=settings.core_port,
+                             token_file=settings.token_file, runtime_root=runtime_root),
+            ConsoleMcpTarget("127.0.0.1", ui_port, runtime_root)),
         # `jarvis-drive` en lecture seule (2026-10-07) : Core sait chercher et lire, le cerveau doit pouvoir aussi.
         drive_mcp=DriveMcpTarget(runtime_root=runtime_root, read_only=True),
         tools_mcp=ToolsGatewayTarget(
@@ -1788,8 +1918,11 @@ async def _amain(argv: list[str] | None = None) -> int:
     if command == "barehands-mcp": return await _barehands_mcp()
     if command == "console-mcp": return await _console_mcp()
     if command == "tools-mcp": return await _tools_mcp()
+    if command == "memory-mcp": return await _memory_mcp()
     if command == "workspace-mcp": return await _workspace_mcp()
     if command == "capture-mcp": return await _capture_mcp()
+    if command == "presentation-mcp": return await _presentation_mcp()
+    if command == "remotion-mcp": return await _remotion_mcp()
     if command == "barehands-replay": return _barehands_replay(args)
     if command == "routing-hook":
         from jarvis.runtime.routing_hook import main as routing_hook_main

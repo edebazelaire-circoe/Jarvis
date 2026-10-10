@@ -15,7 +15,7 @@ Contrat : `docs/prefabs.md` › *Core routes*.
 | GET | `/v1/prefabs[?query&family&class&limit]` | `{prefabs: [{id, latest_version, versions, title, family, class, description, input_names, event_names, base_edited}]}` (`limit` ≤ 50) |
 | GET | `/v1/prefabs/{prefab_id}` | dernière version saine, sa publication, l'historique (chaîne de provenance) |
 | GET | `/v1/prefabs/{prefab_id}/{version}[?include_source=0\\|1]` | une version (+ ses sources ≤ 128 Kio) |
-| GET | `/v1/prefabs/{prefab_id}/{version}/bundle` | `{id, version, fingerprint, manifest, files, runtime: {version, shim, shell_css}}` ; `ETag` = empreinte de la version + version du runtime, `If-None-Match` -> 304 |
+| GET | `/v1/prefabs/{prefab_id}/{version}/bundle` | for a Remotion source (Slice 10): `{kind: "remotion", id, version, title}` only; otherwise `{id, version, fingerprint, manifest, files, runtime: {version, shim, shell_css}}` ; `ETag` = empreinte de la version + version du runtime, `If-None-Match` -> 304 |
 
 Les routes à segment fixe (`/v1/prefabs/events`, `/v1/prefabs/validate`, Slices
 04 et 07) s'enregistrent **avant** `{prefab_id}` : un id porte toujours un
@@ -45,7 +45,7 @@ from jarvis.core.prefab_events import MAX_LIST_LIMIT, PrefabEventsRateLimited
 from jarvis.core.prefab_service import DEFAULT_SEARCH_LIMIT, MAX_SEARCH_LIMIT
 from jarvis.domain._checks import MAX_ID_CHARS
 from jarvis.domain.prefab import (
-    MAX_STATE_EVENT_PAYLOAD_BYTES, MAX_VERSION, PrefabClass, PrefabDefinitionError, PrefabRef,
+    MAX_STATE_EVENT_PAYLOAD_BYTES, MAX_VERSION, PrefabClass, PrefabDefinitionError, PrefabRef, is_retention_id,
 )
 from jarvis.ports.prefabs import PrefabStoreError, PrefabStoreErrorCode
 from jarvis.ports.scene import SceneStoreError, SceneUnavailableError
@@ -59,6 +59,13 @@ PREFIX = "/v1/prefabs"
 MAX_EVENT_BODY_BYTES = 2 * MAX_STATE_EVENT_PAYLOAD_BYTES + 8 * 1024
 #: Corps d'une définition (Slice 07) : sources ≤ 160 Kio, échappement JSON compris.
 MAX_DEFINITION_BODY_BYTES = 512 * 1024
+
+
+def _flag(request: web.Request, name: str) -> bool:
+    value = request.query.get(name, "0")
+    if value not in {"0", "1"}:
+        raise ValueError(f"{name} must be 0 or 1")
+    return value == "1"
 
 
 class PrefabProtocolRoutes:
@@ -137,7 +144,7 @@ class PrefabProtocolRoutes:
         return web.json_response(result.to_dict())
 
     async def search(self, request: web.Request) -> web.Response:
-        _only(request, {"query", "family", "class", "limit"})
+        _only(request, {"query", "family", "class", "limit", "type", "engine", "stack", "catalog"})
         wanted = request.query.get("class")
         if wanted is not None and wanted not in {item.value for item in PrefabClass}:
             raise ValueError("class must be base or custom")
@@ -145,26 +152,35 @@ class PrefabProtocolRoutes:
         if family is not None and not (0 < len(family) <= 32):
             raise ValueError("family must be a token of at most 32 characters")
         limit = _int(request, "limit", DEFAULT_SEARCH_LIMIT, 1, MAX_SEARCH_LIMIT)
+        with_catalog = _flag(request, "catalog")
         rows = await self._prefabs.search(request.query.get("query"), family=family, class_filter=wanted,
-                                          limit=limit)
-        return web.json_response({"prefabs": [row.to_dict() for row in rows]})
+                                          semantic_type=request.query.get("type"), engine=request.query.get("engine"),
+                                          stack=request.query.get("stack"), with_catalog=with_catalog, limit=limit)
+        return web.json_response({"prefabs": [row.to_dict(catalog=with_catalog) for row in rows]})
 
     async def detail(self, request: web.Request) -> web.Response:
-        _only(request, set())
+        _only(request, {"catalog"})
         detail = await self._prefabs.get(request.match_info["prefab_id"])
-        return web.json_response(detail.to_dict())
+        return web.json_response(detail.to_dict(catalog=_flag(request, "catalog")))
 
     async def version(self, request: web.Request) -> web.Response:
-        _only(request, {"include_source"})
+        _only(request, {"include_source", "catalog"})
         include = request.query.get("include_source", "0")
         if include not in {"0", "1"}:
             raise ValueError("include_source must be 0 or 1")
         detail = await self._prefabs.get(request.match_info["prefab_id"], self._version(request))
-        return web.json_response(detail.to_dict(include_source=include == "1"))
+        return web.json_response(detail.to_dict(include_source=include == "1", catalog=_flag(request, "catalog")))
 
     async def bundle(self, request: web.Request) -> web.Response:
         _only(request, set())
-        body = await self._prefabs.bundle(request.match_info["prefab_id"], self._version(request))
+        prefab_id, version = request.match_info["prefab_id"], self._version(request)
+        manifest = await self._prefabs.manifest(prefab_id, version)
+        if manifest.source is not None:
+            # A Remotion source has no HTML frame bundle and never gets one (`PrefabService.bundle` refuses it): the page is told
+            # what KIND of window to mount, nothing executable. The playable descriptor is `GET /v1/remotion/player/...` (Slice 10).
+            return web.json_response({"kind": "remotion", "id": prefab_id, "version": version, "title": manifest.title},
+                                     headers={"Cache-Control": "no-cache"})
+        body = await self._prefabs.bundle(prefab_id, version)
         etag = f'"{body["fingerprint"]}.{body["runtime"]["version"]}"'
         headers = {"ETag": etag, "Cache-Control": "no-cache"}
         if request.headers.get("If-None-Match") == etag:
@@ -191,6 +207,15 @@ class PrefabProtocolRoutes:
 
     async def save(self, request: web.Request) -> web.Response:
         body = await self._definition_body(request, {"actor", "candidate"}, {"derived_from"})
+        manifest = body["candidate"].get("manifest") if isinstance(body["candidate"], dict) else None
+        wanted = manifest.get("id") if isinstance(manifest, dict) else None
+        if isinstance(wanted, str) and is_retention_id(wanted):
+            # Slice 06 (QA 01a I1): the `presentation-studio.` namespace is reserved to the Studio, which publishes through
+            # `PrefabService.save` directly. Every other door (the MCP `prefab_save` tool, the Control Center relay) comes
+            # through this route and would otherwise create an id that retention may archive once the quota fills.
+            raise PrefabStoreError(PrefabStoreErrorCode.INVALID_DEFINITION,
+                                   "ids under 'presentation-studio.' are reserved for the Presentation Studio scene "
+                                   "sources: save the prefab under another id (derived_from the version you started from)")
         derived = body.get("derived_from")
         if derived is not None:
             try:

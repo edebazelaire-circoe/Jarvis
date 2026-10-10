@@ -39,6 +39,13 @@ document is corrected. Native catalog, descriptors, availability and the
 Control Center inspector: [tool-contract.md](tool-contract.md), which this
 document extends and never duplicates.
 
+> **Not covered here: local capabilities.** A locally installed runtime with its
+> own child process (the Remotion capability of
+> `jarvis-remotion-presentation-integration`) is **not** a plugin and never a
+> new `transport` value of `McpPlugin`: plugins stay URL-only,
+> `streamable_http`. Local capabilities have their own sibling model, with no
+> vault, OAuth or endpoint: [../local-capabilities.md](../local-capabilities.md).
+
 A **plugin** is a remote MCP server the user adds from a URL in the Control
 Center. Jarvis holds its definition, its authorization and its connection; the
 brain reaches its tools through one Jarvis-owned gateway, `jarvis-tools`, and

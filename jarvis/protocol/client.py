@@ -37,13 +37,30 @@ from jarvis.domain.live_lifecycle import LiveCloseEvidence, LiveLifecycleState, 
 #: `workspace_routes.py`) : lecture seule, pour l'interface et `jarvis-workspace`.
 #: Catalogue des prefabs (jarvis-scene-window-prefab-foundation, Slice 03,
 #: `prefab_routes.py`) : pour le runtime des cadres et la bibliothèque.
+#: Presentations du Studio (jarvis-interactive-presentation-studio, Slice 05, `presentation_studio_relay.py`) : le
+#: relais n'en expose qu'une partie (lectures + `.../edits`, acteur forcé à `user`) ; la liste vit dans le relais.
 FORWARDABLE_PREFIXES = ("/v1/boards", "/v1/sessions", "/v1/mcp/plugins", "/v1/mcp/oauth/callback",
                         "/v1/contexts", "/v1/captures", "/v1/artifacts", "/v1/activity", "/v1/workspace/",
-                        "/v1/prefabs")
+                        "/v1/prefabs", "/v1/presentation-studio/presentations", "/v1/presentation-studio/playback",
+                        "/v1/presentation-studio/authoring", "/v1/presentation-studio/templates",
+                        "/v1/presentation-studio/engine",  # vue du moteur, lecture seule (remotion-integration S20)
+                        "/v1/memory/", "/v1/remotion/",
+                        # Carte Remotion du Control Center (jarvis-remotion-presentation-integration, Slice 11) : l'état de la capacité et le
+                        # Studio optionnel ; le relais (`remotion_studio_relay.py`) n'appelle que six adresses, jamais l'installation.
+                        "/v1/local-capabilities/remotion")
 #: Seule route relayée en octets (`forward_bytes`) : le payload d'un Artifact, pour l'interface.
 PAYLOAD_ROUTE_SUFFIX = "/payload"
 #: Paramètres de requête relayés : un mapping, ou des paires (un paramètre répété garde chaque valeur).
 QueryParams = Mapping[str, str] | Sequence[tuple[str, str]]
+#: Une edition de source attend la rafale (secondes), la publication et le rapport de montage de l'hote (8 s) : la
+#: reponse de Core peut venir bien apres 10 s ; au-dela, la requete est abandonnee et le resultat reste dans `/reloads`.
+SOURCE_EDIT_TIMEOUT_S = 40.0
+STUDIO_PREFIX = "/v1/presentation-studio/presentations"  # = un élément de FORWARDABLE_PREFIXES (testé)
+PLAYBACK_PREFIX = "/v1/presentation-studio/playback"  # lecture (Slice 12) : aussi dans FORWARDABLE_PREFIXES
+TEMPLATES_PREFIX = "/v1/presentation-studio/templates"  # modeles reutilisables (Slice 20) : aussi dans FORWARDABLE_PREFIXES
+AUTHORING_PREFIX = "/v1/presentation-studio/authoring"  # planificateur d'ecriture (Slice 11) : aussi dans FORWARDABLE_PREFIXES
+#: Longest an authoring request may take (Remotion Slice 15): the compile budget of the service (120 s) plus the write and some slack.
+AUTHORING_TIMEOUT_S = 150.0
 #: Plus grande réponse binaire relayée : la borne par réponse de Core (`MAX_PAYLOAD_CHUNK_BYTES`).
 MAX_FORWARDED_PAYLOAD_BYTES = 8 * 1024 * 1024
 #: En-têtes de la réponse binaire de Core rendus tels quels par le relais.
@@ -797,6 +814,511 @@ class LocalCoreClient:
                                 json={"board_id": board_id}) as response:
             return await self._json(response)
 
+    # Presentations du Studio (jarvis-interactive-presentation-studio, Slice 02) : accès typé à
+    # `/v1/presentation-studio/presentations*` (`presentation_studio_routes.py`). Un refus de Core
+    # lève `CoreProtocolError` avec son statut et son code `presentation_studio_*` ; jamais relayé tel quel.
+
+    async def _studio(self, method: str, suffix: str, *, body: Any = None,
+                      params: Mapping[str, str] | None = None) -> dict[str, Any]:
+        session = await self._http()
+        options: dict[str, Any] = {} if body is None else {"json": body}
+        async with session.request(method, f"{self.base_url}{STUDIO_PREFIX}{suffix}", headers=self.headers,
+                                   params=params, **options) as response:
+            return await self._json(response)
+
+    async def presentation_studio_list(self, *, limit: int | None = None) -> dict[str, Any]:
+        """`GET .../presentations` : `{presentations: [résumé], problems: [{presentation_id, code, message}]}`."""
+
+        return await self._studio("GET", "", params=None if limit is None else {"limit": str(limit)})
+
+    async def presentation_studio_create(self, title: str) -> dict[str, Any]:
+        """`POST .../presentations` `{title}` : `{presentation, variants}` (variante n° 1 active)."""
+
+        return await self._studio("POST", "", body={"title": title})
+
+    async def presentation_studio_get(self, presentation_id: str) -> dict[str, Any]:
+        return await self._studio("GET", f"/{quote(presentation_id, safe='')}")
+
+    async def presentation_studio_save(self, presentation_id: str, update: Mapping[str, Any]) -> dict[str, Any]:
+        """`PUT .../presentations/{id}` `{expected_revision, title, active_variant_id, resources}` : le document `presentation`."""
+
+        return await self._studio("PUT", f"/{quote(presentation_id, safe='')}", body=dict(update))
+
+    async def presentation_studio_variant(self, presentation_id: str, variant_id: str) -> dict[str, Any]:
+        return await self._studio("GET", f"/{quote(presentation_id, safe='')}/variants/{quote(variant_id, safe='')}")
+
+    async def presentation_studio_save_variant(self, presentation_id: str, variant_id: str,
+                                               update: Mapping[str, Any]) -> dict[str, Any]:
+        """`PUT .../variants/{id}` `{expected_revision, title, scenes, art_direction_id, score_id}` : le document `variant`."""
+
+        return await self._studio("PUT", f"/{quote(presentation_id, safe='')}/variants/{quote(variant_id, safe='')}",
+                                  body=dict(update))
+
+    async def presentation_studio_scene_controls(self, presentation_id: str, variant_id: str,
+                                                 scene_id: str) -> dict[str, Any]:
+        """`GET .../variants/{id}/scenes/{scene_id}/controls` : ce qui s'édite sur la scène (contrôles résolus, ancres, budget)."""
+
+        return await self._studio(
+            "GET", f"/{quote(presentation_id, safe='')}/variants/{quote(variant_id, safe='')}"
+                   f"/scenes/{quote(scene_id, safe='')}/controls")
+
+    async def presentation_studio_art_direction(self, presentation_id: str, variant_id: str) -> dict[str, Any]:
+        """`GET .../variants/{id}/art-direction` (Slice 09) : `{art_direction}`. 404 `presentation_studio_unknown_art_direction` s'il n'y en a pas."""
+
+        return await self._studio("GET", self._art_direction_suffix(presentation_id, variant_id))
+
+    async def presentation_studio_create_art_direction(self, presentation_id: str, variant_id: str,
+                                                       body: Mapping[str, Any]) -> dict[str, Any]:
+        """`POST .../art-direction` `{expected_variant_revision, profile}` : la variante reçoit `art_direction_id`."""
+
+        return await self._studio("POST", self._art_direction_suffix(presentation_id, variant_id), body=dict(body))
+
+    async def presentation_studio_save_art_direction(self, presentation_id: str, variant_id: str,
+                                                     body: Mapping[str, Any]) -> dict[str, Any]:
+        """`PUT .../art-direction` `{expected_revision, profile}` : remplacement, `stale_revision` si périmé."""
+
+        return await self._studio("PUT", self._art_direction_suffix(presentation_id, variant_id), body=dict(body))
+
+    async def presentation_studio_fallback_art_direction(self, presentation_id: str, variant_id: str,
+                                                         body: Mapping[str, Any]) -> dict[str, Any]:
+        """`POST .../art-direction/fallback` `{expected_variant_revision, seed_context?}` : crée la DA générée de repli."""
+
+        return await self._studio("POST", self._art_direction_suffix(presentation_id, variant_id) + "/fallback",
+                                  body=dict(body))
+
+    async def presentation_studio_art_direction_candidates(self, presentation_id: str, variant_id: str,
+                                                           body: Mapping[str, Any]) -> dict[str, Any]:
+        """`POST .../art-direction/candidates` `{count, seed_context?}` : `{base, base_profile, candidates}`, calculé, rien d'écrit."""
+
+        return await self._studio("POST", self._art_direction_suffix(presentation_id, variant_id) + "/candidates",
+                                  body=dict(body))
+
+    @staticmethod
+    def _art_direction_suffix(presentation_id: str, variant_id: str) -> str:
+        return f"/{quote(presentation_id, safe='')}/variants/{quote(variant_id, safe='')}/art-direction"
+
+    async def presentation_studio_score(self, presentation_id: str, variant_id: str) -> dict[str, Any]:
+        """`GET .../variants/{id}/score` (Slice 10) : `{score, problems}`. 404 `presentation_studio_unknown_score` si la variante n'en a pas."""
+
+        return await self._studio("GET", self._score_suffix(presentation_id, variant_id))
+
+    async def presentation_studio_create_score(self, presentation_id: str, variant_id: str,
+                                               body: Mapping[str, Any]) -> dict[str, Any]:
+        """`POST .../variants/{id}/score` `{expected_variant_revision, start_item_id, items, cues, sequences, recovery_points}`."""
+
+        return await self._studio("POST", self._score_suffix(presentation_id, variant_id), body=dict(body))
+
+    async def presentation_studio_save_score(self, presentation_id: str, variant_id: str,
+                                             body: Mapping[str, Any]) -> dict[str, Any]:
+        """`PUT .../variants/{id}/score` `{expected_revision, ...contenu}` : remplacement, `stale_revision` si périmé."""
+
+        return await self._studio("PUT", self._score_suffix(presentation_id, variant_id), body=dict(body))
+
+    @staticmethod
+    def _score_suffix(presentation_id: str, variant_id: str) -> str:
+        return f"/{quote(presentation_id, safe='')}/variants/{quote(variant_id, safe='')}/score"
+    async def presentation_studio_suggest_controls(self, presentation_id: str, variant_id: str,
+                                                   scene_id: str) -> dict[str, Any]:
+        """`GET .../scenes/{scene_id}/control-suggestions` : contrôles proposés (rien n'est écrit) et l'opération `apply` prête."""
+
+        return await self._studio(
+            "GET", f"/{quote(presentation_id, safe='')}/variants/{quote(variant_id, safe='')}"
+                   f"/scenes/{quote(scene_id, safe='')}/control-suggestions")
+
+    async def presentation_studio_edit(self, presentation_id: str, variant_id: str,
+                                       request: Mapping[str, Any]) -> dict[str, Any]:
+        """`POST .../variants/{id}/edits` `{actor, mode, basis, ops}` : le résultat d'édition, **tel que Core le rend pour
+        les trois issues** (`applied`, `refused`, `stale` : le statut HTTP est dans le résultat, `status` dit laquelle).
+        Une enveloppe d'erreur nue (requête mal formée, variante inconnue, panne) lève `CoreProtocolError`."""
+
+        session = await self._http()
+        path = f"{STUDIO_PREFIX}/{quote(presentation_id, safe='')}/variants/{quote(variant_id, safe='')}/edits"
+        async with session.request("POST", self.base_url + path, headers=self.headers, json=dict(request)) as response:
+            if response.status in (400, 404, 409):
+                try:
+                    data = await response.json()
+                except (aiohttp.ContentTypeError, ValueError):
+                    data = None  # argued: not a result, `_json` raises the coded refusal below
+                if isinstance(data, dict) and data.get("status") in ("refused", "stale"):
+                    return data
+            return await self._json(response)
+
+    async def presentation_studio_source_edit(self, presentation_id: str, variant_id: str,
+                                              request: Mapping[str, Any]) -> dict[str, Any]:
+        """`POST .../variants/{id}/source-edits` `{actor, basis, scene_id, files, request_id?, allow_state_reset?}` : le
+        resultat du rechargement a chaud, **tel que Core le rend pour toutes ses issues** (`reloaded`, `reloaded_state_reset`,
+        `repinned`, `pending_mount`, `refused_validation`, `stale`, `rolled_back` : le statut HTTP est dans le resultat). Une
+        enveloppe d'erreur nue (requete mal formee, scene inconnue, panne) leve `CoreProtocolError`."""
+
+        session = await self._http()
+        path = f"{STUDIO_PREFIX}/{quote(presentation_id, safe='')}/variants/{quote(variant_id, safe='')}/source-edits"
+        async with session.request("POST", self.base_url + path, headers=self.headers, json=dict(request),
+                                   timeout=aiohttp.ClientTimeout(total=SOURCE_EDIT_TIMEOUT_S)) as response:
+            if response.status in (200, 202, 400, 409):
+                try:
+                    data = await response.json()
+                except (aiohttp.ContentTypeError, ValueError):
+                    data = None  # argued: not a result, `_json` raises the coded refusal below
+                if isinstance(data, dict) and isinstance(data.get("status"), str) and "prefab" in data:
+                    return data
+            return await self._json(response)
+
+    async def presentation_studio_reloads(self, presentation_id: str) -> dict[str, Any]:
+        """`GET .../presentations/{id}/reloads` : `{reloads, pending, stats}` (derniers rechargements, scenes non confirmees)."""
+
+        return await self._studio("GET", f"/{quote(presentation_id, safe='')}/reloads")
+
+    #: Les issues d'un annuler/rétablir (Slice 08) : un résultat complet, pas une enveloppe d'erreur nue.
+    _HISTORY_OUTCOMES = ("history_unavailable", "nothing_to_undo", "nothing_to_redo", "stale", "refused")
+
+    async def presentation_studio_history(self, presentation_id: str, variant_id: str) -> dict[str, Any]:
+        """`GET .../variants/{id}/history` (Slice 08) : ce qui s'annulerait/rétablirait, les bornes, ce qui a été évincé. Lecture seule."""
+
+        return await self._studio("GET", f"/{quote(presentation_id, safe='')}/variants/{quote(variant_id, safe='')}/history")
+
+    async def presentation_studio_undo(self, presentation_id: str, variant_id: str,
+                                       request: Mapping[str, Any]) -> dict[str, Any]:
+        """`POST .../variants/{id}/undo` `{actor, expected_entry_id?}` : le résultat d'historique, **tel que Core le rend pour
+        toutes les issues** (`applied`, `history_unavailable`, `nothing_to_undo`, `stale`, `refused`) ; `status` dit laquelle.
+        Une enveloppe d'erreur nue (requête mal formée, variante inconnue, panne) lève `CoreProtocolError`."""
+
+        return await self._studio_history_step(presentation_id, variant_id, "undo", request)
+
+    async def presentation_studio_redo(self, presentation_id: str, variant_id: str,
+                                       request: Mapping[str, Any]) -> dict[str, Any]:
+        """`POST .../variants/{id}/redo` : comme `presentation_studio_undo`, pour rétablir (`nothing_to_redo`)."""
+
+        return await self._studio_history_step(presentation_id, variant_id, "redo", request)
+
+    async def _studio_history_step(self, presentation_id: str, variant_id: str, verb: str,
+                                   request: Mapping[str, Any]) -> dict[str, Any]:
+        session = await self._http()
+        path = f"{STUDIO_PREFIX}/{quote(presentation_id, safe='')}/variants/{quote(variant_id, safe='')}/{verb}"
+        async with session.request("POST", self.base_url + path, headers=self.headers, json=dict(request)) as response:
+            if response.status in (400, 404, 409):
+                try:
+                    data = await response.json()
+                except (aiohttp.ContentTypeError, ValueError):
+                    data = None  # argued: not a result, `_json` raises the coded refusal below
+                if isinstance(data, dict) and data.get("status") in self._HISTORY_OUTCOMES:
+                    return data
+            return await self._json(response)
+
+    # ---- planificateur d'écriture (Slice 11) : `presentation_studio_authoring_routes.py`
+
+    async def presentation_studio_authoring_check(self, request: Mapping[str, Any]) -> dict[str, Any]:
+        """`POST .../authoring/check` `{actor?, brief, draft}` : `{status: "checked", ok, workflow, report}`. N'écrit rien ;
+        un brouillon qui échoue la porte est `ok: false` (HTTP 200), l'enveloppe d'erreur nue (corps mal formé) lève `CoreProtocolError`."""
+
+        return await self._studio_authoring("check", request)
+
+    async def presentation_studio_authoring_assemble(self, request: Mapping[str, Any]) -> dict[str, Any]:
+        """`POST .../authoring/assemble` : le résultat **tel que Core le rend pour les deux issues** : `delivered` (201, ids,
+        rapport, provenance) ou `refused` (400, le rapport complet et `error.code` `presentation_studio_draft_refused`; rien n'est écrit).
+        Une enveloppe d'erreur nue (corps mal formé, panne de disque) lève `CoreProtocolError`."""
+
+        return await self._studio_authoring("assemble", request)
+
+    async def presentation_studio_authoring_finalize(self, request: Mapping[str, Any]) -> dict[str, Any]:
+        """`POST .../authoring/finalize` `{presentation_id, variant_id, actor?, activate?}` : `finalized` (200) or `refused` (400, the report),
+        both returned as results. The `directed` gate on a stored variant (an exploratory candidate becomes the deck only through it)."""
+
+        return await self._studio_authoring("finalize", request)
+
+    async def presentation_studio_authoring_reconcile(self) -> dict[str, Any]:
+        """`GET .../authoring/reconcile` : what an interrupted assembly can leave (`unreferenced_prefabs`, `unreadable_presentations`). Read only."""
+
+        session = await self._http()
+        async with session.get(f"{self.base_url}{AUTHORING_PREFIX}/reconcile", headers=self.headers) as response:
+            return await self._json(response)
+
+    async def _studio_authoring(self, verb: str, request: Mapping[str, Any]) -> dict[str, Any]:
+        session = await self._http()
+        # Remotion Slice 15: `check`/`assemble` compile every Remotion source before answering (the compiler bounds each at 60 s and the
+        # service stops after `COMPILE_BUDGET_S`); the 10 s default of this client would cut a cold compile and leave the outcome unknown.
+        async with session.request("POST", f"{self.base_url}{AUTHORING_PREFIX}/{verb}", headers=self.headers, json=dict(request),
+                                   timeout=aiohttp.ClientTimeout(total=AUTHORING_TIMEOUT_S)) as response:
+            if response.status == 400:
+                try:
+                    data = await response.json()
+                except (aiohttp.ContentTypeError, ValueError):
+                    data = None  # argued: not a result, `_json` raises the coded refusal below
+                if isinstance(data, dict) and data.get("status") == "refused":
+                    return data
+            return await self._json(response)
+
+    # ---- lecture d'une Presentation (Slice 12) : état en mémoire de Core, jamais un document
+
+    async def presentation_studio_playback_state(self) -> dict[str, Any]:
+        """`GET .../playback` : `{state}` (« où en est-on », borné)."""
+
+        return await self._playback("GET", "")
+
+    async def presentation_studio_playback_armed(self) -> dict[str, Any]:
+        """`GET .../playback/armed` : l'ensemble de cues armées (ids + phrases normalisées + run + génération + expiration).
+        **Pour le suiveur de cues** (Slice 13) ; la lire renouvelle son autorité. Jamais relayée à la page."""
+
+        return await self._playback("GET", "/armed")
+
+    async def presentation_studio_playback(self, verb: str, request: Mapping[str, Any]) -> dict[str, Any]:
+        """`POST .../playback/{verb}` : le résultat de la commande **tel que Core le rend pour ses trois issues**
+        (`applied`, `refused`, `stage_failed` : `status` dit laquelle). Une enveloppe d'erreur nue lève `CoreProtocolError`."""
+
+        session = await self._http()
+        path = f"{PLAYBACK_PREFIX}/{quote(verb, safe='')}"
+        async with session.request("POST", self.base_url + path, headers=self.headers, json=dict(request)) as response:
+            if response.status in (409, 500):
+                try:
+                    data = await response.json()
+                except (aiohttp.ContentTypeError, ValueError):
+                    data = None  # argued: not a result, `_json` raises the coded refusal below
+                if isinstance(data, dict) and data.get("status") in ("refused", "stage_failed"):
+                    return data
+            return await self._json(response)
+
+    async def presentation_studio_report_cue(self, run_id: str, generation: int, cue_id: str) -> dict[str, Any]:
+        """`POST .../cues/satisfied` : le rapport typé du suiveur (jamais de texte). Rend `fired` ou le refus **tel quel**
+        (`stale_run`, `stale_generation`, `armed_set_expired`, `cue_not_armed`, `rate_limited` : `status: refused`, `code`)."""
+
+        session = await self._http()
+        body = {"run_id": run_id, "generation": generation, "cue_id": cue_id}
+        async with session.request("POST", f"{self.base_url}/v1/presentation-studio/cues/satisfied",
+                                   headers=self.headers, json=body) as response:
+            if response.status in (409, 429):
+                try:
+                    data = await response.json()
+                except (aiohttp.ContentTypeError, ValueError):
+                    data = None  # argued: not a result, `_json` raises the coded refusal below
+                if isinstance(data, dict) and data.get("status") == "refused":
+                    return data
+            return await self._json(response)
+
+    async def _playback(self, method: str, suffix: str) -> dict[str, Any]:
+        session = await self._http()
+        async with session.request(method, f"{self.base_url}{PLAYBACK_PREFIX}{suffix}", headers=self.headers) as response:
+            return await self._json(response)
+
+    async def presentation_studio_validate(self, documents: Mapping[str, Any]) -> dict[str, Any]:
+        """`POST .../validate` `{presentation, variants}` : `{ok, errors}` ; rien n'est écrit."""
+
+        return await self._studio("POST", "/validate", body=dict(documents))
+
+    # Graphe des variantes (Slice 16, `presentation_studio_variants_routes.py`) : un refus de Core lève `CoreProtocolError`
+    # avec son code `presentation_studio_*` (dont `..._confirmation_required` / `..._confirmation_stale` / `..._active_variant_protected`).
+
+    @staticmethod
+    def _variant_path(presentation_id: str, variant_id: str | None = None, tail: str = "") -> str:
+        base = f"/{quote(presentation_id, safe='')}"
+        return base + (f"/variants/{quote(variant_id, safe='')}" if variant_id is not None else "/variants") + tail
+
+    async def presentation_studio_graph(self, presentation_id: str, *, archived: bool = False,
+                                        check: bool = False) -> dict[str, Any]:
+        """`GET .../presentations/{id}/graph` : les noeuds (vivants, plus les archivés avec `archived`), l'actif, le compteur, le dernier bilan de reconciliation."""
+
+        params = {name: "1" for name, on in (("archived", archived), ("check", check)) if on}
+        return await self._studio("GET", f"/{quote(presentation_id, safe='')}/graph", params=params or None)
+
+    async def presentation_studio_create_branch(self, presentation_id: str, body: Mapping[str, Any]) -> dict[str, Any]:
+        """`POST .../presentations/{id}/variants` `{title, rationale?, source_variant_id?, activate?, actor?, expected_revision?}` : la branche creee."""
+
+        return await self._studio("POST", self._variant_path(presentation_id), body=dict(body))
+
+    async def presentation_studio_activate(self, presentation_id: str, variant_id: str,
+                                           body: Mapping[str, Any] | None = None) -> dict[str, Any]:
+        return await self._studio("POST", self._variant_path(presentation_id, variant_id, "/activate"), body=dict(body or {}))
+
+    async def presentation_studio_rename(self, presentation_id: str, variant_id: str, body: Mapping[str, Any]) -> dict[str, Any]:
+        return await self._studio("POST", self._variant_path(presentation_id, variant_id, "/rename"), body=dict(body))
+
+    async def presentation_studio_archive_plan(self, presentation_id: str, variant_id: str,
+                                               body: Mapping[str, Any] | None = None) -> dict[str, Any]:
+        """`POST .../variants/{id}/archive-plan` : l'ensemble exact qu'un archivage toucherait + le jeton de confirmation. N'ecrit rien."""
+
+        return await self._studio("POST", self._variant_path(presentation_id, variant_id, "/archive-plan"), body=dict(body or {}))
+
+    async def presentation_studio_archive(self, presentation_id: str, variant_id: str, body: Mapping[str, Any]) -> dict[str, Any]:
+        """`POST .../variants/{id}/archive` `{confirmation, activate_variant_id?, ...}` : exige le jeton du plan courant."""
+
+        return await self._studio("POST", self._variant_path(presentation_id, variant_id, "/archive"), body=dict(body))
+
+    async def presentation_studio_restore(self, presentation_id: str, variant_id: str,
+                                          body: Mapping[str, Any] | None = None) -> dict[str, Any]:
+        return await self._studio("POST", self._variant_path(presentation_id, variant_id, "/restore"), body=dict(body or {}))
+
+    # Comparaison et composition de variantes (Slice 19, `presentation_studio_compose_routes.py`). Une composition refusee leve
+    # `CoreProtocolError` (409, `presentation_studio_composition_refused`) dont `details["conflicts"]` liste chaque conflit type.
+
+    async def presentation_studio_compare(self, presentation_id: str) -> dict[str, Any]:
+        """`GET .../presentations/{id}/compare` : la vue de l'ensemble de comparaison (vide : `active: false`)."""
+
+        return await self._studio("GET", f"/{quote(presentation_id, safe='')}/compare")
+
+    async def presentation_studio_compare_op(self, presentation_id: str, op: str, body: Mapping[str, Any] | None = None) -> dict[str, Any]:
+        """`POST .../compare/{op}` avec `op` dans `select`, `pair`, `mode`, `navigate`, `links`, `links/remove`, `clear`."""
+
+        return await self._studio("POST", f"/{quote(presentation_id, safe='')}/compare/{op}", body=dict(body or {}))
+
+    async def presentation_studio_composition_plan(self, presentation_id: str, body: Mapping[str, Any]) -> dict[str, Any]:
+        """`POST .../compositions/plan` : `{ok, dry_run, conflicts, composition}`. N'ecrit rien."""
+
+        return await self._studio("POST", f"/{quote(presentation_id, safe='')}/compositions/plan", body=dict(body))
+
+    async def presentation_studio_compose(self, presentation_id: str, body: Mapping[str, Any]) -> dict[str, Any]:
+        """`POST .../compositions` : la variante composee (reponse d'une branche + `composition`)."""
+
+        return await self._studio("POST", f"/{quote(presentation_id, safe='')}/compositions", body=dict(body))
+
+    async def presentation_studio_composition(self, presentation_id: str, variant_id: str) -> dict[str, Any]:
+        """`GET .../variants/{id}/composition` : `{composition}`, la provenance ecrite."""
+
+        return await self._studio("GET", self._variant_path(presentation_id, variant_id, "/composition"))
+
+    # Variantes locales d'une scene (Slice 17, `presentation_studio_scene_variants_routes.py`). Creer, renommer, choisir et
+    # supprimer sont des operations d'edition (`scene_variant.*` dans `presentation_studio_edit`), pas des routes.
+
+    @staticmethod
+    def _scene_variants_path(presentation_id: str, variant_id: str, scene_id: str, tail: str = "") -> str:
+        return (f"/{quote(presentation_id, safe='')}/variants/{quote(variant_id, safe='')}"
+                f"/scenes/{quote(scene_id, safe='')}/scene-variants{tail}")
+
+    async def presentation_studio_scene_variants(self, presentation_id: str, variant_id: str, scene_id: str) -> dict[str, Any]:
+        """`GET .../scenes/{scene_id}/scene-variants` : les variantes locales de la scene (sans contenu) et leurs bornes."""
+
+        return await self._studio("GET", self._scene_variants_path(presentation_id, variant_id, scene_id))
+
+    async def presentation_studio_scene_variant_preview(self, presentation_id: str, variant_id: str, scene_id: str,
+                                                        scene_variant_id: str, body: Mapping[str, Any] | None = None
+                                                        ) -> dict[str, Any]:
+        """`POST .../scene-variants/{id}/preview` `{actor?, stage?, timeout_s?}` : la scene rendue en memoire. N'ecrit rien."""
+
+        return await self._studio("POST", self._scene_variants_path(
+            presentation_id, variant_id, scene_id, f"/{quote(scene_variant_id, safe='')}/preview"), body=dict(body or {}))
+
+    async def presentation_studio_scene_variant_cancel_preview(self, presentation_id: str,
+                                                               body: Mapping[str, Any] | None = None) -> dict[str, Any]:
+        """`POST .../presentations/{id}/scene-variants/preview/cancel` : rend la fenetre de scene a la scene canonique."""
+
+        return await self._studio("POST", f"/{quote(presentation_id, safe='')}/scene-variants/preview/cancel",
+                                  body=dict(body or {}))
+
+    async def presentation_studio_scene_variant_promote(self, presentation_id: str, variant_id: str, scene_id: str,
+                                                        scene_variant_id: str, body: Mapping[str, Any]) -> dict[str, Any]:
+        """`POST .../scene-variants/{id}/promote` `{title, rationale?, activate?, ...}` : une variante de presentation neuve."""
+
+        return await self._studio("POST", self._scene_variants_path(
+            presentation_id, variant_id, scene_id, f"/{quote(scene_variant_id, safe='')}/promote"), body=dict(body))
+
+    # ---- modeles reutilisables (Slice 20) : `presentation_studio_template_routes.py`
+
+    async def presentation_studio_template_plan(self, presentation_id: str, variant_id: str,
+                                                body: Mapping[str, Any]) -> dict[str, Any]:
+        """`POST .../variants/{id}/templates/plan` : le plan d'une promotion (`ok`, `scenes`, `findings`, `would_publish`). N'ecrit rien."""
+
+        return await self._studio("POST", f"/{quote(presentation_id, safe='')}/variants/{quote(variant_id, safe='')}/templates/plan",
+                                  body=dict(body))
+
+    async def presentation_studio_template_promote(self, presentation_id: str, variant_id: str,
+                                                   body: Mapping[str, Any]) -> dict[str, Any]:
+        """`POST .../variants/{id}/templates` : publie dans la bibliotheque partagee puis ecrit la composition (201)."""
+
+        return await self._studio("POST", f"/{quote(presentation_id, safe='')}/variants/{quote(variant_id, safe='')}/templates",
+                                  body=dict(body))
+
+    async def _template(self, method: str, suffix: str, *, body: Any = None,
+                        params: Mapping[str, str] | None = None) -> dict[str, Any]:
+        session = await self._http()
+        options: dict[str, Any] = {} if body is None else {"json": body}
+        async with session.request(method, f"{self.base_url}{TEMPLATES_PREFIX}{suffix}", headers=self.headers, params=params,
+                                   **options) as response:
+            return await self._json(response)
+
+    async def presentation_studio_templates(self, kind: str | None = None) -> dict[str, Any]:
+        """`GET /v1/presentation-studio/templates[?kind=]` : `{templates, count, problems, limit}`."""
+
+        return await self._template("GET", "", params=None if kind is None else {"kind": kind})
+
+    async def presentation_studio_template(self, template_id: str) -> dict[str, Any]:
+        """`GET .../templates/{id}` : `{template, summary, prefab_availability}`."""
+
+        return await self._template("GET", f"/{quote(template_id, safe='')}")
+
+    async def presentation_studio_template_instantiate(self, template_id: str,
+                                                       body: Mapping[str, Any] | None = None) -> dict[str, Any]:
+        """`POST .../templates/{id}/instantiate` : 201, selon le genre (nouvelle Presentation, scene ajoutee, direction artistique)."""
+
+        return await self._template("POST", f"/{quote(template_id, safe='')}/instantiate", body=dict(body or {}))
+
+    async def presentation_studio_upgrades(self, presentation_id: str, variant_id: str) -> dict[str, Any]:
+        """`GET .../variants/{id}/upgrades` (Remotion Slice 19) : les scenes dont le pin n'est pas la derniere version saine ; n'ecrit rien."""
+
+        return await self._studio("GET", f"/{quote(presentation_id, safe='')}/variants/{quote(variant_id, safe='')}/upgrades")
+
+    async def presentation_studio_upgrade_try(self, presentation_id: str, variant_id: str, body: Mapping[str, Any]) -> dict[str, Any]:
+        """`POST .../variants/{id}/upgrades/try` : une variante enfant dont la scene prend la version choisie (201)."""
+
+        return await self._studio("POST", f"/{quote(presentation_id, safe='')}/variants/{quote(variant_id, safe='')}/upgrades/try",
+                                  body=dict(body))
+
+    # ---- Capacite Remotion pour le serveur `jarvis-remotion` (Remotion Slice 21) : memes routes de Core que les cartes du Control Center.
+    # Aucune de ces methodes n'ouvre le Studio (l'accuse de la scene sans bac a sable est a l'utilisateur) ni ne choisit un moteur.
+
+    async def _remotion(self, method: str, path: str, *, body: Mapping[str, Any] | None = None, timeout_s: float = 10.0) -> dict[str, Any]:
+        session = await self._http()
+        options: dict[str, Any] = {} if body is None else {"json": dict(body)}
+        async with session.request(method, self.base_url + path, headers=self.headers, timeout=aiohttp.ClientTimeout(total=timeout_s),
+                                   **options) as response:
+            return await self._json(response)
+
+    async def remotion_capability(self) -> dict[str, Any]:
+        """`GET /v1/local-capabilities/remotion` : `{capability}` (jamais un lancement)."""
+
+        return await self._remotion("GET", "/v1/local-capabilities/remotion")
+
+    async def remotion_studio_status(self) -> dict[str, Any]:
+        """`GET .../remotion/studio` : `{studio}` (jamais un lancement)."""
+
+        return await self._remotion("GET", "/v1/local-capabilities/remotion/studio")
+
+    async def presentation_studio_engine(self) -> dict[str, Any]:
+        """`GET /v1/presentation-studio/engine` : le moteur par defaut et l'etat de chacun, lecture seule."""
+
+        return await self._remotion("GET", "/v1/presentation-studio/engine")
+
+    async def remotion_render_availability(self) -> dict[str, Any]:
+        """`GET .../remotion/render` : `{render: {ready, reason, ...}}`."""
+
+        return await self._remotion("GET", "/v1/local-capabilities/remotion/render")
+
+    async def remotion_render_jobs(self) -> dict[str, Any]:
+        """`GET .../remotion/render/jobs` : `{jobs}`, les plus recents d'abord."""
+
+        return await self._remotion("GET", "/v1/local-capabilities/remotion/render/jobs")
+
+    async def remotion_render_job(self, job_id: str) -> dict[str, Any]:
+        """`GET .../render/jobs/{id}` : `{job}`."""
+
+        return await self._remotion("GET", f"/v1/local-capabilities/remotion/render/jobs/{quote(job_id, safe='')}")
+
+    async def remotion_render_create(self, body: Mapping[str, Any]) -> dict[str, Any]:
+        """`POST .../render/jobs` : 202 `{job}` (en file ; l'Artifact derive existe `pending`)."""
+
+        return await self._remotion("POST", "/v1/local-capabilities/remotion/render/jobs", body=body, timeout_s=65.0)
+
+    async def remotion_render_cancel(self, job_id: str) -> dict[str, Any]:
+        """`POST .../render/jobs/{id}/cancel` : `{job}`."""
+
+        return await self._remotion("POST", f"/v1/local-capabilities/remotion/render/jobs/{quote(job_id, safe='')}/cancel", body={}, timeout_s=45.0)
+
+    async def remotion_import_plan(self, body: Mapping[str, Any]) -> dict[str, Any]:
+        """`POST /v1/remotion/imports/plan` : telecharge et analyse, n'ecrit rien."""
+
+        return await self._remotion("POST", "/v1/remotion/imports/plan", body=body, timeout_s=90.0)
+
+    async def remotion_import(self, body: Mapping[str, Any]) -> dict[str, Any]:
+        """`POST /v1/remotion/imports` : un prefab Remotion propre a la presentation (jamais la bibliotheque partagee)."""
+
+        return await self._remotion("POST", "/v1/remotion/imports", body=body, timeout_s=90.0)
+
     async def forward_json(self, method: str, path: str, *, params: QueryParams | None = None,
                            body: bytes | None = None, timeout_s: float | None = None) -> tuple[int, Any]:
         """Relais transparent d'une requête `/v1/boards*`, `/v1/sessions*` (proxy du Control Center, Slice 04b)
@@ -956,6 +1478,24 @@ class LocalCoreClient:
         async with session.post(self._mcp_plugin_url(plugin_id, "/refresh"), headers=self.headers) as response:
             return await self._json(response)
 
+    # ------------------- Capacités locales installables (jarvis-remotion-presentation-integration, Slice 04)
+    # `docs/local-capabilities.md` §7. Refus en `CoreProtocolError` (`local_capability_*`) ; un échec d'opération est la vue.
+
+    async def list_local_capabilities(self) -> dict[str, Any]:
+        """`GET /v1/local-capabilities` : `{capabilities}`."""
+
+        session = await self._http()
+        async with session.get(self.base_url + "/v1/local-capabilities", headers=self.headers) as response:
+            return await self._json(response)
+
+    async def local_capability_action(self, capability_id: str, operation: str) -> dict[str, Any]:
+        """`POST /v1/local-capabilities/{id}/{operation}` : `{capability}` (200 finie, 202 en cours : relire par `GET`)."""
+
+        session = await self._http()
+        url = self.base_url + f"/v1/local-capabilities/{quote(capability_id, safe='')}/{quote(operation, safe='')}"
+        async with session.post(url, headers=self.headers) as response:
+            return await self._json(response)
+
     async def complete_mcp_oauth(self, *, state: str, code: str | None = None, iss: str | None = None,
                                  error: str | None = None) -> dict[str, Any]:
         """`POST /v1/mcp/oauth/callback` (Slice 03) : retour du navigateur relayé par le CC, `{plugin}`."""
@@ -1018,5 +1558,6 @@ class LocalCoreClient:
             if not isinstance(data, dict):
                 raise CoreProtocolError(response.status, "http_error", response.reason or "")
             error = data.get("error") or {}
-            raise CoreProtocolError(response.status, str(error.get("code", "unknown")), str(error.get("message", "")))
+            raise CoreProtocolError(response.status, str(error.get("code", "unknown")), str(error.get("message", "")),
+                                    details={k: v for k, v in error.items() if k not in ("code", "message")})
         return await response.json()

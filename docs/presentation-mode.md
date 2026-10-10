@@ -2,7 +2,9 @@
 
 Entry page for everything PRESENTATION. It **holds no contract of its own**: each
 row points at the page or module that owns the rule. When this page and an owner
-disagree, the owner wins and this page is stale.
+disagree, the owner wins and this page is stale. The Presentation **Studio**
+(authored, editable, presentable decks; a different thing from this interaction
+mode, which it consumes) is indexed in [presentation-studio.md](presentation-studio.md).
 
 Status: Level 2 (index + owner map). The reveal path is Level 3: contract test
 `tests/unit/test_presentation_staging_contract.py`. The Voice mode feed is
@@ -63,6 +65,8 @@ One owner per concept. Reuse it; do not build a second one.
 | Speech manifestation | `runtime/presentation_speech_gate.py` › `PresentationSpeechGate.admit`, enforced in `SpeechScheduler._enqueue` | [presentation-response-policy.md](presentation-response-policy.md) |
 | Attention | `domain/presentation_attention.py` › `decide_attention`; `core/presentation_attention.py` › `PresentationAttentionService` | [presentation-attention.md](presentation-attention.md) |
 | Canonical timeline | `domain/conversation_events.py` (closed types, `_SPECS`); `runtime/conversation_event_forwarder.py`; Presentation adapter `runtime/presentation_timeline.py` › `PresentationTimeline` (lifecycle ports `PreparationLifecycle`, `AttentionLifecycle`; `system.mode.changed`, `system.attention.raised|cleared`, preparation `subagent.*`) | [conversation-events.md](conversation-events.md) › Presentation events |
+| Remotion scene timeline (score anchors -> Player seek / play / pause; Core score stays master, the Player never triggers speech, a cue or a tool) | `domain/remotion_timeline.py` (`build_frame_map`, `target_segment`, `SegmentClock`); `core/presentation_studio_playback.py` (`timeline` of the view); browser `JarvisRemotionFrame.createTimelineFollower` | [presentation-studio.md](presentation-studio.md) › Remotion timeline bridge |
+| Studio playback roles (Jarvis-presenter runs outside PRESENTATION) | `domain/presentation_studio_roles.py` › `requirements`, `plan_mode_entry`, `decide_restore`, `ScoreLineNotice`; source `presentation_studio_run` is not persisted by `BoardService` | [presentation-studio.md](presentation-studio.md) › Playback roles and speech authority |
 | Voice → Control Center status | `runtime/visual_signals.py` › `VisualSignalBus.presentation` (`.voice_presentation`), written by `PresentationCoordinator.presentation_report`; read by `ControlCenter._presentation_report` (`/api/status.presentation`) | [OPERATIONS.md](OPERATIONS.md) › Relevé PRESENTATION |
 
 ## Decision numbering: HD ↔ D

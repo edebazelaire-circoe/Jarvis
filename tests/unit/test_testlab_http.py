@@ -280,8 +280,11 @@ async def test_a_foreign_origin_is_refused(guarded):
 
 
 async def test_a_loopback_read_is_served(guarded):
-    response = await guarded.get(f"{TESTLAB_ROUTE}/diagnostics", headers={"Origin": "http://127.0.0.1:17654"})
+    # L'origine de boucle locale légitime est celle du Control Center lui-même (son port) ; un autre port local est refusé (Slice 11, B1).
+    response = await guarded.get(f"{TESTLAB_ROUTE}/diagnostics", headers={"Origin": f"http://127.0.0.1:{guarded.port}"})
     assert response.status == 200
+    other = await guarded.get(f"{TESTLAB_ROUTE}/diagnostics", headers={"Origin": f"http://127.0.0.1:{guarded.port + 1}"})
+    assert other.status == 403
 
 
 async def test_the_conversation_routes_keep_their_own_guard(guarded):

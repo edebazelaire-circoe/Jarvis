@@ -417,6 +417,7 @@ class PresentationStack:
         stager: LedgeredSceneStager | None = None,
         journal: RuntimeJournal | None = None,
         workspace: PreparationWorkspace | None = None,
+        cue_follower: Any | None = None,
     ) -> None:
         if not session_id:
             raise PresentationRuntimeError(
@@ -431,6 +432,9 @@ class PresentationStack:
         self.turns = turns
         self.stager = stager
         self.journal = journal
+        #: Slice 13 : le suiveur de cues du Studio (`PresentationStudioCueFollower`), ou `None` sans client Core.
+        #: Il vit et meurt avec la séance : jamais un état de cues après la sortie de PRESENTATION.
+        self.cue_follower = cue_follower
         #: Dossiers de travail des préparations (S6 rework 2). Balayé à
         #: l'entrée : un arrêt brutal ne laisse pas de dossier d'une séance à
         #: l'autre.
@@ -512,6 +516,16 @@ class PresentationStack:
             # « positif qui veut dire mort » de la Slice 05.
             await self._teardown("ambient_start_failed")
             raise
+        if self.cue_follower is not None:
+            try:
+                self.cue_follower.attach(self.ambient)
+                await self.cue_follower.start()
+            except Exception as exc:  # noqa: BLE001 - le suivi de cues est un plus : la séance (adresse explicite) continue, et le dit
+                self._trace(
+                    "cue_follower_start_failed",
+                    f"Suiveur de cues du Studio non démarré : {type(exc).__name__}: {exc}",
+                    level="error", code="presentation_cue_follower_start_failed",
+                )
         self.started = True
         self._trace(
             "started", "Séance PRESENTATION ouverte : un micro, une mémoire, une voie ambiante",
@@ -542,6 +556,7 @@ class PresentationStack:
         """
 
         for label, call in (
+            ("cue_follower", lambda: self.cue_follower.stop() if self.cue_follower is not None else None),
             ("ambient", lambda: self.ambient.stop()),
             ("speculative", lambda: self.speculative.stop(reason)),
             ("audio", lambda: self.audio.stop()),
@@ -1729,6 +1744,17 @@ class PresentationComposition:
     #: La ligne de temps canonique (Slice 10, `PresentationTimeline`). `None` :
     #: aucune séance ne raconte rien hors du journal — le comportement d'avant.
     timeline: Any | None = None
+    #: Slice 13 : le client Core (`LocalCoreClient`) dont le suiveur de cues tire l'ensemble armé et à qui il rapporte
+    #: `cue_satisfied`. `None` : pas de suiveur (doubles de test, pile sans transcription : la lane est sourde de toute façon).
+    cue_core: Any | None = None
+
+    def cue_follower(self, turns: Any) -> Any | None:
+        """Le suiveur de cues du Studio (R5) de la séance, ou `None` sans client Core. Composition : `presentation_studio_cue_composition`."""
+
+        from jarvis.runtime.presentation_studio_cue_composition import build_cue_follower
+
+        return build_cue_follower(cue_core=self.cue_core, turns=turns, mode=self.mode, journal=self.journal)
+
     #: Le bloc `wake_word` des réglages (`wake_word_settings.load`), lu une fois
     #: par le composition root. `None` ou `enabled=False` : le comportement
     #: d'avant, Porcupine si une clé existe, sinon la touche manuelle seule (D1).
@@ -1869,6 +1895,7 @@ class PresentationComposition:
             session_id=session_id, store=store, audio=audio, ambient=ambient,
             speculative=speculative, attention=attention, turns=turns,
             stager=stager, journal=self.journal, workspace=workspace,
+            cue_follower=self.cue_follower(turns),
         )
 
     def reclaimer(self) -> Callable[[], Any] | None:

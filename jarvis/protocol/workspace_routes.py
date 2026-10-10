@@ -19,6 +19,8 @@ l'URL, jamais le Board actif implicite, et n'activent rien. Contrat :
 | GET | `/v1/workspace/relations?session_id=\\|board_id=` | relations d'une Session ou d'un Board |
 | GET | `/v1/workspace/artifacts?board_id=\\|session_id=\\|context_id=[&kind&since&until&cursor&limit]` | Artifacts d'une portée |
 | GET | `/v1/workspace/artifacts/{artifact_id}/relations` | provenance et Boards liés |
+| GET | `/v1/workspace/boards/{board_id}/presentation-sources` | sources de présentation du Board : source -> snapshots -> rendus (Remotion Slice 08) |
+| GET | `/v1/workspace/presentation-sources/{presentation_id}` | une source, ses snapshots, rendus et Boards (navigation inverse) |
 | GET | `/v1/workspace/boards/{board_id}/memory/tree[?path&depth&max_entries]` | arbre borné |
 | GET | `/v1/workspace/boards/{board_id}/memory/stat?path=` | une entrée |
 | GET | `/v1/workspace/boards/{board_id}/memory/read?path=[&offset&max_bytes]` | texte UTF-8 borné |
@@ -61,6 +63,7 @@ from jarvis.core.workspace_service import (
 )
 from jarvis.domain.artifacts import ArtifactError, ArtifactKind, check_artifact_id
 from jarvis.domain.board_memory import BoardMemoryError
+from jarvis.domain.presentation_studio import PresentationStudioError
 from jarvis.domain.session_activity import ActivityError, ActivityKind
 from jarvis.domain.session_context import SessionContextError
 from jarvis.domain.workspace_board import BoardError
@@ -74,7 +77,8 @@ Handler = Callable[[web.Request], Awaitable[web.StreamResponse]]
 PREFIX = "/v1/workspace"
 #: Refus codés des domaines : leur `code` et leur `status` voyagent tels quels.
 #: `BoardMemoryError` et `WorkspaceError` sont des `ValueError` : attrapés **avant** elle.
-_CODED = (WorkspaceError, BoardMemoryError, BoardError, SessionContextError, ArtifactError, ActivityError)
+_CODED = (WorkspaceError, BoardMemoryError, BoardError, SessionContextError, ArtifactError, ActivityError,
+          PresentationStudioError)
 
 
 def _code(exc: BaseException) -> str:
@@ -103,6 +107,8 @@ class WorkspaceProtocolRoutes:
             web.get(PREFIX + "/relations", g("relations", self.relations)),
             web.get(PREFIX + "/artifacts", g("artifact_list", self.artifacts)),
             web.get(PREFIX + "/artifacts/{artifact_id}/relations", g("artifact_relations", self.artifact_relations)),
+            web.get(board + "/presentation-sources", g("presentation_sources", self.presentation_sources)),
+            web.get(PREFIX + "/presentation-sources/{presentation_id}", g("presentation_source", self.presentation_source)),
             web.get(board + "/memory/tree", g("memory_tree", self.memory_tree)),
             web.get(board + "/memory/stat", g("memory_stat", self.memory_stat)),
             web.get(board + "/memory/read", g("memory_read", self.memory_read)),
@@ -205,6 +211,16 @@ class WorkspaceProtocolRoutes:
         artifact_id = request.match_info["artifact_id"]
         check_artifact_id(artifact_id)
         return web.json_response(await self._service.artifact_relations(artifact_id))
+
+    async def presentation_sources(self, request: web.Request) -> web.Response:
+        _only(request, set())
+        self._ready()
+        return web.json_response(await self._service.presentation_sources(request.match_info["board_id"]))
+
+    async def presentation_source(self, request: web.Request) -> web.Response:
+        _only(request, set())
+        self._ready()
+        return web.json_response(await self._service.presentation_source(request.match_info["presentation_id"]))
 
     # ------------------------------------------------------------ mémoire
 

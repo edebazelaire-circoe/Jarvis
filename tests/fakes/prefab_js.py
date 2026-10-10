@@ -65,6 +65,7 @@ class FakeEl{
   removeChild(c){const at=this.childNodes.indexOf(c);if(at<0)throw new Error('not a child');this.childNodes.splice(at,1);c.parentNode=null;return c}
   remove(){if(this.parentNode)this.parentNode.removeChild(this)}
   replaceChildren(...nodes){for(const c of this.childNodes.slice())this.removeChild(c);nodes.forEach(n=>this.appendChild(n))}
+  replaceChild(n,old){const at=this.childNodes.indexOf(old);if(at<0)throw new Error('not a child');this._detach(n);n.parentNode=this;this.childNodes.splice(this.childNodes.indexOf(old),1,n);old.parentNode=null;return old}
   setAttribute(k,v){this.attributes[k]=String(v);if(k==='id')this.id=String(v)}
   getAttribute(k){return Object.prototype.hasOwnProperty.call(this.attributes,k)?this.attributes[k]:null}
   hasAttribute(k){return Object.prototype.hasOwnProperty.call(this.attributes,k)}

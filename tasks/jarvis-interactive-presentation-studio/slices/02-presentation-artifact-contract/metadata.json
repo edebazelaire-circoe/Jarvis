@@ -1,0 +1,8 @@
+{
+  "slice_id": "02",
+  "task_type": null,
+  "task_type_resolution_required": true,
+  "dependencies": [
+    "01-contract-audit"
+  ]
+}

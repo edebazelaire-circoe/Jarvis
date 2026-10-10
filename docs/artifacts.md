@@ -16,6 +16,7 @@ table or folder.
 | Activity ledger store | `jarvis/adapters/sqlite_session_activity.py` (`session_activity`, v6) |
 | Payload folders | `jarvis/adapters/artifact_payloads.py`, path defenses in `safe_folders.py` |
 | Core façade + recovery | `jarvis/core/artifact_service.py` (`core.artifacts` in `v2_app`) |
+| Presentation snapshots and renders | `jarvis/domain/presentation_artifacts.py`, `jarvis/core/presentation_artifacts.py`, `jarvis/core/presentation_snapshot_packager.py` ([contract](presentation-artifacts.md), [live references](presentation-live-refs.md)) |
 | Board links | `jarvis/domain/board_artifact_links.py`, port `jarvis/ports/board_artifact_links.py`, store `jarvis/adapters/sqlite_board_artifact_links.py` (`board_artifact_links`, v8) |
 
 ## Artifact
@@ -40,9 +41,13 @@ descriptions and other semantics are appended later.
 | `metadata` | acquisition scalars (≤ 32 keys, strings ≤ 512, integers within int64, finite floats) |
 | `enrichment` | appended later (≤ 32 keys, strings ≤ 4 000) |
 
-**Kinds (V1, closed):** `audio_recording`, `transcript_segment`, `transcript`,
-`screenshot`, `screen_recording`, `description`, `derived`. There is no
-`other` bucket: evidence without a kind cannot be indexed. A new kind is a new
+**Kinds (closed):** `audio_recording`, `transcript_segment`, `transcript`,
+`screenshot`, `screen_recording`, `description`, `derived`, and since the
+Remotion integration (Slice 07) `presentation_snapshot`, `presentation_video`,
+`presentation_still`, `presentation_pdf` — frozen copies of a Presentation
+variant and their renders only; the editable Presentation itself is **not** an
+Artifact ([presentation-artifacts.md](presentation-artifacts.md)). There is no
+`other` bucket: evidence without a kind cannot be indexed. All eleven kinds are accepted by the `artifact_search` kind filter and labelled by the Control Center (Slice 08). A new kind is a new
 `ArtifactKind` value plus this table; no migration (no SQL CHECK on `kind`).
 
 **States.** `pending` is the only open state (`update_pending` records bytes, duration,
@@ -92,6 +97,7 @@ Explicit rows, never opaque metadata (D08): “`artifact_id` *relation*
 | `frame_from` | image extracted from a screen recording |
 | `described_from` | description of a capture, image or excerpt |
 | `derived_from` | any other derivation (summary, observation) |
+| `rendered_from` | MP4, still or PDF of a **complete** `presentation_snapshot` (exactly one origin; [presentation-artifacts.md](presentation-artifacts.md)) |
 
 No self relation; ≤ 64 origins per artifact; both ends must exist; adding an
 existing relation is a no-op (replay-safe); a relation that would close a
@@ -209,7 +215,10 @@ board-memory-workspace-inspector, Slice 02, R2). Table `board_artifact_links`
 (`active_board` | `explicit`), `linked_at`; foreign keys to `work_boards` and
 `artifacts` (deleting the artifact drops its links; Boards are archived,
 never deleted). `Board.artifact_refs` stays a separate list of opaque legacy
-references ([boards.md](boards.md)).
+references ([boards.md](boards.md)). This table is the **single owner** of
+"which Boards show this" for every kind, presentation snapshots and renders
+included; a Presentation source is shown through them, never linked itself
+([presentation-artifacts.md](presentation-artifacts.md#which-boards-show-this-one-owner-the-artifact-link-service-decision)).
 
 - **Automatic link.** `SQLiteArtifactRepository.create_artifact` links every
   new artifact to the `active_board_id` of the **open** Session, read and
@@ -295,6 +304,13 @@ Served by Core (`jarvis/protocol/capture_routes.py`, facade
 | `GET /v1/artifacts/{id}/payload` | the bytes, **for the interface only** (no MCP tool calls it): terminal artifacts only (`artifact_still_pending` 409), `artifact_no_payload` / `artifact_payload_missing` 404; one `Range: bytes=` range (`a-b`, `a-`, `-n`) → 206 with `Content-Range`; at most 8 MiB per answer (`MAX_PAYLOAD_CHUNK_BYTES`): a whole read of a larger payload is 413 `artifact_payload_too_large` (read by ranges), an open range is served by chunk; invalid range 416 `artifact_range_invalid` with `Content-Range: bytes */<size>` (a bound longer than 19 digits included: never Python's integer-size error). Headers: the artifact's MIME type, `Content-Disposition: inline; filename="<payload name>"`, `X-Content-Type-Options: nosniff`, `Cache-Control: no-store`, `Accept-Ranges: bytes`. The Control Center relays the bytes (`forward_bytes`, `Range` passed through) and refuses a body above 8 MiB with 502 `payload_too_large_for_relay` — never half a payload |
 | `DELETE /v1/artifacts/{id}[?cascade=true&origin=user\|brain]` | explicit delete (*Deletion* above) → `{deleted, orphan_folders}` |
 | `GET /v1/activity` | ledger tail of the **open** Session: `after_seq` cursor, `limit` 1..200 (default 50), `context_id` (`active` alias), `kind` (comma list) → `{events, latest_seq}`; ids and small codes only |
+
+## Presentation derivatives (Remotion Slice 16)
+
+The three derivative kinds `presentation_video`, `presentation_still` and `presentation_pdf` are written by the render service ([remotion-render.md](remotion-render.md)) through
+the rules above, unchanged: `pending` at the request, payload through the spool, `complete` only after a verified file, `failed` (stable code) otherwise, recovery of an
+interrupted render by the **owner** (`recover_pending(owned=...)` leaves them) as `failed` or, if the final file already existed, `partial`. Their lineage is one `rendered_from`
+relation to the snapshot; the render settings are acquisition metadata. They are flat exports and say so (`render_flat`).
 
 ## Boundaries
 

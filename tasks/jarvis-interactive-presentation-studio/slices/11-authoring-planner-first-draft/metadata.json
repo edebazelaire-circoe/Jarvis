@@ -1,0 +1,10 @@
+{
+  "slice_id": "11",
+  "task_type": null,
+  "task_type_resolution_required": true,
+  "dependencies": [
+    "09-art-direction-profile",
+    "10-presentation-score-cues",
+    "04-presentation-scene-control-contract"
+  ]
+}

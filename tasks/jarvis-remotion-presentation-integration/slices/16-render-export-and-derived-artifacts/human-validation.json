@@ -1,0 +1,12 @@
+{
+  "checks": [
+    {
+      "id": "HV-16-01",
+      "instruction": "On the real machine: export an MP4, an image and a PDF from a Board copy; play the MP4 in a video player (image, motion and, if the scene has any, SOUND, which no automated check listened to), open the PDF in a reader, and follow 'Ouvrir la source' from the export back to the editable presentation.",
+      "requires_evidence_first": true,
+      "status": "open",
+      "order": 7,
+      "evidence": "docs/remotion-integration-release.md#human-checks"
+    }
+  ]
+}

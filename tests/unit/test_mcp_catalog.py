@@ -105,8 +105,8 @@ async def test_the_catalog_is_what_a_client_reads_in_tools_list(meta, catalog):
 def test_every_descriptor_is_complete_and_every_tool_has_one_category(catalog):
     assert catalog["unavailable"] == []
     assert [server["server"] for server in catalog["servers"]] == [
-        "jarvis-tools", "jarvis-display", "jarvis-surface", "jarvis-console", "jarvis-workspace", "jarvis-capture",
-        "jarvis-barehands", "jarvis-drive"]
+        "jarvis-tools", "jarvis-display", "jarvis-surface", "jarvis-presentation", "jarvis-remotion", "jarvis-console", "jarvis-workspace", "jarvis-memory",
+        "jarvis-capture", "jarvis-barehands", "jarvis-drive"]
     for entry in catalog["tools"]:
         assert set(entry) == _DESCRIPTOR_KEYS, entry["name"]
         # `general` : la passerelle de découverte seule (plugins MCP, Slice 04 ; tool-contract §3).
@@ -227,7 +227,21 @@ WORKSPACE_INSTRUCTIONS_BUDGET_BYTES = 950
 #: Bare Hands, passerelle), outils seulement : 68 583 o avant la Slice 06, 75 823 o après (+7 240 o).
 #: Prefab-foundation Slice 07 : 82 410 o mesurés (+5 853 o, tous sur `jarvis-display`, voir plus bas).
 #: Tool Brain S4 : `ui_intent_publish` +1 225 o (83 475 o mesurés), un outil, aucun autre changement. Plafond 84 000 o.
-DECLARED_CONTEXT_BUDGET_BYTES = 84_000
+#: Presentation Studio Slice 21 : `jarvis-presentation` ajoute ses douze outils, mesurés à part ci-dessous (PRESENTATION_CONTEXT_BUDGET_BYTES).
+#: Le plafond de ce gate monte de ce serveur seulement : 83 475 o + la mesure de `jarvis-presentation`, marge de 500 o. Le serveur n'est déclaré
+#: qu'avec l'affichage (`scene.enabled`) et chaque outil est une opération fermée par domaine : douze outils et non les ~60 opérations qu'ils couvrent.
+PRESENTATION_CONTEXT_BUDGET_BYTES = 17_100
+#: Consigne du serveur `jarvis-presentation` : mesurée 640 o (plafond 700 o).
+PRESENTATION_INSTRUCTIONS_BUDGET_BYTES = 700
+#: Memory-intelligence-knowledge S5b : `jarvis-memory` (cinq outils) ajoute environ 3 900 o. Fusion des deux serveurs : 104 337 o mesurés
+#: (83 475 o de base + `jarvis-presentation` + `jarvis-memory`), marge de 663 o, plafond 105 000 o.
+#: Remotion Slice 21 : `jarvis-remotion` (six outils, serveur SÉPARÉ de `jarvis-presentation` dont le plafond reste 17 100 o) ajoute 5 178 o
+#: mesurés (export 1 763, import 1 076, upgrades 948, studio 545, status 457, setup 389). Le plafond de ce gate monte de ce serveur seulement :
+#: 104 548 o avant, 109 726 o après, marge de 274 o, plafond 110 000 o. Décision délibérée (handoff Slice 21), mesure dans le LOG.
+DECLARED_CONTEXT_BUDGET_BYTES = 110_000
+#: `jarvis-remotion` : 5 178 o mesurés, plafond 5 400 o ; consigne du serveur (plafond 330 o).
+REMOTION_CONTEXT_BUDGET_BYTES = 5_400
+REMOTION_INSTRUCTIONS_BUDGET_BYTES = 330
 
 
 def test_the_console_server_instructions_stay_within_their_budget():
@@ -339,6 +353,60 @@ async def test_the_capture_server_lists_its_tools_in_order_within_its_budget(cat
     assert all(entry["category"] == "capture" and entry["output"]["format"] == "structured" for entry in described)
     assert sum(entry["context_bytes"] for entry in described) <= CAPTURE_CONTEXT_BUDGET_BYTES
     assert len(capture_mcp._SERVER_INSTRUCTIONS.encode("utf-8")) <= CAPTURE_INSTRUCTIONS_BUDGET_BYTES
+
+
+async def test_the_presentation_server_lists_its_tools_in_order_within_its_budget(catalog):
+    """Slice 21 : vrai `tools/list` de `jarvis-presentation` = catalogue partagé, même ordre ; classes ; budget ; aucune porte pour l'acteur."""
+
+    from mcp.shared.memory import create_connected_server_and_client_session
+
+    from jarvis.runtime import presentation_studio_mcp
+
+    async with create_connected_server_and_client_session(build_introspection_server("jarvis-presentation")) as session:
+        wire = (await session.list_tools()).tools
+    described = [entry for entry in catalog["tools"] if entry["server"] == "jarvis-presentation"]
+    assert [t.name for t in wire] == [entry["name"] for entry in described] == list(tool_names("jarvis-presentation")) == list(
+        presentation_studio_mcp.TOOL_NAMES)
+    assert len(described) == 12 and all(entry["name"].startswith("presentation_") for entry in described)
+    effects = {entry["name"]: entry["side_effect"] for entry in described}
+    assert {name for name, effect in effects.items() if effect == "read"} == {"presentation_inspect", "presentation_draft_check"}
+    assert effects["presentation_variant"] == "destructive"  # archive d'une branche
+    assert all(entry["category"] == "presentation" and entry["ui"] is None for entry in described), "pas une opération du Tool Brain"
+    assert sum(entry["context_bytes"] for entry in described) <= PRESENTATION_CONTEXT_BUDGET_BYTES
+    assert len(presentation_studio_mcp._SERVER_INSTRUCTIONS.encode("utf-8")) <= PRESENTATION_INSTRUCTIONS_BUDGET_BYTES
+    # L'acteur et l'origine ne sont jamais des arguments : le serveur est la seule porte `brain` et ne se laisse rien dicter.
+    for tool in wire:
+        assert "actor" not in json.dumps(tool.inputSchema) and "origin" not in json.dumps(tool.inputSchema), tool.name
+        assert tool.inputSchema.get("additionalProperties") is False, tool.name
+
+
+async def test_the_remotion_server_lists_its_tools_in_order_within_its_budget(catalog):
+    """Remotion Slice 21 : vrai `tools/list` de `jarvis-remotion` = catalogue partagé ; budget séparé ; aucun moteur, acteur ni accusé en argument."""
+
+    from mcp.shared.memory import create_connected_server_and_client_session
+
+    from jarvis.runtime import remotion_mcp
+
+    async with create_connected_server_and_client_session(build_introspection_server("jarvis-remotion")) as session:
+        wire = (await session.list_tools()).tools
+    described = [entry for entry in catalog["tools"] if entry["server"] == "jarvis-remotion"]
+    assert [t.name for t in wire] == [entry["name"] for entry in described] == list(tool_names("jarvis-remotion")) == list(remotion_mcp.TOOL_NAMES)
+    assert [entry["name"] for entry in described] == ["remotion_status", "remotion_setup", "remotion_studio", "remotion_export",
+                                                      "remotion_import", "remotion_upgrades"]
+    effects = {entry["name"]: entry["side_effect"] for entry in described}
+    assert {name for name, effect in effects.items() if effect == "read"} == {"remotion_status", "remotion_studio"}
+    assert not any(effect == "destructive" for effect in effects.values())
+    assert all(entry["category"] == "presentation" and entry["ui"] is None for entry in described), "pas une opération du Tool Brain"
+    assert server_meta("jarvis-remotion").registration == "jarvis" and server_meta("jarvis-remotion").condition == "scene.enabled"
+    assert sum(entry["context_bytes"] for entry in described) <= REMOTION_CONTEXT_BUDGET_BYTES
+    assert len(remotion_mcp._SERVER_INSTRUCTIONS.encode("utf-8")) <= REMOTION_INSTRUCTIONS_BUDGET_BYTES
+    # Le budget de `jarvis-presentation` n'a PAS bougé : les nouveaux verbes n'y ont pas été serrés.
+    assert PRESENTATION_CONTEXT_BUDGET_BYTES == 17_100
+    for tool in wire:
+        dumped = json.dumps(tool.inputSchema)
+        for forbidden in ("actor", "origin", "engine", "acknowledge", "licence_ack", "authorised_boards", "concurrency"):
+            assert forbidden not in dumped, (tool.name, forbidden)
+        assert tool.inputSchema.get("additionalProperties") is False, tool.name
 
 
 #: Coût mesuré par la Slice 04 (contrat §10.3) : plafond de `jarvis-display` (contrat §5.3), 33 090 o.
@@ -670,8 +738,8 @@ async def test_a_server_whose_introspection_fails_otherwise_is_unavailable_and_t
     built = await build_catalog()
     assert built["unavailable"] == [{"server": "jarvis-drive", "category": "external", "error": "RuntimeError"}]
     assert [entry["server"] for entry in built["servers"]] == ["jarvis-tools", "jarvis-display", "jarvis-surface",
-                                                               "jarvis-console", "jarvis-workspace", "jarvis-capture",
-                                                               "jarvis-barehands"]
+                                                               "jarvis-presentation", "jarvis-remotion", "jarvis-console", "jarvis-workspace",
+                                                               "jarvis-memory", "jarvis-capture", "jarvis-barehands"]
     assert "secret-sentinel" not in json.dumps(built)
 
 

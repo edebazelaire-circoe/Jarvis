@@ -1,0 +1,112 @@
+[
+ {
+  "data": {},
+  "kind": "presentation.studio.follower_started",
+  "level": "info"
+ },
+ {
+  "data": {
+   "code": "armed_set_pulled",
+   "count": 1,
+   "generation": 1,
+   "run_id": "r00000000000"
+  },
+  "kind": "presentation.studio.armed_set_changed",
+  "level": "info"
+ },
+ {
+  "data": {
+   "code": "cue_follower_state",
+   "reason": "tick",
+   "state": "following"
+  },
+  "kind": "presentation.studio.follower_state",
+  "level": "info"
+ },
+ {
+  "data": {
+   "code": "cue_follower_state",
+   "reason": "explicit_address",
+   "state": "paused_address"
+  },
+  "kind": "presentation.studio.follower_state",
+  "level": "info"
+ },
+ {
+  "data": {
+   "code": "cue_follower_state",
+   "reason": "tick",
+   "state": "following"
+  },
+  "kind": "presentation.studio.follower_state",
+  "level": "info"
+ },
+ {
+  "data": {
+   "code": "cue_fired",
+   "cue_id": "psc_000000000001",
+   "duplicate": false,
+   "end": 23,
+   "generation": 1,
+   "position": 2,
+   "rule": "whole_phrase",
+   "start": 5,
+   "utterance_id": "amb-000004"
+  },
+  "kind": "presentation.studio.cue_fired",
+  "level": "info"
+ },
+ {
+  "data": {
+   "code": "armed_set_pulled",
+   "count": 0,
+   "generation": 2,
+   "run_id": "r00000000000"
+  },
+  "kind": "presentation.studio.armed_set_changed",
+  "level": "info"
+ },
+ {
+  "data": {
+   "code": "cue_follower_state",
+   "reason": "tick",
+   "state": "unarmed"
+  },
+  "kind": "presentation.studio.follower_state",
+  "level": "info"
+ },
+ {
+  "data": {
+   "code": "armed_set_pulled",
+   "count": 1,
+   "generation": 3,
+   "run_id": "r00000000000"
+  },
+  "kind": "presentation.studio.armed_set_changed",
+  "level": "info"
+ },
+ {
+  "data": {
+   "code": "cue_follower_state",
+   "reason": "tick",
+   "state": "following"
+  },
+  "kind": "presentation.studio.follower_state",
+  "level": "info"
+ },
+ {
+  "data": {
+   "code": "cue_fired",
+   "cue_id": "psc_000000000002",
+   "duplicate": false,
+   "end": 12,
+   "generation": 3,
+   "position": 4,
+   "rule": "whole_phrase",
+   "start": 0,
+   "utterance_id": "amb-000007"
+  },
+  "kind": "presentation.studio.cue_fired",
+  "level": "info"
+ }
+]

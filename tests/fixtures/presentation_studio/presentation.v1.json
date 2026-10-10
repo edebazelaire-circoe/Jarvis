@@ -1,0 +1,19 @@
+{
+  "schema": "jarvis.presentation_studio.presentation",
+  "schema_version": 1,
+  "presentation_id": "pst_00000000000000000000000000000001",
+  "title": "Bilan trimestriel",
+  "active_variant_id": "psv_00000000000000000000000000000002",
+  "variant_counter": 2,
+  "variants": [
+    {"variant_id": "psv_00000000000000000000000000000001", "variant_number": 1},
+    {"variant_id": "psv_00000000000000000000000000000002", "variant_number": 2}
+  ],
+  "resources": [
+    {"kind": "web_page", "locator": "https://example.org/rapport", "title": "Rapport"},
+    {"kind": "document", "locator": "doc:drive-file-1", "title": ""}
+  ],
+  "revision": 3,
+  "created_at": "2026-10-07T08:00:00.000000Z",
+  "updated_at": "2026-10-07T09:30:00.000000Z"
+}

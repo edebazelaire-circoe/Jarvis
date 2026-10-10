@@ -1,0 +1,18 @@
+{
+  "scenario": "authoring_refused",
+  "screenshots": [],
+  "failure": {
+    "code": "tsx_compile",
+    "severity": "error",
+    "where": "bundle:slide",
+    "message": "compile_source_error: src/Scene.tsx:21:16 Unexpected <value>",
+    "diagnostics": [
+      {
+        "file": "src/Scene.tsx",
+        "line": 21,
+        "column": 16,
+        "text": "Unexpected \";\""
+      }
+    ]
+  }
+}

@@ -1,0 +1,22 @@
+{
+  "slice_id": "22",
+  "title": "QA, migration, performance and final Human sign-off",
+  "dependencies": [
+    "08",
+    "11",
+    "12",
+    "14",
+    "15",
+    "16",
+    "19",
+    "20",
+    "21"
+  ],
+  "task_type": null,
+  "task_type_resolution_required": true,
+  "requires_caveman": true,
+  "requires_coding_guideline": true,
+  "frontend": false,
+  "requires_impeccable": false,
+  "claude_for_frontend_when_available": false
+}

@@ -1760,13 +1760,38 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
       prefabHost=PrefabHostApi.createPrefabHost({
         fetchBundle:PrefabHostApi.bundleFetcher((path,options)=>fetch(path,{...options,cache:'no-store'})),
         document,window,log:(key,data)=>consoleLog(key==='scene.prefab_mounted'?'info':'warn',key,data),
-        postEvent:postPrefabEvent,onResize:onPrefabResize});
+        postEvent:postPrefabEvent,onResize:onPrefabResize,onOutcome:reportPrefabOutcome,swapPrefix:'presentation-studio.'});
     }catch(error){
       consoleLog('error','scene.prefab_host_failed',{error:errorText(error)});
       prefabHost=null;
     }
     return prefabHost;
   }
+
+  /* Rechargement à chaud du Studio (Slice 06) : ce que l'hôte a observé pour un cadre `presentation-studio.*` part vers Core
+     (`JarvisStudioReload.hostOutcome`) ; tout autre prefab est ignoré par ce module. Lu à la demande : le module est inséré
+     après cette page. Une panne de rapport est dite par le module (toast + console), jamais avalée ici. */
+  function reportPrefabOutcome(info){
+    const studio=window.JarvisStudioReload&&window.JarvisStudioReload.instance;
+    if(!studio)return;
+    studio.hostOutcome(info).catch((error)=>consoleLog('error','scene.studio_outcome_failed',{object_id:info&&info.object_id,error:errorText(error)}));
+  }
+
+  /* Ligne de temps de la partition pour une scène Remotion (Slice 12) : la bande de lecture (`jarvis:studio-timeline`, vue de Core)
+     dit où le lecteur doit être ; `JarvisRemotionFrame.createTimelineFollower` l'applique au cadre de CETTE page (aller au segment,
+     jouer jusqu'à son image d'arrêt, pause, rattrapage). Rien n'est renvoyé à Core. Créé au premier événement. */
+  let timelineFollower=null;
+  function onStudioTimeline(event){
+    try{
+      if(timelineFollower===null){
+        const R=window.JarvisRemotionFrame;
+        if(!R||typeof R.createTimelineFollower!=='function')return;
+        timelineFollower=R.createTimelineFollower({getHost:prefabs,log:(level,key,data)=>consoleLog(level==='warn'?'warn':'info',key,data)});
+      }
+      timelineFollower.apply(event&&event.detail);
+    }catch(error){consoleLog('error','scene.timeline_failed',{error:errorText(error)})}
+  }
+  window.addEventListener('jarvis:studio-timeline',onStudioTimeline);
 
   /* Monter, mettre à jour ou démonter le cadre d'un nœud dessiné
      (`JarvisPrefabHost.syncScene`) : `props`/`data` changent par message (diff
@@ -3190,6 +3215,16 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
     }});
   }
 
+  /* « Plein écran » du menu : l'appel part du clic de l'utilisateur, donc `enter()` entre sans invite. Les refus
+     nommés (cible absente, autre surface déjà plein écran) deviennent l'erreur visible de `actionFailed`. */
+  async function enterFullscreen(id){
+    const api=window.JarvisFullscreen;
+    if(!api)throw new Error('plein écran indisponible : module non installé');
+    const outcome=await api.enter({object_id:id});
+    consoleLog('info','scene.fullscreen_requested',{object_id:id,state:outcome&&outcome.state});
+    if(outcome&&outcome.state==='refused')throw new Error(outcome.reason||outcome.code||'plein écran refusé');
+  }
+
   async function runObjectAction(act,id){
     if(act.startsWith('rep:'))return changeRepresentation(id,act.slice(4));
     if(act==='pin')return pinHere(id);
@@ -3198,6 +3233,7 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
       return optimistic('Désépinglage',id,{pinned:false},I.commands.unpin(id));
     }
     if(act==='hide')return hideObject(id);
+    if(act==='fullscreen')return enterFullscreen(id);
     if(act==='select-constellation')return selectConstellation(id);
     if(act==='stop')return stopJob(id);
     if(act==='archive')return archiveObject(id);

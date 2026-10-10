@@ -1,0 +1,510 @@
+{
+  "scenario": "source_edit_hmr",
+  "screenshots": [
+    "before.png",
+    "edited.png",
+    "broken.png",
+    "restored.png"
+  ],
+  "reads": {
+    "until:!!document.querySelector('iframe[data-remotion-stage]') && !!document.querySelec": true,
+    "page_mark": "0.39977613695100744",
+    "initial": {
+      "title": "Premier v1",
+      "bg": "rgb(16, 24, 32)",
+      "mark": "0.1427626020536471",
+      "frame": 29
+    },
+    "source": {
+      "status": 200,
+      "body": {
+        "scene_id": "pss_000000000001",
+        "prefab": {
+          "id": "presentation-studio.p000000000001.s000000000001",
+          "version": 1
+        },
+        "source_revision": 0,
+        "basis": {
+          "variant_revision": 4
+        },
+        "manifest": {
+          "schema": "jarvis.prefab",
+          "schema_version": 2,
+          "id": "presentation-studio.p000000000001.s000000000001",
+          "version": 1,
+          "title": "Un",
+          "description": "",
+          "family": "scene",
+          "tags": [],
+          "aliases": [],
+          "scene": {
+            "kind": "window"
+          },
+          "inputs": {
+            "props": {
+              "type": "object",
+              "properties": {
+                "title": {
+                  "type": "string",
+                  "default": "Bonjour",
+                  "max_length": 80
+                },
+                "accent": {
+                  "type": "color",
+                  "default": "#3366ff"
+                },
+                "fade": {
+                  "type": "integer",
+                  "default": 10,
+                  "min": 1,
+                  "max": 90
+                }
+              }
+            },
+            "data": {
+              "type": "object",
+              "properties": {}
+            }
+          },
+          "sample": {
+            "props": {
+              "title": "Bonjour",
+              "accent": "#3366ff",
+              "fade": 10
+            },
+            "data": {}
+          },
+          "source": {
+            "format": "remotion",
+            "engine": {
+              "name": "remotion",
+              "version": "4.0.534",
+              "react_version": "19.3.0",
+              "lock_sha256": "acff3cd562fd6f426040aed8b60cce840b23befe7bac71604d0c7614b8762fbe"
+            },
+            "entry": "src/Scene.tsx",
+            "composition": {
+              "id": "Scene",
+              "width": 1280,
+              "height": 720,
+              "fps": 30,
+              "duration_in_frames": 90
+            },
+            "modules": [
+              "src/Scene.tsx"
+            ],
+            "assets": []
+          }
+        },
+        "engine": "remotion",
+        "sources": {
+          "src/Scene.tsx": "import React from \"react\";\nimport {AbsoluteFill, useCurrentFrame} from \"remotion\";\n\nconst mounted = String(Math.random());   // evaluated once per sandbox document: a new document (a swap) changes it\nconst LABEL = \"v1\";\nconst BG = \"#101820\";\n\nexport default function Scene(props: {title: string; accent: string; fade: number}) {\n  const frame = useCurrentFrame();\n  return (\n    <AbsoluteFill id=\"bg\" style={{background: BG}}>\n      <h1 id=\"title\" style={{color: props.accent, fontSize: 90}}>{props.title + \" \" + LABEL}</h1>\n      <p id=\"mark\" style={{color: \"#fff\"}}>{mounted}</p>\n      <p id=\"frame\" style={{color: \"#fff\"}}>{String(frame)}</p>\n    </AbsoluteFill>\n  );\n}\n"
+        },
+        "assets": {}
+      }
+    },
+    "edit_ok": {
+      "status": 200,
+      "body": {
+        "status": "reloaded",
+        "actor": "user",
+        "presentation_id": "pst_d9190d87f0ad892df8adfe576c8b077d",
+        "variant_id": "psv_de42d52159ec437848c9f705f7581aa4",
+        "scene_id": "pss_000000000001",
+        "basis": {
+          "variant_revision": 4
+        },
+        "revision": 6,
+        "source_revision": 1,
+        "prefab": {
+          "id": "presentation-studio.pd9190d87f0ad.s000000000001",
+          "version": 1
+        },
+        "previous": {
+          "id": "presentation-studio.p000000000001.s000000000001",
+          "version": 1
+        },
+        "published": {
+          "id": "presentation-studio.pd9190d87f0ad.s000000000001",
+          "version": 1
+        },
+        "merged": false,
+        "mounted": true,
+        "reset": null,
+        "preserved": {
+          "variant_id": "psv_de42d52159ec437848c9f705f7581aa4",
+          "scene_id": "pss_000000000001",
+          "playback": {
+            "run_id": "b69fbfcdd12d",
+            "variant_id": "psv_de42d52159ec437848c9f705f7581aa4",
+            "scene_id": "pss_000000000001",
+            "item_id": "psi_000000000001",
+            "position": 0,
+            "state": "playing",
+            "role": "user_presenter",
+            "stage_object_id": "studio-stage-b69fbfcdd12d"
+          },
+          "playback_unchanged": true
+        },
+        "request_id": null,
+        "waited_s": 0.471
+      }
+    },
+    "until:document.querySelector('#title') && document.querySelector('#title').textContent": true,
+    "after_edit": {
+      "title": "Premier v2 [edit]",
+      "bg": "rgb(122, 31, 61)",
+      "mark": "0.027840482951381862",
+      "frame": 35
+    },
+    "page_mark_after_edit": "0.39977613695100744",
+    "frames_after_edit": 1,
+    "bands_after_edit": 0,
+    "shell_after_edit": {
+      "phase": "ready",
+      "mounted": true,
+      "playing": true,
+      "frame": 32,
+      "duration": 90,
+      "killedReason": null,
+      "generation": 1,
+      "muted": true,
+      "propsRefused": 0,
+      "lastProblems": [],
+      "supervisor": {
+        "ready": true,
+        "killed": false,
+        "reason": null,
+        "startedAt": 1791623532475,
+        "pending": null,
+        "pendingSince": 1791623532735,
+        "lastPingAt": 1791623532735,
+        "lastFrame": 3,
+        "violations": 0,
+        "accepted": 8,
+        "refused": {},
+        "foreign": 0,
+        "reports": [],
+        "windowStart": 1791623533685,
+        "windowCount": 1,
+        "pongs": 1,
+        "childDropped": 0,
+        "lastHeapMb": 7,
+        "muted": true,
+        "floodStreak": 0,
+        "violationsReported": 0,
+        "errorsReported": 0,
+        "clocks": 6,
+        "clockDropped": 0,
+        "clockWindow": [
+          1791623532889,
+          1791623533152,
+          1791623533419,
+          1791623533685
+        ],
+        "lastClock": {
+          "frame": 32,
+          "playing": true
+        }
+      }
+    },
+    "edit_syntax": {
+      "status": 422,
+      "body": {
+        "status": "refused_validation",
+        "actor": "user",
+        "presentation_id": "pst_d9190d87f0ad892df8adfe576c8b077d",
+        "variant_id": "psv_de42d52159ec437848c9f705f7581aa4",
+        "scene_id": "pss_000000000001",
+        "basis": {
+          "variant_revision": 6
+        },
+        "revision": 6,
+        "source_revision": 1,
+        "prefab": {
+          "id": "presentation-studio.pd9190d87f0ad.s000000000001",
+          "version": 1
+        },
+        "previous": {
+          "id": "presentation-studio.pd9190d87f0ad.s000000000001",
+          "version": 1
+        },
+        "published": null,
+        "merged": false,
+        "mounted": null,
+        "reset": null,
+        "preserved": {
+          "variant_id": "psv_de42d52159ec437848c9f705f7581aa4",
+          "scene_id": "pss_000000000001",
+          "playback": {
+            "run_id": "b69fbfcdd12d",
+            "variant_id": "psv_de42d52159ec437848c9f705f7581aa4",
+            "scene_id": "pss_000000000001",
+            "item_id": "psi_000000000001",
+            "position": 0,
+            "state": "playing",
+            "role": "user_presenter",
+            "stage_object_id": "studio-stage-b69fbfcdd12d"
+          },
+          "playback_unchanged": false
+        },
+        "request_id": null,
+        "waited_s": null,
+        "code": "presentation_studio_source_build_failed",
+        "message": "compile_source_error: src/Scene.tsx:11:8 Expected identifier but found \"=\" - src/Scene.tsx:11:8 Expected identifier but found \"=\"",
+        "diagnostics": [
+          {
+            "file": "src/Scene.tsx",
+            "line": 11,
+            "column": 8,
+            "text": "Expected identifier but found \"=\""
+          }
+        ],
+        "error": {
+          "code": "presentation_studio_source_build_failed",
+          "message": "compile_source_error: src/Scene.tsx:11:8 Expected identifier but found \"=\" - src/Scene.tsx:11:8 Expected identifier but found \"=\"",
+          "diagnostics": [
+            {
+              "file": "src/Scene.tsx",
+              "line": 11,
+              "column": 8,
+              "text": "Expected identifier but found \"=\""
+            }
+          ]
+        }
+      }
+    },
+    "after_syntax_a": {
+      "title": "Premier v2 [edit]",
+      "bg": "rgb(122, 31, 61)",
+      "mark": "0.027840482951381862",
+      "frame": 70
+    },
+    "after_syntax_b": {
+      "title": "Premier v2 [edit]",
+      "bg": "rgb(122, 31, 61)",
+      "mark": "0.027840482951381862",
+      "frame": 1
+    },
+    "bands_after_syntax": 0,
+    "frames_after_syntax": 1,
+    "edit_throws": {
+      "status": 409,
+      "body": {
+        "status": "rolled_back",
+        "actor": "user",
+        "presentation_id": "pst_d9190d87f0ad892df8adfe576c8b077d",
+        "variant_id": "psv_de42d52159ec437848c9f705f7581aa4",
+        "scene_id": "pss_000000000001",
+        "basis": {
+          "variant_revision": 6
+        },
+        "revision": 8,
+        "source_revision": 3,
+        "prefab": {
+          "id": "presentation-studio.pd9190d87f0ad.s000000000001",
+          "version": 1
+        },
+        "previous": {
+          "id": "presentation-studio.pd9190d87f0ad.s000000000001",
+          "version": 1
+        },
+        "published": {
+          "id": "presentation-studio.pd9190d87f0ad.s000000000001",
+          "version": 2
+        },
+        "merged": false,
+        "mounted": false,
+        "reset": null,
+        "preserved": {
+          "variant_id": "psv_de42d52159ec437848c9f705f7581aa4",
+          "scene_id": "pss_000000000001",
+          "playback": {
+            "run_id": "b69fbfcdd12d",
+            "variant_id": "psv_de42d52159ec437848c9f705f7581aa4",
+            "scene_id": "pss_000000000001",
+            "item_id": "psi_000000000001",
+            "position": 0,
+            "state": "playing",
+            "role": "user_presenter",
+            "stage_object_id": "studio-stage-b69fbfcdd12d"
+          },
+          "playback_unchanged": true
+        },
+        "request_id": null,
+        "waited_s": 0.178,
+        "code": "presentation_studio_mount_failed",
+        "message": "boom at render",
+        "reason": "frame",
+        "error": {
+          "code": "presentation_studio_mount_failed",
+          "message": "boom at render"
+        }
+      }
+    },
+    "after_throw": {
+      "title": "Premier v2 [edit]",
+      "bg": "rgb(122, 31, 61)",
+      "mark": "0.027840482951381862",
+      "frame": 76
+    },
+    "bands_after_throw": 0,
+    "frames_after_throw": 1,
+    "undo": {
+      "status": 200,
+      "body": {
+        "status": "reloaded",
+        "actor": "user",
+        "presentation_id": "pst_d9190d87f0ad892df8adfe576c8b077d",
+        "variant_id": "psv_de42d52159ec437848c9f705f7581aa4",
+        "scene_id": "pss_000000000001",
+        "basis": {
+          "variant_revision": 8
+        },
+        "revision": 10,
+        "source_revision": 4,
+        "prefab": {
+          "id": "presentation-studio.pd9190d87f0ad.s000000000001",
+          "version": 3
+        },
+        "previous": {
+          "id": "presentation-studio.pd9190d87f0ad.s000000000001",
+          "version": 1
+        },
+        "published": {
+          "id": "presentation-studio.pd9190d87f0ad.s000000000001",
+          "version": 3
+        },
+        "merged": false,
+        "mounted": true,
+        "reset": null,
+        "preserved": {
+          "variant_id": "psv_de42d52159ec437848c9f705f7581aa4",
+          "scene_id": "pss_000000000001",
+          "playback": {
+            "run_id": "b69fbfcdd12d",
+            "variant_id": "psv_de42d52159ec437848c9f705f7581aa4",
+            "scene_id": "pss_000000000001",
+            "item_id": "psi_000000000001",
+            "position": 0,
+            "state": "playing",
+            "role": "user_presenter",
+            "stage_object_id": "studio-stage-b69fbfcdd12d"
+          },
+          "playback_unchanged": true
+        },
+        "request_id": null,
+        "waited_s": 0.407
+      }
+    },
+    "after_undo": {
+      "title": "Premier v1",
+      "bg": "rgb(16, 24, 32)",
+      "mark": "0.49670020819750027",
+      "frame": 32
+    },
+    "page_mark_end": "0.39977613695100744",
+    "frames_end": 1,
+    "bands_end": 0
+  },
+  "console": [
+    "frame info [capture] capture_rail.status_received {\"open\":0}",
+    "frame info [studio-inspector] hidden {\"reason\":\"playback\"}",
+    "frame info [scène] scene.enabled Object",
+    "frame info [barehands] profil de calibration relu aucune mesure",
+    "frame info [scène] scene.role Object",
+    "frame info [scène] scene.loop_started Object",
+    "frame info [scène] scene.snapshot_loaded Object",
+    "frame info [scène] scene.prefab_mounted Object",
+    "frame info [scène] scene.resolver_committed Object",
+    "frame info [remotion.stage.ready] Object",
+    "frame warning Note: Some companies are required to obtain a license to use Remotion. See: https://remotion.dev/license\nPass the `acknowledgeRemotionLicense` prop to `<Player />` function to make this message disappear.",
+    "frame info [studio-reload] mount_reported {\"object_id\":\"studio-stage-b69fbfcdd12d\",\"prefab\":\"presentation-studio.p000000000001.s000000000001@1\",\"outcome\":\"mounted\",\"reason\":null,\"matched\":false,\"attempt\":1}",
+    "frame info [studio] studio.stage_ready {\"object_id\":\"studio-stage-b69fbfcdd12d\"}",
+    "frame info [scène] scene.prefab_mounted Object",
+    "frame info [remotion.stage.ready] Object",
+    "frame warning Note: Some companies are required to obtain a license to use Remotion. See: https://remotion.dev/license\nPass the `acknowledgeRemotionLicense` prop to `<Player />` function to make this message disappear.",
+    "frame warning [scène] scene.prefab_swapped Object",
+    "frame info [studio-reload] mount_reported {\"object_id\":\"studio-stage-b69fbfcdd12d\",\"prefab\":\"presentation-studio.pd9190d87f0ad.s000000000001@1\",\"outcome\":\"mounted\",\"reason\":null,\"matched\":true,\"attempt\":1}",
+    "frame info [scène] scene.prefab_mounted Object",
+    "frame info [remotion.stage.ready] Object",
+    "frame warning Note: Some companies are required to obtain a license to use Remotion. See: https://remotion.dev/license\nPass the `acknowledgeRemotionLicense` prop to `<Player />` function to make this message disappear.",
+    "frame error Error: boom at render\n    at c (http://127.77.0.2:50830/f/scene-907e9dcf30cc1f071597da814880cf1d/scene.js:2:1173)\n    at qv (http://127.77.0.2:50830/f/host-b933e602657040de671a9e1b5f491d60/host.js:8:49617)\n    at Up (http://127.77.0.2:50830/f/host-b933e602657040de671a9e1b5f491d60/host.js:8:72661)\n  ",
+    "frame warning [remotion.stage.scene_error] Object",
+    "frame warning [scène] scene.prefab_error Object",
+    "frame info [studio-reload] mount_reported {\"object_id\":\"studio-stage-b69fbfcdd12d\",\"prefab\":\"presentation-studio.pd9190d87f0ad.s000000000001@2\",\"outcome\":\"failed\",\"reason\":\"frame\",\"matched\":true,\"attempt\":1}",
+    "frame info [scène] scene.prefab_mounted Object",
+    "frame info [remotion.stage.ready] Object",
+    "frame warning Note: Some companies are required to obtain a license to use Remotion. See: https://remotion.dev/license\nPass the `acknowledgeRemotionLicense` prop to `<Player />` function to make this message disappear.",
+    "frame warning [scène] scene.prefab_swapped Object",
+    "frame info [studio-reload] mount_reported {\"object_id\":\"studio-stage-b69fbfcdd12d\",\"prefab\":\"presentation-studio.pd9190d87f0ad.s000000000001@3\",\"outcome\":\"mounted\",\"reason\":null,\"matched\":true,\"attempt\":1}"
+  ],
+  "errors": [],
+  "journal": [
+    "background.store_loaded",
+    "barehands.mcp_unconfigured",
+    "core.artifact.recovery",
+    "core.board.default_created",
+    "core.board.interaction_mode.restore_skipped",
+    "core.capture.recovery",
+    "core.context.workspace_ready",
+    "core.conversation_events.emitter_started",
+    "core.conversation_events.user_backfill",
+    "core.prefab.catalog_loaded",
+    "core.prefab.draft_coalesced",
+    "core.prefab.saved",
+    "core.presentation_studio.art_direction_resolved",
+    "core.presentation_studio.created",
+    "core.presentation_studio.engine_resolved",
+    "core.presentation_studio.mount_reported",
+    "core.presentation_studio.pins_ready",
+    "core.presentation_studio.playback_follower_absent",
+    "core.presentation_studio.playback_plan_refreshed",
+    "core.presentation_studio.playback_reclaimed",
+    "core.presentation_studio.playback_started",
+    "core.presentation_studio.playback_transition",
+    "core.presentation_studio.presenter_attached",
+    "core.presentation_studio.recovered",
+    "core.presentation_studio.reload_applied",
+    "core.presentation_studio.reload_build_refused",
+    "core.presentation_studio.reload_built",
+    "core.presentation_studio.reload_published",
+    "core.presentation_studio.reload_refused",
+    "core.presentation_studio.reload_rolled_back",
+    "core.presentation_studio.saved",
+    "core.presentation_studio.scenes_checked",
+    "core.presentation_studio.score_loaded",
+    "core.presentation_studio.stage_shown",
+    "core.presentation_studio.started",
+    "core.remotion_player.described",
+    "core.scene.loaded",
+    "core.scene.projection_reconciled",
+    "core.scene.restart_marked",
+    "core.session.opened",
+    "core.transcript.recovery",
+    "interaction.mode.applied",
+    "local_capability.reconcile",
+    "local_capability.service.reconciled",
+    "mcp.plugins.started",
+    "presentation_studio.request.relayed",
+    "remotion.compile.done",
+    "remotion.compile.failed",
+    "remotion.compile.reused",
+    "remotion.sandbox.listening",
+    "remotion.stage.ready",
+    "remotion.stage.scene_error",
+    "scene.display_mcp_unconfigured"
+  ],
+  "reload_statuses": [
+    "reloaded",
+    "refused_validation",
+    "rolled_back",
+    "reloaded"
+  ],
+  "pinned_at_rest": {
+    "id": "presentation-studio.pd9190d87f0ad.s000000000001",
+    "version": 3
+  },
+  "compilations": 4,
+  "build_refused": 1
+}

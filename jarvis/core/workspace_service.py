@@ -246,6 +246,13 @@ class WorkspaceService:
         #: `SpeechAuthority` : lue seulement (`binding`), jamais posée.
         self._authority = authority
         self._diagnostics = diagnostics
+        #: `PresentationArtifacts` (Remotion Slice 08) : lié après construction (le Studio est construit plus tard).
+        self._presentations: Any = None
+
+    def bind_presentations(self, presentations: Any) -> None:
+        """Lie le pont Presentation -> Artifacts : lecture groupée « source -> snapshots -> rendus » d'un Board."""
+
+        self._presentations = presentations
 
     # ------------------------------------------------------------ Sessions
 
@@ -514,6 +521,37 @@ class WorkspaceService:
         payload["boards"] = {"items": [link.to_payload() for link in links[:MAX_ARTIFACT_BOARDS]],
                              "truncated": len(links) > MAX_ARTIFACT_BOARDS}
         self._read("artifact_relations", started, artifact_id=artifact.artifact_id)
+        return payload
+
+    # ------------------------------------------------------------ présentations (Remotion Slice 08)
+
+    def _presentations_or_refuse(self) -> Any:
+        if self._presentations is None:
+            raise WorkspaceError("presentations_unavailable", "the presentation bridge is not wired in this Core",
+                                 status=503)
+        return self._presentations
+
+    async def presentation_sources(self, board_id: str) -> dict[str, Any]:
+        """Sources de Presentation montrées par **ce** Board (archivé compris, lecture seule), groupées et datées.
+
+        Calculé à la lecture depuis `board_artifact_links` : rien n'est recopié, rien à réparer après un redémarrage.
+        """
+
+        presentations = self._presentations_or_refuse()
+        started = time.monotonic()
+        board = await self._board(board_id)
+        payload = await presentations.sources_of_board(board.board_id)
+        self._read("presentation_sources", started, board_id=board.board_id, count=len(payload["sources"]))
+        return payload
+
+    async def presentation_source(self, presentation_id: str) -> dict[str, Any]:
+        """Une source : snapshots, rendus, Boards qui la montrent (navigation inverse). Source disparue = `exists: false`."""
+
+        presentations = self._presentations_or_refuse()
+        started = time.monotonic()
+        payload = await presentations.describe_source(_check_id("presentation_id", presentation_id))
+        self._read("presentation_source", started, presentation_id=presentation_id,
+                   count=len(payload["snapshots"]))
         return payload
 
     # ------------------------------------------------------------ activité

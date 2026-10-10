@@ -143,6 +143,11 @@ class ConversationEventType(StrEnum):
     SYSTEM_MODE_CHANGED = "system.mode.changed"
     SYSTEM_ATTENTION_RAISED = "system.attention.raised"
     SYSTEM_ATTENTION_CLEARED = "system.attention.cleared"
+    SYSTEM_PRESENTATION_STUDIO_EDIT_COMMITTED = "system.presentation_studio.edit_committed"
+    SYSTEM_PRESENTATION_STUDIO_SCENE_RELOADED = "system.presentation_studio.scene_reloaded"
+    SYSTEM_PRESENTATION_STUDIO_VARIANT_CHANGED = "system.presentation_studio.variant_changed"
+    SYSTEM_PRESENTATION_STUDIO_PLAYBACK_CHANGED = "system.presentation_studio.playback_changed"
+    SYSTEM_PRESENTATION_STUDIO_PRESENTER_CHANGED = "system.presentation_studio.presenter_changed"
 
 
 @dataclass(frozen=True, slots=True)
@@ -234,6 +239,21 @@ _SPECS: dict[ConversationEventType, _Spec] = {
     _T.SYSTEM_MODE_CHANGED: _spec(_A.SYSTEM, _S.INSTANT, _V.DIAGNOSTIC, content="forbidden"),
     _T.SYSTEM_ATTENTION_RAISED: _spec(_A.SYSTEM, _S.INSTANT, _V.DIAGNOSTIC, content="forbidden"),
     _T.SYSTEM_ATTENTION_CLEARED: _spec(_A.SYSTEM, _S.INSTANT, _V.DIAGNOSTIC, content="forbidden"),
+    # Presentation Studio (handoff jarvis-interactive-presentation-studio, Slice 05): one committed semantic edit (or
+    # a recorded source request). Ids, op names, tier and who asked only: never a title, a value or an intent.
+    _T.SYSTEM_PRESENTATION_STUDIO_EDIT_COMMITTED: _spec(_A.SYSTEM, _S.INSTANT, _V.DIAGNOSTIC, content="forbidden"),
+    # Slice 06: one scene hot reload outcome (reloaded, reloaded_state_reset, repinned, pending_mount, rolled_back, degraded).
+    # Ids, status, short code, revision and who asked only: never a source text, a value or a frame message.
+    _T.SYSTEM_PRESENTATION_STUDIO_SCENE_RELOADED: _spec(_A.SYSTEM, _S.INSTANT, _V.DIAGNOSTIC, content="forbidden"),
+    # Presentation Studio, Slice 16: the variant graph changed (`op` = created | switched | renamed | archived | restored).
+    # Ids, the display number, a count and who asked only: a title and a rationale are user content, never an attribute.
+    _T.SYSTEM_PRESENTATION_STUDIO_VARIANT_CHANGED: _spec(_A.SYSTEM, _S.INSTANT, _V.DIAGNOSTIC, content="forbidden"),
+    # Presentation Studio playback (Slice 12): a run started / paused / resumed / detoured / returned / ended / stopped,
+    # or its stage failed. Ids, a status word, the role and the detour depth only: no title, no phrase, no cue text.
+    _T.SYSTEM_PRESENTATION_STUDIO_PLAYBACK_CHANGED: _spec(_A.SYSTEM, _S.INSTANT, _V.DIAGNOSTIC, content="forbidden"),
+    # Presentation Studio Jarvis presenter (Slice 14): a scripted line failed or was cut, a locked sequence ended / was left,
+    # the run was driven to its end. Ids, a status word, a reason code and a count only: NEVER the spoken text.
+    _T.SYSTEM_PRESENTATION_STUDIO_PRESENTER_CHANGED: _spec(_A.SYSTEM, _S.INSTANT, _V.DIAGNOSTIC, content="forbidden"),
 }
 
 #: Span close type -> the open type it closes. Pairing key: (open type, span_id).
@@ -274,14 +294,15 @@ def event_visibility(event_type: ConversationEventType) -> ConversationVisibilit
 
 #: Attribute allowlist. Anything else is rejected, whatever its value.
 ATTRIBUTE_KEYS = frozenset({
-    "action_id", "actions", "addressing", "arguments_redacted", "background", "code", "completion_basis", "delivery", "depth", "duplicate",
+    "action_id", "actions", "addressing", "arguments_redacted", "background", "code", "completion_basis", "count", "delivery", "depth", "duplicate",
     "decision_id", "duration_ms", "ephemeral", "error_class", "expires_at", "fallback", "intent_id", "interrupted_speech_id", "job_id", "kind", "live_pause_count",
     "live_pause_max_ms", "live_pauses_ms", "model",
-    "output_id", "owner", "paragraph", "played_ms", "priority", "provider", "reason", "ref_count", "rejected",
+    "op", "output_id", "owner", "paragraph", "played_ms", "presentation_id", "priority", "provider", "reason", "ref_count", "rejected",
     "release_after_quiescence_ms", "revalidated_as",
-    "revision", "source",
+    "revision", "role", "scene_id", "source",
     "status",
-    "subagent_type", "supersedes_key", "timing", "tokens", "tool_name", "tool_uses", "while",
+    "subagent_type", "supersedes_key", "tier", "timing", "tokens", "tool_name", "tool_uses", "variant_id", "variant_number",
+    "while",
 })
 
 #: Defense in depth over the allowlist: these names are refused anywhere in a

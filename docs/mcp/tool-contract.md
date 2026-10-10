@@ -31,6 +31,9 @@ everything else is unchanged and shipped.
 | `jarvis-surface` *(Tool Brain handoff, Slice 07, §10.14)* | `jarvis/runtime/surface_mcp.py` (`build_server`) | 5 | **never** (`registration = "tool_brain"`: catalogued, executed only by the Tool Brain executor) | Core `/v1/scene/*` (windows of prefab `jarvis.browser`), actor `brain` |
 | `jarvis-console` | `jarvis/runtime/settings_mcp.py` (`build_server`) | 3 | always (no switch: it carries the other switches, `control_center.py` `_configure_agent`) | Control Center settings API (the nine Board/Session tools of §10.9 moved to `jarvis-workspace`, §10.12) |
 | `jarvis-workspace` *(board-memory-workspace-inspector, Slice 06, §10.12)* | `jarvis/runtime/workspace_mcp.py` (`build_server`) | 20 | always for the Claude conversation profile (no switch, like the console); never Codex | Control Center `/api/boards*`, `/api/sessions*` (`board_routes.py`), `/api/workspace/*` (`workspace_relay.py`) |
+| `jarvis-presentation` *(interactive-presentation-studio, Slice 21, §10.15)* | `jarvis/runtime/presentation_studio_mcp.py` (`build_server`) | 12 | with the display: `scene.enabled` true and Core target known; Claude conversation profile only | Core `/v1/presentation-studio/*` (actor `brain`, set by the server) and the Control Center explorer / full-screen / turn-attestation routes |
+| `jarvis-remotion` *(jarvis-remotion-presentation-integration, Slice 21, §10.17)* | `jarvis/runtime/remotion_mcp.py` (`build_server`) | 6 | with `jarvis-presentation` (`scene.enabled`, same target); Claude conversation profile only | Core `/v1/local-capabilities/remotion*`, `/v1/remotion/imports*`, `/v1/presentation-studio/.../upgrades*`, `/v1/presentation-studio/engine` (read), the same routes as the Control Center cards; Control Center `/api/presentation-studio/agent/turn` (attestation) |
+| `jarvis-memory` *(memory-intelligence-knowledge, Slice 05b, §10.16)* | `jarvis/runtime/memory_mcp.py` (`build_server`) | 5 | always for the Claude conversation profile (no switch); never Codex, never the reflex or voice model | Control Center `/api/memory/brain/*` (`memory_relay.py`), relay of Core `/v1/memory/*` |
 | `jarvis-capture` *(session-context-recording, Slice 09, §10.11)* | `jarvis/runtime/capture_mcp.py` (`build_server`) | 9 | always for the Claude conversation profile (no switch, like the console); never Codex | Control Center `/api/contexts*`, `/api/captures*`, `/api/artifacts*` (relay of Core, `capture_relay.py`) |
 | `jarvis-barehands` | `jarvis/runtime/barehands_mcp.py:475` (`build_server`) | 16 | `barehands.enabled` true (`control_center.py:1225-1240`) | Control Center `/api/barehands/commands` (five lifecycle tools, `barehands_test`, ten `calibration_*` tools, §6) |
 | `jarvis-drive` | `jarvis/runtime/drive_mcp.py:65` (`build_server`) | 7 | never by Jarvis: registered by the operator (`claude mcp add … --scope user`, `docs/OPERATIONS.md:1475-1486`) | Google Drive |
@@ -108,7 +111,8 @@ ever enters a descriptor.
 | `general` | Général | overview tab: servers, counts, availability, context budget, policies. Hosts cross-domain tools: `jarvis-tools` `list_tools` + `call_tool` *(plugin amendment, implemented by Slice 04)*; every other native tool belongs to a domain |
 | `scene` | Étoiles / Scène | all `jarvis-display` tools |
 | `settings` | Réglages | `settings_describe`, `settings_get`, `settings_set` (`jarvis-console`) |
-| `workspace` | Boards et mémoire | the twenty `jarvis-workspace` tools (§10.12): the nine Board/Session tools (§10.9, moved from `jarvis-console`), Session history, Board inspection, Board memory, Board-artifact links |
+| `workspace` | Boards et mémoire | the twenty `jarvis-workspace` tools (§10.12): the nine Board/Session tools (§10.9, moved from `jarvis-console`), Session history, Board inspection, Board memory, Board-artifact links, plus the five `jarvis-memory` tools (§10.16: memory and knowledge search, read, propose) |
+| `presentation` | Présentations | the twelve `jarvis-presentation` tools (§10.15): inspect, explorer and full screen, playback, semantic edits, undo, variants, comparison, composition, templates, drafting |
 | `capture` | Captures et preuves | the nine `jarvis-capture` tools (§10.11): Contexts, recordings, screenshots, evidence search and transcript reads |
 | `barehands` | Bare Hands | all 16 `jarvis-barehands` tools (`barehands_*` and `calibration_*`, §6) |
 | `external` | Externe | `jarvis-drive` (decision below); *(plugin amendment, implemented by Slice 04)* every managed plugin server |
@@ -1367,3 +1371,50 @@ Own server because `jarvis-display` has a ceiling of 20 tools for the main brain
 the catalog (schemas, effects, `ui`, Tool Brain manifest) without ever declaring it to a brain launch, and the declared-context
 budget test excludes it (its own budget `SURFACE_CONTEXT_BUDGET_BYTES` is pinned in `test_mcp_catalog.py`). Contract, URL safety
 and execution: [../tool-brain-contracts.md](../tool-brain-contracts.md) section 15.
+
+### 10.15 Interactive-presentation-studio, Slice 21 - `jarvis-presentation` (Presentation Studio operations)
+
+Twelve tools, one closed `op` per domain, all `output.format = untyped` (a bounded JSON object with `speech`, see below), no `ui_surface`
+(they are not Tool Brain operations). Reference and examples: [../presentation-studio.md](../presentation-studio.md) > *Agent and voice operations*.
+`presentation_inspect` (read), `presentation_view`, `presentation_play`, `presentation_edit`, `presentation_undo`, `presentation_variant` (destructive class:
+archive), `presentation_compare`, `presentation_compose`, `presentation_template`, `presentation_draft_check` (read), `presentation_draft_assemble`,
+`presentation_draft_finalize` (the three operation names the Slice 11 planner prompt already used). Measured 16 849 bytes of model-visible context
+(budget 17 100); the whole-surface budget `DECLARED_CONTEXT_BUDGET_BYTES` rose from 84 000 to 101 075 for this server only (83 475 + 17 100 + 500 margin).
+
+### 10.16 Memory-intelligence-knowledge, Slice 05b - `jarvis-memory` (long-term memory and knowledge on demand)
+
+Five tools in a new native server, category `workspace` ("Boards et memoire"): `memory_search(query, limit?)`,
+`memory_read(memory_id)`, `memory_propose(title, body?, kind?, retention?, confidence?, reason?, scope?)`,
+`knowledge_search(query, kind?, limit?)`, `knowledge_read(kind, asset_id)`. Module `jarvis/runtime/memory_mcp.py`
+(`MemoryTools` = logic without FastMCP, `build_server`, `serve_stdio`), launched by `python -m jarvis memory-mcp`; target =
+`ConsoleMcpTarget`; `--mcp-config` file `runtime/memory-mcp.json` written by `ClaudeLocalAgent._memory_mcp_args` after the
+workspace one; `agent.memory_mcp` set by `_apply_agent_settings` (no switch). Conversation profile only. Facade only: every
+tool calls `/api/memory/brain/*` on the Control Center (`jarvis/runtime/memory_relay.py`, guarded prefix), which relays to Core
+(`/v1/memory/brain/search`, `/v1/memory/brain/notes/{id}`, `POST /v1/memory/candidates`,
+`/v1/memory/brain/knowledge/search`, `/v1/memory/brain/knowledge/{kind}/{id}`). Rules live in Core
+(`jarvis/core/memory_tools.py`, `BrainMemoryTools`), never in this process:
+
+- **Budget**: at most 3 tool calls per Brain turn (any of the five); the counter resets when `MemoryTurnContext` starts a user
+  turn. The 4th answers HTTP 429 `memory_tool_budget_exceeded`; every success carries `calls_left`.
+- **Scope**: reads are narrowed by the Brain policy (`memory_scope_denied` 403, text never in the refusal); superseded notes are
+  never offered by `memory_search`; knowledge is limited to the Brain loadout (ids not in it: `memory_scope_denied`).
+- **`memory_propose` only creates a candidate** (`_candidates/`, state `proposed`, confidence capped at 0.6, source
+  `brain:memory_propose`), validated by the consolidation schema (`validate_proposal`: no protected class, no state, no id).
+  The same proposal is the same candidate (`already_proposed`). A human accepts it in the Memory Center. No tool creates,
+  revises or supersedes a note.
+- **Core down**: coded tool error (`control_center_unreachable`, `core_unreachable`, `core_timeout`, `memory_unavailable`).
+- Diagnostics (`core.memory.tool_called`, `memory.tool`) carry the tool, counts and codes, never the query or the text.
+
+Tests: `tests/unit/test_memory_mcp.py`.
+
+### 10.17 Jarvis-remotion-presentation-integration, Slice 21 - `jarvis-remotion` (Remotion capability for the brain)
+
+A **separate** server (category `presentation`, `condition = scene.enabled`, no `ui_surface`) so the `jarvis-presentation` budget (17 100 B, twelve tools) is untouched.
+Six tools, `output.format = untyped`: `remotion_status` (read: `capability` with the default engine read-only, `studio`, `exports`, `export`), `remotion_setup`
+(`install` / `repair`), `remotion_studio` (read class: returns a pointer to the Control Center card, never opens), `remotion_export` (`start` / `cancel`),
+`remotion_import` (`plan` / `execute`), `remotion_upgrades` (`notices` / `try`). Reference, guards and tests: [../remotion-runtime.md](../remotion-runtime.md) section 13.
+Parameter rules carried by `ToolMeta`: every write verb needs an addressed user turn (attested) and `user_request`; ids are read from state; no engine, actor,
+acknowledgement, licence acknowledgement, `authorised_boards` or `concurrency` parameter exists (the closed schemas are `additionalProperties: false`).
+Measured 5 178 B of model-visible context (budget `REMOTION_CONTEXT_BUDGET_BYTES` 5 400); the whole-surface budget `DECLARED_CONTEXT_BUDGET_BYTES` rose from 105 000 to 110 000
+for this server only (104 548 + 5 178 = 109 726, 274 B margin), a deliberate raise recorded in the handoff LOG. The server config is written by `ClaudeLocalAgent._remotion_mcp_args`
+next to `jarvis-presentation`'s and the brain prompt block is `BRAIN_REMOTION_PROMPT` (program step `backend.claude.conversation.remotion`, `studio` programs only).

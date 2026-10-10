@@ -45,6 +45,8 @@ _TREES = (Path("history"), Path("memory"))
 #: Contenu versionné du dépôt, pas une donnée locale : jamais repris.
 _VERSIONED = {Path("memory") / "Jarvis-V1.md"}
 ADOPTION_RECORD = "legacy-adoption.json"
+#: Témoin écrit dans un dossier mémoire après la reprise de l'ancien `./data/memory`.
+MEMORY_ADOPTION_RECORD = ".legacy-memory-adoption.json"
 #: Témoin écrit dans l'ancien `./data` après une reprise réussie.
 LEGACY_MARKER = "ADOPTED.json"
 
@@ -186,3 +188,41 @@ def adopt_legacy_data(target: Path, legacy: Path = LEGACY_DATA_ROOT) -> Adoption
                                           "note": "données reprises hors du dépôt, voir docs/local-data.md"},
                                          ensure_ascii=False, indent=2), encoding="utf-8")
     return report
+
+
+def adopt_legacy_memory(memory_dir: Path, legacy: Path = LEGACY_DATA_ROOT) -> int:
+    """Copier l'ancien `./data/memory` dans `memory_dir`, une seule fois ; renvoie le nombre de fichiers copiés.
+
+    Pour le chemin V1 (`RuntimeConfig.memory_dir`), qui n'ouvre pas Core et ne
+    passe donc pas par `adopt_legacy_data`. Même règles : copie seulement (la
+    source n'est ni modifiée ni supprimée, aucun témoin n'y est ajouté), un
+    fichier déjà présent n'est jamais écrasé, `Jarvis-V1.md` (contenu versionné)
+    et l'index dérivé `.jarvis/` sont ignorés, les liens symboliques aussi. Un
+    témoin dans `memory_dir` évite de rejouer la copie, sans quoi une note
+    supprimée ici reviendrait au démarrage suivant ; l'ancien dossier déjà repris
+    par `adopt_legacy_data` (`ADOPTED.json`) n'est pas repris une seconde fois.
+    """
+
+    memory_dir = Path(memory_dir).resolve()
+    source_root = Path(legacy).resolve() / "memory"
+    record = memory_dir / MEMORY_ADOPTION_RECORD
+    if source_root == memory_dir or not source_root.is_dir() or record.exists():
+        return 0
+    if (Path(legacy).resolve() / LEGACY_MARKER).exists():
+        return 0
+    copied = 0
+    for path in sorted(source_root.rglob("*")):
+        relative = path.relative_to(source_root)
+        if (Path("memory") / relative) in _VERSIONED or ".jarvis" in relative.parts or path.is_symlink():
+            continue
+        destination = memory_dir / relative
+        if path.is_dir():
+            destination.mkdir(parents=True, exist_ok=True)
+        elif not destination.exists():
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(path, destination)
+            copied += 1
+    if copied:
+        record.write_text(json.dumps({"adopted_at": datetime.now(timezone.utc).isoformat(), "source": str(source_root),
+                                      "files_copied": copied}, ensure_ascii=False, indent=2), encoding="utf-8")
+    return copied

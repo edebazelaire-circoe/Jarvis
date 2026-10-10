@@ -258,12 +258,13 @@ def test_open_reads_the_catalogue_and_a_prefab_published_meanwhile_appears_on_re
       const second=w.lib.visible().map(e=>[e.row.id,e.kind,e.parent&&e.parent.id]);
       await w.act(w.lib.setQuery('check'));
       out({first,second,lastList:w.server.calls.filter(c=>c.path.startsWith('/api/prefabs?')).map(c=>c.path),
-        detailReads:w.server.calls.filter(c=>c.path==='/api/prefabs/jarvis.checklist').length,
+        detailReads:w.server.calls.filter(c=>c.path.split('?')[0]==='/api/prefabs/jarvis.checklist').length,
         status:C.statusView(w.lib).tone,logs:w.logs.filter(l=>l.event==='prefabs.list_read').length});
     """)
     assert seen["first"] == [["jarvis.checklist", "base"]]
     assert seen["second"] == [["jarvis.checklist", "base", None], ["team.brain", "fork", "jarvis.checklist"]]
-    assert seen["lastList"] == ["/api/prefabs?limit=50", "/api/prefabs?limit=50", "/api/prefabs?query=check&limit=50"]
+    assert seen["lastList"] == ["/api/prefabs?limit=50&catalog=1", "/api/prefabs?limit=50&catalog=1",
+                              "/api/prefabs?query=check&limit=50&catalog=1"]
     # Une version publiée ne change jamais : sa provenance n'est relue que si ses versions changent.
     assert seen["detailReads"] == 1
     assert seen["status"] == "live" and seen["logs"] == 3
@@ -339,7 +340,7 @@ def test_a_stale_list_answer_never_overwrites_a_newer_search(tmp_path):
       const w=world();
       w.server.rows=[rowOf('jarvis.checklist',[1]),rowOf('jarvis.table',[1])];
       const real=w.server.fetch;let release;
-      w.server.fetch=async(path,o)=>{if(path==='/api/prefabs?limit=50')await new Promise(r=>{release=r});return real(path,o)};
+      w.server.fetch=async(path,o)=>{if(path==='/api/prefabs?limit=50&catalog=1')await new Promise(r=>{release=r});return real(path,o)};
       const client=C.createClient({fetchImpl:w.server.fetch,setTimer:()=>0,clearTimer:()=>{}});
       const lib=C.createLibrary({client});
       const slow=lib.open();await new Promise(r=>setImmediate(r));
@@ -555,7 +556,7 @@ def test_provenance_reads_are_four_at_a_time_and_reread_when_the_versions_change
       for(let i=0;i<10;i+=1){const id=`lab.p${i}`;server.rows.push(rowOf(id,[1]));server.details[id]=detailOf(id,[hist(1,'custom')])}
       let inflight=0,peak=0;const gates=[];
       const fetchImpl=async(p,o)=>{
-        if(/^\/api\/prefabs\/[^/?]+$/.test(p)){inflight+=1;peak=Math.max(peak,inflight);await new Promise(r=>gates.push(r));inflight-=1}
+        if(/^\/api\/prefabs\/[^/?]+(\?catalog=1)?$/.test(p)){inflight+=1;peak=Math.max(peak,inflight);await new Promise(r=>gates.push(r));inflight-=1}
         return server.fetch(p,o);
       };
       const lib=C.createLibrary({client:C.createClient({fetchImpl,setTimer:()=>0,clearTimer:()=>{}})});
@@ -568,7 +569,7 @@ def test_provenance_reads_are_four_at_a_time_and_reread_when_the_versions_change
       server.rows[0].versions=[1,2];server.rows[0].latest_version=2;
       server.details['lab.p0']=detailOf('lab.p0',[hist(1,'custom'),hist(2,'revision',{derived_from:{id:'lab.p0',version:1}})]);
       const again=lib.refresh();await settle();await drain();await again;await settle();
-      const reads=id=>server.calls.filter(c=>c.path===`/api/prefabs/${id}`).length;
+      const reads=id=>server.calls.filter(c=>c.path.split('?')[0]===`/api/prefabs/${id}`).length;
       out({firstWave,peak,kinds,p0:reads('lab.p0'),p1:reads('lab.p1'),
         badges:lib.visible().find(e=>e.row.id==='lab.p0').badges.map(b=>b.key)});
     """)
@@ -786,7 +787,7 @@ const page=mk('main','page',doc.body);const toasts=mk('div',null,doc.body);toast
 const openButton=mk('button','openPrefabs',page);
 const root=mk('section','prefabLibrary',doc.body);root.hidden=true;
 for(const [tag,id] of [['button','pfbClose'],['button','pfbRefresh'],['div','pfbStatus'],['strong','pfbStatusLabel'],['span','pfbStatusDetail'],
-  ['input','pfbSearch'],['select','pfbFamily'],['div','pfbKinds'],['p','pfbCount'],['ul','pfbList'],['div','pfbListState'],['div','pfbDetail'],['div','pfbAnnounce']])mk(tag,id,root);
+  ['input','pfbSearch'],['select','pfbFamily'],['select','pfbType'],['select','pfbEngine'],['select','pfbStack'],['div','pfbKinds'],['p','pfbCount'],['ul','pfbList'],['div','pfbListState'],['div','pfbDetail'],['div','pfbAnnounce']])mk(tag,id,root);
 require(LIB_PATH);
 const run=async()=>{for(let i=0;i<25;i+=1){await flush(3);rafq.splice(0).forEach(f=>f(0))}};
 const key=k=>doc.dispatch('keydown',{key:k,target:doc.activeElement||doc.body,stopPropagation(){}});
@@ -877,3 +878,58 @@ def test_long_words_wrap_headings_keep_their_case_and_names_are_distinct():
     assert prefab_relay.MAX_DEFINITION_BODY_BYTES == prefab_routes.MAX_DEFINITION_BODY_BYTES
     relay = (RUNTIME / "prefab_relay.py").read_text(encoding="utf-8")
     assert "from jarvis.protocol.prefab_routes import MAX_DEFINITION_BODY_BYTES" in relay
+
+
+# ------------------------------------------------------------------ Slice 17 : contrat sémantique du catalogue
+
+
+def test_semantic_filters_use_the_core_contract_and_never_guess(tmp_path):
+    seen = run_node(tmp_path, r"""
+      const cat=(type,slidecar,remotion,stack)=>({type,declared:true,stack,compatibility:{slidecar,remotion}});
+      const e=(id,catalog)=>({row:rowOf(id,[1],catalog?{catalog}:{}),kind:'custom'});
+      const all=[e('a.html',cat('component','native','unsupported',['html','css'])),
+        e('a.scene',cat('composition','adapter','native',['react','remotion'])),
+        e('a.page',cat('page','unsupported','native',['react'])),e('a.old',null)];
+      const ids=f=>C.filterEntries(all,f).map(x=>x.row.id);
+      out({type:ids({type:'composition'}),slidecar:ids({engine:'slidecar'}),remotion:ids({engine:'remotion'}),
+        stack:ids({stack:'react'}),both:ids({type:'page',engine:'remotion'}),none:ids({}),
+        stacks:C.stacksOf(all),
+        support:[C.supportOf(all[0].row.catalog,'remotion'),C.supportOf(all[1].row.catalog,'slidecar'),C.supportOf(null,'slidecar'),
+          C.supportOf({compatibility:{slidecar:'bogus'}},'slidecar'),C.supportOf({type:'x',compatibility:{}},'remotion')],
+        labels:C.SEMANTIC_TYPES.map(t=>t.key),engines:C.ENGINES.map(x=>x.key),
+        catalogOf:[C.catalogOf({}),C.catalogOf({catalog:'x'}),C.catalogOf(all[0].row)===all[0].row.catalog]});
+    """)
+    assert seen["type"] == ["a.scene"] and seen["slidecar"] == ["a.html", "a.scene"]  # adapter counts as compatible
+    assert seen["remotion"] == ["a.scene", "a.page"] and seen["stack"] == ["a.scene", "a.page"]
+    assert seen["both"] == ["a.page"] and seen["none"] == ["a.html", "a.scene", "a.page", "a.old"]
+    assert seen["stacks"] == ["css", "html", "react", "remotion"]
+    assert seen["support"] == ["unsupported", "adapter", "unsupported", "unsupported", "unsupported"]
+    assert seen["labels"] == ["component", "composition", "page", "presentation", "asset"]
+    assert seen["engines"] == ["slidecar", "remotion"] and seen["catalogOf"] == [None, None, True]
+
+
+def test_the_library_asks_core_for_the_contract_and_sets_filters_from_a_closed_vocabulary(tmp_path):
+    seen = run_node(tmp_path, r"""
+      const w=world();
+      const c=(type,remotion)=>({type,declared:true,stack:['html'],compatibility:{slidecar:'native',remotion}});
+      w.server.rows=[rowOf('lab.a',[1],{catalog:c('component','unsupported')}),rowOf('lab.b',[1],{catalog:c('page','native')})];
+      w.server.details['lab.a']=detailOf('lab.a',[hist(1,'custom')]);w.server.details['lab.b']=detailOf('lab.b',[hist(1,'custom')]);
+      await w.act(w.lib.open());
+      w.lib.setType('page');const page=w.lib.visible().map(e=>e.row.id);
+      w.lib.setType('bogus');const reset=w.S.type;
+      w.lib.setEngine('remotion');const rem=w.lib.visible().map(e=>e.row.id);
+      w.lib.setEngine('bogus');const engineReset=w.S.engine;
+      w.lib.setStack('html');w.lib.clearSemanticFilters();
+      out({page,reset,rem,engineReset,cleared:[w.S.type,w.S.engine,w.S.stack],
+        paths:w.server.calls.map(x=>x.path),stacks:w.lib.stacks(),
+        allowed:C.allowed('GET',C.PATHS.version('lab.a',1,true))});
+    """)
+    assert seen["page"] == ["lab.b"] and seen["reset"] == "" and seen["rem"] == ["lab.b"] and seen["engineReset"] == ""
+    assert seen["cleared"] == ["", "", ""] and seen["stacks"] == ["html"] and seen["allowed"] is True
+    assert seen["paths"][0] == "/api/prefabs?limit=50&catalog=1"
+    assert all(path.endswith("catalog=1") for path in seen["paths"])
+
+
+def test_the_disabled_place_and_fork_buttons_are_described_by_their_hint():
+    source = MODULE.read_text(encoding="utf-8")
+    assert source.count("'aria-describedby':'pfbActHint'") == 2 and "id:'pfbActHint'" in source

@@ -41,7 +41,9 @@ const JarvisWorkspaceCore=(function(){
   /* Échéances client. Le relais attend Core 30 s pour la mémoire et
      l'inspection d'un Board, 10 s pour le reste (`docs/boards.md`) : le client
      attend un peu plus, pour que ce soit la réponse du relais qui parle. */
-  const DEADLINE_MS=Object.freeze({read:15000,memory:35000});
+  const DEADLINE_MS=Object.freeze({read:15000,memory:35000,render:65000});
+  const EXPORT_POLL_MS=1000;
+  const PRES_PAGE=50;
   const PAGE=20,ACTIVITY_PAGE=50,ARTIFACT_TEXT=2000,READ_BYTES=65536;
   const TREE=Object.freeze({depth:8,max_entries:500});
 
@@ -63,7 +65,17 @@ const JarvisWorkspaceCore=(function(){
   const ARTIFACT_KINDS=Object.freeze({
     audio_recording:'Enregistrement audio',transcript_segment:'Segment de transcription',transcript:'Transcription',
     screenshot:'Capture d’écran',screen_recording:'Enregistrement d’écran',description:'Description',derived:'Dérivé',
+    presentation_snapshot:'Présentation figée',presentation_video:'Présentation (vidéo)',presentation_still:'Présentation (image)',
+    presentation_pdf:'Présentation (PDF)',
   });
+  /* Présentations (Remotion Slice 08, `docs/presentation-artifacts.md`) : moteur de la source et format d'un rendu. */
+  const ENGINES=Object.freeze({slidecar:'Slidecar (HTML)',remotion:'Remotion'});
+  const RENDER_FORMATS=Object.freeze({mp4:'MP4',still:'Image',pdf:'PDF'});
+  /* Export (Slice 16) : phases du rendu, dites en français ; une phase inconnue s'affiche telle quelle. */
+  const EXPORT_PHASES=Object.freeze({queued:'En file d’attente',preparing:'Préparation de la source gelée',bundling:'Empaquetage de la scène',
+    opening_browser:'Ouverture du navigateur de rendu',selecting_composition:'Lecture de la composition',rendering:'Rendu des images',
+    encoding:'Encodage',verifying:'Vérification du fichier',storing:'Enregistrement de l’Artefact',complete:'Terminé',failed:'Échoué',cancelled:'Annulé'});
+  const EXPORT_FORMATS=Object.freeze([['mp4','MP4 (vidéo)'],['still','Image (PNG)'],['pdf','PDF (pages-images, non éditable)']]);
   const LINK_ORIGINS=Object.freeze({active_board:'Board actif à la création',explicit:'Lien explicite'});
   /* Valeurs brutes traduites ; la valeur brute reste dans l'infobulle
      (`title`) pour l'ingénieur. `docs/artifacts.md` › États, Provenance. */
@@ -74,9 +86,9 @@ const JarvisWorkspaceCore=(function(){
   /* Provenance, dans les deux sens. `origins` : CET artefact <relation>
      l'origine ; `dependents` : l'autre artefact <relation> celui-ci. */
   const RELATIONS_FROM=Object.freeze({transcribed_from:'transcrit de',segment_of:'segment de',frame_from:'image extraite de',
-    described_from:'décrit d’après',derived_from:'dérivé de'});
+    described_from:'décrit d’après',derived_from:'dérivé de',rendered_from:'rendu de'});
   const RELATIONS_TO=Object.freeze({transcribed_from:'a été transcrit en',segment_of:'contient le segment',frame_from:'a fourni l’image',
-    described_from:'a été décrit par',derived_from:'a produit'});
+    described_from:'a été décrit par',derived_from:'a produit',rendered_from:'a été rendu en'});
 
   const ERRORS=Object.freeze({
     board_not_found:{title:'Board introuvable',hint:'Il a peut-être été supprimé du stockage : actualisez la liste des Boards.'},
@@ -190,6 +202,12 @@ const JarvisWorkspaceCore=(function(){
     artifacts:(scope,filters,cursor)=>`/api/workspace/artifacts${query({...scope,...filters,limit:PAGE,cursor})}`,
     artifact:id=>`/api/artifacts/${seg(id)}${query({text_chars:ARTIFACT_TEXT})}`,
     artifactRelations:id=>`/api/workspace/artifacts/${seg(id)}/relations`,
+    boardPresentations:id=>`/api/workspace/boards/${seg(id)}/presentation-sources`,
+    /* Export (Remotion Slice 16, `docs/remotion-render.md`) : le rendu est un travail de Core, relayé tel quel. */
+    renderCreate:()=>'/api/local-capabilities/remotion/render/jobs',
+    renderList:()=>'/api/local-capabilities/remotion/render/jobs',
+    renderJob:id=>`/api/local-capabilities/remotion/render/jobs/${seg(id)}`,
+    renderCancel:id=>`/api/local-capabilities/remotion/render/jobs/${seg(id)}/cancel`,
   });
   const MUTATIONS=new Set(['write','mkdir','move','delete']);
 
@@ -202,9 +220,15 @@ const JarvisWorkspaceCore=(function(){
     const bare=path.split('?')[0];
     const segments=bare.split('/').slice(1);
     if(segments.some(s=>{let plain;try{plain=decodeURIComponent(s)}catch(_){return true}return plain===''||plain==='.'||plain==='..'}))return false;
-    if(method==='POST')return segments.length===6&&segments[0]==='api'&&segments[1]==='workspace'&&segments[2]==='boards'
-      &&segments[4]==='memory'&&MUTATIONS.has(segments[5])&&!path.includes('?');
+    const render=segments[0]==='api'&&segments[1]==='local-capabilities'&&segments[2]==='remotion'&&segments[3]==='render'&&segments[4]==='jobs'
+      &&!path.includes('?');
+    if(method==='POST'){
+      if(render)return segments.length===5||(segments.length===7&&segments[6]==='cancel');
+      return segments.length===6&&segments[0]==='api'&&segments[1]==='workspace'&&segments[2]==='boards'
+        &&segments[4]==='memory'&&MUTATIONS.has(segments[5])&&!path.includes('?');
+    }
     if(method!=='GET')return false;
+    if(render)return segments.length===5||segments.length===6;
     if(bare==='/api/boards'||bare==='/api/sessions/current')return true;
     if(bare.startsWith('/api/workspace/'))return true;
     return segments.length===3&&segments[0]==='api'&&segments[1]==='artifacts';
@@ -214,7 +238,7 @@ const JarvisWorkspaceCore=(function(){
   function createClient({fetchImpl,setTimer=setTimeout,clearTimer=clearTimeout}={}){
     async function call(method,path,body){
       if(!allowed(method,path))throw apiError('forbidden_route',0,`adresse refusée par la page : ${method} ${path}`);
-      const deadlineMs=isMemoryPath(path)?DEADLINE_MS.memory:DEADLINE_MS.read;
+      const deadlineMs=/\/render\/jobs$/.test(path)?DEADLINE_MS.render:isMemoryPath(path)?DEADLINE_MS.memory:DEADLINE_MS.read;
       const controller=typeof AbortController==='function'?new AbortController():null;
       let timedOut=false;
       const timer=setTimer(()=>{timedOut=true;if(controller)controller.abort()},deadlineMs);
@@ -286,7 +310,8 @@ const JarvisWorkspaceCore=(function(){
       relations:{scope:'session',id:null,data:slot(),artifacts:pager()},
       memory:{boardId:null,tree:slot(),file:{path:null,...slot()},search:{q:'',path:'',...slot()},
         form:null,confirm:null,formGen:0,archived:false},
-      artifacts:{scope:'board',id:null,session:null,context:null,kind:'',since:'',until:'',list:pager(),detail:{id:null,...slot()}},
+      artifacts:{scope:'board',id:null,session:null,context:null,kind:'',since:'',until:'',list:pager(),detail:{id:null,...slot()},presentations:slot(),presShown:PRES_PAGE},
+      exports:{},
     };
   }
 
@@ -313,7 +338,8 @@ const JarvisWorkspaceCore=(function(){
      Toutes les actions, sans DOM. `onChange` re-rend ; `log(level, event, data)`
      écrit la ligne de console ; `switchBoard(id, title)` est la bascule du
      contrôle Boards (rend `{ok, message}`). */
-  function createManager({client,now=()=>Date.now(),log=()=>{},onChange=()=>{},switchBoard=null}={}){
+  function createManager({client,now=()=>Date.now(),log=()=>{},onChange=()=>{},switchBoard=null,openStudioSource=null,
+    setTimer=setTimeout}={}){
     const S=initialState();
     const changed=()=>onChange(S);
 
@@ -580,8 +606,32 @@ const JarvisWorkspaceCore=(function(){
       }
       const scope=artifactScope();
       a.detail={id:null,...slot()};
-      if(!scope){a.list=pager();changed();return}
-      await artifactsPage(false);
+      if(!scope){a.list=pager();a.presentations=slot();changed();return}
+      /* Les présentations se relisent à chaque choix de Board : rien n'est gardé dans la page d'une lecture à l'autre. */
+      await Promise.all([artifactsPage(false),presentationsRead()]);
+    }
+    function presentationsRead(){
+      const a=S.artifacts;
+      if(a.scope!=='board'||!a.id){a.presentations=slot();a.presShown=PRES_PAGE;changed();return Promise.resolve(null)}
+      /* Un autre Board : les groupes du précédent disparaissent AVANT la lecture (jamais ses boutons sous un autre titre). */
+      if(a.presentations.key!==a.id){a.presentations=slot();a.presShown=PRES_PAGE}
+      return load(a.presentations,a.id,()=>client.get(PATHS.boardPresentations(a.id)),{event:'presentations_read'}).then(data=>{if(data)restoreExports();return data});
+    }
+    /* « Ouvrir la source » : le Studio possède la présentation ; la page ne fait que demander son ouverture par identifiant. */
+    async function openSource(d){
+      const id=d.presentation;
+      if(!id)return;
+      let refusal=null;
+      if(!openStudioSource)refusal='Le Studio de présentation n’est pas disponible dans cette page.';
+      else{
+        try{
+          const outcome=await openStudioSource(id,d.variant||null);
+          if(outcome&&outcome.state==='refused')refusal=outcome.reason||outcome.code||'ouverture refusée';
+        }catch(error){refusal=(error&&error.message)||'erreur inattendue à l’ouverture du Studio'}
+      }
+      log(refusal?'warn':'info','workspace.source_open',{presentation_id:id,variant_id:d.variant||null,refused:!!refusal});
+      S.notice=refusal?{tone:'bad',text:`La source n’a pas pu être ouverte : ${refusal}`}:null;
+      changed();
     }
     function artifactsPage(more){
       const scope=artifactScope();
@@ -674,6 +724,7 @@ const JarvisWorkspaceCore=(function(){
           const id=activeBoardId(S);
           if(id)artifactsFilter({scope:'board',id});
         }else if(a.list.status==='idle'&&artifactScope())artifactsPage(false);
+        if(a.scope==='board'&&a.id&&a.presentations.status==='idle')presentationsRead();
         if(a.detail.id&&a.detail.status==='idle')readArtifact();
       }
     }
@@ -687,6 +738,90 @@ const JarvisWorkspaceCore=(function(){
       log('info','workspace.opened',{view:S.view});
       S.overview.status='idle';S.boards.status='idle';
       changed();ensureView();
+      for(const [snap,x] of Object.entries(S.exports))if(x.status==='running')exportPoll(snap);
+    }
+    /* ---- Export d'une copie figée (Remotion Slice 16) : demander, suivre (état, phase, images, secondes), annuler. ---- */
+    const exportTerminal=job=>['complete','failed','cancelled'].includes(job&&job.state);
+    function exportFailed(x,error,event){
+      x.status='error';x.error=error;changed();
+      log('warn',`workspace.${event}`,{snapshot:x.snapshot,code:error&&error.code,status:error&&error.status,message:error&&error.message});
+    }
+    /* Les exports en cours vivent dans Core, pas dans cette page : à chaque lecture des présentations d'un Board, les travaux non terminés sont lus
+       de Core et leur suivi reprend (page rechargée, panneau fermé puis rouvert, export lancé par une autre fenêtre ou par PowerShell). */
+    async function restoreExports(){
+      try{
+        const body=await client.get(PATHS.renderList());
+        for(const job of list(body.jobs)){
+          const snap=job&&job.snapshot_id;
+          if(!snap||exportTerminal(job)||S.exports[snap])continue;
+          S.exports[snap]={snapshot:snap,format:job.format,status:'running',started:now()-Math.round((Number(job.elapsed_s)||0)*1000),job,error:null,gen:1};
+          log('info','workspace.export_restored',{snapshot:snap,job:job.job_id,state:job.state});
+          changed();
+          exportPoll(snap);
+        }
+      }catch(error){
+        log('warn','workspace.export_restore_failed',{code:error&&error.code,status:error&&error.status,message:error&&error.message});
+      }
+    }
+    async function exportStart(d){
+      const snap=String(d.snapshot||''),format=String(d.format||'');
+      const known=S.exports[snap];
+      if(!snap||(known&&(known.status==='starting'||known.status==='running')))return null;
+      const x=S.exports[snap]={snapshot:snap,format,status:'starting',started:now(),job:null,error:null,gen:((known&&known.gen)||0)+1};
+      changed();
+      try{
+        const answer=await client.post(PATHS.renderCreate(),{snapshot_id:snap,format});
+        x.job=answer.body.job;x.status=exportTerminal(x.job)?'done':'running';x.started=now();
+        log('info','workspace.export_started',{snapshot:snap,format,job:x.job&&x.job.job_id,artifact:x.job&&x.job.artifact_id});
+      }catch(error){exportFailed(x,error,'export_failed');return null}
+      changed();
+      return x.status==='running'?exportPoll(snap):exportDone(x);
+    }
+    async function exportPoll(snap){
+      const x=S.exports[snap];
+      if(!x||x.polling||x.status!=='running')return null;
+      x.polling=true;
+      try{
+        while(S.open&&S.exports[snap]===x&&x.status==='running'){
+          await new Promise(resolve=>setTimer(resolve,EXPORT_POLL_MS));
+          if(!S.open||S.exports[snap]!==x)break;
+          try{
+            x.job=await client.get(PATHS.renderJob(x.job.job_id)).then(b=>b.job);
+            x.pollErrors=0;
+          }catch(error){
+            /* Une lecture ratée ne dit rien du rendu : on le dit et on réessaie, trois fois, puis l'erreur reste affichée. */
+            x.pollErrors=(x.pollErrors||0)+1;x.pollError=error;
+            log('warn','workspace.export_poll_failed',{snapshot:snap,code:error&&error.code,message:error&&error.message,count:x.pollErrors});
+            if(x.pollErrors>=3){exportFailed(x,error,'export_lost');break}
+          }
+          if(exportTerminal(x.job)){x.status='done';await exportDone(x);break}
+          changed();
+        }
+      }finally{x.polling=false;changed()}
+      return null;
+    }
+    async function exportDone(x){
+      log(x.job.state==='complete'?'info':'warn','workspace.export_finished',{snapshot:x.snapshot,job:x.job.job_id,state:x.job.state,code:x.job.error_code||null});
+      changed();
+      if(S.artifacts.scope==='board'&&S.artifacts.id)await presentationsRead();  /* la liste des rendus est relue du serveur */
+      return null;
+    }
+    async function exportCancel(d){
+      const x=S.exports[String(d.snapshot||'')];
+      if(!x||x.status!=='running'||x.cancelling)return null;
+      x.cancelling=true;changed();
+      try{
+        const answer=await client.post(PATHS.renderCancel(x.job.job_id));
+        x.job=answer.body.job;
+        if(exportTerminal(x.job)){x.status='done';x.cancelling=false;await exportDone(x)}
+      }catch(error){x.cancelling=false;exportFailed(x,error,'export_cancel_failed')}
+      changed();
+      return null;
+    }
+    function exportDismiss(d){
+      const x=S.exports[String(d.snapshot||'')];
+      if(x&&x.status!=='starting'&&x.status!=='running'){delete S.exports[x.snapshot];changed()}
+      return null;
     }
     /* « Actualiser » : TOUT ce qui a été lu est marqué à relire ; la vue
        montrée est relue tout de suite, chacune de ses parties (liste, détail
@@ -696,7 +831,7 @@ const JarvisWorkspaceCore=(function(){
     function refresh(){
       const m=S.memory,a=S.artifacts;
       const slots=[S.boards,S.overview,S.sessions,S.session.detail,S.session.activity,S.board.detail,S.relations.data,
-        S.relations.artifacts,m.tree,m.file,m.search,a.list,a.detail];
+        S.relations.artifacts,m.tree,m.file,m.search,a.list,a.detail,a.presentations];
       for(const target of slots)if(target.status!=='loading')target.status='idle';
       S.sessionCache={};
       S.notice=S.view==='memory'&&m.form?{tone:'warn',text:m.form.kind==='replace'
@@ -718,6 +853,7 @@ const JarvisWorkspaceCore=(function(){
       if(slotName==='search')return search(S.memory.search.q,S.memory.search.path);
       if(slotName==='artifacts')return artifactsPage(S.artifacts.list.items.length>0);
       if(slotName==='artifact')return readArtifact();
+      if(slotName==='presentations')return presentationsRead();
       return null;
     }
     function goto(view,args){
@@ -767,6 +903,11 @@ const JarvisWorkspaceCore=(function(){
         case 'artifacts-more':return artifactsPage(true);
         case 'artifact-toggle':return openArtifact(d.id);
         case 'artifact-show':return S.view==='artifacts'?openArtifact(d.id,{toggle:false}):showArtifact(d.id);
+        case 'source-open':return openSource(d);
+        case 'presentations-more':S.artifacts.presShown+=PRES_PAGE;changed();return null;
+        case 'export-start':return exportStart(d);
+        case 'export-cancel':return exportCancel(d);
+        case 'export-dismiss':return exportDismiss(d);
         case 'artifact-close':S.artifacts.detail={id:null,...slot()};changed();return null;
         case 'switch':return switchTo(d.board);
         case 'notice-close':S.notice=null;changed();return null;
@@ -775,8 +916,8 @@ const JarvisWorkspaceCore=(function(){
     }
     function waiting(){
       const slots=[S.boards,S.overview,S.sessions,S.session.detail,S.session.activity,S.board.detail,S.relations.data,
-        S.relations.artifacts,S.memory.tree,S.memory.file,S.memory.search,S.artifacts.list,S.artifacts.detail];
-      return !!(S.busy||S.switching||slots.some(s=>s.status==='loading'));
+        S.relations.artifacts,S.memory.tree,S.memory.file,S.memory.search,S.artifacts.list,S.artifacts.detail,S.artifacts.presentations];
+      return !!(S.busy||S.switching||slots.some(s=>s.status==='loading')||Object.values(S.exports).some(x=>x.status==='starting'||x.status==='running'));
     }
     return {state:S,act,open,close:()=>{S.open=false;log('info','workspace.closed',{})},cancel,waiting,ensureView};
   }
@@ -794,7 +935,7 @@ const JarvisWorkspaceCore=(function(){
   function ownSlots(S){
     const by={overview:[S.overview],sessions:[S.sessions,S.session.detail,S.session.activity],boards:[S.boards,S.board.detail],
       relations:[S.relations.data,S.relations.artifacts],memory:[S.memory.tree,S.memory.file,S.memory.search],
-      artifacts:[S.artifacts.list,S.artifacts.detail]};
+      artifacts:[S.artifacts.list,S.artifacts.detail,S.artifacts.presentations]};
     return by[S.view]||[];
   }
   /* La liste des Boards sert partout (titres, sélecteurs) : son attente et
@@ -1190,6 +1331,120 @@ const JarvisWorkspaceCore=(function(){
         +`<section class="wsp-sect"><h4>Boards liés</h4>${boards?`<ul class="wsp-plain">${boards}</ul>`:'<p class="wsp-none">Lié à aucun Board (artefact d’avant les liens, ou capturé sans Board actif).</p>'}</section></div>`;
     });
   }
+  /* Présentations d'un Board (Remotion Slice 08, `docs/presentation-artifacts.md`) : « source -> copie figée -> rendus »,
+     lu du serveur à chaque choix de Board (rien n'est gardé ici). Une source n'est jamais un artefact : elle s'ouvre
+     dans le Studio par son identifiant ; ce que le Board porte, ce sont les copies figées et leurs rendus. */
+  function engineChip(engine){
+    return chip(ENGINES[engine]||String(engine||'moteur inconnu'),ENGINES[engine]?'':'warn',`moteur : ${engine||'(vide)'}`);
+  }
+  function freshnessChip(snapshot,source){
+    if(source&&source.exists===false)return chip('Source supprimée','bad','La copie figée reste lisible ; sa source n’existe plus.');
+    if(source&&source.exists===null)return chip('Source illisible','warn',`Core n’a pas pu lire la source (${source.unreadable||'raison inconnue'}).`);
+    if(snapshot.stale===true)return chip('Source modifiée depuis','warn','La source a changé après cette copie. La copie reste valide telle quelle.');
+    if(snapshot.stale===false)return chip('À jour','on','Révisions de la copie = révisions vivantes de la source.');
+    return chip('Fraîcheur inconnue','warn');
+  }
+  /* Aperçu d'un rendu complet (Slice 16) : l'octet vient de Core par `/api/artifacts/{id}/payload` ; rien n'est lu avant le geste
+     (`preload="none"`), une image se charge paresseusement. Un PDF s'ouvre dans un onglet : on ne l'intègre pas. */
+  function previewHtml(render){
+    if(render.state!=='complete')return '';
+    const url=`/api/artifacts/${seg(render.artifact_id)}/payload`;
+    if(render.kind==='presentation_still')
+      return `<img class="wsp-thumb" loading="lazy" src="${esc(url)}" alt="Aperçu de l’image rendue" width="${esc(Math.min(Number(render.width)||320,320))}">`;
+    if(render.kind==='presentation_video')
+      return `<video class="wsp-thumb" controls preload="none" src="${esc(url)}" aria-label="Aperçu de la vidéo rendue" width="320"></video>`;
+    if(render.kind==='presentation_pdf')return `<a class="wsp-link" href="${esc(url)}" target="_blank" rel="noopener">Ouvrir le PDF</a>`;
+    return '';
+  }
+  function renderFactsHtml(render){
+    const bits=[];
+    if(render.width&&render.height)bits.push(`${render.width}×${render.height}`);
+    if(render.duration_ms!=null)bits.push(`${(render.duration_ms/1000).toFixed(1)} s`);
+    if(render.scene_id)bits.push(`scène ${render.scene_id}`);
+    return bits.length?` <span class="wsp-sub" title="Réglages enregistrés avec le rendu (empreinte ${esc(render.settings_sha256||'—')})">${esc(bits.join(' · '))}</span>`:'';
+  }
+  function renderRowHtml(render,boardId){
+    const here=list(render.board_ids).includes(boardId);
+    return `<li><span class="wsp-node">Rendu</span> ${chip(RENDER_FORMATS[render.format]||artifactKindLabel(render.kind),'',`kind : ${render.kind}`)}`
+      +`${render.state&&render.state!=='complete'?stateChip(render.state):''}${here?'':chip('Non lié à ce Board','warn','Ce rendu n’est lié qu’à d’autres Boards.')}`
+      +`<button type="button" class="wsp-link" data-act="artifact-show" data-id="${esc(render.artifact_id)}" title="Ouvrir le détail et la provenance">${esc(render.artifact_id)}</button>`
+      +`${render.size_bytes!=null?` <span class="wsp-sub">${esc(formatBytes(render.size_bytes))}</span>`:''}${renderFactsHtml(render)}`
+      +`${render.error_code&&render.state!=='complete'?` <span class="wsp-sub">${esc(render.error_code)}</span>`:''}`
+      +`${render.flat?' <span class="wsp-sub">export à plat : non éditable, l’origine éditable est la source ci-dessus</span>':''}${previewHtml(render)}</li>`;
+  }
+  /* Export (Slice 16) : ce qui attend se voit (phase, images, secondes écoulées, délai) et se quitte (Annuler). */
+  function exportHtml(snap,source,exports){
+    if(snap.state!=='complete')return '';
+    if(snap.engine!=='remotion')return '<p class="wsp-sub">Export indisponible : seule une copie Remotion se rend (Slidecar n’exporte pas).</p>';
+    const x=exports&&exports[snap.artifact_id];
+    const id=esc(snap.artifact_id);
+    if(x&&(x.status==='starting'||x.status==='running')){
+      const job=x.job||{};
+      const phase=x.status==='starting'?'Demande d’export envoyée à Core…':(EXPORT_PHASES[job.phase]||job.phase||'…');
+      const frames=job.frames_total?` · ${job.frames_done||0}/${job.frames_total} images (${job.percent||0} %)`:'';
+      const queue=job.queue_position?` · ${job.queue_position}e en file`:'';
+      const limit=job.timeout_s?` · délai ${Math.round(job.timeout_s/60)} min au plus`:'';
+      const stop=x.status==='running'?(x.cancelling?'<span class="wsp-sub">Annulation…</span>':btn('export-cancel',{snapshot:snap.artifact_id},'Annuler l’export')):'';
+      const lost=x.pollErrors?`<span class="wsp-warn"> · lecture de l’état en échec (${x.pollErrors}/3) : ${esc((x.pollError&&x.pollError.message)||'')}</span>`:'';
+      return `<div class="wsp-export" role="status" aria-live="polite"><span class="wsp-spin" aria-hidden="true"></span>`
+        +`Export ${esc((RENDER_FORMATS[x.format]||x.format))} en cours — ${esc(phase)}${esc(frames)}${esc(queue)} ${clockHtml(x.started)}${esc(limit)}${lost} ${stop}</div>`;
+    }
+    let outcome='';
+    if(x&&x.status==='error')outcome=errorHtml(x.error,{lead:'Export impossible : '})+btn('export-dismiss',{snapshot:snap.artifact_id},'Fermer');
+    else if(x&&x.job&&x.job.state==='complete')
+      outcome=`<div class="notice ok" role="status">Export terminé : ${code(x.job.artifact_id)}${x.job.deduplicated?' — rendu identique déjà existant, rien n’a été refait':''} ${btn('export-dismiss',{snapshot:snap.artifact_id},'Fermer')}</div>`;
+    else if(x&&x.job)
+      outcome=`<div class="notice bad" role="alert"><strong>${x.job.state==='cancelled'?'Export annulé':'Export échoué'}</strong> <code>${esc(x.job.error_code||'')}</code> `
+        +`${esc(x.job.error_detail||'')} ${btn('export-dismiss',{snapshot:snap.artifact_id},'Fermer')}</div>`;
+    const options=EXPORT_FORMATS.map(([value,label])=>`<option value="${esc(value)}">${esc(label)}</option>`).join('');
+    return `<form class="wsp-bar wsp-form-inline wsp-export-form" data-form="export-start"><input type="hidden" name="snapshot" value="${id}">`
+      +`<label class="wsp-field"><span>Exporter cette copie</span><select name="format" aria-label="Format d’export">${options}</select></label>`
+      +`<button type="submit" class="action small" title="Rend la copie figée (jamais la source vivante) : un MP4, une image ou un PDF devient un Artefact relié à cette copie.">Exporter</button></form>${outcome}`;
+  }
+  /* Un bouton « Ouvrir » désactivé dit POURQUOI, en texte visible relié par aria-describedby (pas seulement en infobulle). */
+  function openButtonHtml(attrs,label,source,key){
+    if(source&&source.exists)return btn('source-open',attrs,label,{title:'Ouvre dans le Studio (version actuelle de la source)'});
+    const why=source&&source.exists===null?'Source illisible : impossible de l’ouvrir.':'Source supprimée : rien à ouvrir.';
+    const id=`wspWhy-${String(key).replace(/[^A-Za-z0-9_-]/g,'')}`;
+    return btn('source-open',attrs,label,{disabled:true,title:why}).replace('<button ',`<button aria-describedby="${esc(id)}" `)
+      +`<span class="wsp-sub" id="${esc(id)}">${esc(why)}</span>`;
+  }
+  function snapshotRowHtml(snap,source,boardId,presentationId,exports){
+    const renders=list(snap.renders).map(r=>renderRowHtml(r,boardId)).join('');
+    const failed=snap.state==='failed'||snap.state==='partial';
+    return `<li><span class="wsp-node">Copie figée</span> ${stateChip(snap.state)}${engineChip(snap.engine)}${freshnessChip(snap,source)}`
+      +`${snap.linked_here?'':chip('Lié par un rendu seulement','warn','Ce Board montre un rendu de cette copie, pas la copie elle-même.')}`
+      +`<span class="wsp-sub">variante ${esc(snap.variant_id)} · révision ${esc(snap.source_presentation_revision)}/${esc(snap.source_variant_revision)} · ${esc(formatWhen(snap.created_at))}`
+      +`${failed&&snap.error_code?` · ${esc(snap.error_code)}`:''}</span> `
+      +`<button type="button" class="wsp-link" data-act="artifact-show" data-id="${esc(snap.artifact_id)}" title="Ouvrir le détail et la provenance">${esc(snap.artifact_id)}</button> `
+      +`${openButtonHtml({presentation:presentationId,variant:snap.variant_id},'Ouvrir la variante',source,snap.artifact_id)}`
+      +`${exportHtml(snap,source,exports)}<ul class="wsp-tree">${renders||'<li class="wsp-none">Aucun rendu.</li>'}</ul></li>`;
+  }
+  function presentationsHtml(S){
+    const a=S.artifacts;
+    if(a.scope!=='board'||!a.id)return '';
+    return slotHtml(a.presentations,{label:`Lecture des présentations de « ${titleOf(S,a.id)} »…`,retry:'presentations'},d=>{
+      const sources=list(d.sources),unreadable=list(d.unreadable);
+      const shown=Math.max(PRES_PAGE,Number(a.presShown)||PRES_PAGE);
+      const groups=sources.slice(0,shown).map(src=>{
+        const live=src.source||{};
+        const others=[...new Set(list(src.snapshots).flatMap(x=>[...list(x.board_ids)]))].filter(id=>id!==d.board_id);
+        const title=live.exists?esc(live.title||'Sans titre'):live.exists===false?'<span class="wsp-bad">Source supprimée</span>':'<span class="wsp-warn">Source illisible</span>';
+        return `<div class="wsp-psrc"><div class="wsp-line"><span class="wsp-node">Source</span><span class="wsp-label">${title}</span>`
+          +`${live.exists?engineChip(live.engine)+chip(`révision ${live.revision}`,''):''}`
+          +`${openButtonHtml({presentation:src.presentation_id},'Ouvrir la source',live,src.presentation_id)}</div>`
+          +`<span class="wsp-sub">${esc(src.source_ref)}</span>`
+          +(others.length?`<p class="wsp-sub">Aussi sur : ${others.map(id=>`<button type="button" class="wsp-link" data-act="goto" data-view="artifacts" data-scope="board" data-id="${esc(id)}">${esc(titleOf(S,id))}</button>`).join(' · ')}</p>`:'')
+          +`<ul class="wsp-tree">${list(src.snapshots).map(x=>snapshotRowHtml(x,live,d.board_id,src.presentation_id,S.exports)).join('')||'<li class="wsp-none">Aucune copie figée lisible.</li>'}</ul></div>`;
+      }).join('');
+      const bad=unreadable.length?`<p class="wsp-warn">${plural(unreadable.length,'artefact de présentation illisible','artefacts de présentation illisibles')} (provenance absente ou incohérente) : `
+        +`${unreadable.map(u=>`<button type="button" class="wsp-link" data-act="artifact-show" data-id="${esc(u.artifact_id)}" title="${esc(u.code)}">${esc(u.artifact_id)}</button>`).join(' ')}</p>`:'';
+      const more=sources.length>shown?`<p class="wsp-end">${shown} sources affichées sur ${sources.length} ${btn('presentations-more',{},'Afficher la suite')}</p>`:'';
+      return `<section class="wsp-sect" aria-labelledby="wspPresTitle"><h4 id="wspPresTitle">Présentations de « ${esc(titleOf(S,d.board_id))} » <span class="wsp-n">${sources.length}</span></h4>`
+        +(groups||(unreadable.length?'':'<p class="wsp-none">Aucune présentation figée sur ce Board. Figer une présentation crée la copie que le Board montre ; une source jamais figée n’est sur aucun Board.</p>'))
+        +more+bad+(d.truncated?'<p class="hint">Lecture bornée : des copies, rendus ou liens au-delà des plafonds ne sont pas montrés.</p>':'')+'</section>';
+    });
+  }
   function artifactsHtml(S){
     const a=S.artifacts,boards=boardsOf(S),sessions=S.sessions.items;
     const ctxs=a.session&&S.sessionCache[a.session]?list(S.sessionCache[a.session].contexts&&S.sessionCache[a.session].contexts.items):[];
@@ -1211,7 +1466,7 @@ const JarvisWorkspaceCore=(function(){
     const pinned=a.detail.id&&!p.items.some(x=>x.artifact_id===a.detail.id)
       ?`<section class="wsp-sect" aria-labelledby="wspPinnedTitle"><h4 id="wspPinnedTitle">Artefact hors de la liste courante ${btn('artifact-close',{},'Fermer')}</h4>`
         +`<div class="wsp-list"><div class="wsp-row is-open is-current" id="wspArtifactOpen" tabindex="-1"><div class="wsp-detail"><p class="wsp-big">${code(a.detail.id)}</p>${artifactDetailHtml(S)}</div></div></div></section>`:'';
-    const head=form+pinned;
+    const head=form+presentationsHtml(S)+pinned;
     if(p.status==='idle'&&!p.items.length)return head+'<p class="wsp-empty">Choisissez un Board, une Session ou un Context.</p>';
     if(p.status==='error'&&!p.items.length)return head+errorHtml(p.error,{retry:'artifacts'});
     if(p.status==='loading'&&!p.items.length)return head+loadingHtml('Lecture des artefacts…',p.started);
@@ -1305,8 +1560,18 @@ if(typeof module!=='undefined'&&module.exports)module.exports=JarvisWorkspaceCor
       log:(level,event,data)=>log(level==='warn'?'warn':level==='error'?'error':'info',event,data)});
     return {ok:!!ok,message:ok?'':note.textContent};
   }
+  /* « Ouvrir la source » : le Studio possède la présentation (Explorateur de variantes). On referme ce panneau plein
+     écran, puis on demande l'ouverture par identifiant ; un refus de l'Explorateur (lecture en cours, formulaire
+     ouvert...) revient tel quel au gestionnaire, qui le dit. Rien n'est caché ici. */
+  async function openStudioSource(presentationId,variantId){
+    const explorer=window.JarvisStudioExplorer;
+    if(!explorer||typeof explorer.open!=='function')return {state:'refused',code:'explorer_missing',reason:'l’Explorateur de variantes n’est pas installé dans cette page.'};
+    const outcome=await explorer.open({presentation_id:presentationId,variant_id:variantId||undefined,opener:el.open||undefined});
+    if(!outcome||outcome.state!=='refused'){V.studioTakesFocus=true;try{closeView()}finally{V.studioTakesFocus=false}}
+    return outcome;
+  }
   const client=W.createClient({fetchImpl:(path,options)=>window.fetch(path,options)});
-  const manager=W.createManager({client,log,switchBoard,onChange:()=>{if(!root.hidden)render()}});
+  const manager=W.createManager({client,log,switchBoard,openStudioSource,onChange:()=>{if(!root.hidden)render()}});
   const S=manager.state;
 
   function withFocusAndInput(fn){
@@ -1346,7 +1611,7 @@ if(typeof module!=='undefined'&&module.exports)module.exports=JarvisWorkspaceCor
       node.textContent=W.formatSeconds(now-since);
     }
   }
-  let lastConfirm=null,lastOverlay=null;
+  let lastConfirm=null,lastOverlay=null,lastNotice=null;
   /* La commande qui a ouvert la confirmation ou le formulaire, décrite par
      ses attributs (le nœud est remplacé à chaque rendu). */
   const OPENERS=new Set(['memory-delete-ask','memory-form']);
@@ -1375,6 +1640,12 @@ if(typeof module!=='undefined'&&module.exports)module.exports=JarvisWorkspaceCor
       el.panel.innerHTML=W.panelHtml(S);
     });
     renderStatus();tickClocks();
+    /* Un avis nouveau (refus d'ouvrir la source, erreur) est amené à l'écran : il n'est jamais dit hors de vue. */
+    if(S.notice&&S.notice!==lastNotice){
+      const note=q('.wsp-notice');
+      if(note&&typeof note.scrollIntoView==='function')note.scrollIntoView({block:'nearest'});
+    }
+    lastNotice=S.notice;
     /* « Inspecter » (Slice 08) : le focus rejoint la ligne du Board à sa
        première peinture (la liste arrive après l'ouverture). Chaque rendu
        refait la liste et la ligne n'a pas d'id que `withFocusAndInput` saurait
@@ -1440,7 +1711,7 @@ if(typeof module!=='undefined'&&module.exports)module.exports=JarvisWorkspaceCor
     const back=V.returnTo&&V.returnTo.isConnected&&!V.returnTo.disabled?V.returnTo:null;V.returnTo=null;
     if(el.open){el.open.classList.remove('active');el.open.setAttribute('aria-expanded','false')}
     const target=back||el.open;
-    if(target)target.focus({preventScroll:true});
+    if(!V.studioTakesFocus&&target)target.focus({preventScroll:true});
   }
   function fieldsOf(form){
     const out={};

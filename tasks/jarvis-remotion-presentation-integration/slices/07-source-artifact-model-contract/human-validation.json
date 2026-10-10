@@ -1,0 +1,12 @@
+{
+  "checks": [
+    {
+      "id": "HV-07-01",
+      "instruction": "Confirm UX: editable source is visible as parent in Artifact/Board manager even if its physical storage stays in presentations/.",
+      "requires_evidence_first": true,
+      "status": "open",
+      "order": 10,
+      "evidence": "docs/remotion-integration-release.md#human-checks"
+    }
+  ]
+}

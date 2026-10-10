@@ -129,6 +129,15 @@ details.entry .detail{padding:0 2px 11px 29px}
 textarea{width:100%;min-height:80px;background:#071015;border:1px solid var(--line);color:var(--text);padding:9px;border-radius:5px;font:inherit;resize:vertical}
 .agentEvents{margin-top:14px;border-top:1px solid var(--line);padding-top:12px}
 .empty{color:var(--muted);padding:20px 0;text-align:center}
+.mem-legs{list-style:none;margin:0 0 14px;padding:0;display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:6px 18px}
+.mem-legs li{display:flex;justify-content:space-between;align-items:center;gap:10px;font-size:12px;border-bottom:1px solid var(--line);padding:5px 0}
+.mem-badge{font-size:10px;letter-spacing:.08em;text-transform:uppercase;border:1px solid var(--line);border-radius:3px;padding:1px 6px;color:var(--muted)}
+.mem-badge.ok{color:var(--ok);border-color:var(--ok)}.mem-badge.bad{color:var(--danger);border-color:var(--danger)}
+.mem-field .hint{grid-column:1/-1}
+.mem-field input[type=number]{max-width:160px}
+.mem-actions{display:flex;flex-wrap:wrap;gap:10px;margin-top:18px}
+.mem-settings button:disabled{opacity:.5;cursor:not-allowed}
+.mem-settings :focus-visible{outline:2px solid var(--accent);outline-offset:2px}
 [hidden]{display:none!important}
 
 /* ---------- Panneau Agents ---------- */
@@ -284,11 +293,15 @@ pre.block{background:#050b10;border:1px solid rgba(113,144,160,.16);border-radiu
    une pastille par catégorie non vue. Dock de 9 outils (9×52 + 8×10 = 548 px,
    centré, bas à 50% + 274 px) : la colonne commence 12 px sous le dernier
    bouton. */
-.bgpills{position:absolute;z-index:40;right:30px;top:calc(50% + 286px);display:flex;flex-direction:column;gap:8px}
+.bgpills{position:absolute;z-index:40;right:30px;top:calc(50% + 317px);display:flex;flex-direction:column;gap:8px}
 /* Écran bas (moins de 640 px) : les 9 outils ne tiennent plus entre la barre du
    haut et le bas de l'écran ; boutons de 44 px, écart de 6 px (9×44 + 8×6 =
    444 px, bas à 50% + 222 px), pastilles 12 px dessous, toujours visibles. */
-@media(max-height:640px){.dock{gap:6px}.dock button{width:44px;height:44px}.bgpills{top:calc(50% + 234px)}}
+@media(max-height:719px){.dock{gap:6px}.dock button{width:44px;height:44px}.bgpills{top:calc(50% + 261px)}}
+/* Dix outils depuis l'inspecteur du Studio (Slice 07) : 10 × 38 px + 9 × 6 px = 434 px, plus 12 px de marge, pour que les pastilles restent à l'écran à 520 px de haut. */
+@media(max-height:560px){.dock button{height:38px}.bgpills{top:calc(50% + 229px)}}
+/* Très bas (480 px et moins, paysage d'un téléphone) : deux colonnes de 5 (5 × 38 + 4 × 6 = 214 px de haut), jamais un outil hors de l'écran. */
+@media(max-height:480px){.dock{grid-auto-flow:column;grid-template-rows:repeat(5,auto)}.bgpills{top:calc(50% + 119px)}.panel{right:136px}}
 .bgpill{--pill:var(--accent);position:relative;width:28px;height:28px;padding:0;border-radius:50%;display:grid;place-items:center;border:1px solid var(--pill);background:rgba(3,8,12,.86);color:var(--pill);font:700 11px ui-monospace,SFMono-Regular,Consolas,monospace;cursor:pointer;backdrop-filter:blur(12px);box-shadow:0 0 12px color-mix(in srgb,var(--pill) 35%,transparent);transition:transform .15s,background-color .15s}
 .bgpill.bad{--pill:var(--danger)}.bgpill.warn{--pill:var(--warn)}.bgpill.ok{--pill:var(--ok)}
 .bgpill:hover,.bgpill.active{transform:scale(1.12);background:color-mix(in srgb,var(--pill) 18%,#03080c)}
@@ -961,11 +974,12 @@ details.rd[open]>summary{margin-bottom:14px}
 .mcpv-tabs button[aria-selected=true] .mcpi-n{background:rgba(110,231,255,.14);color:var(--accent)}
 .mcpv-tabs button:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
 .mcpi[data-view=plugins] :is(.mcpi-search,#mcpiExpandAll,#mcpiRefresh,#mcpiStatus,#mcpiNotice,.mcpi-main){display:none}
-.mcpp{grid-row:3;display:grid;grid-template-rows:auto minmax(0,1fr);min-height:0}
+.mcpp{grid-row:3;display:grid;grid-template-rows:auto auto minmax(0,1fr);min-height:0}
 .mcpp[hidden]{display:none}
 .mcpp-bar{display:flex;flex-wrap:wrap;align-items:center;gap:8px 10px;padding:10px 18px;border-bottom:1px solid var(--line);background:rgba(4,9,13,.55)}
 .mcpp-bar .tl-status{flex:1 1 220px}
-.mcpp-body{overflow:auto;min-height:0;padding:16px 22px 56px}
+.mcpp-bar{grid-row:1}
+.mcpp-body{grid-row:3;overflow:auto;min-height:0;padding:16px 22px 56px}
 .mcpp-body>*{max-width:1180px;margin-left:auto;margin-right:auto}
 .mcpp button.action:not(.small){padding:7px 12px;font-size:12.5px}
 .mcpp button.action.primary{border-color:rgba(110,231,255,.5);color:var(--accent)}
@@ -1067,6 +1081,40 @@ details.rd[open]>summary{margin-bottom:14px}
   .mcpp-mhead .mcpp-switch{grid-column:1/-1;justify-self:start}
   .mcpp-add,.mcpp-cred{padding:12px}
 }
+/* ---------- Carte « Remotion » et Studio optionnel (Slice 11, control_center_remotion_studio.js) ----------
+   Au-dessus des cartes de plugins, dans le même onglet : même carte (`.mcpp-card`), mêmes puces et même bouton. Une seule
+   bande, jamais plus haute que son contenu, qui défile avec le journal replié. */
+.rms-stack{grid-row:2}
+.rms{padding:12px 22px 0;max-width:1180px;width:100%;margin:0 auto;box-sizing:border-box}
+.rms-card{max-width:760px}
+/* Carte « Présentations · moteur » (Slice 20, control_center_presentation_studio_engine.js) : mêmes classes, quelques ajouts. */
+.sve-new{display:flex;flex-wrap:wrap;align-items:end;gap:8px 10px}
+.sve-new .rms-scene{flex:1 1 240px}
+.rms-scene input{min-height:32px;max-width:100%;padding:0 8px;border:1px solid var(--line);border-radius:6px;background:#0b141a;color:var(--text);font:inherit;font-size:12.5px}
+.rms-scene input:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.sve-exp[open]{display:grid;gap:8px}
+.sve-warn{padding:8px 10px;border:1px solid rgba(255,184,92,.45);border-radius:6px;color:#f5d9b0;background:rgba(255,184,92,.06)}
+.sve-list{list-style:none;margin:0;padding:0;display:grid;gap:6px}
+.sve-row{display:flex;flex-wrap:wrap;align-items:center;gap:6px 10px;padding:7px 9px;border:1px solid var(--line);border-radius:6px}
+.sve-problem{border-color:rgba(255,101,119,.4);margin-top:6px}
+.sve-row[data-engine=slidecar]{border-color:rgba(255,184,92,.4)}
+.sve-title{flex:1 1 180px;min-width:0;overflow-wrap:anywhere;font-size:12.5px;color:var(--text)}
+.sve-events{list-style:none;margin:6px 0 0;padding:0;display:grid;gap:3px;font-size:11.5px;line-height:1.5;color:#c6dbe4}
+.sve-events time{color:var(--muted);font-variant-numeric:tabular-nums}
+.sve-diag strong{color:var(--text)}
+.rms-scene{display:grid;gap:4px;font-size:11.5px;color:var(--muted)}
+.rms-scene select{min-height:32px;max-width:100%;padding:0 8px;border:1px solid var(--line);border-radius:6px;background:#0b141a;color:var(--text);font:inherit;font-size:12.5px}
+.rms-scene select:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.rms-scene select:disabled{opacity:.6;cursor:wait}
+.rms-none,.rms-hint{margin:0;font-size:11.5px;line-height:1.5;color:var(--muted)}
+.rms-link{margin:0;font-size:12.5px}
+.rms-err{margin:0}
+.rms-busy{margin:6px 0 0;min-height:1em;font-size:11.5px;color:var(--muted);font-variant-numeric:tabular-nums}
+.rms-busy:empty{display:none}
+.rms-log{margin:6px 0 0;max-height:150px;overflow:auto;padding:8px 10px;border:1px solid var(--line);border-radius:6px;background:#04090d;font-size:11px;line-height:1.5;color:#c6dbe4;white-space:pre-wrap;overflow-wrap:anywhere}
+.rms button.action.primary{border-color:rgba(110,231,255,.5);color:var(--accent)}
+.rms button.action.danger{border-color:rgba(255,101,119,.45);color:var(--danger)}
+.rms button.action:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
 @media(prefers-reduced-motion:reduce){.mcpp-card,.mcpp-track,.mcpp-knob{transition:none}.mcpp-spin{animation:none}}
 /* ---------- Sessions & Boards (plein écran) ----------
    Gestionnaire profond du workspace (`docs/boards.md`, « Control Center
@@ -1122,6 +1170,33 @@ details.rd[open]>summary{margin-bottom:14px}
 .wsp-seg{display:flex;gap:2px;padding:2px;border:1px solid var(--line);border-radius:7px;background:#060d12}
 .wsp-seg button{display:inline-flex;align-items:center;gap:7px;min-height:30px;padding:0 11px;border:0;border-radius:5px;background:none;color:var(--muted);font:inherit;font-size:12px;cursor:pointer}
 .wsp-seg button[aria-pressed=true]{background:rgba(110,231,255,.1);color:var(--accent)}
+/* Memory Center (Slice 12) : occupe la place des onglets et du panneau du workspace tant que `.mc-on` est posé. */
+.wsp.mc-on #wspTabs,.wsp.mc-on #wspPanel,.wsp.mc-on #wspRefresh{display:none}
+.wsp.mc-on #memoryCenterMount{grid-row:2/4;min-height:0;display:grid;grid-template-rows:auto minmax(0,1fr)}
+.wsp #memoryCenterMount button.action:focus-visible,.wsp #memoryCenterMount .mc-row:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.mc-panel h3{margin:0 0 6px;font-size:15px}.mc-panel h4{margin:16px 0 6px;font-size:11px;letter-spacing:.1em;text-transform:uppercase;color:var(--muted);font-weight:600}
+.mc-bar{margin:0 0 10px}
+.mc-split{display:grid;grid-template-columns:minmax(260px,380px) minmax(0,1fr);gap:8px 22px;align-items:start}
+.mc-col{min-width:0}
+.mc-detail{border-left:1px solid var(--line);padding-left:22px;outline:none}
+.mc-rows,.mc-legs,.mc-list{list-style:none;margin:0;padding:0}
+.mc-rows>li+li{margin-top:6px}
+.mc-row{display:flex;flex-direction:column;gap:3px;width:100%;text-align:left;padding:9px 11px;border:1px solid var(--line);border-left:3px solid transparent;border-radius:5px;background:rgba(7,16,21,.6);color:var(--text);font:inherit;font-size:12.5px;cursor:pointer}
+.mc-row:hover{border-color:rgba(110,231,255,.35)}
+.mc-row.on{border-left-color:var(--accent);background:rgba(110,231,255,.07)}
+.mc-meta{font-size:11px;color:var(--muted)}.mc-meta .chip{margin-right:6px}
+.mc-hit{display:flex;flex-direction:column;gap:3px;padding:10px 12px;border:1px solid var(--line);border-radius:5px;font-size:12.5px}
+.mc-why{font-size:12px;color:#cfe3ec}
+.mc-dims{margin:8px 0}.mc-dims .chip{margin-right:8px}
+.mc-body{white-space:pre-wrap;overflow-wrap:anywhere;margin:0;padding:12px 14px;border:1px solid var(--line);border-radius:5px;background:#060d12;font:inherit;font-size:12.5px;line-height:1.6;max-height:42vh;overflow:auto}
+.mc-legs{display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:8px 18px;margin-bottom:14px}
+.mc-legs li{display:grid;grid-template-columns:1fr auto;gap:3px 10px;align-items:center;font-size:12.5px;border-bottom:1px solid var(--line);padding:7px 0}
+.mc-legs .hint{grid-column:1/-1}
+.mc-list li{margin:3px 0;font-size:12.5px}
+.mc-confirm{margin:14px 0}.mc-confirm p{margin:6px 0 10px}
+.mc-confirm button+button{margin-left:8px}
+@media(max-width:900px){.mc-split{grid-template-columns:1fr}.mc-detail{border-left:0;padding-left:0;border-top:1px solid var(--line);padding-top:12px}}
+@media(prefers-reduced-motion:reduce){.wsp .wsp-spin{animation:none}}
 .wsp-actions{display:flex;flex-wrap:wrap;gap:6px;margin:10px 0}
 .wsp-more{display:flex;flex-wrap:wrap;align-items:center;gap:10px;margin:12px 2px 0}
 .wsp-sect{margin-top:20px}
@@ -1161,6 +1236,14 @@ details.rd[open]>summary{margin-bottom:14px}
 .wsp-tree>li{padding:6px 0 6px 10px;font-size:12.5px;line-height:1.55}
 .wsp-tree>li.is-current{box-shadow:inset 2px 0 0 var(--accent)}
 .wsp-rel{list-style:none;margin:0;padding:0}
+/* Présentations d'un Board : une carte par source, l'arbre source -> copie figée -> rendus dedans. */
+.wsp-psrc{margin-bottom:12px;padding:10px 14px 6px;border:1px solid var(--line);border-radius:8px;background:#060d12}
+.wsp-psrc .wsp-tree{margin-top:8px}
+.wsp-psrc .wsp-line>.action{margin-left:auto}
+.wsp-psrc .wsp-tree .action{margin-left:6px}
+.wsp-thumb{display:block;max-width:100%;height:auto;margin:6px 0;border:1px solid var(--line);border-radius:6px;background:#000}
+.wsp-export{display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin:8px 0;padding:8px 10px;border:1px solid var(--line);border-radius:6px;background:#091218}
+.wsp-export-form{margin:8px 0}
 .wsp-rel-board{padding:9px 12px;margin-bottom:8px;border:1px solid var(--line);border-radius:7px}
 .wsp-rel-board.is-current{border-color:rgba(110,231,255,.45)}
 /* Mémoire : fichiers à gauche, fichier ouvert à droite. */
@@ -1243,6 +1326,27 @@ button.wsp-ename:hover{color:var(--accent)}
 .pfb-field input::placeholder,.pfb-field textarea::placeholder{color:#7f9dac}
 .pfb-field textarea{resize:vertical;line-height:1.5;min-height:64px}
 .pfb-field input:hover,.pfb-field select:hover,.pfb-field textarea:hover{border-color:#24485c}
+.pfb-semantic{grid-column:1/-1;display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px}
+.pfb-cat{display:flex;flex-wrap:wrap;gap:4px;min-width:0}
+.pfb-badge.is-type{color:#d2e6ef;border-color:rgba(210,230,239,.32);background:rgba(210,230,239,.04);text-transform:none;letter-spacing:.02em}
+.pfb-badge.is-sup-native{color:var(--ok);border-color:rgba(104,224,160,.5);background:rgba(104,224,160,.06);text-transform:none;letter-spacing:.02em}
+.pfb-badge.is-sup-adapter{color:var(--warn);border-color:rgba(255,184,92,.55);background:rgba(255,184,92,.07);text-transform:none;letter-spacing:.02em}
+.pfb-badge.is-sup-unsupported{color:#a9c0cb;border-style:dashed;border-color:rgba(113,144,160,.55);text-transform:none;letter-spacing:.02em}
+.pfb-cdl{display:grid;grid-template-columns:max-content minmax(0,1fr);gap:10px 18px;margin:8px 0 14px;font-size:12.5px;line-height:1.5;color:#c6dbe4}
+.pfb-cdl dt{margin:0;font-size:10.5px;letter-spacing:.12em;text-transform:uppercase;color:var(--muted);padding-top:2px}
+.pfb-cdl dd{margin:0;min-width:0;overflow-wrap:anywhere}
+.pfb-cmeans{color:var(--muted)}
+.pfb-csup,.pfb-cdeps{list-style:none;margin:0;padding:0;display:grid;gap:4px}
+.pfb-csup li{display:flex;flex-wrap:wrap;align-items:center;gap:4px 6px}
+.pfb-csup svg{width:13px;height:13px}
+.pfb-csup .is-sup-native svg,.pfb-csup .is-sup-native strong{color:var(--ok)}
+.pfb-csup .is-sup-adapter svg{color:var(--warn)}
+.pfb-up{display:flex;flex-wrap:wrap;gap:4px 8px;align-items:baseline}
+.pfb-upurl{display:block;flex-basis:100%}
+.pfb-params{margin:4px 0 18px;border:1px solid var(--line);border-radius:8px;padding:8px 12px;background:#060d12}
+.pfb-params>summary{cursor:pointer;font-size:12.5px;color:var(--text)}
+.pfb-params[open]>summary{margin-bottom:8px}
+@media (max-width:760px){.pfb-semantic{grid-template-columns:1fr}.pfb-cdl{grid-template-columns:1fr;gap:2px}.pfb-cdl dd{margin-bottom:8px}}
 .pfb-kinds{grid-column:1/-1;display:flex;flex-wrap:wrap;gap:5px}
 .pfb-kind{display:inline-flex;align-items:center;gap:6px;min-height:30px;padding:0 9px;border:1px solid var(--line);border-radius:6px;background:#060d12;color:#a9c0cb;font:inherit;font-size:11.5px;cursor:pointer;transition:border-color .15s,background-color .15s,color .15s}
 .pfb-kind svg{width:13px;height:13px}
@@ -1540,6 +1644,7 @@ button.wsp-ename:hover{color:var(--accent)}
     <div class="tool"><button id="openMcpInspector" title="MCP · outils du brain et plugins externes" aria-label="MCP · outils du brain et plugins externes" aria-haspopup="dialog" aria-expanded="false" aria-controls="mcpInspector">MCP</button></div>
     <div class="tool"><button id="openWorkspace" title="Sessions &amp; Boards" aria-label="Sessions &amp; Boards · mémoire, relations, artefacts" aria-haspopup="dialog" aria-expanded="false" aria-controls="workspaceManager">WSP</button></div>
     <div class="tool"><button id="openPrefabs" title="Prefabs · bibliothèque partagée" aria-label="Prefabs · bibliothèque partagée, aperçu et fork" aria-haspopup="dialog" aria-expanded="false" aria-controls="prefabLibrary">PFB</button></div>
+    <div class="tool"><button id="openStudioInspector" title="Inspecteur · réglages de la présentation" aria-label="Inspecteur · réglages de la présentation" aria-expanded="false" aria-controls="jvStudioInspector">INS</button></div>
     <div class="tool"><button data-panel="agents" id="agentsButton" title="Agents">AGT</button><span class="badge count" id="agentBadge">0</span></div>
   </nav>
   <div class="bgpills" id="bgPills" role="group" aria-label="Notifications d’arrière-plan" hidden></div>
@@ -1650,6 +1755,10 @@ button.wsp-ename:hover{color:var(--accent)}
       <button type="button" class="action small" id="mcppRefresh">Actualiser</button>
       <button type="button" class="action small primary" id="mcppAdd">Ajouter un plugin</button>
     </div>
+    <div class="rms-stack">
+      <div class="rms" id="sveCard" aria-label="Présentations : moteur par défaut, Slidecar expérimental, diagnostic et réparation"></div>
+      <div class="rms" id="rmsCard" aria-label="Remotion : environnement local et Studio optionnel"></div>
+    </div>
     <div class="mcpp-body" id="mcppBody"></div>
     <p class="sr" id="mcppHelp">Serveurs MCP distants ajoutés par leur adresse. Chaque carte : état de la connexion et de l’accès, interrupteur d’activation, nombre d’outils, bouton Gérer. Échap revient d’un cran, puis ferme.</p>
     <div class="sr" id="mcppAnnounce" aria-live="polite"></div>
@@ -1663,10 +1772,12 @@ button.wsp-ename:hover{color:var(--accent)}
     <h2 class="tl-title" id="wspTitle"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4" width="7" height="7" rx="1.5"/><rect x="14" y="4" width="7" height="7" rx="1.5"/><rect x="3" y="15" width="7" height="5" rx="1.5"/><path d="M10 7.5h4M6.5 11v4M17.5 11v6.5H10"/></svg><span class="tl-tt">Sessions &amp; Boards</span></h2>
     <div class="tl-status" id="wspStatus" role="status" data-tone="muted"><span class="tl-led" aria-hidden="true"></span><strong id="wspStatusLabel">En attente</strong><span id="wspStatusDetail"></span></div>
     <button type="button" class="action small" id="wspRefresh">Actualiser</button>
+    <button type="button" class="action small" id="wspMemoryCenter" title="Notes, candidats, index et test de rappel">Memory Center</button>
     <button type="button" class="tl-x" id="wspClose" aria-label="Fermer Sessions &amp; Boards (Échap)">×</button>
   </header>
   <div class="wsp-tabs" id="wspTabs" role="tablist" aria-label="Vues du workspace"></div>
   <div class="wsp-panel" id="wspPanel" role="tabpanel" tabindex="-1"></div>
+  <div id="memoryCenterMount" hidden></div>
   <p class="sr" id="wspHelp">Sessions, Boards, mémoire des Boards, relations et artefacts, lus sur le serveur. Flèches gauche et droite : vue voisine. Échap : ferme la confirmation ou le formulaire ouvert, puis la vue.</p>
   <div class="sr" id="wspAnnounce" aria-live="polite"></div>
 </section>
@@ -1683,6 +1794,11 @@ button.wsp-ename:hover{color:var(--accent)}
       <div class="pfb-tools">
         <label class="pfb-field"><span>Rechercher <kbd aria-hidden="true">/</kbd></span><input type="search" id="pfbSearch" aria-label="Rechercher un prefab" placeholder="checklist, tableau, todo…" autocomplete="off" spellcheck="false" maxlength="120"></label>
         <label class="pfb-field"><span>Famille</span><select id="pfbFamily" aria-label="Famille"></select></label>
+        <div class="pfb-semantic" role="group" aria-label="Type, moteur et pile technique">
+          <label class="pfb-field"><span>Type</span><select id="pfbType" aria-label="Type"></select></label>
+          <label class="pfb-field"><span>Compatible</span><select id="pfbEngine" aria-label="Moteur compatible"></select></label>
+          <label class="pfb-field"><span>Pile</span><select id="pfbStack" aria-label="Pile technique"></select></label>
+        </div>
         <div class="pfb-kinds" id="pfbKinds" role="group" aria-label="Nature des prefabs"></div>
         <p class="pfb-count" id="pfbCount" aria-live="polite"></p>
       </div>
@@ -2137,8 +2253,38 @@ const STATUS={
    (`control_center_prefab_protocol.js`) puis l'hôte des cadres sandboxés
    (`control_center_prefab_host.js`, seul module qui pose le document d'un cadre). */
 /*__CONTROL_CENTER_PREFAB_PROTOCOL_JS__*/
+/*__CONTROL_CENTER_REMOTION_FRAME_JS__*/
 /*__CONTROL_CENTER_PREFAB_HOST_JS__*/
 /*__CONTROL_CENTER_SCENE_PAGE_JS__*/
+/* Plein écran générique d'une surface (studio de présentation, Slice 03) : API Fullscreen du navigateur
+   sur un élément HÔTE qui contient le cadre, invite d'un clic pour les demandes de la voix ou d'un agent,
+   `fullscreenchange` pour vérité : `control_center_fullscreen.js`. Après la scène (éléments lus à la demande). */
+/*__CONTROL_CENTER_FULLSCREEN_JS__*/
+/* Rechargement à chaud d'une scène du Studio (Slice 06) : rapport des montages de l'hôte à Core, édition de source avec
+   bande visible (en cours, compteur, issue exacte, valeurs remises à zéro) : `control_center_presentation_studio_reload.js`.
+   Lu à la demande par la page de scène (`onOutcome` de l'hôte) ; ne touche ni sandbox, ni CSP, ni `jv:1`. */
+/*__CONTROL_CENTER_PRESENTATION_STUDIO_RELOAD_JS__*/
+/* Explorateur de variantes (studio de présentation, Slice 18) : espace de travail plein écran, arbre des branches et aperçu riche, mêmes
+   opérations canoniques que la voix (`/api/presentation-studio/presentations/.../variants`, acteur forcé à `user`), ouverture par la voix
+   ou un agent par `/api/presentation-studio/explorer/commands` : `control_center_presentation_studio_explorer_core.js` (fonctions pures + CSS)
+   `control_center_presentation_studio_explorer_widgets.js` (arbre virtualisé, formulaires, canal de commandes) puis
+   `control_center_presentation_studio_explorer.js` (contrôleur). Lit `JarvisStudioPlayer`, `JarvisFullscreen` et `JarvisPrefabHost` à la demande. */
+/*__CONTROL_CENTER_PRESENTATION_STUDIO_EXPLORER_CORE_JS__*/
+/*__CONTROL_CENTER_PRESENTATION_STUDIO_EXPLORER_WIDGETS_JS__*/
+/*__CONTROL_CENTER_PRESENTATION_STUDIO_EXPLORER_COMPARE_CORE_JS__*/
+/*__CONTROL_CENTER_PRESENTATION_STUDIO_EXPLORER_COMPARE_JS__*/
+/*__CONTROL_CENTER_PRESENTATION_STUDIO_EXPLORER_COMPOSE_JS__*/
+/*__CONTROL_CENTER_PRESENTATION_STUDIO_EXPLORER_UPGRADES_JS__*/
+/*__CONTROL_CENTER_PRESENTATION_STUDIO_EXPLORER_JS__*/
+/* Lecture d'une présentation (studio de présentation, Slice 12) : bande d'état et clavier sur l'hôte du stage, mêmes
+   routes que la voix (`/api/presentation-studio/playback`), plein écran par `JarvisFullscreen` : `control_center_presentation_studio_player.js`. */
+/*__CONTROL_CENTER_PRESENTATION_STUDIO_PLAYER_JS__*/
+/* Inspecteur d'édition d'une présentation (studio de présentation, Slice 07) : panneau du dock `INS`, widgets générés de la route
+   d'introspection, aperçu/enregistrement par le relais d'édition (acteur `user`), caché entièrement pendant une lecture :
+   `control_center_presentation_studio_inspector.js`. Lit `JarvisStudioPlayer.view()` et `JarvisPrefabHost` (mode `preview`) à la demande. */
+/*__CONTROL_CENTER_PRESENTATION_STUDIO_INSPECTOR_CORE_JS__*/
+/*__CONTROL_CENTER_PRESENTATION_STUDIO_INSPECTOR_WIDGETS_JS__*/
+/*__CONTROL_CENTER_PRESENTATION_STUDIO_INSPECTOR_JS__*/
 /* Réglage de la scène dans l'onglet Expérimental (Slice 11), après Barehands qui crée l'onglet : `control_center_scene_settings.js`. */
 /*__CONTROL_CENTER_SCENE_SETTINGS_JS__*/
 /* Onglet « Mot d'éveil » des Réglages (jarvis-wake-word, Slice 07), inséré après « Voix » : `control_center_wake_word.js`.
@@ -2155,6 +2301,12 @@ const STATUS={
    lecture seule et le rendu de détail ; il utilise `toast` et `confirmDialog`,
    déclarations de fonction remontées de ce même `<script>`. */
 /*__CONTROL_CENTER_MCP_PLUGINS_JS__*/
+/* Carte « Présentations · moteur » (Slice 20 de jarvis-remotion-presentation-integration), au-dessus de la carte Remotion :
+   `control_center_presentation_studio_engine.js`. Il utilise `toast` et `confirmDialog`, déclarations de fonction remontées de ce même `<script>`. */
+/*__CONTROL_CENTER_PRESENTATION_STUDIO_ENGINE_JS__*/
+/* Carte « Remotion » et Studio optionnel (Slice 11 de jarvis-remotion-presentation-integration), en tête du même onglet :
+   `control_center_remotion_studio.js`. Il utilise `toast`, déclaration de fonction remontée de ce même `<script>`. */
+/*__CONTROL_CENTER_REMOTION_STUDIO_JS__*/
 /* Sessions & Boards (board-memory-workspace-inspector, Slice 07) : vue plein
    écran du dock `WSP`. Sa bascule de Board est celle du contrôle Boards, lue
    au clic (`window.JarvisBoards`, `window.JarvisBoardsControl`). */
@@ -2163,6 +2315,9 @@ const STATUS={
    écran du dock `PFB`. Son aperçu passe par `window.JarvisPrefabHost` (mode `preview`),
    lu à l'ouverture : `control_center_prefabs.js`. */
 /*__CONTROL_CENTER_PREFABS_JS__*/
+/* Mémoire (jarvis-memory-intelligence-knowledge, Slice 10b) : accroches servies, remplies par les Slices 11 et 12. */
+/*__CONTROL_CENTER_MEMORY_SETTINGS_JS__*/
+/*__CONTROL_CENTER_MEMORY_JS__*/
 // `error_class` normalisées par Core ou ses observateurs ; les autres restent brutes.
 const ERROR_CLASSES={process_stopped:'processus arrêté',producer_restarted:'Control Center redémarré',
   core_restarted:'Core redémarré',core_restarted_unobserved:'non revu après le redémarrage de Core',merged:'doublon fusionné',unknown_status:'statut inconnu',killed:'tué',stopped:'arrêté',cancelled:'annulé'};
@@ -3421,6 +3576,7 @@ const TABS=[
   {id:'cli',label:'Agent / CLI',save:true},
   {id:'keys',label:'API Keys',save:false},
   {id:'shortcuts',label:'Raccourcis',save:false},
+  {id:'memory',label:'Mémoire',save:false},
 ];
 const SET={open:false,tab:'voice',voiceTab:'architecture',voiceCatalogRole:'realtime',voiceCatalogMountedRole:null,voiceCatalogStates:{},voiceModelSources:{},voiceModelGenerations:{},data:null,draft:null,dirty:false,catalog:{},clis:null,devices:null,capture:null,shortcuts:null,restartNotice:false,rdOpen:false,routingAdvancedOpen:false,routing:null,routingPick:{},prompts:null,agentCatalog:null,voiceCatalog:null,openGeneration:0,cliGeneration:0,cliModelGeneration:0,routingGeneration:0,voiceGeneration:0,audioGeneration:0,diagnosticGeneration:0,voiceDiagnosticError:''};
 const overlay=$('#overlay'),modalContent=$('#modalContent'),modalStatus=$('#modalStatus'),modalSave=$('#modalSave'),modalSub=$('#modalSub');
@@ -4253,6 +4409,7 @@ async function renderTab(){
     prompts:'Chaque couche est enregistrée avec son propre bouton.',
     keys:'Les clés sont enregistrées immédiatement sans jamais être relues par la page.',
     shortcuts:'Les raccourcis sont enregistrés immédiatement.',
+    memory:'Ce que JARVIS retient et rappelle. Enregistrement par le bouton de cet onglet.',
   }[SET.tab]||'';
   try{
     let content;
@@ -4260,11 +4417,13 @@ async function renderTab(){
     else if(SET.tab==='prompts')content=await tabPrompts();
     else if(SET.tab==='cli')content=tabCli()+tabAgenda();
     else if(SET.tab==='keys')content=tabKeys();
+    else if(SET.tab==='memory')content='<div id="memorySettingsMount"></div>';
     else content=tabShortcuts();
     if(revision!==SET.renderRevision||SET.open===false)return;
     modalContent.innerHTML=content;
   }catch(e){if(revision===SET.renderRevision&&SET.open!==false)modalContent.innerHTML=`<div class="notice bad">${esc(e.message)}</div>`;return}
   bindTab(revision);
+  if(SET.tab==='memory'&&window.JarvisMemorySettings)window.JarvisMemorySettings.show(modalContent.querySelector('#memorySettingsMount'));
   if(SET.tab==='voice')bindVoiceSurface(revision);
   if(SET.tab==='cli')bindAgenda();
   if(SET.tab==='cli'){mountAgentCatalog(revision);hydrateCliAgents(revision)}

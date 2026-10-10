@@ -1564,7 +1564,7 @@ Other forms (including `ok`, `confirme`, sentences containing yes/no, or stale c
 
 ## Memory
 
-Canonical files are Markdown under configured `memory_dir`. Do not rely on `.jarvis/index.sqlite3` as data; it is a derived cache.
+Canonical files are Markdown under the memory root, `<data_root>/memory` by default (`JARVIS_MEMORY_DIR` or `runtime.memory_dir` to move it; [local-data.md](local-data.md#mémoire--une-seule-racine)). Retention directories (`short_term_memory/`, `long_term_memory/`, `traumatic_memory/`, `eternal_memory/`, `plastic_memory/`, legacy `notes/`), `_candidates/` (consolidation proposals awaiting a human decision) and `.history/` (previous revisions) are durable; everything under `.jarvis/` is derived. Do not rely on `.jarvis/index.sqlite3` as data; it is a derived cache. Settings live in the Memory tab of the Control Center settings ([settings/memory.md](settings/memory.md)); notes, candidates, index health and a recall test are in the Memory Center ([memory.md](memory.md)). The Brain reaches memory through the per-turn memory block and the `jarvis-memory` MCP server (3 calls per turn, candidates only); sub-agents get Wiki, CodeGraph and Skills through loadouts ([skills-and-loadouts.md](skills-and-loadouts.md)).
 
 Rebuild:
 
@@ -1573,6 +1573,34 @@ python -m jarvis reindex
 ```
 
 It is safe to delete `<memory>/.jarvis/index.sqlite3`; the next rebuild recreates search from Markdown.
+
+#### Recipe: rebuild the derived indexes
+
+1. Lexical (FTS5): stop JARVIS, run `python -m jarvis reindex` (prints the number of documents indexed), or just delete `<memory>/.jarvis/index.sqlite3`. Without a manual step, Core also resynchronizes it from the Markdown files at every start (a background thread; while it runs, turns are `degraded` with `index_syncing`, 10 to 25 s for about 2 000 notes).
+2. Semantic: delete `<memory>/.jarvis/semantic.sqlite3` (or change the embedding model). The next Core start recreates it and re-embeds the canonical notes in the background; the leg reports `semantic_unavailable` until it completes and recall stays lexical. Re-embedding 5 000 notes takes about a minute, and with the `openai` provider it costs embedding calls.
+3. Check in the Memory Center, tab "Santé des index", or `GET /v1/memory/status`: each leg returns to `ok`. Nothing canonical changes in any of these steps.
+
+#### Recipe: back up and restore the memory
+
+Back up `<data_root>/memory` as a folder, with JARVIS stopped or at rest. Keep the `*.md` notes, `_candidates/` and `.history/`; `.jarvis/` is derived and can be left out.
+
+1. Copy the folder (for example `robocopy "<data_root>\memory" "<backup>\memory" /E /XD .jarvis`).
+2. On the second PC or data root, set `JARVIS_DATA_ROOT` to the new root ([local-data.md](local-data.md)) and copy the folder to `<new data_root>/memory` before the first Core start. Do not copy `.jarvis/`, nor any SQLite `-wal` or `.bak`: they are not part of the memory.
+3. Start Core: the indexes rebuild from the Markdown files (recipe above). Open the Memory Center and check the note count and a recall test. If notes are listed but a recall returns nothing, wait for `index_syncing` to clear.
+4. If the target root already holds notes, copy into a scratch folder and compare first; a restore is a copy, never a silent merge.
+
+#### Sidecar outage behaviour
+
+An unreachable, slow or misbehaving Tencent sidecar never blocks a turn and never blocks a canonical write. Recall falls back to the local legs (lexical, plus semantic if enabled); the Tencent leg reports `degraded` / `tencent_unavailable` in `GET /v1/memory/status`, in the Memory Center index health and in the `degraded` codes of the recall; after 3 consecutive failures a circuit breaker pauses calls for 60 s. Undelivered pushes show `tencent_mirror_behind`. Nothing to do during an outage. A full `resync` is a code-level call on the mirror sink (`ResyncReport`, [memory-tencent.md](memory-tencent.md)); no route or button triggers it yet. Disabling `memory.tencent.enabled` removes the leg entirely.
+
+#### Enabling remote embeddings
+
+Off by default: `semantic.provider = none` sends nothing anywhere. To opt in, in the Memory tab of the settings choose the provider `openai`, enable semantic search, save the key under the `openai` provider in API Keys, then restart Core (semantic settings apply at the next start). Note text is then sent to the embedding provider to be vectorized. Notes in the `private` scope are excluded unless you also tick "Autoriser les scopes privés" (`semantic.allow_private`, default false); legacy notes without front matter are `private`, so with the default they are found by the lexical leg only. To go back, set the provider to `none`; the semantic file is derived and can be deleted.
+
+### Tencent MemoryCore sidecar
+
+Optional and off by default (`memory.tencent.enabled`). Contract, API pin and update policy: [memory-tencent.md](memory-tencent.md). Enable: run the sidecar (default `http://127.0.0.1:8420`), set `memory.tencent.url`, save its token under the `tencent` provider in API Keys (or `JARVIS_TENCENT_TOKEN`), then set `memory.tencent.enabled`. JARVIS never probes it at startup. `/v1/memory/status` shows `tencent` as `ok`, or `degraded` with `tencent_unavailable` (the sidecar failed or its circuit breaker is open: 3 failures in a row pause calls for 60 s, then one trial call decides) or `unavailable` with `tencent_config_invalid` (the URL is refused: plain `http` is accepted on loopback only). 
+Recall keeps working from the local legs whatever the sidecar does; canonical writes never wait for it. The mirror reports `tencent_mirror_behind` when pushes are waiting or were dropped: run `resync` (idempotent) to make the sidecar match the notes again. Everything in the sidecar is disposable: to reset it, disable the setting, wipe the sidecar's own data, delete `<memory>/.jarvis/tencent-mirror.json` and run `resync` after re-enabling. To stop using it, set `memory.tencent.enabled` to false: no migration, nothing canonical changes. The sidecar's data plane needs its instance id (`x-tdai-service-id`; `service_id` in the wiring). A sidecar-side erasure is never implied: see the known limits in memory-tencent.md. The adapter is pinned to upstream commit `0468a2a`; do not upgrade the sidecar without running `tests/integration/test_tencent_live.py` (`JARVIS_TENCENT_LIVE=1`).
 
 ## Configuration
 
@@ -1608,7 +1636,7 @@ Main environment overrides:
 | `ANTHROPIC_API_KEY` | lists the real Claude models; the CLI itself can run on a subscription |
 | `GOOGLE_API_KEY` / `GEMINI_API_KEY` | Gemini Live voice and its model list |
 | `JARVIS_DATA_ROOT` | per-PC data root (SQLite state and scene, history, runtime memory); default `~/.jarvis/instances/<checkout>-<hash>/data` (one per checkout of the repo), outside git. First Core start adopts the old `./data` ([local-data.md](local-data.md)) |
-| `JARVIS_MEMORY_DIR` | canonical Markdown root (V1 path) |
+| `JARVIS_MEMORY_DIR` | canonical Markdown root; default `<data_root>/memory` |
 | `JARVIS_RUNTIME_DIR` | transient signal/log directory |
 | `JARVIS_CONFIRMATION_TIMEOUT_S` | pending write confirmation expiry |
 | `JARVIS_LOG_LEVEL` | diagnostic level |
@@ -1940,6 +1968,534 @@ pendant que la vue est fermée apparaît à la prochaine ouverture.
 La bibliothèque vit dans la racine de données du poste
 (`prefabs/<id>/<version>/`, [local-data.md](local-data.md)) : un worktree ou
 `jarvis-dst` a la sienne.
+
+### Plein écran d'une surface (fenêtre de scène, prefab)
+
+Une fenêtre de la scène (et la scène entière) peut passer en **vrai plein écran du navigateur**, sans bordure :
+l'élément hôte qui contient le cadre du prefab reçoit `requestFullscreen()`. Ce n'est pas un grand panneau CSS, et
+JARVIS ne le dit jamais plein écran avant que le navigateur l'ait constaté. Contrat : `docs/prefabs.md` › *Host
+fullscreen*.
+
+**Le plus simple : le menu de la fenêtre.** Un clic droit sur une fenêtre dessinée de la scène (ou la touche Menu)
+propose **Plein écran**. C'est un vrai geste de votre part : la fenêtre passe en plein écran tout de suite, sans
+invite. Les demandes de la voix ou d'un agent, elles, **arment** une invite (ci-dessous), parce que le navigateur
+refuse le plein écran sans clic.
+
+**Le navigateur exige un clic.** Une demande de la voix ou d'un agent n'entre donc pas : elle **arme** une invite
+en haut de la fenêtre (« Plein écran demandé », bouton **Passer en plein écran**, **Annuler**, compte à rebours de
+30 s). L'invite est dans la couche supérieure du navigateur : elle reste cliquable même quand une boîte de
+dialogue du Control Center est ouverte. Un clic sur le bouton entre ; sans clic, l'invite disparaît à l'échéance et
+le dit (« Personne n'a cliqué dans les 30 s … »). **Échap** quitte à tout moment, y compris quand JARVIS ne
+répond plus : c'est le navigateur qui sort. À la sortie, la fenêtre retrouve sa place et le focus revient où il
+était. Seul un onglet **visible** reçoit la demande : un onglet caché ne la prend pas, et son invite périmée
+disparaît dès qu'il se remontre si l'armement a été retiré entre-temps.
+
+Les commandes ci-dessous sont en **PowerShell** (Windows). Remplacez `<port>` par le port de votre Control Center.
+
+Lire l'état (le journal du Control Center porte les lignes `fullscreen.*` ; la console du navigateur les lignes
+`[fullscreen] …`) :
+
+```powershell
+Invoke-RestMethod http://127.0.0.1:<port>/api/fullscreen/state
+```
+
+`state` vaut `entered` | `exited` | `needs_gesture` (invite affichée) | `unsupported` | `refused` | `expired`, avec le
+`code` et la phrase du navigateur quand il y en a un.
+
+**Où lire l'`object_id` d'une fenêtre** : dans l'instantané de la scène, un objet par ligne (`object_id`, forme et
+titre) :
+
+```powershell
+(Invoke-RestMethod http://127.0.0.1:<port>/api/scene).snapshot.objects |
+  ForEach-Object { [pscustomobject]@{ object_id = $_.object_id; forme = $_.representation; titre = $_.payload.title } }
+```
+
+Simuler la demande d'un agent (ne démarrez/arrêtez pas votre JARVIS pour ça ; n'importe quel Control Center de test
+sur un autre port et un autre `JARVIS_DATA_ROOT` convient) :
+
+```powershell
+$id = "<object_id de la fenêtre>"
+Invoke-RestMethod -Method Post -Uri http://127.0.0.1:<port>/api/fullscreen/commands `
+  -ContentType "application/json" -Body (@{ action = "enter"; object_id = $id } | ConvertTo-Json)
+```
+
+Réponse attendue : `state: needs_gesture` (jamais `entered`). Pour sortir : même commande avec
+`@{ action = "exit" }`. `504 fullscreen_no_visible_page` = aucun onglet ouvert **et visible** ;
+`504 fullscreen_command_expired` = la page a pris la commande et ne répond plus. Le clavier de navigation n'est lu
+sur la fenêtre que si la demande porte `keys = "host"` (réservé à la lecture de présentation) ; par défaut
+(`keys = "none"`) le plein écran ne touche jamais au focus d'un prefab avec un champ de saisie.
+
+**Recette de vérification Humaine** (le sans-tête de la machine prouve l'entrée par clic, la sortie, la restauration,
+l'invite cliquable sous une boîte modale et le bac à sable ; il ne prouve pas ce qui suit) :
+
+1. *Menu.* Clic droit sur une fenêtre prefab, **Plein écran** : elle remplit l'écran sur fond noir, sans titre ni
+   poignées, le contenu du prefab est vivant.
+2. *Commande d'agent.* Lancer la commande ci-dessus avec l'`object_id` : l'invite apparaît ; cliquer **Passer en
+   plein écran** : même résultat.
+3. *Sans clic.* Relancer la commande et attendre 30 s : l'invite part avec sa notification d'échéance, rien n'a changé.
+4. *Annuler.* Relancer la commande, cliquer **Annuler** (ou Échap dans l'invite) : l'invite part, le focus revient.
+5. *Échap physique.* Entrer en plein écran, appuyer sur la touche **Échap** : sortie immédiate, fenêtre à sa place,
+   focus rendu, `Invoke-RestMethod …/api/fullscreen/state` répond `exited`.
+6. *Clavier (demande avec `keys = "host"`).* En plein écran, flèches, Page haut/bas, Espace, Début et Fin ne
+   défilent pas la page et ne déplacent pas la sélection de la scène ; un clic dans le cadre ne les perd pas.
+   Sans `keys`, rien n'est capté et un champ de saisie du prefab garde le focus.
+7. *Plusieurs écrans.* Avec deux écrans, ajouter `display = "other"` à la commande : Chrome demande l'autorisation de
+   gérer les fenêtres ; accepter puis cliquer l'invite : la surface s'ouvre sur l'autre écran
+   (`display_selection: granted`). Refuser l'autorisation : le plein écran s'ouvre sur l'écran courant
+   (`display_selection: denied`), sans erreur. Si l'autorisation consomme le clic, l'invite reste avec « cliquez de
+   nouveau ».
+8. *Onglet caché.* Avec deux onglets du Control Center, lancer la commande pendant que l'un est caché : c'est
+   l'onglet visible qui reçoit l'invite.
+9. *Mode fenêtre.* Après chaque sortie, la scène (taille, position et sélection des fenêtres) est inchangée.
+
+Limites connues : Chrome/Edge seulement pour le choix de l'écran (Firefox et Safari entrent en plein écran sur l'écran
+courant) ; les notifications du Control Center (toasts) ne se voient pas pendant le plein écran (seul l'élément
+plein écran s'affiche) : les erreurs sont aussi dans le journal et la console ; l'invite d'autorisation « gestion
+des fenêtres » est celle de Chrome.
+
+### Rechargement à chaud d'une scène du Studio (recette de vérification Humaine)
+
+Une modification de **source** d'une scène (gabarit, style, comportement, manifeste d'un prefab) se voit tout de suite dans
+la fenêtre de cette scène, **sans toucher aux autres** et sans perdre ce que vous aviez réglé ou cliqué dans la scène.
+Contrat : [presentation-studio.md](presentation-studio.md#hot-reload-contract-level-3-slice-06). Il n'y a pas encore d'écran
+d'édition (Slice 07) : la recette passe par les routes du Control Center et par la lecture (Slice 12). Elle ne démarre pas votre
+JARVIS vivant — **n'utilisez pas votre session de travail** : lancez un Core et un Control Center de test, sur un autre
+port et une autre racine de données (`JARVIS_DATA_ROOT=<dossier de test>`), puis ouvrez la page de ce Control Center.
+
+Commandes en **PowerShell** ; remplacez `<port>` par le port du Control Center de test, `<pid>`/`<vid>`/`<sid>` par les
+identifiants de la Presentation, de la variante et de la scène (l'URL de base est
+`$base = "http://127.0.0.1:<port>" + "/api/presentation-studio/presentations"` ; `Invoke-RestMethod "$base/<pid>"` les liste).
+
+1. *Démarrer une lecture* (la scène doit figurer dans la partition de la variante ; la fenêtre est celle de la lecture, il n'y a
+   plus de route provisoire) :
+   `Invoke-RestMethod -Method Post -Uri "http://127.0.0.1:<port>/api/presentation-studio/playback/start" -ContentType 'application/json' -Body (@{presentation_id='<pid>'; role='rehearsal'} | ConvertTo-Json)`.
+   La fenêtre `studio-stage-<run_id>` de la lecture affiche la première scène ; cliquez **+1** dans sa scène plusieurs fois (si le
+   prefab a un compteur). Pendant les étapes suivantes, la lecture **ne se met pas en pause et ne change pas de position** ; une
+   scène que la lecture n'affiche pas est seulement ré-épinglée (« Version enregistrée », la lecture la vérifiera en y arrivant).
+   Arrêtez la lecture à la fin (`.../playback/stop`).
+2. *Bonne modification* : dans la console du navigateur, `JarvisStudioReload.instance.applySourceEdit({presentation_id:'<pid>', variant_id:'<vid>', scene_id:'<sid>', revision:<révision de la variante>, title:'Ma scène', files:{style:'.count{color:#ff7a59}'}})`.
+   Attendu : une bande en bas à gauche « Rechargement de « Ma scène »… 1 s / 50 s » avec un bouton « Arrêter d'attendre », puis
+   « Scène « Ma scène » rechargée » (verte, disparaît seule) ; **seule** cette fenêtre est redessinée, les autres ne clignotent
+   pas ; la valeur cliquée est conservée ; la couleur a changé.
+3. *Mauvaise modification qui ne monte pas* : même appel avec `files:{behavior:'function ( {'}`. Attendu : la fenêtre **ne
+   change pas** (pas de cadre blanc, pas de bande dans la fenêtre), la bande reste rouge « Modification … annulée … retour à la
+   dernière version valide », une notification apparaît ; la scène reste éditable (refaites l'étape 2).
+4. *Refus avant publication* : `files:{template:'<iframe src=https://example.com></iframe>'}` → bande rouge « refusée avant
+   publication · Rien n'a changé ».
+5. *Valeurs qui ne tiennent plus* : un manifeste qui retire une valeur que la scène utilise est **refusé** ; avec
+   `allow_state_reset:true` la scène est rechargée et la bande orange (qui reste) **nomme** ce qui a été retiré.
+6. *Journal* : `Invoke-RestMethod "$base/<pid>/reloads"` liste les derniers (et `versions` : par scène, les versions vivantes et
+   archivées de sa source, sans suppression ; l'archive se vide à la main, Core arrêté)
+   rechargements (sans contenu) ; le visualiseur d'erreurs montre les échecs (`core.presentation_studio.reload_rolled_back`,
+   niveau `warning`) ; la chronologie montre « Scène rechargée ».
+
+Cas qui n'ont pas de recette automatique : un vrai redémarrage de Core entre deux étapes (couvert par un sous-processus tué dans
+les tests), l'allure sur un vrai écran, et un navigateur dont l'onglet est caché. Ce dernier cas n'est pas prouvé par un test : ce qui l'est, c'est qu'une page qui
+ne rapporte rien dans le délai donne « montage non confirmé » (`pending_mount`), jamais un faux succès, et qu'un rapport tardif
+confirme ou annule ensuite. Si un onglet caché retarde le montage d'un cadre, vérifier à l'écran que c'est bien ce résultat qui
+s'affiche, sans supposer le moment où le rapport arrivera.
+
+### Presentations du Studio : sauvegarde et restauration
+
+Les Presentations vivent dans la racine de données du poste, sous
+`presentations/<presentation_id>/` (`presentation.json`, un fichier par variante dans
+`variants/`, la partition dans `scores/`, la direction artistique dans `art_directions/`), jamais dans le dépôt ni dans une base SQLite
+([local-data.md](local-data.md), [presentation-studio.md](presentation-studio.md)).
+
+- **Sauvegarder** : copier le dossier `presentations/` entier, JARVIS arrêté (ou, à chaud, après
+  une écriture terminée : chaque fichier est remplacé atomiquement, une copie ne voit jamais un
+  fichier à moitié écrit, mais deux fichiers copiés à deux instants peuvent différer d'une
+  révision). Copier aussi `prefabs/` : les scènes ne stockent que la référence exacte
+  `(id, version)` des prefabs.
+- **Restaurer** : remettre le dossier à sa place, sous la racine de données voulue, puis
+  démarrer Core. Il retire seulement les restes d'écritures interrompues
+  (`.staging-*`, `*.tmp`, trace `core.presentation_studio.swept`) ; il ne supprime ni ne réécrit
+  jamais un document.
+- **Vérifier** : `GET /v1/presentation-studio/presentations` rend les Presentations lisibles et, dans
+  `problems`, chaque dossier refusé avec son code (`presentation_studio_corrupt_document`,
+  `presentation_studio_unsupported_schema_version`). Une restauration faite avec une version de JARVIS
+  plus ancienne que celle qui a écrit les fichiers est refusée document par document, sans perte :
+  mettre JARVIS à jour.
+- **Ne jamais** éditer un fichier à la main ni le supprimer sans en avoir fait une copie
+  (règle du dépôt, `CLAUDE.md`) ; un dossier sans `presentation.json` est signalé, pas réparé.
+- **Après un arrêt brutal ou une coupure** (Slice 08) : chaque commit acquitté est durable (fichier `fsync`é,
+  remplacement atomique, dossier vidé), donc la Presentation est à la dernière révision acquittée, ou à celle
+  qui était en cours si son remplacement avait eu lieu ; jamais en arrière, jamais tronquée. Au démarrage Core
+  retire les `*.tmp` et `.staging-*` (jamais « promus », même plus récents que le document), puis recharge, derrière le démarrage
+  (il ne le retarde jamais ; `last_recovery.complete` / `pending` disent où il en est), la
+  variante active de chaque Presentation : bilan `core.presentation_studio.recovered`, et, par document
+  illisible, `core.presentation_studio.recovery_failed` au niveau `error` (visible dans le visualiseur
+  d'erreurs) avec son code typé (`presentation_studio_corrupt_document`,
+  `presentation_studio_unsupported_schema_version`). Le bilan est `last_recovery` du service. Aucun repli
+  silencieux : ni variante plus ancienne, ni `*.tmp`, ni `.bak` n'est chargé à la place. Restaurer une copie
+  (`.bak` ou sauvegarde du dossier `presentations/`) est une décision humaine, JARVIS arrêté, après avoir copié
+  le fichier abîmé. Une coupure de courant est protégée par le vidage du dossier après le remplacement ; si le
+  disque ou le système de fichiers ment sur ses caches, aucune écriture applicative n'y peut rien.
+- **Variantes locales d'une scène** (Slice 17) : elles sont dans le fichier de la variante (clé `scene_variants` de la scène), donc dans la sauvegarde du dossier `presentations/` ; aucun fichier ni dossier en plus, et le graphe des variantes ne les voit pas tant qu'on ne les a pas promues. Une variante locale supprimée ne se retrouve que par « annuler » (mémoire) : après un redémarrage elle est perdue, comme pour toute édition ; la copier d'abord (ou la promouvoir en variante) est la sauvegarde durable. Un fichier de variante en schéma 3 est refusé, intact, par une version de JARVIS d'avant la Slice 17.
+- **Annuler / rétablir** : l'historique est en mémoire (bornes dures, évictions visibles) et ne survit pas à un
+  redémarrage : `history_unavailable` avec la raison. Il n'est donc pas une sauvegarde ; la sauvegarde est le dossier
+  `presentations/` (aucun instantané durable n'est conservé). `GET .../variants/{id}/history` dit ce qui est annulable,
+  les bornes et ce qui a été évincé.
+
+### Variantes du Studio : archive, restauration et reprise
+
+Une branche (une variante) ne se supprime pas : **elle s'archive**, ce qui déplace son fichier de
+`presentations/<presentation_id>/variants/` vers `presentations/<presentation_id>/archive/`
+([local-data.md](local-data.md), [presentation-studio.md](presentation-studio.md#variant-graph-and-operations-contract-level-3)).
+Archiver une branche archive aussi tous ses descendants ; la variante active ne s'archive pas tant qu'une autre n'est pas choisie.
+
+- **Archiver** : toujours en deux temps. D'abord un plan, qui ne change rien et rend l'ensemble exact
+  (numéros et titres) avec un jeton de confirmation valable 10 minutes, dans ce processus seulement :
+  `POST /api/presentation-studio/presentations/{presentation_id}/variants/{variant_id}/archive-plan`. Puis, après
+  avoir montré l'ensemble à l'utilisateur, `POST /api/presentation-studio/presentations/{presentation_id}/variants/{variant_id}/archive`
+  avec ce jeton (`confirmation`). Sans jeton, ou avec le jeton d'un autre ensemble, d'un autre titre, d'une autre révision ou périmé, Core refuse
+  (`presentation_studio_confirmation_required` / `presentation_studio_confirmation_stale`) et n'écrit rien.
+- **Voir** : `GET /api/presentation-studio/presentations/{presentation_id}/graph?archived=1` liste les noeuds vivants et archivés
+  (numéro, titre, parent, raison, auteur). `?check=1` ajoute un rapport complet en lecture seule (orphelins, fichiers manquants, doublons).
+- **Restaurer (outil)** : `POST /api/presentation-studio/presentations/{presentation_id}/variants/{variant_id}/restore` remet la variante et ses
+  ancêtres archivés (avec `{"with_descendants": true}`, aussi ses descendants archivés) ; c'est l'inverse exact de l'archivage, le numéro d'affichage est conservé.
+- **Restaurer à la main** (Core arrêté, **après avoir copié** tout le dossier `presentations/<presentation_id>/` ailleurs) : déplacer
+  `archive/<variant_id>.json` vers `variants/`, puis, dans `presentation.json`, déplacer l'objet de ce noeud de la liste `archived` vers la liste
+  `variants` en retirant ses clés `parent_variant_id`, `archived_at`, `archived_by` et `batch_id` (garder `variant_id`, `variant_number`,
+  `rationale`, `created_by`, `sources`, `preview_id`) ; ne jamais toucher `variant_counter`. Un noeud vivant doit avoir un parent vivant : restaurer d'abord les ancêtres.
+  Au moindre doute, utiliser l'outil ci-dessus : il vérifie le graphe avant d'écrire.
+- **Copie du manifeste v1** : la première opération du graphe sur une Presentation créée avant la Slice 16 réécrit `presentation.json` en schéma 2 et garde l'ancien
+  texte exact dans `presentation.json.v1.bak` (une seule fois, jamais remplacée, jamais supprimée par Core). Pour revenir à une version de JARVIS d'avant la Slice 16 : Core arrêté, copier
+  le dossier, puis remettre ce fichier sous le nom `presentation.json` (les variantes créées depuis sont alors des orphelins à garder ou à copier ailleurs).
+- **Un seul Core par racine de données** : deux Core (ou deux services) sur la même racine se disputent le compteur : chaque appelant reçoit « créé », un numéro est donné à
+  plusieurs variantes et le manifeste en liste moins que créées ; les fichiers en trop sont des orphelins rapportés au démarrage suivant.
+- **Après un arrêt brutal** : au démarrage Core accorde les fichiers au manifeste (`core.presentation_studio.reconciled`, `warning`) : un
+  archivage ou une restauration interrompus *avant l'écriture du manifeste* n'a pas eu lieu, les fichiers déjà déplacés retournent à leur place. Un
+  numéro d'affichage réservé par un branchement interrompu est perdu (un trou, jamais une réutilisation).
+- **Orphelins** (`core.presentation_studio.reconcile_orphans`, `warning`) : un fichier de variante ou un document lié (`scores/`, `art_directions/`) que le manifeste ne
+  nomme pas est le reste d'un branchement interrompu. Core le **rapporte et n'y touche pas** (jamais adopté, jamais supprimé). Pour le garder :
+  le copier ailleurs. Pour le retirer : le copier d'abord, puis le supprimer à la main, Core arrêté. Un noeud dont le fichier est introuvable
+  (`missing`, niveau `error`) est une perte : restaurer le dossier depuis une sauvegarde.
+
+### Explorateur de variantes (studio, Slice 18)
+
+Contrat : [presentation-studio.md](presentation-studio.md#variant-explorer-interaction-contract-level-3-slice-18). C'est l'espace de travail plein écran, sombre et flouté,
+où l'on **voit comment la présentation a évolué** : l'arbre des branches à gauche, l'aperçu de la variante choisie à droite, et les actions (activer, brancher, renommer,
+archiver, restaurer). Il ne garde rien : l'arbre est le graphe de Core, relu après chaque action et toutes les 10 s ; l'aperçu **lit** la variante et n'écrit jamais.
+Il n'y a **pas de bouton dans le dock** : on l'ouvre par le bouton **Variantes** de l'en-tête de l'inspecteur (`INS`), par le bouton **Ouvrir l'explorateur de variantes** de la bande « Lecture arrêtée » qui suit une lecture, ou par la commande ci-dessous (c'est la porte de la voix et d'un agent : l'outil `open_explorer` de la Slice 21 la
+appellera ; il n'est pas encore branché) ou par la console (`JarvisStudioExplorer.open({presentation_id:'<pid>'})`). **Il est refusé pendant une lecture** (« Une lecture est en cours… ») et se ferme si une lecture démarre : arrêtez la lecture d'abord.
+
+**Plein écran, sans surprise.** Ouvert par la commande (la voix), l'explorateur s'affiche d'abord dans la fenêtre (étiqueté **Fenêtré**) et le navigateur arme son invite d'un clic (« Plein écran
+demandé » : **Passer en plein écran**, compte à rebours de 30 s, **Annuler**), parce qu'il interdit le plein écran sans geste ; JARVIS ne le dit jamais plein écran avant que le
+navigateur l'ait constaté. Ouvert par un clic, il entre tout de suite. Si le navigateur refuse ou n'a pas le plein écran, l'étiquette dit pourquoi et l'espace reste utilisable.
+**Échap** ferme d'abord le menu, puis la boîte de dialogue, puis l'explorateur ; en plein écran, le navigateur garde la première pression pour quitter le plein écran (l'explorateur
+reste ouvert dans la fenêtre, un second Échap le ferme). Le focus revient à ce qui l'avait ouvert.
+
+**Comparer et composer (Slice 19).** Dans l'arbre, **C** (ou Ctrl + clic, ou le menu) marque une variante ; avec **2 ou 4** marques, **Comparer** (ou Maj+C) ouvre la comparaison côte à côte à la place de l'aperçu simple. Les flèches, Début et Fin parcourent les scènes de la fenêtre qui a le focus ; en mode **synchronisé** les scènes équivalentes suivent (puce **Choisie** / **Synchronisée** ; **Sans équivalent** : la fenêtre garde sa scène), **M** passe en mode indépendant, **F** met deux variantes en vis-à-vis 50/50 (à 4 variantes), **L** lie à la main deux scènes qui se correspondent. **Maj+C** dans la comparaison ouvre **Composer** : une source par dimension (scènes, narration, mouvement, direction artistique), toujours une vérification d'abord ; les conflits sont listés avec leur remède, et **Créer la variante** n'est possible qu'après un plan sans conflit. Le résultat est un nouvel enfant sélectionné dans l'arbre ; les variantes sources ne bougent pas. Contrat : [presentation-studio.md](presentation-studio.md#comparison-and-composition-in-the-explorer-slice-19-interface). Vérifications humaines (non prouvables sans tête) : lecteur d'écran sur les fenêtres, rendu sur un projecteur, tactile.
+
+**Clavier.** `↑ ↓ Début Fin Page↑ Page↓` déplacent le focus dans l'arbre, `→ ←` déplient et replient (puis vont à l'enfant ou au parent), `Entrée` choisit,
+`F2` renomme, `Suppr` archive (un plan d'abord), `N` branche, `A` active, `R` restaure ; `Menu`, `Maj+F10` ou le clic droit ouvrent le menu des mêmes actions (appui long
+sur un écran tactile). Dans l'aperçu, les flèches et `Page↑/Page↓` parcourent les scènes.
+
+**Archiver n'a pas de raccourci sans filet.** Le plan montre **toutes** les variantes qui partiraient (numéro, titre, début de l'identifiant), le focus est sur **Annuler**, et le jeton
+(valable 10 minutes) se décompte à l'écran ; s'il expire, ou si la liste change entre-temps (une branche faite à la voix, par exemple), la liste est recalculée sous vos yeux et
+**rien n'est archivé** sans une nouvelle confirmation. Les variantes archivées se retrouvent dans la section repliée **Archivées**, avec **Restaurer**.
+
+Commandes de test en **PowerShell** (Windows ; n'importe quel Control Center de test sur un autre port et un autre `JARVIS_DATA_ROOT` convient, jamais votre JARVIS vivant) :
+
+```powershell
+$cc = "http://127.0.0.1:<port>"
+# l'état tel que la page l'a rapporté : closed | open (mode, numéro de la variante) | unknown (aucune page visible depuis 60 s)
+Invoke-RestMethod "$cc/api/presentation-studio/explorer/state"
+# ouvrir (la voix fait la même chose) ; fullscreen = $false pour rester dans la fenêtre
+Invoke-RestMethod -Method Post -Uri "$cc/api/presentation-studio/explorer/commands" -ContentType "application/json" `
+  -Body (@{ action = "open"; presentation_id = "<pid>" } | ConvertTo-Json)
+Invoke-RestMethod -Method Post -Uri "$cc/api/presentation-studio/explorer/commands" -ContentType "application/json" -Body '{"action":"close"}'
+```
+
+Les réponses du navigateur portent un jeton de page (`X-Jarvis-Page-Token`, injecté dans le HTML servi) : une écriture sans lui est refusée `403 explorer_bad_page_token`. Le miroir `state` est indicatif (daté) : se fier au `mode` du reçu. Un `open` peut durer jusqu'à `deadline_s` (4 à 10 s, défaut 10) grâce à un accusé `accepted`.
+
+Réponse attendue à `open` : `state: opened` avec `mode: fullscreen_armed` (jamais `fullscreen` sans clic) et la phrase `explanation`. `refused` + `code` : `explorer_run_in_progress` (une lecture tourne),
+`explorer_unknown_presentation`, `explorer_load_failed`. `504 explorer_no_visible_page` = aucun onglet du Control Center ouvert **et visible** ; `504 explorer_command_expired` = la page a pris la commande
+et ne répond plus ; `409 explorer_command_busy` = une autre commande est en cours. Le journal du Control Center porte les lignes `explorer.*` (ids, états, durées, **jamais un titre**) ; la console du
+navigateur, les lignes `[studio-explorer] …`.
+
+**Recette de vérification Humaine** (le sans-tête de la machine prouve : l'ouverture par la commande, l'invite armée puis le VRAI clic qui entre en plein écran, la sortie et le focus rendu, l'arbre,
+l'aperçu, chaque action contre un vrai Core, le clavier seul, l'arbre d'accessibilité, 64 variantes, trois tailles d'écran ; il ne prouve pas ce qui suit) :
+
+1. *Échap physique.* Ouvrir en plein écran (clic sur **Plein écran**), appuyer sur la touche **Échap** : sortie du plein écran, l'explorateur reste ouvert dans la fenêtre avec « Plein écran quitté… » ;
+   un second Échap le ferme et le focus revient où il était.
+2. *Commande (la voix).* Envoyer `open` (ci-dessus) : il apparaît dans la fenêtre, **Fenêtré** / « en attente de votre clic », l'invite en haut ; cliquer **Passer en plein écran** ; sans clic, au bout de 30 s
+   l'invite part et le dit.
+3. *Deux écrans / projecteur.* Glisser la fenêtre du Control Center sur l'écran voulu avant d'ouvrir : le plein écran se fait sur l'écran courant (la sélection d'écran de la commande n'est pas exposée par
+   l'explorateur). Vérifier la lisibilité de l'arbre et de l'aperçu à distance, le contraste du fond et la lueur sur le projecteur réel.
+4. *Lecture.* Lancer une lecture : l'explorateur se ferme dans les 2 s (« Une lecture a démarré… ») ; en lecture, la commande `open` répond `refused: explorer_run_in_progress` ; après l'arrêt, il s'ouvre de nouveau.
+5. *Archiver / restaurer.* Sur une branche qui a des sous-branches : `Suppr`, vérifier la liste, **Annuler** (rien ne bouge), `Suppr` de nouveau, **Archiver** ; la branche est dans **Archivées**, **Restaurer avec ses
+   sous-branches** la remet. Pendant que la boîte est ouverte, créer une branche à la voix sous celle-ci : la confirmation doit recalculer la liste et **ne rien archiver** sans nouvelle confirmation.
+6. *Lecteur d'écran.* Avec NVDA ou Narrateur : l'arbre annonce « Variante 12, <titre>, active, 3 sous-branches », le niveau, la position (n sur m), l'état déplié ; le plan d'archivage est lu, le bouton
+   **Annuler** a le focus ; un échec est annoncé tout de suite.
+
+### Assemblage d'une présentation (studio, Slice 11)
+
+Contrat : [presentation-studio.md](presentation-studio.md#authoring-contract-slice-11). Le cerveau soumet **un** brouillon (brief, scènes, partition,
+direction artistique) ; Core le vérifie avec une porte de qualité (66 règles codées, tableau dans le contrat ; 18 sont celles des sources Remotion, Slice 15) puis le stocke en **une seule transaction**.
+L'outil MCP est `presentation_view` (Slice 21, `explorer_open` / `explorer_close`) : il appelle ces deux routes ; le relais du Control Center force l'acteur `user`.
+
+- **Vérifier sans rien écrire** : `POST /api/presentation-studio/authoring/check` rend le rapport (`failures` bloquent, `warnings` informent, `skipped` dit
+  ce qui n'a pas pu être contrôlé). `POST /api/presentation-studio/authoring/assemble` livre (201, tous les identifiants créés) ou refuse (400 `presentation_studio_draft_refused`,
+  rapport complet, **rien d'écrit**).
+- **Ce qu'un arrêt brutal peut laisser** (preuve : `test_presentation_studio_authoring_crash.py`, vrai `kill`) : rien ; des versions de prefab publiées
+  sous `presentation-studio.*` qu'aucune variante n'épingle (inoffensives, immuables) ; un dossier `presentations/.staging-*` sans manifeste. Jamais une présentation à moitié écrite :
+  le dossier entier, partitions et directions artistiques comprises, est publié par un seul renommage.
+- **Au démarrage** : le balayage de Core retire les `.staging-*` (`core.presentation_studio.swept`). Les versions de prefab que rien n'épingle se **rapportent à la demande** :
+  `GET /v1/presentation-studio/authoring/reconcile` (Core, jeton porteur ; lecture seule, pas relayé à la page ; `core.presentation_studio.authoring_reconciled`, `warning` s'il y en a). Elles ne sont jamais adoptées ni supprimées ;
+  la rétention (docs/prefabs.md) archive une version `presentation-studio.*` que rien n'épingle. Un échec en cours d'assemblage écrit
+  `core.presentation_studio.authoring_unreferenced` (`warning`, les `id@version` concernés).
+- **Rien du contenu du brouillon n'est journalisé** (ni titre, ni phrase, ni valeur) : seulement des identifiants, des codes et des comptes.
+  Les réponses ne portent pas non plus le texte de l'auteur : un nom de clé inconnu est compté, une valeur refusée est remplacée par `<value>`.
+- **Adopter une direction d'un brouillon exploratoire** : `POST /api/presentation-studio/authoring/finalize` (la porte `directed` sur la variante stockée ; sans elle, rien ne garantit qu'un candidat léger soit un exposé complet). `activate` seul reste le choix de l'utilisateur.
+- **Ce que les tests automatiques ne prouvent pas** : que le vrai modèle suive la politique (appels d'outils, questions posées, qualité du premier jet). C'est la porte des Slices 21 et 22 ;
+  la preuve de cette Slice est un banc scripté (`tasks/jarvis-interactive-presentation-studio/slices/11-authoring-planner-first-draft/evidence/`), pas une trace de Claude.
+- **Scènes Remotion (Slice 15)** : le brouillon est rédigé en TSX (`prefabs[].remotion`), compilé par Core **avant toute écriture** ; une scène qui ne compile pas est un constat `tsx_compile`
+  avec fichier, ligne et colonne, jamais un repli. Si Remotion n'est pas prêt (non installé, à réparer), `assemble` répond 409 `presentation_studio_engine_unavailable` et n'écrit rien : réparer la
+  capacité (carte « Présentations · moteur »), puis renvoyer le brouillon. Les références vivantes d'une scène ne lisent que le Board actif. Preuves : banc scripté
+  `tasks/jarvis-remotion-presentation-integration/slices/15-remotion-one-shot-authoring/evidence/` et trace réelle du modèle (`authoring-real-traces*.json`, empreinte du planificateur à jour).
+
+### Lecture d'une présentation (studio, Slice 12) : vérification humaine
+
+Contrat : [presentation-studio.md](presentation-studio.md#playback-runtime-contract-level-3-slice-12). Les tests automatiques couvrent
+la machine d'états, la fenêtre de stage, les fenêtres annexes, le clavier (fenêtré et plein écran, sur la VRAIE page du Control Center servie
+par un Core isolé) et le plein écran dans un vrai Chrome sans tête ; ce que le sans-tête
+ne prouve pas est à regarder une fois, sur un vrai poste, dans une instance isolée (`JARVIS_DATA_ROOT` à part, jamais le Jarvis vivant) :
+
+1. **Clavier réel** : lancer une lecture (rôle « Vous présentez »), cliquer la fenêtre de la scène, puis flèches, Espace, Début, Fin, `P`, Échap
+   (pause) : la bande dit où l'on en est à chaque touche, une touche n'agit qu'une fois, et les mêmes touches avec le focus ailleurs (un champ de
+   saisie, une autre fenêtre) ne font rien. La bande ne recouvre pas le sélecteur de mode (en bas à gauche).
+2. **Plein écran** : « Plein écran » dans la bande (un clic) ; la scène remplit l'écran, la bande n'y est pas, les touches agissent une fois ; **Échap**
+   (la vraie touche) sort du plein écran, la bande revient, la lecture n'a **pas** changé d'état (ni pause surprise, ni saut).
+3. **Deux écrans** : même essai avec un second écran branché (l'invite « gestion des fenêtres » est celle de Chrome) ; la bande reste sur l'écran du Control Center.
+4. **Détour** : demander à la voix une ressource annexe, la voir apparaître, revenir : elle disparaît de la scène, la lecture reprend à la même place.
+5. **Arrêt brutal** : pendant un détour, tuer Core (`taskkill` de CE processus seulement, jamais le Jarvis vivant), le relancer : au démarrage, la ligne
+   `core.presentation_studio.playback_reclaimed` dit combien d'objets ont été repris et la scène n'a plus ni fenêtre de stage ni fenêtre annexe ; le fichier
+   `state/presentation-studio-stage-ledger.json` a disparu.
+6. **Mode** : « Jarvis présente » passe le mode en SIMPLE pendant la lecture et le rétablit à l'arrêt ; changer le mode à la main pendant la lecture
+   l'arrête (« mode changé par vous ») sans le remettre de force ; la préférence enregistrée du Board n'a pas bougé.
+7. **Cues** (pile vocale OpenAI seulement, sinon l'écoute d'ambiance est sourde) : dire la phrase de la cue suivante déclenche l'élément, le dire deux fois
+   ne le déclenche qu'une fois (suiveur : Slice 13). Noter la pile utilisée. Recette complète : *Suivi des cues à la voix* ci-dessous.
+
+8. **Suivi vocal absent** (architecture `legacy` ou `duplex`, ou pile ambiante sans suiveur) : lancer « Vous présentez » ; 10 s plus tard la bande
+   dit « Suivi vocal indisponible » avec la raison, le sélecteur de mode dit « Refusé par la voix », et la lecture continue au clavier. Noter l'architecture.
+9. **Séquence verrouillée** : arriver à un élément qui héberge une séquence ; « Suivant » est refusé pendant qu'elle tourne (Core l'exécute, la bande
+   montre l'étape et le temps) ; « Sortir de la séquence » (ou `S`) continue après elle, toujours.
+10. **Registre illisible** (instance isolée) : après un arrêt brutal, abîmer `state/presentation-studio-stage-ledger.json` (le tronquer), relancer Core : la
+   scène n'a plus de fenêtre `studio-stage-*` / `studio-aux-*`, le fichier est resté à côté en `.corrupt-<horodatage>`, la ligne
+   `stage_ledger_scan_reclaimed` dit combien d'objets ont été repris.
+
+Après un arrêt brutal, une fenêtre `studio-stage-*` ou `studio-aux-*` encore visible est un défaut à signaler avec la ligne `playback_reclaim_failed` du
+journal ; ne pas la supprimer à la main avant d'avoir copié `scene.sqlite3` (règle du dépôt).
+
+### Scène Remotion jouée par Jarvis (Remotion Slice 10) : vérification humaine
+
+Contrat : [remotion-isolation.md](remotion-isolation.md) § 10, [presentation-engine.md](presentation-engine.md) (porte du moteur). Les tests
+automatiques jouent une scène Remotion de bout en bout dans un vrai Chrome sans tête contre un Core isolé (lecture, couleur/titre/durée à chaud, passage de
+scène en scène, plein écran, son sur un vrai geste, moteur indisponible, erreur de compilation, cadre figé retiré, navigation refusée par `frame-src`) :
+`python scripts/remotion_player_harness.py --runtime-dir <racine>/local_capabilities/remotion/runtime --evidence <dossier>`
+(réutilise une installation existante par jonction, n'en installe jamais une). Jamais sur le Jarvis vivant : une instance isolée (`JARVIS_DATA_ROOT`,
+`JARVIS_CORE_PORT`, `JARVIS_UI_PORT`, `JARVIS_REMOTION_SANDBOX_PORT` à part). À regarder une fois sur un vrai poste, avec la capacité Remotion installée
+(§ « Capacité locale Remotion ») :
+
+1. **Lecture** : créer une présentation (moteur Remotion par défaut), y mettre une scène Remotion, lancer « Vous présentez » : la fenêtre de scène affiche
+   « Préparation de la scène Remotion… N s » (le premier lancement compile, jusqu'à 2 minutes), puis la scène joue en boucle, sans clic.
+2. **Son** : la scène démarre muette (« Son coupé · cliquez la scène pour l'activer ») ; un clic DANS la scène (pas ailleurs) active le son si elle en a ; noter
+   si le son sort bien des haut-parleurs voulus (jamais écouté par les tests).
+3. **Plein écran** : « Plein écran » dans la bande (un clic) ; la scène remplit l'écran ; **Échap** (la vraie touche) en sort sans changer l'état de la lecture ;
+   avec un second écran, l'invite « gestion des fenêtres » est celle de Chrome.
+4. **Édition à chaud** : pendant la lecture, demander à la voix de changer la couleur ou le titre : le changement se voit tout de suite, sans nouveau rendu
+   ni clignotement, la lecture reste éditable.
+5. **Moteur absent** : désinstaller la capacité (`POST /v1/local-capabilities/remotion/uninstall`, instance isolée), lancer la lecture : réponse « moteur
+   Remotion indisponible » avec la réparation, aucune fenêtre de scène, **jamais** une scène HTML à la place ; réinstaller, relancer : elle joue.
+6. **Scène figée** : une scène qui boucle sans fin est retirée au bout de 3 s avec sa raison et « Recharger la scène » ; la page reste utilisable.
+7. **Origine** : ouvrir le Control Center par `http://127.0.0.1:<port>/` (pas `localhost`) : l'origine du bac à sable n'autorise que cet hôte.
+
+### Moteur des présentations : Remotion par défaut, Slidecar en expérience (Remotion Slice 20) : exploitation et vérification humaine
+
+Contrat : [presentation-engine.md](presentation-engine.md) › *Human engine control*. Où : Control Center, « Outils MCP » > « Plugins externes », carte « Présentations · moteur ».
+
+- **Lire l'état** : trois pastilles (`Défaut : Remotion`, `Remotion : Prêt | Indisponible`, `Slidecar : N documents · M au journal`) ; chaque présentation porte son badge de moteur
+  (le moteur est fixé à la création et ne change jamais).
+- **Remotion indisponible** : la carte donne la raison réelle de l'adaptateur et le geste. `Installer Remotion` (≈ 270 Mo, une fois par poste) ou `Réparer Remotion` appellent
+  les opérations `install` / `repair` de la capacité locale (après confirmation, temps écoulé affiché, 15 min au plus) ; les réglages de bac à sable invalides
+  (`JARVIS_REMOTION_SANDBOX_HOST` / `_PORT`) et un Core sans moteur demandent un geste de votre part (corriger, relancer Core vous-même : rien ne se relance seul). **Jamais** une
+  présentation Slidecar à la place d'une Remotion.
+- **Créer en Slidecar** : seulement dans « Expérimental : Slidecar » (avertissement, confirmation). Chaque création, copie « expérience » et usage d'un document Slidecar est un diagnostic
+  `core.presentation_studio.slidecar_created | slidecar_experiment_created | slidecar_used` (moteur, acteur, raison) ; la carte montre les 20 dernières lignes (registre en mémoire depuis le
+  démarrage de Core ; le badge du document, lui, est durable). Une tentative de nommer un moteur sans passer par la page est `engine_selection_refused` (warning).
+- **Anciennes présentations** (sans champ moteur) : lues comme Slidecar, jamais converties ; à la première sauvegarde l'ancien manifeste est gardé une fois dans `presentation.json.v<N>.bak`.
+
+Vérification humaine (une fois, instance isolée : ports et `JARVIS_DATA_ROOT` à part, jamais le JARVIS vivant) :
+
+1. Ouvrir la carte : Remotion par défaut. Créer une présentation sans rien d'autre : badge `Remotion`. (Un brouillon assemblé par l'agent est `Remotion` depuis la Slice 15 : le planificateur écrit des scènes Remotion et refuse une source HTML ; les anciens brouillons d'agent déjà sur disque sont des documents `Slidecar · expérimental` hérités, lus comme avant, jamais convertis.)
+2. Ouvrir « Expérimental : Slidecar », lire l'avertissement, créer, **annuler** la confirmation (rien n'est créé), recréer et confirmer : badge `Slidecar · expérimental`, ligne « Création » au journal.
+3. « Dupliquer en expérience Slidecar » sur une présentation Remotion : un nouveau document `... (Slidecar)`, la source inchangée.
+4. Casser Remotion (désinstaller la capacité ou changer le port du bac à sable) : la carte dit pourquoi et propose le bon geste ; lancer la lecture d'une présentation Remotion : erreur visible, rien d'autre ne joue.
+5. Recharger la page : mêmes badges.
+
+### Scène Remotion conduite par la partition (Remotion Slice 12) : vérification humaine
+
+Contrat : [presentation-studio.md](presentation-studio.md) › *Remotion timeline bridge*, [remotion-isolation.md](remotion-isolation.md) § 11. Les tests
+automatiques jouent une scène à trois ancres dans un vrai Chrome sans tête contre un Core isolé (segment d'entrée, ancre révélée, cue, pause, reprise, retour,
+faux rapport de position) :
+`python scripts/remotion_player_harness.py --runtime-dir <racine>/local_capabilities/remotion/runtime --evidence <dossier> --test tests/unit/test_remotion_timeline_realpage_browser.py --slice 12 --report real-timeline.json`.
+Jamais sur le Jarvis vivant. À regarder une fois sur un vrai poste (ancres posées avec `at_ms` sur la scène) :
+
+1. **Suivre la parole** : lancer « Jarvis présente » sur une présentation dont une scène Remotion a des ancres ; à chaque ancre révélée l'animation repart de
+   son repère et s'arrête seule avant le suivant. Noter si le décalage (jusqu'à ~0,5 s, la bande lit Core toutes les 500 ms) est acceptable avec la voix.
+2. **Cue vocale** : dire la phrase d'une cue armée : la scène passe au segment suivant en même temps que la présentation (la cue vient du suiveur, jamais de la scène).
+3. **Pause / reprise** : Pause (bande ou clavier) fige l'image ; Reprise continue là où elle était, sans repartir du repère.
+4. **Séquence verrouillée** : une séquence dont les étapes révèlent des ancres de la scène : l'animation suit le rythme de la séquence ; la sortie de séquence
+   (`S`) libère la scène.
+5. **Son** : la piste sonore de la scène reste muette jusqu'à un clic dans la scène (Slice 10) ; écouter si elle suit les segments (jamais écouté par les tests).
+
+### Présentation rédigée par l'agent en Remotion (Remotion Slice 15) : exploitation et vérification humaine
+
+Contrat : [presentation-studio.md](presentation-studio.md#remotion-scenes-the-generator-slice-15). Les mêmes trois outils (`presentation_draft_check`, `_assemble`, `_finalize`) : le cerveau écrit des **scènes Remotion
+en TSX** (objet `prefabs[].remotion`), Core les compile avant d'écrire quoi que ce soit.
+
+- **Prérequis** : la capacité Remotion est prête (carte « Présentations · moteur »). Sinon `assemble` répond 409 `presentation_studio_engine_unavailable` avec la raison, n'écrit rien, et aucun autre moteur ne prend le relais :
+  installer ou réparer la capacité, puis renvoyer le brouillon.
+- **Une scène qui ne compile pas** est un constat `tsx_compile` (fichier, ligne, colonne) dans le rapport complet ; l'agent corrige et renvoie (3 tours au plus). Aucune version de prefab n'a été publiée.
+- **Ce que l'agent ne peut pas faire** : créer une présentation Slidecar (refus `prefab_engine_mismatch`, `create_assembled` refuse un document Slidecar) ; lire un Board autre que le Board actif par une référence vivante ;
+  se prévaloir d'un modèle amont dont la provenance n'est pas vérifiée par Core.
+- **Journal** (`core.presentation_studio.*`, ids, codes et comptes, jamais le texte du brouillon) : `authoring_compiled` (sources, compilées, refusées, réutilisées du cache), `authoring_compile_refused`, `authoring_engine_unavailable`
+  (`warning`), `authoring_live_refs`, `authoring_delivered` (`engine`, `compiled`, `inspirations`), `created` (`engine: remotion`, `actor: agent`).
+
+Vérification humaine (une fois, instance isolée : ports et `JARVIS_DATA_ROOT` à part, jamais le JARVIS vivant ; la capacité Remotion installée) :
+
+1. Demander à l'agent un exposé de six scènes sur un sujet que vous connaissez (public, durée, ton). Il doit lire le guide (`presentation_inspect draft_guide`), puis livrer en une transaction : badge `Remotion` sur la présentation, aucune ligne `Slidecar` au journal.
+2. Jouer la présentation (« Vous présentez ») : les scènes ont des mises en page **différentes** selon leur rôle (couverture, chiffre clé, liste), les couleurs et les polices sont celles de la direction artistique, les éléments entrent avec son mouvement (durée, décalage, transition). Juger si ce premier jet est
+   présentable : c'est un jugement humain, la porte ne prouve que le plancher (item H-15-1).
+3. Changer la couleur d'accent depuis l'inspecteur (le contrôle `props.theme.accent`) : la scène en cours change de couleur sans se recharger.
+4. Demander « des idées de styles » : les directions sont des brouillons ; ouvrir deux d'entre elles dans l'explorateur : la même scène est dessinée différemment (fond, accent, polices), et `finalize` n'adopte une direction que si elle passe la porte `directed`.
+5. Avec Remotion désinstallé : redemander un exposé : refus visible 409, rien d'écrit, pas de Slidecar.
+
+### Inspecteur d'édition d'une présentation (studio, Slice 07) : vérification humaine
+
+Contrat : [presentation-studio.md](presentation-studio.md#edit-inspector-ui-level-3-slice-07). Les tests automatiques couvrent le rendu des widgets
+depuis l'introspection, l'aperçu contre l'enregistrement (empreinte du fichier de la variante pendant un glissement), la parité interface / voix
+octet pour octet, annuler / rétablir, la base périmée, le 409 de rechargement, le masquage pendant une lecture, l'accessibilité (arbre
+d'accessibilité, contraste, ordre de tabulation) et deux tailles d'écran, dans un vrai Chrome sans tête contre un Core isolé. Ce que le sans-tête
+ne prouve pas est à regarder une fois, sur un vrai écran, dans une instance isolée (`JARVIS_DATA_ROOT` à part, jamais le Jarvis vivant) :
+
+1. **Toucher** : ouvrir `INS` dans le dock, choisir une scène, faire glisser un curseur (taille, durée) à la souris, au doigt si l'écran est tactile :
+   la poignée suit sans à-coup, le cadre d'aperçu bouge en même temps, la ligne dit « aperçu · non enregistré » ; au relâchement elle dit « enregistré ».
+   Le geste ne laisse **qu'une** entrée dans l'historique (un seul `↶` le défait).
+2. **Couleur et dégradé** : le sélecteur de couleur natif et la barre de dégradé se lisent bien ; ajouter, déplacer, retirer une étape.
+3. **Clavier seul** : Tab parcourt l'en-tête, la scène, les onglets, puis chaque réglage dans l'ordre ; flèches sur un curseur, − / +, Entrée ; Ctrl+Z /
+   Ctrl+Y dans l'inspecteur ; Échap ferme et rend le focus au bouton `INS`. Le focus est toujours visible.
+4. **Voix et interface** : demander à Jarvis de changer le même réglage ; la valeur change dans l'inspecteur au prochain relevé (rechargement de la
+   scène) ; modifier ce réglage à la main juste après une modification vocale non encore relue : l'avis « La présentation a changé ailleurs » liste ce
+   qui a changé et propose « Réappliquer ma valeur », sans rien écraser.
+5. **Lecture** : lancer une lecture (« Vous présentez ») ; l'inspecteur disparaît entièrement, le bouton `INS` est grisé avec sa raison, les touches
+   vont au lecteur ; à l'arrêt il est de nouveau disponible (fermé). Même essai en plein écran.
+6. **Rechargement** : demander à Jarvis une modification de source de la scène et, pendant « Rechargement en cours », régler un curseur : l'inspecteur dit
+   qu'il attend, réessaie tout seul, puis enregistre ; « Arrêter d'attendre » rend la main.
+7. **Direction artistique** : le chip montre le nom, la provenance et le contraste ; les 10 variables non livrées au cadre sont marquées « non appliqué ».
+8. **Petit écran** : fenêtre étroite (360 px) : pas de défilement horizontal, les onglets défilent, aucune cible trop petite, les dix outils du dock sont tous visibles (deux rangées dans le thème cosmos) et ne recouvrent pas le bouton Boards. Écran bas (600 px de haut) : l'aperçu démarre replié.
+   **Flèches sur un champ numérique** : cinq appuis sur ↑ dans « Inclinaison » ne laissent **qu'une** entrée d'historique (un seul `↶` les défait) ; maintenir ↑ ou rouler la molette de même ; Ctrl+Z avec un réglage en cours l'abandonne d'abord.
+9. **Mouvement réduit** (réglage système) : plus d'animation du sablier de chargement ni des transitions.
+
+Noter l'écran, le navigateur, le périphérique de pointage utilisés. Un message sans cause, un bouton qui ne répond pas, un état d'attente sans compteur
+ni issue sont des défauts à signaler avec les lignes `[studio-inspector]` de la console.
+
+### Présentation par Jarvis (studio, Slice 14) : vérification humaine
+
+Contrat : [presentation-studio.md](presentation-studio.md#jarvis-presenter-and-locked-sequences-level-3-slice-14). Les tests automatiques couvrent le pilote avec une
+fausse pile vocale et une horloge simulée, la VRAIE pile de parole (`SpeechScheduler`, sa porte de présentation, l'observateur de mode) avec une surface vocale
+factice, un Core réel et la page réelle dans un vrai Chrome sans tête. **Rien n'a été dit sur une vraie voix** : l'audible est à vérifier par vous, dans une instance
+isolée (`JARVIS_DATA_ROOT` à part, jamais le Jarvis vivant), avec un casque ou des haut-parleurs et un micro réels :
+
+1. **Une ligne dite** : préparer une présentation dont les éléments « Jarvis » portent un `text` court, lancer « Jarvis présente » (le clic ou la voix, demande
+   explicite). La bande dit « Jarvis présente », le mode passe en SIMPLE (rétabli à l'arrêt), la voix dit la ligne **telle qu'écrite** (pas reformulée), la bande
+   affiche « Jarvis parle » pendant la ligne, puis l'élément suivant démarre tout seul après la fin de la ligne. Un élément « silence » ne dit rien et dure sa
+   cible. Un élément « vous » (note) : Jarvis se tait et attend votre « Suivant ».
+2. **Une séquence verrouillée** (et la fenêtre « démarrage ») : arriver à un élément qui héberge une séquence avec une première étape parlée. La bande dit « attente du début de la parole »,
+   puis la séquence démarre **quand la voix a commencé à générer les premiers mots** ; les étapes visuelles arrivent à leurs décalages (regarder le chronomètre de la bande
+   contre l'écran), la dernière étape parlée est dite à son décalage (la voix peut avoir une latence propre : la noter), la fin tombe à la durée exacte. **Fenêtre connue** : le départ (t0) est la *demande de génération* de la première
+   ligne, pas le premier son ; noter l'écart entre le premier visuel et le premier son (le worst case : la ligne annulée dans cette fenêtre, par exemple en
+   parlant par-dessus dès l'apparition du premier visuel : les visuels de l'étape 0 sont déjà là, la lecture est en pause). Refaire l'essai avec une ligne
+   d'étape remise tôt pendant qu'une précédente parle encore (même clé de parole) : elle démarre en retard, sans fausse erreur de départ avant 10 s après la fin de la précédente.
+3. **Interruption** (parler par-dessus Jarvis, à voix haute, pendant une ligne) : la ligne est coupée, la lecture passe **en pause** (« Interrompu : Jarvis attend
+   votre continuer »), elle ne repart **pas** toute seule, même après votre question et la réponse. « Continuer » (le bouton, ou la voix) : la ligne reprend **depuis
+   son début**, jamais au milieu d'une phrase. Sur un élément « non interruptible » (`refuse`), parler par-dessus ne met pas en pause (la chorégraphie continue).
+4. **Séquence interrompue** : interrompre pendant une séquence `pause_resume` (la pause prend effet à la frontière de l'étape, les décalages restants sont
+   conservés au « Continuer ») ; avec `abort_to_recovery`, « Continuer » ramène au point de reprise déclaré.
+5. **Échecs visibles** : (a) débrancher le micro/la voix ou couper Voice, lancer une ligne : au bout de 10 s la bande dit pourquoi (« La voix n'a pas commencé la
+   ligne à temps ») et propose « Continuer » ; (b) redémarrer Core juste avant de lancer : « Jarvis n'a pas pu prendre la ligne » (aucune conversation en cours) ;
+   (c) dans l'instance isolée, forcer PRESENTATION à la main pendant la lecture : la lecture s'arrête (« mode changé par vous ») et Jarvis ne dit plus rien.
+6. **Fin et arrêt** : à la dernière ligne la lecture s'arrête d'elle-même (`last_run.reason: completed`), le mode précédent est rétabli ; « Arrêter » coupe tout
+   (une ligne déjà partie finit ou est coupée par votre voix) et rétablit le mode ; Core tué au milieu : au redémarrage le mode est celui du Board, jamais le
+   mode temporaire.
+
+Noter la pile vocale utilisée (OpenAI Realtime, GPT-Live, autre) et la latence entre l'envoi d'une ligne et ses premiers mots (`presenter_sequence_started`,
+`lag_ms`). Un défaut se signale avec les lignes `core.presentation_studio.presenter_*` du journal de Core ; elles ne contiennent jamais le texte.
+
+### Suivi des cues à la voix (studio, Slice 13) : vérification humaine
+
+Contrat : [presentation-studio.md](presentation-studio.md#cue-following-contract-level-3-slice-13) ; règle d'autorité : [presentation-addressed-turn.md](presentation-addressed-turn.md) §12, *Amendment (Slice 13)*.
+Les tests automatiques couvrent le comparateur, le suiveur, les garde-fous structurels et un rejeu complet (lane réelle, suiveur réel, service de lecture réel) ; **ils ne prouvent pas** une vraie salle, un vrai micro ni
+la transcription OpenAI. **Environnement requis : la pile vocale OpenAI** (sans elle la lane ambiante est sourde : seul l'appel explicite marche, et la bande doit dire `suiveur : absent`). Instance isolée
+(`JARVIS_DATA_ROOT` à part, **jamais** le Jarvis vivant), score d'essai à 3 ou 4 éléments dont deux avec une cue (phrases courtes et distinctes, par exemple « passons à la suite », « voilà la conclusion »).
+
+1. **Noter la pile** (fournisseur, modèle de transcription) et lancer une lecture « Vous présentez » ou une répétition silencieuse. La bande passe `suiveur : en attente` puis `connecté` en quelques secondes.
+2. **La bonne phrase** : dire la phrase de la cue suivante comme une indication de scène (« Bon, passons à la suite. »). L'élément avance, une fois ; la dire deux fois de suite n'avance qu'une fois. Noter le délai entre la fin de la phrase et l'avancée (transcription incluse).
+3. **Ce qui ne doit rien faire** : parler normalement pendant une minute ; dire la phrase au milieu d'une longue phrase ; la citer (« quand je dis passons à la suite... ») ; la nier ou la demander en question ; la dire à une autre personne dans la pièce ; une phrase de la cue d'après (non armée) ; « Merci Jarvis, passons à la suite » (le nom de Jarvis n'importe où dans la phrase met le suivi en pause). Aucune avancée.
+4. **L'adresse explicite gagne** : dire « Jarvis, passons à la suite » (ou appuyer sur la touche et la dire) : Jarvis répond à la demande adressée comme d'habitude, la cue **n'avance pas** par ce chemin ; attendre 4 s, redire la phrase seule : elle avance.
+5. **Pause et reprise** : mettre en pause ou lancer un détour, dire la phrase armée avant : rien ; reprendre : la cue est de nouveau possible (nouvelle génération).
+6. **Pannes visibles** : arrêter Core (`taskkill` de CE processus seulement) pendant une lecture : la ligne `presentation.studio.follower_degraded` apparaît **une fois**, aucune avancée, et `follower_recovered` quand Core revient ; couper le micro : le suiveur reste `following` sans rien entendre (la bande ne peut pas le savoir, c'est une limite).
+7. **Vie privée** : dans `runtime/trace.jsonl` de l'instance, chercher un mot rare de ce qui a été dit dans la pièce (hors phrases adressées à Jarvis) : il ne doit apparaître **nulle part**. Les seules lignes du suiveur sont `presentation.studio.*` (id de cue, règle, deux positions, comptes).
+8. **Rapporter** : pile utilisée, nombre de bonnes phrases dites / avancées, faux déclenchements (la phrase dite par quelqu'un d'autre, ou au milieu d'une phrase ordinaire) avec ce qui a été dit **en mots**, jamais l'enregistrement.
+
+Une cue dite avec un complément (« passons à la suite de l'enquête... »), répétée dans la même phrase ou après un long préambule **ne se déclenche pas** : c'est voulu (un cue manquée se rattrape au clavier, un faux déclenchement non) ; le noter, ne pas le corriger. Limites connues à ne pas « corriger » en vérification : la lane n'a pas d'identité de locuteur (une personne qui dit exactement la phrase comme indication de scène la déclenche) ; le suiveur est en français ; il y a toujours la latence de la transcription.
+
+### Outils d'agent du Presentation Studio (studio, Slice 21) : vérification humaine et traces réelles
+
+Contrat : [presentation-studio.md](presentation-studio.md#agent-and-voice-operations-level-3-slice-21). Serveur `jarvis-presentation` (12 outils), déclaré avec l'affichage (`scene.enabled`) ; le journal d'exécution reçoit une ligne `presentation_studio.tool` par appel.
+**Traces avec le vrai modèle** (dépense réelle, faible : cinq scénarios coûtent moins d'un dollar), dans un Core isolé, sans jamais toucher au JARVIS vivant :
+`python -m tests.replay.presentation_studio_mcp_real_trace [scénario ...] --raw-dir=<dossier>` (scénarios : `make-a-variant`, `compare-four`, `delete-a-branch`, `hostile-title`, `semantic-edit`). Il lance `claude -p` avec la consigne réelle `conversation_display_studio_session`, les vrais serveurs MCP, un Core en mémoire sur un port aléatoire et une racine de données jetable ; le Control Center est remplacé par un faux qui répond à l'explorateur, au plein écran et à l'attestation du tour. Le flux brut reste dans `--raw-dir` ; `evidence/real-model-traces.{json,md}` est expurgé (ids en alias, aucun titre ni valeur).
+**Vérification humaine (non prouvable ici)** : instance isolée (`JARVIS_DATA_ROOT` à part), mode présentation actif, dire « montre toutes les variantes », « compare ces quatre », « fais une variante », « supprime la branche N » puis « oui » : l'écran répond, la voix se tait sauf la question de confirmation, le clic de plein écran demandé et le numéro de la variante créée. Dire « répète depuis la deuxième scène » : la lecture démarre ; dans le lecteur, le bouton reste l'autre chemin quand le mode doit changer.
+
+### Presentation Studio : release et exploitation de bout en bout (Slice 22)
+
+Rapport final, état de chaque Slice, acceptation et index des contrats : [presentation-studio-release.md](presentation-studio-release.md). Cette section est le mode d'emploi de l'opérateur ; elle ne remplace pas les recettes humaines des sections *(studio, Slice N)* ci-dessus.
+
+**Porte de release (un fichier de test à la fois, jamais toute la suite d'un coup : la machine est chargée et la mémoire courte).** Depuis la copie du dépôt à valider, `PYTHONPATH` pointe sur elle :
+
+```powershell
+$env:PYTHONPATH = (Get-Location).Path
+# 1. les fichiers non navigateur du Studio
+Get-ChildItem tests/unit -Filter "test_presentation_studio_*.py" | Where-Object { $_.Name -notlike "*_browser.py" } |
+  ForEach-Object { .\.venv\Scripts\python.exe -m pytest "tests/unit/$($_.Name)" -q -p no:cacheprovider }
+# 2. les fichiers navigateur (Chrome réel, profils jetables dans %TEMP%) puis plein écran et modes
+Get-ChildItem tests/unit -Filter "test_presentation_studio_*_browser.py" | ForEach-Object { .\.venv\Scripts\python.exe -m pytest "tests/unit/$($_.Name)" -q -p no:cacheprovider }
+# 3. les suites voisines : control_center*, mcp_catalog, prompt_registry*, v2_architecture, capture_relay (un fichier par appel)
+# 4. le vérificateur sans modèle (planificateur enregistré, lecture seule, attaché, empreinte = celle des preuves, drills de crash et vie privée présents)
+.\.venv\Scripts\python.exe -c "import sys; sys.path.insert(0,'scripts'); import verify_release as v; print(v.presentation_studio_findings() or 'OK')"
+```
+
+Les cinq parcours et les pannes injectées du Studio sont dans `tests/unit/test_presentation_studio_release_flows.py` et `..._release_faults.py` (vrai Core, vrais outils `jarvis-presentation`, mêmes fixtures) ; le vérificateur est testé dans `..._release_gate.py`. `scripts/verify_release.py` complet lance en plus **toute** la suite : à réserver à une machine libre.
+
+**Traces avec le vrai modèle pour la rédaction (dépense réelle).** `python -m tests.replay.presentation_studio_authoring_real_trace [scénario ...] --raw-dir=<dossier> --budget=<USD par tour>` : scénarios `rich-brief`, `missing-context`, `vague-exploratory`, `one-shot-report`, `one-shot-plain-display`, `hostile-text`, `refused-then-fix` ; il lance `claude -p` avec la consigne réelle `conversation_display_studio_session`, les vrais serveurs MCP et un Core **isolé** (port aléatoire, racine de données jetable) : le JARVIS vivant n'est jamais touché. Les sept scénarios coûtent moins d'un dollar. Sortie rédigée dans `tasks/jarvis-interactive-presentation-studio/slices/22-end-to-end-hardening/evidence/`. **À refaire** (et `python -m tests.replay.presentation_studio_authoring_rig` d'abord) dès que `PLANNER_PROMPT`, le guide de rédaction (`presentation_studio_authoring_guide.py`) ou `BRAIN_PRESENTATION_PROMPT` change : l'empreinte du planificateur change, et le vérificateur refuse des preuves recueillies avec une autre empreinte.
+
+**Dépannage.**
+
+| Symptôme | Cause | Action |
+| --- | --- | --- |
+| Démarrage refusé `presentation_studio_art_direction_required` | une lecture sérieuse exige une direction artistique | `presentation_variant art_direction_fallback`, ou une DA fournie ou déduite par le planificateur ; une répétition peut tourner sans |
+| Démarrage par la voix refusé `mode_switch_refused` | aucun tour utilisateur adressé n'est attesté par le Control Center | démarrer par le bouton du lecteur, ou redemander à voix haute en s'adressant à Jarvis |
+| Brouillon refusé plusieurs fois, `brief_invalid` ou `draft_schema` | clés ou formes hors contrat | le rapport complet est rendu tel quel ; lire `presentation_inspect` cible `draft_guide` (`kind: exploratory` pour les directions) ; trois tours au plus, puis dire ce qui bloque |
+| `presentation_studio_stale_revision` | un autre geste a écrit entre la lecture et l'écriture | relire (`presentation_inspect`) puis recommencer |
+| Une confirmation d'archivage est refusée `confirmation_stale` ou `confirmation_required` | l'ensemble a changé depuis le plan, ou le jeton est consommé | refaire `archive_plan`, redemander le oui |
+| Un modèle instancié ne se lit pas (`presentation_studio_unknown_score`) | un modèle ne porte pas la partition (contrat documenté) | créer une partition sur la variante ; le planificateur ou la route `POST .../score` |
+| « Suivi vocal indisponible » dans le lecteur | architecture vocale `legacy` ou `duplex` | le suivi ambiant demande `continuous_brain` et la pile OpenAI ; clavier sinon |
+| Plein écran « à armer » (`needs_gesture`) | une demande vocale ne suffit pas à entrer en plein écran | cliquer ; Jarvis ne dit jamais que l'écran est plein avant de l'avoir lu |
+| Après un redémarrage de Core | le run, la fenêtre de scène et le mode temporaire n'y survivent pas, par conception | rien à réparer : relancer la lecture ; les variantes, partitions et directions artistiques sont intactes (l'historique d'annulation est perdu) |
+
+**Vérifications physiques (reste à faire par une personne).** Liste numérotée H-1 à H-11 dans [presentation-studio-release.md](presentation-studio-release.md#physical-human-checks-the-acceptance-that-remains) : plein écran sur le vrai projecteur, mode PRESENTATION audible, suivi des cues au micro réel, présentation par Jarvis audible, lecteur d'écran, répétition complète de bout en bout (`HVAL-IPS-001` à `008`). Ordre conseillé : H-1, puis H-4 et H-5, puis H-9.
 
 ### Agenda : réel ou en mémoire
 
@@ -2906,6 +3462,180 @@ seulement : **aucun outil n'est exécuté d'ici** (contrat
 La console du navigateur garde `mcp.inspector.failed` (code, statut, message)
 pour chaque échec vu par la vue ; côté serveur, les refus du catalogue sont
 déjà journalisés (`mcp.catalog_failed`).
+
+> **Capacités locales (pas des plugins MCP).** Un runtime installé sur le poste
+> (première cible : Remotion) a son propre cycle de vie — installation unique,
+> versions épinglées, santé, réparation, processus enfant — décrit dans
+> [local-capabilities.md](local-capabilities.md). Le socle n'exécute ni réseau
+> ni npm par défaut (`runner_unavailable`) et ne démarre jamais Core ni le
+> Control Center : un redémarrage éventuel reste à l'utilisateur.
+
+#### Capacité locale Remotion (installation unique)
+
+Contrat complet : [remotion-runtime.md](remotion-runtime.md). Jarvis n'installe Remotion
+**que sur demande** ; démarrer Core ne télécharge rien. Prérequis du poste, que Jarvis
+vérifie sans les installer : Node.js ≥ 20.0.0 et npm ≥ 9 sur le `PATH`, Windows x64
+(macOS et Linux pris en charge mais non éprouvés), ≈ 1,5 Go libres, accès à
+`registry.npmjs.org`. Tout est installé **une fois** sous
+`<racine de données>/local_capabilities/remotion/runtime/` (≈ 270 Mo) : jamais dans le
+dépôt, jamais en global, jamais par présentation. Core en marche, le jeton est dans
+`<runtime_root>\core.token` (`JARVIS_CORE_TOKEN_FILE`) :
+
+```powershell
+$t = (Get-Content runtime\core.token -Raw).Trim(); $h = @{ Authorization = "Bearer $t" }
+$u = "http://127.77.0.1:17653/v1/local-capabilities/remotion"
+Invoke-RestMethod -Method Post -Headers $h "$u/install"        # 200 si fini en 2 s, sinon 202 : l'installation continue
+Invoke-RestMethod -Headers $h $u                               # relire jusqu'à status = ready (ou install_failed)
+Invoke-RestMethod -Method Post -Headers $h "$u/health"         # sonde (paquets présents, intacts, chargeables)
+Invoke-RestMethod -Method Post -Headers $h "$u/repair"         # réinstalle depuis le verrou si malsain ou interrompu
+Invoke-RestMethod -Method Post -Headers $h "$u/uninstall"      # vide runtime/ ; sources et assets des présentations intacts
+```
+
+Lire la réponse : `status` (`not_installed`, `installing`, `ready`, `running`, `repair_needed`,
+`install_failed`, `crashed`, `disabled`), `last_error_code` et `last_error_detail` (jeton puis
+explication, tableau §3 de remotion-runtime.md : `node_too_old`, `install_offline`,
+`install_permission_denied`, `install_disk_full`, `install_timeout`...). Après un arrêt de
+Core pendant l'installation, le prochain démarrage de Core affiche `install_failed` /
+`install_interrupted` : lancer `repair`. La carte « Remotion · Studio » du Control Center (onglet « Plugins externes » du dialogue MCP) montre l'état de
+l'environnement ; l'installation reste cette action explicite. Vérification sur un poste neuf, hors profil vivant :
+`python scripts/remotion_install_harness.py --work-dir <dossier temporaire court> --evidence <fichier.json>`
+(vrai réseau, vrai npm, racine de données privée ; ne touche pas à Core).
+
+#### Studio Remotion optionnel (Slice 11)
+
+Contrat : [remotion-studio.md](remotion-studio.md) ; sécurité : SECURITY.md § 19. Le Studio (`remotion studio`, rechargement à chaud) est une
+**fenêtre à part, ouverte seulement sur demande** : Core, l'aperçu et le Control Center ne le lancent jamais. Un seul par poste ; il ne
+sert que la source de la scène choisie, en copie de travail en lecture seule sous `<racine>/local_capabilities/remotion/runtime/studio/work/`,
+sur `127.0.0.1` (port libre, ou `JARVIS_REMOTION_STUDIO_PORT`). Prérequis : la capacité Remotion `ready` (section précédente) et au moins une
+scène Remotion publiée dans la bibliothèque.
+
+- **Depuis le Control Center** : dialogue MCP, onglet « Plugins externes », carte « Remotion · Studio » : choisir la scène, **Ouvrir le Studio**,
+  **lire et confirmer** le dialogue (la scène s'exécute sans bac à sable ; l'origine de la version y est indiquée, avertissement renforcé pour une
+  scène qui n'est pas de vous), attendre le démarrage (30 à 50 s à froid, 2 min au plus, compteur affiché), puis **Ouvrir la fenêtre du Studio**. **Actualiser la scène** recopie la dernière
+  version publiée (le Studio se recharge sans redémarrer), **Relancer**, **Fermer le Studio**. Arrêt automatique après 30 minutes sans fenêtre
+  ouverte (`JARVIS_REMOTION_STUDIO_IDLE_S`, 60 à 86400 s).
+- **Depuis PowerShell** (jeton comme pour la capacité) :
+
+```powershell
+$u = "http://127.77.0.1:17653/v1/local-capabilities/remotion/studio"
+Invoke-RestMethod -Headers $h $u                                                              # état, jamais un lancement
+Invoke-RestMethod -Method Post -Headers $h "$u/open" -ContentType application/json -Body '{"prefab_id":"<id>","version":<n>,"acknowledge_unsandboxed_scene":true}'
+Invoke-RestMethod -Method Post -Headers $h "$u/sync"                                          # rechargement à chaud de la scène courante
+Invoke-RestMethod -Method Post -Headers $h "$u/restart" -ContentType application/json -Body '{"acknowledge_unsandboxed_scene":true}'
+Invoke-RestMethod -Method Post -Headers $h "$u/close"
+```
+
+- **Lire un échec** : `status: failed`, `last_error_code` (`remotion_studio_*`, tableau §4 du contrat) et `diagnostics` (fin du journal du Studio).
+  `process_exited` : le processus a disparu (fenêtre fermée hors de Jarvis, plantage) ; `start_timeout` : webpack n'a pas fini en 2 min ;
+  `runtime_unavailable` : installer ou réparer la capacité ; `port_unavailable` : le port imposé est pris ; `ack_required` : l'accusé manque (la
+  carte l'envoie après sa confirmation) ; `state_unreadable` : mettre `studio/state.json` de côté (jamais l'écraser), puis réessayer ;
+  `local_capability_stop_failed` à l'`uninstall`/`update` : le Studio n'a pas pu être arrêté, fermer le processus à la main puis recommencer.
+- **Modifier dans le Studio ne modifie pas la scène** : la copie est en lecture seule ; ce qui est changé malgré tout est mis de côté dans
+  `studio/edits/` à la fermeture et avant chaque synchronisation, jamais écrit dans la bibliothèque.
+- **Le Studio est réduit** : le garde refuse toute connexion hors du poste, tout processus enfant (donc ni rendu, ni installation de paquet,
+  ni « ouvrir dans l'éditeur » depuis le Studio) ; ne l'ouvrir que sur une scène connue (contrat §11).
+- **Redémarrage** : pour charger les routes et la carte après une mise à jour de Jarvis, Core et le Control Center doivent être relancés ;
+  c'est à l'utilisateur de le faire (aucun agent ne le fait).
+- **Rejouer la preuve** (hors profil vivant, Chrome et Node requis, ≈ 8 minutes, ≈ 600 Mo) :
+  `python scripts/remotion_studio_harness.py --part early|late --work-dir <dossier court sous Temp> --evidence <fichier.json>` (deux passes de ≈ 6 minutes).
+  Verdict `PASSED` attendu.
+
+#### Édition de source d'une scène Remotion par un agent (Slice 14)
+
+Une scène Remotion se modifie par `POST /v1/presentation-studio/presentations/<id>/variants/<id>/source-edits` (jeton porteur, comme les autres routes
+de Core) : l'agent lit d'abord la source (`GET .../scenes/<scene_id>/source`), puis envoie `files: {sources: {"src/Scene.tsx": "<texte>"}}`
+(`null` supprime un fichier, `assets` pour `public/**`, `restore_version` pour annuler ou rétablir). Contrat : [presentation-studio.md](presentation-studio.md)
+> *Remotion sources*. Aucun outil MCP n'a été ajouté : le cerveau garde `scene.source_request` ; le sous-agent délégué appelle cette route.
+
+**Le `request_id` est obligatoire (acteur `brain`, Slice 21)** : le cerveau enregistre `scene.source_request` lui-même, dans le tour de l'utilisateur, et passe au sous-agent le `request_id` rendu ; le sous-agent l'envoie dans `POST .../source-edits` (`"request_id": "psq_..."`) et **n'appelle pas** `scene.source_request`. Sans demande en attente pour CETTE scène, Core répond **403 `presentation_studio_source_request_required`** (« demande à renouveler ») : inconnue, déjà satisfaite, expirée (30 minutes), perdue au redémarrage de Core ou d'une autre scène. La demande reste en attente tant qu'aucune édition n'a réussi : un refus de compilation se retouche avec le même `request_id`. L'utilisateur (relais du Control Center) n'en a pas besoin.
+
+- **Une source qui ne compile pas n'est jamais publiée** : réponse **422**, `error.code = presentation_studio_source_build_failed`, `diagnostics`
+  `[{file, line, column, text}]` ; la version à l'écran continue de jouer. Moteur non prêt : 400 `presentation_studio_engine_unavailable` avec la réparation
+  (capacité locale Remotion, docs/remotion-runtime.md) ; jamais un repli sur Slidecar.
+- **Une scène qui compile mais lève au rendu** est publiée puis rejetée au montage : `409 rolled_back` (`presentation_studio_mount_failed`), le pin revient
+  à la dernière version valide, l'ancien cadre n'a pas quitté l'écran. La version rejetée reste dans `prefabs/` (immuable, non épinglée) jusqu'à la rétention.
+- **Journal** (`core.presentation_studio.*`) : `reload_built` (info, chemin normal), `reload_build_refused` (warning), `reload_published`, `reload_rolled_back`.
+  `GET .../presentations/<id>/reloads` liste les derniers rechargements (statut, code, nombre de constats).
+- **Occupé** : une édition qui attend plus de 75 s derrière une autre de la même scène reçoit `409 presentation_studio_scene_reloading` (à refaire). Un manifeste d'édition ne peut ni changer `source.engine`, ni le bloc `catalog`, ni `schema_version` (400 `presentation_studio_invalid`, la clé est nommée).
+- **Rien à redémarrer** : pas de migration, pas de nouvelle variable d'environnement ; le code est pris au prochain démarrage de Core.
+- **Preuve réelle rejouable** (Core isolé, jamais le JARVIS vivant) : `python scripts/remotion_player_harness.py --runtime-dir <runtime/> --slice 14
+  --test tests/unit/test_remotion_source_edit_realpage_browser.py --evidence tasks/jarvis-remotion-presentation-integration/slices/14-source-edit-hmr-and-agents/evidence`.
+#### Export d'une présentation : MP4, image, PDF (Slice 16)
+
+Contrat : [remotion-render.md](remotion-render.md) ; sécurité : SECURITY.md § 20. Un export **rend une copie figée** (jamais la source vivante, jamais une valeur de contrôle) et
+enregistre un Artifact relié à cette copie. Prérequis : la capacité Remotion `ready` (installation unique, section « Capacité locale Remotion ») et un Chrome ou Edge installé
+(sinon `JARVIS_REMOTION_RENDER_BROWSER` ; un navigateur n'est **jamais** téléchargé).
+
+- **Depuis le Control Center** : bouton `WSP` → Artefacts → choisir le Board → sous la copie figée d'une présentation Remotion, « Exporter cette copie » (MP4, image, PDF). Le
+  panneau dit la phase, les images faites, les secondes écoulées, le délai, et offre **Annuler l'export**. À la fin le rendu apparaît sous la copie, avec ses dimensions, sa
+  durée, un aperçu et la mention « export à plat : non éditable » ; **Ouvrir la source** / **Ouvrir la variante** (au-dessus) mènent à l'origine éditable.
+- **Depuis PowerShell** (jeton comme pour la capacité) :
+
+```powershell
+$u = "http://127.77.0.1:17653/v1/local-capabilities/remotion/render"
+Invoke-RestMethod -Headers $h $u                                   # prêt ? pourquoi pas ? (lecture seule, ne lance rien)
+$job = (Invoke-RestMethod -Method Post -Headers $h "$u/jobs" -ContentType application/json -Body '{"snapshot_id":"<jart_ps_...>","format":"mp4","settings":{"frame_end":59}}').job
+Invoke-RestMethod -Headers $h "$u/jobs/$($job.job_id)"            # état, phase, images, secondes, délai
+Invoke-RestMethod -Method Post -Headers $h "$u/jobs/$($job.job_id)/cancel"
+# figer ET rendre en une demande (révisions exactes, Boards autorisés explicitement) :
+#   {"format":"still","presentation_id":"pst_...","variant_id":"psv_...","expected_presentation_revision":2,"expected_variant_revision":3,"authorised_boards":["<board>"],"settings":{"frame":45}}
+```
+
+- **Lire un échec** : la vue du travail et le dérivé `failed` portent le même `error_code` (`presentation_render_*`, tableau §8 du contrat) et `error_detail` ; `log_tail` donne les
+  dernières lignes du processus. `browser_unavailable` : installer Chrome ou poser `JARVIS_REMOTION_RENDER_BROWSER` ; `runtime_unavailable` : installer ou réparer la capacité ;
+  `engine_mismatch` : le Remotion installé n'est plus celui du gel, refiger puis rendre ; `source_refused` : une garde d'isolation plus récente refuse la source gelée ;
+  `sandbox_unavailable` : Chrome n'a pas démarré avec son bac à sable (le message dit pourquoi) ; seulement si ce poste ne peut vraiment pas le créer, poser `JARVIS_REMOTION_RENDER_NO_SANDBOX=1` (la scène s'exécute alors sans le bac à sable de Chrome : choix explicite, jamais fait par Jarvis) ;
+  `locked` : un autre Core vivant tient les rendus de cette racine de données (ne lancer qu'un Core par racine) ; `guard_unexpected_args` : une version de Remotion lance Chrome avec un argument que le garde ne connaît pas (refusé par sécurité : signaler, ne pas contourner) ;
+  `disk_low` / `disk_full` : libérer de la place (un rendu veut 1,5 Gio libres) ; `timeout` : rendre une plage plus courte (`frame_start`/`frame_end`) ou une échelle plus
+  basse ; `interrupted` : Core ou le poste s'est arrêté pendant le rendu (aucun fichier n'est promu : recommencer).
+- **Où sont les fichiers** : le payload de l'Artifact (`<racine>/artifacts/<id>/render.mp4|still.png|render.pdf`) ; les dossiers de travail sont sous
+  `<racine>/local_capabilities/remotion/runtime/render/jobs/<id>/` et sont effacés à la fin (restent `job.json`, `render.log`, `result.json`, `egress.json`, quelques Kio).
+- **Redémarrage** : un Core qui redémarre pendant un rendu tue le processus orphelin et marque le dérivé `failed` (`interrupted`) ; pour charger les routes après une mise à
+  jour de Jarvis, Core et le Control Center doivent être relancés, ce que fait l'utilisateur (aucun agent ne le fait).
+- **Rejouer la preuve** (hors profil vivant, Node et Chrome requis, ≈ 6 minutes) :
+  `python scripts/remotion_render_harness.py --work-dir <dossier court sous Temp> --runtime-dir <runtime> --evidence <fichier.json>` ; de bout en bout dans un vrai navigateur :
+  `JARVIS_REMOTION_RUNTIME_DIR=<runtime> pytest tests/unit/test_presentation_render_real.py`.
+- **À regarder une fois sur le poste réel** (vérification humaine, non automatisable) : lire le MP4 exporté dans un lecteur vidéo (image, mouvement, **son** si la scène en a : jamais
+  écouté par les tests), ouvrir le PDF dans un lecteur, comparer l'image fixe à l'aperçu du Player, vérifier que « Ouvrir la source » rouvre bien la présentation d'origine.
+
+#### Isolation du code d'une scène Remotion (Slice 06)
+
+Contrat : [remotion-isolation.md](remotion-isolation.md) ; sécurité : SECURITY.md § 18. Le code d'une scène est hostile par
+défaut. **Rien n'est encore monté** (le Player est la Slice 10) : Core, le Control Center et la voix n'y changent rien, aucun
+redémarrage n'est requis par cette Slice.
+
+- **Une publication est refusée** (`invalid_definition`, constats `chemin:ligne: code - explication`) : lire le constat, corriger
+  la source (par exemple lire un fichier par `staticFile()` au lieu d'une URL, calculer une animation à partir du numéro d'image
+  au lieu d'une boucle) et publier une nouvelle version. Les codes sont listés au § 3 du contrat.
+- **Une version ancienne est refusée à la relecture** après l'ajout d'une garde : ses fichiers sont intacts sur disque (rien
+  n'est réécrit) ; la rejouer exige une nouvelle version corrigée.
+- **Un compilateur trop gourmand** : le processus Node de compilation est plafonné à 1 Go de tas et 60 s ; le dépassement donne
+  `compile_compiler_failed` ou `compile_timeout` sans toucher à Core.
+- **Rejouer la preuve** (hors profil vivant, Chrome et Node requis, 2 à 3 minutes, racine de données et profil Chrome jetables) :
+  `python scripts/remotion_isolation_harness.py --work-dir <dossier court> --runtime-dir <racine>/local_capabilities/remotion/runtime --evidence <fichier.json>`.
+  Verdict `PASSED` attendu ; les vérifications échouées sont nommées dans le fichier.
+
+#### Remotion : release de bout en bout (Slice 22)
+
+Rapport, preuves, contrats et vérifications humaines : [remotion-integration-release.md](remotion-integration-release.md). Ce que cette section ajoute pour
+l'opérateur :
+
+- **Avant la première utilisation de ce build, copier** `<racine de données>/presentations/`, `prefabs/` et `state/` : une variante sauvée par le nouveau build
+  est réécrite sans copie de ses anciens octets et l'ancien build refuse ces fichiers ; une base qui contient des Artifacts `presentation_snapshot|video|still|pdf`
+  n'est plus listable par l'ancien build (rapport, « Migration and rollback »). Aucune migration SQLite n'est attendue (`jarvis.sqlite3` reste au schéma 8,
+  `scene.sqlite3` au schéma 1) ; sur une base plus ancienne, la sauvegarde automatique `<base>.v<ancienne version>.bak` est faite au démarrage de Core.
+- **Redémarrage, à faire par l'utilisateur** (aucun agent ne le fait) : Core, puis le Control Center, puis la session de l'agent (nouveau serveur MCP
+  `jarvis-remotion`). L'installation de Remotion reste un geste explicite : démarrer Core ne télécharge rien.
+- **Rejouer la porte de livraison** (poste isolé, jamais le profil vivant ; Node et Chrome requis ; `JARVIS_REMOTION_RUNTIME_DIR` = le dossier `runtime/` d'une
+  installation) : `python scripts/verify_release.py` (suite complète puis `remotion_release_findings` : tests de livraison présents, preuves `PASSED`, rapport complet,
+  balayage de confidentialité) ; le parcours : `pytest tests/unit/test_remotion_release_flows.py` (≈ 1 min) ; les fautes : `pytest tests/unit/test_remotion_release_faults.py` ;
+  le non-repli et la frontière de confidentialité : `pytest tests/unit/test_remotion_no_fallback_privacy.py` ; la migration :
+  `python scripts/remotion_migration_probe.py --work-dir <dossier court sous Temp> --evidence <fichier.json>` ; les mesures :
+  `python scripts/remotion_perf_wrap.py --label <nom> --out <fichier.json> -- <commande>` et `python scripts/remotion_latency_probe.py --runtime-dir <runtime> --evidence <fichier.json>`.
+- **Si l'export d'une présentation rédigée échoue avec `TypeError ... reading 'body'`** : le build ne porte pas le correctif de la Slice 22 (le rendu ne passait pas
+  l'entrée `data` à la composition) ; mettre à jour. Un snapshot gelé avant le correctif se rend correctement (les défauts de `data` sont recalculés depuis les valeurs figées de la scène).
+- **Fuite de confidentialité dans les preuves** : `python tasks/jarvis-remotion-presentation-integration/slices/22-end-to-end-release/evidence/privacy_sweep.py`
+  (`--fix` remplace le dossier personnel et le nom d'utilisateur par `<home>` / `<user>` ; une adresse ou un jeton se retire à la main).
 
 #### Plugins MCP externes (onglet « Plugins externes » du même dialogue)
 

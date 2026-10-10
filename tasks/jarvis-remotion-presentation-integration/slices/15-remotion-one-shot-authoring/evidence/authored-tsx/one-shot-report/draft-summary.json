@@ -1,0 +1,65 @@
+{
+ "note": "The sources the real model wrote in the committed run (synthetic briefs). Core adds src/jarvis-kit.ts and the theme prop.",
+ "bundles": {
+  "chiffre": {
+   "files": [
+    "src/Scene.tsx"
+   ],
+   "composition": {
+    "width": 1280,
+    "height": 720,
+    "fps": 30,
+    "duration_in_frames": 450
+   },
+   "props": {
+    "type": "object",
+    "properties": {
+     "headline": {
+      "type": "string",
+      "max_length": 80,
+      "default": "Titre"
+     }
+    }
+   },
+   "data": {
+    "type": "object",
+    "required": [
+     "figure",
+     "caption"
+    ],
+    "properties": {
+     "figure": {
+      "type": "string",
+      "max_length": 16
+     },
+     "caption": {
+      "type": "text",
+      "max_length": 200
+     }
+    }
+   }
+  }
+ },
+ "scenes": [
+  {
+   "key": "rapport",
+   "role": "single",
+   "bundle": "chiffre",
+   "controls": [
+    "props.headline",
+    "props.theme.accent"
+   ],
+   "anchors": [
+    {
+     "anchor_id": "detail",
+     "label": "Répartition",
+     "control_id": "accent",
+     "at_ms": 3000
+    }
+   ]
+  }
+ ],
+ "art_direction": {
+  "mode": "fallback"
+ }
+}

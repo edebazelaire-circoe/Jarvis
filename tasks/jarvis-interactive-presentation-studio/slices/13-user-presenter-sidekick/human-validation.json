@@ -1,0 +1,9 @@
+{
+  "checks": [
+    {
+      "id": "HVAL-IPS-003",
+      "title": "Real-microphone sidekick cue following",
+      "instructions": "With a real microphone, present a prepared section at natural pace, include a pause and an off-script sentence, then verify Jarvis triggers only intended armed cues and explicit address preempts immediately."
+    }
+  ]
+}

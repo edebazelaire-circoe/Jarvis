@@ -1,0 +1,16 @@
+{
+  "slice_id": "11",
+  "title": "Optional Studio launch, hot preview server",
+  "dependencies": [
+    "04",
+    "05",
+    "06"
+  ],
+  "task_type": null,
+  "task_type_resolution_required": true,
+  "requires_caveman": true,
+  "requires_coding_guideline": true,
+  "frontend": true,
+  "requires_impeccable": true,
+  "claude_for_frontend_when_available": true
+}

@@ -1,0 +1,229 @@
+{
+  "harness": "scripts/remotion_compile_harness.py",
+  "date": "2026-10-09T18:53:38+00:00",
+  "platform": "Windows-11-10.0.26200-SP0",
+  "python": "3.14.6",
+  "repo_head": "72518b1c5b2116d8a83d942b60a83438ddc38638",
+  "repo_dirty": false,
+  "node": "v24.18.0",
+  "scenarios": {
+    "install": {
+      "seconds": 35.72,
+      "status": "ready",
+      "error": null,
+      "runtime_host_matches_repository": true,
+      "installed": {
+        "@remotion/bundler": "4.0.534",
+        "@remotion/cli": "4.0.534",
+        "@remotion/player": "4.0.534",
+        "react": "19.3.0",
+        "react-dom": "19.3.0",
+        "remotion": "4.0.534"
+      }
+    },
+    "source": {
+      "prefab_id": "presentation-studio.p0000000000a1.s0000000000b1",
+      "versions": [
+        1,
+        2
+      ],
+      "fingerprint": "de83f86d32da440090710a71a5be1155a8e3ebdfb4f036654e96e9839c5001ea",
+      "layout": [
+        "manifest.json",
+        "public/dot.png",
+        "publication.json",
+        "src/Scene.tsx",
+        "src/lib/Title.tsx",
+        "src/theme.json"
+      ],
+      "forbidden_names_in_library": [],
+      "reopened_digest_equal": true,
+      "reopened_bytes_equal": true,
+      "digest": "2f47c396ca11bd9657823dd3b176b981bbe7e3594caf45295ca90b4f76a7cc28",
+      "v1_untouched_after_revision": true,
+      "prefab_events": [
+        "core.prefab.saved",
+        "core.prefab.saved"
+      ]
+    },
+    "compile": {
+      "host": {
+        "contract": 1,
+        "target": "host",
+        "cache_key": "host-b933e602657040de671a9e1b5f491d60",
+        "entry_file": "host.js",
+        "files": [
+          {
+            "path": "host.js",
+            "bytes": 567537,
+            "sha256": "06cdcc9737f785f3c48047d74b1e269e67300b0a33ba49fc4fe13b7d8b645435"
+          }
+        ],
+        "source_digest": null,
+        "engine_installed": {
+          "remotion_version": "4.0.534",
+          "react_version": "19.3.0",
+          "lock_sha256": "acff3cd562fd6f426040aed8b60cce840b23befe7bac71604d0c7614b8762fbe",
+          "compiler_sha256": "0b8b7117e1c79d0d7c75e14d36587a4252f206268ea0fe9f01e6dc8ba936e687"
+        },
+        "engine_pinned": null,
+        "engine_drift": false,
+        "reused": false,
+        "duration_ms": 850,
+        "warnings": 0,
+        "seconds": 0.87
+      },
+      "scene": {
+        "contract": 1,
+        "target": "scene",
+        "cache_key": "scene-74fdf80292336eaaeebd3ac2e18a9fe1",
+        "entry_file": "scene.js",
+        "files": [
+          {
+            "path": "public/dot.png",
+            "bytes": 70,
+            "sha256": "b26679c9006f519b516401e0a0d2351bac2d3377ca99d83ad56135e1c4f9970d"
+          },
+          {
+            "path": "scene.js",
+            "bytes": 1653,
+            "sha256": "9b79e3eac4cd888e3f1564586bff893dac101d3811b94dd70b873b268d6cc5f0"
+          }
+        ],
+        "source_digest": "2f47c396ca11bd9657823dd3b176b981bbe7e3594caf45295ca90b4f76a7cc28",
+        "engine_installed": {
+          "remotion_version": "4.0.534",
+          "react_version": "19.3.0",
+          "lock_sha256": "acff3cd562fd6f426040aed8b60cce840b23befe7bac71604d0c7614b8762fbe",
+          "compiler_sha256": "0b8b7117e1c79d0d7c75e14d36587a4252f206268ea0fe9f01e6dc8ba936e687"
+        },
+        "engine_pinned": {
+          "name": "remotion",
+          "version": "4.0.534",
+          "react_version": "19.3.0",
+          "lock_sha256": "acff3cd562fd6f426040aed8b60cce840b23befe7bac71604d0c7614b8762fbe"
+        },
+        "engine_drift": false,
+        "reused": false,
+        "duration_ms": 161,
+        "warnings": 0,
+        "seconds": 0.18
+      },
+      "reuse_in_process": {
+        "reused": true,
+        "seconds": 0.02
+      },
+      "reuse_after_restart": {
+        "reused": true,
+        "seconds": 0.02,
+        "same_key": true
+      },
+      "revision_gets_its_own_output": true,
+      "forbidden_names_in_compiled_cache": [],
+      "compiled_layout": [
+        "host-b933e602657040de671a9e1b5f491d60/compile.json",
+        "host-b933e602657040de671a9e1b5f491d60/host.js",
+        "scene-47f1d29bfc712a579d10595c4b587b4c/compile.json",
+        "scene-47f1d29bfc712a579d10595c4b587b4c/public/dot.png",
+        "scene-47f1d29bfc712a579d10595c4b587b4c/scene.js",
+        "scene-74fdf80292336eaaeebd3ac2e18a9fe1/compile.json",
+        "scene-74fdf80292336eaaeebd3ac2e18a9fe1/public/dot.png",
+        "scene-74fdf80292336eaaeebd3ac2e18a9fe1/scene.js"
+      ],
+      "events": [
+        "remotion.compile.done",
+        "remotion.compile.done",
+        "remotion.compile.reused",
+        "remotion.compile.done"
+      ],
+      "public_form_has_no_absolute_path": true
+    },
+    "typed_failures": {
+      "syntax_error": {
+        "code": "compile_source_error",
+        "status": 422,
+        "message": "src/lib/Title.tsx:1:33 Expected identifier but found \"/\"",
+        "diagnostics": [
+          {
+            "file": "src/lib/Title.tsx",
+            "line": 1,
+            "column": 33,
+            "text": "Expected identifier but found \"/\""
+          }
+        ]
+      },
+      "forbidden_import_fs": {
+        "code": "compile_import_refused",
+        "status": 422,
+        "message": "import_refused: \"fs\" is not available to scenes (allowed: react, react/jsx-runtime, react/jsx-dev-runtime, remotion); assets go in public/ and are read with staticFile()",
+        "diagnostics": [
+          {
+            "file": "src/lib/Title.tsx",
+            "line": 1,
+            "column": 15,
+            "text": "import_refused: \"fs\" is not available to scenes (allowed: react, react/jsx-runtime, react/jsx-dev-runtime, remotion); assets go in public/ and are read with staticFile()"
+          }
+        ]
+      },
+      "import_escapes_source": {
+        "code": "compile_import_refused",
+        "status": 422,
+        "message": "import_unresolved: \"../../outside\" is not a module of this scene",
+        "diagnostics": [
+          {
+            "file": "src/lib/Title.tsx",
+            "line": 1,
+            "column": 14,
+            "text": "import_unresolved: \"../../outside\" is not a module of this scene"
+          }
+        ]
+      },
+      "missing_default_export": {
+        "code": "compile_entry_invalid",
+        "status": 422,
+        "message": "the entry module has no default export (export default the scene component)",
+        "diagnostics": [
+          {
+            "file": "jarvis-scene-entry.js",
+            "line": 1,
+            "column": 9,
+            "text": "No matching export in \"jarvis:src/Scene.tsx\" for import \"default\""
+          }
+        ]
+      },
+      "deadline": {
+        "code": "compile_timeout",
+        "status": 504,
+        "message": "the scene compile took more than 0.001 s and its process tree was stopped",
+        "diagnostics": []
+      },
+      "no_orphan_tmp_in_cache": true
+    },
+    "browser_player": {
+      "title": "Player evidence",
+      "color": "rgb(255, 136, 0)",
+      "image_loaded": true,
+      "image_src": "/public/dot.png",
+      "players": [
+        "react",
+        "react/jsx-runtime",
+        "react/jsx-dev-runtime",
+        "react-dom",
+        "react-dom/client",
+        "remotion",
+        "@remotion/player"
+      ]
+    },
+    "uninstall": {
+      "sources_identical_bytes": true,
+      "compile_after_uninstall": {
+        "code": "compile_runtime_unavailable",
+        "status": 409,
+        "message": "the Remotion capability is not_installed; install or repair it from the local capabilities (POST /v1/local-capabilities/remotion/install or repair)",
+        "diagnostics": []
+      },
+      "compiled_cache_kept": true
+    }
+  },
+  "verdict": "PASSED"
+}

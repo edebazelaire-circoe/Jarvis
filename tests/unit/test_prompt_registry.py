@@ -284,6 +284,9 @@ def test_the_gateway_guidance_is_one_read_only_layer_in_the_four_claude_programs
         "backend.claude.conversation.tools_session", "backend.claude.conversation.tools_display_session",
         "backend.claude.conversation.tools_barehands_session",
         "backend.claude.conversation.tools_display_barehands_session",
+        # Presentation Studio (Slice 21) : les programmes `studio` ne vivent qu'avec l'affichage.
+        "backend.claude.conversation.tools_display_studio_session",
+        "backend.claude.conversation.tools_display_studio_barehands_session",
         "backend.codex.tools_turn", "backend.codex.tools_plain_turn",
     }
     for invocation in ("job_result_session", "speculative_session", "presentation_preparation_session"):

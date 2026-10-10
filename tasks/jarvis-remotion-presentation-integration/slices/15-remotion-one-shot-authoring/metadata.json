@@ -1,0 +1,16 @@
+{
+  "slice_id": "15",
+  "title": "High-quality generation with storyboard and DA",
+  "dependencies": [
+    "09",
+    "13",
+    "14"
+  ],
+  "task_type": null,
+  "task_type_resolution_required": true,
+  "requires_caveman": true,
+  "requires_coding_guideline": true,
+  "frontend": false,
+  "requires_impeccable": false,
+  "claude_for_frontend_when_available": false
+}

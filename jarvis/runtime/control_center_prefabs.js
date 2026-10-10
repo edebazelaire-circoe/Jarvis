@@ -70,6 +70,23 @@ const JarvisPrefabLibraryCore=(function(){
   ]);
   const KIND_BY_KEY=Object.freeze(Object.fromEntries(KINDS.map(k=>[k.key,k])));
 
+  /* Contrat sémantique du catalogue (Slice 17, `docs/prefabs.md` › Semantic catalog) : MÊMES mots pour tous les moteurs, jamais
+     traduits par moteur. Les identifiants sont ceux de Core ; l'étiquette est la seule part de français. */
+  const SEMANTIC_TYPES=Object.freeze([
+    {key:'component',label:'Composant',means:'Un élément réutilisable (fenêtre, widget).'},
+    {key:'composition',label:'Composition',means:'Une scène animée composée de plusieurs éléments.'},
+    {key:'page',label:'Page',means:'Une page complète.'},
+    {key:'presentation',label:'Présentation',means:'Une présentation entière.'},
+    {key:'asset',label:'Ressource',means:'Une ressource (image, média, police…).'},
+  ]);
+  const TYPE_BY_KEY=Object.freeze(Object.fromEntries(SEMANTIC_TYPES.map(t=>[t.key,t])));
+  const ENGINES=Object.freeze([{key:'slidecar',label:'Slidecar'},{key:'remotion',label:'Remotion'}]);
+  const SUPPORT=Object.freeze({
+    native:{label:'natif',means:'Le moteur le fait lui-même.',icon:'check'},
+    adapter:{label:'adaptateur',means:'Possible seulement par une étape d’adaptation explicite, visible dans la source ; jamais appliquée seule. Déclaré, pas encore utilisable dans une présentation : aucune étape d’adaptation n’existe.',icon:'arrow'},
+    unsupported:{label:'non pris en charge',means:'Impossible dans ce moteur : signalé, jamais deviné ni aplati en capture.',icon:'ban'},
+  });
+
   /* `publication.json` › `provenance.origin` et `created_by.actor`. */
   const ORIGINS=Object.freeze({base:'Livrée avec JARVIS',custom:'Création',fork:'Fork',revision:'Révision',base_edit:'Édition de base'});
   const ACTORS=Object.freeze({system:'JARVIS (livré)',brain:'JARVIS',user:'vous'});
@@ -145,9 +162,9 @@ const JarvisPrefabLibraryCore=(function(){
 
   /* ------------------------------------------------------------- routes */
   const PATHS=Object.freeze({
-    search:q=>`/api/prefabs${query({query:q,limit:LIST_LIMIT})}`,
-    detail:id=>`/api/prefabs/${seg(id)}`,
-    version:(id,v,source)=>`/api/prefabs/${seg(id)}/${seg(v)}${source?'?include_source=1':''}`,
+    search:q=>`/api/prefabs${query({query:q,limit:LIST_LIMIT,catalog:1})}`,
+    detail:id=>`/api/prefabs/${seg(id)}${query({catalog:1})}`,
+    version:(id,v,source)=>`/api/prefabs/${seg(id)}/${seg(v)}${query({include_source:source?1:null,catalog:1})}`,
     save:()=>'/api/prefabs',
     scene:()=>'/api/scene/commands',
   });
@@ -303,6 +320,21 @@ const JarvisPrefabLibraryCore=(function(){
     return {row,lineage:lineage||null,kind:kindOf(row,lineage,failed),badges:badgesOf(row,lineage,failed),
       parent:lineage&&lineage.parent?lineage.parent:null};
   }
+  /* Contrat sémantique d'une ligne ou d'un détail : lu tel que Core le rend, `null` tant qu'il n'est pas là. Un moteur que
+     Core ne liste pas est « non pris en charge », jamais « inconnu » ni « pris en charge ». */
+  function catalogOf(source){
+    const c=isObject(source)?source.catalog:null;
+    return isObject(c)&&typeof c.type==='string'&&isObject(c.compatibility)?c:null;
+  }
+  function supportOf(catalog,engine){
+    const c=catalogOf({catalog});
+    const value=c&&typeof c.compatibility[engine]==='string'?c.compatibility[engine]:'unsupported';
+    return value in SUPPORT?value:'unsupported';
+  }
+  function typeLabel(key){return TYPE_BY_KEY[key]?TYPE_BY_KEY[key].label:String(key)}
+  function stacksOf(entries){
+    return [...new Set(list(entries).flatMap(e=>{const c=catalogOf(e.row);return c?list(c.stack):[]}).filter(t=>typeof t==='string'&&t))].sort();
+  }
   function familiesOf(entries){
     return [...new Set(list(entries).map(e=>e.row.family).filter(f=>typeof f==='string'&&f))].sort();
   }
@@ -321,9 +353,17 @@ const JarvisPrefabLibraryCore=(function(){
      `base` (une base est connue par sa classe) ; une ligne dont la lecture a
      ÉCHOUÉ (`unknown`) reste sous Fork ET Custom, marquée « Provenance
      inconnue » : un échec ne cache jamais une ligne. */
-  function filterEntries(entries,{kind='all',family=''}={}){
+  function filterEntries(entries,{kind='all',family='',type='',engine='',stack=''}={}){
     return list(entries).filter(e=>{
       if(family&&e.row.family!==family)return false;
+      if(type||engine||stack){
+        /* Sans contrat lu (réponse d'un Core plus ancien) : une ligne ne passe aucun filtre sémantique, jamais « devinée ». */
+        const c=catalogOf(e.row);
+        if(!c)return false;
+        if(type&&c.type!==type)return false;
+        if(engine&&supportOf(c,engine)==='unsupported')return false;
+        if(stack&&!list(c.stack).includes(stack))return false;
+      }
       if(kind==='all')return true;
       if(e.kind==='unknown')return kind==='fork'||kind==='custom';
       return e.kind===kind;
@@ -478,7 +518,7 @@ const JarvisPrefabLibraryCore=(function(){
        `sticky` (issue d'une publication finie pendant que l'utilisateur était
        ailleurs) reste jusqu'à « Masquer » ; les autres partent au changement
        de prefab. */
-    const S={open:false,query:'',kind:'all',family:'',
+    const S={open:false,query:'',kind:'all',family:'',type:'',engine:'',stack:'',
       list:{status:'idle',rows:[],error:null,started:0,readAt:0,gen:0,ranked:false},
       details:new Map(),selected:null,version:null,versionView:slot(),
       fork:null,publication:null,place:null,notice:null,previewLog:[],previewSeq:0,focusRequest:null};
@@ -488,7 +528,7 @@ const JarvisPrefabLibraryCore=(function(){
     function lineage(id){const d=S.details.get(id);return d&&d.data?lineageOf(d.data):null}
     function failed(id){const d=S.details.get(id);return !!d&&d.status==='error'&&!d.data}
     function entries(){return S.list.rows.map(row=>entryOf(row,lineage(row.id),failed(row.id)))}
-    function visible(){return sortEntries(filterEntries(entries(),{kind:S.kind,family:S.family}),{ranked:S.list.ranked})}
+    function visible(){return sortEntries(filterEntries(entries(),{kind:S.kind,family:S.family,type:S.type,engine:S.engine,stack:S.stack}),{ranked:S.list.ranked})}
     function rowOf(id){return S.list.rows.find(r=>r.id===id)||null}
     function detailKey(row){return `${row.id}@${row.latest_version}#${list(row.versions).join(',')}`}
 
@@ -593,6 +633,11 @@ const JarvisPrefabLibraryCore=(function(){
       },
       setKind(kind){S.kind=kind==='all'||KIND_BY_KEY[kind]?kind:'all';changed()},
       setFamily(family){S.family=String(family||'');changed()},
+      setType(type){S.type=TYPE_BY_KEY[type]?type:'';changed()},
+      setEngine(engine){S.engine=ENGINES.some(e=>e.key===engine)?engine:'';changed()},
+      setStack(stack){S.stack=String(stack||'');changed()},
+      stacks(){return stacksOf(entries())},
+      clearSemanticFilters(){S.type='';S.engine='';S.stack='';changed()},
       select(id,version){
         if(typeof id!=='string'||!id)return;
         const changedId=S.selected!==id;
@@ -746,7 +791,7 @@ const JarvisPrefabLibraryCore=(function(){
   return Object.freeze({DEADLINE_MS,LIST_LIMIT,DETAIL_CONCURRENCY,LOG_CAP,PREVIEW_OBJECT_ID,KINDS,KIND_BY_KEY,ORIGINS,ACTORS,
     EVENT_CLASSES,VERSION_STATUS,ERRORS,PATHS,
     isPrefabId,isBaseId,formatSeconds,formatWhen,refText,allowed,createClient,errorView,versionsOf,lineageOf,kindOf,badgesOf,
-    entryOf,familiesOf,countsOf,filterEntries,sortEntries,provenanceChain,inputsTree,eventsOf,editableDefaults,forkCandidate,
+    entryOf,familiesOf,countsOf,catalogOf,supportOf,typeLabel,stacksOf,SEMANTIC_TYPES,TYPE_BY_KEY,ENGINES,SUPPORT,filterEntries,sortEntries,provenanceChain,inputsTree,eventsOf,editableDefaults,forkCandidate,
     placeCommand,createLibrary,statusView});
 })();
 if(typeof module!=='undefined'&&module.exports)module.exports=JarvisPrefabLibraryCore;
@@ -770,11 +815,12 @@ if(typeof module!=='undefined'&&module.exports)module.exports=JarvisPrefabLibrar
   const q=s=>root.querySelector(s);
   const el={open:document.getElementById('openPrefabs'),close:q('#pfbClose'),refresh:q('#pfbRefresh'),
     status:q('#pfbStatus'),statusLabel:q('#pfbStatusLabel'),statusDetail:q('#pfbStatusDetail'),
-    search:q('#pfbSearch'),family:q('#pfbFamily'),kinds:q('#pfbKinds'),count:q('#pfbCount'),
+    search:q('#pfbSearch'),family:q('#pfbFamily'),type:q('#pfbType'),engine:q('#pfbEngine'),stack:q('#pfbStack'),kinds:q('#pfbKinds'),count:q('#pfbCount'),
     list:q('#pfbList'),listState:q('#pfbListState'),detail:q('#pfbDetail'),announce:q('#pfbAnnounce')};
   if(Object.values(el).some(node=>!node)){
     console.error('[prefabs] prefabs.install_failed {"code":"prefabs_view_incomplete"}');return;
   }
+  const isRecord=v=>!!v&&typeof v==='object'&&!Array.isArray(v);
   const TICK_MS=500,SEARCH_DEBOUNCE_MS=220;
   const V={inerted:[],tick:null,keys:{},previewKey:null,host:null,searchTimer:null,forkGen:null,pendingFocus:null,raf:0};
   const log=(level,event,data)=>{
@@ -799,6 +845,8 @@ if(typeof module!=='undefined'&&module.exports)module.exports=JarvisPrefabLibrar
     library:['M4 4h4v16H4Z','M10 4h4v16h-4Z','M16 5l3.5-1 3 15.5-3.5.9Z'],
     arrow:['M5 12h14','M13 6l6 6-6 6'],
     quote:['M7 7h4v4c0 3-1.5 5-4 6','M14 7h4v4c0 3-1.5 5-4 6'],
+    check:['M5 12.5l4.5 4.5L19 7.5'],
+    ban:['M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18Z','M5.6 5.6l12.8 12.8'],
   };
   function icon(name,className){
     const s=document.createElementNS(SVGNS,'svg');
@@ -887,6 +935,7 @@ if(typeof module!=='undefined'&&module.exports)module.exports=JarvisPrefabLibrar
   function renderFilters(){
     const counts=lib.counts();
     const families=lib.families();
+    const stacks=lib.stacks();
     region('kinds',JSON.stringify([S.kind,counts]),()=>{
       const kinds=[{key:'all',label:'Tous',tone:'all',icon:null,means:'Tous les prefabs de la bibliothèque'},...C.KINDS];
       replace(el.kinds,kinds.map(k=>h('button',{type:'button',class:`pfb-kind is-${k.tone}`,'aria-pressed':String(S.kind===k.key),
@@ -899,30 +948,52 @@ if(typeof module!=='undefined'&&module.exports)module.exports=JarvisPrefabLibrar
       replace(el.family,options);
       el.family.value=families.includes(S.family)?S.family:'';
     });
+    region('semantic',JSON.stringify([stacks,S.type,S.engine,S.stack]),()=>{
+      replace(el.type,[h('option',{value:'',text:'Tous'}),...C.SEMANTIC_TYPES.map(t=>h('option',{value:t.key,text:t.label,title:t.means}))]);
+      el.type.value=S.type;
+      replace(el.engine,[h('option',{value:'',text:'Tous'}),...C.ENGINES.map(e=>h('option',{value:e.key,text:e.label,title:`Compatible ${e.label} : natif, ou par adaptateur (déclaré : pas encore utilisable dans une présentation)`}))]);
+      el.engine.value=S.engine;
+      replace(el.stack,[h('option',{value:'',text:'Toutes'}),...stacks.map(t=>h('option',{value:t,text:t}))]);
+      el.stack.value=stacks.includes(S.stack)?S.stack:'';
+    });
   }
 
   /* Liste à tabulation itinérante : UN arrêt de Tab (la ligne choisie, sinon
      la première), ↑ ↓ Début Fin déplacent le focus d'une ligne à l'autre. */
+  /* Type + compatibilité de chaque moteur, en mots (jamais la couleur seule). Sans contrat lu : rien d'affirmé. */
+  function catalogLine(source){
+    const c=C.catalogOf(source);
+    if(!c)return null;
+    return h('span',{class:'pfb-cat'},
+      h('span',{class:'pfb-badge is-type',title:(C.TYPE_BY_KEY[c.type]||{}).means||c.type,text:C.typeLabel(c.type)}),
+      C.ENGINES.map(e=>supportChip(e,C.supportOf(c,e.key))));
+  }
+  function supportChip(engine,value){
+    const sp=C.SUPPORT[value];
+    return h('span',{class:`pfb-badge is-sup-${value}`,title:`${engine.label} : ${sp.label}. ${sp.means}`},icon(sp.icon),h('span',{text:`${engine.label} ${sp.label}`}));
+  }
   function rowNode(entry,tabStop){
     const r=entry.row;
     const selected=S.selected===r.id;
     /* Nom accessible dit en phrase : les badges sont en capitales par le CSS,
        que Chrome reporterait dans le nom. */
     const name=[r.title||r.id,r.id,`version ${r.latest_version}`,...entry.badges.map(b=>b.label.toLowerCase()),
-      entry.parent?`fork de ${C.refText(entry.parent)}`:null].filter(Boolean).join(', ');
+      entry.parent?`fork de ${C.refText(entry.parent)}`:null,
+      ...(C.catalogOf(r)?[C.typeLabel(r.catalog.type),...C.ENGINES.map(e=>`${e.label} ${C.SUPPORT[C.supportOf(r.catalog,e.key)].label}`)].map(t=>t.toLowerCase()):[])].filter(Boolean).join(', ');
     return h('li',{},h('button',{type:'button',class:`pfb-row${selected?' is-selected':''}`,id:`pfb-row-${r.id}`,
       dataset:{id:r.id},'aria-current':selected?'true':null,'aria-label':name,tabindex:tabStop?'0':'-1'},
       h('span',{class:'pfb-row-top'},h('span',{class:'pfb-name',dir:'auto',text:r.title||r.id}),h('span',{class:'pfb-ver',text:`v${r.latest_version}`})),
       h('code',{class:'pfb-id',text:r.id}),
       h('span',{class:'pfb-badges'},entry.badges.map(chip)),
+      catalogLine(r),
       entry.parent?h('span',{class:'pfb-parent'},icon('branch'),'de ',h('code',{text:C.refText(entry.parent)})):null));
   }
   function renderList(){
     const shownEntries=lib.visible();
     const keyRows=shownEntries.map(e=>[e.row.id,e.row.latest_version,e.row.title,e.badges.map(b=>b.key+b.label).join(','),
-      e.parent?C.refText(e.parent):'']);
+      e.parent?C.refText(e.parent):'',e.row.catalog||null]);
     if(S.focusRequest){V.pendingFocus=S.focusRequest;S.focusRequest=null}
-    region('list',JSON.stringify([S.list.status,S.list.error&&S.list.error.code,keyRows,S.selected,S.query,S.kind,S.family]),()=>{
+    region('list',JSON.stringify([S.list.status,S.list.error&&S.list.error.code,keyRows,S.selected,S.query,S.kind,S.family,S.type,S.engine,S.stack]),()=>{
       const focusedId=document.activeElement&&document.activeElement.classList&&document.activeElement.classList.contains('pfb-row')
         ?document.activeElement.dataset.id:null;
       const tabId=shownEntries.some(e=>e.row.id===S.selected)?S.selected:(shownEntries[0]&&shownEntries[0].row.id);
@@ -938,7 +1009,8 @@ if(typeof module!=='undefined'&&module.exports)module.exports=JarvisPrefabLibrar
         ?h('p',{class:'pfb-empty'},'Aucun prefab ne répond à « ',iso(S.query),
           ' ». La recherche porte sur l’identifiant, le titre, les alias, les étiquettes et la description.')
         :h('p',{class:'pfb-empty',text:'La bibliothèque est vide.'});
-      else if(total&&!shownEntries.length)state=h('p',{class:'pfb-empty',text:'Aucun prefab de cette nature avec ces filtres.'});
+      else if(total&&!shownEntries.length)state=h('p',{class:'pfb-empty'},'Aucun prefab de cette nature avec ces filtres. ',
+        S.type||S.engine||S.stack?h('button',{type:'button',class:'pfb-link',id:'pfbClearSemantic',onclick:()=>lib.clearSemanticFilters(),text:'Retirer type, moteur et pile'}):null);
       replace(el.listState,state);
       const shownCount=shownEntries.length;
       el.count.textContent=S.list.status==='ready'||total
@@ -1067,20 +1139,22 @@ if(typeof module!=='undefined'&&module.exports)module.exports=JarvisPrefabLibrar
   }
   function renderActions(view){
     const p=S.place;
-    const ready=!!view.data;
+    const remotionSource=!!view.data&&isRecord(view.data.manifest)&&isRecord(view.data.manifest.source);
+    const ready=!!view.data&&!remotionSource;
     const forkOpen=!!S.fork;
-    region('actions',JSON.stringify([S.selected,ready,p&&p.status,p&&p.result,p&&p.error&&p.error.code,forkOpen,view.data&&view.data.version]),()=>{
+    region('actions',JSON.stringify([S.selected,ready,remotionSource,p&&p.status,p&&p.result,p&&p.error&&p.error.code,forkOpen,view.data&&view.data.version]),()=>{
       const placeState=!p?null:p.status==='sending'?loading('Envoi à la scène…',p.started)
         :p.status==='done'?h('p',{class:'pfb-placed',role:'status'},'Placé sur la scène : « ',iso(p.result.title),' » ',h('code',{text:p.result.objectId}),' ',
           h('button',{type:'button',class:'pfb-link',onclick:()=>closeView(),text:'Fermer et voir la scène'}))
         :errorBox(p.error,{lead:'Placer : ',retry:()=>lib.place()});
       replace(D.actions,
         h('div',{class:'pfb-actrow'},
-          h('button',{type:'button',class:'action pfb-primary',id:'pfbPlace',disabled:!ready||(p&&p.status==='sending'),
+          h('button',{type:'button',class:'action pfb-primary',id:'pfbPlace','aria-describedby':'pfbActHint',disabled:!ready||(p&&p.status==='sending'),
             onclick:()=>lib.place()},icon('place'),'Placer sur la scène'),
-          h('button',{type:'button',class:'action',id:'pfbForkOpen','aria-expanded':String(forkOpen),'aria-controls':'pfbForkForm',
+          h('button',{type:'button',class:'action',id:'pfbForkOpen','aria-describedby':'pfbActHint','aria-expanded':String(forkOpen),'aria-controls':'pfbForkForm',
             disabled:!ready,onclick:()=>{if(S.fork)lib.cancelFork();else lib.openFork()}},icon('fork'),'Forker en nouveau prefab'),
-          h('span',{class:'pfb-acthint',text:'Placer : une fenêtre avec les données d’exemple. Forker : une copie sous un autre identifiant.'})),
+          h('span',{class:'pfb-acthint',id:'pfbActHint',text:remotionSource?'Source Remotion : ni placement ni fork depuis cette vue (le Player et l’import arrivent avec les Slices suivantes).'
+          :'Placer : une fenêtre avec les données d’exemple. Forker : une copie sous un autre identifiant.'})),
         placeState);
     });
   }
@@ -1199,6 +1273,12 @@ if(typeof module!=='undefined'&&module.exports)module.exports=JarvisPrefabLibrar
       replace(D.previewState,errorBox({code:'preview_unavailable',message:'le runtime des prefabs (JarvisPrefabHost) n’est pas chargé dans cette page'}));
       return;
     }
+    if(isRecord(m.source)){
+      /* Source Remotion : pas de cadre HTML à monter. Le Player Remotion arrive avec la Slice 10 ; le dire, ne rien simuler. */
+      replace(D.previewState,h('p',{class:'pfb-none',id:'pfbNoPreview',
+        text:'Aperçu indisponible : c’est une source Remotion (React), qu’un cadre HTML ne peut pas jouer. Son contrat est dans « Contrat du catalogue » ci-dessous.'}));
+      return;
+    }
     replace(D.previewState);
     const sample=m.sample&&typeof m.sample==='object'?m.sample:{};
     try{
@@ -1230,7 +1310,7 @@ if(typeof module!=='undefined'&&module.exports)module.exports=JarvisPrefabLibrar
   function renderSections(view){
     const detail=view.data;
     const lineage=lib.lineage(S.selected);
-    region('sections',JSON.stringify([S.selected,detail&&detail.version,lineage&&lineage.versions.length,
+    region('sections',JSON.stringify([S.selected,detail&&detail.version,detail&&detail.catalog||null,lineage&&lineage.versions.length,
       lineage&&lineage.versions.map(v=>[v.version,v.status])]),()=>{
       if(!detail){replace(D.sections);return}
       const m=detail.manifest||{};
@@ -1254,8 +1334,61 @@ if(typeof module!=='undefined'&&module.exports)module.exports=JarvisPrefabLibrar
             e.writes.length?h('span',{class:'pfb-evmeta'},'écrit ',e.writes.map((w,i)=>[i?', ':'',h('code',{text:`data.${w}`})])):null,
             e.summary?h('span',{class:'pfb-evsum',dir:'auto',text:e.summary}):null);
         })):h('p',{class:'pfb-none',text:'Aucun événement : ce prefab affiche, il ne réagit pas.'}));
-      replace(D.sections,h('div',{class:'pfb-two'},inputs,evs),versionsSection(detail,lineage));
+      replace(D.sections,catalogSection(detail),h('div',{class:'pfb-two'},inputs,evs),versionsSection(detail,lineage));
     });
+  }
+  /* Provenance ÉCRITE PAR CORE (import amont, Slice 18) : « intact » seulement si les fichiers courants sont exactement ceux de l'import ;
+     sinon « modifié depuis l'import », la provenance d'origine restant visible comme historique, jamais comme garantie. */
+  function upstreamStamp(up){
+    const where=`commit ${String(up.commit).slice(0,7)}, importé le ${String(up.imported_at||'').slice(0,10)}`;
+    if(up.verified_intact===true)return h('span',{class:'pfb-upstamp is-intact'},
+      h('strong',{text:' Importé de cet amont'}),h('span',{text:` (${where}) · fichiers intacts : vérifié par Core.`}));
+    const files=Array.isArray(up.modified_files)?up.modified_files:null;
+    return h('span',{class:'pfb-upstamp is-modified'},
+      h('strong',{text:' Importé de cet amont — modifié depuis l’import'}),
+      h('span',{text:` (origine : ${where}). Provenance d’origine conservée à titre d’historique, plus vérifiée pour ces fichiers.`}),
+      files&&files.length?h('span',{class:'pfb-cmeans',text:` Fichiers modifiés : ${files.join(', ')}.`}):null);
+  }
+  /* Contrat du catalogue d'UNE version : type, compatibilité par moteur, pile, dépendances, licence, amont ; les paramètres
+     éditables ne s'ouvrent qu'à la demande (<details>). Un contrat « déduit » (version publiée avant le bloc `catalog`) le dit. */
+  function catalogSection(detail){
+    const c=C.catalogOf(detail);
+    const head=h('h4',{id:'pfbCatalogTitle',text:'Contrat du catalogue'});
+    if(!c)return h('section',{class:'pfb-sect pfb-catalog','aria-labelledby':'pfbCatalogTitle'},head,
+      h('p',{class:'pfb-none',text:'Contrat indisponible : Core n’a pas rendu le bloc « catalog » pour cette version. Rien n’est supposé.'}));
+    const row=(label,...value)=>[h('dt',{text:label}),h('dd',{},...value)];
+    const typeMeans=(C.TYPE_BY_KEY[c.type]||{}).means||'';
+    const params=Array.isArray(c.parameters)?c.parameters:[];
+    const deps=Array.isArray(c.dependencies)?c.dependencies:[];
+    const stack=Array.isArray(c.stack)?c.stack:[];
+    const up=c.upstream&&typeof c.upstream==='object'?c.upstream:null;
+    return h('section',{class:'pfb-sect pfb-catalog','aria-labelledby':'pfbCatalogTitle'},head,
+      h('p',{class:'pfb-sechint',text:c.declared?'Déclaré par le manifeste de cette version.'
+        :'Version publiée avant le bloc « catalog » : contrat déduit à la lecture, rien n’a été réécrit.'}),
+      h('dl',{class:'pfb-cdl'},
+        row('Type',h('strong',{text:C.typeLabel(c.type)}),' ',h('code',{text:c.type}),typeMeans?h('span',{class:'pfb-cmeans',text:` ${typeMeans}`}):null),
+        row('Moteurs',h('ul',{class:'pfb-csup'},C.ENGINES.map(e=>{
+          const v=C.supportOf(c,e.key);
+          return h('li',{class:`is-sup-${v}`},icon(C.SUPPORT[v].icon),h('strong',{text:e.label}),h('span',{text:` ${C.SUPPORT[v].label}`}),
+            h('span',{class:'pfb-cmeans',text:` — ${C.SUPPORT[v].means}`}));
+        }))),
+        row('Pile technique',stack.length?h('span',{class:'pfb-badges'},stack.map(t=>h('span',{class:'pfb-badge is-type'},h('span',{text:t})))):h('span',{class:'pfb-none',text:'non déclarée'})),
+        row('Dépendances',deps.length?h('ul',{class:'pfb-cdeps'},deps.map(d=>h('li',{},h('code',{text:d.name}),' ',h('span',{class:'pfb-ver',text:d.version})))):h('span',{class:'pfb-none',text:'aucune déclarée'})),
+        row('Licence',c.license?h('span',{text:c.license}):h('span',{class:'pfb-none',text:'non déclarée'})),
+        row('Amont',up?h('span',{class:'pfb-up'},h('strong',{text:up.name}),up.ref?h('span',{text:` @ ${up.ref}`}):null,
+            h('code',{class:'pfb-upurl',text:up.url}),up.license?h('span',{text:` · licence ${up.license}`}):null,up.author?h('span',{text:` · ${up.author}`}):null,
+            up.commit?upstreamStamp(up):h('span',{class:'pfb-cmeans',text:' Déclaré par l’auteur de la version ; Core ne l’a pas vérifié.'}))
+          :h('span',{class:'pfb-none',text:'aucun (créé sur ce poste)'}))),
+      h('details',{class:'pfb-params',id:'pfbParams'},
+        h('summary',{text:`Paramètres éditables (${params.length})`}),
+        params.length?h('ul',{class:'pfb-tree'},params.map(pm=>h('li',{style:'--depth:0'},
+          h('span',{class:'pfb-tline'},h('code',{class:'pfb-tname',text:pm.name}),h('span',{class:'pfb-ttype',text:pm.type}),
+            pm.required?h('span',{class:'pfb-treq',text:'requis'}):null,
+            Object.prototype.hasOwnProperty.call(pm,'default')?h('span',{class:'pfb-tdef'},'défaut ',h('code',{text:JSON.stringify(pm.default)})):null,
+            Array.isArray(pm.values)&&pm.values.length?h('span',{class:'pfb-tbound',text:`valeurs : ${pm.values.join(', ')}`}):null,
+            Array.isArray(pm.range)&&pm.range.some(x=>x!==null)?h('span',{class:'pfb-tbound',text:`bornes : ${pm.range.map(x=>x===null?'…':x).join(' à ')}`}):null),
+          pm.description?h('span',{class:'pfb-tdesc',dir:'auto',text:pm.description}):null)))
+          :h('p',{class:'pfb-none',text:'Ce prefab ne déclare aucun paramètre éditable : il se règle par ses données.'})));
   }
   function versionsSection(detail,lineage){
     const versions=lineage?lineage.versions.slice().reverse():[];
@@ -1342,6 +1475,9 @@ if(typeof module!=='undefined'&&module.exports)module.exports=JarvisPrefabLibrar
     if(event.key==='ArrowDown'){const first=el.list.querySelector('.pfb-row');if(first){event.preventDefault();first.focus()}}
   });
   el.family.addEventListener('change',()=>lib.setFamily(el.family.value));
+  el.type.addEventListener('change',()=>lib.setType(el.type.value));
+  el.engine.addEventListener('change',()=>lib.setEngine(el.engine.value));
+  el.stack.addEventListener('change',()=>lib.setStack(el.stack.value));
   el.list.addEventListener('click',event=>{
     const row=event.target.closest&&event.target.closest('.pfb-row');
     if(row)selectRow(row.dataset.id);

@@ -1,0 +1,49 @@
+{
+  "scenario": "authoring_exploratory",
+  "screenshots": [
+    "candidate_1.png",
+    "candidate_2.png"
+  ],
+  "grounds": [
+    [
+      "rgb(16, 0, 43)",
+      "rgb(255, 158, 0)"
+    ],
+    [
+      "rgb(251, 247, 240)",
+      "rgb(194, 65, 12)"
+    ]
+  ],
+  "variants": [
+    {
+      "variant_id": "psv_4f84f5a134086632fac88889a03f4772",
+      "variant_number": 1,
+      "title": "Direction 1",
+      "parent_variant_id": null,
+      "art_direction_id": "psd_81529776b82b",
+      "score_id": "psr_8c3fc5a50fd7",
+      "draft": true,
+      "rationale": "draft direction 1/3: Piste 1 : Direction 1 - Bold contrast"
+    },
+    {
+      "variant_id": "psv_05a993b25e2ba28e77fd28c4057acb13",
+      "variant_number": 2,
+      "title": "Direction 2",
+      "parent_variant_id": "psv_4f84f5a134086632fac88889a03f4772",
+      "art_direction_id": "psd_7007d984ffca",
+      "score_id": "psr_91612510831e",
+      "draft": true,
+      "rationale": "draft direction 2/3: Piste 2 : Direction 2 - Editorial bold"
+    },
+    {
+      "variant_id": "psv_e6415270ab3049fb5597984d38f191fa",
+      "variant_number": 3,
+      "title": "Direction 3",
+      "parent_variant_id": "psv_4f84f5a134086632fac88889a03f4772",
+      "art_direction_id": "psd_639a46bdd9e0",
+      "score_id": "psr_71528fdd84c7",
+      "draft": true,
+      "rationale": "draft direction 3/3: Piste 3 : Direction 3 - Luxury minimal"
+    }
+  ]
+}

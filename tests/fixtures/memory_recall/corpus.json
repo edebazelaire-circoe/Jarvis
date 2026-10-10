@@ -1,0 +1,152 @@
+[
+ {
+  "id": "fr-car",
+  "title": "Entretien de la voiture",
+  "body": "La vidange de la voiture se fait tous les quinze mille kilomètres chez le garagiste."
+ },
+ {
+  "id": "en-car",
+  "title": "Car servicing",
+  "body": "The oil change happens every ten thousand miles at the garage."
+ },
+ {
+  "id": "fr-coffee",
+  "title": "Café du matin",
+  "body": "Clarice préfère un espresso serré sans sucre."
+ },
+ {
+  "id": "en-coffee",
+  "title": "Morning coffee",
+  "body": "Clarice likes a short espresso without sugar."
+ },
+ {
+  "id": "fr-trip",
+  "title": "Voyage à Lisbonne",
+  "body": "Le vol part le douze mars depuis Orly, réservation confirmée."
+ },
+ {
+  "id": "en-trip",
+  "title": "Lisbon trip",
+  "body": "The flight leaves on March twelfth from Orly, booking confirmed."
+ },
+ {
+  "id": "fr-budget",
+  "title": "Projet Atlas",
+  "body": "Le budget total est de quarante mille euros."
+ },
+ {
+  "id": "en-budget",
+  "title": "Atlas project",
+  "body": "The total budget is forty thousand euros."
+ },
+ {
+  "id": "fr-dentist",
+  "title": "Rendez-vous dentiste",
+  "body": "Rendez-vous chez le dentiste jeudi à quatorze heures."
+ },
+ {
+  "id": "en-dentist",
+  "title": "Dentist appointment",
+  "body": "Dentist appointment on Thursday at two pm."
+ },
+ {
+  "id": "fr-allergy",
+  "title": "Allergie de Marc",
+  "body": "Marc est allergique aux arachides, jamais de cacahuètes."
+ },
+ {
+  "id": "en-allergy",
+  "title": "Marc allergy",
+  "body": "Marc is allergic to peanuts, never serve groundnuts."
+ },
+ {
+  "id": "fr-wifi",
+  "title": "Wifi du salon",
+  "body": "Le mot de passe du wifi est écrit sous le routeur du salon."
+ },
+ {
+  "id": "en-wifi",
+  "title": "Living room wifi",
+  "body": "The wifi password is written under the living room router."
+ },
+ {
+  "id": "fr-music",
+  "title": "Goûts musicaux",
+  "body": "Elle écoute surtout du jazz le dimanche."
+ },
+ {
+  "id": "en-music",
+  "title": "Music taste",
+  "body": "She mostly listens to jazz on Sundays."
+ },
+ {
+  "id": "fr-cat",
+  "title": "Le chat Pixel",
+  "body": "Le chat Pixel mange des croquettes deux fois par jour."
+ },
+ {
+  "id": "en-cat",
+  "title": "Pixel the cat",
+  "body": "The cat Pixel eats kibble twice a day."
+ },
+ {
+  "id": "fr-workout",
+  "title": "Sport",
+  "body": "Séance de musculation le mardi et le vendredi à sept heures."
+ },
+ {
+  "id": "en-workout",
+  "title": "Workout",
+  "body": "Weightlifting session on Tuesday and Friday at seven."
+ },
+ {
+  "id": "fr-loan",
+  "title": "Prêt immobilier",
+  "body": "Le prêt immobilier est remboursé chaque mois le cinq."
+ },
+ {
+  "id": "en-loan",
+  "title": "Mortgage",
+  "body": "The mortgage is repaid every month on the fifth."
+ },
+ {
+  "id": "fr-garden",
+  "title": "Jardin",
+  "body": "Arroser les tomates tous les soirs en été."
+ },
+ {
+  "id": "en-garden",
+  "title": "Garden",
+  "body": "Water the tomatoes every evening in summer."
+ },
+ {
+  "id": "fr-d1",
+  "title": "Recette ratatouille",
+  "body": "Courgettes, aubergines et poivrons mijotent une heure."
+ },
+ {
+  "id": "en-d2",
+  "title": "Quarterly report",
+  "body": "The slides are due before the board meeting."
+ },
+ {
+  "id": "fr-d3",
+  "title": "Tournoi de tennis",
+  "body": "Le tournoi commence samedi au club."
+ },
+ {
+  "id": "en-d4",
+  "title": "Meeting notes",
+  "body": "Refactor the login module next sprint."
+ },
+ {
+  "id": "fr-d5",
+  "title": "Vacances",
+  "body": "La maison de location est à Biarritz."
+ },
+ {
+  "id": "en-d6",
+  "title": "Birthday",
+  "body": "The cake order for Sophie is ready on Friday."
+ }
+]

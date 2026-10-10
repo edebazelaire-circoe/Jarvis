@@ -47,6 +47,10 @@ AvailabilityState = Literal["advertised", "configured", "disabled", "known"]
 AGENT_SNAPSHOT_FLAGS: dict[str, str] = {
     "jarvis-display": "display_tools",
     "jarvis-barehands": "barehands_tools",
+    # `jarvis-presentation` (interactive-presentation-studio, Slice 21) : déclaré avec l'affichage (`scene.enabled`).
+    "jarvis-presentation": "presentation_tools",
+    # `jarvis-remotion` (jarvis-remotion-presentation-integration, Slice 21) : déclaré avec `jarvis-presentation`.
+    "jarvis-remotion": "remotion_tools",
     "jarvis-console": "console_tools",
     # `jarvis-workspace` (board-memory-workspace-inspector, Slice 06) : Claude seulement.
     "jarvis-workspace": "workspace_tools",
@@ -79,12 +83,24 @@ def build_introspection_server(server: str) -> Any:
         from jarvis.runtime.surface_mcp import build_server
 
         return build_server(tools=_Inert())  # type: ignore[arg-type]
+    if server == "jarvis-presentation":
+        from jarvis.runtime.presentation_studio_mcp import build_server
+
+        return build_server(tools=_Inert())  # type: ignore[arg-type]
+    if server == "jarvis-remotion":
+        from jarvis.runtime.remotion_mcp import build_server
+
+        return build_server(tools=_Inert())  # type: ignore[arg-type]
     if server == "jarvis-console":
         from jarvis.runtime.settings_mcp import build_server
 
         return build_server(tools=_Inert())  # type: ignore[arg-type]
     if server == "jarvis-workspace":
         from jarvis.runtime.workspace_mcp import build_server
+
+        return build_server(tools=_Inert())  # type: ignore[arg-type]
+    if server == "jarvis-memory":
+        from jarvis.runtime.memory_mcp import build_server
 
         return build_server(tools=_Inert())  # type: ignore[arg-type]
     if server == "jarvis-capture":

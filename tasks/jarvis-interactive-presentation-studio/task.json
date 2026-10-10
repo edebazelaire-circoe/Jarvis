@@ -1,0 +1,15 @@
+{
+  "project": "Jarvis",
+  "slug": "jarvis-interactive-presentation-studio",
+  "title": "Jarvis Interactive Presentation Studio",
+  "status": "planned",
+  "goal": "Implement a first-class interactive presentation artifact/studio with strong first-draft authoring, fullscreen playback, live editing, score/cues, rehearsal, creative variants, comparison/mixing and reusable promotion.",
+  "source": "Interactive slide/presentation planning conversation on 2026-10-07 plus live Jarvis repository and related Drive handoff evidence.",
+  "repository_expected": "edebazelaire-circoe/Jarvis",
+  "drive_destination": "Jarvis/task/to-do/jarvis-interactive-presentation-studio/",
+  "external_dependencies": [
+    "jarvis-scene-window-prefab-foundation",
+    "existing PRESENTATION interaction mode"
+  ],
+  "task_type_resolution_required": true
+}

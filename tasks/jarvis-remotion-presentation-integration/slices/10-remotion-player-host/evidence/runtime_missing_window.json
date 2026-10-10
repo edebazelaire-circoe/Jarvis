@@ -1,0 +1,43 @@
+{
+  "scenario": "runtime_missing_window",
+  "screenshots": [
+    "unavailable.png"
+  ],
+  "reads": {
+    "until:!!document.querySelector('iframe[data-remotion-stage]') && !!document.querySelec": true,
+    "panel": "Remotion n’est pas disponible\n\nRéessayer\n\nLe moteur Remotion n’est pas prêt : la scène n’est pas jouée, et rien d’autre ne joue à sa place.\n\nDétail : remotion is unavailable: the Remotion capability is not_installed; install or repair it from the local capabilities (POST /v1/local-capabilities/remotion/install or repair). Repair: install or repair the Remotion capability (POST /v1/local-capabilities/remotion/install or repair)\n\nCode : presentation_studio_engine_unavailable",
+    "band": null,
+    "html_frames": 0,
+    "state": "failed"
+  },
+  "console": [
+    "frame info [barehands] barehands.cards_installed {\"cards\":[\"help\",\"diagnostics\"]}",
+    "frame info [mode] interaction_mode.hud_installed {\"host\":\"interactionModeHud\"}",
+    "frame info [capture] capture_rail.placed {\"mode\":\"below\",\"fits\":true}",
+    "frame info [capture] capture_rail.installed {\"host\":\"captureRail\"}",
+    "frame info [boards] boards.hud_installed {\"host\":\"boardsHud\",\"panel\":\"boardsPanel\"}",
+    "frame info [attention] presentation_attention.installed {\"host\":\"toasts\",\"storage\":true}",
+    "frame info [studio-inspector] installed {\"dock\":true}",
+    "frame info [workspace] workspace.installed {}",
+    "frame info [prefabs] prefabs.installed {}",
+    "frame info [capture] capture_rail.status_received {\"open\":0}",
+    "frame info [scène] scene.enabled Object",
+    "frame info [barehands] profil de calibration relu aucune mesure",
+    "frame info [scène] scene.role Object",
+    "frame info [scène] scene.loop_started Object",
+    "frame info [scène] scene.snapshot_loaded Object",
+    "frame info [scène] scene.prefab_mounted Object",
+    "frame warning [remotion.stage.failed] Object",
+    "frame warning [scène] scene.prefab_error Object",
+    "frame info [studio-reload] mount_reported {\"object_id\":\"win-remotion\",\"prefab\":\"presentation-studio.p000000000001.s000000000001@1\",\"outcome\":\"failed\",\"reason\":\"presentation_studio_engine_unavailable\",\"matched\":false,\"attempt\":1}",
+    "frame info [scène] scene.resolver_committed Object"
+  ],
+  "errors": [],
+  "journal": [
+    "background.store_loaded",
+    "barehands.mcp_unconfigured",
+    "presentation_studio.request.relayed",
+    "remotion.stage.failed",
+    "scene.display_mcp_unconfigured"
+  ]
+}

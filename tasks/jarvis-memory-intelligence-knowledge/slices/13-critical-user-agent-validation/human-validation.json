@@ -1,0 +1,9 @@
+{
+  "checks": [
+    {
+      "id": "HV-13-01",
+      "kind": "human_review",
+      "instruction": "Review the independent critic-agent evidence only after machine QA; confirm remaining limitations are acceptable or send back for rework."
+    }
+  ]
+}

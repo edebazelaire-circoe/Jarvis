@@ -1,0 +1,9 @@
+{
+  "checks": [
+    {
+      "id": "HVAL-IPS-005",
+      "title": "Rehearsal recovery and recall",
+      "instructions": "Rehearse a section, ask Jarvis where you are and what comes next, make an edit mid-rehearsal, then resume and confirm score/scene state remains coherent."
+    }
+  ]
+}

@@ -75,6 +75,13 @@ PROVIDERS: tuple[ProviderSpec, ...] = (
         hint="Non branché sur la boucle vocale pour l'instant.",
     ),
     ProviderSpec(
+        id="tencent",
+        label="Tencent (mémoire)",
+        env=("JARVIS_TENCENT_TOKEN",),
+        placeholder="Jeton du sidecar",
+        hint="Jeton du sidecar mémoire Tencent, optionnel.",
+    ),
+    ProviderSpec(
         id="custom",
         label="Autre",
         env=(),

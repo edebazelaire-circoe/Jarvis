@@ -1,0 +1,30 @@
+{
+ "environment": {
+  "os": "Windows-11-10.0.26200-SP0",
+  "python": "3.14.6",
+  "node": "v24.18.0",
+  "cpu_threads": 20,
+  "when": "2026-10-10T09:03:04+00:00"
+ },
+ "player_cold_describe_s": 0.77,
+ "player_cold_host_bytes": null,
+ "player_warm_describe_s": 0.03,
+ "playback_start_s": 0.063,
+ "props_edit_roundtrip": {
+  "n": 5,
+  "min_s": 0.032,
+  "median_s": 0.037,
+  "max_s": 0.042
+ },
+ "source_edit_roundtrip": {
+  "n": 5,
+  "min_s": 0.641,
+  "median_s": 0.649,
+  "max_s": 0.663
+ },
+ "data_root_footprint_kb": {
+  "local_capabilities/remotion/compiled": 569.6,
+  "local_capabilities/remotion/runtime": 148.6,
+  "state": 1202.3
+ }
+}

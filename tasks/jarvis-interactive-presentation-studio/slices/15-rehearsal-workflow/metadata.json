@@ -1,0 +1,11 @@
+{
+  "slice_id": "15",
+  "task_type": null,
+  "task_type_resolution_required": true,
+  "dependencies": [
+    "12-playback-runtime",
+    "13-user-presenter-sidekick",
+    "14-jarvis-presenter-locked-sequences",
+    "05-semantic-edit-api"
+  ]
+}

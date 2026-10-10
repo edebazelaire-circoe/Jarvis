@@ -30,6 +30,7 @@ from jarvis.runtime.drive_mcp import DriveMcpTarget
 from jarvis.runtime.control_center import MCP_TOOLS_ROUTE, ControlCenter
 from jarvis.runtime.display_mcp import DisplayMcpTarget
 from jarvis.runtime.mcp_tool_meta import CATEGORY_ORDER, SERVERS, tool_names
+from jarvis.runtime.presentation_studio_mcp_support import PresentationMcpTarget
 from jarvis.runtime.settings_mcp import ConsoleMcpTarget
 
 _CARD_KEYS = {"server", "name", "qualified_name", "category", "label", "summary", "side_effect", "atomicity",
@@ -62,6 +63,8 @@ def _center(tmp_path: Path, *, scene: bool | None = None, hands: bool | None = N
             "console_mcp": ConsoleMcpTarget("127.0.0.1", 47002, runtime),
             # `jarvis-capture` (Slice 09 session-context-recording) : même forme de cible que la console.
             "capture_mcp": ConsoleMcpTarget("127.0.0.1", 47002, runtime),
+            "presentation_mcp": PresentationMcpTarget(DisplayMcpTarget("127.0.0.1", 47001, tmp_path / "sentinel-core.token", runtime),
+                                                      ConsoleMcpTarget("127.0.0.1", 47002, runtime)),
             "drive_mcp": DriveMcpTarget(runtime_root=runtime),
         }
     center = ControlCenter(runtime_root=runtime, project_root=tmp_path, **kwargs)
@@ -94,8 +97,8 @@ async def test_the_list_carries_servers_and_compact_cards_in_the_contract_order(
     # Plugins MCP (Slice 04) : la passerelle `jarvis-tools` (catégorie `general`) ouvre la liste ; sans Core,
     # une entrée `plugins` non décrite (`core_unreachable`) la ferme, natifs intacts.
     assert [entry["server"] for entry in body["servers"]] == [
-        "jarvis-tools", "jarvis-display", "jarvis-surface", "jarvis-console", "jarvis-workspace", "jarvis-capture", "jarvis-barehands",
-        "jarvis-drive", "plugins"]
+        "jarvis-tools", "jarvis-display", "jarvis-surface", "jarvis-presentation", "jarvis-remotion", "jarvis-console", "jarvis-memory", "jarvis-workspace",
+        "jarvis-capture", "jarvis-barehands", "jarvis-drive", "plugins"]
     for entry in body["servers"]:
         assert set(entry) == _SERVER_KEYS and set(entry["availability"]) == _AVAILABILITY_KEYS
         if entry["server"] == "plugins":

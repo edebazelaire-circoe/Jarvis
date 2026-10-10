@@ -8,6 +8,7 @@
 | `jarvis/runtime/agent_routing.py` | Canonical Auto/Dupliqué projection over existing routing persistence | `delegation_mode`, `apply_delegation_mode`, `delegation_enabled` |
 | `jarvis/runtime/prompt_overrides.py` | Keep saved prompt edits separate from runtime-only behavior merge into shared backend turn composition | `stored_prompt_override_document`, `prompt_override_document` |
 | `jarvis/runtime/prompt_runtime.py` | One bounded Agent-turn composition for ask, direct send and owned jobs | `compose_agent_turn` |
+| `jarvis/runtime/memory_settings.py` | Memory settings (`memory` key): tolerant read, strict whole-request write, server-described schema, `has_secret` only; see [`memory.md`](memory.md) | `read_memory_settings`, `validate_memory_settings_write`, `describe_memory_settings`, `read_loadout_policy` (`memory.loadouts`, Slice 09) |
 | `jarvis/runtime/control_center.py` | `/api/settings` projection/save, alias conflict rejection, active-agent refresh | `_settings_payload`, `save_settings`, `_apply_cli`, `agent_ask` |
 | `jarvis/runtime/agent_settings.py` + `back_brain_worker.py` | Carry and consume behavior choice for owned background agent executions | `resolve_agent_execution`, `execute_with_progress` |
 

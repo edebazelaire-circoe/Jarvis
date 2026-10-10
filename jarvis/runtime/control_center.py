@@ -92,6 +92,7 @@ from jarvis.runtime.tool_brain_brief import (
 )
 from jarvis.runtime.tool_brain_ownership import DelegationGate
 from jarvis.runtime.presentation_brief import render_presentation_brief
+from jarvis.runtime.memory_brief import render_memory_brief
 from jarvis.runtime.session_context_brief import render_session_context_brief, sessions_root
 from jarvis.runtime.work_brief import render_work_brief
 from jarvis.runtime.subagent_conversation import SubagentConversationScope
@@ -109,10 +110,27 @@ from jarvis.runtime.work_ingress import TrackerWorkObserver, WorkIngressForwarde
 from jarvis.runtime.board_brains import BoardBrain, BoardBrainPool, agent_session_id
 from jarvis.runtime.board_routes import BoardSessionRoutes
 from jarvis.runtime.capture_relay import GUARDED_PREFIXES as CAPTURE_GUARDED_PREFIXES, CaptureRelayRoutes
+from jarvis.runtime.memory_relay import GUARDED_PREFIXES as MEMORY_GUARDED_PREFIXES, MemoryRelayRoutes, memory_settings_section
+from jarvis.runtime.memory_settings import MemorySettingsError, apply_memory_settings
 from jarvis.runtime.prefab_relay import GUARDED_PREFIXES as PREFAB_GUARDED_PREFIXES, PrefabRelayRoutes
+from jarvis.runtime.remotion_relay import GUARDED_PREFIXES as REMOTION_GUARDED_PREFIXES, STAGE_ROUTE as REMOTION_STAGE_ROUTE, RemotionRelayRoutes
+from jarvis.runtime.presentation_studio_scene_variants_relay import PresentationStudioSceneVariantsRelayRoutes
+from jarvis.runtime.presentation_studio_template_relay import PresentationStudioTemplateRelayRoutes
+from jarvis.runtime.presentation_studio_upgrades_relay import PresentationStudioUpgradesRelayRoutes
+from jarvis.runtime.presentation_studio_authoring_relay import PresentationStudioAuthoringRelayRoutes
+from jarvis.runtime.presentation_studio_compose_relay import PresentationStudioComposeRelayRoutes
+from jarvis.runtime.presentation_studio_variants_relay import PresentationStudioVariantsRelayRoutes
+from jarvis.runtime.presentation_studio_relay import (
+    GUARDED_PREFIXES as STUDIO_GUARDED_PREFIXES, PresentationStudioRelayRoutes,
+)
+from jarvis.runtime.presentation_studio_explorer_commands import PresentationStudioExplorerRoutes
+from jarvis.runtime.presentation_studio_turn import AddressedTurnTracker
+from jarvis.runtime.memory_relay import MEMORY_BRAIN_GUARDED_PREFIXES, MemoryBrainRelayRoutes
 from jarvis.runtime.workspace_relay import GUARDED_PREFIXES as WORKSPACE_GUARDED_PREFIXES, WorkspaceRelayRoutes
 from jarvis.runtime.core_sessions import CoreSessionTransport, is_unsupported
 from jarvis.runtime.mcp_plugin_routes import PLUGINS_ROUTE as MCP_PLUGINS_ROUTE, McpPluginRoutes
+from jarvis.runtime.presentation_render_relay import PresentationRenderRelayRoutes
+from jarvis.runtime.remotion_studio_relay import GUARDED_PREFIXES as REMOTION_STUDIO_GUARDED_PREFIXES, RemotionStudioRelayRoutes
 from jarvis.domain.workspace_board import BoardConversationBinding, BoardError, BoardErrorCode, InteractionModeOrigin
 from jarvis.runtime.work_view import CORE_UNREACHABLE, NOT_CONFIGURED, CoreWorkView, unavailable_payload
 from jarvis.protocol import scene_wire
@@ -151,10 +169,14 @@ from jarvis.runtime.barehands_calibration import (
     render_calibration_event,
 )
 from jarvis.runtime.barehands_commands import BarehandsCommandBroker
+from jarvis.domain import surface_fullscreen as fullscreen_vocab
+from jarvis.domain.surface_fullscreen import SurfaceFullscreenError
+from jarvis.runtime.fullscreen_commands import FullscreenCommandBroker
 from jarvis.domain.scene_capture import INVALID_PNG, MAX_CAPTURE_BYTES, UNKNOWN_CAPTURE, check_capture_id, png_dimensions
 from jarvis.protocol.strict_json import loads_strict_json
 from jarvis.runtime.barehands_mcp import BarehandsMcpTarget
 from jarvis.runtime.drive_mcp import DriveMcpTarget
+from jarvis.runtime.presentation_studio_mcp_support import PresentationMcpTarget
 from jarvis.runtime.settings_mcp import ConsoleMcpTarget
 from jarvis.runtime.tools_gateway_mcp import ToolsGatewayTarget
 from jarvis.runtime.display_mcp import DisplayMcpTarget
@@ -201,6 +223,13 @@ TESTLAB_ROUTE = "/api/testlab"
 #: `X-Jarvis-Error-Code`, et le serveur MCP n'a plus de code à nommer — alors
 #: que « tout refus porte un code stable » est une contrainte de cette Slice.
 BAREHANDS_COMMANDS_ROUTE_PREFIX = "/api/barehands/commands"
+#: Plein écran générique d'une surface (Slice 03 du studio de présentation) :
+#: long-poll + reçu comme le canal ci-dessus, et `/api/fullscreen/state` pour les
+#: transitions que le navigateur dicte après le reçu. Mêmes raisons de garde :
+#: `GET /api/fullscreen/commands` consomme la commande, et un cadre de prefab
+#: (origine opaque, `Origin: null`) ne doit pouvoir ni la prendre ni la dicter.
+FULLSCREEN_ROUTE_PREFIX = "/api/fullscreen"
+_FULLSCREEN_PAGE_ID = re.compile(r"\A[A-Za-z0-9_-]{8,64}\Z")
 #: Séance de calibration déclarée par la page (Slice 06 adaptative, décision 50).
 #: Gardée comme le canal : elle donne au cerveau l'autorité des outils
 #: `calibration_*`, donc une page étrangère ne doit pouvoir ni l'ouvrir ni la lire.
@@ -266,10 +295,13 @@ AGENT_BINDINGS_ROUTE = "/api/agent/bindings"
 #: Catalogue des prefabs (jarvis-scene-window-prefab-foundation, Slice 03,
 #: `prefab_relay.py`) : toutes les méthodes gardées — défense en profondeur
 #: contre un cadre de prefab (origine opaque, `Origin: null` refusé).
-READ_GUARDED_ROUTES = (CONVERSATIONS_ROUTE, TESTLAB_ROUTE, BAREHANDS_COMMANDS_ROUTE_PREFIX,
+#: Presentation Studio (jarvis-interactive-presentation-studio, Slice 05, `presentation_studio_relay.py`) : idem, toutes
+#: les méthodes gardées ; la seule écriture relayée est `.../edits`, acteur forcé à `user`.
+READ_GUARDED_ROUTES = (CONVERSATIONS_ROUTE, TESTLAB_ROUTE, BAREHANDS_COMMANDS_ROUTE_PREFIX, FULLSCREEN_ROUTE_PREFIX,
                        BAREHANDS_CALIBRATION_SESSION_ROUTE, BAREHANDS_BENCHMARKS_ROUTE, AGENT_BINDINGS_ROUTE,
-                       MCP_PLUGINS_ROUTE, *CAPTURE_GUARDED_PREFIXES, *WORKSPACE_GUARDED_PREFIXES,
-                       *PREFAB_GUARDED_PREFIXES)
+                       MCP_PLUGINS_ROUTE, *CAPTURE_GUARDED_PREFIXES, *WORKSPACE_GUARDED_PREFIXES, *MEMORY_BRAIN_GUARDED_PREFIXES,
+                       *PREFAB_GUARDED_PREFIXES, *REMOTION_GUARDED_PREFIXES, *STUDIO_GUARDED_PREFIXES, *MEMORY_GUARDED_PREFIXES,
+                       *REMOTION_STUDIO_GUARDED_PREFIXES)
 #: Corps de `POST /api/agent/bindings/activate` : une liaison sérialisée, bornée.
 AGENT_BINDING_MAX_BYTES = 8 * 1024
 #: Adoption de la liaison foreground au démarrage : Core peut démarrer après
@@ -302,7 +334,31 @@ def _authority_host(authority: str) -> str | None:
     return host.lower()
 
 
-def _loopback_refusal(origin: str | None, host_header: str | None, fetch_site: str | None) -> str | None:
+def _authority_port(authority: str, scheme: str = "http") -> int | None:
+    """Port explicite de `host[:port]` / `[v6][:port]`, sinon le port par défaut du schéma ; None si illisible."""
+
+    tail = authority.rsplit("]", 1)[1] if authority.startswith("[") else (authority.partition(":")[1] + authority.partition(":")[2])
+    if not tail:
+        return 443 if scheme.lower() == "https" else 80
+    digits = tail[1:] if tail.startswith(":") else ""
+    return int(digits) if digits.isascii() and digits.isdigit() and int(digits) <= 65535 else None
+
+
+def _foreign_port_refusal(origin: str | None, host_header: str | None) -> str | None:
+    """Un `Origin` de boucle locale n'est accepté que s'il porte le port du Control Center lui-même (celui de l'en-tête `Host`) :
+    une page servie par un AUTRE service local (le Studio Remotion, un serveur de développement) n'est pas le Control Center."""
+
+    if origin is None:
+        return None
+    scheme, separator, authority = origin.partition("://")
+    if not separator:
+        return "forbidden origin"
+    origin_port, host_port = _authority_port(authority, scheme), _authority_port(host_header or "")
+    return None if origin_port is not None and origin_port == host_port else "origin is another local service"
+
+
+def _loopback_refusal(origin: str | None, host_header: str | None, fetch_site: str | None, *, mutating: bool = False,
+                      fetch_mode: str | None = None) -> str | None:
     """Why a conversation history request is refused, or None.
 
     Exact comparison after splitting the port, no URL parser quirks:
@@ -317,34 +373,48 @@ def _loopback_refusal(origin: str | None, host_header: str | None, fetch_site: s
             return "forbidden origin"
     if _authority_host(host_header or "") not in LOOPBACK_HOSTS:
         return "forbidden host"
-    return None
+    site = (fetch_site or "").strip().lower()
+    if mutating and site == "same-site":
+        return "same-site request from another local service"
+    if site == "same-site" and (fetch_mode or "").strip().lower() == "navigate":
+        # Une page d'un autre service local qui NAVIGUE vers une route gardée (`location = ...`) consommerait un état (file de commandes, lecture
+        # longue). La page du Control Center elle-même est `same-origin` (jamais `same-site`), donc non concernée.
+        return "same-site navigation from another local service"
+    return _foreign_port_refusal(origin, host_header)
 
 
 _CSP_HOST = re.compile(r"[a-z0-9.-]+|\[[0-9a-f:.]+\]")
 
 
-def frame_src_policy(visualizer_url: str | None) -> str:
+def frame_src_policy(visualizer_url: str | None, stage_url: str | None = None) -> str:
     """`Content-Security-Policy` of the Control Center page: `frame-src` only.
 
-    The page frames exactly one thing by URL, the configured visualizer, so
-    `frame-src` allows that origin alone (`'none'` without a visualizer).
+    The page frames the configured visualizer by URL, so `frame-src` allows that
+    origin (`'none'` without a visualizer). Since the Remotion Slice 10 it frames
+    one more thing: its own Remotion stage document (`stage_url`, an exact
+    `scheme://host:port/remotion-stage`, a PATH source, not `'self'`: a frame can
+    navigate to that one document and to no other page of the Control Center).
+    The Remotion sandbox origin is NOT here: only the stage document mounts the
+    sandboxed frame, and its own `frame-src` names that origin alone
+    (`remotion_relay.stage_csp`, docs/remotion-isolation.md section 4).
     Prefab frames are `srcdoc` documents, which `frame-src` does not govern,
     but every navigation of a frame (`location.href`, a link) is checked
     against it: a prefab frame cannot load another page (docs/prefabs.md ›
     *Containment*, SECURITY.md §16). Nothing else on the page is restricted.
     """
+    sources: list[str] = []
     try:
         parsed = urlparse(visualizer_url or "")
         port = parsed.port
+        host = parsed.hostname or ""
+        shown = f"[{host}]" if ":" in host else host
+        if parsed.scheme in {"http", "https"} and "@" not in parsed.netloc and host and _CSP_HOST.fullmatch(shown):
+            sources.append(f"{parsed.scheme}://{shown}" + (f":{port}" if port is not None else ""))
     except ValueError:
-        return "frame-src 'none'"
-    host = parsed.hostname or ""
-    if parsed.scheme not in {"http", "https"} or "@" in parsed.netloc or not host:
-        return "frame-src 'none'"
-    shown = f"[{host}]" if ":" in host else host
-    if not _CSP_HOST.fullmatch(shown):
-        return "frame-src 'none'"
-    return f"frame-src {parsed.scheme}://{shown}" + (f":{port}" if port is not None else "")
+        pass
+    if stage_url:
+        sources.append(stage_url)
+    return "frame-src " + (" ".join(sources) if sources else "'none'")
 
 
 #: En-tête d'un refus d'enregistrement (HTTP 400) portant son code stable.
@@ -461,6 +531,46 @@ BAREHANDS_HUD_SCRIPT_MARKER = "/*__CONTROL_CENTER_BAREHANDS_HUD_JS__*/"
 #: refuse de s'installer sans lui.
 BAREHANDS_COMMANDS_SCRIPT_FILE = "control_center_barehands_commands.js"
 BAREHANDS_COMMANDS_SCRIPT_MARKER = "/*__CONTROL_CENTER_BAREHANDS_COMMANDS_JS__*/"
+#: Plein écran générique de surface (Slice 03 du studio de présentation) :
+#: `window.JarvisFullscreen`, canal de commandes armées et invite d'un clic.
+#: Inséré APRÈS l'hôte des prefabs et la page de scène ; il lit leurs éléments
+#: au moment de la demande (jamais au chargement) et n'a besoin d'eux pour rien d'autre.
+FULLSCREEN_SCRIPT_FILE = "control_center_fullscreen.js"
+FULLSCREEN_SCRIPT_MARKER = "/*__CONTROL_CENTER_FULLSCREEN_JS__*/"
+#: Rechargement à chaud d'une scène du Studio (Slice 06) : `window.JarvisStudioReload`, rapports de montage de l'hôte et
+#: bande visible de l'édition de source. Inséré après la page de scène ; elle le lit à la demande (`onOutcome`).
+STUDIO_RELOAD_SCRIPT_FILE = "control_center_presentation_studio_reload.js"
+STUDIO_RELOAD_SCRIPT_MARKER = "/*__CONTROL_CENTER_PRESENTATION_STUDIO_RELOAD_JS__*/"
+#: Explorateur de variantes (studio, Slice 18) : espace de travail plein écran (arbre des branches à gauche, aperçu à droite). Trois fichiers,
+#: dans cet ordre : fonctions pures + CSS, éléments (arbre virtualisé, formulaires, canal de commandes), puis le contrôleur (le seul qui
+#: s'installe et publie `window.JarvisStudioExplorer`). Insérés
+#: après le rechargement à chaud et AVANT la bande de lecture : il lit `JarvisStudioPlayer.view()` à la demande, jamais au chargement.
+STUDIO_EXPLORER_CORE_SCRIPT_FILE = "control_center_presentation_studio_explorer_core.js"
+STUDIO_EXPLORER_CORE_SCRIPT_MARKER = "/*__CONTROL_CENTER_PRESENTATION_STUDIO_EXPLORER_CORE_JS__*/"
+STUDIO_EXPLORER_WIDGETS_SCRIPT_FILE = "control_center_presentation_studio_explorer_widgets.js"
+STUDIO_EXPLORER_WIDGETS_SCRIPT_MARKER = "/*__CONTROL_CENTER_PRESENTATION_STUDIO_EXPLORER_WIDGETS_JS__*/"
+STUDIO_EXPLORER_COMPARE_CORE_SCRIPT_FILE = "control_center_presentation_studio_explorer_compare_core.js"
+STUDIO_EXPLORER_COMPARE_CORE_SCRIPT_MARKER = "/*__CONTROL_CENTER_PRESENTATION_STUDIO_EXPLORER_COMPARE_CORE_JS__*/"
+STUDIO_EXPLORER_COMPARE_SCRIPT_FILE = "control_center_presentation_studio_explorer_compare.js"
+STUDIO_EXPLORER_COMPARE_SCRIPT_MARKER = "/*__CONTROL_CENTER_PRESENTATION_STUDIO_EXPLORER_COMPARE_JS__*/"
+STUDIO_EXPLORER_COMPOSE_SCRIPT_FILE = "control_center_presentation_studio_explorer_compose.js"
+STUDIO_EXPLORER_COMPOSE_SCRIPT_MARKER = "/*__CONTROL_CENTER_PRESENTATION_STUDIO_EXPLORER_COMPOSE_JS__*/"
+STUDIO_EXPLORER_UPGRADES_SCRIPT_FILE = "control_center_presentation_studio_explorer_upgrades.js"
+STUDIO_EXPLORER_UPGRADES_SCRIPT_MARKER = "/*__CONTROL_CENTER_PRESENTATION_STUDIO_EXPLORER_UPGRADES_JS__*/"
+STUDIO_EXPLORER_SCRIPT_FILE = "control_center_presentation_studio_explorer.js"
+STUDIO_EXPLORER_SCRIPT_MARKER = "/*__CONTROL_CENTER_PRESENTATION_STUDIO_EXPLORER_JS__*/"
+# Lecture d'une presentation (studio, Slice 12) : bande d'etat + clavier sur l'hote du stage ; apres le plein ecran qu'il pilote.
+STUDIO_PLAYER_SCRIPT_FILE = "control_center_presentation_studio_player.js"
+STUDIO_PLAYER_SCRIPT_MARKER = "/*__CONTROL_CENTER_PRESENTATION_STUDIO_PLAYER_JS__*/"
+# Inspecteur d'edition (studio, Slice 07) : panneau du dock `INS`, widgets generes de l'introspection, ecritures par le relais.
+# Apres la bande de lecture dont il lit l'etat (`JarvisStudioPlayer.view()`) pour se cacher entierement pendant une lecture.
+# Trois fichiers, dans cet ordre : fonctions pures + CSS, widgets générés, contrôleur (le seul qui s'installe et publie `window.JarvisStudioInspector`).
+STUDIO_INSPECTOR_CORE_SCRIPT_FILE = "control_center_presentation_studio_inspector_core.js"
+STUDIO_INSPECTOR_CORE_SCRIPT_MARKER = "/*__CONTROL_CENTER_PRESENTATION_STUDIO_INSPECTOR_CORE_JS__*/"
+STUDIO_INSPECTOR_WIDGETS_SCRIPT_FILE = "control_center_presentation_studio_inspector_widgets.js"
+STUDIO_INSPECTOR_WIDGETS_SCRIPT_MARKER = "/*__CONTROL_CENTER_PRESENTATION_STUDIO_INSPECTOR_WIDGETS_JS__*/"
+STUDIO_INSPECTOR_SCRIPT_FILE = "control_center_presentation_studio_inspector.js"
+STUDIO_INSPECTOR_SCRIPT_MARKER = "/*__CONTROL_CENTER_PRESENTATION_STUDIO_INSPECTOR_JS__*/"
 #: Contrôle de mode d'interaction du bas-gauche (Slice 03 de
 #: `jarvis-presentation-interaction-mode`) : bouton d'état compact montrant le
 #: mode **en vigueur** (SIMPLE / PRESENTATION) et sélecteur à trois choix, où
@@ -525,6 +635,9 @@ PREFAB_PROTOCOL_SCRIPT_FILE = "control_center_prefab_protocol.js"
 PREFAB_PROTOCOL_SCRIPT_MARKER = "/*__CONTROL_CENTER_PREFAB_PROTOCOL_JS__*/"
 PREFAB_HOST_SCRIPT_FILE = "control_center_prefab_host.js"
 PREFAB_HOST_SCRIPT_MARKER = "/*__CONTROL_CENTER_PREFAB_HOST_JS__*/"
+#: Cadre de la scène Remotion (Slice 10), avant l'hôte : l'hôte le délègue pour un paquet `{kind: "remotion"}`.
+REMOTION_FRAME_SCRIPT_FILE = "control_center_remotion_frame.js"
+REMOTION_FRAME_SCRIPT_MARKER = "/*__CONTROL_CENTER_REMOTION_FRAME_JS__*/"
 SCENE_PAGE_SCRIPT_FILE = "control_center_scene_page.js"
 SCENE_PAGE_SCRIPT_MARKER = "/*__CONTROL_CENTER_SCENE_PAGE_JS__*/"
 #: Interactions de l'utilisateur (Slice 08) : géométrie, menu, archivage
@@ -573,6 +686,12 @@ MCP_INSPECTOR_SCRIPT_MARKER = "/*__CONTROL_CENTER_MCP_INSPECTOR_JS__*/"
 #: lecture seule et le rendu de détail de l'inspecteur, donc inséré APRÈS lui.
 MCP_PLUGINS_SCRIPT_FILE = "control_center_mcp_plugins.js"
 MCP_PLUGINS_SCRIPT_MARKER = "/*__CONTROL_CENTER_MCP_PLUGINS_JS__*/"
+#: Carte « Remotion » et Studio optionnel (jarvis-remotion-presentation-integration, Slice 11) : dans l'onglet des plugins externes.
+REMOTION_STUDIO_SCRIPT_FILE = "control_center_remotion_studio.js"
+REMOTION_STUDIO_SCRIPT_MARKER = "/*__CONTROL_CENTER_REMOTION_STUDIO_JS__*/"
+#: Carte « Présentations · moteur » (Slice 20) : choix humain du moteur, diagnostic d'un Remotion en panne, journal Slidecar.
+STUDIO_ENGINE_SCRIPT_FILE = "control_center_presentation_studio_engine.js"
+STUDIO_ENGINE_SCRIPT_MARKER = "/*__CONTROL_CENTER_PRESENTATION_STUDIO_ENGINE_JS__*/"
 #: Sessions & Boards (board-memory-workspace-inspector, Slice 07) : vue plein
 #: écran du dock `WSP` — état courant, historique des Sessions, tous les Boards,
 #: relations, mémoire d'un Board (lecture et écriture), Artefacts et provenance.
@@ -589,6 +708,13 @@ WORKSPACE_SCRIPT_MARKER = "/*__CONTROL_CENTER_WORKSPACE_JS__*/"
 #: `user`) et `POST /api/scene/commands`. Inséré après l'hôte des cadres.
 PREFABS_SCRIPT_FILE = "control_center_prefabs.js"
 PREFABS_SCRIPT_MARKER = "/*__CONTROL_CENTER_PREFABS_JS__*/"
+#: Mémoire (jarvis-memory-intelligence-knowledge, Slice 10b) : points d'accroche déjà servis, remplis par
+#: la Slice 11 (réglages, `memory_settings`) et la Slice 12 (Memory Center, `memory`). Ils ne lisent que
+#: la section `memory` de `/api/settings` et `/api/memory/*`.
+MEMORY_SETTINGS_SCRIPT_FILE = "control_center_memory_settings.js"
+MEMORY_SETTINGS_SCRIPT_MARKER = "/*__CONTROL_CENTER_MEMORY_SETTINGS_JS__*/"
+MEMORY_SCRIPT_FILE = "control_center_memory.js"
+MEMORY_SCRIPT_MARKER = "/*__CONTROL_CENTER_MEMORY_JS__*/"
 
 #: Architectures vocales proposées dans l'onglet « Mode vocal ». Comme le reste
 #: de l'écran, leur libellé vit ici et non dans la page. `{key}` est remplacé
@@ -908,6 +1034,9 @@ def build_agent_brief(context: dict[str, Any], text: str) -> str:
     # Context actif de la Session (handoff session-context-recording, Slice 03) :
     # son dossier est l'espace de travail implicite de la conversation.
     lines.extend(render_session_context_brief(context.get("session_context")))
+    # Mémoire à long terme du tour (handoff jarvis-memory-intelligence-knowledge, Slice 05) :
+    # profil stable, souvenirs avec leur provenance, rappel dégradé dit. Absente : rien ne change.
+    lines.extend(render_memory_brief(context.get("memory")))
     # Séance PRESENTATION (handoff presentation-interaction-mode, Slice 05) : le
     # fil frais et l'ensemble de travail d'un tour adressé, sous la règle de la
     # salle. Absent hors séance : le brief est celui d'avant.
@@ -978,6 +1107,8 @@ class ControlCenter:
         capture_mcp: "ConsoleMcpTarget | None" = None,
         drive_mcp: "DriveMcpTarget | None" = None,
         workspace_mcp: "ConsoleMcpTarget | None" = None,
+        presentation_mcp: "PresentationMcpTarget | None" = None,
+        memory_mcp: "ConsoleMcpTarget | None" = None,
         voice_registry: VoiceCapabilityRegistry | None = None,
         barehands_vendor_root: Path | None = None,
         sessions: CoreSessionTransport | None = None,
@@ -1106,6 +1237,11 @@ class ControlCenter:
         # `jarvis-workspace` (board-memory-workspace-inspector, Slice 06) : Boards, Sessions, mémoire
         # et liens, par `/api/boards*`, `/api/sessions*`, `/api/workspace/*`. Sans interrupteur.
         self.workspace_mcp = workspace_mcp
+        # `jarvis-presentation` (interactive-presentation-studio, Slice 21) : Core (acteur `brain`) et ce Control Center (explorateur,
+        # plein écran). Déclaré avec l'affichage, donc sous le même interrupteur `scene.enabled`.
+        self.presentation_mcp = presentation_mcp
+        # `jarvis-memory` (memory-intelligence-knowledge, Slice 05b) : recherche, lecture et proposition de mémoire.
+        self.memory_mcp = memory_mcp
         self._barehands_unconfigured_reported = False
         # Une ligne « catalogue MCP construit » par processus (Slice 06).
         self._mcp_catalog_reported = False
@@ -1126,6 +1262,7 @@ class ControlCenter:
         # pendant qu'elle tourne (un seul attend : le plus récent remplace).
         self._calibration_event_task: asyncio.Task[None] | None = None
         self._calibration_event_next: dict[str, Any] | None = None
+        self.fullscreen = FullscreenCommandBroker(journal=self.journal)
         self.barehands_commands = BarehandsCommandBroker(
             journal=self.journal,
             gate=lambda: bool(barehands.load(self._settings())["enabled"]),
@@ -1182,13 +1319,47 @@ class ControlCenter:
             transport=lambda: self.sessions, journal=self.journal,
             loopback_host=lambda host: _authority_host(host or "") in LOOPBACK_HOSTS,
         )
+        # Studio Remotion optionnel (jarvis-remotion-presentation-integration, Slice 11) : relais de la carte Remotion vers Core.
+        self.remotion_studio_routes = RemotionStudioRelayRoutes(transport=lambda: self.sessions, journal=self.journal)
+        # Export d'une présentation gelée (Slice 16) : relais de la vue Artefacts d'un Board vers le rendu de Core.
+        self.presentation_render_routes = PresentationRenderRelayRoutes(transport=lambda: self.sessions, journal=self.journal)
         # Contexts, captures, Artifacts (Slice 09 session-context-recording) : relais
         # vers Core, sans état propre ; transport relu à chaque requête.
         self.capture_routes = CaptureRelayRoutes(transport=lambda: self.sessions, journal=self.journal)
         # Workspace (board-memory-workspace-inspector, Slices 04-05) : relais des lectures et des mutations.
         self.workspace_routes = WorkspaceRelayRoutes(transport=lambda: self.sessions, journal=self.journal)
+        self.memory_brain_routes = MemoryBrainRelayRoutes(transport=lambda: self.sessions, journal=self.journal)
         # Catalogue des prefabs (Slice 03 prefab-foundation) : relais des lectures, transport relu à chaque requête.
+        self.memory_routes = MemoryRelayRoutes(transport=lambda: self.sessions, journal=self.journal)
         self.prefab_routes = PrefabRelayRoutes(transport=lambda: self.sessions, journal=self.journal)
+        # Scène Remotion (jarvis-remotion-presentation-integration, Slice 10) : page de la scène (CSP `frame-src` du bac à sable
+        # seul), relais du descripteur de lecture, compte rendu de la page. Aucun jeton de Core n'entre dans la page.
+        runtime_folder = Path(__file__).resolve().parent
+        self.remotion_routes = RemotionRelayRoutes(
+            transport=lambda: self.sessions, journal=self.journal,
+            # Slice 13 : le validateur d'inputProps voyage avec le protocole (deux IIFE, même emplacement de la page de scène).
+            protocol_js=(runtime_folder / "remotion_sandbox_protocol.js").read_text(encoding="utf-8") + "\n"
+            + (runtime_folder / "control_center_remotion_props.js").read_text(encoding="utf-8"),
+            stage_js=(runtime_folder / "control_center_remotion_stage.js").read_text(encoding="utf-8"),
+            page_template=(runtime_folder / "control_center_remotion_stage.html").read_text(encoding="utf-8"))
+        # Presentation Studio (jarvis-interactive-presentation-studio, Slice 05) : lectures + API d'édition, acteur forcé à `user`.
+        self.studio_routes = PresentationStudioRelayRoutes(transport=lambda: self.sessions, journal=self.journal)
+        # Graphe des variantes (Slice 16): meme surface gardee, acteur force a `user`, archivage sans plan refuse par le relais.
+        self.studio_variants_routes = PresentationStudioVariantsRelayRoutes(transport=lambda: self.sessions, journal=self.journal)
+        # Comparaison et composition de variantes (Slice 19): aucun etat ici; composition a acteur force `user`.
+        self.studio_compose_routes = PresentationStudioComposeRelayRoutes(transport=lambda: self.sessions, journal=self.journal)
+        # Variantes locales d'une scene (Slice 17): lecture, apercu, promotion; acteur force a `user`.
+        self.studio_scene_variants_routes = PresentationStudioSceneVariantsRelayRoutes(
+            transport=lambda: self.sessions, journal=self.journal)
+        # Modeles reutilisables (Slice 20): plan, promotion, liste, lecture, instanciation; acteur force a `user`.
+        self.studio_template_routes = PresentationStudioTemplateRelayRoutes(transport=lambda: self.sessions, journal=self.journal)
+        self.studio_upgrades_routes = PresentationStudioUpgradesRelayRoutes(transport=lambda: self.sessions, journal=self.journal)
+        # Planificateur d'ecriture (Slice 11): verifier / assembler un brouillon, acteur force a `user`.
+        self.studio_authoring_routes = PresentationStudioAuthoringRelayRoutes(transport=lambda: self.sessions, journal=self.journal)
+        # Explorateur de variantes (Slice 18) : canal de commandes (ouvrir / fermer par la voix ou un agent) + miroir d'etat de la page.
+        self.studio_explorer = PresentationStudioExplorerRoutes(journal=self.journal)
+        # Tour adresse de l'utilisateur en vol (Slice 21) : l'origine d'un demarrage de lecture par le cerveau vient de LA, jamais d'un argument.
+        self.studio_turn = AddressedTurnTracker()
         self._apply_agent_settings(settings)
 
         self._app = web.Application(middlewares=[self._origin_guard, self._mcp_json_errors])
@@ -1217,6 +1388,9 @@ class ControlCenter:
             # relais vers Core, écritures comprises, et retour OAuth. Toujours
             # aucune route d'exécution d'outil (`call_tool` vit dans Core).
             *self.mcp_plugin_routes.routes(),
+            # Carte « Remotion » : état de la capacité et Studio optionnel (Slice 11), six adresses relayées vers Core.
+            *self.remotion_studio_routes.routes(),
+            *self.presentation_render_routes.routes(),
             web.get("/api/models", self.models),
             web.get("/api/cli/agents", self.cli_agents),
             web.get("/api/routing/candidates", self.routing_candidates),
@@ -1256,6 +1430,11 @@ class ControlCenter:
             web.post(BAREHANDS_BENCHMARKS_ROUTE, self.save_barehands_benchmark),
             web.delete(BAREHANDS_BENCHMARKS_ROUTE, self.clear_barehands_benchmarks),
             web.post("/api/barehands/failures", self.report_barehands_failure),
+            web.get("/api/fullscreen/commands", self.fullscreen_commands_poll),
+            web.post("/api/fullscreen/commands", self.fullscreen_command_request),
+            web.post("/api/fullscreen/commands/{command_id}", self.fullscreen_command_receipt),
+            web.get("/api/fullscreen/state", self.fullscreen_state),
+            web.post("/api/fullscreen/state", self.fullscreen_state_report),
             web.get("/api/barehands/commands", self.barehands_commands_poll),
             web.post("/api/barehands/commands", self.barehands_command_request),
             web.post("/api/barehands/commands/{command_id}", self.barehands_command_receipt),
@@ -1288,7 +1467,19 @@ class ControlCenter:
             *self.board_routes.routes(),
             *self.capture_routes.routes(),
             *self.workspace_routes.routes(),
+            *self.memory_routes.routes(),
+            *self.memory_brain_routes.routes(),
             *self.prefab_routes.routes(),
+            *self.remotion_routes.routes(),
+            *self.studio_routes.routes(),
+            *self.studio_variants_routes.routes(),
+            *self.studio_compose_routes.routes(),
+            *self.studio_scene_variants_routes.routes(),
+            *self.studio_template_routes.routes(),
+            *self.studio_upgrades_routes.routes(),
+            *self.studio_authoring_routes.routes(),
+            *self.studio_explorer.routes(),
+            *self.studio_turn.routes(),
             web.get("/api/background", self.background_events),
             web.post("/api/background/ack", self.background_ack),
             web.get("/api/conversations", self.conversations_list),
@@ -1417,6 +1608,8 @@ class ControlCenter:
             # serveurs MCP et sa consigne système à son lancement.
             scene = load_scene_gate(settings)
             agent.display_mcp = self.display_mcp if scene["enabled"] else None
+            if hasattr(agent, "presentation_mcp"):
+                agent.presentation_mcp = self.presentation_mcp if scene["enabled"] else None
             if scene["enabled"] and self.display_mcp is None and not self._display_unconfigured_reported:
                 self._display_unconfigured_reported = True
                 self.journal.emit(
@@ -1457,6 +1650,8 @@ class ControlCenter:
             agent.capture_mcp = self.capture_mcp
         if hasattr(agent, "drive_mcp"):
             agent.drive_mcp = self.drive_mcp
+        if hasattr(agent, "memory_mcp"):
+            agent.memory_mcp = self.memory_mcp
         if hasattr(agent, "workspace_mcp"):
             # `jarvis-workspace` (Slice 06) : sans interrupteur ; Claude seulement, comme la capture.
             agent.workspace_mcp = self.workspace_mcp
@@ -1846,8 +2041,13 @@ class ControlCenter:
             # read-sensitive: every method is guarded, and the Host must be loopback
             # too (DNS rebinding).
             refusal = _loopback_refusal(request.headers.get("Origin"), request.headers.get("Host"),
-                                        request.headers.get("Sec-Fetch-Site"))
+                                        request.headers.get("Sec-Fetch-Site"),
+                                        mutating=request.method not in {"GET", "HEAD", "OPTIONS"},
+                                        fetch_mode=request.headers.get("Sec-Fetch-Mode"))
             if refusal is not None:
+                if request.path == FULLSCREEN_ROUTE_PREFIX or request.path.startswith(FULLSCREEN_ROUTE_PREFIX + "/"):
+                    # Même forme de refus que le canal frère, avec **son** code (`fullscreen_*`).
+                    return self._barehands_error(403, fullscreen_vocab.FORBIDDEN_ORIGIN, refusal)
                 if request.path.startswith((BAREHANDS_COMMANDS_ROUTE_PREFIX, BAREHANDS_CALIBRATION_SESSION_ROUTE,
                                             BAREHANDS_BENCHMARKS_ROUTE)):
                     # Le canal garde **sa** forme de refus, ici aussi : code stable
@@ -1872,6 +2072,9 @@ class ControlCenter:
                     # rend déjà `_barehands_error`.
                     if not request.path.startswith(SCENE_CAPTURE_ROUTE_PREFIX):
                         raise web.HTTPForbidden(text="invalid origin")
+                if host in LOOPBACK_HOSTS and (_foreign_port_refusal(origin, request.headers.get("Host")) is not None
+                                               or (request.headers.get("Sec-Fetch-Site") or "").strip().lower() in {"same-site", "cross-site"}):
+                    host = None  # une page d'un autre service local (autre port) : refusée comme une origine étrangère
                 if host not in LOOPBACK_HOSTS:
                     if request.path.startswith(SCENE_CAPTURE_ROUTE_PREFIX):
                         # Même forme d'erreur que les autres refus de la route de capture.
@@ -1887,6 +2090,11 @@ class ControlCenter:
         d'aiohttp dont leurs clients dépendent.
         """
 
+        if RemotionStudioRelayRoutes.owns(request.path):  # Slice 11 : mêmes refus codés, sous `/api/local-capabilities/remotion`
+            try:
+                return await handler(request)
+            except (web.HTTPMethodNotAllowed, web.HTTPNotFound) as exc:
+                return RemotionStudioRelayRoutes.refusal(exc)
         if not (request.path == MCP_ROUTE_PREFIX or request.path.startswith(MCP_ROUTE_PREFIX + "/")):
             return await handler(request)
         if McpPluginRoutes.owns(request.path):
@@ -1948,6 +2156,8 @@ class ControlCenter:
         # main tout de suite avec sa cause, au lieu d'attendre son échéance
         # pendant que le serveur se ferme sous lui.
         self.barehands_commands.close()
+        self.fullscreen.close()
+        self.studio_explorer.close()
         self.barehands_calibration.close()
         self._calibration_event_next = None
         analysis, self._calibration_event_task = self._calibration_event_task, None
@@ -1996,8 +2206,7 @@ class ControlCenter:
             await self._runner.cleanup()
             self._runner = None
 
-    async def index(self, request: web.Request) -> web.Response:
-        del request
+    async def index(self, request: web.Request | None) -> web.Response:
         page = Path(__file__).with_name("control_center.html")
         html = page.read_text(encoding="utf-8")
         # Logique pure du panneau Agents, tenue dans son propre fichier pour que
@@ -2062,6 +2271,50 @@ class ControlCenter:
             page.with_name(BAREHANDS_COMMANDS_SCRIPT_FILE).read_text(encoding="utf-8"),
         )
         html = html.replace(
+            FULLSCREEN_SCRIPT_MARKER,
+            page.with_name(FULLSCREEN_SCRIPT_FILE).read_text(encoding="utf-8"),
+        )
+        html = html.replace(
+            STUDIO_RELOAD_SCRIPT_MARKER,
+            page.with_name(STUDIO_RELOAD_SCRIPT_FILE).read_text(encoding="utf-8"),
+        )
+        html = html.replace(
+            STUDIO_EXPLORER_CORE_SCRIPT_MARKER,
+            page.with_name(STUDIO_EXPLORER_CORE_SCRIPT_FILE).read_text(encoding="utf-8"),
+        )
+        html = html.replace(
+            STUDIO_EXPLORER_WIDGETS_SCRIPT_MARKER,
+            page.with_name(STUDIO_EXPLORER_WIDGETS_SCRIPT_FILE).read_text(encoding="utf-8"),
+        )
+        for marker, file_name in (
+            (STUDIO_EXPLORER_COMPARE_CORE_SCRIPT_MARKER, STUDIO_EXPLORER_COMPARE_CORE_SCRIPT_FILE),
+            (STUDIO_EXPLORER_COMPARE_SCRIPT_MARKER, STUDIO_EXPLORER_COMPARE_SCRIPT_FILE),
+            (STUDIO_EXPLORER_COMPOSE_SCRIPT_MARKER, STUDIO_EXPLORER_COMPOSE_SCRIPT_FILE),
+            (STUDIO_EXPLORER_UPGRADES_SCRIPT_MARKER, STUDIO_EXPLORER_UPGRADES_SCRIPT_FILE),
+        ):
+            html = html.replace(marker, page.with_name(file_name).read_text(encoding="utf-8"))
+        html = html.replace(
+            STUDIO_EXPLORER_SCRIPT_MARKER,
+            page.with_name(STUDIO_EXPLORER_SCRIPT_FILE).read_text(encoding="utf-8"),
+        )
+        html = html.replace("__JARVIS_EXPLORER_PAGE_TOKEN__", self.studio_explorer.broker.page_token)   # remis AVEC la page : reçus et rapports d'état l'exigent
+        html = html.replace(
+            STUDIO_PLAYER_SCRIPT_MARKER,
+            page.with_name(STUDIO_PLAYER_SCRIPT_FILE).read_text(encoding="utf-8"),
+        )
+        html = html.replace(
+            STUDIO_INSPECTOR_CORE_SCRIPT_MARKER,
+            page.with_name(STUDIO_INSPECTOR_CORE_SCRIPT_FILE).read_text(encoding="utf-8"),
+        )
+        html = html.replace(
+            STUDIO_INSPECTOR_WIDGETS_SCRIPT_MARKER,
+            page.with_name(STUDIO_INSPECTOR_WIDGETS_SCRIPT_FILE).read_text(encoding="utf-8"),
+        )
+        html = html.replace(
+            STUDIO_INSPECTOR_SCRIPT_MARKER,
+            page.with_name(STUDIO_INSPECTOR_SCRIPT_FILE).read_text(encoding="utf-8"),
+        )
+        html = html.replace(
             INTERACTION_MODE_SCRIPT_MARKER,
             page.with_name(INTERACTION_MODE_SCRIPT_FILE).read_text(encoding="utf-8"),
         )
@@ -2096,6 +2349,9 @@ class ControlCenter:
             PREFAB_PROTOCOL_SCRIPT_MARKER, page.with_name(PREFAB_PROTOCOL_SCRIPT_FILE).read_text(encoding="utf-8")
         )
         html = html.replace(
+            REMOTION_FRAME_SCRIPT_MARKER, page.with_name(REMOTION_FRAME_SCRIPT_FILE).read_text(encoding="utf-8")
+        )
+        html = html.replace(
             PREFAB_HOST_SCRIPT_MARKER, page.with_name(PREFAB_HOST_SCRIPT_FILE).read_text(encoding="utf-8")
         )
         html = html.replace(
@@ -2120,11 +2376,20 @@ class ControlCenter:
             MCP_PLUGINS_SCRIPT_MARKER, page.with_name(MCP_PLUGINS_SCRIPT_FILE).read_text(encoding="utf-8")
         )
         html = html.replace(
+            REMOTION_STUDIO_SCRIPT_MARKER, page.with_name(REMOTION_STUDIO_SCRIPT_FILE).read_text(encoding="utf-8")
+        )
+        html = html.replace(
+            STUDIO_ENGINE_SCRIPT_MARKER, page.with_name(STUDIO_ENGINE_SCRIPT_FILE).read_text(encoding="utf-8")
+        )
+        html = html.replace(
             WORKSPACE_SCRIPT_MARKER, page.with_name(WORKSPACE_SCRIPT_FILE).read_text(encoding="utf-8")
         )
         html = html.replace(
             PREFABS_SCRIPT_MARKER, page.with_name(PREFABS_SCRIPT_FILE).read_text(encoding="utf-8")
         )
+        for marker, name in ((MEMORY_SETTINGS_SCRIPT_MARKER, MEMORY_SETTINGS_SCRIPT_FILE),
+                             (MEMORY_SCRIPT_MARKER, MEMORY_SCRIPT_FILE)):
+            html = html.replace(marker, page.with_name(name).read_text(encoding="utf-8"))
         if self.visualizer_url:
             html = html.replace("__VISUALIZER_URL__", self.visualizer_url)
         else:
@@ -2134,7 +2399,15 @@ class ControlCenter:
                 html,
             )
         return web.Response(text=html, content_type="text/html",
-                            headers={"Content-Security-Policy": frame_src_policy(self.visualizer_url)})
+                            headers={"Content-Security-Policy": frame_src_policy(self.visualizer_url, self._stage_url(request))})
+
+    @staticmethod
+    def _stage_url(request: web.Request | None) -> str | None:
+        """`scheme://host:port/remotion-stage` of THIS page, when it was reached by a loopback authority (else no stage frame)."""
+
+        if request is None or _authority_host(request.host or "") not in LOOPBACK_HOSTS:
+            return None
+        return f"{request.scheme}://{request.host}{REMOTION_STAGE_ROUTE}"
 
     async def status(self, request: web.Request) -> web.Response:
         del request
@@ -3493,6 +3766,9 @@ class ControlCenter:
             # qui n'a pas sa place dans un GET qui doit rester immédiat.
             # `/api/routing/candidates` les donne, mesurés.
             "routing": agent_routing.describe(agent_routing.load_policy(settings), ()),
+            # Mémoire (Slice 10b) : schéma, valeurs, effectif et sources, champs coupés, état déduit.
+            # Jamais un secret : `has_secret` seul. L'état vivant des étages est `/api/memory/status`.
+            "memory": memory_settings_section(settings),
             # Auto-développement : deux crans, éteints tant que l'utilisateur ne
             # les ouvre pas. L'état des worktrees vit sur `/api/self-dev`.
             "self_development": load_self_dev_gate(settings),
@@ -4534,6 +4810,156 @@ class ControlCenter:
             "avant toute autre chose.",
             502, command_id[:8]))
 
+    # ------------------------------------------------------------------ plein écran de surface (Slice 03)
+
+    async def fullscreen_commands_poll(self, request: web.Request) -> web.Response:
+        """Long-poll de la page : la commande de plein écran en attente, ou `{"command": null, "armed": <id|null>}`.
+
+        Paramètres : `wait_s`, `page` (identifiant de page, 8 à 64 caractères), `visible` (`1` par défaut, `0` =
+        « je suis cachée » : réponse immédiate et plus aucune remise à cette page), `armed` (l'armement que la page
+        croit tenir : s'il diffère de celui du serveur, la réponse est immédiate et la page retire son invite).
+        `armed` rend aussi le poll à tout changement d'armement, pour qu'un `exit` reçu par un autre onglet défasse
+        l'invite de celui-ci (QA-1 POLISH 2).
+        """
+
+        unknown = set(request.query) - {"wait_s", "page", "visible", "armed"}
+        if unknown:
+            return self._barehands_error(
+                400, fullscreen_vocab.BAD_REQUEST, "paramètre inconnu : " + ", ".join(sorted(unknown)))
+        try:
+            wait_s = float(request.query.get("wait_s", "0"))
+        except ValueError:
+            return self._barehands_error(400, fullscreen_vocab.BAD_REQUEST, "wait_s doit être un nombre")
+        if not 0.0 <= wait_s <= fullscreen_vocab.MAX_POLL_WAIT_S:
+            return self._barehands_error(
+                400, fullscreen_vocab.BAD_REQUEST, f"wait_s doit être entre 0 et {fullscreen_vocab.MAX_POLL_WAIT_S:g}")
+        page = request.query.get("page")
+        if page is not None and not _FULLSCREEN_PAGE_ID.match(page):
+            return self._barehands_error(400, fullscreen_vocab.BAD_REQUEST, "page : 8 à 64 caractères [A-Za-z0-9_-]")
+        visible = request.query.get("visible", "1")
+        if visible not in ("0", "1"):
+            return self._barehands_error(400, fullscreen_vocab.BAD_REQUEST, "visible doit être 0 ou 1")
+        claimed = request.query.get("armed")
+        if claimed is not None and not re.fullmatch(r"[A-Za-z0-9_-]{8}", claimed):
+            return self._barehands_error(400, fullscreen_vocab.BAD_REQUEST, "armed : préfixe de 8 caractères")
+        broker = self.fullscreen
+        broker.mark_visibility(page, visible == "1")
+        if visible == "0":
+            return web.json_response({"command": None, "armed": broker.armed_id()})
+        if claimed is not None and claimed != broker.armed_id():
+            return web.json_response({"command": None, "armed": broker.armed_id()})
+        armed_at_entry = broker.armed_id()
+        deadline = time.monotonic() + wait_s
+        while True:
+            wake = broker.wake_event()
+            transport = request.transport
+            if transport is None or transport.is_closing():
+                # Le client est parti : une remise ici serait perdue (la commande expirerait en `command_expired`).
+                return web.json_response({"command": None, "armed": broker.armed_id()})
+            command = broker.deliver(page)
+            if command is not None:
+                return web.json_response({"command": command, "armed": broker.armed_id()})
+            if broker.armed_id() != armed_at_entry:
+                return web.json_response({"command": None, "armed": broker.armed_id()})
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                return web.json_response({"command": None, "armed": broker.armed_id()})
+            try:
+                await asyncio.wait_for(wake.wait(), timeout=remaining)
+            except TimeoutError:
+                continue
+
+    async def fullscreen_command_request(self, request: web.Request) -> web.Response:
+        """Demande de l'agent : armer (`enter`) ou lever (`exit`) le plein écran d'une surface.
+
+        200 avec le reçu de la page (`state` : `needs_gesture` = invite affichée, un clic attendu ;
+        jamais `entered` sans que le navigateur l'ait constaté) ou un refus codé (504 sans page visible).
+        """
+
+        if request.query:
+            return self._barehands_error(400, fullscreen_vocab.BAD_REQUEST, "unexpected query")
+        try:
+            raw = await scene_wire.read_bounded_body(request, fullscreen_vocab.MAX_REQUEST_BYTES)
+        except scene_wire.SceneBodyTooLarge:
+            return self._barehands_error(
+                413, fullscreen_vocab.BAD_REQUEST, f"la demande dépasse {fullscreen_vocab.MAX_REQUEST_BYTES} octets")
+        try:
+            wanted = fullscreen_vocab.parse_request(json.loads(raw.decode("utf-8")) if raw else None)
+        except RecursionError:
+            return self._barehands_error(400, fullscreen_vocab.BAD_REQUEST, "demande illisible : imbrication excessive")
+        except (UnicodeDecodeError, ValueError) as exc:
+            return self._barehands_error(
+                getattr(exc, "status", 400), getattr(exc, "code", fullscreen_vocab.BAD_REQUEST), str(exc))
+        try:
+            answer = await self.fullscreen.request(wanted)
+        except SurfaceFullscreenError as exc:
+            return self._barehands_error(exc.status, exc.code, str(exc), exc.command_id)
+        return web.json_response(answer)
+
+    async def fullscreen_command_receipt(self, request: web.Request) -> web.Response:
+        """Reçu de remise : ce que la page a **constaté** en prenant la commande."""
+
+        if request.query:
+            return self._barehands_error(400, fullscreen_vocab.BAD_RECEIPT, "unexpected query")
+        command_id = request.match_info["command_id"]
+        expected = self.fullscreen.expected(command_id)
+        try:
+            raw = await scene_wire.read_bounded_body(request, fullscreen_vocab.MAX_RECEIPT_BYTES)
+        except scene_wire.SceneBodyTooLarge:
+            self._fullscreen_receipt_rejected(command_id, expected, fullscreen_vocab.RECEIPT_TOO_LARGE,
+                                              f"le reçu dépasse {fullscreen_vocab.MAX_RECEIPT_BYTES} octets")
+            return self._barehands_error(
+                413, fullscreen_vocab.BAD_RECEIPT, f"le reçu dépasse {fullscreen_vocab.MAX_RECEIPT_BYTES} octets")
+        try:
+            body = json.loads(raw.decode("utf-8")) if raw else None
+            receipt = fullscreen_vocab.parse_receipt(expected or "enter", body)
+            return web.json_response(self.fullscreen.complete(command_id, receipt))
+        except SurfaceFullscreenError as exc:
+            if exc.code == fullscreen_vocab.BAD_RECEIPT:
+                self._fullscreen_receipt_rejected(command_id, expected, fullscreen_vocab.RECEIPT_INVALID, str(exc))
+            return self._barehands_error(exc.status, exc.code, str(exc), exc.command_id)
+        except (UnicodeDecodeError, ValueError, RecursionError) as exc:
+            self._fullscreen_receipt_rejected(
+                command_id, expected, fullscreen_vocab.RECEIPT_INVALID, f"reçu illisible : {type(exc).__name__}")
+            return self._barehands_error(400, fullscreen_vocab.BAD_RECEIPT, f"reçu illisible : {type(exc).__name__}")
+
+    def _fullscreen_receipt_rejected(self, command_id: str, expected: str | None, code: str, detail: str) -> None:
+        """Le reçu attendu est refusé : l'agent l'apprend tout de suite, nommé, au lieu d'attendre l'échéance."""
+
+        if expected is None:
+            return
+        self.fullscreen.fail(command_id, SurfaceFullscreenError(
+            code,
+            f"La page a répondu à {expected}, mais son reçu a été refusé ({detail[:160]}). Elle a peut-être agi : "
+            "n'annonce ni succès ni échec, relis l'état (GET /api/fullscreen/state) avant toute autre chose.",
+            502, command_id[:8]))
+
+    async def fullscreen_state(self, request: web.Request) -> web.Response:
+        """État du plein écran tel que la page l'a rapporté (jamais tel qu'il a été demandé)."""
+
+        if request.query:
+            return self._barehands_error(400, fullscreen_vocab.BAD_REQUEST, "unexpected query")
+        return web.json_response(self.fullscreen.snapshot())
+
+    async def fullscreen_state_report(self, request: web.Request) -> web.Response:
+        """Transition constatée par la page : clic abouti, refus du navigateur, échéance, annulation, Échap."""
+
+        if request.query:
+            return self._barehands_error(400, fullscreen_vocab.BAD_RECEIPT, "unexpected query")
+        try:
+            raw = await scene_wire.read_bounded_body(request, fullscreen_vocab.MAX_RECEIPT_BYTES)
+        except scene_wire.SceneBodyTooLarge:
+            return self._barehands_error(
+                413, fullscreen_vocab.BAD_RECEIPT, f"le rapport dépasse {fullscreen_vocab.MAX_RECEIPT_BYTES} octets")
+        try:
+            report = fullscreen_vocab.parse_state_report(json.loads(raw.decode("utf-8")) if raw else None)
+            return web.json_response(self.fullscreen.report(report))
+        except SurfaceFullscreenError as exc:
+            return self._barehands_error(exc.status, exc.code, str(exc), exc.command_id)
+        except (UnicodeDecodeError, ValueError, RecursionError) as exc:
+            return self._barehands_error(
+                400, fullscreen_vocab.BAD_RECEIPT, f"rapport illisible : {type(exc).__name__}")
+
     async def barehands_asset(self, request: web.Request) -> web.StreamResponse:
         found = barehands.asset_path(self.barehands_vendor_root, request.match_info["asset"])
         if found is None:
@@ -4735,6 +5161,8 @@ class ControlCenter:
                 agenda_reminders.apply_settings(current, payload["agenda_reminders"])
             if payload.get("scene") is not None:
                 apply_scene_gate(current, payload["scene"])
+            if payload.get("memory") is not None:
+                apply_memory_settings(current, payload["memory"])
             # Behavior extends an editable prompt layer. Validate their
             # combined bound before any atomic settings replacement.
             from jarvis.runtime.prompt_overrides import prompt_override_document
@@ -4749,12 +5177,14 @@ class ControlCenter:
             SelfDevError,
             SceneSettingsError,
             AgendaSettingsError,
+            MemorySettingsError,
             VoiceConfigError,
         ) as exc:
             # Le corps reste le message en clair (ce que la page affiche) ; le
             # code stable voyage à côté, pour les clients et les tests.
             agent_error = isinstance(
-                exc, (cli_catalog.CliSettingsError, agent_behavior.AgentBehaviorError, RoutingError, SelfDevError, SceneSettingsError, AgendaSettingsError)
+                exc, (cli_catalog.CliSettingsError, agent_behavior.AgentBehaviorError, RoutingError, SelfDevError, SceneSettingsError, AgendaSettingsError,
+                MemorySettingsError)
             )
             self.journal.emit(
                 "settings.agent.rejected" if agent_error else "voice.settings.rejected",
@@ -5163,8 +5593,9 @@ class ControlCenter:
         # cible `tools_mcp` à partir de la Slice 05 (plugins MCP), absente = `disabled`.
         attributes = {"jarvis-display": "display_mcp", "jarvis-barehands": "barehands_mcp",
                       "jarvis-console": "console_mcp", "jarvis-tools": "tools_mcp",
-                      "jarvis-capture": "capture_mcp", "jarvis-workspace": "workspace_mcp",
-                      "jarvis-drive": "drive_mcp"}
+                      "jarvis-capture": "capture_mcp", "jarvis-workspace": "workspace_mcp", "jarvis-memory": "memory_mcp",
+                      "jarvis-drive": "drive_mcp", "jarvis-presentation": "presentation_mcp",
+                      "jarvis-remotion": "presentation_mcp"}
         facts: dict[str, dict[str, Any]] = {}
         for meta in mcp_catalog.SERVERS:
             attribute = attributes.get(meta.server)
@@ -5950,9 +6381,11 @@ class ControlCenter:
             prompt, ask_kwargs = self._compose_ask(agent, text, context, scope, timeout_s)
             self._asks_in_flight += 1
             self._asks_idle.clear()
+            addressed_turn = self.studio_turn.begin(payload.get("context"))
         try:
             result = await agent.ask(prompt, **ask_kwargs)
         finally:
+            self.studio_turn.end(addressed_turn)
             self._asks_in_flight -= 1
             if self._asks_in_flight == 0:
                 self._asks_idle.set()

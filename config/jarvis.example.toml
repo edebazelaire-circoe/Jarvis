@@ -9,7 +9,7 @@ timeout_s = 45.0
 
 [runtime]
 ptt_key = "f9"
-memory_dir = "./data/memory"
+# memory_dir: absent = <data_root>/memory (hors du dépôt, docs/local-data.md). JARVIS_MEMORY_DIR le remplace.
 runtime_dir = "./runtime"
 log_level = "INFO"
 log_content = false

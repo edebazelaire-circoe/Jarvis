@@ -1,0 +1,578 @@
+{
+  "kind": "authoring real-model traces",
+  "model": "sonnet",
+  "planner_fingerprint": "ce625d3d9d1db844db5a04f8eb7ab97de262beb55eb0cbc3ee3687e4b2b049f9",
+  "planner_id": "presentation_studio.authoring.planner",
+  "prompt_program": "conversation_display_studio_session",
+  "scenarios": [
+    {
+      "control_center_requests": [
+        {
+          "method": "GET",
+          "path": "/api/presentation-studio/explorer/state"
+        }
+      ],
+      "end_state": {
+        "created": [
+          {
+            "variants": [
+              {
+                "armable_cues": 6,
+                "art_direction": "generated (fallback)",
+                "cues": 6,
+                "draft": null,
+                "presenters": [
+                  "user"
+                ],
+                "scene_titles": [
+                  "Le lancement de notre application mobile",
+                  "Ce que nous visons avec ce lancement",
+                  "Ce que l'application apporte aux utilisateurs",
+                  "Un plan de lancement progressif",
+                  "Risques et points de vigilance",
+                  "Ce que nous attendons de l'équipe produit"
+                ],
+                "scene_words": [
+                  20,
+                  22,
+                  23,
+                  22,
+                  21,
+                  22
+                ],
+                "scenes": 6,
+                "score_items": 6,
+                "spoken_lines": 0,
+                "state": "live"
+              }
+            ]
+          }
+        ],
+        "pre_existing_untouched": true,
+        "presentations_created": 1
+      },
+      "metrics": {
+        "archive_calls": 0,
+        "cost_usd": 0.1226,
+        "draft_calls": 1,
+        "failure_codes_seen": [],
+        "gate_rounds_until_delivered": 1,
+        "question_budget": 3,
+        "refused_rounds": 0,
+        "scenes_containing_todo": 0,
+        "tool_calls": 5,
+        "turns_with_a_question": 1
+      },
+      "model": "sonnet",
+      "scenario": "missing-context",
+      "turns": [
+        {
+          "calls": [],
+          "cost_usd": 0.014697799999999999,
+          "drafts": [],
+          "duration_ms": 3350,
+          "final_answer": "Volontiers. Sur quel sujet, et pour quel public ? Sans précision, je pars sur un exposé de cinq minutes pour un public général.",
+          "final_answer_chars": 127,
+          "is_error": false,
+          "question_marks_in_final_answer": 1,
+          "session_id": "ca2f01ed-6ec6-4f43-a3e3-063fbe95634b",
+          "spoken_blocks": 1,
+          "turns": 1,
+          "usage": {
+            "cache_creation_input_tokens": 2351,
+            "cache_read_input_tokens": 14599,
+            "input_tokens": 2,
+            "output_tokens": 237
+          },
+          "user": "Fais-moi une présentation."
+        },
+        {
+          "calls": [
+            {
+              "arguments": {
+                "max_results": 3,
+                "query": "select:mcp__jarvis-presentation__presentation_inspect,mcp__jarvis-presentation__presentation_draft_assemble,mcp__jarvis-presentation__presentation_draft_check"
+              },
+              "is_error": false,
+              "n": 1,
+              "speech": null,
+              "status": null,
+              "tool": "ToolSearch"
+            },
+            {
+              "arguments": {
+                "max_results": 3,
+                "query": "Agent subagent background"
+              },
+              "is_error": false,
+              "n": 2,
+              "speech": null,
+              "status": null,
+              "tool": "ToolSearch"
+            },
+            {
+              "arguments": {
+                "target": "draft_guide"
+              },
+              "is_error": false,
+              "n": 3,
+              "speech": "silent",
+              "status": null,
+              "tool": "presentation_inspect"
+            },
+            {
+              "arguments": {
+                "target": "overview"
+              },
+              "is_error": false,
+              "n": 4,
+              "speech": "silent",
+              "status": null,
+              "tool": "presentation_inspect"
+            },
+            {
+              "arguments": {
+                "brief": {
+                  "audience": "Équipe produit",
+                  "duration_target_s": 240,
+                  "language": "fr",
+                  "must_cover": [
+                    "objectifs du lancement de l'application mobile",
+                    "apport de l'application mobile pour les utilisateurs",
+                    "plan de lancement progressif",
+                    "risques et points de vigilance",
+                    "attentes envers l'équipe produit"
+                  ],
+                  "purpose": "Présenter à l'équipe produit le lancement de notre application mobile",
+                  "speech": "user",
+                  "title": "<text>",
+                  "tone": [
+                    "clair",
+                    "direct",
+                    "mobilisateur"
+                  ],
+                  "workflow": "directed"
+                },
+                "draft": {
+                  "art_direction": {
+                    "mode": "fallback"
+                  },
+                  "prefabs": [
+                    {
+                      "candidate": {
+                        "behavior": "jarvis.on('init', function () {});\n",
+                        "manifest": {
+                          "aliases": [],
+                          "description": "Une diapositive: un titre, un texte, une couleur d'accent.",
+                          "family": "window",
+                          "files": {
+                            "behavior": "behavior.js",
+                            "style": "style.css",
+                            "template": "template.html"
+                          },
+                          "id": "presentation-studio.slide-lancement",
+                          "inputs": {
+                            "data": {
+                              "properties": {
+                                "body": {
+                                  "max_length": 600,
+                                  "type": "text"
+                                }
+                              },
+                              "required": [
+                                "body"
+                              ],
+                              "type": "object"
+                            },
+                            "props": {
+                              "properties": {
+                                "accent": {
+                                  "default": "#6ee7ff",
+                                  "type": "color"
+                                },
+                                "headline": {
+                                  "default": "Titre",
+                                  "max_length": 80,
+                                  "type": "string"
+                                },
+                                "stagger_ms": {
+                                  "default": 80,
+                                  "max": 400,
+                                  "min": 0,
+                                  "type": "integer"
+                                }
+                              },
+                              "type": "object"
+                            }
+                          },
+                          "sample": {
+                            "data": {
+                              "body": "Exemple"
+                            },
+                            "props": {}
+                          },
+                          "scene": {
+                            "default_size": {
+                              "h": 40,
+                              "w": 64
+                            },
+                            "kind": "window"
+                          },
+                          "schema": "jarvis.prefab",
+                          "schema_version": 1,
+                          "tags": [
+                            "slide"
+                          ],
+                          "title": "<text>",
+                          "version": 1
+                        },
+                        "style": ".jv-panel h2 { color: var(--jv-accent); transition: opacity 0.3s; }\n@media (prefers-reduced-motion: reduce) { .jv-panel h2 { transition: none; } }\n",
+                        "template": "<section class=\"jv-panel\"><h2 data-jv-text=\"props.headline\"></h2><p data-jv-text=\"data.body\"></p></section>\n"
+                      },
+                      "key": "slide"
+                    }
+                  ],
+                  "scenes": [
+                    {
+                      "anchors": [
+                        {
+                          "anchor_id": "titre",
+                          "control_id": "headline",
+                          "label": "<text>"
+                        }
+                      ],
+                      "controls": [
+                        {
+                          "bounds": {
+                            "max_length": 80
+                          },
+                          "control_id": "headline",
+                          "group": "content",
+                          "label": "<text>",
+                          "meaning": "Le titre affiché en haut",
+                          "path": "props.headline"
+                        }
+                      ],
+                      "data": {
+                        "body": "Quatre minutes pour partager où nous en sommes, ce que nous visons et ce que nous attendons de l'équipe produit."
+                      },
+                      "key": "ouverture",
+                      "prefab": {
+                        "bundle": "slide"
+                      },
+                      "props": {
+                        "headline": "Le lancement de notre application mobile"
+                      },
+                      "role": "opening",
+                      "title": "<text>"
+                    },
+                    {
+                      "anchors": [
+                        {
+                          "anchor_id": "titre",
+                          "control_id": "headline",
+                          "label": "<text>"
+                        }
+                      ],
+                      "controls": [
+                        {
+                          "bounds": {
+                            "max_length": 80
+                          },
+                          "control_id": "headline",
+                          "group": "content",
+                          "label": "<text>",
+                          "meaning": "Le titre affiché en haut",
+                          "path": "props.headline"
+                        }
+                      ],
+                      "data": {
+                        "body": "Offrir à nos utilisateurs un accès mobile simple à l'essentiel du produit, puis mesurer l'adoption dès les premières semaines après la publication."
+                      },
+                      "key": "objectifs",
+                      "prefab": {
+                        "bundle": "slide"
+                      },
+                      "props": {
+                        "headline": "Ce que nous visons avec ce lancement"
+                      },
+                      "role": "body",
+                      "title": "<text>"
+                    },
+                    {
+                      "anchors": [
+                        {
+                          "anchor_id": "titre",
+                          "control_id": "headline",
+                          "label": "<text>"
+                        }
+                      ],
+                      "controls": [
+                        {
+                          "bounds": {
+                            "max_length": 80
+                          },
+                          "control_id": "headline",
+                          "group": "content",
+                          "label": "<text>",
+                          "meaning": "Le titre affiché en haut",
+                          "path": "props.headline"
+                        }
+                      ],
+                      "data": {
+                        "body": "Une expérience pensée pour le mobile : des parcours courts, des notifications utiles et une continuité naturelle avec la version web du produit."
+                      },
+                      "key": "apport",
+                      "prefab": {
+                        "bundle": "slide"
+                      },
+                      "props": {
+                        "headline": "Ce que l'application apporte aux utilisateurs"
+                      },
+                      "role": "body",
+                      "title": "<text>"
+                    },
+                    {
+                      "anchors": [
+                        {
+                          "anchor_id": "titre",
+                          "control_id": "headline",
+                          "label": "<text>"
+                        }
+                      ],
+                      "controls": [
+                        {
+                          "bounds": {
+                            "max_length": 80
+                          },
+                          "control_id": "headline",
+                          "group": "content",
+                          "label": "<text>",
+                          "meaning": "Le titre affiché en haut",
+                          "path": "props.headline"
+                        }
+                      ],
+                      "data": {
+                        "body": "Une montée en charge par étapes : tests internes, bêta ouverte, puis publication sur les stores avec un suivi quotidien des retours."
+                      },
+                      "key": "plan",
+                      "prefab": {
+                        "bundle": "slide"
+                      },
+                      "props": {
+                        "headline": "Un plan de lancement progressif"
+                      },
+                      "role": "body",
+                      "title": "<text>"
+                    },
+                    {
+                      "anchors": [
+                        {
+                          "anchor_id": "titre",
+                          "control_id": "headline",
+                          "label": "<text>"
+                        }
+                      ],
+                      "controls": [
+                        {
+                          "bounds": {
+                            "max_length": 80
+                          },
+                          "control_id": "headline",
+                          "group": "content",
+                          "label": "<text>",
+                          "meaning": "Le titre affiché en haut",
+                          "path": "props.headline"
+                        }
+                      ],
+                      "data": {
+                        "body": "La qualité des premières versions, les avis publiés sur les stores et la capacité du support à absorber les premières demandes."
+                      },
+                      "key": "risques",
+                      "prefab": {
+                        "bundle": "slide"
+                      },
+                      "props": {
+                        "headline": "Risques et points de vigilance"
+                      },
+                      "role": "body",
+                      "title": "<text>"
+                    },
+                    {
+                      "anchors": [
+                        {
+                          "anchor_id": "titre",
+                          "control_id": "headline",
+                          "label": "<text>"
+                        }
+                      ],
+                      "controls": [
+                        {
+                          "bounds": {
+                            "max_length": 80
+                          },
+                          "control_id": "headline",
+                          "group": "content",
+                          "label": "<text>",
+                          "meaning": "Le titre affiché en haut",
+                          "path": "props.headline"
+                        }
+                      ],
+                      "data": {
+                        "body": "Vos retours sur les priorités, un référent produit pour chaque parcours clé et votre aide pour écouter les utilisateurs après le lancement."
+                      },
+                      "key": "attentes",
+                      "prefab": {
+                        "bundle": "slide"
+                      },
+                      "props": {
+                        "headline": "Ce que nous attendons de l'équipe produit"
+                      },
+                      "role": "closing",
+                      "title": "<text>"
+                    }
+                  ],
+                  "score": {
+                    "items": [
+                      {
+                        "cue": {
+                          "armable": true,
+                          "label": "<text>",
+                          "phrases": [
+                            "bonjour à toute l'équipe produit",
+                            "commençons par le lancement"
+                          ]
+                        },
+                        "note": "<text>",
+                        "presenter": "user",
+                        "scene": "ouverture",
+                        "target_duration_ms": 30000
+                      },
+                      {
+                        "cue": {
+                          "armable": true,
+                          "label": "<text>",
+                          "phrases": [
+                            "voici les objectifs du lancement",
+                            "ce que nous visons concrètement"
+                          ]
+                        },
+                        "note": "<text>",
+                        "presenter": "user",
+                        "scene": "objectifs",
+                        "target_duration_ms": 45000
+                      },
+                      {
+                        "cue": {
+                          "armable": true,
+                          "label": "<text>",
+                          "phrases": [
+                            "ce que l'application change pour les utilisateurs",
+                            "passons à la valeur apportée"
+                          ]
+                        },
+                        "note": "<text>",
+                        "presenter": "user",
+                        "scene": "apport",
+                        "target_duration_ms": 45000
+                      },
+                      {
+                        "cue": {
+                          "armable": true,
+                          "label": "<text>",
+                          "phrases": [
+                            "voyons le plan de lancement",
+                            "comment nous allons procéder par étapes"
+                          ]
+                        },
+                        "note": "<text>",
+                        "presenter": "user",
+                        "scene": "plan",
+                        "target_duration_ms": 50000
+                      },
+                      {
+                        "cue": {
+                          "armable": true,
+                          "label": "<text>",
+                          "phrases": [
+                            "parlons des risques à surveiller",
+                            "les points de vigilance principaux"
+                          ]
+                        },
+                        "note": "<text>",
+                        "presenter": "user",
+                        "scene": "risques",
+                        "target_duration_ms": 40000
+                      },
+                      {
+                        "cue": {
+                          "armable": true,
+                          "label": "<text>",
+                          "phrases": [
+                            "pour conclure sur vos attentes",
+                            "ce dont j'ai besoin de vous"
+                          ]
+                        },
+                        "note": "<text>",
+                        "presenter": "user",
+                        "scene": "attentes",
+                        "target_duration_ms": 30000
+                      }
+                    ]
+                  }
+                }
+              },
+              "is_error": false,
+              "n": 5,
+              "speech": "say",
+              "status": "delivered",
+              "tool": "presentation_draft_assemble"
+            }
+          ],
+          "cost_usd": 0.1079218,
+          "drafts": [
+            {
+              "failures": [],
+              "is_error": false,
+              "stage": "complete",
+              "stats": {
+                "armable_cues": 6,
+                "bundles": 1,
+                "cues": 6,
+                "estimated_duration_s": 240,
+                "items": 6,
+                "max_scene_words": 38,
+                "scenes": 6,
+                "target_duration_s": 240,
+                "variants": 1
+              },
+              "status": "delivered",
+              "tool": "presentation_draft_assemble",
+              "warnings": [],
+              "workflow": "directed"
+            }
+          ],
+          "duration_ms": 30967,
+          "final_answer": "C'est fait : la présentation de quatre minutes est créée, avec six scènes. Elles couvrent l'ouverture, les objectifs, l'apport pour les utilisateurs, le plan de lancement progressif, les risques et ce que vous attendez de l'équipe produit. Comme c'est vous qui présentez, je reste muet. Chaque scène a une note d'intention et des phrases de déclenchement. Je n'avais aucun document de départ, donc l'",
+          "final_answer_chars": 600,
+          "is_error": false,
+          "question_marks_in_final_answer": 0,
+          "session_id": "ca2f01ed-6ec6-4f43-a3e3-063fbe95634b",
+          "spoken_blocks": 1,
+          "turns": 6,
+          "usage": {
+            "cache_creation_input_tokens": 8603,
+            "cache_read_input_tokens": 74030,
+            "input_tokens": 8,
+            "output_tokens": 4399
+          },
+          "user": "C'est pour l'équipe produit, sur le lancement de notre application mobile, quatre minutes, et c'est moi qui présente."
+        }
+      ],
+      "workflow_expected": "directed"
+    }
+  ],
+  "slice": 22,
+  "total_calls": 5,
+  "total_cost_usd": 0.1226
+}

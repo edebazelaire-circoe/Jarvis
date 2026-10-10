@@ -25,7 +25,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any, Literal, Mapping
 
-Category = Literal["general", "scene", "settings", "workspace", "capture", "barehands", "external"]
+Category = Literal["general", "scene", "presentation", "settings", "workspace", "capture", "barehands", "external"]
 SideEffect = Literal["read", "write", "destructive"]
 #: Contrat §4.2. Pas de `best_effort` : depuis la Slice 05, chaque lot de
 #: `jarvis-display` est **une** commande de sélection (`atomic_batch`).
@@ -39,11 +39,13 @@ OutputFormat = Literal["structured", "json_text", "json_text+image", "text_lines
 Registration = Literal["jarvis", "operator", "managed", "tool_brain"]
 
 #: Ordre des onglets de l'inspecteur (contrat §3, §8).
-CATEGORY_ORDER: tuple[Category, ...] = ("general", "scene", "settings", "workspace", "capture", "barehands",
+CATEGORY_ORDER: tuple[Category, ...] = ("general", "scene", "presentation", "settings", "workspace", "capture", "barehands",
                                          "external")
 CATEGORY_LABELS: dict[Category, str] = {
     "general": "Général",
     "scene": "Étoiles / Scène",
+    #: `jarvis-presentation` (interactive-presentation-studio, Slice 21) : présentations, variantes, lecture.
+    "presentation": "Présentations",
     "settings": "Réglages",
     #: `jarvis-workspace` (board-memory-workspace-inspector, Slice 06) : Boards, Sessions, mémoire, liens.
     "workspace": "Boards et mémoire",
@@ -536,8 +538,140 @@ SURFACE = ServerMeta(
     },
 )
 
+#: Presentation Studio (jarvis-interactive-presentation-studio, Slice 21) : façade sur `/v1/presentation-studio/*` de Core (acteur `brain`
+#: posé par le serveur) et sur le canal de commandes de l'explorateur / du plein écran du Control Center. Aucun `ui_surface` : ces outils
+#: ne sont pas des opérations du Tool Brain (docs/presentation-studio.md, « Tool Brain »). Les ids légaux viennent de `presentation_inspect`.
+_IDS_RULE = "ids (présentation, variante, scène, contrôle, item, modèle) lus avec presentation_inspect, jamais devinés ; absents : ceux de l'état"
+_SILENT_NOTE = "speech=silent : geste visuel réussi, à ne pas commenter ; speech=say : une phrase courte (say)"
+PRESENTATION = ServerMeta(
+    server="jarvis-presentation", module="jarvis.runtime.presentation_studio_mcp", category="presentation",
+    condition="scene.enabled", registration="jarvis",
+    tools={
+        "presentation_inspect": ToolMeta(
+            "Lire l'état du Presentation Studio", "read", True, "none", "untyped",
+            parameter_rules=(_IDS_RULE, "target scene exige scene_id", "target template exige template_id"),
+            output_notes=("liste bornée : {items, total} ; titres et étiquettes d'auteur listés dans untrusted ; la partition est rendue sans ses textes",)),
+        "presentation_view": ToolMeta(
+            "Explorateur et plein écran", "write", True, "single_request", "untyped",
+            parameter_rules=("explorer_open : refusé pendant une lecture", "needs_gesture=true : un clic de l'utilisateur est attendu, le plein écran n'est pas actif"),
+            output_notes=(_SILENT_NOTE, "mode : windowed, fullscreen_armed ou fullscreen, constaté par la page")),
+        "presentation_play": ToolMeta(
+            "Lire, répéter, naviguer", "write", False, "single_request", "untyped",
+            parameter_rules=(_IDS_RULE, "goto : exactement un de item_id, scene_id, position", "reveal / hide : anchor_id",
+                             "start ne change jamais le mode d'interaction de sa propre initiative (mode_switch_refused)"),
+            output_notes=(_SILENT_NOTE, "state : « où en est-on » borné")),
+        "presentation_edit": ToolMeta(
+            "Éditer sémantiquement", "write", False, "single_request", "untyped",
+            parameter_rules=(_IDS_RULE, "ops : 1 à 16, tout ou rien, vocabulaire fermé", "scene.remove : confirmation obligatoire (jeton du premier appel)",
+                             "revision : celle lue ; absente, l'état actuel"),
+            output_notes=(_SILENT_NOTE, "stale : relire puis recommencer ; un refus nomme l'index de l'ordre fautif")),
+        "presentation_undo": ToolMeta(
+            "Annuler ou rétablir", "write", False, "single_request", "untyped",
+            parameter_rules=("expected_entry_id toujours envoyé (lu dans l'historique)", "la modification de l'utilisateur : confirmation obligatoire"),
+            output_notes=(_SILENT_NOTE,)),
+        "presentation_variant": ToolMeta(
+            "Branches de variantes", "destructive", False, "single_request", "untyped",
+            parameter_rules=(_IDS_RULE, "archive : archive_plan dans ce processus, jeton de Core, confirmed=true après le oui de l'utilisateur",
+                             "create exige title ; scene_preview / scene_promote exigent scene_id et scene_variant_id"),
+            output_notes=(_SILENT_NOTE, "supprimer une branche = archiver (restaurable)")),
+        "presentation_compare": ToolMeta(
+            "Comparer des variantes", "write", True, "single_request", "untyped",
+            parameter_rules=("open : 2 ou 4 variantes", "navigate : variant_id et (scene_id XOR step)", "link / unlink : a et b"),
+            output_notes=(_SILENT_NOTE, "la vue porte les révisions à passer en source_revisions")),
+        "presentation_compose": ToolMeta(
+            "Composer une variante enfant", "write", False, "single_request", "untyped",
+            parameter_rules=("create seulement après un plan identique qui répond ok", "activate faux sauf demande de l'utilisateur"),
+            output_notes=("conflicts : code, dimension, message, fix, rendus tels quels", "une composition ne détruit rien (archive pour revenir)")),
+        "presentation_template": ToolMeta(
+            "Modèles réutilisables", "write", False, "single_request", "untyped",
+            parameter_rules=("plan ne publie rien ; promote exige la sélection explicite choisie d'après le plan ET une demande de l'utilisateur dans ce tour",
+                             "licence_ack et keep_assets sont refusés au cerveau (presentation_studio_template_user_only)",
+                             "instantiate : template_id lu dans presentation_inspect target templates"),
+            output_notes=("une présentation devient UN modèle (aucune scène publiée) ; une scène seule, sur demande, va dans la bibliothèque partagée",)),
+        "presentation_draft_check": ToolMeta(
+            "Vérifier un brouillon", "read", True, "none", "untyped",
+            output_notes=("le rapport complet (failures, warnings, stage) tel que Core le rend",)),
+        "presentation_draft_assemble": ToolMeta(
+            "Créer une présentation (brouillon)", "write", False, "single_request", "untyped",
+            parameter_rules=("une seule transaction : refusé = rien d'écrit, rapport complet",),
+            output_notes=("tous les ids alloués sont rendus : ne jamais en taper un de mémoire",)),
+        "presentation_draft_finalize": ToolMeta(
+            "Adopter une direction exploratoire", "write", False, "single_request", "untyped",
+            parameter_rules=(_IDS_RULE,), output_notes=("le contrôle directed est rejoué sur la variante stockée",)),
+    },
+)
+
+#: Capacité Remotion (jarvis-remotion-presentation-integration, Slice 21) : serveur séparé de `jarvis-presentation` (douze outils, budget plein). Façade
+#: sur les routes de Core que les cartes du Control Center appellent. Aucun `ui_surface` (pas une opération du Tool Brain), aucun paramètre de
+#: moteur, jamais l'accusé du Studio ni la licence : à l'utilisateur seul (docs/remotion-runtime.md §13).
+_USER_TURN_RULE = "seulement dans un tour adressé de l'utilisateur ET user_request (ses mots) ; sinon remotion_user_turn_required, rien n'est envoyé à Core"
+REMOTION = ServerMeta(
+    server="jarvis-remotion", module="jarvis.runtime.remotion_mcp", category="presentation",
+    condition="scene.enabled", registration="jarvis",
+    tools={
+        "remotion_status": ToolMeta(
+            "Lire l'état de Remotion", "read", True, "none", "untyped",
+            parameter_rules=("export exige job_id (rj_…) lu dans exports",),
+            output_notes=("capability rend aussi le moteur par défaut (lecture seule, jamais modifiable d'ici)", "liste bornée : {items, total}")),
+        "remotion_setup": ToolMeta(
+            "Installer ou réparer Remotion", "write", False, "single_request", "untyped",
+            parameter_rules=(_USER_TURN_RULE, "déjà prêt : already_ready, rien n'est lancé"),
+            output_notes=("longue : 202 côté Core, suivie dans la carte Remotion ; ne pas boucler",)),
+        "remotion_studio": ToolMeta(
+            "Demander l'ouverture du Studio", "read", True, "none", "untyped",
+            parameter_rules=("n'appelle jamais l'ouverture : needs_user, l'utilisateur ouvre et confirme dans la carte",),
+            output_notes=("scene.prefab : la source de la scène demandée",)),
+        "remotion_export": ToolMeta(
+            "Exporter ou annuler un export", "write", False, "single_request", "untyped",
+            parameter_rules=(_USER_TURN_RULE, "start : format mp4, still ou pdf ; réglages en liste fermée (pas de concurrency) ; aucun Board lu",
+                             "cancel exige job_id lu avec remotion_status"),
+            output_notes=("job : état, phase, pourcentage ; révisions lues dans Core à l'appel",)),
+        "remotion_import": ToolMeta(
+            "Importer un modèle amont", "write", False, "single_request", "untyped",
+            parameter_rules=(_USER_TURN_RULE, "commit : SHA complet donné par l'utilisateur", "execute exige un plan identique lu dans ce processus",
+                             "la liste blanche des propriétaires est un réglage de l'utilisateur (origin_not_allowed)"),
+            output_notes=("propre à la présentation, jamais la bibliothèque partagée ; licence et dépendances refusées rendues telles quelles",)),
+        "remotion_upgrades": ToolMeta(
+            "Versions plus récentes et essai", "write", False, "single_request", "untyped",
+            parameter_rules=("notices : lecture seule", "try : " + _USER_TURN_RULE, "licence à reconnaître : remotion_licence_user_only (l'utilisateur seul)"),
+            output_notes=("un essai est une variante enfant, jamais un remplacement",)),
+    },
+)
+
+# Mémoire à long terme et connaissance à la demande (memory-intelligence-knowledge, Slice 05b) : façade sur
+# `/api/memory/brain/*` du Control Center ; Core possède le budget (3 appels par tour), la portée et les candidats.
+_MEMORY_BUDGET_NOTE = "compte dans le budget de 3 appels d'outil mémoire par tour (memory_tool_budget_exceeded)"
+MEMORY = ServerMeta(
+    server="jarvis-memory", module="jarvis.runtime.memory_mcp", category="workspace",
+    condition=None, registration="jarvis",
+    tools={
+        "memory_search": ToolMeta(
+            "Chercher dans la mémoire à long terme", "read", True, "none", "structured",
+            parameter_rules=("query : mots-clés du sujet ; sans mot utile, refusée", _MEMORY_BUDGET_NOTE),
+            output_notes=("≤ 8 extraits avec source et révision ; degraded = codes de rappel partiel",)),
+        "memory_read": ToolMeta(
+            "Lire une note de mémoire", "read", True, "none", "structured",
+            parameter_rules=("portée hors politique du cerveau : memory_scope_denied", _MEMORY_BUDGET_NOTE),
+            output_notes=("texte ≤ 6 000 caractères (truncated)",)),
+        "memory_propose": ToolMeta(
+            "Proposer un souvenir (candidat à valider)", "write", True, "single_request", "structured",
+            parameter_rules=("ne crée qu'un candidat proposed : jamais une note durable, jamais une classe protégée",
+                             "confiance plafonnée à 0.6 ; même proposition = même candidat (already_proposed)",
+                             _MEMORY_BUDGET_NOTE),
+            reversibility="reversible"),
+        "knowledge_search": ToolMeta(
+            "Chercher wiki, code et compétences", "read", True, "none", "structured",
+            parameter_rules=("limité au loadout du cerveau", _MEMORY_BUDGET_NOTE),
+            output_notes=("≤ 8 résultats ; degraded = fournisseur indisponible",)),
+        "knowledge_read": ToolMeta(
+            "Lire un élément de connaissance", "read", True, "none", "structured",
+            parameter_rules=("hors loadout : memory_scope_denied", _MEMORY_BUDGET_NOTE),
+            output_notes=("texte ≤ 8 000 caractères (truncated) ; stale = source changée depuis l'index",)),
+    },
+)
+
 #: Ordre d'affichage : catégorie (§3), puis ce tuple.
-SERVERS: tuple[ServerMeta, ...] = (DISPLAY, SURFACE, CONSOLE, WORKSPACE, CAPTURE, BAREHANDS, DRIVE, TOOLS)
+SERVERS: tuple[ServerMeta, ...] = (DISPLAY, SURFACE, PRESENTATION, REMOTION, CONSOLE, WORKSPACE, MEMORY, CAPTURE, BAREHANDS, DRIVE, TOOLS)
 _BY_SERVER = {meta.server: meta for meta in SERVERS}
 
 

@@ -585,6 +585,56 @@ Conformance: `tests/unit/test_presentation_turn_authority.py`.
   `presentation.addressed.window_consumed`): the sentence goes without a plan,
   the next one without a new press is the room's.
 
+### Amendment (handoff jarvis-interactive-presentation-studio, Slice 13, R5): armed score cues
+
+This is the **only** place where words heard in the room may cause something, and it is narrow on purpose.
+
+**What is amended.** *Ambient speech may satisfy exactly one kind of thing: a score cue that is currently armed, and by
+doing so trigger only the pre-authorized, reversible actions that the stored score binds to that cue.* The room
+never authorizes anything else.
+
+**What is not amended.** Everything above stays as written. The authority table of *The rule (P2)* is unchanged:
+ambient speech is still `ambient`, never a brain turn, an admission, an `on_addressed` call, a tool call, a UI intent or an
+`ActionBroker` request. The three enforcement points are untouched, byte for byte and by test:
+`decide_turn_authority` (and `TurnAuthority`, `is_vocative_address`), `BrainTurnInput.__post_init__` (an ambient turn is
+never submitted) and `PresentationOutputPolicy.__post_init__` (`authorizes_action` needs `requires_explicit_address`).
+`AmbientTriggerKind` stays closed (a cue match is not a trigger kind); `AmbientUtterance`, `AmbientTrigger` and
+`AmbientAnalysis` keep `authorizes_actions = False`.
+
+**Why that is not a loophole.** The exception is a *separate path*, not a loosened rule:
+
+1. **It names, it never commands.** The cue follower (`jarvis/runtime/presentation_studio_cue_follower.py`, pure matcher in
+   `jarvis/domain/presentation_studio_cues.py`) is a new consumer of the ambient lane's utterances. Its only output is
+   `CueMatch(cue_id, generation, evidence)`, reported to Core as the three values `{run_id, generation, cue_id}`. There is no
+   field that can carry speech, a tool name or a command (the only strings are a `psc_` cue id and an opaque counter id of the
+   utterance set by the lane, `amb-000005`, never derived from speech), and the Core route refuses any other key.
+2. **Core decides and resolves.** Core accepts the report only if the run is current, the generation is current, the
+   follower's authority is live (90 s, renewed by its pull) and the cue is in the armed set. The action is resolved from the
+   stored score (`Score.resolve_cue`): the five closed, reversible `ActionRef` kinds. Ambient words cannot add, edit or
+   choose an action.
+3. **The armed set is finite and small.** Core arms only the `armable` cue of the next item (`ARM_LOOKAHEAD` = 1), only
+   while the run is `playing` and nobody else owns the timeline. A cue that is not armed matches nothing, whatever is said.
+4. **The matcher is conservative.** It fires only when exactly one armed cue matches by a configured rule on normalized text,
+   at a token boundary, anchored in its own clause (at most one content word before and one after, over the whole utterance at
+   most six before and four after), and not quoted, not hedged on either side (negation, modal or desire frame, condition,
+   retraction after the phrase) and not asked as a question. It prefers a missed cue (recoverable by the keyboard) to a false fire. Two cues
+   touched, or a phrase two armed cues share: nothing fires and the ambiguity is recorded. Once per generation, with a cooldown.
+5. **Explicit address preempts, always.** Before any matching, the follower asks the same two reads the bridge uses
+   (`window_live()` and `is_vocative_address`, through `decide_turn_authority`), plus a counter of armed addresses (it closes the
+   gap of a window that opened and closed between two reads) and the token `jarvis` ANYWHERE in the utterance ("Merci Jarvis,
+   passons a la suite"; the explicit path then handles it as it always does): if the user is addressing Jarvis, cue automation
+   pauses for that utterance and until the addressed turn is over (plus a short hold for the transcript lag), and a report
+   that has not left yet is dropped. The follower never arms, opens or consumes a window and never changes the mode.
+6. **Privacy.** The utterance text lives only inside the synchronous consumer call. Logs and traces carry counts, a `cue_id`,
+   a rule and two offsets. A handler failure is swallowed with its class name only.
+
+**Enforced by** `tests/unit/test_presentation_studio_cue_authority.py`: the follower module can import only domain code
+(closure checked in a fresh interpreter), names no brain, tool, intent or broker symbol, reaches Core through exactly
+`presentation_studio_playback_armed` and `presentation_studio_report_cue`, and a whole session runs with `BrainTurnInput`
+patched to explode; the three enforcement points are pinned by source hash and by behaviour; "ambient text with no armed
+cue produces nothing" is a test. The six existing authority suites run unchanged. Contract of the cue path:
+[presentation-studio.md](presentation-studio.md), *Cue following contract*.
+
 ## 13. The projection reaches the brain (handoff 2026-10, Slice 05)
 
 Decisions **P4** and **P5** of

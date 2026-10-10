@@ -1,0 +1,221 @@
+{
+  "scenario": "real_import_render",
+  "screenshots": [
+    "imported.png"
+  ],
+  "upstream": "hongjiapeng/remotion-workflow-visualizer@730615b75628acb2c22fcacd33e5b9c45f8eb010",
+  "prefab": {
+    "prefab_id": "presentation-studio.pfc8c7cb5216a.sf16ba7c9da51",
+    "version": 1,
+    "fingerprint": "bc2d3f0a565a7d7c7b7c0be0e64f1d4eb7ea72d80f8ea1102bd0c8e8efb79a8b"
+  },
+  "plan": {
+    "origin": {
+      "name": "hongjiapeng/remotion-workflow-visualizer",
+      "url": "https://github.com/hongjiapeng/remotion-workflow-visualizer",
+      "commit": "730615b75628acb2c22fcacd33e5b9c45f8eb010",
+      "archive_url": "https://codeload.github.com/hongjiapeng/remotion-workflow-visualizer/tar.gz/730615b75628acb2c22fcacd33e5b9c45f8eb010",
+      "archive_sha256": "caf6b13fb24fd166bedb7f04290bab1b79a8d6189fd73f18b58855315e3b5140",
+      "archive_bytes": 53083,
+      "subdir": ""
+    },
+    "license": {
+      "spdx": "MIT",
+      "source": "file",
+      "runtime_license": "Remotion License (company licence may be required)"
+    },
+    "composition": {
+      "id": "WorkflowVisualizer",
+      "width": 1920,
+      "height": 1080,
+      "fps": 30,
+      "duration_in_frames": 450
+    },
+    "dependencies": [
+      {
+        "name": "react",
+        "version": "19.3.0"
+      },
+      {
+        "name": "remotion",
+        "version": "4.0.534"
+      }
+    ],
+    "dropped_dependencies": [
+      "@remotion/cli",
+      "@types/react",
+      "@types/react-dom",
+      "react-dom",
+      "sharp",
+      "typescript"
+    ],
+    "files": {
+      "modules": [
+        "src/Scene.tsx",
+        "src/WorkflowVisualizer.tsx",
+        "src/components/AgentTrail.tsx",
+        "src/components/CenterStatus.tsx",
+        "src/components/ProcessRing.tsx",
+        "src/components/geometry.ts",
+        "src/config/workflow-config.ts",
+        "src/theme.ts",
+        "src/upstream/license.json",
+        "src/workflow-state.ts"
+      ],
+      "assets": [],
+      "dropped_modules": 2,
+      "dropped_assets": 0
+    },
+    "changes": [
+      "entry src/Scene.tsx generated: renders WorkflowVisualizer from src/Root.tsx with the Root defaultProps",
+      "composition WorkflowVisualizer 1920x1080 30fps 450f read from src/Root.tsx",
+      "kept 8 upstream module(s) reachable from the component; dropped 2 other src module(s)",
+      "kept 0 public asset(s) named by staticFile; left 0 other file(s)",
+      "react: 19.2.8 declared -> 19.3.0 from the shared tree",
+      "remotion: 4.0.499 declared -> 4.0.534 from the shared tree",
+      "dependencies not shipped (never imported by the scene): @remotion/cli, @types/react, @types/react-dom, react-dom, sharp~",
+      "package.json, lockfiles, scripts and tool configs were never copied or run",
+      "licence file: text kept in src/upstream/license.json; Remotion's own licence recorded separately"
+    ],
+    "warnings": [],
+    "source_digest": "0039fe77454d13064aaa7438e4c2899e9aa70f50bfa7c3ca5d1029187b46628e",
+    "scope": "presentation"
+  },
+  "catalog_view": {
+    "type": "composition",
+    "compatibility": {
+      "slidecar": "unsupported",
+      "remotion": "native"
+    },
+    "stack": [
+      "react",
+      "remotion",
+      "typescript"
+    ],
+    "dependencies": [
+      {
+        "name": "react",
+        "version": "19.3.0"
+      },
+      {
+        "name": "remotion",
+        "version": "4.0.534"
+      }
+    ],
+    "license": "MIT",
+    "upstream": {
+      "name": "hongjiapeng/remotion-workflow-visualizer",
+      "url": "https://github.com/hongjiapeng/remotion-workflow-visualizer",
+      "license": "MIT",
+      "author": "hongjiapeng",
+      "commit": "730615b75628acb2c22fcacd33e5b9c45f8eb010",
+      "archive_sha256": "caf6b13fb24fd166bedb7f04290bab1b79a8d6189fd73f18b58855315e3b5140",
+      "imported_at": "2026-10-10T12:00:00Z",
+      "source_sha256": "0039fe77454d13064aaa7438e4c2899e9aa70f50bfa7c3ca5d1029187b46628e",
+      "changes": [
+        "entry src/Scene.tsx generated: renders WorkflowVisualizer from src/Root.tsx with the Root defaultProps",
+        "composition WorkflowVisualizer 1920x1080 30fps 450f read from src/Root.tsx",
+        "kept 8 upstream module(s) reachable from the component; dropped 2 other src module(s)",
+        "kept 0 public asset(s) named by staticFile; left 0 other file(s)",
+        "react: 19.2.8 declared -> 19.3.0 from the shared tree",
+        "remotion: 4.0.499 declared -> 4.0.534 from the shared tree",
+        "dependencies not shipped (never imported by the scene): @remotion/cli, @types/react, @types/react-dom, react-dom, sharp~",
+        "package.json, lockfiles, scripts and tool configs were never copied or run",
+        "licence file: text kept in src/upstream/license.json; Remotion's own licence recorded separately"
+      ]
+    },
+    "runtime_license": "Remotion License (company licence may be required)",
+    "declared": true,
+    "parameters": []
+  },
+  "player_descriptor_keys": [
+    "compiled",
+    "composition",
+    "defaults",
+    "embedder_origin",
+    "engine",
+    "engine_drift",
+    "kind",
+    "page_url",
+    "prefab_id",
+    "sandbox_origin",
+    "title",
+    "version"
+  ],
+  "reads": {
+    "until:!!document.querySelector('iframe[data-remotion-stage]') && !!document.querySelec": true,
+    "first": {
+      "svg": true,
+      "nodes": 160,
+      "texts": [
+        "PLAN",
+        "CODE",
+        "REVIEW",
+        "TEST",
+        "DEPLOY",
+        "OPERATIONS"
+      ],
+      "sig": "25721:200",
+      "html": 25721
+    },
+    "later": {
+      "svg": true,
+      "nodes": 160,
+      "texts": [
+        "PLAN",
+        "CODE",
+        "REVIEW",
+        "TEST",
+        "DEPLOY",
+        "OPERATIONS"
+      ],
+      "sig": "25744:200",
+      "html": 25744
+    },
+    "isolation": {
+      "parent": "SecurityError",
+      "origin": "null"
+    }
+  },
+  "kinds": [
+    "core.artifact.recovery",
+    "core.board.default_created",
+    "core.board.interaction_mode.restore_skipped",
+    "core.capture.recovery",
+    "core.context.workspace_ready",
+    "core.conversation_events.emitter_started",
+    "core.conversation_events.user_backfill",
+    "core.prefab.catalog_loaded",
+    "core.prefab.saved",
+    "core.presentation_studio.art_direction_resolved",
+    "core.presentation_studio.created",
+    "core.presentation_studio.engine_resolved",
+    "core.presentation_studio.mount_reported",
+    "core.presentation_studio.pins_ready",
+    "core.presentation_studio.playback_reclaimed",
+    "core.presentation_studio.playback_started",
+    "core.presentation_studio.playback_transition",
+    "core.presentation_studio.presenter_attached",
+    "core.presentation_studio.recovered",
+    "core.presentation_studio.saved",
+    "core.presentation_studio.scenes_checked",
+    "core.presentation_studio.score_loaded",
+    "core.presentation_studio.stage_shown",
+    "core.presentation_studio.started",
+    "core.remotion_import.imported",
+    "core.remotion_import.planned",
+    "core.remotion_player.described",
+    "core.scene.loaded",
+    "core.scene.projection_reconciled",
+    "core.scene.restart_marked",
+    "core.session.opened",
+    "core.transcript.recovery",
+    "interaction.mode.applied",
+    "local_capability.reconcile",
+    "local_capability.service.reconciled",
+    "mcp.plugins.started",
+    "remotion.compile.done",
+    "remotion.compile.reused",
+    "remotion.sandbox.listening"
+  ]
+}

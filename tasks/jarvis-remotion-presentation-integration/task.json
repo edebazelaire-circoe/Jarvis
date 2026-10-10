@@ -1,0 +1,32 @@
+{
+  "project": "Jarvis",
+  "slug": "jarvis-remotion-presentation-integration",
+  "title": "Remotion-first Jarvis Presentation Integration and Branch Compliance",
+  "goal": "Audit completed Interactive Presentation Studio branch and implement Remotion as forced default without sacrificing Slidecar experimental path, shared prefab catalogue, Board assets and derived artifacts.",
+  "source": "User discussion and pinned branch audit on 2026-10-08",
+  "repository_expected": "edebazelaire-circoe/Jarvis",
+  "branch_audited": "task/jarvis-interactive-presentation-studio",
+  "snapshot_sha": "16e3dc585a29a767af26440e5a4364c8d57d9065",
+  "drive_destination": "Jarvis/task/to-do/jarvis-remotion-presentation-integration/",
+  "status": "planned",
+  "depends_on_original_task_completion": true,
+  "task_type_resolution_required": true,
+  "default_engine": "remotion",
+  "experimental_user_engine": "slidecar",
+  "automatic_fallback": false,
+  "slice_count": 23,
+  "human_validation_ids": [
+    "HV-00-01",
+    "HV-01-01",
+    "HV-03-01",
+    "HV-07-01",
+    "HV-10-01",
+    "HV-11-01",
+    "HV-12-01",
+    "HV-15-01",
+    "HV-17-01",
+    "HV-19-01",
+    "HV-20-01",
+    "HV-22-01"
+  ]
+}

@@ -81,4 +81,5 @@ testpaths = ["tests"]
 addopts = "-ra"
 markers = [
   "live: touches a real remote service; skipped unless its opt-in environment is set",
+  "engine_gate: keeps the Core engine gate CLOSED by default (the conftest opens it for the historical HTML worlds otherwise)",
 ]

@@ -125,6 +125,62 @@ replaced before the fingerprint is computed.
 | `files` | fixed names in v1. Bounds: template ≤ 32 KiB, style ≤ 32 KiB, behavior ≤ 64 KiB, manifest ≤ 32 KiB. |
 | provenance | **absent**: a candidate manifest that carries a provenance field is refused. Provenance is Core-written in `publication.json`. |
 
+### Manifest v2: Remotion scene source (`schema_version` 2)
+
+Status: implemented by Remotion Slice 05 (`jarvis/domain/remotion_source.py`, `PrefabBundle.sources`, tests `tests/unit/test_remotion_source*.py`);
+contract and rationale: [remotion-source.md](remotion-source.md). A Remotion scene source is a version of this same library with a **second bundle
+kind**. Rule for every manifest version: *a manifest is written at the lowest version that can express it, a version never removes a key of the previous
+one, a published version is never rewritten.* Hence HTML prefabs stay `schema_version` 1 (fingerprints, `publication.json` and `catalog.lock.json`
+unchanged) and a reader that only knows version 1 refuses a version-2 folder as `tampered` (traced, never a crash). Version 2 = the v1 keys **minus
+`files`, plus `source`** (`format`, `engine {name, version, react_version, lock_sha256}`, `entry`, `composition {id, width, height, fps,
+duration_in_frames}`, sorted `modules` under `src/` and `assets` under `public/`); `events` must be empty. The version folder holds
+`manifest.json`, `publication.json`, `src/**`, `public/**` and no HTML file; the fingerprint covers the manifest and the SHA-256 of every file.
+`PrefabService.bundle()` (HTML frames) refuses it; `PrefabService.remotion_source()` returns it. Pins, retention, `validate_instance`, `props`/`data`
+controls and score anchors work unchanged on it.
+
+### Manifest v3 and the semantic catalog (`schema_version` 3, Slice 17)
+
+Status: implemented (`jarvis/domain/prefab_catalog.py`, `parse_manifest`, `PrefabManifest.catalog_view()`; tests `tests/unit/test_prefab_catalog.py`,
+`test_prefab_catalog_browser.py`). Same rule as v2: written at the lowest version that expresses it. Version 3 = the v1 keys (`files`) **or** the v2 keys
+(`source`) — exactly one of the two — **plus a required `catalog` block**. A manifest with no catalog stays v1 (HTML) or v2 (Remotion), byte for byte; a v1 / v2
+manifest that carries `catalog` is refused ("needs schema_version 3"); `schema_version` 4 is unknown. A reader that only knows versions 1-2 refuses a v3 folder
+as `tampered` (traced `core.prefab.tampered`, the id keeps its older healthy versions; never a crash). `is_remotion_manifest(raw)` tells the two bundle kinds apart
+(v2, or v3 with `source`).
+
+```json
+"catalog": {"type": "composition", "compatibility": {"remotion": "native", "slidecar": "adapter"},
+            "stack": ["react", "remotion", "typescript"],
+            "dependencies": [{"name": "remotion", "version": "4.0.534"}],
+            "license": "MIT",
+            "upstream": {"name": "remotion-dev/template", "url": "https://github.com/remotion-dev/template", "ref": "v4"}}
+```
+
+| Field | Required | Contract |
+| --- | --- | --- |
+| `type` | yes | Fixed vocabulary `component` \| `composition` \| `page` \| `presentation` \| `asset` (`SemanticType`). Same words for every engine; never translated per renderer, never inferred. |
+| `compatibility` | yes | `{engine: native\|adapter\|unsupported}`, engines = `Engine` (`slidecar`, `remotion`). An engine left out reads **`unsupported`** (`classify_compatibility`): no automatic promise. **`adapter` is a declared state, not a usable one (Remotion Slice 10, PM decision):** until an explicit, visible adapter step exists, a presentation accepts only `native` sources for its engine (`require_native`): an HTML prefab declaring `remotion: adapter` is refused in a `remotion` document, a Remotion source declaring `slidecar: adapter` in a `slidecar` one (`presentation_studio_engine_unsupported`, "declared, not usable"). The library still shows the declaration (`adaptateur`). |
+| `stack` | yes | 1-12 distinct lowercase tokens (`html`, `react`, `remotion`, `typescript`...). |
+| `dependencies` | no | ≤ 32 `{name, version}`; version never empty (exact or a range); a package listed once. |
+| `license` | no | One line ≤ 64 chars (SPDX id preferred). Absent reads "not declared" (no default). |
+| `upstream` | no | `{name, url (http/https), ref?, license?, author?}` plus five keys **written only by the upstream importer** (Slice 18, [remotion-import.md](remotion-import.md)): `commit` (40 hex, attested by the downloaded archive), `archive_sha256` (64 hex), `imported_at` (`YYYY-MM-DDTHH:MM:SSZ`), `changes` (≤ 16 lines of ≤ 120 chars), `source_sha256` (64 hex: digest of the exact file set written at import). The catalog view adds `verified_intact` and, when false, `modified_files`: a revision may carry the block, but it is never shown as verified once the files differ. A block without those four keys is **declared by the author, not verified by Core**; one with them is Core-verified: `PrefabService.save` and `edit_base` refuse them from any other door (a revision may carry the previous version's block unchanged, nothing else). Manifest v3 had no published release when they were added, so they are optional keys of v3, not a v4. |
+| `runtime_license` | no | **Core-written** (same gate as the upstream keys). One line ≤ 128 chars: the licence of the **engine** (Remotion's own licence, for an import), never the licence of the template (`license`). The two are never conflated. |
+
+**Declaration versus body.** The block cannot contradict the files it ships with (`check_body_kind`, same matrix as `presentation_studio_engine`): a Remotion
+`source` manifest must declare `remotion` `native` or `adapter` and may not be `slidecar` `native`; an HTML `files` manifest may not declare `remotion` `native` and must
+declare `slidecar` `native` or `adapter` (an omitted engine reads `unsupported`, so it is refused too). Refused at `validate` / `save` with the listed path.
+
+**Derived at read (backfill, nothing rewritten).** `catalog_view()` returns the same shape for every version; for v1 / v2 it is derived and flagged
+`declared: false`: legacy HTML -> `type` from `family` (`window` and anything unknown -> `component`; `page`, `deck`/`presentation`, `composition`/`video`/`scene`,
+`asset`/`image`/`media` map to their type), `slidecar: native`, `remotion: unsupported` (`legacy_html_compatibility()`), stack `html, css, javascript`; Remotion v2 ->
+`composition`, `remotion: native`, `slidecar: unsupported`, stack `react, remotion, typescript`. Every shipped base prefab therefore reads `component`,
+Slidecar native, Remotion unsupported **without** a new base version: `catalog.lock.json` is unchanged (a future base prefab that declares a catalog is a new
+version `<id>/<v+1>/` and a new lock entry, like any base publication). `parameters` are the **declared** `inputs.props` of that version (name, type, required,
+default, values, range, description): nothing is added or guessed. Library-scan gate: `test_every_shipped_prefab_reads_and_has_a_contract`.
+
+**Routes: extensions of `GET /v1/prefabs` only.** Query `type`, `engine` (matches `native` or `adapter`, never `unsupported`), `stack` filter on the latest healthy
+version (unknown value -> 400 `invalid_definition`); `catalog=1` adds `catalog` to each row and to `GET /v1/prefabs/{id}` and `/{version}`. Without `catalog=1` the
+answers are byte-identical to before, so the rows the brain reads through `prefab_search` / `prefab_get` do not grow (no tool or budget change).
+
 ### Input schema
 
 Nesting depth ≤ 4, counted from the root object (`inputs.props`) at 0, and
@@ -238,7 +294,9 @@ jarvis/prefabs/
   base/jarvis.document/1/...  base/jarvis.table/1/...  base/jarvis.checklist/1/...
 <data_root>/prefabs/
   <prefab_id>/<version>/{manifest.json,template.html,style.css,behavior.js,publication.json}
+  <prefab_id>/<version>/{manifest.json,publication.json,src/**,public/**}   # Remotion scene source (schema_version 2, remotion-source.md)
   .staging-<hex>/                                  # swept at start
+  .archive/<prefab_id>/<version>/...               # versions retired by the retention rule (Slice 01a), kept whole
 ```
 
 - **Package root** (`jarvis/prefabs/base/`): base prefabs and their shipped
@@ -257,8 +315,8 @@ jarvis/prefabs/
   `check_file_path`; links, junctions and reparse points are refused. Stale
   `.staging-*` folders are swept at start.
 - **Catalogue** = union of both roots, discovered by scanning
-  `*/<int>/manifest.json`; no central table. Bounds: ≤ 512 ids, ≤ 64 versions
-  per id. Fingerprints are recomputed on load: a mismatch with
+  `*/<int>/manifest.json`; no central table. Bounds: ≤ 512 ids, ≤ 64 **live** versions
+  per id (retention for `presentation-studio.*` ids: [below](#retention-of-studio-scene-sources)). Fingerprints are recomputed on load: a mismatch with
   `publication.json` marks the version `tampered` (refused for new instances,
   diagnostic `core.prefab.tampered`). The same `(id, version)` in both roots:
   the package wins (`core.prefab.version_conflict`). Manifests are cached by
@@ -276,18 +334,127 @@ jarvis/prefabs/
   prefab id or a version, or a link, is skipped (`core.prefab.scan_problem`).
 - **Save rules** (`PrefabService.save`, actor `brain` or `user`): a new custom
   id is `custom`, or `fork` with `derived_from` (which must exist and be
-  healthy); either way a new id is refused once the catalogue holds 512 ids.
+  healthy); either way a new id is refused (`id_limit`) once the catalogue holds 512 ids.
   An existing custom id is a `revision` (highest occupied version + 1); a
   `jarvis.*` id is `base_protected`. Publications are serialized in Core.
 - **Errors** (`PrefabStoreError`, `jarvis/ports/prefabs.py`): `unknown_prefab`
   and `unknown_version` (404), `tampered` and `version_exists` (409),
-  `base_protected` and `base_edit_unconfirmed` (403), `invalid_definition`
+  `base_protected` and `base_edit_unconfirmed` (403), `version_limit` and `id_limit`
+  (409, Slice 01a: the 64-live-version / 9999 and the id caps, French sentence naming the way out), `invalid_definition`
   (400, with the collected `errors`), `storage_io` (500).
 - **Diagnostics** (`core.prefab.*`): `catalog_loaded`, `catalog_unavailable`,
   `scan_problem`, `tampered`, `version_conflict`, `saved`, `save_refused`,
-  `save_failed`, `base_edited`, `base_edit_refused`, `swept`, `sweep_failed`.
+  `save_failed`, `base_edited`, `base_edit_refused`, `swept`, `sweep_failed`; retention (Slice 01a):
+  `retired`, `id_retired`, `retention_inactive`, `retention_failed`, `draft_coalesced`.
   Ids, versions and codes only; the user's words in a base-edit request
   never enter the journal (their length does).
+
+
+## Retention of studio scene sources
+
+Status: implemented by Slice 01a of the Interactive Presentation Studio handoff
+(`jarvis/core/prefab_retention.py`, `jarvis/core/prefab_draft_coalescer.py`,
+`PrefabLibrary.retire`, `PrefabPinRegistry`). The Studio renders each scene with a
+prefab ([presentation-studio.md](presentation-studio.md)); every Tier-3 source
+edit is one immutable version, so the hard caps (64 versions per id, 512 ids,
+version ≤ 9999, no deletion) had to be reconciled with a rehearsal's edit volume
+without weakening any pin.
+
+**Measured** (`scripts/measure_prefab_capacity.py`, Windows 11, local disk; real
+`FilePrefabLibrary` + `PrefabService`, 3.5 KiB per version on disk):
+
+| Library | Versions | Cold `start()` | Re-list (`search`) | One `save` on it | Peak RAM at start |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| 15 scenes × 64 versions (+1 probe id) | 970 | 5.8 s | 0.15 s | 362 ms | 17 MiB |
+| 511 user ids × 1 version (not `presentation-studio.*`, whose ids stop at 384) | 521 | 3.3 s | 0.14 s | 313 ms | 9 MiB |
+| 96 ids × 16 versions | 1 546 | 9.3 s | 0.25 s | 556 ms | 28 MiB |
+
+(Re-measured at rework 2026-10-08; run the script to reproduce, each scenario prints as it finishes.)
+Cost is about 6 ms per version at start and every `save` rescans the library
+(about 0.3 ms per version), so **raising the caps was rejected**: 512 × 64 would
+be 32 768 versions, a start of minutes. Keeping the *live* set small is the lever.
+
+**Modelled** (no rehearsal telemetry exists; the assumptions are printed by the
+script, not measured): source edits arrive in bursts. For a scene edited by
+spoken tweaks, 12 / 45 / 150 source edits per hour fill 64 versions in 5.3 / 1.4 /
+0.43 hours uncoalesced; coalesced bursts (2 s quiet, 10 s max wait) publish
+5 / 13 / 31 versions per hour, filling 64 in 12.8 / 4.9 / 2.1 hours. Coalescing
+alone therefore only postpones the cap; it is the first of two measures. Ids:
+a presentation takes 1 id per scene (variants share the scene id and differ by
+`(id, version)` pin) plus 1 per source fork; 15 scenes with no forks is 15 ids,
+3 variants with a third forking 28, 5 variants all forking with 2 scene-local
+variants 105: **5 such presentations fill 512 ids** — which is why ids are bounded
+and recoverable too (below).
+
+**Final rule** (a version is never deleted and never rewritten):
+
+1. *Coalesced drafts.* `PrefabDraftCoalescer.submit` keeps the last candidate per
+   id; one burst (default 2 s of quiet, at most 10 s after the first edit)
+   publishes **one** version through `PrefabService.save`. All callers of a burst
+   receive the same publication or the same typed error. A change of actor or
+   `derived_from` inside a burst publishes the pending one first.
+2. *Reserved-namespace retention.* Only ids `presentation-studio.*` (`is_retention_id`;
+   never `jarvis.*`, never a look-alike such as `lab.presentation-studio`).
+   `MAX_VERSIONS_PER_ID` counts **live** versions. When an id holds
+   `RETENTION_TRIGGER_VERSIONS` (32) live versions, `_publish` — under the
+   prefab write lock — asks the `PrefabPinRegistry` which versions are pinned and
+   retires (`PrefabLibrary.retire`) every healthy data-root version that is not
+   pinned and not among the `RETENTION_KEEP_LAST` (16) most recent, oldest first.
+   `tampered` and `unreadable` versions are never retired (they stay, visible).
+   Retiring is **one `os.rename`** of the whole version folder to
+   `<data_root>/prefabs/.archive/<id>/<version>/`: no byte is destroyed, the move
+   is atomic, a kill leaves the version whole in either place
+   ([local-data.md](local-data.md#bibliothèque-de-prefabs--prefabs)). Restoring is
+   moving the folder back by hand.
+3. *Pins.* `PrefabPinRegistry.pinned_versions(ids) -> {id: {versions}}` is the
+   port the Studio implements (variants, scene-local variants, templates, scene
+   objects, scene documents, the undo stack); the prefab layer imports no Studio
+   code. It must answer for **all** stores, with every requested id as a key (no pin = empty set) and integer versions `1..9999`, within 5 s (it runs under the write lock); with no registry, or one that
+   raises, times out or answers partially or with the wrong types, **nothing is retired** (`core.prefab.retention_inactive` / `retention_failed`)
+   and the hard cap applies. `CompositePinRegistry` unions several stores. Pins
+   are exact `(id, version)`, so a retired version can never be one a document
+   points at. A pin is only ever written for the latest version (kept) or a
+   version already pinned elsewhere (kept); a writer that pins any other old
+   version must register it in its store before it can be retired, which the
+   write lock plus the registry read make safe. A version that cannot be moved (archive slot taken, folder locked) is traced and **skipped**; the others still move, and the limit message says some could not be archived.
+4. *Numbers are monotonic.* The archive counts as occupied in the scan
+   (`PrefabScan.version_folders`), so a retired number is never issued again, even
+   after a restart. At **v9999** the next save is refused.
+5. *Ids.* Studio ids may take at most `MAX_RETENTION_PREFAB_IDS` (384) of the 512
+   so the user keeps room. A new studio id at either limit first archives, whole,
+   the oldest studio id whose versions are all unpinned, all in the data root, and
+   last published more than an hour ago (the Studio writes its pin after the
+   publication, so a fresh id is never evicted); else the save is refused.
+   Its archived numbers stay spent: saving the same id later continues after them.
+6. *Visible limits.* Two typed codes, both 409, French sentence naming the way out
+   (a new id, `derived_from` the last version; the Core message uses "tu", like the MCP sentences): `version_limit` (64 live versions
+   all pinned or recent, retention unavailable — the sentence says which — or
+   version 9999 reached) and `id_limit`. They replace the former
+   `invalid_definition` for these two caps. Nothing is dropped silently.
+
+User prefabs and bases are untouched by every step above (tested): their caps stay
+64 versions / 512 ids with no retention.
+
+**Where the pin registry is wired.** Since Slice 06: `jarvis/core/presentation_studio_pins.py`
+(`StudioPinRegistry`) is built in `v2_app` before `PrefabService` and passed as
+`PrefabService(..., pin_registry=...)`; it is bound to the live scene and its index is built from the
+documents at Core start (`rebuild`). Until the index is built, if a document is unreadable at start, or if
+the scene is not bound, it raises and **nothing is archived**. Later Slices (08 undo, 16 variants, 17
+scene-local variants, 20 templates) add their pins with `StudioPinRegistry.add_source(name, fn)`
+(synchronous, in memory). Contract: [presentation-studio.md](presentation-studio.md#hot-reload-contract-level-3-slice-06).
+The `presentation-studio.` namespace is reserved to the Studio: `POST /v1/prefabs` (so the MCP
+`prefab_save` and the relay) refuses an id under it with `invalid_definition`; the Studio publishes through
+`PrefabService.save` directly (via the coalescer).
+
+**Entry conditions for Slice 06** (all satisfied by Slice 06, tests `test_presentation_studio_pins.py`,
+`test_presentation_studio_reload_core.py`):
+
+- The Studio `PrefabPinRegistry` covers the Slice 02, 04 and 05 stores **and** the live global scene and every frame the host may reload (an archived version answers `unknown_version`, so a reload of it would fail), not only the documents. *(Done: variant documents including `last_valid_pin`, every active scene object's prefab block, in-flight holds.)*
+- A store registers an old version in its own pin set **before** it writes that pin into any document (variant, scene-local variant, template).
+- Slice 08 registers the undo-stack pins; Slices 16, 17 and 20 add their stores through `CompositePinRegistry`. **Slice 17**: the pin source of a variant includes the pin of every stored scene-local variant (`StudioScene.held_pins()`, called by the one `variant_pins(scenes)` function, which also adds `last_valid_pin`), so a version pinned only by a non-selected local variant is never archived; the undo ring holds the pins of a deleted local variant (`scene_variant.restore_set`). **Slice 16**: a branch copies the scene pins of its source and publishes no prefab (variants share one prefab id and differ by `(id, version)`); `PresentationStudioVariants.pin_index()` lists the pins of **live and archived** variants (an archived variant is restorable, so its versions must not age out), and its writes go through the single variant write door that the registry hooks. *(Done by the Slice 06 merge: `StudioPinRegistry` has one source per store: live and archived variants, the undo stacks, the live scene including every playback stage window, in-flight holds.)*
+- `PrefabDraftCoalescer.flush()` is called at Core shutdown (a pending burst is otherwise never published). *(Done: `PresentationStudioReloadService.close()` first in `JarvisCoreApplication.stop`.)*
+- The registry answers from memory, well within 5 s, with every requested id as a key.
+- Restore path: no tool yet. With Core stopped, move `prefabs/.archive/<id>/<version>/` back to `prefabs/<id>/<version>/` by hand.
 
 ## Instance block
 
@@ -386,6 +553,21 @@ ordinary window (title, fallback summary).
     selects that window through the same path as focusing its node
     (`onFocusIn`: anchor, selection, resume of a paused frame), without taking
     the focus back from the frame.
+- **Studio hot swap and observed outcomes** (Slice 06 of `jarvis-interactive-presentation-studio`).
+  `createPrefabHost({swapPrefix: 'presentation-studio.', onOutcome})`: when a **ready** frame's version
+  changes to a version of an id under `swapPrefix`, the host does not unmount first. It loads the new
+  version in a second, hidden iframe in the same slot (class `sc-prefab-staged`; same `sandbox`, same
+  `srcdoc` builder, same checks), forwards `update`s to both, and replaces the live frame only once the
+  new one is `ready` and has stayed quiet for `SETTLE_MS` (250 ms). A new version that errors, hangs
+  (`READY_TIMEOUT_MS`) or navigates is discarded beside the live frame, which keeps its DOM, its listeners
+  and its local state; no band is drawn in the window. The staged frame's events, links and resizes are
+  refused until it replaces the live one. If the pin comes back to the live frame's version (a Core
+  rollback) nothing is mounted. `onOutcome({object_id, prefab, outcome: 'mounted'|'failed', reason,
+  message, generation, counters})` fires **once per frame generation**, for every prefab (the page forwards
+  only `presentation-studio.*`); `host.counters(objectId)` = `{starts, mounted, failed, remounts}`,
+  carried across version changes. No `jv:1` message was added or changed. Outside `swapPrefix`, a version
+  change still remounts immediately, as below. Tests: `test_presentation_studio_reload_host_js.py`,
+  `test_presentation_studio_reload_browser.py`.
 - **Lifecycle** (`createPrefabHost`). One frame per object id, kept in a host
   `Map`, never detached during updates: `fill()` keeps a persistent
   `.sc-prefab-slot`; a props, data or theme change is `host.update` (diffed by
@@ -414,10 +596,11 @@ ordinary window (title, fallback summary).
   `slices/09-integration-hardening/evidence/` of the handoff.
 - **Host API.** `createPrefabHost({fetchBundle, document, window, now,
   setTimeout, clearTimeout, log, postEvent, mode, theme, onResize,
-  onPreviewEvent, openUrl})` → `mount(slot, instance)`, `update(objectId,
+  onPreviewEvent, openUrl, onOutcome, swapPrefix})` → `mount(slot, instance)`, `update(objectId,
   props, data, theme)`, `unmount(objectId)`, `pause` / `resume` / `touch` /
-  `reload(objectId)`, `height(objectId)`, `state(objectId)`, `stats()`,
-  `destroy()`. `JarvisPrefabHost.bundleFetcher(fetch)` reads
+  `reload(objectId)`, `height(objectId)`, `state(objectId)`, `counters(objectId)`, `key(objectId)`,
+  `pendingKey(objectId)`, `stats()` (adds `starts`, `mounted`, `failed`, `staging`), `destroy()`
+  (`onOutcome`, `swapPrefix`, `counters`: *Studio hot swap and observed outcomes* above). `JarvisPrefabHost.bundleFetcher(fetch)` reads
   `GET /api/prefabs/{id}/{version}/bundle`, checks `response.ok` and unfolds
   the `{error: {code, message}}` envelope. While a frame loads, the slot says
   so (« Chargement du prefab <id>@<v> »); the 3 s `ready` deadline runs from
@@ -666,9 +849,10 @@ Status: every row is implemented (`prefab_routes.py`: every Core route; `prefab_
 | domain | `jarvis/domain/prefab.py` | id/version grammar, `PrefabManifest`, `InputSchema` parse + `validate_value(schema, value) -> (value_with_defaults, errors)`, `EventDecl`, `Publication` / `Provenance`, `check_state_event(manifest, event, payload, basis, current_data)`, hygiene lint, bundle fingerprint | 02 |
 | domain | `jarvis/domain/scene.py` | `ScenePrefabRef`, `ScenePayload.prefab`, kind rule, `SceneRefusal.PREFAB_INVALID`, `SceneUpdate.detail` | 04 |
 | domain | `jarvis/domain/brain_context.py` | `BrainPrefabEvent`, `BrainContext.prefab_events` (≤ 8) | 07 |
-| ports | `jarvis/ports/prefabs.py` | `PrefabLibrary` (`scan()`, `read_version(root, id, v)`, `publish(bundle, publication) -> "<id>/<version>"`, `sweep()`), `PrefabInstanceValidator` (`validate_instance(PrefabInstanceRef) -> InstanceValidation`), `PrefabStoreError` with codes | 02 |
+| ports | `jarvis/ports/prefabs.py` | `PrefabLibrary` (`scan()`, `read_version(root, id, v)`, `publish(bundle, publication) -> "<id>/<version>"`, `sweep()`, `retire(id, v)` Slice 01a), `PrefabPinRegistry` (`pinned_versions(ids)`, Slice 01a), `PrefabInstanceValidator` (`validate_instance(PrefabInstanceRef) -> InstanceValidation`), `PrefabStoreError` with codes | 02 |
 | adapters | `jarvis/adapters/file_prefab_library.py` | `FilePrefabLibrary(package_root, data_root)`: scanning, atomic publish, `safe_folders` guards; never writes `package_root` | 02 |
 | core | `jarvis/core/prefab_service.py` | `PrefabService` = catalogue (search, get, bundle), `validate_candidate`, `save`, `edit_base` (gate + witness), `validate_instance` (implements the port), diagnostics `core.prefab.*` | 02 |
+| core | `jarvis/core/prefab_retention.py`, `jarvis/core/prefab_draft_coalescer.py` | retention policy (`retirable_versions`, `CompositePinRegistry`) and the burst coalescer over `PrefabService.save` (Slice 01a, [Retention](#retention-of-studio-scene-sources)) | 01a |
 | core | `jarvis/core/prefab_witness.py` | `quote_problem` (condition 3, normalized quote names the prefab) and `ConversationUtteranceWitness` (condition 4 of the base-edit gate) over `ConversationEventQueryService` | 07 |
 | core | `jarvis/core/prefab_events.py` | `PrefabEventService(scene: SceneConditionalSink & SceneReader, catalog: PrefabManifestSource)` (`PrefabService.manifest(id, version)`): state / notify, ring, rate limit, `take_undelivered_notify()`, `requeue_notify(seqs)` | 04, 07 |
 | core | `jarvis/core/scene_service.py` | `prefab_validator` hook, `apply_if(plan)` (R9.1) | 04 |
@@ -712,14 +896,14 @@ missing → `storage_io` (`core.prefab.runtime_unavailable`).
 
 | Method | Path | Body / query | Result | Slice |
 | --- | --- | --- | --- | --- |
-| GET | `/v1/prefabs` | `query?`, `family?`, `class?=base\|custom`, `limit≤50` | rows `{id, latest_version, versions, title, family, class, description, input_names, event_names, base_edited}` | 03 |
+| GET | `/v1/prefabs` | `query?`, `family?`, `class?=base\|custom`, `type?`, `engine?`, `stack?` (Slice 17), `catalog?=0\|1`, `limit≤50` | rows `{id, latest_version, versions, title, family, class, description, input_names, event_names, base_edited}` (+ `catalog` without `parameters` when `catalog=1`; parameters only in the detail) | 03 |
 | GET | `/v1/prefabs/events` | `after?`, `object_id?`, `limit≤50` | ring entries | 04 |
 | POST | `/v1/prefabs/events` | `{actor:"user", object_id, prefab:{id,version}, event, payload, basis}` | `{outcome: applied\|recorded\|stale\|refused, reason?, detail?, revision?}`; 429 `rate_limited` | 04 |
 | POST | `/v1/prefabs/validate` | `{candidate}` | `{ok, errors[], fingerprint?}` (no write) | 07 |
 | POST | `/v1/prefabs` | `{actor, candidate, derived_from?}` | publication; `409 version_exists`, `403 base_protected` for a `jarvis.*` id | 07 |
-| GET | `/v1/prefabs/{prefab_id}` | – | versions + provenance chain | 03 |
-| GET | `/v1/prefabs/{prefab_id}/{version}` | `include_source=0\|1` | manifest + publication (+ files ≤ 128 KiB) | 03 |
-| GET | `/v1/prefabs/{prefab_id}/{version}/bundle` | – | `{manifest, files, runtime:{version, shim, shell_css}}` (immutable; ETag = fingerprint) | 03 |
+| GET | `/v1/prefabs/{prefab_id}` | `catalog?=0\|1` | versions + provenance chain | 03 |
+| GET | `/v1/prefabs/{prefab_id}/{version}` | `include_source=0\|1`, `catalog?=0\|1` | manifest + publication (+ files ≤ 128 KiB) | 03 |
+| GET | `/v1/prefabs/{prefab_id}/{version}/bundle` | – | `{manifest, files, runtime:{version, shim, shell_css}}` (immutable; ETag = fingerprint). A Remotion source (manifest v2/v3 with `source`) answers `{kind: "remotion", id, version, title}` and nothing executable: the window host mounts the Remotion stage page, never an HTML frame (Remotion Slice 10, [remotion-isolation.md](remotion-isolation.md) section 10) | 03, R10 |
 | POST | `/v1/prefabs/{prefab_id}/base-edits` | `{actor:"brain", candidate, user_request, confirmed_by_user:true}` | publication; `403 base_edit_unconfirmed` | 07 |
 
 ## Control Center routes (relay)
@@ -1137,6 +1321,15 @@ tests `tests/unit/test_prefab_library.py`; browser proof
 `slices/08-prefab-library-management/evidence/` of the handoff). Usage:
 [OPERATIONS.md](OPERATIONS.md) › *Prefab library*.
 
+**Semantic catalog (Slice 17).** The page reads every list and detail with `catalog=1` and adds three filters next to *Famille*: **Type** (the five fixed
+words, French labels *Composant, Composition, Page, Présentation, Ressource*, identical for every engine), **Compatible** (an engine; native or adapter match,
+unsupported never does) and **Pile** (the stack tokens present in the list). Every row says in words, never by colour alone, its type and, for **each** engine, `natif`
+/ `adaptateur` / `non pris en charge` (an unsupported use is shown, not hidden or guessed). A row whose contract Core did not return passes no semantic filter and
+claims nothing. The detail has a *Contrat du catalogue* section: type, per-engine support with its meaning, stack, dependencies with versions, licence, upstream
+(marked declared and not verified) and the **editable parameters inside a closed `<details>`** (opened on demand); a derived contract says it was derived. A
+Remotion source has no HTML frame: its preview says so (the Player comes with the Remotion Player Slice) and *Placer* / *Forker* are disabled with the reason.
+Tests: `test_prefab_library.py` (semantic filters, vocabulary), `test_prefab_catalog_browser.py` (real Chrome on an isolated Core).
+
 **Shell.** Dock button `PFB` (`id="openPrefabs"`, after `WSP`); full-screen
 dialog `.pfb` (`#prefabLibrary`), rank 55 like `.tl` / `.tlab` / `.mcpi` /
 `.wsp`: opening it makes the rest of the page `inert`, so one full-screen view
@@ -1260,6 +1453,113 @@ write) and ends in a coded error with a retry; the console carries
 `[prefabs] prefabs.*` lines (`list_read`, `detail_failed`, `placed`,
 `place_refused`, `forked`, `fork_failed`, `preview.*`).
 
+## Host fullscreen (generic surface capability)
+
+Status: Level 3, Slice 03 of `tasks/jarvis-interactive-presentation-studio/`
+(`jarvis/domain/surface_fullscreen.py`, `jarvis/runtime/fullscreen_commands.py`,
+`jarvis/runtime/control_center_fullscreen.js`; tests `test_surface_fullscreen.py`,
+`test_fullscreen_commands.py`, `test_fullscreen_js.py`, `test_fullscreen_browser.py`).
+It is a surface capability, not a presentation renderer: any scene window
+element (`[data-object-id]`) and the scene root can use it; prefab windows are
+the case that needed it.
+
+- **What "fullscreen" means here.** `Element.requestFullscreen()` on the
+  **host element** that contains the frame (the scene window), never on the
+  frame. A CSS dialog that covers the screen (the PFB / WSP views) is *not*
+  fullscreen and is never reported as such.
+- **Why not from the frame.** The frame is `sandbox="allow-scripts"` with no
+  `allow="fullscreen"`, so inside it `document.fullscreenEnabled` is false.
+  This module changes **none** of the frame's containment: not `sandbox`, not
+  `allow`/`allowfullscreen`, not the CSP, not the `jv: 1` protocol (a static
+  test forbids those tokens in the module source; the browser test reads the
+  attribute back from the real frame while fullscreen).
+- **A gesture is mandatory.** The browser refuses fullscreen without transient
+  user activation (`TypeError: Permissions check failed`, measured in Chrome).
+  A voice or agent request therefore **arms** a request: the page draws an
+  alert dialog (title, "Passer en plein écran", "Annuler", live countdown) and
+  calls `requestFullscreen()` synchronously inside the click. The dialog is a
+  child of `<html>` (not `<body>`) shown in the browser top layer (`popover`),
+  because the Control Center's modal dialogs make every `body` child `inert`,
+  including children added while they are open; a test opens the real
+  `confirmDialog` and clicks the prompt in Chrome. The armed state
+  is `needs_gesture`; it always has a deadline (default 30 s, 3 to 120 s), and
+  the server re-checks it on every state read in case the page died.
+- **`fullscreenchange` is the truth.** `entered` exists only when the browser
+  fires it; `exited` likewise (Escape included, with no application code).
+  On exit the page restores focus to the element that had it, removes its
+  marker (`data-jv-fullscreen`) and its key listeners. The element is never
+  moved in the DOM, so the previous layout returns by itself when the browser's
+  `:fullscreen` styles end (the stylesheet the module adds only matches
+  `:fullscreen` and its own dialog; a test lists every rule).
+- **What the user sees in fullscreen.** The host fills the screen on black; the
+  window chrome (title, handles: every child that is not the frame slot) is
+  hidden; the frame fills the host. A window without a frame slot is fullscreened
+  as is.
+- **Keyboard.** The frame relays no keys. While fullscreen, the host element
+  listens (capture phase) for `ArrowRight/Down/PageDown/Space` (next),
+  `ArrowLeft/Up/PageUp/Backspace` (previous), `Home` (first), `End` (last), and
+  hands them to `JarvisFullscreen.onNavigate(listener)`; those keys are not
+  forwarded to the scene's own key handling. `Escape` and any Ctrl/Alt/Meta
+  combination stay with the browser. This is **opt-in**: the default is
+  `keys: "none"`, which attaches nothing and never takes focus from a prefab (a
+  text field keeps typing). With `keys: "host"` (the presenter playback, Slice 12,
+  passes it) a click inside the frame moves focus into the frame and the host
+  takes it back on the next `blur`, so the keys keep working.
+- **Display selection is best effort.** `display` is `current` (default),
+  `primary`, `other` or an index; the page asks `window.getScreenDetails()` (the
+  Window Management API, Chromium only, own permission) and passes `{screen}`.
+  Unavailable, denied or missing display falls back to the current display and
+  is **reported** as `display_selection`: `not_requested | unavailable | denied |
+  granted | missing`. If the permission prompt eats the click's activation, the
+  dialog stays with "cliquez de nouveau".
+
+### States and failure modes
+
+States are `entered`, `exited`, `needs_gesture`, `unsupported`, `refused`,
+`expired`; the transition table is one table in Python
+(`surface_fullscreen.TRANSITIONS`) mirrored in JS (parity test). Every non-happy
+outcome is visible (toast and/or dialog line), logged (`[fullscreen]` console
+lines; `fullscreen.*` journal lines from the state reports) and reported to the
+server.
+
+| Situation | State | Code | What the user sees |
+| --- | --- | --- | --- |
+| Browser has no Fullscreen API or the page policy forbids it | `unsupported` | `fullscreen_unsupported` | warning toast with the reason; no dialog |
+| Request without activation (agent, voice, local call) | `needs_gesture` | - | the dialog |
+| Click arrived too late (activation expired, permission prompt) | stays `needs_gesture` | - | red-amber line in the dialog: click again |
+| Browser rejects the request | `refused` | `fullscreen_denied` | error toast with the browser's own words |
+| Nobody clicked in time | `expired` | `fullscreen_arm_expired` | warning toast "N s sans clic", dialog removed |
+| User cancelled (Annuler / Escape in the dialog) | `exited` | `fullscreen_cancelled` | dialog removed, focus restored |
+| Window no longer on screen | `refused` | `fullscreen_target_missing` | warning toast |
+| Another surface already fullscreen | `refused` | `fullscreen_other_surface_entered` | exit it first |
+| `exitFullscreen()` fails | `refused` | `fullscreen_exit_failed` | error toast; Escape still works |
+| Unexpected page exception | `refused` | `fullscreen_page_error` | error toast, journal line |
+
+### Routes (Control Center, loopback; sibling of `/api/barehands/commands`)
+
+`GET /api/fullscreen/commands?wait_s=` (page long-poll, exclusive delivery),
+`POST /api/fullscreen/commands` (agent: `{action: "enter"|"exit", object_id?,
+display?, keys?, arm_s?}`; answered by the page's delivery receipt within 3 s,
+**never** `entered` for an `enter`), `POST /api/fullscreen/commands/{id}`
+(page receipt, single use), `POST /api/fullscreen/state` (page reports a
+transition the browser dictated), `GET /api/fullscreen/state` (what the page last
+said, never what was asked). All are in `READ_GUARDED_ROUTES`: a prefab frame
+(`Origin: null`) or a foreign origin gets 403 `fullscreen_forbidden_origin`
+and cannot consume a command. Pages identify themselves on the poll
+(`page`, `visible`, `armed` query parameters, see the handler docstring): a page
+that is hidden aborts its in-flight poll, tells the server (`visible=0`) and
+**never receives a command** while hidden; a poll whose client closed its socket
+does not take delivery either. The poll answer carries `armed` (the server's
+armed id): a page that holds a different prompt drops it at once (an `exit` or
+cancel received by another tab, server-side expiry), and polls are woken when the
+armed state changes. No visible page polling: 504 `fullscreen_no_visible_page`;
+a page that took the command and stayed silent: 504 `fullscreen_command_expired`.
+A request refused by the page while another surface is fullscreen leaves
+`GET /api/fullscreen/state` describing the real fullscreen element.
+The scene window menu (right click, Menu key) offers **Plein écran** for a drawn
+`window`: a real user gesture that calls `JarvisFullscreen.enter()` directly, without arming.
+Agent tools (`presentation_fullscreen`) arrive with Slice 21.
+
 ## Legacy windows
 
 Status: retention proved by Slice 09 (D-LEGACY). **No legacy path is deleted.**
@@ -1273,7 +1573,7 @@ when present). These producers write such objects today and keep doing so:
 | `jarvis/core/scene_projector.py` (`SceneProjector`) | agent/job stars (`star_payload`) and attention signals (`signal_payload`, `core_restarted_unobserved`): `ScenePayload(title, summary)` as actor `runtime` | `tests/unit/test_scene_projector.py`, `tests/integration/test_scene_projection_protocol.py` |
 | `jarvis/runtime/display_mcp.py` `SceneDisplayTools.add_artifact` (`scene_add_artifact`) | grouped artifact + `explains` link in one `attach_artifact`: title, summary, items | `tests/unit/test_scene_artifacts.py`, `test_display_mcp.py` |
 | `SceneDisplayTools.create_object` / `update_object` without `prefab` | every ordinary brain window, artifact and note | `tests/unit/test_display_mcp.py`, `test_scene_batch.py` |
-| `jarvis/runtime/presentation_staging.py` `DisplaySceneStager` | `stage_hidden`: a hidden `artifact` through `create_object(visibility="hidden")`; `reveal` (broken, Issue `presentation-stager-reveal-calls-missing-set-visibility`, owned by the Presentation task) | `tests/unit/test_presentation_*.py` (incl. `test_presentation_integration.py`) |
+| `jarvis/runtime/presentation_staging.py` `DisplaySceneStager` | `stage_hidden`: a hidden `artifact` through `create_object(visibility="hidden")`; `reveal` = `update_object(object_id, visibility="visible")` (fixed by the Presentation task; it once called a removed `set_visibility`) | `tests/unit/test_presentation_staging_contract.py`, `tests/unit/test_presentation_*.py` (incl. `test_presentation_integration.py`) |
 | `jarvis/core/scene_file_watcher.py` `SceneFileWatcher` | rewrites `summary` of any object bound by `payload.source_path` (`replace(payload, summary=…)`, actor `brain`); on a prefab window the block is copied unchanged and not revalidated | `tests/unit/test_scene_file_watcher.py`, [scene-model.md](scene-model.md) › *Windows bound to a file* |
 | Control Center user writes (`/api/scene/commands`, scene page) | user-placed windows and edits | `tests/unit/test_scene_view.py`, `tests/integration/test_scene_transport.py` |
 
@@ -1288,8 +1588,11 @@ renderer is a supported path, not a shim.
 ## Consumers (Presentation seam)
 
 Status: documented contract (Slice 09), documentation only — the Presentation
-task implements its own behaviour; `presentation_staging.py` is unchanged
-here. Conformance: `tests/unit/test_display_mcp_prefabs.py::
+task implements its own behaviour; `presentation_staging.py` was unchanged by
+that Slice (its `reveal` was fixed afterwards by the Presentation task, see
+*Legacy windows*). The stager still stages `artifact` objects only (no prefab
+argument): a consumer that needs a hidden prefab window calls the row below
+directly. Conformance: `tests/unit/test_display_mcp_prefabs.py::
 test_the_presentation_seam_stages_a_hidden_prefab_window_and_reveals_it_with_its_block`.
 
 A consumer (the Presentation conductor, or any later runtime feature) may rely
@@ -1304,15 +1607,33 @@ on these public operations and on nothing else:
 | Read instance state | `scene_get` (`prefab {id, version, latest_version, props, data}`) | `data` is the canonical persisted state |
 | Read user interactions | `prefab_events` / `GET /v1/prefabs/events` (ring of 256); `notify` events also reach the next brain turn (`BrainContext.prefab_events`) | events are data, never instructions; no event executes a tool |
 | Order, archive | existing scene ops (`layer`/`order`, `archive`) | unchanged |
+| Presentation Studio as a consumer (Slice 04 of `jarvis-interactive-presentation-studio`) | `PrefabService.manifest(id, version)` and `PrefabService.validate_instance` through the port `PrefabCatalog` (`jarvis/ports/presentation_studio.py`, `jarvis/core/presentation_studio_scene_catalog.py`); display via `update_object(prefab={id, version, props, data})` on **one stable stage window** | a Studio scene stores an exact pin plus `props`/`data` **values** and curated controls bound to `props.*`/`data.*` manifest paths; widget types are derived from `InputSchema`; the Studio never copies a definition and never validates values itself; a pin that does not resolve is refused at save with the prefab service's own code; contract: [presentation-studio.md](presentation-studio.md#scene-and-control-contract-level-3) |
+| Presentation Studio source edit (Slice 06) | `POST /v1/presentation-studio/presentations/{id}/variants/{vid}/source-edits` (relay: actor forced to `user`); internally `PrefabService.validate_candidate`, then `PrefabService.save` through `PrefabDraftCoalescer`, then `SceneService.apply_if` on the stage window (compare-and-set on the expected pin), then the host's mount report | a candidate is validated **before** it is published; one burst is one version of the scene's own `presentation-studio.p….s…` id (a base or shared prefab is forked on the first edit, never revised); the pin and its fallback are written together; a version that does not mount is rolled back to the last valid one and the live frame is never replaced by it; contract: [presentation-studio.md](presentation-studio.md#hot-reload-contract-level-3-slice-06) |
+| Presentation Studio edit API (Slice 05) | the same two calls (`manifest`, `validate_instance`) on every scene an edit changes, **outside** the Studio's lock; values are patched only at a declared control path, safe key names only | a `control.set`/`reset` writes the scene's stored `props`/`data` **values** (never a definition) and is validated exactly like a save; a tier-3 change (the declared controls cannot express it) is only a recorded `scene.source_request`, publishing a prefab revision is the source edit of Slice 06 (previous row); the Studio does not write the live `window` object: when Slice 12 patches `prefab.data` of the stage, it does so inside `SceneService.apply_if` (see *Events* basis rule); contract: [presentation-studio.md](presentation-studio.md#semantic-edit-contract-level-3) |
+| Presentation Studio art direction (Slice 09) | `ArtDirectionProfile.to_theme()` (the five `theme` keys the host already applies) and `to_theme_variables()` (only `--jv-*` names declared in `shell.css`) | the DA writes **no new channel and no new variable**: values are `#rrggbb` / `rgba()` / numbers / `Npx` / a closed font stack, built from validated tokens, never from free text; the frame still applies only `accent`, `text`, `muted`, `surface`, `scale` (`shim.js` `THEME_VARS`); extending that list is a protocol change outside the Studio; contract: [presentation-studio.md](presentation-studio.md#art-direction-contract-level-3) |
+| Presentation Studio authoring planner (Slice 11) | `PrefabService.validate_candidate` (the verdict on every new source of a draft), `PrefabService.save` (one publication per new `presentation-studio.*` id, actor `user` or `brain`), `PrefabService.manifest` (the pins a draft names, and the published manifests read back) | a draft publishes only under the retention namespace and one bundle per id; Core assigns the version whatever the candidate says; the Slice 01a coalescer is not used (an assembly publishes each id once); a failure after a publication leaves an immutable, unpinned version that Core reports and the retention may archive, never one it deletes. **Remotion Slice 15**: the sources a draft publishes are Remotion (manifest v3 with the catalog block, id `presentation-studio.rm-<key>-<8 hex of the content>`, `props.theme` and `src/jarvis-kit.ts` added by Core), `PrefabService.save(derived_from=<inspiration>)` records the lineage of a source that names a Core-verified upstream template, and every source is compiled before the first publication. [presentation-studio.md](presentation-studio.md#authoring-contract-slice-11), [Remotion scenes](presentation-studio.md#remotion-scenes-the-generator-slice-15) |
+| Presentation Studio template promotion (Slice 20) | `PrefabService.get(id, version)` (the pinned source), `PrefabService.validate_candidate`, `PrefabService.save(candidate, actor, derived_from=<project version>)` (origin `fork`), `PrefabService.manifest` and `validate_instance` (re-check after publication) | a promoted **scene** (`kind: scene`, explicit request) is an ordinary custom entry `studio-template.<slug>` (never the reserved `presentation-studio.` namespace, never archived by the retention): sanitized (project content replaced by placeholders, aliases dropped, no project id, path or locator), an identical retry reuses the published version instead of forking again; a Remotion source (Remotion Slice 19) is promoted as a **v3 manifest with an engine-tagged `catalog`**, its TSX untouched, its Core-written provenance (`catalog.upstream` verified keys, `runtime_license`) carried **only** for an intact import (`PrefabService.save(..., verified_import=True)`, digest recomputed) and its restrictive upstream licence acknowledged by name. A promoted **presentation** publishes **no** library prefab: its sources are embedded in the template record and installed as presentation-scoped `presentation-studio.p<...>.s<...>` prefabs at instantiation (the second `PrefabService.save` door, `verified_import` again only when the files still match `source_sha256`) ([Template and prefab promotion contract](presentation-studio.md#template-and-prefab-promotion-contract-level-3-slice-20)) |
+| Presentation Studio newer-version notice and trial (Remotion Slice 19) | `PrefabService.get(id)` (the healthy versions of a pinned id), `PrefabService.get(id, version).to_dict(catalog=True)` (the public catalog block), `PrefabService.manifest` / `validate_instance` through the Studio's scene catalog and engine gate | read-only: a newer immutable version of a pinned id is **told**, never applied; a trial is a child variant (variant branch operation) that pins the newer version while the original keeps the old one; no publication, no promotion, no pin rewritten. The retention needs nothing new: both variants' pins are held by the `StudioPinRegistry` ([Newer prefab versions and trial variants](presentation-studio.md#newer-prefab-versions-and-trial-variants-level-3-remotion-slice-19)) |
 
 Non-goals of this seam (not provided, do not build around them): a "focus"
 op; a per-Board or per-Session instance owner; a presentation-specific
 prefab, conductor, timing or speech policy; waking the brain on a `notify`
-(Issue `prefab-notify-events-do-not-wake-brain`); fixing the stager's
-`reveal` (Issue `presentation-stager-reveal-calls-missing-set-visibility`:
-the fix is `update_object(visibility="visible")`, the row above); a
-`scene_set_visibility` grant; editing base prefabs outside
+(Issue `prefab-notify-events-do-not-wake-brain`); a
+`scene_set_visibility` grant (the stager's `reveal` uses
+`update_object(visibility="visible")`, the row above); editing base prefabs outside
 `prefab_edit_base`; rasterizing frame content in a capture.
+
+## Engine compatibility (Level 2, Remotion Slice 02)
+
+A prefab source is run by a Presentation engine (`slidecar` or `remotion`, [presentation-engine.md](presentation-engine.md)). Compatibility is **declared per
+engine** and triaged as `native` (the engine does it), `adapter` (only through an explicit, visible source change) or `unsupported`. Undeclared is `unsupported`:
+it is never guessed. Every prefab in this library today is an HTML bundle that predates engines, so it is `slidecar: native`, `remotion: unsupported`
+(`legacy_html_compatibility()`); an unsupported use is reported (`presentation_studio_engine_unsupported`), never silently flattened to a screenshot.
+The declaration is the `catalog.compatibility` field of a **manifest v3** (Slice 17, *Manifest v3 and the semantic catalog*), which either kind may carry; the older
+versions read it derived (HTML: Slidecar native; Remotion source: Remotion native). A Remotion source (`schema_version` 2, Slice 05,
+[remotion-source.md](remotion-source.md)) already states the engine it was written for in `source.engine`.
+
+**Typed variables per engine (Remotion Slice 13).** The editable parameters of a Remotion source are the manifest's `inputs.props` / `inputs.data`, exactly as for an HTML bundle; the semantic controls of a scene bind to them (`props.<key>` / `data.<key>`). Each control row carries its `kind` (`color`, `text`, `spacing`, `timing`, `motion`, `data`, `value`) and, per engine, whether it is carried: a Remotion scene cannot carry a `url` parameter (the sandbox has no network) nor a props key named `data` (reserved for the data block); such a parameter stays declared, is tagged `unsupported` with the reason, refuses `control.set` and is left out of the `inputProps`. Contract: [presentation-studio.md](presentation-studio.md) *Typed variables and fast edits*; isolation side: [remotion-isolation.md](remotion-isolation.md) section 12.
 
 ## Documentation levels
 
@@ -1333,6 +1654,9 @@ conformance gate).
 | Agent prefab operations | 3 | *Agent tools*, `docs/mcp/tool-contract.md` | `display_prefabs.py`, `test_display_mcp_prefabs.py`, real traces (Slices 07, 09) |
 | Library UI | 3 | *Library UI*, `OPERATIONS.md` | `control_center_prefabs.js`, `test_prefab_library.py`, browser proof (Slice 08) |
 | Presentation seam | 2 | *Consumers* | one conformance test; behaviour belongs to the Presentation task |
+| Engine compatibility triage (native / adapter / unsupported) | 2 | *Engine compatibility* | `jarvis/domain/presentation_studio_engine.py`, `test_presentation_studio_engine.py` (declaration field: Slice 17, manifest v3) |
+| Semantic catalog (manifest v3: type, engine compatibility, stack, dependencies, licence, upstream; derived for v1/v2) | 3 | *Manifest v3 and the semantic catalog* | `jarvis/domain/prefab_catalog.py`, `test_prefab_catalog.py` (incl. library scan), `test_prefab_catalog_browser.py` (real Chrome), `control_center_prefabs.js` |
+| Remotion scene source (manifest v2, `src/**` + `public/**`) | 3 | *Manifest v2*, [remotion-source.md](remotion-source.md) | `jarvis/domain/remotion_source.py`, `test_remotion_source.py`, `test_remotion_source_store.py`, real compile `scripts/remotion_compile_harness.py` |
 | Legacy windows | 3 | *Legacy windows* | existing renderer and its suites (unchanged) |
 
 ## Known limitations

@@ -1,0 +1,9 @@
+{
+  "slice_id": "07",
+  "task_type": null,
+  "task_type_resolution_required": true,
+  "dependencies": [
+    "05-semantic-edit-api",
+    "06-scene-hot-reload"
+  ]
+}

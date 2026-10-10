@@ -1212,4 +1212,5 @@ def test_the_brain_prompt_says_how_to_look_at_another_board_without_switching():
     assert "board_" not in BRAIN_SETTINGS_PROMPT and "jarvis-console" not in BRAIN_WORKSPACE_PROMPT
     # 2026-10-07 : 700 -> 1000. La liste de contrôle des capacités (test_brain_capability_parity)
     # exige que chaque outil exposé au cerveau soit nommé dans sa consigne.
-    assert len(BRAIN_WORKSPACE_PROMPT.encode("utf-8")) <= 1000
+    # 2026-10-09 (memory-intelligence-knowledge S5b) : 1000 -> 1300, les cinq outils de `jarvis-memory` y sont nommes.
+    assert len(BRAIN_WORKSPACE_PROMPT.encode("utf-8")) <= 1300

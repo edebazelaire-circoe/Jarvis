@@ -1,0 +1,9 @@
+{
+  "checks": [
+    {
+      "id": "HVAL-IPS-006",
+      "title": "Variant Explorer usability",
+      "instructions": "Navigate a realistic branched presentation using mouse/keyboard and voice. Confirm the tree explains creative evolution, preview browsing is readable, and abandoning/deleting a branch is understandable."
+    }
+  ]
+}
