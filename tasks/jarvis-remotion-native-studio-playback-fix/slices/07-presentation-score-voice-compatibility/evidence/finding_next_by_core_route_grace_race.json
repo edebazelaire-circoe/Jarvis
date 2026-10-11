@@ -1,4 +1,17 @@
 {
+ "finding": "Finding 7, recorded for Slice 09 (owner: the run stage moves into Variants). The run stage's host starts its own grace play before the band's poll brings Core's order, which then replays the entry from frame 0. Independent QA confirmed it predates Slice 07. Slice 07 made the visible jump-back LARGER for an entry that reveals an anchor: Core now orders the entry from frame 0 (contract § 5), so the jump-back is 78 -> 0 instead of 78 -> 60 before Slice 07. Not fixed here.",
+ "owner": "Slice 09",
+ "predates_slice_07": true,
+ "visible_jump_back": {
+  "before_slice_07": [
+   78,
+   60
+  ],
+  "since_slice_07": [
+   78,
+   0
+  ]
+ },
  "first_play": [
   2022,
   0

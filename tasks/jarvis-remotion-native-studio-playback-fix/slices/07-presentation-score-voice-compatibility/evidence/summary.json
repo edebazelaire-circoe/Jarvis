@@ -17,7 +17,7 @@
  },
  "finding": {
   "file": "finding_next_by_core_route_grace_race.json",
-  "what": "same scenario, but `next` posted to Core directly (as a cue or the voice would) instead of the band: the S2 Player, taken from the preload, was played by the prefab host's own grace play (HOLD_GRACE_MS 450, `control_center_prefab_host.js:466-477`) from frame 0 to 78 before the band's next poll (1.5 s when the previous scene had no timeline) delivered Core's order `play 0 -> 149`, which then replayed 78 -> 0. Core's segment was right (0 -> 149); the replay is the run stage's poll latency against the host's grace play. Pre-existing (before Slice 07 the same order would have sent it 78 -> 60). Owner: Slice 09 (the run moves into Variants and the run stage window with its band poll is removed)",
+  "what": "same scenario, but `next` posted to Core directly (as a cue or the voice would) instead of the band: the S2 Player, taken from the preload, was played by the prefab host's own grace play (HOLD_GRACE_MS 450, `control_center_prefab_host.js:466-477`) from frame 0 to 78 before the band's next poll (1.5 s when the previous scene had no timeline) delivered Core's order `play 0 -> 149`, which then replayed 78 -> 0. Core's segment was right (0 -> 149); the replay is the run stage's poll latency against the host's grace play. Pre-existing (before Slice 07 the same order would have sent it 78 -> 60). Owner: Slice 09 (the run moves into Variants and the run stage window with its band poll is removed). Finding 7 (independent QA): confirmed pre-existing; Slice 07 made the visible jump-back larger for an entry that reveals an anchor (78 -> 0 instead of 78 -> 60). Recorded, not fixed (Slice 09)",
   "slice_07_code_involved": false
  },
  "node_and_core": {
@@ -25,5 +25,29 @@
   "tests/unit/test_presentation_studio_presenter_media.py": "8 passed",
   "tests/unit/test_presentation_studio_playback_continuous_isolation.py": "1 passed",
   "tests/unit/test_variants_transport_js.py::test_continuous_video_reads_the_map_and_never_touches_the_score_cues_or_speech": "passed"
+ },
+ "rework": {
+  "tested_head": "4497691d",
+  "findings": {
+   "B1": "fixed: the stage sync wakes the presenter; the scene's kind is answered for the current scene (`pending` while unknown)",
+   "I1": "held, never cut, never paced, but said: `page_wait {reason: timeline_unresolved}` after target + 15 s, band text, trace once",
+   "I2": "guard made robust for locked-sequence steps (`Move.STEP`): an entry still playing goes on from the frame reached (600 ms latency: 18 -> 299, never 180)",
+   "I3": "M3, M7, M11 killed (and the new B1 wake, I1, I2 and STEP mutants)",
+   "P1": "the continuous isolation test replays every route the real Variants page calls (taken from the page in the explorer fake DOM)"
+  },
+  "mutants": {
+   "M3 resume -> RESTART": "killed by test_m3_a_resume_after_a_next_inside_a_scene_continues_the_same_segment_and_seq",
+   "M7 stale done accepted (seq check dropped)": "killed by test_m7_a_done_for_an_old_segment_sent_after_the_next_one_is_on_is_ignored",
+   "M11 previous -> FORWARD": "killed by test_m11_previous_and_goto_back_into_an_earlier_scene_hold_a_non_zero_stop_frame",
+   "no wake after the stage sync": "killed by both test_b1_*_ends_on_its_target_* tests",
+   "entering always None": "killed by test_i2_a_locked_sequence_step_released_600_ms_after_the_entry_*",
+   "unresolved timeline not said": "killed by test_i1_*",
+   "sequence_step -> FORWARD": "killed by test_i2_* and test_m11_*"
+  },
+  "real_chrome": {
+   "test_presentation_playback_release_gate_browser.py -k 'presenter or manual'": "2 passed, 1 xfailed (pre-existing S03 repro, Slice 09/10)",
+   "test_presentation_playback_release_gate_browser.py -k play_all_shows": "1 passed",
+   "test_remotion_timeline_realpage_browser.py": "2 passed"
+  }
  }
 }

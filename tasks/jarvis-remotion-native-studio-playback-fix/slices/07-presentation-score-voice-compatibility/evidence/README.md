@@ -7,9 +7,16 @@ The live Jarvis (Core `127.77.0.1:17653`, its voice, `project jarvis`) was never
 | --- | --- |
 | `summary.json` | checks and their result, the finding below |
 | `presenter_entry_reveals_anchor_S2.json` | real Chrome, run stage: a presenter run enters S2 whose entry item reveals an anchor at 2 s; Core says `from_frame` 0 / `until_frame` 149, the Player is ordered `play 0 -> 149`, first moves at frame 0, never steps back, holds 149 |
-| `finding_next_by_core_route_grace_race.json` | the same scene entered by a `next` posted to Core (as a cue or the voice does): the host's own grace play starts the Player before the band's poll brings Core's order, which then replays from 0 (pre-existing, owner Slice 09) |
+| `finding_next_by_core_route_grace_race.json` | the same scene entered by a `next` posted to Core (as a cue or the voice does): the host's own grace play starts the Player before the band's poll brings Core's order, which then replays from 0. Finding 7: pre-existing (QA confirmed), owner Slice 09; Slice 07 made the visible jump-back larger for an entry that reveals an anchor (78 -> 0 instead of 78 -> 60), said in the file's `finding` field |
 
 Contract: `docs/presentation-studio.md` > *Presentation experience contract* § 5 (*Implemented (Level 3, Slice 07)*).
+
+## Rework (independent QA B1, I1, I2, I3, P1)
+
+Tested HEAD `4497691d`; same rules (fake speech, the live Jarvis never contacted). `summary.json` › `rework` holds the findings, the mutant kills and the real-Chrome results.
+- B1: a Jarvis silence over an HTML scene ends on its target, at the start and after a user `next`, with a stage whose `show` yields under the real presenter loop (`test_presentation_studio_presenter_media_rework.py`).
+- I1: a Remotion scene without timeline is held during a Jarvis silence and said (`page_wait` reason `timeline_unresolved`). I2: a locked-sequence step 600 ms after the entry continues the entry (18 -> 299), never cut to the anchor.
+- I3: mutants M3, M7, M11 killed, each verified by applying it and restoring with `git checkout`.
 
 ## Human checks
 
@@ -23,6 +30,8 @@ Recipe context: `docs/OPERATIONS.md`, *Lecture d'une présentation*, *Présentat
 5. **Interruption.** During a Jarvis line, speak over it: the run pauses (or waits for the item's boundary when the score says so) and resumes only on « Continuer »; the image is not replayed from the start of the scene.
 6. **Audio routing.** Unmute the scene (a click in the image), then check that the scene's own sound and Jarvis's voice come out of the intended output device and that Jarvis's voice is not cut by the scene's sound (or the reverse) on this machine.
 7. **Dual screen.** Move the Jarvis browser window to the external display, start a presenter run, press « Plein écran »: the stage fills that display; `→` / `←` move the run; `Échap` leaves fullscreen (on today's run stage the band still pauses a playing run on `Échap`; § 4.15 removes that with the band in Slice 09); a newly entered scene still starts on its first image on the projector.
-8. **Continuous video stays silent.** In Variants press « Lire » on the same deck with Voice running in PRESENTATION mode and say a cue phrase aloud: nothing moves, nothing is said, the mode does not change; the video plays on to its last image.
+8. **A Jarvis silence over an HTML scene ends on its target** (rework B1). `jarvis_presenter` on a deck whose first item, and a later one, is an explicit silence on an HTML scene (e.g. 2 s target): each silence ends about 2 s after its scene appeared, at the start of the run and after « Suivant »; the run never stays on it until a key is pressed.
+9. **A page that goes silent shows the waiting notice** (rework I1). `jarvis_presenter` on a silence item over a Remotion scene, then close the run stage (or block the scene's page) while it plays: after the segment's length + about 15 s the band says « Scène n : lecture en attente de la page … « Suivant » ou « Arrêter » restent possibles. »; with a scene whose composition cannot be read, the band says « … la ligne de temps de la vidéo n'a pas pu être lue, la scène est tenue … » after the item's target + about 15 s; « Suivant » and « Arrêter » work.
+10. **Continuous video stays silent.** In Variants press « Lire » on the same deck with Voice running in PRESENTATION mode and say a cue phrase aloud: nothing moves, nothing is said, the mode does not change; the video plays on to its last image.
 
 Record for each: the machine, the voice architecture, the output device, pass / fail, and the time the line or cue took (seconds from the words to the image).
