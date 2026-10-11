@@ -136,6 +136,7 @@ La carte (`control_center_remotion_studio.js`) est en tête de l'onglet « Plugi
 - Pas un moteur de rendu : le rendu et l'export sont la Slice 16 ([remotion-render.md](remotion-render.md), processus et garde propres, à partir d'un snapshot figé) ; le garde du Studio refuse les processus enfants, donc le bouton « Render » du Studio échoue visiblement.
 - Pas un éditeur qui écrit dans la bibliothèque : ses modifications sont mises de côté, jamais publiées.
 - Pas un lieu d'exécution isolé comme le Player : la scène y tourne dans l'onglet du Studio (§11).
+- Pas l'écran « Variantes », ni une surface de lecture de Jarvis : son aperçu sert à éditer une scène et ne fixe jamais le temps d'une présentation. À l'écran, ce processus s'appelle toujours « Remotion Studio », jamais « Studio » tout court. La seule lecture d'une présentation est le Player intégré à l'écran « Variantes ». Contrat (2026-10) : [presentation-studio.md](presentation-studio.md#presentation-experience-contract-level-2-2026-10), § 1 et § 2.
 
 ## 10. Preuves
 
