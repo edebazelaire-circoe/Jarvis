@@ -42,6 +42,8 @@ TRANSITION_INVALID = "composition_transition_invalid"
 FRAME_OUT_OF_RANGE = "composition_frame_out_of_range"
 SCENE_OUT_OF_RANGE = "composition_scene_out_of_range"
 WIRE_MISMATCH = "composition_wire_mismatch"
+#: `fromWire` (JS) sans la clé attendue : la vérification de carte périmée ne peut pas être sautée.
+KEY_REQUIRED = "composition_key_required"
 
 
 class CompositionError(ValueError):
@@ -291,14 +293,18 @@ def seek(cmap: CompositionMap, state: Transport, kind: Seek, value: int | None =
 
 
 def tick(cmap: CompositionMap, state: Transport, scene_index: int, native_frame: int, *, scene_ended: bool = False) -> Transport:
-    """Le conseil de l'horloge du lecteur de la scène `scene_index` -> `f`. `scene_ended` : ce lecteur a atteint sa dernière image ;
-    la scène suivante commence alors à son image locale 0 (continuité), la dernière scène tient sa dernière image (`ended`). Une
-    pause reste une pause : un tic ne relance jamais la lecture."""
+    """Le conseil de l'horloge du lecteur de la scène `scene_index` -> `f`. Seul le lecteur de la scène **courante** (celle qui
+    contient `f` ; pendant un recouvrement, l'entrante) est écouté : le tic d'un autre lecteur (le sortant d'un recouvrement, un
+    lecteur périmé après une navigation) ne change rien. `scene_ended` : ce lecteur a atteint sa dernière image ; la scène suivante
+    commence alors à son image locale 0, jamais en arrière de `f` ; la dernière scène tient sa dernière image (`ended`). Une pause
+    reste une pause : un tic ne relance jamais la lecture."""
 
-    frame = cmap.frame_of(scene_index, native_frame)
+    frame = cmap.frame_of(scene_index, native_frame)   # validated first: a malformed tick is an error, not a no-op
+    if scene_index != cmap.locate(state.frame).scene_index:
+        return state
     if scene_ended:
         if scene_index + 1 < len(cmap.scenes):
-            return Transport(cmap.scenes[scene_index + 1].start, state.playing, False)
+            return Transport(max(state.frame, cmap.scenes[scene_index + 1].start), state.playing, False)
         return Transport(cmap.last_frame, False, True)
     return Transport(frame, state.playing, False)
 

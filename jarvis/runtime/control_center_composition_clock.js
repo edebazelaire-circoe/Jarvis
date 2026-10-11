@@ -8,8 +8,8 @@
    Base de temps : fps maître F = le plus grand fps des scènes ; une scène dure ceil(d * F / fps) images maîtres ; image maître locale
    m -> image native floor(m * fps / F) ; image native n -> ceil(n * F / fps). Entiers seulement.
 
-   Le navigateur reçoit la carte de Core (`GET .../variants/{id}/composition`, données) et `fromWire` refait le calcul : un écart est
-   refusé (`composition_wire_mismatch`), jamais corrigé en silence. Le câblage dans la page (lecteur de Variantes) est l'affaire des
+   Le navigateur reçoit la carte de Core (`GET .../variants/{id}/composition-clock`, données) et `fromWire` refait le calcul : un écart est
+   refusé (`composition_wire_mismatch`), jamais corrigé en silence ; la clé attendue est obligatoire (`composition_key_required`). Le câblage dans la page (lecteur de Variantes) est l'affaire des
    Slices 05 et 06 : ce fichier n'est encore inclus dans aucune page. */
 (function(root){
   'use strict';
@@ -17,7 +17,8 @@
   const MAX_FPS=120;
   const MAX_DURATION_FRAMES=108000;
   const CODES=Object.freeze({EMPTY:'composition_empty',SCENE_INVALID:'composition_scene_invalid',TRANSITION_INVALID:'composition_transition_invalid',
-    FRAME_OUT_OF_RANGE:'composition_frame_out_of_range',SCENE_OUT_OF_RANGE:'composition_scene_out_of_range',WIRE_MISMATCH:'composition_wire_mismatch'});
+    FRAME_OUT_OF_RANGE:'composition_frame_out_of_range',SCENE_OUT_OF_RANGE:'composition_scene_out_of_range',WIRE_MISMATCH:'composition_wire_mismatch',
+    KEY_REQUIRED:'composition_key_required'});
   const SEEKS=Object.freeze(['next','previous','scene','scrub','home','end','step','replay']);
 
   class CompositionError extends Error{
@@ -121,10 +122,13 @@
     }
     return settle(map,transport(target,state.playing,false));
   }
+  /* Seul le lecteur de la scène COURANTE (celle qui contient f ; pendant un recouvrement, l'entrante) est écouté ; une fin de scène
+     ne recule jamais f. */
   function tick(map,state,sceneIndex,nativeFrame,sceneEnded){
     const frame=map.frameOf(sceneIndex,nativeFrame);
+    if(sceneIndex!==map.locate(state.frame).scene_index)return state;
     if(sceneEnded){
-      if(sceneIndex+1<map.scenes.length)return transport(map.scenes[sceneIndex+1].start,state.playing,false);
+      if(sceneIndex+1<map.scenes.length)return transport(Math.max(state.frame,map.scenes[sceneIndex+1].start),state.playing,false);
       return transport(map.last_frame,false,true);
     }
     return transport(frame,state.playing,false);
@@ -134,8 +138,9 @@
   function fromWire(wire,expected){
     if(!wire||typeof wire!=='object'||wire.version!==WIRE_VERSION||!Array.isArray(wire.scenes))
       throw new CompositionError(CODES.WIRE_MISMATCH,'the composition sent by Core has an unexpected shape');
-    const want=expected||{};
-    if(want.key!==undefined&&want.key!==wire.key)throw new CompositionError(CODES.WIRE_MISMATCH,'the composition belongs to another variant or pin set');
+    if(!expected||typeof expected.key!=='string'||!expected.key)
+      throw new CompositionError(CODES.KEY_REQUIRED,'fromWire needs the expected key (the run view or the requested variant): a stale map is never reused');
+    if(expected.key!==wire.key)throw new CompositionError(CODES.WIRE_MISMATCH,'the composition belongs to another variant or pin set');
     const map=build(wire.scenes,wire.scenes.map(s=>s&&s.transition_in));
     const same=map.fps===wire.fps&&map.total_frames===wire.total_frames&&map.scenes.every((s,i)=>{
       const w=wire.scenes[i];return s.start===w.start&&s.length===w.length;

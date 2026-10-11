@@ -130,7 +130,7 @@ def test_a_player_tick_maps_to_f_and_a_scene_end_hands_over_to_the_next_scene_fr
     assert tick(deck, state, 1, 100) == Transport(deck.start_of(1) + 240, True)           # 25 fps frame 100 = 4 s = master 240
     assert tick(deck, state, 1, 199, scene_ended=True) == Transport(deck.start_of(2), True)
     assert tick(deck, Transport(7000, False), 8, 300) == Transport(deck.frame_of(8, 300), False)   # a tick never resumes
-    assert tick(deck, state, 8, 719, scene_ended=True) == Transport(deck.last_frame, False, True)
+    assert tick(deck, Transport(deck.start_of(8) + 9, True), 8, 719, scene_ended=True) == Transport(deck.last_frame, False, True)
     with pytest.raises(CompositionError) as err:
         tick(deck, state, 1, 200)
     assert err.value.code == FRAME_OUT_OF_RANGE
@@ -177,3 +177,19 @@ def test_the_anchor_map_and_the_composition_clock_share_one_bounds_check():
     with pytest.raises(CompositionError) as clock_err:
         scene_manifest("s1", {"id": "S", "fps": 0, "duration_in_frames": 10})
     assert str(anchor_err.value) in str(clock_err.value)
+
+
+def test_only_the_current_scene_player_moves_f_and_a_scene_end_never_moves_it_backward():
+    cmap = build_composition(manifests([("a", 30, 90), ("b", 30, 90)]), [0, 15])     # b starts at 75, a ends at 90
+    in_overlap = Transport(80, True)                                                   # b (incoming) is current
+    assert tick(cmap, in_overlap, 0, 85) is in_overlap                                 # the outgoing Player is ignored
+    assert tick(cmap, in_overlap, 0, 89, scene_ended=True) is in_overlap               # its end does not jump back to 75
+    assert tick(cmap, in_overlap, 1, 6) == Transport(81, True)
+    assert tick(cmap, Transport(70, True), 0, 76) == Transport(76, True)                # the current Player crossing into the overlap hands over
+    assert tick(cmap, Transport(70, True), 0, 89, scene_ended=True) == Transport(75, True)
+    deck = build_composition(manifests(DECK))
+    stale = Transport(deck.start_of(2) + 3, False)
+    assert tick(deck, stale, 3, 0, scene_ended=True) is stale                          # a stale Player after « previous » moves nothing
+    assert tick(deck, stale, 1, 199) is stale
+    with pytest.raises(CompositionError):
+        tick(deck, stale, 1, 200)                                                      # a malformed tick is an error even when ignored

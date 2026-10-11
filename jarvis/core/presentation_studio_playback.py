@@ -36,6 +36,7 @@ import time
 from typing import Any, Protocol
 
 from jarvis.core.presentation_studio_autoplay import AutoPlayMixin, AutoTimings
+from jarvis.core.presentation_studio_composition_clock import pins_of
 from jarvis.core.presentation_studio_preview import Preview, ScenePreviewMixin
 from jarvis.core.presentation_studio_reload_stage import StageBinding
 from jarvis.core.presentation_studio_stage import StageError
@@ -60,7 +61,6 @@ from jarvis.domain.presentation_studio_roles import (
     plan_mode_entry, requirements,
 )
 from jarvis.domain.presentation_studio_score import parse_score
-from jarvis.core.presentation_studio_composition_clock import pins_of
 from jarvis.domain.composition_clock import composition_key
 from jarvis.domain.remotion_timeline import (
     UNRESOLVED as TIMELINE_UNRESOLVED, FrameMap, SegmentClock, build_frame_map, target_segment, timeline_wire,

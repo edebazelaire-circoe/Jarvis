@@ -30,6 +30,7 @@ CASES: list[dict[str, Any]] = [
     {"name": "slice03-mixed-fps", "scenes": _SLICE03, "transitions": None},
     {"name": "irregular", "scenes": [["a", 25, 199], ["b", 60, 7], ["c", 24, 1], ["d", 30, 901]], "transitions": None},
     {"name": "overlap", "scenes": [["a", 30, 90], ["b", 24, 240], ["c", 60, 120]], "transitions": [0, 15, 30]},
+    {"name": "overlap-qa", "scenes": [["a", 30, 90], ["b", 30, 90]], "transitions": [0, 15]},
     {"name": "odd-fps", "scenes": [["a", 7, 13], ["b", 11, 29], ["c", 120, 5]], "transitions": [0, 3, 2]},
     {"name": "one-scene", "scenes": [["only", 30, 90]], "transitions": None},
     {"name": "empty", "scenes": [], "transitions": None},
@@ -90,10 +91,18 @@ def _py_case(case: dict[str, Any]) -> dict[str, Any]:
                 transport.append(row)
     out["transport"] = transport
     ticks = []
-    for i, span in enumerate(cmap.scenes):
-        for n in (0, span.duration_in_frames // 2, span.duration_in_frames - 1):
+    starts = sorted({*probes, *(s.start + s.length // 2 for s in cmap.scenes)})
+    for f in starts:
+        for playing in (False, True):
             for ended in (False, True):
-                ticks.append(_state(tick(cmap, Transport(0, True), i, n, scene_ended=ended)))
+                state = Transport(f, playing, ended)
+                for i, span in enumerate(cmap.scenes):
+                    for n in (-1, 0, span.duration_in_frames // 2, span.duration_in_frames - 1, span.duration_in_frames):
+                        for scene_ended in (False, True):
+                            try:
+                                ticks.append(_state(tick(cmap, state, i, n, scene_ended=scene_ended)))
+                            except CompositionError as exc:
+                                ticks.append(_err(exc))
     out["tick"] = ticks
     out["wire"] = to_wire(cmap, key="cmp_test")
     return out
@@ -127,10 +136,14 @@ function jsCase(c){
     out.transport.push(row);
   }
   out.tick=[];
-  map.scenes.forEach((span,i)=>{
-    for(const n of [0,Math.floor(span.duration_in_frames/2),span.duration_in_frames-1])for(const ended of [false,true])
-      out.tick.push(st(C.tick(map,C.transport(0,true,false),i,n,ended)));
-  });
+  const starts=Array.from(new Set([...probes,...map.scenes.map(s=>s.start+Math.floor(s.length/2))])).sort((a,b)=>a-b);
+  for(const f of starts)for(const playing of [false,true])for(const ended of [false,true]){
+    const state=C.transport(f,playing,ended);
+    map.scenes.forEach((span,i)=>{
+      for(const n of [-1,0,Math.floor(span.duration_in_frames/2),span.duration_in_frames-1,span.duration_in_frames])
+        for(const sceneEnded of [false,true]){try{out.tick.push(st(C.tick(map,state,i,n,sceneEnded)))}catch(e){out.tick.push(err(e))}}
+    });
+  }
   return out;
 }
 const results=D.cases.map(jsCase);
@@ -138,9 +151,11 @@ const wires=D.wires.map(w=>{
   const ok=C.fromWire(w.wire,{key:w.wire.key});
   const checks={total:ok.total_frames,key:ok.key};
   const forged=JSON.parse(JSON.stringify(w.wire));forged.scenes[forged.scenes.length-1].length+=1;forged.total_frames+=1;
-  try{C.fromWire(forged)}catch(e){checks.forged=err(e)}
+  try{C.fromWire(forged,{key:forged.key})}catch(e){checks.forged=err(e)}
   try{C.fromWire(w.wire,{key:'cmp_other'})}catch(e){checks.other_key=err(e)}
-  try{C.fromWire(Object.assign({},w.wire,{version:2}))}catch(e){checks.version=err(e)}
+  try{C.fromWire(Object.assign({},w.wire,{version:2}),{key:w.wire.key})}catch(e){checks.version=err(e)}
+  try{C.fromWire(w.wire)}catch(e){checks.no_key=err(e)}
+  try{C.fromWire(w.wire,{})}catch(e){checks.empty_key=err(e)}
   return checks;
 });
 return {results,wires};
@@ -172,7 +187,7 @@ def test_python_and_js_give_the_same_answer_for_every_vector(tmp_path):
         py = {k: v for k, v in py.items() if k != "wire"}
         for part in py:
             assert got[part] == py[part], f"{case['name']}: {part} differs between Python and JS"
-    assert [r["build"].get("error") for r in expected] == [None, None, None, None, None, "composition_empty",
+    assert [r["build"].get("error") for r in expected] == [None, None, None, None, None, None, "composition_empty",
                                                             "composition_scene_invalid", "composition_scene_invalid",
                                                             "composition_scene_invalid", "composition_transition_invalid",
                                                             "composition_transition_invalid"]
@@ -181,3 +196,4 @@ def test_python_and_js_give_the_same_answer_for_every_vector(tmp_path):
         assert checks["forged"] == {"error": "composition_wire_mismatch"}          # a map that does not add up is refused
         assert checks["other_key"] == {"error": "composition_wire_mismatch"}       # a stale or foreign map is never reused
         assert checks["version"] == {"error": "composition_wire_mismatch"}
+        assert checks["no_key"] == checks["empty_key"] == {"error": "composition_key_required"}   # the stale-map check cannot be skipped

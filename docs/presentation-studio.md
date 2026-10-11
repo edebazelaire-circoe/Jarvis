@@ -2402,6 +2402,7 @@ Status: **Level 3** (handoff `jarvis-remotion-native-studio-playback-fix`, Slice
 - Master local frame `m` shows native frame `floor(m × fps_k / F)`. Native frame `n` is master local frame `ceil(n × F / fps_k)`.
 - Because `fps_k ≤ F`, every native frame has at least one master frame, and native → master → native is the identity (tested on every frame).
 - Integers only: no position is ever a float. The readout is `f / F` seconds.
+- **Known limit (pre-existing).** A non-integer fps (29.97, 23.976) cannot reach the map: the manifest schema refuses it (`remotion_source.py`, `source.composition.fps` must be an integer 1..120).
 - Why not a common multiple of the fps: the least common multiple of arbitrary fps up to 120 grows without bound, and an exact timebase is not needed once every native frame is reachable.
 
 **Transitions.** `transition_in_k` (master frames, **0 by default**, always 0 for the first scene) is how far scene `k` overlaps the end of scene `k-1`.
@@ -2422,14 +2423,17 @@ Status: **Level 3** (handoff `jarvis-remotion-native-studio-playback-fix`, Slice
 | `map.clamp(f)` | `map.clamp(f)` | explicit clamp to `0..L-1` (§ 4.9, after an edit shortens the deck) |
 | `Transport(frame, playing, ended)` | `transport(frame, playing, ended)` | the media clock state, a value |
 | `play`, `pause`, `seek(map, state, Seek.X, value)`, `tick(map, state, k, n, scene_ended=)` | `play`, `pause`, `seek(map, state, 'x', value)`, `tick(map, state, k, n, sceneEnded)` | the transport rules below |
-| `composition_key(presentation_id, variant_id, pins)`, `to_wire(map, key=)` | `fromWire(wire, {key})` | the served map; the browser recomputes it and refuses a mismatch or another key (`composition_wire_mismatch`) |
+| `composition_key(presentation_id, variant_id, pins)`, `to_wire(map, key=)` | `fromWire(wire, {key})` | the served map; the browser recomputes it and refuses a mismatch or another key (`composition_wire_mismatch`). The expected `key` is **required** (`composition_key_required`), so the stale-map check cannot be skipped |
 
 **Transport rules.** They are pure. The play state is always kept, unless said otherwise.
 - `next`, `previous`, `scene k` (thumbnail): go to a scene start, so the target scene starts at local frame 0. `next` on the last scene changes nothing.
 - `scrub f`: exactly `f`. `home`: 0. `end`: `L-1`. `step ±1`: only while paused.
 - `pause` holds exactly `f`; `play` continues from `f`.
 - Playing onto `L-1` gives `ended`: the final frame is held, paused. `play` then changes nothing; only `replay` (frame 0, playing) restarts. It never wraps.
-- `tick`: the Player of scene `k` reports native frame `n`, so `f = frame_of(k, n)`. When that Player reports its own end, the next scene starts at its local frame 0; after the last scene, `ended`. A tick never resumes a paused clock.
+- `tick`: the Player of scene `k` reports native frame `n`, so `f = frame_of(k, n)`.
+  - Only the Player of the **current** scene (the one containing `f`; during an overlap, the incoming one) moves `f`. A tick from another Player (the outgoing one of an overlap, or a stale one after a navigation) changes nothing. A malformed tick (frame or scene out of range) is still an error.
+  - When the current Player reports its own end, the next scene starts at its local frame 0, and `f` never moves backward (`max(f, start_(k+1))`). After the last scene, `ended`.
+  - A tick never resumes a paused clock.
 - **Errors, never silent defaults.** These all raise with their code:
   - an empty deck (`composition_empty`);
   - an invalid manifest or a duplicate scene (`composition_scene_invalid`);
@@ -2446,7 +2450,11 @@ Status: **Level 3** (handoff `jarvis-remotion-native-studio-playback-fix`, Slice
 - **Key.** `key = composition_key(presentation_id, variant_id, ordered (scene_id, prefab_id, version))`.
   - A pinned version is immutable, so the same key means the same map.
   - Another variant, another pin or another order gives another key. A renamed title keeps the key.
-- The playback view (`GET /v1/presentation-studio/playback`) carries the same `composition_key` while a run is active. A page holding a map with another key must refetch it, never reuse it. There is one map per variant, named by its key, and no second route for runs.
+- The playback view (`GET /v1/presentation-studio/playback`) carries the same `composition_key` while a run is active. There is one map per variant, named by its key, and no second route for runs.
+- **Key-mismatch rule (Slice 05 implements it).** When the run view's `composition_key` differs from the key of the map the page holds:
+  1. the page refetches the map **once**;
+  2. if the keys still differ, the variant changed under the run. The page shows « La variante a changé », and the run is reloaded through the existing hot-reload path.
+  - The page never plays with a stale map.
 
 **Direction of sync (one time authority).**
 - **Player clock → `f`.** The live Player's `clock {frame}` is advice (*Remotion timeline bridge › Security and authority*); it goes through `tick`. From `f`, through `locate`, come the scene index, the scene strip, the global bar and the time readout.

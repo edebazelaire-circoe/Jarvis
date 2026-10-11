@@ -106,7 +106,9 @@ def test_the_composition_clock_subsection_records_the_decision_the_rule_and_an_a
                    "`len_k = ceil(d_k × F / fps_k)`", "native → master → native is the identity", "**0 by default**",
                    "/v1/presentation-studio/presentations/{presentation_id}/variants/{variant_id}/composition-clock`",
                    "`composition_key`", "**Player clock → `f`.**", "**UI seek → `f` → Player.**",
-                   "Core holds **no** media clock for continuous video.", "**Slice 05**", "**Slice 06**", "**Slice 07**"):
+                   "Core holds **no** media clock for continuous video.", "**Key-mismatch rule (Slice 05 implements it).**", "« La variante a changé »",
+                   "The page never plays with a stale map.", "`composition_key_required`", "Only the Player of the **current** scene",
+                   "never moves backward", "**Known limit (pre-existing).** A non-integer fps", "**Slice 05**", "**Slice 06**", "**Slice 07**"):
         assert needle in text, needle
     root = Path(__file__).resolve().parents[2]
     python = (root / "jarvis" / "domain" / "composition_clock.py").read_text(encoding="utf-8")
