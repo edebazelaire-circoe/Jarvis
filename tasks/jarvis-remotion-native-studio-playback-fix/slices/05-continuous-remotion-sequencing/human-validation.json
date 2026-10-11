@@ -1,0 +1,9 @@
+﻿{
+  "checks": [
+    {
+      "id": "HV-RFX-05-01",
+      "instruction": "Watch and approve real continuous playback on target Windows/Chrome machine after machine gates pass.",
+      "requires_evidence_first": true
+    }
+  ]
+}

@@ -1,0 +1,9 @@
+﻿{
+  "checks": [
+    {
+      "id": "HV-RFX-08-01",
+      "instruction": "Physical projector/second monitor and audio check required.",
+      "requires_evidence_first": true
+    }
+  ]
+}

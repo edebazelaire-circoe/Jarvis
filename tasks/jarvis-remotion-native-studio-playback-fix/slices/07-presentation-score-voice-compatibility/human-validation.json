@@ -1,0 +1,9 @@
+﻿{
+  "checks": [
+    {
+      "id": "HV-RFX-07-01",
+      "instruction": "Validate real spoken cues, audio routing and dual-screen presentation on the target machine.",
+      "requires_evidence_first": true
+    }
+  ]
+}

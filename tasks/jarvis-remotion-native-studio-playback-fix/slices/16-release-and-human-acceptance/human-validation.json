@@ -1,0 +1,9 @@
+﻿{
+  "checks": [
+    {
+      "id": "HV-RFX-16-01",
+      "instruction": "Approve on target machine with actual display/audio and two comparison presentations.",
+      "requires_evidence_first": true
+    }
+  ]
+}

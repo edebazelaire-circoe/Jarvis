@@ -1,0 +1,17 @@
+﻿{
+  "slice_id": "11",
+  "title": "First-class Remotion Studio and Variants choices",
+  "dependencies": [
+    "02-product-experience-contract",
+    "09-remove-legacy-floating-viewer",
+    "10-variants-interface-control-audit"
+  ],
+  "task_type": null,
+  "task_type_resolution_required": true,
+  "requires_caveman": true,
+  "requires_coding_guideline": true,
+  "frontend": true,
+  "requires_impeccable": true,
+  "claude_for_frontend_when_available": true,
+  "requires_agent_trace_analysis": false
+}

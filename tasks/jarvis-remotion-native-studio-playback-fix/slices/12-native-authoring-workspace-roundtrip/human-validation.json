@@ -1,0 +1,9 @@
+﻿{
+  "checks": [
+    {
+      "id": "HV-RFX-12-01",
+      "instruction": "Confirm expected trust/approval UX if product cannot safely enable unsandboxed editing by default.",
+      "requires_evidence_first": true
+    }
+  ]
+}

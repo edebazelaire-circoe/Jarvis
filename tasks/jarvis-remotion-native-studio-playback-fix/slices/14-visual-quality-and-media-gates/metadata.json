@@ -1,0 +1,18 @@
+﻿{
+  "slice_id": "14",
+  "title": "Real rendered-frame quality and regression gates",
+  "dependencies": [
+    "03-reproduce-timeline-and-transition-failures",
+    "05-continuous-remotion-sequencing",
+    "10-variants-interface-control-audit",
+    "13-claude-native-generation-parity"
+  ],
+  "task_type": null,
+  "task_type_resolution_required": true,
+  "requires_caveman": true,
+  "requires_coding_guideline": true,
+  "frontend": false,
+  "requires_impeccable": false,
+  "claude_for_frontend_when_available": false,
+  "requires_agent_trace_analysis": false
+}

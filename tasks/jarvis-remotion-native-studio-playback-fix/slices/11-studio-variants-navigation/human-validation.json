@@ -1,0 +1,9 @@
+﻿{
+  "checks": [
+    {
+      "id": "HV-RFX-11-01",
+      "instruction": "Human confirms Studio, Variants and close/fullscreen UX on actual browser.",
+      "requires_evidence_first": true
+    }
+  ]
+}

@@ -1,0 +1,9 @@
+﻿{
+  "checks": [
+    {
+      "id": "HV-RFX-09-01",
+      "instruction": "Human visually confirms screenshot-1 experience no longer appears.",
+      "requires_evidence_first": true
+    }
+  ]
+}
