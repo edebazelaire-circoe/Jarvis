@@ -1799,7 +1799,7 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
       if(ahead&&detail.object_id&&ahead.prefab){
         const host=prefabs();
         if(host&&typeof host.preload==='function'){
-          host.preload(detail.object_id,{object_id:detail.object_id,prefab:{id:ahead.prefab.id,version:ahead.prefab.version},title:ahead.title,
+          host.preload(detail.object_id,{object_id:detail.object_id,scene_id:ahead.scene_id,prefab:{id:ahead.prefab.id,version:ahead.prefab.version},title:ahead.title,
             props:ahead.props,data:ahead.data});
         }
       }

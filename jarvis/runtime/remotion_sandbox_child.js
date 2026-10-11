@@ -116,7 +116,10 @@
     root.render(React.createElement(Player,{
       ref:function(instance){playerRef.current=instance;if(instance){attachClock(instance);applyPending()}},component:guarded(React,scene.component),durationInFrames:mounted.composition.durationInFrames,fps:mounted.composition.fps,
       compositionWidth:mounted.composition.width,compositionHeight:mounted.composition.height,inputProps:mounted.props,
-      initiallyMuted:true,controls:false,clickToPlay:false,doubleClickToFullscreen:false,spaceKeyToPlayOrPause:false,loop:true,
+      initiallyMuted:true,controls:false,clickToPlay:false,doubleClickToFullscreen:false,spaceKeyToPlayOrPause:false,
+      /* Never wraps (native-studio-playback-fix Slice 05, contract § 4.7): the scene plays once and HOLDS its last frame. Both settings are
+         needed: with `loop:false` alone the Player jumps back to frame 0 when it ends (Slice 03 control group). */
+      loop:false,moveToBeginningWhenEnded:false,
       style:{width:'100%',height:'100%'}
     }));
   }
