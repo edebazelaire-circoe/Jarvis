@@ -23,7 +23,9 @@ lentement, ou dont le cadre avait été perdu, était SAUTÉE (Slice 03, défaut
 - une scène Remotion dont la ligne de temps n'est pas (encore) résolue est tenue de même, jamais avancée au jugé ;
 - seul un élément SANS segment de média à jouer (scène HTML, élément qui ne change pas le segment, segment d'une image) garde un rythme :
   `max(durée visée, MIN_DWELL_MS)` ou, à défaut, `DEFAULT_DWELL_MS`. La pause l'arrête ; il est réarmé à la reprise.
-Le chemin du présentateur (portée `manual`, Slice 07) n'a jamais eu d'échéance : inchangé.
+Le chemin du présentateur (portée `manual`, Slice 07) n'a jamais eu d'échéance : inchangé. Dans une course que Jarvis rythme (Slice 07), la
+page dit aussi `started` / `done` (`_page_reports`) : Core l'apprend sans avancer (`media_segment`), et le silence explicite du présentateur
+dure le média au lieu de sa cible (`target_duration_ms` ne coupe jamais une composition).
 
 **Une attente se voit** (Slice 05 rework, P1). Un `done` perdu, un `started` jamais dit (un `done` sans lui est ignoré) ou une page fermée
 tiennent la lecture sans que rien ne bouge. Quand un segment de média reste sans nouvelle de la page au-delà de sa propre durée + une
@@ -42,6 +44,7 @@ from typing import Any
 
 from jarvis.domain.presentation_studio_playback import EventKind, Phase
 from jarvis.domain.presentation_studio_playback_requests import Scope
+from jarvis.domain.presentation_studio_score import ItemKind
 
 #: Un élément SANS segment de média reste au moins ceci, et par défaut ceci quand la partition ne vise aucune durée. Jamais une scène Remotion.
 MIN_DWELL_MS = 1500
@@ -102,6 +105,33 @@ class AutoPlayMixin:
         return (self._scope is not Scope.MANUAL and self._plan is not None and state.phase is Phase.PLAYING
                 and state.sequence is None and not state.aux and not state.jarvis_speaks and state.pending is None)
 
+    def _page_reports(self) -> bool:
+        """Does the page say when a media segment started and ended (`timeline.auto`)? In a chained play, and (Slice 07) in a run Jarvis
+        paces: his silence items wait for the media instead of their soft target. A scene without anchors then gets one whole segment."""
+
+        return self._scope is not Scope.MANUAL or self._state.jarvis_speaks
+
+    def _waits_for_media(self) -> bool:
+        """Slice 07: the Jarvis presenter holds the current item on its media segment (an explicit silence of a run he paces, playing)."""
+
+        state, plan = self._state, self._plan
+        return (state.jarvis_speaks and plan is not None and state.phase is Phase.PLAYING and state.sequence is None and not state.aux
+                and state.pending is None and 0 <= state.position < len(plan) and plan.item_at(state.position).kind is ItemKind.SILENCE)
+
+    def media_segment(self) -> str | None:
+        """Slice 07, for the Jarvis presenter: `None` when the scene on the stage has no media segment to play (an HTML scene, a hold,
+        no Remotion source: a soft pace may apply); `"playing"` while its Player has not said it reached the stop frame (a Remotion scene
+        whose timeline is not resolved is held the same way, never paced); `"done"` once the page said so for this segment."""
+
+        if self._plan is None or not self._state.active:
+            return None
+        timeline = self._timeline_view()
+        if timeline is None:
+            return "playing" if self._shows_video() else None
+        if timeline["until_frame"] <= timeline["from_frame"]:
+            return None
+        return "done" if timeline["seq"] == self._auto_done_seq else "playing"
+
     def _auto_plan(self) -> tuple[tuple[Any, ...], int] | None:
         """`(identité de ce qui joue, délai en ms avant que Core avance seul)`, ou `None` quand rien n'avance seul."""
 
@@ -157,7 +187,7 @@ class AutoPlayMixin:
         """`{seq, started, waited_ms}` when the media segment of a chained play has had its own length + a margin (played time) without its
         page saying it finished; `None` otherwise. A description for the view, never an advance (Slice 05 rework, P1)."""
 
-        if not self._auto_eligible():
+        if not (self._auto_eligible() or self._waits_for_media()):
             return None
         timeline = self._timeline_view()
         if timeline is None or timeline["until_frame"] <= timeline["from_frame"] or timeline["seq"] == self._auto_done_seq:

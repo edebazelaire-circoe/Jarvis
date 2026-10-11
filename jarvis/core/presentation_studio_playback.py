@@ -63,7 +63,7 @@ from jarvis.domain.presentation_studio_roles import (
 from jarvis.domain.presentation_studio_score import parse_score
 from jarvis.domain.composition_clock import composition_key
 from jarvis.domain.remotion_timeline import (
-    UNRESOLVED as TIMELINE_UNRESOLVED, FrameMap, SegmentClock, build_frame_map, target_segment, timeline_wire,
+    UNRESOLVED as TIMELINE_UNRESOLVED, FrameMap, Move, Placement, SegmentClock, build_frame_map, place, timeline_wire,
 )
 from jarvis.domain.scene import ScenePrefabRef
 from jarvis.domain.v2 import ProtocolEnvelope
@@ -175,6 +175,9 @@ class PresentationStudioPlaybackService(AutoPlayMixin, ScenePreviewMixin):
         #: `(scene_id, is a Remotion scene)` of the scene whose timeline was last resolved (Slice 05: a video scene is never paced by a dwell).
         self._tl_video: tuple[str, bool] | None = None
         self._tl_clock = SegmentClock()
+        #: Slice 07 (§ 5): where the Player stands in the scene on the stage, and the move not yet seen by a timeline view.
+        self._tl_place: Placement | None = None
+        self._tl_move = Move.NONE
         #: Slice 23: the scope of the run (`manual` by default) and the deadline that keeps a chained play alive without a browser.
         self._init_autoplay(autoplay)
         self._compositions: dict[tuple[str, int], dict[str, Any] | None] = {}
@@ -564,7 +567,7 @@ class PresentationStudioPlaybackService(AutoPlayMixin, ScenePreviewMixin):
         if self._plan is None or not self._state.active:
             return self._refused("advance", RefusalCode.NOT_RUNNING, "no presentation is running")
         timeline = self._timeline_view()
-        if timeline is None or timeline["seq"] != seq or self._scope is Scope.MANUAL:
+        if timeline is None or timeline["seq"] != seq or not timeline["auto"]:
             self._trace("autoplay_report_ignored", "Rapport de segment ignore (segment ou portee perimes)", data={
                 "seq": seq, "event": event, "current": None if timeline is None else timeline["seq"], "scope": self._scope.value})
             return PlaybackResult(PlaybackStatus.APPLIED, "advance", self._view())
@@ -573,12 +576,19 @@ class PresentationStudioPlaybackService(AutoPlayMixin, ScenePreviewMixin):
             self._tl_clock.restart(self._ms(), self._state.phase is Phase.PLAYING)
             self._rearm_auto()
             return PlaybackResult(PlaybackStatus.APPLIED, "advance", self._view())
-        if not self._auto_eligible() or timeline["seq"] == self._auto_done_seq:
+        if timeline["seq"] == self._auto_done_seq or not (self._state.jarvis_speaks or self._auto_eligible()):
             return PlaybackResult(PlaybackStatus.APPLIED, "advance", self._view())
         if self._auto_started_seq != seq:
             # Slice 05: the Player is the media clock; its `done` counts once the page said this segment started (never Core's own
             # estimate of the played time, which counted loading and scrubs and so ended scenes early or late).
             self._trace("autoplay_report_early", "Fin de segment annoncee avant son debut : ignoree", level="warning", data={"seq": seq})
+            return PlaybackResult(PlaybackStatus.APPLIED, "advance", self._view())
+        if self._state.jarvis_speaks:
+            # Slice 07: a run Jarvis paces only LEARNS that the media segment reached its stop frame; its presenter moves on (a silence
+            # item waits for it instead of its soft target). Core never advances on the page's word here.
+            self._auto_done_seq = seq
+            self._trace("media_segment_done", "Segment de media fini selon la page", data={"run_id": self._state.run_id, "seq": seq})
+            self._wake()
             return PlaybackResult(PlaybackStatus.APPLIED, "advance", self._view())
         result = await self._auto_advance("report")
         return result if result is not None else PlaybackResult(PlaybackStatus.APPLIED, "advance", self._view())
@@ -590,6 +600,11 @@ class PresentationStudioPlaybackService(AutoPlayMixin, ScenePreviewMixin):
                         data={"command": name, "problems": problems[:3]})
         previous = self._state
         self._state = state
+        move = _move_of(name, previous, state)
+        if move is Move.JUMP and self._scope is not Scope.MANUAL:
+            move = Move.SEEK   # a chained play plays the item it jumps to: a hold would be paced by a dwell and moved on unseen
+        if move is not Move.NONE:
+            self._tl_move = move   # consumed by the first timeline view of this state's scene (the stage may still be loading it)
         self._timeline_view()
         self._trace("playback_transition", "Transition de lecture", data={
             "command": name, "from": previous.phase.value, "to": state.phase.value, "position": state.position + 1,
@@ -748,6 +763,7 @@ class PresentationStudioPlaybackService(AutoPlayMixin, ScenePreviewMixin):
             self._tl_map = None
             self._tl_video = None
             self._tl_clock.reset()   # a new run never inherits the played time of the previous one (Slice 12)
+            self._tl_place, self._tl_move = None, Move.NONE
             self._cancel_auto()
             self._scope, self._auto_done_seq, self._auto_started_seq = request.scope, None, None
             await self._reclaim_leftovers()
@@ -909,7 +925,7 @@ class PresentationStudioPlaybackService(AutoPlayMixin, ScenePreviewMixin):
             composition = self._compositions[pin]
             self._tl_video = (scene_id, composition is not None)
             fmap = None if composition is None else build_frame_map(scene_id, composition, shown.anchors or scene.anchors,
-                                                                        whole_scene=self._scope is not Scope.MANUAL)
+                                                                        whole_scene=self._page_reports())
         except Exception as exc:  # noqa: BLE001 - captured as an error row + a visible notice: the scene then plays unguided (Slice 10)
             self._notice(TIMELINE_UNRESOLVED)
             self._trace("timeline_unresolved", "Ligne de temps Remotion non resolue", level="error",
@@ -938,18 +954,29 @@ class PresentationStudioPlaybackService(AutoPlayMixin, ScenePreviewMixin):
         de parler ni un outil). Aussi appelee a chaque transition pour que le temps joue du segment exclue les pauses."""
 
         fmap, plan, state = self._tl_map, self._plan, self._state
-        if fmap is None or plan is None or not state.active or fmap.scene_id != stage_scene_id(plan, state):
+        if plan is None or not state.active:
+            self._tl_clock.reset()
+            self._tl_place = None
+            return None
+        on_stage = stage_scene_id(plan, state)
+        if fmap is None or fmap.scene_id != on_stage:
             self._tl_clock.reset()   # the scene left the timeline: its played time does not wait for it to come back
+            if self._tl_place is not None and self._tl_place.scene_id != on_stage:
+                self._tl_place = None   # another scene is on the stage: coming back is a new entry (§ 5)
             return None
         revealed = {anchor for scene, anchor in progress_of(plan, state).revealed if scene == fmap.scene_id}
-        segment = target_segment(fmap, revealed)
+        # the segment on screen has not played one frame yet (and its page did not say it finished)
+        fresh = self._tl_clock.played(self._ms()) * fmap.fps < 1000 and self._auto_done_seq != self._tl_clock.seq
+        self._tl_place = place(fmap, revealed, self._tl_move, self._tl_place, fresh=fresh)
+        self._tl_move = Move.NONE
+        segment = self._tl_place.segment
         cap_ms = -(-(segment.until - segment.start + 1) * 1000 // fmap.fps)
         key = (fmap.scene_id, fmap.composition_id, segment.anchor_id, segment.start, segment.until, fmap.fps)
         seq, play_ms = self._tl_clock.observe(key, state.phase is Phase.PLAYING, self._ms(), cap_ms)
         shown = self._scenes.get(fmap.scene_id)
         prefab = _pin_key(shown)
         return timeline_wire(fmap, segment, playing=state.phase is Phase.PLAYING, seq=seq, play_ms=play_ms, prefab=prefab,
-                             auto=self._scope is not Scope.MANUAL)
+                             auto=self._page_reports())
 
     async def _retime(self) -> None:
         """After the plan or a pin moved without a new stage sync (a hot reload patches the window itself): rebuild the frame map of the
@@ -1327,6 +1354,17 @@ class PresentationStudioPlaybackService(AutoPlayMixin, ScenePreviewMixin):
 _UNPROCESSABLE = frozenset({RefusalCode.DETOUR_INVALID.value})
 _STATUS_OF = {"start": "started", "pause": "paused", "resume": "resumed", "detour": "detour", "return": "returned",
               "edit_pause": "paused"}
+#: Slice 07 (§ 5): what a committed command did to the score, for the Player's placement (`remotion_timeline.place`). A name not listed
+#: moved nothing (pause, resume, detour, stage acknowledgements, speaker); `return` is judged by the position it lands on.
+_MOVE_OF = {"start": Move.FORWARD, "next": Move.FORWARD, "cue": Move.FORWARD, "reveal": Move.FORWARD,
+            "sequence_step": Move.FORWARD, "sequence_done": Move.FORWARD, "skip_sequence": Move.FORWARD,
+            "previous": Move.JUMP, "goto": Move.JUMP, "hide": Move.JUMP, "sequence_abort": Move.JUMP, "play": Move.RESTART}
+
+
+def _move_of(name: str, before: PlaybackState, after: PlaybackState) -> Move:
+    if name == "return" and after.position != before.position:
+        return Move.FORWARD if after.position > before.position else Move.JUMP
+    return _MOVE_OF.get(name, Move.NONE)
 
 
 def _pin_key(scene: Any) -> str | None:

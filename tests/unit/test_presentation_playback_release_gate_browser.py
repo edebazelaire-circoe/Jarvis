@@ -379,6 +379,48 @@ async def test_a_manual_scene_without_anchor_plays_once_and_holds_its_last_frame
         assert end.get("frame") == 89 and end.get("playing") is False, f"not held on its last frame: {end}"
 
 
+async def test_a_presenter_run_enters_a_scene_on_frame_zero_while_its_entry_reveals_a_later_anchor(tmp_path):
+    """(e) § 5, defect C (Slice 07): presenter run, the band's « Suivant » (the keyboard path) leaves S1 and enters S2 (8 s @ 30) whose
+    entry item reveals anchor `a2_0` (2 s = frame 60). Core's timeline says `from_frame` 0 / `until_frame` 149; the run stage's Player is
+    ordered from local frame 0 (never joined at 60), never steps back, and holds the item's stop frame 149 (the frame before the next anchor,
+    5 s = 150)."""
+
+    async with RemotionStack(tmp_path, runtime_dir=RUNTIME) as stack:
+        pid, _vid = await make_deck(stack, reveal_on_entry=True)
+        player = run_state(240)
+        plan = open_variants(pid) + presenter_start(stack, pid) + [
+            {"until": f"(()=>{{const s={run_state(90)};return !!s&&s.phase==='ready'}})()", "ms": 60000, "required": True, "as": "s1_ready"},
+            {"until": "!!document.querySelector('#jvStudioBand .jvsp-next:not([disabled])')", "ms": 20000, "required": True, "as": "band"},
+            {"eval": "document.querySelector('#jvStudioBand .jvsp-next').click()"},   # the band's own handler (Variants covers the band)
+            {"until": f"(()=>{{const s={player};return !!s&&s.phase==='ready'&&s.frame>=140&&!s.playing}})()", "ms": 60000, "as": "held"},
+            {"wait": 2000}, {"value": "end", "expr": player}, {"value": "probe", "expr": READ_PROBE}, http(stack, "core", "GET", PLAYBACK)]
+        result = await run_long(stack.page_url, plan, timeout=240)
+        reads = result["reads"]
+        harness("failed" not in reads, reads.get("failed"))
+        check_http(reads, "start")
+        probe = reads["probe"]
+        clocks = player_clocks(probe)
+        uids = [row[2] for row in probe["ev"] if row[1] == "mount" and row[3] != "explorer" and row[4] == "S2" and row[2] in clocks]
+        harness(uids, "no S2 Player clock recorded on the run stage")
+        uid = max(uids, key=lambda u: len(clocks[u]))
+        moving = [frame for _ms, frame, playing in clocks[uid] if playing]
+        evidence = {"first_play": first_play(probe, uid), "held": reads.get("held"), "end": reads.get("end"), "core": core_view(reads.get("core")),
+                    "lowest_moving_frame": min(moving) if moving else None, "wraps": wraps(clocks[uid]),
+                    "backward": [(a, b) for a, b in zip(clocks[uid], clocks[uid][1:]) if b[1] < a[1]],
+                    "orders": [row for row in probe["ev"] if row[1] == "order" and row[2] == uid], "clocks": clocks[uid][:40]}
+        record("presenter_entry_reveals_anchor_S2", evidence)
+        core = evidence["core"] or {}
+        assert (core.get("from"), core.get("until")) == (0, 149), f"Core's segment for the entered scene: {core}"
+        assert evidence["first_play"] and evidence["first_play"][1] <= 2, f"S2 was joined mid-animation: {evidence['first_play']}"
+        assert evidence["lowest_moving_frame"] is not None and evidence["lowest_moving_frame"] < 60, "the entry (frames 0..59) was never played"
+        plays = [row for row in evidence["orders"] if row[3] == "play"]
+        assert plays and plays[0][4:] == [0, 149], f"the first play order to S2 (after the host's paused mount): {plays[:2]}"
+        assert evidence["backward"] == [], f"the S2 Player stepped back (a replay): {evidence['backward'][:3]}"
+        end = evidence["end"] or {}
+        assert end.get("frame") == 149 and end.get("playing") is False, f"not held on the item's stop frame: {end}"
+        assert evidence["wraps"] == []
+
+
 # ---------------------------------------------------------------------------------------------------------------- (a) Variants: slide change
 
 async def explorer_run(tmp_path) -> dict:

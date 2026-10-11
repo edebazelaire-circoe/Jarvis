@@ -11,6 +11,9 @@ C'est un **adaptateur pur**, sans E/S ni horloge : la partition (`Score`, `Score
    = jouer son segment (aller à `de`, jouer, **s'arrêter sur `jusqu'à`** = l'image avant l'ancre suivante) ; rien de révélé = le
    segment d'entrée (de 0 à l'image avant la première ancre). Le repère de lecture est l'ancre révélée la plus loin ; **masquer**
    les ancres suivantes ramène en arrière (réversible, comme tout le dépliement de la partition).
+   `place` (handoff native-studio-playback-fix, Slice 07, contrat § 5) : le segment que le lecteur reçoit dans une lecture de
+   présentateur. Une scène nouvellement entrée part de son image locale 0 jusqu'au `until` de l'élément (jamais de l'ancre) ; un retour ou
+   un saut tient l'image d'arrêt de l'élément ; une reprise dans la même scène continue depuis l'image tenue.
 3. `SegmentClock` : le temps **joué** (pauses exclues) du segment courant selon l'horloge de Core, et un compteur `seq` qui
    n'avance que lorsque le segment change (le navigateur distingue ainsi « aller au segment » de « reprendre »).
 
@@ -27,6 +30,7 @@ from __future__ import annotations
 
 from collections.abc import Collection, Mapping, Sequence
 from dataclasses import dataclass
+from enum import StrEnum
 from typing import Any
 
 #: Bornes de la composition (celles du manifeste de source, `remotion_source`).
@@ -169,6 +173,80 @@ def target_segment(fmap: FrameMap, revealed: Collection[str]) -> Segment:
     return segment_for(fmap, None if best is None else best[2])
 
 
+class Move(StrEnum):
+    """Ce qui a amené la partition à son état (le service le nomme d'après la commande ; handoff native-studio-playback-fix, Slice 07)."""
+
+    #: pause, reprise, détour, acquittement du cadre, changement d'orateur : la position n'a pas bougé
+    NONE = "none"
+    #: départ, `next`, une cue, un pas de séquence verrouillée, une révélation : la partition avance
+    FORWARD = "forward"
+    #: `previous`, `goto`, `hide`, un point de reprise : retour en arrière ou saut
+    JUMP = "jump"
+    #: une lecture enchaînée reprend la scène depuis son premier élément
+    RESTART = "restart"
+    #: un saut PENDANT une lecture enchaînée : le segment de l'élément visé se joue (une tenue y serait rythmée puis sautée, jamais vue)
+    SEEK = "seek"
+
+
+class Arrival(StrEnum):
+    """Comment le lecteur arrive sur le segment de l'élément (`docs/presentation-studio.md` > *Presentation experience contract* § 5)."""
+
+    #: scène nouvellement entrée : image locale 0, puis jusqu'au `until` de l'élément (l'entrée se joue, jamais prise en route)
+    ENTER = "enter"
+    #: même scène, la partition avance : le segment de l'élément, depuis son ancre
+    PLAY = "play"
+    #: retour ou saut : l'image d'arrêt de l'élément, tenue, sans rejouer les segments d'avant
+    HOLD = "hold"
+
+
+@dataclass(frozen=True, slots=True)
+class Placement:
+    """Où en est le lecteur d'une scène dans une lecture de présentateur : le segment que la partition vise (`target`, celui de l'ancre
+    révélée la plus loin) et la façon d'y arriver (`arrival`). `segment` est ce que le navigateur reçoit."""
+
+    scene_id: str
+    target: Segment
+    arrival: Arrival
+
+    @property
+    def segment(self) -> Segment:
+        target = self.target
+        if self.arrival is Arrival.ENTER:
+            return Segment(target.anchor_id, 0, target.until)
+        if self.arrival is Arrival.HOLD:
+            return Segment(target.anchor_id, target.until, target.until)
+        return target
+
+
+def place(fmap: FrameMap, revealed: Collection[str], move: Move, previous: Placement | None, *, fresh: bool = False) -> Placement:
+    """Slice 07 (§ 5) : le placement du lecteur pour l'état de la partition. Pur et idempotent (`move` NONE et le même état rendent le même
+    placement). Les ancres bornent seulement l'arrêt (`until`) et la tenue, jamais le début d'une scène nouvellement entrée :
+
+    - une scène nouvellement entrée (pas de placement précédent dans cette scène) part de son image locale 0 et joue jusqu'au `until` de
+      l'élément, même quand l'élément d'entrée révèle une ancre à `at_ms > 0` (`ENTER`) ; entrée par un saut : tenue (`HOLD`) ;
+    - même scène, même segment visé : le placement ne change pas (une reprise continue depuis l'image tenue, même `seq`) ;
+    - même scène, la partition avance vers une ancre plus loin : son segment (`PLAY`) ; sauf si l'entrée n'a pas encore joué une image
+      (`fresh` : le pas 0 d'une séquence verrouillée révèle une ancre à l'instant où la scène entre) : l'entrée part toujours de 0 et va
+      jusqu'au nouveau `until` (`ENTER`), sinon l'animation d'entrée serait sautée ;
+    - même scène, retour ou saut (ou une ancre plus tôt) : l'image d'arrêt de l'élément, tenue (`HOLD`) ;
+    - `RESTART` (lecture enchaînée relancée) : la scène repart de 0 ;
+    - `SEEK` (saut pendant une lecture enchaînée) : le segment de l'élément visé se joue, depuis son ancre (comportement de la Slice 05)."""
+
+    target = target_segment(fmap, revealed)
+    if move is Move.RESTART:
+        return Placement(fmap.scene_id, target, Arrival.ENTER)
+    if previous is None or previous.scene_id != fmap.scene_id:
+        arrival = {Move.JUMP: Arrival.HOLD, Move.SEEK: Arrival.PLAY}.get(move, Arrival.ENTER)
+        return Placement(fmap.scene_id, target, arrival)
+    if target.anchor_id == previous.target.anchor_id or move is Move.NONE:
+        return Placement(fmap.scene_id, target, previous.arrival)
+    if move is Move.FORWARD and target.start > previous.target.start:
+        return Placement(fmap.scene_id, target, Arrival.ENTER if fresh and previous.arrival is Arrival.ENTER else Arrival.PLAY)
+    if move is Move.SEEK:
+        return Placement(fmap.scene_id, target, Arrival.PLAY)
+    return Placement(fmap.scene_id, target, Arrival.HOLD)
+
+
 def timeline_wire(fmap: FrameMap, segment: Segment, *, playing: bool, seq: int, play_ms: int, prefab: str | None = None,
                   auto: bool = False) -> dict[str, Any]:
     """La ligne de temps de la vue de lecture. Entiers, booléen et identifiants seulement ; une vingtaine d'octets par champ.
@@ -195,6 +273,12 @@ class SegmentClock:
         self._seq = 0
         self._acc = 0
         self._since: int | None = None
+
+    @property
+    def seq(self) -> int:
+        """Le numéro du segment observé en dernier (0 avant le premier)."""
+
+        return self._seq
 
     def reset(self) -> None:
         self._key, self._acc, self._since = None, 0, None

@@ -87,8 +87,9 @@ def test_superseded_statements_point_to_the_contract():
     playback = explorer[explorer.index("### Playback"):]
     assert "**Superseded (2026-10).**" in playback[:600] and ANCHOR in playback[:600]
     bridge = _section("## Remotion timeline bridge (Level 3, Remotion handoff Slice 12)")
-    entry = bridge.index("For the scene on the stage the playhead is")
-    assert "**Superseded (2026-10).**" in bridge[entry - 400:entry] and ANCHOR in bridge[entry - 400:entry]
+    # resolved by Slice 07 (`remotion_timeline.place`): the section states the § 5 entry rule itself and points to the contract
+    entry = bridge.index("How the Player arrives on the target (Slice 07")
+    assert ANCHOR in bridge[entry:entry + 300] and "A **newly entered** scene plays from its local frame 0" in bridge[entry:entry + 1200]
     # resolved by Slice 05 (`loop: false` + `moveToBeginningWhenEnded: false` on every surface): the note now says it holds everywhere
     assert "plays ONCE and holds its last image (it does not loop), so that the chain knows when it is done. *(Since Slice 05 this holds on every surface" in bridge
     for name in ("remotion-studio.md", "presentation-engine.md", "remotion-isolation.md", "OPERATIONS.md"):

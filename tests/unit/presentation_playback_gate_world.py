@@ -90,9 +90,10 @@ def frames_of(index: int) -> int:
     return seconds * fps
 
 
-async def make_deck(stack: RemotionStack, *, title: str = "Neuf scenes") -> tuple[str, str]:
+async def make_deck(stack: RemotionStack, *, title: str = "Neuf scenes", reveal_on_entry: bool = False) -> tuple[str, str]:
     """Publie les 9 sources, crée la présentation, sa partition (un élément d'entrée par scène + un élément de révélation par ancre, chacun
-    visant 8 s) et la direction artistique de secours. Rend `(presentation_id, variant_id)`."""
+    visant 8 s) et la direction artistique de secours. Rend `(presentation_id, variant_id)`. `reveal_on_entry` (Slice 07) : l'élément
+    d'entrée d'une scène à ancres révèle déjà sa première ancre (`at_ms > 0`) au lieu d'avoir un élément à lui."""
 
     for index, prefab_id in enumerate(PREFABS):
         seconds, fps, _anchors, bg = DECK[index]
@@ -114,8 +115,9 @@ async def make_deck(stack: RemotionStack, *, title: str = "Neuf scenes") -> tupl
     harness(status == 200, f"variant save refused: {saved}")
     items: list[dict[str, Any]] = []
     for index, (_s, _f, anchors, _bg) in enumerate(DECK):
-        items.append({"scene_id": SCENE_IDS[index], "reveal": None})
-        items += [{"scene_id": SCENE_IDS[index], "reveal": f"a{index + 1}_{k}"} for k in range(len(anchors))]
+        first = 1 if reveal_on_entry and anchors else 0
+        items.append({"scene_id": SCENE_IDS[index], "reveal": f"a{index + 1}_0" if first else None})
+        items += [{"scene_id": SCENE_IDS[index], "reveal": f"a{index + 1}_{k}"} for k in range(first, len(anchors))]
     wire = []
     for n, entry in enumerate(items, start=1):
         visual = [{"kind": "reveal", "scene_id": entry["scene_id"], "anchor_id": entry["reveal"]}] if entry["reveal"] else []

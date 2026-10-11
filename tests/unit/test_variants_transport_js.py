@@ -651,3 +651,26 @@ env.key(sl,'ArrowRight');
 return {phase:ex.playback.view().phase,said:noticeText()};
 """)
     assert out["phase"] == "unavailable" and out["said"].startswith("Vidéo indisponible : "), out
+
+
+def test_continuous_video_reads_the_map_and_never_touches_the_score_cues_or_speech(tmp_path):
+    """Slice 07 (§ 5): « Lire », pause, ⏭, the slider, « Lire seulement cette scène », End and « Rejouer » drive the one composition clock
+    and nothing else: after Variants opened, the page sends no command at all (no run, no cue report, no armed set, no speech, no tool). The Core side: `test_presentation_studio_playback_continuous_isolation.py`."""
+
+    out = run_ui(tmp_path, VIDEO_WORLD + r"""
+const before=world.calls.length;
+label('Lire').click();await env.advance(40);
+env.key(q('.jvx-stage'),' ');await env.advance(20);
+label('Scène suivante').click();await env.advance(20);
+slider().focus();for(const k of ['Home','PageDown','ArrowRight'])env.key(slider(),k);await env.advance(20);
+const more=label('Plus de lecture');more.click();await env.advance(10);
+qa('.jvx-menu [role="menuitem"]')[0].click();await env.advance(40);
+env.key(q('.jvx-stage'),'End');await env.advance(20);
+(label('Rejouer')||label('Lire')).click();await env.advance(40);
+const after=world.calls.slice(before).map(c=>c.method+' '+c.url);
+return {after,orders:prefabFake.orders.length,phase:ex.playback.view().phase,open:ex.isOpen(),errors:env.errors};
+""")
+    assert out["errors"] == [] and out["open"] is True and out["phase"] == "playing", out
+    assert all(call.startswith("GET ") for call in out["after"]), f"continuous video sends no command: {out['after']}"
+    assert not [c for c in out["after"] if any(word in c for word in ("/playback", "/cues", "/armed", "speak", "/tools"))], out["after"]
+    assert out["orders"] > 0, "the measure saw the video being driven (the Player was ordered by the composition clock)"
