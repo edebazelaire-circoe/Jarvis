@@ -445,7 +445,8 @@ async def test_a_player_halted_further_back_or_paused_by_the_user_does_not_end_t
       return {short3,paused:[b.seq.view().phase,b.seq.view().frame,b.shows.length]};
     """)
     assert result["short3"] == ["playing", 86, 0]
-    assert result["paused"] == ["paused", 87, 0]
+    # Slice 06: the Player's own halt frame after the pause becomes `f` (88, resume starts there); the scene is still not ended
+    assert result["paused"] == ["paused", 88, 0]
 
 
 async def test_a_stale_or_earlier_clock_in_the_middle_of_a_scene_never_moves_the_frame_back(tmp_path):

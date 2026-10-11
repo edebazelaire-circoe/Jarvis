@@ -60,7 +60,7 @@
 
     function fresh(){
       return {phase:'idle',map:null,mapKey:null,t:null,k:-1,want:null,synced:false,ordered:null,waitingSince:0,error:null,retryable:true,generation:0,
-        boundaryAt:null,from:null,changed:0,scope:null,pending:false,queued:false,shown:-1};
+        boundaryAt:null,from:null,changed:0,scope:null,pending:false,queued:false,shown:-1,settling:false};
     }
 
     function host(){try{return d.host()}catch(_error){return null /* intentional: no host means no playback; the page says why */}}
@@ -259,7 +259,7 @@
         S.shown=clampIndex(map,selectedIndex());
         S.t=Clock.transport(map.startOf(S.shown),false,false);
       }
-      S.error=null;S.scope=null;
+      S.error=null;S.scope=null;S.settling=false;
       S.t=S.t.ended?Clock.seek(S.map,S.t,'replay'):Clock.play(S.map,S.t);
       if(S.t.ended){setPhase('ended');emit();return view()}
       const loc=S.map.locate(S.t.frame);
@@ -303,6 +303,7 @@
       if(S.phase==='playing'){const h=host();if(h)h.control(objectId,'pause')}
       if(S.phase==='playing'||S.phase==='waiting'){
         S.t=Clock.pause(S.map,S.t);
+        S.settling=S.phase==='playing';   // the Player's own halt frame (a little past the last report) becomes `f`: resume starts there
         setPhase('paused');
         log('sequencer_pause',{frame:S.t.frame});
         emit();
@@ -323,7 +324,7 @@
       try{next=Clock.seek(S.map,Clock.transport(S.t.frame,wasPlaying,S.t.ended),kind,value)}
       catch(error){log('sequencer_seek_refused',{kind,code:error.code||''},'warn');return false}
       if(next.frame===S.t.frame&&next.playing===wasPlaying&&next.ended===S.t.ended&&kind!=='scene')return false;
-      S.t=next;S.error=null;S.boundaryAt=null;S.want=null;
+      S.t=next;S.error=null;S.boundaryAt=null;S.want=null;S.settling=false;
       S.k=S.map.locate(next.frame).scene_index;
       if(next.playing){if(!wasPlaying)setPhase('playing')}
       else setPhase(next.ended?'ended':'paused');
@@ -412,6 +413,7 @@
     }
 
     function onClock(id){
+      if(id===objectId&&S.phase==='paused'&&S.settling)return settle();
       /* A seek waiting for its animation frame: the Player still reports where it was, which is no longer `f`. */
       if(id!==objectId||S.phase!=='playing'||!S.map||S.k<0||S.pending)return;
       const h=host();
@@ -455,6 +457,19 @@
       }
       const f=S.map.frameOf(S.k,frame);
       if(f>=S.t.frame){S.t=Clock.tick(S.map,S.t,S.k,frame,false);emit()}
+    }
+
+    /* After a pause, the Player halts where it is, up to one report (250 ms) past `f`. Its halted frame becomes `f` once, never backward, so
+       the frame on screen is the one held and the one resumed from (PX-7). */
+    function settle(){
+      const h=host();
+      if(S.pending||!S.map||S.k<0||!h||h.key(objectId)!==keyOf(scenes()[S.k]))return;
+      const clock=h.clock(objectId);
+      if(!clock||clock.playing)return;
+      S.settling=false;
+      const span=S.map.scenes[S.k];
+      const f=S.map.frameOf(S.k,Math.max(0,Math.min(span.duration_in_frames-1,clock.frame)));
+      if(f>S.t.frame&&f<S.map.startOf(S.k)+span.length){S.t=Clock.transport(f,false,false);emit()}
     }
 
     function onOutcome(info){

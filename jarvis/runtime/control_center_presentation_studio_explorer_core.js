@@ -519,7 +519,9 @@ html:has(#${HOST_ID}:not([hidden])) #jvFullscreenPrompt{top:auto;bottom:18px;lef
 #${HOST_ID} .jvx-scene-line{display:flex;align-items:center;gap:10px;min-width:0;flex:1 1 auto}
 #${HOST_ID} .jvx-scene-title{color:var(--jvx-ink);font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 /* Le transport de la vidéo (native-studio-playback-fix Slice 06, contrat § 4, § 6 #15-#20) : une seule rangée sous l'image. */
-#${HOST_ID} .jvx-transport{display:flex;align-items:center;gap:8px;min-width:0}
+#${HOST_ID} .jvx-transport{display:flex;align-items:center;gap:8px;min-width:0;flex:1 1 auto}
+#${HOST_ID} .jvx-stage-note .jvx-scene-line{flex:0 1 auto;max-width:34%}
+#${HOST_ID} .jvx-stage-note>span{flex:none;white-space:nowrap}
 #${HOST_ID} .jvx-transport .jvx-btn{min-height:30px;padding:0 10px;font-size:12px;flex:none}
 #${HOST_ID} .jvx-transport .jvx-btn-icon{width:30px;padding:0}
 #${HOST_ID} .jvx-transport .jvx-btn svg{width:13px;height:13px}

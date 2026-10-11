@@ -343,8 +343,9 @@
       ui.sceneBadge=el('span','jvx-chip');
       sceneLine.appendChild(ui.sceneTitle);sceneLine.appendChild(ui.sceneRole);sceneLine.appendChild(ui.sceneBadge);
       ui.sceneCount=el('span','');
-      note.appendChild(sceneLine);note.appendChild(ui.sceneCount);
+      /* One row under the stage: the transport, then the scene it is on (every pixel of height is the stage's width). */
       buildTransport();
+      note.appendChild(ui.transport);note.appendChild(sceneLine);note.appendChild(ui.sceneCount);
       ui.strip=el('div','jvx-strip');
       attrs(ui.strip,{role:'listbox','aria-label':'Scènes de la variante','aria-orientation':'horizontal'});
       const bottom=el('div','jvx-bottom');
@@ -353,7 +354,7 @@
       bottom.appendChild(ui.meta);bottom.appendChild(ui.actions);
       ui.upgrades=upgrades.buildSection();
       ui.vbar=el('div','jvx-vbar');attrs(ui.vbar,{role:'toolbar',tabindex:'-1','aria-label':'Variantes vivantes : choisir celle à regarder'});
-      preview.appendChild(ui.vbar);preview.appendChild(wrap);preview.appendChild(ui.transport);preview.appendChild(note);preview.appendChild(ui.strip);preview.appendChild(bottom);preview.appendChild(ui.upgrades);
+      preview.appendChild(ui.vbar);preview.appendChild(wrap);preview.appendChild(note);preview.appendChild(ui.strip);preview.appendChild(bottom);preview.appendChild(ui.upgrades);
       ui.preview=preview;
       body.appendChild(treePane);body.appendChild(preview);body.appendChild(cmp.buildRoot());
       ui.live=el('div','jvx-sr');attrs(ui.live,{role:'status','aria-live':'polite','aria-atomic':'true'});

@@ -195,7 +195,7 @@ Handoff `jarvis-remotion-presentation-integration`, Slice 10. **Statut : contrat
 ```
 page du Control Center        http://127.0.0.1:17654/            frame-src <visualiseur> http://127.0.0.1:17654/remotion-stage
   +- fenêtre de stage (prefab host)
-       +- page de la scène    http://127.0.0.1:17654/remotion-stage?id=..&v=..   frame-src http://127.77.0.2:17655   (rien d'autre)
+       +- page de la scène    http://127.0.0.1:17654/remotion-stage?id=..&v=..[&embed=variants]   frame-src http://127.77.0.2:17655   (rien d'autre)
             +- bac à sable    http://127.77.0.2:17655/page/<scène>/<hôte>        sandbox="allow-scripts", CSP du § 4
 ```
 

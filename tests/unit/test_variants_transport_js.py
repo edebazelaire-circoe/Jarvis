@@ -81,6 +81,22 @@ def test_resume_continues_from_the_exact_frame_and_restart_goes_back_to_frame_ze
     assert result["replay"][0] == 0 and result["shows"] == [0], "« Rejouer » restarts from frame 0 (scene 1 brought back)"
 
 
+def test_after_a_pause_the_players_own_halt_frame_is_held_and_resumed_from(tmp_path):
+    """PX-7 in real Chrome: the last report is up to 250 ms behind the Player; it halts a few frames past `f`. That frame becomes `f` (never
+    backward), so resume does not jump back; a halt reported before the pause, or after a seek, changes nothing."""
+
+    result = run_seq(tmp_path, r"""
+      const b=seqBench();
+      await b.seq.prepare();await b.seq.play();b.report(2,true);b.report(40,true);
+      b.seq.pause();const f=b.seq.view().frame;
+      b.report(46,false);const settled=b.seq.view().frame;
+      b.report(30,false);const after=b.seq.view().frame;
+      await b.seq.play();
+      return {f,settled,after,resume:b.orders.slice(-1)[0]};
+    """)
+    assert result == {"f": 40, "settled": 46, "after": 46, "resume": ["s1@1", "play", 46]}
+
+
 def test_next_previous_and_a_thumbnail_land_on_the_local_frame_zero_and_keep_the_play_state(tmp_path):
     """PX-8: next -> start_(k+1); previous -> start_(k-1), from scene 1 frame 0; a thumbnail -> start_k; next on the last scene changes nothing."""
 
