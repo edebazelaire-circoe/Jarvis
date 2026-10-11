@@ -1,0 +1,733 @@
+{
+ "evidence": {
+  "before": {
+   "readouts": [
+    {
+     "where": "page",
+     "text": "0:18 / 1:14"
+    }
+   ],
+   "label": 3,
+   "selected": "pss_000000000003",
+   "slider": {
+    "now": "1074",
+    "max": "4439",
+    "text": "Scène 3 sur 9, 0:18 sur 1:14",
+    "disabled": false
+   },
+   "player": {
+    "frame": 207,
+    "playing": true,
+    "duration": 900,
+    "phase": "ready",
+    "scene": "S3"
+   },
+   "open": true
+  },
+  "after": {
+   "readouts": [
+    {
+     "where": "page",
+     "text": "0:18 / 1:24"
+    }
+   ],
+   "label": 3,
+   "selected": "pss_000000000003",
+   "slider": {
+    "now": "1074",
+    "max": "5039",
+    "text": "Scène 3 sur 9, 0:18 sur 1:24",
+    "disabled": false
+   },
+   "player": {
+    "frame": 207,
+    "playing": true,
+    "duration": 1200,
+    "phase": "ready",
+    "scene": "S3"
+   },
+   "open": true
+  },
+  "later": {
+   "readouts": [
+    {
+     "where": "page",
+     "text": "0:20 / 1:24"
+    }
+   ],
+   "label": 3,
+   "selected": "pss_000000000003",
+   "slider": {
+    "now": "1186",
+    "max": "5039",
+    "text": "Scène 3 sur 9, 0:20 sur 1:24",
+    "disabled": false
+   },
+   "player": {
+    "frame": 269,
+    "playing": true,
+    "duration": 1200,
+    "phase": "ready",
+    "scene": "S3"
+   },
+   "open": true
+  },
+  "view_after": {
+   "phase": "playing",
+   "frame": 1074,
+   "total_frames": 5040,
+   "fps": 60,
+   "playing": true,
+   "scene_index": 2,
+   "scene_count": 9,
+   "scene_id": "pss_000000000003",
+   "scene_title": "S3 30s@30",
+   "starts": [
+    0,
+    180,
+    660,
+    3060,
+    3240,
+    3720,
+    3900,
+    4380,
+    4560
+   ],
+   "scope": "all",
+   "retryable": true,
+   "waiting_ms": 0,
+   "waiting_visible": false,
+   "error": null
+  },
+  "v2_first_play": [
+   10241,
+   207
+  ],
+  "old_held_at": [
+   [
+    9799,
+    213
+   ],
+   [
+    10343,
+    0
+   ]
+  ],
+  "core_phase": "idle",
+  "failed": null
+ },
+ "probe_ev": [
+  [
+   252,
+   "mount",
+   1,
+   "explorer",
+   "S1",
+   false
+  ],
+  [
+   258,
+   "live",
+   1
+  ],
+  [
+   271,
+   "status",
+   1,
+   "shell"
+  ],
+  [
+   272,
+   "status",
+   1,
+   "preparing"
+  ],
+  [
+   1083,
+   "status",
+   1,
+   "mounting"
+  ],
+  [
+   1216,
+   "ready",
+   1,
+   null,
+   null
+  ],
+  [
+   1219,
+   "status",
+   1,
+   "ready"
+  ],
+  [
+   1219,
+   "order",
+   1,
+   "pause",
+   0,
+   null
+  ],
+  [
+   1246,
+   "clock",
+   1,
+   0,
+   false
+  ],
+  [
+   1406,
+   "mount",
+   2,
+   "explorer",
+   "S3",
+   true
+  ],
+  [
+   1414,
+   "status",
+   2,
+   "shell"
+  ],
+  [
+   1414,
+   "status",
+   2,
+   "preparing"
+  ],
+  [
+   1430,
+   "status",
+   2,
+   "mounting"
+  ],
+  [
+   1539,
+   "ready",
+   2,
+   null,
+   null
+  ],
+  [
+   1541,
+   "status",
+   2,
+   "ready"
+  ],
+  [
+   1541,
+   "order",
+   2,
+   "pause",
+   0,
+   null
+  ],
+  [
+   1558,
+   "clock",
+   2,
+   0,
+   false
+  ],
+  [
+   1815,
+   "live",
+   2
+  ],
+  [
+   1817,
+   "order",
+   2,
+   "pause",
+   0,
+   null
+  ],
+  [
+   1820,
+   "clock",
+   2,
+   0,
+   false
+  ],
+  [
+   1865,
+   "gone",
+   1
+  ],
+  [
+   2672,
+   "order",
+   2,
+   "play",
+   0,
+   null
+  ],
+  [
+   2677,
+   "clock",
+   2,
+   0,
+   false
+  ],
+  [
+   2677,
+   "clock",
+   2,
+   0,
+   true
+  ],
+  [
+   2700,
+   "mount",
+   3,
+   "explorer",
+   "S4",
+   true
+  ],
+  [
+   2701,
+   "status",
+   3,
+   "shell"
+  ],
+  [
+   2701,
+   "status",
+   3,
+   "preparing"
+  ],
+  [
+   2714,
+   "status",
+   3,
+   "mounting"
+  ],
+  [
+   2850,
+   "ready",
+   3,
+   null,
+   null
+  ],
+  [
+   2850,
+   "status",
+   3,
+   "ready"
+  ],
+  [
+   2851,
+   "order",
+   3,
+   "pause",
+   0,
+   null
+  ],
+  [
+   2881,
+   "clock",
+   3,
+   0,
+   false
+  ],
+  [
+   2924,
+   "clock",
+   2,
+   7,
+   true
+  ],
+  [
+   3182,
+   "clock",
+   2,
+   15,
+   true
+  ],
+  [
+   3447,
+   "clock",
+   2,
+   23,
+   true
+  ],
+  [
+   3713,
+   "clock",
+   2,
+   31,
+   true
+  ],
+  [
+   3981,
+   "clock",
+   2,
+   39,
+   true
+  ],
+  [
+   4248,
+   "clock",
+   2,
+   47,
+   true
+  ],
+  [
+   4516,
+   "clock",
+   2,
+   55,
+   true
+  ],
+  [
+   4780,
+   "clock",
+   2,
+   63,
+   true
+  ],
+  [
+   5050,
+   "clock",
+   2,
+   71,
+   true
+  ],
+  [
+   5319,
+   "clock",
+   2,
+   79,
+   true
+  ],
+  [
+   5580,
+   "clock",
+   2,
+   87,
+   true
+  ],
+  [
+   5848,
+   "clock",
+   2,
+   95,
+   true
+  ],
+  [
+   6114,
+   "clock",
+   2,
+   103,
+   true
+  ],
+  [
+   6381,
+   "clock",
+   2,
+   111,
+   true
+  ],
+  [
+   6647,
+   "clock",
+   2,
+   119,
+   true
+  ],
+  [
+   6913,
+   "clock",
+   2,
+   127,
+   true
+  ],
+  [
+   7181,
+   "clock",
+   2,
+   135,
+   true
+  ],
+  [
+   7447,
+   "clock",
+   2,
+   143,
+   true
+  ],
+  [
+   7715,
+   "clock",
+   2,
+   151,
+   true
+  ],
+  [
+   7980,
+   "clock",
+   2,
+   159,
+   true
+  ],
+  [
+   8246,
+   "clock",
+   2,
+   167,
+   true
+  ],
+  [
+   8513,
+   "clock",
+   2,
+   175,
+   true
+  ],
+  [
+   8781,
+   "clock",
+   2,
+   183,
+   true
+  ],
+  [
+   9047,
+   "clock",
+   2,
+   191,
+   true
+  ],
+  [
+   9314,
+   "clock",
+   2,
+   199,
+   true
+  ],
+  [
+   9580,
+   "clock",
+   2,
+   207,
+   true
+  ],
+  [
+   9729,
+   "gone",
+   3
+  ],
+  [
+   9798,
+   "order",
+   2,
+   "pause",
+   null,
+   null
+  ],
+  [
+   9799,
+   "clock",
+   2,
+   213,
+   false
+  ],
+  [
+   9814,
+   "mount",
+   4,
+   "explorer",
+   "S3",
+   true
+  ],
+  [
+   9814,
+   "status",
+   4,
+   "shell"
+  ],
+  [
+   9814,
+   "status",
+   4,
+   "preparing"
+  ],
+  [
+   9823,
+   "status",
+   4,
+   "mounting"
+  ],
+  [
+   9941,
+   "ready",
+   4,
+   null,
+   null
+  ],
+  [
+   9942,
+   "status",
+   4,
+   "ready"
+  ],
+  [
+   9942,
+   "order",
+   4,
+   "pause",
+   0,
+   null
+  ],
+  [
+   9974,
+   "clock",
+   4,
+   0,
+   false
+  ],
+  [
+   10233,
+   "order",
+   4,
+   "play",
+   207,
+   null
+  ],
+  [
+   10241,
+   "clock",
+   4,
+   207,
+   false
+  ],
+  [
+   10241,
+   "clock",
+   4,
+   207,
+   true
+  ],
+  [
+   10245,
+   "mount",
+   5,
+   "explorer",
+   "S4",
+   true
+  ],
+  [
+   10245,
+   "status",
+   5,
+   "shell"
+  ],
+  [
+   10245,
+   "status",
+   5,
+   "preparing"
+  ],
+  [
+   10246,
+   "live",
+   4
+  ],
+  [
+   10252,
+   "status",
+   5,
+   "mounting"
+  ],
+  [
+   10295,
+   "gone",
+   2
+  ],
+  [
+   10328,
+   "ready",
+   5,
+   null,
+   null
+  ],
+  [
+   10328,
+   "status",
+   5,
+   "ready"
+  ],
+  [
+   10328,
+   "order",
+   5,
+   "pause",
+   0,
+   null
+  ],
+  [
+   10343,
+   "clock",
+   5,
+   0,
+   false
+  ],
+  [
+   10515,
+   "clock",
+   4,
+   215,
+   true
+  ],
+  [
+   10780,
+   "clock",
+   4,
+   223,
+   true
+  ],
+  [
+   11047,
+   "clock",
+   4,
+   231,
+   true
+  ],
+  [
+   11313,
+   "clock",
+   4,
+   239,
+   true
+  ],
+  [
+   11579,
+   "clock",
+   4,
+   247,
+   true
+  ],
+  [
+   11846,
+   "clock",
+   4,
+   255,
+   true
+  ],
+  [
+   12118,
+   "clock",
+   4,
+   263,
+   true
+  ],
+  [
+   12377,
+   "clock",
+   4,
+   271,
+   true
+  ]
+ ]
+}

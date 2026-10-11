@@ -1,0 +1,105 @@
+{
+ "slice": "06-player-lifecycle-and-transport",
+ "tested_head": "7ce28458",
+ "runtime": "headless Chrome over CDP, RemotionStack on free loopback ports, throw-away data root; the live Jarvis was never contacted",
+ "transport": {
+  "checks": {
+   "PX-4 opens paused on S1 frame 0": true,
+   "PX-4 nothing plays before « Lire » (staged frames included)": true,
+   "PX-4 no stage bar, embedded page": true,
+   "PX-4 « Son » muted, disabled with its reason": true,
+   "§ 4.16 one named toolbar": true,
+   "§ 4.16 slider": true,
+   "§ 4.8 composition readout at opening": true,
+   "PX-7 pause holds 5 s": true,
+   "PX-7 resume continues from the held frame": true,
+   "PX-8 next lands on S2 frame 0 and keeps playing": true,
+   "PX-8 previous lands on S1 frame 0 paused": true,
+   "PX-8 three fast next = three scenes": true,
+   "PX-9 forward scrub into S7": true,
+   "PX-9 backward scrub into S2": true,
+   "PX-10 final frame held 5 s, « Rejouer »": true,
+   "PX-10 « Rejouer » restarts from frame 0": true,
+   "no Core run": true,
+   "never wraps": true
+  },
+  "readout_at_opening": [
+   {
+    "where": "page",
+    "text": "0:00 / 1:14"
+   }
+  ],
+  "scrub_forward": {
+   "readouts": [
+    {
+     "where": "page",
+     "text": "0:57 / 1:14"
+    }
+   ],
+   "label": 7,
+   "selected": "pss_000000000007",
+   "slider": {
+    "now": "3420",
+    "max": "4439",
+    "text": "Scène 7 sur 9, 0:57 sur 1:14",
+    "disabled": false
+   },
+   "player": {
+    "frame": 48,
+    "playing": false,
+    "duration": 192,
+    "phase": "ready",
+    "scene": "S7"
+   },
+   "open": true
+  },
+  "held": {
+   "frame": 239,
+   "playing": false,
+   "duration": 240,
+   "phase": "ready",
+   "scene": "S9"
+  }
+ },
+ "failure": {
+  "checks": {
+   "PX-18 paused at the failing scene's start": true,
+   "PX-18 the reason, named": true,
+   "PX-18 « Réessayer »": true,
+   "PX-18 never a silent skip": true,
+   "PX-18 an Error Logs row (console error key)": true,
+   "no Core run": true
+  },
+  "veil": {
+   "hidden": false,
+   "title": "Scène 2 : lecture impossible",
+   "text": "Scène 2 « S2 » : scene S2 is broken on purpose",
+   "actions": [
+    "Réessayer",
+    "Scène suivante"
+   ]
+  },
+  "live_scenes": [
+   "S1",
+   "S2"
+  ]
+ },
+ "hot_reload": {
+  "checks": {
+   "PX-19 the new version goes on from the kept frame (not 0)": true,
+   "PX-19 play state kept": true,
+   "PX-19 the map was rebuilt (84 s)": true,
+   "§ 4.8 readout = composition time after the swap": true,
+   "no Core run": true
+  },
+  "frame_before_edit": 207,
+  "v2_first_play": [
+   10241,
+   207
+  ],
+  "readout_after": [
+   "0:18 / 1:24"
+  ],
+  "composition_seconds_check": 19.96666666666667
+ }
+}
