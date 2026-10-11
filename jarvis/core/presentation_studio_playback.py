@@ -172,6 +172,8 @@ class PresentationStudioPlaybackService(AutoPlayMixin, ScenePreviewMixin):
         #: Slice 12 (Remotion) : `async remotion_composition(prefab_id, version) -> dict | None` (`PrefabService`). Sans lui, aucune ligne de temps.
         self._timeline_source = timeline_source
         self._tl_map: FrameMap | None = None
+        #: `(scene_id, is a Remotion scene)` of the scene whose timeline was last resolved (Slice 05: a video scene is never paced by a dwell).
+        self._tl_video: tuple[str, bool] | None = None
         self._tl_clock = SegmentClock()
         #: Slice 23: the scope of the run (`manual` by default) and the deadline that keeps a chained play alive without a browser.
         self._init_autoplay(autoplay)
@@ -573,9 +575,10 @@ class PresentationStudioPlaybackService(AutoPlayMixin, ScenePreviewMixin):
             return PlaybackResult(PlaybackStatus.APPLIED, "advance", self._view())
         if not self._auto_eligible() or timeline["seq"] == self._auto_done_seq:
             return PlaybackResult(PlaybackStatus.APPLIED, "advance", self._view())
-        if not self._played_enough(timeline):
-            self._trace("autoplay_report_early", "Fin de segment annoncee trop tot : ignoree, l'echeance de Core reste", level="warning", data={
-                "seq": seq, "play_ms": timeline["play_ms"]})
+        if self._auto_started_seq != seq:
+            # Slice 05: the Player is the media clock; its `done` counts once the page said this segment started (never Core's own
+            # estimate of the played time, which counted loading and scrubs and so ended scenes early or late).
+            self._trace("autoplay_report_early", "Fin de segment annoncee avant son debut : ignoree", level="warning", data={"seq": seq})
             return PlaybackResult(PlaybackStatus.APPLIED, "advance", self._view())
         result = await self._auto_advance("report")
         return result if result is not None else PlaybackResult(PlaybackStatus.APPLIED, "advance", self._view())
@@ -743,6 +746,7 @@ class PresentationStudioPlaybackService(AutoPlayMixin, ScenePreviewMixin):
             self._follower_started_s, self._reopens_seen = self._monotonic(), 0
             self._reports.clear()
             self._tl_map = None
+            self._tl_video = None
             self._tl_clock.reset()   # a new run never inherits the played time of the previous one (Slice 12)
             self._cancel_auto()
             self._scope, self._auto_done_seq, self._auto_started_seq = request.scope, None, None
@@ -894,13 +898,16 @@ class PresentationStudioPlaybackService(AutoPlayMixin, ScenePreviewMixin):
 
         self._tl_map = None
         if self._timeline_source is None:
+            self._tl_video = (scene_id, False)
             return
+        self._tl_video = (scene_id, True)   # until the manifest says otherwise (an unreadable pin is held, never paced)
         scene = self._scenes[scene_id]
         pin = (shown.prefab.prefab_id, shown.prefab.version)
         try:
             if pin not in self._compositions:
                 self._compositions[pin] = await self._timeline_source.remotion_composition(*pin)
             composition = self._compositions[pin]
+            self._tl_video = (scene_id, composition is not None)
             fmap = None if composition is None else build_frame_map(scene_id, composition, shown.anchors or scene.anchors,
                                                                         whole_scene=self._scope is not Scope.MANUAL)
         except Exception as exc:  # noqa: BLE001 - captured as an error row + a visible notice: the scene then plays unguided (Slice 10)
@@ -917,6 +924,14 @@ class PresentationStudioPlaybackService(AutoPlayMixin, ScenePreviewMixin):
                 "scene_id": scene_id, "composition_id": fmap.composition_id, "fps": fmap.fps, "frames": fmap.duration_frames,
                 "anchors": len(fmap.marks), "problems": list(fmap.problems)})
         self._timeline_view()
+
+    def _shows_video(self) -> bool:
+        """Is the scene on the stage a Remotion scene (or one whose kind is not known yet)? Then no dwell may move it (Slice 05)."""
+
+        if self._timeline_source is None or self._plan is None or not self._state.active:
+            return False
+        known = self._tl_video
+        return known is None or known[0] != stage_scene_id(self._plan, self._state) or known[1]
 
     def _timeline_view(self) -> dict[str, Any] | None:
         """La ligne de temps que le navigateur applique au lecteur : une **description** de l'etat de la partition (jamais un ordre
