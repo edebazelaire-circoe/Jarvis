@@ -1,0 +1,152 @@
+{
+ "first_play": [
+  1639,
+  0
+ ],
+ "held": true,
+ "end": {
+  "frame": 149,
+  "playing": false,
+  "phase": "ready",
+  "place": "board"
+ },
+ "core": {
+  "scope": "manual",
+  "phase": "playing",
+  "scene": 2,
+  "play_ms": 5000,
+  "from": 0,
+  "until": 149,
+  "seq": 1,
+  "item_ms": 7275,
+  "item_target_ms": 8000
+ },
+ "lowest_moving_frame": 0,
+ "wraps": [],
+ "backward": [],
+ "orders": [
+  [
+   1617,
+   "order",
+   3,
+   "pause",
+   0,
+   null
+  ],
+  [
+   1617,
+   "order",
+   3,
+   "play",
+   0,
+   149
+  ]
+ ],
+ "clocks": [
+  [
+   1639,
+   0,
+   false
+  ],
+  [
+   1639,
+   0,
+   true
+  ],
+  [
+   1885,
+   7,
+   true
+  ],
+  [
+   2137,
+   14,
+   true
+  ],
+  [
+   2410,
+   23,
+   true
+  ],
+  [
+   2678,
+   31,
+   true
+  ],
+  [
+   2944,
+   39,
+   true
+  ],
+  [
+   3210,
+   47,
+   true
+  ],
+  [
+   3477,
+   55,
+   true
+  ],
+  [
+   3744,
+   63,
+   true
+  ],
+  [
+   4010,
+   71,
+   true
+  ],
+  [
+   4277,
+   79,
+   true
+  ],
+  [
+   4544,
+   87,
+   true
+  ],
+  [
+   4813,
+   95,
+   true
+  ],
+  [
+   5076,
+   103,
+   true
+  ],
+  [
+   5342,
+   111,
+   true
+  ],
+  [
+   5609,
+   119,
+   true
+  ],
+  [
+   5878,
+   127,
+   true
+  ],
+  [
+   6145,
+   135,
+   true
+  ],
+  [
+   6411,
+   143,
+   true
+  ],
+  [
+   6616,
+   149,
+   false
+  ]
+ ]
+}

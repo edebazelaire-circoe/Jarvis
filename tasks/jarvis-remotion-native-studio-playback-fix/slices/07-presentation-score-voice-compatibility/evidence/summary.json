@@ -1,0 +1,29 @@
+{
+ "slice": "07-presentation-score-voice-compatibility",
+ "tested_head": "85326358",
+ "runtime": "headless Chrome over CDP, RemotionStack on free loopback ports, throw-away data root, the existing gate Remotion runtime (read-only); the live Jarvis, its voice and its Core were never contacted; speech was faked",
+ "real_chrome": {
+  "test": "tests/unit/test_presentation_playback_release_gate_browser.py::test_a_presenter_run_enters_a_scene_on_frame_zero_while_its_entry_reveals_a_later_anchor",
+  "file": "presenter_entry_reveals_anchor_S2.json",
+  "scenario": "user_presenter run on the 9-scene gate deck (entry items reveal their first anchor); the band's « Suivant » leaves S1 (3 s, no anchor) and enters S2 (8 s @ 30 fps) whose entry item reveals a2_0 at 2000 ms (frame 60)",
+  "checks": {
+   "Core timeline for the entered scene is from_frame 0, until_frame 149": true,
+   "first play order to the S2 Player is play 0 -> 149 (never 60)": true,
+   "the S2 Player first moved at frame 0": true,
+   "the S2 Player never stepped back (0 backward clock steps)": true,
+   "held on the item's stop frame 149, not playing": true,
+   "never wraps": true
+  }
+ },
+ "finding": {
+  "file": "finding_next_by_core_route_grace_race.json",
+  "what": "same scenario, but `next` posted to Core directly (as a cue or the voice would) instead of the band: the S2 Player, taken from the preload, was played by the prefab host's own grace play (HOLD_GRACE_MS 450, `control_center_prefab_host.js:466-477`) from frame 0 to 78 before the band's next poll (1.5 s when the previous scene had no timeline) delivered Core's order `play 0 -> 149`, which then replayed 78 -> 0. Core's segment was right (0 -> 149); the replay is the run stage's poll latency against the host's grace play. Pre-existing (before Slice 07 the same order would have sent it 78 -> 60). Owner: Slice 09 (the run moves into Variants and the run stage window with its band poll is removed)",
+  "slice_07_code_involved": false
+ },
+ "node_and_core": {
+  "tests/unit/test_remotion_timeline_placement.py": "7 passed",
+  "tests/unit/test_presentation_studio_presenter_media.py": "8 passed",
+  "tests/unit/test_presentation_studio_playback_continuous_isolation.py": "1 passed",
+  "tests/unit/test_variants_transport_js.py::test_continuous_video_reads_the_map_and_never_touches_the_score_cues_or_speech": "passed"
+ }
+}
