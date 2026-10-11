@@ -1,0 +1,26 @@
+{
+ "opened": {
+  "frame": 32,
+  "playing": true,
+  "duration": 900,
+  "phase": "ready",
+  "scene": "S3"
+ },
+ "gesture": "legacy:Jouer cette slide",
+ "after": {
+  "readouts": [
+   {
+    "where": "page",
+    "text": "00:32 / 00:08"
+   }
+  ],
+  "label": 3,
+  "selected": "pss_000000000003",
+  "slider": null,
+  "player": null,
+  "open": false
+ },
+ "first_play_after_gesture": null,
+ "max_frame_after_gesture": null,
+ "wraps_after_gesture": []
+}

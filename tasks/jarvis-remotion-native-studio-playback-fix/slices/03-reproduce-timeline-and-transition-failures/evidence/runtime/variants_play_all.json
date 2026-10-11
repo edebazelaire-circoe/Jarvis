@@ -1,7 +1,8 @@
 {
- "explorer_open_after_click": false,
- "explorer_open_9s": false,
- "core_start": {
+ "gesture": "legacy:Tout jouer",
+ "variants_open": false,
+ "variants_player": null,
+ "core": {
   "scope": "manual",
   "phase": "playing",
   "scene": 1,
@@ -9,33 +10,22 @@
   "from": null,
   "until": null,
   "seq": null,
-  "item_ms": 1463,
+  "item_ms": 6572,
   "item_target_ms": 8000
  },
- "core_9s": {
-  "scope": "manual",
-  "phase": "playing",
-  "scene": 1,
-  "play_ms": null,
-  "from": null,
-  "until": null,
-  "seq": null,
-  "item_ms": 10603,
-  "item_target_ms": 8000
- },
+ "variants_S2_first_play": null,
  "frames": [
   [
-   305,
+   248,
    1,
    "explorer",
    "S1"
   ],
   [
-   3097,
+   1906,
    2,
    "board",
    "S1"
   ]
- ],
- "failed": null
+ ]
 }
