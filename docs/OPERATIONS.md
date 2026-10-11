@@ -2305,7 +2305,7 @@ scène en scène, plein écran, son sur un vrai geste, moteur indisponible, erre
 (§ « Capacité locale Remotion ») :
 
 1. **Lecture** : créer une présentation (moteur Remotion par défaut), y mettre une scène Remotion, lancer « Vous présentez » : la fenêtre de scène affiche
-   « Préparation de la scène Remotion… N s » (le premier lancement compile, jusqu'à 2 minutes), puis la scène joue en boucle, sans clic.
+   « Préparation de la scène Remotion… N s » (le premier lancement compile, jusqu'à 2 minutes), puis la scène joue en boucle, sans clic. *(2026-10 : après la Slice 09, plus de fenêtre de scène ; la lecture se fait dans l'écran « Variantes », voir [le contrat d'expérience](presentation-studio.md#presentation-experience-contract-level-2-2026-10).)*
 2. **Son** : la scène démarre muette (« Son coupé · cliquez la scène pour l'activer ») ; un clic DANS la scène (pas ailleurs) active le son si elle en a ; noter
    si le son sort bien des haut-parleurs voulus (jamais écouté par les tests).
 3. **Plein écran** : « Plein écran » dans la bande (un clic) ; la scène remplit l'écran ; **Échap** (la vraie touche) en sort sans changer l'état de la lecture ;
@@ -2313,7 +2313,7 @@ scène en scène, plein écran, son sur un vrai geste, moteur indisponible, erre
 4. **Édition à chaud** : pendant la lecture, demander à la voix de changer la couleur ou le titre : le changement se voit tout de suite, sans nouveau rendu
    ni clignotement, la lecture reste éditable.
 5. **Moteur absent** : désinstaller la capacité (`POST /v1/local-capabilities/remotion/uninstall`, instance isolée), lancer la lecture : réponse « moteur
-   Remotion indisponible » avec la réparation, aucune fenêtre de scène, **jamais** une scène HTML à la place ; réinstaller, relancer : elle joue.
+   Remotion indisponible » avec la réparation, aucune fenêtre de scène, **jamais** une scène HTML à la place ; réinstaller, relancer : elle joue. *(2026-10 : après la Slice 09, plus de fenêtre de scène ; la lecture se fait dans l'écran « Variantes », voir [le contrat d'expérience](presentation-studio.md#presentation-experience-contract-level-2-2026-10).)*
 6. **Scène figée** : une scène qui boucle sans fin est retirée au bout de 3 s avec sa raison et « Recharger la scène » ; la page reste utilisable.
 7. **Origine** : ouvrir le Control Center par `http://127.0.0.1:<port>/` (pas `localhost`) : l'origine du bac à sable n'autorise que cet hôte.
 
@@ -2498,7 +2498,7 @@ Les cinq parcours et les pannes injectées du Studio sont dans `tests/unit/test_
 | Un modèle instancié ne se lit pas (`presentation_studio_unknown_score`) | un modèle ne porte pas la partition (contrat documenté) | créer une partition sur la variante ; le planificateur ou la route `POST .../score` |
 | « Suivi vocal indisponible » dans le lecteur | architecture vocale `legacy` ou `duplex` | le suivi ambiant demande `continuous_brain` et la pile OpenAI ; clavier sinon |
 | Plein écran « à armer » (`needs_gesture`) | une demande vocale ne suffit pas à entrer en plein écran | cliquer ; Jarvis ne dit jamais que l'écran est plein avant de l'avoir lu |
-| Après un redémarrage de Core | le run, la fenêtre de scène et le mode temporaire n'y survivent pas, par conception | rien à réparer : relancer la lecture ; les variantes, partitions et directions artistiques sont intactes (l'historique d'annulation est perdu) |
+| Après un redémarrage de Core | le run, la fenêtre de scène et le mode temporaire n'y survivent pas, par conception | rien à réparer : relancer la lecture ; les variantes, partitions et directions artistiques sont intactes (l'historique d'annulation est perdu) *(2026-10 : après la Slice 09, plus de fenêtre de scène ; la lecture se fait dans l'écran « Variantes », voir [le contrat d'expérience](presentation-studio.md#presentation-experience-contract-level-2-2026-10).)* |
 
 **Vérifications physiques (reste à faire par une personne).** Liste numérotée H-1 à H-11 dans [presentation-studio-release.md](presentation-studio-release.md#physical-human-checks-the-acceptance-that-remains) : plein écran sur le vrai projecteur, mode PRESENTATION audible, suivi des cues au micro réel, présentation par Jarvis audible, lecteur d'écran, répétition complète de bout en bout (`HVAL-IPS-001` à `008`). Ordre conseillé : H-1, puis H-4 et H-5, puis H-9.
 

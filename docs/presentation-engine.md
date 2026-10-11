@@ -147,7 +147,7 @@ the journal ring (100 entries, process memory) is for display; what survives a r
 **Fail closed, visibly.** The card turns the adapter's real reason into guidance: capability not installed (button **Installer Remotion**, ~270 MB, confirmation), install failed / repair needed / crashed
 (failure code translated, detail shown, button **Réparer Remotion**), invalid sandbox settings or no adapter or disabled (steps to do yourself, no button: restarting Core is the user's act), always with
 « Aucune présentation Slidecar n'est affichée à la place ». The two buttons call `POST /api/local-capabilities/remotion/install|repair`, relayed with an empty body (`remotion_studio_relay.py`); a compile error
-of a scene stays in the stage window with the compiler's message ([remotion-isolation.md](remotion-isolation.md) section 10). While installing, the card shows a spinner and the elapsed time (15 min limit).
+of a scene stays in the stage window with the compiler's message ([remotion-isolation.md](remotion-isolation.md) section 10). While installing, the card shows a spinner and the elapsed time (15 min limit). *(2026-10: after Slice 09 this shows in the Variants Player, not a stage window; see [the experience contract](presentation-studio.md#presentation-experience-contract-level-2-2026-10).)*
 
 **Legacy documents.** A stored document without an engine reads as `slidecar` (v2 -> v3, unchanged); reads never rewrite it; the first save writes the new schema and keeps the exact old bytes once in
 `presentation.json.v<N>.bak`; the variant files are not touched by a manifest save (`tests/unit/test_presentation_studio_engine_migration.py`, on the frozen v1 and v2 fixtures).

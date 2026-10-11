@@ -1,91 +1,97 @@
-# Slice 02: UI inventory for Human sign-off (HV-RFX-02-01)
+# Slice 02 : inventaire de l'écran, à valider par vous (HV-RFX-02-01)
 
-The normative contract is `docs/presentation-studio.md` › *Presentation experience contract (Level 2, 2026-10)*. This page is a non-clickable picture of it, for review. It changes nothing by itself: if the Human disagrees, the contract is amended first.
+Cette page montre, sans rien à cliquer, ce que deviendra l'écran des présentations. Elle résume le contrat écrit dans `docs/presentation-studio.md`, section *Presentation experience contract (Level 2, 2026-10)*. Si un point ne vous convient pas, on corrige d'abord le contrat, puis le code.
 
-## 1. Two names
+## 1. Deux noms, deux endroits
 
-| The user sees | It is | Never called |
+| Vous voyez | Ce que c'est | On ne dira plus |
 | --- | --- | --- |
-| **Remotion Studio** | the native Remotion editor, opened on one scene in its own tab, after the « hors du bac à sable » confirmation | « Studio » alone |
-| **Variantes** | the Jarvis screen: variant history, the only video player, branch / activate / compare / rename / archive | « Studio », « Explorateur » in a button label |
+| **Remotion Studio** | l'éditeur de Remotion. Il s'ouvre dans un onglet à part, sur une seule scène, après une confirmation (« cette scène tourne hors du bac à sable ») | « Studio » tout court |
+| **Variantes** | l'écran de Jarvis où l'on voit l'historique des versions, où l'on regarde la vidéo (c'est le seul endroit où elle se lit) et où l'on crée, active, compare, renomme ou archive une version | « Studio », « explorateur de variantes » |
 
-Rail menu (the wording only; the rail **layout** waits for your sketch):
-- « Ouvrir les variantes »
-- « Remotion Studio… »
-- « Présenter »
-- « Masquer / Afficher »
-- « Renommer… »
-- « Supprimer… »
+Le menu de la colonne des présentations (à gauche) change seulement de mots. Sa mise en page attend votre croquis.
 
-## 2. Target Variants screen (windowed)
+| Entrée | Ce qu'elle fait |
+| --- | --- |
+| « Ouvrir les variantes » | ouvre l'écran Variantes sur la version active |
+| « Remotion Studio… » | ouvre l'écran Variantes, puis Remotion Studio sur la scène choisie |
+| « Éditer » | ouvre l'écran Variantes et le panneau de réglages |
+| « Présenter » | lance une présentation, dans l'écran Variantes |
+| « Acquitter le problème » | efface la pastille orange (inchangé) |
+| « Masquer / Afficher », « Renommer… », « Supprimer… » | inchangés |
+
+## 2. L'écran Variantes (dans la fenêtre)
 
 ```
-+-- Variantes -- <titre de la présentation> · 3 variantes -------- [Fenêtré] [Plein écran] [Fermer] --+
-| ÉVOLUTION            1/64 |  +-------------------------------------------------------------------+  |
-| #1 Diaporama ...   ACTIF  |  |                                                                   |  |
-|   `- #2 Variante ...      |  |              STAGE  (the one Remotion Player)                     |  |
-|   `- #3 Variante ...      |  |              no bar inside, no second transport                   |  |
-|                           |  |                                                                   |  |
-|                           |  +-------------------------------------------------------------------+  |
-|                           |  [|<] [ > Lire ] [>|]  ===o====|=====|=====|=====|====  0:12 / 1:30  [Son] [...] |
-|                           |  Scène 6 sur 9 · Mode Présentation : slides...   [Remotion Studio] [Présenter v] |
-|                           |  [01][02][03][04][05][*06*][07][08][09]      (click = start of that scene)  |
-| > Archivées (0)           |  #1 Titre · Issue de ... · Créée hier par Jarvis · 9 scènes                 |
-|                           |  (Variante active) (Partition liée) (DA ■■■■)   note                        |
-|                           |  [Activer] [Brancher d'ici…] [Renommer…] [Archiver…]   [Comparer]           |
-+-----------------------------------------------------------------------------------------------------+
-  [...] overflow  = Lire seulement cette scène · Revenir au début · Raccourcis clavier (?)
-  [Présenter v]   = Vous présentez · Jarvis présente · Répétition
-  At the end:  [ > Lire ] becomes [ ↺ Rejouer ]; the last image stays on screen.
++-- Variantes -- <titre> · 3 variantes ------------------- [Fenêtré] [Plein écran] [Fermer] --+
+| ÉVOLUTION            1/64 |  +------------------------------------------------------------+ |
+| #1 Diaporama ...   ACTIF  |  |                                                            | |
+|   `- #2 Variante ...      |  |                    LA VIDÉO                                | |
+|   `- #3 Variante ...      |  |       (rien par-dessus : pas de barre dans l'image)        | |
+|                           |  +------------------------------------------------------------+ |
+|                           |  [|<] [ > Lire ] [>|]  ===o===|====|====|====|===  0:12 / 1:30  [Son] [...]  |
+|                           |  Scène 6 sur 9 · Mode Présentation ...   [Remotion Studio] [Présenter v]    |
+|                           |  [01][02][03][04][05][*06*][07][08][09]   (un clic = début de cette scène)  |
+| > Archivées (0)           |  #1 Titre · Créée hier par Jarvis · 9 scènes                                |
+|                           |  (Variante active) (Partition liée) (couleurs)   note                       |
+|                           |  [Activer] [Brancher d'ici…] [Renommer…] [Archiver…]   [Comparer]          |
++-----------------------------------------------------------------------------------------------+
+  [...]          = Lire seulement cette scène · Revenir au début · Raccourcis clavier
+  [Présenter v]  = Vous présentez · Jarvis présente · Répétition
+  À la fin       : la dernière image reste affichée, et [ > Lire ] devient [ Rejouer ].
 ```
 
-During a presenter run (windowed), a **presenter strip** replaces the scene line:
+Les traits `|` de la barre `===o===|====|` marquent le début de chaque scène. On peut faire glisser le rond pour aller n'importe où dans la vidéo : l'image, le numéro de scène et l'heure suivent ensemble.
+
+Pendant une présentation (dans la fenêtre), une ligne d'information apparaît sous la vidéo, à la place du titre de la scène :
 
 ```
   Vous présentez · En cours   Scène 3/9 · élément 5/16   Ensuite : « ... »   Suivi vocal indisponible (...)
-  Élément 0:10 (cible 0:15, temps de partition)                    [Sortir de la séquence (S)] [Arrêter]
+  Élément 0:10 (prévu 0:15, temps de la partition)              [Sortir de la séquence (S)] [Arrêter]
 ```
 
-In fullscreen (« Plein écran » or `F`), only the stage shows, with a transport overlay that hides itself. The tree, the metadata and the actions stay out of fullscreen.
+En plein écran, on ne voit que la vidéo. Les boutons de lecture apparaissent quand on bouge la souris et disparaissent ensuite. L'historique, les informations et les boutons de version restent hors du plein écran. Le plein écran ne s'ouvre que par le bouton « Plein écran » (ou la touche `F`), jamais tout seul.
 
-## 3. Controls, once each
+## 3. Chaque bouton une seule fois
 
-| Control | Key | Note |
+| Bouton | Touche | Ce qu'il fait |
 | --- | --- | --- |
-| Lire / Pause / Rejouer | `Space` | continuous video, authored durations, holds the final image |
-| Scène précédente / suivante | `←` `→` `PageUp` `PageDown` | goes to the first frame of that scene |
-| Global scrub (ticks at scenes) | slider keys | moves the Player, the strip, the title and the time together |
-| Time `0:12 / 1:30` | (none) | the whole presentation's time, the only time readout |
-| Son | `M` | muted at opening |
-| Plein écran (header) | `F` | the only fullscreen; needs your click (voice only arms it) |
-| Fermer | `Échap` | nested: menu, dialog, fullscreen, then the screen |
-| Présenter ▾ | (none) | presenter run in this screen; never a floating window |
-| Remotion Studio | (none) | opens the scene on screen in the native editor |
-| ⋯ | `?` (sheet) | Lire seulement cette scène · Revenir au début · Raccourcis |
-| scene strip | arrows | click = start of the scene |
-| tree, Activer / Brancher / Renommer / Archiver / Restaurer, Comparer | `A` `N` `F2` `Suppr` `R` `Maj+C`, `[` `]` | unchanged |
+| Lire / Pause / Rejouer | `Espace` | lit toute la présentation d'un trait, chaque scène pendant sa vraie durée, puis s'arrête sur la dernière image |
+| Scène précédente / suivante | `←` `→` (ou les touches d'une télécommande) | va au tout début de la scène |
+| La barre de position | flèches quand elle est sélectionnée | va à n'importe quel moment |
+| Le temps `0:12 / 1:30` | | le temps de toute la présentation, et rien d'autre |
+| Son | `M` | le son est coupé à l'ouverture |
+| Plein écran (en haut) | `F` | le seul plein écran ; il faut votre clic (la voix ne fait que le préparer) |
+| Fermer | `Échap` | ferme d'abord un menu ou une fenêtre ouverte, puis le plein écran, puis l'écran |
+| Présenter | | lance une présentation dans cet écran, jamais dans une fenêtre flottante |
+| Remotion Studio | | ouvre la scène affichée dans l'éditeur Remotion |
+| ... | `?` | Lire seulement cette scène · Revenir au début · Raccourcis |
+| les vignettes de scènes | flèches | un clic = début de la scène |
+| historique, Activer, Brancher, Renommer, Archiver, Restaurer, Comparer | `A` `N` `F2` `Suppr` `R` `Maj+C`, `[` `]` | inchangés |
 
-**Removed:**
-- the floating STUDIO_STAGE window and the bottom band (screenshot 1);
-- the bar inside the image (« Lecture », its scrub, `x s / 30 s`);
-- the separate ‹ › above the strip;
-- « Jouer cette slide » and « Tout jouer » as buttons;
-- the variant chip bar (the tree does it);
-- the window host opened by the rail.
+**Ce qui disparaît :**
+- la fenêtre flottante « STUDIO_STAGE » et le bandeau du bas (capture 1) ;
+- la petite barre dans l'image (« Lecture », sa réglette, `x s / 30 s`) ;
+- les flèches ‹ › séparées au-dessus des vignettes ;
+- les boutons « Jouer cette slide » et « Tout jouer » ;
+- la rangée de pastilles de versions (l'historique fait la même chose) ;
+- la petite fenêtre que la colonne de gauche ouvrait.
 
-**Forbidden:**
-- « 8 s par slide », or any time-per-slide setting, for video;
-- a second transport row;
-- loop / repeat;
-- a second fullscreen button;
-- any button that closes the screen in order to play.
+**Ce qui est interdit :**
+- « 8 s par slide », ou tout réglage de temps par diapositive pour une vidéo ;
+- une deuxième rangée de boutons de lecture ;
+- la lecture en boucle ;
+- un deuxième bouton de plein écran ;
+- un bouton qui ferme l'écran pour lire.
 
-## 4. Points to confirm (agent 0 chose; you may overturn)
+## 4. Choix faits pour vous (vous pouvez les changer)
 
-1. **Fullscreen shows the stage only**, not the whole Variants screen (today the whole explorer goes fullscreen).
-2. **« Jouer cette slide » survives only in the ⋯ menu**, as « Lire seulement cette scène ».
-3. **`Échap` no longer pauses** a presentation; `Space` does. `Échap` leaves fullscreen, then closes.
-4. **The variant chip bar is merged into the tree.**
-5. **External screen:** move the window to the projector, then « Plein écran ». No separate presenter view with notes on the laptop in this task.
-6. **Screenshot 2's lower row** (« 8 s par slide », loop, `2 s / 8 s`) is not in the repository. It comes from unpushed work on another machine. Recommendation: discard it.
-7. **Detours** (auxiliary scenes) appear **inside** Variants. The rail shows only an indicator while an agent works; nothing opens by itself.
+1. **Le plein écran montre seulement la vidéo**, pas tout l'écran Variantes (aujourd'hui, tout l'écran passe en plein écran).
+2. **Pas de plein écran automatique quand une présentation commence** : vous cliquez sur « Plein écran » quand vous le voulez.
+3. **« Jouer cette slide » ne reste que dans le menu « ... »**, sous le nom « Lire seulement cette scène ».
+4. **`Échap` ne met plus en pause** une présentation ; c'est `Espace`. `Échap` sort du plein écran, puis ferme.
+5. **La rangée de pastilles de versions disparaît** ; on choisit une version dans l'historique.
+6. **Écran externe** : déplacer la fenêtre sur le projecteur, puis « Plein écran ». Pas d'écran séparé avec vos notes sur l'ordinateur, dans cette tâche.
+7. **Une nouvelle scène commence toujours à son début**, même si la partition prévoit d'y montrer tout de suite un élément plus loin.
+8. **La rangée du bas de la capture 2** (« 8 s par slide », boucle, `2 s / 8 s`) n'existe pas dans le code partagé. Elle vient d'un travail resté sur une autre machine. Conseil : l'abandonner.
+9. **Les apartés** (une scène montrée en passant pendant une présentation) s'affichent **dans** l'écran Variantes. Quand un agent travaille, la colonne de gauche montre seulement une pastille ; rien ne s'ouvre tout seul.

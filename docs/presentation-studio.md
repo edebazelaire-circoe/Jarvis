@@ -2300,7 +2300,22 @@ Rules:
 
 - The bare word « Studio » **must not** label a control, menu entry, tooltip or spoken answer.
   - The rail's « Ouvrir le Studio », the window host's « Studio » button and every other « Studio » that means the Variant Explorer become « Variantes » (a menu entry reads « Ouvrir les variantes »).
-  - « Remotion Studio » always carries the word *Remotion*. The MCP card « Remotion · Studio » reads « Remotion Studio ».
+  - « Remotion Studio » always carries the word *Remotion*. The MCP card « Remotion · Studio » reads « Remotion Studio », and its labels change as follows (`control_center_remotion_studio.js`):
+    - `:96`: « Ouvrir le Studio sur cette scène » becomes « Ouvrir cette scène dans Remotion Studio »;
+    - `:96`: « Relancer le Studio » becomes « Relancer Remotion Studio »;
+    - `:96`: « Afficher cette scène dans le Studio » becomes « Afficher cette scène dans Remotion Studio »;
+    - `:121` and `:125`: « Ouvrir le Studio » becomes « Ouvrir Remotion Studio »;
+    - the card button « Fermer le Studio » becomes « Fermer Remotion Studio ».
+  - « Explorateur de variantes » is not a user-facing name either: the screen is « Variantes ». Labels and tooltips to change (Slices 10 and 15):
+    - the inspector's button (`control_center_presentation_studio_inspector.js:174`): `aria-label` « Ouvrir l'explorateur de variantes » becomes « Ouvrir les variantes »; its tooltip « Explorateur de variantes : … » becomes « Variantes : … »;
+    - the Variants close button (`control_center_presentation_studio_explorer.js:287`): `aria-label` « Fermer l'explorateur de variantes » becomes « Fermer les variantes ».
+- Rail menu (`control_center_presentation_rail.js:85-93`), meaning of each entry:
+  - « Ouvrir les variantes » (replaces « Ouvrir » and the row click): opens Variants, windowed, on the active variant;
+  - « Remotion Studio… » (replaces « Ouvrir le Studio », which meant the explorer): opens Variants on the active variant, then Remotion Studio on the scene selected there, after the acknowledgment;
+  - « Éditer »: opens Variants plus the edit inspector on the active variant (no window host any more);
+  - « Présenter » (replaces « Jouer »): a presenter run in Variants (§ 5);
+  - « Acquitter le problème » (orange dot only): unchanged, it acknowledges the work problem;
+  - « Masquer / Afficher dans le rail », « Renommer… », « Supprimer… »: unchanged.
 - Internal identifiers are **not** renamed by this contract: `JarvisStudioExplorer`, `presentation-studio.*` pins, `/api/presentation-studio/...` routes, the doc title "Presentation Studio". Renaming them would break routes, stored ids and tests for no user benefit.
 - "Publish" in the Variants vocabulary is **Activer**: the active variant is the one that plays, is presented and is exported. Rendering an export is not a Variants control in this contract.
 - Remotion Studio's own preview is an authoring preview inside its own tab. It is **not** a Jarvis playback surface, not a time authority for Variants, and it never drives a run.
@@ -2340,23 +2355,27 @@ What each removed capability becomes (from AUDIT.md § 2 and § 5):
 | band item clock `00:10 / 00:15` | elapsed time of a score item against its soft target | the presenter strip only, labelled as score time, never as media time | 07, 10 |
 | window host (rail click, « Jouer », « Studio », « Plein écran », 5 s refresh) | a light viewer of the active variant; `startRun` with Core's refusal reason | rail click opens Variants on the active variant; `startRun` moves to a shared playback client | 09 |
 | MCP `presentation_view window_open/close`, `stage_fullscreen_enter` | remote open, close and fullscreen | retargeted to Variants open/close and Variants stage fullscreen (`needs_gesture` kept). The MCP contract change is versioned; the catalogue budget test is updated | 09 |
+| stage scene as a pin source (`studio_pins.bind_scene`, `core/v2_app.py:451-455,518-519`) | a frame on screen is never archived under its host | the Variants Player's mounted pins register as a pin source, including a scene-variant preview and in-flight hot-reload pins | 09 |
+| brain prompt (`runtime/claude_local.py:186-191`) | « affiche / ouvre X » = `window_open`; « joue la slide » = scope `scene`; « joue tout » = scope `all` | rewritten in the Variants vocabulary: open = Variants; « lis / joue tout » = the continuous-video command; « présente » = a presenter run | 09 |
+| `window_open` in the rail report (`rail/display-state`), the `jarvis:presentation-window` page event, the `screen` field of `presentation_inspect` | tells the brain whether the window is open | renamed to the Variants open state | 09 |
+| band poll (500 ms to 15 s, `player.js:40-46,492-498,657`) | brings a run started by voice onto the page | moved into the shared playback client (one poll for the page, read by Variants) | 09 |
 | rail auto-open when an agent works | draws attention | a rail indicator only; nothing opens by itself (decided by agent 0) | 11 |
 
 ### 2026-10 § 3. One clock
 
 - **Composition.** The ordered scenes of the variant. Each scene brings its manifest `duration_in_frames` and `fps` (`PrefabService.remotion_composition`). The composition length `L` is the sum of the scene intervals.
   - **Nothing else decides how long a scene plays in video.** No score field, no setting and no dwell does.
-- **Composition frame `F`.** An integer in `0..L-1`, and the **only** position.
+- **Composition frame `f`.** An integer in `0..L-1`, and the **only** position.
   - Everything visible derives from it: the scene index, the scene title, « Scène n sur N », the scrub position, the time readout, the strip highlight, and the local frame of the mounted Player.
-  - It is a pure interval map. Scene `k` occupies `[start_k, start_k + len_k)`, with `start_1 = 0`. The local frame is `F - start_k`.
+  - It is a pure interval map. Scene `k` occupies `[start_k, start_k + len_k)`, with `start_1 = 0`. The local frame is `f - start_k`.
   - The deck uses one integer fps. A scene with another fps is converted by one deterministic integer rule, owned and tested by Slice 04. Every scene start maps exactly to local frame 0.
 - **Transitions.** None exist today: scenes abut (AUDIT.md § 3, no `Series` / `TransitionSeries` anywhere). If Slice 05 adds overlapping transitions, two rules apply:
   - scene `k` starts on the first frame of its entry transition, which is its local frame 0;
   - during an overlap, the "current scene" is the incoming one.
-- **Authority.** The composition clock of the Variants Player adapter (one per page, Slices 04 and 06) owns `F`.
+- **Authority.** The composition clock of the Variants Player adapter (one per page, Slices 04 and 06) owns `f`.
   - The frame the sandboxed Player reports is **advice**. The rules of *Remotion timeline bridge › Security and authority* are unchanged. The adapter reconciles that advice; nothing else seeks the Player.
   - Core owns the **score position** of a presenter run, and the transport **commands** that come from voice or MCP. Core does **not** own a media clock for continuous video.
-  - Core's `SegmentClock`, the autoplay deadlines and the follower's drift loop **must not** move, cut, restart or fight `F` (refactor: Slices 04 and 05).
+  - Core's `SegmentClock`, the autoplay deadlines and the follower's drift loop **must not** move, cut, restart or fight `f` (refactor: Slices 04 and 05).
 - **Implementation (Slice 04 chooses).** Two options give the same observable behaviour:
   - an interval map over per-scene sandboxed Players with preload and seamless swap. **Recommended**, because it keeps the per-scene sandbox;
   - a generated `<Series>` root, allowed only after a security review, because it crosses the per-scene sandbox.
@@ -2366,21 +2385,22 @@ What each removed capability becomes (from AUDIT.md § 2 and § 5):
 **4.1 Opening.** Variants opens **paused** on local frame 0 of the selected scene (scene 1 by default), sound muted. It never starts playing by itself, including when the voice opens it.
 
 **4.2 Play** (« Lire », ▶, `Space`):
-- Plays **continuously** from `F` to the last frame of the composition.
+- Plays **continuously** from `f` to the last frame of the composition.
 - Crosses every scene boundary with no stop, no blank, no visible remount or reload, and no return to an earlier frame.
 - Each scene plays its authored length, and scene `k+1` begins on its local frame 0.
 - **There is no per-slide timer.** Video never reads `target_duration_ms` or any dwell.
 - Play **must not** close Variants, open a window, switch the interaction mode, arm a cue or speak.
+- A variant that is not Remotion (Slidecar or HTML engine): ▶ « Lire » is `aria-disabled` with its reason (« La lecture vidéo n'existe que pour une présentation Remotion »). Its presenter run follows [presentation-engine.md](presentation-engine.md); this contract does not redesign it.
 
-**4.3 Pause and resume.** Pause holds exactly frame `F`. Resume continues from `F`: never a jump to a segment start, never a scene restart.
+**4.3 Pause and resume.** Pause holds exactly frame `f`. Resume continues from `f`: never a jump to a segment start, never a scene restart.
 
 **4.4 Previous and next scene** (⏮ ⏭, `←` `→`, `PageUp` `PageDown`):
-- `k` is the scene that contains `F`. Next goes to `start_(k+1)`. Previous goes to `start_(k-1)`; from scene 1 it goes to frame 0.
+- `k` is the scene that contains `f`. Next goes to `start_(k+1)`. Previous goes to `start_(k-1)`; from scene 1 it goes to frame 0.
 - The play state is kept: playing continues from the target; paused stays paused on the target's frame 0.
 - Next on the last scene is disabled (« Dernière scène »).
 - To restart the current scene, click its thumbnail.
 
-**4.5 Thumbnail click.** A click on a strip thumbnail goes to `start_k` of that scene, play state kept. The strip highlight is always the scene that contains `F`.
+**4.5 Thumbnail click.** A click on a strip thumbnail goes to `start_k` of that scene, play state kept. The strip highlight is always the scene that contains `f`.
 
 **4.6 Global scrub.**
 - One slider over `[0, L-1]`, with a tick at each scene boundary.
@@ -2390,12 +2410,12 @@ What each removed capability becomes (from AUDIT.md § 2 and § 5):
 
 **4.7 End of the show.**
 - On `L-1` the Player **holds the final frame** and the state reads « Terminé ». It never wraps, never loops and never restarts by itself: the Player runs with `loop: false` (Slice 06).
-- The primary button becomes « Rejouer » (↺). This is the only replay: an explicit gesture that goes to `F = 0`, then plays.
-- `Home` also goes to `F = 0` and keeps the play state.
+- The primary button becomes « Rejouer » (↺). This is the only replay: an explicit gesture that goes to `f = 0`, then plays.
+- `Home` also goes to `f = 0` and keeps the play state.
 
 **4.8 Agreement invariant** (testable by Slices 04 to 06 and by QA):
-- At every sample, `strip.selected == sceneOf(F)`, `slider.value == F`, the readout is `F / fps`, and the mounted Player shows local frame `F - start_k`, within ±1 frame while playing.
-- A surface that cannot show `F` must show no position at all.
+- At every sample, `strip.selected == sceneOf(f)`, `slider.value == f`, the readout is `f / fps`, and the mounted Player shows local frame `f - start_k`, within ±1 frame while playing.
+- A surface that cannot show `f` must show no position at all.
 
 **4.9 Edits during playback** (hot reload, an agent edit, a newer revision):
 - The Player swaps in place.
@@ -2416,7 +2436,7 @@ What each removed capability becomes (from AUDIT.md § 2 and § 5):
   - Voice and MCP may only **arm** it (`needs_gesture`, *Generic fullscreen surface*), and the agent must say that the user has to click.
   - A refusal stays windowed and says why (« plein écran indisponible » / « refusé »).
 - **Exiting.** The browser's `Échap`, or the button. The first `Échap` leaves fullscreen (the page is not told); the next one closes Variants (the existing nested rule).
-- Entering or leaving fullscreen changes neither `F` nor the play state.
+- Entering or leaving fullscreen changes neither `f` nor the play state.
 - These **must not** exist: a fullscreen button in the stage page, a transport row, a band or a window host.
 
 **4.13 External display.**
@@ -2432,13 +2452,14 @@ What each removed capability becomes (from AUDIT.md § 2 and § 5):
 - It never acts in a text field or a dialog.
 - The tree keeps its own keys while it has the focus (*Variant Explorer interaction contract › Keyboard*).
 - A key is consumed once.
+- Precedence: when the focus is on a widget with its own ARIA keys (the scrub slider, the scene-strip listbox, the tree), that widget's keys win. The map below applies everywhere else in scope.
 
 | Key | Continuous video (default) | Presenter run |
 | --- | --- | --- |
 | `Space` | play / pause; at the end, « Rejouer ». A focused native button acts on its own | pause / resume the run |
 | `→` `PageDown` | start of the next scene | next score item |
 | `←` `PageUp` | start of the previous scene | previous score item |
-| `Home` / `End` | `F = 0` / final frame | first / last item |
+| `Home` / `End` | `f = 0` / final frame | first / last item |
 | `,` / `.` (paused) | one frame back / forward | (none) |
 | `F` | « Plein écran » (the header control) | same |
 | `M` | sound on / off | same |
@@ -2456,7 +2477,7 @@ Removed:
 - **Scrubber.** It is a `role="slider"` with:
   - `aria-valuemin` 0;
   - `aria-valuemax` `L-1`;
-  - `aria-valuenow` `F`;
+  - `aria-valuenow` `f`;
   - an `aria-valuetext` such as « Scène 3 sur 9, 0:12 sur 1:30 ».
 - **Scene strip.** It is a `listbox`, and `aria-selected` marks the current scene.
 - **Announcements.** A polite live region announces a scene change caused by a user action. Continuous play is not announced, scene by scene or frame by frame.
@@ -2476,15 +2497,17 @@ Removed:
 | `target_duration_ms` | never read | paces **only** an item with no media segment (an HTML scene, a silence, a one-frame hold). Never cuts, shortens, extends or loops a composition |
 | Scrubber | free | read-only position (`aria-disabled`, « La partition mène la présentation ») |
 | Thumbnail click | start of the scene | `goto {scene_id}` through Core; the Player follows |
-| Surface | the Variants Player, windowed or fullscreen | the same Player. A start from a click enters stage fullscreen (that click is the gesture); if refused, it stays windowed with the notice |
+| Surface | the Variants Player, windowed or fullscreen | the same Player. Starting a run never enters fullscreen by itself: fullscreen stays the one header control (§ 4.12) |
 | Around it | tree and actions stay usable (choosing another variant pauses) | tree and actions inert, with the reason « Présentation en cours »; the presenter strip is shown while windowed |
 | Requires | a Remotion variant with a ready engine | the same, plus a score. Without one, « Présenter » is `aria-disabled` with « Cette variante n'a pas de partition » (`presentation_studio_unknown_score`). The art-direction rules for serious roles are unchanged |
 | End | holds the final frame, « Terminé » | `ended` holds the last item's frame; « Arrêter » stops and restores the mode |
 
 **Entering a scene in a presenter run.**
-- The scene starts on its local frame 0 and plays forward to the item's `until`. The entry is played, never joined mid-animation (defect C).
+- A **newly entered** scene always starts on its local frame 0 and plays forward to the item's `until`. The entry is played, never joined mid-animation (defect C).
+- This holds even when the entering item reveals an anchor with `at_ms > 0`. Anchors only bound where the Player stops and holds (`until`), never where a newly entered scene starts.
+- This overrides the rule of *Remotion timeline bridge › What the score asks for* (`from_frame` = the furthest revealed anchor) for a scene entry. It is a change of the Core timeline bridge (Slices 05 and 07).
 - Going back or jumping (`previous`, `goto`, a recovery point) shows the target item's anchor frame directly and holds it, without replaying earlier segments.
-- Resume continues from the exact frame held.
+- Resuming after a pause, in the same scene, continues from the exact frame held.
 
 **Holds.**
 - A presenter run may hold on an explicit score anchor frame for as long as needed.
@@ -2506,7 +2529,7 @@ Removed:
 - « Sortir de la séquence » (`S`, only while a sequence owns the timeline);
 - « Arrêter ».
 
-In fullscreen only the self-hiding transport overlay shows, with « Arrêter ».
+In fullscreen (entered by the header control) only the self-hiding transport overlay shows, with « Arrêter ».
 
 **What today's buttons become.** None of these buttons closes Variants or opens a window.
 
@@ -2541,7 +2564,7 @@ Today's owners: AUDIT.md § 1.1 (screenshot 2) and § 1.2 (screenshot 1). Each c
 | 9 | preview stage | **retain, promoted** | the Variants Player | (none) |
 | 10 | inner bar `rs-bar` (« Lecture », scrub, `x.x s / 30.0 s`) | **remove** | replaced by the transport (15 to 19) | (none) |
 | 11 | scene ‹ › above the strip | merge | transport ⏮ ⏭ | `←` `→` `PageUp` `PageDown` |
-| 12 | scene title, « Scène n sur N » | retain, derived from `F` | the scene line | (none) |
+| 12 | scene title, « Scène n sur N » | retain, derived from `f` | the scene line | (none) |
 | 13 | « Tout jouer » | merge | ▶ « Lire » (15) | `Space` |
 | 14 | « Jouer cette slide » | overflow | « Lire seulement cette scène » | (none) |
 | 15 | (new) ▶ « Lire » / « Pause » / « Rejouer » | add | the primary transport button | `Space` |
@@ -2552,7 +2575,7 @@ Today's owners: AUDIT.md § 1.1 (screenshot 2) and § 1.2 (screenshot 1). Each c
 | 20 | (new) « ⋯ » overflow | add | « Lire seulement cette scène », « Revenir au début », « Raccourcis clavier » | `?` (sheet) |
 | 21 | (new) « Présenter ▾ » | add | presenter run (§ 5) | (none) |
 | 22 | (new) « Remotion Studio » | add (Slice 11) | opens the scene on screen in Remotion Studio, after the acknowledgment | (none) |
-| 23 | scene strip `01 … 09` | retain | goes to the scene start; its highlight follows `F` | strip arrows |
+| 23 | scene strip `01 … 09` | retain | goes to the scene start; its highlight follows `f` | strip arrows |
 | 24 | metadata (`#n`, title, parent, date, scenes, chips, art-direction palette, note) | retain | unchanged | (none) |
 | 25 | « Activer », « Brancher d'ici… », « Renommer… », « Archiver… » (« Restaurer » for an archived variant) | retain | unchanged | `A` `N` `F2` `Suppr` (`R`) |
 | 26 | « Comparer » (marked variants, Slice 19) | retain | unchanged | `Maj+C` |
@@ -2575,31 +2598,34 @@ Each row is observable. Later Slices and QA test against it; "real browser" mean
 
 | ID | Area | Pass criteria | Slices |
 | --- | --- | --- | --- |
-| PX-1 | Naming | no visible string or spoken answer uses the bare word « Studio » for Variants; the rail menu offers « Ouvrir les variantes » and « Remotion Studio… »; the Variants header reads « Variantes » | 10, 11 |
+| PX-1 | Naming | on every surface (rail, Variants, inspector, Remotion card, tooltips, `aria-label`s, spoken answers), no string uses the bare word « Studio » or « explorateur de variantes » as a name; the rail menu offers « Ouvrir les variantes » and « Remotion Studio… »; the Variants header reads « Variantes » | 10, 11 |
 | PX-2 | Remotion Studio | from Variants, one click plus the acknowledgment opens the **scene on screen** at its exact pin in Remotion Studio; cancelling launches nothing; the brain cannot launch it; unpublished edits are said to be unpublished | 11, 12 |
 | PX-3 | Remotion Studio round trip | a change made in Remotion Studio becomes a new pinned source version of the variant through the publish path, visible in Variants after a refresh, with rollback | 12 |
 | PX-4 | Variants opening | opens paused on frame 0 of the selected scene, sound muted; browsing tree and scenes writes nothing (the existing hash test still holds) | 06, 10 |
 | PX-5 | Embedded Player, continuous play | 9-scene deck: ▶ plays scene 1 frame 0 to the final frame with no stop; each scene shows local frames `0..len-1` once, in order; 0 backward steps; never blank between scenes (frame sampler ≤ 50 ms) | 04, 05, 06 |
 | PX-6 | No per-slide cut | a scene of 30 s with a score `target_duration_ms` of 8 s plays its full 30 s in continuous play | 03, 05 |
-| PX-7 | Pause / resume | pausing at frame `F` holds `F` (no drift for 5 s); resume continues from `F` | 06 |
+| PX-7 | Pause / resume | pausing at frame `f` holds `f` (no drift for 5 s); resume continues from `f` | 06 |
 | PX-8 | Scene navigation | next, previous and a thumbnail click land on the target scene's local frame 0 (sampler) and keep the play state; next is disabled on the last scene | 04, 06 |
 | PX-9 | One clock | during play, scrub and navigation, invariant § 4.8 holds at every sample; scrubbing changes Player, strip, label and readout together | 04, 06 |
 | PX-10 | End | at `L-1` the final frame is held for ≥ 5 s and never wraps; « Rejouer » restarts from frame 0 | 06 |
 | PX-11 | Controls | exactly one play control, one fullscreen control, one scrub, one time readout, one prev/next pair; no `rs-bar`, no band, no window host, no dwell selector, no loop toggle in the DOM | 09, 10 |
-| PX-12 | Fullscreen | the header button (or `F`) puts the stage in fullscreen, without the tree, and keeps `F` and the play state; a voice request only arms it (`needs_gesture`); `Échap` behaves as in § 4.12 | 08, 10 |
-| PX-13 | External display | Human: on a second screen, fullscreen fills that screen and playback is smooth (OPERATIONS recipe) | 16 |
+| PX-12 | Fullscreen | the header button (or `F`) puts the stage in fullscreen, without the tree, and keeps `f` and the play state; a voice request only arms it (`needs_gesture`); `Échap` behaves as in § 4.12 | 08, 10 |
+| PX-13 | External display | Human: on a second screen, the stage fills the whole screen, no tree, metadata or Board is visible, and the PX-5 criteria hold (OPERATIONS recipe) | 16 |
 | PX-14 | Presenter mode | « Présenter » starts a `user_presenter` run **in Variants** (no Board window); `next` / a cue advances; each item holds on its anchor frame; entering a scene starts at local frame 0; `previous` shows the anchor frame without replay; « Arrêter » restores the mode; no item is cut by `target_duration_ms` | 07, 09 |
 | PX-15 | Presenter, Jarvis | « Jarvis présente » speaks the score through the existing path; the media follows the score; the band is absent; the presenter strip shows the state | 07, 09 |
 | PX-16 | Floating viewer removed | no `studio_stage` / `studio_aux` object is created by any start (button, rail, voice, MCP, presenter); a leftover object from an older run is archived once at start | 09 |
 | PX-17 | Keyboard and accessibility | the § 4.15 map acts once per key, only in scope; the § 4.16 roles and names are present; reduced motion leaves no UI animation | 10 |
 | PX-18 | Failure | a scene that fails to compile pauses playback at that scene, with the reason and « Réessayer »; no Slidecar, no silent skip, an Error Logs row | 06 |
+| PX-19 | Hot reload during play | a source edit landing while the video plays keeps `(scene_id, local frame)` (clamped to the new length) and the play state; the Player swaps in place (§ 4.9) | 06, 09 |
+| PX-20 | Detour | a score detour shows as an overlay inside the Variants stage, never a Board window; `return` removes it; the frame underneath is unchanged | 09 |
+| PX-21 | Lire seulement cette scène | the overflow entry plays the current scene from its frame 0 to its last frame, then holds that frame paused; no run starts; Variants stays open | 06, 10 |
 
 ### 2026-10 § 8. What stays exactly as it is
 
 These contracts are not changed by this section:
-- the score, cue, armed-set, follower, roles, Jarvis-presenter and locked-sequence contracts (Core-owned);
+- the score, cue, armed-set, follower, roles, Jarvis-presenter and locked-sequence contracts (Core-owned), **except the scene-entry segment** (§ 5);
 - variant graph operations;
-- pins and retention;
+- pins and retention (`StudioPinRegistry`): the mechanism is unchanged; its "live scene" source moves from the Board stage windows (`studio_pins.bind_scene`) to the Variants Player's mounted pins, including a scene-variant preview and in-flight hot-reload pins (§ 2), so a frame on screen is never archived;
 - the hot-reload gate;
 - the engine gate and no-fallback rule;
 - the sandbox and its security rules;
@@ -2615,6 +2641,8 @@ These contracts are not changed by this section:
   - `Échap` no longer pauses a presenter run (§ 4.15);
   - the variant bar is merged into the tree (§ 6 #8);
   - an external display gets no separate presenter view in this task (§ 4.13);
+  - no automatic fullscreen when a presenter run starts (§ 5);
+  - a newly entered scene starts at frame 0 even when its first item reveals a later anchor (§ 5, decided by agent 0);
   - discard the unpushed foreign work behind the « 8 s par slide » row (AUDIT.md § 9).
 
 ### 2026-10 § 10. Superseded statements (index)
@@ -2624,6 +2652,7 @@ These contracts are not changed by this section:
 | *Playback runtime contract › The stage window* | one Board window per run is where a run is shown | § 2: the Variants Player; the window is removed by Slice 09 |
 | *Playback runtime contract › Page: band and keyboard* | the band, its buttons, its keys (`P` / `Échap` pause), its item clock | § 2, § 4.15, § 5 (presenter strip) |
 | *Playback runtime contract › Human checks and known limits* (last sentence) | « Jouer cette slide » / « Tout jouer » start a `manual` rehearsal | § 5: ▶ « Lire » and the overflow entry, never a manual run |
+| *Remotion timeline bridge › What the score asks for* | the playhead (`from_frame`) is the furthest revealed anchor, also when a scene is entered | § 5: a newly entered scene always starts at local frame 0; anchors only bound `until` and the hold; going back or jumping shows the anchor frame; a resume keeps the exact frame |
 | *Remotion timeline bridge › What the score asks for* | an anchorless scene in a chained play "plays ONCE and holds" | true only through the stage window. The Player has `loop: true` today; § 4.7 makes `loop: false` and the final-frame hold the rule for every surface |
 | *Remotion timeline bridge › Chained playback* | "no blank, no remount" at a scene change | true only for the run stage and `presentation-studio.*` pins; the preview hosts remount on every scene. § 4.2 makes it the rule for the Variants Player |
 | *Remotion timeline bridge › Chained playback* | "A Player starts paused on its first image" | contradicted by the stage page (`play` on ready); kept as a requirement by § 4.1 (Slice 06) |
@@ -2803,6 +2832,8 @@ A `ScoreAnchor` is `{anchor_id, label, control_id?, at_ms?}`. `at_ms` (integer, 
 
 ### What the score asks for
 
+> **Superseded (2026-10).** For a **newly entered** scene the Player starts at local frame 0, even when the entering item reveals a later anchor; anchors only bound `until` and the hold. Going back, jumping and resuming are unchanged. See [Presentation experience contract](#presentation-experience-contract-level-2-2026-10) § 5.
+
 For the scene on the stage the playhead is the **furthest revealed anchor, by timeline position (furthest wins, not the most recent reveal)** (a manual reveal of an earlier anchor while a later one is revealed does not move the playhead back: hide the later ones to go back) (`reveal` / `hide` folded over the played items, the started steps of a locked sequence and the manual overrides: the existing `progress_of`). Revealing an anchor opens its segment; `hide`, `previous` and `goto` fall back to the furthest anchor still revealed (reversible, like every fold of the score). The `reveal` steps of a locked sequence therefore move the playhead at the sequence clock own beat (the Core clock stays master).
 
 Core puts the answer in the playback view (`GET .../playback`, the route the band polls) as `timeline`, only when the scene on the stage is a Remotion scene **with anchors** and the run is active:
@@ -2819,7 +2850,7 @@ Core puts the answer in the playback view (`GET .../playback`, the route the ban
 | `prefab` | `id@version` of the source the scene shows (Slice 23): the browser orders only the frame of THIS source, never the one still on screen while the next loads beside it |
 | `auto` | `true` in a chained play (Slice 23): the browser says when a segment started and finished, and does not catch up by seeking |
 
-A scene without anchors (in a `manual` run), an HTML scene and a Core wired without a `timeline_source` have **no** `timeline` key and behave exactly as before (a Remotion scene plays on its own, Slice 10). In a chained play (`scope` `scene` or `all`) a Remotion scene without anchors has a one-segment timeline from frame 0 to its last frame: it plays ONCE and holds its last image (it does not loop), so that the chain knows when it is done. The view stays under `MAX_VIEW_BYTES` (tested). The `where` tool of the agent keeps its own key list: the brain never receives the timeline.
+A scene without anchors (in a `manual` run), an HTML scene and a Core wired without a `timeline_source` have **no** `timeline` key and behave exactly as before (a Remotion scene plays on its own, Slice 10). In a chained play (`scope` `scene` or `all`) a Remotion scene without anchors has a one-segment timeline from frame 0 to its last frame: it plays ONCE and holds its last image (it does not loop), so that the chain knows when it is done. *(Superseded 2026-10: true only through the stage window, the Player has `loop: true` today; [Presentation experience contract](#presentation-experience-contract-level-2-2026-10) § 4.7 makes `loop: false` and the final-frame hold the rule for every surface.)* The view stays under `MAX_VIEW_BYTES` (tested). The `where` tool of the agent keeps its own key list: the brain never receives the timeline.
 
 ### What the browser does (`JarvisRemotionFrame.createTimelineFollower`, one per page)
 

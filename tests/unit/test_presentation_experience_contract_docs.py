@@ -52,22 +52,43 @@ def test_one_key_map_covers_both_run_kinds():
         assert f"| {key} |" in text, key
 
 
-def test_the_acceptance_matrix_covers_each_destination():
+ROWS = ("Naming", "Remotion Studio", "Remotion Studio round trip", "Variants opening", "Embedded Player, continuous play",
+        "No per-slide cut", "Pause / resume", "Scene navigation", "One clock", "End", "Controls", "Fullscreen",
+        "External display", "Presenter mode", "Presenter, Jarvis", "Floating viewer removed", "Keyboard and accessibility",
+        "Failure", "Hot reload during play", "Detour", "Lire seulement cette scène")
+
+
+def test_the_acceptance_matrix_has_each_row_under_its_name():
     text = contract()
-    for row in range(1, 19):
-        assert f"| PX-{row} |" in text, row
-    for area in ("Remotion Studio", "Variants opening", "Embedded Player", "Fullscreen", "External display", "Presenter mode"):
-        assert area in text, area
+    for number, area in enumerate(ROWS, start=1):
+        assert f"| PX-{number} | {area} |" in text, (number, area)
+    assert "| PX-22 |" not in text
+
+
+def test_pins_and_scene_entry_decisions_are_stated():
+    text = contract()
+    assert "stage scene as a pin source (`studio_pins.bind_scene`" in text
+    assert "the Variants Player's mounted pins register as a pin source" in text
+    assert "its \"live scene\" source moves from the Board stage windows (`studio_pins.bind_scene`)" in text
+    assert "A **newly entered** scene always starts on its local frame 0" in text
+    assert "**except the scene-entry segment** (§ 5)" in text
+    assert "the playhead (`from_frame`) is the furthest revealed anchor, also when a scene is entered" in text
+    assert "Starting a run never enters fullscreen by itself" in text
 
 
 def test_superseded_statements_point_to_the_contract():
     text = page("presentation-studio.md")
     for heading in ("### The stage window", "### Page: band and keyboard", "### Chained playback (scope, Slice 23)",
-                    "### Studio additions (variant explorer)"):
+                    "### Studio additions (variant explorer)", "### The page\n\n> **Superseded"):
         start = text.index(heading)
         head = text[start:start + 900]
         assert "**Superseded (2026-10).**" in head and ANCHOR in head, heading
     explorer = _section("## Variant Explorer interaction contract (Level 3, Slice 18)")
     playback = explorer[explorer.index("### Playback"):]
     assert "**Superseded (2026-10).**" in playback[:600] and ANCHOR in playback[:600]
-    assert ANCHOR in page("remotion-studio.md") and ANCHOR in page("presentation-engine.md")
+    bridge = _section("## Remotion timeline bridge (Level 3, Remotion handoff Slice 12)")
+    entry = bridge.index("For the scene on the stage the playhead is")
+    assert "**Superseded (2026-10).**" in bridge[entry - 400:entry] and ANCHOR in bridge[entry - 400:entry]
+    assert "plays ONCE and holds its last image (it does not loop), so that the chain knows when it is done. *(Superseded 2026-10" in bridge
+    for name in ("remotion-studio.md", "presentation-engine.md", "remotion-isolation.md", "OPERATIONS.md"):
+        assert ANCHOR in page(name), name
