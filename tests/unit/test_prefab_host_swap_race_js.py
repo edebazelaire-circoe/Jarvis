@@ -11,7 +11,7 @@ mechanism without a browser, so a fix is proven in milliseconds:
   repaints A's composition with B's props for the swap window.
 
 Binding target: `docs/presentation-studio.md` > *Presentation experience contract* § 4.2 (crosses every boundary, no blank, no visible
-remount, scene k+1 on its local frame 0). Strict xfail until the swap is fixed (Slice 05 continuous sequencing / Slice 06 Player lifecycle).
+remount, scene k+1 on its local frame 0). Fixed by Slice 05 (queued preload, incoming values go to the incoming frame only); now regression guards.
 """
 
 from __future__ import annotations
@@ -46,8 +46,6 @@ SETUP = r"""
 """
 
 
-@pytest.mark.xfail(strict=True, raises=AssertionError, reason="S03 repro: defect A — preload(C) right after mount(B) discards the staged B "
-                                                              "(prefab_host.js preload -> dropNext) before its deferred take-over — fixed by Slice 05")
 async def test_the_next_preload_never_discards_the_scene_being_entered(tmp_path):
     """Core enters B (`mount(B)`) and, in the same timeline event, announces C (`preload(C)`): B takes the screen, C waits beside it."""
 
@@ -65,8 +63,6 @@ async def test_the_next_preload_never_discards_the_scene_being_entered(tmp_path)
     assert (result["pending"] or "").endswith("s000000000003@1"), "C waits beside B"
 
 
-@pytest.mark.xfail(strict=True, raises=AssertionError, reason="S03 repro: defect B/C hybrid frame — mount(B) sends B's props to the outgoing A "
-                                                              "Player (prefab_host.js mount -> update() on the live record) — fixed by Slice 05")
 async def test_the_outgoing_player_never_receives_the_incoming_scene_values(tmp_path):
     """Entering B never repaints A's composition with B's values: A's frame gets no `props` message after the swap begins."""
 

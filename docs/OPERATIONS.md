@@ -3649,7 +3649,7 @@ l'opérateur :
   de [presentation-studio.md](presentation-studio.md)) : même poste isolé, même `JARVIS_REMOTION_RUNTIME_DIR` (sans lui, tout est ignoré) ; facultatif
   `JARVIS_PLAYBACK_GATE_EVIDENCE_DIR=<dossier>` pour garder JSON et captures (dossier personnel masqué). Une seule commande à la fois, au premier plan :
   `pytest tests/unit/test_presentation_playback_release_gate_browser.py -q -p no:cacheprovider -rxX -k "not play_all_shows"` (≈ 4 min), puis
-  `-k play_all_shows` seul (≈ 4 min tant que le défaut A dure, ≈ 1,5 min une fois corrigé). Compagnon sans navigateur :
+  `-k play_all_shows` seul (≈ 1,5 min depuis la Slice 05). Compagnon sans navigateur :
   `pytest tests/unit/test_prefab_host_swap_race_js.py` (≈ 2 s). Les défauts connus sont des `xfail(strict=True)` : un `XPASS(strict)` veut dire
   qu'une Slice a corrigé le comportement, retirer alors la marque ; un échec `harness: …` est une mesure cassée (pilote, précondition), jamais le défaut.
   Constats : `tasks/jarvis-remotion-native-studio-playback-fix/slices/03-reproduce-timeline-and-transition-failures/evidence/FINDINGS.md`.

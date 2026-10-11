@@ -270,22 +270,23 @@ if(x){const lm=/Scène (\d+) sur (\d+)/.exec(x.innerText||'');label=lm?+lm[1]:nu
 def gesture(kind: str, *, legacy: bool) -> str:
     """Click the contract control for `kind` (synthetic click) and return the name of the control used, or null.
 
-    `play`: toolbar « Lire » (§ 4.2); legacy « Tout jouer ». `scene_only`: overflow « Lire seulement cette scène » (§ 5 table); legacy
-    « Jouer cette slide ». `pause`: toolbar « Pause » (§ 4.3); legacy: the stage page's own toggle while it reads « Pause »."""
+    `play`: « Lire » in a toolbar (§ 4.2, transport toolbar from Slice 06); legacy « Lire » outside a toolbar (Slice 05), then « Tout jouer ». `scene_only`: overflow « Lire seulement cette scène » (§ 5 table); legacy
+    « Jouer cette slide ». `pause`: « Pause » in a toolbar (§ 4.3); legacy: « Pause » outside a toolbar, then the stage page's own toggle while it reads « Pause »."""
 
     return (r"""(()=>{const x=document.querySelector('#jvStudioExplorer');if(!x)return null;
 const names=el=>[el.getAttribute('aria-label')||'',(el.textContent||'').replace(/\s+/g,' ').trim()];
 const find=(re,root)=>[...(root||x).querySelectorAll('button,[role="menuitem"],[role="button"]')].find(b=>names(b).some(n=>re.test(n))&&b.getAttribute('aria-disabled')!=='true'&&b.getClientRects().length);
 const press=(b,label)=>{b.click();return label};
 const KIND=""" + json.dumps(kind) + ";const LEGACY=" + ("true" if legacy else "false") + r""";
-if(KIND==='play'){const b=find(/^(▶\s*)?Lire$/i,x.querySelector('[role="toolbar"]')||x);if(b)return press(b,'Lire');
-  if(LEGACY){const t=find(/Tout jouer/);if(t)return press(t,'legacy:Tout jouer')}return null}
+const inBars=re=>{for(const bar of x.querySelectorAll('[role="toolbar"]')){const b=find(re,bar);if(b)return b}return null};
+if(KIND==='play'){const b=inBars(/^(▶\s*)?Lire$/i);if(b)return press(b,'Lire');
+  if(LEGACY){const l=find(/^(▶\s*)?Lire$/i);if(l)return press(l,'legacy:Lire outside a toolbar');const t=find(/Tout jouer/);if(t)return press(t,'legacy:Tout jouer')}return null}
 if(KIND==='scene_only'){let item=find(/Lire seulement cette scène/);
   if(!item){const more=[...x.querySelectorAll('[aria-haspopup="menu"],[aria-haspopup="true"]')].find(b=>b.getClientRects().length);if(more){more.click();item=find(/Lire seulement cette scène/,document)}}
   if(item)return press(item,'Lire seulement cette scène');
   if(LEGACY){const t=find(/Jouer cette slide/);if(t)return press(t,'legacy:Jouer cette slide')}return null}
-if(KIND==='pause'){const b=find(/^Pause$/i,x.querySelector('[role="toolbar"]')||x);if(b)return press(b,'Pause');
-  if(LEGACY){const f=""" + EXPLORER_FRAME + r""";try{const t=f.contentDocument.querySelector('.rs-btn');if(t&&t.textContent==='Pause')return press(t,'legacy:rs-bar Pause')}catch(e){}}return null}
+if(KIND==='pause'){const b=inBars(/^Pause$/i);if(b)return press(b,'Pause');
+  if(LEGACY){const l=find(/^Pause$/i);if(l)return press(l,'legacy:Pause outside a toolbar');const f=""" + EXPLORER_FRAME + r""";try{const t=f.contentDocument.querySelector('.rs-btn');if(t&&t.textContent==='Pause')return press(t,'legacy:rs-bar Pause')}catch(e){}}return null}
 return null})()""")
 
 

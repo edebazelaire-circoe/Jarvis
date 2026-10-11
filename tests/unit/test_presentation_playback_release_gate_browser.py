@@ -102,9 +102,6 @@ def check_http(reads: dict, *names: str) -> None:
 
 # ---------------------------------------------------------------------------------------------------------------- (c) chained play (Board today)
 
-@pytest.mark.xfail(strict=True, raises=AssertionError, reason="S03 repro: defect A — in a chained play a one-segment scene's staged frame is "
-                                                              "discarded by the next scene's preload (prefab_host.preload -> dropNext), the "
-                                                              "run stalls ~LOAD_ALLOWANCE then skips it — fixed by Slice 05")
 async def test_play_all_shows_every_scene_in_order_from_frame_zero_without_stall_blank_or_cut(tmp_path):
     """(c) « tout jouer » (`scope: all`): each of the 9 scenes becomes visible within 1.5 s of Core entering it, plays from its frame 0 to its
     last frame (the 30 s scene is not cut at its 8 s score target), no instant without a ready frame, no replay (§ 4.2)."""
@@ -157,7 +154,8 @@ def analyse_play_all(probe: dict, reads: dict, core_rows: list[dict]) -> dict:
         scene = scene_of.get(uid)
         number = int(scene[1:]) if scene else None
         per_scene.append({"uid": uid, "scene": scene, "live_ms": ms, "core_enter_ms": enter.get(number),
-                          "entry_latency_ms": None if number not in enter else ms - enter[number],
+                          # Core starts the run before Chrome loads the page: a scene entered before the probe existed counts from the probe's epoch
+                          "entry_latency_ms": None if number not in enter else ms - max(enter[number], 0),
                           "duration": next((s[5] for s in rows.get(uid, []) if s[5]), None), "first_play": first_play(probe, uid),
                           "max_frame": max((c[1] for c in clocks.get(uid, [])), default=None), "wraps": wraps(clocks.get(uid, []))})
     shown = {s["scene"] for s in per_scene}
@@ -246,9 +244,6 @@ async def test_a_scrub_of_the_player_bar_moves_the_shared_clock(tmp_path):
     assert problems == [], f"readouts {after['readouts']}: {problems}"
 
 
-@pytest.mark.xfail(strict=True, raises=AssertionError, reason="S03 repro: defect C/D — a scrub clears the Player's stop frame (sandbox seek "
-                                                              "until=null) and the Player is loop:true: it runs past the end and wraps to 0 — "
-                                                              "fixed by Slice 06 (loop:false + moveToBeginningWhenEnded:false)")
 async def test_after_a_forward_scrub_the_scene_ends_once_and_holds_its_last_frame(tmp_path):
     """(d) § 4.7: after a scrub to 20 s, « Lire seulement cette scène » plays S3 to frame 899 and HOLDS it: no wrap to 0, and no later order
     moves it (no follower jump such as 612 -> 835)."""
@@ -362,9 +357,6 @@ async def test_a_presenter_run_scrubber_is_read_only(tmp_path):
     assert all(s["disabled"] for s in scrubbers), f"an enabled scrubber during a presenter run: {scrubbers}"
 
 
-@pytest.mark.xfail(strict=True, raises=AssertionError, reason="S03 repro: defect A/C — a manual (presenter) run gives an anchorless scene no "
-                                                              "timeline; the Player is free with loop:true after the 450 ms hold and replays "
-                                                              "forever — fixed by Slice 06 (hold) with Slice 05/07 (scene segment)")
 async def test_a_manual_scene_without_anchor_plays_once_and_holds_its_last_frame(tmp_path):
     """(e) § 5: presenter run, S1 (3 s, no anchor): its item plays the scene once from frame 0 and holds frame 89; it never wraps by itself."""
 
@@ -432,9 +424,6 @@ async def explorer_run(tmp_path) -> dict:
         return evidence
 
 
-@pytest.mark.xfail(strict=True, raises=AssertionError, reason="S03 repro: defect B — the Variants preview host has no swapPrefix: a thumbnail "
-                                                              "click unmounts the frame and mounts a fresh one (dark ~1.2 s) — fixed by Slice 06 "
-                                                              "(Variants Player preload / seamless swap)")
 async def test_variants_slide_change_never_shows_an_empty_preview(tmp_path):
     """(a) § 4.2 / § 4.5: a thumbnail click keeps a ready picture on screen: no interval without a ready Variants frame, never a dark capture."""
 
@@ -505,8 +494,6 @@ async def test_variants_play_this_slide_plays_the_slide_in_scene_scope(tmp_path)
     assert_plays_once_and_holds(evidence, "S3", 899)
 
 
-@pytest.mark.xfail(strict=True, raises=AssertionError, reason="S03 repro: defect A — « Tout jouer » starts a MANUAL run and closes Variants for the "
-                                                              "floating stage; nothing advances — fixed by Slice 10 (« Lire ») + Slice 05/06")
 async def test_variants_play_all_plays_the_whole_presentation_inside_variants(tmp_path):
     """(b) § 4.2: « Lire » (today « Tout jouer ») keeps Variants open, and the Variants Player itself crosses into S2 at its local frame 0."""
 
