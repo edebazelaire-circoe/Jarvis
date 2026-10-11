@@ -25,6 +25,10 @@
   const WAIT_VISIBLE_MS=300;
   const WAIT_TICK_MS=500;
   const MAX_BOUNDARIES=64;
+  /* A Player that halted by itself this close to its last frame has ended (Slice 05 rework, B1): Remotion pauses one step short of the end
+     when a frame is dropped and fires `ended` without setting the frame; the sandbox then seeks the last frame, this covers a lost report.
+     Never wider: a Player halted further back has not finished, and a user pause is ours (the phase is no longer `playing`). */
+  const END_SLACK_FRAMES=2;
 
   function keyOf(scene){return scene&&scene.prefab?`${scene.prefab.id}@${scene.prefab.version}`:null}
   function describe(error){return error&&typeof error.message==='string'?error.message:String(error)}
@@ -250,9 +254,19 @@
       const loc=S.map.locate(S.t.frame);
       S.error=null;S.t=Clock.play(S.map,S.t);
       setPhase('playing');
-      log('sequencer_retry',{scene_index:loc.scene_index});
+      const reloaded=reloadFailed(loc.scene_index);
+      log('sequencer_retry',{scene_index:loc.scene_index,reloaded});
       bring(loc.scene_index,loc.native_frame);
       return Promise.resolve(view());
+    }
+
+    /* The failed scene's frame took the window with its failure: showing the same pin again is "already there" for the host (it only
+       updates its values), so the scene would stay in error and the wait pill count forever (Slice 05 rework, B2). It is loaded again. */
+    function reloadFailed(index){
+      const h=host();
+      if(!h||typeof h.reload!=='function'||h.key(objectId)!==keyOf(scenes()[index])||h.state(objectId)!=='error')return false;
+      try{return h.reload(objectId)===true}
+      catch(error){log('sequencer_reload_failed',{scene_index:index,error:describe(error)},'warn');return false}
     }
 
     /* Variant changed, comparison opened, Variants closed: playback stops where it is and the map is dropped (a new variant has a new key). */
@@ -288,7 +302,7 @@
         if(!near&&!(from>=last&&frame>=last))return;
         S.synced=true;
       }
-      if(frame>=last){
+      if(frame>=last||(!clock.playing&&frame>=last-END_SLACK_FRAMES)){
         S.boundaryAt=now();S.from=S.k;
         S.t=Clock.tick(S.map,S.t,S.k,last,true);
         if(S.t.ended){
@@ -325,7 +339,7 @@
       active:()=>!!S.map,stats:()=>({phase:S.phase,frame:S.t?S.t.frame:null,boundaries:boundaries.slice(),changed:S.changed})});
   }
 
-  const api=Object.freeze({WAIT_VISIBLE_MS,createSequencer,keyOf});
+  const api=Object.freeze({WAIT_VISIBLE_MS,END_SLACK_FRAMES,createSequencer,keyOf});
   root.JarvisVariantsSequencer=api;
   if(typeof module!=='undefined'&&module.exports)module.exports=api;
 })(typeof globalThis!=='undefined'?globalThis:this);

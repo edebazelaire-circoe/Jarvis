@@ -406,3 +406,95 @@ async def test_the_real_host_and_the_sequencer_hand_over_without_a_hybrid_frame(
     assert result["bOrders"] == [["pause", 0, None], ["play", 0, None]] and result["cOrders"] == [["pause", 0, None], ["play", 0, None]]
     assert result["view"]["phase"] == "ended" and result["view"]["frame"] == 449
     assert result["bounds"] == [[0, 1, True], [1, 2, True]]
+
+
+async def test_a_player_that_ends_one_or_two_frames_short_of_its_last_frame_ends_the_scene(tmp_path):
+    """Slice 05 rework, B1: Remotion stops on 88 (or 87) of 0..89 when a frame is dropped. The sequencer waited for 89 and stayed
+    `playing` forever with « Pause » on screen; it now takes a Player halted by itself that close to the end as the end of the scene."""
+
+    result = run_seq(tmp_path, r"""
+      const out={};
+      for(const halt of [88,87]){
+        const b=seqBench({parkAhead:true});
+        await b.seq.play();b.report(5,true);b.report(60,true);
+        b.report(halt,false);
+        const v=b.seq.view();
+        b.swap();b.report(0,true);b.playTo(0,899,100);b.swap();b.report(0,true);b.report(30,true);
+        b.report(73,false);                                        // the last scene too: 0..74 at 25 fps, halted one short
+        out[halt]={boundary:[v.phase,v.scene_index,v.frame],shows:b.shows,end:[b.seq.view().phase,b.seq.view().frame]};
+      }
+      return out;
+    """)
+    for halt in ("88", "87"):
+        assert result[halt]["boundary"] == ["waiting", 1, 90], halt
+        assert result[halt]["shows"] == [1, 2] and result[halt]["end"] == ["ended", 1079], halt
+
+
+async def test_a_player_halted_further_back_or_paused_by_the_user_does_not_end_the_scene(tmp_path):
+    """Negative cases: 3 frames short is not an end; after the user's pause a halted clock near the end changes nothing."""
+
+    result = run_seq(tmp_path, r"""
+      const b=seqBench({parkAhead:true});
+      await b.seq.play();b.report(5,true);b.report(60,true);
+      b.report(86,false);
+      const short3=[b.seq.view().phase,b.seq.view().frame,b.shows.length];
+      b.report(87,true);
+      b.seq.pause();b.report(88,false);
+      return {short3,paused:[b.seq.view().phase,b.seq.view().frame,b.shows.length]};
+    """)
+    assert result["short3"] == ["playing", 86, 0]
+    assert result["paused"] == ["paused", 87, 0]
+
+
+async def test_a_stale_or_earlier_clock_in_the_middle_of_a_scene_never_moves_the_frame_back(tmp_path):
+    """QA mutant M12: the guard on `f` is the only thing that stops a backward clock mid-scene (§ 4.2: no return to an earlier frame)."""
+
+    result = run_seq(tmp_path, r"""
+      const b=seqBench();
+      await b.seq.play();b.report(5,true);b.report(40,true);
+      b.report(20,true);const back=b.seq.view().frame;
+      b.report(39,false);const halted=b.seq.view().frame;
+      b.report(41,true);
+      return {back,halted,on:b.seq.view().frame};
+    """)
+    assert result == {"back": 40, "halted": 40, "on": 41}
+
+
+async def test_retry_after_a_scene_failed_to_load_reloads_it_in_the_real_host_and_playback_goes_on(tmp_path):
+    """Slice 05 rework, B2, on the real `control_center_prefab_host.js`: « Réessayer » showed the same pin again, which the host took for
+    "already there"; the scene stayed in error and the wait pill counted forever. Retry now loads the failed scene again."""
+
+    result = run_stage_node(tmp_path, HOST_BENCH + SEQ_BENCH.split("function seqBench")[0] + r"""
+      let seq=null;
+      const b=hostBench({onLive:(id)=>seq&&seq.onLive(id),onClock:(id)=>seq&&seq.onClock(id),onOutcome:(o)=>{b2.outcomes.push(o);seq&&seq.onOutcome(o)}});
+      const b2={outcomes:[]};
+      const deck=[{id:'pss_1',title:'Un',prefab:{id:b.A,version:1},props:{title:'one'},data:{},fps:30,frames:150},
+                  {id:'pss_2',title:'Deux',prefab:{id:b.B,version:1},props:{title:'two'},data:{},fps:30,frames:150}];
+      seq=Seq.createSequencer({objectId:'stage',host:()=>b.host,now:b.c.now,setTimeout:b.c.setTimeout,clearTimeout:b.c.clearTimeout,
+        scenes:()=>deck,revision:()=>1,fetchClock:async()=>({key:'k',variant_revision:1,clock:wireOf(deck,'k')}),
+        show:(i)=>b.host.mount(b.slot,b.inst(deck[i].prefab.id,{scene_id:deck[i].id,props:deck[i].props})),changed:()=>{}});
+      const tick=(f,frame,playing)=>b.say(f,{type:'clock',frame,playing,duration:150,fps:30});
+      const up=(f)=>{const C={width:1280,height:720,fps:30,durationInFrames:150};
+        b.status(f,'shell');b.status(f,'mounting',{composition:C});b.status(f,'ready',{composition:C});tick(f,0,false)};
+      b.host.mount(b.slot,b.inst(b.A,{scene_id:'pss_1',props:deck[0].props}));const fa=await b.bringUp(b.A);b.c.advance(2000);
+      await seq.play();await flush();
+      b.status(b.frames()[b.frames().length-1],'failed',{reason:'compile_failed',message:'Scene.tsx(3,1): boom'});   // loaded ahead: dropped
+      tick(fa,2,true);tick(fa,149,false);await flush();                                    // the boundary: scene 2 is asked for, loads again
+      const fb=b.frames()[b.frames().length-1];
+      b.status(fb,'shell');b.status(fb,'failed',{reason:'compile_failed',message:'Scene.tsx(3,1): boom'});
+      const failed={phase:seq.view().phase,scene:seq.view().error&&seq.view().error.scene_index,state:b.host.state('stage'),key:b.host.key('stage')};
+      const framesBefore=b.frames().length;
+      await seq.retry();await flush();
+      const fresh=b.frames()[b.frames().length-1];
+      const retrying={phase:seq.view().phase,state:b.host.state('stage'),newFrame:fresh!==fb};
+      up(fresh);b.c.advance(400);
+      const live={phase:seq.view().phase,orders:b.posted(fresh)};
+      tick(fresh,1,true);tick(fresh,149,false);
+      return {failed,retrying,live,end:[seq.view().phase,seq.view().frame],framesBefore,
+        outcomes:b2.outcomes.map(o=>[o.prefab.id.slice(-2),o.outcome])};
+    """, {"paths": PATHS})
+    assert result["failed"] == {"phase": "failed", "scene": 1, "state": "error", "key": "presentation-studio.p000000000001.s000000000002@1"}
+    assert result["retrying"] == {"phase": "waiting", "state": "loading", "newFrame": True}, "a fresh load of the failed scene"
+    assert result["live"]["phase"] == "playing" and result["live"]["orders"] == [["pause", 0, None], ["play", 0, None]]
+    assert result["end"] == ["ended", 299]
+    assert result["outcomes"] == [["01", "mounted"], ["02", "failed"], ["02", "failed"], ["02", "mounted"]], "the ahead load, the shown one, the retry"
