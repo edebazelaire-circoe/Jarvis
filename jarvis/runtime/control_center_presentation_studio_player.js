@@ -110,6 +110,10 @@
      tient la scène (jamais un saut) et le dit ; « Suivant » et « Arrêter » marchent toujours. */
   function pageWaitText(wait,scene){
     const which=scene&&Number.isInteger(scene.number)?`Scène ${scene.number}`:'La scène';
+    /* Slice 07 rework (I1) : un silence de Jarvis sur une scène Remotion dont la ligne de temps n'a pas pu être lue. Jamais coupée, jamais
+       rythmée par sa durée visée : tenue, et dite. */
+    if(wait.reason==='timeline_unresolved')return `${which} : la ligne de temps de la vidéo n'a pas pu être lue, la scène est tenue `+
+      `depuis ${Math.round((wait.waited_ms||0)/1000)} s (jamais coupée) ; « Suivant » ou « Arrêter » restent possibles.`;
     return `${which} : lecture en attente de la page, rien n'a été signalé depuis ${Math.round((wait.waited_ms||0)/1000)} s. `+
       'Elle reste à l\'écran, jamais sautée ; « Suivant » ou « Arrêter » restent possibles.';
   }

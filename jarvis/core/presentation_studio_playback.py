@@ -63,7 +63,7 @@ from jarvis.domain.presentation_studio_roles import (
 from jarvis.domain.presentation_studio_score import parse_score
 from jarvis.domain.composition_clock import composition_key
 from jarvis.domain.remotion_timeline import (
-    UNRESOLVED as TIMELINE_UNRESOLVED, FrameMap, Move, Placement, SegmentClock, build_frame_map, place, timeline_wire,
+    UNRESOLVED as TIMELINE_UNRESOLVED, Arrival, FrameMap, Move, Placement, SegmentClock, build_frame_map, place, timeline_wire,
 )
 from jarvis.domain.scene import ScenePrefabRef
 from jarvis.domain.v2 import ProtocolEnvelope
@@ -178,6 +178,8 @@ class PresentationStudioPlaybackService(AutoPlayMixin, ScenePreviewMixin):
         #: Slice 07 (§ 5): where the Player stands in the scene on the stage, and the move not yet seen by a timeline view.
         self._tl_place: Placement | None = None
         self._tl_move = Move.NONE
+        #: Slice 07 rework (I1): the scene whose Remotion timeline could not be resolved on its last stage sync (held, and said).
+        self._tl_failed: str | None = None
         #: Slice 23: the scope of the run (`manual` by default) and the deadline that keeps a chained play alive without a browser.
         self._init_autoplay(autoplay)
         self._compositions: dict[tuple[str, int], dict[str, Any] | None] = {}
@@ -763,7 +765,7 @@ class PresentationStudioPlaybackService(AutoPlayMixin, ScenePreviewMixin):
             self._tl_map = None
             self._tl_video = None
             self._tl_clock.reset()   # a new run never inherits the played time of the previous one (Slice 12)
-            self._tl_place, self._tl_move = None, Move.NONE
+            self._tl_place, self._tl_move, self._tl_failed = None, Move.NONE, None
             self._cancel_auto()
             self._scope, self._auto_done_seq, self._auto_started_seq = request.scope, None, None
             await self._reclaim_leftovers()
@@ -902,6 +904,8 @@ class PresentationStudioPlaybackService(AutoPlayMixin, ScenePreviewMixin):
         self._bind_stage(scene_id)
         await self._resolve_timeline(scene_id, shown)
         self._rearm_auto()   # the segment of the scene just shown is known now (the state change came before the stage sync)
+        # Slice 07 rework (B1): `_commit` woke the presenter BEFORE this sync; what the new scene is (HTML, video) is known only now
+        self._wake()
         reopens = getattr(self._stage, "reopens", 0)
         if reopens > self._reopens_seen:  # the user closed the stage window: it was brought back, and the band says so
             self._reopens_seen = reopens
@@ -912,7 +916,7 @@ class PresentationStudioPlaybackService(AutoPlayMixin, ScenePreviewMixin):
         La composition vient du manifeste du pin (`remotion_composition`), jamais du code de la scène ; un échec est dit (journal +
         constat `timeline_unresolved`) et la scène se joue alors comme en Slice 10, sans pilotage."""
 
-        self._tl_map = None
+        self._tl_map, self._tl_failed = None, None
         if self._timeline_source is None:
             self._tl_video = (scene_id, False)
             return
@@ -927,6 +931,7 @@ class PresentationStudioPlaybackService(AutoPlayMixin, ScenePreviewMixin):
             fmap = None if composition is None else build_frame_map(scene_id, composition, shown.anchors or scene.anchors,
                                                                         whole_scene=self._page_reports())
         except Exception as exc:  # noqa: BLE001 - captured as an error row + a visible notice: the scene then plays unguided (Slice 10)
+            self._tl_failed = scene_id
             self._notice(TIMELINE_UNRESOLVED)
             self._trace("timeline_unresolved", "Ligne de temps Remotion non resolue", level="error",
                         data={"scene_id": scene_id, "prefab": f"{pin[0]}@{pin[1]}", "error_class": type(exc).__name__,
@@ -944,10 +949,24 @@ class PresentationStudioPlaybackService(AutoPlayMixin, ScenePreviewMixin):
     def _shows_video(self) -> bool:
         """Is the scene on the stage a Remotion scene (or one whose kind is not known yet)? Then no dwell may move it (Slice 05)."""
 
+        return self._stage_video() is not False
+
+    def _stage_video(self) -> bool | None:
+        """Is the scene on the stage NOW a Remotion scene? Answered for that very scene, never from the scene before it (Slice 07 rework,
+        B1): its last timeline resolution, or the manifest already read for its pin. `None` while it is not known yet (its stage sync is
+        under way; the sync wakes the presenter when it lands)."""
+
         if self._timeline_source is None or self._plan is None or not self._state.active:
             return False
+        scene_id = stage_scene_id(self._plan, self._state)
         known = self._tl_video
-        return known is None or known[0] != stage_scene_id(self._plan, self._state) or known[1]
+        if known is not None and known[0] == scene_id:
+            return known[1]
+        scene = self._scenes.get(scene_id)
+        pin = None if scene is None or scene.prefab is None else (scene.prefab.prefab_id, scene.prefab.version)
+        if pin is not None and pin in self._compositions:
+            return self._compositions[pin] is not None
+        return None
 
     def _timeline_view(self) -> dict[str, Any] | None:
         """La ligne de temps que le navigateur applique au lecteur : une **description** de l'etat de la partition (jamais un ordre
@@ -965,9 +984,7 @@ class PresentationStudioPlaybackService(AutoPlayMixin, ScenePreviewMixin):
                 self._tl_place = None   # another scene is on the stage: coming back is a new entry (§ 5)
             return None
         revealed = {anchor for scene, anchor in progress_of(plan, state).revealed if scene == fmap.scene_id}
-        # the segment on screen has not played one frame yet (and its page did not say it finished)
-        fresh = self._tl_clock.played(self._ms()) * fmap.fps < 1000 and self._auto_done_seq != self._tl_clock.seq
-        self._tl_place = place(fmap, revealed, self._tl_move, self._tl_place, fresh=fresh)
+        self._tl_place = place(fmap, revealed, self._tl_move, self._tl_place, entering=self._entry_reached(fmap))
         self._tl_move = Move.NONE
         segment = self._tl_place.segment
         cap_ms = -(-(segment.until - segment.start + 1) * 1000 // fmap.fps)
@@ -977,6 +994,24 @@ class PresentationStudioPlaybackService(AutoPlayMixin, ScenePreviewMixin):
         prefab = _pin_key(shown)
         return timeline_wire(fmap, segment, playing=state.phase is Phase.PLAYING, seq=seq, play_ms=play_ms, prefab=prefab,
                              auto=self._page_reports())
+
+    def _entry_reached(self, fmap: FrameMap) -> int | None:
+        """Slice 07 rework (I2): the local frame the entry of the scene on the stage has reached while it still plays, for `place`; `None`
+        once it finished or when the Player is not playing an entry. With page reports (a run Jarvis paces, a chained play): finished when
+        the page said `done`; before its `started` the Player has not begun (frame `start`); after it, Core's played time since `started`.
+        Without page reports: Core's played time, finished once it covers the entry. An estimate: the Player is re-ordered from it, a few
+        frames of jitter at most, never a cut to the anchor."""
+
+        placed = self._tl_place
+        if placed is None or placed.scene_id != fmap.scene_id or placed.arrival is not Arrival.ENTER:
+            return None
+        segment, seq = placed.segment, self._tl_clock.seq
+        reached = segment.start + self._tl_clock.played(self._ms()) * fmap.fps // 1000
+        if self._page_reports():
+            if self._auto_done_seq == seq:
+                return None
+            return segment.start if self._auto_started_seq != seq else min(reached, segment.until)
+        return None if reached >= segment.until else reached
 
     async def _retime(self) -> None:
         """After the plan or a pin moved without a new stage sync (a hot reload patches the window itself): rebuild the frame map of the
@@ -989,6 +1024,7 @@ class PresentationStudioPlaybackService(AutoPlayMixin, ScenePreviewMixin):
         self._compositions.clear()   # a manifest read is cheap; a reload must never be answered from a memory of the old version
         if scene is not None:
             await self._resolve_timeline(scene_id, scene)
+            self._wake()
 
     async def _require_native_on_stage(self, prefab_id: str, version: int, what: str) -> None:
         """Last door before the stage: whatever path chose this block (an edit, a hot reload, a scene-variant selection, a score
@@ -1357,7 +1393,7 @@ _STATUS_OF = {"start": "started", "pause": "paused", "resume": "resumed", "detou
 #: Slice 07 (§ 5): what a committed command did to the score, for the Player's placement (`remotion_timeline.place`). A name not listed
 #: moved nothing (pause, resume, detour, stage acknowledgements, speaker); `return` is judged by the position it lands on.
 _MOVE_OF = {"start": Move.FORWARD, "next": Move.FORWARD, "cue": Move.FORWARD, "reveal": Move.FORWARD,
-            "sequence_step": Move.FORWARD, "sequence_done": Move.FORWARD, "skip_sequence": Move.FORWARD,
+            "sequence_step": Move.STEP, "sequence_done": Move.FORWARD, "skip_sequence": Move.FORWARD,
             "previous": Move.JUMP, "goto": Move.JUMP, "hide": Move.JUMP, "sequence_abort": Move.JUMP, "play": Move.RESTART}
 
 

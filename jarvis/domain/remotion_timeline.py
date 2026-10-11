@@ -13,7 +13,8 @@ C'est un **adaptateur pur**, sans E/S ni horloge : la partition (`Score`, `Score
    les ancres suivantes ramène en arrière (réversible, comme tout le dépliement de la partition).
    `place` (handoff native-studio-playback-fix, Slice 07, contrat § 5) : le segment que le lecteur reçoit dans une lecture de
    présentateur. Une scène nouvellement entrée part de son image locale 0 jusqu'au `until` de l'élément (jamais de l'ancre) ; un retour ou
-   un saut tient l'image d'arrêt de l'élément ; une reprise dans la même scène continue depuis l'image tenue.
+   un saut tient l'image d'arrêt de l'élément ; une reprise dans la même scène continue depuis l'image tenue ; un pas de séquence
+   verrouillée ne coupe jamais une entrée qui joue encore.
 3. `SegmentClock` : le temps **joué** (pauses exclues) du segment courant selon l'horloge de Core, et un compteur `seq` qui
    n'avance que lorsque le segment change (le navigateur distingue ainsi « aller au segment » de « reprendre »).
 
@@ -178,8 +179,11 @@ class Move(StrEnum):
 
     #: pause, reprise, détour, acquittement du cadre, changement d'orateur : la position n'a pas bougé
     NONE = "none"
-    #: départ, `next`, une cue, un pas de séquence verrouillée, une révélation : la partition avance
+    #: départ, `next`, une cue, une révélation, la fin d'une séquence : la partition avance (un geste explicite : il va où il est demandé)
     FORWARD = "forward"
+    #: un pas d'une séquence verrouillée (son horloge écrite ; personne ne l'a demandé à l'instant) : avance comme `FORWARD`, mais ne
+    #: coupe jamais une entrée qui joue encore (Slice 07 rework, I2)
+    STEP = "step"
     #: `previous`, `goto`, `hide`, un point de reprise : retour en arrière ou saut
     JUMP = "jump"
     #: une lecture enchaînée reprend la scène depuis son premier élément
@@ -202,32 +206,37 @@ class Arrival(StrEnum):
 @dataclass(frozen=True, slots=True)
 class Placement:
     """Où en est le lecteur d'une scène dans une lecture de présentateur : le segment que la partition vise (`target`, celui de l'ancre
-    révélée la plus loin) et la façon d'y arriver (`arrival`). `segment` est ce que le navigateur reçoit."""
+    révélée la plus loin) et la façon d'y arriver (`arrival`). `segment` est ce que le navigateur reçoit. `start` : l'image d'où part une
+    entrée (`ENTER`) ; 0, sauf une entrée prolongée par un pas de séquence pendant qu'elle joue (elle continue d'où elle est)."""
 
     scene_id: str
     target: Segment
     arrival: Arrival
+    start: int = 0
 
     @property
     def segment(self) -> Segment:
         target = self.target
         if self.arrival is Arrival.ENTER:
-            return Segment(target.anchor_id, 0, target.until)
+            return Segment(target.anchor_id, min(self.start, target.until), target.until)
         if self.arrival is Arrival.HOLD:
             return Segment(target.anchor_id, target.until, target.until)
         return target
 
 
-def place(fmap: FrameMap, revealed: Collection[str], move: Move, previous: Placement | None, *, fresh: bool = False) -> Placement:
+def place(fmap: FrameMap, revealed: Collection[str], move: Move, previous: Placement | None, *,
+          entering: int | None = None) -> Placement:
     """Slice 07 (§ 5) : le placement du lecteur pour l'état de la partition. Pur et idempotent (`move` NONE et le même état rendent le même
     placement). Les ancres bornent seulement l'arrêt (`until`) et la tenue, jamais le début d'une scène nouvellement entrée :
 
     - une scène nouvellement entrée (pas de placement précédent dans cette scène) part de son image locale 0 et joue jusqu'au `until` de
       l'élément, même quand l'élément d'entrée révèle une ancre à `at_ms > 0` (`ENTER`) ; entrée par un saut : tenue (`HOLD`) ;
     - même scène, même segment visé : le placement ne change pas (une reprise continue depuis l'image tenue, même `seq`) ;
-    - même scène, la partition avance vers une ancre plus loin : son segment (`PLAY`) ; sauf si l'entrée n'a pas encore joué une image
-      (`fresh` : le pas 0 d'une séquence verrouillée révèle une ancre à l'instant où la scène entre) : l'entrée part toujours de 0 et va
-      jusqu'au nouveau `until` (`ENTER`), sinon l'animation d'entrée serait sautée ;
+    - même scène, la partition avance vers une ancre plus loin : son segment (`PLAY`) ;
+    - même scène, un pas de séquence verrouillée (`STEP`) vers une ancre plus loin PENDANT que l'entrée joue encore (`entering` : l'image
+      que l'entrée a atteinte, dite par le service tant qu'elle n'a pas fini ; `None` sinon) : l'entrée n'est jamais coupée, elle continue
+      d'où elle est jusqu'au nouveau `until` (`ENTER`, `start` = `entering`). Le pas 0 est lâché quand la voix commence, une demi-seconde
+      ou plus après l'entrée (Slice 07 rework, I2) ;
     - même scène, retour ou saut (ou une ancre plus tôt) : l'image d'arrêt de l'élément, tenue (`HOLD`) ;
     - `RESTART` (lecture enchaînée relancée) : la scène repart de 0 ;
     - `SEEK` (saut pendant une lecture enchaînée) : le segment de l'élément visé se joue, depuis son ancre (comportement de la Slice 05)."""
@@ -239,9 +248,11 @@ def place(fmap: FrameMap, revealed: Collection[str], move: Move, previous: Place
         arrival = {Move.JUMP: Arrival.HOLD, Move.SEEK: Arrival.PLAY}.get(move, Arrival.ENTER)
         return Placement(fmap.scene_id, target, arrival)
     if target.anchor_id == previous.target.anchor_id or move is Move.NONE:
-        return Placement(fmap.scene_id, target, previous.arrival)
-    if move is Move.FORWARD and target.start > previous.target.start:
-        return Placement(fmap.scene_id, target, Arrival.ENTER if fresh and previous.arrival is Arrival.ENTER else Arrival.PLAY)
+        return Placement(fmap.scene_id, target, previous.arrival, previous.start)
+    if move in (Move.FORWARD, Move.STEP) and target.start > previous.target.start:
+        if move is Move.STEP and entering is not None and previous.arrival is Arrival.ENTER:
+            return Placement(fmap.scene_id, target, Arrival.ENTER, max(previous.start, min(entering, target.until)))
+        return Placement(fmap.scene_id, target, Arrival.PLAY)
     if move is Move.SEEK:
         return Placement(fmap.scene_id, target, Arrival.PLAY)
     return Placement(fmap.scene_id, target, Arrival.HOLD)

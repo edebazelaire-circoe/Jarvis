@@ -485,6 +485,22 @@ return texts;
     assert "attente de la page" not in out["none"]["text"] and out["none"]["kind"] == "ok"
 
 
+def test_a_scene_held_because_its_timeline_could_not_be_read_is_said_and_next_and_stop_stay_usable(tmp_path):
+    """Slice 07 rework, I1: a Jarvis silence on a Remotion scene without a timeline is held (never cut, never paced), and the band says so."""
+
+    out = _node(tmp_path, """
+script.state=st({page_wait:{seq:null,started:false,waited_ms:17000,reason:'timeline_unresolved'}});
+const p=make();p.start();await env.tick();
+const out={text:textOf(bandOf()),kind:bandOf().getAttribute('data-kind'),next:btn('Suivant').disabled,stop:btn('Arrêter').disabled};
+p.stop();
+return out;
+""")
+    assert "Scène 2 : la ligne de temps de la vidéo n'a pas pu être lue, la scène est tenue depuis 17 s" in out["text"], out
+    assert "jamais coupée" in out["text"] and "« Suivant » ou « Arrêter » restent possibles" in out["text"]
+    assert "attente de la page" not in out["text"]
+    assert out["kind"] == "problem" and out["next"] is False and out["stop"] is False
+
+
 def test_the_sequence_exit_is_a_button_and_a_key_only_while_a_sequence_owns_the_timeline(tmp_path):
     out = _node(tmp_path, """
 const p=make();p.start();await env.tick();

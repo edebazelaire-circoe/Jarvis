@@ -42,7 +42,8 @@ import asyncio
 from dataclasses import dataclass
 from typing import Any
 
-from jarvis.domain.presentation_studio_playback import EventKind, Phase
+from jarvis.core.presentation_studio_presenter import SILENCE_DEFAULT_MS
+from jarvis.domain.presentation_studio_playback import EventKind, Phase, stage_scene_id
 from jarvis.domain.presentation_studio_playback_requests import Scope
 from jarvis.domain.presentation_studio_score import ItemKind
 
@@ -62,7 +63,7 @@ class AutoTimings:
 
 class AutoPlayMixin:
     """Methods of `PresentationStudioPlaybackService`. Expects `_lock`, `_state`, `_plan`, `_tasks`, `_dispatch`, `_timeline_view`,
-    `_tl_clock`, `_ms`, `_shows_video`, `_wake` and `_trace` from the service."""
+    `_tl_clock`, `_ms`, `_shows_video`, `_stage_video`, `_tl_failed`, `_wake` and `_trace` from the service."""
 
     def _init_autoplay(self, timings: AutoTimings | None) -> None:
         self._timings = timings or AutoTimings()
@@ -75,6 +76,8 @@ class AutoPlayMixin:
         self._auto_started_seq: int | None = None
         #: `seq` of the segment whose silent page has already been traced (once per segment).
         self._page_wait_seq: int | None = None
+        #: `(run_id, position, epoch)` of the item whose unresolved-timeline hold has already been traced (Slice 07 rework, I1).
+        self._timeline_wait_key: tuple[Any, ...] | None = None
 
     # ------------------------------------------------------------------ scope
 
@@ -121,13 +124,16 @@ class AutoPlayMixin:
     def media_segment(self) -> str | None:
         """Slice 07, for the Jarvis presenter: `None` when the scene on the stage has no media segment to play (an HTML scene, a hold,
         no Remotion source: a soft pace may apply); `"playing"` while its Player has not said it reached the stop frame (a Remotion scene
-        whose timeline is not resolved is held the same way, never paced); `"done"` once the page said so for this segment."""
+        whose timeline is not resolved is held the same way, never paced); `"done"` once the page said so for this segment;
+        `"pending"` while the kind of the scene now on the stage is not known yet (its stage sync is under way and wakes the presenter
+        when it lands: Slice 07 rework, B1). Always answered for the CURRENT item, never from the scene before it."""
 
         if self._plan is None or not self._state.active:
             return None
         timeline = self._timeline_view()
         if timeline is None:
-            return "playing" if self._shows_video() else None
+            video = self._stage_video()
+            return "pending" if video is None else "playing" if video else None
         if timeline["until_frame"] <= timeline["from_frame"]:
             return None
         return "done" if timeline["seq"] == self._auto_done_seq else "playing"
@@ -190,7 +196,9 @@ class AutoPlayMixin:
         if not (self._auto_eligible() or self._waits_for_media()):
             return None
         timeline = self._timeline_view()
-        if timeline is None or timeline["until_frame"] <= timeline["from_frame"] or timeline["seq"] == self._auto_done_seq:
+        if timeline is None:
+            return self._timeline_wait()
+        if timeline["until_frame"] <= timeline["from_frame"] or timeline["seq"] == self._auto_done_seq:
             return None
         seq = timeline["seq"]
         started = self._auto_started_seq == seq
@@ -204,6 +212,27 @@ class AutoPlayMixin:
             self._trace("autoplay_page_silent", "Segment de media sans nouvelle de la page : la lecture reste sur la scene", level="warning",
                         data={"run_id": self._state.run_id, "seq": seq, "started": started, "waited_ms": waited})
         return {"seq": seq, "started": started, "waited_ms": waited}
+
+    def _timeline_wait(self) -> dict[str, Any] | None:
+        """Slice 07 rework (I1): a Jarvis silence held on a Remotion scene whose timeline could not be resolved. The contract holds (the
+        motion is never cut, `target_duration_ms` never paces it) but never silently: once the item's soft target + `PAGE_SILENCE_MARGIN_MS`
+        has passed (pauses excluded), the view says it (`page_wait` with `reason: timeline_unresolved`) and the band says the scene is held
+        and that « Suivant » / « Arrêter » work. Traced once per item entry."""
+
+        state, plan = self._state, self._plan
+        if not self._waits_for_media() or self._tl_failed is None or self._tl_failed != stage_scene_id(plan, state):
+            return None
+        item = plan.item_at(state.position)
+        target = item.target_duration_ms if item.target_duration_ms is not None else SILENCE_DEFAULT_MS
+        held = max(0, self._ms() - state.item_started_ms - state.item_paused_ms)
+        if held < target + PAGE_SILENCE_MARGIN_MS:
+            return None
+        key = (state.run_id, state.position, state.epoch)
+        if self._timeline_wait_key != key:
+            self._timeline_wait_key = key
+            self._trace("timeline_unresolved_held", "Silence tenu sur une scene Remotion sans ligne de temps : dit, jamais coupe",
+                        level="warning", data={"run_id": state.run_id, "position": state.position + 1, "held_ms": held})
+        return {"seq": None, "started": False, "waited_ms": held, "reason": "timeline_unresolved"}
 
     # ------------------------------------------------------------------ advance
 

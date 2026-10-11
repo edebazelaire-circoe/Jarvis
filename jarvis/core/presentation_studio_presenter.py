@@ -113,7 +113,8 @@ class Playback(Protocol):
     async def finish(self, reason: str) -> Any: ...
 
     def media_segment(self) -> str | None:
-        """Slice 07: `None` (no media segment), `"playing"` or `"done"` for the scene on the stage. Optional (read with `getattr`)."""
+        """Slice 07: `None` (no media segment), `"playing"`, `"done"`, or `"pending"` (the stage sync of the scene is under way: it
+        wakes the presenter when it lands) for the scene on the stage NOW. Optional (read with `getattr`)."""
 
 
 @dataclass(slots=True)
@@ -525,7 +526,7 @@ class PresentationStudioPresenter:
         # explicit silence: nothing is said, the bound actions were applied when the item was entered. Slice 07: on a media segment it
         # lasts the media (the Player reaching its stop frame, said by the page), never its soft target; otherwise a soft pace.
         media = self._media_segment()
-        if media == "playing":
+        if media in ("playing", "pending"):   # pending: the stage sync wakes us once it knows the scene (Slice 07 rework, B1)
             return False
         if media == "done":
             return await self._advance(run, "media_done")
@@ -790,7 +791,8 @@ class PresentationStudioPresenter:
         plan = self._playback.plan
         if run.speaks and state.sequence is None and plan is not None and 0 <= state.position < len(plan):
             item = plan.item_at(state.position)
-            if item.kind is ItemKind.SILENCE and self._media_segment() is None:   # a media silence is woken by the page's report
+            # a media silence is woken by the page's report; a scene still syncing by the end of its stage sync (Slice 07 rework, B1)
+            if item.kind is ItemKind.SILENCE and self._media_segment() is None:
                 target = item.target_duration_ms if item.target_duration_ms is not None else self._silence_default_ms
                 deadlines.append(run.item_t0 + run.frozen_total + target)
         return min(deadlines) if deadlines else None

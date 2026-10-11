@@ -42,10 +42,26 @@ def test_the_score_going_on_in_the_same_scene_plays_the_new_anchors_segment_from
     assert entered.segment.until + 1 == moved.segment.start, "continuous: no frame skipped, none replayed"
     same = place(m, {"a"}, Move.FORWARD, entered)
     assert same == entered, "an item that reveals nothing new keeps the segment (and so the browser's `seq`)"
-    at_once = place(m, {"a", "b"}, Move.FORWARD, place(m, set(), Move.FORWARD, None), fresh=True)
-    assert at_once.arrival is Arrival.ENTER and at_once.segment == Segment("b", 0, 299), \
-        "a locked sequence's step 0 revealing an anchor as the scene enters: the entry is still played from frame 0"
-    later = place(m, {"a", "b"}, Move.FORWARD, place(m, {"a"}, Move.JUMP, None), fresh=True)
+    assert place(m, {"a", "b"}, Move.STEP, entered).segment == Segment("b", 180, 299), "an entry that finished: the step plays its segment"
+
+
+def test_a_locked_sequence_step_never_cuts_an_entry_that_still_plays_it_continues_to_the_new_stop_frame():
+    """Slice 07 rework, I2: step 0 is released when the voice starts, 600 ms after the entry began (frame 18 at 30 fps)."""
+
+    m = fmap()
+    entry = place(m, set(), Move.FORWARD, None)
+    assert entry.segment == Segment(None, 0, 59)
+    at_once = place(m, {"a", "b"}, Move.STEP, entry, entering=0)
+    assert at_once.arrival is Arrival.ENTER and at_once.segment == Segment("b", 0, 299), "before the Player began: from frame 0"
+    latency = place(m, {"a", "b"}, Move.STEP, entry, entering=18)
+    assert latency.arrival is Arrival.ENTER and latency.segment == Segment("b", 18, 299), \
+        "600 ms of voice latency: the entry goes on from frame 18 to the new stop frame, never cut to the anchor (180)"
+    assert place(m, {"a", "b"}, Move.NONE, latency) == latency, "idempotent: the extended entry keeps its frame (same `seq`)"
+    assert place(m, {"a", "b"}, Move.STEP, entry, entering=900).segment == Segment("b", 299, 299), "bounded by the new stop frame"
+    assert place(m, {"a", "b"}, Move.FORWARD, entry, entering=18).segment == Segment("b", 180, 299), \
+        "an explicit move (next, a cue, the end of the presenter's line) goes where it is asked"
+    assert place(m, {"a", "b"}, Move.STEP, entry).segment == Segment("b", 180, 299), "the entry finished: the step's own segment"
+    later = place(m, {"a", "b"}, Move.STEP, place(m, {"a"}, Move.JUMP, None), entering=0)
     assert later.segment == Segment("b", 180, 299), "only an entry is extended, never a hold"
 
 
@@ -99,14 +115,14 @@ def test_a_random_walk_keeps_every_placement_inside_the_rules():
             m = maps[rng.choice(["s1", "s2"])]
             revealed = {a.anchor_id for a in anchors if rng.random() < 0.4}
             move = rng.choice(moves)
-            got = place(m, revealed, move, previous, fresh=rng.random() < 0.3)
+            got = place(m, revealed, move, previous, entering=rng.choice([None, rng.randint(0, duration + 5)]))
             target, segment = target_segment(m, revealed), got.segment
             assert got.target == target and got.scene_id == m.scene_id
             assert 0 <= segment.start <= segment.until <= duration - 1
             assert segment.until == target.until, "anchors bound the stop frame, whatever the arrival"
             assert segment.anchor_id == target.anchor_id
             entered = previous is None or previous.scene_id != m.scene_id
-            if entered and move in (Move.FORWARD, Move.NONE, Move.RESTART):
+            if entered and move in (Move.FORWARD, Move.STEP, Move.NONE, Move.RESTART):
                 assert segment.start == 0, (seed, "a newly entered scene starts on its local frame 0")
             if move is Move.RESTART:
                 assert segment.start == 0
