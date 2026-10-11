@@ -256,6 +256,56 @@ def test_a_hot_reload_while_paused_holds_the_same_frame_and_a_removed_scene_give
     assert result["noPlay"] == 0, "nothing ever plays by itself"
 
 
+def test_a_pause_while_a_hot_reload_reads_its_map_keeps_the_scene_and_frame_and_lands_paused(tmp_path):
+    """QA P1: `revise()` drops the map and reads the new one; a pause during that read used to leave `idle` without a map, and the next
+    « Lire » restarted at the scene start. The kept (scene, local frame) and the paused intent now cross the read."""
+
+    result = run_seq(tmp_path, r"""
+      const answers=[{key:'k1',variant_revision:3,clock:wireOf(SCENES,'k1'),problem:null}];
+      const opts={parkAhead:true,answers,revision:3};
+      const b=seqBench(opts);
+      await b.seq.prepare();
+      b.seq.seek('scene',1);b.swap();
+      await b.seq.play();b.report(0,true);b.report(600,true);
+      SCENES[1].prefab.version=2;opts.revision=4;
+      let land;answers.push(new Promise(r=>{land=r}));
+      const n=b.orders.length;
+      const revising=b.seq.revise();
+      await null;
+      const reading=b.seq.view().phase;
+      const paused=await b.seq.toggle();
+      const again=await b.seq.toggle();   // a second press during the read does not start anything either
+      land({key:'k2',variant_revision:4,clock:wireOf(SCENES,'k2'),problem:null});
+      await revising;b.swap();
+      const v=b.seq.view();
+      const landed=[v.phase,v.frame,v.scene_index,b.orders.slice(n)];
+      await b.seq.play();
+      return {reading,paused:paused.phase,again:again.phase,landed,resume:b.orders.slice(-1)[0],fetches:b.fetches.length};
+    """)
+    assert result["reading"] == "loading" and result["paused"] == "loading" and result["again"] == "loading", "the read goes on"
+    assert result["landed"] == ["paused", 690, 1, [["s2@1", "pause", None], ["s2@2", "pause", 600]]], "held on (scene 2, frame 600), paused"
+    assert result["resume"] == ["s2@2", "play", 600] and result["fetches"] == 2, "« Lire » continues from the kept frame, not the scene start"
+
+
+def test_a_hot_reload_read_that_fails_keeps_its_position_for_the_next_play(tmp_path):
+    result = run_seq(tmp_path, r"""
+      const answers=[{key:'k1',variant_revision:3,clock:wireOf(SCENES,'k1'),problem:null}];
+      const opts={answers,revision:3};
+      const b=seqBench(opts);
+      await b.seq.prepare();
+      b.seq.seek('scrub',290);b.swap();
+      opts.revision=4;
+      answers.push(Object.assign(new Error('Core injoignable'),{code:'network'}));
+      answers.push({key:'k2',variant_revision:4,clock:wireOf(SCENES,'k2'),problem:null});
+      await b.seq.revise();
+      const failed=[b.seq.view().phase,b.seq.view().retryable];
+      await b.seq.play();b.swap();
+      return {failed,v:[b.seq.view().phase,b.seq.view().frame],order:b.orders.slice(-1)[0]};
+    """)
+    assert result["failed"] == ["unavailable", True]
+    assert result["v"] == ["playing", 290] and result["order"] == ["s2@1", "play", 200], "the next « Lire » starts at the kept frame"
+
+
 def test_lost_core_never_hangs_and_overlapping_commands_start_nothing_twice(tmp_path):
     result = run_seq(tmp_path, r"""
       const out={};
@@ -495,3 +545,109 @@ return {disabled,said,slider,title:q('.jvx-scene-title').textContent,phase:ex.pl
     assert out["slider"] == ["true", None, ""], "no map, no position shown at all (§ 4.8)"
     assert out["title"] == "Scène 2 de 1" and out["phase"] == "unavailable"
     assert out["failures"] == 0 and out["errors"] == []
+
+
+DRAG_WORLD = VIDEO_WORLD + r"""
+/* 270 px for 270 frames: clientX x lands on frame round(x / 270 * 269). Pointer capture recorded (the fake DOM has none). */
+const s=slider();s.rect={left:0,top:0,width:270,height:20};
+const captures=[];s.setPointerCapture=(id)=>captures.push(id);
+const orders=(from)=>prefabFake.orders.slice(from);
+const phase=()=>ex.playback.view().phase;
+"""
+
+
+def test_a_pointer_drag_pauses_follows_with_one_seek_per_frame_and_gives_the_play_state_back(tmp_path):
+    """§ 4.6: a drag that starts playing pauses for the drag, `f` follows every move, the Player gets one seek per animation frame, and
+    the release plays again from the scrubbed frame. A drag that starts paused stays paused (QA B1: mutants M12, M13)."""
+
+    out = run_ui(tmp_path, DRAG_WORLD + r"""
+const out={};
+label('Lire').click();await env.advance(20);
+const o0=prefabFake.orders.length;
+env.pointer(s,'pointerdown',{clientX:100});
+out.down=[phase(),ex.playback.view().frame,orders(o0),captures.slice()];
+out.moves=[];
+for(const x of [150,200,240]){env.pointer(s,'pointermove',{clientX:x});out.moves.push([readout().frame,readout().now,readout().time])}
+out.beforeFrame=orders(o0);
+await env.advance(20);
+out.afterFrame=orders(o0);
+env.pointer(s,'pointerup',{clientX:240});await env.advance(20);
+const r=readout();
+out.up=[phase(),r.frame,r.now,r.time,r.count,r.selected,orders(o0).slice(-1)[0]];
+// a drag that starts paused
+env.key(q('.jvx-stage'),' ');await env.advance(20);
+const o1=prefabFake.orders.length;
+env.pointer(s,'pointerdown',{clientX:30});env.pointer(s,'pointermove',{clientX:60});await env.advance(20);
+env.pointer(s,'pointerup',{clientX:60});await env.advance(20);
+out.paused=[phase(),readout().frame,orders(o1),readout().count];
+return out;
+""")
+    assert out["down"] == ["paused", 100, [["pause", None]], [1]], "pointerdown while playing pauses, captures the pointer, seeks under it"
+    assert out["moves"] == [[149, "149", "0:05 / 0:09"], [199, "199", "0:07 / 0:09"], [239, "239", "0:08 / 0:09"]], "f follows every move"
+    assert out["beforeFrame"] == [["pause", None]], "no seek reaches the Player before the animation frame"
+    assert out["afterFrame"] == [["pause", None], ["pause", 59]], "one seek for the whole burst: scene 3, local frame 59"
+    assert out["up"] == ["playing", 239, "239", "0:08 / 0:09", "Scène 3 sur 3", "3", ["play", 59]], "release plays from the scrubbed frame"
+    assert out["paused"][0] == "paused" and out["paused"][1] == 60 and out["paused"][3] == "Scène 1 sur 3"
+    assert not [o for o in out["paused"][2] if o[0] == "play"], "a drag that started paused stays paused on release"
+
+
+def test_a_drag_cut_short_by_closing_variants_or_a_lost_capture_never_outlives_its_gesture(tmp_path):
+    """QA P2: closing Variants mid-drag, `lostpointercapture` or `pointercancel` end the drag; after a reopen, hovering the slider does
+    not seek and a stray pointerup does not play."""
+
+    out = run_ui(tmp_path, DRAG_WORLD + r"""
+const out={};
+label('Lire').click();await env.advance(20);
+env.pointer(s,'pointerdown',{clientX:100});
+ex.close();await env.advance(20);
+await ex.open({presentation_id:PID,fullscreen:false});await env.advance(400);
+const s2=slider();s2.rect={left:0,top:0,width:270,height:20};
+const o0=prefabFake.orders.length;
+env.pointer(s2,'pointermove',{clientX:200});env.pointer(s2,'pointerup',{clientX:200});await env.advance(20);
+out.reopened=[phase(),ex.playback.view().frame,orders(o0)];
+for(const ending of ['lostpointercapture','pointercancel']){
+  env.pointer(s2,'pointerdown',{clientX:50});await env.advance(20);
+  env.pointer(s2,ending,{clientX:50});
+  env.pointer(s2,'pointermove',{clientX:220});await env.advance(20);
+  out[ending]=[phase(),ex.playback.view().frame];
+}
+return out;
+""")
+    assert out["reopened"] == ["paused", 0, []], "a reopened Variants is paused on frame 0: hover does not seek, pointerup does not play"
+    assert out["lostpointercapture"] == ["paused", 50] and out["pointercancel"] == ["paused", 50], "the drag ended there: later moves do not seek"
+
+
+def test_the_slider_keys_say_a_neutral_wording_while_the_map_is_read_and_the_failure_only_once_it_failed(tmp_path):
+    """QA P3: « Vidéo indisponible » is for a map that really failed, never for one still being read."""
+
+    out = run_ui(tmp_path, r"""
+world.clock=(id,doc)=>{
+  const scenes=doc.scenes.map((s,i)=>({scene_id:s.scene_id,composition_id:'Scene',fps:30,duration_in_frames:90,start:i*90,length:90,transition_in:0}));
+  return {key:'k',clock:{version:1,key:'k',fps:30,total_frames:90*scenes.length,scenes}};
+};
+world.delays.push({match:(url)=>url.includes('composition-clock'),ms:3000});
+seed(2);
+const {ex}=await opened({fullscreen:false});
+const sl=q('.jvx-transport [role="slider"]');
+const reading=ex.playback.view().phase;
+env.key(sl,'ArrowRight');
+const said=noticeText();
+await env.advance(3000);
+const ready=[ex.playback.view().phase,ex.playback.view().frame];
+return {reading,said,ready,title:sl.getAttribute('title')};
+""")
+    assert out["reading"] == "loading"
+    assert out["said"] == "La position paraît dès que la vidéo est prête.", "neutral while the map is read"
+    assert out["ready"] == ["paused", 0]
+
+
+def test_the_slider_keys_say_the_failure_once_the_map_failed(tmp_path):
+    out = run_ui(tmp_path, r"""
+world.failNext.push({match:(url)=>url.includes('composition-clock'),status:503,code:'core_down',message:'Core injoignable'});
+seed(2);
+const {ex}=await opened({fullscreen:false});
+const sl=q('.jvx-transport [role="slider"]');
+env.key(sl,'ArrowRight');
+return {phase:ex.playback.view().phase,said:noticeText()};
+""")
+    assert out["phase"] == "unavailable" and out["said"].startswith("Vidéo indisponible : "), out

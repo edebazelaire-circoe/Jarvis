@@ -109,6 +109,7 @@ try{
   }
   await sleep(300);
   const reads={};
+  let mouseDown=false;
   for(const action of plan){
     try{
       if(action.eval!==undefined)await evaluate(action.eval,action.scope);
@@ -116,6 +117,16 @@ try{
       else if(action.key!==undefined)await press(action.key);
       else if(action.click!==undefined)await click(action.click);
       else if(action.clickAt!==undefined)await clickAt(action.clickAt[0],action.clickAt[1]);
+      else if(action.mouse!==undefined){
+        /* Un geste souris CDP pas à pas (glisser) : `mouse` = mouseMoved | mousePressed | mouseReleased, `atExpr` -> {x,y} de la page ; le
+           bouton gauche reste tenu entre mousePressed et mouseReleased (`buttons: 1`), comme une vraie main. */
+        const at=await evaluate(action.atExpr,'page');
+        if(!at)throw new Error('souris : expression sans position');
+        if(action.mouse==='mousePressed')mouseDown=true;
+        if(action.mouse==='mouseReleased')mouseDown=false;
+        await send('Input.dispatchMouseEvent',{type:action.mouse,x:at.x,y:at.y,button:action.mouse==='mouseMoved'&&!mouseDown?'none':'left',
+          buttons:mouseDown?1:0,clickCount:action.mouse==='mouseMoved'?0:1},page);
+      }
       else if(action.clickExpr!==undefined){
         const at=await evaluate(action.clickExpr,'page');
         if(!at)throw new Error('clic : expression sans position');

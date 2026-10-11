@@ -60,7 +60,7 @@
 
     function fresh(){
       return {phase:'idle',map:null,mapKey:null,t:null,k:-1,want:null,synced:false,ordered:null,waitingSince:0,error:null,retryable:true,generation:0,
-        boundaryAt:null,from:null,changed:0,scope:null,pending:false,queued:false,shown:-1,settling:false};
+        boundaryAt:null,from:null,changed:0,scope:null,pending:false,queued:false,shown:-1,settling:false,keep:null};
     }
 
     function host(){try{return d.host()}catch(_error){return null /* intentional: no host means no playback; the page says why */}}
@@ -241,6 +241,13 @@
       if(S.map||S.phase==='loading'||!scenes().length)return view();
       const map=await loadMap(true);
       if(!map)return view();
+      if(S.keep){   // a revision whose read did not land: its position is held, paused
+        const {k,native,frame}=placeKept(map);
+        S.t=Clock.transport(frame,false,false);
+        setPhase('paused');
+        bring(k,native);
+        return view();
+      }
       S.k=S.shown=clampIndex(map,selectedIndex());
       S.t=Clock.transport(map.startOf(S.k),false,false);
       setPhase('paused');
@@ -256,8 +263,8 @@
       if(!S.map||S.mapKey===null){
         const map=await loadMap(false);
         if(!map)return view();
-        S.shown=clampIndex(map,selectedIndex());
-        S.t=Clock.transport(map.startOf(S.shown),false,false);
+        if(S.keep)S.t=Clock.transport(placeKept(map).frame,false,false);   // a revision whose read did not land: its position still holds
+        else{S.shown=clampIndex(map,selectedIndex());S.t=Clock.transport(map.startOf(S.shown),false,false)}
       }
       S.error=null;S.scope=null;S.settling=false;
       S.t=S.t.ended?Clock.seek(S.map,S.t,'replay'):Clock.play(S.map,S.t);
@@ -291,7 +298,15 @@
     }
 
     function pause(){
-      if(S.phase==='loading'){   // a « Lire » (or a new revision) still reading the map: it is dropped, nothing starts behind the user's back
+      if(S.phase==='loading'&&S.keep){   // a new revision reading its map: the read goes on, the kept (scene, frame) lands paused
+        if(S.keep.playing){
+          S.keep.playing=false;
+          log('sequencer_pause',{frame:S.t?S.t.frame:null,revising:true});
+          emit();
+        }
+        return view();
+      }
+      if(S.phase==='loading'){   // a « Lire » still reading the map: it is dropped, nothing starts behind the user's back
         S.generation++;
         const h=host();
         try{if(h)h.control(objectId,'pause')}catch(_error){/* intentional: no frame, nothing plays */}
@@ -311,7 +326,10 @@
       return view();
     }
 
-    function toggle(){return S.phase==='playing'||S.phase==='waiting'||S.phase==='loading'?Promise.resolve(pause()):play()}
+    function toggle(){
+      if(S.phase==='loading'&&S.keep&&!S.keep.playing)return Promise.resolve(view());   // paused during a revision's read: it lands paused
+      return S.phase==='playing'||S.phase==='waiting'||S.phase==='loading'?Promise.resolve(pause()):play();
+    }
 
     /* The transport's one door (§ 4.4-§ 4.7): ⏮ ⏭ (`previous`, `next`), a thumbnail (`scene`), the scrub (`scrub`), Home / End (`home`, `end`),
        `,` `.` (`step`), « Rejouer » (`replay`). The target `f` is computed NOW from `f`, so every visible position follows at once and ten fast
@@ -389,21 +407,34 @@
     async function revise(){
       if(!S.map||!S.t)return view();
       const loc=S.map.locate(S.t.frame);
-      const keep={scene_id:loc.scene_id,index:loc.scene_index,native:loc.native_frame,playing:S.phase==='playing'||S.phase==='waiting',scope:S.scope!==null};
+      /* `S.keep` outlives the map read: a pause during it only turns `playing` off (P1), and a read that does not land leaves it for the
+         next « Lire », which starts there instead of the scene start. */
+      const keep=S.keep={scene_id:loc.scene_id,index:loc.scene_index,native:loc.native_frame,playing:S.phase==='playing'||S.phase==='waiting',
+        scope:S.scope!==null};
       /* The Player on screen holds where it is while the new version loads: it resumes from the kept frame, it never runs on ahead of it. */
       if(keep.playing){const h=host();try{if(h)h.control(objectId,'pause')}catch(_error){/* intentional: the frame may already be gone */}}
       S.map=null;S.mapKey=null;S.want=null;S.pending=false;S.scope=null;S.shown=-1;   // the page shows the new revision's scene
+      const mine=S;
       const map=await loadMap(true);
-      if(!map)return view();
-      let k=map.scenes.findIndex(s=>s.scene_id===keep.scene_id),native=keep.native;
-      if(k<0){k=clampIndex(map,keep.index);native=0}
-      native=Math.min(native,map.scenes[k].duration_in_frames-1);
-      S.t=Clock.transport(map.frameOf(k,native),keep.playing,false);
+      if(!map||S!==mine||S.keep!==keep)return view();
+      const {k,native,frame}=placeKept(map);
+      S.t=Clock.transport(frame,keep.playing,false);
       S.scope=keep.scope&&map.scenes[k].scene_id===keep.scene_id?k:null;
       setPhase(keep.playing?'playing':'paused');
       log('sequencer_revised',{scene_id:map.scenes[k].scene_id,native_frame:native,kept:map.scenes[k].scene_id===keep.scene_id,playing:keep.playing});
       bring(k,native);
       return view();
+    }
+
+    /* Where the kept (scene_id, the scene's own frame) lands in `map`, clamped to the scene's new length; a scene that is gone gives its
+       place in the order to the scene now there, from its start. Consumes `S.keep`. */
+    function placeKept(map){
+      const keep=S.keep;
+      S.keep=null;
+      let k=map.scenes.findIndex(s=>s.scene_id===keep.scene_id),native=keep.native;
+      if(k<0){k=clampIndex(map,keep.index);native=0}
+      native=Math.min(native,map.scenes[k].duration_in_frames-1);
+      return {k,native,frame:map.frameOf(k,native)};
     }
 
     /* ------------------------------------------------------------ ce que l'hôte dit */
@@ -459,8 +490,9 @@
       if(f>=S.t.frame){S.t=Clock.tick(S.map,S.t,S.k,frame,false);emit()}
     }
 
-    /* After a pause, the Player halts where it is, up to one report (250 ms) past `f`. Its halted frame becomes `f` once, never backward, so
-       the frame on screen is the one held and the one resumed from (PX-7). */
+    /* After a pause, the Player halts where it is, in practice about one report (250 ms) past `f`. Its first halted report becomes `f` once if
+       it is later than `f` and inside the current scene (no tighter bound), never backward, so the frame on screen is the one held and the
+       one resumed from (PX-7). */
     function settle(){
       const h=host();
       if(S.pending||!S.map||S.k<0||!h||h.key(objectId)!==keyOf(scenes()[S.k]))return;

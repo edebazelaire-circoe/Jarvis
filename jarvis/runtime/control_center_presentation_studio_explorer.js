@@ -342,7 +342,7 @@
       ui.sceneRole=el('span','jvx-chip');
       ui.sceneBadge=el('span','jvx-chip');
       sceneLine.appendChild(ui.sceneTitle);sceneLine.appendChild(ui.sceneRole);sceneLine.appendChild(ui.sceneBadge);
-      ui.sceneCount=el('span','');
+      ui.sceneCount=el('span','jvx-scene-count');
       /* One row under the stage: the transport, then the scene it is on (every pixel of height is the stage's width). */
       buildTransport();
       note.appendChild(ui.transport);note.appendChild(sceneLine);note.appendChild(ui.sceneCount);
@@ -650,6 +650,7 @@
     /* The one transport of Variants (contract § 4, § 4.16, § 6 #15-#20): a named toolbar under the stage, read only from the sequencer's
        `f`. The stage page shows no bar of its own (`embed: 'variants'`). */
     const SOUND_REASON="Le son s'active d'un clic dans l'image de la scène : le navigateur n'autorise le son que sur un geste dans la scène.";
+    const NO_POSITION='La position paraît dès que la vidéo est prête.';
     let drag=null;
     function buildTransport(){
       ui.transport=el('div','jvx-transport');
@@ -666,7 +667,8 @@
       ui.scrub.addEventListener('keydown',onScrubKey);
       ui.scrub.addEventListener('pointerdown',onScrubDown);
       ui.scrub.addEventListener('pointermove',(event)=>{if(drag)scrubAt(event.clientX)});
-      ui.scrub.addEventListener('pointerup',endDrag);ui.scrub.addEventListener('pointercancel',endDrag);
+      /* `lostpointercapture` too: a drag cut short (capture taken away, the window left) ends there and never outlives its gesture. */
+      for(const type of ['pointerup','pointercancel','lostpointercapture'])ui.scrub.addEventListener(type,endDrag);
       ui.time=el('span','jvx-time');
       ui.sound=button(null,'jvx-btn jvx-btn-icon',()=>say('info',SOUND_REASON),{icon:'sound',attrs:{'aria-label':'Son','aria-disabled':'true',title:`Son (M) : ${SOUND_REASON}`}});
       ui.more=button(null,'jvx-btn jvx-btn-icon',()=>openPlaybackMenu(),{icon:'more',attrs:{'aria-label':'Plus de lecture','aria-haspopup':'menu','aria-expanded':'false',title:'Plus de lecture'}});
@@ -716,13 +718,19 @@
       if(!keys.includes(event.key))return;
       event.preventDefault();event.stopPropagation();
       const v=seq&&seq.active()?seq.view():null;
-      if(!v){say('info',unavailableText(seq?seq.view():{retryable:true}));return}
+      if(!v){say('info',noPositionText());return}
       const second=v.fps;
       if(event.key==='ArrowRight'||event.key==='ArrowUp')seq.seek('scrub',Math.min(v.total_frames-1,v.frame+second));
       else if(event.key==='ArrowLeft'||event.key==='ArrowDown')seq.seek('scrub',Math.max(0,v.frame-second));
       else if(event.key==='PageDown')seq.seek('next');
       else if(event.key==='PageUp')seq.seek('previous');
       else seq.seek(event.key==='Home'?'home':'end');
+    }
+    /* No map yet: while it is read (or before), a neutral wording; the failure is said only once the map really failed (§ 4.2). */
+    function noPositionText(){
+      if(!seq)return "La lecture continue n'est pas chargée dans cette page.";
+      const v=seq.view();
+      return v.error&&['unavailable','failed','idle'].includes(v.phase)?unavailableText(v):NO_POSITION;
     }
     /* Dragging pauses for the drag and gives the play state back on release (§ 4.6); one seek per animation frame at most (the sequencer). */
     function onScrubDown(event){
@@ -743,7 +751,7 @@
       if(!drag)return;
       const resume=drag.wasPlaying;
       drag=null;
-      if(resume)togglePlayback();
+      if(resume)playback(s=>s.play());
     }
     /* « ⋯ » (§ 6 #20): « Lire seulement cette scène » (PX-21) and « Revenir au début ». The menu is the explorer's; focus goes back to « ⋯ ». */
     function openPlaybackMenu(){
@@ -808,7 +816,7 @@
     }
     function renderScrub(v,mapped){
       if(!mapped){
-        attrs(ui.scrub,{'aria-disabled':'true',title:seq&&v.phase==='unavailable'?unavailableText(v):'La position paraît dès que la vidéo est prête.'});
+        attrs(ui.scrub,{'aria-disabled':'true',title:seq&&v.phase==='unavailable'?unavailableText(v):NO_POSITION});
         for(const name of ['aria-valuenow','aria-valuemax','aria-valuetext'])ui.scrub.removeAttribute(name);
         ui.time.textContent='';ui.scrubKey=null;clear(ui.scrubTicks);
         return;
@@ -1547,6 +1555,7 @@
       for(const t of [tickTimer,playbackTimer,pollTimer,armTimer])if(t)stopEvery(t);
       tickTimer=playbackTimer=pollTimer=armTimer=null;
       cmp.shutdown();
+      drag=null;   // a drag cut short by the close: no resume, and a reopened slider does not seek on hover
       if(seq)seq.reset('closed');
       unmountPreview();
       if(previewHost&&typeof previewHost.destroy==='function'){try{previewHost.destroy()}catch(_error){/* intentional: the host is dropped either way */}}

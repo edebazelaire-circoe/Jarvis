@@ -202,6 +202,105 @@ async def test_variants_opens_paused_and_the_transport_drives_one_clock_pause_re
         assert all(checks.values()), {k: v for k, v in checks.items() if not v}
 
 
+# ---------------------------------------------------------------------------------------------------------------- § 4.6 pointer drag, the row
+
+def at_slider(fraction: float) -> str:
+    """{x, y} of the slider at `fraction` of its width (CDP coordinates of the page)."""
+
+    return ("(()=>{const r=document.querySelector('#jvStudioExplorer [role=\"slider\"]').getBoundingClientRect();"
+            f"return {{x:r.left+r.width*{fraction},y:r.top+r.height/2}}}})()")
+
+
+def mouse(kind: str, fraction: float) -> dict:
+    return {"mouse": kind, "atExpr": at_slider(fraction)}
+
+
+#: The row under the stage (transport, scene line, « Scène n sur N »): every child inside the row and the row inside the preview, nothing
+#: wider than its box, and the scene count either whole or cut with an ellipsis (QA P5).
+ROW = ("(()=>{const x=document.querySelector('#jvStudioExplorer');const pe=x.querySelector('.jvx-preview'),b=pe.getBoundingClientRect(),cs=getComputedStyle(pe);"
+       "const p={left:b.left+parseFloat(cs.paddingLeft),right:Math.min(innerWidth,b.right)-parseFloat(cs.paddingRight)};"
+       "const note=x.querySelector('.jvx-stage-note');const n=note.getBoundingClientRect();"
+       "const kids=[...note.children].map(c=>{const b=c.getBoundingClientRect();return {cls:c.className,left:Math.round(b.left),right:Math.round(b.right),"
+       "scroll:c.scrollWidth,client:c.clientWidth,ellipsis:getComputedStyle(c).textOverflow,text:c.textContent.slice(0,40)}});"
+       "return {preview:[Math.round(p.left),Math.round(p.right)],row:[Math.round(n.left),Math.round(n.right)],rowScroll:note.scrollWidth,rowClient:note.clientWidth,kids}})()")
+
+
+SLIDER_W = "Math.round(document.querySelector('#jvStudioExplorer [role=\"slider\"]').getBoundingClientRect().width)"
+
+
+def row_problems(row: dict) -> list[str]:
+    problems = []
+    if row["row"][0] < row["preview"][0] - 1 or row["row"][1] > row["preview"][1] + 1:
+        problems.append(f"row {row['row']} outside the preview {row['preview']}")
+    if row["rowScroll"] > row["rowClient"] + 1:
+        problems.append(f"row overflows: {row['rowScroll']} > {row['rowClient']}")
+    for kid in row["kids"]:
+        if kid["left"] < row["row"][0] - 1 or kid["right"] > row["row"][1] + 1:
+            problems.append(f"{kid['cls']!r} {kid['left']}..{kid['right']} outside the row {row['row']}")
+        if kid["cls"] == "jvx-transport" and kid["scroll"] > kid["client"] + 1:
+            problems.append(f"the transport overflows its box: {kid['scroll']} > {kid['client']}")
+        if kid["cls"] == "jvx-scene-count" and kid["scroll"] > kid["client"] + 1 and kid["ellipsis"] != "ellipsis":
+            problems.append(f"scene count cut without an ellipsis: {kid}")
+    return problems
+
+
+@pytest.mark.parametrize("viewport", ["800x600", "1280x720"])
+async def test_a_pointer_drag_on_the_slider_pauses_then_plays_from_the_scrubbed_frame_and_the_row_fits(tmp_path, viewport):
+    """§ 4.6 with a real mouse (CDP press, moves, release on the slider): playing, the press pauses; `f` follows the moves; the release plays
+    from the scrubbed frame with Player, readout, label and strip in agreement. A drag that starts paused stays paused. QA B1, P5."""
+
+    async with RemotionStack(tmp_path, runtime_dir=RUNTIME) as stack:
+        pid, _vid = await make_deck(stack)
+        tag = f"drag-{viewport}"
+        plan = opened(pid) + [
+            {"wait": 2000}, {"value": "row_opened", "expr": ROW}, snap(tmp_path, f"{tag}-opened"),
+            {"click": LIRE}, {"until": vstate_is(1, "s.playing&&s.frame>=20"), "ms": 30000, "required": True, "as": "playing"},
+            mouse("mouseMoved", 0.2), mouse("mousePressed", 0.2),
+            {"value": "pressed", "expr": "JarvisStudioExplorer.playback.view()"}, {"value": "w_pressed", "expr": SLIDER_W},
+            mouse("mouseMoved", 0.4), mouse("mouseMoved", 0.6), mouse("mouseMoved", 0.78),
+            {"value": "moved", "expr": "JarvisStudioExplorer.playback.view()"}, {"value": "w_moved", "expr": SLIDER_W}, {"value": "moved_now", "expr": "document.querySelector('#jvStudioExplorer [role=\"slider\"]').getAttribute('aria-valuenow')"},
+            mouse("mouseReleased", 0.78),
+            {"until": vstate_is(7, "s.playing&&s.frame>0"), "ms": 60000, "required": True, "as": "released_s7"}, {"wait": 400},
+            {"value": "released", "expr": RO}, {"value": "released_view", "expr": "JarvisStudioExplorer.playback.view()"},
+            {"value": "row_playing", "expr": ROW}, snap(tmp_path, f"{tag}-released"),
+            # a drag that starts paused stays paused
+            {"click": LIRE}, {"until": f"{PHASE}==='paused'", "ms": 5000, "required": True, "as": "paused"},
+            mouse("mouseMoved", 0.1), mouse("mousePressed", 0.1), mouse("mouseMoved", 0.05), mouse("mouseReleased", 0.05),
+            {"until": vstate_is(2, "!s.playing"), "ms": 60000, "as": "paused_s2"}, {"wait": 1500},
+            {"value": "paused_after", "expr": RO}, {"value": "paused_view", "expr": "JarvisStudioExplorer.playback.view()"},
+            {"value": "probe", "expr": READ_PROBE}, http_step(stack, "core", "GET", PLAYBACK)]
+        result = await run_long(stack.page_url, plan, timeout=500, viewport=viewport)
+        reads = result["reads"]
+        harness(reads.get("probe"), reads.get("failed"))
+        rel, view = reads["released"], reads["released_view"]
+        evidence = {k: reads.get(k) for k in ("row_opened", "w_pressed", "w_moved", "pressed", "moved", "moved_now", "released", "released_view", "row_playing",
+                                              "paused_after", "paused_view", "failed")}
+        evidence["core_phase"] = core_phase(reads)
+        record(tag, evidence, [tmp_path / f"{tag}-opened-000.png", tmp_path / f"{tag}-released-000.png"])
+        harness("failed" not in reads, reads.get("failed"))
+        total = 74 * 60
+        target = round(0.78 * (total - 1))
+        player = rel["player"]
+        local = (view["frame"] - view["starts"][6]) * 24 / 60
+        checks = {
+            "press while playing pauses": evidence["pressed"]["phase"] == "paused",
+            "the slider keeps its width while the scene changes under the drag": reads["w_pressed"] == reads["w_moved"],
+            "f follows the moves": abs(evidence["moved"]["frame"] - target) <= 6 and evidence["moved_now"] == str(evidence["moved"]["frame"]),
+            "release plays from the scrubbed frame": view["phase"] == "playing" and player["scene"] == "S7" and player["playing"] is True
+                and view["frame"] >= evidence["moved"]["frame"],
+            "Player, readout, label and strip agree": rel["label"] == 7 and rel["selected"] == SCENE_IDS[6]
+                and readout_problems(rel, 6) == [] and abs(player["frame"] - local) <= 24,
+            "a drag that starts paused stays paused": evidence["paused_view"]["phase"] == "paused"
+                and evidence["paused_after"]["player"]["playing"] is False and evidence["paused_after"]["label"] == 2,
+            "the row fits the preview (opened)": row_problems(evidence["row_opened"]) == [],
+            "the row fits the preview (playing S7)": row_problems(evidence["row_playing"]) == [],
+            "no Core run": evidence["core_phase"] in (None, "idle", "stopped"),
+        }
+        summarize(tag, {"checks": checks, "moved": evidence["moved"]["frame"], "target": target, "released": rel,
+                        "row": evidence["row_playing"], "row_problems": row_problems(evidence["row_playing"])})
+        assert all(checks.values()), ({k: v for k, v in checks.items() if not v}, row_problems(evidence["row_playing"]), evidence["moved"], view, player)
+
+
 # ---------------------------------------------------------------------------------------------------------------- PX-18
 
 BROKEN_TSX = """import React from "react";
