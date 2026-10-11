@@ -110,6 +110,10 @@
   const MAX_RESENDS=3;
   /* A Player ordered to play that sits paused short of its stop frame this long is ordered again (auto mode: no drift correction exists). */
   const STALLED_MS=2500;
+  /* A Player that halted this close to its stop frame reached it (Slice 05 rework, B1): Remotion stops one step short of the end when a
+     frame is dropped (238 on 240 frames: the step to 240 passes the end, it pauses and fires `ended` without setting the frame). The sandbox
+     then seeks the last frame; this covers a page whose seek report is lost. Never wider: a Player halted further back has not finished. */
+  const END_SLACK_FRAMES=2;
 
   function validTimeline(tl){
     if(!plain(tl))return false;
@@ -231,8 +235,10 @@
       if(!tl.playing||!applied.playing||typeof host.clock!=='function')return 'idle';
       const clock=host.clock(current.objectId);
       if(clock&&clock.playing)applied.sawPlaying=true;
-      /* The stop frame, reached by a Player seen moving and now halted exactly on it (a stale report of another segment cannot match both). */
-      if(clock&&!applied.done&&!clock.playing&&clock.frame===tl.until_frame&&(applied.sawPlaying||tl.until_frame===tl.from_frame)){
+      /* The stop frame, reached by a Player seen moving and now halted on it, at most `END_SLACK_FRAMES` short of it or past it (the frame
+         before the sandbox's `seekTo(until)` landed); a Player never seen moving only on it exactly. A stale report of another segment
+         cannot match both; a pause is Core's (`tl.playing` false, above), never read here. */
+      if(clock&&!applied.done&&!clock.playing&&reachedStop(clock.frame,tl)){
         applied.done=true;stats.done++;say('done');return 'done';
       }
       if(applied.done)return 'done';
@@ -268,6 +274,11 @@
       return 'corrected';
     }
 
+    function reachedStop(frame,tl){
+      if(frame===tl.until_frame)return applied.sawPlaying||tl.until_frame===tl.from_frame;
+      return applied.sawPlaying&&frame>=Math.max(tl.from_frame,tl.until_frame-END_SLACK_FRAMES);
+    }
+
     /* The host heard the Player's position (it comes at most four times a second, and at once when the Player starts or stops): the stop frame
        is noticed when it happens, not at the next tick. */
     function onClock(objectId){return current!==null&&objectId===current.objectId&&applied!==null?tick():'none'}
@@ -278,7 +289,7 @@
   }
 
   const api=Object.freeze({SHELL,STAGE_PATH,PHASES,stageUrl,createFrame,hostMessage,parseStatus,parseClock,createTimelineFollower,validTimeline,
-    TIMELINE:Object.freeze({MAX_CORRECTIONS,CORRECTION_GAP_MS,CLOCK_FRESH_MS,TICK_MS,SILENT_TICKS,MAX_RESENDS,STALLED_MS})});
+    TIMELINE:Object.freeze({MAX_CORRECTIONS,CORRECTION_GAP_MS,CLOCK_FRESH_MS,TICK_MS,SILENT_TICKS,MAX_RESENDS,STALLED_MS,END_SLACK_FRAMES})});
   root.JarvisRemotionFrame=api;
   if(typeof module!=='undefined'&&module.exports)module.exports=api;
 })(typeof globalThis!=='undefined'?globalThis:this);

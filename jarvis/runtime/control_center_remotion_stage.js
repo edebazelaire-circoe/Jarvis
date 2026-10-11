@@ -89,7 +89,7 @@
     const every=d.setInterval||((fn,ms)=>setInterval(fn,ms));
     const stopEvery=d.clearInterval||((id)=>clearInterval(id));
     const state={phase:'shell',generation:0,props:{},data:{},noticed:false,propsRefused:0,lastProblems:[],descriptor:null,iframe:null,supervisor:null,tickTimer:null,prepareTimer:null,
-      prepareSince:0,counterTimer:null,propsTimer:null,sent:'',playing:false,frame:0,frameAt:0,lastPong:0,clockSentAt:-1e9,mounted:false,
+      prepareSince:0,counterTimer:null,propsTimer:null,sent:'',playing:false,frame:0,frameAt:0,lastPong:0,clockSentAt:-1e9,clockSentFrame:-1,mounted:false,
       killedReason:null,duration:0,fps:30,hideTimer:null,lastSupervisor:null,muted:true,controller:null,barTimer:null};
     const ui={};
 
@@ -319,15 +319,17 @@
 
     /* Position du lecteur (Slice 12) : conseil de l'iframe, jamais une vérité pour Core (il n'y va pas). Bornée à la durée de la
        composition (un cadre qui ment ne sort pas de sa propre ligne de temps) et relayée à la fenêtre au plus 4 fois par seconde,
-       sauf changement d'état (lecture <-> pause), toujours dit. */
+       sauf changement d'état (lecture <-> pause) et sauf l'image d'un lecteur arrêté qui change (un `seekTo` juste après l'arrêt : l'image
+       d'arrêt, la dernière image d'une scène finie), toujours dits. Sans cela, la fenêtre gardait l'image d'AVANT le `seekTo` et ne voyait
+       jamais l'image d'arrêt (Slice 05 rework, B1 / P2). */
     function onClock(message){
       const frame=Math.max(0,Math.min(Math.max(state.duration-1,0),message.frame));
-      const changed=message.playing!==state.playing;
+      const changed=message.playing!==state.playing||(!message.playing&&frame!==state.clockSentFrame);
       state.frame=frame;state.frameAt=now();state.playing=message.playing;
       refreshBar();
       const t=now();
       if(!changed&&t-state.clockSentAt<CLOCK_RELAY_MS)return;
-      state.clockSentAt=t;
+      state.clockSentAt=t;state.clockSentFrame=frame;
       try{d.parentWindow.postMessage({rsh:SHELL,type:'clock',frame,playing:message.playing,duration:state.duration,fps:state.fps},d.origin)}
       catch(error){d.log('warn','remotion.stage.parent_post_failed',{error:describe(error)})}
     }

@@ -85,11 +85,28 @@
     }
     emitClock(false);
   }
+  /* Remotion 4 never sets the last frame when a playback step would pass it (`use-playback.js`: with a dropped frame, 238 -> 240 on 240
+     frames): it pauses where it is and fires `ended`. The end of a scene is its LAST frame: the Player is sent there, so the stage, the
+     sequencer and the follower all read `duration - 1` (Slice 05 rework, B1). `seekTo(last)` fires `ended` again BEFORE it moves: guarded. */
+  let ending=false;
+  function onEnded(){
+    const player=playerRef&&playerRef.current;
+    const last=mounted?mounted.composition.durationInFrames-1:-1;
+    if(ending||!player)return;
+    until=null;
+    if(last>=0&&currentFrame()<last){
+      ending=true;
+      try{player.seekTo(last)}catch(error){report('error',{message:String(error&&error.message||error)})}
+      finally{ending=false}
+    }
+    emitClock(true);
+  }
   function attachClock(instance){
     if(attached===instance||!instance||typeof instance.addEventListener!=='function')return;
     attached=instance;
     instance.addEventListener('frameupdate',onFrameUpdate);
-    ['play','pause','seeked','ended'].forEach(function(name){instance.addEventListener(name,function(){emitClock(true)})});
+    instance.addEventListener('ended',onEnded);
+    ['play','pause','seeked'].forEach(function(name){instance.addEventListener(name,function(){emitClock(true)})});
     emitClock(true);   // the position at mount: a host that remounted this frame hears from it at once
   }
   /* `seek` : aller à l'image ; `play` / `pause` : aller d'abord à `frame` s'il est donné ; `play` avec `until` s'arrête sur cette image. */
@@ -189,7 +206,7 @@
         break;
       case 'teardown':
         try{if(root)root.unmount()}catch(_e){}
-        root=null;playerRef=null;mounted=null;pending.playing=null;pending.seek=null;pending.until=null;until=null;attached=null;guardedFor=null;guardedComponent=null;
+        root=null;playerRef=null;mounted=null;pending.playing=null;pending.seek=null;pending.until=null;until=null;attached=null;ending=false;guardedFor=null;guardedComponent=null;
         break;
       default:break;
     }
