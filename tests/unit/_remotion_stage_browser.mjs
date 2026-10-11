@@ -7,7 +7,7 @@
    Environnement : CDP_VIEWPORT=LxH (1280x720 par défaut).
    Actions (champ `scope` : "page" par défaut, ou "sandbox" pour le cadre du bac à sable) :
      {eval}, {wait: ms}, {click: selecteur}, {clickAt: [x,y]}, {clickExpr: expr -> {x,y} de la page}, {key: nom}, {value: nom, expr, scope?}, {until: expr, ms, scope?}, {size: [w,h]},
-     {shot: chemin.png}, {http: {method, url, headers?, json?, basisFrom?}, as: nom} (requête de Node, pour parler à Core entre deux étapes ;
+     {shot: chemin.png}, {burst: dossier, ms, clipExpr?, scale?, prefix?, as?} (rafale de captures datées), {http: {method, url, headers?, json?, basisFrom?}, as: nom} (requête de Node, pour parler à Core entre deux étapes ;
      `basisFrom` : URL d'une variante, sa révision du moment est écrite dans `json.basis.variant_revision`, Slice 14).
    Sortie : {reads, console, errors, targets}. Chrome est tué avec ses enfants, le profil effacé. */
 import {execFileSync, spawn} from 'node:child_process';
@@ -126,6 +126,18 @@ try{
       else if(action.shot!==undefined){
         const shot=await send('Page.captureScreenshot',{format:'png'},page);
         writeFileSync(action.shot,Buffer.from(shot.data,'base64'));
+      }else if(action.burst!==undefined){
+        /* Rafale (Slice 03 du handoff rnsp) : captures aussi vite que Chrome les rend pendant `ms`, chacune datée par `performance.now()` de
+           la page (même base que les échantillonneurs). `clipExpr` -> {x,y,width,height} de la page ; `scale` réduit l'image (0.25 défaut). */
+        const clip=action.clipExpr?await evaluate(action.clipExpr,'page'):null;
+        const end=Date.now()+(action.ms||1000);const shots=[];let n=0;
+        while(Date.now()<end){
+          const t=await rawEval(page,'performance.now()');
+          const shot=await send('Page.captureScreenshot',{format:'png',...(clip?{clip:{...clip,scale:action.scale||0.25}}:{})},page);
+          const file=join(action.burst,`${action.prefix||'burst'}-${String(n++).padStart(3,'0')}.png`);
+          writeFileSync(file,Buffer.from(shot.data,'base64'));shots.push([Math.round(t),file]);
+        }
+        reads[action.as||'burst']=shots;
       }else if(action.http!==undefined){
         const h=action.http;
         if(h.basisFrom){
