@@ -1,0 +1,20 @@
+{
+ "scrubbers": [
+  {
+   "kind": "stage-scrub",
+   "disabled": false
+  }
+ ],
+ "held_on_899": true,
+ "held": {
+  "frame": 899,
+  "playing": false,
+  "phase": "ready",
+  "place": "board"
+ },
+ "first_play": [
+  1589,
+  0
+ ],
+ "failed": null
+}

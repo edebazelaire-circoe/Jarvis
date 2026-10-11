@@ -42,7 +42,8 @@ These findings were written by agent 0 from the Slice 03 Work Agent's report, be
 **Run with `scope: all`:** scenes without anchors that are followed by another scene are never shown.
 - In one run S3, S6 and S8 never appeared. The previous picture stayed frozen for 78.0 s, 51.1 s and 51.0 s.
 - 74 s of content took 232.9 s to play.
-- Which scenes survive depends on message order, but at least 2 were lost in each of 3 runs.
+- Recorded evidence: the recorded run (`runtime/play_all.json`), QA's rerun and the S03 rework rerun (2026-10-11, `--runxfail`: S3 held 78.1 s, S6 51.1 s, S8 lost) each lost the same S3, S6 and S8. Two earlier exploratory runs (not kept) lost S6+S8 and S3+S4+S6+S8: which scenes survive can depend on message order.
+- Deterministic companion (no browser): `tests/unit/test_prefab_host_swap_race_js.py` reproduces both host mechanisms below in node (2 strict xfails).
 
 Mechanism:
 1. A scene without anchors has a single segment, so its first timeline event already preloads the next scene (`player.js:437-457`, `scene_page.js:1798-1806`).
@@ -117,39 +118,42 @@ The stalls, skipped scenes, hybrid frame, remount gap and clock split are theref
 
 File: `tests/unit/test_presentation_playback_release_gate_browser.py`, with its helpers in `presentation_playback_gate_world.py` and a `burst` action added to `_remotion_stage_browser.mjs`.
 
-**10 strict xfails.** Each accepts only an `AssertionError`, so a broken harness fails instead of passing as expected.
+**Target (S03 rework after QA):** every assertion encodes `docs/presentation-studio.md` > *Presentation experience contract (Level 2, 2026-10)*, not today's architecture: a contract-conformant fix flips the xfail. Controls are found by contract role and name (toolbar « Lire » / « Pause », overflow « Lire seulement cette scène », `role="slider"`, the scene listbox); today's controls (`.jvx-play` buttons, `.rs-scrub`, `.rs-time`, the band) are used only as `legacy:` fallbacks that measure today's defect, and each run records which control it used.
 
-| Test | Defect | Fixed by |
-| --- | --- | --- |
-| `play_all_shows_every_scene_in_order_from_frame_zero_without_stall_blank_or_cut` | A | Slices 05/06 |
-| `one_clock_every_time_readout_shows_the_composition_time` | D/F | |
-| `a_scrub_of_the_player_bar_moves_the_shared_clock` | D | |
-| `after_a_forward_scrub_the_scene_ends_once_and_core_ends_with_it` | C/D | |
-| `a_manual_scene_without_anchor_plays_once_and_holds_its_last_frame` | A/C | |
-| `a_manual_scrub_back_while_playing_is_honoured_and_the_segment_still_stops` | C/D | |
-| `variants_slide_change_never_shows_an_empty_preview` | B | |
-| `variants_preview_plays_a_slide_once_and_holds` | A/C | |
-| `variants_play_all_plays_the_whole_presentation_inside_variants` | A | |
-| `variants_play_this_slide_plays_the_slide_in_scene_scope` | A | |
+**10 strict xfails** (`raises=AssertionError`: a broken measure goes through `harness()` → `pytest.fail`, and a timed-out precondition `until` with `required` stops the plan and is reported).
 
-**2 regression guards that pass:**
-- `a_30s_composition_with_an_8s_score_target_plays_to_its_last_frame`
-- `a_manual_scrub_of_a_held_segment_is_kept`
+| Test | Contract assertion | Defect | Fixed by |
+| --- | --- | --- | --- |
+| `play_all_shows_every_scene_in_order_from_frame_zero_without_stall_blank_or_cut` | § 4.2: all 9 scenes shown in order, each from frame 0 to its last frame, no stall, blank or wrap | A | 05 |
+| `one_clock_every_time_readout_shows_the_composition_time` | § 4.8 / § 6 #18: ≥ 1 visible readout; every one = Player composition time / 74 s | D/F | 04 + 06/10 |
+| `a_scrub_of_the_player_bar_moves_the_shared_clock` | § 4.6 / § 4.8: after a scrub, readouts, label and strip derive from the Player frame; no re-seek order | D | 04/06 |
+| `after_a_forward_scrub_the_scene_ends_once_and_holds_its_last_frame` | § 4.7: no wrap, holds 899, no later order moves it | C/D | 06 |
+| `a_presenter_run_scrubber_is_read_only` | § 5: Variants slider exists and is `aria-disabled`; no enabled scrubber elsewhere | D/F | 09/10 |
+| `a_manual_scene_without_anchor_plays_once_and_holds_its_last_frame` | § 5: presenter run, S1 plays once from 0 and holds 89 | A/C | 06 (+05/07) |
+| `variants_slide_change_never_shows_an_empty_preview` | § 4.2 / § 4.5: no blank DOM span, no dark capture on a thumbnail click | B | 06 |
+| `variants_preview_plays_a_slide_once_and_holds` | § 4.1: opens paused on frame 0; « Lire seulement cette scène » plays S1 once, holds 89 | A/C | 06 + 10 |
+| `variants_play_this_slide_plays_the_slide_in_scene_scope` | § 5 table: Variants stays open, its Player plays S3 0 → 899 and holds | A | 10 + 09 |
+| `variants_play_all_plays_the_whole_presentation_inside_variants` | § 4.2: « Lire » keeps Variants open; its Player enters S2 at frame 0 | A | 10 + 05/06 |
 
-**Run results**
-- The whole file gave 2 passed and 9 xfailed in 146 s; the play-all test xfailed on its own run in 237 s.
-- Without `JARVIS_REMOTION_RUNTIME_DIR`, all 12 tests skip in 1.5 s.
+**3 regression guards that pass:** `a_30s_composition_with_an_8s_score_target_plays_to_its_last_frame` (presenter run, § 3/§ 5), `a_video_scrub_back_while_playing_is_honoured` and `a_video_scrub_while_paused_is_kept` (continuous video, § 4.3/§ 4.6; they replace the two manual-run scrub cases, since § 5 makes the presenter-run scrubber read-only).
+
+**Deterministic companion:** `tests/unit/test_prefab_host_swap_race_js.py` (node, 1.5 s), 2 strict xfails (Slice 05): `preload(C)` right after `mount(B)` must not drop B; `mount(B)` must not send B's props to the outgoing A.
+
+**Run results (S03 rework, 2026-10-11, runtime `C:/Projects/jarvis/_remotion-runtime-gate`)**
+- `-k "not play_all_shows"`: 3 passed, 9 xfailed, 222 s. With `--runxfail --tb=line`: the same 9 fail, each on its contract assertion, 218 s.
+- `-k play_all_shows` (`--runxfail`): fails on « scenes shown S1 S2 S4 S5 S7 S9 », 238 s.
+- `test_prefab_host_swap_race_js.py` 2 xfailed; `test_prefab_host_js.py` 18 passed; `test_remotion_stage_js.py` 26 passed; `test_remotion_continuity_js.py` 11 passed; `test_remotion_player_realpage_browser.py` 7 passed.
+- Without `JARVIS_REMOTION_RUNTIME_DIR`, the gate's 13 tests skip.
 
 **Command**, from the worktree:
 
 ```
 JARVIS_REMOTION_RUNTIME_DIR=<runtime copy> [JARVIS_PLAYBACK_GATE_EVIDENCE_DIR=<dir>]
-<repo>/.venv/Scripts/python.exe -m pytest tests/unit/test_presentation_playback_release_gate_browser.py -q -p no:cacheprovider -rxXfE
+<repo>/.venv/Scripts/python.exe -m pytest tests/unit/test_presentation_playback_release_gate_browser.py -q -p no:cacheprovider -rxX -k "not play_all_shows"
+<repo>/.venv/Scripts/python.exe -m pytest tests/unit/test_presentation_playback_release_gate_browser.py -q -p no:cacheprovider -rxX -k play_all_shows
 ```
 
-The whole file takes about 6.5 min. Run `-k play_all_shows` on its own.
-
-**Known risk:** if a lucky message order happened to save every anchorless scene, the play-all xfail would pass and fail as strict. This was never observed: at least 2 scenes were lost in every run.
+**Known risk:** if a lucky message order saved every anchorless scene, the play-all xfail would pass and fail as strict. In the three recorded runs the same S3, S6 and S8 were lost; the node companion pins the mechanism deterministically.
 
 ## Not run
 

@@ -3645,6 +3645,14 @@ l'opérateur :
   le non-repli et la frontière de confidentialité : `pytest tests/unit/test_remotion_no_fallback_privacy.py` ; la migration :
   `python scripts/remotion_migration_probe.py --work-dir <dossier court sous Temp> --evidence <fichier.json>` ; les mesures :
   `python scripts/remotion_perf_wrap.py --label <nom> --out <fichier.json> -- <commande>` et `python scripts/remotion_latency_probe.py --runtime-dir <runtime> --evidence <fichier.json>`.
+- **Porte de lecture des présentations** (handoff `jarvis-remotion-native-studio-playback-fix`, Slice 03 ; cible : *Presentation experience contract*
+  de [presentation-studio.md](presentation-studio.md)) : même poste isolé, même `JARVIS_REMOTION_RUNTIME_DIR` (sans lui, tout est ignoré) ; facultatif
+  `JARVIS_PLAYBACK_GATE_EVIDENCE_DIR=<dossier>` pour garder JSON et captures (dossier personnel masqué). Une seule commande à la fois, au premier plan :
+  `pytest tests/unit/test_presentation_playback_release_gate_browser.py -q -p no:cacheprovider -rxX -k "not play_all_shows"` (≈ 4 min), puis
+  `-k play_all_shows` seul (≈ 4 min tant que le défaut A dure, ≈ 1,5 min une fois corrigé). Compagnon sans navigateur :
+  `pytest tests/unit/test_prefab_host_swap_race_js.py` (≈ 2 s). Les défauts connus sont des `xfail(strict=True)` : un `XPASS(strict)` veut dire
+  qu'une Slice a corrigé le comportement, retirer alors la marque ; un échec `harness: …` est une mesure cassée (pilote, précondition), jamais le défaut.
+  Constats : `tasks/jarvis-remotion-native-studio-playback-fix/slices/03-reproduce-timeline-and-transition-failures/evidence/FINDINGS.md`.
 - **Si l'export d'une présentation rédigée échoue avec `TypeError ... reading 'body'`** : le build ne porte pas le correctif de la Slice 22 (le rendu ne passait pas
   l'entrée `data` à la composition) ; mettre à jour. Un snapshot gelé avant le correctif se rend correctement (les défauts de `data` sont recalculés depuis les valeurs figées de la scène).
 - **Fuite de confidentialité dans les preuves** : `python tasks/jarvis-remotion-presentation-integration/slices/22-end-to-end-release/evidence/privacy_sweep.py`

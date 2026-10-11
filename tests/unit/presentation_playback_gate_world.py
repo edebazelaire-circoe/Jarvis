@@ -28,10 +28,20 @@ import time
 from typing import Any
 import zlib
 
+import pytest
+
 from jarvis.adapters.remotion_compiler import shipped_engine_pin
 from jarvis.domain.remotion_source import Composition
 from tests.fakes.remotion_player_stack import RemotionStack
 from tests.fakes.remotion_scene import scene_candidate
+
+def harness(ok: object, why: object) -> None:
+    """A broken measure (setup refused, driver crash, precondition timed out, unreadable capture) is a real failure, never the expected one:
+    the gate's xfail marks accept `AssertionError` only (`raises=`), and this raises pytest's `Failed`."""
+
+    if not ok:
+        pytest.fail(f"harness: {why}")
+
 
 PLAYBACK = "/v1/presentation-studio/playback"
 BASE = "/v1/presentation-studio/presentations"
@@ -101,7 +111,7 @@ async def make_deck(stack: RemotionStack, *, title: str = "Neuf scenes") -> tupl
     status, saved = await stack.call("PUT", f"{BASE}/{pid}/variants/{vid}", json={
         "expected_revision": variant["revision"], "title": variant["title"], "scenes": scenes,
         "art_direction_id": variant["art_direction_id"], "score_id": variant["score_id"]})
-    assert status == 200, saved
+    harness(status == 200, f"variant save refused: {saved}")
     items: list[dict[str, Any]] = []
     for index, (_s, _f, anchors, _bg) in enumerate(DECK):
         items.append({"scene_id": SCENE_IDS[index], "reveal": None})
@@ -115,10 +125,10 @@ async def make_deck(stack: RemotionStack, *, title: str = "Neuf scenes") -> tupl
     status, made = await stack.call("POST", f"{BASE}/{pid}/variants/{vid}/score", json={
         "expected_variant_revision": saved["revision"], "start_item_id": wire[0]["item_id"], "items": wire, "cues": [],
         "sequences": [], "recovery_points": []})
-    assert status == 201, made
+    harness(status == 201, f"score refused: {made}")
     status, art = await stack.call("POST", f"{BASE}/{pid}/variants/{vid}/art-direction/fallback",
                                    json={"expected_variant_revision": saved["revision"] + 1})
-    assert status == 201, art
+    harness(status == 201, f"art direction refused: {art}")
     return pid, vid
 
 
@@ -216,6 +226,149 @@ def next_boundary(frames_left: int = 20) -> str:
             f"return false}}catch(e){{return false}}}})()")
 
 
+# ---------------------------------------------------------------------------------------------------------------- the Variants Player (contract)
+#
+# Contract-level observations of `docs/presentation-studio.md` > *Presentation experience contract* (§ 2, § 4, § 6): the Variants Player is
+# the visible Remotion stage frame inside `#jvStudioExplorer`; controls are found by their ROLE and NAME (toolbar « Lire » / « Pause »,
+# overflow « Lire seulement cette scène », `role="slider"`, the scene listbox), never by today's classes. Where the contract control does
+# not exist yet, a gesture falls back to today's control ONLY when the test measures today's defect through it (`legacy`), and says which
+# control it used. Today's selectors (`.jvx-play`, `.rs-scrub`, `.rs-time`, the band `#jvStudioBand`) are retargeted to the Variants Player
+# by Slices 06/09/10; the helpers below keep working across that change.
+
+EXPLORER_FRAME = ("[...document.querySelectorAll('#jvStudioExplorer iframe[data-remotion-stage]')].find(x=>!x.classList.contains('sc-prefab-staged')"
+                  "&&x.style.visibility!=='hidden'&&x.getBoundingClientRect().width>0)")
+#: The Variants Player: `{frame, playing, duration, phase, scene}` (scene from the mounted pin, `S<n>`), or null when Variants shows no Player.
+VSTATE = (f"(()=>{{const f={EXPLORER_FRAME};if(!f)return null;let s=null;try{{s=f.contentWindow.__remotionStage.state()}}catch(e){{return null}}"
+          "const m=/\\.s0*(\\d+)(?:@|&|$)/.exec(decodeURIComponent(f.src||''));"
+          "return {frame:s.frame,playing:s.playing,duration:s.duration,phase:s.phase,scene:m?'S'+m[1]:null}})()")
+#: The run's Player wherever it plays today (Board stage) or after Slice 09 (Variants): the visible frame showing `duration` frames.
+def run_state(duration: int) -> str:
+    return (f"(()=>{{for(const f of document.querySelectorAll('iframe[data-remotion-stage]')){{if(f.classList.contains('sc-prefab-staged')||"
+            f"f.style.visibility==='hidden'||!f.getBoundingClientRect().width)continue;try{{const s=f.contentWindow.__remotionStage.state();"
+            f"if(s.duration==={duration})return {{frame:s.frame,playing:s.playing,phase:s.phase,place:f.closest('#jvStudioExplorer')?'variants':'board'}}}}"
+            "catch(e){}}return null})()")
+
+
+#: Everything a viewer reads at one instant (§ 4.8): every VISIBLE time readout of the page and of the same-origin stage pages (text `a / b`
+#: with `m:ss` or `x s` terms), the scene label « Scène n sur N », the strip selection, the scrub slider, the Variants Player.
+READOUTS = (r"""(()=>{const RX=/(\d{1,2}:\d{2}(?::\d{2})?|\d+(?:[.,]\d+)?\s?s)\s*\/\s*(\d{1,2}:\d{2}(?::\d{2})?|\d+(?:[.,]\d+)?\s?s)/;
+const out=[];const shown=(el,v)=>{const cs=v.getComputedStyle(el);return el.getClientRects().length>0&&cs.visibility!=='hidden'&&cs.display!=='none'&&!el.closest('[hidden]')};
+const scan=(doc,where)=>{for(const el of doc.querySelectorAll('body *')){if(['SCRIPT','STYLE','IFRAME'].includes(el.tagName))continue;
+  const own=[...el.childNodes].filter(n=>n.nodeType===3).map(n=>n.textContent).join('');const m=RX.exec(own);
+  if(m&&shown(el,doc.defaultView))out.push({where,text:own.trim().slice(0,80)})}};
+scan(document,'page');
+for(const f of document.querySelectorAll('iframe[data-remotion-stage]')){if(f.classList.contains('sc-prefab-staged')||f.style.visibility==='hidden'||!f.getBoundingClientRect().width)continue;
+  try{scan(f.contentDocument,f.closest('#jvStudioExplorer')?'variants-stage':'board-stage')}catch(e){}}
+const x=document.querySelector('#jvStudioExplorer');let label=null,selected=null,slider=null;
+if(x){const lm=/Scène (\d+) sur (\d+)/.exec(x.innerText||'');label=lm?+lm[1]:null;
+  const sel=x.querySelector('[aria-selected="true"][data-scene]');selected=sel?sel.getAttribute('data-scene'):null;
+  const sl=x.querySelector('[role="slider"]');slider=sl?{now:sl.getAttribute('aria-valuenow'),max:sl.getAttribute('aria-valuemax'),
+    text:sl.getAttribute('aria-valuetext'),disabled:sl.getAttribute('aria-disabled')==='true'}:null}
+""" + f"return {{readouts:out,label,selected,slider,player:{VSTATE},open:!!(window.JarvisStudioExplorer&&JarvisStudioExplorer.isOpen())}}}})()")
+
+
+def gesture(kind: str, *, legacy: bool) -> str:
+    """Click the contract control for `kind` (synthetic click) and return the name of the control used, or null.
+
+    `play`: toolbar « Lire » (§ 4.2); legacy « Tout jouer ». `scene_only`: overflow « Lire seulement cette scène » (§ 5 table); legacy
+    « Jouer cette slide ». `pause`: toolbar « Pause » (§ 4.3); legacy: the stage page's own toggle while it reads « Pause »."""
+
+    return (r"""(()=>{const x=document.querySelector('#jvStudioExplorer');if(!x)return null;
+const names=el=>[el.getAttribute('aria-label')||'',(el.textContent||'').replace(/\s+/g,' ').trim()];
+const find=(re,root)=>[...(root||x).querySelectorAll('button,[role="menuitem"],[role="button"]')].find(b=>names(b).some(n=>re.test(n))&&b.getAttribute('aria-disabled')!=='true'&&b.getClientRects().length);
+const press=(b,label)=>{b.click();return label};
+const KIND=""" + json.dumps(kind) + ";const LEGACY=" + ("true" if legacy else "false") + r""";
+if(KIND==='play'){const b=find(/^(▶\s*)?Lire$/i,x.querySelector('[role="toolbar"]')||x);if(b)return press(b,'Lire');
+  if(LEGACY){const t=find(/Tout jouer/);if(t)return press(t,'legacy:Tout jouer')}return null}
+if(KIND==='scene_only'){let item=find(/Lire seulement cette scène/);
+  if(!item){const more=[...x.querySelectorAll('[aria-haspopup="menu"],[aria-haspopup="true"]')].find(b=>b.getClientRects().length);if(more){more.click();item=find(/Lire seulement cette scène/,document)}}
+  if(item)return press(item,'Lire seulement cette scène');
+  if(LEGACY){const t=find(/Jouer cette slide/);if(t)return press(t,'legacy:Jouer cette slide')}return null}
+if(KIND==='pause'){const b=find(/^Pause$/i,x.querySelector('[role="toolbar"]')||x);if(b)return press(b,'Pause');
+  if(LEGACY){const f=""" + EXPLORER_FRAME + r""";try{const t=f.contentDocument.querySelector('.rs-btn');if(t&&t.textContent==='Pause')return press(t,'legacy:rs-bar Pause')}catch(e){}}return null}
+return null})()""")
+
+
+def scrub_to(scene_index: int, seconds: int, *, legacy_local_frame: int) -> str:
+    """The user scrubs (§ 4.6) to `seconds` after the start of scene `scene_index`. Contract: the `role="slider"` of Variants with its ARIA keys
+    (`Home`, `PageDown` per scene, `→` per second). Legacy (today): the stage page's own scrub (`.rs-scrub`) of the Variants Player, set to the
+    scene-local frame. Returns which one was used, or null."""
+
+    return (r"""(()=>{const x=document.querySelector('#jvStudioExplorer');if(!x)return null;const sl=x.querySelector('[role="slider"]');
+if(sl&&sl.getAttribute('aria-disabled')!=='true'){sl.focus();const key=k=>sl.dispatchEvent(new KeyboardEvent('keydown',{key:k,bubbles:true,cancelable:true}));
+  key('Home');for(let i=0;i<""" + str(scene_index) + r""";i++)key('PageDown');for(let i=0;i<""" + str(seconds) + r""";i++)key('ArrowRight');
+  sl.dispatchEvent(new KeyboardEvent('keyup',{key:'ArrowRight',bubbles:true}));return 'slider'}
+const f=""" + EXPLORER_FRAME + r""";try{const r=f.contentDocument.querySelector('.rs-scrub');if(r){r.value='""" + str(legacy_local_frame)
+            + r"""';r.dispatchEvent(new Event('input',{bubbles:true}));return 'legacy:rs-scrub'}}catch(e){}return null})()""")
+
+
+def open_variants(pid: str) -> list[dict]:
+    """Plan prefix: the page, the probe, Variants opened windowed on the presentation, its Player ready (a precondition: `required`)."""
+
+    return [{"until": "!!window.JarvisStudioExplorer", "ms": 20000, "required": True, "as": "explorer_api"}, {"eval": PAGE_PROBE},
+            {"eval": f"JarvisStudioExplorer.open({{presentation_id:'{pid}',fullscreen:false}})"},
+            {"until": f"(()=>{{const s={VSTATE};return !!s&&s.phase==='ready'}})()", "ms": 90000, "required": True, "as": "variants_ready"}]
+
+
+def variants_scene_ready(scene_index: int) -> dict:
+    return {"until": f"(()=>{{const s={VSTATE};return !!s&&s.phase==='ready'&&s.scene==='S{scene_index + 1}'}})()", "ms": 90000,
+            "required": True, "as": f"variants_ready_S{scene_index + 1}"}
+
+
+def thumbnail(scene_index: int) -> dict:
+    """A click on the strip thumbnail of a scene (§ 4.5): the option of the scene listbox that carries its id."""
+
+    return {"click": f"#jvStudioExplorer [data-scene=\"{SCENE_IDS[scene_index]}\"]"}
+
+
+def composition_seconds(scene_index: int, local_frame: int) -> float:
+    """§ 3: the composition time of a scene-local frame (scenes abut; fps-agnostic in seconds)."""
+
+    seconds, fps, _a, _b = DECK[scene_index]
+    return sum(s for s, _f, _a2, _b2 in DECK[:scene_index]) + local_frame / fps
+
+
+def parse_readout(text: str) -> tuple[float, float | None] | None:
+    """`(shown, total)` in seconds from `0:12 / 1:30`, `12.3 s / 30.0 s`; None when it is not a time readout."""
+
+    import re
+    term = r"(\d{1,2}:\d{2}(?::\d{2})?|\d+(?:[.,]\d+)?\s?s)"
+    m = re.search(term + r"\s*/\s*" + term, text)
+    if not m:
+        return None
+
+    def sec(t: str) -> float:
+        t = t.strip().rstrip("s").strip().replace(",", ".")
+        if ":" in t:
+            parts = [int(p) for p in t.split(":")]
+            value = 0
+            for p in parts:
+                value = value * 60 + p
+            return float(value)
+        return float(t)
+    return sec(m.group(1)), sec(m.group(2))
+
+
+def readout_problems(snapshot: dict, scene_index: int) -> list[str]:
+    """§ 4.8 / § 6 #18: at least one visible time readout, and every one shows the composition time of the Player's frame over the
+    composition length (never a score item time over a target, never a scene-local time)."""
+
+    player = snapshot.get("player") or {}
+    if player.get("frame") is None:
+        return ["no Variants Player"]
+    expected = composition_seconds(scene_index, player["frame"])
+    total = sum(s for s, _f, _a, _b in DECK)
+    problems = [] if snapshot.get("readouts") else ["no visible time readout"]
+    for r in snapshot.get("readouts") or []:
+        parsed = parse_readout(r["text"])
+        if parsed is None:
+            continue
+        shown, length = parsed
+        if abs(shown - expected) > 1.0 or (length is not None and abs(length - total) > 1.0):
+            problems.append(f"{r['where']} {r['text']!r} != composition {expected:.1f} s / {total} s")
+    return problems
+
+
 def drive_long(url: str, plan: list, *, timeout: int = 600, viewport: str = "1280x720") -> dict:
     """Le pilote CDP partagé (`_remotion_stage_browser.mjs`) avec une échéance plus longue (une présentation entière se joue)."""
 
@@ -224,7 +377,7 @@ def drive_long(url: str, plan: list, *, timeout: int = 600, viewport: str = "128
     driver = Path(__file__).parent / "_remotion_stage_browser.mjs"
     done = subprocess.run(["node", str(driver), url, _chrome(), json.dumps(plan)], capture_output=True, text=True, encoding="utf-8",
                           timeout=timeout, check=False, env={**os.environ, "CDP_VIEWPORT": viewport})
-    assert done.returncode == 0, done.stderr[-2000:]
+    harness(done.returncode == 0, f"CDP driver exit {done.returncode}: {done.stderr[-2000:]}")
     return json.loads(done.stdout)
 
 
@@ -289,14 +442,14 @@ def first_play(probe: dict, uid: int) -> tuple[int, int] | None:
 
 def _png_rows(path: Path) -> tuple[int, int, int, list[bytes]]:
     data = path.read_bytes()
-    assert data[:8] == b"\x89PNG\r\n\x1a\n", path
+    harness(data[:8] == b"\x89PNG\r\n\x1a\n", f"not a PNG: {path}")
     pos, idat, width = 8, b"", 0
     while pos < len(data):
         length, kind = struct.unpack(">I4s", data[pos:pos + 8])
         body = data[pos + 8:pos + 8 + length]
         if kind == b"IHDR":
             width, height, depth, color = struct.unpack(">IIBB", body[:10])
-            assert depth == 8 and color in (2, 6), (depth, color)
+            harness(depth == 8 and color in (2, 6), f"unsupported PNG depth/colour {depth}/{color}: {path}")
             channels = 3 if color == 2 else 4
         elif kind == b"IDAT":
             idat += body

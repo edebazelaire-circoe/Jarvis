@@ -6,7 +6,7 @@
    Usage : node _remotion_stage_browser.mjs <url de la page> <chrome.exe> <planJSON>
    Environnement : CDP_VIEWPORT=LxH (1280x720 par défaut).
    Actions (champ `scope` : "page" par défaut, ou "sandbox" pour le cadre du bac à sable) :
-     {eval}, {wait: ms}, {click: selecteur}, {clickAt: [x,y]}, {clickExpr: expr -> {x,y} de la page}, {key: nom}, {value: nom, expr, scope?}, {until: expr, ms, scope?}, {size: [w,h]},
+     {eval}, {wait: ms}, {click: selecteur}, {clickAt: [x,y]}, {clickExpr: expr -> {x,y} de la page}, {key: nom}, {value: nom, expr, scope?}, {until: expr, ms, scope?, as?, required?}, {size: [w,h]},
      {shot: chemin.png}, {burst: dossier, ms, clipExpr?, scale?, prefix?, as?} (rafale de captures datées), {http: {method, url, headers?, json?, basisFrom?}, as: nom} (requête de Node, pour parler à Core entre deux étapes ;
      `basisFrom` : URL d'une variante, sa révision du moment est écrite dans `json.basis.variant_revision`, Slice 14).
    Sortie : {reads, console, errors, targets}. Chrome est tué avec ses enfants, le profil effacé. */
@@ -153,6 +153,9 @@ try{
         const end=Date.now()+(action.ms||5000);let ok=false;
         while(Date.now()<end){ok=!!(await evaluate(action.until,action.scope).catch(()=>false));if(ok)break;await sleep(100)}
         reads['until:'+action.until.slice(0,80)]=ok;
+        if(action.as)reads[action.as]=ok;
+        /* `required` : une précondition du plan (cadre prêt...) ; son échéance dépassée arrête le plan et se lit dans `reads.failed`. */
+        if(!ok&&action.required)throw new Error(`until timed out after ${action.ms||5000} ms: ${action.as||action.until.slice(0,120)}`);
       }
     }catch(error){reads.failed={action:JSON.stringify(action).slice(0,200),error:String(error.message||error).slice(0,300)};break}
   }
