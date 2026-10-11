@@ -515,16 +515,18 @@ html:has(#${HOST_ID}:not([hidden])) #jvFullscreenPrompt{top:auto;bottom:18px;lef
 #${HOST_ID} .jvx-stage-wait span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 @media (prefers-reduced-motion:no-preference){#${HOST_ID} .jvx-stage-wait::before{animation:jvxPulse 1.1s ease-in-out infinite}}
 #${HOST_ID} .jvx-stage-veil .jvx-veil-actions{display:inline-flex;gap:8px;justify-content:center}
-#${HOST_ID} .jvx-stage-note{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:6px 12px;color:var(--jvx-mute);font-size:13px;min-width:0}
+#${HOST_ID} .jvx-stage-note{display:flex;align-items:center;justify-content:space-between;gap:12px;color:var(--jvx-mute);font-size:13px;min-width:0}
 #${HOST_ID} .jvx-scene-line{display:flex;align-items:center;gap:10px;min-width:0;flex:1 1 auto}
 #${HOST_ID} .jvx-scene-title{color:var(--jvx-ink);font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 /* Le transport de la vidéo (native-studio-playback-fix Slice 06, contrat § 4, § 6 #15-#20) : une seule rangée sous l'image. */
-/* The row never runs past the preview (Slice 06 rework, P5): too narrow for the transport and the scene line side by side, the scene line
-   and « Scène n sur N » wrap under the transport; the count is cut with an ellipsis as a last resort. The scene line has a fixed basis, so
-   the slider keeps its width when the scene title changes under a drag. */
-#${HOST_ID} .jvx-transport{display:flex;align-items:center;gap:8px;min-width:0;flex:1 1 340px}
+/* The row never runs past the preview (Slice 06 rework, P5), and stays ONE row (every pixel of height is the stage's width): on a narrow
+   preview the scene title leaves the row (the strip names the scene) and the transport tightens; « Scène n sur N » is never cut unless
+   nothing else can give, then with an ellipsis. The scene line has a fixed basis, so the slider keeps its width when the scene title
+   changes under a drag. */
+#${HOST_ID} .jvx-preview{container:jvxpreview/inline-size}
+#${HOST_ID} .jvx-transport{display:flex;align-items:center;gap:8px;min-width:0;flex:1 1 auto}
 #${HOST_ID} .jvx-stage-note .jvx-scene-line{flex:0 1 9em}
-#${HOST_ID} .jvx-scene-count{flex:0 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-variant-numeric:tabular-nums}
+#${HOST_ID} .jvx-scene-count{flex:0 0 auto;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-variant-numeric:tabular-nums}
 #${HOST_ID} .jvx-transport .jvx-btn{min-height:30px;padding:0 10px;font-size:12px;flex:none}
 #${HOST_ID} .jvx-transport .jvx-btn-icon{width:30px;padding:0}
 #${HOST_ID} .jvx-transport .jvx-btn svg{width:13px;height:13px}
@@ -540,6 +542,12 @@ html:has(#${HOST_ID}:not([hidden])) #jvFullscreenPrompt{top:auto;bottom:18px;lef
 #${HOST_ID} .jvx-scrub[aria-disabled="true"] .jvx-scrub-fill,#${HOST_ID} .jvx-scrub[aria-disabled="true"] .jvx-scrub-thumb{display:none}
 #${HOST_ID} .jvx-time{flex:none;min-width:7.5em;text-align:center;font:12px/1 ui-monospace,Consolas,monospace;font-variant-numeric:tabular-nums;color:var(--jvx-mute)}
 @media (forced-colors:active){#${HOST_ID} .jvx-scrub-track,#${HOST_ID} .jvx-scrub-tick{background:CanvasText}#${HOST_ID} .jvx-scrub-fill,#${HOST_ID} .jvx-scrub-thumb{background:Highlight}}
+@container jvxpreview (max-width:640px){
+  #${HOST_ID} .jvx-stage-note .jvx-scene-line{display:none}
+  #${HOST_ID} .jvx-transport{gap:6px}
+  #${HOST_ID} .jvx-transport .jvx-time{min-width:0}
+  #${HOST_ID} .jvx-scrub{min-width:40px}
+}
 #${HOST_ID} .jvx-vbar{display:flex;align-items:center;gap:6px;overflow-x:auto;padding:2px 2px 8px;scrollbar-width:thin;scrollbar-color:var(--jvx-line-strong) transparent;min-height:34px}
 @media (max-height:680px){#${HOST_ID} .jvx-vbar{display:none}}
 #${HOST_ID} .jvx-vbar-label{flex:none;color:var(--jvx-mute);font-size:11px;letter-spacing:.1em;text-transform:uppercase;padding-right:4px}

@@ -215,7 +215,7 @@ def mouse(kind: str, fraction: float) -> dict:
     return {"mouse": kind, "atExpr": at_slider(fraction)}
 
 
-#: The row under the stage (transport, scene line, « Scène n sur N »): every child inside the row and the row inside the preview, nothing
+#: The row under the stage (transport, scene line, « Scène n sur N »): one row, every child inside it and the row inside the preview, nothing
 #: wider than its box, and the scene count either whole or cut with an ellipsis (QA P5).
 ROW = ("(()=>{const x=document.querySelector('#jvStudioExplorer');const pe=x.querySelector('.jvx-preview'),b=pe.getBoundingClientRect(),cs=getComputedStyle(pe);"
        "const p={left:b.left+parseFloat(cs.paddingLeft),right:Math.min(innerWidth,b.right)-parseFloat(cs.paddingRight)};"
@@ -235,6 +235,8 @@ def row_problems(row: dict) -> list[str]:
     if row["rowScroll"] > row["rowClient"] + 1:
         problems.append(f"row overflows: {row['rowScroll']} > {row['rowClient']}")
     for kid in row["kids"]:
+        if kid["right"] == kid["left"]:
+            continue   # not displayed (the scene title leaves a narrow row)
         if kid["left"] < row["row"][0] - 1 or kid["right"] > row["row"][1] + 1:
             problems.append(f"{kid['cls']!r} {kid['left']}..{kid['right']} outside the row {row['row']}")
         if kid["cls"] == "jvx-transport" and kid["scroll"] > kid["client"] + 1:
@@ -253,7 +255,7 @@ async def test_a_pointer_drag_on_the_slider_pauses_then_plays_from_the_scrubbed_
         pid, _vid = await make_deck(stack)
         tag = f"drag-{viewport}"
         plan = opened(pid) + [
-            {"wait": 2000}, {"value": "row_opened", "expr": ROW}, snap(tmp_path, f"{tag}-opened"),
+            {"wait": 2000}, {"value": "row_opened", "expr": ROW}, snap(tmp_path, "opened"),
             {"click": LIRE}, {"until": vstate_is(1, "s.playing&&s.frame>=20"), "ms": 30000, "required": True, "as": "playing"},
             mouse("mouseMoved", 0.2), mouse("mousePressed", 0.2),
             {"value": "pressed", "expr": "JarvisStudioExplorer.playback.view()"}, {"value": "w_pressed", "expr": SLIDER_W},
@@ -262,7 +264,7 @@ async def test_a_pointer_drag_on_the_slider_pauses_then_plays_from_the_scrubbed_
             mouse("mouseReleased", 0.78),
             {"until": vstate_is(7, "s.playing&&s.frame>0"), "ms": 60000, "required": True, "as": "released_s7"}, {"wait": 400},
             {"value": "released", "expr": RO}, {"value": "released_view", "expr": "JarvisStudioExplorer.playback.view()"},
-            {"value": "row_playing", "expr": ROW}, snap(tmp_path, f"{tag}-released"),
+            {"value": "row_playing", "expr": ROW}, snap(tmp_path, "released"),
             # a drag that starts paused stays paused
             {"click": LIRE}, {"until": f"{PHASE}==='paused'", "ms": 5000, "required": True, "as": "paused"},
             mouse("mouseMoved", 0.1), mouse("mousePressed", 0.1), mouse("mouseMoved", 0.05), mouse("mouseReleased", 0.05),
@@ -276,7 +278,7 @@ async def test_a_pointer_drag_on_the_slider_pauses_then_plays_from_the_scrubbed_
         evidence = {k: reads.get(k) for k in ("row_opened", "w_pressed", "w_moved", "pressed", "moved", "moved_now", "released", "released_view", "row_playing",
                                               "paused_after", "paused_view", "failed")}
         evidence["core_phase"] = core_phase(reads)
-        record(tag, evidence, [tmp_path / f"{tag}-opened-000.png", tmp_path / f"{tag}-released-000.png"])
+        record(tag, evidence, [tmp_path / "opened-000.png", tmp_path / "released-000.png"])
         harness("failed" not in reads, reads.get("failed"))
         total = 74 * 60
         target = round(0.78 * (total - 1))
