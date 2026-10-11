@@ -60,14 +60,14 @@
    "open": true
   },
   "paused1": {
-   "frame": 43,
+   "frame": 42,
    "playing": false,
    "duration": 90,
    "phase": "ready",
    "scene": "S1"
   },
   "paused2": {
-   "frame": 43,
+   "frame": 42,
    "playing": false,
    "duration": 90,
    "phase": "ready",
@@ -75,7 +75,7 @@
   },
   "label_paused": "Lire",
   "resumed": {
-   "frame": 59,
+   "frame": 64,
    "playing": true,
    "duration": 90,
    "phase": "ready",
@@ -230,15 +230,15 @@
   "failed": null,
   "played_before_lire": [],
   "resume_first_play": [
-   11490,
-   43
+   12210,
+   42
   ],
   "next_first_play_S2": [
-   12337,
+   13116,
    0
   ],
   "replay_first_play_S1": [
-   24016,
+   25658,
    0
   ],
   "core_phase": "idle",
@@ -246,7 +246,7 @@
  },
  "probe_ev": [
   [
-   240,
+   256,
    "mount",
    1,
    "explorer",
@@ -254,43 +254,43 @@
    false
   ],
   [
-   244,
+   258,
    "live",
    1
-  ],
-  [
-   258,
-   "status",
-   1,
-   "shell"
   ],
   [
    259,
    "status",
    1,
+   "shell"
+  ],
+  [
+   260,
+   "status",
+   1,
    "preparing"
   ],
   [
-   1189,
+   1852,
    "status",
    1,
    "mounting"
   ],
   [
-   1315,
+   2090,
    "ready",
    1,
    null,
    null
   ],
   [
-   1317,
+   2091,
    "status",
    1,
    "ready"
   ],
   [
-   1317,
+   2093,
    "order",
    1,
    "pause",
@@ -298,14 +298,14 @@
    null
   ],
   [
-   1337,
+   2133,
    "clock",
    1,
    0,
    false
   ],
   [
-   4600,
+   5432,
    "order",
    1,
    "play",
@@ -313,21 +313,21 @@
    null
   ],
   [
-   4604,
+   5440,
    "clock",
    1,
    0,
    false
   ],
   [
-   4604,
+   5440,
    "clock",
    1,
    0,
    true
   ],
   [
-   4613,
+   5465,
    "mount",
    2,
    "explorer",
@@ -335,38 +335,45 @@
    true
   ],
   [
-   4620,
+   5465,
    "status",
    2,
    "shell"
   ],
   [
-   4620,
+   5465,
    "status",
    2,
    "preparing"
   ],
   [
-   4632,
+   5494,
    "status",
    2,
    "mounting"
   ],
   [
-   4726,
+   5731,
    "ready",
    2,
    null,
    null
   ],
   [
-   4728,
+   5731,
+   "clock",
+   1,
+   8,
+   true
+  ],
+  [
+   5731,
    "status",
    2,
    "ready"
   ],
   [
-   4728,
+   5733,
    "order",
    2,
    "pause",
@@ -374,49 +381,42 @@
    null
   ],
   [
-   4745,
+   5762,
    "clock",
    2,
    0,
    false
   ],
   [
-   4872,
-   "clock",
-   1,
-   8,
-   true
-  ],
-  [
-   5138,
+   5993,
    "clock",
    1,
    16,
    true
   ],
   [
-   5403,
+   6251,
    "clock",
    1,
    24,
    true
   ],
   [
-   5672,
+   6526,
    "clock",
    1,
    32,
    true
   ],
   [
-   5937,
+   6788,
    "clock",
    1,
    40,
    true
   ],
   [
-   6037,
+   6851,
    "order",
    1,
    "pause",
@@ -424,57 +424,57 @@
    null
   ],
   [
-   6038,
+   6853,
    "clock",
    1,
-   43,
+   42,
    false
   ],
   [
-   11487,
+   12206,
    "order",
    1,
    "play",
-   43,
+   42,
    null
   ],
   [
-   11489,
+   12210,
    "clock",
    1,
-   43,
+   42,
    false
   ],
   [
-   11490,
+   12210,
    "clock",
    1,
-   43,
+   42,
    true
   ],
   [
-   11771,
+   12462,
    "clock",
    1,
-   51,
+   49,
    true
   ],
   [
-   12037,
+   12715,
    "clock",
    1,
-   59,
+   57,
    true
   ],
   [
-   12304,
+   12980,
    "clock",
    1,
-   67,
+   64,
    true
   ],
   [
-   12330,
+   13104,
    "order",
    2,
    "play",
@@ -482,26 +482,26 @@
    null
   ],
   [
-   12337,
+   13116,
    "clock",
    2,
    0,
    false
   ],
   [
-   12337,
+   13116,
    "clock",
    2,
    0,
    true
   ],
   [
-   12341,
+   13134,
    "live",
    2
   ],
   [
-   12341,
+   13134,
    "mount",
    3,
    "explorer",
@@ -509,43 +509,50 @@
    true
   ],
   [
-   12350,
+   13154,
    "status",
    3,
    "shell"
   ],
   [
-   12350,
+   13154,
    "status",
    3,
    "preparing"
   ],
   [
-   12362,
+   13178,
    "status",
    3,
    "mounting"
   ],
   [
-   12387,
+   13195,
    "gone",
    1
   ],
   [
-   12454,
+   13398,
    "ready",
    3,
    null,
    null
   ],
   [
-   12456,
+   13407,
    "status",
    3,
    "ready"
   ],
   [
-   12456,
+   13408,
+   "clock",
+   2,
+   8,
+   true
+  ],
+  [
+   13408,
    "order",
    3,
    "pause",
@@ -553,28 +560,21 @@
    null
   ],
   [
-   12474,
+   13457,
    "clock",
    3,
    0,
    false
   ],
   [
-   12603,
-   "clock",
-   2,
-   8,
-   true
-  ],
-  [
-   12875,
+   13660,
    "clock",
    2,
    16,
    true
   ],
   [
-   13003,
+   13807,
    "order",
    2,
    "pause",
@@ -582,14 +582,14 @@
    null
   ],
   [
-   13006,
+   13817,
    "clock",
    2,
    20,
    false
   ],
   [
-   13179,
+   13963,
    "mount",
    4,
    "explorer",
@@ -597,43 +597,43 @@
    true
   ],
   [
-   13179,
+   13979,
    "status",
    4,
    "shell"
   ],
   [
-   13180,
+   13979,
    "status",
    4,
    "preparing"
   ],
   [
-   13191,
+   13992,
+   "gone",
+   3
+  ],
+  [
+   14007,
    "status",
    4,
    "mounting"
   ],
   [
-   13237,
-   "gone",
-   3
-  ],
-  [
-   13364,
+   14181,
    "ready",
    4,
    null,
    null
   ],
   [
-   13364,
+   14182,
    "status",
    4,
    "ready"
   ],
   [
-   13364,
+   14183,
    "order",
    4,
    "pause",
@@ -641,14 +641,14 @@
    null
   ],
   [
-   13388,
+   14213,
    "clock",
    4,
    0,
    false
   ],
   [
-   13651,
+   14467,
    "order",
    4,
    "pause",
@@ -656,24 +656,24 @@
    null
   ],
   [
-   13657,
+   14479,
+   "clock",
+   4,
+   0,
+   false
+  ],
+  [
+   14484,
    "live",
    4
   ],
   [
-   13661,
-   "clock",
-   4,
-   0,
-   false
-  ],
-  [
-   13703,
+   14545,
    "gone",
    2
   ],
   [
-   14223,
+   15073,
    "mount",
    5,
    "explorer",
@@ -681,38 +681,38 @@
    true
   ],
   [
-   14231,
+   15073,
    "status",
    5,
    "shell"
   ],
   [
-   14231,
+   15073,
    "status",
    5,
    "preparing"
   ],
   [
-   14244,
+   15097,
    "status",
    5,
    "mounting"
   ],
   [
-   14368,
+   15287,
    "ready",
    5,
    null,
    null
   ],
   [
-   14371,
+   15287,
    "status",
    5,
    "ready"
   ],
   [
-   14371,
+   15290,
    "order",
    5,
    "pause",
@@ -720,14 +720,14 @@
    null
   ],
   [
-   14396,
+   15323,
    "clock",
    5,
    0,
    false
   ],
   [
-   14648,
+   15586,
    "order",
    5,
    "pause",
@@ -735,24 +735,24 @@
    null
   ],
   [
-   14651,
+   15595,
    "clock",
    5,
    0,
    false
   ],
   [
-   14654,
+   15605,
    "live",
    5
   ],
   [
-   14719,
+   15677,
    "gone",
    4
   ],
   [
-   15572,
+   16582,
    "mount",
    6,
    "explorer",
@@ -760,38 +760,38 @@
    true
   ],
   [
-   15580,
+   16584,
    "status",
    6,
    "shell"
   ],
   [
-   15580,
+   16584,
    "status",
    6,
    "preparing"
   ],
   [
-   15593,
+   16601,
    "status",
    6,
    "mounting"
   ],
   [
-   15705,
+   16808,
    "ready",
    6,
    null,
    null
   ],
   [
-   15708,
+   16808,
    "status",
    6,
    "ready"
   ],
   [
-   15708,
+   16809,
    "order",
    6,
    "pause",
@@ -799,14 +799,14 @@
    null
   ],
   [
-   15736,
+   16848,
    "clock",
    6,
    0,
    false
   ],
   [
-   16000,
+   17101,
    "order",
    6,
    "pause",
@@ -814,24 +814,24 @@
    null
   ],
   [
-   16003,
+   17108,
+   "clock",
+   6,
+   48,
+   false
+  ],
+  [
+   17124,
    "live",
    6
   ],
   [
-   16004,
-   "clock",
-   6,
-   48,
-   false
-  ],
-  [
-   16052,
+   17181,
    "gone",
    5
   ],
   [
-   16814,
+   17973,
    "mount",
    7,
    "explorer",
@@ -839,38 +839,38 @@
    true
   ],
   [
-   16815,
+   17982,
    "status",
    7,
    "shell"
   ],
   [
-   16815,
+   17982,
    "status",
    7,
    "preparing"
   ],
   [
-   16825,
+   18003,
    "status",
    7,
    "mounting"
   ],
   [
-   16943,
+   18166,
    "ready",
    7,
    null,
    null
   ],
   [
-   16943,
+   18167,
    "status",
    7,
    "ready"
   ],
   [
-   16944,
+   18168,
    "order",
    7,
    "pause",
@@ -878,14 +878,14 @@
    null
   ],
   [
-   16963,
+   18217,
    "clock",
    7,
    0,
    false
   ],
   [
-   17215,
+   18470,
    "order",
    7,
    "pause",
@@ -893,24 +893,24 @@
    null
   ],
   [
-   17222,
+   18484,
+   "clock",
+   7,
+   90,
+   false
+  ],
+  [
+   18485,
    "live",
    7
   ],
   [
-   17224,
-   "clock",
-   7,
-   90,
-   false
-  ],
-  [
-   17270,
+   18550,
    "gone",
    6
   ],
   [
-   17978,
+   19170,
    "mount",
    8,
    "explorer",
@@ -918,38 +918,38 @@
    true
   ],
   [
-   17978,
+   19172,
    "status",
    8,
    "shell"
   ],
   [
-   17981,
+   19172,
    "status",
    8,
    "preparing"
   ],
   [
-   17994,
+   19194,
    "status",
    8,
    "mounting"
   ],
   [
-   18159,
+   19418,
    "ready",
    8,
    null,
    null
   ],
   [
-   18160,
+   19421,
    "status",
    8,
    "ready"
   ],
   [
-   18160,
+   19422,
    "order",
    8,
    "pause",
@@ -957,14 +957,14 @@
    null
   ],
   [
-   18196,
+   19456,
    "clock",
    8,
    0,
    false
   ],
   [
-   18454,
+   19710,
    "order",
    8,
    "pause",
@@ -972,24 +972,24 @@
    null
   ],
   [
-   18458,
+   19723,
    "clock",
    8,
    239,
    false
   ],
   [
-   18474,
+   19763,
    "live",
    8
   ],
   [
-   18537,
+   19772,
    "gone",
    7
   ],
   [
-   23603,
+   25052,
    "mount",
    9,
    "explorer",
@@ -997,38 +997,38 @@
    true
   ],
   [
-   23611,
+   25062,
    "status",
    9,
    "shell"
   ],
   [
-   23612,
+   25062,
    "status",
    9,
    "preparing"
   ],
   [
-   23623,
+   25088,
    "status",
    9,
    "mounting"
   ],
   [
-   23725,
+   25294,
    "ready",
    9,
    null,
    null
   ],
   [
-   23726,
+   25295,
    "status",
    9,
    "ready"
   ],
   [
-   23728,
+   25295,
    "order",
    9,
    "pause",
@@ -1036,14 +1036,14 @@
    null
   ],
   [
-   23744,
+   25347,
    "clock",
    9,
    0,
    false
   ],
   [
-   24006,
+   25636,
    "order",
    9,
    "play",
@@ -1051,21 +1051,12 @@
    null
   ],
   [
-   24016,
-   "clock",
-   9,
-   0,
-   false
+   25646,
+   "live",
+   9
   ],
   [
-   24016,
-   "clock",
-   9,
-   0,
-   true
-  ],
-  [
-   24023,
+   25646,
    "mount",
    10,
    "explorer",
@@ -1073,48 +1064,57 @@
    true
   ],
   [
-   24023,
+   25657,
+   "clock",
+   9,
+   0,
+   false
+  ],
+  [
+   25658,
+   "clock",
+   9,
+   0,
+   true
+  ],
+  [
+   25684,
    "status",
    10,
    "shell"
   ],
   [
-   24023,
+   25684,
    "status",
    10,
    "preparing"
   ],
   [
-   24024,
-   "live",
-   9
+   25690,
+   "gone",
+   8
   ],
   [
-   24032,
+   25718,
    "status",
    10,
    "mounting"
   ],
   [
-   24068,
-   "gone",
-   8
-  ],
-  [
-   24136,
+   25915,
    "ready",
    10,
    null,
    null
   ],
   [
-   24136,
+   25917,
    "status",
    10,
    "ready"
   ],
   [
-   24137,
+   25920,
    "order",
    10,
    "pause",
@@ -1122,24 +1122,24 @@
    null
   ],
   [
-   24155,
+   25921,
+   "clock",
+   9,
+   7,
+   true
+  ],
+  [
+   25956,
    "clock",
    10,
    0,
    false
   ],
   [
-   24291,
+   26186,
    "clock",
    9,
-   8,
-   true
-  ],
-  [
-   24554,
-   "clock",
-   9,
-   16,
+   15,
    true
   ]
  ]
