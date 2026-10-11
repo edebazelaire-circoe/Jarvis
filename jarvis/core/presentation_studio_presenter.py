@@ -75,6 +75,8 @@ PRESENTER_CRASHED = "presenter_crashed"
 _FAILURE_OF = {LinePhase.OBSOLETE: "speech_obsolete", LinePhase.FAILED: "speech_failed",
                LinePhase.UNCONFIRMED: "speech_unconfirmed"}
 _STEP = "step:"
+#: Why the presenter advanced, when it is the end of Jarvis's own line(s): Jarvis pacing himself (Slice 07, § 5). A line the user cut is input.
+_LINE_ENDS = frozenset({"line_heard", "sequence_done"})
 
 
 def _applied(result: Any) -> bool:
@@ -106,7 +108,7 @@ class Playback(Protocol):
 
     def resolve_problem(self, code: str) -> None: ...
 
-    async def notify(self, kind: EventKind, **fields: Any) -> Any: ...
+    async def notify(self, kind: EventKind, *, line_end: bool = False, **fields: Any) -> Any: ...
 
     async def halt(self, problem: str) -> Any: ...
 
@@ -586,7 +588,8 @@ class PresentationStudioPresenter:
         return "wait"
 
     async def _advance(self, run: _Run, why: str) -> bool:
-        applied = _applied(await self._playback.notify(EventKind.NEXT))
+        # the end of Jarvis's own line(s) is Jarvis pacing himself, not an input: it never cuts a scene entry still playing (§ 5)
+        applied = _applied(await self._playback.notify(EventKind.NEXT, line_end=why in _LINE_ENDS))
         self._trace("presenter_advanced", "Item suivant", data={"run_id": run.run_id, "why": why, "applied": applied})
         return applied
 

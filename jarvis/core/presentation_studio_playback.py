@@ -402,17 +402,21 @@ class PresentationStudioPlaybackService(AutoPlayMixin, ScenePreviewMixin):
         async with self._lock:
             return await self._guarded("edit", self._edit_during_run(actor, basis, ops))
 
-    async def notify(self, kind: EventKind, **fields: Any) -> PlaybackResult:
+    async def notify(self, kind: EventKind, *, line_end: bool = False, **fields: Any) -> PlaybackResult:
         """Reports and moves of the timeline owner (Slice 14: the locked-sequence executor and the Jarvis presenter). Not an
         HTTP surface. `next` / `pause` / `goto` are the presenter pacing its own run (advance after a line, pause on a user
         interruption, land on a recovery point): the machine applies the item's declared interruption policy to them exactly as
-        it does to a user's, so the presenter can never move a run the score forbids to move."""
+        it does to a user's, so the presenter can never move a run the score forbids to move. `line_end`: this `next` is the end of a
+        Jarvis line (Jarvis pacing himself, no one asked): placed like a locked-sequence step, it never cuts an entry still playing
+        (Slice 07, § 5); a user's `next` or a cue still cuts."""
 
         allowed = {EventKind.SEQUENCE_STEP, EventKind.SEQUENCE_DONE, EventKind.SEQUENCE_ABORT, EventKind.SPEAKING,
                    EventKind.BOUNDARY, EventKind.NEXT, EventKind.PAUSE, EventKind.GOTO}
         if kind not in allowed:
             raise ValueError(f"{kind.value} is not a timeline report")
-        return await self._command(kind.value, kind, **fields)
+        async with self._lock:
+            move = Move.STEP if line_end and kind is EventKind.NEXT else None
+            return await self._guarded(kind.value, self._dispatch(kind.value, kind, move=move, **fields))
 
     async def halt(self, problem: str) -> PlaybackResult:
         """The presenter could not go on (the speech stack refused the line, never started it, was cut...): **pause** the run and
@@ -513,7 +517,8 @@ class PresentationStudioPlaybackService(AutoPlayMixin, ScenePreviewMixin):
             self._state = transition.state
         await self._teardown("crashed")
 
-    async def _dispatch(self, name: str, kind: EventKind, *, stop_reason: str = "user", **fields: Any) -> PlaybackResult:
+    async def _dispatch(self, name: str, kind: EventKind, *, stop_reason: str = "user", move: Move | None = None,
+                        **fields: Any) -> PlaybackResult:
         if self._plan is None:
             return self._refused(name, RefusalCode.NOT_RUNNING, "no presentation is running")
         if self._preview is not None:
@@ -526,7 +531,7 @@ class PresentationStudioPlaybackService(AutoPlayMixin, ScenePreviewMixin):
             self._trace("playback_refused", "Commande de lecture refusee", data={
                 "command": name, "code": refusal.code.value, "phase": before.phase.value, "run_id": before.run_id})
             return self._refused(name, refusal.code, refusal.message)
-        self._commit(transition.state, name)
+        self._commit(transition.state, name, move)
         return await self._execute(name, before, transition.effects, stop_reason=stop_reason)
 
     async def _resume(self) -> PlaybackResult:
@@ -595,14 +600,14 @@ class PresentationStudioPlaybackService(AutoPlayMixin, ScenePreviewMixin):
         result = await self._auto_advance("report")
         return result if result is not None else PlaybackResult(PlaybackStatus.APPLIED, "advance", self._view())
 
-    def _commit(self, state: PlaybackState, name: str) -> None:
+    def _commit(self, state: PlaybackState, name: str, move: Move | None = None) -> None:
         problems = check_invariants(self._plan, state) if self._plan is not None else []
         if problems:  # a bug in the machine, never a user error: said loudly, the state is still taken (it was computed)
             self._trace("playback_invariant_broken", "Etat de lecture incoherent", level="error",
                         data={"command": name, "problems": problems[:3]})
         previous = self._state
         self._state = state
-        move = _move_of(name, previous, state)
+        move = move or _move_of(name, previous, state)   # `move`: named by the caller (a Jarvis line's end is a STEP)
         if move is Move.JUMP and self._scope is not Scope.MANUAL:
             move = Move.SEEK   # a chained play plays the item it jumps to: a hold would be paced by a dwell and moved on unseen
         if move is not Move.NONE:

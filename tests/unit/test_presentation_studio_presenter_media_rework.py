@@ -9,7 +9,9 @@ composition fausse), plus :
 - I1 : une scène Remotion dont la ligne de temps n'a pas pu être lue est tenue pendant un silence de Jarvis (jamais coupée), mais jamais en
   silence : la vue le dit (`page_wait`, `reason: timeline_unresolved`) après la cible + la marge ;
 - I2 : une latence de voix réaliste (600 ms) entre l'entrée de la scène et le pas 0 d'une séquence verrouillée ne coupe pas l'entrée ;
-- I3 : les mutants M3 (`resume` -> RESTART), M7 (un `done` périmé accepté), M11 (`previous` -> FORWARD) sont tués.
+- I3 : les mutants M3 (`resume` -> RESTART), M7 (un `done` périmé accepté), M11 (`previous` -> FORWARD) sont tués ;
+- 2e reprise : le mutant « `pending` traité comme sans média » est tué ; la fin d'une ligne de Jarvis continue une entrée (comme un pas de
+  séquence verrouillée), un `next` de l'utilisateur la coupe ; un recalage (`_retime`) réveille le présentateur.
 Contrat : `docs/presentation-studio.md` > *Presentation experience contract* § 5 ; *Playback runtime contract* › *Failure modes*.
 """
 
@@ -21,9 +23,10 @@ import time
 from jarvis.core.presentation_studio_autoplay import PAGE_SILENCE_MARGIN_MS
 from jarvis.core.presentation_studio_playback import _MOVE_OF, _move_of
 from jarvis.domain.remotion_timeline import Move
-from tests.fakes.presentation_studio_presenter import advance, locked_content, make_presenter, set_ms
+from tests.fakes.presentation_studio_presenter import TEXT_A, advance, locked_content, make_presenter, set_ms
 from tests.unit.test_presentation_studio_playback_service import I1, I2, I3, Rig, S1, S2, S3, applied
-from tests.unit.test_presentation_studio_presenter_media import deck, jarvis_content, kinds, open_rig, page, segment, speak_line, where
+from tests.unit.test_presentation_studio_presenter_media import (TEXT_B, deck, jarvis_content, kinds, open_rig, page, segment, speak_line,
+                                                                 where)
 from tests.unit.test_remotion_timeline_service import COMP, Compositions
 
 
@@ -286,5 +289,113 @@ async def test_m11_previous_and_goto_back_into_an_earlier_scene_hold_a_non_zero_
         assert segment(rig) == (S2, "reveal", 179, 179, False)
         state = rig.service.state
         assert _move_of("previous", state, state) is Move.JUMP and _move_of("resume", state, state) is Move.NONE
+    finally:
+        await rig.close()
+
+
+# ------------------------------------------------------------------ 2nd rework: `pending` is never "no media"
+
+async def test_a_video_silence_whose_stage_sync_outlasts_its_target_is_held_while_pending_never_paced_by_the_target(tmp_path):
+    rig = await Rig(tmp_path).open(scenes=deck(), content=silences_content())
+    rig.build(timeline_source=Compositions(COMP))           # every scene is a Remotion video
+    set_ms(rig, 1_000_000)
+    presenter, _brain, _voice = make_presenter(rig)
+    released, real = asyncio.Event(), rig.stage.show
+
+    async def slow_show(payload):                           # the stage sync of S2 takes 1.5 s, longer than the 1 s target
+        await released.wait()
+        return await real(payload)
+
+    try:
+        applied(await rig.service.start(rig.start_body("rehearsal", jarvis_speaks=True)))
+        await presenter.pump()
+        rig.service._compositions.clear()                    # S2's kind is not known before its own sync
+        rig.stage.show = slow_show
+        moved = asyncio.create_task(rig.run("next"))
+        await settle()
+        assert where(rig)["position"]["index"] == 2 and rig.service.media_segment() == "pending"
+        await presenter.pump()                              # the presenter enters I2 while its scene is still syncing
+        assert presenter.next_wake_s() is None, "pending: no soft-target deadline, the stage sync wakes the presenter"
+        advance(rig, 1500)
+        pumped = asyncio.create_task(presenter.pump())      # past the target, still pending
+        await settle()
+        released.set()
+        applied(await moved)
+        await pumped
+        await settle()
+        assert rig.service.media_segment() == "playing"
+        assert where(rig)["position"]["index"] == 2 and where(rig)["phase"] == "playing",             "a video silence lasts its media: the 1 s target never paced it while its kind was pending"
+    finally:
+        released.set()
+        await presenter.close()
+        await rig.close()
+
+
+# ------------------------------------------------------------------ 2nd rework: the end of a Jarvis line never cuts an entry
+
+def two_lines_in_one_scene() -> dict:
+    """I1 Jarvis line entering S2 (entry: frames 0-59, before `reveal`) -> I2 Jarvis line in S2 revealing `marker` (180-299)."""
+
+    return {"start_item_id": I1, "cues": [], "sequences": [], "recovery_points": [], "items": [
+        {"item_id": I1, "scene_id": S2, "presenter": "jarvis", "kind": "speech", "text": TEXT_A, "next_item_id": I2},
+        {"item_id": I2, "scene_id": S2, "presenter": "jarvis", "kind": "speech", "text": TEXT_B,
+         "visual": [{"kind": "reveal", "scene_id": S2, "anchor_id": "marker"}]}]}
+
+
+async def enter_and_speak(tmp_path, spoken_ms: int):
+    rig = await open_rig(tmp_path, two_lines_in_one_scene())
+    presenter, _brain, voice = make_presenter(rig)
+    applied(await rig.service.start(rig.start_body("jarvis_presenter")))
+    await presenter.pump()                                  # I1's line handed over
+    assert segment(rig) == (S2, None, 0, 59, True), "the entry of S2"
+    await page(rig, "started")                              # the Player began the entry
+    voice.started()
+    advance(rig, spoken_ms)
+    return rig, presenter, voice
+
+
+async def test_the_end_of_a_jarvis_line_during_an_entry_continues_the_entry_like_a_locked_step(tmp_path):
+    rig, presenter, voice = await enter_and_speak(tmp_path, 500)
+    try:
+        voice.completed()
+        await presenter.pump()                              # the line ended: Jarvis moves on to I2 (`marker`)
+        assert where(rig)["position"]["index"] == 2
+        assert segment(rig) == (S2, "marker", 15, 299, True),             "the entry goes on from the frame it reached (15) to the new stop frame: never cut to 180"
+    finally:
+        await rig.close()
+
+
+async def test_an_entry_estimate_past_its_stop_frame_is_clamped_to_it_before_the_page_says_done(tmp_path):
+    rig, presenter, voice = await enter_and_speak(tmp_path, 2500)   # 75 frames played, the entry stops at 59, no `done` yet
+    try:
+        voice.completed()
+        await presenter.pump()
+        assert segment(rig) == (S2, "marker", 59, 299, True), "the reached frame never passes the entry's own stop frame"
+    finally:
+        await rig.close()
+
+
+async def test_a_user_next_during_an_entry_while_jarvis_speaks_still_cuts_to_the_anchor(tmp_path):
+    rig, _presenter, _voice = await enter_and_speak(tmp_path, 500)
+    try:
+        applied(await rig.run("next"))                      # explicit input: it goes where it is asked
+        assert where(rig)["position"]["index"] == 2
+        assert segment(rig) == (S2, "marker", 180, 299, True)
+    finally:
+        await rig.close()
+
+
+# ------------------------------------------------------------------ 2nd rework: a retime wakes the presenter
+
+async def test_a_retime_wakes_the_presenter_once_the_new_frame_map_is_known(tmp_path):
+    rig = await open_rig(tmp_path, jarvis_content())
+    try:
+        applied(await rig.service.start(rig.start_body("rehearsal", jarvis_speaks=True)))
+        applied(await rig.run("play", scope="manual"))      # the scope is already manual: only the retime may wake
+        resolved = len(kinds(rig, "timeline_resolved"))
+        seen: list[int] = []
+        rig.service.add_observer(lambda: seen.append(len(kinds(rig, "timeline_resolved"))))
+        applied(await rig.run("play", scope="manual"))      # re-reads the frame map of the scene on the stage
+        assert seen and seen[-1] == resolved + 1, f"woken after the frame map was rebuilt: {seen}"
     finally:
         await rig.close()
