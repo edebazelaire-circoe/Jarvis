@@ -1,0 +1,41 @@
+{
+ "explorer_open_after_click": false,
+ "explorer_open_9s": false,
+ "core_start": {
+  "scope": "manual",
+  "phase": "playing",
+  "scene": 1,
+  "play_ms": null,
+  "from": null,
+  "until": null,
+  "seq": null,
+  "item_ms": 1463,
+  "item_target_ms": 8000
+ },
+ "core_9s": {
+  "scope": "manual",
+  "phase": "playing",
+  "scene": 1,
+  "play_ms": null,
+  "from": null,
+  "until": null,
+  "seq": null,
+  "item_ms": 10603,
+  "item_target_ms": 8000
+ },
+ "frames": [
+  [
+   305,
+   1,
+   "explorer",
+   "S1"
+  ],
+  [
+   3097,
+   2,
+   "board",
+   "S1"
+  ]
+ ],
+ "failed": null
+}

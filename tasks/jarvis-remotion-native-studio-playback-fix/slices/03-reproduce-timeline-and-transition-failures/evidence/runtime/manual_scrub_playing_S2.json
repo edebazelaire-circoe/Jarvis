@@ -1,0 +1,156 @@
+{
+ "before": {
+  "rs_time": "1.0 s / 8.0 s",
+  "band": "00:03 / 00:08",
+  "band_where": "Scène 2/9 · S2 8s@30  — élément 2/13",
+  "frame": 31,
+  "playing": true,
+  "duration": 240
+ },
+ "scrub_at": 1751,
+ "after_300": {
+  "rs_time": "0.4 s / 8.0 s",
+  "band": "00:03 / 00:08",
+  "band_where": "Scène 2/9 · S2 8s@30  — élément 2/13",
+  "frame": 13,
+  "playing": true,
+  "duration": 240
+ },
+ "after_1500": {
+  "rs_time": "1.6 s / 8.0 s",
+  "band": "00:04 / 00:08",
+  "band_where": "Scène 2/9 · S2 8s@30  — élément 2/13",
+  "frame": 49,
+  "playing": true,
+  "duration": 240
+ },
+ "after_5000": {
+  "rs_time": "5.2 s / 8.0 s",
+  "band": "00:08 / 00:08",
+  "band_where": "Scène 2/9 · S2 8s@30  — élément 2/13",
+  "frame": 149,
+  "playing": true,
+  "duration": 240
+ },
+ "core": {
+  "scope": "manual",
+  "phase": "playing",
+  "scene": 2,
+  "play_ms": 2000,
+  "from": 0,
+  "until": 59,
+  "seq": 1,
+  "item_ms": 8273,
+  "item_target_ms": 8000
+ },
+ "orders_after_scrub": [],
+ "max_frame_after_scrub": 149,
+ "wraps_after_scrub": [],
+ "clocks_after_scrub": [
+  [
+   1754,
+   31,
+   false
+  ],
+  [
+   1754,
+   5,
+   false
+  ],
+  [
+   1754,
+   5,
+   true
+  ],
+  [
+   2027,
+   13,
+   true
+  ],
+  [
+   2294,
+   21,
+   true
+  ],
+  [
+   2561,
+   29,
+   true
+  ],
+  [
+   2827,
+   37,
+   true
+  ],
+  [
+   3094,
+   45,
+   true
+  ],
+  [
+   3362,
+   53,
+   true
+  ],
+  [
+   3634,
+   61,
+   true
+  ],
+  [
+   3894,
+   69,
+   true
+  ],
+  [
+   4162,
+   77,
+   true
+  ],
+  [
+   4428,
+   85,
+   true
+  ],
+  [
+   4693,
+   93,
+   true
+  ],
+  [
+   4960,
+   101,
+   true
+  ],
+  [
+   5229,
+   109,
+   true
+  ],
+  [
+   5495,
+   117,
+   true
+  ],
+  [
+   5759,
+   125,
+   true
+  ],
+  [
+   6027,
+   133,
+   true
+  ],
+  [
+   6293,
+   141,
+   true
+  ],
+  [
+   6562,
+   149,
+   true
+  ]
+ ]
+}
