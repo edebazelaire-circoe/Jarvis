@@ -159,9 +159,9 @@ async def test_variants_plays_the_whole_deck_continuously_each_scene_from_frame_
                             {"eval": f"window.__clip={VISIBLE_RECT}"}, {"value": "label_before", "expr": LABEL}, {"clickExpr": LIRE},
                             {"until": f"({PHASE}==='playing')", "ms": 30000}, {"value": "label_playing", "expr": LABEL}]
         for boundary in range(1, 9):
-            plan += [{"until": f"({next_boundary()})||{ENDED}", "ms": 70000},
+            plan += [{"until": f"({next_boundary()})||{ENDED}", "ms": 70000, "required": True, "as": f"variants_boundary_{boundary}"},
                      {"burst": str(shots), "ms": 1600, "clipExpr": "window.__clip", "prefix": f"v{boundary}", "as": f"burst{boundary}"}]
-        plan += [{"until": ENDED, "ms": 70000}, {"value": "ended_at", "expr": "Math.round(performance.now()-__pg.t0)"},
+        plan += [{"until": ENDED, "ms": 70000, "required": True, "as": "variants_ended"}, {"value": "ended_at", "expr": "Math.round(performance.now()-__pg.t0)"},
                  {"wait": 5000}, {"value": "after_hold", "expr": STATE}, {"value": "label_end", "expr": LABEL},
                  {"value": "open", "expr": "JarvisStudioExplorer.isOpen()"}, {"value": "view", "expr": "JarvisStudioExplorer.playback.view()"},
                  {"value": "stats", "expr": "JarvisStudioExplorer.playback.stats()"}, {"shot": str(tmp_path / "variants-end.png")},
@@ -221,9 +221,9 @@ async def test_the_run_stage_chained_play_shows_every_scene_from_frame_zero_with
         ready = {"until": f"(()=>{{const s={STATE};return !!s&&s.phase==='ready'}})()", "ms": 120000}
         plan: list[dict] = [{"eval": PAGE_PROBE}, ready]
         for boundary in range(1, 9):
-            plan += [{"until": f"({next_boundary()})||({RUN_FINAL})", "ms": 150000},
+            plan += [{"until": f"({next_boundary()})||({RUN_FINAL})", "ms": 150000, "required": True, "as": f"run_boundary_{boundary}"},
                      {"burst": str(shots), "ms": 1600, "clipExpr": VISIBLE_RECT, "prefix": f"r{boundary}", "as": f"burst{boundary}"}]
-        plan += [{"until": RUN_FINAL, "ms": 150000}, {"wait": 3000}, {"value": "probe", "expr": READ_PROBE},
+        plan += [{"until": RUN_FINAL, "ms": 150000, "required": True, "as": "run_final"}, {"wait": 3000}, {"value": "probe", "expr": READ_PROBE},
                  http_step(stack, "where", "GET", PLAYBACK)]
         async with CorePoller(stack) as poll:
             began = time.time()

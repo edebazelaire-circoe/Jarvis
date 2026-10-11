@@ -217,5 +217,9 @@ class SegmentClock:
         elif not playing and self._since is not None:
             self._acc += max(0, now_ms - self._since)
             self._since = None
-        live = self._acc + (max(0, now_ms - self._since) if self._since is not None else 0)
-        return self._seq, max(0, min(cap_ms, live))
+        return self._seq, max(0, min(cap_ms, self.played(now_ms)))
+
+    def played(self, now_ms: int) -> int:
+        """Le temps joué du segment observé, NON plafonné (pauses exclues) : combien de temps la page a eu pour le finir."""
+
+        return self._acc + (max(0, now_ms - self._since) if self._since is not None else 0)

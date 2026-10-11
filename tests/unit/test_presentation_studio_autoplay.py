@@ -161,6 +161,61 @@ async def test_with_no_page_at_all_a_remotion_scene_is_held_and_never_skipped(tm
         await finish(rig)
 
 
+async def test_a_media_segment_with_no_news_from_its_page_says_so_and_still_never_advances(tmp_path):
+    """Slice 05 rework, P1: a lost `done`, a `started` never sent or a closed page held the run with nothing on screen. Past the segment's
+    own length + a margin (played time; + a load allowance before `started`) the view says it (`page_wait`); never an advance, never a
+    skip, and the presenter's next and stop still work. A pause stops the count; a new segment starts it again."""
+
+    rig = await open_rig(tmp_path, SLOW, QUIET)
+    try:
+        applied(await rig.service.start(rig.start_body(scope="all")))
+        applied(await rig.run("goto", position=2))                                   # S2 'marker': frames 150..299, 5 s
+        seq = rig.service.where()["timeline"]["seq"]
+        rig.mono.t += 5 + 15 + 59                                                    # no `started`: segment + margin + load allowance - 1 s
+        assert "page_wait" not in rig.service.where(), "a slow compile is not a silent page yet"
+        rig.mono.t += 2
+        where = rig.service.where()
+        assert where["page_wait"] == {"seq": seq, "started": False, "waited_ms": 81_000}
+        assert where["position"]["index"] == 2 and where["scope"] == "all", "said, never advanced"
+        applied(await rig.service.advance({"actor": "user", "seq": seq, "event": "started"}))
+        assert "page_wait" not in rig.service.where(), "the page spoke: the count starts again"
+        rig.mono.t += 21                                                             # started, then the `done` was lost
+        assert rig.service.where()["page_wait"] == {"seq": seq, "started": True, "waited_ms": 21_000}
+        applied(await rig.run("pause"))
+        rig.mono.t += 600
+        assert "page_wait" not in rig.service.where(), "a pause is not a silent page"
+        applied(await rig.run("resume"))
+        assert rig.service.where()["page_wait"]["waited_ms"] == 21_000, "pauses excluded"
+        assert len(rig.env.sink.of("core.presentation_studio.autoplay_page_silent")) == 1, "traced once per segment"
+        moved = applied(await rig.run("next"))                                     # S2's second element shares the segment: still waiting
+        assert moved["position"]["index"] == 3 and moved["page_wait"]["seq"] == seq, "the presenter still moves the run"
+        moved = applied(await rig.run("next"))
+        assert moved["position"]["index"] == 4 and "page_wait" not in moved, "a new segment starts its own count"
+        stopped = await rig.service.stop({"actor": "user"})
+        assert stopped.status is PlaybackStatus.APPLIED and "page_wait" not in rig.service.where()
+    finally:
+        await finish(rig)
+
+
+async def test_a_page_that_reports_in_time_never_shows_a_wait(tmp_path):
+    """Negative case: normal playback (started, then done within the segment's length) never shows the notice."""
+
+    rig = await open_rig(tmp_path, SLOW, QUIET)
+    try:
+        applied(await rig.service.start(rig.start_body(scope="all")))
+        applied(await rig.run("goto", position=2))
+        seq = rig.service.where()["timeline"]["seq"]
+        rig.mono.t += 30                                                             # a long first compile
+        applied(await rig.service.advance({"actor": "user", "seq": seq, "event": "started"}))
+        rig.mono.t += 5
+        assert "page_wait" not in rig.service.where()
+        moved = applied(await rig.service.advance({"actor": "user", "seq": seq, "event": "done"}))
+        assert moved["position"]["index"] == 3 and "page_wait" not in moved
+        assert rig.env.sink.of("core.presentation_studio.autoplay_page_silent") == []
+    finally:
+        await finish(rig)
+
+
 async def test_a_remotion_scene_whose_timeline_cannot_be_resolved_is_held_not_paced(tmp_path):
     rig = await open_rig(tmp_path, RuntimeError("manifest unreadable"), QUICK)
     try:

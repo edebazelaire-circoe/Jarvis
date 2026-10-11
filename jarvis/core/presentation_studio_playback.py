@@ -1237,6 +1237,9 @@ class PresentationStudioPlaybackService(AutoPlayMixin, ScenePreviewMixin):
                 view["timeline"] = timeline
             view["follower"] = self._follower()
             view["scope"] = self._scope.value
+            waiting = self._page_wait()
+            if waiting is not None:
+                view["page_wait"] = waiting
             # Slice 04 (native-studio-playback-fix): which composition-clock map this run plays (`GET .../composition-clock` serves the
             # same key). A browser holding a map with another key must refetch it, never reuse it.
             view["composition_key"] = composition_key(self._presentation_id, self._variant_id, pins_of(self._scenes.values()))

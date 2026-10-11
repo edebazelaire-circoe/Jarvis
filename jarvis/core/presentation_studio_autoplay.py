@@ -25,6 +25,11 @@ lentement, ou dont le cadre avait été perdu, était SAUTÉE (Slice 03, défaut
   `max(durée visée, MIN_DWELL_MS)` ou, à défaut, `DEFAULT_DWELL_MS`. La pause l'arrête ; il est réarmé à la reprise.
 Le chemin du présentateur (portée `manual`, Slice 07) n'a jamais eu d'échéance : inchangé.
 
+**Une attente se voit** (Slice 05 rework, P1). Un `done` perdu, un `started` jamais dit (un `done` sans lui est ignoré) ou une page fermée
+tiennent la lecture sans que rien ne bouge. Quand un segment de média reste sans nouvelle de la page au-delà de sa propre durée + une
+marge (temps JOUÉ, pauses exclues ; plus une marge de chargement tant que `started` n'est pas venu), la vue le dit (`page_wait`) et la
+bande l'affiche. C'est un constat, jamais une avance : la lecture reste sur la scène, `next` et `stop` marchent comme toujours.
+
 Un mixin, comme `presentation_studio_preview` : même verrou, même scène, même état ; dans son propre fichier pour que le service reste
 une seule responsabilité.
 """
@@ -41,6 +46,9 @@ from jarvis.domain.presentation_studio_playback_requests import Scope
 #: Un élément SANS segment de média reste au moins ceci, et par défaut ceci quand la partition ne vise aucune durée. Jamais une scène Remotion.
 MIN_DWELL_MS = 1500
 DEFAULT_DWELL_MS = 4000
+#: Un segment de média sans nouvelle de la page au-delà de sa durée + ceci (+ `PAGE_SILENCE_BEFORE_START_MS` avant `started`) est dit, jamais avancé.
+PAGE_SILENCE_MARGIN_MS = 15_000
+PAGE_SILENCE_BEFORE_START_MS = 60_000
 
 
 @dataclass(frozen=True, slots=True)
@@ -51,7 +59,7 @@ class AutoTimings:
 
 class AutoPlayMixin:
     """Methods of `PresentationStudioPlaybackService`. Expects `_lock`, `_state`, `_plan`, `_tasks`, `_dispatch`, `_timeline_view`,
-    `_shows_video`, `_wake` and `_trace` from the service."""
+    `_tl_clock`, `_ms`, `_shows_video`, `_wake` and `_trace` from the service."""
 
     def _init_autoplay(self, timings: AutoTimings | None) -> None:
         self._timings = timings or AutoTimings()
@@ -62,6 +70,8 @@ class AutoPlayMixin:
         self._auto_done_seq: int | None = None
         #: `seq` of the segment the browser said it began (its scene had loaded and the Player was ordered).
         self._auto_started_seq: int | None = None
+        #: `seq` of the segment whose silent page has already been traced (once per segment).
+        self._page_wait_seq: int | None = None
 
     # ------------------------------------------------------------------ scope
 
@@ -142,6 +152,28 @@ class AutoPlayMixin:
                 await self._guarded("autoplay", self._auto_advance("deadline"))
             except Exception:  # noqa: BLE001 - `_guarded` ended the run cleanly and traced the real cause; a timer task has nobody to raise to
                 return
+
+    def _page_wait(self) -> dict[str, Any] | None:
+        """`{seq, started, waited_ms}` when the media segment of a chained play has had its own length + a margin (played time) without its
+        page saying it finished; `None` otherwise. A description for the view, never an advance (Slice 05 rework, P1)."""
+
+        if not self._auto_eligible():
+            return None
+        timeline = self._timeline_view()
+        if timeline is None or timeline["until_frame"] <= timeline["from_frame"] or timeline["seq"] == self._auto_done_seq:
+            return None
+        seq = timeline["seq"]
+        started = self._auto_started_seq == seq
+        segment_ms = -(-(timeline["until_frame"] - timeline["from_frame"] + 1) * 1000 // timeline["fps"])
+        limit = segment_ms + PAGE_SILENCE_MARGIN_MS + (0 if started else PAGE_SILENCE_BEFORE_START_MS)
+        waited = self._tl_clock.played(self._ms())
+        if waited < limit:
+            return None
+        if self._page_wait_seq != seq:
+            self._page_wait_seq = seq
+            self._trace("autoplay_page_silent", "Segment de media sans nouvelle de la page : la lecture reste sur la scene", level="warning",
+                        data={"run_id": self._state.run_id, "seq": seq, "started": started, "waited_ms": waited})
+        return {"seq": seq, "started": started, "waited_ms": waited}
 
     # ------------------------------------------------------------------ advance
 

@@ -106,6 +106,12 @@
   const FOLLOWER_ABSENT='Suivi vocal indisponible : les cues dites ne feront pas avancer la présentation (il faut l\'architecture vocale '+
     'OpenAI ambiante). La lecture continue au clavier et à la souris.';
   const FOLLOWER_WAITING='Suivi vocal : connexion…';
+  /* Slice 05 rework (P1) : un segment vidéo d'une lecture enchaînée sans nouvelle de la page de la scène (fin perdue, page fermée). Core
+     tient la scène (jamais un saut) et le dit ; « Suivant » et « Arrêter » marchent toujours. */
+  function pageWaitText(wait){
+    return `Lecture en attente de la page : la scène n'a rien signalé depuis ${Math.round((wait.waited_ms||0)/1000)} s. `+
+      'Elle reste à l\'écran, jamais sautée ; « Suivant » ou « Arrêter » restent possibles.';
+  }
 
   const STYLE=`
 #${BAND_ID}{position:fixed;left:18px;bottom:18px;z-index:34;box-sizing:border-box;width:min(580px,calc(100vw - 150px));max-height:calc(100vh - 36px);overflow:auto;
@@ -333,7 +339,8 @@
       const phase=view.phase||'idle';
       band.setAttribute('data-phase',phase);
       const problems=activeRun()?problemsText():[];
-      band.setAttribute('data-kind',problems.length||lost||view.follower==='absent'||notice&&notice.kind==='problem'?'problem':'ok');
+      const pageWait=activeRun()&&view.page_wait?view.page_wait:null;
+      band.setAttribute('data-kind',problems.length||lost||pageWait||view.follower==='absent'||notice&&notice.kind==='problem'?'problem':'ok');
       if(activeRun()){
         ui.role.textContent=ROLE_LABEL[view.role]||'Présentation';
         const pendingLabel=view.pending==='pause'?' · pause demandée':view.pending==='detour'?' · détour demandé':'';
@@ -375,6 +382,7 @@
           'Interrompu : Jarvis attend votre « continuer » (il reprendra la ligne depuis son début), il ne repart jamais seul.');
         if(view.follower==='absent')lines.push(FOLLOWER_ABSENT);
         else if(view.follower==='waiting')lines.push(FOLLOWER_WAITING);
+        if(pageWait)lines.push(pageWaitText(pageWait));
         lines.push(...problems);
         if(lost)lines.push(`Core ne répond plus depuis ${Math.round((now()-linkLostSince)/1000)} s : l'état affiché peut être périmé.`);
         if(notice)lines.push(notice.text);

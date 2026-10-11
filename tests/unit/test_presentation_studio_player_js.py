@@ -465,6 +465,25 @@ return texts;
         assert "Suivi vocal" not in out[quiet]["text"]
 
 
+def test_a_page_that_went_silent_on_a_video_segment_is_said_and_next_and_stop_stay_usable(tmp_path):
+    """Slice 05 rework, P1: Core's `page_wait` (a chained play held with no news from the scene's page) is a visible problem line."""
+
+    out = _node(tmp_path, """
+const texts={};
+for(const wait of [{seq:4,started:true,waited_ms:21400},null]){
+  script.state=st(wait?{page_wait:wait}:{});
+  const p=make();p.start();await env.tick();
+  texts[wait?'wait':'none']={text:textOf(bandOf()),kind:bandOf().getAttribute('data-kind'),next:btn('Suivant').disabled,stop:btn('Arrêter').disabled};
+  p.stop();bandOf().parentNode.removeChild(bandOf());
+}
+return texts;
+""")
+    wait = out["wait"]
+    assert "Lecture en attente de la page" in wait["text"] and "depuis 21 s" in wait["text"] and "jamais sautée" in wait["text"]
+    assert wait["kind"] == "problem" and wait["next"] is False and wait["stop"] is False
+    assert "attente de la page" not in out["none"]["text"] and out["none"]["kind"] == "ok"
+
+
 def test_the_sequence_exit_is_a_button_and_a_key_only_while_a_sequence_owns_the_timeline(tmp_path):
     out = _node(tmp_path, """
 const p=make();p.start();await env.tick();
