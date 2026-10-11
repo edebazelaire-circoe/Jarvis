@@ -338,23 +338,13 @@
       ui.stage.appendChild(ui.slot);ui.stage.appendChild(ui.veil);ui.stage.appendChild(ui.wait);wrap.appendChild(ui.stage);
       const note=el('div','jvx-stage-note');
       const sceneLine=el('div','jvx-scene-line');
-      ui.prevScene=button(null,'jvx-btn jvx-btn-icon',()=>browseScene(-1),{icon:'prev',attrs:{'aria-label':'Scène précédente',title:'Scène précédente (Page précédente)'}});
-      ui.nextScene=button(null,'jvx-btn jvx-btn-icon',()=>browseScene(1),{icon:'next',attrs:{'aria-label':'Scène suivante',title:'Scène suivante (Page suivante)'}});
       ui.sceneTitle=el('span','jvx-scene-title jvx-bidi');ui.sceneTitle.setAttribute('dir','auto');
       ui.sceneRole=el('span','jvx-chip');
       ui.sceneBadge=el('span','jvx-chip');
-      sceneLine.appendChild(ui.prevScene);sceneLine.appendChild(ui.nextScene);sceneLine.appendChild(ui.sceneTitle);sceneLine.appendChild(ui.sceneRole);sceneLine.appendChild(ui.sceneBadge);
+      sceneLine.appendChild(ui.sceneTitle);sceneLine.appendChild(ui.sceneRole);sceneLine.appendChild(ui.sceneBadge);
       ui.sceneCount=el('span','');
-      /* « Jouer cette slide » : la MÊME route que la voix et le lecteur (`JarvisStudioPlayer.startRun` puis `goto`), en répétition silencieuse ; elle ferme
-         encore Variantes (Slices 06/10 en font « Lire seulement cette scène »). « Lire » (Slice 05, ex « Tout jouer ») : la vidéo continue ICI, dans le
-         lecteur de Variantes, sans lecture de Core et sans fermer (contrat 2026-10 § 4.2). Point d'entrée minimal : le transport complet est la Slice 06. */
-      ui.playBox=el('div','jvx-play');
-      ui.playScene=button('Jouer cette slide','jvx-btn',()=>{playFromStudio('scene')},{icon:'play',attrs:{title:'Lancer la lecture en répétition à partir de cette slide (le Studio se ferme)'}});
-      ui.playAll=button(null,'jvx-btn',()=>{togglePlayback()},{attrs:{'data-act':'continuous',title:'Lire la vidéo en continu, de la scène affichée à la fin (Variantes reste ouvert)'}});
-      ui.playAllIcon=el('span','jvx-icon-slot');ui.playAllIcon.appendChild(icon('play'));ui.playAllLabel=el('span','','Lire');
-      ui.playAll.appendChild(ui.playAllIcon);ui.playAll.appendChild(ui.playAllLabel);
-      ui.playBox.appendChild(ui.playScene);ui.playBox.appendChild(ui.playAll);
-      note.appendChild(sceneLine);note.appendChild(ui.sceneCount);note.appendChild(ui.playBox);
+      note.appendChild(sceneLine);note.appendChild(ui.sceneCount);
+      buildTransport();
       ui.strip=el('div','jvx-strip');
       attrs(ui.strip,{role:'listbox','aria-label':'Scènes de la variante','aria-orientation':'horizontal'});
       const bottom=el('div','jvx-bottom');
@@ -363,14 +353,15 @@
       bottom.appendChild(ui.meta);bottom.appendChild(ui.actions);
       ui.upgrades=upgrades.buildSection();
       ui.vbar=el('div','jvx-vbar');attrs(ui.vbar,{role:'toolbar',tabindex:'-1','aria-label':'Variantes vivantes : choisir celle à regarder'});
-      preview.appendChild(ui.vbar);preview.appendChild(wrap);preview.appendChild(note);preview.appendChild(ui.strip);preview.appendChild(bottom);preview.appendChild(ui.upgrades);
+      preview.appendChild(ui.vbar);preview.appendChild(wrap);preview.appendChild(ui.transport);preview.appendChild(note);preview.appendChild(ui.strip);preview.appendChild(bottom);preview.appendChild(ui.upgrades);
       ui.preview=preview;
       body.appendChild(treePane);body.appendChild(preview);body.appendChild(cmp.buildRoot());
       ui.live=el('div','jvx-sr');attrs(ui.live,{role:'status','aria-live':'polite','aria-atomic':'true'});
       ui.layer=el('div','jvx-layer');
       for(const node of [top,ui.notice,body,ui.live,ui.layer])host.appendChild(node);
       host.addEventListener('keydown',onHostKey);
-      ui.stage.addEventListener('keydown',onSceneKey);
+      ui.stage.addEventListener('keydown',onTransportKey);
+      ui.transport.addEventListener('keydown',onTransportKey);
       ui.strip.addEventListener('keydown',onSceneKey);
       doc.body.appendChild(host);
       ui.host=host;
@@ -496,32 +487,6 @@
       selectVariant(next.variant_id,{});
       return true;
     }
-    /* Jouer depuis le Studio : répétition silencieuse (`rehearsal`) de la variante choisie. `scene` : à partir de la slide regardée ; `all` : du début.
-       La lecture est démarrée par le lecteur de la page (mêmes routes que la voix) ; le Studio se ferme dès qu'elle est appliquée. */
-    async function playFromStudio(mode){
-      const player=root.JarvisStudioPlayer;
-      const node=nodeOf(S.selectedId);
-      if(!player||typeof player.startRun!=='function'){say('failed',"Le lecteur n'est pas chargé dans cette page.");return}
-      if(!node||node.state!=='live'){say('info','Choisissez une variante vivante à jouer.');return}
-      if(S.busy||S.writing){say('info','Une opération est en cours : attendez la fin avant de lancer la lecture.');return}
-      const sceneId=mode==='scene'?S.preview.sceneId:null;
-      if(mode==='scene'&&(!sceneId||S.preview.variantId!==node.variant_id)){say('info',"Aucune slide n'est affichée : attendez l'aperçu.");return}
-      log('play_requested',{mode,variant_id:node.variant_id,scene_id:sceneId});
-      say('info',mode==='scene'?'Lecture à partir de cette slide…':'Lecture de toute la présentation…');
-      const pw=root.JarvisPresentationWindow;
-      let result=null;
-      try{result=pw&&typeof pw.startRun==='function'?await pw.startRun(S.pid,'rehearsal',{variant_id:node.variant_id}):await player.startRun(S.pid,'rehearsal',{variant_id:node.variant_id})}
-      catch(error){say('failed',`Lecture impossible : ${describe(error)}`);return}
-      if(!result||result.status!=='applied'){
-        const why=result&&(result.message||result.reason)||"la commande n'a pas abouti";
-        say('failed',`Lecture refusée : ${cleanLine(why,160)}`);log('play_refused',{mode,reason:result&&result.reason||null},'warn');return;
-      }
-      if(sceneId){
-        try{await player.command('goto',{scene_id:sceneId})}
-        catch(error){log('play_goto_failed',{error:describe(error)},'warn')}
-      }
-      close({reason:'run_started'});
-    }
     function ensureFocus(kind){
       const forest=kind==='live'?S.live:S.archived;
       const cur=S.focus[kind];
@@ -614,7 +579,9 @@
         /* `swapPrefix` (Slice 05) : une autre scène `presentation-studio.*` se prépare À CÔTÉ de la scène vivante et ne la remplace qu'une
            fois prête (plus de cadre vide entre deux scènes), et la suivante se précharge. `onLive` / `onClock` / `onOutcome` : ce que la
            lecture continue écoute (Player devenu vivant, position du Player, échec d'une scène). */
-        previewHost=api.createPrefabHost({mode:'preview',document:doc,window:win,swapPrefix:'presentation-studio.',
+        /* `autoplay: false`, `embed: 'variants'` (Slice 06): the Player opens paused on frame 0 and only the transport below plays it (§ 4.1);
+           the stage page shows no bar of its own (§ 2). */
+        previewHost=api.createPrefabHost({mode:'preview',document:doc,window:win,swapPrefix:'presentation-studio.',autoplay:false,embed:'variants',
           fetchBundle:api.bundleFetcher((path,options)=>fetchImpl(path,Object.assign({cache:'no-store'},options))),
           onPreviewEvent:()=>{/* intentional: the preview frame writes nothing anywhere; its events are dropped */},
           onLive:(id)=>{if(seq)seq.onLive(id)},onClock:(id)=>{if(seq)seq.onClock(id)},onOutcome:(info)=>{if(seq)seq.onOutcome(info)},
@@ -622,12 +589,12 @@
       }catch(error){log('preview_host_failed',{error:describe(error)},'error');previewHost=null}
       return previewHost;
     }
-    /* -------------------------------------------------------------- lecture continue (Slice 05) */
+    /* -------------------------------------------------------------- lecture continue (Slice 05) et transport (Slice 06) */
     const PREVIEW_HOST_INFO=new Set(['scene.prefab_mounted','scene.prefab_preloaded','scene.prefab_swapped','scene.prefab_preload_queued']);
     let seq=null;
     function sequencer(){
       if(seq||!Seq)return seq;
-      seq=Seq.createSequencer({objectId:PREVIEW_OBJECT_ID,host:()=>previewHost,now,setTimeout:later,clearTimeout:cancelLater,
+      seq=Seq.createSequencer({objectId:PREVIEW_OBJECT_ID,host:()=>previewHost,now,setTimeout:later,clearTimeout:cancelLater,requestFrame:frame,
         log:(key,data,level)=>log(key,data,level),
         scenes:()=>S.preview.status==='ready'?S.preview.scenes:[],
         revision:()=>S.preview.doc&&Number.isInteger(S.preview.doc.revision)?S.preview.doc.revision:null,
@@ -638,34 +605,191 @@
         changed:()=>renderPlayback()});
       return seq;
     }
-    async function togglePlayback(){
-      if(cmp.isActive()){say('info',"La lecture se fait hors de la comparaison : fermez-la d'abord.");return}
-      if(S.preview.status!=='ready'||!S.preview.scenes.length){say('info',"Aucune scène à lire : attendez l'aperçu.");return}
+    /* The map is read as soon as the preview is ready (§ 4.1): the transport shows `f` before anything plays, and a variant without video says
+       so on « Lire ». Nothing is ordered to the Player, which already holds frame 0 of the scene on screen. */
+    function preparePlayback(){
+      if(cmp.isActive()||S.preview.status!=='ready'||!S.preview.scenes.length)return;
       const s=sequencer();
-      if(!s){say('failed',"La lecture continue n'est pas chargée dans cette page.");return}
+      if(!s||s.active())return;
       ensureHost();
+      s.prepare().catch(error=>log('playback_prepare_failed',{error:describe(error)},'error'));
+    }
+    /* A playback command from the transport, a key or the page API: refused with its reason when it cannot run, its failure said. `run` gets
+       the sequencer. */
+    async function playback(run){
+      if(cmp.isActive()){say('info',"La lecture se fait hors de la comparaison : fermez-la d'abord.");return null}
+      if(S.preview.status!=='ready'||!S.preview.scenes.length){say('info',"Aucune scène à lire : attendez l'aperçu.");return null}
+      const s=sequencer();
+      if(!s){say('failed',"La lecture continue n'est pas chargée dans cette page.");return null}
+      ensureHost();
+      const before=s.view();
+      if(before.phase==='unavailable'&&!before.retryable){say('info',unavailableText(before));return before}
       try{
-        const v=await s.toggle();
+        const v=await run(s);
         if(v&&v.phase==='failed'&&v.error)say('failed',playbackError(v.error));
+        else if(v&&v.phase==='unavailable')say(v.retryable?'failed':'info',unavailableText(v));
+        return v;
       }catch(error){
         say('failed',`Lecture impossible : ${describe(error)}`);
         log('playback_failed',{error:describe(error)},'error');
+        return null;
       }finally{renderPlayback()}
     }
+    function togglePlayback(){return playback(s=>s.view().phase==='failed'?s.retry():s.toggle())}
+    function playSceneOnly(){return playback(s=>s.playScene())}
     function playbackError(error){
       const where=Number.isInteger(error.scene_index)?`Scène ${error.scene_index+1}${error.scene_title?` « ${cleanLine(error.scene_title,60)} »`:''} : `:'';
       return `${where}${cleanLine(error.message,220)}`;
     }
-    /* Le bouton, la pastille de chargement et l'état d'échec suivent la lecture. Jamais une position ici : le transport complet (barre, temps) est la Slice 06. */
+    function unavailableText(v){
+      if(!v.retryable)return 'La lecture vidéo n\'existe que pour une présentation Remotion'+(v.error?` (${playbackError(v.error)}).`:'.');
+      return `Vidéo indisponible : ${v.error?playbackError(v.error):'la carte de la vidéo n\'a pas pu être lue'}. « Lire » réessaie.`;
+    }
+
+    /* The one transport of Variants (contract § 4, § 4.16, § 6 #15-#20): a named toolbar under the stage, read only from the sequencer's
+       `f`. The stage page shows no bar of its own (`embed: 'variants'`). */
+    const SOUND_REASON="Le son s'active d'un clic dans l'image de la scène : le navigateur n'autorise le son que sur un geste dans la scène.";
+    let drag=null;
+    function buildTransport(){
+      ui.transport=el('div','jvx-transport');
+      attrs(ui.transport,{role:'toolbar','aria-label':'Lecture de la vidéo'});
+      ui.prevScene=button(null,'jvx-btn jvx-btn-icon',()=>moveScene(-1),{icon:'first',attrs:{'aria-label':'Scène précédente',title:'Début de la scène précédente (←, Page précédente)'}});
+      ui.playAll=button(null,'jvx-btn',()=>{togglePlayback()},{attrs:{'data-act':'continuous',title:'Lire la vidéo en continu, de la position à la fin (Espace)'}});
+      ui.playAllIcon=el('span','jvx-icon-slot');ui.playAllIcon.appendChild(icon('play'));ui.playAllLabel=el('span','','Lire');
+      ui.playAll.appendChild(ui.playAllIcon);ui.playAll.appendChild(ui.playAllLabel);
+      ui.nextScene=button(null,'jvx-btn jvx-btn-icon',()=>moveScene(1),{icon:'last',attrs:{'aria-label':'Scène suivante',title:'Début de la scène suivante (→, Page suivante)'}});
+      ui.scrub=el('div','jvx-scrub');
+      attrs(ui.scrub,{role:'slider',tabindex:'0','aria-label':'Position dans la vidéo','aria-valuemin':'0','aria-disabled':'true'});
+      ui.scrubTrack=el('div','jvx-scrub-track');ui.scrubFill=el('div','jvx-scrub-fill');ui.scrubTicks=el('div','');ui.scrubThumb=el('div','jvx-scrub-thumb');
+      for(const node of [ui.scrubTrack,ui.scrubFill,ui.scrubTicks,ui.scrubThumb])ui.scrub.appendChild(node);
+      ui.scrub.addEventListener('keydown',onScrubKey);
+      ui.scrub.addEventListener('pointerdown',onScrubDown);
+      ui.scrub.addEventListener('pointermove',(event)=>{if(drag)scrubAt(event.clientX)});
+      ui.scrub.addEventListener('pointerup',endDrag);ui.scrub.addEventListener('pointercancel',endDrag);
+      ui.time=el('span','jvx-time');
+      ui.sound=button(null,'jvx-btn jvx-btn-icon',()=>say('info',SOUND_REASON),{icon:'sound',attrs:{'aria-label':'Son','aria-disabled':'true',title:`Son (M) : ${SOUND_REASON}`}});
+      ui.more=button(null,'jvx-btn jvx-btn-icon',()=>openPlaybackMenu(),{icon:'more',attrs:{'aria-label':'Plus de lecture','aria-haspopup':'menu','aria-expanded':'false',title:'Plus de lecture'}});
+      for(const node of [ui.prevScene,ui.playAll,ui.nextScene,ui.scrub,ui.time,ui.sound,ui.more])ui.transport.appendChild(node);
+    }
+    /* ⏮ ⏭, ← →, Page précédente / suivante: the start of the previous / next scene, play state kept (§ 4.4). Without a map (a variant
+       without video, or before it is read) they browse the scenes. Next on the last scene says why it does nothing. */
+    function moveScene(delta){
+      if(seq&&seq.active()){
+        const v=seq.view();
+        if(delta>0&&v.scene_index>=v.scene_count-1){say('info','Dernière scène.');return true}
+        if(seq.seek(delta>0?'next':'previous'))announceScene();
+        return true;
+      }
+      return browseScene(delta);
+    }
+    function seekTo(kind,value){
+      if(!(seq&&seq.active()))return false;
+      return seq.seek(kind,value);
+    }
+    /* A scene change made by the user is said once (§ 4.16); continuous play never is. */
+    function announceScene(){
+      const v=seq.view();
+      if(v.scene_index>=0&&v.scene_title)announce(`Scène ${v.scene_index+1} sur ${v.scene_count} : ${v.scene_title}`);
+    }
+    /* The § 4.15 map, on the stage and the transport. The slider's own ARIA keys win (it stops them); a focused button acts on Space itself. */
+    function onTransportKey(event){
+      if(event.ctrlKey||event.altKey||event.metaKey||event.defaultPrevented)return;
+      const tag=String(event.target&&event.target.tagName||'').toUpperCase();
+      if(['INPUT','TEXTAREA','SELECT'].includes(tag))return;
+      const key=event.key;
+      let handled=true;
+      if(key===' '){if(tag==='BUTTON')return;togglePlayback()}
+      else if(key==='ArrowRight'||key==='PageDown')moveScene(1);
+      else if(key==='ArrowLeft'||key==='PageUp')moveScene(-1);
+      else if(key==='Home'){if(!seekTo('home'))browseScene(0,0)}
+      else if(key==='End'){if(!seekTo('end'))browseScene(0,S.preview.scenes.length-1)}
+      else if(key===','||key==='.'){if(!seekTo('step',key===','?-1:1)&&seq&&seq.view().playing)say('info','Image par image : mettez d\'abord en pause.')}
+      else if(key==='m'||key==='M')say('info',SOUND_REASON);
+      else handled=false;
+      if(handled){event.preventDefault();event.stopPropagation()}
+    }
+    /* ARIA slider keys (§ 4.6): ← → one second, Page précédente / suivante the previous / next scene start, Début / Fin. */
+    function onScrubKey(event){
+      if(event.ctrlKey||event.altKey||event.metaKey)return;
+      const keys=['ArrowRight','ArrowUp','ArrowLeft','ArrowDown','PageUp','PageDown','Home','End'];
+      if(!keys.includes(event.key))return;
+      event.preventDefault();event.stopPropagation();
+      const v=seq&&seq.active()?seq.view():null;
+      if(!v){say('info',unavailableText(seq?seq.view():{retryable:true}));return}
+      const second=v.fps;
+      if(event.key==='ArrowRight'||event.key==='ArrowUp')seq.seek('scrub',Math.min(v.total_frames-1,v.frame+second));
+      else if(event.key==='ArrowLeft'||event.key==='ArrowDown')seq.seek('scrub',Math.max(0,v.frame-second));
+      else if(event.key==='PageDown')seq.seek('next');
+      else if(event.key==='PageUp')seq.seek('previous');
+      else seq.seek(event.key==='Home'?'home':'end');
+    }
+    /* Dragging pauses for the drag and gives the play state back on release (§ 4.6); one seek per animation frame at most (the sequencer). */
+    function onScrubDown(event){
+      if(!(seq&&seq.active())||(event.button!==undefined&&event.button>0))return;
+      event.preventDefault();
+      ui.scrub.focus({preventScroll:true});
+      drag={wasPlaying:seq.view().playing};
+      if(drag.wasPlaying)seq.pause();
+      try{ui.scrub.setPointerCapture(event.pointerId)}catch(_error){/* intentional: without capture the drag ends when the pointer leaves */}
+      scrubAt(event.clientX);
+    }
+    function scrubAt(x){
+      const v=seq.view(),box=ui.scrub.getBoundingClientRect();
+      if(!v.total_frames||!box.width)return;
+      seq.seek('scrub',Math.max(0,Math.min(v.total_frames-1,Math.round((x-box.left)/box.width*(v.total_frames-1)))));
+    }
+    function endDrag(){
+      if(!drag)return;
+      const resume=drag.wasPlaying;
+      drag=null;
+      if(resume)togglePlayback();
+    }
+    /* « ⋯ » (§ 6 #20): « Lire seulement cette scène » (PX-21) and « Revenir au début ». The menu is the explorer's; focus goes back to « ⋯ ». */
+    function openPlaybackMenu(){
+      if(S.dialog)return;
+      if(S.menu){closeMenu(true);return}
+      const box=ui.more.getBoundingClientRect?ui.more.getBoundingClientRect():{left:80,bottom:80};
+      const items=[{act:'scene_only',label:'Lire seulement cette scène',icon:'play'},{act:'home',label:'Revenir au début',icon:'restore',key:'Début'}];
+      const {menu,buttons}=W.buildMenu(kit,{head:'Lecture',label:'Plus de lecture',items,anchor:{x:box.left,y:box.bottom+4},
+        width:win.innerWidth||1280,height:win.innerHeight||720,
+        onPick:item=>{
+          closeMenu(true);
+          if(item.act==='scene_only')playSceneOnly();
+          else if(!seekTo('home'))browseScene(0,0);
+        }});
+      ui.layer.appendChild(menu);
+      S.menu={node:menu,buttons,returnFocus:ui.more,id:null,onClose:()=>ui.more.setAttribute('aria-expanded','false')};
+      ui.more.setAttribute('aria-expanded','true');
+      menu.addEventListener('keydown',event=>onMenuKey(event));
+      menu.addEventListener('mousedown',event=>event.stopPropagation());
+      if(buttons[0])buttons[0].focus({preventScroll:true});
+    }
+    function clockText(frames,fps){
+      const s=Math.max(0,Math.round(frames/fps));
+      return `${Math.floor(s/60)}:${String(s%60).padStart(2,'0')}`;
+    }
+    /* The transport, the wait pill and the failure veil follow the sequencer. Every position shown here is `f`; without a map, none (§ 4.8). */
     function renderPlayback(){
       if(!ui.playAll)return;
-      const v=seq?seq.view():{phase:'idle'};
+      const v=seq?seq.view():{phase:'idle',retryable:true};
       const running=v.phase==='playing'||v.phase==='waiting';
-      const label=running?'Pause':v.phase==='ended'?'Rejouer':v.phase==='loading'?'Préparation…':'Lire';
+      const label=running?'Pause':v.phase==='ended'?'Rejouer':v.phase==='loading'&&!v.total_frames?'Préparation…':'Lire';
       ui.playAllLabel.textContent=label;
       clear(ui.playAllIcon);ui.playAllIcon.appendChild(icon(running?'pause':v.phase==='ended'?'restore':'play'));
       ui.playAll.setAttribute('aria-pressed',running?'true':'false');
       ui.playAll.setAttribute('aria-label',label==='Préparation…'?'Préparation de la lecture':label);
+      const ready=S.preview.status==='ready'&&S.preview.scenes.length>0;
+      const blocked=!ready?"Aucune scène à lire : attendez l'aperçu.":v.phase==='unavailable'&&!v.retryable?unavailableText(v):null;
+      ui.playAll.setAttribute('aria-disabled',blocked?'true':'false');
+      ui.playAll.title=blocked||'Lire la vidéo en continu, de la position à la fin (Espace)';
+      const mapped=!!(seq&&seq.active()&&v.total_frames);
+      const index=mapped?v.scene_index:Math.max(-1,S.preview.scenes.findIndex(s=>s.id===S.preview.sceneId));
+      const count=S.preview.scenes.length;
+      ui.prevScene.setAttribute('aria-disabled',ready&&(mapped||index>0)?'false':'true');
+      const last=index>=count-1;
+      ui.nextScene.setAttribute('aria-disabled',ready&&!last?'false':'true');
+      ui.nextScene.title=ready&&last?'Dernière scène':'Début de la scène suivante (→, Page suivante)';
+      renderScrub(v,mapped);
       if(v.phase==='waiting'&&v.waiting_visible){
         ui.wait.hidden=false;
         ui.waitText.textContent=`Chargement de la scène ${v.scene_index+1} sur ${v.scene_count}`;
@@ -680,6 +804,26 @@
         ui.veilAction2.hidden=!hasNext;ui.veilAction2.textContent='Scène suivante';ui.veilRun2=hasNext?()=>{seq.seekScene(v.error.scene_index+1);seq.play()}:null;
       }else if(ui.veil.getAttribute('data-playback')==='1'&&v.phase!=='failed'){ui.veil.removeAttribute('data-playback');renderStage()}
       if(v.phase==='failed')ui.veil.setAttribute('data-playback','1');
+    }
+    function renderScrub(v,mapped){
+      if(!mapped){
+        attrs(ui.scrub,{'aria-disabled':'true',title:seq&&v.phase==='unavailable'?unavailableText(v):'La position paraît dès que la vidéo est prête.'});
+        for(const name of ['aria-valuenow','aria-valuemax','aria-valuetext'])ui.scrub.removeAttribute(name);
+        ui.time.textContent='';ui.scrubKey=null;clear(ui.scrubTicks);
+        return;
+      }
+      const last=Math.max(1,v.total_frames-1),at=`${clockText(v.frame,v.fps)} sur ${clockText(v.total_frames,v.fps)}`;
+      attrs(ui.scrub,{'aria-disabled':'false',title:'Position dans la vidéo (← → une seconde, Page précédente / suivante une scène, Début / Fin)',
+        'aria-valuemax':String(v.total_frames-1),'aria-valuenow':String(v.frame),'aria-valuetext':`Scène ${v.scene_index+1} sur ${v.scene_count}, ${at}`});
+      const pct=`${(v.frame/last*100).toFixed(3)}%`;
+      ui.scrubFill.style.width=pct;ui.scrubThumb.style.left=pct;
+      ui.time.textContent=`${clockText(v.frame,v.fps)} / ${clockText(v.total_frames,v.fps)}`;
+      /* One tick per scene boundary, redrawn only when the map changes. */
+      const key=`${v.total_frames}:${v.starts.join(',')}`;
+      if(ui.scrubKey!==key){
+        ui.scrubKey=key;clear(ui.scrubTicks);
+        for(const start of v.starts.slice(1)){const tick=el('span','jvx-scrub-tick');tick.style.left=`${(start/last*100).toFixed(3)}%`;ui.scrubTicks.appendChild(tick)}
+      }
     }
     function unmountPreview(){
       if(previewHost&&S.preview.mounted){try{previewHost.unmount(PREVIEW_OBJECT_ID)}catch(_error){/* intentional: the frame is gone either way */}}
@@ -728,13 +872,17 @@
       try{
         const variantDoc=await call('GET',variantPath(variantId),undefined,{timeoutMs:READ_TIMEOUT_MS});
         if(generation!==p.generation||!S.open)return;
-        /* A new revision of the variant on screen while its video plays: the map no longer describes it. Playback stops and says why; keeping
-           the position across an edit (§ 4.9) is the Player lifecycle of Slice 06. */
-        if(seq&&seq.active()&&p.doc&&p.doc.revision!==variantDoc.revision){seq.reset('revision_changed');say('info','La variante a changé : la lecture est arrêtée. Relancez-la.')}
+        /* A new revision of the variant on screen once the map exists (hot reload, an agent edit): the sequencer keeps (scene, frame) and the
+           play state across it (§ 4.9, PX-19); the new pin swaps in place below (`renderStage`). */
+        const revised=!!(seq&&seq.active()&&p.doc&&p.doc.revision!==variantDoc.revision);
         p.doc=variantDoc;p.scenes=scenesOf(variantDoc);
         if(!p.scenes.some(s=>s.id===p.sceneId))p.sceneId=p.scenes[0]?p.scenes[0].id:null;
         p.status=p.scenes.length?'ready':'empty';p.error=null;
         log('preview_loaded',{variant_id:variantId,scenes:p.scenes.length,variant_revision:variantDoc.revision});
+        renderStage();renderStrip();renderMeta();
+        if(revised)seq.revise().catch(error=>log('playback_revise_failed',{error:describe(error)},'error'));
+        else preparePlayback();
+        return;
       }catch(error){
         if(generation!==p.generation||!S.open)return;
         const info=describeRefusal(error.info||error,{op:'preview'});
@@ -809,9 +957,6 @@
       ui.sceneBadge.textContent=scene&&scene.locals>1?`${scene.locals} variantes locales`:'';
       ui.sceneBadge.title='Variantes locales de cette scène (elles restent hors de l\'arbre tant qu\'on ne les promeut pas)';
       ui.sceneCount.textContent=scene?`Scène ${index+1} sur ${p.scenes.length}`:'';
-      if(ui.playBox){ui.playScene.setAttribute('aria-disabled',scene?'false':'true');ui.playAll.setAttribute('aria-disabled',p.status==='ready'&&p.scenes.length?'false':'true')}
-      ui.prevScene.setAttribute('aria-disabled',index>0?'false':'true');
-      ui.nextScene.setAttribute('aria-disabled',index>=0&&index<p.scenes.length-1?'false':'true');
       ui.stage.setAttribute('aria-label',scene?`Aperçu, scène ${index+1} sur ${p.scenes.length} : ${scene.title}`:'Aperçu');
       renderPlayback();
     }
@@ -840,13 +985,13 @@
       if(index<0)return;
       /* Once the video has been played, a scene chosen by the user is a seek of the one clock: its start, play state kept (§ 4.4, § 4.5);
          the thumbnail of the current scene restarts it. The sequencer then shows the scene (`showScene`). */
-      if(seq&&seq.active()){if(!seq.seekScene(index))return}
+      if(seq&&seq.active()){if(!seq.seekScene(index))return;announceScene()}
       else{
         if(p.sceneId===sceneId)return;
         showScene(sceneId);
+        const scene=currentScene();
+        if(scene)announce(`Scène ${p.scenes.indexOf(scene)+1} sur ${p.scenes.length} : ${scene.title}`);
       }
-      const scene=currentScene();
-      if(scene)announce(`Scène ${p.scenes.indexOf(scene)+1} sur ${p.scenes.length} : ${scene.title}`);
       if(options&&options.focus){const b=ui.strip.querySelector(`[data-scene="${sceneId}"]`);if(b)b.focus({preventScroll:true})}
     }
     /* The scene on screen becomes `sceneId` (the user's choice, or the next scene of the continuous play: never announced, § 4.16). */
@@ -1180,6 +1325,7 @@
       if(!menu)return;
       S.menu=null;
       menu.node.remove();
+      if(menu.onClose)menu.onClose();
       if(restore!==false){
         const target=menu.returnFocus;
         if(target&&target.isConnected!==false&&typeof target.focus==='function')target.focus({preventScroll:true});
@@ -1502,9 +1648,9 @@
       open,close,isOpen:()=>S.open,refresh,
       selection:()=>S.open&&cmp.isActive()&&cmp.view()?cmp.view().variant_ids.slice():S.open&&S.selectedId?[S.selectedId]:[],
       compare:cmp,compose,upgrades,
-      /* Lecture continue (Slice 05) : de quoi la piloter et la lire (épreuves navigateur ; la voix et le transport de la Slice 06 s'y brancheront). */
-      playback:Object.freeze({toggle:()=>togglePlayback(),play:()=>{const s=sequencer();return s?(ensureHost(),s.play()):Promise.resolve(null)},
-        pause:()=>seq?seq.pause():null,view:()=>seq?seq.view():{phase:'idle'},stats:()=>seq?seq.stats():null}),
+      /* Lecture continue (Slice 05) et transport (Slice 06) : les mêmes portes que les boutons (épreuves navigateur ; la voix s'y branchera). */
+      playback:Object.freeze({toggle:()=>togglePlayback(),play:()=>playback(s=>s.play()),playScene:()=>playSceneOnly(),
+        pause:()=>seq?seq.pause():null,seek:(kind,value)=>seekTo(kind,value),view:()=>seq?seq.view():{phase:'idle'},stats:()=>seq?seq.stats():null}),
       onSelectionChange(fn){selectionListeners.add(fn);return()=>selectionListeners.delete(fn)},
       select:(id)=>{if(S.open&&nodeOf(id))selectVariant(id,{focus:true})},
       runAction:(act,id)=>runAction(act,id||S.selectedId,{}),

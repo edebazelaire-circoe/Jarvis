@@ -479,7 +479,8 @@ for(const wait of [{seq:4,started:true,waited_ms:21400},null]){
 return texts;
 """)
     wait = out["wait"]
-    assert "Lecture en attente de la page" in wait["text"] and "depuis 21 s" in wait["text"] and "jamais sautée" in wait["text"]
+    # Slice 06 polish: the line names the scene, like the Variants failure veil (« Scène n : ... »)
+    assert "Scène 2 : lecture en attente de la page" in wait["text"] and "depuis 21 s" in wait["text"] and "jamais sautée" in wait["text"]
     assert wait["kind"] == "problem" and wait["next"] is False and wait["stop"] is False
     assert "attente de la page" not in out["none"]["text"] and out["none"]["kind"] == "ok"
 

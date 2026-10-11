@@ -192,6 +192,10 @@
     const log=typeof d.log==='function'?d.log:()=>{};
     const baseTheme=Object.assign({},DEFAULT_THEME,d.theme||{});
     const swapPrefix=typeof d.swapPrefix==='string'?d.swapPrefix:'';
+    /* Variants (native-studio-playback-fix Slice 06): its Player opens paused and only its transport plays it (§ 4.1). `autoplay: false`
+       drops the grace-period play; `embed` tells the stage page it has no bar of its own (`R.stageUrl`). The run stage keeps both. */
+    const autoplay=d.autoplay!==false;
+    const embed=typeof d.embed==='string'?d.embed:undefined;
     const frames=new Map();
     const bundles=new Map();
     const departing=new Set();
@@ -431,7 +435,7 @@
       if(!R){fail(rec,'the Remotion frame module is not loaded','bundle');return}
       rec.remotion=true;rec.shellUp=false;rec.bundle=bundle;rec.events=new Map();
       rec.rendered=false;cancel(rec.renderTimer);rec.renderTimer=null;
-      const frame=R.createFrame(doc,rec.prefab,rec.title?`${rec.title} (scène Remotion ${rec.key})`:`Scène Remotion ${rec.key}`);
+      const frame=R.createFrame(doc,rec.prefab,rec.title?`${rec.title} (scène Remotion ${rec.key})`:`Scène Remotion ${rec.key}`,embed);
       if(rec.staged){frame.className+=' sc-prefab-staged';setStagedAttrs(frame,true)}
       if(old&&old.parentNode)old.parentNode.replaceChild(frame,old);
       rec.iframe=frame;
@@ -462,6 +466,7 @@
     /* The Player is paused on frame 0 until something orders it. If nothing does within the grace period (a scene the score does not drive:
        a hot reload, a window opened outside a run), it plays on its own, as a Remotion scene always did. */
     function hold(rec){
+      if(!autoplay)return;
       const generation=rec.generation;
       cancel(rec.holdTimer);
       rec.holdTimer=later(()=>{

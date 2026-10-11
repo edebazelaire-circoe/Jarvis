@@ -197,7 +197,8 @@ function seqBench(opts){
     preload(id,inst){preloads.push(inst.prefab.id.slice(-2));H.pending=`${inst.prefab.id}@${inst.prefab.version}`;H.pk=!!o.parkAhead;return true}};
   const answers=o.answers||[{key:'k1',variant_revision:3,clock:wireOf(SCENES,'k1'),problem:null}];
   let changedVariant=0;
-  const seq=Seq.createSequencer({objectId:'preview',host:()=>H,now:()=>t,
+  const rafs=[];   // `o.raf`: seeks reach the Player at the next animation frame (`b.frame()`), as in the page (Slice 06)
+  const seq=Seq.createSequencer({objectId:'preview',host:()=>H,now:()=>t,requestFrame:o.raf?(fn)=>{rafs.push(fn)}:undefined,
     setTimeout:(fn,ms)=>{timers.push({at:t+ms,fn});return timers.length},clearTimeout:(i)=>{if(timers[i-1])timers[i-1].fn=null},
     log:(k,d,l)=>logs.push([k,l||'info']),scenes:()=>SCENES,revision:()=>o.revision===undefined?3:o.revision,selectedIndex:()=>o.selected||0,
     fetchClock:async()=>{fetches.push(1);const a=answers[Math.min(fetches.length-1,answers.length-1)];if(a instanceof Error)throw a;return a},
@@ -210,7 +211,8 @@ function seqBench(opts){
   /* The live Player reports a position. */
   const report=(frame,playing)=>{H.now={frame,playing,duration:SCENES.find(s=>key(s)===H.live).frames,fps:30,at:t};seq.onClock('preview')};
   const playTo=(from,to,step)=>{for(let f=from;f<=to;f+=step){report(Math.min(f,to),f<to)}report(to,false)};
-  return {seq,H,orders,preloads,shows,logs,views,fetches,advance,swap,report,playTo,key,changedVariant:()=>changedVariant,SCENES};
+  const frame=()=>{const due=rafs.splice(0);due.forEach(fn=>fn());return due.length};
+  return {seq,H,orders,preloads,shows,logs,views,fetches,advance,swap,report,playTo,frame,key,changedVariant:()=>changedVariant,SCENES,o};
 }
 """
 

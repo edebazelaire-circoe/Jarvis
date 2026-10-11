@@ -83,6 +83,9 @@
   function createStage(deps){
     const d=deps;
     const doc=d.document,win=d.window;
+    /* `embed: 'variants'` (`?embed=variants`): the Player of Variants. No bar of its own, and it never plays on `ready`: Variants opens paused
+       on frame 0 and only its transport plays (contract § 4.1). The run stage keeps its bar and its play-on-ready until Slice 09 retires it. */
+    const embedded=d.embed==='variants';
     const now=d.now||(()=>Date.now());
     const later=d.setTimeout||((fn,ms)=>setTimeout(fn,ms));
     const cancel=d.clearTimeout||((id)=>clearTimeout(id));
@@ -129,13 +132,15 @@
       ui.sound=el('span','rs-sound','');
       ui.sound.title='Le navigateur n’autorise le son que sur un geste de l’utilisateur dans la scène : la lecture démarre muette.';
       ui.bar.append(ui.toggle,ui.scrub,ui.time,ui.sound);
+      /* Embedded in Variants (Slice 06): Variants' transport is the only one (contract § 2, § 6 #10); the bar is never put in the page. */
+      if(embedded){ui.root.append(ui.host,ui.panel);return}
       ui.root.append(ui.host,ui.panel,ui.bar);
       doc.addEventListener('pointermove',showBar);
       doc.addEventListener('focusin',showBar);
     }
 
     function showBar(){
-      if(!state.mounted)return;
+      if(!state.mounted||embedded)return;
       ui.bar.hidden=false;
       cancel(state.hideTimer);
       state.hideTimer=later(()=>{
@@ -348,10 +353,10 @@
       }
       state.phase='ready';state.mounted=true;
       setPanel('ready');
-      ui.bar.hidden=false;
+      ui.bar.hidden=embedded;
       ui.scrub.max=String(Math.max(state.duration-1,0));
       state.playing=false;
-      control('play');
+      if(!embedded)control('play');   // embedded: the Player stays paused on its first frame (a frame loaded ahead never reports `playing`)
       showBar();
       tellParent({phase:'ready',composition:descriptor.composition,engine_drift:!!descriptor.engine_drift});
       report('ready',{prefab_id:descriptor.prefab_id,version:descriptor.version});
@@ -481,7 +486,7 @@
       prepare();
     }
 
-    return {start,prepare,control,setProps,state:()=>({phase:state.phase,mounted:state.mounted,playing:state.playing,frame:state.frame,
+    return {start,prepare,control,setProps,state:()=>({phase:state.phase,mounted:state.mounted,playing:state.playing,frame:state.frame,embedded,
       duration:state.duration,killedReason:state.killedReason,generation:state.generation,muted:state.muted,
       propsRefused:state.propsRefused,lastProblems:state.lastProblems.slice(0,3),
       supervisor:state.supervisor?state.supervisor.state():state.lastSupervisor||null})};

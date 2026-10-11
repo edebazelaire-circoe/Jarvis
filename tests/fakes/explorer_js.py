@@ -61,15 +61,19 @@ const fsFake={calls:[],armed:null,cancelled:0,mode:'enter',
   state(){return {state:fsFake.armed?'needs_gesture':'exited',armed:fsFake.armed?{id:fsFake.armed,remainingMs:20000}:null}},
   cancel(){fsFake.armed=null;fsFake.cancelled++},
 };
-/* Le runtime des prefabs (Slice 03 de la fondation) : l'explorateur n'appelle que `createPrefabHost({mode:'preview'})`, `mount`, `unmount`, `destroy`. */
-const prefabFake={hosts:[],mounts:[],unmounts:0,destroyed:0,failMount:null,
+/* Le runtime des prefabs (Slice 03 de la fondation) : l'explorateur appelle `createPrefabHost({mode:'preview'})`, `mount`, `unmount`, `destroy` ;
+   le séquenceur de Variantes (Slices 05/06) lit `key` / `state` du cadre vivant et lui donne ses ordres (`control`, gardés dans `orders`). */
+const prefabFake={hosts:[],mounts:[],unmounts:0,destroyed:0,failMount:null,live:null,orders:[],
   bundleFetcher(fn){return fn},
   createPrefabHost(deps){
     const record={mode:deps.mode,deps};prefabFake.hosts.push(record);
     return {mount(slot,instance){
         if(prefabFake.failMount)throw new Error(prefabFake.failMount);
         prefabFake.mounts.push({object_id:instance.object_id,prefab:instance.prefab,title:instance.title,props:instance.props,data:instance.data,slot});
-      },unmount(){prefabFake.unmounts++},destroy(){prefabFake.destroyed++},has(){return true}};
+        prefabFake.live=`${instance.prefab.id}@${instance.prefab.version}`;
+      },unmount(){prefabFake.unmounts++;prefabFake.live=null},destroy(){prefabFake.destroyed++;prefabFake.live=null},has(){return true},
+      key(){return prefabFake.live},state(){return prefabFake.live?'ready':null},clock(){return null},
+      control(id,action,frame){prefabFake.orders.push([action,frame===undefined?null:frame]);return !!prefabFake.live}};
   }};
 const base=(extra)=>Object.assign({document:doc,window:win,fetch:env.fetch,setTimeout:timers.setTimeout,clearTimeout:timers.clearTimeout,setInterval:timers.setInterval,
   clearInterval:timers.clearInterval,now:timers.now,requestAnimationFrame:timers.requestAnimationFrame,toast:env.toast,console:env.console,

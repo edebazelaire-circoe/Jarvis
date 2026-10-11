@@ -83,6 +83,21 @@ def test_play_goes_to_the_frame_then_stops_by_itself_on_the_stop_frame(tmp_path)
     assert result["midway"] is True and result["playing"] is False and result["frame"] == 60
 
 
+def test_an_order_with_a_frame_to_a_playing_player_pauses_it_before_moving_it(tmp_path):
+    """Slice 06 (native-studio-playback-fix): Remotion's `seekTo` on a playing Player arms a resume that the `play()` after it left armed;
+    at the end of the scene it fired, and `play()` on the last frame restarts at 0 (seen in real Chrome after a scrub while playing)."""
+
+    result = run_child(tmp_path, r"""
+      const w=world();w.init();
+      w.send({rs:1,type:'control',action:'play',frame:0});
+      w.send({rs:1,type:'control',action:'play',frame:200});           // the user scrubbed while it plays
+      w.send({rs:1,type:'control',action:'pause',frame:120});
+      console.log(JSON.stringify({calls:w.calls,playing:w.player.playing}));
+    """)
+    assert result["calls"] == [["seek", 0], ["play"], ["pause"], ["seek", 200], ["play"], ["pause"], ["seek", 120], ["pause"]]
+    assert result["playing"] is False
+
+
 def test_a_stop_frame_already_reached_neither_plays_nor_leaves_the_segment(tmp_path):
     result = run_child(tmp_path, r"""
       const w=world();w.init();

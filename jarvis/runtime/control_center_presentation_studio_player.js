@@ -108,8 +108,9 @@
   const FOLLOWER_WAITING='Suivi vocal : connexion…';
   /* Slice 05 rework (P1) : un segment vidéo d'une lecture enchaînée sans nouvelle de la page de la scène (fin perdue, page fermée). Core
      tient la scène (jamais un saut) et le dit ; « Suivant » et « Arrêter » marchent toujours. */
-  function pageWaitText(wait){
-    return `Lecture en attente de la page : la scène n'a rien signalé depuis ${Math.round((wait.waited_ms||0)/1000)} s. `+
+  function pageWaitText(wait,scene){
+    const which=scene&&Number.isInteger(scene.number)?`Scène ${scene.number}`:'La scène';
+    return `${which} : lecture en attente de la page, rien n'a été signalé depuis ${Math.round((wait.waited_ms||0)/1000)} s. `+
       'Elle reste à l\'écran, jamais sautée ; « Suivant » ou « Arrêter » restent possibles.';
   }
 
@@ -382,7 +383,7 @@
           'Interrompu : Jarvis attend votre « continuer » (il reprendra la ligne depuis son début), il ne repart jamais seul.');
         if(view.follower==='absent')lines.push(FOLLOWER_ABSENT);
         else if(view.follower==='waiting')lines.push(FOLLOWER_WAITING);
-        if(pageWait)lines.push(pageWaitText(pageWait));
+        if(pageWait)lines.push(pageWaitText(pageWait,view.scene));
         lines.push(...problems);
         if(lost)lines.push(`Core ne répond plus depuis ${Math.round((now()-linkLostSince)/1000)} s : l'état affiché peut être périmé.`);
         if(notice)lines.push(notice.text);

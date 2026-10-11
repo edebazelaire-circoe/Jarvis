@@ -112,7 +112,10 @@
   /* `seek` : aller à l'image ; `play` / `pause` : aller d'abord à `frame` s'il est donné ; `play` avec `until` s'arrête sur cette image. */
   function applyControl(player,m){
     if(m.action==='seek'){until=null;player.seekTo(m.frame);return}
-    if(m.frame!==undefined)player.seekTo(m.frame);
+    /* Paused before it is moved: Remotion's `seekTo` on a PLAYING Player arms a "resume after the seek" (`hasPausedToResume`) that the
+       `play()` right after leaves armed; it fired when the scene ended, and `play()` on the last frame restarts at 0: a scrubbed scene
+       replayed itself from its start (native-studio-playback-fix Slice 06). `pause()` disarms it. */
+    if(m.frame!==undefined){if(player.isPlaying())player.pause();player.seekTo(m.frame)}
     if(m.action==='pause'){until=null;player.pause();return}
     until=m.until!==undefined?m.until:null;
     if(until!==null&&(m.frame!==undefined?m.frame:currentFrame())>=until){player.seekTo(until);player.pause();until=null;return}

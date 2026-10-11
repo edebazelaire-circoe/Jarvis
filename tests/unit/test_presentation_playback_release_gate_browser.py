@@ -216,9 +216,6 @@ async def variants_clock_run(tmp_path) -> dict:
         return evidence
 
 
-@pytest.mark.xfail(strict=True, raises=AssertionError, reason="S03 repro: defect D/F — no composition-time readout in Variants (today only the "
-                                                              "stage page's scene-local `x s / 30.0 s`, or nothing once its bar hides); the band "
-                                                              "shows score time as the run's clock — fixed by Slice 04 (clock) + Slice 06/10 (readout)")
 async def test_one_clock_every_time_readout_shows_the_composition_time(tmp_path):
     """(d) § 4.8 / § 6 #18: at 2.6 s into S3 every visible time readout shows the Player's composition time f/fps (11 s + 2.6 s) over the
     composition length (74 s): no score time (x / 0:08) and no scene-local time shown as media time; at least one readout exists."""
@@ -228,8 +225,6 @@ async def test_one_clock_every_time_readout_shows_the_composition_time(tmp_path)
     assert problems == [], f"readouts {evidence['at_2_6']['readouts']}: {problems}"
 
 
-@pytest.mark.xfail(strict=True, raises=AssertionError, reason="S03 repro: defect D — a scrub of the Player reaches only the sandboxed Player: no "
-                                                              "readout, slider or label follows it as composition time — fixed by Slice 04/06")
 async def test_a_scrub_of_the_player_bar_moves_the_shared_clock(tmp_path):
     """(d) § 4.6 / § 4.8: after a scrub to 20 s into S3, the Player shows it, and every visible readout, the scene label and the strip selection
     derive from the Player frame; no host or follower order re-seeks the Player afterwards."""
@@ -447,16 +442,17 @@ async def scene_only_run(tmp_path, scene_index: int, wait_ms: int) -> dict:
             plan += [thumbnail(scene_index), variants_scene_ready(scene_index)]
         plan += [{"wait": 1500}, {"value": "opened", "expr": VSTATE}, {"value": "gesture_at", **NOW},
                  {"value": "gesture", "expr": gesture("scene_only", legacy=True)}, {"wait": wait_ms},
-                 {"value": "after", "expr": READOUTS}, {"value": "probe", "expr": READ_PROBE}]
+                 {"value": "after", "expr": READOUTS}, {"value": "probe", "expr": READ_PROBE}, http(stack, "core", "GET", PLAYBACK)]
         result = await run_long(stack.page_url, plan, timeout=300)
         reads = result["reads"]
         harness("failed" not in reads and reads.get("gesture"), reads.get("failed") or "neither « Lire seulement cette scène » nor « Jouer cette slide »")
+        check_http(reads, "core")
         probe = reads["probe"]
         clocks = player_clocks(probe)
         scene = f"S{scene_index + 1}"
         own = sorted((c for u in variants_uids(probe, scene) for c in clocks.get(u, [])), key=lambda c: c[0])
         after = [c for c in own if c[0] >= reads["gesture_at"]]
-        return {"opened": reads.get("opened"), "gesture": reads.get("gesture"), "after": reads.get("after"),
+        return {"opened": reads.get("opened"), "gesture": reads.get("gesture"), "after": reads.get("after"), "core": core_view(reads.get("core")),
                 "first_play_after_gesture": next(((ms, f) for ms, f, p in after if p), None),
                 "max_frame_after_gesture": max((c[1] for c in after), default=None), "wraps_after_gesture": wraps(after)}
 
@@ -465,14 +461,12 @@ def assert_plays_once_and_holds(evidence: dict, scene: str, last: int) -> None:
     after = evidence["after"] or {}
     player = after.get("player") or {}
     assert after.get("open") is True, f"Variants closed after « {evidence['gesture']} »"
+    assert (evidence["core"] or {}).get("phase") in (None, "idle", "stopped"), f"Core started a run (§ 5 table: video semantics): {evidence['core']}"
     assert evidence["first_play_after_gesture"] and evidence["first_play_after_gesture"][1] == 0, evidence
     assert evidence["max_frame_after_gesture"] == last and evidence["wraps_after_gesture"] == [], evidence
     assert player.get("scene") == scene and player.get("frame") == last and player.get("playing") is False, f"not held on {last}: {player}"
 
 
-@pytest.mark.xfail(strict=True, raises=AssertionError, reason="S03 repro: defect A/C — Variants opens PLAYING (the host's 450 ms hold then a free "
-                                                              "loop:true Player) and has no « Lire seulement cette scène » — fixed by Slice 06 "
-                                                              "(opening paused, hold) + Slice 10 (control)")
 async def test_variants_preview_plays_a_slide_once_and_holds(tmp_path):
     """(a) § 4.1: Variants opens paused on frame 0 of S1; § 5 table: « Lire seulement cette scène » plays S1 from frame 0 to 89 once and holds
     89 paused, Variants still open."""
@@ -484,8 +478,6 @@ async def test_variants_preview_plays_a_slide_once_and_holds(tmp_path):
     assert_plays_once_and_holds(evidence, "S1", 89)
 
 
-@pytest.mark.xfail(strict=True, raises=AssertionError, reason="S03 repro: defect A — « Jouer cette slide » starts a MANUAL run and closes Variants "
-                                                              "for the floating stage — fixed by Slice 10 (« Lire seulement cette scène ») + 09")
 async def test_variants_play_this_slide_plays_the_slide_in_scene_scope(tmp_path):
     """(b) § 5 table: on S3, « Lire seulement cette scène » keeps Variants open and its Player plays S3 from frame 0 to 899, then holds 899."""
 

@@ -26,20 +26,24 @@
   function plain(value){return value!==null&&typeof value==='object'&&!Array.isArray(value)}
   function clip(value){return typeof value==='string'?value.replace(/[\u0000-\u001f\u007f]/g,' ').slice(0,MAX_TEXT):''}
 
-  function stageUrl(prefab){
-    return `${STAGE_PATH}?id=${encodeURIComponent(prefab.id)}&v=${encodeURIComponent(String(prefab.version))}`;
+  /* `embed` (native-studio-playback-fix Slice 06): `variants` = the page is the Player of Variants, whose transport is outside it. The stage
+     page then shows no bar of its own (`rs-bar`, contract § 2) and never plays by itself on `ready` (§ 4.1). Any other value is ignored. */
+  const EMBEDS=Object.freeze(['variants']);
+  function stageUrl(prefab,embed){
+    const tail=EMBEDS.includes(embed)?`&embed=${embed}`:'';
+    return `${STAGE_PATH}?id=${encodeURIComponent(prefab.id)}&v=${encodeURIComponent(String(prefab.version))}${tail}`;
   }
 
   /* L'iframe de la page de la scène. Pas d'attribut `sandbox` ici : c'est un document de confiance de notre origine ; le code non
      fiable est dans le cadre que CE document monte. */
-  function createFrame(doc,prefab,title){
+  function createFrame(doc,prefab,title,embed){
     const iframe=doc.createElement('iframe');
     iframe.className='sc-prefab-frame sc-remotion-frame';
     iframe.setAttribute('title',title);
     iframe.setAttribute('allow','');
     iframe.setAttribute('referrerpolicy','no-referrer');
     iframe.setAttribute('data-remotion-stage','1');
-    iframe.src=stageUrl(prefab);
+    iframe.src=stageUrl(prefab,embed);
     return iframe;
   }
 
@@ -235,9 +239,10 @@
       if(!tl.playing||!applied.playing||typeof host.clock!=='function')return 'idle';
       const clock=host.clock(current.objectId);
       if(clock&&clock.playing)applied.sawPlaying=true;
-      /* The stop frame, reached by a Player seen moving and now halted on it, at most `END_SLACK_FRAMES` short of it or past it (the frame
-         before the sandbox's `seekTo(until)` landed); a Player never seen moving only on it exactly. A stale report of another segment
-         cannot match both; a pause is Core's (`tl.playing` false, above), never read here. */
+      /* The stop frame, reached by a Player seen moving and now halted within `END_SLACK_FRAMES` of it, on either side (short of it: a
+         dropped frame; past it: the frame before the sandbox's `seekTo(until)` landed); a Player never seen moving only on it exactly. A
+         halt further away is not this segment's stop (a stale report of another segment); a pause is Core's (`tl.playing` false, above),
+         never read here. */
       if(clock&&!applied.done&&!clock.playing&&reachedStop(clock.frame,tl)){
         applied.done=true;stats.done++;say('done');return 'done';
       }
@@ -276,7 +281,7 @@
 
     function reachedStop(frame,tl){
       if(frame===tl.until_frame)return applied.sawPlaying||tl.until_frame===tl.from_frame;
-      return applied.sawPlaying&&frame>=Math.max(tl.from_frame,tl.until_frame-END_SLACK_FRAMES);
+      return applied.sawPlaying&&frame>=Math.max(tl.from_frame,tl.until_frame-END_SLACK_FRAMES)&&frame<=tl.until_frame+END_SLACK_FRAMES;
     }
 
     /* The host heard the Player's position (it comes at most four times a second, and at once when the Player starts or stops): the stop frame
@@ -288,7 +293,7 @@
       gaveUp:applied?applied.gaveUp:false,done:applied?applied.done:false,pending:current!==null&&applied===null})};
   }
 
-  const api=Object.freeze({SHELL,STAGE_PATH,PHASES,stageUrl,createFrame,hostMessage,parseStatus,parseClock,createTimelineFollower,validTimeline,
+  const api=Object.freeze({SHELL,STAGE_PATH,PHASES,EMBEDS,stageUrl,createFrame,hostMessage,parseStatus,parseClock,createTimelineFollower,validTimeline,
     TIMELINE:Object.freeze({MAX_CORRECTIONS,CORRECTION_GAP_MS,CLOCK_FRESH_MS,TICK_MS,SILENT_TICKS,MAX_RESENDS,STALLED_MS,END_SLACK_FRAMES})});
   root.JarvisRemotionFrame=api;
   if(typeof module!=='undefined'&&module.exports)module.exports=api;

@@ -37,14 +37,14 @@ pytestmark = pytest.mark.skipif(RUNTIME is None or shutil.which("node") is None,
 
 EXPLORER_READY = {"until": "(()=>{const f=[...document.querySelectorAll('#jvStudioExplorer iframe[data-remotion-stage]')].find(x=>!x.classList.contains('sc-prefab-staged'));"
                            "try{return !!f&&f.contentWindow.__remotionStage.state().phase==='ready'}catch(e){return false}})()", "ms": 120000}
-LIRE = ("(()=>{const b=document.querySelector('#jvStudioExplorer .jvx-play button[data-act=\"continuous\"]');if(!b)return null;"
+LIRE = ("(()=>{const b=document.querySelector('#jvStudioExplorer [role=\"toolbar\"] button[data-act=\"continuous\"]');if(!b)return null;"
         "const r=b.getBoundingClientRect();return {x:r.left+r.width/2,y:r.top+r.height/2}})()")
 PHASE = "(window.JarvisStudioExplorer&&JarvisStudioExplorer.playback.view().phase)"
 ENDED = f"({PHASE}==='ended')"
 STATE = f"(()=>{{const f={VISIBLE};try{{return f?f.contentWindow.__remotionStage.state():null}}catch(e){{return null}}}})()"
 #: The run is over on the stage window: S9 (240 frames) holds its last frame.
 RUN_FINAL = f"(()=>{{const s={STATE};return !!s&&s.duration===240&&s.frame===239&&!s.playing}})()"
-LABEL = "(()=>{const b=document.querySelector('#jvStudioExplorer .jvx-play button[data-act=\"continuous\"]');return b?b.textContent.trim():null})()"
+LABEL = "(()=>{const b=document.querySelector('#jvStudioExplorer [role=\"toolbar\"] button[data-act=\"continuous\"]');return b?b.textContent.trim():null})()"
 
 
 def harness(ok: object, why: object) -> None:

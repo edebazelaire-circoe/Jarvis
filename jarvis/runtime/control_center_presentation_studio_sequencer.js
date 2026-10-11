@@ -16,8 +16,12 @@
    - fin de la composition : la dernière image est tenue (le Player ne boucle pas), `Rejouer` repart de f = 0.
 
    Le module est un contrôleur sans DOM (testé par node) : la page lui donne l'hôte, la liste des scènes de l'aperçu, la lecture de la
-   carte, `show(index)` et `changed(view)`. Le transport visible (lecture / pause / barre / précédent / suivant) est la Slice 06 ; ici
-   un seul point d'entrée lecture / pause suffit. Une horloge de composition par page (§ 3) : `f` vit ici, rien d'autre ne le déplace. */
+   carte, `show(index)` et `changed(view)`. Une horloge de composition par page (§ 3) : `f` vit ici, rien d'autre ne le déplace.
+
+   Slice 06 (cycle de vie et transport, § 4) : la carte est lue dès que l'aperçu est à l'écran (`prepare`, en pause, rien n'est ordonné) ;
+   `seek` est la seule porte du transport visible (⏮ ⏭, barre, Début / Fin, image par image) : `f` cible calculé tout de suite, Player envoyé au
+   plus une fois par image d'animation (`requestFrame`) ; `playScene` lit la scène affichée seule puis tient sa dernière image ; `revise` garde
+   (scène, image) à travers une nouvelle révision de la variante. */
 (function(root){
   'use strict';
   const Clock=root.JarvisCompositionClock||(typeof require==='function'?require('./control_center_composition_clock.js'):null);
@@ -29,6 +33,8 @@
      when a frame is dropped and fires `ended` without setting the frame; the sandbox then seeks the last frame, this covers a lost report.
      Never wider: a Player halted further back has not finished, and a user pause is ours (the phase is no longer `playing`). */
   const END_SLACK_FRAMES=2;
+  /* A map refused for these reasons will not change by asking again: « Lire » stays disabled with the reason (§ 4.2). */
+  const NO_VIDEO=new Set(['composition_empty','composition_scene_not_remotion','composition_scene_invalid']);
 
   function keyOf(scene){return scene&&scene.prefab?`${scene.prefab.id}@${scene.prefab.version}`:null}
   function describe(error){return error&&typeof error.message==='string'?error.message:String(error)}
@@ -44,18 +50,22 @@
     const log=typeof d.log==='function'?d.log:()=>{};
     const revision=typeof d.revision==='function'?d.revision:()=>null;
     const selectedIndex=typeof d.selectedIndex==='function'?d.selectedIndex:()=>0;
-    /* phase : idle (pas de carte) · loading · paused · playing · waiting (la scène voulue n'est pas encore à l'écran) · ended · failed */
+    /* One seek reaches the Player per animation frame at most (§ 4.6). Without it (node benches), a seek reaches it at once. */
+    const requestFrame=typeof d.requestFrame==='function'?d.requestFrame:null;
+    /* phase : idle (pas de carte) · loading · paused · playing · waiting (la scène voulue n'est pas encore à l'écran) · ended · failed ·
+       unavailable (carte refusée à la préparation : pas de vidéo, ou Core injoignable ; la raison est dite, rien ne joue) */
     let S=fresh();
     let waitTimer=null;
     const boundaries=[];
 
     function fresh(){
-      return {phase:'idle',map:null,mapKey:null,t:null,k:-1,want:null,synced:false,ordered:null,waitingSince:0,error:null,generation:0,
-        boundaryAt:null,from:null,changed:0};
+      return {phase:'idle',map:null,mapKey:null,t:null,k:-1,want:null,synced:false,ordered:null,waitingSince:0,error:null,retryable:true,generation:0,
+        boundaryAt:null,from:null,changed:0,scope:null,pending:false,queued:false,shown:-1};
     }
 
     function host(){try{return d.host()}catch(_error){return null /* intentional: no host means no playback; the page says why */}}
     function scenes(){const list=d.scenes();return Array.isArray(list)?list:[]}
+    function clampIndex(map,index){return Math.max(0,Math.min(map.scenes.length-1,Number.isInteger(index)?index:0))}
 
     function view(){
       const map=S.map,list=scenes();
@@ -63,6 +73,7 @@
       const scene=index>=0?list[index]:null;
       return {phase:S.phase,frame:S.t?S.t.frame:null,total_frames:map?map.total_frames:null,fps:map?map.fps:null,playing:S.phase==='playing'||S.phase==='waiting',
         scene_index:index,scene_count:list.length,scene_id:scene?scene.id:null,scene_title:scene?scene.title:null,
+        starts:map?map.scenes.map(s=>s.start):null,scope:S.scope===null?'all':'scene',retryable:S.phase!=='unavailable'||S.retryable,
         waiting_ms:S.phase==='waiting'?Math.max(0,now()-S.waitingSince):0,
         waiting_visible:S.phase==='waiting'&&now()-S.waitingSince>=WAIT_VISIBLE_MS,error:S.error?Object.assign({},S.error):null};
     }
@@ -83,13 +94,26 @@
       }else if(waitTimer!==null){cancel(waitTimer);waitTimer=null}
     }
 
-    function fail(code,message,index){
+    function errorOf(code,message,index){
       const list=scenes();
       const scene=Number.isInteger(index)&&index>=0?list[index]:null;
-      S.error={code,message:String(message||code).slice(0,300),scene_index:scene?index:null,scene_id:scene?scene.id:null,scene_title:scene?scene.title:null};
+      return {code,message:String(message||code).slice(0,300),scene_index:scene?index:null,scene_id:scene?scene.id:null,scene_title:scene?scene.title:null};
+    }
+
+    function fail(code,message,index){
+      S.error=errorOf(code,message,index);
       if(S.t&&S.map)S.t=Clock.pause(S.map,S.t);
       setPhase('failed');
       log('sequencer_failed',{code,scene_id:S.error.scene_id,scene_index:S.error.scene_index},'error');
+      emit();
+    }
+
+    /* The map could not be had while preparing (no video, Core unreachable): said on the transport, never the failure veil; nothing played. */
+    function unavailable(code,message,index){
+      S.error=errorOf(code,message,index);
+      S.retryable=!NO_VIDEO.has(code);
+      setPhase('unavailable');
+      log('sequencer_unavailable',{code,retryable:S.retryable},S.retryable?'warn':'info');
       emit();
     }
 
@@ -99,27 +123,30 @@
       return map.scenes.length===list.length&&map.scenes.every((s,i)=>list[i]&&list[i].id===s.scene_id);
     }
 
-    async function loadMap(){
+    /* `quiet` (prepare, revise): a refusal is `unavailable`, never `failed`, and a mismatch is not sent back to the page (it is reading the
+       variant already); the user's « Lire » asks again. */
+    async function loadMap(quiet){
       const generation=++S.generation;
+      const refuse=quiet?unavailable:fail;
       setPhase('loading');S.error=null;emit();
       for(let attempt=0;attempt<2;attempt++){
         let answer;
         try{answer=await d.fetchClock()}
         catch(error){
           if(generation!==S.generation)return null;
-          fail(error&&error.code||'composition_clock_unreachable',`La carte de la vidéo n'a pas pu être lue : ${describe(error)}`);
+          refuse(error&&error.code||'composition_clock_unreachable',`La carte de la vidéo n'a pas pu être lue : ${describe(error)}`);
           return null;
         }
         if(generation!==S.generation)return null;
         if(!answer||!answer.clock){
           const problem=answer&&answer.problem||{};
           const index=problem.scene_id?scenes().findIndex(s=>s.id===problem.scene_id):-1;
-          fail(problem.code||'composition_clock_missing',problem.message||"Cette variante n'a pas de vidéo à lire.",index>=0?index:undefined);
+          refuse(problem.code||'composition_clock_missing',problem.message||"Cette variante n'a pas de vidéo à lire.",index>=0?index:undefined);
           return null;
         }
         let map;
         try{map=Clock.fromWire(answer.clock,{key:answer.key})}
-        catch(error){fail(error.code||'composition_wire_mismatch',`Carte de la vidéo refusée : ${describe(error)}`);return null}
+        catch(error){refuse(error.code||'composition_wire_mismatch',`Carte de la vidéo refusée : ${describe(error)}`);return null}
         const current=revision();
         if(sameScenes(map)&&(current===null||answer.variant_revision===current)){
           S.map=map;S.mapKey=map.key;
@@ -130,6 +157,7 @@
         log('sequencer_map_mismatch',{attempt,variant_revision:answer.variant_revision,shown_revision:current,scenes:map.scenes.length},'warn');
       }
       S.map=null;S.mapKey=null;
+      if(quiet){unavailable('variant_changed','La variante a changé : l\'aperçu est relu avant de lire.');return null}
       setPhase('idle');
       S.error={code:'variant_changed',message:'La variante a changé : l\'aperçu est relu avant de lire.',scene_index:null,scene_id:null,scene_title:null};
       emit();
@@ -168,13 +196,18 @@
 
     /* Make scene `want.k` the live Player, then play it from `want.native` (or hold there when paused). */
     function bring(index,native){
-      S.k=index;S.want={k:index,native};
-      if(onScreen(index)){arrive();return}
-      if(S.phase==='playing'||S.phase==='waiting')setPhase('waiting');
+      S.k=index;S.want={k:index,native};S.pending=false;   // this order supersedes a seek still waiting for its animation frame
+      /* The page shows the scene first, even when its Player is already on screen: two scenes on the same source version share the frame and
+         differ by their values, title and strip highlight (Slice 06: before, the second one was played under the first one's name). */
+      const showing=S.shown!==index;
+      if(!showing&&onScreen(index)){arrive();return}
+      if(!onScreen(index)&&(S.phase==='playing'||S.phase==='waiting'))setPhase('waiting');
       emit();
-      try{d.show(index)}
-      catch(error){fail('scene_show_failed',`La scène n'a pas pu être montée : ${describe(error)}`,index);return}
-      /* Two scenes on the same source version: the frame does not change, only its values. */
+      if(showing){
+        S.shown=index;
+        try{d.show(index)}
+        catch(error){fail('scene_show_failed',`La scène n'a pas pu être montée : ${describe(error)}`,index);return}
+      }
       if(onScreen(index)&&S.want&&S.want.k===index)arrive();
     }
 
@@ -193,7 +226,7 @@
         }
         setPhase('playing');
         S.want=null;
-        preloadAfter(want.k);
+        if(S.scope===null)preloadAfter(want.k);   // one scene only: nothing follows it
       }else{
         hold(want.native);   // paused, ended or failed: the Player shows the target frame and waits (it never plays by itself)
         S.want=null;
@@ -202,16 +235,31 @@
     }
 
     /* ------------------------------------------------------------ commandes */
+    /* The map, read as soon as the preview is on screen (§ 4.1: Variants opens paused on frame 0 of the selected scene). Nothing is ordered:
+       the Player already holds that frame. The scrub, the readout and ⏮ ⏭ can show `f` before anything plays. */
+    async function prepare(){
+      if(S.map||S.phase==='loading'||!scenes().length)return view();
+      const map=await loadMap(true);
+      if(!map)return view();
+      S.k=S.shown=clampIndex(map,selectedIndex());
+      S.t=Clock.transport(map.startOf(S.k),false,false);
+      setPhase('paused');
+      emit();
+      return view();
+    }
+
     async function play(){
       if(S.phase==='playing'||S.phase==='waiting'||S.phase==='loading')return view();
+      if(S.phase==='unavailable'&&!S.retryable)return view();
       const list=scenes();
       if(!list.length){fail('composition_empty',"Cette variante n'a aucune scène.");return view()}
       if(!S.map||S.mapKey===null){
-        const map=await loadMap();
+        const map=await loadMap(false);
         if(!map)return view();
-        S.t=Clock.transport(map.startOf(Math.max(0,Math.min(map.scenes.length-1,selectedIndex()))),false,false);
+        S.shown=clampIndex(map,selectedIndex());
+        S.t=Clock.transport(map.startOf(S.shown),false,false);
       }
-      S.error=null;
+      S.error=null;S.scope=null;
       S.t=S.t.ended?Clock.seek(S.map,S.t,'replay'):Clock.play(S.map,S.t);
       if(S.t.ended){setPhase('ended');emit();return view()}
       const loc=S.map.locate(S.t.frame);
@@ -222,7 +270,35 @@
       return view();
     }
 
+    /* « Lire seulement cette scène » (§ 5 table, PX-21): the scene that holds `f`, from its local frame 0 to its last frame, then that frame is
+       held, paused. Video semantics: no run, nothing armed or spoken, Variants stays open, the scene after it is not loaded ahead. */
+    async function playScene(){
+      if(S.phase==='loading')return view();
+      if(S.phase==='unavailable'&&!S.retryable)return view();
+      if(!S.map){
+        const map=await loadMap(false);
+        if(!map)return view();
+        S.shown=clampIndex(map,selectedIndex());
+        S.t=Clock.transport(map.startOf(S.shown),false,false);
+      }
+      const k=S.map.locate(S.t.frame).scene_index;
+      S.pending=false;S.error=null;S.boundaryAt=null;S.scope=k;
+      S.t=Clock.transport(S.map.startOf(k),true,false);
+      log('sequencer_play_scene',{scene_index:k});
+      setPhase('playing');
+      bring(k,0);
+      return view();
+    }
+
     function pause(){
+      if(S.phase==='loading'){   // a « Lire » (or a new revision) still reading the map: it is dropped, nothing starts behind the user's back
+        S.generation++;
+        const h=host();
+        try{if(h)h.control(objectId,'pause')}catch(_error){/* intentional: no frame, nothing plays */}
+        setPhase(S.map?'paused':'idle');
+        emit();
+        return view();
+      }
       if(!S.map||!S.t)return view();
       if(S.phase==='playing'){const h=host();if(h)h.control(objectId,'pause')}
       if(S.phase==='playing'||S.phase==='waiting'){
@@ -234,25 +310,51 @@
       return view();
     }
 
-    function toggle(){return S.phase==='playing'||S.phase==='waiting'?Promise.resolve(pause()):play()}
+    function toggle(){return S.phase==='playing'||S.phase==='waiting'||S.phase==='loading'?Promise.resolve(pause()):play()}
 
-    /* The user chose a scene (thumbnail, ‹ ›): its start, play state kept (§ 4.4, § 4.5). Without a map (nothing played yet) the page
-       browses as before and `false` says so. */
-    function seekScene(index){
-      if(!S.map||!S.t||!Number.isInteger(index)||index<0||index>=S.map.scenes.length)return false;
+    /* The transport's one door (§ 4.4-§ 4.7): ⏮ ⏭ (`previous`, `next`), a thumbnail (`scene`), the scrub (`scrub`), Home / End (`home`, `end`),
+       `,` `.` (`step`), « Rejouer » (`replay`). The target `f` is computed NOW from `f`, so every visible position follows at once and ten fast
+       ⏭ are ten scenes, never two per press and never a drift. The Player is sent there once per animation frame at most, its play state
+       kept. `false`: nothing moved (no map yet, next on the last scene, a step while playing, a value out of range). */
+    function seek(kind,value){
+      if(!S.map||!S.t||S.phase==='loading')return false;
       const wasPlaying=S.phase==='playing'||S.phase==='waiting';
-      S.t=Clock.seek(S.map,Clock.transport(S.t.frame,wasPlaying,false),'scene',index);
-      S.error=null;S.boundaryAt=null;
-      if(!wasPlaying)setPhase('paused');
-      bring(index,0);
+      let next;
+      try{next=Clock.seek(S.map,Clock.transport(S.t.frame,wasPlaying,S.t.ended),kind,value)}
+      catch(error){log('sequencer_seek_refused',{kind,code:error.code||''},'warn');return false}
+      if(next.frame===S.t.frame&&next.playing===wasPlaying&&next.ended===S.t.ended&&kind!=='scene')return false;
+      S.t=next;S.error=null;S.boundaryAt=null;S.want=null;
+      S.k=S.map.locate(next.frame).scene_index;
+      if(next.playing){if(!wasPlaying)setPhase('playing')}
+      else setPhase(next.ended?'ended':'paused');
+      S.pending=true;
+      emit();
+      if(!requestFrame){applySeek();return true}
+      if(!S.queued){
+        S.queued=true;
+        const mine=S;
+        requestFrame(()=>{if(S!==mine)return;mine.queued=false;applySeek()});
+      }
       return true;
     }
+
+    function applySeek(){
+      if(!S.pending||!S.map||!S.t)return;
+      S.pending=false;
+      const loc=S.map.locate(S.t.frame);
+      /* « Lire seulement cette scène » stays one scene while the seek lands in it (the slider's Home, PageDown... on the way do not count). */
+      if(S.scope!==null&&S.scope!==loc.scene_index)S.scope=null;
+      bring(loc.scene_index,loc.native_frame);
+    }
+
+    /* A thumbnail: the start of its scene, play state kept (§ 4.5); the thumbnail of the current scene restarts it. */
+    function seekScene(index){return Number.isInteger(index)?seek('scene',index):false}
 
     function retry(){
       if(S.phase!=='failed')return play();
       if(!S.map||!S.t){S.phase='idle';return play()}
       const loc=S.map.locate(S.t.frame);
-      S.error=null;S.t=Clock.play(S.map,S.t);
+      S.error=null;S.scope=null;S.t=Clock.play(S.map,S.t);S.shown=-1;   // the failed scene is shown (loaded) again
       setPhase('playing');
       const reloaded=reloadFailed(loc.scene_index);
       log('sequencer_retry',{scene_index:loc.scene_index,reloaded});
@@ -271,12 +373,36 @@
 
     /* Variant changed, comparison opened, Variants closed: playback stops where it is and the map is dropped (a new variant has a new key). */
     function reset(reason){
-      if(S.phase==='idle'&&!S.map)return;
+      if(S.phase==='idle'&&!S.map&&!S.error)return;
       if(S.phase==='playing'){const h=host();try{if(h)h.control(objectId,'pause')}catch(_error){/* intentional: the frame may already be gone */}}
       log('sequencer_reset',{reason:reason||'',phase:S.phase});
       setPhase('idle');
       S=Object.assign(fresh(),{generation:S.generation+1});
       emit();
+    }
+
+    /* A new revision of the variant on screen (hot reload, an agent edit) while the map exists (§ 4.9, PX-19). The position is kept as
+       (scene_id, the scene's own frame), clamped to the scene's new length; the map is read again; the play state is kept, and the Player of
+       the new pin is sent there once it took the window (it swaps in place). A scene that is gone leaves its place in the order: the scene now
+       at that index, from its start. The map refused (no video any more): playback stops, said on the transport. */
+    async function revise(){
+      if(!S.map||!S.t)return view();
+      const loc=S.map.locate(S.t.frame);
+      const keep={scene_id:loc.scene_id,index:loc.scene_index,native:loc.native_frame,playing:S.phase==='playing'||S.phase==='waiting',scope:S.scope!==null};
+      /* The Player on screen holds where it is while the new version loads: it resumes from the kept frame, it never runs on ahead of it. */
+      if(keep.playing){const h=host();try{if(h)h.control(objectId,'pause')}catch(_error){/* intentional: the frame may already be gone */}}
+      S.map=null;S.mapKey=null;S.want=null;S.pending=false;S.scope=null;S.shown=-1;   // the page shows the new revision's scene
+      const map=await loadMap(true);
+      if(!map)return view();
+      let k=map.scenes.findIndex(s=>s.scene_id===keep.scene_id),native=keep.native;
+      if(k<0){k=clampIndex(map,keep.index);native=0}
+      native=Math.min(native,map.scenes[k].duration_in_frames-1);
+      S.t=Clock.transport(map.frameOf(k,native),keep.playing,false);
+      S.scope=keep.scope&&map.scenes[k].scene_id===keep.scene_id?k:null;
+      setPhase(keep.playing?'playing':'paused');
+      log('sequencer_revised',{scene_id:map.scenes[k].scene_id,native_frame:native,kept:map.scenes[k].scene_id===keep.scene_id,playing:keep.playing});
+      bring(k,native);
+      return view();
     }
 
     /* ------------------------------------------------------------ ce que l'hôte dit */
@@ -286,7 +412,8 @@
     }
 
     function onClock(id){
-      if(id!==objectId||S.phase!=='playing'||!S.map||S.k<0)return;
+      /* A seek waiting for its animation frame: the Player still reports where it was, which is no longer `f`. */
+      if(id!==objectId||S.phase!=='playing'||!S.map||S.k<0||S.pending)return;
       const h=host();
       if(!h||h.key(objectId)!==keyOf(scenes()[S.k]))return;   // another frame (a stale one, or the one being left): not ours to read
       const clock=h.clock(objectId);
@@ -303,6 +430,15 @@
         S.synced=true;
       }
       if(frame>=last||(!clock.playing&&frame>=last-END_SLACK_FRAMES)){
+        if(S.scope===S.k){
+          /* One scene only: its last frame is held, paused (the Player does not loop: it stays there by itself, nothing is ordered). */
+          S.t=Clock.pause(S.map,Clock.transport(S.map.frameOf(S.k,last),true,false));
+          S.scope=null;
+          setPhase('paused');
+          log('sequencer_scene_held',{scene_index:S.k,frame:S.t.frame});
+          emit();
+          return;
+        }
         S.boundaryAt=now();S.from=S.k;
         S.t=Clock.tick(S.map,S.t,S.k,last,true);
         if(S.t.ended){
@@ -335,7 +471,7 @@
       else log('sequencer_preload_lost',{prefab:key,reason:info.reason||''},'warn');   // a scene loaded ahead failed: it is loaded again at its turn
     }
 
-    return Object.freeze({play,pause,toggle,seekScene,retry,reset,onLive,onClock,onOutcome,view,
+    return Object.freeze({prepare,play,playScene,pause,toggle,seek,seekScene,retry,revise,reset,onLive,onClock,onOutcome,view,
       active:()=>!!S.map,stats:()=>({phase:S.phase,frame:S.t?S.t.frame:null,boundaries:boundaries.slice(),changed:S.changed})});
   }
 

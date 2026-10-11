@@ -68,7 +68,7 @@ async def test_the_rail_lists_real_presentations_with_their_real_work_state_and_
             {"until": "!!window.JarvisStudioExplorer&&JarvisStudioExplorer.isOpen&&JarvisStudioExplorer.isOpen()", "ms": 15000},
             {"until": "document.querySelectorAll('#jvStudioExplorer .jvx-vchip').length===2", "ms": 15000},
             {"wait": 500},
-            {"value": "studio", "expr": "(()=>{const r=document.querySelector('#presentationRail').getBoundingClientRect(),x=document.querySelector('#jvStudioExplorer').getBoundingClientRect();return {docked:document.documentElement.classList.contains('jvr-studio'),railLeft:r.left,railTop:r.top,explorerLeft:x.left,railInert:!!document.querySelector('#presentationRail').closest('[inert]'),chips:document.querySelectorAll('#jvStudioExplorer .jvx-vchip').length,play:[...document.querySelectorAll('#jvStudioExplorer .jvx-play button')].map(b=>b.textContent.trim()),windowOpen:!document.querySelector('#jvPresWindow').hidden,fullscreen:!!document.fullscreenElement}})()"},
+            {"value": "studio", "expr": "(()=>{const r=document.querySelector('#presentationRail').getBoundingClientRect(),x=document.querySelector('#jvStudioExplorer').getBoundingClientRect();return {docked:document.documentElement.classList.contains('jvr-studio'),railLeft:r.left,railTop:r.top,explorerLeft:x.left,railInert:!!document.querySelector('#presentationRail').closest('[inert]'),chips:document.querySelectorAll('#jvStudioExplorer .jvx-vchip').length,play:[...document.querySelectorAll('#jvStudioExplorer .jvx-transport button')].map(b=>b.getAttribute('aria-label')||b.textContent.trim()),windowOpen:!document.querySelector('#jvPresWindow').hidden,fullscreen:!!document.fullscreenElement}})()"},
             {"shot": str(tmp_path / "studio.png")},
             # the rail stays usable inside the Studio: its menu opens above it
             {"eval": CONTEXT % pid2},
@@ -94,7 +94,8 @@ async def test_the_rail_lists_real_presentations_with_their_real_work_state_and_
         assert reads["window"]["title"] == "Atelier du cadran" and reads["window"]["pips"] == 3 and reads["window"]["chip"].startswith("variante #")
         assert reads["studio"]["docked"] is True and reads["studio"]["railLeft"] == 8 and reads["studio"]["explorerLeft"] > 150
         assert reads["studio"]["railInert"] is False and reads["studio"]["chips"] == 2 and reads["studio"]["fullscreen"] is False
-        assert reads["studio"]["play"] == ["Jouer cette slide", "Lire"] and reads["studio"]["windowOpen"] is False
+        # Slice 06 (native-studio-playback-fix): one transport toolbar; « Jouer cette slide » became the « ⋯ » entry « Lire seulement cette scène »
+        assert reads["studio"]["play"] == ["Scène précédente", "Lire", "Scène suivante", "Son", "Plus de lecture"] and reads["studio"]["windowOpen"] is False
         assert reads["studio_menu"]["onTop"] is True and reads["studio_still_open"] is True, "Escape in the rail menu does not close the Studio"
         assert sorted(reads["stepped"]) == ["false", "true"]
         assert not noise(result), noise(result)
@@ -156,7 +157,11 @@ async def test_archive_confirm_rename_and_restore_through_the_real_page(tmp_path
         assert rail_doc["archived"] is False and rail_doc["hidden"] is False
 
 
-async def test_the_studio_plays_one_slide_or_everything_through_the_real_playback_routes(tmp_path):
+async def test_read_only_this_scene_never_starts_a_run_nor_closes_variants(tmp_path):
+    """Contract § 5 table / PX-21 (native-studio-playback-fix Slice 06): « Jouer cette slide » used to start a `rehearsal` run through the
+    playback routes and close Variants. It is now the « ⋯ » entry « Lire seulement cette scène »: video semantics in the Variants Player, no
+    run, Variants stays open (the rehearsal is « Présenter › Répétition », Slice 07). This deck is HTML: the entry says why there is no video."""
+
     async with InspectorRig(tmp_path) as rig:
         core = rig.core
         revision = (await core.call("GET", f"/{rig.pid}/variants/{rig.vid}"))[1]["revision"]
@@ -167,17 +172,21 @@ async def test_the_studio_plays_one_slide_or_everything_through_the_real_playbac
             {"eval": f"JarvisStudioExplorer.open({{presentation_id:'{rig.pid}',fullscreen:false}})"},
             {"until": "!!document.querySelector('#jvStudioExplorer .jvx-scene')", "ms": 20000},
             {"click": "#jvStudioExplorer .jvx-scene:nth-child(2)"},
-            {"wait": 400},
+            {"until": "JarvisStudioExplorer.playback.view().phase==='unavailable'", "ms": 20000},
             {"value": "scene", "expr": "document.querySelector('#jvStudioExplorer .jvx-scene-line .jvx-scene-title').textContent"},
-            {"click": "#jvStudioExplorer .jvx-play button:nth-child(1)"},
-            {"until": "(()=>{const v=JarvisStudioPlayer.view();return !!v&&v.running===true})()", "ms": 20000},
-            {"wait": 800},
-            {"value": "view", "expr": "(()=>{const v=JarvisStudioPlayer.view();return {role:v.role,phase:v.phase,pid:v.presentation_id,position:v.position}})()"},
+            {"value": "lire", "expr": "(()=>{const b=document.querySelector('#jvStudioExplorer [role=\"toolbar\"] [data-act=\"continuous\"]');return [b.getAttribute('aria-disabled'),b.title]})()"},
+            {"click": "#jvStudioExplorer [aria-haspopup=\"menu\"]"},
+            {"until": "!!document.querySelector('#jvStudioExplorer .jvx-menu')", "ms": 5000},
+            {"eval": "[...document.querySelectorAll('#jvStudioExplorer .jvx-menu [role=\"menuitem\"]')].find(b=>b.textContent.includes('Lire seulement cette scène')).click()"},
+            {"wait": 1500},
+            {"value": "notice", "expr": "document.querySelector('#jvStudioExplorer .jvx-notice-text').textContent"},
             {"value": "explorer_open", "expr": "JarvisStudioExplorer.isOpen()"},
         ], viewport="1440x900", timeout=240)
         reads = result["reads"]
         state = (await core.client.presentation_studio_playback_state())["state"]
         assert reads["scene"] == "Chiffres"
-        assert reads["explorer_open"] is False, (reads, "the Studio closes when the run starts")
-        assert state["role"] == "rehearsal" and state["presentation_id"] == rig.pid, state
+        assert reads["lire"][0] == "true" and "présentation Remotion" in reads["lire"][1], "« Lire » is disabled with its reason"
+        assert "présentation Remotion" in reads["notice"], "the overflow entry says the same reason when activated"
+        assert reads["explorer_open"] is True, "Variants stays open"
+        assert state.get("running") is not True and state.get("role") != "rehearsal", f"no run started: {state}"
         assert not noise(result), noise(result)
