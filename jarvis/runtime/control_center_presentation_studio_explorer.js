@@ -33,6 +33,8 @@
   const Cmp=root.JarvisStudioExplorerCompare||(typeof require==='function'?require('./control_center_presentation_studio_explorer_compare.js'):null);
   const Compose=root.JarvisStudioExplorerCompose||(typeof require==='function'?require('./control_center_presentation_studio_explorer_compose.js'):null);
   const Upgrades=root.JarvisStudioExplorerUpgrades||(typeof require==='function'?require('./control_center_presentation_studio_explorer_upgrades.js'):null);
+  /* Lecture continue de la variante dans Variantes (native-studio-playback-fix Slice 05) : le contrôleur sans DOM qui tient `f`. */
+  const Seq=root.JarvisVariantsSequencer||(typeof require==='function'?require('./control_center_presentation_studio_sequencer.js'):null);
   const {ROUTE,PLAYBACK_ROUTE,COMMAND_ROUTE,STATE_ROUTE,HOST_ID,OBJECT_ID,PREVIEW_OBJECT_ID,STYLE_ID,ROW_H,MAX_DEPTH_SHOWN,INDENT_PX,TYPEAHEAD_MS,PAGE_TOKEN,PAGE_TOKEN_HEADER,
     REQUEST_TIMEOUT_MS,READ_TIMEOUT_MS,PLAYBACK_CHECK_MS,LONG_PRESS_MS,PREVIEW_SETTLE_MS,NOTICE_MS,COMMAND_REFUSALS,ICONS,CSS,MAX_LIVE,MAX_ARCHIVED,
     cleanLine,checkTitle,checkRationale,rationaleBytes,relativeTime,absoluteTime,creatorLabel,shortId,buildForest,subtreeIds,flatten,windowOf,treeKey,
@@ -196,7 +198,7 @@
       dialog:dialogApi,compose,
       setCompareVisible:on=>{if(ui.preview)ui.preview.hidden=!!on},
       onActive:on=>{
-        if(on){if(previewTimer){cancelLater(previewTimer);previewTimer=null}unmountPreview()}
+        if(on){if(previewTimer){cancelLater(previewTimer);previewTimer=null}if(seq)seq.reset('compare');unmountPreview()}
         else if(S.open&&S.selectedId)schedulePreview();
       }});
 
@@ -326,8 +328,14 @@
       ui.slot=el('div','jvx-slot');
       ui.veil=el('div','jvx-stage-veil');
       ui.veilTitle=el('strong');ui.veilText=el('span');ui.veilAction=button('',null,()=>{if(ui.veilRun)ui.veilRun()});ui.veilAction.hidden=true;
-      ui.veil.appendChild(ui.veilTitle);ui.veil.appendChild(ui.veilText);ui.veil.appendChild(ui.veilAction);
-      ui.stage.appendChild(ui.slot);ui.stage.appendChild(ui.veil);wrap.appendChild(ui.stage);
+      ui.veilAction2=button('',null,()=>{if(ui.veilRun2)ui.veilRun2()});ui.veilAction2.hidden=true;
+      const veilActions=el('div','jvx-veil-actions');veilActions.appendChild(ui.veilAction);veilActions.appendChild(ui.veilAction2);
+      ui.veil.appendChild(ui.veilTitle);ui.veil.appendChild(ui.veilText);ui.veil.appendChild(veilActions);
+      /* Lecture continue : la scène suivante charge encore (Slice 05). Texte stable pour les lecteurs d'écran, compteur à part (caché d'eux). */
+      ui.wait=el('div','jvx-stage-wait');ui.wait.hidden=true;attrs(ui.wait,{role:'status','aria-live':'polite'});
+      ui.waitText=el('span');ui.waitCount=el('span');ui.waitCount.setAttribute('aria-hidden','true');
+      ui.wait.appendChild(ui.waitText);ui.wait.appendChild(ui.waitCount);
+      ui.stage.appendChild(ui.slot);ui.stage.appendChild(ui.veil);ui.stage.appendChild(ui.wait);wrap.appendChild(ui.stage);
       const note=el('div','jvx-stage-note');
       const sceneLine=el('div','jvx-scene-line');
       ui.prevScene=button(null,'jvx-btn jvx-btn-icon',()=>browseScene(-1),{icon:'prev',attrs:{'aria-label':'Scène précédente',title:'Scène précédente (Page précédente)'}});
@@ -337,10 +345,14 @@
       ui.sceneBadge=el('span','jvx-chip');
       sceneLine.appendChild(ui.prevScene);sceneLine.appendChild(ui.nextScene);sceneLine.appendChild(ui.sceneTitle);sceneLine.appendChild(ui.sceneRole);sceneLine.appendChild(ui.sceneBadge);
       ui.sceneCount=el('span','');
-      /* Jouer : la MÊME route que la voix et le lecteur (`JarvisStudioPlayer.startRun` puis `goto`), en répétition silencieuse. La lecture ferme le Studio (un seul outil à la fois). */
+      /* « Jouer cette slide » : la MÊME route que la voix et le lecteur (`JarvisStudioPlayer.startRun` puis `goto`), en répétition silencieuse ; elle ferme
+         encore Variantes (Slices 06/10 en font « Lire seulement cette scène »). « Lire » (Slice 05, ex « Tout jouer ») : la vidéo continue ICI, dans le
+         lecteur de Variantes, sans lecture de Core et sans fermer (contrat 2026-10 § 4.2). Point d'entrée minimal : le transport complet est la Slice 06. */
       ui.playBox=el('div','jvx-play');
       ui.playScene=button('Jouer cette slide','jvx-btn',()=>{playFromStudio('scene')},{icon:'play',attrs:{title:'Lancer la lecture en répétition à partir de cette slide (le Studio se ferme)'}});
-      ui.playAll=button('Tout jouer','jvx-btn',()=>{playFromStudio('all')},{icon:'play',attrs:{title:"Lancer toute la présentation d'un coup, de la première slide (le Studio se ferme)"}});
+      ui.playAll=button(null,'jvx-btn',()=>{togglePlayback()},{attrs:{'data-act':'continuous',title:'Lire la vidéo en continu, de la scène affichée à la fin (Variantes reste ouvert)'}});
+      ui.playAllIcon=el('span','jvx-icon-slot');ui.playAllIcon.appendChild(icon('play'));ui.playAllLabel=el('span','','Lire');
+      ui.playAll.appendChild(ui.playAllIcon);ui.playAll.appendChild(ui.playAllLabel);
       ui.playBox.appendChild(ui.playScene);ui.playBox.appendChild(ui.playAll);
       note.appendChild(sceneLine);note.appendChild(ui.sceneCount);note.appendChild(ui.playBox);
       ui.strip=el('div','jvx-strip');
@@ -599,12 +611,75 @@
       const api=prefabApi();
       if(!api||typeof api.createPrefabHost!=='function')return null;
       try{
-        previewHost=api.createPrefabHost({mode:'preview',document:doc,window:win,
+        /* `swapPrefix` (Slice 05) : une autre scène `presentation-studio.*` se prépare À CÔTÉ de la scène vivante et ne la remplace qu'une
+           fois prête (plus de cadre vide entre deux scènes), et la suivante se précharge. `onLive` / `onClock` / `onOutcome` : ce que la
+           lecture continue écoute (Player devenu vivant, position du Player, échec d'une scène). */
+        previewHost=api.createPrefabHost({mode:'preview',document:doc,window:win,swapPrefix:'presentation-studio.',
           fetchBundle:api.bundleFetcher((path,options)=>fetchImpl(path,Object.assign({cache:'no-store'},options))),
           onPreviewEvent:()=>{/* intentional: the preview frame writes nothing anywhere; its events are dropped */},
-          log:(key,data)=>{if(key!=='scene.prefab_mounted')log('preview_host_'+String(key).replace(/^scene\./,''),data,'warn')}});
+          onLive:(id)=>{if(seq)seq.onLive(id)},onClock:(id)=>{if(seq)seq.onClock(id)},onOutcome:(info)=>{if(seq)seq.onOutcome(info)},
+          log:(key,data)=>{const k=String(key);log('preview_host_'+k.replace(/^scene\./,''),data,PREVIEW_HOST_INFO.has(k)?'info':'warn')}});
       }catch(error){log('preview_host_failed',{error:describe(error)},'error');previewHost=null}
       return previewHost;
+    }
+    /* -------------------------------------------------------------- lecture continue (Slice 05) */
+    const PREVIEW_HOST_INFO=new Set(['scene.prefab_mounted','scene.prefab_preloaded','scene.prefab_swapped','scene.prefab_preload_queued']);
+    let seq=null;
+    function sequencer(){
+      if(seq||!Seq)return seq;
+      seq=Seq.createSequencer({objectId:PREVIEW_OBJECT_ID,host:()=>previewHost,now,setTimeout:later,clearTimeout:cancelLater,
+        log:(key,data,level)=>log(key,data,level),
+        scenes:()=>S.preview.status==='ready'?S.preview.scenes:[],
+        revision:()=>S.preview.doc&&Number.isInteger(S.preview.doc.revision)?S.preview.doc.revision:null,
+        selectedIndex:()=>Math.max(0,S.preview.scenes.findIndex(s=>s.id===S.preview.sceneId)),
+        fetchClock:()=>call('GET',variantPath(S.preview.variantId,'/composition-clock'),undefined,{timeoutMs:READ_TIMEOUT_MS}),
+        show:(index)=>{const scene=S.preview.scenes[index];if(scene)showScene(scene.id)},
+        variantChanged:()=>{say('info',"La variante a changé : l'aperçu est relu. Relancez la lecture.");schedulePreview()},
+        changed:()=>renderPlayback()});
+      return seq;
+    }
+    async function togglePlayback(){
+      if(cmp.isActive()){say('info',"La lecture se fait hors de la comparaison : fermez-la d'abord.");return}
+      if(S.preview.status!=='ready'||!S.preview.scenes.length){say('info',"Aucune scène à lire : attendez l'aperçu.");return}
+      const s=sequencer();
+      if(!s){say('failed',"La lecture continue n'est pas chargée dans cette page.");return}
+      ensureHost();
+      try{
+        const v=await s.toggle();
+        if(v&&v.phase==='failed'&&v.error)say('failed',playbackError(v.error));
+      }catch(error){
+        say('failed',`Lecture impossible : ${describe(error)}`);
+        log('playback_failed',{error:describe(error)},'error');
+      }finally{renderPlayback()}
+    }
+    function playbackError(error){
+      const where=Number.isInteger(error.scene_index)?`Scène ${error.scene_index+1}${error.scene_title?` « ${cleanLine(error.scene_title,60)} »`:''} : `:'';
+      return `${where}${cleanLine(error.message,220)}`;
+    }
+    /* Le bouton, la pastille de chargement et l'état d'échec suivent la lecture. Jamais une position ici : le transport complet (barre, temps) est la Slice 06. */
+    function renderPlayback(){
+      if(!ui.playAll)return;
+      const v=seq?seq.view():{phase:'idle'};
+      const running=v.phase==='playing'||v.phase==='waiting';
+      const label=running?'Pause':v.phase==='ended'?'Rejouer':v.phase==='loading'?'Préparation…':'Lire';
+      ui.playAllLabel.textContent=label;
+      clear(ui.playAllIcon);ui.playAllIcon.appendChild(icon(running?'pause':v.phase==='ended'?'restore':'play'));
+      ui.playAll.setAttribute('aria-pressed',running?'true':'false');
+      ui.playAll.setAttribute('aria-label',label==='Préparation…'?'Préparation de la lecture':label);
+      if(v.phase==='waiting'&&v.waiting_visible){
+        ui.wait.hidden=false;
+        ui.waitText.textContent=`Chargement de la scène ${v.scene_index+1} sur ${v.scene_count}`;
+        ui.waitCount.textContent=`· ${Math.max(0,Math.round(v.waiting_ms/1000))} s`;
+      }else if(!ui.wait.hidden){ui.wait.hidden=true;ui.waitText.textContent='';ui.waitCount.textContent=''}
+      if(v.phase==='failed'&&v.error&&S.preview.status==='ready'&&!cmp.isActive()){
+        ui.veil.hidden=false;ui.veil.setAttribute('data-tone','danger');
+        ui.veilTitle.textContent=Number.isInteger(v.error.scene_index)?`Scène ${v.error.scene_index+1} : lecture impossible`:'Lecture impossible';
+        ui.veilText.textContent=playbackError(v.error);
+        ui.veilAction.hidden=false;ui.veilAction.textContent='Réessayer';ui.veilRun=()=>{seq.retry()};
+        const hasNext=Number.isInteger(v.error.scene_index)&&v.error.scene_index+1<v.scene_count;
+        ui.veilAction2.hidden=!hasNext;ui.veilAction2.textContent='Scène suivante';ui.veilRun2=hasNext?()=>{seq.seekScene(v.error.scene_index+1);seq.play()}:null;
+      }else if(ui.veil.getAttribute('data-playback')==='1'&&v.phase!=='failed'){ui.veil.removeAttribute('data-playback');renderStage()}
+      if(v.phase==='failed')ui.veil.setAttribute('data-playback','1');
     }
     function unmountPreview(){
       if(previewHost&&S.preview.mounted){try{previewHost.unmount(PREVIEW_OBJECT_ID)}catch(_error){/* intentional: the frame is gone either way */}}
@@ -624,7 +699,10 @@
       const p=S.preview;
       p.generation+=1;
       if(!node){p.variantId=null;p.status='idle';unmountPreview();renderStage();renderStrip();return}
-      if(p.variantId!==node.variant_id){p.doc=null;p.scenes=[];p.error=null;p.variantId=node.variant_id}
+      if(p.variantId!==node.variant_id){
+        if(seq)seq.reset('variant_changed');   // another variant: playback stops, its map (another key) is dropped (§ 4.10)
+        p.doc=null;p.scenes=[];p.error=null;p.variantId=node.variant_id;
+      }
       if(node.state==='archived'){p.status='archived';p.since=now();unmountPreview();renderStage();renderStrip();renderMeta();return}
       /* Relire une variante déjà à l'écran (après un renommage, un changement venu d'ailleurs) ne couvre pas l'aperçu d'un voile : l'ancien reste, le neuf le remplace. */
       const refreshing=p.status==='ready'&&p.scenes.length>0;
@@ -650,6 +728,9 @@
       try{
         const variantDoc=await call('GET',variantPath(variantId),undefined,{timeoutMs:READ_TIMEOUT_MS});
         if(generation!==p.generation||!S.open)return;
+        /* A new revision of the variant on screen while its video plays: the map no longer describes it. Playback stops and says why; keeping
+           the position across an edit (§ 4.9) is the Player lifecycle of Slice 06. */
+        if(seq&&seq.active()&&p.doc&&p.doc.revision!==variantDoc.revision){seq.reset('revision_changed');say('info','La variante a changé : la lecture est arrêtée. Relancez-la.')}
         p.doc=variantDoc;p.scenes=scenesOf(variantDoc);
         if(!p.scenes.some(s=>s.id===p.sceneId))p.sceneId=p.scenes[0]?p.scenes[0].id:null;
         p.status=p.scenes.length?'ready':'empty';p.error=null;
@@ -713,7 +794,7 @@
         else if(!scene.prefab)veil('danger','Scène sans prefab','Cette scène ne désigne aucun prefab.');
         else{
           try{
-            host.mount(ui.slot,{object_id:PREVIEW_OBJECT_ID,prefab:{id:scene.prefab.id,version:scene.prefab.version},title:scene.title,props:scene.props,data:scene.data});
+            host.mount(ui.slot,{object_id:PREVIEW_OBJECT_ID,scene_id:scene.id,prefab:{id:scene.prefab.id,version:scene.prefab.version},title:scene.title,props:scene.props,data:scene.data});
             p.mounted=scene.prefab;ui.veil.hidden=true;
           }catch(error){
             veil('danger','Aperçu impossible',describe(error));
@@ -732,6 +813,7 @@
       ui.prevScene.setAttribute('aria-disabled',index>0?'false':'true');
       ui.nextScene.setAttribute('aria-disabled',index>=0&&index<p.scenes.length-1?'false':'true');
       ui.stage.setAttribute('aria-label',scene?`Aperçu, scène ${index+1} sur ${p.scenes.length} : ${scene.title}`:'Aperçu');
+      renderPlayback();
     }
     function renderStrip(){
       const hadFocus=ui.strip.contains(doc.activeElement);
@@ -754,12 +836,25 @@
     }
     function setScene(sceneId,options){
       const p=S.preview;
-      if(p.sceneId===sceneId||!p.scenes.some(s=>s.id===sceneId))return;
-      p.sceneId=sceneId;
-      renderStage();renderStrip();
+      const index=p.scenes.findIndex(s=>s.id===sceneId);
+      if(index<0)return;
+      /* Once the video has been played, a scene chosen by the user is a seek of the one clock: its start, play state kept (§ 4.4, § 4.5);
+         the thumbnail of the current scene restarts it. The sequencer then shows the scene (`showScene`). */
+      if(seq&&seq.active()){if(!seq.seekScene(index))return}
+      else{
+        if(p.sceneId===sceneId)return;
+        showScene(sceneId);
+      }
       const scene=currentScene();
       if(scene)announce(`Scène ${p.scenes.indexOf(scene)+1} sur ${p.scenes.length} : ${scene.title}`);
       if(options&&options.focus){const b=ui.strip.querySelector(`[data-scene="${sceneId}"]`);if(b)b.focus({preventScroll:true})}
+    }
+    /* The scene on screen becomes `sceneId` (the user's choice, or the next scene of the continuous play: never announced, § 4.16). */
+    function showScene(sceneId){
+      const p=S.preview;
+      if(!p.scenes.some(s=>s.id===sceneId))return;
+      p.sceneId=sceneId;
+      renderStage();renderStrip();
     }
     function browseScene(delta,absolute){
       const p=S.preview;
@@ -1305,6 +1400,7 @@
       for(const t of [tickTimer,playbackTimer,pollTimer,armTimer])if(t)stopEvery(t);
       tickTimer=playbackTimer=pollTimer=armTimer=null;
       cmp.shutdown();
+      if(seq)seq.reset('closed');
       unmountPreview();
       if(previewHost&&typeof previewHost.destroy==='function'){try{previewHost.destroy()}catch(_error){/* intentional: the host is dropped either way */}}
       previewHost=null;
@@ -1406,6 +1502,9 @@
       open,close,isOpen:()=>S.open,refresh,
       selection:()=>S.open&&cmp.isActive()&&cmp.view()?cmp.view().variant_ids.slice():S.open&&S.selectedId?[S.selectedId]:[],
       compare:cmp,compose,upgrades,
+      /* Lecture continue (Slice 05) : de quoi la piloter et la lire (épreuves navigateur ; la voix et le transport de la Slice 06 s'y brancheront). */
+      playback:Object.freeze({toggle:()=>togglePlayback(),play:()=>{const s=sequencer();return s?(ensureHost(),s.play()):Promise.resolve(null)},
+        pause:()=>seq?seq.pause():null,view:()=>seq?seq.view():{phase:'idle'},stats:()=>seq?seq.stats():null}),
       onSelectionChange(fn){selectionListeners.add(fn);return()=>selectionListeners.delete(fn)},
       select:(id)=>{if(S.open&&nodeOf(id))selectVariant(id,{focus:true})},
       runAction:(act,id)=>runAction(act,id||S.selectedId,{}),
@@ -1456,7 +1555,7 @@
     window.JarvisStudioExplorer=Object.freeze({
       open:explorer.open,close:explorer.close,isOpen:explorer.isOpen,state:explorer.state,selection:explorer.selection,
       onSelectionChange:explorer.onSelectionChange,select:explorer.select,refresh:explorer.refresh,stats:explorer.stats,
-      inspectTree:explorer.inspectTree,repaint:explorer.repaint,
+      inspectTree:explorer.inspectTree,repaint:explorer.repaint,playback:explorer.playback,
       compare:Object.freeze({open:o=>explorer.compare.start(o),close:o=>explorer.compare.close(o),isOpen:()=>explorer.compare.isActive(),view:()=>explorer.compare.view(),
         state:()=>explorer.compare.state(),marks:()=>explorer.compare.marks(),mark:id=>explorer.compare.mark(id),focus:pair=>explorer.compare.setPair(pair),
         mode:m=>explorer.compare.setMode(m),navigate:s=>explorer.compare.navigate(s),link:(a,b)=>explorer.compare.link(a,b),unlink:(a,b)=>explorer.compare.unlink(a,b),

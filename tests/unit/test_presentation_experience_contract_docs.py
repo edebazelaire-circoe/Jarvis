@@ -89,7 +89,8 @@ def test_superseded_statements_point_to_the_contract():
     bridge = _section("## Remotion timeline bridge (Level 3, Remotion handoff Slice 12)")
     entry = bridge.index("For the scene on the stage the playhead is")
     assert "**Superseded (2026-10).**" in bridge[entry - 400:entry] and ANCHOR in bridge[entry - 400:entry]
-    assert "plays ONCE and holds its last image (it does not loop), so that the chain knows when it is done. *(Superseded 2026-10" in bridge
+    # resolved by Slice 05 (`loop: false` + `moveToBeginningWhenEnded: false` on every surface): the note now says it holds everywhere
+    assert "plays ONCE and holds its last image (it does not loop), so that the chain knows when it is done. *(Since Slice 05 this holds on every surface" in bridge
     for name in ("remotion-studio.md", "presentation-engine.md", "remotion-isolation.md", "OPERATIONS.md"):
         assert ANCHOR in page(name), name
 

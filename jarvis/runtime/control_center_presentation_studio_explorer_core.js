@@ -382,6 +382,7 @@
     alert:['M12 5l8 14H4z','M12 10v4','M12 17v.01'],
     compare:['M4 5h7v14H4z','M13 5h7v14h-7z'],
     play:['M8 5l11 7-11 7z'],
+    pause:['M8 5v14','M16 5v14'],
   });
 
   /* ------------------------------------------------------------------ feuille de style */
@@ -501,12 +502,23 @@ html:has(#${HOST_ID}:not([hidden])) #jvFullscreenPrompt{top:auto;bottom:18px;lef
 #${HOST_ID} .jvx-stage-veil strong{color:var(--jvx-ink);font-size:15px}
 #${HOST_ID} .jvx-stage-veil[data-tone="warn"] strong{color:var(--jvx-warn)}
 #${HOST_ID} .jvx-stage-veil[data-tone="danger"] strong{color:var(--jvx-danger)}
+/* Lecture continue (Slice 05) : la scène suivante n'est pas encore prête. La dernière image de la scène qui part reste visible ; une pastille
+   discrète dit qu'on charge, laquelle, depuis combien de temps. Jamais un voile plein : l'image tenue est le contenu. */
+#${HOST_ID} .jvx-stage-wait{position:absolute;right:12px;bottom:12px;z-index:2;display:inline-flex;align-items:center;gap:8px;max-width:calc(100% - 24px);
+  padding:5px 11px 5px 9px;border-radius:999px;background:rgba(2,6,10,.78);border:1px solid var(--jvx-line-strong);color:var(--jvx-ink);
+  font-size:12px;font-variant-numeric:tabular-nums;pointer-events:none;box-shadow:0 6px 18px rgba(0,0,0,.4)}
+#${HOST_ID} .jvx-stage-wait::before{content:"";flex:none;width:7px;height:7px;border-radius:50%;background:var(--jvx-accent)}
+#${HOST_ID} .jvx-stage-wait span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+@media (prefers-reduced-motion:no-preference){#${HOST_ID} .jvx-stage-wait::before{animation:jvxPulse 1.1s ease-in-out infinite}}
+#${HOST_ID} .jvx-stage-veil .jvx-veil-actions{display:inline-flex;gap:8px;justify-content:center}
 #${HOST_ID} .jvx-stage-note{display:flex;align-items:center;justify-content:space-between;gap:12px;color:var(--jvx-mute);font-size:13px;min-width:0}
 #${HOST_ID} .jvx-scene-line{display:flex;align-items:center;gap:10px;min-width:0;flex:1 1 auto}
 #${HOST_ID} .jvx-scene-title{color:var(--jvx-ink);font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 #${HOST_ID} .jvx-play{display:inline-flex;gap:8px;flex:none}
 #${HOST_ID} .jvx-play .jvx-btn{min-height:30px;padding:0 10px;font-size:12px}
 #${HOST_ID} .jvx-play .jvx-btn svg{width:13px;height:13px}
+#${HOST_ID} .jvx-play .jvx-icon-slot{display:inline-flex}
+#${HOST_ID} .jvx-play .jvx-btn[aria-pressed="true"]{border-color:var(--jvx-accent);color:var(--jvx-accent)}
 #${HOST_ID} .jvx-vbar{display:flex;align-items:center;gap:6px;overflow-x:auto;padding:2px 2px 8px;scrollbar-width:thin;scrollbar-color:var(--jvx-line-strong) transparent;min-height:34px}
 @media (max-height:680px){#${HOST_ID} .jvx-vbar{display:none}}
 #${HOST_ID} .jvx-vbar-label{flex:none;color:var(--jvx-mute);font-size:11px;letter-spacing:.1em;text-transform:uppercase;padding-right:4px}

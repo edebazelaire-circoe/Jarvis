@@ -9,8 +9,8 @@
    m -> image native floor(m * fps / F) ; image native n -> ceil(n * F / fps). Entiers seulement.
 
    Le navigateur reçoit la carte de Core (`GET .../variants/{id}/composition-clock`, données) et `fromWire` refait le calcul : un écart est
-   refusé (`composition_wire_mismatch`), jamais corrigé en silence ; la clé attendue est obligatoire (`composition_key_required`). Le câblage dans la page (lecteur de Variantes) est l'affaire des
-   Slices 05 et 06 : ce fichier n'est encore inclus dans aucune page. */
+   refusé (`composition_wire_mismatch`), jamais corrigé en silence ; la clé attendue est obligatoire (`composition_key_required`). Inclus dans
+   la page du Control Center (Slice 05) avant `control_center_presentation_studio_sequencer.js`, qui tient `f` pour le lecteur de Variantes. */
 (function(root){
   'use strict';
   const WIRE_VERSION=1;

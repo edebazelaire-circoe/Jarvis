@@ -94,7 +94,7 @@ async def test_the_rail_lists_real_presentations_with_their_real_work_state_and_
         assert reads["window"]["title"] == "Atelier du cadran" and reads["window"]["pips"] == 3 and reads["window"]["chip"].startswith("variante #")
         assert reads["studio"]["docked"] is True and reads["studio"]["railLeft"] == 8 and reads["studio"]["explorerLeft"] > 150
         assert reads["studio"]["railInert"] is False and reads["studio"]["chips"] == 2 and reads["studio"]["fullscreen"] is False
-        assert reads["studio"]["play"] == ["Jouer cette slide", "Tout jouer"] and reads["studio"]["windowOpen"] is False
+        assert reads["studio"]["play"] == ["Jouer cette slide", "Lire"] and reads["studio"]["windowOpen"] is False
         assert reads["studio_menu"]["onTop"] is True and reads["studio_still_open"] is True, "Escape in the rail menu does not close the Studio"
         assert sorted(reads["stepped"]) == ["false", "true"]
         assert not noise(result), noise(result)

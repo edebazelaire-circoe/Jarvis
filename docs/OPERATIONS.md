@@ -2290,6 +2290,14 @@ ne prouve pas est à regarder une fois, sur un vrai poste, dans une instance iso
    bout à l'autre puis tient sa dernière image sans passer à la suivante ; le bouton actif (surligné) rend la main. Pause arrête tout, Reprendre
    continue. Automatisé dans un vrai Chrome : `tests/unit/test_remotion_continuity_realpage_browser.py` ; à regarder une fois à l'oeil sur un vrai
    poste (fluidité réelle, GPU). Ceci demande de redémarrer Core et le Control Center (code des routes, du service et du navigateur).
+12. **Vidéo continue dans Variantes** (native-studio-playback-fix Slice 05) : ouvrir Variantes sur une présentation Remotion, « Lire » : les scènes
+   s'enchaînent dans l'aperçu, chacune de sa première à sa dernière image, sans blanc ni image mêlée de deux scènes ; Variantes reste ouvert ; à la fin
+   la dernière image reste, le bouton dit « Rejouer ». Une scène lente à charger : l'image précédente reste avec la pastille « Chargement de la scène
+   n sur N · s ». Une scène qui ne compile pas : la lecture s'arrête sur elle, nommée, avec « Réessayer » ; jamais un saut. Automatisé dans un vrai
+   Chrome : `JARVIS_REMOTION_RUNTIME_DIR=<runtime> [JARVIS_PLAYBACK_GATE_EVIDENCE_DIR=<dossier>] python -m pytest
+   tests/unit/test_presentation_continuous_playback_browser.py -q -p no:cacheprovider` (environ 3 min ; un test par processus sur un poste à
+   mémoire courte : `-k variants`, `-k run_stage`). Demande de recharger le Control Center (code du navigateur) et de redémarrer Core (lecture
+   enchaînée sans échéance).
 
 Après un arrêt brutal, une fenêtre `studio-stage-*` ou `studio-aux-*` encore visible est un défaut à signaler avec la ligne `playback_reclaim_failed` du
 journal ; ne pas la supprimer à la main avant d'avoir copié `scene.sqlite3` (règle du dépôt).
