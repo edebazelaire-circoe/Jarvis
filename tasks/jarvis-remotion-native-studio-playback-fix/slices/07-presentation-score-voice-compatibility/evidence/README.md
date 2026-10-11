@@ -18,6 +18,22 @@ Tested HEAD `4497691d`; same rules (fake speech, the live Jarvis never contacted
 - I1: a Remotion scene without timeline is held during a Jarvis silence and said (`page_wait` reason `timeline_unresolved`). I2: a locked-sequence step 600 ms after the entry continues the entry (18 -> 299), never cut to the anchor.
 - I3: mutants M3, M7, M11 killed, each verified by applying it and restoring with `git checkout`.
 
+## Second rework (QA mutant, Agent 0 decision, Issue, polish)
+
+Tested HEAD `8151092a`; same rules (fake speech, the live Jarvis never contacted).
+- Mutant "`pending` treated as no media" (presenter `_drive_item` and `_next_deadline_ms`) killed by
+  `test_a_video_silence_whose_stage_sync_outlasts_its_target_is_held_while_pending_never_paced_by_the_target`: each half alone and both together fail it.
+- Agent 0 decision: the end of a Jarvis line (`line_heard`, `sequence_done`) is Jarvis pacing himself. The presenter sends `notify(NEXT, line_end=True)`,
+  committed as `Move.STEP`: a line ending 500 ms into an entry continues it (15 -> 299), never cut to 180. A user `next` while Jarvis speaks, or a cue,
+  still cuts (180 -> 299). Mutants killed: `line_end` always false; a user `next` mapped to STEP; the `_retime` wake removed; the `min(reached, until)`
+  clamp removed (2.5 s into a 2 s entry, no `done` yet: 59, not 75).
+- Real Chrome, release gate `-k "presenter or manual"`: 2 passed, 1 xfailed (presenter scrubber read-only, Slice 09/10, unchanged).
+
+Recorded, not fixed here:
+- A `SceneStage.show` that never resolves leaves the run stuck, and `stop` queues behind the playback lock. Predates Slice 07; owner Slice 09
+  (stage lifecycle).
+- A failed manifest read on an HTML scene is held with the "video timeline" message (`timeline_unresolved`). Accepted: an unreadable pin is held.
+
 ## Human checks
 
 Slice 07 claims **no** live voice, microphone, audio-routing or second-screen proof. These are for the Human, on the target machine (HV-RFX-07-01).
