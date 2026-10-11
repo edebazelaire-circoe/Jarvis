@@ -304,6 +304,10 @@ Le protocole `rs: 1` et les messages `rsh: 1` ne changent PAS (mêmes champs exa
 
 Risques résiduels : le premier affichage d'une scène (hors lecture continue) attend jusqu'à 450 ms sur son image 0 quand aucune ligne de temps ne vient ; une scène qui ne compile pas n'est découverte qu'à son tour (le cadre vivant reste affiché, avec l'erreur dite par la page de la scène une fois montée, comme pour un échange à chaud).
 
+### 11.8 Horloge de composition (native-studio-playback-fix, Slice 04) : un bac à sable par scène, maintenu
+
+Le protocole `rs: 1` ne change pas. L'horloge unique d'une présentation vidéo est une **carte d'intervalles** posée sur les compositions de chaque scène, chacune dans son propre cadre bac-à-sablé (même origine dédiée, même CSP, mêmes gardes statiques). Une racine générée `<Series>` / `<TransitionSeries>` qui ferait tourner plusieurs scènes écrites par l'agent dans UN seul document est **refusée pour l'instant** : elle franchirait l'isolation par scène. Décision, compromis et conditions d'une future revue de sécurité : [presentation-studio.md](presentation-studio.md) > *Composition clock (Level 3)*.
+
 ## 12. Slice 13 : variables typées et `inputProps` validées
 
 **Statut : contrat (Level 2) et implémentation (Level 3) livrés ; éprouvé dans un vrai Chrome sur un Core isolé** ([preuve](#126-tests-et-preuves)). Contrat produit : [presentation-studio.md](presentation-studio.md) > *Typed variables and fast edits*. Rien ici n'ajoute d'éditeur, de route ni de type de contrôle : la modification durable reste `control.set` / `control.reset` (CAS), le Player ne reçoit que des valeurs.

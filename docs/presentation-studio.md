@@ -111,6 +111,7 @@ reads hit the disk every time (the file is the truth, also after a restart). Rou
 | GET | `/v1/presentation-studio/presentations/{presentation_id}/variants/{variant_id}` | the `variant` document |
 | PUT | `/v1/presentation-studio/presentations/{presentation_id}/variants/{variant_id}` | `{expected_revision, title, scenes, art_direction_id, score_id}` -> the `variant` document (new or changed scenes are checked against their pinned prefab) |
 | GET | `/v1/presentation-studio/presentations/{presentation_id}/variants/{variant_id}/scenes/{scene_id}/controls` | what is editable on a scene (Slice 04, see *Scene and control contract*) |
+| GET | `/v1/presentation-studio/presentations/{presentation_id}/variants/{variant_id}/composition-clock` | `{presentation_id, variant_id, variant_revision, key, clock, problem}`, read-only (native-studio-playback-fix Slice 04, see *Composition clock (Level 3)*); relayed read-only by the Control Center |
 | GET | `/v1/presentation-studio/presentations/{presentation_id}/variants/{variant_id}/score` | `{score, problems}` (Slice 10, see *Score and cue contract*) |
 | POST | `/v1/presentation-studio/presentations/{presentation_id}/variants/{variant_id}/score` | `{expected_variant_revision, start_item_id, items, cues, sequences, recovery_points}` -> 201 `{score, problems: []}` (Slice 10) |
 | PUT | `/v1/presentation-studio/presentations/{presentation_id}/variants/{variant_id}/score` | `{expected_revision, ...content}` -> `{score, problems: []}` (Slice 10) |
@@ -2379,6 +2380,92 @@ What each removed capability becomes (from AUDIT.md § 2 and § 5):
 - **Implementation (Slice 04 chooses).** Two options give the same observable behaviour:
   - an interval map over per-scene sandboxed Players with preload and seamless swap. **Recommended**, because it keeps the per-scene sandbox;
   - a generated `<Series>` root, allowed only after a security review, because it crosses the per-scene sandbox.
+  - **Chosen (Slice 04):** the interval map. See *Composition clock (Level 3)* below.
+
+### Composition clock (Level 3)
+
+Status: **Level 3** (handoff `jarvis-remotion-native-studio-playback-fix`, Slice 04). It implements § 3 and the position rules of § 4. "Composition" here means the **video** composition (the variant's Remotion scenes end to end). It is unrelated to the Slice 19 *semantic composition* of variants (`presentation_studio_composition.py`, `.../compositions`).
+
+**Decision: one sandboxed Player per scene, one interval map over them.**
+- Each scene keeps its own Remotion Player in its own sandbox iframe, on the dedicated sandbox origin, with the same CSP and static guards ([remotion-isolation.md](remotion-isolation.md)). The isolation is unchanged.
+- The single clock is a **pure interval map** over the per-scene compositions. It is data plus arithmetic; it executes no scene code.
+- **Rejected for now: a generated multi-scene root** (`<Series>` / `<TransitionSeries>` over every scene). It would run several agent-authored scenes in **one** sandbox document. One scene could then read or alter another's DOM, props and timing. A failure or a hang in one would take the whole deck down. The per-scene static guards and size budgets would no longer bound what runs together. A future security review would have to show, at least:
+  - that the guards hold for a bundle that merges N sources (no shared mutable module state, no cross-scene global);
+  - per-scene failure isolation (an error boundary per `<Sequence>`, a typed failure per scene, § 4.11);
+  - a combined size and compile budget, and the same CSP;
+  - that the pins and the hot-reload gate still name one scene per mounted source.
+- **Cost of the choice.** A scene boundary is a swap between two Players. Seamless preload and swap (no blank, no visible remount) is Slice 05's work. Visual transitions across a boundary would need two Players on screen at once; none exist today.
+
+**Timebase and rounding (one integer rule).**
+- The **master fps** `F` is the highest `fps` among the scenes (an integer, 1..120).
+- A scene authored at `fps_k` for `d_k` frames lasts `len_k = ceil(d_k × F / fps_k)` master frames. It is never shorter than authored, and at most one master frame (under `1/F` s) longer.
+- Master local frame `m` shows native frame `floor(m × fps_k / F)`. Native frame `n` is master local frame `ceil(n × F / fps_k)`.
+- Because `fps_k ≤ F`, every native frame has at least one master frame, and native → master → native is the identity (tested on every frame).
+- Integers only: no position is ever a float. The readout is `f / F` seconds.
+- Why not a common multiple of the fps: the least common multiple of arbitrary fps up to 120 grows without bound, and an exact timebase is not needed once every native frame is reachable.
+
+**Transitions.** `transition_in_k` (master frames, **0 by default**, always 0 for the first scene) is how far scene `k` overlaps the end of scene `k-1`.
+- `start_0 = 0`; `start_k = start_(k-1) + len_(k-1) − transition_in_k`; `L = start_last + len_last`.
+- Every scene keeps at least one frame of its own: `transition_in_k + transition_in_(k+1) < len_k`. Otherwise the map is refused (`composition_transition_invalid`).
+- During an overlap the current scene is the **incoming** one, from its local frame 0 (§ 3).
+- No transition is drawn today; the map is only ready for them.
+
+**The map API.** Python: `jarvis/domain/composition_clock.py`, the one implementation. Browser: `jarvis/runtime/control_center_composition_clock.js` (`window.JarvisCompositionClock`), a direct port. One vector table runs through both and must agree exactly, errors included (`tests/unit/test_composition_clock_conformance_js.py`).
+
+| Python | JS | Meaning |
+| --- | --- | --- |
+| `scene_manifest(scene_id, composition)` | `sceneManifest(sceneId, composition)` | a scene from its manifest composition; the bounds are `remotion_timeline.checked_composition`, shared with the anchor map |
+| `build_composition(manifests, transitions=None)` | `build(manifests, transitions)` | the map: `fps` (= `F`), `scenes` (`start`, `length`, `transition_in`, native `fps` and `duration_in_frames`), `total_frames` (`L`) |
+| `map.locate(f)` | `map.locate(f)` | `scene_index`, `scene_id`, `local_frame`, `native_frame`, `local_progress` (= `local_frame / length`) |
+| `map.start_of(k)`, `map.frame_of(k, n)` | `map.startOf(k)`, `map.frameOf(k, n)` | the start of scene `k`; the `f` of native frame `n` of scene `k` (a Player clock tick) |
+| `map.next_start(f)`, `map.previous_start(f)` | `map.nextStart(f)`, `map.previousStart(f)` | § 4.4; `None` / `null` on the last scene (next disabled); previous from scene 1 is 0 |
+| `map.clamp(f)` | `map.clamp(f)` | explicit clamp to `0..L-1` (§ 4.9, after an edit shortens the deck) |
+| `Transport(frame, playing, ended)` | `transport(frame, playing, ended)` | the media clock state, a value |
+| `play`, `pause`, `seek(map, state, Seek.X, value)`, `tick(map, state, k, n, scene_ended=)` | `play`, `pause`, `seek(map, state, 'x', value)`, `tick(map, state, k, n, sceneEnded)` | the transport rules below |
+| `composition_key(presentation_id, variant_id, pins)`, `to_wire(map, key=)` | `fromWire(wire, {key})` | the served map; the browser recomputes it and refuses a mismatch or another key (`composition_wire_mismatch`) |
+
+**Transport rules.** They are pure. The play state is always kept, unless said otherwise.
+- `next`, `previous`, `scene k` (thumbnail): go to a scene start, so the target scene starts at local frame 0. `next` on the last scene changes nothing.
+- `scrub f`: exactly `f`. `home`: 0. `end`: `L-1`. `step ±1`: only while paused.
+- `pause` holds exactly `f`; `play` continues from `f`.
+- Playing onto `L-1` gives `ended`: the final frame is held, paused. `play` then changes nothing; only `replay` (frame 0, playing) restarts. It never wraps.
+- `tick`: the Player of scene `k` reports native frame `n`, so `f = frame_of(k, n)`. When that Player reports its own end, the next scene starts at its local frame 0; after the last scene, `ended`. A tick never resumes a paused clock.
+- **Errors, never silent defaults.** These all raise with their code:
+  - an empty deck (`composition_empty`);
+  - an invalid manifest or a duplicate scene (`composition_scene_invalid`);
+  - a bad overlap (`composition_transition_invalid`);
+  - a frame or scene out of range (`composition_frame_out_of_range`, `composition_scene_out_of_range`).
+
+**Where Core serves it.** `GET /v1/presentation-studio/presentations/{presentation_id}/variants/{variant_id}/composition-clock`, relayed read-only by the Control Center at `/api/presentation-studio/presentations/.../composition-clock`.
+- Answer: `{presentation_id, variant_id, variant_revision, key, clock, problem}`.
+  - `clock` is the wire map `{version: 1, key, fps, total_frames, scenes: [{scene_id, composition_id, fps, duration_in_frames, start, length, transition_in}]}`.
+  - When the variant has no video, `clock` is `null` and `problem` is `{code, message, scene_id}`. The codes: an empty variant (`composition_empty`), an HTML scene (`composition_scene_not_remotion`), an invalid, unknown or tampered pin (`composition_scene_invalid`). This is what disables « Lire » with its reason (§ 4.2).
+  - A catalogue disk fault is a 500 with its real cause.
+- It reads only the manifests of the pins (`PrefabService.remotion_composition`): no source byte, no compilation, nothing written.
+- Owner: `jarvis/core/presentation_studio_composition_clock.py`. Journal: `core.presentation_studio.composition_clock_built` (info) and `core.presentation_studio.composition_clock_refused` (warning), ids and counts only.
+- **Key.** `key = composition_key(presentation_id, variant_id, ordered (scene_id, prefab_id, version))`.
+  - A pinned version is immutable, so the same key means the same map.
+  - Another variant, another pin or another order gives another key. A renamed title keeps the key.
+- The playback view (`GET /v1/presentation-studio/playback`) carries the same `composition_key` while a run is active. A page holding a map with another key must refetch it, never reuse it. There is one map per variant, named by its key, and no second route for runs.
+
+**Direction of sync (one time authority).**
+- **Player clock → `f`.** The live Player's `clock {frame}` is advice (*Remotion timeline bridge › Security and authority*); it goes through `tick`. From `f`, through `locate`, come the scene index, the scene strip, the global bar and the time readout.
+- **UI seek → `f` → Player.** A button, a key, a thumbnail or the scrub computes the target `f` with `seek`. The adapter then seeks the Player of `locate(f).scene_index` to `locate(f).native_frame`.
+- **Core's score position is separate.** In a presenter run, Core owns the score position. It reaches media frames **only** through explicit anchors (`remotion_timeline.build_frame_map`). It never writes `f`, and `f` never moves the score.
+- Core holds **no** media clock for continuous video.
+
+**What Slices 05 to 07 wire or retire.**
+- **Slice 05** (continuous sequencing):
+  - loads `control_center_composition_clock.js` into the Variants page (no page includes it yet);
+  - fetches `.../composition-clock`, preloads the scene at `start_(k+1)`, and swaps on `tick(..., scene_ended=True)`;
+  - stops the autoplay deadlines (`presentation_studio_autoplay.py`: `scope` `scene`/`all`, `GRACE_MS`, `LOAD_ALLOWANCE_MS`, `DEFAULT_DWELL_MS`) and `SegmentClock` from ever advancing, cutting or re-timing a Remotion scene.
+- **Slice 06** (Player lifecycle):
+  - makes `Transport` the Variants transport state;
+  - sets `loop: false` and `moveToBeginningWhenEnded: false`;
+  - retires the `rs-bar` and any other position not derived from `f`.
+- **Slice 07** (presenter and score):
+  - keeps `SegmentClock` and the timeline follower (`JarvisRemotionFrame.createTimelineFollower`) **only** for score anchors in a presenter run, without a drift re-seek against `f`;
+  - makes a scene entry start at local frame 0 (§ 5).
 
 ### 2026-10 § 4. Transport semantics (continuous video, the default)
 

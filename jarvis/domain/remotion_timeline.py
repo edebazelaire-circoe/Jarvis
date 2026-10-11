@@ -14,6 +14,11 @@ C'est un **adaptateur pur**, sans E/S ni horloge : la partition (`Score`, `Score
 3. `SegmentClock` : le temps **joué** (pauses exclues) du segment courant selon l'horloge de Core, et un compteur `seq` qui
    n'avance que lorsque le segment change (le navigateur distingue ainsi « aller au segment » de « reprendre »).
 
+Horloge de composition (handoff jarvis-remotion-native-studio-playback-fix, Slice 04) : la position de la vidéo continue est l'image
+de composition `f` de `composition_clock.py`, jamais `SegmentClock`. `SegmentClock` reste le temps joué d'un segment de PARTITION (lecture
+de présentateur) ; la Slice 05 lui retire tout pouvoir d'avancer, couper ou recaler une scène vidéo (échéances de `presentation_studio_autoplay`,
+recalage de dérive du suiveur), la Slice 07 le garde pour les seules ancres du présentateur.
+
 Rien ici ne parle, n'appelle un outil ni ne déclenche une cue : le résultat est une **description** (`timeline` de la vue de
 lecture) que le navigateur applique au lecteur Remotion. Le lecteur ne renvoie jamais rien à Core.
 """
@@ -82,15 +87,10 @@ def frame_of_ms(ms: int, fps: int, duration_frames: int) -> int:
     return max(0, min(duration_frames - 1, (ms * fps + 500) // 1000))
 
 
-def build_frame_map(scene_id: str, composition: Mapping[str, Any], anchors: Sequence[Any], *, whole_scene: bool = False) -> FrameMap | None:
-    """`composition` : `{id, fps, duration_in_frames}` du manifeste (ou `{id, fps, durationInFrames}` du descripteur).
-    `anchors` : les `ScoreAnchor` de la scène (`anchor_id`, `at_ms`). `None` si la scène n'a aucune ancre : rien ne la pilote,
-    elle se joue comme avant (Slice 10). `whole_scene` (lecture enchaînée, Slice 23) : une scène sans ancre a quand même une ligne de
-    temps, d'un seul segment (de 0 à la dernière image) : elle se joue UNE fois et tient sa dernière image, au lieu de boucler, pour que
-    l'enchaînement sache quand elle a fini."""
+def checked_composition(composition: Mapping[str, Any]) -> tuple[str, int, int]:
+    """`(id, fps, duration_in_frames)` d'une composition déclarée, ou `TimelineError`. Seule validation des bornes d'une composition
+    côté Core : la table d'ancres ci-dessous et l'horloge de composition (`composition_clock.py`) la partagent."""
 
-    if not anchors and not whole_scene:
-        return None
     comp_id = composition.get("id")
     fps = composition.get("fps")
     duration = composition.get("duration_in_frames", composition.get("durationInFrames"))
@@ -100,6 +100,19 @@ def build_frame_map(scene_id: str, composition: Mapping[str, Any], anchors: Sequ
         raise TimelineError(f"the composition fps must be an integer 1..{MAX_FPS}")
     if type(duration) is not int or not 1 <= duration <= MAX_DURATION_FRAMES:
         raise TimelineError(f"the composition duration must be an integer 1..{MAX_DURATION_FRAMES} frames")
+    return comp_id, fps, duration
+
+
+def build_frame_map(scene_id: str, composition: Mapping[str, Any], anchors: Sequence[Any], *, whole_scene: bool = False) -> FrameMap | None:
+    """`composition` : `{id, fps, duration_in_frames}` du manifeste (ou `{id, fps, durationInFrames}` du descripteur).
+    `anchors` : les `ScoreAnchor` de la scène (`anchor_id`, `at_ms`). `None` si la scène n'a aucune ancre : rien ne la pilote,
+    elle se joue comme avant (Slice 10). `whole_scene` (lecture enchaînée, Slice 23) : une scène sans ancre a quand même une ligne de
+    temps, d'un seul segment (de 0 à la dernière image) : elle se joue UNE fois et tient sa dernière image, au lieu de boucler, pour que
+    l'enchaînement sache quand elle a fini."""
+
+    if not anchors and not whole_scene:
+        return None
+    comp_id, fps, duration = checked_composition(composition)
     count = len(anchors)
     if not anchors:
         return FrameMap(scene_id, comp_id, fps, duration, ())

@@ -80,6 +80,7 @@ from jarvis.core.presentation_studio_pins import StudioPinRegistry
 from jarvis.core.presentation_studio_playback import PresentationStudioPlaybackService
 from jarvis.core.presentation_studio_compare import PresentationStudioCompare
 from jarvis.core.presentation_studio_composition import PresentationStudioComposition
+from jarvis.core.presentation_studio_composition_clock import PresentationStudioCompositionClock
 from jarvis.core.presentation_studio_scene_variants import PresentationStudioSceneVariants
 from jarvis.core.presentation_studio_template import PresentationStudioTemplates
 from jarvis.core.presentation_studio_upgrades import PresentationStudioUpgrades
@@ -512,6 +513,10 @@ class JarvisCoreApplication:
         # Slice 16), jamais de mise a jour automatique ni de pin remplace sans variante.
         self.presentation_studio_upgrades = PresentationStudioUpgrades(
             self.presentation_studio, self.presentation_studio_variants, self.prefabs, edit=self.presentation_studio_edit)
+        # Horloge de composition (native-studio-playback-fix Slice 04) : la carte pure des scenes Remotion d'une variante, en lecture
+        # seule (manifestes des pins) ; Core ne tient aucune horloge de media pour la video continue.
+        self.presentation_studio_composition_clock = PresentationStudioCompositionClock(
+            self.presentation_studio, self.prefabs, diagnostics=diagnostics)
         # Slice 06 x Slice 12 : le rechargement lit la position de la lecture et patche la fenetre `studio-stage-<run_id>` que
         # le stage de la lecture lui a liee (`stage_observer`) ; une scene non affichee est seulement re-epinglee.
         self.presentation_studio_reload.bind_playback(self.presentation_studio_playback)

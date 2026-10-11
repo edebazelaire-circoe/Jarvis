@@ -120,6 +120,9 @@
       &&(tl.prefab===undefined||(typeof tl.prefab==='string'&&tl.prefab.length>0&&tl.prefab.length<=200));
   }
 
+  /* À retirer pour la vidéo (native-studio-playback-fix, Slices 05-07) : ce suiveur applique le temps de PARTITION de Core (segment,
+     `play_ms`, recalage de dérive). La vidéo continue suit l'horloge de composition (`control_center_composition_clock.js`) : ce
+     suiveur ne doit plus jamais déplacer, couper ou relancer l'image `f` ; il ne reste que pour les ancres d'une lecture de présentateur. */
   function createTimelineFollower(deps){
     const now=deps.now||(()=>Date.now());
     const log=deps.log||(()=>{});

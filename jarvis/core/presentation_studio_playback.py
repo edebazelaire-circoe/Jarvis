@@ -60,6 +60,8 @@ from jarvis.domain.presentation_studio_roles import (
     plan_mode_entry, requirements,
 )
 from jarvis.domain.presentation_studio_score import parse_score
+from jarvis.core.presentation_studio_composition_clock import pins_of
+from jarvis.domain.composition_clock import composition_key
 from jarvis.domain.remotion_timeline import (
     UNRESOLVED as TIMELINE_UNRESOLVED, FrameMap, SegmentClock, build_frame_map, target_segment, timeline_wire,
 )
@@ -1220,6 +1222,9 @@ class PresentationStudioPlaybackService(AutoPlayMixin, ScenePreviewMixin):
                 view["timeline"] = timeline
             view["follower"] = self._follower()
             view["scope"] = self._scope.value
+            # Slice 04 (native-studio-playback-fix): which composition-clock map this run plays (`GET .../composition-clock` serves the
+            # same key). A browser holding a map with another key must refetch it, never reuse it.
+            view["composition_key"] = composition_key(self._presentation_id, self._variant_id, pins_of(self._scenes.values()))
             ahead = self._next_scene_id()
             if ahead is not None:
                 scene = self._scenes[ahead]

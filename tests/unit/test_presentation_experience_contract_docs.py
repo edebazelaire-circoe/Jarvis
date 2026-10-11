@@ -92,3 +92,29 @@ def test_superseded_statements_point_to_the_contract():
     assert "plays ONCE and holds its last image (it does not loop), so that the chain knows when it is done. *(Superseded 2026-10" in bridge
     for name in ("remotion-studio.md", "presentation-engine.md", "remotion-isolation.md", "OPERATIONS.md"):
         assert ANCHOR in page(name), name
+
+
+def test_the_composition_clock_subsection_records_the_decision_the_rule_and_an_api_that_exists():
+    """Slice 04: the Level 3 subsection names the chosen isolation path, the integer rule, the route and the API of both ports."""
+
+    from pathlib import Path
+
+    text = contract()
+    assert text.count("### Composition clock (Level 3)") == 1
+    for needle in ("**Decision: one sandboxed Player per scene, one interval map over them.**",
+                   "**Rejected for now: a generated multi-scene root**", "A future security review would have to show",
+                   "`len_k = ceil(d_k × F / fps_k)`", "native → master → native is the identity", "**0 by default**",
+                   "/v1/presentation-studio/presentations/{presentation_id}/variants/{variant_id}/composition-clock`",
+                   "`composition_key`", "**Player clock → `f`.**", "**UI seek → `f` → Player.**",
+                   "Core holds **no** media clock for continuous video.", "**Slice 05**", "**Slice 06**", "**Slice 07**"):
+        assert needle in text, needle
+    root = Path(__file__).resolve().parents[2]
+    python = (root / "jarvis" / "domain" / "composition_clock.py").read_text(encoding="utf-8")
+    js = (root / "jarvis" / "runtime" / "control_center_composition_clock.js").read_text(encoding="utf-8")
+    for name in ("scene_manifest", "build_composition", "def locate", "def start_of", "def frame_of", "def next_start",
+                 "def previous_start", "def clamp", "class Transport", "def play", "def pause", "def seek", "def tick",
+                 "def composition_key", "def to_wire"):
+        assert name in python and name.removeprefix('def ').removeprefix('class ') in text, name
+    for name in ("sceneManifest", "build", "locate", "startOf", "frameOf", "nextStart", "previousStart", "clamp", "transport",
+                 "play", "pause", "seek", "tick", "fromWire"):
+        assert (f"function {name}(" in js or f"const {name}=" in js) and name in text, name

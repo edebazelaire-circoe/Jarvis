@@ -20,6 +20,7 @@ Core rendus tels quels, erreurs et résultats `refused`/`stale` compris ; Core i
 | `GET .../presentations/{presentation_id}/reloads` | idem (Slice 06) : derniers rechargements, scènes non confirmées |
 | `GET .../variants/{variant_id}/history` | idem (Slice 08) |
 | `GET .../variants/{variant_id}/art-direction` | idem (Slice 07, **lecture seule** : le chip de l'inspecteur ; création, remplacement, repli et candidates restent hors du relais) |
+| `GET .../variants/{variant_id}/composition-clock` | idem (native-studio-playback-fix Slice 04, **lecture seule**) : la carte de l'horloge de composition de la variante |
 | `POST .../variants/{variant_id}/undo` et `.../redo` | idem, **`actor` forcé à `user`** (Slice 08) |
 | `POST /api/presentation-studio/presentations` | idem (Slice 20, **creation**), **`actor` force a `user`** ; corps `{title, engine?, experimental_confirmed?, reason?}` : la SEULE porte par laquelle un moteur est nomme ; `slidecar` exige `experimental_confirmed: true` |
 | `POST .../presentations/{presentation_id}/experiment` | idem (Slice 20) : copie « experience Slidecar » = NOUVEAU document, **`actor` force a `user`** ; corps `{experimental_confirmed, reason?}` |
@@ -77,6 +78,7 @@ _READ_ROUTES = (
     ("GET", "studio_reloads", "/{presentation_id}/reloads"),
     ("GET", "studio_history", "/{presentation_id}/variants/{variant_id}/history"),
     ("GET", "studio_art_direction", "/{presentation_id}/variants/{variant_id}/art-direction"),
+    ("GET", "studio_composition_clock", "/{presentation_id}/variants/{variant_id}/composition-clock"),
 )
 PLAYBACK_ROUTE = "/api/presentation-studio/playback"
 #: Rail des presentations : la liste (lecture), le rapport de la page (ecran) et les gestes persistants (acteur force `user`).

@@ -18,6 +18,7 @@ cette Slice (Slice 05+ : acteur forcé `user`). Contrat :
 | GET | `/v1/presentation-studio/presentations/{presentation_id}/variants/{variant_id}` | le document `variant` |
 | PUT | `/v1/presentation-studio/presentations/{presentation_id}/variants/{variant_id}` | corps `{expected_revision, title, scenes, art_direction_id, score_id}` -> le document `variant` |
 | GET | `/v1/presentation-studio/presentations/{presentation_id}/variants/{variant_id}/scenes/{scene_id}/controls` | introspection (Slice 04) : `{presentation_id, variant_id, variant_revision, scene_id, order, title, section, prefab, preview, controls, anchors, payload, problems, stage}` |
+| GET | `/v1/presentation-studio/presentations/{presentation_id}/variants/{variant_id}/composition-clock` | native-studio-playback-fix Slice 04 : `{presentation_id, variant_id, variant_revision, key, clock, problem}` ; `clock` = la carte de l'horloge de composition (`{version, key, fps, total_frames, scenes: [{scene_id, composition_id, fps, duration_in_frames, start, length, transition_in}]}`) ou `null` avec `problem: {code, message, scene_id}` (variante sans video) ; **n'ecrit rien** |
 | GET | `/v1/presentation-studio/presentations/{presentation_id}/variants/{variant_id}/score` | Slice 10 : `{score, problems}` (`problems` : références qui ne se résolvent plus dans la variante actuelle) |
 | POST | `/v1/presentation-studio/presentations/{presentation_id}/variants/{variant_id}/score` | Slice 10 : corps `{expected_variant_revision, start_item_id, items, cues, sequences, recovery_points}` -> 201 `{score, problems: []}` ; la variante reçoit `score_id` |
 | PUT | `/v1/presentation-studio/presentations/{presentation_id}/variants/{variant_id}/score` | Slice 10 : corps `{expected_revision, ...contenu}` (remplacement) -> `{score, problems: []}` |
@@ -102,6 +103,7 @@ class PresentationStudioProtocolRoutes:
                      g(self.fallback_art_direction)),
             web.post(PREFIX + "/{presentation_id}/variants/{variant_id}/art-direction/candidates",
                      g(self.art_direction_candidates)),
+            web.get(PREFIX + "/{presentation_id}/variants/{variant_id}/composition-clock", g(self.composition_clock)),
             web.get(PREFIX + "/{presentation_id}/variants/{variant_id}/score", g(self.get_score)),
             web.post(PREFIX + "/{presentation_id}/variants/{variant_id}/score", g(self.create_score)),
             web.put(PREFIX + "/{presentation_id}/variants/{variant_id}/score", g(self.save_score)),
@@ -186,6 +188,14 @@ class PresentationStudioProtocolRoutes:
         variant = await self._service.get_variant(request.match_info["presentation_id"],
                                                   request.match_info["variant_id"])
         return web.json_response(variant.to_document())
+
+    async def composition_clock(self, request: web.Request) -> web.Response:
+        """La carte de l'horloge de composition de la variante (Slice 04 de native-studio-playback-fix) ; lecture seule."""
+
+        _only(request, set())
+        info = request.match_info
+        return web.json_response(await self._core.presentation_studio_composition_clock.view(info["presentation_id"],
+                                                                                              info["variant_id"]))
 
     async def scene_controls(self, request: web.Request) -> web.Response:
         _only(request, set())

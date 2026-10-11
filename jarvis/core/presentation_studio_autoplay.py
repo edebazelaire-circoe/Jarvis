@@ -18,6 +18,12 @@ pas dit `started`), après laquelle Core avance seul (page fermée, scène qui n
 est recalculée à la reprise sur le TEMPS JOUÉ (pauses exclues). Un rapport d'un autre segment (`seq` périmé), ou venu trop tôt pour avoir
 pu être vrai, est ignoré.
 
+**À retirer pour la vidéo (handoff jarvis-remotion-native-studio-playback-fix, Slices 05 et 07).** La vidéo continue (« Lire ») n'a
+plus d'échéance ni de portée : l'horloge de composition du lecteur de Variantes (`jarvis/domain/composition_clock.py`) est la seule
+autorité de `f`, et Core n'en tient aucune copie. Les portées `scene`/`all`, leurs échéances (`GRACE_MS`, `LOAD_ALLOWANCE_MS`) et le
+pas `DEFAULT_DWELL_MS` ne doivent plus jamais avancer une scène Remotion ; il ne reste, pour une lecture de présentateur, que le rythme
+d'un élément SANS segment de média (scène HTML, silence). Contrat : `docs/presentation-studio.md` > *Composition clock (Level 3)*.
+
 Un mixin, comme `presentation_studio_preview` : même verrou, même scène, même état ; dans son propre fichier pour que le service reste
 une seule responsabilité.
 """
