@@ -18,6 +18,8 @@ from __future__ import annotations
 
 import base64
 from collections.abc import Mapping
+import hashlib
+import json
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -34,7 +36,12 @@ CONFIRM_FIELD = "confirm_publish"
 DISCARD_FIELD = "discard_unpublished"
 #: Au plus ce nombre de chemins est nommé dans un message ou dans la vue (le compte, lui, est exact).
 MAX_NAMED_PATHS = 20
-_PUBLISH_KEYS = frozenset({"presentation_id", "variant_id", "scene_id", "base", CONFIRM_FIELD})
+#: Champ de la publication : l'empreinte de la liste de fichiers que la confirmation a montrée (`work_copy.digest` de la vue). Core
+#: refuse (`remotion_studio_publish_listing_changed`) si l'espace ne donne plus cette empreinte au moment de la lecture : ce qui est
+#: publié est exactement ce que l'utilisateur a confirmé (QA Slice 12, I1).
+DIGEST_FIELD = "digest"
+_PUBLISH_KEYS = frozenset({"presentation_id", "variant_id", "scene_id", "base", DIGEST_FIELD, CONFIRM_FIELD})
+_HEX = frozenset("0123456789abcdef")
 _ID_CHARS = frozenset("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_-")
 WIDENING_REFUSAL = ("no trust widening exists (HV-RFX-12-01): a published scene imports only " + ", ".join(SCENE_ALLOWED_IMPORTS)
                     + "; other packages, Node built-ins, host files or network would need an explicit per-project Human approval")
@@ -48,6 +55,8 @@ class WorkspaceDiff:
     base: Mapping[str, str]
     changed: Mapping[str, bytes | None]
     links: tuple[str, ...] = ()
+    #: `listing_digest` des octets LUS pour ce relevé (ceux qui partiraient) ; comparée à celle que la confirmation a montrée.
+    digest: str = ""
 
     @property
     def paths(self) -> tuple[str, ...]:
@@ -84,6 +93,16 @@ class PublishRequest:
     variant_id: str
     scene_id: str
     base: StudioPin
+    digest: str = ""
+
+
+def listing_digest(entries: Mapping[str, str | None]) -> str:
+    """Empreinte d'une liste de modifications non publiées : `{chemin: empreinte du contenu | "link" | None (supprimé)}`. Le statut
+    (relevé du disque) et la publication (octets lus) la calculent sur les mêmes entrées : égales si et seulement si l'espace n'a pas
+    changé entre la confirmation et la lecture."""
+
+    payload = json.dumps(sorted((str(path), value) for path, value in entries.items()), separators=(",", ":"))
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
 
 def _named(paths: list[str]) -> str:
@@ -172,12 +191,15 @@ def parse_publish(raw: object) -> PublishRequest:
 
     if not isinstance(raw, Mapping) or set(raw) != _PUBLISH_KEYS:
         raise StudioError(C.INVALID, "the body must be exactly {presentation_id, variant_id, scene_id, base: {prefab_id, version}, "
-                                     f"{CONFIRM_FIELD}: true}}")
+                                     f"{DIGEST_FIELD}, {CONFIRM_FIELD}: true}}")
     if raw.get(CONFIRM_FIELD) is not True:
         raise StudioError(C.PUBLISH_CONFIRM_REQUIRED, "publishing writes a new version into the variant: send "
                                                       f"{CONFIRM_FIELD}: true after the user confirmed")
     base = parse_pin(raw.get("base"))
-    return PublishRequest(_ident(raw, "presentation_id"), _ident(raw, "variant_id"), _ident(raw, "scene_id"), base)
+    digest = raw.get(DIGEST_FIELD)
+    if not isinstance(digest, str) or len(digest) != 64 or not set(digest) <= _HEX:
+        raise StudioError(C.INVALID, f"{DIGEST_FIELD} must be the work_copy.digest the confirmation showed (64 hex characters)")
+    return PublishRequest(_ident(raw, "presentation_id"), _ident(raw, "variant_id"), _ident(raw, "scene_id"), base, digest)
 
 
 def split_discard(raw: object) -> tuple[dict[str, Any], bool]:
@@ -191,5 +213,5 @@ def split_discard(raw: object) -> tuple[dict[str, Any], bool]:
     return body, raw.get(DISCARD_FIELD) is True
 
 
-__all__ = ["CONFIRM_FIELD", "DISCARD_FIELD", "PREFAB_ID", "PublishPlan", "PublishRequest", "WIDENING_REFUSAL", "WorkspaceDiff",
-           "parse_publish", "plan_publish", "refused_imports", "split_discard", "summary_of"]
+__all__ = ["CONFIRM_FIELD", "DIGEST_FIELD", "DISCARD_FIELD", "PREFAB_ID", "PublishPlan", "PublishRequest", "WIDENING_REFUSAL", "WorkspaceDiff",
+           "listing_digest", "parse_publish", "plan_publish", "refused_imports", "split_discard", "summary_of"]

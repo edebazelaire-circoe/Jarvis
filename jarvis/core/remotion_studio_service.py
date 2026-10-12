@@ -139,7 +139,7 @@ class RemotionStudioService:
         """Rend `state` conforme au processus (vivant ? actif ? fichiers modifiés ?). Lecture seule hors constat d'une disparition.
         Les modifications non publiées sont relevées quel que soit le statut (Slice 12) : elles survivent à un arrêt et à Core."""
 
-        state.modified_files = list(self._runner.modified_work()) if state.pin is not None else []
+        self._relist(state)
         if state.status is not S.READY:
             return
         if not self._runner.is_alive(state.process_ref):
@@ -155,6 +155,23 @@ class RemotionStudioService:
         state.ws_open = ws if type(ws) is int and ws >= 0 else 0
         blocked = activity.get("blocked_egress")
         state.egress_blocked = blocked if type(blocked) is int and blocked >= 0 else 0
+
+    def _relist(self, state: StudioState) -> None:
+        """(Fil.) Fichiers non publiés de l'espace et empreinte de leur liste (`work_copy.digest`, renvoyée par la page avec `publish`)."""
+
+        if state.pin is None:
+            state.modified_files, state.work_digest = [], ""
+            return
+        paths, digest = self._runner.workspace_listing()
+        state.modified_files, state.work_digest = list(paths), digest
+
+    def _report_rotated(self) -> None:
+        """La rotation de `studio-edits/` (5 dossiers) retire le plus ancien : jamais en silence, chaque nom retiré est journalisé."""
+
+        rotated = self._runner.take_rotated()
+        if rotated:
+            self._emit("edits_rotated", f"studio-edits keeps {D.MAX_SAVED_EDITS} folders: removed the oldest: {', '.join(rotated)}",
+                       level="warning", removed=list(rotated), kept=D.MAX_SAVED_EDITS)
 
     # ------------------------------------------------------------------ lecture
 
@@ -257,7 +274,7 @@ class RemotionStudioService:
         state.last_error_code = state.last_error_detail = state.stop_reason = ""
         state.started_at, state.ready_at, state.synced_at = self._clock(), None, None
         state.syncs = 0  # par lancement : « rafraîchie N fois » ne compte que ce Studio-ci
-        state.diagnostics, state.modified_files = [], list(edited) if keep else []
+        state.diagnostics, state.modified_files, state.set_aside = [], list(edited) if keep else [], []
         await asyncio.to_thread(self._save, state)
         self._emit("starting", "Studio starting", prefab_id=pin.prefab_id, version=pin.version)
         try:
@@ -270,6 +287,15 @@ class RemotionStudioService:
                 if report.edits_saved:
                     state.edits_saved += len(report.edits_saved)
                     self._note(state, f"{len(report.edits_saved)} unpublished file(s) were set aside (studio-edits) as confirmed")
+            # QA Slice 12 (B1) : avant CHAQUE lancement, chemin gardé compris, l'espace n'a que sa forme. Node exécuterait un
+            # `remotion.config.js` posé au premier niveau ; un lien ou une jonction ferait servir un fichier d'ailleurs. Mis de côté
+            # (jamais supprimé), dit et journalisé ; un déplacement impossible lève : pas de lancement.
+            aside = await asyncio.to_thread(self._runner.enforce_shape, files)
+            if aside:
+                state.set_aside = list(aside[:D.MAX_SET_ASIDE_NAMED])
+                self._emit("workspace_set_aside", "Studio launch: files outside the workspace shape were set aside (studio-edits)",
+                           level="warning", count=len(aside), paths=list(aside[:MAX_NAMED_PATHS]), prefab_id=pin.prefab_id, version=pin.version)
+            await asyncio.to_thread(self._relist, state)
             launched = await asyncio.to_thread(self._launch_with_retry)
         except StudioError as exc:
             self._fail(state, exc.code, exc.detail)
@@ -278,10 +304,12 @@ class RemotionStudioService:
             self._emit("start_crashed", f"Studio start raised {type(exc).__name__}", level="error")
             self._fail(state, C.INTERNAL_ERROR, f"{type(exc).__name__}: {exc}")
             return
+        finally:
+            self._report_rotated()
         now = self._clock()
         state.status, state.port, state.process_ref, state.launch_id = S.READY, launched.port, launched.process_ref, launched.launch_id
         state.ready_at = state.last_activity_at = now
-        state.diagnostics = []
+        state.diagnostics = [set_aside_line(state.set_aside)] if state.set_aside else []
         await asyncio.to_thread(self._save, state)
         self._start_watch()
         self._emit("ready", "Studio ready", port=launched.port, prefab_id=pin.prefab_id, version=pin.version,
@@ -330,6 +358,8 @@ class RemotionStudioService:
             self._emit("sync_failed", f"Studio sync failed: {exc.code.value}", level="error", code=exc.code.value)
             await asyncio.to_thread(self._save, state)
             raise
+        finally:
+            self._report_rotated()
         state.pin, state.source_digest, state.workspace_digest = pin, source.digest, D.workspace_digest(files)
         state.composition = source.block.composition.to_dict()
         state.synced_at, state.syncs = self._clock(), state.syncs + 1
@@ -337,7 +367,7 @@ class RemotionStudioService:
         if report.edits_saved:
             state.edits_saved += len(report.edits_saved)
             self._note(state, f"{len(report.edits_saved)} unpublished file(s) were set aside (studio-edits) as confirmed")
-        state.modified_files = []
+        await asyncio.to_thread(self._relist, state)
         await asyncio.to_thread(self._save, state)
         self._emit("synced", "Studio work copy refreshed (hot reload)", prefab_id=pin.prefab_id, version=pin.version,
                    written=report.written, removed=report.removed, unchanged=report.unchanged)
@@ -365,7 +395,7 @@ class RemotionStudioService:
             return
         state.status, state.port, state.process_ref, state.launch_id = S.STOPPED, None, "", ""
         state.stop_reason, state.ws_open = reason, 0
-        state.modified_files = list(await asyncio.to_thread(self._runner.modified_work)) if state.pin is not None else []
+        await asyncio.to_thread(self._relist, state)
         state.last_error_code = state.last_error_detail = ""
         await asyncio.to_thread(self._save, state)
         self._emit("stopped", "Studio stopped", reason=reason)
@@ -393,7 +423,7 @@ class RemotionStudioService:
     async def publish(self, request: PublishRequest) -> dict[str, Any]:
         """Publie l'espace de travail dans la scène d'une variante, comme NOUVELLE version (jamais une réécriture). Sous le verrou du
         service : aucune ouverture ni synchronisation ne remplace l'espace pendant ce temps. Refus typés, rien de publié : base vue par
-        la page différente, rien à publier, fichier non publiable (lien, premier niveau, chemin), import hors liste, scène changée
+        la page différente, fichiers changés depuis la confirmation (empreinte de la liste, `request.digest`), rien à publier, fichier non publiable (lien, premier niveau, chemin), import hors liste, scène changée
         depuis la base (conflit), refus de la porte (compilation, valeurs, partition). Une version qui tient rebase l'espace."""
 
         publisher = self._publisher
@@ -411,6 +441,12 @@ class RemotionStudioService:
                                                            f"{request.base.prefab_id} v{request.base.version}: read Remotion Studio again",
                                   extra={"base": state.pin.to_dict()})
             diff = await asyncio.to_thread(self._runner.workspace_diff)
+            if diff.digest != request.digest:  # QA Slice 12 (I1) : on ne publie que ce que la confirmation a montré
+                self._emit("publish_listing_changed", "Remotion Studio publish refused: the workspace changed since the confirmation",
+                           level="warning", **target, count=len(diff.paths))
+                raise StudioError(C.PUBLISH_LISTING_CHANGED, f"the workspace files changed since the confirmation ({len(diff.paths)} file(s) "
+                                                             "now): nothing was published; read the list again and confirm it",
+                                  extra={"count": len(diff.paths), "files": list(diff.paths[:MAX_NAMED_PATHS]), "digest": diff.digest})
             current, revision = await publisher.current(request.presentation_id, request.variant_id, request.scene_id)
             if current != state.pin:
                 return await self._publish_moved(state, diff, current, target)
@@ -467,7 +503,7 @@ class RemotionStudioService:
         await asyncio.to_thread(self._runner.rebase_work, files)
         state.pin, state.source_digest, state.workspace_digest = pin, source.digest, D.workspace_digest(files)
         state.composition = source.block.composition.to_dict()
-        state.modified_files = list(await asyncio.to_thread(self._runner.modified_work))
+        await asyncio.to_thread(self._relist, state)
         await asyncio.to_thread(self._save, state)
 
     # ------------------------------------------------------------------ surveillance (inactivité, disparition)
@@ -604,7 +640,10 @@ class RemotionStudioService:
 
         if state.pin is None:
             return
-        saved = self._runner.save_modified()
+        try:
+            saved = self._runner.save_modified()
+        finally:
+            self._report_rotated()
         if saved:
             state.edits_saved += len(saved)
             self._note(state, f"{len(saved)} unpublished file(s) copied to studio-edits before a change of the Remotion capability")
@@ -618,6 +657,14 @@ class RemotionStudioService:
             await asyncio.to_thread(self._backup_before_change, state)
             if state.process_ref:
                 await asyncio.to_thread(self._kill_or_raise, state)
+
+
+def set_aside_line(paths: list[str]) -> str:
+    """La phrase (diagnostics de la vue) d'un lancement qui a mis de côté ce qui n'était pas la forme de l'espace (B1)."""
+
+    named = ", ".join(paths[:MAX_NAMED_PATHS]) + (f" (+{len(paths) - MAX_NAMED_PATHS})" if len(paths) > MAX_NAMED_PATHS else "")
+    return (f"{len(paths)} item(s) outside the workspace shape were set aside in studio-edits before the launch (never run, never "
+            f"published): {named}")
 
 
 def _sha256(data: bytes) -> str:

@@ -12,7 +12,7 @@ from typing import Any
 import hashlib
 
 from jarvis.domain.remotion_studio import StudioError, StudioErrorCode as C
-from jarvis.domain.remotion_studio_workspace import WorkspaceDiff
+from jarvis.domain.remotion_studio_workspace import WorkspaceDiff, listing_digest
 from jarvis.ports.remotion_studio import LaunchResult, SyncReport
 
 
@@ -33,6 +33,10 @@ class FakeStudioRunner:
         self.modified: tuple[str, ...] | None = None  # forcé par un test ; sinon calculé (work contre base)
         self.saved: tuple[str, ...] = ()
         self.saved_aside: list[tuple[str, ...]] = []
+        self.foreign: set[str] = set()      # chemins hors de la forme de l'espace : `enforce_shape` les met de côté
+        self.shape_aside: list[tuple[str, ...]] = []
+        self.shape_error: StudioError | None = None
+        self.rotated: tuple[str, ...] = ()
         self.edits_on_sync: tuple[str, ...] = ()
         self.activity_data: dict[str, Any] = {}
         self.healthy = True
@@ -73,11 +77,37 @@ class FakeStudioRunner:
         paths = set(self.work) | set(self.base) | self.links
         return tuple(sorted(p for p in paths if p in self.links or self.work.get(p) != self.base.get(p)))
 
+    def _entries(self, paths):
+        return {p: "link" if p in self.links else (None if self.work.get(p) is None else hashlib.sha256(self.work[p]).hexdigest())
+                for p in paths}
+
+    def workspace_listing(self):
+        paths = self.modified_work()
+        return paths, listing_digest(self._entries(paths))
+
     def workspace_diff(self):
         self.calls.append("workspace_diff")
         base = {p: hashlib.sha256(d).hexdigest() for p, d in self.base.items()}
         changed = {p: self.work.get(p) for p in self.modified_work() if p not in self.links}
-        return WorkspaceDiff(base=base, changed=changed, links=tuple(sorted(self.links)))
+        paths = tuple(sorted(set(changed) | self.links))
+        return WorkspaceDiff(base=base, changed=changed, links=tuple(sorted(self.links)), digest=listing_digest(self._entries(paths)))
+
+    def enforce_shape(self, files):
+        self.calls.append("enforce_shape")
+        if self.shape_error:
+            raise self.shape_error
+        aside = tuple(sorted(self.foreign | self.links))
+        for path in aside:
+            self.work.pop(path, None)
+        self.links -= set(aside)
+        self.foreign = set()
+        if aside:
+            self.shape_aside.append(aside)
+        return aside
+
+    def take_rotated(self):
+        rotated, self.rotated = self.rotated, ()
+        return rotated
 
     def rebase_work(self, files):
         self.calls.append("rebase_work")

@@ -33,6 +33,7 @@ pytestmark = pytest.mark.asyncio
 
 PIN = StudioPin(BASE, 1)
 EDITED = SCENE_TSX.replace("#101820", "#203040")
+ZERO = "0" * 64
 PNG = b"\x89PNG\r\n\x1a\n" + b"\x00" * 32
 
 
@@ -63,12 +64,17 @@ class Bench:
         else:
             target.write_bytes(data)
 
-    def body(self, base: StudioPin = PIN, scene_id: str = SID) -> dict:
+    def body(self, base: StudioPin = PIN, scene_id: str = SID, digest: str = ZERO) -> dict:
         return {"presentation_id": self.rig.pid, "variant_id": self.rig.vid, "scene_id": scene_id, "base": base.to_dict(),
-                "confirm_publish": True}
+                "digest": digest, "confirm_publish": True}
 
-    async def publish(self, **kwargs):
-        return await self.service.publish(parse_publish(self.body(**kwargs)))
+    async def listed(self) -> str:
+        """L'empreinte que la page a lue (`work_copy.digest`) et renvoie avec la confirmation."""
+
+        return (await self.service.status())["work_copy"]["digest"]
+
+    async def publish(self, digest: str | None = None, **kwargs):
+        return await self.service.publish(parse_publish(self.body(digest=digest or await self.listed(), **kwargs)))
 
 
 @pytest.fixture
@@ -408,17 +414,151 @@ async def test_publishing_without_a_presentation_studio_is_a_typed_503(tmp_path)
                                     source_provider=lambda pin: None, capability_status=lambda: "ready")
     with pytest.raises(StudioError) as caught:
         await service.publish(parse_publish({"presentation_id": "prs_1", "variant_id": "var_1", "scene_id": "pss_1",
-                                             "base": PIN.to_dict(), "confirm_publish": True}))
+                                             "base": PIN.to_dict(), "digest": ZERO, "confirm_publish": True}))
     assert caught.value.code is C.PUBLISH_UNAVAILABLE and caught.value.http_status == 503
 
 
 async def test_the_publish_body_is_exact_and_needs_the_confirmation():
-    good = {"presentation_id": "prs_1", "variant_id": "var_1", "scene_id": "pss_1", "base": PIN.to_dict(), "confirm_publish": True}
-    assert parse_publish(good).base == PIN
+    good = {"presentation_id": "prs_1", "variant_id": "var_1", "scene_id": "pss_1", "base": PIN.to_dict(), "digest": "a" * 64,
+            "confirm_publish": True}
+    assert parse_publish(good).base == PIN and parse_publish(good).digest == "a" * 64
     for bad, code in (({**good, "confirm_publish": False}, C.PUBLISH_CONFIRM_REQUIRED), ({**good, "confirm_publish": "yes"}, C.PUBLISH_CONFIRM_REQUIRED),
                       ({k: v for k, v in good.items() if k != "confirm_publish"}, C.INVALID), ({**good, "actor": "brain"}, C.INVALID),
-                      ({**good, "scene_id": "../x"}, C.INVALID), ({**good, "base": {"prefab_id": BASE}}, C.INVALID), ([], C.INVALID)):
+                      ({**good, "scene_id": "../x"}, C.INVALID), ({k: v for k, v in good.items() if k != "digest"}, C.INVALID),
+                      ({**good, "digest": "A" * 64}, C.INVALID), ({**good, "digest": "a" * 63}, C.INVALID), ({**good, "digest": None}, C.INVALID), ({**good, "base": {"prefab_id": BASE}}, C.INVALID), ([], C.INVALID)):
         with pytest.raises(StudioError) as caught:
             parse_publish(bad)
         assert caught.value.code is code, bad
     assert base64.b64encode(b"x")  # (keeps the import list honest for the asset path above)
+
+
+# ------------------------------------------------------------------ QA Slice 12 rework (I1, I2, I3)
+
+async def test_a_publish_is_bound_to_the_listing_the_confirmation_showed(bench):
+    """I1: the page sends the `work_copy.digest` it showed; a file changed after the confirmation refuses the publish, nothing moves."""
+
+    rig = bench.rig
+    bench.write("src/Scene.tsx", EDITED)
+    shown = await bench.listed()
+    status = await bench.service.status()
+    assert status["work_copy"]["digest"] == shown and len(shown) == 64
+    bench.write("src/lib/Title.tsx", TITLE_TSX + "// typed after the confirmation\n")
+    error = await refused(bench, C.PUBLISH_LISTING_CHANGED, digest=shown)
+    assert error.http_status == 409 and error.extra["count"] == 2 and error.extra["files"] == ["src/Scene.tsx", "src/lib/Title.tsx"]
+    assert rig.fake.calls == [] and "remotion_studio.publish_listing_changed" in rig.sink.kinds(), "refused before any build"
+    assert (await bench.service.status())["work_copy"]["unpublished"] == 2, "the workspace and its base are untouched"
+    # the page re-reads the listing, the user confirms again: that publishes
+    outcome = (await bench.publish(digest=await bench.listed()))["publish"]
+    assert outcome["files"]["changed"] == ["src/Scene.tsx", "src/lib/Title.tsx"]
+
+
+def swap_parent_for_junction_after_the_check(bench, monkeypatch, outside: Path) -> list[str]:
+    """The QA race: `src/lib` is checked, then swapped for a junction to `outside` before the file is opened."""
+
+    import _winapi
+    import shutil
+    real_check, swapped = bench.runner._check_inside, []
+
+    def check_then_swap(target):
+        real_check(target)
+        if target.name == "Title.tsx" and not swapped:
+            shutil.move(str(bench.work / "src" / "lib"), str(outside.parent / "lib-moved-away"))
+            _winapi.CreateJunction(str(outside), str(bench.work / "src" / "lib"))
+            swapped.append(target.name)
+
+    monkeypatch.setattr(bench.runner, "_check_inside", check_then_swap)
+    return swapped
+
+
+async def test_a_parent_folder_swapped_for_a_junction_after_the_check_is_never_read(bench, monkeypatch):
+    """I2: the opened file's real path (bound to the handle) must still be inside the workspace."""
+
+    outside = bench.runtime.parent.parent.parent / "outside-lib"
+    outside.mkdir()
+    (outside / "Title.tsx").write_text('export const leak = "TOP-SECRET";\n', encoding="utf-8")
+    bench.write("src/lib/Title.tsx", TITLE_TSX + "// edited\n")
+    swapped = swap_parent_for_junction_after_the_check(bench, monkeypatch, outside)
+    diff = bench.runner.workspace_diff()
+    assert swapped == ["Title.tsx"], "the race really happened"
+    assert "src/lib/Title.tsx" in diff.links and "src/lib/Title.tsx" not in diff.changed, "the outside file is never read"
+    assert (outside / "Title.tsx").read_text(encoding="utf-8").endswith('"TOP-SECRET";\n'), "and never touched"
+
+
+async def test_the_same_race_through_the_service_publishes_nothing(bench, monkeypatch):
+    outside = bench.runtime.parent.parent.parent / "outside-lib"
+    outside.mkdir()
+    (outside / "Title.tsx").write_text('export const leak = "TOP-SECRET";\n', encoding="utf-8")
+    bench.write("src/lib/Title.tsx", TITLE_TSX + "// edited\n")
+    shown = await bench.listed()
+    swap_parent_for_junction_after_the_check(bench, monkeypatch, outside)
+    error = await refused(bench, C.PUBLISH_LISTING_CHANGED, digest=shown)
+    assert "TOP-SECRET" not in error.detail and not library_holds(bench.rig, b"TOP-SECRET")
+
+
+async def test_a_file_replaced_while_it_is_read_is_refused(bench, monkeypatch):
+    """I3 / M3: the `lstat` AFTER the read must match the opened file; without it, a swapped file would be published as read."""
+
+    from jarvis.adapters import remotion_studio_runner as R
+    bench.write("src/Scene.tsx", EDITED)
+    target = bench.work / "src" / "Scene.tsx"
+    real_lstat, seen = R.os.lstat, []
+
+    def lstat_swapping_on_the_second_look(path, *args, **kwargs):
+        if str(path).endswith("Scene.tsx"):
+            seen.append(path)
+            if len(seen) == 2:  # the look AFTER the read: another file now holds the name
+                fresh = target.with_name("fresh.part")
+                fresh.write_bytes(b"// swapped in while the bytes were read\n")
+                os.replace(fresh, target)
+        return real_lstat(path, *args, **kwargs)
+
+    monkeypatch.setattr(R.os, "lstat", lstat_swapping_on_the_second_look)
+    assert R.RemotionStudioRunner._read_regular(target, bench.work) is None
+    assert len(seen) == 2, "one look before, one after"
+
+
+@pytest.mark.parametrize("status", ["stale", "rolled_back", "refused_validation"])
+async def test_a_result_that_does_not_stand_never_rebases_even_when_it_names_a_published_version(bench, status):
+    """I3 / M9: only `STANDING_RESULTS` rebase the workspace; `stale` / `rolled_back` carrying `published` must not."""
+
+    from jarvis.core.remotion_studio_service import STANDING_RESULTS
+    assert status not in STANDING_RESULTS
+    bench.write("src/Scene.tsx", EDITED)
+
+    class Result:
+        http_status = 409
+
+        def to_dict(self):
+            return {"status": status, "published": {"id": "presentation-studio.p1.s1", "version": 7}, "code": "presentation_studio_x",
+                    "message": status, "diagnostics": []}
+
+    async def publish(*args, **kwargs):
+        return Result()
+
+    bench.service._publisher.publish = publish
+    with pytest.raises(StudioError) as caught:
+        await bench.publish()
+    assert caught.value.code is (C.PUBLISH_CONFLICT if status == "stale" else C.PUBLISH_REFUSED)
+    view = await bench.service.status()
+    assert view["pin"] == PIN.to_dict() and view["work_copy"]["base"] == PIN.to_dict() and view["work_copy"]["unpublished"] == 1
+    assert json.loads((bench.runtime / "studio" / "work.files.json").read_text(encoding="utf-8")) == bench.runner._manifest()
+    assert "remotion_studio.published" not in bench.rig.sink.kinds()
+
+
+async def test_the_already_published_catch_up_is_refused_while_a_link_is_present(bench):
+    """I3 / M1: a workspace equal to the scene's current version rebases, unless a link or junction sits in it (then: conflict)."""
+
+    import _winapi
+    rig = bench.rig
+    bench.write("src/Scene.tsx", EDITED)
+    moved = await rig.edit({"sources": {"src/Scene.tsx": EDITED}})   # another writer published exactly the workspace content
+    assert moved.status.value in ("reloaded", "repinned")
+    outside = bench.runtime.parent.parent.parent / "outside-dir"
+    outside.mkdir()
+    (outside / "Leak.tsx").write_text('export const leak = "TOP-SECRET";\n', encoding="utf-8")
+    _winapi.CreateJunction(str(outside), str(bench.work / "src" / "lib2"))
+    error = await refused(bench, C.PUBLISH_CONFLICT)
+    assert error.extra["base"] == PIN.to_dict() and (await bench.service.status())["pin"] == PIN.to_dict(), "never rebased"
+    os.rmdir(bench.work / "src" / "lib2")   # the junction itself, never its target
+    answer = await bench.publish()
+    assert answer["publish"]["status"] == "already_published", "without the link the same workspace is the catch-up case"

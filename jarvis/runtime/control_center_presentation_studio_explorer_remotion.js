@@ -59,6 +59,7 @@
 #${HOST_ID} .jvx-rms-link{color:var(--jvx-accent);font-weight:600;text-underline-offset:3px;white-space:nowrap}
 #${HOST_ID} .jvx-rms .jvx-btn{min-height:28px;padding:0 10px;font-size:12px}
 #${HOST_ID} .jvx-rms-log{flex:1 1 100%;min-width:0}
+#${HOST_ID} .jvx-rms-files{margin:4px 0 0;padding:6px 8px 6px 22px;max-height:12em;overflow:auto;border:1px solid var(--jvx-line-strong);border-radius:6px;font:12px/1.4 ui-monospace,Consolas,monospace}
 #${HOST_ID} .jvx-rms-log pre{margin:4px 0 0;max-height:7.5em;overflow:auto;white-space:pre-wrap;font:11.5px/1.35 ui-monospace,Consolas,monospace;color:var(--jvx-mute)}
 #${HOST_ID} .jvx-theater:fullscreen .jvx-stage-note>[data-act="remotion_studio"],#${HOST_ID} .jvx-theater:fullscreen .jvx-rms{display:none}
 `;
@@ -85,7 +86,10 @@
     const count=typeof wc.unpublished==='number'?wc.unpublished:files.length;
     const base=wc.base||(st&&st.pin)||null;
     const relation=!base||!mine?'none':base.prefab_id===mine.id&&Number(base.version)===Number(mine.version)?'here':'other';
-    return {count,files,base,relation,saved:wc.edits_saved||0};
+    /* `digest` : l'empreinte de CETTE liste, renvoyée avec `publish` (Core refuse si l'espace a changé depuis : QA Slice 12, I1).
+       `setAside` : ce que le dernier lancement a mis de côté parce que ce n'était pas la forme de l'espace (B1). */
+    const setAside=Array.isArray(wc.set_aside)?wc.set_aside:[];
+    return {count,files,base,relation,saved:wc.edits_saved||0,digest:typeof wc.digest==='string'?wc.digest:null,setAside};
   }
 
   function doorModel(i){
@@ -180,6 +184,11 @@
       status={tone:'warn',text:work.text,publish:publish.offered};
     }else if(i.explain){
       status={tone:'warn',text:i.explain};
+    }
+    if(ws.setAside.length&&ws.relation==='here'){
+      const n=ws.setAside.length,named=ws.setAside.slice(0,6).map(f=>cleanLine(f,60)).join(', ')+(n>6?'…':'');
+      const said=`Au dernier lancement, ${plural(n,'élément étranger','éléments étrangers')} à l’espace de travail (${named}) ${n>1?'ont été mis':'a été mis'} de côté dans studio-edits : jamais ${n>1?'exécutés':'exécuté'} ni ${n>1?'publiés':'publié'}.`;
+      status=status?{...status,tone:status.tone==='danger'?'danger':'warn',text:`${status.text} ${said}`}:{tone:'warn',text:said};
     }
     return {button,status,relation,publish};
   }
@@ -468,7 +477,12 @@
         const list=el('ul','jvx-confirm-lines');
         const line=(head,text,key)=>{const li=el('li');if(key)li.setAttribute('data-line',key);li.appendChild(el('strong','',head));li.appendChild(doc.createTextNode(text));list.appendChild(li)};
         line('Scène : ',`Scène ${sc.number} sur ${sc.of} « ${cleanLine(sc.title,60)} »`,'scene');
-        line('Fichiers : ',`${plural(ws.count,'fichier modifié','fichiers modifiés')} dans Remotion Studio : ${ws.files.slice(0,8).map(f=>cleanLine(f,80)).join(', ')}${ws.count>8?'…':''}`,'files');
+        line('Fichiers : ',`${plural(ws.count,'fichier modifié','fichiers modifiés')} dans Remotion Studio, tous publiés tels quels :`,'files');
+        /* Chaque fichier, sans troncature (liste défilante) : ce que Core publiera est exactement cette liste (son empreinte part avec
+           la confirmation ; un fichier changé depuis fait refuser la publication). */
+        const files=el('ul','jvx-rms-files');files.setAttribute('data-line','files-list');attrs(files,{tabindex:'0','aria-label':`${ws.count} fichiers à publier`});
+        for(const f of ws.files)files.appendChild(el('li','',cleanLine(f,160)));
+        list.lastChild.appendChild(files);
         line('Ce qui se passe : ',`Jarvis compile la scène puis la publie comme NOUVELLE version ; la v${sc.prefab.version} n’est pas modifiée et reste disponible (« Revenir »).`,'what');
         line('Refusé si : ','la scène a changé depuis l’ouverture dans Remotion Studio, elle ne compile pas, ou elle importe autre chose que react et remotion.','refused');
         dlg.box.appendChild(list);
@@ -477,7 +491,7 @@
         const go=ctx.dialogButton('Publier',()=>{finish(true);ctx.dialog.close(true)},{primary:true});
         go.setAttribute('data-act','remotion_studio_publish_confirm');
         actions.appendChild(cancel);actions.appendChild(go);dlg.box.appendChild(actions);
-        go.focus({preventScroll:true});
+        cancel.focus({preventScroll:true});   // publier écrit une nouvelle version : une touche Entrée égarée ne publie rien (QA Slice 12, P-a)
       });
     }
     async function publish(options){
@@ -489,17 +503,20 @@
       if(!core||!c){S.publishError={code:'remotion_studio_page_error',text:'le module de Remotion Studio n’est pas chargé dans cette page.',sceneId:v.scene.id};
         log('remotion_studio_module_missing',{},'error');render();return {state:'failed'}}
       const sc=v.scene,at=v.at,ws=workspaceOf(S.studio,sc.prefab);
+      if(!ws.digest){S.publishError={code:'remotion_studio_page_error',text:'la liste des fichiers n’a pas encore été lue : réessayez dans un instant.',sceneId:sc.id};
+        log('remotion_studio_publish_no_listing',{via:o.via},'warn');render();refresh('no_listing');return {state:'refused'}}
       const ok=await confirmPublish(sc,ws,o.returnFocus||ui.publish);
       if(!ok){log('remotion_studio_publish_cancelled',{via:o.via});announce('Rien n’a été publié.');return {state:'cancelled'}}
       const now2=view().scene;
       if(!now2||keyOf(now2.prefab)!==keyOf(sc.prefab)){S.explain='La scène a changé pendant la confirmation : rien n’a été publié.';render();return {state:'cancelled'}}
       S.publishing={at:now(),label:'Publication dans la variante…'};S.publishError=null;S.published=null;S.explain=null;
       render();tick(true);
-      log('remotion_studio_publish_requested',{via:o.via,prefab:keyOf(sc.prefab),scene_id:sc.id,files:ws.count});
+      log('remotion_studio_publish_requested',{via:o.via,prefab:keyOf(sc.prefab),scene_id:sc.id,files:ws.count,digest:ws.digest.slice(0,12)});
       let result;
       try{
         const answer=await c.write('publish',{presentation_id:at.presentationId,variant_id:at.variantId,scene_id:sc.id,
-          base:{prefab_id:ws.base.prefab_id,version:Number(ws.base.version)}});   // the workspace base the user saw, checked by Core
+          base:{prefab_id:ws.base.prefab_id,version:Number(ws.base.version)},   // the workspace base the user saw, checked by Core
+          digest:ws.digest});   // the listing the user confirmed: Core refuses (listing_changed) if the workspace no longer gives it
         if(answer&&answer.studio)S.studio=answer.studio;
         const p=answer&&answer.publish||{};
         S.published={published:p.published,previous:p.previous,status:p.status,sceneId:sc.id,presentationId:at.presentationId,variantId:at.variantId};
@@ -515,6 +532,7 @@
         if(error.code==='remotion_studio_publish_import_refused'&&info.imports)text+=` (${info.imports.slice(0,4).join(', ')})`;
         if(error.code==='remotion_studio_publish_refused'&&info.publish_code)text+=` ${cleanLine(error.message,220)} [${info.publish_code}]`;
         if(error.code==='remotion_studio_publish_invalid_file')text+=` ${cleanLine(error.message,220)}`;
+        if(error.code==='remotion_studio_publish_listing_changed'&&typeof info.count==='number')text+=` (${plural(info.count,'fichier modifié','fichiers modifiés')} maintenant)`;
         S.publishError={code:error.code||'network',text,diagnostics,sceneId:sc.id};
         log('remotion_studio_publish_failed',{code:S.publishError.code,publish_code:info.publish_code,status:error.status},
           error.status>=500||!error.status?'error':'warn');

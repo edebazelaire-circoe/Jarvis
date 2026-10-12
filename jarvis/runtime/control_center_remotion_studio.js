@@ -82,6 +82,7 @@ const JarvisRemotionStudioCore=(function(){
     remotion_studio_publish_import_refused:'Un import n’est pas autorisé dans une scène publiée (seuls react et remotion le sont) : rien n’a été publié.',
     remotion_studio_publish_refused:'La variante a refusé la publication (compilation, valeurs ou partition) : rien n’a été publié.',
     remotion_studio_publish_unavailable:'Ce Core ne peut pas publier dans une variante.',
+    remotion_studio_publish_listing_changed:'Les fichiers de Remotion Studio ont changé depuis votre confirmation : rien n’a été publié. La liste est relue ; relisez-la, puis publiez de nouveau.',
     core_unreachable:'Core ne répond pas.',core_unconfigured:'Le Control Center ne connaît pas Core.',
     core_timeout:'Core n’a pas répondu à temps : l’issue est inconnue, l’état est relu.',
   });

@@ -17,9 +17,10 @@ from __future__ import annotations
 from tests.fakes.explorer_js import run_ui
 from tests.unit.test_variants_remotion_studio_js import PIN, READY, STUDIO_WORLD, model
 
+DIGEST = "d" * 64
 STOPPED_WITH_EDITS = {"status": "stopped", "pin": {"prefab_id": "lab.dial", "version": 1}, "url": None, "viewers": 0,
                       "work_copy": {"modified_files": ["src/Scene.tsx"], "unpublished": 1, "base": {"prefab_id": "lab.dial", "version": 1},
-                                    "writable": True, "edits_saved": 0}}
+                                    "writable": True, "edits_saved": 0, "digest": DIGEST, "set_aside": []}}
 
 
 # ------------------------------------------------------------------ 1. the pure model
@@ -99,7 +100,7 @@ const revertBtn=()=>q('[data-act="remotion_studio_revert"]');
 def test_publish_confirms_sends_the_exact_body_says_the_result_rereads_and_reverts(tmp_path):
     out = run_ui(tmp_path, PUBLISH_WORLD + r"""
       rms.studio={status:'stopped',pin:{prefab_id:'lab.dial',version:1},url:null,viewers:0,
-        work_copy:{modified_files:['src/Scene.tsx'],unpublished:1,base:{prefab_id:'lab.dial',version:1},edits_saved:0}};
+        work_copy:{modified_files:['src/Scene.tsx'],unpublished:1,base:{prefab_id:'lab.dial',version:1},edits_saved:0,digest:'d'.repeat(64)}};
       const ex=await openVariants();
       const shown={visible:!publishBtn().hidden,text:say()};
       publishBtn().click();await env.advance(50);
@@ -120,7 +121,8 @@ def test_publish_confirms_sends_the_exact_body_says_the_result_rereads_and_rever
     assert "NOUVELLE version" in d["text"] and "reste disponible" in d["text"] and "react et remotion" in d["text"]
     assert out["afterCancel"] == {"dialog": False, "sent": 0}, "« Annuler » publishes nothing"
     [sent] = out["publishes"]
-    assert set(sent) == {"presentation_id", "variant_id", "scene_id", "base", "confirm_publish"} and sent["confirm_publish"] is True
+    assert set(sent) == {"presentation_id", "variant_id", "scene_id", "base", "digest", "confirm_publish"} and sent["confirm_publish"] is True
+    assert sent["digest"] == DIGEST, "the listing the confirmation showed is what Core checks"
     assert sent["base"] == {"prefab_id": "lab.dial", "version": 1} and sent["scene_id"] == "pss_000000000001"
     assert out["done"]["tone"] == "ok"
     assert out["done"]["text"] == "Publié dans la variante : nouvelle version de la scène (v1) ; la version d’avant reste disponible."
@@ -136,7 +138,7 @@ def test_publish_confirms_sends_the_exact_body_says_the_result_rereads_and_rever
 def test_a_conflict_is_said_with_both_versions_logged_and_the_button_stays(tmp_path):
     out = run_ui(tmp_path, PUBLISH_WORLD + r"""
       rms.studio={status:'stopped',pin:{prefab_id:'lab.dial',version:1},url:null,viewers:0,
-        work_copy:{modified_files:['src/Scene.tsx'],unpublished:1,base:{prefab_id:'lab.dial',version:1},edits_saved:0}};
+        work_copy:{modified_files:['src/Scene.tsx'],unpublished:1,base:{prefab_id:'lab.dial',version:1},edits_saved:0,digest:'d'.repeat(64)}};
       rms.publishReply=()=>({status:409,body:{error:{code:'remotion_studio_publish_conflict',message:'moved',base:{prefab_id:'lab.dial',version:1},
         current:{prefab_id:'presentation-studio.p1.s1',version:2}}}});
       const ex=await openVariants();
@@ -167,7 +169,7 @@ def test_opening_another_scene_with_unpublished_files_says_so_and_sends_the_disc
 def test_the_same_scene_with_unpublished_files_opens_without_any_discard(tmp_path):
     out = run_ui(tmp_path, PUBLISH_WORLD + r"""
       rms.studio={status:'stopped',pin:{prefab_id:'lab.dial',version:1},url:null,viewers:0,
-        work_copy:{modified_files:['src/Scene.tsx'],unpublished:1,base:{prefab_id:'lab.dial',version:1},edits_saved:0}};
+        work_copy:{modified_files:['src/Scene.tsx'],unpublished:1,base:{prefab_id:'lab.dial',version:1},edits_saved:0,digest:'d'.repeat(64)}};
       const ex=await openVariants();
       door().click();await env.advance(50);
       const line=!!q('[data-line="discard"]',dialog());
@@ -183,16 +185,78 @@ def test_the_shared_client_adds_the_publish_confirmation_only_on_publish_and_kee
     out = run_node(tmp_path, """
       const calls=[];let next={ok:true,status:200,json:async()=>({studio:{status:'stopped'},publish:{status:'reloaded'}})};
       const client=C.createClient({fetchImpl:async(path,options)=>{calls.push([path,JSON.parse(options.body)]);return next}});
-      const published=await client.write('publish',{presentation_id:'prs_1',variant_id:'var_1',scene_id:'pss_1',base:{prefab_id:'a',version:1}});
+      const published=await client.write('publish',{presentation_id:'prs_1',variant_id:'var_1',scene_id:'pss_1',base:{prefab_id:'a',version:1},digest:'e'.repeat(64)});
       await client.write('open',{prefab_id:'a',version:2,discard_unpublished:true});
       await client.write('sync');
       next={ok:false,status:409,json:async()=>({error:{code:'remotion_studio_publish_conflict',message:'m',current:{prefab_id:'a',version:3}}})};
       let refused=null;try{await client.write('publish',{})}catch(e){refused={code:e.code,status:e.status,current:e.info.current}}
       return {calls,published,refused,deadline:C.WRITES.publish,limit:C.PUBLISH_LIMIT_S};""")
     assert out["calls"][0] == ["/api/local-capabilities/remotion/studio/publish", {"presentation_id": "prs_1", "variant_id": "var_1", "scene_id": "pss_1",
-                                                                                     "base": {"prefab_id": "a", "version": 1}, "confirm_publish": True}]
+                                                                                     "base": {"prefab_id": "a", "version": 1}, "digest": "e" * 64,
+                                                                                     "confirm_publish": True}]
     assert out["calls"][1][1] == {"prefab_id": "a", "version": 2, "discard_unpublished": True, "acknowledge_unsandboxed_scene": True}
     assert out["calls"][2][1] == {}, "nothing is added to a plain sync: no confirmation, no discard"
     assert out["published"] == {"studio": {"status": "stopped"}, "publish": {"status": "reloaded"}}
     assert out["refused"] == {"code": "remotion_studio_publish_conflict", "status": 409, "current": {"prefab_id": "a", "version": 3}}
     assert out["deadline"] == 160000 and out["limit"] == 150
+
+
+# ------------------------------------------------------------------ QA Slice 12 rework (I1, P-a, B1)
+
+def test_the_confirmation_lists_every_file_focuses_cancel_and_sends_the_digest_it_showed(tmp_path):
+    out = run_ui(tmp_path, PUBLISH_WORLD + r"""
+      const files=Array.from({length:14},(_,i)=>`src/lib/Part${String(i).padStart(2,'0')}.tsx`);
+      rms.studio={status:'stopped',pin:{prefab_id:'lab.dial',version:1},url:null,viewers:0,
+        work_copy:{modified_files:files,unpublished:14,base:{prefab_id:'lab.dial',version:1},edits_saved:0,digest:'a'.repeat(64)}};
+      const ex=await openVariants();
+      publishBtn().click();await env.advance(50);
+      const listed=qa('li',q('[data-line="files-list"]',pubDialog())).map(li=>li.textContent);
+      const focus={cancel:doc.activeElement&&doc.activeElement.textContent==='Annuler',go:doc.activeElement===pubGo()};
+      env.key(doc.activeElement,'Enter');await env.advance(50);
+      const afterEnter={sent:rms.publishes.length};
+      if(pubDialog())qa('button',pubDialog()).find(b=>b.textContent==='Annuler').click();await env.advance(50);
+      // the poll changed the listing after the dialog opened: the digest sent is the one the dialog SHOWED
+      publishBtn().click();await env.advance(50);
+      rms.studio=Object.assign({},rms.studio,{work_copy:Object.assign({},rms.studio.work_copy,{digest:'b'.repeat(64)})});
+      pubGo().click();await env.advance(400);
+      return {listed,focus,afterEnter,sent:rms.publishes.map(b=>b.digest)};
+    """)
+    assert out["listed"] == [f"src/lib/Part{i:02d}.tsx" for i in range(14)], "every changed file, none cut at 8"
+    assert out["focus"] == {"cancel": True, "go": False}, "a stray Enter must not publish"
+    assert out["afterEnter"] == {"sent": 0}
+    assert out["sent"] == ["a" * 64]
+
+
+def test_a_listing_that_changed_since_the_confirmation_is_said_and_read_again(tmp_path):
+    out = run_ui(tmp_path, PUBLISH_WORLD + r"""
+      rms.studio={status:'stopped',pin:{prefab_id:'lab.dial',version:1},url:null,viewers:0,
+        work_copy:{modified_files:['src/Scene.tsx'],unpublished:1,base:{prefab_id:'lab.dial',version:1},edits_saved:0,digest:'a'.repeat(64)}};
+      rms.publishReply=()=>{
+        rms.studio=Object.assign({},rms.studio,{work_copy:Object.assign({},rms.studio.work_copy,{modified_files:['src/Scene.tsx','src/a.ts'],unpublished:2,digest:'c'.repeat(64)})});
+        return {status:409,body:{error:{code:'remotion_studio_publish_listing_changed',message:'changed',count:2,files:['src/Scene.tsx','src/a.ts']}}}};
+      const ex=await openVariants();
+      const reads=()=>env.requests.filter(r=>r.method==='GET'&&r.url.endsWith('/remotion/studio')).length;
+      publishBtn().click();await env.advance(50);
+      const before=reads();
+      pubGo().click();await env.advance(400);
+      const text=say();
+      publishBtn().click();await env.advance(50);
+      const relisted=qa('li',q('[data-line="files-list"]',pubDialog())).map(li=>li.textContent);
+      return {text,reread:reads()>before,relisted,
+        warns:env.logs.filter(l=>l[0]==='warn'&&l[1].includes('remotion_studio_publish_failed')).length};
+    """)
+    assert "(remotion_studio_publish_listing_changed)" in out["text"] and "rien n’a été publié" in out["text"]
+    assert "(2 fichiers modifiés maintenant)" in out["text"]
+    assert out["reread"] is True and out["relisted"] == ["src/Scene.tsx", "src/a.ts"], "the page lists again before a new confirmation"
+    assert out["warns"] == 1
+
+
+def test_what_the_last_launch_set_aside_is_said_on_the_scene():
+    aside = {**STOPPED_WITH_EDITS, "work_copy": {**STOPPED_WITH_EDITS["work_copy"], "set_aside": ["remotion.config.js", "src/lib2"]}}
+    m = model(studio=aside)
+    assert m["status"]["tone"] == "warn"
+    assert ("Au dernier lancement, 2 éléments étrangers à l’espace de travail (remotion.config.js, src/lib2) ont été mis de côté dans "
+            "studio-edits : jamais exécutés ni publiés.") in m["status"]["text"]
+    clean = {**STOPPED_WITH_EDITS, "work_copy": {**STOPPED_WITH_EDITS["work_copy"], "modified_files": [], "unpublished": 0, "set_aside": ["x.txt"]}}
+    alone = model(studio=clean)
+    assert alone["status"]["text"].startswith("Au dernier lancement, 1 élément étranger") and alone["status"]["tone"] == "warn"

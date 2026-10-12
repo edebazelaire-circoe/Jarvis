@@ -58,7 +58,7 @@ async def call(base, method, path, **kwargs):
 
 def body(**changes):
     return {"presentation_id": "prs_000000000001", "variant_id": "var_000000000001", "scene_id": "pss_000000000001",
-            "base": PIN.to_dict(), "confirm_publish": True, **changes}
+            "base": PIN.to_dict(), "digest": "0" * 64, "confirm_publish": True, **changes}
 
 
 async def test_publish_needs_the_confirmation_and_an_exact_body(stack):
@@ -67,7 +67,7 @@ async def test_publish_needs_the_confirmation_and_an_exact_body(stack):
     assert status == 400 and answer["error"]["code"] == "remotion_studio_invalid"
     status, answer = await call(base, "POST", STUDIO + "/publish", json=body(confirm_publish=False))
     assert status == 400 and answer["error"]["code"] == "remotion_studio_publish_confirm_required"
-    for extra in ({"allowed_imports": ["zod"]}, {"actor": "brain"}, {"trust": "widened"}):
+    for extra in ({"allowed_imports": ["zod"]}, {"actor": "brain"}, {"trust": "widened"}, {"digest": "not-a-digest"}):
         status, answer = await call(base, "POST", STUDIO + "/publish", json=body(**extra))
         assert status == 400 and answer["error"]["code"] == "remotion_studio_invalid", extra
     status, answer = await call(base, "POST", STUDIO + "/publish?x=1", json=body())
@@ -90,6 +90,12 @@ async def test_a_base_the_page_did_not_see_and_an_unknown_scene_are_typed_refusa
     status, answer = await call(base, "POST", STUDIO + "/publish", json=body(base={"prefab_id": PIN.prefab_id, "version": 2}))
     assert status == 409 and answer["error"]["code"] == "remotion_studio_publish_base_mismatch" and answer["error"]["base"] == PIN.to_dict()
     status, answer = await call(base, "POST", STUDIO + "/publish", json=body())
+    assert status == 409 and answer["error"]["code"] == "remotion_studio_publish_listing_changed", "not the listing the page showed"
+    assert answer["error"]["count"] == 1 and answer["error"]["files"] == ["src/Scene.tsx"]
+    _status, view = await call(base, "GET", STUDIO)
+    shown = view["studio"]["work_copy"]["digest"]
+    assert len(shown) == 64 and view["studio"]["work_copy"]["modified_files"] == ["src/Scene.tsx"]
+    status, answer = await call(base, "POST", STUDIO + "/publish", json=body(digest=shown))
     assert answer["error"]["code"] == "remotion_studio_publish_refused" and status in (400, 404)
     assert answer["error"]["publish_code"].startswith("presentation_studio_"), "the variant's own code is kept, never relabelled"
 

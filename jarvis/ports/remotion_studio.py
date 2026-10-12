@@ -34,10 +34,21 @@ class StudioRunner(Protocol):
         """`None` si l'environnement Node/Remotion permet de lancer le Studio, sinon la raison (jeton: phrase)."""
 
     def sync_work(self, files: Mapping[str, bytes]) -> SyncReport:
-        """Rend le dossier de travail EXACTEMENT égal à `files` (copie en lecture seule), sans toucher un fichier identique."""
+        """Rend le dossier de travail EXACTEMENT égal à `files` (générés en lecture seule), sans toucher un fichier identique."""
 
     def modified_work(self) -> tuple[str, ...]:
         """Fichiers du dossier de travail qui diffèrent de la dernière synchronisation."""
+
+    def workspace_listing(self) -> tuple[tuple[str, ...], str]:
+        """`(fichiers modifiés, empreinte de leur état)` : l'empreinte que la page renvoie avec `publish` (QA Slice 12, I1)."""
+
+    def enforce_shape(self, files: Mapping[str, bytes]) -> tuple[str, ...]:
+        """Avant chaque lancement : met de côté (`studio-edits`, jamais supprimé) tout ce qui n'est pas la forme de l'espace (fichier ou
+        dossier de premier niveau étranger, lien, jonction, lien dur) et régénère les fichiers générés depuis `files` ; rend les chemins
+        mis de côté. Lève `StudioError` si un déplacement est impossible (le lancement n'a pas lieu)."""
+
+    def take_rotated(self) -> tuple[str, ...]:
+        """Noms des dossiers `studio-edits/` retirés par la rotation depuis le dernier appel (le service les journalise)."""
 
     def save_modified(self) -> tuple[str, ...]:
         """Copie à part (jamais supprimée par une synchronisation) les fichiers modifiés hors de Jarvis ; rend leurs chemins."""

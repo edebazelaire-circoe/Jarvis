@@ -10,7 +10,7 @@ Remotion, pas une capacité de plus) ; jeton porteur de Core obligatoire comme t
 | POST | `.../studio/sync` | `{}` (scène courante relue) ou `{"prefab_id", "version", "acknowledge_unsandboxed_scene": true}` | `{studio: vue}` |
 | POST | `.../studio/close` | `{}` | `{studio: vue}` |
 | POST | `.../studio/restart` | `{"acknowledge_unsandboxed_scene": true}` | `{studio: vue}` |
-| POST | `.../studio/publish` | `{"presentation_id", "variant_id", "scene_id", "base": {"prefab_id", "version"}, "confirm_publish": true}` | `{studio: vue, publish: {status, published, previous, variant_revision, mounted, files, message}}` |
+| POST | `.../studio/publish` | `{"presentation_id", "variant_id", "scene_id", "base": {"prefab_id", "version"}, "digest", "confirm_publish": true}` (`digest` = `work_copy.digest` montré par la confirmation) | `{studio: vue, publish: {status, published, previous, variant_revision, mounted, files, message}}` |
 
 Slice 12 (native-studio-playback-fix) : `open` et `sync` acceptent en plus `"discard_unpublished": true` (geste confirmé : les fichiers non
 publiés de l'espace de travail sont copiés dans `studio-edits/` puis remplacés) ; sans lui, une modification non publiée n'est jamais
