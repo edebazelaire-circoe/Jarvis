@@ -12,3 +12,10 @@ Slice 15 (cleanup) or Slice 16 (release sweep).
 
 I1 of the same QA (the « ⋯ » menu invisible in stage fullscreen) was fixed with the Slice 10
 rework (4ce22d1e), because it shares the cause of the blocking finding B1.
+
+## Added after the Slice 11 QA (2026-10-12, on 8573e6f5)
+
+| # | Defect | Evidence | Where to look |
+| --- | --- | --- | --- |
+| I4 (again) | `test_variants_media_fullscreen_browser.py` flaky under load: 6/7 then 5/7 at HEAD (one 120 s `variants_ready` timeout, one `audio and image within 200 ms`); the audio/image test alone 3/4. Host had < 1 GB free RAM with two agents. | Slice 11 QA; comparison at 873e0cc0 inconclusive (ran past 590 s). | media fullscreen browser test timing bounds |
+| I5 | For a scene the user wrote, the shared `confirmSpec` puts focus on the confirm button: a held or repeated Enter on the « Remotion Studio » door can confirm at once. Same behaviour as the MCP card. | Slice 11 QA code reading. | `JarvisRemotionStudioCore.confirmSpec` default focus |
