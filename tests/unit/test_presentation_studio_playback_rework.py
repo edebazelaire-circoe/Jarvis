@@ -1,6 +1,8 @@
 """Slice 12 rework (QA-1): the detour is validated before any state change, the follower is a visible state, a locked sequence has
-a provisional exit, a commit is ours by identity, the stage the user closes is reported, and an unreadable ledger no longer
-leaves studio windows on the scene. Contract: `docs/presentation-studio.md` > *Playback runtime contract*.
+a provisional exit, a commit is ours by identity, and an unreadable ledger no longer leaves studio windows on the scene. Since
+native-studio-playback-fix Slice 09 the run plays on the Variants surface: there is no stage window the user could close (the P4
+reopen rule is retired) and the ledger is only read once by the legacy reclaim. Contract: `docs/presentation-studio.md` >
+*Playback runtime contract*, *Variants run surface*.
 """
 
 from __future__ import annotations
@@ -10,11 +12,12 @@ import json
 
 import pytest
 
-from jarvis.adapters.file_presentation_studio_stage_ledger import KEEP_QUARANTINED, LEDGER_FILE, FileStageLedger
+from jarvis.adapters.file_presentation_studio_stage_ledger import KEEP_QUARANTINED, LEDGER_FILE, SCHEMA, FileStageLedger
 from jarvis.core.presentation_studio_playback import (
     FOLLOWER_GRACE_S, MAX_VIEW_BYTES, PlaybackStatus, PresentationStudioPlaybackService,
 )
-from jarvis.core.presentation_studio_stage import MAX_STAGE_REOPENS, SceneStage, StageLedger
+from jarvis.core.presentation_studio_run_surface import RunSurface
+from jarvis.core.presentation_studio_stage import LegacyStageReclaimer, StageLedger
 from jarvis.domain.interaction_mode import InteractionMode
 from jarvis.domain.presentation_studio_playback import EventKind
 from jarvis.domain.scene import (
@@ -50,7 +53,7 @@ def locked_content() -> dict:
         "recovery_points": []}
 
 
-async def archive(rig: Rig, object_id: str) -> None:
+async def archive(rig: Rig, object_id: str) -> None:  # a Board object the user closes
     await rig.scene.apply(SceneCommand(op=SceneOp.ARCHIVE_SELECTION, actor=SceneActor.USER,
                                        selection=SceneSelection(ids=(object_id,))))
 
@@ -70,7 +73,7 @@ async def test_an_invalid_detour_is_a_typed_4xx_and_the_state_is_unchanged(rig, 
     assert result.status is PlaybackStatus.REFUSED and result.reason == "detour_invalid" and result.http_status == 422
     assert result.to_dict()["error"]["code"] == "presentation_studio_playback_refused"
     assert rig.service.where() == before                                       # nothing moved, not even the generation
-    assert await rig.objects("studio_aux") == []
+    assert rig.overlays() == []
     applied(await rig.run("next"))                                             # the run was never in a detour
     assert applied(await rig.run("detour", title="Annexe", prefab=AUX_BLOCK))["phase"] == "detour"
 
@@ -100,7 +103,7 @@ async def test_a_detour_that_fails_to_show_after_the_boundary_is_undone_not_left
         assert result.status is PlaybackStatus.STAGE_FAILED
         state = rig.service.where()
         assert state["phase"] == "playing" and state["detour"] is None and state["pending"] is None
-        assert await rig.objects("studio_aux") == []
+        assert rig.overlays() == []
     finally:
         await rig.close()
 
@@ -218,31 +221,24 @@ async def test_a_foreign_commit_landing_while_our_own_edit_is_in_flight_is_still
     assert rig.service.where()["phase"] == "paused"
 
 
-# ------------------------------------------------------------------ P4: the stage window the user closes
+# ------------------------------------------------------------------ P4 retired (Slice 09): nothing the user closes on the Board is the run
 
-async def test_closing_the_stage_is_reported_the_old_id_leaves_the_ledger_and_a_clean_stop_erases_it(rig):
+async def test_archiving_a_board_object_during_a_run_never_touches_the_run_surface(rig):
+    """The P4 rule (a closed stage window reopened, `stage_closed` after 3) is retired with the window: the run surface is not a Board
+    object, so a user closing Board windows never moves, pauses or reopens the run."""
+
     applied(await rig.service.start(rig.start_body()))
-    first = rig.stage.stage_object_id
-    await archive(rig, first)
-    state = applied(await rig.run("next"))
-    second = state["stage_object_id"]
-    assert second == first + "-1" and "stage_closed_by_user" in state["notices"]
-    assert rig.stage_ledger.ids == (second,) and rig.ledger_store.ids == [second]
-    assert rig.env.sink.of("core.presentation_studio.stage_reopened")[0][0] == "warning"
-    applied(await rig.run("stop"))
-    assert rig.stage_ledger.ids == () and rig.ledger_store.ids is None        # the file really disappears
-
-
-async def test_a_stage_closed_again_and_again_is_not_fought_the_run_pauses_and_says_so(rig):
-    applied(await rig.service.start(rig.start_body()))
-    for _ in range(MAX_STAGE_REOPENS):
-        await archive(rig, rig.stage.stage_object_id)
-        applied(await rig.run("next" if rig.service.where()["position"]["index"] == 1 else "previous"))
-    await archive(rig, rig.stage.stage_object_id)
-    result = await rig.run("next")
-    assert result.status is PlaybackStatus.STAGE_FAILED and result.reason == "stage_closed"
-    state = rig.service.where()
-    assert state["phase"] == "paused" and "stage_stage_closed" in state["problems"] or "stage_closed" in state["problems"]
+    surface = rig.stage.stage_object_id
+    await rig.scene.apply(SceneCommand(op=SceneOp.UPSERT_OBJECT, actor=SceneActor.USER, object_id="note-1",
+                                       fields=SceneObjectFields(kind=SceneObjectKind.WINDOW, category="note",
+                                                                representation=Representation.WINDOW,
+                                                                payload=ScenePayload(title="x", prefab=ScenePrefabRef(
+                                                                    "lab.counter", 1, {"label": "x"}, {"count": 1})))))
+    await archive(rig, "note-1")
+    for verb in ("next", "previous", "next", "previous"):
+        state = applied(await rig.run(verb))
+    assert state["stage_object_id"] == surface and state["phase"] == "playing"
+    assert "stage_closed_by_user" not in state["notices"] and state["problems"] == []
 
 
 # ------------------------------------------------------------------ P3: an unreadable ledger no longer leaks windows
@@ -250,7 +246,7 @@ async def test_a_stage_closed_again_and_again_is_not_fought_the_run_pauses_and_s
 class CorruptStore(MemoryLedgerStore):
     def __init__(self) -> None:
         super().__init__()
-        self.corrupt, self.kept = False, []
+        self.corrupt, self.kept = True, []
 
     def read(self):
         if self.corrupt:
@@ -264,28 +260,26 @@ class CorruptStore(MemoryLedgerStore):
 
 
 async def test_a_corrupt_ledger_falls_back_to_a_namespaced_scan_keeps_the_file_and_warns(tmp_path):
-    store = CorruptStore()
-    first = await Rig(tmp_path, ledger_store=store).open()
+    first = await Rig(tmp_path).open()
     try:
-        applied(await first.service.start(first.start_body()))
-        applied(await first.run("detour", title="Annexe", prefab=AUX_BLOCK))
-        # a look-alike of the brain (right category, wrong id) and a studio-looking id of another category must survive
-        for object_id, category in (("brain-window-1", "studio_stage"), ("studio-stage-fake", "brain")):
+        # windows an older Core left (killed mid-run), a look-alike of the brain (right category, wrong id) and a studio-looking id of
+        # another category: only the first two are ours
+        for object_id, category in (("studio-stage-r1", "studio_stage"), ("studio-aux-r1-a1", "studio_aux"),
+                                    ("brain-window-1", "studio_stage"), ("studio-stage-fake", "brain")):
             await first.scene.apply(SceneCommand(
                 op=SceneOp.UPSERT_OBJECT, actor=SceneActor.USER, object_id=object_id,
                 fields=SceneObjectFields(kind=SceneObjectKind.WINDOW, category=category, representation=Representation.WINDOW,
                                          payload=ScenePayload(title="x", prefab=ScenePrefabRef("lab.counter", 1, {"label": "x"}, {"count": 1})))))
-        visible = {o.object_id for o in await first.objects()}
-        assert {"brain-window-1", "studio-stage-fake"} <= visible and len(visible) == 4
-        store.corrupt = True                                                      # Core killed, the ledger damaged
+        store = CorruptStore()                                                    # the ledger damaged
         reborn = PresentationStudioPlaybackService(
-            first.studio, first.edit, SceneStage(first.scene, StageLedger(store, diagnostics=first.env.sink), diagnostics=first.env.sink), first.mode,
+            first.studio, first.edit, RunSurface(reclaimer=LegacyStageReclaimer(
+                first.scene, StageLedger(store, diagnostics=first.env.sink), diagnostics=first.env.sink)), first.mode,
             gate=first.gate, diagnostics=first.env.sink, monotonic=first.mono)
         await reborn.start_service()
         remaining = {o.object_id for o in await first.objects()}
         assert remaining == {"brain-window-1", "studio-stage-fake"}, remaining
         assert store.kept and first.env.sink.of("core.presentation_studio.stage_ledger_quarantined")[0][0] == "warning"
-        [(level, data)] = first.env.sink.of("core.presentation_studio.stage_ledger_scan_reclaimed")
+        [(level, data)] = first.env.sink.of("core.presentation_studio.legacy_stage_reclaimed")
         assert level == "warning" and data["count"] == 2
     finally:
         await first.close()
@@ -293,7 +287,7 @@ async def test_a_corrupt_ledger_falls_back_to_a_namespaced_scan_keeps_the_file_a
 
 def test_the_file_ledger_keeps_a_corrupt_file_aside_and_never_silently_overwrites_it(tmp_path):
     ledger = FileStageLedger(tmp_path)
-    ledger.write(["studio-stage-r1"])
+    (tmp_path / "state").mkdir()
     path = tmp_path / "state" / LEDGER_FILE
     path.write_text('{"schema": "x"', encoding="utf-8")                           # truncated by a crash
     with pytest.raises(ValueError):
@@ -301,17 +295,17 @@ def test_the_file_ledger_keeps_a_corrupt_file_aside_and_never_silently_overwrite
     name = ledger.quarantine()
     assert name and name.startswith(LEDGER_FILE + ".corrupt-") and not path.exists()
     assert (tmp_path / "state" / name).read_text(encoding="utf-8") == '{"schema": "x"'
-    ledger.write(["studio-stage-r2"])                                              # the next run's write: evidence intact
-    assert (tmp_path / "state" / name).exists() and json.loads(path.read_text(encoding="utf-8"))["object_ids"] == ["studio-stage-r2"]
+    assert ledger.read() is None and (tmp_path / "state" / name).exists()          # evidence intact, no new ledger is ever written
     (tmp_path / "empty").mkdir()
     assert FileStageLedger(tmp_path / "empty").quarantine() is None
 
 
 def test_quarantined_files_are_bounded(tmp_path):
     ledger = FileStageLedger(tmp_path)
+    (tmp_path / "state").mkdir()
     for index in range(KEEP_QUARANTINED + 3):
-        ledger.write([f"studio-stage-r{index}"])
-        (tmp_path / "state" / LEDGER_FILE).write_text("not json", encoding="utf-8")
+        (tmp_path / "state" / LEDGER_FILE).write_text(json.dumps({"schema": SCHEMA, "object_ids": [f"studio-stage-r{index}"]})[:-3],
+                                                       encoding="utf-8")
         ledger.quarantine()
     kept = list((tmp_path / "state").glob(LEDGER_FILE + ".corrupt-*"))
     assert len(kept) == KEEP_QUARANTINED
@@ -331,7 +325,7 @@ async def test_the_whole_where_answer_stays_inside_its_bound_at_the_worst_case(t
         wire = rig.service.where()
         assert len(json.dumps(wire).encode()) <= MAX_VIEW_BYTES
         pure = {k: v for k, v in wire.items() if k not in ("presentation_id", "variant_id", "stage_object_id", "art_direction",
-                                                          "notices", "mode", "follower")}
+                                                          "notices", "mode", "follower", "surface")}
         from jarvis.domain.presentation_studio_playback import MAX_WHERE_BYTES
         assert len(json.dumps(pure).encode()) <= MAX_WHERE_BYTES + 700             # ensure_ascii inflates accents x6
     finally:

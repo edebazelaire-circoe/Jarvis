@@ -227,17 +227,18 @@ async def test_a_hot_reload_carries_the_anchors_over_and_recomputes_the_frames(r
 
 async def test_played_time_does_not_survive_leaving_the_timeline_and_coming_back(tmp_path):
     scenes = timed_scenes()
-    scenes[0] = {**scenes[0], "anchors": []}           # S1 has no anchor: it is not on the timeline
+    scenes[0] = {**scenes[0], "anchors": []}           # S1 has no anchor: one whole segment (Slice 09: every run, every Remotion scene)
     rig = await Rig(tmp_path).open(scenes=scenes)
     rig.build(timeline_source=Compositions(COMP))
     try:
         applied(await rig.service.start(rig.start_body()))
-        assert "timeline" not in rig.service.where()
+        whole = rig.service.where()["timeline"]
+        assert whole["scene_id"] == S1 and whole["anchor_id"] is None and whole["from_frame"] == 0
         applied(await rig.run("next"))
         rig.mono.t += 2
         assert rig.service.where()["timeline"]["play_ms"] == 2000
         applied(await rig.run("previous"))
-        assert "timeline" not in rig.service.where()
+        assert rig.service.where()["timeline"]["scene_id"] == S1
         rig.mono.t += 5
         again = applied(await rig.run("next"))["timeline"]
         assert again["anchor_id"] == "marker" and again["play_ms"] == 0

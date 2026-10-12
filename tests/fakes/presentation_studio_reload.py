@@ -1,8 +1,9 @@
 """Banc du rechargement a chaud (jarvis-interactive-presentation-studio, Slice 06) : tout est reel sauf le navigateur.
 
 Magasin de fichiers, `PrefabService` + bibliotheque, `SceneService` (SQLite sous `tmp_path`), registre des pins, coalesceur,
-stage, service de rechargement. Le navigateur est `FakeHost` : il regarde la scene globale comme la page le ferait et rapporte
-le montage de ce que la fenetre stage affiche, selon une regle (`policy`) que chaque test choisit.
+surface de lecture de Variantes (`RunSurface`, native-studio-playback-fix Slice 09), service de rechargement. Le navigateur est
+`FakeHost` : il regarde la surface de lecture comme le lecteur de Variantes le ferait et rapporte le montage de ce qu'elle affiche,
+sous l'id de la surface, selon une regle (`policy`) que chaque test choisit.
 """
 
 from __future__ import annotations
@@ -26,12 +27,13 @@ from jarvis.core.presentation_studio_edit import PresentationStudioEditService
 from jarvis.core.presentation_studio_events import StudioEditEvents
 from jarvis.core.presentation_studio_pins import StudioPinRegistry
 from jarvis.adapters.file_presentation_studio_stage_ledger import FileStageLedger
+from jarvis.core.presentation_studio_run_surface import RunSurface
 from jarvis.core.interaction_mode import InteractionModeService
 from jarvis.core.presentation_studio_autosave import PresentationStudioHistory
 from jarvis.core.presentation_studio_playback import PresentationStudioPlaybackService
 from jarvis.core.presentation_studio_reload import PresentationStudioReloadService
 from jarvis.core.presentation_studio_reload_stage import StageWindows
-from jarvis.core.presentation_studio_stage import SceneStage, StageLedger
+from jarvis.core.presentation_studio_stage import LegacyStageReclaimer, StageLedger
 from jarvis.core.presentation_studio_variants import PresentationStudioVariants
 from jarvis.core.presentation_studio_service import PresentationStudioService
 from jarvis.core.scene_service import SceneService
@@ -108,7 +110,7 @@ class Emitter:
 
 
 class FakeHost:
-    """Le navigateur : suit les revisions de la scene globale et rapporte le montage de l'objet stage.
+    """Le lecteur de Variantes : suit les revisions de la surface de lecture et rapporte le montage de ce qu'elle affiche.
 
     `policy(pin)` rend le rapport `{outcome, reason?, message?}` pour cette version, ou `None` (la page ne repond pas).
     Par defaut tout monte. Les pins deja rapportes ne le sont pas deux fois (un cadre ne remonte que sur changement de pin)."""
@@ -128,24 +130,28 @@ class FakeHost:
             await asyncio.gather(self._task, return_exceptions=True)
 
     async def _watch(self) -> None:
-        scene = self.rig.scene
-        revision = (await scene.snapshot()).revision
+        surface = self.rig.surface
+        revision = -1
         while True:
-            revision = await scene.wait_for_revision(revision, timeout_s=30)
-            for item in (await scene.snapshot()).objects:
-                block = item.payload.prefab
-                if block is None:
-                    continue
-                pin = PrefabRef(block.prefab_id, block.version)
-                if self.mounted.get(item.object_id) == pin:
-                    continue
-                self.mounted[item.object_id] = pin
-                answer = self.policy(pin)
-                if answer is None:
-                    continue
-                body = {"object_id": item.object_id, "prefab": pin.to_dict(), **answer}
-                self.reports.append(body)
-                await self.rig.reload.handle_mount_report(body)
+            if revision >= 0:
+                revision = await surface.wait_for_revision(revision, timeout_s=30)
+            else:
+                revision = surface.revision
+            snapshot = surface.snapshot()
+            block = None if snapshot is None else snapshot["prefab"]
+            if block is None:
+                continue
+            object_id = snapshot["surface_id"]
+            pin = PrefabRef(block["id"], block["version"])
+            if self.mounted.get(object_id) == pin:
+                continue
+            self.mounted[object_id] = pin
+            answer = self.policy(pin)
+            if answer is None:
+                continue
+            body = {"object_id": object_id, "prefab": pin.to_dict(), **answer}
+            self.reports.append(body)
+            await self.rig.reload.handle_mount_report(body)
 
 
 class Rig:
@@ -190,17 +196,19 @@ class Rig:
         self.pins.add_source("undo", self.history.pins)
         self.coalescer = PrefabDraftCoalescer(self.prefabs, quiet_s=self.quiet_s, max_wait_s=self.max_wait_s,
                                               diagnostics=self.sink)
-        self.stage = StageWindows(self.scene, diagnostics=self.sink)
+        # The REAL playback runtime (Slice 12) owns the run surface of Variants (Slice 09): a run shows `variants-run-<run_id>` and
+        # tells the reload (`stage_observer`) which scene it shows; the reload reads its position (`PlaybackProbe`).
+        self.surface = RunSurface(validator=self.prefabs, diagnostics=self.sink, reclaimer=LegacyStageReclaimer(
+            self.scene, StageLedger(FileStageLedger(self.tmp), diagnostics=self.sink), diagnostics=self.sink))
+        self.pins.add_source("variants_run", self.surface.pins)
+        self.stage = StageWindows(self.surface, diagnostics=self.sink)
         self.reload = PresentationStudioReloadService(
             self.studio, self.prefabs, self.coalescer, self.stage, pins=self.pins, edits=self.edits,
             events=self.events, diagnostics=self.sink, mount_deadline_s=self.mount_deadline_s, builder=self.builder,
             **self.reload_options)
-        # The REAL playback runtime (Slice 12) owns the stage window: a run creates `studio-stage-<run_id>` and tells the
-        # reload (`stage_observer`) which scene it shows; the reload reads its position (`PlaybackProbe`).
-        self.stage_scene = SceneStage(self.scene, StageLedger(FileStageLedger(self.tmp), diagnostics=self.sink), diagnostics=self.sink)
         self.mode = InteractionModeService(events=_Bus(), epoch="epoch-1")
         self.playback = PresentationStudioPlaybackService(
-            self.studio, self.edits, self.stage_scene, self.mode, gate=_Gate(), bus=_Bus(), diagnostics=self.sink,
+            self.studio, self.edits, self.surface, self.mode, gate=_Gate(), bus=_Bus(), diagnostics=self.sink,
             new_run_id=self._run_id, detour_validator=self.prefabs, stage_observer=self.stage)
         self.reload.bind_playback(self.playback)
         self.variants.bind_playback(self.playback)
@@ -209,7 +217,7 @@ class Rig:
             self.pid, self.vid = first["presentation_id"], first["active_variant_id"]
             await self.rebuild_pins()
             await self.reload.recover()
-            await self.playback.start_service()  # as at Core start: the stage window of the killed life is taken back by id list
+            await self.playback.start_service()  # as at Core start: Board windows an older Core left are archived
             return self
         view = await self.studio.create({"title": "Atelier"})
         self.pid, self.vid = view.presentation.presentation_id, view.presentation.active_variant_id
@@ -291,15 +299,36 @@ class Rig:
         return await self.reload.apply_source_edit(self.pid, self.vid, self.request(revision, files, scene_id=scene_id, **extra))
 
     def stage_object_id(self) -> str | None:
-        """La fenetre `studio-stage-<run_id>` de la lecture en cours, `None` si rien ne joue."""
+        """La surface `variants-run-<run_id>` de la lecture en cours, `None` si rien ne joue."""
 
         where = self.playback.position(self.pid) if self.playback is not None else None
         return None if where is None else where["stage_object_id"]
 
     async def stage_block(self):
         object_id = self.stage_object_id()
-        found = None if object_id is None else (await self.scene.snapshot()).get_object(object_id)
-        return None if found is None else found.payload.prefab
+        return None if object_id is None else self.surface.current_block(object_id)
+
+    async def frame_commits(self, data: dict) -> Any:
+        """The frame on the run surface commits values (`state` event `incremented`, the REAL event path of Slice 09: the page posts
+        it to `/v1/prefabs/events`, `PrefabEventService` checks it and writes the surface's data)."""
+
+        from jarvis.core.prefab_events import PrefabEventService
+        events = PrefabEventService(self.scene, self.prefabs, diagnostics=self.sink, surface=self.surface)
+        block = await self.stage_block()
+        body = {"actor": "user", "object_id": self.stage_object_id(), "prefab": {"id": block.prefab_id, "version": block.version},
+                "event": "incremented", "payload": data, "basis": {key: block.data.get(key) for key in data}}
+        return await events.submit(body)
+
+    def surface_shows(self, *, props: dict | None = None, data: dict | None = None) -> None:
+        """Values the run surface shows besides the stored scene (the score's ephemeral overlay renders props there)."""
+
+        from dataclasses import replace as _replace
+        from jarvis.domain.scene import ScenePrefabRef
+        shown = self.surface._shown
+        block = shown.prefab
+        self.surface._shown = _replace(shown, prefab=ScenePrefabRef(block.prefab_id, block.version, {**block.props, **(props or {})},
+                                                                   {**block.data, **(data or {})}))
+        self.surface._bump()
 
     async def add_window(self, object_id: str, prefab_id: str = "lab.counter", version: int = 1) -> None:
         """Une fenetre de la scene globale qui n'est pas le stage : un cadre voisin que le rechargement ne doit jamais toucher."""

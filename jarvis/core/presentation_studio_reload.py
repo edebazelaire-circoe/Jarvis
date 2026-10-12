@@ -3,9 +3,10 @@
 **Un** chemin pour qu'une edition de SOURCE (niveau 3, D11) donne un resultat vivant coherent, ou echoue sans rien abimer.
 Mecanisme R2 (decide par la Slice 00) : candidat de prefab valide **avant** toute publication, publie comme revision
 immuable par `PrefabService.save` (via le coalesceur de la Slice 01a : une rafale = une version), puis le pin exact de la
-scene est re-ecrit (variante, compare-and-set de la Slice 05) et la fenetre « stage » est patchee : la regle de remontage
-de l'hote (changement de `(id, version)`) recharge **ce** cadre seulement. Aucun second moteur de rendu, aucun `srcdoc`
-nouveau, ni le bac a sable, ni la CSP, ni `jv:1` ne bougent.
+scene est re-ecrit (variante, compare-and-set de la Slice 05) et la surface de lecture de Variantes est re-epinglee (Slice 09 de
+native-studio-playback-fix ; avant, la fenetre « stage » du Board) : la regle de remontage de l'hote (changement de
+`(id, version)`) recharge **ce** cadre seulement. Aucun second moteur de rendu, aucun `srcdoc` nouveau, ni le bac a sable,
+ni la CSP, ni `jv:1` ne bougent.
 
 ```
 requete -> [1 sans verrou]  lire pin+source, composer, VALIDER (manifeste sur, validate_candidate, valeurs studio,
@@ -15,7 +16,7 @@ requete -> [1 sans verrou]  lire pin+source, composer, VALIDER (manifeste sur, v
                             montage de l'hote (echeance) -> confirmer (effacer le repli) | retour arriere
 ```
 
-Issues (`ReloadStatus`) : `reloaded`, `reloaded_state_reset`, `repinned` (aucune fenetre stage ne l'affiche), `pending_mount`
+Issues (`ReloadStatus`) : `reloaded`, `reloaded_state_reset`, `repinned` (aucune surface de lecture ne l'affiche), `pending_mount`
 (pas de rapport dans le delai : le pin tient, le repli aussi), `refused_validation` (rien n'a change), `rolled_back`
 (pin revenu, raison dite), `stale`. **Jamais** la derniere scene valide n'est detruite : le repli est le document
 precedent de la scene, restaure tel quel (seul `source_revision` a monte).
@@ -88,7 +89,7 @@ DEFAULT_MAX_WAIT_S = 4.0
 #: Attente bornee des editions en vol a l'arret de Core.
 CLOSE_GRACE_S = 10.0
 MAX_PROBLEMS_IN_MESSAGE = 3
-#: Essais bornes pour remettre la fenetre stage sur la derniere version valide apres un echec de montage.
+#: Essais bornes pour remettre la surface de lecture sur la derniere version valide apres un echec de montage.
 STAGE_RESTORE_ATTEMPTS = 3
 
 
@@ -616,7 +617,7 @@ class PresentationStudioReloadService:
             self._note_unverified(presentation_id, variant_id, new_scene)
             return self._ok(ReloadStatus.REPINNED, request, presentation_id, variant_id, new_scene, revision, old, reset,
                             mounted=None, playback_before=playback_before,
-                            message="no stage window shows this scene: the new version is pinned and waits to be seen mounted")
+                            message="no run surface shows this scene: the new version is pinned and waits to be seen mounted")
         return await self._patch_and_confirm(presentation_id, variant_id, request, binding, scene, new_scene, revision, old,
                                              manifest, live_props, live_data, shown, reset, playback_before)
 
@@ -716,7 +717,7 @@ class PresentationStudioReloadService:
             failed = await self._restore_stage(binding, scene.prefab, old, shown, before)
             if failed is not None:
                 return self._degraded(presentation_id, variant_id, request, scene, revision, old, C.STAGE_FAILED, failed,
-                                      f"{message} (and the stage window could not be put back on the last valid version: {failed})",
+                                      f"{message} (and the run surface could not be put back on the last valid version: {failed})",
                                       playback_before, waited_s, reason)
         try:
             restored_revision, restored, reset = await self._restore_variant(presentation_id, variant_id, before, scene)
@@ -759,7 +760,7 @@ class PresentationStudioReloadService:
 
     async def _restore_stage(self, binding: StageBinding, current: PrefabRef, old: PrefabRef, shown: Any,
                              before: StudioScene) -> str | None:
-        """Remet la fenetre stage sur `old` (essais bornes). `None` si c'est fait, sinon le code de la derniere panne."""
+        """Remet la surface de lecture sur `old` (essais bornes). `None` si c'est fait, sinon le code de la derniere panne."""
 
         props = dict(shown.props) if shown is not None else dict(before.props)
         data = dict(shown.data) if shown is not None else dict(before.data)
@@ -865,7 +866,7 @@ class PresentationStudioReloadService:
             before = replace(scene, prefab=old, last_valid_pin=None)
             binding = await self._stage.locate(presentation_id, variant_id, scene_id, scene.prefab)
             block = None if binding is None else await self._stage_block(binding, scene.prefab)
-            if binding is not None and block is not None:  # the window still shows the failed version: put it back
+            if binding is not None and block is not None:  # the surface still shows the failed version: put it back
                 failed = await self._restore_stage(binding, scene.prefab, old, block, before)
                 if failed is not None:  # stays unverified: a later report, a reload or a restart repairs it
                     self._counters["degraded"] += 1

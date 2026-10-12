@@ -1,9 +1,10 @@
 """Core playback service against the real scene, prefab catalogue, edit service and file store (Slice 12).
 
-What is proven here, with real objects and no mock of the code under test: one stable stage window patched (not
-recreated), the score's values as an ephemeral overlay (the variant file is byte-identical across a full run), an explicit
-edit that pauses and commits, auxiliary windows that are always retired (stop, crash, killed Core), the interaction mode
-switched and restored, art direction as a port, and the armed-cue delivery with a fake follower.
+What is proven here, with real objects and no mock of the code under test: one stable run surface of Variants patched (not
+recreated, no Board object; native-studio-playback-fix Slice 09), the score's values as an ephemeral overlay (the variant file is
+byte-identical across a full run), an explicit edit that pauses and commits, detour overlays that are always retired (stop,
+crash), the Board windows an older Core left archived at start, the interaction mode switched and restored, art direction as a
+port, and the armed-cue delivery with a fake follower.
 Contract: `docs/presentation-studio.md` > *Playback runtime contract*.
 """
 
@@ -16,13 +17,14 @@ from pathlib import Path
 
 import pytest
 
-from jarvis.adapters.file_presentation_studio_stage_ledger import FileStageLedger, LEDGER_FILE
+from jarvis.adapters.file_presentation_studio_stage_ledger import FileStageLedger, LEDGER_FILE, SCHEMA as LEDGER_SCHEMA
 from jarvis.adapters.sqlite_scene import SQLiteSceneRepository
 from jarvis.core.interaction_mode import InteractionModeService
 from jarvis.core.presentation_studio_edit import PresentationStudioEditService
 from jarvis.core.presentation_studio_events import StudioPlaybackEvents
 from jarvis.core.presentation_studio_playback import PlaybackStatus, PresentationStudioPlaybackService
-from jarvis.core.presentation_studio_stage import SceneStage, StageLedger
+from jarvis.core.presentation_studio_run_surface import RunSurface
+from jarvis.core.presentation_studio_stage import LegacyStageReclaimer, StageLedger
 from jarvis.core.scene_service import SceneService, SceneState
 from jarvis.domain.conversation_events import ConversationEventType as T
 from jarvis.domain.interaction_mode import InteractionMode
@@ -88,17 +90,19 @@ class Conversation:
 
 
 class MemoryLedgerStore:
-    def __init__(self) -> None:
-        self.ids: list[str] | None = None
+    """The ledger an older Core left (read once, then kept aside: `retired`)."""
+
+    def __init__(self, ids: list[str] | None = None) -> None:
+        self.ids, self.retired = ids, None
 
     def read(self):
         return None if self.ids is None else list(self.ids)
 
-    def write(self, ids):
-        self.ids = list(ids)
-
-    def erase(self):
-        self.ids = None
+    def retire(self):
+        if self.ids is None:
+            return None
+        self.retired, self.ids = list(self.ids), None
+        return "ledger.retired"
 
 
 class Gate:
@@ -139,7 +143,8 @@ class Rig:
         if mode is not InteractionMode.ASSISTANT:
             await self.mode.request(mode, source="control_center")
         self.stage_ledger = StageLedger(self.ledger_store, diagnostics=env.sink)
-        self.stage = SceneStage(self.scene, self.stage_ledger, diagnostics=env.sink)
+        self.reclaimer = LegacyStageReclaimer(self.scene, self.stage_ledger, diagnostics=env.sink)
+        self.stage = RunSurface(validator=env.prefabs, reclaimer=self.reclaimer, diagnostics=env.sink)
         self.build()
         return self
 
@@ -166,13 +171,25 @@ class Rig:
         return {str(p.relative_to(root)): hashlib.sha256(p.read_bytes()).hexdigest() for p in sorted(root.rglob("*.json"))}
 
     async def objects(self, category: str | None = None):
+        """Board objects (Slice 09: a run never creates one)."""
+
         snapshot = await self.scene.snapshot()
         return [o for o in snapshot.objects if category is None or o.category == category]
 
     async def stage_object(self):
-        found = await self.objects("studio_stage")
-        assert len(found) <= 1, "ONE stable stage window per run"
-        return found[0] if found else None
+        """The run surface of Variants as the page reads it: `None`, or `.object_id` and `.payload` (title, prefab)."""
+
+        snapshot = self.stage.snapshot()
+        if snapshot is None:
+            return None
+        from types import SimpleNamespace
+        return SimpleNamespace(object_id=snapshot["surface_id"], revision=snapshot["revision"], wire=snapshot,
+                               payload=self.stage._shown)
+
+    def overlays(self):
+        """The detour overlays inside the surface (`visible`, `block`, `title`)."""
+
+        return list(self.stage._overlays.values())
 
     def start_body(self, role="user_presenter", **extra):
         return {"actor": "user", "presentation_id": self.pid, "role": role, **extra}
@@ -199,60 +216,61 @@ def applied(result):
 
 # ------------------------------------------------------------------ start, stage, stop
 
-async def test_start_shows_one_stable_stage_window_and_next_patches_it_instead_of_recreating(rig):
+async def test_start_shows_one_stable_run_surface_and_next_patches_it_without_any_board_object(rig):
+    board_before = (await rig.scene.snapshot()).revision
     state = applied(await rig.service.start(rig.start_body()))
     assert state["phase"] == "playing" and state["scene"]["title"] == "Un" and state["position"] == {"index": 1, "of": 4}
     stage = await rig.stage_object()
-    assert stage.object_id == state["stage_object_id"] == "studio-stage-r00000000000"
+    assert stage.object_id == state["stage_object_id"] == "variants-run-r00000000000"
+    assert state["surface"] == {"id": stage.object_id, "rev": stage.revision}            # the page refetches when `rev` moves
     assert stage.payload.title == "Un" and stage.payload.prefab.prefab_id == "lab.counter"
-    revision_first = (await rig.scene.snapshot()).revision
+    assert rig.service.surface()["prefab"]["id"] == "lab.counter" and rig.service.surface()["overlays"] == []
+    revision_first = stage.revision
     applied(await rig.run("next"))
     again = await rig.stage_object()
-    assert again.object_id == stage.object_id and again.payload.title == "Deux"            # patched, same window
-    assert [o.object_id for o in await rig.objects("studio_stage")] == [stage.object_id]
-    assert (await rig.scene.snapshot()).revision == revision_first + 1
-    assert rig.stage_ledger.ids == (stage.object_id,)
+    assert again.object_id == stage.object_id and again.payload.title == "Deux"            # patched, same surface
+    assert again.revision == revision_first + 1
     # The same payload shown again writes nothing (a frame's own state is not reset by a "resume").
-    revision = (await rig.scene.snapshot()).revision
     applied(await rig.run("previous"))
     applied(await rig.run("next"))
-    assert (await rig.scene.snapshot()).revision == revision + 2
+    assert (await rig.stage_object()).revision == revision_first + 3
+    # PX-16: no Board object was created or touched by the whole run
+    assert (await rig.scene.snapshot()).revision == board_before and await rig.objects() == []
 
 
-async def test_stop_archives_the_stage_clears_the_ledger_and_leaves_an_inspectable_record(rig):
+async def test_stop_releases_the_surface_and_leaves_an_inspectable_record(rig):
     applied(await rig.service.start(rig.start_body()))
     state = applied(await rig.run("stop"))
-    assert state["phase"] == "stopped" and state["running"] is False
-    assert await rig.stage_object() is None and rig.stage_ledger.ids == () and rig.ledger_store.ids is None
+    assert state["phase"] == "stopped" and state["running"] is False and "surface" not in state
+    assert await rig.stage_object() is None and rig.service.surface() is None
     assert rig.service.where()["last_run"]["reason"] == "user" and rig.service.where()["last_run"]["problems"] == []
     again = await rig.run("stop")
     assert again.status is PlaybackStatus.REFUSED and again.reason == "not_running" and again.http_status == 409
-    # a new run is possible afterwards and gets a stage window again
+    # a new run is possible afterwards and gets its own surface
     rig.build();
     applied(await rig.service.start(rig.start_body()))
-    assert (await rig.stage_object()) is not None
+    assert (await rig.stage_object()).object_id == "variants-run-r00000000001"
 
 
 async def test_a_second_start_while_running_is_refused_without_touching_anything(rig):
     applied(await rig.service.start(rig.start_body()))
-    revision = (await rig.scene.snapshot()).revision
+    revision = (await rig.stage_object()).revision
     second = await rig.service.start(rig.start_body())
     assert second.status is PlaybackStatus.REFUSED and second.reason == "already_running"
-    assert (await rig.scene.snapshot()).revision == revision
+    assert (await rig.stage_object()).revision == revision and await rig.objects() == []
 
 
-async def test_the_stage_the_user_closed_is_recreated_once_under_a_new_generation(rig):
+async def test_a_block_the_catalogue_refuses_never_reaches_the_surface_and_pauses_the_run(rig):
+    """The surface is validated like the scene window was (`prefab_invalid`, the catalogue's reason), never shown unchecked."""
+
     applied(await rig.service.start(rig.start_body()))
-    stage = await rig.stage_object()
-    from jarvis.domain.scene import SceneActor, SceneCommand, SceneOp
-    from jarvis.domain.scene_selection import SceneSelection
-    await rig.scene.apply(SceneCommand(op=SceneOp.ARCHIVE_SELECTION, actor=SceneActor.USER,
-                                       selection=SceneSelection(ids=(stage.object_id,))))
-    assert await rig.stage_object() is None
-    state = applied(await rig.run("next"))
-    now = await rig.stage_object()
-    assert now.object_id == stage.object_id + "-1" and state["stage_object_id"] == now.object_id
-    assert now.payload.title == "Deux"
+    shown = (await rig.stage_object()).payload
+    from jarvis.domain.scene import ScenePayload, ScenePrefabRef
+    from jarvis.core.presentation_studio_stage import StageError
+    with pytest.raises(StageError) as caught:
+        await rig.stage.show(ScenePayload(title="x", prefab=ScenePrefabRef("lab.nothing", 1, {}, {})))
+    assert caught.value.code == "prefab_invalid" and "lab.nothing" in caught.value.message
+    assert (await rig.stage_object()).payload == shown
 
 
 # ------------------------------------------------------------------ the overlay never writes the variant
@@ -357,36 +375,39 @@ async def test_speaking_cues_and_navigation_are_improvisation_and_never_write(ri
 
 # ------------------------------------------------------------------ detour: aux windows are always retired
 
-async def test_a_detour_stages_the_aux_window_hidden_then_visible_and_return_retires_it(rig):
+async def test_a_detour_is_an_overlay_inside_the_surface_hidden_then_visible_and_return_retires_it(rig):
+    """PX-20: a detour shows as an overlay inside the Variants stage, never a Board window; `return` removes it; the frame underneath
+    is unchanged."""
+
     applied(await rig.service.start(rig.start_body()))
     applied(await rig.run("next"))
     position = rig.service.where()["position"]
+    under = (await rig.stage_object()).payload
     state = applied(await rig.run("detour", title="Annexe", prefab=AUX_BLOCK))
     assert state["phase"] == "detour" and state["detour"] == {"depth": 1, "title": "Annexe"}
-    [aux] = await rig.objects("studio_aux")
-    assert aux.visibility.value == "visible" and aux.payload.prefab.props["label"] == "Annexe"
-    assert aux.object_id in rig.stage_ledger.ids and len(rig.stage_ledger.ids) == 2
+    [aux] = rig.overlays()
+    assert aux.visible is True and aux.block.props["label"] == "Annexe" and aux.title == "Annexe"
+    assert rig.service.surface()["overlays"][0]["visible"] is True and await rig.objects() == []      # not a Board window
     stage = await rig.stage_object()
-    assert stage.payload.title == "Deux"                                                 # the stage is untouched
+    assert stage.payload == under                                                        # the frame underneath is untouched
     assert (await rig.run("next")).reason == "in_detour"
     state = applied(await rig.run("return"))
-    assert await rig.objects("studio_aux") == [] and rig.stage_ledger.ids == (stage.object_id,)
+    assert rig.overlays() == [] and (await rig.stage_object()).payload == under
     assert state["phase"] == "playing" and state["position"] == position
 
 
-async def test_stop_in_the_middle_of_nested_detours_retires_every_aux_window(rig):
+async def test_stop_in_the_middle_of_nested_detours_retires_every_overlay(rig):
     applied(await rig.service.start(rig.start_body()))
     for index in range(3):
         applied(await rig.run("detour", title=f"Annexe {index}", prefab=AUX_BLOCK))
-    assert len(await rig.objects("studio_aux")) == 3
+    assert len(rig.overlays()) == 3
     applied(await rig.run("stop"))
-    assert await rig.objects("studio_aux") == [] and await rig.stage_object() is None
-    assert rig.stage_ledger.ids == ()
+    assert rig.overlays() == [] and await rig.stage_object() is None
 
 
 async def test_an_aux_that_cannot_be_staged_is_reported_and_leaves_no_phantom_detour(rig):
-    """Without a catalogue check up front the scene is the judge: the failure is reported (500, the real cause) and the
-    transition is UNDONE, so `next` / `previous` / `pause` still work (QA-1 P2)."""
+    """Without a catalogue check up front the surface's catalogue check is the judge: the failure is reported (500, the real
+    cause) and the transition is UNDONE, so `next` / `previous` / `pause` still work (QA-1 P2)."""
 
     applied(await rig.service.start(rig.start_body()))
     before = rig.service.where()
@@ -395,7 +416,7 @@ async def test_an_aux_that_cannot_be_staged_is_reported_and_leaves_no_phantom_de
     after = rig.service.where()
     assert after["phase"] == "playing" and after["detour"] is None and after["problems"] == []
     assert after["armed"] == before["armed"] and after["generation"] > before["generation"]   # monotonic, never reused
-    assert await rig.objects("studio_aux") == [] and rig.stage_ledger.ids == (rig.stage.stage_object_id,)
+    assert rig.overlays() == [] and await rig.objects() == []
     applied(await rig.run("next"))                                        # not stuck in a detour that never showed
 
 
@@ -411,41 +432,74 @@ async def test_a_crash_inside_a_command_ends_the_run_cleanly_and_propagates(rig)
         await rig.run("return")
     state = rig.service.where()
     assert state["phase"] == "stopped" and state["last_run"]["reason"] == "crashed"
-    assert await rig.objects("studio_aux") == [] and await rig.stage_object() is None
-    assert rig.stage_ledger.ids == () and rig.mode.mode is InteractionMode.ASSISTANT
+    assert rig.overlays() == [] and await rig.stage_object() is None
+    assert rig.mode.mode is InteractionMode.ASSISTANT
     assert rig.env.sink.of("core.presentation_studio.playback_crashed")[0][0] == "error"
 
 
-# ------------------------------------------------------------------ killed Core: reclaim by id list
+# ------------------------------------------------------------------ legacy: the Board windows an older Core left (Slice 09)
 
-async def test_a_core_killed_mid_run_is_reclaimed_at_the_next_start_by_id_list(tmp_path):
-    root = tmp_path / "studio"
-    first = Rig(tmp_path, ledger_store=FileStageLedger(root))
-    await first.open()
-    applied(await first.service.start(first.start_body()))
-    applied(await first.run("detour", title="Annexe", prefab=AUX_BLOCK))
-    leftovers = {o.object_id for o in await first.objects() if o.category.startswith("studio_")}
-    assert len(leftovers) == 2 and (root / "state" / LEDGER_FILE).exists()
-    # a brain object of the same shape that the Studio did NOT create must survive the reclaim
+async def _legacy_window(scene, object_id: str, category: str, actor=None) -> None:
     from jarvis.domain.scene import (Representation, SceneActor, SceneCommand, SceneObjectFields, SceneObjectKind, SceneOp,
                                      ScenePayload, ScenePrefabRef)
-    await first.scene.apply(SceneCommand(op=SceneOp.UPSERT_OBJECT, actor=SceneActor.BRAIN, object_id="brain-window-1",
-                                         fields=SceneObjectFields(kind=SceneObjectKind.WINDOW,
-                                                                  category="studio_aux",
-                                                                  payload=ScenePayload(title="Brain's", prefab=ScenePrefabRef(
-                                                                      "lab.counter", 1, {"label": "x"}, {"count": 1})),
-                                                                  representation=Representation.WINDOW)))
-    # no stop, no close: the process "dies". A new life with the same scene and the same ledger file:
-    second_ledger = StageLedger(FileStageLedger(root), diagnostics=first.env.sink)
-    second_stage = SceneStage(first.scene, second_ledger, diagnostics=first.env.sink)
-    reborn = PresentationStudioPlaybackService(first.studio, first.edit, second_stage, first.mode,
-                                               gate=first.gate, diagnostics=first.env.sink, monotonic=first.mono)
-    await reborn.start_service()
-    remaining = {o.object_id for o in await first.objects()}
-    assert not (leftovers & remaining) and "brain-window-1" in remaining
-    assert not (root / "state" / LEDGER_FILE).exists()
-    assert reborn.where() == {"phase": "idle", "running": False}
-    await first.close()
+    await scene.apply(SceneCommand(op=SceneOp.UPSERT_OBJECT, actor=actor or SceneActor.USER, object_id=object_id,
+                                   fields=SceneObjectFields(kind=SceneObjectKind.WINDOW, category=category,
+                                                            payload=ScenePayload(title=object_id, prefab=ScenePrefabRef(
+                                                                "lab.counter", 1, {"label": "x"}, {"count": 1})),
+                                                            representation=Representation.WINDOW)))
+
+
+async def test_board_windows_an_older_core_left_are_archived_at_start_and_its_ledger_kept_aside(tmp_path):
+    """PX-16 and persisted state: a `studio-stage-*` / `studio-aux-*` window of the retired floating viewer, persisted on the scene
+    by an older Core (killed mid-run), is archived once at Core start (ledger ids AND a namespaced scan, the ledger is gone or not);
+    the old ledger file is kept aside (`.retired-*`), never deleted; a brain object of the same category but another id survives."""
+
+    root = tmp_path / "studio"
+    rig = Rig(tmp_path, ledger_store=FileStageLedger(root))
+    await rig.open()
+    try:
+        await _legacy_window(rig.scene, "studio-stage-oldrun", "studio_stage")
+        await _legacy_window(rig.scene, "studio-stage-lost-1", "studio_stage")          # not in the ledger: found by the scan
+        await _legacy_window(rig.scene, "studio-aux-oldrun-a1", "studio_aux")
+        from jarvis.domain.scene import SceneActor
+        await _legacy_window(rig.scene, "brain-window-1", "studio_aux", SceneActor.BRAIN)  # same category, not our namespace
+        (root / "state").mkdir(parents=True, exist_ok=True)
+        (root / "state" / LEDGER_FILE).write_text(json.dumps({"schema": LEDGER_SCHEMA, "object_ids": [
+            "studio-stage-oldrun", "studio-aux-oldrun-a1", "studio-stage-already-archived"]}), encoding="utf-8")
+        await rig.service.start_service()
+        remaining = {o.object_id for o in await rig.objects()}
+        assert remaining == {"brain-window-1"}
+        assert not (root / "state" / LEDGER_FILE).exists()
+        assert len(list((root / "state").glob(LEDGER_FILE + ".retired-*"))) == 1        # kept aside, never deleted
+        assert rig.env.sink.of("core.presentation_studio.legacy_stage_reclaimed")[0][1]["count"] == 3
+        assert rig.service.where() == {"phase": "idle", "running": False}
+        # a run afterwards creates no Board object, and a second pass has nothing left to do
+        applied(await rig.service.start(rig.start_body()))
+        assert {o.object_id for o in await rig.objects()} == {"brain-window-1"}
+    finally:
+        await rig.close()
+
+
+async def test_a_leftover_window_appearing_later_is_archived_before_the_next_run(rig):
+    await _legacy_window(rig.scene, "studio-stage-late", "studio_stage")
+    applied(await rig.service.start(rig.start_body()))
+    assert await rig.objects() == []
+
+
+async def test_an_unreadable_old_ledger_is_an_error_row_kept_aside_and_the_scan_still_runs(tmp_path):
+    root = tmp_path / "studio"
+    rig = Rig(tmp_path, ledger_store=FileStageLedger(root))
+    await rig.open()
+    try:
+        await _legacy_window(rig.scene, "studio-stage-oldrun", "studio_stage")
+        (root / "state").mkdir(parents=True, exist_ok=True)
+        (root / "state" / LEDGER_FILE).write_text("{not json", encoding="utf-8")
+        await rig.service.start_service()
+        assert await rig.objects() == []
+        assert rig.env.sink.of("core.presentation_studio.stage_ledger_unreadable")[0][0] == "error"
+        assert len(list((root / "state").glob(LEDGER_FILE + ".corrupt-*"))) == 1
+    finally:
+        await rig.close()
 
 
 # ------------------------------------------------------------------ role and mode
@@ -499,7 +553,7 @@ async def test_a_manual_mode_change_during_the_run_stops_it_and_leaves_the_users
     state = rig.service.where()
     assert state["phase"] == "stopped" and state["last_run"]["reason"] == "mode_changed_by_user"
     assert rig.mode.mode is InteractionMode.ASSISTANT and rig.mode.state.source == "control_center"   # never forced back
-    assert await rig.objects("studio_aux") == [] and await rig.stage_object() is None
+    assert rig.overlays() == [] and await rig.stage_object() is None
 
 
 async def test_our_own_switch_and_restore_never_stop_the_run(rig):
@@ -746,5 +800,5 @@ async def test_close_ends_a_live_run_cleanly(rig):
     applied(await rig.service.start(rig.start_body("user_presenter")))
     applied(await rig.run("detour", title="Annexe", prefab=AUX_BLOCK))
     await rig.service.close()
-    assert await rig.stage_object() is None and await rig.objects("studio_aux") == []
+    assert await rig.stage_object() is None and rig.overlays() == []
     assert rig.mode.mode is InteractionMode.ASSISTANT and rig.service.where()["last_run"]["reason"] == "shutdown"

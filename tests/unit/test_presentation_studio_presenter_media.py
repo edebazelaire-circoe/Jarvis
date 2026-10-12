@@ -173,7 +173,8 @@ async def test_a_page_report_in_a_run_the_user_paces_teaches_core_nothing_and_mo
     rig = await open_rig(tmp_path, jarvis_content())
     try:
         state = applied(await rig.service.start(rig.start_body("user_presenter")))
-        assert "timeline" not in state, "a scene without anchors plays freely in a run the user paces (unchanged)"
+        # Slice 09: a scene without anchors gets one whole segment in EVERY run (the Variants Player never plays by itself)
+        assert state["timeline"]["anchor_id"] is None and state["timeline"]["from_frame"] == 0 and state["timeline"]["auto"] is False
         applied(await rig.run("next"))
         tl = where(rig)["timeline"]
         assert tl["auto"] is False and segment(rig) == (S2, "reveal", 0, 179, True)

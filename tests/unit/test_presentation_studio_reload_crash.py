@@ -85,7 +85,9 @@ async def reopen(root: Path) -> Rig:
 
 
 async def live_stage_windows(rig: Rig) -> list[str]:
-    return [o.object_id for o in (await rig.scene.snapshot()).objects if o.object_id.startswith("studio-stage-")]
+    """Board windows of the retired run stage (Slice 09: a run plays on the Variants surface, in memory; none must ever exist)."""
+
+    return [o.object_id for o in (await rig.scene.snapshot()).objects if o.object_id.startswith(("studio-stage-", "studio-aux-"))]
 
 
 def library_ids(rig: Rig) -> list[str]:
@@ -128,7 +130,7 @@ async def test_a_kill_after_the_pin_and_before_the_stage_patch_keeps_the_fallbac
         assert held["lab.counter"] == frozenset({1}) and held[scene.prefab.prefab_id] == frozenset({1})
         assert await rig.reload.recover() == 1
         assert [entry.fallback for entry in rig.reload.pending_scenes()] == [OLD]
-        # the killed life's stage window was taken back by id list at start (Slice 12): no window, no run
+        # the killed life's run surface was memory (Slice 09): no surface, no Board window, no run
         assert await rig.stage_block() is None and not await live_stage_windows(rig)
         # a new run shows the scene: it mounts the document's pin, and a good mount confirms it ...
         rig.host = FakeHost(rig)
@@ -165,9 +167,9 @@ async def test_a_kill_after_the_stage_patch_leaves_a_consistent_pair_that_the_re
     try:
         scene = scene_of(await rig.variant())
         assert scene.prefab.prefab_id.startswith("presentation-studio.") and scene.last_valid_pin == OLD
-        assert not await live_stage_windows(rig)       # the killed life's window (it showed the new pin) was taken back
+        assert not await live_stage_windows(rig)       # the killed life's surface (it showed the new pin) was memory: nothing left
         assert await rig.reload.recover() == 1
-        await rig.play()                               # a new run shows the document's pin on its own window
+        await rig.play()                               # a new run shows the document's pin on its own surface
         block = await rig.stage_block()
         assert (block.prefab_id, block.version) == (scene.prefab.prefab_id, scene.prefab.version)
         object_id = rig.stage_object_id()

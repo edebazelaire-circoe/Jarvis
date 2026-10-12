@@ -29,6 +29,7 @@ Core rendus tels quels, erreurs et résultats `refused`/`stale` compris ; Core i
 | `POST /api/presentation-studio/rail/display-state` | idem : ce que la page constate (rail visible, fenetre ouverte) |
 | `POST .../presentations/{presentation_id}/rail` | idem, **`actor` force a `user`** ; `{action: hide|show|archive|restore|rename|acknowledge, confirmed?, title?}` |
 | `GET /api/presentation-studio/playback` | `GET /v1/presentation-studio/playback` : « où en est-on » (Slice 12) |
+| `GET /api/presentation-studio/playback/preload`, `.../playback/surface` | idem (Slice 23 ; native-studio-playback-fix Slice 09 : ce que le lecteur de Variantes monte pour la lecture) |
 | `POST /api/presentation-studio/playback/{verb}` | idem, **`actor` forcé à `user`** ; `verb` : `start stop pause resume next previous goto detour return reveal hide edit skip_sequence play advance` (Slices 12, 23) |
 
 **Jamais relayés** à la page : `GET .../playback/armed` (les phrases des cues armées) et `POST .../cues/satisfied` (le suiveur
@@ -123,6 +124,7 @@ class PresentationStudioRelayRoutes(CaptureRelayRoutes):
                 web.post(STUDIO_ROUTE + "/mount-reports", self._relay("studio_mount_report", CORE_PREFIX + "/mount-reports")),
                 web.get(PLAYBACK_ROUTE, self._relay("studio_playback", PLAYBACK_PREFIX)),
                 web.get(f"{PLAYBACK_ROUTE}/preload", self._relay("studio_playback_preload", PLAYBACK_PREFIX + "/preload")),
+                web.get(f"{PLAYBACK_ROUTE}/surface", self._relay("studio_playback_surface", PLAYBACK_PREFIX + "/surface")),
                 *(web.post(f"{PLAYBACK_ROUTE}/{verb.value}", self._forced(f"/{verb.value}", f"studio_playback_{verb.value}",
                                                                            prefix=PLAYBACK_PREFIX))
                   for verb in Verb)]

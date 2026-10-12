@@ -89,7 +89,9 @@ class Counters:
         objects = list(snapshot.objects)
         root = core.stack.data_root / "presentations"
         return Counters(
-            stage_objects=sum(1 for o in objects if o.object_id.startswith("studio-stage-")),
+            # Slice 09: the floating viewer's Board windows (retired) and the run surface of Variants, both counted for leaks
+            stage_objects=sum(1 for o in objects if o.object_id.startswith(("studio-stage-", "studio-aux-")))
+            + (1 if core.stack.core.presentation_studio_stage.stage_object_id else 0),
             objects=len(objects), tasks=len(asyncio.all_tasks()),
             store_files=sum(1 for p in root.rglob("*") if p.is_file()) if root.exists() else 0,
             trace_rows=len(core.stack.trace()))

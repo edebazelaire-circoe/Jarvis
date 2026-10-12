@@ -1,29 +1,31 @@
-"""La fenetre « stage » vue par le rechargement a chaud (handoff jarvis-interactive-presentation-studio, Slice 06).
+"""La surface de lecture vue par le rechargement a chaud (handoff jarvis-interactive-presentation-studio, Slice 06 ;
+native-studio-playback-fix Slice 09).
 
-La Slice 12 (lecture) POSSEDE la fenetre : `SceneStage` (`presentation_studio_stage.py`) la cree par run (`studio-stage-<run_id>`),
-la patche d'une scene a l'autre et la retire. Ce module n'en cree jamais : il garde en memoire **quelle fenetre affiche quelle
-scene** (handle d'execution : jamais persiste, jamais dans un document) et n'ecrit qu'une chose, le **pin** de cette fenetre :
+La lecture POSSEDE la surface : depuis la Slice 09 c'est la surface en memoire de Variantes (`RunSurface`,
+`presentation_studio_run_surface.py`, id `variants-run-<run_id>`), et non plus une fenetre du Board (`studio-stage-<run_id>`,
+retiree). Ce module n'en cree jamais : il garde en memoire **quelle surface affiche quelle scene** (handle d'execution : jamais
+persiste, jamais dans un document) et n'ecrit qu'une chose, le **pin** de cette surface :
 
 - `bind` / `unbind` : appeles par le service de lecture (observateur de stage) a chaque affichage d'une scene et a la fin du
   run. Une scene qui n'est pas affichee n'a pas de liaison : sa source est seulement re-epinglee.
-- `repin` : change le pin de la fenetre (donc remonte **ce** cadre, la regle de l'hote), compare-and-set sous le verrou de la
-  scene (`SceneService.apply_if`, docs/07 §4.4) : un evenement d'etat du cadre simultane n'est jamais perdu et un patch ne
-  s'applique que si la fenetre porte encore le pin attendu (`stage_changed` sinon). Idempotent : une fenetre qui porte deja
-  le pin cible (la lecture l'a suivi entre-temps) n'est pas reecrite.
-- `current` : le bloc vivant (valeurs committees par les evenements d'etat du cadre comprises).
+- `repin` : change le pin de la surface (le lecteur de Variantes remonte donc **ce** cadre, sous le meme id), compare-and-set sous
+  le verrou de la surface : un patch ne s'applique que si la surface porte encore le pin attendu (`stage_changed` sinon).
+  Idempotent : une surface qui porte deja le pin cible (la lecture l'a suivi entre-temps) n'est pas reecrite.
+- `current` : le bloc vivant.
 
-Les patchs prefab traversent la validation de la scene (`SceneService._check_prefabs`) : une instance invalide pour le
-nouveau manifeste est refusee (`prefab_invalid`), jamais ecrite.
+Le bloc passe par le catalogue des prefabs (`validate_instance`) : une instance invalide pour le nouveau manifeste est refusee
+(`prefab_invalid`), jamais montree. Le montage est confirme par la page de Variantes (rapport de montage sous l'id de la surface).
 """
 
 from __future__ import annotations
 
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 from typing import Any
 
-from jarvis.core.scene_service import SceneService
+from jarvis.core.presentation_studio_run_surface import RunSurface
+from jarvis.core.presentation_studio_stage import StageError
 from jarvis.domain.prefab import PrefabRef
-from jarvis.domain.scene import SceneActor, SceneCommand, SceneCommandOutcome, SceneObjectFields, SceneOp, ScenePrefabRef
+from jarvis.domain.scene import ScenePrefabRef
 from jarvis.ports.v2 import DiagnosticSink
 
 
@@ -41,15 +43,15 @@ class StageBinding:
     variant_id: str
     scene_id: str
     object_id: str
-    #: Le run de lecture dont c'est la fenetre (`studio-stage-<run_id>[-<n>]`), pour la trace.
+    #: Le run de lecture dont c'est la surface (`variants-run-<run_id>`), pour la trace.
     run_id: str = ""
 
 
 class StageWindows:
     """Voir l'en-tete du module."""
 
-    def __init__(self, scene: SceneService, *, diagnostics: DiagnosticSink | None = None) -> None:
-        self._scene = scene
+    def __init__(self, surface: RunSurface, *, diagnostics: DiagnosticSink | None = None) -> None:
+        self._surface = surface
         self._diagnostics = diagnostics
         self._bindings: dict[str, StageBinding] = {}
 
@@ -64,15 +66,14 @@ class StageWindows:
         self._bindings.pop(presentation_id, None)
 
     def binding_for(self, presentation_id: str, variant_id: str, scene_id: str) -> StageBinding | None:
-        """La fenetre qui affiche **cette** scene de **cette** variante en ce moment, sinon `None`."""
+        """La surface qui affiche **cette** scene de **cette** variante en ce moment, sinon `None`."""
 
         found = self._bindings.get(presentation_id)
         return found if found is not None and (found.variant_id, found.scene_id) == (variant_id, scene_id) else None
 
     async def locate(self, presentation_id: str, variant_id: str, scene_id: str, pin: PrefabRef) -> StageBinding | None:
-        """La fenetre que la lecture affiche pour **cette** scene, SI elle existe encore dans la scene globale et porte ce
-        pin (l'utilisateur a pu la fermer ; la lecture la rouvre sous un autre id et rebinde). Sinon `None` : la source est
-        seulement re-epinglee. Apres un redemarrage de Core il n'y a plus de liaison (la lecture est reprise a zero)."""
+        """La surface que la lecture affiche pour **cette** scene, SI elle montre encore ce pin. Sinon `None` : la source est
+        seulement re-epinglee. Apres un redemarrage de Core il n'y a plus de liaison (aucune lecture ne survit)."""
 
         bound = self.binding_for(presentation_id, variant_id, scene_id)
         if bound is None:
@@ -88,53 +89,22 @@ class StageWindows:
     # ------------------------------------------------------------ lecture
 
     async def current(self, binding: StageBinding) -> ScenePrefabRef | None:
-        """Le bloc `prefab` vivant de la fenetre (valeurs committees par les evenements d'etat du cadre comprises)."""
+        """Le bloc `prefab` vivant de la surface (`None` : ce n'est plus la surface a l'ecran)."""
 
-        snapshot = await self._scene.snapshot()
-        found = snapshot.get_object(binding.object_id)
-        return None if found is None else found.payload.prefab
+        return self._surface.current_block(binding.object_id)
 
     # ------------------------------------------------------------ ecriture
 
     async def repin(self, binding: StageBinding, *, expect: PrefabRef, to: PrefabRef,
                     props: dict[str, Any], data: dict[str, Any]) -> None:
-        """Change le pin de la fenetre (donc remonte **ce** cadre) et pose `props`/`data`, seulement si la fenetre porte
-        encore `expect`. `StagePatchError` sinon ou si la scene refuse l'instance."""
-
-        verdict: list[tuple[str, str]] = []
-
-        def plan(snapshot: Any) -> SceneCommand | None:
-            target = snapshot.get_object(binding.object_id)
-            block = None if target is None else target.payload.prefab
-            if target is None:
-                verdict.append(("stage_missing", "the stage window no longer exists"))
-                return None
-            if block is not None and PrefabRef(block.prefab_id, block.version) == to:
-                return None  # already there (the playback followed the variant): nothing to write, nothing failed
-            if block is None or PrefabRef(block.prefab_id, block.version) != expect:
-                verdict.append(("stage_changed", "the stage window no longer shows the expected version"))
-                return None
-            payload = replace(target.payload, prefab=ScenePrefabRef(to.prefab_id, to.version, props, data))
-            return SceneCommand(op=SceneOp.PATCH_OBJECT, actor=SceneActor.USER, object_id=binding.object_id,
-                                fields=SceneObjectFields(payload=payload))
+        """Change le pin de la surface (le lecteur remonte donc **ce** cadre) et pose `props`/`data`, seulement si elle porte
+        encore `expect`. `StagePatchError` sinon ou si le catalogue refuse l'instance."""
 
         try:
-            update = await self._scene.apply_if(plan)
-        except (ValueError, TypeError) as exc:  # a payload beyond the scene bounds: refused, not a fault
-            raise StagePatchError("prefab_invalid", str(exc)) from None
-        if update is None:
-            if not verdict:
-                return
-            code, message = verdict[0]
-            raise StagePatchError(code, message)
-        if update.outcome not in (SceneCommandOutcome.APPLIED, SceneCommandOutcome.DUPLICATE):
-            reason = update.reason.value if update.reason is not None else update.outcome.value
-            raise StagePatchError(reason, update.detail or reason)
-
-    def _trace(self, kind: str, message: str, *, data: dict[str, Any]) -> None:
-        if self._diagnostics is None:
-            return
-        try:
-            self._diagnostics.emit(kind, message, level="info", data=data)
-        except Exception:  # noqa: BLE001 - intentional: an unavailable journal never undoes a scene write
-            pass
+            refused = await self._surface.repin(binding.object_id, expect=expect, to=to, props=props, data=data)
+        except StageError as exc:  # the catalogue refused the block: refused, not a fault
+            raise StagePatchError(exc.code, exc.message) from None
+        if refused == "stage_missing":
+            raise StagePatchError("stage_missing", "the run surface no longer shows this scene")
+        if refused == "stage_changed":
+            raise StagePatchError("stage_changed", "the run surface no longer shows the expected version")
