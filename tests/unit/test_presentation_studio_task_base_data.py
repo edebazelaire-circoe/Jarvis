@@ -1,6 +1,6 @@
 """Presentations saved before native-studio-playback-fix still open and play (Slice 15, migration safety).
 
-The fixture `tests/fixtures/presentation_studio/task_base_a8377529/` was WRITTEN BY THE TASK BASE CODE (`a8377529`), not by hand and
+The fixture `tests/fixtures/presentation_studio_task_base_a8377529/` was WRITTEN BY THE TASK BASE CODE (`a8377529`), not by hand and
 not from a user's data: in a detached worktree at that commit, the real authoring door (`assemble_deck`, 3 Remotion scenes, score,
 art direction) and `presentation_with_score` (3 window scenes) ran against a real Core, then a branch was made; the files Core wrote
 under `presentations/` and `prefabs/` were copied as they were (SQLite bases left out, repo rule). `state/presentation-studio-stage-
@@ -21,7 +21,7 @@ from jarvis.protocol.presentation_studio_playback_routes import PLAYBACK
 from tests.unit.test_presentation_studio_playback_routes import get, start_body
 from tests.unit.test_presentation_studio_routes import Core
 
-FIXTURE = Path(__file__).resolve().parents[1] / "fixtures" / "presentation_studio" / "task_base_a8377529"
+FIXTURE = Path(__file__).resolve().parents[1] / "fixtures" / "presentation_studio_task_base_a8377529"
 SMALL = ("pst_eaf773f3a32c8360758a76d54fc5398a", "psv_ff1d369bc1f1e187f99dbf77a47965e1")
 DECK = ("pst_5ba11edc8ea08575b8397379859af675", "psv_cdd730b75bda3a1bea77e7d3b38343a4")
 BRANCH = "psv_4a68694f2f6ae13a13aaed5f7a57b7e0"

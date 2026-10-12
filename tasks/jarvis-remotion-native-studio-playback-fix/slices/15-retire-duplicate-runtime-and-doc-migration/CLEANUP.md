@@ -52,7 +52,7 @@ MCP budget moved: declared surface 113 521 → **113 495 B** (budget 113 700: 20
 | `StageError`, `StageWindows`, `stage_object_id` names | still the run surface's error type, the reload's binding table and the view field (renaming = churn without user value, and `stage_object_id` is in MCP inspect answers) | a later rename Slice, if wanted |
 | `rs-bar` on Board Remotion prefab windows | § 4 | — |
 
-**Old presentations open and play** (SLICE step 3). `tests/fixtures/presentation_studio/task_base_a8377529/` was written by the task base
+**Old presentations open and play** (SLICE step 3). `tests/fixtures/presentation_studio_task_base_a8377529/` was written by the task base
 code itself: a pytest run inside a detached worktree at `a8377529` (generator below) assembled a 3-scene Remotion deck through the real
 authoring door, made a 3-scene window presentation with a score and an art direction, branched a variant, and copied what Core wrote
 (`presentations/`, `prefabs/`; SQLite bases excluded, repo rule; LF pinned in `.gitattributes` because prefab fingerprints hash bytes).

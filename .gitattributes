@@ -13,7 +13,7 @@
 jarvis/prefabs/** text eol=lf
 tests/fixtures/prefabs/** text eol=lf
 # Presentations written by the task base of native-studio-playback-fix (Slice 15): their prefab versions are fingerprinted too.
-tests/fixtures/presentation_studio/task_base_a8377529/** text eol=lf
+tests/fixtures/presentation_studio_task_base_a8377529/** text eol=lf
 
 # Capacites locales livrees avec le code : le verrou npm est hashe tel quel, jamais converti.
 jarvis/capabilities/** text eol=lf
