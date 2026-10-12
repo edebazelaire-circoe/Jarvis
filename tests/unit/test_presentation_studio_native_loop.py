@@ -127,6 +127,30 @@ async def test_opening_the_scene_in_remotion_studio_ends_the_permission_in_that_
     assert rig.sink.of("core.presentation_studio.authored_release_unchecked")
 
 
+STOOD = (S.RELOADED, S.REPINNED)
+
+
+async def test_opening_an_older_version_in_remotion_studio_still_ends_the_permission_after_an_agent_write(rig):
+    """B3 race (mutant: a release matching the exact `(prefab_id, version)`): the user opens v1, the agent writes v2 while the Studio starts,
+    the release for v1 arrives. It ends the permission on that scene source (any version, as the write gate matches it); the agent's next
+    write is refused. A scene with another source keeps its permission."""
+
+    rig.edits.record_authored_scenes(rig.pid, rig.vid, [SID, SID2], (await rig.variant()).revision)
+    assert (await rig.edit({"style": GOOD_STYLE}, actor="brain", auto_request=False)).status is S.RELOADED
+    assert (await rig.edit({"style": GOOD_STYLE}, scene_id=SID2, actor="brain", auto_request=False)).status in STOOD  # not shown: repinned
+    opened = next(s.prefab for s in (await rig.variant()).scenes if s.scene_id == SID)            # the user clicks on v1
+    assert (await rig.edit({"style": "p{color:#010203}"}, actor="brain", auto_request=False)).status is S.RELOADED  # agent: v2
+    now = next(s.prefab for s in (await rig.variant()).scenes if s.scene_id == SID)
+    other = next(s.prefab for s in (await rig.variant()).scenes if s.scene_id == SID2)
+    assert now.prefab_id == opened.prefab_id and now.version > opened.version and other.prefab_id != opened.prefab_id
+    assert await rig.edits.release_authored_for_pin(opened.prefab_id, opened.version) == 1
+    with pytest.raises(PresentationStudioError) as caught:
+        await rig.edit({"style": "p{color:#020304}"}, actor="brain", auto_request=False)
+    assert caught.value.code is C.SOURCE_REQUEST_REQUIRED, "Studio opened on v1: the agent's v2 does not keep the permission"
+    assert [r.scene_id for r in authored(rig, SID2)] == [SID2], "a scene with another source keeps its permission"
+    assert (await rig.edit({"style": "p{color:#030405}"}, scene_id=SID2, actor="brain", auto_request=False)).status in STOOD
+
+
 async def test_unpublished_remotion_studio_edits_of_the_scene_refuse_every_agent_write(rig):
     from jarvis.domain.remotion_studio import StudioPin
 
@@ -371,6 +395,20 @@ async def test_a_caller_that_left_cancels_its_preview_while_waiting_and_while_re
         await asyncio.wait_for(rendering, 3)
     assert caught.value.code is RenderErrorCode.CANCELLED and len(runs(view, "pdf")) == 1
     assert emitted(view, "core.presentation_render.preview_abandoned") and not view.service._browser_slot.busy
+
+
+async def test_a_cancellation_right_after_the_preview_took_the_browser_never_leaks_the_slot(view):
+    """Slice 13 rework (mutant: `take_preview` back outside the `try` whose `finally` releases): a suspension point injected between the
+    take and the render (here the caller watcher, the first step after it) is cancelled there; the browser slot is free again."""
+
+    def cancelled_here(*_args, **_kwargs):
+        raise asyncio.CancelledError  # what a cancellation at an `await` added after the take would raise
+
+    view.service._watch_caller = cancelled_here
+    with pytest.raises(asyncio.CancelledError):
+        await view.service.preview(presentation_id=view.pid, variant_id=view.vid, scene_id=SCENE_ID, frames=[1])
+    assert not view.service._browser_slot.busy and view.service._previews_waiting == 0, "the slot taken is released"
+    assert ("cleanup", "rj_000000000001") in view.runner.calls and not runs(view, "pdf")
 
 
 def test_default_frames_and_the_kept_folders_are_bounded():

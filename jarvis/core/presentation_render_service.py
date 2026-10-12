@@ -321,62 +321,69 @@ class PresentationRenderService:
                         data={"presentation_id": presentation_id, "scene_id": scene_id, "waiting": self._previews_waiting})
             raise RenderError(C.PREVIEW_BUSY, "another preview is already waiting for the browser: nothing was rendered; retry once it is done")
         self._previews_waiting += 1  # BEFORE the first await: a burst of previews cannot all pass the check
+        holding = False  # set right after `take_preview` returns (no await between): the outer `finally` releases what was taken
         try:
-            await self._require_engine_for(presentation_id, variant_id)
-            started = time.monotonic()
-            package = await self._packager.assemble_preview(presentation_id, variant_id)
-            target = choose_scene(package, scene_id)
-            chosen = tuple(frames) if frames is not None else default_preview_frames(target.duration_in_frames)
-            resolved = resolve(RenderFormat.PDF, parse_settings(RenderFormat.PDF, {"scene_id": scene_id, "frames": list(chosen),
-                                                                                   "scale": float(scale)}), target)
-            installed = self._installed()
-            if installed is None or installed.remotion_version != target.engine_version:
-                have = "unreadable" if installed is None else installed.remotion_version
-                raise RenderError(C.ENGINE_MISMATCH, f"the scene declares remotion {target.engine_version}, this machine has {have}")
-            files, props = plan_files(package, target)
-            job_id = self._new_id()
-            spec = {"format": RenderFormat.PDF.value, "entry": "studio-root.tsx", "composition_id": target.composition_id,
-                    "composition": {"width": target.width, "height": target.height, "fps": target.fps, "durationInFrames": target.duration_in_frames},
-                    "props": props, "frames_total": len(resolved.frames), "frame_range": [resolved.frame_start, resolved.frame_end],
-                    "frames": list(resolved.frames), "crf": resolved.settings.crf, "scale": resolved.settings.scale, "concurrency": 1,
-                    "jpeg_quality": 85}
-            self._trace("preview_started", "Apercu natif d'une scene demande", data={
-                "job_id": job_id, "presentation_id": presentation_id, "variant_id": variant_id, "scene_id": scene_id,
-                "prefab": f"{target.prefab_id}@{target.version}", "frames": list(resolved.frames)})
             try:
-                await self._browser_slot.take_preview(exports_queued=lambda: bool(self._queue), gone=gone,
-                                                      deadline=time.monotonic() + self._preview_wait_s)
+                await self._require_engine_for(presentation_id, variant_id)
+                started = time.monotonic()
+                package = await self._packager.assemble_preview(presentation_id, variant_id)
+                target = choose_scene(package, scene_id)
+                chosen = tuple(frames) if frames is not None else default_preview_frames(target.duration_in_frames)
+                resolved = resolve(RenderFormat.PDF, parse_settings(RenderFormat.PDF, {"scene_id": scene_id, "frames": list(chosen),
+                                                                                       "scale": float(scale)}), target)
+                installed = self._installed()
+                if installed is None or installed.remotion_version != target.engine_version:
+                    have = "unreadable" if installed is None else installed.remotion_version
+                    raise RenderError(C.ENGINE_MISMATCH, f"the scene declares remotion {target.engine_version}, this machine has {have}")
+                files, props = plan_files(package, target)
+                job_id = self._new_id()
+                spec = {"format": RenderFormat.PDF.value, "entry": "studio-root.tsx", "composition_id": target.composition_id,
+                        "composition": {"width": target.width, "height": target.height, "fps": target.fps, "durationInFrames": target.duration_in_frames},
+                        "props": props, "frames_total": len(resolved.frames), "frame_range": [resolved.frame_start, resolved.frame_end],
+                        "frames": list(resolved.frames), "crf": resolved.settings.crf, "scale": resolved.settings.scale, "concurrency": 1,
+                        "jpeg_quality": 85}
+                self._trace("preview_started", "Apercu natif d'une scene demande", data={
+                    "job_id": job_id, "presentation_id": presentation_id, "variant_id": variant_id, "scene_id": scene_id,
+                    "prefab": f"{target.prefab_id}@{target.version}", "frames": list(resolved.frames)})
+                try:
+                    await self._browser_slot.take_preview(exports_queued=lambda: bool(self._queue), gone=gone,
+                                                          deadline=time.monotonic() + self._preview_wait_s)
+                except RenderError as exc:
+                    kind = "preview_abandoned" if exc.code is C.CANCELLED else "preview_wait_timeout"
+                    self._trace(kind, "Apercu natif abandonne avant le navigateur", level="warning",
+                                data={"job_id": job_id, "scene_id": scene_id, "code": exc.code.value, "wait_s": self._preview_wait_s})
+                    raise
+                holding = True
+            finally:
+                self._previews_waiting -= 1  # holding the browser, refused or failed: this preview no longer waits
+            kept: list[dict[str, Any]] = []
+            cancel = threading.Event()
+            watcher = asyncio.get_running_loop().create_task(self._watch_caller(gone, cancel, job_id), name=f"preview-caller-{job_id}")
+            try:
+                await self._run_blocking(self._runner.prepare, job_id, files)
+                if cancel.is_set():
+                    raise RenderError(C.CANCELLED, "the caller left: the preview was cancelled")
+                outcome = await self._run_blocking(self._runner.run, job_id, spec, browser=browser, cancel=cancel,
+                                                   timeout_s=min(resolved.timeout_s, PREVIEW_TIMEOUT_S), on_start=lambda ref: None,
+                                                   on_progress=lambda progress: None)
+                if not outcome.ok:
+                    raise RenderError(C.FAILED if outcome.code not in {c.value for c in C} else C(outcome.code), outcome.detail)
+                outputs = list(outcome.outputs)
+                if len(outputs) != len(resolved.frames):
+                    raise RenderError(C.OUTPUT_INVALID, f"{len(outputs)} image(s) for {len(resolved.frames)} frame(s)")
+                kept = await self._run_blocking(self._keep_preview, job_id, resolved.frames, outputs)
             except RenderError as exc:
-                kind = "preview_abandoned" if exc.code is C.CANCELLED else "preview_wait_timeout"
-                self._trace(kind, "Apercu natif abandonne avant le navigateur", level="warning",
-                            data={"job_id": job_id, "scene_id": scene_id, "code": exc.code.value, "wait_s": self._preview_wait_s})
+                self._trace("preview_failed", "Apercu natif en echec", level="warning",
+                            data={"job_id": job_id, "scene_id": scene_id, "code": exc.code.value, "detail": clean_detail(exc.detail)})
                 raise
+            finally:
+                watcher.cancel()
         finally:
-            self._previews_waiting -= 1  # holding the browser, refused or failed: this preview no longer waits
-        kept: list[dict[str, Any]] = []
-        cancel = threading.Event()
-        watcher = asyncio.get_running_loop().create_task(self._watch_caller(gone, cancel, job_id), name=f"preview-caller-{job_id}")
-        try:
-            await self._run_blocking(self._runner.prepare, job_id, files)
-            if cancel.is_set():
-                raise RenderError(C.CANCELLED, "the caller left: the preview was cancelled")
-            outcome = await self._run_blocking(self._runner.run, job_id, spec, browser=browser, cancel=cancel,
-                                               timeout_s=min(resolved.timeout_s, PREVIEW_TIMEOUT_S), on_start=lambda ref: None,
-                                               on_progress=lambda progress: None)
-            if not outcome.ok:
-                raise RenderError(C.FAILED if outcome.code not in {c.value for c in C} else C(outcome.code), outcome.detail)
-            outputs = list(outcome.outputs)
-            if len(outputs) != len(resolved.frames):
-                raise RenderError(C.OUTPUT_INVALID, f"{len(outputs)} image(s) for {len(resolved.frames)} frame(s)")
-            kept = await self._run_blocking(self._keep_preview, job_id, resolved.frames, outputs)
-        except RenderError as exc:
-            self._trace("preview_failed", "Apercu natif en echec", level="warning",
-                        data={"job_id": job_id, "scene_id": scene_id, "code": exc.code.value, "detail": clean_detail(exc.detail)})
-            raise
-        finally:
-            watcher.cancel()
-            self._browser_slot.release()
-            await self._run_blocking(self._runner.cleanup, job_id)
+            # Slice 13 rework: the take is inside this `try`, so a cancellation or an error anywhere after it (the watcher, a future
+            # `await`) can never leak the browser slot.
+            if holding:
+                self._browser_slot.release()
+                await self._run_blocking(self._runner.cleanup, job_id)
         elapsed_ms = round((time.monotonic() - started) * 1000)
         self._trace("preview_done", "Apercu natif rendu", data={"job_id": job_id, "scene_id": scene_id, "frames": len(kept),
                                                                 "elapsed_ms": elapsed_ms})

@@ -4481,9 +4481,10 @@ route: compose, `SOURCE_GUARDS`, carry-over, score references, real build, new i
 - **bound to presentation, variant and scene**: the same scene id in another variant is refused (`presentation_studio_source_request_required`);
 - **30 minutes from the last write that STOOD** (admitted, built, published: `renew_authored_scene`); a refused attempt (build error, stale
   basis, rollback, rate limit, Studio refusal) never extends it;
-- **ends** when the user's own source edit of that scene stands (Variants, the Studio's publish) and when Remotion Studio OPENS or SYNCS the
-  exact version that scene pins in that variant (`release_authored_for_pin`, through `RemotionStudioService.add_scene_listener`); the agent's
-  next write there is refused `presentation_studio_source_request_required`;
+- **ends** when the user's own source edit of that scene stands (Variants, the Studio's publish) and when Remotion Studio OPENS or SYNCS
+  ANY version of that scene's source (same `prefab_id` as its pin, in every variant where the agent holds a permission on it:
+  `release_authored_for_pin`, through `RemotionStudioService.add_scene_listener`), so an agent write that lands while the Studio starts on an
+  older version does not keep the permission; the agent's next write there is refused `presentation_studio_source_request_required`;
 - **refused while the user edits in Remotion Studio**: while the Studio workspace holds unpublished files based on that scene's source, any
   `brain` write to it is refused 409 `presentation_studio_scene_edited_in_remotion`, request or not (*Hot reload contract* › *Source
   requests*, rule 5);

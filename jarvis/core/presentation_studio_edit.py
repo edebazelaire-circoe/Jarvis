@@ -264,9 +264,11 @@ class PresentationStudioEditService:
         return 1
 
     async def release_authored_for_pin(self, prefab_id: str, version: int) -> int:
-        """Remotion Studio opened (or synced) this exact source version: every agent permission whose scene, in ITS variant, pins it ends
-        (QA B3). A variant that cannot be read keeps its permission and the failure is journaled (the write gate still refuses while the
-        Studio holds unpublished edits on that scene). Returns how many permissions ended."""
+        """Remotion Studio opened (or synced) `version` of this scene source: every agent permission whose scene, in ITS variant, pins ANY
+        version of `prefab_id` ends (QA B3); `version` is only journaled. By prefab id, as the write gate (`_refuse_over_studio_edits`):
+        an agent write that lands while the Studio starts on an older version (v1 opened, v2 written) must not keep, nor renew, the
+        permission. A variant that cannot be read keeps its permission and the failure is journaled (the write gate still refuses while
+        the Studio holds unpublished edits on that scene). Returns how many permissions ended."""
 
         ended = 0
         for pid, vid, sid in list(self._authored_scenes):
@@ -277,8 +279,11 @@ class PresentationStudioEditService:
                             level="warning", data={"presentation_id": pid, "variant_id": vid, "scene_id": sid, "code": exc.code.value})
                 continue
             scene = next((s for s in variant.scenes if s.scene_id == sid), None)
-            if scene is not None and (scene.prefab.prefab_id, scene.prefab.version) == (prefab_id, version):
+            if scene is not None and scene.prefab.prefab_id == prefab_id:
                 ended += self.drop_authored_scene(pid, vid, sid, reason="opened_in_remotion")
+        if ended:
+            self._trace("core.presentation_studio.authored_released_for_studio", "Remotion Studio ouvert : l'agent n'ecrit plus cette source",
+                        data={"prefab_id": prefab_id, "opened_version": version, "ended": ended})
         return ended
 
     def renew_authored_scene(self, presentation_id: str, variant_id: str, scene_id: str) -> bool:
