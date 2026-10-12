@@ -321,6 +321,29 @@ def test_the_tool_cache_folder_is_wiped_at_each_launch(tmp_path):
     assert parent["pid"] == os.getpid() and parent["created"]
 
 
+def test_a_planted_node_modules_folder_is_gone_before_the_studio_process_spawns(tmp_path):
+    """S12 polish: the pin is the ORDER (removed before `spawn`), not only the end state. Removing the `_remove_tree(work/node_modules)`
+    line of `launch`, or moving it after the spawn, fails here."""
+
+    runtime = tmp_path / "local_capabilities" / "remotion" / "runtime"
+    (runtime / "node_modules" / "@remotion" / "cli").mkdir(parents=True)
+    (runtime / R.CLI_ENTRY).write_text("//", encoding="utf-8")
+    planted = runtime / "studio" / "work" / "node_modules" / "x" / "index.js"
+    seen_at_spawn: list[bool] = []
+
+    def spawn(*args, **kwargs):
+        seen_at_spawn.append(planted.parent.parent.exists())
+        return 2_000_000_000
+
+    runner = make(runtime, spawn=spawn, sleep=lambda s: None, port_chooser=lambda: 39997)
+    runner.sync_work(files())
+    planted.parent.mkdir(parents=True)
+    planted.write_text("module.exports = 'planted'", encoding="utf-8")
+    with pytest.raises(StudioError):
+        runner.launch(port=None)
+    assert seen_at_spawn == [False], "work/node_modules must be removed before the Studio process is spawned"
+
+
 def test_the_source_for_helper_is_still_importable():
     assert source_for(PIN).block.composition.composition_id == "Scene" and scene_files()
 

@@ -58,6 +58,7 @@ EDITS_DIR = "studio-edits"
 GENERATED_FILES = (D.WORK_ROOT_FILE, D.WORK_PACKAGE)
 #: Le cache de l'outil (webpack de Remotion) au premier niveau de l'espace : vidé par `launch`, jamais scanné ni mis de côté.
 TOOL_CACHE_DIR = "node_modules"
+TOOL_CACHE_SUBDIR = ".cache"  # seul contenu que l'outil (webpack) écrit dans `node_modules` de l'espace
 UNREADABLE_WORK = "<work folder unreadable or too large>"
 #: Départage des mises de côté créées dans la même microseconde (nom triable : `...ffffff-<seq>`).
 _EDITS_SEQ = itertools.count(1)
@@ -444,7 +445,12 @@ class RemotionStudioRunner:
                 if entry.name in self.SOURCE_DIRS and folder and not link:
                     self._shape_source(path, move)
                 elif entry.name == TOOL_CACHE_DIR and folder and not link:
-                    continue  # le cache de l'outil : vidé par `launch`
+                    # Le cache de l'outil (`node_modules/.cache`) est vidé par `launch` ; tout AUTRE contenu y a été posé à la main
+                    # (S12 polish) : mis de côté et dit comme le reste, avant que `launch` ne vide le dossier.
+                    for child in sorted(os.scandir(path), key=lambda item: item.name):
+                        if child.name != TOOL_CACHE_SUBDIR:
+                            child_info = os.lstat(extended_path(Path(child.path)))
+                            move(Path(child.path), stat.S_ISDIR(child_info.st_mode) and not _is_link(child_info))
                 elif (entry.name in GENERATED_FILES and _plain_file(info)
                       and _sha(Path(extended_path(path)).read_bytes()) == _sha(bytes(files[entry.name]))):
                     continue

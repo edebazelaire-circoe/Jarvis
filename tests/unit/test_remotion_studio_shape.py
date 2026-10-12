@@ -247,3 +247,22 @@ async def test_the_service_logs_each_rotation_naming_what_was_removed(bench):
     assert len(rotated) == 1 and len(rotated[0]["removed"]) == 1 and rotated[0]["kept"] == D.MAX_SAVED_EDITS
     assert [level for kind, level, _ in bench.events.events if kind == "remotion_studio.edits_rotated"] == ["warning"]
     assert len(list(bench.edits.iterdir())) == D.MAX_SAVED_EDITS
+
+
+async def test_a_planted_node_modules_package_is_set_aside_and_said_while_the_tool_cache_stays(bench):
+    """S12 polish: `work/node_modules` holds only the tool cache (`.cache`, wiped by `launch`). A planted package there is set aside
+    like any foreign entry, so the user is told, instead of vanishing silently with the cache."""
+
+    planted = bench.work / "node_modules" / "x" / "index.js"
+    planted.parent.mkdir(parents=True)
+    planted.write_text("module.exports = 'planted'", encoding="utf-8")
+    cache = bench.work / "node_modules" / ".cache" / "webpack" / "0.pack"
+    cache.parent.mkdir(parents=True)
+    cache.write_bytes(b"x")
+    view = await reopen(bench)
+    assert view["work_copy"]["set_aside"] == ["node_modules/x/"]
+    assert any("node_modules/x/" in line for line in view["diagnostics"]), view["diagnostics"]
+    assert not planted.exists() and cache.exists(), "the cache is left to `launch`, which wipes it"
+    assert any(path.name == "index.js" and path.read_bytes() == b"module.exports = 'planted'" for path in bench.set_aside())
+    [event] = [data for kind, level, data in bench.events.events if kind == "remotion_studio.workspace_set_aside"]
+    assert event["paths"] == ["node_modules/x/"]
