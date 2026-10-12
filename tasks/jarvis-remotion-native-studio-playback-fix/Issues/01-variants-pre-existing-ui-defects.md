@@ -19,3 +19,8 @@ rework (4ce22d1e), because it shares the cause of the blocking finding B1.
 | --- | --- | --- | --- |
 | I4 (again) | `test_variants_media_fullscreen_browser.py` flaky under load: 6/7 then 5/7 at HEAD (one 120 s `variants_ready` timeout, one `audio and image within 200 ms`); the audio/image test alone 3/4. Host had < 1 GB free RAM with two agents. | Slice 11 QA; comparison at 873e0cc0 inconclusive (ran past 590 s). | media fullscreen browser test timing bounds |
 | I5 | For a scene the user wrote, the shared `confirmSpec` puts focus on the confirm button: a held or repeated Enter on the « Remotion Studio » door can confirm at once. Same behaviour as the MCP card. | Slice 11 QA code reading. | `JarvisRemotionStudioCore.confirmSpec` default focus |
+## Added after the Slice 14 QA (2026-10-12, on 0cde0e05)
+
+| # | Defect | Evidence | Where to look |
+| --- | --- | --- | --- |
+| I6 | The `authored` gate profile blocks a deliberately blank middle frame (e.g. a black beat between two scenes), with no way to mark the blank as intended. Not a Slice 14 rework blocker: the blocking scope agreed for the rework is the first frame on `release_gate`. | Slice 14 QA, profile table reading. | `authored` profile of the frame-quality gates; candidate for Slice 16 or a follow-up. |
