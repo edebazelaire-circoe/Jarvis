@@ -1710,8 +1710,8 @@
       ui.pNote=el('p','jvx-presenter-note');ui.pNote.setAttribute('role','alert');
       const actions=el('div','jvx-presenter-actions');
       ui.pSkip=button('Sortir de la séquence','jvx-btn',()=>{runCommand('skip_sequence')},{attrs:{title:'Votre issue de secours, toujours possible : quitte la séquence verrouillée et continue après elle (S)','aria-keyshortcuts':'S'}});
-      ui.pStop=button('Arrêter','jvx-btn',()=>{runCommand('stop')},{attrs:{'data-danger':'',title:'Arrêter la présentation (le mode d\'interaction est rétabli)'}});
-      actions.appendChild(ui.pSkip);actions.appendChild(ui.pStop);
+      /* One « Arrêter »: the transport's (it stays in the stage fullscreen, where this strip is not). */
+      actions.appendChild(ui.pSkip);
       for(const n of [head,ui.pWhere,ui.pItem,ui.pSeq,ui.pNext,ui.pNote,actions])box.appendChild(n);
       return box;
     }

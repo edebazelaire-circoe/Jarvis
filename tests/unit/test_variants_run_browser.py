@@ -122,7 +122,7 @@ async def test_a_run_core_starts_opens_variants_windowed_with_the_presenter_stri
           role:{STRIP}.querySelector('.jvx-presenter-role').textContent,where:{STRIP}.querySelector('.jvx-presenter-where').textContent,
           scrub:document.querySelector('#jvStudioExplorer [role=slider]').getAttribute('aria-disabled'),
           tree:document.querySelector('#jvStudioExplorer .jvx-treepane').inert,
-          stop:!{STRIP}.closest('#jvStudioExplorer').querySelector('[data-danger]').hidden}})"""},
+          stops:[...document.querySelectorAll('#jvStudioExplorer button')].filter(b=>!b.hidden&&b.offsetParent&&b.textContent.trim()==='Arrêter').length}})"""},
         {"shot": str(shot)},
     ])
     reads = result["reads"]
@@ -131,7 +131,7 @@ async def test_a_run_core_starts_opens_variants_windowed_with_the_presenter_stri
     assert seen["mode"] == "windowed" and seen["fs"] is False, "a run Core starts opens Variants windowed (never fullscreen by itself)"
     assert seen["board"] is False and seen["band"] is False, "the floating viewer is retired: no Board stage window, no band"
     assert seen["role"] == "Vous présentez" and seen["where"].startswith("Scène 1/"), seen
-    assert seen["scrub"] == "true" and seen["tree"] is True and seen["stop"] is True, seen
+    assert seen["scrub"] == "true" and seen["tree"] is True and seen["stops"] == 1, "one « Arrêter » (the transport's)"
     assert shot.stat().st_size > 1000
     _no_noise(result)
 
