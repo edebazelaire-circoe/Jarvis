@@ -104,7 +104,7 @@ class Stage(Protocol):
 
     def begin(self, run_id: str) -> None: ...
 
-    async def show(self, payload: Any) -> bool: ...
+    async def show(self, payload: Any, *, scene_id: str | None = None) -> bool: ...
 
     async def release(self) -> None: ...
 
@@ -949,7 +949,7 @@ class PresentationStudioPlaybackService(AutoPlayMixin, ScenePreviewMixin):
                     raise StageError(render.code or "overlay_refused", render.message or "the overlay was refused")
                 shown = next(s for s in render.scenes if s.scene_id == scene_id)
         await self._require_native_on_stage(shown.prefab.prefab_id, shown.prefab.version, f"scene {scene_id}")
-        await self._stage.show(shown.payload())
+        await self._stage.show(shown.payload(), scene_id=scene_id)
         self._bind_stage(scene_id)
         await self._resolve_timeline(scene_id, shown)
         self._rearm_auto()   # the segment of the scene just shown is known now (the state change came before the stage sync)

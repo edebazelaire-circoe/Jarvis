@@ -44,10 +44,10 @@ def yielding_stage(rig, turns: int = 6) -> None:
 
     real = rig.stage.show
 
-    async def show(payload):
+    async def show(payload, **kwargs):
         for _ in range(turns):
             await asyncio.sleep(0)
-        return await real(payload)
+        return await real(payload, **kwargs)
 
     rig.stage.show = show
 
@@ -134,9 +134,9 @@ async def test_b1_while_the_stage_syncs_the_kind_of_the_new_scene_is_pending_nev
         seen: list = []
         real = rig.stage.show
 
-        async def show(payload):
+        async def show(payload, **kwargs):
             seen.append(rig.service.media_segment())
-            return await real(payload)
+            return await real(payload, **kwargs)
 
         rig.stage.show = show
         applied(await rig.service.start(rig.start_body("jarvis_presenter")))
@@ -302,9 +302,9 @@ async def test_a_video_silence_whose_stage_sync_outlasts_its_target_is_held_whil
     presenter, _brain, _voice = make_presenter(rig)
     released, real = asyncio.Event(), rig.stage.show
 
-    async def slow_show(payload):                           # the stage sync of S2 takes 1.5 s, longer than the 1 s target
+    async def slow_show(payload, **kwargs):                 # the stage sync of S2 takes 1.5 s, longer than the 1 s target
         await released.wait()
-        return await real(payload)
+        return await real(payload, **kwargs)
 
     try:
         applied(await rig.service.start(rig.start_body("rehearsal", jarvis_speaks=True)))

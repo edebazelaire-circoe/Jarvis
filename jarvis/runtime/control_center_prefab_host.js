@@ -46,7 +46,10 @@
    - `host.counters(objectId)` -> `{starts, mounted, failed, remounts}` de cet objet (survivent à un remontage de version,
      disparaissent au démontage) : les tests de fuite d'un rechargement répété lisent ça et `stats()` ;
    - `deps.postEvent(event)` : envoi d'un événement à Core (Slice 04) ; jamais
-     appelé en mode `preview` (`deps.onPreviewEvent(event)` à la place). Sa
+     appelé en mode `preview` (`deps.onPreviewEvent(event)` à la place), sauf
+     pour un objet que `deps.posts(objectId)` désigne (native-studio-playback-fix
+     Slice 09 : le cadre d'une lecture dans Variantes, monté sous l'id de la surface
+     de lecture, garde les événements qu'il avait dans sa fenêtre de stage). Sa
      promesse rend `{outcome, ...}` ou est rejetée (Core injoignable, statut
      HTTP d'erreur : `error.code` s'il existe, `rate_limited` pour un 429).
      L'issue revient au cadre par `event_result {name, outcome, reason?}`
@@ -963,7 +966,7 @@
       }
       const event={object_id:rec.objectId,prefab:{id:rec.prefab.id,version:rec.prefab.version},event:message.name,
         payload:message.payload,basis};
-      if(mode==='preview'){
+      if(mode==='preview'&&!(typeof d.posts==='function'&&d.posts(rec.objectId)===true)){
         totals.previewEvents++;
         try{if(typeof d.onPreviewEvent==='function')d.onPreviewEvent(event)}catch(_error){/* intentional: preview display only */}
         return;

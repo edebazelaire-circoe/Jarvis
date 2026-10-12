@@ -69,7 +69,7 @@ RECEIPT_TOO_LARGE = "explorer_receipt_too_large"
 BAD_PAGE_TOKEN = "explorer_bad_page_token"
 
 #: Codes côté page : liste fermée (un reçu qui en porte un autre est refusé).
-RUN_IN_PROGRESS = "explorer_run_in_progress"            # une lecture tourne : l'explorateur est un outil d'édition
+RUN_IN_PROGRESS = "explorer_run_in_progress"            # une AUTRE présentation joue : Variantes la montre (Slice 09)
 UNKNOWN_PRESENTATION = "explorer_unknown_presentation"  # la présentation (ou la variante demandée) n'existe pas
 UNAVAILABLE = "explorer_unavailable"                    # module absent ou non installé dans cette page
 LOAD_FAILED = "explorer_load_failed"                    # Core n'a pas pu rendre le graphe (cause dans `reason`)

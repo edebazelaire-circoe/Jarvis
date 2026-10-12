@@ -54,7 +54,7 @@ class ScenePreviewMixin:
             await self._studio.require_native_pin(presentation_id, scene.prefab.prefab_id, scene.prefab.version,
                                                   what=f"preview of scene {scene.scene_id} ({scene.prefab.prefab_id}@{scene.prefab.version})")
             await self._end_preview_locked("replaced", repaint=False)
-            await self._stage.show(scene.payload())
+            await self._stage.show(scene.payload(), scene_id=scene.scene_id)
             preview = Preview(scene.scene_id, scene_variant_id)
             self._preview = preview
             preview.timer = asyncio.get_running_loop().create_task(self._preview_timeout(preview, timeout_s))

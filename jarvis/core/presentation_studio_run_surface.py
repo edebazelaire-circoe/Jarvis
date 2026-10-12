@@ -73,6 +73,7 @@ class RunSurface:
         self._validator, self._reclaimer, self._diagnostics = validator, reclaimer, diagnostics
         self._run: str | None = None
         self._shown: ScenePayload | None = None
+        self._scene_id: str | None = None
         self._overlays: dict[str, Overlay] = {}
         self._revision = 0
         self._lock = asyncio.Lock()
@@ -103,7 +104,8 @@ class RunSurface:
         if surface_id is None or self._shown is None:
             return None
         block = self._shown.prefab
-        return {"surface_id": surface_id, "run_id": self._run, "revision": self._revision, "title": self._shown.title,
+        return {"surface_id": surface_id, "run_id": self._run, "revision": self._revision, "scene_id": self._scene_id,
+                "title": self._shown.title,
                 "prefab": None if block is None else _block_wire(block),
                 "overlays": [o.to_wire() for o in self._overlays.values()]}
 
@@ -150,24 +152,25 @@ class RunSurface:
     # ------------------------------------------------------------ the run (the playback service's `Stage` protocol)
 
     def begin(self, run_id: str) -> None:
-        self._run, self._shown, self._overlays = run_id, None, {}
+        self._run, self._shown, self._scene_id, self._overlays = run_id, None, None, {}
         self._bump()
 
-    async def show(self, payload: ScenePayload) -> bool:
-        """Show `payload` on the surface. `True` when what is shown changed. Never blocks on anything but the catalogue check."""
+    async def show(self, payload: ScenePayload, *, scene_id: str | None = None) -> bool:
+        """Show `payload` (the scene `scene_id` of the variant: the Player swaps to a preloaded frame of ANOTHER scene, and takes a new pin
+        of the SAME scene as a hot reload) on the surface. `True` when what is shown changed. Never blocks on anything but the catalogue check."""
 
         if self._run is None:
             raise StageError("stage_not_begun", "no run owns the surface")
-        if payload == self._shown:
+        if payload == self._shown and scene_id == self._scene_id:
             return False
         block = payload.prefab
         if block is not None:
             block = await self._validated(block, "scene")
             payload = replace(payload, prefab=block)
         async with self._lock:
-            if payload == self._shown:
+            if payload == self._shown and scene_id == self._scene_id:
                 return False
-            self._shown = payload
+            self._shown, self._scene_id = payload, scene_id
             self._bump()
         self._trace("stage_shown", "Scene de la lecture montree dans Variantes",
                     data={"object_id": self.stage_object_id, "prefab": block.key if block else None, "revision": self._revision})
@@ -177,7 +180,7 @@ class RunSurface:
         if self._run is None and self._shown is None:
             return
         surface_id = self.stage_object_id
-        self._run, self._shown, self._overlays = None, None, {}
+        self._run, self._shown, self._scene_id, self._overlays = None, None, None, {}
         self._bump()
         self._trace("stage_released", "Surface de lecture de Variantes liberee", data={"object_id": surface_id})
 

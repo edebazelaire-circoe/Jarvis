@@ -136,11 +136,11 @@ class _Hanging:
     def revision(self):
         return self.inner.revision
 
-    async def show(self, payload):
+    async def show(self, payload, **kwargs):
         if self.hang:
             self.entered.set()
             await asyncio.Event().wait()
-        return await self.inner.show(payload)
+        return await self.inner.show(payload, **kwargs)
 
 
 async def test_a_show_that_never_resolves_pauses_the_run_with_a_bounded_actionable_problem(rig):

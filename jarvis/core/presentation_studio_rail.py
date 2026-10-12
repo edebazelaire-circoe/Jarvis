@@ -45,7 +45,9 @@ MAX_TRACKED = 256
 MAX_LABEL = 40
 MAX_MESSAGE = 160
 
-UI_ACTIONS = ("open_window", "close_window", "show_rail", "hide_rail")
+#: Screen requests of the brain. `open_window` / `close_window` are retired with the floating window host (native-studio-playback-fix
+#: Slice 09): `presentation_view window_open|close` now opens or closes Variants through its own command channel, with a receipt.
+UI_ACTIONS = ("show_rail", "hide_rail")
 #: Une demande d'ecran plus vieille que cela n'est plus appliquee par une page qui vient de s'ouvrir.
 UI_REQUEST_FRESH_S = 30.0
 
@@ -333,8 +335,6 @@ class PresentationRail:
         if action not in UI_ACTIONS:
             raise PresentationStudioError(C.INVALID_PRESENTATION, "action must be " + ", ".join(UI_ACTIONS))
         pid = raw.get("presentation_id")
-        if action == "open_window" and not is_presentation_id(pid):
-            raise PresentationStudioError(C.INVALID_PRESENTATION, "open_window needs a presentation_id")
         if pid is not None and not is_presentation_id(pid):
             raise PresentationStudioError(C.INVALID_PRESENTATION, "presentation_id is malformed")
         self._display.seq += 1
@@ -342,18 +342,19 @@ class PresentationRail:
         return self.ui_view()
 
     def report_ui(self, raw: object) -> dict[str, Any]:
-        """Ce que la page constate : rail visible ? fenetre ouverte, sur quelle presentation ? (consultatif, date)."""
+        """Ce que la page constate : rail visible ? Variantes ouvert, sur quelle presentation ? (consultatif, date ; Slice 09 : `variants_open`
+        remplace `window_open`, la fenetre de presentation est retiree)."""
 
-        allowed = {"rail_visible", "window_open", "presentation_id", "applied_seq"}
+        allowed = {"rail_visible", "variants_open", "presentation_id", "applied_seq"}
         if not isinstance(raw, dict) or set(raw) - allowed:
-            raise PresentationStudioError(C.INVALID_PRESENTATION, "body: {rail_visible, window_open, presentation_id, applied_seq?}")
+            raise PresentationStudioError(C.INVALID_PRESENTATION, "body: {rail_visible, variants_open, presentation_id, applied_seq?}")
         pid = raw.get("presentation_id")
         if pid is not None and not is_presentation_id(pid):
             raise PresentationStudioError(C.INVALID_PRESENTATION, "presentation_id is malformed")
-        for key in ("rail_visible", "window_open"):
+        for key in ("rail_visible", "variants_open"):
             if type(raw.get(key)) is not bool:
                 raise PresentationStudioError(C.INVALID_PRESENTATION, f"{key} must be a boolean")
-        self._display.reported = {"rail_visible": raw["rail_visible"], "window_open": raw["window_open"], "presentation_id": pid,
+        self._display.reported = {"rail_visible": raw["rail_visible"], "variants_open": raw["variants_open"], "presentation_id": pid,
                                   "applied_seq": raw.get("applied_seq") if type(raw.get("applied_seq")) is int else None}
         self._display.reported_at = self._clock()
         return self.ui_view()

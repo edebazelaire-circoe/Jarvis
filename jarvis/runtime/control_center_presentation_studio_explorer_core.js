@@ -43,12 +43,10 @@
   const PAGE_TOKEN_HEADER='X-Jarvis-Page-Token';
   const REQUEST_TIMEOUT_MS=15000;
   const READ_TIMEOUT_MS=10000;
-  const PLAYBACK_CHECK_MS=2000;
   const LONG_PRESS_MS=550;
   const PREVIEW_SETTLE_MS=120;
   const NOTICE_MS=9000;
   const PREFS_MAX_COLLAPSED=256;
-  const STUDIO_STAGE_PREFIX='studio-stage-';
 
   /* ------------------------------------------------------------------ texte non fiable */
   const CONTROL_CHARS=/[\u0000-\u001f\u007f-\u009f\u2028\u2029]/g;
@@ -314,7 +312,7 @@
       text:`Core a refusé : ${code||('HTTP '+(e.status||'?'))}${detail?' — '+detail:''}.`};
   }
   const COMMAND_REFUSALS=Object.freeze({
-    explorer_run_in_progress:"Une lecture est en cours : l'explorateur est un outil d'édition, il ne s'ouvre pas pendant une présentation. Arrêtez la lecture d'abord.",
+    explorer_run_in_progress:"Une autre présentation est en cours : Variantes la montre. Arrêtez-la pour ouvrir celle-ci.",
     explorer_unknown_presentation:"Cette présentation n'existe pas.",
     explorer_unavailable:"L'explorateur de variantes n'est pas disponible dans cette page.",
     explorer_load_failed:"Core n'a pas pu rendre le graphe des variantes.",
@@ -685,8 +683,8 @@ html:has(#${HOST_ID}:not([hidden])) #jvFullscreenPrompt .jvfs-bar{display:none}
 
   const api=Object.freeze({
     ROUTE,PLAYBACK_ROUTE,COMMAND_ROUTE,STATE_ROUTE,HOST_ID,OBJECT_ID,PREVIEW_OBJECT_ID,STAGE_OBJECT_ID,STYLE_ID,STORAGE_KEY,ROW_H,OVERSCAN,MAX_LIVE,MAX_ARCHIVED,
-    MAX_TITLE,MAX_RATIONALE,MAX_RATIONALE_BYTES,MAX_DEPTH_SHOWN,INDENT_PX,DEEP_FROM,TYPEAHEAD_MS,PAGE_TOKEN,PAGE_TOKEN_HEADER,REQUEST_TIMEOUT_MS,READ_TIMEOUT_MS,PLAYBACK_CHECK_MS,LONG_PRESS_MS,
-    PREVIEW_SETTLE_MS,NOTICE_MS,PREFS_MAX_COLLAPSED,STUDIO_STAGE_PREFIX,REFUSALS,COMMAND_REFUSALS,ICONS,CSS,
+    MAX_TITLE,MAX_RATIONALE,MAX_RATIONALE_BYTES,MAX_DEPTH_SHOWN,INDENT_PX,DEEP_FROM,TYPEAHEAD_MS,PAGE_TOKEN,PAGE_TOKEN_HEADER,REQUEST_TIMEOUT_MS,READ_TIMEOUT_MS,LONG_PRESS_MS,
+    PREVIEW_SETTLE_MS,NOTICE_MS,PREFS_MAX_COLLAPSED,REFUSALS,COMMAND_REFUSALS,ICONS,CSS,
     clip,cleanLine,utf8Length,rationaleBytes,checkTitle,checkRationale,absoluteTime,relativeTime,creatorLabel,shortId,
     buildForest,childrenOf,ancestorsOf,subtreeIds,flatten,windowOf,treeKey,typeAhead,describeRefusal,planModel,blockedText,sameSet,readPrefs,writePrefs,
   });

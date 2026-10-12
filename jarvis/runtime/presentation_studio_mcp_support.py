@@ -115,7 +115,7 @@ SENTENCES: dict[str, str] = {
     "presentation_studio_prefab_unavailable": "Le prefab de cette scène n'est pas disponible : rien n'a été écrit.",
     "presentation_studio_draft_refused": "Le brouillon est refusé : le rapport complet est dans la réponse, corrige tout puis resoumets.",
     "presentation_studio_template_selection_required": "Choisis explicitement les scènes et les paramètres du modèle d'après le plan.",
-    "explorer_run_in_progress": "Une lecture tourne : l'explorateur est un outil d'édition, arrête d'abord la lecture.",
+    "explorer_run_in_progress": "Une autre présentation est en cours : Variantes la montre ; arrête-la d'abord (presentation_play stop) pour ouvrir celle-ci.",
     "explorer_unknown_presentation": "La page ne connaît pas cette présentation ou cette variante.",
     "explorer_unavailable": "L'explorateur n'est pas disponible dans cette page.",
     "explorer_load_failed": "Core n'a pas pu rendre le graphe à la page.",
@@ -123,6 +123,9 @@ SENTENCES: dict[str, str] = {
     "explorer_dialog_open": "Un formulaire est ouvert dans l'explorateur : l'utilisateur doit le fermer ou le valider d'abord.",
     "explorer_no_visible_page": "Aucune page du Control Center n'est visible : l'utilisateur doit ouvrir l'interface de JARVIS.",
     "explorer_command_busy": "Une autre commande d'explorateur est en cours : réessaie dans un instant.",
+    # native-studio-playback-fix Slice 09 : une présentation se montre dans Variantes, jamais dans une fenêtre du Board.
+    "surface_unavailable": ("Aucune page de JARVIS ne peut montrer la présentation dans Variantes : elle a démarré puis a été mise en pause. "
+                            "Dis à l'utilisateur d'ouvrir l'interface de JARVIS ; la présentation reprend avec presentation_play resume."),
     "mode_switch_refused": ("Le mode d'interaction ne se change que sur une demande de l'utilisateur dans le tour en cours : "
                             "l'utilisateur doit lancer cette lecture lui-même (bouton du lecteur) ou le demander à voix haute."),
     "control_center_unreachable": "Le Control Center est injoignable : l'interface de JARVIS doit tourner.",

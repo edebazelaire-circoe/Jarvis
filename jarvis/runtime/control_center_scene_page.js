@@ -1760,8 +1760,7 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
       prefabHost=PrefabHostApi.createPrefabHost({
         fetchBundle:PrefabHostApi.bundleFetcher((path,options)=>fetch(path,{...options,cache:'no-store'})),
         document,window,log:(key,data)=>consoleLog(key==='scene.prefab_mounted'?'info':'warn',key,data),
-        postEvent:postPrefabEvent,onResize:onPrefabResize,onOutcome:reportPrefabOutcome,swapPrefix:'presentation-studio.',
-        onLive:(objectId)=>{if(timelineFollower)timelineFollower.refresh(objectId)},onClock:(objectId)=>{if(timelineFollower)timelineFollower.onClock(objectId)}});
+        postEvent:postPrefabEvent,onResize:onPrefabResize,onOutcome:reportPrefabOutcome});
     }catch(error){
       consoleLog('error','scene.prefab_host_failed',{error:errorText(error)});
       prefabHost=null;
@@ -1778,35 +1777,9 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
     studio.hostOutcome(info).catch((error)=>consoleLog('error','scene.studio_outcome_failed',{object_id:info&&info.object_id,error:errorText(error)}));
   }
 
-  /* Ligne de temps de la partition pour une scène Remotion (Slice 12) : la bande de lecture (`jarvis:studio-timeline`, vue de Core)
-     dit où le lecteur doit être ; `JarvisRemotionFrame.createTimelineFollower` l'applique au cadre de CETTE page (aller au segment,
-     jouer jusqu'à son image d'arrêt, pause, rattrapage). Rien n'est renvoyé à Core. Créé au premier événement. */
-  let timelineFollower=null;
-  /* Ce que le suiveur DIT (début de segment, image d'arrêt atteinte, lecture enchaînée) : relayé à la bande de lecture, qui le rend à Core. */
-  function onSegmentReport(report){
-    window.dispatchEvent(new CustomEvent('jarvis:studio-segment',{detail:report}));
-  }
-  function onStudioTimeline(event){
-    try{
-      if(timelineFollower===null){
-        const R=window.JarvisRemotionFrame;
-        if(!R||typeof R.createTimelineFollower!=='function')return;
-        timelineFollower=R.createTimelineFollower({getHost:prefabs,onSegment:onSegmentReport,log:(level,key,data)=>consoleLog(level==='warn'?'warn':'info',key,data)});
-      }
-      const detail=event&&event.detail;
-      /* La scène qui suit est chargée à côté, en pause, avant qu'on y passe (lecture continue) : le passage n'attend plus ni compilation ni démarrage. */
-      const ahead=detail&&detail.preload;
-      if(ahead&&detail.object_id&&ahead.prefab){
-        const host=prefabs();
-        if(host&&typeof host.preload==='function'){
-          host.preload(detail.object_id,{object_id:detail.object_id,scene_id:ahead.scene_id,prefab:{id:ahead.prefab.id,version:ahead.prefab.version},title:ahead.title,
-            props:ahead.props,data:ahead.data});
-        }
-      }
-      timelineFollower.apply(detail);
-    }catch(error){consoleLog('error','scene.timeline_failed',{error:errorText(error)})}
-  }
-  window.addEventListener('jarvis:studio-timeline',onStudioTimeline);
+  /* La lecture d'une présentation ne se montre plus sur le Board (native-studio-playback-fix Slice 09) : sa surface, sa ligne de temps et la
+     scène qui suit sont montées par Variantes (`control_center_presentation_studio_run.js`). Les anciennes fenêtres `studio_stage` /
+     `studio_aux` ne sont jamais dessinées (`control_center_scene_layout.js`, catégories retirées) ; Core les archive au démarrage. */
 
   /* Monter, mettre à jour ou démonter le cadre d'un nœud dessiné
      (`JarvisPrefabHost.syncScene`) : `props`/`data` changent par message (diff

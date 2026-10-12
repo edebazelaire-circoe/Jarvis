@@ -189,16 +189,16 @@ def build_server(target: PresentationMcpTarget | None = None, *, tools: Presenta
     async def presentation_view(
         op: Annotated[Literal["explorer_open", "explorer_close", "stage_fullscreen_enter", "fullscreen_exit", "window_open", "window_close",
                               "rail_show", "rail_hide"],
-                      Field(description="explorer_open : le Studio d'édition (toutes les slides, variantes) ; window_open : la fenêtre de la "
-                                        "présentation ; rail_show / rail_hide : le rail ; plein écran de la scène de lecture ; sortie du plein écran.")],
+                      Field(description="explorer_open : Variantes (toutes les slides, variantes, et la présentation en cours) ; window_open : "
+                                        "Variantes en fenêtre ; rail_show / rail_hide : le rail ; plein écran de la scène de Variantes ; sortie du plein écran.")],
         presentation_id: PresentationId = None,
         variant_id: VariantId = None,
-        fullscreen: Annotated[bool, Field(description="explorer_open : demander le plein écran (faux : le Studio reste à côté du rail).")] = True,
+        fullscreen: Annotated[bool, Field(description="explorer_open : demander le plein écran (faux : Variantes reste à côté du rail).")] = True,
     ) -> dict[str, Any]:
-        """Ouvrir ou fermer le Studio (explorateur de variantes), la fenêtre d'une présentation, le rail ; plein écran.
+        """Ouvrir ou fermer Variantes (window_* : la même, en fenêtre), le rail ; plein écran de la scène.
 
-        Le plein écran exige un clic de l'utilisateur : needs_gesture=true veut dire qu'il n'y est pas encore. Le Studio est refusé pendant
-        une lecture. window_* et rail_* sont des demandes d'écran : relis presentation_inspect target rail. Une archivée ne s'ouvre pas."""
+        Le plein écran exige un clic de l'utilisateur : needs_gesture=true veut dire qu'il n'y est pas encore. Une présentation en cours se
+        montre dans Variantes. rail_* sont des demandes d'écran : relis presentation_inspect target rail. Une archivée ne s'ouvre pas."""
         return await studio.view(op, presentation_id=presentation_id, variant_id=variant_id, fullscreen=fullscreen)
 
     @mcp.tool(annotations=tool_annotations(SERVER_NAME, "presentation_library"))

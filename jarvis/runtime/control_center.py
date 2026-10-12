@@ -564,16 +564,19 @@ STUDIO_SEQUENCER_SCRIPT_MARKER = "/*__CONTROL_CENTER_PRESENTATION_STUDIO_SEQUENC
 # Son, plein ecran de la scene et clavier du lecteur de Variantes (native-studio-playback-fix Slice 08), avant le controleur.
 STUDIO_STAGE_MEDIA_SCRIPT_FILE = "control_center_presentation_studio_stage_media.js"
 STUDIO_STAGE_MEDIA_SCRIPT_MARKER = "/*__CONTROL_CENTER_PRESENTATION_STUDIO_STAGE_MEDIA_JS__*/"
+# Une presentation dans Variantes (native-studio-playback-fix Slice 09) : la surface de Core montee dans le lecteur, la bande du presentateur,
+# les touches de la presentation ; avant le controleur.
+STUDIO_RUN_SCRIPT_FILE = "control_center_presentation_studio_run.js"
+STUDIO_RUN_SCRIPT_MARKER = "/*__CONTROL_CENTER_PRESENTATION_STUDIO_RUN_JS__*/"
 STUDIO_EXPLORER_SCRIPT_FILE = "control_center_presentation_studio_explorer.js"
 STUDIO_EXPLORER_SCRIPT_MARKER = "/*__CONTROL_CENTER_PRESENTATION_STUDIO_EXPLORER_JS__*/"
-# Lecture d'une presentation (studio, Slice 12) : bande d'etat + clavier sur l'hote du stage ; apres le plein ecran qu'il pilote.
+# Client de lecture partage de la page (studio, Slice 12 ; native-studio-playback-fix Slice 09 : la bande flottante est retiree, la presentation
+# se montre dans Variantes) : releve de Core, commandes, evenements `jarvis:studio-*`.
 STUDIO_PLAYER_SCRIPT_FILE = "control_center_presentation_studio_player.js"
 STUDIO_PLAYER_SCRIPT_MARKER = "/*__CONTROL_CENTER_PRESENTATION_STUDIO_PLAYER_JS__*/"
-#: Rail permanent des presentations et fenetre d'une presentation : le rail (bord gauche, a droite de la palette) liste toutes les presentations avec
-#: leur pastille d'etat (bleu : un agent travaille, vert : termine, orange : probleme), le clic droit offre Ouvrir / Studio / Editer / Jouer / Masquer /
-#: Renommer / Supprimer (archiver) ; la fenetre est le lecteur flottant non modal. Apres le lecteur, l'inspecteur et l'explorateur qu'ils lisent a la demande.
-PRESENTATION_WINDOW_SCRIPT_FILE = "control_center_presentation_window.js"
-PRESENTATION_WINDOW_SCRIPT_MARKER = "/*__CONTROL_CENTER_PRESENTATION_WINDOW_JS__*/"
+#: Rail permanent des presentations : le rail (bord gauche, a droite de la palette) liste toutes les presentations avec leur pastille d'etat (bleu :
+#: un agent travaille, vert : termine, orange : probleme), le clic ouvre Variantes, le clic droit offre Ouvrir les variantes / Editer / Presenter /
+#: Masquer / Renommer / Supprimer (archiver). La fenetre flottante d'une presentation est retiree (Slice 09). Apres le client de lecture.
 PRESENTATION_RAIL_SCRIPT_FILE = "control_center_presentation_rail.js"
 PRESENTATION_RAIL_SCRIPT_MARKER = "/*__CONTROL_CENTER_PRESENTATION_RAIL_JS__*/"
 # Inspecteur d'edition (studio, Slice 07) : panneau du dock `INS`, widgets generes de l'introspection, ecritures par le relais.
@@ -2308,6 +2311,7 @@ class ControlCenter:
             (COMPOSITION_CLOCK_SCRIPT_MARKER, COMPOSITION_CLOCK_SCRIPT_FILE),
             (STUDIO_SEQUENCER_SCRIPT_MARKER, STUDIO_SEQUENCER_SCRIPT_FILE),
             (STUDIO_STAGE_MEDIA_SCRIPT_MARKER, STUDIO_STAGE_MEDIA_SCRIPT_FILE),
+            (STUDIO_RUN_SCRIPT_MARKER, STUDIO_RUN_SCRIPT_FILE),
         ):
             html = html.replace(marker, page.with_name(file_name).read_text(encoding="utf-8"))
         html = html.replace(
@@ -2318,10 +2322,6 @@ class ControlCenter:
         html = html.replace(
             STUDIO_PLAYER_SCRIPT_MARKER,
             page.with_name(STUDIO_PLAYER_SCRIPT_FILE).read_text(encoding="utf-8"),
-        )
-        html = html.replace(
-            PRESENTATION_WINDOW_SCRIPT_MARKER,
-            page.with_name(PRESENTATION_WINDOW_SCRIPT_FILE).read_text(encoding="utf-8"),
         )
         html = html.replace(
             PRESENTATION_RAIL_SCRIPT_MARKER,

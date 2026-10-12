@@ -1121,7 +1121,9 @@
       const api=d.prefabHost||root.JarvisPrefabHost;
       if(!api||typeof api.createPrefabHost!=='function')return null;
       try{
-        previewHost=api.createPrefabHost({mode:'preview',document:doc,window:win,
+        /* `embed: 'variants'` (native-studio-playback-fix Slice 09): an editing preview inside the Variants workspace has no transport of its
+           own (contract § 2: no `rs-bar`); the host's grace play still shows the scene once, held on its last frame. */
+        previewHost=api.createPrefabHost({mode:'preview',document:doc,window:win,embed:'variants',
           fetchBundle:api.bundleFetcher((path,options)=>fetchImpl(path,Object.assign({cache:'no-store'},options))),
           onPreviewEvent:()=>{/* intentional: the preview frame writes nothing anywhere; its events are dropped */},
           log:(key,data)=>{if(key!=='scene.prefab_mounted')log('preview_host_'+String(key).replace(/^scene\./,''),data,'warn')}});

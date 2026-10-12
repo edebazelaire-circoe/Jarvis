@@ -449,14 +449,15 @@ await env.advance(50);
 def test_the_transport_is_one_named_toolbar_that_opens_paused_on_frame_zero_and_shows_the_composition_time(tmp_path):
     out = run_ui(tmp_path, VIDEO_WORLD + r"""
 const toolbars=qa('[role="toolbar"]').filter(t=>t.querySelector('[data-act="continuous"]'));
-const names=qa('button',bar()).map(b=>b.getAttribute('aria-label')||b.textContent.trim());
+const names=qa('button',bar()).filter(b=>!b.hidden).map(b=>b.getAttribute('aria-label')||b.textContent.trim());
 return {toolbars:toolbars.length,label:bar().getAttribute('aria-label'),names,haspopup:label('Plus de lecture').getAttribute('aria-haspopup'),
   slider:['aria-valuemin','aria-valuemax','aria-valuenow','aria-valuetext','aria-disabled'].map(k=>slider().getAttribute(k)),
   readout:readout(),orders:prefabFake.orders,phase:ex.playback.view().phase,host:prefabFake.hosts[0].deps.autoplay+'/'+prefabFake.hosts[0].deps.embed,
   sound:[label('Son').getAttribute('aria-pressed'),label('Son').getAttribute('aria-disabled'),label('Son').getAttribute('title'),prefabFake.sounds],errors:env.errors};
 """)
     assert out["toolbars"] == 1 and out["label"] == "Lecture de la vidéo"
-    assert out["names"] == ["Scène précédente", "Lire", "Scène suivante", "Son", "Plus de lecture"] and out["haspopup"] == "menu"
+    # Slice 09: « Présenter » (§ 6 #21) starts a presenter run here; « Arrêter » exists only during one.
+    assert out["names"] == ["Scène précédente", "Lire", "Scène suivante", "Son", "Plus de lecture", "Présenter"] and out["haspopup"] == "menu"
     assert out["slider"] == ["0", "269", "0", "Scène 1 sur 3, 0:00 sur 0:09", "false"]
     assert out["readout"] == {"time": "0:00 / 0:09", "now": "0", "text": "Scène 1 sur 3, 0:00 sur 0:09", "count": "Scène 1 sur 3", "selected": "1",
                               "frame": 0}

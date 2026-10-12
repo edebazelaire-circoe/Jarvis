@@ -424,7 +424,7 @@ async def test_a_crash_inside_a_command_ends_the_run_cleanly_and_propagates(rig)
     applied(await rig.service.start(rig.start_body("user_presenter")))
     applied(await rig.run("detour", title="Annexe", prefab=AUX_BLOCK))
 
-    async def boom(payload):
+    async def boom(payload, **kwargs):
         raise RuntimeError("kaboom")
 
     rig.stage.show = boom                       # not a StageError: an unexpected bug in the stage layer

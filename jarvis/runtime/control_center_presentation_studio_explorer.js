@@ -14,8 +14,12 @@
      acteur forcé à `user` par le relais), les mêmes que la voix. L'aperçu LIT le document de la variante (`GET .../variants/{id}`) et le monte dans
      un cadre de prefab en mode `preview` de l'hôte : aucun événement ne part du cadre, rien n'est écrit (un test de navigateur empreinte tout
      l'arbre de la présentation avant et après) ;
-   - un outil de lecture. Il est refusé pendant une lecture (cause dite, code `explorer_run_in_progress`) et se ferme si une lecture démarre : un seul
-     élément peut être en plein écran, et le public ne doit jamais voir l'atelier.
+   - une fenêtre de plus pour jouer. Depuis native-studio-playback-fix Slice 09, Variantes EST la surface d'une présentation : une lecture (bouton
+     « Présenter », rail, voix, MCP, présentateur Jarvis) se montre dans son lecteur, avec la bande du présentateur, le transport (pause, élément
+     précédent / suivant, position en lecture seule) et la carte § 4.15 de la colonne « présentation » (`control_center_presentation_studio_run.js`).
+     Une lecture qui démarre ouvre Variantes (fenêtré, jamais en plein écran) au lieu de le fermer ; l'arbre et les actions sont inertes pendant
+     la présentation (« Présentation en cours ») ; fermer Variantes met la présentation en pause. Ouvrir une AUTRE présentation pendant une
+     lecture est refusé (`explorer_run_in_progress`).
 
    Plein écran : à l'ouverture, l'hôte (`#jvStudioExplorer`, `data-object-id="studio-explorer"`) demande le VRAI plein écran par
    `JarvisFullscreen.enter` ; par la voix il ARME (invite d'un clic, compte à rebours) et l'explorateur est déjà visible en recouvrement fenêtré,
@@ -39,8 +43,12 @@
   const Seq=root.JarvisVariantsSequencer||(typeof require==='function'?require('./control_center_presentation_studio_sequencer.js'):null);
   /* Son, plein écran de la scène, carte des touches (Slice 08) : contrôleurs sans DOM. */
   const Media=root.JarvisVariantsStageMedia||(typeof require==='function'?require('./control_center_presentation_studio_stage_media.js'):null);
+  /* Une présentation dans Variantes (Slice 09) : la surface de Core, la bande du présentateur, les touches de la présentation. */
+  const Run=root.JarvisVariantsRun||(typeof require==='function'?require('./control_center_presentation_studio_run.js'):null);
+  const Frames=()=>root.JarvisRemotionFrame||(typeof require==='function'?require('./control_center_remotion_frame.js'):null);
+  const Clock=()=>root.JarvisCompositionClock||(typeof require==='function'?require('./control_center_composition_clock.js'):null);
   const {ROUTE,PLAYBACK_ROUTE,COMMAND_ROUTE,STATE_ROUTE,HOST_ID,OBJECT_ID,PREVIEW_OBJECT_ID,STAGE_OBJECT_ID,STYLE_ID,ROW_H,MAX_DEPTH_SHOWN,INDENT_PX,TYPEAHEAD_MS,PAGE_TOKEN,PAGE_TOKEN_HEADER,
-    REQUEST_TIMEOUT_MS,READ_TIMEOUT_MS,PLAYBACK_CHECK_MS,LONG_PRESS_MS,PREVIEW_SETTLE_MS,NOTICE_MS,COMMAND_REFUSALS,ICONS,CSS,MAX_LIVE,MAX_ARCHIVED,
+    REQUEST_TIMEOUT_MS,READ_TIMEOUT_MS,LONG_PRESS_MS,PREVIEW_SETTLE_MS,NOTICE_MS,COMMAND_REFUSALS,ICONS,CSS,MAX_LIVE,MAX_ARCHIVED,
     cleanLine,checkTitle,checkRationale,rationaleBytes,relativeTime,absoluteTime,creatorLabel,shortId,buildForest,subtreeIds,flatten,windowOf,treeKey,
     describeRefusal,planModel,sameSet,readPrefs,writePrefs,MAX_RATIONALE_BYTES}=Core;
 
@@ -79,10 +87,9 @@
       if(d.storage)return d.storage;
       try{return root.localStorage||null}catch(_error){return null /* intentional: blocked storage only costs the remembered folds */}
     };
-    const playing=d.playing||(()=>{
-      const player=root.JarvisStudioPlayer,view=player&&typeof player.view==='function'?player.view():null;
-      return !!view&&view.running===true&&view.phase!=='stopped'&&view.phase!=='idle';
-    });
+    /* The page's playback client (`control_center_presentation_studio_player.js`): Core's view, the run's surface, the commands. */
+    const player=()=>d.player||root.JarvisStudioPlayer||null;
+    const playerView=()=>{const p=player();try{return p&&typeof p.view==='function'?p.view():null}catch(_error){return null}};
     const fullscreenApi=()=>d.fullscreen||root.JarvisFullscreen||null;
     const prefabApi=()=>d.prefabHost||root.JarvisPrefabHost||null;
     const stats={renders:0,paints:0,lastPaintMs:0,lastRenderMs:0,graphLoads:0,previews:0,ops:0,refusals:0,failures:0,polls:0,commands:0,staleHandled:0};
@@ -92,11 +99,15 @@
       preview:{variantId:null,status:'idle',doc:null,scenes:[],sceneId:null,error:null,since:0,generation:0,mounted:null},
       art:{variantId:null,state:'idle',doc:null},fs:'not_requested',generation:0,dialog:null,menu:null,opener:null,fullscreenOwned:false,
       fsKind:null,fsOpener:null,fsLeftAt:-1e9,
+      /* Slice 09: the presentation Variants hosts (`{runId, view, viewAt, busy, map}`), and the runs it has opened by itself (once each). */
+      run:null,
     };
+    const runsOpened=new Set();
+    let runTimeline=null;
     const ui={};
     const selectionListeners=new Set();
-    let tickTimer=null,playbackTimer=null,pollTimer=null,previewTimer=null,reportTimer=null,noticeTimer=null,armTimer=null;
-    let previewHost=null,inerted=[],idSeq=0,lastReported='',playbackFailures=0,graphFailures=0;
+    let tickTimer=null,pollTimer=null,previewTimer=null,reportTimer=null,noticeTimer=null,armTimer=null,runTicker=null;
+    let previewHost=null,inerted=[],idSeq=0,lastReported='',graphFailures=0;
 
     /* -------------------------------------------------------------- journal et retour visible (RULE ZERO) */
     function log(key,data,level){
@@ -151,7 +162,7 @@
     function ensureStyle(){
       if(!doc||typeof doc.getElementById!=='function'||doc.getElementById(STYLE_ID))return;
       const style=doc.createElement('style');
-      style.id=STYLE_ID;style.textContent=CSS+(Cmp&&Cmp.CSS||'')+(Upgrades&&Upgrades.CSS||'');
+      style.id=STYLE_ID;style.textContent=CSS+(Cmp&&Cmp.CSS||'')+(Upgrades&&Upgrades.CSS||'')+(Run&&Run.CSS||'');
       (doc.head||doc.body).appendChild(style);
     }
 
@@ -303,10 +314,14 @@
       const body=el('div','jvx-body');
       const treePane=el('aside','jvx-treepane');
       attrs(treePane,{'aria-label':"Évolution des variantes"});
+      ui.treePane=treePane;
       const head=el('div','jvx-panehead');
       head.appendChild(el('h2','jvx-panetitle','Évolution'));
       ui.count=el('span','jvx-chip');
       head.appendChild(ui.count);
+      /* Slice 09: while a presentation plays here, the tree and the actions are inert, and this chip says why. */
+      ui.runChip=el('span','jvx-chip','Présentation en cours');ui.runChip.hidden=true;ui.runChip.setAttribute('data-tone','accent');
+      head.appendChild(ui.runChip);
       ui.liveTree=W.createTreeView(kit,{collapsed:()=>S.collapsed,label:'Variantes de la présentation',
         onSelect:(id,o)=>{if(o&&o.ctrl){cmp.toggleMark(id);return}selectVariant(id,{focus:true,pointer:o&&o.pointer})},onToggle:id=>toggleFold(id),
         onKey:(event,id,rows,index)=>onTreeKey('live',event,id,rows,index),onFocus:id=>{S.focus.live=id;syncRoving('live')},
@@ -344,7 +359,9 @@
       ui.soundPill=el('div','jvx-stage-sound');ui.soundPill.hidden=true;attrs(ui.soundPill,{role:'status','aria-live':'polite'});
       ui.catcher=el('div','jvx-catch');ui.catcher.setAttribute('aria-hidden','true');
       for(const type of ['pointermove','pointerdown'])ui.catcher.addEventListener(type,()=>chrome.poke());
-      ui.stage.appendChild(ui.slot);ui.stage.appendChild(ui.veil);ui.stage.appendChild(ui.wait);ui.stage.appendChild(ui.soundPill);ui.stage.appendChild(ui.catcher);
+      /* Slice 09: a detour of the presentation is an overlay INSIDE the stage (never a Board window). */
+      ui.overlay=el('div','jvx-stage-overlay');ui.overlay.hidden=true;attrs(ui.overlay,{role:'region','aria-label':'Ressource annexe de la présentation'});
+      ui.stage.appendChild(ui.slot);ui.stage.appendChild(ui.overlay);ui.stage.appendChild(ui.veil);ui.stage.appendChild(ui.wait);ui.stage.appendChild(ui.soundPill);ui.stage.appendChild(ui.catcher);
       wrap.appendChild(ui.stage);
       const note=el('div','jvx-stage-note');
       const sceneLine=el('div','jvx-scene-line');
@@ -369,7 +386,9 @@
       attrs(ui.theater,{'data-object-id':STAGE_OBJECT_ID,'aria-label':'Vidéo de la variante'});
       ui.theater.appendChild(wrap);ui.theater.appendChild(note);
       for(const type of ['pointermove','focusin','keydown'])ui.theater.addEventListener(type,()=>chrome.poke());
-      preview.appendChild(ui.vbar);preview.appendChild(ui.theater);preview.appendChild(ui.strip);preview.appendChild(bottom);preview.appendChild(ui.upgrades);
+      /* Slice 09: the presenter strip (§ 5), windowed only, under the stage: it replaces the floating band. */
+      ui.presenter=buildPresenter();
+      preview.appendChild(ui.vbar);preview.appendChild(ui.theater);preview.appendChild(ui.presenter);preview.appendChild(ui.strip);preview.appendChild(bottom);preview.appendChild(ui.upgrades);
       ui.preview=preview;
       body.appendChild(treePane);body.appendChild(preview);body.appendChild(cmp.buildRoot());
       ui.live=el('div','jvx-sr');attrs(ui.live,{role:'status','aria-live':'polite','aria-atomic':'true'});
@@ -545,18 +564,19 @@
       const out=[];
       if(!node)return out;
       const archived=node.state==='archived';
-      const busy=!!S.busy;
-      const add=(act,label,iconName,key,opts)=>out.push(Object.assign({act,label,icon:iconName,key,disabled:busy?'Une opération est en cours.':null},opts||{}));
+      const busy=!!S.busy||!!S.run;
+      const busyText=S.run?RUN_BUSY:'Une opération est en cours.';
+      const add=(act,label,iconName,key,opts)=>out.push(Object.assign({act,label,icon:iconName,key,disabled:busy?busyText:null},opts||{}));
       if(archived){
         const dead=S.archived;
         const withKids=dead&&dead.kids.get(node.variant_id);
         add('restore','Restaurer','restore','R',{});
         if(withKids&&withKids.length)add('restore_all','Restaurer avec ses sous-branches','restore','',{});
       }else{
-        add('activate','Activer','power','A',{disabled:busy?'Une opération est en cours.':S.graph.activeId===node.variant_id?'Cette variante est déjà la variante active.':null});
-        add('branch','Brancher d\'ici…','fork','N',{disabled:busy?'Une opération est en cours.':live>=MAX_LIVE?`${MAX_LIVE} variantes vivantes au plus : archivez des branches abandonnées d'abord.`:null});
+        add('activate','Activer','power','A',{disabled:busy?busyText:S.graph.activeId===node.variant_id?'Cette variante est déjà la variante active.':null});
+        add('branch','Brancher d\'ici…','fork','N',{disabled:busy?busyText:live>=MAX_LIVE?`${MAX_LIVE} variantes vivantes au plus : archivez des branches abandonnées d'abord.`:null});
         add('rename','Renommer…','pencil','F2',{});
-        add('archive','Archiver…','box','Suppr',{danger:true,disabled:busy?'Une opération est en cours.':live<=1?'Une présentation garde toujours au moins une variante vivante.':null});
+        add('archive','Archiver…','box','Suppr',{danger:true,disabled:busy?busyText:live<=1?'Une présentation garde toujours au moins une variante vivante.':null});
       }
       return out;
     }
@@ -602,9 +622,13 @@
         previewHost=api.createPrefabHost({mode:'preview',document:doc,window:win,swapPrefix:'presentation-studio.',autoplay:false,embed:'variants',
           fetchBundle:api.bundleFetcher((path,options)=>fetchImpl(path,Object.assign({cache:'no-store'},options))),
           onPreviewEvent:()=>{/* intentional: the preview frame writes nothing anywhere; its events are dropped */},
-          onLive:(id)=>{if(seq)seq.onLive(id)},onClock:(id)=>{if(seq)seq.onClock(id)},onOutcome:(info)=>{if(seq)seq.onOutcome(info)},
+          onLive:(id)=>{if(runAdapter.owns(id))runAdapter.onLive(id);else if(seq)seq.onLive(id)},
+          onClock:(id)=>{if(runAdapter.owns(id)){runAdapter.onClock(id);renderRunPosition()}else if(seq)seq.onClock(id)},
+          onOutcome:(info)=>{if(info&&runAdapter.owns(info.object_id))reportRunOutcome(info);else if(seq)seq.onOutcome(info)},
+          /* Slice 09: the run's frame keeps the events it had in its stage window (`state` writes the surface's data, `notify` reaches the brain). */
+          posts:(id)=>runAdapter.owns(id),postEvent:(event)=>postFrameEvent(event),
           /* Slice 08: the real state of the scene's sound, and a § 4.15 key typed in the scene that has the focus. */
-          onSound:(id,audio)=>{if(id===PREVIEW_OBJECT_ID)sound.onAudio(audio)},onKey:(id,key)=>onFrameKey(id,key),
+          onSound:(id,audio)=>{if(id===PREVIEW_OBJECT_ID||id===runAdapter.objectId())sound.onAudio(audio)},onKey:(id,key)=>onFrameKey(id,key),
           log:(key,data)=>{const k=String(key);log('preview_host_'+k.replace(/^scene\./,''),data,PREVIEW_HOST_INFO.has(k)?'info':'warn')}});
       }catch(error){log('preview_host_failed',{error:describe(error)},'error');previewHost=null}
       if(previewHost)sound.attach();   // muted at opening (§ 4.14), or the sound the user turned on in this opening
@@ -629,7 +653,7 @@
     /* The map is read as soon as the preview is ready (§ 4.1): the transport shows `f` before anything plays, and a variant without video says
        so on « Lire ». Nothing is ordered to the Player, which already holds frame 0 of the scene on screen. */
     function preparePlayback(){
-      if(cmp.isActive()||S.preview.status!=='ready'||!S.preview.scenes.length)return;
+      if(S.run||cmp.isActive()||S.preview.status!=='ready'||!S.preview.scenes.length)return;
       const s=sequencer();
       if(!s||s.active())return;
       ensureHost();
@@ -638,6 +662,7 @@
     /* A playback command from the transport, a key or the page API: refused with its reason when it cannot run, its failure said. `run` gets
        the sequencer. */
     async function playback(run){
+      if(S.run){say('info','Une présentation est en cours : la partition la mène. « Arrêter » pour revenir à la vidéo.');return null}
       if(cmp.isActive()){say('info',"La lecture se fait hors de la comparaison : fermez-la d'abord.");return null}
       if(S.preview.status!=='ready'||!S.preview.scenes.length){say('info',"Aucune scène à lire : attendez l'aperçu.");return null}
       const s=sequencer();
@@ -656,7 +681,10 @@
         return null;
       }finally{renderPlayback()}
     }
-    function togglePlayback(){return playback(s=>s.view().phase==='failed'?s.retry():s.toggle())}
+    function togglePlayback(){
+      if(S.run){const m=runModel();return m.active?runCommand(m.pause.command):null}
+      return playback(s=>s.view().phase==='failed'?s.retry():s.toggle());
+    }
     function playSceneOnly(){return playback(s=>s.playScene())}
     function playbackError(error){
       const where=Number.isInteger(error.scene_index)?`Scène ${error.scene_index+1}${error.scene_title?` « ${cleanLine(error.scene_title,60)} »`:''} : `:'';
@@ -675,7 +703,7 @@
     /* Slice 08: the transport over the stage in fullscreen, hidden while the video plays (§ 4.12, § 4.16). */
     const chrome=Media.createChrome({setTimeout:later,clearTimeout:cancelLater,
       apply:(hidden)=>{if(ui.theater){if(hidden)ui.theater.setAttribute('data-chrome','hidden');else ui.theater.removeAttribute('data-chrome')}},
-      playing:()=>{const v=seq?seq.view():null;return !!v&&(v.phase==='playing'||v.phase==='waiting')},
+      playing:()=>{if(S.run)return S.run.view.phase==='playing';const v=seq?seq.view():null;return !!v&&(v.phase==='playing'||v.phase==='waiting')},
       pinned:()=>!!S.menu||!!(ui.transport&&ui.transport.contains(doc.activeElement))});
     function toggleSound(){
       if(!ensureHost()){say('failed',Media.TEXT.unavailable);return}
@@ -713,11 +741,17 @@
       ui.sound=button(null,'jvx-btn jvx-btn-icon',()=>toggleSound(),{attrs:{'aria-label':'Son','aria-pressed':'false',title:Media.TEXT.titleOff}});
       ui.soundIcon=el('span','jvx-icon-slot');ui.soundIcon.appendChild(icon('muted'));ui.sound.appendChild(ui.soundIcon);
       ui.more=button(null,'jvx-btn jvx-btn-icon',()=>openPlaybackMenu(),{icon:'more',attrs:{'aria-label':'Plus de lecture','aria-haspopup':'menu','aria-expanded':'false',title:'Plus de lecture'}});
-      for(const node of [ui.prevScene,ui.playAll,ui.nextScene,ui.scrub,ui.time,ui.sound,ui.more])ui.transport.appendChild(node);
+      /* § 5 / § 6 #21 (Slice 09): « Présenter ▾ » starts a presenter run here; during the run « Arrêter » stops it (also in fullscreen). */
+      ui.present=button('Présenter','jvx-btn',()=>openPresentMenu(),{attrs:{'aria-haspopup':'menu','aria-expanded':'false','data-act':'present',
+        title:'Présenter cette variante : vous, Jarvis, ou une répétition (la partition mène)'}});
+      ui.stopRun=button('Arrêter','jvx-btn',()=>{runCommand('stop')},{attrs:{'data-act':'stop_run','data-danger':'',title:'Arrêter la présentation'}});
+      ui.stopRun.hidden=true;
+      for(const node of [ui.prevScene,ui.playAll,ui.nextScene,ui.scrub,ui.time,ui.sound,ui.more,ui.present,ui.stopRun])ui.transport.appendChild(node);
     }
     /* ⏮ ⏭, ← →, Page précédente / suivante: the start of the previous / next scene, play state kept (§ 4.4). Without a map (a variant
        without video, or before it is read) they browse the scenes. Next on the last scene says why it does nothing. */
     function moveScene(delta){
+      if(S.run){runCommand(delta>0?'next':'previous');return true}
       if(seq&&seq.active()){
         const v=seq.view();
         if(delta>0&&v.scene_index>=v.scene_count-1){say('info','Dernière scène.');return true}
@@ -739,6 +773,12 @@
        Returns whether the key acted. `Escape` is not here: it is the nested rule of the host (`onHostKey`). */
     function transportKey(key,event){
       const action=Media.keyAction(key);
+      if(S.run){
+        /* § 4.15, column « Presenter run »: the score moves, never `f`; `S` leaves a locked sequence; F, M as in the video. */
+        const asked=Run.keyCommand(key==='s'||key==='S'?'skip':action,S.run.view);
+        if(asked&&asked.said){say('info',asked.said);return true}
+        if(asked){runCommand(asked.verb,asked.body);return true}
+      }
       if(action==='toggle')togglePlayback();
       else if(action==='next')moveScene(1);
       else if(action==='previous')moveScene(-1);
@@ -762,7 +802,7 @@
     /* A key typed in the scene (the cross-origin frame keeps it; its stage page passes it on only while the scene has the focus): it acts
        once, here, only while the focus is really in the stage, and never while a menu or a dialog is open (Slice 08). */
     function onFrameKey(objectId,key){
-      if(!S.open||objectId!==PREVIEW_OBJECT_ID||S.dialog||S.menu)return;
+      if(!S.open||(objectId!==PREVIEW_OBJECT_ID&&objectId!==runAdapter.objectId())||S.dialog||S.menu)return;
       const active=doc.activeElement;
       if(!(active&&ui.stage&&ui.stage.contains(active)))return;
       chrome.poke();
@@ -775,6 +815,7 @@
       const keys=['ArrowRight','ArrowUp','ArrowLeft','ArrowDown','PageUp','PageDown','Home','End'];
       if(!keys.includes(event.key))return;
       event.preventDefault();event.stopPropagation();
+      if(S.run){say('info',RUN_SCRUB);return}
       const v=seq&&seq.active()?seq.view():null;
       if(!v){say('info',noPositionText());return}
       const second=v.fps;
@@ -792,6 +833,7 @@
     }
     /* Dragging pauses for the drag and gives the play state back on release (§ 4.6); one seek per animation frame at most (the sequencer). */
     function onScrubDown(event){
+      if(S.run){say('info',RUN_SCRUB);return}
       if(!(seq&&seq.active())||(event.button!==undefined&&event.button>0))return;
       event.preventDefault();
       ui.scrub.focus({preventScroll:true});
@@ -816,12 +858,16 @@
       if(S.dialog)return;
       if(S.menu){closeMenu(true);return}
       const box=ui.more.getBoundingClientRect?ui.more.getBoundingClientRect():{left:80,bottom:80};
-      const items=[{act:'scene_only',label:'Lire seulement cette scène',icon:'play'},{act:'home',label:'Revenir au début',icon:'restore',key:'Début'}];
-      const {menu,buttons}=W.buildMenu(kit,{head:'Lecture',label:'Plus de lecture',items,anchor:{x:box.left,y:box.bottom+4},
+      /* During a presentation the menu speaks of score items, never of the video's position (the score leads, § 5). */
+      const items=S.run?[{act:'first_item',label:'Premier élément',icon:'first',key:'Début'},{act:'last_item',label:'Dernier élément',icon:'last',key:'Fin'}]
+        :[{act:'scene_only',label:'Lire seulement cette scène',icon:'play'},{act:'home',label:'Revenir au début',icon:'restore',key:'Début'}];
+      const {menu,buttons}=W.buildMenu(kit,{head:S.run?'Présentation':'Lecture',label:'Plus de lecture',items,anchor:{x:box.left,y:box.bottom+4},
         width:win.innerWidth||1280,height:win.innerHeight||720,
         onPick:item=>{
           closeMenu(true);
-          if(item.act==='scene_only')playSceneOnly();
+          if(item.act==='first_item')runCommand('goto',{position:1});
+          else if(item.act==='last_item')runCommand('goto',{position:(S.run&&S.run.view.position&&S.run.view.position.of)||1});
+          else if(item.act==='scene_only')playSceneOnly();
           else if(!seekTo('home'))browseScene(0,0);
         }});
       ui.layer.appendChild(menu);
@@ -838,6 +884,8 @@
     /* The transport, the wait pill and the failure veil follow the sequencer. Every position shown here is `f`; without a map, none (§ 4.8). */
     function renderPlayback(){
       if(!ui.playAll)return;
+      if(S.run){renderRun();return}
+      renderPresent();
       const v=seq?seq.view():{phase:'idle',retryable:true};
       const running=v.phase==='playing'||v.phase==='waiting';
       chrome.sync();   // fullscreen: the transport stays while paused, hides itself while the video plays
@@ -989,6 +1037,7 @@
     function currentScene(){return S.preview.scenes.find(s=>s.id===S.preview.sceneId)||null}
     function renderStage(){
       if(cmp.isActive())return;      /* la comparaison tient la place de l'aperçu : aucun cadre n'est monté dans l'aperçu simple */
+      if(S.run){renderRunStage();return}   /* Slice 09: the stage shows the run's surface, never the preview frame */
       const p=S.preview;
       const scene=p.status==='ready'?currentScene():null;
       const veil=(tone,title,text,action)=>{
@@ -1051,6 +1100,8 @@
       const p=S.preview;
       const index=p.scenes.findIndex(s=>s.id===sceneId);
       if(index<0)return;
+      /* § 5 table: during a presentation a thumbnail is `goto {scene_id}` through Core; the Player follows. */
+      if(S.run){runCommand('goto',{scene_id:sceneId});return}
       /* Once the video has been played, a scene chosen by the user is a seek of the one clock: its start, play state kept (§ 4.4, § 4.5);
          the thumbnail of the current scene restarts it. The sequencer then shows the scene (`showScene`). */
       if(seq&&seq.active()){if(!seq.seekScene(index))return;announceScene()}
@@ -1072,7 +1123,7 @@
     function browseScene(delta,absolute){
       const p=S.preview;
       if(p.status!=='ready'||!p.scenes.length)return false;
-      const index=Math.max(0,p.scenes.findIndex(s=>s.id===p.sceneId));
+      const index=Math.max(0,p.scenes.findIndex(s=>s.id===(S.run?runSceneId():p.sceneId)));
       const target=absolute!==undefined?absolute:index+delta;
       const clamped=Math.max(0,Math.min(p.scenes.length-1,target));
       if(clamped===index)return true;
@@ -1096,6 +1147,7 @@
     function selectVariant(id,options){
       const node=nodeOf(id);
       if(!node)return;
+      if(S.run&&id!==S.run.view.variant_id){say('info',RUN_BUSY);return}
       const changed=S.selectedId!==id;
       S.selectedId=id;
       S.prefs.last[S.pid]=id;savePrefs();
@@ -1438,6 +1490,296 @@
       else if(event.key==='Enter'||event.key===' '){event.preventDefault();event.stopPropagation();if(list[index])list[index].click()}
     }
 
+    /* -------------------------------------------------------------- une présentation dans Variantes (native-studio-playback-fix Slice 09) */
+    const RUN_BUSY='Présentation en cours : l\'arbre et les actions reviennent à l\'arrêt (« Arrêter »).';
+    const RUN_SCRUB='La partition mène la présentation : la position suit les éléments (⏮ ⏭, ← →), elle ne se fait pas glisser.';
+    const runAdapter=Run.createRunAdapter({host:()=>ensureHost(),slot:()=>ui.slot,overlaySlot:()=>ui.overlay,frames:Frames(),
+      now,setInterval:every,clearInterval:stopEvery,
+      onSegment:(report)=>{if(typeof win.dispatchEvent==='function'&&typeof win.CustomEvent==='function'){
+        try{win.dispatchEvent(new win.CustomEvent('jarvis:studio-segment',{detail:report}))}catch(error){log('run_segment_failed',{error:describe(error)},'warn')}}},
+      log:(key,data,level)=>log(key,data,level)});
+    function runSceneId(){
+      if(!S.run)return null;
+      const surface=runAdapter.surface();
+      return surface&&surface.scene_id||S.run.view.scene&&S.run.view.scene.scene_id||null;
+    }
+    function runElapsed(){
+      const v=S.run.view,el=v.elapsed||{};
+      return (el.item_ms||0)+(v.phase==='playing'||v.phase==='resuming'?Math.max(0,now()-S.run.viewAt):0);
+    }
+    function runModel(){
+      if(!S.run)return {active:false};
+      const state=player()&&typeof player().state==='function'?player().state():{};
+      return Run.presenterModel(S.run.view,runElapsed(),{busy:S.run.busy,linkLostMs:state.linkLostSince?now()-state.linkLostSince:0});
+    }
+    function setRunInert(on){
+      for(const node of [ui.treePane,ui.actions,ui.vbar,ui.upgrades])if(node)node.inert=!!on;
+      if(ui.runChip)ui.runChip.hidden=!on;
+    }
+    /* A run of this deck: the stage shows its surface (paused on frame 0 until Core orders it), the tree and actions become inert. */
+    function enterRun(view){
+      if(!Run.isRun(view))return;
+      if(cmp.isActive())cmp.close({});
+      closeMenu(false);
+      if(seq)seq.reset('run');   // continuous video stops: one Player, the run's
+      unmountPreview();
+      if(view.variant_id&&nodeOf(view.variant_id)&&S.selectedId!==view.variant_id)selectVariant(view.variant_id,{});
+      S.run={runId:view.run_id,view,viewAt:now(),busy:false,map:null};
+      setRunInert(true);
+      const p=player(),surface=p&&typeof p.surface==='function'?p.surface():null;
+      if(surface&&surface.run_id===view.run_id)runAdapter.applySurface(surface);
+      runAdapter.setUnresolved(view.timeline_unresolved||null);
+      if(runTimeline)runAdapter.applyTimeline(runTimeline);
+      loadRunMap(view);
+      if(!runTicker)runTicker=every(()=>{if(S.run)renderRun()},1000);
+      renderAll();
+      const m=runModel();
+      announce(`Présentation en cours dans Variantes : ${m.role}. ${m.where}.`);
+      log('run_hosted',{run_id:view.run_id,role:view.role||null});
+    }
+    function updateRun(view){
+      S.run.view=view;S.run.viewAt=now();
+      runAdapter.setUnresolved(view.timeline_unresolved||null);
+      renderRun();renderStrip();renderRunStage();
+    }
+    function leaveRun(view){
+      const ended=view&&view.last_run||null;
+      runAdapter.clear();
+      S.run=null;setRunInert(false);
+      if(runTicker){stopEvery(runTicker);runTicker=null}
+      renderAll();schedulePreview();
+      const problems=(ended&&ended.problems||[]).map(code=>(root.JarvisStudioPlayerCore&&root.JarvisStudioPlayerCore.PROBLEMS[code])||`Problème : ${code}`);
+      if(problems.length)say('failed',`Présentation arrêtée. ${problems.join(' ')}`);
+      else say('info',ended&&ended.reason==='mode_changed_by_user'?'Présentation arrêtée : mode changé par vous.':ended&&ended.reason==='crashed'?
+        'Présentation interrompue par une erreur de Core.':'Présentation terminée : la vidéo est de nouveau à vous.');
+      log('run_left',{reason:ended&&ended.reason||null});
+    }
+    /* Core's view, every time the client adopts one: open Variants for a NEW run (once, windowed, never fullscreen), follow it, leave it. */
+    function onRunView(event){
+      const view=event&&event.detail&&event.detail.view;
+      if(!view)return;
+      if(Run.isRun(view)){
+        if(!S.open||S.pid!==view.presentation_id){
+          if(runsOpened.has(view.run_id))return;
+          runsOpened.add(view.run_id);
+          open({presentation_id:view.presentation_id,variant_id:view.variant_id||undefined,fullscreen:false,via:'run'})
+            .then(result=>{if(result&&result.state==='refused')log('run_open_refused',{code:result.code},'warn')})
+            .catch(error=>log('run_open_failed',{error:describe(error)},'error'));
+          return;
+        }
+        runsOpened.add(view.run_id);
+        if(!S.run||S.run.runId!==view.run_id)enterRun(view);else updateRun(view);
+        return;
+      }
+      if(S.run)leaveRun(view);
+    }
+    function onRunSurface(event){
+      const surface=event&&event.detail?event.detail.surface:null;
+      if(!S.run){return}
+      if(surface&&surface.run_id!==S.run.runId)return;
+      runAdapter.applySurface(surface);
+      renderRunStage();
+    }
+    function onRunTimeline(event){
+      runTimeline=event&&event.detail||null;
+      if(S.run&&runTimeline)runAdapter.applyTimeline(runTimeline);
+    }
+    if(typeof win.addEventListener==='function'){
+      win.addEventListener('jarvis:studio-view',onRunView);
+      win.addEventListener('jarvis:studio-surface',onRunSurface);
+      win.addEventListener('jarvis:studio-timeline',onRunTimeline);
+    }
+    /* A command of the presentation, through the page's playback client (the voice's own routes): refusals and failures said here. */
+    async function runCommand(verb,body){
+      const p=player();
+      if(!p||typeof p.command!=='function'){say('failed','Le client de lecture n\'est pas chargé dans cette page.');return null}
+      if(S.run){S.run.busy=true;renderRun()}
+      let result=null;
+      try{result=await p.command(verb,body||{})}
+      catch(error){say('failed',`${verb} impossible : ${describe(error)}`);log('run_command_failed',{verb,error:describe(error)},'error');return null}
+      finally{if(S.run){S.run.busy=false;renderRun()}}
+      const P=root.JarvisStudioPlayerCore||{REFUSALS:{}};
+      if(result&&result.status==='refused')say('info',P.REFUSALS[result.reason]||result.message||'Commande refusée.');
+      else if(result&&result.status==='stage_failed')say('failed',`La scène n'a pas suivi : ${result.message||result.reason||'cause inconnue'}`);
+      else if(result&&result.status==='failed')say('failed',result.message);
+      else if(result&&result.status==='dropped')say('info','Trop de commandes à la fois : un instant.');
+      return result;
+    }
+    /* The surface's frame posts its events like its Board window did (`/api/prefabs/events`): a `state` keeps the clicks across a hot reload. */
+    async function postFrameEvent(event){
+      let answer;
+      try{answer=await call('POST','/api/prefabs/events',event,{timeoutMs:15000})}
+      catch(error){
+        log('run_frame_event_failed',{event:event&&event.event,code:error.code},'warn');
+        throw Object.assign(new Error(describe(error)),{code:error.code&&/^[a-z][a-z0-9_]{0,39}$/.test(error.code)?error.code:'unreachable'});
+      }
+      if(answer&&answer.outcome==='refused')say('info',`Action de la scène refusée : ${cleanLine(answer.detail||answer.reason||'',160)}`);
+      return answer;
+    }
+    /* What the Player observed for the run's frame (mounted, failed): the hot reload confirms a new source or rolls it back with it. */
+    function reportRunOutcome(info){
+      const reload=root.JarvisStudioReload&&root.JarvisStudioReload.instance;
+      if(!reload||typeof reload.hostOutcome!=='function')return;
+      reload.hostOutcome(info).catch(error=>log('run_outcome_failed',{object_id:info&&info.object_id,error:describe(error)},'error'));
+    }
+    /* The read-only position (§ 5): the composition frame of the run's Player, from the variant's map; none until the map is read. */
+    async function loadRunMap(view){
+      const C=Clock();
+      if(!C||!view.variant_id)return;
+      try{
+        const answer=await call('GET',variantPath(view.variant_id,'/composition-clock'),undefined,{timeoutMs:READ_TIMEOUT_MS});
+        if(!S.run||S.run.runId!==view.run_id||!answer||!answer.clock)return;
+        S.run.map=C.fromWire(answer.clock,{key:answer.key});
+        renderRun();
+      }catch(error){log('run_map_unavailable',{code:error.code||null,error:describe(error)},'info')}
+    }
+    function runPosition(){
+      const map=S.run&&S.run.map,surface=runAdapter.surface();
+      if(!map||!surface||!previewHost||typeof previewHost.clock!=='function')return null;
+      const index=map.scenes.findIndex(sc=>sc.scene_id===surface.scene_id);
+      const clock=previewHost.clock(surface.surface_id);
+      if(index<0||!clock||!Number.isInteger(clock.frame))return null;
+      let frame;
+      try{frame=map.frameOf(index,clock.frame)}catch(_error){return null}
+      return {frame,fps:map.fps,total_frames:map.total_frames,scene_index:index,scene_count:map.scenes.length,starts:map.scenes.map(sc=>sc.start)};
+    }
+    function renderRunPosition(){if(S.run)renderRunScrub()}
+    function renderRunScrub(){
+      const v=runPosition();
+      ui.scrubKey=null;clear(ui.scrubTicks);
+      if(!v){
+        attrs(ui.scrub,{'aria-disabled':'true',title:RUN_SCRUB});
+        for(const name of ['aria-valuenow','aria-valuemax','aria-valuetext'])ui.scrub.removeAttribute(name);
+        ui.time.textContent='';
+        return;
+      }
+      const last=Math.max(1,v.total_frames-1),at=`${clockText(v.frame,v.fps)} sur ${clockText(v.total_frames,v.fps)}`;
+      attrs(ui.scrub,{'aria-disabled':'true',title:RUN_SCRUB,'aria-valuemax':String(v.total_frames-1),'aria-valuenow':String(v.frame),
+        'aria-valuetext':`Scène ${v.scene_index+1} sur ${v.scene_count}, ${at} (la partition mène)`});
+      const pct=`${(v.frame/last*100).toFixed(3)}%`;
+      ui.scrubFill.style.width=pct;ui.scrubThumb.style.left=pct;
+      ui.time.textContent=`${clockText(v.frame,v.fps)} / ${clockText(v.total_frames,v.fps)}`;
+    }
+    /* The transport during a presentation: ▶ is the run's pause / resume, ⏮ ⏭ the previous / next item, the slider read-only. */
+    function renderRun(){
+      if(!S.run||!ui.playAll)return;
+      const m=runModel();
+      if(!m.active)return;
+      ui.stopRun.hidden=false;ui.present.hidden=true;
+      chrome.sync();
+      const pausing=m.pause.command==='pause';
+      ui.playAllLabel.textContent=m.pause.label;
+      clear(ui.playAllIcon);ui.playAllIcon.appendChild(icon(pausing?'pause':'play'));
+      attrs(ui.playAll,{'aria-pressed':pausing?'true':'false','aria-label':m.pause.label,'aria-disabled':m.pause.disabled?'true':'false',
+        title:pausing?'Mettre la présentation en pause (Espace)':'Reprendre la présentation (Espace)'});
+      attrs(ui.prevScene,{'aria-label':'Élément précédent','aria-disabled':m.previous.disabled?'true':'false',title:'Élément précédent (←, Page précédente)'});
+      attrs(ui.nextScene,{'aria-label':'Élément suivant','aria-disabled':m.nextItem.disabled?'true':'false',title:'Élément suivant (→, Page suivante)'});
+      renderRunScrub();
+      ui.wait.hidden=true;
+      if(ui.veil.getAttribute('data-playback')==='1'){ui.veil.removeAttribute('data-playback');ui.veil.hidden=true}
+      renderPresenterStrip(m);
+    }
+    function renderRunStage(){
+      if(!S.run)return;
+      const v=S.run.view,scene=v.scene||{},surface=runAdapter.surface();
+      ui.veil.hidden=!!surface;
+      if(!surface){ui.veil.setAttribute('data-tone','');ui.veilTitle.textContent='Préparation de la présentation…';ui.veilText.textContent=v.scene&&v.scene.title?cleanLine(v.scene.title,80):'';ui.veilAction.hidden=true;ui.veilAction2.hidden=true}
+      ui.overlay.hidden=!(surface&&(surface.overlays||[]).some(o=>o.visible));
+      ui.sceneTitle.textContent=cleanLine(scene.title||'',80);
+      ui.sceneRole.hidden=!scene.section;ui.sceneRole.textContent=scene.section||'';
+      ui.sceneBadge.hidden=true;
+      ui.sceneCount.textContent=scene.number?`Scène ${scene.number} sur ${scene.of}`:'';
+      ui.stage.setAttribute('aria-label',scene.number?`Présentation, scène ${scene.number} sur ${scene.of} : ${cleanLine(scene.title||'',80)}`:'Présentation');
+      renderRun();
+    }
+    function buildPresenter(){
+      const box=el('section','jvx-presenter');
+      attrs(box,{'aria-label':'Présentation en cours'});box.hidden=true;
+      const head=el('div','jvx-presenter-head');
+      ui.pRole=el('strong','jvx-presenter-role');ui.pPhase=el('span','jvx-chip');ui.pVoice=el('span','jvx-presenter-voice');ui.pVoice.hidden=true;
+      attrs(ui.pVoice,{role:'status','aria-live':'polite'});
+      ui.pClock=el('span','jvx-presenter-clock');
+      for(const n of [ui.pRole,ui.pPhase,ui.pVoice,ui.pClock])head.appendChild(n);
+      ui.pWhere=el('div','jvx-presenter-where');attrs(ui.pWhere,{role:'status','aria-live':'polite'});
+      ui.pItem=el('p','jvx-presenter-line jvx-bidi');ui.pItem.setAttribute('dir','auto');
+      ui.pNext=el('p','jvx-presenter-line jvx-bidi');ui.pNext.setAttribute('dir','auto');
+      ui.pSeq=el('div','jvx-presenter-seq');ui.pSeq.hidden=true;
+      ui.pSeqText=el('span');ui.pSeqBar=el('div','jvx-presenter-seqbar');
+      attrs(ui.pSeqBar,{role:'progressbar','aria-label':'Avancement de la séquence verrouillée','aria-valuemin':'0','aria-valuemax':'100'});
+      ui.pSeqFill=el('span');ui.pSeqBar.appendChild(ui.pSeqFill);ui.pSeq.appendChild(ui.pSeqText);ui.pSeq.appendChild(ui.pSeqBar);
+      ui.pNote=el('p','jvx-presenter-note');ui.pNote.setAttribute('role','alert');
+      const actions=el('div','jvx-presenter-actions');
+      ui.pSkip=button('Sortir de la séquence','jvx-btn',()=>{runCommand('skip_sequence')},{attrs:{title:'Votre issue de secours, toujours possible : quitte la séquence verrouillée et continue après elle (S)','aria-keyshortcuts':'S'}});
+      ui.pStop=button('Arrêter','jvx-btn',()=>{runCommand('stop')},{attrs:{'data-danger':'',title:'Arrêter la présentation (le mode d\'interaction est rétabli)'}});
+      actions.appendChild(ui.pSkip);actions.appendChild(ui.pStop);
+      for(const n of [head,ui.pWhere,ui.pItem,ui.pSeq,ui.pNext,ui.pNote,actions])box.appendChild(n);
+      return box;
+    }
+    function renderPresenterStrip(m){
+      const box=ui.presenter;
+      if(!box)return;
+      box.hidden=!m.active;
+      if(!m.active)return;
+      box.setAttribute('data-kind',m.kind);box.setAttribute('data-phase',m.phaseKey);
+      ui.pRole.textContent=m.role;ui.pPhase.textContent=m.phase;
+      ui.pVoice.hidden=!m.voice;if(m.voice){ui.pVoice.setAttribute('data-state',m.voice.state);ui.pVoice.textContent=m.voice.text}
+      ui.pClock.textContent=m.clock;ui.pClock.title=m.clockTitle;ui.pClock.setAttribute('data-over',m.over?'1':'0');
+      ui.pWhere.textContent=`${m.where} · ${cleanLine(m.sceneTitle,80)}`;
+      ui.pItem.textContent=cleanLine(m.item,160);ui.pNext.textContent=cleanLine(m.next,200);
+      ui.pSeq.hidden=!m.sequence;
+      if(m.sequence){ui.pSeqText.textContent=m.sequence.text;ui.pSeqBar.setAttribute('aria-valuenow',String(m.sequence.percent));
+        ui.pSeqBar.setAttribute('aria-valuetext',m.sequence.text);ui.pSeqFill.style.width=m.sequence.percent+'%'}
+      ui.pNote.textContent=m.lines.join(' ');
+      ui.pSkip.hidden=!m.skip;
+    }
+    /* « Présenter ▾ » (§ 5, § 6 #21): a presenter run of the variant on screen, in Variants. Without a score it says why. */
+    function presentBlocked(){
+      if(S.preview.status!=='ready'||!S.preview.doc)return "Aucune variante prête à présenter : attendez l'aperçu.";
+      if(!S.preview.doc.score_id)return 'Cette variante n\'a pas de partition : « Présenter » suit une partition.';
+      return null;
+    }
+    function renderPresent(){
+      if(!ui.present)return;
+      ui.stopRun.hidden=true;ui.present.hidden=false;
+      const blocked=presentBlocked();
+      attrs(ui.present,{'aria-disabled':blocked?'true':'false',title:blocked||'Présenter cette variante : vous, Jarvis, ou une répétition (la partition mène)'});
+      if(ui.presenter)ui.presenter.hidden=true;
+    }
+    function openPresentMenu(){
+      if(S.dialog)return;
+      if(S.menu){closeMenu(true);return}
+      const blocked=presentBlocked();
+      if(blocked){say('info',blocked);return}
+      const box=ui.present.getBoundingClientRect?ui.present.getBoundingClientRect():{left:120,bottom:80};
+      const items=[{act:'user_presenter',label:'Vous présentez',icon:'play'},{act:'jarvis_presenter',label:'Jarvis présente',icon:'play'},
+        {act:'rehearsal',label:'Répétition',icon:'play'}];
+      const {menu,buttons}=W.buildMenu(kit,{head:'Présenter',label:'Présenter la variante',items,anchor:{x:box.left,y:box.bottom+4},
+        width:win.innerWidth||1280,height:win.innerHeight||720,onPick:item=>{closeMenu(true);startPresenting(item.act)}});
+      ui.layer.appendChild(menu);
+      S.menu={node:menu,buttons,returnFocus:ui.present,id:null,onClose:()=>ui.present.setAttribute('aria-expanded','false')};
+      ui.present.setAttribute('aria-expanded','true');
+      menu.addEventListener('keydown',event=>onMenuKey(event));
+      menu.addEventListener('mousedown',event=>event.stopPropagation());
+      if(buttons[0])buttons[0].focus({preventScroll:true});
+    }
+    async function startPresenting(role){
+      const p=player();
+      if(!p||typeof p.startRun!=='function'){say('failed','Le client de lecture n\'est pas chargé dans cette page.');return null}
+      const video=seq?seq.view():null;
+      const wasPlaying=!!video&&(video.phase==='playing'||video.phase==='waiting');
+      const scene=currentScene();
+      if(wasPlaying)seq.pause();   // § 5: « Présenter » while a video plays pauses it, the run starts at the current scene
+      const result=await p.startRun(S.pid,role,{variant_id:S.preview.variantId});
+      const P=root.JarvisStudioPlayerCore||{REFUSALS:{}};
+      if(!result||result.status!=='applied'){
+        say(result&&result.status==='refused'?'refused':'failed',`Présentation impossible : ${result&&(P.REFUSALS[result.reason]||result.message||result.reason)||'le client de lecture ne répond pas'}`);
+        return result;
+      }
+      log('run_started_here',{role});
+      if(wasPlaying&&scene&&S.preview.scenes.indexOf(scene)>0)await runCommand('goto',{scene_id:scene.id});
+      return result;
+    }
+
     /* -------------------------------------------------------------- clavier de l'hôte */
     /* Échap, imbriqué (§ 4.15) : le menu d'abord, puis la boîte, puis le plein écran de la scène, puis l'explorateur. Jamais une pause. En
        vrai plein écran le navigateur garde la première pression ; si la page la reçoit quand même pendant le plein écran de la scène, elle
@@ -1471,7 +1813,10 @@
       /* Aucune touche tapée dans l'explorateur ne doit atteindre les raccourcis de la page derrière. */
       const t=event.target;
       const typing=t&&(t.isContentEditable||['INPUT','TEXTAREA','SELECT'].includes(String(t.tagName||'').toUpperCase()));
-      if(!typing&&!S.dialog&&!S.menu&&!event.ctrlKey&&!event.metaKey&&!event.altKey&&(event.key==='['||event.key===']')&&stepVariant(event.key===']'?1:-1)){event.preventDefault();event.stopPropagation();return}
+      if(!typing&&!S.dialog&&!S.menu&&!event.ctrlKey&&!event.metaKey&&!event.altKey&&(event.key==='['||event.key===']')){
+        if(S.run){event.preventDefault();event.stopPropagation();say('info',RUN_BUSY);return}
+        if(stepVariant(event.key===']'?1:-1)){event.preventDefault();event.stopPropagation();return}
+      }
       if(!typing&&!event.ctrlKey&&!event.metaKey&&event.key.length===1)event.stopPropagation();
     }
 
@@ -1577,13 +1922,17 @@
       const presentationId=opts.presentation_id;
       if(typeof presentationId!=='string'||!ID_PRESENTATION.test(presentationId))return refusal('explorer_unknown_presentation',"Identifiant de présentation invalide.");
       if(opts.variant_id!==undefined&&opts.variant_id!==null&&!ID_VARIANT.test(opts.variant_id))return refusal('explorer_unknown_presentation',"Identifiant de variante invalide.");
-      if(playing()||await corePlaying()){
+      /* Slice 09: Variants IS the surface of a presentation. During a run it opens on THAT presentation and shows the run; another one is refused. */
+      const running=Run.isRun(playerView())?playerView():await coreRun();
+      if(running&&running.presentation_id!==presentationId){
         const result=refusal('explorer_run_in_progress');
-        tell('Explorateur de variantes',result.reason,'warn');
+        tell('Variantes',result.reason,'warn');
         log('open_refused',{code:result.code});
         return result;
       }
+      if(running)opts.variant_id=running.variant_id||opts.variant_id;
       if(S.open&&S.pid===presentationId){
+        if(running&&(!S.run||S.run.runId!==running.run_id))enterRun(running);
         if(opts.variant_id&&nodeOf(opts.variant_id))selectVariant(opts.variant_id,{focus:true});
         if(opts.fullscreen!==false&&modeNow()==='windowed')await requestFullscreen(opts.arm_s);
         return {state:'opened',mode:modeNow(),fullscreen:fsNow(),presentation_id:S.pid,variant_id:S.selectedId};
@@ -1613,7 +1962,6 @@
       doc.addEventListener('keydown',onDocKey,true);
       renderAll();renderSound();startTicker();
       ui.title.focus({preventScroll:true});
-      playbackTimer=every(checkPlayback,PLAYBACK_CHECK_MS);
       pollTimer=every(pollGraph,GRAPH_POLL_MS);
       log('opened',{presentation_id:S.pid,via:opts.via||'api'});
       /* Dit à la page que le Studio est ouvert : le rail des présentations se range à gauche du Studio, la voix et le rail restent utilisables. */
@@ -1645,6 +1993,9 @@
         return refusal(unknown?'explorer_unknown_presentation':'explorer_load_failed',info.text);
       }
       renderAll();schedulePreview();
+      /* A presentation of this deck plays (or started while the graph was read): Variants shows it at once. */
+      const now_running=Run.isRun(playerView())?playerView():running;
+      if(now_running&&now_running.presentation_id===S.pid)enterRun(now_running);
       const target=S.selectedId?nodeOf(S.selectedId):null;
       if(target){const kind=target.state==='archived'?'archived':'live';S.focus[kind]=target.variant_id;renderTrees();(kind==='live'?ui.liveTree:ui.archiveTree).focus(target.variant_id)}
       /* Le reçu ne attend pas un clic éventuel : 2,5 s au plus pour que le navigateur réponde, puis l'état OBSERVÉ (jamais « entré » deviné). */
@@ -1663,8 +2014,17 @@
       S.open=false;S.generation+=1;S.writing=false;
       for(const timer of [previewTimer,reportTimer,noticeTimer]){if(timer)cancelLater(timer)}
       previewTimer=reportTimer=noticeTimer=null;
-      for(const t of [tickTimer,playbackTimer,pollTimer,armTimer])if(t)stopEvery(t);
-      tickTimer=playbackTimer=pollTimer=armTimer=null;
+      for(const t of [tickTimer,pollTimer,armTimer,runTicker])if(t)stopEvery(t);
+      tickTimer=pollTimer=armTimer=runTicker=null;
+      /* Slice 09: closing Variants during a presentation pauses it (no visible surface: the run must not go on unseen), said. */
+      if(S.run){
+        const view=S.run.view;
+        runAdapter.clear();S.run=null;setRunInert(false);
+        if(view.phase==='playing'&&player()){
+          player().command('pause',{}).then(r=>log('run_paused_on_close',{status:r&&r.status||null}));
+          tell('Présentation en pause',"Variantes est fermé : la présentation attend. Rouvrez Variantes (rail) pour la reprendre.",'warn');
+        }
+      }
       cmp.shutdown();
       drag=null;   // a drag cut short by the close: no resume, and a reopened slider does not seek on hover
       if(seq)seq.reset('closed');
@@ -1695,33 +2055,15 @@
       reportSoon(true);
       return {state:'closed',was_open:true};
     }
-    function closeBecauseRun(){
-      tell('Explorateur de variantes','Une lecture a démarré : l\'explorateur s\'est fermé.','warn');
-      log('closed_by_run',{});
-      close({reason:'run_started'});
-    }
-    /* La bande de lecture ne relève Core que toutes les 5 s au repos : une lecture lancée à la voix à l'instant n'y est pas encore. On le demande à Core. */
-    async function corePlaying(){
+    /* The playback client polls Core every 5 s at rest: a run started by voice an instant ago is not in its view yet. Core is asked. */
+    async function coreRun(){
       try{
         const answer=await call('GET',PLAYBACK_ROUTE,undefined,{timeoutMs:4000});
         const state=answer&&answer.state;
-        return !!state&&state.running===true&&state.phase!=='stopped'&&state.phase!=='idle';
+        return Run.isRun(state)?state:null;
       }catch(error){
         log('playback_check_failed',{code:error.code,at:'open'},'warn');
-        return false;   /* Core injoignable : le chargement du graphe, juste après, le dira avec ses mots */
-      }
-    }
-    async function checkPlayback(){
-      if(!S.open)return;
-      if(playing()){closeBecauseRun();return}
-      try{
-        const answer=await call('GET',PLAYBACK_ROUTE,undefined,{timeoutMs:6000});
-        playbackFailures=0;
-        const state=answer&&answer.state;
-        if(S.open&&state&&state.running===true&&state.phase!=='stopped'&&state.phase!=='idle')closeBecauseRun();
-      }catch(error){
-        playbackFailures+=1;
-        if(playbackFailures===3)log('playback_check_failed',{code:error.code},'warn');
+        return null;   /* Core injoignable : le chargement du graphe, juste après, le dira avec ses mots */
       }
     }
     async function pollGraph(){
@@ -1775,6 +2117,9 @@
         pause:()=>seq?seq.pause():null,seek:(kind,value)=>seekTo(kind,value),view:()=>seq?seq.view():{phase:'idle'},stats:()=>seq?seq.stats():null,
         /* Slice 08: the sound and the stage fullscreen, as the page shows them (proofs; the voice will use the same doors). */
         sound:()=>sound.view(),chrome:()=>chrome.view(),fullscreen:()=>({mode:S.open?modeNow():null,kind:S.fsKind})}),
+      /* Slice 09: the presentation Variants hosts (proofs; the run itself is Core's). */
+      run:Object.freeze({view:()=>S.run?S.run.view:null,model:()=>runModel(),stats:()=>runAdapter.stats(),objectId:()=>runAdapter.objectId(),
+        position:()=>S.run?runPosition():null,present:(role)=>startPresenting(role||'user_presenter')}),
       onSelectionChange(fn){selectionListeners.add(fn);return()=>selectionListeners.delete(fn)},
       select:(id)=>{if(S.open&&nodeOf(id))selectVariant(id,{focus:true})},
       runAction:(act,id)=>runAction(act,id||S.selectedId,{}),
@@ -1803,7 +2148,10 @@
         }
         return {state:'refused',code:'explorer_page_error',reason:'action inconnue'};
       },
-      destroy(){close({reason:'destroy',quiet:true});if(ui.host)ui.host.remove();if(typeof win.removeEventListener==='function')win.removeEventListener('resize',onResize);doc.removeEventListener&&doc.removeEventListener('fullscreenchange',onFullscreenChange)},
+      destroy(){close({reason:'destroy',quiet:true});if(ui.host)ui.host.remove();
+        if(typeof win.removeEventListener==='function'){win.removeEventListener('resize',onResize);win.removeEventListener('jarvis:studio-view',onRunView);
+          win.removeEventListener('jarvis:studio-surface',onRunSurface);win.removeEventListener('jarvis:studio-timeline',onRunTimeline)}
+        doc.removeEventListener&&doc.removeEventListener('fullscreenchange',onFullscreenChange)},
     };
     return api;
   }
@@ -1825,7 +2173,7 @@
     window.JarvisStudioExplorer=Object.freeze({
       open:explorer.open,close:explorer.close,isOpen:explorer.isOpen,state:explorer.state,selection:explorer.selection,
       onSelectionChange:explorer.onSelectionChange,select:explorer.select,refresh:explorer.refresh,stats:explorer.stats,
-      inspectTree:explorer.inspectTree,repaint:explorer.repaint,playback:explorer.playback,
+      inspectTree:explorer.inspectTree,repaint:explorer.repaint,playback:explorer.playback,run:explorer.run,
       compare:Object.freeze({open:o=>explorer.compare.start(o),close:o=>explorer.compare.close(o),isOpen:()=>explorer.compare.isActive(),view:()=>explorer.compare.view(),
         state:()=>explorer.compare.state(),marks:()=>explorer.compare.marks(),mark:id=>explorer.compare.mark(id),focus:pair=>explorer.compare.setPair(pair),
         mode:m=>explorer.compare.setMode(m),navigate:s=>explorer.compare.navigate(s),link:(a,b)=>explorer.compare.link(a,b),unlink:(a,b)=>explorer.compare.unlink(a,b),

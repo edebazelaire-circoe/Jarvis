@@ -2282,14 +2282,16 @@ const STATUS={
 /* Son, plein écran de la scène et clavier du lecteur de Variantes (native-studio-playback-fix Slice 08) :
    `control_center_presentation_studio_stage_media.js`, avant le contrôleur. */
 /*__CONTROL_CENTER_PRESENTATION_STUDIO_STAGE_MEDIA_JS__*/
+/* Une présentation dans Variantes (native-studio-playback-fix Slice 09) : la surface de Core montée dans le lecteur de Variantes, la bande du
+   présentateur, les touches de la présentation : `control_center_presentation_studio_run.js`, avant le contrôleur. */
+/*__CONTROL_CENTER_PRESENTATION_STUDIO_RUN_JS__*/
 /*__CONTROL_CENTER_PRESENTATION_STUDIO_EXPLORER_JS__*/
-/* Lecture d'une présentation (studio de présentation, Slice 12) : bande d'état et clavier sur l'hôte du stage, mêmes
-   routes que la voix (`/api/presentation-studio/playback`), plein écran par `JarvisFullscreen` : `control_center_presentation_studio_player.js`. */
+/* Client de lecture partagé de la page (studio de présentation, Slice 12 ; native-studio-playback-fix Slice 09 : la bande flottante est retirée,
+   une présentation se montre dans Variantes) : relevé de Core, commandes par les routes de la voix (`/api/presentation-studio/playback`),
+   événements `jarvis:studio-*` : `control_center_presentation_studio_player.js`. */
 /*__CONTROL_CENTER_PRESENTATION_STUDIO_PLAYER_JS__*/
-/* Fenetre d'une presentation (rail des presentations) : lecteur flottant non modal, apercu en mode `preview`, plein ecran, Jouer, Studio :
-   `control_center_presentation_window.js`. Puis le rail permanent (bord gauche, a droite de la palette), ses pastilles d'etat et son menu :
-   `control_center_presentation_rail.js`. Ils lisent le lecteur, l'explorateur, l'inspecteur et le plein ecran a la demande. */
-/*__CONTROL_CENTER_PRESENTATION_WINDOW_JS__*/
+/* Le rail permanent des présentations (bord gauche, à droite de la palette), ses pastilles d'état et son menu ; le clic ouvre Variantes :
+   `control_center_presentation_rail.js`. Il lit le client de lecture, Variantes et l'inspecteur à la demande. */
 /*__CONTROL_CENTER_PRESENTATION_RAIL_JS__*/
 /* Inspecteur d'édition d'une présentation (studio de présentation, Slice 07) : panneau du dock `INS`, widgets générés de la route
    d'introspection, aperçu/enregistrement par le relais d'édition (acteur `user`), caché entièrement pendant une lecture :
