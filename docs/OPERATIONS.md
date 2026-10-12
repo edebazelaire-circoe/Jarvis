@@ -2256,7 +2256,33 @@ L'outil MCP est `presentation_view` (Slice 21, `explorer_open` / `explorer_close
   capacité (carte « Présentations · moteur »), puis renvoyer le brouillon. Les références vivantes d'une scène ne lisent que le Board actif. Preuves : banc scripté
   `tasks/jarvis-remotion-presentation-integration/slices/15-remotion-one-shot-authoring/evidence/` et trace réelle du modèle (`authoring-real-traces*.json`, empreinte du planificateur à jour).
 
+### Une présentation dans Variantes (native-studio-playback-fix Slice 09) : vérification humaine (HV-RFX-09-01)
+
+La vue flottante (fenêtre « STUDIO_STAGE » du Board et bande « Vous présentez » en bas à gauche, capture 1 de la tâche) est **retirée** : une
+présentation se montre dans Variantes. Contrat : [presentation-studio.md](presentation-studio.md), *Variants run surface (Level 3, Slice 09)*.
+Ces changements demandent de **redémarrer Core et le Control Center** (le dire à l'utilisateur ; aucun agent ne le fait).
+
+1. **Depuis Variantes** : ouvrir Variantes sur une présentation Remotion, « Présenter » › « Vous présentez ». Attendu : aucune fenêtre ne s'ouvre sur
+   le Board, aucune bande flottante ; Variantes reste ouvert, l'arbre et les actions sont grisés (« Présentation en cours »), la scène joue dans
+   l'aperçu depuis sa première image, la bande du présentateur sous l'image dit « Vous présentez · En cours », « Scène 1/N · élément 1/M » et
+   « Partition 00:03 / 00:08 ». ⏭ (ou →) passe à l'élément suivant, Espace met en pause et reprend, la barre de position est grisée (« La
+   partition mène la présentation »). « Arrêter » rend la vidéo (« Lire »).
+2. **Depuis le rail et la voix** : Variantes fermé, clic droit sur la présentation › « Présenter » (puis, sur une pile vocale, « présente
+   <titre> ») : Variantes s'ouvre **en fenêtre** sur la présentation qui joue ; rien d'autre n'apparaît. Fermer Variantes met la présentation en
+   pause (avis « Présentation en pause ») et elle ne se rouvre pas seule ; le rail la rouvre.
+3. **Plein écran** : « Plein écran » (ou F) met la scène et son transport en plein écran ; « Arrêter » y reste ; Échap sort du plein écran sans
+   mettre en pause. Par la voix (« mets en plein écran »), seule l'invite apparaît : un clic y entre.
+4. **Ancienne fenêtre** (poste qui a fait tourner une version précédente) : au démarrage de Core, aucune fenêtre « STUDIO_STAGE » ne reste sur le
+   Board ; le journal porte `core.presentation_studio.legacy_stage_reclaimed` (nombre d'objets) et
+   `state/presentation-studio-stage-ledger.json.retired-<horodatage>` a remplacé l'ancien registre (copie gardée, jamais supprimée).
+5. **Comparer aux captures** : la capture 1 (fenêtre flottante + bande) ne doit plus jamais apparaître ; l'aspect est celui de la capture 2
+   (Variantes). Preuves automatiques avant / après : `tasks/jarvis-remotion-native-studio-playback-fix/slices/09-remove-legacy-floating-viewer/evidence/`.
+
 ### Lecture d'une présentation (studio, Slice 12) : vérification humaine
+
+> **Retirée en partie (native-studio-playback-fix Slice 09).** La bande, sa fenêtre de stage, ses touches (`P`, Échap qui met en pause) et le
+> registre écrit à chaque lecture n'existent plus : les étapes 1, 2, 5, 10 et 11 ci-dessous décrivent l'ancienne vue flottante (histoire). La
+> vérification actuelle est *Une présentation dans Variantes* ci-dessus.
 
 Contrat : [presentation-studio.md](presentation-studio.md#playback-runtime-contract-level-3-slice-12). Les tests automatiques couvrent
 la machine d'états, la fenêtre de stage, les fenêtres annexes, le clavier (fenêtré et plein écran, sur la VRAIE page du Control Center servie
@@ -2300,7 +2326,8 @@ ne prouve pas est à regarder une fois, sur un vrai poste, dans une instance iso
    enchaînée sans échéance).
 
 Après un arrêt brutal, une fenêtre `studio-stage-*` ou `studio-aux-*` encore visible est un défaut à signaler avec la ligne `playback_reclaim_failed` du
-journal ; ne pas la supprimer à la main avant d'avoir copié `scene.sqlite3` (règle du dépôt).
+journal (depuis la Slice 09 la page ne dessine plus ces catégories, Core les archive au démarrage) ; ne pas la supprimer à la main avant d'avoir copié
+`scene.sqlite3` (règle du dépôt).
 
 ### Scène Remotion jouée par Jarvis (Remotion Slice 10) : vérification humaine
 

@@ -1,14 +1,15 @@
-"""The band of a Jarvis-presented run on the REAL Control Center page, in a REAL headless Chrome, against an isolated REAL Core
-(jarvis-interactive-presentation-studio, Slice 14).
+"""The presenter strip of a Jarvis-presented run on the REAL Control Center page, in a REAL headless Chrome, against an isolated REAL
+Core (jarvis-interactive-presentation-studio, Slice 14; retargeted to Variants by jarvis-remotion-native-studio-playback-fix Slice 09:
+the floating band `#jvStudioBand` is retired, a run plays in Variants with its presenter strip `.jvx-presenter` and its transport).
 
 Nothing is simulated except the display: a real `JarvisCoreApplication` (its real brain, playback service and presenter, on the
 real clock) behind the real `LocalProtocolServer`, the real `ControlCenter` page relaying to it, real CDP clicks. Proved, measured:
 
-- a Jarvis run that the speech stack cannot take (a fresh Core has no current intention) is a visible pause on the band, with the
-  reason in plain words and a working `Continuer` that retries (the count of lines goes from 1 to 2);
+- a Jarvis run that the speech stack cannot take (a fresh Core has no current intention) is a visible pause on the strip, with the
+  reason in plain words and a working `Continuer` (the transport's play button) that retries (the count of lines goes from 1 to 2);
 - a locked sequence is executed by Core on its real clock and the band shows its step, its exact length and a live counter;
   the user's `Sortir de la séquence` leaves it;
-- the band never covers the interaction-mode HUD with its new rows.
+- the strip never overlaps the interaction-mode HUD with its new rows.
 
 Not provable here (Human check, `docs/OPERATIONS.md`): audible output, the real voice stack.
 """
@@ -22,12 +23,14 @@ import pytest
 from jarvis.runtime.interaction_mode_view import CoreInteractionModeTransport, CoreInteractionModeView
 from jarvis.runtime.presentation_studio_relay import PLAYBACK_ROUTE
 from jarvis.runtime.scene_view import CoreSceneTransport, CoreSceneView
-from tests.unit.test_presentation_studio_player_realpage_browser import GEOMETRY, READY, _no_noise, _until, drive
+from tests.unit.test_variants_run_browser import GEOMETRY, READY, _no_noise, _until, drive
 from tests.unit.test_presentation_studio_playback_routes import start_body
 from tests.unit.test_presentation_studio_presenter_routes import jarvis_score, locked_score, presentation
 from tests.unit.test_presentation_studio_routes import Core
 
-BAND = "document.getElementById('jvStudioBand')"
+BAND = "document.querySelector('#jvStudioExplorer .jvx-presenter')"
+PLAY = "#jvStudioExplorer [data-act=\"continuous\"]"
+SKIP = "#jvStudioExplorer .jvx-presenter-actions .jvx-btn"
 VIEW = "window.JarvisStudioPlayer.view()"
 
 
@@ -52,12 +55,12 @@ async def test_a_jarvis_run_the_speech_stack_cannot_take_is_a_visible_pause_and_
                 {"wait": 600}, READY,
                 _until(f"{VIEW}.phase==='paused' && ({VIEW}.problems||[]).includes('announce_refused')", 10000),
                 {"value": "text", "expr": f"{BAND}.textContent"},
-                {"value": "voice", "expr": f"{BAND}.querySelector('.jvsp-voice').textContent"},
-                {"value": "voice_state", "expr": f"{BAND}.querySelector('.jvsp-voice').getAttribute('data-state')"},
+                {"value": "voice", "expr": f"{BAND}.querySelector('.jvx-presenter-voice').textContent"},
+                {"value": "voice_state", "expr": f"{BAND}.querySelector('.jvx-presenter-voice').getAttribute('data-state')"},
                 {"value": "kind", "expr": f"{BAND}.getAttribute('data-kind')"},
-                {"value": "label", "expr": f"{BAND}.querySelector('.jvsp-pause').textContent"},
+                {"value": "label", "expr": f"document.querySelector('{PLAY}').getAttribute('aria-label')"},
                 {"value": "lines_before", "expr": f"({VIEW}.presenter||{{}}).lines"},
-                {"click": "#jvStudioBand .jvsp-pause"},
+                {"click": PLAY},
                 _until(f"({VIEW}.presenter||{{}}).lines===2 && {VIEW}.phase==='paused'", 10000),
                 {"value": "lines_after", "expr": f"({VIEW}.presenter||{{}}).lines"},
                 {"value": "again", "expr": f"({VIEW}.problems||[]).includes('announce_refused')"},
@@ -71,9 +74,9 @@ async def test_a_jarvis_run_the_speech_stack_cannot_take_is_a_visible_pause_and_
         assert reads["voice"] == "Jarvis se tait (pause)" and reads["voice_state"] == "paused" and reads["kind"] == "problem"
         assert reads["label"] == "Continuer"
         assert (reads["lines_before"], reads["lines_after"], reads["again"]) == (1, 2, True), "continue retried, and said it failed again"
-        assert "Bonjour" not in reads["text"], "the band shows states and codes, never the script"
+        assert "Bonjour" not in reads["text"], "the strip shows states and codes, never the script"
         geometry = reads["geometry"]
-        assert geometry["overlap"] is False and geometry["hudReachable"] is True, geometry
+        assert geometry["overlap"] is False, geometry   # Variants is modal: the HUD is under it (test_variants_run_browser.py)
         _no_noise(result)
 
 
@@ -85,16 +88,16 @@ async def test_a_locked_sequence_shows_its_progress_and_the_users_escape_leaves_
         try:
             result = await drive(url, [
                 {"wait": 600}, READY,
-                _until(f"{BAND}.querySelector('.jvsp-seq') && !{BAND}.querySelector('.jvsp-seq').hidden", 10000),
-                {"value": "first", "expr": f"{BAND}.querySelector('.jvsp-seqtext').textContent"},
-                {"value": "role", "expr": f"{BAND}.querySelector('.jvsp-seqbar').getAttribute('role')"},
+                _until(f"{BAND}.querySelector('.jvx-presenter-seq') && !{BAND}.querySelector('.jvx-presenter-seq').hidden", 10000),
+                {"value": "first", "expr": f"{BAND}.querySelector('.jvx-presenter-seq span').textContent"},
+                {"value": "role", "expr": f"{BAND}.querySelector('.jvx-presenter-seqbar').getAttribute('role')"},
                 {"wait": 2600},
-                {"value": "later", "expr": f"{BAND}.querySelector('.jvsp-seqtext').textContent"},
-                {"value": "now", "expr": f"+{BAND}.querySelector('.jvsp-seqbar').getAttribute('aria-valuenow')"},
-                {"value": "skip_visible", "expr": f"!{BAND}.querySelector('.jvsp-skip').hidden"},
-                {"click": "#jvStudioBand .jvsp-skip"},
+                {"value": "later", "expr": f"{BAND}.querySelector('.jvx-presenter-seq span').textContent"},
+                {"value": "now", "expr": f"+{BAND}.querySelector('.jvx-presenter-seqbar').getAttribute('aria-valuenow')"},
+                {"value": "skip_visible", "expr": f"!document.querySelector('{SKIP}').hidden"},
+                {"click": SKIP},
                 _until(f"{VIEW}.sequence===null && {VIEW}.owner==='user' && {VIEW}.position.index===3", 10000),
-                {"value": "after", "expr": f"[{VIEW}.position.index,{VIEW}.owner,{BAND}.querySelector('.jvsp-seq').hidden]"},
+                {"value": "after", "expr": f"[{VIEW}.position.index,{VIEW}.owner,{BAND}.querySelector('.jvx-presenter-seq').hidden]"},
             ])
         finally:
             await core.stack.center.scene_view.aclose()

@@ -273,30 +273,39 @@ async def test_a_forged_confirmation_and_a_set_changed_under_the_dialog_never_ar
 
 # ------------------------------------------------------------------ lecture : refus et fermeture
 
-async def test_while_a_run_plays_it_refuses_to_open_and_a_run_that_starts_closes_it(tmp_path):
+async def test_a_run_shows_in_variants_another_presentation_is_refused_and_the_end_gives_it_back(tmp_path):
+    """Slice 09 (native-studio-playback-fix): a run Core starts while Variants shows another presentation moves Variants to the run (it
+    never closes it); opening another presentation during the run is refused with its cause (page and agent, typed); the end gives the
+    video back and any presentation opens again."""
+
     async with ExplorerRig(tmp_path) as rig:
         other, _ = await presentation_with_score(rig.core)
+        hosted = f"{STATE}.open&&{STATE}.presentation_id==='{other}'&&!!JarvisStudioExplorer.run.view()"
         result = await drive(rig.url, [
             open_api(rig), READY,
             {"http": {"name": "start", "method": "POST", "path": "/api/presentation-studio/playback/start", "body": start_body(other)}},
-            {"until": f"{STATE}.open===false", "ms": 12000},
-            {"value": "closed", "expr": f"JSON.stringify({{hidden:document.querySelector('{HOST}').hidden,inert:[...document.body.children].filter(n=>n.inert).length}})"},
+            {"until": hosted, "ms": 20000},
+            {"value": "hosted", "expr": f"JSON.stringify({{hidden:document.querySelector('{HOST}').hidden,tree:document.querySelector('{HOST} .jvx-treepane').inert,"
+                                        "board:!!document.querySelector('[data-object-id^=\"studio-stage-\"]'),band:!!document.querySelector('#jvStudioBand'),"
+                                        "strip:!document.querySelector('.jvx-presenter').hidden})"},
             {"value": "refused", "expr": f"JarvisStudioExplorer.open({{presentation_id:'{rig.pid}'}}).then(r=>JSON.stringify(r))"},
             {"http": {"name": "agent", "method": "POST", "path": "/api/presentation-studio/explorer/commands", "body": {"action": "open", "presentation_id": rig.pid}}},
             {"http": {"name": "stop", "method": "POST", "path": "/api/presentation-studio/playback/stop", "body": {}}},
-            {"wait": 600},
+            {"until": f"{STATE}.open&&!JarvisStudioExplorer.run.view()", "ms": 15000},
+            {"value": "after", "expr": f"JSON.stringify({{open:{STATE}.open,tree:document.querySelector('{HOST} .jvx-treepane').inert}})"},
             open_api(rig), READY,
-            {"value": "reopened", "expr": f"{STATE}.open"},
+            {"value": "reopened", "expr": f"{STATE}.presentation_id==='{rig.pid}'"},
         ])
         reads = result["reads"]
         assert "failed" not in reads, reads.get("failed")
-        assert json.loads(reads["closed"]) == {"hidden": True, "inert": 0}
+        assert json.loads(reads["hosted"]) == {"hidden": False, "tree": True, "board": False, "band": False, "strip": True}
         refused = json.loads(reads["refused"])
-        assert refused["state"] == "refused" and refused["code"] == "explorer_run_in_progress" and "Une lecture est en cours" in refused["reason"]
+        assert refused["state"] == "refused" and refused["code"] == "explorer_run_in_progress" and "Variantes la montre" in refused["reason"]
         assert reads["agent"]["status"] == 200 and reads["agent"]["body"]["state"] == "refused" and reads["agent"]["body"]["code"] == "explorer_run_in_progress", \
             "the agent is told why, in a typed receipt"
-        assert reads["reopened"] is True, "once the run is stopped, it opens again"
-        assert not noise(result), noise(result)
+        assert json.loads(reads["after"]) == {"open": True, "tree": False}, "the end gives the video back, Variants stays open"
+        assert reads["reopened"] is True, "once the run is stopped, any presentation opens again"
+        assert not noise(result, (HTTP_REFUSAL,)), noise(result, (HTTP_REFUSAL,))
 
 
 # ------------------------------------------------------------------ clavier seul
@@ -621,16 +630,10 @@ FOCUS_ON = f"JSON.stringify({FOCUS_OBJ})"
 FS_AND_INSPECTOR_HIDDEN = "!!document.fullscreenElement&&document.querySelector('#jvStudioInspector').hidden===true"
 
 
-async def test_the_inspector_header_opens_the_explorer_with_a_real_click_gives_focus_back_and_is_refused_in_words_during_a_run(tmp_path):
+async def test_the_inspector_header_opens_the_explorer_with_a_real_click_gives_focus_back_and_a_run_then_shows_in_variants(tmp_path):
     async with ExplorerRig(tmp_path) as rig:
         other, _ = await presentation_with_score(rig.core)
-        run_then_click = (
-            "fetch('/api/presentation-studio/playback/start',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify("
-            + json.dumps(start_body(other))
-            + ")}).then(()=>{document.querySelector('button.jvi-explore').click();"
-            "return new Promise(r=>setTimeout(()=>r(JSON.stringify({open:JarvisStudioExplorer.state().open,"
-            "inspectorStatus:(document.querySelector('#jvStudioInspector .jvi-status:not([hidden])')||{}).textContent||''})),1500))})"
-        )
+        hosted = f"{STATE}.open&&{STATE}.presentation_id==='{other}'&&!!JarvisStudioExplorer.run.view()"
         result = await drive(rig.url, [
             INSPECTOR_OPEN, INSPECTOR_READY,
             {"value": "button", "expr": "JSON.stringify((()=>{const b=document.querySelector('button.jvi-explore');const r=b.getBoundingClientRect();"
@@ -653,7 +656,10 @@ async def test_the_inspector_header_opens_the_explorer_with_a_real_click_gives_f
             *LEAVE,
             {"until": f"{STATE}.open===false", "ms": 10000},
             {"value": "after_keyboard", "expr": FOCUS_ON},
-            {"value": "refused", "expr": run_then_click},
+            # Slice 09: a run Core starts opens Variants on it (the inspector hides itself during a run, so its button is not reachable)
+            {"http": {"name": "start", "method": "POST", "path": "/api/presentation-studio/playback/start", "body": start_body(other)}},
+            {"until": hosted, "ms": 20000},
+            {"value": "during_run", "expr": "JSON.stringify({inspectorHidden:document.querySelector('#jvStudioInspector').hidden||!!document.querySelector('#jvStudioInspector').closest('[inert]')})"},
             {"http": {"name": "stop", "method": "POST", "path": "/api/presentation-studio/playback/stop", "body": {}}},
         ])
         reads = result["reads"]
@@ -668,41 +674,33 @@ async def test_the_inspector_header_opens_the_explorer_with_a_real_click_gives_f
         after = json.loads(reads["after_close"])
         assert "jvi-explore" in after["focus"]["cls"] and after["inspectorOpen"] is True and after["inert"] is False, "focus goes back to the button that opened it"
         assert "jvi-explore" in json.loads(reads["after_keyboard"])["cls"]
-        refused = json.loads(reads["refused"])
-        assert refused["open"] is False and "Une lecture est en cours" in refused["inspectorStatus"], refused
+        assert reads["until:" + hosted] and json.loads(reads["during_run"])["inspectorHidden"] is True, "a run shows in Variants, the inspector steps aside"
         assert not noise(result, (HTTP_REFUSAL, "explorer_refused")), noise(result, (HTTP_REFUSAL, "explorer_refused"))
 
 
-async def test_the_stopped_playback_band_offers_the_explorer_for_the_played_presentation_and_never_while_a_run_plays(tmp_path):
+async def test_a_run_started_by_core_while_variants_is_closed_opens_it_windowed_and_closing_it_pauses_the_run(tmp_path):
+    """Slice 09: the retired band offered the explorer after a run; now a run Core starts (voice, MCP, the rail) opens Variants WINDOWED on the
+    played presentation, once; closing Variants pauses a playing run, which never reopens it by itself."""
+
     async with ExplorerRig(tmp_path) as rig:
         other, _ = await presentation_with_score(rig.core)
-        btn = "#jvStudioBand .jvsp-explore"
         result = await drive(rig.url, [
             {"http": {"name": "start", "method": "POST", "path": "/api/presentation-studio/playback/start", "body": start_body(other)}},
-            {"until": "JarvisStudioPlayer.view().running===true&&!document.querySelector('#jvStudioBand').hidden", "ms": 15000},
-            {"value": "during", "expr": f"JSON.stringify({{hidden:document.querySelector('{btn}').hidden}})"},
-            {"http": {"name": "stop", "method": "POST", "path": "/api/presentation-studio/playback/stop", "body": {}}},
-            {"until": f"JarvisStudioPlayer.view().running!==true&&!document.querySelector('{btn}').hidden&&!document.querySelector('#jvStudioBand').hidden", "ms": 15000},
-            {"value": "band", "expr": f"JSON.stringify((()=>{{const b=document.querySelector('{btn}');const r=b.getBoundingClientRect();return {{text:b.textContent,h:r.height,w:r.width,pid:JarvisStudioPlayer.view().presentation_id}}}})())"},
-            {"shot": str(shots_dir(tmp_path) / "player-band-with-explorer-button.png")},
-            {"click": btn},
-            {"until": f"{STATE}.open===true", "ms": 20000},
-            {"value": "opened", "expr": f"{STATE}.presentation_id"},
+            {"until": f"{STATE}.open&&!!JarvisStudioExplorer.run.view()", "ms": 20000},
+            {"value": "opened", "expr": f"JSON.stringify({{pid:{STATE}.presentation_id,mode:{STATE}.mode,fs:!!document.fullscreenElement}})"},
+            {"shot": str(shots_dir(tmp_path) / "run-hosted-in-variants.png")},
             *LEAVE,
             {"until": f"{STATE}.open===false", "ms": 10000},
-            {"value": "focus", "expr": f"JSON.stringify({{id:String(document.activeElement&&document.activeElement.className),band:!document.querySelector('#jvStudioBand').hidden}})"},
-            {"http": {"name": "start2", "method": "POST", "path": "/api/presentation-studio/playback/start", "body": start_body(other)}},
-            {"until": "JarvisStudioPlayer.view().running===true", "ms": 15000},
-            {"value": "playing", "expr": f"JSON.stringify({{hidden:document.querySelector('{btn}').hidden}})"},
-            {"http": {"name": "stop2", "method": "POST", "path": "/api/presentation-studio/playback/stop", "body": {}}},
+            {"until": "JarvisStudioPlayer.view().phase==='paused'", "ms": 15000},
+            {"wait": 6000},
+            {"value": "after", "expr": f"JSON.stringify({{open:{STATE}.open,phase:JarvisStudioPlayer.view().phase}})"},
+            {"http": {"name": "stop", "method": "POST", "path": "/api/presentation-studio/playback/stop", "body": {}}},
         ])
         reads = result["reads"]
         assert "failed" not in reads, reads.get("failed")
-        assert json.loads(reads["during"])["hidden"] is True
-        band = json.loads(reads["band"])
-        assert band["text"] == "Ouvrir l'explorateur de variantes" and band["h"] >= 24 and band["pid"] == other
-        assert reads["opened"] == other
-        focus = json.loads(reads["focus"])
-        assert "jvsp-explore" in focus["id"] and focus["band"] is True, focus
-        assert json.loads(reads["playing"])["hidden"] is True
-        assert not noise(result, (HTTP_REFUSAL,)), noise(result, (HTTP_REFUSAL,))
+        assert json.loads(reads["opened"]) == {"pid": other, "mode": "windowed", "fs": False}
+        assert json.loads(reads["after"]) == {"open": False, "phase": "paused"}, "closed by the user: paused, never reopened by itself"
+        # No click anywhere in this page (Core opened Variants): Chrome warns once that an AudioContext waits for a user gesture.
+        quiet = (HTTP_REFUSAL, "The AudioContext was not allowed to start")
+        assert not noise(result, quiet), noise(result, quiet)
+

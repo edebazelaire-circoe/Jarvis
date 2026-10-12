@@ -19,7 +19,7 @@ import pytest
 from tests.fakes.capture_stack import TOKEN
 from tests.fakes.prefabs import candidate
 from tests.fakes.remotion_scene import scene_candidate
-from tests.unit.test_presentation_studio_player_realpage_browser import _no_noise, _until, drive
+from tests.unit.test_variants_run_browser import _no_noise, _until, drive
 from tests.unit.test_presentation_studio_routes import Core
 
 AUTH = {"Authorization": f"Bearer {TOKEN}"}

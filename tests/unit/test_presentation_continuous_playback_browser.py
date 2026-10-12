@@ -9,7 +9,8 @@ hybrides (une capture dont les couleurs disent la scène k+1 pendant que le cadr
 
 - Variantes (la surface du contrat, § 2) : « Lire » enchaîne les 9 scènes dans le lecteur intégré, Variantes reste ouvert, Core ne lance
   aucune lecture ; la scène de 30 s joue ses 900 images ; la dernière image est tenue ;
-- la fenêtre de scène d'une lecture `all` (retirée par la Slice 09, mais elle partage l'hôte) : plus aucune scène sautée.
+- une lecture `all` démarrée par Core : depuis la Slice 09 elle se joue DANS Variantes (la fenêtre de scène du Board est retirée), même
+  hôte : plus aucune scène sautée, et aucune image ne s'affiche sur le Board.
 
 Preuves (JSON + PNG réduits, chemin personnel masqué) : `JARVIS_PLAYBACK_GATE_EVIDENCE_DIR`, en pratique
 `tasks/jarvis-remotion-native-studio-playback-fix/slices/05-continuous-remotion-sequencing/evidence/`.
@@ -208,8 +209,9 @@ async def test_variants_plays_the_whole_deck_continuously_each_scene_from_frame_
 # ---------------------------------------------------------------------------------------------------------------- run stage
 
 async def test_the_run_stage_chained_play_shows_every_scene_from_frame_zero_without_a_skip(tmp_path):
-    """The shared host fixes on the run stage window (until Slice 09 retires it): `scope: all` from cold compiles shows the 9 scenes in order,
-    each from frame 0 to its last frame; no scene skipped, no blank, no hybrid frame; no Core deadline moves a scene."""
+    """A `scope: all` run Core starts plays in Variants (Slice 09 retired the Board stage window): from cold compiles it shows the 9 scenes in
+    order, each from frame 0 to its last frame; no scene skipped, no blank, no hybrid frame; no Core deadline moves a scene; nothing on the
+    Board."""
 
     shots = tmp_path / "shots"
     shots.mkdir()
@@ -235,8 +237,9 @@ async def test_the_run_stage_chained_play_shows_every_scene_from_frame_zero_with
         bursts = {k: bursts_classified(v) for k, v in reads.items() if k.startswith("burst") and isinstance(v, list)}
         state = ((reads.get("where") or {}).get("body") or {}).get("state") or {}
         evidence = {"wall_s": round(took, 1), "expected_s": sum(s for s, _f, _a, _b in DECK), "failed": reads.get("failed"),
-                    "boundaries": boundaries(probe, "board"), "scenes": per_scene(probe, "board"),
-                    "blank_spans_ms": blank_spans(probe, place="board"), "hybrid_or_blank_captures": hybrids(probe, bursts, "board"),
+                    "boundaries": boundaries(probe, "explorer"), "scenes": per_scene(probe, "explorer"),
+                    "blank_spans_ms": blank_spans(probe, place="explorer"), "hybrid_or_blank_captures": hybrids(probe, bursts, "explorer"),
+                    "board_mounts": [row for row in probe["ev"] if row[1] == "mount" and row[3] == "board"],
                     "core_scenes_entered": sorted({r.get("scene") for r in poll.rows if r.get("scene")}),
                     "where_end": {k: state.get(k) for k in ("phase", "scope", "position")},
                     "deadline_traces": [k for k in stack.kinds() if "autoplay_deadline" in k],
@@ -252,3 +255,4 @@ async def test_the_run_stage_chained_play_shows_every_scene_from_frame_zero_with
             assert scene["max_frame"] == frames_of(n) - 1 and scene["wraps"] == [], scene
         assert evidence["blank_spans_ms"] == [], evidence["blank_spans_ms"]
         assert evidence["hybrid_or_blank_captures"] == [], evidence["hybrid_or_blank_captures"]
+        assert evidence["board_mounts"] == [], "a run never mounts a scene on the Board any more (Slice 09)"

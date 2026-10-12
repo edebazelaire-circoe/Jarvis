@@ -5,6 +5,9 @@ page que l'utilisateur ouvre ; la vraie page de scene dessine les fenetres de la
 hote (donc `swapPrefix` et `onOutcome` branches par `control_center_scene_page.js`), et le module de rechargement envoie ses
 rapports par le vrai relais. Le prefab est la base livree `jarvis.window`.
 
+Depuis la Slice 09 de jarvis-remotion-native-studio-playback-fix, une lecture se montre DANS Variantes (surface en memoire
+`variants-run-<run_id>`, montee par l'hote de Variantes, `swapPrefix` compris) : la fenetre `studio-stage-<run_id>` du Board est retiree.
+
 Prouve ce que le pont ne peut pas prouver : que le cablage de la page de scene (hote, rapport, relais, Core) tient de bout en
 bout. Le cadre est lu comme un contenu non fiable (CDP, `jarvis.instance.object_id`), jamais autrement.
 """
@@ -27,6 +30,9 @@ from tests.unit.test_presentation_studio_routes import Core
 
 pytestmark = pytest.mark.asyncio
 
+#: The frame of an object: a Board window by its `data-object-id`; the run surface in the Variants stage slot (Slice 09).
+NODE_OF = ("(id=>id.startsWith('variants-run-')?document.querySelector('#jvStudioExplorer .jvx-slot iframe.sc-prefab-frame')"
+           ":document.querySelector('[data-object-id=\"'+id+'\"] iframe'))")
 LISTENERS = "[window,document,document.body].map(t=>Object.values(getEventListeners(t)).flat().length).reduce((a,b)=>a+b,0)"
 USER_WINDOWS = ("user-a", "user-b")
 
@@ -45,7 +51,7 @@ async def real_page(tmp_path):
     center = core.stack.center
     center.scene_view = CoreSceneView(CoreSceneTransport(host="127.0.0.1", port=port, token_file=core.stack.tmp_path / "core.token"),
                                       journal=center.journal)
-    stage_id, revision = await start_run(core, pid, vid)       # a REAL playback run: its window is `studio-stage-<run_id>`
+    stage_id, revision = await start_run(core, pid, vid)       # a REAL playback run: Variants mounts its surface `variants-run-<run_id>`
     for index, object_id in enumerate(USER_WINDOWS):
         await core.stack.core.scene.apply(SceneCommand(
             op=SceneOp.UPSERT_OBJECT, actor=SceneActor.USER, object_id=object_id, fields=SceneObjectFields(
@@ -66,8 +72,8 @@ def prelude(stage_id: str) -> list:
     steps: list = [
         {"until": "document.querySelectorAll('iframe.sc-prefab-frame').length>=3", "ms": 30000},
         {"wait": 1200},
-        {"eval": "window.__nodes=Object.fromEntries([...document.querySelectorAll('[data-object-id]')]"
-                 ".map(e=>[e.dataset.objectId,e.querySelector('iframe.sc-prefab-frame')]))"},
+        {"until": "!!window.JarvisStudioExplorer&&!!JarvisStudioExplorer.run.objectId()&&JarvisStudioExplorer.run.stats().mounted>0", "ms": 30000},
+        {"eval": f"window.__nodes=Object.fromEntries({json.dumps([stage_id, *USER_WINDOWS])}.map(id=>[id,{NODE_OF}(id)]))"},
     ]
     for oid in (stage_id, *USER_WINDOWS):
         steps.append({"frameEval": "window.__born='born-'+Math.random().toString(36).slice(2)", "object_id": oid})
@@ -77,8 +83,7 @@ def prelude(stage_id: str) -> list:
 
 def survey(tag: str, stage_id: str) -> list:
     steps: list = [
-        {"value": f"{tag}:same_nodes", "expr": "Object.fromEntries(Object.entries(window.__nodes).map(([id,n])=>[id,"
-                                              "document.querySelector('[data-object-id=\"'+id+'\"] iframe')===n]))"},
+        {"value": f"{tag}:same_nodes", "expr": f"Object.fromEntries(Object.entries(window.__nodes).map(([id,n])=>[id,{NODE_OF}(id)===n]))"},
         {"value": f"{tag}:iframes", "expr": "document.querySelectorAll('iframe.sc-prefab-frame').length"},
         {"value": f"{tag}:band", "expr": "(()=>{const b=document.getElementById('jvStudioReloadBand');"
                                         "return b?{kind:b.dataset.kind,text:b.textContent}:null})()"},
@@ -142,7 +147,8 @@ async def test_a_bad_edit_on_the_real_page_is_rolled_back_and_the_stage_frame_is
         assert reads["end:band"]["kind"] == "bad" and "annulée" in reads["end:band"]["text"]
         scene = next(s for s in (await core.stack.core.presentation_studio.get_variant(pid, vid)).scenes if s.scene_id == S1)
         assert scene.prefab.prefab_id == "jarvis.window" and scene.last_valid_pin is None and scene.source_revision == 2
-        block = (await core.stack.core.scene.snapshot()).get_object(stage_id).payload.prefab
-        assert (block.prefab_id, block.version) == ("jarvis.window", 1)
+        block = core.stack.core.presentation_studio_playback.surface()["prefab"]
+        assert (block["id"], block["version"]) == ("jarvis.window", 1), "the run surface keeps the last good version"
+        assert (await core.stack.core.scene.snapshot()).get_object(stage_id) is None, "no Board window for a run (Slice 09)"
     finally:
         await core.__aexit__(None, None, None)

@@ -7,8 +7,8 @@ Chrome ; sans eux ces épreuves sont ignorées (elles n'installent jamais rien).
 Prouvé (mesuré, image lue DANS le bac à sable) : le segment d'entrée joue jusqu'à l'image avant la première ancre puis tient ; révéler
 une ancre (`next`) fait aller le lecteur à son image et jouer jusqu'à l'image avant l'ancre suivante, où il s'arrête de lui-même ;
 une cue (le rapport typé du suiveur, comme la voix) fait de même ; pause tient l'image, reprise continue sans revenir en arrière ;
-`previous` tient l'image d'arrêt de l'élément précédent sans rien rejouer (Slice 07 de native-studio-playback-fix, contrat § 5) ; une scène sans ancre se joue seule (Slice 10) et la vue de Core n'a alors aucune
-`timeline` ; un faux rapport de position venu de la scène est refusé par le chien de garde et ne change rien.
+`previous` tient l'image d'arrêt de l'élément précédent sans rien rejouer (Slice 07 de native-studio-playback-fix, contrat § 5) ; une scène sans ancre se joue en entier (Slice 10), sous l'ordre de Core : depuis la Slice 09 de
+native-studio-playback-fix sa vue porte une `timeline` de scène entière (le lecteur de Variantes ne joue jamais de lui-même) ; un faux rapport de position venu de la scène est refusé par le chien de garde et ne change rien.
 """
 
 from __future__ import annotations
@@ -184,12 +184,15 @@ async def test_the_score_drives_a_remotion_scene_through_its_anchors_a_cue_pause
         assert (back.get("from_frame"), back.get("until_frame"), back.get("playing")) == (119, 119, False), back
         assert not noise(two), noise(two)
 
-        # --- a scene with no anchor is left to itself (Slice 10) and Core's view carries no timeline for it
+        # --- a scene with no anchor plays once, whole, under Core's order: since Slice 09 (native-studio-playback-fix) the Variants Player never
+        #     plays by itself, so Core's view carries a whole-scene timeline (no anchor, frame 0 to the last frame, playing)
         for _ in range(2):
             status, moved = await stack.call("POST", f"{PLAYBACK}/next", json={"actor": "user"})
             assert status == 200, moved
         _, state = await stack.call("GET", PLAYBACK)
-        assert state["state"]["scene"]["scene_id"] == S2 and "timeline" not in state["state"]
+        whole = state["state"].get("timeline") or {}
+        assert state["state"]["scene"]["scene_id"] == S2 and whole.get("anchor_id") is None, state["state"]
+        assert (whole.get("from_frame"), whole.get("until_frame"), whole.get("playing")) == (0, 149, True), whole
         three = await run(stack.page_url, [
             {"wait": 500}, READY, {"wait": 800},
             {"value": "free_a", "expr": FRAME, **SANDBOX}, {"wait": 900}, {"value": "free_b", "expr": FRAME, **SANDBOX},
