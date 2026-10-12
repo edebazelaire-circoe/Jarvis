@@ -342,3 +342,14 @@ def test_the_rail_offers_remotion_studio_which_opens_variants_then_the_door(tmp_
     assert acts[:2] == ["open", "studio"] and ("studio", "Remotion Studio…", None) in [tuple(x) for x in out["idle"]]
     assert "Remotion Studio s’ouvre à son arrêt" in out["busy"]
     assert out["dlg"] is True and out["result"]["state"] == "ready" and out["opens"] == 1
+
+
+def test_an_html_deck_never_asks_core_about_remotion_studio(tmp_path):
+    out = run_ui(tmp_path, STUDIO_WORLD + r"""
+      rms.remotion=false;
+      const ex=await openVariants();
+      win.dispatchEvent(new (require(process.env.JARVIS_EXPLORER_DOM).FakeEvent)('focus',{bubbles:false}));await env.advance(16000);
+      return {studioReads:env.requests.filter(r=>r.url.startsWith('/api/local-capabilities/remotion')).length,
+        libraryReads:env.requests.filter(r=>r.url.startsWith('/api/prefabs/')).length};
+    """)
+    assert out == {"studioReads": 0, "libraryReads": 1}, "no Remotion Studio read (nor a 503 in the console) for a deck without Remotion"

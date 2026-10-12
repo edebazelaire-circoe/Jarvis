@@ -2686,7 +2686,7 @@ Status: **Level 3** (handoff `jarvis-remotion-native-studio-playback-fix`, Slice
 
 **One identity, chosen once.** The door opens **the scene on screen** of the variant on screen, at its exact pin `{prefab_id, version}` (never « the latest version »; the MCP card's own scene list still offers library versions). Before the click it reads the pin's library entry once (`GET /api/prefabs/{id}/{version}`, cached per pin while Variants is open): its manifest says whether the scene is a Remotion source (the rule of `jarvis.domain.prefab.is_remotion_manifest`, mirrored and held by a test), its publication the provenance shown in the confirmation. A failed read is « unknown », never « not Remotion »: the button stays usable and Core refuses a wrong pin with its own code.
 
-**Relation to the scene on screen** (from Core's view, re-read when Variants opens, every 2 s while starting or stopping, every 15 s while ready, and at each return to Jarvis's tab: `focus`, `visibilitychange`; never while the tab is hidden):
+**Relation to the scene on screen** (from Core's view, read as soon as a Remotion scene is on screen — a deck without Remotion never asks, so a Core without Remotion Studio leaves no 503 in the console — then every 2 s while starting or stopping, every 15 s while ready, and at each return to Jarvis's tab: `focus`, `visibilitychange`; never while the tab is hidden):
 
 | Remotion Studio | Button | State line |
 | --- | --- | --- |

@@ -153,12 +153,19 @@ def test_no_brain_mcp_or_agent_path_can_open_the_studio():
                "adapters/remotion_render_runner.py", "domain/presentation_render_plan.py", "runtime/presentation_render_relay.py",
                # Slice 21 (`jarvis-remotion`): the agent surface only READS the Studio status (`remotion_studio_status`) and its `remotion_studio` tool returns a
                # pointer to the card; it never calls `open` / `restart` / `sync` nor sends the acknowledgement (`test_remotion_mcp_server.py`, AST scan).
-               "runtime/remotion_mcp.py", "runtime/remotion_mcp_tools.py", "runtime/mcp_tool_meta.py", "runtime/claude_local.py"}
+               "runtime/remotion_mcp.py", "runtime/remotion_mcp_tools.py", "runtime/mcp_tool_meta.py", "runtime/claude_local.py",
+               # native-studio-playback-fix Slice 11: the second USER door, in Variants (a click, then the same confirmation as the card), and
+               # the rail's entry to it. No command of the page channel reaches it (asserted below): the brain still only points.
+               "runtime/control_center_presentation_studio_explorer_remotion.js", "runtime/control_center_presentation_studio_explorer.js",
+               "runtime/control_center_presentation_rail.js"}
     slice_21_agent_surface = {"runtime/remotion_mcp.py", "runtime/remotion_mcp_tools.py", "runtime/mcp_tool_meta.py"}
     users = {path.relative_to(root).as_posix() for path in root.rglob("*")
              if path.suffix in {".py", ".js", ".html", ".cjs", ".mjs"}
              and any(token in path.read_text(encoding="utf-8", errors="replace") for token in ("remotion_studio", "RemotionStudio", "remotion/studio"))}
     assert users <= allowed, sorted(users - allowed)
+    explorer = (root / "runtime" / "control_center_presentation_studio_explorer.js").read_text(encoding="utf-8")
+    commands = explorer[explorer.index("handleCommand:async(command)=>{"):explorer.index("destroy(){", explorer.index("handleCommand:async(command)=>{"))]
+    assert "remotion" not in commands.lower(), "the page command channel (voice, agents) has no Remotion Studio action"
     for path in root.rglob("*.py"):
         name = path.relative_to(root).as_posix()
         if name in slice_21_agent_surface:

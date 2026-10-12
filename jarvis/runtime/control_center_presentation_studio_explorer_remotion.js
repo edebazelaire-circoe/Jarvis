@@ -134,7 +134,7 @@
   function createRemotionDoor(ctx){
     const {doc,win,el,attrs,clear,later,cancelLater,now,log,announce}=ctx;
     const S={studio:null,capability:null,readError:null,busy:null,actionError:null,needsClick:false,explain:null,
-      details:new Map(),started:false,poll:null,ticker:null,reading:null,generation:0,lastOk:null};
+      details:new Map(),started:false,asked:false,poll:null,ticker:null,reading:null,generation:0,lastOk:null};
     const ui={};
     let client=null;
     const C=()=>Studio();
@@ -192,6 +192,7 @@
     async function refresh(reason){
       const c=api();
       if(!c||!ctx.isOpen())return;
+      S.asked=true;
       if(S.reading)return S.reading;
       const generation=S.generation;
       S.reading=(async()=>{
@@ -229,13 +230,13 @@
       if(!on&&S.ticker){cancelLater(S.ticker);S.ticker=null}
     }
     /* The return path: coming back to Jarvis's tab (or window) re-reads Remotion Studio and says what changed there. */
-    function onBack(){if(S.started&&!hidden())refresh('return')}
+    function onBack(){if(S.started&&!hidden()&&S.asked)refresh('return')}
     function start(){
       if(S.started)return;
       S.started=true;S.generation+=1;
       if(win&&typeof win.addEventListener==='function')win.addEventListener('focus',onBack);
       if(doc&&typeof doc.addEventListener==='function')doc.addEventListener('visibilitychange',onBack);
-      render();refresh('open');
+      render();   // Core's Remotion Studio is read once a Remotion scene is on screen (`loadDetail`): an HTML deck never asks
     }
     function stop(){
       if(!S.started)return;
@@ -244,7 +245,7 @@
       tick(false);
       if(win&&typeof win.removeEventListener==='function')win.removeEventListener('focus',onBack);
       if(doc&&typeof doc.removeEventListener==='function')doc.removeEventListener('visibilitychange',onBack);
-      S.explain=null;S.actionError=null;S.needsClick=false;S.details.clear();
+      S.explain=null;S.actionError=null;S.needsClick=false;S.details.clear();S.asked=false;
     }
 
     /* -------------------------------------------------------------- la scène : Remotion ? provenance ? (lu une fois par pin) */
@@ -269,6 +270,7 @@
         if(!payload.ok)throw Object.assign(new Error(body&&body.error&&body.error.message||`HTTP ${payload.status}`),{code:body&&body.error&&body.error.code||`http_${payload.status}`});
         record.state='ready';record.remotion=isRemotionManifest(body&&body.manifest);
         record.provenance=body&&body.publication&&body.publication.provenance||null;
+        if(record.remotion&&!S.asked)refresh('scene');   // the first Remotion scene on screen: what is Remotion Studio doing?
       }catch(error){
         /* Unknown is not « not Remotion »: the button stays usable, the click re-reads, Core refuses a wrong pin by its own code. */
         record.state='error';record.code=error.code||'network';

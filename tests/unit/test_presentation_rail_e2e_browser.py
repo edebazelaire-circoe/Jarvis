@@ -87,7 +87,7 @@ async def test_the_rail_lists_real_presentations_with_their_real_work_state_and_
         assert by_name["Atelier du cadran"] == ("done", GREEN)
         assert [f.replace(" ", "") for f in reads["folds"]] == ["▸Archivées(1)"]
         assert reads["palette"][1] > reads["palette"][0], "right of the tool palette"
-        assert reads["menu"] == ["open", "edit", "play", "hide", "rename", "ack", "archive"]
+        assert reads["menu"] == ["open", "studio", "edit", "play", "hide", "rename", "ack", "archive"]  # « Remotion Studio… » (Slice 11)
         assert sorted(i[0] for i in reads["after_hide"]) == ["Atelier du cadran", "Bilan trimestriel"]
         assert reads["studio"]["pid"] == rig.pid, "the rail click opens Variants on that presentation"
         assert reads["studio"]["docked"] is True and reads["studio"]["railLeft"] == 8 and reads["studio"]["explorerLeft"] > 150

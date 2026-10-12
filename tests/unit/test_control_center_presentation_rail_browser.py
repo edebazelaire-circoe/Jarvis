@@ -109,7 +109,7 @@ def test_the_rail_sits_right_of_the_palette_and_lists_three_visible_presentation
 
 def test_the_context_menu_has_every_action_and_hide_moves_the_row_to_the_folded_group(r):
     menu = r["menu"]["menu"]
-    assert [i["act"] for i in menu["items"]] == ["open", "edit", "play", "hide", "rename", "archive"]
+    assert [i["act"] for i in menu["items"]] == ["open", "studio", "edit", "play", "hide", "rename", "archive"]  # « Remotion Studio… » (Slice 11)
     assert "Supprimer" in menu["items"][-1]["text"] and menu["head"] == "Bilan"
     assert r["after_hide"]["menu"] is None and "Bilan" not in names(r["after_hide"])
     assert any(w.endswith('/rail {"action":"hide"}') and "pst_" + "2".zfill(32) in w for w in r["after_hide"]["writes"])
