@@ -20,7 +20,7 @@
    "start_frame": 180,
    "start_ms": 3000,
    "end_ms": 11000,
-   "seen_in_video_ms": 3036
+   "seen_in_video_ms": 3132
   },
   {
    "scene": "S3",
@@ -30,7 +30,7 @@
    "start_frame": 660,
    "start_ms": 11000,
    "end_ms": 41000,
-   "seen_in_video_ms": 11073
+   "seen_in_video_ms": 11047
   },
   {
    "scene": "S4",
@@ -40,7 +40,7 @@
    "start_frame": 2460,
    "start_ms": 41000,
    "end_ms": 44000,
-   "seen_in_video_ms": 41086
+   "seen_in_video_ms": 41081
   },
   {
    "scene": "S5",
@@ -60,7 +60,7 @@
    "start_frame": 3120,
    "start_ms": 52000,
    "end_ms": 55000,
-   "seen_in_video_ms": 52080
+   "seen_in_video_ms": 52086
   },
   {
    "scene": "S7",
@@ -70,7 +70,7 @@
    "start_frame": 3300,
    "start_ms": 55000,
    "end_ms": 63000,
-   "seen_in_video_ms": 55116
+   "seen_in_video_ms": 55142
   },
   {
    "scene": "S8",
@@ -80,7 +80,7 @@
    "start_frame": 3780,
    "start_ms": 63000,
    "end_ms": 66000,
-   "seen_in_video_ms": 63169
+   "seen_in_video_ms": 63104
   },
   {
    "scene": "S9",
@@ -90,7 +90,7 @@
    "start_frame": 3960,
    "start_ms": 66000,
    "end_ms": 74000,
-   "seen_in_video_ms": 66221
+   "seen_in_video_ms": 66160
   }
  ]
 }

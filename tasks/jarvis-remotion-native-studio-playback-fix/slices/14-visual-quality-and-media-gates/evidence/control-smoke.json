@@ -1,7 +1,7 @@
 {
  "deck": "control",
- "presentation_id": "pst_6f0b0c33de6ea5e82f84530b0ff63ef4",
- "variant_id": "psv_2a23766e254304299577977421f0429f",
+ "presentation_id": "pst_1343bcc32d962ea96e0cb0d590ca737e",
+ "variant_id": "psv_4ba9fde0cfe97b7257afb7b5b49c46ee",
  "profile": "release_gate",
  "scale": 0.5,
  "scenes": [
@@ -17,8 +17,8 @@
     "duration_in_frames": 30
    },
    "http": 200,
-   "preview_s": 8.5,
-   "render_elapsed_ms": 8525,
+   "preview_s": 8.4,
+   "render_elapsed_ms": 8423,
    "frames": [
     {
      "frame": 0,
@@ -184,8 +184,8 @@
     "duration_in_frames": 30
    },
    "http": 200,
-   "preview_s": 8.5,
-   "render_elapsed_ms": 8452,
+   "preview_s": 8.4,
+   "render_elapsed_ms": 8406,
    "frames": [
     {
      "frame": 0,
@@ -351,8 +351,8 @@
     "duration_in_frames": 30
    },
    "http": 200,
-   "preview_s": 8.9,
-   "render_elapsed_ms": 8851,
+   "preview_s": 8.5,
+   "render_elapsed_ms": 8511,
    "frames": [
     {
      "frame": 0,
@@ -508,8 +508,8 @@
     "duration_in_frames": 30
    },
    "http": 200,
-   "preview_s": 8.4,
-   "render_elapsed_ms": 8413,
+   "preview_s": 8.5,
+   "render_elapsed_ms": 8460,
    "frames": [
     {
      "frame": 0,
@@ -665,8 +665,8 @@
     "duration_in_frames": 30
    },
    "http": 200,
-   "preview_s": 8.4,
-   "render_elapsed_ms": 8358,
+   "preview_s": 8.8,
+   "render_elapsed_ms": 8831,
    "frames": [
     {
      "frame": 0,
@@ -815,8 +815,8 @@
    ]
   }
  ],
- "smoke_s": 45.6,
- "page_s": 14.5,
+ "smoke_s": 45.7,
+ "page_s": 13.3,
  "page_probe": {
   "S1": [
    {
@@ -908,7 +908,7 @@
     "assets": [
      {
       "kind": "image",
-      "url": "http://127.77.0.2:59607/page/scene-540d8cf87ed53b0c921490c2244fc57c/jarvis-missing-asset.png"
+      "url": "http://127.77.0.2:58691/page/scene-540d8cf87ed53b0c921490c2244fc57c/jarvis-missing-asset.png"
      }
     ],
     "overflow": []
@@ -955,7 +955,7 @@
    "findings": [
     {
      "code": "black",
-     "severity": "warning",
+     "severity": "blocking",
      "detail": "first frame has no detail (edge density 0.00000, mean luma 0)",
      "scene": "S1",
      "frame": 0,
@@ -1205,6 +1205,7 @@
     "ink_delta": 48,
     "band_depth": 4,
     "clipped_ink_share": 0.05,
+    "corner_run_texture": 0.05,
     "overflow_ink_share": 0.02,
     "overflow_texture": 0.4,
     "repeat_mean_delta": 0.005,

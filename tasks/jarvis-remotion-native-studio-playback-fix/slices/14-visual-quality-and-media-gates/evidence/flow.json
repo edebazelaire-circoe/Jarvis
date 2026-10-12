@@ -1,15 +1,15 @@
 {
- "wall_s": 83.6,
- "captures": 683,
+ "wall_s": 83.4,
+ "captures": 681,
  "capture_every_ms": 100,
- "recorded_ms": 74196,
+ "recorded_ms": 74143,
  "composition_ms": 74000,
  "video": {
   "codec": "h264",
   "width": 640,
   "height": 360,
-  "frames": 743,
-  "duration_ms": 74300
+  "frames": 742,
+  "duration_ms": 74200
  },
  "scenes": [
   {
@@ -17,7 +17,7 @@
    "duration_in_frames": 240,
    "fps": 30,
    "max_frame": 239,
-   "played_ms": 8014,
+   "played_ms": 8003,
    "first_frame": 0
   },
   {
@@ -25,7 +25,7 @@
    "duration_in_frames": 900,
    "fps": 30,
    "max_frame": 899,
-   "played_ms": 30010,
+   "played_ms": 30018,
    "first_frame": 0
   },
   {
@@ -33,7 +33,7 @@
    "duration_in_frames": 75,
    "fps": 25,
    "max_frame": 74,
-   "played_ms": 2969,
+   "played_ms": 2960,
    "first_frame": 0
   },
   {
@@ -41,7 +41,7 @@
    "duration_in_frames": 480,
    "fps": 60,
    "max_frame": 479,
-   "played_ms": 8003,
+   "played_ms": 7990,
    "first_frame": 0
   },
   {
@@ -49,7 +49,7 @@
    "duration_in_frames": 90,
    "fps": 30,
    "max_frame": 89,
-   "played_ms": 2999,
+   "played_ms": 3008,
    "first_frame": 0
   },
   {
@@ -57,7 +57,7 @@
    "duration_in_frames": 192,
    "fps": 24,
    "max_frame": 191,
-   "played_ms": 8015,
+   "played_ms": 7965,
    "first_frame": 0
   },
   {
@@ -65,7 +65,7 @@
    "duration_in_frames": 90,
    "fps": 30,
    "max_frame": 89,
-   "played_ms": 3004,
+   "played_ms": 3008,
    "first_frame": 0
   },
   {
@@ -73,21 +73,21 @@
    "duration_in_frames": 240,
    "fps": 30,
    "max_frame": 239,
-   "played_ms": 8015,
+   "played_ms": 8009,
    "first_frame": 0
   }
  ],
  "scene_changes_in_video": [
   {
-   "at_ms": 3036,
+   "at_ms": 3132,
    "to": "S2"
   },
   {
-   "at_ms": 11073,
+   "at_ms": 11047,
    "to": "S3"
   },
   {
-   "at_ms": 41086,
+   "at_ms": 41081,
    "to": "S4"
   },
   {
@@ -95,26 +95,26 @@
    "to": "S5"
   },
   {
-   "at_ms": 52080,
+   "at_ms": 52086,
    "to": "S6"
   },
   {
-   "at_ms": 55116,
+   "at_ms": 55142,
    "to": "S7"
   },
   {
-   "at_ms": 63169,
+   "at_ms": 63104,
    "to": "S8"
   },
   {
-   "at_ms": 66221,
+   "at_ms": 66160,
    "to": "S9"
   }
  ],
- "stale_samples": 673,
- "transport_gap_ms_max": 283,
+ "stale_samples": 672,
+ "transport_gap_ms_max": 267,
  "scene_bar_gap_max": 0.101,
- "scene_bar_gap_beyond_sampling_max": 0.027,
+ "scene_bar_gap_beyond_sampling_max": 0.026,
  "held_after_end": {
   "frame": 239,
   "playing": false,
@@ -140,6 +140,7 @@
     "ink_delta": 48,
     "band_depth": 4,
     "clipped_ink_share": 0.05,
+    "corner_run_texture": 0.05,
     "overflow_ink_share": 0.02,
     "overflow_texture": 0.4,
     "repeat_mean_delta": 0.005,

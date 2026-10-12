@@ -317,5 +317,51 @@
   "native-contact.jpg",
   "native-smoke.json",
   "native-transitions.jpg"
- ]
+ ],
+ "rework_remeasure": {
+  "tested_sha": "ef26359a (branch fix/rnsp-s14-rework; same Slice 14 rework content as a1d20e43)",
+  "date": "2026-10-12",
+  "isolation": "same as the delivered run: RemotionStack, copy of the read-only gate runtime under a short temp folder, throw-away data root; the live Jarvis was never contacted",
+  "replaces_files": [
+   "gate-smoke.json",
+   "gate-contact.jpg",
+   "gate-transitions.jpg",
+   "control-*",
+   "flow.json",
+   "flow.mp4",
+   "flow-markers.json",
+   "flow-contact.jpg",
+   "flow-transitions.jpg"
+  ],
+  "not_rerun": [
+   "native-*",
+   "flow-negative-control.json"
+  ],
+  "durations_s": {
+   "gate_smoke_test": 175,
+   "control_smoke_test": 62,
+   "flow_recorded_test_and_pairing": 109
+  },
+  "gate": {
+   "frames_sampled": 45,
+   "verdict": "clean",
+   "fired": {},
+   "edge_clipped": "0 of 45 (was 27); the 27 frames carry the same render (mean luma and edge density identical to the delivered run, contact and transition sheets byte-identical), only the side metrics changed: the bar run is skipped",
+   "first_frames": "9 of 9 frame-0 captures without finding (edge density 0.0034 to 0.0048, blank threshold 0.0008)"
+  },
+  "control": {
+   "frames_sampled": 25,
+   "verdict": "blocked",
+   "counts": "identical to the delivered run (black 7, static_scene 2, edge_text_overflow 5, repeated_frames 2, text_overflow 1, font_fallback 1, font_substituted 2, font_load_failed 1, asset_missing 1)",
+   "change": "S1 frame 0 black: warning -> blocking (B1: an empty first frame blocks under release_gate); every other finding has the same code, scene, frame and severity; per-frame metrics identical"
+  },
+  "flow": {
+   "captures": 681,
+   "findings": 0,
+   "verdict": "clean",
+   "transport_gap_ms_max": 267,
+   "scene_bar_gap_beyond_sampling_max": 0.026,
+   "transitions": "8 pairs, S1>S2 ... S8>S9, each the end of scene k beside the start of scene k+1 (start frames 0 to 5); the delivered sheet's last pair was S9 beside S9 (the P4 bug)"
+  }
+ }
 }
