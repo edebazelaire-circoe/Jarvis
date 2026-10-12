@@ -266,3 +266,19 @@ async def test_a_planted_node_modules_package_is_set_aside_and_said_while_the_to
     assert any(path.name == "index.js" and path.read_bytes() == b"module.exports = 'planted'" for path in bench.set_aside())
     [event] = [data for kind, level, data in bench.events.events if kind == "remotion_studio.workspace_set_aside"]
     assert event["paths"] == ["node_modules/x/"]
+
+
+async def test_a_junction_planted_as_the_tool_cache_is_set_aside_and_its_target_never_wiped(bench):
+    """S12 polish (rework): only a REAL `node_modules/.cache` folder is the tool cache. A junction named `.cache` is a link like any other:
+    set aside and said before `launch` wipes the cache, so the wipe never reaches its target."""
+
+    import _winapi
+    (bench.outside / "keep.txt").write_text("outside", encoding="utf-8")
+    (bench.work / "node_modules").mkdir()
+    _winapi.CreateJunction(str(bench.outside), str(bench.work / "node_modules" / ".cache"))
+    view = await reopen(bench)
+    assert view["work_copy"]["set_aside"] == ["node_modules/.cache"]
+    assert any("node_modules/.cache" in line for line in view["diagnostics"]), view["diagnostics"]
+    assert not os.path.lexists(bench.work / "node_modules" / ".cache")
+    assert (bench.outside / "keep.txt").read_text(encoding="utf-8") == "outside", "the target is never moved nor emptied"
+    assert _is_junction(next(bench.edits.rglob(".cache"))), "the junction itself was moved aside"

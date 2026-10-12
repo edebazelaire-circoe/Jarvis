@@ -445,12 +445,14 @@ class RemotionStudioRunner:
                 if entry.name in self.SOURCE_DIRS and folder and not link:
                     self._shape_source(path, move)
                 elif entry.name == TOOL_CACHE_DIR and folder and not link:
-                    # Le cache de l'outil (`node_modules/.cache`) est vidé par `launch` ; tout AUTRE contenu y a été posé à la main
-                    # (S12 polish) : mis de côté et dit comme le reste, avant que `launch` ne vide le dossier.
+                    # Le cache de l'outil (`node_modules/.cache`, un VRAI dossier) est vidé par `launch` ; tout AUTRE contenu y a été
+                    # posé à la main (S12 polish), et un `.cache` lien ou jonction aussi (vider sa cible toucherait hors de l'espace) :
+                    # mis de côté et dit comme le reste, avant que `launch` ne vide le dossier.
                     for child in sorted(os.scandir(path), key=lambda item: item.name):
-                        if child.name != TOOL_CACHE_SUBDIR:
-                            child_info = os.lstat(extended_path(Path(child.path)))
-                            move(Path(child.path), stat.S_ISDIR(child_info.st_mode) and not _is_link(child_info))
+                        child_info = os.lstat(extended_path(Path(child.path)))
+                        child_folder, child_link = stat.S_ISDIR(child_info.st_mode), _is_link(child_info)
+                        if not (child.name == TOOL_CACHE_SUBDIR and child_folder and not child_link):
+                            move(Path(child.path), child_folder and not child_link)
                 elif (entry.name in GENERATED_FILES and _plain_file(info)
                       and _sha(Path(extended_path(path)).read_bytes()) == _sha(bytes(files[entry.name]))):
                     continue
