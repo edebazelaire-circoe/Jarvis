@@ -116,6 +116,10 @@ async def test_a_real_click_on_son_makes_the_sandboxed_scene_audible_in_sync_and
             # a jump back of one second inside the scene, playing (the slider's own key)
             {"eval": "document.querySelector('#jvStudioExplorer [role=\"slider\"]').focus()"}, {"key": "ArrowLeft"},
             {"wait": 900}, dict(sample, value="seek_a"), {"wait": 300}, dict(sample, value="seek_b"),
+            # rework M1b: « Son » pressed off then on while S2 is loaded ahead: the preloaded frame never hears it
+            {"click": SOUND_BTN}, {"until": media_is(1, "s.wanted===false"), "ms": 5000, "as": "toggled_off"},
+            {"click": SOUND_BTN}, {"until": media_is(1, "s.wanted===true&&s.muted===false"), "ms": 5000, "as": "toggled_on"},
+            {"wait": 400}, {"value": "toggled_frames", "expr": AUDIO_TAGS, "scope": "sandboxes"},
             # the boundary into S2 (4:3, its own `<Audio>`): the incoming Player gets the sound, in sync
             {"until": media_is(2, "s.playing&&s.frame>=20"), "ms": 30000, "required": True, "as": "s2_playing"},
             dict(sample, value="s2_a"), {"wait": 400}, dict(sample, value="s2_b"),
@@ -130,8 +134,10 @@ async def test_a_real_click_on_son_makes_the_sandboxed_scene_audible_in_sync_and
     opening = reads["opening"]
     live_s1 = [f for f in reads["s1_frames"] if f.get("title", "").startswith("A ")]
     staged_s2 = [f for f in reads["s1_frames"] if f.get("title", "").startswith("B ")]
+    toggled_live = [f for f in reads["toggled_frames"] if f.get("title", "").startswith("A ")]
+    toggled_staged = [f for f in reads["toggled_frames"] if f.get("title", "").startswith("B ")]
     evidence = {"opening": opening, "on": reads["on"], "syncs_ms": syncs, "s1_frames": reads["s1_frames"], "s2_frames": reads["s2_frames"],
-                "off": reads["off"], "off_frames": reads["off_frames"],
+                "off": reads["off"], "off_frames": reads["off_frames"], "toggled_frames": reads["toggled_frames"],
                 **{k: reads[k] for k in ("s1_a", "s1_b", "s1_c", "seek_a", "seek_b", "s2_a", "s2_b")}}
     checks = {
         "muted at opening (page, stage page and the Player's own <audio>)": opening["wanted"] is False and opening["muted"] is True
@@ -143,6 +149,10 @@ async def test_a_real_click_on_son_makes_the_sandboxed_scene_audible_in_sync_and
         "audio and image within 200 ms in S1, after a jump and after the boundary": all(v is not None and v <= 200 for v in syncs.values()),
         "the preloaded S2 frame stays muted while S1 plays": bool(live_s1) and bool(staged_s2)
             and all(f["audio"] is None or f["audio"]["muted"] for f in staged_s2),
+        "« Son » pressed off then on while S2 is preloaded: S1 sounds again, the preloaded S2 frame stays muted": reads["toggled_off"]
+            and reads["toggled_on"] and bool(toggled_live) and bool(toggled_staged)
+            and any(f["audio"] and f["audio"]["muted"] is False for f in toggled_live)
+            and all(f["audio"] is None or f["audio"]["muted"] for f in toggled_staged),
         "S2 on screen gets the sound (persisted across the scene change)": reads["s2_media"]["wanted"] is True and reads["s2_media"]["muted"] is False
             and reads["s2_a"]["audio"] is not None and reads["s2_a"]["audio"]["muted"] is False,
         "only one audible Player at any sample": all(sum(1 for f in reads[k] if f["audio"] and not f["audio"]["muted"] and not f["audio"]["paused"]) <= 1
@@ -273,6 +283,18 @@ async def test_fullscreen_shows_only_the_whole_slide_letterboxed_keeps_f_and_pla
             {"click": FS_BTN}, {"until": "!!document.fullscreenElement", "ms": 5000, "as": "entered_again"}, {"wait": 300},
             {"key": "Escape"}, {"until": "!document.fullscreenElement", "ms": 5000, "as": "left_by_escape"}, {"wait": 600},
             {"value": "after_escape", "expr": f"({{open:JarvisStudioExplorer.isOpen(),view:{VIEW}}})"},
+            # rework M4: headless Chrome keeps the CDP Échap for itself in fullscreen, so the page handler may never see it. An Échap
+            # dispatched to the stage element does reach the page's handler: still playing, fullscreen left, Variants open.
+            # back to the start of the 6 s S1 so the video is surely still playing (S4 is only 3 s long)
+            {"eval": FOCUS_STAGE}, {"key": "Home"}, {"wait": 400},
+            {"eval": f"{VIEW}.phase==='playing'||JarvisStudioExplorer.playback.play()"},
+            {"until": media_is(1, "s.playing") + f"&&{VIEW}.phase==='playing'", "ms": 10000, "as": "replaying"},
+            {"click": FS_BTN}, {"until": "!!document.fullscreenElement", "ms": 5000, "as": "entered_third"}, {"wait": 300},
+            {"value": "before_page_escape", "expr": VIEW},
+            {"eval": "document.querySelector('#jvStudioExplorer .jvx-stage').dispatchEvent(new KeyboardEvent('keydown',"
+                     "{key:'Escape',code:'Escape',bubbles:true,cancelable:true}))"},
+            {"until": "!document.fullscreenElement", "ms": 5000, "as": "left_by_page_escape"}, {"wait": 600},
+            {"value": "after_page_escape", "expr": f"({{open:JarvisStudioExplorer.isOpen(),view:{VIEW}}})"},
             {"key": "Escape"}, {"wait": 600}, {"value": "after_escape2", "expr": "JarvisStudioExplorer.isOpen()"},
         ]
         reads = harness_ok(await run_media(stack.page_url, plan, viewport="1920x1080"))
@@ -299,12 +321,15 @@ async def test_fullscreen_shows_only_the_whole_slide_letterboxed_keeps_f_and_pla
                                                                           for g in geoms.values()),
         "the first Échap leaves fullscreen only, never pauses": reads["left_by_escape"] and reads["after_escape"]["open"] is True
             and reads["after_escape"]["view"]["phase"] == "playing",
+        "an Échap that reaches the page handler in the stage fullscreen, while playing, leaves it and never pauses":
+            reads["entered_third"] and reads["before_page_escape"]["phase"] == "playing" and reads["left_by_page_escape"]
+            and reads["after_page_escape"]["open"] is True and reads["after_page_escape"]["view"]["phase"] == "playing",
         "the next Échap closes Variants": reads["after_escape2"] is False,
     }
     picked = [Path(reads[f"shot_{k}"][0][1]) for k in ("S1", "S2", "S3", "S4")]
     record("fullscreen", {"checks": checks, "boxes": boxes, "inside": inside, "hidden": reads["hidden"], "poked": reads["poked"],
                           "before": before, "in_view": in_view, "paused_in": reads["paused_in"], "out": out, "out_view": reads["out_view"],
-                          "geometry": geoms, "after_escape": reads["after_escape"]},
+                          "geometry": geoms, "after_escape": reads["after_escape"], "after_page_escape": reads["after_page_escape"]},
            picked)
     summarize("fullscreen", {"checks": checks, "boxes": {k: v["ratio"] for k, v in boxes.items()}})
     assert all(checks.values()), {k: v for k, v in checks.items() if not v}

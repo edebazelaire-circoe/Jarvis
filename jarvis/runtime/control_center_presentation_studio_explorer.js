@@ -1518,9 +1518,12 @@
         return;
       }
       const active=doc.activeElement;
-      S.fsOpener=active&&active!==doc.body?active:null;
+      S.fsOpener=null;
       const display=opts&&opts.other?await otherScreen():'current';
       const result=await requestFullscreen(undefined,STAGE_OBJECT_ID,display);
+      /* The opener is kept only for a fullscreen that really started: a refused or merely armed request leaves none behind (the stage
+         fullscreen an armed prompt starts later gives the focus to « Plein écran »). */
+      if(result.state==='entered'&&doc.fullscreenElement===ui.theater)S.fsOpener=active&&active!==doc.body?active:null;
       if(result.state==='refused')say('refused',`Plein écran refusé par le navigateur${result.reason?' : '+cleanLine(result.reason,120):''}. La vidéo reste dans la fenêtre.`);
       else if(result.state==='unsupported')say('refused',"Plein écran indisponible dans ce navigateur : la vidéo reste dans la fenêtre.");
       else if(result.state==='needs_gesture')say('info',"Cliquez « Passer en plein écran » dans l'invite en haut de la fenêtre.");

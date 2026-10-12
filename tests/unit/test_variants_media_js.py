@@ -193,6 +193,29 @@ def test_the_child_re_mutes_a_player_frozen_by_a_refused_audio_context_and_treat
     assert out["selfMuted"] == [[False, False], [True, True]], "Remotion muting itself is a refusal, said"
 
 
+def test_the_stall_watchdog_never_re_mutes_a_player_the_user_paused(tmp_path):
+    """Rework M7: unmuted, played, then paused; the image stops on purpose. 1.5 s later the Player keeps its sound and nothing is said."""
+
+    out = run_child(tmp_path, CHILD_COMMON + r"""
+      const seen=w=>({playing:w.player.playing,muted:w.player.muted,audio:audio(w),mutes:w.calls.filter(c=>c[0]==='mute').length});
+      // unmute, play, pause before the image moved: the watchdog armed by `play` fires on a Player the user paused
+      const w=world({delegated:true});w.init();
+      w.send({rs:1,type:'sound',muted:false});
+      w.send({rs:1,type:'control',action:'play'});w.player.emit('play');
+      w.advance(200);w.send({rs:1,type:'control',action:'pause'});w.player.emit('pause');
+      w.advance(1600);w.win.__fire();w.advance(1600);w.win.__fire();
+      // « Son » pressed while the Player is paused: the image does not move, on purpose
+      const p=world({delegated:true});p.init();
+      p.send({rs:1,type:'sound',muted:false});p.advance(1600);p.win.__fire();
+      console.log(JSON.stringify({played:seen(w),pausedUnmute:seen(p)}));
+    """)
+    for name in ("played", "pausedUnmute"):
+        seen = out[name]
+        assert seen["playing"] is False, f"{name}: the bench really has a paused Player"
+        assert seen["muted"] is False and seen["mutes"] == 0, f"{name}: a paused Player keeps the sound the user asked for ({seen})"
+        assert seen["audio"] == [[False, False]], f"{name}: no `audio {{blocked: true}}` for a pause ({seen})"
+
+
 def test_a_frame_without_a_wish_keeps_the_old_rule_and_a_wish_is_never_contradicted_by_a_click(tmp_path):
     out = run_child(tmp_path, CHILD_COMMON + r"""
       const legacy=world({});legacy.init();gesture(legacy,'pointerdown');gesture(legacy,'pointerdown',{isTrusted:false});
@@ -233,6 +256,24 @@ def test_the_protocol_bounds_the_new_messages(tmp_path):
     assert out["child"] == [True, "bad_audio", "bad_audio", True, "bad_key", "extra_field"]
     assert out["host"] == [True, "bad_sound", "bad_sound"]
     assert out["accepted"] == 20 and out["dropped"] == 5 and out["violations"] == 0, "keys capped per second, never a violation"
+
+
+def test_the_window_parsers_of_audio_and_key_refuse_another_source_another_origin_and_an_extra_field(tmp_path):
+    """Defence in depth (rework polish): `parseAudio` / `parseKey` of `control_center_remotion_frame.js`."""
+
+    out = run_plain(tmp_path, """
+      const W={},iframe={contentWindow:W},O='http://127.0.0.1:1';
+      const ev=(data,over)=>Object.assign({source:W,origin:O,data:Object.assign({rsh:1},data)},over||{});
+      const r=x=>x.ok?x:x.reason;
+      const audio={type:'audio',muted:true,blocked:false},key={type:'key',key:' '};
+      return {
+        audio:[R.parseAudio(ev(audio),iframe,O),R.parseAudio(ev(audio,{source:{}}),iframe,O),R.parseAudio(ev(audio,{origin:'http://evil'}),iframe,O),
+          R.parseAudio(ev(Object.assign({extra:1},audio)),iframe,O),R.parseAudio(ev(key),iframe,O)].map(r),
+        key:[R.parseKey(ev(key),iframe,O),R.parseKey(ev(key,{source:{}}),iframe,O),R.parseKey(ev(key,{origin:'http://evil'}),iframe,O),
+          R.parseKey(ev(Object.assign({extra:1},key)),iframe,O),R.parseKey(ev({type:'key',key:'a'}),iframe,O)].map(r)};
+    """)
+    assert out["audio"] == [{"ok": True, "audio": {"muted": True, "blocked": False}}, "foreign_source", "bad_origin", "extra_field", "bad_message"]
+    assert out["key"] == [{"ok": True, "key": " "}, "foreign_source", "bad_origin", "extra_field", "bad_key"]
 
 
 # ------------------------------------------------------------------ 3. the stage page
@@ -302,6 +343,28 @@ async def test_the_host_sends_the_wish_to_the_live_frame_only_and_follows_the_sw
     assert result["wanted"] is True and "bad_key" in result["dropped"] and "bad_audio" in result["dropped"]
 
 
+async def test_toggling_the_sound_while_a_frame_is_loaded_ahead_never_reaches_the_preloaded_frame(tmp_path):
+    """Rework M1b: « Son » pressed (on, off, on) AFTER the next scene is preloaded; only the live frame hears it."""
+
+    result = run_stage_node(tmp_path, HOST_BENCH + r"""
+      const b=hostBench({onSound:()=>{},onKey:()=>{}});
+      const sent=f=>f.contentWindow.posted.map(p=>p.message).filter(m=>m.type==='sound').map(m=>m.muted);
+      b.host.sound(true);
+      b.host.mount(b.slot,b.inst(b.A));const live=await b.bringUp(b.A);b.c.advance(2000);
+      b.host.preload('stage',b.inst(b.B));const next=await b.bringUp(b.B);b.c.advance(2000);
+      const staged=b.host.parked('stage')||!!b.host.pendingKey('stage');
+      const counts=[b.host.sound(false),b.host.sound(true),b.host.sound(false)];
+      const nextWhileStaged=sent(next);
+      b.host.mount(b.slot,b.inst(b.B));b.c.advance(1);
+      return {staged,counts,live:sent(live),nextWhileStaged,nextAfterSwap:sent(next)};
+    """)
+    assert result["staged"] is True, "the bench really has a frame loaded ahead"
+    assert result["counts"] == [1, 1, 1], "each toggle reaches exactly one frame: the live one"
+    assert result["live"] == [True, False, True, False]
+    assert result["nextWhileStaged"] == [], "the preloaded frame never receives `sound`"
+    assert result["nextAfterSwap"] == [False], "it gets the current wish only once it takes the window"
+
+
 # ------------------------------------------------------------------ 5. the explorer
 
 def test_son_and_m_toggle_the_sound_and_a_refusal_is_said_on_the_button_the_image_and_the_notice(tmp_path):
@@ -356,6 +419,75 @@ return {entered,afterEscape,graceKept,viaF,leftViaF,closedAfter:ex.isOpen()};
     assert out["graceKept"] is True, "the Échap that just left fullscreen, delivered late, closes nothing"
     assert out["viaF"]["element"] is True and out["leftViaF"]["element"] is None and out["leftViaF"]["focusBack"] is True
     assert out["closedAfter"] is False, "the next Échap closes Variants"
+
+
+def test_escape_in_the_stage_fullscreen_while_playing_leaves_it_and_never_pauses(tmp_path):
+    """Rework M4: playing, stage fullscreen, Échap reaches the page (on the stage, on the page body, relayed by the focused scene)."""
+
+    out = run_ui(tmp_path, VIDEO_WORLD + r"""
+const theater=q('.jvx-theater'),fsBtn=q('.jvx-top-actions .jvx-btn');
+await ex.playback.play();await env.advance(100);
+const runs=[];
+const deliver={stage:()=>env.key(q('.jvx-stage'),'Escape'),page:()=>env.key(doc.body,'Escape'),
+  scene:()=>{q('.jvx-stage').focus();prefabFake.hosts[0].deps.onKey('studio-explorer-preview','Escape')}};
+for(const [name,fn] of Object.entries(deliver)){
+  fsBtn.click();await env.advance(50);
+  const entered=doc.fullscreenElement===theater,before=ex.playback.view().phase;
+  fn();await env.advance(50);
+  runs.push({name,entered,before,left:doc.fullscreenElement===null,phase:ex.playback.view().phase,open:ex.isOpen()});
+  await env.advance(500);
+}
+return {runs,pauses:prefabFake.orders.filter(o=>o[0]==='pause').length};
+""")
+    for run in out["runs"]:
+        assert run["entered"] is True and run["before"] == "playing", run
+        assert run["left"] is True and run["open"] is True, run
+        assert run["phase"] == "playing", f"Échap ({run['name']}) in the stage fullscreen must never pause: {run}"
+    assert out["pauses"] == 0, "no pause order ever reached the Player"
+
+
+def test_sound_is_muted_again_when_variants_is_reopened_in_the_same_page(tmp_path):
+    """Rework M10: sound on, Variants closed, reopened without a reload: « Son » not pressed and the host told `muted`."""
+
+    out = run_ui(tmp_path, VIDEO_WORLD + r"""
+label('Son').click();
+const on={pressed:label('Son').getAttribute('aria-pressed'),sounds:prefabFake.sounds.slice()};
+ex.close({reason:'test'});await env.advance(50);
+const closed=ex.isOpen();
+const marker=prefabFake.sounds.length;
+await ex.open({presentation_id:PID,fullscreen:false});await env.advance(400);
+return {on,closed,reopened:ex.isOpen(),pressed:label('Son').getAttribute('aria-pressed'),title:label('Son').title,
+  told:prefabFake.sounds.slice(marker),view:ex.playback.sound()};
+""")
+    assert out["on"]["pressed"] == "true" and out["on"]["sounds"][-1] is False, "the bench really turned the sound on"
+    assert out["closed"] is False and out["reopened"] is True
+    assert out["pressed"] == "false" and out["title"] == "Activer le son (M)" and out["view"]["on"] is False
+    assert out["told"] and all(m is True for m in out["told"]), "the host is told `muted` at the reopening, never `false`"
+
+
+def test_the_focus_opener_is_kept_only_when_the_stage_fullscreen_really_starts(tmp_path):
+    """Rework polish: a refused or merely armed request keeps no opener; the stage fullscreen that starts later gives the focus to « Plein écran »."""
+
+    out = run_ui(tmp_path, VIDEO_WORLD + r"""
+const theater=q('.jvx-theater'),fsBtn=q('.jvx-top-actions .jvx-btn');
+const row=q('.jvx-row');
+const cycle=async(mode)=>{
+  fsFake.mode=mode;row.focus();fsBtn.click();await env.advance(50);
+  const entered=doc.fullscreenElement===theater;
+  env.enterFullscreen(theater);await env.advance(20);   // the fullscreen starts later, by another way (the armed prompt's click)
+  env.leaveFullscreen();await env.advance(500);
+  return {entered,focusOnButton:doc.activeElement===fsBtn,focusOnRow:doc.activeElement===row};
+};
+const refused=await cycle('refuse');
+const armed=await cycle('arm');fsFake.armed=null;
+fsFake.mode='enter';row.focus();fsBtn.click();await env.advance(50);const realEntered=doc.fullscreenElement===theater;
+env.leaveFullscreen();await env.advance(50);
+return {refused,armed,real:{entered:realEntered,focusOnRow:doc.activeElement===row}};
+""")
+    for name in ("refused", "armed"):
+        assert out[name]["entered"] is False, out
+        assert out[name]["focusOnButton"] is True and out[name]["focusOnRow"] is False, f"{name}: no stale opener ({out[name]})"
+    assert out["real"] == {"entered": True, "focusOnRow": True}, "a fullscreen that really starts gives the focus back to its opener"
 
 
 def test_fullscreen_keeps_the_play_state_and_the_transport_hides_while_playing(tmp_path):

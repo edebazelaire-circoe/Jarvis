@@ -618,6 +618,7 @@ EXPLORE_BTN = "button.jvi-explore"
 INSPECTOR_READY = {"until": "!!JarvisStudioInspector.instance.view().presentation_id&&!JarvisStudioInspector.instance.view().loading&&!!document.querySelector('button.jvi-explore')&&!document.querySelector('button.jvi-explore').disabled", "ms": 20000}
 FOCUS_OBJ = "{cls:String(document.activeElement&&document.activeElement.className),tag:document.activeElement&&document.activeElement.tagName}"
 FOCUS_ON = f"JSON.stringify({FOCUS_OBJ})"
+FS_AND_INSPECTOR_HIDDEN = "!!document.fullscreenElement&&document.querySelector('#jvStudioInspector').hidden===true"
 
 
 async def test_the_inspector_header_opens_the_explorer_with_a_real_click_gives_focus_back_and_is_refused_in_words_during_a_run(tmp_path):
@@ -638,7 +639,11 @@ async def test_the_inspector_header_opens_the_explorer_with_a_real_click_gives_f
             {"shot": str(shots_dir(tmp_path) / "inspector-with-explorer-button.png")},
             {"click": EXPLORE_BTN},
             {"until": f"{STATE}.open===true", "ms": 20000},
-            {"value": "opened", "expr": f"JSON.stringify({{pid:{STATE}.presentation_id,hostHidden:document.querySelector('{HOST}').hidden,inspectorBehind:document.querySelector('#jvStudioInspector').inert||document.querySelector('#jvStudioInspector').hidden}})"},
+            # `open` is true before the workspace fullscreen the click asked for has started; the inspector (inside `#app`, which the
+            # explorer makes inert, so its own `inert` stays false) hides itself on `fullscreenchange`. Read once the fullscreen is there.
+            {"value": "fs_at_open", "expr": "JSON.stringify({fs:!!document.fullscreenElement,hidden:document.querySelector('#jvStudioInspector').hidden})"},
+            {"until": FS_AND_INSPECTOR_HIDDEN, "ms": 10000},
+            {"value": "opened", "expr": f"JSON.stringify({{pid:{STATE}.presentation_id,hostHidden:document.querySelector('{HOST}').hidden,inspectorBehind:document.querySelector('#jvStudioInspector').inert||document.querySelector('#jvStudioInspector').hidden,underInert:!!document.querySelector('#jvStudioInspector').closest('[inert]')}})"},
             *LEAVE,
             {"until": f"{STATE}.open===false", "ms": 10000},
             {"value": "after_close", "expr": f"JSON.stringify({{focus:{FOCUS_OBJ},inspectorOpen:JarvisStudioInspector.instance.view().open,inert:document.querySelector('#jvStudioInspector').inert}})"},
@@ -656,7 +661,10 @@ async def test_the_inspector_header_opens_the_explorer_with_a_real_click_gives_f
         button = json.loads(reads["button"])
         assert button["vis"] and button["label"] == "Ouvrir l'explorateur de variantes" and button["text"] == "Variantes" and button["h"] >= 24 and button["tab"] == 0
         opened = json.loads(reads["opened"])
+        print("fs_at_open", reads["fs_at_open"])     # diagnostic of the old flake (rework of Slice 08): was the fullscreen there yet?
+        assert reads["until:" + FS_AND_INSPECTOR_HIDDEN], "the click opens the explorer in the workspace fullscreen, and the inspector hides itself"
         assert opened["pid"] == reads["inspector_id"] and opened["hostHidden"] is False and opened["inspectorBehind"] is True
+        assert opened["underInert"] is True, "the inspector is behind the explorer: its `#app` ancestor is inert"
         after = json.loads(reads["after_close"])
         assert "jvi-explore" in after["focus"]["cls"] and after["inspectorOpen"] is True and after["inert"] is False, "focus goes back to the button that opened it"
         assert "jvi-explore" in json.loads(reads["after_keyboard"])["cls"]
