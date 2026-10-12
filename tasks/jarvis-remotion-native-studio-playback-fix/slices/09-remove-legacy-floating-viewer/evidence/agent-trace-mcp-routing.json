@@ -1,0 +1,324 @@
+{
+ "stage_object_id": "variants-run-8c4897ab3dee",
+ "phase_after_no_page_start": "paused",
+ "board_objects": [],
+ "verbs": [
+  {
+   "verb": "presentation_view window_open",
+   "ok": true,
+   "status": "opened",
+   "surface": null,
+   "speech": "silent",
+   "cc_requests": [
+    [
+     "POST",
+     "/api/presentation-studio/explorer/commands",
+     {
+      "action": "open",
+      "presentation_id": "pst_fc8f47477e7241091fc3e8dfcdb8cf3c",
+      "fullscreen": false
+     }
+    ]
+   ]
+  },
+  {
+   "verb": "presentation_play start rehearsal",
+   "ok": true,
+   "status": "applied",
+   "surface": "variants",
+   "speech": "silent",
+   "cc_requests": [
+    [
+     "GET",
+     "/api/presentation-studio/explorer/state",
+     null
+    ],
+    [
+     "GET",
+     "/api/presentation-studio/agent/turn",
+     null
+    ],
+    [
+     "POST",
+     "/api/presentation-studio/explorer/commands",
+     {
+      "action": "open",
+      "presentation_id": "pst_fc8f47477e7241091fc3e8dfcdb8cf3c",
+      "variant_id": "psv_5279c0dd779853dcb0f2ad3913ffe15b",
+      "fullscreen": false
+     }
+    ]
+   ]
+  },
+  {
+   "verb": "presentation_view stage_fullscreen_enter",
+   "ok": true,
+   "status": "needs_gesture",
+   "surface": null,
+   "speech": "say",
+   "cc_requests": [
+    [
+     "POST",
+     "/api/presentation-studio/explorer/commands",
+     {
+      "action": "open",
+      "presentation_id": "pst_fc8f47477e7241091fc3e8dfcdb8cf3c",
+      "variant_id": "psv_5279c0dd779853dcb0f2ad3913ffe15b",
+      "fullscreen": false
+     }
+    ],
+    [
+     "POST",
+     "/api/fullscreen/commands",
+     {
+      "action": "enter",
+      "object_id": "studio-explorer-stage",
+      "keys": "none"
+     }
+    ]
+   ]
+  },
+  {
+   "verb": "presentation_play next",
+   "ok": true,
+   "status": "applied",
+   "surface": null,
+   "speech": "silent",
+   "cc_requests": []
+  },
+  {
+   "verb": "presentation_play stop",
+   "ok": true,
+   "status": "applied",
+   "surface": null,
+   "speech": "silent",
+   "cc_requests": []
+  },
+  {
+   "verb": "presentation_view window_close",
+   "ok": true,
+   "status": "closed",
+   "surface": null,
+   "speech": "silent",
+   "cc_requests": [
+    [
+     "POST",
+     "/api/presentation-studio/explorer/commands",
+     {
+      "action": "close"
+     }
+    ]
+   ]
+  },
+  {
+   "verb": "presentation_play start (no visible page)",
+   "ok": false,
+   "code": "surface_unavailable",
+   "message": "Refus surface_unavailable : Aucune page de JARVIS ne peut montrer la présentation dans Variantes : elle a démarré puis a été mise en pause. Dis à l'utilisateur d'ouvrir l'interface de JARVIS ; la présentation reprend avec presentation_play ",
+   "cc_requests": [
+    [
+     "GET",
+     "/api/presentation-studio/agent/turn",
+     null
+    ],
+    [
+     "POST",
+     "/api/presentation-studio/explorer/commands",
+     {
+      "action": "open",
+      "presentation_id": "pst_fc8f47477e7241091fc3e8dfcdb8cf3c",
+      "variant_id": "psv_5279c0dd779853dcb0f2ad3913ffe15b",
+      "fullscreen": false
+     }
+    ]
+   ]
+  },
+  {
+   "verb": "presentation_view explorer_open other (during run)",
+   "ok": false,
+   "code": "explorer_run_in_progress",
+   "message": "Refus explorer_run_in_progress : Une autre présentation est en cours : Variantes la montre ; arrête-la d'abord (presentation_play stop) pour ouvrir celle-ci. (Une autre présentation est en cours : Variantes la montre.)",
+   "cc_requests": [
+    [
+     "POST",
+     "/api/presentation-studio/explorer/commands",
+     {
+      "action": "open",
+      "presentation_id": "pst_fc8f47477e7241091fc3e8dfcdb8cf3c",
+      "fullscreen": true
+     }
+    ]
+   ]
+  }
+ ],
+ "mcp_journal_kinds": [
+  "presentation_studio.tool",
+  "presentation_studio.tool_failed"
+ ],
+ "mcp_journal_rows": [
+  {
+   "kind": "presentation_studio.tool",
+   "level": "info",
+   "data": {
+    "tool": "presentation_view",
+    "op": "window_open",
+    "correlation_id": "fd11d7b77aa3",
+    "speech": "silent",
+    "revision": null,
+    "event": null,
+    "ms": 4,
+    "presentation_id": "pst_fc8f47477e7241091fc3e8dfcdb8cf3c",
+    "variant_id": "psv_5279c0dd779853dcb0f2ad3913ffe15b"
+   }
+  },
+  {
+   "kind": "presentation_studio.tool",
+   "level": "info",
+   "data": {
+    "tool": "presentation_play",
+    "op": "start",
+    "correlation_id": "914060a402f2",
+    "speech": "silent",
+    "revision": null,
+    "event": "system.presentation_studio.playback_changed",
+    "ms": 76,
+    "presentation_id": null,
+    "variant_id": null
+   }
+  },
+  {
+   "kind": "presentation_studio.tool",
+   "level": "info",
+   "data": {
+    "tool": "presentation_inspect",
+    "op": "playback",
+    "correlation_id": "d93f72d8bdd6",
+    "speech": "silent",
+    "revision": null,
+    "event": null,
+    "ms": 1,
+    "target": "playback"
+   }
+  },
+  {
+   "kind": "presentation_studio.tool",
+   "level": "info",
+   "data": {
+    "tool": "presentation_view",
+    "op": "stage_fullscreen_enter",
+    "correlation_id": "0daf319bca06",
+    "speech": "say",
+    "revision": null,
+    "event": null,
+    "ms": 1,
+    "presentation_id": null,
+    "variant_id": null
+   }
+  },
+  {
+   "kind": "presentation_studio.tool",
+   "level": "info",
+   "data": {
+    "tool": "presentation_play",
+    "op": "next",
+    "correlation_id": "da849ffb47a7",
+    "speech": "silent",
+    "revision": null,
+    "event": "system.presentation_studio.playback_changed",
+    "ms": 1,
+    "presentation_id": null,
+    "variant_id": null
+   }
+  },
+  {
+   "kind": "presentation_studio.tool",
+   "level": "info",
+   "data": {
+    "tool": "presentation_play",
+    "op": "stop",
+    "correlation_id": "09cc362552f1",
+    "speech": "silent",
+    "revision": null,
+    "event": "system.presentation_studio.playback_changed",
+    "ms": 1,
+    "presentation_id": null,
+    "variant_id": null
+   }
+  },
+  {
+   "kind": "presentation_studio.tool",
+   "level": "info",
+   "data": {
+    "tool": "presentation_view",
+    "op": "window_close",
+    "correlation_id": "331523758253",
+    "speech": "silent",
+    "revision": null,
+    "event": null,
+    "ms": 0,
+    "presentation_id": null,
+    "variant_id": null
+   }
+  },
+  {
+   "kind": "presentation_studio.tool_failed",
+   "level": "warning",
+   "data": {
+    "tool": "presentation_play",
+    "code": "surface_unavailable",
+    "source": "presentation_studio_mcp",
+    "state": "paused"
+   }
+  },
+  {
+   "kind": "presentation_studio.tool_failed",
+   "level": "warning",
+   "data": {
+    "tool": "presentation_play",
+    "op": "start",
+    "code": "surface_unavailable",
+    "correlation_id": "2491a44f8e68",
+    "presentation_id": null,
+    "variant_id": null
+   }
+  },
+  {
+   "kind": "presentation_studio.tool",
+   "level": "info",
+   "data": {
+    "tool": "presentation_inspect",
+    "op": "playback",
+    "correlation_id": "8025863c7f06",
+    "speech": "silent",
+    "revision": null,
+    "event": null,
+    "ms": 1,
+    "target": "playback"
+   }
+  },
+  {
+   "kind": "presentation_studio.tool_failed",
+   "level": "warning",
+   "data": {
+    "tool": "presentation_view",
+    "code": "explorer_run_in_progress",
+    "source": "presentation_studio_mcp"
+   }
+  },
+  {
+   "kind": "presentation_studio.tool_failed",
+   "level": "warning",
+   "data": {
+    "tool": "presentation_view",
+    "op": "explorer_open",
+    "code": "explorer_run_in_progress",
+    "correlation_id": "eacc5fd5181b",
+    "presentation_id": "pst_fc8f47477e7241091fc3e8dfcdb8cf3c",
+    "variant_id": null
+   }
+  }
+ ],
+ "core_trace_kinds": [],
+ "core_trace_count": 0,
+ "core_trace_rows": []
+}

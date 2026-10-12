@@ -1,0 +1,46 @@
+{
+ "gesture": "Lire",
+ "variants_open": true,
+ "variants_player": {
+  "frame": 104,
+  "playing": true,
+  "duration": 240,
+  "phase": "ready",
+  "scene": "S2"
+ },
+ "core": {
+  "scope": null,
+  "phase": "idle",
+  "scene": null,
+  "play_ms": null,
+  "from": null,
+  "until": null,
+  "seq": null,
+  "item_ms": null,
+  "item_target_ms": null
+ },
+ "variants_S2_first_play": [
+  4738,
+  0
+ ],
+ "frames": [
+  [
+   245,
+   1,
+   "explorer",
+   "S1"
+  ],
+  [
+   1724,
+   2,
+   "explorer",
+   "S2"
+  ],
+  [
+   4742,
+   3,
+   "explorer",
+   "S3"
+  ]
+ ]
+}

@@ -1,0 +1,633 @@
+{
+ "evidence": {
+  "gesture": "Lire seulement cette scène",
+  "at_2_6": {
+   "readouts": [
+    {
+     "where": "page",
+     "text": "0:14 / 1:14"
+    }
+   ],
+   "label": 3,
+   "selected": "pss_000000000003",
+   "slider": {
+    "now": "820",
+    "max": "4439",
+    "text": "Scène 3 sur 9, 0:14 sur 1:14",
+    "disabled": false
+   },
+   "player": {
+    "frame": 80,
+    "playing": true,
+    "duration": 900,
+    "phase": "ready",
+    "scene": "S3"
+   },
+   "open": true
+  },
+  "scrub_kind": "slider",
+  "scrub_at": 4749,
+  "after_scrub": {
+   "readouts": [
+    {
+     "where": "page",
+     "text": "0:32 / 1:14"
+    }
+   ],
+   "label": 3,
+   "selected": "pss_000000000003",
+   "slider": {
+    "now": "1940",
+    "max": "4439",
+    "text": "Scène 3 sur 9, 0:32 sur 1:14",
+    "disabled": false
+   },
+   "player": {
+    "frame": 640,
+    "playing": true,
+    "duration": 900,
+    "phase": "ready",
+    "scene": "S3"
+   },
+   "open": true
+  },
+  "held_on_899": true,
+  "held": {
+   "readouts": [
+    {
+     "where": "page",
+     "text": "0:41 / 1:14"
+    }
+   ],
+   "label": 3,
+   "selected": "pss_000000000003",
+   "slider": {
+    "now": "2458",
+    "max": "4439",
+    "text": "Scène 3 sur 9, 0:41 sur 1:14",
+    "disabled": false
+   },
+   "player": {
+    "frame": 899,
+    "playing": false,
+    "duration": 900,
+    "phase": "ready",
+    "scene": "S3"
+   },
+   "open": true
+  },
+  "held_later": {
+   "readouts": [
+    {
+     "where": "page",
+     "text": "0:41 / 1:14"
+    }
+   ],
+   "label": 3,
+   "selected": "pss_000000000003",
+   "slider": {
+    "now": "2458",
+    "max": "4439",
+    "text": "Scène 3 sur 9, 0:41 sur 1:14",
+    "disabled": false
+   },
+   "player": {
+    "frame": 899,
+    "playing": false,
+    "duration": 900,
+    "phase": "ready",
+    "scene": "S3"
+   },
+   "open": true
+  },
+  "player_reached_end_ms": 14624,
+  "wraps_after_scrub": [],
+  "frame_orders_after_scrub_500ms": [],
+  "frame_orders_after_end": [],
+  "first_play": [
+   1878,
+   0
+  ],
+  "failed": null
+ },
+ "probe_ev": [
+  [
+   253,
+   "mount",
+   1,
+   "explorer",
+   "S1",
+   false
+  ],
+  [
+   258,
+   "live",
+   1
+  ],
+  [
+   268,
+   "status",
+   1,
+   "shell"
+  ],
+  [
+   269,
+   "status",
+   1,
+   "preparing"
+  ],
+  [
+   1037,
+   "status",
+   1,
+   "mounting"
+  ],
+  [
+   1161,
+   "ready",
+   1,
+   null,
+   null
+  ],
+  [
+   1163,
+   "status",
+   1,
+   "ready"
+  ],
+  [
+   1164,
+   "order",
+   1,
+   "pause",
+   0,
+   null
+  ],
+  [
+   1180,
+   "clock",
+   1,
+   0,
+   false
+  ],
+  [
+   1473,
+   "mount",
+   2,
+   "explorer",
+   "S3",
+   true
+  ],
+  [
+   1482,
+   "status",
+   2,
+   "shell"
+  ],
+  [
+   1482,
+   "status",
+   2,
+   "preparing"
+  ],
+  [
+   1499,
+   "status",
+   2,
+   "mounting"
+  ],
+  [
+   1591,
+   "ready",
+   2,
+   null,
+   null
+  ],
+  [
+   1593,
+   "status",
+   2,
+   "ready"
+  ],
+  [
+   1593,
+   "order",
+   2,
+   "pause",
+   0,
+   null
+  ],
+  [
+   1609,
+   "clock",
+   2,
+   0,
+   false
+  ],
+  [
+   1862,
+   "order",
+   2,
+   "pause",
+   0,
+   null
+  ],
+  [
+   1866,
+   "clock",
+   2,
+   0,
+   false
+  ],
+  [
+   1876,
+   "live",
+   2
+  ],
+  [
+   1877,
+   "order",
+   2,
+   "play",
+   0,
+   null
+  ],
+  [
+   1878,
+   "clock",
+   2,
+   0,
+   true
+  ],
+  [
+   1920,
+   "gone",
+   1
+  ],
+  [
+   2157,
+   "clock",
+   2,
+   8,
+   true
+  ],
+  [
+   2422,
+   "clock",
+   2,
+   16,
+   true
+  ],
+  [
+   2692,
+   "clock",
+   2,
+   24,
+   true
+  ],
+  [
+   2955,
+   "clock",
+   2,
+   32,
+   true
+  ],
+  [
+   3225,
+   "clock",
+   2,
+   40,
+   true
+  ],
+  [
+   3487,
+   "clock",
+   2,
+   48,
+   true
+  ],
+  [
+   3765,
+   "clock",
+   2,
+   56,
+   true
+  ],
+  [
+   4038,
+   "clock",
+   2,
+   64,
+   true
+  ],
+  [
+   4287,
+   "clock",
+   2,
+   72,
+   true
+  ],
+  [
+   4557,
+   "clock",
+   2,
+   80,
+   true
+  ],
+  [
+   4768,
+   "order",
+   2,
+   "play",
+   600,
+   null
+  ],
+  [
+   4770,
+   "clock",
+   2,
+   86,
+   false
+  ],
+  [
+   4770,
+   "clock",
+   2,
+   600,
+   false
+  ],
+  [
+   4770,
+   "clock",
+   2,
+   600,
+   true
+  ],
+  [
+   5021,
+   "clock",
+   2,
+   608,
+   true
+  ],
+  [
+   5289,
+   "clock",
+   2,
+   616,
+   true
+  ],
+  [
+   5554,
+   "clock",
+   2,
+   624,
+   true
+  ],
+  [
+   5821,
+   "clock",
+   2,
+   632,
+   true
+  ],
+  [
+   6090,
+   "clock",
+   2,
+   640,
+   true
+  ],
+  [
+   6389,
+   "clock",
+   2,
+   648,
+   true
+  ],
+  [
+   6621,
+   "clock",
+   2,
+   656,
+   true
+  ],
+  [
+   6891,
+   "clock",
+   2,
+   664,
+   true
+  ],
+  [
+   7155,
+   "clock",
+   2,
+   672,
+   true
+  ],
+  [
+   7420,
+   "clock",
+   2,
+   680,
+   true
+  ],
+  [
+   7687,
+   "clock",
+   2,
+   688,
+   true
+  ],
+  [
+   7956,
+   "clock",
+   2,
+   696,
+   true
+  ],
+  [
+   8220,
+   "clock",
+   2,
+   704,
+   true
+  ],
+  [
+   8496,
+   "clock",
+   2,
+   712,
+   true
+  ],
+  [
+   8758,
+   "clock",
+   2,
+   720,
+   true
+  ],
+  [
+   9028,
+   "clock",
+   2,
+   728,
+   true
+  ],
+  [
+   9292,
+   "clock",
+   2,
+   736,
+   true
+  ],
+  [
+   9556,
+   "clock",
+   2,
+   744,
+   true
+  ],
+  [
+   9821,
+   "clock",
+   2,
+   752,
+   true
+  ],
+  [
+   10090,
+   "clock",
+   2,
+   760,
+   true
+  ],
+  [
+   10355,
+   "clock",
+   2,
+   768,
+   true
+  ],
+  [
+   10624,
+   "clock",
+   2,
+   776,
+   true
+  ],
+  [
+   10887,
+   "clock",
+   2,
+   784,
+   true
+  ],
+  [
+   11161,
+   "clock",
+   2,
+   792,
+   true
+  ],
+  [
+   11433,
+   "clock",
+   2,
+   800,
+   true
+  ],
+  [
+   11686,
+   "clock",
+   2,
+   808,
+   true
+  ],
+  [
+   11954,
+   "clock",
+   2,
+   816,
+   true
+  ],
+  [
+   12220,
+   "clock",
+   2,
+   824,
+   true
+  ],
+  [
+   12491,
+   "clock",
+   2,
+   832,
+   true
+  ],
+  [
+   12754,
+   "clock",
+   2,
+   840,
+   true
+  ],
+  [
+   13021,
+   "clock",
+   2,
+   848,
+   true
+  ],
+  [
+   13296,
+   "clock",
+   2,
+   856,
+   true
+  ],
+  [
+   13556,
+   "clock",
+   2,
+   864,
+   true
+  ],
+  [
+   13831,
+   "clock",
+   2,
+   872,
+   true
+  ],
+  [
+   14087,
+   "clock",
+   2,
+   880,
+   true
+  ],
+  [
+   14360,
+   "clock",
+   2,
+   888,
+   true
+  ],
+  [
+   14624,
+   "clock",
+   2,
+   896,
+   true
+  ],
+  [
+   14759,
+   "clock",
+   2,
+   899,
+   false
+  ]
+ ]
+}
