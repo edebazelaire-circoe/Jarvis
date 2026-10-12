@@ -1,0 +1,60 @@
+{
+ "side": "jarvis",
+ "topic": "jarvis",
+ "model": "sonnet",
+ "pack_sha256": "90b9bafef0a2c3daa58b95b8c6fa562c0c52e71bcf9e07018b2cdd2ccb029857",
+ "tested_head": "4ea12e008c01866772168fe0e1d166391309dd13",
+ "decks": [
+  {
+   "presentation_id": "pst_6dab6236b6f2b0a54af4148b40e15e1d",
+   "title": "JARVIS en 40 secondes",
+   "revision": 1,
+   "variants": [
+    {
+     "variant_id": "psv_4ea4542358845ffde809831a35d368d4",
+     "revision": 3,
+     "title": "JARVIS en 40 secondes",
+     "scenes": [
+      {
+       "scene_id": "pss_6c46fdb11601",
+       "title": "Ouverture",
+       "prefab": {
+        "id": "presentation-studio.rm-ouverture-046925db",
+        "version": 1
+       },
+       "source_status": 200
+      },
+      {
+       "scene_id": "pss_7034887b4ecf",
+       "title": "Du micro à la voix",
+       "prefab": {
+        "id": "presentation-studio.p6dab6236b6f2.s7034887b4ecf",
+        "version": 1
+       },
+       "source_status": 200
+      },
+      {
+       "scene_id": "pss_f436082b77f4",
+       "title": "Trois outils, un garde",
+       "prefab": {
+        "id": "presentation-studio.p6dab6236b6f2.sf436082b77f4",
+        "version": 1
+       },
+       "source_status": 200
+      },
+      {
+       "scene_id": "pss_13c8de8066b0",
+       "title": "À toi d'essayer",
+       "prefab": {
+        "id": "presentation-studio.rm-cloture-bfea90c3",
+        "version": 1
+       },
+       "source_status": 200
+      }
+     ]
+    }
+   ]
+  }
+ ],
+ "brief": "Crée une courte présentation vidéo Remotion de 4 scènes, environ 40 secondes au total, en 1920x1080, qui présente JARVIS, l'assistant vocal local de ce poste à des développeurs qui le découvrent. Seule source de vérité : le fichier <bench>/packs/jarvis/README.md ; n'invente aucun chiffre, nom ni fonctionnalité qui n'y soit pas. Direction artistique : fond sombre, sobre, typographie nette, une seule couleur d'accent, animations soignées (entrées échelonnées, schémas ou éléments animés plutôt que des listes de puces). Textes à l'écran en français et courts. N'installe aucune dépendance : utilise seulement react et remotion. Quand c'est prêt, dis-moi en une phrase où la voir."
+}

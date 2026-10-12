@@ -1,0 +1,43 @@
+{
+ "run": "d-jarvis-2",
+ "label": "direct run 2",
+ "side": "direct",
+ "topic": "jarvis",
+ "totals": {
+  "cost_usd": 0.343055,
+  "duration_ms": 149708,
+  "num_turns": 13
+ },
+ "agents": {
+  "direct": {
+   "description": null,
+   "tool_calls": 12,
+   "by_tool": {
+    "Read": 5,
+    "Bash": 5,
+    "Write": 2
+   },
+   "refused_or_error": [
+    {
+     "tool": "Bash",
+     "result": "Exit code 2\n/usr/bin/bash: -c: line 165: unexpected EOF while looking for matching `''"
+    },
+    {
+     "tool": "Bash",
+     "result": "Exit code 2\nls: cannot access 'out': No such file or directory\nsrc:\nRoot.tsx\nindex.ts"
+    }
+   ],
+   "frames_viewed": 4,
+   "usage": {
+    "input_tokens": 16,
+    "output_tokens": 111,
+    "cache_read_input_tokens": 262230,
+    "cache_creation_input_tokens": 40015
+   },
+   "elapsed_s": null
+  }
+ },
+ "files": {
+  "stream.jsonl": 47
+ }
+}

@@ -173,3 +173,12 @@ def test_the_native_guide_offers_only_brief_keys_a_native_deck_uses():
 
     offered = set(draft_guide("native")["brief"]["optional"])
     assert offered <= _BRIEF_OPTIONAL and "strict_content" not in offered, "a real run was refused once for strict_content (Slice 13 trace)"
+
+
+def test_the_native_guide_names_the_component_names_the_isolation_guard_refuses():
+    from jarvis.domain.presentation_studio_authoring_guide import draft_guide
+    from jarvis.domain.remotion_isolation import _TAGS
+
+    hint = draft_guide("native")["draft"]["isolation"]
+    assert all(tag in hint for tag in _TAGS.split("|")), "the guide lists every tag the guard refuses"
+    assert "Link" in hint and "Frame" in hint, "a real run lost two submissions to components named Frame and Link (Slice 13 trace jn2)"

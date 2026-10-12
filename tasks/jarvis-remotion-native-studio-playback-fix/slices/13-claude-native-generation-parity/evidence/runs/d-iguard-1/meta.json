@@ -1,0 +1,18 @@
+{
+ "side": "direct",
+ "topic": "iguard",
+ "model": "sonnet",
+ "budget_usd": 3.0,
+ "pack_sha256": "02e4e74dcaf671a975bee10cfa2022161b184b66e8923b12f7511e41cba6ba1d",
+ "argv_flags": [
+  "--model",
+  "--output-format",
+  "--verbose",
+  "--safe-mode",
+  "--strict-mcp-config",
+  "--permission-mode",
+  "--max-budget-usd",
+  "--disallowedTools"
+ ],
+ "brief": "Crée une courte présentation vidéo Remotion de 4 scènes, environ 40 secondes au total, en 1920x1080, qui présente IAGuard, l'agent documentaire souverain à un DSI qui évalue l'outil. Seule source de vérité : le fichier <scratch>/bench/packs/iguard/README.md ; n'invente aucun chiffre, nom ni fonctionnalité qui n'y soit pas. Direction artistique : fond sombre, sobre, typographie nette, une seule couleur d'accent, animations soignées (entrées échelonnées, schémas ou éléments animés plutôt que des listes de puces). Textes à l'écran en français et courts. N'installe aucune dépendance : utilise seulement react et remotion. Quand c'est prêt, dis-moi en une phrase où la voir."
+}

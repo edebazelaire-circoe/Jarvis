@@ -1,0 +1,60 @@
+{
+ "side": "jarvis",
+ "topic": "iguard",
+ "model": "sonnet",
+ "pack_sha256": "02e4e74dcaf671a975bee10cfa2022161b184b66e8923b12f7511e41cba6ba1d",
+ "tested_head": "2e7167329fca2919ce5935c857b0bb5a8024b353",
+ "decks": [
+  {
+   "presentation_id": "pst_f50c5abb9fafc6ef16b36b098494801d",
+   "title": "IAGuard, l'agent documentaire souverain",
+   "revision": 1,
+   "variants": [
+    {
+     "variant_id": "psv_2cbf9cb86cdf85267948cef2314ffddb",
+     "revision": 2,
+     "title": "IAGuard, l'agent documentaire souverain",
+     "scenes": [
+      {
+       "scene_id": "pss_42259f4a25ce",
+       "title": "Ouverture",
+       "prefab": {
+        "id": "presentation-studio.rm-ouverture-f32492bf",
+        "version": 1
+       },
+       "source_status": 200
+      },
+      {
+       "scene_id": "pss_d89e8268199d",
+       "title": "De vos fichiers à une réponse prouvée",
+       "prefab": {
+        "id": "presentation-studio.rm-parcours-994dab09",
+        "version": 1
+       },
+       "source_status": 200
+      },
+      {
+       "scene_id": "pss_24f640f9aa44",
+       "title": "Rien ne change sans votre accord",
+       "prefab": {
+        "id": "presentation-studio.pf50c5abb9faf.s24f640f9aa44",
+        "version": 1
+       },
+       "source_status": 200
+      },
+      {
+       "scene_id": "pss_623e7334dd9a",
+       "title": "Local, maîtrisé, prêt à tester",
+       "prefab": {
+        "id": "presentation-studio.rm-cloture-8c8affd2",
+        "version": 1
+       },
+       "source_status": 200
+      }
+     ]
+    }
+   ]
+  }
+ ],
+ "brief": "Crée une courte présentation vidéo Remotion de 4 scènes, environ 40 secondes au total, en 1920x1080, qui présente IAGuard, l'agent documentaire souverain à un DSI qui évalue l'outil. Seule source de vérité : le fichier <bench>/packs/iguard/README.md ; n'invente aucun chiffre, nom ni fonctionnalité qui n'y soit pas. Direction artistique : fond sombre, sobre, typographie nette, une seule couleur d'accent, animations soignées (entrées échelonnées, schémas ou éléments animés plutôt que des listes de puces). Textes à l'écran en français et courts. N'installe aucune dépendance : utilise seulement react et remotion. Quand c'est prêt, dis-moi en une phrase où la voir."
+}

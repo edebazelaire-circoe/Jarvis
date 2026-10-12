@@ -236,6 +236,12 @@ def native_example() -> dict[str, Any]:
 #: `must_cover`, `resources` feed rules that are only warnings in native): the guide offers these, nothing else, so the author does not probe.
 NATIVE_BRIEF_OPTIONAL = frozenset({"purpose", "audience", "duration_target_s", "tone", "language", "speech"})
 
+#: The isolation guard (`remotion_isolation`, a case-insensitive filter, unchanged: the sandbox stays the wall) reads `<Link`, `<Frame`,
+#: `<Meta`... as the forbidden HTML elements: a real native run lost two submissions to components named `Frame` and `Link`. Said up front.
+ISOLATION_HINT = ("la garde d'isolation refuse les balises script, iframe, frame, frameset, embed, object, applet, link, meta, base, quelle que "
+                  "soit la casse : ne nomme pas un composant Link, Frame, Meta, Base, Object ou Embed (Lien, Cadre, Etape...) ; pas de "
+                  "window, document, fetch, eval, setTimeout avec une chaine")
+
 NATIVE_LOOP = ("CODE REMOTION NATIF (brief.authoring: native). 1) Storyboard : une scene = une composition (taille, fps, duree en images) et "
                "une idee. 2) Ecris du React/TSX normal : texte, couleurs et mise en page dans le code, modules src/lib/*.tsx ; point d'entree "
                "src/Scene.tsx (export default) ; imports react et remotion seulement (polices systeme, pas de paquet) ; images en public/** "
@@ -259,7 +265,8 @@ def draft_guide(kind: str | None = None) -> dict[str, Any]:
                           "prefabs": "[{key, remotion: {title, files: {'src/Scene.tsx': <TSX>, 'src/lib/X.tsx': <TSX>}, composition: "
                                      "{width, height, fps, duration_in_frames}, assets?: {'public/x.png': <base64>}}}]",
                           "scenes": "[{key, title, prefab: {bundle: <key>}, role?}] dans l'ordre du deck",
-                          "keys": "key de bundle et de scene : minuscules, chiffres et _ , commence par une lettre (ouverture, scene_2)"},
+                          "keys": "key de bundle et de scene : minuscules, chiffres et _ , commence par une lettre (ouverture, scene_2)",
+                          "isolation": ISOLATION_HINT},
                 "note": "FORME seulement : remplace tout le texte, les couleurs, les durees et les mises en page par les tiens.",
                 "example": copy.deepcopy(native_example())}
     if kind == "exploratory":

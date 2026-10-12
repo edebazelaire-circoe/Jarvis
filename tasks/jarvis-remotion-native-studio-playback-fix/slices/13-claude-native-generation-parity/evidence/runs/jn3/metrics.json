@@ -1,0 +1,70 @@
+{
+ "run": "jn3",
+ "label": "Jarvis native, run 3 (same external kill)",
+ "side": "jarvis",
+ "topic": "jarvis",
+ "totals": {
+  "cost_usd_last_brain_result": 0.1683359,
+  "brain_results": 1
+ },
+ "agents": {
+  "brain": {
+   "description": "brain",
+   "tool_calls": 1,
+   "by_tool": {
+    "Agent": 1
+   },
+   "refused_or_error": [],
+   "frames_viewed": 0,
+   "usage": {
+    "input_tokens": 4,
+    "output_tokens": 785,
+    "cache_read_input_tokens": 70099,
+    "cache_creation_input_tokens": 38367
+   },
+   "elapsed_s": 13.0
+  },
+  "agent-a8071e9a05cf2d61a": {
+   "description": "[code] [presentation-author] Présentation Remotion JARVIS",
+   "tool_calls": 9,
+   "by_tool": {
+    "Read": 1,
+    "ToolSearch": 1,
+    "mcp__jarvis-presentation__presentation_inspect": 1,
+    "Bash": 1,
+    "mcp__jarvis-presentation__presentation_draft_assemble": 1,
+    "mcp__jarvis-presentation__presentation_source": 4
+   },
+   "refused_or_error": [
+    {
+     "tool": "mcp__jarvis-presentation__presentation_source",
+     "result": "Refus core_unreachable : Core est injoignable : rien n'a été lu ni fait. (Core : Core est injoignable (ClientOSError))"
+    },
+    {
+     "tool": "mcp__jarvis-presentation__presentation_source",
+     "result": "Connection closed"
+    }
+   ],
+   "frames_viewed": 0,
+   "usage": {
+    "input_tokens": 10,
+    "output_tokens": 117,
+    "cache_read_input_tokens": 174221,
+    "cache_creation_input_tokens": 52192
+   },
+   "elapsed_s": 162.3
+  }
+ },
+ "turns": [
+  {
+   "text": "Crée une courte présentation vidéo Remotion de 4 scènes, environ 40 secondes au total, en 1920x1080, qui présente JARVIS, l'assistant vocal local de ce poste à des développeurs qui le découvrent. Seul",
+   "brain_answer_s": 20.6,
+   "answer": "{\"text\": \"J'ai lancé un agent qui construit la présentation Remotion de 4 scènes sur JARVIS, à partir du README seulement. Je vous dis où la voir dès qu'il a terminé.\", \"ok\": true, \"error\": null}"
+  }
+ ],
+ "files": {
+  "brain.jsonl": 14,
+  "agent-a8071e9a05cf2d61a.jsonl": 21,
+  "jarvis-trace.jsonl": 111
+ }
+}
