@@ -16,7 +16,10 @@
    - dit à l'écran chaque état : préparation (compteur), prêt, échec typé (moteur indisponible, compilation avec fichier:ligne,
      source refusée), cadre retiré par le chien de garde (raison en clair + « Recharger la scène ») ;
    - rend compte à la fenêtre parente par `{rsh: 1, type: 'status'}` (états `shell`, `preparing`, `ready`, `failed`, `killed`) et lit
-     d'elle `props`, `control`, `cue`, `teardown` (même origine, source = `window.parent` : un autre cadre ne la pilote pas).
+     d'elle `props`, `control`, `cue`, `teardown`, `sound` (même origine, source = `window.parent` : un autre cadre ne la pilote pas) ;
+   - Slice 08 (native-studio-playback-fix) : garde le son voulu (`sound {muted}`) et le redonne à chaque Player qu'elle monte (rechargement,
+     chien de garde) ; relaie l'état réel du son (`audio {muted, blocked}`) ; dans Variantes (`embed=variants`), relaie les touches du
+     transport (`KEYS` du protocole) frappées dans la scène ou dans cette page, seulement quand la scène a vraiment le focus.
    Aucun secret ici : aucun jeton de Core n'existe dans cette page (les routes `/api/...` sont celles de la page de l'utilisateur). */
 (function(root){
   'use strict';
@@ -29,7 +32,7 @@
   const PROPS_COALESCE_MS=16;
   const CONTROL_HIDE_MS=2500;
   const CLOCK_RELAY_MS=250;
-  const PARENT_TYPES=Object.freeze(['props','control','cue','teardown']);
+  const PARENT_TYPES=Object.freeze(['props','control','cue','teardown','sound']);
   const KILL_TEXT=Object.freeze({
     unresponsive:'La scène ne répond plus depuis 3 s : elle a été retirée.',
     memory:'La scène utilise trop de mémoire : elle a été retirée.',
@@ -46,7 +49,7 @@
     if(!event||event.source!==parentWindow||event.origin!==origin)return {ok:false,reason:'foreign'};
     const data=event.data;
     if(!plainObject(data)||data.rsh!==SHELL||!PARENT_TYPES.includes(data.type))return {ok:false,reason:'bad_message'};
-    const allowed={props:['props','data'],control:['action','frame','until'],cue:['name','frame'],teardown:[]}[data.type];
+    const allowed={props:['props','data'],control:['action','frame','until'],cue:['name','frame'],teardown:[],sound:['muted']}[data.type];
     for(const key of Object.keys(data))if(key!=='rsh'&&key!=='type'&&!allowed.includes(key))return {ok:false,reason:'extra_field'};
     return {ok:true,message:data};
   }
@@ -93,7 +96,8 @@
     const stopEvery=d.clearInterval||((id)=>clearInterval(id));
     const state={phase:'shell',generation:0,props:{},data:{},noticed:false,propsRefused:0,lastProblems:[],descriptor:null,iframe:null,supervisor:null,tickTimer:null,prepareTimer:null,
       prepareSince:0,counterTimer:null,propsTimer:null,sent:'',playing:false,frame:0,frameAt:0,lastPong:0,clockSentAt:-1e9,clockSentFrame:-1,mounted:false,
-      killedReason:null,duration:0,fps:30,hideTimer:null,lastSupervisor:null,muted:true,controller:null,barTimer:null};
+      killedReason:null,duration:0,fps:30,hideTimer:null,lastSupervisor:null,muted:true,controller:null,barTimer:null,
+      soundWanted:null,soundBlocked:false,keysRelayed:0,keysRefused:0};
     const ui={};
 
     function el(tag,className,text){
@@ -133,7 +137,7 @@
       ui.sound.title='Le navigateur n’autorise le son que sur un geste de l’utilisateur dans la scène : la lecture démarre muette.';
       ui.bar.append(ui.toggle,ui.scrub,ui.time,ui.sound);
       /* Embedded in Variants (Slice 06): Variants' transport is the only one (contract § 2, § 6 #10); the bar is never put in the page. */
-      if(embedded){ui.root.append(ui.host,ui.panel);return}
+      if(embedded){ui.root.append(ui.host,ui.panel);doc.addEventListener('keydown',onOwnKey,true);return}
       ui.root.append(ui.host,ui.panel,ui.bar);
       doc.addEventListener('pointermove',showBar);
       doc.addEventListener('focusin',showBar);
@@ -309,6 +313,15 @@
           state.frame=message.frame;state.frameAt=now();state.lastPong=state.frameAt;state.muted=message.muted!==false;refreshBar();
           break;
         case 'clock':onClock(message);break;
+        case 'audio':
+          state.muted=message.muted;state.soundBlocked=message.blocked;refreshBar();
+          tellParentRaw({type:'audio',muted:message.muted,blocked:message.blocked});
+          break;
+        case 'key':
+          /* A key is passed on only while the scene really has the focus: a scene cannot press the transport behind the user's back. */
+          if(embedded&&sceneFocused())relayKey(message.key);
+          else state.keysRefused+=1;
+          break;
         case 'violation':
           report('violation',{directive:message.directive});
           d.log('warn','remotion.stage.csp_violation',{directive:message.directive,blocked:message.blocked.slice(0,120)});
@@ -339,6 +352,31 @@
       catch(error){d.log('warn','remotion.stage.parent_post_failed',{error:describe(error)})}
     }
 
+    function tellParentRaw(fields){
+      try{d.parentWindow.postMessage(Object.assign({rsh:SHELL},fields),d.origin)}
+      catch(error){d.log('warn','remotion.stage.parent_post_failed',{error:describe(error)})}
+    }
+    function sceneFocused(){
+      try{return !!state.iframe&&doc.activeElement===state.iframe&&(typeof doc.hasFocus!=='function'||doc.hasFocus())}catch(_error){return false}
+    }
+    function relayKey(key){
+      state.keysRelayed+=1;
+      tellParentRaw({type:'key',key});
+    }
+    /* Keys typed in this page itself (the focus on the panel or a « Réessayer » button): the same map, a focused button keeps Space and Enter. */
+    function onOwnKey(event){
+      if(event.ctrlKey||event.altKey||event.metaKey||!P.KEYS.includes(event.key))return;
+      const tag=String(event.target&&event.target.tagName||'').toUpperCase();
+      if(tag==='BUTTON'&&event.key===' ')return;
+      if(tag==='IFRAME')return;
+      event.preventDefault();
+      relayKey(event.key);
+    }
+    function sendSound(){
+      if(state.soundWanted===null||!state.mounted||!state.iframe)return;
+      try{postToFrame(state.iframe,P.hostMessage('sound',{muted:!state.soundWanted}))}catch(error){d.log('warn','remotion.stage.sound_refused',{error:describe(error)})}
+    }
+
     function sandboxReady(generation){
       const descriptor=state.descriptor;
       try{
@@ -352,6 +390,7 @@
         return;
       }
       state.phase='ready';state.mounted=true;
+      sendSound();   // the sound the window wants, kept across a reload or a watchdog restart of the Player
       setPanel('ready');
       ui.bar.hidden=embedded;
       ui.scrub.max=String(Math.max(state.duration-1,0));
@@ -469,6 +508,9 @@
             try{postToFrame(state.iframe,P.hostMessage('cue',{name:m.name,frame:m.frame}))}catch(error){d.log('warn','remotion.stage.cue_refused',{error:describe(error)})}
           }
           break;
+        case 'sound':
+          if(typeof m.muted==='boolean'){state.soundWanted=!m.muted;sendSound()}
+          break;
         case 'teardown':
           state.generation+=1;abortPrepare();teardownFrame();stopEvery(state.barTimer);state.barTimer=null;state.phase='removed';state.mounted=false;break;
         default:break;
@@ -487,7 +529,8 @@
     }
 
     return {start,prepare,control,setProps,state:()=>({phase:state.phase,mounted:state.mounted,playing:state.playing,frame:state.frame,embedded,
-      duration:state.duration,killedReason:state.killedReason,generation:state.generation,muted:state.muted,
+      duration:state.duration,killedReason:state.killedReason,generation:state.generation,muted:state.muted,soundWanted:state.soundWanted,
+      soundBlocked:state.soundBlocked,keysRelayed:state.keysRelayed,keysRefused:state.keysRefused,
       propsRefused:state.propsRefused,lastProblems:state.lastProblems.slice(0,3),
       supervisor:state.supervisor?state.supervisor.state():state.lastSupervisor||null})};
   }

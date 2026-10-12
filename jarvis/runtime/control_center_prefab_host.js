@@ -196,6 +196,10 @@
        drops the grace-period play; `embed` tells the stage page it has no bar of its own (`R.stageUrl`). The run stage keeps both. */
     const autoplay=d.autoplay!==false;
     const embed=typeof d.embed==='string'?d.embed:undefined;
+    /* Sound (native-studio-playback-fix Slice 08): the sound the page wants for its Remotion Players (`sound(muted)`), `null` until it says
+       (then each stage keeps the old rule: a click in the scene turns the sound on). Only the LIVE frame of an object gets it: a frame loaded
+       ahead or a hot-reload candidate stays muted until it takes the window (`promote`), so only the scene on screen is ever audible. */
+    let soundMuted=null;
     const frames=new Map();
     const bundles=new Map();
     const departing=new Set();
@@ -476,9 +480,31 @@
       },HOLD_GRACE_MS);
     }
 
+    function sendSound(rec){
+      if(soundMuted===null||!rec.remotion||!rec.ready||rec.staged||frames.get(rec.objectId)!==rec)return false;
+      return post(rec,R.hostMessage('sound',{muted:soundMuted}));
+    }
+    function liveHook(rec,name,value){
+      if(rec.staged||frames.get(rec.objectId)!==rec||typeof d[name]!=='function')return;
+      try{d[name](rec.objectId,value)}catch(error){safeLog('scene.prefab_hook_failed',{object_id:rec.objectId,hook:name,error:describe(error)})}
+    }
     function onRemotionStatus(rec,event){
       const view=rec.iframe;
       const origin=win.location&&win.location.origin;
+      const type=event&&event.data&&event.data.type;
+      if(type==='audio'){   /* the real state of the sound in the Player (Slice 08): `blocked` when the browser refused it */
+        const parsed=R.parseAudio(event,view,origin);
+        if(!parsed.ok){drop(rec,parsed.reason);return}
+        rec.audio=parsed.audio;
+        liveHook(rec,'onSound',Object.assign({},parsed.audio));
+        return;
+      }
+      if(type==='key'){     /* a § 4.15 key typed in the scene that has the focus (Slice 08): the page's transport acts on it, once */
+        const parsed=R.parseKey(event,view,origin);
+        if(!parsed.ok){drop(rec,parsed.reason);return}
+        liveHook(rec,'onKey',parsed.key);
+        return;
+      }
       if(event&&event.data&&event.data.type==='clock'){   /* position du lecteur (Slice 12) : gardée, bornée, jamais envoyée à Core */
         const clock=R.parseClock(event,view,origin);
         if(!clock.ok){drop(rec,clock.reason);return}
@@ -511,7 +537,7 @@
           rec.ready=true;
           /* Starts paused on the first frame: the timeline (or the grace period) decides what it plays, nothing replays after a mount. */
           post(rec,R.hostMessage('control',{action:'pause',frame:0}));
-          if(!rec.staged){hold(rec);notifyLive(rec)}
+          if(!rec.staged){sendSound(rec);hold(rec);notifyLive(rec)}
           clearNote(rec);
           if(rec.bandReason==='timeout'||rec.state==='error'){clearBand(rec)}
           rec.state='ready';
@@ -603,7 +629,7 @@
       current.state='removed';
       try{if(next.height&&typeof d.onResize==='function')d.onResize(next.objectId,next.height)}catch(_error){/* intentional: layout hint only */}
       safeLog('scene.prefab_swapped',{object_id:next.objectId,prefab:next.key,mode});
-      if(next.remotion){hold(next);notifyLive(next)}   // the Player that waited paused on frame 0 behind the live one takes its orders now
+      if(next.remotion){sendSound(next);hold(next);notifyLive(next)}   // the Player that waited paused on frame 0 behind the live one takes its orders now
       /* The scene asked to be loaded ahead while this one was still waiting (Slice 05): it starts now, beside the frame just shown. */
       const queued=current.queued;current.queued=null;
       if(queued&&!next.next&&next.state==='ready'&&`${queued.prefab.id}@${queued.prefab.version}`!==next.key){
@@ -1052,6 +1078,15 @@
       return post(rec,R.hostMessage('cue',{name,frame}));
     }
 
+    /* The sound the page wants for its Remotion Players (Slice 08): sent at once to every live Remotion frame, kept for the next ones. */
+    function sound(muted){
+      if(typeof muted!=='boolean')throw new TypeError('sound: muted must be a boolean');
+      soundMuted=muted;
+      let sent=0;
+      for(const rec of frames.values())if(sendSound(rec))sent++;
+      return sent;
+    }
+
     function stats(){
       let paused=0,ready=0,errors=0,loading=0,staging=0;
       for(const rec of frames.values()){
@@ -1069,7 +1104,9 @@
       for(const objectId of Array.from(frames.keys()))unmount(objectId);
     }
 
-    return Object.freeze({mount,preload,update,unmount,pause,resume,touch,reload,stats,destroy,control,cue,clock,frame,
+    return Object.freeze({mount,preload,update,unmount,pause,resume,touch,reload,stats,destroy,control,cue,clock,frame,sound,
+      soundWanted:()=>soundMuted===null?null:!soundMuted,
+      audio:(objectId)=>{const rec=frames.get(objectId);return rec&&rec.audio?Object.assign({},rec.audio):null},
       has:(objectId)=>frames.has(objectId),
       counters:(objectId)=>{const rec=frames.get(objectId);return rec?Object.assign({},rec.counters):null},
       parked:(objectId)=>{const rec=frames.get(objectId);return !!(rec&&rec.next&&rec.next.parked)},

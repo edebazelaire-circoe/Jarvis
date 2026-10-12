@@ -7,7 +7,10 @@
    porte `frame-src <origine du bac à sable>` et rien d'autre ; la page principale du Control Center encadre déjà un visualiseur.
 
    Protocole avec la page de la scène (`rsh: 1`, même origine, source = `contentWindow` du cadre, champs exacts) :
-   - fenêtre -> page : `props {props, data?}`, `control {action, frame?, until?}`, `cue {name, frame}`, `teardown {}` ;
+   - fenêtre -> page : `props {props, data?}`, `control {action, frame?, until?}`, `cue {name, frame}`, `teardown {}`, `sound {muted}` (Slice 08 de
+     native-studio-playback-fix : le son voulu ; seul le cadre VIVANT le reçoit, un cadre préchargé reste muet) ;
+   - page -> fenêtre : `audio {muted, blocked}` (l'état réel du son, `blocked` : refusé par le navigateur) et `key {key}` (une touche de `KEYS`
+     frappée dans la scène de Variantes ; même contrôle de source et d'origine) ;
    - page -> fenêtre : `clock {frame, playing, duration, fps}` (Slice 12 : où en est le lecteur, au plus 4 par seconde ; conseil de
      l'iframe, jamais envoyé à Core) ;
    - page -> fenêtre : `status {phase, ...}` avec `phase` parmi `shell`, `preparing`, `mounting`, `ready`, `failed`, `killed`,
@@ -17,7 +20,9 @@
   const SHELL=1;
   const STAGE_PATH='/remotion-stage';
   const PHASES=Object.freeze(['shell','preparing','mounting','ready','failed','killed','scene_error','notice']);
-  const HOST_FIELDS=Object.freeze({props:['props','data'],control:['action','frame','until'],cue:['name','frame'],teardown:[]});
+  const HOST_FIELDS=Object.freeze({props:['props','data'],control:['action','frame','until'],cue:['name','frame'],teardown:[],sound:['muted']});
+  /* The same list as `RemotionSandboxProtocol.KEYS` (a test keeps them equal): the § 4.15 keys a scene with the focus passes on. */
+  const KEYS=Object.freeze([' ','ArrowLeft','ArrowRight','PageUp','PageDown','Home','End',',','.','f','F','m','M','Escape']);
   const ACTIONS=Object.freeze(['play','pause','seek']);
   const MAX_TEXT=300;
   const MAX_FRAMES=108000;
@@ -52,6 +57,7 @@
     const message=Object.assign({rsh:SHELL,type},fields||{});
     for(const key of Object.keys(message))if(key!=='rsh'&&key!=='type'&&!HOST_FIELDS[type].includes(key))throw new Error(`unexpected field ${key}`);
     if(type==='control'&&!ACTIONS.includes(message.action))throw new Error('bad control action');
+    if(type==='sound'&&typeof message.muted!=='boolean')throw new Error('bad sound');
     if(type==='control'){
       for(const key of ['frame','until'])if(key in message&&!(Number.isInteger(message[key])&&message[key]>=0&&message[key]<=MAX_FRAMES))throw new Error(`bad control ${key}`);
       if('until' in message&&(message.action!=='play'||('frame' in message&&message.until<message.frame)))throw new Error('bad control until');
@@ -88,6 +94,28 @@
     const inRange=(v,lo,hi)=>Number.isInteger(v)&&v>=lo&&v<=hi;
     if(!inRange(data.duration,1,MAX_FRAMES)||!inRange(data.fps,1,MAX_FPS)||!inRange(data.frame,0,data.duration-1)||typeof data.playing!=='boolean')return {ok:false,reason:'bad_clock'};
     return {ok:true,clock:{frame:data.frame,playing:data.playing,duration:data.duration,fps:data.fps}};
+  }
+
+  /* `audio` et `key` de la page de la scène (Slice 08) : même contrôle de source et d'origine, champs exacts. */
+  function parseExact(event,iframe,origin,type,fields){
+    if(!event||!iframe||event.source!==iframe.contentWindow||iframe.contentWindow==null)return {ok:false,reason:'foreign_source'};
+    if(event.origin!==origin)return {ok:false,reason:'bad_origin'};
+    const data=event.data;
+    if(!plain(data)||data.rsh!==SHELL||data.type!==type)return {ok:false,reason:'bad_message'};
+    for(const key of Object.keys(data))if(!['rsh','type'].concat(fields).includes(key))return {ok:false,reason:'extra_field'};
+    return {ok:true,data};
+  }
+  function parseAudio(event,iframe,origin){
+    const r=parseExact(event,iframe,origin,'audio',['muted','blocked']);
+    if(!r.ok)return r;
+    if(typeof r.data.muted!=='boolean'||typeof r.data.blocked!=='boolean')return {ok:false,reason:'bad_audio'};
+    return {ok:true,audio:{muted:r.data.muted,blocked:r.data.blocked}};
+  }
+  function parseKey(event,iframe,origin){
+    const r=parseExact(event,iframe,origin,'key',['key']);
+    if(!r.ok)return r;
+    if(typeof r.data.key!=='string'||!KEYS.includes(r.data.key))return {ok:false,reason:'bad_key'};
+    return {ok:true,key:r.data.key};
   }
 
   /* Ligne de temps de la partition (Slice 12, `docs/presentation-studio.md` > *Remotion timeline bridge*). Pur : la fenêtre de scène
@@ -293,7 +321,7 @@
       gaveUp:applied?applied.gaveUp:false,done:applied?applied.done:false,pending:current!==null&&applied===null})};
   }
 
-  const api=Object.freeze({SHELL,STAGE_PATH,PHASES,EMBEDS,stageUrl,createFrame,hostMessage,parseStatus,parseClock,createTimelineFollower,validTimeline,
+  const api=Object.freeze({SHELL,STAGE_PATH,PHASES,EMBEDS,KEYS,stageUrl,createFrame,hostMessage,parseStatus,parseClock,parseAudio,parseKey,createTimelineFollower,validTimeline,
     TIMELINE:Object.freeze({MAX_CORRECTIONS,CORRECTION_GAP_MS,CLOCK_FRESH_MS,TICK_MS,SILENT_TICKS,MAX_RESENDS,STALLED_MS,END_SLACK_FRAMES})});
   root.JarvisRemotionFrame=api;
   if(typeof module!=='undefined'&&module.exports)module.exports=api;
