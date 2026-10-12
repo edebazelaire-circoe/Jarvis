@@ -1,0 +1,130 @@
+{
+  "schema": "jarvis.presentation_studio.variant",
+  "schema_version": 5,
+  "presentation_id": "pst_eaf773f3a32c8360758a76d54fc5398a",
+  "variant_id": "psv_ff1d369bc1f1e187f99dbf77a47965e1",
+  "variant_number": 1,
+  "title": "Lecture",
+  "parent_variant_id": null,
+  "scenes": [
+    {
+      "scene_id": "pss_0000000000d1",
+      "prefab": {
+        "id": "jarvis.window",
+        "version": 1
+      },
+      "title": "Un",
+      "section": "",
+      "props": {
+        "density": "compact"
+      },
+      "data": {
+        "body": "Texte"
+      },
+      "controls": [
+        {
+          "control_id": "density",
+          "path": "props.density",
+          "label": "Densite",
+          "group": "layout",
+          "meaning": ""
+        },
+        {
+          "control_id": "body",
+          "path": "data.body",
+          "label": "Texte",
+          "group": "content",
+          "meaning": ""
+        }
+      ],
+      "anchors": [],
+      "preview": {
+        "caption": "",
+        "alt": ""
+      },
+      "source_revision": 0,
+      "last_valid_pin": null
+    },
+    {
+      "scene_id": "pss_0000000000d2",
+      "prefab": {
+        "id": "jarvis.window",
+        "version": 1
+      },
+      "title": "Deux",
+      "section": "",
+      "props": {
+        "density": "compact"
+      },
+      "data": {
+        "body": "Texte"
+      },
+      "controls": [
+        {
+          "control_id": "density",
+          "path": "props.density",
+          "label": "Densite",
+          "group": "layout",
+          "meaning": ""
+        },
+        {
+          "control_id": "body",
+          "path": "data.body",
+          "label": "Texte",
+          "group": "content",
+          "meaning": ""
+        }
+      ],
+      "anchors": [],
+      "preview": {
+        "caption": "",
+        "alt": ""
+      },
+      "source_revision": 0,
+      "last_valid_pin": null
+    },
+    {
+      "scene_id": "pss_0000000000d3",
+      "prefab": {
+        "id": "jarvis.window",
+        "version": 1
+      },
+      "title": "Trois",
+      "section": "",
+      "props": {
+        "density": "compact"
+      },
+      "data": {
+        "body": "Texte"
+      },
+      "controls": [
+        {
+          "control_id": "density",
+          "path": "props.density",
+          "label": "Densite",
+          "group": "layout",
+          "meaning": ""
+        },
+        {
+          "control_id": "body",
+          "path": "data.body",
+          "label": "Texte",
+          "group": "content",
+          "meaning": ""
+        }
+      ],
+      "anchors": [],
+      "preview": {
+        "caption": "",
+        "alt": ""
+      },
+      "source_revision": 0,
+      "last_valid_pin": null
+    }
+  ],
+  "art_direction_id": "psd_e2a5dd1c83b3",
+  "score_id": "psr_bbdd8c4febc5",
+  "revision": 4,
+  "created_at": "2026-10-12T18:38:56.041520Z",
+  "updated_at": "2026-10-12T18:38:56.208055Z"
+}
