@@ -87,7 +87,8 @@
     const d=deps;
     const doc=d.document,win=d.window;
     /* `embed: 'variants'` (`?embed=variants`): the Player of Variants. No bar of its own, and it never plays on `ready`: Variants opens paused
-       on frame 0 and only its transport plays (contract § 4.1). The run stage keeps its bar and its play-on-ready until Slice 09 retires it. */
+       on frame 0 and only its transport plays (contract § 4.1). Without `embed` (a Remotion prefab window on the Board, outside any
+       presentation; the run stage window is retired, Slice 09) the bar is that window's only transport and it plays on ready. */
     const embedded=d.embed==='variants';
     const now=d.now||(()=>Date.now());
     const later=d.setTimeout||((fn,ms)=>setTimeout(fn,ms));

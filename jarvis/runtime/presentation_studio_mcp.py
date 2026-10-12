@@ -1,13 +1,13 @@
 """Serveur MCP stdio « jarvis-presentation » : le Presentation Studio pour le cerveau (jarvis-interactive-presentation-studio, Slice 21).
 
 Treize outils sémantiques, une opération fermée (`op`) par domaine, des ids lus dans l'état. **Une façade, jamais un propriétaire** :
-Core possède la présentation, ses variantes, sa lecture ; la page possède l'explorateur et le plein écran. Ce serveur est la **seule porte
+Core possède la présentation, ses variantes, sa lecture ; la page possède Variantes et le plein écran. Ce serveur est la **seule porte
 `brain`** : il pose l'acteur `brain` lui-même et n'envoie jamais l'origine d'un démarrage (voir `presentation_studio_mcp_tools`).
 
 | Outil | Rôle |
 | --- | --- |
 | `presentation_inspect` | état courant et ids valides (lecture ciblée : présentations, variantes, scène, partition, historique, lecture, comparaison, modèles) |
-| `presentation_view` | Studio (explorateur de variantes), fenêtre d'une présentation, rail, plein écran (explorateur, scène de lecture) |
+| `presentation_view` | Variantes (plein écran ou en fenêtre), rail, plein écran de la scène de Variantes |
 | `presentation_library` | rail : masquer / afficher, archiver / restaurer (avec accord), renommer, acquitter la pastille orange |
 | `presentation_play` | lire, répéter, naviguer (scène, partition, ancres) |
 | `presentation_edit` | éditions sémantiques et variantes de scène (ordres fermés, révision de base) |
@@ -125,7 +125,7 @@ def build_server(target: PresentationMcpTarget | None = None, *, tools: Presenta
 
     mcp = StrictPresentationMCP(SERVER_NAME, instructions=_SERVER_INSTRUCTIONS)
 
-    PresentationId = Annotated[str | None, Field(max_length=40, description="pst_… ; absent : la présentation de l'état (lecture en cours, explorateur ouvert, ou l'unique).")]
+    PresentationId = Annotated[str | None, Field(max_length=40, description="pst_… ; absent : la présentation de l'état (lecture en cours, Variantes ouvert, ou l'unique).")]
     VariantId = Annotated[str | None, Field(max_length=40, description="psv_… ; absent : la variante active.")]
     SceneId = Annotated[str, Field(max_length=20, description="pss_…, lu dans presentation_inspect.")]
 
@@ -172,7 +172,7 @@ def build_server(target: PresentationMcpTarget | None = None, *, tools: Presenta
     async def presentation_inspect(
         target: Annotated[Literal["overview", "presentation", "variant", "scene", "score", "history", "playback", "compare", "composition",
                                   "templates", "template", "explorer", "choices", "draft_guide", "rail"],
-                          Field(description="Quoi lire. overview : présentations (masquée, archivée, travail) + lecture + explorateur ; rail : état du rail et de l'écran ; presentation : graphe des variantes ; "
+                          Field(description="Quoi lire. overview : présentations (masquée, archivée, travail) + lecture + Variantes ; rail : état du rail et de l'écran ; presentation : graphe des variantes ; "
                                             "variant : scènes ; scene : contrôles, bornes, variantes de scène ; score : items sans texte ; "
                                             "choices : tous les ids valides ; draft_guide : clés exactes et exemple valide d'un brouillon.")],
         presentation_id: PresentationId = None,

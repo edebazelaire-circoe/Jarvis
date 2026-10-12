@@ -563,7 +563,7 @@ html:has(#${HOST_ID}:not([hidden])) #jvFullscreenPrompt{top:auto;bottom:18px;lef
 #${HOST_ID} .jvx-time{flex:none;min-width:7.5em;text-align:center;font:12px/1 ui-monospace,Consolas,monospace;font-variant-numeric:tabular-nums;color:var(--jvx-mute)}
 @media (forced-colors:active){#${HOST_ID} .jvx-scrub-track,#${HOST_ID} .jvx-scrub-tick{background:CanvasText}#${HOST_ID} .jvx-scrub-fill,#${HOST_ID} .jvx-scrub-thumb{background:Highlight}}
 @container jvxpreview (max-width:640px){
-  #${HOST_ID} .jvx-stage-note .jvx-scene-role,#${HOST_ID} .jvx-stage-note .jvx-scene-line .jvx-chip{display:none}
+  #${HOST_ID} .jvx-stage-note .jvx-scene-line .jvx-chip{display:none}
   #${HOST_ID} .jvx-transport{gap:4px}
   #${HOST_ID} .jvx-transport .jvx-btn:not(.jvx-btn-icon){padding:0 8px}
   /* Slice 09: on a narrow preview « Arrêter » keeps its name (text, title) but shows a glyph, so the transport stays one row. */
@@ -625,7 +625,7 @@ html:has(#${HOST_ID}:not([hidden])) #jvFullscreenPrompt{top:auto;bottom:18px;lef
 #${HOST_ID} .jvx-run-note{margin:0;contain:inline-size;width:100%;font-size:12.5px;line-height:1.4;color:var(--jvx-warn);text-align:right}
 /* Slice 10: during a run (\`data-run\` on the host) what is inert is SEEN: the tree (not its head, which carries « Présentation en cours »),
    the graph actions and the upgrade notice are dimmed; the run note says why. Never hidden: the actions stay where the hand expects them. */
-#${HOST_ID}[data-run] .jvx-treepane>:not(.jvx-panehead),#${HOST_ID}[data-run] .jvx-upgrades{opacity:.45;filter:saturate(.3)}
+#${HOST_ID}[data-run] .jvx-treepane>:not(.jvx-panehead),#${HOST_ID}[data-run] .jvx-upg{opacity:.45;filter:saturate(.3)}
 #${HOST_ID}[data-run] .jvx-actions{opacity:.8}
 #${HOST_ID}[data-run] .jvx-actions .jvx-btn{filter:saturate(.3)}
 #${HOST_ID} .jvx-actions .jvx-btn{justify-content:flex-start}

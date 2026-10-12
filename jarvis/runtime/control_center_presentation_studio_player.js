@@ -271,11 +271,6 @@
       }
     }
 
-    /* Lecture enchaînée : la portée active rend la main (`manual`), une autre la règle et rejoue la scène depuis son premier élément. */
-    function chain(scope){
-      if(!active(view))return Promise.resolve(null);
-      return command('play',{scope:(view.scope||'manual')===scope?'manual':scope});
-    }
     /* Ce que le suiveur du lecteur dit d'un segment : un fait, rendu à Core tel quel (il le juge contre son propre segment et son horloge). */
     function onSegment(event){
       const detail=event&&event.detail;
@@ -301,7 +296,7 @@
       if(started)refresh().then(schedule);
     }
 
-    return {start,stop,setVisible,refresh,command,adopt,chain,onSegment,
+    return {start,stop,setVisible,refresh,command,adopt,onSegment,
       view:()=>view,surface:()=>surface,stats:()=>Object.assign({},stats),
       state:()=>({inflight,failures,linkLostSince,started,visible,viewAt}),
       /* Variantes, le rail : démarre une lecture par la MÊME route que la voix (le refus de Core est rendu tel quel). */
@@ -326,7 +321,7 @@
     const player=createStudioPlayer({window,request,toast:typeof toast==='function'?toast:null});
     document.addEventListener('visibilitychange',()=>player.setVisible(document.visibilityState!=='hidden'));
     window.JarvisStudioPlayer=Object.freeze({start:player.start,stop:player.stop,refresh:player.refresh,command:player.command,
-      startRun:player.startRun,chain:player.chain,view:player.view,surface:player.surface,stats:player.stats,state:player.state});
+      startRun:player.startRun,view:player.view,surface:player.surface,stats:player.stats,state:player.state});
     player.start();
   }
   /* Rattrapé ici : la page servie n'a qu'une balise <script> ; une levée emporterait la page avec elle. */

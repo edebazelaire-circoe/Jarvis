@@ -6,8 +6,8 @@ Variants, `test_variants_run_js.py`). Pinned here: it creates no DOM at all and 
 timeline, 1.5 s in a run, 5 s at rest, back-off on failure, nothing while the tab is hidden); the events Variants listens to
 (`jarvis:studio-view` every view, `jarvis:studio-playback` on a start or an end, `jarvis:studio-surface` read once per surface revision,
 `jarvis:studio-timeline` with the surface id and the scene loaded ahead); every command ends in a state the caller can say (applied,
-refused, stage failure, timeout, unreachable Core); the follower's segment facts go to Core without a command in flight; the chained play
-toggle; a lost Core said once.
+refused, stage failure, timeout, unreachable Core); the follower's segment facts go to Core without a command in flight; no chained-play
+toggle helper (retired with the band, Slice 15); a lost Core said once.
 """
 
 from __future__ import annotations
@@ -225,17 +225,15 @@ return {posts:posts(),dropped:dropped.status,stats:p.stats().dropped};
     assert out["posts"] == ["next", "next", "previous", "pause"] and out["dropped"] == "dropped" and out["stats"] == 1
 
 
-def test_start_run_uses_the_voice_route_and_the_chained_play_toggles(tmp_path):
+def test_start_run_uses_the_voice_route(tmp_path):
     out = _node(tmp_path, """
 const p=make();p.start();await tick();
 await p.startRun('pst_1','user_presenter',{variant_id:'psv_1'});
-await p.chain('scene');
-p.adopt(st({scope:'scene'}));await p.chain('scene');
-p.adopt(st({scope:'all'}));await p.chain('all');await p.chain('scene');
-return {posts:posts()};
+return {posts:posts(),chain:typeof p.chain};
 """)
-    assert out["posts"] == ['start{"presentation_id":"pst_1","role":"user_presenter","variant_id":"psv_1"}', 'play{"scope":"scene"}',
-                            'play{"scope":"manual"}', 'play{"scope":"manual"}', 'play{"scope":"scene"}']
+    assert out["posts"] == ['start{"presentation_id":"pst_1","role":"user_presenter","variant_id":"psv_1"}']
+    # Slice 15: the band's « ▶ Slide / ▶▶ Tout » toggle helper is retired with the band; Core's `play {scope}` verb stays.
+    assert out["chain"] == "undefined"
 
 
 def test_the_followers_segment_facts_go_to_core_without_a_command_in_flight_or_a_toast(tmp_path):
