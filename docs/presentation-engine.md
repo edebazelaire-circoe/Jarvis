@@ -152,6 +152,12 @@ of a scene stays in the stage window with the compiler's message ([remotion-isol
 **Legacy documents.** A stored document without an engine reads as `slidecar` (v2 -> v3, unchanged); reads never rewrite it; the first save writes the new schema and keeps the exact old bytes once in
 `presentation.json.v<N>.bak`; the variant files are not touched by a manifest save (`tests/unit/test_presentation_studio_engine_migration.py`, on the frozen v1 and v2 fixtures).
 
+## Native authoring is not an engine (native-studio-playback-fix Slice 13)
+
+`brief.authoring: "native"` changes how a Remotion draft is JUDGED (only validity and safety block), not which engine runs it: the
+Presentation is created `remotion`, the Player, the isolation guards and the compile are the same, and nothing here can select Slidecar.
+Contract: [presentation-studio.md](presentation-studio.md#native-remotion-authoring-level-3-native-studio-playback-fix-slice-13).
+
 ## Conformance
 
 `tests/unit/test_presentation_studio_engine.py` (policy, no-fallback, legacy default, capability and compatibility triage, manifest identity, upgrade),

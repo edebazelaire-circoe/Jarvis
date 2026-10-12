@@ -112,7 +112,7 @@ ever enters a descriptor.
 | `scene` | Étoiles / Scène | all `jarvis-display` tools |
 | `settings` | Réglages | `settings_describe`, `settings_get`, `settings_set` (`jarvis-console`) |
 | `workspace` | Boards et mémoire | the twenty `jarvis-workspace` tools (§10.12): the nine Board/Session tools (§10.9, moved from `jarvis-console`), Session history, Board inspection, Board memory, Board-artifact links, plus the five `jarvis-memory` tools (§10.16: memory and knowledge search, read, propose) |
-| `presentation` | Présentations | the thirteen `jarvis-presentation` tools (§10.15): inspect, explorer and full screen, playback, semantic edits, undo, variants, comparison, composition, templates, drafting |
+| `presentation` | Présentations | the fourteen `jarvis-presentation` tools (§10.15): inspect, explorer and full screen, playback, semantic edits, undo, variants, comparison, composition, templates, drafting, native scene source (`presentation_source`, native-studio-playback-fix Slice 13: read, write, preview; 20 888 B measured, budget 21 000 B, declared surface 113 700 B) |
 | `capture` | Captures et preuves | the nine `jarvis-capture` tools (§10.11): Contexts, recordings, screenshots, evidence search and transcript reads |
 | `barehands` | Bare Hands | all 16 `jarvis-barehands` tools (`barehands_*` and `calibration_*`, §6) |
 | `external` | Externe | `jarvis-drive` (decision below); *(plugin amendment, implemented by Slice 04)* every managed plugin server |

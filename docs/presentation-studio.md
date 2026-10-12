@@ -48,7 +48,7 @@ untime/control_center_presentation_studio_explorer_compare*.js, ..._compose.js |
 | Newer prefab version, trial variant | a pinned scene is told a newer immutable version exists; "try it" creates a child variant; never an auto-upgrade, adoption is explicit | `jarvis/core/presentation_studio_upgrades.py`, `protocol/presentation_studio_upgrades_routes.py`, `runtime/presentation_studio_upgrades_relay.py` | [Newer prefab versions and trial variants](#newer-prefab-versions-and-trial-variants-level-3-remotion-slice-19), Remotion Slice 19 | **implemented (Level 3)** |
 | Presentation experience (two destinations, one video runtime) | « Remotion Studio » (native authoring) vs « Variantes » (history, the only Player); one composition clock; continuous play honours the authored durations, with no per-slide timer; presenter run vs continuous video; control inventory; acceptance matrix | Slices 04-11 of handoff `jarvis-remotion-native-studio-playback-fix` | [Presentation experience contract](#presentation-experience-contract-level-2-2026-10) | **Level 2 contract** (2026-10); implementation: Slices 04-11 |
 | Generic fullscreen surface | real browser fullscreen of a host element; armed request + user gesture; explicit `needs_gesture` / `unsupported` | `jarvis/domain/surface_fullscreen.py`, `runtime/control_center_fullscreen.js` | Slice 03 | implemented (Level 3) |
-| Agent / voice operations | one MCP server `jarvis-presentation`, thirteen `presentation_*` tools, ids read from the state (`presentation_inspect`), the only `brain` door, destructive gestures behind the canonical confirmation | `jarvis/runtime/presentation_studio_mcp{,_tools,_support}.py`, `runtime/presentation_studio_turn.py` | Slice 21, [Agent and voice operations](#agent-and-voice-operations-level-3-slice-21), [mcp/tool-contract.md](mcp/tool-contract.md) | **implemented (Level 3)**; real-model traces: 5 scenarios, limited |
+| Agent / voice operations | one MCP server `jarvis-presentation`, fourteen `presentation_*` tools (Slice 13 of native-studio-playback-fix added `presentation_source`), ids read from the state (`presentation_inspect`), the only `brain` door, destructive gestures behind the canonical confirmation | `jarvis/runtime/presentation_studio_mcp{,_tools,_support}.py`, `runtime/presentation_studio_turn.py` | Slice 21, [Agent and voice operations](#agent-and-voice-operations-level-3-slice-21), [mcp/tool-contract.md](mcp/tool-contract.md) | **implemented (Level 3)**; real-model traces: 5 scenarios, limited |
 
 Exact names (ids, routes, events, tools): `tasks/jarvis-interactive-presentation-studio/docs/09-canonical-names.md`; the Presentation ids, routes, error codes and storage tree are now stated in the contract section below (Slice 02).
 
@@ -4314,11 +4314,11 @@ Context budget: `jarvis-presentation` 16 849 -> 18 495 bytes (18 495 alone, 19 1
 
 ## Agent and voice operations (Level 3, Slice 21)
 
-Status: implemented by Slice 21. Owners: `jarvis/runtime/presentation_studio_mcp.py` (the FastMCP server `jarvis-presentation`, 13 tools), `presentation_studio_mcp_tools.py` (the logic, `PresentationTools`), `presentation_studio_mcp_support.py` (targets, errors, confirmation ledger), `presentation_studio_turn.py` (turn attestation in the Control Center), `jarvis/runtime/mcp_tool_meta.py` (`PRESENTATION`), the brain prompt `BRAIN_PRESENTATION_PROMPT` plus the Slice 11 planner prompt in the `*_display_studio_*` programs. Conformance: `tests/unit/test_presentation_studio_mcp{,_ops,_policy,_trace}.py`, `test_tool_brain_studio_ownership.py`, `test_mcp_catalog.py`, `test_brain_capability_parity.py`. Evidence: `tasks/jarvis-interactive-presentation-studio/slices/21-agent-voice-operations/evidence/`.
+Status: implemented by Slice 21. Owners: `jarvis/runtime/presentation_studio_mcp.py` (the FastMCP server `jarvis-presentation`, 14 tools since native-studio-playback-fix Slice 13), `presentation_studio_mcp_tools.py` (the logic, `PresentationTools`), `presentation_studio_mcp_support.py` (targets, errors, confirmation ledger), `presentation_studio_turn.py` (turn attestation in the Control Center), `jarvis/runtime/mcp_tool_meta.py` (`PRESENTATION`), the brain prompt `BRAIN_PRESENTATION_PROMPT` plus the Slice 11 planner prompt in the `*_display_studio_*` programs. Conformance: `tests/unit/test_presentation_studio_mcp{,_ops,_policy,_trace}.py`, `test_tool_brain_studio_ownership.py`, `test_mcp_catalog.py`, `test_brain_capability_parity.py`. Evidence: `tasks/jarvis-interactive-presentation-studio/slices/21-agent-voice-operations/evidence/`.
 
-There is **no natural-language router and no second UI scheduler**: the brain (Claude) understands the sentence, and calls one of thirteen semantic tools with ids it read from the state. A tool is a facade: it calls the Core route (typed `LocalCoreClient`) or the Control Center command channel that already owns the operation, so voice and interface reach the same canonical state through the same validation. The server is the **only `brain` door**: it sets `actor: "brain"` itself (no tool has an `actor` or `origin` argument; a catalogue test fails if one appears), where the Control Center relay forces `user`.
+There is **no natural-language router and no second UI scheduler**: the brain (Claude) understands the sentence, and calls one of fourteen semantic tools with ids it read from the state. A tool is a facade: it calls the Core route (typed `LocalCoreClient`) or the Control Center command channel that already owns the operation, so voice and interface reach the same canonical state through the same validation. The server is the **only `brain` door**: it sets `actor: "brain"` itself (no tool has an `actor` or `origin` argument; a catalogue test fails if one appears), where the Control Center relay forces `user`.
 
-### The thirteen tools
+### The fourteen tools
 
 | Tool | `op` / `target` | Calls | Class |
 | --- | --- | --- | --- |
@@ -4333,6 +4333,7 @@ There is **no natural-language router and no second UI scheduler**: the brain (C
 | `presentation_compose` | `plan`, `create` (`request`: `base`, `scenes`, `narrative`, `motion`, `art_direction`, `title`, ...) | `compositions/plan`, `compositions` | write |
 | `presentation_template` | `plan`, `promote`, `instantiate` | the Slice 20 routes | write |
 | `presentation_draft_check`, `presentation_draft_assemble`, `presentation_draft_finalize` | `brief`, `draft` | `authoring/{check,assemble,finalize}` | read / write |
+| `presentation_source` | `read`, `write` (`files`, `assets?`, `manifest?`, `request_id?`), `preview` (`frames?`, `scale?`) on ONE scene: [Native Remotion authoring](#native-remotion-authoring-level-3-native-studio-playback-fix-slice-13) | `GET .../scenes/{id}/source`, `POST .../source-edits`, `POST /v1/local-capabilities/remotion/render/preview` | write |
 
 Not exposed on purpose: `scene.add`, `scene.set_controls` and the `*.restore_*` forms (they take a whole scene body or are the shape of an undo; use a template or a branch), score writing (`POST/PUT .../score`: the planner assembles it), prefab detours, `skip_sequence` (user only on the wire), the page-side compare API (the compare state is Core's). Deleting a Presentation does not exist.
 
@@ -4381,6 +4382,70 @@ Run by `python -m tests.replay.presentation_studio_mcp_real_trace` (real `claude
 - Score editing, `scene.add`, prefab detours and score `text` reading by the agent are not offered.
 - Voice-undo confirmation and destructive confirmations are enforced by token binding and the prompt; a model that says "oui" for the user cannot be told from the user by the tools (same trust level as `confirm` of `scene_update_many`).
 - Physical checks (a spoken session in PRESENTATION mode, full screen on a projector) are Human checks.
+
+## Native Remotion authoring (Level 3, native-studio-playback-fix Slice 13)
+
+Status: implemented by Slice 13 of `jarvis-remotion-native-studio-playback-fix`. Owners: `jarvis/domain/presentation_studio_authoring.py`
+(`Authoring`, `native_role`, `native_score`), `presentation_studio_authoring_gate.py` (`NATIVE_BLOCKING`, `NATIVE_OFF`),
+`presentation_studio_authoring_guide.py` (`draft_guide("native")`, `NATIVE_LOOP`, `ISOLATION_HINT`), `jarvis/core/presentation_studio_edit.py`
+(`record_authored_scenes`, `drop_authored_scene`), `jarvis/core/presentation_render_service.py` (`preview`),
+`jarvis/runtime/presentation_studio_mcp_tools.py` (`PresentationTools.source`), `jarvis/runtime/presentation_playbooks.py` (author playbook),
+`jarvis/runtime/claude_local.py` (`PRESENTATION_PRODUCTION_RULE`). Conformance: `tests/unit/test_presentation_studio_native_authoring.py`,
+`test_presentation_studio_native_loop.py`, `test_presentation_playbooks.py`, `test_mcp_catalog.py`, `test_native_parity_evidence_privacy.py`.
+Evidence and the measured comparison: `tasks/jarvis-remotion-native-studio-playback-fix/slices/13-claude-native-generation-parity/BENCHMARK.md`.
+
+**Why.** Measured on the same brief, an agent in Jarvis needed four sub-agents, 76 tool calls, 15 refusals (13 of them drafts), about 21 minutes and USD 3.9 to
+produce a deck it never looked at, where Claude in a plain Remotion project needed one agent, 12 to 19 calls and USD 0.34 to 0.47, and rendered
+its own frames to check them. The restrictive draft schema (text in props, colours in the `theme` prop, curated controls, cues, a spoken score)
+was the only creation path, and an agent could neither see nor fix the scenes it had just created.
+
+**The default workflow** (author playbook, one `[code] [presentation-author]` sub-agent, the brief and review roles only when useful):
+
+1. read the sources named in the request (and the production brief if one exists);
+2. `presentation_inspect` `target: "draft_guide"`, `kind: "native"`: exact keys, one valid example, the key format, the tags the isolation guard
+   refuses;
+3. storyboard: one scene = one composition (size, fps, duration) and one idea;
+4. write normal React/TSX (text, colours, layout in the code; helper modules in `src/lib/*.tsx`; `react` and `remotion` only);
+5. `presentation_draft_assemble` with `brief.authoring: "native"` (no score, roles or art direction needed);
+6. `presentation_source` `op: "preview"` on every scene, then the agent READS each rendered frame;
+7. `presentation_source` `op: "write"` (complete files) to fix what it saw, and preview again.
+
+**What still blocks a native deck** (`NATIVE_BLOCKING`, one reason each in the code): the request and the draft are understood (`brief_invalid`,
+`draft_schema`), the source is a valid candidate and passes the isolation guards (`prefab_invalid`), it publishes only under
+`presentation-studio.` (`prefab_namespace`), pins and values fit (`pin_unknown`, `scene_incompatible`, `score_incompatible`), documents fit
+their caps (`document_invalid`), every scene is reachable by playback (`scene_no_score`), Remotion only (`prefab_engine_mismatch`), the real
+compiler builds it in time (`tsx_compile`, `tsx_compile_budget`, `tsx_lint_budget`), anchors are inside the composition (`tsx_anchor_range`),
+live Board references and inspirations follow their security contracts (`tsx_live_ref_*`, `tsx_inspiration_unconfirmed`), no network, eval or
+remote reference (`behavior_risky`). That is the floor the source-edit gate already applies to every later change of a scene.
+
+**What is silent** (`NATIVE_OFF`): the rules that judge the guided model itself (text in props, the `theme` prop, curated controls, cues, spoken
+lines, declared transitions, the props-based text density and contrast). **Everything else is a warning.** The guided path is unchanged and
+stays the default of `presentation_draft_assemble` when `authoring` is absent (its brief digest is unchanged).
+
+**Defaults a native draft gets from Core:** roles from the order (`single`, else `opening` / `body` / `closing`), a silent score (one
+`presenter: none` item per scene lasting its declared composition), a generated fallback art direction (the variant keeps its required DA and
+the `theme` prop is still filled for scenes that read it), `speech: none`. `strict_content` is refused (exploratory only), and
+`authoring: native` with `workflow: exploratory` is refused.
+
+**Refining its own scenes.** When the BRAIN assembles a deck, Core records one `agent_authored_scene` source request per created scene
+(`source_requests` in the result). Unlike a user's request it is multi-use: the agent's `presentation_source write` (the existing source-edit
+route: compose, `SOURCE_GUARDS`, carry-over, score references, real build, new immutable version, CAS, rollback) needs no user turn and no
+`request_id` on a scene it created; the 30 minutes restart at each use; the record ends when the user edits that scene's source (Variants,
+Remotion Studio publish) and is lost at a Core restart (memory only, like every source request). It authorises nothing the agent could not
+already do (assemble a new deck), and never a scene the user has touched. A user's `scene.source_request` keeps its Slice 21 rules.
+
+**Native preview.** `POST /v1/local-capabilities/remotion/render/preview` `{presentation_id, variant_id, scene_id, frames? (1..6), scale?
+(0.25, 0.5, 1)}` renders a few frames of ONE scene of the CURRENT variant with the export path's own assembler (`assemble_preview`: in memory,
+no Board read) and guarded render host, in one bundle and one browser, and keeps them as JPEG files under `<runtime>/render/previews/<job>/`
+(the last 40 folders). Nothing is frozen, no Artifact is created, nothing is queued; one browser at a time with the exports (a preview waits for a
+running export and the other way round); bounded at 150 s; typed refusals (`presentation_render_*`). Default frames: 30 %, 65 % and the last
+frame. See [remotion-render.md](remotion-render.md).
+
+**Unchanged on purpose:** the Player sandbox, `SOURCE_GUARDS`, the Slice 12 import gate and publish path, `SCENE_ALLOWED_IMPORTS`, the
+Remotion Studio workspace (no agent writes it), exports (still a user gesture). Known limits: the isolation guard is a case-insensitive filter
+and reads a component named `Link` or `Frame` as the forbidden element (the native guide says so; changing the guard is a trust decision left
+to agent 0); a data root path long enough to push Chrome's profile path past 260 characters makes every render and preview fail
+(`presentation_render_sandbox_unavailable`), as for exports.
 
 ## Typed variables and fast edits (Level 3, Remotion Slice 13)
 
