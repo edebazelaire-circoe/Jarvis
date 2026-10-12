@@ -987,6 +987,9 @@ class PresentationStudioReloadService:
                 history.append(result.previous)
         if result.status.stood and result.request_id and self._edits is not None:
             self._edits.fulfil_source_request(result.request_id)
+        if result.status.stood and result.actor is StudioActor.USER and self._edits is not None:
+            # Slice 13: the user's own source change ends an agent's authoring record on this scene (never overwritten without a request).
+            self._edits.drop_authored_scene(result.presentation_id, result.variant_id, result.scene_id)
         level = "warning" if result.status in (ReloadStatus.ROLLED_BACK, ReloadStatus.PENDING_MOUNT) else "info"
         kind = {ReloadStatus.REFUSED_VALIDATION: "reload_refused", ReloadStatus.STALE: "reload_stale",
                 ReloadStatus.ROLLED_BACK: "reload_rolled_back", ReloadStatus.PENDING_MOUNT: "reload_pending"}.get(

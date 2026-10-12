@@ -10,6 +10,7 @@ porteur de Core obligatoire. Le chemin `.../render/jobs` a au moins quatre segme
 | POST | `.../render/jobs` | voir ci-dessous | 202 `{job: vue}` : le travail est en file, l'Artifact dérivé existe `pending` |
 | GET | `.../render/jobs/{job_id}` | — | `{job: vue}` : état, phase, images faites / total, secondes écoulées, délai, annulable |
 | POST | `.../render/jobs/{job_id}/cancel` | `{}` | `{job: vue}` |
+| POST | `.../render/preview` | `{presentation_id, variant_id, scene_id, frames?, scale?}` | 200 `{preview: {scene_id, prefab, composition, scale, frames: [{frame, path, bytes}], elapsed_ms}}` : aperçu natif (Slice 13 native-studio-playback-fix), synchrone, sans gel ni Artifact |
 
 Corps d'une demande : `{"format": "mp4"|"still"|"pdf", "settings": {...}}` plus, au choix, `{"snapshot_id": "jart_ps_..."}` (rendre un snapshot déjà figé)
 OU `{"presentation_id", "variant_id", "expected_presentation_revision", "expected_variant_revision", "authorised_boards": [...]}` (figer cette
@@ -40,6 +41,7 @@ MAX_BODY_BYTES = 8192
 SNAPSHOT_KEYS = frozenset({"format", "settings", "snapshot_id"})
 EXPORT_KEYS = frozenset({"format", "settings", "presentation_id", "variant_id", "expected_presentation_revision",
                          "expected_variant_revision", "authorised_boards"})
+PREVIEW_KEYS = frozenset({"presentation_id", "variant_id", "scene_id", "frames", "scale"})
 Handler = Callable[[web.Request], Awaitable[web.StreamResponse]]
 
 
@@ -51,7 +53,8 @@ class PresentationRenderProtocolRoutes:
         g = self._guarded
         jobs = PREFIX + "/jobs"
         return [web.get(PREFIX, g(self.availability)), web.get(jobs, g(self.list)), web.post(jobs, g(self.create)),
-                web.get(jobs + "/{job_id}", g(self.get)), web.post(jobs + "/{job_id}/cancel", g(self.cancel))]
+                web.get(jobs + "/{job_id}", g(self.get)), web.post(jobs + "/{job_id}/cancel", g(self.cancel)),
+                web.post(PREFIX + "/preview", g(self.preview))]
 
     def _guarded(self, handler: Handler) -> Handler:
         async def run(request: web.Request) -> web.StreamResponse:
@@ -153,6 +156,21 @@ class PresentationRenderProtocolRoutes:
                 presentation_id=body["presentation_id"], variant_id=body["variant_id"], expected_presentation_revision=revisions[0],
                 expected_variant_revision=revisions[1], authorised_boards=boards, render_format=fmt, settings=body.get("settings"))
         return web.json_response({"job": job}, status=202)
+
+    async def preview(self, request: web.Request) -> web.StreamResponse:
+        """The author's look at a scene (Slice 13): a few frames of the CURRENT variant, rendered by the guarded host, nothing frozen."""
+
+        service = self._service()
+        body = await self._body(request)
+        self._only(body, PREVIEW_KEYS)
+        if not all(isinstance(body.get(k), str) for k in ("presentation_id", "variant_id", "scene_id")):
+            raise RenderError(C.INVALID, "presentation_id, variant_id and scene_id are required strings")
+        frames = body.get("frames")
+        if frames is not None and (not isinstance(frames, list) or any(type(f) is not int for f in frames)):
+            raise RenderError(C.INVALID, "frames must be a list of frame numbers")
+        preview = await service.preview(presentation_id=body["presentation_id"], variant_id=body["variant_id"], scene_id=body["scene_id"],
+                                        frames=frames, scale=body.get("scale", 0.5))
+        return web.json_response({"preview": preview})
 
     @staticmethod
     def _only(body: dict[str, Any], allowed: frozenset[str]) -> None:

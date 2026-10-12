@@ -25,7 +25,9 @@ from __future__ import annotations
 import asyncio
 from collections import deque
 import hashlib
-from collections.abc import Callable, Collection, Mapping
+from collections.abc import Callable, Collection, Mapping, Sequence
+from pathlib import Path
+import shutil
 import threading
 import time
 from typing import Any
@@ -44,6 +46,19 @@ from jarvis.ports.remotion_render import BrowserInfo, RenderRunner
 from jarvis.ports.v2 import DiagnosticSink
 
 TRACE = "core.presentation_render"
+#: Native preview (Slice 13 of native-studio-playback-fix): frames per request, output scales, time bound, folders kept.
+MAX_PREVIEW_FRAMES = 6
+PREVIEW_SCALES = (0.25, 0.5, 1.0)
+DEFAULT_PREVIEW_SCALE = 0.5
+PREVIEW_TIMEOUT_S = 150.0
+KEEP_PREVIEWS = 40
+
+
+def default_preview_frames(duration_in_frames: int) -> tuple[int, ...]:
+    """Three moments of a scene: after the entrances, the middle of the story, the held last frame."""
+
+    last = max(0, duration_in_frames - 1)
+    return tuple(sorted({min(last, round(last * 0.3)), min(last, round(last * 0.65)), last}))
 STOP_WAIT_S = 15.0
 SPOOL_PROGRESS_STEP = 8
 
@@ -94,7 +109,7 @@ class PresentationRenderService:
     def __init__(self, *, artifacts: ArtifactService, snapshots: Any, packager: Any, runner: RenderRunner,
                  installed_engine: Callable[[], Any | None], capability_status: Callable[[], str] = lambda: "ready",
                  diagnostics: DiagnosticSink | None = None, run_blocking: Callable[..., Any] = asyncio.to_thread,
-                 new_job_id: Callable[[], str] | None = None) -> None:
+                 new_job_id: Callable[[], str] | None = None, preview_root: Callable[[], Path] | None = None) -> None:
         """`snapshots` = `PresentationArtifacts` ; `packager` = `PresentationPackager` ; `installed_engine` rend l'`InstalledEngine` réel
         de la capacité (ou `None`) ; `capability_status` rend le statut de la capacité locale (`ready`/`running` = utilisable)."""
 
@@ -112,6 +127,10 @@ class PresentationRenderService:
         self._key_locks: dict[tuple[str, str], asyncio.Lock] = {}
         self._lock_holder: str | None = None  # another live Core holds the render lock
         self._lock_checked = False
+        #: One browser at a time on this host (memory): a preview waits for a running export and the other way round.
+        self._browser_slot = asyncio.Lock()
+        #: Where previews land (`<runtime>/render/previews`); `None`: this Core offers no preview.
+        self._preview_root = preview_root
 
     # ------------------------------------------------------------------ demander
 
@@ -208,6 +227,93 @@ class PresentationRenderService:
             "frames": resolved.frames_total, "queued": len(self._queue)})
         self._ensure_worker()
         return job.view(position=self._position(job_id))
+
+    # ------------------------------------------------------------------ aperçu natif (Slice 13 native-studio-playback-fix)
+
+    async def preview(self, *, presentation_id: str, variant_id: str, scene_id: str, frames: Sequence[int] | None = None,
+                      scale: float = DEFAULT_PREVIEW_SCALE) -> dict[str, Any]:
+        """Render a few frames of ONE scene of the CURRENT variant, for the author to look at (an agent's `npx remotion still`).
+
+        Same package assembler as an export (`assemble_preview`: in memory, no Board read), same guarded render host and browser, but no
+        freeze, no Artifact, no queue entry: the JPEG frames land in `<runtime>/render/previews/<job>/` (the last `KEEP_PREVIEWS` folders
+        are kept) and their paths are returned. Synchronous and bounded (`PREVIEW_TIMEOUT_S`); one browser at a time with the exports."""
+
+        if self._preview_root is None:
+            raise RenderError(C.UNAVAILABLE, "this Core offers no preview (no render folder)")
+        if self._stopping:
+            raise RenderError(C.UNAVAILABLE, "Core is stopping")
+        if not isinstance(scale, (int, float)) or isinstance(scale, bool) or float(scale) not in PREVIEW_SCALES:
+            raise RenderError(C.INVALID, f"scale must be one of {list(PREVIEW_SCALES)}")
+        if frames is not None and (not isinstance(frames, (list, tuple)) or not 1 <= len(frames) <= MAX_PREVIEW_FRAMES):
+            raise RenderError(C.INVALID, f"frames must be a list of 1..{MAX_PREVIEW_FRAMES} frame numbers")
+        self._require_lock()
+        browser = self._require_ready()
+        await self._require_engine_for(presentation_id, variant_id)
+        started = time.monotonic()
+        package = await self._packager.assemble_preview(presentation_id, variant_id)
+        target = choose_scene(package, scene_id)
+        chosen = tuple(frames) if frames is not None else default_preview_frames(target.duration_in_frames)
+        resolved = resolve(RenderFormat.PDF, parse_settings(RenderFormat.PDF, {"scene_id": scene_id, "frames": list(chosen),
+                                                                               "scale": float(scale)}), target)
+        installed = self._installed()
+        if installed is None or installed.remotion_version != target.engine_version:
+            have = "unreadable" if installed is None else installed.remotion_version
+            raise RenderError(C.ENGINE_MISMATCH, f"the scene declares remotion {target.engine_version}, this machine has {have}")
+        files, props = plan_files(package, target)
+        job_id = self._new_id()
+        spec = {"format": RenderFormat.PDF.value, "entry": "studio-root.tsx", "composition_id": target.composition_id,
+                "composition": {"width": target.width, "height": target.height, "fps": target.fps, "durationInFrames": target.duration_in_frames},
+                "props": props, "frames_total": len(resolved.frames), "frame_range": [resolved.frame_start, resolved.frame_end],
+                "frames": list(resolved.frames), "crf": resolved.settings.crf, "scale": resolved.settings.scale, "concurrency": 1,
+                "jpeg_quality": 85}
+        self._trace("preview_started", "Apercu natif d'une scene demande", data={
+            "job_id": job_id, "presentation_id": presentation_id, "variant_id": variant_id, "scene_id": scene_id,
+            "prefab": f"{target.prefab_id}@{target.version}", "frames": list(resolved.frames)})
+        kept: list[dict[str, Any]] = []
+        async with self._browser_slot:
+            try:
+                await self._run_blocking(self._runner.prepare, job_id, files)
+                outcome = await self._run_blocking(self._runner.run, job_id, spec, browser=browser, cancel=threading.Event(),
+                                                   timeout_s=min(resolved.timeout_s, PREVIEW_TIMEOUT_S), on_start=lambda ref: None,
+                                                   on_progress=lambda progress: None)
+                if not outcome.ok:
+                    raise RenderError(C.FAILED if outcome.code not in {c.value for c in C} else C(outcome.code), outcome.detail)
+                outputs = list(outcome.outputs)
+                if len(outputs) != len(resolved.frames):
+                    raise RenderError(C.OUTPUT_INVALID, f"{len(outputs)} image(s) for {len(resolved.frames)} frame(s)")
+                kept = await self._run_blocking(self._keep_preview, job_id, resolved.frames, outputs)
+            except RenderError as exc:
+                self._trace("preview_failed", "Apercu natif en echec", level="warning",
+                            data={"job_id": job_id, "scene_id": scene_id, "code": exc.code.value, "detail": clean_detail(exc.detail)})
+                raise
+            finally:
+                await self._run_blocking(self._runner.cleanup, job_id)
+        elapsed_ms = round((time.monotonic() - started) * 1000)
+        self._trace("preview_done", "Apercu natif rendu", data={"job_id": job_id, "scene_id": scene_id, "frames": len(kept),
+                                                                "elapsed_ms": elapsed_ms})
+        return {"presentation_id": presentation_id, "variant_id": variant_id, "scene_id": scene_id,
+                "prefab": {"id": target.prefab_id, "version": target.version},
+                "composition": {"width": target.width, "height": target.height, "fps": target.fps,
+                                "duration_in_frames": target.duration_in_frames},
+                "scale": resolved.settings.scale, "frames": kept, "elapsed_ms": elapsed_ms}
+
+    def _keep_preview(self, job_id: str, frames: Sequence[int], outputs: Sequence[Path]) -> list[dict[str, Any]]:
+        assert self._preview_root is not None
+        root = Path(self._preview_root())
+        folder = root / job_id
+        try:
+            folder.mkdir(parents=True, exist_ok=True)
+            kept = []
+            for frame, source in zip(frames, outputs):
+                target = folder / f"frame-{int(frame):05d}.jpg"
+                shutil.copyfile(source, target)
+                kept.append({"frame": int(frame), "path": str(target), "bytes": target.stat().st_size})
+            older = sorted((p for p in root.iterdir() if p.is_dir() and p.name != job_id), key=lambda p: p.stat().st_mtime)
+            for stale in older[: max(0, len(older) - KEEP_PREVIEWS + 1)]:
+                shutil.rmtree(stale, ignore_errors=True)  # intentional: an old preview folder that resists removal is retried next time
+            return kept
+        except OSError as exc:
+            raise RenderError(C.STORE_FAILED, f"{type(exc).__name__}: the preview frames could not be kept") from None
 
     # ------------------------------------------------------------------ capacité, doublons, verrou
 
@@ -348,6 +454,7 @@ class PresentationRenderService:
             if job.cancel.is_set():
                 raise RenderError(C.CANCELLED, "cancelled before the process started")
             loop = asyncio.get_running_loop()
+            await self._browser_slot.acquire()
 
             def on_start(ref: str) -> None:
                 job.process_ref = ref
@@ -356,8 +463,11 @@ class PresentationRenderService:
             def on_progress(progress: Mapping[str, Any]) -> None:
                 loop.call_soon_threadsafe(self._apply_progress, job, dict(progress))
 
-            outcome = await self._run_blocking(self._runner.run, job.job_id, spec, browser=job.browser, cancel=job.cancel,
-                                               timeout_s=r.timeout_s, on_start=on_start, on_progress=on_progress)
+            try:
+                outcome = await self._run_blocking(self._runner.run, job.job_id, spec, browser=job.browser, cancel=job.cancel,
+                                                   timeout_s=r.timeout_s, on_start=on_start, on_progress=on_progress)
+            finally:
+                self._browser_slot.release()
             job.egress, job.log_tail = dict(outcome.egress), list(outcome.log_tail)
             if not outcome.ok:
                 raise RenderError(C.FAILED if outcome.code not in {c.value for c in C} else C(outcome.code), outcome.detail)

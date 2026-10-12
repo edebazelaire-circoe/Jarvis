@@ -46,7 +46,7 @@ from jarvis.ports.remotion_render import BrowserInfo, RunOutcome, VerifiedOutput
 
 SHIPPED_DIR = Path(__file__).resolve().parents[1] / "capabilities" / "remotion"
 GUARD_FILE, HOST_FILE = "render-guard.cjs", "render-host.cjs"
-RENDER_DIR, JOBS_DIR = "render", "jobs"
+RENDER_DIR, JOBS_DIR, PREVIEWS_DIR = "render", "jobs", "previews"
 LOG_FILE = "render.log"
 LOG_MAX_BYTES = 1_000_000
 POLL_S = 0.4
@@ -130,6 +130,11 @@ class RemotionRenderRunner:
     @property
     def _jobs(self) -> Path:
         return Path(self._runtime_dir()) / RENDER_DIR / JOBS_DIR
+
+    def preview_dir(self) -> Path:
+        """Where native previews land (Slice 13 of native-studio-playback-fix): `<runtime>/render/previews/<job>/frame-NNNNN.jpg`."""
+
+        return Path(self._runtime_dir()) / RENDER_DIR / PREVIEWS_DIR
 
     def job_dir(self, job_id: str) -> Path:
         if not _JOB_ID.fullmatch(str(job_id)):

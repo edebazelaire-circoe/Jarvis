@@ -72,8 +72,13 @@ OPERATION_EVENTS: dict[str, str | None] = {
 #: Rail des presentations : les outils qui ECRIVENT du travail d'agent allument la pastille bleue de la presentation, un echec reel la passe
 #: en orange (docs/presentation-studio.md > *Rail des presentations*). Les ops de plan et de verification n'ecrivent rien.
 WORK_TOOLS = frozenset({"presentation_edit", "presentation_undo", "presentation_variant", "presentation_compose", "presentation_template",
-                        "presentation_draft_assemble", "presentation_draft_finalize"})
-WORK_READ_OPS = frozenset({"plan", "archive_plan", "check", "scene_preview", "scene_cancel_preview"})
+                        "presentation_draft_assemble", "presentation_draft_finalize", "presentation_source"})
+WORK_READ_OPS = frozenset({"plan", "archive_plan", "check", "scene_preview", "scene_cancel_preview", "read", "preview"})
+#: Slice 13 (native-studio-playback-fix): the agent's native loop on ONE scene source: read it, write it (the validated source-edit route:
+#: compose, isolation guards, real build, new immutable version), look at a few rendered frames (the guarded render host, nothing frozen).
+SOURCE_OPS = ("read", "write", "preview")
+#: Source-edit outcomes that leave the new version standing (`ReloadStatus.stood`).
+_SOURCE_STOOD = frozenset({"reloaded", "reloaded_state_reset", "repinned", "pending_mount"})
 #: Un refus que l'agent corrige lui-meme (id, revision, confirmation, brouillon) n'est pas « un probleme » pour l'utilisateur.
 BENIGN_PREFIXES = ("invalid_", "unknown_", "presentation_studio_unknown_", "presentation_studio_invalid",
                    "presentation_studio_stale_revision", "presentation_studio_confirmation_", "presentation_studio_draft_refused",
@@ -1273,6 +1278,63 @@ class PresentationTools:
 
         return await self._run(tool, op, {"presentation_id": presentation_id}, body)
 
+    # ------------------------------------------------------------------ Slice 13 : la boucle native sur la source d'une scène
+
+    async def source(self, op: str, *, presentation_id: str | None = None, variant_id: str | None = None, scene_id: str | None = None,
+                     files: Mapping[str, Any] | None = None, assets: Mapping[str, Any] | None = None, manifest: Mapping[str, Any] | None = None,
+                     frames: Sequence[int] | None = None, scale: float | None = None, request_id: str | None = None) -> dict[str, Any]:
+        tool = "presentation_source"
+
+        async def body() -> dict[str, Any]:
+            if op not in SOURCE_OPS:
+                raise self._refuse(tool, "invalid_op", f"op : {', '.join(SOURCE_OPS)}.")
+            scene = self._scene(tool, scene_id)
+            pid = await self._presentation(tool, presentation_id)
+            vid = await self._variant(tool, pid, variant_id)
+            if op == "read":
+                return await self._source_read(pid, vid, scene)
+            if op == "preview":
+                request = _drop_none({"presentation_id": pid, "variant_id": vid, "scene_id": scene, "frames": list(frames) if frames else None,
+                                      "scale": scale})
+                preview = (await self._c(lambda c: c.remotion_render_preview(request))).get("preview") or {}
+                return self._ok("silent", status="previewed", presentation_id=pid, variant_id=vid, scene_id=scene,
+                                prefab=preview.get("prefab"), composition=preview.get("composition"), frames=preview.get("frames"),
+                                elapsed_ms=preview.get("elapsed_ms"),
+                                note="Regarde chaque image (outil Read sur path) avant de juger la scène ; corrige avec op write, puis revois.")
+            return await self._source_write(tool, pid, vid, scene, files, assets, manifest, request_id)
+
+        return await self._run(tool, op, {"presentation_id": presentation_id, "variant_id": variant_id}, body)
+
+    async def _source_read(self, pid: str, vid: str, scene: str) -> dict[str, Any]:
+        source = await self._c(lambda c: c.presentation_studio_scene_source(pid, vid, scene))
+        manifest = source.get("manifest") if isinstance(source.get("manifest"), Mapping) else {}
+        block = manifest.get("source") if isinstance(manifest.get("source"), Mapping) else {}
+        return self._ok("silent", status="read", presentation_id=pid, variant_id=vid, scene_id=scene, prefab=source.get("prefab"),
+                        basis=source.get("basis"), composition=block.get("composition"), entry=block.get("entry"),
+                        sources=source.get("sources"), assets=sorted(source.get("assets") or {}), manifest=manifest,
+                        untrusted=["sources", "manifest"])
+
+    async def _source_write(self, tool: str, pid: str, vid: str, scene: str, files: Mapping[str, Any] | None, assets: Mapping[str, Any] | None,
+                            manifest: Mapping[str, Any] | None, request_id: str | None) -> dict[str, Any]:
+        if not files and not assets and not manifest:
+            raise self._refuse(tool, "invalid_request", "write : donne files (chemin src/... -> texte, null pour supprimer), assets ou manifest.")
+        revision = (await self._c(lambda c: c.presentation_studio_variant(pid, vid))).get("revision")
+        request = _drop_none({"actor": BRAIN_ACTOR, "basis": {"variant_revision": revision}, "scene_id": scene, "request_id": request_id,
+                              "files": _drop_none({"sources": dict(files) if files else None, "assets": dict(assets) if assets else None,
+                                                   "manifest": dict(manifest) if manifest else None})})
+        result = await self._c(lambda c: c.presentation_studio_source_edit(pid, vid, request))
+        status = str(result.get("status") or "")
+        error = result.get("error") if isinstance(result.get("error"), Mapping) else {}
+        diagnostics = [dict(d) for d in (result.get("diagnostics") or []) if isinstance(d, Mapping)][:20] or None
+        if status in _SOURCE_STOOD:
+            return self._ok("silent", status=status, presentation_id=pid, variant_id=vid, scene_id=scene, prefab=result.get("prefab"),
+                            previous=result.get("previous"), mounted=result.get("mounted"), diagnostics=diagnostics,
+                            note="Nouvelle version publiée (la précédente reste restaurable) ; revois-la avec op preview.")
+        # A refusal the author fixes (build error with file:line, stale basis, rollback at mount): returned, not raised, like a draft report.
+        return self._ok("silent", status=status or "refused", presentation_id=pid, variant_id=vid, scene_id=scene,
+                        code=error.get("code"), message=clip(error.get("message") or result.get("message"), 600), diagnostics=diagnostics,
+                        note="Rien n'a changé à l'écran : corrige ce qui est dit (fichier, ligne, colonne) puis renvoie op write.")
+
     def _draft_result(self, tool: str, op: str, result: Mapping[str, Any]) -> dict[str, Any]:
         status = result.get("status")
         report = result.get("report")
@@ -1281,7 +1343,8 @@ class PresentationTools:
             return self._ok("silent", status="refused" if status == "refused" else "checked", ok_gate=False, report=report,
                             workflow=result.get("workflow"), note="Corrige tout ce qui est listé puis resoumets (3 tours au plus).")
         picked = {k: result.get(k) for k in ("presentation_id", "engine", "variant_ids", "scene_ids", "art_direction_id", "score_id", "provenance",
-                                             "workflow", "candidates", "variant_id", "fallback") if k in result}
+                                             "workflow", "candidates", "variant_id", "fallback", "active_variant_id", "scenes",
+                                             "source_requests") if k in result}
         say = None
         if op != "check":
             say = "La présentation est créée." if op == "assemble" else "La direction est adoptée comme présentation."

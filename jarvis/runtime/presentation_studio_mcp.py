@@ -16,6 +16,7 @@ Core possède la présentation, ses variantes, sa lecture ; la page possède l'e
 | `presentation_compare`, `presentation_compose` | comparer 2 ou 4 variantes ; composer un enfant (plan puis création) |
 | `presentation_template` | promouvoir en modèle (plan, publication), instancier |
 | `presentation_draft_check`, `_assemble`, `_finalize` | rédaction d'une présentation (planificateur de la Slice 11) |
+| `presentation_source` | Slice 13 (native-studio-playback-fix) : lire, écrire (route d'édition de source validée), prévisualiser une scène Remotion |
 
 Pas de `from __future__ import annotations` : FastMCP lit les annotations des outils définis dans `build_server`.
 """
@@ -178,8 +179,8 @@ def build_server(target: PresentationMcpTarget | None = None, *, tools: Presenta
         variant_id: VariantId = None,
         scene_id: Annotated[str | None, Field(max_length=20)] = None,
         template_id: Annotated[str | None, Field(max_length=20, description="ptp_…")] = None,
-        kind: Annotated[Literal["presentation", "scene", "art_direction", "motion", "exploratory"] | None,
-                        Field(description="templates : filtre ; draft_guide : exploratory.")] = None,
+        kind: Annotated[Literal["presentation", "scene", "art_direction", "motion", "exploratory", "native"] | None,
+                        Field(description="templates : filtre ; draft_guide : exploratory ou native (code Remotion normal).")] = None,
     ) -> dict[str, Any]:
         """Lire l'état courant et les ids valides du Presentation Studio. Toujours avant de nommer un id."""
         return await studio.inspect(target, presentation_id=presentation_id, variant_id=variant_id, scene_id=scene_id,
@@ -358,6 +359,23 @@ def build_server(target: PresentationMcpTarget | None = None, *, tools: Presenta
     ) -> dict[str, Any]:
         """Juger une direction exploratoire avec le contrôle directed avant qu'elle devienne la présentation."""
         return await studio.draft("finalize", presentation_id=presentation_id, variant_id=variant_id, activate=activate)
+
+    @mcp.tool(annotations=tool_annotations(SERVER_NAME, "presentation_source"))
+    async def presentation_source(
+        op: Literal["read", "write", "preview"],
+        scene_id: SceneId,
+        presentation_id: PresentationId = None,
+        variant_id: VariantId = None,
+        files: Annotated[dict[str, str | None] | None, Field(description="write : src/... -> TSX complet, null supprime.")] = None,
+        assets: Annotated[dict[str, str | None] | None, Field(description="write : public/... -> base64.")] = None,
+        manifest: Annotated[dict[str, Any] | None, Field(description="write : manifeste lu (read), modifié.")] = None,
+        frames: Annotated[list[int] | None, Field(max_length=6, description="preview : images (défaut 3).")] = None,
+        scale: Annotated[float | None, Field(description="preview : 0.25, 0.5 ou 1.")] = None,
+        request_id: Annotated[str | None, Field(max_length=20, description="write : psq_… ; inutile sur ta scène créée.")] = None,
+    ) -> dict[str, Any]:
+        """Code Remotion d'une scène : read, write (nouvelle version compilée ; refus avec fichier:ligne), preview (JPEG à lire avec Read)."""
+        return await studio.source(op, presentation_id=presentation_id, variant_id=variant_id, scene_id=scene_id, files=files, assets=assets,
+                                   manifest=manifest, frames=frames, scale=scale, request_id=request_id)
 
     return mcp
 

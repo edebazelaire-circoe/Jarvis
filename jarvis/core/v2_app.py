@@ -423,7 +423,8 @@ class JarvisCoreApplication:
         self.presentation_studio_authoring = PresentationStudioAuthoring(
             self.presentation_studio, self.prefabs, variants=self.presentation_studio_variants,
             pins=self.presentation_studio_variants.pin_index, registry=self.studio_pins, compiler=authoring_compiler or remotion_compiler,
-            engine_pin=authoring_engine_pin or (None if composition is None else composition.engine_pin), live_refs=self.live_refs, boards=self._authorised_boards)
+            engine_pin=authoring_engine_pin or (None if composition is None else composition.engine_pin), live_refs=self.live_refs, boards=self._authorised_boards,
+            authored=self.presentation_studio_edit.record_authored_scenes)
         # Pont Presentation -> Artifacts (Remotion Slice 08) : sans etat propre ; la table `board_artifact_links` reste l'unique
         # proprietaire de « quels Boards montrent cette source » (`docs/presentation-artifacts.md`). Le workspace le lit.
         self.presentation_artifacts = PresentationArtifacts(
@@ -444,7 +445,8 @@ class JarvisCoreApplication:
             self.presentation_render = PresentationRenderService(
                 artifacts=self.artifacts, snapshots=self.presentation_artifacts, packager=self.presentation_packager,
                 runner=remotion_render_runner, installed_engine=remotion_render_runner.installed_engine,
-                capability_status=lambda: str(render_capabilities.host.status("remotion").get("status")), diagnostics=diagnostics)
+                capability_status=lambda: str(render_capabilities.host.status("remotion").get("status")), diagnostics=diagnostics,
+                preview_root=getattr(remotion_render_runner, "preview_dir", None))
         self.scene = SceneService(
             scene_repository or SQLiteSceneRepository(root / "state" / "scene.sqlite3"),
             diagnostics=diagnostics,

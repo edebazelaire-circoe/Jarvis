@@ -92,10 +92,16 @@ class Rule:
     exploratory: str
     summary: str
 
-    def level(self, workflow: Workflow, strict: bool = False) -> str:
+    def level(self, workflow: Workflow, strict: bool = False, native: bool = False) -> str:
         """`strict` (exploratory with `brief.strict_content`): the `directed` level wherever `directed` has one, the exploratory level
-        for the rules only exploratory has (the candidate shape)."""
+        for the rules only exploratory has (the candidate shape).
 
+        `native` (`brief.authoring: native`, Slice 13 of native-studio-playback-fix): a rule in `NATIVE_BLOCKING` keeps its workflow level;
+        every other rule the workflow runs becomes a warning (reported, never blocking)."""
+
+        if native:
+            base = self.level(workflow, strict)
+            return base if base == OFF or self.code in NATIVE_BLOCKING else WARNING
         if workflow is Workflow.EXPLORATORY and strict and self.directed != OFF:
             return self.directed
         return {Workflow.ONE_SHOT: self.one_shot, Workflow.DIRECTED: self.directed, Workflow.EXPLORATORY: self.exploratory}[workflow]
@@ -241,13 +247,40 @@ class QualityReport:
                 "skipped": list(self.skipped), "not_judged": list(self.not_judged), "suppressed": dict(self.suppressed), "stats": dict(self.stats)}
 
 
+#: Slice 13 (native-studio-playback-fix): what still BLOCKS a native deck, each with the reason it earns its place. Everything else in the
+#: table (content density, placeholder lint, text and colours in the source, the theme prop, controls, cues, speech, durations, roles) is a
+#: creative or metadata preference: reported as a warning, never a refusal. This is the same floor the source-edit gate applies to every later
+#: change of a scene (compose, isolation guards, score references, real build), plus the draft's own shape.
+NATIVE_BLOCKING: frozenset[str] = frozenset({
+    "brief_invalid",                 # the request is understood (exact keys) or nothing can be judged
+    "draft_schema",                  # same: a half-understood draft is never assembled
+    "prefab_invalid",                # the source is a valid prefab candidate (isolation guards run here: SOURCE_GUARDS)
+    "prefab_namespace",              # the agent publishes only under presentation-studio. (no write into other catalogues)
+    "pin_unknown",                   # a pin names a real, healthy version (else the scene cannot play)
+    "scene_incompatible",            # declared values fit the manifest (else the Player refuses the props)
+    "score_incompatible",            # every score reference resolves (else playback stops on a dangling id)
+    "document_invalid",              # documents fit their size caps and stay consistent (storage contract)
+    "scene_no_score",                # a scene with no score item is unreachable by playback
+    "prefab_engine_mismatch",        # Remotion only: no silent Slidecar (engine choice is the user's)
+    "tsx_compile",                   # the real compiler builds every scene: a broken scene never reaches the Player
+    "tsx_compile_budget",            # same, bounded: what is not compiled in time is refused, never waved through
+    "tsx_lint_budget",               # fail-closed bound on reading author code
+    "tsx_anchor_range",              # an anchor outside the composition can never be revealed
+    "tsx_live_ref_invalid",          # live Board references: grammar (security contract, Slice 09)
+    "tsx_live_ref_unresolved",       # live Board references: only Boards the user works with (default deny)
+    "tsx_inspiration_unconfirmed",   # an inspiration claims a verified upstream provenance or is omitted
+    "behavior_risky",                # no network, eval, dynamic import or remote reference (the sandbox stays the wall; this says it early)
+})
+
+
 class _Sink:
     """Collects findings at the level the rule table gives the workflow, with a cap per rule."""
 
     def __init__(self, workflow: Workflow, strict: bool = False, partial: bool = False,
-                 not_judged: frozenset[str] = frozenset()) -> None:
+                 not_judged: frozenset[str] = frozenset(), native: bool = False) -> None:
         self.workflow = workflow
         self.strict = strict
+        self.native = native
         #: Rules the caller says it cannot judge (a stored variant keeps no brief): never run, never skipped silently, listed in the report.
         self.not_judged = not_judged
         #: The draft did not parse completely: rules that need every part of it do not run (and are not "skipped": the stage says why).
@@ -260,18 +293,18 @@ class _Sink:
     def ran(self, code: str) -> bool:
         """True when the rule applies to this workflow (and so is worth computing)."""
 
-        applies = code not in self.not_judged and RULE_BY_CODE[code].level(self.workflow, self.strict) != OFF
+        applies = code not in self.not_judged and RULE_BY_CODE[code].level(self.workflow, self.strict, self.native) != OFF
         if applies:
             self.checked.add(code)
         return applies
 
     def skip(self, code: str) -> None:
         self.checked.discard(code)
-        if code not in self.skipped and RULE_BY_CODE[code].level(self.workflow, self.strict) != OFF:
+        if code not in self.skipped and RULE_BY_CODE[code].level(self.workflow, self.strict, self.native) != OFF:
             self.skipped.append(code)
 
     def add(self, code: str, where: str, message: str, detail: tuple[Mapping[str, Any], ...] = ()) -> None:
-        level = RULE_BY_CODE[code].level(self.workflow, self.strict)
+        level = RULE_BY_CODE[code].level(self.workflow, self.strict, self.native)
         if level == OFF or code in self.not_judged:
             return
         if sum(1 for f in self.findings if f.code == code) >= MAX_FINDINGS_PER_RULE or len(self.findings) >= MAX_FINDINGS:
@@ -280,11 +313,11 @@ class _Sink:
         self.findings.append(Finding(code, level, where, safe_text(message), detail))
 
 
-def finding_from_problem(problem: Problem, workflow: Workflow, strict: bool = False) -> Finding | None:
+def finding_from_problem(problem: Problem, workflow: Workflow, strict: bool = False, native: bool = False) -> Finding | None:
     """A parse or validation `Problem` as a finding at its rule's level (`None`: the rule is off for this workflow)."""
 
     rule = RULE_BY_CODE.get(problem.code) or RULE_BY_CODE["draft_schema"]
-    level = rule.level(workflow, strict)
+    level = rule.level(workflow, strict, native)
     return None if level == OFF else Finding(rule.code, level, problem.where, safe_text(problem.message), problem.detail)
 
 
@@ -338,9 +371,9 @@ def check_first_draft(draft: PresentationDraft, brief: AuthoringBrief, manifests
     `partial`: `draft` is only what could be read of a submission with schema problems; the structure, timing, cue and art direction
     rules (which need every part) do not run, the text, motion, source and control rules do, and `stage` says `partial`."""
 
-    sink = _Sink(brief.workflow, brief.strict_content, partial, not_judged)
+    sink = _Sink(brief.workflow, brief.strict_content, partial, not_judged, brief.native)
     for problem in problems:
-        found = finding_from_problem(problem, brief.workflow, brief.strict_content)
+        found = finding_from_problem(problem, brief.workflow, brief.strict_content, brief.native)
         if found is not None:
             sink.checked.add(found.code)
             sink.add(found.code, found.where, found.message, found.detail)

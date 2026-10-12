@@ -46,8 +46,8 @@ from jarvis.domain.presentation_studio_checks import PresentationStudioError, Pr
 from jarvis.domain.presentation_studio import stamp
 from jarvis.domain.presentation_studio_edit import (
     UNSAFE_KEYS, ControlReset, ControlSet, EditMode, EditPlan, EditRefusal, EditRequest, EditResult, EditStatus,
-    EXPLICIT_USER_REQUEST, MAX_OPS, RestoreValues, SceneAdd, SceneSetControls, SceneVariantSelect, SourceRequestRecord, StudioActor,
-    actor_refusal, apply_ops, parse_edit_request, scenes_changed, undo_record,
+    AGENT_AUTHORED_SCENE, EXPLICIT_USER_REQUEST, MAX_OPS, RestoreValues, SceneAdd, SceneSetControls, SceneVariantSelect, SourceRequestRecord, StudioActor,
+    actor_refusal, apply_ops, new_source_request_id, parse_edit_request, scenes_changed, undo_record,
 )
 from jarvis.domain.presentation_studio_score import check_score, parse_score
 from jarvis.domain.presentation_studio_scene_variants import new_scene_variant_id
@@ -183,6 +183,10 @@ class PresentationStudioEditService:
 
         renew = "renew it: the brain records scene.source_request again in a turn of the user, then edits with the new request_id"
         if not request_id:
+            # Slice 13: the scene an agent created itself (assemble) carries a multi-use authoring record; no id needed to refine it.
+            authored = self._authored(presentation_id, variant_id, scene_id)
+            if authored is not None:
+                return authored
             raise PresentationStudioError(C.SOURCE_REQUEST_REQUIRED, f"a source edit of the brain needs the request_id of a pending source request; {renew}")
         record = next((r for r in self._sources if r.request_id == request_id), None)
         if record is None:
@@ -193,9 +197,63 @@ class PresentationStudioEditService:
             raise PresentationStudioError(C.SOURCE_REQUEST_REQUIRED, f"source request {request_id} expired after {int(SOURCE_REQUEST_TTL_S // 60)} minutes; {renew}")
         if (record.presentation_id, record.variant_id, record.scene_id) != (presentation_id, variant_id, scene_id):
             raise PresentationStudioError(C.SOURCE_REQUEST_REQUIRED, f"source request {request_id} was recorded for another presentation, variant or scene; {renew}")
+        if record.origin == AGENT_AUTHORED_SCENE:
+            return self._touch(record)
         if record.origin != EXPLICIT_USER_REQUEST:
             raise PresentationStudioError(C.SOURCE_REQUEST_REQUIRED, f"source request {request_id} does not come from a request of the user; {renew}")
         return record
+
+    # ------------------------------------------------------------ Slice 13: scenes an agent created itself
+
+    def record_authored_scenes(self, presentation_id: str, variant_id: str, scene_ids: Sequence[str], basis_revision: int) -> tuple[dict[str, Any], ...]:
+        """One multi-use `agent_authored_scene` record per scene an agent just assembled (`presentation_draft_assemble`): the agent refines its
+        own fresh scenes through the source-edit route (preview, fix, iterate) without a user turn. 30 minutes, restarted at each use; dropped
+        when the user edits that scene's source (`drop_authored_scene`). Returned as the assemble result shows them (no intent)."""
+
+        records = tuple(SourceRequestRecord(new_source_request_id(), presentation_id, variant_id, scene_id, "", StudioActor.BRAIN.value,
+                                            basis_revision, AGENT_AUTHORED_SCENE, self._clock()) for scene_id in scene_ids)
+        dropped = max(0, len(self._sources) + len(records) - MAX_SOURCE_REQUESTS)
+        self._sources.extend(records)
+        self._trace("core.presentation_studio.authored_scenes_recorded", "Scenes creees par l'agent : il peut affiner leurs sources",
+                    data={"presentation_id": presentation_id, "variant_id": variant_id, "scenes": len(records), "durable": False,
+                          "ttl_s": int(SOURCE_REQUEST_TTL_S)})
+        if dropped:
+            self._trace("core.presentation_studio.source_requests_dropped", "Demandes de source evincees de la memoire",
+                        level="warning", data={"presentation_id": presentation_id, "dropped": dropped, "capacity": MAX_SOURCE_REQUESTS})
+        return tuple({**r.to_dict(with_intent=False), "durable": False, "ttl_s": int(SOURCE_REQUEST_TTL_S)} for r in records)
+
+    def drop_authored_scene(self, presentation_id: str, variant_id: str, scene_id: str) -> int:
+        """The user edited this scene's source: the agent's authoring record ends (the user's work is never overwritten without a new
+        request of the user). Returns how many records ended."""
+
+        kept = [r for r in self._sources if not (r.origin == AGENT_AUTHORED_SCENE
+                                                 and (r.presentation_id, r.variant_id, r.scene_id) == (presentation_id, variant_id, scene_id))]
+        ended = len(self._sources) - len(kept)
+        if ended:
+            self._sources.clear()
+            self._sources.extend(kept)
+            self._trace("core.presentation_studio.authored_scene_released", "L'utilisateur a edite la scene : l'agent n'y ecrit plus sans demande",
+                        data={"presentation_id": presentation_id, "variant_id": variant_id, "scene_id": scene_id})
+        return ended
+
+    def _authored(self, presentation_id: str, variant_id: str, scene_id: str) -> SourceRequestRecord | None:
+        for record in reversed(self._sources):
+            if record.origin == AGENT_AUTHORED_SCENE and (record.presentation_id, record.variant_id, record.scene_id) == (
+                    presentation_id, variant_id, scene_id):
+                if self._clock() - record.created_at > SOURCE_REQUEST_TTL_S:
+                    self._drop_source_request(record.request_id)
+                    return None
+                return self._touch(record)
+        return None
+
+    def _touch(self, record: SourceRequestRecord) -> SourceRequestRecord:
+        """An authoring record is used: its 30 minutes start again (a long creative session does not expire mid-work)."""
+
+        fresh = replace(record, created_at=self._clock())
+        kept = [fresh if r.request_id == record.request_id else r for r in self._sources]
+        self._sources.clear()
+        self._sources.extend(kept)
+        return fresh
 
     def _drop_source_request(self, request_id: str) -> None:
         kept = [record for record in self._sources if record.request_id != request_id]
@@ -208,6 +266,8 @@ class PresentationStudioEditService:
         Slice 06, `docs/presentation-studio.md` > *Hot reload contract*) : une demande disparue (redemarrage, eviction
         tracee en `warning`) n'empeche jamais une edition de source."""
 
+        if any(r.request_id == request_id and r.origin == AGENT_AUTHORED_SCENE for r in self._sources):
+            return True  # multi-use: an authored scene stays refinable (`claim_source_request` restarted its 30 minutes)
         kept = [record for record in self._sources if record.request_id != request_id]
         found = len(kept) != len(self._sources)
         if found:

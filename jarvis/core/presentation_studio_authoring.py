@@ -44,7 +44,7 @@ draft at `info` with its codes, an unreferenced prefab version left by a failed 
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Awaitable, Callable, Collection, Mapping
+from collections.abc import Awaitable, Callable, Collection, Mapping, Sequence
 from dataclasses import dataclass, field
 import hashlib
 import time
@@ -193,12 +193,12 @@ def _digest(value: object) -> str:
 
 
 def _problem_report(workflow: Workflow | None, problems: list[Problem], *, stage: str, declared: str | None = None,
-                    strict: bool = False) -> QualityReport:
+                    strict: bool = False, native: bool = False) -> QualityReport:
     """The report of a submission that could not be judged further. `workflow` `None`: the brief was refused, the levels are the
     `directed` ones and the report says what the author declared."""
 
     levels = workflow or Workflow.DIRECTED
-    findings = tuple(f for f in (finding_from_problem(p, levels, strict) for p in problems) if f is not None)
+    findings = tuple(f for f in (finding_from_problem(p, levels, strict, native) for p in problems) if f is not None)
     return QualityReport(workflow, findings, (), {}, {}, len({f.code for f in findings}), stage, declared)
 
 
@@ -209,11 +209,15 @@ class PresentationStudioAuthoring:
     def __init__(self, studio: Any, prefabs: AuthoringPrefabs, *, variants: Any | None = None, pins: PinIndex | None = None,
                  checkpoint: Checkpoint | None = None, registry: Any | None = None, compiler: SceneCompiler | None = None,
                  engine_pin: Callable[[], EnginePin] | None = None, live_refs: LiveRefReader | None = None,
-                 boards: Callable[[], Awaitable[Collection[str]]] | None = None) -> None:
+                 boards: Callable[[], Awaitable[Collection[str]]] | None = None,
+                 authored: Callable[[str, str, Sequence[str], int], Sequence[Mapping[str, Any]]] | None = None) -> None:
         #: Slice 15. `compiler` : the Remotion compiler (absent: a Remotion draft is `engine_unavailable`); `engine_pin` : the engine set the
         #: generated sources declare (absent: the generator object is refused); `live_refs` + `boards` : the resolver and the Boards the user
         #: works with (absent: a draft with live references cannot be judged, said in `skipped`, and the references block as unresolved).
         self._compiler = compiler
+        #: Slice 13 (native-studio-playback-fix): `PresentationStudioEditService.record_authored_scenes`. The agent that assembled a deck may
+        #: refine the sources of the scenes it created (preview, fix, iterate) through the source-edit route; absent: nothing is recorded.
+        self._authored = authored
         self._engine_pin = engine_pin
         self._live_refs = live_refs
         self._boards = boards
@@ -294,7 +298,11 @@ class PresentationStudioAuthoring:
                           "scenes": len(draft.scenes), "bundles": len(published), "warnings": len(report.warnings),
                           "engine": final.presentation.engine.value, "compiled": len(prepared.compiled),
                           "inspirations": len(prepared.inspirations)})
-        return AuthoringOutcome("delivered", self._delivered(prepared, final, published), 201)
+        delivered = self._delivered(prepared, final, published)
+        if self._authored is not None and prepared.actor == "brain":
+            first = final.variants[0].variant
+            delivered["source_requests"] = list(self._authored(pid, first.variant_id, [s.scene_id for s in first.scenes], first.revision))
+        return AuthoringOutcome("delivered", delivered, 201)
 
     async def _publish(self, draft: PresentationDraft, actor: str, published: list[dict[str, Any]]) -> dict[str, PrefabRef]:
         pins: dict[str, PrefabRef] = {}
@@ -444,13 +452,15 @@ class PresentationStudioAuthoring:
             parsed = parse_draft(draft_raw, brief, self._engine_pin() if self._engine_pin is not None else None)
         except (OverflowError, RecursionError, ValueError, TypeError, MemoryError) as exc:   # net behind scan_json: never a 500
             problem = Problem("draft_schema", "draft", f"the draft could not be analysed ({type(exc).__name__})")
-            return _Prepared(actor, _problem_report(brief.workflow, [problem], stage="schema", strict=brief.strict_content), brief,
+            return _Prepared(actor, _problem_report(brief.workflow, [problem], stage="schema", strict=brief.strict_content,
+                                    native=brief.native), brief,
                              digests=digests)
         if parsed.draft is None:
             if parsed.partial is not None:
                 report = check_first_draft(parsed.partial, brief, None, None, problems=tuple(parsed.problems), partial=True)
             else:
-                report = _problem_report(brief.workflow, list(parsed.problems), stage="schema", strict=brief.strict_content)
+                report = _problem_report(brief.workflow, list(parsed.problems), stage="schema", strict=brief.strict_content,
+                                    native=brief.native)
             return _Prepared(actor, report, brief, digests=digests)
         draft = parsed.draft
         problems: list[Problem] = []

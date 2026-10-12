@@ -96,6 +96,22 @@ class Workflow(StrEnum):
         return self is not Workflow.EXPLORATORY
 
 
+class Authoring(StrEnum):
+    """How the deck is written (handoff jarvis-remotion-native-studio-playback-fix, Slice 13).
+
+    - `guided` (default, the historical path): the full quality gate of the workflow judges the draft; text lives in props/data, colours in
+      the `theme` prop, every scene has controls, cues and speech.
+    - `native`: normal editable Remotion code. The agent writes React/TSX as in any Remotion project (text and colours in the source, any
+      number of modules); only what makes the deck invalid, unsafe or unplayable blocks (`NATIVE_BLOCKING` in the gate); every other rule is
+      reported as a warning. The score, the scene roles and the art direction become optional (Core derives a silent score from the declared
+      compositions, roles from the order, a generated fallback direction). The Player sandbox, the isolation guards and the real compile are
+      unchanged: `native` is a creative profile, never a trust widening.
+    """
+
+    GUIDED = "guided"
+    NATIVE = "native"
+
+
 class Speech(StrEnum):
     """Who speaks in the presentation, as the brief says it."""
 
@@ -189,6 +205,12 @@ class AuthoringBrief:
     #: An exploratory request over a briefed deck keeps the full content gate (the `directed` level of every rule) and varies only the art
     #: direction: the exploratory column applies to candidates that are deliberately light, not to a deck whose content is given.
     strict_content: bool = False
+    #: Slice 13 (native-studio-playback-fix): `native` = normal editable Remotion code, judged only on validity and safety (see `Authoring`).
+    authoring: Authoring = Authoring.GUIDED
+
+    @property
+    def native(self) -> bool:
+        return self.authoring is Authoring.NATIVE
 
     def seed(self) -> SeedContext:
         """The context the deterministic DA fallback reads (title, audience, purpose, tone; clipped to its own bounds)."""
@@ -198,19 +220,22 @@ class AuthoringBrief:
                            tuple(word[:24] for word in self.tone[:8]))
 
     def to_dict(self) -> dict[str, Any]:
-        return {"title": self.title, "workflow": self.workflow.value, "purpose": self.purpose, "audience": self.audience,
+        wire = {"title": self.title, "workflow": self.workflow.value, "purpose": self.purpose, "audience": self.audience,
                 "duration_target_s": self.duration_target_s, "tone": list(self.tone), "language": self.language,
                 "speech": self.speech.value,
                 "resources": [{"kind": r.kind.value, "locator": r.locator, "title": r.title} for r in self.resources],
                 "must_cover": list(self.must_cover), "max_scenes": self.max_scenes, "literal_terms": list(self.literal_terms),
                 "strict_content": self.strict_content}
+        if self.native:  # only when set: the digest of a guided brief stays what it was before Slice 13
+            wire["authoring"] = self.authoring.value
+        return wire
 
     def digest_source(self) -> str:
         return canonical_json(self.to_dict())
 
 
 _BRIEF_OPTIONAL = frozenset({"purpose", "audience", "duration_target_s", "tone", "language", "speech", "resources",
-                             "must_cover", "max_scenes", "literal_terms", "strict_content"})
+                             "must_cover", "max_scenes", "literal_terms", "strict_content", "authoring"})
 
 
 def parse_brief(raw: object) -> AuthoringBrief:
@@ -238,10 +263,15 @@ def parse_brief(raw: object) -> AuthoringBrief:
     strict = _flag("brief.strict_content", data.get("strict_content", False))
     if strict and workflow is not Workflow.EXPLORATORY:
         raise _fail("brief.strict_content belongs to an exploratory request (the other workflows are strict already)")
+    authoring = _enum(Authoring, "brief.authoring", data.get("authoring", Authoring.GUIDED.value))
+    if authoring is Authoring.NATIVE and workflow is Workflow.EXPLORATORY:
+        raise _fail("brief.authoring native writes one deck: workflow directed or one_shot (exploratory candidates stay guided)")
+    # A native deck is silent unless the author says otherwise: the default `jarvis` would ask for a spoken line per scene.
+    speech_default = Speech.NONE.value if authoring is Authoring.NATIVE else Speech.JARVIS.value
     return AuthoringBrief(
         title, workflow, _line("brief.purpose", data.get("purpose", ""), MAX_BRIEF_LINE, allow_empty=True),
         _line("brief.audience", data.get("audience", ""), MAX_BRIEF_LINE, allow_empty=True), duration, tone, language,
-        _enum(Speech, "brief.speech", data.get("speech", "jarvis")), resources, must, max_scenes, literal, strict)
+        _enum(Speech, "brief.speech", data.get("speech", speech_default)), resources, must, max_scenes, literal, strict, authoring)
 
 
 # ------------------------------------------------------------------ the draft
@@ -493,11 +523,14 @@ def _item(raw: object, where: str, scene_keys: set[str]) -> DraftItem:
     return item
 
 
-def _scene(raw: object, where: str, bundles: Mapping[str, DraftBundle]) -> DraftScene:
-    data = _exact_keys(raw, where, {"key", "role", "title", "prefab"},
-                       frozenset({"section", "props", "data", "controls", "anchors", "alt", "long_form", "cut"}))
+def _scene(raw: object, where: str, bundles: Mapping[str, DraftBundle], default_role: SceneRole | None = None) -> DraftScene:
+    """`default_role` (native authoring only): the role from the scene's place when the author gives none."""
+
+    required = {"key", "title", "prefab"} if default_role is not None else {"key", "role", "title", "prefab"}
+    data = _exact_keys(raw, where, required,
+                       frozenset({"section", "props", "data", "controls", "anchors", "alt", "long_form", "cut", "role"}))
     key = _slug(f"{where}.key", data["key"])
-    role = _enum(SceneRole, f"{where}.role", data["role"])
+    role = _enum(SceneRole, f"{where}.role", data["role"]) if "role" in data else default_role
     ref = _exact_keys(data["prefab"], f"{where}.prefab", set(), frozenset({"bundle", "id", "version"}))
     bundle_key: str | None = None
     if "bundle" in ref:
@@ -595,7 +628,9 @@ def parse_draft(raw: object, brief: AuthoringBrief, engine_pin: EnginePin | None
     if c.problems:
         return ParsedDraft(None, tuple(c.problems))
     try:
-        data = _exact_keys(raw, "draft", {"scenes", "score"}, _DRAFT_KEYS)
+        # Native authoring (Slice 13): the score is optional (Core derives a silent one from the compositions).
+        data = _exact_keys(raw, "draft", {"scenes"}, _DRAFT_KEYS | {"score"}) if brief.native else \
+            _exact_keys(raw, "draft", {"scenes", "score"}, _DRAFT_KEYS)
     except PresentationStudioError as exc:
         c.add("draft_schema", "draft", exc.message)
         return ParsedDraft(None, tuple(c.problems))
@@ -645,7 +680,8 @@ def parse_draft(raw: object, brief: AuthoringBrief, engine_pin: EnginePin | None
             if isinstance(entry.get("key"), str) and SLUG.fullmatch(entry["key"]):
                 blocked.add(entry["key"])
             continue
-        scene = c.guard(f"scene:{i + 1}", lambda e=entry, n=i: _scene(e, f"scenes[{n}]", bundles))
+        default_role = native_role(i, len(scene_list)) if brief.native else None
+        scene = c.guard(f"scene:{i + 1}", lambda e=entry, n=i, r=default_role: _scene(e, f"scenes[{n}]", bundles, r))
         if scene is None:
             continue
         if any(s.key == scene.key for s in scenes):
@@ -660,12 +696,15 @@ def parse_draft(raw: object, brief: AuthoringBrief, engine_pin: EnginePin | None
 
     keys = {s.key for s in scenes} | blocked
     items: list[DraftItem] = []
-    score = c.guard("draft.score", lambda: _exact_keys(data["score"], "score", {"items"}))
-    item_list = c.guard("score.items", lambda: _list("score.items", score["items"], MAX_DRAFT_ITEMS, 1)) if score else []
-    for i, entry in enumerate(item_list or []):
-        item = c.guard(f"item:{i + 1}", lambda e=entry, n=i: _item(e, f"score.items[{n}]", keys))
-        if item is not None:
-            items.append(replace(item, position=i + 1))
+    if brief.native and "score" not in data:
+        items = native_score(scenes, bundles)
+    else:
+        score = c.guard("draft.score", lambda: _exact_keys(data["score"], "score", {"items"}))
+        item_list = c.guard("score.items", lambda: _list("score.items", score["items"], MAX_DRAFT_ITEMS, 1)) if score else []
+        for i, entry in enumerate(item_list or []):
+            item = c.guard(f"item:{i + 1}", lambda e=entry, n=i: _item(e, f"score.items[{n}]", keys))
+            if item is not None:
+                items.append(replace(item, position=i + 1))
 
     directions = _directions(data, brief, keys, c)
     if c.problems:
@@ -673,6 +712,31 @@ def parse_draft(raw: object, brief: AuthoringBrief, engine_pin: EnginePin | None
         partial = PresentationDraft(tuple(bundles.values()), tuple(scenes), tuple(i for i in items if i.scene in parsed_keys), ())             if scenes else None
         return ParsedDraft(None, tuple(c.problems), partial)
     return ParsedDraft(PresentationDraft(tuple(bundles.values()), tuple(scenes), tuple(items), tuple(directions)), ())
+
+
+def native_role(index: int, count: int) -> SceneRole:
+    """Native authoring: the role a scene takes from its place when the author gives none (one scene: single; else opening, body, closing)."""
+
+    if count == 1:
+        return SceneRole.SINGLE
+    return SceneRole.OPENING if index == 0 else SceneRole.CLOSING if index == count - 1 else SceneRole.BODY
+
+
+def native_score(scenes: list[DraftScene], bundles: Mapping[str, DraftBundle]) -> list[DraftItem]:
+    """Native authoring without a score: one silent item per scene, in order, lasting the scene's declared composition (a pinned scene
+    whose composition is not in the draft keeps no target). A silence is an explicit item (presenter `none`), as the score contract says."""
+
+    from jarvis.domain.presentation_studio_authoring_gate import MAX_ITEM_MS, MIN_ITEM_MS  # the gate imports this module: late import
+
+    items: list[DraftItem] = []
+    for position, scene in enumerate(scenes, start=1):
+        target = None
+        bundle = bundles.get(scene.bundle_key) if scene.bundle_key else None
+        source = bundle.bundle.manifest.source if bundle is not None else None
+        if source is not None and source.composition.fps > 0:
+            target = max(MIN_ITEM_MS, min(MAX_ITEM_MS, round(1000 * source.composition.duration_in_frames / source.composition.fps)))
+        items.append(DraftItem(scene.key, Presenter.NONE, target_duration_ms=target, position=position))
+    return items
 
 
 def _directions(data: Mapping[str, Any], brief: AuthoringBrief, keys: set[str], c: _Collector) -> list[DraftDirection]:
@@ -691,6 +755,9 @@ def _directions(data: Mapping[str, Any], brief: AuthoringBrief, keys: set[str], 
     if "candidates" in data:
         c.add("draft_schema", "draft.candidates", f"a {brief.workflow.value} draft is one direction: candidates belong to exploratory")
     if "art_direction" not in data:
-        return [DraftDirection(brief.title, f"first draft ({brief.workflow.value})", None)]
+        # Native authoring: the scenes carry their own look; a generated fallback direction still gives the variant its required DA (and
+        # its `theme` prop to the scenes that read it).
+        profile = generate_fallback_profile(brief.seed()) if brief.native else None
+        return [DraftDirection(brief.title, f"first draft ({brief.workflow.value})", profile)]
     profile = c.guard("art_direction", lambda: _profile(data["art_direction"], "art_direction", brief))
     return [DraftDirection(brief.title, f"first draft ({brief.workflow.value})", profile)] if profile is not None else []

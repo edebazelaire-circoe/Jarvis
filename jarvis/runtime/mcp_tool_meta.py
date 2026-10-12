@@ -605,6 +605,11 @@ PRESENTATION = ServerMeta(
         "presentation_draft_finalize": ToolMeta(
             "Adopter une direction exploratoire", "write", False, "single_request", "untyped",
             parameter_rules=(_IDS_RULE,), output_notes=("le contrôle directed est rejoué sur la variante stockée",)),
+        "presentation_source": ToolMeta(
+            "Code Remotion natif d'une scène", "write", False, "single_request", "untyped",
+            parameter_rules=(_IDS_RULE, "write : sa propre scène créée par assemble, sinon request_id d'une demande de l'utilisateur"),
+            output_notes=("write refusé : status, code, diagnostics (fichier, ligne) ; rien ne change à l'écran",
+                          "preview : chemins d'images JPEG à regarder")),
     },
 )
 
