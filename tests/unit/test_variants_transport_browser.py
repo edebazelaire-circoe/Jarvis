@@ -172,7 +172,8 @@ async def test_variants_opens_paused_and_the_transport_drives_one_clock_pause_re
             "PX-4 opens paused on S1 frame 0": evidence["opened"]["scene"] == "S1" and evidence["opened"]["frame"] == 0 and evidence["opened"]["playing"] is False,
             "PX-4 nothing plays before « Lire » (staged frames included)": played_before_lire == [],
             "PX-4 no stage bar, embedded page": t["stageBars"] and all(n == 0 for n in t["stageBars"]) and all(t["embedded"]),
-            "PX-4 « Son » muted, disabled with its reason": t["son"][0] == "true" and "clic dans l'image" in t["son"][1],
+            # Slice 08: « Son » is the sound toggle, muted at opening (no longer disabled; `test_variants_media_fullscreen_browser.py`)
+            "PX-4 « Son » muted at opening": t["son"][0] is None and t["son"][1] == "Activer le son (M)",
             "§ 4.16 one named toolbar": t["toolbars"] == 1 and t["name"] == "Lecture de la vidéo"
                 and t["buttons"] == ["Scène précédente", "Lire", "Scène suivante", "Son", "Plus de lecture"],
             "§ 4.16 slider": t["slider"]["min"] == "0" and t["slider"]["now"] == "0" and t["slider"]["max"] == str(74 * 60 - 1),

@@ -23,6 +23,8 @@
   const HOST_ID='jvStudioExplorer';
   const OBJECT_ID='studio-explorer';
   const PREVIEW_OBJECT_ID='studio-explorer-preview';
+  /* The stage of Variants as a fullscreen target (native-studio-playback-fix Slice 08, contract § 4.12): the Player and its transport only. */
+  const STAGE_OBJECT_ID='studio-explorer-stage';
   const STYLE_ID='jv-studio-explorer-style';
   const STORAGE_KEY='jarvis.studio_explorer.ui';
   const ROW_H=48;
@@ -386,6 +388,7 @@
     first:['M6 5v14','M18 6l-8 6 8 6'],
     last:['M18 5v14','M6 6l8 6-8 6'],
     sound:['M4 10v4h4l5 4V6l-5 4z','M17 9a4 4 0 0 1 0 6'],
+    muted:['M4 10v4h4l5 4V6l-5 4z','M17 10l4 4','M21 10l-4 4'],
     more:['M5 12h.01','M12 12h.01','M19 12h.01'],
   });
 
@@ -548,6 +551,26 @@ html:has(#${HOST_ID}:not([hidden])) #jvFullscreenPrompt{top:auto;bottom:18px;lef
   #${HOST_ID} .jvx-transport .jvx-time{min-width:0}
   #${HOST_ID} .jvx-scrub{min-width:40px}
 }
+/* Le plein écran de la scène (native-studio-playback-fix Slice 08, § 4.12) : la cible est le « théâtre » (la scène et son transport), jamais
+   l'arbre, les métadonnées ou les actions. L'image entière, à son format, sur fond noir (le Player de Remotion la met à l'échelle « contain » :
+   bandes noires) ; le transport en surimpression se cache seul pendant la lecture et revient au moindre mouvement ; sous mouvement réduit,
+   il disparaît et revient sans fondu. Le capteur (.jvx-catch) n'existe que transport caché : un mouvement au-dessus de l'image (que
+   l'iframe garde pour elle) le fait revenir ; transport visible, le capteur s'efface et un clic atteint la scène. */
+#${HOST_ID} .jvx-theater{position:relative;display:flex;flex-direction:column;gap:12px;flex:1 1 0;min-height:0;min-width:0}
+#${HOST_ID} .jvx-catch{display:none;position:absolute;inset:0;z-index:4;cursor:none}
+#${HOST_ID} .jvx-stage-sound{position:absolute;left:12px;top:12px;z-index:3;max-width:calc(100% - 24px);padding:5px 11px;border-radius:999px;
+  background:rgba(2,6,10,.82);border:1px solid color-mix(in srgb,var(--jvx-warn) 60%,transparent);color:var(--jvx-warn);font-size:12px;pointer-events:none}
+#${HOST_ID} .jvx-transport .jvx-btn[data-sound="blocked"]{border-color:var(--jvx-warn);color:var(--jvx-warn)}
+#${HOST_ID} .jvx-theater:fullscreen{display:block;background:#000;padding:0;gap:0}
+#${HOST_ID} .jvx-theater:fullscreen::backdrop{background:#000}
+#${HOST_ID} .jvx-theater:fullscreen .jvx-stagewrap{position:absolute;inset:0;min-height:0;display:block}
+#${HOST_ID} .jvx-theater:fullscreen .jvx-stage{width:100%;height:100%;aspect-ratio:auto;border:0;border-radius:0;box-shadow:none;background:#000}
+#${HOST_ID} .jvx-theater:fullscreen .jvx-stage-note{position:absolute;left:0;right:0;bottom:0;z-index:5;padding:28px 20px 16px;
+  background:linear-gradient(transparent,rgba(0,0,0,.82));color:var(--jvx-ink)}
+#${HOST_ID} .jvx-theater:fullscreen .jvx-stage-note .jvx-scene-line,#${HOST_ID} .jvx-theater:fullscreen .jvx-scene-count{display:none}
+#${HOST_ID} .jvx-theater:fullscreen[data-chrome="hidden"] .jvx-stage-note{opacity:0;pointer-events:none}
+#${HOST_ID} .jvx-theater:fullscreen[data-chrome="hidden"] .jvx-catch{display:block}
+@media (prefers-reduced-motion:no-preference){#${HOST_ID} .jvx-theater:fullscreen .jvx-stage-note{transition:opacity .25s ease}}
 #${HOST_ID} .jvx-vbar{display:flex;align-items:center;gap:6px;overflow-x:auto;padding:2px 2px 8px;scrollbar-width:thin;scrollbar-color:var(--jvx-line-strong) transparent;min-height:34px}
 @media (max-height:680px){#${HOST_ID} .jvx-vbar{display:none}}
 #${HOST_ID} .jvx-vbar-label{flex:none;color:var(--jvx-mute);font-size:11px;letter-spacing:.1em;text-transform:uppercase;padding-right:4px}
@@ -661,7 +684,7 @@ html:has(#${HOST_ID}:not([hidden])) #jvFullscreenPrompt .jvfs-bar{display:none}
 `;
 
   const api=Object.freeze({
-    ROUTE,PLAYBACK_ROUTE,COMMAND_ROUTE,STATE_ROUTE,HOST_ID,OBJECT_ID,PREVIEW_OBJECT_ID,STYLE_ID,STORAGE_KEY,ROW_H,OVERSCAN,MAX_LIVE,MAX_ARCHIVED,
+    ROUTE,PLAYBACK_ROUTE,COMMAND_ROUTE,STATE_ROUTE,HOST_ID,OBJECT_ID,PREVIEW_OBJECT_ID,STAGE_OBJECT_ID,STYLE_ID,STORAGE_KEY,ROW_H,OVERSCAN,MAX_LIVE,MAX_ARCHIVED,
     MAX_TITLE,MAX_RATIONALE,MAX_RATIONALE_BYTES,MAX_DEPTH_SHOWN,INDENT_PX,DEEP_FROM,TYPEAHEAD_MS,PAGE_TOKEN,PAGE_TOKEN_HEADER,REQUEST_TIMEOUT_MS,READ_TIMEOUT_MS,PLAYBACK_CHECK_MS,LONG_PRESS_MS,
     PREVIEW_SETTLE_MS,NOTICE_MS,PREFS_MAX_COLLAPSED,STUDIO_STAGE_PREFIX,REFUSALS,COMMAND_REFUSALS,ICONS,CSS,
     clip,cleanLine,utf8Length,rationaleBytes,checkTitle,checkRationale,absoluteTime,relativeTime,creatorLabel,shortId,

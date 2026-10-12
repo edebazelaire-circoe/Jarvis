@@ -17,8 +17,10 @@
    - un outil de lecture. Il est refusé pendant une lecture (cause dite, code `explorer_run_in_progress`) et se ferme si une lecture démarre : un seul
      élément peut être en plein écran, et le public ne doit jamais voir l'atelier.
 
-   Plein écran : l'hôte (`#jvStudioExplorer`, `data-object-id="studio-explorer"`) demande le VRAI plein écran par `JarvisFullscreen.enter` ;
-   par la voix il ARME (invite d'un clic, compte à rebours) et l'explorateur est déjà visible en recouvrement fenêtré, clairement étiqueté. Échap
+   Plein écran : à l'ouverture, l'hôte (`#jvStudioExplorer`, `data-object-id="studio-explorer"`) demande le VRAI plein écran par
+   `JarvisFullscreen.enter` ; par la voix il ARME (invite d'un clic, compte à rebours) et l'explorateur est déjà visible en recouvrement fenêtré,
+   clairement étiqueté. Le bouton « Plein écran » de l'en-tête (et `F`) met la SCÈNE en plein écran (`data-object-id="studio-explorer-stage"` :
+   le lecteur et son transport, sans l'arbre ni les métadonnées ; native-studio-playback-fix Slice 08, § 4.12). Échap
    (livré à la page) ferme d'abord le menu, puis la boîte de dialogue, puis l'explorateur ; en plein écran le navigateur garde la première pression
    pour sortir du plein écran, l'explorateur reste alors ouvert en fenêtré.
 
@@ -35,7 +37,9 @@
   const Upgrades=root.JarvisStudioExplorerUpgrades||(typeof require==='function'?require('./control_center_presentation_studio_explorer_upgrades.js'):null);
   /* Lecture continue de la variante dans Variantes (native-studio-playback-fix Slice 05) : le contrôleur sans DOM qui tient `f`. */
   const Seq=root.JarvisVariantsSequencer||(typeof require==='function'?require('./control_center_presentation_studio_sequencer.js'):null);
-  const {ROUTE,PLAYBACK_ROUTE,COMMAND_ROUTE,STATE_ROUTE,HOST_ID,OBJECT_ID,PREVIEW_OBJECT_ID,STYLE_ID,ROW_H,MAX_DEPTH_SHOWN,INDENT_PX,TYPEAHEAD_MS,PAGE_TOKEN,PAGE_TOKEN_HEADER,
+  /* Son, plein écran de la scène, carte des touches (Slice 08) : contrôleurs sans DOM. */
+  const Media=root.JarvisVariantsStageMedia||(typeof require==='function'?require('./control_center_presentation_studio_stage_media.js'):null);
+  const {ROUTE,PLAYBACK_ROUTE,COMMAND_ROUTE,STATE_ROUTE,HOST_ID,OBJECT_ID,PREVIEW_OBJECT_ID,STAGE_OBJECT_ID,STYLE_ID,ROW_H,MAX_DEPTH_SHOWN,INDENT_PX,TYPEAHEAD_MS,PAGE_TOKEN,PAGE_TOKEN_HEADER,
     REQUEST_TIMEOUT_MS,READ_TIMEOUT_MS,PLAYBACK_CHECK_MS,LONG_PRESS_MS,PREVIEW_SETTLE_MS,NOTICE_MS,COMMAND_REFUSALS,ICONS,CSS,MAX_LIVE,MAX_ARCHIVED,
     cleanLine,checkTitle,checkRationale,rationaleBytes,relativeTime,absoluteTime,creatorLabel,shortId,buildForest,subtreeIds,flatten,windowOf,treeKey,
     describeRefusal,planModel,sameSet,readPrefs,writePrefs,MAX_RATIONALE_BYTES}=Core;
@@ -87,6 +91,7 @@
       collapsed:new Set(),archivedOpen:false,prefs:readPrefs(null),loading:null,busy:null,notice:null,
       preview:{variantId:null,status:'idle',doc:null,scenes:[],sceneId:null,error:null,since:0,generation:0,mounted:null},
       art:{variantId:null,state:'idle',doc:null},fs:'not_requested',generation:0,dialog:null,menu:null,opener:null,fullscreenOwned:false,
+      fsKind:null,fsOpener:null,fsLeftAt:-1e9,
     };
     const ui={};
     const selectionListeners=new Set();
@@ -283,7 +288,7 @@
       const actions=el('div','jvx-top-actions');
       ui.busy=el('span','jvx-busy');ui.busy.hidden=true;attrs(ui.busy,{role:'status','aria-live':'polite'});
       ui.modeChip=el('span','jvx-chip');
-      ui.fsButton=button(null,null,()=>{toggleFullscreen()});
+      ui.fsButton=button(null,null,(event)=>{toggleFullscreen({other:!!(event&&event.shiftKey)})});
       ui.fsIconIn=icon('expand');ui.fsIconOut=icon('contract');ui.fsLabel=el('span','jvx-btn-label-long','Plein écran');
       ui.fsButton.appendChild(ui.fsIconIn);ui.fsButton.appendChild(ui.fsIconOut);ui.fsButton.appendChild(ui.fsLabel);
       ui.closeButton=button('Fermer',null,()=>{close({reason:'user'})},{icon:'close',labelClass:'jvx-btn-label-long',attrs:{'aria-label':"Fermer l'explorateur de variantes",title:'Fermer (Échap)'}});
@@ -335,7 +340,12 @@
       ui.wait=el('div','jvx-stage-wait');ui.wait.hidden=true;attrs(ui.wait,{role:'status','aria-live':'polite'});
       ui.waitText=el('span');ui.waitCount=el('span');ui.waitCount.setAttribute('aria-hidden','true');
       ui.wait.appendChild(ui.waitText);ui.wait.appendChild(ui.waitCount);
-      ui.stage.appendChild(ui.slot);ui.stage.appendChild(ui.veil);ui.stage.appendChild(ui.wait);wrap.appendChild(ui.stage);
+      /* Slice 08: the sound the browser refused, said on the image itself (also in fullscreen, where the notice zone is not drawn). */
+      ui.soundPill=el('div','jvx-stage-sound');ui.soundPill.hidden=true;attrs(ui.soundPill,{role:'status','aria-live':'polite'});
+      ui.catcher=el('div','jvx-catch');ui.catcher.setAttribute('aria-hidden','true');
+      for(const type of ['pointermove','pointerdown'])ui.catcher.addEventListener(type,()=>chrome.poke());
+      ui.stage.appendChild(ui.slot);ui.stage.appendChild(ui.veil);ui.stage.appendChild(ui.wait);ui.stage.appendChild(ui.soundPill);ui.stage.appendChild(ui.catcher);
+      wrap.appendChild(ui.stage);
       const note=el('div','jvx-stage-note');
       const sceneLine=el('div','jvx-scene-line');
       ui.sceneTitle=el('span','jvx-scene-title jvx-bidi');ui.sceneTitle.setAttribute('dir','auto');
@@ -354,7 +364,12 @@
       bottom.appendChild(ui.meta);bottom.appendChild(ui.actions);
       ui.upgrades=upgrades.buildSection();
       ui.vbar=el('div','jvx-vbar');attrs(ui.vbar,{role:'toolbar',tabindex:'-1','aria-label':'Variantes vivantes : choisir celle à regarder'});
-      preview.appendChild(ui.vbar);preview.appendChild(wrap);preview.appendChild(note);preview.appendChild(ui.strip);preview.appendChild(bottom);preview.appendChild(ui.upgrades);
+      /* The « theater » (Slice 08): the stage and its transport, the one fullscreen target of « Plein écran » (§ 4.12). */
+      ui.theater=el('div','jvx-theater');
+      attrs(ui.theater,{'data-object-id':STAGE_OBJECT_ID,'aria-label':'Vidéo de la variante'});
+      ui.theater.appendChild(wrap);ui.theater.appendChild(note);
+      for(const type of ['pointermove','focusin','keydown'])ui.theater.addEventListener(type,()=>chrome.poke());
+      preview.appendChild(ui.vbar);preview.appendChild(ui.theater);preview.appendChild(ui.strip);preview.appendChild(bottom);preview.appendChild(ui.upgrades);
       ui.preview=preview;
       body.appendChild(treePane);body.appendChild(preview);body.appendChild(cmp.buildRoot());
       ui.live=el('div','jvx-sr');attrs(ui.live,{role:'status','aria-live':'polite','aria-atomic':'true'});
@@ -370,8 +385,10 @@
     }
 
     /* -------------------------------------------------------------- rendu */
+    /* Variants is fullscreen: the workspace (an opening that asked for it) or the stage (« Plein écran », `F`; Slice 08). */
+    function fullscreenNow(){const fs=doc.fullscreenElement;return !!fs&&!!ui.host&&(fs===ui.host||fs===ui.theater)}
     function modeNow(){
-      if(doc.fullscreenElement===ui.host)return 'fullscreen';
+      if(fullscreenNow())return 'fullscreen';
       const api=fullscreenApi(),st=api&&typeof api.state==='function'?api.state():null;
       return st&&st.armed?'fullscreen_armed':'windowed';
     }
@@ -380,7 +397,7 @@
       return !!(st&&st.armed);
     }
     function fsNow(){
-      if(doc.fullscreenElement===ui.host)return 'entered';
+      if(fullscreenNow())return 'entered';
       if(armedNow())return 'needs_gesture';
       return S.fs==='needs_gesture'?'exited':S.fs;     /* l'invite a été annulée ou a expiré : le navigateur n'attend plus rien */
     }
@@ -586,8 +603,11 @@
           fetchBundle:api.bundleFetcher((path,options)=>fetchImpl(path,Object.assign({cache:'no-store'},options))),
           onPreviewEvent:()=>{/* intentional: the preview frame writes nothing anywhere; its events are dropped */},
           onLive:(id)=>{if(seq)seq.onLive(id)},onClock:(id)=>{if(seq)seq.onClock(id)},onOutcome:(info)=>{if(seq)seq.onOutcome(info)},
+          /* Slice 08: the real state of the scene's sound, and a § 4.15 key typed in the scene that has the focus. */
+          onSound:(id,audio)=>{if(id===PREVIEW_OBJECT_ID)sound.onAudio(audio)},onKey:(id,key)=>onFrameKey(id,key),
           log:(key,data)=>{const k=String(key);log('preview_host_'+k.replace(/^scene\./,''),data,PREVIEW_HOST_INFO.has(k)?'info':'warn')}});
       }catch(error){log('preview_host_failed',{error:describe(error)},'error');previewHost=null}
+      if(previewHost)sound.attach();   // muted at opening (§ 4.14), or the sound the user turned on in this opening
       return previewHost;
     }
     /* -------------------------------------------------------------- lecture continue (Slice 05) et transport (Slice 06) */
@@ -649,7 +669,27 @@
 
     /* The one transport of Variants (contract § 4, § 4.16, § 6 #15-#20): a named toolbar under the stage, read only from the sequencer's
        `f`. The stage page shows no bar of its own (`embed: 'variants'`). */
-    const SOUND_REASON="Le son s'active d'un clic dans l'image de la scène : le navigateur n'autorise le son que sur un geste dans la scène.";
+    /* Slice 08: « Son » and `M` turn the sound of the scene on screen on and off (§ 4.14); a frame loaded ahead stays muted. */
+    const sound=Media.createSound({host:()=>previewHost,log:(key,data,level)=>log(key,data,level),say:(kind,text)=>say(kind,text),
+      announce:(text)=>announce(text),changed:()=>renderSound()});
+    /* Slice 08: the transport over the stage in fullscreen, hidden while the video plays (§ 4.12, § 4.16). */
+    const chrome=Media.createChrome({setTimeout:later,clearTimeout:cancelLater,
+      apply:(hidden)=>{if(ui.theater){if(hidden)ui.theater.setAttribute('data-chrome','hidden');else ui.theater.removeAttribute('data-chrome')}},
+      playing:()=>{const v=seq?seq.view():null;return !!v&&(v.phase==='playing'||v.phase==='waiting')},
+      pinned:()=>!!S.menu||!!(ui.transport&&ui.transport.contains(doc.activeElement))});
+    function toggleSound(){
+      if(!ensureHost()){say('failed',Media.TEXT.unavailable);return}
+      sound.toggle();
+    }
+    function renderSound(){
+      if(!ui.sound)return;
+      const v=sound.view();
+      ui.sound.setAttribute('aria-pressed',v.pressed?'true':'false');
+      ui.sound.title=v.title;
+      if(v.blocked)ui.sound.setAttribute('data-sound','blocked');else ui.sound.removeAttribute('data-sound');
+      clear(ui.soundIcon);ui.soundIcon.appendChild(icon(v.on?'sound':'muted'));
+      ui.soundPill.hidden=!v.pill;ui.soundPill.textContent=v.pill;
+    }
     const NO_POSITION='La position paraît dès que la vidéo est prête.';
     let drag=null;
     function buildTransport(){
@@ -670,7 +710,8 @@
       /* `lostpointercapture` too: a drag cut short (capture taken away, the window left) ends there and never outlives its gesture. */
       for(const type of ['pointerup','pointercancel','lostpointercapture'])ui.scrub.addEventListener(type,endDrag);
       ui.time=el('span','jvx-time');
-      ui.sound=button(null,'jvx-btn jvx-btn-icon',()=>say('info',SOUND_REASON),{icon:'sound',attrs:{'aria-label':'Son','aria-disabled':'true',title:`Son (M) : ${SOUND_REASON}`}});
+      ui.sound=button(null,'jvx-btn jvx-btn-icon',()=>toggleSound(),{attrs:{'aria-label':'Son','aria-pressed':'false',title:Media.TEXT.titleOff}});
+      ui.soundIcon=el('span','jvx-icon-slot');ui.soundIcon.appendChild(icon('muted'));ui.sound.appendChild(ui.soundIcon);
       ui.more=button(null,'jvx-btn jvx-btn-icon',()=>openPlaybackMenu(),{icon:'more',attrs:{'aria-label':'Plus de lecture','aria-haspopup':'menu','aria-expanded':'false',title:'Plus de lecture'}});
       for(const node of [ui.prevScene,ui.playAll,ui.nextScene,ui.scrub,ui.time,ui.sound,ui.more])ui.transport.appendChild(node);
     }
@@ -694,22 +735,39 @@
       const v=seq.view();
       if(v.scene_index>=0&&v.scene_title)announce(`Scène ${v.scene_index+1} sur ${v.scene_count} : ${v.scene_title}`);
     }
-    /* The § 4.15 map, on the stage and the transport. The slider's own ARIA keys win (it stops them); a focused button acts on Space itself. */
+    /* The § 4.15 map (one table, `Media.keyAction`), on the stage, the transport, the strip (F, M) and for the keys the scene passes on.
+       Returns whether the key acted. `Escape` is not here: it is the nested rule of the host (`onHostKey`). */
+    function transportKey(key,event){
+      const action=Media.keyAction(key);
+      if(action==='toggle')togglePlayback();
+      else if(action==='next')moveScene(1);
+      else if(action==='previous')moveScene(-1);
+      else if(action==='home'){if(!seekTo('home'))browseScene(0,0)}
+      else if(action==='end'){if(!seekTo('end'))browseScene(0,S.preview.scenes.length-1)}
+      else if(action==='step_back'||action==='step_forward'){if(!seekTo('step',action==='step_back'?-1:1)&&seq&&seq.view().playing)say('info','Image par image : mettez d\'abord en pause.')}
+      else if(action==='fullscreen')toggleFullscreen({other:!!(event&&event.shiftKey)});
+      else if(action==='sound')toggleSound();
+      else return false;
+      return true;
+    }
+    /* The slider's own ARIA keys win (it stops them); a focused button acts on Space itself. */
     function onTransportKey(event){
       if(event.ctrlKey||event.altKey||event.metaKey||event.defaultPrevented)return;
       const tag=String(event.target&&event.target.tagName||'').toUpperCase();
       if(['INPUT','TEXTAREA','SELECT'].includes(tag))return;
-      const key=event.key;
-      let handled=true;
-      if(key===' '){if(tag==='BUTTON')return;togglePlayback()}
-      else if(key==='ArrowRight'||key==='PageDown')moveScene(1);
-      else if(key==='ArrowLeft'||key==='PageUp')moveScene(-1);
-      else if(key==='Home'){if(!seekTo('home'))browseScene(0,0)}
-      else if(key==='End'){if(!seekTo('end'))browseScene(0,S.preview.scenes.length-1)}
-      else if(key===','||key==='.'){if(!seekTo('step',key===','?-1:1)&&seq&&seq.view().playing)say('info','Image par image : mettez d\'abord en pause.')}
-      else if(key==='m'||key==='M')say('info',SOUND_REASON);
-      else handled=false;
-      if(handled){event.preventDefault();event.stopPropagation()}
+      if(event.key===' '&&tag==='BUTTON')return;
+      if(event.key==='Escape')return;
+      if(transportKey(event.key,event)){event.preventDefault();event.stopPropagation()}
+    }
+    /* A key typed in the scene (the cross-origin frame keeps it; its stage page passes it on only while the scene has the focus): it acts
+       once, here, only while the focus is really in the stage, and never while a menu or a dialog is open (Slice 08). */
+    function onFrameKey(objectId,key){
+      if(!S.open||objectId!==PREVIEW_OBJECT_ID||S.dialog||S.menu)return;
+      const active=doc.activeElement;
+      if(!(active&&ui.stage&&ui.stage.contains(active)))return;
+      chrome.poke();
+      if(key==='Escape'){escapeKey();return}
+      transportKey(key,null);
     }
     /* ARIA slider keys (§ 4.6): ← → one second, Page précédente / suivante the previous / next scene start, Début / Fin. */
     function onScrubKey(event){
@@ -782,6 +840,7 @@
       if(!ui.playAll)return;
       const v=seq?seq.view():{phase:'idle',retryable:true};
       const running=v.phase==='playing'||v.phase==='waiting';
+      chrome.sync();   // fullscreen: the transport stays while paused, hides itself while the video plays
       const label=running?'Pause':v.phase==='ended'?'Rejouer':v.phase==='loading'&&!v.total_frames?'Préparation…':'Lire';
       ui.playAllLabel.textContent=label;
       clear(ui.playAllIcon);ui.playAllIcon.appendChild(icon(running?'pause':v.phase==='ended'?'restore':'play'));
@@ -1029,6 +1088,7 @@
       else if(key==='ArrowLeft'||key==='ArrowUp'||key==='PageUp')handled=browseScene(key==='PageUp'?-3:-1);
       else if(key==='Home')handled=browseScene(0,0);
       else if(key==='End')handled=browseScene(0,p.scenes.length-1);
+      else if(['fullscreen','sound'].includes(Media.keyAction(key)))handled=transportKey(key,event);
       if(handled){event.preventDefault();event.stopPropagation()}
     }
 
@@ -1379,15 +1439,24 @@
     }
 
     /* -------------------------------------------------------------- clavier de l'hôte */
+    /* Échap, imbriqué (§ 4.15) : le menu d'abord, puis la boîte, puis le plein écran de la scène, puis l'explorateur. Jamais une pause. En
+       vrai plein écran le navigateur garde la première pression ; si la page la reçoit quand même pendant le plein écran de la scène, elle
+       le quitte sans fermer, et la pression qui vient de le quitter (livrée en retard) ne ferme rien. Le plein écran de l'atelier ouvert
+       par une demande (Slice 18) garde sa règle. */
+    const FS_ESCAPE_GRACE_MS=400;
+    function escapeKey(){
+      if(S.menu){closeMenu(true);return}
+      if(S.dialog){cancelDialog();return}
+      if(ui.theater&&doc.fullscreenElement===ui.theater){toggleFullscreen();return}
+      if(now()-S.fsLeftAt<FS_ESCAPE_GRACE_MS){log('escape_after_fullscreen_ignored',{});return}
+      if(cmp.isActive()){cmp.close({});return}
+      close({reason:'escape'});
+    }
     function onHostKey(event){
       if(!S.open)return;
       if(event.key==='Escape'){
         event.preventDefault();event.stopPropagation();
-        /* Imbriqué : le menu d'abord, puis la boîte, puis l'explorateur. */
-        if(S.menu){closeMenu(true);return}
-        if(S.dialog){cancelDialog();return}
-        if(cmp.isActive()){cmp.close({});return}
-        close({reason:'escape'});
+        escapeKey();
         return;
       }
       if(event.key==='Tab'&&(S.dialog||S.menu)){
@@ -1421,11 +1490,13 @@
     }
 
     /* -------------------------------------------------------------- plein écran */
-    async function requestFullscreen(armS){
+    async function requestFullscreen(armS,objectId,display){
       const api=fullscreenApi();
       if(!api||typeof api.enter!=='function'){S.fs='unsupported';log('fullscreen_module_missing',{},'warn');return {state:'unsupported'}}
       try{
-        const result=await api.enter({object_id:OBJECT_ID,keys:'none',arm_s:armS||ARM_DEFAULT_S});
+        const spec={object_id:objectId||OBJECT_ID,keys:'none',arm_s:armS||ARM_DEFAULT_S};
+        if(display&&display!=='current')spec.display=display;
+        const result=await api.enter(spec);
         const state=result&&result.state||'refused';
         S.fs=state==='entered'||state==='needs_gesture'||state==='unsupported'||state==='refused'?state:'refused';
         if(S.fs==='needs_gesture')watchArm();
@@ -1437,22 +1508,58 @@
         return {state:'refused',reason:describe(error)};
       }finally{renderHeader();reportSoon()}
     }
-    async function toggleFullscreen(){
-      if(doc.fullscreenElement===ui.host){
+    /* « Plein écran » / `F` (§ 4.12, Slice 08): the STAGE goes fullscreen (the Player and its transport, never the tree, the metadata or
+       the actions); when Variants is already fullscreen (the stage, or a workspace an opening asked for) it leaves it. `f` and the play state
+       are untouched: the frames stay in the page, only their box grows. `other` (Maj+F, Maj+clic): another screen, only when the browser
+       already granted the window-management permission (never asked here); otherwise the window's current screen, said (§ 4.13). */
+    async function toggleFullscreen(opts){
+      if(fullscreenNow()){
         try{await doc.exitFullscreen()}catch(error){say('failed',`Sortie du plein écran impossible : ${describe(error)}. Échap quitte toujours.`)}
         return;
       }
-      const result=await requestFullscreen();
-      if(result.state==='refused')say('refused',`Plein écran refusé par le navigateur${result.reason?' : '+cleanLine(result.reason,120):''}. L'explorateur reste dans la fenêtre.`);
-      else if(result.state==='unsupported')say('refused',"Plein écran indisponible dans ce navigateur : l'explorateur reste dans la fenêtre.");
+      const active=doc.activeElement;
+      S.fsOpener=active&&active!==doc.body?active:null;
+      const display=opts&&opts.other?await otherScreen():'current';
+      const result=await requestFullscreen(undefined,STAGE_OBJECT_ID,display);
+      if(result.state==='refused')say('refused',`Plein écran refusé par le navigateur${result.reason?' : '+cleanLine(result.reason,120):''}. La vidéo reste dans la fenêtre.`);
+      else if(result.state==='unsupported')say('refused',"Plein écran indisponible dans ce navigateur : la vidéo reste dans la fenêtre.");
       else if(result.state==='needs_gesture')say('info',"Cliquez « Passer en plein écran » dans l'invite en haut de la fenêtre.");
+    }
+    /* `display: 'other'` only when the browser already granted window management; never a permission prompt from here (§ 4.13). */
+    async function otherScreen(){
+      let state='unavailable';
+      try{
+        const perms=win.navigator&&win.navigator.permissions;
+        if(perms&&typeof perms.query==='function')state=(await perms.query({name:'window-management'})).state;
+      }catch(_error){state='unavailable' /* intentional: an unknown permission name is the same answer as a refusal */}
+      if(state==='granted')return 'other';
+      say('info',"Choisir l'écran demande l'autorisation « Gestion des fenêtres » du navigateur : déplacez la fenêtre de Jarvis sur l'écran voulu, puis « Plein écran ».");
+      log('fullscreen_screen_choice_unavailable',{permission:state});
+      return 'current';
+    }
+    function restoreFullscreenFocus(){
+      const target=S.fsOpener;S.fsOpener=null;
+      const usable=target&&target.isConnected!==false&&typeof target.focus==='function'&&ui.host.contains(target);
+      const into=!usable?ui.fsButton:String(target.tagName||'').toUpperCase()==='IFRAME'?ui.stage:target;
+      try{into.focus({preventScroll:true})}catch(error){log('fullscreen_focus_failed',{error:describe(error)},'warn')}
     }
     function onFullscreenChange(){
       if(!S.open)return;
-      const full=doc.fullscreenElement===ui.host;
-      if(full){S.fs='entered';S.fullscreenOwned=true;announce("Plein écran. Échap quitte le plein écran ; l'explorateur reste ouvert.")}
-      else if(S.fullscreenOwned){
-        S.fullscreenOwned=false;S.fs='exited';
+      const fs=doc.fullscreenElement;
+      const stage=!!fs&&fs===ui.theater;
+      if(fullscreenNow()){
+        S.fs='entered';S.fullscreenOwned=true;S.fsKind=stage?'stage':'workspace';
+        if(stage){
+          chrome.enter();
+          try{ui.stage.focus({preventScroll:true})}catch(error){log('fullscreen_focus_failed',{error:describe(error)},'warn')}
+          announce("Plein écran de la vidéo. Échap ou F le quitte ; la lecture continue.");
+          log('fullscreen_stage_entered',{});
+        }else announce("Plein écran. Échap quitte le plein écran ; l'explorateur reste ouvert.");
+      }else if(S.fullscreenOwned){
+        const wasStage=S.fsKind==='stage';
+        S.fullscreenOwned=false;S.fs='exited';S.fsKind=null;
+        chrome.exit();
+        if(wasStage){S.fsLeftAt=now();restoreFullscreenFocus();log('fullscreen_stage_left',{})}
         say('info',"Plein écran quitté : l'explorateur reste ouvert dans la fenêtre. Échap le ferme.");
       }
       renderHeader();reportSoon();
@@ -1489,7 +1596,8 @@
       try{build()}catch(error){log('build_failed',{error:describe(error)},'error');return refusal('explorer_page_error',describe(error))}
       S.generation+=1;
       S.pid=presentationId;S.presentationTitle='';S.graph=null;S.live=buildForest([],'live');S.archived=buildForest([],'archived');S.selectedId=null;
-      S.focus={live:null,archived:null};S.notice=null;S.dialog=null;S.menu=null;S.fs='not_requested';
+      S.focus={live:null,archived:null};S.notice=null;S.dialog=null;S.menu=null;S.fs='not_requested';S.fsKind=null;S.fsOpener=null;S.fsLeftAt=-1e9;
+      sound.reset();   // muted at every opening (§ 4.1, § 4.14)
       S.preview={variantId:null,status:'idle',doc:null,scenes:[],sceneId:null,error:null,since:now(),generation:S.preview.generation+1,mounted:null};
       S.art={variantId:null,state:'idle',doc:null};
       loadPrefs();
@@ -1500,7 +1608,7 @@
       for(const n of inerted)n.inert=true;
       if(!ui.bound){doc.addEventListener('fullscreenchange',onFullscreenChange);ui.bound=true}
       doc.addEventListener('keydown',onDocKey,true);
-      renderAll();startTicker();
+      renderAll();renderSound();startTicker();
       ui.title.focus({preventScroll:true});
       playbackTimer=every(checkPlayback,PLAYBACK_CHECK_MS);
       pollTimer=every(pollGraph,GRAPH_POLL_MS);
@@ -1561,7 +1669,8 @@
       if(previewHost&&typeof previewHost.destroy==='function'){try{previewHost.destroy()}catch(_error){/* intentional: the host is dropped either way */}}
       previewHost=null;
       const api=fullscreenApi();
-      if(doc.fullscreenElement===ui.host){try{doc.exitFullscreen()}catch(error){log('fullscreen_exit_failed',{error:describe(error)},'warn')}}
+      chrome.exit();
+      if(fullscreenNow()){try{doc.exitFullscreen()}catch(error){log('fullscreen_exit_failed',{error:describe(error)},'warn')}}
       else if(api&&typeof api.cancel==='function'&&api.state&&api.state().armed){try{api.cancel()}catch(error){log('fullscreen_cancel_failed',{error:describe(error)},'warn')}}
       S.fullscreenOwned=false;
       for(const n of inerted)n.inert=false;
@@ -1660,7 +1769,9 @@
       compare:cmp,compose,upgrades,
       /* Lecture continue (Slice 05) et transport (Slice 06) : les mêmes portes que les boutons (épreuves navigateur ; la voix s'y branchera). */
       playback:Object.freeze({toggle:()=>togglePlayback(),play:()=>playback(s=>s.play()),playScene:()=>playSceneOnly(),
-        pause:()=>seq?seq.pause():null,seek:(kind,value)=>seekTo(kind,value),view:()=>seq?seq.view():{phase:'idle'},stats:()=>seq?seq.stats():null}),
+        pause:()=>seq?seq.pause():null,seek:(kind,value)=>seekTo(kind,value),view:()=>seq?seq.view():{phase:'idle'},stats:()=>seq?seq.stats():null,
+        /* Slice 08: the sound and the stage fullscreen, as the page shows them (proofs; the voice will use the same doors). */
+        sound:()=>sound.view(),chrome:()=>chrome.view(),fullscreen:()=>({mode:S.open?modeNow():null,kind:S.fsKind})}),
       onSelectionChange(fn){selectionListeners.add(fn);return()=>selectionListeners.delete(fn)},
       select:(id)=>{if(S.open&&nodeOf(id))selectVariant(id,{focus:true})},
       runAction:(act,id)=>runAction(act,id||S.selectedId,{}),

@@ -9,7 +9,8 @@ Deux étages, chacun avec ses cas négatifs :
    « Lire seulement cette scène » qui tient la dernière image, rechargement à chaud qui garde (scène, image) bornée à la nouvelle longueur,
    Core injoignable, démontage puis remontage, commandes qui se chevauchent.
 2. Le transport de l'explorateur (`control_center_presentation_studio_explorer.js`) sur le faux DOM : une barre d'outils nommée, les noms
-   des boutons, la barre `role="slider"` et ses touches, la lecture du temps de composition, « Son » désactivé avec sa raison, le menu « ⋯ »
+   des boutons, la barre `role="slider"` et ses touches, la lecture du temps de composition, « Son » coupé à l'ouverture (bascule depuis la
+   Slice 08 : `test_variants_media_js.py`), le menu « ⋯ »
    et le retour du focus, « Lire » désactivé avec sa raison sur une variante sans vidéo.
 
 Contrat : `docs/presentation-studio.md` > *Presentation experience contract* § 3, § 4, § 6 ; *Variants transport (Level 3, Slice 06)*.
@@ -452,7 +453,7 @@ const names=qa('button',bar()).map(b=>b.getAttribute('aria-label')||b.textConten
 return {toolbars:toolbars.length,label:bar().getAttribute('aria-label'),names,haspopup:label('Plus de lecture').getAttribute('aria-haspopup'),
   slider:['aria-valuemin','aria-valuemax','aria-valuenow','aria-valuetext','aria-disabled'].map(k=>slider().getAttribute(k)),
   readout:readout(),orders:prefabFake.orders,phase:ex.playback.view().phase,host:prefabFake.hosts[0].deps.autoplay+'/'+prefabFake.hosts[0].deps.embed,
-  sound:[label('Son').getAttribute('aria-disabled'),label('Son').getAttribute('title').includes("clic dans l'image")],errors:env.errors};
+  sound:[label('Son').getAttribute('aria-pressed'),label('Son').getAttribute('aria-disabled'),label('Son').getAttribute('title'),prefabFake.sounds],errors:env.errors};
 """)
     assert out["toolbars"] == 1 and out["label"] == "Lecture de la vidéo"
     assert out["names"] == ["Scène précédente", "Lire", "Scène suivante", "Son", "Plus de lecture"] and out["haspopup"] == "menu"
@@ -461,7 +462,8 @@ return {toolbars:toolbars.length,label:bar().getAttribute('aria-label'),names,ha
                               "frame": 0}
     assert out["orders"] == [] and out["phase"] == "paused", "Variants opens paused: nothing is ordered to the Player"
     assert out["host"] == "false/variants", "the preview host never autoplays and the stage page shows no bar of its own"
-    assert out["sound"] == ["true", True] and out["errors"] == []
+    # Slice 08: « Son » is a toggle, muted at opening (the preview host is told `muted` before any frame); no longer disabled.
+    assert out["sound"] == ["false", None, "Activer le son (M)", [True]] and out["errors"] == []
 
 
 def test_slider_keys_buttons_and_space_move_the_one_clock_and_every_readout_follows(tmp_path):

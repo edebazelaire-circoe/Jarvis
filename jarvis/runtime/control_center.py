@@ -561,6 +561,9 @@ COMPOSITION_CLOCK_SCRIPT_FILE = "control_center_composition_clock.js"
 COMPOSITION_CLOCK_SCRIPT_MARKER = "/*__CONTROL_CENTER_COMPOSITION_CLOCK_JS__*/"
 STUDIO_SEQUENCER_SCRIPT_FILE = "control_center_presentation_studio_sequencer.js"
 STUDIO_SEQUENCER_SCRIPT_MARKER = "/*__CONTROL_CENTER_PRESENTATION_STUDIO_SEQUENCER_JS__*/"
+# Son, plein ecran de la scene et clavier du lecteur de Variantes (native-studio-playback-fix Slice 08), avant le controleur.
+STUDIO_STAGE_MEDIA_SCRIPT_FILE = "control_center_presentation_studio_stage_media.js"
+STUDIO_STAGE_MEDIA_SCRIPT_MARKER = "/*__CONTROL_CENTER_PRESENTATION_STUDIO_STAGE_MEDIA_JS__*/"
 STUDIO_EXPLORER_SCRIPT_FILE = "control_center_presentation_studio_explorer.js"
 STUDIO_EXPLORER_SCRIPT_MARKER = "/*__CONTROL_CENTER_PRESENTATION_STUDIO_EXPLORER_JS__*/"
 # Lecture d'une presentation (studio, Slice 12) : bande d'etat + clavier sur l'hote du stage ; apres le plein ecran qu'il pilote.
@@ -2304,6 +2307,7 @@ class ControlCenter:
             (STUDIO_EXPLORER_UPGRADES_SCRIPT_MARKER, STUDIO_EXPLORER_UPGRADES_SCRIPT_FILE),
             (COMPOSITION_CLOCK_SCRIPT_MARKER, COMPOSITION_CLOCK_SCRIPT_FILE),
             (STUDIO_SEQUENCER_SCRIPT_MARKER, STUDIO_SEQUENCER_SCRIPT_FILE),
+            (STUDIO_STAGE_MEDIA_SCRIPT_MARKER, STUDIO_STAGE_MEDIA_SCRIPT_FILE),
         ):
             html = html.replace(marker, page.with_name(file_name).read_text(encoding="utf-8"))
         html = html.replace(

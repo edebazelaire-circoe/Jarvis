@@ -52,7 +52,8 @@ const player={playing:false};
 const fsFake={calls:[],armed:null,cancelled:0,mode:'enter',
   async enter(spec){
     fsFake.calls.push(spec);
-    if(fsFake.mode==='enter'){env.enterFullscreen(host());return {state:'entered',object_id:spec.object_id}}
+    /* The element that carries the requested `data-object-id` (Slice 08: the stage, `studio-explorer-stage`), else the explorer host. */
+    if(fsFake.mode==='enter'){env.enterFullscreen(q(`[data-object-id="${spec.object_id}"]`)||host());return {state:'entered',object_id:spec.object_id}}
     if(fsFake.mode==='arm'){fsFake.armed='abcd1234';return {state:'needs_gesture',object_id:spec.object_id}}
     if(fsFake.mode==='unsupported')return {state:'unsupported',code:'fullscreen_unsupported'};
     if(fsFake.mode==='throw')throw new Error('boum');
@@ -63,7 +64,7 @@ const fsFake={calls:[],armed:null,cancelled:0,mode:'enter',
 };
 /* Le runtime des prefabs (Slice 03 de la fondation) : l'explorateur appelle `createPrefabHost({mode:'preview'})`, `mount`, `unmount`, `destroy` ;
    le séquenceur de Variantes (Slices 05/06) lit `key` / `state` du cadre vivant et lui donne ses ordres (`control`, gardés dans `orders`). */
-const prefabFake={hosts:[],mounts:[],unmounts:0,destroyed:0,failMount:null,live:null,orders:[],
+const prefabFake={hosts:[],mounts:[],unmounts:0,destroyed:0,failMount:null,live:null,orders:[],sounds:[],
   bundleFetcher(fn){return fn},
   createPrefabHost(deps){
     const record={mode:deps.mode,deps};prefabFake.hosts.push(record);
@@ -73,7 +74,9 @@ const prefabFake={hosts:[],mounts:[],unmounts:0,destroyed:0,failMount:null,live:
         prefabFake.live=`${instance.prefab.id}@${instance.prefab.version}`;
       },unmount(){prefabFake.unmounts++;prefabFake.live=null},destroy(){prefabFake.destroyed++;prefabFake.live=null},has(){return true},
       key(){return prefabFake.live},state(){return prefabFake.live?'ready':null},clock(){return null},
-      control(id,action,frame){prefabFake.orders.push([action,frame===undefined?null:frame]);return !!prefabFake.live}};
+      control(id,action,frame){prefabFake.orders.push([action,frame===undefined?null:frame]);return !!prefabFake.live},
+      /* Slice 08: the sound the page wants (`muted`), and the host's hooks to answer it (`deps.onSound`, `deps.onKey`). */
+      sound(muted){prefabFake.sounds.push(muted);return prefabFake.live?1:0}};
   }};
 const base=(extra)=>Object.assign({document:doc,window:win,fetch:env.fetch,setTimeout:timers.setTimeout,clearTimeout:timers.clearTimeout,setInterval:timers.setInterval,
   clearInterval:timers.clearInterval,now:timers.now,requestAnimationFrame:timers.requestAnimationFrame,toast:env.toast,console:env.console,

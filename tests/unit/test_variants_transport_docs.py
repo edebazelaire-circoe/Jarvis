@@ -46,7 +46,7 @@ def test_the_named_controls_and_doors_are_in_the_code():
     relay = (RUNTIME / "remotion_relay.py").read_text(encoding="utf-8")
     assert "const EMBEDS=Object.freeze(['variants'])" in frame and 'STAGE_EMBEDS = ("variants",)' in relay
     stage = (RUNTIME / "control_center_remotion_stage.js").read_text(encoding="utf-8")
-    assert "if(embedded){ui.root.append(ui.host,ui.panel);return}" in stage and "if(!embedded)control('play')" in stage
+    assert "if(embedded){ui.root.append(ui.host,ui.panel);doc.addEventListener('keydown',onOwnKey,true);return}" in stage and "if(!embedded)control('play')" in stage
     host = (RUNTIME / "control_center_prefab_host.js").read_text(encoding="utf-8")
     assert "if(!autoplay)return;" in host
     child = (RUNTIME / "remotion_sandbox_child.js").read_text(encoding="utf-8")
