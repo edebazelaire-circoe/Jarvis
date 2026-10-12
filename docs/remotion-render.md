@@ -162,6 +162,8 @@ Codes d'**échec d'un travail** (dans la vue et sur le dérivé, pas des erreurs
 - **un navigateur à la fois** : un aperçu attend un export en cours et inversement (mémoire du poste) ; borné à 150 s ; refus typés (`presentation_render_invalid` pour images, échelle ou scène, `_unavailable` sans dossier d'aperçus, `_runtime_unavailable`, `_browser_unavailable`, `_engine_mismatch`, `_locked`, `_disk_low`, et les codes d'échec d'un travail comme `_sandbox_unavailable` ou `_failed`, rendus comme une erreur HTTP 409/500 puisque rien n'est conservé) ;
 - **journal** : `core.presentation_render.preview_started`, `.preview_done` (info, durée), `.preview_failed` (warning, code et détail).
 
+**Chemin de fumée de la Slice 14** : les portes de qualité des images rendues ([presentation-studio.md](presentation-studio.md#rendered-frame-quality-gates-level-3-native-studio-playback-fix-slice-14)) rendent par cette route la première, la deuxième, celle du milieu, l'avant-dernière et la dernière image de chaque scène (une requête par scène, échelle 0,5) : aucun second moteur de rendu.
+
 Le cerveau n'a pas de verbe d'export de plus : exporter reste un geste de l'utilisateur (`remotion_export`, `user_request`).
 
 ## 9. Control Center

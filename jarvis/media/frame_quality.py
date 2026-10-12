@@ -80,7 +80,8 @@ class Thresholds:
     frozen_span_ms: int = 1000
     #: A scene that played less than this share of its authored length was cut early.
     truncation_share: float = 0.97
-    #: Time (ms) the transport's position may trail or lead the Player's (its update cadence; measured lag at a scene entry: 267 ms).
+    #: Time (ms) the transport's position may trail or lead the Player's (its update cadence; measured lag at a scene entry: 250 to
+    #: 283 ms over three recorded runs).
     stale_progress_ms: int = 500
     #: Scene-local share between the scene's own progress bar and its frame (gate deck only: its scene draws one).
     stale_bar_share: float = 0.08

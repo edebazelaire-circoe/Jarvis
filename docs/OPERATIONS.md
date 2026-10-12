@@ -3689,6 +3689,13 @@ l'opérateur :
   `pytest tests/unit/test_prefab_host_swap_race_js.py` (≈ 2 s). Les défauts connus sont des `xfail(strict=True)` : un `XPASS(strict)` veut dire
   qu'une Slice a corrigé le comportement, retirer alors la marque ; un échec `harness: …` est une mesure cassée (pilote, précondition), jamais le défaut.
   Constats : `tasks/jarvis-remotion-native-studio-playback-fix/slices/03-reproduce-timeline-and-transition-failures/evidence/FINDINGS.md`.
+- **Porte de qualité des images rendues** (même handoff, Slice 14 ; contrat : *Rendered-frame quality gates* de
+  [presentation-studio.md](presentation-studio.md)) : même poste isolé, même `JARVIS_REMOTION_RUNTIME_DIR`, un `--basetemp` court ; facultatif
+  `JARVIS_QUALITY_EVIDENCE_DIR=<dossier>` (vidéo, repères, planches, JSON ; dossier personnel masqué). Un test par processus, au premier plan :
+  `pytest tests/unit/test_remotion_frame_quality_real.py -k gate` (≈ 100 s), `-k native` (≈ 50 s), `-k control` (≈ 60 s), puis
+  `pytest tests/unit/test_presentation_flow_quality_browser.py -k recorded` (≈ 110 s) et `-k planted` (≈ 20 s, le contrôle négatif). Un constat
+  `blocking` (image noire ou vide, police ou fichier absent, scène coupée, temps reporté, éclair, barre figée) arrête la livraison ; les
+  `warning` se lisent, ils ne remplacent jamais la vérification humaine.
 - **Si l'export d'une présentation rédigée échoue avec `TypeError ... reading 'body'`** : le build ne porte pas le correctif de la Slice 22 (le rendu ne passait pas
   l'entrée `data` à la composition) ; mettre à jour. Un snapshot gelé avant le correctif se rend correctement (les défauts de `data` sont recalculés depuis les valeurs figées de la scène).
 - **Fuite de confidentialité dans les preuves** : `python tasks/jarvis-remotion-presentation-integration/slices/22-end-to-end-release/evidence/privacy_sweep.py`

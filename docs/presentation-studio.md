@@ -4452,6 +4452,84 @@ and reads a component named `Link` or `Frame` as the forbidden element (the nati
 to agent 0); a data root path long enough to push Chrome's profile path past 260 characters makes every render and preview fail
 (`presentation_render_sandbox_unavailable`), as for exports.
 
+## Rendered-frame quality gates (Level 3, native-studio-playback-fix Slice 14)
+
+A compiled scene, a first draft that passes `check_first_draft` and a deck the Human likes are three different facts; a fourth is
+**what the rendered frames actually show**. This contract makes that fourth fact measurable on REAL frames, without a second renderer,
+and keeps it apart from the other three.
+
+**Four separate sections, never merged** (`jarvis.media.frame_quality.report_sections`): `compilation` (the compiler's own verdict),
+`first_draft_gate` (`check_first_draft`), `frame_quality` (this contract: `verdict` `clean` / `warnings` / `blocked`, `counts`,
+`findings`, `thresholds`) and `human_assessment` (always `pending` here). A machine finding never stands in for the Human creative
+assessment, and a clean frame report is not a visual approval.
+
+**Where the frames come from** (no second renderer):
+
+- the **smoke path**: for every scene, `smoke_frames(duration_in_frames)` = first (0), entry (1), middle, exit (last − 1) and last
+  frame, rendered by the guarded render host through `POST /v1/local-capabilities/remotion/render/preview` (one request per scene,
+  at most 6 frames, scale 0.5, the scene's authored fps and size); the **critical transition frames** are the last frame of scene
+  k beside the first frame of scene k+1 (`transition_pairs`);
+- the **recorded flow**: the 9-scene gate deck played by « Lire » in Variants, the Variants Player captured as JPEG about every
+  100 ms by the CDP driver's `record` action, each capture with the Player's own frame and the transport slider read at the same
+  instant;
+- the **scene's page**: `SCENE_DOM_PROBE` (in `tests/unit/remotion_quality_world.py`) evaluated in every live sandbox page of the
+  Variants Player, scene by scene, for fonts, assets and text out of the frame.
+
+Frames are decoded by the pinned ffmpeg of the Remotion runtime (`jarvis/adapters/remotion_media_tools.py`, `compositor_tool`, the
+same binaries the render runner uses to verify an MP4) to luma at `WORK_WIDTH` = 320 pixels. The detectors are pure standard-library
+Python (Core does not depend on numpy).
+
+**Detectors, severities and thresholds.** Profiles: `release_gate` (the machine gate deck: every frame carries text) and `authored`
+(a real deck, where a fade from or to an empty frame is an authoring choice). Thresholds are `THRESHOLDS` (`Thresholds`), measured on
+the gate deck (45 smoke frames, 682 flow captures), a Slice 13 native deck (20 frames) and the control deck (positive controls).
+
+| Code | Input | Severity | Threshold | Measured false positives |
+| --- | --- | --- | --- | --- |
+| `black`, `blank` | frame: edge density (neighbours more than `edge_step` = 20 luma apart) below `blank_edge_density` = 0.0008; `black` when the mean luma is at most `black_mean` = 16 | first frame: warning; `authored` entry / exit / last: warning; otherwise **blocking** | as stated | gate 0 / 45; native 16 / 20, all fades, all warnings |
+| `edge_clipped` | frame: ink (more than `ink_delta` = 48 from the median luma) in the `band_depth` = 4 band of a side over at least `clipped_ink_share` = 5 % of it | warning | as stated | gate 27 / 45 (its own full-width progress bar); native 0 / 20 |
+| `edge_text_overflow` | same band, ink over at least `overflow_ink_share` = 2 % and edge texture at least `overflow_texture` = 0.4 | warning | as stated | gate 0 / 45 (bar end 0.25), native 0 / 20; control text 0.73 |
+| `static_scene`, `repeated_frames` | sampled frames whose mean luma difference is below `repeat_mean_delta` = 0.005 (identical renders: 0.0; a one-digit change: 0.012 to 0.048) | warning, info | as stated | gate 0, native 0 |
+| `frozen_playback` | captures of a playing Player identical for at least `frozen_span_ms` = 1000 | warning | as stated | flow 0 |
+| `transition_flash` | a black or blank capture of the playing deck | **blocking** | `blank_edge_density` | flow 0 / 682 |
+| `time_carry` | a scene whose Player started on a frame other than 0 | **blocking** | exact | flow 0 / 8 |
+| `truncated` | a scene that never reached its last frame or played less than `truncation_share` = 0.97 of its authored length (the « cut at 8 s ») | **blocking** | as stated | flow 0 / 8 (the 30 s scene: 900 frames in 30.0 s) |
+| `stale_progress` | the transport slider (composition frame) against `CompositionMap.frame_of` of the Player's frame, beyond the sampling tolerance plus `stale_progress_ms` = 500 | **blocking** | as stated | flow 0 / 672 (largest lag 250 to 283 ms, at scene entries) |
+| `stale_scene_bar` | gate deck only: the scene's own drawn progress bar (`bar_share`) against its frame, beyond the sampling tolerance plus `stale_bar_share` = 0.08 | **blocking** | as stated | flow 0 / 672 |
+| `font_fallback`, `font_load_failed` | page: no family of the declared list available and no generic family; an `@font-face` whose file failed | **blocking** | exact | gate 0, native 0 |
+| `font_substituted` | page: the first family missing, a later one of the stack drawn | warning | exact | gate 0, native 0 |
+| `asset_missing` | page: a broken `<img>`, a media element in error, a resource answered 400 or more | **blocking** | exact | gate 0, native 0 |
+| `text_overflow` | page: a text box beyond the composition box, or larger than its own clipping box | warning | 2 composition pixels | gate 0, native 0 |
+| `render_failed` | the guarded host refused or failed the preview of a scene | **blocking** | exact | 0 |
+
+Clipping, overflow and repeated frames start as warnings (decided by agent 0): a full-bleed element, an element sliding in from
+outside and a still title card are legitimate, and pixels alone cannot tell them from a defect. The control deck
+(`CONTROL_SCENES`) proves the other side: black frame, text cut by the frame, a missing font, a missing font file, a missing image and
+a still card fading to black are all found.
+
+**Acceptance evidence of a release** (handoff `slices/14-visual-quality-and-media-gates/evidence/`): the complete recorded flow
+(`flow.mp4`, 10 i/s, 640 px, CRF 34, about 55 KB for 74 s), deterministic timeline markers (`flow-markers.json`: start frame and ms of
+every scene from `build_composition`, beside where each scene was first seen in the video), a per-scene contact sheet from the
+render host (`gate-contact.jpg`: one row per scene, first / entry / middle / exit / last) and from the recording (`flow-contact.jpg`),
+side-by-side transition snapshots (`gate-transitions.jpg`, `flow-transitions.jpg`), and `summary.json` (SHA, runtime versions,
+durations, thresholds, false-positive notes).
+
+**Run it** (an isolated stack only, never the live Jarvis; one test per process; a short `--basetemp`, see
+[remotion-render.md](remotion-render.md) § 12): `JARVIS_REMOTION_RUNTIME_DIR=<runtime> [JARVIS_QUALITY_EVIDENCE_DIR=<dir>] pytest
+tests/unit/test_remotion_frame_quality_real.py -k gate|native|control` (about 100, 50 and 60 s) and
+`tests/unit/test_presentation_flow_quality_browser.py -k recorded|planted` (about 110 and 20 s; `planted` is the negative control:
+a black layer and a held slider planted in the page, never in the product, must be caught).
+
+**Limits.** The detectors are not wired into Core or the preview route: the author agent still reads its preview frames itself
+(Slice 13), and a later Slice may add the `frame_quality` section to the preview answer. A missing image renders as an empty box in
+the render host (no error): only the page probe finds it. Fonts are judged by the browser that plays the scene (this machine's fonts).
+The recording samples about every 100 ms: a flash shorter than one capture can fall between two captures (the Slice 05 burst and the
+Player clocks remain the frame-exact measure). The gate deck's scene bar check applies to that deck only.
+
+**Conformance.** `tests/unit/test_frame_quality.py` (every detector both ways on synthetic frames, the four regressions: transition
+flash, time carry, stale progress bar, cut at 8 s), `tests/unit/test_remotion_media_tools.py`, `tests/unit/test_frame_quality_docs.py`
+(this section against the code), real runtime: `tests/unit/test_remotion_frame_quality_real.py`,
+`tests/unit/test_presentation_flow_quality_browser.py`.
+
 ## Typed variables and fast edits (Level 3, Remotion Slice 13)
 
 Status: implemented by Slice 13 of `jarvis-remotion-presentation-integration`. Conformance: `tests/unit/test_remotion_controls.py`, `test_remotion_input_props.py` (with `tests/fixtures/remotion_input_props_cases.json`, played by Python **and** JavaScript), `test_remotion_stage_js.py`, `test_presentation_studio_inspector_behaviour_js.py`, `test_remotion_controls_docs.py`, and the opt-in real-Chrome `test_remotion_controls_realpage_browser.py`. Owner: `jarvis/domain/remotion_controls.py` (pure) and, in the browser, `jarvis/runtime/control_center_remotion_props.js`. Isolation side of the contract: [remotion-isolation.md](remotion-isolation.md) section 12.
@@ -4492,6 +4570,7 @@ card and the stage window say why, with `Installer Remotion` / `Réparer Remotio
 | Resource references | `ResourceReference` in `jarvis/domain/presentation_working_set.py` | [presentation-working-set.md](presentation-working-set.md) |
 | Local data root, file-store conventions | `jarvis/data_root.py`, `jarvis/adapters/file_prefab_library.py`, `file_replace.py` | [local-data.md](local-data.md) |
 | UI intents / ownership of the screen by the Tool Brain | `jarvis/runtime/tool_brain_*`, `jarvis/domain/ui_intent.py` | [tool-brain-contracts.md](tool-brain-contracts.md) |
+| Rendered-frame quality (detectors, smoke frames, report sections) | `jarvis/media/frame_quality.py` (pure), `jarvis/adapters/remotion_media_tools.py` (pinned ffmpeg), frames from `POST /v1/local-capabilities/remotion/render/preview` | [Rendered-frame quality gates](#rendered-frame-quality-gates-level-3-native-studio-playback-fix-slice-14) |
 
 ## Generic fullscreen surface (Level 3, Slice 03)
 
@@ -4544,5 +4623,6 @@ What later Slices may rely on, and nothing else:
 | Cue matching, template and prefab promotion, agent and voice operations | 0-1 | 3 (**done**, Slices 13, 20, 21) |
 | Rehearsal (section loop, restart-a-section, dedicated runbook) | 0-1 | 3 (**not delivered as a Slice**: the `rehearsal` role, `goto`, `previous` and "where are we" exist through Slices 12, 01c and 21; the section loop and the runbook do not, see [presentation-studio-release.md](presentation-studio-release.md)) |
 | Presentation engine semantics (identity on the document, policy, capability matrix, typed failures, compatibility triage) | 0 | 2 contract + domain conformance (**done**, Remotion Slice 02; adapters and runtime gates: later Slices) |
+| Rendered-frame quality gates (smoke frames, detectors and thresholds, recorded flow, separate report sections) | 0 | 3 (**done**, native-studio-playback-fix Slice 14) |
 
 There is no `docs/CONTEXT.md` or documentation-level registry in this repository: the level of a concept is stated in its page header (`Status: Level N`), as in [presentation-mode.md](presentation-mode.md).
