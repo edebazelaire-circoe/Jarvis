@@ -2177,8 +2177,12 @@ Archiver une branche archive aussi tous ses descendants ; la variante active ne 
 Contrat : [presentation-studio.md](presentation-studio.md#variant-explorer-interaction-contract-level-3-slice-18). C'est l'espace de travail plein écran, sombre et flouté,
 où l'on **voit comment la présentation a évolué** : l'arbre des branches à gauche, l'aperçu de la variante choisie à droite, et les actions (activer, brancher, renommer,
 archiver, restaurer). Il ne garde rien : l'arbre est le graphe de Core, relu après chaque action et toutes les 10 s ; l'aperçu **lit** la variante et n'écrit jamais.
-Il n'y a **pas de bouton dans le dock** : on l'ouvre par le bouton **Variantes** de l'en-tête de l'inspecteur (`INS`), par le bouton **Ouvrir l'explorateur de variantes** de la bande « Lecture arrêtée » qui suit une lecture, ou par la commande ci-dessous (c'est la porte de la voix et d'un agent : l'outil `open_explorer` de la Slice 21 la
-appellera ; il n'est pas encore branché) ou par la console (`JarvisStudioExplorer.open({presentation_id:'<pid>'})`). **Il est refusé pendant une lecture** (« Une lecture est en cours… ») et se ferme si une lecture démarre : arrêtez la lecture d'abord.
+> **Mis à jour (native-studio-playback-fix Slices 09 à 15).** L'écran s'appelle **Variantes** (plus « explorateur »). Une lecture se montre **dedans** :
+> il n'est plus refusé pendant une lecture et ne se ferme pas quand elle démarre (seule une **autre** présentation en cours est refusée,
+> `explorer_run_in_progress`). La bande « Lecture arrêtée » et son bouton n'existent plus. Recette actuelle d'une lecture : *Une présentation dans
+> Variantes* ci-dessous ; carte de ce qui est retiré : [presentation-studio.md](presentation-studio.md), *Retirement map and migration readers (Level 3, Slice 15)*.
+
+Il n'y a **pas de bouton dans le dock** : on l'ouvre par le bouton **Variantes** de l'en-tête de l'inspecteur (`INS`), par le rail (clic sur une présentation, ou « Ouvrir les variantes »), ou par la commande ci-dessous (c'est la porte de la voix et d'un agent : l'outil MCP `presentation_view` `explorer_open`) ou par la console (`JarvisStudioExplorer.open({presentation_id:'<pid>'})`). Pendant une lecture, Variantes la montre ; une autre présentation est refusée tant que la première joue.
 
 **Plein écran, sans surprise.** Ouvert par la commande (la voix), l'explorateur s'affiche d'abord dans la fenêtre (étiqueté **Fenêtré**) et le navigateur arme son invite d'un clic (« Plein écran
 demandé » : **Passer en plein écran**, compte à rebours de 30 s, **Annuler**), parce qu'il interdit le plein écran sans geste ; JARVIS ne le dit jamais plein écran avant que le
@@ -2224,7 +2228,7 @@ l'aperçu, chaque action contre un vrai Core, le clavier seul, l'arbre d'accessi
    l'invite part et le dit.
 3. *Deux écrans / projecteur.* Glisser la fenêtre du Control Center sur l'écran voulu avant d'ouvrir : le plein écran se fait sur l'écran courant (la sélection d'écran de la commande n'est pas exposée par
    l'explorateur). Vérifier la lisibilité de l'arbre et de l'aperçu à distance, le contraste du fond et la lueur sur le projecteur réel.
-4. *Lecture.* Lancer une lecture : l'explorateur se ferme dans les 2 s (« Une lecture a démarré… ») ; en lecture, la commande `open` répond `refused: explorer_run_in_progress` ; après l'arrêt, il s'ouvre de nouveau.
+4. *Lecture.* Lancer une lecture (« Présenter ») : Variantes reste ouvert et la montre (*Une présentation dans Variantes*) ; pendant ce temps, la commande `open` d'une **autre** présentation répond `refused: explorer_run_in_progress` ; après l'arrêt, elle s'ouvre.
 5. *Archiver / restaurer.* Sur une branche qui a des sous-branches : `Suppr`, vérifier la liste, **Annuler** (rien ne bouge), `Suppr` de nouveau, **Archiver** ; la branche est dans **Archivées**, **Restaurer avec ses
    sous-branches** la remet. Pendant que la boîte est ouverte, créer une branche à la voix sous celle-ci : la confirmation doit recalculer la liste et **ne rien archiver** sans nouvelle confirmation.
 6. *Lecteur d'écran.* Avec NVDA ou Narrateur : l'arbre annonce « Variante 12, <titre>, active, 3 sous-branches », le niveau, la position (n sur m), l'état déplié ; le plan d'archivage est lu, le bouton
@@ -2344,7 +2348,7 @@ scène en scène, plein écran, son sur un vrai geste, moteur indisponible, erre
 2. **Son** : la scène démarre muette (« Son coupé · cliquez la scène pour l'activer ») ; un clic DANS la scène (pas ailleurs) active le son si elle en a ; noter
    si le son sort bien des haut-parleurs voulus (jamais écouté par les tests).
 3. **Plein écran** : « Plein écran » dans la bande (un clic) ; la scène remplit l'écran ; **Échap** (la vraie touche) en sort sans changer l'état de la lecture ;
-   avec un second écran, l'invite « gestion des fenêtres » est celle de Chrome.
+   avec un second écran, l'invite « gestion des fenêtres » est celle de Chrome. *(2026-10 : la bande est retirée, Slice 09 ; « Plein écran » de Variantes, ou F.)*
 4. **Édition à chaud** : pendant la lecture, demander à la voix de changer la couleur ou le titre : le changement se voit tout de suite, sans nouveau rendu
    ni clignotement, la lecture reste éditable.
 5. **Moteur absent** : désinstaller la capacité (`POST /v1/local-capabilities/remotion/uninstall`, instance isolée), lancer la lecture : réponse « moteur

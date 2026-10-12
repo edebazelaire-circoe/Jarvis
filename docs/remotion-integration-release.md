@@ -414,6 +414,27 @@ locked entries (`jarvis/capabilities/remotion/package-lock.json`). The official 
 why the default import allowlist imports nothing. **Do not distribute or sell an installation that bundles Remotion before the licence is read and a
 decision is recorded.** Sources: <https://www.remotion.dev/docs/license/pricing>, <https://www.remotion.dev/docs/license/faq>.
 
+**What the installed licence text says (native-studio-playback-fix Slice 15, facts only, not legal advice; the decision stays the Human's).**
+Read from the gate runtime's `node_modules/remotion/LICENSE.md` (Remotion 4.0.534, the pinned version of `jarvis/capabilities/remotion`;
+SHA-256 `bd65083b940f61904f6ef298aade918a7cad72a3e35bc406e36fab365844b673`). The same file ships with `@remotion/player`, `@remotion/renderer`,
+`@remotion/bundler`, `@remotion/cli` and `@remotion/web-renderer`; `@remotion/sdk`, `@remotion/studio-protocol` and `@remotion/media-parser`
+declare « Remotion License »; `@remotion/studio`, `@remotion/studio-server`, `@remotion/paths`, `@remotion/media-utils` and several helpers declare MIT.
+The text sets two tiers:
+
+- **Free License**: individuals; for-profit organisations with **up to 3 employees**; non-profit or not-for-profit organisations; and an entity
+  « evaluating whether Remotion is a good fit, and … not yet using it in a commercial way ». Allowed: creating videos and images, commercially or
+  not, and modifying the software for one's own use case. Disallowed: copying or modifying Remotion « for the purpose of selling, renting, licensing,
+  relicensing, or sublicensing your own derivate of Remotion ».
+- **Company License**: required for any entity outside the Free License group, for the same allowed uses; bought at remotion.pro. The file also
+  announces that « In Remotion 5.0, the license will slightly change ».
+
+How this task uses Remotion, for whoever decides: the Player (Variants), the renderer (exports, previews, frame checks) and the native Remotion
+Studio (`remotion studio`, Slice 11/12) all run **locally** on the user's machine from the user's own install (the capability card's explicit
+« Installer »); Jarvis distributes no Remotion code (the lock file pins it, npm fetches it). Jarvis's code passes no licence key and calls no usage-event API
+(in 4.0.534, `@remotion/renderer` `render-media.js` sends its usage event through `@remotion/licensing` only when a `licenseKey` is passed); the Studio's own licence prompts may show (*[remotion-studio.md](remotion-studio.md) § 11*). Which tier applies depends on the entity that
+uses this installation; nobody in this task has decided it. **The decision gate above is kept unchanged**: H-0 (row 0 of *Human checks*) and
+HV-22-02 record it before any shipping or distribution.
+
 ## Known issues
 
 [Issues/](../tasks/jarvis-remotion-presentation-integration/Issues/): 01 inherited debt of the Studio task, 02 local capability wiring (closed by Slice 04 for the
