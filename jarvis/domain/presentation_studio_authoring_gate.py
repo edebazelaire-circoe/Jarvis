@@ -101,7 +101,9 @@ class Rule:
 
         if native:
             base = self.level(workflow, strict)
-            return base if base == OFF or self.code in NATIVE_BLOCKING else WARNING
+            if base == OFF or self.code in NATIVE_BLOCKING:
+                return base
+            return OFF if self.code in NATIVE_OFF else WARNING
         if workflow is Workflow.EXPLORATORY and strict and self.directed != OFF:
             return self.directed
         return {Workflow.ONE_SHOT: self.one_shot, Workflow.DIRECTED: self.directed, Workflow.EXPLORATORY: self.exploratory}[workflow]
@@ -270,6 +272,17 @@ NATIVE_BLOCKING: frozenset[str] = frozenset({
     "tsx_live_ref_unresolved",       # live Board references: only Boards the user works with (default deny)
     "tsx_inspiration_unconfirmed",   # an inspiration claims a verified upstream provenance or is omitted
     "behavior_risky",                # no network, eval, dynamic import or remote reference (the sandbox stays the wall; this says it early)
+})
+
+
+#: Slice 13: rules that judge the GUIDED model itself (text in props, colours in the `theme` prop, curated controls, cues, spoken lines,
+#: declared transitions) and say nothing about native code: off in native, so the author is not pushed back to the guided model by a wall
+#: of irrelevant warnings (the first native trace returned 23 of them). The text rules read props/data only, which native code leaves empty.
+NATIVE_OFF: frozenset[str] = frozenset({
+    "tsx_theme_unread", "tsx_color_hardcoded", "tsx_text_hardcoded", "tsx_props_unread", "tsx_props_undeclared",
+    "scene_no_controls", "scene_unbound", "controls_too_many", "control_unlabelled", "control_label_meaningless", "control_no_meaning",
+    "control_unbounded", "cue_weak", "cue_stopword_phrase", "cue_nested", "cues_sparse", "jarvis_line_missing", "notes_missing",
+    "transition_missing", "contrast_low", "content_thin", "text_density", "text_dense",
 })
 
 

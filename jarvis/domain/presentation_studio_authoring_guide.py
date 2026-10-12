@@ -258,7 +258,8 @@ def draft_guide(kind: str | None = None) -> dict[str, Any]:
                 "draft": {"required": ["scenes"], "optional": ["prefabs", "score", "art_direction"],
                           "prefabs": "[{key, remotion: {title, files: {'src/Scene.tsx': <TSX>, 'src/lib/X.tsx': <TSX>}, composition: "
                                      "{width, height, fps, duration_in_frames}, assets?: {'public/x.png': <base64>}}}]",
-                          "scenes": "[{key, title, prefab: {bundle: <key>}, role?}] dans l'ordre du deck"},
+                          "scenes": "[{key, title, prefab: {bundle: <key>}, role?}] dans l'ordre du deck",
+                          "keys": "key de bundle et de scene : minuscules, chiffres et _ , commence par une lettre (ouverture, scene_2)"},
                 "note": "FORME seulement : remplace tout le texte, les couleurs, les durees et les mises en page par les tiens.",
                 "example": copy.deepcopy(native_example())}
     if kind == "exploratory":

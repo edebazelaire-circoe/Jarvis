@@ -10,7 +10,7 @@ from __future__ import annotations
 import pytest
 
 from jarvis.domain.presentation_studio_authoring import Authoring, SceneRole, native_role, parse_brief, parse_draft
-from jarvis.domain.presentation_studio_authoring_gate import ERROR, NATIVE_BLOCKING, OFF, RULES, WARNING
+from jarvis.domain.presentation_studio_authoring_gate import ERROR, NATIVE_BLOCKING, NATIVE_OFF, OFF, RULES, WARNING
 from jarvis.domain.presentation_studio_authoring import Workflow
 from jarvis.domain.presentation_studio_checks import PresentationStudioError
 from tests.fakes.presentation_studio_authoring_env import AuthoringEnv
@@ -76,8 +76,11 @@ def test_native_keeps_only_validity_and_safety_blocking_and_reports_the_rest():
                 assert native == OFF, rule.code                       # native never switches a rule ON
             elif rule.code in NATIVE_BLOCKING:
                 assert native == base, rule.code
+            elif rule.code in NATIVE_OFF:
+                assert native == OFF, rule.code                       # judges the guided model, silent on native code
             else:
                 assert native == WARNING, rule.code
+    assert not NATIVE_BLOCKING & NATIVE_OFF
     creative = {"tsx_text_hardcoded", "tsx_color_hardcoded", "tsx_theme_unread", "tsx_props_unread", "tsx_monolith", "content_thin",
                 "text_density", "cue_weak", "controls_too_many", "notes_missing", "must_cover_missing", "duration_off", "arc_incomplete",
                 "scene_unbound", "transition_missing", "da_missing", "contrast_low", "placeholder_text"}
@@ -129,7 +132,7 @@ async def test_native_code_is_delivered_with_its_creative_findings_as_warnings(e
     body = out.to_dict()
     assert out.status == "delivered", body.get("report", {}).get("failures")
     warned = codes(body["report"], "warnings")
-    assert {"tsx_text_hardcoded", "tsx_color_hardcoded", "tsx_theme_unread"} <= warned, warned
+    assert not warned & {"tsx_text_hardcoded", "tsx_color_hardcoded", "tsx_theme_unread", "scene_unbound"}, warned
     assert not body["report"]["failures"]
     assert len(body["scenes"]) == 3 and body["engine"] == "remotion"
     variant = await env.studio.get_variant(body["presentation_id"], body["active_variant_id"])
