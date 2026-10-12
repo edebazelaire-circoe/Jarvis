@@ -664,7 +664,8 @@ browser, not a content check:
 tools, Core) and cannot act as Jarvis. `connect-src 'none'` closes fetch/XHR/WebSocket/beacon/prefetch/preload, but two channels
 stay open: `<link rel=dns-prefetch>` (a DNS name chosen by the scene) and `<link rel=preconnect>` (a bare TCP connection to a
 chosen host:port, also a blind port probe of the workstation and LAN). Measured in Chrome 154: neither the CSP nor
-`X-DNS-Prefetch-Control: off` nor `allow=""` closes them. WebRTC (no CSP directive) is closed only in-realm, best-effort, by
+`X-DNS-Prefetch-Control: off` nor the frame's `allow` attribute (empty until 2026-10; since the native-studio-playback-fix Slice 08 it delegates
+`autoplay` only, `docs/remotion-isolation.md` § 10.6) closes them. WebRTC (no CSP directive) is closed only in-realm, best-effort, by
 the bootstrap removing `RTCPeerConnection` before scene code runs. Whatever the host gives the scene (`inputProps`, assets)
 can leave through these channels: never pass a scene data more sensitive than the slide content.
 
