@@ -19,10 +19,19 @@ def _classes_named_by_rules(text: str) -> set[str]:
     return set(SELECTOR.findall(text))
 
 
+#: JS comments: a class named only in a comment is not built by anything (`//` after `:` is a URL, not a comment).
+COMMENT = re.compile(r"""/\*[\s\S]*?\*/|(?<![:'"\\])//[^\n]*""")
+
+
 def _used_outside_selectors(name: str, texts: list[str]) -> bool:
-    # A use is the bare token (in a class string, a classList call, a template), not preceded by `.` (a selector).
+    # A use is the bare token (in a class string, a classList call, a template), not preceded by `.` (a selector), outside comments.
     bare = re.compile(r"(?<![.\w-])" + re.escape(name) + r"(?![\w-])")
-    return any(bare.search(text) for text in texts)
+    return any(bare.search(COMMENT.sub(" ", text)) for text in texts)
+
+
+def test_a_class_named_only_in_a_comment_is_not_a_use():
+    assert not _used_outside_selectors("jvx-ghost", ["/* el('div','jvx-ghost') */ const a=1; // el('div','jvx-ghost')\n.jvx-ghost{}"])
+    assert _used_outside_selectors("jvx-real", ["const u='http://x/y';el('div','jvx-real')"])
 
 
 def test_every_variants_style_rule_names_a_class_the_page_builds():

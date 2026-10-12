@@ -2381,6 +2381,11 @@ Vérification humaine (une fois, instance isolée : ports et `JARVIS_DATA_ROOT` 
 
 ### Scène Remotion conduite par la partition (Remotion Slice 12) : vérification humaine
 
+> **Bande retirée (native-studio-playback-fix Slice 09).** La bande flottante « Vous présentez » / « Jarvis présente » n'existe plus : ce que
+> les étapes ci-dessous lisent ou pressent « dans la bande » se lit dans la **bande du présentateur, sous l'image de Variantes**, et se commande
+> par le transport de Variantes (« Lire » / « Pause », « Suivant », « Arrêter ») et ses touches. Une lecture se joue dans Variantes :
+> *Une présentation dans Variantes* ci-dessus. Le reste de la recette (ce qu'il faut entendre et voir) est inchangé.
+
 Contrat : [presentation-studio.md](presentation-studio.md) › *Remotion timeline bridge*, [remotion-isolation.md](remotion-isolation.md) § 11. Les tests
 automatiques jouent une scène à trois ancres dans un vrai Chrome sans tête contre un Core isolé (segment d'entrée, ancre révélée, cue, pause, reprise, retour,
 faux rapport de position) :
@@ -2448,6 +2453,11 @@ ni issue sont des défauts à signaler avec les lignes `[studio-inspector]` de l
 
 ### Présentation par Jarvis (studio, Slice 14) : vérification humaine
 
+> **Bande retirée (native-studio-playback-fix Slice 09).** La bande flottante « Vous présentez » / « Jarvis présente » n'existe plus : ce que
+> les étapes ci-dessous lisent ou pressent « dans la bande » se lit dans la **bande du présentateur, sous l'image de Variantes**, et se commande
+> par le transport de Variantes (« Lire » / « Pause », « Suivant », « Arrêter ») et ses touches. Une lecture se joue dans Variantes :
+> *Une présentation dans Variantes* ci-dessus. Le reste de la recette (ce qu'il faut entendre et voir) est inchangé.
+
 Contrat : [presentation-studio.md](presentation-studio.md#jarvis-presenter-and-locked-sequences-level-3-slice-14). Les tests automatiques couvrent le pilote avec une
 fausse pile vocale et une horloge simulée, la VRAIE pile de parole (`SpeechScheduler`, sa porte de présentation, l'observateur de mode) avec une surface vocale
 factice, un Core réel et la page réelle dans un vrai Chrome sans tête. **Rien n'a été dit sur une vraie voix** : l'audible est à vérifier par vous, dans une instance
@@ -2479,6 +2489,11 @@ Noter la pile vocale utilisée (OpenAI Realtime, GPT-Live, autre) et la latence 
 `lag_ms`). Un défaut se signale avec les lignes `core.presentation_studio.presenter_*` du journal de Core ; elles ne contiennent jamais le texte.
 
 ### Suivi des cues à la voix (studio, Slice 13) : vérification humaine
+
+> **Bande retirée (native-studio-playback-fix Slice 09).** La bande flottante « Vous présentez » / « Jarvis présente » n'existe plus : ce que
+> les étapes ci-dessous lisent ou pressent « dans la bande » se lit dans la **bande du présentateur, sous l'image de Variantes**, et se commande
+> par le transport de Variantes (« Lire » / « Pause », « Suivant », « Arrêter ») et ses touches. Une lecture se joue dans Variantes :
+> *Une présentation dans Variantes* ci-dessus. Le reste de la recette (ce qu'il faut entendre et voir) est inchangé.
 
 Contrat : [presentation-studio.md](presentation-studio.md#cue-following-contract-level-3-slice-13) ; règle d'autorité : [presentation-addressed-turn.md](presentation-addressed-turn.md) §12, *Amendment (Slice 13)*.
 Les tests automatiques couvrent le comparateur, le suiveur, les garde-fous structurels et un rejeu complet (lane réelle, suiveur réel, service de lecture réel) ; **ils ne prouvent pas** une vraie salle, un vrai micro ni

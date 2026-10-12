@@ -67,6 +67,7 @@ async def test_presentations_saved_by_the_task_base_open_unchanged(tmp_path):
 
 async def test_an_old_presentation_plays_in_the_variants_run_surface_and_the_old_ledger_is_kept_aside(tmp_path):
     data = _seed(tmp_path)
+    before = _digests(data / "presentations")
     async with Core(tmp_path) as core:
         state = data / "state"
         assert not (state / LEDGER).exists(), "Core start reads the retired ledger once"
@@ -89,3 +90,4 @@ async def test_an_old_presentation_plays_in_the_variants_run_surface_and_the_old
             assert (await core.stack.core.scene.snapshot()).objects == (), "never a Board window"
             stopped = await client.presentation_studio_playback("stop", {"actor": "user"})
             assert stopped["state"]["phase"] == "stopped"
+    assert _digests(data / "presentations") == before, "playing must not rewrite a stored presentation"
