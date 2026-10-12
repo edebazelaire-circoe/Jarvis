@@ -112,8 +112,8 @@ Core tests (`legacy_stage_reclaimed`, `stage_ledger_*`, `stage_timeout`).
   said "drop with the category"): an older Core's leftover objects stay protected until reclaimed. Deviation from the audit.
 - **Flag for agent 0:** closing Variants during a playing run pauses it (never stops it, never reopens Variants by itself). Not in the
   contract text before Slice 09; now documented.
-- **Flag for agent 0:** Variants is a modal dialog, so the interaction-mode HUD is under it while a run shows (the old band left it
-  clickable). The strip never overlaps it; closing Variants gives it back. Documented in *Limits*.
+- ~~**Flag for agent 0:** Variants is a modal dialog, so the interaction-mode HUD is under it while a run shows.~~ Superseded by the
+  rework (§ 9): **decided by agent 0 (Human delegated autonomy)**, the HUD stays live and drawn above Variants during a run.
 - **Flag for agent 0 (Slice 15):** `rs-bar` still exists on generic Board Remotion windows (not presentation runs).
 - **Flag for agent 0:** a run started by a direct Core call with no page action waits for the page's next poll (≤ 5 s at rest) before
   Variants opens; voice/MCP open it at once.
@@ -167,3 +167,59 @@ Retargeted earlier in the Slice and green: `test_presentation_studio_explorer_br
 `test_presentation_studio_run_surface.py` 10. Release gate: 14 + 1 passed on `5870c17b`.
 
 The 16 inherited failures of `slices/00-project-manager/READINESS.md` are outside this list and were not touched.
+
+## 9. Rework after independent QA (REWORK: 1 blocking, 9 polish)
+
+| # | Fix | Test |
+| --- | --- | --- |
+| B1 | the page guard that never draws a `studio_stage` / `studio_aux` window now has a test | `test_scene_renderer_logic.py::test_retired_run_viewer_windows_are_never_drawn` (the resolver places both objects; only the guard keeps them out) |
+| P1 | Finding 7 self-play: the node test reads the host options the REAL explorer passes (fake DOM, `createPrefabHost` deps), asserts `autoplay: false` in run mode, then runs the race with them; the real-Chrome test holds Core's order back 2.6 s in the page (`DELAY_CORE_ORDER`, the delay Slice 07 measured) and asserts that no Variants Player (preview, S1, S2) ever plays before a framed order (a frameless `play` is the host's grace play) | `test_variants_run_js.py::test_finding_7…`, release gate `test_finding_7…` (`self_played == {}`) |
+| P2 | HUD live during a run (agent 0's decision): `data-keep-live="run"` on `#interactionModeHud`; the explorer keeps keep-live elements out of the inert set, recursing into a container that holds one (`#app` stays live, its other children are inert); `jvx-run` on `<html>` draws the HUD at 9150 (above Variants 9000 and the rail 9100, under the rail's menu 9300), in the rail's column, whose list stops 96 px from the bottom; the stacking registry of `control_center.html` says so; *Limits* updated | `test_variants_run_js.py::test_the_mode_hud_stays_live_during_a_run…` (node), `test_variants_run_browser.py::test_the_presenter_strip_never_overlaps_the_mode_hud…` (real Chrome, 1280x720 and 1920x1080: HUD clickable, not inert, no overlap with the strip or the rail), `test_interaction_mode_hud_js.py` (slot and registry), docs test |
+| P3 | Échap rule made precise: an `Échap` that only leaves fullscreen never pauses; the `Échap` that closes Variants during a run pauses the run (§ 4.15 table, Slice 08 and 09 sections) | `test_variants_run_surface_docs.py::test_the_escape_rule_is_precise…` |
+| P4 | closing Variants pauses every active phase: `playing` / `resuming` at once; `detour` (Core refuses `pause` there) as soon as Core's view leaves it, once (« Présentation en pause au retour »); reopening Variants on the run cancels it; `paused` / `ended` send nothing. Client-side: the domain's closed table is untouched | `test_variants_run_js.py::test_closing_variants_pauses_the_run_in_every_active_phase` |
+| P5 | the `surface_unavailable` advice follows the page's reason (`explorer_dialog_open`, `explorer_command_busy`: never « open the interface »; `presentation_view window_open` then `presentation_play resume`); the start waits at most `HOST_IN_VARIANTS_TIMEOUT_S` = 4 + 10 + 2 = 16 s (was 30 s), derived from the explorer channel's own deadlines | `test_presentation_studio_mcp_ops.py::test_surface_unavailable_gives_the_advice_of_the_pages_own_reason` (3 cases), `::test_a_start_waits_for_variants_within_the_pages_own_deadlines_not_30_s`, docs parity |
+| P6 | stale docs: anchorless scene timeline (every run since Slice 09), « band cases » / « on the run stage », the band announcing timelines, `control_center_presentation_window.js` as a rail owner, `open_window` / `close_window` in `ui.request`; the hand-over tolerance stated (the last `END_SLACK_FRAMES` = 2 frames or fewer of a non-final scene may go unseen) | `test_variants_run_surface_docs.py::test_stale_viewer_wording_is_gone_and_the_handover_tolerance_is_stated` (value read from the code) |
+| P7a | an existing ledger whose id list is empty is set aside (`.retired-<time>`) | `test_presentation_studio_stage.py::test_a_ledger_whose_id_list_is_empty_is_set_aside_all_the_same` (memory store and real file adapter) |
+| P7b | an object of a retired category is archived whatever its id. This is safer than opening the categories to the Tool Brain: archiving is reversible, and the Tool Brain keeps refusing them as `studio_owned`. Our id prefix on another category survives. Unused id-prefix constants removed | `test_presentation_studio_stage.py::test_an_orphan_of_a_retired_category_is_archived_not_deleted…`, `::test_reclaim_archives_ledger_ids_and_every_retired_category_object…`; `test_presentation_studio_playback_service.py` and `_playback_rework.py` updated |
+| P8 | `test_remotion_timeline_service.py` test renamed `test_an_anchorless_scene_has_one_whole_segment_and_its_played_time_restarts_on_re_entry` | itself |
+| P9 | the stuck-show test bounds its own wait (`asyncio.wait_for(…, 5)`, then `pytest.fail`) | `test_presentation_studio_run_surface.py::test_a_show_that_never_resolves…` |
+
+### Mutant kill proofs
+
+| Mutant | Before the rework | Now |
+| --- | --- | --- |
+| B1: `RETIRED_CATEGORIES=new Set([])` (`control_center_scene_layout.js:46`) | every test passed | `test_retired_run_viewer_windows_are_never_drawn` FAILS: `drawn == ['studio-stag…', 'studio-aux…', 'report']` |
+| P1: `autoplay:true` in the explorer's `createPrefabHost` (`control_center_presentation_studio_explorer.js:622`) | `test_variants_run_js` and the real-Chrome `finding_7` passed | the node test FAILS on the options read from the explorer (`autoplay: True`), and on behaviour too with that assert disabled (`beforeOrder` holds the frameless grace `play`); the real-Chrome `finding_7` FAILS: `self_played = {'S1#1': {first_framed_play_ms: None, frameless_plays: [[1685,'order',1,'play',None,None]], playing_before: [(1690,0,True)…]}}` |
+| P9: show cap removed (`asyncio.wait({task}, timeout=None)` in the stage sync) | the file hung | FAILS in 9.6 s: « the stage sync is not bounded: `next` was still waiting on a show that never resolves after 5 s »; the 9 other tests pass |
+| sanity: `data-keep-live="run"` ignored, and only `playing` pausing on close | (new tests) | both new node tests FAIL |
+
+Each mutant was reverted (`git checkout` or a copy) before the runs below.
+
+### Test results (rework tree, one file per process, fresh `JARVIS_DATA_ROOT` each)
+
+| File | Result |
+| --- | --- |
+| `test_scene_renderer_logic.py` | 65 passed |
+| `test_variants_run_js.py` | 9 passed |
+| `test_variants_run_browser.py` | 6 passed |
+| `test_variants_transport_js.py` | 29 passed |
+| `test_variants_transport_browser.py` | 5 passed |
+| `test_variants_media_fullscreen_browser.py` | 7 passed |
+| `test_presentation_studio_run_surface.py` | 10 passed |
+| `test_presentation_studio_stage.py` | 12 passed |
+| `test_presentation_studio_mcp_ops.py` | 27 passed |
+| `test_presentation_studio_playback_service.py` | 41 passed |
+| `test_presentation_studio_playback_rework.py` | 17 passed |
+| `test_interaction_mode_hud_js.py` | 48 passed |
+| `test_barehands_contracts_js.py` | 26 passed |
+| `test_presentation_studio_explorer_browser.py` | 18 passed |
+| `test_control_center_presentation_rail_browser.py` | 13 passed |
+| `test_presentation_rail_e2e_browser.py` | 3 passed |
+| `test_presentation_studio_presenter_browser.py` | 2 passed |
+| `test_remotion_timeline_service.py` | 12 passed |
+| `test_variants_run_surface_docs.py` | 8 passed |
+| every other docs test reading `presentation-studio.md` (30 files) | all passed |
+| `test_remotion_isolation.py` | 229 passed |
+| `test_schema_migrations.py` | 8 passed |
+| release gate `-k "not play_all_shows"` | 14 passed (first try) |
+| release gate `-k play_all_shows` | 1 passed (first try) |
