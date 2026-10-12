@@ -75,7 +75,7 @@ class Thresholds:
     #: Share of the inked band pixels that are edges: text-like texture (a solid bar or a photo edge is smooth).
     overflow_texture: float = 0.4
     #: Mean absolute luma difference under which two frames are the same picture.
-    repeat_mean_delta: float = 0.05
+    repeat_mean_delta: float = 0.005  # identical renders decode to 0.0; a one-digit change measured 0.012-0.048
     #: A playing Player whose captures stay the same picture this long is frozen (ms).
     frozen_span_ms: int = 1000
     #: A scene that played less than this share of its authored length was cut early.
