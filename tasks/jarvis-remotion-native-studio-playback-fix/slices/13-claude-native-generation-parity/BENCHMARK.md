@@ -20,7 +20,7 @@ One template, two topics, word for word the same on both sides (`evidence/harnes
 | Topic | {sujet} | {public} | Source pack (same file both sides) |
 | --- | --- | --- | --- |
 | Jarvis | JARVIS, l'assistant vocal local de ce poste | des développeurs qui le découvrent | the repository `README.md` (sha256 in each run's `meta.json`) |
-| iGuard | IAGuard, l'agent documentaire souverain | un DSI qui évalue l'outil | the user's IGuard `README.md` (not committed; sha256 in `meta.json`) |
+| iGuard | IAGuard, l'agent documentaire souverain | un DSI qui évalue l'outil | the user's IGuard `README.md` (sha256 in `meta.json`; the file itself is not committed, and its full text, which the agents' Read results first carried into four committed traces, is replaced there by `<redacted: IGuard README, 10469 bytes>` since the Slice 13 rework; earlier commits of the task branch still hold it) |
 
 Isolation: Jarvis = a throw-away data root, its own Core / Control Center / sandbox / Studio ports, the gate Remotion runtime provisioned by
 junction (read only), the Control Center started through `harness/run_cc_strict.py` (`--strict-mcp-config`, no `--chrome`, no browser tab);
