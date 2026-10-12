@@ -2699,7 +2699,7 @@ Status: **Level 3** (handoff `jarvis-remotion-native-studio-playback-fix`, Slice
 | ready on **this pin** | `data-state="here"` (dot), name « Remotion Studio, ouvert sur cette scène »; a click shows the tab (no confirmation: already acknowledged) | « Remotion Studio est ouvert sur cette scène (source v1), dans un autre onglet. » and the link « Afficher l'onglet Remotion Studio » |
 | ready on **another version of the same source** | « Remotion Studio » | « Remotion Studio montre la version 3 de cette scène ; la variante utilise la version 4. … après confirmation. » (said, never corrected silently) |
 | ready on **another scene** | « Remotion Studio » | « Remotion Studio est ouvert sur la scène 2 (« … »). « Remotion Studio » y affiche cette scène, après confirmation. » |
-| files changed in Remotion Studio | (as above) | « n fichiers modifiés dans Remotion Studio : pas publiés, la variante n'a pas changé ; ils seront mis de côté à sa fermeture. » — never « enregistré » (§ 1: until Slice 12 they are backups) |
+| files changed in Remotion Studio | (as above) | « n fichiers modifiés dans Remotion Studio, pas encore publiés : la variante n'a pas changé. » and « Publier dans la variante… » — never « enregistré »; said with Remotion Studio stopped too (Slice 12: *Remotion Studio round trip*) |
 | failed | « Remotion Studio » | the code's sentence and the code, « Réessayer », the folded « Journal de Remotion Studio » (Core's last lines) |
 
 **Refused before any dialog, said at the click** (`aria-disabled`, the reason as title and, on click, in the state line): no scene on screen; a scene without a source; a scene that is not a Remotion source; a Core without Remotion Studio (`remotion_studio_unavailable`, « Ce Jarvis n'a pas de Remotion Studio »); the Remotion environment not ready (« … pas prêt (à réparer) : installez-le ou réparez-le (carte « Présentations · moteur », onglet « Plugins externes » du dialogue MCP) … »: installing stays an explicit gesture of that card, never of Variants); a run in progress.
@@ -2728,7 +2728,89 @@ Status: **Level 3** (handoff `jarvis-remotion-native-studio-playback-fix`, Slice
 
 **Level 3 conformance.** Node: `tests/unit/test_variants_remotion_studio_js.py` (the model: every refusal and its words, here / version / other, unpublished files said « pas publiés », the counter, a failure with its code and « Réessayer », the click the browser needs; `isRemotionManifest` against `is_remotion_manifest`; on the fake DOM: the button beside « Présenter », one modal confirmation with the exact version and provenance, « Annuler » and `Échap` launch nothing, the exact pin and the acknowledgment sent, the tab opened while the click is fresh, Variants' variant and scene kept, a failed and a refused start said and logged with their codes, « Réessayer », refusals before any dialog, a long start offering the link, the return re-reading and saying unpublished files, the pause after the confirmation only, a run hiding the door, nothing of Remotion Studio drawn in Variants, the rail entry). Real Chrome: `tests/unit/test_variants_remotion_studio_browser.py` (isolated Core with the real Studio service and a fake `remotion studio` process: the confirmed open on the exact pin, a NEW TAB on Remotion Studio's address, Variants unchanged, the return; a Core without Remotion Studio; a failed start and « Réessayer »; the rail entry; the button named, on the scene row, without overflow at 800×600, 1280×720, 1920×1080). Updated: `test_control_center_remotion_studio.py`, `test_remotion_mcp_tools.py`, `test_control_center_presentation_rail_js.py`, `test_variants_controls_browser.py` (the readout audit knows the state line). Docs parity: `tests/unit/test_variants_remotion_studio_docs.py`. Evidence: `tasks/jarvis-remotion-native-studio-playback-fix/slices/11-studio-variants-navigation/evidence/`.
 
-**Limits, said.** Edits made in Remotion Studio are not published to the variant: the round trip is Slice 12 (PX-3). A tab blocked by the browser cannot be detected (`noopener` returns no handle): the link is always offered when the click was not fresh, and stays in the state line once ready. Remotion Studio is one per Core (one pin at a time): opening another scene switches it in place (`sync`, after confirmation). The rail shows no Remotion Studio mark (above). The real `remotion studio` process with this door is the Human check HV-RFX-11-01 (the automated proofs use Core's fake process).
+**Limits, said.** Edits made in Remotion Studio reach the variant only through « Publier dans la variante… » (Slice 12, PX-3, next section). A tab blocked by the browser cannot be detected (`noopener` returns no handle): the link is always offered when the click was not fresh, and stays in the state line once ready. Remotion Studio is one per Core (one pin at a time): opening another scene switches it in place (`sync`, after confirmation). The rail shows no Remotion Studio mark (above). The real `remotion studio` process with this door is the Human check HV-RFX-11-01 (the automated proofs use Core's fake process).
+
+### Remotion Studio round trip (Level 3, Slice 12)
+
+Status: **Level 3** (handoff `jarvis-remotion-native-studio-playback-fix`, Slice 12). It implements PX-3 and closes the publish half of PX-2:
+a change made in Remotion Studio becomes a **new pinned source version** of the scene through an explicit, confirmed publish, survives a Core
+restart, shows in Variants, and can be rolled back. Design note: `tasks/jarvis-remotion-native-studio-playback-fix/slices/12-native-authoring-workspace-roundtrip/DESIGN.md`.
+Process side (workspace, the old sync path, codes): [remotion-studio.md](remotion-studio.md) § 2 bis.
+
+**Three verbs, never mixed.** *Preview*: Remotion Studio's own dev server and its HMR (no MP4 is rendered on an edit), and the sandboxed
+Player of Variants for published versions. *Publish*: « Publier dans la variante… » (this section). *Export*: the render of a frozen
+published version ([remotion-render.md](remotion-render.md)), unchanged.
+
+**Source ownership.**
+
+| What | Owner | Written by |
+| --- | --- | --- |
+| a published source version `(prefab_id, version)` | the prefab library (`PrefabService`), immutable | the source-edit door only (`apply_source_edit`), never rewritten |
+| the scene's pin in a variant | the variant document (`StudioScene.prefab`, `last_valid_pin`, `source_revision`) | the source-edit door (CAS on the variant revision) |
+| the Remotion Studio workspace `runtime/studio/work/src/**`, `public/**` | the user (editor, Remotion Studio) | anyone with the user's rights on the folder; never read into the library except by a confirmed publish |
+| the workspace base `state.pin` + `work.files.json` | `RemotionStudioService` | materialisation (`open` / `sync` / confirmed discard) and a standing publish (rebase) |
+| set-aside copies `local_capabilities/remotion/studio-edits/` | the user (outside `runtime/`) | a confirmed discard, a capability change |
+
+**The path.** Variants' state line (Slice 11 door) says
+« n fichiers modifiés dans Remotion Studio, pas encore publiés : la variante n'a pas changé. » whenever the workspace has unpublished files, Remotion Studio open or not. When the workspace base is the scene's exact pin (or a
+base no scene on screen pins: an interrupted publication, a « Revenir », a library version opened from the MCP card — Core decides),
+« Publier dans la variante… » opens ONE confirmation in Variants' layer (`data-kind="remotion_studio_publish"`): the scene, the files, « Jarvis
+compile la scène puis la publie comme NOUVELLE version ; la v<N> n'est pas modifiée et reste disponible », what refuses it. « Annuler »,
+`Échap` or the scrim publish nothing. « Publier » sends `POST /api/local-capabilities/remotion/studio/publish` `{presentation_id,
+variant_id, scene_id, base: <the workspace base the page saw>, confirm_publish: true}` (page only: the relay refuses a request that is not
+`Sec-Fetch-Site: same-origin`), shows « Publication dans la variante… 12 s (2.5 min au plus). » with a pulse, then:
+
+| Outcome | Variants says | Core |
+| --- | --- | --- |
+| published | « Publié dans la variante : nouvelle version de la scène (v<M>) ; la v<N> reste disponible. » + « Revenir à la v<N> » (« la version d'avant » / « Revenir à la version d'avant » when the first publication forked the scene's own source id, whose numbering starts again at 1); the variant is re-read (`ctx.reload`), the Player mounts the new pin at once | new immutable version, pin moved by CAS, workspace rebased |
+| already published | « Déjà publié : la scène utilise la source v<M>. » | an interrupted rebase completed; nothing published |
+| conflict | « Publication refusée : La scène a changé dans la variante … La variante utilise la v<K> ; Remotion Studio a été ouvert sur la v<N>. (remotion_studio_publish_conflict) » | nothing published; the workspace kept |
+| refused (build, import, file, values, score) | the code's sentence, the code, the diagnostics (`file:line:column`) folded; « Publier dans la variante… » stays | nothing published; workspace and base kept |
+
+« Revenir à … » is the source-edit door's `restore_version` (`POST /api/presentation-studio/presentations/{pid}/variants/{vid}/source-edits`,
+actor `user`): the old content becomes a NEW version (« Revenu au contenu d'avant : publié comme nouvelle version (v<K>). »); nothing is deleted.
+
+**Opening another scene with unpublished files.** The Slice 11 confirmation gains the line « Fichiers non publiés : n fichiers modifiés dans
+Remotion Studio (sur v<N>) seront mis de côté (studio-edits), pas publiés. » and the open carries `discard_unpublished: true`; the same scene
+reopens on its workspace as it is. Core refuses any other replacement (`remotion_studio_unpublished_edits`); the MCP card turns that refusal
+into a « Mettre de côté les fichiers non publiés ? » confirmation.
+
+**Trust boundary.** Unchanged sandbox for the Player (every published version still passes `SOURCE_GUARDS` and the real build). The publish
+refuses links, junctions, hard links, top-level or generated files and invalid names (their content is never read), and any bare import other
+than `react`, `react/jsx-runtime`, `react/jsx-dev-runtime`, `remotion` **before** the build. **No widening exists** (decided by agent 0's Work
+Agent): no route, setting or tool grants third-party packages, Node built-ins, host files or network; a widening would need an explicit,
+recorded, per-project Human approval and a Player/render host able to serve it — HV-RFX-12-01.
+
+**Agents.** Unchanged: the agent edits a scene through `scene.source_request` then `source-edits` (sandboxed preview, request authority). It
+does not write into the Remotion Studio workspace (code there runs unsandboxed under the user's acknowledgment of a version) and has no path to
+`studio/publish`, `confirm_publish` or `discard_unpublished` (tested). MCP tools, schemas, descriptions and answers are unchanged.
+
+**Interruption and restart.** Killed during the build: nothing published, the workspace and its base intact, the next publish works.
+Killed after the pin, before the rebase: the scene holds the new version, the workspace still names the old base; the next publish finds the
+workspace equal to the scene's version and rebases (`already_published`), publishing nothing more. Unpublished files survive a close, an idle
+stop and a Core restart; a fresh Core shows the published pin in Variants.
+
+**Logs.** Page (`[studio-explorer] <key>`, `warn` / `error` through `obsClientLog`): `remotion_studio_publish_requested`,
+`remotion_studio_published` (status, seconds), `remotion_studio_publish_cancelled`, `remotion_studio_publish_failed` (code, `publish_code`),
+`remotion_studio_revert_requested`, `remotion_studio_reverted`, `remotion_studio_revert_failed`, `remotion_studio_reload_failed`. Core:
+`remotion_studio.publish_*`, `remotion_studio.published`, `remotion_studio.unpublished_kept`, `remotion_studio.workspace_kept`, and the
+door's own `core.presentation_studio.reload_*`. Relay: `remotion_studio.page_door_refused`.
+
+**Level 3 conformance.** `tests/unit/test_remotion_studio_publish.py` (real disk runner, real prefab library, variant and source-edit door:
+publish as a new pinned version with the base intact, add / remove / asset, edits during the publish stay unpublished, nothing to publish,
+stale base and concurrent write = conflict, a base the page did not see, restricted imports refused before the build and no widening field,
+a build failure, an unknown target, symlink / junction / replaced folder / hard link / top-level / generated / bad names, hostile paths,
+another version refused with unpublished files, the capability-change copy outside `runtime/`, rollback, a fresh Core on the same data root),
+`test_remotion_studio_publish_crash.py` (a REAL subprocess killed during the build and after the pin), `test_remotion_studio_publish_routes.py`
+(real Core route, confirmation, exact body, error envelope, discard flag, page-only relay, who may publish), `test_variants_remotion_studio_publish_js.py`
+(model and fake-DOM flows), `test_remotion_studio_publish_docs.py` (this section against the code), the updated Slice 11 / process tests, and
+the opt-in real round trip `test_remotion_studio_roundtrip_real_browser.py` (real `remotion studio`, workspace edit, HMR, publish from
+Variants in real Chrome, a fresh Core). Evidence: `tasks/jarvis-remotion-native-studio-playback-fix/slices/12-native-authoring-workspace-roundtrip/evidence/`.
+
+**Limits, said.** No trust widening (HV-RFX-12-01). The manifest (composition size, fps, duration, inputs) is not edited from the workspace:
+`studio-root.tsx` is generated from it and refused at publish; those changes stay on the validated source-edit path. Unpublished files are
+detected by hash at each read, not continuously. The provenance of a published version is the user (they confirmed it), whatever wrote the
+workspace files (listed in the confirmation). The real `remotion studio` in the user's own browser is HV-RFX-12-01's check.
 
 ### 2026-10 § 4. Transport semantics (continuous video, the default)
 
@@ -2972,7 +3054,7 @@ Each row is observable. Later Slices and QA test against it; "real browser" mean
 | --- | --- | --- | --- |
 | PX-1 | Naming | on every surface (rail, Variants, inspector, Remotion card, tooltips, `aria-label`s, spoken answers), no string uses the bare word « Studio » or « explorateur de variantes » as a name; the rail menu offers « Ouvrir les variantes » and « Remotion Studio… »; the Variants header reads « Variantes » | 10, 11 |
 | PX-2 | Remotion Studio | from Variants, one click plus the acknowledgment opens the **scene on screen** at its exact pin in Remotion Studio; cancelling launches nothing; the brain cannot launch it; unpublished edits are said to be unpublished | 11, 12 |
-| PX-3 | Remotion Studio round trip | a change made in Remotion Studio becomes a new pinned source version of the variant through the publish path, visible in Variants after a refresh, with rollback | 12 |
+| PX-3 | Remotion Studio round trip | a change made in Remotion Studio becomes a new pinned source version of the variant through the publish path, visible in Variants after a refresh, with rollback | 12 (done: *Remotion Studio round trip (Level 3, Slice 12)*) |
 | PX-4 | Variants opening | opens paused on frame 0 of the selected scene, sound muted; browsing tree and scenes writes nothing (the existing hash test still holds) | 06, 10 |
 | PX-5 | Embedded Player, continuous play | 9-scene deck: ▶ plays scene 1 frame 0 to the final frame with no stop; each scene shows local frames `0..len-1` once, in order; 0 backward steps; never blank between scenes (frame sampler ≤ 50 ms) | 04, 05, 06 |
 | PX-6 | No per-slide cut | a scene of 30 s with a score `target_duration_ms` of 8 s plays its full 30 s in continuous play | 03, 05 |

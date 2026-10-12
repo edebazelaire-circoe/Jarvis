@@ -697,9 +697,16 @@ therefore opt-in and wrapped by a preload guard that runs inside the Studio proc
   `dns.promises`, `Resolver`) and UDP (`dgram.createSocket`, `dgram.Socket`) are refused; Worker threads get the same guard. Every
   refusal is counted and shown on the card.
 - **No child process** except the pinned esbuild service the TSX loader needs: package install, editor, terminal, agent, render are refused.
-- **Read-only working copy** of exactly the selected scene's `src/**` and `public/**` (no data root, no Board, no secret, allow-listed
-  environment); paths are validated (no `..`, drive, backslash, empty segment); edits made anyway are set aside, never published; links
-  planted in it are removed, never followed; the tool cache is wiped at each launch.
+- **Authoring workspace** of exactly the selected scene's `src/**` and `public/**` (no data root, no Board, no secret, allow-listed
+  environment); paths are validated (no `..`, drive, backslash, empty segment); links planted in it are removed, never followed; the tool
+  cache is wiped at each launch. Since native-studio-playback-fix Slice 12 `src/**` and `public/**` are **writable** (generated files stay
+  read-only): an unpublished edit is never replaced silently and reaches the variant only by « Publier dans la variante… », a confirmed,
+  page-only (`Sec-Fetch-Site: same-origin`) request that no brain, MCP or agent path can send (tested). The publish never reads a link,
+  junction or hard link, refuses top-level/generated files and bare imports outside `react`/`remotion` before any build, then goes through
+  the variant's source-edit door (`SOURCE_GUARDS`, real build, new immutable version): the Player sandbox of section 18 is unchanged and no
+  trust widening (third-party packages, host files, network) exists. Residual: a scene running in the Studio tab can ask the Studio API to
+  rewrite workspace files (the read-only attribute used to prevent it on Windows); such files are listed in the publish confirmation and
+  still pass the gate.
 - **No orphan**: identity by `pid:creation time` and a per-launch identifier; Core stop closes it; if the Core declared in `parent.json`
   (pid and creation time, rewritten by a Core that adopts the Studio) is gone for 60 s the guard ends the process; an idle ceiling ends it too.
 

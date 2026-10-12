@@ -39,7 +39,7 @@ def test_every_status_and_stop_reason_is_documented():
 def test_the_documented_routes_are_the_registered_ones():
     registered = {(route.method, route.path) for route in RemotionStudioProtocolRoutes(object()).routes() if route.method != "HEAD"}
     documented = set(re.findall(r"\| (GET|POST) \| `(/v1/local-capabilities/remotion/studio[a-z/]*)`", DOC))
-    assert registered == documented and len(registered) == 5
+    assert registered == documented and len(registered) == 6  # native-studio-playback-fix Slice 12: `publish`
     assert PREFIX == "/v1/local-capabilities/remotion/studio"
 
 
@@ -48,7 +48,8 @@ def test_the_relayed_control_center_routes_are_documented_and_only_install_and_r
         assert path in DOC
     for action in relay._WRITES:
         assert action in DOC
-    assert len(relay.RemotionStudioRelayRoutes(transport=lambda: None, journal=None).routes()) == 8
+    assert len(relay.RemotionStudioRelayRoutes(transport=lambda: None, journal=None).routes()) == 9  # + `publish` (Slice 12, page only)
+    assert relay._PAGE_ONLY == frozenset({"publish"}) and "seulement depuis la page" in DOC
     assert relay._CAPABILITY_WRITES == ("install", "repair") and "install|repair" in DOC
     assert "Aucune désinstallation ni mise à jour n'est relayée" in DOC and relay.START_TIMEOUT_S == 150.0 and "150 s" in DOC
 

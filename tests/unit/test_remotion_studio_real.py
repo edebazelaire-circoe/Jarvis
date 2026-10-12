@@ -56,9 +56,10 @@ async def test_the_real_studio_opens_serves_the_scene_reloads_and_leaves_nothing
         assert status == 200 and "Remotion Studio" in page and "default-src 'self'" in headers["content-security-policy"]
         _, _, health = fetch(url + "__jarvis_studio__/health")
         assert json.loads(health)["launch"] == runner.read_state()["launch_id"]
-        # La copie de travail est exactement la source + ses trois fichiers générés, en lecture seule.
+        # L'espace de travail : la source (modifiable depuis native-studio-playback-fix Slice 12) + les fichiers générés (lecture seule).
         work = runtime / "studio" / "work"
-        assert (work / "studio-root.tsx").is_file() and not os.access(work / "src" / "Scene.tsx", os.W_OK)
+        assert (work / "studio-root.tsx").is_file() and os.access(work / "src" / "Scene.tsx", os.W_OK)
+        assert not os.access(work / "studio-root.tsx", os.W_OK)
         # Rechargement à chaud : la nouvelle version atteint le paquet servi sans redémarrer le processus.
         pid_before = runner.read_state()["process_ref"]
         _, _, bundle = fetch(url + "bundle.js", timeout=60)

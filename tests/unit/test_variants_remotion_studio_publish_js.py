@@ -3,7 +3,7 @@
 1. The pure model (`doorModel`, `workspaceOf`): unpublished files of the Remotion Studio workspace are said with Remotion Studio stopped
    too; publishing is offered only when the workspace base is this scene's pin (or a base no scene on screen holds: Core decides), never
    when it is another scene of the deck; the publication in progress shows motion, a counter and its deadline; a refusal says its code and
-   keeps the button; a publication says the new and the kept version and offers « Revenir à la v<N> ».
+   keeps the button; a publication says the new and the kept version and offers « Revenir à la v<N> » (« la version d'avant » when the first publication forked the scene's own source id).
 2. The explorer on the fake DOM with the real modules: one confirmation in Variants' layer naming the scene and the files; « Annuler »
    publishes nothing; « Publier » sends Core's exact body (the workspace base, `confirm_publish`), says the result, re-reads the variant,
    and « Revenir » is the source-edit door's `restore_version`; a conflict is said with both versions and logged; opening another scene
@@ -60,11 +60,18 @@ def test_a_refusal_says_its_code_and_keeps_the_button_a_publication_offers_the_w
     clean = {**STOPPED_WITH_EDITS, "pin": new_pin, "work_copy": {"modified_files": [], "unpublished": 0, "base": new_pin, "edits_saved": 0}}
     done = model(studio=clean, scene={"id": "pss_000000000001", "title": "Ouverture", "number": 1, "of": 3, "prefab": {"id": new_pin["prefab_id"], "version": 1}},
                  published={"published": new_pin, "previous": {"prefab_id": "lab.dial", "version": 1}, "status": "reloaded", "sceneId": "pss_000000000001"})
-    assert done["status"]["tone"] == "ok" and done["status"]["text"] == "Publié dans la variante : source v1 (la v1 reste disponible)."
-    assert done["status"]["revert"] == {"label": "Revenir à la v1", "target": {"prefab_id": "lab.dial", "version": 1}}
+    assert done["status"]["tone"] == "ok"
+    assert done["status"]["text"] == "Publié dans la variante : nouvelle version de la scène (v1) ; la version d’avant reste disponible."
+    assert done["status"]["revert"] == {"label": "Revenir à la version d’avant", "target": {"prefab_id": "lab.dial", "version": 1}}
+    same = {"prefab_id": "presentation-studio.p1.s1", "version": 2}
+    second = model(studio={**clean, "pin": same, "work_copy": {**clean["work_copy"], "base": same}},
+                   scene={"id": "pss_000000000001", "title": "O", "number": 1, "of": 3, "prefab": {"id": same["prefab_id"], "version": 2}},
+                   published={"published": same, "previous": new_pin, "status": "reloaded", "sceneId": "pss_000000000001"})
+    assert second["status"]["text"] == "Publié dans la variante : nouvelle version de la scène (v2) ; la v1 reste disponible."
+    assert second["status"]["revert"]["label"] == "Revenir à la v1", "the same source: versions are numbered"
     repinned = model(studio=clean, scene={"id": "pss_000000000001", "title": "O", "number": 1, "of": 3, "prefab": {"id": new_pin["prefab_id"], "version": 1}},
                      published={"published": new_pin, "previous": None, "status": "repinned", "sceneId": "pss_000000000001"})
-    assert "prochaine lecture" in repinned["status"]["text"] and repinned["status"]["revert"] is None
+    assert "prochaine lecture" not in repinned["status"]["text"] and repinned["status"]["revert"] is None, "Variants re-read: nothing to wait for"
 
 
 # ------------------------------------------------------------------ 2. the explorer on the fake DOM
@@ -115,12 +122,13 @@ def test_publish_confirms_sends_the_exact_body_says_the_result_rereads_and_rever
     [sent] = out["publishes"]
     assert set(sent) == {"presentation_id", "variant_id", "scene_id", "base", "confirm_publish"} and sent["confirm_publish"] is True
     assert sent["base"] == {"prefab_id": "lab.dial", "version": 1} and sent["scene_id"] == "pss_000000000001"
-    assert out["done"]["tone"] == "ok" and out["done"]["text"] == "Publié dans la variante : source v1 (la v1 reste disponible)."
-    assert out["done"]["revert"] == "Revenir à la v1" and out["done"]["reread"] is True, "Variants re-reads the variant: the new pin plays"
+    assert out["done"]["tone"] == "ok"
+    assert out["done"]["text"] == "Publié dans la variante : nouvelle version de la scène (v1) ; la version d’avant reste disponible."
+    assert out["done"]["revert"] == "Revenir à la version d’avant" and out["done"]["reread"] is True, "Variants re-reads: the new pin plays"
     [restore] = out["restores"]
     assert restore["body"]["files"] == {"restore_version": {"id": "lab.dial", "version": 1}} and restore["body"]["actor"] == "user"
     assert restore["body"]["scene_id"] == "pss_000000000001" and isinstance(restore["body"]["basis"]["variant_revision"], int)
-    assert "Revenu au contenu de la v1 : nouvelle version v2." in out["after"]
+    assert "Revenu au contenu d’avant : publié comme nouvelle version (v2)." in out["after"]
     assert {"remotion_studio_publish_requested", "remotion_studio_published", "remotion_studio_publish_cancelled",
             "remotion_studio_revert_requested", "remotion_studio_reverted"} <= set(out["logs"])
 

@@ -43,7 +43,7 @@ def test_the_owners_the_section_names_exist_under_those_names():
 def test_the_names_the_user_reads_are_the_ones_the_code_writes_and_never_the_bare_studio():
     text = section()
     for name in ("Remotion Studio, ouvert sur cette scène", "Ouvrir l'onglet Remotion Studio", "Remotion Studio démarre…",
-                 "pas publiés, la variante n'a pas changé", "Ouvrir cette scène dans Remotion Studio", "Fermer Remotion Studio"):
+                 "la variante n'a pas changé", "Ouvrir cette scène dans Remotion Studio", "Fermer Remotion Studio"):
         assert name in text, name
         assert name.replace("'", "’") in DOOR + CARD or name in DOOR + CARD, name
     # PX-1 on the card: the strings the user reads never name it « le Studio », « du Studio », « Remotion · Studio »

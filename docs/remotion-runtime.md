@@ -110,7 +110,7 @@ Au démarrage de Core, **seul** `reconcile()` s'exécute (une installation « en
 
 ## 8. Désinstaller, désactiver : ce qui est protégé
 
-`uninstall` arrête le processus puis vide `runtime/` (sans suivre aucun lien symbolique ni jonction, avec reprise des fichiers verrouillés) et garde `state.json` (`not_installed`). `disable` arrête le processus et marque la capacité désactivée ; `enable` ne relance rien. Aucune de ces opérations ne lit ni n'écrit hors de `local_capabilities/remotion/` : les sources et les assets des présentations (`<racine>/presentation/...`, stockage du Studio) sont intacts, ce que le harnais et les tests vérifient octet par octet. Réinstaller restitue un environnement identique sans toucher aux présentations.
+`uninstall` arrête le processus puis vide `runtime/` (sans suivre aucun lien symbolique ni jonction, avec reprise des fichiers verrouillés) et garde `state.json` (`not_installed`). `disable` arrête le processus et marque la capacité désactivée ; `enable` ne relance rien. Aucune de ces opérations ne lit ni n'écrit hors de `local_capabilities/remotion/` : les sources et les assets des présentations (`<racine>/presentation/...`, stockage du Studio) sont intacts, ce que le harnais et les tests vérifient octet par octet. Réinstaller restitue un environnement identique sans toucher aux présentations. Les fichiers **non publiés** de l'espace de travail de Remotion Studio (`runtime/studio/work/`, native-studio-playback-fix Slice 12) sont copiés avant toute opération de la capacité dans `local_capabilities/remotion/studio-edits/`, hors de `runtime/` ; une copie impossible refuse l'opération ([remotion-studio.md](remotion-studio.md) § 2 bis).
 
 ## 9. Preuves
 

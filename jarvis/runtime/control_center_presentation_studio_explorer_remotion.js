@@ -15,7 +15,7 @@
      de Remotion Studio est relu et dit.
    - **Une seule autorité de source.** Ce que Remotion Studio modifie n'atteint la variante QUE par « Publier dans la variante… » (Slice 12) :
      une confirmation qui nomme la base et les fichiers, puis Core publie une NOUVELLE version par la porte d'édition de source (compilation,
-     conflit si la scène a changé, version précédente intacte) ; « Revenir à la v<N> » republie l'ancienne (`restore_version`). Avant, les
+     conflit si la scène a changé, version précédente intacte) ; « Revenir à … » republie l'ancienne (`restore_version`). Avant, les
      fichiers modifiés sont comptés et dits « pas encore publiés », jamais « enregistrés ». Un pin différent (autre scène, autre version de
      la même source) est dit, jamais corrigé en silence ; changer de scène avec des fichiers non publiés le dit dans la confirmation (ils
      sont mis de côté, `discard_unpublished`).
@@ -126,12 +126,15 @@
         status={tone:'danger',text:`Publication refusée : ${e.text} (${e.code})`,diagnostics:e.diagnostics||[],publish:publish.offered};
       }else{
         const p=i.published,prev=p.previous;
-        const wait=p.status==='repinned'||p.status==='pending_mount'?' La vidéo se met à jour à la prochaine lecture de la scène.':'';
-        const done=p.status==='already_published'?`Déjà publié : la scène utilise la source v${p.published.version}.`
-          :p.restored?`Revenu au contenu de la v${p.restored} : nouvelle version v${p.published.version}.${wait}`
-          :`Publié dans la variante : source v${p.published.version}${prev?` (la v${prev.version} reste disponible)`:''}.${wait}`;
+        /* Variants re-reads the variant after a publication (`ctx.reload`): the new version is on screen, nothing to wait for. A first publication
+           forks the scene's own source id, so its « v1 » and the base's « v1 » are two different versions: then they are not numbered. */
+        const sameSource=prev&&prev.prefab_id===p.published.prefab_id;
+        const before=prev?(sameSource?`la v${prev.version}`:'la version d’avant'):'';
+        const done=p.status==='already_published'?`Déjà publié : la scène utilise déjà cette version (v${p.published.version}).`
+          :p.restored?`Revenu au contenu d’avant : publié comme nouvelle version (v${p.published.version}).`
+          :`Publié dans la variante : nouvelle version de la scène (v${p.published.version})${prev?` ; ${before} reste disponible`:''}.`;
         status={tone:work?'warn':'ok',text:work?`${done} ${work.text}`:done,publish:publish.offered,
-          revert:prev&&!p.restored&&p.status!=='already_published'?{label:`Revenir à la v${prev.version}`,target:prev}:null};
+          revert:prev&&!p.restored&&p.status!=='already_published'?{label:`Revenir à ${before}`,target:prev}:null};
       }
     }
     if(status){/* intentional: said above; the usual lines below are for a scene without a publication outcome */}
@@ -521,7 +524,7 @@
       refresh('after_publish');
       return result;
     }
-    /* « Revenir à la v<N> » : la porte d'édition de source republie l'ancien contenu comme NOUVELLE version (`restore_version`). */
+    /* « Revenir à … » : la porte d'édition de source republie l'ancien contenu comme NOUVELLE version (`restore_version`). */
     async function revert(options){
       const o=options||{};
       const p=S.published,at=ctx.scene();
@@ -529,7 +532,7 @@
       if(!at||at.presentationId!==p.presentationId||at.variantId!==p.variantId||!at.scene||at.scene.id!==p.sceneId){
         S.explain='La scène publiée n’est plus à l’écran : rien n’a été changé.';render();return {state:'refused'};
       }
-      S.publishing={at:now(),label:`Retour à la v${p.previous.version}…`};S.publishError=null;render();tick(true);
+      S.publishing={at:now(),label:'Retour à la version d’avant…'};S.publishError=null;render();tick(true);
       log('remotion_studio_revert_requested',{via:o.via,target:`${p.previous.prefab_id}@${p.previous.version}`});
       let result;
       try{
@@ -544,11 +547,11 @@
           const e=body&&body.error||{};
           throw Object.assign(new Error(e.message||body&&body.message||`HTTP ${response.status}`),{code:e.code||body&&body.code||status||`http_${response.status}`,status:response.status});
         }
-        S.published={...p,published:{prefab_id:body.published.id,version:body.published.version},restored:p.previous.version,status};
+        S.published={...p,published:{prefab_id:body.published.id,version:body.published.version},restored:true,status};
         log('remotion_studio_reverted',{status,published:`${body.published.id}@${body.published.version}`});
         result={state:'reverted',published:S.published.published};
       }catch(error){
-        S.publishError={code:error.code||'network',text:`le retour à la v${p.previous.version} a échoué : ${cleanLine(error.message,200)}`,diagnostics:[],sceneId:p.sceneId};
+        S.publishError={code:error.code||'network',text:`le retour à la version d’avant a échoué : ${cleanLine(error.message,200)}`,diagnostics:[],sceneId:p.sceneId};
         log('remotion_studio_revert_failed',{code:S.publishError.code,status:error.status},'error');
         result={state:'failed',code:S.publishError.code};
       }finally{S.publishing=null;tick(false);render()}

@@ -3555,6 +3555,12 @@ scène Remotion publiée dans la bibliothèque.
   scène qui n'est pas de vous), attendre le démarrage (30 à 50 s à froid, 2 min au plus, compteur affiché), puis **Ouvrir l'onglet Remotion Studio**. **Actualiser la scène** recopie la dernière
   version publiée (le Studio se recharge sans redémarrer), **Relancer**, **Fermer Remotion Studio**. Arrêt automatique après 30 minutes sans fenêtre
   ouverte (`JARVIS_REMOTION_STUDIO_IDLE_S`, 60 à 86400 s).
+- **Modifier puis publier** (native-studio-playback-fix Slice 12) : l'espace de travail
+  `<racine de données>/local_capabilities/remotion/runtime/studio/work/src/` est modifiable (éditeur ou Remotion Studio, rechargement à
+  chaud) ; Variantes dit « n fichiers modifiés dans Remotion Studio, pas encore publiés » et **Publier dans la variante…** (confirmation)
+  en fait une nouvelle version de la scène ; **Revenir à …** republie la version d'avant. Les fichiers non publiés restent après une
+  fermeture ou un redémarrage ; ouvrir une autre scène demande de les mettre de côté (`studio-edits/`, hors de `runtime/`). Imports
+  permis : `react` et `remotion` seulement. Refus lisibles : `remotion_studio_publish_*` (contrat [remotion-studio.md](remotion-studio.md) § 2 bis).
 - **Depuis PowerShell** (jeton comme pour la capacité) :
 
 ```powershell
