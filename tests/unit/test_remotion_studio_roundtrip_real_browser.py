@@ -171,7 +171,7 @@ async def test_edit_in_remotion_studio_hot_reloads_publishes_into_the_variant_an
                 {"click": PUBLISH}, {"until": f"!!{PUBLISH_DIALOG}", "ms": 8000, "required": True, "as": "confirm_shown"},
                 {"value": "confirm_text", "expr": f"{PUBLISH_DIALOG}.innerText"}, {"shot": str(folder / "variants-publish-confirm-1280x720.png")},
                 {"value": "publish_clicked_at_ms", "expr": "Date.now()"}, {"click": PUBLISH_GO},
-                {"until": f"{RMS_TEXT}.includes('dans la variante : source v')", "ms": 150000, "required": True, "as": "published"},
+                {"until": f"{RMS_TEXT}.includes('dans la variante : nouvelle version')", "ms": 150000, "required": True, "as": "published"},
                 {"value": "published_at_ms", "expr": "Date.now()"}, {"value": "line_after", "expr": RMS_TEXT},
                 {"until": f"(()=>{{const s={VSTATE};return !!s&&s.phase==='ready'}})()", "ms": 90000, "required": True, "as": "player_ready_again"},
                 {"wait": 2500}, frame(folder, "variants-after-publish"), {"shot": str(folder / "variants-published-1280x720.png")},
