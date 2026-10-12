@@ -270,6 +270,19 @@ async def test_a_render_is_refused_until_the_capability_is_ready_and_a_browser_e
 
 async def test_the_routes_do_not_collide_with_the_capability_operation_routes(stack):
     registered = {(r.method, r.path) for r in PresentationRenderProtocolRoutes(object()).routes() if r.method != "HEAD"}
-    assert registered == {("GET", PREFIX), ("GET", JOBS), ("POST", JOBS), ("GET", JOBS + "/{job_id}"), ("POST", JOBS + "/{job_id}/cancel")}
+    # native-studio-playback-fix Slice 13 adds the native preview, five segments deep like the jobs (never `/{capability_id}/{operation}`).
+    assert registered == {("GET", PREFIX), ("GET", JOBS), ("POST", JOBS), ("GET", JOBS + "/{job_id}"), ("POST", JOBS + "/{job_id}/cancel"),
+                          ("POST", PREFIX + "/preview")}
     status, body = await call(stack.base, "POST", "/v1/local-capabilities/remotion/render", json={})
     assert status in (400, 404, 405) and body["error"]["code"] != "presentation_render_unavailable"  # the capability route answers, not ours
+
+
+async def test_the_native_preview_route_refuses_a_bad_body_before_rendering(stack):
+    """Slice 13 (native-studio-playback-fix): exact keys and types, typed 400, nothing run."""
+
+    for body in ({"presentation_id": "pst_x", "variant_id": "psv_x"}, {"presentation_id": "pst_x", "variant_id": "psv_x", "scene_id": "pss_x",
+                                                                        "frames": ["1"]},
+                 {"presentation_id": "pst_x", "variant_id": "psv_x", "scene_id": "pss_x", "surprise": 1}):
+        status, answer = await call(stack.base, "POST", PREFIX + "/preview", json=body)
+        assert status == 400 and answer["error"]["code"] == "presentation_render_invalid", (body, answer)
+    assert not [c for c in stack.render.calls if c[0] == "run"]
