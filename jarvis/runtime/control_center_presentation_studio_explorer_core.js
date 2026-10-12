@@ -526,6 +526,9 @@ html:has(#${HOST_ID}:not([hidden])) #jvFullscreenPrompt{top:auto;bottom:18px;lef
 #${HOST_ID} .jvx-stage-veil strong{color:var(--jvx-ink);font-size:15px}
 #${HOST_ID} .jvx-stage-veil[data-tone="warn"] strong{color:var(--jvx-warn)}
 #${HOST_ID} .jvx-stage-veil[data-tone="danger"] strong{color:var(--jvx-danger)}
+/* Slice 16 (rnsp): a failure veil is opaque. Under it the scene frame may draw its own failure panel (« Réessayer », the code): seen
+   through a translucent veil the two texts overlapped and two « Réessayer » showed. The veil is the one message and the one action. */
+#${HOST_ID} .jvx-stage-veil[data-tone="danger"]{background:#02060a}
 /* Lecture continue (Slice 05) : la scène suivante n'est pas encore prête. La dernière image de la scène qui part reste visible ; une pastille
    discrète dit qu'on charge, laquelle, depuis combien de temps. Jamais un voile plein : l'image tenue est le contenu. */
 #${HOST_ID} .jvx-stage-wait{position:absolute;right:12px;bottom:12px;z-index:2;display:inline-flex;align-items:center;gap:8px;max-width:calc(100% - 24px);

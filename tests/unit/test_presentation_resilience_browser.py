@@ -112,6 +112,7 @@ async def test_continuous_variants_playback_through_a_core_outage(tmp_path, outa
                 plan += [{"until": f"({PHASE}==='failed')", "ms": 60000, "as": "failed_seen"},
                          {"value": "failed_at", "expr": "Math.round(performance.now()-__rs.t0)"},
                          {"shot": str(shots / f"{outage}-failed.png")}, {"value": "view_failed", "expr": "JarvisStudioExplorer.playback.view()"},
+                         {"value": "veil_ground", "expr": "getComputedStyle(document.querySelector('#jvStudioExplorer .jvx-stage-veil')).backgroundColor"},
                          {"wait": down_s * 1000}, {"clickExpr": RETRY, "as": "retry"},
                          {"value": "retry_at", "expr": "Math.round(performance.now()-__rs.t0)"}]
             plan += [{"until": f"({next_boundary()})||{ENDED}", "ms": 70000, "as": f"boundary_{n}"} for n in range(2, 9)]
@@ -140,7 +141,7 @@ async def test_continuous_variants_playback_through_a_core_outage(tmp_path, outa
                 "page_ms": {"core_down": down_ms, "core_up": up_ms, "ended": reads.get("ended_at")},
                 "failed": reads.get("failed"), "ended": reads.get("ended"), "explorer_open_at_end": reads.get("open"),
                 "view_during": reads.get("view_during"), "view_end": reads.get("view_end"),
-                "failed_seen_ms": reads.get("failed_at"), "view_failed": reads.get("view_failed"), "retry_clicked_ms": reads.get("retry_at"),
+                "failed_seen_ms": reads.get("failed_at"), "view_failed": reads.get("view_failed"), "retry_clicked_ms": reads.get("retry_at"), "veil_ground": reads.get("veil_ground"),
                 "said_during_outage": said(rs["rows"], down_ms, up_ms + 2000),
                 "said_whole_run": said(rs["rows"], 0, 10 ** 9),
                 "scenes": [{k: s[k] for k in ("scene", "first_play", "max_frame", "played_ms", "wraps", "duration")} for s in scenes],
@@ -174,5 +175,7 @@ async def test_continuous_variants_playback_through_a_core_outage(tmp_path, outa
                 failed = evidence["view_failed"] or {}
                 assert reads.get("failed_seen") is True and failed.get("retryable") is True and (failed.get("error") or {}).get("code"), failed
                 assert any(row["veil"] and "lecture impossible" in row["veil"] for row in evidence["said_whole_run"]), "the veil names the scene"
+                # one message, one « Réessayer »: the failure veil is opaque over the frame's own failure panel (Slice 16 fix)
+                assert evidence["veil_ground"] == "rgb(2, 6, 10)", evidence["veil_ground"]
     finally:
         await runner.cleanup()
