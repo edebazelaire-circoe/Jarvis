@@ -59,6 +59,18 @@ async def test_the_surface_is_memory_its_id_names_the_run_and_a_same_payload_wri
     assert await rig.objects() == []                                         # never a Board object
 
 
+async def test_core_start_releases_a_surface_no_run_owns_so_no_stale_scene_or_pin_survives(rig):
+    """A surface left shown without a run (a crash between begin and stop) is released at Core start: the page mounts nothing stale and
+    the pin registry stops protecting its prefab."""
+
+    surface = rig.stage
+    surface.begin("stale")
+    assert await surface.show(payload("Vieux")) is True and surface.pins() == {("lab.counter", 1)}
+    assert rig.service.where() == {"phase": "idle", "running": False}
+    await rig.service.start_service()
+    assert surface.snapshot() is None and surface.pins() == set() and rig.service.surface() is None
+
+
 async def test_overlays_are_hidden_at_birth_revealed_retired_and_pinned(rig):
     surface = rig.stage
     surface.begin("rx")

@@ -109,7 +109,7 @@ def test_the_rail_sits_right_of_the_palette_and_lists_three_visible_presentation
 
 def test_the_context_menu_has_every_action_and_hide_moves_the_row_to_the_folded_group(r):
     menu = r["menu"]["menu"]
-    assert [i["act"] for i in menu["items"]] == ["open", "studio", "edit", "play", "hide", "rename", "archive"]
+    assert [i["act"] for i in menu["items"]] == ["open", "edit", "play", "hide", "rename", "archive"]
     assert "Supprimer" in menu["items"][-1]["text"] and menu["head"] == "Bilan"
     assert r["after_hide"]["menu"] is None and "Bilan" not in names(r["after_hide"])
     assert any(w.endswith('/rail {"action":"hide"}') and "pst_" + "2".zfill(32) in w for w in r["after_hide"]["writes"])
@@ -132,29 +132,26 @@ def test_rename_prefills_and_writes_the_trimmed_title(r):
     assert "Bilan 2026" in names(r["renamed"]) and any('"title":"Bilan 2026"' in w for w in r["renamed"]["writes"])
 
 
-def test_a_click_opens_the_window_which_follows_the_active_variant_and_plays(r):
-    win = r["window"]["window"]
-    assert win["title"] == "Lancement produit automne" and win["chip"] == "variante #2" and win["pips"] == 3 and win["count"] == "1 / 3"
-    assert win["dot"] == BLUE and win["buttons"] == ["Plein écran", "Jouer", "Studio", "Fermer"]
-    assert win["box"]["l"] > r["window"]["box"]["r"], "la fenetre est a droite du rail"
-    assert [i["open"] for i in r["window"]["items"]][0] == "true"
-    assert r["window_scene3"]["window"]["count"] == "3 / 3"
+def test_a_click_opens_variants_windowed_on_the_presentation_and_present_starts_a_run(r):
+    """Slice 09 (native-studio-playback-fix): the floating window is retired; a click opens Variants, « Présenter » starts a run."""
+
+    opens = r["opened"]["opens"]
+    assert len(opens) == 1 and opens[0]["presentation_id"] == "pst_" + "1".zfill(32) and opens[0]["fullscreen"] is False
+    assert r["opened"]["windowNode"] is False and r["opened"]["window"] is None, "no floating window in the page"
     assert r["played"]["commands"] and r["played"]["commands"][0]["verb"] == "start"
-    assert r["played"]["commands"][0]["body"]["role"] == "user_presenter" and r["played"]["window"] is None, "la lecture prend la place de la fenetre"
-    assert r["window_closed"]["window"] is None, "Echap ferme la fenetre"
+    assert r["played"]["commands"][0]["body"]["role"] == "user_presenter"
 
 
-def test_the_brain_can_open_a_window_hide_and_show_the_rail_but_a_stale_request_is_not_replayed(r):
-    assert r["brain_open"]["window"]["title"] == "Bilan 2026" or r["brain_open"]["window"]["title"] == "Bilan"
-    assert r["brain_open"]["reports"] and r["brain_open"]["reports"][-1]["window_open"] is True
+def test_the_brain_can_hide_and_show_the_rail_an_old_open_window_opens_nothing_and_a_stale_request_is_not_replayed(r):
+    assert r["brain_open"]["opens"] == 0 and r["brain_open"]["window"] is None, "open_window is retired: the brain opens Variants through MCP"
     assert r["brain_hide"]["visible"] is False and r["brain_hide"]["api"]["pref"] == "hidden"
     assert r["brain_show"]["visible"] is True and r["brain_show"]["api"]["pref"] == "shown"
     assert r["stale_request"] is False
 
 
-def test_work_on_a_presentation_focuses_it_once_and_never_steals_an_open_window(r):
-    assert r["focus_opened"]["window"] is not None and r["focus_opened"]["window"]["dot"] == BLUE
-    assert r["focus_kept"]["window"]["title"] == r["focus_opened"]["window"]["title"]
+def test_work_on_a_presentation_is_shown_by_its_dot_and_opens_nothing_by_itself(r):
+    assert r["focus"]["opens"] == 0 and r["focus"]["window"] is None
+    assert r["focus"]["items"][1]["state"] == "working" and r["focus"]["items"][1]["dot"] == BLUE
 
 
 def test_the_studio_docks_the_rail_to_the_left_and_releases_it(r):

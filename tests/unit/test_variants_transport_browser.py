@@ -53,7 +53,7 @@ LABEL = f"document.querySelector('{LIRE}').textContent.trim()"
 #: The transport as a viewer and a screen reader see it.
 TRANSPORT = ("(()=>{const x=document.querySelector('#jvStudioExplorer');const bars=[...x.querySelectorAll('[role=\"toolbar\"]')].filter(b=>b.querySelector('[data-act=\"continuous\"]'));"
              "const bar=bars[0];if(!bar)return null;const sl=bar.querySelector('[role=\"slider\"]');const son=bar.querySelector('[aria-label=\"Son\"]');"
-             "return {toolbars:bars.length,name:bar.getAttribute('aria-label'),buttons:[...bar.querySelectorAll('button')].map(b=>b.getAttribute('aria-label')||b.textContent.trim()),"
+             "return {toolbars:bars.length,name:bar.getAttribute('aria-label'),buttons:[...bar.querySelectorAll('button')].filter(b=>!b.hidden).map(b=>b.getAttribute('aria-label')||b.textContent.trim()),"
              "slider:{min:sl.getAttribute('aria-valuemin'),max:sl.getAttribute('aria-valuemax'),now:sl.getAttribute('aria-valuenow'),text:sl.getAttribute('aria-valuetext')},"
              "son:[son.getAttribute('aria-disabled'),son.title],more:bar.querySelector('[aria-haspopup=\"menu\"]').getAttribute('aria-label'),"
              "stageBars:[...x.querySelectorAll('iframe[data-remotion-stage]')].map(f=>{try{return f.contentDocument.querySelectorAll('.rs-bar').length}catch(e){return -1}}),"
@@ -175,7 +175,8 @@ async def test_variants_opens_paused_and_the_transport_drives_one_clock_pause_re
             # Slice 08: « Son » is the sound toggle, muted at opening (no longer disabled; `test_variants_media_fullscreen_browser.py`)
             "PX-4 « Son » muted at opening": t["son"][0] is None and t["son"][1] == "Activer le son (M)",
             "§ 4.16 one named toolbar": t["toolbars"] == 1 and t["name"] == "Lecture de la vidéo"
-                and t["buttons"] == ["Scène précédente", "Lire", "Scène suivante", "Son", "Plus de lecture"],
+                # Slice 09: « Présenter ▾ » joins the row (« Arrêter » shows only during a run)
+                and t["buttons"] == ["Scène précédente", "Lire", "Scène suivante", "Son", "Plus de lecture", "Présenter"],
             "§ 4.16 slider": t["slider"]["min"] == "0" and t["slider"]["now"] == "0" and t["slider"]["max"] == str(74 * 60 - 1),
             "§ 4.8 composition readout at opening": readout_problems(evidence["readouts0"], 0) == [],
             "PX-7 pause holds 5 s": evidence["paused1"]["frame"] == evidence["paused2"]["frame"] and evidence["paused2"]["playing"] is False

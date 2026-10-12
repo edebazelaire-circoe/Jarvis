@@ -58,17 +58,13 @@ async def test_the_rail_lists_real_presentations_with_their_real_work_state_and_
             {"click": ".jvr-menu button[data-act=\"hide\"]"},
             {"until": "document.querySelectorAll('#presentationRail .jvr-item').length===2", "ms": 8000},
             {"value": "after_hide", "expr": ITEMS},
-            # open the window on the first presentation: the real prefab is mounted in a sandboxed frame
+            # a click on the first presentation opens Variants on it, windowed (Slice 09 of native-studio-playback-fix: the floating
+            # window host is retired, Variants is the one surface): rail docked, variant bar, transport
             {"eval": f"document.querySelector('#presentationRail .jvr-item[data-id=\"{rig.pid}\"]').click()"},
-            {"until": "!!document.querySelector('#jvPresWindow:not([hidden]) .jvw-pip')", "ms": 15000},
-            {"value": "window", "expr": "(()=>{const w=document.querySelector('#jvPresWindow');return {title:w.querySelector('.jvw-title').textContent,pips:w.querySelectorAll('.jvw-pip').length,chip:w.querySelector('.jvw-chip').textContent,veil:w.querySelector('.jvw-veil').hidden,frames:w.querySelectorAll('iframe').length}})()"},
-            {"shot": str(tmp_path / "window.png")},
-            # the Studio from the menu: windowed, rail docked, variant bar, play buttons
-            {"click": "#jvPresWindow .jvw-bar button:nth-of-type(3)"},
             {"until": "!!window.JarvisStudioExplorer&&JarvisStudioExplorer.isOpen&&JarvisStudioExplorer.isOpen()", "ms": 15000},
             {"until": "document.querySelectorAll('#jvStudioExplorer .jvx-vchip').length===2", "ms": 15000},
             {"wait": 500},
-            {"value": "studio", "expr": "(()=>{const r=document.querySelector('#presentationRail').getBoundingClientRect(),x=document.querySelector('#jvStudioExplorer').getBoundingClientRect();return {docked:document.documentElement.classList.contains('jvr-studio'),railLeft:r.left,railTop:r.top,explorerLeft:x.left,railInert:!!document.querySelector('#presentationRail').closest('[inert]'),chips:document.querySelectorAll('#jvStudioExplorer .jvx-vchip').length,play:[...document.querySelectorAll('#jvStudioExplorer .jvx-transport button')].map(b=>b.getAttribute('aria-label')||b.textContent.trim()),windowOpen:!document.querySelector('#jvPresWindow').hidden,fullscreen:!!document.fullscreenElement}})()"},
+            {"value": "studio", "expr": "(()=>{const r=document.querySelector('#presentationRail').getBoundingClientRect(),x=document.querySelector('#jvStudioExplorer').getBoundingClientRect();return {docked:document.documentElement.classList.contains('jvr-studio'),railLeft:r.left,railTop:r.top,explorerLeft:x.left,railInert:!!document.querySelector('#presentationRail').closest('[inert]'),chips:document.querySelectorAll('#jvStudioExplorer .jvx-vchip').length,play:[...document.querySelectorAll('#jvStudioExplorer .jvx-transport button')].filter(b=>!b.hidden).map(b=>b.getAttribute('aria-label')||b.textContent.trim()),windowOpen:!!document.querySelector('#jvPresWindow'),pid:JarvisStudioExplorer.state().presentation_id,fullscreen:!!document.fullscreenElement}})()"},
             {"shot": str(tmp_path / "studio.png")},
             # the rail stays usable inside the Studio: its menu opens above it
             {"eval": CONTEXT % pid2},
@@ -89,13 +85,13 @@ async def test_the_rail_lists_real_presentations_with_their_real_work_state_and_
         assert by_name["Atelier du cadran"] == ("done", GREEN)
         assert [f.replace(" ", "") for f in reads["folds"]] == ["▸Archivées(1)"]
         assert reads["palette"][1] > reads["palette"][0], "right of the tool palette"
-        assert reads["menu"] == ["open", "studio", "edit", "play", "hide", "rename", "ack", "archive"]
+        assert reads["menu"] == ["open", "edit", "play", "hide", "rename", "ack", "archive"]
         assert sorted(i[0] for i in reads["after_hide"]) == ["Atelier du cadran", "Bilan trimestriel"]
-        assert reads["window"]["title"] == "Atelier du cadran" and reads["window"]["pips"] == 3 and reads["window"]["chip"].startswith("variante #")
+        assert reads["studio"]["pid"] == rig.pid, "the rail click opens Variants on that presentation"
         assert reads["studio"]["docked"] is True and reads["studio"]["railLeft"] == 8 and reads["studio"]["explorerLeft"] > 150
         assert reads["studio"]["railInert"] is False and reads["studio"]["chips"] == 2 and reads["studio"]["fullscreen"] is False
         # Slice 06 (native-studio-playback-fix): one transport toolbar; « Jouer cette slide » became the « ⋯ » entry « Lire seulement cette scène »
-        assert reads["studio"]["play"] == ["Scène précédente", "Lire", "Scène suivante", "Son", "Plus de lecture"] and reads["studio"]["windowOpen"] is False
+        assert reads["studio"]["play"] == ["Scène précédente", "Lire", "Scène suivante", "Son", "Plus de lecture", "Présenter"] and reads["studio"]["windowOpen"] is False
         assert reads["studio_menu"]["onTop"] is True and reads["studio_still_open"] is True, "Escape in the rail menu does not close the Studio"
         assert sorted(reads["stepped"]) == ["false", "true"]
         assert not noise(result), noise(result)

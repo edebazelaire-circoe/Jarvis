@@ -534,7 +534,7 @@ html:has(#${HOST_ID}:not([hidden])) #jvFullscreenPrompt{top:auto;bottom:18px;lef
 #${HOST_ID} .jvx-transport .jvx-icon-slot{display:inline-flex}
 #${HOST_ID} .jvx-transport .jvx-btn[aria-pressed="true"]{border-color:var(--jvx-accent);color:var(--jvx-accent)}
 #${HOST_ID} .jvx-transport .jvx-btn[aria-disabled="true"]{opacity:.55;cursor:default}
-#${HOST_ID} .jvx-scrub{position:relative;flex:1 1 auto;min-width:64px;height:24px;cursor:pointer;touch-action:none;border-radius:6px}
+#${HOST_ID} .jvx-scrub{position:relative;flex:1 1 auto;min-width:44px;height:24px;cursor:pointer;touch-action:none;border-radius:6px}
 #${HOST_ID} .jvx-scrub[aria-disabled="true"]{cursor:default;opacity:.5}
 #${HOST_ID} .jvx-scrub-track{position:absolute;left:0;right:0;top:10px;height:4px;border-radius:2px;background:var(--jvx-line-strong)}
 #${HOST_ID} .jvx-scrub-fill{position:absolute;left:0;top:10px;height:4px;border-radius:2px;background:var(--jvx-accent)}
@@ -545,7 +545,12 @@ html:has(#${HOST_ID}:not([hidden])) #jvFullscreenPrompt{top:auto;bottom:18px;lef
 @media (forced-colors:active){#${HOST_ID} .jvx-scrub-track,#${HOST_ID} .jvx-scrub-tick{background:CanvasText}#${HOST_ID} .jvx-scrub-fill,#${HOST_ID} .jvx-scrub-thumb{background:Highlight}}
 @container jvxpreview (max-width:640px){
   #${HOST_ID} .jvx-stage-note .jvx-scene-line{display:none}
-  #${HOST_ID} .jvx-transport{gap:6px}
+  #${HOST_ID} .jvx-transport{gap:4px}
+  #${HOST_ID} .jvx-transport .jvx-btn:not(.jvx-btn-icon){padding:0 8px}
+  /* Slice 09: on a narrow preview « Présenter » / « Arrêter » keep their name (text, title) but show a glyph, so the row stays one row. */
+  #${HOST_ID} .jvx-transport .jvx-btn:is([data-act="present"],[data-act="stop_run"]){width:30px;padding:0;font-size:0}
+  #${HOST_ID} .jvx-transport .jvx-btn[data-act="present"]::before{content:"▸";font-size:14px}
+  #${HOST_ID} .jvx-transport .jvx-btn[data-act="stop_run"]::before{content:"■";font-size:12px}
   #${HOST_ID} .jvx-transport .jvx-time{min-width:0}
   #${HOST_ID} .jvx-scrub{min-width:40px}
 }

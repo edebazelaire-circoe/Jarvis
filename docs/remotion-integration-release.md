@@ -124,7 +124,7 @@ The first pass of the same suite, run before the fixes of this Slice, found what
 | `test_remotion_import_real.py` (real GitHub, `JARVIS_REMOTION_IMPORT_NETWORK=1`) | 2 | pass | 19 s |
 | `test_presentation_studio_authoring_remotion_real.py` | 6 | pass | 3 s |
 | `test_presentation_studio_authoring_remotion_browser.py` | 3 | pass | 28 s |
-| `test_presentation_studio_player_realpage_browser.py` | 5 | pass | 38 s |
+| test_presentation_studio_player_realpage_browser.py (deleted by native-studio-playback-fix Slice 09 with the band; its proofs moved to `test_variants_run_browser.py`) | 5 | pass | 38 s |
 | `test_presentation_studio_reload_real_page_browser.py` | 2 | pass | 43 s |
 | `test_remotion_release_flows.py` (the journey, below) | 1 | pass | 54 s |
 
