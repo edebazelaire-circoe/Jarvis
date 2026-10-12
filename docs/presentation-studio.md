@@ -2749,21 +2749,24 @@ published version ([remotion-render.md](remotion-render.md)), unchanged.
 | the scene's pin in a variant | the variant document (`StudioScene.prefab`, `last_valid_pin`, `source_revision`) | the source-edit door (CAS on the variant revision) |
 | the Remotion Studio workspace `runtime/studio/work/src/**`, `public/**` | the user (editor, Remotion Studio) | anyone with the user's rights on the folder; never read into the library except by a confirmed publish |
 | the workspace base `state.pin` + `work.files.json` | `RemotionStudioService` | materialisation (`open` / `sync` / confirmed discard) and a standing publish (rebase) |
-| set-aside copies `local_capabilities/remotion/studio-edits/` | the user (outside `runtime/`) | a confirmed discard, a capability change |
+| set-aside copies `local_capabilities/remotion/studio-edits/` | the user (outside `runtime/`) | a confirmed discard, a capability change, the workspace shape before a launch (5 folders kept, the oldest removed and logged `remotion_studio.edits_rotated`) |
 
 **The path.** Variants' state line (Slice 11 door) says
 « n fichiers modifiés dans Remotion Studio, pas encore publiés : la variante n'a pas changé. » whenever the workspace has unpublished files, Remotion Studio open or not. When the workspace base is the scene's exact pin (or a
 base no scene on screen pins: an interrupted publication, a « Revenir », a library version opened from the MCP card — Core decides),
-« Publier dans la variante… » opens ONE confirmation in Variants' layer (`data-kind="remotion_studio_publish"`): the scene, the files, « Jarvis
+« Publier dans la variante… » opens ONE confirmation in Variants' layer (`data-kind="remotion_studio_publish"`, the focus on « Annuler »: a stray
+Enter publishes nothing): the scene, EVERY changed file (a scrolling list, never cut), « Jarvis
 compile la scène puis la publie comme NOUVELLE version ; la v<N> n'est pas modifiée et reste disponible », what refuses it. « Annuler »,
 `Échap` or the scrim publish nothing. « Publier » sends `POST /api/local-capabilities/remotion/studio/publish` `{presentation_id,
-variant_id, scene_id, base: <the workspace base the page saw>, confirm_publish: true}` (page only: the relay refuses a request that is not
-`Sec-Fetch-Site: same-origin`), shows « Publication dans la variante… 12 s (2.5 min au plus). » with a pulse, then:
+variant_id, scene_id, base: <the workspace base the page saw>, digest: <the work_copy.digest of the list the confirmation showed>,
+confirm_publish: true}` (page only: the relay refuses a request that is not `Sec-Fetch-Site: same-origin`); Core publishes only that list
+(`remotion_studio_publish_listing_changed` when the workspace changed since: nothing published, the page lists again), shows « Publication dans la variante… 12 s (2.5 min au plus). » with a pulse, then:
 
 | Outcome | Variants says | Core |
 | --- | --- | --- |
 | published | « Publié dans la variante : nouvelle version de la scène (v<M>) ; la v<N> reste disponible. » + « Revenir à la v<N> » (« la version d'avant » / « Revenir à la version d'avant » when the first publication forked the scene's own source id, whose numbering starts again at 1); the variant is re-read (`ctx.reload`), the Player mounts the new pin at once | new immutable version, pin moved by CAS, workspace rebased |
 | already published | « Déjà publié : la scène utilise la source v<M>. » | an interrupted rebase completed; nothing published |
+| listing changed | « Publication refusée : Les fichiers de Remotion Studio ont changé depuis votre confirmation : rien n'a été publié. … (n fichiers modifiés maintenant) (remotion_studio_publish_listing_changed) »; the list is read again | nothing published; the workspace kept |
 | conflict | « Publication refusée : La scène a changé dans la variante … La variante utilise la v<K> ; Remotion Studio a été ouvert sur la v<N>. (remotion_studio_publish_conflict) » | nothing published; the workspace kept |
 | refused (build, import, file, values, score) | the code's sentence, the code, the diagnostics (`file:line:column`) folded; « Publier dans la variante… » stays | nothing published; workspace and base kept |
 
@@ -2772,7 +2775,9 @@ actor `user`): the old content becomes a NEW version (« Revenu au contenu d'ava
 
 **Opening another scene with unpublished files.** The Slice 11 confirmation gains the line « Fichiers non publiés : n fichiers modifiés dans
 Remotion Studio (sur v<N>) seront mis de côté (studio-edits), pas publiés. » and the open carries `discard_unpublished: true`; the same scene
-reopens on its workspace as it is. Core refuses any other replacement (`remotion_studio_unpublished_edits`); the MCP card turns that refusal
+reopens on its workspace (the user's `src/**` / `public/**` kept; before EVERY launch anything outside the workspace shape — a top-level
+`remotion.config.js`, any other top-level file or folder, a link, a junction, a hard link — is moved into `studio-edits/`, never run, and
+said: `work_copy.set_aside`, « Au dernier lancement, … mis de côté dans studio-edits : jamais exécutés ni publiés. »). Core refuses any other replacement (`remotion_studio_unpublished_edits`); the MCP card turns that refusal
 into a « Mettre de côté les fichiers non publiés ? » confirmation.
 
 **Trust boundary.** Unchanged sandbox for the Player (every published version still passes `SOURCE_GUARDS` and the real build). The publish
