@@ -258,10 +258,14 @@ async def test_a_configured_port_is_never_silently_replaced():
 async def test_close_stops_the_process_tree_and_keeps_the_work_recorded(stack):
     await stack.service.open(PIN, acknowledged=True)
     ref = next(iter(stack.runner.alive))
-    stack.runner.saved = ("src/Scene.tsx",)
+    stack.runner.work["src/Scene.tsx"] = b"// edited in Remotion Studio"
     view = await stack.service.close()
     assert view["status"] == "stopped" and view["url"] is None and stack.runner.stopped == [ref] and not stack.runner.alive
-    assert view["work_copy"]["edits_saved"] == 1 and view["pin"] == PIN.to_dict(), "the last scene is remembered for restart"
+    assert view["pin"] == PIN.to_dict(), "the last scene is remembered for restart"
+    # Slice 12 (native-studio-playback-fix): close leaves the unpublished file IN the workspace (no copy, no replacement) and says it
+    assert "save_modified" not in stack.runner.calls and stack.runner.work["src/Scene.tsx"] == b"// edited in Remotion Studio"
+    assert view["work_copy"]["modified_files"] == ["src/Scene.tsx"] and view["work_copy"]["unpublished"] == 1
+    assert view["work_copy"]["base"] == PIN.to_dict() and view["work_copy"]["edits_saved"] == 0
     assert (await stack.service.close())["status"] == "stopped", "close is idempotent"
 
 
@@ -398,13 +402,18 @@ async def test_a_second_operation_while_one_runs_is_busy(stack):
     await stack.service.stop()
 
 
-async def test_work_edited_outside_jarvis_is_reported_and_saved_before_a_sync(stack):
+async def test_work_edited_outside_jarvis_is_reported_and_only_a_confirmed_discard_replaces_it(stack):
     await stack.service.open(PIN, acknowledged=True)
     stack.runner.modified = ("src/Scene.tsx",)
     assert (await stack.service.status())["work_copy"]["modified_files"] == ["src/Scene.tsx"]
-    stack.runner.edits_on_sync = ("src/Scene.tsx",)
-    view = await stack.service.sync(PIN2, acknowledged=True)
-    assert view["work_copy"]["edits_saved"] == 1 and any("saved aside" in line for line in view["diagnostics"])
+    # Slice 12: the old sync path never replaces an unpublished file silently
+    with pytest.raises(StudioError) as refused:
+        await stack.service.sync(PIN2, acknowledged=True)
+    assert refused.value.code is C.UNPUBLISHED_EDITS and refused.value.extra["files"] == ["src/Scene.tsx"] and refused.value.http_status == 409
+    assert (await stack.service.status())["pin"] == PIN.to_dict(), "nothing moved"
+    view = await stack.service.sync(PIN2, acknowledged=True, discard=True)
+    assert view["pin"] == PIN2.to_dict() and stack.runner.saved_aside == [("src/Scene.tsx",)]
+    assert view["work_copy"]["edits_saved"] == 1 and any("set aside" in line for line in view["diagnostics"])
     await stack.service.stop()
 
 

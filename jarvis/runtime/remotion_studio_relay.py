@@ -10,15 +10,19 @@ telles quelles vers Core (statut et JSON, erreurs comprises) ; c'est `control_ce
 | `POST /api/local-capabilities/remotion/studio/open` | `POST .../studio/open` | 150 s (démarrage ≤ 120 s) |
 | `POST /api/local-capabilities/remotion/studio/restart` | `POST .../studio/restart` | 150 s |
 | `POST /api/local-capabilities/remotion/studio/sync\\|close` | `POST .../studio/sync\\|close` | 40 s |
+| `POST /api/local-capabilities/remotion/studio/publish` | `POST .../studio/publish` | 150 s (compilation et attente du tour ≤ 135 s) |
 | `POST /api/local-capabilities/remotion/install` ou `repair` | `POST /v1/local-capabilities/remotion/install` ou `repair` | 40 s (Slice 20) |
 
-Seules ces huit adresses existent : aucun arrêt ni désinstallation de la capacité, aucun chemin libre n'est relayé d'ici. Depuis la
+Seules ces neuf adresses existent : aucun arrêt ni désinstallation de la capacité, aucun chemin libre n'est relayé d'ici. Depuis la
 Slice 20, `install` et `repair` le sont (corps vide imposé, jamais celui de la page) : c'est le geste « réparer » de la carte
 d'erreur du moteur, précédé d'une confirmation dans la page (`docs/remotion-runtime.md` §7). Toutes les méthodes sont gardées (Host et origine
 de boucle locale, `READ_GUARDED_ROUTES`) : ces routes lancent un processus.
 
 Core injoignable ou non configuré : 503 `core_unreachable` / `core_unconfigured` ; délai dépassé : 504 `core_timeout` (l'issue est
 inconnue, l'écran relit l'état). Journal : `remotion_studio.relayed` pour chaque écriture (jamais un corps).
+
+`publish` (native-studio-playback-fix Slice 12) écrit une nouvelle version dans une variante : comme `install` / `repair`, il n'est
+relayé que depuis la page (`Sec-Fetch-Site: same-origin`), jamais depuis un outil hors navigateur (403 `forbidden_origin`).
 """
 
 from __future__ import annotations
@@ -42,7 +46,9 @@ START_TIMEOUT_S = 150.0
 MAX_BODY_BYTES = 2048
 #: Slice 20 : les deux seules operations de la capacite relayees (le geste « installer / reparer » apres une panne visible).
 _CAPABILITY_WRITES = ("install", "repair")
-_WRITES = {"open": START_TIMEOUT_S, "restart": START_TIMEOUT_S, "sync": SHORT_TIMEOUT_S, "close": SHORT_TIMEOUT_S}
+_WRITES = {"open": START_TIMEOUT_S, "restart": START_TIMEOUT_S, "sync": SHORT_TIMEOUT_S, "close": SHORT_TIMEOUT_S, "publish": START_TIMEOUT_S}
+#: Écritures relayées seulement depuis la page du Control Center (geste de l'utilisateur dans un navigateur).
+_PAGE_ONLY = frozenset({"publish"})
 
 
 def _envelope(status: int, code: str, message: str, *, headers: dict[str, str] | None = None) -> web.Response:
@@ -86,6 +92,10 @@ class RemotionStudioRelayRoutes:
         async def handler(request: web.Request) -> web.Response:
             if request.query:
                 return _envelope(400, "remotion_studio_invalid", "unexpected query parameters")
+            if action in _PAGE_ONLY and request.headers.get("Sec-Fetch-Site") != "same-origin":
+                self._journal.emit("remotion_studio.page_door_refused", f"Studio Remotion : {action} refusé, requête hors de la page",
+                                   level="warning", data={"action": action, "sec_fetch_site": request.headers.get("Sec-Fetch-Site")})
+                return _envelope(403, "forbidden_origin", f"{action} can only be sent from the Control Center page (same-origin request required)")
             body = await request.read() if request.can_read_body else b""
             if len(body) > MAX_BODY_BYTES:
                 return _envelope(400, "remotion_studio_invalid", "the request body is too large")

@@ -90,10 +90,11 @@ def test_remotion_studio_on_this_pin_another_version_or_another_scene_is_said_ne
 def test_unpublished_files_are_said_unpublished_never_saved():
     m = model(studio={**READY, "work_copy": {"modified_files": ["src/Scene.tsx", "src/a.ts"], "edits_saved": 0}})
     assert m["status"]["tone"] == "warn"
-    assert "2 fichiers modifiés dans Remotion Studio : pas publiés, la variante n’a pas changé" in m["status"]["text"]
-    assert "enregistr" not in m["status"]["text"]
+    # Slice 12: the workspace says it, and publishing is offered (the base is this scene's pin)
+    assert "2 fichiers modifiés dans Remotion Studio, pas encore publiés : la variante n’a pas changé" in m["status"]["text"]
+    assert "enregistr" not in m["status"]["text"] and m["status"]["publish"] is True
     kept = model(studio={**READY, "work_copy": {"modified_files": [], "edits_saved": 1}})
-    assert "1 fichier modifié dans Remotion Studio, mis de côté : pas publiés." in kept["status"]["text"]
+    assert "1 fichier mis de côté (studio-edits) à votre demande : pas publié." in kept["status"]["text"]
 
 
 def test_starting_failing_and_the_click_the_browser_needs():
@@ -173,7 +174,7 @@ def test_the_button_is_on_the_scene_row_and_a_confirmed_open_sends_the_exact_pin
     assert s["modal"] == "true" and s["inert"] is True and s["opens"] == 0, "a modal confirmation first, nothing launched yet"
     assert s["title"] == "Ouvrir cette scène hors du bac à sable ?" and s["goLabel"] == "Ouvrir cette scène dans Remotion Studio"
     assert "Sans bac à sable" in s["text"] and "Scène 2 sur 3" in s["text"] and "source v1" in s["text"] and "auteur : vous" in s["text"]
-    assert "pas publié" in s["text"]
+    assert "n’atteint la variante que par « Publier dans la variante… »" in s["text"]
     assert out["opens"] == [{"prefab_id": "lab.dial", "version": 1, "acknowledge_unsandboxed_scene": True}], "the exact pin, acknowledged"
     assert out["tabs"] == [["http://127.0.0.1:41000/", "jarvis-remotion-studio", "noopener,noreferrer"]], "the tab, while the click is fresh"
     b, a = out["before"]["state"], out["after"]
@@ -278,7 +279,7 @@ def test_a_long_start_offers_the_link_coming_back_rereads_and_says_unpublished_f
     assert "n’ouvre un onglet qu’après un clic" in r["text"] and r["link"] == "Ouvrir l’onglet Remotion Studio" and r["tabs"] == 0
     assert (r["href"], r["target"], r["rel"]) == ("http://127.0.0.1:41000/", "_blank", "noopener noreferrer")
     assert out["reread"] is True and out["tone"] == "warn"
-    assert "1 fichier modifié dans Remotion Studio : pas publiés, la variante n’a pas changé" in out["back"]
+    assert "1 fichier modifié dans Remotion Studio, pas encore publié : la variante n’a pas changé" in out["back"]
     assert out["scene"] == "pss_000000000001"
 
 

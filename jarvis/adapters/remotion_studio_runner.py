@@ -4,9 +4,12 @@ Tout effet disque et processus du Studio passe ici. Il n'écrit que sous `<runti
 capacité, `docs/remotion-runtime.md` §1) :
 
     studio/state.json          état persistant (service)
-    studio/work/               le SEUL dossier que le Studio sert : copie matérialisée, en lecture seule, de la source d'une scène
-    studio/work.files.json     empreintes de la dernière synchronisation (détecte une modification faite hors de Jarvis)
-    studio/edits/<horodatage>/ copie des fichiers modifiés hors de Jarvis avant qu'une synchronisation les remplace
+    studio/work/               le SEUL dossier que le Studio sert : l'ESPACE DE TRAVAIL (Slice 12 de native-studio-playback-fix) ;
+                               `src/**` et `public/**` modifiables, `studio-root.tsx` et `package.json` générés en lecture seule
+    studio/work.files.json     empreintes de la BASE (la version matérialisée, ou publiée depuis cet espace) : ce qui en diffère
+                               est une modification non publiée
+    ../studio-edits/<horodatage>/ copie des fichiers non publiés avant qu'une action CONFIRMÉE (mettre de côté) ou un changement
+                               de la capacité les remplace ; HORS de `runtime/` : une désinstallation ne l'emporte pas
     studio/studio-guard.cjs    copie du garde livré (`jarvis/capabilities/remotion/studio-guard.cjs`), comparée à chaque lancement
     studio/studio.log          sortie du processus (plafonnée)
     studio/listening.json, activity.json   écrits par le garde dans le processus du Studio
@@ -14,7 +17,8 @@ capacité, `docs/remotion-runtime.md` §1) :
 Le processus est `node --require studio-guard.cjs @remotion/cli/remotion-cli.js studio ...`, cwd = `work/`, environnement en
 liste blanche (`process_tree.clean_env` : aucune variable `JARVIS_*` sauf les deux identifiants de lancement, aucune clé, aucun
 jeton), lancé sans fenêtre ni navigateur (`--no-open`). Aucune route de Core, aucune base, aucun Board n'est lisible depuis ce
-dossier ; les écritures vers la bibliothèque de prefabs ne passent JAMAIS par ici (elles passent par `PrefabService`).
+dossier ; les écritures vers la bibliothèque de prefabs ne passent JAMAIS par ici : la publication lit l'espace de travail
+(`workspace_diff`) et passe par la porte d'édition de source de la variante (`RemotionStudioService.publish`).
 """
 
 from __future__ import annotations
@@ -36,6 +40,7 @@ from jarvis.adapters import process_tree
 from jarvis.adapters.node_capability_runner import _remove_tree, extended_path
 from jarvis.domain import remotion_studio as D
 from jarvis.domain.remotion_studio import StudioError, StudioErrorCode as C
+from jarvis.domain.remotion_studio_workspace import WorkspaceDiff
 from jarvis.ports.remotion_studio import LaunchResult, SyncReport
 
 CLI_ENTRY = Path("node_modules") / "@remotion" / "cli" / "remotion-cli.js"
@@ -44,6 +49,10 @@ LOG_FILE = "studio.log"
 LOG_MAX_BYTES = 1_000_000
 STATE_FILE = "state.json"
 MANIFEST_FILE = "work.files.json"
+#: Copies des fichiers non publiés, à côté de `runtime/` (jamais dedans : `uninstall` vide `runtime/`).
+EDITS_DIR = "studio-edits"
+#: Fichiers générés par Jarvis (lecture seule) ; tout le reste de l'espace de travail (`src/**`, `public/**`) est modifiable.
+GENERATED_FILES = (D.WORK_ROOT_FILE, D.WORK_PACKAGE)
 MAX_WORK_FILES = 400
 MAX_WORK_BYTES = 64 * 1024 * 1024
 STUDIO_NODE_FLAGS = ("--max-old-space-size=2048",)
@@ -110,6 +119,10 @@ class RemotionStudioRunner:
     @property
     def _work(self) -> Path:
         return self._studio / D.WORK_DIR
+
+    @property
+    def _edits(self) -> Path:
+        return Path(self._runtime_dir()).parent / EDITS_DIR
 
     def configured_port(self) -> int | None:
         raw = self._environ.get("JARVIS_REMOTION_STUDIO_PORT", "").strip()
@@ -229,10 +242,13 @@ class RemotionStudioRunner:
                 self._check_inside(target)
                 if disk.get(path) == wanted[path]:
                     unchanged += 1
+                    if path not in GENERATED_FILES:  # une copie d'avant la Slice 12 était en lecture seule : l'espace devient modifiable
+                        _clear_readonly(target)
                     continue
                 staged = temp / f"{secrets.token_hex(6)}.part"
                 staged.write_bytes(bytes(files[path]))
-                os.chmod(staged, stat.S_IREAD)
+                if path in GENERATED_FILES:  # généré depuis le manifeste : jamais une source, lecture seule
+                    os.chmod(staged, stat.S_IREAD)
                 target.parent.mkdir(parents=True, exist_ok=True)
                 if target.exists() or target.is_symlink():
                     _clear_readonly(target)
@@ -275,7 +291,7 @@ class RemotionStudioRunner:
         saved = [path for path in edited if not path.endswith("/") and not path.startswith("<") and (self._work / path).is_file()]
         if not saved:
             return []
-        edits = self._studio / "edits"
+        edits = self._edits
         destination = edits / (time.strftime("%Y%m%dT%H%M%S") + f"-{secrets.token_hex(2)}")
         for path in saved:
             safe_relative(path)
@@ -292,6 +308,80 @@ class RemotionStudioRunner:
             return tuple(self._save_edits(self.modified_work()))
         except OSError as exc:
             raise StudioError(C.SYNC_FAILED, f"{type(exc).__name__}: the modified Studio files could not be saved") from None
+
+    # ------------------------------------------------------------------ espace de travail (Slice 12)
+
+    def workspace_diff(self) -> WorkspaceDiff:
+        """Relevé de l'espace de travail contre sa base : octets des fichiers ajoutés ou changés, `None` pour un fichier supprimé,
+        liens à part. Un lien, une jonction (fichier OU dossier, sur le chemin compris) n'est jamais suivi ni lu ; un fichier
+        remplacé par un lien entre le relevé et la lecture est vu (`lstat` avant ET après) ; aucun chemin hors de `work/`."""
+
+        work = self._work
+        try:
+            disk, base = self._scan_work(), self._manifest()
+            changed: dict[str, bytes | None] = {}
+            links: list[str] = [path for path, kind in disk.items() if kind == "link"]
+            for path in sorted(set(disk) | set(base)):
+                if path in links or disk.get(path) == base.get(path):
+                    continue
+                if path not in disk:
+                    changed[path] = None
+                    continue
+                try:
+                    safe_relative(path)
+                except StudioError:
+                    raise StudioError(C.PUBLISH_INVALID_FILE, f"{path[:120]!r} is not a plain relative path: refused") from None
+                target = work.joinpath(*path.split("/"))
+                try:
+                    self._check_inside(target)
+                except StudioError:
+                    links.append(path)
+                    continue
+                data = self._read_regular(target)
+                if data is None:
+                    links.append(path)
+                else:
+                    changed[path] = data
+        except StudioError:
+            raise
+        except OSError as exc:
+            raise StudioError(C.SYNC_FAILED, f"{type(exc).__name__}: the Remotion Studio workspace could not be read") from None
+        return WorkspaceDiff(base=base, changed=changed, links=tuple(sorted(links)))
+
+    @staticmethod
+    def _read_regular(target: Path) -> bytes | None:
+        """Octets d'un fichier ordinaire, ou `None` si c'est (ou c'est devenu pendant la lecture) un lien, une jonction ou autre chose."""
+
+        def plain(info: os.stat_result) -> bool:
+            # un lien dur (`st_nlink` > 1) ferait lire un fichier d'ailleurs sous un nom de l'espace de travail : refusé comme un lien
+            return (stat.S_ISREG(info.st_mode) and info.st_nlink == 1
+                    and not (getattr(info, "st_file_attributes", 0) & 0x400))
+
+        before = os.lstat(extended_path(target))
+        if not plain(before):
+            return None
+        data = Path(extended_path(target)).read_bytes()
+        after = os.lstat(extended_path(target))
+        if not plain(after) or (before.st_ino, before.st_dev) != (after.st_ino, after.st_dev):
+            return None
+        return data
+
+    def rebase_work(self, files: Mapping[str, bytes]) -> None:
+        """Après une publication : la base devient la version publiée (ses empreintes), sans toucher un fichier du disque (le
+        rechargement à chaud continue ; ce qui a été modifié pendant la publication reste une modification non publiée)."""
+
+        for path in files:
+            safe_relative(path)
+        try:
+            self._studio.mkdir(parents=True, exist_ok=True)
+            record = self._studio / (MANIFEST_FILE + f".{secrets.token_hex(3)}.tmp")
+            record.write_text(json.dumps({path: _sha(bytes(data)) for path, data in files.items()}, sort_keys=True), encoding="utf-8")
+            os.replace(record, self._studio / MANIFEST_FILE)
+        except OSError as exc:
+            raise StudioError(C.STORE_FAILED, f"{type(exc).__name__}: the workspace base could not be recorded") from None
+
+    def has_workspace(self) -> bool:
+        return (self._work / D.WORK_ROOT_FILE).is_file()
 
     # ------------------------------------------------------------------ processus
 

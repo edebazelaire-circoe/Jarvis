@@ -30,7 +30,13 @@ const JarvisRemotionStudioCore=(function(){
   const START_LIMIT_S=120;
   const POLL_FAST_MS=2000;
   const POLL_SLOW_MS=10000;
-  const WRITES=Object.freeze({open:START_DEADLINE_MS,restart:START_DEADLINE_MS,sync:SHORT_DEADLINE_MS,close:SHORT_DEADLINE_MS});
+  /* `publish` (native-studio-playback-fix Slice 12) : compilation réelle et attente du tour comprises, Core répond en 135 s au plus, le relais 150 s. */
+  const PUBLISH_DEADLINE_MS=160000;
+  const PUBLISH_LIMIT_S=150;
+  const WRITES=Object.freeze({open:START_DEADLINE_MS,restart:START_DEADLINE_MS,sync:SHORT_DEADLINE_MS,close:SHORT_DEADLINE_MS,publish:PUBLISH_DEADLINE_MS});
+  /* Champs que seule la page ajoute après une confirmation de l'utilisateur (jamais le cerveau : il n'a pas de chemin ici). */
+  const CONFIRM_PUBLISH='confirm_publish';
+  const DISCARD_FIELD='discard_unpublished';
 
   const STATUS=Object.freeze({
     stopped:{label:'Arrêté',tone:''},
@@ -67,6 +73,15 @@ const JarvisRemotionStudioCore=(function(){
     remotion_studio_unavailable:'Ce Core n’a pas de Remotion Studio.',
     remotion_studio_ack_required:'Il faut confirmer que la scène s’exécutera sans bac à sable.',
     remotion_studio_state_unreadable:'Le fichier d’état de Remotion Studio est illisible : mettez-le de côté (studio/state.json), puis réessayez.',
+    remotion_studio_unpublished_edits:'Des fichiers modifiés dans Remotion Studio ne sont pas publiés : publiez-les dans la variante, ou confirmez leur mise de côté.',
+    remotion_studio_publish_confirm_required:'La publication demande votre confirmation.',
+    remotion_studio_publish_nothing:'Rien à publier : l’espace de travail de Remotion Studio n’a aucune modification.',
+    remotion_studio_publish_base_mismatch:'L’espace de travail de Remotion Studio a changé de version depuis la dernière lecture : relisez, puis réessayez.',
+    remotion_studio_publish_conflict:'La scène a changé dans la variante depuis l’ouverture dans Remotion Studio : rien n’a été publié.',
+    remotion_studio_publish_invalid_file:'Un fichier de l’espace de travail ne peut pas faire partie d’une scène (lien, fichier généré ou hors de src/ et public/, nom refusé) : rien n’a été publié.',
+    remotion_studio_publish_import_refused:'Un import n’est pas autorisé dans une scène publiée (seuls react et remotion le sont) : rien n’a été publié.',
+    remotion_studio_publish_refused:'La variante a refusé la publication (compilation, valeurs ou partition) : rien n’a été publié.',
+    remotion_studio_publish_unavailable:'Ce Core ne peut pas publier dans une variante.',
     core_unreachable:'Core ne répond pas.',core_unconfigured:'Le Control Center ne connaît pas Core.',
     core_timeout:'Core n’a pas répondu à temps : l’issue est inconnue, l’état est relu.',
   });
@@ -153,7 +168,7 @@ const JarvisRemotionStudioCore=(function(){
     }
     model.diagnostics=(studio.diagnostics||[]).slice(-12);
     const wc=studio.work_copy||{};
-    model.edits={modified:(wc.modified_files||[]).length,saved:wc.edits_saved||0};
+    model.edits={modified:typeof wc.unpublished==='number'?wc.unpublished:(wc.modified_files||[]).length,saved:wc.edits_saved||0};
     model.egressBlocked=studio.egress_blocked||0;
     model.pin=pin;
     model.portMode=studio.port_mode;
@@ -183,7 +198,8 @@ const JarvisRemotionStudioCore=(function(){
       try{payload=await response.json()}catch(_){payload=null}
       if(!response.ok){
         const e=payload&&payload.error||{};
-        throw Object.assign(new Error(e.message||`HTTP ${response.status}`),{code:e.code||`http_${response.status}`,status:response.status});
+        /* Slice 12 : l'enveloppe d'une publication refusée porte `publish_code`, `diagnostics`, `files`, `base` / `current` : gardés dans `info`. */
+        throw Object.assign(new Error(e.message||`HTTP ${response.status}`),{code:e.code||`http_${response.status}`,status:response.status,info:e});
       }
       return payload;
     }
@@ -196,13 +212,16 @@ const JarvisRemotionStudioCore=(function(){
         .then(p=>(p&&p.publication&&p.publication.provenance)||null).catch(()=>null),
       write(action,body){
         if(!Object.prototype.hasOwnProperty.call(WRITES,action))throw new Error('unknown Studio action');
-        const acked=(action==='open'||action==='restart'||(action==='sync'&&body&&body.prefab_id))?{...(body||{}),[ACK_FIELD]:true}:(body===undefined?{}:body);
-        return request('POST',`${STUDIO}/${action}`,{body:acked,deadline:WRITES[action]}).then(p=>p.studio);
+        const acked=(action==='open'||action==='restart'||(action==='sync'&&body&&body.prefab_id))?{...(body||{}),[ACK_FIELD]:true}
+          :action==='publish'?{...(body||{}),[CONFIRM_PUBLISH]:true}:(body===undefined?{}:body);
+        /* `publish` rend aussi son issue (`publish`) : la vue est jointe sous `studio` comme pour les autres écritures. */
+        return request('POST',`${STUDIO}/${action}`,{body:acked,deadline:WRITES[action]}).then(p=>action==='publish'?p:p.studio);
       },
     };
   }
 
   return {ROUTE,STUDIO,PREFABS,STATUS,CAPABILITY,ERRORS,STOP_REASON,WRITES,START_LIMIT_S,POLL_FAST_MS,POLL_SLOW_MS,ACK_FIELD,
+    CONFIRM_PUBLISH,DISCARD_FIELD,PUBLISH_LIMIT_S,
     errorText,fmtDuration,viewModel,sceneOption,createClient,confirmSpec,failureToast};
 })();
 
@@ -253,7 +272,7 @@ if(typeof window!=='undefined')window.JarvisRemotionStudioCore=JarvisRemotionStu
     const actionError=S.actionError?`<div class="mcpp-lasterr rms-err" role="alert"><span class="mcpp-dot" aria-hidden="true"></span><span>${esc(S.actionError.text)} <code>${esc(S.actionError.code)}</code></span></div>`:'';
     const readError=S.readError?`<p class="mcpp-lasterr rms-err" role="status"><span class="mcpp-dot" aria-hidden="true"></span><span>${esc(S.readError.text)} <code>${esc(S.readError.code)}</code> L’état affiché est le dernier connu.</span></p>`:'';
     const diag=m.diagnostics.length?`<details class="mcpp-tech" id="rmsTech"${S.techOpen?' open':''}><summary>Journal de Remotion Studio (${m.diagnostics.length})</summary><pre class="rms-log">${esc(m.diagnostics.join('\n'))}</pre></details>`:'';
-    const edits=m.edits&&(m.edits.modified||m.edits.saved)?`<p class="rms-hint">${m.edits.modified?`${m.edits.modified} fichier(s) modifié(s) dans Remotion Studio : cette copie est en lecture seule et n’est jamais écrite dans la bibliothèque ; elle est mise de côté à la fermeture. `:''}${m.edits.saved?`${m.edits.saved} fichier(s) modifié(s) dans Remotion Studio mis de côté ; la bibliothèque n’a pas été modifiée.`:''}</p>`:'';
+    const edits=m.edits&&(m.edits.modified||m.edits.saved)?`<p class="rms-hint">${m.edits.modified?`${m.edits.modified} fichier(s) modifié(s) dans Remotion Studio, pas encore publiés : ils restent dans son espace de travail (même fermé). Pour une scène d’une présentation, « Publier dans la variante… » sous la vidéo de Variantes. `:''}${m.edits.saved?`${m.edits.saved} fichier(s) mis de côté (studio-edits) à votre demande ; pas publiés.`:''}</p>`:'';
     /* Le nœud `aria-live` (`#rmsBusy`) est créé une fois et jamais remplacé : son texte seul change, sinon le lecteur d'écran l'annonce à chaque rendu. */
     const html=`<article class="mcpp-card rms-card" data-state="${m.status==='failed'?'error':m.status==='stopped'?'off':'on'}" aria-labelledby="rmsTitle">
       <div class="mcpp-top"><span class="mcpp-avatar" aria-hidden="true"><span class="mcpp-letter">R</span></span>
@@ -351,12 +370,32 @@ if(typeof window!=='undefined')window.JarvisRemotionStudioCore=JarvisRemotionStu
         window.open(studio.url,'jarvis-remotion-studio','noopener,noreferrer');
       }
     }catch(error){
+      if(error.code==='remotion_studio_unpublished_edits'&&!(body&&body[C.DISCARD_FIELD])){
+        /* Slice 12 : jamais un remplacement silencieux. Les fichiers non publiés sont nommés ; les mettre de côté est un geste confirmé. */
+        S.busy='';render();
+        log('info','remotion.studio.unpublished_kept',{action,count:error.info&&error.info.count});
+        if(await confirmDiscard(error))return act(action,label,{...(body||{}),[C.DISCARD_FIELD]:true});
+        return;
+      }
       S.actionError={code:error.code||'network',text:C.errorText(error.code)||error.message||'L’action a échoué.'};
       log('error','remotion.studio.action_failed',{action,code:error.code,status:error.status});
       notify(C.failureToast(error));
     }finally{S.busy=''}
     render();
     refresh();
+  }
+
+  async function confirmDiscard(error){
+    const info=error.info||{},files=Array.isArray(info.files)?info.files:[],count=Number(info.count)||files.length;
+    if(typeof confirmDialog!=='function'){
+      S.actionError={code:error.code,text:C.errorText(error.code)};render();return false;
+    }
+    const base=info.base?` (faites sur ${info.base.prefab_id} v${info.base.version})`:'';
+    return confirmDialog({title:'Mettre de côté les fichiers non publiés ?',
+      lines:[['Fichiers : ',`${count} fichier${count>1?'s':''} modifié${count>1?'s':''} dans Remotion Studio${base} : ${files.slice(0,6).join(', ')}${files.length>6?'…':''}`],
+        ['Ce qui se passe : ','ils sont copiés dans studio-edits (à côté de l’environnement Remotion), puis remplacés par la scène demandée. Ils ne sont pas publiés.'],
+        ['Pour les garder dans la variante : ','annulez, puis « Publier dans la variante… » depuis Variantes, sur la scène qu’ils modifient.']],
+      confirmLabel:'Mettre de côté et continuer',cancelLabel:'Annuler',danger:true});
   }
 
   host.addEventListener('click',event=>{

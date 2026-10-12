@@ -71,23 +71,38 @@ class StudioErrorCode(str, Enum):
     UNAVAILABLE = "remotion_studio_unavailable"
     ACK_REQUIRED = "remotion_studio_ack_required"
     STATE_UNREADABLE = "remotion_studio_state_unreadable"
+    # Slice 12 (native-studio-playback-fix) : espace de travail et publication vers une variante.
+    UNPUBLISHED_EDITS = "remotion_studio_unpublished_edits"
+    PUBLISH_CONFIRM_REQUIRED = "remotion_studio_publish_confirm_required"
+    PUBLISH_NOTHING = "remotion_studio_publish_nothing"
+    PUBLISH_BASE_MISMATCH = "remotion_studio_publish_base_mismatch"
+    PUBLISH_CONFLICT = "remotion_studio_publish_conflict"
+    PUBLISH_INVALID_FILE = "remotion_studio_publish_invalid_file"
+    PUBLISH_IMPORT_REFUSED = "remotion_studio_publish_import_refused"
+    PUBLISH_REFUSED = "remotion_studio_publish_refused"
+    PUBLISH_UNAVAILABLE = "remotion_studio_publish_unavailable"
 
 
 _HTTP = {StudioErrorCode.INVALID: 400, StudioErrorCode.ACK_REQUIRED: 400, StudioErrorCode.UNAVAILABLE: 503, StudioErrorCode.STORE_FAILED: 500,
-         StudioErrorCode.INTERNAL_ERROR: 500, StudioErrorCode.SOURCE_UNAVAILABLE: 404}
+         StudioErrorCode.INTERNAL_ERROR: 500, StudioErrorCode.SOURCE_UNAVAILABLE: 404,
+         StudioErrorCode.PUBLISH_CONFIRM_REQUIRED: 400, StudioErrorCode.PUBLISH_INVALID_FILE: 422,
+         StudioErrorCode.PUBLISH_IMPORT_REFUSED: 422, StudioErrorCode.PUBLISH_REFUSED: 422, StudioErrorCode.PUBLISH_UNAVAILABLE: 503}
 
 
 class StudioError(Exception):
     """Refus de précondition ou échec typé ; `code` stable (préfixe `remotion_studio_`), `detail` borné et sans chemin."""
 
-    def __init__(self, code: StudioErrorCode, detail: str = "") -> None:
+    def __init__(self, code: StudioErrorCode, detail: str = "", *, extra: Mapping[str, Any] | None = None, status: int | None = None) -> None:
         self.code = code
         self.detail = bound_detail(detail)
+        #: Champs de plus dans l'enveloppe d'erreur (publication : code de la porte d'édition, diagnostics, versions) ; jamais un chemin.
+        self.extra = dict(extra or {})
+        self._status = status
         super().__init__(f"{code.value}: {self.detail}" if self.detail else code.value)
 
     @property
     def http_status(self) -> int:
-        return _HTTP.get(self.code, 409)
+        return self._status or _HTTP.get(self.code, 409)
 
 
 @dataclass(frozen=True, slots=True)
@@ -273,6 +288,8 @@ def public_view(state: StudioState, *, idle_timeout_s: float, now: float, config
         "viewers": state.ws_open if ready else 0, "stop_reason": state.stop_reason or None,
         "last_error_code": state.last_error_code or None, "last_error_detail": state.last_error_detail or None,
         "diagnostics": [bound_detail(line) for line in state.diagnostics[-MAX_DIAGNOSTIC_LINES:]],
-        "work_copy": {"modified_files": list(state.modified_files)[:20], "edits_saved": state.edits_saved},
+        # Slice 12 : l'espace de travail (modifiable) et sa base ; `unpublished` est le compte exact, `modified_files` en nomme 20.
+        "work_copy": {"modified_files": list(state.modified_files)[:20], "unpublished": len(state.modified_files),
+                      "base": state.pin.to_dict() if state.pin else None, "writable": True, "edits_saved": state.edits_saved},
         "egress_blocked": state.egress_blocked,
     }

@@ -1,4 +1,7 @@
-"""Faux `StudioRunner` en mémoire (Slice 11) : aucun processus, aucun fichier ; trace chaque appel et simule vivacité et activité."""
+"""Faux `StudioRunner` en mémoire (Slice 11) : aucun processus, aucun fichier ; trace chaque appel et simule vivacité et activité.
+
+Slice 12 (native-studio-playback-fix) : `work` est l'espace de travail, `base` la dernière matérialisation ; une modification non publiée
+se simule en changeant `work` (ou en forçant `modified`) ; `workspace_diff` / `rebase_work` / `has_workspace` suivent le vrai runner."""
 
 from __future__ import annotations
 
@@ -6,7 +9,10 @@ from collections.abc import Mapping
 import itertools
 from typing import Any
 
+import hashlib
+
 from jarvis.domain.remotion_studio import StudioError, StudioErrorCode as C
+from jarvis.domain.remotion_studio_workspace import WorkspaceDiff
 from jarvis.ports.remotion_studio import LaunchResult, SyncReport
 
 
@@ -16,14 +22,17 @@ class FakeStudioRunner:
         self.launches: list[int | None] = []
         self.idle_args: list[float] = []
         self.work: dict[str, bytes] = {}
+        self.base: dict[str, bytes] = {}
+        self.links: set[str] = set()
         self.alive: set[str] = set()
         self.stopped: list[str] = []
         self.port = port
         self.ready_reason: str | None = None
         self.launch_errors: list[StudioError] = []
         self.sync_error: StudioError | None = None
-        self.modified: tuple[str, ...] = ()
+        self.modified: tuple[str, ...] | None = None  # forcé par un test ; sinon calculé (work contre base)
         self.saved: tuple[str, ...] = ()
+        self.saved_aside: list[tuple[str, ...]] = []
         self.edits_on_sync: tuple[str, ...] = ()
         self.activity_data: dict[str, Any] = {}
         self.healthy = True
@@ -47,14 +56,35 @@ class FakeStudioRunner:
             raise self.sync_error
         unchanged = sum(1 for path, data in files.items() if self.work.get(path) == data)
         removed = len(set(self.work) - set(files))
-        self.work = dict(files)
-        return SyncReport(len(files) - unchanged, removed, unchanged, self.edits_on_sync)
+        edited = self.modified_work()
+        if edited:
+            self.saved_aside.append(tuple(edited))
+        self.work, self.base, self.links = dict(files), dict(files), set()
+        if self.modified is not None:
+            self.modified = ()
+        return SyncReport(len(files) - unchanged, removed, unchanged, self.edits_on_sync or tuple(edited))
 
     def bind_parent(self):
         self.calls.append("bind_parent")
 
     def modified_work(self):
-        return self.modified
+        if self.modified is not None:
+            return self.modified
+        paths = set(self.work) | set(self.base) | self.links
+        return tuple(sorted(p for p in paths if p in self.links or self.work.get(p) != self.base.get(p)))
+
+    def workspace_diff(self):
+        self.calls.append("workspace_diff")
+        base = {p: hashlib.sha256(d).hexdigest() for p, d in self.base.items()}
+        changed = {p: self.work.get(p) for p in self.modified_work() if p not in self.links}
+        return WorkspaceDiff(base=base, changed=changed, links=tuple(sorted(self.links)))
+
+    def rebase_work(self, files):
+        self.calls.append("rebase_work")
+        self.base = dict(files)
+
+    def has_workspace(self):
+        return bool(self.work)
 
     def save_modified(self):
         self.calls.append("save_modified")

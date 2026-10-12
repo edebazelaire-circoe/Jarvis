@@ -294,9 +294,12 @@
         const p=S.preview,scene=p.status==='ready'&&!S.run?currentScene():null;
         if(!scene)return null;
         const node=nodeOf(p.variantId);
-        return {presentationId:S.pid,variantId:p.variantId,variantNumber:node?node.variant_number:null,scene,index:p.scenes.indexOf(scene),scenes:p.scenes};
+        return {presentationId:S.pid,variantId:p.variantId,variantNumber:node?node.variant_number:null,revision:p.doc?p.doc.revision:null,
+          scene,index:p.scenes.indexOf(scene),scenes:p.scenes};
       },
       running:()=>!!S.run,isOpen:()=>S.open,
+      /* Slice 12 : après « Publier dans la variante… » ou « Revenir », la variante est relue (le Player prend la nouvelle version). */
+      reload:()=>refresh(),
       pause:()=>{const v=seq?seq.view():null;if(v&&(v.phase==='playing'||v.phase==='waiting')){seq.pause();log('playback_paused_for_remotion_studio',{})}}});
 
     function build(){

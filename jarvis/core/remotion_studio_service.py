@@ -8,6 +8,14 @@ scène en place), `sync` (rechargement à chaud d'une nouvelle version), `close`
 (aucune requête, aucun WebSocket ouvert) arrête le Studio ; un processus disparu devient `failed` / `process_exited`.
 
 Les effets (fichiers, processus) sont dans un `StudioRunner` (port) ; la source vient d'un `source_provider` injecté.
+
+Espace de travail et publication (Slice 12 de native-studio-playback-fix, `docs/remotion-studio.md` § 2 bis) : le dossier servi est
+modifiable ; ce qui diffère de sa base (le pin matérialisé) est une modification NON PUBLIÉE. Aucune opération ne la remplace en
+silence : `open` de la même scène la garde, `open` / `sync` d'une autre version la refusent (`remotion_studio_unpublished_edits`)
+sauf `discard_unpublished` (geste confirmé : copie dans `studio-edits/`, puis matérialisation) ; `close` et l'arrêt la laissent en
+place ; un changement de la capacité la copie hors de `runtime/` d'abord. `publish` l'envoie, sous le verrou du service, par la
+porte d'édition de source de la variante (`ScenePublisher`) : nouvelle version immuable, conflit si la scène a changé depuis la
+base, la version précédente intacte (retour arrière = republier).
 """
 
 from __future__ import annotations
@@ -21,6 +29,7 @@ from jarvis.domain import remotion_studio as D
 from jarvis.domain.local_capabilities import bound_detail
 from jarvis.domain.remotion_source import RemotionSource
 from jarvis.domain.remotion_studio import StudioError, StudioErrorCode as C, StudioPin, StudioState, StudioStatus as S
+from jarvis.domain.remotion_studio_workspace import MAX_NAMED_PATHS, PublishRequest, WorkspaceDiff, plan_publish
 from jarvis.ports.remotion_studio import StudioRunner
 from jarvis.ports.v2 import DiagnosticSink
 
@@ -28,6 +37,8 @@ from jarvis.ports.v2 import DiagnosticSink
 SourceProvider = Callable[[StudioPin], Awaitable[tuple[RemotionSource, Mapping[str, Any]]]]
 TICK_S = 15.0
 RUNNABLE_CAPABILITY = ("ready", "running")
+#: Issues de la porte d'édition de source après lesquelles la nouvelle version TIENT (publiée et épinglée) : l'espace est rebasé.
+STANDING_RESULTS = ("reloaded", "reloaded_state_reset", "repinned", "pending_mount")
 
 
 class RemotionStudioService:
@@ -46,6 +57,12 @@ class RemotionStudioService:
         self._watch: asyncio.Task | None = None
         self._loop: asyncio.AbstractEventLoop | None = None
         self._unreadable: str = ""
+        self._publisher: Any = None
+
+    def bind_publisher(self, publisher: Any) -> None:
+        """Câblé par `v2_app` quand le Studio de présentations existe (`VariantScenePublisher`) ; sans lui `publish` est refusé (503)."""
+
+        self._publisher = publisher
 
     # ------------------------------------------------------------------ journal et persistance
 
@@ -119,8 +136,10 @@ class RemotionStudioService:
         return D.public_view(state, idle_timeout_s=self._idle_timeout_s, now=self._clock(), configured_port=self._configured_port())
 
     def _refresh(self, state: StudioState) -> None:
-        """Rend `state` conforme au processus (vivant ? actif ? fichiers modifiés ?). Lecture seule hors constat d'une disparition."""
+        """Rend `state` conforme au processus (vivant ? actif ? fichiers modifiés ?). Lecture seule hors constat d'une disparition.
+        Les modifications non publiées sont relevées quel que soit le statut (Slice 12) : elles survivent à un arrêt et à Core."""
 
+        state.modified_files = list(self._runner.modified_work()) if state.pin is not None else []
         if state.status is not S.READY:
             return
         if not self._runner.is_alive(state.process_ref):
@@ -136,7 +155,6 @@ class RemotionStudioService:
         state.ws_open = ws if type(ws) is int and ws >= 0 else 0
         blocked = activity.get("blocked_egress")
         state.egress_blocked = blocked if type(blocked) is int and blocked >= 0 else 0
-        state.modified_files = list(self._runner.modified_work())
 
     # ------------------------------------------------------------------ lecture
 
@@ -167,9 +185,10 @@ class RemotionStudioService:
 
     # ------------------------------------------------------------------ open
 
-    async def open(self, pin: StudioPin, *, acknowledged: bool = False) -> dict[str, Any]:
+    async def open(self, pin: StudioPin, *, acknowledged: bool = False, discard: bool = False) -> dict[str, Any]:
         """Ouvre le Studio sur `pin` (demande explicite ET accusé : la scène tourne sans le bac à sable du Player). Déjà vivant :
-        réutilisé (même scène) ou rechargé à chaud (autre scène)."""
+        réutilisé (même scène) ou rechargé à chaud (autre scène). Modifications non publiées : gardées sur la même scène, refusées
+        pour une autre sauf `discard` (Slice 12)."""
 
         D._require_ack(acknowledged)
         self._loop = asyncio.get_running_loop()
@@ -184,12 +203,23 @@ class RemotionStudioService:
                         self._touch(state)
                         self._emit("reused", "Studio already open on this scene", prefab_id=pin.prefab_id, version=pin.version)
                         return {**self._view(state), "reused": True}
-                    await self._sync_locked(state, pin)
+                    await self._sync_locked(state, pin, discard=discard)
                     return {**self._view(state), "reused": True}
                 await asyncio.to_thread(self._kill, state)
                 self._fail(state, C.HEALTH_FAILED, "the Studio did not answer; it was stopped and is restarted")
-            await self._start_locked(state, pin)
+            await self._start_locked(state, pin, discard=discard)
             return self._view(state)
+
+    def _refuse_unpublished(self, edited: tuple[str, ...], state: StudioState, pin: StudioPin) -> None:
+        """Jamais un remplacement silencieux de fichiers modifiés : le refus nomme les fichiers et la sortie (publier, ou mettre de côté)."""
+
+        base = f"{state.pin.prefab_id} v{state.pin.version}" if state.pin else "an unknown base"
+        named = ", ".join(edited[:MAX_NAMED_PATHS]) + (f" (+{len(edited) - MAX_NAMED_PATHS})" if len(edited) > MAX_NAMED_PATHS else "")
+        self._emit("unpublished_kept", "Studio switch refused: unpublished workspace edits", level="info", count=len(edited),
+                   prefab_id=pin.prefab_id, version=pin.version)
+        raise StudioError(C.UNPUBLISHED_EDITS, f"{len(edited)} unpublished file(s) in the Remotion Studio workspace (based on {base}): {named}; "
+                                               "publish them to the variant, or confirm setting them aside (discard_unpublished: true)",
+                          extra={"files": list(edited[:MAX_NAMED_PATHS]), "count": len(edited), "base": state.pin.to_dict() if state.pin else None})
 
     def _touch(self, state: StudioState) -> None:
         state.last_activity_at = self._clock()
@@ -207,7 +237,12 @@ class RemotionStudioService:
         except StudioError as exc:
             self._note(state, f"{exc.code.value}: {exc.detail}")
 
-    async def _start_locked(self, state: StudioState, pin: StudioPin) -> None:
+    async def _start_locked(self, state: StudioState, pin: StudioPin, *, discard: bool = False) -> None:
+        # Slice 12 : d'abord les fichiers non publiés (le refus le plus utile, et rien n'a encore changé : ni état, ni fichier)
+        edited = await asyncio.to_thread(self._runner.modified_work) if state.pin is not None else ()
+        keep = bool(edited) and state.pin == pin and await asyncio.to_thread(self._runner.has_workspace)
+        if edited and not keep and not discard:
+            self._refuse_unpublished(edited, state, pin)
         runtime_status = await asyncio.to_thread(self._capability_status)
         if runtime_status not in RUNNABLE_CAPABILITY:
             raise StudioError(C.RUNTIME_UNAVAILABLE, f"the Remotion capability is '{runtime_status}': install or repair it first "
@@ -222,14 +257,19 @@ class RemotionStudioService:
         state.last_error_code = state.last_error_detail = state.stop_reason = ""
         state.started_at, state.ready_at, state.synced_at = self._clock(), None, None
         state.syncs = 0  # par lancement : « rafraîchie N fois » ne compte que ce Studio-ci
-        state.diagnostics, state.modified_files = [], []
+        state.diagnostics, state.modified_files = [], list(edited) if keep else []
         await asyncio.to_thread(self._save, state)
         self._emit("starting", "Studio starting", prefab_id=pin.prefab_id, version=pin.version)
         try:
-            report = await asyncio.to_thread(self._runner.sync_work, files)
-            if report.edits_saved:
-                state.edits_saved += len(report.edits_saved)
-                self._note(state, f"{len(report.edits_saved)} file(s) edited outside Jarvis were saved aside before the refresh")
+            if keep:  # même scène, modifications non publiées : l'espace de travail est rouvert tel quel (Slice 12)
+                state.modified_files = list(edited)
+                self._emit("workspace_kept", "Studio reopened on its workspace with unpublished edits", count=len(edited),
+                           prefab_id=pin.prefab_id, version=pin.version)
+            else:
+                report = await asyncio.to_thread(self._runner.sync_work, files)
+                if report.edits_saved:
+                    state.edits_saved += len(report.edits_saved)
+                    self._note(state, f"{len(report.edits_saved)} unpublished file(s) were set aside (studio-edits) as confirmed")
             launched = await asyncio.to_thread(self._launch_with_retry)
         except StudioError as exc:
             self._fail(state, exc.code, exc.detail)
@@ -262,7 +302,7 @@ class RemotionStudioService:
 
     # ------------------------------------------------------------------ sync (rechargement à chaud)
 
-    async def sync(self, pin: StudioPin | None = None, *, acknowledged: bool = False) -> dict[str, Any]:
+    async def sync(self, pin: StudioPin | None = None, *, acknowledged: bool = False, discard: bool = False) -> dict[str, Any]:
         """Rematérialise la source (même scène relue, ou autre version/scène) : le serveur de développement recharge à chaud.
         Une AUTRE scène exige l'accusé, comme `open`."""
 
@@ -275,11 +315,14 @@ class RemotionStudioService:
             await asyncio.to_thread(self._refresh, state)
             if state.status is not S.READY or state.pin is None:
                 raise StudioError(C.NOT_RUNNING, "the Studio is not open: open it first")
-            await self._sync_locked(state, pin or state.pin)
+            await self._sync_locked(state, pin or state.pin, discard=discard)
             return self._view(state)
 
-    async def _sync_locked(self, state: StudioState, pin: StudioPin) -> None:
+    async def _sync_locked(self, state: StudioState, pin: StudioPin, *, discard: bool = False) -> None:
         files, source = await self._prepare(pin)
+        edited = await asyncio.to_thread(self._runner.modified_work)
+        if edited and not discard:
+            self._refuse_unpublished(edited, state, pin)
         try:
             report = await asyncio.to_thread(self._runner.sync_work, files)
         except StudioError as exc:
@@ -293,7 +336,7 @@ class RemotionStudioService:
         state.last_activity_at = state.synced_at
         if report.edits_saved:
             state.edits_saved += len(report.edits_saved)
-            self._note(state, f"{len(report.edits_saved)} file(s) edited outside Jarvis were saved aside before the refresh")
+            self._note(state, f"{len(report.edits_saved)} unpublished file(s) were set aside (studio-edits) as confirmed")
         state.modified_files = []
         await asyncio.to_thread(self._save, state)
         self._emit("synced", "Studio work copy refreshed (hot reload)", prefab_id=pin.prefab_id, version=pin.version,
@@ -315,17 +358,14 @@ class RemotionStudioService:
         state.status = S.STOPPING
         await asyncio.to_thread(self._save, state)
         try:
-            if state.process_ref:
-                saved = await asyncio.to_thread(self._runner.save_modified)
-                if saved:
-                    state.edits_saved += len(saved)
-                    self._note(state, f"{len(saved)} file(s) edited in the Studio were saved aside (never written to the prefab library)")
+            if state.process_ref:  # Slice 12 : les fichiers non publiés RESTENT dans l'espace de travail (ni copiés, ni remplacés)
                 await asyncio.to_thread(self._runner.stop, state.process_ref)
         except StudioError as exc:
             self._fail(state, exc.code, exc.detail)
             return
         state.status, state.port, state.process_ref, state.launch_id = S.STOPPED, None, "", ""
-        state.stop_reason, state.ws_open, state.modified_files = reason, 0, []
+        state.stop_reason, state.ws_open = reason, 0
+        state.modified_files = list(await asyncio.to_thread(self._runner.modified_work)) if state.pin is not None else []
         state.last_error_code = state.last_error_detail = ""
         await asyncio.to_thread(self._save, state)
         self._emit("stopped", "Studio stopped", reason=reason)
@@ -347,6 +387,88 @@ class RemotionStudioService:
             state.restarts = restarts
             await self._start_locked(state, pin)
             return self._view(state)
+
+    # ------------------------------------------------------------------ publication (Slice 12)
+
+    async def publish(self, request: PublishRequest) -> dict[str, Any]:
+        """Publie l'espace de travail dans la scène d'une variante, comme NOUVELLE version (jamais une réécriture). Sous le verrou du
+        service : aucune ouverture ni synchronisation ne remplace l'espace pendant ce temps. Refus typés, rien de publié : base vue par
+        la page différente, rien à publier, fichier non publiable (lien, premier niveau, chemin), import hors liste, scène changée
+        depuis la base (conflit), refus de la porte (compilation, valeurs, partition). Une version qui tient rebase l'espace."""
+
+        publisher = self._publisher
+        if publisher is None:
+            raise StudioError(C.PUBLISH_UNAVAILABLE, "this Core has no presentation studio to publish into")
+        self._acquire()
+        async with self._lock:
+            self._refuse_if_unreadable()
+            state = self._load()
+            target = {"presentation_id": request.presentation_id, "variant_id": request.variant_id, "scene_id": request.scene_id}
+            if state.pin is None or not await asyncio.to_thread(self._runner.has_workspace):
+                raise StudioError(C.PUBLISH_NOTHING, "there is no Remotion Studio workspace: open the scene in Remotion Studio first")
+            if state.pin != request.base:
+                raise StudioError(C.PUBLISH_BASE_MISMATCH, f"the workspace is based on {state.pin.prefab_id} v{state.pin.version}, not on "
+                                                           f"{request.base.prefab_id} v{request.base.version}: read Remotion Studio again",
+                                  extra={"base": state.pin.to_dict()})
+            diff = await asyncio.to_thread(self._runner.workspace_diff)
+            current, revision = await publisher.current(request.presentation_id, request.variant_id, request.scene_id)
+            if current != state.pin:
+                return await self._publish_moved(state, diff, current, target)
+            plan = plan_publish(diff)
+            self._emit("publish_started", "Publishing the Remotion Studio workspace into the variant", **target,
+                       base=f"{state.pin.prefab_id}@{state.pin.version}", **{k: len(v) for k, v in plan.summary.items()})
+            result = await publisher.publish(request.presentation_id, request.variant_id, request.scene_id, revision, plan.files())
+            wire = result.to_dict()
+            status = wire.get("status")
+            if status not in STANDING_RESULTS or not wire.get("published"):
+                code = C.PUBLISH_CONFLICT if status == "stale" else C.PUBLISH_REFUSED
+                self._emit("publish_refused", "Remotion Studio publish refused: nothing was published into the variant", level="warning",
+                           **target, status=status, code=wire.get("code"))
+                raise StudioError(code, str(wire.get("message") or status), status=409 if status == "stale" else result.http_status,
+                                  extra={"publish_status": status, "publish_code": wire.get("code"),
+                                         "diagnostics": wire.get("diagnostics") or [], "published": wire.get("published"),
+                                         "base": state.pin.to_dict()})
+            published = StudioPin(wire["published"]["id"], int(wire["published"]["version"]))
+            await self._rebase_locked(state, published)
+            self._emit("published", "Remotion Studio workspace published as a new version of the scene", **target,
+                       previous=f"{current.prefab_id}@{current.version}", published=f"{published.prefab_id}@{published.version}",
+                       status=status)
+            return {"studio": self._view(state), "publish": {"status": status, "published": published.to_dict(),
+                    "previous": current.to_dict(), "variant_revision": wire.get("revision"), "mounted": wire.get("mounted"),
+                    "files": plan.summary, "message": wire.get("message")}}
+
+    async def _publish_moved(self, state: StudioState, diff: WorkspaceDiff, current: StudioPin, target: Mapping[str, str]) -> dict[str, Any]:
+        """La scène n'est plus sur la base de l'espace. Si l'espace contient EXACTEMENT la version courante (une publication dont le
+        rebasage a été interrompu), il est rebasé et c'est dit ; sinon conflit, rien n'est publié."""
+
+        try:
+            files, _source = await self._prepare(current)
+        except StudioError:
+            files = None  # la version courante n'est pas une source Remotion saine : ce ne peut pas être cet espace, donc conflit
+        if files is not None:
+            disk = {path: digest for path, digest in diff.base.items() if path not in diff.changed and path not in diff.links}
+            for path, data in diff.changed.items():
+                if data is not None:
+                    disk[path] = _sha256(data)
+            if not diff.links and disk == {path: _sha256(data) for path, data in files.items()}:
+                await self._rebase_locked(state, current)
+                self._emit("publish_rebased", "Workspace already published: rebased on the scene's version", **target,
+                           version=f"{current.prefab_id}@{current.version}")
+                return {"studio": self._view(state), "publish": {"status": "already_published", "published": current.to_dict(),
+                        "previous": None, "variant_revision": None, "mounted": None, "files": {}, "message": None}}
+        self._emit("publish_conflict", "Remotion Studio publish refused: the scene moved since the workspace base", level="warning",
+                   **target, base=f"{state.pin.prefab_id}@{state.pin.version}", current=f"{current.prefab_id}@{current.version}")
+        raise StudioError(C.PUBLISH_CONFLICT, f"the scene now uses {current.prefab_id} v{current.version}; the workspace was opened from "
+                                              f"{state.pin.prefab_id} v{state.pin.version}: nothing was published",
+                          extra={"base": state.pin.to_dict(), "current": current.to_dict()})
+
+    async def _rebase_locked(self, state: StudioState, pin: StudioPin) -> None:
+        files, source = await self._prepare(pin)
+        await asyncio.to_thread(self._runner.rebase_work, files)
+        state.pin, state.source_digest, state.workspace_digest = pin, source.digest, D.workspace_digest(files)
+        state.composition = source.block.composition.to_dict()
+        state.modified_files = list(await asyncio.to_thread(self._runner.modified_work))
+        await asyncio.to_thread(self._save, state)
 
     # ------------------------------------------------------------------ surveillance (inactivité, disparition)
 
@@ -458,6 +580,7 @@ class RemotionStudioService:
         loop = self._loop
         if loop is None or not loop.is_running():
             state = self._load()
+            self._backup_before_change(state)
             if state.process_ref and self._runner.is_alive(state.process_ref):
                 self._kill_or_raise(state)
             return
@@ -475,11 +598,31 @@ class RemotionStudioService:
         self._save(state)
         self._emit("stopped", "Studio stopped before a capability change", reason="capability_change")
 
+    def _backup_before_change(self, state: StudioState) -> None:
+        """`uninstall` vide `runtime/` (donc l'espace de travail) : les fichiers non publiés sont copiés hors de `runtime/` AVANT ;
+        une copie impossible refuse l'opération de la capacité (le crochet lève), jamais une perte silencieuse."""
+
+        if state.pin is None:
+            return
+        saved = self._runner.save_modified()
+        if saved:
+            state.edits_saved += len(saved)
+            self._note(state, f"{len(saved)} unpublished file(s) copied to studio-edits before a change of the Remotion capability")
+            self._emit("unpublished_saved", "Unpublished Studio files copied before a capability change", level="warning", count=len(saved))
+            if not self._unreadable:
+                self._save(state)
+
     async def _stop_for_change(self) -> None:
         async with self._lock:
             state = self._load()
+            await asyncio.to_thread(self._backup_before_change, state)
             if state.process_ref:
                 await asyncio.to_thread(self._kill_or_raise, state)
+
+
+def _sha256(data: bytes) -> str:
+    import hashlib
+    return hashlib.sha256(bytes(data)).hexdigest()
 
 
 def prefab_source_provider(prefabs) -> SourceProvider:

@@ -530,6 +530,11 @@ class JarvisCoreApplication:
         # Slice 06 x Slice 12 : le rechargement lit la position de la lecture et re-epingle la surface `variants-run-<run_id>` que
         # la lecture lui a liee (`stage_observer`, Slice 09) ; une scene non affichee est seulement re-epinglee.
         self.presentation_studio_reload.bind_playback(self.presentation_studio_playback)
+        # native-studio-playback-fix Slice 12 : Remotion Studio publie son espace de travail dans une scene par la SEULE porte d'edition de
+        # source (`apply_source_edit`, acteur `user`) : nouvelle version, conflit sur la base, retour arriere = republier.
+        if self.remotion_studio is not None:
+            from jarvis.core.remotion_studio_publish import VariantScenePublisher
+            self.remotion_studio.bind_publisher(VariantScenePublisher(self.presentation_studio, self.presentation_studio_reload))
         # Pins : une source par magasin (undo 08 ; variantes vivantes et archivees 16 par `rebuild` ; scene vivante et surface de
         # lecture de Variantes, liees plus haut ; retenues en vol du rechargement).
         self.studio_pins.add_source("undo", self.presentation_studio_history.pins)

@@ -157,7 +157,10 @@ def test_no_brain_mcp_or_agent_path_can_open_the_studio():
                # native-studio-playback-fix Slice 11: the second USER door, in Variants (a click, then the same confirmation as the card), and
                # the rail's entry to it. No command of the page channel reaches it (asserted below): the brain still only points.
                "runtime/control_center_presentation_studio_explorer_remotion.js", "runtime/control_center_presentation_studio_explorer.js",
-               "runtime/control_center_presentation_rail.js"}
+               "runtime/control_center_presentation_rail.js",
+               # native-studio-playback-fix Slice 12: the workspace / publish domain and the bridge to the variant's source-edit door (no route,
+               # no process: they cannot open the Studio; who may PUBLISH is held by `test_remotion_studio_publish.py`).
+               "domain/remotion_studio_workspace.py", "core/remotion_studio_publish.py"}
     slice_21_agent_surface = {"runtime/remotion_mcp.py", "runtime/remotion_mcp_tools.py", "runtime/mcp_tool_meta.py"}
     users = {path.relative_to(root).as_posix() for path in root.rglob("*")
              if path.suffix in {".py", ".js", ".html", ".cjs", ".mjs"}
