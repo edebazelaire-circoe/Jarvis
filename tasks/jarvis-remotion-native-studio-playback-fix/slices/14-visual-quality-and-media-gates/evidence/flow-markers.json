@@ -1,0 +1,96 @@
+{
+ "composition_fps": 60,
+ "total_frames": 4440,
+ "markers": [
+  {
+   "scene": "S1",
+   "scene_id": "pss_000000000001",
+   "fps": 30,
+   "duration_in_frames": 90,
+   "start_frame": 0,
+   "start_ms": 0,
+   "end_ms": 3000,
+   "seen_in_video_ms": 0
+  },
+  {
+   "scene": "S2",
+   "scene_id": "pss_000000000002",
+   "fps": 30,
+   "duration_in_frames": 240,
+   "start_frame": 180,
+   "start_ms": 3000,
+   "end_ms": 11000,
+   "seen_in_video_ms": 3036
+  },
+  {
+   "scene": "S3",
+   "scene_id": "pss_000000000003",
+   "fps": 30,
+   "duration_in_frames": 900,
+   "start_frame": 660,
+   "start_ms": 11000,
+   "end_ms": 41000,
+   "seen_in_video_ms": 11073
+  },
+  {
+   "scene": "S4",
+   "scene_id": "pss_000000000004",
+   "fps": 25,
+   "duration_in_frames": 75,
+   "start_frame": 2460,
+   "start_ms": 41000,
+   "end_ms": 44000,
+   "seen_in_video_ms": 41086
+  },
+  {
+   "scene": "S5",
+   "scene_id": "pss_000000000005",
+   "fps": 60,
+   "duration_in_frames": 480,
+   "start_frame": 2640,
+   "start_ms": 44000,
+   "end_ms": 52000,
+   "seen_in_video_ms": 44125
+  },
+  {
+   "scene": "S6",
+   "scene_id": "pss_000000000006",
+   "fps": 30,
+   "duration_in_frames": 90,
+   "start_frame": 3120,
+   "start_ms": 52000,
+   "end_ms": 55000,
+   "seen_in_video_ms": 52080
+  },
+  {
+   "scene": "S7",
+   "scene_id": "pss_000000000007",
+   "fps": 24,
+   "duration_in_frames": 192,
+   "start_frame": 3300,
+   "start_ms": 55000,
+   "end_ms": 63000,
+   "seen_in_video_ms": 55116
+  },
+  {
+   "scene": "S8",
+   "scene_id": "pss_000000000008",
+   "fps": 30,
+   "duration_in_frames": 90,
+   "start_frame": 3780,
+   "start_ms": 63000,
+   "end_ms": 66000,
+   "seen_in_video_ms": 63169
+  },
+  {
+   "scene": "S9",
+   "scene_id": "pss_000000000009",
+   "fps": 30,
+   "duration_in_frames": 240,
+   "start_frame": 3960,
+   "start_ms": 66000,
+   "end_ms": 74000,
+   "seen_in_video_ms": 66221
+  }
+ ]
+}

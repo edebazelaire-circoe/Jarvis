@@ -1,0 +1,1222 @@
+{
+ "deck": "control",
+ "presentation_id": "pst_6f0b0c33de6ea5e82f84530b0ff63ef4",
+ "variant_id": "psv_2a23766e254304299577977421f0429f",
+ "profile": "release_gate",
+ "scale": 0.5,
+ "scenes": [
+  {
+   "scene": "S1",
+   "scene_id": "pss_000000000001",
+   "title": "Noir",
+   "composition": {
+    "id": "Scene",
+    "width": 1280,
+    "height": 720,
+    "fps": 30,
+    "duration_in_frames": 30
+   },
+   "http": 200,
+   "preview_s": 8.5,
+   "render_elapsed_ms": 8525,
+   "frames": [
+    {
+     "frame": 0,
+     "role": "first",
+     "metrics": {
+      "mean": 0.0,
+      "background": 0,
+      "edge_density": 0.0,
+      "sides": {
+       "top": {
+        "ink_share": 0.0,
+        "texture": 0.0
+       },
+       "bottom": {
+        "ink_share": 0.0,
+        "texture": 0.0
+       },
+       "left": {
+        "ink_share": 0.0,
+        "texture": 0.0
+       },
+       "right": {
+        "ink_share": 0.0,
+        "texture": 0.0
+       }
+      }
+     },
+     "findings": [
+      "black"
+     ]
+    },
+    {
+     "frame": 1,
+     "role": "entry",
+     "metrics": {
+      "mean": 0.0,
+      "background": 0,
+      "edge_density": 0.0,
+      "sides": {
+       "top": {
+        "ink_share": 0.0,
+        "texture": 0.0
+       },
+       "bottom": {
+        "ink_share": 0.0,
+        "texture": 0.0
+       },
+       "left": {
+        "ink_share": 0.0,
+        "texture": 0.0
+       },
+       "right": {
+        "ink_share": 0.0,
+        "texture": 0.0
+       }
+      }
+     },
+     "findings": [
+      "black"
+     ]
+    },
+    {
+     "frame": 14,
+     "role": "middle",
+     "metrics": {
+      "mean": 0.0,
+      "background": 0,
+      "edge_density": 0.0,
+      "sides": {
+       "top": {
+        "ink_share": 0.0,
+        "texture": 0.0
+       },
+       "bottom": {
+        "ink_share": 0.0,
+        "texture": 0.0
+       },
+       "left": {
+        "ink_share": 0.0,
+        "texture": 0.0
+       },
+       "right": {
+        "ink_share": 0.0,
+        "texture": 0.0
+       }
+      }
+     },
+     "findings": [
+      "black"
+     ]
+    },
+    {
+     "frame": 28,
+     "role": "exit",
+     "metrics": {
+      "mean": 0.0,
+      "background": 0,
+      "edge_density": 0.0,
+      "sides": {
+       "top": {
+        "ink_share": 0.0,
+        "texture": 0.0
+       },
+       "bottom": {
+        "ink_share": 0.0,
+        "texture": 0.0
+       },
+       "left": {
+        "ink_share": 0.0,
+        "texture": 0.0
+       },
+       "right": {
+        "ink_share": 0.0,
+        "texture": 0.0
+       }
+      }
+     },
+     "findings": [
+      "black"
+     ]
+    },
+    {
+     "frame": 29,
+     "role": "last",
+     "metrics": {
+      "mean": 0.0,
+      "background": 0,
+      "edge_density": 0.0,
+      "sides": {
+       "top": {
+        "ink_share": 0.0,
+        "texture": 0.0
+       },
+       "bottom": {
+        "ink_share": 0.0,
+        "texture": 0.0
+       },
+       "left": {
+        "ink_share": 0.0,
+        "texture": 0.0
+       },
+       "right": {
+        "ink_share": 0.0,
+        "texture": 0.0
+       }
+      }
+     },
+     "findings": [
+      "black"
+     ]
+    }
+   ]
+  },
+  {
+   "scene": "S2",
+   "scene_id": "pss_000000000002",
+   "title": "Debordement",
+   "composition": {
+    "id": "Scene",
+    "width": 1280,
+    "height": 720,
+    "fps": 30,
+    "duration_in_frames": 30
+   },
+   "http": 200,
+   "preview_s": 8.5,
+   "render_elapsed_ms": 8452,
+   "frames": [
+    {
+     "frame": 0,
+     "role": "first",
+     "metrics": {
+      "mean": 47.0,
+      "background": 45,
+      "edge_density": 0.01285,
+      "sides": {
+       "top": {
+        "ink_share": 0.0,
+        "texture": 0.0
+       },
+       "bottom": {
+        "ink_share": 0.0,
+        "texture": 0.0
+       },
+       "left": {
+        "ink_share": 0.0,
+        "texture": 0.0
+       },
+       "right": {
+        "ink_share": 0.061,
+        "texture": 0.727
+       }
+      }
+     },
+     "findings": [
+      "edge_text_overflow"
+     ]
+    },
+    {
+     "frame": 1,
+     "role": "entry",
+     "metrics": {
+      "mean": 47.0,
+      "background": 45,
+      "edge_density": 0.01285,
+      "sides": {
+       "top": {
+        "ink_share": 0.0,
+        "texture": 0.0
+       },
+       "bottom": {
+        "ink_share": 0.0,
+        "texture": 0.0
+       },
+       "left": {
+        "ink_share": 0.0,
+        "texture": 0.0
+       },
+       "right": {
+        "ink_share": 0.061,
+        "texture": 0.727
+       }
+      }
+     },
+     "findings": [
+      "edge_text_overflow"
+     ]
+    },
+    {
+     "frame": 14,
+     "role": "middle",
+     "metrics": {
+      "mean": 47.0,
+      "background": 45,
+      "edge_density": 0.01285,
+      "sides": {
+       "top": {
+        "ink_share": 0.0,
+        "texture": 0.0
+       },
+       "bottom": {
+        "ink_share": 0.0,
+        "texture": 0.0
+       },
+       "left": {
+        "ink_share": 0.0,
+        "texture": 0.0
+       },
+       "right": {
+        "ink_share": 0.061,
+        "texture": 0.727
+       }
+      }
+     },
+     "findings": [
+      "edge_text_overflow"
+     ]
+    },
+    {
+     "frame": 28,
+     "role": "exit",
+     "metrics": {
+      "mean": 47.0,
+      "background": 45,
+      "edge_density": 0.01285,
+      "sides": {
+       "top": {
+        "ink_share": 0.0,
+        "texture": 0.0
+       },
+       "bottom": {
+        "ink_share": 0.0,
+        "texture": 0.0
+       },
+       "left": {
+        "ink_share": 0.0,
+        "texture": 0.0
+       },
+       "right": {
+        "ink_share": 0.061,
+        "texture": 0.727
+       }
+      }
+     },
+     "findings": [
+      "edge_text_overflow"
+     ]
+    },
+    {
+     "frame": 29,
+     "role": "last",
+     "metrics": {
+      "mean": 47.0,
+      "background": 45,
+      "edge_density": 0.01285,
+      "sides": {
+       "top": {
+        "ink_share": 0.0,
+        "texture": 0.0
+       },
+       "bottom": {
+        "ink_share": 0.0,
+        "texture": 0.0
+       },
+       "left": {
+        "ink_share": 0.0,
+        "texture": 0.0
+       },
+       "right": {
+        "ink_share": 0.061,
+        "texture": 0.727
+       }
+      }
+     },
+     "findings": [
+      "edge_text_overflow"
+     ]
+    }
+   ]
+  },
+  {
+   "scene": "S3",
+   "scene_id": "pss_000000000003",
+   "title": "Police absente",
+   "composition": {
+    "id": "Scene",
+    "width": 1280,
+    "height": 720,
+    "fps": 30,
+    "duration_in_frames": 30
+   },
+   "http": 200,
+   "preview_s": 8.9,
+   "render_elapsed_ms": 8851,
+   "frames": [
+    {
+     "frame": 0,
+     "role": "first",
+     "metrics": {
+      "mean": 43.2,
+      "background": 40,
+      "edge_density": 0.02668,
+      "sides": {
+       "top": {
+        "ink_share": 0.0,
+        "texture": 0.0
+       },
+       "bottom": {
+        "ink_share": 0.0,
+        "texture": 0.0
+       },
+       "left": {
+        "ink_share": 0.0,
+        "texture": 0.0
+       },
+       "right": {
+        "ink_share": 0.0,
+        "texture": 0.0
+       }
+      }
+     },
+     "findings": []
+    },
+    {
+     "frame": 1,
+     "role": "entry",
+     "metrics": {
+      "mean": 43.1,
+      "background": 40,
+      "edge_density": 0.02614,
+      "sides": {
+       "top": {
+        "ink_share": 0.0,
+        "texture": 0.0
+       },
+       "bottom": {
+        "ink_share": 0.0,
+        "texture": 0.0
+       },
+       "left": {
+        "ink_share": 0.0,
+        "texture": 0.0
+       },
+       "right": {
+        "ink_share": 0.0,
+        "texture": 0.0
+       }
+      }
+     },
+     "findings": []
+    },
+    {
+     "frame": 14,
+     "role": "middle",
+     "metrics": {
+      "mean": 43.3,
+      "background": 40,
+      "edge_density": 0.02703,
+      "sides": {
+       "top": {
+        "ink_share": 0.0,
+        "texture": 0.0
+       },
+       "bottom": {
+        "ink_share": 0.0,
+        "texture": 0.0
+       },
+       "left": {
+        "ink_share": 0.0,
+        "texture": 0.0
+       },
+       "right": {
+        "ink_share": 0.0,
+        "texture": 0.0
+       }
+      }
+     },
+     "findings": []
+    },
+    {
+     "frame": 28,
+     "role": "exit",
+     "metrics": {
+      "mean": 43.3,
+      "background": 40,
+      "edge_density": 0.02787,
+      "sides": {
+       "top": {
+        "ink_share": 0.0,
+        "texture": 0.0
+       },
+       "bottom": {
+        "ink_share": 0.0,
+        "texture": 0.0
+       },
+       "left": {
+        "ink_share": 0.0,
+        "texture": 0.0
+       },
+       "right": {
+        "ink_share": 0.0,
+        "texture": 0.0
+       }
+      }
+     },
+     "findings": []
+    },
+    {
+     "frame": 29,
+     "role": "last",
+     "metrics": {
+      "mean": 43.3,
+      "background": 40,
+      "edge_density": 0.02779,
+      "sides": {
+       "top": {
+        "ink_share": 0.0,
+        "texture": 0.0
+       },
+       "bottom": {
+        "ink_share": 0.0,
+        "texture": 0.0
+       },
+       "left": {
+        "ink_share": 0.0,
+        "texture": 0.0
+       },
+       "right": {
+        "ink_share": 0.0,
+        "texture": 0.0
+       }
+      }
+     },
+     "findings": []
+    }
+   ]
+  },
+  {
+   "scene": "S4",
+   "scene_id": "pss_000000000004",
+   "title": "Image absente",
+   "composition": {
+    "id": "Scene",
+    "width": 1280,
+    "height": 720,
+    "fps": 30,
+    "duration_in_frames": 30
+   },
+   "http": 200,
+   "preview_s": 8.4,
+   "render_elapsed_ms": 8413,
+   "frames": [
+    {
+     "frame": 0,
+     "role": "first",
+     "metrics": {
+      "mean": 54.3,
+      "background": 53,
+      "edge_density": 0.01327,
+      "sides": {
+       "top": {
+        "ink_share": 0.0,
+        "texture": 0.0
+       },
+       "bottom": {
+        "ink_share": 0.0,
+        "texture": 0.0
+       },
+       "left": {
+        "ink_share": 0.0,
+        "texture": 0.0
+       },
+       "right": {
+        "ink_share": 0.0,
+        "texture": 0.0
+       }
+      }
+     },
+     "findings": []
+    },
+    {
+     "frame": 1,
+     "role": "entry",
+     "metrics": {
+      "mean": 54.3,
+      "background": 53,
+      "edge_density": 0.01271,
+      "sides": {
+       "top": {
+        "ink_share": 0.0,
+        "texture": 0.0
+       },
+       "bottom": {
+        "ink_share": 0.0,
+        "texture": 0.0
+       },
+       "left": {
+        "ink_share": 0.0,
+        "texture": 0.0
+       },
+       "right": {
+        "ink_share": 0.0,
+        "texture": 0.0
+       }
+      }
+     },
+     "findings": []
+    },
+    {
+     "frame": 14,
+     "role": "middle",
+     "metrics": {
+      "mean": 54.4,
+      "background": 53,
+      "edge_density": 0.01346,
+      "sides": {
+       "top": {
+        "ink_share": 0.0,
+        "texture": 0.0
+       },
+       "bottom": {
+        "ink_share": 0.0,
+        "texture": 0.0
+       },
+       "left": {
+        "ink_share": 0.0,
+        "texture": 0.0
+       },
+       "right": {
+        "ink_share": 0.0,
+        "texture": 0.0
+       }
+      }
+     },
+     "findings": []
+    },
+    {
+     "frame": 28,
+     "role": "exit",
+     "metrics": {
+      "mean": 54.4,
+      "background": 53,
+      "edge_density": 0.01418,
+      "sides": {
+       "top": {
+        "ink_share": 0.0,
+        "texture": 0.0
+       },
+       "bottom": {
+        "ink_share": 0.0,
+        "texture": 0.0
+       },
+       "left": {
+        "ink_share": 0.0,
+        "texture": 0.0
+       },
+       "right": {
+        "ink_share": 0.0,
+        "texture": 0.0
+       }
+      }
+     },
+     "findings": []
+    },
+    {
+     "frame": 29,
+     "role": "last",
+     "metrics": {
+      "mean": 54.4,
+      "background": 53,
+      "edge_density": 0.01411,
+      "sides": {
+       "top": {
+        "ink_share": 0.0,
+        "texture": 0.0
+       },
+       "bottom": {
+        "ink_share": 0.0,
+        "texture": 0.0
+       },
+       "left": {
+        "ink_share": 0.0,
+        "texture": 0.0
+       },
+       "right": {
+        "ink_share": 0.0,
+        "texture": 0.0
+       }
+      }
+     },
+     "findings": []
+    }
+   ]
+  },
+  {
+   "scene": "S5",
+   "scene_id": "pss_000000000005",
+   "title": "Carte fixe",
+   "composition": {
+    "id": "Scene",
+    "width": 1280,
+    "height": 720,
+    "fps": 30,
+    "duration_in_frames": 30
+   },
+   "http": 200,
+   "preview_s": 8.4,
+   "render_elapsed_ms": 8358,
+   "frames": [
+    {
+     "frame": 0,
+     "role": "first",
+     "metrics": {
+      "mean": 61.6,
+      "background": 60,
+      "edge_density": 0.01352,
+      "sides": {
+       "top": {
+        "ink_share": 0.0,
+        "texture": 0.0
+       },
+       "bottom": {
+        "ink_share": 0.0,
+        "texture": 0.0
+       },
+       "left": {
+        "ink_share": 0.0,
+        "texture": 0.0
+       },
+       "right": {
+        "ink_share": 0.0,
+        "texture": 0.0
+       }
+      }
+     },
+     "findings": []
+    },
+    {
+     "frame": 1,
+     "role": "entry",
+     "metrics": {
+      "mean": 61.6,
+      "background": 60,
+      "edge_density": 0.01352,
+      "sides": {
+       "top": {
+        "ink_share": 0.0,
+        "texture": 0.0
+       },
+       "bottom": {
+        "ink_share": 0.0,
+        "texture": 0.0
+       },
+       "left": {
+        "ink_share": 0.0,
+        "texture": 0.0
+       },
+       "right": {
+        "ink_share": 0.0,
+        "texture": 0.0
+       }
+      }
+     },
+     "findings": []
+    },
+    {
+     "frame": 14,
+     "role": "middle",
+     "metrics": {
+      "mean": 61.6,
+      "background": 60,
+      "edge_density": 0.01352,
+      "sides": {
+       "top": {
+        "ink_share": 0.0,
+        "texture": 0.0
+       },
+       "bottom": {
+        "ink_share": 0.0,
+        "texture": 0.0
+       },
+       "left": {
+        "ink_share": 0.0,
+        "texture": 0.0
+       },
+       "right": {
+        "ink_share": 0.0,
+        "texture": 0.0
+       }
+      }
+     },
+     "findings": []
+    },
+    {
+     "frame": 28,
+     "role": "exit",
+     "metrics": {
+      "mean": 7.2,
+      "background": 7,
+      "edge_density": 3e-05,
+      "sides": {
+       "top": {
+        "ink_share": 0.0,
+        "texture": 0.0
+       },
+       "bottom": {
+        "ink_share": 0.0,
+        "texture": 0.0
+       },
+       "left": {
+        "ink_share": 0.0,
+        "texture": 0.0
+       },
+       "right": {
+        "ink_share": 0.0,
+        "texture": 0.0
+       }
+      }
+     },
+     "findings": [
+      "black"
+     ]
+    },
+    {
+     "frame": 29,
+     "role": "last",
+     "metrics": {
+      "mean": 0.0,
+      "background": 0,
+      "edge_density": 0.0,
+      "sides": {
+       "top": {
+        "ink_share": 0.0,
+        "texture": 0.0
+       },
+       "bottom": {
+        "ink_share": 0.0,
+        "texture": 0.0
+       },
+       "left": {
+        "ink_share": 0.0,
+        "texture": 0.0
+       },
+       "right": {
+        "ink_share": 0.0,
+        "texture": 0.0
+       }
+      }
+     },
+     "findings": [
+      "black"
+     ]
+    }
+   ]
+  }
+ ],
+ "smoke_s": 45.6,
+ "page_s": 14.5,
+ "page_probe": {
+  "S1": [
+   {
+    "page": "/page/scene-a566d8fa072812a0153fe5698dc6baca/host-b933e602657040de671a9e1b5f491d60",
+    "text": "",
+    "fonts": [],
+    "assets": [],
+    "overflow": []
+   }
+  ],
+  "S2": [
+   {
+    "page": "/page/scene-3e5122649321fc256b4644bbf9375c1a/host-b933e602657040de671a9e1b5f491d60",
+    "text": "Un titre beaucoup trop long 0",
+    "fonts": [
+     {
+      "family": "\"Times New Roman\"",
+      "available": {
+       "Times New Roman": true
+      },
+      "failed_faces": []
+     }
+    ],
+    "assets": [],
+    "overflow": [
+     {
+      "text": "Un titre beaucoup trop long 0",
+      "outside": {
+       "left": 0,
+       "top": 0,
+       "right": 613,
+       "bottom": 0
+      }
+     }
+    ]
+   }
+  ],
+  "S3": [
+   {
+    "page": "/page/scene-8cb9e60e9d04f469fce5c23fecdaecac/host-b933e602657040de671a9e1b5f491d60",
+    "text": "Police absente 0 Repli voulu Fichier de police absent",
+    "fonts": [
+     {
+      "family": "JarvisNoSuchFont",
+      "available": {
+       "JarvisNoSuchFont": false
+      },
+      "failed_faces": []
+     },
+     {
+      "family": "JarvisNoSuchFontToo, sans-serif",
+      "available": {
+       "JarvisNoSuchFontToo": false
+      },
+      "failed_faces": []
+     },
+     {
+      "family": "JarvisMissingFace, serif",
+      "available": {
+       "JarvisMissingFace": false
+      },
+      "failed_faces": []
+     },
+     {
+      "family": "",
+      "available": {},
+      "failed_faces": [
+       "JarvisMissingFace"
+      ]
+     }
+    ],
+    "assets": [],
+    "overflow": []
+   }
+  ],
+  "S4": [
+   {
+    "page": "/page/scene-540d8cf87ed53b0c921490c2244fc57c/host-b933e602657040de671a9e1b5f491d60",
+    "text": "Image absente 0",
+    "fonts": [
+     {
+      "family": "\"Times New Roman\"",
+      "available": {
+       "Times New Roman": true
+      },
+      "failed_faces": []
+     }
+    ],
+    "assets": [
+     {
+      "kind": "image",
+      "url": "http://127.77.0.2:59607/page/scene-540d8cf87ed53b0c921490c2244fc57c/jarvis-missing-asset.png"
+     }
+    ],
+    "overflow": []
+   }
+  ],
+  "S5": [
+   {
+    "page": "/page/scene-31e9929b3f9f2aa46dcc3d1373cb08c3/host-b933e602657040de671a9e1b5f491d60",
+    "text": "Une carte immobile",
+    "fonts": [
+     {
+      "family": "\"Times New Roman\"",
+      "available": {
+       "Times New Roman": true
+      },
+      "failed_faces": []
+     }
+    ],
+    "assets": [],
+    "overflow": []
+   }
+  ]
+ },
+ "report": {
+  "compilation": {
+   "status": "not_run_here"
+  },
+  "first_draft_gate": {
+   "status": "not_run_here"
+  },
+  "frame_quality": {
+   "verdict": "blocked",
+   "counts": {
+    "black": 7,
+    "static_scene": 2,
+    "edge_text_overflow": 5,
+    "repeated_frames": 2,
+    "text_overflow": 1,
+    "font_fallback": 1,
+    "font_substituted": 2,
+    "font_load_failed": 1,
+    "asset_missing": 1
+   },
+   "findings": [
+    {
+     "code": "black",
+     "severity": "warning",
+     "detail": "first frame has no detail (edge density 0.00000, mean luma 0)",
+     "scene": "S1",
+     "frame": 0,
+     "metric": {
+      "edge_density": 0.0,
+      "mean": 0.0
+     }
+    },
+    {
+     "code": "black",
+     "severity": "blocking",
+     "detail": "entry frame has no detail (edge density 0.00000, mean luma 0)",
+     "scene": "S1",
+     "frame": 1,
+     "metric": {
+      "edge_density": 0.0,
+      "mean": 0.0
+     }
+    },
+    {
+     "code": "black",
+     "severity": "blocking",
+     "detail": "middle frame has no detail (edge density 0.00000, mean luma 0)",
+     "scene": "S1",
+     "frame": 14,
+     "metric": {
+      "edge_density": 0.0,
+      "mean": 0.0
+     }
+    },
+    {
+     "code": "black",
+     "severity": "blocking",
+     "detail": "exit frame has no detail (edge density 0.00000, mean luma 0)",
+     "scene": "S1",
+     "frame": 28,
+     "metric": {
+      "edge_density": 0.0,
+      "mean": 0.0
+     }
+    },
+    {
+     "code": "black",
+     "severity": "blocking",
+     "detail": "last frame has no detail (edge density 0.00000, mean luma 0)",
+     "scene": "S1",
+     "frame": 29,
+     "metric": {
+      "edge_density": 0.0,
+      "mean": 0.0
+     }
+    },
+    {
+     "code": "static_scene",
+     "severity": "warning",
+     "detail": "5 sampled frames are the same picture",
+     "scene": "S1",
+     "frame": 29,
+     "metric": {
+      "max_delta": 0.0
+     }
+    },
+    {
+     "code": "edge_text_overflow",
+     "severity": "warning",
+     "detail": "text-like strokes are cut by the right side (texture 0.73 over 6% of it)",
+     "scene": "S2",
+     "frame": 0,
+     "metric": {
+      "side": "right",
+      "texture": 0.727,
+      "ink_share": 0.061
+     }
+    },
+    {
+     "code": "edge_text_overflow",
+     "severity": "warning",
+     "detail": "text-like strokes are cut by the right side (texture 0.73 over 6% of it)",
+     "scene": "S2",
+     "frame": 1,
+     "metric": {
+      "side": "right",
+      "texture": 0.727,
+      "ink_share": 0.061
+     }
+    },
+    {
+     "code": "edge_text_overflow",
+     "severity": "warning",
+     "detail": "text-like strokes are cut by the right side (texture 0.73 over 6% of it)",
+     "scene": "S2",
+     "frame": 14,
+     "metric": {
+      "side": "right",
+      "texture": 0.727,
+      "ink_share": 0.061
+     }
+    },
+    {
+     "code": "edge_text_overflow",
+     "severity": "warning",
+     "detail": "text-like strokes are cut by the right side (texture 0.73 over 6% of it)",
+     "scene": "S2",
+     "frame": 28,
+     "metric": {
+      "side": "right",
+      "texture": 0.727,
+      "ink_share": 0.061
+     }
+    },
+    {
+     "code": "edge_text_overflow",
+     "severity": "warning",
+     "detail": "text-like strokes are cut by the right side (texture 0.73 over 6% of it)",
+     "scene": "S2",
+     "frame": 29,
+     "metric": {
+      "side": "right",
+      "texture": 0.727,
+      "ink_share": 0.061
+     }
+    },
+    {
+     "code": "static_scene",
+     "severity": "warning",
+     "detail": "5 sampled frames are the same picture",
+     "scene": "S2",
+     "frame": 29,
+     "metric": {
+      "max_delta": 0.0
+     }
+    },
+    {
+     "code": "black",
+     "severity": "blocking",
+     "detail": "exit frame has no detail (edge density 0.00003, mean luma 7)",
+     "scene": "S5",
+     "frame": 28,
+     "metric": {
+      "edge_density": 3e-05,
+      "mean": 7.2
+     }
+    },
+    {
+     "code": "black",
+     "severity": "blocking",
+     "detail": "last frame has no detail (edge density 0.00000, mean luma 0)",
+     "scene": "S5",
+     "frame": 29,
+     "metric": {
+      "edge_density": 0.0,
+      "mean": 0.0
+     }
+    },
+    {
+     "code": "repeated_frames",
+     "severity": "info",
+     "detail": "frames 0 and 1 are the same picture",
+     "scene": "S5",
+     "frame": 1,
+     "metric": {
+      "delta": 0.0
+     }
+    },
+    {
+     "code": "repeated_frames",
+     "severity": "info",
+     "detail": "frames 1 and 14 are the same picture",
+     "scene": "S5",
+     "frame": 14,
+     "metric": {
+      "delta": 0.0
+     }
+    },
+    {
+     "code": "text_overflow",
+     "severity": "warning",
+     "detail": "the text 'Un titre beaucoup trop long 0' runs out of the frame ({'right': 613})",
+     "scene": "S2",
+     "frame": null,
+     "metric": {
+      "text": "Un titre beaucoup trop long 0",
+      "outside": {
+       "right": 613
+      }
+     }
+    },
+    {
+     "code": "font_fallback",
+     "severity": "blocking",
+     "detail": "no font of 'JarvisNoSuchFont' is available: the browser default is drawn",
+     "scene": "S3",
+     "frame": null,
+     "metric": {
+      "family": "JarvisNoSuchFont"
+     }
+    },
+    {
+     "code": "font_substituted",
+     "severity": "warning",
+     "detail": "'JarvisNoSuchFontToo' is missing, 'sans-serif' is drawn",
+     "scene": "S3",
+     "frame": null,
+     "metric": {
+      "family": "JarvisNoSuchFontToo,sans-serif",
+      "drawn": "sans-serif"
+     }
+    },
+    {
+     "code": "font_substituted",
+     "severity": "warning",
+     "detail": "'JarvisMissingFace' is missing, 'serif' is drawn",
+     "scene": "S3",
+     "frame": null,
+     "metric": {
+      "family": "JarvisMissingFace,serif",
+      "drawn": "serif"
+     }
+    },
+    {
+     "code": "font_load_failed",
+     "severity": "blocking",
+     "detail": "the font file of 'JarvisMissingFace' did not load",
+     "scene": "S3",
+     "frame": null,
+     "metric": {
+      "family": "JarvisMissingFace"
+     }
+    },
+    {
+     "code": "asset_missing",
+     "severity": "blocking",
+     "detail": "image 'jarvis-missing-asset.png' did not load",
+     "scene": "S4",
+     "frame": null,
+     "metric": {
+      "kind": "image",
+      "name": "jarvis-missing-asset.png",
+      "status": null
+     }
+    }
+   ],
+   "thresholds": {
+    "edge_step": 20,
+    "blank_edge_density": 0.0008,
+    "black_mean": 16.0,
+    "ink_delta": 48,
+    "band_depth": 4,
+    "clipped_ink_share": 0.05,
+    "overflow_ink_share": 0.02,
+    "overflow_texture": 0.4,
+    "repeat_mean_delta": 0.005,
+    "frozen_span_ms": 1000,
+    "truncation_share": 0.97,
+    "stale_progress_ms": 500,
+    "stale_bar_share": 0.08
+   }
+  },
+  "human_assessment": {
+   "status": "pending",
+   "note": "machine findings never replace the Human creative assessment"
+  }
+ }
+}

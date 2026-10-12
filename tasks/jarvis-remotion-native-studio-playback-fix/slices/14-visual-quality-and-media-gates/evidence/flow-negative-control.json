@@ -1,0 +1,155 @@
+{
+ "captures": 61,
+ "stale_samples": 59,
+ "codes": [
+  "stale_progress",
+  "stale_scene_bar",
+  "transition_flash"
+ ],
+ "findings": [
+  {
+   "code": "transition_flash",
+   "severity": "blocking",
+   "detail": "a black picture was on screen",
+   "scene": null,
+   "frame": null,
+   "metric": {
+    "ms": 5675,
+    "edge_density": 0.0,
+    "mean": 0.1
+   }
+  },
+  {
+   "code": "transition_flash",
+   "severity": "blocking",
+   "detail": "a black picture was on screen",
+   "scene": null,
+   "frame": null,
+   "metric": {
+    "ms": 5784,
+    "edge_density": 0.0,
+    "mean": 0.1
+   }
+  },
+  {
+   "code": "transition_flash",
+   "severity": "blocking",
+   "detail": "a black picture was on screen",
+   "scene": null,
+   "frame": null,
+   "metric": {
+    "ms": 5894,
+    "edge_density": 0.0,
+    "mean": 0.1
+   }
+  },
+  {
+   "code": "transition_flash",
+   "severity": "blocking",
+   "detail": "a black picture was on screen",
+   "scene": null,
+   "frame": null,
+   "metric": {
+    "ms": 6004,
+    "edge_density": 0.0,
+    "mean": 0.1
+   }
+  },
+  {
+   "code": "transition_flash",
+   "severity": "blocking",
+   "detail": "a black picture was on screen",
+   "scene": null,
+   "frame": null,
+   "metric": {
+    "ms": 6114,
+    "edge_density": 0.0,
+    "mean": 0.1
+   }
+  },
+  {
+   "code": "stale_progress",
+   "severity": "blocking",
+   "detail": "transport at frame 0, Player at composition frame 48",
+   "scene": null,
+   "frame": null,
+   "metric": {
+    "ms": 3822,
+    "transport": 0,
+    "expected": 48
+   }
+  },
+  {
+   "code": "stale_progress",
+   "severity": "blocking",
+   "detail": "transport at frame 0, Player at composition frame 48",
+   "scene": null,
+   "frame": null,
+   "metric": {
+    "ms": 3932,
+    "transport": 0,
+    "expected": 48
+   }
+  },
+  {
+   "code": "stale_progress",
+   "severity": "blocking",
+   "detail": "transport at frame 0, Player at composition frame 56",
+   "scene": null,
+   "frame": null,
+   "metric": {
+    "ms": 4041,
+    "transport": 0,
+    "expected": 56
+   }
+  },
+  {
+   "code": "stale_progress",
+   "severity": "blocking",
+   "detail": "transport at frame 0, Player at composition frame 64",
+   "scene": null,
+   "frame": null,
+   "metric": {
+    "ms": 4149,
+    "transport": 0,
+    "expected": 64
+   }
+  },
+  {
+   "code": "stale_progress",
+   "severity": "blocking",
+   "detail": "transport at frame 0, Player at composition frame 64",
+   "scene": null,
+   "frame": null,
+   "metric": {
+    "ms": 4258,
+    "transport": 0,
+    "expected": 64
+   }
+  },
+  {
+   "code": "stale_progress",
+   "severity": "blocking",
+   "detail": "transport at frame 0, Player at composition frame 80",
+   "scene": null,
+   "frame": null,
+   "metric": {
+    "ms": 4368,
+    "transport": 0,
+    "expected": 80
+   }
+  },
+  {
+   "code": "stale_progress",
+   "severity": "blocking",
+   "detail": "transport at frame 0, Player at composition frame 80",
+   "scene": null,
+   "frame": null,
+   "metric": {
+    "ms": 4476,
+    "transport": 0,
+    "expected": 80
+   }
+  }
+ ]
+}
