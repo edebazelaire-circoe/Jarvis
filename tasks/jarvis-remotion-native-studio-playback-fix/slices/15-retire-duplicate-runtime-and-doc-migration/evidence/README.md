@@ -36,13 +36,17 @@ File list: `sweep-files.txt` (457 files of `tests/unit` + `tests/integration` ma
 MCP, scene, board, docs, privacy, fullscreen, prefab, rail, studio, continuous, composition, playback, frame quality, media tools; three
 voice-composition files that matched « composition » by name were dropped). One file per process, 250 s cap per file, chunks under 10 min.
 
-**Status: paused at 41 / 457** on agent 0's order: drive C: fell to about 170-240 MB free from outside this task (WSL/Docker suspected) at
-about 21:30. Results so far:
+Run on the task branch as it moved (Slices 12-14 reworks landed meanwhile; last code tip `c190f48e`), then 713ee2de for the fix below.
+First pass at 41 / 457 paused at about 21:30 (drive C: full from outside the task); resumed when about 27 GB were free.
 
-| File | Result | Note |
+**Totals, 457 files:** 11 230 passed, 6 failed, 95 skipped (real Remotion / Chrome / network runtime not set: `JARVIS_REMOTION_RUNTIME_DIR`).
+
+| File | Result | Verdict |
 | --- | --- | --- |
-| 38 files | green | (includes `integration/test_scene_transport.py`: 56 passed on its rerun) |
-| `integration/test_board_session_e2e.py` | killed at the 250 s cap | to rerun alone with a longer cap |
-| `integration/test_presentation_scenarios.py` | 1 failed (`test_explicit_turn_latency_is_unc…`), 15 passed | timing test under load and low disk: to rerun |
-| `integration/test_remote_mcp_connector.py` | killed at the cap (2 F seen) | during the disk-full window: to rerun |
-| `integration/test_scene_transport.py` (first run) | 43 errors during disk full (`No space left`) | rerun: 56 passed |
+| `integration/test_board_session_e2e.py` | killed at the 250 s cap during the disk-full window; rerun 7 passed | not a regression |
+| `integration/test_presentation_scenarios.py` | 1 latency failure during the disk-full window; rerun 16 passed | not a regression |
+| `integration/test_remote_mcp_connector.py` | killed at the cap during the disk-full window; rerun 36 passed | not a regression |
+| `integration/test_scene_transport.py` | 43 errors `No space left`; rerun 56 passed | not a regression |
+| `unit/test_presentation_studio_docs.py::test_no_studio_state_leaked_into_the_sqlite_schemas_or_the_repository` | failed: the guard wants `tests/fixtures/presentation_studio/` to hold flat `.json` documents only, and the Slice 15 fixture was a folder inside it | **Slice 15 regression, fixed 713ee2de**: fixture moved to `tests/fixtures/presentation_studio_task_base_a8377529/` (21 + 2 passed; engine-migration 9, prefab routes 25 passed) |
+| `unit/test_presentation_studio_edit_docs.py::test_every_diagnostic_the_edit_service_emits_is_documented` | `core.presentation_studio.authored_released_for_studio` undocumented | passes at `c486eae7`; introduced by the Slice 13 second rework `3da74f17`, **not Slice 15** (agent 0) |
+| `unit/test_control_center_voice_architecture.py` (`agenda_reminders` undefined), `unit/test_scene_artifacts.py` and `unit/test_scene_query_tools.py` (brain prompt hash), `unit/test_scene_group_drag_js.py` (substring not found), `unit/test_scene_interaction_logic.py` (`confirm(` in the page) | 1 failure each | **pre-existing**: same failure at `c486eae7` in a fresh `bs15` worktree |
