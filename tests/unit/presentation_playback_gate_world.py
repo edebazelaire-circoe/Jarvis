@@ -7,7 +7,8 @@ racine jetable ; `_remotion_stage_browser.mjs` : Chrome sans tête par CDP). Ajo
   ancres sur certaines scènes et aucune sur d'autres, et une partition dont chaque élément vise 8 s (`target_duration_ms`), donc
   PLUS COURT que la scène de 30 s : de quoi voir si une durée de partition coupe une composition ;
 - `PAGE_PROBE` : un échantillonneur de la page (à chaque image d'animation) et des écoutes de messages : montage / départ / échange des
-  cadres, état de chaque page de scène (phase, image, lecture, durée), texte de l'horloge `rs-bar` et de l'horloge de la bande, ordres
+  cadres, état de chaque page de scène (phase, image, lecture, durée), texte de l'horloge `rs-bar` et de l'horloge de la bande du présentateur
+  de Variantes (Slice 09 : la bande flottante est retirée), ordres
   de l'hôte au Player et horloge du Player (`clock`, émise de force à chaque lecture / pause / saut) ;
 - `CorePoller` : l'état de lecture de Core relevé toutes les 150 ms pendant que Chrome joue ;
 - `png_rgb_mean` : la couleur moyenne d'une capture (PNG décodé avec la bibliothèque standard) pour dire « scène X », « blanc », « vide ».
@@ -138,10 +139,11 @@ async def make_deck(stack: RemotionStack, *, title: str = "Neuf scenes", reveal_
 
 #: Installée par `{eval: PAGE_PROBE}`. `__pg.rows` : `[ms, [cadres]]` à chaque changement (image d'animation), un cadre étant
 #: `[uid, lieu, visible, phase, image, lecture, durée, texte rs-time]` ; `__pg.ev` : `[ms, sorte, uid, ...]` (mount, gone, live, host->stage
-#: `control`, Player->stage `clock`/`ready`, stage->hôte `status`) ; `__pg.band` : `[ms, horloge de la bande, où]` à chaque changement.
+#: `control`, Player->stage `clock`/`ready`, stage->hôte `status`) ; `__pg.band` : `[ms, horloge de la bande du présentateur, où]` à chaque
+#: changement (native-studio-playback-fix Slice 09 : la bande du présentateur de Variantes, `.jvx-presenter`).
 PAGE_PROBE = r"""(()=>{if(window.__pg)return;const W=window;const pg=W.__pg={t0:performance.now(),epoch:Date.now(),rows:[],ev:[],band:[],uid:0,last:'',lastBand:''};
 const T=()=>Math.round(performance.now()-pg.t0);
-const place=f=>f.closest('#jvStudioExplorer')?'explorer':f.closest('#jvPresWindow')?'window':'board';
+const place=f=>f.closest('#jvStudioExplorer')?'explorer':'board';
 const vis=f=>f.isConnected&&!f.classList.contains('sc-prefab-staged')&&f.style.visibility!=='hidden'&&f.getBoundingClientRect().width>0;
 function tap(f){const hook=()=>{try{const w=f.contentWindow;if(!w||w.__pgTap)return;w.__pgTap=1;
   w.addEventListener('message',e=>{const d=e.data;if(!d||typeof d!=='object')return;
@@ -166,8 +168,8 @@ function sample(){try{
     let s=null,txt=null;try{s=f.contentWindow.__remotionStage.state();const t=f.contentDocument.querySelector('.rs-time');txt=t?t.textContent:null}catch(_e){}
     return [u,place(f),v,s&&s.phase,s&&s.frame,s&&s.playing,s&&s.duration,txt]});
   const key=JSON.stringify(rec);if(key!==pg.last){pg.last=key;pg.rows.push([T(),rec])}
-  const band=document.querySelector('#jvStudioBand');const clock=band&&!band.hidden?band.querySelector('.jvsp-clock'):null;
-  const bk=clock?clock.textContent+'|'+(band.querySelector('.jvsp-where')||{}).textContent:'';
+  const band=document.querySelector('#jvStudioExplorer .jvx-presenter');const clock=band&&!band.hidden?band.querySelector('.jvx-presenter-clock'):null;
+  const bk=clock?clock.textContent+'|'+(band.querySelector('.jvx-presenter-where')||{}).textContent:'';
   if(bk!==pg.lastBand){pg.lastBand=bk;pg.band.push([T(),bk])}
 }catch(e){pg.ev.push([T(),'probe_error',0,String(e)])}requestAnimationFrame(sample)}
 requestAnimationFrame(sample);})()"""
@@ -234,8 +236,8 @@ def next_boundary(frames_left: int = 20) -> str:
 # the visible Remotion stage frame inside `#jvStudioExplorer`; controls are found by their ROLE and NAME (toolbar « Lire » / « Pause »,
 # overflow « Lire seulement cette scène », `role="slider"`, the scene listbox), never by today's classes. Where the contract control does
 # not exist yet, a gesture falls back to today's control ONLY when the test measures today's defect through it (`legacy`), and says which
-# control it used. Today's selectors (`.jvx-play`, `.rs-scrub`, `.rs-time`, the band `#jvStudioBand`) are retargeted to the Variants Player
-# by Slices 06/09/10; the helpers below keep working across that change.
+# control it used. Today's selectors (`.jvx-play`, `.rs-scrub`, `.rs-time`) are retargeted to the Variants Player by Slices 06/10; the band
+# `#jvStudioBand` is retired by Slice 09 (a run plays in Variants, with its presenter strip `.jvx-presenter`).
 
 EXPLORER_FRAME = ("[...document.querySelectorAll('#jvStudioExplorer iframe[data-remotion-stage]')].find(x=>!x.classList.contains('sc-prefab-staged')"
                   "&&x.style.visibility!=='hidden'&&x.getBoundingClientRect().width>0)")
@@ -243,7 +245,8 @@ EXPLORER_FRAME = ("[...document.querySelectorAll('#jvStudioExplorer iframe[data-
 VSTATE = (f"(()=>{{const f={EXPLORER_FRAME};if(!f)return null;let s=null;try{{s=f.contentWindow.__remotionStage.state()}}catch(e){{return null}}"
           "const m=/\\.s0*(\\d+)(?:@|&|$)/.exec(decodeURIComponent(f.src||''));"
           "return {frame:s.frame,playing:s.playing,duration:s.duration,phase:s.phase,scene:m?'S'+m[1]:null}})()")
-#: The run's Player wherever it plays today (Board stage) or after Slice 09 (Variants): the visible frame showing `duration` frames.
+#: The run's Player (Slice 09: always in Variants; `place` says where, a Board stage would be a regression): the visible frame showing
+#: `duration` frames.
 def run_state(duration: int) -> str:
     return (f"(()=>{{for(const f of document.querySelectorAll('iframe[data-remotion-stage]')){{if(f.classList.contains('sc-prefab-staged')||"
             f"f.style.visibility==='hidden'||!f.getBoundingClientRect().width)continue;try{{const s=f.contentWindow.__remotionStage.state();"

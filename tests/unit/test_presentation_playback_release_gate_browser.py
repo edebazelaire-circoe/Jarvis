@@ -12,9 +12,10 @@ avec le défaut et la Slice qui le corrige : une correction conforme au contrat 
 
 Une mesure cassée (pilote, précondition expirée, refus de Core au montage du décor) n'est jamais « attendue » : elle passe par
 `harness()` (`pytest.fail`), jamais par `AssertionError`. Les contrôles sont trouvés par rôle et nom du contrat (barre « Lire », menu
-« Lire seulement cette scène », `role="slider"`, liste des scènes) ; les sélecteurs d'aujourd'hui (`.jvx-play`, `.rs-scrub`, `.rs-time`,
-la bande `#jvStudioBand` de FINAL) ne servent qu'à mesurer le défaut actuel et sont reciblés sur le Player de Variantes par les
-Slices 06/09/10. Constats : `tasks/jarvis-remotion-native-studio-playback-fix/slices/03-reproduce-timeline-and-transition-failures/evidence/`.
+« Lire seulement cette scène », `role="slider"`, liste des scènes) ; les sélecteurs d'aujourd'hui (`.jvx-play`, `.rs-scrub`, `.rs-time`) ne
+servent qu'à mesurer le défaut actuel. Slice 09 : une lecture se montre DANS Variantes (la vue flottante, fenêtre de stage du Board et bande
+`#jvStudioBand`, est retirée) ; Variantes s'ouvre seul pour une lecture démarrée par Core, et la bande du présentateur (`.jvx-presenter`)
+dit où l'on en est. Constats : `tasks/jarvis-remotion-native-studio-playback-fix/slices/03-reproduce-timeline-and-transition-failures/evidence/`.
 
     JARVIS_REMOTION_RUNTIME_DIR=<runtime> [JARVIS_PLAYBACK_GATE_EVIDENCE_DIR=<dossier>] \\
       python -m pytest tests/unit/test_presentation_playback_release_gate_browser.py -q -p no:cacheprovider -k "not play_all_shows"
@@ -42,9 +43,11 @@ pytestmark = pytest.mark.skipif(RUNTIME is None or shutil.which("node") is None,
 
 STATE = f"(()=>{{const f={VISIBLE};try{{return f?f.contentWindow.__remotionStage.state():null}}catch(e){{return null}}}})()"
 READY = {"until": f"(()=>{{const s={STATE};return !!s&&s.phase==='ready'}})()", "ms": 90000, "required": True, "as": "ready"}
-#: The run is over: the last scene (S9, 240 frames) holds its last frame and the band says scene 9/9 (band: today only, Slice 09 retargets).
-FINAL = (f"(()=>{{const s={STATE};const w=document.querySelector('#jvStudioBand .jvsp-where');"
+#: The run is over: the last scene (S9, 240 frames) holds its last frame and the presenter strip of Variants says scene 9/9 (Slice 09).
+FINAL = (f"(()=>{{const s={STATE};const w=document.querySelector('#jvStudioExplorer .jvx-presenter-where');"
          f"return !!s&&s.duration===240&&s.frame===239&&!s.playing&&!!w&&w.textContent.includes('Scène 9/9')}})()")
+#: Slice 09: no Board window plays (the floating viewer is retired): what the scene holds, read through Core's own route.
+NO_BOARD_STAGE = "(()=>!document.querySelector('[data-object-id^=\"studio-stage-\"],[data-object-id^=\"studio-aux-\"]'))()"
 NOW = {"expr": "Math.round(performance.now()-__pg.t0)"}
 
 
@@ -113,7 +116,9 @@ async def test_play_all_shows_every_scene_in_order_from_frame_zero_without_stall
         status, started = await stack.call("POST", f"{PLAYBACK}/start", json={
             "actor": "user", "presentation_id": pid, "role": "user_presenter", "scope": "all"})
         harness(status == 200 and started["state"]["scope"] == "all", f"start scope all refused: {started}")
-        plan: list[dict] = [{"eval": PAGE_PROBE}, READY]
+        plan: list[dict] = [{"until": "!!window.JarvisStudioExplorer", "ms": 20000, "required": True, "as": "explorer_api"}, {"eval": PAGE_PROBE},
+                            READY, {"value": "no_board_stage", "expr": NO_BOARD_STAGE},
+                            {"value": "variants_open", "expr": "JarvisStudioExplorer.isOpen()&&!!JarvisStudioExplorer.run.view()"}]
         for boundary in range(1, 9):
             plan += [{"until": f"({next_boundary()})||({FINAL})", "ms": 70000},
                      {"burst": str(shots), "ms": 1800, "clipExpr": VISIBLE_RECT, "prefix": f"b{boundary}", "as": f"burst{boundary}"}]
@@ -130,10 +135,12 @@ async def test_play_all_shows_every_scene_in_order_from_frame_zero_without_stall
         evidence = analyse_play_all(probe, reads, poll.rows)
         evidence["wall_s"] = round(took, 1)
         evidence["at_stall_shot"] = reads.get("at_stall_shot")
+        evidence["variants_open"], evidence["no_board_stage"] = reads.get("variants_open"), reads.get("no_board_stage")
         boundary_shots = [p for burst in evidence["bursts"].values() for p in transition_shots(burst, shots, 2)]
         record("play_all", {"evidence": evidence, "page_epoch": probe["epoch"], "core": poll.rows, "probe_ev": probe["ev"], "band": probe["band"]},
                boundary_shots + [tmp_path / "stall.png"])
         shown = [s["scene"] for s in evidence["per_scene"]]
+        assert evidence["variants_open"] is True and evidence["no_board_stage"] is True, "Slice 09: the run plays in Variants, never on the Board"
         assert shown == [f"S{n}" for n in range(1, 10)], f"scenes shown: {shown}; never shown: {evidence['never_shown']}"
         for scene in evidence["per_scene"]:
             n = int(scene["scene"][1:]) - 1
@@ -167,7 +174,7 @@ def analyse_play_all(probe: dict, reads: dict, core_rows: list[dict]) -> dict:
                            "held_previous_ms": None if following is None else following - ms})
     bursts = {key: bursts_classified(value) for key, value in reads.items() if key.startswith("burst") and isinstance(value, list)}
     return {"mounted_frames": [(row[0], row[2], row[4], row[5]) for row in probe["ev"] if row[1] == "mount"],
-            "per_scene": per_scene, "never_shown": stalls, "blank_spans_ms": blank_spans(probe, place="board"), "bursts": bursts,
+            "per_scene": per_scene, "never_shown": stalls, "blank_spans_ms": blank_spans(probe, place="explorer"), "bursts": bursts,
             "core_scopes": sorted({r.get("scope") for r in core_rows if r.get("scope")}),
             "expected_s": sum(s for s, _f, _a, _b in DECK),
             "where_end": {k: ((reads.get("where") or {}).get("body") or {}).get("state", {}).get(k) for k in ("phase", "scope", "position")}}
@@ -340,16 +347,15 @@ async def test_a_30s_composition_with_an_8s_score_target_plays_to_its_last_frame
     assert evidence["first_play"] and evidence["first_play"][1] == 0, evidence["first_play"]
 
 
-@pytest.mark.xfail(strict=True, raises=AssertionError, reason="S03 repro: defect D/F — a presenter run has no read-only Variants scrubber; the stage "
-                                                              "page's own scrub stays usable and fights the score — fixed by Slice 09/10")
 async def test_a_presenter_run_scrubber_is_read_only(tmp_path):
     """(e) § 5: in a presenter run the Variants scrubber exists and is `aria-disabled` (« La partition mène la présentation »); no enabled
-    scrubber exists anywhere else on the page."""
+    scrubber exists anywhere else on the page. Passes since Slice 09 (the run plays in Variants; the run stage's `rs-bar` is retired)."""
 
     evidence = await presenter_s3_run(tmp_path)
     scrubbers = evidence["scrubbers"] or []
     assert any(s["kind"] == "variants-slider" for s in scrubbers), f"no Variants scrubber during the presenter run: {scrubbers}"
     assert all(s["disabled"] for s in scrubbers), f"an enabled scrubber during a presenter run: {scrubbers}"
+    assert any("partition mène la présentation" in (s.get("text") or "") for s in scrubbers), scrubbers
 
 
 async def test_a_manual_scene_without_anchor_plays_once_and_holds_its_last_frame(tmp_path):
@@ -380,8 +386,8 @@ async def test_a_manual_scene_without_anchor_plays_once_and_holds_its_last_frame
 
 
 async def test_a_presenter_run_enters_a_scene_on_frame_zero_while_its_entry_reveals_a_later_anchor(tmp_path):
-    """(e) § 5, defect C (Slice 07): presenter run, the band's « Suivant » (the keyboard path) leaves S1 and enters S2 (8 s @ 30) whose
-    entry item reveals anchor `a2_0` (2 s = frame 60). Core's timeline says `from_frame` 0 / `until_frame` 149; the run stage's Player is
+    """(e) § 5, defect C (Slice 07): presenter run, Variants' « Élément suivant » (the transport, Slice 09) leaves S1 and enters S2 (8 s @ 30)
+    whose entry item reveals anchor `a2_0` (2 s = frame 60). Core's timeline says `from_frame` 0 / `until_frame` 149; the Variants Player is
     ordered from local frame 0 (never joined at 60), never steps back, and holds the item's stop frame 149 (the frame before the next anchor,
     5 s = 150)."""
 
@@ -390,8 +396,8 @@ async def test_a_presenter_run_enters_a_scene_on_frame_zero_while_its_entry_reve
         player = run_state(240)
         plan = open_variants(pid) + presenter_start(stack, pid) + [
             {"until": f"(()=>{{const s={run_state(90)};return !!s&&s.phase==='ready'}})()", "ms": 60000, "required": True, "as": "s1_ready"},
-            {"until": "!!document.querySelector('#jvStudioBand .jvsp-next:not([disabled])')", "ms": 20000, "required": True, "as": "band"},
-            {"eval": "document.querySelector('#jvStudioBand .jvsp-next').click()"},   # the band's own handler (Variants covers the band)
+            {"until": NEXT_ITEM_READY, "ms": 20000, "required": True, "as": "transport"},
+            {"eval": f"{NEXT_ITEM}.click()"},                                        # Variants' own transport (the band is retired)
             {"until": f"(()=>{{const s={player};return !!s&&s.phase==='ready'&&s.frame>=140&&!s.playing}})()", "ms": 60000, "as": "held"},
             {"wait": 2000}, {"value": "end", "expr": player}, {"value": "probe", "expr": READ_PROBE}, http(stack, "core", "GET", PLAYBACK)]
         result = await run_long(stack.page_url, plan, timeout=240)
@@ -400,8 +406,8 @@ async def test_a_presenter_run_enters_a_scene_on_frame_zero_while_its_entry_reve
         check_http(reads, "start")
         probe = reads["probe"]
         clocks = player_clocks(probe)
-        uids = [row[2] for row in probe["ev"] if row[1] == "mount" and row[3] != "explorer" and row[4] == "S2" and row[2] in clocks]
-        harness(uids, "no S2 Player clock recorded on the run stage")
+        uids = [row[2] for row in probe["ev"] if row[1] == "mount" and row[3] == "explorer" and row[4] == "S2" and row[2] in clocks]
+        harness(uids, "no S2 Player clock recorded in Variants")
         uid = max(uids, key=lambda u: len(clocks[u]))
         moving = [frame for _ms, frame, playing in clocks[uid] if playing]
         evidence = {"first_play": first_play(probe, uid), "held": reads.get("held"), "end": reads.get("end"), "core": core_view(reads.get("core")),
@@ -419,6 +425,54 @@ async def test_a_presenter_run_enters_a_scene_on_frame_zero_while_its_entry_reve
         end = evidence["end"] or {}
         assert end.get("frame") == 149 and end.get("playing") is False, f"not held on the item's stop frame: {end}"
         assert evidence["wraps"] == []
+
+
+#: Slice 09: the run's « Élément suivant » in the Variants transport.
+NEXT_ITEM = ("[...document.querySelectorAll('#jvStudioExplorer [role=\"toolbar\"] button')].find(b=>b.getAttribute('aria-label')==='Élément suivant')")
+NEXT_ITEM_READY = f"(()=>{{const b={NEXT_ITEM};return !!b&&b.getAttribute('aria-disabled')!=='true'}})()"
+
+
+async def test_finding_7_a_next_posted_to_core_enters_the_scene_once_from_frame_zero_without_a_replay(tmp_path):
+    """Slice 07 Finding 7 (owner Slice 09), real Core / Chrome / Remotion: a presenter run hosted in Variants; S1 plays; a `next` is POSTED
+    TO CORE (the route a cue or the voice uses, not a page button). The Variants Player of S2 never plays before Core's order reaches it (no
+    grace play, no play on ready), then plays its entry from frame 0 to its stop frame once: no frame goes backward (the 78 -> 0 replay of the
+    retired run stage), no Board window exists."""
+
+    async with RemotionStack(tmp_path, runtime_dir=RUNTIME) as stack:
+        pid, _vid = await make_deck(stack, reveal_on_entry=True)
+        player = run_state(240)
+        plan = open_variants(pid) + presenter_start(stack, pid) + [
+            {"until": f"(()=>{{const s={run_state(90)};return !!s&&s.phase==='ready'&&s.place==='variants'}})()", "ms": 60000, "required": True,
+             "as": "s1_ready"},
+            {"wait": 1200}, {"value": "next_at", **NOW},
+            http(stack, "next", "POST", f"{PLAYBACK}/next", {"actor": "user"}),
+            {"until": f"(()=>{{const s={player};return !!s&&s.phase==='ready'&&s.frame>=140&&!s.playing}})()", "ms": 60000, "as": "held"},
+            {"wait": 1500}, {"value": "end", "expr": player}, {"value": "no_board_stage", "expr": NO_BOARD_STAGE},
+            {"value": "probe", "expr": READ_PROBE}, http(stack, "core", "GET", PLAYBACK)]
+        result = await run_long(stack.page_url, plan, timeout=240)
+        reads = result["reads"]
+        harness("failed" not in reads, reads.get("failed"))
+        check_http(reads, "start", "next")
+        probe = reads["probe"]
+        clocks = player_clocks(probe)
+        uids = [row[2] for row in probe["ev"] if row[1] == "mount" and row[3] == "explorer" and row[4] == "S2" and row[2] in clocks]
+        harness(uids, "no S2 Player clock recorded in Variants")
+        uid = max(uids, key=lambda u: len(clocks[u]))
+        orders = [row for row in probe["ev"] if row[1] == "order" and row[2] == uid]
+        plays = [row for row in orders if row[3] == "play"]
+        moving = [frame for _ms, frame, playing in clocks[uid] if playing]
+        evidence = {"next_at": reads.get("next_at"), "orders": orders, "first_play": first_play(probe, uid), "end": reads.get("end"),
+                    "backward": [(a, b) for a, b in zip(clocks[uid], clocks[uid][1:]) if b[1] < a[1]],
+                    "lowest_moving_frame": min(moving) if moving else None, "core": core_view(reads.get("core")),
+                    "no_board_stage": reads.get("no_board_stage"), "clocks": clocks[uid][:60]}
+        record("finding7_next_by_core_route_in_variants", evidence)
+        assert evidence["no_board_stage"] is True
+        assert plays and all(row[4] == 0 for row in plays[:1]), f"the first play of S2 is Core's, from frame 0: {orders[:4]}"
+        assert not [row for row in plays if row[4] is None], f"a play without a frame (the host's own grace play) reached S2: {orders}"
+        assert evidence["backward"] == [], f"S2 stepped back (the Finding 7 replay): {evidence['backward'][:3]}"
+        assert evidence["first_play"] and evidence["first_play"][1] <= 2, evidence["first_play"]
+        end = evidence["end"] or {}
+        assert end.get("frame") == 149 and end.get("playing") is False, f"not held on the item's stop frame: {end}"
 
 
 # ---------------------------------------------------------------------------------------------------------------- (a) Variants: slide change
