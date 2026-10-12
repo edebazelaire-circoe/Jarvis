@@ -232,6 +232,10 @@ def native_example() -> dict[str, Any]:
                                  {"key": "cloture", "title": "Cloture", "prefab": {"bundle": "cloture"}}]}}
 
 
+#: The brief keys that mean something to a native deck (`strict_content` is exploratory-only and refused elsewhere; `literal_terms`,
+#: `must_cover`, `resources` feed rules that are only warnings in native): the guide offers these, nothing else, so the author does not probe.
+NATIVE_BRIEF_OPTIONAL = frozenset({"purpose", "audience", "duration_target_s", "tone", "language", "speech"})
+
 NATIVE_LOOP = ("CODE REMOTION NATIF (brief.authoring: native). 1) Storyboard : une scene = une composition (taille, fps, duree en images) et "
                "une idee. 2) Ecris du React/TSX normal : texte, couleurs et mise en page dans le code, modules src/lib/*.tsx ; point d'entree "
                "src/Scene.tsx (export default) ; imports react et remotion seulement (polices systeme, pas de paquet) ; images en public/** "
@@ -248,7 +252,9 @@ def draft_guide(kind: str | None = None) -> dict[str, Any]:
     if kind == "native":
         return {"loop": NATIVE_LOOP,
                 "brief": {"required": ["title", "workflow", "authoring"], "authoring": "native", "workflow": ["directed", "one_shot"],
-                          "optional": sorted(_BRIEF_OPTIONAL - {"authoring"})},
+                          "optional": sorted(NATIVE_BRIEF_OPTIONAL),
+                          "types": {"duration_target_s": "secondes (entier)", "language": "fr, en, fr-CA", "tone": "liste de mots",
+                                    "speech": "none (defaut natif), jarvis ou user"}},
                 "draft": {"required": ["scenes"], "optional": ["prefabs", "score", "art_direction"],
                           "prefabs": "[{key, remotion: {title, files: {'src/Scene.tsx': <TSX>, 'src/lib/X.tsx': <TSX>}, composition: "
                                      "{width, height, fps, duration_in_frames}, assets?: {'public/x.png': <base64>}}}]",

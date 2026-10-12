@@ -162,3 +162,11 @@ async def test_the_native_guide_example_is_delivered_as_it_is(env):
     assert guide["loop"] == NATIVE_LOOP and guide["brief"]["authoring"] == "native" and "presentation_source" in NATIVE_LOOP
     out = await env.assemble(guide["example"]["brief"], guide["example"]["draft"])
     assert out.status == "delivered", out.to_dict().get("report", {}).get("failures")
+
+
+def test_the_native_guide_offers_only_brief_keys_a_native_deck_uses():
+    from jarvis.domain.presentation_studio_authoring import _BRIEF_OPTIONAL
+    from jarvis.domain.presentation_studio_authoring_guide import draft_guide
+
+    offered = set(draft_guide("native")["brief"]["optional"])
+    assert offered <= _BRIEF_OPTIONAL and "strict_content" not in offered, "a real run was refused once for strict_content (Slice 13 trace)"
