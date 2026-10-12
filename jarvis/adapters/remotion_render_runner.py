@@ -36,6 +36,7 @@ from typing import Any
 from jarvis.adapters import process_tree
 from jarvis.adapters.node_capability_runner import _remove_tree, extended_path
 from jarvis.adapters.remotion_compiler import read_installed_engine
+from jarvis.adapters.remotion_media_tools import compositor_tool
 from jarvis.adapters.remotion_studio_runner import safe_relative
 from jarvis.domain import presentation_render as D
 from jarvis.domain import presentation_render_output as O
@@ -177,16 +178,7 @@ class RemotionRenderRunner:
         return f"{label} {versions[-1]}" if versions else "unknown"
 
     def _ffprobe(self) -> Path | None:
-        modules = Path(self._runtime_dir()) / "node_modules" / "@remotion"
-        try:
-            for entry in sorted(os.scandir(modules), key=lambda e: e.name):
-                if entry.name.startswith("compositor-"):
-                    for name in ("ffprobe.exe", "ffprobe"):
-                        if (Path(entry.path) / name).is_file():
-                            return Path(entry.path) / name
-        except OSError:
-            return None
-        return None
+        return compositor_tool(Path(self._runtime_dir()), "ffprobe")  # the pinned compositor binary (shared with Slice 14 quality)
 
     # ------------------------------------------------------------------ travail
 

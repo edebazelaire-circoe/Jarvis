@@ -380,9 +380,15 @@ def drive_long(url: str, plan: list, *, timeout: int = 600, viewport: str = "128
 
     import subprocess
     from tests.unit.test_fullscreen_browser import _chrome
+    import tempfile
     driver = Path(__file__).parent / "_remotion_stage_browser.mjs"
-    done = subprocess.run(["node", str(driver), url, _chrome(), json.dumps(plan)], capture_output=True, text=True, encoding="utf-8",
-                          timeout=timeout, check=False, env={**os.environ, "CDP_VIEWPORT": viewport})
+    text = json.dumps(plan)
+    with tempfile.TemporaryDirectory(prefix="jq-plan-") as folder:
+        if len(text) > 20000:   # Slice 14: a long plan (page probes per scene) exceeds Windows' command line; the driver reads `@file`
+            (Path(folder) / "plan.json").write_text(text, encoding="utf-8")
+            text = "@" + str(Path(folder) / "plan.json")
+        done = subprocess.run(["node", str(driver), url, _chrome(), text], capture_output=True, text=True, encoding="utf-8",
+                              timeout=timeout, check=False, env={**os.environ, "CDP_VIEWPORT": viewport})
     harness(done.returncode == 0, f"CDP driver exit {done.returncode}: {done.stderr[-2000:]}")
     return json.loads(done.stdout)
 

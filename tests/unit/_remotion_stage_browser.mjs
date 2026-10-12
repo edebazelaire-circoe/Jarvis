@@ -9,18 +9,20 @@
    Actions (champ `scope` : "page" par défaut, "sandbox" pour le cadre du bac à sable, "sandboxes" pour TOUS les cadres de bac à sable
    vivants, un tableau ; champ `cli: true` : l'API de la ligne de commande des DevTools, par ex. `getEventListeners`) :
      {eval}, {wait: ms}, {click: selecteur}, {clickAt: [x,y]}, {clickExpr: expr -> {x,y} de la page}, {key: nom}, {value: nom, expr, scope?}, {until: expr, ms, scope?, as?, required?}, {size: [w,h]},
-     {shot: chemin.png}, {burst: dossier, ms, clipExpr?, scale?, prefix?, as?} (rafale de captures datées), {http: {method, url, headers?, json?, basisFrom?}, as: nom} (requête de Node, pour parler à Core entre deux étapes ;
+     {shot: chemin.png}, {burst: dossier, ms, clipExpr?, scale?, prefix?, as?} (rafale de captures datées),
+     {record: dossier, ms, everyMs?, untilExpr?, readExpr?, clipExpr?, scale?, quality?, prefix?, as?} (enregistrement JPEG cadencé, Slice 14), {http: {method, url, headers?, json?, basisFrom?}, as: nom} (requête de Node, pour parler à Core entre deux étapes ;
      `basisFrom` : URL d'une variante, sa révision du moment est écrite dans `json.basis.variant_revision`, Slice 14),
      {media: [{name, value}]} (`Emulation.setEmulatedMedia`, par ex. `prefers-reduced-motion: reduce`), {reload: true} (`Page.reload`) ;
      `key` accepte aussi tout caractère seul (`f`, `M`, `,`...) et `PageUp` / `PageDown` / `ArrowUp` / `ArrowDown`, `shift: true` en option.
    Sortie : {reads, console, errors, targets}. Chrome est tué avec ses enfants, le profil effacé. */
 import {execFileSync, spawn} from 'node:child_process';
-import {mkdtempSync, rmSync, writeFileSync} from 'node:fs';
+import {mkdtempSync, readFileSync, rmSync, writeFileSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 
 const [,,PAGE,CHROME,PLAN]=process.argv;
-const plan=JSON.parse(PLAN);
+/* `@<fichier>` : le plan lu dans un fichier (un plan long dépasse la ligne de commande de Windows, 32 767 caractères). */
+const plan=JSON.parse(PLAN.startsWith('@')?readFileSync(PLAN.slice(1),'utf8'):PLAN);
 const [VIEW_W,VIEW_H]=(process.env.CDP_VIEWPORT||'1280x720').split('x').map(Number);
 const profile=mkdtempSync(join(tmpdir(),'jarvis-rs-cdp-'));
 const port=9300+Math.floor(Math.random()*500);
@@ -169,6 +171,23 @@ try{
           writeFileSync(file,Buffer.from(shot.data,'base64'));shots.push([Math.round(t),file]);
         }
         reads[action.as||'burst']=shots;
+      }else if(action.record!==undefined){
+        /* Enregistrement (Slice 14 du handoff rnsp) : une capture JPEG toutes les `everyMs` (100 par défaut) jusqu'à `untilExpr` vrai ou
+           `ms` écoulées, chacune datée par `performance.now()` de la page et accompagnée de `readExpr` (lu dans la même évaluation, juste
+           avant la capture). `clipExpr` -> {x,y,width,height} ; `scale` (0.5) ; `quality` JPEG (60). Sortie : [[ms, fichier, lecture]]. */
+        const clip=action.clipExpr?await evaluate(action.clipExpr,'page'):null;
+        const end=Date.now()+(action.ms||60000);const every=action.everyMs||100;const shots=[];let n=0;
+        const probe=`({t:Math.round(performance.now()),v:(${action.readExpr||'null'}),done:!!(${action.untilExpr||'false'})})`;
+        while(Date.now()<end){
+          const started=Date.now();
+          const r=await rawEval(page,probe);
+          const shot=await send('Page.captureScreenshot',{format:'jpeg',quality:action.quality||60,...(clip?{clip:{...clip,scale:action.scale||0.5}}:{})},page);
+          const file=join(action.record,`${action.prefix||'rec'}-${String(n++).padStart(4,'0')}.jpg`);
+          writeFileSync(file,Buffer.from(shot.data,'base64'));shots.push([r.t,file,r.v]);
+          if(r.done)break;
+          const left=every-(Date.now()-started);if(left>0)await sleep(left);
+        }
+        reads[action.as||'record']=shots;
       }else if(action.http!==undefined){
         const h=action.http;
         if(h.basisFrom){
