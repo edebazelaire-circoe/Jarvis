@@ -4544,8 +4544,8 @@ the gate deck (45 smoke frames, 682 flow captures), a Slice 13 native deck (20 f
 
 | Code | Input | Severity | Threshold | Measured false positives |
 | --- | --- | --- | --- | --- |
-| `black`, `blank` | frame: edge density (neighbours more than `edge_step` = 20 luma apart) below `blank_edge_density` = 0.0008; `black` when the mean luma is at most `black_mean` = 16 | first frame: warning; `authored` entry / exit / last: warning; otherwise **blocking** | as stated | gate 0 / 45; native 16 / 20, all fades, all warnings |
-| `edge_clipped` | frame: ink (more than `ink_delta` = 48 from the median luma) in the `band_depth` = 4 band of a side over at least `clipped_ink_share` = 5 % of it | warning | as stated | gate 27 / 45 (its own full-width progress bar); native 0 / 20 |
+| `black`, `blank` | frame: edge density (neighbours more than `edge_step` = 20 luma apart) below `blank_edge_density` = 0.0008; `black` when the mean luma is at most `black_mean` = 16 | `authored` first / entry / exit / last: warning; otherwise **blocking**, the `release_gate` first frame included (its frames always carry text; agent 0, Slice 14 rework) | as stated | gate 0 / 45; native 16 / 20, all fades, all warnings |
+| `edge_clipped` | frame: ink (more than `ink_delta` = 48 from the median luma) in the `band_depth` = 4 band of a side over at least `clipped_ink_share` = 5 % of it; a run of ink that touches a corner of the side and whose texture is below `corner_run_texture` = 0.05 is a full-bleed bar (a progress bar, measured 0.006 to 0.013) and does not count | warning | as stated | gate 27 / 45 before the corner rule (all of them its own full-width progress bar, texture 0.006 to 0.013, which the rule skips; real re-measure: Slice 14 evidence `README.md`, Rework); native 0 / 20 |
 | `edge_text_overflow` | same band, ink over at least `overflow_ink_share` = 2 % and edge texture at least `overflow_texture` = 0.4 | warning | as stated | gate 0 / 45 (bar end 0.25), native 0 / 20; control text 0.73 |
 | `static_scene`, `repeated_frames` | sampled frames whose mean luma difference is below `repeat_mean_delta` = 0.005 (identical renders: 0.0; a one-digit change: 0.012 to 0.048) | warning, info | as stated | gate 0, native 0 |
 | `frozen_playback` | captures of a playing Player identical for at least `frozen_span_ms` = 1000 | warning | as stated | flow 0 |
@@ -4561,7 +4561,9 @@ the gate deck (45 smoke frames, 682 flow captures), a Slice 13 native deck (20 f
 | `render_failed` | the guarded host refused or failed the preview of a scene | **blocking** | exact | 0 |
 
 Clipping, overflow and repeated frames start as warnings (decided by agent 0): a full-bleed element, an element sliding in from
-outside and a still title card are legitimate, and pixels alone cannot tell them from a defect. The control deck
+outside and a still title card are legitimate, and pixels alone cannot tell them from a defect. The corner rule of `edge_clipped` trades one
+false negative for it: a smooth block cut by a side AT a corner (a flat panel bleeding off a corner) is not reported; textured content
+there (text strokes) still is. The control deck
 (`CONTROL_SCENES`) proves the other side: black frame, text cut by the frame, a missing font, a missing font file, a missing image and
 a still card fading to black are all found.
 
