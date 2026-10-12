@@ -14,8 +14,9 @@ Proved, measured:
   last item, Espace pause / resume); keys typed in another field of the page are untouched;
 - `F` puts the Variants stage in real fullscreen, the keys still act once each there, leaving it keeps the run;
 - Échap closes Variants and pauses a playing run, which never reopens Variants by itself;
-- the presenter strip never overlaps the interaction-mode HUD and stays on screen (1280x720 and 1920x1080); Variants is modal, so
-  the HUD is under it until Variants closes.
+- the presenter strip never overlaps the interaction-mode HUD and stays on screen (1280x720 and 1920x1080); during a run the HUD
+  stays live and drawn above Variants, beside it in the rail's column (Slice 09 rework), and becomes modal-inert again when the run
+  ends.
 
 Not provable headless (Human check HV-RFX-09-01, `docs/OPERATIONS.md`): the physical Esc key, sound, a second screen.
 """
@@ -80,10 +81,13 @@ READY = _until(f"{EXPLORER}.state().open && !!{EXPLORER}.run.view() && !!{STRIP}
 GEOMETRY = {"value": "geometry", "expr": """(()=>{
   const rect=el=>{if(!el)return null;const r=el.getBoundingClientRect();return {l:Math.round(r.left),t:Math.round(r.top),r:Math.round(r.right),b:Math.round(r.bottom)}};
   const band=document.querySelector('#jvStudioExplorer .jvx-presenter'),hud=document.getElementById('interactionModeHud');
-  const a=rect(band),h=rect(hud);
-  const overlap=a&&h&&a.l<h.r&&h.l<a.r&&a.t<h.b&&h.t<a.b;
-  const mid=hud?document.elementFromPoint((h.l+h.r)/2,(h.t+h.b)/2):null;
-  return {band:a,hud:h,overlap:!!overlap,hudReachable:!!mid&&(hud.contains(mid)||mid===hud),vw:innerWidth,vh:innerHeight};
+  const btn=hud&&hud.querySelector('button'),rail=document.getElementById('presentationRail');
+  const a=rect(band),h=rect(btn||hud),r=rail&&!rail.hidden?rect(rail):null;
+  const meets=(x,y)=>!!x&&!!y&&x.l<y.r&&y.l<x.r&&x.t<y.b&&y.t<x.b;
+  const mid=btn?document.elementFromPoint((h.l+h.r)/2,(h.t+h.b)/2):null;
+  let inert=false;for(let n=btn;n;n=n.parentElement)if(n.inert)inert=true;
+  return {band:a,hud:h,rail:r,overlap:meets(a,h),railOverlap:meets(r,h),hudReachable:!!mid&&btn.contains(mid),hudInert:inert,
+    runClass:document.documentElement.classList.contains('jvx-run'),vw:innerWidth,vh:innerHeight};
 })()"""}
 
 
@@ -217,9 +221,13 @@ async def test_the_presenter_strip_never_overlaps_the_mode_hud_and_stays_on_scre
     geometry = result["reads"]["geometry"]
     assert geometry["hud"] is not None, "the interaction-mode HUD is part of the real page"
     assert geometry["overlap"] is False, geometry
-    # Variants is a modal dialog (Slice 07): while it is open the page under it, the HUD included, is not clickable; closing Variants
-    # (Échap, ✕) gives it back. The old floating band left the HUD clickable: flagged for agent 0 in the Slice 09 evidence README.
-    assert geometry["hudReachable"] is False, geometry
+    # Slice 09 rework (agent 0's decision): during a run the interaction-mode HUD stays live and drawn above Variants, in the rail's
+    # column (whose list stops above it): « Refusé par la voix » and the way out of PRESENTATION stay visible and clickable.
+    assert geometry["runClass"] is True and geometry["hudInert"] is False, geometry
+    assert geometry["hudReachable"] is True, geometry
+    assert geometry["railOverlap"] is False, geometry
+    h = geometry["hud"]
+    assert h["l"] >= 0 and h["b"] <= geometry["vh"], geometry
     band = geometry["band"]
     assert band["l"] >= 0 and band["r"] <= geometry["vw"] and band["t"] >= 0 and band["b"] <= geometry["vh"], geometry
     assert shot.stat().st_size > 1000

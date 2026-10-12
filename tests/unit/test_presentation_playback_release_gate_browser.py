@@ -430,18 +430,27 @@ async def test_a_presenter_run_enters_a_scene_on_frame_zero_while_its_entry_reve
 #: Slice 09: the run's « Élément suivant » in the Variants transport.
 NEXT_ITEM = ("[...document.querySelectorAll('#jvStudioExplorer [role=\"toolbar\"] button')].find(b=>b.getAttribute('aria-label')==='Élément suivant')")
 NEXT_ITEM_READY = f"(()=>{{const b={NEXT_ITEM};return !!b&&b.getAttribute('aria-disabled')!=='true'}})()"
+#: Slice 09 rework: Core's order reaches the page LATE, as Slice 07 measured it (the scene's surface at once, its timeline 2.6 s after): every
+#: `jarvis:studio-timeline` the page emits from now on reaches its listeners 2.6 s later (a capture listener on `window`, which Chrome runs
+#: before the explorer's own). A Player that plays by itself (a host grace play, `autoplay: true`) plays inside that gap and is caught.
+DELAY_CORE_ORDER = ("(()=>{if(window.__lateOrder)return;window.__lateOrder=2600;window.addEventListener('jarvis:studio-timeline',(e)=>{"
+                    "if(e.__late)return;e.stopImmediatePropagation();const d=e.detail;"
+                    "setTimeout(()=>{const again=new CustomEvent('jarvis:studio-timeline',{detail:d});again.__late=true;"
+                    "window.dispatchEvent(again)},window.__lateOrder)},true)})()")
 
 
 async def test_finding_7_a_next_posted_to_core_enters_the_scene_once_from_frame_zero_without_a_replay(tmp_path):
     """Slice 07 Finding 7 (owner Slice 09), real Core / Chrome / Remotion: a presenter run hosted in Variants; S1 plays; a `next` is POSTED
     TO CORE (the route a cue or the voice uses, not a page button). The Variants Player of S2 never plays before Core's order reaches it (no
     grace play, no play on ready), then plays its entry from frame 0 to its stop frame once: no frame goes backward (the 78 -> 0 replay of the
-    retired run stage), no Board window exists."""
+    retired run stage), no Board window exists. Core's order is held back 2.6 s in the page (`DELAY_CORE_ORDER`, the delay Slice 07
+    measured), from before the run starts: every Variants Player (preview, S1, S2) stays paused until an order plays it, so a self-playing
+    Variants Player (`autoplay: true`) fails here."""
 
     async with RemotionStack(tmp_path, runtime_dir=RUNTIME) as stack:
         pid, _vid = await make_deck(stack, reveal_on_entry=True)
         player = run_state(240)
-        plan = open_variants(pid) + presenter_start(stack, pid) + [
+        plan = open_variants(pid) + [{"eval": DELAY_CORE_ORDER}] + presenter_start(stack, pid) + [
             {"until": f"(()=>{{const s={run_state(90)};return !!s&&s.phase==='ready'&&s.place==='variants'}})()", "ms": 60000, "required": True,
              "as": "s1_ready"},
             {"wait": 1200}, {"value": "next_at", **NOW},
@@ -461,13 +470,26 @@ async def test_finding_7_a_next_posted_to_core_enters_the_scene_once_from_frame_
         orders = [row for row in probe["ev"] if row[1] == "order" and row[2] == uid]
         plays = [row for row in orders if row[3] == "play"]
         moving = [frame for _ms, frame, playing in clocks[uid] if playing]
-        evidence = {"next_at": reads.get("next_at"), "orders": orders, "first_play": first_play(probe, uid), "end": reads.get("end"),
+        # Every Variants Player (the preview, S1, S2...) stays paused until an order plays it from a frame (Core's timeline, the transport):
+        # a frameless `play` is the host's own grace play, and a Player moving before any framed play played by itself.
+        self_played = {}
+        for row in probe["ev"]:
+            if row[1] == "mount" and row[3] == "explorer":
+                mine = [o for o in probe["ev"] if o[1] == "order" and o[2] == row[2] and o[3] == "play"]
+                first = next((o[0] for o in mine if o[4] is not None), None)
+                early = [c for c in clocks.get(row[2], []) if c[2] and (first is None or c[0] < first)]
+                frameless = [o for o in mine if o[4] is None]
+                if early or frameless:
+                    self_played[f"{row[4]}#{row[2]}"] = {"first_framed_play_ms": first, "frameless_plays": frameless[:3], "playing_before": early[:3]}
+        evidence = {"next_at": reads.get("next_at"), "orders": orders, "self_played": self_played,
+                    "all_orders": [row for row in probe["ev"] if row[1] in ("mount", "order", "gone")], "first_play": first_play(probe, uid), "end": reads.get("end"),
                     "backward": [(a, b) for a, b in zip(clocks[uid], clocks[uid][1:]) if b[1] < a[1]],
                     "lowest_moving_frame": min(moving) if moving else None, "core": core_view(reads.get("core")),
                     "no_board_stage": reads.get("no_board_stage"), "clocks": clocks[uid][:60]}
         record("finding7_next_by_core_route_in_variants", evidence)
         assert evidence["no_board_stage"] is True
         assert plays and all(row[4] == 0 for row in plays[:1]), f"the first play of S2 is Core's, from frame 0: {orders[:4]}"
+        assert evidence["self_played"] == {}, f"a Variants Player played before any order reached it: {evidence['self_played']}"
         assert not [row for row in plays if row[4] is None], f"a play without a frame (the host's own grace play) reached S2: {orders}"
         assert evidence["backward"] == [], f"S2 stepped back (the Finding 7 replay): {evidence['backward'][:3]}"
         assert evidence["first_play"] and evidence["first_play"][1] <= 2, evidence["first_play"]

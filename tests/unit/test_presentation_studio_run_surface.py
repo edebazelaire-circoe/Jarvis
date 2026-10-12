@@ -162,14 +162,17 @@ async def test_a_show_that_never_resolves_pauses_the_run_with_a_bounded_actionab
     applied(await rig.service.start(rig.start_body()))
     hanging.hang = True
     began = time.monotonic()
-    result = await rig.run("next")
+    try:   # the test's own bound: without the sync cap, the run would hang here forever; it must fail cleanly instead
+        result = await asyncio.wait_for(rig.run("next"), 5)
+    except TimeoutError:
+        pytest.fail("the stage sync is not bounded: `next` was still waiting on a show that never resolves after 5 s")
     assert time.monotonic() - began < 2                                       # bounded, never forever
     assert result.status is PlaybackStatus.STAGE_FAILED and result.reason == "stage_timeout"
     state = rig.service.where()
     assert state["phase"] == "paused" and state["problems"] == ["stage_timeout"]
     assert rig.env.sink.of("core.presentation_studio.playback_stage_sync_timeout")[0][0] == "error"
     hanging.hang = False                                                      # the cause went away: « Reprendre » retries
-    state = applied(await rig.run("resume"))
+    state = applied(await asyncio.wait_for(rig.run("resume"), 5))
     assert state["phase"] == "playing" and (await rig.stage_object()).payload.title == "Deux"
 
 

@@ -76,7 +76,7 @@ async def test_a_jarvis_run_the_speech_stack_cannot_take_is_a_visible_pause_and_
         assert (reads["lines_before"], reads["lines_after"], reads["again"]) == (1, 2, True), "continue retried, and said it failed again"
         assert "Bonjour" not in reads["text"], "the strip shows states and codes, never the script"
         geometry = reads["geometry"]
-        assert geometry["overlap"] is False, geometry   # Variants is modal: the HUD is under it (test_variants_run_browser.py)
+        assert geometry["overlap"] is False, geometry   # during a run the HUD stays live above Variants (test_variants_run_browser.py)
         _no_noise(result)
 
 

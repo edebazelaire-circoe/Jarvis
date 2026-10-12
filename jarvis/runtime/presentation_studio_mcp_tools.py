@@ -37,6 +37,7 @@ import aiohttp
 from jarvis.domain.presentation_studio import is_presentation_id
 from jarvis.domain.presentation_studio_authoring_guide import draft_guide
 from jarvis.domain.presentation_studio_checks import is_scene_id
+from jarvis.domain.presentation_studio_explorer import DELIVERY_DEADLINE_S, WORK_DEADLINE_MAX_S
 from jarvis.domain.presentation_studio_scene_variants import is_scene_variant_id
 from jarvis.domain.presentation_studio_template import is_template_id
 from jarvis.domain.presentation_studio_variants import is_variant_id
@@ -44,10 +45,14 @@ from jarvis.protocol.client import CoreProtocolError, LocalCoreClient
 from jarvis.runtime.journal import RuntimeJournal
 from jarvis.runtime.presentation_studio_mcp_support import (
     BRAIN_ACTOR, CONNECT_TIMEOUT_S, MAX_LISTED, READ_TIMEOUT_S, WRITE_TIMEOUT_S, ConfirmationLedger, PresentationToolError, capped, clip,
-    sentence_for,
+    sentence_for, surface_unavailable_sentence,
 )
 
 ITEM_ID = re.compile(r"psi_[0-9a-f]{12}\Z")
+#: Slice 09 rework: the longest a start waits for Variants to show the run before pausing it. The page's channel answers within its own
+#: deadlines (delivery 4 s: no visible page is known after 4 s; final receipt 10 s after the page accepted, the graph loading); 2 s of
+#: margin bounds a Control Center that hangs. Was 30 s: Jarvis could present to an empty screen that long.
+HOST_IN_VARIANTS_TIMEOUT_S = DELIVERY_DEADLINE_S + WORK_DEADLINE_MAX_S + 2.0
 ANCHOR_ID = re.compile(r"[a-z][a-z0-9_]{0,39}\Z")
 CONTROL_ID = re.compile(r"[A-Za-z][A-Za-z0-9_.-]{0,63}\Z")
 
@@ -785,7 +790,8 @@ class PresentationTools:
         body = _drop_none({"action": "open", "presentation_id": view.get("presentation_id"), "variant_id": view.get("variant_id"),
                            "fullscreen": False})
         try:
-            status, receipt = await self._cc.request("POST", "/api/presentation-studio/explorer/commands", body, timeout_s=30.0)
+            status, receipt = await self._cc.request("POST", "/api/presentation-studio/explorer/commands", body,
+                                                     timeout_s=HOST_IN_VARIANTS_TIMEOUT_S)
         except PresentationToolError as exc:
             status, receipt = 503, {"code": exc.code, "reason": str(exc)}
         shown = status < 400 and not (isinstance(receipt, Mapping) and receipt.get("state") == "refused")
@@ -798,7 +804,7 @@ class PresentationTools:
             await self._c(lambda c: c.presentation_studio_playback("pause", {"actor": BRAIN_ACTOR}))
         except PresentationToolError:
             pass   # the refusal below still says why; the run may already be paused or stopped
-        raise self._refuse(tool, "surface_unavailable", sentence_for("surface_unavailable") + f" ({code})", state="paused")
+        raise self._refuse(tool, "surface_unavailable", surface_unavailable_sentence(code) + f" ({code})", state="paused")
 
     # ------------------------------------------------------------------ rail : masquer, archiver, renommer (niveau présentation)
 

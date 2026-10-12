@@ -60,10 +60,32 @@ function runBench(hostExtra){
 
 # ------------------------------------------------------------------ 1. the run adapter on the real host
 
+def explorer_host_options(tmp_path):
+    """The options the REAL explorer passes to `createPrefabHost` for its Player (the one a run is mounted in), read on the fake DOM: only
+    the plain values (the callbacks, the document and the window are the explorer's own wiring)."""
+    return run_ui(tmp_path / "explorer", RUN_UI + r"""
+      seed(3);
+      const ex=make({player:fakePlayer});
+      await showView(runView());
+      fakePlayer.surf=SURF;fire('jarvis:studio-surface',{surface:SURF});await env.advance(200);
+      const deps=prefabFake.hosts[0].deps,plain={};
+      for(const [k,v] of Object.entries(deps))if(v===null||['string','number','boolean'].includes(typeof v))plain[k]=v;
+      return plain;
+    """)
+
+
 def test_finding_7_a_scene_entered_by_a_core_next_is_never_played_before_cores_order_and_never_replayed(tmp_path):
     """Slice 07, Finding 7 (owner Slice 09): the run stage's host started its own grace play 450 ms after the frame was ready, before the band's
     1.5 s poll brought Core's order; the order then replayed the entry from frame 0 (78 -> 0). In Variants the host never plays by itself and
-    the embedded stage page never plays on ready, so the only play a scene ever gets is Core's, from frame 0: the race cannot happen."""
+    the embedded stage page never plays on ready, so the only play a scene ever gets is Core's, from frame 0: the race cannot happen.
+
+    The host is configured with the options the REAL explorer passes (read from it, never written here): a self-playing Variants Player
+    (`autoplay: true`) fails this test."""
+
+    (tmp_path / "explorer").mkdir()
+    options = explorer_host_options(tmp_path)
+    assert options.get("autoplay") is False, f"run mode: the explorer's Player never plays by itself ({options})"
+    assert options.get("embed") == "variants"
 
     result = run_stage_node(tmp_path, ADAPTER + r"""
       const run=async(config)=>{
@@ -83,8 +105,8 @@ def test_finding_7_a_scene_entered_by_a_core_next_is_never_played_before_cores_o
         b.plays(fb,0,3000);
         return {a:b.posted(fa),beforeOrder,b:b.posted(fb),key:b.host.key('variants-run-r1')};
       };
-      return {variants:await run({autoplay:false,embed:'variants'}),retired:await run({})};
-    """)
+      return {variants:await run(D.explorer),retired:await run({})};
+    """, {"explorer": options})
     v = result["variants"]
     assert v["beforeOrder"] == [["pause", 0, None]], "Variants: nothing plays the entered scene before Core's order (no grace play)"
     assert v["b"] == [["pause", 0, None], ["play", 0, 149]], "one play, Core's, from frame 0: the entry is played once, never replayed"
@@ -273,3 +295,81 @@ def test_the_runs_frame_posts_its_events_and_reports_its_mount_to_the_hot_reload
     assert result["posts"] == [True, False], "only the run's frame posts; the preview never writes"
     assert result["answer"] == {"outcome": "applied", "revision": 2} and result["sent"] == ["variants-run-r1"]
     assert result["outcomes"] == ["variants-run-r1"], "the run frame's mount is reported to the hot reload; the preview's is not"
+
+
+def test_the_mode_hud_stays_live_during_a_run_and_the_page_under_variants_stays_inert(tmp_path):
+    """Slice 09 rework (agent 0's decision): Variants is modal (the page under it is inert) except what lives beside it. The interaction-mode
+    HUD (`data-keep-live="run"`, nested in `#app` like the real page) stays live during a run — « Refusé par la voix » and the way out of
+    PRESENTATION stay usable — and is inert again when the run ends with Variants still open; closing Variants gives everything back."""
+
+    result = run_ui(tmp_path, RUN_UI + r"""
+      seed(3);
+      const app=doc.createElement('div'),hud=doc.createElement('div'),face=doc.createElement('div'),rail=doc.createElement('div');
+      hud.setAttribute('data-keep-live','run');rail.setAttribute('data-keep-live','true');
+      app.appendChild(face);app.appendChild(hud);doc.body.appendChild(app);doc.body.appendChild(rail);
+      const look=()=>({app:!!app.inert,hud:!!hud.inert,face:!!face.inert,rail:!!rail.inert,run:doc.documentElement.classList.contains('jvx-run')});
+      const ex=make({player:fakePlayer});
+      await ex.open({presentation_id:PID,fullscreen:false});await env.advance(400);
+      const before=look();
+      await showView(runView());
+      const during=look();
+      await showView({phase:'stopped',running:false,run_id:'r1',last_run:{run_id:'r1',reason:'user',problems:[]}});await env.advance(400);
+      const ended=look();
+      await showView(runView({run_id:'r2',stage_object_id:'variants-run-r2',surface:{id:'variants-run-r2',rev:1}}));
+      const again=look();
+      ex.close({reason:'user'});await env.advance(100);
+      return {before,during,ended,again,closed:look()};
+    """)
+    assert result["before"] == {"app": True, "hud": False, "face": False, "rail": False, "run": False}, "no run: the whole page is under the modal"
+    assert result["during"] == {"app": False, "hud": False, "face": True, "rail": False, "run": True}, \
+        "during a run the HUD is live (its container is not inert, its siblings are) and drawn above Variants (`jvx-run`)"
+    assert result["ended"] == result["before"], "the run ended, Variants still open: the HUD is under the modal again"
+    assert result["again"] == result["during"]
+    assert result["closed"] == {"app": False, "hud": False, "face": False, "rail": False, "run": False}
+
+
+def test_closing_variants_pauses_the_run_in_every_active_phase(tmp_path):
+    """Slice 09 rework: closing Variants during a run never lets it go on unseen. `playing` and `resuming` pause at once; a `detour`
+    (Core refuses `pause` there) is paused as soon as Core's view leaves it for this run, once; `paused` / `ended` send nothing; reopening
+    Variants on the run cancels a pause-on-return."""
+
+    result = run_ui(tmp_path, RUN_UI + r"""
+      seed(3);
+      const out={};
+      for(const phase of ['playing','resuming','detour','paused','ended']){
+        const ex=make({player:fakePlayer});
+        fakePlayer.commands=[];
+        await showView(runView({run_id:'r-'+phase,phase}));
+        ex.close({reason:'user'});await env.advance(100);
+        const atClose=fakePlayer.commands.slice();
+        let afterReturn=null;
+        if(phase==='detour'){
+          await showView(runView({run_id:'r-'+phase,phase:'detour'}));       // still in the detour: nothing yet
+          const still=fakePlayer.commands.slice();
+          await showView(runView({run_id:'r-'+phase,phase:'resuming'}));     // the detour returned: pause, once
+          await showView(runView({run_id:'r-'+phase,phase:'playing'}));
+          afterReturn={still,after:fakePlayer.commands.slice()};
+        }
+        out[phase]={atClose,afterReturn,open:ex.isOpen()};
+        ex.destroy&&ex.destroy();
+      }
+      /* Reopened on the run before the detour returns: the user sees it, no pause is sent. */
+      const ex=make({player:fakePlayer});fakePlayer.commands=[];
+      await showView(runView({run_id:'r-back',phase:'detour'}));
+      ex.close({reason:'user'});await env.advance(100);
+      await ex.open({presentation_id:PID,fullscreen:false});await env.advance(400);
+      await showView(runView({run_id:'r-back',phase:'detour'}));
+      await showView(runView({run_id:'r-back',phase:'resuming'}));
+      out.reopened=fakePlayer.commands.slice();
+      out.toasts=env.toasts.map(t=>t.title);
+      return out;
+    """)
+    assert result["playing"]["atClose"] == [["pause", {}]]
+    assert result["resuming"]["atClose"] == [["pause", {}]], "resuming: the run is paused, never left to play unseen"
+    d = result["detour"]
+    assert d["atClose"] == [] and d["afterReturn"]["still"] == [], "in a detour Core refuses pause: nothing is sent while it lasts"
+    assert d["afterReturn"]["after"] == [["pause", {}]], "the detour returned: paused once, never again"
+    assert result["paused"]["atClose"] == [] and result["ended"]["atClose"] == []
+    assert all(not result[p]["open"] for p in ("playing", "resuming", "detour", "paused", "ended")), "a closed Variants stays closed"
+    assert result["reopened"] == [], "Variants reopened on the run: no pause-on-return"
+    assert "Présentation en pause au retour" in result["toasts"]

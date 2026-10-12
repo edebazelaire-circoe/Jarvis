@@ -287,6 +287,45 @@ async def test_a_start_is_shown_in_variants_and_without_a_visible_page_the_run_p
     assert (await world.tools.inspect("playback"))["state"]["phase"] == "paused", "Jarvis never presents to an empty screen"
 
 
+@pytest.mark.parametrize("code, says, never", [
+    ("explorer_dialog_open", "un formulaire y est ouvert", "ouvrir l'interface"),
+    ("explorer_command_busy", "une autre commande de l'explorateur était en cours", "ouvrir l'interface"),
+    ("explorer_no_visible_page", "ouvrir l'interface de JARVIS", "formulaire"),
+])
+async def test_surface_unavailable_gives_the_advice_of_the_pages_own_reason(world, code, says, never):
+    """Slice 09 rework: a page that refused because a form is open or another explorer command was in flight IS visible: the sentence
+    never says « open the JARVIS interface » there; it says what to do for that reason, and the run is paused either way."""
+
+    world.cc.answers[ATTESTED] = (200, {"ok": True, "addressed_user_turn": True})
+    route = "/api/presentation-studio/explorer/commands"
+    status = 504 if code == "explorer_no_visible_page" else 200
+    world.cc.answers[("POST", route)] = ((status, {"ok": False, "code": code, "error": "x"}) if status == 504 else
+                                         (200, {"state": "refused", "code": code, "reason": "x"}))
+    error = await refused(world.tools.play("start", role="rehearsal"))
+    text = str(error)
+    assert error.code == "surface_unavailable" and code in text and "mise en pause" in text
+    assert says in text and never not in text, text
+    if code != "explorer_no_visible_page":
+        assert "presentation_view window_open" in text and "presentation_play resume" in text
+    assert (await world.tools.inspect("playback"))["state"]["phase"] == "paused"
+
+
+async def test_a_start_waits_for_variants_within_the_pages_own_deadlines_not_30_s(world):
+    """Slice 09 rework: the start waits for the page's receipt at most delivery (4 s) + final receipt (10 s) + 2 s margin, then pauses:
+    Jarvis never presents to an empty screen for 30 s."""
+
+    from jarvis.domain.presentation_studio_explorer import DELIVERY_DEADLINE_S, WORK_DEADLINE_MAX_S
+    from jarvis.runtime.presentation_studio_mcp_tools import HOST_IN_VARIANTS_TIMEOUT_S
+
+    world.cc.answers[ATTESTED] = (200, {"ok": True, "addressed_user_turn": True})
+    route = "/api/presentation-studio/explorer/commands"
+    world.cc.answers[("POST", route)] = (200, {"state": "opened", "mode": "windowed"})
+    await world.tools.play("start", role="rehearsal")
+    waited = [t for (_m, r, _b), t in zip(world.cc.requests, world.cc.timeouts) if r == route]
+    assert waited == [HOST_IN_VARIANTS_TIMEOUT_S] == [DELIVERY_DEADLINE_S + WORK_DEADLINE_MAX_S + 2.0]
+    assert HOST_IN_VARIANTS_TIMEOUT_S <= 16.0
+
+
 async def test_window_ops_open_and_close_variants_windowed_with_the_pages_receipt(world):
     """The floating window host is retired (Slice 09): `window_open` / `window_close` keep their names for the brain's habits and now
     open / close Variants, windowed, through the explorer's command channel (a receipt, never a blind screen request)."""

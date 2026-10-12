@@ -14,7 +14,7 @@ band: the "floating viewer" the user rejected (contract `docs/presentation-studi
   Board window.
 - **Memory only** (R6): nothing persisted, nothing on the Board; a Core restart has no run and no surface.
 - **Legacy reclaim.** Board windows an older Core left (`studio_stage` / `studio_aux`) are archived by `LegacyStageReclaimer`
-  (`presentation_studio_stage.py`) at Core start and before each run: one last pass, by id list and by namespaced scan.
+  (`presentation_studio_stage.py`) at Core start and before each run: one last pass, by id list and by a scan of the retired categories.
 - **A pin source.** `pins()` names every pin the surface shows (scene, detours), so a frame on screen is never archived under the
   Player (contract § 8, `StudioPinRegistry`).
 - **Frame events.** A frame mounted under the surface id posts its `state` / `notify` events to `/v1/prefabs/events` like a Board

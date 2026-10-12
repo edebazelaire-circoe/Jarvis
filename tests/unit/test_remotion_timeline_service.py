@@ -225,7 +225,7 @@ async def test_a_hot_reload_carries_the_anchors_over_and_recomputes_the_frames(r
     assert after["seq"] > before["seq"] and after["playing"] is True and rig.service.where()["phase"] == "playing"
 
 
-async def test_played_time_does_not_survive_leaving_the_timeline_and_coming_back(tmp_path):
+async def test_an_anchorless_scene_has_one_whole_segment_and_its_played_time_restarts_on_re_entry(tmp_path):
     scenes = timed_scenes()
     scenes[0] = {**scenes[0], "anchors": []}           # S1 has no anchor: one whole segment (Slice 09: every run, every Remotion scene)
     rig = await Rig(tmp_path).open(scenes=scenes)

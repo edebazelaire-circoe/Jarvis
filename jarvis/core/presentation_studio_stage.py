@@ -12,13 +12,16 @@ What stays here, and why:
 - `LegacyStageReclaimer`: **one last reclaim pass** for what an older Core left on this machine's scene (contract
   `docs/presentation-studio.md` > *2026-10 § 2*, PX-16). At Core start and before each run it archives
   1. the ids of the old ledger file (`StageLedger`, read only), and
-  2. every object this module namespaced, found by a scan of the scene: category `studio_stage` **and** an id starting
-     `studio-stage-`, or category `studio_aux` **and** an id starting `studio-aux-` (never a free filter: a brain object of the same
-     shape but another id survives).
+  2. every object of a retired category found by a scan of the scene (`studio_stage` / `studio_aux`), **whatever its id**
+     (Slice 09 rework): no live owner can write these categories any more (Core writes no Board object for a run, the Tool Brain
+     refuses them as `studio_owned`, the page never draws them), so an object that holds one — a `studio-aux-` window or any other
+     id — would be an unreachable orphan. Archiving is reversible (the scene keeps it as archived); an object with our id prefix but
+     another category is not ours and survives.
   An id the scene no longer knows is already gone (not a failure). Once the archive succeeded, the ledger file is **kept aside**
-  (`<file>.retired-<UTC timestamp>`, repo data rules: never deleted without a copy) and no new one is ever written. An unreadable
+  (`<file>.retired-<UTC timestamp>`, repo data rules: never deleted without a copy) — an existing ledger whose id list is empty
+  included — and no new one is ever written. An unreadable
   ledger is quarantined (`.corrupt-<timestamp>`) and said as an `error` row, then the scan still runs.
-- The category and prefix constants: the Tool Brain keeps these retired categories reserved (`tool_brain_executor.studio_owned_targets`),
+- The category constants: the Tool Brain keeps these retired categories reserved (`tool_brain_executor.studio_owned_targets`),
   the Control Center page never draws them (`control_center_scene_page.js`), the document hygiene still refuses stage handles.
 
 Contract: `docs/presentation-studio.md` > *Variants run surface (Level 3, Slice 09)*.
@@ -40,8 +43,6 @@ LEGACY_CATEGORIES = frozenset({STAGE_CATEGORY, AUX_CATEGORY})
 #: Ids read from an old ledger, and the scan bound (one archive command).
 MAX_LEDGER_IDS = 16
 MAX_SCAN_IDS = 64
-STAGE_ID_PREFIX = "studio-stage-"
-AUX_ID_PREFIX = "studio-aux-"
 TRACE_PREFIX = "core.presentation_studio"
 
 
@@ -68,10 +69,13 @@ class StageLedger:
 
     def __init__(self, store: LedgerStore, *, diagnostics: DiagnosticSink | None = None) -> None:
         self._store, self._diagnostics = store, diagnostics
+        #: A readable ledger file exists (its id list may be empty): it is retired after the archive, never left in place.
+        self.present = False
 
     def load(self) -> tuple[str, ...]:
         """The ids an older life left. An unreadable ledger is an `error` row and is kept aside, never "nothing to do"."""
 
+        self.present = False
         try:
             stored = self._store.read()
         except Exception as exc:  # noqa: BLE001 - captured as an error row below; the scan still runs
@@ -79,6 +83,7 @@ class StageLedger:
                    data={"error_class": type(exc).__name__})
             self._keep_aside("quarantine", "stage_ledger_quarantined", "Registre illisible conserve a part")
             return ()
+        self.present = stored is not None
         return tuple(i for i in (stored or []) if isinstance(i, str) and i)[:MAX_LEDGER_IDS]
 
     def retire(self) -> None:
@@ -107,7 +112,7 @@ class LegacyStageReclaimer:
         self._scene, self._ledger, self._diagnostics, self._actor = scene, ledger, diagnostics, actor
 
     async def reclaim(self) -> tuple[str, ...]:
-        """Archive what an older Core left (ledger ids + namespaced scan). Returns the ids taken back. Raises `StageError` when
+        """Archive what an older Core left (ledger ids + scan of the retired categories). Returns the ids taken back. Raises `StageError` when
         the scene refuses the archive (the caller says it; the next pass tries again)."""
 
         listed = self._ledger.load()
@@ -115,9 +120,7 @@ class LegacyStageReclaimer:
 
         def plan(snapshot: Any) -> SceneCommand | None:
             known = {o.object_id for o in snapshot.objects}
-            scanned = [o.object_id for o in snapshot.objects
-                       if (o.category == STAGE_CATEGORY and o.object_id.startswith(STAGE_ID_PREFIX))
-                       or (o.category == AUX_CATEGORY and o.object_id.startswith(AUX_ID_PREFIX))]
+            scanned = [o.object_id for o in snapshot.objects if o.category in LEGACY_CATEGORIES]
             found[:] = list(dict.fromkeys([*(i for i in listed if i in known), *scanned]))[:MAX_SCAN_IDS]
             if not found:
                 return None
@@ -130,7 +133,7 @@ class LegacyStageReclaimer:
         if update is not None and update.outcome not in (SceneCommandOutcome.APPLIED, SceneCommandOutcome.DUPLICATE):
             reason = update.reason.value if update.reason is not None else update.outcome.value
             raise StageError(reason, update.detail or f"the scene refused the archive ({reason})")
-        if listed:
+        if self._ledger.present:   # an empty id list included: the file is set aside all the same
             self._ledger.retire()
         if found:
             _trace(self._diagnostics, "legacy_stage_reclaimed", "Anciennes fenetres de lecture archivees (vue flottante retiree)",

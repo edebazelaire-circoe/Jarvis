@@ -451,8 +451,9 @@ async def _legacy_window(scene, object_id: str, category: str, actor=None) -> No
 
 async def test_board_windows_an_older_core_left_are_archived_at_start_and_its_ledger_kept_aside(tmp_path):
     """PX-16 and persisted state: a `studio-stage-*` / `studio-aux-*` window of the retired floating viewer, persisted on the scene
-    by an older Core (killed mid-run), is archived once at Core start (ledger ids AND a namespaced scan, the ledger is gone or not);
-    the old ledger file is kept aside (`.retired-*`), never deleted; a brain object of the same category but another id survives."""
+    by an older Core (killed mid-run), is archived once at Core start (ledger ids AND a scan of the retired categories, the ledger is gone or not);
+    the old ledger file is kept aside (`.retired-*`), never deleted; an object of a retired category with another id (a brain
+    orphan: never drawn, refused to the Tool Brain) is archived too (Slice 09 rework); another category survives."""
 
     root = tmp_path / "studio"
     rig = Rig(tmp_path, ledger_store=FileStageLedger(root))
@@ -462,20 +463,21 @@ async def test_board_windows_an_older_core_left_are_archived_at_start_and_its_le
         await _legacy_window(rig.scene, "studio-stage-lost-1", "studio_stage")          # not in the ledger: found by the scan
         await _legacy_window(rig.scene, "studio-aux-oldrun-a1", "studio_aux")
         from jarvis.domain.scene import SceneActor
-        await _legacy_window(rig.scene, "brain-window-1", "studio_aux", SceneActor.BRAIN)  # same category, not our namespace
+        await _legacy_window(rig.scene, "brain-window-1", "studio_aux", SceneActor.BRAIN)  # retired category, another id: an orphan
+        await _legacy_window(rig.scene, "studio-stage-note", "note")                       # our prefix, another category: survives
         (root / "state").mkdir(parents=True, exist_ok=True)
         (root / "state" / LEDGER_FILE).write_text(json.dumps({"schema": LEDGER_SCHEMA, "object_ids": [
             "studio-stage-oldrun", "studio-aux-oldrun-a1", "studio-stage-already-archived"]}), encoding="utf-8")
         await rig.service.start_service()
         remaining = {o.object_id for o in await rig.objects()}
-        assert remaining == {"brain-window-1"}
+        assert remaining == {"studio-stage-note"}
         assert not (root / "state" / LEDGER_FILE).exists()
         assert len(list((root / "state").glob(LEDGER_FILE + ".retired-*"))) == 1        # kept aside, never deleted
-        assert rig.env.sink.of("core.presentation_studio.legacy_stage_reclaimed")[0][1]["count"] == 3
+        assert rig.env.sink.of("core.presentation_studio.legacy_stage_reclaimed")[0][1]["count"] == 4
         assert rig.service.where() == {"phase": "idle", "running": False}
         # a run afterwards creates no Board object, and a second pass has nothing left to do
         applied(await rig.service.start(rig.start_body()))
-        assert {o.object_id for o in await rig.objects()} == {"brain-window-1"}
+        assert {o.object_id for o in await rig.objects()} == {"studio-stage-note"}
     finally:
         await rig.close()
 

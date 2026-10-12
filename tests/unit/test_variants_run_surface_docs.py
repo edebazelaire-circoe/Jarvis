@@ -68,3 +68,48 @@ def test_every_test_file_the_section_cites_exists_and_the_retired_viewer_is_gone
 def test_the_human_check_is_in_operations():
     ops = page("OPERATIONS.md")
     assert "HV-RFX-09-01" in ops and "Variantes" in ops
+
+
+def test_the_escape_rule_is_precise_leaving_fullscreen_never_pauses_closing_variants_during_a_run_pauses():
+    """Slice 09 rework: no unqualified « Échap never pauses » — the Échap that closes Variants mid-run pauses the run."""
+
+    text = page("presentation-studio.md")
+    rows = [line for line in text.splitlines() if line.startswith("| `Échap` |") and "then Variants" in line]
+    assert rows and all("leaving fullscreen **never pauses**" in r and "closing Variants **pauses the run**" in r for r in rows), rows
+    for line in text.splitlines():
+        if "Échap" in line and "never pauses" in line:
+            assert "only leaves fullscreen" in line or "leaving fullscreen" in line, line
+    sec = section()
+    assert "the `Échap` that closes Variants during a run pauses the run" in sec
+
+
+def test_the_limits_say_the_hud_stays_live_and_every_active_phase_pauses_on_close():
+    sec = section()
+    assert 'data-keep-live="run"' in sec and "stays live and drawn above it" in sec
+    assert "the interaction-mode HUD is under it" not in sec
+    for phase in ("`playing`", "`resuming`", "`detour`"):
+        assert phase in sec, phase
+    html = (ROOT / "jarvis" / "runtime" / "control_center.html").read_text(encoding="utf-8")
+    assert '<div id="interactionModeHud" data-keep-live="run"></div>' in html
+
+
+def test_stale_viewer_wording_is_gone_and_the_handover_tolerance_is_stated():
+    text = page("presentation-studio.md")
+    assert "band cases in" not in text and "in Variants and on the run stage" not in text
+    assert "until Slice 09 removes it" not in text
+    assert "`control_center_presentation_window.js` (the window)" not in text
+    assert "`ui.request`: `open_window`" not in text
+    assert "A scene without anchors (in a `manual` run the user paces)" not in text
+    frame_js = (ROOT / "jarvis" / "runtime" / "control_center_remotion_frame.js").read_text(encoding="utf-8")
+    slack = re.search(r"END_SLACK_FRAMES=(\d+)", frame_js).group(1)
+    assert f"`END_SLACK_FRAMES` ({slack})" in text and f"last {slack} frames or fewer" in text
+
+
+def test_the_surface_unavailable_advice_and_bound_are_stated_with_the_codes_value():
+    from jarvis.runtime.presentation_studio_mcp_support import SURFACE_UNAVAILABLE_ADVICE
+    from jarvis.runtime.presentation_studio_mcp_tools import HOST_IN_VARIANTS_TIMEOUT_S
+
+    sec = section()
+    for code in SURFACE_UNAVAILABLE_ADVICE:
+        assert f"`{code}`" in sec, code
+    assert "`HOST_IN_VARIANTS_TIMEOUT_S`" in sec and f"= {HOST_IN_VARIANTS_TIMEOUT_S:g} s" in sec

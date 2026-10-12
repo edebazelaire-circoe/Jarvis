@@ -171,6 +171,27 @@ def sentence_for(code: str, fallback: str = "") -> str:
     return SENTENCES.get(code) or fallback or "Refusé."
 
 
+#: `surface_unavailable` (native-studio-playback-fix Slice 09 rework): the run started then was paused because Variants could not show
+#: it; what to do depends on WHY the page could not (the code of its receipt). A page that refused because a form is open or another
+#: explorer command was in flight IS visible: « open the JARVIS interface » would be wrong advice there.
+SURFACE_UNAVAILABLE_ADVICE: dict[str, str] = {
+    "explorer_dialog_open": ("Variantes n'a pas pu la montrer : un formulaire y est ouvert. Demande à l'utilisateur de le fermer ou de le "
+                             "valider, puis ouvre Variantes sur la présentation (presentation_view window_open) et reprends avec "
+                             "presentation_play resume."),
+    "explorer_command_busy": ("Variantes n'a pas pu la montrer : une autre commande de l'explorateur était en cours. Dans un instant, ouvre "
+                              "Variantes sur la présentation (presentation_view window_open), puis reprends avec presentation_play resume."),
+}
+
+
+def surface_unavailable_sentence(code: str) -> str:
+    """The `surface_unavailable` sentence for the page's own refusal `code` (default: no visible page)."""
+
+    advice = SURFACE_UNAVAILABLE_ADVICE.get(code)
+    if advice is None:
+        return SENTENCES["surface_unavailable"]
+    return "La présentation a démarré puis a été mise en pause. " + advice
+
+
 class ConfirmationLedger:
     """Jetons de confirmation liés à un état exact, valables dans ce processus seulement (HMAC à secret par processus).
 
@@ -209,4 +230,4 @@ class ConfirmationLedger:
 
 
 __all__ = ["BRAIN_ACTOR", "CONFIG_FILE_NAME", "ConfirmationLedger", "PresentationMcpTarget", "PresentationToolError", "SENTENCES",
-           "SERVER_NAME", "capped", "clip", "sentence_for"]
+           "SERVER_NAME", "SURFACE_UNAVAILABLE_ADVICE", "capped", "clip", "sentence_for", "surface_unavailable_sentence"]

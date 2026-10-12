@@ -408,6 +408,14 @@
     rgba(3,7,11,.80);
   -webkit-backdrop-filter:blur(26px) saturate(.75);backdrop-filter:blur(26px) saturate(.75)}
 #${HOST_ID}[hidden],#${HOST_ID} [hidden]{display:none!important}
+/* Slice 09 rework: during a run (\`jvx-run\` on <html>) the interaction-mode HUD (\`data-keep-live="run"\`) is drawn above Variants (9000)
+   and the presentations rail (9100), under the rail's menu (9300); beside Variants, in the rail's column, whose list stops above it. */
+html.jvx-run #interactionModeHud{z-index:9150}
+html.jvx-run.jvr-studio #interactionModeHud{left:12px}
+html.jvx-run.jvr-studio #interactionModeHud .im-btn{min-width:0;max-width:166px;gap:8px;padding:8px 9px}
+html.jvx-run.jvr-studio #interactionModeHud .im-label{letter-spacing:.04em}
+html.jvx-run.jvr-studio #interactionModeHud .im-sub,html.jvx-run.jvr-studio #interactionModeHud .im-pres{letter-spacing:.04em}
+html.jvx-run.jvr-studio #presentationRail{bottom:96px}
 #${HOST_ID}:fullscreen{background:
     radial-gradient(70% 55% at 88% 6%,color-mix(in srgb,var(--jvx-glow-a) 26%,transparent),transparent 72%),
     radial-gradient(60% 60% at 4% 100%,color-mix(in srgb,var(--jvx-glow-b) 20%,transparent),transparent 74%),var(--jvx-bg)}

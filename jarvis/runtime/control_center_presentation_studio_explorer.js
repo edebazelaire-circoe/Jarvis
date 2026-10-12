@@ -103,6 +103,9 @@
       run:null,
     };
     const runsOpened=new Set();
+    /* Slice 09 rework: Variants closed during a detour (Core refuses `pause` there) — the run is paused as soon as Core's view leaves the
+       detour for this run (`resuming` / `playing`), once, so it never goes on unseen. Cleared when Variants opens on the run again. */
+    let pauseOnReturn=null;
     let runTimeline=null;
     const ui={};
     const selectionListeners=new Set();
@@ -1515,6 +1518,42 @@
     function setRunInert(on){
       for(const node of [ui.treePane,ui.actions,ui.vbar,ui.upgrades])if(node)node.inert=!!on;
       if(ui.runChip)ui.runChip.hidden=!on;
+      /* Slice 09 rework: during a run the interaction-mode HUD (`data-keep-live="run"`) stays live and drawn above Variants (`jvx-run` on
+         <html>, rank in the explorer's sheet): « Refusé par la voix » and the way out of PRESENTATION stay on screen. */
+      const html=doc.documentElement;
+      if(html&&html.classList)html.classList.toggle('jvx-run',!!on);
+      if(S.open)applyInert();
+    }
+    /* The page under Variants is inert while it is open (a modal dialog), except what lives beside it: `data-keep-live="true"` (the
+       presentations rail, its menu and dialogs) always, `data-keep-live="run"` (the interaction-mode HUD) during a run. A keep-live element
+       nested in a container keeps it out of the inert set; its siblings are made inert one level down instead. */
+    function keepsLive(n){
+      const v=n&&typeof n.getAttribute==='function'?n.getAttribute('data-keep-live'):null;
+      return v==='true'||v===''||(v==='run'&&!!S.run);
+    }
+    function holdsLive(n){
+      if(!n||typeof n.querySelectorAll!=='function')return false;
+      return Array.from(n.querySelectorAll('[data-keep-live]')).some(keepsLive);
+    }
+    function inertTargets(parent,out){
+      for(const n of Array.from(parent.children||[])){
+        if(n===ui.host||String(n.tagName).toUpperCase()==='SCRIPT'||(n.classList&&n.classList.contains('toasts'))||keepsLive(n))continue;
+        if(holdsLive(n))inertTargets(n,out);
+        else if(!n.inert||inerted.includes(n))out.push(n);
+      }
+      return out;
+    }
+    function applyInert(){
+      const next=inertTargets(doc.body,[]);
+      for(const n of inerted)if(!next.includes(n))n.inert=false;
+      for(const n of next)n.inert=true;
+      inerted=next;
+    }
+    function releaseInert(){
+      for(const n of inerted)n.inert=false;
+      inerted=[];
+      const html=doc.documentElement;
+      if(html&&html.classList)html.classList.remove('jvx-run');
     }
     /* A run of this deck: the stage shows its surface (paused on frame 0 until Core orders it), the tree and actions become inert. */
     function enterRun(view){
@@ -1558,7 +1597,15 @@
     function onRunView(event){
       const view=event&&event.detail&&event.detail.view;
       if(!view)return;
+      if(pauseOnReturn&&(!Run.isRun(view)||view.run_id!==pauseOnReturn||view.phase==='paused'||view.phase==='ended'))pauseOnReturn=null;
       if(Run.isRun(view)){
+        if(pauseOnReturn&&!S.open&&(view.phase==='resuming'||view.phase==='playing')){
+          pauseOnReturn=null;
+          const p=player();
+          if(p&&typeof p.command==='function')p.command('pause',{}).then(r=>log('run_paused_on_return',{status:r&&r.status||null}),
+            error=>log('run_pause_on_return_failed',{error:describe(error)},'error'));
+          return;
+        }
         if(!S.open||S.pid!==view.presentation_id){
           if(runsOpened.has(view.run_id))return;
           runsOpened.add(view.run_id);
@@ -1568,6 +1615,7 @@
           return;
         }
         runsOpened.add(view.run_id);
+        if(pauseOnReturn===view.run_id)pauseOnReturn=null;   // Variants shows the run again: the user sees what plays
         if(!S.run||S.run.runId!==view.run_id)enterRun(view);else updateRun(view);
         return;
       }
@@ -1956,8 +2004,7 @@
       S.opener=opts.opener||doc.activeElement;
       S.open=true;S.loading={label:'Chargement du graphe',at:now()};
       ui.host.hidden=false;
-      inerted=Array.from(doc.body.children).filter(n=>n!==ui.host&&!n.inert&&String(n.tagName).toUpperCase()!=='SCRIPT'&&!(n.classList&&n.classList.contains('toasts'))&&!(n.hasAttribute&&n.hasAttribute('data-keep-live')));
-      for(const n of inerted)n.inert=true;
+      applyInert();
       if(!ui.bound){doc.addEventListener('fullscreenchange',onFullscreenChange);ui.bound=true}
       doc.addEventListener('keydown',onDocKey,true);
       renderAll();renderSound();startTicker();
@@ -2017,12 +2064,19 @@
       for(const t of [tickTimer,pollTimer,armTimer,runTicker])if(t)stopEvery(t);
       tickTimer=pollTimer=armTimer=runTicker=null;
       /* Slice 09: closing Variants during a presentation pauses it (no visible surface: the run must not go on unseen), said. */
+      /* Slice 09 rework: every active phase. `playing` / `resuming` pause now; a `detour` (Core refuses `pause` there) pauses as soon as
+         it returns (`pauseOnReturn`); `paused` / `ended` have nothing to stop. */
       if(S.run){
         const view=S.run.view;
         runAdapter.clear();S.run=null;setRunInert(false);
-        if(view.phase==='playing'&&player()){
-          player().command('pause',{}).then(r=>log('run_paused_on_close',{status:r&&r.status||null}));
+        const phase=view.phase;
+        if((phase==='playing'||phase==='resuming')&&player()){
+          player().command('pause',{}).then(r=>log('run_paused_on_close',{status:r&&r.status||null,phase}));
           tell('Présentation en pause',"Variantes est fermé : la présentation attend. Rouvrez Variantes (rail) pour la reprendre.",'warn');
+        }else if(phase==='detour'&&player()){
+          pauseOnReturn=view.run_id;
+          log('run_pause_on_return',{run_id:view.run_id});
+          tell('Présentation en pause au retour',"Variantes est fermé : la présentation se mettra en pause à la fin du détour. Rouvrez Variantes (rail) pour la reprendre.",'warn');
         }
       }
       cmp.shutdown();
@@ -2036,8 +2090,7 @@
       if(fullscreenNow()){try{doc.exitFullscreen()}catch(error){log('fullscreen_exit_failed',{error:describe(error)},'warn')}}
       else if(api&&typeof api.cancel==='function'&&api.state&&api.state().armed){try{api.cancel()}catch(error){log('fullscreen_cancel_failed',{error:describe(error)},'warn')}}
       S.fullscreenOwned=false;
-      for(const n of inerted)n.inert=false;
-      inerted=[];
+      releaseInert();
       ui.host.hidden=true;
       const target=S.opener;
       S.opener=null;

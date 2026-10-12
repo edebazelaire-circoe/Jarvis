@@ -259,11 +259,11 @@ class CorruptStore(MemoryLedgerStore):
         return self.kept[-1]
 
 
-async def test_a_corrupt_ledger_falls_back_to_a_namespaced_scan_keeps_the_file_and_warns(tmp_path):
+async def test_a_corrupt_ledger_falls_back_to_the_retired_category_scan_keeps_the_file_and_warns(tmp_path):
     first = await Rig(tmp_path).open()
     try:
-        # windows an older Core left (killed mid-run), a look-alike of the brain (right category, wrong id) and a studio-looking id of
-        # another category: only the first two are ours
+        # windows an older Core left (killed mid-run), an orphan of a retired category with another id (archived too, Slice 09
+        # rework: never drawn, refused to the Tool Brain) and a studio-looking id of another category (not ours: survives)
         for object_id, category in (("studio-stage-r1", "studio_stage"), ("studio-aux-r1-a1", "studio_aux"),
                                     ("brain-window-1", "studio_stage"), ("studio-stage-fake", "brain")):
             await first.scene.apply(SceneCommand(
@@ -277,10 +277,10 @@ async def test_a_corrupt_ledger_falls_back_to_a_namespaced_scan_keeps_the_file_a
             gate=first.gate, diagnostics=first.env.sink, monotonic=first.mono)
         await reborn.start_service()
         remaining = {o.object_id for o in await first.objects()}
-        assert remaining == {"brain-window-1", "studio-stage-fake"}, remaining
+        assert remaining == {"studio-stage-fake"}, remaining
         assert store.kept and first.env.sink.of("core.presentation_studio.stage_ledger_quarantined")[0][0] == "warning"
         [(level, data)] = first.env.sink.of("core.presentation_studio.legacy_stage_reclaimed")
-        assert level == "warning" and data["count"] == 2
+        assert level == "warning" and data["count"] == 3
     finally:
         await first.close()
 
