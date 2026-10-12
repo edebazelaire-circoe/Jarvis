@@ -9,9 +9,10 @@ These are machine findings. They are reported apart from TSX compilation, the fi
 assessment (`report_sections`), and they never replace the Human check.
 
 - Frame detectors (`frame_findings`): `black`, `blank` (no detail at all: a uniform or smooth frame), `edge_clipped` (content touches a
-  side of the frame), `edge_text_overflow` (text-like strokes cross a side). Severities depend on the frame's role in the scene and on the
-  profile: `release_gate` (the machine gate deck: an empty frame anywhere but the very first is blocking) or `authored` (a real deck: an
-  empty first or last frame is a deliberate fade, a warning; an empty middle frame is blocking).
+  side of the frame; a smooth ink run from a corner, a full-bleed bar, does not count), `edge_text_overflow` (text-like strokes cross a
+  side). Severities depend on the frame's role in the scene and on the profile: `release_gate` (the machine gate deck: an empty frame is
+  blocking anywhere, its first frame included) or `authored` (a real deck: an empty first or last frame is a deliberate fade, a
+  warning; an empty middle frame is blocking).
 - Sequence detectors: `repeated_findings` (sampled frames of a scene that never change), `frozen_spans` (captures of a playing Player that
   stay identical), `playback_findings` (early truncation, time carry, transition flash, stale progress against the composition clock).
 - Page detectors (the scene's own DOM, read in the Player's sandbox page by the harness probe): `font_findings`, `asset_findings`,
@@ -70,6 +71,9 @@ class Thresholds:
     band_depth: int = 4
     #: Share of a side where its band holds ink: content clipped by that side.
     clipped_ink_share: float = 0.05
+    #: An ink run along a side that touches a corner and is this smooth (texture) is a full-bleed bar or band (a progress bar), not
+    #: content cut by the side: it does not count. Measured: the gate deck's bar 0.006 to 0.013; text strokes 0.73.
+    corner_run_texture: float = 0.05
     #: Smaller share that is enough when the ink is textured (text strokes cut by the side).
     overflow_ink_share: float = 0.02
     #: Share of the inked band pixels that are edges: text-like texture (a solid bar or a photo edge is smooth).
@@ -168,17 +172,30 @@ def _side(lines: Sequence[bytes], background: int, thresholds: Thresholds) -> Si
 
     delta, step = thresholds.ink_delta, thresholds.edge_step
     length = len(lines[0])
+
+    def edge_count(positions: Sequence[int]) -> int:
+        edges = 0
+        for depth, line in enumerate(lines):
+            for i in positions:
+                v = line[i]
+                if (i + 1 < length and abs(v - line[i + 1]) > step) or (depth + 1 < len(lines) and abs(v - lines[depth + 1][i]) > step):
+                    edges += 1
+        return edges
+
     inked = [i for i in range(length) if any(abs(line[i] - background) > delta for line in lines)]
-    if not inked:
+    # Contiguous runs of inked positions; a smooth run that touches a corner is a full-bleed bar (the gate deck's progress bar), skipped.
+    runs: list[list[int]] = []
+    for i in inked:
+        if runs and runs[-1][-1] == i - 1:
+            runs[-1].append(i)
+        else:
+            runs.append([i])
+    kept = [i for run in runs
+            if not ((run[0] == 0 or run[-1] == length - 1) and edge_count(run) / (len(run) * len(lines)) < thresholds.corner_run_texture)
+            for i in run]
+    if not kept:
         return Side(0.0, 0.0)
-    edges = total = 0
-    for depth, line in enumerate(lines):
-        for i in inked:
-            total += 1
-            v = line[i]
-            if (i + 1 < length and abs(v - line[i + 1]) > step) or (depth + 1 < len(lines) and abs(v - lines[depth + 1][i]) > step):
-                edges += 1
-    return Side(len(inked) / length, edges / total)
+    return Side(len(kept) / length, edge_count(kept) / (len(kept) * len(lines)))
 
 
 def measure(frame: GrayFrame, thresholds: Thresholds = THRESHOLDS) -> FrameMetrics:
@@ -193,11 +210,9 @@ def measure(frame: GrayFrame, thresholds: Thresholds = THRESHOLDS) -> FrameMetri
 
 
 def _empty_severity(role: Role, profile: Profile) -> Severity:
-    if role is Role.FIRST:
-        return Severity.WARNING  # a scene may open on its background before its first reveal
-    if profile is Profile.AUTHORED and role in (Role.LAST, Role.EXIT, Role.ENTRY):
-        return Severity.WARNING  # a deliberate fade in / out
-    return Severity.BLOCKING
+    if profile is Profile.AUTHORED and role in (Role.FIRST, Role.ENTRY, Role.EXIT, Role.LAST):
+        return Severity.WARNING  # a deliberate fade in / out, or a scene opening on its background before its first reveal
+    return Severity.BLOCKING  # the gate deck's frames always carry text, its first frame included (agent 0, Slice 14 rework)
 
 
 def frame_findings(metrics: FrameMetrics, *, role: Role, profile: Profile = Profile.RELEASE_GATE, scene: str | None = None,

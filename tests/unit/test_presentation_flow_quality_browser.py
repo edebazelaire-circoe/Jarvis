@@ -22,7 +22,8 @@ A negative control plants a black layer and a held slider in the PAGE (never in 
 
 Evidence (`JARVIS_QUALITY_EVIDENCE_DIR`): `flow.mp4` (the complete play, 10 i/s, 640 px, CRF 34), `flow-markers.json` (the deterministic
 composition markers of every scene beside where each scene was seen in the video), `flow-contact.jpg` (per scene: first, middle and last
-capture), `flow-transitions.jpg` (per hand-over: the capture before and after), `flow.json` (metrics, findings, durations).
+capture), `flow-transitions.jpg` (per hand-over: the last capture certainly in scene k beside the first read on scene k+1,
+`transition_captures`), `flow.json` (metrics, findings, durations).
 """
 
 from __future__ import annotations
@@ -44,8 +45,8 @@ from tests.unit.remotion_quality_world import media_tools, write_evidence
 from tests.unit.test_presentation_continuous_playback_browser import EXPLORER_READY, LIRE, PHASE, per_scene
 
 RUNTIME = runtime_dir_from_env()
-pytestmark = pytest.mark.skipif(RUNTIME is None or shutil.which("node") is None,
-                                reason="needs JARVIS_REMOTION_RUNTIME_DIR (an existing Remotion install), node and Chrome")
+needs_runtime = pytest.mark.skipif(RUNTIME is None or shutil.which("node") is None,
+                                   reason="needs JARVIS_REMOTION_RUNTIME_DIR (an existing Remotion install), node and Chrome")
 
 ENDED = f"({PHASE}==='ended')"
 #: Read with every capture: the Variants Player's own frame and the transport slider (composition frame), in one evaluation.
@@ -107,6 +108,35 @@ def measure_recording(ffmpeg, rec: list, cmap):
     return files, frames, findings, samples
 
 
+def transition_captures(scenes: list[str | None]) -> list[tuple[int, int]]:
+    """Per hand-over, `(end of scene k, start of scene k+1)` as capture indexes. `scenes[i]` is the Player's scene READ just before
+    capture i (`record`): the pixels land between read i and read i+1, so a capture whose read is k but whose next read is k+1 may
+    already show k+1 (the S9 f0 beside S9 f2 row of the first run). The end of k is the last capture bracketed by two reads of k; the
+    start of k+1 is the first capture read on k+1 (its pixels come after that read)."""
+
+    out = []
+    last = None   # index of the last capture with a scene read (a capture may come with none)
+    for i, scene in enumerate(scenes):
+        if not scene:
+            continue
+        if last is not None and scenes[last] != scene:
+            k = scenes[last]
+            out.append((next((j for j in range(last - 1, -1, -1) if scenes[j] == k and scenes[j + 1] == k), last), i))
+        last = i
+    return out
+
+
+def test_a_transition_pair_never_takes_the_capture_read_just_before_the_hand_over():
+    """The capture read on S8 just before the first read on S9 may already show S9: it is skipped, S8's end is the capture before it."""
+
+    reads = ["S8", "S8", "S8", "S8", "S9", "S9", None, "S9"]
+    assert transition_captures(reads) == [(2, 4)]
+    assert transition_captures(["S1", "S2", "S2", "S3"]) == [(0, 1), (1, 3)], "a scene with no bracketed capture falls back to the last read"
+    assert transition_captures(["S1", "S1"]) == []
+    assert transition_captures(["S1", "S1", "S1", None, "S2"]) == [(1, 4)], "a capture without a read is no hand-over"
+
+
+@needs_runtime
 async def test_the_recorded_nine_scene_flow_has_no_flash_carry_stale_bar_cut_or_freeze(tmp_path):
     ffmpeg, ffprobe = media_tools(RUNTIME)
     shots = tmp_path / "rec"
@@ -146,21 +176,18 @@ async def test_the_recorded_nine_scene_flow_has_no_flash_carry_stale_bar_cut_or_
     video = encode_flow_video(ffmpeg, timed, out=tmp_path / "flow.mp4")
     facts = probe_video(ffprobe, video)
     by_scene: dict[str, list[int]] = {}
-    changes: list[int] = []
-    previous = None
     for i, (_ms, _f, read) in enumerate(rec):
         scene = ((read or {}).get("s") or {}).get("scene")
         if scene:
             by_scene.setdefault(scene, []).append(i)
-            if previous and scene != previous:
-                changes.append(i)
-            previous = scene
+    handovers = transition_captures([((read or {}).get("s") or {}).get("scene") for _ms, _f, read in rec])
+    changes = [start for _end, start in handovers]
     cells = []
     for k in range(len(DECK)):
         seen = by_scene.get(f"S{k + 1}", [])
         cells += [files[seen[0]], files[seen[len(seen) // 2]], files[seen[-1]]] if seen else [None, None, None]
     flow_contact = contact_sheet(ffmpeg, cells, columns=3, out=tmp_path / "flow-contact.jpg")
-    pairs = [p for i in changes for p in (files[i - 1], files[i])]
+    pairs = [p for end, start in handovers for p in (files[end], files[start])]
     flow_transitions = contact_sheet(ffmpeg, pairs, columns=2, out=tmp_path / "flow-transitions.jpg") if pairs else None
     mark = markers(cmap, rec)
     report = Q.report_sections(findings)
@@ -199,6 +226,7 @@ PLANT = ("(()=>{const c=window.__clip;const d=document.createElement('div');d.st
 S2_UNDER_WAY = f"(()=>{{const s={VSTATE};return !!s&&s.scene==='S2'&&s.frame>=90}})()"
 
 
+@needs_runtime
 async def test_a_planted_flash_and_a_held_transport_are_caught_on_the_real_captures(tmp_path):
     ffmpeg, _ffprobe = media_tools(RUNTIME)
     shots = tmp_path / "rec"

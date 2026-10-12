@@ -84,8 +84,9 @@ def test_a_uniform_or_smooth_frame_is_blank():
 
 
 @pytest.mark.parametrize("role,profile,severity", [
-    (Q.Role.FIRST, Q.Profile.RELEASE_GATE, Q.Severity.WARNING),
+    (Q.Role.FIRST, Q.Profile.RELEASE_GATE, Q.Severity.BLOCKING),   # the gate deck's frames always carry text (agent 0, rework)
     (Q.Role.ENTRY, Q.Profile.RELEASE_GATE, Q.Severity.BLOCKING),
+    (Q.Role.EXIT, Q.Profile.RELEASE_GATE, Q.Severity.BLOCKING),
     (Q.Role.MIDDLE, Q.Profile.RELEASE_GATE, Q.Severity.BLOCKING),
     (Q.Role.LAST, Q.Profile.RELEASE_GATE, Q.Severity.BLOCKING),
     (Q.Role.PLAYBACK, Q.Profile.RELEASE_GATE, Q.Severity.BLOCKING),
@@ -111,11 +112,20 @@ def test_text_strokes_cut_by_a_side_are_text_overflow_not_a_plain_clip():
     assert found[0].metric["texture"] >= Q.THRESHOLDS.overflow_texture
 
 
-def test_a_full_width_bar_along_the_bottom_is_a_clip_never_text():
-    """The gate deck's own progress bar: measured false positive of `edge_clipped` (27 of 45 smoke frames), never `edge_text_overflow`."""
+@pytest.mark.parametrize("bar", [rect(0, H - 6, W, H), rect(0, H - 6, W // 2, H), rect(W // 3, H - 6, W, H)],
+                         ids=["full", "growing-from-left", "ending-at-right"])
+def test_a_smooth_bar_from_a_corner_of_a_side_is_not_content_cut_by_it(bar):
+    """The gate deck's own progress bar (measured false positive of `edge_clipped`: 27 of 45 smoke frames before the rework): a smooth
+    ink run that touches a corner of the side is a full-bleed bar, neither a clip nor text."""
 
-    found = findings_of(frame(draw=both(TITLE, rect(0, H - 6, W, H))))
-    assert "edge_text_overflow" not in codes(found) and "edge_clipped" in codes(found)
+    assert findings_of(frame(draw=both(TITLE, bar))) == []
+
+
+def test_a_corner_run_that_is_textured_or_a_smooth_block_away_from_the_corners_is_still_reported():
+    found = findings_of(frame(draw=both(TITLE, strokes(0, 120, H - 8, H))))   # text cut by the bottom, from its left corner
+    assert set(codes(found)) == {"edge_text_overflow"} and {f.metric["side"] for f in found} == {"bottom", "left"}
+    found = findings_of(frame(draw=both(TITLE, rect(40, H - 6, W - 40, H))))   # a smooth block cut by the bottom, no corner
+    assert codes(found) == ["edge_clipped"] and found[0].metric["side"] == "bottom"
 
 
 def test_a_grey_frame_must_have_the_size_it_claims():
@@ -148,6 +158,17 @@ def test_a_playing_picture_that_stays_the_same_for_a_second_is_frozen_playback()
     assert Q.frozen_spans(caps[:8]) == [], "under the threshold (700 ms)"
 
 
+def test_a_frozen_span_only_counts_pairs_of_captures_that_both_play():
+    """The paused / playing boundary: a held, paused picture (0 to 2000 ms) then 900 ms of playing on the same picture is under the
+    threshold; the pair across the boundary (paused, playing) must not stretch the run to 1000 ms."""
+
+    still = frame(draw=TITLE)
+    paused_then_playing = [(ms, still, False) for ms in range(0, 2100, 100)] + [(ms, still, True) for ms in range(2100, 3100, 100)]
+    assert Q.frozen_spans(paused_then_playing) == []
+    playing_then_paused = [(ms, still, True) for ms in range(0, 1000, 100)] + [(ms, still, False) for ms in range(1000, 3000, 100)]
+    assert Q.frozen_spans(playing_then_paused) == []
+
+
 # ------------------------------------------------------------------ the four regressions of the Slice
 
 
@@ -156,6 +177,14 @@ def test_transition_flash_a_black_capture_at_a_hand_over_blocks():
     [found] = Q.flash_findings(caps)
     assert found.code == "transition_flash" and found.severity is Q.Severity.BLOCKING and found.metric["ms"] == 100
     assert Q.flash_findings(caps[::2]) == []
+
+
+@pytest.mark.parametrize("fill,kind", [(255, "blank"), (128, "blank")], ids=["white", "mid-grey"])
+def test_transition_flash_a_one_frame_white_or_grey_flash_blocks_too(fill, kind):
+    caps = [(0, Q.measure(frame(draw=TITLE))), (100, Q.measure(frame(fill))), (200, Q.measure(frame(draw=TITLE)))]
+    [found] = Q.flash_findings(caps)
+    assert found.code == "transition_flash" and found.severity is Q.Severity.BLOCKING and found.metric["ms"] == 100
+    assert kind in found.detail and found.metric["mean"] == fill
 
 
 def test_time_carry_a_scene_that_enters_past_its_frame_zero_blocks():

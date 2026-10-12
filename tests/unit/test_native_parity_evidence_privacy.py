@@ -1,4 +1,4 @@
-"""The committed evidence of Slice 13 (native-studio-playback-fix parity benchmark) keeps no local identity, and stays usable.
+"""The committed evidence of Slices 13 and 14 (native-studio-playback-fix) keeps no local identity; Slice 13's stays usable.
 
 Real agent traces were committed (both sides). The sweep's targets are derived at runtime (home folder, user names of this machine, email
 addresses, token shapes), never written in the repository. Then: every run has its metrics, the blinded decks hide the side (same file
@@ -65,13 +65,20 @@ def findings(text: str) -> list[str]:
     return hits
 
 
-def test_no_committed_file_of_the_slice_keeps_a_home_path_a_user_name_an_email_or_a_token():
+#: Slice 14 (rendered-frame quality gates) committed real smoke and flow evidence too (`*-smoke.json`, `flow*.json`, `summary.json`,
+#: `README.md`): the same sweep covers it (QA Slice 14, P5).
+QUALITY_SLICE = SLICE.parent / "14-visual-quality-and-media-gates"
+
+
+@pytest.mark.parametrize("folder", [SLICE, QUALITY_SLICE], ids=["slice-13", "slice-14"])
+def test_no_committed_file_of_the_slice_keeps_a_home_path_a_user_name_an_email_or_a_token(folder):
+    assert (folder / "evidence").is_dir(), folder
     leaks = {}
-    for path in sorted(SLICE.rglob("*")):
+    for path in sorted(folder.rglob("*")):
         if path.is_file() and path.suffix.lower() in TEXT_SUFFIXES and "__pycache__" not in path.parts:
             hits = findings(path.read_text("utf-8", errors="ignore"))
             if hits:
-                leaks[str(path.relative_to(SLICE))] = hits
+                leaks[str(path.relative_to(folder))] = hits
     assert leaks == {}
 
 
