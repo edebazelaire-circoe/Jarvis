@@ -367,7 +367,7 @@
     }
 
     /* -------------------------------------------------------------- la confirmation (dans la couche de Variantes) */
-    function confirm(sceneView,detail,kind,returnFocus,discard){
+    function confirmOpen(sceneView,detail,kind,returnFocus,discard){
       const core=C();
       const label=`Scène ${sceneView.number} sur ${sceneView.of} « ${cleanLine(sceneView.title,60)} » · source v${sceneView.prefab.version}`;
       const spec=core.confirmSpec({id:sceneView.prefab.id,version:sceneView.prefab.version,label},detail&&detail.state==='ready'?detail.provenance:null,kind);
@@ -429,7 +429,7 @@
       const kind=st&&st.status==='ready'?'switch':'open';
       const ws=workspaceOf(st,sc.prefab);
       const discard=ws.count&&ws.relation==='other'?{count:ws.count,base:ws.base}:null;
-      const ok=await confirm(sc,detail,kind,o.returnFocus||ui.button,discard);
+      const ok=await confirmOpen(sc,detail,kind,o.returnFocus||ui.button,discard);
       if(!ok){log('remotion_studio_cancelled',{via:o.via});announce('Remotion Studio : rien n’a été lancé.');return {state:'cancelled'}}
       /* Still the scene that was confirmed? (a poll, a hot reload or the user may have moved while the dialog was open) */
       const now2=view().scene;
