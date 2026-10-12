@@ -1,0 +1,111 @@
+{
+ "slice": "08-media-fullscreen-stability",
+ "tested_head": "006c659c",
+ "runtime": "headless Chrome over CDP, RemotionStack on free loopback ports, throw-away data root; the live Jarvis was never contacted",
+ "sound": {
+  "checks": {
+   "muted at opening (page, stage page and the Player's own <audio>)": true,
+   "a real click on « Son » unmutes the scene through the cross-origin sandbox": true,
+   "the scene on screen plays its <audio>, unmuted": true,
+   "audio and image within 200 ms in S1, after a jump and after the boundary": true,
+   "the preloaded S2 frame stays muted while S1 plays": true,
+   "S2 on screen gets the sound (persisted across the scene change)": true,
+   "only one audible Player at any sample": true,
+   "M turns the sound off": true
+  },
+  "syncs_ms": {
+   "s1_a": 6,
+   "s1_b": 11,
+   "s1_c": 32,
+   "seek_a": 41,
+   "seek_b": 38,
+   "s2_a": 36,
+   "s2_b": 16
+  }
+ },
+ "sound_refused": {
+  "checks": {
+   "the frame really had no delegation": true,
+   "the refusal is said in French with what to do (notice, pill on the image, marked button)": true,
+   "the Player was never unmuted against the browser (no frozen playback)": true,
+   "one real click in the image lifts the refusal": true,
+   "the scene then plays with its sound": true
+  }
+ },
+ "sound_no_gesture_default": {
+  "checks": {
+   "no user activation anywhere": true,
+   "the refusal is said (blocked, notice, pill)": true,
+   "the Player is muted again, never left waiting for audio": true,
+   "playback is never frozen: the image keeps moving": true
+  }
+ },
+ "sound_no_gesture_no-user-gesture-required": {
+  "checks": {
+   "no user activation anywhere": true,
+   "with the policy lifted, the same path plays with sound": true,
+   "playback moves": true
+  }
+ },
+ "fullscreen": {
+  "checks": {
+   "the STAGE is the fullscreen element (not the workspace)": true,
+   "no tree, metadata, actions or strip in fullscreen": true,
+   "the stage and the Player fill the screen": true,
+   "entering keeps f and the play state": true,
+   "the transport hides itself while playing and comes back on a move": true,
+   "the complete slide at its own format, black bars (16:9, 4:3, 9:16, 1:1)": true,
+   "paused in fullscreen: the transport stays": true,
+   "F leaves; f and the paused state are kept; the focus goes back to the opener": true,
+   "the stage keeps 16:9 inside the preview at every window size": true,
+   "the first Échap leaves fullscreen only, never pauses": true,
+   "the next Échap closes Variants": true
+  },
+  "boxes": {
+   "S1": 1.778,
+   "S2": 1.333,
+   "S3": 0.563,
+   "S4": 1.0
+  }
+ },
+ "scene_keys": {
+  "checks": {
+   "a click puts the focus in the cross-origin scene": true,
+   "Space typed in the scene plays, then pauses (once each)": true,
+   "→ typed in the scene goes to the next scene once (S2, frame 0)": true,
+   "M typed in the scene toggles the sound once": true,
+   "F typed in the scene enters the stage fullscreen (the key is the gesture); Échap leaves": true,
+   "a key posted by the scene without the focus is refused, nothing moves": true,
+   "Échap typed in the scene closes Variants (nested rule)": true
+  }
+ },
+ "robustness": {
+  "checks": {
+   "reduced motion: the overlay hides without a fade and no UI transition or animation runs": true,
+   "long session: at most the live frame and the one loaded ahead": true,
+   "long session: no listener accumulates": true,
+   "long session: the DOM does not grow": true,
+   "after a Chrome reload Variants opens muted, windowed, paused on S1 frame 0": true
+  },
+  "leaks": {
+   "start": {
+    "iframes": 1,
+    "nodes": 968,
+    "winMessage": 1,
+    "winResize": 8,
+    "docKeydown": 8,
+    "docFullscreen": 3,
+    "heapMb": 10
+   },
+   "after_10_cycles": {
+    "iframes": 1,
+    "nodes": 968,
+    "winMessage": 1,
+    "winResize": 8,
+    "docKeydown": 8,
+    "docFullscreen": 3,
+    "heapMb": 14
+   }
+  }
+ }
+}

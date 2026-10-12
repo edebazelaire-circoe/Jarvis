@@ -1,0 +1,108 @@
+{
+ "checks": {
+  "reduced motion: the overlay hides without a fade and no UI transition or animation runs": true,
+  "long session: at most the live frame and the one loaded ahead": true,
+  "long session: no listener accumulates": true,
+  "long session: the DOM does not grow": true,
+  "after a Chrome reload Variants opens muted, windowed, paused on S1 frame 0": true
+ },
+ "leaks": {
+  "start": {
+   "iframes": 1,
+   "nodes": 968,
+   "winMessage": 1,
+   "winResize": 8,
+   "docKeydown": 8,
+   "docFullscreen": 3,
+   "heapMb": 10
+  },
+  "after_10_cycles": {
+   "iframes": 1,
+   "nodes": 968,
+   "winMessage": 1,
+   "winResize": 8,
+   "docKeydown": 8,
+   "docFullscreen": 3,
+   "heapMb": 14
+  },
+  "after_reload": {
+   "iframes": 1,
+   "nodes": 968,
+   "winMessage": 1,
+   "winResize": 8,
+   "docKeydown": 8,
+   "docFullscreen": 3,
+   "heapMb": 10
+  }
+ },
+ "sandboxes": [
+  1,
+  1
+ ],
+ "reduced": {
+  "element": "stage",
+  "mode": "fullscreen",
+  "tree": false,
+  "meta": false,
+  "actions": false,
+  "strip": false,
+  "stage": [
+   0,
+   0,
+   1280,
+   720
+  ],
+  "frame": [
+   0,
+   0,
+   1280,
+   720
+  ],
+  "viewport": [
+   1280,
+   720
+  ],
+  "chrome": "hidden",
+  "noteOpacity": "0",
+  "noteTransition": "0s",
+  "focus": "Aperçu, scène 1 sur 4 : A 16:9 son",
+  "animations": 0
+ },
+ "reloaded": {
+  "scene": "S1",
+  "frame": 0,
+  "playing": false,
+  "duration": 180,
+  "wanted": false,
+  "muted": true,
+  "blocked": false,
+  "keysRelayed": 0,
+  "keysRefused": 0,
+  "frames": [
+   {
+    "staged": false,
+    "wanted": false,
+    "muted": true,
+    "phase": "ready"
+   }
+  ],
+  "button": {
+   "pressed": "false",
+   "title": "Activer le son (M)",
+   "state": null
+  },
+  "pill": "",
+  "sound": {
+   "on": false,
+   "blocked": false,
+   "pressed": false,
+   "title": "Activer le son (M)",
+   "pill": "",
+   "toggles": 0,
+   "refusals": 0
+  },
+  "phase": "paused",
+  "f": 0,
+  "notice": ""
+ }
+}

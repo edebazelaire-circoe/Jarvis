@@ -1,0 +1,331 @@
+{
+ "checks": {
+  "the STAGE is the fullscreen element (not the workspace)": true,
+  "no tree, metadata, actions or strip in fullscreen": true,
+  "the stage and the Player fill the screen": true,
+  "entering keeps f and the play state": true,
+  "the transport hides itself while playing and comes back on a move": true,
+  "the complete slide at its own format, black bars (16:9, 4:3, 9:16, 1:1)": true,
+  "paused in fullscreen: the transport stays": true,
+  "F leaves; f and the paused state are kept; the focus goes back to the opener": true,
+  "the stage keeps 16:9 inside the preview at every window size": true,
+  "the first Échap leaves fullscreen only, never pauses": true,
+  "the next Échap closes Variants": true
+ },
+ "boxes": {
+  "S1": {
+   "width": 480,
+   "height": 270,
+   "box": [
+    0,
+    0,
+    480,
+    270
+   ],
+   "ratio": 1.778
+  },
+  "S2": {
+   "width": 480,
+   "height": 270,
+   "box": [
+    60,
+    0,
+    360,
+    270
+   ],
+   "ratio": 1.333
+  },
+  "S3": {
+   "width": 480,
+   "height": 270,
+   "box": [
+    164,
+    0,
+    152,
+    270
+   ],
+   "ratio": 0.563
+  },
+  "S4": {
+   "width": 480,
+   "height": 270,
+   "box": [
+    105,
+    0,
+    270,
+    270
+   ],
+   "ratio": 1.0
+  }
+ },
+ "inside": {
+  "element": "stage",
+  "mode": "fullscreen",
+  "tree": false,
+  "meta": false,
+  "actions": false,
+  "strip": false,
+  "stage": [
+   0,
+   0,
+   1920,
+   1080
+  ],
+  "frame": [
+   0,
+   0,
+   1920,
+   1080
+  ],
+  "viewport": [
+   1920,
+   1080
+  ],
+  "chrome": "shown",
+  "noteOpacity": "1",
+  "noteTransition": "0.25s",
+  "focus": "jvx-btn",
+  "animations": 0
+ },
+ "hidden": {
+  "element": "stage",
+  "mode": "fullscreen",
+  "tree": false,
+  "meta": false,
+  "actions": false,
+  "strip": false,
+  "stage": [
+   0,
+   0,
+   1920,
+   1080
+  ],
+  "frame": [
+   0,
+   0,
+   1920,
+   1080
+  ],
+  "viewport": [
+   1920,
+   1080
+  ],
+  "chrome": "hidden",
+  "noteOpacity": "0",
+  "noteTransition": "0.25s",
+  "focus": "Aperçu, scène 1 sur 4 : A 16:9 son",
+  "animations": 0
+ },
+ "poked": {
+  "element": "stage",
+  "mode": "fullscreen",
+  "tree": false,
+  "meta": false,
+  "actions": false,
+  "strip": false,
+  "stage": [
+   0,
+   0,
+   1920,
+   1080
+  ],
+  "frame": [
+   0,
+   0,
+   1920,
+   1080
+  ],
+  "viewport": [
+   1920,
+   1080
+  ],
+  "chrome": "shown",
+  "noteOpacity": "0.885294",
+  "noteTransition": "0.25s",
+  "focus": "Aperçu, scène 3 sur 4 : C 9:16",
+  "animations": 1
+ },
+ "before": {
+  "phase": "playing",
+  "frame": 15,
+  "total_frames": 480,
+  "fps": 30,
+  "playing": true,
+  "scene_index": 0,
+  "scene_count": 4,
+  "scene_id": "pss_000000000801",
+  "scene_title": "A 16:9 son",
+  "starts": [
+   0,
+   180,
+   300,
+   390
+  ],
+  "scope": "all",
+  "retryable": true,
+  "waiting_ms": 0,
+  "waiting_visible": false,
+  "error": null
+ },
+ "in_view": {
+  "phase": "playing",
+  "frame": 15,
+  "total_frames": 480,
+  "fps": 30,
+  "playing": true,
+  "scene_index": 0,
+  "scene_count": 4,
+  "scene_id": "pss_000000000801",
+  "scene_title": "A 16:9 son",
+  "starts": [
+   0,
+   180,
+   300,
+   390
+  ],
+  "scope": "all",
+  "retryable": true,
+  "waiting_ms": 0,
+  "waiting_visible": false,
+  "error": null
+ },
+ "paused_in": {
+  "phase": "paused",
+  "frame": 400,
+  "total_frames": 480,
+  "fps": 30,
+  "playing": false,
+  "scene_index": 3,
+  "scene_count": 4,
+  "scene_id": "pss_000000000804",
+  "scene_title": "D 1:1",
+  "starts": [
+   0,
+   180,
+   300,
+   390
+  ],
+  "scope": "all",
+  "retryable": true,
+  "waiting_ms": 0,
+  "waiting_visible": false,
+  "error": null
+ },
+ "out": {
+  "element": null,
+  "mode": "windowed",
+  "tree": false,
+  "meta": false,
+  "actions": false,
+  "strip": false,
+  "stage": [
+   628,
+   96,
+   1272,
+   716
+  ],
+  "frame": [
+   629,
+   97,
+   1270,
+   714
+  ],
+  "viewport": [
+   1920,
+   1080
+  ],
+  "chrome": "shown",
+  "noteOpacity": "1",
+  "noteTransition": "0s",
+  "focus": "jvx-btn",
+  "animations": 0
+ },
+ "out_view": {
+  "phase": "paused",
+  "frame": 400,
+  "total_frames": 480,
+  "fps": 30,
+  "playing": false,
+  "scene_index": 3,
+  "scene_count": 4,
+  "scene_id": "pss_000000000804",
+  "scene_title": "D 1:1",
+  "starts": [
+   0,
+   180,
+   300,
+   390
+  ],
+  "scope": "all",
+  "retryable": true,
+  "waiting_ms": 0,
+  "waiting_visible": false,
+  "error": null
+ },
+ "geometry": {
+  "windowed_1080": {
+   "stage": [
+    1272,
+    716
+   ],
+   "ratio": 1.778,
+   "frame": [
+    1270,
+    714
+   ],
+   "inside": true,
+   "overflowX": false
+  },
+  "windowed_1600": {
+   "stage": [
+    952,
+    536
+   ],
+   "ratio": 1.778,
+   "frame": [
+    950,
+    534
+   ],
+   "inside": true,
+   "overflowX": false
+  },
+  "windowed_1024": {
+   "stage": [
+    603,
+    339
+   ],
+   "ratio": 1.778,
+   "frame": [
+    601,
+    337
+   ],
+   "inside": true,
+   "overflowX": false
+  }
+ },
+ "after_escape": {
+  "open": true,
+  "view": {
+   "phase": "playing",
+   "frame": 424,
+   "total_frames": 480,
+   "fps": 30,
+   "playing": true,
+   "scene_index": 3,
+   "scene_count": 4,
+   "scene_id": "pss_000000000804",
+   "scene_title": "D 1:1",
+   "starts": [
+    0,
+    180,
+    300,
+    390
+   ],
+   "scope": "all",
+   "retryable": true,
+   "waiting_ms": 0,
+   "waiting_visible": false,
+   "error": null
+  }
+ }
+}

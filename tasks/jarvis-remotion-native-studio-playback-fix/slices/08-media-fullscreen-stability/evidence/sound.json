@@ -1,0 +1,264 @@
+{
+ "checks": {
+  "muted at opening (page, stage page and the Player's own <audio>)": true,
+  "a real click on « Son » unmutes the scene through the cross-origin sandbox": true,
+  "the scene on screen plays its <audio>, unmuted": true,
+  "audio and image within 200 ms in S1, after a jump and after the boundary": true,
+  "the preloaded S2 frame stays muted while S1 plays": true,
+  "S2 on screen gets the sound (persisted across the scene change)": true,
+  "only one audible Player at any sample": true,
+  "M turns the sound off": true
+ },
+ "opening": {
+  "scene": "S1",
+  "frame": 0,
+  "playing": false,
+  "duration": 180,
+  "wanted": false,
+  "muted": true,
+  "blocked": false,
+  "keysRelayed": 0,
+  "keysRefused": 0,
+  "frames": [
+   {
+    "staged": false,
+    "wanted": false,
+    "muted": true,
+    "phase": "ready"
+   }
+  ],
+  "button": {
+   "pressed": "false",
+   "title": "Activer le son (M)",
+   "state": null
+  },
+  "pill": "",
+  "sound": {
+   "on": false,
+   "blocked": false,
+   "pressed": false,
+   "title": "Activer le son (M)",
+   "pill": "",
+   "toggles": 0,
+   "refusals": 0
+  },
+  "phase": "paused",
+  "f": 0,
+  "notice": ""
+ },
+ "on": {
+  "scene": "S1",
+  "frame": 0,
+  "playing": false,
+  "duration": 180,
+  "wanted": true,
+  "muted": false,
+  "blocked": false,
+  "keysRelayed": 0,
+  "keysRefused": 0,
+  "frames": [
+   {
+    "staged": false,
+    "wanted": true,
+    "muted": false,
+    "phase": "ready"
+   }
+  ],
+  "button": {
+   "pressed": "true",
+   "title": "Couper le son (M)",
+   "state": null
+  },
+  "pill": "",
+  "sound": {
+   "on": true,
+   "blocked": false,
+   "pressed": true,
+   "title": "Couper le son (M)",
+   "pill": "",
+   "toggles": 1,
+   "refusals": 0
+  },
+  "phase": "paused",
+  "f": 0,
+  "notice": ""
+ },
+ "syncs_ms": {
+  "s1_a": 6,
+  "s1_b": 11,
+  "s1_c": 32,
+  "seek_a": 41,
+  "seek_b": 38,
+  "s2_a": 36,
+  "s2_b": 16
+ },
+ "s1_frames": [
+  {
+   "frame": 77,
+   "title": "A 16:9 son",
+   "audio": {
+    "paused": false,
+    "muted": false,
+    "volume": 1,
+    "t": 2.569
+   }
+  },
+  {
+   "frame": 0,
+   "title": "B 4:3 son",
+   "audio": {
+    "paused": true,
+    "muted": true,
+    "volume": 1,
+    "t": 0
+   }
+  }
+ ],
+ "s2_frames": [
+  {
+   "frame": 36,
+   "title": "B 4:3 son",
+   "audio": {
+    "paused": false,
+    "muted": false,
+    "volume": 1,
+    "t": 1.186
+   }
+  },
+  {
+   "frame": 0,
+   "title": "C 9:16",
+   "audio": null
+  }
+ ],
+ "off": {
+  "scene": "S2",
+  "frame": 37,
+  "playing": true,
+  "duration": 120,
+  "wanted": false,
+  "muted": true,
+  "blocked": false,
+  "keysRelayed": 0,
+  "keysRefused": 0,
+  "frames": [
+   {
+    "staged": false,
+    "wanted": false,
+    "muted": true,
+    "phase": "ready"
+   },
+   {
+    "staged": true,
+    "wanted": null,
+    "muted": true,
+    "phase": "ready"
+   }
+  ],
+  "button": {
+   "pressed": "false",
+   "title": "Activer le son (M)",
+   "state": null
+  },
+  "pill": "",
+  "sound": {
+   "on": false,
+   "blocked": false,
+   "pressed": false,
+   "title": "Activer le son (M)",
+   "pill": "",
+   "toggles": 2,
+   "refusals": 0
+  },
+  "phase": "playing",
+  "f": 217,
+  "notice": ""
+ },
+ "off_frames": [
+  {
+   "frame": 39,
+   "title": "B 4:3 son",
+   "audio": {
+    "paused": false,
+    "muted": true,
+    "volume": 1,
+    "t": 1.335
+   }
+  },
+  {
+   "frame": 0,
+   "title": "C 9:16",
+   "audio": null
+  }
+ ],
+ "s1_a": {
+  "frame": 52,
+  "title": "A 16:9 son",
+  "audio": {
+   "paused": false,
+   "muted": false,
+   "volume": 1,
+   "t": 1.727
+  }
+ },
+ "s1_b": {
+  "frame": 64,
+  "title": "A 16:9 son",
+  "audio": {
+   "paused": false,
+   "muted": false,
+   "volume": 1,
+   "t": 2.144
+  }
+ },
+ "s1_c": {
+  "frame": 76,
+  "title": "A 16:9 son",
+  "audio": {
+   "paused": false,
+   "muted": false,
+   "volume": 1,
+   "t": 2.565
+  }
+ },
+ "seek_a": {
+  "frame": 67,
+  "title": "A 16:9 son",
+  "audio": {
+   "paused": false,
+   "muted": false,
+   "volume": 1,
+   "t": 2.274
+  }
+ },
+ "seek_b": {
+  "frame": 76,
+  "title": "A 16:9 son",
+  "audio": {
+   "paused": false,
+   "muted": false,
+   "volume": 1,
+   "t": 2.571
+  }
+ },
+ "s2_a": {
+  "frame": 22,
+  "title": "B 4:3 son",
+  "audio": {
+   "paused": false,
+   "muted": false,
+   "volume": 1,
+   "t": 0.769
+  }
+ },
+ "s2_b": {
+  "frame": 35,
+  "title": "B 4:3 son",
+  "audio": {
+   "paused": false,
+   "muted": false,
+   "volume": 1,
+   "t": 1.183
+  }
+ }
+}
