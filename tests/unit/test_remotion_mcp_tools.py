@@ -117,7 +117,9 @@ async def test_setup_core_refusal_is_surfaced_with_its_code_and_no_fallback_talk
 async def test_studio_never_opens_and_never_acknowledges_it_returns_a_pointer_to_the_card(tmp_path):
     tools, core, _ = make_tools(tmp_path, turn=True)  # même dans un tour adressé : l'accusé est à l'utilisateur
     result = await tools.studio()
-    assert result["status"] == "needs_user" and "carte « Remotion · Studio »" in result["where"]
+    # native-studio-playback-fix Slice 11: the pointer is Variants' « Remotion Studio » button (the scene on screen, its exact pin), PX-1 names
+    assert result["status"] == "needs_user" and "« Remotion Studio »" in result["where"] and "Variantes" in result["where"]
+    assert "Remotion Studio" in result["say"] and "Ouvrir le Studio" not in result["say"]
     assert "hors du bac à sable" in result["say"] and "à l'utilisateur seul" in result["note"]
     assert [name for name, _ in core.calls] == ["remotion_capability"]
     assert core.writes == []

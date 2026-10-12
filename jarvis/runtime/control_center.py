@@ -568,6 +568,9 @@ STUDIO_STAGE_MEDIA_SCRIPT_MARKER = "/*__CONTROL_CENTER_PRESENTATION_STUDIO_STAGE
 # les touches de la presentation ; avant le controleur.
 STUDIO_RUN_SCRIPT_FILE = "control_center_presentation_studio_run.js"
 STUDIO_RUN_SCRIPT_MARKER = "/*__CONTROL_CENTER_PRESENTATION_STUDIO_RUN_JS__*/"
+# « Remotion Studio » sous la video de Variantes (native-studio-playback-fix Slice 11) : la porte vers l'editeur natif ; avant le controleur.
+STUDIO_REMOTION_DOOR_SCRIPT_FILE = "control_center_presentation_studio_explorer_remotion.js"
+STUDIO_REMOTION_DOOR_SCRIPT_MARKER = "/*__CONTROL_CENTER_PRESENTATION_STUDIO_EXPLORER_REMOTION_JS__*/"
 STUDIO_EXPLORER_SCRIPT_FILE = "control_center_presentation_studio_explorer.js"
 STUDIO_EXPLORER_SCRIPT_MARKER = "/*__CONTROL_CENTER_PRESENTATION_STUDIO_EXPLORER_JS__*/"
 # Client de lecture partage de la page (studio, Slice 12 ; native-studio-playback-fix Slice 09 : la bande flottante est retiree, la presentation
@@ -2312,6 +2315,7 @@ class ControlCenter:
             (STUDIO_SEQUENCER_SCRIPT_MARKER, STUDIO_SEQUENCER_SCRIPT_FILE),
             (STUDIO_STAGE_MEDIA_SCRIPT_MARKER, STUDIO_STAGE_MEDIA_SCRIPT_FILE),
             (STUDIO_RUN_SCRIPT_MARKER, STUDIO_RUN_SCRIPT_FILE),
+            (STUDIO_REMOTION_DOOR_SCRIPT_MARKER, STUDIO_REMOTION_DOOR_SCRIPT_FILE),
         ):
             html = html.replace(marker, page.with_name(file_name).read_text(encoding="utf-8"))
         html = html.replace(

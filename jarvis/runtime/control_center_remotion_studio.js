@@ -9,8 +9,9 @@
    - un bloc navigateur qui rend la carte et relit l'état.
 
    QUATRE RÈGLES.
-   1. SUR DEMANDE SEULEMENT. Le Studio ne s'ouvre que par le bouton « Ouvrir le Studio » ; rien ne le lance à l'affichage, à la
-      relecture ni depuis l'aperçu.
+   1. SUR DEMANDE SEULEMENT. Remotion Studio ne s'ouvre que par un clic (« Ouvrir Remotion Studio » ici, « Remotion Studio » sous la
+      vidéo de Variantes, native-studio-playback-fix Slice 11) ; rien ne le lance à l'affichage, à la relecture ni depuis l'aperçu.
+   Noms (PX-1, `docs/presentation-studio.md` § 1) : ce que l'utilisateur lit dit toujours « Remotion Studio », jamais « Studio » tout court.
    2. CE QUI ATTEND SE VOIT : pastille animée, durée écoulée, échéance (« 2 min au plus »), arrêt automatique décompté.
    3. L'ÉTAT EST CELUI DE CORE, avec son code stable ; un échec dit ce qui s'est passé (journal du Studio, code), jamais « erreur ».
    4. AUCUN NOM NI CHEMIN EN DUR : seules les scènes que la bibliothèque rend (`/api/prefabs?engine=remotion`) sont proposées ;
@@ -50,29 +51,29 @@ const JarvisRemotionStudioCore=(function(){
   /* Codes de Core (`docs/remotion-studio.md` §7), en phrases. Un code inconnu s'affiche tel quel. */
   const ERRORS=Object.freeze({
     remotion_studio_invalid:'La demande est mal formée.',
-    remotion_studio_busy:'Une autre opération sur le Studio est en cours : attendez qu’elle finisse.',
+    remotion_studio_busy:'Une autre opération sur Remotion Studio est en cours : attendez qu’elle finisse.',
     remotion_studio_runtime_unavailable:'L’environnement Remotion n’est pas prêt. Installez-le ou réparez-le d’abord (action explicite sur Core), puis réessayez.',
     remotion_studio_source_unavailable:'Cette version de scène n’existe pas ou n’est pas une source Remotion saine.',
-    remotion_studio_not_running:'Le Studio n’est pas ouvert : ouvrez-le d’abord.',
-    remotion_studio_port_unavailable:'Le port demandé pour le Studio est déjà utilisé sur ce poste.',
-    remotion_studio_start_failed:'Le Studio n’a pas démarré. Le journal ci-dessous dit pourquoi.',
-    remotion_studio_start_timeout:'Le Studio n’a pas répondu dans le délai (2 min). Réessayez avec « Relancer ».',
-    remotion_studio_health_failed:'Le Studio ne répond plus ; il a été arrêté. Rouvrez-le.',
-    remotion_studio_process_exited:'Le processus du Studio a disparu (fenêtre fermée hors de Jarvis ou plantage). Rouvrez-le.',
-    remotion_studio_stop_failed:'Le Studio n’a pas pu être arrêté : un processus peut rester actif. Réessayez la fermeture.',
-    remotion_studio_sync_failed:'La scène n’a pas pu être rafraîchie dans le Studio.',
-    remotion_studio_store_failed:'L’état du Studio n’a pas pu être lu ou écrit sur le disque.',
-    remotion_studio_internal_error:'Défaut interne du Studio.',
-    remotion_studio_unavailable:'Ce Core n’a pas de Studio Remotion.',
+    remotion_studio_not_running:'Remotion Studio n’est pas ouvert : ouvrez-le d’abord.',
+    remotion_studio_port_unavailable:'Le port demandé pour Remotion Studio est déjà utilisé sur ce poste.',
+    remotion_studio_start_failed:'Remotion Studio n’a pas démarré. Son journal dit pourquoi.',
+    remotion_studio_start_timeout:'Remotion Studio n’a pas répondu dans le délai (2 min). Réessayez.',
+    remotion_studio_health_failed:'Remotion Studio ne répond plus ; il a été arrêté. Rouvrez-le.',
+    remotion_studio_process_exited:'Le processus de Remotion Studio a disparu (fermé hors de Jarvis ou plantage). Rouvrez-le.',
+    remotion_studio_stop_failed:'Remotion Studio n’a pas pu être arrêté : un processus peut rester actif. Réessayez la fermeture.',
+    remotion_studio_sync_failed:'La scène n’a pas pu être rafraîchie dans Remotion Studio.',
+    remotion_studio_store_failed:'L’état de Remotion Studio n’a pas pu être lu ou écrit sur le disque.',
+    remotion_studio_internal_error:'Défaut interne de Remotion Studio.',
+    remotion_studio_unavailable:'Ce Core n’a pas de Remotion Studio.',
     remotion_studio_ack_required:'Il faut confirmer que la scène s’exécutera sans bac à sable.',
-    remotion_studio_state_unreadable:'Le fichier d’état du Studio est illisible : mettez-le de côté (studio/state.json), puis réessayez.',
+    remotion_studio_state_unreadable:'Le fichier d’état de Remotion Studio est illisible : mettez-le de côté (studio/state.json), puis réessayez.',
     core_unreachable:'Core ne répond pas.',core_unconfigured:'Le Control Center ne connaît pas Core.',
     core_timeout:'Core n’a pas répondu à temps : l’issue est inconnue, l’état est relu.',
   });
 
   function errorText(code){return ERRORS[code]||''}
 
-  /* Accusé obligatoire (B2) : la scène tourne dans l'onglet du Studio, sans le bac à sable du Player, à l'origine de l'API du Studio. */
+  /* Accusé obligatoire (B2) : la scène tourne dans l'onglet de Remotion Studio, sans le bac à sable du Player, à l'origine de son API. */
   const ACK_FIELD='acknowledge_unsandboxed_scene';
   const ORIGIN_LABEL=Object.freeze({base:'livrée avec Jarvis',custom:'créée sur ce poste',fork:'dérivée d’une autre scène (fork)',
     revision:'nouvelle version d’une scène',base_edit:'modification d’une scène de base'});
@@ -86,20 +87,20 @@ const JarvisRemotionStudioCore=(function(){
     const own=actor==='user';
     const lines=[
       ['Sans bac à sable : ','la scène s’exécute dans votre navigateur avec les droits d’une page web, pas dans le lecteur isolé de Jarvis.'],
-      ['Même origine que l’API du Studio : ','elle peut appeler cette API (lecture de sa copie de travail).'],
-      ['Données : ','sa source et ses paramètres peuvent sortir de ce poste (le Studio bloque les connexions, mais pas tous les canaux d’un navigateur).'],
+      ['Même origine que l’API de Remotion Studio : ','elle peut appeler cette API (lecture de sa copie de travail).'],
+      ['Données : ','sa source et ses paramètres peuvent sortir de ce poste (Remotion Studio bloque les connexions, mais pas tous les canaux d’un navigateur).'],
       ['Version : ',`${scene.label||scene.id}`],
       ['Provenance : ',known?`${ORIGIN_LABEL[origin]||String(origin)} · auteur : ${ACTOR_LABEL[actor]||String(actor)}`:'inconnue (lecture impossible)'],
     ];
     if(!own)lines.push(['Attention : ',known?'cette version n’a pas été écrite par vous (agent, système ou import) et n’a peut-être pas été relue. Ne l’ouvrez que si vous lui faites confiance.'
       :'sa provenance n’a pas pu être vérifiée. Ne l’ouvrez que si vous lui faites confiance.']);
-    const verbs={open:'Ouvrir le Studio sur cette scène',restart:'Relancer le Studio',switch:'Afficher cette scène dans le Studio'};
+    const verbs={open:'Ouvrir cette scène dans Remotion Studio',restart:'Relancer Remotion Studio',switch:'Afficher cette scène dans Remotion Studio'};
     return {title:own?'Ouvrir cette scène hors du bac à sable ?':'Ouvrir une scène que vous n’avez pas écrite ?',lines,
       confirmLabel:verbs[kind]||verbs.open,cancelLabel:'Annuler',danger:!own,own};
   }
 
   /* Une seule phrase par message d'erreur de notification : `sub` et `kind` sont les champs de `toast` de la page. */
-  function failureToast(error,fallback){return {title:'Studio Remotion',sub:errorText(error&&error.code)||(error&&error.message)||fallback||'L’action a échoué.',kind:'error'}}
+  function failureToast(error,fallback){return {title:'Remotion Studio',sub:errorText(error&&error.code)||(error&&error.message)||fallback||'L’action a échoué.',kind:'error'}}
 
   function fmtDuration(seconds){
     const s=Math.max(0,Math.round(seconds));
@@ -118,11 +119,11 @@ const JarvisRemotionStudioCore=(function(){
     const busy=st==='starting'||st==='stopping';
     const ready=st==='ready';
     const model={status:st,label:info.label,tone:info.tone,capability:{label:cap.label,tone:cap.tone,runnable},activity:null,url:null,
-      note:null,error:null,diagnostics:[],actions:{open:{label:'Ouvrir le Studio',enabled:false,why:''},sync:{enabled:false},restart:{enabled:false},close:{enabled:false}}};
-    if(!studio){model.activity={text:'Lecture de l’état du Studio…',spin:true};return model}
+      note:null,error:null,diagnostics:[],actions:{open:{label:'Ouvrir Remotion Studio',enabled:false,why:''},sync:{enabled:false},restart:{enabled:false},close:{enabled:false}}};
+    if(!studio){model.activity={text:'Lecture de l’état de Remotion Studio…',spin:true};return model}
     const pin=studio.pin||null;
     const differs=!!(ready&&pin&&scene&&(scene.id!==pin.prefab_id||Number(scene.version)!==Number(pin.version)));
-    if(ready)model.actions.open.label=differs?'Afficher cette scène':'Ouvrir le Studio';
+    if(ready)model.actions.open.label=differs?'Afficher cette scène':'Ouvrir Remotion Studio';
     const canOpen=!busy&&!!scene&&runnable&&(!ready||differs);
     model.actions.open.enabled=canOpen||(ready&&!differs&&!!studio.url);
     if(!scene)model.actions.open.why='Aucune scène Remotion dans la bibliothèque.';
@@ -132,9 +133,9 @@ const JarvisRemotionStudioCore=(function(){
     model.actions.close.enabled=ready||st==='failed';
     if(st==='starting'){
       const since=studio.started_at?Math.max(0,now/1000-studio.started_at):0;
-      model.activity={text:`Démarrage du Studio… ${fmtDuration(since)} écoulées, ${START_LIMIT_S/60} min au plus.`,spin:true,since};
+      model.activity={text:`Démarrage de Remotion Studio… ${fmtDuration(since)} écoulées, ${START_LIMIT_S/60} min au plus.`,spin:true,since};
     }else if(st==='stopping'){
-      model.activity={text:'Arrêt du Studio…',spin:true};
+      model.activity={text:'Arrêt de Remotion Studio…',spin:true};
     }else if(ready){
       model.url=studio.url;
       const parts=[];
@@ -148,7 +149,7 @@ const JarvisRemotionStudioCore=(function(){
     }
     if(st==='failed'){
       const code=studio.last_error_code||'';
-      model.error={code,text:errorText(code)||studio.last_error_detail||'Le Studio est en échec.',detail:studio.last_error_detail||''};
+      model.error={code,text:errorText(code)||studio.last_error_detail||'Remotion Studio est en échec.',detail:studio.last_error_detail||''};
     }
     model.diagnostics=(studio.diagnostics||[]).slice(-12);
     const wc=studio.work_copy||{};
@@ -206,6 +207,9 @@ const JarvisRemotionStudioCore=(function(){
 })();
 
 if(typeof module!=='undefined'&&module.exports)module.exports=JarvisRemotionStudioCore;
+/* Variantes (native-studio-playback-fix Slice 11, `control_center_presentation_studio_explorer_remotion.js`) lit ce même noyau : un seul client,
+   une seule confirmation, un seul vocabulaire pour les deux portes de Remotion Studio. */
+if(typeof window!=='undefined')window.JarvisRemotionStudioCore=JarvisRemotionStudioCore;
 
 /* --------------------------------------------------------------------------
    Navigateur : rend la carte dans `#rmsCard` quand l'onglet « Plugins externes » est visible, relit l'état (2 s pendant un
@@ -238,30 +242,30 @@ if(typeof module!=='undefined'&&module.exports)module.exports=JarvisRemotionStud
     if(studio&&typeof studio.idle_in_s==='number')studio.idle_in_s=Math.max(0,studio.idle_in_s-(now-S.fetchedAt)/1000);
     const m=C.viewModel(studio,S.capability,scene,now);
     const activityText=m.activity?m.activity.text:'';
-    const sceneSelect=S.scenes.length?`<label class="rms-scene"><span>Scène</span><select id="rmsScene" aria-label="Scène à afficher dans le Studio"${S.busy||m.status==='starting'?' disabled':''}>${
+    const sceneSelect=S.scenes.length?`<label class="rms-scene"><span>Scène</span><select id="rmsScene" aria-label="Scène à afficher dans Remotion Studio"${S.busy||m.status==='starting'?' disabled':''}>${
       S.scenes.map(s=>`<option value="${esc(s.id)}@${s.version}"${scene&&s.id===scene.id&&s.version===scene.version?' selected':''}>${esc(s.label)}</option>`).join('')}</select></label>`
-      :`<p class="rms-none">Aucune scène Remotion dans la bibliothèque : le Studio s’ouvre sur une scène publiée.</p>`;
+      :`<p class="rms-none">Aucune scène Remotion dans la bibliothèque : Remotion Studio s’ouvre sur une scène publiée.</p>`;
     const btn=(id,label,enabled,cls='',title='')=>`<button type="button" class="action small ${cls}" id="${id}"${enabled&&!S.busy?'':' disabled'}${title?` title="${esc(title)}"`:''}>${esc(label)}</button>`;
     const activity=m.activity?`<p class="mcpp-activity rms-activity" id="rmsActivity">${m.activity.spin?'<span class="mcpp-spin" aria-hidden="true"></span>':''}<span id="rmsActivityText">${ACT}</span></p>`:'';
-    const link=m.url?`<p class="rms-link"><a class="mcpp-link" id="rmsOpenLink" href="${esc(m.url)}" target="_blank" rel="noopener noreferrer">Ouvrir la fenêtre du Studio</a>${
-      ' <span class="rms-hint">Ouverture dans une fenêtre à part ; le Studio n’est jamais affiché dans cette page.</span>'}</p>`:'';
+    const link=m.url?`<p class="rms-link"><a class="mcpp-link" id="rmsOpenLink" href="${esc(m.url)}" target="_blank" rel="noopener noreferrer">Ouvrir l’onglet Remotion Studio</a>${
+      ' <span class="rms-hint">Ouverture dans un onglet à part ; Remotion Studio n’est jamais affiché dans cette page.</span>'}</p>`:'';
     const failure=m.error?`<div class="mcpp-lasterr rms-err" role="alert"><span class="mcpp-dot" aria-hidden="true"></span><span>${esc(m.error.text)} <code>${esc(m.error.code)}</code></span></div>`:'';
     const actionError=S.actionError?`<div class="mcpp-lasterr rms-err" role="alert"><span class="mcpp-dot" aria-hidden="true"></span><span>${esc(S.actionError.text)} <code>${esc(S.actionError.code)}</code></span></div>`:'';
     const readError=S.readError?`<p class="mcpp-lasterr rms-err" role="status"><span class="mcpp-dot" aria-hidden="true"></span><span>${esc(S.readError.text)} <code>${esc(S.readError.code)}</code> L’état affiché est le dernier connu.</span></p>`:'';
-    const diag=m.diagnostics.length?`<details class="mcpp-tech" id="rmsTech"${S.techOpen?' open':''}><summary>Journal du Studio (${m.diagnostics.length})</summary><pre class="rms-log">${esc(m.diagnostics.join('\n'))}</pre></details>`:'';
-    const edits=m.edits&&(m.edits.modified||m.edits.saved)?`<p class="rms-hint">${m.edits.modified?`${m.edits.modified} fichier(s) modifié(s) dans le Studio : cette copie est en lecture seule et n’est jamais écrite dans la bibliothèque ; elle est mise de côté à la fermeture. `:''}${m.edits.saved?`${m.edits.saved} fichier(s) modifié(s) dans le Studio mis de côté ; la bibliothèque n’a pas été modifiée.`:''}</p>`:'';
+    const diag=m.diagnostics.length?`<details class="mcpp-tech" id="rmsTech"${S.techOpen?' open':''}><summary>Journal de Remotion Studio (${m.diagnostics.length})</summary><pre class="rms-log">${esc(m.diagnostics.join('\n'))}</pre></details>`:'';
+    const edits=m.edits&&(m.edits.modified||m.edits.saved)?`<p class="rms-hint">${m.edits.modified?`${m.edits.modified} fichier(s) modifié(s) dans Remotion Studio : cette copie est en lecture seule et n’est jamais écrite dans la bibliothèque ; elle est mise de côté à la fermeture. `:''}${m.edits.saved?`${m.edits.saved} fichier(s) modifié(s) dans Remotion Studio mis de côté ; la bibliothèque n’a pas été modifiée.`:''}</p>`:'';
     /* Le nœud `aria-live` (`#rmsBusy`) est créé une fois et jamais remplacé : son texte seul change, sinon le lecteur d'écran l'annonce à chaque rendu. */
     const html=`<article class="mcpp-card rms-card" data-state="${m.status==='failed'?'error':m.status==='stopped'?'off':'on'}" aria-labelledby="rmsTitle">
       <div class="mcpp-top"><span class="mcpp-avatar" aria-hidden="true"><span class="mcpp-letter">R</span></span>
-        <div class="mcpp-ident"><h3 class="mcpp-name" id="rmsTitle">Remotion · Studio</h3>
-          <span class="mcpp-host">Fenêtre d’édition à chaud d’une scène, ouverte seulement à votre demande</span></div>
+        <div class="mcpp-ident"><h3 class="mcpp-name" id="rmsTitle">Remotion Studio</h3>
+          <span class="mcpp-host">L’éditeur de Remotion sur une scène, dans un onglet à part, ouvert seulement à votre demande. Pour une scène d’une présentation : Variantes, « Remotion Studio » sous la vidéo (la version exacte de la variante)</span></div>
         <div class="mcpp-badges"><span class="chip ${m.capability.tone}" title="Environnement Remotion installé sur ce poste">Environnement : ${esc(m.capability.label)}</span><span class="chip ${m.tone}" id="rmsStatus">${esc(m.label)}</span></div></div>
       ${sceneSelect}${activity}${link}${failure}${actionError}${readError}${m.note?`<p class="rms-hint">${esc(m.note)}</p>`:''}${edits}${diag}
       <div class="mcpp-foot rms-foot">
         ${btn('rmsOpen',m.actions.open.label,m.actions.open.enabled,'primary',m.actions.open.why)}
-        ${btn('rmsSync','Actualiser la scène',m.actions.sync.enabled,'','Recopier la dernière version publiée ; le Studio se recharge sans redémarrer')}
+        ${btn('rmsSync','Actualiser la scène',m.actions.sync.enabled,'','Recopier la dernière version publiée ; Remotion Studio se recharge sans redémarrer')}
         ${btn('rmsRestart','Relancer',m.actions.restart.enabled)}
-        ${btn('rmsClose','Fermer le Studio',m.actions.close.enabled,'danger')}</div>
+        ${btn('rmsClose','Fermer Remotion Studio',m.actions.close.enabled,'danger')}</div>
     </article>`;
     if(!host.querySelector('#rmsBusy')){
       const live=document.createElement('div');live.id='rmsBusy';live.className='rms-busy';live.setAttribute('aria-live','polite');
@@ -296,7 +300,7 @@ if(typeof module!=='undefined'&&module.exports)module.exports=JarvisRemotionStud
       if(gen!==S.gen)return;
       S.studio=studio;S.capability=capability;S.readError=null;S.fetchedAt=Date.now();
     }catch(error){
-      S.readError={code:error.code||'network',text:C.errorText(error.code)||'Impossible de lire l’état du Studio.'};
+      S.readError={code:error.code||'network',text:C.errorText(error.code)||'Impossible de lire l’état de Remotion Studio.'};
       log('warn','remotion.studio.read_failed',{code:error.code,status:error.status});
     }finally{S.loading=false}
     render();schedule();
@@ -323,7 +327,7 @@ if(typeof module!=='undefined'&&module.exports)module.exports=JarvisRemotionStud
   /* Confirmation (B2) : jamais d'accusé envoyé sans que l'utilisateur ait lu le risque et la provenance de CETTE version. */
   async function confirmUnsandboxed(scene,kind){
     if(typeof confirmDialog!=='function'){
-      S.actionError={code:'confirmation_unavailable',text:'La confirmation n’est pas disponible dans cette page : le Studio n’a pas été ouvert.'};
+      S.actionError={code:'confirmation_unavailable',text:'La confirmation n’est pas disponible dans cette page : Remotion Studio n’a pas été ouvert.'};
       render();return false;
     }
     const provenance=await client.provenance(scene.id,scene.version);
@@ -341,7 +345,7 @@ if(typeof module!=='undefined'&&module.exports)module.exports=JarvisRemotionStud
       const studio=await client.write(action,body);
       S.studio=studio;S.fetchedAt=Date.now();
       log('info','remotion.studio.action_done',{action,status:studio.status,seconds:Math.round((Date.now()-started)/1000)});
-      if(studio.status==='failed')notify(C.failureToast({code:studio.last_error_code},'Le Studio est en échec.'));
+      if(studio.status==='failed')notify(C.failureToast({code:studio.last_error_code},'Remotion Studio est en échec.'));
       else if((action==='open'||action==='restart')&&studio.status==='ready'&&studio.url){
         /* Un navigateur peut refuser l'ouverture après une longue attente (plus de geste récent) : le lien reste affiché. */
         window.open(studio.url,'jarvis-remotion-studio','noopener,noreferrer');
@@ -363,14 +367,14 @@ if(typeof module!=='undefined'&&module.exports)module.exports=JarvisRemotionStud
       const ready=S.studio&&S.studio.status==='ready';
       const same=ready&&scene&&S.studio.pin&&S.studio.pin.prefab_id===scene.id&&Number(S.studio.pin.version)===scene.version;
       if(same&&S.studio.url){window.open(S.studio.url,'jarvis-remotion-studio','noopener,noreferrer');return}
-      if(scene)act('open',ready?'Changement de scène…':'Ouverture du Studio…',{prefab_id:scene.id,version:scene.version},scene,ready?'switch':'open');
+      if(scene)act('open',ready?'Changement de scène…':'Ouverture de Remotion Studio…',{prefab_id:scene.id,version:scene.version},scene,ready?'switch':'open');
     }else if(button.id==='rmsSync')act('sync','Rafraîchissement de la scène…');
     else if(button.id==='rmsRestart'){
       const pin=S.studio&&S.studio.pin;
       const known=pin&&S.scenes.find(x=>x.id===pin.prefab_id)||(pin?{id:pin.prefab_id,version:Number(pin.version),label:`${pin.prefab_id} · v${pin.version}`}:null);
-      act('restart','Relance du Studio…',undefined,known&&{...known,version:pin?Number(pin.version):known.version},'restart');
+      act('restart','Relance de Remotion Studio…',undefined,known&&{...known,version:pin?Number(pin.version):known.version},'restart');
     }
-    else if(button.id==='rmsClose')act('close','Fermeture du Studio…');
+    else if(button.id==='rmsClose')act('close','Fermeture de Remotion Studio…');
   });
   host.addEventListener('change',event=>{
     if(event.target&&event.target.id==='rmsScene'){S.sceneKey=event.target.value;S.rendered='';S.deferred=false;render()}

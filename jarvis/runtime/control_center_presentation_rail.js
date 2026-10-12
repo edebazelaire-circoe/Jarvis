@@ -12,7 +12,7 @@
      repos, 20 s onglet caché). Aucune présentation n'est gardée ici : un geste (masquer, archiver, renommer) est une écriture de Core
      (`POST .../presentations/{id}/rail`, acteur `user` imposé par le relais) puis une relecture ; un échec est dit à l'écran ;
    - le lieu des gestes : clic = ouvrir Variantes sur la présentation (fenêtré, `JarvisStudioExplorer`), clic droit (ou touche Menu,
-     Maj+F10) = menu Ouvrir les variantes / Éditer / Présenter / Masquer ou Afficher / Renommer / Supprimer (archiver, restaurable, avec
+     Maj+F10) = menu Ouvrir les variantes / Remotion Studio… / Éditer / Présenter / Masquer ou Afficher / Renommer / Supprimer (archiver, restaurable, avec
      confirmation) ; une archivée ne propose que Restaurer. La fenêtre de présentation flottante (`JarvisPresentationWindow`) est
      RETIRÉE (native-studio-playback-fix Slice 09) : Variantes est la seule surface, et une présentation lancée d'ici s'y montre ;
    - le récepteur des demandes d'écran du cerveau (`ui.request` : montrer ou masquer le rail), et le rapporteur de ce que la page
@@ -80,6 +80,8 @@
     if(row.archived)return [{act:'restore',label:'Restaurer'}];
     const items=[
       {act:'open',label:'Ouvrir les variantes',note:c.playing&&!c.playingThis?'Une autre présentation est en cours : Variantes la montre.':null},
+      /* native-studio-playback-fix Slice 11 (§ 1): Variants on the active variant, then Remotion Studio on the scene on screen, after the confirmation. */
+      {act:'studio',label:'Remotion Studio…',note:c.playing?'Une présentation est en cours : Remotion Studio s’ouvre à son arrêt.':null},
       {act:'edit',label:'Éditer',note:c.playing?'Une présentation est en cours : l’inspecteur est indisponible.':null},
       {act:'play',label:'Présenter',note:c.playing?'Une présentation est déjà en cours.':null},
       '-',
@@ -376,6 +378,26 @@ html.jvr-studio.jvr-slim #${DOM.hostId}{width:44px}
       }).catch(error=>{log('variants_open_failed',{via,error:cleanLine(error&&error.message,120)},'error');say('failed',`Ouverture impossible : ${cleanLine(error&&error.message,100)}`)});
       return true;
     }
+    /* « Remotion Studio… » (§ 1, Slice 11): Variants opens on the presentation, then its « Remotion Studio » door on the scene on screen (the
+       confirmation names the scene; « Annuler » launches nothing). Remotion Studio's state and failures are said in Variants. */
+    async function remotionStudio(id){
+      const row=rowOf(id);
+      if(row&&row.archived){say('failed','Archivée : restaurez-la d’abord.');return null}
+      const ex=explorerApi();
+      if(!ex||typeof ex.open!=='function'||!ex.remotionStudio||typeof ex.remotionStudio.open!=='function'){say('failed','Variantes n’est pas chargé dans cette page.');return null}
+      try{
+        const opened=await ex.open({presentation_id:id,fullscreen:false,via:'rail'});
+        render();reportSoon(true);
+        if(opened&&opened.state==='refused'){say('failed',opened.reason||opened.code||'Variantes refusé.');return opened}
+        const result=await ex.remotionStudio.open({via:'rail'});
+        log('remotion_studio_from_rail',{state:result&&result.state});
+        return result;
+      }catch(error){
+        log('remotion_studio_from_rail_failed',{error:cleanLine(error&&error.message,120)},'error');
+        say('failed',`Remotion Studio : ${cleanLine(error&&error.message,100)}`);
+        return null;
+      }
+    }
     async function edit(id){
       const ins=inspectorApi();
       openRow(id,'edit');
@@ -416,6 +438,7 @@ html.jvr-studio.jvr-slim #${DOM.hostId}{width:44px}
       const row=rowOf(id);if(!row)return;
       if(action==='open')return openRow(id,'menu');
       if(action==='edit')return edit(id);
+      if(action==='studio')return remotionStudio(id);
       if(action==='play')return play(id);
       if(action==='hide'||action==='show'){const a=await write(id,{action},action==='hide'?'Masquer':'Afficher');if(a)say('ok',action==='hide'?'Masquée du rail (menu Masquées pour la réafficher).':'Réaffichée dans le rail.');return}
       if(action==='ack')return write(id,{action:'acknowledge'},'Acquitter');

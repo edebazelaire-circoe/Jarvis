@@ -66,13 +66,13 @@ def test_the_retired_window_and_focus_are_gone():
 
 def test_the_menu_has_every_action_says_why_one_is_unavailable_and_an_archived_row_only_restores():
     normal = node(f"return R.menuModel({{presentation_id:'{P1}',title:'A',hidden:false,archived:false,work:{{state:'done'}}}},{{}}).map(i=>i==='-'?'-':i.act)")
-    assert normal == ["open", "edit", "play", "-", "hide", "rename", "-", "archive"]
+    assert normal == ["open", "studio", "edit", "play", "-", "hide", "rename", "-", "archive"], "§ 1: « Remotion Studio… » (Slice 11)"
     labels = node(f"return R.menuModel({{presentation_id:'{P1}',title:'A',work:{{state:'done'}}}},{{}}).filter(i=>i!=='-').map(i=>i.label)")
-    assert labels[:3] == ["Ouvrir les variantes", "Éditer", "Présenter"], "contract § 1: the rail opens Variants and « Présenter » starts a run"
+    assert labels[:4] == ["Ouvrir les variantes", "Remotion Studio…", "Éditer", "Présenter"], "contract § 1: the rail opens Variants, then Remotion Studio, and « Présenter » starts a run"
     hidden = node(f"return R.menuModel({{presentation_id:'{P1}',title:'A',hidden:true,archived:false,work:{{state:'problem'}}}},{{}}).filter(i=>i!=='-').map(i=>i.act)")
     assert "show" in hidden and "hide" not in hidden and "ack" in hidden, "acknowledge only when orange"
     busy = node(f"return R.menuModel({{presentation_id:'{P1}',title:'A',work:{{state:'done'}}}},{{playing:true,playingThis:true}}).filter(i=>i!=='-').map(i=>[i.act,!!i.note])")
-    assert dict(map(tuple, busy)) == {"open": False, "edit": True, "play": True, "hide": False, "rename": False, "archive": True}
+    assert dict(map(tuple, busy)) == {"open": False, "studio": True, "edit": True, "play": True, "hide": False, "rename": False, "archive": True}
     other = node(f"return R.menuModel({{presentation_id:'{P1}',title:'A',work:{{state:'done'}}}},{{playing:true,playingThis:false}}).filter(i=>i!=='-').map(i=>[i.act,!!i.note])")
     assert dict(map(tuple, other))["open"] is True, "another presentation plays: Variants shows that one"
     archived = node(f"return R.menuModel({{presentation_id:'{P1}',title:'A',archived:true}},{{}}).map(i=>i.act)")

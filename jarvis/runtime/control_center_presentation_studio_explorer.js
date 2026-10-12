@@ -45,6 +45,8 @@
   const Media=root.JarvisVariantsStageMedia||(typeof require==='function'?require('./control_center_presentation_studio_stage_media.js'):null);
   /* Une présentation dans Variantes (Slice 09) : la surface de Core, la bande du présentateur, les touches de la présentation. */
   const Run=root.JarvisVariantsRun||(typeof require==='function'?require('./control_center_presentation_studio_run.js'):null);
+  /* « Remotion Studio » sous la vidéo (Slice 11) : la porte vers l'éditeur natif, sur la scène à l'écran, son pin exact. */
+  const Rms=root.JarvisVariantsRemotionStudio||(typeof require==='function'?require('./control_center_presentation_studio_explorer_remotion.js'):null);
   const Frames=()=>root.JarvisRemotionFrame||(typeof require==='function'?require('./control_center_remotion_frame.js'):null);
   const Clock=()=>root.JarvisCompositionClock||(typeof require==='function'?require('./control_center_composition_clock.js'):null);
   const {ROUTE,PLAYBACK_ROUTE,COMMAND_ROUTE,STATE_ROUTE,HOST_ID,OBJECT_ID,PREVIEW_OBJECT_ID,STAGE_OBJECT_ID,STYLE_ID,ROW_H,MAX_DEPTH_SHOWN,INDENT_PX,TYPEAHEAD_MS,PAGE_TOKEN,PAGE_TOKEN_HEADER,
@@ -164,7 +166,7 @@
     function ensureStyle(){
       if(!doc||typeof doc.getElementById!=='function'||doc.getElementById(STYLE_ID))return;
       const style=doc.createElement('style');
-      style.id=STYLE_ID;style.textContent=CSS+(Cmp&&Cmp.CSS||'')+(Upgrades&&Upgrades.CSS||'')+(Run&&Run.CSS||'');
+      style.id=STYLE_ID;style.textContent=CSS+(Cmp&&Cmp.CSS||'')+(Upgrades&&Upgrades.CSS||'')+(Run&&Run.CSS||'')+(Rms&&Rms.CSS||'');
       (doc.head||doc.body).appendChild(style);
     }
 
@@ -285,6 +287,18 @@
       busy:()=>!!S.busy,blocked:()=>S.writing||(!!S.busy&&!!S.busy.op&&S.busy.op!=='plan'),revision:()=>S.graph?S.graph.revision:null,isOpen:()=>S.open,say:(kind,text)=>say(kind,text),select:id=>{if(nodeOf(id))selectVariant(id,{focus:true})},
       perform:(op,label,fn)=>perform(op,label,fn),after:(id,message)=>after(id,message),describe:error=>describeRefusal(error.info||error,{op:'upgrades'})});
 
+    /* « Remotion Studio » (Slice 11) : la scène à l'écran, son pin exact, la boîte de dialogue et la pause de Variantes ; l'état est celui de Core. */
+    const door=Rms.createRemotionDoor({doc,win,el,attrs,clear,button,dialogButton,later,cancelLater,now,log,announce,fetch:fetchImpl,
+      dialog:{open:spec=>openDialog(spec),close:restore=>closeDialog(restore),current:()=>S.dialog},
+      scene:()=>{
+        const p=S.preview,scene=p.status==='ready'&&!S.run?currentScene():null;
+        if(!scene)return null;
+        const node=nodeOf(p.variantId);
+        return {presentationId:S.pid,variantId:p.variantId,variantNumber:node?node.variant_number:null,scene,index:p.scenes.indexOf(scene),scenes:p.scenes};
+      },
+      running:()=>!!S.run,isOpen:()=>S.open,
+      pause:()=>{const v=seq?seq.view():null;if(v&&(v.phase==='playing'||v.phase==='waiting')){seq.pause();log('playback_paused_for_remotion_studio',{})}}});
+
     function build(){
       if(ui.host)return ui.host;
       ensureStyle();
@@ -377,7 +391,10 @@
       buildTransport();
       /* Slice 10 (Slice 02 inventory § 2): row 1 is the transport alone, so the slider gets the width; row 2 is « Scène n sur N », the scene
          title and « Présenter » (not a playback control). During a run row 2 gives way to the presenter strip; in fullscreen only row 1 shows. */
-      note.appendChild(ui.transport);note.appendChild(ui.sceneCount);note.appendChild(sceneLine);note.appendChild(ui.present);
+      /* Slice 11 (§ 6 #22): « Remotion Studio » beside « Présenter » on the scene row, its state line under the row (only when it has something to say). */
+      ui.rmsButton=door.buildButton();ui.rmsStatus=door.buildStatus();
+      note.appendChild(ui.transport);note.appendChild(ui.sceneCount);note.appendChild(sceneLine);note.appendChild(ui.rmsButton);note.appendChild(ui.present);
+      note.appendChild(ui.rmsStatus);
       ui.strip=el('div','jvx-strip');
       attrs(ui.strip,{role:'listbox','aria-label':'Scènes de la variante','aria-orientation':'horizontal'});
       const bottom=el('div','jvx-bottom');
@@ -1094,6 +1111,7 @@
       ui.sceneBadge.title='Variantes locales de cette scène (elles restent hors de l\'arbre tant qu\'on ne les promeut pas)';
       ui.sceneCount.textContent=scene?`Scène ${index+1} sur ${p.scenes.length}`:'';
       ui.stage.setAttribute('aria-label',scene?`Aperçu, scène ${index+1} sur ${p.scenes.length} : ${scene.title}`:'Aperçu');
+      door.sync();
       renderPlayback();
     }
     function renderStrip(){
@@ -1373,6 +1391,8 @@
       S.dialog=null;
       if(dlg.timer)stopEvery(dlg.timer);
       clear(ui.layer);setInertBehind(false);
+      /* Slice 11: a dialog that waits for an answer (the Remotion Studio confirmation) learns it was closed some other way (Échap, scrim). */
+      if(typeof dlg.onClose==='function'){try{dlg.onClose()}catch(error){log('dialog_on_close_failed',{kind:dlg.kind,error:describe(error)},'error')}}
       if(restore!==false){
         const target=dlg.returnFocus&&dlg.returnFocus.isConnected!==false?dlg.returnFocus:null;
         const kindNode=nodeOf(S.selectedId);
@@ -1389,7 +1409,7 @@
       scrim.appendChild(box);
       ui.layer.appendChild(scrim);
       setInertBehind(true);
-      S.dialog={kind:spec.kind,box,scrim,returnFocus:spec.returnFocus||doc.activeElement,onCancel:spec.onCancel||null,timer:null};
+      S.dialog={kind:spec.kind,box,scrim,returnFocus:spec.returnFocus||doc.activeElement,onCancel:spec.onCancel||null,onClose:spec.onClose||null,timer:null};
       scrim.addEventListener('mousedown',event=>{if(event.target===scrim&&spec.dismissible!==false)cancelDialog()});
       return S.dialog;
     }
@@ -1735,6 +1755,7 @@
       if(!m.active)return;
       ui.stopRun.hidden=false;ui.present.hidden=true;
       ui.sceneCount.hidden=true;ui.sceneLine.hidden=true;   // the presenter strip says the scene and the item (Slice 02 inventory § 2)
+      ui.rmsButton.hidden=true;ui.rmsStatus.hidden=true;   // Slice 11: Remotion Studio opens when the run has stopped
       chrome.sync();
       const pausing=m.pause.command==='pause';
       ui.playAllLabel.textContent=m.pause.label;
@@ -1810,7 +1831,8 @@
     function renderPresent(){
       if(!ui.present)return;
       ui.stopRun.hidden=true;ui.present.hidden=false;
-      ui.sceneCount.hidden=false;ui.sceneLine.hidden=false;
+      ui.sceneCount.hidden=false;ui.sceneLine.hidden=false;ui.rmsButton.hidden=false;
+      door.render();
       const blocked=presentBlocked();
       attrs(ui.present,{'aria-disabled':blocked?'true':'false',title:blocked||'Présenter cette variante : vous, Jarvis, ou une répétition (la partition mène)'});
       if(ui.presenter)ui.presenter.hidden=true;
@@ -2029,6 +2051,7 @@
       S.opener=opts.opener||doc.activeElement;
       S.open=true;S.loading={label:'Chargement du graphe',at:now()};
       ui.host.hidden=false;
+      door.start();   // Slice 11: Remotion Studio's state, read once now, then at each return to this tab
       applyInert();
       if(!ui.bound){doc.addEventListener('fullscreenchange',onFullscreenChange);ui.bound=true}
       doc.addEventListener('keydown',onDocKey,true);
@@ -2078,6 +2101,25 @@
       reportSoon(true);
       return {state:'opened',mode:modeNow(),fullscreen:fsNow(),presentation_id:S.pid,variant_id:S.selectedId,fullscreen_result:fsResult&&fsResult.state};
     }
+    /* Slice 11: « Remotion Studio… » of the rail opens Variants, then this door on the scene on screen once the preview is ready (the
+       confirmation names it; the user may cancel and pick another scene). Waits at most 15 s, then says where to click. */
+    const REMOTION_WAIT_MS=15000;
+    function openRemotionStudio(options){
+      const o=options||{};
+      const since=now();
+      return new Promise(resolve=>{
+        const look=()=>{
+          if(!S.open){resolve({state:'refused',reason:'Variantes est fermé.'});return}
+          if(S.preview.status==='ready'&&currentScene()&&!S.dialog){door.request({via:o.via||'rail'}).then(resolve,error=>{
+            log('remotion_studio_request_failed',{error:describe(error)},'error');resolve({state:'failed',reason:describe(error)})});return}
+          if(now()-since>REMOTION_WAIT_MS){
+            const reason='Choisissez une scène, puis « Remotion Studio » sous la vidéo.';
+            say('info',reason);log('remotion_studio_wait_expired',{status:S.preview.status});resolve({state:'refused',reason});return}
+          later(look,100);
+        };
+        look();
+      });
+    }
     function close(options){
       const opts=options||{};
       if(!S.open)return {state:'closed',was_open:false};
@@ -2105,6 +2147,7 @@
         }
       }
       cmp.shutdown();
+      door.stop();
       drag=null;   // a drag cut short by the close: no resume, and a reopened slider does not seek on hover
       if(seq)seq.reset('closed');
       unmountPreview();
@@ -2198,6 +2241,9 @@
       /* Slice 09: the presentation Variants hosts (proofs; the run itself is Core's). */
       run:Object.freeze({view:()=>S.run?S.run.view:null,model:()=>runModel(),stats:()=>runAdapter.stats(),objectId:()=>runAdapter.objectId(),
         position:()=>S.run?runPosition():null,present:(role)=>startPresenting(role||'user_presenter')}),
+      /* Slice 11: the « Remotion Studio » door (the same as the button: confirmation first, then Core's open with the scene's exact pin). */
+      remotionStudio:Object.freeze({request:o=>door.request(Object.assign({via:'api'},o||{})),open:o=>openRemotionStudio(o),state:()=>door.state(),
+        model:()=>door.model(),refresh:()=>door.refresh()}),
       onSelectionChange(fn){selectionListeners.add(fn);return()=>selectionListeners.delete(fn)},
       select:(id)=>{if(S.open&&nodeOf(id))selectVariant(id,{focus:true})},
       runAction:(act,id)=>runAction(act,id||S.selectedId,{}),
@@ -2251,7 +2297,7 @@
     window.JarvisStudioExplorer=Object.freeze({
       open:explorer.open,close:explorer.close,isOpen:explorer.isOpen,state:explorer.state,selection:explorer.selection,
       onSelectionChange:explorer.onSelectionChange,select:explorer.select,refresh:explorer.refresh,stats:explorer.stats,
-      inspectTree:explorer.inspectTree,repaint:explorer.repaint,playback:explorer.playback,run:explorer.run,
+      inspectTree:explorer.inspectTree,repaint:explorer.repaint,playback:explorer.playback,run:explorer.run,remotionStudio:explorer.remotionStudio,
       compare:Object.freeze({open:o=>explorer.compare.start(o),close:o=>explorer.compare.close(o),isOpen:()=>explorer.compare.isActive(),view:()=>explorer.compare.view(),
         state:()=>explorer.compare.state(),marks:()=>explorer.compare.marks(),mark:id=>explorer.compare.mark(id),focus:pair=>explorer.compare.setPair(pair),
         mode:m=>explorer.compare.setMode(m),navigate:s=>explorer.compare.navigate(s),link:(a,b)=>explorer.compare.link(a,b),unlink:(a,b)=>explorer.compare.unlink(a,b),

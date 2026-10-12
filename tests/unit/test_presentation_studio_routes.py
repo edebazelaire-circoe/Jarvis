@@ -27,8 +27,8 @@ SCENES = [{"scene_id": "pss_000000000001", "prefab": {"id": "jarvis.window", "ve
 class Core:
     """`async with Core(tmp_path) as core` : `core.call(method, path, **kw) -> (status, json)` direct sur Core."""
 
-    def __init__(self, tmp_path) -> None:
-        self.stack = CaptureStack(tmp_path)
+    def __init__(self, tmp_path, **core_options) -> None:
+        self.stack = CaptureStack(tmp_path, core_options=core_options)
 
     async def __aenter__(self) -> "Core":
         await self.stack.__aenter__()

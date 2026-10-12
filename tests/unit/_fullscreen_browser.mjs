@@ -12,7 +12,8 @@
    Fin : Chrome est tue AVEC ses processus enfants (`taskkill /T /F` sous Windows : `kill()` ne tue que le parent, les
    enfants gardent le profil ouvert et il restait ~13 Mo dans %TEMP% par execution), puis le profil est efface.
    Actions : {eval}, {wait: ms}, {click: selecteur}, {key: nom}, {value: nom, expr}, {until: expr, ms},
-   {size: [w,h]}, {shot: chemin.png}. Sortie : {reads, console, errors}. */
+   {size: [w,h]}, {shot: chemin.png}, {targets: nom} (les adresses des onglets ouverts, native-studio-playback-fix Slice 11).
+   Sortie : {reads, console, errors}. */
 import {execFileSync, spawn} from 'node:child_process';
 import {mkdtempSync, rmSync, writeFileSync} from 'node:fs';
 import {tmpdir} from 'node:os';
@@ -136,6 +137,8 @@ try{
       writeFileSync(action.shot,Buffer.from(shot.data,'base64'));
     }
     else if(action.value!==undefined)reads[action.value]=await evaluate(action.expr);
+    else if(action.targets!==undefined)
+      reads[action.targets]=(await (await fetch(`http://127.0.0.1:${port}/json/list`)).json()).filter(t=>t.type==='page').map(t=>t.url);
     else if(action.until!==undefined){
       const end=Date.now()+(action.ms||5000);let ok=false;
       while(Date.now()<end){ok=!!(await evaluate(action.until));if(ok)break;await sleep(50)}

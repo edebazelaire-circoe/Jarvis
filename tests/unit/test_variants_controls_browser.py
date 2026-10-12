@@ -70,7 +70,7 @@ READOUT_SCAN = r"""(()=>{const x=document.querySelector('#jvStudioExplorer');con
 const out=[];const walk=document.createTreeWalker(x,NodeFilter.SHOW_TEXT);
 for(let n=walk.nextNode();n;n=walk.nextNode()){const t=n.textContent.replace(/\s+/g,' ').trim();if(!t||!RX.test(t))continue;const e=n.parentElement;
   if(!e||e.closest('[hidden]')||e.closest('.jvx-sr'))continue;const r=e.getBoundingClientRect();if(!r.width||!r.height)continue;
-  const owner=e.closest('.jvx-time,.jvx-presenter-clock,.jvx-stage-wait,.jvx-busy,.jvx-panehead .jvx-chip,.jvx-rowmeta,.jvx-facts,.jvx-meta,.jvx-presenter-where,.jvx-presenter-seq,.jvx-scene-count,.jvx-stage-veil,.jvx-notice,.jvx-row,.jvx-scene');
+  const owner=e.closest('.jvx-time,.jvx-presenter-clock,.jvx-stage-wait,.jvx-busy,.jvx-panehead .jvx-chip,.jvx-rowmeta,.jvx-facts,.jvx-meta,.jvx-presenter-where,.jvx-presenter-seq,.jvx-scene-count,.jvx-stage-veil,.jvx-notice,.jvx-row,.jvx-scene,.jvx-rms');
   out.push({text:t.slice(0,80),owner:owner?owner.className:null,label:(owner||e).textContent.replace(/\s+/g,' ').trim().slice(0,120),title:(owner||e).getAttribute('title')||''})}
 return out})()"""
 
@@ -232,6 +232,8 @@ def _readouts_are_canonical_or_labelled(rows: list[dict]) -> None:
             assert label.startswith("Partition") and "jamais le temps de la vidéo" in row["title"], row
         elif "jvx-stage-wait" in owner:
             assert label.startswith("Chargement de la scène"), row
+        elif "jvx-rms" in owner:
+            assert "Remotion Studio" in label, ("Slice 11: Remotion Studio's state line says whose state it is", row)
         elif "jvx-busy" in owner or "jvx-stage-veil" in owner or "jvx-notice" in owner:
             assert "…" in label or label.endswith("s") or "Chargement" in label, row
         elif "jvx-chip" in owner:
