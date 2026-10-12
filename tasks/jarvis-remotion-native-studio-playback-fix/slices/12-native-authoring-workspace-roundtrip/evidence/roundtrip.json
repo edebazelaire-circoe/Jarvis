@@ -1,0 +1,110 @@
+{
+ "slice": "12-native-authoring-workspace-roundtrip",
+ "tested_head": "4f2a6baf",
+ "edited_source": "sample-Scene.tsx",
+ "runtime": "RemotionStack (real Core, real compiler, real remotion studio) on free loopback ports, throw-away data root, headless Chrome over CDP; the live Jarvis was never contacted",
+ "durations_ms": {
+  "private_runtime_copy": 7648,
+  "studio_open_cold": 61989,
+  "hmr_edit_to_screen": 691,
+  "publish_click_to_said": 901
+ },
+ "studio_open": {
+  "status": "ready",
+  "pin": {
+   "prefab_id": "presentation-studio.p0000000000a1.s000000000001",
+   "version": 1
+  },
+  "work_copy": {
+   "modified_files": [],
+   "unpublished": 0,
+   "base": {
+    "prefab_id": "presentation-studio.p0000000000a1.s000000000001",
+    "version": 1
+   },
+   "writable": true,
+   "edits_saved": 0
+  },
+  "port_mode": "random"
+ },
+ "studio": {
+  "rendered": true,
+  "text_before_edit": "File\nView\nComposition\nTools\nHelp\nwork\nCompositions\nAssets\nSearch...\nCtrl+K\nScene\nScene\n\nS1\n\n0\n\nInspector\nJobs\nScene\nstudio-root.tsx:6\nMetadata\nDimensions\n1280\n720\nFrame rate\n30fps\nDuration\n00:03.00\nActions\nGenerate with agent...\nFit\n1x\nRender\n<AbsoluteFill>\n00:00.00\n0\n0",
+  "hmr_seen": true,
+  "same_document_no_reload": true,
+  "console_errors": []
+ },
+ "work_copy_before_publish": {
+  "modified_files": [
+   "src/Scene.tsx"
+  ],
+  "unpublished": 1,
+  "base": {
+   "prefab_id": "presentation-studio.p0000000000a1.s000000000001",
+   "version": 1
+  },
+  "writable": true,
+  "edits_saved": 0
+ },
+ "variants": {
+  "line_before": "Remotion Studio est ouvert sur cette scène (source v1), dans un autre onglet. 1 fichier modifié dans Remotion Studio, pas encore publié : la variante n’a pas changé.",
+  "confirm_text": "Publier dans la variante ?\nScène : Scène 1 sur 9 « S1 3s@30 »\nFichiers : 1 fichier modifié dans Remotion Studio : src/Scene.tsx\nCe qui se passe : Jarvis compile la scène puis la publie comme NOUVELLE version ; la v1 n’est pas modifiée et reste disponible (« Revenir »).\nRefusé si : la scène a changé depuis l’ouverture dans Remotion Studio, elle ne compile pas, ou elle importe autre chose que react et remotion.\nAnnuler\nPublier",
+  "line_after": "Publié dans la variante : nouvelle version de la scène (v1) ; la version d’avant reste disponible.",
+  "preview_pin": {
+   "status": "ready",
+   "scene": "pss_000000000001",
+   "scenes": 9
+  }
+ },
+ "scene_pin_after_publish": {
+  "id": "presentation-studio.p3c822227f7e2.s000000000001",
+  "version": 1
+ },
+ "stage_mean_rgb": {
+  "before": [
+   176,
+   16,
+   16
+  ],
+  "after": [
+   0,
+   224,
+   255
+  ],
+  "after_restart": [
+   0,
+   224,
+   255
+  ]
+ },
+ "studio_after_restart": {
+  "status": "stopped",
+  "stop_reason": "core_stopped",
+  "pin": {
+   "prefab_id": "presentation-studio.p3c822227f7e2.s000000000001",
+   "version": 1
+  },
+  "work_copy": {
+   "modified_files": [],
+   "unpublished": 0,
+   "base": {
+    "prefab_id": "presentation-studio.p3c822227f7e2.s000000000001",
+    "version": 1
+   },
+   "writable": true,
+   "edits_saved": 0
+  }
+ },
+ "evidence_files": [
+  "sample-Scene.tsx",
+  "studio-after-edit.png",
+  "studio-before-edit.png",
+  "variants-after-publish-000.png",
+  "variants-after-restart-000.png",
+  "variants-after-restart-1280x720.png",
+  "variants-before-publish-000.png",
+  "variants-publish-confirm-1280x720.png",
+  "variants-published-1280x720.png",
+  "variants-unpublished-1280x720.png"
+ ]
+}
