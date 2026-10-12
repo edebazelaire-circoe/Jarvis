@@ -21,7 +21,7 @@ import pytest
 from tests.fakes import presentation_studio_fake_author as fa
 from tests.fakes.remotion_player_stack import RemotionStack
 from tests.unit.test_remotion_player_realpage_browser import (
-    READY, RUNTIME, SANDBOX, SHELL, STAGE, control, edit_step, http_step, noise, record_evidence, run,
+    READY, RUNTIME, SANDBOX, SHELL, STAGE, VISIBLE_FRAMES, control, edit_step, http_step, noise, record_evidence, run,
 )
 
 pytestmark = pytest.mark.skipif(RUNTIME is None, reason="needs JARVIS_REMOTION_RUNTIME_DIR (an existing Remotion install), node and Chrome")
@@ -91,7 +91,8 @@ async def test_a_scripted_brief_becomes_a_multi_scene_remotion_presentation_that
                   edit_step(stack, "edit", control(scene_ids[2], "accent", "#00ff00")),
                   {"until": "getComputedStyle(document.querySelector('h1')).color==='rgb(0, 255, 0)'", "ms": 8000, **SANDBOX},
                   {"value": "after_edit", "expr": LOOK, **SANDBOX}, {"shot": shots[4]},
-                  {"value": "frames", "expr": "document.querySelectorAll('iframe[data-remotion-stage]').length"},
+                  # one SHOWN frame: since Slice 05 (rnsp) Variants keeps the next scene loaded beside it, staged and hidden
+                  {"value": "frames", "expr": VISIBLE_FRAMES},
                   {"value": "shell", "expr": SHELL}]
         result = await run(stack.page_url, steps)
         reads = result["reads"]
