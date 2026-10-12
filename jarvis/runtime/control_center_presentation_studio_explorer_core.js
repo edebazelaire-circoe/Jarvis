@@ -257,6 +257,16 @@
     }
   }
 
+  /* The tree and variant keys, as the keyboard sheet (`?`, Slice 10) shows them: the same keys as `treeKey`, the type-ahead, `C` / `Maj+C`
+     (comparison) and `[` `]` (the controller). The sheet replaced the hint line under the tree (§ 6 #6). */
+  const TREE_SHORTCUTS=Object.freeze([
+    {keys:['↑','↓'],does:"Parcourir l'arbre"},{keys:['→','←'],does:'Ouvrir, fermer une branche'},{keys:['Entrée'],does:'Choisir la variante'},
+    {keys:['0–9'],does:'Aller au numéro tapé'},{keys:['A'],does:'Activer'},{keys:['N'],does:"Brancher d'ici"},{keys:['F2'],does:'Renommer'},
+    {keys:['Suppr'],does:'Archiver'},{keys:['R'],does:'Restaurer (archivée)'},{keys:['C'],does:'Marquer pour comparer'},
+    {keys:['Maj+C'],does:'Comparer les variantes marquées'},{keys:['[',']'],does:'Variante précédente, suivante'},
+    {keys:['Maj+F10'],does:'Menu des actions'},
+  ].map(row=>Object.freeze({keys:Object.freeze(row.keys),does:row.does})));
+
   /* Recherche par numéro (type-ahead, motif APG facultatif) : les chiffres tapés à la suite (<= 700 ms entre deux) désignent le numéro d'affichage, immuable.
      Seuls les chiffres : les lettres N, A, R sont des raccourcis d'action. Rend l'id de la première ligne VISIBLE dont le numéro commence par `buffer`,
      en partant de la ligne suivante la focalisée (un numéro répété avance), ou `null`. */
@@ -314,10 +324,10 @@
   const COMMAND_REFUSALS=Object.freeze({
     explorer_run_in_progress:"Une autre présentation est en cours : Variantes la montre. Arrêtez-la pour ouvrir celle-ci.",
     explorer_unknown_presentation:"Cette présentation n'existe pas.",
-    explorer_unavailable:"L'explorateur de variantes n'est pas disponible dans cette page.",
+    explorer_unavailable:"Variantes n'est pas disponible dans cette page.",
     explorer_load_failed:"Core n'a pas pu rendre le graphe des variantes.",
     explorer_page_error:"L'explorateur a rencontré une erreur inattendue.",
-    explorer_dialog_open:"Un formulaire est ouvert dans l'explorateur : terminez-le ou annulez-le avant de changer de présentation.",
+    explorer_dialog_open:"Un formulaire est ouvert dans Variantes : terminez-le ou annulez-le avant de changer de présentation.",
   });
 
   /* ------------------------------------------------------------------ boîte d'archivage */
@@ -369,6 +379,7 @@
   /* ------------------------------------------------------------------ icônes (dessinées, un seul trait) */
   const ICONS=Object.freeze({
     close:['M6 6l12 12','M18 6L6 18'],
+    keyboard:['M3 7h18v10H3z','M7 11h.01','M11 11h.01','M15 11h.01','M8 14h8'],
     expand:['M4 9V4h5','M20 9V4h-5','M4 15v5h5','M20 15v5h-5'],
     contract:['M9 4v5H4','M15 4v5h5','M9 20v-5H4','M15 20v-5h5'],
     fork:['M7 4v9','M17 4v3a3 3 0 0 1-3 3H10a3 3 0 0 0-3 3','M7 20v-3'],
@@ -463,7 +474,7 @@ html:has(#${HOST_ID}:not([hidden])) #jvFullscreenPrompt{top:auto;bottom:18px;lef
 #${HOST_ID} .jvx-notice .jvx-btn-icon{width:28px;padding:0}
 #${HOST_ID} .jvx-body{grid-row:2;display:grid;grid-template-columns:clamp(280px,29vw,420px) minmax(0,1fr);min-height:0}
 #${HOST_ID} .jvx-treepane{display:flex;flex-direction:column;min-height:0;min-width:0;border-right:1px solid var(--jvx-line);background:rgba(0,0,0,.14)}
-#${HOST_ID} .jvx-panehead{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:12px 16px 8px}
+#${HOST_ID} .jvx-panehead{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:8px;padding:12px 16px 8px}
 #${HOST_ID} .jvx-panetitle{margin:0;font-size:12px;font-weight:600;letter-spacing:.09em;text-transform:uppercase;color:var(--jvx-mute)}
 #${HOST_ID} .jvx-tree{position:relative;flex:1 1 auto;min-height:0;overflow:auto;outline-offset:-2px;scrollbar-width:thin;scrollbar-color:var(--jvx-line-strong) transparent}
 #${HOST_ID} .jvx-spacer{position:relative;width:100%}
@@ -524,17 +535,17 @@ html:has(#${HOST_ID}:not([hidden])) #jvFullscreenPrompt{top:auto;bottom:18px;lef
 #${HOST_ID} .jvx-stage-wait span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 @media (prefers-reduced-motion:no-preference){#${HOST_ID} .jvx-stage-wait::before{animation:jvxPulse 1.1s ease-in-out infinite}}
 #${HOST_ID} .jvx-stage-veil .jvx-veil-actions{display:inline-flex;gap:8px;justify-content:center}
-#${HOST_ID} .jvx-stage-note{display:flex;align-items:center;justify-content:space-between;gap:12px;color:var(--jvx-mute);font-size:13px;min-width:0}
-#${HOST_ID} .jvx-scene-line{display:flex;align-items:center;gap:10px;min-width:0;flex:1 1 auto}
+#${HOST_ID} .jvx-stage-note{display:flex;flex-wrap:wrap;align-items:center;gap:8px 12px;color:var(--jvx-mute);font-size:13px;min-width:0}
+#${HOST_ID} .jvx-scene-line{display:flex;align-items:center;gap:10px;min-width:0;flex:1 1 0}
 #${HOST_ID} .jvx-scene-title{color:var(--jvx-ink);font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-/* Le transport de la vidéo (native-studio-playback-fix Slice 06, contrat § 4, § 6 #15-#20) : une seule rangée sous l'image. */
-/* The row never runs past the preview (Slice 06 rework, P5), and stays ONE row (every pixel of height is the stage's width): on a narrow
-   preview the scene title leaves the row (the strip names the scene) and the transport tightens; « Scène n sur N » is never cut unless
-   nothing else can give, then with an ellipsis. The scene line has a fixed basis, so the slider keeps its width when the scene title
-   changes under a drag. */
+/* Le transport de la vidéo (native-studio-playback-fix Slice 06, contrat § 4, § 6 #15-#20). Slice 10 (Slice 02 inventory § 2): two rows
+   under the stage. Row 1 is the transport ALONE (\`flex-basis: 100%\`), so the slider takes the width it needs (it was squeezed to ~60 px
+   by the scene title and « Présenter » on one row); row 2 is « Scène n sur N », the scene title (ellipsis) and « Présenter ». Neither row
+   runs past the preview (Slice 06 rework, P5); the slider's width never depends on the scene title. During a run row 2 is hidden (the
+   presenter strip says the scene); in fullscreen only row 1 is drawn. */
 #${HOST_ID} .jvx-preview{container:jvxpreview/inline-size}
-#${HOST_ID} .jvx-transport{display:flex;align-items:center;gap:8px;min-width:0;flex:1 1 auto}
-#${HOST_ID} .jvx-stage-note .jvx-scene-line{flex:0 1 9em}
+#${HOST_ID} .jvx-transport{display:flex;align-items:center;gap:8px;min-width:0;flex:1 1 100%}
+#${HOST_ID} .jvx-stage-note>[data-act="present"]{margin-left:auto;min-height:30px;padding:0 12px;font-size:12px;flex:none}
 #${HOST_ID} .jvx-scene-count{flex:0 0 auto;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-variant-numeric:tabular-nums}
 #${HOST_ID} .jvx-transport .jvx-btn{min-height:30px;padding:0 10px;font-size:12px;flex:none}
 #${HOST_ID} .jvx-transport .jvx-btn-icon{width:30px;padding:0}
@@ -552,12 +563,11 @@ html:has(#${HOST_ID}:not([hidden])) #jvFullscreenPrompt{top:auto;bottom:18px;lef
 #${HOST_ID} .jvx-time{flex:none;min-width:7.5em;text-align:center;font:12px/1 ui-monospace,Consolas,monospace;font-variant-numeric:tabular-nums;color:var(--jvx-mute)}
 @media (forced-colors:active){#${HOST_ID} .jvx-scrub-track,#${HOST_ID} .jvx-scrub-tick{background:CanvasText}#${HOST_ID} .jvx-scrub-fill,#${HOST_ID} .jvx-scrub-thumb{background:Highlight}}
 @container jvxpreview (max-width:640px){
-  #${HOST_ID} .jvx-stage-note .jvx-scene-line{display:none}
+  #${HOST_ID} .jvx-stage-note .jvx-scene-role,#${HOST_ID} .jvx-stage-note .jvx-scene-line .jvx-chip{display:none}
   #${HOST_ID} .jvx-transport{gap:4px}
   #${HOST_ID} .jvx-transport .jvx-btn:not(.jvx-btn-icon){padding:0 8px}
-  /* Slice 09: on a narrow preview « Présenter » / « Arrêter » keep their name (text, title) but show a glyph, so the row stays one row. */
-  #${HOST_ID} .jvx-transport .jvx-btn:is([data-act="present"],[data-act="stop_run"]){width:30px;padding:0;font-size:0}
-  #${HOST_ID} .jvx-transport .jvx-btn[data-act="present"]::before{content:"▸";font-size:14px}
+  /* Slice 09: on a narrow preview « Arrêter » keeps its name (text, title) but shows a glyph, so the transport stays one row. */
+  #${HOST_ID} .jvx-transport .jvx-btn[data-act="stop_run"]{width:30px;padding:0;font-size:0}
   #${HOST_ID} .jvx-transport .jvx-btn[data-act="stop_run"]::before{content:"■";font-size:12px}
   #${HOST_ID} .jvx-transport .jvx-time{min-width:0}
   #${HOST_ID} .jvx-scrub{min-width:40px}
@@ -567,7 +577,9 @@ html:has(#${HOST_ID}:not([hidden])) #jvFullscreenPrompt{top:auto;bottom:18px;lef
    bandes noires) ; le transport en surimpression se cache seul pendant la lecture et revient au moindre mouvement ; sous mouvement réduit,
    il disparaît et revient sans fondu. Le capteur (.jvx-catch) n'existe que transport caché : un mouvement au-dessus de l'image (que
    l'iframe garde pour elle) le fait revenir ; transport visible, le capteur s'efface et un clic atteint la scène. */
-#${HOST_ID} .jvx-theater{position:relative;display:flex;flex-direction:column;gap:12px;flex:1 1 0;min-height:0;min-width:0}
+#${HOST_ID} .jvx-theater{position:relative;display:flex;flex-direction:column;gap:12px;flex:1 1 0;min-height:auto;min-width:0}
+/* Slice 10: \`min-height: auto\` (was 0): the theater never shrinks below the stage's floor plus its rows, so on a crowded preview (a run:
+   the presenter strip) the preview scrolls instead of drawing the presenter strip over the transport. */
 #${HOST_ID} .jvx-catch{display:none;position:absolute;inset:0;z-index:4;cursor:none}
 #${HOST_ID} .jvx-stage-sound{position:absolute;left:12px;top:12px;z-index:3;max-width:calc(100% - 24px);padding:5px 11px;border-radius:999px;
   background:rgba(2,6,10,.82);border:1px solid color-mix(in srgb,var(--jvx-warn) 60%,transparent);color:var(--jvx-warn);font-size:12px;pointer-events:none}
@@ -578,19 +590,11 @@ html:has(#${HOST_ID}:not([hidden])) #jvFullscreenPrompt{top:auto;bottom:18px;lef
 #${HOST_ID} .jvx-theater:fullscreen .jvx-stage{width:100%;height:100%;aspect-ratio:auto;border:0;border-radius:0;box-shadow:none;background:#000}
 #${HOST_ID} .jvx-theater:fullscreen .jvx-stage-note{position:absolute;left:0;right:0;bottom:0;z-index:5;padding:28px 20px 16px;
   background:linear-gradient(transparent,rgba(0,0,0,.82));color:var(--jvx-ink)}
-#${HOST_ID} .jvx-theater:fullscreen .jvx-stage-note .jvx-scene-line,#${HOST_ID} .jvx-theater:fullscreen .jvx-scene-count{display:none}
+#${HOST_ID} .jvx-theater:fullscreen .jvx-stage-note .jvx-scene-line,#${HOST_ID} .jvx-theater:fullscreen .jvx-scene-count,
+#${HOST_ID} .jvx-theater:fullscreen .jvx-stage-note>[data-act="present"]{display:none}
 #${HOST_ID} .jvx-theater:fullscreen[data-chrome="hidden"] .jvx-stage-note{opacity:0;pointer-events:none}
 #${HOST_ID} .jvx-theater:fullscreen[data-chrome="hidden"] .jvx-catch{display:block}
 @media (prefers-reduced-motion:no-preference){#${HOST_ID} .jvx-theater:fullscreen .jvx-stage-note{transition:opacity .25s ease}}
-#${HOST_ID} .jvx-vbar{display:flex;align-items:center;gap:6px;overflow-x:auto;padding:2px 2px 8px;scrollbar-width:thin;scrollbar-color:var(--jvx-line-strong) transparent;min-height:34px}
-@media (max-height:680px){#${HOST_ID} .jvx-vbar{display:none}}
-#${HOST_ID} .jvx-vbar-label{flex:none;color:var(--jvx-mute);font-size:11px;letter-spacing:.1em;text-transform:uppercase;padding-right:4px}
-#${HOST_ID} .jvx-vchip{flex:none;display:inline-flex;align-items:center;gap:6px;min-height:28px;padding:0 10px;border-radius:999px;border:1px solid var(--jvx-line);background:var(--jvx-surface);
-  font:600 12px/1 ui-monospace,Consolas,monospace;color:var(--jvx-ink)}
-#${HOST_ID} .jvx-vchip:hover{border-color:var(--jvx-line-strong)}
-#${HOST_ID} .jvx-vchip[aria-pressed="true"]{border-color:var(--jvx-accent);background:color-mix(in srgb,var(--jvx-accent) 16%,transparent)}
-#${HOST_ID} .jvx-vchip[data-active="true"]::after{content:'';width:6px;height:6px;border-radius:50%;background:var(--jvx-ok)}
-#${HOST_ID} .jvx-vchip-t{max-width:120px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font:500 12px/1 system-ui,"Segoe UI",sans-serif;color:var(--jvx-mute)}
 #${HOST_ID} .jvx-strip{display:flex;gap:8px;overflow-x:auto;padding:2px 2px 6px;scrollbar-width:thin;scrollbar-color:var(--jvx-line-strong) transparent}
 #${HOST_ID} .jvx-scene{flex:none;display:flex;flex-direction:column;gap:2px;width:150px;padding:8px 10px;text-align:left;border-radius:9px;border:1px solid var(--jvx-line);
   background:var(--jvx-surface)}
@@ -617,6 +621,13 @@ html:has(#${HOST_ID}:not([hidden])) #jvFullscreenPrompt{top:auto;bottom:18px;lef
 #${HOST_ID} .jvx-swatches{display:inline-flex;gap:3px;margin-left:2px}
 #${HOST_ID} .jvx-swatch{width:11px;height:11px;border-radius:3px;border:1px solid rgba(255,255,255,.28)}
 #${HOST_ID} .jvx-actions{display:grid;grid-template-columns:repeat(2,minmax(0,auto));gap:8px;justify-content:end}
+#${HOST_ID} .jvx-actions-col{display:grid;gap:8px;justify-items:end;min-width:0}
+#${HOST_ID} .jvx-run-note{margin:0;contain:inline-size;width:100%;font-size:12.5px;line-height:1.4;color:var(--jvx-warn);text-align:right}
+/* Slice 10: during a run (\`data-run\` on the host) what is inert is SEEN: the tree (not its head, which carries « Présentation en cours »),
+   the graph actions and the upgrade notice are dimmed; the run note says why. Never hidden: the actions stay where the hand expects them. */
+#${HOST_ID}[data-run] .jvx-treepane>:not(.jvx-panehead),#${HOST_ID}[data-run] .jvx-upgrades{opacity:.45;filter:saturate(.3)}
+#${HOST_ID}[data-run] .jvx-actions{opacity:.8}
+#${HOST_ID}[data-run] .jvx-actions .jvx-btn{filter:saturate(.3)}
 #${HOST_ID} .jvx-actions .jvx-btn{justify-content:flex-start}
 #${HOST_ID} .jvx-layer{position:absolute;inset:0;z-index:5;pointer-events:none}
 #${HOST_ID} .jvx-layer>*{pointer-events:auto}
@@ -648,6 +659,16 @@ html:has(#${HOST_ID}:not([hidden])) #jvFullscreenPrompt{top:auto;bottom:18px;lef
 #${HOST_ID} .jvx-token{font-size:12.5px;color:var(--jvx-mute);font-variant-numeric:tabular-nums}
 #${HOST_ID} .jvx-token[data-state="expired"]{color:var(--jvx-danger)}
 #${HOST_ID} .jvx-warnbox{padding:10px 12px;border-radius:9px;border:1px solid color-mix(in srgb,var(--jvx-warn) 50%,transparent);color:var(--jvx-warn);background:color-mix(in srgb,var(--jvx-warn) 8%,transparent)}
+/* The keyboard sheet (\`?\`, Slice 10). */
+#${HOST_ID} .jvx-dialog[data-kind="shortcuts"]{width:min(640px,100%)}
+#${HOST_ID} .jvx-keys-body{display:grid;gap:14px;max-height:min(60vh,520px);overflow:auto;padding-right:4px}
+#${HOST_ID} .jvx-keys{width:100%;border-collapse:collapse;font-size:13px}
+#${HOST_ID} .jvx-keys caption{text-align:left;padding:0 0 6px;font-size:12px;font-weight:600;letter-spacing:.08em;text-transform:uppercase;color:var(--jvx-mute)}
+#${HOST_ID} .jvx-keys th{text-align:left;font-weight:400;white-space:nowrap;padding:4px 14px 4px 0;vertical-align:top;width:1%}
+#${HOST_ID} .jvx-keys td{padding:4px 0;color:var(--jvx-ink)}
+#${HOST_ID} .jvx-keys tr+tr>*{border-top:1px solid var(--jvx-line)}
+#${HOST_ID} kbd{display:inline-block;min-width:1.9em;text-align:center;padding:1px 6px;font:600 12px/1.5 ui-monospace,Consolas,monospace;color:var(--jvx-ink);
+  border:1px solid var(--jvx-line-strong);border-bottom-width:2px;border-radius:5px;background:rgba(255,255,255,.05)}
 #${HOST_ID} .jvx-menu{position:absolute;min-width:240px;max-width:min(360px,calc(100% - 16px));padding:6px;border-radius:12px;border:1px solid var(--jvx-line-strong);
   background:var(--jvx-surface-2);-webkit-backdrop-filter:blur(18px);backdrop-filter:blur(18px);box-shadow:0 18px 50px rgba(0,0,0,.6);display:grid;gap:2px}
 #${HOST_ID} .jvx-menu [role="menuitem"]{display:flex;align-items:center;gap:10px;min-height:36px;padding:0 10px;border-radius:8px;border:0;background:transparent;text-align:left;width:100%}
@@ -664,6 +685,8 @@ html:has(#${HOST_ID}:not([hidden])) #jvFullscreenPrompt{top:auto;bottom:18px;lef
   #${HOST_ID} .jvx-body{grid-template-columns:clamp(240px,31vw,340px) minmax(0,1fr)}
   #${HOST_ID} .jvx-bottom{grid-template-columns:minmax(0,1fr)}
   #${HOST_ID} .jvx-actions{grid-template-columns:repeat(3,minmax(0,auto));justify-content:start}
+  #${HOST_ID} .jvx-actions-col{justify-items:start}
+  #${HOST_ID} .jvx-run-note{text-align:left}
   #${HOST_ID} .jvx-top{padding:10px 14px}
 }
 @media (max-width:820px){
@@ -680,6 +703,13 @@ html:has(#${HOST_ID}:not([hidden])) #jvFullscreenPrompt{top:auto;bottom:18px;lef
   #${HOST_ID} .jvx-scene{flex-direction:row;align-items:center;width:auto;gap:8px;padding:4px 12px}
   #${HOST_ID} .jvx-scene-r,#${HOST_ID} .jvx-scene-b{display:none}
   #${HOST_ID} .jvx-stagewrap{min-height:120px}
+  /* Slice 10: the second row under the stage costs ~38 px of height; on a short window it is paid back by tighter gaps, never by the
+     stage (16:9, at least 300 px wide at 800x600). */
+  #${HOST_ID} .jvx-preview{gap:8px;padding-top:8px;padding-bottom:8px}
+  #${HOST_ID} .jvx-theater{gap:8px}
+  #${HOST_ID} .jvx-stage-note{row-gap:4px}
+  #${HOST_ID} .jvx-bottom{padding-top:8px}
+  #${HOST_ID} .jvx-meta{gap:4px}
 }
 /* L'invite de plein écran (Slice 03) est posée par le navigateur au-dessus de la page : ici elle se range dans la bande de l'en-tête, sans couvrir l'aperçu ni l'étiquette de mode. */
 html:has(#${HOST_ID}:not([hidden])) #jvFullscreenPrompt{top:10px;width:min(620px,calc(100vw - 700px));min-width:420px;padding:8px 12px;gap:2px 12px;grid-template-columns:minmax(0,1fr) auto auto}
@@ -697,7 +727,7 @@ html:has(#${HOST_ID}:not([hidden])) #jvFullscreenPrompt .jvfs-bar{display:none}
   const api=Object.freeze({
     ROUTE,PLAYBACK_ROUTE,COMMAND_ROUTE,STATE_ROUTE,HOST_ID,OBJECT_ID,PREVIEW_OBJECT_ID,STAGE_OBJECT_ID,STYLE_ID,STORAGE_KEY,ROW_H,OVERSCAN,MAX_LIVE,MAX_ARCHIVED,
     MAX_TITLE,MAX_RATIONALE,MAX_RATIONALE_BYTES,MAX_DEPTH_SHOWN,INDENT_PX,DEEP_FROM,TYPEAHEAD_MS,PAGE_TOKEN,PAGE_TOKEN_HEADER,REQUEST_TIMEOUT_MS,READ_TIMEOUT_MS,LONG_PRESS_MS,
-    PREVIEW_SETTLE_MS,NOTICE_MS,PREFS_MAX_COLLAPSED,REFUSALS,COMMAND_REFUSALS,ICONS,CSS,
+    PREVIEW_SETTLE_MS,NOTICE_MS,PREFS_MAX_COLLAPSED,REFUSALS,COMMAND_REFUSALS,ICONS,CSS,TREE_SHORTCUTS,
     clip,cleanLine,utf8Length,rationaleBytes,checkTitle,checkRationale,absoluteTime,relativeTime,creatorLabel,shortId,
     buildForest,childrenOf,ancestorsOf,subtreeIds,flatten,windowOf,treeKey,typeAhead,describeRefusal,planModel,blockedText,sameSet,readPrefs,writePrefs,
   });

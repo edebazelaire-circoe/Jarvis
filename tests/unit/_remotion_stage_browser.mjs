@@ -93,7 +93,7 @@ try{
   const KEYS={ArrowRight:{code:'ArrowRight',keyCode:39},ArrowLeft:{code:'ArrowLeft',keyCode:37},' ':{code:'Space',keyCode:32,text:' '},
     Escape:{code:'Escape',keyCode:27},Enter:{code:'Enter',keyCode:13,text:'\r'},Home:{code:'Home',keyCode:36},End:{code:'End',keyCode:35},
     p:{code:'KeyP',keyCode:80,text:'p'},Tab:{code:'Tab',keyCode:9},PageUp:{code:'PageUp',keyCode:33},PageDown:{code:'PageDown',keyCode:34},
-    ArrowUp:{code:'ArrowUp',keyCode:38},ArrowDown:{code:'ArrowDown',keyCode:40},',':{code:'Comma',keyCode:188,text:','},'.':{code:'Period',keyCode:190,text:'.'}};
+    ArrowUp:{code:'ArrowUp',keyCode:38},ArrowDown:{code:'ArrowDown',keyCode:40},',':{code:'Comma',keyCode:188,text:','},'.':{code:'Period',keyCode:190,text:'.'},'?':{code:'Slash',keyCode:191,text:'?'}};
   const single=key=>/^[a-zA-Z]$/.test(key)?{code:'Key'+key.toUpperCase(),keyCode:key.toUpperCase().charCodeAt(0),text:key}:null;
   const press=async (key,shift)=>{
     const k=KEYS[key]||single(key);if(!k)throw new Error('touche inconnue '+key);

@@ -175,8 +175,8 @@ async def test_variants_opens_paused_and_the_transport_drives_one_clock_pause_re
             # Slice 08: « Son » is the sound toggle, muted at opening (no longer disabled; `test_variants_media_fullscreen_browser.py`)
             "PX-4 « Son » muted at opening": t["son"][0] is None and t["son"][1] == "Activer le son (M)",
             "§ 4.16 one named toolbar": t["toolbars"] == 1 and t["name"] == "Lecture de la vidéo"
-                # Slice 09: « Présenter ▾ » joins the row (« Arrêter » shows only during a run)
-                and t["buttons"] == ["Scène précédente", "Lire", "Scène suivante", "Son", "Plus de lecture", "Présenter"],
+                # Slice 10: playback controls only; « Présenter ▾ » is on the scene row (« Arrêter » shows only during a run)
+                and t["buttons"] == ["Scène précédente", "Lire", "Scène suivante", "Son", "Plus de lecture"],
             "§ 4.16 slider": t["slider"]["min"] == "0" and t["slider"]["now"] == "0" and t["slider"]["max"] == str(74 * 60 - 1),
             "§ 4.8 composition readout at opening": readout_problems(evidence["readouts0"], 0) == [],
             "PX-7 pause holds 5 s": evidence["paused1"]["frame"] == evidence["paused2"]["frame"] and evidence["paused2"]["playing"] is False

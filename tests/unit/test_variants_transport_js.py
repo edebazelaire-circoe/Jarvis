@@ -456,8 +456,9 @@ return {toolbars:toolbars.length,label:bar().getAttribute('aria-label'),names,ha
   sound:[label('Son').getAttribute('aria-pressed'),label('Son').getAttribute('aria-disabled'),label('Son').getAttribute('title'),prefabFake.sounds],errors:env.errors};
 """)
     assert out["toolbars"] == 1 and out["label"] == "Lecture de la vidéo"
-    # Slice 09: « Présenter » (§ 6 #21) starts a presenter run here; « Arrêter » exists only during one.
-    assert out["names"] == ["Scène précédente", "Lire", "Scène suivante", "Son", "Plus de lecture", "Présenter"] and out["haspopup"] == "menu"
+    # Slice 10: the toolbar holds the playback controls only; « Présenter » (§ 6 #21) is on the scene row under it; « Arrêter » shows in
+    # the toolbar only during a run (it stays in the stage fullscreen).
+    assert out["names"] == ["Scène précédente", "Lire", "Scène suivante", "Son", "Plus de lecture"] and out["haspopup"] == "menu"
     assert out["slider"] == ["0", "269", "0", "Scène 1 sur 3, 0:00 sur 0:09", "false"]
     assert out["readout"] == {"time": "0:00 / 0:09", "now": "0", "text": "Scène 1 sur 3, 0:00 sur 0:09", "count": "Scène 1 sur 3", "selected": "1",
                               "frame": 0}
@@ -522,7 +523,8 @@ const v=ex.playback.view();
 return {items,expanded,back,play:[v.phase,v.scope,v.frame,prefabFake.orders.slice(-1)[0]],focus:doc.activeElement===more,open:ex.isOpen(),
   runs:world.calls.filter(c=>c.url.includes('/playback')&&c.method==='POST').length};
 """)
-    assert out["items"] == ["Lire seulement cette scène", "Revenir au débutDébut"] and out["expanded"] == "true"
+    # Slice 10: « Raccourcis clavier » (`?`) joins the overflow (§ 6 #20)
+    assert out["items"] == ["Lire seulement cette scène", "Revenir au débutDébut", "Raccourcis clavier?"] and out["expanded"] == "true"
     assert out["back"] == [True, "false", False], "Escape closes the menu and the focus returns to « ⋯ »"
     assert out["play"] == ["playing", "scene", 90, ["play", 0]], "the scene on screen from its frame 0"
     assert out["focus"] is True and out["open"] is True and out["runs"] == 0, "no run, Variants stays open"

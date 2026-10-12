@@ -53,7 +53,6 @@
     describeRefusal,planModel,sameSet,readPrefs,writePrefs,MAX_RATIONALE_BYTES}=Core;
 
   const GRAPH_POLL_MS=10000;
-  const VBAR_MAX=40;
   const COMMAND_POLL_WAIT_S=25;
   const COMMAND_POLL_TIMEOUT_MS=30000;
   const COMMAND_MIN_GAP_MS=1000;
@@ -305,7 +304,7 @@
       ui.fsButton=button(null,null,(event)=>{toggleFullscreen({other:!!(event&&event.shiftKey)})});
       ui.fsIconIn=icon('expand');ui.fsIconOut=icon('contract');ui.fsLabel=el('span','jvx-btn-label-long','Plein écran');
       ui.fsButton.appendChild(ui.fsIconIn);ui.fsButton.appendChild(ui.fsIconOut);ui.fsButton.appendChild(ui.fsLabel);
-      ui.closeButton=button('Fermer',null,()=>{close({reason:'user'})},{icon:'close',labelClass:'jvx-btn-label-long',attrs:{'aria-label':"Fermer l'explorateur de variantes",title:'Fermer (Échap)'}});
+      ui.closeButton=button('Fermer',null,()=>{close({reason:'user'})},{icon:'close',labelClass:'jvx-btn-label-long',attrs:{'aria-label':'Fermer Variantes',title:'Fermer (Échap)'}});
       for(const node of [ui.busy,ui.modeChip,ui.fsButton,ui.closeButton])actions.appendChild(node);
       top.appendChild(heading);top.appendChild(actions);
       ui.notice=el('div','jvx-notice');
@@ -340,8 +339,9 @@
         onMenu:(id,anchor)=>openMenu(id,anchor)});
       ui.archive=archive;
       archive.appendChild(ui.archiveToggle);archive.appendChild(ui.archiveTree.element);
+      /* Slice 10 (§ 6 #6): the key hint is merged into the keyboard sheet; this line only says where it is (text, not a second control). */
       ui.hint=el('p','jvx-hint-keys');
-      ui.hint.textContent='↑ ↓ → ← parcourir · Entrée choisir · N brancher · F2 renommer · Suppr archiver · A activer';
+      ui.hint.textContent='Touche ? : raccourcis clavier';
       treePane.appendChild(head);treePane.appendChild(cmp.buildBar());treePane.appendChild(ui.liveTree.element);treePane.appendChild(ui.hint);treePane.appendChild(archive);
       const preview=el('section','jvx-preview');
       attrs(preview,{'aria-label':'Aperçu de la variante choisie'});
@@ -367,7 +367,7 @@
       ui.stage.appendChild(ui.slot);ui.stage.appendChild(ui.overlay);ui.stage.appendChild(ui.veil);ui.stage.appendChild(ui.wait);ui.stage.appendChild(ui.soundPill);ui.stage.appendChild(ui.catcher);
       wrap.appendChild(ui.stage);
       const note=el('div','jvx-stage-note');
-      const sceneLine=el('div','jvx-scene-line');
+      const sceneLine=el('div','jvx-scene-line');ui.sceneLine=sceneLine;
       ui.sceneTitle=el('span','jvx-scene-title jvx-bidi');ui.sceneTitle.setAttribute('dir','auto');
       ui.sceneRole=el('span','jvx-chip');
       ui.sceneBadge=el('span','jvx-chip');
@@ -375,15 +375,19 @@
       ui.sceneCount=el('span','jvx-scene-count');
       /* One row under the stage: the transport, then the scene it is on (every pixel of height is the stage's width). */
       buildTransport();
-      note.appendChild(ui.transport);note.appendChild(sceneLine);note.appendChild(ui.sceneCount);
+      /* Slice 10 (Slice 02 inventory § 2): row 1 is the transport alone, so the slider gets the width; row 2 is « Scène n sur N », the scene
+         title and « Présenter » (not a playback control). During a run row 2 gives way to the presenter strip; in fullscreen only row 1 shows. */
+      note.appendChild(ui.transport);note.appendChild(ui.sceneCount);note.appendChild(sceneLine);note.appendChild(ui.present);
       ui.strip=el('div','jvx-strip');
       attrs(ui.strip,{role:'listbox','aria-label':'Scènes de la variante','aria-orientation':'horizontal'});
       const bottom=el('div','jvx-bottom');
       ui.meta=el('div','jvx-meta');
       ui.actions=el('div','jvx-actions');attrs(ui.actions,{role:'toolbar','aria-label':'Actions sur la variante choisie'});
-      bottom.appendChild(ui.meta);bottom.appendChild(ui.actions);
+      /* Slice 10: during a run the actions stay on screen, dimmed and inert, and this line says why (the chip is far, in the tree). */
+      ui.runNote=el('p','jvx-run-note',RUN_BUSY);ui.runNote.hidden=true;
+      const actionsCol=el('div','jvx-actions-col');actionsCol.appendChild(ui.actions);actionsCol.appendChild(ui.runNote);
+      bottom.appendChild(ui.meta);bottom.appendChild(actionsCol);
       ui.upgrades=upgrades.buildSection();
-      ui.vbar=el('div','jvx-vbar');attrs(ui.vbar,{role:'toolbar',tabindex:'-1','aria-label':'Variantes vivantes : choisir celle à regarder'});
       /* The « theater » (Slice 08): the stage and its transport, the one fullscreen target of « Plein écran » (§ 4.12). */
       ui.theater=el('div','jvx-theater');
       attrs(ui.theater,{'data-object-id':STAGE_OBJECT_ID,'aria-label':'Vidéo de la variante'});
@@ -391,7 +395,7 @@
       for(const type of ['pointermove','focusin','keydown'])ui.theater.addEventListener(type,()=>chrome.poke());
       /* Slice 09: the presenter strip (§ 5), windowed only, under the stage: it replaces the floating band. */
       ui.presenter=buildPresenter();
-      preview.appendChild(ui.vbar);preview.appendChild(ui.theater);preview.appendChild(ui.presenter);preview.appendChild(ui.strip);preview.appendChild(bottom);preview.appendChild(ui.upgrades);
+      preview.appendChild(ui.theater);preview.appendChild(ui.presenter);preview.appendChild(ui.strip);preview.appendChild(bottom);preview.appendChild(ui.upgrades);
       ui.preview=preview;
       body.appendChild(treePane);body.appendChild(preview);body.appendChild(cmp.buildRoot());
       ui.live=el('div','jvx-sr');attrs(ui.live,{role:'status','aria-live':'polite','aria-atomic':'true'});
@@ -437,16 +441,18 @@
       const mode=modeNow();
       ui.modeChip.textContent=mode==='fullscreen'?'Plein écran':mode==='fullscreen_armed'?'Plein écran en attente de votre clic':'Fenêtré';
       ui.modeChip.setAttribute('data-tone',mode==='fullscreen'?'ok':mode==='fullscreen_armed'?'accent':(S.fs==='unsupported'||S.fs==='refused')?'warn':'');
-      const why=S.fs==='unsupported'?"Plein écran indisponible dans ce navigateur : l'explorateur est affiché dans la fenêtre.":
-        S.fs==='refused'?"Plein écran refusé par le navigateur : l'explorateur est affiché dans la fenêtre.":'';
+      const why=S.fs==='unsupported'?"Plein écran indisponible dans ce navigateur : Variantes reste dans la fenêtre.":
+        S.fs==='refused'?"Plein écran refusé par le navigateur : Variantes reste dans la fenêtre.":'';
       ui.modeChip.title=mode==='windowed'&&why?why:mode==='fullscreen_armed'?"Cliquez « Passer en plein écran » dans l'invite en haut de la fenêtre.":'';
       if(mode==='windowed'&&why)ui.modeChip.textContent='Fenêtré — '+(S.fs==='unsupported'?'plein écran indisponible':'plein écran refusé');
       const full=mode==='fullscreen';
       ui.fsIconIn.style.display=full?'none':'';ui.fsIconOut.style.display=full?'':'none';
       ui.fsLabel.textContent=full?'Quitter le plein écran':'Plein écran';
+      ui.fsButton.setAttribute('aria-label',ui.fsLabel.textContent);   // the label hides on a narrow window: the name stays (Slice 10)
       const live=S.graph?S.live.size:0,dead=S.graph?S.archived.size:0;
       ui.subtitle.textContent=S.graph?`${S.presentationTitle?cleanLine(S.presentationTitle,80)+' · ':''}${live} variante${live>1?'s':''}${dead?` · ${dead} archivée${dead>1?'s':''}`:''}`:cleanLine(S.presentationTitle,80);
-      ui.count.textContent=S.graph?`${live}/${MAX_LIVE}`:'';
+      /* Authoring metadata, never a position (Slice 10, § 6 « every readout »): it says what it counts. */
+      ui.count.textContent=S.graph?`${live} / ${MAX_LIVE} variantes`:'';
       ui.count.title=`${live} variantes vivantes sur ${MAX_LIVE} au plus`;
       if(S.busy){ui.busy.hidden=false;ui.busy.textContent=`${S.busy.label}… ${Math.max(0,Math.round((now()-S.busy.at)/1000))} s`}
       else if(S.loading){ui.busy.hidden=false;ui.busy.textContent=`${S.loading.label}… ${Math.max(0,Math.round((now()-S.loading.at)/1000))} s`}
@@ -486,37 +492,12 @@
       ui.archiveToggle.setAttribute('aria-controls',ui.archiveTree.element.id||(ui.archiveTree.element.id=uid('archive')));
       ui.archiveTree.element.hidden=!S.archivedOpen;
       ui.archiveTree.setData({forest:S.archived,ctx:treeContext('archived'),emptyText:dead?'':'Rien dans l\'archive : « Archiver… » met une branche de côté, elle se restaure ici.'});
-      renderVariantBar();
     }
-    /* La barre des variantes : chaque variante vivante est une pastille numérotée (la variante active porte un point vert), un clic la choisit ; `[` et `]` passent à la
-       précédente / suivante. L'arbre à gauche reste le lieu des branches ET le chemin du clavier (la barre n'ajoute aucun arrêt de tabulation : `tabindex=-1`, la suite
-       Tab de l'arbre vers la scène est inchangée) ; la barre est le moyen de FEUILLETER les variantes à la souris ou aux touches `[` `]` sans quitter l'aperçu. */
+    /* `[` and `]` go to the previous / next live variant by number, from anywhere in Variants. The variant bar that showed them as chips is
+       merged into the tree (Slice 10, § 6 #8): the tree is the one place where a variant is chosen. */
     function liveNodes(){
       const nodes=S.graph?S.graph.nodes.filter(n=>n&&n.state==='live'&&typeof n.variant_id==='string'):[];
       return nodes.sort((a,b)=>(Number(a.variant_number)||0)-(Number(b.variant_number)||0));
-    }
-    function renderVariantBar(){
-      if(!ui.vbar)return;
-      const focused=ui.vbar.contains(doc.activeElement)?doc.activeElement.dataset.id:null;
-      clear(ui.vbar);
-      const nodes=liveNodes();
-      ui.vbar.hidden=nodes.length<2;
-      if(nodes.length<2)return;
-      ui.vbar.appendChild(el('span','jvx-vbar-label',`Variantes ${nodes.length}`));
-      for(const node of nodes.slice(0,VBAR_MAX)){
-        const b=el('button','jvx-vchip');
-        attrs(b,{type:'button',tabindex:'-1','aria-pressed':node.variant_id===S.selectedId?'true':'false','data-id':node.variant_id,'data-active':S.graph.activeId===node.variant_id?'true':'false',
-          title:`#${node.variant_number} ${cleanLine(node.title,60)}${S.graph.activeId===node.variant_id?' (active)':''}`,
-          'aria-label':`Variante ${node.variant_number}, ${cleanLine(node.title,60)}${S.graph.activeId===node.variant_id?', active':''}`});
-        b.appendChild(el('span','',`#${node.variant_number}`));
-        b.appendChild(el('span','jvx-vchip-t jvx-bidi',cleanLine(node.title,24)));
-        b.addEventListener('click',()=>selectVariant(node.variant_id,{}));
-        ui.vbar.appendChild(b);
-        if(focused===node.variant_id)b.focus({preventScroll:true});
-      }
-      if(nodes.length>VBAR_MAX)ui.vbar.appendChild(el('span','jvx-vbar-label',`+${nodes.length-VBAR_MAX} dans l'arbre`));
-      const current=ui.vbar.querySelector('[aria-pressed="true"]');
-      if(current&&typeof current.scrollIntoView==='function'){try{current.scrollIntoView({block:'nearest',inline:'nearest'})}catch(_error){/* intentional: scrolling is a courtesy */}}
     }
     function stepVariant(delta){
       const nodes=liveNodes();
@@ -749,7 +730,7 @@
         title:'Présenter cette variante : vous, Jarvis, ou une répétition (la partition mène)'}});
       ui.stopRun=button('Arrêter','jvx-btn',()=>{runCommand('stop')},{attrs:{'data-act':'stop_run','data-danger':'',title:'Arrêter la présentation'}});
       ui.stopRun.hidden=true;
-      for(const node of [ui.prevScene,ui.playAll,ui.nextScene,ui.scrub,ui.time,ui.sound,ui.more,ui.present,ui.stopRun])ui.transport.appendChild(node);
+      for(const node of [ui.prevScene,ui.playAll,ui.nextScene,ui.scrub,ui.time,ui.sound,ui.more,ui.stopRun])ui.transport.appendChild(node);
     }
     /* ⏮ ⏭, ← →, Page précédente / suivante: the start of the previous / next scene, play state kept (§ 4.4). Without a map (a variant
        without video, or before it is read) they browse the scenes. Next on the last scene says why it does nothing. */
@@ -862,13 +843,15 @@
       if(S.menu){closeMenu(true);return}
       const box=ui.more.getBoundingClientRect?ui.more.getBoundingClientRect():{left:80,bottom:80};
       /* During a presentation the menu speaks of score items, never of the video's position (the score leads, § 5). */
-      const items=S.run?[{act:'first_item',label:'Premier élément',icon:'first',key:'Début'},{act:'last_item',label:'Dernier élément',icon:'last',key:'Fin'}]
-        :[{act:'scene_only',label:'Lire seulement cette scène',icon:'play'},{act:'home',label:'Revenir au début',icon:'restore',key:'Début'}];
+      const items=(S.run?[{act:'first_item',label:'Premier élément',icon:'first',key:'Début'},{act:'last_item',label:'Dernier élément',icon:'last',key:'Fin'}]
+        :[{act:'scene_only',label:'Lire seulement cette scène',icon:'play'},{act:'home',label:'Revenir au début',icon:'restore',key:'Début'}])
+        .concat([{act:'shortcuts',label:'Raccourcis clavier',icon:'keyboard',key:'?'}]);   // § 6 #20 (Slice 10)
       const {menu,buttons}=W.buildMenu(kit,{head:S.run?'Présentation':'Lecture',label:'Plus de lecture',items,anchor:{x:box.left,y:box.bottom+4},
         width:win.innerWidth||1280,height:win.innerHeight||720,
         onPick:item=>{
           closeMenu(true);
-          if(item.act==='first_item')runCommand('goto',{position:1});
+          if(item.act==='shortcuts')openShortcuts(ui.more);
+          else if(item.act==='first_item')runCommand('goto',{position:1});
           else if(item.act==='last_item')runCommand('goto',{position:(S.run&&S.run.view.position&&S.run.view.position.of)||1});
           else if(item.act==='scene_only')playSceneOnly();
           else if(!seekTo('home'))browseScene(0,0);
@@ -879,6 +862,39 @@
       menu.addEventListener('keydown',event=>onMenuKey(event));
       menu.addEventListener('mousedown',event=>event.stopPropagation());
       if(buttons[0])buttons[0].focus({preventScroll:true});
+    }
+    /* The keyboard sheet (Slice 10, § 6 #6 and #20): `?` anywhere in Variants, or « ⋯ › Raccourcis clavier ». One modal dialog of the
+       explorer's layer (Tab stays in it, Échap closes it and gives the focus back), read from the one key map (`Media.shortcutRows`) in the
+       mode on screen, and the tree keys (`Core.TREE_SHORTCUTS`). It acts on nothing: it only says. */
+    function openShortcuts(returnFocus){
+      if(!S.open)return;
+      if(S.dialog&&S.dialog.kind==='shortcuts'){cancelDialog();return}
+      if(S.dialog)return;
+      const dlg=openDialog({kind:'shortcuts',titleId:'jvxDialogTitle',returnFocus:returnFocus||doc.activeElement});
+      dlg.box.setAttribute('data-kind','shortcuts');
+      const h=el('h2','','Raccourcis clavier');h.id='jvxDialogTitle';
+      dlg.box.appendChild(h);
+      dlg.box.appendChild(el('p','',S.run?'Une présentation est en cours : la partition mène, la vidéo suit.':'Sur la vidéo, la barre de lecture et les vignettes de scènes.'));
+      const table=(caption,rows)=>{
+        const t=el('table','jvx-keys');t.appendChild(el('caption','',caption));
+        for(const row of rows){
+          const tr=el('tr');const th=el('th');th.setAttribute('scope','row');
+          row.keys.forEach((k,i)=>{if(i)th.appendChild(doc.createTextNode(' '));th.appendChild(el('kbd','',k))});
+          tr.appendChild(th);tr.appendChild(el('td','',row.does));t.appendChild(tr);
+        }
+        return t;
+      };
+      const body=el('div','jvx-keys-body');
+      body.appendChild(table(S.run?'Présentation':'Vidéo',Media.shortcutRows(S.run?'run':'video')));
+      if(!S.run)body.appendChild(table('Barre de position (sélectionnée)',[{keys:['←','→'],does:'Une seconde'},{keys:['Page précédente','Page suivante'],does:'Début de la scène'},
+        {keys:['Début','Fin'],does:'Début, fin de la vidéo'}]));
+      body.appendChild(table(S.run?'Arbre et versions (à l’arrêt de la présentation)':'Arbre et versions',Core.TREE_SHORTCUTS));
+      dlg.box.appendChild(body);
+      const actions=el('div','jvx-dialog-actions');
+      const done=dialogButton('Fermer',()=>cancelDialog(),{primary:true});
+      actions.appendChild(done);dlg.box.appendChild(actions);
+      done.focus({preventScroll:true});
+      log('shortcuts_opened',{mode:S.run?'run':'video'});
     }
     function clockText(frames,fps){
       const s=Math.max(0,Math.round(frames/fps));
@@ -1516,8 +1532,12 @@
       return Run.presenterModel(S.run.view,runElapsed(),{busy:S.run.busy,linkLostMs:state.linkLostSince?now()-state.linkLostSince:0});
     }
     function setRunInert(on){
-      for(const node of [ui.treePane,ui.actions,ui.vbar,ui.upgrades])if(node)node.inert=!!on;
+      for(const node of [ui.treePane,ui.actions,ui.upgrades])if(node)node.inert=!!on;
       if(ui.runChip)ui.runChip.hidden=!on;
+      /* Slice 10: inert is also SEEN — the tree, the actions and the upgrade notice are dimmed (`data-run` on the host) and the line
+         under the actions says why; the actions stay on screen (never removed), each `aria-disabled` with the same reason. */
+      if(ui.host){if(on)ui.host.setAttribute('data-run','');else ui.host.removeAttribute('data-run')}
+      if(ui.runNote)ui.runNote.hidden=!on;
       /* Slice 09 rework: during a run the interaction-mode HUD (`data-keep-live="run"`) stays live and drawn above Variants (`jvx-run` on
          <html>, rank in the explorer's sheet): « Refusé par la voix » and the way out of PRESENTATION stay on screen. */
       const html=doc.documentElement;
@@ -1714,6 +1734,7 @@
       const m=runModel();
       if(!m.active)return;
       ui.stopRun.hidden=false;ui.present.hidden=true;
+      ui.sceneCount.hidden=true;ui.sceneLine.hidden=true;   // the presenter strip says the scene and the item (Slice 02 inventory § 2)
       chrome.sync();
       const pausing=m.pause.command==='pause';
       ui.playAllLabel.textContent=m.pause.label;
@@ -1789,6 +1810,7 @@
     function renderPresent(){
       if(!ui.present)return;
       ui.stopRun.hidden=true;ui.present.hidden=false;
+      ui.sceneCount.hidden=false;ui.sceneLine.hidden=false;
       const blocked=presentBlocked();
       attrs(ui.present,{'aria-disabled':blocked?'true':'false',title:blocked||'Présenter cette variante : vous, Jarvis, ou une répétition (la partition mène)'});
       if(ui.presenter)ui.presenter.hidden=true;
@@ -1861,6 +1883,9 @@
       /* Aucune touche tapée dans l'explorateur ne doit atteindre les raccourcis de la page derrière. */
       const t=event.target;
       const typing=t&&(t.isContentEditable||['INPUT','TEXTAREA','SELECT'].includes(String(t.tagName||'').toUpperCase()));
+      if(!typing&&!S.menu&&!event.ctrlKey&&!event.metaKey&&!event.altKey&&event.key==='?'&&(!S.dialog||S.dialog.kind==='shortcuts')){
+        event.preventDefault();event.stopPropagation();openShortcuts(doc.activeElement);return;
+      }
       if(!typing&&!S.dialog&&!S.menu&&!event.ctrlKey&&!event.metaKey&&!event.altKey&&(event.key==='['||event.key===']')){
         if(S.run){event.preventDefault();event.stopPropagation();say('info',RUN_BUSY);return}
         if(stepVariant(event.key===']'?1:-1)){event.preventDefault();event.stopPropagation();return}
@@ -1950,13 +1975,13 @@
           try{ui.stage.focus({preventScroll:true})}catch(error){log('fullscreen_focus_failed',{error:describe(error)},'warn')}
           announce("Plein écran de la vidéo. Échap ou F le quitte ; la lecture continue.");
           log('fullscreen_stage_entered',{});
-        }else announce("Plein écran. Échap quitte le plein écran ; l'explorateur reste ouvert.");
+        }else announce("Plein écran. Échap quitte le plein écran ; Variantes reste ouvert.");
       }else if(S.fullscreenOwned){
         const wasStage=S.fsKind==='stage';
         S.fullscreenOwned=false;S.fs='exited';S.fsKind=null;
         chrome.exit();
         if(wasStage){S.fsLeftAt=now();restoreFullscreenFocus();log('fullscreen_stage_left',{})}
-        say('info',"Plein écran quitté : l'explorateur reste ouvert dans la fenêtre. Échap le ferme.");
+        say('info',"Plein écran quitté : Variantes reste ouvert dans la fenêtre. Échap le ferme.");
       }
       renderHeader();reportSoon();
     }

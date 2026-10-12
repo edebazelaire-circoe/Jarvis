@@ -92,7 +92,7 @@
     /* Le bouton dit pourquoi il est éteint : pas de présentation réglée, ou lecture / plein écran en cours (le panneau est alors masqué). */
     function syncExplore(){
       if(!ui.explore)return;
-      const reason=!S.available?(S.hiddenReason==='fullscreen'?"Quittez le plein écran pour ouvrir l'explorateur de variantes.":"Une lecture est en cours : l'explorateur de variantes est un outil d'édition."):
+      const reason=!S.available?(S.hiddenReason==='fullscreen'?"Quittez le plein écran pour ouvrir les variantes.":"Une lecture est en cours : Variantes la montre, l'édition attend son arrêt."):
         !S.presentationId?"Choisissez d'abord une présentation.":null;
       ui.explore.disabled=reason!==null;
       ui.explore.setAttribute('aria-disabled',String(reason!==null));
@@ -101,7 +101,7 @@
     async function openExplorer(){
       const explorer=root.JarvisStudioExplorer;
       if(!S.presentationId)return;
-      if(!explorer||typeof explorer.open!=='function'){setStatus('warn','Explorateur indisponible',"Le module de l'explorateur de variantes n'est pas chargé dans cette page.");return}
+      if(!explorer||typeof explorer.open!=='function'){setStatus('warn','Variantes indisponible',"Le module de Variantes n'est pas chargé dans cette page.");return}
       let result=null;
       S.explorerReturn=true;     /* le plein écran de l'explorateur range ce panneau : à la fermeture il revient, avec le focus sur ce bouton */
       try{
@@ -171,7 +171,7 @@
       ui.redo=button('↷','jvi-icon',()=>{runHistory('redo')},{'aria-label':'Rétablir la modification annulée',title:'Rétablir (Ctrl+Y dans l\'inspecteur)'});
       ui.undo.disabled=true;ui.redo.disabled=true;
       /* Porte graphique de l'explorateur de variantes (Slice 18) : même appel que la voix, depuis la présentation réglée ici. */
-      ui.explore=button('Variantes','jvi-icon jvi-explore',()=>{openExplorer()},{"aria-label":"Ouvrir l'explorateur de variantes",title:"Explorateur de variantes : l'arbre des branches de cette présentation"});
+      ui.explore=button('Variantes','jvi-icon jvi-explore',()=>{openExplorer()},{"aria-label":"Ouvrir les variantes",title:"Variantes : l'arbre des branches de cette présentation"});
       ui.explore.disabled=true;
       ui.close=button('×','jvi-icon',()=>{close({restoreFocus:true})},{'aria-label':'Fermer l\'inspecteur',title:'Fermer (Échap)'});
       const bar=el('div','jvi-bar');

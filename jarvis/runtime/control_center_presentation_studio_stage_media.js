@@ -4,7 +4,7 @@
    Contrôleurs SANS DOM, exposés en `window.JarvisVariantsStageMedia` et en `module.exports` pour node. L'explorateur leur donne ses
    minuteries, son hôte de prefabs et ses fonctions d'affichage ; eux tiennent l'état :
    - `keyAction(key)` : la carte § 4.15 d'une touche (une seule table pour la scène, le transport, la bande et les touches que la scène
-     relaie quand elle a le focus) ;
+     relaie quand elle a le focus) ; `shortcutRows(mode)` : la même carte, lisible, pour la fiche des raccourcis (`?`, Slice 10) ;
    - `createSound(deps)` : le son voulu (« Son », `M`), muet à l'ouverture, donné à l'hôte (`host.sound(muted)`), gardé d'une scène à
      l'autre ; un refus du navigateur (`audio.blocked`) est dit en français avec ce qu'il faut faire, jamais un silence ;
    - `createChrome(deps)` : le transport en surimpression du plein écran de la scène, qui se cache seul pendant la lecture
@@ -27,6 +27,34 @@
   });
 
   function keyAction(key){return Object.prototype.hasOwnProperty.call(KEY_ACTIONS,key)?KEY_ACTIONS[key]:null}
+
+  /* The keyboard sheet (`?`, Slice 10): the § 4.15 map as the user reads it, DERIVED from `KEY_ACTIONS` (a key added there shows here, a
+     test holds it), one column per mode: `video` (continuous video) or `run` (a presenter run: the score leads). Rows `{keys, does}`. */
+  const KEY_NAMES=Object.freeze({' ':'Espace',ArrowRight:'→',ArrowLeft:'←',PageDown:'Page suivante',PageUp:'Page précédente',Home:'Début',End:'Fin',
+    ',':',','.':'.',f:'F',F:'F',m:'M',M:'M',Escape:'Échap'});
+  const SHEET_TEXT=Object.freeze({
+    video:Object.freeze({toggle:'Lire, mettre en pause, rejouer',next:'Début de la scène suivante',previous:'Début de la scène précédente',
+      home:'Début de la vidéo',end:'Dernière image de la vidéo',step_back:'Une image en arrière (en pause)',step_forward:'Une image en avant (en pause)',
+      fullscreen:"Plein écran de la vidéo (Maj+F : un autre écran, si le navigateur l'autorise)",sound:'Son',
+      escape:'Ferme le menu ou la fenêtre ouverte, puis quitte le plein écran, puis ferme Variantes'}),
+    run:Object.freeze({toggle:'Pause, reprise de la présentation',next:'Élément suivant de la partition',previous:'Élément précédent de la partition',
+      home:'Premier élément',end:'Dernier élément',step_back:'Sans effet : la partition mène',step_forward:'Sans effet : la partition mène',
+      fullscreen:'Plein écran de la vidéo',sound:'Son',
+      escape:'Ferme le menu ou la fenêtre ouverte, puis quitte le plein écran, puis ferme Variantes (la présentation se met en pause)'}),
+  });
+  function shortcutRows(mode){
+    const text=SHEET_TEXT[mode==='run'?'run':'video'];
+    const rows=[];
+    for(const key of Object.keys(KEY_ACTIONS)){
+      const action=KEY_ACTIONS[key],name=KEY_NAMES[key]||key;
+      let row=rows.find(r=>r.action===action);
+      if(!row){row={action,keys:[],does:text[action]||action};rows.push(row)}
+      if(!row.keys.includes(name))row.keys.push(name);
+    }
+    if(mode==='run')rows.push({action:'skip',keys:['S'],does:'Sortir de la séquence verrouillée'});
+    rows.push({action:'help',keys:['?'],does:'Cette aide'});
+    return rows.map(r=>Object.freeze({action:r.action,keys:Object.freeze(r.keys.slice()),does:r.does}));
+  }
 
   /* Le son voulu. `deps`: host() -> prefab host or null, log(key, data, level), say(kind, text), announce(text), changed(). */
   function createSound(deps){
@@ -98,7 +126,7 @@
     return {enter,exit,poke,sync,view:()=>({active:state.active,hidden:state.hidden,armed:state.timer!==null,shows:state.shows,hides:state.hides})};
   }
 
-  const api=Object.freeze({CHROME_HIDE_MS,KEY_ACTIONS,TEXT,keyAction,createSound,createChrome});
+  const api=Object.freeze({CHROME_HIDE_MS,KEY_ACTIONS,KEY_NAMES,TEXT,keyAction,shortcutRows,createSound,createChrome});
   root.JarvisVariantsStageMedia=api;
   if(typeof module!=='undefined'&&module.exports)module.exports=api;
 })(typeof globalThis!=='undefined'?globalThis:this);

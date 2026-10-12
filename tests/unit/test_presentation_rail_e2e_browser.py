@@ -59,12 +59,13 @@ async def test_the_rail_lists_real_presentations_with_their_real_work_state_and_
             {"until": "document.querySelectorAll('#presentationRail .jvr-item').length===2", "ms": 8000},
             {"value": "after_hide", "expr": ITEMS},
             # a click on the first presentation opens Variants on it, windowed (Slice 09 of native-studio-playback-fix: the floating
-            # window host is retired, Variants is the one surface): rail docked, variant bar, transport
+            # window host is retired, Variants is the one surface): rail docked, the tree's two variants, transport (Slice 10: the variant bar
+            # is merged into the tree, `[` `]` stay)
             {"eval": f"document.querySelector('#presentationRail .jvr-item[data-id=\"{rig.pid}\"]').click()"},
             {"until": "!!window.JarvisStudioExplorer&&JarvisStudioExplorer.isOpen&&JarvisStudioExplorer.isOpen()", "ms": 15000},
-            {"until": "document.querySelectorAll('#jvStudioExplorer .jvx-vchip').length===2", "ms": 15000},
+            {"until": "JarvisStudioExplorer.state().live===2", "ms": 15000},
             {"wait": 500},
-            {"value": "studio", "expr": "(()=>{const r=document.querySelector('#presentationRail').getBoundingClientRect(),x=document.querySelector('#jvStudioExplorer').getBoundingClientRect();return {docked:document.documentElement.classList.contains('jvr-studio'),railLeft:r.left,railTop:r.top,explorerLeft:x.left,railInert:!!document.querySelector('#presentationRail').closest('[inert]'),chips:document.querySelectorAll('#jvStudioExplorer .jvx-vchip').length,play:[...document.querySelectorAll('#jvStudioExplorer .jvx-transport button')].filter(b=>!b.hidden).map(b=>b.getAttribute('aria-label')||b.textContent.trim()),windowOpen:!!document.querySelector('#jvPresWindow'),pid:JarvisStudioExplorer.state().presentation_id,fullscreen:!!document.fullscreenElement}})()"},
+            {"value": "studio", "expr": "(()=>{const r=document.querySelector('#presentationRail').getBoundingClientRect(),x=document.querySelector('#jvStudioExplorer').getBoundingClientRect();return {docked:document.documentElement.classList.contains('jvr-studio'),railLeft:r.left,railTop:r.top,explorerLeft:x.left,railInert:!!document.querySelector('#presentationRail').closest('[inert]'),chips:JarvisStudioExplorer.state().live,vbar:document.querySelectorAll('#jvStudioExplorer .jvx-vbar,#jvStudioExplorer .jvx-vchip').length,play:[...document.querySelectorAll('#jvStudioExplorer .jvx-transport button')].filter(b=>!b.hidden).map(b=>b.getAttribute('aria-label')||b.textContent.trim()),windowOpen:!!document.querySelector('#jvPresWindow'),pid:JarvisStudioExplorer.state().presentation_id,fullscreen:!!document.fullscreenElement}})()"},
             {"shot": str(tmp_path / "studio.png")},
             # the rail stays usable inside the Studio: its menu opens above it
             {"eval": CONTEXT % pid2},
@@ -72,10 +73,11 @@ async def test_the_rail_lists_real_presentations_with_their_real_work_state_and_
             {"value": "studio_menu", "expr": "(()=>{const m=document.querySelector('.jvr-menu').getBoundingClientRect();const top=document.elementFromPoint(m.left+20,m.top+20);return {onTop:!!top&&!!top.closest('.jvr-menu'),z:getComputedStyle(document.querySelector('.jvr-menu')).zIndex}})()"},
             {"key": "Escape"},
             {"value": "studio_still_open", "expr": "JarvisStudioExplorer.isOpen()"},
-            # variant bar: ] steps to the other variant
+            # ] steps to the other variant (the tree's selection follows)
+            {"value": "before_step", "expr": "JarvisStudioExplorer.state().selected"},
             {"eval": "document.querySelector('#jvStudioExplorer').dispatchEvent(new KeyboardEvent('keydown',{key:']',bubbles:true,cancelable:true}))"},
             {"wait": 600},
-            {"value": "stepped", "expr": "[...document.querySelectorAll('#jvStudioExplorer .jvx-vchip')].map(b=>b.getAttribute('aria-pressed'))"},
+            {"value": "stepped", "expr": "[JarvisStudioExplorer.state().selected,document.querySelectorAll('#jvStudioExplorer .jvx-row[aria-selected=\"true\"]').length]"},
         ], viewport="1440x900", timeout=300)
         reads = result["reads"]
         assert [i[0] for i in reads["items"]] == ["Atelier du cadran", "Bilan trimestriel", "Roadmap produit"] or sorted(i[0] for i in reads["items"]) == sorted(["Atelier du cadran", "Bilan trimestriel", "Roadmap produit"])
@@ -90,10 +92,12 @@ async def test_the_rail_lists_real_presentations_with_their_real_work_state_and_
         assert reads["studio"]["pid"] == rig.pid, "the rail click opens Variants on that presentation"
         assert reads["studio"]["docked"] is True and reads["studio"]["railLeft"] == 8 and reads["studio"]["explorerLeft"] > 150
         assert reads["studio"]["railInert"] is False and reads["studio"]["chips"] == 2 and reads["studio"]["fullscreen"] is False
-        # Slice 06 (native-studio-playback-fix): one transport toolbar; « Jouer cette slide » became the « ⋯ » entry « Lire seulement cette scène »
-        assert reads["studio"]["play"] == ["Scène précédente", "Lire", "Scène suivante", "Son", "Plus de lecture", "Présenter"] and reads["studio"]["windowOpen"] is False
+        assert reads["studio"]["vbar"] == 0, "Slice 10: no variant bar (merged into the tree)"
+        # Slice 06 (native-studio-playback-fix): one transport toolbar; « Jouer cette slide » became the « ⋯ » entry « Lire seulement cette scène »;
+        # Slice 10: « Présenter » is on the scene row under it
+        assert reads["studio"]["play"] == ["Scène précédente", "Lire", "Scène suivante", "Son", "Plus de lecture"] and reads["studio"]["windowOpen"] is False
         assert reads["studio_menu"]["onTop"] is True and reads["studio_still_open"] is True, "Escape in the rail menu does not close the Studio"
-        assert sorted(reads["stepped"]) == ["false", "true"]
+        assert reads["stepped"][0] != reads["before_step"] and reads["stepped"][1] == 1, (reads["before_step"], reads["stepped"])
         assert not noise(result), noise(result)
 
         # what the page wrote is in the real store, beside the manifest, and the manifest did not move

@@ -120,7 +120,7 @@ SENTENCES: dict[str, str] = {
     "explorer_unavailable": "L'explorateur n'est pas disponible dans cette page.",
     "explorer_load_failed": "Core n'a pas pu rendre le graphe à la page.",
     "explorer_page_error": "La page a rencontré une erreur : elle est dans les journaux.",
-    "explorer_dialog_open": "Un formulaire est ouvert dans l'explorateur : l'utilisateur doit le fermer ou le valider d'abord.",
+    "explorer_dialog_open": "Un formulaire est ouvert dans Variantes : l'utilisateur doit le fermer ou le valider d'abord.",
     "explorer_no_visible_page": "Aucune page du Control Center n'est visible : l'utilisateur doit ouvrir l'interface de JARVIS.",
     "explorer_command_busy": "Une autre commande d'explorateur est en cours : réessaie dans un instant.",
     # native-studio-playback-fix Slice 09 : une présentation se montre dans Variantes, jamais dans une fenêtre du Board.

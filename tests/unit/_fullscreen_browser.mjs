@@ -89,7 +89,7 @@ try{
     Escape:{code:'Escape',keyCode:27},Enter:{code:'Enter',keyCode:13,text:'\r'},Home:{code:'Home',keyCode:36},
     End:{code:'End',keyCode:35},p:{code:'KeyP',keyCode:80,text:'p'},ArrowUp:{code:'ArrowUp',keyCode:38},
     ArrowDown:{code:'ArrowDown',keyCode:40},PageDown:{code:'PageDown',keyCode:34},PageUp:{code:'PageUp',keyCode:33},
-    Backspace:{code:'Backspace',keyCode:8},Tab:{code:'Tab',keyCode:9}};
+    Backspace:{code:'Backspace',keyCode:8},Tab:{code:'Tab',keyCode:9},'?':{code:'Slash',keyCode:191,text:'?'}};
   const keyOf=key=>{
     if(KEYS_BASE[key])return KEYS_BASE[key];
     if(/^[A-Za-z]$/.test(key))return {code:'Key'+key.toUpperCase(),keyCode:key.toUpperCase().charCodeAt(0),text:key};

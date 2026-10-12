@@ -665,7 +665,7 @@ async def test_the_inspector_header_opens_the_explorer_with_a_real_click_gives_f
         reads = result["reads"]
         assert "failed" not in reads, reads.get("failed")
         button = json.loads(reads["button"])
-        assert button["vis"] and button["label"] == "Ouvrir l'explorateur de variantes" and button["text"] == "Variantes" and button["h"] >= 24 and button["tab"] == 0
+        assert button["vis"] and button["label"] == "Ouvrir les variantes" and button["text"] == "Variantes" and button["h"] >= 24 and button["tab"] == 0
         opened = json.loads(reads["opened"])
         print("fs_at_open", reads["fs_at_open"])     # diagnostic of the old flake (rework of Slice 08): was the fullscreen there yet?
         assert reads["until:" + FS_AND_INSPECTOR_HIDDEN], "the click opens the explorer in the workspace fullscreen, and the inspector hides itself"
