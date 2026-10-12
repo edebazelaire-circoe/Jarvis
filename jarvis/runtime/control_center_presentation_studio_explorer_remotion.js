@@ -105,7 +105,9 @@
     const relation=!st||st.status!=='ready'||!pin||!mine?'none':pin.prefab_id===mine.id?(Number(pin.version)===Number(mine.version)?'here':'version'):'other';
     const button={label:'Remotion Studio',state:relation==='here'?'here':'idle',blocked,ariaLabel:'Remotion Studio',
       title:blocked||'Ouvrir la scène à l’écran dans Remotion Studio (un onglet à part, après confirmation)'};
-    if(relation==='here'){button.ariaLabel='Remotion Studio, ouvert sur cette scène';button.title='Afficher l’onglet Remotion Studio de cette scène'}
+    /* The tab is opened `noopener` (security): a browser cannot bring back a tab opened that way, so a click here opens ANOTHER tab; the words
+       say so (Slice 11 QA polish, decided by agent 0: keep `noopener`). */
+    if(relation==='here'){button.ariaLabel='Remotion Studio, ouvert sur cette scène';button.title='Ouvrir un autre onglet Remotion Studio sur cette scène (celui déjà ouvert reste où il est)'}
     let status=null;
     const elapsed=since=>C.fmtDuration(Math.max(0,since));
     const ws=workspaceOf(st,mine);
@@ -157,7 +159,7 @@
       if(relation==='here'){
         parts.push(i.needsClick?'Remotion Studio est prêt sur cette scène. Le navigateur n’ouvre un onglet qu’après un clic :'
           :`Remotion Studio est ouvert sur cette scène (source v${mine.version}), dans un autre onglet.`);
-        link={url:st.url,label:i.needsClick||!(st.viewers>0)?'Ouvrir l’onglet Remotion Studio':'Afficher l’onglet Remotion Studio'};
+        link={url:st.url,label:i.needsClick||!(st.viewers>0)?'Ouvrir l’onglet Remotion Studio':'Ouvrir un autre onglet Remotion Studio'};
       }else if(relation==='version'){
         tone='warn';
         parts.push(`Remotion Studio montre la version ${pin.version} de cette scène ; la variante utilise la version ${mine.version}. « Remotion Studio » y affiche la version de la variante, après confirmation.`);

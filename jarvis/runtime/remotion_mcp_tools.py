@@ -212,8 +212,10 @@ class RemotionTools(PresentationTools):
             sid = self._scene(tool, scene_id)
             described = await self._c(lambda c: c.presentation_studio_scene_controls(presentation_id, variant_id, sid))
             scene = {"scene_id": sid, "prefab": described.get("prefab")}
+        # The door opens the scene ON SCREEN in Variants: for a named scene, the user shows it first (Slice 11 QA polish).
+        where_first = "affiche cette scène dans Variantes, puis clique" if scene else "dans Variantes, clique"
         return self._ok("say", status="needs_user", where=CARD_PATH, scene=scene or None,
-                        say="Pour ouvrir cette scène dans Remotion Studio : dans Variantes, clique « Remotion Studio » sous la vidéo et confirme ; elle y tourne hors du bac à sable.",
+                        say=f"Pour ouvrir cette scène dans Remotion Studio : {where_first} « Remotion Studio » sous la vidéo et confirme ; elle y tourne hors du bac à sable.",
                         note="Tu ne peux pas ouvrir le Studio ni confirmer à sa place : l'accusé est à l'utilisateur seul. Dis où cliquer, une fois.")
 
     # ------------------------------------------------------------------ export

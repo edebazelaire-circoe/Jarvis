@@ -2094,7 +2094,7 @@
       S.opener=opts.opener||doc.activeElement;
       S.open=true;S.loading={label:'Chargement du graphe',at:now()};
       ui.host.hidden=false;
-      door.start();   // Slice 11: Remotion Studio's state, read once now, then at each return to this tab
+      door.start();   // Slice 11: listens for the return to this tab; Remotion Studio is read once a Remotion scene is on screen (`loadDetail`)
       applyInert();
       if(!ui.bound){doc.addEventListener('fullscreenchange',onFullscreenChange);ui.bound=true}
       doc.addEventListener('keydown',onDocKey,true);

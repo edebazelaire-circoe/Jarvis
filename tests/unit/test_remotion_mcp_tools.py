@@ -130,6 +130,9 @@ async def test_studio_with_a_scene_reads_its_source_pin_from_the_state_and_still
     tools, core, _ = make_tools(tmp_path, turn=True)
     result = await tools.studio(scene_id=SID)
     assert result["scene"] == {"scene_id": SID, "prefab": {"id": "circoe.demo", "version": 1}}
+    # the door opens the scene on screen: the user shows that scene first (Slice 11 QA polish)
+    assert "affiche cette scène dans Variantes, puis clique « Remotion Studio » sous la vidéo et confirme" in result["say"]
+    assert "dans Variantes, clique « Remotion Studio »" in (await tools.studio())["say"], "without a scene: the plain pointer"
     assert core.named("presentation_studio_scene_controls") == [(PID, VID, SID)] and core.writes == []
     with pytest.raises(PresentationToolError) as caught:
         await tools.studio(scene_id="pss_nope")

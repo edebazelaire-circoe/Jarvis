@@ -59,7 +59,8 @@ def test_the_spoken_pointer_is_the_one_the_tool_returns():
     assert remotion_mcp_tools.CARD_PATH in text, "where the user clicks"
     assert "« Remotion Studio » sous la vidéo et confirme" in text
     source = (RUNTIME / "remotion_mcp_tools.py").read_text(encoding="utf-8")
-    assert "clique « Remotion Studio » sous la vidéo et confirme" in source and "Ouvrir le Studio" not in source
+    assert "« Remotion Studio » sous la vidéo et confirme" in source and "affiche cette scène dans Variantes, puis clique" in source
+    assert "Ouvrir le Studio" not in source and "affiche cette scène dans Variantes, puis clique" in text
 
 
 def test_every_test_file_the_section_cites_exists():

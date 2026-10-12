@@ -77,7 +77,8 @@ def test_remotion_studio_on_this_pin_another_version_or_another_scene_is_said_ne
     assert here["relation"] == "here" and here["button"]["state"] == "here"
     assert here["button"]["ariaLabel"] == "Remotion Studio, ouvert sur cette scène"
     assert here["status"]["tone"] == "ok" and "ouvert sur cette scène (source v1)" in here["status"]["text"]
-    assert here["status"]["link"] == {"url": READY["url"], "label": "Afficher l’onglet Remotion Studio"}
+    assert here["status"]["link"] == {"url": READY["url"], "label": "Ouvrir un autre onglet Remotion Studio"}
+    assert "Ouvrir un autre onglet" in here["button"]["title"], "noopener: a click opens another tab, and the words say so"
     older = model(studio={**READY, "pin": {"prefab_id": "lab.dial", "version": 0}}, scene={**SCENE, "prefab": {"id": "lab.dial", "version": 1}})
     assert older["relation"] == "version" and older["status"]["tone"] == "warn"
     assert "version 0 de cette scène ; la variante utilise la version 1" in older["status"]["text"] and older["status"].get("link") is None
@@ -354,3 +355,23 @@ def test_an_html_deck_never_asks_core_about_remotion_studio(tmp_path):
         libraryReads:env.requests.filter(r=>r.url.startsWith('/api/prefabs/')).length};
     """)
     assert out == {"studioReads": 0, "libraryReads": 1}, "no Remotion Studio read (nor a 503 in the console) for a deck without Remotion"
+
+
+def test_a_click_on_this_scene_opens_another_noopener_tab_each_time_and_says_so(tmp_path):
+    """Slice 11 QA polish: `noopener` (kept for security) means the browser never hands back a tab it opened, so each click on the door of a
+    scene already open opens ANOTHER tab, without a second confirmation; the button's title and the link say « un autre onglet »."""
+
+    out = run_ui(tmp_path, STUDIO_WORLD + r"""
+      const ex=await openVariants();
+      door().click();await env.advance(50);go().click();await env.advance(300);
+      const first=tabs.length;
+      rms.studio=Object.assign({},rms.studio,{viewers:1});
+      door().click();await env.advance(100);
+      door().click();await env.advance(100);
+      return {first,tabs,dialogs:!!dialog(),opens:rms.opens.length,title:door().getAttribute('title'),
+        link:q('.jvx-rms-link').textContent};
+    """)
+    assert out["first"] == 1 and out["opens"] == 1, "one confirmed open"
+    assert out["tabs"][1:] == [["http://127.0.0.1:41000/", "jarvis-remotion-studio", "noopener,noreferrer"]] * 2, "noopener kept, a new tab per click"
+    assert out["dialogs"] is False, "no second confirmation"
+    assert "Ouvrir un autre onglet" in out["title"]
