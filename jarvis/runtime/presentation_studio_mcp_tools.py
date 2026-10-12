@@ -687,7 +687,7 @@ class PresentationTools:
         mode = receipt.get("mode")
         armed = mode == "fullscreen_armed"
         # Un geste attendu de l'utilisateur est la seule réussite qui se dit : il ne sait pas qu'il doit cliquer.
-        return self._ok("say" if armed else "silent", say=("L'explorateur est ouvert ; clique sur « Passer en plein écran » pour le plein écran."
+        return self._ok("say" if armed else "silent", say=("Variantes est ouvert ; clique sur « Passer en plein écran » pour le plein écran."
                                                            if armed else None),
                         status=state, mode=mode, fullscreen=receipt.get("fullscreen"), needs_gesture=armed or None,
                         presentation_id=receipt.get("presentation_id") or pid, variant_id=receipt.get("variant_id") or vid,

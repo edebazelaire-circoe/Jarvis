@@ -289,7 +289,7 @@ async def test_a_start_is_shown_in_variants_and_without_a_visible_page_the_run_p
 
 @pytest.mark.parametrize("code, says, never", [
     ("explorer_dialog_open", "un formulaire y est ouvert", "ouvrir l'interface"),
-    ("explorer_command_busy", "une autre commande de l'explorateur était en cours", "ouvrir l'interface"),
+    ("explorer_command_busy", "une autre commande de Variantes était en cours", "ouvrir l'interface"),
     ("explorer_no_visible_page", "ouvrir l'interface de JARVIS", "formulaire"),
 ])
 async def test_surface_unavailable_gives_the_advice_of_the_pages_own_reason(world, code, says, never):

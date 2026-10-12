@@ -326,7 +326,7 @@
     explorer_unknown_presentation:"Cette présentation n'existe pas.",
     explorer_unavailable:"Variantes n'est pas disponible dans cette page.",
     explorer_load_failed:"Core n'a pas pu rendre le graphe des variantes.",
-    explorer_page_error:"L'explorateur a rencontré une erreur inattendue.",
+    explorer_page_error:"Variantes a rencontré une erreur inattendue.",
     explorer_dialog_open:"Un formulaire est ouvert dans Variantes : terminez-le ou annulez-le avant de changer de présentation.",
   });
 
@@ -631,6 +631,8 @@ html:has(#${HOST_ID}:not([hidden])) #jvFullscreenPrompt{top:auto;bottom:18px;lef
 #${HOST_ID} .jvx-actions .jvx-btn{justify-content:flex-start}
 #${HOST_ID} .jvx-layer{position:absolute;inset:0;z-index:5;pointer-events:none}
 #${HOST_ID} .jvx-layer>*{pointer-events:auto}
+/* Slice 10 rework (B1): the layer inside the fullscreen stage, above its transport overlay. */
+#${HOST_ID} .jvx-fs-layer{z-index:6}
 #${HOST_ID} .jvx-scrim{position:absolute;inset:0;display:grid;place-items:center;padding:20px;background:rgba(2,5,8,.62)}
 #${HOST_ID} .jvx-dialog{width:min(560px,100%);max-height:100%;overflow:auto;padding:20px;border-radius:14px;border:1px solid var(--jvx-line-strong);background:var(--jvx-surface-2);
   -webkit-backdrop-filter:blur(18px);backdrop-filter:blur(18px);box-shadow:0 24px 70px rgba(0,0,0,.6);display:grid;gap:14px}
@@ -698,7 +700,7 @@ html:has(#${HOST_ID}:not([hidden])) #jvFullscreenPrompt{top:auto;bottom:18px;lef
   #${HOST_ID} .jvx-row{--row-pad:6px}
 }
 @media (max-height:640px){
-  #${HOST_ID} .jvx-hint-keys{display:none}
+  #${HOST_ID} .jvx-hint-keys{padding:3px 16px 4px;font-size:11.5px}   /* Slice 10 rework (P3): compact, never hidden: the « ? » key stays discoverable */
   #${HOST_ID} .jvx-rationale{display:none}
   #${HOST_ID} .jvx-scene{flex-direction:row;align-items:center;width:auto;gap:8px;padding:4px 12px}
   #${HOST_ID} .jvx-scene-r,#${HOST_ID} .jvx-scene-b{display:none}

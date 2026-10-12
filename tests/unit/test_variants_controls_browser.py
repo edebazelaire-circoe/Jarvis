@@ -256,7 +256,10 @@ async def test_every_visible_readout_is_the_player_time_or_says_what_it_is(deck)
 
 # ---------------------------------------------------------------------------------------------------------------- evidence, real video
 
-RUNTIME_RAW = os.environ.get("JARVIS_REMOTION_RUNTIME_DIR")
+from tests.fakes.remotion_player_stack import runtime_dir_from_env  # noqa: E402
+
+#: Slice 10 rework (P4): an installation with `node_modules` and `runtime-host.mjs`, as the transport tests read it (else skip, never fail).
+RUNTIME = runtime_dir_from_env()
 
 
 def _evidence_dir() -> Path | None:
@@ -277,16 +280,16 @@ def _redact(text: str) -> str:
     return text.replace(Path.home().name, "<user>")
 
 
-@pytest.mark.skipif(not RUNTIME_RAW or shutil.which("node") is None, reason="needs JARVIS_REMOTION_RUNTIME_DIR, node and Chrome")
+@pytest.mark.skipif(RUNTIME is None or shutil.which("node") is None, reason="needs JARVIS_REMOTION_RUNTIME_DIR (with node_modules), node and Chrome")
 async def test_evidence_variants_with_the_video_deck_idle_at_three_sizes_and_during_a_run(tmp_path):
-    from tests.fakes.remotion_player_stack import RemotionStack, runtime_dir_from_env
+    from tests.fakes.remotion_player_stack import RemotionStack
     from tests.unit.presentation_playback_gate_world import READOUTS, make_deck, open_variants, readout_problems, run_long
 
     tag = os.environ.get("JARVIS_VARIANTS_CONTROLS_SHOT_TAG", "run")
     head = subprocess.run(["git", "rev-parse", "--short=8", "HEAD"], capture_output=True, text=True, check=False).stdout.strip()
     dirty = subprocess.run(["git", "status", "--porcelain", "--", "jarvis"], capture_output=True, text=True, check=False).stdout.strip()
     sha = head + ("-dirty" if dirty else "")
-    async with RemotionStack(tmp_path, runtime_dir=runtime_dir_from_env()) as stack:
+    async with RemotionStack(tmp_path, runtime_dir=RUNTIME) as stack:
         pid, _vid = await make_deck(stack)
         names = {size: tmp_path / f"{tag}-{sha}-variants-{size}.png" for size in VIEWPORTS}
         plan = open_variants(pid) + [{"eval": f"window.__ro=()=>{READOUTS};"}, {"wait": 2500}]
@@ -316,3 +319,83 @@ async def test_evidence_variants_with_the_video_deck_idle_at_three_sizes_and_dur
             {"sha": sha, "tag": tag, "runtime": "headless Chrome over CDP, RemotionStack on free loopback ports, throw-away data root; "
              "the live Jarvis was never contacted", **inventory}, indent=1, ensure_ascii=False)), encoding="utf-8")
     assert readout_problems(reads["readout"], 0) == [], "the time readout is the composition time"
+
+
+# ---------------------------------------------------------------------------------------------------------------- Slice 10 rework (B1)
+
+THEATER = f"document.querySelector('{X} .jvx-theater')"
+IN_FS = f"(document.fullscreenElement==={THEATER})"
+#: Is this element drawn and reachable inside the fullscreen stage: in the fullscreen element, not inert, the point at its centre hits it.
+SEEN = r"""(sel=>{const e=document.querySelector(sel);if(!e)return null;const fs=document.fullscreenElement;let inert=false;
+for(let n=e;n;n=n.parentElement)if(n.inert)inert=true;const r=e.getBoundingClientRect();const hit=document.elementFromPoint(r.left+r.width/2,r.top+r.height/2);
+return {inFs:!!fs&&fs.contains(e),inert,visible:r.width>0&&r.height>0,hit:!!hit&&e.contains(hit)}})"""
+TRANSPORT_LIVE = (f"(()=>{{const t=document.querySelector('{X} .jvx-transport');for(let n=t;n;n=n.parentElement)if(n.inert)return false;"
+                  "return true})()")
+
+
+SPY_LOCK = ("window.__locks=[];const k=navigator.keyboard;const l=k.lock.bind(k),u=k.unlock.bind(k);"
+            "k.lock=a=>{window.__locks.push(['lock'].concat(a||[]));return l(a)};k.unlock=()=>{window.__locks.push(['unlock']);return u()}")
+
+
+async def test_in_stage_fullscreen_the_sheet_and_the_overflow_menu_are_drawn_inside_it_and_escape_is_nested(deck):
+    """B1: `?` in the stage fullscreen used to mount the sheet outside the fullscreen element (unseen) and make the stage inert.
+
+    The first Échap goes to the overlay: Variants holds the Keyboard Lock on Échap while a menu or a dialog is drawn inside the fullscreen
+    stage (so a real browser delivers it instead of leaving fullscreen) and releases it once the overlay is gone. Headless Chrome leaves
+    the fullscreen on an injected Échap whatever the lock (measured: the lock resolves, the page receives the key, the fullscreen still
+    ends), so here the proof is: the page closes the overlay on that first press, asked for the lock while it was open and released it;
+    that the fullscreen survives in a real browser is the Human check."""
+
+    core, url, pid = deck
+    focus_stage = {"eval": f"document.querySelector('{X} .jvx-stage').focus()"}
+    result = await drive(url, _open_variants(pid) + [
+        {"wait": 500}, {"eval": SPY_LOCK}, focus_stage, {"key": "F"},
+        {"until": IN_FS, "ms": 6000},
+        {"key": "?"}, {"until": f"!!{SHEET}", "ms": 4000}, {"wait": 300},
+        {"value": "sheet", "expr": f"{SEEN}('{X} [data-kind=\"shortcuts\"]')"},
+        {"value": "transportLiveUnderSheet", "expr": TRANSPORT_LIVE},
+        {"value": "locksOpen", "expr": "JSON.stringify(window.__locks)"},
+        {"key": "Escape"}, {"wait": 500},
+        {"value": "afterFirstEscape", "expr": f"JSON.stringify({{sheet:!!{SHEET},live:{TRANSPORT_LIVE},locks:window.__locks}})"},
+        # headless Chrome has left the fullscreen on that Échap (see the docstring): enter it again for « ⋯ »
+        {"eval": "document.fullscreenElement&&document.exitFullscreen()"}, {"wait": 300}, focus_stage, {"key": "F"}, {"until": IN_FS, "ms": 6000},
+        {"click": f"{X} [aria-label=\"Plus de lecture\"]"}, {"wait": 400},
+        {"value": "menu", "expr": f"{SEEN}('{X} .jvx-menu [role=\"menuitem\"]')"},
+        {"key": "Escape"}, {"wait": 400},
+        {"value": "afterMenuEscape", "expr": f"JSON.stringify({{menu:!!document.querySelector('{X} .jvx-menu')}})"},
+        {"value": "open", "expr": f"{EXPLORER}.isOpen()"}])
+    reads = _ok(result)
+    assert reads["sheet"] == {"inFs": True, "inert": False, "visible": True, "hit": True}, ("the sheet is drawn inside the fullscreen", reads["sheet"])
+    assert reads["transportLiveUnderSheet"] is False, "a modal sheet: the transport waits behind it (inert) …"
+    assert json.loads(reads["locksOpen"]) == [["lock", "Escape"]], "Échap is held for the overlay while it is open in fullscreen"
+    first = json.loads(reads["afterFirstEscape"])
+    assert first["sheet"] is False and first["live"] is True, "the first Échap closes the sheet, the transport is live again"
+    assert ["unlock"] in first["locks"], "the lock is given back once the overlay is gone"
+    assert reads["menu"] == {"inFs": True, "inert": False, "visible": True, "hit": True}, ("« ⋯ » is drawn inside the fullscreen", reads["menu"])
+    assert json.loads(reads["afterMenuEscape"]) == {"menu": False}
+    assert reads["open"] is True, "Échap never closed Variants while an overlay or the fullscreen was there"
+
+
+@pytest.mark.skipif(RUNTIME is None or shutil.which("node") is None, reason="needs JARVIS_REMOTION_RUNTIME_DIR (with node_modules), node and Chrome")
+async def test_in_stage_fullscreen_space_plays_and_pauses_after_the_sheet_is_closed(tmp_path):
+    from tests.fakes.remotion_player_stack import RemotionStack
+    from tests.unit.presentation_playback_gate_world import make_deck, open_variants, run_long
+
+    phase = f"{EXPLORER}.playback.view().phase"
+    async with RemotionStack(tmp_path, runtime_dir=RUNTIME) as stack:
+        pid, _vid = await make_deck(stack)
+        plan = open_variants(pid) + [
+            {"wait": 1500}, {"eval": f"document.querySelector('{X} .jvx-stage').focus()"}, {"key": "F"},
+            {"until": IN_FS, "ms": 6000, "required": True, "as": "fullscreen"},
+            {"key": "?"}, {"until": f"!!{SHEET}", "ms": 4000, "required": True, "as": "sheet"},
+            {"value": "sheet", "expr": f"{SEEN}('{X} [data-kind=\"shortcuts\"]')"},
+            {"key": "Escape"}, {"until": f"!{SHEET}", "ms": 4000, "required": True, "as": "sheet_closed"},
+            {"value": "fsAfterSheet", "expr": IN_FS},
+            {"key": " "}, {"until": f"{phase}==='playing'||{phase}==='waiting'", "ms": 20000, "required": True, "as": "plays"},
+            {"wait": 1500}, {"key": " "}, {"until": f"{phase}==='paused'", "ms": 8000, "required": True, "as": "pauses"},
+            {"value": "fs", "expr": IN_FS}]
+        result = await run_long(stack.page_url, plan, timeout=400)
+    reads = result["reads"]
+    assert "failed" not in reads, reads.get("failed")
+    assert reads["sheet"] == {"inFs": True, "inert": False, "visible": True, "hit": True}, reads["sheet"]
+    assert reads.get("until:" + f"{phase}==='paused'") is True, "Space played, then paused, once the sheet was closed"

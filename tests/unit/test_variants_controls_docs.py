@@ -69,3 +69,34 @@ def test_earlier_sections_no_longer_promise_slice_10_as_future_work():
     assert "the keyboard sheet (`?`) is Slice 10." not in text
     assert "The tree, the actions, the variant bar and the upgrade notice are `inert`" not in text
     assert "Done by Slice 10 (*Variants control audit (Level 3, Slice 10)*)" in text, "§ 6 says which target rows are done"
+
+
+def _js_strings(source: str) -> list[str]:
+    """The string literals of a JavaScript file, comments removed first (block and line comments)."""
+
+    code = re.sub(r"/\*.*?\*/", "", source, flags=re.S)
+    code = "\n".join(line for line in code.splitlines() if not line.lstrip().startswith("//"))
+    return [a or b or c for a, b, c in re.findall(r"'((?:[^'\\n]|\.)*)'|\"((?:[^\"\\n]|\.)*)\"|`([^`]*)`", code)]
+
+
+def _py_strings(path: Path) -> list[str]:
+    """The string constants of a Python file that are not docstrings."""
+
+    import ast
+    tree = ast.parse(path.read_text(encoding="utf-8"))
+    docs = {id(node.body[0].value) for node in ast.walk(tree)
+            if isinstance(node, (ast.Module, ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)) and node.body
+            and isinstance(node.body[0], ast.Expr) and isinstance(node.body[0].value, ast.Constant)}
+    return [n.value for n in ast.walk(tree) if isinstance(n, ast.Constant) and isinstance(n.value, str) and id(n) not in docs]
+
+
+def test_messages_the_user_or_the_brain_relays_never_name_the_screen_explorateur():
+    """Slice 10 rework (P1): not only the rendered DOM — every refusal, reason and spoken sentence the page, the command channel and the
+    presentation MCP return. Code identifiers (`explorer_*`) and tool descriptions are not messages."""
+
+    found = []
+    for name, text in (("explorer.js", EXPLORER), ("explorer_core.js", CORE)):
+        found += [(name, s) for s in _js_strings(text) if "explorateur" in s.lower()]
+    for name in ("presentation_studio_mcp_support.py", "presentation_studio_mcp_tools.py", "presentation_studio_explorer_commands.py"):
+        found += [(name, s) for s in _py_strings(RUNTIME / name) if "explorateur" in s.lower() and " " in s]
+    assert found == [], found

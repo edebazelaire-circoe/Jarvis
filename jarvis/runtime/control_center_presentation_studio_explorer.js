@@ -409,6 +409,9 @@
       ui.theater=el('div','jvx-theater');
       attrs(ui.theater,{'data-object-id':STAGE_OBJECT_ID,'aria-label':'Vidéo de la variante'});
       ui.theater.appendChild(wrap);ui.theater.appendChild(note);
+      /* Slice 10 rework (B1): while the stage is fullscreen, menus and dialogs mount HERE, inside the fullscreen element (else they are drawn
+         outside it, unseen, and the inert set freezes the transport). */
+      ui.fsLayer=el('div','jvx-layer jvx-fs-layer');ui.theater.appendChild(ui.fsLayer);
       for(const type of ['pointermove','focusin','keydown'])ui.theater.addEventListener(type,()=>chrome.poke());
       /* Slice 09: the presenter strip (§ 5), windowed only, under the stage: it replaces the floating band. */
       ui.presenter=buildPresenter();
@@ -873,7 +876,7 @@
           else if(item.act==='scene_only')playSceneOnly();
           else if(!seekTo('home'))browseScene(0,0);
         }});
-      ui.layer.appendChild(menu);
+      mountOverlay(menu);
       S.menu={node:menu,buttons,returnFocus:ui.more,id:null,onClose:()=>ui.more.setAttribute('aria-expanded','false')};
       ui.more.setAttribute('aria-expanded','true');
       menu.addEventListener('keydown',event=>onMenuKey(event));
@@ -1381,16 +1384,44 @@
     }
 
     /* -------------------------------------------------------------- boîtes de dialogue (dans l'hôte : hors de lui, rien ne se dessine en plein écran) */
-    function setInertBehind(on){
-      /* Le reste de l'hôte est inerte pendant un dialogue ; le calque du dialogue ne l'est pas. */
-      for(const node of ui.host.children){if(node!==ui.layer&&node.nodeType===1)node.inert=!!on}
+    /* The layer menus and dialogs mount in: inside the stage while it is fullscreen (Slice 10 rework, B1), the explorer's layer otherwise. */
+    function overlayLayer(){return ui.fsLayer&&ui.theater&&doc.fullscreenElement===ui.theater?ui.fsLayer:ui.layer}
+    /* Nested Échap inside the fullscreen stage (§ 4.15, Slice 08 rule): a browser keeps the first Échap of a fullscreen for itself, unless
+       the page holds the Keyboard Lock on it. While a menu or a dialog is drawn inside the fullscreen stage, Échap is locked, so the first
+       press closes it and fullscreen stays; the lock is released as soon as no overlay is left (then Échap leaves fullscreen again). A
+       browser without the API keeps its rule: fullscreen ends, and the overlay moves to the windowed layer (`onFullscreenChange`). */
+    let escapeLocked=false;
+    function escapeLock(on){
+      const kb=win.navigator&&win.navigator.keyboard;
+      if(!kb||typeof kb.lock!=='function'||on===escapeLocked)return;
+      escapeLocked=on;
+      if(on)Promise.resolve().then(()=>kb.lock(['Escape'])).catch(error=>{escapeLocked=false;log('escape_lock_refused',{error:describe(error)})});
+      else{try{kb.unlock()}catch(error){log('escape_unlock_failed',{error:describe(error)})}}
+    }
+    function mountOverlay(node){
+      const layer=overlayLayer();
+      layer.appendChild(node);
+      if(layer===ui.fsLayer)escapeLock(true);
+      return layer;
+    }
+    function overlaysGone(){if(!S.menu&&!S.dialog)escapeLock(false)}
+    /* Le reste de l'hôte est inerte pendant un dialogue ; le calque du dialogue ne l'est pas. Every sibling on the path from the layer up to
+       the host is made inert (so a dialog inside the fullscreen stage leaves the stage's own path live); only the nodes made inert here are
+       given back (the run's own inertness, Slice 09, is never undone by a dialog). */
+    let inertBehind=[];
+    function setInertBehind(on,layer){
+      if(!on){for(const node of inertBehind)node.inert=false;inertBehind=[];return}
+      for(let n=layer||ui.layer;n&&n!==ui.host;n=n.parentNode){
+        const parent=n.parentNode;if(!parent)break;
+        for(const sib of parent.children){if(sib!==n&&sib.nodeType===1&&!sib.inert){sib.inert=true;inertBehind.push(sib)}}
+      }
     }
     function closeDialog(restore){
       const dlg=S.dialog;
       if(!dlg)return;
       S.dialog=null;
       if(dlg.timer)stopEvery(dlg.timer);
-      clear(ui.layer);setInertBehind(false);
+      clear(dlg.layer||ui.layer);setInertBehind(false);overlaysGone();
       /* Slice 11: a dialog that waits for an answer (the Remotion Studio confirmation) learns it was closed some other way (Échap, scrim). */
       if(typeof dlg.onClose==='function'){try{dlg.onClose()}catch(error){log('dialog_on_close_failed',{kind:dlg.kind,error:describe(error)},'error')}}
       if(restore!==false){
@@ -1407,9 +1438,9 @@
       const box=el('div','jvx-dialog');
       attrs(box,{role:'dialog','aria-modal':'true','aria-labelledby':spec.titleId});
       scrim.appendChild(box);
-      ui.layer.appendChild(scrim);
-      setInertBehind(true);
-      S.dialog={kind:spec.kind,box,scrim,returnFocus:spec.returnFocus||doc.activeElement,onCancel:spec.onCancel||null,onClose:spec.onClose||null,timer:null};
+      const layer=mountOverlay(scrim);
+      setInertBehind(true,layer);
+      S.dialog={kind:spec.kind,box,scrim,layer,returnFocus:spec.returnFocus||doc.activeElement,onCancel:spec.onCancel||null,onClose:spec.onClose||null,timer:null};
       scrim.addEventListener('mousedown',event=>{if(event.target===scrim&&spec.dismissible!==false)cancelDialog()});
       return S.dialog;
     }
@@ -1484,7 +1515,7 @@
       const menu=S.menu;
       if(!menu)return;
       S.menu=null;
-      menu.node.remove();
+      menu.node.remove();overlaysGone();
       if(menu.onClose)menu.onClose();
       if(restore!==false){
         const target=menu.returnFocus;
@@ -1507,7 +1538,7 @@
           closeMenu(false);
           runAction(item.act,id,{returnFocus});
         }});
-      ui.layer.appendChild(menu);
+      mountOverlay(menu);
       S.menu={node:menu,buttons,returnFocus,id};
       menu.addEventListener('keydown',event=>onMenuKey(event));
       menu.addEventListener('mousedown',event=>event.stopPropagation());
@@ -1847,7 +1878,7 @@
         {act:'rehearsal',label:'Répétition',icon:'play'}];
       const {menu,buttons}=W.buildMenu(kit,{head:'Présenter',label:'Présenter la variante',items,anchor:{x:box.left,y:box.bottom+4},
         width:win.innerWidth||1280,height:win.innerHeight||720,onPick:item=>{closeMenu(true);startPresenting(item.act)}});
-      ui.layer.appendChild(menu);
+      mountOverlay(menu);
       S.menu={node:menu,buttons,returnFocus:ui.present,id:null,onClose:()=>ui.present.setAttribute('aria-expanded','false')};
       ui.present.setAttribute('aria-expanded','true');
       menu.addEventListener('keydown',event=>onMenuKey(event));
@@ -2003,6 +2034,15 @@
         S.fullscreenOwned=false;S.fs='exited';S.fsKind=null;
         chrome.exit();
         if(wasStage){S.fsLeftAt=now();restoreFullscreenFocus();log('fullscreen_stage_left',{})}
+        /* Slice 10 rework (B1): an overlay drawn inside the stage when the browser itself left fullscreen: the menu closes, a dialog moves
+           to the windowed layer (still modal, focus inside it). */
+        if(S.menu&&ui.fsLayer.contains(S.menu.node))closeMenu(false);
+        if(S.dialog&&S.dialog.layer===ui.fsLayer){
+          const dlg=S.dialog;setInertBehind(false);ui.layer.appendChild(dlg.scrim);dlg.layer=ui.layer;setInertBehind(true,ui.layer);
+          const first=dlg.box.querySelector('button');if(first)first.focus({preventScroll:true});
+          log('dialog_moved_out_of_fullscreen',{kind:dlg.kind});
+        }
+        escapeLock(false);
         say('info',"Plein écran quitté : Variantes reste ouvert dans la fenêtre. Échap le ferme.");
       }
       renderHeader();reportSoon();
@@ -2267,7 +2307,7 @@
           return result;
         }
         if(command.action==='compare'||command.action==='compose'){
-          if(!S.open)return {state:'refused',code:'explorer_page_error',reason:"L'explorateur n'est pas ouvert."};
+          if(!S.open)return {state:'refused',code:'explorer_page_error',reason:"Variantes n'est pas ouvert."};
           return cmp.handleCommand(command);
         }
         return {state:'refused',code:'explorer_page_error',reason:'action inconnue'};
