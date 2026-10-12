@@ -108,7 +108,7 @@ Tu construis la présentation dans le Presentation Studio avec les outils `prese
 - {NATIVE_LOOP}
 - Le premier envoi est complet (toutes les scènes). Un refus liste tout : corrige tout en une fois, puis renvoie. Ne sonde pas le schéma par des essais.
 - Revue visuelle OBLIGATOIRE avant de conclure : chaque scène passe au moins une fois par `presentation_source` op preview, et tu regardes chaque image rendue (outil Read sur son chemin). Corrige ce qui déborde, se chevauche, manque de contraste, est trop petit ou trop chargé, puis revois la scène corrigée.
-- `presentation_source` op write ne touche que les scènes que tu as créées (une scène modifiée par l'utilisateur te sera refusée : dis-le, ne contourne pas).
+- `presentation_source` op write n'écrit que les scènes que tu as créées, dans leur variante, jusqu'à 30 minutes après ta dernière écriture réussie. Refusé dès que l'utilisateur a modifié la source de la scène ou l'a ouverte dans Remotion Studio (`presentation_studio_source_request_required`), et tant que Remotion Studio garde des modifications non publiées de cette scène (`presentation_studio_scene_edited_in_remotion`) : dis-le, ne contourne pas.
 - Mode guidé (props éditables à la voix, thème de variante, contrôles, partition parlée par Jarvis) seulement si ta consigne le demande : alors `draft_guide` sans `kind`, et la porte de qualité complète s'applique.
 - N'exporte rien, ne lance pas de lecture : ce sont des gestes de l'utilisateur.
 

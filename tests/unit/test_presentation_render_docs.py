@@ -49,7 +49,7 @@ def test_every_state_and_phase_is_documented():
 def test_the_documented_routes_are_the_registered_ones():
     registered = {(route.method, route.path) for route in PresentationRenderProtocolRoutes(object()).routes() if route.method != "HEAD"}
     documented = set(re.findall(r"\| (GET|POST) \| `(/v1/local-capabilities/remotion/render[A-Za-z/{}_]*)`", DOC))
-    assert registered == documented and len(registered) == 5 and PREFIX == "/v1/local-capabilities/remotion/render"
+    assert registered == documented and len(registered) == 6 and PREFIX == "/v1/local-capabilities/remotion/render"
 
 
 def test_the_relayed_control_center_routes_are_documented():

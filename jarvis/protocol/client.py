@@ -56,8 +56,9 @@ QueryParams = Mapping[str, str] | Sequence[tuple[str, str]]
 #: Une edition de source attend la rafale (secondes), la publication et le rapport de montage de l'hote (8 s) : la
 #: reponse de Core peut venir bien apres 10 s ; au-dela, la requete est abandonnee et le resultat reste dans `/reloads`.
 SOURCE_EDIT_TIMEOUT_S = 40.0
-#: Slice 13 (native-studio-playback-fix): a native preview bundles the scene and opens a browser; Core bounds it at 150 s (+ margin).
-RENDER_PREVIEW_TIMEOUT_S = 170.0
+#: Slice 13 (native-studio-playback-fix): a native preview bundles the scene and opens a browser. Core bounds the wait for the browser at
+#: 60 s and the render at 150 s (+ margin); a client that gives up first closes the connection, which cancels the preview in Core.
+RENDER_PREVIEW_TIMEOUT_S = 230.0
 STUDIO_PREFIX = "/v1/presentation-studio/presentations"  # = un élément de FORWARDABLE_PREFIXES (testé)
 PLAYBACK_PREFIX = "/v1/presentation-studio/playback"  # lecture (Slice 12) : aussi dans FORWARDABLE_PREFIXES
 TEMPLATES_PREFIX = "/v1/presentation-studio/templates"  # modeles reutilisables (Slice 20) : aussi dans FORWARDABLE_PREFIXES

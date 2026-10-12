@@ -45,6 +45,11 @@ PREVIEW_KEYS = frozenset({"presentation_id", "variant_id", "scene_id", "frames",
 Handler = Callable[[web.Request], Awaitable[web.StreamResponse]]
 
 
+def _caller_gone(request: web.Request) -> bool:
+    transport = request.transport
+    return transport is None or transport.is_closing()
+
+
 class PresentationRenderProtocolRoutes:
     def __init__(self, core: Any) -> None:
         self._core = core
@@ -168,8 +173,9 @@ class PresentationRenderProtocolRoutes:
         frames = body.get("frames")
         if frames is not None and (not isinstance(frames, list) or any(type(f) is not int for f in frames)):
             raise RenderError(C.INVALID, "frames must be a list of frame numbers")
+        # Slice 13 rework (QA B2): a caller that left (closed connection, client timeout) cancels its preview, waiting or rendering.
         preview = await service.preview(presentation_id=body["presentation_id"], variant_id=body["variant_id"], scene_id=body["scene_id"],
-                                        frames=frames, scale=body.get("scale", 0.5))
+                                        frames=frames, scale=body.get("scale", 0.5), gone=lambda: _caller_gone(request))
         return web.json_response({"preview": preview})
 
     @staticmethod

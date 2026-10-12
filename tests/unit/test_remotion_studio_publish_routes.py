@@ -143,3 +143,27 @@ async def test_no_brain_mcp_or_agent_path_can_publish_a_workspace():
         if "mcp" in name or "tool_brain" in name or name.startswith(("brain", "core/brain", "core/tool")):
             text = path.read_text(encoding="utf-8", errors="replace")
             assert "publish_workspace" not in text and "studio/publish" not in text and "discard_unpublished" not in text, name
+
+
+async def test_core_wires_remotion_studio_to_the_agents_permissions_and_to_the_source_edit_gate(stack):
+    """native-studio-playback-fix Slice 13 rework (QA B3): opening a scene in Remotion Studio ends the agent's permission on it, and the
+    source-edit gate reads the Studio workspace (unpublished edits refuse the agent)."""
+
+    from tests.fakes.remotion_scene import scene_candidate
+
+    core, _, studio = stack
+    published = await core.prefabs.save(scene_candidate(PIN.prefab_id), actor="user")
+    created = await core.presentation_studio.create({"title": "Atelier"})
+    pid, vid = created.presentation.presentation_id, created.presentation.active_variant_id
+    variant = created.variants[0].to_document()
+    scene_id = "pss_000000000001"
+    await core.presentation_studio.save_variant(pid, vid, {
+        "expected_revision": variant["revision"], "title": variant["title"],
+        "scenes": [{"scene_id": scene_id, "prefab": {"id": PIN.prefab_id, "version": published.version}}], "art_direction_id": None,
+        "score_id": None})
+    edits = core.presentation_studio_edit
+    edits.record_authored_scenes(pid, vid, [scene_id], 1)
+    assert core.presentation_studio_reload._studio_workspace == core.remotion_studio.workspace_base
+    for listener in core.remotion_studio._scene_listeners:                       # what `open` / `sync` await once the Studio is ready
+        await listener(StudioPin(PIN.prefab_id, published.version))
+    assert edits.authored_scenes() == (), "the scene the user opened in Remotion Studio is no longer the agent's to write"

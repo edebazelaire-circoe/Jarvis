@@ -57,6 +57,7 @@ def test_the_names_the_user_reads_are_the_ones_the_code_writes_and_never_the_bar
 def test_the_spoken_pointer_is_the_one_the_tool_returns():
     text = section()
     assert remotion_mcp_tools.CARD_PATH in text, "where the user clicks"
+    assert remotion_mcp_tools.SCENE_CARD_PATH in text and "rail" not in remotion_mcp_tools.SCENE_CARD_PATH, "a named scene: its button only"
     assert "« Remotion Studio » sous la vidéo et confirme" in text
     source = (RUNTIME / "remotion_mcp_tools.py").read_text(encoding="utf-8")
     assert "« Remotion Studio » sous la vidéo et confirme" in source and "affiche cette scène dans Variantes, puis clique" in source

@@ -424,3 +424,34 @@ async def test_the_refresh_counter_belongs_to_one_launch(stack):
     await stack.service.close()
     assert (await stack.service.open(PIN, acknowledged=True))["syncs"] == 0
     await stack.service.stop()
+
+
+# ------------------------------------------------------------------ native-studio-playback-fix Slice 13 rework (QA B3)
+
+async def test_open_reuse_and_sync_tell_the_scene_listeners_and_a_failing_listener_never_fails_the_open(stack):
+    seen = []
+
+    async def listener(pin):
+        seen.append(pin)
+
+    stack.service.add_scene_listener(listener)
+    await stack.service.open(PIN, acknowledged=True)
+    await stack.service.open(PIN, acknowledged=True)                 # reused on the same scene: the user is (still) editing it
+    await stack.service.sync(PIN2, acknowledged=True)
+    assert seen == [PIN, PIN, PIN2]
+
+    async def broken(pin):
+        raise RuntimeError("listener down")
+
+    stack.service.add_scene_listener(broken)
+    view = await stack.service.open(PIN_OTHER, acknowledged=True)
+    assert view["status"] == "ready" and seen[-1] == PIN_OTHER and "remotion_studio.scene_listener_failed" in stack.events.kinds()
+
+
+async def test_the_workspace_base_and_its_unpublished_files_are_read_without_changing_anything(stack):
+    assert await stack.service.workspace_base() == (None, ())
+    await stack.service.open(PIN, acknowledged=True)
+    assert await stack.service.workspace_base() == (PIN, ())
+    stack.runner.modified = ("src/Scene.tsx",)
+    assert await stack.service.workspace_base() == (PIN, ("src/Scene.tsx",))
+    assert (await stack.service.status())["status"] == "ready"

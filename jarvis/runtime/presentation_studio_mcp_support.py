@@ -133,6 +133,8 @@ SENTENCES: dict[str, str] = {
     # jarvis-remotion (Remotion Slice 21) : les mêmes routes de Core que les cartes du Control Center ; le refus dit quoi dire à l'utilisateur.
     "presentation_studio_source_request_required": ("Core n'édite une source pour le cerveau que sur une demande de source EN ATTENTE, enregistrée dans un tour de "
                                                     "l'utilisateur pour cette scène : demande à renouveler (scene.source_request dans le tour de l'utilisateur)."),
+    "presentation_studio_scene_edited_in_remotion": ("L'utilisateur a des modifications non publiées de cette scène dans Remotion Studio : rien n'est écrit. "
+                                                     "Dis-lui de les publier ou de les mettre de côté ; ne contourne pas."),
     "core_timeout": ("Core n'a pas répondu à temps : l'issue est inconnue, relis l'état avant de réessayer (remotion_status exports pour un export, "
                      "presentation_inspect pour une présentation) : un travail a pu partir."),
     "remotion_user_turn_required": "Ce tour n'est pas une demande de l'utilisateur : rien n'est lancé. Dis en une phrase que tu le fais dès qu'il le demande ; ne réessaie pas.",
@@ -144,6 +146,7 @@ SENTENCES: dict[str, str] = {
     "presentation_render_runtime_unavailable": "Remotion n'est pas prêt sur ce poste : propose à l'utilisateur de l'installer ou de le réparer (remotion_setup, sur sa demande).",
     "presentation_render_browser_unavailable": "Aucun Chrome ni Edge sur ce poste : l'export vidéo est impossible, dis-le tel quel.",
     "presentation_render_queue_full": "Huit exports sont déjà en cours ou en attente : attends qu'un s'achève ou annule-en un (remotion_export cancel, sur demande).",
+    "presentation_render_preview_busy": "Le navigateur des rendus est occupé : attends la fin de l'aperçu ou de l'export en cours, puis redemande un seul aperçu.",
     "presentation_render_disk_low": "Il reste moins de 1,5 Gio de disque : l'export ne part pas. Dis-le à l'utilisateur.",
     "presentation_render_unknown_job": "Cet export n'existe pas (ou a été oublié par Core) : prends un job_id de remotion_status (target exports).",
     "presentation_render_not_cancellable": "Cet export est déjà terminé ou en finalisation : rien à annuler.",

@@ -85,6 +85,9 @@ class PresentationStudioErrorCode(StrEnum):
     #: l'utilisateur (`origin: explicit_user_request`), pour cette presentation, cette variante et cette scene ; il n'enregistre pas de
     #: demande sans cette origine. Absente, inconnue, expiree ou d'une autre scene : « demande a renouveler ».
     SOURCE_REQUEST_REQUIRED = "presentation_studio_source_request_required"
+    #: Slice 13 rework of native-studio-playback-fix (QA B3): the Remotion Studio workspace holds unpublished files based on this scene's source;
+    #: the agent (`brain`) writes nothing until the user publishes them or sets them aside.
+    SCENE_EDITED_IN_REMOTION = "presentation_studio_scene_edited_in_remotion"
     #: Aucun historique d'annulation pour cette variante (mémoire seulement : redémarrage, anneau abandonné ou évincé) (Slice 08).
     HISTORY_UNAVAILABLE = "presentation_studio_history_unavailable"
     #: Rien à annuler / à rétablir (Slice 08).
@@ -162,6 +165,7 @@ HTTP_STATUS: Mapping[PresentationStudioErrorCode, int] = {
     _C.SCENE_RELOADING: 409,
     _C.SOURCE_EDIT_RATE: 429,
     _C.SOURCE_REQUEST_REQUIRED: 403,
+    _C.SCENE_EDITED_IN_REMOTION: 409,
     _C.HISTORY_UNAVAILABLE: 409,
     _C.HISTORY_EMPTY: 409,
     _C.HISTORY_STALE: 409,

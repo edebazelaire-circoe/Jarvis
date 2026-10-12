@@ -58,11 +58,44 @@ class RemotionStudioService:
         self._loop: asyncio.AbstractEventLoop | None = None
         self._unreadable: str = ""
         self._publisher: Any = None
+        self._scene_listeners: list[Callable[[StudioPin], Awaitable[Any]]] = []
 
     def bind_publisher(self, publisher: Any) -> None:
         """Câblé par `v2_app` quand le Studio de présentations existe (`VariantScenePublisher`) ; sans lui `publish` est refusé (503)."""
 
         self._publisher = publisher
+
+    def add_scene_listener(self, listener: Callable[[StudioPin], Awaitable[Any]]) -> None:
+        """Slice 13 rework of native-studio-playback-fix (QA B3): awaited with the pin each time the Studio has OPENED or SYNCED a scene
+        (`v2_app`: the agent's authoring permission on that scene ends). A listener's failure is journaled; the open stands."""
+
+        self._scene_listeners.append(listener)
+
+    async def _announce_scene(self, state: StudioState) -> None:
+        if state.status is not S.READY or state.pin is None:
+            return
+        for listener in self._scene_listeners:
+            try:
+                await listener(state.pin)
+            except Exception as exc:  # noqa: BLE001 - argued: the Studio is open either way; the write gate (unpublished edits) still guards
+                self._emit("scene_listener_failed", f"Studio scene listener raised {type(exc).__name__}", level="error",
+                           prefab_id=state.pin.prefab_id, version=state.pin.version)
+
+    async def workspace_base(self) -> tuple[StudioPin | None, tuple[str, ...] | None]:
+        """Slice 13 rework (QA B3), read-only: the version the workspace is based on and its unpublished files. `(None, ())` without a
+        workspace (or with an unreadable state: no base is known); `(base, None)` when the files could not be listed (the caller treats the
+        edits as unknown, never as absent)."""
+
+        state = self._load()
+        if self._unreadable or state.pin is None:
+            return None, ()
+        try:
+            if not await asyncio.to_thread(self._runner.has_workspace):
+                return None, ()
+            return state.pin, tuple(await asyncio.to_thread(self._runner.modified_work))
+        except StudioError as exc:
+            self._emit("workspace_unlisted", f"Studio workspace could not be listed: {exc.code.value}", level="warning", code=exc.code.value)
+            return state.pin, None
 
     # ------------------------------------------------------------------ journal et persistance
 
@@ -219,12 +252,15 @@ class RemotionStudioService:
                     if state.pin == pin:
                         self._touch(state)
                         self._emit("reused", "Studio already open on this scene", prefab_id=pin.prefab_id, version=pin.version)
+                        await self._announce_scene(state)
                         return {**self._view(state), "reused": True}
                     await self._sync_locked(state, pin, discard=discard)
+                    await self._announce_scene(state)
                     return {**self._view(state), "reused": True}
                 await asyncio.to_thread(self._kill, state)
                 self._fail(state, C.HEALTH_FAILED, "the Studio did not answer; it was stopped and is restarted")
             await self._start_locked(state, pin, discard=discard)
+            await self._announce_scene(state)
             return self._view(state)
 
     def _refuse_unpublished(self, edited: tuple[str, ...], state: StudioState, pin: StudioPin) -> None:
@@ -344,6 +380,7 @@ class RemotionStudioService:
             if state.status is not S.READY or state.pin is None:
                 raise StudioError(C.NOT_RUNNING, "the Studio is not open: open it first")
             await self._sync_locked(state, pin or state.pin, discard=discard)
+            await self._announce_scene(state)
             return self._view(state)
 
     async def _sync_locked(self, state: StudioState, pin: StudioPin, *, discard: bool = False) -> None:

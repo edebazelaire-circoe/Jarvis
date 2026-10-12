@@ -659,6 +659,7 @@ Exact keys; unknown keys refused; a runtime-state name keeps its own code (`pres
 | `max_scenes` | 1..48 |
 | `literal_terms` | <= 8 words of <= 40, one printable line each: terms that look like a placeholder but are the subject (a status deck that says `todo` or `WIP`). They lift the placeholder rule for that span only and the report says so (`placeholder_allowed`, a count, never the term) |
 | `strict_content` | boolean, exploratory only: the `directed` level of every rule applies and only the art direction varies |
+| `authoring` | `guided` (default: the full gate of the workflow) or `native` (normal editable Remotion code, directed or one-shot only; see *Native Remotion authoring* below) |
 
 `language` is checked against the scene texts by a cheap French/English stop-word guess (`language_mismatch`: at least 6 hits and twice the other language; a language the guess does not know is not judged). **`purpose`, `audience` and `tone` are not machine-checkable**: they are untrusted prose with no deterministic test worth the name. They steer the model through the prompt and seed the art direction fallback; the gate does not pretend to read them.
 
@@ -988,7 +989,7 @@ Conversation event `system.presentation_studio.edit_committed` (actor `system`, 
 `control_center_timeline.js` mirror): attributes `presentation_id`, `variant_id`, `scene_id` (when one scene), `op` (names), `tier`, `source` (the actor), `revision`, `status` (`applied`, or `recorded_in_memory` for a source request).
 Never a title, a value or an intent. A storage failure during a commit is `system.failure` with a `code`. No live conversation (`BrainOrchestrator.live_conversation_id()`: the foreground conversation, `None` when none is bound, never the last finished turn): no event, and the
 `edit_committed` journal row says `event_recorded: false`. Diagnostics (ids, op
-names, tier, actor, counts, codes; never values, intents or titles, and the `refused` rows of the variant service carry the code without the refusal message, which may quote the value) `core.presentation_studio.edit_committed`, `edit_previewed`, `edit_refused`, `edit_stale`, `edit_source_recorded`, `controls_suggested` and `source_request_fulfilled` (Slice 06: a source edit answered a recorded request) at `info`, `overlay_rendered` (Slice 12: a playback overlay was rendered in memory, `written: false`, counts only) at `info`, `event_failed`, `commit_listener_failed` (Slice 12: the playback follower of a commit failed; the commit stands) and `source_requests_dropped` at `warning`;
+names, tier, actor, counts, codes; never values, intents or titles, and the `refused` rows of the variant service carry the code without the refusal message, which may quote the value) `core.presentation_studio.edit_committed`, `edit_previewed`, `edit_refused`, `edit_stale`, `edit_source_recorded`, `controls_suggested` and `source_request_fulfilled` (Slice 06: a source edit answered a recorded request) at `info`, `overlay_rendered` (Slice 12: a playback overlay was rendered in memory, `written: false`, counts only) at `info`, `event_failed`, `commit_listener_failed` (Slice 12: the playback follower of a commit failed; the commit stands) and `source_requests_dropped` at `warning`; native-studio-playback-fix Slice 13: `authored_scenes_recorded` (info: an agent's assemble opened its authoring permissions, count and `ttl_s`), `authored_scene_released` (info: the user edited the scene's source or opened it in Remotion Studio, with `reason` `user_source_edit` or `opened_in_remotion`), `authored_scenes_dropped` (warning: the agent's own store was full, oldest agent permissions evicted, never a user request) and `authored_release_unchecked` (warning: a variant could not be read when Remotion Studio opened a scene; that permission stays and the unpublished-edits rule still applies);
 a failure of storage or data is traced at `error` by the variant service (`failed`) and the request returns the coded error.
 
 ### Extension points
@@ -2210,6 +2211,11 @@ rule « an unknown or evicted `request_id` never blocks an edit » now holds for
 4. **Remaining limit, said plainly**: Core trusts the `actor` and `origin` fields of a body presented with the Core token. A holder of the
    token can forge both, so this stops an ambient or spontaneous brain (a turn nobody addressed, a sub-agent launched on a whim, an honest
    brain skipping the step) but not a hostile process that has the token. The token is the boundary for that case, as for every `/v1` route.
+5. **Remotion Studio holds the scene** (native-studio-playback-fix Slice 13 rework, QA B3): while the Remotion Studio workspace holds
+   unpublished files based on this scene's source (the workspace base has the prefab id of the scene's pin in this variant), a `brain` source
+   edit is refused 409 `presentation_studio_scene_edited_in_remotion` after the request check and before any rate-limit charge, composition or
+   build, with or without a `request_id`; a workspace whose files cannot be listed counts as holding edits. The user's own edits (Variants,
+   the Studio's publish) are never refused by this rule.
 
 ### Concurrency
 
@@ -2246,7 +2252,7 @@ The relay forwards no `PUT` and no create: a page changes a Presentation only th
 | Control Center relay | the routes above under `/api/presentation-studio/...`, **actor forced to `user`** on `source-edits`, read-guarded (`Origin: null`, a frame, can neither edit nor report) |
 | Event | `system.presentation_studio.scene_reloaded` (actor `system`, instant, diagnostic, content forbidden; `status`, `code`, `reason`, `revision` = source revision, `source` = actor, `tier` = `source`) |
 | Diagnostics (`core.presentation_studio.<kind>`; ids, statuses, codes, counts, never values) | `reload_published`, `reload_applied`, `reload_refused`, `reload_stale`, `reload_pending` (warning), `reload_rolled_back` (warning), `reload_late` (a mount report that arrived after the call returned; warning when it rolled back), `reload_failed` (error), `reload_confirm_failed`, `reload_rollback_failed` (error), `reload_rate_limited`, `reload_restore_unvalidated`, `reload_announce_failed` (warning), `reload_unverified` (warning, at start), `reload_built` (Slice 14: the source compiled before publication), `reload_build_refused` (warning: code, compile code, number of diagnostics, never a source text), `reload_flush_failed`, `reload_close_timeout`, `reload_recover_failed`, `mount_reported`, `stage_unreadable`, `playback_unreadable`, `pins_ready`, `pins_degraded` (error), `source_request_fulfilled`, `event_failed` |
-| Error codes added | `presentation_studio_source_invalid` (400), `presentation_studio_mount_failed` (409), `presentation_studio_stage_failed` (409), `presentation_studio_reload_unavailable` (409), `presentation_studio_scene_reloading` (409), `presentation_studio_source_edit_rate` (429), `presentation_studio_source_build_failed` (422, Slice 14) |
+| Error codes added | `presentation_studio_source_invalid` (400), `presentation_studio_mount_failed` (409), `presentation_studio_stage_failed` (409), `presentation_studio_reload_unavailable` (409), `presentation_studio_scene_reloading` (409), `presentation_studio_source_edit_rate` (429), `presentation_studio_source_build_failed` (422, Slice 14), `presentation_studio_scene_edited_in_remotion` (409, native-studio-playback-fix Slice 13 rework) |
 
 ### Limits and known gaps
 
@@ -2712,7 +2718,7 @@ Status: **Level 3** (handoff `jarvis-remotion-native-studio-playback-fix`, Slice
 
 **Rail.** The menu gains « Remotion Studio… » after « Ouvrir les variantes » (§ 1): it opens Variants on the presentation (windowed, active variant), waits for its preview (15 s at most, otherwise it says « Choisissez une scène, puis « Remotion Studio » sous la vidéo. »), then the same door, the same confirmation (cancelling launches nothing). During a run it says « Une présentation est en cours : Remotion Studio s'ouvre à son arrêt. ». The rail's geometry and indicators are unchanged; its existing active state (the row of the presentation Variants shows, `data-open`, `aria-selected`) is the Variants side of the navigation, the button's `data-state="here"` the Remotion Studio side (decided by agent 0's Work Agent: Core's Studio state knows a pin, not a presentation, so a rail mark would have to guess).
 
-**Names (PX-1).** The MCP card reads « Remotion Studio »; its buttons « Ouvrir Remotion Studio », « Fermer Remotion Studio », its confirmation « Ouvrir cette scène dans Remotion Studio » / « Relancer Remotion Studio » / « Afficher cette scène dans Remotion Studio », its link « Ouvrir l'onglet Remotion Studio », its sentences « Démarrage de Remotion Studio… », and every error sentence of `JarvisRemotionStudioCore.ERRORS` say « Remotion Studio ». The card's subtitle points to Variants for a scene of a presentation. The brain's pointer (`remotion_studio`, `jarvis-remotion`) now says where the user clicks: `where` « Variantes, sous la vidéo : bouton « Remotion Studio » (ou le rail : clic droit sur la présentation, « Remotion Studio… ») », `say` « Pour ouvrir cette scène dans Remotion Studio : dans Variantes, clique « Remotion Studio » sous la vidéo et confirme ; elle y tourne hors du bac à sable. » (with a `scene_id`: « … : affiche cette scène dans Variantes, puis clique « Remotion Studio » sous la vidéo et confirme ; … », since the door opens the scene on screen) It still never calls `open` (MCP behaviour: the answer's words only; tool names, schemas and descriptions unchanged).
+**Names (PX-1).** The MCP card reads « Remotion Studio »; its buttons « Ouvrir Remotion Studio », « Fermer Remotion Studio », its confirmation « Ouvrir cette scène dans Remotion Studio » / « Relancer Remotion Studio » / « Afficher cette scène dans Remotion Studio », its link « Ouvrir l'onglet Remotion Studio », its sentences « Démarrage de Remotion Studio… », and every error sentence of `JarvisRemotionStudioCore.ERRORS` say « Remotion Studio ». The card's subtitle points to Variants for a scene of a presentation. The brain's pointer (`remotion_studio`, `jarvis-remotion`) now says where the user clicks: `where` « Variantes, sous la vidéo : bouton « Remotion Studio » (ou le rail : clic droit sur la présentation, « Remotion Studio… ») », `say` « Pour ouvrir cette scène dans Remotion Studio : dans Variantes, clique « Remotion Studio » sous la vidéo et confirme ; elle y tourne hors du bac à sable. » (with a `scene_id`: `where` « Variantes, cette scène affichée : bouton « Remotion Studio » sous la vidéo », without the rail, whose entry opens the scene on screen and not necessarily this one (Slice 13 rework of native-studio-playback-fix), and `say` « … : affiche cette scène dans Variantes, puis clique « Remotion Studio » sous la vidéo et confirme ; … », since the door opens the scene on screen) It still never calls `open` (MCP behaviour: the answer's words only; tool names, schemas and descriptions unchanged).
 
 **Logs** (`[studio-explorer] <key>`; `warn` / `error` also through `obsClientLog`, hence the Error Logs viewer): `remotion_studio_open_requested`, `remotion_studio_ready` (seconds, `tab: opened | needs_click`), `remotion_studio_tab_opened`, `remotion_studio_cancelled`, `remotion_studio_blocked` (info); `remotion_studio_open_failed` (error, code); `remotion_studio_read_failed` (info for a Core that never answered, `warn` once a read had worked), `remotion_scene_read_failed`; `playback_paused_for_remotion_studio`; rail `remotion_studio_from_rail`.
 
@@ -4393,7 +4399,8 @@ Run by `python -m tests.replay.presentation_studio_mcp_real_trace` (real `claude
 Status: implemented by Slice 13 of `jarvis-remotion-native-studio-playback-fix`. Owners: `jarvis/domain/presentation_studio_authoring.py`
 (`Authoring`, `native_role`, `native_score`), `presentation_studio_authoring_gate.py` (`NATIVE_BLOCKING`, `NATIVE_OFF`),
 `presentation_studio_authoring_guide.py` (`draft_guide("native")`, `NATIVE_LOOP`, `ISOLATION_HINT`), `jarvis/core/presentation_studio_edit.py`
-(`record_authored_scenes`, `drop_authored_scene`), `jarvis/core/presentation_render_service.py` (`preview`),
+(`record_authored_scenes`, `drop_authored_scene`, `release_authored_for_pin`, `renew_authored_scene`), `jarvis/core/presentation_studio_reload.py`
+(`_refuse_over_studio_edits`), `jarvis/core/presentation_render_service.py` (`preview`, `BrowserSlot`),
 `jarvis/runtime/presentation_studio_mcp_tools.py` (`PresentationTools.source`), `jarvis/runtime/presentation_playbooks.py` (author playbook),
 `jarvis/runtime/claude_local.py` (`PRESENTATION_PRODUCTION_RULE`). Conformance: `tests/unit/test_presentation_studio_native_authoring.py`,
 `test_presentation_studio_native_loop.py`, `test_presentation_playbooks.py`, `test_mcp_catalog.py`, `test_native_parity_evidence_privacy.py`.
@@ -4432,19 +4439,36 @@ stays the default of `presentation_draft_assemble` when `authoring` is absent (i
 the `theme` prop is still filled for scenes that read it), `speech: none`. `strict_content` is refused (exploratory only), and
 `authoring: native` with `workflow: exploratory` is refused.
 
-**Refining its own scenes.** When the BRAIN assembles a deck, Core records one `agent_authored_scene` source request per created scene
+**Refining its own scenes.** When the BRAIN assembles a deck, Core records one `agent_authored_scene` permission per created scene
 (`source_requests` in the result). Unlike a user's request it is multi-use: the agent's `presentation_source write` (the existing source-edit
 route: compose, `SOURCE_GUARDS`, carry-over, score references, real build, new immutable version, CAS, rollback) needs no user turn and no
-`request_id` on a scene it created; the 30 minutes restart at each use; the record ends when the user edits that scene's source (Variants,
-Remotion Studio publish) and is lost at a Core restart (memory only, like every source request). It authorises nothing the agent could not
-already do (assemble a new deck), and never a scene the user has touched. A user's `scene.source_request` keeps its Slice 21 rules.
+`request_id` on a scene it created. What is implemented (Slice 13 rework):
+
+- **bound to presentation, variant and scene**: the same scene id in another variant is refused (`presentation_studio_source_request_required`);
+- **30 minutes from the last write that STOOD** (admitted, built, published: `renew_authored_scene`); a refused attempt (build error, stale
+  basis, rollback, rate limit, Studio refusal) never extends it;
+- **ends** when the user's own source edit of that scene stands (Variants, the Studio's publish) and when Remotion Studio OPENS or SYNCS the
+  exact version that scene pins in that variant (`release_authored_for_pin`, through `RemotionStudioService.add_scene_listener`); the agent's
+  next write there is refused `presentation_studio_source_request_required`;
+- **refused while the user edits in Remotion Studio**: while the Studio workspace holds unpublished files based on that scene's source, any
+  `brain` write to it is refused 409 `presentation_studio_scene_edited_in_remotion`, request or not (*Hot reload contract* › *Source
+  requests*, rule 5);
+- **kept apart from the user's requests**: its own store of 96 (`MAX_AUTHORED_SCENES`: expired first, then the oldest agent permission,
+  `authored_scenes_dropped`); it never evicts a user's pending `scene.source_request` (ring of 64) and is not listed by
+  `pending_source_requests`;
+- lost at a Core restart (memory only, like every source request).
+
+It authorises nothing the agent could not already do (assemble a new deck). A user's `scene.source_request` keeps its Slice 21 rules.
 
 **Native preview.** `POST /v1/local-capabilities/remotion/render/preview` `{presentation_id, variant_id, scene_id, frames? (1..6), scale?
 (0.25, 0.5, 1)}` renders a few frames of ONE scene of the CURRENT variant with the export path's own assembler (`assemble_preview`: in memory,
 no Board read) and guarded render host, in one bundle and one browser, and keeps them as JPEG files under `<runtime>/render/previews/<job>/`
-(the last 40 folders). Nothing is frozen, no Artifact is created, nothing is queued; one browser at a time with the exports (a preview waits for a
-running export and the other way round); bounded at 150 s; typed refusals (`presentation_render_*`). Default frames: 30 %, 65 % and the last
-frame. See [remotion-render.md](remotion-render.md).
+(the last 40 folders). Nothing is frozen, no Artifact is created, nothing is queued. Bounds (Slice 13 rework, QA B2): one browser at a time
+with the exports, and an export that wants it always goes before a waiting preview; at most ONE preview waits while one renders, any other is
+refused at once with `presentation_render_preview_busy` (429; the tool tells the agent to wait for the running preview or export); the wait for the
+browser ends at 60 s (same code, nothing rendered); the render itself at 150 s; a caller that left (closed connection, client timeout) cancels
+its preview, while it waits and while it renders. Other typed refusals: `presentation_render_*`. Default frames: 30 %, 65 % and the last frame.
+See [remotion-render.md](remotion-render.md).
 
 **Unchanged on purpose:** the Player sandbox, `SOURCE_GUARDS`, the Slice 12 import gate and publish path, `SCENE_ALLOWED_IMPORTS`, the
 Remotion Studio workspace (no agent writes it), exports (still a user gesture). Known limits: the isolation guard is a case-insensitive filter

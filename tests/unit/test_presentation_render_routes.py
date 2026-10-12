@@ -127,7 +127,8 @@ async def test_a_core_without_a_render_service_answers_503(tmp_path):
 
 
 async def test_every_route_needs_the_core_token(stack):
-    for method, path in (("GET", PREFIX), ("GET", JOBS), ("POST", JOBS), ("GET", JOBS + "/x"), ("POST", JOBS + "/x/cancel")):
+    for method, path in (("GET", PREFIX), ("GET", JOBS), ("POST", JOBS), ("GET", JOBS + "/x"), ("POST", JOBS + "/x/cancel"),
+                         ("POST", PREFIX + "/preview")):
         status, _ = await call(stack.base, method, path, token="wrong" * 10)
         assert status == 401, (method, path)
 
@@ -286,3 +287,23 @@ async def test_the_native_preview_route_refuses_a_bad_body_before_rendering(stac
         status, answer = await call(stack.base, "POST", PREFIX + "/preview", json=body)
         assert status == 400 and answer["error"]["code"] == "presentation_render_invalid", (body, answer)
     assert not [c for c in stack.render.calls if c[0] == "run"]
+
+
+async def test_a_preview_whose_http_caller_left_is_cancelled_in_core(stack):
+    """Slice 13 rework (QA B2): aiohttp keeps running a handler after its client left; the preview route watches the connection."""
+
+    await ready(stack)
+    _, pid, vid, _ = await frozen(stack, "4")
+    stack.render.mode = "block"
+    service = stack.core.presentation_render
+    service._preview_root = lambda: stack.render.root.parent / "previews"  # the fake runner has no `preview_dir`
+    body = {"presentation_id": pid, "variant_id": vid, "scene_id": SCENE_ID, "frames": [1]}
+    with pytest.raises(asyncio.TimeoutError):
+        async with aiohttp.ClientSession() as session:
+            await session.post(stack.base + PREFIX + "/preview", json=body, headers={"Authorization": f"Bearer {TOKEN}"},
+                               timeout=aiohttp.ClientTimeout(total=1.0))
+    end = asyncio.get_running_loop().time() + 5
+    while service._browser_slot.busy and asyncio.get_running_loop().time() < end:
+        await asyncio.sleep(0.05)
+    assert [c for c in stack.render.calls if c[0] == "run"], "the preview had started rendering"
+    assert not service._browser_slot.busy and service._previews_waiting == 0, "the caller left: the render was stopped, the browser freed"

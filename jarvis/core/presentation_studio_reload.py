@@ -45,7 +45,7 @@ from __future__ import annotations
 import asyncio
 from collections import deque
 import hashlib
-from collections.abc import Callable, Iterable, Mapping
+from collections.abc import Awaitable, Callable, Iterable, Mapping
 from contextlib import nullcontext
 from dataclasses import dataclass, replace
 import time
@@ -136,6 +136,9 @@ class _Base:
 
 #: Versions anterieures d'une scene que l'on peut republier (annuler) : bornees, en memoire.
 MAX_RESTORABLE = 16
+#: Slice 13 rework (QA B3): `() -> (base pin or None, unpublished paths)` of the Remotion Studio workspace
+#: (the Remotion Studio service's `workspace_base`); the base has a `prefab_id`.
+StudioWorkspaceProbe = Callable[[], Awaitable[tuple[Any, tuple[str, ...]]]]
 
 
 class PresentationStudioReloadService:
@@ -145,8 +148,10 @@ class PresentationStudioReloadService:
                  playback: PlaybackProbe | None = None, events: Any | None = None,
                  diagnostics: DiagnosticSink | None = None, mount_deadline_s: float = DEFAULT_MOUNT_DEADLINE_S,
                  monotonic: Callable[[], float] = time.monotonic, builder: SourceBuilder | None = None,
-                 compose_queue_s: float = DEFAULT_COMPOSE_QUEUE_S) -> None:
+                 compose_queue_s: float = DEFAULT_COMPOSE_QUEUE_S, studio_workspace: StudioWorkspaceProbe | None = None) -> None:
         self._studio, self._prefabs, self._coalescer, self._stage = studio, prefabs, coalescer, stage
+        #: Slice 13 rework (QA B3): what the Remotion Studio workspace is based on and its unpublished files; absent: no Studio on this Core.
+        self._studio_workspace = studio_workspace
         self._pins, self._edits, self._mounts = pins, edits, mounts or MountBook()
         self._playback, self._events, self._diagnostics = playback, events, diagnostics
         self._deadline_s, self._monotonic = mount_deadline_s, monotonic
@@ -259,6 +264,7 @@ class PresentationStudioReloadService:
             raise PresentationStudioError(C.RELOAD_UNAVAILABLE, "Core is stopping: no new source edit is accepted")
         request = parse_source_edit(raw)
         self._require_pending_request(presentation_id, variant_id, request)
+        await self._refuse_over_studio_edits(presentation_id, variant_id, request)
         self._admit(presentation_id, variant_id, request)
         self._inflight += 1
         self._idle.clear()
@@ -294,6 +300,29 @@ class PresentationStudioReloadService:
                         data={"presentation_id": presentation_id, "variant_id": variant_id, "scene_id": request.scene_id,
                               "code": exc.code.value, "actor": request.actor.value, "has_request_id": bool(request.request_id)})
             raise
+
+    async def _refuse_over_studio_edits(self, presentation_id: str, variant_id: str, request: SourceEditRequest) -> None:
+        """Slice 13 rework (QA B3): the agent never writes a scene whose source the user is editing in Remotion Studio. While the Studio
+        workspace holds unpublished files based on this scene's source (same prefab id as the scene's pin in this variant), a `brain` source
+        edit is refused 409 `presentation_studio_scene_edited_in_remotion` before any work, request or not; the user publishes or sets the
+        files aside first. The user's own edits (Variants, the Studio's publish) are never refused here."""
+
+        if request.actor is not StudioActor.BRAIN or self._studio_workspace is None:
+            return
+        base, edited = await self._studio_workspace()
+        if base is None or edited == ():
+            return
+        scene = variant_scene(await self._studio.get_variant(presentation_id, variant_id), request.scene_id)
+        if base.prefab_id != scene.prefab.prefab_id:
+            return
+        if edited is None:
+            raise PresentationStudioError(C.SCENE_EDITED_IN_REMOTION, "the Remotion Studio workspace of this scene could not be listed: nothing "
+                                                                      "was written; the user checks Remotion Studio first")
+        self._trace("core.presentation_studio.reload_refused", "Edition de l'agent refusee : la scene a des modifications non publiees dans Remotion Studio",
+                    level="warning", data={"presentation_id": presentation_id, "variant_id": variant_id, "scene_id": request.scene_id,
+                                           "code": C.SCENE_EDITED_IN_REMOTION.value, "actor": request.actor.value, "unpublished": len(edited)})
+        raise PresentationStudioError(C.SCENE_EDITED_IN_REMOTION, f"the user has {len(edited)} unpublished file(s) of this scene in Remotion Studio: "
+                                                                  "nothing was written; the user publishes or sets them aside first")
 
     def _admit(self, presentation_id: str, variant_id: str, request: SourceEditRequest) -> None:
         """Plafond par scene des editions de l'agent (`presentation_studio_reload_limits`)."""
@@ -990,6 +1019,9 @@ class PresentationStudioReloadService:
         if result.status.stood and result.actor is StudioActor.USER and self._edits is not None:
             # Slice 13: the user's own source change ends an agent's authoring record on this scene (never overwritten without a request).
             self._edits.drop_authored_scene(result.presentation_id, result.variant_id, result.scene_id)
+        if result.status.stood and result.actor is StudioActor.BRAIN and self._edits is not None:
+            # Slice 13 rework (QA I3): only a write that stood restarts the agent's 30 minutes on its own scene, never a refused attempt.
+            self._edits.renew_authored_scene(result.presentation_id, result.variant_id, result.scene_id)
         level = "warning" if result.status in (ReloadStatus.ROLLED_BACK, ReloadStatus.PENDING_MOUNT) else "info"
         kind = {ReloadStatus.REFUSED_VALIDATION: "reload_refused", ReloadStatus.STALE: "reload_stale",
                 ReloadStatus.ROLLED_BACK: "reload_rolled_back", ReloadStatus.PENDING_MOUNT: "reload_pending"}.get(

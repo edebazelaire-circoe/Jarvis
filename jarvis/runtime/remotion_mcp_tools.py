@@ -46,6 +46,8 @@ TARGETS = ("capability", "studio", "exports", "export")
 MAX_WORDS = 200
 #: Où l'utilisateur ouvre Remotion Studio (native-studio-playback-fix Slice 11 : la scène à l'écran de Variantes, son pin exact).
 CARD_PATH = "Variantes, sous la vidéo : bouton « Remotion Studio » (ou le rail : clic droit sur la présentation, « Remotion Studio… »)"
+#: With a `scene_id` (Slice 13 rework, QA I5): only the button under the video of THAT scene; the rail opens the scene on screen, not this one.
+SCENE_CARD_PATH = "Variantes, cette scène affichée : bouton « Remotion Studio » sous la vidéo"
 ENGINE_CARD = "carte « Présentations · moteur »"
 
 
@@ -214,7 +216,7 @@ class RemotionTools(PresentationTools):
             scene = {"scene_id": sid, "prefab": described.get("prefab")}
         # The door opens the scene ON SCREEN in Variants: for a named scene, the user shows it first (Slice 11 QA polish).
         where_first = "affiche cette scène dans Variantes, puis clique" if scene else "dans Variantes, clique"
-        return self._ok("say", status="needs_user", where=CARD_PATH, scene=scene or None,
+        return self._ok("say", status="needs_user", where=SCENE_CARD_PATH if scene else CARD_PATH, scene=scene or None,
                         say=f"Pour ouvrir cette scène dans Remotion Studio : {where_first} « Remotion Studio » sous la vidéo et confirme ; elle y tourne hors du bac à sable.",
                         note="Tu ne peux pas ouvrir le Studio ni confirmer à sa place : l'accusé est à l'utilisateur seul. Dis où cliquer, une fois.")
 

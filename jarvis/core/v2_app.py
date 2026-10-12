@@ -472,7 +472,8 @@ class JarvisCoreApplication:
         self.presentation_studio_reload = PresentationStudioReloadService(
             self.presentation_studio, self.prefabs, self.prefab_drafts, self.studio_stage, pins=self.studio_pins,
             edits=self.presentation_studio_edit, events=studio_events, diagnostics=diagnostics,
-            builder=self.remotion_player)
+            builder=self.remotion_player,
+            studio_workspace=None if self.remotion_studio is None else self.remotion_studio.workspace_base)
         # Événements des cadres (Slice 04) : `state` écrit `prefab.data` par le
         # réducteur (acteur `user`, `basis` contrôlée sous le verrou de la
         # scène), `notify` est consigné ; aucun n'exécute d'outil.
@@ -537,6 +538,9 @@ class JarvisCoreApplication:
         if self.remotion_studio is not None:
             from jarvis.core.remotion_studio_publish import VariantScenePublisher
             self.remotion_studio.bind_publisher(VariantScenePublisher(self.presentation_studio, self.presentation_studio_reload))
+            # Slice 13 rework (QA B3): the user opening (or syncing) a scene in Remotion Studio ends the agent's permission on it.
+            edits = self.presentation_studio_edit
+            self.remotion_studio.add_scene_listener(lambda pin: edits.release_authored_for_pin(pin.prefab_id, pin.version))
         # Pins : une source par magasin (undo 08 ; variantes vivantes et archivees 16 par `rebuild` ; scene vivante et surface de
         # lecture de Variantes, liees plus haut ; retenues en vol du rechargement).
         self.studio_pins.add_source("undo", self.presentation_studio_history.pins)

@@ -60,6 +60,10 @@ from jarvis.ports.v2 import DiagnosticSink
 MAX_SOURCE_REQUESTS = 64
 #: Remotion Slice 21 (QA B1): une demande de source reste en attente 30 minutes (horloge monotone) ; au-delà, « demande à renouveler ».
 SOURCE_REQUEST_TTL_S = 1800.0
+#: Slice 13 rework (QA I2): an agent's authoring permissions (`agent_authored_scene`) live in their OWN bounded store, never in the ring of the
+#: user's source requests, so a deck of 48 scenes cannot push a user's pending request out. Two full decks; when full, expired permissions go
+#: first, then the oldest agent permission (traced), never a user request.
+MAX_AUTHORED_SCENES = 96
 
 
 class EditHistory(Protocol):
@@ -109,6 +113,8 @@ class PresentationStudioEditService:
         self._new_id = new_id
         self._new_variant_id = new_variant_id
         self._sources: deque[SourceRequestRecord] = deque(maxlen=MAX_SOURCE_REQUESTS)
+        #: Slice 13: `(presentation_id, variant_id, scene_id) -> agent_authored_scene` record, oldest first (bounded by `MAX_AUTHORED_SCENES`).
+        self._authored_scenes: dict[tuple[str, str, str], SourceRequestRecord] = {}
         self._listeners: list[CommitListener] = []
         self._failure_listeners: list[Callable[[str, str], None]] = []
 
@@ -188,17 +194,18 @@ class PresentationStudioEditService:
             if authored is not None:
                 return authored
             raise PresentationStudioError(C.SOURCE_REQUEST_REQUIRED, f"a source edit of the brain needs the request_id of a pending source request; {renew}")
-        record = next((r for r in self._sources if r.request_id == request_id), None)
+        record = next((r for r in (*self._sources, *self._authored_scenes.values()) if r.request_id == request_id), None)
         if record is None:
             raise PresentationStudioError(C.SOURCE_REQUEST_REQUIRED, f"no pending source request {request_id} (unknown, already satisfied, evicted or "
                                                                       f"lost at a restart); {renew}")
         if self._clock() - record.created_at > SOURCE_REQUEST_TTL_S:
             self._drop_source_request(request_id)
+            self._authored_scenes.pop((record.presentation_id, record.variant_id, record.scene_id), None)
             raise PresentationStudioError(C.SOURCE_REQUEST_REQUIRED, f"source request {request_id} expired after {int(SOURCE_REQUEST_TTL_S // 60)} minutes; {renew}")
         if (record.presentation_id, record.variant_id, record.scene_id) != (presentation_id, variant_id, scene_id):
             raise PresentationStudioError(C.SOURCE_REQUEST_REQUIRED, f"source request {request_id} was recorded for another presentation, variant or scene; {renew}")
         if record.origin == AGENT_AUTHORED_SCENE:
-            return self._touch(record)
+            return record  # admitted, not renewed: only a write that stands restarts its 30 minutes (`renew_authored_scene`)
         if record.origin != EXPLICIT_USER_REQUEST:
             raise PresentationStudioError(C.SOURCE_REQUEST_REQUIRED, f"source request {request_id} does not come from a request of the user; {renew}")
         return record
@@ -206,54 +213,94 @@ class PresentationStudioEditService:
     # ------------------------------------------------------------ Slice 13: scenes an agent created itself
 
     def record_authored_scenes(self, presentation_id: str, variant_id: str, scene_ids: Sequence[str], basis_revision: int) -> tuple[dict[str, Any], ...]:
-        """One multi-use `agent_authored_scene` record per scene an agent just assembled (`presentation_draft_assemble`): the agent refines its
-        own fresh scenes through the source-edit route (preview, fix, iterate) without a user turn. 30 minutes, restarted at each use; dropped
-        when the user edits that scene's source (`drop_authored_scene`). Returned as the assemble result shows them (no intent)."""
+        """One multi-use `agent_authored_scene` permission per scene an agent just assembled (`presentation_draft_assemble`): the agent refines
+        its own fresh scenes through the source-edit route (preview, fix, iterate) without a user turn. Bound to the presentation, the VARIANT
+        and the scene. 30 minutes, restarted only by a write that stands (`renew_authored_scene`); ended when the user edits that scene's
+        source (`drop_authored_scene`) or opens it in Remotion Studio (`release_authored_for_pin`). Kept apart from the user's source requests
+        (`MAX_AUTHORED_SCENES`). Returned as the assemble result shows them (no intent)."""
 
         records = tuple(SourceRequestRecord(new_source_request_id(), presentation_id, variant_id, scene_id, "", StudioActor.BRAIN.value,
                                             basis_revision, AGENT_AUTHORED_SCENE, self._clock()) for scene_id in scene_ids)
-        dropped = max(0, len(self._sources) + len(records) - MAX_SOURCE_REQUESTS)
-        self._sources.extend(records)
+        for record in records:
+            self._authored_scenes.pop((presentation_id, variant_id, record.scene_id), None)  # re-recorded: moves to the newest place
+            self._authored_scenes[(presentation_id, variant_id, record.scene_id)] = record
+        dropped = self._bound_authored()
         self._trace("core.presentation_studio.authored_scenes_recorded", "Scenes creees par l'agent : il peut affiner leurs sources",
                     data={"presentation_id": presentation_id, "variant_id": variant_id, "scenes": len(records), "durable": False,
                           "ttl_s": int(SOURCE_REQUEST_TTL_S)})
         if dropped:
-            self._trace("core.presentation_studio.source_requests_dropped", "Demandes de source evincees de la memoire",
-                        level="warning", data={"presentation_id": presentation_id, "dropped": dropped, "capacity": MAX_SOURCE_REQUESTS})
+            self._trace("core.presentation_studio.authored_scenes_dropped",
+                        "Permissions d'agent les plus anciennes evincees (jamais une demande de l'utilisateur)", level="warning",
+                        data={"presentation_id": presentation_id, "dropped": dropped, "capacity": MAX_AUTHORED_SCENES})
         return tuple({**r.to_dict(with_intent=False), "durable": False, "ttl_s": int(SOURCE_REQUEST_TTL_S)} for r in records)
 
-    def drop_authored_scene(self, presentation_id: str, variant_id: str, scene_id: str) -> int:
-        """The user edited this scene's source: the agent's authoring record ends (the user's work is never overwritten without a new
-        request of the user). Returns how many records ended."""
+    def _bound_authored(self) -> int:
+        """Over `MAX_AUTHORED_SCENES`: expired permissions leave first, then the oldest ones. Returns how many LIVE permissions were evicted."""
 
-        kept = [r for r in self._sources if not (r.origin == AGENT_AUTHORED_SCENE
-                                                 and (r.presentation_id, r.variant_id, r.scene_id) == (presentation_id, variant_id, scene_id))]
-        ended = len(self._sources) - len(kept)
-        if ended:
-            self._sources.clear()
-            self._sources.extend(kept)
-            self._trace("core.presentation_studio.authored_scene_released", "L'utilisateur a edite la scene : l'agent n'y ecrit plus sans demande",
-                        data={"presentation_id": presentation_id, "variant_id": variant_id, "scene_id": scene_id})
+        if len(self._authored_scenes) <= MAX_AUTHORED_SCENES:
+            return 0
+        now = self._clock()
+        for key in [k for k, r in self._authored_scenes.items() if now - r.created_at > SOURCE_REQUEST_TTL_S]:
+            del self._authored_scenes[key]
+        evicted = 0
+        while len(self._authored_scenes) > MAX_AUTHORED_SCENES:
+            del self._authored_scenes[next(iter(self._authored_scenes))]
+            evicted += 1
+        return evicted
+
+    def authored_scenes(self, presentation_id: str | None = None) -> tuple[SourceRequestRecord, ...]:
+        """The agent's authoring permissions (oldest first); never part of `pending_source_requests`."""
+
+        return tuple(r for r in self._authored_scenes.values() if presentation_id is None or r.presentation_id == presentation_id)
+
+    def drop_authored_scene(self, presentation_id: str, variant_id: str, scene_id: str, *, reason: str = "user_source_edit") -> int:
+        """The user edited this scene's source (or opened it in Remotion Studio): the agent's permission on it IN THIS VARIANT ends (the user's
+        work is never overwritten without a new request of the user). Returns how many permissions ended (0 or 1)."""
+
+        if self._authored_scenes.pop((presentation_id, variant_id, scene_id), None) is None:
+            return 0
+        self._trace("core.presentation_studio.authored_scene_released", "L'utilisateur a pris la scene : l'agent n'y ecrit plus sans demande",
+                    data={"presentation_id": presentation_id, "variant_id": variant_id, "scene_id": scene_id, "reason": reason})
+        return 1
+
+    async def release_authored_for_pin(self, prefab_id: str, version: int) -> int:
+        """Remotion Studio opened (or synced) this exact source version: every agent permission whose scene, in ITS variant, pins it ends
+        (QA B3). A variant that cannot be read keeps its permission and the failure is journaled (the write gate still refuses while the
+        Studio holds unpublished edits on that scene). Returns how many permissions ended."""
+
+        ended = 0
+        for pid, vid, sid in list(self._authored_scenes):
+            try:
+                variant = await self._studio.get_variant(pid, vid)
+            except PresentationStudioError as exc:
+                self._trace("core.presentation_studio.authored_release_unchecked", "Permission d'agent non verifiee a l'ouverture du Studio",
+                            level="warning", data={"presentation_id": pid, "variant_id": vid, "scene_id": sid, "code": exc.code.value})
+                continue
+            scene = next((s for s in variant.scenes if s.scene_id == sid), None)
+            if scene is not None and (scene.prefab.prefab_id, scene.prefab.version) == (prefab_id, version):
+                ended += self.drop_authored_scene(pid, vid, sid, reason="opened_in_remotion")
         return ended
 
+    def renew_authored_scene(self, presentation_id: str, variant_id: str, scene_id: str) -> bool:
+        """A write of the agent on its own scene STOOD (admitted, built, published): its 30 minutes start again. A refused attempt never
+        renews (QA I3). Returns whether a live permission was renewed."""
+
+        key = (presentation_id, variant_id, scene_id)
+        record = self._authored_scenes.get(key)
+        if record is None:
+            return False
+        self._authored_scenes[key] = replace(record, created_at=self._clock())
+        return True
+
     def _authored(self, presentation_id: str, variant_id: str, scene_id: str) -> SourceRequestRecord | None:
-        for record in reversed(self._sources):
-            if record.origin == AGENT_AUTHORED_SCENE and (record.presentation_id, record.variant_id, record.scene_id) == (
-                    presentation_id, variant_id, scene_id):
-                if self._clock() - record.created_at > SOURCE_REQUEST_TTL_S:
-                    self._drop_source_request(record.request_id)
-                    return None
-                return self._touch(record)
-        return None
-
-    def _touch(self, record: SourceRequestRecord) -> SourceRequestRecord:
-        """An authoring record is used: its 30 minutes start again (a long creative session does not expire mid-work)."""
-
-        fresh = replace(record, created_at=self._clock())
-        kept = [fresh if r.request_id == record.request_id else r for r in self._sources]
-        self._sources.clear()
-        self._sources.extend(kept)
-        return fresh
+        key = (presentation_id, variant_id, scene_id)
+        record = self._authored_scenes.get(key)
+        if record is None:
+            return None
+        if self._clock() - record.created_at > SOURCE_REQUEST_TTL_S:
+            del self._authored_scenes[key]
+            return None
+        return record
 
     def _drop_source_request(self, request_id: str) -> None:
         kept = [record for record in self._sources if record.request_id != request_id]
@@ -266,8 +313,8 @@ class PresentationStudioEditService:
         Slice 06, `docs/presentation-studio.md` > *Hot reload contract*) : une demande disparue (redemarrage, eviction
         tracee en `warning`) n'empeche jamais une edition de source."""
 
-        if any(r.request_id == request_id and r.origin == AGENT_AUTHORED_SCENE for r in self._sources):
-            return True  # multi-use: an authored scene stays refinable (`claim_source_request` restarted its 30 minutes)
+        if any(r.request_id == request_id for r in self._authored_scenes.values()):
+            return True  # multi-use: an authored scene stays refinable (the stood write renewed it: `renew_authored_scene`)
         kept = [record for record in self._sources if record.request_id != request_id]
         found = len(kept) != len(self._sources)
         if found:
