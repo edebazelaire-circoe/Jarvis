@@ -236,8 +236,8 @@ Studio (the agent tools return where to click). Detail and PowerShell recipes: [
 3. **Repair**: `repair` reinstalls from the shipped lock when `repair_needed` / `install_failed` / `install_interrupted`; `health` probes; `uninstall`
    empties `runtime/` and leaves every source and asset untouched. After a Jarvis update that changes `runtime-host.mjs` the card says
    `shipped_files_changed`: repair.
-4. **Enable / disable the Studio**: the Studio is a separate, optional process: **Ouvrir le Studio** (explicit confirmation: the scene runs without the
-   sandbox and the Studio's API can send source and props off the machine), **Fermer le Studio**, automatic stop after 30 minutes without a window
+4. **Enable / disable the Studio**: the Studio is a separate, optional process: **Ouvrir Remotion Studio** (since native-studio-playback-fix Slice 11 also « Remotion Studio » under the video in Variants) (explicit confirmation: the scene runs without the
+   sandbox and the Studio's API can send source and props off the machine), **Fermer Remotion Studio**, automatic stop after 30 minutes without a window
    (`JARVIS_REMOTION_STUDIO_IDLE_S`, 60 to 86400 s), fixed port with `JARVIS_REMOTION_STUDIO_PORT`. The capability itself is `disable` / `enable` on the same
    route family. Only open it on a scene you know.
 5. **Export**: Board, Artefacts view, under a frozen copy, "Exporter cette copie" (MP4, image, PDF). One scene per export (`settings.scene_id` when a

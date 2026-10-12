@@ -3536,7 +3536,7 @@ Lire la réponse : `status` (`not_installed`, `installing`, `ready`, `running`, 
 explication, tableau §3 de remotion-runtime.md : `node_too_old`, `install_offline`,
 `install_permission_denied`, `install_disk_full`, `install_timeout`...). Après un arrêt de
 Core pendant l'installation, le prochain démarrage de Core affiche `install_failed` /
-`install_interrupted` : lancer `repair`. La carte « Remotion · Studio » du Control Center (onglet « Plugins externes » du dialogue MCP) montre l'état de
+`install_interrupted` : lancer `repair`. La carte « Remotion Studio » du Control Center (onglet « Plugins externes » du dialogue MCP) montre l'état de
 l'environnement ; l'installation reste cette action explicite. Vérification sur un poste neuf, hors profil vivant :
 `python scripts/remotion_install_harness.py --work-dir <dossier temporaire court> --evidence <fichier.json>`
 (vrai réseau, vrai npm, racine de données privée ; ne touche pas à Core).
@@ -3549,10 +3549,11 @@ sert que la source de la scène choisie, en copie de travail en lecture seule so
 sur `127.0.0.1` (port libre, ou `JARVIS_REMOTION_STUDIO_PORT`). Prérequis : la capacité Remotion `ready` (section précédente) et au moins une
 scène Remotion publiée dans la bibliothèque.
 
-- **Depuis le Control Center** : dialogue MCP, onglet « Plugins externes », carte « Remotion · Studio » : choisir la scène, **Ouvrir le Studio**,
+- **Depuis Variantes** (native-studio-playback-fix Slice 11) : sous la vidéo, **Remotion Studio** ouvre la scène à l'écran, à la version exacte de la variante (confirmation, compteur, lien « Ouvrir l'onglet Remotion Studio » si le navigateur bloque l'onglet) ; le rail : clic droit, **Remotion Studio…**.
+- **Depuis le Control Center** : dialogue MCP, onglet « Plugins externes », carte « Remotion Studio » : choisir la scène, **Ouvrir Remotion Studio**,
   **lire et confirmer** le dialogue (la scène s'exécute sans bac à sable ; l'origine de la version y est indiquée, avertissement renforcé pour une
-  scène qui n'est pas de vous), attendre le démarrage (30 à 50 s à froid, 2 min au plus, compteur affiché), puis **Ouvrir la fenêtre du Studio**. **Actualiser la scène** recopie la dernière
-  version publiée (le Studio se recharge sans redémarrer), **Relancer**, **Fermer le Studio**. Arrêt automatique après 30 minutes sans fenêtre
+  scène qui n'est pas de vous), attendre le démarrage (30 à 50 s à froid, 2 min au plus, compteur affiché), puis **Ouvrir l'onglet Remotion Studio**. **Actualiser la scène** recopie la dernière
+  version publiée (le Studio se recharge sans redémarrer), **Relancer**, **Fermer Remotion Studio**. Arrêt automatique après 30 minutes sans fenêtre
   ouverte (`JARVIS_REMOTION_STUDIO_IDLE_S`, 60 à 86400 s).
 - **Depuis PowerShell** (jeton comme pour la capacité) :
 

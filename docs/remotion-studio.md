@@ -6,7 +6,7 @@ Handoff `jarvis-remotion-presentation-integration`, Slice 11. **Statut : contrat
 
 | Décision | Conséquence |
 | --- | --- |
-| **Sur demande explicite seulement** (D5, D17). | Rien ne lance le Studio : ni le démarrage de Core, ni l'aperçu, ni la lecture de l'état (`GET`), ni la carte à son affichage. Seul `POST .../studio/open` (bouton « Ouvrir le Studio ») ou `restart` d'une scène déjà ouverte avant. |
+| **Sur demande explicite seulement** (D5, D17). | Rien ne lance le Studio : ni le démarrage de Core, ni l'aperçu, ni la lecture de l'état (`GET`), ni la carte à son affichage. Seul `POST .../studio/open` (bouton « Ouvrir Remotion Studio » de la carte, ou « Remotion Studio » sous la vidéo de Variantes depuis native-studio-playback-fix Slice 11) ou `restart` d'une scène déjà ouverte avant. |
 | **Un seul Studio par profil d'exécution**, jamais un par présentation. | `open` sur une scène différente **change la scène en place** (rechargement à chaud), sans second processus ; `open` sur la même scène **réutilise** l'hôte vivant (`reused: true`). |
 | **Le Studio ne sert que la source de la scène choisie**, matérialisée en copie de travail **en lecture seule**. | Jamais la racine de données, jamais un chemin libre : voir §2. L'écriture vers la bibliothèque ne passe jamais par le Studio (elle passe par `PrefabService`, Slices 14-15). |
 | **Boucle locale uniquement**, port libre aléatoire ou imposé. | Le Studio stock lie `0.0.0.0` et `::` ; le garde (§3) le force sur `127.0.0.1`. Vérifié : l'adresse du réseau local refuse le port. |
@@ -109,7 +109,7 @@ Réponse : `{studio: vue}`. Refus : `{error: {code, message}}`. Un défaut inatt
 | `JARVIS_REMOTION_STUDIO_PORT` | port imposé (1024-65535) ; sinon un port libre de boucle locale à chaque lancement |
 | `JARVIS_REMOTION_STUDIO_IDLE_S` | inactivité avant arrêt automatique, 60 à 86400 s (défaut 1800) ; une valeur illisible est ignorée (défaut), jamais un Core qui ne démarre pas |
 
-## 8. Control Center : la carte « Remotion · Studio »
+## 8. Control Center : la carte « Remotion Studio » et la porte de Variantes
 
 Six adresses relaient **telles quelles** vers Core (`jarvis/runtime/remotion_studio_relay.py`), toutes gardées par Host et origine de boucle locale :
 
@@ -123,16 +123,18 @@ Six adresses relaient **telles quelles** vers Core (`jarvis/runtime/remotion_stu
 | POST `/api/local-capabilities/remotion/studio/close` | POST `.../studio/close` | 40 s |
  **Aucune désinstallation ni mise à jour n'est relayée d'ici** : elles restent une action explicite sur Core ([remotion-runtime.md](remotion-runtime.md) §7). Depuis la Slice 20, seules `install` et `repair` le sont (`POST /api/local-capabilities/remotion/install|repair`, corps vide imposé), pour le geste de la carte « Présentations · moteur ». Le client de Core n'accepte que le préfixe `/v1/local-capabilities/remotion`.
 
-La carte (`control_center_remotion_studio.js`) est en tête de l'onglet « Plugins externes » du dialogue MCP, au-dessus des cartes de plugins (la « carte unique » de [local-capabilities.md](local-capabilities.md) §1) : état de l'environnement Remotion, état du Studio, choix de la scène (scènes Remotion de la bibliothèque, `?engine=remotion`), boutons **Ouvrir le Studio**, **Actualiser la scène**, **Relancer**, **Fermer le Studio**.
+La carte (`control_center_remotion_studio.js`) est en tête de l'onglet « Plugins externes » du dialogue MCP, au-dessus des cartes de plugins (la « carte unique » de [local-capabilities.md](local-capabilities.md) §1) : état de l'environnement Remotion, état du Studio, choix de la scène (scènes Remotion de la bibliothèque, `?engine=remotion`), boutons **Ouvrir Remotion Studio**, **Actualiser la scène**, **Relancer**, **Fermer Remotion Studio** (noms : PX-1 de [presentation-studio.md](presentation-studio.md#presentation-experience-contract-level-2-2026-10), « Remotion Studio », jamais « Studio » tout court ; avant native-studio-playback-fix Slice 11 : « Remotion · Studio », « Ouvrir le Studio », « Fermer le Studio »).
+
+**La porte de Variantes (native-studio-playback-fix Slice 11).** Pour une scène d'une présentation, l'utilisateur n'a pas à chercher cette carte : le bouton « Remotion Studio » sous la vidéo de Variantes (et l'entrée « Remotion Studio… » du rail) ouvre **la scène à l'écran, à son pin exact**, avec le même client, la même confirmation (`confirmSpec`) et les mêmes phrases (`JarvisRemotionStudioCore`, désormais aussi sur `window`). L'état (démarrage avec compteur, prêt, autre scène ou autre version, fichiers modifiés « pas publiés », échec avec son code et « Réessayer ») se dit dans Variantes ; l'onglet s'ouvre tant que le clic de confirmation est récent, sinon un lien « Ouvrir l'onglet Remotion Studio ». Contrat : [presentation-studio.md](presentation-studio.md) › *Remotion Studio from Variants (Level 3, Slice 11)*.
 
 - **Confirmation avant tout lancement** : « Ouvrir cette scène hors du bac à sable ? » nomme le risque (pas de bac à sable, même origine que l'API du Studio, la source et les paramètres peuvent sortir du poste) et la **provenance de la version exacte** (`publication.provenance` : origine et auteur). Une version écrite par vous : confirmation ordinaire ; écrite par un agent ou le système, ou de provenance illisible : titre « Ouvrir une scène que vous n'avez pas écrite ? », bouton rouge, avertissement renforcé. Annuler ne lance rien. Sans le dialogue de la page, la carte refuse d'ouvrir. `restart` redemande la confirmation ; `sync` de la scène courante non.
-- **Ce qui attend se voit** : pastille animée, durée écoulée (« Démarrage du Studio… 12 s écoulées, 2 min au plus. »), boutons désactivés pendant l'opération avec son libellé (« Ouverture du Studio… »), décompte de l'arrêt automatique (« arrêt automatique dans 28 min 12 s », absent tant qu'une fenêtre est ouverte), nombre de fenêtres ouvertes.
+- **Ce qui attend se voit** : pastille animée, durée écoulée (« Démarrage de Remotion Studio… 12 s écoulées, 2 min au plus. »), boutons désactivés pendant l'opération avec son libellé (« Ouverture de Remotion Studio… »), décompte de l'arrêt automatique (« arrêt automatique dans 28 min 12 s », absent tant qu'une fenêtre est ouverte), nombre de fenêtres ouvertes.
 - **Un échec dit ce qui s'est passé** : phrase française du code, code stable affiché, journal du Studio replié ; l'état affiché est celui de Core, relu toutes les 2 s (démarrage, arrêt) ou 10 s.
 - Étroit : la carte tient dans 390 px. Aucune écriture hors d'un clic ; aucun chemin du disque.
 
 ## 9. Ce que le Studio n'est pas
 
-- Pas un outil du cerveau : `remotion_studio` ([remotion-runtime.md](remotion-runtime.md) §13, Slice 21) rend seulement où cliquer ; l'accusé « cette scène tourne sans le bac à sable » est un geste de l'utilisateur dans la page, et le cerveau ne l'envoie jamais.
+- Pas un outil du cerveau : `remotion_studio` ([remotion-runtime.md](remotion-runtime.md) §13, Slice 21) rend seulement où cliquer (depuis native-studio-playback-fix Slice 11 : « Remotion Studio » sous la vidéo de Variantes) ; l'accusé « cette scène tourne sans le bac à sable » est un geste de l'utilisateur dans la page, et le cerveau ne l'envoie jamais.
 - Pas un moteur de rendu : le rendu et l'export sont la Slice 16 ([remotion-render.md](remotion-render.md), processus et garde propres, à partir d'un snapshot figé) ; le garde du Studio refuse les processus enfants, donc le bouton « Render » du Studio échoue visiblement.
 - Pas un éditeur qui écrit dans la bibliothèque : ses modifications sont mises de côté, jamais publiées.
 - Pas un lieu d'exécution isolé comme le Player : la scène y tourne dans l'onglet du Studio (§11).
