@@ -1,0 +1,226 @@
+{
+ "slice": "09-release-and-human-acceptance",
+ "tested_head": "b658b4d3",
+ "durations_ms": {
+  "private_runtime_copy": 34812,
+  "studio_open_from_page": 38310
+ },
+ "journey": "studio",
+ "injections": {
+  "unpublished_master_edits": {
+   "refusal": {
+    "status": 409,
+    "code": "remotion_studio_unpublished_edits",
+    "classified": [
+     [
+      "remotion.config.ts",
+      "shared"
+     ],
+     [
+      "src/scenes/pss_d00000000002/Scene.tsx",
+      "scene"
+     ]
+    ]
+   },
+   "with_discard": {
+    "target_key": "mpk_f6b1fe529658bd1a50fc1348",
+    "work_copy": {
+     "modified_files": [],
+     "unpublished": 0,
+     "digest": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+     "set_aside": [],
+     "base": null,
+     "writable": true,
+     "edits_saved": 2,
+     "classified": []
+    },
+    "set_aside": [
+     "20261013T175353.543683-0001/remotion.config.ts",
+     "20261013T175353.543683-0001/src/scenes/pss_d00000000002/Scene.tsx"
+    ]
+   },
+   "canonical_changed": []
+  },
+  "core_outage_with_master_studio_open": {
+   "page": {
+    "studio_seen": true,
+    "line_before": "Remotion Studio est ouvert sur la vidéo entière (4 scènes), dans un autre onglet.",
+    "outage_seen": true,
+    "line_outage": "Remotion Studio est ouvert sur la vidéo entière (4 scènes), dans un autre onglet.",
+    "read_error": "{\"code\":\"core_unreachable\",\"text\":\"Core ne répond pas.\"}",
+    "unreachable_notices": [
+     "Scène figée · Core injoignable. Nouvel essai automatique.",
+     "Rail injoignable : l’état affiché n’est plus confirmé."
+    ],
+    "recovered": true,
+    "line_after": "",
+    "settled": true,
+    "line_settled": ""
+   },
+   "studio_process_listening_after_core_stop": false,
+   "state_json_during_outage": {
+    "schema": 2,
+    "target_kind": "variant_master"
+   },
+   "studio_after_core_restart": {
+    "status": "stopped",
+    "target": {
+     "kind": "variant_master",
+     "presentation_id": "pst_b8247cfa9afa8af2ae01e175f6490df4",
+     "variant_id": "psv_6615caf6b7cc0de57c583be3ebe0d167",
+     "variant_revision": 2,
+     "project_key": "mpk_0ad20129c3460f9d3435d63f",
+     "scenes": [
+      {
+       "scene_id": "pss_d00000000001",
+       "prefab_id": "presentation-studio.p0000000000d9.s000000000001",
+       "version": 1
+      },
+      {
+       "scene_id": "pss_d00000000002",
+       "prefab_id": "presentation-studio.p0000000000d9.s000000000002",
+       "version": 1
+      },
+      {
+       "scene_id": "pss_d00000000003",
+       "prefab_id": "presentation-studio.p0000000000d9.s000000000003",
+       "version": 1
+      },
+      {
+       "scene_id": "pss_d00000000004",
+       "prefab_id": "presentation-studio.p0000000000d9.s000000000004",
+       "version": 1
+      }
+     ],
+     "scene_count": 4,
+     "current_project_key": "mpk_0ad20129c3460f9d3435d63f",
+     "stale": false
+    }
+   },
+   "canonical_changed": []
+  }
+ },
+ "runtime": "RemotionStack (real Core, real Control Center, real remotion studio, real guarded render host) on free loopback ports, throw-away data root, private copy of the gate runtime's node_modules, headless Chrome over CDP; the live Jarvis and the user's own Remotion Studio were never contacted",
+ "plan": {
+  "status": "ready",
+  "project_key": "mpk_0ad20129c3460f9d3435d63f",
+  "composition": {
+   "id": "JarvisPresentation",
+   "width": 1920,
+   "height": 1080,
+   "fps": 30,
+   "duration_in_frames": 150
+  },
+  "totals": {
+   "files": 12,
+   "bytes": 52410
+  },
+  "scenes": [
+   {
+    "scene_id": "pss_d00000000001",
+    "from_frame": 0,
+    "duration_in_frames": 30,
+    "mount": "src/scenes/pss_d00000000001/"
+   },
+   {
+    "scene_id": "pss_d00000000002",
+    "from_frame": 30,
+    "duration_in_frames": 45,
+    "mount": "src/scenes/pss_d00000000002/"
+   },
+   {
+    "scene_id": "pss_d00000000003",
+    "from_frame": 75,
+    "duration_in_frames": 30,
+    "mount": "src/scenes/pss_d00000000003/"
+   },
+   {
+    "scene_id": "pss_d00000000004",
+    "from_frame": 105,
+    "duration_in_frames": 45,
+    "mount": "src/scenes/pss_d00000000004/"
+   }
+  ],
+  "public_assets": [
+   {
+    "path": "public/rel-s1-tone.wav",
+    "bytes": 44144,
+    "scene_ids": [
+     "pss_d00000000001"
+    ]
+   },
+   {
+    "path": "public/rel-s2-clip.mp4",
+    "bytes": 2730,
+    "scene_ids": [
+     "pss_d00000000002"
+    ]
+   }
+  ]
+ },
+ "canonical_files": {
+  "count": 26,
+  "roots": [
+   "prefabs",
+   "presentations"
+  ]
+ },
+ "outcome": "passed",
+ "studio": {
+  "target": {
+   "kind": "variant_master",
+   "presentation_id": "pst_b8247cfa9afa8af2ae01e175f6490df4",
+   "variant_id": "psv_6615caf6b7cc0de57c583be3ebe0d167",
+   "variant_revision": 2,
+   "project_key": "mpk_0ad20129c3460f9d3435d63f",
+   "scenes": [
+    {
+     "scene_id": "pss_d00000000001",
+     "prefab_id": "presentation-studio.p0000000000d9.s000000000001",
+     "version": 1
+    },
+    {
+     "scene_id": "pss_d00000000002",
+     "prefab_id": "presentation-studio.p0000000000d9.s000000000002",
+     "version": 1
+    },
+    {
+     "scene_id": "pss_d00000000003",
+     "prefab_id": "presentation-studio.p0000000000d9.s000000000003",
+     "version": 1
+    },
+    {
+     "scene_id": "pss_d00000000004",
+     "prefab_id": "presentation-studio.p0000000000d9.s000000000004",
+     "version": 1
+    }
+   ],
+   "scene_count": 4,
+   "current_project_key": "mpk_0ad20129c3460f9d3435d63f",
+   "stale": false
+  },
+  "status_line": "Remotion Studio est prêt sur la vidéo entière. Le navigateur n’ouvre un onglet qu’après un clic :",
+  "master_line": "Vidéo entière : « Release S09 », variante 1, 4 scènes (5 s).",
+  "scenes_seen_by_stepping": [
+   1,
+   2,
+   3,
+   4
+  ],
+  "mounted": [
+   "src/master/Presentation.tsx",
+   "src/master/SceneBoundary.tsx",
+   "src/scenes/pss_d00000000001/Scene.tsx",
+   "src/scenes/pss_d00000000002/Scene.tsx",
+   "src/scenes/pss_d00000000003/Scene.tsx",
+   "src/scenes/pss_d00000000004/Scene.tsx"
+  ],
+  "console_errors": []
+ },
+ "studio_busy_retries": 1,
+ "path_probe": {},
+ "screenshots": [
+  "core-outage.png",
+  "studio-master.png"
+ ]
+}

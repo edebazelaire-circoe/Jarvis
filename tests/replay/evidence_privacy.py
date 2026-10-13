@@ -4,6 +4,8 @@ Evidence recorded from real runs (`tasks/jarvis-tool-brain-ui-orchestrator/slice
 never carry what identifies the machine or its owner. The targets are DERIVED AT RUNTIME (never written in the repo): the
 home directory in every spelling, the OS user name, the repo checkout path, the temp root, every secret-looking environment
 value, and the shapes of tokens and Claude CLI stream events (`system`/`init` carry the session id, cwd, tools, MCP servers).
+A `session_id` / `sessionId` field's value is replaced by one placeholder wherever it appears, so a redacted JSON line stays valid.
+Also swept: `tests/unit/test_master_project_evidence_privacy.py` (handoff jarvis-remotion-master-project-studio-export).
 
 - `python -m tests.replay.evidence_privacy <dir>`: redact in place (text files), then report what the sweep still finds;
 - `sweep(<dir>)`: findings only (used by `tests/unit/test_tool_brain_evidence_privacy.py`).
@@ -27,10 +29,14 @@ SHAPES = {
     "provider_key": re.compile(r"\bsk-[A-Za-z0-9_\-]{16,}"),
     "bearer_token": re.compile(r"Bearer\s+[A-Za-z0-9._\-]{16,}"),
     "claude_init_event": re.compile(r'"subtype"\s*:\s*"init"'),
-    "claude_session_id": re.compile(r'"session_id"\s*:\s*"[0-9a-f\-]{8,}"'),
+    "claude_session_id": re.compile(r'\\*"(?:session_id|sessionId)\\*"\s*:\s*\\*"[0-9a-f\-]{8,}'),
     "windows_user_path": re.compile(r"[A-Za-z]:[\\/]+Users[\\/]+[^\\/\s\"']+", re.IGNORECASE),
     "posix_home_path": re.compile(r"/(?:home|Users)/[A-Za-z0-9._\-]+/"),
 }
+#: A Claude CLI session id held in a field (snake or camel case, raw or JSON-escaped). The redaction replaces its VALUE wherever it appears
+#: in the file (other fields, transcript paths) by one placeholder, so the JSON stays valid (handoff master-project-studio-export, S09).
+SESSION_FIELD = re.compile(r'\\*"(?:session_id|sessionId)\\*"\s*:\s*\\*"([0-9a-f][0-9a-f\-]{7,})')
+SESSION_PLACEHOLDER = "<redacted-claude-session>"
 
 
 def _spellings(path: str) -> set[str]:
@@ -39,8 +45,9 @@ def _spellings(path: str) -> set[str]:
         return set()
     forward, back = path.replace("\\", "/"), path.replace("/", "\\")
     escaped = back.replace("\\", "\\\\")  # the JSON spelling of a backslash path
+    nested = escaped.replace("\\", "\\\\")  # a JSON string held inside a JSON string (tool inputs in a trace's metrics)
     msys = re.sub(r"^([A-Za-z]):", lambda m: "/" + m.group(1).lower(), forward)
-    return {path, forward, back, escaped, msys, forward.lower(), back.lower(), escaped.lower()}
+    return {path, forward, back, escaped, nested, msys, forward.lower(), back.lower(), escaped.lower(), nested.lower()}
 
 
 def targets() -> dict[str, set[str]]:
@@ -75,6 +82,8 @@ def redact_text(text: str) -> str:
     for category in ("repo", "temp", "home", "secret", "user"):
         for target in sorted(targets()[category], key=len, reverse=True):
             text = text.replace(target, placeholders[category])
+    for value in sorted({match.group(1) for match in SESSION_FIELD.finditer(text)}, key=len, reverse=True):
+        text = text.replace(value, SESSION_PLACEHOLDER)
     for name, pattern in SHAPES.items():
         text = pattern.sub(f"<redacted-{name}>", text)
     return text

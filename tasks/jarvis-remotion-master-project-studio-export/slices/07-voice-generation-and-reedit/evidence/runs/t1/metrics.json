@@ -262,7 +262,7 @@
     {
      "ts": "2026-10-13T12:39:39.096Z",
      "tool": "Grep",
-     "input": "{\"pattern\": \"Édition de source d'une scène Remotion\", \"path\": \"C:\\\\Projects\\\\jarvis\\\\bmp\\\\docs\\\\OPERATIONS.md\", \"output_mode\": \"content\", \"-n\": true}",
+     "input": "{\"pattern\": \"Édition de source d'une scène Remotion\", \"path\": \"<repo>\\\\docs\\\\OPERATIONS.md\", \"output_mode\": \"content\", \"-n\": true}",
      "result": "3609:#### Édition de source d'une scène Remotion par un agent (Slice 14)",
      "refused": false
     },
@@ -276,7 +276,7 @@
     {
      "ts": "2026-10-13T12:39:42.583Z",
      "tool": "Read",
-     "input": "{\"file_path\": \"C:\\\\Projects\\\\jarvis\\\\bmp\\\\docs\\\\OPERATIONS.md\", \"offset\": 3609, \"limit\": 90}",
+     "input": "{\"file_path\": \"<repo>\\\\docs\\\\OPERATIONS.md\", \"offset\": 3609, \"limit\": 90}",
      "result": "3609\t#### Édition de source d'une scène Remotion par un agent (Slice 14)\n3610\t\n3611\tUne scène Remotion se modifie par `POST /v1/presentation-studio/presentations/<id>/variants/<id>/source-edits` (jeton porteur, comme les autres routes\n3612\t",
      "refused": false
     },
