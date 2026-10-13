@@ -1,14 +1,17 @@
 # Remotion master project of a Presentation Variant: plan, readiness, Studio target, whole-video export
 
-Status: **Level 2 — contract; implementation in Slices 03-08 of handoff jarvis-remotion-master-project-studio-export.** Shipped so far:
+Status: **Level 3 — implemented by Slices 03-08 of handoff jarvis-remotion-master-project-studio-export, released by its Slice 09.** Shipped:
 § 2, § 3 and § 5, the pure planner (Level 3 (Slice 03), `jarvis/domain/remotion_master_project.py`); § 6 and § 7, the workspace files and
 the generated composition (Level 3 (Slice 04), `jarvis/domain/remotion_master_files.py`); § 9 and § 11, the Studio master target and the
 live readiness read (Level 3 (Slice 05), `jarvis/core/remotion_studio_service.py`); § 10, the whole-video render scope (Level 3
 (Slice 06), `jarvis/domain/presentation_render_master.py`); § 12, voice and agent (Level 3 (Slice 07), `jarvis/domain/remotion_master_sentences.py`,
 `jarvis/runtime/remotion_mcp_tools.py`); § 13, the Variants and Board entrypoints (Level 3 (Slice 08),
 `jarvis/runtime/control_center_presentation_studio_explorer_remotion.js`, `jarvis/runtime/control_center_presentation_studio_explorer_export.js`,
-`jarvis/runtime/control_center_workspace.js`). Every other behaviour below is the
-contract the Slices implement, and every "is" means "must be" until the Slice that owns it lands (owners: § 16). Evidence for the choices: the handoff's Slice 01 audit (`tasks/jarvis-remotion-master-project-studio-export/slices/01-current-state-and-compatibility-audit/AUDIT.md`,
+`jarvis/runtime/control_center_workspace.js`). § 4 (spec and timeline) and § 8 (security review) are implemented through those sections;
+§ 14 is the compatibility table and § 15 the non-goals (master publish-back and the master Player stay Level 1, deferred, never partially
+implemented). Release proof (Slice 09, real Core + Control Center + `remotion studio` + render host, real Chrome):
+`tests/unit/test_remotion_master_release_real.py` (opt-in), evidence in the handoff's `slices/09-release-and-human-acceptance/`;
+operations, set-aside location and rollback: [OPERATIONS.md](OPERATIONS.md) › *Studio Remotion optionnel*. Evidence for the choices: the handoff's Slice 01 audit (`tasks/jarvis-remotion-master-project-studio-export/slices/01-current-state-and-compatibility-audit/AUDIT.md`,
 real runs on the pinned Remotion 4.0.534). Decisions marked *decided by agent 0* were taken by the handoff's orchestrator under the Human's
 delegated autonomy (2026-10-13).
 
@@ -284,7 +287,7 @@ recorded scene, so its edits are always kept and it has nothing to discard); `di
 - **`state.json`**: a scene target keeps writing `schema: 1` byte-compatible; a master target writes `schema: 2` with
   `target: {kind: "variant_master", presentation_id, variant_id, variant_revision, project_key, scenes: [{scene_id, prefab_id, version}]}`
   instead of `pin`. The reader accepts 1 (`pin` → `target.kind = "scene"`) and 2. An older Core reading schema 2 fails closed as
-  `remotion_studio_state_unreadable` (the documented set-aside path; never a wrong scene, no data lost; Slice 09 rollback notes).
+  `remotion_studio_state_unreadable` (the documented set-aside path; never a wrong scene, no data lost; rollback: [OPERATIONS.md](OPERATIONS.md) › *Studio Remotion optionnel*).
 - **View**: the status view gains `target` (`{kind: "scene", prefab_id, version}` or the master shape plus `current_project_key` and
   `stale: bool` from the live plan); `pin` stays for a scene target and is `null` for a master target.
 - **Scene listeners**: a ready master target calls the existing scene listeners once per mounted pin (today: ends the agent's

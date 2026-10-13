@@ -1,6 +1,6 @@
-"""Level 2 conformance of `docs/remotion-master-project.md` (handoff jarvis-remotion-master-project-studio-export, Slice 02).
+"""Conformance of `docs/remotion-master-project.md` (handoff jarvis-remotion-master-project-studio-export, Slice 02; Level 3 since Slice 09).
 
-Slice 03 implemented the planner (§ 2, § 3, § 5 are Level 3, `jarvis/domain/remotion_master_project.py`); Slices 04-08 follow. These tests pin what Slices 03-08 build against: the reason codes and their order, the
+Slices 03-08 implemented every section (each heading names its Slice); Slice 09 released it and moved the page's status to Level 3. These tests pin: the reason codes and their order, the
 `project_key` inputs, the bounds, the composition id, the acknowledgment and scope names, the terminology, and that the scene-lane documents
 qualify their single-scene sentences instead of contradicting the new contract. They also check that the new names do not collide with any
 code that exists today and that the scene-lane constants the contract keeps unchanged are still the ones in the code.
@@ -24,7 +24,7 @@ ROOT = Path(__file__).resolve().parents[2]
 DOCS = ROOT / "docs"
 NAME = "remotion-master-project.md"
 DOC = (DOCS / NAME).read_text(encoding="utf-8")
-STATUS = "Level 2 — contract; implementation in Slices 03-08 of handoff jarvis-remotion-master-project-studio-export"
+STATUS = "Level 3 — implemented by Slices 03-08 of handoff jarvis-remotion-master-project-studio-export, released by its Slice 09"
 LINK = f"]({NAME})"
 
 PLANNER_CODES = ("master_empty", "master_engine_not_remotion", "master_source_unavailable", "master_engine_mismatch", "master_fps_mismatch",
@@ -55,10 +55,11 @@ LEVEL_3_SECTIONS = ("## 2. MasterProjectPlan — Level 3 (Slice 03)", "## 3. Rea
                     "## 13. Variants and Board entrypoints — Level 3 (Slice 08)")
 
 
-def test_the_page_states_level_2_and_claims_level_3_only_for_the_implemented_planner_sections():
+def test_the_page_states_level_3_and_each_level_3_section_names_its_slice():
     assert f"Status: **{STATUS}.**" in DOC
-    assert "Shipped so far: § 2, § 3 and § 5, the pure planner (Level 3 (Slice 03)" in flat(DOC)
-    rest = DOC.replace("*Composition clock (Level 3)*", "")
+    assert "Shipped: § 2, § 3 and § 5, the pure planner (Level 3 (Slice 03)" in flat(DOC)
+    assert "`tests/unit/test_remotion_master_release_real.py`" in DOC, "the release proof is named"
+    rest = DOC.replace("*Composition clock (Level 3)*", "").replace(STATUS, "")
     for marker in ("Level 3 (Slice 03)", "(Level 3, Slice 03)", "Level 3 (Slice 04)", "(Level 3, Slice 04)", "Level 3 (Slice 05)",
                    "(Level 3, Slice 05)", "Level 3\n(Slice 06)",
                    "Level 3 (Slice 06)", "(Level 3, Slice 06)", "Level 3 (Slice 07)", "(Level 3, Slice 07)", "Level 3 (Slice 08)",

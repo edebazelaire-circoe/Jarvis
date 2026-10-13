@@ -33,3 +33,23 @@ At minimum refresh canonical repository docs after implementation, based on actu
 - `docs/mcp/tool-contract.md` if whole-video export or inspection tool contracts change
 
 Do not leave the old sentence "one scene per export" or "Studio serves only the selected scene" unqualified after the master path is implemented. Preserve historical/compatibility behavior explicitly where it still exists.
+
+Slice 09 (2026-10-13, release): reality at the end of the task.
+
+| Concept | Level reached | Where |
+| --- | ---: | --- |
+| Scene Remotion source/version; scene-level Studio workspace; Variants composition clock | L3 (kept) | unchanged contracts; their single-scene sentences are qualified and link `docs/remotion-master-project.md` |
+| Variant master Remotion project, master spec, public-asset merge | L3 | § 2-7 (Slices 03-04), `remotion_master_project.py`, `remotion_master_generated.py`, `remotion_master_files.py` |
+| Remotion Studio master target | L3 | § 9, § 11 (Slice 05), `remotion_studio.py`, `remotion_studio_master.py`, `remotion_studio_service.py` |
+| Whole-variant native Remotion export | L3 | § 10 (Slice 06), `presentation_render_master.py`, render service and routes |
+| Voice creation -> master-ready video; voice re-edit -> refreshed master | L3 | § 12 (Slice 07), `remotion_master_sentences.py`, MCP tools, authoring guide; real traces `t1` (Slice 07) and `trace-t2` (Slice 09) |
+| Variants and Board entrypoints | L3 | § 13 (Slice 08) |
+| Arbitrary master workspace publish-back; master Player (phase C) | L1 (non-goals) | § 15 |
+
+The page's status is **Level 3** (`tests/unit/test_remotion_master_project_docs.py` pins it). Documentation updated by Slice 09:
+`docs/remotion-master-project.md` (status, release proof), `docs/remotion-render.md`, `docs/remotion-studio.md`, `docs/remotion-source.md`,
+`docs/presentation-studio.md` (no « planned » master wording left), `docs/ARCHITECTURE.md` (row: Core, Level 3), `docs/OPERATIONS.md` (master
+Studio files and state, `studio-edits/` set-aside location, Core outage, rollback, master export failures), `docs/mcp/tool-contract.md` (Slices 08
+and 09), `docs/remotion-integration-release.md` (contract index row, export lines qualified). `docs/presentation-engine.md` needed no change (it
+owns the engine choice, not the master project). No unqualified « one scene per export » or « the Studio serves only the selected scene » is left
+(grep at Slice 09).

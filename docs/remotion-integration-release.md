@@ -215,7 +215,7 @@ One row per contract. Docs are in `docs/`; `tests/unit/test_remotion_release_doc
 | Optional Studio | 11 | `remotion-studio.md` | `test_remotion_studio*.py` |
 | Hot reload, timeline, typed controls, authoring, templates, upgrades | 12, 13, 14, 15, 19 | `presentation-studio.md` | `test_remotion_timeline*.py`, `test_remotion_controls.py`, `test_remotion_source_edit_service.py`, `test_presentation_studio_authoring_remotion.py`, `test_presentation_studio_upgrades.py` |
 | Render and export | 16 | `remotion-render.md` | `test_presentation_render_service.py`, `test_render_guard.py` |
-| Master Remotion project of a variant, Studio master target, whole-video export (Level 2 — contract; implementation in Slices 03-08 of handoff jarvis-remotion-master-project-studio-export) | master-project 02 | `remotion-master-project.md` | `test_remotion_master_project_docs.py` |
+| Master Remotion project of a variant, Studio master target, whole-video export (Level 3 — implemented by Slices 03-08 of handoff jarvis-remotion-master-project-studio-export, released by its Slice 09) | master-project 02-09 | `remotion-master-project.md` | `test_remotion_master_project_docs.py` |
 | Semantic prefab catalog, manifest v3 | 17, 19 | `prefabs.md` | `test_prefab_catalog.py` |
 | Upstream import | 18 | `remotion-import.md` | `test_remotion_upstream.py`, `test_remotion_import.py` |
 | Agent verbs, ownership | 21 | `mcp/tool-contract.md` (10.17), `tool-brain-contracts.md` (19) | `test_remotion_mcp_tools.py`, `test_remotion_mcp_server.py` |
@@ -240,9 +240,10 @@ Studio (the agent tools return where to click). Detail and PowerShell recipes: [
 4. **Enable / disable the Studio**: the Studio is a separate, optional process: **Ouvrir Remotion Studio** (since native-studio-playback-fix Slice 11 also « Remotion Studio » under the video in Variants) (explicit confirmation: the scene runs without the
    sandbox and the Studio's API can send source and props off the machine), **Fermer Remotion Studio**, automatic stop after 30 minutes without a window
    (`JARVIS_REMOTION_STUDIO_IDLE_S`, 60 to 86400 s), fixed port with `JARVIS_REMOTION_STUDIO_PORT`. The capability itself is `disable` / `enable` on the same
-   route family. Only open it on a scene you know.
-5. **Export**: Board, Artefacts view, under a frozen copy, "Exporter cette copie" (MP4, image, PDF). One scene per export (`settings.scene_id` when a
-   deck has several). Needs Chrome or Edge installed (`JARVIS_REMOTION_RENDER_BROWSER` to name one; one is never downloaded) and 1.5 GB free. The PDF is
+   route family. Only open it on a scene you know (or, for the whole variant, on scenes you know: master-project Slice 08).
+5. **Export**: Board, Artefacts view, under a frozen copy, "Exporter cette copie" (MP4, image, PDF). One scene per export in the scene scope (`settings.scene_id` when a
+   deck has several); the whole variant in one MP4 with `settings.scope: "master"` when it is master-ready (« Exporter la vidéo » in Variants,
+   [remotion-master-project.md](remotion-master-project.md) § 10). Needs Chrome or Edge installed (`JARVIS_REMOTION_RENDER_BROWSER` to name one; one is never downloaded) and 1.5 GB free. The PDF is
    flat page images. Chrome runs with its process sandbox ON; `JARVIS_REMOTION_RENDER_NO_SANDBOX=1` is the explicit opt-out for a machine that cannot
    create it. Retention: the 20 newest renders of a snapshot keep their files.
 6. **Import an upstream template**: only on the user's request, only from GitHub with a full commit SHA, only from an allowed owner: the list is
@@ -350,7 +351,7 @@ Consolidated from the Slices; none waived, none repaid by this one.
 3. **Guards are filters, not walls**: the static source guard and the authoring lint are pattern based and bypassable by construction; the
    frontier is origin + frame sandbox + CSP (Player) and the process guard (render, Studio).
 4. **Render**: Chrome runs with its process sandbox on, but the network service is outside it on Windows; the Node render guard is JavaScript;
-   one scene per export; a PDF is flat images; an MP4 is not byte-reproducible across machines; a render of a scene with live Board data does not
+   one scene per export in the scene scope (the whole variant only through the master scope, never a concatenation); a PDF is flat images; an MP4 is not byte-reproducible across machines; a render of a scene with live Board data does not
    announce that data to the scene; audio never listened to.
 5. **Attested-turn limits (Slice 21)**: the attestation says "a user turn is in progress", not that the user's sentence asked for the gesture; a
    sub-agent that the brain launches on its own with the token could still call the source-edit route (the prompt forbids it; Core refuses a brain

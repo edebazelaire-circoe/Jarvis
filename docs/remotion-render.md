@@ -2,7 +2,7 @@
 
 Handoff `jarvis-remotion-presentation-integration`, Slice 16. **Statut : contrat (Level 2) et implémentation réelle (Level 3), vérifiés sur Windows 11 avec le vrai moteur Remotion épinglé, le vrai Chrome installé, un vrai Core et un vrai Control Center** ([preuves](#11-preuves)). Le rendu **exécute le code de la scène** dans un navigateur sans interface : il tourne donc sous le même modèle de menace que le Player ([remotion-isolation.md](remotion-isolation.md)) et son processus est isolé plus strictement encore ([§4](#4-isolation-du-processus-de-rendu)).
 
-**Vidéo entière d'une variante (livrée, Slice 06 ; contrat Level 2 — contract; implementation in Slices 03-08 of handoff jarvis-remotion-master-project-studio-export, § 10 en Level 3)** : la portée additive `settings.scope: "master"` rend la composition maître Remotion (`JarvisPresentation`) de toute la variante figée, par le même processus gardé, la même file et le même navigateur (MP4 seulement, sans `scene_id`, au plus `MAX_MASTER_RENDER_FRAMES` = 9 000 images) ; sans `scope` (ou avec `scope: "scene"`, normalisé), tout ce qui suit reste vrai octet pour octet, `render_settings_sha256` compris. Contrat : [remotion-master-project.md](remotion-master-project.md) § 10 ; résumé au [§ 3 bis](#3-bis-portée-master-la-vidéo-entière).
+**Vidéo entière d'une variante (livrée, Slice 06 ; contrat Level 3 — implemented by Slices 03-08 of handoff jarvis-remotion-master-project-studio-export, released by its Slice 09, § 10)** : la portée additive `settings.scope: "master"` rend la composition maître Remotion (`JarvisPresentation`) de toute la variante figée, par le même processus gardé, la même file et le même navigateur (MP4 seulement, sans `scene_id`, au plus `MAX_MASTER_RENDER_FRAMES` = 9 000 images) ; sans `scope` (ou avec `scope: "scene"`, normalisé), tout ce qui suit reste vrai octet pour octet, `render_settings_sha256` compris. Contrat : [remotion-master-project.md](remotion-master-project.md) § 10 ; résumé au [§ 3 bis](#3-bis-portée-master-la-vidéo-entière).
 
 Pages voisines : [presentation-artifacts.md](presentation-artifacts.md) (source, snapshot, dérivé, `begin_render`), [remotion-runtime.md](remotion-runtime.md) (la capacité), [remotion-studio.md](remotion-studio.md) (le Studio n'est pas un moteur de rendu), [artifacts.md](artifacts.md).
 
@@ -162,7 +162,7 @@ Pourquoi des routes d'abord : l'export est une **action de l'utilisateur** qui l
 | --- | --- | --- |
 | `presentation_render_invalid` | 400 | corps, réglage, plage ou format invalide |
 | `presentation_render_unknown_job` | 404 | identifiant inconnu de ce Core (au-delà des 20 derniers terminés, lire l'Artifact) |
-| `presentation_render_unknown_scene` | 404 | scène absente du snapshot, ou plusieurs scènes sans `scene_id` (et sans la portée prévue `scope: "master"`, qui ne change pas ce refus) |
+| `presentation_render_unknown_scene` | 404 | scène absente du snapshot, ou plusieurs scènes sans `scene_id` (et sans la portée `scope: "master"`, livrée par la Slice 06 de master-project, qui ne change pas ce refus) |
 | `presentation_render_unavailable` | 503 | Core sans service de rendu (aucun magasin de capacités) ou en arrêt |
 | `presentation_render_runtime_unavailable` | 409 | capacité non `ready`, Node, `@remotion/bundler` ou `@remotion/renderer` manquants : installer ou réparer |
 | `presentation_render_browser_unavailable` | 409 | aucun Chrome ni Edge (jamais téléchargé) |

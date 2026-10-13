@@ -1429,3 +1429,9 @@ The readiness the agent reads is the compact `master` block (`status`, `reason`,
 `MasterProjectReader.live_plan` (`GET .../master-project`, client `presentation_studio_master_project`), never computed by the tools.
 Measured after the change: `jarvis-remotion` 5 335 B (budget 5 400 B), `jarvis-presentation` 20 896 B (budget 21 000 B), declared surface
 113 686 B (budget 113 700 B); no budget raised. Tests: `tests/unit/test_remotion_master_agent.py`.
+**Master-project Slice 08**: `remotion_studio` stays a pointer that opens nothing; it says « dans Variantes, clique « Remotion Studio » sous la
+vidéo et confirme ; la vidéo entière de la variante (ou la scène à l'écran si la vidéo entière n'est pas disponible) … » and, for a named scene,
+« Cette scène seule dans Remotion Studio » (§ 13, § 14 of `docs/remotion-master-project.md`); the brain prompt adds that a `master.status`
+`unknown` is an unreadable state, never « disponible ». Budgets unchanged (`tests/unit/test_mcp_catalog.py`). **Slice 09 (release)**: the real
+trace create → whole-video export → voice edit → re-export → incompatible refusal was rerun on the release head (run `trace-t2`,
+claude-sonnet-5-5, USD 0.92, 0 refusals; the handoff's `slices/09-release-and-human-acceptance/evidence/trace-t2/`).
