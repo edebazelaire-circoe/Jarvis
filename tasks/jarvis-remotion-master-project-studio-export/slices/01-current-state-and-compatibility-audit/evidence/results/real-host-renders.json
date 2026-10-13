@@ -1,0 +1,270 @@
+{
+ "real-master-ok": {
+  "host": "render-host.cjs + render-guard.cjs copied from the worktree, node --require guard (run_real_host.py)",
+  "composition": "MASTER-OK",
+  "declared": {
+   "width": 640,
+   "height": 360,
+   "fps": 30,
+   "durationInFrames": 180
+  },
+  "ok": true,
+  "elapsed_ms": 15178,
+  "egress": {
+   "blocked_connect": 0,
+   "blocked_spawn": 5,
+   "refused_spawns": [
+    "execSync:nproc",
+    "execSync:nproc",
+    "execSync:nproc",
+    "execSync:nproc",
+    "execSync:nproc"
+   ],
+   "proxy_denied": 16,
+   "proxy_denied_targets": [
+    "clients2.google.com:80",
+    "www.gstatic.com:443",
+    "www.google.com:443",
+    "update.googleapis.com:443",
+    "accounts.google.com:443",
+    "android.clients.google.com:443"
+   ],
+   "proxy_allowed": 66,
+   "browser_launches": 1,
+   "sandbox": true,
+   "guard_error": ""
+  },
+  "ffprobe": {
+   "programs": [],
+   "stream_groups": [],
+   "streams": [
+    {
+     "index": 0,
+     "codec_name": "h264",
+     "codec_type": "video",
+     "width": 640,
+     "height": 360,
+     "r_frame_rate": "30/1",
+     "duration": "6.000000",
+     "nb_frames": "180",
+     "side_data_list": [
+      {}
+     ]
+    },
+    {
+     "index": 1,
+     "codec_name": "aac",
+     "codec_type": "audio",
+     "sample_rate": "48000",
+     "channels": 2,
+     "r_frame_rate": "0/0",
+     "duration": "6.016000",
+     "nb_frames": "284"
+    }
+   ],
+   "format": {
+    "duration": "6.016000"
+   }
+  },
+  "silencedetect_-40dB": [
+   "silence_start: 0",
+   "silence_end: 1.000042 | silence_duration: 1.000042",
+   "silence_start: 3.999979",
+   "silence_end: 4.500042 | silence_duration: 0.500062"
+  ]
+ },
+ "real-perf-1080": {
+  "host": "render-host.cjs + render-guard.cjs copied from the worktree, node --require guard (run_real_host.py)",
+  "composition": "PERF-1080",
+  "declared": {
+   "width": 1920,
+   "height": 1080,
+   "fps": 30,
+   "durationInFrames": 150
+  },
+  "ok": true,
+  "elapsed_ms": 16276,
+  "egress": {
+   "blocked_connect": 0,
+   "blocked_spawn": 5,
+   "refused_spawns": [
+    "execSync:nproc",
+    "execSync:nproc",
+    "execSync:nproc",
+    "execSync:nproc",
+    "execSync:nproc"
+   ],
+   "proxy_denied": 18,
+   "proxy_denied_targets": [
+    "clients2.google.com:80",
+    "www.gstatic.com:443",
+    "www.google.com:443",
+    "accounts.google.com:443",
+    "update.googleapis.com:443",
+    "android.clients.google.com:443",
+    "optimizationguide-pa.googleapis.com:443"
+   ],
+   "proxy_allowed": 55,
+   "browser_launches": 1,
+   "sandbox": true,
+   "guard_error": ""
+  },
+  "ffprobe": {
+   "programs": [],
+   "stream_groups": [],
+   "streams": [
+    {
+     "index": 0,
+     "codec_name": "h264",
+     "codec_type": "video",
+     "width": 1920,
+     "height": 1080,
+     "r_frame_rate": "30/1",
+     "duration": "5.000000",
+     "nb_frames": "150",
+     "side_data_list": [
+      {}
+     ]
+    },
+    {
+     "index": 1,
+     "codec_name": "aac",
+     "codec_type": "audio",
+     "sample_rate": "48000",
+     "channels": 2,
+     "r_frame_rate": "0/0",
+     "duration": "5.013000",
+     "nb_frames": "237"
+    }
+   ],
+   "format": {
+    "duration": "5.013000"
+   }
+  },
+  "silencedetect_-40dB": [
+   "silence_start: 0",
+   "silence_end: 1.667042 | silence_duration: 1.667042",
+   "silence_start: 3.166979",
+   "silence_end: 3.333042 | silence_duration: 0.166063",
+   "silence_start: 4.832979",
+   "silence_end: 5.013333 | silence_duration: 0.180354"
+  ]
+ },
+ "real-perf-1080-long": {
+  "host": "render-host.cjs + render-guard.cjs copied from the worktree, node --require guard (run_real_host.py)",
+  "composition": "PERF-1080-LONG",
+  "declared": {
+   "width": 1920,
+   "height": 1080,
+   "fps": 30,
+   "durationInFrames": 600
+  },
+  "ok": true,
+  "elapsed_ms": 42695,
+  "egress": {
+   "blocked_connect": 0,
+   "blocked_spawn": 5,
+   "refused_spawns": [
+    "execSync:nproc",
+    "execSync:nproc",
+    "execSync:nproc",
+    "execSync:nproc",
+    "execSync:nproc"
+   ],
+   "proxy_denied": 21,
+   "proxy_denied_targets": [
+    "clients2.google.com:80",
+    "www.gstatic.com:443",
+    "www.google.com:443",
+    "accounts.google.com:443",
+    "update.googleapis.com:443",
+    "android.clients.google.com:443",
+    "optimizationguide-pa.googleapis.com:443"
+   ],
+   "proxy_allowed": 205,
+   "browser_launches": 1,
+   "sandbox": true,
+   "guard_error": ""
+  },
+  "ffprobe": {
+   "programs": [],
+   "stream_groups": [],
+   "streams": [
+    {
+     "index": 0,
+     "codec_name": "h264",
+     "codec_type": "video",
+     "width": 1920,
+     "height": 1080,
+     "r_frame_rate": "30/1",
+     "duration": "20.000000",
+     "nb_frames": "600",
+     "side_data_list": [
+      {}
+     ]
+    },
+    {
+     "index": 1,
+     "codec_name": "aac",
+     "codec_type": "audio",
+     "sample_rate": "48000",
+     "channels": 2,
+     "r_frame_rate": "0/0",
+     "duration": "20.011000",
+     "nb_frames": "940"
+    }
+   ],
+   "format": {
+    "duration": "20.011000"
+   }
+  },
+  "silencedetect_-40dB": [
+   "silence_start: 0",
+   "silence_end: 6.667042 | silence_duration: 6.667042",
+   "silence_start: 8.166979",
+   "silence_end: 13.333042 | silence_duration: 5.166062",
+   "silence_start: 14.832979",
+   "silence_end: 20.010667 | silence_duration: 5.177688"
+  ]
+ },
+ "probe-ok-mp4": {
+  "ffprobe": {
+   "programs": [],
+   "stream_groups": [],
+   "streams": [
+    {
+     "index": 0,
+     "codec_name": "h264",
+     "codec_type": "video",
+     "width": 640,
+     "height": 360,
+     "r_frame_rate": "30/1",
+     "duration": "6.000000",
+     "nb_frames": "180",
+     "side_data_list": [
+      {}
+     ]
+    },
+    {
+     "index": 1,
+     "codec_name": "aac",
+     "codec_type": "audio",
+     "sample_rate": "48000",
+     "channels": 2,
+     "r_frame_rate": "0/0",
+     "duration": "6.016000",
+     "nb_frames": "284"
+    }
+   ],
+   "format": {
+    "duration": "6.016000"
+   }
+  }
+ },
+ "probe-throw-boundary-mp4": {
+  "silencedetect_-40dB": [
+   "silence_start: 0",
+   "silence_end: 1.000042 | silence_duration: 1.000042"
+  ]
+ }
+}

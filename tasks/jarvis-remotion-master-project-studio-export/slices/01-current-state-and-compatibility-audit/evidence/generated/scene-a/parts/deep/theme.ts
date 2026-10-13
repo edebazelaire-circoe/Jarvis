@@ -1,0 +1,1 @@
+export {accent} from '../../palette';

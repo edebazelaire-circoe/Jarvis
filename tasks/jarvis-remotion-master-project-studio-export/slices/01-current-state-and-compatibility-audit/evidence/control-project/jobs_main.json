@@ -1,0 +1,9 @@
+[{"id":"ok","composition":"MASTER-OK","kind":"mp4"},
+ {"id":"ok","composition":"MASTER-OK","kind":"still","frames":[0,29,30,74,75,90,134,135,179]},
+ {"id":"mixed","composition":"MASTER-MIXED","kind":"still","frames":[0,30,89,149,150,179]},
+ {"id":"seqdims","composition":"MASTER-SEQDIMS","kind":"still","frames":[0]},
+ {"id":"collide","composition":"MASTER-COLLIDE","kind":"still","frames":[0,15]},
+ {"id":"ns","composition":"MASTER-NS","kind":"still","frames":[0]},
+ {"id":"throw-boundary","composition":"MASTER-THROW-BOUNDARY","kind":"mp4"},
+ {"id":"throw-boundary","composition":"MASTER-THROW-BOUNDARY","kind":"still","frames":[15]},
+ {"id":"throw-raw","composition":"MASTER-THROW-RAW","kind":"mp4"}]
