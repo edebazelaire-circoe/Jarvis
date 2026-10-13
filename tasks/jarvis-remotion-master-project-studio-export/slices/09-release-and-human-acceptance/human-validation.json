@@ -1,0 +1,9 @@
+{
+  "checks": [
+    {
+      "id": "HV-RMP-09-01",
+      "instruction": "Final acceptance: inspect the master project in Remotion Studio and the resulting exported MP4 (image, transitions/scene changes, authored audio/video) and confirm it matches the mental model of one Remotion video project while the existing Jarvis presentation path remains available.",
+      "requires_evidence_first": true
+    }
+  ]
+}

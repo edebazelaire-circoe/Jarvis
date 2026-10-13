@@ -1,0 +1,9 @@
+{
+  "checks": [
+    {
+      "id": "HV-RMP-08-01",
+      "instruction": "Confirm the Variants controls make the project-level Remotion Studio and whole-video export semantics clear without degrading the existing player/transport workflow.",
+      "requires_evidence_first": true
+    }
+  ]
+}

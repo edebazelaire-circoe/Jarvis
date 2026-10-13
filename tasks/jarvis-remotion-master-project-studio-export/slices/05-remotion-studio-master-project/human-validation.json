@@ -1,0 +1,9 @@
+{
+  "checks": [
+    {
+      "id": "HV-RMP-05-01",
+      "instruction": "On a real browser with the real managed Remotion Studio, confirm that the primary presentation Studio opens the whole variant/master composition and feels like one normal Remotion project rather than a single-slide project.",
+      "requires_evidence_first": true
+    }
+  ]
+}

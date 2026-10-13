@@ -1,0 +1,9 @@
+{
+  "checks": [
+    {
+      "id": "HV-RMP-00-01",
+      "instruction": "Human decision only if the fresh audit finds a real contract conflict, irreversible persistence choice, or missing permission that prevents a safe READY state.",
+      "requires_evidence_first": true
+    }
+  ]
+}

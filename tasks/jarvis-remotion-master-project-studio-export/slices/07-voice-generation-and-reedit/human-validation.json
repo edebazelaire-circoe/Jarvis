@@ -1,0 +1,9 @@
+{
+  "checks": [
+    {
+      "id": "HV-RMP-07-01",
+      "instruction": "Speak or type a natural request to create a short video, then request a meaningful edit after the first result; confirm Jarvis can regenerate/re-export the whole video without requiring Remotion Studio and accurately explains what changed.",
+      "requires_evidence_first": true
+    }
+  ]
+}

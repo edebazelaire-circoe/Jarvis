@@ -1,0 +1,15 @@
+{
+  "slice_id": "06",
+  "title": "Whole-variant native Remotion render/export",
+  "dependencies": [
+    "04-master-workspace-materialization"
+  ],
+  "task_type": null,
+  "task_type_resolution_required": true,
+  "requires_caveman": true,
+  "requires_coding_guideline": true,
+  "frontend": false,
+  "requires_impeccable": false,
+  "claude_for_frontend_when_available": false,
+  "requires_agent_trace_analysis": false
+}

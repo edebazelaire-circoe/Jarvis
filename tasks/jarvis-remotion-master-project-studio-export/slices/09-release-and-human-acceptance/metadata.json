@@ -1,0 +1,18 @@
+{
+  "slice_id": "09",
+  "title": "Integrated release and Human acceptance",
+  "dependencies": [
+    "05-remotion-studio-master-project",
+    "06-whole-variant-render-export",
+    "07-voice-generation-and-reedit",
+    "08-variants-master-entrypoints"
+  ],
+  "task_type": null,
+  "task_type_resolution_required": true,
+  "requires_caveman": false,
+  "requires_coding_guideline": false,
+  "frontend": false,
+  "requires_impeccable": false,
+  "claude_for_frontend_when_available": false,
+  "requires_agent_trace_analysis": true
+}
