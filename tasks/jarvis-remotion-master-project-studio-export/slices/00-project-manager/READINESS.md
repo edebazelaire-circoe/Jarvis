@@ -34,7 +34,7 @@ Run by an Explore agent given only the Slice 00 goal and forbidden to read this 
 
 ## Baseline tests (branch point `d101d887`)
 
-See `baseline.md` (filled when the detached `bmq` sweep reports). Gate rule inherited from the previous task: run `test_presentation_studio_reload*` / `test_scene_variants_crash*` one file per process.
+Full detail: `baseline.md`. At `d101d887`: **21 837 passed, 23 failed, 0 errors, 140 skipped** (863 files, chunks, failing files rerun alone). 22 deterministic: the 16 inherited of the previous task (same 13 files, same counts) + **6 new in `test_presentation_studio_explorer_player_js.py`** (merge loss, Issue 03). 1 load flake (`test_memory_context.py` recall budget). ~100 skips = real Remotion runtime not set. **None of the inherited failures is a Slice's to fix.** Gate rule inherited from the previous task: run `test_presentation_studio_reload*` / `test_scene_variants_crash*` one file per process.
 
 ## Reconciliation with the handoff
 

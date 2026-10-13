@@ -3,7 +3,8 @@
 Status: **Level 2 — contract; implementation in Slices 03-08 of handoff jarvis-remotion-master-project-studio-export.** Shipped so far:
 § 2, § 3 and § 5, the pure planner (Level 3 (Slice 03), `jarvis/domain/remotion_master_project.py`); § 6 and § 7, the workspace files and
 the generated composition (Level 3 (Slice 04), `jarvis/domain/remotion_master_files.py`); § 9 and § 11, the Studio master target and the
-live readiness read (Level 3 (Slice 05), `jarvis/core/remotion_studio_service.py`). Every other behaviour below is the
+live readiness read (Level 3 (Slice 05), `jarvis/core/remotion_studio_service.py`); § 10, the whole-video render scope (Level 3
+(Slice 06), `jarvis/domain/presentation_render_master.py`). Every other behaviour below is the
 contract the Slices implement, and every "is" means "must be" until the Slice that owns it lands (owners: § 16). Evidence for the choices: the handoff's Slice 01 audit (`tasks/jarvis-remotion-master-project-studio-export/slices/01-current-state-and-compatibility-audit/AUDIT.md`,
 real runs on the pinned Remotion 4.0.534). Decisions marked *decided by agent 0* were taken by the handoff's orchestrator under the Human's
 delegated autonomy (2026-10-13).
@@ -322,7 +323,7 @@ was refused 409; an edit of a mounted scene source is classified `scene` and blo
 then reopens in the same process with `state.json` schema 1 and the scene alone on the page (evidence: the handoff's
 `slices/05-remotion-studio-master-project/evidence/`).
 
-## 10. Whole-video render scope
+## 10. Whole-video render scope — Level 3 (Slice 06)
 
 **Request**: the existing route and bodies (`{snapshot_id, format, settings?}` or `{presentation_id, variant_id, expected_*_revision,
 authorised_boards?, format, settings?}`) with `settings.scope`:
@@ -340,8 +341,14 @@ authorised_boards?, format, settings?}`) with `settings.scope`:
   declared-config check against the plan's master composition (`_composition_mismatch` otherwise).
 - **Scene failure**: a `cancelRender` whose message starts with `jarvis_master_scene_failed:` ends the job as `presentation_render_master_scene_failed`
   naming the scene; no partial MP4, no fallback card.
-- **Verification**: today's video checks (one h264 stream, master width/height/fps, duration = range) plus, when any mounted source contains
-  `Audio`, `Video` or `OffthreadVideo`, an audio stream must exist (pinned ffprobe; Slice 06).
+- **Verification**: today's video checks (one h264 stream, master width/height/fps, duration = range) plus, when the rendered range overlaps a
+  scene whose source plays an `<Audio>` element, an audio stream must exist (pinned ffprobe; without ffprobe the check fails closed).
+  Corrected by Slice 06: a `<Video>` / `<OffthreadVideo>` alone does not require one (its clip may be silent and Remotion then writes no
+  audio track), and a range that holds no `<Audio>` scene requires none. The detection is **textual** (comments stripped, `<Audio` or
+  `<Html5Audio` in the scene's modules): an aliased import (`import {Audio as Sound}`) skips the check (the MP4 is verified like a scene
+  render, without the audio requirement); a user component named `Audio` or a muted `<Audio>` counts, and if Remotion then writes no audio
+  track the job fails `presentation_render_output_invalid` with « the whole video plays an <Audio> but the MP4 holds no audio stream »
+  (the user renders a range without that scene, or removes the element).
 - **Artifact**: one `presentation_video` derivative, one `rendered_from` relation to the snapshot, `render_flat: true`. Metadata for a master
   render: `render_scope: "master"`, `render_project_key`, `render_scene_count`, `render_composition: "JarvisPresentation"`, the master
   `render_fps` / `render_width` / `render_height`, the shared engine keys, and the MP4/finish keys of today; the per-scene keys
@@ -353,6 +360,22 @@ authorised_boards?, format, settings?}`) with `settings.scope`:
   `GET /v1/local-capabilities/remotion/render/master?snapshot_id=…`, relayed under `/api/local-capabilities/remotion/render/master`, returns
   the plan view of § 2 for that package (Slice 06).
 - **Preview** (`render/preview`) stays scene-scoped (the author's eye).
+
+**Implementation (Level 3, Slice 06).** `jarvis/domain/presentation_render.py`: `settings.scope` (`SETTINGS_KEYS`; absent or `"scene"` gives
+the same `RenderSettings`, so a scene render's `render_settings_sha256` is unchanged), `MasterTarget`, `MAX_MASTER_RENDER_FRAMES` (9000, the
+planner re-exports it), `presentation_render_master_incompatible` (409; `RenderError.extra` puts `reason`, `detail`, `scene_ids` in the HTTP
+envelope beside `code` and `message`), `presentation_render_master_scene_failed`, `master_scene_failure` (reads the boundary's marker).
+`jarvis/domain/presentation_render_master.py`: `choose_master(package)`, `master_files(package, target)` (re-plans the re-read package at
+execution: another `project_key` is `presentation_render_snapshot_invalid`), `audio_ranges` (textual `<Audio>` check per mounted scene).
+`PresentationRenderService.export` with `scope: "master"` first plans the LIVE variant (`MasterProjectReader.live_plan`, wired in
+`v2_app`) and refuses an incompatible one (409 `presentation_render_master_incompatible`) before anything is frozen; once frozen, the
+package's own plan is the authority. `PresentationRenderService.submit` resolves a master target before creating anything and queues it like any render (same queue, browser
+slot, cancellation, restart recovery, guard, disk budgets); the job runs `render-host.cjs` with entry `studio-root.tsx`, composition
+`JarvisPresentation` and input props `{}`; a master job view adds `scope`, `project_key`, `scene_count` (its `scene_id` is `null`).
+`RenderRunner.verify(..., audio_required=True)` checks the audio stream. `PresentationRenderService.master_readiness(snapshot_id)` serves
+`GET .../render/master?snapshot_id=` (the only render route that takes a query; the id must be a snapshot id), relayed by the Control Center
+(`jarvis/runtime/presentation_render_relay.py`, the id checked before the relay). MCP `remotion_export` does not take `scope` yet (Slice 07).
+Tests: `tests/unit/test_presentation_render_master.py`, routes and relay tests; real proof `tests/unit/test_presentation_render_master_real.py`.
 
 ## 11. Live readiness read — Level 3 (Slice 05)
 
@@ -426,7 +449,7 @@ unknown presentation or variant is the usual 404 `presentation_studio_unknown_*`
 | MasterProjectPlan, readiness codes, `project_key`, asset merge | 3 (Slice 03) | 3 | 03 |
 | Master workspace files, generated composition, boundary | 3 (Slice 04) | 3 | 04 |
 | Studio master target, ack, `state.json` schema 2, unpublished policy, live readiness route | 3 (Slice 05) | 3 | 05 |
-| Render scope `master`, bounds, Artifact metadata, frozen readiness route | 2 | 3 | 06 |
+| Render scope `master`, bounds, Artifact metadata, frozen readiness route | 3 (Slice 06) | 3 | 06 |
 | Voice spec rule, collision-free names, inspect block, `scope` in `remotion_export` | 2 | 3 | 07 |
 | Variants and Board entrypoints | 2 | 3 | 08 |
 | Master publish-back, master Player | 1 (non-goal) | 1 | — |

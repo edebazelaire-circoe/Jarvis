@@ -273,7 +273,7 @@ async def test_the_routes_do_not_collide_with_the_capability_operation_routes(st
     registered = {(r.method, r.path) for r in PresentationRenderProtocolRoutes(object()).routes() if r.method != "HEAD"}
     # native-studio-playback-fix Slice 13 adds the native preview, five segments deep like the jobs (never `/{capability_id}/{operation}`).
     assert registered == {("GET", PREFIX), ("GET", JOBS), ("POST", JOBS), ("GET", JOBS + "/{job_id}"), ("POST", JOBS + "/{job_id}/cancel"),
-                          ("POST", PREFIX + "/preview")}
+                          ("POST", PREFIX + "/preview"), ("GET", PREFIX + "/master")}  # master handoff Slice 06: whole-video readiness
     status, body = await call(stack.base, "POST", "/v1/local-capabilities/remotion/render", json={})
     assert status in (400, 404, 405) and body["error"]["code"] != "presentation_render_unavailable"  # the capability route answers, not ours
 
@@ -307,3 +307,49 @@ async def test_a_preview_whose_http_caller_left_is_cancelled_in_core(stack):
         await asyncio.sleep(0.05)
     assert [c for c in stack.render.calls if c[0] == "run"], "the preview had started rendering"
     assert not service._browser_slot.busy and service._previews_waiting == 0, "the caller left: the render was stopped, the browser freed"
+
+
+# ------------------------------------------------------------------ master handoff Slice 06: whole-video scope and readiness
+
+
+async def test_the_master_readiness_route_reads_a_snapshot_and_refuses_a_bad_query(stack):
+    snapshot, *_ = await frozen(stack)
+    status, body = await call(stack.base, "GET", f"{PREFIX}/master", params={"snapshot_id": snapshot})
+    assert status == 200 and body["master"]["status"] == "ready" and body["master"]["composition"]["id"] == "JarvisPresentation"
+    assert body["master"]["scenes"][0]["scene_id"] == SCENE_ID
+    for params in ({}, {"snapshot_id": "jart_x"}, {"snapshot_id": snapshot, "x": "1"}):
+        status, body = await call(stack.base, "GET", f"{PREFIX}/master", params=params)
+        assert status == 400 and body["error"]["code"] == "presentation_render_invalid", params
+    status, body = await call(stack.base, "GET", f"{PREFIX}/master",
+                              params={"snapshot_id": "jart_ps_" + "0" * 32 + "_" + "0" * 32 + "_p1_v1_a1"})
+    assert status == 409 and body["error"]["code"] == "presentation_render_snapshot_invalid"
+    status, body = await call(stack.base, "GET", JOBS, params={"snapshot_id": snapshot})
+    assert status == 400, "only the master route takes a query"
+
+
+async def test_a_master_job_is_created_and_an_incompatible_one_is_a_409_envelope_with_its_reason(stack):
+    await ready(stack)
+    snapshot, *_ = await frozen(stack)
+    status, body = await call(stack.base, "POST", JOBS, json={"snapshot_id": snapshot, "format": "mp4", "settings": {"scope": "master"}})
+    assert status == 202 and body["job"]["scope"] == "master" and body["job"]["scene_count"] == 1
+    job = await until_done(stack.base, body["job"]["job_id"])
+    assert job["state"] == "complete" and job["project_key"].startswith("mpk_")
+    status, body = await call(stack.base, "POST", JOBS, json={"snapshot_id": snapshot, "format": "still", "settings": {"scope": "master"}})
+    assert status == 400 and body["error"]["code"] == "presentation_render_invalid"
+    # a scene reading getInputProps: frozen fine, master refused with the plan's reason
+    reader = {**__import__("tests.fakes.remotion_scene", fromlist=["scene_files"]).scene_files()}
+    reader["src/lib/Title.tsx"] = reader["src/lib/Title.tsx"] + "import {getInputProps} from 'remotion';\nexport const p = () => getInputProps();\n"
+    prefab = "presentation-studio.p000000000009.s000000000009"
+    published = await stack.core.prefabs.save(scene_candidate(prefab, files=reader), actor="user")
+    created = await stack.core.presentation_studio.create({"title": "Lecteur"})
+    pid, vid = created.presentation.presentation_id, created.presentation.active_variant_id
+    variant = created.variants[0].to_document()
+    await stack.core.presentation_studio.save_variant(pid, vid, {
+        "expected_revision": variant["revision"], "title": variant["title"],
+        "scenes": [{"scene_id": SCENE_ID, "prefab": {"id": prefab, "version": published.version}}], "art_direction_id": None, "score_id": None})
+    view = await stack.core.presentation_studio.get(pid)
+    done = await stack.core.presentation_packager.freeze(pid, vid, expected_presentation_revision=view.presentation.revision,
+                                                         expected_variant_revision=view.variants[0].revision, authorised_boards={"default"})
+    status, body = await call(stack.base, "POST", JOBS, json={"snapshot_id": done["artifact_id"], "format": "mp4", "settings": {"scope": "master"}})
+    assert status == 409 and body["error"]["code"] == "presentation_render_master_incompatible"
+    assert body["error"]["reason"] == "master_input_props_reader" and body["error"]["scene_ids"] == [SCENE_ID] and body["error"]["detail"]

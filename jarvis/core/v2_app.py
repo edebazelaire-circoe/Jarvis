@@ -70,6 +70,7 @@ from jarvis.core.prefab_service import PrefabService
 from jarvis.core.presentation_artifacts import PresentationArtifacts
 from jarvis.core.presentation_live_refs import LiveRefResolver
 from jarvis.core.presentation_render_service import PresentationRenderService
+from jarvis.core.remotion_master_project import MasterProjectReader
 from jarvis.core.presentation_snapshot_packager import PresentationPackager
 from jarvis.core.presentation_studio_autosave import PresentationStudioHistory
 from jarvis.core.presentation_studio_edit import PresentationStudioEditService
@@ -447,7 +448,9 @@ class JarvisCoreApplication:
                 artifacts=self.artifacts, snapshots=self.presentation_artifacts, packager=self.presentation_packager,
                 runner=remotion_render_runner, installed_engine=remotion_render_runner.installed_engine,
                 capability_status=lambda: str(render_capabilities.host.status("remotion").get("status")), diagnostics=diagnostics,
-                preview_root=getattr(remotion_render_runner, "preview_dir", None))
+                preview_root=getattr(remotion_render_runner, "preview_dir", None),
+                # master handoff Slice 06 rework: a whole-video export plans the live variant before freezing (refused 409 when incompatible)
+                live_master=MasterProjectReader(studio=self.presentation_studio, prefabs=self.prefabs, diagnostics=diagnostics).live_plan)
         self.scene = SceneService(
             scene_repository or SQLiteSceneRepository(root / "state" / "scene.sqlite3"),
             diagnostics=diagnostics,

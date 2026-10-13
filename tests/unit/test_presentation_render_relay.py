@@ -159,3 +159,24 @@ async def test_a_pending_or_unknown_derivative_keeps_its_typed_refusal_and_a_dea
         assert truncated, "a partial file is never presented as a whole one"
         logged = "".join(f.read_text(encoding="utf-8", errors="replace") for f in tmp_path.rglob("*.jsonl"))
         assert "payload_stream_failed" in logged
+
+
+async def test_the_master_readiness_is_relayed_with_its_snapshot_id_only(tmp_path):
+    """master handoff Slice 06: the sixth address, read only, `?snapshot_id=` checked before anything reaches Core."""
+
+    snapshot = "jart_ps_" + "1" * 32 + "_" + "2" * 32 + "_p3_v4_a1"
+    core = RecordingCore((200, {"master": {"status": "ready"}}))
+    client = await client_for(tmp_path, core)
+    try:
+        response = await client.get(f"{RENDER}/master?snapshot_id={snapshot}")
+        assert response.status == 200 and (await response.json())["master"]["status"] == "ready"
+        [call] = core.calls
+        assert (call["method"], call["path"], call["timeout_s"]) == ("GET", f"{CORE}/master?snapshot_id={snapshot}", CREATE_TIMEOUT_S)
+        core.calls.clear()
+        for query in ("", "?snapshot_id=jart_x", f"?snapshot_id={snapshot}&x=1", f"?snapshot_id={snapshot}&snapshot_id={snapshot}",
+                      "?snapshot_id=jart_ps_../../v1/x"):
+            response = await client.get(f"{RENDER}/master{query}")
+            assert response.status == 400 and (await response.json())["error"]["code"] == "presentation_render_invalid", query
+        assert core.calls == []
+    finally:
+        await client.close()
