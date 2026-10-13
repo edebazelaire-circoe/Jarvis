@@ -1,0 +1,178 @@
+{
+ "slice": "05-remotion-studio-master-project",
+ "tested_head": "82bb0c7a",
+ "tested_head_note": "corrected by the Slice 05 QA polish: the run recorded git HEAD 10598193 (pre-Slice-05) because the Slice 05 code was not yet committed when it ran; the tested code is the Slice 05 code commit 82bb0c7a",
+ "durations_ms": {
+  "private_runtime_copy": 6821,
+  "studio_open_master_cold": 83916,
+  "studio_switch_variant_hot": 118
+ },
+ "runtime": "RemotionStack (real Core, real remotion studio via RemotionStudioRunner) on free loopback ports, throw-away data root with a private copy of the gate runtime's node_modules, headless Chrome over CDP; the live Jarvis and the user's own Remotion Studio were never contacted",
+ "plan": {
+  "status": "ready",
+  "project_key": "mpk_017aeef38dd7e2d304ff561e",
+  "composition": {
+   "id": "JarvisPresentation",
+   "width": 1280,
+   "height": 720,
+   "fps": 30,
+   "duration_in_frames": 135
+  },
+  "totals": {
+   "files": 7,
+   "bytes": 5428
+  },
+  "scenes": [
+   {
+    "scene_id": "pss_a00000000000",
+    "prefab_id": "presentation-studio.p0000000000b1.s000000000001",
+    "from_frame": 0,
+    "duration_in_frames": 30,
+    "mount": "src/scenes/pss_a00000000000/"
+   },
+   {
+    "scene_id": "pss_a00000000001",
+    "prefab_id": "presentation-studio.p0000000000b1.s000000000002",
+    "from_frame": 30,
+    "duration_in_frames": 45,
+    "mount": "src/scenes/pss_a00000000001/"
+   },
+   {
+    "scene_id": "pss_a00000000002",
+    "prefab_id": "presentation-studio.p0000000000b1.s000000000003",
+    "from_frame": 75,
+    "duration_in_frames": 60,
+    "mount": "src/scenes/pss_a00000000002/"
+   }
+  ]
+ },
+ "studio_open": {
+  "status": "ready",
+  "pin": null,
+  "target": {
+   "kind": "variant_master",
+   "presentation_id": "pst_976026dccf77a55f179815e926cd01e2",
+   "variant_id": "psv_2431f7d88733fb0b9ff8abc5cc69e05e",
+   "variant_revision": 2,
+   "project_key": "mpk_017aeef38dd7e2d304ff561e",
+   "scenes": [
+    {
+     "scene_id": "pss_a00000000000",
+     "prefab_id": "presentation-studio.p0000000000b1.s000000000001",
+     "version": 1
+    },
+    {
+     "scene_id": "pss_a00000000001",
+     "prefab_id": "presentation-studio.p0000000000b1.s000000000002",
+     "version": 1
+    },
+    {
+     "scene_id": "pss_a00000000002",
+     "prefab_id": "presentation-studio.p0000000000b1.s000000000003",
+     "version": 1
+    }
+   ],
+   "scene_count": 3,
+   "current_project_key": "mpk_017aeef38dd7e2d304ff561e",
+   "stale": false
+  },
+  "composition": {
+   "id": "JarvisPresentation",
+   "width": 1280,
+   "height": 720,
+   "fps": 30,
+   "duration_in_frames": 135
+  },
+  "work_copy": {
+   "modified_files": [],
+   "unpublished": 0,
+   "digest": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+   "set_aside": [],
+   "base": null,
+   "writable": true,
+   "edits_saved": 0,
+   "classified": []
+  }
+ },
+ "workspace_src": [
+  "src/master/Presentation.tsx",
+  "src/master/SceneBoundary.tsx",
+  "src/scenes/pss_a00000000000/Scene.tsx",
+  "src/scenes/pss_a00000000001/Scene.tsx",
+  "src/scenes/pss_a00000000002/Scene.tsx"
+ ],
+ "studio_page": {
+  "composition_listed": true,
+  "scene1_rendered": true,
+  "scene2_rendered": true,
+  "scene3_rendered": true,
+  "text_at_open": "File\nView\nComposition\nTools\nHelp\nwork\nCompositions\nAssets\nSearch...\nCtrl+K\nJarvisPresentation\nJarvisPresentation\n\nSCENE-1\n\n0\n\nInspector\nJobs\nJarvisPresentation\nstudio-root.tsx:6\nsrc\\master\\Presentation.tsx:11\nMetadata\nDimensions\n1280\n720\nFrame rate\n30fps\nDuration\n00:04.15\nActions\nAdd Solid\nAdd asset...\nAdd composition...\nGenerate with agent...\nBrowse Elements\nFit\n1x\nRender\n<Series>\n<Series.Sequence>\n<AbsoluteFill>\n<Series.Sequence>\n<Series.Sequence>\n00:00.00\n0\n0\n0\n0",
+  "console_errors": []
+ },
+ "switch_variant": {
+  "stale_refusal": {
+   "project_key": "mpk_4891c0a40c846286d19d9607",
+   "variant_revision": 2,
+   "scene_count": 2,
+   "code": "remotion_studio_master_stale",
+   "message": "the variant changed since the confirmation (project key mpk_4891c0a40c846286d19d9607, revision 2, 2 scene(s)): confirm again"
+  },
+  "target": {
+   "kind": "variant_master",
+   "presentation_id": "pst_29d4e5a75aac85b4dbb5765cd13c1dc1",
+   "variant_id": "psv_6ba2fe5a16533e42cfbe39e6110e35c0",
+   "variant_revision": 2,
+   "project_key": "mpk_4891c0a40c846286d19d9607",
+   "scenes": [
+    {
+     "scene_id": "pss_b00000000002",
+     "prefab_id": "presentation-studio.p0000000000b1.s000000000003",
+     "version": 1
+    },
+    {
+     "scene_id": "pss_b00000000000",
+     "prefab_id": "presentation-studio.p0000000000b1.s000000000001",
+     "version": 1
+    }
+   ],
+   "scene_count": 2,
+   "current_project_key": "mpk_4891c0a40c846286d19d9607",
+   "stale": false
+  }
+ },
+ "unpublished": {
+  "classified": [
+   {
+    "path": "src/scenes/pss_b00000000002/Scene.tsx",
+    "class": "scene",
+    "scene_id": "pss_b00000000002"
+   }
+  ],
+  "refusal": "remotion_studio_unpublished_edits",
+  "after_discard": {
+   "modified_files": [],
+   "unpublished": 0,
+   "digest": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+   "set_aside": [],
+   "base": null,
+   "writable": true,
+   "edits_saved": 1,
+   "classified": []
+  }
+ },
+ "back_to_scene": {
+  "target": {
+   "kind": "scene",
+   "prefab_id": "presentation-studio.p0000000000b1.s000000000001",
+   "version": 1
+  },
+  "state_schema": 1,
+  "text": "File\nView\nComposition\nTools\nHelp\nwork\nCompositions\nAssets\nSearch...\nCtrl+K\nScene\nScene\n\nM1\n\n0\n\nInspector\nJobs\nScene\nstudio-root.tsx:6\nMetadata\nDimensions\n1280\n720\nFrame rate\n30fps\nDuration\n00:01.00\nActions\nGenerate with agent...\nFit\n1x\nRender\n<AbsoluteFill>\n00:00.00\n0\n0"
+ },
+ "evidence_files": [
+  "studio-master-open.png",
+  "studio-master-scene2.png",
+  "studio-master-scene3.png",
+  "studio-scene-after-master.png"
+ ]
+}

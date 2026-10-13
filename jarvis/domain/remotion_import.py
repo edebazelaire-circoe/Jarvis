@@ -580,7 +580,7 @@ def _wrapper(tag: CompositionTag, texts: Mapping[str, str], entry_name: str, ori
     def import_line(local: str, spec: str, imported: str) -> str:
         if not spec.startswith("."):
             raise UpstreamRefusal(ImportErrorCode.COMPONENT_UNRESOLVED, f"{local!r} comes from the package {spec!r}, not from the project source")
-        target = _resolve(here, spec, texts)
+        target = resolve_relative(here, spec, texts)
         if target is None:
             raise UpstreamRefusal(ImportErrorCode.IMPORT_UNRESOLVED, f"{tag.file}: cannot resolve {spec!r}")
         rel = _relative(entry_dir, target)
@@ -638,7 +638,11 @@ def _wrapper(tag: CompositionTag, texts: Mapping[str, str], entry_name: str, ori
 
 # ------------------------------------------------------------------ graphe d'imports
 
-def _resolve(from_dir: str, spec: str, texts: Mapping[str, str]) -> str | None:
+def resolve_relative(from_dir: str, spec: str, texts: Mapping[str, str]) -> str | None:
+    """The module of `texts` that the relative specifier `spec`, written in a module of folder `from_dir`, resolves to (extension and
+    `index` probing as the bundler does), or `None` when it escapes the root or names no module of `texts`. Also the master planner's
+    defensive re-check (`remotion_master_project`, `master_source_import_refused`)."""
+
     base = posixpath.normpath(posixpath.join(from_dir, spec))
     if base.startswith("../") or base == "..":
         return None
@@ -687,12 +691,12 @@ def _reach(entry: str, modules: Mapping[str, str], archive: TarContent, base: st
         # (prudence : un `import` en commentaire d'un paquet hors liste refuse aussi), un relatif trouvé là est suivi s'il existe.
         for spec in dict.fromkeys(strict + specifiers(text, comments_stripped=False)):
             if spec not in strict and spec.startswith("."):
-                hidden = _resolve(posixpath.dirname(path), spec, modules)
+                hidden = resolve_relative(posixpath.dirname(path), spec, modules)
                 if hidden is not None:
                     queue.append(hidden)
                 continue
             if spec.startswith("."):
-                target = _resolve(posixpath.dirname(path), spec, modules)
+                target = resolve_relative(posixpath.dirname(path), spec, modules)
                 if target is not None:
                     queue.append(target)
                     continue

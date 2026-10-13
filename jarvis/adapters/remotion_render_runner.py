@@ -310,7 +310,11 @@ class RemotionRenderRunner:
     def _out_name(fmt: str) -> str:
         return {"mp4": "out.mp4", "still": "out.png", "pdf": "out.pdf"}[fmt]
 
-    def verify(self, job_id: str, fmt: str, *, width: int, height: int, frames: int | None, pages: int | None) -> VerifiedOutput:
+    def verify(self, job_id: str, fmt: str, *, width: int, height: int, frames: int | None, pages: int | None,
+               audio_required: bool = False) -> VerifiedOutput:
+        """`audio_required` (a master render whose scenes play an `<Audio>`, Slice 06 of the master handoff): the MP4 must hold an audio
+        stream, which only ffprobe can tell (without it the check fails closed)."""
+
         job = self.job_dir(job_id)
         kind = RenderFormat(fmt)
 
@@ -351,15 +355,18 @@ class RemotionRenderRunner:
                 if count != pages:
                     raise bad(f"the PDF has {count} pages, expected {pages}")
                 return VerifiedOutput(path, size, sha.hexdigest(), width, height, None, None, count, "pdf")
-            return self._verify_video(path, size, sha.hexdigest(), width, height, frames, bad)
+            return self._verify_video(path, size, sha.hexdigest(), width, height, frames, bad, audio_required=audio_required)
         except O.OutputProblem as exc:
             raise bad(str(exc)) from None
         except OSError as exc:
             raise bad(f"{type(exc).__name__}: the output could not be read") from None
 
-    def _verify_video(self, path: Path, size: int, sha: str, width: int, height: int, frames: int | None, bad) -> VerifiedOutput:
+    def _verify_video(self, path: Path, size: int, sha: str, width: int, height: int, frames: int | None, bad, *,
+                      audio_required: bool = False) -> VerifiedOutput:
         ffprobe = self._ffprobe()
         if ffprobe is None:
+            if audio_required:
+                raise bad("the video must carry an audio stream and ffprobe (the pinned compositor) is missing to check it")
             return VerifiedOutput(path, size, sha, width, height, None, None, None, "header")
         try:
             result = subprocess.run(
@@ -372,9 +379,12 @@ class RemotionRenderRunner:
         if result.returncode != 0:
             raise bad("ffprobe could not read the video: " + D.clean_detail(result.stderr, 160))
         try:
-            facts = O.video_facts(json.loads(result.stdout))
+            probe = json.loads(result.stdout)
+            facts = O.video_facts(probe)
         except (ValueError, O.OutputProblem) as exc:
             raise bad(f"the video is not readable: {D.clean_detail(exc, 160)}") from None
+        if audio_required and not O.has_audio_stream(probe):
+            raise bad("the whole video plays an <Audio> but the MP4 holds no audio stream")
         if (facts.width, facts.height) != (width, height) or facts.codec != D.CODEC:
             raise bad(f"the video is {facts.width}x{facts.height} {facts.codec}, expected {width}x{height} {D.CODEC}")
         if frames is not None and facts.frames is not None and facts.frames != frames:

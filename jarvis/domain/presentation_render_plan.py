@@ -63,23 +63,27 @@ def render_props(package: FrozenPackage, target: SceneTarget) -> dict[str, Any]:
     """Valeurs d'entrée de la composition : défauts figés du manifeste, puis valeurs d'instance de la scène figée."""
 
     row = next((r for r in package.manifest["prefabs"] if (r["prefab_id"], r["version"]) == (target.prefab_id, target.version)), {})
-    defaults = row.get("props_defaults")
-    props: dict[str, Any] = dict(defaults) if isinstance(defaults, dict) else {}
     scene = scene_document(package, target.scene_id)
     instance = scene.get("props", {})
     if not isinstance(instance, dict):
         raise RenderError(C.SNAPSHOT_INVALID, f"scene {target.scene_id}: props must be an object")
-    props.update(instance)
-    # Slice 22: `data` is an input of the composition too (`inputProps.data`, as in the Player): the frozen defaults of the manifest, then the
-    # frozen values of the scene. A scene that does not use `data` (empty on both sides) gets no key, exactly as before.
-    data_defaults = row.get("data_defaults")
     instance_data = scene.get("data", {})
     if not isinstance(instance_data, dict):
         raise RenderError(C.SNAPSHOT_INVALID, f"scene {target.scene_id}: data must be an object")
-    merged = {**(data_defaults if isinstance(data_defaults, dict) else {}), **instance_data}
-    if merged and "data" not in props:
-        props["data"] = merged
-    return props
+    return merge_props(row.get("props_defaults"), row.get("data_defaults"), instance, instance_data)
+
+
+def merge_props(props_defaults: object, data_defaults: object, props: Mapping[str, Any], data: Mapping[str, Any]) -> dict[str, Any]:
+    """The input props of a scene composition: manifest defaults, then the instance `props`. Slice 22: `data` is an input too
+    (`inputProps.data`, as in the Player): defaults then instance values, under `props.data`; a scene that does not use `data` (empty on
+    both sides) gets no key. Shared by the scene render and the master planner (`remotion_master_project`)."""
+
+    merged_props: dict[str, Any] = dict(props_defaults) if isinstance(props_defaults, dict) else {}
+    merged_props.update(props)
+    merged_data = {**(data_defaults if isinstance(data_defaults, dict) else {}), **data}
+    if merged_data and "data" not in merged_props:
+        merged_props["data"] = merged_data
+    return merged_props
 
 
 def plan_files(package: FrozenPackage, target: SceneTarget) -> tuple[dict[str, bytes], dict[str, Any]]:

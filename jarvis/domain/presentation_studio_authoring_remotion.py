@@ -48,6 +48,9 @@ SPEC_REQUIRED = frozenset({"title", "files"})
 SPEC_OPTIONAL = frozenset({"description", "composition", "props", "data", "sample", "assets", "live_refs", "inspiration"})
 COMPOSITION_KEYS = frozenset({"width", "height", "fps", "duration_in_frames"})
 DEFAULT_COMPOSITION = {"width": 1280, "height": 720, "fps": 30, "duration_in_frames": 150}
+#: Master-project Slice 07 (`docs/remotion-master-project.md` M11): the spec a NATIVE bundle gets for what it leaves out, so a brand-new
+#: native deck is one whole Remotion video by construction. Guided and structured bundles keep `DEFAULT_COMPOSITION` (unchanged).
+NATIVE_DEFAULT_COMPOSITION = {"width": 1920, "height": 1080, "fps": 30, "duration_in_frames": 150}
 MAX_TITLE = 80
 MAX_DESCRIPTION = 200
 MAX_LIVE_REFS = 8
@@ -124,9 +127,9 @@ def source_id(key: str, title: str, files: Mapping[str, Any], props: object, com
     return f"{NAMESPACE}rm-{key[:18]}-{digest[:8]}"
 
 
-def _composition(raw: object, where: str) -> Composition:
+def _composition(raw: object, where: str, defaults: Mapping[str, Any] = DEFAULT_COMPOSITION) -> Composition:
     data = _exact_keys(raw if raw is not None else {}, where, set(), COMPOSITION_KEYS)
-    merged = {**DEFAULT_COMPOSITION, **data}
+    merged = {**defaults, **data}
     return Composition(COMPOSITION_ID_DEFAULT, merged["width"], merged["height"], merged["fps"], merged["duration_in_frames"])
 
 
@@ -223,9 +226,10 @@ def _sample(schema: object, given: object) -> dict[str, Any]:
     return {**(base if isinstance(base, dict) else {}), **(given if isinstance(given, dict) else {})}
 
 
-def generate_source(key: str, raw: object, pin: EnginePin, where: str) -> GeneratedSource:
+def generate_source(key: str, raw: object, pin: EnginePin, where: str, *, native: bool = False) -> GeneratedSource:
     """`{title, files, ...}` -> the candidate of a Remotion source. Raises `PresentationStudioError` (a schema problem) on a bad shape;
-    the manifest, the module paths and the bounds are then judged ONCE by `parse_candidate` (the caller), with every error."""
+    the manifest, the module paths and the bounds are then judged ONCE by `parse_candidate` (the caller), with every error.
+    `native`: the composition keys the bundle leaves out come from `NATIVE_DEFAULT_COMPOSITION` (master-project Slice 07)."""
 
     data = _exact_keys(raw, where, SPEC_REQUIRED, SPEC_OPTIONAL)
     title = data["title"]
@@ -249,7 +253,8 @@ def generate_source(key: str, raw: object, pin: EnginePin, where: str) -> Genera
             files[path] = base64.b64decode(body, validate=True)
         except ValueError:
             raise _fail(f"{where}.assets: `{path[:60]}` is not base64") from None
-    composition = _composition(data.get("composition"), f"{where}.composition")
+    composition = _composition(data.get("composition"), f"{where}.composition",
+                               NATIVE_DEFAULT_COMPOSITION if native else DEFAULT_COMPOSITION)
     props = _props_schema(data.get("props"), f"{where}.props")
     sample = data.get("sample", {})
     sample = _exact_keys(sample, f"{where}.sample", set(), {"props", "data"})
@@ -265,5 +270,5 @@ def generate_source(key: str, raw: object, pin: EnginePin, where: str) -> Genera
     return GeneratedSource(candidate, prefab_id, refs, _inspiration(data.get("inspiration"), f"{where}.inspiration"))
 
 
-__all__ = ["CATALOG_STACK", "DEFAULT_COMPOSITION", "GeneratedSource", "NAMESPACE", "NEUTRAL_THEME", "SPEC_OPTIONAL", "SPEC_REQUIRED",
+__all__ = ["CATALOG_STACK", "DEFAULT_COMPOSITION", "NATIVE_DEFAULT_COMPOSITION", "GeneratedSource", "NAMESPACE", "NEUTRAL_THEME", "SPEC_OPTIONAL", "SPEC_REQUIRED",
            "THEME_PROP", "THEME_SCHEMA", "apply_theme", "generate_source", "source_id", "theme_values"]

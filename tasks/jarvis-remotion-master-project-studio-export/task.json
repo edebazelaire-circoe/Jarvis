@@ -1,0 +1,27 @@
+{
+  "project": "Jarvis",
+  "slug": "jarvis-remotion-master-project-studio-export",
+  "title": "Remotion Master Project, Studio and Whole-Video Export",
+  "goal": "Add an additive variant-level Remotion master project so native Remotion Studio opens the whole video, whole-variant source rendering/export works with audio/video, and voice-native scene edits automatically regenerate the master path without replacing the current Variants playback runtime.",
+  "source": "User architecture review 2026-10-13 + screenshot + GitHub main inspection after jarvis-remotion-native-studio-playback-fix",
+  "repository_expected": "edebazelaire-circoe/Jarvis",
+  "reference_commit_static_only": "d101d88740c4cf10c2da8114384d0148ec05c3ff",
+  "drive_destination": "Jarvis/task/to-do/jarvis-remotion-master-project-studio-export/",
+  "status": "planned",
+  "slice_count": 10,
+  "task_type_resolution_required": true,
+  "human_validation_ids": [
+    "HV-RMP-00-01",
+    "HV-RMP-05-01",
+    "HV-RMP-07-01",
+    "HV-RMP-08-01",
+    "HV-RMP-09-01"
+  ],
+  "phases_in_scope": [
+    "A-master-project",
+    "B-studio-and-whole-video-export"
+  ],
+  "phase_c_explicitly_deferred": true,
+  "preserve_existing_scene_runtime": true,
+  "not_authorized_to_modify_live_core": true
+}

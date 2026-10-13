@@ -72,7 +72,11 @@ SLICE_21_AGENT_DOOR = ("remotion_mcp.py", "remotion_mcp_tools.py", "mcp_tool_met
                        "presentation_studio_mcp_support.py")
 #: native-studio-playback-fix Slice 12: pure domain code that reuses the importer's import scanner (`specifiers`, one source of truth for
 #: what an import specifier is). It may hold exactly that import line and nothing else of the importer: no route, no service, no call.
-SCANNER_REUSE = {"remotion_studio_workspace.py": "from jarvis.domain.remotion_import import specifiers"}
+#: master-project Slice 03: the master planner's defensive import re-check reuses the same scanner and the importer's relative resolver.
+SCANNER_REUSE = {"remotion_studio_workspace.py": "from jarvis.domain.remotion_import import specifiers",
+                 "remotion_master_project.py": "from jarvis.domain.remotion_import import resolve_relative, specifiers, strip_comments",
+                 # master-project Slice 06: the master render's `<Audio>` check reads module texts without comments.
+                 "presentation_render_master.py": "from jarvis.domain.remotion_import import strip_comments"}
 
 
 def test_no_control_center_relay_or_page_references_the_importer_and_the_agent_door_is_the_one_server():

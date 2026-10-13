@@ -1,0 +1,345 @@
+{
+ "runtime": "remotion, @remotion/bundler, @remotion/renderer 4.0.534 (pinned gate runtime via read-only junction)",
+ "driver": "control-project/probe.cjs (unguarded probe driver)",
+ "bundle_ms": 5332,
+ "jobs": [
+  {
+   "id": "ok",
+   "composition": "MASTER-OK",
+   "kind": "mp4",
+   "ok": true,
+   "error": null,
+   "selected": {
+    "width": 640,
+    "height": 360,
+    "fps": 30,
+    "durationInFrames": 180
+   },
+   "elapsed_ms": 9180,
+   "scenes_in_order": [
+    {
+     "scene": "a",
+     "first_local_frame": 0,
+     "last_local_frame": 29,
+     "frames_seen": 30,
+     "useVideoConfig": [
+      "640x360@30 durationInFrames=30"
+     ]
+    },
+    {
+     "scene": "b",
+     "first_local_frame": 0,
+     "last_local_frame": 44,
+     "frames_seen": 45,
+     "useVideoConfig": [
+      "640x360@30 durationInFrames=45"
+     ]
+    },
+    {
+     "scene": "c",
+     "first_local_frame": 0,
+     "last_local_frame": 59,
+     "frames_seen": 60,
+     "useVideoConfig": [
+      "640x360@30 durationInFrames=60"
+     ]
+    },
+    {
+     "scene": "c2",
+     "first_local_frame": 0,
+     "last_local_frame": 44,
+     "frames_seen": 45,
+     "useVideoConfig": [
+      "640x360@30 durationInFrames=45"
+     ]
+    }
+   ],
+   "browser_errors": []
+  },
+  {
+   "id": "ok",
+   "composition": "MASTER-OK",
+   "kind": "still",
+   "ok": true,
+   "error": null,
+   "selected": {
+    "width": 640,
+    "height": 360,
+    "fps": 30,
+    "durationInFrames": 180
+   },
+   "elapsed_ms": 3138,
+   "scenes_in_order": [
+    {
+     "scene": "a",
+     "first_local_frame": 0,
+     "last_local_frame": 29,
+     "frames_seen": 2,
+     "useVideoConfig": [
+      "640x360@30 durationInFrames=30"
+     ]
+    },
+    {
+     "scene": "b",
+     "first_local_frame": 0,
+     "last_local_frame": 44,
+     "frames_seen": 2,
+     "useVideoConfig": [
+      "640x360@30 durationInFrames=45"
+     ]
+    },
+    {
+     "scene": "c",
+     "first_local_frame": 0,
+     "last_local_frame": 59,
+     "frames_seen": 3,
+     "useVideoConfig": [
+      "640x360@30 durationInFrames=60"
+     ]
+    },
+    {
+     "scene": "c2",
+     "first_local_frame": 0,
+     "last_local_frame": 44,
+     "frames_seen": 2,
+     "useVideoConfig": [
+      "640x360@30 durationInFrames=45"
+     ]
+    }
+   ],
+   "browser_errors": []
+  },
+  {
+   "id": "mixed",
+   "composition": "MASTER-MIXED",
+   "kind": "still",
+   "ok": true,
+   "error": null,
+   "selected": {
+    "width": 640,
+    "height": 360,
+    "fps": 30,
+    "durationInFrames": 180
+   },
+   "elapsed_ms": 1888,
+   "scenes_in_order": [
+    {
+     "scene": "a",
+     "first_local_frame": 0,
+     "last_local_frame": 0,
+     "frames_seen": 1,
+     "useVideoConfig": [
+      "640x360@30 durationInFrames=30"
+     ]
+    },
+    {
+     "scene": "d60",
+     "first_local_frame": 0,
+     "last_local_frame": 119,
+     "frames_seen": 3,
+     "useVideoConfig": [
+      "640x360@30 durationInFrames=120"
+     ]
+    },
+    {
+     "scene": "e",
+     "first_local_frame": 0,
+     "last_local_frame": 29,
+     "frames_seen": 2,
+     "useVideoConfig": [
+      "640x360@30 durationInFrames=30"
+     ]
+    }
+   ],
+   "browser_errors": []
+  },
+  {
+   "id": "seqdims",
+   "composition": "MASTER-SEQDIMS",
+   "kind": "still",
+   "ok": true,
+   "error": null,
+   "selected": {
+    "width": 640,
+    "height": 360,
+    "fps": 30,
+    "durationInFrames": 30
+   },
+   "elapsed_ms": 450,
+   "scenes_in_order": [
+    {
+     "scene": "e",
+     "first_local_frame": 0,
+     "last_local_frame": 0,
+     "frames_seen": 1,
+     "useVideoConfig": [
+      "360x640@30 durationInFrames=30"
+     ]
+    }
+   ],
+   "browser_errors": []
+  },
+  {
+   "id": "collide",
+   "composition": "MASTER-COLLIDE",
+   "kind": "still",
+   "ok": true,
+   "error": null,
+   "selected": {
+    "width": 640,
+    "height": 360,
+    "fps": 30,
+    "durationInFrames": 30
+   },
+   "elapsed_ms": 769,
+   "scenes_in_order": [
+    {
+     "scene": "f",
+     "first_local_frame": 0,
+     "last_local_frame": 0,
+     "frames_seen": 1,
+     "useVideoConfig": [
+      "640x360@30 durationInFrames=15"
+     ]
+    },
+    {
+     "scene": "g",
+     "first_local_frame": 0,
+     "last_local_frame": 0,
+     "frames_seen": 1,
+     "useVideoConfig": [
+      "640x360@30 durationInFrames=15"
+     ]
+    }
+   ],
+   "browser_errors": []
+  },
+  {
+   "id": "ns",
+   "composition": "MASTER-NS",
+   "kind": "still",
+   "ok": false,
+   "error": "Error: Error loading image with src: http://localhost:3000/public/logo.png",
+   "selected": {
+    "width": 640,
+    "height": 360,
+    "fps": 30,
+    "durationInFrames": 15
+   },
+   "elapsed_ms": 3412,
+   "scenes_in_order": [
+    {
+     "scene": "h",
+     "first_local_frame": 0,
+     "last_local_frame": 0,
+     "frames_seen": 1,
+     "useVideoConfig": [
+      "640x360@30 durationInFrames=15"
+     ]
+    }
+   ],
+   "browser_errors": [
+    "Failed to load resource: the server responded with a status of 404 (Not Found)"
+   ]
+  },
+  {
+   "id": "throw-boundary",
+   "composition": "MASTER-THROW-BOUNDARY",
+   "kind": "mp4",
+   "ok": true,
+   "error": null,
+   "selected": {
+    "width": 640,
+    "height": 360,
+    "fps": 30,
+    "durationInFrames": 40
+   },
+   "elapsed_ms": 2245,
+   "scenes_in_order": [
+    {
+     "scene": "a",
+     "first_local_frame": 0,
+     "last_local_frame": 9,
+     "frames_seen": 10,
+     "useVideoConfig": [
+      "640x360@30 durationInFrames=10"
+     ]
+    },
+    {
+     "scene": "t",
+     "first_local_frame": 0,
+     "last_local_frame": 4,
+     "frames_seen": 5,
+     "useVideoConfig": [
+      "640x360@30 durationInFrames=20"
+     ]
+    },
+    {
+     "scene": "b",
+     "first_local_frame": 0,
+     "last_local_frame": 9,
+     "frames_seen": 10,
+     "useVideoConfig": [
+      "640x360@30 durationInFrames=10"
+     ]
+    }
+   ],
+   "browser_errors": [
+    "JSHandle@error"
+   ]
+  },
+  {
+   "id": "throw-boundary",
+   "composition": "MASTER-THROW-BOUNDARY",
+   "kind": "still",
+   "ok": true,
+   "error": null,
+   "selected": {
+    "width": 640,
+    "height": 360,
+    "fps": 30,
+    "durationInFrames": 40
+   },
+   "elapsed_ms": 476,
+   "scenes_in_order": [],
+   "browser_errors": [
+    "JSHandle@error"
+   ]
+  },
+  {
+   "id": "throw-raw",
+   "composition": "MASTER-THROW-RAW",
+   "kind": "mp4",
+   "ok": false,
+   "error": "scene t exploded at local frame 5",
+   "selected": {
+    "width": 640,
+    "height": 360,
+    "fps": 30,
+    "durationInFrames": 40
+   },
+   "elapsed_ms": 963,
+   "scenes_in_order": [
+    {
+     "scene": "a",
+     "first_local_frame": 0,
+     "last_local_frame": 9,
+     "frames_seen": 10,
+     "useVideoConfig": [
+      "640x360@30 durationInFrames=10"
+     ]
+    },
+    {
+     "scene": "t",
+     "first_local_frame": 0,
+     "last_local_frame": 4,
+     "frames_seen": 5,
+     "useVideoConfig": [
+      "640x360@30 durationInFrames=20"
+     ]
+    }
+   ],
+   "browser_errors": []
+  }
+ ]
+}

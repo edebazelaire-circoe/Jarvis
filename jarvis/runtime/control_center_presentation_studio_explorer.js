@@ -47,6 +47,8 @@
   const Run=root.JarvisVariantsRun||(typeof require==='function'?require('./control_center_presentation_studio_run.js'):null);
   /* « Remotion Studio » sous la vidéo (Slice 11) : la porte vers l'éditeur natif, sur la scène à l'écran, son pin exact. */
   const Rms=root.JarvisVariantsRemotionStudio||(typeof require==='function'?require('./control_center_presentation_studio_explorer_remotion.js'):null);
+  /* « Exporter la vidéo » (master-project-studio-export Slice 08): the whole video's export, beside the Remotion Studio door. */
+  const Vx=root.JarvisVariantsVideoExport||(typeof require==='function'?require('./control_center_presentation_studio_explorer_export.js'):null);
   const Frames=()=>root.JarvisRemotionFrame||(typeof require==='function'?require('./control_center_remotion_frame.js'):null);
   const Clock=()=>root.JarvisCompositionClock||(typeof require==='function'?require('./control_center_composition_clock.js'):null);
   const {ROUTE,PLAYBACK_ROUTE,COMMAND_ROUTE,STATE_ROUTE,HOST_ID,OBJECT_ID,PREVIEW_OBJECT_ID,STAGE_OBJECT_ID,STYLE_ID,ROW_H,MAX_DEPTH_SHOWN,INDENT_PX,TYPEAHEAD_MS,PAGE_TOKEN,PAGE_TOKEN_HEADER,
@@ -166,7 +168,7 @@
     function ensureStyle(){
       if(!doc||typeof doc.getElementById!=='function'||doc.getElementById(STYLE_ID))return;
       const style=doc.createElement('style');
-      style.id=STYLE_ID;style.textContent=CSS+(Cmp&&Cmp.CSS||'')+(Upgrades&&Upgrades.CSS||'')+(Run&&Run.CSS||'')+(Rms&&Rms.CSS||'');
+      style.id=STYLE_ID;style.textContent=CSS+(Cmp&&Cmp.CSS||'')+(Upgrades&&Upgrades.CSS||'')+(Run&&Run.CSS||'')+(Rms&&Rms.CSS||'')+(Vx&&Vx.CSS||'');
       (doc.head||doc.body).appendChild(style);
     }
 
@@ -295,12 +297,23 @@
         if(!scene)return null;
         const node=nodeOf(p.variantId);
         return {presentationId:S.pid,variantId:p.variantId,variantNumber:node?node.variant_number:null,revision:p.doc?p.doc.revision:null,
-          scene,index:p.scenes.indexOf(scene),scenes:p.scenes};
+          presentationTitle:S.presentationTitle,scene,index:p.scenes.indexOf(scene),scenes:p.scenes};
       },
       running:()=>!!S.run,isOpen:()=>S.open,
       /* Slice 12 : après « Publier dans la variante… » ou « Revenir », la variante est relue (le Player prend la nouvelle version). */
       reload:()=>refresh(),
+      /* master Slice 08: the whole video's readiness changed (read once per variant revision): the export reads the same view. */
+      onMaster:()=>{if(videoExport)videoExport.sync()},
       pause:()=>{const v=seq?seq.view():null;if(v&&(v.phase==='playing'||v.phase==='waiting')){seq.pause();log('playback_paused_for_remotion_studio',{})}}});
+    /* « Exporter la vidéo » (master Slice 08): the variant on screen, its exact revisions, and the door's master view (never a second read). */
+    const videoExport=Vx?Vx.createVideoExport({doc,el,attrs,button,later,cancelLater,now,log,announce,fetch:fetchImpl,isOpen:()=>S.open,
+      running:()=>!!S.run,master:()=>door.master(),rereadMaster:()=>door.rereadMaster(),reload:()=>refresh(),
+      scene:()=>{
+        const p=S.preview;
+        if(p.status!=='ready'||S.run||!p.doc)return null;
+        return {presentationId:S.pid,variantId:p.variantId,revision:Number.isInteger(p.doc.revision)?p.doc.revision:null,
+          presentationRevision:S.graph&&Number.isInteger(S.graph.revision)?S.graph.revision:null};
+      }}):null;
 
     function build(){
       if(ui.host)return ui.host;
@@ -396,8 +409,13 @@
          title and « Présenter » (not a playback control). During a run row 2 gives way to the presenter strip; in fullscreen only row 1 shows. */
       /* Slice 11 (§ 6 #22): « Remotion Studio » beside « Présenter » on the scene row, its state line under the row (only when it has something to say). */
       ui.rmsButton=door.buildButton();ui.rmsStatus=door.buildStatus();
-      note.appendChild(ui.transport);note.appendChild(ui.sceneCount);note.appendChild(sceneLine);note.appendChild(ui.rmsButton);note.appendChild(ui.present);
+      /* master Slice 08: « Exporter la vidéo » between « Remotion Studio » and « Présenter »; its line under the door's. */
+      ui.vxButton=videoExport?videoExport.buildButton():null;ui.vxStatus=videoExport?videoExport.buildStatus():null;
+      note.appendChild(ui.transport);note.appendChild(ui.sceneCount);note.appendChild(sceneLine);note.appendChild(ui.rmsButton);
+      if(ui.vxButton)note.appendChild(ui.vxButton);
+      note.appendChild(ui.present);
       note.appendChild(ui.rmsStatus);
+      if(ui.vxStatus)note.appendChild(ui.vxStatus);
       ui.strip=el('div','jvx-strip');
       attrs(ui.strip,{role:'listbox','aria-label':'Scènes de la variante','aria-orientation':'horizontal'});
       const bottom=el('div','jvx-bottom');
@@ -1790,6 +1808,7 @@
       ui.stopRun.hidden=false;ui.present.hidden=true;
       ui.sceneCount.hidden=true;ui.sceneLine.hidden=true;   // the presenter strip says the scene and the item (Slice 02 inventory § 2)
       ui.rmsButton.hidden=true;ui.rmsStatus.hidden=true;   // Slice 11: Remotion Studio opens when the run has stopped
+      if(ui.vxButton){ui.vxButton.hidden=true;ui.vxStatus.hidden=true}   // master Slice 08: the export too
       chrome.sync();
       const pausing=m.pause.command==='pause';
       ui.playAllLabel.textContent=m.pause.label;
@@ -1867,6 +1886,7 @@
       ui.stopRun.hidden=true;ui.present.hidden=false;
       ui.sceneCount.hidden=false;ui.sceneLine.hidden=false;ui.rmsButton.hidden=false;
       door.render();
+      if(videoExport)videoExport.render();
       const blocked=presentBlocked();
       attrs(ui.present,{'aria-disabled':blocked?'true':'false',title:blocked||'Présenter cette variante : vous, Jarvis, ou une répétition (la partition mène)'});
       if(ui.presenter)ui.presenter.hidden=true;
@@ -2191,6 +2211,7 @@
       }
       cmp.shutdown();
       door.stop();
+      if(videoExport)videoExport.stop();
       drag=null;   // a drag cut short by the close: no resume, and a reopened slider does not seek on hover
       if(seq)seq.reset('closed');
       unmountPreview();
@@ -2287,6 +2308,9 @@
       /* Slice 11: the « Remotion Studio » door (the same as the button: confirmation first, then Core's open with the scene's exact pin). */
       remotionStudio:Object.freeze({request:o=>door.request(Object.assign({via:'api'},o||{})),open:o=>openRemotionStudio(o),state:()=>door.state(),
         model:()=>door.model(),refresh:()=>door.refresh()}),
+      /* master Slice 08: « Exporter la vidéo » (proofs: the same as the button). */
+      videoExport:Object.freeze({start:o=>videoExport?videoExport.start(Object.assign({via:'api'},o||{})):Promise.resolve({state:'refused'}),
+        state:()=>videoExport?videoExport.state():null,model:()=>videoExport?videoExport.model():null}),
       onSelectionChange(fn){selectionListeners.add(fn);return()=>selectionListeners.delete(fn)},
       select:(id)=>{if(S.open&&nodeOf(id))selectVariant(id,{focus:true})},
       runAction:(act,id)=>runAction(act,id||S.selectedId,{}),
@@ -2340,7 +2364,7 @@
     window.JarvisStudioExplorer=Object.freeze({
       open:explorer.open,close:explorer.close,isOpen:explorer.isOpen,state:explorer.state,selection:explorer.selection,
       onSelectionChange:explorer.onSelectionChange,select:explorer.select,refresh:explorer.refresh,stats:explorer.stats,
-      inspectTree:explorer.inspectTree,repaint:explorer.repaint,playback:explorer.playback,run:explorer.run,remotionStudio:explorer.remotionStudio,
+      inspectTree:explorer.inspectTree,repaint:explorer.repaint,playback:explorer.playback,run:explorer.run,remotionStudio:explorer.remotionStudio,videoExport:explorer.videoExport,
       compare:Object.freeze({open:o=>explorer.compare.start(o),close:o=>explorer.compare.close(o),isOpen:()=>explorer.compare.isActive(),view:()=>explorer.compare.view(),
         state:()=>explorer.compare.state(),marks:()=>explorer.compare.marks(),mark:id=>explorer.compare.mark(id),focus:pair=>explorer.compare.setPair(pair),
         mode:m=>explorer.compare.setMode(m),navigate:s=>explorer.compare.navigate(s),link:(a,b)=>explorer.compare.link(a,b),unlink:(a,b)=>explorer.compare.unlink(a,b),

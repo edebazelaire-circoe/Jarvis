@@ -658,7 +658,8 @@ def parse_draft(raw: object, brief: AuthoringBrief, engine_pin: EnginePin | None
                 c.add("draft_schema", f"bundle:{key}", "no Remotion engine is available to build this source")
                 failed_bundles.add(key)
                 continue
-            generated = c.guard(f"bundle:{key}", lambda b=body, k=key: generate_source(k, b["remotion"], engine_pin, f"bundle:{k}.remotion"))
+            generated = c.guard(f"bundle:{key}", lambda b=body, k=key: generate_source(k, b["remotion"], engine_pin, f"bundle:{k}.remotion",
+                                                                                        native=brief.native))
             if generated is None:
                 failed_bundles.add(key)
                 continue

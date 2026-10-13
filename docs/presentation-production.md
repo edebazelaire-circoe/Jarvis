@@ -40,6 +40,15 @@ boucle native (`NATIVE_LOOP`) et la barre de qualité, en moins de 7 000 caract�
 réglables à la voix, thème de variante, partition parlée par Jarvis) reste disponible quand la consigne le demande : la
 porte de qualité complète s'applique alors, et `draft_guide` sans `kind` en donne la forme.
 
+**Une seule vidéo par construction (master-project Slice 07, [remotion-master-project.md](remotion-master-project.md) § 12).** « Natif »
+veut dire : du code Remotion normal par scène, stocké scène par scène (une version immuable par écriture), que JARVIS assemble à la demande
+en UN projet Remotion (le projet maître, dérivé, jamais canonique) pour Remotion Studio et l'export de la vidéo entière. Pour que
+l'assemblage soit possible, le playbook et `draft_guide` `kind: native` portent `MASTER_HINT` : même `width`, `height`, `fps` pour toutes
+les scènes (deck neuf 1920x1080 à 30, que Core pose aussi pour ce qu'un bundle natif omet ; scène ajoutée ou recodée : ceux de la
+variante), fichiers `public/` nommés d'après leur scène (chemin et `staticFile()`), jamais `getInputProps`. Ce sont des faits techniques
+de compatibilité, pas une règle de contenu ou de style : le natif reste permissif. Le résultat de `presentation_draft_assemble` et de
+`presentation_source` porte le bloc `master` (prête, ou la raison dite à l'utilisateur) ; l'auteur corrige ce qu'il nomme.
+
 ## Limites connues
 
 - La revue visuelle est celle de l'auteur (images fixes, pas de vidéo jouée) ; la qualité finale reste un jugement humain

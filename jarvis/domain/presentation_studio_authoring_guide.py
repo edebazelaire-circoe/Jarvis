@@ -20,6 +20,7 @@ from typing import Any
 
 from jarvis.domain.presentation_studio_art_direction_authoring import SeedContext, diverge, generate_fallback_profile
 from jarvis.domain.presentation_studio_authoring import _BRIEF_OPTIONAL, MAX_DRAFT_SCENES, Speech, Workflow
+from jarvis.domain.presentation_studio_authoring_remotion import NATIVE_DEFAULT_COMPOSITION
 
 #: Where the draft's own key names are fixed by the parser (`parse_draft`): required, then optional.
 DRAFT_KEYS = {"required": ["scenes", "score"], "optional": ["prefabs", "art_direction", "candidates"]}
@@ -223,7 +224,7 @@ def native_example() -> dict[str, Any]:
     """A complete, valid native submission (two scenes, no score, no roles, no art direction): the SHAPE to adapt."""
 
     def bundle(key: str, frames: int) -> dict[str, Any]:
-        return {"key": key, "remotion": {"title": f"Scene {key}", "composition": {"width": 1920, "height": 1080, "fps": 30, "duration_in_frames": frames},
+        return {"key": key, "remotion": {"title": f"Scene {key}", "composition": {**NATIVE_DECK_SPEC, "duration_in_frames": frames},
                                          "files": {"src/Scene.tsx": NATIVE_SCENE_TSX, "src/lib/Reveal.tsx": NATIVE_TITLE_TSX}}}
 
     return {"brief": {"title": "Titre de la presentation", "workflow": "directed", "authoring": "native", "language": "fr"},
@@ -240,7 +241,17 @@ NATIVE_BRIEF_OPTIONAL = frozenset({"purpose", "audience", "duration_target_s", "
 #: `<Meta`... as the forbidden HTML elements: a real native run lost two submissions to components named `Frame` and `Link`. Said up front.
 ISOLATION_HINT = ("la garde d'isolation refuse les balises script, iframe, frame, frameset, embed, object, applet, link, meta, base, quelle que "
                   "soit la casse : ne nomme pas un composant Link, Frame, Meta, Base, Object ou Embed (Lien, Cadre, Etape...) ; pas de "
-                  "window, document, fetch, eval, setTimeout avec une chaine")
+                  "window, document, fetch, eval, setTimeout avec une chaine ; le mot require et les echappements \\u (ASCII) sont refuses "
+                  "meme dans un texte affiche : reformule (exiger, necessiter) et ecris les caracteres accentues eux-memes")
+
+#: Master-project Slice 07 (`docs/remotion-master-project.md` § 12, M11): what makes a native deck ONE whole Remotion video by construction.
+#: Technical compatibility only (spec, asset names, input props): nothing here restricts the content, the layout or the style.
+NATIVE_DECK_SPEC = {key: NATIVE_DEFAULT_COMPOSITION[key] for key in ("width", "height", "fps")}
+MASTER_HINT = ("VIDEO ENTIERE : les scenes d'un deck forment une seule video Remotion si elles ont toutes la meme composition width, height "
+               "et fps (deck neuf : 1920x1080 a 30 ; scene ajoutee ou recodee : garde ceux de la variante, lus avec presentation_source read) ; "
+               "seule la duree change. Nomme chaque fichier public/ avec le nom de sa scene (public/intro-voix.mp3, pas public/voix.mp3), "
+               "le meme dans staticFile(). Jamais getInputProps : une scene lit ses props. Le resultat porte master (status, say) : "
+               "incompatible = corrige ce qu'il nomme.")
 
 NATIVE_LOOP = ("CODE REMOTION NATIF (brief.authoring: native). 1) Storyboard : une scene = une composition (taille, fps, duree en images) et "
                "une idee. 2) Ecris du React/TSX normal : texte, couleurs et mise en page dans le code, modules src/lib/*.tsx ; point d'entree "
@@ -248,7 +259,8 @@ NATIVE_LOOP = ("CODE REMOTION NATIF (brief.authoring: native). 1) Storyboard : u
                "(base64) ; aucun reseau. 3) presentation_draft_assemble avec ce brief : seuls compilation, isolation, schema et references "
                "bloquent ; le reste revient en warnings (a lire, pas a negocier) ; la partition muette et les roles sont deduits. 4) "
                "presentation_source op preview sur chaque scene, puis Read de chaque image : juge lisibilite, hierarchie, debordements, "
-               "mouvement. 5) Corrige avec presentation_source op write (fichiers complets), revois. Les ids viennent des resultats.")
+               "mouvement. 5) Corrige avec presentation_source op write (fichiers complets), revois. Les ids viennent des resultats. "
+               "6) Meme taille et meme fps pour toutes les scenes (voir master).")
 
 
 def draft_guide(kind: str | None = None) -> dict[str, Any]:
@@ -266,7 +278,7 @@ def draft_guide(kind: str | None = None) -> dict[str, Any]:
                                      "{width, height, fps, duration_in_frames}, assets?: {'public/x.png': <base64>}}}]",
                           "scenes": "[{key, title, prefab: {bundle: <key>}, role?}] dans l'ordre du deck",
                           "keys": "key de bundle et de scene : minuscules, chiffres et _ , commence par une lettre (ouverture, scene_2)",
-                          "isolation": ISOLATION_HINT},
+                          "isolation": ISOLATION_HINT, "master": MASTER_HINT},
                 "note": "FORME seulement : remplace tout le texte, les couleurs, les durees et les mises en page par les tiens.",
                 "example": copy.deepcopy(native_example())}
     if kind == "exploratory":
@@ -296,4 +308,4 @@ def draft_guide(kind: str | None = None) -> dict[str, Any]:
         "example": copy.deepcopy(example())}
 
 
-__all__ = ["DRAFT_KEYS", "EXPLORATORY_DIRECTIONS", "NATIVE_LOOP", "draft_guide", "example", "exploratory_example", "layouts", "native_example"]
+__all__ = ["DRAFT_KEYS", "EXPLORATORY_DIRECTIONS", "MASTER_HINT", "NATIVE_DECK_SPEC", "NATIVE_LOOP", "draft_guide", "example", "exploratory_example", "layouts", "native_example"]

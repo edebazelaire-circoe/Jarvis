@@ -1,0 +1,11 @@
+{
+  "checks": [
+    {
+      "id": "HV-RMP-00-01",
+      "instruction": "Human decision only if the fresh audit finds a real contract conflict, irreversible persistence choice, or missing permission that prevents a safe READY state.",
+      "requires_evidence_first": true,
+      "status": "not_needed",
+      "note": "Slice 00 reported READY; no contract conflict, no persistence choice (no migration, no document field) and no missing permission arose during Slices 01-09. Agent 0 took the open technical decisions under the Human's delegated autonomy (docs/remotion-master-project.md § 1). The only Human decision left is Issue 03 (pre-existing merge loss on main), listed in HV-RMP-09-01-d."
+    }
+  ]
+}

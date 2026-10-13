@@ -3563,12 +3563,34 @@ l'environnement ; l'installation reste cette action explicite. Vérification sur
 #### Studio Remotion optionnel (Slice 11)
 
 Contrat : [remotion-studio.md](remotion-studio.md) ; sécurité : SECURITY.md § 19. Le Studio (`remotion studio`, rechargement à chaud) est une
-**fenêtre à part, ouverte seulement sur demande** : Core, l'aperçu et le Control Center ne le lancent jamais. Un seul par poste ; il ne
-sert que la source de la scène choisie, en copie de travail en lecture seule sous `<racine>/local_capabilities/remotion/runtime/studio/work/`,
-sur `127.0.0.1` (port libre, ou `JARVIS_REMOTION_STUDIO_PORT`). Prérequis : la capacité Remotion `ready` (section précédente) et au moins une
-scène Remotion publiée dans la bibliothèque.
+**fenêtre à part, ouverte seulement sur demande** : Core, l'aperçu et le Control Center ne le lancent jamais. Un seul par poste ; il sert
+**soit une scène** (cible de scène : la source de la scène choisie), **soit la vidéo entière d'une variante** (cible maître, master-project
+Slices 05 et 08 : le projet Remotion maître `JarvisPresentation`, toutes les scènes), en copie de travail sous
+`<racine>/local_capabilities/remotion/runtime/studio/work/`, sur `127.0.0.1` (port libre, ou `JARVIS_REMOTION_STUDIO_PORT`). Prérequis : la
+capacité Remotion `ready` (section précédente) et au moins une scène Remotion publiée dans la bibliothèque.
 
-- **Depuis Variantes** (native-studio-playback-fix Slice 11) : sous la vidéo, **Remotion Studio** ouvre la scène à l'écran, à la version exacte de la variante (confirmation, compteur, lien « Ouvrir l'onglet Remotion Studio » si le navigateur bloque l'onglet) ; le rail : clic droit, **Remotion Studio…**.
+- **Depuis Variantes** (native-studio-playback-fix Slice 11 ; master-project Slice 08) : sous la vidéo, **Remotion Studio** ouvre la **vidéo entière** de la variante quand elle est prête (la ligne « Vidéo entière : « titre », variante n, N scènes (durée) » ; la confirmation dit « N scènes vont tourner hors du bac à sable ») ; sinon, ou par **Cette scène seule dans Remotion Studio**, la scène à l'écran, à la version exacte de la variante (confirmation, compteur, lien « Ouvrir l'onglet Remotion Studio » si le navigateur bloque l'onglet) ; le rail : clic droit, **Remotion Studio…**. Une variante incompatible (cadences ou tailles différentes, collision de fichiers `public/`…) garde la porte de scène et dit la raison ([remotion-master-project.md](remotion-master-project.md) § 3).
+- **Vidéo entière dans Remotion Studio : fichiers et état** (master-project Slices 05, 09) :
+  - `runtime/studio/work/` contient `package.json` (`jarvis-studio-master`), `studio-root.tsx` et `src/master/**` (**générés**, en lecture
+    seule, réécrits à chaque matérialisation), `src/scenes/<scene_id>/**` (copie octet pour octet de la version épinglée de chaque scène) et
+    `public/**` (fusion des `public/` des scènes) ; `runtime/studio/work.files.json` garde les empreintes de cette base ;
+    `runtime/studio/state.json` passe au `schema: 2` avec `target.kind: "variant_master"` (une cible de scène reste au `schema: 1`).
+  - Rien de cet espace n'est canonique ni publiable : la vidéo entière ne se publie pas dans la variante (« Publier dans la variante… » est
+    masqué). Pour garder une modification d'une scène, l'ouvrir seule (« Cette scène seule dans Remotion Studio ») et la publier, ou la
+    reprendre à la main depuis `studio-edits/`.
+  - **Mise de côté** : changer de variante, actualiser après une édition, ou passer à une scène avec des fichiers modifiés est refusé
+    (`remotion_studio_unpublished_edits`, fichiers et classe — `generated`, `scene`, `shared` — nommés) tant que l'utilisateur n'a pas confirmé ;
+    confirmé, les fichiers sont **copiés** dans `<racine>/local_capabilities/remotion/studio-edits/<horodatage>/` (même chemin relatif, hors de
+    `runtime/`), jamais écrasés ni publiés ; 5 dossiers gardés, le plus ancien retiré avec l'événement `edits_rotated` au journal.
+  - **Une coupure de Core** ferme le Studio (aucun orphelin) ; `state.json` garde la cible maître ; au retour de Core, l'état est `stopped`
+    et la page le dit. Les fichiers modifiés restent dans `work/` (vérifié par la Slice 09 de master-project).
+- **Retour arrière** (revenir à une version de Jarvis d'avant master-project) : aucune base, aucun document de présentation ni de variante,
+  aucune version de scène n'a changé de forme (pas de migration). Avant de relancer l'ancienne version : (1) **Fermer Remotion Studio** ;
+  (2) si Variantes dit des fichiers modifiés dans Remotion Studio (vidéo entière), les copier ailleurs depuis
+  `runtime/studio/work/` (ou les mettre de côté par la porte de scène, après sa confirmation) ; (3) une ancienne version lit le `schema: 2`
+  comme `remotion_studio_state_unreadable` : déplacer `runtime/studio/state.json` à côté (le garder, ne jamais l'écraser), elle repart sans
+  Studio. Les MP4 de la vidéo entière restent des Artifacts `presentation_video` ordinaires (métadonnée `render_scope: master`) : rien à
+  supprimer.
 - **Depuis le Control Center** : dialogue MCP, onglet « Plugins externes », carte « Remotion Studio » : choisir la scène, **Ouvrir Remotion Studio**,
   **lire et confirmer** le dialogue (la scène s'exécute sans bac à sable ; l'origine de la version y est indiquée, avertissement renforcé pour une
   scène qui n'est pas de vous), attendre le démarrage (30 à 50 s à froid, 2 min au plus, compteur affiché), puis **Ouvrir l'onglet Remotion Studio**. **Actualiser la scène** recopie la dernière
@@ -3586,6 +3608,8 @@ scène Remotion publiée dans la bibliothèque.
 $u = "http://127.77.0.1:17653/v1/local-capabilities/remotion/studio"
 Invoke-RestMethod -Headers $h $u                                                              # état, jamais un lancement
 Invoke-RestMethod -Method Post -Headers $h "$u/open" -ContentType application/json -Body '{"prefab_id":"<id>","version":<n>,"acknowledge_unsandboxed_scene":true}'
+# vidéo entière : la clé vient de GET /v1/presentation-studio/presentations/<pst>/variants/<psv>/master-project (master.project_key)
+Invoke-RestMethod -Method Post -Headers $h "$u/open" -ContentType application/json -Body '{"kind":"variant_master","presentation_id":"<pst>","variant_id":"<psv>","project_key":"<mpk_...>","acknowledge_unsandboxed_project":true}'
 Invoke-RestMethod -Method Post -Headers $h "$u/sync"                                          # rechargement à chaud de la scène courante
 Invoke-RestMethod -Method Post -Headers $h "$u/restart" -ContentType application/json -Body '{"acknowledge_unsandboxed_scene":true}'
 Invoke-RestMethod -Method Post -Headers $h "$u/close"
@@ -3596,8 +3620,9 @@ Invoke-RestMethod -Method Post -Headers $h "$u/close"
   `runtime_unavailable` : installer ou réparer la capacité ; `port_unavailable` : le port imposé est pris ; `ack_required` : l'accusé manque (la
   carte l'envoie après sa confirmation) ; `state_unreadable` : mettre `studio/state.json` de côté (jamais l'écraser), puis réessayer ;
   `local_capability_stop_failed` à l'`uninstall`/`update` : le Studio n'a pas pu être arrêté, fermer le processus à la main puis recommencer.
-- **Modifier dans le Studio ne modifie pas la scène** : la copie est en lecture seule ; ce qui est changé malgré tout est mis de côté dans
-  `studio/edits/` à la fermeture et avant chaque synchronisation, jamais écrit dans la bibliothèque.
+- **Modifier dans le Studio ne modifie pas la scène** tant qu'elle n'est pas publiée (cible de scène, voir plus haut ; une cible maître ne se
+  publie jamais) : ce qui est changé et que l'utilisateur choisit de mettre de côté va dans `<racine>/local_capabilities/remotion/studio-edits/`,
+  jamais écrit dans la bibliothèque.
 - **Le Studio est réduit** : le garde refuse toute connexion hors du poste, tout processus enfant (donc ni rendu, ni installation de paquet,
   ni « ouvrir dans l'éditeur » depuis le Studio) ; ne l'ouvrir que sur une scène connue (contrat §11).
 - **Redémarrage** : pour charger les routes et la carte après une mise à jour de Jarvis, Core et le Control Center doivent être relancés ;
@@ -3625,6 +3650,7 @@ de Core) : l'agent lit d'abord la source (`GET .../scenes/<scene_id>/source`), p
 - **Journal** (`core.presentation_studio.*`) : `reload_built` (info, chemin normal), `reload_build_refused` (warning), `reload_published`, `reload_rolled_back`.
   `GET .../presentations/<id>/reloads` liste les derniers rechargements (statut, code, nombre de constats).
 - **Occupé** : une édition qui attend plus de 75 s derrière une autre de la même scène reçoit `409 presentation_studio_scene_reloading` (à refaire). Un manifeste d'édition ne peut ni changer `source.engine`, ni le bloc `catalog`, ni `schema_version` (400 `presentation_studio_invalid`, la clé est nommée).
+- **Vidéo entière (master-project Slice 07)** : une écriture garde `width`, `height`, `fps` de la composition (ceux de la variante), nomme ses fichiers `public/` d'après la scène et ne lit jamais `getInputProps` ; le résultat de `presentation_source` write porte le bloc `master` (nouveau `project_key` après chaque écriture ; `incompatible` avec la phrase à dire). Aucune synchronisation à lancer : le prochain export `remotion_export` `scope: master` rend la nouvelle version ([remotion-master-project.md](remotion-master-project.md) § 12).
 - **Rien à redémarrer** : pas de migration, pas de nouvelle variable d'environnement ; le code est pris au prochain démarrage de Core.
 - **Preuve réelle rejouable** (Core isolé, jamais le JARVIS vivant) : `python scripts/remotion_player_harness.py --runtime-dir <runtime/> --slice 14
   --test tests/unit/test_remotion_source_edit_realpage_browser.py --evidence tasks/jarvis-remotion-presentation-integration/slices/14-source-edit-hmr-and-agents/evidence`.
@@ -3634,7 +3660,7 @@ Contrat : [remotion-render.md](remotion-render.md) ; sécurité : SECURITY.md §
 enregistre un Artifact relié à cette copie. Prérequis : la capacité Remotion `ready` (installation unique, section « Capacité locale Remotion ») et un Chrome ou Edge installé
 (sinon `JARVIS_REMOTION_RENDER_BROWSER` ; un navigateur n'est **jamais** téléchargé).
 
-- **Depuis le Control Center** : bouton `WSP` → Artefacts → choisir le Board → sous la copie figée d'une présentation Remotion, « Exporter cette copie » (MP4, image, PDF). Le
+- **Depuis le Control Center** : bouton `WSP` → Artefacts → choisir le Board → sous la copie figée d'une présentation Remotion, « Exporter cette copie » (MP4, image, PDF ; un MP4 rend la vidéo entière quand elle est prête). Depuis Variantes : « Exporter la vidéo » sous la vidéo (la vidéo entière de la variante). Le
   panneau dit la phase, les images faites, les secondes écoulées, le délai, et offre **Annuler l'export**. À la fin le rendu apparaît sous la copie, avec ses dimensions, sa
   durée, un aperçu et la mention « export à plat : non éditable » ; **Ouvrir la source** / **Ouvrir la variante** (au-dessus) mènent à l'origine éditable.
 - **Depuis PowerShell** (jeton comme pour la capacité) :
@@ -3656,6 +3682,11 @@ Invoke-RestMethod -Method Post -Headers $h "$u/jobs/$($job.job_id)/cancel"
   `locked` : un autre Core vivant tient les rendus de cette racine de données (ne lancer qu'un Core par racine) ; `guard_unexpected_args` : une version de Remotion lance Chrome avec un argument que le garde ne connaît pas (refusé par sécurité : signaler, ne pas contourner) ;
   `disk_low` / `disk_full` : libérer de la place (un rendu veut 1,5 Gio libres) ; `timeout` : rendre une plage plus courte (`frame_start`/`frame_end`) ou une échelle plus
   basse ; `interrupted` : Core ou le poste s'est arrêté pendant le rendu (aucun fichier n'est promu : recommencer).
+  Vidéo entière (`settings.scope: "master"`, master-project Slice 06) : `master_incompatible` (409, rien n'est figé ni rendu ; `reason` et la
+  phrase du § 3 de [remotion-master-project.md](remotion-master-project.md) : exporter les scènes une à une) ; `master_scene_failed` (une scène
+  a levé pendant le rendu : `error_detail` nomme sa position et son id, aucun MP4 gardé ; corriger cette scène puis relancer). Un
+  `sandbox_unavailable` peut aussi venir d'un navigateur désigné qui n'est pas un Chrome (`JARVIS_REMOTION_RENDER_BROWSER` vers un autre
+  programme : le message de Chrome dit alors pourquoi ; vérifier le chemin avant de couper le bac à sable).
 - **Où sont les fichiers** : le payload de l'Artifact (`<racine>/artifacts/<id>/render.mp4|still.png|render.pdf`) ; les dossiers de travail sont sous
   `<racine>/local_capabilities/remotion/runtime/render/jobs/<id>/` et sont effacés à la fin (restent `job.json`, `render.log`, `result.json`, `egress.json`, quelques Kio).
 - **Redémarrage** : un Core qui redémarre pendant un rendu tue le processus orphelin et marque le dérivé `failed` (`interrupted`) ; pour charger les routes après une mise à

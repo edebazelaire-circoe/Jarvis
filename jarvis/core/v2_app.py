@@ -70,6 +70,7 @@ from jarvis.core.prefab_service import PrefabService
 from jarvis.core.presentation_artifacts import PresentationArtifacts
 from jarvis.core.presentation_live_refs import LiveRefResolver
 from jarvis.core.presentation_render_service import PresentationRenderService
+from jarvis.core.remotion_master_project import MasterProjectReader
 from jarvis.core.presentation_snapshot_packager import PresentationPackager
 from jarvis.core.presentation_studio_autosave import PresentationStudioHistory
 from jarvis.core.presentation_studio_edit import PresentationStudioEditService
@@ -81,6 +82,7 @@ from jarvis.core.presentation_studio_playback import PresentationStudioPlaybackS
 from jarvis.core.presentation_studio_compare import PresentationStudioCompare
 from jarvis.core.presentation_studio_composition import PresentationStudioComposition
 from jarvis.core.presentation_studio_composition_clock import PresentationStudioCompositionClock
+from jarvis.core.remotion_master_project import MasterProjectReader
 from jarvis.core.presentation_studio_scene_variants import PresentationStudioSceneVariants
 from jarvis.core.presentation_studio_template import PresentationStudioTemplates
 from jarvis.core.presentation_studio_upgrades import PresentationStudioUpgrades
@@ -446,7 +448,9 @@ class JarvisCoreApplication:
                 artifacts=self.artifacts, snapshots=self.presentation_artifacts, packager=self.presentation_packager,
                 runner=remotion_render_runner, installed_engine=remotion_render_runner.installed_engine,
                 capability_status=lambda: str(render_capabilities.host.status("remotion").get("status")), diagnostics=diagnostics,
-                preview_root=getattr(remotion_render_runner, "preview_dir", None))
+                preview_root=getattr(remotion_render_runner, "preview_dir", None),
+                # master handoff Slice 06 rework: a whole-video export plans the live variant before freezing (refused 409 when incompatible)
+                live_master=MasterProjectReader(studio=self.presentation_studio, prefabs=self.prefabs, diagnostics=diagnostics).live_plan)
         self.scene = SceneService(
             scene_repository or SQLiteSceneRepository(root / "state" / "scene.sqlite3"),
             diagnostics=diagnostics,
@@ -530,6 +534,9 @@ class JarvisCoreApplication:
         # seule (manifestes des pins) ; Core ne tient aucune horloge de media pour la video continue.
         self.presentation_studio_composition_clock = PresentationStudioCompositionClock(
             self.presentation_studio, self.prefabs, diagnostics=diagnostics)
+        # master-project-studio-export Slice 05 (`docs/remotion-master-project.md` § 11): the ONE live readiness read of a variant's master
+        # project (route `.../master-project`, Remotion Studio's master target); read only, no process.
+        self.remotion_master_project = MasterProjectReader(studio=self.presentation_studio, prefabs=self.prefabs, diagnostics=diagnostics)
         # Slice 06 x Slice 12 : le rechargement lit la position de la lecture et re-epingle la surface `variants-run-<run_id>` que
         # la lecture lui a liee (`stage_observer`, Slice 09) ; une scene non affichee est seulement re-epinglee.
         self.presentation_studio_reload.bind_playback(self.presentation_studio_playback)
@@ -538,6 +545,7 @@ class JarvisCoreApplication:
         if self.remotion_studio is not None:
             from jarvis.core.remotion_studio_publish import VariantScenePublisher
             self.remotion_studio.bind_publisher(VariantScenePublisher(self.presentation_studio, self.presentation_studio_reload))
+            self.remotion_studio.bind_master_reader(self.remotion_master_project.live_plan)
             # Slice 13 rework (QA B3): the user opening (or syncing) a scene in Remotion Studio ends the agent's permission on it.
             edits = self.presentation_studio_edit
             self.remotion_studio.add_scene_listener(lambda pin: edits.release_authored_for_pin(pin.prefab_id, pin.version))

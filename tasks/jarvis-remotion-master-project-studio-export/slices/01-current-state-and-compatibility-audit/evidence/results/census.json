@@ -1,0 +1,230 @@
+{
+ "declarations": 27,
+ "by_spec": {
+  "1280x720@30": 18,
+  "1920x1080@30": 4,
+  "1280x720@fps": 1,
+  "1280x720@24": 1,
+  "800x600@24": 1,
+  "800x600@25": 1,
+  "widthxheight@fps": 1
+ },
+ "rows": [
+  {
+   "file": "jarvis/domain/presentation_studio_authoring_guide.py",
+   "line": 114,
+   "kind": "composition dict",
+   "width": "1280",
+   "height": "720",
+   "fps": "30"
+  },
+  {
+   "file": "jarvis/domain/presentation_studio_authoring_guide.py",
+   "line": 133,
+   "kind": "composition dict",
+   "width": "1280",
+   "height": "720",
+   "fps": "30"
+  },
+  {
+   "file": "jarvis/domain/presentation_studio_authoring_guide.py",
+   "line": 226,
+   "kind": "composition dict",
+   "width": "1920",
+   "height": "1080",
+   "fps": "30"
+  },
+  {
+   "file": "tests/fakes/presentation_studio_fake_author.py",
+   "line": 101,
+   "kind": "Composition(...)",
+   "width": "1280",
+   "height": "720",
+   "fps": "30"
+  },
+  {
+   "file": "tests/fakes/presentation_studio_fake_author.py",
+   "line": 79,
+   "kind": "composition dict",
+   "width": "1280",
+   "height": "720",
+   "fps": "30"
+  },
+  {
+   "file": "tests/fakes/remotion_scene.py",
+   "line": 17,
+   "kind": "Composition(...)",
+   "width": "1280",
+   "height": "720",
+   "fps": "30"
+  },
+  {
+   "file": "tests/fixtures/presentation_studio_task_base_a8377529/prefabs/presentation-studio.rm-cover-239ec16b/1/manifest.json",
+   "line": 186,
+   "kind": "composition dict",
+   "width": "1280",
+   "height": "720",
+   "fps": "30"
+  },
+  {
+   "file": "tests/fixtures/presentation_studio_task_base_a8377529/prefabs/presentation-studio.rm-slide-c896f159/1/manifest.json",
+   "line": 186,
+   "kind": "composition dict",
+   "width": "1280",
+   "height": "720",
+   "fps": "30"
+  },
+  {
+   "file": "tests/unit/presentation_playback_gate_world.py",
+   "line": 102,
+   "kind": "Composition(...)",
+   "width": "1280",
+   "height": "720",
+   "fps": "fps"
+  },
+  {
+   "file": "tests/unit/remotion_mcp_world.py",
+   "line": 100,
+   "kind": "composition dict",
+   "width": "1280",
+   "height": "720",
+   "fps": "30"
+  },
+  {
+   "file": "tests/unit/remotion_quality_world.py",
+   "line": 140,
+   "kind": "Composition(...)",
+   "width": "1280",
+   "height": "720",
+   "fps": "30"
+  },
+  {
+   "file": "tests/unit/test_presentation_render_real.py",
+   "line": 104,
+   "kind": "Composition(...)",
+   "width": "1280",
+   "height": "720",
+   "fps": "30"
+  },
+  {
+   "file": "tests/unit/test_presentation_render_real.py",
+   "line": 217,
+   "kind": "Composition(...)",
+   "width": "1920",
+   "height": "1080",
+   "fps": "30"
+  },
+  {
+   "file": "tests/unit/test_presentation_studio_composition_clock_routes.py",
+   "line": 39,
+   "kind": "Composition(...)",
+   "width": "1280",
+   "height": "720",
+   "fps": "24"
+  },
+  {
+   "file": "tests/unit/test_presentation_studio_native_authoring.py",
+   "line": 47,
+   "kind": "composition dict",
+   "width": "1920",
+   "height": "1080",
+   "fps": "30"
+  },
+  {
+   "file": "tests/unit/test_presentation_studio_native_loop.py",
+   "line": 442,
+   "kind": "composition dict",
+   "width": "1920",
+   "height": "1080",
+   "fps": "30"
+  },
+  {
+   "file": "tests/unit/test_remotion_continuity_realpage_browser.py",
+   "line": 58,
+   "kind": "Composition(...)",
+   "width": "1280",
+   "height": "720",
+   "fps": "30"
+  },
+  {
+   "file": "tests/unit/test_remotion_import.py",
+   "line": 85,
+   "kind": "Composition(...)",
+   "width": "1280",
+   "height": "720",
+   "fps": "30"
+  },
+  {
+   "file": "tests/unit/test_remotion_import.py",
+   "line": 277,
+   "kind": "Composition(...)",
+   "width": "800",
+   "height": "600",
+   "fps": "24"
+  },
+  {
+   "file": "tests/unit/test_remotion_import.py",
+   "line": 283,
+   "kind": "Composition(...)",
+   "width": "800",
+   "height": "600",
+   "fps": "25"
+  },
+  {
+   "file": "tests/unit/test_remotion_timeline_realpage_browser.py",
+   "line": 57,
+   "kind": "Composition(...)",
+   "width": "1280",
+   "height": "720",
+   "fps": "30"
+  },
+  {
+   "file": "tests/unit/test_variants_media_export.py",
+   "line": 30,
+   "kind": "Composition(...)",
+   "width": "1280",
+   "height": "720",
+   "fps": "30"
+  },
+  {
+   "file": "tests/unit/test_variants_transport_browser.py",
+   "line": 323,
+   "kind": "Composition(...)",
+   "width": "1280",
+   "height": "720",
+   "fps": "30"
+  },
+  {
+   "file": "tests/unit/test_variants_transport_browser.py",
+   "line": 384,
+   "kind": "Composition(...)",
+   "width": "1280",
+   "height": "720",
+   "fps": "30"
+  },
+  {
+   "file": "tests/unit/variants_media_world.py",
+   "line": 87,
+   "kind": "Composition(...)",
+   "width": "width",
+   "height": "height",
+   "fps": "fps"
+  },
+  {
+   "file": "tests/fixtures/presentation_studio_task_base_a8377529/prefabs/presentation-studio.rm-cover-239ec16b/1/manifest.json",
+   "line": 0,
+   "kind": "fixture manifest",
+   "width": "1280",
+   "height": "720",
+   "fps": "30"
+  },
+  {
+   "file": "tests/fixtures/presentation_studio_task_base_a8377529/prefabs/presentation-studio.rm-slide-c896f159/1/manifest.json",
+   "line": 0,
+   "kind": "fixture manifest",
+   "width": "1280",
+   "height": "720",
+   "fps": "30"
+  }
+ ]
+}

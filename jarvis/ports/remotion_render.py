@@ -58,8 +58,10 @@ class RenderRunner(Protocol):
             on_start: Callable[[str], None], on_progress: Callable[[Mapping[str, Any]], None]) -> RunOutcome:
         """Lance le processus de rendu, suit sa progression, le tue au délai, à l'annulation ou au dépassement du disque."""
 
-    def verify(self, job_id: str, fmt: str, *, width: int, height: int, frames: int | None, pages: int | None) -> VerifiedOutput:
-        """Contrôle le fichier produit (en-tête, dimensions, durée, nombre d'images). Lève `output_invalid`."""
+    def verify(self, job_id: str, fmt: str, *, width: int, height: int, frames: int | None, pages: int | None,
+               audio_required: bool = False) -> VerifiedOutput:
+        """Contrôle le fichier produit (en-tête, dimensions, durée, nombre d'images ; un flux audio si `audio_required`, rendu maître dont
+        une scène joue un `<Audio>`). Lève `output_invalid`."""
 
     def copy_output(self, job_id: str, verified: VerifiedOutput, write: Callable[[bytes], Any]) -> None:
         """Lit le fichier vérifié par blocs et les passe à `write` (le spool de l'Artifact)."""

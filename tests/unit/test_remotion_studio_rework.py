@@ -160,7 +160,13 @@ def test_no_brain_mcp_or_agent_path_can_open_the_studio():
                "runtime/control_center_presentation_rail.js",
                # native-studio-playback-fix Slice 12: the workspace / publish domain and the bridge to the variant's source-edit door (no route,
                # no process: they cannot open the Studio; who may PUBLISH is held by `test_remotion_studio_publish.py`).
-               "domain/remotion_studio_workspace.py", "core/remotion_studio_publish.py"}
+               "domain/remotion_studio_workspace.py", "core/remotion_studio_publish.py",
+               # master-project-studio-export Slices 03-05: the pure master planner / file map (they only NAME the Studio runner that writes
+               # their map) and the master edit classes; no route, no process: they cannot open the Studio.
+               "domain/remotion_master_project.py", "domain/remotion_master_files.py", "domain/remotion_studio_master.py",
+               # master-project-studio-export Slice 08: « Exporter la vidéo » of Variants READS the card's core for the § 3 sentences and the
+               # duration format (`JarvisRemotionStudioCore`); it only calls the render routes, never a Studio route.
+               "runtime/control_center_presentation_studio_explorer_export.js"}
     slice_21_agent_surface = {"runtime/remotion_mcp.py", "runtime/remotion_mcp_tools.py", "runtime/mcp_tool_meta.py"}
     users = {path.relative_to(root).as_posix() for path in root.rglob("*")
              if path.suffix in {".py", ".js", ".html", ".cjs", ".mjs"}

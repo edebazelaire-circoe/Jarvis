@@ -32,7 +32,9 @@ import json
 import re
 from typing import Any, Mapping
 
+from jarvis.domain.presentation_render import SCOPE_MASTER, SCOPE_SCENE
 from jarvis.domain.presentation_studio_checks import is_scene_id
+from jarvis.domain.remotion_master_sentences import reason_sentence
 from jarvis.protocol.client import CoreProtocolError
 from jarvis.runtime.presentation_studio_mcp_support import MAX_LISTED, PresentationToolError, capped, clip, sentence_for
 from jarvis.runtime.presentation_studio_mcp_tools import PresentationTools, _drop_none
@@ -40,14 +42,20 @@ from jarvis.runtime.presentation_studio_mcp_tools import PresentationTools, _dro
 JOB_ID = re.compile(r"rj_[0-9a-f]{12}\Z")
 COMMIT = re.compile(r"[0-9a-f]{40}\Z")
 #: Les seules clés de réglage d'export que le cerveau peut poser. `concurrency` (mémoire du poste) et tout le reste : à l'utilisateur.
-EXPORT_SETTINGS = frozenset({"scene_id", "frame_start", "frame_end", "frame", "scale", "crf"})
+#: `scope` (master-project-studio-export Slice 07, `docs/remotion-master-project.md` § 10, § 12) : `master` = la vidéo entière de la
+#: variante (le projet maître Remotion), `scene` ou absent = une scène, exactement comme avant.
+EXPORT_SETTINGS = frozenset({"scene_id", "frame_start", "frame_end", "frame", "scale", "crf", "scope"})
 EXPORT_FORMATS = ("mp4", "still", "pdf")
+MASTER_INCOMPATIBLE = "presentation_render_master_incompatible"
 TARGETS = ("capability", "studio", "exports", "export")
 MAX_WORDS = 200
-#: Où l'utilisateur ouvre Remotion Studio (native-studio-playback-fix Slice 11 : la scène à l'écran de Variantes, son pin exact).
-CARD_PATH = "Variantes, sous la vidéo : bouton « Remotion Studio » (ou le rail : clic droit sur la présentation, « Remotion Studio… »)"
-#: With a `scene_id` (Slice 13 rework, QA I5): only the button under the video of THAT scene; the rail opens the scene on screen, not this one.
-SCENE_CARD_PATH = "Variantes, cette scène affichée : bouton « Remotion Studio » sous la vidéo"
+#: Où l'utilisateur ouvre Remotion Studio (native-studio-playback-fix Slice 11 ; master-project-studio-export Slice 08 : « Remotion Studio » ouvre
+#: la vidéo entière de la variante quand elle est prête, sinon la scène à l'écran ; `docs/remotion-master-project.md` § 13, § 14).
+CARD_PATH = ("Variantes, sous la vidéo : bouton « Remotion Studio », la vidéo entière de la variante "
+             "(ou le rail : clic droit sur la présentation, « Remotion Studio… »)")
+#: With a `scene_id` (Slice 13 rework, QA I5): only the scene door under the video of THAT scene; the rail opens the whole video or the scene on
+#: screen, not this one. Slice 08 of the master handoff: the scene door is the secondary « Cette scène seule dans Remotion Studio ».
+SCENE_CARD_PATH = "Variantes, cette scène affichée : « Cette scène seule dans Remotion Studio » sous la vidéo"
 ENGINE_CARD = "carte « Présentations · moteur »"
 
 
@@ -153,7 +161,10 @@ class RemotionTools(PresentationTools):
     def _job_row(job: Mapping[str, Any], *, full: bool = False) -> dict[str, Any]:
         row = {"job_id": job.get("job_id"), "state": job.get("state"), "phase": job.get("phase"), "format": job.get("format"),
                "percent": job.get("percent"), "elapsed_s": job.get("elapsed_s"), "can_cancel": job.get("can_cancel"),
-               "error": job.get("error_code"), "artifact_id": job.get("artifact_id")}
+               "error": job.get("error_code"), "artifact_id": job.get("artifact_id"),
+               # Slice 07: a whole-video job names itself (scope master, its project_key and scene count); a scene job keeps its scene_id.
+               "scope": job.get("scope") or "scene", "scene_id": job.get("scene_id"), "project_key": job.get("project_key"),
+               "scene_count": job.get("scene_count"), "deduplicated": job.get("deduplicated") or None}
         if full:
             row.update(frames_done=job.get("frames_done"), frames_total=job.get("frames_total"), timeout_s=job.get("timeout_s"),
                        queue_position=job.get("queue_position"), size_bytes=job.get("size_bytes"),
@@ -215,9 +226,12 @@ class RemotionTools(PresentationTools):
             described = await self._c(lambda c: c.presentation_studio_scene_controls(presentation_id, variant_id, sid))
             scene = {"scene_id": sid, "prefab": described.get("prefab")}
         # The door opens the scene ON SCREEN in Variants: for a named scene, the user shows it first (Slice 11 QA polish).
-        where_first = "affiche cette scène dans Variantes, puis clique" if scene else "dans Variantes, clique"
-        return self._ok("say", status="needs_user", where=SCENE_CARD_PATH if scene else CARD_PATH, scene=scene or None,
-                        say=f"Pour ouvrir cette scène dans Remotion Studio : {where_first} « Remotion Studio » sous la vidéo et confirme ; elle y tourne hors du bac à sable.",
+        say = ("Pour ouvrir cette scène seule dans Remotion Studio : affiche cette scène dans Variantes, puis clique « Cette scène seule dans "
+               "Remotion Studio » sous la vidéo (« Remotion Studio » si la vidéo entière n'est pas disponible) et confirme ; elle y tourne hors du "
+               "bac à sable.") if scene else (
+               "Pour ouvrir la présentation dans Remotion Studio : dans Variantes, clique « Remotion Studio » sous la vidéo et confirme ; la vidéo "
+               "entière de la variante (ou la scène à l'écran si la vidéo entière n'est pas disponible) y tourne hors du bac à sable.")
+        return self._ok("say", status="needs_user", where=SCENE_CARD_PATH if scene else CARD_PATH, scene=scene or None, say=say,
                         note="Tu ne peux pas ouvrir le Studio ni confirmer à sa place : l'accusé est à l'utilisateur seul. Dis où cliquer, une fois.")
 
     # ------------------------------------------------------------------ export
@@ -246,6 +260,14 @@ class RemotionTools(PresentationTools):
         stray = sorted(str(k)[:30] for k in chosen if k not in EXPORT_SETTINGS)
         if stray:
             raise self._refuse(tool, "invalid_setting", f"réglage(s) non permis au cerveau : {', '.join(stray[:5])} (permis : {', '.join(sorted(EXPORT_SETTINGS))}).")
+        scope = chosen.pop("scope", None) or SCOPE_SCENE
+        if scope not in (SCOPE_SCENE, SCOPE_MASTER):  # the render domain owns the scope names
+            raise self._refuse(tool, "invalid_setting", "scope : master (la vidéo entière) ou scene (une scène).")
+        whole = scope == SCOPE_MASTER
+        if whole and "scene_id" in chosen:
+            raise self._refuse(tool, "invalid_setting", "scope master = la vidéo entière : pas de scene_id (une scène seule : scope scene).")
+        if whole and fmt != "mp4":
+            raise self._refuse(tool, "invalid_format", "la vidéo entière (scope master) s'exporte en mp4 seulement.")
         if "scene_id" in chosen:
             self._scene(tool, chosen["scene_id"])
         await self._user_gate(tool, op, user_request)
@@ -258,13 +280,29 @@ class RemotionTools(PresentationTools):
             raise self._refuse(tool, "presentation_studio_unknown_variant", sentence_for("presentation_studio_unknown_variant"))
         request: dict[str, Any] = {"format": fmt, "presentation_id": presentation_id, "variant_id": variant_id,
                                    "expected_presentation_revision": revision, "expected_variant_revision": variant["revision"]}
+        if whole:
+            chosen["scope"] = SCOPE_MASTER  # an explicit "scene" is never sent: the scene body stays byte for byte today's
         if chosen:
             request["settings"] = chosen
-        job = (await self._c(lambda c: c.remotion_render_create(request))).get("job") or {}
-        return self._ok("say", status=job.get("state"), job=self._job_row(job), presentation_id=presentation_id, variant_id=variant_id,
-                        revisions={"presentation": revision, "variant": variant["revision"]},
-                        say="L'export est lancé ; il se suit dans la vue Artefacts du Board (phase, images, secondes).",
-                        note="Aucun Board n'est lu dans cet export. Ne boucle pas pour attendre : remotion_status (target export, job_id) à la demande.")
+        try:
+            answer = await self._core.call(lambda c: c.remotion_render_create(request))
+        except CoreProtocolError as exc:
+            if exc.code == MASTER_INCOMPATIBLE:
+                # § 3 / § 12: the reason sentence, scene exports offered, NOTHING changed (Core froze nothing; no variant is rewritten).
+                details = exc.details if isinstance(exc.details, Mapping) else {}
+                reason = clip(details.get("reason"), 60)
+                raise self._refuse(tool, MASTER_INCOMPATIBLE,
+                                   f"{reason_sentence(reason, details.get('detail'))} Rien n'a été exporté ni modifié. Propose une scène à la "
+                                   "fois (scope scene + scene_id) ; ne la présente jamais comme la vidéo entière.",
+                                   reason=reason, scene_ids=[s for s in (details.get("scene_ids") or [])[:12] if is_scene_id(s)] or None)
+            raise await self._explain(exc) from None
+        job = answer.get("job") or {}
+        video, say = _export_label(whole, chosen, job.get("scene_count"))
+        return self._ok("say", status=job.get("state"), video=video, job=self._job_row(job),
+                        presentation_id=presentation_id, variant_id=variant_id,
+                        revisions={"presentation": revision, "variant": variant["revision"]}, say=say,
+                        note="Aucun Board n'est lu dans cet export. Ne boucle pas pour attendre : remotion_status (target export, job_id) à la "
+                             "demande." + (" project_key = la version de la vidéo exportée." if whole else ""))
 
     # ------------------------------------------------------------------ import d'un modèle amont
 
@@ -375,5 +413,21 @@ class RemotionTools(PresentationTools):
         return self._ok("say", status="trial_created", presentation_id=presentation_id, variant_id=made.get("variant_id"),
                         scene_id=scene_id, trial=_drop_none({"from": made.get("from"), "to": made.get("to")}), adopted=False,
                         say="Un essai est créé dans une variante enfant ; la variante actuelle n'est pas touchée.")
+
+
+def _export_label(whole: bool, chosen: Mapping[str, Any], scene_count: Any) -> tuple[str, str]:
+    """`video` + the sentence of a started export (§ 12). A master export with `frame_start`/`frame_end`/`frame` is an EXTRACT of the
+    whole video (`whole_range`), never announced as the whole video; a scene count Core did not send is left out, never said « None »."""
+    tail = " est lancé ; il se suit dans la vue Artefacts du Board."
+    if not whole:
+        return "scene", "L'export d'une scène seule est lancé (pas la vidéo entière) ; il se suit dans la vue Artefacts du Board."
+    first = chosen.get("frame_start", chosen.get("frame"))
+    last = chosen.get("frame_end", chosen.get("frame"))
+    if first is not None or last is not None:
+        span = f"{first if first is not None else 0}–{last if last is not None else 'fin'}"
+        return "whole_range", f"L'export d'un extrait de la vidéo entière (images {span}, pas la vidéo complète)" + tail
+    count = f" ({scene_count} scène{'s' if scene_count > 1 else ''})" if type(scene_count) is int else ""
+    return "whole", f"L'export de la vidéo entière{count}" + tail
+
 
 __all__ = ["COMMIT", "EXPORT_FORMATS", "EXPORT_SETTINGS", "JOB_ID", "RemotionTools", "TARGETS"]

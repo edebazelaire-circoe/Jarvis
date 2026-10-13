@@ -17,6 +17,12 @@ publiés de l'espace de travail sont copiés dans `studio-edits/` puis remplacé
 remplacée (409 `remotion_studio_unpublished_edits`). `publish` passe par la porte d'édition de source de la variante (nouvelle version) ;
 ses refus portent `publish_code`, `diagnostics`, `base` / `current` dans l'enveloppe d'erreur.
 
+Cible maître (master-project-studio-export Slice 05, `docs/remotion-master-project.md` § 9) : `open`, `sync` et `restart` acceptent aussi
+`{"kind": "variant_master", "presentation_id", "variant_id", "project_key", "acknowledge_unsandboxed_project": true}` (au plus ~420 octets avec
+`discard_unpublished`, admis aussi par `restart` maître ; le corps de scène de `restart` reste exactement l'accusé : sous le plafond de 1024) ; refus 409 `remotion_studio_master_incompatible` (`reason`, `detail`, `scene_ids`),
+`remotion_studio_master_stale` (`project_key`, `variant_revision`, `scene_count` courants) ; `publish` d'une cible maître : 409
+`remotion_studio_publish_master_unsupported`.
+
 `open`, `restart` et `sync` d'une AUTRE scène exigent l'accusé explicite : sans lui, 400 `remotion_studio_ack_required` et rien n'est lancé
 (la scène tourne sans le bac à sable du Player). Aucun chemin du cerveau, d'un outil MCP ni d'un agent n'appelle ces routes : `remotion_studio` (Slice 21) rend un pointeur vers la carte, l'accusé est à l'utilisateur.
 
@@ -34,7 +40,7 @@ from typing import Any
 
 from aiohttp import web
 
-from jarvis.domain.remotion_studio import StudioError, StudioErrorCode as C, parse_ack_only, parse_open
+from jarvis.domain.remotion_studio import StudioError, StudioErrorCode as C, parse_restart, parse_target
 from jarvis.domain.remotion_studio_workspace import parse_publish, split_discard
 
 PREFIX = "/v1/local-capabilities/remotion/studio"
@@ -98,14 +104,14 @@ class RemotionStudioProtocolRoutes:
     async def open(self, request: web.Request) -> web.StreamResponse:
         service = self._service()
         body, discard = split_discard(await self._body(request))
-        return web.json_response({"studio": await service.open(parse_open(body), acknowledged=True, discard=discard)})
+        return web.json_response({"studio": await service.open(parse_target(body), acknowledged=True, discard=discard)})
 
     async def sync(self, request: web.Request) -> web.StreamResponse:
         body, discard = split_discard(await self._body(request))
         service = self._service()
         if not body:
             return web.json_response({"studio": await service.sync(None, discard=discard)})
-        return web.json_response({"studio": await service.sync(parse_open(body), acknowledged=True, discard=discard)})
+        return web.json_response({"studio": await service.sync(parse_target(body), acknowledged=True, discard=discard)})
 
     async def publish(self, request: web.Request) -> web.StreamResponse:
         service = self._service()
@@ -118,5 +124,5 @@ class RemotionStudioProtocolRoutes:
 
     async def restart(self, request: web.Request) -> web.StreamResponse:
         service = self._service()
-        parse_ack_only(await self._body(request))
-        return web.json_response({"studio": await service.restart(acknowledged=True)})
+        master, discard = parse_restart(await self._body(request))
+        return web.json_response({"studio": await service.restart(acknowledged=True, master=master, discard=discard)})
