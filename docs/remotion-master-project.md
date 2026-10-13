@@ -1,8 +1,8 @@
 # Remotion master project of a Presentation Variant: plan, readiness, Studio target, whole-video export
 
-Status: **Level 2 — contract; implementation in Slices 03-08 of handoff jarvis-remotion-master-project-studio-export.** Nothing on this page is
-shipped yet: every behaviour below is the contract the Slices implement, and every "is" means "must be" until the Slice that owns it lands
-(owners: § 16). Evidence for the choices: the handoff's Slice 01 audit (`tasks/jarvis-remotion-master-project-studio-export/slices/01-current-state-and-compatibility-audit/AUDIT.md`,
+Status: **Level 2 — contract; implementation in Slices 03-08 of handoff jarvis-remotion-master-project-studio-export.** Shipped so far:
+§ 2, § 3 and § 5, the pure planner (Level 3 (Slice 03), `jarvis/domain/remotion_master_project.py`). Every other behaviour below is the
+contract the Slices implement, and every "is" means "must be" until the Slice that owns it lands (owners: § 16). Evidence for the choices: the handoff's Slice 01 audit (`tasks/jarvis-remotion-master-project-studio-export/slices/01-current-state-and-compatibility-audit/AUDIT.md`,
 real runs on the pinned Remotion 4.0.534). Decisions marked *decided by agent 0* were taken by the handoff's orchestrator under the Human's
 delegated autonomy (2026-10-13).
 
@@ -42,7 +42,7 @@ Composition without the word *master*.
 | M12 | **No persistence change.** No SQLite migration, no new field in a Presentation or Variant document: the plan derives from the live variant + prefab store (Studio, UI, agent) or from the frozen snapshot package (render). | AUDIT B; decided by agent 0 |
 | M13 | **Board Artifacts export** requests `scope: "master"` when the snapshot is master-ready, otherwise posts today's body unchanged (Slice 08). | decided by agent 0 |
 
-## 2. MasterProjectPlan
+## 2. MasterProjectPlan — Level 3 (Slice 03)
 
 One pure function family (Slice 03, `jarvis/domain/`; no disk, no process, no clock) builds the plan from either input:
 
@@ -71,9 +71,30 @@ MasterProjectPlan
 
 A plan is a value: the same inputs give the same plan, the same files and the same key, on every machine.
 
-## 3. Readiness and reason codes
+**Implementation (Level 3, Slice 03).** `jarvis/domain/remotion_master_project.py`: `live_inputs(presentation, variant, pins)` and
+`frozen_inputs(package)` build one `MasterInputs`; `plan_master(inputs) -> MasterProjectPlan`; `MasterProjectPlan.to_wire()` is the view
+above. `jarvis/core/remotion_master_project.py` `MasterProjectReader.live_plan(presentation_id, variant_id)` is the live read seam (variant
+from `PresentationStudioService`, each active pin through `PrefabService.manifest` + `remotion_source`, the props/data defaults exactly as
+the snapshot packager freezes them; it emits `core.remotion_master.planned` at info). Facts the implementation fixes:
 
-The planner checks in this fixed order and reports the **first** failing check as `reason` (with `detail` and the involved `scene_ids`). An
+- `scenes[].entry` is the workspace-relative mounted entry (`src/scenes/<scene_id>/Scene.tsx`); `mount` is its folder.
+- The wire view of an incompatible plan carries `reason`, `detail`, `scene_ids` and no `project_key`, `composition`, `scenes`,
+  `public_assets` or `totals`; a ready plan carries those and no reason.
+- `public_assets[]` of a frozen plan also lists the `public/live/**` copies (render workspace); they count in the collision check and in
+  `totals`, never in the key (§ 5).
+- `totals` counts the scene modules, the merged `public/**` and the generated set, whose bytes come from
+  `jarvis/domain/remotion_master_generated.py` `generated_files(...)` (the function Slice 04 writes to disk); the plan keeps those bytes
+  (`plan.generated`) and, per scene, the parsed source and merged props, never on the wire.
+- A pin unreadable in the store (`PrefabStoreError`) is `master_source_unavailable` with the store's code in `detail`; an HTML pin is
+  `master_engine_not_remotion`. A frozen pin is revalidated with `parse_source` and its recomputed digest compared with the manifest's
+  `source_digest`. A package whose `presentation.json` / `variant.json` cannot be read is `presentation_render_snapshot_invalid`
+  (corruption, not incompatibility).
+- Conformance: `tests/unit/test_remotion_master_project.py`.
+
+## 3. Readiness and reason codes — Level 3 (Slice 03)
+
+The planner checks in this fixed order and reports the **first** failing check as `reason` (with `detail` and the involved `scene_ids`;
+`MasterReason` declares the codes in this order; `detail` names scenes as « scene n (pss_…) », at most 300 characters, never a machine path). An
 incompatible master is **not** a corruption: the variant keeps opening, playing, exporting scene by scene and opening a scene in Remotion
 Studio exactly as today. Nothing is rewritten to make a variant ready.
 
@@ -117,17 +138,19 @@ expected revision is stale (the frozen package fixes the key, § 5).
 - **Residual difference, accepted**: `useVideoConfig().id` / `.props` / `.defaultProps` and `getInputProps()` belong to the master. Scenes get
   their props as React props of the mounted component; a reader of `getInputProps` is refused (`master_input_props_reader`).
 
-## 5. `project_key`
+## 5. `project_key` — Level 3 (Slice 03)
 
 `project_key = "mpk_" + sha256(canonical_json(inputs))[:24]`, `canonical_json` = `json.dumps(..., sort_keys=True, separators=(",", ":"),
-ensure_ascii=True)`, over exactly these inputs (decided by agent 0):
+ensure_ascii=True)`, over exactly these inputs (decided by agent 0), written as the object
+`{"generator_version": …, "spec": [w, h, fps], "scenes": [[…], …], "public_assets": [[path, sha256], …]}`:
 
 1. `generator_version` (`MASTER_GENERATOR_VERSION`; bumped whenever the generated files change for the same inputs);
 2. the master spec `[width, height, fps]`;
 3. the ordered list, in variant order, of `[scene_id, prefab_id, version, source_digest, props_digest]`, where `props_digest` = SHA-256 of the
    canonical JSON of the scene's **instance** `{"props": …, "data": …}`;
 4. the public-asset merge plan: the sorted list of `[path, sha256]` of the merged `public/**` of the pins (frozen `public/live/**` copies are
-   not inputs: they are bound by the snapshot id, which is already the render's identity).
+   not inputs: they are bound by the snapshot id, which is already the render's identity). The exclusion is by origin, not by path: a file
+   that a pin's own source brings counts even under `public/live/`, so the live and the frozen plan of the same pins have the same key.
 
 Not inputs: the Presentation title, the variant name, the variant `revision`, `presentation_id`, `variant_id`, scores, cues, art direction.
 Consequences, each a planner test: a title rename or a no-op revision bump keeps the key; a repin (voice edit), a reorder, a new source version,
@@ -168,7 +191,8 @@ work/
   `<SceneBoundary sceneId=… position=…><Scene_k {...props_k} /></SceneBoundary>`. `premountFor` may be set for Studio smoothness; it never
   changes render output.
 - `SceneBoundary` is a React error boundary. Under `getRemotionEnvironment().isRendering` it calls `cancelRender(new Error("jarvis_master_scene_failed:<scene_id>:<position>: <message>"))`;
-  otherwise (Studio) it draws a visible fallback card naming the scene (« Scène n « titre » : erreur — <message> ») and the rest of the video
+  otherwise (Studio) it draws a visible fallback card naming the scene (« Scène n (pss_…) : erreur — <message> »; the title is not a key
+  input, so it never reaches a generated file) and the rest of the video
   keeps its timing (AUDIT A6).
 
 ## 8. Security review: master root in Remotion Studio and the render host
@@ -327,7 +351,7 @@ this one view; none of them computes readiness itself (Slice 05).
 
 | Concept | Level now | Target | Owner Slice |
 | --- | --- | --- | --- |
-| MasterProjectPlan, readiness codes, `project_key`, asset merge | 2 (this page) | 3 | 03 |
+| MasterProjectPlan, readiness codes, `project_key`, asset merge | 3 (Slice 03) | 3 | 03 |
 | Master workspace files, generated composition, boundary | 2 | 3 | 04 |
 | Studio master target, ack, `state.json` schema 2, unpublished policy, live readiness route | 2 | 3 | 05 |
 | Render scope `master`, bounds, Artifact metadata, frozen readiness route | 2 | 3 | 06 |

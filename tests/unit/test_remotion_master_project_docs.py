@@ -1,6 +1,6 @@
 """Level 2 conformance of `docs/remotion-master-project.md` (handoff jarvis-remotion-master-project-studio-export, Slice 02).
 
-The contract is not implemented yet (Slices 03-08). These tests pin what Slices 03-08 build against: the reason codes and their order, the
+Slice 03 implemented the planner (§ 2, § 3, § 5 are Level 3, `jarvis/domain/remotion_master_project.py`); Slices 04-08 follow. These tests pin what Slices 03-08 build against: the reason codes and their order, the
 `project_key` inputs, the bounds, the composition id, the acknowledgment and scope names, the terminology, and that the scene-lane documents
 qualify their single-scene sentences instead of contradicting the new contract. They also check that the new names do not collide with any
 code that exists today and that the scene-lane constants the contract keeps unchanged are still the ones in the code.
@@ -14,6 +14,7 @@ import re
 from jarvis.adapters import remotion_studio_runner as runner
 from jarvis.domain import presentation_render as render
 from jarvis.domain import presentation_snapshot_package as package
+from jarvis.domain import remotion_master_project as master
 from jarvis.domain.presentation_studio import PresentationStudioErrorCode
 from jarvis.domain.remotion_compile import SCENE_ALLOWED_IMPORTS
 from jarvis.domain.remotion_source import COMPOSITION_ID
@@ -46,10 +47,27 @@ def section(title: str) -> str:
     return DOC[start: nxt if nxt != -1 else len(DOC)]
 
 
-def test_the_page_states_level_2_and_never_claims_an_implementation():
+LEVEL_3_SECTIONS = ("## 2. MasterProjectPlan — Level 3 (Slice 03)", "## 3. Readiness and reason codes — Level 3 (Slice 03)",
+                    "## 5. `project_key` — Level 3 (Slice 03)")
+
+
+def test_the_page_states_level_2_and_claims_level_3_only_for_the_implemented_planner_sections():
     assert f"Status: **{STATUS}.**" in DOC
-    assert "Nothing on this page is shipped yet" in flat(DOC)
-    assert "Level 3" not in DOC.replace("*Composition clock (Level 3)*", ""), "a Level 2 contract never claims Level 3"
+    assert "Shipped so far: § 2, § 3 and § 5, the pure planner (Level 3 (Slice 03)" in flat(DOC)
+    rest = DOC.replace("*Composition clock (Level 3)*", "").replace("Level 3 (Slice 03)", "").replace("(Level 3, Slice 03)", "")
+    assert "Level 3" not in rest, "only the Slice 03 sections claim Level 3"
+    for heading in LEVEL_3_SECTIONS:
+        assert "\n" + heading + "\n" in DOC, heading
+    assert "| MasterProjectPlan, readiness codes, `project_key`, asset merge | 3 (Slice 03) | 3 | 03 |" in DOC
+
+
+def test_the_level_3_sections_name_their_implementation_and_its_conformance_test():
+    text = flat(section("## 2. MasterProjectPlan"))
+    for needle in ("`jarvis/domain/remotion_master_project.py`", "`plan_master(inputs) -> MasterProjectPlan`", "`frozen_inputs(package)`",
+                   "`MasterProjectReader.live_plan(presentation_id, variant_id)`", "`jarvis/domain/remotion_master_generated.py`",
+                   "`tests/unit/test_remotion_master_project.py`"):
+        assert needle in text, needle
+    assert [r.value for r in master.MasterReason] == list(PLANNER_CODES)
 
 
 def test_the_planner_reason_codes_are_listed_in_their_fixed_order_with_a_sentence_each():
@@ -93,11 +111,13 @@ def test_the_bounds_are_the_decided_ones_and_the_scene_bounds_are_unchanged_in_t
     assert runner.MAX_WORK_FILES == 400 and runner.MAX_WORK_BYTES == 64 * 1024 * 1024
     assert package.MAX_PACKAGE_FILES >= 400 and package.MAX_PACKAGE_BYTES == 64 * 1024 * 1024, "400 / 64 MiB is the minimum of both"
     assert not hasattr(render, "MAX_MASTER_RENDER_FRAMES") or render.MAX_MASTER_RENDER_FRAMES == 9000
+    assert master.MAX_MASTER_RENDER_FRAMES == 9000 and master.MASTER_GENERATOR_VERSION == 1
+    assert (master.MAX_MASTER_FILES, master.MAX_MASTER_BYTES) == (min(runner.MAX_WORK_FILES, package.MAX_PACKAGE_FILES), 64 * 1024 * 1024)
 
 
 def test_the_composition_id_is_valid_for_remotion_and_jarvis_and_the_draft_id_is_rejected():
     assert DOC.count('`JarvisPresentation`') >= 2 and 'id="JarvisPresentation"' in DOC
-    assert COMPOSITION_ID.fullmatch("JarvisPresentation")
+    assert COMPOSITION_ID.fullmatch("JarvisPresentation") and master.MASTER_COMPOSITION_ID == "JarvisPresentation"
     assert not COMPOSITION_ID.fullmatch("JARVIS_PRESENTATION"), "Remotion 4.0.534 refuses an underscore"
     assert "`JARVIS_PRESENTATION` (the handoff's draft) is refused by Remotion 4.0.534 and is never used" in DOC
 
