@@ -12,7 +12,7 @@
 (function(root){
   'use strict';
   const CHROME_HIDE_MS=2500;
-  const KEY_ACTIONS=Object.freeze({' ':'toggle',ArrowRight:'next',PageDown:'next',ArrowLeft:'previous',PageUp:'previous',Home:'home',End:'end',
+  const KEY_ACTIONS=Object.freeze({' ':'toggle',ArrowRight:'next',PageDown:'next',ArrowLeft:'restart',PageUp:'previous',Home:'home',End:'end',
     ',':'step_back','.':'step_forward',f:'fullscreen',F:'fullscreen',m:'sound',M:'sound',Escape:'escape'});
   const TEXT=Object.freeze({
     on:'Son activé.',
@@ -33,11 +33,11 @@
   const KEY_NAMES=Object.freeze({' ':'Espace',ArrowRight:'→',ArrowLeft:'←',PageDown:'Page suivante',PageUp:'Page précédente',Home:'Début',End:'Fin',
     ',':',','.':'.',f:'F',F:'F',m:'M',M:'M',Escape:'Échap'});
   const SHEET_TEXT=Object.freeze({
-    video:Object.freeze({toggle:'Lire, mettre en pause, rejouer',next:'Début de la scène suivante',previous:'Début de la scène précédente',
+    video:Object.freeze({toggle:'Lire, mettre en pause, rejouer',next:'Slide suivante (début de la scène suivante)',restart:'Début de la slide ; deux fois de suite : la slide d’avant',previous:'Début de la scène précédente',
       home:'Début de la vidéo',end:'Dernière image de la vidéo',step_back:'Une image en arrière (en pause)',step_forward:'Une image en avant (en pause)',
       fullscreen:"Plein écran de la vidéo (Maj+F : un autre écran, si le navigateur l'autorise)",sound:'Son',
       escape:'Ferme le menu ou la fenêtre ouverte, puis quitte le plein écran, puis ferme Variantes'}),
-    run:Object.freeze({toggle:'Pause, reprise de la présentation',next:'Élément suivant de la partition',previous:'Élément précédent de la partition',
+    run:Object.freeze({toggle:'Pause, reprise de la présentation',next:'Élément suivant de la partition',restart:'Début de l’élément ; deux fois de suite : l’élément précédent',previous:'Élément précédent de la partition',
       home:'Premier élément',end:'Dernier élément',step_back:'Sans effet : la partition mène',step_forward:'Sans effet : la partition mène',
       fullscreen:'Plein écran de la vidéo',sound:'Son',
       escape:'Ferme le menu ou la fenêtre ouverte, puis quitte le plein écran, puis ferme Variantes (la présentation se met en pause)'}),

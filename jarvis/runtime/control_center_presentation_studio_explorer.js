@@ -52,7 +52,7 @@
   const {ROUTE,PLAYBACK_ROUTE,COMMAND_ROUTE,STATE_ROUTE,HOST_ID,OBJECT_ID,PREVIEW_OBJECT_ID,STAGE_OBJECT_ID,STYLE_ID,ROW_H,MAX_DEPTH_SHOWN,INDENT_PX,TYPEAHEAD_MS,PAGE_TOKEN,PAGE_TOKEN_HEADER,
     REQUEST_TIMEOUT_MS,READ_TIMEOUT_MS,LONG_PRESS_MS,PREVIEW_SETTLE_MS,NOTICE_MS,COMMAND_REFUSALS,ICONS,CSS,MAX_LIVE,MAX_ARCHIVED,
     cleanLine,checkTitle,checkRationale,rationaleBytes,relativeTime,absoluteTime,creatorLabel,shortId,buildForest,subtreeIds,flatten,windowOf,treeKey,
-    describeRefusal,planModel,sameSet,readPrefs,writePrefs,MAX_RATIONALE_BYTES}=Core;
+    describeRefusal,planModel,sameSet,readPrefs,writePrefs,MAX_RATIONALE_BYTES,AUTO_DWELL_DEFAULT,AUTO_TICK_MS,AUTO_SKIP_MS,autoStep,leftKeyAction,nextDwell,dwellLabel}=Core;
 
   const GRAPH_POLL_MS=10000;
   const COMMAND_POLL_WAIT_S=25;
@@ -99,6 +99,7 @@
       collapsed:new Set(),archivedOpen:false,prefs:readPrefs(null),loading:null,busy:null,notice:null,
       preview:{variantId:null,status:'idle',doc:null,scenes:[],sceneId:null,error:null,since:0,generation:0,mounted:null},
       art:{variantId:null,state:'idle',doc:null},fs:'not_requested',generation:0,dialog:null,menu:null,opener:null,fullscreenOwned:false,
+      auto:{on:false,dwell:AUTO_DWELL_DEFAULT,elapsed:0,lastTick:0,lastLeftAt:0,loop:false,timer:null},
       fsKind:null,fsOpener:null,fsLeftAt:-1e9,
       /* Slice 09: the presentation Variants hosts (`{runId, view, viewAt, busy, map}`), and the runs it has opened by itself (once each). */
       run:null,
@@ -218,7 +219,7 @@
       dialog:dialogApi,compose,
       setCompareVisible:on=>{if(ui.preview)ui.preview.hidden=!!on},
       onActive:on=>{
-        if(on){if(previewTimer){cancelLater(previewTimer);previewTimer=null}if(seq)seq.reset('compare');unmountPreview()}
+        if(on){if(previewTimer){cancelLater(previewTimer);previewTimer=null}if(seq)seq.reset('compare');stopAuto('compare');unmountPreview()}
         else if(S.open&&S.selectedId)schedulePreview();
       }});
 
@@ -412,6 +413,9 @@
       ui.theater=el('div','jvx-theater');
       attrs(ui.theater,{'data-object-id':STAGE_OBJECT_ID,'aria-label':'Vidéo de la variante'});
       ui.theater.appendChild(wrap);ui.theater.appendChild(note);
+      /* In fullscreen the presenter strip (under the theater) is not drawn: this band says who presents, the phase and WHY it paused. */
+      ui.fsStatus=el('div','jvx-fs-status');ui.fsStatus.hidden=true;attrs(ui.fsStatus,{role:'status','aria-live':'polite'});
+      ui.theater.appendChild(ui.fsStatus);
       /* Slice 10 rework (B1): while the stage is fullscreen, menus and dialogs mount HERE, inside the fullscreen element (else they are drawn
          outside it, unseen, and the inert set freezes the transport). */
       ui.fsLayer=el('div','jvx-layer jvx-fs-layer');ui.theater.appendChild(ui.fsLayer);
@@ -647,6 +651,7 @@
     function sequencer(){
       if(seq||!Seq)return seq;
       seq=Seq.createSequencer({objectId:PREVIEW_OBJECT_ID,host:()=>previewHost,now,setTimeout:later,clearTimeout:cancelLater,requestFrame:frame,
+        visible:()=>doc.visibilityState!=='hidden',
         log:(key,data,level)=>log(key,data,level),
         scenes:()=>S.preview.status==='ready'?S.preview.scenes:[],
         revision:()=>S.preview.doc&&Number.isInteger(S.preview.doc.revision)?S.preview.doc.revision:null,
@@ -668,7 +673,7 @@
     }
     /* A playback command from the transport, a key or the page API: refused with its reason when it cannot run, its failure said. `run` gets
        the sequencer. */
-    async function playback(run){
+    async function playback(run,fallback){
       if(S.run){say('info','Une présentation est en cours : la partition la mène. « Arrêter » pour revenir à la vidéo.');return null}
       if(cmp.isActive()){say('info',"La lecture se fait hors de la comparaison : fermez-la d'abord.");return null}
       if(S.preview.status!=='ready'||!S.preview.scenes.length){say('info',"Aucune scène à lire : attendez l'aperçu.");return null}
@@ -676,9 +681,10 @@
       if(!s){say('failed',"La lecture continue n'est pas chargée dans cette page.");return null}
       ensureHost();
       const before=s.view();
-      if(before.phase==='unavailable'&&!before.retryable){say('info',unavailableText(before));return before}
+      if(before.phase==='unavailable'&&!before.retryable){if(fallback){fallback();return before}say('info',unavailableText(before));return before}
       try{
         const v=await run(s);
+        if(fallback&&v&&v.phase==='unavailable'&&!v.retryable){fallback();return v}
         if(v&&v.phase==='failed'&&v.error)say('failed',playbackError(v.error));
         else if(v&&v.phase==='unavailable')say(v.retryable?'failed':'info',unavailableText(v));
         return v;
@@ -690,7 +696,9 @@
     }
     function togglePlayback(){
       if(S.run){const m=runModel();return m.active?runCommand(m.pause.command):null}
-      return playback(s=>s.view().phase==='failed'?s.retry():s.toggle());
+      if(autoMode()){toggleAuto();return null}
+      /* A variant without video (HTML scenes) plays by its slides' own rhythm, here, instead of saying « no video ». */
+      return playback(s=>s.view().phase==='failed'?s.retry():s.toggle(),()=>{if(!S.auto.on)startAuto()});
     }
     function playSceneOnly(){return playback(s=>s.playScene())}
     function playbackError(error){
@@ -710,7 +718,7 @@
     /* Slice 08: the transport over the stage in fullscreen, hidden while the video plays (§ 4.12, § 4.16). */
     const chrome=Media.createChrome({setTimeout:later,clearTimeout:cancelLater,
       apply:(hidden)=>{if(ui.theater){if(hidden)ui.theater.setAttribute('data-chrome','hidden');else ui.theater.removeAttribute('data-chrome')}},
-      playing:()=>{if(S.run)return S.run.view.phase==='playing';const v=seq?seq.view():null;return !!v&&(v.phase==='playing'||v.phase==='waiting')},
+      playing:()=>{if(S.run)return S.run.view.phase==='playing';if(S.auto.on)return true;const v=seq?seq.view():null;return !!v&&(v.phase==='playing'||v.phase==='waiting')},
       pinned:()=>!!S.menu||!!(ui.transport&&ui.transport.contains(doc.activeElement))});
     function toggleSound(){
       if(!ensureHost()){say('failed',Media.TEXT.unavailable);return}
@@ -730,10 +738,14 @@
     function buildTransport(){
       ui.transport=el('div','jvx-transport');
       attrs(ui.transport,{role:'toolbar','aria-label':'Lecture de la vidéo'});
-      ui.prevScene=button(null,'jvx-btn jvx-btn-icon',()=>moveScene(-1),{icon:'first',attrs:{'aria-label':'Scène précédente',title:'Début de la scène précédente (←, Page précédente)'}});
-      ui.playAll=button(null,'jvx-btn',()=>{togglePlayback()},{attrs:{'data-act':'continuous',title:'Lire la vidéo en continu, de la position à la fin (Espace)'}});
-      ui.playAllIcon=el('span','jvx-icon-slot');ui.playAllIcon.appendChild(icon('play'));ui.playAllLabel=el('span','','Lire');
+      ui.prevScene=button(null,'jvx-btn jvx-btn-icon',()=>moveScene(-1),{icon:'first',attrs:{'aria-label':'Scène précédente',title:'Début de la scène précédente (Page précédente ; ← deux fois de suite)'}});
+      ui.restart=button(null,'jvx-btn jvx-btn-icon',()=>restartScene(),{icon:'restart',attrs:{'aria-label':'Début de la slide',title:'Début de la slide (←)'}});
+      ui.skipBack=button(null,'jvx-btn jvx-btn-icon jvx-t-skip',()=>skipTime(-AUTO_SKIP_MS),{icon:'rewind',attrs:{'aria-label':'Reculer de 5 secondes',title:'Reculer de 5 secondes'}});
+      /* One play button: its icon IS the state (▶ / ⏸ / ⟲); its word stays for assistive technology and tests, never drawn. */
+      ui.playAll=button(null,'jvx-btn jvx-t-play',()=>{togglePlayback()},{attrs:{'data-act':'continuous',title:'Lire la vidéo en continu, de la position à la fin (Espace)'}});
+      ui.playAllIcon=el('span','jvx-icon-slot');ui.playAllIcon.appendChild(icon('play'));ui.playAllLabel=el('span','jvx-sr','Lire');
       ui.playAll.appendChild(ui.playAllIcon);ui.playAll.appendChild(ui.playAllLabel);
+      ui.skipFwd=button(null,'jvx-btn jvx-btn-icon jvx-t-skip',()=>skipTime(AUTO_SKIP_MS),{icon:'forward',attrs:{'aria-label':'Avancer de 5 secondes',title:'Avancer de 5 secondes'}});
       ui.nextScene=button(null,'jvx-btn jvx-btn-icon',()=>moveScene(1),{icon:'last',attrs:{'aria-label':'Scène suivante',title:'Début de la scène suivante (→, Page suivante)'}});
       ui.scrub=el('div','jvx-scrub');
       attrs(ui.scrub,{role:'slider',tabindex:'0','aria-label':'Position dans la vidéo','aria-valuemin':'0','aria-disabled':'true'});
@@ -747,13 +759,16 @@
       ui.time=el('span','jvx-time');
       ui.sound=button(null,'jvx-btn jvx-btn-icon',()=>toggleSound(),{attrs:{'aria-label':'Son','aria-pressed':'false',title:Media.TEXT.titleOff}});
       ui.soundIcon=el('span','jvx-icon-slot');ui.soundIcon.appendChild(icon('muted'));ui.sound.appendChild(ui.soundIcon);
+      ui.fsT=button(null,'jvx-btn jvx-btn-icon',()=>{toggleFullscreen()},{attrs:{'data-act':'fullscreen','aria-label':'Plein écran',title:'Plein écran (F)','aria-keyshortcuts':'F'}});
+      ui.fsTIn=el('span','jvx-icon-slot');ui.fsTIn.appendChild(icon('expand'));ui.fsTOut=el('span','jvx-icon-slot');ui.fsTOut.appendChild(icon('contract'));ui.fsTOut.style.display='none';
+      ui.fsT.appendChild(ui.fsTIn);ui.fsT.appendChild(ui.fsTOut);
       ui.more=button(null,'jvx-btn jvx-btn-icon',()=>openPlaybackMenu(),{icon:'more',attrs:{'aria-label':'Plus de lecture','aria-haspopup':'menu','aria-expanded':'false',title:'Plus de lecture'}});
       /* § 5 / § 6 #21 (Slice 09): « Présenter ▾ » starts a presenter run here; during the run « Arrêter » stops it (also in fullscreen). */
       ui.present=button('Présenter','jvx-btn',()=>openPresentMenu(),{attrs:{'aria-haspopup':'menu','aria-expanded':'false','data-act':'present',
         title:'Présenter cette variante : vous, Jarvis, ou une répétition (la partition mène)'}});
       ui.stopRun=button('Arrêter','jvx-btn',()=>{runCommand('stop')},{attrs:{'data-act':'stop_run','data-danger':'',title:'Arrêter la présentation'}});
       ui.stopRun.hidden=true;
-      for(const node of [ui.prevScene,ui.playAll,ui.nextScene,ui.scrub,ui.time,ui.sound,ui.more,ui.stopRun])ui.transport.appendChild(node);
+      for(const node of [ui.prevScene,ui.restart,ui.skipBack,ui.playAll,ui.skipFwd,ui.nextScene,ui.scrub,ui.time,ui.sound,ui.fsT,ui.more,ui.stopRun])ui.transport.appendChild(node);
     }
     /* ⏮ ⏭, ← →, Page précédente / suivante: the start of the previous / next scene, play state kept (§ 4.4). Without a map (a variant
        without video, or before it is read) they browse the scenes. Next on the last scene says why it does nothing. */
@@ -779,7 +794,13 @@
     /* The § 4.15 map (one table, `Media.keyAction`), on the stage, the transport, the strip (F, M) and for the keys the scene passes on.
        Returns whether the key acted. `Escape` is not here: it is the nested rule of the host (`onHostKey`). */
     function transportKey(key,event){
-      const action=Media.keyAction(key);
+      let action=Media.keyAction(key);
+      /* ← : the start of this slide; twice in a row: the slide before (one table of keys, § 4.15). */
+      if(action==='restart'){
+        const at=now(),twice=leftKeyAction(S.auto.lastLeftAt,at)==='previous';
+        S.auto.lastLeftAt=twice?0:at;
+        if(twice)action='previous';
+      }
       if(S.run){
         /* § 4.15, column « Presenter run »: the score moves, never `f`; `S` leaves a locked sequence; F, M as in the video. */
         const asked=Run.keyCommand(key==='s'||key==='S'?'skip':action,S.run.view);
@@ -787,6 +808,7 @@
         if(asked){runCommand(asked.verb,asked.body);return true}
       }
       if(action==='toggle')togglePlayback();
+      else if(action==='restart')restartScene();
       else if(action==='next')moveScene(1);
       else if(action==='previous')moveScene(-1);
       else if(action==='home'){if(!seekTo('home'))browseScene(0,0)}
@@ -867,6 +889,8 @@
       const box=ui.more.getBoundingClientRect?ui.more.getBoundingClientRect():{left:80,bottom:80};
       /* During a presentation the menu speaks of score items, never of the video's position (the score leads, § 5). */
       const items=(S.run?[{act:'first_item',label:'Premier élément',icon:'first',key:'Début'},{act:'last_item',label:'Dernier élément',icon:'last',key:'Fin'}]
+        :autoMode()?[{act:'dwell',label:dwellLabel(S.auto.dwell)+' (changer)',icon:'rewind'},{act:'loop',label:S.auto.loop?'Ne pas recommencer à la fin':'Recommencer à la fin',icon:'repeat'},
+          {act:'home',label:'Revenir au début',icon:'restore',key:'Début'}]
         :[{act:'scene_only',label:'Lire seulement cette scène',icon:'play'},{act:'home',label:'Revenir au début',icon:'restore',key:'Début'}])
         .concat([{act:'shortcuts',label:'Raccourcis clavier',icon:'keyboard',key:'?'}]);   // § 6 #20 (Slice 10)
       const {menu,buttons}=W.buildMenu(kit,{head:S.run?'Présentation':'Lecture',label:'Plus de lecture',items,anchor:{x:box.left,y:box.bottom+4},
@@ -877,6 +901,8 @@
           else if(item.act==='first_item')runCommand('goto',{position:1});
           else if(item.act==='last_item')runCommand('goto',{position:(S.run&&S.run.view.position&&S.run.view.position.of)||1});
           else if(item.act==='scene_only')playSceneOnly();
+          else if(item.act==='dwell')cycleDwell();
+          else if(item.act==='loop')toggleLoop();
           else if(!seekTo('home'))browseScene(0,0);
         }});
       mountOverlay(menu);
@@ -929,17 +955,21 @@
       if(S.run){renderRun();return}
       renderPresent();
       const v=seq?seq.view():{phase:'idle',retryable:true};
-      const running=v.phase==='playing'||v.phase==='waiting';
+      const auto=autoMode();
+      const running=auto?S.auto.on:v.phase==='playing'||v.phase==='waiting';
       chrome.sync();   // fullscreen: the transport stays while paused, hides itself while the video plays
-      const label=running?'Pause':v.phase==='ended'?'Rejouer':v.phase==='loading'&&!v.total_frames?'Préparation…':'Lire';
+      renderFullscreenButton();
+      const label=running?'Pause':!auto&&v.phase==='ended'?'Rejouer':!auto&&v.phase==='loading'&&!v.total_frames?'Préparation…':'Lire';
       ui.playAllLabel.textContent=label;
-      clear(ui.playAllIcon);ui.playAllIcon.appendChild(icon(running?'pause':v.phase==='ended'?'restore':'play'));
+      clear(ui.playAllIcon);ui.playAllIcon.appendChild(icon(running?'pause':!auto&&v.phase==='ended'?'restore':'play'));
       ui.playAll.setAttribute('aria-pressed',running?'true':'false');
       ui.playAll.setAttribute('aria-label',label==='Préparation…'?'Préparation de la lecture':label);
       const ready=S.preview.status==='ready'&&S.preview.scenes.length>0;
-      const blocked=!ready?"Aucune scène à lire : attendez l'aperçu.":v.phase==='unavailable'&&!v.retryable?unavailableText(v):null;
+      const blocked=!ready?"Aucune scène à lire : attendez l'aperçu.":null;
       ui.playAll.setAttribute('aria-disabled',blocked?'true':'false');
-      ui.playAll.title=blocked||'Lire la vidéo en continu, de la position à la fin (Espace)';
+      ui.playAll.title=blocked||(auto?(running?'Pause (Espace)':`Lire les slides l'une après l'autre, ${dwellLabel(S.auto.dwell)} (Espace)`):
+        running?'Mettre la lecture en pause (Espace)':'Lire la vidéo en continu, de la position à la fin (Espace)');
+      for(const b of [ui.restart,ui.skipBack,ui.skipFwd])b.setAttribute('aria-disabled',ready?'false':'true');
       const mapped=!!(seq&&seq.active()&&v.total_frames);
       const index=mapped?v.scene_index:Math.max(-1,S.preview.scenes.findIndex(s=>s.id===S.preview.sceneId));
       const count=S.preview.scenes.length;
@@ -947,7 +977,7 @@
       const last=index>=count-1;
       ui.nextScene.setAttribute('aria-disabled',ready&&!last?'false':'true');
       ui.nextScene.title=ready&&last?'Dernière scène':'Début de la scène suivante (→, Page suivante)';
-      renderScrub(v,mapped);
+      if(auto&&ready)renderAutoReadout(index,count);else renderScrub(v,mapped);
       if(v.phase==='waiting'&&v.waiting_visible){
         ui.wait.hidden=false;
         ui.waitText.textContent=`Chargement de la scène ${v.scene_index+1} sur ${v.scene_count}`;
@@ -1003,6 +1033,7 @@
       if(!node){p.variantId=null;p.status='idle';unmountPreview();renderStage();renderStrip();return}
       if(p.variantId!==node.variant_id){
         if(seq)seq.reset('variant_changed');   // another variant: playback stops, its map (another key) is dropped (§ 4.10)
+        stopAuto('variant_changed');S.auto.elapsed=0;
         p.doc=null;p.scenes=[];p.error=null;p.variantId=node.variant_id;
       }
       if(node.state==='archived'){p.status='archived';p.since=now();unmountPreview();renderStage();renderStrip();renderMeta();return}
@@ -1160,9 +1191,119 @@
     function showScene(sceneId){
       const p=S.preview;
       if(!p.scenes.some(s=>s.id===sceneId))return;
-      p.sceneId=sceneId;
+      p.sceneId=sceneId;S.auto.elapsed=0;
       renderStage();renderStrip();
     }
+    /* -------------------------------------------------------------- lecture automatique, début de slide, saut de quelques secondes */
+    const RUN_SKIP="La partition mène la présentation : on ne saute pas dans le temps, on passe à l'élément suivant (→) ou précédent (←←).";
+    function sceneIndex(){const p=S.preview;return Math.max(0,p.scenes.findIndex(s=>s.id===p.sceneId))}
+    function readyScenes(){return S.preview.status==='ready'&&S.preview.scenes.length>0}
+    /* A variant without video plays by the rhythm of its slides (no Core run, nothing written, the explorer stays open). */
+    function autoMode(){
+      if(S.run||!seq)return false;
+      const v=seq.view();
+      return v.phase==='unavailable'&&!v.retryable;
+    }
+    /* « Début de la slide » (←): the start of the scene on screen, play state kept; during a presentation, the start of the item. */
+    function restartScene(){
+      if(S.run){
+        const at=S.run.view.position&&S.run.view.position.index||1;
+        runCommand('goto',{position:at});
+        return;
+      }
+      if(!readyScenes())return;
+      if(seq&&seq.active()){
+        const v=seq.view();
+        if(v.scene_index>=0&&seq.seekScene(v.scene_index))announce(`Début de la scène ${v.scene_index+1}`);
+        return;
+      }
+      S.auto.elapsed=0;S.auto.lastTick=now();
+      unmountPreview();renderStage();renderPlayback();   // the frame is mounted again: the slide's animation restarts from its first instant
+      announce(`Début de la slide ${sceneIndex()+1}`);
+    }
+    /* « Avancer / Reculer de 5 secondes »: the video's clock (one seek), or the slide's own clock without video. */
+    function skipTime(deltaMs){
+      if(S.run){say('info',RUN_SKIP);return}
+      if(!readyScenes())return;
+      if(seq&&seq.active()){
+        const v=seq.view();
+        if(v.total_frames&&v.fps)seq.seek('scrub',Math.max(0,Math.min(v.total_frames-1,v.frame+Math.round(deltaMs/1000*v.fps))));
+        return;
+      }
+      if(!autoMode()){say('info',noPositionText());return}
+      S.auto.elapsed=Math.max(0,S.auto.elapsed+deltaMs);
+      if(S.auto.on){autoTick(true);return}
+      const step=autoStep({elapsedMs:S.auto.elapsed,dwellMs:S.auto.dwell,index:sceneIndex(),count:S.preview.scenes.length,loop:false});
+      if(step.action==='next'){browseScene(1);return}
+      if(step.action==='end')S.auto.elapsed=S.auto.dwell;
+      renderPlayback();
+    }
+    function toggleAuto(){if(S.auto.on)stopAuto('manual');else startAuto()}
+    function startAuto(){
+      if(!readyScenes()||S.run){S.auto.on=false;renderPlayback();return false}
+      const p=S.preview;
+      /* Played again from the last slide: from the first one, else the run would end at once. */
+      if(sceneIndex()>=p.scenes.length-1&&S.auto.elapsed>=S.auto.dwell&&!S.auto.loop){browseScene(0,0);S.auto.elapsed=0}
+      S.auto.on=true;S.auto.lastTick=now();
+      if(!S.auto.timer)S.auto.timer=every(()=>autoTick(false),AUTO_TICK_MS);
+      renderPlayback();announce('Lecture');log('auto_started',{dwell_ms:S.auto.dwell});
+      return true;
+    }
+    function stopAuto(reason){
+      const was=S.auto.on;
+      S.auto.on=false;
+      if(S.auto.timer){stopEvery(S.auto.timer);S.auto.timer=null}
+      if(S.open)renderPlayback();
+      if(was){announce(reason==='end'?'Fin de la présentation':'Pause');log('auto_stopped',{reason})}
+    }
+    function autoTick(forced){
+      if(!S.open||!S.auto.on)return;
+      const at=now();
+      const dt=Math.max(0,Math.min(1000,at-S.auto.lastTick));
+      S.auto.lastTick=at;
+      if(!readyScenes()||S.dialog||S.menu||(S.busy&&S.busy.op&&S.busy.op!=='plan')||cmp.isActive()||doc.visibilityState==='hidden'){renderPlayback();return}
+      if(!forced)S.auto.elapsed+=dt;
+      const step=autoStep({elapsedMs:S.auto.elapsed,dwellMs:S.auto.dwell,index:sceneIndex(),count:S.preview.scenes.length,loop:S.auto.loop});
+      if(step.action==='next'){browseScene(1);S.auto.elapsed=0}
+      else if(step.action==='wrap'){browseScene(0,0);S.auto.elapsed=0}
+      else if(step.action==='end'){S.auto.elapsed=S.auto.dwell;stopAuto('end');say('info','Fin de la présentation.')}
+      renderPlayback();
+    }
+    function cycleDwell(){S.auto.dwell=nextDwell(S.auto.dwell);S.auto.elapsed=Math.min(S.auto.elapsed,S.auto.dwell);renderPlayback();announce(dwellLabel(S.auto.dwell))}
+    function toggleLoop(){S.auto.loop=!S.auto.loop;renderPlayback();announce(S.auto.loop?'Recommencer à la fin : oui':'Recommencer à la fin : non')}
+    /* « Lance la lecture » on opening: the preview is read first (about 120 ms of calm), then the play starts: the video when the variant has
+       one, the slides' own rhythm otherwise. */
+    function autoplayWhenReady(){
+      let tries=0;
+      const attempt=()=>{
+        if(!S.open||S.run)return;
+        if(!readyScenes()){if(++tries<40)later(attempt,250);return}
+        startPlayback();
+      };
+      later(attempt,0);
+    }
+    function startPlayback(){
+      if(autoMode()){if(!S.auto.on)startAuto();return}
+      const v=seq?seq.view():null;
+      if(v&&(v.phase==='playing'||v.phase==='waiting'))return;
+      playback(s=>s.play(),()=>{if(!S.auto.on)startAuto()});
+    }
+    /* The automatic play's readout: the slide's own clock, in the slot the video's time uses. */
+    function renderAutoReadout(index,count){
+      const pct=Math.max(0,Math.min(100,Math.round(S.auto.elapsed*100/S.auto.dwell)));
+      attrs(ui.scrub,{'aria-disabled':'true',title:`Lecture automatique : ${dwellLabel(S.auto.dwell)}. Pas de position vidéo.`});
+      for(const name of ['aria-valuenow','aria-valuemax','aria-valuetext'])ui.scrub.removeAttribute(name);
+      ui.scrubFill.style.width=pct+'%';ui.scrubKey=null;clear(ui.scrubTicks);
+      ui.time.textContent=`${index+1}/${count} · ${Math.floor(S.auto.elapsed/1000)} s / ${Math.round(S.auto.dwell/1000)} s`;
+    }
+    function renderFullscreenButton(){
+      if(!ui.fsT)return;
+      const full=fullscreenNow();
+      ui.fsTIn.style.display=full?'none':'';ui.fsTOut.style.display=full?'':'none';
+      const label=full?'Quitter le plein écran':'Plein écran';
+      ui.fsT.setAttribute('aria-label',label);ui.fsT.title=`${label} (F)`;
+    }
+
     function browseScene(delta,absolute){
       const p=S.preview;
       if(p.status!=='ready'||!p.scenes.length)return false;
@@ -1635,6 +1776,7 @@
       if(cmp.isActive())cmp.close({});
       closeMenu(false);
       if(seq)seq.reset('run');   // continuous video stops: one Player, the run's
+      stopAuto('run');
       unmountPreview();
       if(view.variant_id&&nodeOf(view.variant_id)&&S.selectedId!==view.variant_id)selectVariant(view.variant_id,{});
       S.run={runId:view.run_id,view,viewAt:now(),busy:false,map:null};
@@ -1798,10 +1940,28 @@
         title:pausing?'Mettre la présentation en pause (Espace)':'Reprendre la présentation (Espace)'});
       attrs(ui.prevScene,{'aria-label':'Élément précédent','aria-disabled':m.previous.disabled?'true':'false',title:'Élément précédent (←, Page précédente)'});
       attrs(ui.nextScene,{'aria-label':'Élément suivant','aria-disabled':m.nextItem.disabled?'true':'false',title:'Élément suivant (→, Page suivante)'});
+      attrs(ui.restart,{'aria-label':'Début de l\u2019élément','aria-disabled':m.previous.disabled?'true':'false',title:'Début de l\u2019élément (←, deux fois : l\u2019élément précédent)'});
+      for(const b of [ui.skipBack,ui.skipFwd])attrs(b,{'aria-disabled':'true',title:RUN_SKIP});
       renderRunScrub();
       ui.wait.hidden=true;
       if(ui.veil.getAttribute('data-playback')==='1'){ui.veil.removeAttribute('data-playback');ui.veil.hidden=true}
       renderPresenterStrip(m);
+      renderFsStatus(m);
+    }
+    /* The fullscreen status band (the presenter strip is not drawn there): who presents, where, the phase, and WHY it paused. */
+    function renderFsStatus(m){
+      const box=ui.fsStatus;
+      if(!box)return;
+      const on=!!(m&&m.active);
+      box.hidden=!on;
+      if(!on){box.textContent='';box.removeAttribute('data-kind');return}
+      const paused=m.phaseKey==='paused'||!!m.pauseReason;
+      box.setAttribute('data-kind',m.kind==='problem'?'problem':paused?'paused':'ok');
+      clear(box);
+      box.appendChild(el('strong','',m.role));
+      box.appendChild(el('span','',`${m.where} · ${m.phase}`));
+      if(m.pauseReason)box.appendChild(el('span','',`${m.pauseReason}. Espace ou « ${m.pause.label} » pour reprendre.`));
+      else if(m.lines.length)box.appendChild(el('span','',cleanLine(m.lines[0],160)));
     }
     function renderRunStage(){
       if(!S.run)return;
@@ -1866,6 +2026,9 @@
       if(!ui.present)return;
       ui.stopRun.hidden=true;ui.present.hidden=false;
       ui.sceneCount.hidden=false;ui.sceneLine.hidden=false;ui.rmsButton.hidden=false;
+      renderFsStatus(null);
+      attrs(ui.restart,{'aria-label':'Début de la slide',title:'Début de la slide (←)'});
+      attrs(ui.skipBack,{title:'Reculer de 5 secondes'});attrs(ui.skipFwd,{title:'Avancer de 5 secondes'});
       door.render();
       const blocked=presentBlocked();
       attrs(ui.present,{'aria-disabled':blocked?'true':'false',title:blocked||'Présenter cette variante : vous, Jarvis, ou une répétition (la partition mène)'});
@@ -1945,6 +2108,13 @@
       if(!typing&&!S.dialog&&!S.menu&&!event.ctrlKey&&!event.metaKey&&!event.altKey&&(event.key==='['||event.key===']')){
         if(S.run){event.preventDefault();event.stopPropagation();say('info',RUN_BUSY);return}
         if(stepVariant(event.key===']'?1:-1)){event.preventDefault();event.stopPropagation();return}
+      }
+      /* The player's keys work wherever the focus is in Variants, except where they have another meaning (the tree, the scene strip, the
+         slider, a button that takes Espace, a menu, a dialog, a comparison): → ← Espace F M (Slice 08 map). */
+      if(!typing&&!S.dialog&&!S.menu&&!event.ctrlKey&&!event.metaKey&&!event.altKey&&!cmp.isActive()&&['ArrowRight','ArrowLeft',' ','f','F','m','M'].includes(event.key)){
+        const at=t&&typeof t.closest==='function'?t:null;
+        const own=at&&(at.closest('[role="tree"],[role="listbox"],[role="slider"],[role="menu"]')||(event.key===' '&&String(at.tagName||'').toUpperCase()==='BUTTON'));
+        if(!own&&transportKey(event.key,event)){event.preventDefault();event.stopPropagation();return}
       }
       if(!typing&&!event.ctrlKey&&!event.metaKey&&event.key.length===1)event.stopPropagation();
     }
@@ -2048,7 +2218,7 @@
         escapeLock(false);
         say('info',"Plein écran quitté : Variantes reste ouvert dans la fenêtre. Échap le ferme.");
       }
-      renderHeader();reportSoon();
+      renderHeader();renderPlayback();reportSoon();
     }
 
     /* -------------------------------------------------------------- ouverture, fermeture */
@@ -2073,6 +2243,7 @@
         if(running&&(!S.run||S.run.runId!==running.run_id))enterRun(running);
         if(opts.variant_id&&nodeOf(opts.variant_id))selectVariant(opts.variant_id,{focus:true});
         if(opts.fullscreen!==false&&modeNow()==='windowed')await requestFullscreen(opts.arm_s);
+        if(opts.autoplay===true)autoplayWhenReady();
         return {state:'opened',mode:modeNow(),fullscreen:fsNow(),presentation_id:S.pid,variant_id:S.selectedId};
       }
       if(S.open&&S.dialog){
@@ -2131,6 +2302,7 @@
         return refusal(unknown?'explorer_unknown_presentation':'explorer_load_failed',info.text);
       }
       renderAll();schedulePreview();
+      if(opts.autoplay===true)autoplayWhenReady();
       /* A presentation of this deck plays (or started while the graph was read): Variants shows it at once. */
       const now_running=Run.isRun(playerView())?playerView():running;
       if(now_running&&now_running.presentation_id===S.pid)enterRun(now_running);
@@ -2193,6 +2365,7 @@
       door.stop();
       drag=null;   // a drag cut short by the close: no resume, and a reopened slider does not seek on hover
       if(seq)seq.reset('closed');
+      stopAuto('close');S.auto.elapsed=0;S.auto.lastLeftAt=0;
       unmountPreview();
       if(previewHost&&typeof previewHost.destroy==='function'){try{previewHost.destroy()}catch(_error){/* intentional: the host is dropped either way */}}
       previewHost=null;
@@ -2292,7 +2465,7 @@
       runAction:(act,id)=>runAction(act,id||S.selectedId,{}),
       state:()=>({open:S.open,presentation_id:S.pid,selected:S.selectedId,active:S.graph&&S.graph.activeId,mode:S.open?modeNow():null,fullscreen:fsNow(),
         revision:S.graph&&S.graph.revision,live:S.live?S.live.size:0,archived:S.archived?S.archived.size:0,preview:{status:S.preview.status,scene:S.preview.sceneId,
-        scenes:S.preview.scenes.length},busy:S.busy&&S.busy.label||null,dialog:S.dialog&&S.dialog.kind||null,menu:!!S.menu,notice:S.notice&&{kind:S.notice.kind,text:S.notice.text}||null,
+        scenes:S.preview.scenes.length},auto:{on:S.auto.on,dwell_ms:S.auto.dwell,elapsed_ms:S.auto.elapsed,loop:S.auto.loop},busy:S.busy&&S.busy.label||null,dialog:S.dialog&&S.dialog.kind||null,menu:!!S.menu,notice:S.notice&&{kind:S.notice.kind,text:S.notice.text}||null,
         collapsed:Array.from(S.collapsed),compare:cmp.state()}),
       stats:()=>Object.assign({},stats,{pool:ui.liveTree?ui.liveTree.poolSize():0,archivePool:ui.archiveTree?ui.archiveTree.poolSize():0}),
       element:()=>ui.host||null,
@@ -2305,7 +2478,7 @@
         if(!command||typeof command!=='object')return {state:'refused',code:'explorer_page_error',reason:'commande illisible'};
         if(command.action==='close'){close({reason:'command'});return {state:'closed'}}
         if(command.action==='open'){
-          const result=await open({presentation_id:command.presentation_id,variant_id:command.variant_id,fullscreen:command.fullscreen!==false,
+          const result=await open({presentation_id:command.presentation_id,variant_id:command.variant_id,fullscreen:command.fullscreen===true,autoplay:command.autoplay===true,
             arm_s:command.arm_s,via:'command',opener:doc.activeElement});
           return result;
         }

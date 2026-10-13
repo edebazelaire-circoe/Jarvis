@@ -36,11 +36,12 @@ seed(4);
 const {ex}=await opened();
 const title=()=>q('.jvx-scene-title').textContent;
 const play=q('.jvx-t-play');
-const shown=n=>n.style.display!=='none';
-const idle={label:play.getAttribute('aria-label'),pressed:play.getAttribute('aria-pressed'),play:shown(play.children[0]),pause:shown(play.children[1]),text:play.textContent};
+const glyph=()=>play.querySelector('path').getAttribute('d');
+const word=play.children[1];
+const idle={label:play.getAttribute('aria-label'),pressed:play.getAttribute('aria-pressed'),glyph:glyph(),wordDrawn:!/jvx-sr/.test(word.className),count:qa('.jvx-t-play').length};
 const first=title();
 play.click();await env.advance(300);
-const running={label:play.getAttribute('aria-label'),pressed:play.getAttribute('aria-pressed'),play:shown(play.children[0]),pause:shown(play.children[1]),on:ex.state().auto.on};
+const running={label:play.getAttribute('aria-label'),pressed:play.getAttribute('aria-pressed'),glyph:glyph(),on:ex.state().auto.on};
 await env.advance(8500);
 const second=title();
 await env.advance(8500);
@@ -50,13 +51,13 @@ const paused=ex.state().auto.on;
 await env.advance(20000);
 return {idle,running,first,second,third,paused,still:title(),buttons:qa('.jvx-transport button').map(b=>b.getAttribute('aria-label')||b.textContent)};
 """)
-    assert out["idle"] == {"label": "Lecture", "pressed": "false", "play": True, "pause": False, "text": ""}, "a glyph button, no word"
-    assert out["running"] == {"label": "Pause", "pressed": "true", "play": False, "pause": True, "on": True}
+    assert out["idle"] == {"label": "Lire", "pressed": "false", "glyph": "M8 5l11 7-11 7z", "wordDrawn": False, "count": 1}, "a glyph button: the word is read, never drawn"
+    assert out["running"] == {"label": "Pause", "pressed": "true", "glyph": "M8 5v14", "on": True}, "playing: the icon is the pause bars"
     assert out["first"] != out["second"] != out["third"], "the slides move on their own, one dwell time each"
     assert out["paused"] is False and out["still"] == out["third"], "paused means paused: it never moves again by itself"
-    for wanted in ("Début de la slide", "Reculer de 5 secondes", "Avancer de 5 secondes", "Slide suivante"):
+    for wanted in ("Début de la slide", "Reculer de 5 secondes", "Avancer de 5 secondes", "Scène suivante"):
         assert wanted in out["buttons"]
-    assert "Quitter le plein écran" in out["buttons"], "the bench enters fullscreen at open: the button says how to leave it"
+    assert "Quitter le plein écran" in out["buttons"], "the bench opens in fullscreen: the bar button says how to leave it"
 
 
 def test_keys_right_left_double_left_space_and_f(tmp_path):
@@ -119,7 +120,8 @@ const count=()=>q('.jvx-stage-note > span').textContent;
 q('.jvx-t-play').click();
 await env.advance(60000);
 const ended={on:ex.state().auto.on,count:count()};
-q('[aria-label="Recommencer à la fin"]').click();
+q('[aria-label="Plus de lecture"]').click();
+qa('button').find(b=>/Recommencer à la fin/.test(b.textContent)).click();
 q('.jvx-t-play').click();
 await env.advance(30000);
 return {ended,looping:ex.state().auto.on,loop:ex.state().auto.loop};

@@ -194,13 +194,16 @@ def build_server(target: PresentationMcpTarget | None = None, *, tools: Presenta
                                         "Variantes en fenêtre ; rail_show / rail_hide : le rail ; plein écran de la scène de Variantes ; sortie du plein écran.")],
         presentation_id: PresentationId = None,
         variant_id: VariantId = None,
-        fullscreen: Annotated[bool, Field(description="explorer_open : demander le plein écran (faux : Variantes reste à côté du rail).")] = True,
+        fullscreen: Annotated[bool, Field(description="explorer_open : plein écran, seulement si l'utilisateur le demande (défaut faux : fenêtré).")] = False,
+        autoplay: Annotated[bool, Field(description="explorer_open : lancer la lecture automatique à l'ouverture.")] = False,
     ) -> dict[str, Any]:
         """Ouvrir ou fermer Variantes (window_* : la même, en fenêtre), le rail ; plein écran de la scène.
 
-        Le plein écran exige un clic de l'utilisateur : needs_gesture=true veut dire qu'il n'y est pas encore. Une présentation en cours se
+        explorer_open ouvre le grand explorateur de variantes, fenêtré (arbre à gauche), jamais en plein écran sauf fullscreen=true demandé
+        par l'utilisateur ; pour la vidéo en plein écran : stage_fullscreen_enter. Le plein écran exige un clic de l'utilisateur : needs_gesture=true veut dire qu'il n'y est pas encore. Une présentation en cours se
         montre dans Variantes. rail_* sont des demandes d'écran : relis presentation_inspect target rail. Une archivée ne s'ouvre pas."""
-        return await studio.view(op, presentation_id=presentation_id, variant_id=variant_id, fullscreen=fullscreen)
+        return await studio.view(op, presentation_id=presentation_id, variant_id=variant_id, fullscreen=fullscreen,
+                                  autoplay=autoplay)
 
     @mcp.tool(annotations=tool_annotations(SERVER_NAME, "presentation_library"))
     async def presentation_library(

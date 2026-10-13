@@ -225,9 +225,12 @@ async def test_open_the_explorer_sends_the_ids_and_reports_the_mode_the_page_obs
     assert out["mode"] == "windowed" and out["speech"] == "silent" and "needs_gesture" not in out
     method, sent_route, body = world.cc.requests[-1]
     assert (method, sent_route) == ("POST", route)
-    assert body == {"action": "open", "presentation_id": world.pid, "variant_id": world.vid, "fullscreen": True}
+    assert body == {"action": "open", "presentation_id": world.pid, "variant_id": world.vid, "fullscreen": False}   # the big explorer, windowed, unless asked
     world.cc.answers[("POST", route)] = (200, {"state": "opened", "mode": "fullscreen_armed", "fullscreen": "needs_gesture"})
     armed = await world.tools.view("explorer_open", fullscreen=True)
+    assert world.cc.requests[-1][2]["fullscreen"] is True and "autoplay" not in world.cc.requests[-1][2]
+    await world.tools.view("explorer_open", autoplay=True)
+    assert world.cc.requests[-1][2] == {"action": "open", "presentation_id": world.pid, "fullscreen": False, "autoplay": True}
     assert armed["needs_gesture"] is True and armed["speech"] == "say" and "clique" in armed["say"]
     world.cc.answers[("POST", route)] = (200, {"state": "closed"})
     assert (await world.tools.view("explorer_close"))["speech"] == "silent"

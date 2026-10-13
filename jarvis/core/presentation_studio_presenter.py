@@ -150,6 +150,7 @@ class _Run:
     signal: str | None = None
     interrupted: bool = False
     interrupt_key: tuple[int, int] | None = None
+    interrupt_source: str | None = None  # why the run paused (floor_taken / user_turn / speech_interrupted); None when not interrupted
     recover_on_resume: bool = False
     done_at: int | None = None
     speaking_sent: bool = False
@@ -243,6 +244,7 @@ class PresentationStudioPresenter:
             return None
         now = self._now_ms()
         out: dict[str, Any] = {"speaks": run.speaks, "lines": run.issued, "interrupted": run.interrupted,
+                               "interrupt_source": run.interrupt_source if run.interrupted else None,
                                "problem": run.problem, "line": None, "sequence": None}
         line = run.lines.get(run.primary_tag) if run.primary_tag else None
         if line is None and run.lines:
@@ -387,7 +389,7 @@ class PresentationStudioPresenter:
         run.queue, run.sent = [], {}
         run.done_at, run.speaking_sent, run.signal = None, False, None
         if run.interrupt_key != key:
-            run.interrupted = False
+            run.interrupted, run.interrupt_source = False, None
 
     @staticmethod
     def _forget_lines(run: _Run) -> None:
@@ -422,7 +424,7 @@ class PresentationStudioPresenter:
         if not recover:
             self._reissue_unheard(run)
             return True
-        run.interrupted = False
+        run.interrupted, run.interrupt_source = False, None
         if state.sequence is not None:
             if run.recover_on_resume:
                 result = await self._playback.notify(EventKind.SEQUENCE_ABORT)
@@ -511,6 +513,7 @@ class PresentationStudioPresenter:
         if not _applied(result):
             return False
         run.interrupted, run.interrupt_key, run.recover_on_resume = True, run.key, decision.recover_on_resume
+        run.interrupt_source = source
         self._trace("presenter_interrupted", "Lecture interrompue par l'utilisateur : en pause, reprise sur demande explicite", data={
             "run_id": run.run_id, "source": source, "verdict": decision.verdict.value, "recover_on_resume": decision.recover_on_resume})
         self._emit("interrupted", run, source)

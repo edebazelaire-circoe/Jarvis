@@ -230,7 +230,7 @@ async def test_every_scene_plays_its_authored_length_and_the_next_one_starts_on_
       const atBoundary={phase:b.seq.view().phase,shows:b.shows.slice(),frame:b.seq.view().frame};
       b.swap();                                                   // the preloaded scene 2 takes the window
       b.report(0,true);
-      for(let i=0;i<60;i++){b.advance(1000)}                      // 60 s of wall time: no timer ever moves a scene
+      for(let i=0;i<60;i++){b.advance(1000);b.report(i*10,true)}   // 60 s of wall time, the Player reporting: no timer ever moves a scene
       b.playTo(0,600,30);                                         // 20 s into the 30 s scene, past any 8 s target
       const mid={phase:b.seq.view().phase,scene:b.seq.view().scene_index,frame:b.seq.view().frame,shows:b.shows.length};
       b.playTo(600,899,30);

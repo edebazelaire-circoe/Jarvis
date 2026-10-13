@@ -610,13 +610,15 @@ class PresentationTools:
 
     # ------------------------------------------------------------------ explorateur et plein écran (page)
 
-    async def view(self, op: str, *, presentation_id: str | None = None, variant_id: str | None = None, fullscreen: bool = True) -> dict[str, Any]:
+    async def view(self, op: str, *, presentation_id: str | None = None, variant_id: str | None = None, fullscreen: bool = False,
+                   autoplay: bool = False) -> dict[str, Any]:
         async def body() -> dict[str, Any]:
-            return await self._view(op, presentation_id, variant_id, fullscreen)
+            return await self._view(op, presentation_id, variant_id, fullscreen, autoplay)
 
         return await self._run("presentation_view", op, {"presentation_id": presentation_id, "variant_id": variant_id}, body)
 
-    async def _view(self, op: str, presentation_id: str | None, variant_id: str | None, fullscreen: bool) -> dict[str, Any]:
+    async def _view(self, op: str, presentation_id: str | None, variant_id: str | None, fullscreen: bool,
+                    autoplay: bool = False) -> dict[str, Any]:
         tool = "presentation_view"
         if self._cc is None:
             raise self._refuse(tool, "control_center_unreachable", sentence_for("control_center_unreachable"))
@@ -632,7 +634,8 @@ class PresentationTools:
             pid = await self._presentation(tool, presentation_id)
             await self._refuse_if_archived(tool, pid)
             vid = None if variant_id is None else await self._variant(tool, pid, variant_id)
-            request = _drop_none({"action": "open", "presentation_id": pid, "variant_id": vid, "fullscreen": bool(fullscreen)})
+            request = _drop_none({"action": "open", "presentation_id": pid, "variant_id": vid, "fullscreen": bool(fullscreen),
+                                 "autoplay": True if autoplay else None})
             status, receipt = await self._cc.request("POST", "/api/presentation-studio/explorer/commands", request, timeout_s=30.0)
             return self._explorer_receipt(op, status, receipt, pid, vid)
         if op == "explorer_close":
