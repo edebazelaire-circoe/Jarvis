@@ -7,6 +7,8 @@ deck « Remotion Studio » opens ONE confirmation naming the whole video (keyboa
 the focus back, nothing launched), confirming makes Core record the master target (`state.json` schema 2 view: `target.kind`), the line says
 the whole video; an incompatible deck keeps the scene door, says the § 3 sentence and refuses « Exporter la vidéo »; at 800x600, 1280x720 and
 1920x1080 the changed controls are named, inside the window, without horizontal overflow or overlap; in the stage fullscreen they are hidden.
+Slice 09 polish: with the Control Center's link to Core cut (a real `core_unreachable` from the relay) the line never says Remotion Studio is
+open, and a whole-video export failed by a throwing scene says the scene, offers no « Réessayer » and wraps its small-print code at every size.
 
 Part 2 (opt-in `JARVIS_REMOTION_RUNTIME_DIR`, Node, Chrome; one real process at a time): `RemotionStack` with the real `remotion studio`
 (private copy of the runtime's `node_modules`) and the real render host. The page's « Remotion Studio » opens the REAL Studio on the master
@@ -270,6 +272,84 @@ async def test_the_changed_controls_fit_every_viewport_and_hide_in_the_stage_ful
         for b in keys[i + 1:]:
             assert not overlaps(boxes[a], boxes[b]), (viewport, a, b, boxes)
     assert reads["fullscreen"] is True and reads["inFullscreen"] == [False, False, False, False], "nothing of this Slice over the slide"
+    keep_shots(raw, evidence())
+
+
+class _ScriptedRelay:
+    """The Control Center's transport to Core, scripted (Slice 09 polish): `down` -> the relay answers a real `core_unreachable` (503);
+    `failed_job` -> a whole-video export request answers a job that a throwing scene failed (Core's own shape and wording)."""
+
+    def __init__(self, real, *, down: bool = False, failed_job: dict | None = None) -> None:
+        self.real, self.down, self.failed_job = real, down, failed_job
+
+    async def forward(self, method, core_path, *, body=None, timeout_s):
+        if self.down:
+            raise ConnectionRefusedError("Core stopped")
+        if self.failed_job and method == "POST" and core_path.endswith("/jobs"):
+            return 202, {"job": self.failed_job}
+        return await self.real.forward(method, core_path, body=body, timeout_s=timeout_s)
+
+
+#: The export line's small print against its panel and the window (R3: it was cut at the panel's right edge at 1280x720).
+CODE_BOX = (f"(()=>{{const c=document.querySelector('{X} .jvx-vx-code'),p=document.querySelector('{X} .jvx-vx');"
+            "const r=e=>{const x=e.getBoundingClientRect();return [Math.round(x.left),Math.round(x.top),Math.round(x.right),Math.round(x.bottom)]};"
+            "const lh=parseFloat(getComputedStyle(c).lineHeight)||14;"
+            "return {code:r(c),panel:r(p),lines:Math.round(c.getBoundingClientRect().height/lh),cut:c.scrollWidth>c.clientWidth+1,"
+            "shown:!c.hidden&&c.offsetParent!==null,vw:innerWidth,overflowX:document.documentElement.scrollWidth>innerWidth}})()")
+
+
+@pytest.mark.parametrize("viewport", ["800x600", "1280x720", "1920x1080"])
+async def test_a_core_outage_never_says_studio_open_and_a_throwing_scene_export_wraps_its_code(stack, viewport, tmp_path):
+    """Slice 09 polish (R1, R3) on the real page: Remotion Studio really open on the whole video, then the relay loses Core."""
+
+    core, url, pid, _broken, runner = stack
+    opened = await run_long(url, open_plan(pid) + [
+        {"until": MASTER_READY, "ms": 15000, "required": True, "as": "master_read"}, {"wait": 300},
+        {"click": DOOR}, {"until": f"!!{DIALOG}", "ms": 8000, "required": True, "as": "dialog"}, {"click": CONFIRM},
+        {"until": f"{RMS_STATE}.studio && {RMS_STATE}.studio.status==='ready' && !{RMS_STATE}.busy", "ms": 20000, "required": True, "as": "opened"},
+        {"wait": 300}, {"value": "status", "expr": RMS_TEXT}], viewport=viewport)
+    assert not opened["reads"].get("failed"), opened["reads"].get("failed")
+    assert "ouvert sur la vidéo entière" in opened["reads"]["status"]
+    center = core.stack.center
+    detail = ("scene 2 (pss_0000000000c2) failed while rendering: Error: jarvis_master_scene_failed:pss_0000000000c2:2: "
+              "ReferenceError_boom_in_the_second_scene_at_frame_5_without_any_space_to_break_this_very_long_line_on")
+    failed = {"job_id": "rj_0123456789ab", "artifact_id": "jart_" + "e" * 32, "state": "failed", "phase": "failed", "format": "mp4",
+              "frames_done": 40, "frames_total": 180, "percent": 22, "elapsed_s": 3, "timeout_s": 435, "can_cancel": False,
+              "error_code": "presentation_render_master_scene_failed", "error_detail": detail, "scope": "master", "scene_count": 2}
+    studio_relay, render_relay = center.remotion_studio_routes, center.presentation_render_routes
+    studio_relay._transport = lambda: _ScriptedRelay(center.sessions, down=True)
+    render_relay._transport = lambda: _ScriptedRelay(center.sessions, failed_job=failed)
+    raw = tmp_path / "shots"
+    raw.mkdir()
+    try:
+        result = await run_long(url, open_plan(pid) + [
+            {"until": MASTER_READY, "ms": 15000, "required": True, "as": "master_read"},
+            {"until": f"{RMS_TEXT}.includes('plus confirmé')", "ms": 15000, "required": True, "as": "unconfirmed"}, {"wait": 300},
+            {"value": "status", "expr": RMS_TEXT}, {"value": "readError", "expr": f"({RMS_STATE}.readError||{{}}).code"},
+            {"value": "door", "expr": f"(b=>[b.dataset.state,b.getAttribute('aria-disabled'),b.getAttribute('aria-label')])(document.querySelector('{DOOR}'))"},
+            {"value": "link", "expr": f"{SHOWN}('{X} .jvx-rms-link')"},
+            {"click": DOOR}, {"wait": 600}, {"value": "dialogAfterClick", "expr": f"!!{DIALOG}"},
+            {"click": EXPORT}, {"until": f"{SHOWN}('{X} .jvx-vx-code')", "ms": 10000, "required": True, "as": "exportFailed"}, {"wait": 300},
+            {"value": "exportText", "expr": VX_TEXT}, {"value": "retry", "expr": f"{SHOWN}('{X} [data-act=\"video_export_retry\"]')"},
+            {"value": "codeBox", "expr": CODE_BOX}, {"value": "boxes", "expr": BOXES},
+            shot(raw, f"variants-outage-scene-failed-{viewport}")], viewport=viewport)
+    finally:
+        studio_relay._transport = render_relay._transport = lambda: center.sessions
+    reads = result["reads"]
+    assert not reads.get("failed"), reads.get("failed")
+    assert reads["status"] == "Core injoignable : l’état de Remotion Studio n’est plus confirmé." and "ouvert" not in reads["status"]
+    assert reads["readError"] == "core_unreachable", "the relay's real answer, not a page-side stub"
+    assert reads["door"] == ["idle", "true", "Remotion Studio, vidéo entière"] and reads["link"] is False
+    assert reads["dialogAfterClick"] is False and len(runner.launches) == 1, "a click while Core is unreachable opens nothing"
+    assert reads["exportText"] == ("Export de la vidéo entière échoué : la scène 2 a échoué pendant le rendu, aucun fichier n’a été gardé. "
+                                   "Corrigez la scène 2, puis exportez de nouveau.")
+    assert reads["retry"] is False, "a scene that throws throws again: no « Réessayer »"
+    box = reads["codeBox"]
+    assert box["shown"] and not box["cut"], ("the long code wraps instead of running out", box)
+    if viewport != "1920x1080":
+        assert box["lines"] >= 2, ("at this width the code needs more than one line: it wraps", box)
+    assert box["panel"][0] <= box["code"][0] and box["code"][2] <= box["panel"][2] + 1 and box["code"][2] <= box["vw"], box
+    assert box["overflowX"] is False and reads["boxes"]["overflowX"] is False
     keep_shots(raw, evidence())
 
 

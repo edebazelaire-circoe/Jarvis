@@ -35,6 +35,8 @@
   const TAB_NAME='jarvis-remotion-studio';
   const POLL_FAST_MS=2000;
   const POLL_READY_MS=15000;
+  /* Core's view of Remotion Studio unreadable (Core stopped, network): re-read every 5 s so the true state comes back as soon as Core does. */
+  const POLL_LOST_MS=5000;
   /* Sans `navigator.userActivation` : un clic de moins de 4 s est encore une permission d'ouvrir un onglet (Chrome en accorde 5). */
   const ACTIVATION_MS=4000;
   const DIAG_LINES=8;
@@ -155,15 +157,29 @@
     return t.project_key===plan.project_key&&t.stale!==true?'here':'stale';
   }
 
+  /* A failed read of Core's view (anything but « no Remotion Studio here »): the last view is no longer confirmed (Slice 09 polish, R1). Core's
+     stop closes Remotion Studio, so the page never keeps saying « ouvert » on a view it can no longer read; the rail's « Rail injoignable :
+     l'état affiché n'est plus confirmé. » is the model. */
+  const UNREACHABLE=new Set(['core_unreachable','core_timeout','network','timeout']);
+  function lostRead(readError){return !!readError&&readError.code!=='remotion_studio_unavailable'}
+  function lostSentence(readError){
+    const code=readError&&readError.code||'network';
+    return UNREACHABLE.has(code)||/^http_5\d\d$/.test(code)?'Core injoignable : l’état de Remotion Studio n’est plus confirmé.'
+      :`Remotion Studio illisible (${cleanLine(code,60)}) : l’état affiché n’est plus confirmé.`;
+  }
+
   function doorModel(i){
     const C=Studio();
-    const scene=i.scene||null,st=i.studio||null,cap=i.capability||null,mine=scene&&scene.prefab;
+    const lost=lostRead(i.readError);
+    /* Unconfirmed: the last view says nothing (no « ouvert », no link, no publish), the line says why, the click re-reads first. */
+    const scene=i.scene||null,st=lost?null:i.studio||null,cap=i.capability||null,mine=scene&&scene.prefab;
     let blocked=null;
     if(i.run)blocked='Une présentation est en cours : Remotion Studio s’ouvre à son arrêt (« Arrêter »).';
     else if(!scene)blocked='Aucune scène à l’écran : choisissez une variante et une scène.';
     else if(!mine)blocked='Cette scène ne désigne aucune source : rien à ouvrir dans Remotion Studio.';
     else if(i.detail&&i.detail.state==='ready'&&!i.detail.remotion)blocked='Cette scène n’est pas une scène Remotion : Remotion Studio n’ouvre que les scènes Remotion.';
     else if(i.readError&&i.readError.code==='remotion_studio_unavailable')blocked='Ce Jarvis n’a pas de Remotion Studio (Core sans environnement Remotion).';
+    else if(lost)blocked=`${lostSentence(i.readError)} Réessayez dans un instant.`;
     else if(cap&&cap.status&&!RUNNABLE.has(cap.status)){
       const label=(C.CAPABILITY[cap.status]||{label:String(cap.status)}).label;
       blocked=`L’environnement Remotion n’est pas prêt (${label.toLowerCase()}) : installez-le ou réparez-le (carte « Présentations · moteur », onglet « Plugins externes » du dialogue MCP), puis réessayez.`;
@@ -227,6 +243,8 @@
       status={tone:'',spin:true,text:`${i.busy.label} ${elapsed((i.now-i.busy.at)/1000)} (${C.START_LIMIT_S/60} min au plus).`};
     }else if(i.actionError){
       status={tone:'danger',text:`Remotion Studio : ${i.actionError.text} (${i.actionError.code})`,retry:true};
+    }else if(lost){
+      status={tone:'warn',text:lostSentence(i.readError)};
     }else if(st&&st.status==='starting'){
       button.state='busy';
       status={tone:'',spin:true,text:`Remotion Studio démarre… ${elapsed(st.started_at?i.now/1000-st.started_at:0)} (${C.START_LIMIT_S/60} min au plus).`};
@@ -424,7 +442,8 @@
             log('remotion_capability_read_failed',{code:error.code,status:error.status});return null})]);
           if(generation!==S.generation)return;
           S.studio=studio;S.capability=capability;S.readError=null;
-          if(S.lastOk===false)log('remotion_studio_read_restored',{status:studio&&studio.status});
+          /* Core back: what a click said against the unconfirmed view (« Réessayez dans un instant ») is no longer true. */
+          if(S.lastOk===false){log('remotion_studio_read_restored',{status:studio&&studio.status});S.explain=null}
           S.lastOk=true;
         }catch(error){
           if(generation!==S.generation)return;
@@ -444,7 +463,7 @@
       if(S.poll){cancelLater(S.poll);S.poll=null}
       if(!S.started||!ctx.isOpen()||hidden())return;
       const st=S.studio&&S.studio.status;
-      const ms=S.busy||st==='starting'||st==='stopping'?POLL_FAST_MS:st==='ready'||(S.studio&&S.studio.work_copy&&S.studio.work_copy.unpublished)?POLL_READY_MS:0;
+      const ms=S.busy||st==='starting'||st==='stopping'?POLL_FAST_MS:lostRead(S.readError)?POLL_LOST_MS:st==='ready'||(S.studio&&S.studio.work_copy&&S.studio.work_copy.unpublished)?POLL_READY_MS:0;
       if(ms)S.poll=later(()=>{S.poll=null;refresh('poll')},ms);
     }
     function tick(on){
@@ -749,6 +768,8 @@
       if(first&&first.prefab&&(!known||known.state==='loading'))await loadDetail(first.prefab);
       const pending=maybeMaster('request');
       if(pending)await pending;
+      /* Core's view unconfirmed (R1): a click reads it again before deciding; still unreadable, the button says so and nothing opens. */
+      if(lostRead(S.readError))await refresh('request');
       const v=view(),m=doorModel(v.input);
       if(m.button.blocked){
         S.explain=m.button.blocked;render();

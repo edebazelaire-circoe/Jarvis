@@ -501,7 +501,11 @@ unknown presentation or variant is the usual 404 `presentation_studio_unknown_*`
   (maintenant N scènes) : « Actualiser » l'y recharge, après confirmation. » + « Actualiser » (`data-act="remotion_studio_master_refresh"`,
   the same dialog, « Actualiser la vidéo entière dans Remotion Studio »); another variant's whole video; a scene open (« … ouvert sur cette
   scène seule (source v1) … « Remotion Studio » y affiche la vidéo entière, après confirmation. », its publish flow unchanged). Never « ouvert
-  sur la scène N » for a master target.
+  sur la scène N » for a master target. A failed read of Core's view other than `remotion_studio_unavailable` (Core stopped, network,
+  deadline; Slice 09 polish) leaves nothing of the last view on screen — Core's stop closes Remotion Studio, so never « ouvert », no link,
+  no publish: the line says « Core injoignable : l’état de Remotion Studio n’est plus confirmé. » (another code: « Remotion Studio illisible
+  (<code>) : l’état affiché n’est plus confirmé. »), both doors are `aria-disabled` with that sentence and « Réessayez dans un instant. »,
+  the view is read again every 5 s, and a click reads it first (still unreadable: nothing opens). Core back: the usual words.
 - **Publish.** Edits of a whole-video workspace (`workspaceOf(...).relation === "master"`) are said « n fichiers modifiés dans Remotion Studio
   (vidéo entière), pas publiés : la vidéo entière ne se publie pas dans la variante. Pour publier une scène, ouvrez-la seule (« Cette scène
   seule dans Remotion Studio ») ; ces fichiers seront mis de côté (studio-edits), après confirmation. »; « Publier dans la variante… » stays
@@ -521,7 +525,12 @@ unknown presentation or variant is the usual 404 `presentation_studio_unknown_*`
   lancez l’export depuis les Artefacts de ce Board. »; `presentation_render_master_incompatible` → the § 3 sentence (and a re-read);
   `presentation_studio_stale_revision` → the variant is read again; an unknown code → « Core a refusé l’export de la vidéo entière. » with
   Core's detail beside the code. « Réessayer » only for a failure another try can fix (network, deadline, Core unreachable or 5xx, a failed
-  render job, a stale revision, a full queue). Not ready: `aria-disabled`, title and click say « <sentence> Exportez plutôt les scènes une à
+  render job, a stale revision, a full queue). A failed job whose failure the same frozen variant would repeat offers no « Réessayer »
+  (`JOB_FAILURES`, Slice 09 polish): `presentation_render_master_scene_failed` names the scene from Core's `error_detail` (« Export de la vidéo
+  entière échoué : la scène 2 a échoué pendant le rendu, aucun fichier n’a été gardé. Corrigez la scène 2, puis exportez de nouveau. »),
+  and `presentation_render_composition_mismatch`, `presentation_render_job_too_large`, `presentation_render_output_too_large` say why; any
+  other job failure (crash, timeout, interruption, full disk) keeps « Réessayer ». The small print wraps inside the line at every width
+  (`.jvx-vx-code`: `flex: 0 1 auto`, `min-width: 0`, `overflow-wrap: anywhere`). Not ready: `aria-disabled`, title and click say « <sentence> Exportez plutôt les scènes une à
   une depuis les Artefacts du Board. ». A running master job of this `project_key` (voice, another window) is picked up when Variants
   shows the variant. Logs `video_export_*`.
 - **Board Artifacts.** `exportStart` (`control_center_workspace.js`) for `mp4` reads `GET /api/local-capabilities/remotion/render/master?snapshot_id=`

@@ -172,12 +172,65 @@ def test_the_export_model_says_why_it_waits_runs_or_refuses():
     assert done["status"]["link"] == {"url": "/api/artifacts/jart_x/payload", "label": "Ouvrir la vidéo"}
     failed = export_model(x={"status": "done", "job": {**job, "state": "failed", "error_code": "presentation_render_master_scene_failed",
                                                       "error_detail": "scene pss_2 (2) threw"}, "started": 1})
-    assert failed["status"]["tone"] == "danger" and failed["status"]["retry"], "a failed render job is transient: « Réessayer »"
-    assert failed["status"]["text"] == "Export de la vidéo entière échoué : aucun fichier n’a été gardé."
+    assert failed["status"]["tone"] == "danger" and failed["status"]["retry"] is False, "a scene that throws throws again: no « Réessayer »"
+    assert failed["status"]["text"] == ("Export de la vidéo entière échoué : une scène a échoué pendant le rendu, aucun fichier n’a été gardé. "
+                                        "Corrigez-la, puis exportez de nouveau."), "a detail without Core's « scene n (…) »: no position guessed"
     assert failed["status"]["code"] == "presentation_render_master_scene_failed · scene pss_2 (2) threw", "Core's code and detail in small print"
     one = export_model(x={"status": "running", "job": {**job, "scene_count": 1}, "started": 88_000})
     assert one["status"]["text"].startswith("Export de la vidéo entière (1 scène) — "), "« 1 scène », never « 1 scènes »"
     assert export_model(master={"state": "ready", "plan": plan(1)})["button"]["title"].startswith("Rendre la vidéo entière (1 scène, ")
+
+
+def test_a_render_failure_that_would_repeat_names_what_to_fix_and_offers_no_retry():
+    """Slice 09 polish (R3): « Réessayer » only when another try can work; a scene that throws is named (Core's `scene n (pss_…)`)."""
+    job = {"job_id": "rj_0123456789ab", "phase": "failed", "scene_count": 3, "state": "failed"}
+
+    def failed(code, detail=None):
+        return export_model(x={"status": "done", "job": {**job, "error_code": code, "error_detail": detail}, "started": 1})["status"]
+
+    scene = failed("presentation_render_master_scene_failed", "scene 2 (pss_00000000000b) failed while rendering: boom at frame 5")
+    assert scene["retry"] is False and scene["tone"] == "danger" and scene["dismiss"] is True
+    assert scene["text"] == ("Export de la vidéo entière échoué : la scène 2 a échoué pendant le rendu, aucun fichier n’a été gardé. "
+                             "Corrigez la scène 2, puis exportez de nouveau.")
+    assert scene["code"] == "presentation_render_master_scene_failed · scene 2 (pss_00000000000b) failed while rendering: boom at frame 5"
+    for code in ("presentation_render_composition_mismatch", "presentation_render_job_too_large", "presentation_render_output_too_large"):
+        said = failed(code, "x")
+        assert said["retry"] is False and said["text"].startswith("Export de la vidéo entière échoué : ") and "gardé" in said["text"], code
+    for code in ("presentation_render_failed", "presentation_render_crashed", "presentation_render_timeout", "presentation_render_interrupted",
+                 "presentation_render_disk_full", None):
+        said = failed(code, "x")
+        assert said["retry"] is True and said["text"] == "Export de la vidéo entière échoué : aucun fichier n’a été gardé.", code
+    keys = node(f"process.stdout.write(JSON.stringify(Object.keys(require({EXPORT_JS}).JOB_FAILURES)));")
+    assert set(keys) == {"presentation_render_master_scene_failed", "presentation_render_composition_mismatch",
+                         "presentation_render_job_too_large", "presentation_render_output_too_large"}
+
+
+def test_the_small_print_code_wraps_inside_the_export_line():
+    css = node(f"process.stdout.write(JSON.stringify(require({EXPORT_JS}).CSS));")
+    rule = next(line for line in css.splitlines() if ".jvx-vx-code{" in line)
+    assert "flex:0 1 auto" in rule and "min-width:0" in rule and "max-width:100%" in rule and "overflow-wrap:anywhere" in rule
+    assert "flex:none" not in rule, "a rigid item keeps its whole width and is cut at the panel's edge (R3, 1280x720)"
+
+
+def test_a_read_error_never_leaves_remotion_studio_said_open():
+    """Slice 09 polish (R1): Core's stop closes Remotion Studio; a view the page can no longer read is not confirmed."""
+    down = model(studio=MASTER_STUDIO, readError={"code": "core_unreachable", "text": "Core ne répond pas."})
+    assert down["status"]["text"] == "Core injoignable : l’état de Remotion Studio n’est plus confirmé." and down["status"]["tone"] == "warn"
+    assert "ouvert" not in down["status"]["text"] and not down["status"].get("link") and not down["status"].get("publish")
+    assert down["button"]["state"] == "idle" and down["button"]["ariaLabel"] == "Remotion Studio, vidéo entière" and down["masterRelation"] == "none"
+    assert down["button"]["blocked"] == "Core injoignable : l’état de Remotion Studio n’est plus confirmé. Réessayez dans un instant."
+    assert down["sceneDoor"]["blocked"] == down["button"]["blocked"] and down["master"]["text"].startswith("Vidéo entière : "), "the plan stays"
+    for code in ("network", "timeout", "core_timeout", "http_502"):
+        assert model(studio=MASTER_STUDIO, readError={"code": code, "text": "x"})["status"]["text"].startswith("Core injoignable : "), code
+    odd = model(studio=MASTER_STUDIO, readError={"code": "http_404", "text": "x"})["status"]["text"]
+    assert odd == "Remotion Studio illisible (http_404) : l’état affiché n’est plus confirmé."
+    scene_open = {"status": "ready", "url": "http://x/", "viewers": 1, "pin": {"prefab_id": "lab.dial", "version": 1}, "work_copy": {}}
+    plain = model(master=None, studio=scene_open, readError={"code": "network", "text": "x"})
+    assert "ouvert" not in plain["status"]["text"] and plain["relation"] == "none" and plain["button"]["state"] == "idle"
+    back = model(studio=MASTER_STUDIO)
+    assert back["status"]["text"].startswith("Remotion Studio est ouvert sur la vidéo entière"), "Core back: the usual words"
+    none_here = model(readError={"code": "remotion_studio_unavailable", "text": "x"})
+    assert none_here["status"] is None and "pas de Remotion Studio" in none_here["button"]["blocked"], "unchanged: no Remotion Studio on this Core"
 
 
 def describe(error: dict) -> dict:
@@ -444,6 +497,40 @@ def test_export_cancel_and_refusals_are_said_and_logged(tmp_path):
     assert r["tone"] == "danger" and r["reads"] == 2, "Core's refusal re-reads the readiness"
     assert out["stale"]["text"].startswith("La variante a changé depuis sa lecture") and out["stale"]["retry"] is True
     assert out["warns"] >= 3
+
+
+def test_a_core_outage_says_the_state_is_unconfirmed_a_click_reads_again_and_core_back_says_the_truth(tmp_path):
+    """Slice 09 polish (R1) on the fake DOM: Remotion Studio open on the whole video, then Core stops (its stop closes Studio)."""
+    out = run_ui(tmp_path, MASTER_WORLD + r"""
+      env.route(u=>mp.down&&u.startsWith('/api/local-capabilities/remotion'),()=>({reject:'Failed to fetch'}));
+      const ex=await openVariants();
+      door().click();await env.advance(80);go().click();await env.advance(300);
+      const open={text:say(),state:door().getAttribute('data-state')};
+      mp.down=true;await env.advance(15100);                       // the next read of a ready Studio fails
+      const studioReads=()=>env.requests.filter(r=>r.url.endsWith('/studio')&&r.method==='GET').length;
+      const down={text:say(),tone:status().getAttribute('data-tone'),state:door().getAttribute('data-state'),disabled:door().getAttribute('aria-disabled'),
+        aria:door().getAttribute('aria-label'),link:q('.jvx-rms-link').hidden,reads:studioReads()};
+      await env.advance(5100);
+      const polled=studioReads();
+      door().click();await env.advance(100);
+      const clicked={reads:studioReads(),dialog:!!dialog(),opens:rms.opens.length,text:say()};
+      rms.studio={status:'stopped',pin:null,url:null,viewers:0,work_copy:{modified_files:[],unpublished:0,base:null}};mp.down=false;
+      await env.advance(5100);
+      const back={hidden:q('.jvx-rms-text').hidden,state:door().getAttribute('data-state'),disabled:door().getAttribute('aria-disabled'),
+        line:masterLine(),logs:env.logs.filter(l=>l[1].includes('remotion_studio_read_')).map(l=>[l[0],l[1].split(' ')[1]])};
+      return {open,down,polled,clicked,back};
+    """)
+    assert "ouvert sur la vidéo entière" in out["open"]["text"] and out["open"]["state"] == "here"
+    d = out["down"]
+    assert d["text"] == "Core injoignable : l’état de Remotion Studio n’est plus confirmé." and "ouvert" not in d["text"] and d["tone"] == "warn"
+    assert d["state"] == "idle" and d["disabled"] == "true" and d["aria"] == "Remotion Studio, vidéo entière" and d["link"] is True
+    assert out["polled"] == d["reads"] + 1, "an unconfirmed view is read again every 5 s"
+    c = out["clicked"]
+    assert c["reads"] == out["polled"] + 1 and c["dialog"] is False and c["opens"] == 1, "a click reads again first; still down: nothing opens"
+    assert c["text"] == d["text"]
+    b = out["back"]
+    assert b["hidden"] is True and b["state"] == "idle" and b["disabled"] == "false" and b["line"].startswith("Vidéo entière : ")
+    assert ["warn", "remotion_studio_read_failed"] in b["logs"] and any(name == "remotion_studio_read_restored" for _, name in b["logs"])
 
 
 def test_a_running_export_of_this_whole_video_is_picked_up_when_variants_opens(tmp_path):

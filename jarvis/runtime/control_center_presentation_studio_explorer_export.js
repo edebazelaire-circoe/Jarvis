@@ -13,7 +13,8 @@
      Core ; « Annuler l'export » tant que Core l'accepte. Le suivi a une échéance (le délai du travail + 2 min) : passée, la ligne le dit.
    - **Un échec se dit.** Une phrase française par code connu (`EXPORT_ERRORS`), le code de Core en petit à côté (et son détail anglais
      pour un code inconnu) ; « Réessayer » seulement quand un nouvel essai peut réussir (réseau, délai, Core injoignable, rendu échoué, variante
-     relue), jamais pour un poste sans moteur, une copie qui lit un Board en direct ou une vidéo pas prête. Trois lectures d'état ratées de
+     relue), jamais pour un poste sans moteur, une copie qui lit un Board en direct, une vidéo pas prête ni un rendu dont l'échec se répéterait
+     à l'identique (`JOB_FAILURES` : une scène qui lève, un rendu ou un fichier trop gros, une composition qui ne correspond pas). Trois lectures d'état ratées de
      suite : l'erreur reste affichée.
      Chaque étape est journalisée (`[studio-explorer] video_export_*`, `warn` / `error` pour un échec).
    - **Le résultat est un Artefact.** Terminé : son identifiant, sa taille, « Ouvrir la vidéo » (le fichier servi par Jarvis) ; il apparaît
@@ -46,7 +47,8 @@
 #${HOST_ID} .jvx-vx[data-tone="danger"] .jvx-vx-text{color:var(--jvx-danger)}
 #${HOST_ID} .jvx-vx[data-spin="true"] .jvx-vx-text::before{content:"";display:inline-block;width:8px;height:8px;margin-right:7px;border-radius:50%;background:var(--jvx-accent);vertical-align:1px}
 @media (prefers-reduced-motion:no-preference){#${HOST_ID} .jvx-vx[data-spin="true"] .jvx-vx-text::before{animation:jvxPulse 1.1s ease-in-out infinite}}
-#${HOST_ID} .jvx-vx-code{flex:none;font:11px/1.3 ui-monospace,Consolas,monospace;color:var(--jvx-mute);overflow-wrap:anywhere}
+/* The small print wraps inside the line (Slice 09 polish, R3): Core's code and English detail are one long word-less run at 1280×720. */
+#${HOST_ID} .jvx-vx-code{flex:0 1 auto;min-width:0;max-width:100%;font:11px/1.3 ui-monospace,Consolas,monospace;color:var(--jvx-mute);overflow-wrap:anywhere}
 #${HOST_ID} .jvx-vx-code[hidden]{display:none}
 #${HOST_ID} .jvx-vx-link{color:var(--jvx-accent);font-weight:600;text-underline-offset:3px;white-space:nowrap}
 #${HOST_ID} .jvx-vx .jvx-btn{min-height:28px;padding:0 10px;font-size:12px}
@@ -66,6 +68,27 @@
     presentation_render_queue_full:{text:'La file d’export de Core est pleine : réessayez quand un export en cours sera fini.',retry:true},
     presentation_render_no_job:{text:'Core n’a rendu aucun travail d’export.',retry:true},
   });
+  /* A failed render job whose failure a retry of the same frozen variant would repeat (Slice 09 polish, R3): no « Réessayer », the sentence
+     says what to change. Any other job failure (crash, timeout, interruption, full disk, …) stays retryable. */
+  const JOB_FAILURES=Object.freeze({
+    presentation_render_master_scene_failed:{text:'Export de la vidéo entière échoué : une scène a échoué pendant le rendu, aucun fichier n’a été gardé. Corrigez-la, puis exportez de nouveau.'},
+    presentation_render_composition_mismatch:{text:'Export de la vidéo entière échoué : la composition rendue n’est pas celle du projet, aucun fichier n’a été gardé.'},
+    presentation_render_job_too_large:{text:'Export de la vidéo entière échoué : le rendu dépasse la place permise pour un export, aucun fichier n’a été gardé.'},
+    presentation_render_output_too_large:{text:'Export de la vidéo entière échoué : la vidéo produite dépasse la taille permise, aucun fichier n’a été gardé.'},
+  });
+  /* `scene n (pss_…) failed while rendering: …` (Core's `error_detail` of `presentation_render_master_scene_failed`) -> n, or 0. */
+  function failedScenePosition(detail){
+    const match=/\bscene (\d{1,3}) \(/.exec(String(detail||''));
+    return match?Number(match[1]):0;
+  }
+  /* A failed render job in the user's words: {text, retry}. */
+  function describeJobFailure(job){
+    const code=job&&job.error_code||'presentation_render_failed';
+    const known=JOB_FAILURES[code];
+    if(!known)return {text:'Export de la vidéo entière échoué : aucun fichier n’a été gardé.',retry:true};
+    const n=code==='presentation_render_master_scene_failed'?failedScenePosition(job.error_detail):0;
+    return {text:n?`Export de la vidéo entière échoué : la scène ${n} a échoué pendant le rendu, aucun fichier n’a été gardé. Corrigez la scène ${n}, puis exportez de nouveau.`:known.text,retry:false};
+  }
   /* Transient failures: the request or a read did not get through, nothing says the export cannot work. */
   const TRANSIENT=new Set(['network','timeout','core_unreachable','core_timeout','http_error']);
   /* `error`: {code, status, message, info}. Returns {code, text, detail, retry}. */
@@ -141,10 +164,11 @@
       }else if(job.state==='cancelled'){
         status={tone:'warn',text:'Export de la vidéo entière annulé : aucun fichier n’a été gardé.',retry:!blocked,dismiss:true};
       }else{
-        /* A failed render is a transient failure: « Réessayer » relaunches it. Core's English detail goes to the small print with its code. */
-        const detail=cleanLine(job.error_detail,160);
-        status={tone:'danger',text:'Export de la vidéo entière échoué : aucun fichier n’a été gardé.',
-          code:`${job.error_code||'presentation_render_failed'}${detail?` · ${detail}`:''}`,retry:!blocked,dismiss:true};
+        /* A failed render is retried by « Réessayer » unless the failure would repeat (`JOB_FAILURES`). Core's English detail goes to the small
+           print with its code. */
+        const detail=cleanLine(job.error_detail,160),why=describeJobFailure(job);
+        status={tone:'danger',text:why.text,
+          code:`${job.error_code||'presentation_render_failed'}${detail?` · ${detail}`:''}`,retry:why.retry&&!blocked,dismiss:true};
       }
     }else if(i.explain){
       status={tone:'warn',text:i.explain};
@@ -370,7 +394,7 @@
       state:()=>({status:S.x&&S.x.status||'idle',job:S.x&&S.x.job,error:S.x&&S.x.error,explain:S.explain})});
   }
 
-  const api=Object.freeze({createVideoExport,exportModel,describeExportError,EXPORT_ERRORS,CSS,PHASES});
+  const api=Object.freeze({createVideoExport,exportModel,describeExportError,describeJobFailure,EXPORT_ERRORS,JOB_FAILURES,CSS,PHASES});
   root.JarvisVariantsVideoExport=api;
   if(typeof module!=='undefined'&&module.exports)module.exports=api;
 })(typeof window!=='undefined'?window:globalThis);
