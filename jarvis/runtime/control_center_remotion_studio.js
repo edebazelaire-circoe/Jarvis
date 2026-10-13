@@ -82,6 +82,9 @@ const JarvisRemotionStudioCore=(function(){
     remotion_studio_publish_import_refused:'Un import n’est pas autorisé dans une scène publiée (seuls react et remotion le sont) : rien n’a été publié.',
     remotion_studio_publish_refused:'La variante a refusé la publication (compilation, valeurs ou partition) : rien n’a été publié.',
     remotion_studio_publish_unavailable:'Ce Core ne peut pas publier dans une variante.',
+    remotion_studio_master_incompatible:'La vidéo entière de cette variante ne peut pas s’ouvrir dans Remotion Studio (scènes incompatibles) ; chaque scène reste ouvrable seule.',
+    remotion_studio_master_stale:'La variante a changé depuis votre confirmation : confirmez de nouveau pour ouvrir la vidéo entière dans Remotion Studio.',
+    remotion_studio_publish_master_unsupported:'Remotion Studio contient la vidéo entière de la variante : elle ne se publie pas. Ouvrez la scène seule pour publier ses modifications.',
     remotion_studio_publish_listing_changed:'Les fichiers de Remotion Studio ont changé depuis votre confirmation : rien n’a été publié. La liste est relue ; relisez-la, puis publiez de nouveau.',
     core_unreachable:'Core ne répond pas.',core_unconfigured:'Le Control Center ne connaît pas Core.',
     core_timeout:'Core n’a pas répondu à temps : l’issue est inconnue, l’état est relu.',
@@ -91,6 +94,11 @@ const JarvisRemotionStudioCore=(function(){
 
   /* Accusé obligatoire (B2) : la scène tourne dans l'onglet de Remotion Studio, sans le bac à sable du Player, à l'origine de son API. */
   const ACK_FIELD='acknowledge_unsandboxed_scene';
+  /* Cible maître (master-project-studio-export Slice 05, `docs/remotion-master-project.md` § 9) : le corps maître porte son propre accusé,
+     lié au `project_key` que la confirmation a montré ; le client ne fait que l'ajouter, la confirmation reste celle de la page. */
+  const MASTER_KIND='variant_master';
+  const PROJECT_ACK_FIELD='acknowledge_unsandboxed_project';
+  const PRESENTATIONS='/api/presentation-studio/presentations';
   const ORIGIN_LABEL=Object.freeze({base:'livrée avec Jarvis',custom:'créée sur ce poste',fork:'dérivée d’une autre scène (fork)',
     revision:'nouvelle version d’une scène',base_edit:'modification d’une scène de base'});
   const ACTOR_LABEL=Object.freeze({user:'vous',brain:'un agent de Jarvis',system:'Jarvis (système)'});
@@ -211,9 +219,14 @@ const JarvisRemotionStudioCore=(function(){
       /* Provenance de la version exacte (`/api/prefabs/{id}/{version}`, lecture) : null si illisible, jamais devinée. */
       provenance:(id,version)=>request('GET',`/api/prefabs/${encodeURIComponent(id)}/${Number(version)}`,{deadline:READ_DEADLINE_MS})
         .then(p=>(p&&p.publication&&p.publication.provenance)||null).catch(()=>null),
+      /* Lecture de préparation du projet maître d'une variante (§ 11) : `{status, project_key?, composition?, scenes?, reason?...}`. */
+      masterProject:(presentationId,variantId)=>request('GET',`${PRESENTATIONS}/${encodeURIComponent(presentationId)}/variants/${encodeURIComponent(variantId)}/master-project`,
+        {deadline:READ_DEADLINE_MS}).then(p=>p.master),
       write(action,body){
         if(!Object.prototype.hasOwnProperty.call(WRITES,action))throw new Error('unknown Studio action');
-        const acked=(action==='open'||action==='restart'||(action==='sync'&&body&&body.prefab_id))?{...(body||{}),[ACK_FIELD]:true}
+        const master=!!(body&&body.kind===MASTER_KIND);
+        const acked=master&&(action==='open'||action==='restart'||action==='sync')?{...body,[PROJECT_ACK_FIELD]:true}
+          :(action==='open'||action==='restart'||(action==='sync'&&body&&body.prefab_id))?{...(body||{}),[ACK_FIELD]:true}
           :action==='publish'?{...(body||{}),[CONFIRM_PUBLISH]:true}:(body===undefined?{}:body);
         /* `publish` rend aussi son issue (`publish`) : la vue est jointe sous `studio` comme pour les autres écritures. */
         return request('POST',`${STUDIO}/${action}`,{body:acked,deadline:WRITES[action]}).then(p=>action==='publish'?p:p.studio);
@@ -222,6 +235,7 @@ const JarvisRemotionStudioCore=(function(){
   }
 
   return {ROUTE,STUDIO,PREFABS,STATUS,CAPABILITY,ERRORS,STOP_REASON,WRITES,START_LIMIT_S,POLL_FAST_MS,POLL_SLOW_MS,ACK_FIELD,
+    MASTER_KIND,PROJECT_ACK_FIELD,
     CONFIRM_PUBLISH,DISCARD_FIELD,PUBLISH_LIMIT_S,
     errorText,fmtDuration,viewModel,sceneOption,createClient,confirmSpec,failureToast};
 })();

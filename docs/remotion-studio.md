@@ -2,7 +2,7 @@
 
 Handoff `jarvis-remotion-presentation-integration`, Slice 11. **Statut : contrat (Level 2) et implémentation réelle (Level 3), vérifiés sur Windows 11 avec le vrai `remotion studio`, un Core isolé et un vrai Chrome** ([preuves](#10-preuves)). Le Studio est un processus **supplémentaire** de la capacité locale Remotion ([remotion-runtime.md](remotion-runtime.md)) : il ne l'installe pas, ne la répare pas, et ne touche ni le worker `--serve` ni la compilation des scènes ([remotion-source.md](remotion-source.md) §5). L'aperçu intégré (Player, Slice 10) n'en dépend pas.
 
-**Projet maître d'une variante (prévu, Level 2 — contract; implementation in Slices 03-08 of handoff jarvis-remotion-master-project-studio-export)** : le même processus unique gagnera une seconde sorte de cible, `variant_master` (toute la variante en un projet Remotion, composition maître `JarvisPresentation`, scènes sous `src/scenes/<scene_id>/`), avec son propre accusé `acknowledge_unsandboxed_project` lié au `project_key` et nommant le nombre de scènes, un `state.json` de schéma 2 écrit seulement pour cette cible, et aucune publication depuis ce projet. La cible de scène décrite ici reste la cible de compatibilité, inchangée octet pour octet. Contrat : [remotion-master-project.md](remotion-master-project.md) § 9. Rien de cette cible n'est livré aujourd'hui.
+**Projet maître d'une variante (livré côté Core et client : Slice 05 de jarvis-remotion-master-project-studio-export ; contrat de la page : Level 2 — contract; implementation in Slices 03-08 of handoff jarvis-remotion-master-project-studio-export)** : le même processus unique a une seconde sorte de cible, `variant_master` (toute la variante en un projet Remotion, composition maître `JarvisPresentation`, scènes sous `src/scenes/<scene_id>/`), avec son propre accusé `acknowledge_unsandboxed_project` lié au `project_key` et nommant le nombre de scènes, un `state.json` de schéma 2 écrit seulement pour cette cible, et aucune publication depuis ce projet (§ 2 ter). La cible de scène décrite ici reste la cible de compatibilité, inchangée octet pour octet (corps, accusé, schéma 1, publication). Les portes de Variantes vers la cible maître sont la Slice 08. Contrat : [remotion-master-project.md](remotion-master-project.md) § 9.
 
 ## 1. Décisions
 
@@ -75,6 +75,17 @@ Réponse : `{studio: vue, publish: {status, published, previous, variant_revisio
 
 **La scène que l'utilisateur ouvre n'est plus à l'agent** (reprise de la Slice 13 de native-studio-playback-fix, QA B3). Après chaque `open` (lancement, réutilisation sur la même scène) et chaque `sync` réussis, le service attend ses écouteurs de scène (`add_scene_listener`, câblé par `v2_app`) avec le pin ouvert : la permission d'auteur de l'agent (`agent_authored_scene`) sur toute scène qui épingle exactement cette version, dans sa variante, prend fin. Un écouteur en panne est journalisé (`remotion_studio.scene_listener_failed`, `error`) sans défaire l'ouverture. `workspace_base()` (lecture seule) rend la base de l'espace et ses fichiers non publiés ; la porte d'édition de source refuse toute écriture de l'agent sur la scène tant qu'il en reste (`presentation_studio_scene_edited_in_remotion`, 409) ; un espace illisible compte comme modifié (`remotion_studio.workspace_unlisted`, `warning`). Contrat : [presentation-studio.md](presentation-studio.md) › *Native Remotion authoring*.
 
+## 2 ter. Cible maître d'une variante (master-project-studio-export Slice 05)
+
+Contrat : [remotion-master-project.md](remotion-master-project.md) § 6 et § 9. Code : `jarvis/domain/remotion_studio.py` (`MasterTarget`, `MasterRequest`, `parse_target`, `parse_restart`, schéma 2), `jarvis/domain/remotion_studio_master.py` (classes de modifications, chemins générés), `jarvis/core/remotion_studio_service.py` (`_resolve`, `_live_plan`). Tests : `tests/unit/test_remotion_studio_master.py`, `tests/unit/test_remotion_studio_master_routes.py`, preuve réelle `tests/unit/test_remotion_studio_master_real_browser.py`.
+
+- **Ouverture** : `open` / `sync` / `restart` avec `{"kind": "variant_master", "presentation_id", "variant_id", "project_key", "acknowledge_unsandboxed_project": true}`. Core replanifie la variante vivante (`MasterProjectReader.live_plan`, la même lecture que `GET .../master-project`) : `incompatible` → 409 `master_incompatible` (`reason`, `detail`, `scene_ids`), clé différente → 409 `master_stale` (`project_key`, `variant_revision`, `scene_count` courants), rien ne démarre ni ne change ; sinon `plan_master_files` est écrit par `sync_work` et le même processus démarre ou recharge à chaud. Même cible = même `(presentation_id, variant_id, project_key)` : réutilisée. Un `sync {}` ou un `restart {acknowledge_unsandboxed_scene}` sur une cible maître est `ack_required` : l'accusé est lié à la clé.
+- **Disposition de `work/`** : `package.json` (`jarvis-studio-master`), `studio-root.tsx`, `src/master/**` générés **en lecture seule** ; `src/scenes/<scene_id>/**` (octets de chaque pin) et `public/**` fusionné modifiables. La forme (`enforce_shape`) est la même qu'une scène : `src/`, `public/`, les deux fichiers générés de premier niveau ; rien d'autre n'est admis. Un `src/master/**` d'une scène seule reste modifiable (le paquet généré dit quelle disposition est servie).
+- **`state.json`** : schéma 1 inchangé pour une scène ; schéma 2 (`target` au lieu de `pin`) pour une cible maître. Le lecteur accepte les deux ; tout autre schéma, ou un `target` mal formé, donne `state_unreadable` (jamais deviné ni réécrit). Un Core plus ancien lit un schéma 2 comme illisible : on met le fichier de côté.
+- **Vue** : `target` (`{kind: "scene", prefab_id, version}` ou la forme maître plus `scene_count`, `current_project_key`, `stale`) ; `pin` vaut `null` pour une cible maître ; `composition` est la composition maître ; `work_copy.classified` classe les modifications (`generated`, `scene` avec `scene_id`, `shared`), `null` pour une scène. Le relevé de `status` recalcule la clé vivante au plus toutes les 5 s, sans journaliser de plan.
+- **Modifications non publiées** : jamais publiées, jamais écrasées ; un `sync`, un `restart` vers une autre clé ou un passage à une autre cible (scène ou maître) est refusé `unpublished_edits` (fichiers et classes nommés) sauf `discard_unpublished: true` (copie dans `studio-edits/`). La même clé rouvre l'espace tel quel. `publish` sur une cible maître : 409 `publish_master_unsupported`, avant toute lecture de l'espace.
+- **Porte d'écriture de l'agent** : pendant qu'une cible maître est enregistrée, une édition de source par l'agent de la scène X n'est refusée (`presentation_studio_scene_edited_in_remotion`) que pour des modifications de classe scène sur X, ou un relevé illisible ; les fichiers générés ou partagés ne la bloquent jamais.
+
 ## 3. Processus et garde
 
 Commande : `node --max-old-space-size=2048 --require studio/studio-guard.cjs <runtime>/node_modules/@remotion/cli/remotion-cli.js studio studio-root.tsx --port=<p> --no-open --ipv4 --disable-ask-ai --disable-git-source`, cwd = `work/`, sans fenêtre, sortie dans `studio.log` (1 Mio, une génération), environnement en liste blanche plus `JARVIS_STUDIO_DIR`, `JARVIS_STUDIO_LAUNCH` (identifiant aléatoire du lancement) et `JARVIS_STUDIO_IDLE_S` (le Core parent est déclaré dans `parent.json`, pas dans l'environnement). **Aucune route de Core, base, Board ou secret** n'est lisible depuis ce dossier.
@@ -96,12 +107,12 @@ La référence d'un processus est `pid:heure de création` ([remotion-runtime.md
 
 ## 4. États, vue, codes
 
-Statut : `stopped`, `starting`, `ready`, `stopping`, `failed`. Vue publique (`jarvis.domain.remotion_studio.public_view`) : `status`, `url` (`http://127.0.0.1:<port>/`, seulement `ready`), `port`, `port_mode` (`configured`/`random`), `pin`, `source_digest`, `composition`, `started_at`, `ready_at`, `synced_at`, `syncs` (par lancement), `restarts`, `idle_timeout_s`, `idle_in_s`, `viewers` (WebSocket ouverts), `stop_reason` (`user`, `idle_timeout`, `core_stopped`, `capability_change`, `restart`), `last_error_code`, `last_error_detail`, `diagnostics` (fin du journal, sans chemin ni secret), `work_copy`, `egress_blocked`. Aucun chemin du disque, aucun `process_ref`, aucun identifiant de lancement.
+Statut : `stopped`, `starting`, `ready`, `stopping`, `failed`. Vue publique (`jarvis.domain.remotion_studio.public_view`) : `status`, `url` (`http://127.0.0.1:<port>/`, seulement `ready`), `port`, `port_mode` (`configured`/`random`), `pin`, `source_digest`, `composition`, `started_at`, `ready_at`, `synced_at`, `syncs` (par lancement), `restarts`, `idle_timeout_s`, `idle_in_s`, `viewers` (WebSocket ouverts), `stop_reason` (`user`, `idle_timeout`, `core_stopped`, `capability_change`, `restart`), `last_error_code`, `last_error_detail`, `diagnostics` (fin du journal, sans chemin ni secret), `work_copy`, `egress_blocked`, `target` (Slice 05 : cible de scène ou maître, § 2 ter). Aucun chemin du disque, aucun `process_ref`, aucun identifiant de lancement.
 
 | Code (`remotion_studio_*`) | HTTP | Cause |
 | --- | --- | --- |
 | `invalid` | 400 | corps, pin ou paramètre invalide |
-| `ack_required` | 400 | `acknowledge_unsandboxed_scene` absent ou différent de `true` : rien n'est lancé ni changé |
+| `ack_required` | 400 | `acknowledge_unsandboxed_scene` (scène) ou `acknowledge_unsandboxed_project` (cible maître) absent ou différent de `true` : rien n'est lancé ni changé |
 | `state_unreadable` | 409 | `state.json` illisible : jamais deviné ni réécrit (un Studio vivant serait oublié) ; la vue est `failed`, `open` est refusé tant que le fichier n'est pas mis de côté (relu à chaque appel) |
 | `unavailable` | 503 | Core sans Studio (aucun magasin de capacités) |
 | `source_unavailable` | 404 | version inconnue, HTML, altérée ou refusée par une garde |
@@ -119,6 +130,9 @@ Statut : `stopped`, `starting`, `ready`, `stopping`, `failed`. Vue publique (`ja
 | `publish_import_refused` | 422 | import hors de la liste ; aucun élargissement n'existe |
 | `publish_refused` | 422 (ou le statut de la variante) | refus de la porte d'édition de source (compilation, valeurs, partition, cible inconnue) : `publish_code` et `diagnostics` |
 | `publish_unavailable` | 503 | Core sans Studio de présentations |
+| `master_incompatible` | 409 | cible maître : le plan vivant de la variante est `incompatible` (`reason`, `detail`, `scene_ids`) ; rien ne démarre (§ 2 ter) |
+| `master_stale` | 409 | cible maître : le `project_key` envoyé n'est plus celui de la variante (`project_key`, `variant_revision`, `scene_count` courants) ; la page reconfirme |
+| `publish_master_unsupported` | 409 | `publish` alors que l'espace est un projet maître : jamais publié, refusé avant toute lecture |
 | `port_unavailable`, `start_failed`, `start_timeout`, `health_failed`, `process_exited`, `stop_failed`, `store_failed`, `internal_error` | 200, vue `failed` | **échec d'opération = la vue** (comme les capacités), avec `last_error_code` et le journal |
 
 ## 5. Opérations
@@ -143,13 +157,13 @@ Préfixe frère de la famille des capacités : `/v1/local-capabilities/remotion/
 | Méthode | Route | Corps |
 | --- | --- | --- |
 | GET | `/v1/local-capabilities/remotion/studio` | — |
-| POST | `/v1/local-capabilities/remotion/studio/open` | `{"prefab_id", "version", "acknowledge_unsandboxed_scene": true}` |
-| POST | `/v1/local-capabilities/remotion/studio/sync` | `{}` (scène courante) ou `{"prefab_id", "version", "acknowledge_unsandboxed_scene": true}` |
+| POST | `/v1/local-capabilities/remotion/studio/open` | `{"prefab_id", "version", "acknowledge_unsandboxed_scene": true}` ou le corps maître (§ 2 ter) |
+| POST | `/v1/local-capabilities/remotion/studio/sync` | `{}` (scène courante) ou `{"prefab_id", "version", "acknowledge_unsandboxed_scene": true}` ou le corps maître |
 | POST | `/v1/local-capabilities/remotion/studio/close` | `{}` |
-| POST | `/v1/local-capabilities/remotion/studio/restart` | `{"acknowledge_unsandboxed_scene": true}` |
+| POST | `/v1/local-capabilities/remotion/studio/restart` | `{"acknowledge_unsandboxed_scene": true}` ou le corps maître |
 | POST | `/v1/local-capabilities/remotion/studio/publish` | `{"presentation_id", "variant_id", "scene_id", "base": {"prefab_id", "version"}, "digest", "confirm_publish": true}` (§2 bis) |
 
-Réponse : `{studio: vue}` (`publish` : plus `publish`). Refus : `{error: {code, message, ...}}` (une publication refusée ajoute `publish_code`, `diagnostics`, `files`, `base`, `current`, `imports` selon le cas). `open` et `sync` acceptent `"discard_unpublished": true` (seule valeur admise). Un défaut inattendu d'une route est journalisé durablement (`remotion_studio.route_failed`, niveau `error`) et rendu en 500 `remotion_studio_internal_error`. Une requête avec paramètres de requête, un corps de plus de 1 Kio ou un champ en trop est refusée (`invalid`).
+Réponse : `{studio: vue}` (`publish` : plus `publish`). Refus : `{error: {code, message, ...}}` (une publication refusée ajoute `publish_code`, `diagnostics`, `files`, `base`, `current`, `imports` selon le cas). `open` et `sync` acceptent `"discard_unpublished": true` (seule valeur admise). Un défaut inattendu d'une route est journalisé durablement (`remotion_studio.route_failed`, niveau `error`) et rendu en 500 `remotion_studio_internal_error`. Une requête avec paramètres de requête, un corps de plus de 1 Kio ou un champ en trop est refusée (`invalid`) ; le plus grand corps maître (identifiants de 128 caractères, `discard_unpublished` compris) fait moins de 450 octets.
 
 ## 7. Réglages
 

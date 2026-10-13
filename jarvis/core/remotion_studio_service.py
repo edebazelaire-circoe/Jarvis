@@ -16,6 +16,13 @@ sauf `discard_unpublished` (geste confirmé : copie dans `studio-edits/`, puis m
 place ; un changement de la capacité la copie hors de `runtime/` d'abord. `publish` l'envoie, sous le verrou du service, par la
 porte d'édition de source de la variante (`ScenePublisher`) : nouvelle version immuable, conflit si la scène a changé depuis la
 base, la version précédente intacte (retour arrière = republier).
+
+Cible maître (Slice 05 de master-project-studio-export, `docs/remotion-master-project.md` § 9) : le même processus sert, au choix, une
+scène (`StudioPin`, `state.json` schéma 1 inchangé) ou le projet maître d'une variante (`MasterTarget`, schéma 2). Une ouverture maître
+replanifie la variante vivante (`MasterProjectReader.live_plan`, la seule lecture de préparation) : incompatible ->
+`remotion_studio_master_incompatible`, clé différente de celle confirmée -> `remotion_studio_master_stale`, sinon `plan_master_files`
+matérialisé par `sync_work`. Un espace maître n'est jamais publié (`remotion_studio_publish_master_unsupported`) ; ses modifications sont
+classées (générées / scène / partagées) et gardées comme celles d'une scène.
 """
 
 from __future__ import annotations
@@ -25,20 +32,68 @@ from collections.abc import Awaitable, Callable, Mapping
 import time
 from typing import Any
 
+from dataclasses import dataclass
+
 from jarvis.domain import remotion_studio as D
 from jarvis.domain.local_capabilities import bound_detail
+from jarvis.domain.presentation_studio_checks import PresentationStudioError
+from jarvis.domain.remotion_master_files import MasterFilesError, plan_master_files
+from jarvis.domain.remotion_master_project import MasterProjectPlan
 from jarvis.domain.remotion_source import RemotionSource
-from jarvis.domain.remotion_studio import StudioError, StudioErrorCode as C, StudioPin, StudioState, StudioStatus as S
+from jarvis.domain.remotion_studio import (
+    MasterRequest, MasterTarget, StudioError, StudioErrorCode as C, StudioPin, StudioState, StudioStatus as S, StudioTarget,
+)
+from jarvis.domain.remotion_studio_master import (
+    MasterWorkspaceBase, classify_edits, public_owners_of_plan, public_owners_of_sources,
+)
 from jarvis.domain.remotion_studio_workspace import MAX_NAMED_PATHS, PublishRequest, WorkspaceDiff, plan_publish
 from jarvis.ports.remotion_studio import StudioRunner
 from jarvis.ports.v2 import DiagnosticSink
 
 #: `(pin) -> (source, props d'exemple)` ; lève `StudioError(SOURCE_UNAVAILABLE)` si la version n'est pas une source Remotion saine.
 SourceProvider = Callable[[StudioPin], Awaitable[tuple[RemotionSource, Mapping[str, Any]]]]
+#: Slice 05 : `(presentation_id, variant_id, trace) -> MasterProjectPlan` (`MasterProjectReader.live_plan`) ; `trace=False` for the status
+#: poll (the plan is recomputed to say `stale`, without one `core.remotion_master.planned` line per poll).
+MasterReader = Callable[..., Awaitable[MasterProjectPlan]]
+#: What `open` / `sync` / `restart` ask for: a scene pin or a variant master (`MasterRequest`, bound to the confirmed key).
+StudioRequest = StudioPin | MasterRequest
+#: The status poll recomputes the live key at most this often (seconds).
+LIVE_KEY_TTL_S = 5.0
 TICK_S = 15.0
 RUNNABLE_CAPABILITY = ("ready", "running")
 #: Issues de la porte d'édition de source après lesquelles la nouvelle version TIENT (publiée et épinglée) : l'espace est rebasé.
 STANDING_RESULTS = ("reloaded", "reloaded_state_reset", "repinned", "pending_mount")
+
+
+@dataclass(frozen=True, slots=True)
+class Prepared:
+    """A resolved target, ready to materialize: the exact workspace files, the digest recorded in the state and the declared composition."""
+
+    target: StudioTarget
+    files: dict[str, bytes]
+    source_digest: str
+    composition: dict[str, Any]
+
+
+def labels(target: StudioTarget | MasterRequest | None) -> dict[str, Any]:
+    """Journal identifiers of a target (never a path): the pin of a scene, the variant and key of a master."""
+
+    if isinstance(target, StudioPin):
+        return {"prefab_id": target.prefab_id, "version": target.version}
+    if isinstance(target, (MasterTarget, MasterRequest)):
+        out: dict[str, Any] = {"presentation_id": target.presentation_id, "variant_id": target.variant_id, "project_key": target.project_key}
+        if isinstance(target, MasterTarget):
+            out["scenes"] = len(target.scenes)
+        return out
+    return {}
+
+
+def same_target(state: StudioState, request: StudioRequest) -> bool:
+    """Target equality (`docs/remotion-master-project.md` § 9): the exact pin of a scene; `(presentation, variant, project_key)` of a master."""
+
+    if isinstance(request, MasterRequest):
+        return state.master is not None and state.master.matches(request)
+    return state.master is None and state.pin == request
 
 
 class RemotionStudioService:
@@ -59,6 +114,16 @@ class RemotionStudioService:
         self._unreadable: str = ""
         self._publisher: Any = None
         self._scene_listeners: list[Callable[[StudioPin], Awaitable[Any]]] = []
+        self._master_reader: MasterReader | None = None
+        #: `project_key -> {public path: owning scene ids}` (classification of master edits); rebuilt from the pins after a restart.
+        self._owners: dict[str, dict[str, tuple[str, ...]]] = {}
+        #: Last live key of the recorded master: `((presentation_id, variant_id), key or None, read at)`.
+        self._live: tuple[tuple[str, str], str | None, float] | None = None
+
+    def bind_master_reader(self, reader: MasterReader) -> None:
+        """Câblé par `v2_app` (`MasterProjectReader.live_plan`) ; sans lui une cible maître est refusée (503 `remotion_studio_unavailable`)."""
+
+        self._master_reader = reader
 
     def bind_publisher(self, publisher: Any) -> None:
         """Câblé par `v2_app` quand le Studio de présentations existe (`VariantScenePublisher`) ; sans lui `publish` est refusé (503)."""
@@ -72,14 +137,18 @@ class RemotionStudioService:
         self._scene_listeners.append(listener)
 
     async def _announce_scene(self, state: StudioState) -> None:
-        if state.status is not S.READY or state.pin is None:
+        """Each listener once per mounted pin: the scene's pin, or every pin of a ready master (§ 9 « scene listeners »)."""
+
+        if state.status is not S.READY or state.target is None:
             return
-        for listener in self._scene_listeners:
-            try:
-                await listener(state.pin)
-            except Exception as exc:  # noqa: BLE001 - argued: the Studio is open either way; the write gate (unpublished edits) still guards
-                self._emit("scene_listener_failed", f"Studio scene listener raised {type(exc).__name__}", level="error",
-                           prefab_id=state.pin.prefab_id, version=state.pin.version)
+        pins = state.master.pins if state.master is not None else (state.pin,)
+        for pin in pins:
+            for listener in self._scene_listeners:
+                try:
+                    await listener(pin)
+                except Exception as exc:  # noqa: BLE001 - argued: the Studio is open either way; the write gate (unpublished edits) still guards
+                    self._emit("scene_listener_failed", f"Studio scene listener raised {type(exc).__name__}", level="error",
+                               prefab_id=pin.prefab_id, version=pin.version)
 
     async def workspace_base(self) -> tuple[StudioPin | None, tuple[str, ...] | None]:
         """Slice 13 rework (QA B3), read-only: the version the workspace is based on and its unpublished files. `(None, ())` without a
@@ -87,15 +156,38 @@ class RemotionStudioService:
         edits as unknown, never as absent)."""
 
         state = self._load()
-        if self._unreadable or state.pin is None:
+        if self._unreadable or state.target is None:
             return None, ()
+        base: Any = state.pin
         try:
             if not await asyncio.to_thread(self._runner.has_workspace):
                 return None, ()
-            return state.pin, tuple(await asyncio.to_thread(self._runner.modified_work))
+            edited = tuple(await asyncio.to_thread(self._runner.modified_work))
         except StudioError as exc:
             self._emit("workspace_unlisted", f"Studio workspace could not be listed: {exc.code.value}", level="warning", code=exc.code.value)
-            return state.pin, None
+            edited = None
+        if state.master is not None:
+            # Slice 05: the write gate blocks scene X only for edits that belong to X; ownership unknown -> edits unknown (never absent).
+            owners = await self._ensure_owners(state.master)
+            base = MasterWorkspaceBase(state.master, owners or {})
+            if owners is None and edited:
+                return base, None
+        return base, edited
+
+    async def _ensure_owners(self, target: MasterTarget) -> dict[str, tuple[str, ...]] | None:
+        """`{public path: owning scene ids}` of a master: from the plan at open, else rebuilt from the immutable pinned sources."""
+
+        known = self._owners.get(target.project_key)
+        if known is not None:
+            return known
+        try:
+            sources = [(scene_id, (await self._source(pin))[0].files.keys()) for scene_id, pin in target.scenes]
+        except Exception as exc:  # noqa: BLE001 - argued: classification degrades to « unknown », said here and by the gate's refusal
+            self._emit("master_owners_unknown", f"Studio master edits could not be classified: {type(exc).__name__}", level="warning",
+                       **labels(target))
+            return None
+        self._owners = {target.project_key: public_owners_of_sources(sources)}
+        return self._owners[target.project_key]
 
     # ------------------------------------------------------------------ journal et persistance
 
@@ -166,7 +258,31 @@ class RemotionStudioService:
             return None
 
     def _view(self, state: StudioState) -> dict[str, Any]:
-        return D.public_view(state, idle_timeout_s=self._idle_timeout_s, now=self._clock(), configured_port=self._configured_port())
+        view = D.public_view(state, idle_timeout_s=self._idle_timeout_s, now=self._clock(), configured_port=self._configured_port())
+        if state.master is not None and view["target"] is not None:
+            # § 9 « View »: the live key and `stale`; `None` when the live plan could not be read (or is incompatible: no key).
+            live = self._live if self._live and self._live[0] == (state.master.presentation_id, state.master.variant_id) else None
+            current = live[1] if live else None
+            view["target"].update(current_project_key=current, stale=None if live is None else current != state.master.project_key)
+        return view
+
+    async def _read_live_key(self, state: StudioState) -> None:
+        """(Status poll.) Recomputes the recorded master's live key at most every `LIVE_KEY_TTL_S`; a failure is journaled, `stale: null`."""
+
+        master, reader = state.master, self._master_reader
+        if master is None or reader is None:
+            return
+        where = (master.presentation_id, master.variant_id)
+        if self._live and self._live[0] == where and self._clock() - self._live[2] < LIVE_KEY_TTL_S:
+            return
+        try:
+            plan = await reader(master.presentation_id, master.variant_id, trace=False)
+        except Exception as exc:  # noqa: BLE001 - argued: the view says `stale: null` (unknown), journaled with its cause
+            self._live = None
+            self._emit("master_live_unread", f"Studio master: the live plan could not be read: {type(exc).__name__}", level="warning",
+                       **labels(master))
+            return
+        self._live = (where, plan.project_key if plan.ready else None, self._clock())
 
     def _refresh(self, state: StudioState) -> None:
         """Rend `state` conforme au processus (vivant ? actif ? fichiers modifiés ?). Lecture seule hors constat d'une disparition.
@@ -192,11 +308,13 @@ class RemotionStudioService:
     def _relist(self, state: StudioState) -> None:
         """(Fil.) Fichiers non publiés de l'espace et empreinte de leur liste (`work_copy.digest`, renvoyée par la page avec `publish`)."""
 
-        if state.pin is None:
-            state.modified_files, state.work_digest = [], ""
+        if state.target is None:
+            state.modified_files, state.work_digest, state.classified = [], "", []
             return
         paths, digest = self._runner.workspace_listing()
         state.modified_files, state.work_digest = list(paths), digest
+        state.classified = [] if state.master is None else [row.to_dict() for row in classify_edits(
+            paths, state.master, self._owners.get(state.master.project_key, {}))]
 
     def _report_rotated(self) -> None:
         """La rotation de `studio-edits/` (5 dossiers) retire le plus ancien : jamais en silence, chaque nom retiré est journalisé."""
@@ -211,6 +329,9 @@ class RemotionStudioService:
     async def status(self) -> dict[str, Any]:
         self._loop = asyncio.get_running_loop()
         state = self._load()
+        if state.master is not None:
+            await self._ensure_owners(state.master)
+            await self._read_live_key(state)
         if self._lock.locked():  # une opération tient l'état : on rend l'état courant sans le toucher
             return self._view(state)
         async with self._lock:  # constat de vivacité atomique : jamais entre deux étapes d'un `sync` ou d'un `open`
@@ -233,12 +354,55 @@ class RemotionStudioService:
             raise StudioError(C.SOURCE_UNAVAILABLE, f"{pin.prefab_id}@{pin.version}: {getattr(code, 'value', type(exc).__name__)}: {exc}") from None
         return D.plan_workspace(source, props), source
 
+    async def _resolve(self, request: StudioRequest) -> Prepared:
+        """The files of a target. A master is re-planned from the live variant (§ 9 « Planning at open ») and refused, before anything
+        changes, when incompatible or when its key is not the one the user confirmed."""
+
+        if isinstance(request, StudioPin):
+            files, source = await self._prepare(request)
+            return Prepared(request, files, source.digest, source.block.composition.to_dict())
+        plan = await self._live_plan(request)
+        try:
+            files = plan_master_files(plan)
+        except MasterFilesError as exc:  # a defence: a plan `plan_master` made ready never fails it
+            raise StudioError(C.SOURCE_UNAVAILABLE, f"the master project could not be laid out: {exc}") from None
+        target = MasterTarget(plan.presentation_id, plan.variant_id, plan.variant_revision, str(plan.project_key),
+                              tuple((scene.scene_id, StudioPin(scene.prefab_id, scene.version)) for scene in plan.scenes))
+        self._owners = {target.project_key: public_owners_of_plan(plan)}
+        self._live = ((plan.presentation_id, plan.variant_id), plan.project_key, self._clock())
+        assert plan.composition is not None  # a ready plan has one
+        return Prepared(target, files, target.project_key, plan.composition.to_dict())
+
+    async def _live_plan(self, request: MasterRequest) -> MasterProjectPlan:
+        reader = self._master_reader
+        if reader is None:
+            raise StudioError(C.UNAVAILABLE, "this Core cannot plan a variant master (no presentation studio)")
+        where = {"presentation_id": request.presentation_id, "variant_id": request.variant_id}
+        try:
+            plan = await reader(request.presentation_id, request.variant_id)
+        except PresentationStudioError as exc:
+            raise StudioError(C.SOURCE_UNAVAILABLE, f"{exc.code.value}: {exc.message}", extra={"presentation_code": exc.code.value}) from None
+        if not plan.ready:
+            reason = plan.reason.value if plan.reason else ""
+            self._emit("master_incompatible", "Studio master refused: the variant is not master-ready", level="info", **where, reason=reason)
+            raise StudioError(C.MASTER_INCOMPATIBLE, f"{reason}: {plan.detail}",
+                              extra={"reason": reason, "detail": plan.detail, "scene_ids": list(plan.scene_ids)})
+        if plan.project_key != request.project_key:
+            self._emit("master_stale", "Studio master refused: the variant changed since the confirmation", level="info", **where,
+                       asked=request.project_key, current=plan.project_key)
+            raise StudioError(C.MASTER_STALE, f"the variant changed since the confirmation (project key {plan.project_key}, revision "
+                                              f"{plan.variant_revision}, {len(plan.scenes)} scene(s)): confirm again",
+                              extra={"project_key": plan.project_key, "variant_revision": plan.variant_revision,
+                                     "scene_count": len(plan.scenes)})
+        return plan
+
     # ------------------------------------------------------------------ open
 
-    async def open(self, pin: StudioPin, *, acknowledged: bool = False, discard: bool = False) -> dict[str, Any]:
-        """Ouvre le Studio sur `pin` (demande explicite ET accusé : la scène tourne sans le bac à sable du Player). Déjà vivant :
-        réutilisé (même scène) ou rechargé à chaud (autre scène). Modifications non publiées : gardées sur la même scène, refusées
-        pour une autre sauf `discard` (Slice 12)."""
+    async def open(self, pin: StudioRequest, *, acknowledged: bool = False, discard: bool = False) -> dict[str, Any]:
+        """Ouvre le Studio sur `pin` (une scène, ou le projet maître d'une variante : Slice 05) — demande explicite ET accusé : le code
+        tourne sans le bac à sable du Player. Déjà vivant : réutilisé (même cible) ou rechargé à chaud (autre cible). Modifications non
+        publiées : gardées sur la même cible, refusées pour une autre sauf `discard` (Slice 12). Une cible maître est replanifiée d'abord
+        (incompatible, clé périmée : refus, rien ne change)."""
 
         D._require_ack(acknowledged)
         self._loop = asyncio.get_running_loop()
@@ -247,32 +411,43 @@ class RemotionStudioService:
             self._refuse_if_unreadable()
             state = self._load()
             await asyncio.to_thread(self._refresh, state)
+            prepared = await self._resolve(pin) if isinstance(pin, MasterRequest) else None
             if state.status is S.READY:
                 if await asyncio.to_thread(self._healthy, state):
-                    if state.pin == pin:
+                    if same_target(state, pin):
                         self._touch(state)
-                        self._emit("reused", "Studio already open on this scene", prefab_id=pin.prefab_id, version=pin.version)
+                        self._emit("reused", "Studio already open on this target", **labels(pin))
                         await self._announce_scene(state)
                         return {**self._view(state), "reused": True}
-                    await self._sync_locked(state, pin, discard=discard)
+                    await self._sync_locked(state, pin, prepared, discard=discard)
                     await self._announce_scene(state)
                     return {**self._view(state), "reused": True}
                 await asyncio.to_thread(self._kill, state)
                 self._fail(state, C.HEALTH_FAILED, "the Studio did not answer; it was stopped and is restarted")
-            await self._start_locked(state, pin, discard=discard)
+            await self._start_locked(state, pin, prepared, discard=discard)
             await self._announce_scene(state)
             return self._view(state)
 
-    def _refuse_unpublished(self, edited: tuple[str, ...], state: StudioState, pin: StudioPin) -> None:
-        """Jamais un remplacement silencieux de fichiers modifiés : le refus nomme les fichiers et la sortie (publier, ou mettre de côté)."""
+    async def _refuse_unpublished(self, edited: tuple[str, ...], state: StudioState, pin: StudioRequest) -> None:
+        """Jamais un remplacement silencieux de fichiers modifiés : le refus nomme les fichiers et la sortie (publier, ou mettre de côté).
+        Sur un espace maître (Slice 05), chaque fichier porte sa classe (générée, scène, partagée) et il n'y a pas de publication."""
 
-        base = f"{state.pin.prefab_id} v{state.pin.version}" if state.pin else "an unknown base"
         named = ", ".join(edited[:MAX_NAMED_PATHS]) + (f" (+{len(edited) - MAX_NAMED_PATHS})" if len(edited) > MAX_NAMED_PATHS else "")
-        self._emit("unpublished_kept", "Studio switch refused: unpublished workspace edits", level="info", count=len(edited),
-                   prefab_id=pin.prefab_id, version=pin.version)
+        extra: dict[str, Any] = {"files": list(edited[:MAX_NAMED_PATHS]), "count": len(edited), "base": state.pin.to_dict() if state.pin else None}
+        if state.master is not None:
+            owners = await self._ensure_owners(state.master) or {}
+            classified = classify_edits(edited[:MAX_NAMED_PATHS], state.master, owners)
+            extra.update(target=D.target_view(state.master), classified=[row.to_dict() for row in classified])
+            base = f"the master project of variant {state.master.variant_id} ({len(state.master.scenes)} scene(s))"
+            named = ", ".join(f"{row.path} [{row.edit_class.value}{':' + row.scene_id if row.scene_id else ''}]" for row in classified) + (
+                f" (+{len(edited) - MAX_NAMED_PATHS})" if len(edited) > MAX_NAMED_PATHS else "")
+            way_out = "a master workspace is never published: confirm setting them aside (discard_unpublished: true)"
+        else:
+            base = f"{state.pin.prefab_id} v{state.pin.version}" if state.pin else "an unknown base"
+            way_out = "publish them to the variant, or confirm setting them aside (discard_unpublished: true)"
+        self._emit("unpublished_kept", "Studio switch refused: unpublished workspace edits", level="info", count=len(edited), **labels(pin))
         raise StudioError(C.UNPUBLISHED_EDITS, f"{len(edited)} unpublished file(s) in the Remotion Studio workspace (based on {base}): {named}; "
-                                               "publish them to the variant, or confirm setting them aside (discard_unpublished: true)",
-                          extra={"files": list(edited[:MAX_NAMED_PATHS]), "count": len(edited), "base": state.pin.to_dict() if state.pin else None})
+                                               f"{way_out}", extra=extra)
 
     def _touch(self, state: StudioState) -> None:
         state.last_activity_at = self._clock()
@@ -290,12 +465,12 @@ class RemotionStudioService:
         except StudioError as exc:
             self._note(state, f"{exc.code.value}: {exc.detail}")
 
-    async def _start_locked(self, state: StudioState, pin: StudioPin, *, discard: bool = False) -> None:
+    async def _start_locked(self, state: StudioState, pin: StudioRequest, prepared: Prepared | None = None, *, discard: bool = False) -> None:
         # Slice 12 : d'abord les fichiers non publiés (le refus le plus utile, et rien n'a encore changé : ni état, ni fichier)
-        edited = await asyncio.to_thread(self._runner.modified_work) if state.pin is not None else ()
-        keep = bool(edited) and state.pin == pin and await asyncio.to_thread(self._runner.has_workspace)
+        edited = await asyncio.to_thread(self._runner.modified_work) if state.target is not None else ()
+        keep = bool(edited) and same_target(state, pin) and await asyncio.to_thread(self._runner.has_workspace)
         if edited and not keep and not discard:
-            self._refuse_unpublished(edited, state, pin)
+            await self._refuse_unpublished(edited, state, pin)
         runtime_status = await asyncio.to_thread(self._capability_status)
         if runtime_status not in RUNNABLE_CAPABILITY:
             raise StudioError(C.RUNTIME_UNAVAILABLE, f"the Remotion capability is '{runtime_status}': install or repair it first "
@@ -303,21 +478,22 @@ class RemotionStudioService:
         reason = await asyncio.to_thread(self._runner.runtime_ready)
         if reason:
             raise StudioError(C.RUNTIME_UNAVAILABLE, reason)
-        files, source = await self._prepare(pin)  # un refus ici ne change PAS l'état (rien n'a démarré)
-        state.status, state.pin = S.STARTING, pin
-        state.source_digest, state.workspace_digest = source.digest, D.workspace_digest(files)
-        state.composition = source.block.composition.to_dict()
+        prepared = prepared or await self._resolve(pin)  # un refus ici ne change PAS l'état (rien n'a démarré)
+        files, target = prepared.files, prepared.target
+        state.status = S.STARTING
+        state.set_target(target)
+        state.source_digest, state.workspace_digest = prepared.source_digest, D.workspace_digest(files)
+        state.composition = dict(prepared.composition)
         state.last_error_code = state.last_error_detail = state.stop_reason = ""
         state.started_at, state.ready_at, state.synced_at = self._clock(), None, None
         state.syncs = 0  # par lancement : « rafraîchie N fois » ne compte que ce Studio-ci
         state.diagnostics, state.modified_files, state.set_aside = [], list(edited) if keep else [], []
         await asyncio.to_thread(self._save, state)
-        self._emit("starting", "Studio starting", prefab_id=pin.prefab_id, version=pin.version)
+        self._emit("starting", "Studio starting", **labels(target))
         try:
-            if keep:  # même scène, modifications non publiées : l'espace de travail est rouvert tel quel (Slice 12)
+            if keep:  # même cible, modifications non publiées : l'espace de travail est rouvert tel quel (Slice 12)
                 state.modified_files = list(edited)
-                self._emit("workspace_kept", "Studio reopened on its workspace with unpublished edits", count=len(edited),
-                           prefab_id=pin.prefab_id, version=pin.version)
+                self._emit("workspace_kept", "Studio reopened on its workspace with unpublished edits", count=len(edited), **labels(target))
             else:
                 report = await asyncio.to_thread(self._runner.sync_work, files)
                 if report.edits_saved:
@@ -330,7 +506,7 @@ class RemotionStudioService:
             if aside:
                 state.set_aside = list(aside[:D.MAX_SET_ASIDE_NAMED])
                 self._emit("workspace_set_aside", "Studio launch: files outside the workspace shape were set aside (studio-edits)",
-                           level="warning", count=len(aside), paths=list(aside[:MAX_NAMED_PATHS]), prefab_id=pin.prefab_id, version=pin.version)
+                           level="warning", count=len(aside), paths=list(aside[:MAX_NAMED_PATHS]), **labels(target))
             await asyncio.to_thread(self._relist, state)
             launched = await asyncio.to_thread(self._launch_with_retry)
         except StudioError as exc:
@@ -348,8 +524,7 @@ class RemotionStudioService:
         state.diagnostics = [set_aside_line(state.set_aside)] if state.set_aside else []
         await asyncio.to_thread(self._save, state)
         self._start_watch()
-        self._emit("ready", "Studio ready", port=launched.port, prefab_id=pin.prefab_id, version=pin.version,
-                   seconds=round(now - (state.started_at or now), 1))
+        self._emit("ready", "Studio ready", port=launched.port, **labels(target), seconds=round(now - (state.started_at or now), 1))
 
     def _guard_idle_s(self) -> float:
         return self._idle_timeout_s + D.IDLE_GUARD_MARGIN_S
@@ -366,9 +541,9 @@ class RemotionStudioService:
 
     # ------------------------------------------------------------------ sync (rechargement à chaud)
 
-    async def sync(self, pin: StudioPin | None = None, *, acknowledged: bool = False, discard: bool = False) -> dict[str, Any]:
-        """Rematérialise la source (même scène relue, ou autre version/scène) : le serveur de développement recharge à chaud.
-        Une AUTRE scène exige l'accusé, comme `open`."""
+    async def sync(self, pin: StudioRequest | None = None, *, acknowledged: bool = False, discard: bool = False) -> dict[str, Any]:
+        """Rematérialise la source (même scène relue, ou autre version/scène, ou un projet maître) : le serveur de développement recharge
+        à chaud. Une AUTRE scène exige l'accusé, comme `open` ; une cible maître l'exige TOUJOURS (lié à sa clé, § 9)."""
 
         if pin is not None:
             D._require_ack(acknowledged)
@@ -377,17 +552,21 @@ class RemotionStudioService:
             self._refuse_if_unreadable()
             state = self._load()
             await asyncio.to_thread(self._refresh, state)
-            if state.status is not S.READY or state.pin is None:
+            if state.status is not S.READY or state.target is None:
                 raise StudioError(C.NOT_RUNNING, "the Studio is not open: open it first")
-            await self._sync_locked(state, pin or state.pin, discard=discard)
+            if pin is None and state.master is not None:
+                raise StudioError(C.ACK_REQUIRED, D.PROJECT_ACK_REFUSAL)
+            prepared = await self._resolve(pin) if isinstance(pin, MasterRequest) else None
+            await self._sync_locked(state, pin or state.pin, prepared, discard=discard)
             await self._announce_scene(state)
             return self._view(state)
 
-    async def _sync_locked(self, state: StudioState, pin: StudioPin, *, discard: bool = False) -> None:
-        files, source = await self._prepare(pin)
+    async def _sync_locked(self, state: StudioState, pin: StudioRequest, prepared: Prepared | None = None, *, discard: bool = False) -> None:
+        prepared = prepared or await self._resolve(pin)
+        files = prepared.files
         edited = await asyncio.to_thread(self._runner.modified_work)
         if edited and not discard:
-            self._refuse_unpublished(edited, state, pin)
+            await self._refuse_unpublished(edited, state, pin)
         try:
             report = await asyncio.to_thread(self._runner.sync_work, files)
         except StudioError as exc:
@@ -397,8 +576,9 @@ class RemotionStudioService:
             raise
         finally:
             self._report_rotated()
-        state.pin, state.source_digest, state.workspace_digest = pin, source.digest, D.workspace_digest(files)
-        state.composition = source.block.composition.to_dict()
+        state.set_target(prepared.target)
+        state.source_digest, state.workspace_digest = prepared.source_digest, D.workspace_digest(files)
+        state.composition = dict(prepared.composition)
         state.synced_at, state.syncs = self._clock(), state.syncs + 1
         state.last_activity_at = state.synced_at
         if report.edits_saved:
@@ -406,7 +586,7 @@ class RemotionStudioService:
             self._note(state, f"{len(report.edits_saved)} unpublished file(s) were set aside (studio-edits) as confirmed")
         await asyncio.to_thread(self._relist, state)
         await asyncio.to_thread(self._save, state)
-        self._emit("synced", "Studio work copy refreshed (hot reload)", prefab_id=pin.prefab_id, version=pin.version,
+        self._emit("synced", "Studio work copy refreshed (hot reload)", **labels(prepared.target),
                    written=report.written, removed=report.removed, unchanged=report.unchanged)
 
     # ------------------------------------------------------------------ close / restart
@@ -437,22 +617,28 @@ class RemotionStudioService:
         await asyncio.to_thread(self._save, state)
         self._emit("stopped", "Studio stopped", reason=reason)
 
-    async def restart(self, *, acknowledged: bool = False) -> dict[str, Any]:
+    async def restart(self, *, acknowledged: bool = False, master: MasterRequest | None = None) -> dict[str, Any]:
+        """Relance sur la cible enregistrée : la scène (accusé de scène) ou un projet maître (`master` : corps maître, accusé lié à la
+        clé ; replanifié, refusé s'il est périmé ou incompatible, avant tout arrêt)."""
+
         D._require_ack(acknowledged)
         self._acquire()
         async with self._lock:
             self._refuse_if_unreadable()
             state = self._load()
-            pin = state.pin
+            pin: StudioRequest | None = master or state.pin
             if pin is None:
+                if state.master is not None:
+                    raise StudioError(C.ACK_REQUIRED, D.PROJECT_ACK_REFUSAL)
                 raise StudioError(C.NOT_RUNNING, "there is no scene to reopen: open the Studio on a scene first")
+            prepared = await self._resolve(master) if master is not None else None
             restarts = state.restarts + 1
             if state.status is not S.FAILED or state.process_ref:
                 await self._close_locked(state, "restart")
             if state.status is S.FAILED:
                 state.status = S.STOPPED
             state.restarts = restarts
-            await self._start_locked(state, pin)
+            await self._start_locked(state, pin, prepared)
             return self._view(state)
 
     # ------------------------------------------------------------------ publication (Slice 12)
@@ -470,6 +656,11 @@ class RemotionStudioService:
         async with self._lock:
             self._refuse_if_unreadable()
             state = self._load()
+            if state.master is not None:  # § 9 « Publish »: refused before the workspace is read (M6, no master publish-back)
+                self._emit("publish_master_refused", "Remotion Studio publish refused: the workspace is a variant master", level="info",
+                           **labels(state.master))
+                raise StudioError(C.PUBLISH_MASTER_UNSUPPORTED, "Remotion Studio holds the whole variant (master project): it is never "
+                                                                "published back; open the scene alone in Remotion Studio to publish it")
             target = {"presentation_id": request.presentation_id, "variant_id": request.variant_id, "scene_id": request.scene_id}
             if state.pin is None or not await asyncio.to_thread(self._runner.has_workspace):
                 raise StudioError(C.PUBLISH_NOTHING, "there is no Remotion Studio workspace: open the scene in Remotion Studio first")
@@ -675,7 +866,7 @@ class RemotionStudioService:
         """`uninstall` vide `runtime/` (donc l'espace de travail) : les fichiers non publiés sont copiés hors de `runtime/` AVANT ;
         une copie impossible refuse l'opération de la capacité (le crochet lève), jamais une perte silencieuse."""
 
-        if state.pin is None:
+        if state.target is None:
             return
         try:
             saved = self._runner.save_modified()

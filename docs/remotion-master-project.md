@@ -2,7 +2,8 @@
 
 Status: **Level 2 — contract; implementation in Slices 03-08 of handoff jarvis-remotion-master-project-studio-export.** Shipped so far:
 § 2, § 3 and § 5, the pure planner (Level 3 (Slice 03), `jarvis/domain/remotion_master_project.py`); § 6 and § 7, the workspace files and
-the generated composition (Level 3 (Slice 04), `jarvis/domain/remotion_master_files.py`). Every other behaviour below is the
+the generated composition (Level 3 (Slice 04), `jarvis/domain/remotion_master_files.py`); § 9 and § 11, the Studio master target and the
+live readiness read (Level 3 (Slice 05), `jarvis/core/remotion_studio_service.py`). Every other behaviour below is the
 contract the Slices implement, and every "is" means "must be" until the Slice that owns it lands (owners: § 16). Evidence for the choices: the handoff's Slice 01 audit (`tasks/jarvis-remotion-master-project-studio-export/slices/01-current-state-and-compatibility-audit/AUDIT.md`,
 real runs on the pinned Remotion 4.0.534). Decisions marked *decided by agent 0* were taken by the handoff's orchestrator under the Human's
 delegated autonomy (2026-10-13).
@@ -243,15 +244,17 @@ the Variants Player** (still one sandboxed Player per scene; a master Player is 
 - **(d) pins**: each mounted folder `src/scenes/<scene_id>/` names one exact pin; the master workspace is never a hot-reload or publish source
   in A+B.
 
-## 9. Studio master target
+## 9. Studio master target — Level 3 (Slice 05)
 
 **Open body** (new; the scene body `{prefab_id, version, acknowledge_unsandboxed_scene, discard_unpublished?}` is unchanged byte for byte and
 keeps meaning a scene target):
 
 ```json
 {"kind": "variant_master", "presentation_id": "…", "variant_id": "…", "project_key": "mpk_…",
- "acknowledge_unsandboxed_project": true, "discard_unpublished": false}
+ "acknowledge_unsandboxed_project": true}
 ```
+
+plus `"discard_unpublished": true` when the user confirmed setting edits aside (as for a scene, `true` is the only admitted value).
 
 A body mixing `kind: "variant_master"` with `prefab_id`/`version`, or `acknowledge_unsandboxed_scene` with a master body, is
 `remotion_studio_invalid` (400). The same body serves `open`, `sync` and `restart`.
@@ -289,6 +292,30 @@ A body mixing `kind: "variant_master"` with `prefab_id`/`version`, or `acknowled
 - **Publish**: refused `remotion_studio_publish_master_unsupported` before any read. The scene round trip ([remotion-studio.md](remotion-studio.md)
   § 2 bis) is unchanged for scene targets.
 
+**Implementation (Level 3, Slice 05).** `jarvis/domain/remotion_studio.py`: `MasterRequest` (the body), `MasterTarget` (identity
+`(presentation_id, variant_id, project_key)`), `StudioTarget = StudioPin | MasterTarget`, `parse_target` / `parse_restart` (the scene body
+untouched), `StudioState.master` and `to_payload` / `from_payload` (schema 1 or 2; any other schema, a schema 2 with `pin`, or a malformed
+`target` raises: `remotion_studio_state_unreadable`), `target_view`. `jarvis/domain/remotion_studio_master.py`: `classify_edits`
+(generated / scene / shared), `MasterWorkspaceBase.edits_on(scene_id, edited)` (the write gate's view), `generated_paths(files)` (the runner
+writes `src/master/**` read-only only when the map's `package.json` is `jarvis-studio-master`; a scene's own `src/master/x` stays
+editable). `jarvis/core/remotion_studio_service.py`: `_resolve` / `_live_plan` (the live plan through the bound
+`MasterProjectReader.live_plan`, then `plan_master_files` into the existing `sync_work`), target equality `same_target`, the scene listeners
+once per mounted pin, `public/**` ownership kept from the plan and rebuilt from the immutable pins after a Core restart (unknown ownership
+counts as unknown edits for the gate), `stale` / `current_project_key` recomputed by the status poll at most every 5 s with
+`live_plan(..., trace=False)`. The write gate is `presentation_studio_reload._refuse_over_studio_edits`. Facts the implementation fixes: a
+`sync {}` or a scene-ack `restart` while a master is recorded is `remotion_studio_ack_required`; `restart` with a master body re-plans first
+(stale or incompatible: nothing stops); the largest master body (128-character ids, `discard_unpublished`) is under 450 bytes, within the
+route's 1 KiB cap. Tests: `tests/unit/test_remotion_studio_master.py` (bodies, schemas 1/2 and an older state file, classes, read-only
+generated files on the real runner, open / reuse / stale / incompatible / switch / discard / publish refused / restart / adoption, the write
+gate on a real reload rig), `tests/unit/test_remotion_studio_master_routes.py` (Core and Control Center routes, page client). Real proof,
+`tests/unit/test_remotion_studio_master_real_browser.py` (opt-in `JARVIS_REMOTION_RUNTIME_DIR`), 2026-10-13: a 3-scene variant (1280x720 @ 30,
+30 + 45 + 60 frames) opens the real `remotion studio` on the master root in ~84 s cold; headless Chrome on `/JarvisPresentation` shows the
+one composition, its duration `00:04.15` (135 frames), the `<Series>` with three `<Series.Sequence>` tracks, and, stepping the playhead, scene 1,
+2 and 3 in turn (master frame 120 = scene 3 local frame 45); another variant's key hot-syncs the same process (~0.1 s) after its stale body
+was refused 409; an edit of a mounted scene source is classified `scene` and blocks the rebuild until `discard_unpublished`; the scene target
+then reopens in the same process with `state.json` schema 1 and the scene alone on the page (evidence: the handoff's
+`slices/05-remotion-studio-master-project/evidence/`).
+
 ## 10. Whole-video render scope
 
 **Request**: the existing route and bodies (`{snapshot_id, format, settings?}` or `{presentation_id, variant_id, expected_*_revision,
@@ -321,12 +348,18 @@ authorised_boards?, format, settings?}`) with `settings.scope`:
   the plan view of § 2 for that package (Slice 06).
 - **Preview** (`render/preview`) stays scene-scoped (the author's eye).
 
-## 11. Live readiness read
+## 11. Live readiness read — Level 3 (Slice 05)
 
 `GET /v1/presentation-studio/presentations/{presentation_id}/variants/{variant_id}/master-project` (Core, read-only, no side effect, no process)
 returns `{"master": <plan view of § 2>}` from the live variant; relayed read-only by the Control Center under
 `/api/presentation-studio/presentations/{presentation_id}/variants/{variant_id}/master-project`. Studio open, Variants and the agent all read
 this one view; none of them computes readiness itself (Slice 05).
+
+**Implementation (Level 3, Slice 05).** Core route `PresentationStudioProtocolRoutes.master_project`
+(`jarvis/protocol/presentation_studio_routes.py`) over `core.remotion_master_project` (`MasterProjectReader`, wired in `v2_app`, also bound
+to the Studio service for its master target); the relay row `studio_master_project` of `jarvis/runtime/presentation_studio_relay.py`. An
+unknown presentation or variant is the usual 404 `presentation_studio_unknown_*`; a query parameter is 400. The page client reads it with
+`JarvisRemotionStudioCore.createClient(...).masterProject(presentation_id, variant_id)`. Tests: `tests/unit/test_remotion_studio_master_routes.py`.
 
 ## 12. Voice and agent
 
@@ -386,7 +419,7 @@ this one view; none of them computes readiness itself (Slice 05).
 | --- | --- | --- | --- |
 | MasterProjectPlan, readiness codes, `project_key`, asset merge | 3 (Slice 03) | 3 | 03 |
 | Master workspace files, generated composition, boundary | 3 (Slice 04) | 3 | 04 |
-| Studio master target, ack, `state.json` schema 2, unpublished policy, live readiness route | 2 | 3 | 05 |
+| Studio master target, ack, `state.json` schema 2, unpublished policy, live readiness route | 3 (Slice 05) | 3 | 05 |
 | Render scope `master`, bounds, Artifact metadata, frozen readiness route | 2 | 3 | 06 |
 | Voice spec rule, collision-free names, inspect block, `scope` in `remotion_export` | 2 | 3 | 07 |
 | Variants and Board entrypoints | 2 | 3 | 08 |

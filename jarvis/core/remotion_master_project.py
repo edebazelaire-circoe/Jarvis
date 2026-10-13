@@ -34,9 +34,10 @@ class MasterProjectReader:
         self._prefabs = prefabs
         self._diagnostics = diagnostics
 
-    async def live_plan(self, presentation_id: str, variant_id: str) -> MasterProjectPlan:
+    async def live_plan(self, presentation_id: str, variant_id: str, *, trace: bool = True) -> MasterProjectPlan:
         """The plan of the variant as it is now. An unknown presentation or variant raises `PresentationStudioError` (the route's 404);
-        a pin that cannot be read is NOT an error: it is the plan's `master_source_unavailable` / `master_engine_not_remotion`."""
+        a pin that cannot be read is NOT an error: it is the plan's `master_source_unavailable` / `master_engine_not_remotion`.
+        `trace=False`: no `core.remotion_master.planned` line (the Studio status poll, Slice 05, recomputes the key to say `stale`)."""
 
         view = await self._studio.get(presentation_id)
         variant = next((v for v in view.variants if v.variant_id == variant_id), None)
@@ -48,7 +49,8 @@ class MasterProjectReader:
             if pin not in pins:
                 pins[pin] = await self._pin(*pin)
         plan = plan_master(live_inputs(view.presentation, variant, pins))
-        self._emit(plan)
+        if trace:
+            self._emit(plan)
         return plan
 
     async def _pin(self, prefab_id: str, version: int) -> PinSource:

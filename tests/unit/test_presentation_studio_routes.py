@@ -72,6 +72,8 @@ def test_the_route_table_has_the_fixed_segment_before_the_id():
         ("POST", PREFIX + "/{presentation_id}/variants/{variant_id}/art-direction/candidates"),
         # native-studio-playback-fix Slice 04: the composition-clock map of the variant (read only)
         ("GET", PREFIX + "/{presentation_id}/variants/{variant_id}/composition-clock"),
+        # master-project-studio-export Slice 05: the live readiness read of the variant's master project (read only)
+        ("GET", PREFIX + "/{presentation_id}/variants/{variant_id}/master-project"),
         # Slice 10: the score
         ("GET", PREFIX + "/{presentation_id}/variants/{variant_id}/score"),
         ("POST", PREFIX + "/{presentation_id}/variants/{variant_id}/score"),

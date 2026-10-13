@@ -49,20 +49,27 @@ def section(title: str) -> str:
 
 LEVEL_3_SECTIONS = ("## 2. MasterProjectPlan — Level 3 (Slice 03)", "## 3. Readiness and reason codes — Level 3 (Slice 03)",
                     "## 5. `project_key` — Level 3 (Slice 03)", "## 6. Workspace layout, generated vs canonical files — Level 3 (Slice 04)",
-                    "## 7. Generated master composition — Level 3 (Slice 04)")
+                    "## 7. Generated master composition — Level 3 (Slice 04)", "## 9. Studio master target — Level 3 (Slice 05)",
+                    "## 11. Live readiness read — Level 3 (Slice 05)")
 
 
 def test_the_page_states_level_2_and_claims_level_3_only_for_the_implemented_planner_sections():
     assert f"Status: **{STATUS}.**" in DOC
     assert "Shipped so far: § 2, § 3 and § 5, the pure planner (Level 3 (Slice 03)" in flat(DOC)
     rest = DOC.replace("*Composition clock (Level 3)*", "")
-    for marker in ("Level 3 (Slice 03)", "(Level 3, Slice 03)", "Level 3 (Slice 04)", "(Level 3, Slice 04)"):
+    for marker in ("Level 3 (Slice 03)", "(Level 3, Slice 03)", "Level 3 (Slice 04)", "(Level 3, Slice 04)", "Level 3 (Slice 05)",
+                   "(Level 3, Slice 05)"):
         rest = rest.replace(marker, "")
-    assert "Level 3" not in rest, "only the Slice 03 and Slice 04 sections claim Level 3"
+    assert "Level 3" not in rest, "only the Slice 03, 04 and 05 sections claim Level 3"
     for heading in LEVEL_3_SECTIONS:
         assert "\n" + heading + "\n" in DOC, heading
     assert "| MasterProjectPlan, readiness codes, `project_key`, asset merge | 3 (Slice 03) | 3 | 03 |" in DOC
     assert "| Master workspace files, generated composition, boundary | 3 (Slice 04) | 3 | 04 |" in DOC
+    assert ("| Studio master target, ack, `state.json` schema 2, unpublished policy, live readiness route | 3 (Slice 05) | 3 | 05 |"
+            in DOC)
+    for needle in ("`tests/unit/test_remotion_studio_master.py`", "`tests/unit/test_remotion_studio_master_routes.py`",
+                   "`tests/unit/test_remotion_studio_master_real_browser.py`", "`MasterProjectReader.live_plan`", "`generated_paths(files)`"):
+        assert needle in flat(DOC), needle
     for needle in ("`plan_master_files(plan) -> {path: bytes}`", "`tests/unit/test_remotion_master_files.py`",
                    "`tests/unit/test_remotion_master_files_real.py`", "`RemotionStudioRunner.sync_work(files)`",
                    "`RemotionRenderRunner.prepare(job_id, files)`"):
@@ -91,6 +98,10 @@ def test_the_envelope_codes_are_documented_with_their_status_and_collide_with_no
         assert re.search(rf"^\| `{code}` \| {status}[^|]* \|", text, flags=re.M), code
     existing = ({c.value for c in StudioErrorCode} | {c.value for c in render.RenderErrorCode}
                 | {c.value for c in PresentationStudioErrorCode})
+    # Slice 05 implemented the three Studio codes in `StudioErrorCode` (exactly those, under their documented names); the others are still new.
+    studio = {code for code in ENVELOPE_CODES if code.startswith("remotion_studio_")}
+    assert studio <= {c.value for c in StudioErrorCode} and all(StudioErrorCode(c).value == c for c in studio)
+    existing -= studio
     assert not (set(ENVELOPE_CODES) | set(PLANNER_CODES)) & existing, "a new code reuses a name that already means something"
     for reused in ("remotion_studio_ack_required", "presentation_render_invalid", "presentation_studio_stale_revision",
                    "remotion_studio_unpublished_edits", "remotion_studio_invalid", "presentation_studio_scene_edited_in_remotion"):
