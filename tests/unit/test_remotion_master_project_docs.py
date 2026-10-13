@@ -48,17 +48,25 @@ def section(title: str) -> str:
 
 
 LEVEL_3_SECTIONS = ("## 2. MasterProjectPlan — Level 3 (Slice 03)", "## 3. Readiness and reason codes — Level 3 (Slice 03)",
-                    "## 5. `project_key` — Level 3 (Slice 03)")
+                    "## 5. `project_key` — Level 3 (Slice 03)", "## 6. Workspace layout, generated vs canonical files — Level 3 (Slice 04)",
+                    "## 7. Generated master composition — Level 3 (Slice 04)")
 
 
 def test_the_page_states_level_2_and_claims_level_3_only_for_the_implemented_planner_sections():
     assert f"Status: **{STATUS}.**" in DOC
     assert "Shipped so far: § 2, § 3 and § 5, the pure planner (Level 3 (Slice 03)" in flat(DOC)
-    rest = DOC.replace("*Composition clock (Level 3)*", "").replace("Level 3 (Slice 03)", "").replace("(Level 3, Slice 03)", "")
-    assert "Level 3" not in rest, "only the Slice 03 sections claim Level 3"
+    rest = DOC.replace("*Composition clock (Level 3)*", "")
+    for marker in ("Level 3 (Slice 03)", "(Level 3, Slice 03)", "Level 3 (Slice 04)", "(Level 3, Slice 04)"):
+        rest = rest.replace(marker, "")
+    assert "Level 3" not in rest, "only the Slice 03 and Slice 04 sections claim Level 3"
     for heading in LEVEL_3_SECTIONS:
         assert "\n" + heading + "\n" in DOC, heading
     assert "| MasterProjectPlan, readiness codes, `project_key`, asset merge | 3 (Slice 03) | 3 | 03 |" in DOC
+    assert "| Master workspace files, generated composition, boundary | 3 (Slice 04) | 3 | 04 |" in DOC
+    for needle in ("`plan_master_files(plan) -> {path: bytes}`", "`tests/unit/test_remotion_master_files.py`",
+                   "`tests/unit/test_remotion_master_files_real.py`", "`RemotionStudioRunner.sync_work(files)`",
+                   "`RemotionRenderRunner.prepare(job_id, files)`"):
+        assert needle in flat(DOC), needle
 
 
 def test_the_level_3_sections_name_their_implementation_and_its_conformance_test():

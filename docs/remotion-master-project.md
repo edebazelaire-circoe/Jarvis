@@ -1,7 +1,8 @@
 # Remotion master project of a Presentation Variant: plan, readiness, Studio target, whole-video export
 
 Status: **Level 2 — contract; implementation in Slices 03-08 of handoff jarvis-remotion-master-project-studio-export.** Shipped so far:
-§ 2, § 3 and § 5, the pure planner (Level 3 (Slice 03), `jarvis/domain/remotion_master_project.py`). Every other behaviour below is the
+§ 2, § 3 and § 5, the pure planner (Level 3 (Slice 03), `jarvis/domain/remotion_master_project.py`); § 6 and § 7, the workspace files and
+the generated composition (Level 3 (Slice 04), `jarvis/domain/remotion_master_files.py`). Every other behaviour below is the
 contract the Slices implement, and every "is" means "must be" until the Slice that owns it lands (owners: § 16). Evidence for the choices: the handoff's Slice 01 audit (`tasks/jarvis-remotion-master-project-studio-export/slices/01-current-state-and-compatibility-audit/AUDIT.md`,
 real runs on the pinned Remotion 4.0.534). Decisions marked *decided by agent 0* were taken by the handoff's orchestrator under the Human's
 delegated autonomy (2026-10-13).
@@ -157,7 +158,7 @@ Consequences, each a planner test: a title rename or a no-op revision bump keeps
 an instance props/data change, an added or removed scene changes it. The revision is carried beside the key as the **basis** of a plan, a
 Studio target and a render.
 
-## 6. Workspace layout, generated vs canonical files
+## 6. Workspace layout, generated vs canonical files — Level 3 (Slice 04)
 
 ```text
 work/
@@ -182,7 +183,18 @@ work/
 - **Path safety**: `<scene_id>` is the scene id (`pss_…`); every planned path passes the runner's `safe_relative` rule; the top-level shape
   (`src/`, `public/`, generated files) is the one the Studio runner already admits (no shape widening).
 
-## 7. Generated master composition
+**Implementation (Level 3, Slice 04).** `jarvis/domain/remotion_master_files.py` `plan_master_files(plan) -> {path: bytes}` (pure, sorted)
+lays out a READY plan: the generated set, each scene's pinned `src/**` byte for byte under `src/scenes/<scene_id>/`, the merged `public/**`
+(a frozen plan adds its `public/live/**` copies). There is no separate materialization adapter: the existing runners already take a file
+map and write it, `RemotionStudioRunner.sync_work(files)` (atomic per-file rename under the Studio `work/`, Slice 05) and
+`RemotionRenderRunner.prepare(job_id, files)` (the job's `work/`, Slice 06), each re-checking `safe_relative`. Before returning, the map is
+checked again (`MasterFilesError`, a defence: a plan `plan_master` made ready never fails it): every path passes the snapshot package's
+lexical rule (`package_path_problem`), a mount is `src/scenes/<scene id>/` with a real scene id, generated paths are only the generated set,
+no path is written twice or collides by case or as file-and-folder (`path_set_problems`), the 400 files / 64 MiB bound holds, and the count
+and bytes equal `plan.totals`. Marking `src/master/**` read-only in the Studio workspace is Slice 05 (today's `GENERATED_FILES` of the
+runner names the two root files only). Tests: `tests/unit/test_remotion_master_files.py`; real proof below (§ 7).
+
+## 7. Generated master composition — Level 3 (Slice 04)
 
 - `studio-root.tsx` registers exactly one composition, `JarvisPresentation`, with the master spec and duration, `defaultProps={}`. Optional
   per-scene debug compositions are allowed only with generated unique ids (Remotion refuses duplicates and nearly every scene declares
@@ -194,6 +206,19 @@ work/
   otherwise (Studio) it draws a visible fallback card naming the scene (« Scène n (pss_…) : erreur — <message> »; the title is not a key
   input, so it never reaches a generated file) and the rest of the video
   keeps its timing (AUDIT A6).
+
+**Implementation (Level 3, Slice 04).** `jarvis/domain/remotion_master_generated.py` `generated_files(...)` writes the four generated files
+(no `premountFor` yet); each scene's props are the `merge_props` result (manifest defaults, then instance `props`, `data` under
+`props.data`), inlined per scene. Real proof on the pinned 4.0.534 through the REAL guarded render runner (`render-host.cjs`, guard, deny
+proxy, Chrome sandbox), `tests/unit/test_remotion_master_files_real.py` (opt-in `JARVIS_REMOTION_RUNTIME_DIR`), 2026-10-13: a 3-scene master
+(320x180 @ 30, 30 + 45 + 30 frames; scene 1 `<Audio>` from `staticFile`, scene 2 `<OffthreadVideo>`, scene 3 relative imports
+`./parts/Panel` -> `../palette`) bundles, `selectComposition("JarvisPresentation")` passes the host's declared-config check (spec and 105
+frames), stills at master frames 0, 29, 30, 74, 75, 104 show exactly scene 1 local 0 and 29, scene 2 local 0 and 44, scene 3 local 0 and 29
+with `useVideoConfig().durationInFrames` = the scene's own duration (~8 s for six stills); the MP4 of the whole range has 105 video frames and
+an AAC audio stream (~11-14 s at scale 0.5). A scene throwing at every frame: under rendering the boundary's `cancelRender` ends the job with
+`jarvis_master_scene_failed:<scene_id>:1: <message>` (the typed job failure is Slice 06); the read-only Studio of the same bundle (route
+`?/JarvisPresentation`, `@remotion/studio` query-string routing) shows the fallback card « Scène 1 (pss_…) : erreur — boom in s1 » with the
+master timeline intact (evidence: the handoff's `slices/04-master-workspace-materialization/evidence/studio-boundary-fallback.png`).
 
 ## 8. Security review: master root in Remotion Studio and the render host
 
@@ -352,7 +377,7 @@ this one view; none of them computes readiness itself (Slice 05).
 | Concept | Level now | Target | Owner Slice |
 | --- | --- | --- | --- |
 | MasterProjectPlan, readiness codes, `project_key`, asset merge | 3 (Slice 03) | 3 | 03 |
-| Master workspace files, generated composition, boundary | 2 | 3 | 04 |
+| Master workspace files, generated composition, boundary | 3 (Slice 04) | 3 | 04 |
 | Studio master target, ack, `state.json` schema 2, unpublished policy, live readiness route | 2 | 3 | 05 |
 | Render scope `master`, bounds, Artifact metadata, frozen readiness route | 2 | 3 | 06 |
 | Voice spec rule, collision-free names, inspect block, `scope` in `remotion_export` | 2 | 3 | 07 |
