@@ -21,6 +21,7 @@ from jarvis.domain.remotion_master_generated import BOUNDARY_FILE, PACKAGE_FILE,
 from jarvis.domain.remotion_master_project import MasterInputs, MasterReason as R, PinSource, plan_master
 from jarvis.domain.remotion_source import Composition, EnginePin, decode_candidate_files, parse_source, parse_source_block
 from tests.fakes.presentation_world import SCENE_ID, PresentationWorld
+from tests.fakes.remotion_hostile import LOADER_BYPASSES
 from tests.fakes.remotion_scene import COMPOSITION, ENGINE, PNG_1X1, SCENE_TSX, scene_candidate, scene_files
 
 IDS = ("pss_00000000000a", "pss_00000000000b", "pss_00000000000c", "pss_00000000000d")
@@ -414,3 +415,27 @@ def test_a_proto_prop_stays_an_own_key_of_the_scene_props():
     plan = plan_master(inputs([scene(0, props={"__proto__": {"x": 1}, "title": "t"}), *scenes[1:]], pins))
     text = plan.generated[PRESENTATION_FILE].decode()
     assert "JSON.parse(" in text and generated_props(text)[1] == {"__proto__": {"x": 1}, "title": "t"}
+
+
+# ------------------------------------------------------------------ QA rework (Slice 04 B1, P1)
+
+
+@pytest.mark.parametrize("form,line,code", LOADER_BYPASSES, ids=[b[0] for b in LOADER_BYPASSES])
+def test_every_module_loader_bypass_is_refused_by_the_planner_even_on_an_unguarded_pin(form, line, code):
+    """Defence in depth (§ 8 a): a pin read before the guard knew the form (an old version) is still refused by the planner."""
+
+    files = {**scene_files(), "src/Scene.tsx": SCENE_TSX + "\n" + line + "\n"}
+    candidate = scene_candidate(files=files)
+    from jarvis.domain.remotion_source import RemotionSource
+    unguarded = RemotionSource(parse_source_block(candidate["manifest"]["source"]),
+                               decode_candidate_files(candidate["sources"], candidate["assets"]))
+    plan = failed(plan_master(inputs(*three(s1=unguarded))), R.SOURCE_IMPORT_REFUSED)
+    assert f"src/Scene.tsx breaks {code}" in plan.detail and plan.scene_ids == (IDS[1],), form
+
+
+def test_a_frozen_live_copy_that_turns_a_pinned_file_into_a_folder_is_refused_by_the_planner():
+    """P1: the planner runs the workspace path-set check, so a ready plan never fails in `plan_master_files`."""
+
+    own = {**scene_files(), "public/live/a.png": PNG_1X1}
+    plan = failed(plan_master(inputs(*three(s0=source(own)), live={pin(1): {"a.png/b.json": b"{}"}})), R.PUBLIC_ASSET_COLLISION)
+    assert "public/live/a.png is a file, not a folder" in plan.detail and plan.scene_ids == (IDS[0], IDS[1])

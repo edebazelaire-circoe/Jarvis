@@ -46,6 +46,9 @@ _NETWORK = ("fetch", "XMLHttpRequest", "WebSocket", "WebTransport", "EventSource
 _WORKERS = ("Worker", "SharedWorker", "ServiceWorker", "serviceWorker", "Worklet", "importScripts", "MessageChannel",
             "BroadcastChannel", "postMessage", "showOpenFilePicker", "showSaveFilePicker", "showDirectoryPicker")
 _TAGS = "script|iframe|frame|frameset|embed|object|applet|link|meta|base"
+#: Any whitespace run a module can hold (`MAX_MODULE_BYTES`, 256 KiB): bounded for `test_no_rule_has_an_unbounded_repeat`, never escapable
+#: by padding. Linear: the runs it scans after each anchor are disjoint.
+_GAP = r"\s{0,262144}"
 
 
 @dataclass(frozen=True, slots=True)
@@ -82,8 +85,19 @@ MODULE_RULES: tuple[Rule, ...] = (
           "eval/Function turn text into code and are forbidden", re.M),
     _rule("constructor_chain", r"\.\s*constructor\s*(?:\.\s*constructor|\()|\[\s*[\"'`]constructor[\"'`]\s*\]",
           "reaching the Function constructor through .constructor is forbidden"),
-    _rule("dynamic_import", r"(?<![\w$.])import\s*\(|(?<![\w$.])require\s*\(|\bimport\.meta\b",
-          "dynamic import()/require() is forbidden: only static relative imports and react/remotion are allowed"),
+    # The bundler's `require` is refused in ANY form (call, bare reference, member, alias `const r = require`): webpack bundles whatever
+    # it can resolve from `require("...")` / `require.context(...)`, files outside the workspace included (QA S04 B1 of the master).
+    # `import` followed by `(`, a comment, or `.meta` (comments allowed around the dot) is never a static import.
+    # `_GAP` spans any whitespace run a module can hold: a `\s{0,64}` would let 65 spaces before `(` slip through.
+    _rule("dynamic_import", rf"(?<![\w$.])import{_GAP}(?:\(|/[/*]|\.{_GAP}(?:meta(?![\w$])|/[/*]))|(?<![\w$])require(?![\w$])"
+                            rf"|\.{_GAP}context{_GAP}(?:\?\.{_GAP})?[(/]|(?<![\w$.])module{_GAP}\??\.{_GAP}hot(?![\w$])|__(?:non_)?webpack_",
+          "dynamic import()/require (any form), .context(), import.meta, module.hot and __webpack_* are forbidden: "
+          "only static relative imports and react/remotion are allowed"),
+    # A name written `\u0072equire` IS `require` to the bundler: every `\uXXXX` of an ASCII character (< U+0080) and every `\u{...}`
+    # form is refused, wherever it stands (without a lexer a string cannot be told from a name). A dangerous name is ASCII and
+    # JavaScript does not normalise names, so a non-ASCII escape (`\u00e9`, `\u2014`) cannot spell one.
+    _rule("identifier_escape", r"\\u(?:00[0-7][0-9a-f]|\{)",
+          "\\u escapes of ASCII characters and \\u{...} escapes are forbidden: write the character itself", re.I),
     _rule("string_timer", r"(?<![\w$.])(?:setTimeout|setInterval|setImmediate)\s*\(\s*[\"'`]",
           "a timer given a string runs it as code; pass a function"),
     _rule("worker_or_channel", rf"{_BEFORE}(?:{'|'.join(_WORKERS)}){_NAME_END}(?=\s*[(.,;=)\]}}]|\s*$)|\.\s*postMessage\s*\(",
@@ -115,6 +129,15 @@ MODULE_RULES: tuple[Rule, ...] = (
 )
 
 _MODULE_SUFFIXES = (".ts", ".tsx", ".js", ".jsx")
+#: The rules that keep the bundler from reaching a module the static import check did not see (re-run by the master planner, § 8 a of
+#: `docs/remotion-master-project.md`, as defence in depth over the frozen and live pins).
+LOADER_RULES: tuple[Rule, ...] = tuple(rule for rule in MODULE_RULES if rule.code in ("dynamic_import", "identifier_escape"))
+
+
+def loader_finding(text: str) -> Rule | None:
+    """The first `LOADER_RULES` rule the raw module text breaks, or `None`."""
+
+    return next((rule for rule in LOADER_RULES if rule.pattern.search(text)), None)
 
 
 def _line_of(text: str, index: int) -> int:

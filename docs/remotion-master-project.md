@@ -92,11 +92,16 @@ the snapshot packager freezes them; it emits `core.remotion_master.planned` at i
   `source_digest`. A package whose `presentation.json` / `variant.json` cannot be read is `presentation_render_snapshot_invalid`
   (corruption, not incompatibility).
 - The import re-check (`master_source_import_refused`) resolves each relative specifier against the scene **as mounted** under
-  `src/scenes/<scene_id>/` (`../src/lib/x` from `src/Scene.tsx` resolves standalone, not once mounted: refused) and refuses any dynamic
-  `import(...)` / `require(...)`, whatever the quoting (template literals included). The generated composition imports each entry by its exact
+  `src/scenes/<scene_id>/` (`../src/lib/x` from `src/Scene.tsx` resolves standalone, not once mounted: refused) and refuses what the isolation
+  guard's `LOADER_RULES` refuse (`loader_finding`, over the raw text): any dynamic `import(...)` whatever the quoting or spacing, `require` in
+  any form (call, bare reference, alias, `require.context`), `.context(`, `import.meta`, `module.hot`, `__webpack_*`, and every ASCII
+  `\uXXXX` / `\u{…}` escape (`\u0072equire` IS `require` to webpack: QA S04 B1 proved a file outside the workspace bundled through it). The generated composition imports each entry by its exact
   file, extension included, and hands each scene its props as `JSON.parse("<json>")`, so every key (`__proto__` included) is an own property,
   as in the scene lane's JSON input props.
-- The `getInputProps` check (`master_input_props_reader`) and the dynamic-import check are **textual** (comments stripped): defence in depth,
+- The planner also runs the workspace path-set check (`path_set_problems`) over the merged `public/` paths, frozen live copies included
+  (`master_public_asset_collision`): a pinned `public/live/a.png` beside a frozen copy `a.png/b.json` is refused at planning, so a ready plan
+  never fails in `plan_master_files`.
+- The `getInputProps` check (`master_input_props_reader`, comments stripped) and the loader check are **textual**: defence in depth,
   not a guarantee. A computed name (`remotion["get" + "InputProps"]`) escapes them; the per-source isolation guard is the boundary.
 - Conformance: `tests/unit/test_remotion_master_project.py`.
 
@@ -117,7 +122,7 @@ Studio exactly as today. Nothing is rewritten to make a variant ready.
 | 6 | `master_dimensions_mismatch` | the scenes declare different `width` or `height` | « Les scènes n'ont pas toutes la même taille d'image : la vidéo entière n'est pas disponible ; chaque scène reste lisible. » |
 | 7 | `master_source_import_refused` | the defensive per-scene re-check (§ 8 a) finds a bare specifier outside `SCENE_ALLOWED_IMPORTS` or a relative import resolving outside the scene's own module set | « Une scène importe un module qui n'est pas le sien : la vidéo entière n'est pas disponible. » |
 | 8 | `master_input_props_reader` | a scene module contains `getInputProps` (it would read the master's input props, not its own; zero uses today) | « Une scène lit les paramètres d'entrée de la vidéo : elle ne peut pas être assemblée. » |
-| 9 | `master_public_asset_collision` | two scenes bring different bytes at one case-folded `public/` path (detail names the path and both scene ids) | « Deux scènes utilisent le même nom de fichier « x » pour des contenus différents. » |
+| 9 | `master_public_asset_collision` | two scenes bring different bytes at one case-folded `public/` path, or one merged path is a file another uses as a folder (detail names the path and the scene ids) | « Deux scènes utilisent le même nom de fichier « x » pour des contenus différents. » |
 | 10 | `master_project_too_large` | workspace > 400 files or > 64 MiB, generated files included | « Le projet de la vidéo entière dépasse 400 fichiers ou 64 Mio. » |
 | 11 | `master_too_long` | master `duration_in_frames` > `MAX_MASTER_RENDER_FRAMES` (9000) | « La vidéo entière dépasse 9 000 images (5 min à 30 i/s). » |
 
@@ -237,7 +242,8 @@ the Variants Player** (still one sandboxed Player per scene; a master Player is 
 
 - **(a) guards**: each scene source passes its own `parse_source`, isolation and import checks; the planner re-checks every scene's specifiers
   (`master_source_import_refused`: only `SCENE_ALLOWED_IMPORTS`, relative imports stay inside the scene's own folder as mounted, no dynamic
-  import), since the webpack bundle used by Studio and render checks nothing (AUDIT A7); these re-checks, like the `getInputProps` one, are
+  import, no `require` in any form, no `.context(` and no ASCII `\u` escape: the isolation guard's `LOADER_RULES`, which the per-source guard
+  applies first in both lanes), since the webpack bundle used by Studio and render checks nothing (AUDIT A7); these re-checks, like the `getInputProps` one, are
   textual: defence in depth over the per-source guards, not a replacement for them;
 - **(b) failure isolation**: one error boundary per Sequence; a render failure is typed and names the scene;
 - **(c) budgets**: 400 files / 64 MiB combined, the same Studio guard and the same render egress guard, Chrome sandbox and deny proxy;

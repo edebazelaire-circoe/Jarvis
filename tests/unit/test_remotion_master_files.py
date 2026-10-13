@@ -13,7 +13,7 @@ import pytest
 from jarvis.domain import remotion_master_files as F
 from jarvis.domain.remotion_master_files import MasterFilesError, plan_master_files
 from jarvis.domain.remotion_master_generated import BOUNDARY_FILE, PACKAGE_FILE, PRESENTATION_FILE, ROOT_FILE
-from jarvis.domain.remotion_master_project import MasterAsset, PinSource, plan_master
+from jarvis.domain.remotion_master_project import MasterAsset, MasterTotals, PinSource, plan_master
 from tests.fakes.remotion_scene import PNG_1X1, scene_files
 from tests.unit.test_remotion_master_project import IDS, generated_props, inputs, pin, scene, source, three
 
@@ -92,3 +92,42 @@ def test_the_workspace_bound_is_rechecked(monkeypatch):
     monkeypatch.setattr(F, "MAX_MASTER_FILES", plan.totals.files - 1)
     with pytest.raises(MasterFilesError, match="bound"):
         plan_master_files(plan)
+
+
+# ------------------------------------------------------------------ QA rework (Slice 04 P2): each defence fails on its own branch
+
+
+def _with_extra(plan, path: str, data: bytes = b"x"):
+    """The plan plus one public asset, its totals adjusted so that only the branch under test can refuse it."""
+
+    extra = MasterAsset(path, "0" * 64, len(data), (IDS[0],), False, data)
+    return replace(plan, public_assets=(*plan.public_assets, extra),
+                   totals=MasterTotals(plan.totals.files + 1, plan.totals.bytes + len(data)))
+
+
+def test_a_path_written_twice_is_refused_by_the_write_check():
+    plan = plan_master(inputs(*three()))
+    with pytest.raises(MasterFilesError, match="would be written twice"):
+        plan_master_files(_with_extra(plan, "public/dot.png"))
+
+
+def test_a_bad_path_with_matching_totals_is_refused_by_the_path_check():
+    plan = plan_master(inputs(*three()))
+    with pytest.raises(MasterFilesError, match=r"segment '\.\.' is not allowed"):
+        plan_master_files(_with_extra(plan, "public/../studio-root.tsx"))
+
+
+def test_the_byte_bound_is_rechecked(monkeypatch):
+    plan = plan_master(inputs(*three()))
+    monkeypatch.setattr(F, "MAX_MASTER_BYTES", plan.totals.bytes - 1)
+    with pytest.raises(MasterFilesError, match="bound"):
+        plan_master_files(plan)
+    monkeypatch.setattr(F, "MAX_MASTER_BYTES", plan.totals.bytes)
+    assert len(plan_master_files(plan)) == plan.totals.files, "the bound is inclusive"
+
+
+def test_a_plan_whose_totals_differ_from_the_map_is_refused():
+    plan = plan_master(inputs(*three()))
+    for totals in (MasterTotals(plan.totals.files, plan.totals.bytes + 1), MasterTotals(plan.totals.files + 1, plan.totals.bytes), None):
+        with pytest.raises(MasterFilesError, match="differs from the plan totals"):
+            plan_master_files(replace(plan, totals=totals))

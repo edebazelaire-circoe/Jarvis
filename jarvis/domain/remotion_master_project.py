@@ -33,8 +33,11 @@ from jarvis.domain.presentation_studio import (
 )
 from jarvis.domain.presentation_studio_engine import Engine
 from jarvis.domain.remotion_import import resolve_relative, specifiers, strip_comments
+from jarvis.domain.remotion_isolation import loader_finding
 from jarvis.domain.remotion_master_generated import MASTER_COMPOSITION_ID, GeneratedScene, generated_files
-from jarvis.domain.remotion_source import MODULE_ROOT, RemotionSource, RemotionSourceError, parse_source, parse_source_block
+from jarvis.domain.remotion_source import (
+    MODULE_ROOT, RemotionSource, RemotionSourceError, parse_source, parse_source_block, path_set_problems,
+)
 from jarvis.domain.remotion_studio_workspace import refused_imports
 
 #: Bumped whenever the generated files change for the same inputs (it is the first `project_key` input).
@@ -50,7 +53,6 @@ MAX_DETAIL_CHARS = 300
 #: Textual checks (defence in depth, not a guarantee: a computed name such as `remotion["get" + "InputProps"]` escapes them; the
 #: isolation guard refuses the obfuscation patterns it knows).
 _INPUT_PROPS = re.compile(r"\bgetInputProps\b")
-_DYNAMIC_IMPORT = re.compile(r"(?<![\w$.])(?:import|require)\s*\(")
 
 __all__ = ["MASTER_COMPOSITION_ID", "MASTER_GENERATOR_VERSION", "MAX_MASTER_BYTES", "MAX_MASTER_FILES", "MAX_MASTER_RENDER_FRAMES",
            "MasterAsset", "MasterComposition", "MasterInputs", "MasterProjectPlan", "MasterReason", "MasterScene", "MasterStatus",
@@ -334,7 +336,8 @@ def _import_problem(scene_id: str, source: RemotionSource) -> str | None:
     """§ 8 a: bare specifiers only from `SCENE_ALLOWED_IMPORTS` (`refused_imports`, the Studio publish check); relative specifiers must
     resolve to a module of this scene's own source AS MOUNTED under `src/scenes/<scene_id>/` (`resolve_relative`, the importer's resolver:
     `../src/lib/x` from `src/Scene.tsx` resolves standalone but not once mounted, so it is refused); no dynamic `import(...)` /
-    `require(...)` at all, whatever the quoting (a template-literal specifier escapes the static parser)."""
+    `require` in any form (call, reference, alias, `require.context`), no `.context(`, `import.meta`, `module.hot`, `__webpack_*` nor ASCII
+    backslash-u escape (an escaped `require` IS `require`): the isolation guard's `LOADER_RULES`, re-run here over the raw text (comments included)."""
 
     texts = source.module_texts()
     refused = refused_imports(texts)
@@ -342,8 +345,9 @@ def _import_problem(scene_id: str, source: RemotionSource) -> str | None:
         return f"imports {refused[0]}, outside the allowed modules"
     mounted = {_mounted(scene_id, path): text for path, text in texts.items()}
     for (path, text), mounted_path in zip(texts.items(), mounted):
-        if _DYNAMIC_IMPORT.search(strip_comments(text)):
-            return f"{path} uses a dynamic import() or require(), which the master cannot check"
+        rule = loader_finding(text)
+        if rule is not None:
+            return f"{path} breaks {rule.code} (a dynamic import, require in any form, .context() or an escaped name), which the master cannot check"
         for spec in specifiers(text):
             if spec.startswith(".") and resolve_relative(posixpath.dirname(mounted_path), spec, mounted) is None:
                 return f"{path} imports {spec[:80]!r}, which is not a module of its own source once mounted"
@@ -422,6 +426,14 @@ def plan_master(inputs: MasterInputs) -> MasterProjectPlan:
             row["live"] = row["live"] and live  # a file a pin's own source brings is a key input, even if a frozen copy matches it
             if s.scene_id not in [sid for _, sid in row["owners"]]:
                 row["owners"].append((p, s.scene_id))
+    # The workspace check `plan_master_files` runs (`path_set_problems`), over the merged public paths frozen live copies included, so a
+    # ready plan never fails there (`public/live/a.png` from a pin + a frozen copy `a.png/b.json`: a file that is also a folder).
+    layout = path_set_problems(r["path"] for r in merged.values())
+    if layout:
+        bad = layout[0].split(": ", 1)[0]  # the deeper path; the file it runs through is one of its ancestors
+        involved = [owner for r in merged.values() if bad == r["path"] or bad.startswith(r["path"] + "/") for owner in r["owners"]]
+        return _incompatible(inputs, MasterReason.PUBLIC_ASSET_COLLISION,
+                             f"{layout[0]} ({_named_list(sorted(set(involved)))})", tuple(dict.fromkeys(sid for _, sid in sorted(involved))))
     first_block = sources[0][3].block.composition
     planned: list[MasterScene] = []
     generated_input: list[GeneratedScene] = []

@@ -23,8 +23,8 @@ from jarvis.domain.prefab import PrefabDefinitionError, parse_candidate
 from jarvis.ports.prefabs import PrefabStoreError, PrefabStoreErrorCode as C
 from jarvis.runtime.remotion_sandbox import SandboxResponder, load_bootstrap
 from tests.fakes.prefabs import install_version
-from tests.fakes.remotion_hostile import SAMPLES
-from tests.fakes.remotion_scene import PNG_1X1, scene_candidate, scene_files
+from tests.fakes.remotion_hostile import LOADER_BYPASSES, SAMPLES
+from tests.fakes.remotion_scene import PNG_1X1, SCENE_TSX, scene_candidate, scene_files
 
 SCENE = "presentation-studio.p000000000001.s000000000009"
 SCENE_KEY = "scene-" + "a" * 32
@@ -97,6 +97,35 @@ def test_each_rule_fires_on_its_form(text, code):
     "// we never fetch anything here",
 ])
 def test_honest_code_and_prose_are_not_refused(text):
+    assert module_findings(text) == set(), text
+
+
+@pytest.mark.parametrize("form,line,code", LOADER_BYPASSES, ids=[b[0] for b in LOADER_BYPASSES])
+def test_every_module_loader_bypass_is_refused_by_the_scan(form, line, code):
+    # QA S04 B1: `\u0072equire(...)`, `const r = require; r.context(...)` and `require.context(...)` passed the old
+    # `require\s*\(` rule and webpack bundled a file from outside the workspace.
+    assert code in module_findings(line), form
+    assert iso.loader_finding(line) is not None and iso.loader_finding(line).code == code
+
+
+@pytest.mark.parametrize("form,line,code", LOADER_BYPASSES, ids=[b[0] for b in LOADER_BYPASSES])
+def test_every_module_loader_bypass_is_refused_by_parse_source_in_the_scene_lane(form, line, code):
+    candidate = scene_candidate(files={**scene_files(), "src/Scene.tsx": SCENE_TSX + "\n" + line + "\n"})
+    with pytest.raises(rs.RemotionSourceError) as caught:
+        rs.parse_source(rs.parse_source_block(candidate["manifest"]["source"]),
+                        rs.decode_candidate_files(candidate["sources"], candidate["assets"]))
+    assert "src/Scene.tsx:" in str(caught.value) and code in str(caught.value), form
+
+
+@pytest.mark.parametrize("text", [
+    r'const title = "Caf\u00e9 \u2014 \u2028";',              # non-ASCII escapes cannot spell a dangerous name
+    'const c = canvas.getContext("2d"); const T = React.createContext(null); useContext(T);',
+    "const requirements = 3; const required = true; const isRequired = !required;",
+    "const m = <p>Click import. Then export it.</p>;",
+    'import {Title} from "./lib/Title";\nimport type {X} from "./x";\nimport * as R from "react";',
+    "const ctx = props.context;",
+])
+def test_the_loader_rules_leave_honest_code_alone(text):
     assert module_findings(text) == set(), text
 
 
