@@ -215,6 +215,7 @@ One row per contract. Docs are in `docs/`; `tests/unit/test_remotion_release_doc
 | Optional Studio | 11 | `remotion-studio.md` | `test_remotion_studio*.py` |
 | Hot reload, timeline, typed controls, authoring, templates, upgrades | 12, 13, 14, 15, 19 | `presentation-studio.md` | `test_remotion_timeline*.py`, `test_remotion_controls.py`, `test_remotion_source_edit_service.py`, `test_presentation_studio_authoring_remotion.py`, `test_presentation_studio_upgrades.py` |
 | Render and export | 16 | `remotion-render.md` | `test_presentation_render_service.py`, `test_render_guard.py` |
+| Master Remotion project of a variant, Studio master target, whole-video export (Level 2 — contract; implementation in Slices 03-08 of handoff jarvis-remotion-master-project-studio-export) | master-project 02 | `remotion-master-project.md` | `test_remotion_master_project_docs.py` |
 | Semantic prefab catalog, manifest v3 | 17, 19 | `prefabs.md` | `test_prefab_catalog.py` |
 | Upstream import | 18 | `remotion-import.md` | `test_remotion_upstream.py`, `test_remotion_import.py` |
 | Agent verbs, ownership | 21 | `mcp/tool-contract.md` (10.17), `tool-brain-contracts.md` (19) | `test_remotion_mcp_tools.py`, `test_remotion_mcp_server.py` |

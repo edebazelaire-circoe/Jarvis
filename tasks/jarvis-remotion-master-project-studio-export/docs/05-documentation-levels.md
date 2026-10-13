@@ -17,6 +17,8 @@ Reference levels: L0 implicit/ambiguous; L1 named/discoverable; L2 dedicated beh
 | Arbitrary master workspace publish-back | L0 | L1 (explicit non-goal) | Name it as deferred; do not accidentally imply support. |
 | Master Player replacing Variants sequencer | L0 | L1 (future phase C) | Explicitly deferred. |
 
+Slice 02 (2026-10-13): every row whose current state was L0 or L1 above (master project, master spec, public-asset merge, Studio master target, whole-variant export, voice creation and re-edit) is now **L2** in the canonical contract `docs/remotion-master-project.md`, pinned by `tests/unit/test_remotion_master_project_docs.py`; the two non-goal rows (master publish-back, master Player) are L1 there, named as deferred. L3 is reached by Slices 03-08.
+
 ## Documentation files expected to change
 
 At minimum refresh canonical repository docs after implementation, based on actual owner audit:

@@ -2,6 +2,8 @@
 
 Handoff `jarvis-remotion-presentation-integration`, Slice 16. **Statut : contrat (Level 2) et implémentation réelle (Level 3), vérifiés sur Windows 11 avec le vrai moteur Remotion épinglé, le vrai Chrome installé, un vrai Core et un vrai Control Center** ([preuves](#11-preuves)). Le rendu **exécute le code de la scène** dans un navigateur sans interface : il tourne donc sous le même modèle de menace que le Player ([remotion-isolation.md](remotion-isolation.md)) et son processus est isolé plus strictement encore ([§4](#4-isolation-du-processus-de-rendu)).
 
+**Vidéo entière d'une variante (prévu, Level 2 — contract; implementation in Slices 03-08 of handoff jarvis-remotion-master-project-studio-export)** : une portée additive `settings.scope: "master"` rendra la composition maître Remotion (`JarvisPresentation`) de toute la variante figée, par le même processus gardé ; sans `scope` (ou avec `scope: "scene"`), tout ce qui suit reste vrai octet pour octet. Contrat : [remotion-master-project.md](remotion-master-project.md) § 10. Rien de cette portée n'est livré aujourd'hui.
+
 Pages voisines : [presentation-artifacts.md](presentation-artifacts.md) (source, snapshot, dérivé, `begin_render`), [remotion-runtime.md](remotion-runtime.md) (la capacité), [remotion-studio.md](remotion-studio.md) (le Studio n'est pas un moteur de rendu), [artifacts.md](artifacts.md).
 
 ## 1. Décisions
@@ -9,7 +11,7 @@ Pages voisines : [presentation-artifacts.md](presentation-artifacts.md) (source,
 | Décision | Conséquence |
 | --- | --- |
 | **Un rendu part d'un snapshot figé, jamais d'une édition** (décisions 6 et 7 du handoff). | Les valeurs de contrôles, le rechargement à chaud, une édition de source ne rendent **jamais** un MP4. Seule une demande explicite d'export le fait, et elle rend **un snapshot `complete`** relu et vérifié (hash du paquet, empreinte de chaque membre) : la source vivante, la bibliothèque de prefabs vivante et les Boards ne sont pas consultés. |
-| **Une scène par export.** | Cadence, taille et durée sont celles que le manifeste de la scène **déclare**. Un snapshot à plusieurs scènes demande `settings.scene_id` (jamais deviné) ; la concaténation d'une variante entière en un seul fichier n'est **pas** livrée ([§12](#12-limites-et-risques-résiduels)). |
+| **Une scène par export.** | Cadence, taille et durée sont celles que le manifeste de la scène **déclare**. Un snapshot à plusieurs scènes demande `settings.scene_id` (jamais deviné) ; la concaténation d'une variante entière en un seul fichier n'est **pas** livrée ([§12](#12-limites-et-risques-résiduels)). Portée de scène : c'est la portée par défaut et elle le reste ; la vidéo entière d'une variante sera une portée distincte, `scope: "master"`, jamais une concaténation (prévu, Level 2 — contract; implementation in Slices 03-08 of handoff jarvis-remotion-master-project-studio-export : [remotion-master-project.md](remotion-master-project.md)). |
 | **Chaque export est un Artifact dérivé** (`presentation_video`, `presentation_still`, `presentation_pdf`), terminal, relié au snapshot par **une** relation `rendered_from`. | L'origine éditable se retrouve en deux sauts : dérivé → snapshot (relation) → source + variante + révisions (métadonnées typées du snapshot), puis « Ouvrir la source » ([presentation-artifacts.md](presentation-artifacts.md)). Les réglages résolus sont **figés avec le dérivé**. |
 | **Un export est plat.** | `render_flat: true` sur chaque dérivé, dit dans la vue du Board : un MP4, une image ou un PDF n'est **jamais** présenté comme éditable ; l'origine éditable est la source. |
 | **Remotion seul exporte** (`export` est `unsupported` pour Slidecar). | `begin_render` refuse un snapshot Slidecar ; il n'y a aucun repli (« Slidecar n'exporte pas » est dit à l'écran). |
@@ -40,7 +42,7 @@ Clés **fermées** (`settings`), types stricts ; une clé qui ne s'applique pas 
 
 | Clé | Formats | Sens | Défaut |
 | --- | --- | --- | --- |
-| `scene_id` | tous | scène du snapshot (`pss_...`) ; obligatoire s'il y a plusieurs scènes Remotion | l'unique scène |
+| `scene_id` | tous | scène du snapshot (`pss_...`) ; obligatoire s'il y a plusieurs scènes Remotion (en portée de scène ; la portée prévue `scope: "master"` l'interdit, [remotion-master-project.md](remotion-master-project.md) § 10) | l'unique scène |
 | `frame_start`, `frame_end` | mp4 | plage d'images **incluse** dans la durée déclarée | toute la scène |
 | `frame` | still | image fixe | 0 |
 | `frames` | pdf | 1 à 24 images distinctes, une page chacune | `[0]` |
@@ -137,7 +139,7 @@ Pourquoi des routes d'abord : l'export est une **action de l'utilisateur** qui l
 | --- | --- | --- |
 | `presentation_render_invalid` | 400 | corps, réglage, plage ou format invalide |
 | `presentation_render_unknown_job` | 404 | identifiant inconnu de ce Core (au-delà des 20 derniers terminés, lire l'Artifact) |
-| `presentation_render_unknown_scene` | 404 | scène absente du snapshot, ou plusieurs scènes sans `scene_id` |
+| `presentation_render_unknown_scene` | 404 | scène absente du snapshot, ou plusieurs scènes sans `scene_id` (et sans la portée prévue `scope: "master"`, qui ne change pas ce refus) |
 | `presentation_render_unavailable` | 503 | Core sans service de rendu (aucun magasin de capacités) ou en arrêt |
 | `presentation_render_runtime_unavailable` | 409 | capacité non `ready`, Node, `@remotion/bundler` ou `@remotion/renderer` manquants : installer ou réparer |
 | `presentation_render_browser_unavailable` | 409 | aucun Chrome ni Edge (jamais téléchargé) |
@@ -157,7 +159,7 @@ Codes d'**échec d'un travail** (dans la vue et sur le dérivé, pas des erreurs
 
 `POST .../render/preview` est **l'œil de l'agent auteur** (`presentation_source` op `preview`, [presentation-studio.md](presentation-studio.md#native-remotion-authoring-level-3-native-studio-playback-fix-slice-13)), l'équivalent de `npx remotion still` dans un projet Remotion. Ce n'est **pas un export** :
 
-- **ce qui est rendu** : la variante COURANTE, assemblée en mémoire par le même assembleur que le gel (`PresentationPackager.assemble_preview`, aucun Board lu : une scène à références vivantes est refusée comme un gel sans Boards autorisés), puis UNE scène, ses images demandées (6 au plus, défaut 30 %, 65 % et la dernière image), en JPEG, à l'échelle 0,25, 0,5 (défaut) ou 1 ;
+- **ce qui est rendu** : la variante COURANTE, assemblée en mémoire par le même assembleur que le gel (`PresentationPackager.assemble_preview`, aucun Board lu : une scène à références vivantes est refusée comme un gel sans Boards autorisés), puis UNE scène (l'aperçu reste de portée de scène, même après la vidéo entière prévue par [remotion-master-project.md](remotion-master-project.md)), ses images demandées (6 au plus, défaut 30 %, 65 % et la dernière image), en JPEG, à l'échelle 0,25, 0,5 (défaut) ou 1 ;
 - **par le même processus gardé** que l'export (`render-host.cjs`, `render-guard.cjs`, proxy de refus, navigateur de la machine, bac à sable de Chrome) : un seul empaquetage et un seul navigateur pour toutes les images d'une scène ;
 - **rien n'est figé, aucun Artifact, aucune file** : les images sont gardées sous `<runtime>/render/previews/<travail>/frame-NNNNN.jpg` (les 40 derniers dossiers) et leurs chemins rendus ; le dossier de travail est nettoyé comme celui d'un export ;
 - **un navigateur à la fois, les exports d'abord** (reprise de la Slice 13, QA B2) : un aperçu attend un export en cours et inversement (mémoire du poste) ; un export qui veut le navigateur (pris par le travailleur ou en file) passe toujours avant un aperçu qui attend ;
@@ -208,7 +210,7 @@ Rejouer la preuve (hors profil vivant) : `python scripts/remotion_render_harness
 
 - **Chemin de la racine de données** (constaté par la Slice 13 de native-studio-playback-fix) : Chrome place son profil sous `render/jobs/<travail>/tmp/` ; une racine assez longue pour que ce chemin dépasse 260 caractères fait échouer tout rendu ou aperçu en `presentation_render_sandbox_unavailable` (« Failed to create cache directory »). La racine par défaut (`~/.jarvis/instances/...`) en est loin ; une racine de test très profonde ne l'est pas.
 
-- **Une scène par export** : un snapshot de plusieurs scènes se rend scène par scène ; aucune concaténation en une vidéo (les cadences peuvent différer, les assets de `public/` de plusieurs scènes se heurteraient). À assembler hors de Jarvis ou par une Slice ultérieure.
+- **Une scène par export** (aujourd'hui) : un snapshot de plusieurs scènes se rend scène par scène ; aucune concaténation en une vidéo (les cadences peuvent différer, les assets de `public/` de plusieurs scènes se heurteraient). Suite (prévu, Level 2 — contract; implementation in Slices 03-08 of handoff jarvis-remotion-master-project-studio-export) : une composition maître Remotion de toute la variante, prête seulement si toutes les scènes partagent largeur, hauteur et cadence et si leurs assets ne se heurtent pas (sinon un refus typé et la portée de scène intacte), rendue par la portée `scope: "master"` ; jamais une concaténation de clips. Contrat : [remotion-master-project.md](remotion-master-project.md).
 - **Chrome installé, version non épinglée** : le navigateur est celui de l'utilisateur (testé : Chrome 154.0.8037.99 avec Remotion 4.0.534, mode `chrome-for-testing`) ; une autre version peut rendre des pixels légèrement différents. Edge n'a pas été exercé.
 - **Windows seul éprouvé en réel** ; POSIX est couvert par la logique (groupe de processus, `pgrep`) et les tests unitaires, non exécuté.
 - **Le processus de rendu a les droits de l'utilisateur sur ses fichiers** (§4) ; le bac à sable de Chrome est actif par défaut (sauf opt-out explicite) mais le service réseau de Chrome tourne hors bac à sable sous Windows ; un code natif échappe au garde Node.
