@@ -21,12 +21,14 @@ from pathlib import Path
 import re
 import shutil
 import sys
+import tempfile
 
 import bench
 import trace_tools
 
 EVIDENCE = bench.HERE.parent
-SEP = r"(?:\\\\|\\|/)"
+#: Any run of backslashes (raw, JSON-escaped, or double-escaped JSON nested in a JSON string) or a slash.
+SEP = r"(?:\\+|/)"
 NOISY_KINDS = {"core.presentation_studio.listed", "presentation_studio.request.relayed", "agent.event"}
 INIT_KEEP = ("type", "subtype", "model", "permissionMode", "claude_code_version", "tools", "mcp_servers")
 
@@ -43,8 +45,15 @@ def _names() -> list[str]:
 def _rules() -> list[tuple[re.Pattern[str], str]]:
     home = Path.home()
     drive = home.drive.rstrip(":")
-    home_re = rf"(?:{re.escape(drive)}:|/{re.escape(drive.lower())})" + "".join(SEP + re.escape(p) for p in home.parts[1:])
-    temp = home_re + SEP + "AppData" + SEP + "Local" + SEP + "Temp"
+    # The last part may already read `<user>` (a file redacted by an older rule set): redacting twice gives the same text.
+    parts = [re.escape(p) for p in home.parts[1:-1]] + [rf"(?:{re.escape(home.name)}|<user>)"]
+    home_re = rf"(?:{re.escape(drive)}:|/{re.escape(drive.lower())})" + "".join(SEP + p for p in parts)
+    # The user's temp folder under home, read from the OS (never spelled out here); outside home it is redacted on its own.
+    system_temp = Path(tempfile.gettempdir())
+    try:
+        temp = home_re + "".join(SEP + re.escape(p) for p in system_temp.relative_to(home).parts)
+    except ValueError:
+        temp = SEP.join(re.escape(p.rstrip("\\/")) for p in system_temp.parts)
     bench_root = temp + SEP + re.escape(bench.root().name)
     rules = [(re.compile(bench_root, re.I), "<bench>"), (re.compile(temp, re.I), "<temp>"), (re.compile(home_re, re.I), "<home>")]
     rules += [(re.compile(r"(?<![A-Za-z])" + re.escape(n) + r"(?![a-z])", re.I), "<user>") for n in _names()]
@@ -160,6 +169,22 @@ def collect(run: str) -> dict:
     return result
 
 
+def redact_in_place(folder: Path) -> list[str]:
+    """Re-applies `redact` to every committed text file under `folder` (after a rule fix); returns the files it changed."""
+    changed = []
+    for path in sorted(folder.rglob("*")):
+        if path.suffix not in (".jsonl", ".json", ".md", ".txt") or not path.is_file():
+            continue
+        text = path.read_bytes().decode("utf-8")  # bytes: line endings stay as committed
+        if (clean := redact(text)) != text:
+            path.write_bytes(clean.encode("utf-8"))
+            changed.append(str(path.relative_to(folder)))
+    return changed
+
+
 if __name__ == "__main__":
+    if sys.argv[1] == "--redact-in-place":
+        print(json.dumps(redact_in_place(Path(sys.argv[2])), ensure_ascii=False))
+        raise SystemExit(0)
     summary = collect(sys.argv[1])
     print(json.dumps({"totals": summary["totals"], "files": summary["files"]}, ensure_ascii=False))

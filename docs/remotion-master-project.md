@@ -430,10 +430,12 @@ unknown presentation or variant is the usual 404 `presentation_studio_unknown_*`
   target `variant`, to a standing `presentation_source` write (read after the write) and to a preview, and to `presentation_draft_assemble` /
   `_finalize`. A failed read never fails the call it rides: `master: {status: "unknown", error: <code>}` and a warning
   `presentation_studio.master_unread` in the journal.
-- **Export**: `remotion_export` `settings.scope` (`EXPORT_SETTINGS`, `EXPORT_SCOPES`). `master` with `scene_id` is `invalid_setting`, with
+- **Export**: `remotion_export` `settings.scope` (`EXPORT_SETTINGS`; the scope names are `SCOPE_SCENE` / `SCOPE_MASTER` of `jarvis/domain/presentation_render.py`). `master` with `scene_id` is `invalid_setting`, with
   `still`/`pdf` `invalid_format`, both before any Core call; an explicit `"scene"` is dropped, so a scene export's body is today's. The result
-  says `video: "whole"` (« L'export de la vidéo entière (N scènes) est lancé ») or `video: "scene"` (« L'export d'une scène seule est lancé
-  (pas la vidéo entière) »); job rows carry `scope`, `scene_id`, `project_key`, `scene_count`. Core's 409 `presentation_render_master_incompatible`
+  says `video: "whole"` (« L'export de la vidéo entière (N scènes) est lancé »; the count is left out when Core's job lacks `scene_count`),
+  `video: "whole_range"` when a master export carries `frame_start`/`frame_end`/`frame` (« L'export d'un extrait de la vidéo entière (images
+  a–b, pas la vidéo complète) est lancé »: an extract is never announced as the whole video) or `video: "scene"` (« L'export d'une scène
+  seule est lancé (pas la vidéo entière) »); job rows carry `scope`, `scene_id`, `project_key`, `scene_count`. Core's 409 `presentation_render_master_incompatible`
   becomes a refusal with the sentence, « Rien n'a été exporté ni modifié » and the scene-export offer; Core froze nothing (§ 10, live pre-check).
 - **Authoring**: `NATIVE_DEFAULT_COMPOSITION` (1920x1080 @ 30, `presentation_studio_authoring_remotion.py`) fills what a NATIVE bundle leaves
   out (`generate_source(..., native=True)`); guided bundles keep `DEFAULT_COMPOSITION` (1280x720). `MASTER_HINT` (authoring guide, native

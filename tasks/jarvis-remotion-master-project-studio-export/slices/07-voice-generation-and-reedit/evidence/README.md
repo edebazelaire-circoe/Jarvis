@@ -52,3 +52,21 @@ still 1, plan still `incompatible / master_fps_mismatch` (nothing auto-mutated, 
 - Errors / recovery: one refusal (F1) fixed at once; the incompatible refusal is intentional and was said with its words; no hidden failure,
   no fallback, no repeated call. Missing evidence: per-message output-token counts in the side chains are partial (the cost figure is the
   CLI's own).
+
+## Inherited observations and optimization notes (Slice 07 QA polish)
+
+Warnings in `runs/t1/jarvis-trace.jsonl`, none caused by Slice 07 code (the brain's turn pacing and the relay of background results are
+older mechanisms):
+
+- **Three `agent.turn_over_budget`** (budget 8 s): brain turns of **8.8 s**, **12.2 s** and **8.3 s** (« travail fait dans le tour au lieu
+  d'un sous-agent »).
+- **Two `core.brain.notice_dropped`** (`reason: no_current_source`): background-agent relays with no current intention to say them in.
+  The harness drives addressed text turns through the ask route, with no voice source to speak into.
+
+Optimization notes (no behaviour change asked of this Slice):
+
+- **Needless status call** (F2): the edit agent called `remotion_status export` on the first job; nothing in an edit needs it.
+- **Repeated `ToolSearch`** (F3): one deferred-tool load per MCP tool before its first use (3 in the brain, 1 per agent); batching the
+  `select:` list into one call would save round-trips.
+- **`Frame` guard refusal despite the hint** (F1): `ISOLATION_HINT` names `Frame`, the author still wrote `<Frame>` and was refused
+  `markup_tag` once before renaming it `Cadre`; the hint is not salient enough at authoring time.

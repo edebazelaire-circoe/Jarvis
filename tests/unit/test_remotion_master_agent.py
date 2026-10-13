@@ -181,6 +181,37 @@ async def test_the_whole_video_export_sends_scope_master_and_says_it_is_the_whol
     assert out["job"]["scope"] == "master" and out["job"]["project_key"] == KEY and out["job"]["scene_count"] == 3
 
 
+@pytest.mark.parametrize("extra,span", [({"frame_start": 30, "frame_end": 90}, "images 30–90"), ({"frame": 45}, "images 45–45"),
+                                        ({"frame_start": 120}, "images 120–fin"), ({"frame_end": 60}, "images 0–60")])
+async def test_a_master_export_with_a_frame_range_is_announced_as_an_extract_never_the_whole_video(tmp_path, extra, span):
+    tools, core, _ = make_tools(tmp_path, turn=True)
+
+    async def create(body):
+        core._record("remotion_render_create", body)
+        return {"job": MASTER_JOB}
+
+    core.remotion_render_create = create
+    out = await tools.export("start", format="mp4", settings={"scope": "master", **extra}, user_request="exporte un extrait de la vidéo")
+    (request,) = core.named("remotion_render_create")[0]
+    assert request["settings"] == {"scope": "master", **extra}
+    assert out["video"] == "whole_range", out
+    assert "extrait de la vidéo entière" in out["say"] and span in out["say"] and "pas la vidéo complète" in out["say"]
+    assert "scènes)" not in out["say"]
+
+
+async def test_a_master_job_without_scene_count_omits_the_count_never_says_none(tmp_path):
+    tools, core, _ = make_tools(tmp_path, turn=True)
+
+    async def create(body):
+        core._record("remotion_render_create", body)
+        return {"job": {k: v for k, v in MASTER_JOB.items() if k != "scene_count"}}
+
+    core.remotion_render_create = create
+    out = await tools.export("start", format="mp4", settings={"scope": "master"}, user_request="exporte la vidéo")
+    assert out["video"] == "whole" and "None" not in out["say"] and "scènes" not in out["say"]
+    assert out["say"].startswith("L'export de la vidéo entière est lancé"), out["say"]
+
+
 @pytest.mark.parametrize("settings", [None, {"scope": "scene", "scene_id": SID}, {"scene_id": SID}])
 async def test_a_scene_export_keeps_todays_body_and_never_calls_itself_the_video(tmp_path, settings):
     tools, core, _ = make_tools(tmp_path, turn=True)
@@ -375,5 +406,5 @@ def test_the_brain_prompt_routes_the_video_to_scope_master_and_never_calls_a_sce
     from jarvis.runtime.claude_local import BRAIN_REMOTION_PROMPT
 
     for needle in ("scope master", "la vidéo entière", "master.status", "une scène exportée n'est jamais « la vidéo »",
-                   "un ancien export n'est pas la vidéo à jour"):
+                   "un ancien export n'est pas la vidéo à jour", "« unknown » = état illisible, ne dis pas la vidéo disponible"):
         assert needle in BRAIN_REMOTION_PROMPT, needle

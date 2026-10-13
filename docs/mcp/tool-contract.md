@@ -1421,7 +1421,8 @@ next to `jarvis-presentation`'s and the brain prompt block is `BRAIN_REMOTION_PR
 
 **Master-project Slice 07** (`docs/remotion-master-project.md` § 12): `remotion_export` `settings.scope` (`"scene"` | `"master"`, closed list
 `EXPORT_SETTINGS`). `master` = the whole video of the variant (mp4 only; `scene_id` refused); absent or `"scene"` sends today's body byte for byte
-(an explicit `"scene"` is never sent). The result says which it is (`video: "whole" | "scene"`, job row `scope`, `project_key`, `scene_count`);
+(an explicit `"scene"` is never sent). The result says which it is (`video: "whole" | "whole_range" | "scene"`, job row `scope`, `project_key`, `scene_count`;
+`whole_range` = a master export with `frame_start`/`frame_end`/`frame`, said « extrait de la vidéo entière (images a–b) », never the whole video);
 an incompatible variant is refused `presentation_render_master_incompatible` with the § 3 sentence and scene exports offered, nothing written.
 The readiness the agent reads is the compact `master` block (`status`, `reason`, `say`, `project_key`, `scenes`, `duration_s`, `spec`) of
 `presentation_inspect` target `variant`, `presentation_source` write/preview and `presentation_draft_assemble` / `_finalize`: a projection of
