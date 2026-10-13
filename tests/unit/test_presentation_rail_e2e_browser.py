@@ -95,7 +95,7 @@ async def test_the_rail_lists_real_presentations_with_their_real_work_state_and_
         assert reads["studio"]["vbar"] == 0, "Slice 10: no variant bar (merged into the tree)"
         # Slice 06 (native-studio-playback-fix): one transport toolbar; « Jouer cette slide » became the « ⋯ » entry « Lire seulement cette scène »;
         # Slice 10: « Présenter » is on the scene row under it
-        assert reads["studio"]["play"] == ["Scène précédente", "Lire", "Scène suivante", "Son", "Plus de lecture"] and reads["studio"]["windowOpen"] is False
+        assert reads["studio"]["play"] == ["Scène précédente", "Début de la slide", "Reculer de 5 secondes", "Lire", "Avancer de 5 secondes", "Scène suivante", "Son", "Plein écran", "Plus de lecture"] and reads["studio"]["windowOpen"] is False
         assert reads["studio_menu"]["onTop"] is True and reads["studio_still_open"] is True, "Escape in the rail menu does not close the Studio"
         assert reads["stepped"][0] != reads["before_step"] and reads["stepped"][1] == 1, (reads["before_step"], reads["stepped"])
         assert not noise(result), noise(result)

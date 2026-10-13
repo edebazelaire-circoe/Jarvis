@@ -458,7 +458,7 @@ return {toolbars:toolbars.length,label:bar().getAttribute('aria-label'),names,ha
     assert out["toolbars"] == 1 and out["label"] == "Lecture de la vidéo"
     # Slice 10: the toolbar holds the playback controls only; « Présenter » (§ 6 #21) is on the scene row under it; « Arrêter » shows in
     # the toolbar only during a run (it stays in the stage fullscreen).
-    assert out["names"] == ["Scène précédente", "Lire", "Scène suivante", "Son", "Plus de lecture"] and out["haspopup"] == "menu"
+    assert out["names"] == ["Scène précédente", "Début de la slide", "Reculer de 5 secondes", "Lire", "Avancer de 5 secondes", "Scène suivante", "Son", "Plein écran", "Plus de lecture"] and out["haspopup"] == "menu"
     assert out["slider"] == ["0", "269", "0", "Scène 1 sur 3, 0:00 sur 0:09", "false"]
     assert out["readout"] == {"time": "0:00 / 0:09", "now": "0", "text": "Scène 1 sur 3, 0:00 sur 0:09", "count": "Scène 1 sur 3", "selected": "1",
                               "frame": 0}
@@ -484,7 +484,7 @@ out.paused=[ex.playback.view().phase,ex.playback.view().frame,prefabFake.orders.
 env.key(q('.jvx-stage'),'.');await env.advance(20);
 out.stepped=[ex.playback.view().frame,prefabFake.orders.slice(-1)[0]];
 label('Scène suivante').click();await env.advance(20);
-out.next=[readout(),label('Scène suivante').getAttribute('aria-disabled'),q('.jvx-sr').textContent];
+out.next=[readout(),label('Scène suivante').getAttribute('aria-disabled'),q('.jvx-sr[role="status"]').textContent];
 label('Scène suivante').click();await env.advance(20);
 out.last=[ex.playback.view().frame,noticeText()];
 env.key(q('.jvx-stage'),'Home');await env.advance(20);
@@ -530,24 +530,26 @@ return {items,expanded,back,play:[v.phase,v.scope,v.frame,prefabFake.orders.slic
     assert out["focus"] is True and out["open"] is True and out["runs"] == 0, "no run, Variants stays open"
 
 
-def test_a_variant_without_video_says_why_lire_is_disabled_and_the_scene_buttons_still_browse(tmp_path):
+def test_a_variant_without_video_plays_by_rhythm_and_the_scene_buttons_still_browse(tmp_path):
     out = run_ui(tmp_path, r"""
 seed(2);
 const {ex}=await opened({fullscreen:false});
 await env.advance(50);
 const lire=q('.jvx-transport [data-act="continuous"]');
-const disabled=[lire.getAttribute('aria-disabled'),lire.title];
+const enabled=[lire.getAttribute('aria-disabled'),lire.title];
 lire.click();await env.advance(20);
-const said=noticeText();
+const said=noticeText();const playing=lire.getAttribute('aria-pressed');
+lire.click();await env.advance(20);const paused=lire.getAttribute('aria-pressed');
 const sl=q('.jvx-transport [role="slider"]');
 const slider=[sl.getAttribute('aria-disabled'),sl.getAttribute('aria-valuenow'),q('.jvx-time').textContent];
 q('.jvx-transport [aria-label="Scène suivante"]').click();await env.advance(20);
-return {disabled,said,slider,title:q('.jvx-scene-title').textContent,phase:ex.playback.view().phase,
+return {enabled,said,playing,paused,slider,title:q('.jvx-scene-title').textContent,phase:ex.playback.view().phase,
   failures:env.logs.filter(l=>l[1].includes('sequencer_failed')).length,errors:env.errors};
 """)
-    assert out["disabled"][0] == "true" and "présentation Remotion" in out["disabled"][1]
-    assert "présentation Remotion" in out["said"], "a disabled control says its reason when activated"
-    assert out["slider"] == ["true", None, ""], "no map, no position shown at all (§ 4.8)"
+    assert out["enabled"][0] == "false" and "Lire les slides" in out["enabled"][1], "without video, Lire plays the slides by rhythm"
+    assert "n'existe que" not in out["said"], "Lire no longer refuses with a notice"
+    assert [out["playing"], out["paused"]] == ["true", "false"], "Lire starts the automatic mode, then pauses it"
+    assert out["slider"][:2] == ["true", None] and " s / " in out["slider"][2], "no map: no video position, only the slide rhythm readout (§ 4.8)"
     assert out["title"] == "Scène 2 de 1" and out["phase"] == "unavailable"
     assert out["failures"] == 0 and out["errors"] == []
 

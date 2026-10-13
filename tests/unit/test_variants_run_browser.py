@@ -146,7 +146,8 @@ async def test_the_presenter_run_keys_on_the_variants_stage_act_once_each_and_ot
         {"wait": 600}, READY, FOCUS_STAGE,
         {"value": "start", "expr": f"[{POS},{PHASE}]"},
         {"key": "ArrowRight"}, _until(f"{POS}===2"), {"value": "after_right", "expr": POS},
-        {"key": "ArrowLeft"}, _until(f"{POS}===1"), {"value": "after_left", "expr": POS},
+        {"key": "ArrowLeft"}, {"wait": 900}, {"value": "after_restart", "expr": POS},
+        {"key": "ArrowLeft"}, {"key": "ArrowLeft"}, _until(f"{POS}===1"), {"value": "after_left", "expr": POS},
         {"key": "End"}, _until(f"{POS}===3"), {"value": "after_end", "expr": POS},
         {"key": "Home"}, _until(f"{POS}===1"), {"value": "after_home", "expr": POS},
         {"key": " "}, _until(f"{PHASE}==='paused'"), {"value": "space_phase", "expr": PHASE},
@@ -162,7 +163,7 @@ async def test_the_presenter_run_keys_on_the_variants_stage_act_once_each_and_ot
     reads = result["reads"]
     assert "failed" not in reads, reads
     assert reads["start"] == [1, "playing"]
-    assert (reads["after_right"], reads["after_left"], reads["after_end"], reads["after_home"]) == (2, 1, 3, 1), reads
+    assert (reads["after_right"], reads["after_restart"], reads["after_left"], reads["after_end"], reads["after_home"]) == (2, 2, 1, 3, 1), reads
     assert (reads["space_phase"], reads["space_again"]) == ("paused", "playing")
     assert reads["settled"] == [1, "playing"], "each key acted once (no double command)"
     assert reads["field"] == "a ", reads["field"]
