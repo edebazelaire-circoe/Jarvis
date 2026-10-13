@@ -27,8 +27,12 @@ def frozen_plan(package: FrozenPackage) -> MasterProjectPlan:
     return plan_master(frozen_inputs(package))
 
 
-def audio_required(plan: MasterProjectPlan) -> bool:
-    return any(_AUDIO_ELEMENT.search(strip_comments(text)) for scene in plan.scenes for text in scene.source.module_texts().values())
+def audio_ranges(plan: MasterProjectPlan) -> tuple[tuple[int, int], ...]:
+    """`(from_frame, duration_in_frames)` of each mounted scene whose modules contain an `<Audio>` element (textual, comments stripped:
+    `import {Audio as Sound}` escapes it, a user component named `Audio` or a muted `<Audio>` is counted)."""
+
+    return tuple((scene.from_frame, scene.duration_in_frames) for scene in plan.scenes
+                 if any(_AUDIO_ELEMENT.search(strip_comments(text)) for text in scene.source.module_texts().values()))
 
 
 def master_target(plan: MasterProjectPlan) -> MasterTarget:
@@ -40,7 +44,7 @@ def master_target(plan: MasterProjectPlan) -> MasterTarget:
     engine = plan.scenes[0].source.block.engine
     c = plan.composition
     return MasterTarget(c.composition_id, c.width, c.height, c.fps, c.duration_in_frames, engine.version, engine.lock_sha256,
-                        plan.project_key, tuple(s.scene_id for s in plan.scenes), audio_required(plan))
+                        plan.project_key, tuple(s.scene_id for s in plan.scenes), audio_ranges(plan))
 
 
 def choose_master(package: FrozenPackage) -> MasterTarget:

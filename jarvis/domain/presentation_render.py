@@ -238,8 +238,9 @@ class MasterTarget:
     engine_lock_sha256: str
     project_key: str
     scene_ids: tuple[str, ...]
-    #: A mounted scene plays an `<Audio>`: the MP4 must hold an audio stream (verification).
-    audio_required: bool
+    #: `(from_frame, duration_in_frames)` of each mounted scene that plays an `<Audio>` (textual check): an MP4 whose rendered range
+    #: overlaps one of them must hold an audio stream (verification); a range outside them requires none.
+    audio_ranges: tuple[tuple[int, int], ...] = ()
 
     @property
     def scene_id(self) -> None:
@@ -272,6 +273,14 @@ class ResolvedRender:
     @property
     def master(self) -> bool:
         return isinstance(self.target, MasterTarget)
+
+    @property
+    def audio_required(self) -> bool:
+        """A master MP4 whose rendered range `[frame_start, frame_end]` overlaps a scene that plays an `<Audio>` must carry audio."""
+
+        if not isinstance(self.target, MasterTarget) or self.fmt is not RenderFormat.MP4:
+            return False
+        return any(start <= self.frame_end and self.frame_start <= start + duration - 1 for start, duration in self.target.audio_ranges)
 
     def canonical(self) -> dict[str, Any]:
         t = self.target

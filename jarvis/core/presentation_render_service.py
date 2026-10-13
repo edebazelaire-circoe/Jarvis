@@ -28,7 +28,7 @@ from __future__ import annotations
 import asyncio
 from collections import deque
 import hashlib
-from collections.abc import Callable, Collection, Mapping, Sequence
+from collections.abc import Awaitable, Callable, Collection, Mapping, Sequence
 from pathlib import Path
 import shutil
 import threading
@@ -42,7 +42,7 @@ from jarvis.domain.presentation_render import (
     CONCURRENCY_LIMIT, KEEP_FINISHED, KEEP_RENDERS_PER_SNAPSHOT, MAX_ACTIVE_JOBS, SCOPE_MASTER, JobState, MasterTarget, RenderError,
     RenderErrorCode as C, ResolvedRender, clean_detail, master_scene_failure, parse_settings, resolve,
 )
-from jarvis.domain.presentation_render_master import choose_master, frozen_plan, master_files
+from jarvis.domain.presentation_render_master import choose_master, frozen_plan, master_files, master_target
 from jarvis.domain.presentation_render_plan import choose_scene, plan_files
 from jarvis.domain.presentation_studio import PresentationStudioError
 from jarvis.ports.artifacts import RelationDirection
@@ -183,7 +183,8 @@ class PresentationRenderService:
                  installed_engine: Callable[[], Any | None], capability_status: Callable[[], str] = lambda: "ready",
                  diagnostics: DiagnosticSink | None = None, run_blocking: Callable[..., Any] = asyncio.to_thread,
                  new_job_id: Callable[[], str] | None = None, preview_root: Callable[[], Path] | None = None,
-                 preview_wait_s: float = PREVIEW_SLOT_WAIT_S) -> None:
+                 preview_wait_s: float = PREVIEW_SLOT_WAIT_S,
+                 live_master: Callable[[str, str], Awaitable[Any]] | None = None) -> None:
         """`snapshots` = `PresentationArtifacts` ; `packager` = `PresentationPackager` ; `installed_engine` rend l'`InstalledEngine` réel
         de la capacité (ou `None`) ; `capability_status` rend le statut de la capacité locale (`ready`/`running` = utilisable)."""
 
@@ -208,6 +209,9 @@ class PresentationRenderService:
         self._preview_wait_s = float(preview_wait_s)
         #: Where previews land (`<runtime>/render/previews`); `None`: this Core offers no preview.
         self._preview_root = preview_root
+        #: `MasterProjectReader.live_plan`: an `export` with `scope: "master"` plans the LIVE variant first and refuses an incompatible one
+        #: before anything is frozen (the frozen re-plan stays the authority once frozen). `None`: no pre-check (tests, old wiring).
+        self._live_master = live_master
 
     # ------------------------------------------------------------------ demander
 
@@ -235,10 +239,13 @@ class PresentationRenderService:
         Le gel passe par `PresentationPackager.freeze` (liste blanche de Boards obligatoire, révisions exactes)."""
 
         fmt = parse_render_format(render_format)  # un format invalide est refusé avant tout gel
-        parse_settings(fmt, settings)
+        parsed = parse_settings(fmt, settings)
         self._require_ready()
         self._require_capacity()
         await self._require_engine_for(presentation_id, variant_id)  # nothing is frozen for a render this machine cannot make
+        if parsed.scope == SCOPE_MASTER and self._live_master is not None:
+            # nothing is frozen for a whole video the live variant cannot make; once frozen, the package's own plan decides (submit)
+            master_target(await self._live_master(presentation_id, variant_id))
         frozen = await self._packager.freeze(
             presentation_id, variant_id, expected_presentation_revision=expected_presentation_revision,
             expected_variant_revision=expected_variant_revision, authorised_boards=authorised_boards,
@@ -653,7 +660,7 @@ class PresentationRenderService:
         frames = r.frames_total if r.fmt is RenderFormat.MP4 else None
         pages = len(r.frames) if r.fmt is RenderFormat.PDF else None
         # A master whose scenes play an `<Audio>` must come out with an audio stream; a scene render is verified exactly as before.
-        audio = {"audio_required": True} if isinstance(r.target, MasterTarget) and r.target.audio_required else {}
+        audio = {"audio_required": True} if r.audio_required else {}
         verified = await self._run_blocking(self._runner.verify, job.job_id, r.fmt.value, width=r.out_width, height=r.out_height,
                                             frames=frames, pages=pages, **audio)
         job.phase = "storing"

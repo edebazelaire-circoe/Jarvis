@@ -13,15 +13,18 @@ import wave
 
 import pytest
 
+from dataclasses import replace
+
 from jarvis.core.presentation_render_service import PresentationRenderService
+from jarvis.core.remotion_master_project import MasterProjectReader
 from jarvis.domain import presentation_render as D
 from jarvis.domain.artifacts import ArtifactKind, ArtifactQuery, ArtifactRelationKind, ArtifactState
 from jarvis.domain.presentation_artifacts import RenderFormat
 from jarvis.domain.presentation_render import MasterTarget, RenderError, RenderErrorCode as C
-from jarvis.domain.presentation_render_master import choose_master, frozen_plan
+from jarvis.domain.presentation_render_master import choose_master, frozen_plan, master_files
 from jarvis.ports.artifacts import RelationDirection
 from tests.fakes.presentation_world import SCENE_ID, PresentationWorld
-from tests.fakes.remotion_render import FakeRenderRunner
+from tests.fakes.remotion_render import MP4 as MP4_BYTES, FakeRenderRunner
 from tests.fakes.remotion_scene import COMPOSITION, SCENE_TSX, scene_candidate, scene_files
 from tests.unit.test_presentation_render_domain import target as scene_target
 
@@ -33,7 +36,7 @@ PREFABS = ("presentation-studio.p000000000001.s000000000001", "presentation-stud
 
 def master_target(**changes) -> MasterTarget:
     base = dict(composition_id="JarvisPresentation", width=1280, height=720, fps=30, duration_in_frames=270, engine_version="4.0.534",
-                engine_lock_sha256="a" * 64, project_key="mpk_" + "1" * 24, scene_ids=IDS, audio_required=False)
+                engine_lock_sha256="a" * 64, project_key="mpk_" + "1" * 24, scene_ids=IDS)
     base.update(changes)
     return MasterTarget(**base)
 
@@ -92,6 +95,16 @@ def test_the_master_identity_and_metadata_name_the_project_not_a_scene():
     assert len(meta) + 9 <= 32, "room for the job, drift and finish keys"
 
 
+def test_audio_is_required_only_when_the_rendered_range_overlaps_a_scene_that_plays_audio():
+    target = master_target(audio_ranges=((90, 90),))  # scene 2 (frames 90..179) plays an <Audio>
+    for settings, required in (({}, True), ({"frame_start": 0, "frame_end": 89}, False), ({"frame_start": 180, "frame_end": 269}, False),
+                               ({"frame_start": 89, "frame_end": 90}, True), ({"frame_start": 179, "frame_end": 180}, True),
+                               ({"frame_start": 120, "frame_end": 130}, True)):
+        assert D.resolve(MP4, master(settings), target).audio_required is required, settings
+    assert D.resolve(MP4, master(), master_target()).audio_required is False
+    assert D.resolve(MP4, D.parse_settings(MP4, None), scene_target()).audio_required is False
+
+
 def test_the_scene_failure_marker_is_parsed_and_anything_else_is_not():
     text = "Error: jarvis_master_scene_failed:pss_00000000000b:2: boom at frame 5\n    at SceneBoundary.componentDidCatch (<path>)"
     assert D.master_scene_failure(text) == ("pss_00000000000b", 2, "boom at frame 5")  # the message line, not the stack
@@ -138,8 +151,14 @@ async def rig(tmp_path):
         await r.world.close()
 
 
-async def deck(rig, *, fps3: int = 30, audio: bool = False) -> tuple[str, str, str]:
-    """A frozen 3-scene variant: the world's scene plus two more pins (scene 2 optionally plays an `<Audio>`, scene 3 at `fps3`)."""
+VIDEO_TSX = SCENE_TSX.replace("import {AbsoluteFill, Img,", "import {AbsoluteFill, Img, OffthreadVideo, Video,").replace(
+    '<Title text={props.title} color={props.accent} />',
+    '<OffthreadVideo src={staticFile("s1-clip.mp4")} />\n      <Video src={staticFile("s1-clip.mp4")} />\n      <Title text={props.title} color={props.accent} />')
+
+
+async def deck(rig, *, fps3: int = 30, audio: bool = False, video: bool = False, freeze: bool = True) -> tuple[str, str, str | None]:
+    """A 3-scene variant, frozen unless `freeze=False`: the world's scene plus two more pins (scene 2 optionally plays an `<Audio>` or only
+    a `<Video>` / `<OffthreadVideo>`, scene 3 at `fps3`)."""
 
     w = rig.world
     pid, vid = await w.new_presentation(props={"title": "Un"})
@@ -148,13 +167,15 @@ async def deck(rig, *, fps3: int = 30, audio: bool = False) -> tuple[str, str, s
         files = scene_files(title_suffix=f"// scene {n}\n")
         if audio and n == 1:
             files = {**files, "src/Scene.tsx": AUDIO_TSX, "public/s1-voice.wav": tone_wav()}
+        if video and n == 1:
+            files = {**files, "src/Scene.tsx": VIDEO_TSX, "public/s1-clip.mp4": MP4_BYTES}
         composition = COMPOSITION if n == 1 or fps3 == 30 else type(COMPOSITION)("Scene", 1280, 720, fps3, 90)
         published = await w.prefabs.save(scene_candidate(PREFABS[n], files=files, composition=composition), actor="user")
         extra.append({"scene_id": IDS[n], "prefab": {"id": PREFABS[n], "version": published.version}, "props": {"title": f"S{n}"}})
     variant = (await w.studio.get(pid)).variants[0].to_document()
     await w.studio.save_variant(pid, vid, {"expected_revision": variant["revision"], "title": variant["title"],
                                            "scenes": variant["scenes"] + extra, "art_direction_id": None, "score_id": None})
-    snapshot = (await w.freeze(pid, vid))["artifact_id"]
+    snapshot = (await w.freeze(pid, vid))["artifact_id"] if freeze else None
     return pid, vid, snapshot
 
 
@@ -248,7 +269,7 @@ async def test_a_scene_render_failure_with_the_marker_text_keeps_its_own_code(ri
 
 async def test_a_deck_with_audio_requires_an_audio_stream(rig):
     _, _, snapshot = await deck(rig, audio=True)
-    assert choose_master(await rig.world.packager.read_snapshot(snapshot)).audio_required
+    assert choose_master(await rig.world.packager.read_snapshot(snapshot)).audio_ranges == ((90, 90),)
     done = await finished(rig.service, (await rig.service.submit(snapshot, "mp4", {"scope": "master"}))["job_id"])
     assert done["state"] == "complete" and ("verify_audio_required", "mp4") in rig.runner.calls
     rig.runner.audio_missing = True
@@ -275,3 +296,56 @@ async def test_the_master_readiness_of_a_snapshot_is_the_plan_view(rig):
     with pytest.raises(RenderError) as bad:
         await rig.service.master_readiness("jart_ps_" + "0" * 32 + "_" + "0" * 32 + "_p1_v1_a1")
     assert bad.value.code is C.SNAPSHOT_INVALID
+
+
+async def test_a_range_without_the_audio_scene_requires_no_audio_stream(rig):
+    _, _, snapshot = await deck(rig, audio=True)
+    rig.runner.audio_missing = True  # the MP4 has no audio: only a range overlapping scene 2 (frames 90..179) may fail for it
+    outside = await finished(rig.service, (await rig.service.submit(snapshot, "mp4", {"scope": "master", "frame_start": 180,
+                                                                                       "frame_end": 269}))["job_id"])
+    assert outside["state"] == "complete" and ("verify_audio_required", "mp4") not in rig.runner.calls
+    across = await finished(rig.service, (await rig.service.submit(snapshot, "mp4", {"scope": "master", "frame_start": 170,
+                                                                                      "frame_end": 189}))["job_id"])
+    assert across["error_code"] == "presentation_render_output_invalid" and ("verify_audio_required", "mp4") in rig.runner.calls
+
+
+async def test_a_video_only_deck_requires_no_audio_stream(rig):
+    _, _, snapshot = await deck(rig, video=True)
+    assert choose_master(await rig.world.packager.read_snapshot(snapshot)).audio_ranges == ()
+    rig.runner.audio_missing = True
+    done = await finished(rig.service, (await rig.service.submit(snapshot, "mp4", {"scope": "master"}))["job_id"])
+    assert done["state"] == "complete" and ("verify_audio_required", "mp4") not in rig.runner.calls
+
+
+async def test_the_execution_re_plan_refuses_another_project_than_the_requested_one(rig):
+    _, _, snapshot = await deck(rig)
+    package = await rig.world.packager.read_snapshot(snapshot)
+    target = choose_master(package)
+    assert "src/master/Presentation.tsx" in master_files(package, target)
+    with pytest.raises(RenderError) as refused:
+        master_files(package, replace(target, project_key="mpk_" + "0" * 24))
+    assert refused.value.code is C.SNAPSHOT_INVALID and "no longer plans" in refused.value.detail
+
+
+async def test_an_incompatible_live_variant_is_refused_before_anything_is_frozen(rig):
+    reader = MasterProjectReader(studio=rig.world.studio, prefabs=rig.world.prefabs)
+    service = PresentationRenderService(
+        artifacts=rig.world.artifacts, snapshots=rig.world.snapshots, packager=rig.world.packager, runner=rig.runner,
+        installed_engine=rig.runner.installed_engine, diagnostics=rig.world.sink, live_master=reader.live_plan)
+    try:
+        pid, vid, _ = await deck(rig, fps3=25, freeze=False)
+        p, v = await rig.world.revisions(pid)
+        with pytest.raises(RenderError) as refused:
+            await service.export(presentation_id=pid, variant_id=vid, expected_presentation_revision=p, expected_variant_revision=v,
+                                 authorised_boards={"default"}, render_format="mp4", settings={"scope": "master"})
+        assert refused.value.code is C.MASTER_INCOMPATIBLE and refused.value.extra["reason"] == "master_fps_mismatch"
+        snapshots = await rig.world.artifacts.query(ArtifactQuery(kinds=(ArtifactKind.PRESENTATION_SNAPSHOT,), limit=10))
+        assert not snapshots.items and not rig.runner.calls, "nothing frozen, nothing rendered"
+        pid2, vid2, _ = await deck(rig, freeze=False)
+        p, v = await rig.world.revisions(pid2)
+        job = await service.export(presentation_id=pid2, variant_id=vid2, expected_presentation_revision=p, expected_variant_revision=v,
+                                   authorised_boards={"default"}, render_format="mp4", settings={"scope": "master"})
+        assert job["scope"] == "master" and job["scene_count"] == 3
+        assert (await finished(service, job["job_id"]))["state"] == "complete"
+    finally:
+        await service.stop()

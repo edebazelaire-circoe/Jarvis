@@ -77,8 +77,11 @@ rend `JarvisPresentation` (spécification et durée du plan contrôlées par l'h
 scène reçoit ses props fusionnées dans le `Presentation.tsx` généré). Borne : `MAX_MASTER_RENDER_FRAMES` = 9 000 images sur la plage
 rendue ; délai, dossier, disque et sortie inchangés. Une scène qui lève : sa frontière appelle `cancelRender`, le travail échoue
 `presentation_render_master_scene_failed` et `error_detail` nomme la scène (« scene n (pss_…) failed while rendering: … »). Vérification :
-celle d'un MP4 (un flux H.264, taille, nombre d'images = la plage) et, si une scène montée joue un `<Audio>` (contrôle textuel), un flux
-audio (ffprobe épinglé ; sans ffprobe, refus). Un `<Video>` / `<OffthreadVideo>` seul n'en exige pas : son clip peut être muet. Identité :
+celle d'un MP4 (un flux H.264, taille, nombre d'images = la plage) et, si la plage rendue chevauche une scène qui joue un `<Audio>`
+(contrôle textuel : un import renommé `Audio as X` y échappe, un composant maison nommé `Audio` ou un `<Audio>` muet y entre), un flux
+audio (ffprobe épinglé ; sans ffprobe, refus). Un `<Video>` / `<OffthreadVideo>` seul n'en exige pas : son clip peut être muet. Un export
+(`presentation_id` + `variant_id`) en portée `master` planifie d'abord la variante VIVANTE et refuse en 409 avant tout gel si elle n'est
+pas compatible ; une fois figée, le plan du paquet fait foi. Identité :
 `render_settings_sha256` = SHA-256 du JSON canonique (portée, `project_key`, composition, nombre de scènes, cadence, taille, échelle, codec,
 crf, plage, moteur, verrou) : même snapshot + mêmes réglages = le même travail ou le même dérivé. La vue d'un travail maître ajoute
 `scope` (`"master"`), `project_key` et `scene_count` ; son `scene_id` est `null`. Lecture seule de la préparation d'un snapshot :

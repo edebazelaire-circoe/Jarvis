@@ -151,6 +151,10 @@ async def test_a_frozen_three_scene_variant_renders_as_one_verified_video(tmp_pa
                 assert abs(rgb[CHANNEL[n]] - expected) <= 14, (start + local, n, local, rgb)
                 assert all(rgb[c] <= 24 for c in range(3) if c != CHANNEL[n]), (start + local, n, rgb)
             start += duration
+        # QA B1: a range that holds no <Audio> scene (scene 3 only) needs no audio stream
+        ranged = await finished(service, (await service.submit(snapshot, "mp4", {"scope": "master", "scale": 0.5, "frame_start": 75,
+                                                                                 "frame_end": 104}))["job_id"])
+        assert ranged["state"] == "complete" and ranged["frames_total"] == 30, (ranged["error_code"], ranged["error_detail"])
         print(f"\nmaster export: 105 frames {v['width']}x{v['height']} h264 + {audio[0]['codec_name']} in {elapsed:.1f} s; boundaries {checks}")
     finally:
         await service.stop()

@@ -308,9 +308,14 @@ authorised_boards?, format, settings?}`) with `settings.scope`:
   declared-config check against the plan's master composition (`_composition_mismatch` otherwise).
 - **Scene failure**: a `cancelRender` whose message starts with `jarvis_master_scene_failed:` ends the job as `presentation_render_master_scene_failed`
   naming the scene; no partial MP4, no fallback card.
-- **Verification**: today's video checks (one h264 stream, master width/height/fps, duration = range) plus, when any mounted source plays an
-  `<Audio>` element, an audio stream must exist (pinned ffprobe; without ffprobe the check fails closed). Corrected by Slice 06: a `<Video>` /
-  `<OffthreadVideo>` alone does not require one, since its clip may be silent and Remotion then writes no audio track.
+- **Verification**: today's video checks (one h264 stream, master width/height/fps, duration = range) plus, when the rendered range overlaps a
+  scene whose source plays an `<Audio>` element, an audio stream must exist (pinned ffprobe; without ffprobe the check fails closed).
+  Corrected by Slice 06: a `<Video>` / `<OffthreadVideo>` alone does not require one (its clip may be silent and Remotion then writes no
+  audio track), and a range that holds no `<Audio>` scene requires none. The detection is **textual** (comments stripped, `<Audio` or
+  `<Html5Audio` in the scene's modules): an aliased import (`import {Audio as Sound}`) skips the check (the MP4 is verified like a scene
+  render, without the audio requirement); a user component named `Audio` or a muted `<Audio>` counts, and if Remotion then writes no audio
+  track the job fails `presentation_render_output_invalid` with « the whole video plays an <Audio> but the MP4 holds no audio stream »
+  (the user renders a range without that scene, or removes the element).
 - **Artifact**: one `presentation_video` derivative, one `rendered_from` relation to the snapshot, `render_flat: true`. Metadata for a master
   render: `render_scope: "master"`, `render_project_key`, `render_scene_count`, `render_composition: "JarvisPresentation"`, the master
   `render_fps` / `render_width` / `render_height`, the shared engine keys, and the MP4/finish keys of today; the per-scene keys
@@ -329,7 +334,9 @@ planner re-exports it), `presentation_render_master_incompatible` (409; `RenderE
 envelope beside `code` and `message`), `presentation_render_master_scene_failed`, `master_scene_failure` (reads the boundary's marker).
 `jarvis/domain/presentation_render_master.py`: `choose_master(package)`, `master_files(package, target)` (re-plans the re-read package at
 execution: another `project_key` is `presentation_render_snapshot_invalid`), `audio_required` (textual `<Audio>` check).
-`PresentationRenderService.submit` resolves a master target before creating anything and queues it like any render (same queue, browser
+`PresentationRenderService.export` with `scope: "master"` first plans the LIVE variant (`MasterProjectReader.live_plan`, wired in
+`v2_app`) and refuses an incompatible one (409 `presentation_render_master_incompatible`) before anything is frozen; once frozen, the
+package's own plan is the authority. `PresentationRenderService.submit` resolves a master target before creating anything and queues it like any render (same queue, browser
 slot, cancellation, restart recovery, guard, disk budgets); the job runs `render-host.cjs` with entry `studio-root.tsx`, composition
 `JarvisPresentation` and input props `{}`; a master job view adds `scope`, `project_key`, `scene_count` (its `scene_id` is `null`).
 `RenderRunner.verify(..., audio_required=True)` checks the audio stream. `PresentationRenderService.master_readiness(snapshot_id)` serves
