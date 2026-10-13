@@ -19,7 +19,7 @@ ses refus portent `publish_code`, `diagnostics`, `base` / `current` dans l'envel
 
 Cible maître (master-project-studio-export Slice 05, `docs/remotion-master-project.md` § 9) : `open`, `sync` et `restart` acceptent aussi
 `{"kind": "variant_master", "presentation_id", "variant_id", "project_key", "acknowledge_unsandboxed_project": true}` (au plus ~420 octets avec
-`discard_unpublished` : sous le plafond de 1024) ; refus 409 `remotion_studio_master_incompatible` (`reason`, `detail`, `scene_ids`),
+`discard_unpublished`, admis aussi par `restart` maître ; le corps de scène de `restart` reste exactement l'accusé : sous le plafond de 1024) ; refus 409 `remotion_studio_master_incompatible` (`reason`, `detail`, `scene_ids`),
 `remotion_studio_master_stale` (`project_key`, `variant_revision`, `scene_count` courants) ; `publish` d'une cible maître : 409
 `remotion_studio_publish_master_unsupported`.
 
@@ -124,5 +124,5 @@ class RemotionStudioProtocolRoutes:
 
     async def restart(self, request: web.Request) -> web.StreamResponse:
         service = self._service()
-        master = parse_restart(await self._body(request))
-        return web.json_response({"studio": await service.restart(acknowledged=True, master=master)})
+        master, discard = parse_restart(await self._body(request))
+        return web.json_response({"studio": await service.restart(acknowledged=True, master=master, discard=discard)})

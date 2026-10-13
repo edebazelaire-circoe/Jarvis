@@ -1,6 +1,7 @@
 {
  "slice": "05-remotion-studio-master-project",
- "tested_head": "10598193",
+ "tested_head": "82bb0c7a",
+ "tested_head_note": "corrected by the Slice 05 QA polish: the run recorded git HEAD 10598193 (pre-Slice-05) because the Slice 05 code was not yet committed when it ran; the tested code is the Slice 05 code commit 82bb0c7a",
  "durations_ms": {
   "private_runtime_copy": 6821,
   "studio_open_master_cold": 83916,

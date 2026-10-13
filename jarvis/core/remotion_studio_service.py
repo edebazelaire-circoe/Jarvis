@@ -465,12 +465,19 @@ class RemotionStudioService:
         except StudioError as exc:
             self._note(state, f"{exc.code.value}: {exc.detail}")
 
-    async def _start_locked(self, state: StudioState, pin: StudioRequest, prepared: Prepared | None = None, *, discard: bool = False) -> None:
-        # Slice 12 : d'abord les fichiers non publiés (le refus le plus utile, et rien n'a encore changé : ni état, ni fichier)
+    async def _check_unpublished(self, state: StudioState, pin: StudioRequest, *, discard: bool) -> tuple[tuple[str, ...], bool]:
+        """(fichiers non publiés, garder l'espace) pour un lancement sur `pin` ; refus `unpublished_edits` si on ne garde pas sans
+        `discard`. Lecture seule : `restart` l'appelle AVANT d'arrêter le Studio (QA Slice 05 : un refus laisse le Studio tourner)."""
+
         edited = await asyncio.to_thread(self._runner.modified_work) if state.target is not None else ()
         keep = bool(edited) and same_target(state, pin) and await asyncio.to_thread(self._runner.has_workspace)
         if edited and not keep and not discard:
             await self._refuse_unpublished(edited, state, pin)
+        return edited, keep
+
+    async def _start_locked(self, state: StudioState, pin: StudioRequest, prepared: Prepared | None = None, *, discard: bool = False) -> None:
+        # Slice 12 : d'abord les fichiers non publiés (le refus le plus utile, et rien n'a encore changé : ni état, ni fichier)
+        edited, keep = await self._check_unpublished(state, pin, discard=discard)
         runtime_status = await asyncio.to_thread(self._capability_status)
         if runtime_status not in RUNNABLE_CAPABILITY:
             raise StudioError(C.RUNTIME_UNAVAILABLE, f"the Remotion capability is '{runtime_status}': install or repair it first "
@@ -617,9 +624,10 @@ class RemotionStudioService:
         await asyncio.to_thread(self._save, state)
         self._emit("stopped", "Studio stopped", reason=reason)
 
-    async def restart(self, *, acknowledged: bool = False, master: MasterRequest | None = None) -> dict[str, Any]:
+    async def restart(self, *, acknowledged: bool = False, master: MasterRequest | None = None, discard: bool = False) -> dict[str, Any]:
         """Relance sur la cible enregistrée : la scène (accusé de scène) ou un projet maître (`master` : corps maître, accusé lié à la
-        clé ; replanifié, refusé s'il est périmé ou incompatible, avant tout arrêt)."""
+        clé ; replanifié, refusé s'il est périmé ou incompatible, avant tout arrêt). Vers une autre clé, des modifications non publiées
+        sont refusées AVANT l'arrêt (le Studio continue de tourner) sauf `discard` (corps maître seulement, § 9)."""
 
         D._require_ack(acknowledged)
         self._acquire()
@@ -632,13 +640,14 @@ class RemotionStudioService:
                     raise StudioError(C.ACK_REQUIRED, D.PROJECT_ACK_REFUSAL)
                 raise StudioError(C.NOT_RUNNING, "there is no scene to reopen: open the Studio on a scene first")
             prepared = await self._resolve(master) if master is not None else None
+            await self._check_unpublished(state, pin, discard=discard)  # avant tout arrêt : un refus ne change rien
             restarts = state.restarts + 1
             if state.status is not S.FAILED or state.process_ref:
                 await self._close_locked(state, "restart")
             if state.status is S.FAILED:
                 state.status = S.STOPPED
             state.restarts = restarts
-            await self._start_locked(state, pin, prepared)
+            await self._start_locked(state, pin, prepared, discard=discard)
             return self._view(state)
 
     # ------------------------------------------------------------------ publication (Slice 12)

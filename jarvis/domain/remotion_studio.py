@@ -275,13 +275,18 @@ def parse_target(raw: object) -> StudioPin | MasterRequest:
     return parse_master(raw) if _is_master_body(raw) else parse_open(raw)  # type: ignore[arg-type]
 
 
-def parse_restart(raw: object) -> MasterRequest | None:
-    """Body of `restart`: `{acknowledge_unsandboxed_scene: true}` (the recorded scene: `None`) or a master body."""
+def parse_restart(raw: object) -> tuple[MasterRequest | None, bool]:
+    """Body of `restart` -> (master request, discard): `{acknowledge_unsandboxed_scene: true}` exactly (the recorded scene: `None`;
+    a scene restart never switches target, so it keeps its edits and takes no `discard_unpublished`), or a master body with the
+    optional `discard_unpublished: true` (a restart to another key can set edits aside, § 9 of remotion-master-project.md)."""
 
     if _is_master_body(raw):
-        return parse_master(raw)  # type: ignore[arg-type]
+        from jarvis.domain.remotion_studio_workspace import split_discard  # local: the workspace module imports this one
+
+        body, discard = split_discard(raw)
+        return parse_master(body), discard
     parse_ack_only(raw)
-    return None
+    return None, False
 
 
 def target_view(target: StudioTarget | None) -> dict[str, Any] | None:

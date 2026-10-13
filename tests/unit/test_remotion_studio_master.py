@@ -105,7 +105,19 @@ def body(key: str = "mpk_" + "a" * 24, **extra):
 def test_the_scene_body_is_unchanged_and_the_master_body_is_its_own_shape():
     assert D.parse_target({"prefab_id": PIN.prefab_id, "version": 1, D.ACK_FIELD: True}) == PIN
     assert D.parse_target(body()) == MasterRequest(PID, VID, "mpk_" + "a" * 24)
-    assert D.parse_restart({D.ACK_FIELD: True}) is None and D.parse_restart(body()) == MasterRequest(PID, VID, "mpk_" + "a" * 24)
+    assert D.parse_restart({D.ACK_FIELD: True}) == (None, False)
+    assert D.parse_restart(body()) == (MasterRequest(PID, VID, "mpk_" + "a" * 24), False)
+
+
+def test_restart_takes_discard_unpublished_only_with_a_master_body():
+    """§ 9: the master body (with `discard_unpublished`) serves `restart` too; the scene restart body stays exactly `{ack}` (a scene
+    restart never switches target, so its edits are always kept)."""
+
+    assert D.parse_restart(body(discard_unpublished=True)) == (MasterRequest(PID, VID, "mpk_" + "a" * 24), True)
+    for raw in (body(discard_unpublished=False), body(discard_unpublished="true"), {D.ACK_FIELD: True, "discard_unpublished": True}):
+        with pytest.raises(StudioError) as caught:
+            D.parse_restart(raw)
+        assert caught.value.code is C.INVALID and caught.value.http_status == 400
 
 
 @pytest.mark.parametrize("raw", [
@@ -183,6 +195,21 @@ def test_a_master_state_is_schema_2_with_a_target_instead_of_a_pin_and_round_tri
 def test_an_unknown_schema_or_a_malformed_master_target_is_refused_never_guessed(raw):
     with pytest.raises((ValueError, StudioError)):
         D.StudioState.from_payload(raw)
+
+
+@pytest.mark.parametrize("revision", ["absent", -1, None, "3", True])
+async def test_a_schema_2_target_without_a_valid_variant_revision_is_unreadable(stack, revision):
+    raw_target = target().to_dict()
+    if revision == "absent":
+        del raw_target["variant_revision"]
+    else:
+        raw_target["variant_revision"] = revision
+    stack.runner.state = {"schema": 2, "status": "stopped", "target": raw_target}
+    view = await stack.service.status()
+    assert view["status"] == "failed" and view["last_error_code"] == C.STATE_UNREADABLE.value
+    with pytest.raises(StudioError) as caught:
+        await stack.service.open(stack.request(), acknowledged=True)
+    assert caught.value.code is C.STATE_UNREADABLE and stack.runner.calls.count("launch") == 0
 
 
 async def test_an_unreadable_master_state_fails_closed_and_is_never_rewritten(stack):
@@ -274,6 +301,20 @@ async def test_the_same_key_reuses_the_living_studio(stack):
     await stack.service.open(stack.request(), acknowledged=True)
     again = await stack.service.open(stack.request(), acknowledged=True)
     assert again["reused"] is True and stack.runner.launches == [None] and len(stack.reader.calls) == 2, "replanned, not relaunched"
+
+
+async def test_opening_a_new_key_while_ready_syncs_instead_of_reusing(stack):
+    """Target identity includes `project_key`: K1 open, the variant moves to K2, `open` K2 hot-syncs the same process (never « reused »)."""
+
+    await stack.service.open(stack.request(), acknowledged=True)
+    old_key = stack.reader.plan.project_key
+    stack.reader.plan = plan_of(stack.srcs, props="Edited", revision=4)
+    stack.events.events.clear()
+    view = await stack.service.open(stack.request(), acknowledged=True)
+    kinds = stack.events.kinds()
+    assert "remotion_studio.synced" in kinds and "remotion_studio.reused" not in kinds
+    assert view["target"]["project_key"] == stack.reader.plan.project_key != old_key and view["syncs"] == 1
+    assert stack.runner.launches == [None] and stack.runner.work == plan_master_files(stack.reader.plan)
 
 
 async def test_a_stale_key_is_refused_with_the_current_key_and_nothing_changes(stack):
@@ -385,7 +426,9 @@ async def test_publish_on_a_master_is_refused_before_the_workspace_is_read(stack
     with pytest.raises(StudioError) as caught:
         await stack.service.publish(PublishRequest(PID, VID, IDS[0], StudioPin(PREFABS[0], 1), "0" * 64))
     assert caught.value.code is C.PUBLISH_MASTER_UNSUPPORTED and caught.value.http_status == 409
-    assert "workspace_diff" not in stack.runner.calls and stack.runner.calls == []
+    for read in ("workspace_diff", "has_workspace", "modified_work"):
+        assert read not in stack.runner.calls, read
+    assert stack.runner.calls == [], "refused before any workspace read"
 
 
 async def test_restart_of_a_master_needs_the_master_body_and_replans(stack):
@@ -398,6 +441,36 @@ async def test_restart_of_a_master_needs_the_master_body_and_replans(stack):
     assert caught.value.code is C.MASTER_STALE and stack.runner.launches == [None], "refused before anything stops"
     view = await stack.service.restart(acknowledged=True, master=stack.request())
     assert view["status"] == "ready" and view["restarts"] == 1 and len(stack.runner.launches) == 2
+
+
+async def test_a_refused_master_restart_to_another_key_leaves_the_studio_running(stack):
+    """QA Slice 05: unpublished edits are checked BEFORE the restart stops anything; `discard_unpublished` then sets them aside."""
+
+    await stack.service.open(stack.request(), acknowledged=True)
+    edited = f"src/scenes/{IDS[1]}/Scene.tsx"
+    stack.runner.work[edited] = b"// edited by the user\n"
+    stack.reader.plan = plan_of(stack.srcs, props="Edited", revision=4)
+    stack.runner.calls.clear()
+    with pytest.raises(StudioError) as caught:
+        await stack.service.restart(acknowledged=True, master=stack.request())
+    assert caught.value.code is C.UNPUBLISHED_EDITS and caught.value.http_status == 409
+    assert caught.value.extra["classified"] == [{"path": edited, "class": "scene", "scene_id": IDS[1]}]
+    assert "stop" not in stack.runner.calls and stack.runner.stopped == [], "the refused restart stopped nothing"
+    view = await stack.service.status()
+    assert view["status"] == "ready" and view["restarts"] == 0 and stack.runner.work[edited] == b"// edited by the user\n"
+    view = await stack.service.restart(acknowledged=True, master=stack.request(), discard=True)
+    assert view["status"] == "ready" and view["restarts"] == 1 and len(stack.runner.launches) == 2
+    assert view["target"]["project_key"] == stack.reader.plan.project_key and stack.runner.saved_aside == [(edited,)]
+    assert stack.runner.work == plan_master_files(stack.reader.plan)
+
+
+async def test_a_master_restart_on_the_same_key_keeps_its_edits(stack):
+    await stack.service.open(stack.request(), acknowledged=True)
+    edited = f"src/scenes/{IDS[0]}/Scene.tsx"
+    stack.runner.work[edited] = b"// kept\n"
+    view = await stack.service.restart(acknowledged=True, master=stack.request())
+    assert view["status"] == "ready" and view["restarts"] == 1 and stack.runner.work[edited] == b"// kept\n"
+    assert stack.runner.saved_aside == []
 
 
 async def test_a_new_core_adopts_the_master_and_rebuilds_the_edit_ownership_from_the_pins(stack):

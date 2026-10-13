@@ -265,7 +265,9 @@ keeps meaning a scene target):
 plus `"discard_unpublished": true` when the user confirmed setting edits aside (as for a scene, `true` is the only admitted value).
 
 A body mixing `kind: "variant_master"` with `prefab_id`/`version`, or `acknowledge_unsandboxed_scene` with a master body, is
-`remotion_studio_invalid` (400). The same body serves `open`, `sync` and `restart`.
+`remotion_studio_invalid` (400). The same body, `discard_unpublished` included, serves `open`, `sync` and `restart`. The scene `restart`
+body stays exactly `{"acknowledge_unsandboxed_scene": true}` ([remotion-studio.md](remotion-studio.md) § 2 bis: a scene restart reopens the
+recorded scene, so its edits are always kept and it has nothing to discard); `discard_unpublished` there is `remotion_studio_invalid`.
 
 - **Target**: `StudioTarget = scene(pin) | variant_master(presentation_id, variant_id, variant_revision, project_key, scenes: ((scene_id, pin), …))`.
   Target equality for a master is `(presentation_id, variant_id, project_key)`; a changed key is a different target (it goes through `sync`, with
@@ -288,12 +290,15 @@ A body mixing `kind: "variant_master"` with `prefab_id`/`version`, or `acknowled
 - **Refresh after a voice edit**: the running Studio never follows a new key by itself. The view says `stale: true`; Variants says the video
   changed since Remotion Studio opened and offers « Actualiser » (a `sync` with the new key, after the same confirmation).
 - **Unpublished master edits** (detected by `modified_work` against `work.files.json`, as today), classified:
-  1. **generated** (`package.json`, `studio-root.tsx`, `src/master/**`, normally read-only);
-  2. **per-scene**: `src/scenes/<scene_id>/**`, or a `public/**` file owned by exactly one scene;
-  3. **shared**: a `public/**` file owned by several scenes or by none.
+  1. **generated** (`package.json`, `studio-root.tsx`, and any path under `src/master/**`, normally read-only; a file the user adds there is
+     generated too);
+  2. **per-scene**: `src/scenes/<scene_id>/**` of a mounted scene, or a `public/**` file owned by exactly one scene;
+  3. **shared**: everything else: a `public/**` file owned by several scenes or by none, any other top-level file (e.g.
+     `remotion.config.ts`), `src/scenes/<id>/**` of a scene that is not mounted, any other path, and the runner's unreadable-listing marker
+     (`<...>`). Classification goes by path only: a link, junction or hard link counts by the path it sits at, like a file.
   A `sync`, `restart` to another key, or a switch to another target with any of them is refused `remotion_studio_unpublished_edits` (409,
   naming the files and their class) unless `discard_unpublished: true`, which sets them aside in `studio-edits/` exactly as today. Never an
-  overwrite.
+  overwrite. A refused `restart` stops nothing: the edits (like a stale or incompatible key) are checked before the running Studio is closed.
 - **Agent write gate** (`presentation_studio_scene_edited_in_remotion`): while a master target is recorded, a `brain` source edit of scene X is
   refused only when class-2 edits on X exist, or when the listing is unreadable. Generated or shared edits never block a voice edit (they are
   refused at the next sync instead), so an unpublishable master edit cannot block D5.
@@ -312,7 +317,8 @@ once per mounted pin, `public/**` ownership kept from the plan and rebuilt from 
 counts as unknown edits for the gate), `stale` / `current_project_key` recomputed by the status poll at most every 5 s with
 `live_plan(..., trace=False)`. The write gate is `presentation_studio_reload._refuse_over_studio_edits`. Facts the implementation fixes: a
 `sync {}` or a scene-ack `restart` while a master is recorded is `remotion_studio_ack_required`; `restart` with a master body re-plans first
-(stale or incompatible: nothing stops); the largest master body (128-character ids, `discard_unpublished`) is under 450 bytes, within the
+(stale or incompatible: nothing stops) and checks unpublished edits before closing (`_check_unpublished`; refused: nothing stops, QA
+Slice 05 polish); the largest master body (128-character ids, `discard_unpublished`) is under 450 bytes, within the
 route's 1 KiB cap. Tests: `tests/unit/test_remotion_studio_master.py` (bodies, schemas 1/2 and an older state file, classes, read-only
 generated files on the real runner, open / reuse / stale / incompatible / switch / discard / publish refused / restart / adoption, the write
 gate on a real reload rig), `tests/unit/test_remotion_studio_master_routes.py` (Core and Control Center routes, page client). Real proof,
