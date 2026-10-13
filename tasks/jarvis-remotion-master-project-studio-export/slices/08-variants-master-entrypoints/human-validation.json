@@ -3,7 +3,44 @@
     {
       "id": "HV-RMP-08-01",
       "instruction": "Confirm the Variants controls make the project-level Remotion Studio and whole-video export semantics clear without degrading the existing player/transport workflow.",
-      "requires_evidence_first": true
+      "requires_evidence_first": true,
+      "prerequisite": "The user restarts their own Jarvis on branch task/jarvis-remotion-master-project-studio-export themselves; no agent does it. No migration in this task.",
+      "evidence": [
+        "slices/08-variants-master-entrypoints/evidence/ (variants-master-*.png at 800x600, 1280x720, 1920x1080; confirm and 12-scene confirm; real-studio-*.png and real-export-*.png; variants-master-summary.json, variants-master-door-summary.json)",
+        "slices/09-release-and-human-acceptance/evidence/export-done.png, throwing-scene.png, legacy-variants.png, core-outage.png"
+      ],
+      "checklist": [
+        {
+          "id": "HV-RMP-08-01-a",
+          "step": "Open a master-ready presentation in Variants (windowed, then full HD and a small window).",
+          "look_at": "Row under the video: « Remotion Studio » (primary), « Exporter la vidéo », « Présenter »; the master line « Vidéo entière : … N scènes (durée) » with the quiet text button « Cette scène seule dans Remotion Studio ». Is it clear which button acts on the whole video and which on the scene on screen?",
+          "record": "pass/fail, screen size, one sentence on clarity"
+        },
+        {
+          "id": "HV-RMP-08-01-b",
+          "step": "Click « Exporter la vidéo ».",
+          "look_at": "A live line « Export de la vidéo entière (N scènes) — Rendu des images · a/b images (x %) · s · délai … » with « Annuler l'export », then « Vidéo entière exportée : Artefact … » and « Ouvrir la vidéo ». A failure says « Export de la vidéo entière échoué … » with its code in small print (known polish: the code line can be cut at the right edge; « Réessayer » is also offered after a scene error).",
+          "record": "pass/fail, render time"
+        },
+        {
+          "id": "HV-RMP-08-01-c",
+          "step": "Play the deck with « Lire », scrub, « Suivant »/« Précédent », full screen, « Présenter », as before this task.",
+          "look_at": "Transport and Players behave as before (no new control over the slide in full screen; the strip is not squeezed).",
+          "record": "pass/fail"
+        },
+        {
+          "id": "HV-RMP-08-01-d",
+          "step": "Open an older deck whose scenes have different frame rates or sizes.",
+          "look_at": "The line gives the reason followed by « « Remotion Studio » ouvre donc la scène à l’écran. »; « Exporter la vidéo » is disabled with the reason and the advice to export scene by scene; « Remotion Studio » opens the scene.",
+          "record": "pass/fail"
+        },
+        {
+          "id": "HV-RMP-08-01-e",
+          "step": "Board Artifacts: under a frozen copy of a master-ready presentation with at least two scenes, « Exporter cette copie » MP4.",
+          "look_at": "The line says « Export MP4 (vidéo entière, N scènes) en cours »; a single-scene copy exports as before.",
+          "record": "pass/fail"
+        }
+      ]
     }
   ]
 }

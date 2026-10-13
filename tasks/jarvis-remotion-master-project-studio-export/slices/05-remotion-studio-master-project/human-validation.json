@@ -3,7 +3,32 @@
     {
       "id": "HV-RMP-05-01",
       "instruction": "On a real browser with the real managed Remotion Studio, confirm that the primary presentation Studio opens the whole variant/master composition and feels like one normal Remotion project rather than a single-slide project.",
-      "requires_evidence_first": true
+      "requires_evidence_first": true,
+      "prerequisite": "The user restarts their own Jarvis (Core + Control Center) on branch task/jarvis-remotion-master-project-studio-export themselves; no agent starts, restarts or stops it. No migration and no new environment variable in this task. The Remotion capability must be `ready` (card « Présentations · moteur »).",
+      "evidence": [
+        "slices/05-remotion-studio-master-project/evidence/ (studio-master-open.png, studio-master-scene2.png, studio-master-scene3.png, studio-master-summary.json: real remotion studio on a 3-scene master, variant switch, unpublished-edit refusal, back to a scene target)",
+        "slices/09-release-and-human-acceptance/evidence/studio-master.png and release-studio-summary.json (4 scenes 1920x1080 @ 30 opened from Variants in ~35 s; JarvisPresentation, <Series>, the audio track; scenes 1-4 seen by stepping; unpublished edits set aside only after discard; Core outage)"
+      ],
+      "checklist": [
+        {
+          "id": "HV-RMP-05-01-a",
+          "step": "Pick (or ask Jarvis for) a Remotion presentation whose scenes share one size and frame rate (a new Jarvis deck is 1920x1080 @ 30). Open it in Variants; under the video the line reads « Vidéo entière : « titre », variante n, N scènes (durée). ». Click « Remotion Studio », read the dialog (« N scènes vont tourner hors du bac à sable, dans Remotion Studio »), confirm.",
+          "look_at": "The dialog names the whole video, not one scene; a counter runs while Studio starts (30-90 s cold); the line then says « Remotion Studio est ouvert sur la vidéo entière (N scènes) » or offers the tab link.",
+          "record": "pass/fail, cold start time"
+        },
+        {
+          "id": "HV-RMP-05-01-b",
+          "step": "In the Remotion Studio tab: the composition list holds one `JarvisPresentation`; play it or drag the playhead across the whole timeline; open the file tree.",
+          "look_at": "One timeline whose duration is the sum of the scenes; a <Series> with one sequence per scene, in variant order, each scene starting at its own beginning; media tracks (audio/video) where your scenes have them; `src/scenes/<scene>/` per scene and generated `studio-root.tsx` / `src/master/` (read-only). Does it feel like one normal Remotion project?",
+          "record": "pass/fail, judgement in one sentence"
+        },
+        {
+          "id": "HV-RMP-05-01-c",
+          "step": "Optional: edit a scene file in Remotion Studio, then in Variants click « Remotion Studio » on another variant (or « Actualiser » after a voice edit).",
+          "look_at": "Jarvis refuses to rebuild while the edit is unpublished and names the file; confirming sets it aside in `<data root>/local_capabilities/remotion/studio-edits/<timestamp>/` (never overwritten, never published). To keep a scene edit: « Cette scène seule dans Remotion Studio », then « Publier dans la variante… ».",
+          "record": "pass/fail"
+        }
+      ]
     }
   ]
 }

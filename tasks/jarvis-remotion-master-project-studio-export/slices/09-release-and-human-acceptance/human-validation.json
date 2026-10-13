@@ -3,7 +3,46 @@
     {
       "id": "HV-RMP-09-01",
       "instruction": "Final acceptance: inspect the master project in Remotion Studio and the resulting exported MP4 (image, transitions/scene changes, authored audio/video) and confirm it matches the mental model of one Remotion video project while the existing Jarvis presentation path remains available.",
-      "requires_evidence_first": true
+      "requires_evidence_first": true,
+      "prerequisite": "The user restarts their own Jarvis on branch task/jarvis-remotion-master-project-studio-export themselves; no agent starts, restarts or stops it. No migration (no _SCHEMA_VERSION change in d101d887..HEAD), no new environment variable. Do HV-RMP-05-01, 07-01 and 08-01 first or together.",
+      "evidence": [
+        "../../REPORT.md (final report; committed by agent 0)",
+        "evidence/release-studio-summary.json + studio-master.png (master Studio from Variants, 4 scenes, scenes 1-4 seen)",
+        "evidence/release-export-summary.json + boundaries.png + export-done.png (one MP4 1920x1080 30/1, 150 frames, h264 + aac; frames before/after each boundary = expected scene at local 0 / last frame; audio -18.3 dBFS in the <Audio> scene, silence after)",
+        "evidence/legacy-summary.json + legacy-variants.png (mixed-fps deck: master refused with its sentence, Lire plays, scene Studio and scene export work)",
+        "evidence/core-outage.png, throwing-scene.png and the injections block of the summaries (no canonical file changed)",
+        "evidence/trace-t2/ (real voice-path trace on the release head)"
+      ],
+      "checklist": [
+        {
+          "id": "HV-RMP-09-01-a",
+          "area": "master project",
+          "step": "Open a master-ready deck that has at least one scene with sound or video (ask Jarvis for one with a short background sound if needed). « Remotion Studio » → confirm → in Remotion Studio, play `JarvisPresentation` from start to end.",
+          "look_at": "One project, one composition, every scene in order in one timeline, each scene starting at its own start; nothing in Studio suggests « one slide ».",
+          "record": "pass/fail, one sentence"
+        },
+        {
+          "id": "HV-RMP-09-01-b",
+          "area": "exported MP4",
+          "step": "« Exporter la vidéo », then « Ouvrir la vidéo » and watch it with sound on the target machine (and the projector if used for presentations).",
+          "look_at": "Image quality; each scene change clean (no black, white or mixed frame, no scene cut short at a score target); authored audio heard at the right moments; authored video clips play; duration = sum of the scenes.",
+          "record": "pass/fail per scene change, any defect with its time code"
+        },
+        {
+          "id": "HV-RMP-09-01-c",
+          "area": "existing path",
+          "step": "On the same deck and on an older mixed-fps deck: « Lire », « Présenter », « Cette scène seule dans Remotion Studio » → edit → « Publier dans la variante… », and a scene export from the Board's Artifacts.",
+          "look_at": "Everything that worked before this task still works; the older deck says why the whole video is not available and keeps the scene door.",
+          "record": "pass/fail"
+        },
+        {
+          "id": "HV-RMP-09-01-d",
+          "area": "judgement",
+          "step": "Read REPORT.md § 7 (residual risks: R1 Studio line during a Core outage, R2 browser-launch label, R3 retry after a scene error and cut code line, Issues 01-03, textual detections, 9000-frame cap).",
+          "look_at": "Decide which are acceptable for release and which you want as follow-up tasks. Issue 03 (explorer autoplay lost by the d101d887 merge into main) needs your decision: port it or retire its test.",
+          "record": "accept / follow-ups wanted (list)"
+        }
+      ]
     }
   ]
 }
