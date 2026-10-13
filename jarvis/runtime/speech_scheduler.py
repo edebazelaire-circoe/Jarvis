@@ -269,6 +269,10 @@ class _Reflex:
     admission: OutputAdmission | None = None
 
 
+#: Délais de sortie prolongés tant que le haut-parleur lit encore (surface sans fin de sortie).
+MAX_BUSY_EXTENSIONS = 8
+
+
 class SpeechScheduler:
     """Décide ce que la surface vocale dit maintenant, et le fait dire une fois.
 
@@ -561,6 +565,9 @@ class SpeechScheduler:
         # longues secondes. Sans lui, une phrase de plus de `output_timeout_s`
         # passait pour bloquée et la suivante partait par-dessus.
         self.output_alive: Callable[[str], bool] | None = None
+        #: Sur une surface sans fin de sortie (Live), le bridge dit si du son est encore en lecture ici : l'identifiant
+        #: réservé de la parole n'est pas celui du fournisseur, `output_alive` ne peut donc pas le savoir.
+        self.live_output_busy: Callable[[], bool] | None = None
         self._user_speaking = False
         self._user_quiet = asyncio.Event()
         self._user_quiet.set()
@@ -2974,12 +2981,20 @@ class SpeechScheduler:
                 active.completion_basis = COMPLETION_UNCONFIRMED
                 return
         try:
+            busy_extensions = 0
             while True:
                 try:
                     await asyncio.wait_for(active.done.wait(), timeout=self.output_timeout_s)
                     return
                 except asyncio.TimeoutError:
                     still_active = self._output_still_alive(active.output_id)
+                    # Une parole longue sur Live (plus de 30 s) n'est pas « bloquée » tant que le haut-parleur la lit :
+                    # la déclarer interrompue bloquait la chaîne et faisait dire la suivante par-dessus. Borné, pour
+                    # qu'une quiescence jamais atteinte ne tienne pas la file indéfiniment.
+                    if (not still_active and self._without_output_final and self.live_output_busy is not None
+                            and busy_extensions < MAX_BUSY_EXTENSIONS and self.live_output_busy()):
+                        busy_extensions += 1
+                        still_active = True
                     self.output_stall_count += 1
                     self._trace(
                         OUTPUT_STALLED,

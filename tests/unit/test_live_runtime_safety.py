@@ -216,3 +216,127 @@ async def test_interruption_during_async_preplay_callback_cannot_write_after_lat
         await asyncio.gather(pending, return_exceptions=True)
         await audio.close()
         await session.close()
+
+
+class _AckFrontend(FakeVoiceFrontend):
+    """Le frontal factice, avec la position du flux et le rang de l'accusé des appends de parole."""
+
+    def __init__(self):
+        super().__init__()
+        self.boundaries = {}
+
+    @property
+    def last_sequence(self):
+        return self._sequence
+
+    def ack(self, operation_id):
+        self.boundaries[str(operation_id)] = self._sequence
+
+    def ack_boundary(self, operation_id):
+        return self.boundaries.pop(str(operation_id), None)
+
+
+def _chunk(frontend, output_id, level=1):
+    return frontend.event(AssistantAudioChunk(VoiceAudioChunk(level.to_bytes(2, "little") * 2400)),
+                          correlation=VoiceCorrelation("live-session", output_id=output_id))
+
+
+async def test_a_spoken_result_requested_after_a_barge_in_is_audible_again():
+    """Le bug : après un barge-in, toute la session restait muette alors que le transcript arrivait."""
+    frontend = _AckFrontend()
+    await ready(frontend)
+    session = LiveFrontendSession(frontend, "live-session")
+    journal = RecordingJournal()
+    session.journal = journal
+    try:
+        session.suppress_playback_until_session_end()
+        tail = _chunk(frontend, "interrupted-output", 4000)
+        assert list(session._legacy_events(tail)) == []
+
+        late_tail = _chunk(frontend, "interrupted-output", 4000)  # précède l'accusé : encore la queue
+        # L'append de la parole du cerveau est accusé : la frontière ordonnée du flux.
+        frontend.ack("spoken-1")
+        session.note_spoken_ack("spoken-1")
+        assert session.playback_suppressed
+        assert not any(session._legacy_events(late_tail))
+
+        # Un événement postérieur à l'accusé est la nouvelle parole.
+        frontend._sequence += 1
+        fresh = _chunk(frontend, "new-output", 4000)
+        emitted = list(session._legacy_events(fresh))
+        assert [item.message_type for item in emitted] == ["realtime.output_started", "realtime.audio"]
+        assert not session.playback_suppressed
+        assert any(entry["kind"] == "voice.live.playback_resumed" for entry in journal.events)
+    finally:
+        await session.close()
+
+
+async def test_the_latch_holds_without_a_spoken_result_whatever_the_input_or_the_output_id():
+    frontend = _AckFrontend()
+    await ready(frontend)
+    session = LiveFrontendSession(frontend, "live-session")
+    try:
+        session.suppress_playback_until_session_end()
+        session._observe(frontend.event(UserTranscriptDelta("input", "nouvelle question", 1),
+                                        correlation=VoiceCorrelation("live-session")))
+        for identity in ("after-input", "another-local-output", "third"):
+            assert not any(session._legacy_events(_chunk(frontend, identity, 4000)))
+        assert session.playback_suppressed
+    finally:
+        await session.close()
+
+
+async def test_a_spoken_ack_that_precedes_the_latch_does_not_release_the_old_tail():
+    frontend = _AckFrontend()
+    await ready(frontend)
+    session = LiveFrontendSession(frontend, "live-session")
+    try:
+        frontend.ack("early")  # accusé arrivé AVANT le barge-in
+        frontend._sequence += 1
+        session.suppress_playback_until_session_end()
+        session.note_spoken_ack("early")
+        frontend._sequence += 1
+        assert not any(session._legacy_events(_chunk(frontend, "tail", 4000)))
+        assert session.playback_suppressed
+    finally:
+        await session.close()
+
+
+async def test_the_brain_answer_after_a_barge_in_reaches_the_speaker_through_the_bridge():
+    """De bout en bout : le verrou posé par le pont, puis la parole du cerveau accusée, puis l'audio joué."""
+    frontend = _AckFrontend()
+    await ready(frontend)
+    session = LiveFrontendSession(frontend, "live-session")
+    audio, device, core = SoundDeviceRealtimeAudio(), FakeOutputStream(), RecordingCore()
+    audio._output = device
+    bridge = build_bridge(audio=audio, session=session, core=core)
+    first = audio_event("interrupted-output")
+    try:
+        bridge._note_output_received(first.payload, audio=True)
+        await bridge._handle_event(ProtocolEnvelope(message_type="realtime.output_started", payload=first.payload))
+        await bridge._play_audio(1, first)
+        await bridge._barge_in()
+        assert session.playback_suppressed
+        written_before = list(device.writes)
+
+        late = frontend.event(AssistantAudioChunk(VoiceAudioChunk(b"\x10\x0f" * 2400)),
+                              correlation=VoiceCorrelation("live-session", output_id="interrupted-output"))
+        session._observe(late)
+        assert list(session._legacy_events(late)) == []
+
+        frontend.ack("brain-answer")           # l'append de la réponse du cerveau est accusé
+        session.note_spoken_ack("brain-answer")
+        fresh = frontend.event(AssistantAudioChunk(VoiceAudioChunk(b"\x10\x0f" * 2400)),
+                               correlation=VoiceCorrelation("live-session", output_id="brain-output"))
+        session._observe(fresh)
+        envelopes = list(session._legacy_events(fresh))
+        assert [item.message_type for item in envelopes] == ["realtime.output_started", "realtime.audio"]
+        bridge._note_output_received(envelopes[1].payload, audio=True)
+        await bridge._handle_event(envelopes[0])
+        await bridge._play_audio(200, envelopes[1])
+
+        assert not session.playback_suppressed
+        assert len(device.writes) > len(written_before)
+    finally:
+        await audio.close()
+        await session.close()

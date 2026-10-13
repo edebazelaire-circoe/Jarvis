@@ -233,3 +233,44 @@ async def test_invalid_unicode_append_returns_typed_rejection_without_send():
         result = await frontend.append_quiet_context(VoiceTextUpdate("\ud800"), operation=op("invalid-unicode"))
         assert result.status is VoiceOperationStatus.REJECTED
         assert not any(message["type"] == "session.thinking.append" for message in transport.sent)
+
+
+async def test_a_spoken_result_ack_marks_the_stream_and_gives_the_next_audio_a_new_output():
+    """L'accusé d'une parole est une frontière ordonnée : ce qui le précède est l'ancienne réponse."""
+    async with active() as (frontend, transport):
+        pcm = base64.b64encode(b"\1\0" * 2400).decode()
+        transport.push({"type": "session.output_audio.delta", "delta": pcm})
+        await tick()
+        before = [event for event in frontend._events if isinstance(event.payload, AssistantAudioChunk)]
+        old_output = before[-1].correlation.output_id
+
+        call = asyncio.create_task(frontend.append_spoken_result(VoiceTextUpdate("résultat"), operation=op("spoken")))
+        await tick()
+        transport.push({"type": "session.commentary.appended", "client_event_id": "spoken", "start_ms": 1, "end_ms": 2})
+        await call
+        boundary = frontend.ack_boundary("spoken")
+        assert boundary == before[-1].sequence  # tout rang <= boundary précède l'accusé
+        assert frontend.ack_boundary("spoken") is None  # lu une seule fois
+
+        transport.push({"type": "session.output_audio.delta", "delta": pcm})
+        await tick()
+        after = [event for event in frontend._events if isinstance(event.payload, AssistantAudioChunk)][-1]
+        assert after.sequence > boundary
+        assert after.correlation.output_id != old_output
+
+
+async def test_a_thinking_ack_neither_marks_the_stream_nor_rotates_the_output():
+    async with active() as (frontend, transport):
+        pcm = base64.b64encode(b"\1\0" * 2400).decode()
+        transport.push({"type": "session.output_audio.delta", "delta": pcm})
+        await tick()
+        old_output = [e for e in frontend._events if isinstance(e.payload, AssistantAudioChunk)][-1].correlation.output_id
+        call = asyncio.create_task(frontend.append_quiet_context(VoiceTextUpdate("fait"), operation=op("quiet")))
+        await tick()
+        transport.push({"type": "session.thinking.appended", "client_event_id": "quiet", "start_ms": 1, "end_ms": 2})
+        await call
+        assert frontend.ack_boundary("quiet") is None
+        transport.push({"type": "session.output_audio.delta", "delta": pcm})
+        await tick()
+        same = [e for e in frontend._events if isinstance(e.payload, AssistantAudioChunk)][-1].correlation.output_id
+        assert same == old_output

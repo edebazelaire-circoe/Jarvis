@@ -382,7 +382,37 @@
     alert:['M12 5l8 14H4z','M12 10v4','M12 17v.01'],
     compare:['M4 5h7v14H4z','M13 5h7v14h-7z'],
     play:['M8 5l11 7-11 7z'],
+    pause:['M8 5v14','M16 5v14'],
+    restart:['M6 5v14','M18 6l-9 6 9 6z'],
+    rewind:['M12 6l-7 6 7 6','M20 6l-7 6 7 6'],
+    forward:['M4 6l7 6-7 6','M12 6l7 6-7 6'],
+    repeat:['M4 11V9a3 3 0 0 1 3-3h11','M15 3l3 3-3 3','M20 13v2a3 3 0 0 1-3 3H6','M9 21l-3-3 3-3'],
   });
+
+  /* ------------------------------------------------------------------ lecteur automatique du Studio (pur : l'horloge et les touches) */
+  /* Temps passé sur une slide avant la suivante (une slide ne porte pas sa durée ici : c'est un rythme de lecture, réglable). */
+  const AUTO_DWELL_CHOICES=Object.freeze([4000,8000,15000,30000]);
+  const AUTO_DWELL_DEFAULT=8000;
+  const AUTO_TICK_MS=250;
+  const AUTO_SKIP_MS=5000;
+  /* Deux flèches gauche à moins de ce délai : la slide d'avant (une seule : le début de la slide). */
+  const DOUBLE_LEFT_MS=650;
+  function autoStep(input){
+    const dwell=Math.max(1000,Number(input&&input.dwellMs)||AUTO_DWELL_DEFAULT);
+    const elapsed=Math.max(0,Number(input&&input.elapsedMs)||0);
+    const index=Number(input&&input.index)||0,count=Number(input&&input.count)||0;
+    if(elapsed<dwell)return {action:'stay',elapsedMs:elapsed};
+    if(index<count-1)return {action:'next',elapsedMs:0};
+    return input&&input.loop&&count>1?{action:'wrap',elapsedMs:0}:{action:'end',elapsedMs:dwell};
+  }
+  function leftKeyAction(lastLeftAt,at){
+    return lastLeftAt&&at-lastLeftAt>=0&&at-lastLeftAt<=DOUBLE_LEFT_MS?'previous':'restart';
+  }
+  function nextDwell(current){
+    const i=AUTO_DWELL_CHOICES.indexOf(current);
+    return AUTO_DWELL_CHOICES[(i+1)%AUTO_DWELL_CHOICES.length];
+  }
+  function dwellLabel(ms){return `${Math.round(ms/1000)} s par slide`}
 
   /* ------------------------------------------------------------------ feuille de style */
   /* Un seul parti pris : l'explorateur est un atelier sombre dont la lueur prend la palette de la variante regardée. Le flou est celui
@@ -507,6 +537,16 @@ html:has(#${HOST_ID}:not([hidden])) #jvFullscreenPrompt{top:auto;bottom:18px;lef
 #${HOST_ID} .jvx-play{display:inline-flex;gap:8px;flex:none}
 #${HOST_ID} .jvx-play .jvx-btn{min-height:30px;padding:0 10px;font-size:12px}
 #${HOST_ID} .jvx-play .jvx-btn svg{width:13px;height:13px}
+#${HOST_ID} .jvx-transport{display:flex;align-items:center;gap:8px;flex-wrap:wrap;min-width:0}
+#${HOST_ID} .jvx-transport .jvx-btn{min-height:34px;padding:0 10px}
+#${HOST_ID} .jvx-transport .jvx-btn svg{width:16px;height:16px}
+#${HOST_ID} .jvx-transport .jvx-t-play{min-width:44px;justify-content:center;border-color:var(--jvx-line-strong)}
+#${HOST_ID} .jvx-transport .jvx-t-play svg{width:20px;height:20px}
+#${HOST_ID} .jvx-transport .jvx-btn[aria-pressed="true"]{border-color:var(--jvx-accent);color:var(--jvx-accent)}
+#${HOST_ID} .jvx-t-bar{flex:1 1 120px;min-width:80px;height:6px;border-radius:999px;border:1px solid var(--jvx-line);overflow:hidden}
+#${HOST_ID} .jvx-t-bar>span{display:block;height:100%;width:0;background:var(--jvx-accent)}
+#${HOST_ID} .jvx-t-clock{color:var(--jvx-mute);font-variant-numeric:tabular-nums;font-size:12px;min-width:84px;text-align:right}
+#${HOST_ID} .jvx-t-keys{color:var(--jvx-mute);font-size:11px}
 #${HOST_ID} .jvx-vbar{display:flex;align-items:center;gap:6px;overflow-x:auto;padding:2px 2px 8px;scrollbar-width:thin;scrollbar-color:var(--jvx-line-strong) transparent;min-height:34px}
 @media (max-height:680px){#${HOST_ID} .jvx-vbar{display:none}}
 #${HOST_ID} .jvx-vbar-label{flex:none;color:var(--jvx-mute);font-size:11px;letter-spacing:.1em;text-transform:uppercase;padding-right:4px}
@@ -623,6 +663,7 @@ html:has(#${HOST_ID}:not([hidden])) #jvFullscreenPrompt .jvfs-bar{display:none}
     ROUTE,PLAYBACK_ROUTE,COMMAND_ROUTE,STATE_ROUTE,HOST_ID,OBJECT_ID,PREVIEW_OBJECT_ID,STYLE_ID,STORAGE_KEY,ROW_H,OVERSCAN,MAX_LIVE,MAX_ARCHIVED,
     MAX_TITLE,MAX_RATIONALE,MAX_RATIONALE_BYTES,MAX_DEPTH_SHOWN,INDENT_PX,DEEP_FROM,TYPEAHEAD_MS,PAGE_TOKEN,PAGE_TOKEN_HEADER,REQUEST_TIMEOUT_MS,READ_TIMEOUT_MS,PLAYBACK_CHECK_MS,LONG_PRESS_MS,
     PREVIEW_SETTLE_MS,NOTICE_MS,PREFS_MAX_COLLAPSED,STUDIO_STAGE_PREFIX,REFUSALS,COMMAND_REFUSALS,ICONS,CSS,
+    AUTO_DWELL_CHOICES,AUTO_DWELL_DEFAULT,AUTO_TICK_MS,AUTO_SKIP_MS,DOUBLE_LEFT_MS,autoStep,leftKeyAction,nextDwell,dwellLabel,
     clip,cleanLine,utf8Length,rationaleBytes,checkTitle,checkRationale,absoluteTime,relativeTime,creatorLabel,shortId,
     buildForest,childrenOf,ancestorsOf,subtreeIds,flatten,windowOf,treeKey,typeAhead,describeRefusal,planModel,blockedText,sameSet,readPrefs,writePrefs,
   });

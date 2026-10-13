@@ -110,6 +110,11 @@ class LiveFrontendSession:
         self.journal = None
         self.input_observation_revision = 0
         self._playback_suppressed = False
+        #: Position du flux au moment du verrou, et position au-delà de laquelle l'audio est celui d'une parole
+        #: demandée APRÈS le verrou (accusé ordonné de son append) : voir `suppress_playback_until_session_end`.
+        self._latch_sequence: int | None = None
+        self._resume_after: int | None = None
+        self._dropped_while_suppressed = 0
         self._request_deltas: deque[str] = deque()
         self._request_bytes = 0
         self._request_held = False
@@ -337,7 +342,10 @@ class LiveFrontendSession:
         for index, chunk in enumerate(segments[:MAX_APPEND_CHUNKS]):
             if index and (self._closed or self.playback_suppressed):
                 break
-            result = await method(VoiceTextUpdate(chunk), operation=self._operation(correlation))
+            operation = self._operation(correlation)
+            result = await method(VoiceTextUpdate(chunk), operation=operation)
+            if channel == "commentary":
+                self.note_spoken_ack(operation.operation_id)
             if not index:
                 self._require(result)
             elif result.status not in {VoiceOperationStatus.ACCEPTED, VoiceOperationStatus.COMPLETED}:
@@ -363,14 +371,54 @@ class LiveFrontendSession:
         return self._playback_suppressed
 
     def suppress_playback_until_session_end(self) -> None:
-        """No primary Live boundary distinguishes a new answer from an old tail.
+        """Couper l'audio de la réponse en cours, jusqu'à la prochaine parole demandée.
 
-        After application-authorized interruption, every output stays inaudible
-        for this incarnation. Only a new session after confirmed close may play;
-        input, transcript, delegation and append ACK cannot clear this latch.
-        The bridge calls this synchronously before awaiting the device stop.
+        Le fournisseur n'a aucun moyen d'annuler une réponse ni aucune frontière native entre l'ancienne et la
+        nouvelle : son reste arrive après la coupure. Le verrou jette donc tout l'audio, la queue comprise. Il ne
+        dure plus jusqu'à la fin de la session (la réponse du cerveau, demandée ensuite, restait alors muette pour
+        tout le reste de la session) : l'accusé d'un append de parole envoyé après le verrou est une frontière
+        ORDONNÉE du flux. Tout ce qui le précède est la queue de l'ancienne réponse, tout ce qui le suit est la
+        nouvelle parole (`note_spoken_ack`, `_try_resume`). Ni une entrée, ni un transcript, ni un nouvel
+        identifiant de sortie ne lèvent le verrou : un identifiant neuf peut encore être une queue.
+        Le pont l'appelle de façon synchrone avant d'attendre l'arrêt du périphérique.
         """
+        if not self._playback_suppressed:
+            self._latch_sequence = getattr(self.frontend, "last_sequence", None)
+            self._resume_after = None
+            self._dropped_while_suppressed = 0
+            self._trace_playback("voice.live.playback_suppressed", "Live playback fenced by an interruption", {
+                "latch_sequence": self._latch_sequence})
         self._playback_suppressed = True
+
+    def note_spoken_ack(self, operation_id: object) -> None:
+        """L'accusé de l'append de parole `operation_id` est arrivé : lire son rang dans le flux, une seule fois."""
+        reader = getattr(self.frontend, "ack_boundary", None)
+        boundary = reader(operation_id) if callable(reader) else None
+        if boundary is None or not self._playback_suppressed:
+            return
+        if self._latch_sequence is not None and boundary <= self._latch_sequence:
+            return  # Accusé traité avant le verrou : ce qui le suit peut encore être la queue coupée.
+        self._resume_after = boundary if self._resume_after is None else max(self._resume_after, boundary)
+
+    def _try_resume(self, event) -> bool:
+        """Lever le verrou à la première trame audio postérieure à l'accusé d'une parole demandée après lui."""
+        if self._resume_after is None or event.sequence <= self._resume_after:
+            return False
+        self._playback_suppressed = False
+        dropped, self._dropped_while_suppressed = self._dropped_while_suppressed, 0
+        self._resume_after = self._latch_sequence = None
+        self._trace_playback("voice.live.playback_resumed", "Live playback resumed after a spoken-result boundary", {
+            "dropped_chunks": dropped})
+        return True
+
+    def _trace_playback(self, kind: str, message: str, data: dict[str, object]) -> None:
+        if self.journal is None:
+            return
+        try:
+            self.journal.emit(kind, message, data={"session_id": self.session_id,
+                                                   "conversation_id": self.conversation_id, **data})
+        except Exception:
+            pass
 
     async def truncate(self, cursor: PlaybackCursor) -> None:
         del cursor  # No alignment primitive exists for Live.
@@ -458,7 +506,8 @@ class LiveFrontendSession:
         common = {"output_id": output_id, "response_id": None, "item_id": None,
                   "speech_id": correlation.speech_id}
         if isinstance(payload, AssistantAudioChunk):
-            if self.playback_suppressed:
+            if self.playback_suppressed and not self._try_resume(event):
+                self._dropped_while_suppressed += 1
                 return  # Canonical received evidence remains, never playback.
             if is_silent_pcm16(payload.audio.pcm):
                 # Le silence que GPT-Live diffuse entre deux paroles n'est pas

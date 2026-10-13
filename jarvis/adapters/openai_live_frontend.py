@@ -133,6 +133,9 @@ class OpenAILiveFrontend:
         self._input_transcript_id: VoiceTranscriptId | None = None
         self._output_transcript_id: VoiceTranscriptId | None = None
         self._output_id: VoiceOutputId | None = None
+        #: Numéro d'ordre du dernier événement émis quand l'accusé d'un append de parole est arrivé : tout événement
+        #: de rang inférieur ou égal précède l'accusé dans le flux (FIFO), tout événement de rang supérieur le suit.
+        self._ack_boundaries: dict[str, int] = {}
         self._started = asyncio.Event()
         self._closed = asyncio.Event()
         self._reader: asyncio.Task[None] | None = None
@@ -175,6 +178,15 @@ class OpenAILiveFrontend:
     @property
     def context_usage_ratio(self) -> float | None:
         return self._context_usage_ratio
+
+    @property
+    def last_sequence(self) -> int:
+        """Rang du dernier événement émis : la position courante dans le flux."""
+        return self._sequence
+
+    def ack_boundary(self, operation_id: object) -> int | None:
+        """Rang du flux à l'accusé de la parole `operation_id` (lu une fois), ou `None`."""
+        return self._ack_boundaries.pop(str(operation_id), None)
 
     def _event(self, payload, *, correlation: VoiceCorrelation | None = None,
                provider_event_id: str | None = None,
@@ -497,6 +509,16 @@ class OpenAILiveFrontend:
             channel = kind.removeprefix("session.").removesuffix(".appended")
             if pending is not None and pending[0] == channel:
                 self._pending_acks.pop(client_id, None)
+                if channel == "commentary":
+                    # Le fournisseur n'a aucune frontière native entre l'ancienne réponse et la nouvelle ; l'accusé
+                    # d'une parole en est une, ordonnée : l'audio qui suit appartient à cette parole, sous une
+                    # sortie neuve (sans quoi une sortie coupée par un barge-in resterait sur liste noire).
+                    self._ack_boundaries[client_id] = self._sequence
+                    while len(self._ack_boundaries) > 64:
+                        self._ack_boundaries.pop(next(iter(self._ack_boundaries)))
+                    self._output_id = None
+                    self._output_transcript_id = None
+                    self._output_chars = 0
                 future = pending[1]
                 if not future.done():
                     future.set_result(None)

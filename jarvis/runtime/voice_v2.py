@@ -320,8 +320,22 @@ class PersistentVoiceRuntime:
 
     def _visual(self, state: str) -> None:
         self._requested_visual = state
+        displayed = self._displayed(state)
+        previous = getattr(self, "_last_displayed", None)
+        if displayed != previous:
+            # La couleur de l'orbe n'était tracée nulle part : un état qui restait vert ne pouvait pas se démontrer.
+            # Une ligne par changement, jamais par appel ; l'état initial de veille n'en est pas un.
+            self._last_displayed = displayed
+            if previous is None and displayed == "idle":
+                return self._signal_visual(displayed)
+            self._trace("voice.visual", "Orb state changed", data={
+                "requested": state, "displayed": displayed,
+                "brain_working": bool(self._brain_working), "brain_busy": bool(self._brain_busy)})
+        self._signal_visual(displayed)
+
+    def _signal_visual(self, displayed: str) -> None:
         if self.signals is not None:
-            self.signals.state(self._displayed(state))
+            self.signals.state(displayed)
 
     def _displayed(self, state: str) -> str:
         """Dériver la couleur à partir de deux faits, au lieu d'un seul champ.
@@ -958,6 +972,7 @@ class PersistentVoiceRuntime:
         if speech is not None:
             # Seul le bridge sait si une sortie joue encore localement.
             speech.output_alive = bridge.output_pending
+            speech.live_output_busy = bridge.live_output_busy
             await speech.start()
         self._bridge_task = asyncio.create_task(bridge.run(), name="jarvis-realtime-bridge")
 

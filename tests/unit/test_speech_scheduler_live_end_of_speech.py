@@ -463,3 +463,32 @@ def test_a_barge_in_while_the_audio_plays_frees_the_mouth_at_once_without_the_sa
     waited, journal = run_virtual(scenario())
     assert journal.of(OUTPUT_STALLED) == []
     assert waited < 2.0, f"la parole coupée tient la bouche {waited:.1f} s"
+
+
+def test_a_long_live_speech_is_not_declared_stalled_while_the_speaker_still_plays_it():
+    """Sur Live, une parole de plus de 30 s a été déclarée interrompue pendant qu'elle jouait, et la suivante part par-dessus."""
+    from jarvis.runtime.speech_scheduler import OUTPUT_STALLED, SPEECH_INTERRUPTED
+
+    def plan(request):
+        return [(42000, 0)] if request.text.startswith("L") else [(2000, 0)]
+
+    async def scenario():
+        surface = shared(plan)
+        scheduler, journal, fw, consumer = await rig(surface)
+        try:
+            frames_total = 42000 // 20
+            scheduler.live_output_busy = lambda: bool(surface.speech_frames) and len(surface.speech_frames[0]) < frames_total
+            scheduler._enqueue(said("L très longue réponse (42 s).", "L"))
+            await until(lambda: len(surface.speech_frames) >= 1 and len(surface.speech_frames[0]) >= frames_total, budget_s=120)
+            await until(lambda: ("completed" in {status for status, _ in decisions(journal, "L")}), budget_s=120)
+            scheduler._enqueue(said("Suite.", "N"))
+            await until(lambda: len(surface.spoken) == 2, budget_s=120)
+            return dict(interrupted=[d for d in decisions(journal, "L") if d[0] == "interrupted"],
+                        stalled_still_active=[e["data"].get("still_active") for e in journal.of(OUTPUT_STALLED)])
+        finally:
+            await close(surface, scheduler, consumer)
+
+    from tests.fakes.virtual_time_loop import run_virtual
+    out = run_virtual(scenario())
+    assert out["interrupted"] == []
+    assert out["stalled_still_active"] and all(out["stalled_still_active"])

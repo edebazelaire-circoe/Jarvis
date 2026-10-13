@@ -36,7 +36,7 @@
   const {ROUTE,PLAYBACK_ROUTE,COMMAND_ROUTE,STATE_ROUTE,HOST_ID,OBJECT_ID,PREVIEW_OBJECT_ID,STYLE_ID,ROW_H,MAX_DEPTH_SHOWN,INDENT_PX,TYPEAHEAD_MS,PAGE_TOKEN,PAGE_TOKEN_HEADER,
     REQUEST_TIMEOUT_MS,READ_TIMEOUT_MS,PLAYBACK_CHECK_MS,LONG_PRESS_MS,PREVIEW_SETTLE_MS,NOTICE_MS,COMMAND_REFUSALS,ICONS,CSS,MAX_LIVE,MAX_ARCHIVED,
     cleanLine,checkTitle,checkRationale,rationaleBytes,relativeTime,absoluteTime,creatorLabel,shortId,buildForest,subtreeIds,flatten,windowOf,treeKey,
-    describeRefusal,planModel,sameSet,readPrefs,writePrefs,MAX_RATIONALE_BYTES}=Core;
+    describeRefusal,planModel,sameSet,readPrefs,writePrefs,MAX_RATIONALE_BYTES,AUTO_DWELL_DEFAULT,AUTO_TICK_MS,AUTO_SKIP_MS,autoStep,leftKeyAction,nextDwell,dwellLabel}=Core;
 
   const GRAPH_POLL_MS=10000;
   const VBAR_MAX=40;
@@ -85,6 +85,7 @@
       collapsed:new Set(),archivedOpen:false,prefs:readPrefs(null),loading:null,busy:null,notice:null,
       preview:{variantId:null,status:'idle',doc:null,scenes:[],sceneId:null,error:null,since:0,generation:0,mounted:null},
       art:{variantId:null,state:'idle',doc:null},fs:'not_requested',generation:0,dialog:null,menu:null,opener:null,fullscreenOwned:false,
+      auto:{on:false,dwell:AUTO_DWELL_DEFAULT,elapsed:0,lastTick:0,lastLeftAt:0,loop:false,timer:null},
     };
     const ui={};
     const selectionListeners=new Set();
@@ -343,6 +344,25 @@
       ui.playAll=button('Tout jouer','jvx-btn',()=>{playFromStudio('all')},{icon:'play',attrs:{title:"Lancer toute la présentation d'un coup, de la première slide (le Studio se ferme)"}});
       ui.playBox.appendChild(ui.playScene);ui.playBox.appendChild(ui.playAll);
       note.appendChild(sceneLine);note.appendChild(ui.sceneCount);note.appendChild(ui.playBox);
+      /* Lecture automatique DANS le Studio : les slides défilent à leur rythme, sans fermer l'atelier ni ouvrir la petite fenêtre de scène.
+         C'est une lecture d'aperçu (rien n'est écrit, aucune lecture Core) ; la présentation dite par Jarvis reste la lecture de Core. */
+      ui.transport=el('div','jvx-transport');attrs(ui.transport,{role:'toolbar','aria-label':'Lecture des slides'});
+      ui.tRestart=button(null,'jvx-btn jvx-btn-icon',()=>restartScene(),{icon:'restart',attrs:{'aria-label':'Début de la slide',title:"Début de la slide (flèche gauche ; deux fois : la slide d'avant)"}});
+      ui.tBack=button(null,'jvx-btn jvx-btn-icon',()=>skipTime(-AUTO_SKIP_MS),{icon:'rewind',attrs:{'aria-label':'Reculer de 5 secondes',title:'Reculer de 5 secondes'}});
+      ui.tPlay=button(null,'jvx-btn jvx-btn-icon jvx-t-play',()=>toggleAuto(),{icon:'play',attrs:{'aria-label':'Lecture',title:'Lecture (Espace)','aria-pressed':'false','aria-keyshortcuts':'Space'}});
+      ui.tPlayIcon=ui.tPlay.firstChild;
+      ui.tPauseIcon=icon('pause');ui.tPauseIcon.style.display='none';ui.tPlay.appendChild(ui.tPauseIcon);
+      ui.tFwd=button(null,'jvx-btn jvx-btn-icon',()=>skipTime(AUTO_SKIP_MS),{icon:'forward',attrs:{'aria-label':'Avancer de 5 secondes',title:'Avancer de 5 secondes'}});
+      ui.tNext=button(null,'jvx-btn jvx-btn-icon',()=>browseScene(1),{icon:'next',attrs:{'aria-label':'Slide suivante',title:'Slide suivante (flèche droite)'}});
+      ui.tDwell=button(dwellLabel(S.auto.dwell),'jvx-btn',()=>cycleDwell(),{attrs:{title:'Temps passé sur chaque slide en lecture automatique'}});
+      ui.tLoop=button(null,'jvx-btn jvx-btn-icon',()=>toggleLoop(),{icon:'repeat',attrs:{'aria-label':'Recommencer à la fin','aria-pressed':'false',title:'Recommencer à la fin'}});
+      ui.tFull=button(null,'jvx-btn jvx-btn-icon',()=>{toggleFullscreen()},{icon:'expand',attrs:{'aria-label':'Plein écran',title:'Plein écran (F)','aria-keyshortcuts':'F'}});
+      ui.tBar=el('div','jvx-t-bar');attrs(ui.tBar,{role:'progressbar','aria-label':'Avancement de la slide','aria-valuemin':'0','aria-valuemax':'100','aria-valuenow':'0'});
+      ui.tFill=el('span');ui.tBar.appendChild(ui.tFill);
+      ui.tClock=el('span','jvx-t-clock');
+      ui.tKeys=el('span','jvx-t-keys','→ suivante · ← début · ←← précédente · Espace lecture · F plein écran');
+      for(const node of [ui.tRestart,ui.tBack,ui.tPlay,ui.tFwd,ui.tNext,ui.tBar,ui.tClock,ui.tDwell,ui.tLoop,ui.tFull,ui.tKeys])ui.transport.appendChild(node);
+      ui.transport.addEventListener('keydown',onSceneKey);
       ui.strip=el('div','jvx-strip');
       attrs(ui.strip,{role:'listbox','aria-label':'Scènes de la variante','aria-orientation':'horizontal'});
       const bottom=el('div','jvx-bottom');
@@ -351,7 +371,7 @@
       bottom.appendChild(ui.meta);bottom.appendChild(ui.actions);
       ui.upgrades=upgrades.buildSection();
       ui.vbar=el('div','jvx-vbar');attrs(ui.vbar,{role:'toolbar',tabindex:'-1','aria-label':'Variantes vivantes : choisir celle à regarder'});
-      preview.appendChild(ui.vbar);preview.appendChild(wrap);preview.appendChild(note);preview.appendChild(ui.strip);preview.appendChild(bottom);preview.appendChild(ui.upgrades);
+      preview.appendChild(ui.vbar);preview.appendChild(wrap);preview.appendChild(note);preview.appendChild(ui.transport);preview.appendChild(ui.strip);preview.appendChild(bottom);preview.appendChild(ui.upgrades);
       ui.preview=preview;
       body.appendChild(treePane);body.appendChild(preview);body.appendChild(cmp.buildRoot());
       ui.live=el('div','jvx-sr');attrs(ui.live,{role:'status','aria-live':'polite','aria-atomic':'true'});
@@ -731,6 +751,7 @@
       if(ui.playBox){ui.playScene.setAttribute('aria-disabled',scene?'false':'true');ui.playAll.setAttribute('aria-disabled',p.status==='ready'&&p.scenes.length?'false':'true')}
       ui.prevScene.setAttribute('aria-disabled',index>0?'false':'true');
       ui.nextScene.setAttribute('aria-disabled',index>=0&&index<p.scenes.length-1?'false':'true');
+      renderTransport();
       ui.stage.setAttribute('aria-label',scene?`Aperçu, scène ${index+1} sur ${p.scenes.length} : ${scene.title}`:'Aperçu');
     }
     function renderStrip(){
@@ -755,7 +776,7 @@
     function setScene(sceneId,options){
       const p=S.preview;
       if(p.sceneId===sceneId||!p.scenes.some(s=>s.id===sceneId))return;
-      p.sceneId=sceneId;
+      p.sceneId=sceneId;S.auto.elapsed=0;
       renderStage();renderStrip();
       const scene=currentScene();
       if(scene)announce(`Scène ${p.scenes.indexOf(scene)+1} sur ${p.scenes.length} : ${scene.title}`);
@@ -775,12 +796,100 @@
       if(event.ctrlKey||event.altKey||event.metaKey)return;
       const p=S.preview;
       const key=event.key;
+      const target=event.target;
+      const onButton=!!target&&String(target.tagName||'').toUpperCase()==='BUTTON';
       let handled=false;
       if(key==='ArrowRight'||key==='ArrowDown'||key==='PageDown')handled=browseScene(key==='PageDown'?3:1);
-      else if(key==='ArrowLeft'||key==='ArrowUp'||key==='PageUp')handled=browseScene(key==='PageUp'?-3:-1);
+      else if(key==='ArrowLeft')handled=leftKey();
+      else if(key==='ArrowUp'||key==='PageUp')handled=browseScene(key==='PageUp'?-3:-1);
       else if(key==='Home')handled=browseScene(0,0);
       else if(key==='End')handled=browseScene(0,p.scenes.length-1);
+      else if(key===' '&&!onButton&&p.status==='ready'){toggleAuto();handled=true}
+      else if((key==='f'||key==='F')&&!event.shiftKey){toggleFullscreen();handled=true}
       if(handled){event.preventDefault();event.stopPropagation()}
+    }
+
+    /* -------------------------------------------------------------- lecture automatique du Studio */
+    function sceneIndex(){const p=S.preview;return Math.max(0,p.scenes.findIndex(s=>s.id===p.sceneId))}
+    function readyScenes(){return S.preview.status==='ready'&&S.preview.scenes.length>0}
+    /* Une flèche gauche : le début de la slide ; deux à la suite (moins de 650 ms) : la slide d'avant. */
+    function leftKey(){
+      if(!readyScenes())return false;
+      const at=now();
+      const action=leftKeyAction(S.auto.lastLeftAt,at);
+      S.auto.lastLeftAt=action==='previous'?0:at;
+      if(action==='previous'){browseScene(-1);announce('Slide précédente')}
+      else restartScene();
+      return true;
+    }
+    function restartScene(){
+      if(!readyScenes())return;
+      S.auto.elapsed=0;S.auto.lastTick=now();
+      if(S.preview.mounted)unmountPreview();   /* le cadre est remonté : l'animation de la slide repart de son premier instant */
+      renderStage();
+      announce(`Début de la slide ${sceneIndex()+1}`);
+    }
+    function skipTime(deltaMs){
+      if(!readyScenes())return;
+      S.auto.elapsed=Math.max(0,S.auto.elapsed+deltaMs);
+      if(S.auto.on){autoTick(true);return}
+      /* Hors lecture, avancer d'un peu passe à la slide suivante quand le temps de la slide est écoulé. */
+      const step=autoStep({elapsedMs:S.auto.elapsed,dwellMs:S.auto.dwell,index:sceneIndex(),count:S.preview.scenes.length,loop:false});
+      if(step.action==='next'){browseScene(1);return}
+      if(step.action==='end')S.auto.elapsed=S.auto.dwell;
+      renderTransport();
+    }
+    function toggleAuto(){
+      if(S.auto.on)stopAuto('manual');else startAuto();
+    }
+    function startAuto(){
+      if(!readyScenes()){S.auto.on=false;renderTransport();return false}
+      const p=S.preview;
+      /* Relancer à la dernière slide repart du début : sinon la lecture se terminerait aussitôt. */
+      if(sceneIndex()>=p.scenes.length-1&&S.auto.elapsed>=S.auto.dwell&&!S.auto.loop){browseScene(0,0);S.auto.elapsed=0}
+      S.auto.on=true;S.auto.lastTick=now();
+      if(!S.auto.timer)S.auto.timer=every(()=>autoTick(false),AUTO_TICK_MS);
+      renderTransport();announce('Lecture');log('auto_started',{dwell_ms:S.auto.dwell});
+      return true;
+    }
+    function stopAuto(reason){
+      const was=S.auto.on;
+      S.auto.on=false;
+      if(S.auto.timer){stopEvery(S.auto.timer);S.auto.timer=null}
+      renderTransport();
+      if(was){announce(reason==='end'?'Fin de la présentation':'Pause');log('auto_stopped',{reason})}
+    }
+    function autoTick(forced){
+      if(!S.open||!S.auto.on)return;
+      const at=now();
+      const dt=Math.max(0,Math.min(1000,at-S.auto.lastTick));
+      S.auto.lastTick=at;
+      if(!readyScenes()||S.dialog||S.menu||(S.busy&&S.busy.op&&S.busy.op!=='plan')||cmp.isActive()||doc.visibilityState==='hidden'){renderTransport();return}
+      if(!forced)S.auto.elapsed+=dt;
+      const step=autoStep({elapsedMs:S.auto.elapsed,dwellMs:S.auto.dwell,index:sceneIndex(),count:S.preview.scenes.length,loop:S.auto.loop});
+      if(step.action==='next'){browseScene(1);S.auto.elapsed=0}
+      else if(step.action==='wrap'){browseScene(0,0);S.auto.elapsed=0}
+      else if(step.action==='end'){S.auto.elapsed=S.auto.dwell;stopAuto('end');say('info','Fin de la présentation.')}
+      renderTransport();
+    }
+    function cycleDwell(){S.auto.dwell=nextDwell(S.auto.dwell);S.auto.elapsed=Math.min(S.auto.elapsed,S.auto.dwell);renderTransport();announce(dwellLabel(S.auto.dwell))}
+    function toggleLoop(){S.auto.loop=!S.auto.loop;renderTransport();announce(S.auto.loop?'Recommencer à la fin : oui':'Recommencer à la fin : non')}
+    function renderTransport(){
+      if(!ui.transport)return;
+      const ready=readyScenes(),index=ready?sceneIndex():-1,count=ready?S.preview.scenes.length:0;
+      const on=S.auto.on&&ready;
+      ui.tPlayIcon.style.display=on?'none':'';ui.tPauseIcon.style.display=on?'':'none';
+      ui.tPlay.setAttribute('aria-pressed',on?'true':'false');
+      ui.tPlay.setAttribute('aria-label',on?'Pause':'Lecture');ui.tPlay.title=on?'Pause (Espace)':'Lecture (Espace)';
+      for(const b of [ui.tRestart,ui.tBack,ui.tPlay,ui.tFwd])b.setAttribute('aria-disabled',ready?'false':'true');
+      ui.tNext.setAttribute('aria-disabled',ready&&index<count-1?'false':'true');
+      ui.tDwell.firstChild.textContent=dwellLabel(S.auto.dwell);
+      ui.tLoop.setAttribute('aria-pressed',S.auto.loop?'true':'false');
+      const pct=Math.max(0,Math.min(100,Math.round(S.auto.elapsed*100/S.auto.dwell)));
+      ui.tFill.style.width=pct+'%';ui.tBar.setAttribute('aria-valuenow',String(pct));
+      ui.tClock.textContent=ready?`${index+1}/${count} · ${Math.floor(S.auto.elapsed/1000)} s / ${Math.round(S.auto.dwell/1000)} s`:'';
+      const full=doc.fullscreenElement===ui.host;
+      ui.tFull.setAttribute('aria-label',full?'Quitter le plein écran':'Plein écran');ui.tFull.title=full?'Quitter le plein écran (F)':'Plein écran (F)';
     }
 
     /* -------------------------------------------------------------- sélection, pliage, clavier de l'arbre */
@@ -1226,6 +1335,7 @@
       if(S.open&&S.pid===presentationId){
         if(opts.variant_id&&nodeOf(opts.variant_id))selectVariant(opts.variant_id,{focus:true});
         if(opts.fullscreen!==false&&modeNow()==='windowed')await requestFullscreen(opts.arm_s);
+        if(opts.autoplay===true&&!S.auto.on)startAuto();
         return {state:'opened',mode:modeNow(),fullscreen:fsNow(),presentation_id:S.pid,variant_id:S.selectedId};
       }
       if(S.open&&S.dialog){
@@ -1284,6 +1394,7 @@
         return refusal(unknown?'explorer_unknown_presentation':'explorer_load_failed',info.text);
       }
       renderAll();schedulePreview();
+      if(opts.autoplay===true){S.auto.elapsed=0;S.auto.on=true;S.auto.lastTick=now();if(!S.auto.timer)S.auto.timer=every(()=>autoTick(false),AUTO_TICK_MS);renderTransport()}
       const target=S.selectedId?nodeOf(S.selectedId):null;
       if(target){const kind=target.state==='archived'?'archived':'live';S.focus[kind]=target.variant_id;renderTrees();(kind==='live'?ui.liveTree:ui.archiveTree).focus(target.variant_id)}
       /* Le reçu ne attend pas un clic éventuel : 2,5 s au plus pour que le navigateur réponde, puis l'état OBSERVÉ (jamais « entré » deviné). */
@@ -1305,6 +1416,7 @@
       for(const t of [tickTimer,playbackTimer,pollTimer,armTimer])if(t)stopEvery(t);
       tickTimer=playbackTimer=pollTimer=armTimer=null;
       cmp.shutdown();
+      stopAuto('close');S.auto.elapsed=0;S.auto.lastLeftAt=0;
       unmountPreview();
       if(previewHost&&typeof previewHost.destroy==='function'){try{previewHost.destroy()}catch(_error){/* intentional: the host is dropped either way */}}
       previewHost=null;
@@ -1411,7 +1523,7 @@
       runAction:(act,id)=>runAction(act,id||S.selectedId,{}),
       state:()=>({open:S.open,presentation_id:S.pid,selected:S.selectedId,active:S.graph&&S.graph.activeId,mode:S.open?modeNow():null,fullscreen:fsNow(),
         revision:S.graph&&S.graph.revision,live:S.live?S.live.size:0,archived:S.archived?S.archived.size:0,preview:{status:S.preview.status,scene:S.preview.sceneId,
-        scenes:S.preview.scenes.length},busy:S.busy&&S.busy.label||null,dialog:S.dialog&&S.dialog.kind||null,menu:!!S.menu,notice:S.notice&&{kind:S.notice.kind,text:S.notice.text}||null,
+        scenes:S.preview.scenes.length},auto:{on:S.auto.on,dwell_ms:S.auto.dwell,elapsed_ms:S.auto.elapsed,loop:S.auto.loop},busy:S.busy&&S.busy.label||null,dialog:S.dialog&&S.dialog.kind||null,menu:!!S.menu,notice:S.notice&&{kind:S.notice.kind,text:S.notice.text}||null,
         collapsed:Array.from(S.collapsed),compare:cmp.state()}),
       stats:()=>Object.assign({},stats,{pool:ui.liveTree?ui.liveTree.poolSize():0,archivePool:ui.archiveTree?ui.archiveTree.poolSize():0}),
       element:()=>ui.host||null,
@@ -1424,7 +1536,7 @@
         if(!command||typeof command!=='object')return {state:'refused',code:'explorer_page_error',reason:'commande illisible'};
         if(command.action==='close'){close({reason:'command'});return {state:'closed'}}
         if(command.action==='open'){
-          const result=await open({presentation_id:command.presentation_id,variant_id:command.variant_id,fullscreen:command.fullscreen!==false,
+          const result=await open({presentation_id:command.presentation_id,variant_id:command.variant_id,fullscreen:command.fullscreen!==false,autoplay:command.autoplay===true,
             arm_s:command.arm_s,via:'command',opener:doc.activeElement});
           return result;
         }

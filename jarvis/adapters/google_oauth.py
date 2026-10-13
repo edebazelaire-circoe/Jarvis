@@ -13,6 +13,7 @@ def load_credentials(client_secret_file: Path, token_file: Path, scopes: Sequenc
     élargi d'un côté invaliderait silencieusement l'autre.
     """
     try:
+        from google.auth.exceptions import TransportError  # type: ignore
         from google.auth.transport.requests import Request  # type: ignore
         from google.oauth2.credentials import Credentials  # type: ignore
         from google_auth_oauthlib.flow import InstalledAppFlow  # type: ignore
@@ -24,7 +25,13 @@ def load_credentials(client_secret_file: Path, token_file: Path, scopes: Sequenc
     if creds and creds.valid and _covers(creds, wanted):
         return creds
     if creds and creds.expired and creds.refresh_token and _covers(creds, wanted):
-        creds.refresh(Request())
+        try:
+            creds.refresh(Request())
+        except TransportError:
+            # Réseau coupé au démarrage : Core doit démarrer quand même. Le jeton
+            # expiré n'est pas réécrit ; le client Google le rafraîchira à la
+            # première requête réelle, quand le réseau sera revenu.
+            return creds
     else:
         if not client_secret_file.is_file():
             raise RuntimeError(f"Google client secret file not found: {client_secret_file}")

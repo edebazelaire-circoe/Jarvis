@@ -1863,7 +1863,9 @@ class RealtimeConversationBridge:
         # reprend n'est pas une phrase, c'est le tour en cours de réflexion.
         thinking_floor = not self._output_live() and self._brain_floor()
         suppress = getattr(self.session, "suppress_playback_until_session_end", None)
-        if callable(suppress):
+        if callable(suppress) and not thinking_floor:
+            # Rien ne jouait : aucune queue à couper, donc rien à verrouiller (verrouiller ici rendait muette la
+            # réponse du cerveau qui suivait).
             suppress()  # Fence both queued and future PCM before any device await.
         # C'est un `await`, mais le gestionnaire de la bouche
         # (`SpeechScheduler.note_output_event`, câblé directement par
@@ -2850,6 +2852,11 @@ class RealtimeConversationBridge:
         """
 
         return any(entry.get("output_id") == output_id for entry in self._received_outputs.values())
+
+    def live_output_busy(self) -> bool:
+        """Du son est-il encore en lecture ici (file, périphérique, sortie Live non quiescente) ?"""
+
+        return bool(not self._live_output_quiescent or self._playing or self._queued_audio > 0)
 
     def live_idle_evidence(self):
         """Current local microphone/device evidence for Live idle policy."""
