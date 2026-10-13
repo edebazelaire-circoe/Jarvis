@@ -56,6 +56,7 @@ class FakeRenderRunner:
         self.lock_holder: str | None = None
         self.lock_released = False
         self.out_of_spec = False  # verify() returns the wrong size
+        self.audio_missing = False  # verify(audio_required=True) finds no audio stream
 
     def release(self) -> None:
         self._release.set()
@@ -102,8 +103,13 @@ class FakeRenderRunner:
         finally:
             self.alive_refs.discard(ref)
 
-    def verify(self, job_id: str, fmt: str, *, width: int, height: int, frames: int | None, pages: int | None) -> VerifiedOutput:
+    def verify(self, job_id: str, fmt: str, *, width: int, height: int, frames: int | None, pages: int | None,
+               audio_required: bool = False) -> VerifiedOutput:
         self.calls.append(("verify", fmt))
+        if audio_required:  # master handoff Slice 06: recorded apart, so the scene-render call log stays what it was
+            self.calls.append(("verify_audio_required", fmt))
+            if self.audio_missing:
+                raise RenderError(C.OUTPUT_INVALID, "the whole video plays an <Audio> but the MP4 holds no audio stream")
         if self.verify_error is not None:
             raise self.verify_error
         data = {"mp4": MP4, "still": PNG, "pdf": PDF}[fmt]

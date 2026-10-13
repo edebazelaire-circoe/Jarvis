@@ -10,12 +10,16 @@ porteur de Core obligatoire. Le chemin `.../render/jobs` a au moins quatre segme
 | POST | `.../render/jobs` | voir ci-dessous | 202 `{job: vue}` : le travail est en file, l'Artifact dérivé existe `pending` |
 | GET | `.../render/jobs/{job_id}` | — | `{job: vue}` : état, phase, images faites / total, secondes écoulées, délai, annulable |
 | POST | `.../render/jobs/{job_id}/cancel` | `{}` | `{job: vue}` |
+| GET | `.../render/master?snapshot_id=…` | — | `{master: vue du plan}` : la vidéo entière d'un snapshot figé est-elle prête (`docs/remotion-master-project.md` §2, §10), lecture seule |
 | POST | `.../render/preview` | `{presentation_id, variant_id, scene_id, frames?, scale?}` | 200 `{preview: {scene_id, prefab, composition, scale, frames: [{frame, path, bytes}], elapsed_ms}}` : aperçu natif (Slice 13 native-studio-playback-fix), synchrone, sans gel ni Artifact |
 
 Corps d'une demande : `{"format": "mp4"|"still"|"pdf", "settings": {...}}` plus, au choix, `{"snapshot_id": "jart_ps_..."}` (rendre un snapshot déjà figé)
 OU `{"presentation_id", "variant_id", "expected_presentation_revision", "expected_variant_revision", "authorised_boards": [...]}` (figer cette
 variante, rejouable, puis la rendre ; `authorised_boards` absent = aucun Board lu). Le cerveau n'exporte que par `remotion_export` (serveur `jarvis-remotion`, Slice 21), sur la demande de l'utilisateur
 dans le tour en cours et sans `authorised_boards` : l'exportation reste une action explicite de l'utilisateur.
+
+`settings.scope` : absent ou `"scene"` = une scène (inchangé) ; `"master"` = la composition maître de toute la variante figée (MP4 seulement,
+sans `scene_id`) ; plan incompatible -> 409 `presentation_render_master_incompatible` dont l'enveloppe porte `reason`, `detail`, `scene_ids`.
 
 Refus : `{"error": {"code", "message"}}` ; codes `presentation_render_*` (400 invalide, 404 inconnu, 409 non prêt ou snapshot refusé, 429 file pleine,
 503 Core sans rendu) et les codes des registres traversés (`stale_revision`, `live_ref_*`, `artifact_*`). Un ÉCHEC de rendu n'est pas une erreur
@@ -32,6 +36,7 @@ from typing import Any
 from aiohttp import web
 
 from jarvis.domain.artifacts import ArtifactError
+from jarvis.domain.presentation_artifacts import is_snapshot_id
 from jarvis.domain.presentation_live_refs import LiveRefError
 from jarvis.domain.presentation_render import RenderError, RenderErrorCode as C
 from jarvis.domain.presentation_studio import PresentationStudioError
@@ -59,17 +64,17 @@ class PresentationRenderProtocolRoutes:
         jobs = PREFIX + "/jobs"
         return [web.get(PREFIX, g(self.availability)), web.get(jobs, g(self.list)), web.post(jobs, g(self.create)),
                 web.get(jobs + "/{job_id}", g(self.get)), web.post(jobs + "/{job_id}/cancel", g(self.cancel)),
-                web.post(PREFIX + "/preview", g(self.preview))]
+                web.post(PREFIX + "/preview", g(self.preview)), web.get(PREFIX + "/master", g(self.master, query=("snapshot_id",)))]
 
-    def _guarded(self, handler: Handler) -> Handler:
+    def _guarded(self, handler: Handler, *, query: tuple[str, ...] = ()) -> Handler:
         async def run(request: web.Request) -> web.StreamResponse:
             try:
-                if request.query:
+                if set(request.query) - set(query) or len(request.query) != len(set(request.query)):
                     raise RenderError(C.INVALID, "unexpected query parameters")
                 return await handler(request)
             except RenderError as exc:
                 self._report(exc, request, level="warning" if exc.status < 500 else "error")
-                return self._error(exc.code.value, exc.detail or exc.code.value, exc.status)
+                return self._error(exc.code.value, exc.detail or exc.code.value, exc.status, extra=exc.extra)
             except (ArtifactError, PresentationStudioError, LiveRefError) as exc:
                 status = getattr(exc, "status", None) or getattr(exc, "http_status", None) or (409 if isinstance(exc, LiveRefError) else 400)
                 code = getattr(getattr(exc, "code", None), "value", "presentation_render_failed")
@@ -96,8 +101,8 @@ class PresentationRenderProtocolRoutes:
                 pass
 
     @staticmethod
-    def _error(code: str, message: str, status: int) -> web.Response:
-        return web.json_response({"error": {"code": code, "message": message}}, status=status)
+    def _error(code: str, message: str, status: int, *, extra: dict[str, Any] | None = None) -> web.Response:
+        return web.json_response({"error": {**(extra or {}), "code": code, "message": message}}, status=status)
 
     def _service(self):
         service = getattr(self._core, "presentation_render", None)
@@ -161,6 +166,14 @@ class PresentationRenderProtocolRoutes:
                 presentation_id=body["presentation_id"], variant_id=body["variant_id"], expected_presentation_revision=revisions[0],
                 expected_variant_revision=revisions[1], authorised_boards=boards, render_format=fmt, settings=body.get("settings"))
         return web.json_response({"job": job}, status=202)
+
+    async def master(self, request: web.Request) -> web.StreamResponse:
+        """Readiness of the whole video of a frozen snapshot (Slice 06 of the master handoff): the plan view, nothing started."""
+
+        snapshot_id = request.query.get("snapshot_id")
+        if not is_snapshot_id(snapshot_id):
+            raise RenderError(C.INVALID, "snapshot_id must be a presentation snapshot id (jart_ps_...)")
+        return web.json_response({"master": await self._service().master_readiness(snapshot_id)})
 
     async def preview(self, request: web.Request) -> web.StreamResponse:
         """The author's look at a scene (Slice 13): a few frames of the CURRENT variant, rendered by the guarded host, nothing frozen."""

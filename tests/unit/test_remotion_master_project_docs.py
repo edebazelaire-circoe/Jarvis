@@ -49,14 +49,15 @@ def section(title: str) -> str:
 
 LEVEL_3_SECTIONS = ("## 2. MasterProjectPlan — Level 3 (Slice 03)", "## 3. Readiness and reason codes — Level 3 (Slice 03)",
                     "## 5. `project_key` — Level 3 (Slice 03)", "## 6. Workspace layout, generated vs canonical files — Level 3 (Slice 04)",
-                    "## 7. Generated master composition — Level 3 (Slice 04)")
+                    "## 7. Generated master composition — Level 3 (Slice 04)", "## 10. Whole-video render scope — Level 3 (Slice 06)")
 
 
 def test_the_page_states_level_2_and_claims_level_3_only_for_the_implemented_planner_sections():
     assert f"Status: **{STATUS}.**" in DOC
     assert "Shipped so far: § 2, § 3 and § 5, the pure planner (Level 3 (Slice 03)" in flat(DOC)
     rest = DOC.replace("*Composition clock (Level 3)*", "")
-    for marker in ("Level 3 (Slice 03)", "(Level 3, Slice 03)", "Level 3 (Slice 04)", "(Level 3, Slice 04)"):
+    for marker in ("Level 3 (Slice 03)", "(Level 3, Slice 03)", "Level 3 (Slice 04)", "(Level 3, Slice 04)", "Level 3\n(Slice 06)",
+                   "Level 3 (Slice 06)", "(Level 3, Slice 06)"):
         rest = rest.replace(marker, "")
     assert "Level 3" not in rest, "only the Slice 03 and Slice 04 sections claim Level 3"
     for heading in LEVEL_3_SECTIONS:
@@ -91,7 +92,10 @@ def test_the_envelope_codes_are_documented_with_their_status_and_collide_with_no
         assert re.search(rf"^\| `{code}` \| {status}[^|]* \|", text, flags=re.M), code
     existing = ({c.value for c in StudioErrorCode} | {c.value for c in render.RenderErrorCode}
                 | {c.value for c in PresentationStudioErrorCode})
-    assert not (set(ENVELOPE_CODES) | set(PLANNER_CODES)) & existing, "a new code reuses a name that already means something"
+    #: Slice 06 implemented the two render codes in `RenderErrorCode`; every other new name still collides with nothing.
+    implemented = {"presentation_render_master_incompatible", "presentation_render_master_scene_failed"}
+    assert implemented <= {c.value for c in render.RenderErrorCode}
+    assert not ((set(ENVELOPE_CODES) | set(PLANNER_CODES)) - implemented) & existing, "a new code reuses a name that already means something"
     for reused in ("remotion_studio_ack_required", "presentation_render_invalid", "presentation_studio_stale_revision",
                    "remotion_studio_unpublished_edits", "remotion_studio_invalid", "presentation_studio_scene_edited_in_remotion"):
         assert f"`{reused}`" in DOC and reused in existing, reused
@@ -118,7 +122,7 @@ def test_the_bounds_are_the_decided_ones_and_the_scene_bounds_are_unchanged_in_t
     assert render.TIMEOUT_BASE_S == 300.0 and render.TIMEOUT_PER_FRAME_S == 1.0
     assert runner.MAX_WORK_FILES == 400 and runner.MAX_WORK_BYTES == 64 * 1024 * 1024
     assert package.MAX_PACKAGE_FILES >= 400 and package.MAX_PACKAGE_BYTES == 64 * 1024 * 1024, "400 / 64 MiB is the minimum of both"
-    assert not hasattr(render, "MAX_MASTER_RENDER_FRAMES") or render.MAX_MASTER_RENDER_FRAMES == 9000
+    assert render.MAX_MASTER_RENDER_FRAMES == 9000 and master.MAX_MASTER_RENDER_FRAMES is render.MAX_MASTER_RENDER_FRAMES
     assert master.MAX_MASTER_RENDER_FRAMES == 9000 and master.MASTER_GENERATOR_VERSION == 1
     assert (master.MAX_MASTER_FILES, master.MAX_MASTER_BYTES) == (min(runner.MAX_WORK_FILES, package.MAX_PACKAGE_FILES), 64 * 1024 * 1024)
 
@@ -185,7 +189,7 @@ def test_the_security_review_accepts_the_master_root_for_studio_and_render_only_
 
 def test_the_scene_lane_documents_qualify_their_single_scene_sentences_and_link_the_contract():
     for name, needles in {
-        "remotion-render.md": ("| **Une scène par export.** |", "- **Une scène par export** (aujourd'hui)", "| `scene_id` | tous |",
+        "remotion-render.md": ("| **Une scène par export.** |", "- **Une scène par export** (portée de scène", "| `scene_id` | tous |",
                                "puis UNE scène (l'aperçu reste de portée de scène"),
         "remotion-studio.md": ("| **Le Studio ne sert que la source de la scène choisie** (cible de scène, livrée",
                                "**La porte de Variantes (native-studio-playback-fix Slice 11).** (prévu"),

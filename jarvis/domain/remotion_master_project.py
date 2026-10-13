@@ -25,7 +25,7 @@ import posixpath
 import re
 from typing import Any
 
-from jarvis.domain.presentation_render import RenderError, RenderErrorCode
+from jarvis.domain.presentation_render import MAX_MASTER_RENDER_FRAMES, RenderError, RenderErrorCode
 from jarvis.domain.presentation_render_plan import LIVE_PUBLIC_DIR, merge_props
 from jarvis.domain.presentation_snapshot_package import FrozenPackage
 from jarvis.domain.presentation_studio import (
@@ -39,8 +39,7 @@ from jarvis.domain.remotion_studio_workspace import refused_imports
 
 #: Bumped whenever the generated files change for the same inputs (it is the first `project_key` input).
 MASTER_GENERATOR_VERSION = 1
-#: Export bound of a whole video (the scene bound `MAX_RENDER_FRAMES = 3600` is unchanged).
-MAX_MASTER_RENDER_FRAMES = 9000
+#: `MAX_MASTER_RENDER_FRAMES` (9000) lives with the render bounds in `presentation_render` and is re-exported here.
 #: Whole workspace, generated files included: the minimum of the Studio workspace and snapshot package bounds.
 MAX_MASTER_FILES = 400
 MAX_MASTER_BYTES = 64 * 1024 * 1024

@@ -49,15 +49,15 @@ def test_every_state_and_phase_is_documented():
 def test_the_documented_routes_are_the_registered_ones():
     registered = {(route.method, route.path) for route in PresentationRenderProtocolRoutes(object()).routes() if route.method != "HEAD"}
     documented = set(re.findall(r"\| (GET|POST) \| `(/v1/local-capabilities/remotion/render[A-Za-z/{}_]*)`", DOC))
-    assert registered == documented and len(registered) == 6 and PREFIX == "/v1/local-capabilities/remotion/render"
+    assert registered == documented and len(registered) == 7 and PREFIX == "/v1/local-capabilities/remotion/render"
 
 
 def test_the_relayed_control_center_routes_are_documented():
     registered = {(route.method, route.path) for route in relay.PresentationRenderRelayRoutes(transport=lambda: None, journal=None).routes() if route.method != "HEAD"}
-    assert len(registered) == 5
+    assert len(registered) == 6
     for _, path in registered:
         assert path in DOC, path
-    assert "Cinq adresses relaient" in DOC and relay.CREATE_TIMEOUT_S == 60.0 and "60 s pour la création" in DOC and "40 s pour l'annulation" in DOC
+    assert "Six adresses relaient" in DOC and relay.CREATE_TIMEOUT_S == 60.0 and "60 s pour la création" in DOC and "40 s pour l'annulation" in DOC
 
 
 def test_the_documented_bounds_are_the_code_bounds():
@@ -86,6 +86,8 @@ def test_the_documented_settings_are_the_accepted_ones():
 def test_the_documented_metadata_keys_are_the_recorded_ones():
     meta = D.resolve(RenderFormat.MP4, D.parse_settings(RenderFormat.MP4, None), target()).to_metadata()
     meta |= D.resolve(RenderFormat.PDF, D.parse_settings(RenderFormat.PDF, {"frames": [0, 1]}), target()).to_metadata()
+    from tests.unit.test_presentation_render_master import master_target
+    meta |= D.resolve(RenderFormat.MP4, D.parse_settings(RenderFormat.MP4, {"scope": "master"}), master_target()).to_metadata()
     for key in meta:
         assert f"`{key}`" in DOC, key
     source = Path(service.__file__).read_text(encoding="utf-8")

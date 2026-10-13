@@ -160,7 +160,10 @@ def test_no_brain_mcp_or_agent_path_can_open_the_studio():
                "runtime/control_center_presentation_rail.js",
                # native-studio-playback-fix Slice 12: the workspace / publish domain and the bridge to the variant's source-edit door (no route,
                # no process: they cannot open the Studio; who may PUBLISH is held by `test_remotion_studio_publish.py`).
-               "domain/remotion_studio_workspace.py", "core/remotion_studio_publish.py"}
+               "domain/remotion_studio_workspace.py", "core/remotion_studio_publish.py",
+               # master-project handoff Slices 03-04: the pure planner reuses `refused_imports` and the file map names the runner that will
+               # write it (`sync_work`); pure functions, no route, no process: they cannot open the Studio.
+               "domain/remotion_master_project.py", "domain/remotion_master_files.py"}
     slice_21_agent_surface = {"runtime/remotion_mcp.py", "runtime/remotion_mcp_tools.py", "runtime/mcp_tool_meta.py"}
     users = {path.relative_to(root).as_posix() for path in root.rglob("*")
              if path.suffix in {".py", ".js", ".html", ".cjs", ".mjs"}

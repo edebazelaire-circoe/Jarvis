@@ -18,6 +18,9 @@ Règles :
 - Un même (snapshot, réglages résolus) n'est pas rendu deux fois : la demande rend le travail en cours ou le rendu `complete` existant (`deduplicated`).
 - Un seul Core vivant par racine de données lance, reprend ou tue des rendus (`render/core.lock`).
 - Le processus de rendu tourne isolé (`docs/remotion-render.md` §4) ; l'annulation tue l'arbre entier après contrôle d'identité (`pid:heure`).
+- Portée `master` (`settings.scope`, jarvis-remotion-master-project-studio-export Slice 06, `docs/remotion-master-project.md` §10) : la
+  composition maître de toute la variante figée, par le même hôte, le même navigateur, la même file ; plan `incompatible` -> 409
+  `presentation_render_master_incompatible` avant toute création ; une scène qui lève -> `presentation_render_master_scene_failed`.
 """
 
 from __future__ import annotations
@@ -36,9 +39,10 @@ from jarvis.core.artifact_service import ArtifactService
 from jarvis.domain.artifacts import Artifact, ArtifactError, ArtifactQuery, ArtifactRelationKind, ArtifactState
 from jarvis.domain.presentation_artifacts import RENDER_KINDS, RENDERS, RenderFormat, parse_render_format
 from jarvis.domain.presentation_render import (
-    CONCURRENCY_LIMIT, KEEP_FINISHED, KEEP_RENDERS_PER_SNAPSHOT, MAX_ACTIVE_JOBS, JobState, RenderError, RenderErrorCode as C, ResolvedRender, clean_detail,
-    parse_settings, resolve,
+    CONCURRENCY_LIMIT, KEEP_FINISHED, KEEP_RENDERS_PER_SNAPSHOT, MAX_ACTIVE_JOBS, SCOPE_MASTER, JobState, MasterTarget, RenderError,
+    RenderErrorCode as C, ResolvedRender, clean_detail, master_scene_failure, parse_settings, resolve,
 )
+from jarvis.domain.presentation_render_master import choose_master, frozen_plan, master_files
 from jarvis.domain.presentation_render_plan import choose_scene, plan_files
 from jarvis.domain.presentation_studio import PresentationStudioError
 from jarvis.ports.artifacts import RelationDirection
@@ -161,8 +165,17 @@ class RenderJob:
             "browser": self.browser.version, "settings": r.canonical(), "settings_sha256": r.settings_sha256,
             "egress_denied": int(self.egress.get("proxy_denied", 0) or 0) + int(self.egress.get("blocked_connect", self.egress.get("blockedConnect", 0)) or 0),
             "verified_by": self.verified_by or None, "log_tail": self.log_tail[-4:] if self.state is JobState.FAILED else [],
-            "sandbox": self.egress.get("sandbox"), "deduplicated": False,
+            "sandbox": self.egress.get("sandbox"), "deduplicated": False, **_scope_view(r),
         }
+
+
+def _scope_view(resolved: ResolvedRender) -> dict[str, Any]:
+    """The master fields of a job view (absent for a scene render: its view is unchanged)."""
+
+    t = resolved.target
+    if not isinstance(t, MasterTarget):
+        return {}
+    return {"scope": SCOPE_MASTER, "project_key": t.project_key, "scene_count": len(t.scene_ids)}
 
 
 class PresentationRenderService:
@@ -245,14 +258,17 @@ class PresentationRenderService:
         fmt = parse_render_format(render_format)
         parsed = parse_settings(fmt, settings)
         browser = self._require_ready()
-        try:
-            package = await self._packager.read_snapshot(snapshot_id)
-        except (ArtifactError, PresentationStudioError) as exc:
-            raise RenderError(C.SNAPSHOT_INVALID, f"{getattr(exc, 'code', type(exc).__name__)}: {str(exc)[:200]}") from None
-        except Exception as exc:  # noqa: BLE001 - argued: a damaged package (LiveRefError) is the same refusal, with its code
-            code = getattr(exc, "code", None)
-            raise RenderError(C.SNAPSHOT_INVALID, f"{getattr(code, 'value', code) or type(exc).__name__}: {str(exc)[:200]}") from None
-        target = choose_scene(package, parsed.scene_id)
+        package = await self._read_package(snapshot_id)
+        if parsed.scope == SCOPE_MASTER:
+            try:
+                target: Any = choose_master(package)
+            except RenderError as exc:
+                if exc.code is C.MASTER_INCOMPATIBLE:
+                    self._trace("master_incompatible", "Rendu de la vidéo entière refusé : variante figée non compatible", level="warning",
+                                data={"snapshot_id": snapshot_id, **exc.extra})
+                raise
+        else:
+            target = choose_scene(package, parsed.scene_id)
         resolved = resolve(fmt, parsed, target)
         installed = self._installed()
         if installed is None or installed.remotion_version != target.engine_version:
@@ -288,9 +304,31 @@ class PresentationRenderService:
         await self._record(job)
         self._trace("queued", "Rendu de présentation mis en file", data={
             "job_id": job_id, "artifact_id": artifact.artifact_id, "snapshot_id": snapshot_id, "format": fmt.value,
-            "frames": resolved.frames_total, "queued": len(self._queue)})
+            "frames": resolved.frames_total, "queued": len(self._queue), **_scope_view(resolved)})
         self._ensure_worker()
         return job.view(position=self._position(job_id))
+
+    async def _read_package(self, snapshot_id: str) -> Any:
+        """The snapshot package, re-read AND verified; any refusal is `presentation_render_snapshot_invalid` with the registry's code."""
+
+        try:
+            return await self._packager.read_snapshot(snapshot_id)
+        except (ArtifactError, PresentationStudioError) as exc:
+            raise RenderError(C.SNAPSHOT_INVALID, f"{getattr(exc, 'code', type(exc).__name__)}: {str(exc)[:200]}") from None
+        except Exception as exc:  # noqa: BLE001 - argued: a damaged package (LiveRefError) is the same refusal, with its code
+            code = getattr(exc, "code", None)
+            raise RenderError(C.SNAPSHOT_INVALID, f"{getattr(code, 'value', code) or type(exc).__name__}: {str(exc)[:200]}") from None
+
+    async def master_readiness(self, snapshot_id: str) -> dict[str, Any]:
+        """Read only (`GET .../render/master?snapshot_id=`): the master plan view (§ 2) of a frozen snapshot, ready or incompatible.
+        Starts nothing, needs no browser; an unreadable snapshot is `presentation_render_snapshot_invalid`."""
+
+        package = await self._read_package(snapshot_id)
+        plan = frozen_plan(package)
+        self._trace("master_readiness", "Vidéo entière d'un snapshot : plan lu", data={
+            "snapshot_id": snapshot_id, "status": plan.status.value, "reason": plan.reason.value if plan.reason else None,
+            "project_key": plan.project_key, "scenes": len(plan.scenes)})
+        return plan.to_wire()
 
     # ------------------------------------------------------------------ aperçu natif (Slice 13 native-studio-playback-fix)
 
@@ -459,7 +497,7 @@ class PresentationRenderService:
                         "queue_position": None, "elapsed_s": 0.0, "timeout_s": int(resolved.timeout_s), "started_at": None,
                         "created_at": artifact.created_at.timestamp(), "browser": artifact.metadata.get("render_browser"),
                         "egress_denied": artifact.metadata.get("render_egress_denied", 0), "verified_by": artifact.metadata.get("render_verified_by"),
-                        "log_tail": [], "sandbox": artifact.metadata.get("render_sandbox")}
+                        "log_tail": [], "sandbox": artifact.metadata.get("render_sandbox"), **_scope_view(resolved)}
         return None
 
     async def _require_engine_for(self, presentation_id: str, variant_id: str) -> None:
@@ -550,9 +588,13 @@ class PresentationRenderService:
         self._trace("started", "Rendu de présentation démarré", data={"job_id": job.job_id, "artifact_id": job.artifact_id})
         try:
             package = await self._packager.read_snapshot(job.snapshot_id)  # relu et revérifié : le paquet n'a pas changé depuis la demande
-            files, props = plan_files(package, job.resolved.target)
-            await self._run_blocking(self._runner.prepare, job.job_id, files)
             r = job.resolved
+            if isinstance(r.target, MasterTarget):
+                # the master composition takes no input props: each scene's merged props are inlined in the generated Presentation.tsx
+                files, props = master_files(package, r.target), {}
+            else:
+                files, props = plan_files(package, r.target)
+            await self._run_blocking(self._runner.prepare, job.job_id, files)
             spec = {"format": r.fmt.value, "entry": "studio-root.tsx", "composition_id": r.target.composition_id,
                     "composition": {"width": r.target.width, "height": r.target.height, "fps": r.target.fps,
                                     "durationInFrames": r.target.duration_in_frames},
@@ -579,6 +621,10 @@ class PresentationRenderService:
                 self._browser_slot.release()
             job.egress, job.log_tail = dict(outcome.egress), list(outcome.log_tail)
             if not outcome.ok:
+                failed_scene = master_scene_failure(outcome.detail) if r.master else None
+                if failed_scene is not None:
+                    scene_id, position, message = failed_scene
+                    raise RenderError(C.MASTER_SCENE_FAILED, f"scene {position} ({scene_id}) failed while rendering: {message}")
                 raise RenderError(C.FAILED if outcome.code not in {c.value for c in C} else C(outcome.code), outcome.detail)
             await self._finalize(job)
         except RenderError as exc:
@@ -606,8 +652,10 @@ class PresentationRenderService:
         r = job.resolved
         frames = r.frames_total if r.fmt is RenderFormat.MP4 else None
         pages = len(r.frames) if r.fmt is RenderFormat.PDF else None
+        # A master whose scenes play an `<Audio>` must come out with an audio stream; a scene render is verified exactly as before.
+        audio = {"audio_required": True} if isinstance(r.target, MasterTarget) and r.target.audio_required else {}
         verified = await self._run_blocking(self._runner.verify, job.job_id, r.fmt.value, width=r.out_width, height=r.out_height,
-                                            frames=frames, pages=pages)
+                                            frames=frames, pages=pages, **audio)
         job.phase = "storing"
         artifact = await self._artifacts.get(job.artifact_id)
         spool = self._artifacts.open_spool(artifact)

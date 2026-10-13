@@ -10,8 +10,9 @@ et JSON, erreurs comprises) ; c'est le gestionnaire Sessions & Boards (`control_
 | `POST /api/local-capabilities/remotion/render/jobs` | `POST .../render/jobs` | 60 s (relecture et vérification du paquet) |
 | `GET /api/local-capabilities/remotion/render/jobs/{job_id}` | `GET .../render/jobs/{job_id}` | 10 s |
 | `POST /api/local-capabilities/remotion/render/jobs/{job_id}/cancel` | `POST .../jobs/{job_id}/cancel` | 40 s |
+| `GET /api/local-capabilities/remotion/render/master?snapshot_id=…` | `GET .../render/master?snapshot_id=…` | 60 s (relecture du paquet) |
 
-Seules ces cinq adresses existent. Toutes sont gardées (Host et origine de boucle locale, `READ_GUARDED_ROUTES`, préfixe `/api/local-capabilities`) :
+Seules ces six adresses existent (la sixième, lecture seule, est la vidéo entière d'un snapshot : `docs/remotion-master-project.md` §10). Toutes sont gardées (Host et origine de boucle locale, `READ_GUARDED_ROUTES`, préfixe `/api/local-capabilities`) :
 elles lancent un processus. Mêmes refus codés, mêmes erreurs de Core injoignable ou trop lent que le relais du Studio. Journal :
 `presentation_render.relayed` pour chaque écriture (jamais un corps).
 """
@@ -22,6 +23,7 @@ from collections.abc import Awaitable, Callable
 
 from aiohttp import web
 
+from jarvis.domain.presentation_artifacts import is_snapshot_id
 from jarvis.runtime.remotion_studio_relay import (
     CAPABILITY_ROUTE, CORE_CAPABILITY, MAX_BODY_BYTES, READ_TIMEOUT_S, SHORT_TIMEOUT_S, RemotionStudioRelayRoutes, _envelope,
 )
@@ -36,7 +38,18 @@ class PresentationRenderRelayRoutes(RemotionStudioRelayRoutes):
         jobs = RENDER_ROUTE + "/jobs"
         return [web.get(RENDER_ROUTE, self._read(CORE_RENDER)), web.get(jobs, self._read(CORE_RENDER + "/jobs")),
                 web.get(jobs + "/{job_id}", self._read_job()), web.post(jobs, self._create()),
-                web.post(jobs + "/{job_id}/cancel", self._cancel())]
+                web.post(jobs + "/{job_id}/cancel", self._cancel()), web.get(RENDER_ROUTE + "/master", self._read_master())]
+
+    def _read_master(self) -> Callable[[web.Request], Awaitable[web.Response]]:
+        async def handler(request: web.Request) -> web.Response:
+            snapshot_id = request.query.get("snapshot_id")
+            if set(request.query) != {"snapshot_id"} or len(request.query) != 1 or not is_snapshot_id(snapshot_id):
+                return _envelope(400, "presentation_render_invalid", "pass exactly snapshot_id (a presentation snapshot id, jart_ps_...)")
+            # the id is checked above (letters, digits, underscores only): it goes into the Core path as is
+            status, payload = await self._forward("GET", f"{CORE_RENDER}/master?snapshot_id={snapshot_id}", action="read_master",
+                                                  timeout_s=CREATE_TIMEOUT_S)
+            return self._answer(status, payload)
+        return handler
 
     def _read(self, core_path: str) -> Callable[[web.Request], Awaitable[web.Response]]:
         async def handler(request: web.Request) -> web.Response:

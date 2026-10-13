@@ -152,6 +152,12 @@ def video_facts(probe: dict[str, Any]) -> VideoFacts:
     return VideoFacts(width, height, frames, duration_ms, str(stream.get("codec_name", "")), fps)
 
 
+def has_audio_stream(probe: dict[str, Any]) -> bool:
+    """An `ffprobe -show_streams` JSON holds at least one audio stream (a master render whose scenes play an `<Audio>`)."""
+
+    return any(isinstance(s, dict) and s.get("codec_type") == "audio" for s in probe.get("streams", []))
+
+
 def check_header(fmt: RenderFormat, head: bytes) -> None:
     """Contrôle d'en-tête (toujours possible, même sans `ffprobe`)."""
 
