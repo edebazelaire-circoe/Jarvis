@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 
 import pytest
 
@@ -51,6 +52,13 @@ def three(**sources):
     scenes = [scene(n) for n in range(3)]
     pins = {pin(n): PinSource.remotion(sources.get(f"s{n}") or source()) for n in range(3)}
     return scenes, pins
+
+
+def generated_props(text: str) -> dict[int, dict]:
+    """`{position: props}` as the generated `Presentation.tsx` hands them to each scene (`JSON.parse` of a JSON string literal)."""
+
+    return {int(n): json.loads(json.loads(literal))
+            for n, literal in re.findall(r'^const props(\d+): Record<string, unknown> = JSON\.parse\((".*")\);$', text, flags=re.M)}
 
 
 def failed(plan, reason):
@@ -101,7 +109,8 @@ def test_the_generated_composition_follows_the_variant_order_and_the_merged_prop
     assert 'id="JarvisPresentation"' in root and "durationInFrames={270}" in root and "fps={30}" in root
     text = plan.generated[PRESENTATION_FILE].decode()
     assert text.index(f"../scenes/{IDS[0]}/Scene") < text.index(f"../scenes/{IDS[1]}/Scene") < text.index(f"../scenes/{IDS[2]}/Scene")
-    assert '"title": "Deux"' in text and text.count("<Series.Sequence durationInFrames={90}>") == 3
+    assert generated_props(text)[2] == {"title": "Deux"} and text.count("<Series.Sequence durationInFrames={90}>") == 3
+    assert f'import Scene1 from "../scenes/{IDS[0]}/Scene.tsx";' in text, "the exact entry file, extension included"
     assert "jarvis_master_scene_failed:" in plan.generated[BOUNDARY_FILE].decode()
     assert json.loads(plan.generated[PACKAGE_FILE]) == {"name": "jarvis-studio-master", "private": True, "version": "0.0.0"}
 
@@ -172,7 +181,8 @@ def test_different_engine_pins_are_an_engine_mismatch():
     plan = failed(plan_master(inputs(scenes, pins)), R.ENGINE_MISMATCH)
     assert "4.0.534" in plan.detail and "4.0.535" in plan.detail and plan.scene_ids == IDS[:3]
     same_version_other_lock = EnginePin("remotion", "4.0.534", "19.3.0", "c" * 64)
-    failed(plan_master(inputs(*three(s2=source(engine=same_version_other_lock)))), R.ENGINE_MISMATCH)
+    plan = failed(plan_master(inputs(*three(s2=source(engine=same_version_other_lock)))), R.ENGINE_MISMATCH)
+    assert "version 4.0.534 with 2 different locks" in plan.detail, plan.detail
 
 
 def test_mixed_fps_then_mixed_dimensions_are_typed_and_fps_is_checked_first():
@@ -368,3 +378,39 @@ async def test_a_frozen_pin_whose_files_no_longer_match_is_source_unavailable(wo
     files[path] = files[path] + b"// changed\n"
     plan = failed(plan_master(M.frozen_inputs(FrozenPackage(package.manifest, files))), R.SOURCE_UNAVAILABLE)
     assert "source digest" in plan.detail and plan.scene_ids == (SCENE_ID,)
+
+
+# ------------------------------------------------------------------ QA polish (Slice 03 QA findings 1-4)
+
+
+def test_a_relative_import_that_leaves_the_scene_root_is_refused_even_if_it_resolves_standalone():
+    climbing = {**scene_files(), "src/Scene.tsx": SCENE_TSX.replace('"./lib/Title"', '"../src/lib/Title"')}
+    plan = failed(plan_master(inputs(*three(s1=source(climbing)))), R.SOURCE_IMPORT_REFUSED)
+    assert "../src/lib/Title" in plan.detail and "once mounted" in plan.detail and plan.scene_ids == (IDS[1],)
+    deep = {**scene_files(), "src/lib/Title.tsx": 'import {palette} from "../theme.json";\n' + scene_files()["src/lib/Title.tsx"]}
+    assert plan_master(inputs(*three(s0=source(deep)))).ready, "a parent import that stays inside src/ is kept"
+
+
+@pytest.mark.parametrize("call", ["import(`./lib/${name}`)", "require(`lodash`)", 'import("./lib/Title")'])
+def test_a_dynamic_import_is_refused_whatever_the_quoting(call):
+    files = {**scene_files(), "src/lib/Title.tsx": scene_files()["src/lib/Title.tsx"] + f"const name = 'Title';\nexport const lazy = () => {call};\n"}
+    candidate = scene_candidate(files=files)
+    from jarvis.domain.remotion_source import RemotionSource
+    raw = parse_source_block(candidate["manifest"]["source"])
+    unguarded = RemotionSource(raw, decode_candidate_files(candidate["sources"], candidate["assets"]))  # an old version, before the guard
+    plan = failed(plan_master(inputs(*three(s2=unguarded))), R.SOURCE_IMPORT_REFUSED)
+    assert "dynamic import" in plan.detail and plan.scene_ids == (IDS[2],)
+
+
+def test_an_entry_beside_a_same_stem_module_is_imported_by_its_exact_file():
+    twin = {**scene_files(), "src/Scene.ts": "export const other = 1;\n"}
+    plan = plan_master(inputs(*three(s0=source(twin))))
+    assert plan.ready
+    assert f'from "../scenes/{IDS[0]}/Scene.tsx";' in plan.generated[PRESENTATION_FILE].decode()
+
+
+def test_a_proto_prop_stays_an_own_key_of_the_scene_props():
+    scenes, pins = three()
+    plan = plan_master(inputs([scene(0, props={"__proto__": {"x": 1}, "title": "t"}), *scenes[1:]], pins))
+    text = plan.generated[PRESENTATION_FILE].decode()
+    assert "JSON.parse(" in text and generated_props(text)[1] == {"__proto__": {"x": 1}, "title": "t"}

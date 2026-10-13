@@ -47,7 +47,10 @@ MAX_MASTER_BYTES = 64 * 1024 * 1024
 PROJECT_KEY = re.compile(r"mpk_[0-9a-f]{24}\Z")
 SCENES_DIR = "src/scenes/"
 MAX_DETAIL_CHARS = 300
+#: Textual checks (defence in depth, not a guarantee: a computed name such as `remotion["get" + "InputProps"]` escapes them; the
+#: isolation guard refuses the obfuscation patterns it knows).
 _INPUT_PROPS = re.compile(r"\bgetInputProps\b")
+_DYNAMIC_IMPORT = re.compile(r"(?<![\w$.])(?:import|require)\s*\(")
 
 __all__ = ["MASTER_COMPOSITION_ID", "MASTER_GENERATOR_VERSION", "MAX_MASTER_BYTES", "MAX_MASTER_FILES", "MAX_MASTER_RENDER_FRAMES",
            "MasterAsset", "MasterComposition", "MasterInputs", "MasterProjectPlan", "MasterReason", "MasterScene", "MasterStatus",
@@ -327,18 +330,23 @@ def _named_list(items: list[tuple[int, str]]) -> str:
     return shown + (f" and {len(items) - 4} more" if len(items) > 4 else "")
 
 
-def _import_problem(source: RemotionSource) -> str | None:
-    """§ 8 a: bare specifiers only from `SCENE_ALLOWED_IMPORTS` (`refused_imports`, the Studio publish check), relative specifiers must
-    resolve to a module of this scene's own source (`resolve_relative`, the importer's resolver)."""
+def _import_problem(scene_id: str, source: RemotionSource) -> str | None:
+    """§ 8 a: bare specifiers only from `SCENE_ALLOWED_IMPORTS` (`refused_imports`, the Studio publish check); relative specifiers must
+    resolve to a module of this scene's own source AS MOUNTED under `src/scenes/<scene_id>/` (`resolve_relative`, the importer's resolver:
+    `../src/lib/x` from `src/Scene.tsx` resolves standalone but not once mounted, so it is refused); no dynamic `import(...)` /
+    `require(...)` at all, whatever the quoting (a template-literal specifier escapes the static parser)."""
 
     texts = source.module_texts()
     refused = refused_imports(texts)
     if refused:
         return f"imports {refused[0]}, outside the allowed modules"
-    for path, text in texts.items():
+    mounted = {_mounted(scene_id, path): text for path, text in texts.items()}
+    for (path, text), mounted_path in zip(texts.items(), mounted):
+        if _DYNAMIC_IMPORT.search(strip_comments(text)):
+            return f"{path} uses a dynamic import() or require(), which the master cannot check"
         for spec in specifiers(text):
-            if spec.startswith(".") and resolve_relative(posixpath.dirname(path), spec, texts) is None:
-                return f"{path} imports {spec[:80]!r}, which is not a module of its own source"
+            if spec.startswith(".") and resolve_relative(posixpath.dirname(mounted_path), spec, mounted) is None:
+                return f"{path} imports {spec[:80]!r}, which is not a module of its own source once mounted"
     return None
 
 
@@ -375,8 +383,9 @@ def plan_master(inputs: MasterInputs) -> MasterProjectPlan:
     engines = {(src.block.engine.version, src.block.engine.lock_sha256) for *_, src in sources}
     if len(engines) > 1:
         versions = sorted({version for version, _ in engines})
+        what = f"versions {', '.join(versions)}" if len(versions) > 1 else f"version {versions[0]} with {len(engines)} different locks"
         return _incompatible(inputs, MasterReason.ENGINE_MISMATCH,
-                             f"the scenes were written for {len(engines)} different engine pins (versions {', '.join(versions)})",
+                             f"the scenes were written for {len(engines)} different engine pins ({what})",
                              tuple(s.scene_id for _, s, _, _ in sources))
     for reason, label, read in ((MasterReason.FPS_MISMATCH, "fps", lambda c: f"{c.fps}"),
                                 (MasterReason.DIMENSIONS_MISMATCH, "size", lambda c: f"{c.width}x{c.height}")):
@@ -388,7 +397,7 @@ def plan_master(inputs: MasterInputs) -> MasterProjectPlan:
                                                  f"{_named_list(odd)} declare{'s' if len(odd) == 1 else ''} another",
                                  tuple(sid for _, sid, _ in values))
     for p, s, _, src in sources:
-        problem = _import_problem(src)
+        problem = _import_problem(s.scene_id, src)
         if problem:
             return _incompatible(inputs, MasterReason.SOURCE_IMPORT_REFUSED, f"{_name(p, s.scene_id)}: {problem}", (s.scene_id,))
     for p, s, _, src in sources:

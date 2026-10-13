@@ -90,6 +90,13 @@ the snapshot packager freezes them; it emits `core.remotion_master.planned` at i
   `master_engine_not_remotion`. A frozen pin is revalidated with `parse_source` and its recomputed digest compared with the manifest's
   `source_digest`. A package whose `presentation.json` / `variant.json` cannot be read is `presentation_render_snapshot_invalid`
   (corruption, not incompatibility).
+- The import re-check (`master_source_import_refused`) resolves each relative specifier against the scene **as mounted** under
+  `src/scenes/<scene_id>/` (`../src/lib/x` from `src/Scene.tsx` resolves standalone, not once mounted: refused) and refuses any dynamic
+  `import(...)` / `require(...)`, whatever the quoting (template literals included). The generated composition imports each entry by its exact
+  file, extension included, and hands each scene its props as `JSON.parse("<json>")`, so every key (`__proto__` included) is an own property,
+  as in the scene lane's JSON input props.
+- The `getInputProps` check (`master_input_props_reader`) and the dynamic-import check are **textual** (comments stripped): defence in depth,
+  not a guarantee. A computed name (`remotion["get" + "InputProps"]`) escapes them; the per-source isolation guard is the boundary.
 - Conformance: `tests/unit/test_remotion_master_project.py`.
 
 ## 3. Readiness and reason codes — Level 3 (Slice 03)
@@ -228,8 +235,9 @@ the Variants Player** (still one sandboxed Player per scene; a master Player is 
 (already unsandboxed under explicit acknowledgment) and for the guarded render host only**, because:
 
 - **(a) guards**: each scene source passes its own `parse_source`, isolation and import checks; the planner re-checks every scene's specifiers
-  (`master_source_import_refused`: only `SCENE_ALLOWED_IMPORTS`, relative imports stay inside the scene's own folder), since the webpack bundle
-  used by Studio and render checks nothing (AUDIT A7);
+  (`master_source_import_refused`: only `SCENE_ALLOWED_IMPORTS`, relative imports stay inside the scene's own folder as mounted, no dynamic
+  import), since the webpack bundle used by Studio and render checks nothing (AUDIT A7); these re-checks, like the `getInputProps` one, are
+  textual: defence in depth over the per-source guards, not a replacement for them;
 - **(b) failure isolation**: one error boundary per Sequence; a render failure is typed and names the scene;
 - **(c) budgets**: 400 files / 64 MiB combined, the same Studio guard and the same render egress guard, Chrome sandbox and deny proxy;
 - **(d) pins**: each mounted folder `src/scenes/<scene_id>/` names one exact pin; the master workspace is never a hot-reload or publish source

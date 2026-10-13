@@ -15,7 +15,7 @@ from jarvis.domain.remotion_master_files import MasterFilesError, plan_master_fi
 from jarvis.domain.remotion_master_generated import BOUNDARY_FILE, PACKAGE_FILE, PRESENTATION_FILE, ROOT_FILE
 from jarvis.domain.remotion_master_project import MasterAsset, PinSource, plan_master
 from tests.fakes.remotion_scene import PNG_1X1, scene_files
-from tests.unit.test_remotion_master_project import IDS, inputs, pin, scene, source, three
+from tests.unit.test_remotion_master_project import IDS, generated_props, inputs, pin, scene, source, three
 
 GENERATED = {PACKAGE_FILE, ROOT_FILE, PRESENTATION_FILE, BOUNDARY_FILE}
 
@@ -60,8 +60,7 @@ def test_the_map_equals_the_plan_totals_and_holds_frozen_live_copies():
 def test_the_generated_presentation_wires_merged_props_per_scene():
     plan, _ = distinct()
     text = plan_master_files(plan)[PRESENTATION_FILE].decode()
-    for n in range(3):
-        assert f'"accent": "#000000", "title": "T{n}"' in text, text
+    assert generated_props(text) == {n + 1: {"accent": "#000000", "title": f"T{n}"} for n in range(3)}, text
 
 
 def test_a_plan_that_is_not_ready_has_no_workspace():

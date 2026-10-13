@@ -41,10 +41,16 @@ def is_generated(path: str) -> bool:
 
 
 def _import_from_master(entry: str) -> str:
-    """`src/scenes/<id>/Scene.tsx` seen from `src/master/`: `../scenes/<id>/Scene` (no extension, as the bundler resolves it)."""
+    """`src/scenes/<id>/Scene.tsx` seen from `src/master/`: `../scenes/<id>/Scene.tsx`, the exact extension (a source holding both
+    `Scene.tsx` and `Scene.ts` must mount the declared entry, not whichever the bundler probes first)."""
 
-    stem = entry.rsplit(".", 1)[0]
-    return "../" + stem.removeprefix("src/")
+    return "../" + entry.removeprefix("src/")
+
+
+def _props_literal(props: Mapping[str, Any]) -> str:
+    """`JSON.parse("<json>")`: every key, `__proto__` included, is an own property, exactly as the scene lane's JSON input props."""
+
+    return f"JSON.parse({json.dumps(_js(dict(props)))})"
 
 
 def _js(value: Any) -> str:
@@ -69,7 +75,7 @@ def generated_files(*, width: int, height: int, fps: int, scenes: Sequence[Gener
     ))
     lines = [_HEADER, "import React from 'react';", "import {Series} from 'remotion';", "import {SceneBoundary} from './SceneBoundary';"]
     lines += [f"import Scene{s.position} from {_js(_import_from_master(s.entry))};" for s in scenes]
-    lines += [f"const props{s.position}: Record<string, unknown> = {_js(dict(s.props))};" for s in scenes]
+    lines += [f"const props{s.position}: Record<string, unknown> = {_props_literal(s.props)};" for s in scenes]
     lines += ["export const Presentation: React.FC = () => (", "  <Series>"]
     for s in scenes:
         lines += [f"    <Series.Sequence durationInFrames={{{s.duration_in_frames}}}>",
