@@ -50,6 +50,10 @@ DOOR = f"{X} [data-act=\"remotion_studio\"]"
 SCENE_DOOR = f"{X} [data-act=\"remotion_studio_scene\"]"
 SCENE_DOOR_SHOWN = f"(()=>{{const b=document.querySelector('{SCENE_DOOR}');return !!b&&!b.hidden&&b.offsetParent!==null}})()"
 CONFIRM = f"{X} [data-act=\"remotion_studio_confirm\"]"
+#: Slice 09 rework: the whole video's readiness is known (the door means the whole video, no read on the way) and the master line, with its scene
+#: door, is on screen: nothing under the pointer moves any more (a click aimed at the door while the line was arriving landed on the scene door).
+MASTER_KNOWN = (f"(()=>{{const b=document.querySelector('{DOOR}');return !!b&&b.dataset.target==='master'&&b.dataset.state!=='loading'"
+                f"&&b.getAttribute('aria-busy')!=='true'&&!{EXPLORER}.remotionStudio.state().master.loading}})()")
 DIALOG = f"document.querySelector('{X} [data-kind=\"remotion_studio\"]')"
 RMS_TEXT = f"(document.querySelector('{X} .jvx-rms-text')||{{}}).textContent||''"
 RMS_STATE = f"{EXPLORER}.remotionStudio.state()"
@@ -161,6 +165,7 @@ async def test_a_failed_start_is_said_with_its_code_and_retry_recovers(studio_de
     core, url, pid, runner, studio_url = studio_deck
     runner.launch_errors = [StudioError(StudioErrorCode.START_TIMEOUT, "no answer within 120 s")]
     result = await drive(url, _open_variants(pid) + [
+        {"until": MASTER_KNOWN, "ms": 8000},
         {"click": DOOR}, {"until": f"!!{DIALOG}", "ms": 8000}, {"click": CONFIRM},
         {"until": f"{RMS_STATE}.studio && {RMS_STATE}.studio.status==='failed' && !{RMS_STATE}.busy", "ms": 15000},
         {"value": "failedText", "expr": RMS_TEXT},

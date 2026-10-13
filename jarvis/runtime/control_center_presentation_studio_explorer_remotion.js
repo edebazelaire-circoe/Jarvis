@@ -48,6 +48,7 @@
 #${HOST_ID} .jvx-stage-note>[data-act="remotion_studio"]{margin-left:auto;min-height:30px;padding:0 12px;font-size:12px;flex:none}
 #${HOST_ID} .jvx-stage-note>[data-act="remotion_studio"]+[data-act="present"]{margin-left:0}
 #${HOST_ID} .jvx-stage-note>[data-act="remotion_studio"][aria-disabled="true"]{opacity:.55;cursor:default}
+#${HOST_ID} .jvx-stage-note>[data-act="remotion_studio"][data-state="loading"]{opacity:.75;cursor:progress}
 #${HOST_ID} .jvx-stage-note>[data-act="remotion_studio"][data-state="here"]{border-color:var(--jvx-ok);color:var(--jvx-ok)}
 #${HOST_ID} .jvx-stage-note>[data-act="remotion_studio"][data-state="here"]::before{content:"";width:7px;height:7px;border-radius:50%;background:currentColor}
 #${HOST_ID} .jvx-rms{flex:1 1 100%;display:flex;flex-wrap:wrap;align-items:center;gap:6px 12px;min-width:0;margin:0;font-size:12.5px;color:var(--jvx-mute)}
@@ -64,7 +65,7 @@
 #${HOST_ID} .jvx-rms-files{margin:4px 0 0;padding:6px 8px 6px 22px;max-height:12em;overflow:auto;border:1px solid var(--jvx-line-strong);border-radius:6px;font:12px/1.4 ui-monospace,Consolas,monospace}
 #${HOST_ID} .jvx-rms-log pre{margin:4px 0 0;max-height:7.5em;overflow:auto;white-space:pre-wrap;font:11.5px/1.35 ui-monospace,Consolas,monospace;color:var(--jvx-mute)}
 #${HOST_ID} .jvx-theater:fullscreen .jvx-stage-note>[data-act="remotion_studio"],#${HOST_ID} .jvx-theater:fullscreen .jvx-rms{display:none}
-#${HOST_ID} .jvx-rms-master{flex:1 1 100%;display:flex;flex-wrap:wrap;align-items:center;gap:4px 12px;min-width:0}
+#${HOST_ID} .jvx-rms-master{flex:1 1 100%;display:flex;flex-wrap:wrap;align-items:center;gap:4px 12px;min-width:0;min-height:26px}
 #${HOST_ID} .jvx-rms-master[hidden]{display:none}
 #${HOST_ID} .jvx-rms-master-text{min-width:0;flex:0 1 auto}
 #${HOST_ID} .jvx-rms[data-master-tone="warn"] .jvx-rms-master-text{color:var(--jvx-warn)}
@@ -94,7 +95,7 @@
 
   /* Le modèle (pur) de la porte : le bouton et la ligne d'état, depuis la scène à l'écran et la vue de Core. `i` :
      {scene:{id,title,number,of,prefab}|null, scenes:[{id,title,prefab}], detail:{state,remotion}|null, studio, capability, readError,
-      busy:{label,at}|null, actionError:{code,text}|null, run, needsClick, explain, now,
+      busy:{label,at}|null, actionError:{code,text}|null, run, needsClick, explain, lastTarget:'master'|'scene'|'auto' (ce que « Réessayer » relance), now,
       publishing:{at,label}|null, published:{published,previous,status,sceneId}|null, publishError:{code,text,diagnostics}|null}. */
   /* L'espace de travail de Remotion Studio (Slice 12) face à la scène à l'écran : 'here' (sa base est le pin de la scène : publiable ici),
      'other' (une autre version ou une autre scène), 'none' (aucune base connue). Vrai que Remotion Studio soit ouvert ou arrêté. */
@@ -136,6 +137,9 @@
     const m=i.master||null;
     if(!m||!i.scene)return null;
     const plan=m.plan;
+    /* Slice 09 rework: the line is on screen while the whole video is read, at the height the scene door will take, so nothing under the
+       pointer moves when the answer comes (a click aimed at « Remotion Studio » once landed on « Cette scène seule… », which took its place). */
+    if(!plan&&m.state==='loading')return {tone:'',scene:false,loading:true,text:'Vidéo entière : lecture en cours…'};
     if(plan&&plan.status==='ready'){
       const f=masterFacts(plan);
       return {tone:'',scene:true,text:`Vidéo entière : ${projectName(i)}, ${f.scenes}${f.seconds?` (${f.seconds})`:''}.`};
@@ -193,6 +197,13 @@
     const master=masterLine(i);
     const button={label:'Remotion Studio',state:relation==='here'?'here':'idle',blocked,ariaLabel:'Remotion Studio',
       title:blocked||'Ouvrir la scène à l’écran dans Remotion Studio (un onglet à part, après confirmation)'};
+    /* Slice 09 rework: the whole video's readiness not known yet, the button never silently means « this scene »: it says it is reading, and a
+       click waits for the answer before choosing (whole video if ready, the scene otherwise). */
+    const masterUnknown=!!(scene&&i.master&&i.master.state==='loading'&&!plan);
+    if(masterUnknown&&!blocked){
+      button.state='loading';button.ariaLabel='Remotion Studio, lecture de la vidéo entière';
+      button.title='Lecture de la vidéo entière en cours : un clic ouvre la vidéo entière si elle est prête, sinon la scène à l’écran (après confirmation)';
+    }
     /* The tab is opened `noopener` (security): a browser cannot bring back a tab opened that way, so a click here opens ANOTHER tab; the words
        say so (Slice 11 QA polish, decided by agent 0: keep `noopener`). */
     if(masterMode){
@@ -206,6 +217,8 @@
       ?'Ouvrir un autre onglet Remotion Studio sur cette scène seule (celui déjà ouvert reste où il est)'
       :'Ouvrir seulement la scène à l’écran dans Remotion Studio, à sa version exacte : pour la modifier et la publier dans la variante (après confirmation)')}:null;
     const done=out=>Object.assign(out,{master,masterMode,masterRelation,sceneDoor});
+    /* « Réessayer » retries the target that failed (Slice 09 rework): a whole video no longer ready has nothing to retry (its line says why). */
+    const retryable=!(i.lastTarget==='master'&&!masterMode);
     let status=null;
     const elapsed=since=>C.fmtDuration(Math.max(0,since));
     const ws=workspaceOf(st,mine);
@@ -242,7 +255,7 @@
       button.state='busy';
       status={tone:'',spin:true,text:`${i.busy.label} ${elapsed((i.now-i.busy.at)/1000)} (${C.START_LIMIT_S/60} min au plus).`};
     }else if(i.actionError){
-      status={tone:'danger',text:`Remotion Studio : ${i.actionError.text} (${i.actionError.code})`,retry:true};
+      status={tone:'danger',text:`Remotion Studio : ${i.actionError.text} (${i.actionError.code})`,retry:retryable};
     }else if(lost){
       status={tone:'warn',text:lostSentence(i.readError)};
     }else if(st&&st.status==='starting'){
@@ -253,7 +266,7 @@
     }else if(st&&st.status==='failed'){
       const code=st.last_error_code||'remotion_studio_failed';
       status={tone:'danger',text:`Remotion Studio est en échec : ${C.errorText(code)||cleanLine(st.last_error_detail,160)||'raison inconnue'} (${code})`,
-        retry:!blocked,diagnostics:(st.diagnostics||[]).slice(-DIAG_LINES)};
+        retry:!blocked&&retryable,diagnostics:(st.diagnostics||[]).slice(-DIAG_LINES)};
     }else if(masterRelation!=='none'){
       const f=masterFacts(plan);
       let tone='ok',link=null,refresh=false;const parts=[];
@@ -360,7 +373,7 @@
       const at=ctx.scene();
       const scene=at&&at.scene?{id:at.scene.id,title:at.scene.title,number:at.index+1,of:at.scenes.length,prefab:at.scene.prefab}:null;
       return {at,scene,input:{scene,scenes:at?at.scenes:[],detail:scene?S.details.get(keyOf(scene.prefab))||null:null,studio:S.studio,capability:S.capability,
-        readError:S.readError,busy:S.busy,actionError:S.actionError,run:ctx.running(),needsClick:S.needsClick,explain:S.explain,now:now(),
+        readError:S.readError,busy:S.busy,actionError:S.actionError,run:ctx.running(),needsClick:S.needsClick,explain:S.explain,lastTarget:S.lastTarget,now:now(),
         publishing:S.publishing,published:S.published,publishError:S.publishError,
         master:masterNow(at),presentationId:at&&at.presentationId,variantId:at&&at.variantId,variantNumber:at&&at.variantNumber,
         presentationTitle:at&&at.presentationTitle||''}};
@@ -401,7 +414,7 @@
       if(!ui.button)return;
       const m=model();
       const b=m.button;
-      attrs(ui.button,{'aria-disabled':b.blocked||b.state==='busy'?'true':'false','aria-label':b.ariaLabel,title:b.title,'data-state':b.state,
+      attrs(ui.button,{'aria-disabled':b.blocked||b.state==='busy'?'true':'false','aria-busy':b.state==='loading'?'true':'false','aria-label':b.ariaLabel,title:b.title,'data-state':b.state,
         'data-target':m.masterMode?'master':'scene'});
       const ml=m.master;
       ui.master.hidden=!ml;
@@ -766,8 +779,8 @@
       const first=view().scene;
       const known=first&&first.prefab?S.details.get(keyOf(first.prefab)):null;
       if(first&&first.prefab&&(!known||known.state==='loading'))await loadDetail(first.prefab);
-      const pending=maybeMaster('request');
-      if(pending)await pending;
+      /* A newer revision may take over the read on the way: wait for the read that answers for what is on screen (never the scene by default). */
+      for(let n=0,pending=maybeMaster('request');pending&&n<4;n++,pending=maybeMaster('request'))await pending;
       /* Core's view unconfirmed (R1): a click reads it again before deciding; still unreadable, the button says so and nothing opens. */
       if(lostRead(S.readError))await refresh('request');
       const v=view(),m=doorModel(v.input);
@@ -782,10 +795,15 @@
         log('remotion_studio_module_missing',{},'error');
         return {state:'failed',code:'remotion_studio_page_error'};
       }
-      /* « Remotion Studio » opens the whole video when it is ready; the scene door (« Cette scène seule… ») and a retry of a scene open keep
-         the scene. `target`: 'scene' | 'master' | undefined (the primary meaning). */
-      const wantScene=o.target==='scene'||(o.via==='retry'&&S.lastTarget==='scene');
-      if(m.masterMode&&!wantScene)return requestMaster(o,v,m);
+      /* « Remotion Studio » opens the whole video when it is ready; the scene door (« Cette scène seule… ») keeps the scene. « Réessayer »
+         retries exactly the target that failed, never re-decides (Slice 09 rework). `target`: 'scene' | 'master' | undefined (the primary meaning). */
+      const target=o.target||(o.via==='retry'&&S.lastTarget!=='auto'?S.lastTarget:undefined);
+      if(target==='master'&&!m.masterMode){
+        S.lastTarget='auto';S.explain='La vidéo entière n’est plus prête (voir la ligne ci-dessus) : rien n’a été relancé. « Remotion Studio » ouvre maintenant la scène à l’écran.';
+        announce(S.explain);render();log('remotion_studio_blocked',{via:o.via,why:'master_not_ready',target:'master'});
+        return {state:'refused',reason:S.explain};
+      }
+      if(m.masterMode&&target!=='scene')return requestMaster(o,v,m);
       const sc=v.scene,st=S.studio;
       if(m.relation==='here'&&st.url){S.needsClick=!openTab(st.url,'button');render();return {state:'shown',url:st.url}}
       let detail=S.details.get(keyOf(sc.prefab));
@@ -801,7 +819,7 @@
       if(!now2||keyOf(now2.prefab)!==keyOf(sc.prefab)){S.explain='La scène a changé pendant la confirmation : rien n’a été lancé.';render();return {state:'cancelled'}}
       ctx.pause();
       S.busy={label:kind==='switch'?'Remotion Studio change de scène…':'Remotion Studio démarre…',at:now()};
-      S.actionError=null;S.explain=null;S.needsClick=false;S.generation+=1;S.lastTarget=m.masterMode?'scene':'auto';
+      S.actionError=null;S.explain=null;S.needsClick=false;S.generation+=1;S.lastTarget='scene';
       render();tick(true);schedule();
       log('remotion_studio_open_requested',{via:o.via,kind,prefab:keyOf(sc.prefab),scene_id:sc.id});
       let result;

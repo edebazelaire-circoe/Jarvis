@@ -626,3 +626,78 @@ def test_the_master_line_is_a_live_region_and_the_confirmation_pins_its_action_r
     s = out["shape"]
     assert s["kids"] == ["h2", "div.jvx-confirm-body", "div.jvx-dialog-actions"], "heading, scrolling body, pinned action row"
     assert s["listInBody"] is True and s["actionsInBody"] is False and s["goInActions"] is True
+
+
+# ------------------------------------------------------------------ Slice 09 rework: readiness unknown, retry keeps its target
+
+RETRY_WORLD = MASTER_WORLD + r"""
+const retry=()=>q('[data-act="remotion_studio_retry"]');
+const failedStudio=()=>({status:'failed',pin:null,url:null,viewers:0,last_error_code:'remotion_studio_start_timeout',work_copy:{}});
+const baseOpen=rms.openReply;let failNext=0;
+rms.openReply=body=>{if(failNext>0){failNext--;rms.studio=failedStudio();return {status:200,body:{studio:rms.studio}}}return baseOpen(body)};
+"""
+
+
+def test_a_click_while_the_whole_video_is_read_waits_and_never_opens_the_scene(tmp_path):
+    out = run_ui(tmp_path, MASTER_WORLD + r"""
+      env.route(u=>u.includes('/master-project'),()=>{mp.reads++;return {status:200,body:{master:mp.plan},delay:2000}});
+      const ex=await openVariants();                  // 600 ms: the readiness read is still on the way
+      const loading={state:door().getAttribute('data-state'),busy:door().getAttribute('aria-busy'),aria:door().getAttribute('aria-label'),
+        title:door().getAttribute('title'),lineShown:!q('.jvx-rms-master').hidden,line:masterLine(),sceneDoor:sceneDoor().hidden};
+      door().click();await env.advance(200);
+      const during={dialog:!!dialog(),opens:rms.opens.length};
+      await env.advance(2000);
+      const after={target:dialog()&&dialog().getAttribute('data-target'),title:dialog()&&q('h2',dialog()).textContent,
+        state:door().getAttribute('data-state'),busy:door().getAttribute('aria-busy'),reads:mp.reads};
+      go().click();await env.advance(300);
+      return {loading,during,after,opens:rms.opens};
+    """)
+    lo = out["loading"]
+    assert lo["state"] == "loading" and lo["busy"] == "true" and lo["aria"] == "Remotion Studio, lecture de la vidéo entière"
+    assert "Lecture de la vidéo entière en cours" in lo["title"]
+    assert lo["lineShown"] is True and lo["line"] == "Vidéo entière : lecture en cours…" and lo["sceneDoor"] is True, \
+        "the line holds its place while the readiness is read: nothing moves under the pointer when the answer comes"
+    assert out["during"] == {"dialog": False, "opens": 0}, "the click waits for the readiness, it never opens the scene meanwhile"
+    a = out["after"]
+    assert a["target"] == "master" and a["title"] == "Ouvrir la vidéo entière hors du bac à sable ?" and a["reads"] == 1
+    assert a["state"] == "idle" and a["busy"] == "false"
+    assert [b.get("kind") for b in out["opens"]] == ["variant_master"]
+
+
+def test_retry_retries_exactly_the_target_that_failed(tmp_path):
+    out = run_ui(tmp_path, RETRY_WORLD + r"""
+      const ex=await openVariants();
+      failNext=1;door().click();await env.advance(80);go().click();await env.advance(300);
+      const masterFailed={retry:!retry().hidden,text:say()};
+      retry().click();await env.advance(80);
+      const masterRetry=dialog()&&dialog().getAttribute('data-target');
+      go().click();await env.advance(300);
+      failNext=1;sceneDoor().click();await env.advance(80);go().click();await env.advance(300);
+      const sceneFailed={retry:!retry().hidden,target:door().getAttribute('data-target')};
+      retry().click();await env.advance(80);
+      const sceneRetry={target:dialog()&&dialog().getAttribute('data-target'),title:dialog()&&q('h2',dialog()).textContent};
+      go().click();await env.advance(300);
+      return {masterFailed,masterRetry,sceneFailed,sceneRetry,opens:rms.opens.map(b=>b.kind||'scene')};
+    """)
+    assert out["masterFailed"]["retry"] is True and "remotion_studio_start_timeout" in out["masterFailed"]["text"]
+    assert out["masterRetry"] == "master", "a failed whole video is retried as the whole video"
+    assert out["sceneFailed"] == {"retry": True, "target": "master"}, "the primary door still means the whole video"
+    assert out["sceneRetry"]["target"] is None and out["sceneRetry"]["title"] == "Ouvrir cette scène hors du bac à sable ?", \
+        "a failed scene is retried as the scene, never re-decided as the whole video"
+    assert out["opens"] == ["variant_master", "variant_master", "scene", "scene"]
+
+
+def test_a_failed_whole_video_no_longer_ready_offers_no_retry_and_never_falls_back_to_the_scene(tmp_path):
+    out = run_ui(tmp_path, RETRY_WORLD + r"""
+      const ex=await openVariants();
+      failNext=1;door().click();await env.advance(80);go().click();await env.advance(300);
+      mp.plan=Object.assign({},mp.plan,{variant_revision:2,status:'incompatible',reason:'master_dimensions_mismatch',
+        detail:'scene 2 (pss_000000000002) is 1920x1080'});
+      world.byId(vid(1)).revision=2;await ex.refresh();await env.advance(600);
+      const seen={retry:retry().hidden,target:door().getAttribute('data-target'),text:say()};
+      const forced=await ex.remotionStudio.request({via:'retry'});await env.advance(80);
+      return {seen,forced,dialog:!!dialog(),opens:rms.opens.length};
+    """)
+    assert out["seen"]["retry"] is True and out["seen"]["target"] == "scene", "nothing to retry: the line says why"
+    assert out["forced"]["state"] == "refused" and "La vidéo entière n’est plus prête" in out["forced"]["reason"]
+    assert out["dialog"] is False and out["opens"] == 1, "a retry of the whole video never opens the scene instead"

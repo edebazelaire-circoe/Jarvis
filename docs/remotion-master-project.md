@@ -479,6 +479,13 @@ unknown presentation or variant is the usual 404 `presentation_studio_unknown_*`
   `JarvisRemotionStudioCore.MASTER_REASONS` / `masterReasonSentence`, the table of `remotion_master_sentences.py` word for word (a parity
   test). An unreadable view (an older Core, a variant gone, a network failure) keeps the scene door and says « La vidéo entière n’a pas pu être
   lue (<code>) : « Remotion Studio » ouvre la scène à l’écran. » (logged `remotion_master_read_failed`, `warn`).
+- **Readiness not known yet (Slice 09 rework).** While the first read of the revision is on the way (no plan yet), the button never silently
+  means « this scene »: `data-state="loading"`, `aria-busy="true"`, name « Remotion Studio, lecture de la vidéo entière », and a click waits
+  for the read (the one answering for the revision on screen, if a newer one took over) before choosing: whole video if ready, the scene
+  otherwise. The master line is already on screen, « Vidéo entière : lecture en cours… », at the height the scene door takes
+  (`min-height`), so nothing under the pointer moves when the answer comes (a click aimed at « Remotion Studio » once landed on « Cette
+  scène seule… », which took its place). « Réessayer » retries exactly the target that failed (whole video or this scene), never re-decides;
+  a failed whole video that is no longer ready offers no « Réessayer » (its line says why) and a retry asked anyway opens nothing.
 - **Primary door, master target.** Ready: the button reads « Remotion Studio » (`data-target="master"`, name « Remotion Studio, vidéo entière »),
   and its master line « Vidéo entière : « Atelier », variante 2, 3 scènes (4,5 s). » with the quiet secondary « Cette scène seule dans Remotion
   Studio » (a text button on that line in the line's muted ink and normal weight, accent and underline only on hover or keyboard focus,
