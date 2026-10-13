@@ -124,7 +124,7 @@ The first pass of the same suite, run before the fixes of this Slice, found what
 | `test_remotion_import_real.py` (real GitHub, `JARVIS_REMOTION_IMPORT_NETWORK=1`) | 2 | pass | 19 s |
 | `test_presentation_studio_authoring_remotion_real.py` | 6 | pass | 3 s |
 | `test_presentation_studio_authoring_remotion_browser.py` | 3 | pass | 28 s |
-| `test_presentation_studio_player_realpage_browser.py` | 5 | pass | 38 s |
+| test_presentation_studio_player_realpage_browser.py (deleted by native-studio-playback-fix Slice 09 with the band; its proofs moved to `test_variants_run_browser.py`) | 5 | pass | 38 s |
 | `test_presentation_studio_reload_real_page_browser.py` | 2 | pass | 43 s |
 | `test_remotion_release_flows.py` (the journey, below) | 1 | pass | 54 s |
 
@@ -236,8 +236,8 @@ Studio (the agent tools return where to click). Detail and PowerShell recipes: [
 3. **Repair**: `repair` reinstalls from the shipped lock when `repair_needed` / `install_failed` / `install_interrupted`; `health` probes; `uninstall`
    empties `runtime/` and leaves every source and asset untouched. After a Jarvis update that changes `runtime-host.mjs` the card says
    `shipped_files_changed`: repair.
-4. **Enable / disable the Studio**: the Studio is a separate, optional process: **Ouvrir le Studio** (explicit confirmation: the scene runs without the
-   sandbox and the Studio's API can send source and props off the machine), **Fermer le Studio**, automatic stop after 30 minutes without a window
+4. **Enable / disable the Studio**: the Studio is a separate, optional process: **Ouvrir Remotion Studio** (since native-studio-playback-fix Slice 11 also « Remotion Studio » under the video in Variants) (explicit confirmation: the scene runs without the
+   sandbox and the Studio's API can send source and props off the machine), **Fermer Remotion Studio**, automatic stop after 30 minutes without a window
    (`JARVIS_REMOTION_STUDIO_IDLE_S`, 60 to 86400 s), fixed port with `JARVIS_REMOTION_STUDIO_PORT`. The capability itself is `disable` / `enable` on the same
    route family. Only open it on a scene you know.
 5. **Export**: Board, Artefacts view, under a frozen copy, "Exporter cette copie" (MP4, image, PDF). One scene per export (`settings.scene_id` when a
@@ -413,6 +413,27 @@ every import and promotion shows it, but nobody here has read it against this in
 locked entries (`jarvis/capabilities/remotion/package-lock.json`). The official `remotion-dev/template-*` repositories are `UNLICENSED`, which is
 why the default import allowlist imports nothing. **Do not distribute or sell an installation that bundles Remotion before the licence is read and a
 decision is recorded.** Sources: <https://www.remotion.dev/docs/license/pricing>, <https://www.remotion.dev/docs/license/faq>.
+
+**What the installed licence text says (native-studio-playback-fix Slice 15, facts only, not legal advice; the decision stays the Human's).**
+Read from the gate runtime's `node_modules/remotion/LICENSE.md` (Remotion 4.0.534, the pinned version of `jarvis/capabilities/remotion`;
+SHA-256 `bd65083b940f61904f6ef298aade918a7cad72a3e35bc406e36fab365844b673`). The same file ships with `@remotion/player`, `@remotion/renderer`,
+`@remotion/bundler`, `@remotion/cli` and `@remotion/web-renderer`; `@remotion/sdk`, `@remotion/studio-protocol` and `@remotion/media-parser`
+declare « Remotion License »; `@remotion/studio`, `@remotion/studio-server`, `@remotion/paths`, `@remotion/media-utils` and several helpers declare MIT.
+The text sets two tiers:
+
+- **Free License**: individuals; for-profit organisations with **up to 3 employees**; non-profit or not-for-profit organisations; and an entity
+  « evaluating whether Remotion is a good fit, and … not yet using it in a commercial way ». Allowed: creating videos and images, commercially or
+  not, and modifying the software for one's own use case. Disallowed: copying or modifying Remotion « for the purpose of selling, renting, licensing,
+  relicensing, or sublicensing your own derivate of Remotion ».
+- **Company License**: required for any entity outside the Free License group, for the same allowed uses; bought at remotion.pro. The file also
+  announces that « In Remotion 5.0, the license will slightly change ».
+
+How this task uses Remotion, for whoever decides: the Player (Variants), the renderer (exports, previews, frame checks) and the native Remotion
+Studio (`remotion studio`, Slice 11/12) all run **locally** on the user's machine from the user's own install (the capability card's explicit
+« Installer »); Jarvis distributes no Remotion code (the lock file pins it, npm fetches it). Jarvis's code passes no licence key and calls no usage-event API
+(in 4.0.534, `@remotion/renderer` `render-media.js` sends its usage event through `@remotion/licensing` only when a `licenseKey` is passed); the Studio's own licence prompts may show (*[remotion-studio.md](remotion-studio.md) § 11*). Which tier applies depends on the entity that
+uses this installation; nobody in this task has decided it. **The decision gate above is kept unchanged**: H-0 (row 0 of *Human checks*) and
+HV-22-02 record it before any shipping or distribution.
 
 ## Known issues
 

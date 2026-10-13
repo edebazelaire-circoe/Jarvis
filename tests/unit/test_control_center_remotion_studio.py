@@ -216,7 +216,7 @@ def test_a_ready_studio_shows_the_url_viewers_and_the_automatic_stop_countdown(t
     assert m["url"] == "http://127.0.0.1:41000/" and m["label"] == "Prêt" and m["tone"] == "ok"
     assert "aucune fenêtre ouverte" in m["activity"]["text"] and "arrêt automatique dans 2 min 05 s" in m["activity"]["text"]
     assert m["actions"]["sync"]["enabled"] and m["actions"]["close"]["enabled"] and m["actions"]["restart"]["enabled"]
-    assert m["actions"]["open"]["label"] == "Ouvrir le Studio"
+    assert m["actions"]["open"]["label"] == "Ouvrir Remotion Studio"  # PX-1 (native-studio-playback-fix Slice 11)
     viewers = model(tmp_path, {**READY, "viewers": 2}, scene={"id": "s", "version": 1})
     assert "2 fenêtres ouvertes" in viewers["activity"]["text"] and "arrêt automatique" not in viewers["activity"]["text"]
 
@@ -347,10 +347,10 @@ SCENE = {"id": "presentation-studio.p1.s1", "version": 3, "label": "Scène A · 
 def test_the_confirmation_names_the_risk_and_the_provenance_of_the_exact_version(tmp_path):
     own = spec(tmp_path, SCENE, {"origin": "custom", "created_by": {"actor": "user"}})
     text = json.dumps(own["lines"], ensure_ascii=False)
-    assert "Sans bac à sable" in text and "Même origine que l’API du Studio" in text and "sortir de ce poste" in text
+    assert "Sans bac à sable" in text and "Même origine que l’API de Remotion Studio" in text and "sortir de ce poste" in text
     assert "Scène A · v3" in text and "créée sur ce poste" in text and "auteur : vous" in text
     assert own["danger"] is False and own["own"] is True and "Attention" not in text
-    assert own["confirmLabel"] == "Ouvrir le Studio sur cette scène" and own["cancelLabel"] == "Annuler"
+    assert own["confirmLabel"] == "Ouvrir cette scène dans Remotion Studio" and own["cancelLabel"] == "Annuler"
 
 
 @pytest.mark.parametrize("provenance,wanted", [

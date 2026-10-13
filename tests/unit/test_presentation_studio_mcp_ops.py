@@ -238,24 +238,107 @@ async def test_the_explorer_refusals_come_from_the_page_and_name_their_cause(wor
     route = "/api/presentation-studio/explorer/commands"
     world.cc.answers[("POST", route)] = (200, {"state": "refused", "code": "explorer_run_in_progress", "reason": "lecture"})
     error = await refused(world.tools.view("explorer_open"))
-    assert error.code == "explorer_run_in_progress" and "arrête d'abord la lecture" in str(error)
+    assert error.code == "explorer_run_in_progress" and "arrête-la d'abord" in str(error) and "Variantes la montre" in str(error)
     world.cc.answers[("POST", route)] = (504, {"ok": False, "code": "explorer_no_visible_page", "error": "aucune page"})
     assert (await refused(world.tools.view("explorer_open"))).code == "explorer_no_visible_page"
 
 
-async def test_stage_fullscreen_needs_a_run_and_never_claims_the_screen_is_full(world):
+async def test_stage_fullscreen_needs_a_run_opens_variants_on_it_and_only_arms_the_variants_stage(world):
+    """Slice 09: the run plays in Variants, so `stage_fullscreen_enter` targets the Variants STAGE (`studio-explorer-stage`, the Player and
+    its transport), after opening Variants on the run (windowed, receipt); it only ARMS fullscreen: the user's click enters it."""
+
     error = await refused(world.tools.view("stage_fullscreen_enter"))
     assert error.code == "no_run"
     world.cc.answers[ATTESTED] = (200, {"ok": True, "addressed_user_turn": True})
+    world.cc.answers[("POST", "/api/presentation-studio/explorer/commands")] = (200, {"state": "opened", "mode": "windowed"})
     await world.tools.play("start", role="rehearsal")
     stage = (await world.tools.inspect("playback"))["state"]["stage_object_id"]
+    assert stage.startswith("variants-run-"), "the run's surface is a Variants surface, never a Board window"
     world.cc.answers[("POST", "/api/fullscreen/commands")] = (200, {"state": "needs_gesture"})
     out = await world.tools.view("stage_fullscreen_enter")
     assert out["needs_gesture"] is True and out["speech"] == "say" and "plein écran" in out["note"]
-    assert world.cc.requests[-1][2] == {"action": "enter", "object_id": stage, "keys": "host"}
+    assert world.cc.requests[-2][1] == "/api/presentation-studio/explorer/commands"
+    assert world.cc.requests[-2][2] == {"action": "open", "presentation_id": world.pid, "variant_id": world.vid, "fullscreen": False}
+    assert world.cc.requests[-1][2] == {"action": "enter", "object_id": "studio-explorer-stage", "keys": "none"}
+    world.cc.answers[("POST", "/api/presentation-studio/explorer/commands")] = (200, {"state": "refused", "code": "explorer_dialog_open",
+                                                                                       "reason": "formulaire"})
+    assert (await refused(world.tools.view("stage_fullscreen_enter"))).code == "explorer_dialog_open"
     world.cc.answers[("POST", "/api/fullscreen/commands")] = (200, {"state": "exited"})
     left = await world.tools.view("fullscreen_exit")
     assert left["speech"] == "silent" and world.cc.requests[-1][2] == {"action": "exit"}
+
+
+async def test_a_start_is_shown_in_variants_and_without_a_visible_page_the_run_pauses_with_a_typed_refusal(world):
+    """§ 5 « Voice and MCP » (Slice 09): `presentation_play start` opens Variants on the run (windowed, never fullscreen) with the page's
+    receipt; with no visible page to show it, the run is paused and the start answers `surface_unavailable`; never a Board window."""
+
+    world.cc.answers[ATTESTED] = (200, {"ok": True, "addressed_user_turn": True})
+    route = "/api/presentation-studio/explorer/commands"
+    world.cc.answers[("POST", route)] = (200, {"state": "opened", "mode": "windowed"})
+    out = await world.tools.play("start", role="rehearsal")
+    assert out["surface"] == "variants" and out["state"]["phase"] == "playing"
+    opened = [r for r in world.cc.requests if r[1] == route][-1][2]
+    assert opened == {"action": "open", "presentation_id": world.pid, "variant_id": world.vid, "fullscreen": False}
+    assert (await world.core.stack.core.scene.snapshot()).objects == (), "never a Board window"
+    await world.tools.play("stop")
+    world.cc.answers[("POST", route)] = (504, {"ok": False, "code": "explorer_no_visible_page", "error": "aucune page"})
+    error = await refused(world.tools.play("start", role="rehearsal"))
+    assert error.code == "surface_unavailable" and "mise en pause" in str(error) and "explorer_no_visible_page" in str(error)
+    assert (await world.tools.inspect("playback"))["state"]["phase"] == "paused", "Jarvis never presents to an empty screen"
+
+
+@pytest.mark.parametrize("code, says, never", [
+    ("explorer_dialog_open", "un formulaire y est ouvert", "ouvrir l'interface"),
+    ("explorer_command_busy", "une autre commande de Variantes était en cours", "ouvrir l'interface"),
+    ("explorer_no_visible_page", "ouvrir l'interface de JARVIS", "formulaire"),
+])
+async def test_surface_unavailable_gives_the_advice_of_the_pages_own_reason(world, code, says, never):
+    """Slice 09 rework: a page that refused because a form is open or another explorer command was in flight IS visible: the sentence
+    never says « open the JARVIS interface » there; it says what to do for that reason, and the run is paused either way."""
+
+    world.cc.answers[ATTESTED] = (200, {"ok": True, "addressed_user_turn": True})
+    route = "/api/presentation-studio/explorer/commands"
+    status = 504 if code == "explorer_no_visible_page" else 200
+    world.cc.answers[("POST", route)] = ((status, {"ok": False, "code": code, "error": "x"}) if status == 504 else
+                                         (200, {"state": "refused", "code": code, "reason": "x"}))
+    error = await refused(world.tools.play("start", role="rehearsal"))
+    text = str(error)
+    assert error.code == "surface_unavailable" and code in text and "mise en pause" in text
+    assert says in text and never not in text, text
+    if code != "explorer_no_visible_page":
+        assert "presentation_view window_open" in text and "presentation_play resume" in text
+    assert (await world.tools.inspect("playback"))["state"]["phase"] == "paused"
+
+
+async def test_a_start_waits_for_variants_within_the_pages_own_deadlines_not_30_s(world):
+    """Slice 09 rework: the start waits for the page's receipt at most delivery (4 s) + final receipt (10 s) + 2 s margin, then pauses:
+    Jarvis never presents to an empty screen for 30 s."""
+
+    from jarvis.domain.presentation_studio_explorer import DELIVERY_DEADLINE_S, WORK_DEADLINE_MAX_S
+    from jarvis.runtime.presentation_studio_mcp_tools import HOST_IN_VARIANTS_TIMEOUT_S
+
+    world.cc.answers[ATTESTED] = (200, {"ok": True, "addressed_user_turn": True})
+    route = "/api/presentation-studio/explorer/commands"
+    world.cc.answers[("POST", route)] = (200, {"state": "opened", "mode": "windowed"})
+    await world.tools.play("start", role="rehearsal")
+    waited = [t for (_m, r, _b), t in zip(world.cc.requests, world.cc.timeouts) if r == route]
+    assert waited == [HOST_IN_VARIANTS_TIMEOUT_S] == [DELIVERY_DEADLINE_S + WORK_DEADLINE_MAX_S + 2.0]
+    assert HOST_IN_VARIANTS_TIMEOUT_S <= 16.0
+
+
+async def test_window_ops_open_and_close_variants_windowed_with_the_pages_receipt(world):
+    """The floating window host is retired (Slice 09): `window_open` / `window_close` keep their names for the brain's habits and now
+    open / close Variants, windowed, through the explorer's command channel (a receipt, never a blind screen request)."""
+
+    route = "/api/presentation-studio/explorer/commands"
+    world.cc.answers[("POST", route)] = (200, {"state": "opened", "mode": "windowed", "presentation_id": world.pid, "variant_id": world.vid})
+    out = await world.tools.view("window_open", presentation_id=world.pid)
+    assert out["status"] == "opened" and out["mode"] == "windowed"
+    assert world.cc.requests[-1][1] == route and world.cc.requests[-1][2] == {"action": "open", "presentation_id": world.pid, "fullscreen": False}
+    world.cc.answers[("POST", route)] = (200, {"state": "closed"})
+    closed = await world.tools.view("window_close")
+    assert closed["status"] == "closed" and world.cc.requests[-1][2] == {"action": "close"}
+    assert not [r for r in world.cc.requests if r[1].endswith("/rail/display")], "no screen request for a window that no longer exists"
 
 
 async def test_the_explorer_mirror_is_read_as_dated_and_advisory(world):

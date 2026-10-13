@@ -1,0 +1,8 @@
+import React from 'react';
+import {AbsoluteFill, interpolate, spring, useCurrentFrame, useVideoConfig} from 'remotion';
+export const C = {bg: '#0a0e15', panel: '#121824', line: '#26324a', text: '#eef2f7', mute: '#97a4b9', accent: '#5eead4'};
+export const FONT = 'Segoe UI, system-ui, sans-serif';
+export const useEnter = (delay: number, damping = 200) => {const frame = useCurrentFrame(); const {fps} = useVideoConfig(); return spring({frame: frame - delay, fps, config: {damping}});};
+export const Reveal: React.FC<{delay: number; y?: number; style?: React.CSSProperties; children: React.ReactNode}> = ({delay, y = 40, style, children}) => {const e = useEnter(delay); return <div style={{opacity: e, transform: `translateY(${interpolate(e, [0, 1], [y, 0])}px)`, ...style}}>{children}</div>;};
+export const Stage: React.FC<{children: React.ReactNode}> = ({children}) => {const frame = useCurrentFrame(); const {durationInFrames} = useVideoConfig(); const o = interpolate(frame, [0, 12, durationInFrames - 14, durationInFrames], [0, 1, 1, 0], {extrapolateLeft: 'clamp', extrapolateRight: 'clamp'}); return <AbsoluteFill style={{background: C.bg, fontFamily: FONT, color: C.text}}><AbsoluteFill style={{backgroundImage: `linear-gradient(${C.line}55 1px, transparent 1px), linear-gradient(90deg, ${C.line}55 1px, transparent 1px)`, backgroundSize: '120px 120px', opacity: 0.5}} /><AbsoluteFill style={{opacity: o}}>{children}</AbsoluteFill></AbsoluteFill>;};
+export const Eyebrow: React.FC<{children: React.ReactNode}> = ({children}) => <div style={{fontSize: 30, letterSpacing: 6, textTransform: 'uppercase', color: C.accent, fontWeight: 600}}>{children}</div>;

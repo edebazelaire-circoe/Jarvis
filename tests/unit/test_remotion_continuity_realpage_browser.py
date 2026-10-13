@@ -134,11 +134,14 @@ async def test_play_all_chains_three_scenes_without_a_restart_a_replay_or_a_blan
         assert sorted(frames) == [1, 2, 3], f"one frame per scene, never a remount: {sorted(frames)}"
         for uid, samples in frames.items():
             assert backwards(samples) == [], f"scene {uid} went backwards (a restart or a replay): {backwards(samples)}"
-            assert max(s[2] for s in samples) == 149, f"scene {uid} did not reach its last image"
+            # A scene that hands over reaches its stop frame within the follower's END_SLACK_FRAMES (2: a dropped frame counts as the end,
+            # `control_center_remotion_frame.js`); since Slice 09 (native-studio-playback-fix) the next scene, loaded beside it in Variants,
+            # takes over at once, so the outgoing frame's last report may be 147. The last scene is held: it must show 149 exactly.
+            assert max(s[2] for s in samples) >= (149 if uid == 3 else 147), f"scene {uid} did not reach its last image"
             assert {s[1] for s in samples} == {"ready"}, f"scene {uid} was visible while not ready"
             # played once, in order: the images seen cover the whole composition with no big hole beyond one report period
             seen = sorted({s[2] for s in samples})
-            assert seen[0] <= 10 and seen[-1] == 149   # the first image seen is one of the opening ones (the frame number reaches the page 4 times a second)
+            assert seen[0] <= 10 and seen[-1] >= (149 if uid == 3 else 147)   # the first image seen is one of the opening ones (the frame number reaches the page 4 times a second)
         # the window is never empty and the scene to come never shows up loading: from the first ready on, always exactly one visible frame
         started_at = next(ms for ms, _n, vis in reads["log"] if vis)
         assert all(len(vis) == 1 for ms, _n, vis in reads["log"] if ms >= started_at), "the window was empty or doubled at some moment"

@@ -92,14 +92,7 @@ class RemotionStack:
         if self.runtime_dir is not None:
             provision_runtime(self.data_root, self.runtime_dir)
         self.sandbox_settings = RemotionSandboxSettings(SANDBOX_HOST, self.sandbox_port, f"http://127.0.0.1:{self.cc_port}")
-        self.core = JarvisCoreApplication(
-            data_root=self.data_root, diagnostics=self.diagnostics,
-            local_capability_store=FileLocalCapabilityStore(self.data_root), local_capability_runner=default_remotion_runner(),
-            remotion=remotion_factory(self.sandbox_settings) if self.configure_sandbox else None,
-            **(self.core_options(self) if self.core_options else {}))
-        await self.core.start()
-        self.server = LocalProtocolServer(self.core, host="127.0.0.1", port=self.core_port, token=TOKEN)
-        await self.server.start()
+        await self.start_core()
         self.core_url = f"http://127.0.0.1:{self.core_port}"
         token_file = self.tmp_path / "core.token"
         token_file.write_text(TOKEN, encoding="utf-8")
@@ -119,6 +112,24 @@ class RemotionStack:
         await self.cc_server.close()
         await self.center.scene_view.aclose()
         await self.sessions.close()
+        await self.server.stop()
+        await self.core.stop()
+
+    async def start_core(self) -> None:
+        """Core, its sandbox listener and its protocol server on the stack's ports and data root (also a Core restart, Slice 16 rnsp)."""
+
+        self.core = JarvisCoreApplication(
+            data_root=self.data_root, diagnostics=self.diagnostics,
+            local_capability_store=FileLocalCapabilityStore(self.data_root), local_capability_runner=default_remotion_runner(),
+            remotion=remotion_factory(self.sandbox_settings) if self.configure_sandbox else None,
+            **(self.core_options(self) if self.core_options else {}))
+        await self.core.start()
+        self.server = LocalProtocolServer(self.core, host="127.0.0.1", port=self.core_port, token=TOKEN)
+        await self.server.start()
+
+    async def stop_core(self) -> None:
+        """Core goes away (protocol server, sandbox listener, Core) while the Control Center and the page stay: `start_core()` restarts it."""
+
         await self.server.stop()
         await self.core.stop()
 

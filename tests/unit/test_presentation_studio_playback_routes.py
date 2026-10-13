@@ -71,15 +71,22 @@ async def post(core: Core, path: str, body: dict | None = None, *, headers=AUTH)
         return response.status, await response.json(content_type=None)
 
 
+async def get(core: Core, path: str, *, headers=AUTH):
+    async with core.http.get(core.stack.core_url + path, headers=headers) as response:
+        return response.status, await response.json(content_type=None)
+
+
 # ------------------------------------------------------------------ tables
 
 def test_the_core_route_table_and_what_the_relay_exposes():
     routes = [(r.method, r.path) for r in PresentationStudioPlaybackRoutes(object()).routes()]
-    assert routes == [("GET", PLAYBACK), ("GET", PLAYBACK + "/armed"), ("GET", PLAYBACK + "/preload"), ("POST", PLAYBACK + "/{verb}"), ("POST", CUES)]
+    assert routes == [("GET", PLAYBACK), ("GET", PLAYBACK + "/armed"), ("GET", PLAYBACK + "/preload"), ("GET", PLAYBACK + "/surface"),
+                      ("POST", PLAYBACK + "/{verb}"), ("POST", CUES)]
     relay = PresentationStudioRelayRoutes(transport=lambda: None, journal=None)  # type: ignore[arg-type]
     mapped = {(r.method, "/v1/presentation-studio" + r.path[len("/api/presentation-studio"):]) for r in relay.routes()
               if r.path.startswith(PLAYBACK_ROUTE)}
-    assert mapped == {("GET", PLAYBACK), ("GET", PLAYBACK + "/preload"), *(("POST", f"{PLAYBACK}/{verb.value}") for verb in Verb)}
+    assert mapped == {("GET", PLAYBACK), ("GET", PLAYBACK + "/preload"), ("GET", PLAYBACK + "/surface"),
+                      *(("POST", f"{PLAYBACK}/{verb.value}") for verb in Verb)}
     assert not any("armed" in path or "cues" in path for _, path in mapped), "phrases and cue reports are never relayed"
     assert PLAYBACK == PLAYBACK_PREFIX and PLAYBACK_PREFIX in FORWARDABLE_PREFIXES == client_module.FORWARDABLE_PREFIXES
     assert {v.value for v in Verb} == {"start", "stop", "pause", "resume", "next", "previous", "goto", "detour", "return",
@@ -100,8 +107,12 @@ async def test_a_run_over_http_with_its_statuses_and_the_typed_client(tmp_path):
         assert started["status"] == "applied" and started["state"]["phase"] == "playing"
         assert started["state"]["scene"]["title"] == "Un" and started["state"]["art_direction"] == "fallback"
         stage_id = started["state"]["stage_object_id"]
+        assert stage_id.startswith("variants-run-") and started["state"]["surface"]["id"] == stage_id   # Slice 09: the Variants surface
+        status, surface = await get(core, f"{PLAYBACK}/surface")
+        assert status == 200 and surface["surface"]["surface_id"] == stage_id
+        assert surface["surface"]["prefab"]["data"]["body"] == "Premier"                    # the overlay is on screen
         snapshot = await core.stack.core.scene.snapshot()
-        assert snapshot.get_object(stage_id).payload.prefab.data["body"] == "Premier"       # the overlay is on screen
+        assert snapshot.objects == ()                                                       # never a Board window
         _, variant = await core.call("GET", f"/{pid}/variants/{vid}")
         assert variant["scenes"][0]["data"]["body"] == "Texte"                              # ... and not in the variant
         assert (await client.presentation_studio_playback_state())["state"]["phase"] == "playing"
@@ -118,8 +129,8 @@ async def test_a_run_over_http_with_its_statuses_and_the_typed_client(tmp_path):
         assert back["state"]["phase"] == "playing"
         stopped = await client.presentation_studio_playback("stop", {"actor": "user"})
         assert stopped["state"]["phase"] == "stopped" and snapshot is not None
-        after = await core.stack.core.scene.snapshot()
-        assert after.get_object(stage_id) is None
+        status, surface = await get(core, f"{PLAYBACK}/surface")
+        assert status == 200 and surface == {"surface": None} and (await core.stack.core.scene.snapshot()).objects == ()
 
 
 async def test_malformed_unknown_and_unauthorized_requests_are_coded_envelopes(tmp_path):

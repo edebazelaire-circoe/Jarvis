@@ -79,6 +79,16 @@ UNSAFE_KEYS = frozenset({"__proto__", "constructor", "prototype"})
 
 #: Origine d'une demande de source dite par l'appelant ; pour `user`, c'est toujours le cas (l'utilisateur est la demande).
 EXPLICIT_USER_REQUEST = "explicit_user_request"
+#: Slice 13 (native-studio-playback-fix): a scene an agent has just created through `presentation_draft_assemble`. The agent may keep
+#: refining ITS OWN scene source (preview, fix, iterate) without a user turn: the record is multi-use, its 30 minutes restart at each use, and
+#: it is dropped as soon as the user edits that scene's source. It authorises nothing the agent could not already do (assemble a new deck).
+AGENT_AUTHORED_SCENE = "agent_authored_scene"
+
+
+def new_source_request_id() -> str:
+    """The id of a source request (`psq_` + 12 hex), the same shape `apply_ops` gives a `scene.source_request`."""
+
+    return "psq_" + secrets.token_hex(6)
 
 
 class StudioActor(StrEnum):

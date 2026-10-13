@@ -1,6 +1,7 @@
 """Ouvrir, fermer, plein écran, Échap, lecture et canal de commandes de l'explorateur de variantes, par node (studio de présentation, Slice 18).
 
-Épinglé : l'ouverture refusée pendant une lecture (cause dite) et la fermeture quand une lecture démarre ; le plein écran armé par la voix, entré par
+Épinglé : pendant une lecture, l'ouverture d'une AUTRE présentation refusée (cause dite) et celle de la présentation qui joue qui la montre
+(native-studio-playback-fix Slice 09 : une lecture qui démarre ne ferme plus l'explorateur) ; le plein écran armé par la voix, entré par
 un clic, refusé, indisponible ; Échap imbriqué (menu, boîte, explorateur) et le focus rendu à celui qui a ouvert ; le reste de la page inerte
 puis rendu ; aucun minuteur ne survit à la fermeture ; le canal long-poll de la page (commande, reçu, panne, onglet caché) ; le rapport d'état
 qui ne porte jamais un titre.
@@ -11,46 +12,54 @@ from __future__ import annotations
 from tests.fakes.explorer_js import run_ui
 
 
-def test_opening_while_a_run_plays_is_refused_with_its_cause_and_builds_nothing(tmp_path):
-    out = run_ui(tmp_path, """
+RUNNING = """
+/* The page's playback client (Slice 09): Core's view of a run, as `JarvisStudioPlayer.view()` gives it. */
+const runPlayer=(pid)=>({v:{phase:'playing',running:true,run_id:'r1',presentation_id:pid,variant_id:vid(1),role:'user_presenter',
+  position:{index:1,of:3},scene:{scene_id:'pss_000000000001',title:'S1',number:1,of:3},stage_object_id:'variants-run-r1'},
+  view(){return this.v},surface(){return null},state(){return {}},async command(){return {status:'applied'}}});
+"""
+
+
+def test_opening_another_presentation_while_a_run_plays_is_refused_with_its_cause_and_builds_nothing(tmp_path):
+    """Slice 09: Variants IS the surface of a run; opening ANOTHER presentation during a run is refused (`explorer_run_in_progress`), with
+    the cause in words; opening the presentation that plays shows the run (`test_variants_run_js.py`)."""
+
+    out = run_ui(tmp_path, RUNNING + """
 seed(3);
-player.playing=true;
-const ex=make();
+const ex=make({player:runPlayer('pst_'+'f'.repeat(32))});
 const result=await ex.open({presentation_id:PID});
 return {result,hostBuilt:!!host(),requests:world.calls.length,toast:env.toasts.map(t=>[t.title,t.kind]),open:ex.isOpen(),logs:env.logs.map(l=>l[1]).filter(l=>l.includes('open_refused'))};
 """)
     assert out["result"]["state"] == "refused" and out["result"]["code"] == "explorer_run_in_progress"
-    assert "Une lecture est en cours" in out["result"]["reason"] and "outil d'édition" in out["result"]["reason"]
+    assert "Une autre présentation est en cours" in out["result"]["reason"] and "Variantes la montre" in out["result"]["reason"]
     assert out["hostBuilt"] is False and out["requests"] == 0 and out["open"] is False
-    assert out["toast"] == [["Explorateur de variantes", "warn"]] and len(out["logs"]) == 1
+    assert out["toast"] == [["Variantes", "warn"]] and len(out["logs"]) == 1
 
 
-def test_a_run_that_starts_while_open_closes_the_explorer_and_says_so_within_two_seconds(tmp_path):
+def test_opening_the_presentation_that_plays_shows_its_run_instead_of_refusing(tmp_path):
+    out = run_ui(tmp_path, RUNNING + """
+seed(3);
+const ex=make({player:runPlayer(PID)});
+const result=await ex.open({presentation_id:PID,fullscreen:false});await env.advance(400);
+return {state:result.state,open:ex.isOpen(),run:ex.run.view()&&ex.run.view().run_id,inert:q('.jvx-treepane').inert,fs:fsFake.calls.length};
+""")
+    assert out == {"state": "opened", "open": True, "run": "r1", "inert": True, "fs": 0}
+
+
+def test_a_run_started_by_voice_while_open_never_closes_variants_and_the_explorer_polls_no_playback(tmp_path):
+    """Before Slice 09 a run that started closed the explorer within 2 s (its own playback check). Now nothing closes it: the page's
+    playback client brings the run and Variants hosts it (`test_variants_run_js.py`); the explorer no longer polls Core's playback."""
+
     out = run_ui(tmp_path, """
 seed(3);
 const button=doc.createElement('button');button.id='opener';doc.body.appendChild(button);button.focus();
 const {ex}=await opened();
-const before={open:ex.isOpen(),inert:doc.body.children.filter(n=>n.inert).length};
-world.runningNow=true;                    /* started by the voice: the page's player has not polled yet */
-await env.advance(2100);
-return {before,open:ex.isOpen(),hidden:host().hidden,inert:doc.body.children.filter(n=>n.inert).length,toast:env.toasts.map(t=>t.sub),
-  focus:doc.activeElement.id,timers:env.pendingTimers()};
+world.runningNow=true;                    /* started by the voice */
+await env.advance(10000);
+return {open:ex.isOpen(),hidden:host().hidden,toast:env.toasts.map(t=>t.sub),playbackPolls:world.calls.filter(c=>c.url.includes('/playback')).length};
 """)
-    assert out["before"]["open"] is True and out["before"]["inert"] >= 1
-    assert out["open"] is False and out["hidden"] is True and out["inert"] == 0
-    assert out["toast"] == ["Une lecture a démarré : l'explorateur s'est fermé."] and out["focus"] == "opener"
-    assert out["timers"] == 0, "no timer outlives the explorer"
-
-
-def test_a_run_seen_by_the_player_closes_it_at_once_on_the_next_check(tmp_path):
-    out = run_ui(tmp_path, """
-seed(3);
-const {ex}=await opened();
-player.playing=true;
-await env.advance(2100);
-return {open:ex.isOpen(),requests:world.calls.filter(c=>c.url.endsWith('/playback')).length};
-""")
-    assert out["open"] is False
+    assert out["open"] is True and out["hidden"] is False and out["toast"] == []
+    assert out["playbackPolls"] == 1, "one read of Core's playback at the opening, and no periodic check of its own any more"
 
 
 def test_unknown_presentation_and_a_broken_core_are_refused_with_distinct_codes_and_leave_the_page_usable(tmp_path):
@@ -273,8 +282,8 @@ return {first,receipts,pollUrl:env.requests.find(r=>r.method==='GET'&&r.url.incl
 def test_a_refused_command_is_answered_with_its_code_and_a_dead_server_backs_off_without_a_hot_loop(tmp_path):
     out = run_ui(tmp_path, """
 seed(3);
-player.playing=true;
-const ex=make({report:false});
+const ex=make({report:false,player:{v:{phase:'playing',running:true,run_id:'r1',presentation_id:'pst_'+'f'.repeat(32)},view(){return this.v},
+  surface(){return null},state(){return {}}}});
 const channel=X.createCommandChannel({fetch:env.fetch,document:doc,explorer:ex,now:timers.now,setTimeout:timers.setTimeout,clearTimeout:timers.clearTimeout,
   log:(k,d,l)=>env.logs.push([l||'info','[studio-explorer] '+k+' '+JSON.stringify(d)]),pageId:'pageAAAA1111'});
 let phase='ok';const receipts=[];let polls=0;
@@ -289,7 +298,7 @@ await env.advance(20000);
 return {receipts,polls,state:channel.state(),warns:env.logs.filter(l=>l[0]==='warn'&&l[1].includes('command_poll_failed')).length};
 """)
     final = [r for r in out["receipts"] if r["state"] != "accepted"][0]
-    assert final["state"] == "refused" and final["code"] == "explorer_run_in_progress" and "outil d'édition" in final["reason"]
+    assert final["state"] == "refused" and final["code"] == "explorer_run_in_progress" and "Variantes la montre" in final["reason"]
     assert out["polls"] <= 12, f"exponential backoff: {out['polls']} polls in 20 s"
     assert out["state"]["failures"] >= 3 and out["warns"] >= 1
 

@@ -56,6 +56,9 @@ QueryParams = Mapping[str, str] | Sequence[tuple[str, str]]
 #: Une edition de source attend la rafale (secondes), la publication et le rapport de montage de l'hote (8 s) : la
 #: reponse de Core peut venir bien apres 10 s ; au-dela, la requete est abandonnee et le resultat reste dans `/reloads`.
 SOURCE_EDIT_TIMEOUT_S = 40.0
+#: Slice 13 (native-studio-playback-fix): a native preview bundles the scene and opens a browser. Core bounds the wait for the browser at
+#: 60 s and the render at 150 s (+ margin); a client that gives up first closes the connection, which cancels the preview in Core.
+RENDER_PREVIEW_TIMEOUT_S = 230.0
 STUDIO_PREFIX = "/v1/presentation-studio/presentations"  # = un élément de FORWARDABLE_PREFIXES (testé)
 PLAYBACK_PREFIX = "/v1/presentation-studio/playback"  # lecture (Slice 12) : aussi dans FORWARDABLE_PREFIXES
 TEMPLATES_PREFIX = "/v1/presentation-studio/templates"  # modeles reutilisables (Slice 20) : aussi dans FORWARDABLE_PREFIXES
@@ -968,6 +971,13 @@ class LocalCoreClient:
                     return data
             return await self._json(response)
 
+    async def presentation_studio_scene_source(self, presentation_id: str, variant_id: str, scene_id: str) -> dict[str, Any]:
+        """`GET .../variants/{vid}/scenes/{sid}/source` (Slice 14) : la source du pin de la scene, `{scene_id, prefab, source_revision, basis,
+        manifest, engine, sources, assets}` ; ce qu'un agent lit avant d'editer (Slice 13 : outil `presentation_source read`)."""
+
+        return await self._studio(
+            "GET", f"/{quote(presentation_id, safe='')}/variants/{quote(variant_id, safe='')}/scenes/{quote(scene_id, safe='')}/source")
+
     async def presentation_studio_source_edit(self, presentation_id: str, variant_id: str,
                                               request: Mapping[str, Any]) -> dict[str, Any]:
         """`POST .../variants/{id}/source-edits` `{actor, basis, scene_id, files, request_id?, allow_state_reset?}` : le
@@ -1328,6 +1338,15 @@ class LocalCoreClient:
         """`POST .../render/jobs` : 202 `{job}` (en file ; l'Artifact derive existe `pending`)."""
 
         return await self._remotion("POST", "/v1/local-capabilities/remotion/render/jobs", body=body, timeout_s=65.0)
+
+    async def remotion_render_preview(self, body: Mapping[str, Any]) -> dict[str, Any]:
+        """`POST .../render/preview` (Slice 13 native-studio-playback-fix): a few frames of one scene of the current variant, rendered by the
+        guarded host and kept as JPEG files (paths in the answer). Synchronous: the timeout covers bundling and the browser."""
+
+        session = await self._http()
+        async with session.post(f"{self.base_url}/v1/local-capabilities/remotion/render/preview", headers=self.headers, json=dict(body),
+                                timeout=aiohttp.ClientTimeout(total=RENDER_PREVIEW_TIMEOUT_S)) as response:
+            return await self._json(response)
 
     async def remotion_render_cancel(self, job_id: str) -> dict[str, Any]:
         """`POST .../render/jobs/{id}/cancel` : `{job}`."""

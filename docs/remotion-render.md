@@ -129,6 +129,7 @@ Préfixe frère de la famille des capacités : `/v1/local-capabilities/remotion/
 | POST | `/v1/local-capabilities/remotion/render/jobs` | `{format, settings?, snapshot_id}` ou `{format, settings?, presentation_id, variant_id, expected_presentation_revision, expected_variant_revision, authorised_boards?}` | 202 `{job: vue}` |
 | GET | `/v1/local-capabilities/remotion/render/jobs/{job_id}` | — | `{job: vue}` |
 | POST | `/v1/local-capabilities/remotion/render/jobs/{job_id}/cancel` | `{}` | `{job: vue}` |
+| POST | `/v1/local-capabilities/remotion/render/preview` | `{presentation_id, variant_id, scene_id, frames? (1..6), scale? (0.25, 0.5, 1)}` | 200 `{preview: {scene_id, prefab, composition, scale, frames: [{frame, path, bytes}], elapsed_ms}}` |
 
 Pourquoi des routes d'abord : l'export est une **action de l'utilisateur** qui lance un processus et écrit un Artifact ; les budgets d'outils des serveurs MCP internes sont contractuels (le verbe du cerveau vit dans le serveur séparé `jarvis-remotion`, Slice 21). Le gel (`authorised_boards`) passe par la même route : sans liste, aucun Board n'est lu (refus par défaut). Corps de plus de 8 Kio, champ en trop, paramètre de requête : `presentation_render_invalid`.
 
@@ -145,11 +146,29 @@ Pourquoi des routes d'abord : l'export est une **action de l'utilisateur** qui l
 | `presentation_render_engine_mismatch` | 409 | version de Remotion installée ≠ version du gel |
 | `presentation_render_not_cancellable` | 409 | travail terminé ou en `finalizing` |
 | `presentation_render_queue_full` | 429 | 8 travaux déjà en cours ou en attente (réservations en vol comprises) |
+| `presentation_render_preview_busy` | 429 | aperçu natif : un autre aperçu attend déjà le navigateur, ou celui-ci l'a attendu 60 s sans l'obtenir ; rien n'est rendu |
 | `presentation_render_locked` | 409 | un autre Core vivant tient le verrou des rendus de cette racine de données |
 | `presentation_render_disk_low` | 507 | moins de 1,5 Gio libres avant de commencer |
 | `presentation_render_store_failed`, `presentation_render_internal_error` | 500 | disque ou défaut inattendu (journalisé durablement, niveau `error`) |
 
 Codes d'**échec d'un travail** (dans la vue et sur le dérivé, pas des erreurs HTTP) : `presentation_render_sandbox_unavailable` (Chrome n'a pas démarré avec son bac à sable : le détail dit l'opt-out), `presentation_render_guard_unexpected_args` (argument de lancement inconnu du garde : refusé), `presentation_render_guard_not_applied` (aucun lancement réécrit enregistré), `presentation_render_failed` (processus terminé en échec ; `error_detail` et `log_tail` disent pourquoi), `_crashed` (le processus s'est effondré), `_composition_mismatch` (la composition rendue n'est pas celle que le manifeste déclare), `_timeout`, `_disk_full`, `_job_too_large`, `_output_invalid`, `_output_too_large`, `_cancelled`, `_interrupted` (Core ou poste arrêté), ainsi que les codes de refus ci-dessus survenus après la demande (`_source_refused`, `_snapshot_invalid`, `_disk_low`). Les codes des registres traversés par un gel (`presentation_studio_stale_revision`, `live_ref_*`, `snapshot_package_*`, `artifact_*`) sont rendus tels quels.
+
+### 8 bis. Aperçu natif d'une scène (native-studio-playback-fix Slice 13)
+
+`POST .../render/preview` est **l'œil de l'agent auteur** (`presentation_source` op `preview`, [presentation-studio.md](presentation-studio.md#native-remotion-authoring-level-3-native-studio-playback-fix-slice-13)), l'équivalent de `npx remotion still` dans un projet Remotion. Ce n'est **pas un export** :
+
+- **ce qui est rendu** : la variante COURANTE, assemblée en mémoire par le même assembleur que le gel (`PresentationPackager.assemble_preview`, aucun Board lu : une scène à références vivantes est refusée comme un gel sans Boards autorisés), puis UNE scène, ses images demandées (6 au plus, défaut 30 %, 65 % et la dernière image), en JPEG, à l'échelle 0,25, 0,5 (défaut) ou 1 ;
+- **par le même processus gardé** que l'export (`render-host.cjs`, `render-guard.cjs`, proxy de refus, navigateur de la machine, bac à sable de Chrome) : un seul empaquetage et un seul navigateur pour toutes les images d'une scène ;
+- **rien n'est figé, aucun Artifact, aucune file** : les images sont gardées sous `<runtime>/render/previews/<travail>/frame-NNNNN.jpg` (les 40 derniers dossiers) et leurs chemins rendus ; le dossier de travail est nettoyé comme celui d'un export ;
+- **un navigateur à la fois, les exports d'abord** (reprise de la Slice 13, QA B2) : un aperçu attend un export en cours et inversement (mémoire du poste) ; un export qui veut le navigateur (pris par le travailleur ou en file) passe toujours avant un aperçu qui attend ;
+- **bornes réelles** : **un seul** aperçu attend (en préparation ou devant le navigateur) pendant qu'un autre rend ; tout autre est refusé aussitôt, `presentation_render_preview_busy` (429 ; 30 demandes simultanées pendant qu'un aperçu rend : 1 rend, 1 attend, 28 refusées) ; l'attente du navigateur s'arrête à **60 s** (`PREVIEW_SLOT_WAIT_S`, même code, rien n'est rendu) ; le rendu lui-même à **150 s** (`PREVIEW_TIMEOUT_S`) ; le client typé abandonne à 230 s ;
+- **appelant parti = aperçu annulé** : aiohttp laisse courir un gestionnaire dont le client est parti ; la route regarde la connexion (`request.transport` absent ou `is_closing()`) pendant l'attente et toutes les 0,25 s pendant le rendu ; un appelant parti annule l'aperçu (le processus de rendu est arrêté comme pour une annulation d'export, `presentation_render_cancelled`) et libère le navigateur ;
+- **refus typés** (`presentation_render_invalid` pour images, échelle ou scène, `_unavailable` sans dossier d'aperçus, `_runtime_unavailable`, `_browser_unavailable`, `_engine_mismatch`, `_locked`, `_disk_low`, et les codes d'échec d'un travail comme `_sandbox_unavailable` ou `_failed`, rendus comme une erreur HTTP 409/500 puisque rien n'est conservé) ;
+- **journal** : `core.presentation_render.preview_started`, `.preview_done` (info, durée), `.preview_failed` (warning, code et détail), `.preview_refused_busy`, `.preview_wait_timeout`, `.preview_abandoned` (warning : refusé car un autre attend, attente échue, appelant parti).
+
+**Chemin de fumée de la Slice 14** : les portes de qualité des images rendues ([presentation-studio.md](presentation-studio.md#rendered-frame-quality-gates-level-3-native-studio-playback-fix-slice-14)) rendent par cette route la première, la deuxième, celle du milieu, l'avant-dernière et la dernière image de chaque scène (une requête par scène, échelle 0,5) : aucun second moteur de rendu.
+
+Le cerveau n'a pas de verbe d'export de plus : exporter reste un geste de l'utilisateur (`remotion_export`, `user_request`).
 
 ## 9. Control Center
 
@@ -186,6 +205,8 @@ Tests automatiques (aucun navigateur, aucun réseau) : `test_presentation_render
 Rejouer la preuve (hors profil vivant) : `python scripts/remotion_render_harness.py --work-dir <dossier court sous Temp> --runtime-dir <racine>/local_capabilities/remotion/runtime --evidence <fichier.json>` (≈ 6 minutes sur une machine chargée, ≈ 500 Mo de disque consommés au plus pendant les rendus, nettoyés ensuite). Verdict `PASSED` attendu.
 
 ## 12. Limites et risques résiduels
+
+- **Chemin de la racine de données** (constaté par la Slice 13 de native-studio-playback-fix) : Chrome place son profil sous `render/jobs/<travail>/tmp/` ; une racine assez longue pour que ce chemin dépasse 260 caractères fait échouer tout rendu ou aperçu en `presentation_render_sandbox_unavailable` (« Failed to create cache directory »). La racine par défaut (`~/.jarvis/instances/...`) en est loin ; une racine de test très profonde ne l'est pas.
 
 - **Une scène par export** : un snapshot de plusieurs scènes se rend scène par scène ; aucune concaténation en une vidéo (les cadences peuvent différer, les assets de `public/` de plusieurs scènes se heurteraient). À assembler hors de Jarvis ou par une Slice ultérieure.
 - **Chrome installé, version non épinglée** : le navigateur est celui de l'utilisateur (testé : Chrome 154.0.8037.99 avec Remotion 4.0.534, mode `chrome-for-testing`) ; une autre version peut rendre des pixels légèrement différents. Edge n'a pas été exercé.

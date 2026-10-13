@@ -233,7 +233,10 @@ WORKSPACE_INSTRUCTIONS_BUDGET_BYTES = 950
 #: Rail des presentations : un treizieme outil (`presentation_library`, 954 o) et les ops window_* / rail_* / target rail : 18 495 o mesures (16 849 avant), plafond 18 600 o ;
 #: le plafond global monte du meme ecart (111 128 o mesures, plafond 111 500 o). Decision deliberee, voir docs/presentation-studio.md > Rail des presentations.
 #: Fusion avec la lecture continue (`scope` de presentation_play, +643 o) : 19 138 o mesures, plafond 19 300 o ; plafond global 112 500 o (111 771 mesures).
-PRESENTATION_CONTEXT_BUDGET_BYTES = 19_300
+#: Native-studio-playback-fix Slice 13 : un quatorzieme outil, `presentation_source` (read / write / preview du code Remotion natif d'une scene,
+#: 1 711 o) : 20 888 o mesures, plafond 21 000 o ; plafond global 113 700 o (113 521 mesures). Decision deliberee : sans lui l'agent ne voit
+#: pas ce qu'il a code et ne peut pas corriger sa propre scene (BENCHMARK.md de la Slice 13) ; la consigne du serveur ne change pas.
+PRESENTATION_CONTEXT_BUDGET_BYTES = 21_000
 #: Consigne du serveur `jarvis-presentation` : mesurée 640 o (plafond 700 o).
 PRESENTATION_INSTRUCTIONS_BUDGET_BYTES = 700
 #: Memory-intelligence-knowledge S5b : `jarvis-memory` (cinq outils) ajoute environ 3 900 o. Fusion des deux serveurs : 104 337 o mesurés
@@ -241,7 +244,7 @@ PRESENTATION_INSTRUCTIONS_BUDGET_BYTES = 700
 #: Remotion Slice 21 : `jarvis-remotion` (six outils, serveur SÉPARÉ de `jarvis-presentation` dont le plafond reste 17 100 o) ajoute 5 178 o
 #: mesurés (export 1 763, import 1 076, upgrades 948, studio 545, status 457, setup 389). Le plafond de ce gate monte de ce serveur seulement :
 #: 104 548 o avant, 109 726 o après, marge de 274 o, plafond 110 000 o. Décision délibérée (handoff Slice 21), mesure dans le LOG.
-DECLARED_CONTEXT_BUDGET_BYTES = 112_500
+DECLARED_CONTEXT_BUDGET_BYTES = 113_700
 #: `jarvis-remotion` : 5 178 o mesurés, plafond 5 400 o ; consigne du serveur (plafond 330 o).
 REMOTION_CONTEXT_BUDGET_BYTES = 5_400
 REMOTION_INSTRUCTIONS_BUDGET_BYTES = 330
@@ -370,7 +373,7 @@ async def test_the_presentation_server_lists_its_tools_in_order_within_its_budge
     described = [entry for entry in catalog["tools"] if entry["server"] == "jarvis-presentation"]
     assert [t.name for t in wire] == [entry["name"] for entry in described] == list(tool_names("jarvis-presentation")) == list(
         presentation_studio_mcp.TOOL_NAMES)
-    assert len(described) == 13 and all(entry["name"].startswith("presentation_") for entry in described)
+    assert len(described) == 14 and all(entry["name"].startswith("presentation_") for entry in described)
     effects = {entry["name"]: entry["side_effect"] for entry in described}
     assert {name for name, effect in effects.items() if effect == "read"} == {"presentation_inspect", "presentation_draft_check"}
     assert effects["presentation_variant"] == "destructive"  # archive d'une branche
@@ -403,8 +406,9 @@ async def test_the_remotion_server_lists_its_tools_in_order_within_its_budget(ca
     assert server_meta("jarvis-remotion").registration == "jarvis" and server_meta("jarvis-remotion").condition == "scene.enabled"
     assert sum(entry["context_bytes"] for entry in described) <= REMOTION_CONTEXT_BUDGET_BYTES
     assert len(remotion_mcp._SERVER_INSTRUCTIONS.encode("utf-8")) <= REMOTION_INSTRUCTIONS_BUDGET_BYTES
-    # Le budget de `jarvis-presentation` n'a PAS bougé : les nouveaux verbes n'y ont pas été serrés.
-    assert PRESENTATION_CONTEXT_BUDGET_BYTES == 19_300
+    # Le budget de `jarvis-presentation` n'a PAS bougé pour les verbes Remotion (il a bougé une fois depuis, pour `presentation_source`,
+    # native-studio-playback-fix Slice 13 : 19 300 -> 21 000 o).
+    assert PRESENTATION_CONTEXT_BUDGET_BYTES == 21_000
     for tool in wire:
         dumped = json.dumps(tool.inputSchema)
         for forbidden in ("actor", "origin", "engine", "acknowledge", "licence_ack", "authorised_boards", "concurrency"):

@@ -55,9 +55,12 @@ class FakeCC:
 
     answers: dict[tuple[str, str], Any] = field(default_factory=dict)
     requests: list[tuple[str, str, Any]] = field(default_factory=list)
+    #: The `timeout_s` of each request, in the same order (Slice 09 rework: how long a start may wait for Variants).
+    timeouts: list[float] = field(default_factory=list)
 
     async def request(self, method: str, route: str, payload: Any = None, *, timeout_s: float = 0) -> tuple[int, Any]:
         self.requests.append((method, route, payload))
+        self.timeouts.append(timeout_s)
         answer = self.answers.get((method, route), (200, {}))
         return answer(payload) if callable(answer) else answer
 

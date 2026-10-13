@@ -1,0 +1,317 @@
+{
+ "slice": "05-continuous-remotion-sequencing",
+ "base_sha": "ec9c10b0",
+ "tested": "working tree of task/jarvis-remotion-native-studio-playback-fix on ec9c10b0 (committed as the S5 commits)",
+ "runtime": "headless Chrome over CDP, RemotionStack on free loopback ports, throw-away data root; JARVIS_REMOTION_RUNTIME_DIR = read-only copy of an existing install; the live Jarvis was never contacted",
+ "deck": "presentation_playback_gate_world.DECK: 9 Remotion scenes, 3/8/30 s at 24/25/30/60 fps, every score item targets 8000 ms",
+ "variants": {
+  "surface": "Variants embedded Player, « Lire »",
+  "boundaries": [
+   {
+    "from": "S1",
+    "to": "S2",
+    "outgoing_last_frame": 89,
+    "incoming_first_frame": 0,
+    "gap_ms": 11
+   },
+   {
+    "from": "S2",
+    "to": "S3",
+    "outgoing_last_frame": 239,
+    "incoming_first_frame": 0,
+    "gap_ms": 13
+   },
+   {
+    "from": "S3",
+    "to": "S4",
+    "outgoing_last_frame": 899,
+    "incoming_first_frame": 0,
+    "gap_ms": 19
+   },
+   {
+    "from": "S4",
+    "to": "S5",
+    "outgoing_last_frame": 74,
+    "incoming_first_frame": 0,
+    "gap_ms": 14
+   },
+   {
+    "from": "S5",
+    "to": "S6",
+    "outgoing_last_frame": 479,
+    "incoming_first_frame": 0,
+    "gap_ms": 24
+   },
+   {
+    "from": "S6",
+    "to": "S7",
+    "outgoing_last_frame": 89,
+    "incoming_first_frame": 0,
+    "gap_ms": 14
+   },
+   {
+    "from": "S7",
+    "to": "S8",
+    "outgoing_last_frame": 191,
+    "incoming_first_frame": 0,
+    "gap_ms": 12
+   },
+   {
+    "from": "S8",
+    "to": "S9",
+    "outgoing_last_frame": 89,
+    "incoming_first_frame": 0,
+    "gap_ms": 8
+   }
+  ],
+  "blank_spans_ms": [],
+  "hybrid_or_blank_captures": [],
+  "captures_per_boundary": {
+   "burst1": 36,
+   "burst2": 36,
+   "burst3": 36,
+   "burst4": 34,
+   "burst5": 37,
+   "burst6": 34,
+   "burst7": 36,
+   "burst8": 35
+  },
+  "scenes": [
+   {
+    "scene": "S1",
+    "max_frame": 89,
+    "played_ms": 4210
+   },
+   {
+    "scene": "S2",
+    "max_frame": 239,
+    "played_ms": 8006
+   },
+   {
+    "scene": "S3",
+    "max_frame": 899,
+    "played_ms": 30003
+   },
+   {
+    "scene": "S4",
+    "max_frame": 74,
+    "played_ms": 2963
+   },
+   {
+    "scene": "S5",
+    "max_frame": 479,
+    "played_ms": 8002
+   },
+   {
+    "scene": "S6",
+    "max_frame": 89,
+    "played_ms": 2992
+   },
+   {
+    "scene": "S7",
+    "max_frame": 191,
+    "played_ms": 7970
+   },
+   {
+    "scene": "S8",
+    "max_frame": 89,
+    "played_ms": 3004
+   },
+   {
+    "scene": "S9",
+    "max_frame": 239,
+    "played_ms": 8012
+   }
+  ],
+  "labels": [
+   "Lire",
+   "Pause",
+   "Rejouer"
+  ],
+  "final_frame_held_after_5s": 239,
+  "explorer_open_at_end": true,
+  "core_phases_seen": [
+   "idle"
+  ],
+  "sequencer_boundaries": [
+   {
+    "from": 0,
+    "to": 1,
+    "gap_ms": 1,
+    "ready_ahead": true
+   },
+   {
+    "from": 1,
+    "to": 2,
+    "gap_ms": 1,
+    "ready_ahead": true
+   },
+   {
+    "from": 2,
+    "to": 3,
+    "gap_ms": 3,
+    "ready_ahead": true
+   },
+   {
+    "from": 3,
+    "to": 4,
+    "gap_ms": 1,
+    "ready_ahead": true
+   },
+   {
+    "from": 4,
+    "to": 5,
+    "gap_ms": 1,
+    "ready_ahead": true
+   },
+   {
+    "from": 5,
+    "to": 6,
+    "gap_ms": 1,
+    "ready_ahead": true
+   },
+   {
+    "from": 6,
+    "to": 7,
+    "gap_ms": 0,
+    "ready_ahead": true
+   },
+   {
+    "from": 7,
+    "to": 8,
+    "gap_ms": 1,
+    "ready_ahead": true
+   }
+  ]
+ },
+ "run_stage": {
+  "surface": "run stage Board window, scope all (cold compiles)",
+  "boundaries": [
+   {
+    "from": "S1",
+    "to": "S2",
+    "outgoing_last_frame": 89,
+    "incoming_first_frame": 0,
+    "gap_ms": 147
+   },
+   {
+    "from": "S2",
+    "to": "S3",
+    "outgoing_last_frame": 239,
+    "incoming_first_frame": 0,
+    "gap_ms": 146
+   },
+   {
+    "from": "S3",
+    "to": "S4",
+    "outgoing_last_frame": 899,
+    "incoming_first_frame": 0,
+    "gap_ms": 170
+   },
+   {
+    "from": "S4",
+    "to": "S5",
+    "outgoing_last_frame": 74,
+    "incoming_first_frame": 0,
+    "gap_ms": 167
+   },
+   {
+    "from": "S5",
+    "to": "S6",
+    "outgoing_last_frame": 479,
+    "incoming_first_frame": 0,
+    "gap_ms": 166
+   },
+   {
+    "from": "S6",
+    "to": "S7",
+    "outgoing_last_frame": 89,
+    "incoming_first_frame": 0,
+    "gap_ms": 151
+   },
+   {
+    "from": "S7",
+    "to": "S8",
+    "outgoing_last_frame": 191,
+    "incoming_first_frame": 0,
+    "gap_ms": 280
+   },
+   {
+    "from": "S8",
+    "to": "S9",
+    "outgoing_last_frame": 89,
+    "incoming_first_frame": 0,
+    "gap_ms": 160
+   }
+  ],
+  "blank_spans_ms": [],
+  "hybrid_or_blank_captures": [],
+  "scenes": [
+   {
+    "scene": "S1",
+    "max_frame": 89,
+    "played_ms": 2973
+   },
+   {
+    "scene": "S2",
+    "max_frame": 239,
+    "played_ms": 7951
+   },
+   {
+    "scene": "S3",
+    "max_frame": 899,
+    "played_ms": 29969
+   },
+   {
+    "scene": "S4",
+    "max_frame": 74,
+    "played_ms": 2966
+   },
+   {
+    "scene": "S5",
+    "max_frame": 479,
+    "played_ms": 7999
+   },
+   {
+    "scene": "S6",
+    "max_frame": 89,
+    "played_ms": 2983
+   },
+   {
+    "scene": "S7",
+    "max_frame": 191,
+    "played_ms": 7948
+   },
+   {
+    "scene": "S8",
+    "max_frame": 89,
+    "played_ms": 2970
+   },
+   {
+    "scene": "S9",
+    "max_frame": 239,
+    "played_ms": 7973
+   }
+  ],
+  "core_scenes_entered": [
+   1,
+   2,
+   3,
+   4,
+   5,
+   6,
+   7,
+   8,
+   9
+  ]
+ },
+ "thirty_second_scene": {
+  "variants": 30003,
+  "run_stage": 29969,
+  "frames": 900
+ },
+ "anomalies": [
+  "run_stage_continuous-earlier-run-S5-intra-scene-stall.json: one earlier run-stage run (before the staged-opacity change) held S5 at its anchor for ~6.9 s between its two segments; not reproduced in 4 later run-stage runs; not seen in Variants (no segments there)",
+  "gate-play_all-dark-capture-before-opacity-fix.png: one dark capture at the S7->S8 run-stage boundary in 1 of 4 gate runs while staged frames were visibility:hidden; after the change to opacity:0 + inert, 0 dark captures in 5 gate runs + 2 Slice 05 runs"
+ ]
+}

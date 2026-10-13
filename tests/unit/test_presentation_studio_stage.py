@@ -1,148 +1,162 @@
-"""Stage window, auxiliary windows and the id-list ledger (Slice 12), against a real `SceneService` and the real file ledger.
+"""The retired run stage: one last reclaim of what an older Core left (native-studio-playback-fix Slice 09), against a real
+`SceneService` and the real file ledger.
 
-Proved: one window created then patched (a payload already shown writes nothing), an aux window hidden at birth, archive by id
-only (a look-alike object of the brain survives), a ledger that is ids and nothing else, an unreadable / foreign ledger that is
-an error row rather than "nothing to do", overflow said loudly, the file adapter's atomic write and its invisibility to the
-store listing, and the leak-then-reclaim paths of the service (a failed retire is taken back at the next start).
+Since Slice 09 a run never writes a Board object (it plays inside Variants, `test_presentation_studio_run_surface.py`). Proved here:
+the Board windows of the retired floating viewer (`studio_stage` / `studio_aux`) are archived by id list (old ledger) AND by a scan
+of the retired categories whatever the id (Slice 09 rework: an object of a retired category is never drawn and refused to the Tool
+Brain, so it would be an unreachable orphan; our id prefix on another category survives), an id already gone is not a failure, the
+old ledger is read once and then kept aside (never deleted, never rewritten; an empty id list included), an unreadable ledger is an
+error row kept aside and the scan still runs, a scene that refuses the archive is said and never blocks a run.
 """
 
 from __future__ import annotations
 
 import json
-from pathlib import Path
 
 import pytest
 
 from jarvis.adapters.file_presentation_studio_stage_ledger import LEDGER_FILE, SCHEMA, FileStageLedger
 from jarvis.adapters.file_presentation_studio_store import FilePresentationStudioStore
-from jarvis.adapters.sqlite_scene import SQLiteSceneRepository
-from jarvis.core.presentation_studio_stage import MAX_LEDGER_IDS, SceneStage, StageError, StageLedger
-from jarvis.core.scene_service import SceneService
+from jarvis.core.presentation_studio_stage import LEGACY_CATEGORIES, LegacyStageReclaimer, StageError, StageLedger
 from jarvis.domain.scene import (
     Representation, SceneActor, SceneCommand, SceneObjectFields, SceneObjectKind, SceneOp, ScenePayload, ScenePrefabRef,
 )
-from tests.unit.test_presentation_studio_playback_service import AUX_BLOCK, MemoryLedgerStore, Rig, applied
+from tests.unit.test_presentation_studio_playback_service import MemoryLedgerStore, Rig, applied
 from tests.unit.test_presentation_studio_scene_service import Sink
 
 
-def payload(title: str, label: str = "x") -> ScenePayload:
-    return ScenePayload(title=title, prefab=ScenePrefabRef("lab.counter", 1, {"label": label}, {"count": 1}))
+async def window(scene, object_id: str, category: str, actor: SceneActor = SceneActor.USER) -> None:
+    await scene.apply(SceneCommand(op=SceneOp.UPSERT_OBJECT, actor=actor, object_id=object_id,
+                                   fields=SceneObjectFields(kind=SceneObjectKind.WINDOW, category=category,
+                                                            payload=ScenePayload(title=object_id, prefab=ScenePrefabRef(
+                                                                "lab.counter", 1, {"label": "x"}, {"count": 1})),
+                                                            representation=Representation.WINDOW)))
 
 
 @pytest.fixture
-async def stage_rig(tmp_path):
-    rig = await Rig(tmp_path).open()
-    yield rig
-    await rig.close()
+async def rig(tmp_path):
+    made = await Rig(tmp_path).open()
+    yield made
+    await made.close()
 
 
-# ------------------------------------------------------------------ the stage window
-
-async def test_show_creates_once_then_patches_and_an_identical_payload_writes_nothing(stage_rig):
-    stage = stage_rig.stage
-    stage.begin("rx")
-    assert await stage.show(payload("Un")) is True
-    first = stage.stage_object_id
-    revision = (await stage_rig.scene.snapshot()).revision
-    assert await stage.show(payload("Un")) is False                 # nothing to write: the frame's own state survives
-    assert (await stage_rig.scene.snapshot()).revision == revision
-    assert await stage.show(payload("Deux", "y")) is True
-    assert stage.stage_object_id == first == "studio-stage-rx"
-    assert [o.payload.title for o in await stage_rig.objects("studio_stage")] == ["Deux"]
-    await stage.release()
-    assert stage.stage_object_id is None and await stage_rig.stage_object() is None
+def test_the_retired_categories_are_the_two_of_the_floating_viewer():
+    assert LEGACY_CATEGORIES == {"studio_stage", "studio_aux"}
 
 
-async def test_show_without_a_run_is_a_coded_error(stage_rig):
+# ------------------------------------------------------------------ the reclaim
+
+async def test_reclaim_archives_ledger_ids_and_every_retired_category_object_and_spares_other_categories(rig):
+    await window(rig.scene, "studio-stage-r1", "studio_stage")
+    await window(rig.scene, "studio-stage-r2-1", "studio_stage")                 # a reopened generation, not in the ledger
+    await window(rig.scene, "studio-aux-r1-a1", "studio_aux")
+    await window(rig.scene, "brain-look-alike", "studio_aux", SceneActor.BRAIN)  # retired category, another id: an orphan, archived
+    await window(rig.scene, "stage-without-prefix", "studio_stage")              # the same for the stage category
+    await window(rig.scene, "studio-stage-note", "note")                         # our prefix, another category: not ours, survives
+    store = MemoryLedgerStore(["studio-stage-r1", "studio-aux-r1-a1", "studio-stage-gone"])
+    reclaimer = LegacyStageReclaimer(rig.scene, StageLedger(store, diagnostics=rig.env.sink), diagnostics=rig.env.sink)
+    taken = await reclaimer.reclaim()
+    assert set(taken) == {"studio-stage-r1", "studio-stage-r2-1", "studio-aux-r1-a1", "brain-look-alike",
+                          "stage-without-prefix"}                                   # the unknown id is already gone
+    assert {o.object_id for o in await rig.objects()} == {"studio-stage-note"}
+    assert store.ids is None and store.retired == ["studio-stage-r1", "studio-aux-r1-a1", "studio-stage-gone"]
+    [(level, data)] = rig.env.sink.of("core.presentation_studio.legacy_stage_reclaimed")
+    assert level == "warning" and data == {"count": 5, "from_ledger": 3}
+    assert await reclaimer.reclaim() == ()                                        # nothing left: a second pass writes nothing
+
+
+async def test_an_orphan_of_a_retired_category_is_archived_not_deleted_and_the_brain_still_cannot_touch_it(rig):
+    """Slice 09 rework, the safer of the two choices: a `studio_aux` object without the `studio-aux-` prefix is archived (reversible,
+    the scene keeps it), rather than handed to the Tool Brain (which keeps refusing the retired categories as `studio_owned`)."""
+
+    from jarvis.runtime.tool_brain_executor import studio_owned_targets
+    from jarvis.domain.scene_selection import SceneSelection
+
+    await window(rig.scene, "old-brain-aux", "studio_aux", SceneActor.BRAIN)
+    snapshot = await rig.scene.snapshot()
+    touch = SceneCommand(op=SceneOp.ARCHIVE_SELECTION, actor=SceneActor.BRAIN, selection=SceneSelection(ids=("old-brain-aux",)))
+    assert studio_owned_targets(snapshot, touch) == ["old-brain-aux"], "the Tool Brain still refuses it"
+    taken = await LegacyStageReclaimer(rig.scene, StageLedger(MemoryLedgerStore())).reclaim()
+    assert taken == ("old-brain-aux",)
+    after = await rig.scene.snapshot()
+    assert "old-brain-aux" in after.archived_ids and after.get_object("old-brain-aux") is None, "archived, never deleted"
+
+
+async def test_a_ledger_whose_id_list_is_empty_is_set_aside_all_the_same(rig, tmp_path):
+    store = MemoryLedgerStore([])
+    taken = await LegacyStageReclaimer(rig.scene, StageLedger(store, diagnostics=rig.env.sink), diagnostics=rig.env.sink).reclaim()
+    assert taken == () and store.ids is None and store.retired == [], "an existing ledger is retired even when it lists nothing"
+    assert rig.env.sink.of("core.presentation_studio.stage_ledger_retired")[0][1] == {"file": "ledger.retired"}
+    # The real file adapter: an empty list on disk becomes `.retired-<time>`, kept byte for byte.
+    (tmp_path / "state").mkdir(exist_ok=True)
+    path = tmp_path / "state" / LEDGER_FILE
+    text = json.dumps({"schema": SCHEMA, "object_ids": []})
+    path.write_text(text, encoding="utf-8")
+    await LegacyStageReclaimer(rig.scene, StageLedger(FileStageLedger(tmp_path))).reclaim()
+    kept = [p for p in (tmp_path / "state").iterdir() if p.name.startswith(LEDGER_FILE + ".retired-")]
+    assert not path.exists() and len(kept) == 1 and kept[0].read_text(encoding="utf-8") == text
+
+
+async def test_reclaim_with_nothing_to_take_back_writes_nothing(rig):
+    revision = (await rig.scene.snapshot()).revision
+    reclaimer = LegacyStageReclaimer(rig.scene, StageLedger(MemoryLedgerStore()), diagnostics=rig.env.sink)
+    assert await reclaimer.reclaim() == ()
+    assert (await rig.scene.snapshot()).revision == revision and rig.env.sink.of("core.presentation_studio.legacy_stage_reclaimed") == []
+
+
+async def test_a_scene_that_refuses_the_archive_is_said_and_never_blocks_a_run(rig):
+    await window(rig.scene, "studio-stage-r1", "studio_stage")
+
+    class Refusing:
+        def __init__(self, scene):
+            self._scene = scene
+
+        async def apply_if(self, plan):
+            raise ValueError("scene store refused")
+
+    reclaimer = LegacyStageReclaimer(Refusing(rig.scene), StageLedger(MemoryLedgerStore()))
     with pytest.raises(StageError) as caught:
-        await stage_rig.stage.show(payload("Un"))
-    assert caught.value.code == "stage_not_begun"
+        await reclaimer.reclaim()
+    assert caught.value.code == "stage_invalid"
+    rig.stage._reclaimer = reclaimer
+    await rig.service.start_service()                                             # Core starts regardless: an error row
+    assert rig.env.sink.of("core.presentation_studio.playback_reclaim_failed")[0][0] == "error"
+    applied(await rig.service.start(rig.start_body()))                            # and a run still starts (on the surface)
+    assert rig.service.where()["stage_object_id"].startswith("variants-run-")
 
 
-async def test_a_payload_the_scene_refuses_is_the_scenes_own_reason(stage_rig):
-    stage_rig.stage.begin("rx")
-    bad = ScenePayload(title="x", prefab=ScenePrefabRef("lab.nothing", 1, {}, {}))
-    with pytest.raises(StageError) as caught:
-        await stage_rig.stage.show(bad)
-    assert caught.value.code == "prefab_invalid" and "lab.nothing" in caught.value.message
-    assert stage_rig.stage.stage_object_id is None and stage_rig.stage_ledger.ids == ()
-
-
-async def test_an_aux_window_is_hidden_at_birth_revealed_and_archived_by_id_only(stage_rig):
-    stage = stage_rig.stage
-    stage.begin("rx")
-    object_id = await stage.stage_aux("a1", "Annexe", ScenePrefabRef("lab.counter", 1, {"label": "A"}, {"count": 1}))
-    [aux] = await stage_rig.objects("studio_aux")
-    assert aux.visibility.value == "hidden"                         # never visible between create and reveal
-    await stage.reveal_aux(object_id)
-    assert (await stage_rig.objects("studio_aux"))[0].visibility.value == "visible"
-    # an object of the same shape that the brain made is NOT ours: the id list cannot reach it
-    await stage_rig.scene.apply(SceneCommand(op=SceneOp.UPSERT_OBJECT, actor=SceneActor.BRAIN, object_id="brain-look-alike",
-                                             fields=SceneObjectFields(kind=SceneObjectKind.WINDOW, category="studio_aux",
-                                                                      payload=payload("Brain"), representation=Representation.WINDOW)))
-    await stage.retire([object_id])
-    assert [o.object_id for o in await stage_rig.objects("studio_aux")] == ["brain-look-alike"]
-    assert stage_rig.stage_ledger.ids == ()
-
-
-async def test_retiring_an_object_that_is_already_gone_is_not_a_failure(stage_rig):
-    stage = stage_rig.stage
-    stage.begin("rx")
-    object_id = await stage.stage_aux("a1", "Annexe", ScenePrefabRef("lab.counter", 1, {"label": "A"}, {"count": 1}))
-    await stage.retire([object_id])
-    await stage.retire([object_id])                                 # the user (or an earlier try) already removed it
-    await stage.retire(["never-existed"])
-    assert stage_rig.stage_ledger.ids == ()
-
-
-# ------------------------------------------------------------------ the ledger
-
-def test_the_ledger_holds_ids_only_is_bounded_and_says_when_it_overflows():
-    sink = Sink()
-    store = MemoryLedgerStore()
-    ledger = StageLedger(store, diagnostics=sink)
-    for index in range(MAX_LEDGER_IDS + 3):
-        ledger.add(f"studio-aux-r-{index}")
-    assert len(ledger.ids) == MAX_LEDGER_IDS and ledger.ids[-1] == f"studio-aux-r-{MAX_LEDGER_IDS + 2}"
-    [(level, data)] = sink.of("core.presentation_studio.stage_ledger_overflow")[-1:]
-    assert level == "error" and data["dropped"] == 1
-    ledger.remove([f"studio-aux-r-{index}" for index in range(MAX_LEDGER_IDS + 3)])
-    assert ledger.ids == () and store.ids is None                   # empty -> erased, not an empty file
-
-
-def test_an_unreadable_ledger_is_an_error_row_not_nothing_to_do():
+def test_an_unreadable_ledger_is_an_error_row_kept_aside_not_nothing_to_do():
     class Broken(MemoryLedgerStore):
         def read(self):
             raise ValueError("not a stage ledger")
 
-        def write(self, ids):
-            raise OSError("disk full")
+        def quarantine(self):
+            return "ledger.corrupt-1"
 
     sink = Sink()
     ledger = StageLedger(Broken(), diagnostics=sink)
     assert ledger.load() == ()
     assert sink.of("core.presentation_studio.stage_ledger_unreadable")[0][0] == "error"
-    ledger.add("studio-stage-r")                                     # the run goes on, the leak risk is said
-    assert sink.of("core.presentation_studio.stage_ledger_unwritable")[0][1]["ids"] == 1
-    assert ledger.ids == ("studio-stage-r",)
+    assert sink.of("core.presentation_studio.stage_ledger_quarantined")[0][1] == {"file": "ledger.corrupt-1"}
 
 
-# ------------------------------------------------------------------ the file adapter
+# ------------------------------------------------------------------ the file adapter (read once, then kept aside)
 
-def test_the_file_ledger_round_trips_atomically_beside_the_scene_database_not_in_the_presentations_tree(tmp_path):
+def test_the_file_ledger_is_read_then_kept_aside_beside_the_scene_database_never_deleted(tmp_path):
     ledger = FileStageLedger(tmp_path)
-    assert ledger.read() is None                                     # first run: no ledger, not an error
-    ledger.write(["studio-stage-r1", "studio-aux-r1-a1"])
+    assert ledger.read() is None and ledger.retire() is None                     # no ledger: the normal state, not an error
+    (tmp_path / "state").mkdir()
     path = tmp_path / "state" / LEDGER_FILE
-    assert json.loads(path.read_text(encoding="utf-8")) == {"schema": SCHEMA, "object_ids": ["studio-stage-r1", "studio-aux-r1-a1"]}
+    text = json.dumps({"schema": SCHEMA, "object_ids": ["studio-stage-r1", "studio-aux-r1-a1"]})
+    path.write_text(text, encoding="utf-8")
     assert ledger.read() == ["studio-stage-r1", "studio-aux-r1-a1"]
-    assert [p.name for p in (tmp_path / "state").iterdir()] == [LEDGER_FILE], "no temporary left behind"
+    name = ledger.retire()
+    assert name.startswith(LEDGER_FILE + ".retired-") and not path.exists()
+    assert (tmp_path / "state" / name).read_text(encoding="utf-8") == text        # kept as it was, byte for byte
+    assert ledger.read() is None
     assert not (tmp_path / "presentations").exists(), "never inside the Presentations tree (backup / move)"
     scan = FilePresentationStudioStore(tmp_path).scan()
     assert scan.presentation_ids == () and scan.problems == ()
-    ledger.erase()
-    ledger.erase()                                                   # erasing what is gone is the goal
-    assert ledger.read() is None
 
 
 @pytest.mark.parametrize("content", ["not json", '{"schema":"other","object_ids":[]}', '{"schema":"%s","object_ids":"x"}' % SCHEMA, "[]"])
@@ -151,28 +165,5 @@ def test_a_foreign_or_corrupt_ledger_raises_instead_of_reading_as_empty(tmp_path
     (tmp_path / "state" / LEDGER_FILE).write_text(content, encoding="utf-8")
     with pytest.raises(ValueError):
         FileStageLedger(tmp_path).read()
-
-
-# ------------------------------------------------------------------ leak, then reclaim
-
-async def test_a_retire_that_failed_leaves_the_id_in_the_ledger_and_the_next_run_takes_it_back(tmp_path):
-    rig = await Rig(tmp_path).open()
-    applied(await rig.service.start(rig.start_body()))
-    applied(await rig.run("detour", title="Annexe", prefab=AUX_BLOCK))
-    [aux] = await rig.objects("studio_aux")
-    real_retire = rig.stage.retire
-
-    async def failing(ids):
-        raise StageError("scene_unavailable", "the scene store is down")
-
-    rig.stage.retire = failing
-    result = await rig.run("stop")
-    assert result.status.value == "stage_failed" and result.reason == "aux_retire_failed" and "store is down" in result.message
-    assert rig.service.where()["phase"] == "stopped" and rig.service.where()["last_run"]["problems"] == ["aux_retire_failed"]
-    assert aux.object_id in rig.stage_ledger.ids                      # kept: it can still be taken back
-    rig.stage.retire = real_retire
-    rig.build()
-    applied(await rig.service.start(rig.start_body()))                # the next run reclaims the leftovers first
-    assert [o.object_id for o in await rig.objects("studio_aux")] == []
-    assert aux.object_id not in rig.stage_ledger.ids
-    await rig.close()
+    kept = FileStageLedger(tmp_path).quarantine()
+    assert kept.startswith(LEDGER_FILE + ".corrupt-") and (tmp_path / "state" / kept).read_text(encoding="utf-8") == content

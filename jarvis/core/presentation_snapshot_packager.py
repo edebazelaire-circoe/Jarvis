@@ -196,6 +196,18 @@ class PresentationPackager:
         return {"artifact": done, "artifact_id": done.artifact_id, "created": bool(begun["created"]), "replayed": False,
                 "content_sha256": digest, "authorised_boards": sorted(boards)}
 
+    async def assemble_preview(self, presentation_id: str, variant_id: str) -> FrozenPackage:
+        """The CURRENT variant as a package, in memory only (Slice 13 of native-studio-playback-fix: the agent's native preview). Nothing is
+        frozen, no Artifact is created, and no Board is read (`authorised_boards` empty: a scene with live Board references is refused with
+        the same typed error a freeze gives). Same assembler as `freeze`, so a preview renders exactly what an export would."""
+
+        view = await self._studio.get(presentation_id)
+        variant = next((v for v in view.variants if v.variant_id == variant_id), None)
+        if variant is None:
+            raise PresentationStudioError(_C.UNKNOWN_VARIANT, "unknown or archived variant")
+        data, _boards = await self._assemble(view, variant, presentation_id, frozenset())
+        return await asyncio.to_thread(read_package, data)
+
     async def read_snapshot(self, artifact_id: str) -> FrozenPackage:
         """Rouvre un snapshot **complet** à partir de son seul `snapshot.zip` : hash annoncé, puis chaque membre vérifié, puis
         la provenance du manifeste contre les métadonnées gelées de l'Artifact. Ne consulte ni le Board d'origine, ni la source

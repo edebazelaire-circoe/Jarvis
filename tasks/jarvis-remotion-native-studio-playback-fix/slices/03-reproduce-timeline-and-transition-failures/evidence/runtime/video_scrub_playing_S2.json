@@ -1,0 +1,12 @@
+{
+ "gesture": null,
+ "scrub_kind": "legacy:rs-scrub",
+ "after": {
+  "frame": 39,
+  "playing": true,
+  "duration": 240,
+  "phase": "ready",
+  "scene": "S2"
+ },
+ "frame_orders_after_scrub_500ms": []
+}

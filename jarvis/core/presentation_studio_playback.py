@@ -1,19 +1,20 @@
 """Playback service of the Presentation Studio (handoff jarvis-interactive-presentation-studio, Slice 12).
 
-Core owns the run, in memory (R6: position, reveal progress, detours and the auxiliary stack are **never persisted**;
-the only thing on disk is the stage ledger of object ids, which exists to take objects back). The decision logic is the
-pure machine `jarvis/domain/presentation_studio_playback.py`; this service
+Core owns the run, in memory (R6: position, reveal progress, detours and the auxiliary stack are **never persisted**; nothing of a
+run is on disk). The decision logic is the pure machine `jarvis/domain/presentation_studio_playback.py`; this service
 
 1. serialises the commands (one lock: a click and a cue never interleave),
 2. runs the machine and then executes its **effects** through existing services only:
-   the one stable stage window and the auxiliary windows through `SceneStage` (scene commands inside
-   `SceneService.apply_if`), the values of the score through `PresentationStudioEditService.render_overlay`,
-   the interaction mode through `InteractionModeService.request` with the Slice 01c helper,
-3. keeps the reality honest: a failed stage sync pauses the run with a visible problem; a crash, a stop, a foreign
-   mode change and a Core restart all end with the auxiliary windows retired and the stage released.
+   the one run surface of Variants and its detour overlays through `RunSurface` (memory, `presentation_studio_run_surface.py`,
+   read and mounted by the Variants Player; native-studio-playback-fix Slice 09 retired the Board stage window), the values of the
+   score through `PresentationStudioEditService.render_overlay`, the interaction mode through `InteractionModeService.request` with
+   the Slice 01c helper,
+3. keeps the reality honest: a failed stage sync pauses the run with a visible problem; a stage sync is **bounded**
+   (`STAGE_SYNC_TIMEOUT_S`) and a `stop` **pre-empts** one in flight, so no run is ever stuck behind a sync that never ends; a
+   crash, a stop, a foreign mode change and a Core restart all end with the detours retired and the surface released.
 
 Playback never writes the variant. Values a score sets (`control_set`, control-bound reveals) are an **ephemeral overlay**
-rendered in memory by the edit engine and shown on the stage window; the variant file is byte-identical after a full run.
+rendered in memory by the edit engine and shown on the run surface; the variant file is byte-identical after a full run.
 Only an **explicit edit instruction** (`edit`) commits, through the Slice 05 service, and it pauses the run first;
 improvisation (what the presenter says) never writes anything.
 
@@ -36,6 +37,7 @@ import time
 from typing import Any, Protocol
 
 from jarvis.core.presentation_studio_autoplay import AutoPlayMixin, AutoTimings
+from jarvis.core.presentation_studio_composition_clock import pins_of
 from jarvis.core.presentation_studio_preview import Preview, ScenePreviewMixin
 from jarvis.core.presentation_studio_reload_stage import StageBinding
 from jarvis.core.presentation_studio_stage import StageError
@@ -60,8 +62,9 @@ from jarvis.domain.presentation_studio_roles import (
     plan_mode_entry, requirements,
 )
 from jarvis.domain.presentation_studio_score import parse_score
+from jarvis.domain.composition_clock import composition_key
 from jarvis.domain.remotion_timeline import (
-    UNRESOLVED as TIMELINE_UNRESOLVED, FrameMap, SegmentClock, build_frame_map, target_segment, timeline_wire,
+    UNRESOLVED as TIMELINE_UNRESOLVED, Arrival, FrameMap, Move, Placement, SegmentClock, build_frame_map, place, timeline_wire,
 )
 from jarvis.domain.scene import ScenePrefabRef
 from jarvis.domain.v2 import ProtocolEnvelope
@@ -74,6 +77,9 @@ FOLLOWER_GRACE_S = 10.0
 MAX_VIEW_BYTES = 3072
 #: What `render_overlay` is given per scene: the score's values are few, but the engine takes 16 ops per chunk.
 MAX_NOTICES = 8
+#: Slice 09: the longest a stage sync (overlay render, catalogue check, surface, timeline) may take before the run pauses with
+#: `stage_timeout` instead of holding the lock (and every command, `stop` included) behind it.
+STAGE_SYNC_TIMEOUT_S = 20.0
 
 
 class ArtDirectionGate(Protocol):
@@ -91,14 +97,14 @@ class DetourValidator(Protocol):
 
 
 class Stage(Protocol):
-    """What the service needs of `SceneStage` (a recording fake in tests)."""
+    """What the service needs of `RunSurface` (a recording fake in tests)."""
 
     @property
     def stage_object_id(self) -> str | None: ...
 
     def begin(self, run_id: str) -> None: ...
 
-    async def show(self, payload: Any) -> bool: ...
+    async def show(self, payload: Any, *, scene_id: str | None = None) -> bool: ...
 
     async def release(self) -> None: ...
 
@@ -114,7 +120,7 @@ class Stage(Protocol):
 class PlaybackStatus(StrEnum):
     APPLIED = "applied"
     REFUSED = "refused"
-    #: The transition happened but the stage could not follow: the run is paused with a visible problem.
+    #: The transition happened but the run surface could not follow: the run is paused with a visible problem.
     STAGE_FAILED = "stage_failed"
 
 
@@ -158,19 +164,30 @@ class PresentationStudioPlaybackService(AutoPlayMixin, ScenePreviewMixin):
                  new_run_id: Callable[[], str] = lambda: secrets.token_hex(6),
                  armed_ttl_s: float = ARMED_SET_TTL_S, detour_validator: DetourValidator | None = None,
                  follower_grace_s: float = FOLLOWER_GRACE_S, stage_observer: Any | None = None,
-                 timeline_source: Any | None = None, autoplay: AutoTimings | None = None) -> None:
+                 timeline_source: Any | None = None, autoplay: AutoTimings | None = None,
+                 stage_sync_timeout_s: float = STAGE_SYNC_TIMEOUT_S) -> None:
         if gate is None or not callable(getattr(gate, "require_art_direction", None)):
             raise ValueError("the playback service needs an art direction gate (PresentationStudioService.require_art_direction)")
         self._studio, self._edit, self._stage, self._mode = studio, edit, stage, mode
         self._gate, self._bus, self._events, self._diagnostics = gate, bus, events, diagnostics
         self._monotonic, self._new_run_id, self._armed_ttl_s = monotonic, new_run_id, armed_ttl_s
         self._detour_validator, self._follower_grace_s = detour_validator, follower_grace_s
-        #: Slice 06 (hot reload) : sait quelle fenetre affiche quelle scene (`bind`/`unbind`), pour patcher CETTE fenetre.
+        #: Slice 09: the bound of one stage sync, and the sync in flight (`stop` cancels it before it takes the lock).
+        self._stage_sync_timeout_s = stage_sync_timeout_s
+        self._syncing: asyncio.Task[None] | None = None
+        #: Slice 06 (hot reload) : sait quelle surface affiche quelle scene (`bind`/`unbind`), pour re-epingler CETTE surface.
         self._stage_observer = stage_observer
         #: Slice 12 (Remotion) : `async remotion_composition(prefab_id, version) -> dict | None` (`PrefabService`). Sans lui, aucune ligne de temps.
         self._timeline_source = timeline_source
         self._tl_map: FrameMap | None = None
+        #: `(scene_id, is a Remotion scene)` of the scene whose timeline was last resolved (Slice 05: a video scene is never paced by a dwell).
+        self._tl_video: tuple[str, bool] | None = None
         self._tl_clock = SegmentClock()
+        #: Slice 07 (§ 5): where the Player stands in the scene on the stage, and the move not yet seen by a timeline view.
+        self._tl_place: Placement | None = None
+        self._tl_move = Move.NONE
+        #: Slice 07 rework (I1): the scene whose Remotion timeline could not be resolved on its last stage sync (held, and said).
+        self._tl_failed: str | None = None
         #: Slice 23: the scope of the run (`manual` by default) and the deadline that keeps a chained play alive without a browser.
         self._init_autoplay(autoplay)
         self._compositions: dict[tuple[str, int], dict[str, Any] | None] = {}
@@ -198,7 +215,6 @@ class PresentationStudioPlaybackService(AutoPlayMixin, ScenePreviewMixin):
         self._follower_pulled = False
         self._follower_started_s = 0.0
         self._follower_warned = False
-        self._reopens_seen = 0
         self._tasks: set[asyncio.Task[Any]] = set()
         #: Slice 17: the scene variant the stage is showing in a user-started preview (ephemeral, memory only, never a run state).
         self._preview: Preview | None = None
@@ -214,8 +230,11 @@ class PresentationStudioPlaybackService(AutoPlayMixin, ScenePreviewMixin):
     # ------------------------------------------------------------------ lifecycle
 
     async def start_service(self) -> None:
-        """Core start: take back what a killed life left on the scene (by id list). Never raises: a failure is an error row."""
+        """Core start: no run exists, so nothing may stay on the run surface; archive the Board windows an older Core left (the retired
+        run stage, Slice 09). Never raises: an error row."""
 
+        if not self._state.active:
+            await self._stage.release()
         try:
             taken = await self._stage.reclaim()
         except Exception as exc:  # noqa: BLE001 - captured as an error row; Core starts regardless, the leak risk is said
@@ -225,7 +244,7 @@ class PresentationStudioPlaybackService(AutoPlayMixin, ScenePreviewMixin):
         self._trace("playback_reclaimed", "Objets de scene d'une vie precedente repris", data={"count": len(taken)})
 
     async def close(self) -> None:
-        """Core shutdown: end a live run (aux retired, stage released, mode restored) before the scene closes."""
+        """Core shutdown: end a live run (detours retired, surface released, mode restored)."""
 
         if self._state.active:
             await self.stop({"actor": "user"}, reason="shutdown")
@@ -311,6 +330,7 @@ class PresentationStudioPlaybackService(AutoPlayMixin, ScenePreviewMixin):
 
     async def stop(self, raw: object, *, reason: str = "user") -> PlaybackResult:
         parse_actor_only(raw, "stop")
+        self._preempt_sync("stop")   # Slice 09: a stop never queues behind a stage sync that does not end
         async with self._lock:
             return await self._guarded("stop", self._dispatch("stop", EventKind.STOP, stop_reason=reason))
 
@@ -393,17 +413,21 @@ class PresentationStudioPlaybackService(AutoPlayMixin, ScenePreviewMixin):
         async with self._lock:
             return await self._guarded("edit", self._edit_during_run(actor, basis, ops))
 
-    async def notify(self, kind: EventKind, **fields: Any) -> PlaybackResult:
+    async def notify(self, kind: EventKind, *, line_end: bool = False, **fields: Any) -> PlaybackResult:
         """Reports and moves of the timeline owner (Slice 14: the locked-sequence executor and the Jarvis presenter). Not an
         HTTP surface. `next` / `pause` / `goto` are the presenter pacing its own run (advance after a line, pause on a user
         interruption, land on a recovery point): the machine applies the item's declared interruption policy to them exactly as
-        it does to a user's, so the presenter can never move a run the score forbids to move."""
+        it does to a user's, so the presenter can never move a run the score forbids to move. `line_end`: this `next` is the end of a
+        Jarvis line (Jarvis pacing himself, no one asked): placed like a locked-sequence step, it never cuts an entry still playing
+        (Slice 07, § 5); a user's `next` or a cue still cuts."""
 
         allowed = {EventKind.SEQUENCE_STEP, EventKind.SEQUENCE_DONE, EventKind.SEQUENCE_ABORT, EventKind.SPEAKING,
                    EventKind.BOUNDARY, EventKind.NEXT, EventKind.PAUSE, EventKind.GOTO}
         if kind not in allowed:
             raise ValueError(f"{kind.value} is not a timeline report")
-        return await self._command(kind.value, kind, **fields)
+        async with self._lock:
+            move = Move.STEP if line_end and kind is EventKind.NEXT else None
+            return await self._guarded(kind.value, self._dispatch(kind.value, kind, move=move, **fields))
 
     async def halt(self, problem: str) -> PlaybackResult:
         """The presenter could not go on (the speech stack refused the line, never started it, was cut...): **pause** the run and
@@ -504,7 +528,8 @@ class PresentationStudioPlaybackService(AutoPlayMixin, ScenePreviewMixin):
             self._state = transition.state
         await self._teardown("crashed")
 
-    async def _dispatch(self, name: str, kind: EventKind, *, stop_reason: str = "user", **fields: Any) -> PlaybackResult:
+    async def _dispatch(self, name: str, kind: EventKind, *, stop_reason: str = "user", move: Move | None = None,
+                        **fields: Any) -> PlaybackResult:
         if self._plan is None:
             return self._refused(name, RefusalCode.NOT_RUNNING, "no presentation is running")
         if self._preview is not None:
@@ -517,7 +542,7 @@ class PresentationStudioPlaybackService(AutoPlayMixin, ScenePreviewMixin):
             self._trace("playback_refused", "Commande de lecture refusee", data={
                 "command": name, "code": refusal.code.value, "phase": before.phase.value, "run_id": before.run_id})
             return self._refused(name, refusal.code, refusal.message)
-        self._commit(transition.state, name)
+        self._commit(transition.state, name, move)
         return await self._execute(name, before, transition.effects, stop_reason=stop_reason)
 
     async def _resume(self) -> PlaybackResult:
@@ -560,7 +585,7 @@ class PresentationStudioPlaybackService(AutoPlayMixin, ScenePreviewMixin):
         if self._plan is None or not self._state.active:
             return self._refused("advance", RefusalCode.NOT_RUNNING, "no presentation is running")
         timeline = self._timeline_view()
-        if timeline is None or timeline["seq"] != seq or self._scope is Scope.MANUAL:
+        if timeline is None or timeline["seq"] != seq or not timeline["auto"]:
             self._trace("autoplay_report_ignored", "Rapport de segment ignore (segment ou portee perimes)", data={
                 "seq": seq, "event": event, "current": None if timeline is None else timeline["seq"], "scope": self._scope.value})
             return PlaybackResult(PlaybackStatus.APPLIED, "advance", self._view())
@@ -569,22 +594,35 @@ class PresentationStudioPlaybackService(AutoPlayMixin, ScenePreviewMixin):
             self._tl_clock.restart(self._ms(), self._state.phase is Phase.PLAYING)
             self._rearm_auto()
             return PlaybackResult(PlaybackStatus.APPLIED, "advance", self._view())
-        if not self._auto_eligible() or timeline["seq"] == self._auto_done_seq:
+        if timeline["seq"] == self._auto_done_seq or not (self._state.jarvis_speaks or self._auto_eligible()):
             return PlaybackResult(PlaybackStatus.APPLIED, "advance", self._view())
-        if not self._played_enough(timeline):
-            self._trace("autoplay_report_early", "Fin de segment annoncee trop tot : ignoree, l'echeance de Core reste", level="warning", data={
-                "seq": seq, "play_ms": timeline["play_ms"]})
+        if self._auto_started_seq != seq:
+            # Slice 05: the Player is the media clock; its `done` counts once the page said this segment started (never Core's own
+            # estimate of the played time, which counted loading and scrubs and so ended scenes early or late).
+            self._trace("autoplay_report_early", "Fin de segment annoncee avant son debut : ignoree", level="warning", data={"seq": seq})
+            return PlaybackResult(PlaybackStatus.APPLIED, "advance", self._view())
+        if self._state.jarvis_speaks:
+            # Slice 07: a run Jarvis paces only LEARNS that the media segment reached its stop frame; its presenter moves on (a silence
+            # item waits for it instead of its soft target). Core never advances on the page's word here.
+            self._auto_done_seq = seq
+            self._trace("media_segment_done", "Segment de media fini selon la page", data={"run_id": self._state.run_id, "seq": seq})
+            self._wake()
             return PlaybackResult(PlaybackStatus.APPLIED, "advance", self._view())
         result = await self._auto_advance("report")
         return result if result is not None else PlaybackResult(PlaybackStatus.APPLIED, "advance", self._view())
 
-    def _commit(self, state: PlaybackState, name: str) -> None:
+    def _commit(self, state: PlaybackState, name: str, move: Move | None = None) -> None:
         problems = check_invariants(self._plan, state) if self._plan is not None else []
         if problems:  # a bug in the machine, never a user error: said loudly, the state is still taken (it was computed)
             self._trace("playback_invariant_broken", "Etat de lecture incoherent", level="error",
                         data={"command": name, "problems": problems[:3]})
         previous = self._state
         self._state = state
+        move = move or _move_of(name, previous, state)   # `move`: named by the caller (a Jarvis line's end is a STEP)
+        if move is Move.JUMP and self._scope is not Scope.MANUAL:
+            move = Move.SEEK   # a chained play plays the item it jumps to: a hold would be paced by a dwell and moved on unseen
+        if move is not Move.NONE:
+            self._tl_move = move   # consumed by the first timeline view of this state's scene (the stage may still be loading it)
         self._timeline_view()
         self._trace("playback_transition", "Transition de lecture", data={
             "command": name, "from": previous.phase.value, "to": state.phase.value, "position": state.position + 1,
@@ -618,7 +656,7 @@ class PresentationStudioPlaybackService(AutoPlayMixin, ScenePreviewMixin):
             except (StageError, PresentationStudioError) as exc:
                 code = exc.code if isinstance(exc, StageError) else exc.code.value
                 failures.append((code, exc.message))
-                self._trace("playback_stage_failed", "La fenetre de scene n'a pas suivi : lecture en pause", level="error",
+                self._trace("playback_stage_failed", "La scene n'a pas suivi sur la surface de Variantes : lecture en pause", level="error",
                             data={"command": name, "code": code, "error": _clip(exc.message), "run_id": self._state.run_id})
                 if effect is Effect.SYNC_STAGE:
                     queue = self._feed(EventKind.STAGE_FAILED, problem=_problem_code(code))
@@ -738,10 +776,12 @@ class PresentationStudioPlaybackService(AutoPlayMixin, ScenePreviewMixin):
             self._aux_counter, self._last_ended = 0, None
             self._follower_needed = needs.mode is InteractionMode.PRESENTATION   # the lane is armed for cues only
             self._follower_pulled, self._follower_warned = False, False
-            self._follower_started_s, self._reopens_seen = self._monotonic(), 0
+            self._follower_started_s = self._monotonic()
             self._reports.clear()
             self._tl_map = None
+            self._tl_video = None
             self._tl_clock.reset()   # a new run never inherits the played time of the previous one (Slice 12)
+            self._tl_place, self._tl_move, self._tl_failed = None, Move.NONE, None
             self._cancel_auto()
             self._scope, self._auto_done_seq, self._auto_started_seq = request.scope, None, None
             await self._reclaim_leftovers()
@@ -778,7 +818,7 @@ class PresentationStudioPlaybackService(AutoPlayMixin, ScenePreviewMixin):
         return plan, {scene.scene_id: scene for scene in variant.scenes}
 
     async def _reclaim_leftovers(self) -> None:
-        """Ids a previous run could not retire (its archive failed) stay in the ledger: take them back before a new run."""
+        """Board windows an older Core left (the retired run stage) are archived before a new run (PX-16)."""
 
         try:
             taken = await self._stage.reclaim()
@@ -823,7 +863,7 @@ class PresentationStudioPlaybackService(AutoPlayMixin, ScenePreviewMixin):
             await self._stage.release()
         except Exception as exc:  # noqa: BLE001 - captured as an error row; the id stays in the ledger for the next start
             problems.append(("stage_release_failed", _clip(exc)))
-            self._trace("playback_stage_release_failed", "Fenetre de scene du Studio non retiree", level="error",
+            self._trace("playback_stage_release_failed", "Surface de lecture de Variantes non liberee", level="error",
                         data={"run_id": run_id, "error_class": type(exc).__name__, "error": _clip(exc)})
         problems += await self._restore_mode(reason)
         if self._state.phase is not Phase.STOPPED and self._state.active:
@@ -856,7 +896,40 @@ class PresentationStudioPlaybackService(AutoPlayMixin, ScenePreviewMixin):
     # ------------------------------------------------------------------ internals: stage and aux
 
     async def _sync_stage(self) -> None:
-        """Bring the stage window to the state: the position's scene with the score's overlay (never written)."""
+        """Bring the run surface to the state, **bounded** (Slice 09): a sync that does not end within `stage_sync_timeout_s`, or
+        that a `stop` pre-empts, is a `StageError` (`stage_timeout` / `stage_preempted`): the run pauses with that problem and
+        « Reprendre » tries again; nothing waits forever behind it."""
+
+        task = asyncio.ensure_future(self._sync_stage_now())
+        self._syncing = task
+        try:
+            done, _ = await asyncio.wait({task}, timeout=self._stage_sync_timeout_s)
+        finally:
+            if self._syncing is task:
+                self._syncing = None
+        if task in done and not task.cancelled():
+            task.result()   # the sync's own failure (a StageError, a PresentationStudioError) is raised as it is
+            return
+        if not task.done():
+            task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
+            self._trace("playback_stage_sync_timeout", "La scene n'a pas pu s'afficher a temps : lecture en pause", level="error",
+                        data={"run_id": self._state.run_id, "timeout_s": self._stage_sync_timeout_s})
+            raise StageError("stage_timeout", f"the scene did not reach the run surface within {self._stage_sync_timeout_s:g} s")
+        self._trace("playback_stage_sync_preempted", "Synchronisation de la scene interrompue par un arret", level="warning",
+                    data={"run_id": self._state.run_id})
+        raise StageError("stage_preempted", "a stop interrupted the scene sync")
+
+    def _preempt_sync(self, why: str) -> None:
+        """Cancel the stage sync in flight (if any), so that `why` (a stop) takes the lock at once instead of queueing behind it."""
+
+        task = self._syncing
+        if task is not None and not task.done():
+            task.cancel()
+            self._trace("playback_stage_sync_cancelled", "Synchronisation de la scene annulee", level="info", data={"by": why})
+
+    async def _sync_stage_now(self) -> None:
+        """Bring the run surface to the state: the position's scene with the score's overlay (never written)."""
 
         state, plan = self._state, self._plan
         scene_id = stage_scene_id(plan, state)  # the item's scene, or a scene a started step of its locked sequence visits
@@ -876,32 +949,36 @@ class PresentationStudioPlaybackService(AutoPlayMixin, ScenePreviewMixin):
                     raise StageError(render.code or "overlay_refused", render.message or "the overlay was refused")
                 shown = next(s for s in render.scenes if s.scene_id == scene_id)
         await self._require_native_on_stage(shown.prefab.prefab_id, shown.prefab.version, f"scene {scene_id}")
-        await self._stage.show(shown.payload())
+        await self._stage.show(shown.payload(), scene_id=scene_id)
         self._bind_stage(scene_id)
         await self._resolve_timeline(scene_id, shown)
         self._rearm_auto()   # the segment of the scene just shown is known now (the state change came before the stage sync)
-        reopens = getattr(self._stage, "reopens", 0)
-        if reopens > self._reopens_seen:  # the user closed the stage window: it was brought back, and the band says so
-            self._reopens_seen = reopens
-            self._notice("stage_closed_by_user")
+        # Slice 07 rework (B1): `_commit` woke the presenter BEFORE this sync; what the new scene is (HTML, video) is known only now
+        self._wake()
 
     async def _resolve_timeline(self, scene_id: str, shown: Any) -> None:
         """Slice 12 : la table d'images de la scène montrée (`None` : une scène HTML, ou sans ancre, ne reçoit aucune ligne de temps).
         La composition vient du manifeste du pin (`remotion_composition`), jamais du code de la scène ; un échec est dit (journal +
         constat `timeline_unresolved`) et la scène se joue alors comme en Slice 10, sans pilotage."""
 
-        self._tl_map = None
+        self._tl_map, self._tl_failed = None, None
         if self._timeline_source is None:
+            self._tl_video = (scene_id, False)
             return
+        self._tl_video = (scene_id, True)   # until the manifest says otherwise (an unreadable pin is held, never paced)
         scene = self._scenes[scene_id]
         pin = (shown.prefab.prefab_id, shown.prefab.version)
         try:
             if pin not in self._compositions:
                 self._compositions[pin] = await self._timeline_source.remotion_composition(*pin)
             composition = self._compositions[pin]
+            self._tl_video = (scene_id, composition is not None)
+            # Slice 09: a Remotion scene of ANY run gets a timeline, one whole segment when it has no anchor: the Variants Player never
+            # plays by itself (no grace play), so Core's order is what starts it, from frame 0, and it holds its last frame (§ 5).
             fmap = None if composition is None else build_frame_map(scene_id, composition, shown.anchors or scene.anchors,
-                                                                        whole_scene=self._scope is not Scope.MANUAL)
+                                                                        whole_scene=True)
         except Exception as exc:  # noqa: BLE001 - captured as an error row + a visible notice: the scene then plays unguided (Slice 10)
+            self._tl_failed = scene_id
             self._notice(TIMELINE_UNRESOLVED)
             self._trace("timeline_unresolved", "Ligne de temps Remotion non resolue", level="error",
                         data={"scene_id": scene_id, "prefab": f"{pin[0]}@{pin[1]}", "error_class": type(exc).__name__,
@@ -916,23 +993,72 @@ class PresentationStudioPlaybackService(AutoPlayMixin, ScenePreviewMixin):
                 "anchors": len(fmap.marks), "problems": list(fmap.problems)})
         self._timeline_view()
 
+    def _shows_video(self) -> bool:
+        """Is the scene on the stage a Remotion scene (or one whose kind is not known yet)? Then no dwell may move it (Slice 05)."""
+
+        return self._stage_video() is not False
+
+    def _stage_video(self) -> bool | None:
+        """Is the scene on the stage NOW a Remotion scene? Answered for that very scene, never from the scene before it (Slice 07 rework,
+        B1): its last timeline resolution, or the manifest already read for its pin. `None` while it is not known yet (its stage sync is
+        under way; the sync wakes the presenter when it lands)."""
+
+        if self._timeline_source is None or self._plan is None or not self._state.active:
+            return False
+        scene_id = stage_scene_id(self._plan, self._state)
+        known = self._tl_video
+        if known is not None and known[0] == scene_id:
+            return known[1]
+        scene = self._scenes.get(scene_id)
+        pin = None if scene is None or scene.prefab is None else (scene.prefab.prefab_id, scene.prefab.version)
+        if pin is not None and pin in self._compositions:
+            return self._compositions[pin] is not None
+        return None
+
     def _timeline_view(self) -> dict[str, Any] | None:
         """La ligne de temps que le navigateur applique au lecteur : une **description** de l'etat de la partition (jamais un ordre
         de parler ni un outil). Aussi appelee a chaque transition pour que le temps joue du segment exclue les pauses."""
 
         fmap, plan, state = self._tl_map, self._plan, self._state
-        if fmap is None or plan is None or not state.active or fmap.scene_id != stage_scene_id(plan, state):
+        if plan is None or not state.active:
+            self._tl_clock.reset()
+            self._tl_place = None
+            return None
+        on_stage = stage_scene_id(plan, state)
+        if fmap is None or fmap.scene_id != on_stage:
             self._tl_clock.reset()   # the scene left the timeline: its played time does not wait for it to come back
+            if self._tl_place is not None and self._tl_place.scene_id != on_stage:
+                self._tl_place = None   # another scene is on the stage: coming back is a new entry (§ 5)
             return None
         revealed = {anchor for scene, anchor in progress_of(plan, state).revealed if scene == fmap.scene_id}
-        segment = target_segment(fmap, revealed)
+        self._tl_place = place(fmap, revealed, self._tl_move, self._tl_place, entering=self._entry_reached(fmap))
+        self._tl_move = Move.NONE
+        segment = self._tl_place.segment
         cap_ms = -(-(segment.until - segment.start + 1) * 1000 // fmap.fps)
         key = (fmap.scene_id, fmap.composition_id, segment.anchor_id, segment.start, segment.until, fmap.fps)
         seq, play_ms = self._tl_clock.observe(key, state.phase is Phase.PLAYING, self._ms(), cap_ms)
         shown = self._scenes.get(fmap.scene_id)
         prefab = _pin_key(shown)
         return timeline_wire(fmap, segment, playing=state.phase is Phase.PLAYING, seq=seq, play_ms=play_ms, prefab=prefab,
-                             auto=self._scope is not Scope.MANUAL)
+                             auto=self._page_reports())
+
+    def _entry_reached(self, fmap: FrameMap) -> int | None:
+        """Slice 07 rework (I2): the local frame the entry of the scene on the stage has reached while it still plays, for `place`; `None`
+        once it finished or when the Player is not playing an entry. With page reports (a run Jarvis paces, a chained play): finished when
+        the page said `done`; before its `started` the Player has not begun (frame `start`); after it, Core's played time since `started`.
+        Without page reports: Core's played time, finished once it covers the entry. An estimate: the Player is re-ordered from it, a few
+        frames of jitter at most, never a cut to the anchor."""
+
+        placed = self._tl_place
+        if placed is None or placed.scene_id != fmap.scene_id or placed.arrival is not Arrival.ENTER:
+            return None
+        segment, seq = placed.segment, self._tl_clock.seq
+        reached = segment.start + self._tl_clock.played(self._ms()) * fmap.fps // 1000
+        if self._page_reports():
+            if self._auto_done_seq == seq:
+                return None
+            return segment.start if self._auto_started_seq != seq else min(reached, segment.until)
+        return None if reached >= segment.until else reached
 
     async def _retime(self) -> None:
         """After the plan or a pin moved without a new stage sync (a hot reload patches the window itself): rebuild the frame map of the
@@ -945,6 +1071,7 @@ class PresentationStudioPlaybackService(AutoPlayMixin, ScenePreviewMixin):
         self._compositions.clear()   # a manifest read is cheap; a reload must never be answered from a memory of the old version
         if scene is not None:
             await self._resolve_timeline(scene_id, scene)
+            self._wake()
 
     async def _require_native_on_stage(self, prefab_id: str, version: int, what: str) -> None:
         """Last door before the stage: whatever path chose this block (an edit, a hot reload, a scene-variant selection, a score
@@ -956,7 +1083,7 @@ class PresentationStudioPlaybackService(AutoPlayMixin, ScenePreviewMixin):
             raise StageError(exc.code.value, exc.message) from exc
 
     def _bind_stage(self, scene_id: str) -> None:
-        """Dit au rechargement a chaud quelle fenetre (`studio-stage-<run_id>[-<n>]`) affiche quelle scene. Ne leve jamais."""
+        """Dit au rechargement a chaud quelle surface (`variants-run-<run_id>`) affiche quelle scene. Ne leve jamais."""
 
         observer, object_id = self._stage_observer, self._stage.stage_object_id
         if observer is None or object_id is None or self._presentation_id is None or self._variant_id is None:
@@ -1104,7 +1231,7 @@ class PresentationStudioPlaybackService(AutoPlayMixin, ScenePreviewMixin):
                     await self._sync_stage()
                 except (StageError, PresentationStudioError) as exc:
                     self._notice("stage_sync_after_edit_failed")
-                    self._trace("playback_stage_failed", "La fenetre de scene n'a pas suivi l'edition", level="error",
+                    self._trace("playback_stage_failed", "La scene n'a pas suivi l'edition sur la surface de Variantes", level="error",
                                 data={"command": "edit", "error": _clip(exc.message)})
             await self._announce("edit_committed")
         self._trace("playback_edit", "Edition explicite pendant la lecture", data={
@@ -1126,7 +1253,7 @@ class PresentationStudioPlaybackService(AutoPlayMixin, ScenePreviewMixin):
             return
         if isinstance(origin, ReloadOrigin):
             # Slice 06: a hot reload of a scene's source. It is not an edit of what is presented: the run does not pause,
-            # stays on the same item, re-reads the variant (the pin moved) and the reload already patched the stage window.
+            # stays on the same item, re-reads the variant (the pin moved) and the reload already re-pinned the run surface.
             async with self._lock:
                 if self._state.active:
                     await self._refresh_plan("scene_reload")
@@ -1143,7 +1270,7 @@ class PresentationStudioPlaybackService(AutoPlayMixin, ScenePreviewMixin):
                     await self._sync_stage()
                 except (StageError, PresentationStudioError) as exc:
                     self._notice("stage_sync_after_edit_failed")
-                    self._trace("playback_stage_failed", "La fenetre de scene n'a pas suivi l'edition", level="error",
+                    self._trace("playback_stage_failed", "La scene n'a pas suivi l'edition sur la surface de Variantes", level="error",
                                 data={"command": "foreign_edit", "error": _clip(exc.message)})
             await self._announce("edit_committed")
 
@@ -1210,16 +1337,29 @@ class PresentationStudioPlaybackService(AutoPlayMixin, ScenePreviewMixin):
         view = where_are_we(self._plan, state, self._ms())
         if self._plan is None or state.phase is Phase.IDLE:
             return view
+        surface_id = self._stage.stage_object_id if state.active else None
         view.update({"presentation_id": self._presentation_id, "variant_id": self._variant_id,
-                     "stage_object_id": self._stage.stage_object_id if state.active else None,
+                     "stage_object_id": surface_id,
                      "art_direction": self._art_direction if state.active else None,
                      "notices": list(self._notices), "mode": self._required_mode.value if self._required_mode else None})
         if state.active:
             timeline = self._timeline_view()
             if timeline is not None:
                 view["timeline"] = timeline
+            # Slice 09: what Variants mounts (`GET .../playback/surface` when `rev` moves) and the scene whose timeline could not be
+            # read (the Player then plays it once from frame 0, unguided, instead of waiting for an order that will not come).
+            if surface_id is not None:
+                view["surface"] = {"id": surface_id, "rev": getattr(self._stage, "revision", 0)}
+            if self._tl_failed is not None and self._tl_failed == stage_scene_id(self._plan, state):
+                view["timeline_unresolved"] = self._tl_failed
             view["follower"] = self._follower()
             view["scope"] = self._scope.value
+            waiting = self._page_wait()
+            if waiting is not None:
+                view["page_wait"] = waiting
+            # Slice 04 (native-studio-playback-fix): which composition-clock map this run plays (`GET .../composition-clock` serves the
+            # same key). A browser holding a map with another key must refetch it, never reuse it.
+            view["composition_key"] = composition_key(self._presentation_id, self._variant_id, pins_of(self._scenes.values()))
             ahead = self._next_scene_id()
             if ahead is not None:
                 scene = self._scenes[ahead]
@@ -1250,6 +1390,15 @@ class PresentationStudioPlaybackService(AutoPlayMixin, ScenePreviewMixin):
         if scene_here is not None and _pin_key(scene_here) == _pin_key(scene_there):
             return None
         return there
+
+    def surface(self) -> dict[str, Any] | None:
+        """`GET .../playback/surface` (Slice 09): what the Variants Player mounts for the run (the scene's block, the detour overlays),
+        `None` when nothing is shown. Read only, no lock (memory values)."""
+
+        snapshot = getattr(self._stage, "snapshot", None)
+        if not self._state.active or snapshot is None:
+            return None
+        return snapshot()
 
     def preload_hint(self) -> dict[str, Any] | None:
         """`GET .../playback/preload`: what the browser needs to load the next scene ahead (its source and values), `None` when nothing is to be
@@ -1304,6 +1453,17 @@ class PresentationStudioPlaybackService(AutoPlayMixin, ScenePreviewMixin):
 _UNPROCESSABLE = frozenset({RefusalCode.DETOUR_INVALID.value})
 _STATUS_OF = {"start": "started", "pause": "paused", "resume": "resumed", "detour": "detour", "return": "returned",
               "edit_pause": "paused"}
+#: Slice 07 (§ 5): what a committed command did to the score, for the Player's placement (`remotion_timeline.place`). A name not listed
+#: moved nothing (pause, resume, detour, stage acknowledgements, speaker); `return` is judged by the position it lands on.
+_MOVE_OF = {"start": Move.FORWARD, "next": Move.FORWARD, "cue": Move.FORWARD, "reveal": Move.FORWARD,
+            "sequence_step": Move.STEP, "sequence_done": Move.FORWARD, "skip_sequence": Move.FORWARD,
+            "previous": Move.JUMP, "goto": Move.JUMP, "hide": Move.JUMP, "sequence_abort": Move.JUMP, "play": Move.RESTART}
+
+
+def _move_of(name: str, before: PlaybackState, after: PlaybackState) -> Move:
+    if name == "return" and after.position != before.position:
+        return Move.FORWARD if after.position > before.position else Move.JUMP
+    return _MOVE_OF.get(name, Move.NONE)
 
 
 def _pin_key(scene: Any) -> str | None:

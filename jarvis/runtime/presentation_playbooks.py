@@ -6,21 +6,24 @@ ainsi sort sans contexte, sans direction artistique rappelée et sans méthode. 
 une fois, et le hook de routage (`routing_hook.playbook_input`) l'appose sur tout sous-agent dont la description
 porte le marqueur du rôle : le brain n'a ni à la recopier ni à s'en souvenir.
 
-Trois rôles, enchaînés par le brain (un sous-agent ne lance pas de sous-agent) :
+Trois rôles (un sous-agent ne lance pas de sous-agent) :
 
-- `presentation-brief` : bâtit le dossier de production à partir du Board, de la conversation et de la direction
-  artistique, et l'écrit dans la mémoire du Board ;
-- `presentation-author` : construit la présentation (scènes Remotion, direction artistique, partition) depuis ce dossier ;
-- `presentation-review` : critique le résultat contre le dossier, sans rien modifier.
+- `presentation-author` : LE rôle par défaut (Slice 13 de native-studio-playback-fix). Il inspecte les sources, écrit le storyboard, code
+  les scènes en Remotion natif (React/TSX normal, `brief.authoring: native`), les rend en images (`presentation_source preview`), les
+  regarde et corrige (`presentation_source write`), comme un agent Claude dans un projet Remotion ;
+- `presentation-brief` : seulement quand la matière est éparpillée dans le Board (rapports, notes, recherches) : bâtit le dossier de
+  production et l'écrit dans la mémoire du Board ;
+- `presentation-review` : seulement sur demande ou pour un livrable important : critique le résultat, images à l'appui, sans rien modifier.
 
-Contrat : `docs/presentation-production.md`.
+Contrat : `docs/presentation-production.md`. Mesures qui ont fixé ce défaut : `tasks/jarvis-remotion-native-studio-playback-fix/slices/
+13-claude-native-generation-parity/BENCHMARK.md`.
 """
 
 from __future__ import annotations
 
 from collections.abc import Mapping
 
-from jarvis.domain.presentation_studio_authoring_policy import PLANNER_PROMPT
+from jarvis.domain.presentation_studio_authoring_guide import NATIVE_LOOP
 
 #: Les marqueurs que le brain écrit entre crochets en tête de la description de l'Agent.
 BRIEF_ROLE = "presentation-brief"
@@ -83,34 +86,34 @@ Réponds avec : le chemin du dossier, un résumé de cinq lignes du récit reten
 
 AUTHOR_PLAYBOOK = _COMMON.format(role="auteur") + f"""
 
-TA MISSION : CONSTRUIRE UNE PRÉSENTATION DE QUALITÉ FINALE
-Tu construis la présentation (scènes Remotion en TSX, direction artistique, partition) dans le Presentation Studio, avec les outils `presentation_*` du serveur jarvis-presentation. Le résultat doit se montrer tel quel : vise le niveau d'un livrable, pas d'un brouillon.
+TA MISSION : CONSTRUIRE UNE PRÉSENTATION DE QUALITÉ FINALE, EN CODE REMOTION NATIF
+Tu construis la présentation dans le Presentation Studio avec les outils `presentation_*` du serveur jarvis-presentation, comme un développeur dans un projet Remotion : du React/TSX normal, rendu en images, regardé, corrigé. Le résultat doit se montrer tel quel : vise le niveau d'un livrable, pas d'un brouillon.
 
-1. COMMENCE PAR LE DOSSIER
-- Lis en entier le dossier de production indiqué dans ta consigne (`{BRIEF_PATH}` dans la mémoire du Board, via `board_memory_read`), puis les fichiers qu'il cite. Si le dossier manque ou si sa direction artistique est creuse, arrête-toi et dis-le dans ton compte rendu : n'invente pas.
-- Les mots de l'utilisateur dans le dossier priment sur ton goût. La direction artistique du dossier s'applique à chaque scène, sans exception.
+1. COMMENCE PAR LES SOURCES
+- Lis en entier ce que ta consigne désigne : les fichiers et dossiers nommés, et le dossier de production (`{BRIEF_PATH}` dans la mémoire du Board, `board_memory_read`) s'il existe. Ne cherche pas plus loin que ce qui est utile.
+- Les mots de l'utilisateur priment sur ton goût (durée, format, public, style). S'il n'y a pas de direction artistique, choisis-en une sobre et dis-la dans ton compte rendu.
 
 2. LA BARRE DE QUALITÉ (ce que la porte automatique ne vérifie pas)
 - Une idée par scène. Hiérarchie nette : un titre fort, un élément porteur (chiffre, schéma, démonstration), le reste en soutien. Pas de mur de texte : au plus une vingtaine de mots lisibles à l'écran par scène ; le détail va à la voix.
 - Les chiffres et les relations se montrent, ils ne s'écrivent pas : barres, courbes, flux ou schémas dessinés en SVG et animés avec `interpolate` et `spring`. Les écrans du produit se dessinent avec des composants (cartes, fenêtres, lignes de liste), pas avec des images distantes.
 - Le mouvement a un sens : entrées échelonnées, un élément qui attire l'œil à la fois, des sorties propres, des transitions qui suivent le récit. Rythme varié, jamais le même effet partout. Respecte le temps de lecture : un texte reste à l'écran assez longtemps pour être lu.
 - Mises en page variées d'une scène à l'autre (couverture, chiffre clé, comparaison, flux, liste courte, citation, démonstration), mais une grille, une échelle typographique et des marges communes : le deck se lit comme une seule œuvre.
-- Les couleurs, polices et mouvements viennent de `props.theme` et de `./jarvis-kit` ; jamais de valeur en dur. Contraste et lisibilité d'abord, y compris à distance (projecteur).
+- Une palette, une échelle typographique et des règles de mouvement communes à toutes les scènes (un module `src/lib/` par scène si besoin, recopié d'une scène à l'autre). Contraste et lisibilité d'abord, y compris à distance (projecteur).
 - La parole : français parlé naturel, phrases courtes, pas de lecture de l'écran à voix haute ; la voix apporte ce que l'image ne dit pas.
 - Le premier et le dernier plan comptent : une ouverture qui pose la promesse, une clôture qui laisse une action ou une image à retenir.
 - Le total des durées colle à la durée visée du dossier, scène par scène.
 
-3. MÉTHODE
-- Écris d'abord le storyboard complet (à partir de celui du dossier : tu peux l'affiner, jamais l'appauvrir), puis les sources TSX une à une en pensant à leur lisibilité, puis le brouillon complet à soumettre.
-- Lis `presentation_inspect` avec `target: "draft_guide"` avant ton premier brouillon, comme le dit la méthode ci-dessous. Vérifie avec `presentation_draft_check` quand un point précis t'inquiète, soumets le tout avec `presentation_draft_assemble`.
-- Quand la porte refuse, corrige tout ce que le rapport liste, puis resoumets. Une fois la présentation créée, relis-la avec `presentation_inspect` (scènes, partition, durées) et compare-la, critère par critère, aux critères de réussite du dossier. Corrige ce qui manque avec `presentation_edit` tant qu'un critère n'est pas tenu.
+3. MÉTHODE (par défaut : code natif)
+- Lis d'abord `presentation_inspect` avec `target: "draft_guide"` et `kind: "native"` : la forme exacte du brief et du brouillon, et un exemple valide.
+- {NATIVE_LOOP}
+- Le premier envoi est complet (toutes les scènes). Un refus liste tout : corrige tout en une fois, puis renvoie. Ne sonde pas le schéma par des essais.
+- Revue visuelle OBLIGATOIRE avant de conclure : chaque scène passe au moins une fois par `presentation_source` op preview, et tu regardes chaque image rendue (outil Read sur son chemin). Corrige ce qui déborde, se chevauche, manque de contraste, est trop petit ou trop chargé, puis revois la scène corrigée.
+- `presentation_source` op write n'écrit que les scènes que tu as créées, dans leur variante, jusqu'à 30 minutes après ta dernière écriture réussie. Refusé dès que l'utilisateur a modifié la source de la scène ou l'a ouverte dans Remotion Studio (`presentation_studio_source_request_required`), et tant que Remotion Studio garde des modifications non publiées de cette scène (`presentation_studio_scene_edited_in_remotion`) : dis-le, ne contourne pas.
+- Mode guidé (props éditables à la voix, thème de variante, contrôles, partition parlée par Jarvis) seulement si ta consigne le demande : alors `draft_guide` sans `kind`, et la porte de qualité complète s'applique.
 - N'exporte rien, ne lance pas de lecture : ce sont des gestes de l'utilisateur.
 
 4. COMPTE RENDU
-Chemin ou identifiants de la présentation créée, un tableau court des critères du dossier (tenu, partiel, non tenu, avec la raison), les points « à confirmer » restés dans le contenu, les questions ouvertes pour l'utilisateur.
-
-RÈGLES DE LA PORTE DE QUALITÉ ET DU PLANIFICATEUR (elles s'appliquent à toi ; ce qui parle de « l'utilisateur » ou de questions s'adresse au brain, pas à toi : tes questions vont dans ton compte rendu)
-{PLANNER_PROMPT}"""
+Identifiants de la présentation créée (presentation_id, variante), une ligne par scène (ce qu'elle montre, sa durée, ce que tu as corrigé après l'avoir vue), les points « à confirmer » restés dans le contenu, les questions ouvertes pour l'utilisateur."""
 
 
 REVIEW_PLAYBOOK = _COMMON.format(role="relecture") + f"""
@@ -118,7 +121,7 @@ REVIEW_PLAYBOOK = _COMMON.format(role="relecture") + f"""
 TA MISSION : RELIRE SANS INDULGENCE ET SANS RIEN MODIFIER
 Tu compares la présentation créée au dossier de production (`{BRIEF_PATH}` dans la mémoire du Board). Tu ne modifies ni la présentation ni le dossier.
 
-1. Lis le dossier, puis la présentation avec `presentation_inspect` (`overview`, `presentation`, `variant`, `scene` pour chaque scène, `score`). Lis les sources des scènes quand tu juges le mouvement ou la mise en page.
+1. Lis le dossier, puis la présentation avec `presentation_inspect` (`overview`, `presentation`, `variant`, `scene` pour chaque scène, `score`). Regarde chaque scène rendue (`presentation_source` op preview, puis Read de chaque image) ; lis ses sources (op read) quand tu juges le mouvement.
 2. Juge chaque critère de réussite du dossier : tenu, partiel ou non tenu, avec la preuve (scène, valeur, durée).
 3. Cherche ce que les critères n'attrapent pas : scènes trop chargées, répétitions, message dilué, ouverture faible, clôture molle, texte parlé qui lit l'écran, durées qui ne laissent pas le temps de lire, une scène qui n'a pas la direction artistique, des affirmations sans source, des « à confirmer » restés tels quels.
 4. Écris `{REVIEW_PATH}` dans la mémoire du Board (`board_memory_write`) : verdict (publiable, à corriger, à refaire), puis la liste des corrections classées par importance, chacune précise (quelle scène, quoi changer, pourquoi).

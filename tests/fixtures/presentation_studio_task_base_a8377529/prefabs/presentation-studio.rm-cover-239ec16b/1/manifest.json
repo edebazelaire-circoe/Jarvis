@@ -1,0 +1,217 @@
+{
+  "schema": "jarvis.prefab",
+  "schema_version": 3,
+  "id": "presentation-studio.rm-cover-239ec16b",
+  "version": 1,
+  "title": "Diapositive",
+  "description": "A titled slide: headline and body text, drawn with the art direction.",
+  "family": "scene",
+  "tags": [],
+  "aliases": [],
+  "scene": {
+    "kind": "window"
+  },
+  "inputs": {
+    "props": {
+      "type": "object",
+      "properties": {
+        "headline": {
+          "type": "string",
+          "max_length": 80,
+          "default": "Titre"
+        },
+        "reveal": {
+          "type": "boolean",
+          "default": true
+        },
+        "stagger_ms": {
+          "type": "integer",
+          "min": 0,
+          "max": 400,
+          "default": 80
+        },
+        "density": {
+          "type": "enum",
+          "values": [
+            "compact",
+            "airy"
+          ],
+          "default": "airy"
+        },
+        "theme": {
+          "type": "object",
+          "properties": {
+            "background": {
+              "type": "color",
+              "default": "#0b1020"
+            },
+            "text": {
+              "type": "color",
+              "default": "#e8ecf4"
+            },
+            "accent": {
+              "type": "color",
+              "default": "#6ee7ff"
+            },
+            "muted": {
+              "type": "color",
+              "default": "#9aa4b8"
+            },
+            "body": {
+              "type": "color",
+              "default": "#cfd6e4"
+            },
+            "surface": {
+              "type": "string",
+              "max_length": 40,
+              "default": "rgba(255,255,255,0.08)"
+            },
+            "font_heading": {
+              "type": "string",
+              "max_length": 200,
+              "default": "system-ui, sans-serif"
+            },
+            "font_body": {
+              "type": "string",
+              "max_length": 200,
+              "default": "system-ui, sans-serif"
+            },
+            "heading_weight": {
+              "type": "integer",
+              "min": 100,
+              "max": 900,
+              "default": 700
+            },
+            "body_weight": {
+              "type": "integer",
+              "min": 100,
+              "max": 900,
+              "default": 400
+            },
+            "radius": {
+              "type": "integer",
+              "min": 0,
+              "max": 64,
+              "default": 12
+            },
+            "gap": {
+              "type": "integer",
+              "min": 0,
+              "max": 96,
+              "default": 24
+            },
+            "scale": {
+              "type": "number",
+              "min": 0.5,
+              "max": 2.0,
+              "default": 1.0
+            },
+            "enter_ms": {
+              "type": "integer",
+              "min": 0,
+              "max": 5000,
+              "default": 400
+            },
+            "stagger_ms": {
+              "type": "integer",
+              "min": 0,
+              "max": 2000,
+              "default": 80
+            },
+            "easing": {
+              "type": "string",
+              "max_length": 24,
+              "default": "ease_out"
+            },
+            "transition": {
+              "type": "string",
+              "max_length": 16,
+              "default": "fade"
+            }
+          }
+        }
+      }
+    },
+    "data": {
+      "type": "object",
+      "required": [
+        "body"
+      ],
+      "properties": {
+        "body": {
+          "type": "text",
+          "max_length": 600
+        },
+        "figure": {
+          "type": "integer"
+        }
+      }
+    }
+  },
+  "sample": {
+    "props": {
+      "theme": {
+        "background": "#0b1020",
+        "text": "#e8ecf4",
+        "accent": "#6ee7ff",
+        "muted": "#9aa4b8",
+        "body": "#cfd6e4",
+        "surface": "rgba(255,255,255,0.08)",
+        "font_heading": "system-ui, sans-serif",
+        "font_body": "system-ui, sans-serif",
+        "heading_weight": 700,
+        "body_weight": 400,
+        "radius": 12,
+        "gap": 24,
+        "scale": 1.0,
+        "enter_ms": 400,
+        "stagger_ms": 80,
+        "easing": "ease_out",
+        "transition": "fade"
+      }
+    },
+    "data": {
+      "body": "Exemple"
+    }
+  },
+  "source": {
+    "format": "remotion",
+    "engine": {
+      "name": "remotion",
+      "version": "4.0.534",
+      "react_version": "19.3.0",
+      "lock_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    },
+    "entry": "src/Scene.tsx",
+    "composition": {
+      "id": "Scene",
+      "width": 1280,
+      "height": 720,
+      "fps": 30,
+      "duration_in_frames": 300
+    },
+    "modules": [
+      "src/Scene.tsx",
+      "src/jarvis-kit.ts"
+    ],
+    "assets": []
+  },
+  "catalog": {
+    "type": "composition",
+    "compatibility": {
+      "remotion": "native",
+      "slidecar": "unsupported"
+    },
+    "stack": [
+      "react",
+      "remotion",
+      "typescript"
+    ],
+    "dependencies": [
+      {
+        "name": "remotion",
+        "version": "4.0.534"
+      }
+    ]
+  }
+}

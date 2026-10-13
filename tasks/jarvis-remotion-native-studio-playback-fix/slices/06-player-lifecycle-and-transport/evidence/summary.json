@@ -1,0 +1,267 @@
+{
+ "slice": "06-player-lifecycle-and-transport",
+ "tested_head": "f527b73d",
+ "runtime": "headless Chrome over CDP, RemotionStack on free loopback ports, throw-away data root; the live Jarvis was never contacted",
+ "transport": {
+  "checks": {
+   "PX-4 opens paused on S1 frame 0": true,
+   "PX-4 nothing plays before « Lire » (staged frames included)": true,
+   "PX-4 no stage bar, embedded page": true,
+   "PX-4 « Son » muted, disabled with its reason": true,
+   "§ 4.16 one named toolbar": true,
+   "§ 4.16 slider": true,
+   "§ 4.8 composition readout at opening": true,
+   "PX-7 pause holds 5 s": true,
+   "PX-7 resume continues from the held frame": true,
+   "PX-8 next lands on S2 frame 0 and keeps playing": true,
+   "PX-8 previous lands on S1 frame 0 paused": true,
+   "PX-8 three fast next = three scenes": true,
+   "PX-9 forward scrub into S7": true,
+   "PX-9 backward scrub into S2": true,
+   "PX-10 final frame held 5 s, « Rejouer »": true,
+   "PX-10 « Rejouer » restarts from frame 0": true,
+   "no Core run": true,
+   "never wraps": true
+  },
+  "readout_at_opening": [
+   {
+    "where": "page",
+    "text": "0:00 / 1:14"
+   }
+  ],
+  "scrub_forward": {
+   "readouts": [
+    {
+     "where": "page",
+     "text": "0:57 / 1:14"
+    }
+   ],
+   "label": 7,
+   "selected": "pss_000000000007",
+   "slider": {
+    "now": "3420",
+    "max": "4439",
+    "text": "Scène 7 sur 9, 0:57 sur 1:14",
+    "disabled": false
+   },
+   "player": {
+    "frame": 48,
+    "playing": false,
+    "duration": 192,
+    "phase": "ready",
+    "scene": "S7"
+   },
+   "open": true
+  },
+  "held": {
+   "frame": 239,
+   "playing": false,
+   "duration": 240,
+   "phase": "ready",
+   "scene": "S9"
+  }
+ },
+ "drag-800x600": {
+  "checks": {
+   "press while playing pauses": true,
+   "the slider keeps its width while the scene changes under the drag": true,
+   "f follows the moves": true,
+   "release plays from the scrubbed frame": true,
+   "Player, readout, label and strip agree": true,
+   "a drag that starts paused stays paused": true,
+   "the row fits the preview (opened)": true,
+   "the row fits the preview (playing S7)": true,
+   "no Core run": true
+  },
+  "moved": 3462,
+  "target": 3462,
+  "released": {
+   "readouts": [
+    {
+     "where": "page",
+     "text": "0:58 / 1:14"
+    }
+   ],
+   "label": 7,
+   "selected": "pss_000000000007",
+   "slider": {
+    "now": "3475",
+    "max": "4439",
+    "text": "Scène 7 sur 9, 0:58 sur 1:14",
+    "disabled": false
+   },
+   "player": {
+    "frame": 70,
+    "playing": true,
+    "duration": 192,
+    "phase": "ready",
+    "scene": "S7"
+   },
+   "open": true
+  },
+  "row": {
+   "preview": [
+    332,
+    788
+   ],
+   "row": [
+    332,
+    788
+   ],
+   "rowScroll": 456,
+   "rowClient": 456,
+   "kids": [
+    {
+     "cls": "jvx-transport",
+     "left": 332,
+     "right": 700,
+     "scroll": 368,
+     "client": 368,
+     "ellipsis": "clip",
+     "text": "Pause0:58 / 1:14"
+    },
+    {
+     "cls": "jvx-scene-line",
+     "left": 0,
+     "right": 0,
+     "scroll": 0,
+     "client": 0,
+     "ellipsis": "clip",
+     "text": "S7 8s@24"
+    },
+    {
+     "cls": "jvx-scene-count",
+     "left": 712,
+     "right": 788,
+     "scroll": 76,
+     "client": 76,
+     "ellipsis": "ellipsis",
+     "text": "Scène 7 sur 9"
+    }
+   ]
+  },
+  "row_problems": []
+ },
+ "drag-1280x720": {
+  "checks": {
+   "press while playing pauses": true,
+   "the slider keeps its width while the scene changes under the drag": true,
+   "f follows the moves": true,
+   "release plays from the scrubbed frame": true,
+   "Player, readout, label and strip agree": true,
+   "a drag that starts paused stays paused": true,
+   "the row fits the preview (opened)": true,
+   "the row fits the preview (playing S7)": true,
+   "no Core run": true
+  },
+  "moved": 3462,
+  "target": 3462,
+  "released": {
+   "readouts": [
+    {
+     "where": "page",
+     "text": "0:58 / 1:14"
+    }
+   ],
+   "label": 7,
+   "selected": "pss_000000000007",
+   "slider": {
+    "now": "3473",
+    "max": "4439",
+    "text": "Scène 7 sur 9, 0:58 sur 1:14",
+    "disabled": false
+   },
+   "player": {
+    "frame": 69,
+    "playing": true,
+    "duration": 192,
+    "phase": "ready",
+    "scene": "S7"
+   },
+   "open": true
+  },
+  "row": {
+   "preview": [
+    579,
+    1260
+   ],
+   "row": [
+    579,
+    1260
+   ],
+   "rowScroll": 681,
+   "rowClient": 681,
+   "kids": [
+    {
+     "cls": "jvx-transport",
+     "left": 579,
+     "right": 1043,
+     "scroll": 464,
+     "client": 464,
+     "ellipsis": "clip",
+     "text": "Pause0:58 / 1:14"
+    },
+    {
+     "cls": "jvx-scene-line",
+     "left": 1055,
+     "right": 1172,
+     "scroll": 117,
+     "client": 117,
+     "ellipsis": "clip",
+     "text": "S7 8s@24"
+    },
+    {
+     "cls": "jvx-scene-count",
+     "left": 1184,
+     "right": 1260,
+     "scroll": 76,
+     "client": 76,
+     "ellipsis": "ellipsis",
+     "text": "Scène 7 sur 9"
+    }
+   ]
+  },
+  "row_problems": []
+ },
+ "failure": {
+  "checks": {
+   "PX-18 paused at the failing scene's start": true,
+   "PX-18 the reason, named": true,
+   "PX-18 « Réessayer »": true,
+   "PX-18 never a silent skip": true,
+   "PX-18 an Error Logs row (console error key)": true,
+   "no Core run": true
+  },
+  "veil": {
+   "hidden": false,
+   "title": "Scène 2 : lecture impossible",
+   "text": "Scène 2 « S2 » : scene S2 is broken on purpose",
+   "actions": [
+    "Réessayer",
+    "Scène suivante"
+   ]
+  },
+  "live_scenes": [
+   "S1",
+   "S2"
+  ]
+ },
+ "hot_reload": {
+  "checks": {
+   "PX-19 the new version goes on from the kept frame (not 0)": true,
+   "PX-19 play state kept": true,
+   "PX-19 the map was rebuilt (84 s)": true,
+   "§ 4.8 readout = composition time after the swap": true,
+   "no Core run": true
+  },
+  "frame_before_edit": 202,
+  "v2_first_play": [
+   10441,
+   210
+  ],
+  "readout_after": [
+   "0:18 / 1:24"
+  ],
+  "composition_seconds_check": 19.833333333333336
+ }
+}

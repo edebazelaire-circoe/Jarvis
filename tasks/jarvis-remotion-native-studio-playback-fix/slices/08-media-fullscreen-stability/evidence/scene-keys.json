@@ -1,0 +1,305 @@
+{
+ "checks": {
+  "a click puts the focus in the cross-origin scene": true,
+  "Space typed in the scene plays, then pauses (once each)": true,
+  "→ typed in the scene goes to the next scene once (S2, frame 0)": true,
+  "M typed in the scene toggles the sound once": true,
+  "F typed in the scene enters the stage fullscreen (the key is the gesture); Échap leaves": true,
+  "a key posted by the scene without the focus is refused, nothing moves": true,
+  "Échap typed in the scene closes Variants (nested rule)": true
+ },
+ "after_space": {
+  "scene": "S1",
+  "frame": 16,
+  "playing": true,
+  "duration": 180,
+  "wanted": false,
+  "muted": true,
+  "blocked": false,
+  "keysRelayed": 1,
+  "keysRefused": 0,
+  "frames": [
+   {
+    "staged": false,
+    "wanted": false,
+    "muted": true,
+    "phase": "ready"
+   },
+   {
+    "staged": true,
+    "wanted": null,
+    "muted": true,
+    "phase": "ready"
+   }
+  ],
+  "button": {
+   "pressed": "false",
+   "title": "Activer le son (M)",
+   "state": null
+  },
+  "pill": "",
+  "sound": {
+   "on": false,
+   "blocked": false,
+   "pressed": false,
+   "title": "Activer le son (M)",
+   "pill": "",
+   "toggles": 0,
+   "refusals": 0
+  },
+  "phase": "playing",
+  "f": 16,
+  "notice": ""
+ },
+ "after_arrow": {
+  "media": {
+   "scene": "S2",
+   "frame": 0,
+   "playing": false,
+   "duration": 120,
+   "wanted": false,
+   "muted": true,
+   "blocked": false,
+   "keysRelayed": 0,
+   "keysRefused": 0,
+   "frames": [
+    {
+     "staged": false,
+     "wanted": false,
+     "muted": true,
+     "phase": "ready"
+    }
+   ],
+   "button": {
+    "pressed": "false",
+    "title": "Activer le son (M)",
+    "state": null
+   },
+   "pill": "",
+   "sound": {
+    "on": false,
+    "blocked": false,
+    "pressed": false,
+    "title": "Activer le son (M)",
+    "pill": "",
+    "toggles": 0,
+    "refusals": 0
+   },
+   "phase": "paused",
+   "f": 180,
+   "notice": ""
+  },
+  "view": {
+   "phase": "paused",
+   "frame": 180,
+   "total_frames": 480,
+   "fps": 30,
+   "playing": false,
+   "scene_index": 1,
+   "scene_count": 4,
+   "scene_id": "pss_000000000802",
+   "scene_title": "B 4:3 son",
+   "starts": [
+    0,
+    180,
+    300,
+    390
+   ],
+   "scope": "all",
+   "retryable": true,
+   "waiting_ms": 0,
+   "waiting_visible": false,
+   "error": null
+  }
+ },
+ "after_m": {
+  "scene": "S2",
+  "frame": 0,
+  "playing": false,
+  "duration": 120,
+  "wanted": true,
+  "muted": false,
+  "blocked": false,
+  "keysRelayed": 1,
+  "keysRefused": 0,
+  "frames": [
+   {
+    "staged": false,
+    "wanted": true,
+    "muted": false,
+    "phase": "ready"
+   }
+  ],
+  "button": {
+   "pressed": "true",
+   "title": "Couper le son (M)",
+   "state": null
+  },
+  "pill": "",
+  "sound": {
+   "on": true,
+   "blocked": false,
+   "pressed": true,
+   "title": "Couper le son (M)",
+   "pill": "",
+   "toggles": 1,
+   "refusals": 0
+  },
+  "phase": "paused",
+  "f": 180,
+  "notice": ""
+ },
+ "fs": {
+  "element": "stage",
+  "mode": "fullscreen",
+  "tree": false,
+  "meta": false,
+  "actions": false,
+  "strip": false,
+  "stage": [
+   0,
+   0,
+   1280,
+   720
+  ],
+  "frame": [
+   0,
+   0,
+   1280,
+   720
+  ],
+  "viewport": [
+   1280,
+   720
+  ],
+  "chrome": "shown",
+  "noteOpacity": "1",
+  "noteTransition": "0.25s",
+  "focus": "Aperçu, scène 1 sur 4 : A 16:9 son",
+  "animations": 0
+ },
+ "before_forged": {
+  "media": {
+   "scene": "S2",
+   "frame": 0,
+   "playing": false,
+   "duration": 120,
+   "wanted": true,
+   "muted": false,
+   "blocked": false,
+   "keysRelayed": 1,
+   "keysRefused": 0,
+   "frames": [
+    {
+     "staged": false,
+     "wanted": true,
+     "muted": false,
+     "phase": "ready"
+    }
+   ],
+   "button": {
+    "pressed": "true",
+    "title": "Couper le son (M)",
+    "state": null
+   },
+   "pill": "",
+   "sound": {
+    "on": true,
+    "blocked": false,
+    "pressed": true,
+    "title": "Couper le son (M)",
+    "pill": "",
+    "toggles": 1,
+    "refusals": 0
+   },
+   "phase": "paused",
+   "f": 180,
+   "notice": ""
+  },
+  "view": {
+   "phase": "paused",
+   "frame": 180,
+   "total_frames": 480,
+   "fps": 30,
+   "playing": false,
+   "scene_index": 1,
+   "scene_count": 4,
+   "scene_id": "pss_000000000802",
+   "scene_title": "B 4:3 son",
+   "starts": [
+    0,
+    180,
+    300,
+    390
+   ],
+   "scope": "all",
+   "retryable": true,
+   "waiting_ms": 0,
+   "waiting_visible": false,
+   "error": null
+  }
+ },
+ "after_forged": {
+  "media": {
+   "scene": "S2",
+   "frame": 0,
+   "playing": false,
+   "duration": 120,
+   "wanted": true,
+   "muted": false,
+   "blocked": false,
+   "keysRelayed": 1,
+   "keysRefused": 2,
+   "frames": [
+    {
+     "staged": false,
+     "wanted": true,
+     "muted": false,
+     "phase": "ready"
+    }
+   ],
+   "button": {
+    "pressed": "true",
+    "title": "Couper le son (M)",
+    "state": null
+   },
+   "pill": "",
+   "sound": {
+    "on": true,
+    "blocked": false,
+    "pressed": true,
+    "title": "Couper le son (M)",
+    "pill": "",
+    "toggles": 1,
+    "refusals": 0
+   },
+   "phase": "paused",
+   "f": 180,
+   "notice": ""
+  },
+  "view": {
+   "phase": "paused",
+   "frame": 180,
+   "total_frames": 480,
+   "fps": 30,
+   "playing": false,
+   "scene_index": 1,
+   "scene_count": 4,
+   "scene_id": "pss_000000000802",
+   "scene_title": "B 4:3 son",
+   "starts": [
+    0,
+    180,
+    300,
+    390
+   ],
+   "scope": "all",
+   "retryable": true,
+   "waiting_ms": 0,
+   "waiting_visible": false,
+   "error": null
+  },
+  "open": true
+ },
+ "escape_focus": true
+}

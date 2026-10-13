@@ -72,14 +72,17 @@ class FakeServer:
 
 # ------------------------------------------------------------------ dossier de travail
 
-def test_sync_work_writes_exactly_the_files_read_only_and_records_them(runtime):
+def test_sync_work_writes_exactly_the_files_a_writable_workspace_and_records_them(runtime):
     runner = make(runtime)
     report = runner.sync_work(files())
     work = runtime / "studio" / "work"
     assert report.written == len(files()) and report.removed == 0 and report.edits_saved == ()
     assert (work / "src" / "Scene.tsx").read_bytes() == files()["src/Scene.tsx"]
     assert {p.relative_to(work).as_posix() for p in work.rglob("*") if p.is_file()} == set(files())
-    assert not os.access(work / "src" / "Scene.tsx", os.W_OK), "the work copy is read-only: a Studio save cannot write it"
+    # Slice 12 (native-studio-playback-fix): the workspace is writable (an editor or Remotion Studio saves into it); the generated files
+    # are not a source and stay read-only
+    assert os.access(work / "src" / "Scene.tsx", os.W_OK) and os.access(work / "src" / "lib" / "Title.tsx", os.W_OK)
+    assert not os.access(work / D.WORK_ROOT_FILE, os.W_OK) and not os.access(work / D.WORK_PACKAGE, os.W_OK)
     assert runner.modified_work() == ()
     assert not (runtime / "studio" / ".tmp").exists()
 
@@ -114,7 +117,7 @@ def test_a_file_edited_outside_jarvis_is_saved_aside_then_replaced(runtime):
     assert runner.modified_work() == ("src/Scene.tsx",)
     report = runner.sync_work(files())
     assert report.edits_saved == ("src/Scene.tsx",)
-    saved = list((runtime / "studio" / "edits").glob("*/src/Scene.tsx"))
+    saved = list((runtime.parent / R.EDITS_DIR).glob("*/src/Scene.tsx"))  # outside runtime/: an uninstall never takes it
     assert len(saved) == 1 and saved[0].read_text(encoding="utf-8") == "// hand edit in the Studio\n"
     assert scene.read_bytes() == files()["src/Scene.tsx"] and runner.modified_work() == ()
 
@@ -128,7 +131,7 @@ def test_saved_edits_are_bounded_and_never_silently_dropped_before_the_bound(run
         scene.write_text(f"// {index}\n", encoding="utf-8")
         assert runner.save_modified() == ("src/Scene.tsx",)
         runner.sync_work(files())
-    assert len(list((runtime / "studio" / "edits").iterdir())) == D.MAX_SAVED_EDITS
+    assert len(list((runtime.parent / R.EDITS_DIR).iterdir())) == D.MAX_SAVED_EDITS
 
 
 def test_a_stray_file_added_to_the_work_folder_is_reported_and_removed(runtime):

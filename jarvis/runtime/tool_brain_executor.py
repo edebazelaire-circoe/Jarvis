@@ -117,18 +117,20 @@ class PlanRefused(Exception):
 
 ScenePlanner = Callable[[SceneSnapshot], SceneCommand]
 
-#: Objets de scène que le Presentation Studio possède (fenêtre de scène de la lecture et fenêtres auxiliaires, Slice 12) : le Tool Brain
-#: n'y touche jamais. Leur propriétaire est la lecture en cours (id par run, tombstone, registre de nettoyage) ; un déplacement ou un
-#: retrait par un second décideur casserait l'état de la lecture. Refus typé `studio_owned`, comme les autres invalidations.
+#: Catégories de scène réservées au Presentation Studio : `studio_stage` / `studio_aux`, l'ancienne fenêtre de lecture et ses fenêtres
+#: auxiliaires (Slice 12), RETIRÉES par native-studio-playback-fix Slice 09 (une lecture se montre dans Variantes, en mémoire). Elles
+#: restent réservées tant que des données anciennes peuvent en contenir : Core archive ces restes au démarrage (`LegacyStageReclaimer`),
+#: la page ne les dessine jamais, et le Tool Brain ne peut ni en créer ni toucher un reste. Refus typé `studio_owned`.
 STUDIO_OWNED = "studio_owned"
 
 
 def studio_owned_targets(snapshot: SceneSnapshot, command: SceneCommand) -> list[str]:
-    """Ids visés par `command` qui appartiennent au Studio (catégorie `studio_stage` / `studio_aux`), ou une catégorie Studio imposée."""
+    """Ids visés par `command` qui sont dans une catégorie réservée au Studio (`studio_stage` / `studio_aux`, retirées), ou une
+    catégorie réservée imposée."""
 
-    from jarvis.core.presentation_studio_stage import AUX_CATEGORY, STAGE_CATEGORY
+    from jarvis.core.presentation_studio_stage import LEGACY_CATEGORIES
 
-    owned = {STAGE_CATEGORY, AUX_CATEGORY}
+    owned = LEGACY_CATEGORIES
     ids: set[str] = set(command.object_ids or ())
     for single in (command.object_id, command.target_id):
         if single:

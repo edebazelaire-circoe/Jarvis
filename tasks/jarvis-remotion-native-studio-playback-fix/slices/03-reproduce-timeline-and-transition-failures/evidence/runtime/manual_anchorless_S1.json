@@ -1,0 +1,224 @@
+{
+ "wraps": [
+  [
+   5268,
+   88,
+   6
+  ],
+  [
+   8201,
+   86,
+   4
+  ]
+ ],
+ "first_play": [
+  2061,
+  0
+ ],
+ "end": {
+  "frame": 36,
+  "playing": true,
+  "phase": "ready",
+  "place": "board"
+ },
+ "core": {
+  "scope": "manual",
+  "phase": "playing",
+  "scene": 1,
+  "play_ms": null,
+  "from": null,
+  "until": null,
+  "seq": null,
+  "item_ms": 8023,
+  "item_target_ms": 8000
+ },
+ "orders": [
+  [
+   1296,
+   "order",
+   1,
+   "pause",
+   0,
+   null
+  ],
+  [
+   1602,
+   "order",
+   2,
+   "pause",
+   0,
+   null
+  ],
+  [
+   1753,
+   "order",
+   1,
+   "play",
+   null,
+   null
+  ],
+  [
+   2058,
+   "order",
+   2,
+   "play",
+   null,
+   null
+  ],
+  [
+   4806,
+   "order",
+   3,
+   "pause",
+   0,
+   null
+  ]
+ ],
+ "clocks": [
+  [
+   1622,
+   0,
+   false
+  ],
+  [
+   2061,
+   0,
+   true
+  ],
+  [
+   2335,
+   8,
+   true
+  ],
+  [
+   2601,
+   16,
+   true
+  ],
+  [
+   2867,
+   24,
+   true
+  ],
+  [
+   3136,
+   32,
+   true
+  ],
+  [
+   3400,
+   40,
+   true
+  ],
+  [
+   3668,
+   48,
+   true
+  ],
+  [
+   3934,
+   56,
+   true
+  ],
+  [
+   4201,
+   64,
+   true
+  ],
+  [
+   4467,
+   72,
+   true
+  ],
+  [
+   4735,
+   80,
+   true
+  ],
+  [
+   5002,
+   88,
+   true
+  ],
+  [
+   5268,
+   6,
+   true
+  ],
+  [
+   5534,
+   14,
+   true
+  ],
+  [
+   5801,
+   22,
+   true
+  ],
+  [
+   6067,
+   30,
+   true
+  ],
+  [
+   6334,
+   38,
+   true
+  ],
+  [
+   6601,
+   46,
+   true
+  ],
+  [
+   6867,
+   54,
+   true
+  ],
+  [
+   7134,
+   62,
+   true
+  ],
+  [
+   7401,
+   70,
+   true
+  ],
+  [
+   7668,
+   78,
+   true
+  ],
+  [
+   7934,
+   86,
+   true
+  ],
+  [
+   8201,
+   4,
+   true
+  ],
+  [
+   8467,
+   12,
+   true
+  ],
+  [
+   8734,
+   20,
+   true
+  ],
+  [
+   9000,
+   28,
+   true
+  ],
+  [
+   9267,
+   36,
+   true
+  ]
+ ]
+}

@@ -1,0 +1,666 @@
+{
+ "slice": "16-release-and-human-acceptance",
+ "date": "2026-10-13",
+ "tested": {
+  "product_code_real_run": "a437e5c2 (efa0cc08 code: S16 confirmOpen rename on top of b34d494a)",
+  "veil_fix_and_resilience": "6aa93f20",
+  "note": "a437e5c2..6aa93f20 changes one CSS rule (failure veil opaque) and tests; the files that render the veil were rerun on 6aa93f20"
+ },
+ "runtime": "headless Chrome over CDP, RemotionStack (real Core, real compiler, real Control Center) on free loopback ports, throw-away data root under a short temp folder; JARVIS_REMOTION_RUNTIME_DIR = the read-only gate runtime (Remotion 4.0.534); the live Jarvis (127.77.0.1:17653) was never started, stopped or contacted",
+ "deck": "presentation_playback_gate_world.DECK: 9 Remotion scenes, 3/8/30 s at 24/25/30/60 fps, composition 74 s (4440 frames at 60)",
+ "variants_continuous_warm": {
+  "wall_s": 87.2,
+  "boundaries": [
+   {
+    "from": "S1",
+    "to": "S2",
+    "out_last": 89,
+    "in_first": 0,
+    "gap_ms": 10
+   },
+   {
+    "from": "S2",
+    "to": "S3",
+    "out_last": 239,
+    "in_first": 0,
+    "gap_ms": 8
+   },
+   {
+    "from": "S3",
+    "to": "S4",
+    "out_last": 899,
+    "in_first": 0,
+    "gap_ms": 8
+   },
+   {
+    "from": "S4",
+    "to": "S5",
+    "out_last": 74,
+    "in_first": 0,
+    "gap_ms": 13
+   },
+   {
+    "from": "S5",
+    "to": "S6",
+    "out_last": 479,
+    "in_first": 0,
+    "gap_ms": 23
+   },
+   {
+    "from": "S6",
+    "to": "S7",
+    "out_last": 89,
+    "in_first": 0,
+    "gap_ms": 16
+   },
+   {
+    "from": "S7",
+    "to": "S8",
+    "out_last": 191,
+    "in_first": 0,
+    "gap_ms": 12
+   },
+   {
+    "from": "S8",
+    "to": "S9",
+    "out_last": 89,
+    "in_first": 0,
+    "gap_ms": 11
+   }
+  ],
+  "gap_ms_max": 23,
+  "scenes": [
+   {
+    "scene": "S1",
+    "first_frame": 0,
+    "last_frame": 89,
+    "played_ms": 3004,
+    "wraps": 0
+   },
+   {
+    "scene": "S2",
+    "first_frame": 0,
+    "last_frame": 239,
+    "played_ms": 8007,
+    "wraps": 0
+   },
+   {
+    "scene": "S3",
+    "first_frame": 0,
+    "last_frame": 899,
+    "played_ms": 30006,
+    "wraps": 0
+   },
+   {
+    "scene": "S4",
+    "first_frame": 0,
+    "last_frame": 74,
+    "played_ms": 2977,
+    "wraps": 0
+   },
+   {
+    "scene": "S5",
+    "first_frame": 0,
+    "last_frame": 479,
+    "played_ms": 8002,
+    "wraps": 0
+   },
+   {
+    "scene": "S6",
+    "first_frame": 0,
+    "last_frame": 89,
+    "played_ms": 2995,
+    "wraps": 0
+   },
+   {
+    "scene": "S7",
+    "first_frame": 0,
+    "last_frame": 191,
+    "played_ms": 7999,
+    "wraps": 0
+   },
+   {
+    "scene": "S8",
+    "first_frame": 0,
+    "last_frame": 89,
+    "played_ms": 3005,
+    "wraps": 0
+   },
+   {
+    "scene": "S9",
+    "first_frame": 0,
+    "last_frame": 239,
+    "played_ms": 8004,
+    "wraps": 0
+   }
+  ],
+  "blank_spans_ms": [],
+  "hybrid_or_blank_captures": 0,
+  "captures_per_boundary": {
+   "burst1": 36,
+   "burst2": 38,
+   "burst3": 36,
+   "burst4": 35,
+   "burst5": 37,
+   "burst6": 37,
+   "burst7": 34,
+   "burst8": 36
+  },
+  "core_runs_seen": [
+   "idle"
+  ]
+ },
+ "run_in_variants_cold": {
+  "wall_s": 83.4,
+  "boundaries": [
+   {
+    "from": "S1",
+    "to": "S2",
+    "out_last": 89,
+    "in_first": 0,
+    "gap_ms": 42
+   },
+   {
+    "from": "S2",
+    "to": "S3",
+    "out_last": 239,
+    "in_first": 0,
+    "gap_ms": 17
+   },
+   {
+    "from": "S3",
+    "to": "S4",
+    "out_last": 899,
+    "in_first": 0,
+    "gap_ms": 22
+   },
+   {
+    "from": "S4",
+    "to": "S5",
+    "out_last": 74,
+    "in_first": 0,
+    "gap_ms": 18
+   },
+   {
+    "from": "S5",
+    "to": "S6",
+    "out_last": 479,
+    "in_first": 0,
+    "gap_ms": 25
+   },
+   {
+    "from": "S6",
+    "to": "S7",
+    "out_last": 89,
+    "in_first": 0,
+    "gap_ms": 13
+   },
+   {
+    "from": "S7",
+    "to": "S8",
+    "out_last": 191,
+    "in_first": 0,
+    "gap_ms": 28
+   },
+   {
+    "from": "S8",
+    "to": "S9",
+    "out_last": 89,
+    "in_first": 0,
+    "gap_ms": 26
+   }
+  ],
+  "gap_ms_max": 42,
+  "scenes": [
+   {
+    "scene": "S1",
+    "first_frame": 0,
+    "last_frame": 89,
+    "played_ms": 2977,
+    "wraps": 0
+   },
+   {
+    "scene": "S2",
+    "first_frame": 0,
+    "last_frame": 239,
+    "played_ms": 7942,
+    "wraps": 0
+   },
+   {
+    "scene": "S3",
+    "first_frame": 0,
+    "last_frame": 899,
+    "played_ms": 29982,
+    "wraps": 0
+   },
+   {
+    "scene": "S4",
+    "first_frame": 0,
+    "last_frame": 74,
+    "played_ms": 2977,
+    "wraps": 0
+   },
+   {
+    "scene": "S5",
+    "first_frame": 0,
+    "last_frame": 479,
+    "played_ms": 7997,
+    "wraps": 0
+   },
+   {
+    "scene": "S6",
+    "first_frame": 0,
+    "last_frame": 89,
+    "played_ms": 2975,
+    "wraps": 0
+   },
+   {
+    "scene": "S7",
+    "first_frame": 0,
+    "last_frame": 191,
+    "played_ms": 7955,
+    "wraps": 0
+   },
+   {
+    "scene": "S8",
+    "first_frame": 0,
+    "last_frame": 89,
+    "played_ms": 2970,
+    "wraps": 0
+   },
+   {
+    "scene": "S9",
+    "first_frame": 0,
+    "last_frame": 239,
+    "played_ms": 7973,
+    "wraps": 0
+   }
+  ],
+  "blank_spans_ms": [],
+  "hybrid_or_blank_captures": 0,
+  "board_mounts": 0,
+  "core_deadline_traces": []
+ },
+ "gate_play_all": {
+  "wall_s": 83.4,
+  "expected_s": 74,
+  "never_shown": [],
+  "blank_spans_ms": [],
+  "variants_open": true,
+  "no_board_stage": true,
+  "baseline_16d56857": {
+   "wall_s": 232.9,
+   "never_shown": [
+    "S3",
+    "S6",
+    "S8"
+   ],
+   "held_previous_ms": [
+    77975,
+    51085,
+    51019
+   ]
+  }
+ },
+ "flow_recorded": {
+  "wall_s": 83.6,
+  "captures": 680,
+  "capture_every_ms": 100,
+  "recorded_ms": 74106,
+  "composition_ms": 74000,
+  "transport_gap_ms_max": 283,
+  "scene_bar_gap_beyond_sampling_max": 0.024,
+  "held_after_end": {
+   "frame": 239,
+   "playing": false,
+   "duration": 240,
+   "phase": "ready",
+   "scene": "S9"
+  },
+  "scene_changes_in_video": [
+   {
+    "at_ms": 3069,
+    "to": "S2"
+   },
+   {
+    "at_ms": 11107,
+    "to": "S3"
+   },
+   {
+    "at_ms": 41044,
+    "to": "S4"
+   },
+   {
+    "at_ms": 44093,
+    "to": "S5"
+   },
+   {
+    "at_ms": 52062,
+    "to": "S6"
+   },
+   {
+    "at_ms": 55121,
+    "to": "S7"
+   },
+   {
+    "at_ms": 63094,
+    "to": "S8"
+   },
+   {
+    "at_ms": 66143,
+    "to": "S9"
+   }
+  ],
+  "frame_quality_verdict": "clean",
+  "findings": 0,
+  "lag_threshold_ms": 500
+ },
+ "rapid_seek_and_jumps": {
+  "three_fast_next_from_S1": {
+   "frame": 0,
+   "playing": false,
+   "duration": 75,
+   "phase": "ready",
+   "scene": "S4"
+  },
+  "previous": {
+   "frame": 0,
+   "playing": false,
+   "duration": 90,
+   "phase": "ready",
+   "scene": "S1"
+  },
+  "scrub_forward": {
+   "frame": 48,
+   "playing": false,
+   "duration": 192,
+   "phase": "ready",
+   "scene": "S7"
+  },
+  "scrub_back": {
+   "frame": 90,
+   "playing": false,
+   "duration": 240,
+   "phase": "ready",
+   "scene": "S2"
+  },
+  "held_final": {
+   "frame": 239,
+   "playing": false,
+   "duration": 240,
+   "phase": "ready",
+   "scene": "S9"
+  },
+  "played_before_lire": []
+ },
+ "audio": {
+  "audio_vs_frame_ms": {
+   "s1_a": 11,
+   "s1_b": 10,
+   "s1_c": 19,
+   "seek_a": 46,
+   "seek_b": 11,
+   "s2_a": 5,
+   "s2_b": 14
+  },
+  "threshold_ms": 200,
+  "checks_passed": 9,
+  "checks": 9
+ },
+ "export": {
+  "streams": [
+   {
+    "codec_type": "video",
+    "codec_name": "h264",
+    "sample_rate": null,
+    "channels": null,
+    "duration": "2.000000"
+   },
+   {
+    "codec_type": "audio",
+    "codec_name": "aac",
+    "sample_rate": "48000",
+    "channels": 2,
+    "duration": "2.005000"
+   }
+  ],
+  "verified_by": "ffprobe",
+  "size_bytes": 98054
+ },
+ "studio_roundtrip": {
+  "private_runtime_copy": 5927,
+  "studio_open_cold": 75162,
+  "hmr_edit_to_screen": 342,
+  "publish_click_to_said": 781
+ },
+ "resilience": {
+  "restart": {
+   "core_down_s": 3.1,
+   "page_ms": {
+    "core_down": 5237,
+    "core_up": 8338,
+    "ended": 76409
+   },
+   "failed_attempts": [],
+   "failed_seen_ms": null,
+   "retry_clicked_ms": null,
+   "veil_ground": null,
+   "boundaries": [
+    {
+     "from": "S1",
+     "to": "S2",
+     "gap_ms": 11
+    },
+    {
+     "from": "S2",
+     "to": "S3",
+     "gap_ms": 10
+    },
+    {
+     "from": "S3",
+     "to": "S4",
+     "gap_ms": 9
+    },
+    {
+     "from": "S4",
+     "to": "S5",
+     "gap_ms": 9
+    },
+    {
+     "from": "S5",
+     "to": "S6",
+     "gap_ms": 10
+    },
+    {
+     "from": "S6",
+     "to": "S7",
+     "gap_ms": 8
+    },
+    {
+     "from": "S7",
+     "to": "S8",
+     "gap_ms": 13
+    },
+    {
+     "from": "S8",
+     "to": "S9",
+     "gap_ms": 7
+    }
+   ],
+   "scenes": [
+    {
+     "scene": "S1",
+     "first_frame": 0,
+     "last_frame": 89,
+     "played_ms": 3010
+    },
+    {
+     "scene": "S2",
+     "first_frame": 0,
+     "last_frame": 239,
+     "played_ms": 8005
+    },
+    {
+     "scene": "S3",
+     "first_frame": 0,
+     "last_frame": 899,
+     "played_ms": 30013
+    },
+    {
+     "scene": "S4",
+     "first_frame": 0,
+     "last_frame": 74,
+     "played_ms": 2967
+    },
+    {
+     "scene": "S5",
+     "first_frame": 0,
+     "last_frame": 479,
+     "played_ms": 8007
+    },
+    {
+     "scene": "S6",
+     "first_frame": 0,
+     "last_frame": 89,
+     "played_ms": 3008
+    },
+    {
+     "scene": "S7",
+     "first_frame": 0,
+     "last_frame": 191,
+     "played_ms": 8008
+    },
+    {
+     "scene": "S8",
+     "first_frame": 0,
+     "last_frame": 89,
+     "played_ms": 3008
+    },
+    {
+     "scene": "S9",
+     "first_frame": 0,
+     "last_frame": 239,
+     "played_ms": 8005
+    }
+   ]
+  },
+  "lost": {
+   "core_down_s": 20.1,
+   "page_ms": {
+    "core_down": 5120,
+    "core_up": 25247,
+    "ended": 102504
+   },
+   "failed_attempts": [
+    "S3"
+   ],
+   "failed_seen_ms": 18685,
+   "retry_clicked_ms": 38855,
+   "veil_ground": "rgb(2, 6, 10)",
+   "boundaries": [
+    {
+     "from": "S1",
+     "to": "S2",
+     "gap_ms": 9
+    },
+    {
+     "from": "S2",
+     "to": "S3",
+     "gap_ms": null
+    },
+    {
+     "from": "S3",
+     "to": "S4",
+     "gap_ms": 407
+    },
+    {
+     "from": "S4",
+     "to": "S5",
+     "gap_ms": 9
+    },
+    {
+     "from": "S5",
+     "to": "S6",
+     "gap_ms": 9
+    },
+    {
+     "from": "S6",
+     "to": "S7",
+     "gap_ms": 9
+    },
+    {
+     "from": "S7",
+     "to": "S8",
+     "gap_ms": 11
+    },
+    {
+     "from": "S8",
+     "to": "S9",
+     "gap_ms": 5
+    }
+   ],
+   "scenes": [
+    {
+     "scene": "S1",
+     "first_frame": 0,
+     "last_frame": 89,
+     "played_ms": 2997
+    },
+    {
+     "scene": "S2",
+     "first_frame": 0,
+     "last_frame": 239,
+     "played_ms": 8006
+    },
+    {
+     "scene": "S3",
+     "first_frame": null,
+     "last_frame": null,
+     "played_ms": null
+    },
+    {
+     "scene": "S3",
+     "first_frame": 0,
+     "last_frame": 899,
+     "played_ms": 29982
+    },
+    {
+     "scene": "S4",
+     "first_frame": 0,
+     "last_frame": 74,
+     "played_ms": 3010
+    },
+    {
+     "scene": "S5",
+     "first_frame": 0,
+     "last_frame": 479,
+     "played_ms": 7997
+    },
+    {
+     "scene": "S6",
+     "first_frame": 0,
+     "last_frame": 89,
+     "played_ms": 3001
+    },
+    {
+     "scene": "S7",
+     "first_frame": 0,
+     "last_frame": 191,
+     "played_ms": 7965
+    },
+    {
+     "scene": "S8",
+     "first_frame": 0,
+     "last_frame": 89,
+     "played_ms": 3018
+    },
+    {
+     "scene": "S9",
+     "first_frame": 0,
+     "last_frame": 239,
+     "played_ms": 8010
+    }
+   ]
+  }
+ }
+}

@@ -1,0 +1,18 @@
+{
+ "gesture": "legacy:rs-bar Pause",
+ "scrub1": "legacy:rs-scrub",
+ "at_2s": {
+  "frame": 60,
+  "playing": false,
+  "duration": 240,
+  "phase": "ready",
+  "scene": "S2"
+ },
+ "at_6s": {
+  "frame": 180,
+  "playing": false,
+  "duration": 240,
+  "phase": "ready",
+  "scene": "S2"
+ }
+}

@@ -2,11 +2,12 @@
 
 Banc réel de la Slice 12 (scène, catalogue, service d'édition, fichiers) avec la source de composition factice de la Slice 12 Remotion ;
 l'horloge de Core est la fausse horloge du banc (`rig.mono`), les échéances sont de vraies minuteries de la boucle d'événements (petites).
-Prouvé : la portée se règle au `start` et par `play`, la ligne de temps dit `auto` et la source (`prefab`) de sa scène ; Core avance seul à
-l'échéance quand aucune page ne dit rien, et tient la dernière image à la fin ; un rapport `done` de la page avance tout de suite, un rapport périmé
-ou venu trop tôt ne change rien ; la pause arrête tout et la reprise recalcule sur le temps joué ; `scene` s'arrête à la fin de la scène ;
+Prouvé : la portée se règle au `start` et par `play`, la ligne de temps dit `auto` et la source (`prefab`) de sa scène ; un segment de
+média (scène Remotion) n'avance QUE sur le rapport `done` de la page (son Player a fini), jamais sur une échéance de Core : sans page, ou
+quand la scène ne se résout pas, la lecture reste sur la scène (native-studio-playback-fix Slice 05) ; seul un élément sans segment de média
+garde son rythme ; un rapport périmé ou sans `started` ne change rien ; la pause arrête tout ; `scene` s'arrête à la fin de la scène ;
 une lecture où Jarvis dit les lignes n'a pas de portée ; la scène suivante est annoncée (`next_scene`) et lisible (`preload_hint`).
-Contrat : `docs/presentation-studio.md` > *Remotion timeline bridge* > *Chained playback*.
+Contrat : `docs/presentation-studio.md` > *Remotion timeline bridge* > *Chained playback*, *Composition clock (Level 3)*.
 """
 
 from __future__ import annotations
@@ -26,9 +27,9 @@ from tests.unit.test_remotion_timeline_service import Compositions
 
 SLOW = {"id": "Scene", "width": 1280, "height": 720, "fps": 30, "duration_in_frames": 300}      # S2 'marker' segment: frames 150..299 = 5 s
 FAST = {"id": "Scene", "width": 1280, "height": 720, "fps": 120, "duration_in_frames": 24}      # the same segment: frames 12..23 = 100 ms
-QUICK = AutoTimings(min_dwell_ms=20, default_dwell_ms=30, grace_ms=30, load_allowance_ms=0)
+QUICK = AutoTimings(min_dwell_ms=20, default_dwell_ms=30)
 #: Never fires during a test: the reports are the only thing that moves the run.
-QUIET = AutoTimings(min_dwell_ms=600_000, default_dwell_ms=600_000, grace_ms=600_000, load_allowance_ms=600_000)
+QUIET = AutoTimings(min_dwell_ms=600_000, default_dwell_ms=600_000)
 
 
 async def open_rig(tmp_path, composition, timings):
@@ -48,6 +49,27 @@ async def until(predicate, seconds=6.0):
 
 def at(rig) -> int:
     return rig.service.where()["position"]["index"]
+
+
+async def play_through(rig, limit: int = 12) -> list[int]:
+    """What the page does in a chained play: per segment, `started` then, once its Player has finished, `done`. Returns the positions seen."""
+
+    seen = []
+    for _ in range(limit):
+        async with rig.service._lock:   # a dwell step in flight finishes its stage sync first: the timeline read below is the new scene's
+            pass
+        where = rig.service.where()
+        if where["scope"] == "manual":
+            break
+        seen.append(where["position"]["index"])
+        timeline = where.get("timeline")
+        if timeline is not None:
+            applied(await rig.service.advance({"actor": "user", "seq": timeline["seq"], "event": "started"}))
+            applied(await rig.service.advance({"actor": "user", "seq": timeline["seq"], "event": "done"}))
+        if at(rig) == seen[-1] and rig.service.where()["scope"] != "manual":
+            before = at(rig)                        # no media segment left to play here: the element's dwell moves it
+            await until(lambda: at(rig) != before or rig.service.where()["scope"] == "manual")
+    return seen
 
 
 async def finish(rig):
@@ -118,20 +140,115 @@ async def test_the_scene_to_come_is_named_and_readable_only_when_it_is_another_s
         await finish(rig)
 
 
-# ------------------------------------------------------------------ Core's own deadline (no page)
+# ------------------------------------------------------------------ no deadline for a media segment (Slice 05)
 
-async def test_with_no_page_at_all_core_goes_on_by_itself_through_every_element_and_holds_the_last_image(tmp_path):
+async def test_with_no_page_at_all_a_remotion_scene_is_held_and_never_skipped(tmp_path):
+    """Slice 03 defect A: Core used to wait the segment, + 3 s, + 45 s of load allowance, then skip the scene. Now only its Player ends it.
+    Item 1 shows a one-frame hold of S1 (no media to play: its dwell moves it); item 2 is S2's entry segment, frames 0..11: held there."""
+
     rig = await open_rig(tmp_path, FAST, QUICK)
     try:
         applied(await rig.service.start(rig.start_body(scope="all")))
-        assert await until(lambda: rig.service.where()["scope"] == "manual"), rig.service.where()
+        assert await until(lambda: at(rig) == 2)
+        await asyncio.sleep(0.4)                                                      # far beyond the 100 ms segment and every dwell
+        async with rig.service._lock:
+            pass
         where = rig.service.where()
-        assert where["position"]["index"] == 4 and where["phase"] == "playing" and where["scene"]["title"] == "Trois"
-        assert where["timeline"]["auto"] is False, "the chain is over: the last image is held, nothing moves any more"
+        assert where["position"]["index"] == 2 and where["scope"] == "all" and where["phase"] == "playing"
+        assert where["timeline"]["until_frame"] > where["timeline"]["from_frame"]
+        assert rig.service._auto_handle is None, "no deadline is armed for a media segment"
+    finally:
+        await finish(rig)
+
+
+async def test_a_media_segment_with_no_news_from_its_page_says_so_and_still_never_advances(tmp_path):
+    """Slice 05 rework, P1: a lost `done`, a `started` never sent or a closed page held the run with nothing on screen. Past the segment's
+    own length + a margin (played time; + a load allowance before `started`) the view says it (`page_wait`); never an advance, never a
+    skip, and the presenter's next and stop still work. A pause stops the count; a new segment starts it again."""
+
+    rig = await open_rig(tmp_path, SLOW, QUIET)
+    try:
+        applied(await rig.service.start(rig.start_body(scope="all")))
+        applied(await rig.run("goto", position=2))                                   # S2 'marker': frames 150..299, 5 s
+        seq = rig.service.where()["timeline"]["seq"]
+        rig.mono.t += 5 + 15 + 59                                                    # no `started`: segment + margin + load allowance - 1 s
+        assert "page_wait" not in rig.service.where(), "a slow compile is not a silent page yet"
+        rig.mono.t += 2
+        where = rig.service.where()
+        assert where["page_wait"] == {"seq": seq, "started": False, "waited_ms": 81_000}
+        assert where["position"]["index"] == 2 and where["scope"] == "all", "said, never advanced"
+        applied(await rig.service.advance({"actor": "user", "seq": seq, "event": "started"}))
+        assert "page_wait" not in rig.service.where(), "the page spoke: the count starts again"
+        rig.mono.t += 21                                                             # started, then the `done` was lost
+        assert rig.service.where()["page_wait"] == {"seq": seq, "started": True, "waited_ms": 21_000}
+        applied(await rig.run("pause"))
+        rig.mono.t += 600
+        assert "page_wait" not in rig.service.where(), "a pause is not a silent page"
+        applied(await rig.run("resume"))
+        assert rig.service.where()["page_wait"]["waited_ms"] == 21_000, "pauses excluded"
+        assert len(rig.env.sink.of("core.presentation_studio.autoplay_page_silent")) == 1, "traced once per segment"
+        moved = applied(await rig.run("next"))                                     # S2's second element shares the segment: still waiting
+        assert moved["position"]["index"] == 3 and moved["page_wait"]["seq"] == seq, "the presenter still moves the run"
+        moved = applied(await rig.run("next"))
+        assert moved["position"]["index"] == 4 and "page_wait" not in moved, "a new segment starts its own count"
+        stopped = await rig.service.stop({"actor": "user"})
+        assert stopped.status is PlaybackStatus.APPLIED and "page_wait" not in rig.service.where()
+    finally:
+        await finish(rig)
+
+
+async def test_a_page_that_reports_in_time_never_shows_a_wait(tmp_path):
+    """Negative case: normal playback (started, then done within the segment's length) never shows the notice."""
+
+    rig = await open_rig(tmp_path, SLOW, QUIET)
+    try:
+        applied(await rig.service.start(rig.start_body(scope="all")))
+        applied(await rig.run("goto", position=2))
+        seq = rig.service.where()["timeline"]["seq"]
+        rig.mono.t += 30                                                             # a long first compile
+        applied(await rig.service.advance({"actor": "user", "seq": seq, "event": "started"}))
+        rig.mono.t += 5
+        assert "page_wait" not in rig.service.where()
+        moved = applied(await rig.service.advance({"actor": "user", "seq": seq, "event": "done"}))
+        assert moved["position"]["index"] == 3 and "page_wait" not in moved
+        assert rig.env.sink.of("core.presentation_studio.autoplay_page_silent") == []
+    finally:
+        await finish(rig)
+
+
+async def test_a_remotion_scene_whose_timeline_cannot_be_resolved_is_held_not_paced(tmp_path):
+    rig = await open_rig(tmp_path, RuntimeError("manifest unreadable"), QUICK)
+    try:
+        applied(await rig.service.start(rig.start_body(scope="all")))
+        assert "timeline" not in rig.service.where()
+        await asyncio.sleep(0.3)
+        assert at(rig) == 1 and rig.service.where()["scope"] == "all", "an unknown scene is never moved on a guess"
+    finally:
+        await finish(rig)
+
+
+async def test_an_html_scene_in_a_chained_play_keeps_its_dwell(tmp_path):
+    """Negative case: no media segment (an HTML prefab), so the score's pace still applies."""
+
+    rig = await open_rig(tmp_path, None, QUICK)
+    try:
+        applied(await rig.service.start(rig.start_body(scope="all")))
+        assert await until(lambda: rig.service.where()["scope"] == "manual"), rig.service.where()
+        assert at(rig) == 4
+    finally:
+        await finish(rig)
+
+
+async def test_the_page_reports_carry_a_chained_play_to_the_end_and_the_last_image_is_held(tmp_path):
+    rig = await open_rig(tmp_path, FAST, QUICK)
+    try:
+        applied(await rig.service.start(rig.start_body(scope="all")))
+        seen = await play_through(rig)
+        where = rig.service.where()
+        assert seen == [1, 2, 3, 4] and where["position"]["index"] == 4 and where["scene"]["title"] == "Trois"
+        assert where["scope"] == "manual" and where["timeline"]["auto"] is False, "the chain is over: the last image is held"
         await asyncio.sleep(0.2)
         assert at(rig) == 4 and rig.service.where()["phase"] == "playing"
-        kinds = rig.env.sink.kinds() if hasattr(rig.env.sink, "kinds") else []
-        assert not kinds or "core.presentation_studio.autoplay_finished" in kinds
     finally:
         await finish(rig)
 
@@ -144,7 +261,8 @@ async def test_play_scene_goes_through_the_elements_of_the_scene_then_holds_with
         assert at(rig) == 2
         played = applied(await rig.service.play({"actor": "user", "scope": "scene"}))
         assert played["scope"] == "scene" and played["scene"]["title"] == "Deux" and at(rig) == 2
-        assert await until(lambda: rig.service.where()["scope"] == "manual"), rig.service.where()
+        await play_through(rig)
+        assert rig.service.where()["scope"] == "manual", rig.service.where()
         where = rig.service.where()
         assert where["position"]["index"] == 3 and where["scene"]["title"] == "Deux", "S2 has two elements: it ends on the second, never on S3"
         await asyncio.sleep(0.2)
@@ -161,7 +279,7 @@ async def test_play_all_restarts_the_current_scene_from_its_first_element_and_go
         applied(await rig.run("next"))                                            # item 3: the second element of S2
         started = applied(await rig.service.play({"actor": "user", "scope": "all"}))
         assert at(rig) == 2 and started["scope"] == "all", "back to the first element of the scene being played"
-        assert await until(lambda: rig.service.where()["scope"] == "manual")
+        assert await play_through(rig) == [2, 3, 4]
         assert at(rig) == 4
     finally:
         await finish(rig)
@@ -169,7 +287,7 @@ async def test_play_all_restarts_the_current_scene_from_its_first_element_and_go
 
 # ------------------------------------------------------------------ the page's reports
 
-async def test_a_done_report_goes_on_at_once_but_only_for_the_segment_core_is_in_and_only_once_it_could_be_true(tmp_path):
+async def test_a_done_report_goes_on_at_once_but_only_for_the_segment_core_is_in_and_only_once_it_started(tmp_path):
     rig = await open_rig(tmp_path, SLOW, QUIET)
     try:
         applied(await rig.service.start(rig.start_body(scope="all")))
@@ -179,29 +297,30 @@ async def test_a_done_report_goes_on_at_once_but_only_for_the_segment_core_is_in
         stale = applied(await rig.service.advance({"actor": "user", "seq": seq - 1, "event": "done"}))
         assert at(rig) == before and stale["timeline"]["seq"] == seq, "another segment's report changes nothing"
         early = applied(await rig.service.advance({"actor": "user", "seq": seq, "event": "done"}))
-        assert at(rig) == before and early["position"]["index"] == before, "5 s of a segment cannot have been played in no time"
+        assert at(rig) == before and early["position"]["index"] == before, "a segment the page never started cannot have finished"
         applied(await rig.service.advance({"actor": "user", "seq": seq, "event": "started"}))
-        rig.mono.t += 5
         moved = applied(await rig.service.advance({"actor": "user", "seq": seq, "event": "done"}))
-        assert moved["position"]["index"] == before + 1, "a true done goes on, and the answer carries the new state"
+        assert moved["position"]["index"] == before + 1, "the Player is the media clock: its done goes on at once, Core's estimate does not gate it"
         again = applied(await rig.service.advance({"actor": "user", "seq": seq, "event": "done"}))
         assert again["position"]["index"] == before + 1, "a duplicate report does not skip a second element"
     finally:
         await finish(rig)
 
 
-async def test_a_started_report_restarts_the_played_time_of_the_segment_at_the_moment_the_scene_was_really_playing(tmp_path):
-    rig = await open_rig(tmp_path, SLOW, QUIET)
+async def test_a_scene_that_takes_long_to_load_is_waited_for_and_its_started_report_restarts_the_played_time(tmp_path):
+    rig = await open_rig(tmp_path, SLOW, QUICK)
     try:
         applied(await rig.service.start(rig.start_body(scope="all")))
         applied(await rig.run("goto", position=2))
         seq = rig.service.where()["timeline"]["seq"]
         rig.mono.t += 40                                                            # the scene took 40 s to compile and load
-        assert rig.service.where()["timeline"]["play_ms"] == 5000, "capped at the segment: Core's clock alone says it is over"
+        await asyncio.sleep(0.2)
+        assert at(rig) == 2, "a slow compile is never a skip"
+        assert rig.service.where()["timeline"]["play_ms"] == 5000, "capped at the segment: Core's clock is a description, not a decision"
         applied(await rig.service.advance({"actor": "user", "seq": seq, "event": "started"}))
         assert rig.service.where()["timeline"]["play_ms"] == 0 and rig.service.where()["timeline"]["seq"] == seq
         applied(await rig.service.advance({"actor": "user", "seq": seq, "event": "done"}))
-        assert at(rig) == 2, "the load time was not played time: this done is premature"
+        assert at(rig) == 3
     finally:
         await finish(rig)
 
@@ -223,7 +342,7 @@ async def test_a_report_in_a_manual_run_or_with_nothing_running_changes_nothing(
 
 # ------------------------------------------------------------------ pause, edge cases
 
-async def test_a_pause_stops_the_deadline_and_the_resume_recomputes_it_on_the_time_played(tmp_path):
+async def test_a_pause_stops_everything_and_the_play_goes_on_after_the_resume(tmp_path):
     rig = await open_rig(tmp_path, FAST, QUICK)
     try:
         applied(await rig.service.start(rig.start_body()))
@@ -231,10 +350,13 @@ async def test_a_pause_stops_the_deadline_and_the_resume_recomputes_it_on_the_ti
         applied(await rig.service.play({"actor": "user", "scope": "all"}))
         applied(await rig.run("pause"))
         assert at(rig) == 2 and rig.service.where()["phase"] == "paused"
-        await asyncio.sleep(0.6)
+        seq = rig.service.where()["timeline"]["seq"]
+        applied(await rig.service.advance({"actor": "user", "seq": seq, "event": "started"}))
+        applied(await rig.service.advance({"actor": "user", "seq": seq, "event": "done"}))
+        await asyncio.sleep(0.3)
         assert at(rig) == 2, "nothing advances while paused"
         applied(await rig.run("resume"))
-        assert await until(lambda: at(rig) == 4), rig.service.where()
+        assert await play_through(rig) and at(rig) == 4, rig.service.where()
     finally:
         await finish(rig)
 
@@ -263,11 +385,15 @@ async def test_a_user_move_while_chained_re_arms_without_a_double_advance_and_st
     rig = await open_rig(tmp_path, FAST, QUICK)
     try:
         applied(await rig.service.start(rig.start_body(scope="all")))
+        first = rig.service.where()["timeline"]["seq"]
+        applied(await rig.service.advance({"actor": "user", "seq": first, "event": "started"}))
         applied(await rig.run("next"))
         applied(await rig.run("next"))
         position = at(rig)
         assert position == 3
-        assert await until(lambda: rig.service.where()["scope"] == "manual")
+        applied(await rig.service.advance({"actor": "user", "seq": first, "event": "done"}))   # a late report of scene 1
+        assert at(rig) == 3, "a report of a segment the user's click left is not a second step"
+        assert await play_through(rig) == [3, 4]
         assert at(rig) == 4, "one step per element, never two for a click that came in the middle"
         await rig.service.stop({"actor": "user"})
         assert rig.service._auto_handle is None and rig.service.scope is Scope.MANUAL

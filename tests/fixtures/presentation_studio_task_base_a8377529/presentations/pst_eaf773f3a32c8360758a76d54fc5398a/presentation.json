@@ -1,0 +1,24 @@
+{
+  "schema": "jarvis.presentation_studio.presentation",
+  "schema_version": 3,
+  "presentation_id": "pst_eaf773f3a32c8360758a76d54fc5398a",
+  "title": "Lecture",
+  "active_variant_id": "psv_ff1d369bc1f1e187f99dbf77a47965e1",
+  "variant_counter": 1,
+  "variants": [
+    {
+      "variant_id": "psv_ff1d369bc1f1e187f99dbf77a47965e1",
+      "variant_number": 1,
+      "rationale": "",
+      "created_by": "system",
+      "sources": [],
+      "preview_id": null
+    }
+  ],
+  "archived": [],
+  "resources": [],
+  "engine": "remotion",
+  "revision": 1,
+  "created_at": "2026-10-12T18:38:56.041520Z",
+  "updated_at": "2026-10-12T18:38:56.041520Z"
+}

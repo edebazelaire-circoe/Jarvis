@@ -1,0 +1,141 @@
+{
+ "checks": {
+  "no user activation anywhere": true,
+  "with the policy lifted, the same path plays with sound": true,
+  "playback moves": true
+ },
+ "wish": {
+  "scene": "S1",
+  "frame": 0,
+  "playing": false,
+  "duration": 180,
+  "wanted": true,
+  "muted": false,
+  "blocked": false,
+  "keysRelayed": 0,
+  "keysRefused": 0,
+  "frames": [
+   {
+    "staged": false,
+    "wanted": true,
+    "muted": false,
+    "phase": "ready"
+   }
+  ],
+  "button": {
+   "pressed": "true",
+   "title": "Couper le son (M)",
+   "state": null
+  },
+  "pill": "",
+  "sound": {
+   "on": true,
+   "blocked": false,
+   "pressed": true,
+   "title": "Couper le son (M)",
+   "pill": "",
+   "toggles": 1,
+   "refusals": 0
+  },
+  "phase": "paused",
+  "f": 0,
+  "notice": ""
+ },
+ "later": {
+  "scene": "S1",
+  "frame": 97,
+  "playing": true,
+  "duration": 180,
+  "wanted": true,
+  "muted": false,
+  "blocked": false,
+  "keysRelayed": 0,
+  "keysRefused": 0,
+  "frames": [
+   {
+    "staged": false,
+    "wanted": true,
+    "muted": false,
+    "phase": "ready"
+   },
+   {
+    "staged": true,
+    "wanted": null,
+    "muted": true,
+    "phase": "ready"
+   }
+  ],
+  "button": {
+   "pressed": "true",
+   "title": "Couper le son (M)",
+   "state": null
+  },
+  "pill": "",
+  "sound": {
+   "on": true,
+   "blocked": false,
+   "pressed": true,
+   "title": "Couper le son (M)",
+   "pill": "",
+   "toggles": 1,
+   "refusals": 0
+  },
+  "phase": "playing",
+  "f": 97,
+  "notice": ""
+ },
+ "later2": {
+  "scene": "S1",
+  "frame": 129,
+  "playing": true,
+  "duration": 180,
+  "wanted": true,
+  "muted": false,
+  "blocked": false,
+  "keysRelayed": 0,
+  "keysRefused": 0,
+  "frames": [
+   {
+    "staged": false,
+    "wanted": true,
+    "muted": false,
+    "phase": "ready"
+   },
+   {
+    "staged": true,
+    "wanted": null,
+    "muted": true,
+    "phase": "ready"
+   }
+  ],
+  "button": {
+   "pressed": "true",
+   "title": "Couper le son (M)",
+   "state": null
+  },
+  "pill": "",
+  "sound": {
+   "on": true,
+   "blocked": false,
+   "pressed": true,
+   "title": "Couper le son (M)",
+   "pill": "",
+   "toggles": 1,
+   "refusals": 0
+  },
+  "phase": "playing",
+  "f": 129,
+  "notice": ""
+ },
+ "later_audio": {
+  "frame": 99,
+  "title": "A 16:9 son",
+  "audio": {
+   "paused": false,
+   "muted": false,
+   "volume": 1,
+   "t": 3.307
+  }
+ },
+ "chrome_args": "--autoplay-policy=no-user-gesture-required"
+}

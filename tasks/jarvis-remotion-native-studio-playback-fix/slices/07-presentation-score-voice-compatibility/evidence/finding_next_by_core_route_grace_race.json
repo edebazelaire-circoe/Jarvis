@@ -1,0 +1,232 @@
+{
+ "finding": "Finding 7, recorded for Slice 09 (owner: the run stage moves into Variants). The run stage's host starts its own grace play before the band's poll brings Core's order, which then replays the entry from frame 0. Independent QA confirmed it predates Slice 07. Slice 07 made the visible jump-back LARGER for an entry that reveals an anchor: Core now orders the entry from frame 0 (contract § 5), so the jump-back is 78 -> 0 instead of 78 -> 60 before Slice 07. Not fixed here.",
+ "owner": "Slice 09",
+ "predates_slice_07": true,
+ "visible_jump_back": {
+  "before_slice_07": [
+   78,
+   60
+  ],
+  "since_slice_07": [
+   78,
+   0
+  ]
+ },
+ "first_play": [
+  2022,
+  0
+ ],
+ "held": true,
+ "end": {
+  "frame": 149,
+  "playing": false,
+  "phase": "ready",
+  "place": "board"
+ },
+ "core": {
+  "scope": "manual",
+  "phase": "playing",
+  "scene": 2,
+  "play_ms": 5000,
+  "from": 0,
+  "until": 149,
+  "seq": 1,
+  "item_ms": 10293,
+  "item_target_ms": 8000
+ },
+ "lowest_moving_frame": 0,
+ "wraps": [],
+ "orders": [
+  [
+   1559,
+   "order",
+   3,
+   "pause",
+   0,
+   null
+  ],
+  [
+   2018,
+   "order",
+   3,
+   "play",
+   null,
+   null
+  ],
+  [
+   4663,
+   "order",
+   3,
+   "play",
+   0,
+   149
+  ]
+ ],
+ "clocks": [
+  [
+   1577,
+   0,
+   false
+  ],
+  [
+   2022,
+   0,
+   true
+  ],
+  [
+   2270,
+   7,
+   true
+  ],
+  [
+   2536,
+   15,
+   true
+  ],
+  [
+   2804,
+   23,
+   true
+  ],
+  [
+   3070,
+   31,
+   true
+  ],
+  [
+   3337,
+   39,
+   true
+  ],
+  [
+   3604,
+   47,
+   true
+  ],
+  [
+   3869,
+   55,
+   true
+  ],
+  [
+   4136,
+   63,
+   true
+  ],
+  [
+   4402,
+   71,
+   true
+  ],
+  [
+   4665,
+   78,
+   false
+  ],
+  [
+   4665,
+   0,
+   false
+  ],
+  [
+   4665,
+   0,
+   true
+  ],
+  [
+   4935,
+   9,
+   true
+  ],
+  [
+   5203,
+   17,
+   true
+  ],
+  [
+   5470,
+   25,
+   true
+  ],
+  [
+   5736,
+   33,
+   true
+  ],
+  [
+   6002,
+   41,
+   true
+  ],
+  [
+   6269,
+   49,
+   true
+  ],
+  [
+   6537,
+   57,
+   true
+  ],
+  [
+   6802,
+   65,
+   true
+  ],
+  [
+   7068,
+   73,
+   true
+  ],
+  [
+   7336,
+   81,
+   true
+  ],
+  [
+   7603,
+   89,
+   true
+  ],
+  [
+   7869,
+   97,
+   true
+  ],
+  [
+   8137,
+   105,
+   true
+  ],
+  [
+   8402,
+   113,
+   true
+  ],
+  [
+   8671,
+   121,
+   true
+  ],
+  [
+   8935,
+   129,
+   true
+  ],
+  [
+   9203,
+   137,
+   true
+  ],
+  [
+   9470,
+   145,
+   true
+  ],
+  [
+   9604,
+   149,
+   false
+  ]
+ ]
+}

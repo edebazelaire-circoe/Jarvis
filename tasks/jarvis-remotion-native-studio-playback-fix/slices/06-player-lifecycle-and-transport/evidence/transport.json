@@ -1,0 +1,1146 @@
+{
+ "evidence": {
+  "opened": {
+   "frame": 0,
+   "playing": false,
+   "duration": 90,
+   "phase": "ready",
+   "scene": "S1"
+  },
+  "transport": {
+   "toolbars": 1,
+   "name": "Lecture de la vidéo",
+   "buttons": [
+    "Scène précédente",
+    "Lire",
+    "Scène suivante",
+    "Son",
+    "Plus de lecture"
+   ],
+   "slider": {
+    "min": "0",
+    "max": "4439",
+    "now": "0",
+    "text": "Scène 1 sur 9, 0:00 sur 1:14"
+   },
+   "son": [
+    "true",
+    "Son (M) : Le son s'active d'un clic dans l'image de la scène : le navigateur n'autorise le son que sur un geste dans la scène."
+   ],
+   "more": "Plus de lecture",
+   "stageBars": [
+    0
+   ],
+   "embedded": [
+    true
+   ]
+  },
+  "readouts0": {
+   "readouts": [
+    {
+     "where": "page",
+     "text": "0:00 / 1:14"
+    }
+   ],
+   "label": 1,
+   "selected": "pss_000000000001",
+   "slider": {
+    "now": "0",
+    "max": "4439",
+    "text": "Scène 1 sur 9, 0:00 sur 1:14",
+    "disabled": false
+   },
+   "player": {
+    "frame": 0,
+    "playing": false,
+    "duration": 90,
+    "phase": "ready",
+    "scene": "S1"
+   },
+   "open": true
+  },
+  "paused1": {
+   "frame": 42,
+   "playing": false,
+   "duration": 90,
+   "phase": "ready",
+   "scene": "S1"
+  },
+  "paused2": {
+   "frame": 42,
+   "playing": false,
+   "duration": 90,
+   "phase": "ready",
+   "scene": "S1"
+  },
+  "label_paused": "Lire",
+  "resumed": {
+   "frame": 64,
+   "playing": true,
+   "duration": 90,
+   "phase": "ready",
+   "scene": "S1"
+  },
+  "next": {
+   "readouts": [
+    {
+     "where": "page",
+     "text": "0:04 / 1:14"
+    }
+   ],
+   "label": 2,
+   "selected": "pss_000000000002",
+   "slider": {
+    "now": "212",
+    "max": "4439",
+    "text": "Scène 2 sur 9, 0:04 sur 1:14",
+    "disabled": false
+   },
+   "player": {
+    "frame": 16,
+    "playing": true,
+    "duration": 240,
+    "phase": "ready",
+    "scene": "S2"
+   },
+   "open": true
+  },
+  "prev": {
+   "readouts": [
+    {
+     "where": "page",
+     "text": "0:00 / 1:14"
+    }
+   ],
+   "label": 1,
+   "selected": "pss_000000000001",
+   "slider": {
+    "now": "0",
+    "max": "4439",
+    "text": "Scène 1 sur 9, 0:00 sur 1:14",
+    "disabled": false
+   },
+   "player": {
+    "frame": 0,
+    "playing": false,
+    "duration": 90,
+    "phase": "ready",
+    "scene": "S1"
+   },
+   "open": true
+  },
+  "rapid": {
+   "readouts": [
+    {
+     "where": "page",
+     "text": "0:41 / 1:14"
+    }
+   ],
+   "label": 4,
+   "selected": "pss_000000000004",
+   "slider": {
+    "now": "2460",
+    "max": "4439",
+    "text": "Scène 4 sur 9, 0:41 sur 1:14",
+    "disabled": false
+   },
+   "player": {
+    "frame": 0,
+    "playing": false,
+    "duration": 75,
+    "phase": "ready",
+    "scene": "S4"
+   },
+   "open": true
+  },
+  "scrub_fwd_kind": "slider",
+  "scrub_fwd": {
+   "readouts": [
+    {
+     "where": "page",
+     "text": "0:57 / 1:14"
+    }
+   ],
+   "label": 7,
+   "selected": "pss_000000000007",
+   "slider": {
+    "now": "3420",
+    "max": "4439",
+    "text": "Scène 7 sur 9, 0:57 sur 1:14",
+    "disabled": false
+   },
+   "player": {
+    "frame": 48,
+    "playing": false,
+    "duration": 192,
+    "phase": "ready",
+    "scene": "S7"
+   },
+   "open": true
+  },
+  "scrub_back": {
+   "readouts": [
+    {
+     "where": "page",
+     "text": "0:06 / 1:14"
+    }
+   ],
+   "label": 2,
+   "selected": "pss_000000000002",
+   "slider": {
+    "now": "360",
+    "max": "4439",
+    "text": "Scène 2 sur 9, 0:06 sur 1:14",
+    "disabled": false
+   },
+   "player": {
+    "frame": 90,
+    "playing": false,
+    "duration": 240,
+    "phase": "ready",
+    "scene": "S2"
+   },
+   "open": true
+  },
+  "label_end": "Rejouer",
+  "held": {
+   "readouts": [
+    {
+     "where": "page",
+     "text": "1:14 / 1:14"
+    }
+   ],
+   "label": 9,
+   "selected": "pss_000000000009",
+   "slider": {
+    "now": "4439",
+    "max": "4439",
+    "text": "Scène 9 sur 9, 1:14 sur 1:14",
+    "disabled": false
+   },
+   "player": {
+    "frame": 239,
+    "playing": false,
+    "duration": 240,
+    "phase": "ready",
+    "scene": "S9"
+   },
+   "open": true
+  },
+  "failed": null,
+  "played_before_lire": [],
+  "resume_first_play": [
+   12210,
+   42
+  ],
+  "next_first_play_S2": [
+   13116,
+   0
+  ],
+  "replay_first_play_S1": [
+   25658,
+   0
+  ],
+  "core_phase": "idle",
+  "wraps": {}
+ },
+ "probe_ev": [
+  [
+   256,
+   "mount",
+   1,
+   "explorer",
+   "S1",
+   false
+  ],
+  [
+   258,
+   "live",
+   1
+  ],
+  [
+   259,
+   "status",
+   1,
+   "shell"
+  ],
+  [
+   260,
+   "status",
+   1,
+   "preparing"
+  ],
+  [
+   1852,
+   "status",
+   1,
+   "mounting"
+  ],
+  [
+   2090,
+   "ready",
+   1,
+   null,
+   null
+  ],
+  [
+   2091,
+   "status",
+   1,
+   "ready"
+  ],
+  [
+   2093,
+   "order",
+   1,
+   "pause",
+   0,
+   null
+  ],
+  [
+   2133,
+   "clock",
+   1,
+   0,
+   false
+  ],
+  [
+   5432,
+   "order",
+   1,
+   "play",
+   0,
+   null
+  ],
+  [
+   5440,
+   "clock",
+   1,
+   0,
+   false
+  ],
+  [
+   5440,
+   "clock",
+   1,
+   0,
+   true
+  ],
+  [
+   5465,
+   "mount",
+   2,
+   "explorer",
+   "S2",
+   true
+  ],
+  [
+   5465,
+   "status",
+   2,
+   "shell"
+  ],
+  [
+   5465,
+   "status",
+   2,
+   "preparing"
+  ],
+  [
+   5494,
+   "status",
+   2,
+   "mounting"
+  ],
+  [
+   5731,
+   "ready",
+   2,
+   null,
+   null
+  ],
+  [
+   5731,
+   "clock",
+   1,
+   8,
+   true
+  ],
+  [
+   5731,
+   "status",
+   2,
+   "ready"
+  ],
+  [
+   5733,
+   "order",
+   2,
+   "pause",
+   0,
+   null
+  ],
+  [
+   5762,
+   "clock",
+   2,
+   0,
+   false
+  ],
+  [
+   5993,
+   "clock",
+   1,
+   16,
+   true
+  ],
+  [
+   6251,
+   "clock",
+   1,
+   24,
+   true
+  ],
+  [
+   6526,
+   "clock",
+   1,
+   32,
+   true
+  ],
+  [
+   6788,
+   "clock",
+   1,
+   40,
+   true
+  ],
+  [
+   6851,
+   "order",
+   1,
+   "pause",
+   null,
+   null
+  ],
+  [
+   6853,
+   "clock",
+   1,
+   42,
+   false
+  ],
+  [
+   12206,
+   "order",
+   1,
+   "play",
+   42,
+   null
+  ],
+  [
+   12210,
+   "clock",
+   1,
+   42,
+   false
+  ],
+  [
+   12210,
+   "clock",
+   1,
+   42,
+   true
+  ],
+  [
+   12462,
+   "clock",
+   1,
+   49,
+   true
+  ],
+  [
+   12715,
+   "clock",
+   1,
+   57,
+   true
+  ],
+  [
+   12980,
+   "clock",
+   1,
+   64,
+   true
+  ],
+  [
+   13104,
+   "order",
+   2,
+   "play",
+   0,
+   null
+  ],
+  [
+   13116,
+   "clock",
+   2,
+   0,
+   false
+  ],
+  [
+   13116,
+   "clock",
+   2,
+   0,
+   true
+  ],
+  [
+   13134,
+   "live",
+   2
+  ],
+  [
+   13134,
+   "mount",
+   3,
+   "explorer",
+   "S3",
+   true
+  ],
+  [
+   13154,
+   "status",
+   3,
+   "shell"
+  ],
+  [
+   13154,
+   "status",
+   3,
+   "preparing"
+  ],
+  [
+   13178,
+   "status",
+   3,
+   "mounting"
+  ],
+  [
+   13195,
+   "gone",
+   1
+  ],
+  [
+   13398,
+   "ready",
+   3,
+   null,
+   null
+  ],
+  [
+   13407,
+   "status",
+   3,
+   "ready"
+  ],
+  [
+   13408,
+   "clock",
+   2,
+   8,
+   true
+  ],
+  [
+   13408,
+   "order",
+   3,
+   "pause",
+   0,
+   null
+  ],
+  [
+   13457,
+   "clock",
+   3,
+   0,
+   false
+  ],
+  [
+   13660,
+   "clock",
+   2,
+   16,
+   true
+  ],
+  [
+   13807,
+   "order",
+   2,
+   "pause",
+   null,
+   null
+  ],
+  [
+   13817,
+   "clock",
+   2,
+   20,
+   false
+  ],
+  [
+   13963,
+   "mount",
+   4,
+   "explorer",
+   "S1",
+   true
+  ],
+  [
+   13979,
+   "status",
+   4,
+   "shell"
+  ],
+  [
+   13979,
+   "status",
+   4,
+   "preparing"
+  ],
+  [
+   13992,
+   "gone",
+   3
+  ],
+  [
+   14007,
+   "status",
+   4,
+   "mounting"
+  ],
+  [
+   14181,
+   "ready",
+   4,
+   null,
+   null
+  ],
+  [
+   14182,
+   "status",
+   4,
+   "ready"
+  ],
+  [
+   14183,
+   "order",
+   4,
+   "pause",
+   0,
+   null
+  ],
+  [
+   14213,
+   "clock",
+   4,
+   0,
+   false
+  ],
+  [
+   14467,
+   "order",
+   4,
+   "pause",
+   0,
+   null
+  ],
+  [
+   14479,
+   "clock",
+   4,
+   0,
+   false
+  ],
+  [
+   14484,
+   "live",
+   4
+  ],
+  [
+   14545,
+   "gone",
+   2
+  ],
+  [
+   15073,
+   "mount",
+   5,
+   "explorer",
+   "S4",
+   true
+  ],
+  [
+   15073,
+   "status",
+   5,
+   "shell"
+  ],
+  [
+   15073,
+   "status",
+   5,
+   "preparing"
+  ],
+  [
+   15097,
+   "status",
+   5,
+   "mounting"
+  ],
+  [
+   15287,
+   "ready",
+   5,
+   null,
+   null
+  ],
+  [
+   15287,
+   "status",
+   5,
+   "ready"
+  ],
+  [
+   15290,
+   "order",
+   5,
+   "pause",
+   0,
+   null
+  ],
+  [
+   15323,
+   "clock",
+   5,
+   0,
+   false
+  ],
+  [
+   15586,
+   "order",
+   5,
+   "pause",
+   0,
+   null
+  ],
+  [
+   15595,
+   "clock",
+   5,
+   0,
+   false
+  ],
+  [
+   15605,
+   "live",
+   5
+  ],
+  [
+   15677,
+   "gone",
+   4
+  ],
+  [
+   16582,
+   "mount",
+   6,
+   "explorer",
+   "S7",
+   true
+  ],
+  [
+   16584,
+   "status",
+   6,
+   "shell"
+  ],
+  [
+   16584,
+   "status",
+   6,
+   "preparing"
+  ],
+  [
+   16601,
+   "status",
+   6,
+   "mounting"
+  ],
+  [
+   16808,
+   "ready",
+   6,
+   null,
+   null
+  ],
+  [
+   16808,
+   "status",
+   6,
+   "ready"
+  ],
+  [
+   16809,
+   "order",
+   6,
+   "pause",
+   0,
+   null
+  ],
+  [
+   16848,
+   "clock",
+   6,
+   0,
+   false
+  ],
+  [
+   17101,
+   "order",
+   6,
+   "pause",
+   48,
+   null
+  ],
+  [
+   17108,
+   "clock",
+   6,
+   48,
+   false
+  ],
+  [
+   17124,
+   "live",
+   6
+  ],
+  [
+   17181,
+   "gone",
+   5
+  ],
+  [
+   17973,
+   "mount",
+   7,
+   "explorer",
+   "S2",
+   true
+  ],
+  [
+   17982,
+   "status",
+   7,
+   "shell"
+  ],
+  [
+   17982,
+   "status",
+   7,
+   "preparing"
+  ],
+  [
+   18003,
+   "status",
+   7,
+   "mounting"
+  ],
+  [
+   18166,
+   "ready",
+   7,
+   null,
+   null
+  ],
+  [
+   18167,
+   "status",
+   7,
+   "ready"
+  ],
+  [
+   18168,
+   "order",
+   7,
+   "pause",
+   0,
+   null
+  ],
+  [
+   18217,
+   "clock",
+   7,
+   0,
+   false
+  ],
+  [
+   18470,
+   "order",
+   7,
+   "pause",
+   90,
+   null
+  ],
+  [
+   18484,
+   "clock",
+   7,
+   90,
+   false
+  ],
+  [
+   18485,
+   "live",
+   7
+  ],
+  [
+   18550,
+   "gone",
+   6
+  ],
+  [
+   19170,
+   "mount",
+   8,
+   "explorer",
+   "S9",
+   true
+  ],
+  [
+   19172,
+   "status",
+   8,
+   "shell"
+  ],
+  [
+   19172,
+   "status",
+   8,
+   "preparing"
+  ],
+  [
+   19194,
+   "status",
+   8,
+   "mounting"
+  ],
+  [
+   19418,
+   "ready",
+   8,
+   null,
+   null
+  ],
+  [
+   19421,
+   "status",
+   8,
+   "ready"
+  ],
+  [
+   19422,
+   "order",
+   8,
+   "pause",
+   0,
+   null
+  ],
+  [
+   19456,
+   "clock",
+   8,
+   0,
+   false
+  ],
+  [
+   19710,
+   "order",
+   8,
+   "pause",
+   239,
+   null
+  ],
+  [
+   19723,
+   "clock",
+   8,
+   239,
+   false
+  ],
+  [
+   19763,
+   "live",
+   8
+  ],
+  [
+   19772,
+   "gone",
+   7
+  ],
+  [
+   25052,
+   "mount",
+   9,
+   "explorer",
+   "S1",
+   true
+  ],
+  [
+   25062,
+   "status",
+   9,
+   "shell"
+  ],
+  [
+   25062,
+   "status",
+   9,
+   "preparing"
+  ],
+  [
+   25088,
+   "status",
+   9,
+   "mounting"
+  ],
+  [
+   25294,
+   "ready",
+   9,
+   null,
+   null
+  ],
+  [
+   25295,
+   "status",
+   9,
+   "ready"
+  ],
+  [
+   25295,
+   "order",
+   9,
+   "pause",
+   0,
+   null
+  ],
+  [
+   25347,
+   "clock",
+   9,
+   0,
+   false
+  ],
+  [
+   25636,
+   "order",
+   9,
+   "play",
+   0,
+   null
+  ],
+  [
+   25646,
+   "live",
+   9
+  ],
+  [
+   25646,
+   "mount",
+   10,
+   "explorer",
+   "S2",
+   true
+  ],
+  [
+   25657,
+   "clock",
+   9,
+   0,
+   false
+  ],
+  [
+   25658,
+   "clock",
+   9,
+   0,
+   true
+  ],
+  [
+   25684,
+   "status",
+   10,
+   "shell"
+  ],
+  [
+   25684,
+   "status",
+   10,
+   "preparing"
+  ],
+  [
+   25690,
+   "gone",
+   8
+  ],
+  [
+   25718,
+   "status",
+   10,
+   "mounting"
+  ],
+  [
+   25915,
+   "ready",
+   10,
+   null,
+   null
+  ],
+  [
+   25917,
+   "status",
+   10,
+   "ready"
+  ],
+  [
+   25920,
+   "order",
+   10,
+   "pause",
+   0,
+   null
+  ],
+  [
+   25921,
+   "clock",
+   9,
+   7,
+   true
+  ],
+  [
+   25956,
+   "clock",
+   10,
+   0,
+   false
+  ],
+  [
+   26186,
+   "clock",
+   9,
+   15,
+   true
+  ]
+ ]
+}

@@ -1,0 +1,39 @@
+{
+ "run": "d-jarvis-1",
+ "label": "direct run 1",
+ "side": "direct",
+ "topic": "jarvis",
+ "totals": {
+  "cost_usd": 0.40030999999999994,
+  "duration_ms": 309572,
+  "num_turns": 14
+ },
+ "agents": {
+  "direct": {
+   "description": null,
+   "tool_calls": 13,
+   "by_tool": {
+    "Read": 5,
+    "Bash": 6,
+    "Write": 2
+   },
+   "refused_or_error": [
+    {
+     "tool": "Bash",
+     "result": "Exit code 2\n/usr/bin/bash: -c: line 217: unexpected EOF while looking for matching `''"
+    }
+   ],
+   "frames_viewed": 4,
+   "usage": {
+    "input_tokens": 18,
+    "output_tokens": 513,
+    "cache_read_input_tokens": 332140,
+    "cache_creation_input_tokens": 44235
+   },
+   "elapsed_s": null
+  }
+ },
+ "files": {
+  "stream.jsonl": 57
+ }
+}

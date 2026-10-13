@@ -36,7 +36,10 @@ START_TIMEOUT_S = 120.0
 IDLE_GUARD_MARGIN_S = 120.0
 STOP_GRACE_S = 5.0
 MAX_DIAGNOSTIC_LINES = 12
+#: Dossiers gardés dans `studio-edits/` : une mise de côté de plus retire la PLUS ANCIENNE (noms triables et monotones) et le
+#: journalise (`remotion_studio.edits_rotated`, les noms retirés).
 MAX_SAVED_EDITS = 5
+MAX_SET_ASIDE_NAMED = 50
 #: Ports acceptés quand l'opérateur en fixe un (`JARVIS_REMOTION_STUDIO_PORT`) : non privilégiés seulement.
 MIN_PORT = 1024
 MAX_PORT = 65535
@@ -71,23 +74,40 @@ class StudioErrorCode(str, Enum):
     UNAVAILABLE = "remotion_studio_unavailable"
     ACK_REQUIRED = "remotion_studio_ack_required"
     STATE_UNREADABLE = "remotion_studio_state_unreadable"
+    # Slice 12 (native-studio-playback-fix) : espace de travail et publication vers une variante.
+    UNPUBLISHED_EDITS = "remotion_studio_unpublished_edits"
+    PUBLISH_CONFIRM_REQUIRED = "remotion_studio_publish_confirm_required"
+    PUBLISH_NOTHING = "remotion_studio_publish_nothing"
+    PUBLISH_BASE_MISMATCH = "remotion_studio_publish_base_mismatch"
+    PUBLISH_CONFLICT = "remotion_studio_publish_conflict"
+    PUBLISH_INVALID_FILE = "remotion_studio_publish_invalid_file"
+    PUBLISH_IMPORT_REFUSED = "remotion_studio_publish_import_refused"
+    PUBLISH_REFUSED = "remotion_studio_publish_refused"
+    PUBLISH_UNAVAILABLE = "remotion_studio_publish_unavailable"
+    #: QA Slice 12 (I1) : l'espace ne donne plus l'empreinte de la liste confirmée ; rien n'est publié, la page relit et reconfirme.
+    PUBLISH_LISTING_CHANGED = "remotion_studio_publish_listing_changed"
 
 
 _HTTP = {StudioErrorCode.INVALID: 400, StudioErrorCode.ACK_REQUIRED: 400, StudioErrorCode.UNAVAILABLE: 503, StudioErrorCode.STORE_FAILED: 500,
-         StudioErrorCode.INTERNAL_ERROR: 500, StudioErrorCode.SOURCE_UNAVAILABLE: 404}
+         StudioErrorCode.INTERNAL_ERROR: 500, StudioErrorCode.SOURCE_UNAVAILABLE: 404,
+         StudioErrorCode.PUBLISH_CONFIRM_REQUIRED: 400, StudioErrorCode.PUBLISH_INVALID_FILE: 422,
+         StudioErrorCode.PUBLISH_IMPORT_REFUSED: 422, StudioErrorCode.PUBLISH_REFUSED: 422, StudioErrorCode.PUBLISH_UNAVAILABLE: 503}
 
 
 class StudioError(Exception):
     """Refus de précondition ou échec typé ; `code` stable (préfixe `remotion_studio_`), `detail` borné et sans chemin."""
 
-    def __init__(self, code: StudioErrorCode, detail: str = "") -> None:
+    def __init__(self, code: StudioErrorCode, detail: str = "", *, extra: Mapping[str, Any] | None = None, status: int | None = None) -> None:
         self.code = code
         self.detail = bound_detail(detail)
+        #: Champs de plus dans l'enveloppe d'erreur (publication : code de la porte d'édition, diagnostics, versions) ; jamais un chemin.
+        self.extra = dict(extra or {})
+        self._status = status
         super().__init__(f"{code.value}: {self.detail}" if self.detail else code.value)
 
     @property
     def http_status(self) -> int:
-        return _HTTP.get(self.code, 409)
+        return self._status or _HTTP.get(self.code, 409)
 
 
 @dataclass(frozen=True, slots=True)
@@ -217,6 +237,11 @@ class StudioState:
     diagnostics: list[str] = field(default_factory=list)
     modified_files: list[str] = field(default_factory=list)
     edits_saved: int = 0
+    #: QA Slice 12 (B1) : ce que le DERNIER lancement a mis de côté (`studio-edits`) parce que ce n'était pas la forme de l'espace
+    #: (fichier ou dossier de premier niveau étranger, lien, jonction, lien dur). Remis à zéro à chaque lancement.
+    set_aside: list[str] = field(default_factory=list)
+    #: Empreinte (`listing_digest`) de la liste `modified_files` relevée ; jamais persistée (recalculée à chaque relevé).
+    work_digest: str = ""
     egress_blocked: int = 0
     ws_open: int = 0
 
@@ -226,7 +251,8 @@ class StudioState:
                 "port": self.port, "process_ref": self.process_ref, "launch_id": self.launch_id, "started_at": self.started_at,
                 "ready_at": self.ready_at, "synced_at": self.synced_at, "syncs": self.syncs, "restarts": self.restarts,
                 "last_error_code": self.last_error_code, "last_error_detail": self.last_error_detail,
-                "stop_reason": self.stop_reason, "diagnostics": self.diagnostics[-MAX_DIAGNOSTIC_LINES:], "edits_saved": self.edits_saved}
+                "stop_reason": self.stop_reason, "diagnostics": self.diagnostics[-MAX_DIAGNOSTIC_LINES:], "edits_saved": self.edits_saved,
+                "set_aside": self.set_aside[:MAX_SET_ASIDE_NAMED]}
 
     @classmethod
     def from_payload(cls, raw: object) -> "StudioState":
@@ -249,6 +275,8 @@ class StudioState:
         for key in ("syncs", "restarts", "edits_saved"):
             value = raw.get(key, 0)
             setattr(state, key, value if type(value) is int and value >= 0 else 0)
+        aside = raw.get("set_aside")
+        state.set_aside = [bound_detail(str(item)) for item in aside[:MAX_SET_ASIDE_NAMED]] if isinstance(aside, list) else []
         diagnostics = raw.get("diagnostics")
         state.diagnostics = [bound_detail(line) for line in diagnostics[:MAX_DIAGNOSTIC_LINES]] if isinstance(diagnostics, list) else []
         return state
@@ -273,6 +301,11 @@ def public_view(state: StudioState, *, idle_timeout_s: float, now: float, config
         "viewers": state.ws_open if ready else 0, "stop_reason": state.stop_reason or None,
         "last_error_code": state.last_error_code or None, "last_error_detail": state.last_error_detail or None,
         "diagnostics": [bound_detail(line) for line in state.diagnostics[-MAX_DIAGNOSTIC_LINES:]],
-        "work_copy": {"modified_files": list(state.modified_files)[:20], "edits_saved": state.edits_saved},
+        # Slice 12 : l'espace de travail (modifiable) et sa base ; `modified_files` les nomme TOUS (la confirmation de publication les
+        # montre tous), `unpublished` en est le compte, `digest` l'empreinte que la page renvoie avec `publish` (QA Slice 12, I1) ;
+        # `set_aside` : ce que le dernier lancement a mis de côté parce que ce n'était pas la forme de l'espace (B1).
+        "work_copy": {"modified_files": list(state.modified_files), "unpublished": len(state.modified_files),
+                      "digest": state.work_digest or None, "set_aside": list(state.set_aside),
+                      "base": state.pin.to_dict() if state.pin else None, "writable": True, "edits_saved": state.edits_saved},
         "egress_blocked": state.egress_blocked,
     }

@@ -20,6 +20,7 @@ Core rendus tels quels, erreurs et résultats `refused`/`stale` compris ; Core i
 | `GET .../presentations/{presentation_id}/reloads` | idem (Slice 06) : derniers rechargements, scènes non confirmées |
 | `GET .../variants/{variant_id}/history` | idem (Slice 08) |
 | `GET .../variants/{variant_id}/art-direction` | idem (Slice 07, **lecture seule** : le chip de l'inspecteur ; création, remplacement, repli et candidates restent hors du relais) |
+| `GET .../variants/{variant_id}/composition-clock` | idem (native-studio-playback-fix Slice 04, **lecture seule**) : la carte de l'horloge de composition de la variante |
 | `POST .../variants/{variant_id}/undo` et `.../redo` | idem, **`actor` forcé à `user`** (Slice 08) |
 | `POST /api/presentation-studio/presentations` | idem (Slice 20, **creation**), **`actor` force a `user`** ; corps `{title, engine?, experimental_confirmed?, reason?}` : la SEULE porte par laquelle un moteur est nomme ; `slidecar` exige `experimental_confirmed: true` |
 | `POST .../presentations/{presentation_id}/experiment` | idem (Slice 20) : copie « experience Slidecar » = NOUVEAU document, **`actor` force a `user`** ; corps `{experimental_confirmed, reason?}` |
@@ -28,6 +29,7 @@ Core rendus tels quels, erreurs et résultats `refused`/`stale` compris ; Core i
 | `POST /api/presentation-studio/rail/display-state` | idem : ce que la page constate (rail visible, fenetre ouverte) |
 | `POST .../presentations/{presentation_id}/rail` | idem, **`actor` force a `user`** ; `{action: hide|show|archive|restore|rename|acknowledge, confirmed?, title?}` |
 | `GET /api/presentation-studio/playback` | `GET /v1/presentation-studio/playback` : « où en est-on » (Slice 12) |
+| `GET /api/presentation-studio/playback/preload`, `.../playback/surface` | idem (Slice 23 ; native-studio-playback-fix Slice 09 : ce que le lecteur de Variantes monte pour la lecture) |
 | `POST /api/presentation-studio/playback/{verb}` | idem, **`actor` forcé à `user`** ; `verb` : `start stop pause resume next previous goto detour return reveal hide edit skip_sequence play advance` (Slices 12, 23) |
 
 **Jamais relayés** à la page : `GET .../playback/armed` (les phrases des cues armées) et `POST .../cues/satisfied` (le suiveur
@@ -77,6 +79,7 @@ _READ_ROUTES = (
     ("GET", "studio_reloads", "/{presentation_id}/reloads"),
     ("GET", "studio_history", "/{presentation_id}/variants/{variant_id}/history"),
     ("GET", "studio_art_direction", "/{presentation_id}/variants/{variant_id}/art-direction"),
+    ("GET", "studio_composition_clock", "/{presentation_id}/variants/{variant_id}/composition-clock"),
 )
 PLAYBACK_ROUTE = "/api/presentation-studio/playback"
 #: Rail des presentations : la liste (lecture), le rapport de la page (ecran) et les gestes persistants (acteur force `user`).
@@ -121,6 +124,7 @@ class PresentationStudioRelayRoutes(CaptureRelayRoutes):
                 web.post(STUDIO_ROUTE + "/mount-reports", self._relay("studio_mount_report", CORE_PREFIX + "/mount-reports")),
                 web.get(PLAYBACK_ROUTE, self._relay("studio_playback", PLAYBACK_PREFIX)),
                 web.get(f"{PLAYBACK_ROUTE}/preload", self._relay("studio_playback_preload", PLAYBACK_PREFIX + "/preload")),
+                web.get(f"{PLAYBACK_ROUTE}/surface", self._relay("studio_playback_surface", PLAYBACK_PREFIX + "/surface")),
                 *(web.post(f"{PLAYBACK_ROUTE}/{verb.value}", self._forced(f"/{verb.value}", f"studio_playback_{verb.value}",
                                                                            prefix=PLAYBACK_PREFIX))
                   for verb in Verb)]

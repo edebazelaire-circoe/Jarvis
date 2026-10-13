@@ -116,6 +116,16 @@ function makeWorld(env,options){
       world.tries=(world.tries||[]).concat([{source:id,node:node.variant_id,body}]);
       return json(201,{node:Object.assign({},node),activated:false,trial:true,adopted:false,source_variant_id:source.variant_id,presentation_revision:world.revision,scene_id:body.scene_id});
     }
+    /* native-studio-playback-fix Slice 06: Variants reads the composition clock as soon as the preview is on screen. The default deck is not
+       Remotion (`lab.dial`): Core says so (`clock: null`, `problem`), never an HTTP error. `world.clock(id, doc)` serves a map instead. */
+    if(seg[1]==='variants'&&seg[3]==='composition-clock'&&method==='GET'){
+      const doc=world.doc(id);
+      if(!doc)return err(404,'presentation_studio_unknown_variant','unknown variant');
+      const served=typeof world.clock==='function'?world.clock(id,doc):null;
+      if(served)return json(200,Object.assign({presentation_id:PID,variant_id:id,variant_revision:doc.revision,problem:null},served));
+      return json(200,{presentation_id:PID,variant_id:id,variant_revision:doc.revision,key:null,clock:null,
+        problem:{code:'composition_scene_not_remotion',message:'Cette scène n\'est pas une scène Remotion.',scene_id:doc.scenes[0]?doc.scenes[0].scene_id:null}});
+    }
     if(seg[1]==='variants'&&seg[3]==='art-direction'&&method==='GET'){
       const art=world.art.get(id);
       return art?json(200,{art_direction:art}):err(404,'presentation_studio_unknown_art_direction','none');

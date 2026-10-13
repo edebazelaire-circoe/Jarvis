@@ -1,0 +1,21 @@
+{
+ "scrubbers": [
+  {
+   "kind": "variants-slider",
+   "disabled": true,
+   "text": "La partition mène la présentation : la position suit les éléments (⏮ ⏭, ← →), elle ne se fait pas glisser."
+  }
+ ],
+ "held_on_899": true,
+ "held": {
+  "frame": 899,
+  "playing": false,
+  "phase": "ready",
+  "place": "variants"
+ },
+ "first_play": [
+  4830,
+  0
+ ],
+ "failed": null
+}

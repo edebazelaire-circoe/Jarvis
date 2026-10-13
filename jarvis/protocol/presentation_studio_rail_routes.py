@@ -8,8 +8,8 @@ Meme garde, memes enveloppes et meme jeton porteur que `presentation_studio_rout
 | GET | `/v1/presentation-studio/rail` | `{presentations: [{...resume, hidden, archived, work: {state, label, age_s, code?, message?}}], problems, work_revision, ui, playing}` ; masquees et archivees comprises (la page range), triees visibles puis masquees puis archivees |
 | POST | `/v1/presentation-studio/presentations/{presentation_id}/rail` | `{action: hide|show|archive|restore|rename|acknowledge, actor?: user|brain, confirmed?, title?}` -> `{presentation_id, action, changed, hidden, archived, restorable}` (`rename` : `{title, revision}`) ; `archive` par le cerveau sans `confirmed: true` : 400 `presentation_studio_confirmation_required` ; pendant sa lecture : 409 `presentation_studio_variant_in_playback` |
 | POST | `/v1/presentation-studio/presentations/{presentation_id}/work` | `{event: begin|success|failure|ack, label?, code?, message?}` -> `{presentation_id, work}` (porte du cerveau, jamais relayee a la page) |
-| POST | `/v1/presentation-studio/rail/display` | `{action: open_window|close_window|show_rail|hide_rail, presentation_id?}` -> `{seq, request, reported}` (demande d'ecran du cerveau, jamais relayee) |
-| POST | `/v1/presentation-studio/rail/display-state` | `{rail_visible, window_open, presentation_id, applied_seq?}` -> `{seq, request, reported}` (rapport de la page, relaye) |
+| POST | `/v1/presentation-studio/rail/display` | `{action: show_rail|hide_rail, presentation_id?}` -> `{seq, request, reported}` (demande d'ecran du cerveau, jamais relayee) |
+| POST | `/v1/presentation-studio/rail/display-state` | `{rail_visible, variants_open, presentation_id, applied_seq?}` -> `{seq, request, reported}` (rapport de la page, relaye) |
 """
 
 from __future__ import annotations

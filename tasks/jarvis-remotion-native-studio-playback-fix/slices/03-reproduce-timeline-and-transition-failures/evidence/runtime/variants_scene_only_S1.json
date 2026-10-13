@@ -1,0 +1,29 @@
+{
+ "opened": {
+  "frame": 24,
+  "playing": true,
+  "duration": 90,
+  "phase": "ready",
+  "scene": "S1"
+ },
+ "gesture": "legacy:Jouer cette slide",
+ "after": {
+  "readouts": [
+   {
+    "where": "page",
+    "text": "00:05 / 00:08"
+   }
+  ],
+  "label": 1,
+  "selected": "pss_000000000001",
+  "slider": null,
+  "player": null,
+  "open": false
+ },
+ "first_play_after_gesture": [
+  2801,
+  32
+ ],
+ "max_frame_after_gesture": 32,
+ "wraps_after_gesture": []
+}

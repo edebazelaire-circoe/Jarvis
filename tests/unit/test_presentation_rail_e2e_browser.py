@@ -58,17 +58,14 @@ async def test_the_rail_lists_real_presentations_with_their_real_work_state_and_
             {"click": ".jvr-menu button[data-act=\"hide\"]"},
             {"until": "document.querySelectorAll('#presentationRail .jvr-item').length===2", "ms": 8000},
             {"value": "after_hide", "expr": ITEMS},
-            # open the window on the first presentation: the real prefab is mounted in a sandboxed frame
+            # a click on the first presentation opens Variants on it, windowed (Slice 09 of native-studio-playback-fix: the floating
+            # window host is retired, Variants is the one surface): rail docked, the tree's two variants, transport (Slice 10: the variant bar
+            # is merged into the tree, `[` `]` stay)
             {"eval": f"document.querySelector('#presentationRail .jvr-item[data-id=\"{rig.pid}\"]').click()"},
-            {"until": "!!document.querySelector('#jvPresWindow:not([hidden]) .jvw-pip')", "ms": 15000},
-            {"value": "window", "expr": "(()=>{const w=document.querySelector('#jvPresWindow');return {title:w.querySelector('.jvw-title').textContent,pips:w.querySelectorAll('.jvw-pip').length,chip:w.querySelector('.jvw-chip').textContent,veil:w.querySelector('.jvw-veil').hidden,frames:w.querySelectorAll('iframe').length}})()"},
-            {"shot": str(tmp_path / "window.png")},
-            # the Studio from the menu: windowed, rail docked, variant bar, play buttons
-            {"click": "#jvPresWindow .jvw-bar button:nth-of-type(3)"},
             {"until": "!!window.JarvisStudioExplorer&&JarvisStudioExplorer.isOpen&&JarvisStudioExplorer.isOpen()", "ms": 15000},
-            {"until": "document.querySelectorAll('#jvStudioExplorer .jvx-vchip').length===2", "ms": 15000},
+            {"until": "JarvisStudioExplorer.state().live===2", "ms": 15000},
             {"wait": 500},
-            {"value": "studio", "expr": "(()=>{const r=document.querySelector('#presentationRail').getBoundingClientRect(),x=document.querySelector('#jvStudioExplorer').getBoundingClientRect();return {docked:document.documentElement.classList.contains('jvr-studio'),railLeft:r.left,railTop:r.top,explorerLeft:x.left,railInert:!!document.querySelector('#presentationRail').closest('[inert]'),chips:document.querySelectorAll('#jvStudioExplorer .jvx-vchip').length,play:[...document.querySelectorAll('#jvStudioExplorer .jvx-play button')].map(b=>b.textContent.trim()),windowOpen:!document.querySelector('#jvPresWindow').hidden,fullscreen:!!document.fullscreenElement}})()"},
+            {"value": "studio", "expr": "(()=>{const r=document.querySelector('#presentationRail').getBoundingClientRect(),x=document.querySelector('#jvStudioExplorer').getBoundingClientRect();return {docked:document.documentElement.classList.contains('jvr-studio'),railLeft:r.left,railTop:r.top,explorerLeft:x.left,railInert:!!document.querySelector('#presentationRail').closest('[inert]'),chips:JarvisStudioExplorer.state().live,vbar:document.querySelectorAll('#jvStudioExplorer .jvx-vbar,#jvStudioExplorer .jvx-vchip').length,play:[...document.querySelectorAll('#jvStudioExplorer .jvx-transport button')].filter(b=>!b.hidden).map(b=>b.getAttribute('aria-label')||b.textContent.trim()),windowOpen:!!document.querySelector('#jvPresWindow'),pid:JarvisStudioExplorer.state().presentation_id,fullscreen:!!document.fullscreenElement}})()"},
             {"shot": str(tmp_path / "studio.png")},
             # the rail stays usable inside the Studio: its menu opens above it
             {"eval": CONTEXT % pid2},
@@ -76,10 +73,11 @@ async def test_the_rail_lists_real_presentations_with_their_real_work_state_and_
             {"value": "studio_menu", "expr": "(()=>{const m=document.querySelector('.jvr-menu').getBoundingClientRect();const top=document.elementFromPoint(m.left+20,m.top+20);return {onTop:!!top&&!!top.closest('.jvr-menu'),z:getComputedStyle(document.querySelector('.jvr-menu')).zIndex}})()"},
             {"key": "Escape"},
             {"value": "studio_still_open", "expr": "JarvisStudioExplorer.isOpen()"},
-            # variant bar: ] steps to the other variant
+            # ] steps to the other variant (the tree's selection follows)
+            {"value": "before_step", "expr": "JarvisStudioExplorer.state().selected"},
             {"eval": "document.querySelector('#jvStudioExplorer').dispatchEvent(new KeyboardEvent('keydown',{key:']',bubbles:true,cancelable:true}))"},
             {"wait": 600},
-            {"value": "stepped", "expr": "[...document.querySelectorAll('#jvStudioExplorer .jvx-vchip')].map(b=>b.getAttribute('aria-pressed'))"},
+            {"value": "stepped", "expr": "[JarvisStudioExplorer.state().selected,document.querySelectorAll('#jvStudioExplorer .jvx-row[aria-selected=\"true\"]').length]"},
         ], viewport="1440x900", timeout=300)
         reads = result["reads"]
         assert [i[0] for i in reads["items"]] == ["Atelier du cadran", "Bilan trimestriel", "Roadmap produit"] or sorted(i[0] for i in reads["items"]) == sorted(["Atelier du cadran", "Bilan trimestriel", "Roadmap produit"])
@@ -89,14 +87,17 @@ async def test_the_rail_lists_real_presentations_with_their_real_work_state_and_
         assert by_name["Atelier du cadran"] == ("done", GREEN)
         assert [f.replace(" ", "") for f in reads["folds"]] == ["▸Archivées(1)"]
         assert reads["palette"][1] > reads["palette"][0], "right of the tool palette"
-        assert reads["menu"] == ["open", "studio", "edit", "play", "hide", "rename", "ack", "archive"]
+        assert reads["menu"] == ["open", "studio", "edit", "play", "hide", "rename", "ack", "archive"]  # « Remotion Studio… » (Slice 11)
         assert sorted(i[0] for i in reads["after_hide"]) == ["Atelier du cadran", "Bilan trimestriel"]
-        assert reads["window"]["title"] == "Atelier du cadran" and reads["window"]["pips"] == 3 and reads["window"]["chip"].startswith("variante #")
+        assert reads["studio"]["pid"] == rig.pid, "the rail click opens Variants on that presentation"
         assert reads["studio"]["docked"] is True and reads["studio"]["railLeft"] == 8 and reads["studio"]["explorerLeft"] > 150
         assert reads["studio"]["railInert"] is False and reads["studio"]["chips"] == 2 and reads["studio"]["fullscreen"] is False
-        assert reads["studio"]["play"] == ["Jouer cette slide", "Tout jouer"] and reads["studio"]["windowOpen"] is False
+        assert reads["studio"]["vbar"] == 0, "Slice 10: no variant bar (merged into the tree)"
+        # Slice 06 (native-studio-playback-fix): one transport toolbar; « Jouer cette slide » became the « ⋯ » entry « Lire seulement cette scène »;
+        # Slice 10: « Présenter » is on the scene row under it
+        assert reads["studio"]["play"] == ["Scène précédente", "Lire", "Scène suivante", "Son", "Plus de lecture"] and reads["studio"]["windowOpen"] is False
         assert reads["studio_menu"]["onTop"] is True and reads["studio_still_open"] is True, "Escape in the rail menu does not close the Studio"
-        assert sorted(reads["stepped"]) == ["false", "true"]
+        assert reads["stepped"][0] != reads["before_step"] and reads["stepped"][1] == 1, (reads["before_step"], reads["stepped"])
         assert not noise(result), noise(result)
 
         # what the page wrote is in the real store, beside the manifest, and the manifest did not move
@@ -156,7 +157,11 @@ async def test_archive_confirm_rename_and_restore_through_the_real_page(tmp_path
         assert rail_doc["archived"] is False and rail_doc["hidden"] is False
 
 
-async def test_the_studio_plays_one_slide_or_everything_through_the_real_playback_routes(tmp_path):
+async def test_read_only_this_scene_never_starts_a_run_nor_closes_variants(tmp_path):
+    """Contract § 5 table / PX-21 (native-studio-playback-fix Slice 06): « Jouer cette slide » used to start a `rehearsal` run through the
+    playback routes and close Variants. It is now the « ⋯ » entry « Lire seulement cette scène »: video semantics in the Variants Player, no
+    run, Variants stays open (the rehearsal is « Présenter › Répétition », Slice 07). This deck is HTML: the entry says why there is no video."""
+
     async with InspectorRig(tmp_path) as rig:
         core = rig.core
         revision = (await core.call("GET", f"/{rig.pid}/variants/{rig.vid}"))[1]["revision"]
@@ -167,17 +172,21 @@ async def test_the_studio_plays_one_slide_or_everything_through_the_real_playbac
             {"eval": f"JarvisStudioExplorer.open({{presentation_id:'{rig.pid}',fullscreen:false}})"},
             {"until": "!!document.querySelector('#jvStudioExplorer .jvx-scene')", "ms": 20000},
             {"click": "#jvStudioExplorer .jvx-scene:nth-child(2)"},
-            {"wait": 400},
+            {"until": "JarvisStudioExplorer.playback.view().phase==='unavailable'", "ms": 20000},
             {"value": "scene", "expr": "document.querySelector('#jvStudioExplorer .jvx-scene-line .jvx-scene-title').textContent"},
-            {"click": "#jvStudioExplorer .jvx-play button:nth-child(1)"},
-            {"until": "(()=>{const v=JarvisStudioPlayer.view();return !!v&&v.running===true})()", "ms": 20000},
-            {"wait": 800},
-            {"value": "view", "expr": "(()=>{const v=JarvisStudioPlayer.view();return {role:v.role,phase:v.phase,pid:v.presentation_id,position:v.position}})()"},
+            {"value": "lire", "expr": "(()=>{const b=document.querySelector('#jvStudioExplorer [role=\"toolbar\"] [data-act=\"continuous\"]');return [b.getAttribute('aria-disabled'),b.title]})()"},
+            {"click": "#jvStudioExplorer [aria-haspopup=\"menu\"]"},
+            {"until": "!!document.querySelector('#jvStudioExplorer .jvx-menu')", "ms": 5000},
+            {"eval": "[...document.querySelectorAll('#jvStudioExplorer .jvx-menu [role=\"menuitem\"]')].find(b=>b.textContent.includes('Lire seulement cette scène')).click()"},
+            {"wait": 1500},
+            {"value": "notice", "expr": "document.querySelector('#jvStudioExplorer .jvx-notice-text').textContent"},
             {"value": "explorer_open", "expr": "JarvisStudioExplorer.isOpen()"},
         ], viewport="1440x900", timeout=240)
         reads = result["reads"]
         state = (await core.client.presentation_studio_playback_state())["state"]
         assert reads["scene"] == "Chiffres"
-        assert reads["explorer_open"] is False, (reads, "the Studio closes when the run starts")
-        assert state["role"] == "rehearsal" and state["presentation_id"] == rig.pid, state
+        assert reads["lire"][0] == "true" and "présentation Remotion" in reads["lire"][1], "« Lire » is disabled with its reason"
+        assert "présentation Remotion" in reads["notice"], "the overflow entry says the same reason when activated"
+        assert reads["explorer_open"] is True, "Variants stays open"
+        assert state.get("running") is not True and state.get("role") != "rehearsal", f"no run started: {state}"
         assert not noise(result), noise(result)

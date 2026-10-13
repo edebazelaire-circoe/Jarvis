@@ -1,0 +1,16 @@
+﻿{
+  "slice_id": "04",
+  "title": "One composition and one playback clock contract",
+  "dependencies": [
+    "02-product-experience-contract",
+    "03-reproduce-timeline-and-transition-failures"
+  ],
+  "task_type": null,
+  "task_type_resolution_required": true,
+  "requires_caveman": true,
+  "requires_coding_guideline": true,
+  "frontend": false,
+  "requires_impeccable": false,
+  "claude_for_frontend_when_available": false,
+  "requires_agent_trace_analysis": false
+}

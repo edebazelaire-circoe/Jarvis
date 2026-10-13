@@ -7,7 +7,10 @@
    porte `frame-src <origine du bac à sable>` et rien d'autre ; la page principale du Control Center encadre déjà un visualiseur.
 
    Protocole avec la page de la scène (`rsh: 1`, même origine, source = `contentWindow` du cadre, champs exacts) :
-   - fenêtre -> page : `props {props, data?}`, `control {action, frame?, until?}`, `cue {name, frame}`, `teardown {}` ;
+   - fenêtre -> page : `props {props, data?}`, `control {action, frame?, until?}`, `cue {name, frame}`, `teardown {}`, `sound {muted}` (Slice 08 de
+     native-studio-playback-fix : le son voulu ; seul le cadre VIVANT le reçoit, un cadre préchargé reste muet) ;
+   - page -> fenêtre : `audio {muted, blocked}` (l'état réel du son, `blocked` : refusé par le navigateur) et `key {key}` (une touche de `KEYS`
+     frappée dans la scène de Variantes ; même contrôle de source et d'origine) ;
    - page -> fenêtre : `clock {frame, playing, duration, fps}` (Slice 12 : où en est le lecteur, au plus 4 par seconde ; conseil de
      l'iframe, jamais envoyé à Core) ;
    - page -> fenêtre : `status {phase, ...}` avec `phase` parmi `shell`, `preparing`, `mounting`, `ready`, `failed`, `killed`,
@@ -17,7 +20,9 @@
   const SHELL=1;
   const STAGE_PATH='/remotion-stage';
   const PHASES=Object.freeze(['shell','preparing','mounting','ready','failed','killed','scene_error','notice']);
-  const HOST_FIELDS=Object.freeze({props:['props','data'],control:['action','frame','until'],cue:['name','frame'],teardown:[]});
+  const HOST_FIELDS=Object.freeze({props:['props','data'],control:['action','frame','until'],cue:['name','frame'],teardown:[],sound:['muted']});
+  /* The same list as `RemotionSandboxProtocol.KEYS` (a test keeps them equal): the § 4.15 keys a scene with the focus passes on. */
+  const KEYS=Object.freeze([' ','ArrowLeft','ArrowRight','PageUp','PageDown','Home','End',',','.','f','F','m','M','Escape']);
   const ACTIONS=Object.freeze(['play','pause','seek']);
   const MAX_TEXT=300;
   const MAX_FRAMES=108000;
@@ -26,20 +31,24 @@
   function plain(value){return value!==null&&typeof value==='object'&&!Array.isArray(value)}
   function clip(value){return typeof value==='string'?value.replace(/[\u0000-\u001f\u007f]/g,' ').slice(0,MAX_TEXT):''}
 
-  function stageUrl(prefab){
-    return `${STAGE_PATH}?id=${encodeURIComponent(prefab.id)}&v=${encodeURIComponent(String(prefab.version))}`;
+  /* `embed` (native-studio-playback-fix Slice 06): `variants` = the page is the Player of Variants, whose transport is outside it. The stage
+     page then shows no bar of its own (`rs-bar`, contract § 2) and never plays by itself on `ready` (§ 4.1). Any other value is ignored. */
+  const EMBEDS=Object.freeze(['variants']);
+  function stageUrl(prefab,embed){
+    const tail=EMBEDS.includes(embed)?`&embed=${embed}`:'';
+    return `${STAGE_PATH}?id=${encodeURIComponent(prefab.id)}&v=${encodeURIComponent(String(prefab.version))}${tail}`;
   }
 
   /* L'iframe de la page de la scène. Pas d'attribut `sandbox` ici : c'est un document de confiance de notre origine ; le code non
      fiable est dans le cadre que CE document monte. */
-  function createFrame(doc,prefab,title){
+  function createFrame(doc,prefab,title,embed){
     const iframe=doc.createElement('iframe');
     iframe.className='sc-prefab-frame sc-remotion-frame';
     iframe.setAttribute('title',title);
     iframe.setAttribute('allow','');
     iframe.setAttribute('referrerpolicy','no-referrer');
     iframe.setAttribute('data-remotion-stage','1');
-    iframe.src=stageUrl(prefab);
+    iframe.src=stageUrl(prefab,embed);
     return iframe;
   }
 
@@ -48,6 +57,7 @@
     const message=Object.assign({rsh:SHELL,type},fields||{});
     for(const key of Object.keys(message))if(key!=='rsh'&&key!=='type'&&!HOST_FIELDS[type].includes(key))throw new Error(`unexpected field ${key}`);
     if(type==='control'&&!ACTIONS.includes(message.action))throw new Error('bad control action');
+    if(type==='sound'&&typeof message.muted!=='boolean')throw new Error('bad sound');
     if(type==='control'){
       for(const key of ['frame','until'])if(key in message&&!(Number.isInteger(message[key])&&message[key]>=0&&message[key]<=MAX_FRAMES))throw new Error(`bad control ${key}`);
       if('until' in message&&(message.action!=='play'||('frame' in message&&message.until<message.frame)))throw new Error('bad control until');
@@ -86,6 +96,28 @@
     return {ok:true,clock:{frame:data.frame,playing:data.playing,duration:data.duration,fps:data.fps}};
   }
 
+  /* `audio` et `key` de la page de la scène (Slice 08) : même contrôle de source et d'origine, champs exacts. */
+  function parseExact(event,iframe,origin,type,fields){
+    if(!event||!iframe||event.source!==iframe.contentWindow||iframe.contentWindow==null)return {ok:false,reason:'foreign_source'};
+    if(event.origin!==origin)return {ok:false,reason:'bad_origin'};
+    const data=event.data;
+    if(!plain(data)||data.rsh!==SHELL||data.type!==type)return {ok:false,reason:'bad_message'};
+    for(const key of Object.keys(data))if(!['rsh','type'].concat(fields).includes(key))return {ok:false,reason:'extra_field'};
+    return {ok:true,data};
+  }
+  function parseAudio(event,iframe,origin){
+    const r=parseExact(event,iframe,origin,'audio',['muted','blocked']);
+    if(!r.ok)return r;
+    if(typeof r.data.muted!=='boolean'||typeof r.data.blocked!=='boolean')return {ok:false,reason:'bad_audio'};
+    return {ok:true,audio:{muted:r.data.muted,blocked:r.data.blocked}};
+  }
+  function parseKey(event,iframe,origin){
+    const r=parseExact(event,iframe,origin,'key',['key']);
+    if(!r.ok)return r;
+    if(typeof r.data.key!=='string'||!KEYS.includes(r.data.key))return {ok:false,reason:'bad_key'};
+    return {ok:true,key:r.data.key};
+  }
+
   /* Ligne de temps de la partition (Slice 12, `docs/presentation-studio.md` > *Remotion timeline bridge*). Pur : la fenêtre de scène
      lui donne l'hôte des cadres (`getHost()`), l'horloge et le journal. Il applique la `timeline` que Core met dans la vue de lecture
      au lecteur Remotion : aller au segment, jouer jusqu'à son image d'arrêt, tenir à la pause, reprendre sans revenir en arrière.
@@ -110,6 +142,10 @@
   const MAX_RESENDS=3;
   /* A Player ordered to play that sits paused short of its stop frame this long is ordered again (auto mode: no drift correction exists). */
   const STALLED_MS=2500;
+  /* A Player that halted this close to its stop frame reached it (Slice 05 rework, B1): Remotion stops one step short of the end when a
+     frame is dropped (238 on 240 frames: the step to 240 passes the end, it pauses and fires `ended` without setting the frame). The sandbox
+     then seeks the last frame; this covers a page whose seek report is lost. Never wider: a Player halted further back has not finished. */
+  const END_SLACK_FRAMES=2;
 
   function validTimeline(tl){
     if(!plain(tl))return false;
@@ -120,6 +156,9 @@
       &&(tl.prefab===undefined||(typeof tl.prefab==='string'&&tl.prefab.length>0&&tl.prefab.length<=200));
   }
 
+  /* À retirer pour la vidéo (native-studio-playback-fix, Slices 05-07) : ce suiveur applique le temps de PARTITION de Core (segment,
+     `play_ms`, recalage de dérive). La vidéo continue suit l'horloge de composition (`control_center_composition_clock.js`) : ce
+     suiveur ne doit plus jamais déplacer, couper ou relancer l'image `f` ; il ne reste que pour les ancres d'une lecture de présentateur. */
   function createTimelineFollower(deps){
     const now=deps.now||(()=>Date.now());
     const log=deps.log||(()=>{});
@@ -228,8 +267,11 @@
       if(!tl.playing||!applied.playing||typeof host.clock!=='function')return 'idle';
       const clock=host.clock(current.objectId);
       if(clock&&clock.playing)applied.sawPlaying=true;
-      /* The stop frame, reached by a Player seen moving and now halted exactly on it (a stale report of another segment cannot match both). */
-      if(clock&&!applied.done&&!clock.playing&&clock.frame===tl.until_frame&&(applied.sawPlaying||tl.until_frame===tl.from_frame)){
+      /* The stop frame, reached by a Player seen moving and now halted within `END_SLACK_FRAMES` of it, on either side (short of it: a
+         dropped frame; past it: the frame before the sandbox's `seekTo(until)` landed); a Player never seen moving only on it exactly. A
+         halt further away is not this segment's stop (a stale report of another segment); a pause is Core's (`tl.playing` false, above),
+         never read here. */
+      if(clock&&!applied.done&&!clock.playing&&reachedStop(clock.frame,tl)){
         applied.done=true;stats.done++;say('done');return 'done';
       }
       if(applied.done)return 'done';
@@ -265,6 +307,11 @@
       return 'corrected';
     }
 
+    function reachedStop(frame,tl){
+      if(frame===tl.until_frame)return applied.sawPlaying||tl.until_frame===tl.from_frame;
+      return applied.sawPlaying&&frame>=Math.max(tl.from_frame,tl.until_frame-END_SLACK_FRAMES)&&frame<=tl.until_frame+END_SLACK_FRAMES;
+    }
+
     /* The host heard the Player's position (it comes at most four times a second, and at once when the Player starts or stops): the stop frame
        is noticed when it happens, not at the next tick. */
     function onClock(objectId){return current!==null&&objectId===current.objectId&&applied!==null?tick():'none'}
@@ -274,8 +321,8 @@
       gaveUp:applied?applied.gaveUp:false,done:applied?applied.done:false,pending:current!==null&&applied===null})};
   }
 
-  const api=Object.freeze({SHELL,STAGE_PATH,PHASES,stageUrl,createFrame,hostMessage,parseStatus,parseClock,createTimelineFollower,validTimeline,
-    TIMELINE:Object.freeze({MAX_CORRECTIONS,CORRECTION_GAP_MS,CLOCK_FRESH_MS,TICK_MS,SILENT_TICKS,MAX_RESENDS,STALLED_MS})});
+  const api=Object.freeze({SHELL,STAGE_PATH,PHASES,EMBEDS,KEYS,stageUrl,createFrame,hostMessage,parseStatus,parseClock,parseAudio,parseKey,createTimelineFollower,validTimeline,
+    TIMELINE:Object.freeze({MAX_CORRECTIONS,CORRECTION_GAP_MS,CLOCK_FRESH_MS,TICK_MS,SILENT_TICKS,MAX_RESENDS,STALLED_MS,END_SLACK_FRAMES})});
   root.JarvisRemotionFrame=api;
   if(typeof module!=='undefined'&&module.exports)module.exports=api;
 })(typeof globalThis!=='undefined'?globalThis:this);

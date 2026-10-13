@@ -29,6 +29,15 @@ from tests.unit.test_presentation_studio_playback_routes import AUX, PLAYBACK_RO
 from tests.unit.test_presentation_studio_routes import Core
 
 
+async def stage_ids(core) -> list[str]:
+    """The run surface of Variants (Slice 09: `[surface id]` while a run shows something). A run never creates a Board window."""
+
+    board = [o.object_id for o in (await core.stack.core.scene.snapshot()).objects if o.object_id.startswith(("studio-stage-", "studio-aux-"))]
+    assert board == [], "native-studio-playback-fix Slice 09: no Board window is ever created to play"
+    surface = core.stack.core.presentation_studio_stage.stage_object_id
+    return [surface] if surface else []
+
+
 @pytest.fixture
 async def world(tmp_path):
     core, built = await open_world(tmp_path)
@@ -115,8 +124,8 @@ async def test_a_hundred_reloads_leave_one_stage_window_and_no_task_behind(tmp_p
         for index in range(100):
             result = await rig.edit({"style": "p{color:#%06x}" % (0x100000 + index)})
             assert result.status is RS.RELOADED, (index, result)
-        stage_objects = [o.object_id for o in (await rig.scene.snapshot()).objects if o.object_id.startswith("studio-stage-")]
-        assert stage_objects == [window], "the SAME window after 100 reloads"
+        assert rig.stage_object_id() == window, "the SAME run surface after 100 reloads"
+        assert (await rig.scene.snapshot()).objects == (), "no Board window (Slice 09)"
         assert len(asyncio.all_tasks()) - tasks_before <= 3, "no task per reload"
         assert rig.playback.state.phase.value == "playing"
         assert not rig.sink.of("core.presentation_studio.reload_announce_failed")
@@ -174,7 +183,7 @@ async def test_a_core_restart_in_the_middle_of_a_run_leaves_the_deck_whole_and_n
         await attest(world)
         await world.tools.play("start", role="user_presenter", presentation_id=deck.pid, variant_id=deck.vid)
         await world.tools.play("next")
-        assert len([o for o in (await core.stack.core.scene.snapshot()).objects if o.object_id.startswith("studio-stage-")]) == 1
+        assert len(await stage_ids(core)) == 1
         stored = {n: (await core.call("GET", f"/{deck.pid}/variants/{deck.vid}"))[1] for n in (0,)}[0]
         score = (await core.call("GET", f"/{deck.pid}/variants/{deck.vid}/score"))[1]
         variant_file = next((core.stack.data_root / "presentations" / deck.pid / "variants").glob("*.json"))
@@ -185,8 +194,7 @@ async def test_a_core_restart_in_the_middle_of_a_run_leaves_the_deck_whole_and_n
     core, world = await reopen(tmp_path)
     try:
         assert (await core.client.presentation_studio_playback_state())["state"]["phase"] == "idle"
-        snapshot = await core.stack.core.scene.snapshot()
-        assert [o.object_id for o in snapshot.objects if o.object_id.startswith("studio-stage-")] == [], "no orphan stage window"
+        assert await stage_ids(core) == [], "no orphan run surface, no Board window"
         assert (await core.call("GET", f"/{deck.pid}/variants/{deck.vid}"))[1] == stored
         assert (await core.call("GET", f"/{deck.pid}/variants/{deck.vid}/score"))[1] == score
         assert core.stack.core.interaction_mode.mode.value == "assistant", "the run's temporary mode did not outlive it"
@@ -261,7 +269,7 @@ async def test_two_armed_cues_sharing_a_phrase_are_ambiguous_and_neither_fires()
 
 # ------------------------------------------------------------------ auxiliary detours
 
-async def test_a_detour_shows_an_auxiliary_window_and_resumes_at_the_same_place_without_a_second_stage(world):
+async def test_a_detour_shows_an_overlay_and_resumes_at_the_same_place_without_a_second_stage(world):
     deck = await assemble_deck(world, count=6)
     await attest(world)
     await world.tools.play("start", role="user_presenter", presentation_id=deck.pid, variant_id=deck.vid)
@@ -279,8 +287,7 @@ async def test_a_detour_shows_an_auxiliary_window_and_resumes_at_the_same_place_
     assert caught.value.status == 422 and "presentation_studio_playback_refused" in str(caught.value)
     state = (await world.tools.inspect("playback"))["state"]
     assert state["phase"] == "playing" and state["position"] == place, "an invalid detour is a typed refusal and the run is untouched"
-    ids = [o.object_id for o in (await world.core.stack.core.scene.snapshot()).objects if o.object_id.startswith("studio-")]
-    assert ids == [stage]
+    assert await stage_ids(world.core) == [stage]
     await world.tools.play("stop")
 
 
@@ -308,7 +315,7 @@ async def test_every_role_gives_the_users_mode_back_and_a_manual_mode_change_end
     await app.interaction_mode.request("assistant", source="control_center")
     stage = None
     for _ in range(100):
-        stage = [o.object_id for o in (await app.scene.snapshot()).objects if o.object_id.startswith("studio-stage-")]
+        stage = await stage_ids(world.core)
         if not stage:
             break
         await asyncio.sleep(0.05)

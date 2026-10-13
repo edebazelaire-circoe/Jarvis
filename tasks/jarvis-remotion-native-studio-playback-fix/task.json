@@ -1,0 +1,28 @@
+{
+  "project": "Jarvis",
+  "slug": "jarvis-remotion-native-studio-playback-fix",
+  "title": "Remotion-native Studio, Variants and Playback UX Fix",
+  "goal": "Remove duplicate Jarvis viewer; stabilize seamless Remotion playback and one synchronized timeline; simplify Variants UI; expose native Remotion Studio and restore Claude-native creation quality.",
+  "source": "User feedback + two screenshots 2026-10-11, GitHub static inspection",
+  "repository_expected": "edebazelaire-circoe/Jarvis",
+  "reference_commit_static_only": "d2332e61c0e384d1e75d7d31a81efb730254eb6e",
+  "drive_destination": "Jarvis/task/to-do/jarvis-remotion-native-studio-playback-fix/",
+  "status": "planned",
+  "slice_count": 17,
+  "task_type_resolution_required": true,
+  "human_validation_ids": [
+    "HV-RFX-00-01",
+    "HV-RFX-02-01",
+    "HV-RFX-05-01",
+    "HV-RFX-07-01",
+    "HV-RFX-08-01",
+    "HV-RFX-09-01",
+    "HV-RFX-10-01",
+    "HV-RFX-11-01",
+    "HV-RFX-12-01",
+    "HV-RFX-13-01",
+    "HV-RFX-16-01"
+  ],
+  "not_authorized_to_modify_live_core": true,
+  "rail_design_deferred_pending_sketch": true
+}

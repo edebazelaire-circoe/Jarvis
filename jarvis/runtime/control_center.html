@@ -54,7 +54,13 @@ html,body{margin:0;height:100%;background:var(--bg);color:var(--text);font:15px 
    ouvertes **depuis** le menu contextuel, donc au-dessus de ses 80 — une carte
    qui se ferait recouvrir par le menu qui l'a ouverte serait illisible — et en
    dessous de la confirmation en page, qui doit pouvoir les recouvrir),
-   confirmation en page 85, Barehands 2147483000. Thème Cosmos :
+   confirmation en page 85, Barehands 2147483000. Variantes (explorateur du
+   Studio) 9000, rail des présentations à côté 9100, son menu 9300 ; pendant
+   une présentation montrée dans Variantes, l'emplacement du contrôle de mode
+   d'interaction prend 9150 (`html.jvx-run`, feuille de l'explorateur,
+   native-studio-playback-fix Slice 09) : au-dessus de Variantes et du rail,
+   sous le menu du rail ; ce contexte d'empilement n'enferme alors rien que
+   ses propres bouton (32) et sélecteur (36), toujours dans cet ordre. Thème Cosmos :
    panneau 42, barre 45, bandeau 48, dock et pastilles 50. Les couches de la
    scène (0–1000) ne s'empilent qu'à l'intérieur de son conteneur ; les rangs
    internes de la chronologie (`.tl-*`, 1–30) et de l'écran d'aiguillage (aucun :
@@ -1619,8 +1625,12 @@ button.wsp-ename:hover{color:var(--accent)}
        pour le sélecteur) vivent dans le registre du haut, et non dispersés dans
        un script. Rempli par `control_center_interaction_mode.js`, qui refuse de
        se dessiner sous un nom cherchable si cet emplacement manque — sans
-       emporter aucun des autres modules de la page. -->
-  <div id="interactionModeHud"></div>
+       emporter aucun des autres modules de la page. `data-keep-live="run"`
+       (native-studio-playback-fix Slice 09) : pendant une présentation montrée
+       dans Variantes, le contrôle reste vivant et dessiné au-dessus de
+       Variantes — un « Refusé par la voix » et la sortie du mode restent
+       visibles (`control_center_presentation_studio_explorer*.js`). -->
+  <div id="interactionModeHud" data-keep-live="run"></div>
   <!-- Emplacements du contrôle Boards (jarvis-board-session-context-runtime,
        Slice 06). Le bouton `#boardsHud` est dans `.topbar` ci-dessus (titre du
        Board actif toujours visible, en haut à droite à côté de l'état) ; son
@@ -2275,14 +2285,26 @@ const STATUS={
 /*__CONTROL_CENTER_PRESENTATION_STUDIO_EXPLORER_COMPARE_JS__*/
 /*__CONTROL_CENTER_PRESENTATION_STUDIO_EXPLORER_COMPOSE_JS__*/
 /*__CONTROL_CENTER_PRESENTATION_STUDIO_EXPLORER_UPGRADES_JS__*/
+/* Lecture continue dans Variantes (native-studio-playback-fix Slice 05) : l'horloge de composition (`control_center_composition_clock.js`, portage
+   de `jarvis/domain/composition_clock.py`) puis l'enchaînement des scènes (`control_center_presentation_studio_sequencer.js`), avant le contrôleur. */
+/*__CONTROL_CENTER_COMPOSITION_CLOCK_JS__*/
+/*__CONTROL_CENTER_PRESENTATION_STUDIO_SEQUENCER_JS__*/
+/* Son, plein écran de la scène et clavier du lecteur de Variantes (native-studio-playback-fix Slice 08) :
+   `control_center_presentation_studio_stage_media.js`, avant le contrôleur. */
+/*__CONTROL_CENTER_PRESENTATION_STUDIO_STAGE_MEDIA_JS__*/
+/* Une présentation dans Variantes (native-studio-playback-fix Slice 09) : la surface de Core montée dans le lecteur de Variantes, la bande du
+   présentateur, les touches de la présentation : `control_center_presentation_studio_run.js`, avant le contrôleur. */
+/*__CONTROL_CENTER_PRESENTATION_STUDIO_RUN_JS__*/
+/* « Remotion Studio » sous la vidéo de Variantes (native-studio-playback-fix Slice 11) : la porte vers l'éditeur natif, sur la scène à l'écran et
+   son pin exact ; elle lit `JarvisRemotionStudioCore` (carte du dialogue MCP, plus bas) à l'usage : `control_center_presentation_studio_explorer_remotion.js`. */
+/*__CONTROL_CENTER_PRESENTATION_STUDIO_EXPLORER_REMOTION_JS__*/
 /*__CONTROL_CENTER_PRESENTATION_STUDIO_EXPLORER_JS__*/
-/* Lecture d'une présentation (studio de présentation, Slice 12) : bande d'état et clavier sur l'hôte du stage, mêmes
-   routes que la voix (`/api/presentation-studio/playback`), plein écran par `JarvisFullscreen` : `control_center_presentation_studio_player.js`. */
+/* Client de lecture partagé de la page (studio de présentation, Slice 12 ; native-studio-playback-fix Slice 09 : la bande flottante est retirée,
+   une présentation se montre dans Variantes) : relevé de Core, commandes par les routes de la voix (`/api/presentation-studio/playback`),
+   événements `jarvis:studio-*` : `control_center_presentation_studio_player.js`. */
 /*__CONTROL_CENTER_PRESENTATION_STUDIO_PLAYER_JS__*/
-/* Fenetre d'une presentation (rail des presentations) : lecteur flottant non modal, apercu en mode `preview`, plein ecran, Jouer, Studio :
-   `control_center_presentation_window.js`. Puis le rail permanent (bord gauche, a droite de la palette), ses pastilles d'etat et son menu :
-   `control_center_presentation_rail.js`. Ils lisent le lecteur, l'explorateur, l'inspecteur et le plein ecran a la demande. */
-/*__CONTROL_CENTER_PRESENTATION_WINDOW_JS__*/
+/* Le rail permanent des présentations (bord gauche, à droite de la palette), ses pastilles d'état et son menu ; le clic ouvre Variantes :
+   `control_center_presentation_rail.js`. Il lit le client de lecture, Variantes et l'inspecteur à la demande. */
 /*__CONTROL_CENTER_PRESENTATION_RAIL_JS__*/
 /* Inspecteur d'édition d'une présentation (studio de présentation, Slice 07) : panneau du dock `INS`, widgets générés de la route
    d'introspection, aperçu/enregistrement par le relais d'édition (acteur `user`), caché entièrement pendant une lecture :

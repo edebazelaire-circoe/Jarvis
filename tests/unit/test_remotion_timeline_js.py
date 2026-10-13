@@ -260,6 +260,24 @@ async def test_the_page_relays_the_players_position_clamped_and_at_most_four_tim
     assert result["targets"] == ["http://127.0.0.1:17654"], "only ever to the Control Center's own origin"
 
 
+async def test_a_halted_player_that_moves_to_its_stop_or_last_frame_is_relayed_at_once(tmp_path):
+    """Slice 05 rework, B1 / P2: the sandbox pauses, then seeks the stop frame (or the last frame of a scene that ended one step short) a
+    few ms later. Both are paused positions; the second used to fall in the 250 ms window and the window kept the frame BEFORE the seek."""
+
+    result = run_stage_node(tmp_path, READY_FLOW + r"""
+      await flush();
+      const clocks=()=>b.parent.posted.map(p=>p.message).filter(m=>m.type==='clock');
+      b.fromFrame({rs:1,type:'clock',frame:60,playing:true});
+      b.c.advance(300);b.fromFrame({rs:1,type:'clock',frame:88,playing:false});     // `ended` one frame short
+      b.c.advance(5);b.fromFrame({rs:1,type:'clock',frame:89,playing:false});       // the sandbox's seekTo(last)
+      const landed=clocks().slice(-1)[0];
+      b.c.advance(5);b.fromFrame({rs:1,type:'clock',frame:89,playing:false});       // the same halted frame again: not news
+      return {landed,total:clocks().length};
+    """)
+    assert result["landed"]["frame"] == 89 and result["landed"]["playing"] is False
+    assert result["total"] == 3
+
+
 async def test_a_forged_clock_from_the_frame_is_refused_by_the_watchdog_and_never_relayed(tmp_path):
     result = run_stage_node(tmp_path, READY_FLOW + r"""
       await flush();

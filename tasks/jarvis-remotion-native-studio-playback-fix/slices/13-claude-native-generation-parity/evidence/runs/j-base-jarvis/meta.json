@@ -1,0 +1,110 @@
+{
+ "side": "jarvis",
+ "topic": "jarvis",
+ "model": "sonnet",
+ "pack_sha256": "90b9bafef0a2c3daa58b95b8c6fa562c0c52e71bcf9e07018b2cdd2ccb029857",
+ "tested_head": "40cb68a8db68445b19d9dbcd418416173a942f96",
+ "decks": [
+  {
+   "presentation_id": "pst_65d69305d1805d73cf6b241cff929847",
+   "title": "JARVIS en quatre scènes",
+   "revision": 1,
+   "variants": [
+    {
+     "variant_id": "psv_1d93cc09deef6c1e7c656a2e7bda98cb",
+     "revision": 1,
+     "title": "JARVIS en quatre scènes",
+     "scenes": [
+      {
+       "scene_id": "pss_711a37f7c305",
+       "title": "JARVIS, assistant vocal",
+       "prefab": {
+        "id": "presentation-studio.rm-cover-8df9a09b",
+        "version": 1
+       },
+       "source_status": 200
+      },
+      {
+       "scene_id": "pss_5b33cfc3d634",
+       "title": "De la voix à la réponse",
+       "prefab": {
+        "id": "presentation-studio.rm-flow-a9a8da91",
+        "version": 1
+       },
+       "source_status": 200
+      },
+      {
+       "scene_id": "pss_4e4ed105ce38",
+       "title": "Surface et cerveau",
+       "prefab": {
+        "id": "presentation-studio.rm-split-adf3ce9a",
+        "version": 1
+       },
+       "source_status": 200
+      },
+      {
+       "scene_id": "pss_03bf4d39e742",
+       "title": "Sécurité et essai",
+       "prefab": {
+        "id": "presentation-studio.rm-trust-bca69b54",
+        "version": 1
+       },
+       "source_status": 200
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "presentation_id": "pst_ff38af51cb7db4b9d9646897cf89f2c6",
+   "title": "JARVIS en quatre scenes",
+   "revision": 1,
+   "variants": [
+    {
+     "variant_id": "psv_e1d9cfa65f8a286106492b91b929f6d5",
+     "revision": 1,
+     "title": "JARVIS en quatre scenes",
+     "scenes": [
+      {
+       "scene_id": "pss_22403a2379b4",
+       "title": "Qui est JARVIS",
+       "prefab": {
+        "id": "presentation-studio.rm-cover-e6eb4a45",
+        "version": 1
+       },
+       "source_status": 200
+      },
+      {
+       "scene_id": "pss_a9a7f0ebab10",
+       "title": "De la voix à la réponse",
+       "prefab": {
+        "id": "presentation-studio.rm-flow-6663befd",
+        "version": 1
+       },
+       "source_status": 200
+      },
+      {
+       "scene_id": "pss_96703354ac11",
+       "title": "Qui décide",
+       "prefab": {
+        "id": "presentation-studio.rm-split-8dfba659",
+        "version": 1
+       },
+       "source_status": 200
+      },
+      {
+       "scene_id": "pss_b2ac7aeef66f",
+       "title": "Sûr par défaut",
+       "prefab": {
+        "id": "presentation-studio.rm-trust-19c12d66",
+        "version": 1
+       },
+       "source_status": 200
+      }
+     ]
+    }
+   ]
+  }
+ ],
+ "brief": "Crée une courte présentation vidéo Remotion de 4 scènes, environ 40 secondes au total, en 1920x1080, qui présente JARVIS, l'assistant vocal local de ce poste à des développeurs qui le découvrent. Seule source de vérité : le fichier <scratch>/bench/packs/jarvis/README.md ; n'invente aucun chiffre, nom ni fonctionnalité qui n'y soit pas. Direction artistique : fond sombre, sobre, typographie nette, une seule couleur d'accent, animations soignées (entrées échelonnées, schémas ou éléments animés plutôt que des listes de puces). Textes à l'écran en français et courts. N'installe aucune dépendance : utilise seulement react et remotion. Quand c'est prêt, dis-moi en une phrase où la voir."
+}

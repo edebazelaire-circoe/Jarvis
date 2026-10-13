@@ -42,6 +42,8 @@
      l'évite de préférence, sans l'interdire. */
   const FACE_ZONE=Object.freeze({x0:-34,x1:34,y0:-34,y1:34});
   const OBJECT_LIMIT=512;
+  /* Board categories of the retired run stage (native-studio-playback-fix Slice 09): never drawn. */
+  const RETIRED_CATEGORIES=Object.freeze(new Set(['studio_stage','studio_aux']));
   /* Taille par défaut d'un objet posé par le résolveur, en unités. */
   const DEFAULT_SIZE=Object.freeze({
     point:Object.freeze({w:6,h:6}),
@@ -1711,6 +1713,9 @@
     const explains=explainsIndex(state);
     for(const item of state.objects.values()){
       if(item.visibility!=='visible'){hidden++;continue}
+      /* The retired floating viewer of a presentation run (native-studio-playback-fix Slice 09): a `studio_stage` / `studio_aux` window an
+         older Core left is never drawn (Core archives it at start); a run plays inside Variants. */
+      if(RETIRED_CATEGORIES.has(item.category))continue;
       const work=workView?workView(item):null;
       if(work&&work.hidden){ephemeralHidden++;continue}
       const stored=layout.placements.get(item.object_id);
@@ -2008,7 +2013,7 @@
     return entry;
   }
 
-  const api=Object.freeze({FRAME,SAFE_AREA,FACE_ZONE,OBJECT_LIMIT,DEFAULT_SIZE,WORK_BUDGET,COMMIT_MAX_ATTEMPTS,READABLE,MAX_ANIMATED,CAPSULE_MAX,drawnBox,
+  const api=Object.freeze({FRAME,SAFE_AREA,FACE_ZONE,OBJECT_LIMIT,RETIRED_CATEGORIES,DEFAULT_SIZE,WORK_BUDGET,COMMIT_MAX_ATTEMPTS,READABLE,MAX_ANIMATED,CAPSULE_MAX,drawnBox,
     NODE_STATE_CLASSES,nodeClassName,RESTART_UNKNOWN_LABEL,restartUnknown,ARTIFACT_CATEGORIES,linkOf,explainedTarget,explainsIndex,artifactsExplaining,itemsOf,PREFAB_ID,PREFAB_MAX_ID_CHARS,PREFAB_MAX_VERSION,prefabOf,hostTail,isOrphanArtifact,orphanArtifacts,
     artifactsLeftOrphan,placeFor,linkHost,linkLength,POINT_HIT_PX,CAPSULE_MIN_HEIGHT_PX,drawnRect,fitWindowHeight,ORBIT_STEPS,orbitSteps,orbitField,orbitTrack,orbitTurnPoint,orbitTurns,orbitTurnAt,orbitFrameWall,orbitClockGap,
     ORBIT_AXES,ORBIT_GAIN_MIN,ORBIT_GAIN_MAX,ORBIT_RATE_MIN,ORBIT_RATE_MAX,QUANTUM,orbitFits,orbitReach,orbitInset,orbitTurnsRepresentation,

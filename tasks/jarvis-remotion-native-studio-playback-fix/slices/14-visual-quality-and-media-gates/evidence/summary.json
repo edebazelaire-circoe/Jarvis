@@ -1,0 +1,367 @@
+{
+ "slice": "14-visual-quality-and-media-gates",
+ "tested_sha": "7fa1c744 (S14 code 67eb4f34 + threshold 7fa1c744; S12 polish 1e749583 before them)",
+ "runtime": {
+  "os": "Windows 11 Pro 10.0.26200",
+  "node": "v24.18.0",
+  "chrome": "154.0.8037.99 (headless, CDP)",
+  "remotion": "4.0.534",
+  "render": "guarded render host through POST /v1/local-capabilities/remotion/render/preview (Slice 13), JPEG, scale 0.5",
+  "media_tools": "ffmpeg/ffprobe of @remotion/compositor-win32-x64-msvc (pinned with the runtime)",
+  "isolation": "RemotionStack: free 127.0.0.1 ports, sandbox 127.77.0.2:<free>, throw-away data root under a short temp folder; runtime = a copy of the read-only gate runtime; the live Jarvis was never contacted"
+ },
+ "commands": [
+  "JARVIS_REMOTION_RUNTIME_DIR=<runtime copy> JARVIS_QUALITY_EVIDENCE_DIR=<dir> python -m pytest tests/unit/test_remotion_frame_quality_real.py -q -p no:cacheprovider --basetemp <short dir> -k gate|native|control",
+  "JARVIS_REMOTION_RUNTIME_DIR=<runtime copy> JARVIS_QUALITY_EVIDENCE_DIR=<dir> python -m pytest tests/unit/test_presentation_flow_quality_browser.py -q -p no:cacheprovider --basetemp <short dir> -k recorded|planted",
+  "python -m pytest tests/unit/test_frame_quality.py tests/unit/test_remotion_media_tools.py (one file per process)"
+ ],
+ "durations_s": {
+  "gate_smoke_test": 102,
+  "native_smoke_test": 52,
+  "control_smoke_test": 62,
+  "flow_recorded_test": 110,
+  "flow_negative_control_test": 19
+ },
+ "samples": {
+  "gate": "Slice 03 DECK, 9 scenes 3/8/30 s at 24/25/30/60 fps (presentation_playback_gate_world)",
+  "native": "Slice 13 run jn4 final deck (4 scenes, 1920x1080, 300 frames each), sources in slices/13-claude-native-generation-parity/evidence/runs/jn4/sources",
+  "control": "remotion_quality_world.CONTROL_SCENES (black, text out of the frame, missing fonts, missing image, still card fading to black)"
+ },
+ "thresholds": {
+  "edge_step": 20,
+  "blank_edge_density": 0.0008,
+  "black_mean": 16.0,
+  "ink_delta": 48,
+  "band_depth": 4,
+  "clipped_ink_share": 0.05,
+  "overflow_ink_share": 0.02,
+  "overflow_texture": 0.4,
+  "repeat_mean_delta": 0.005,
+  "frozen_span_ms": 1000,
+  "truncation_share": 0.97,
+  "stale_progress_ms": 500,
+  "stale_bar_share": 0.08
+ },
+ "detectors": {
+  "gate": {
+   "frames_sampled": 45,
+   "scenes": 9,
+   "profile": "release_gate",
+   "verdict": "warnings",
+   "smoke_s": 81.5,
+   "page_pass_s": 18.1,
+   "preview_s_per_scene": [
+    8.6,
+    8.5,
+    8.5,
+    8.5,
+    8.5,
+    8.5,
+    8.4,
+    8.5,
+    8.5
+   ],
+   "fired": {
+    "edge_clipped": {
+     "findings": 27,
+     "severity": [
+      "warning"
+     ]
+    }
+   }
+  },
+  "native": {
+   "frames_sampled": 20,
+   "scenes": 4,
+   "profile": "authored",
+   "verdict": "warnings",
+   "smoke_s": 37.7,
+   "page_pass_s": 12.0,
+   "preview_s_per_scene": [
+    8.6,
+    8.5,
+    8.9,
+    9.0
+   ],
+   "fired": {
+    "black": {
+     "findings": 16,
+     "severity": [
+      "warning"
+     ]
+    }
+   }
+  },
+  "control": {
+   "frames_sampled": 25,
+   "scenes": 5,
+   "profile": "release_gate",
+   "verdict": "blocked",
+   "smoke_s": 45.6,
+   "page_pass_s": 14.5,
+   "preview_s_per_scene": [
+    8.5,
+    8.5,
+    8.9,
+    8.4,
+    8.4
+   ],
+   "fired": {
+    "asset_missing": {
+     "findings": 1,
+     "severity": [
+      "blocking"
+     ]
+    },
+    "black": {
+     "findings": 7,
+     "severity": [
+      "blocking",
+      "warning"
+     ]
+    },
+    "edge_text_overflow": {
+     "findings": 5,
+     "severity": [
+      "warning"
+     ]
+    },
+    "font_fallback": {
+     "findings": 1,
+     "severity": [
+      "blocking"
+     ]
+    },
+    "font_load_failed": {
+     "findings": 1,
+     "severity": [
+      "blocking"
+     ]
+    },
+    "font_substituted": {
+     "findings": 2,
+     "severity": [
+      "warning"
+     ]
+    },
+    "repeated_frames": {
+     "findings": 2,
+     "severity": [
+      "info"
+     ]
+    },
+    "static_scene": {
+     "findings": 2,
+     "severity": [
+      "warning"
+     ]
+    },
+    "text_overflow": {
+     "findings": 1,
+     "severity": [
+      "warning"
+     ]
+    }
+   }
+  }
+ },
+ "false_positive_notes": {
+  "edge_clipped": "fires on 27 of 45 gate frames: the gate scene's own full-width progress bar touches the bottom side (by design of the fixture). 0 of 20 native frames. Stays a WARNING: a full-bleed element is legitimate and cannot be told from a clip by pixels.",
+  "edge_text_overflow": "0 of 45 gate and 0 of 20 native frames; 5 of 5 control frames of the overflow scene (texture 0.73). The gate bar's end measured texture 0.25 at a first threshold of 0.25 (8 false hits on 45 frames), threshold raised to 0.4. Stays a WARNING (an element sliding in from outside is legitimate while it moves).",
+  "black/blank": "gate 0 of 45; native 16 of 20 (every scene fades in from its background and out to black: first, entry, exit, last frames) -> warnings under the authored profile, 0 blocking; control 7 (S1 black throughout, S5 fading to black) -> blocking under release_gate.",
+  "static_scene / repeated_frames": "two identical renders decode to a mean luma delta of 0.0; a one-digit change of the gate scene (frame 0 vs 1, last-1 vs last) measured 0.012 to 0.048. A first threshold of 0.6 then 0.05 reported those 10 gate pairs as repeated (info): threshold set at 0.005, 0 on gate; native: 0. static_scene: 0 on gate and native, fires on the control's black and still scenes. Stays WARNING / INFO: a still title card is legitimate.",
+  "text_overflow (page)": "0 on gate (9 scenes) and native (4 scenes); fires on the control overflow scene (613 composition px beyond the right side).",
+  "font_* / asset_missing (page)": "0 on gate and native (Times New Roman default; Segoe UI and Consolas present); control: font_fallback, font_substituted x2, font_load_failed, asset_missing all fire.",
+  "stale_progress": "flow: transport trailed the Player by at most 283 ms (at scene entries, its update cadence); threshold 500 ms; 0 findings on 673 samples. Planted held slider: caught.",
+  "stale_scene_bar": "flow: scene bar vs frame gap max 0.101 raw, 0.027 beyond the sampling tolerance; threshold 0.08; 0 findings. A first version measured from the very first pixel and failed on the capture's rounded corner (607 false hits): fixed by reading the bottom band and the picture box.",
+  "transition_flash": "flow: 0 black/blank captures on 683 captures; planted 500 ms black layer: caught (['stale_progress', 'stale_scene_bar', 'transition_flash']).",
+  "truncated / time_carry": "flow: every scene S2..S9 from frame 0 to its last frame, S3 900 frames in 30.0 s; 0 findings."
+ },
+ "flow": {
+  "wall_s": 83.6,
+  "captures": 683,
+  "capture_every_ms": 100,
+  "recorded_ms": 74196,
+  "composition_ms": 74000,
+  "video": {
+   "codec": "h264",
+   "width": 640,
+   "height": 360,
+   "frames": 743,
+   "duration_ms": 74300
+  },
+  "scenes": [
+   {
+    "scene": "S2",
+    "duration_in_frames": 240,
+    "fps": 30,
+    "max_frame": 239,
+    "played_ms": 8014,
+    "first_frame": 0
+   },
+   {
+    "scene": "S3",
+    "duration_in_frames": 900,
+    "fps": 30,
+    "max_frame": 899,
+    "played_ms": 30010,
+    "first_frame": 0
+   },
+   {
+    "scene": "S4",
+    "duration_in_frames": 75,
+    "fps": 25,
+    "max_frame": 74,
+    "played_ms": 2969,
+    "first_frame": 0
+   },
+   {
+    "scene": "S5",
+    "duration_in_frames": 480,
+    "fps": 60,
+    "max_frame": 479,
+    "played_ms": 8003,
+    "first_frame": 0
+   },
+   {
+    "scene": "S6",
+    "duration_in_frames": 90,
+    "fps": 30,
+    "max_frame": 89,
+    "played_ms": 2999,
+    "first_frame": 0
+   },
+   {
+    "scene": "S7",
+    "duration_in_frames": 192,
+    "fps": 24,
+    "max_frame": 191,
+    "played_ms": 8015,
+    "first_frame": 0
+   },
+   {
+    "scene": "S8",
+    "duration_in_frames": 90,
+    "fps": 30,
+    "max_frame": 89,
+    "played_ms": 3004,
+    "first_frame": 0
+   },
+   {
+    "scene": "S9",
+    "duration_in_frames": 240,
+    "fps": 30,
+    "max_frame": 239,
+    "played_ms": 8015,
+    "first_frame": 0
+   }
+  ],
+  "scene_changes_in_video": [
+   {
+    "at_ms": 3036,
+    "to": "S2"
+   },
+   {
+    "at_ms": 11073,
+    "to": "S3"
+   },
+   {
+    "at_ms": 41086,
+    "to": "S4"
+   },
+   {
+    "at_ms": 44125,
+    "to": "S5"
+   },
+   {
+    "at_ms": 52080,
+    "to": "S6"
+   },
+   {
+    "at_ms": 55116,
+    "to": "S7"
+   },
+   {
+    "at_ms": 63169,
+    "to": "S8"
+   },
+   {
+    "at_ms": 66221,
+    "to": "S9"
+   }
+  ],
+  "stale_samples": 673,
+  "transport_gap_ms_max": 283,
+  "scene_bar_gap_max": 0.101,
+  "scene_bar_gap_beyond_sampling_max": 0.027
+ },
+ "flow_verdict": "clean",
+ "negative_control": [
+  "stale_progress",
+  "stale_scene_bar",
+  "transition_flash"
+ ],
+ "files": [
+  "control-contact.jpg",
+  "control-smoke.json",
+  "control-transitions.jpg",
+  "flow-contact.jpg",
+  "flow-markers.json",
+  "flow-negative-control.json",
+  "flow-transitions.jpg",
+  "flow.json",
+  "flow.mp4",
+  "gate-contact.jpg",
+  "gate-smoke.json",
+  "gate-transitions.jpg",
+  "native-contact.jpg",
+  "native-smoke.json",
+  "native-transitions.jpg"
+ ],
+ "rework_remeasure": {
+  "tested_sha": "ef26359a (branch fix/rnsp-s14-rework; same Slice 14 rework content as a1d20e43)",
+  "date": "2026-10-12",
+  "isolation": "same as the delivered run: RemotionStack, copy of the read-only gate runtime under a short temp folder, throw-away data root; the live Jarvis was never contacted",
+  "replaces_files": [
+   "gate-smoke.json",
+   "gate-contact.jpg",
+   "gate-transitions.jpg",
+   "control-*",
+   "flow.json",
+   "flow.mp4",
+   "flow-markers.json",
+   "flow-contact.jpg",
+   "flow-transitions.jpg"
+  ],
+  "not_rerun": [
+   "native-*",
+   "flow-negative-control.json"
+  ],
+  "durations_s": {
+   "gate_smoke_test": 175,
+   "control_smoke_test": 62,
+   "flow_recorded_test_and_pairing": 109
+  },
+  "gate": {
+   "frames_sampled": 45,
+   "verdict": "clean",
+   "fired": {},
+   "edge_clipped": "0 of 45 (was 27); the 27 frames carry the same render (mean luma and edge density identical to the delivered run, contact and transition sheets byte-identical), only the side metrics changed: the bar run is skipped",
+   "first_frames": "9 of 9 frame-0 captures without finding (edge density 0.0034 to 0.0048, blank threshold 0.0008)"
+  },
+  "control": {
+   "frames_sampled": 25,
+   "verdict": "blocked",
+   "counts": "identical to the delivered run (black 7, static_scene 2, edge_text_overflow 5, repeated_frames 2, text_overflow 1, font_fallback 1, font_substituted 2, font_load_failed 1, asset_missing 1)",
+   "change": "S1 frame 0 black: warning -> blocking (B1: an empty first frame blocks under release_gate); every other finding has the same code, scene, frame and severity; per-frame metrics identical"
+  },
+  "flow": {
+   "captures": 681,
+   "findings": 0,
+   "verdict": "clean",
+   "transport_gap_ms_max": 267,
+   "scene_bar_gap_beyond_sampling_max": 0.026,
+   "transitions": "8 pairs, S1>S2 ... S8>S9, each the end of scene k beside the start of scene k+1 (start frames 0 to 5); the delivered sheet's last pair was S9 beside S9 (the P4 bug)"
+  }
+ }
+}

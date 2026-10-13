@@ -37,7 +37,7 @@ async def pending(core: Core, pid: str, vid: str, scene_id: str = S1) -> str:
 
 
 async def start_run(core: Core, pid: str, vid: str) -> tuple[str, int]:
-    """A REAL playback run (Slice 12) of the first scene: its stage window `studio-stage-<run_id>` and the variant revision."""
+    """A REAL playback run (Slice 12) of the first scene: its run surface `variants-run-<run_id>` (Slice 09) and the variant revision."""
 
     studio, playback = core.stack.core.presentation_studio, core.stack.core.presentation_studio_playback
     variant = await studio.get_variant(pid, vid)
@@ -134,26 +134,34 @@ async def test_the_recent_reloads_carry_codes_and_counts_never_source_or_values(
         assert "fedcba" not in text and "Texte" not in text
 
 
-# ------------------------------------------------------------------ la page : stage et rapport de montage
+# ------------------------------------------------------------------ la page : surface de Variantes et rapport de montage
+
+async def page_mounts(core, object_id: str, outcome: str, **extra) -> tuple:
+    """What the Variants Player does (Slice 09): it reads the run surface (`GET .../playback/surface`, relayed), mounts the new
+    source under the surface id, and reports what it observed."""
+
+    surface = core.stack.core.presentation_studio_stage
+    seen = surface.revision
+    while True:
+        status, body, _ = await core.stack.call("GET", "/api/presentation-studio/playback/surface")
+        block = (body.get("surface") or {}).get("prefab") if status == 200 else None
+        if block and block["id"].startswith("presentation-studio."):
+            assert body["surface"]["surface_id"] == object_id
+            return await core.stack.call("POST", f"{RELAY}/mount-reports", json={
+                "object_id": object_id, "prefab": {"id": block["id"], "version": block["version"]}, "outcome": outcome, **extra})
+        seen = await surface.wait_for_revision(seen, timeout_s=10)
+
 
 async def test_the_page_shows_a_scene_then_a_source_edit_waits_for_its_mount_report(tmp_path):
     async with Core(tmp_path) as core:
         pid, vid, revision = await new_presentation(core)
         stage_id, revision = await start_run(core, pid, vid)
-        assert stage_id.startswith("studio-stage-")                      # the run's own window, not a provisional route's
+        assert stage_id.startswith("variants-run-")                      # the run's own surface, not a provisional route's
         shown = {"object_id": stage_id}
-        scene_service = core.stack.core.scene
 
         async def the_page():
-            """The browser: sees the re-pinned stage window, mounts it, reports what it observed."""
-            revision_seen = (await scene_service.snapshot()).revision
-            while True:
-                block = (await scene_service.snapshot()).get_object(shown["object_id"]).payload.prefab
-                if block.prefab_id.startswith("presentation-studio."):
-                    return await core.stack.call("POST", f"{RELAY}/mount-reports", json={
-                        "object_id": shown["object_id"], "prefab": {"id": block.prefab_id, "version": block.version},
-                        "outcome": "mounted"})
-                revision_seen = await scene_service.wait_for_revision(revision_seen, timeout_s=10)
+            """The Variants Player: reads the re-pinned run surface over the relay, mounts it, reports what it observed."""
+            return await page_mounts(core, shown["object_id"], "mounted")
 
         page = asyncio.ensure_future(the_page())
         status, result, _ = await core.stack.call("POST", f"{RELAY}/{pid}/variants/{vid}/source-edits",
@@ -171,17 +179,9 @@ async def test_a_failed_mount_report_over_the_relay_rolls_the_scene_back(tmp_pat
         pid, vid, revision = await new_presentation(core)
         stage_id, revision = await start_run(core, pid, vid)
         shown = {"object_id": stage_id}
-        scene_service = core.stack.core.scene
 
         async def the_page():
-            seen = (await scene_service.snapshot()).revision
-            while True:
-                block = (await scene_service.snapshot()).get_object(shown["object_id"]).payload.prefab
-                if block.prefab_id.startswith("presentation-studio."):
-                    return await core.stack.call("POST", f"{RELAY}/mount-reports", json={
-                        "object_id": shown["object_id"], "prefab": {"id": block.prefab_id, "version": block.version},
-                        "outcome": "failed", "reason": "frame", "message": "ReferenceError: x is not defined"})
-                seen = await scene_service.wait_for_revision(seen, timeout_s=10)
+            return await page_mounts(core, shown["object_id"], "failed", reason="frame", message="ReferenceError: x is not defined")
 
         page = asyncio.ensure_future(the_page())
         status, result, _ = await core.stack.call("POST", f"{RELAY}/{pid}/variants/{vid}/source-edits",
@@ -191,8 +191,10 @@ async def test_a_failed_mount_report_over_the_relay_rolls_the_scene_back(tmp_pat
         assert result["reason"] == "frame" and "ReferenceError" in result["message"] and result["prefab"] == {"id": "jarvis.window", "version": 1}
         scene = (await variant_of(core, pid, vid))["scenes"][0]
         assert scene["prefab"] == {"id": "jarvis.window", "version": 1} and scene["last_valid_pin"] is None
-        block = (await scene_service.snapshot()).get_object(shown["object_id"]).payload.prefab
-        assert (block.prefab_id, block.version) == ("jarvis.window", 1)          # the previous frame is what stays on screen
+        status, body, _ = await core.stack.call("GET", "/api/presentation-studio/playback/surface")
+        block = body["surface"]["prefab"]
+        assert status == 200 and body["surface"]["surface_id"] == shown["object_id"]
+        assert (block["id"], block["version"]) == ("jarvis.window", 1)          # the previous frame is what stays on screen
 
 
 # ------------------------------------------------------------------ relais : acteur, garde, pannes

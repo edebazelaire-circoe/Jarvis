@@ -1,0 +1,9 @@
+﻿{
+  "checks": [
+    {
+      "id": "HV-RFX-10-01",
+      "instruction": "Human validates visual control audit on 2 screenshots and live screen.",
+      "requires_evidence_first": true
+    }
+  ]
+}

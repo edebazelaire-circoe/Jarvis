@@ -2046,3 +2046,25 @@ def test_windows_always_above_stars_and_raised_window_stays_on_top(tmp_path):
     assert base["win-b"] > base["win-a"] > base["win-low"]
     assert result["same"] is True
     assert max(after.values()) < 2**31
+
+
+def test_retired_run_viewer_windows_are_never_drawn(tmp_path):
+    """native-studio-playback-fix Slice 09 : une fenêtre `studio_stage` ou
+    `studio_aux` qu'un Core plus ancien a laissée dans la scène n'est jamais
+    dessinée — une exécution se joue dans Variantes. Le modèle de vue reçoit
+    les objets avec un placement résolu : seul le garde des catégories retirées
+    les écarte (vider la liste fait échouer ce test)."""
+    result = run_node(tmp_path, r"""
+      const stage=obj('studio-stage:run-1','window',{category:'studio_stage',payload:{title:'Scène 1',summary:'',items:[]}});
+      const aux=obj('studio-aux-run-1-notes','window',{category:'studio_aux',payload:{title:'Notes',summary:'',items:[]}});
+      const kept=obj('report','window',{payload:{title:'Rapport',summary:'',items:[]}});
+      const s=state([stage,aux,kept]);
+      const layout=L.resolveLayout(s);
+      const vm=L.viewModel(s,layout,L.viewport(1280,720));
+      return {placed:[...layout.placements.keys()].sort(),drawn:vm.nodes.map(n=>n.id),hidden:vm.hidden};
+    """)
+
+    # Le résolveur les a bien posés : le garde du modèle de vue est la seule barrière.
+    assert {"studio-stage:run-1", "studio-aux-run-1-notes"} <= set(result["placed"])
+    assert result["drawn"] == ["report"]
+    assert result["hidden"] == 0

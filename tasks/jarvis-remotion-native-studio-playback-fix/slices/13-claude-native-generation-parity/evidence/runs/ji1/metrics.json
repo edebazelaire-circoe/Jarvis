@@ -1,0 +1,65 @@
+{
+ "run": "ji1",
+ "label": "Jarvis native, iGuard run 1",
+ "side": "jarvis",
+ "topic": "iguard",
+ "totals": {
+  "cost_usd_last_brain_result": 0.8343574000000001,
+  "brain_results": 2
+ },
+ "agents": {
+  "brain": {
+   "description": "brain",
+   "tool_calls": 1,
+   "by_tool": {
+    "Agent": 1
+   },
+   "refused_or_error": [],
+   "frames_viewed": 0,
+   "usage": {
+    "input_tokens": 8,
+    "output_tokens": 883,
+    "cache_read_input_tokens": 124830,
+    "cache_creation_input_tokens": 40147
+   },
+   "elapsed_s": 511.8
+  },
+  "agent-a38e4c582eb85ecd1": {
+   "description": "[code] [presentation-author] Présentation IAGuard",
+   "tool_calls": 25,
+   "by_tool": {
+    "Read": 13,
+    "ToolSearch": 1,
+    "mcp__jarvis-presentation__presentation_inspect": 1,
+    "mcp__jarvis-presentation__presentation_draft_assemble": 2,
+    "mcp__jarvis-presentation__presentation_source": 8
+   },
+   "refused_or_error": [
+    {
+     "tool": "mcp__jarvis-presentation__presentation_draft_assemble",
+     "result": "{\"ok\":true,\"speech\":\"silent\",\"status\":\"refused\",\"ok_gate\":false,\"report\":{\"ok\":false,\"workflow\":\"directed\",\"stage\":\"partial\",\"subset\":\"full\",\"failures\":[{\"code\":\"draft_schema\",\"severity\":\"error\",\"where\":\"scene:4\",\"message\":\"scenes[3].key must match [a-z][a-z0-9_]{0,39}\"}],\"warnings\":[{\"code\":\"tsx_th"
+    }
+   ],
+   "frames_viewed": 12,
+   "usage": {
+    "input_tokens": 20,
+    "output_tokens": 1495,
+    "cache_read_input_tokens": 623179,
+    "cache_creation_input_tokens": 86369
+   },
+   "elapsed_s": 497.7
+  }
+ },
+ "turns": [
+  {
+   "text": "Crée une courte présentation vidéo Remotion de 4 scènes, environ 40 secondes au total, en 1920x1080, qui présente IAGuard, l'agent documentaire souverain à un DSI qui évalue l'outil. Seule source de v",
+   "brain_answer_s": 15.6,
+   "answer": "{\"text\": \"J'ai lancé un agent qui construit la présentation IAGuard en Remotion, 4 scènes, à partir du seul README. Je vous dis où la voir dès qu'elle est prête.\", \"ok\": true, \"error\": null}"
+  }
+ ],
+ "files": {
+  "brain.jsonl": 16,
+  "agent-a38e4c582eb85ecd1.jsonl": 57,
+  "jarvis-trace.jsonl": 153
+ }
+}

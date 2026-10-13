@@ -142,7 +142,7 @@ async def test_a_good_edit_reloads_only_the_affected_frame_and_keeps_the_live_va
     async with Scenario(tmp_path) as sc:
         out = await drive(sc.bridge, tmp_path, [
             *await sc.prelude(),
-            # two REAL clicks in the stage frame: its own state events write the stage window's data through Core
+            # two REAL clicks in the run's frame: its own state events write the run surface's data through Core (Slice 09)
             {"clickInFrame": {"object_id": sc.stage, "selector": "button"}},
             {"frameUntil": {"object_id": sc.stage, "expr": "document.querySelector('.count').textContent==='13'", "ms": 8000}},
             {"clickInFrame": {"object_id": sc.stage, "selector": "button"}},
@@ -582,8 +582,9 @@ async def test_a_slow_frame_that_then_fails_is_rolled_back_late_and_the_previous
 # ------------------------------------------------------------------ la page servie du Control Center
 
 async def test_the_served_control_center_installs_the_reload_module_and_wires_the_host(tmp_path):
-    """La vraie page assemblee par la chaine de marqueurs de `ControlCenter.index` : le module est la, installe sans erreur, et la
-    page de scene branche `onOutcome` et `swapPrefix` sur l'hote (lus dans la source servie, l'hote ne se cree qu'au premier prefab)."""
+    """La vraie page assemblee par la chaine de marqueurs de `ControlCenter.index` : le module est la, installe sans erreur ; la page de
+    scene branche `onOutcome` sur son hote, et le lecteur de Variantes (Slice 09 : la surface de la lecture) rapporte les montages de la
+    lecture au rechargement (lus dans la source servie, les hotes ne se creent qu'au premier prefab)."""
 
     from tests.unit.test_fullscreen_browser import _drive, _served_page
 
@@ -591,7 +592,9 @@ async def test_the_served_control_center_installs_the_reload_module_and_wires_th
     html = page.read_text(encoding="utf-8")
     assert html.count("root.JarvisStudioReload=api") == 1 and "__CONTROL_CENTER_PRESENTATION_STUDIO_RELOAD_JS__" not in html
     assert html.index("root.JarvisPrefabHost=api") < html.index("root.JarvisStudioReload=api")          # after the host
-    assert "onOutcome:reportPrefabOutcome,swapPrefix:'presentation-studio.'" in html
+    assert "onOutcome:reportPrefabOutcome});" in html
+    assert "onOutcome:(info)=>{if(info&&runAdapter.owns(info.object_id))reportRunOutcome(info)" in html
+    assert "reload.hostOutcome(info)" in html
     result = await asyncio.to_thread(_drive, page, [
         {"wait": 700},
         {"value": "api", "expr": "Object.keys(window.JarvisStudioReload).sort()"},

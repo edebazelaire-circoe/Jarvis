@@ -1,0 +1,106 @@
+{
+  "schema": "jarvis.presentation_studio.score",
+  "schema_version": 1,
+  "score_id": "psr_9810e388d8b7",
+  "presentation_id": "pst_5ba11edc8ea08575b8397379859af675",
+  "variant_id": "psv_cdd730b75bda3a1bea77e7d3b38343a4",
+  "start_item_id": "psi_0b92d522916c",
+  "items": [
+    {
+      "item_id": "psi_0b92d522916c",
+      "scene_id": "pss_fb9142fbddda",
+      "presenter": "jarvis",
+      "kind": "speech",
+      "label": "",
+      "text": "Bonjour a tous, voici la revue du troisieme trimestre : ce qui a marche, ce qui nous freine, et ce que nous decidons.",
+      "note": "",
+      "cue_id": null,
+      "visual": [],
+      "motion": [],
+      "target_duration_ms": 50000,
+      "timing": "soft",
+      "interruption": "allow",
+      "recovery": "continue_item",
+      "recovery_point_id": null,
+      "next_item_id": "psi_42b43e38a630",
+      "loop": null
+    },
+    {
+      "item_id": "psi_42b43e38a630",
+      "scene_id": "pss_b05de78187bf",
+      "presenter": "jarvis",
+      "kind": "speech",
+      "label": "",
+      "text": "En un coup d'oeil, le chiffre d'affaires progresse de douze pour cent et la marge reste stable.",
+      "note": "",
+      "cue_id": "psc_e106bd9b967f",
+      "visual": [
+        {
+          "kind": "control_set",
+          "scene_id": "pss_b05de78187bf",
+          "control_id": "accent",
+          "value": "#ff7a00"
+        }
+      ],
+      "motion": [
+        {
+          "kind": "control_set",
+          "scene_id": "pss_b05de78187bf",
+          "control_id": "stagger",
+          "value": 120
+        }
+      ],
+      "target_duration_ms": 50000,
+      "timing": "soft",
+      "interruption": "allow",
+      "recovery": "continue_item",
+      "recovery_point_id": null,
+      "next_item_id": "psi_fa63660ff63f",
+      "loop": null
+    },
+    {
+      "item_id": "psi_fa63660ff63f",
+      "scene_id": "pss_618942a263dd",
+      "presenter": "jarvis",
+      "kind": "speech",
+      "label": "",
+      "text": "Merci de votre attention, je vous laisse la parole pour vos questions.",
+      "note": "",
+      "cue_id": null,
+      "visual": [],
+      "motion": [
+        {
+          "kind": "control_set",
+          "scene_id": "pss_618942a263dd",
+          "control_id": "stagger",
+          "value": 120
+        }
+      ],
+      "target_duration_ms": 50000,
+      "timing": "soft",
+      "interruption": "allow",
+      "recovery": "continue_item",
+      "recovery_point_id": null,
+      "next_item_id": null,
+      "loop": null
+    }
+  ],
+  "cues": [
+    {
+      "cue_id": "psc_e106bd9b967f",
+      "label": "Le trimestre en un coup d'oeil",
+      "predicate": {
+        "phrases": [
+          "passons au chiffre d'affaires"
+        ],
+        "semantics": []
+      },
+      "armable": true
+    }
+  ],
+  "sequences": [],
+  "recovery_points": [],
+  "revision": 1,
+  "created_at": "2026-10-12T18:38:56.411514Z",
+  "updated_at": "2026-10-12T18:38:56.411514Z"
+}

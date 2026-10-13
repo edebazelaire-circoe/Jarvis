@@ -20,6 +20,11 @@ Deux classes, déclarées par le manifeste de la définition :
   commande ne peut s'intercaler entre la lecture et l'écriture ;
 - **notify** est seulement consigné : rien n'est écrit.
 
+La surface de lecture de Variantes (native-studio-playback-fix Slice 09, `RunSurface`) : un cadre monté sous l'id de la surface
+(`variants-run-<run_id>`) n'est pas un objet du Board. Ses événements suivent les MÊMES contrôles (bloc de même id et version,
+`check_state_event`, `basis` comparée sous le verrou de la surface) ; un `state` écrit les données de la surface en mémoire (ce
+que le rechargement à chaud reporte), jamais la variante ; un `notify` est consigné comme les autres.
+
 Bornes de la charge (reprise QA S04/S06, A5) : un `state` jusqu'à
 `MAX_STATE_EVENT_PAYLOAD_BYTES` (16 Kio, la borne de la charge d'un objet de
 scène : toute clé de `data` valide se réécrit entière), un `notify` jusqu'à
@@ -88,6 +93,16 @@ class PrefabEventsRateLimited(Exception):
 
 class PrefabManifestSource(Protocol):
     async def manifest(self, prefab_id: str, version: int) -> PrefabManifest: ...
+
+
+class EventSurface(Protocol):
+    """La surface de lecture de Variantes (`RunSurface`) : ses cadres ne sont pas des objets du Board."""
+
+    def owns(self, object_id: str) -> bool: ...
+
+    def current_block(self, object_id: str) -> Any: ...
+
+    async def write_data(self, object_id: str, pin: tuple[str, int], compute: Callable[[Mapping[str, Any]], Any]) -> Any: ...
 
 
 class EventScene(SceneConditionalSink, SceneReader, Protocol):
@@ -213,13 +228,25 @@ def _object_mismatch(snapshot: SceneSnapshot, request: PrefabEventRequest) -> tu
     return target, ""
 
 
+def _surface_mismatch(block: Any, request: PrefabEventRequest) -> str:
+    """Étape 1 pour la surface de Variantes : elle montre ce bloc, de même id et version ; sinon motif (vide : d'accord)."""
+
+    if block is None:
+        return f"object {request.object_id} is not the run surface on screen"
+    if (block.prefab_id, block.version) != (request.prefab_id, request.version):
+        return f"object {request.object_id} shows {block.key}, not {request.prefab_key}"
+    return ""
+
+
 class PrefabEventService:
     """Événements `state`/`notify` des cadres. Voir l'en-tête du module."""
 
     def __init__(self, scene: EventScene, catalog: PrefabManifestSource, *, diagnostics: DiagnosticSink | None = None,
                  ring_size: int = EVENT_RING_SIZE, rate_per_s: float = RATE_PER_S,
-                 clock: Callable[[], float] = time.monotonic, now: Callable[[], datetime] = utc_now) -> None:
+                 clock: Callable[[], float] = time.monotonic, now: Callable[[], datetime] = utc_now,
+                 surface: EventSurface | None = None) -> None:
         self._scene = scene
+        self._surface = surface
         self._catalog = catalog
         self._diagnostics: DiagnosticSink = diagnostics or NullDiagnosticSink()
         self._ring: deque[PrefabEventEntry] = deque(maxlen=ring_size)
@@ -250,9 +277,15 @@ class PrefabEventService:
             return await self._notify(request, manifest)
         return await self._state(request, manifest)
 
+    def _on_surface(self, request: PrefabEventRequest) -> bool:
+        return self._surface is not None and self._surface.owns(request.object_id)
+
     async def _notify(self, request: PrefabEventRequest, manifest: PrefabManifest) -> PrefabEventResult:
         decl = manifest.events[request.event]
-        _, mismatch = _object_mismatch(await self._scene.snapshot(), request)
+        if self._on_surface(request):
+            mismatch = _surface_mismatch(self._surface.current_block(request.object_id), request)
+        else:
+            _, mismatch = _object_mismatch(await self._scene.snapshot(), request)
         if mismatch:
             return self._record(request, decl.event_class, PrefabEventOutcome.REFUSED, "object_mismatch", mismatch)
         if _bounded_payload(request.payload, EventClass.NOTIFY) is None:
@@ -264,7 +297,27 @@ class PrefabEventService:
                                 "; ".join(problems[:3]))
         return self._record(request, decl.event_class, PrefabEventOutcome.RECORDED)
 
+    async def _surface_state(self, request: PrefabEventRequest, manifest: PrefabManifest) -> PrefabEventResult:
+        """Un `state` d'un cadre de la surface de Variantes : mêmes contrôles, sous le verrou de la surface ; écrit ses données (mémoire)."""
+
+        def compute(data: Mapping[str, Any]) -> tuple[PrefabEventResult, Mapping[str, Any] | None]:
+            check = check_state_event(manifest, request.event, request.payload, request.basis, data)
+            if check.outcome is StateEventOutcome.STALE:
+                return PrefabEventResult(PrefabEventOutcome.STALE, "stale", check.detail), None
+            if check.outcome is StateEventOutcome.REFUSED:
+                return PrefabEventResult(PrefabEventOutcome.REFUSED, "invalid_event", check.detail), None
+            assert check.merged is not None
+            return PrefabEventResult(PrefabEventOutcome.APPLIED), dict(check.merged)
+
+        result = await self._surface.write_data(request.object_id, (request.prefab_id, request.version), compute)
+        if result is None:
+            mismatch = _surface_mismatch(self._surface.current_block(request.object_id), request) or "the run surface moved"
+            return self._record(request, EventClass.STATE, PrefabEventOutcome.REFUSED, "object_mismatch", mismatch)
+        return self._record(request, EventClass.STATE, result.outcome, result.reason, result.detail, revision=result.revision)
+
     async def _state(self, request: PrefabEventRequest, manifest: PrefabManifest) -> PrefabEventResult:
+        if self._on_surface(request):
+            return await self._surface_state(request, manifest)
         verdict: list[PrefabEventResult] = []
 
         def plan(snapshot: SceneSnapshot) -> SceneCommand | None:

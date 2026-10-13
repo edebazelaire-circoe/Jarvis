@@ -52,7 +52,7 @@ function stageBench(opts){
   const intervals=[];let seq=1000;
   const reports=[],logs=[],fetches=[],signals=[];
   const response=(o.response)||{status:200,body:Object.assign({},DESCRIPTOR,o.descriptor||{})};
-  const deps={document:doc,window:win,parentWindow:parent,origin:ORIGIN,prefabId:DESCRIPTOR.prefab_id,version:1,iframeAttributes:ATTRS,
+  const deps={document:doc,window:win,parentWindow:parent,origin:ORIGIN,prefabId:DESCRIPTOR.prefab_id,version:1,iframeAttributes:ATTRS,embed:o.embed,
     fetch:async(url,init)=>{fetches.push(url);signals.push(init&&init.signal);if(o.never)return new Promise(()=>{});
       if(o.fetchError)throw new Error(o.fetchError);
       return {ok:response.status<400,status:response.status,json:async()=>response.body}},
@@ -110,7 +110,8 @@ async def test_the_frame_is_created_with_exactly_the_contract_attributes_and_src
       return {attrs:f.attributes,srcWhenInserted,src:f.src,fetch:b.fetches,first:statuses(b).map(s=>s.phase)};
     """)
     assert result["attrs"]["sandbox"] == "allow-scripts"
-    assert result["attrs"]["allow"] == "" and result["attrs"]["referrerpolicy"] == "no-referrer"
+    # Slice 08 (native-studio-playback-fix): autoplay is the one delegated feature (the user's « Son » click counts for the scene).
+    assert result["attrs"]["allow"] == "autoplay" and result["attrs"]["referrerpolicy"] == "no-referrer"
     assert "allow-same-origin" not in json.dumps(result["attrs"])
     assert result["srcWhenInserted"] == result["src"] and result["src"].startswith("http://127.77.0.2:17655/page/scene-")
     assert result["fetch"] == ["/api/remotion/player/presentation-studio.p000000000001.s000000000001/1"]

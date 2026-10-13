@@ -1,0 +1,20 @@
+﻿{
+  "slice_id": "15",
+  "title": "Code cleanup and durable documentation migration",
+  "dependencies": [
+    "06-player-lifecycle-and-transport",
+    "07-presentation-score-voice-compatibility",
+    "09-remove-legacy-floating-viewer",
+    "10-variants-interface-control-audit",
+    "11-studio-variants-navigation",
+    "12-native-authoring-workspace-roundtrip"
+  ],
+  "task_type": null,
+  "task_type_resolution_required": true,
+  "requires_caveman": true,
+  "requires_coding_guideline": true,
+  "frontend": false,
+  "requires_impeccable": false,
+  "claude_for_frontend_when_available": false,
+  "requires_agent_trace_analysis": false
+}

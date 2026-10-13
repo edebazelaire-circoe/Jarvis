@@ -1,41 +1,49 @@
-# Production d'une présentation ou d'une vidéo : le brain orchestre, trois agents construisent
+# Production d'une présentation ou d'une vidéo : le brain orchestre, un auteur construit en code natif
 
-Contrat de `jarvis/runtime/presentation_playbooks.py`. Les tests sont dans `tests/unit/test_presentation_playbooks.py`.
+Contrat de `jarvis/runtime/presentation_playbooks.py` et de `claude_local.PRESENTATION_PRODUCTION_RULE`. Les tests sont dans
+`tests/unit/test_presentation_playbooks.py`. Le chemin de création et ses portes : [presentation-studio.md](presentation-studio.md)
+> *Native Remotion authoring*. Les mesures qui ont fixé ce défaut (Slice 13 de native-studio-playback-fix) :
+`tasks/jarvis-remotion-native-studio-playback-fix/slices/13-claude-native-generation-parity/BENCHMARK.md`.
 
 ## Pourquoi
 
 Un sous-agent ne voit ni le prompt système du brain ni le guide du planificateur (`PLANNER_PROMPT`). Il n'a que la
 consigne que le brain a rédigée, et le prompt du brain demande des consignes de « quelques lignes de faits ». Une
-vidéo demandée ainsi sort sans contexte, sans direction artistique rappelée et sans méthode.
+vidéo demandée ainsi sort sans contexte et sans méthode : la méthode est apposée d'office (voir plus bas).
+
+Avant la Slice 13, le chemin enchaînait toujours dossier, auteur, relecture, puis un second auteur : sur le même brief,
+mesuré, quatre sous-agents, 76 appels d'outils, 15 refus (dont 13 brouillons refusés), environ 21 minutes et 3,9 USD, pour un deck que
+personne n'avait regardé ; Claude seul dans un projet Remotion : un agent, 12 à 19 appels, 2,5 à 7,5 minutes, 0,34 à 0,47 USD,
+et il regardait ses propres images.
 
 ## Le chemin
 
 Un sous-agent ne lance pas de sous-agent : le brain enchaîne les rôles, tous en arrière-plan.
 
-| Étape | Marqueur de la description de l'Agent | Rôle |
-| --- | --- | --- |
-| 1 (si le Board manque de matière) | `[general] [research]` | recherches, en parallèle |
-| 2 | `[general] [presentation-brief]` | lit le Board, la direction artistique, les consignes de l'utilisateur ; écrit `presentation/production_brief.md` dans la mémoire du Board ; rend ses questions ouvertes |
-| 3 | le brain | relaie une question bloquante à l'utilisateur, une à la fois, avec un choix par défaut |
-| 4 | `[code] [presentation-author]` | construit depuis le dossier ; se compare aux critères de réussite ; corrige |
-| 5 | `[general] [presentation-review]` | critique, sans rien modifier ; écrit `presentation/review.md` ; s'il y a des écarts, le brain relance l'auteur |
-
-La qualité passe avant la vitesse : 30 minutes à 2 heures sont acceptables.
+| Étape | Marqueur de la description de l'Agent | Quand | Rôle |
+| --- | --- | --- | --- |
+| défaut | `[code] [presentation-author]` | toujours | lit les sources, écrit le storyboard, code les scènes en Remotion natif, les rend en images (`presentation_source preview`), les regarde, corrige (`presentation_source write`) |
+| avant | `[general] [research]` | la matière manque | recherches, en parallèle |
+| avant | `[general] [presentation-brief]` | la matière est éparpillée dans le Board | écrit `presentation/production_brief.md` dans la mémoire du Board ; rend ses questions ouvertes (le brain les relaie, une à la fois) |
+| après | `[general] [presentation-review]` | l'utilisateur demande une relecture, ou livrable important | critique images à l'appui, sans rien modifier ; écrit `presentation/review.md` ; s'il y a des écarts, le brain relance l'auteur |
 
 ## Comment la méthode arrive à l'agent
 
 Le hook de routage (`routing_hook.charter_input`) appose le playbook du rôle sur la consigne de l'appel `Agent`, comme
 la charte du chantier : à toute profondeur, quoi que le brain ait rédigé, et jamais en double (`PLAYBOOK_MARK`). Le
-brain n'a donc qu'à écrire le marqueur et une consigne courte (les mots exacts de l'utilisateur, le chemin du dossier).
-La règle du brain est `claude_local.PRESENTATION_PRODUCTION_RULE`.
+brain n'a donc qu'à écrire le marqueur et une consigne courte (les mots exacts de l'utilisateur, les chemins nommés, le
+chemin du dossier s'il existe). Preuve réelle (Slice 13) : la consigne du brain recopie les mots de l'utilisateur et le
+chemin de la source ; le premier geste de l'auteur est `draft_guide` `kind: native`, comme le dit le playbook.
 
-Le playbook de l'auteur contient `PLANNER_PROMPT` en entier : la porte de qualité s'applique à lui, et ses questions vont
-dans son compte rendu, jamais à l'utilisateur.
+Le playbook de l'auteur ne contient plus `PLANNER_PROMPT` (9 000 caractères de règles du modèle guidé) : il porte la
+boucle native (`NATIVE_LOOP`) et la barre de qualité, en moins de 7 000 caractères (testé). Le mode guidé (contrôles
+réglables à la voix, thème de variante, partition parlée par Jarvis) reste disponible quand la consigne le demande : la
+porte de qualité complète s'applique alors, et `draft_guide` sans `kind` en donne la forme.
 
 ## Limites connues
 
-- Aucune vérification visuelle automatique : l'export et la lecture sont des gestes de l'utilisateur
-  (`user_request`). La relecture juge sur la structure, les sources et la partition.
+- La revue visuelle est celle de l'auteur (images fixes, pas de vidéo jouée) ; la qualité finale reste un jugement humain
+  (HV-RFX-13-01, decks aveugles côte à côte).
 - La règle du brain est lue au premier tour d'une conversation ; une conversation déjà ouverte la voit après un
   redémarrage de JARVIS. Le hook, lui, s'applique dès l'appel suivant.
-- Non éprouvé avec un vrai modèle : à valider par une vraie demande de vidéo.
+- Un aperçu coûte 30 à 40 s par scène sur un poste chargé (empaquetage et navigateur à chaque appel).

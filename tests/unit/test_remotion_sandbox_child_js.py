@@ -24,8 +24,12 @@ function world(opts){
   const o=opts||{};
   const posted=[],handlers={},calls=[];
   let nowMs=1000000;
+  /* `remotion: true`: the order of events of Remotion 4.0.534 (`PlayerUI.js` `seekTo`): clamped to the last frame, `ended` fired BEFORE the
+     frame moves when it is the last one (no loop), then `seeked`. */
+  const LAST=299;
   const player={frame:0,playing:false,listeners:{},
-    seekTo(f){calls.push(['seek',f]);player.frame=f},play(){calls.push(['play']);player.playing=true},pause(){calls.push(['pause']);player.playing=false},
+    seekTo(f){calls.push(['seek',f]);const to=o.remotion?Math.max(0,Math.min(LAST,f)):f;if(o.remotion&&to===LAST)player.emit('ended');player.frame=to;if(o.remotion)player.emit('seeked')},
+    play(){calls.push(['play']);player.playing=true},pause(){calls.push(['pause']);player.playing=false},
     isPlaying(){return player.playing},getCurrentFrame(){return player.frame},isMuted(){return true},unmute(){},
     addEventListener(name,fn){(player.listeners[name]=player.listeners[name]||[]).push(fn)},
     emit(name,detail){(player.listeners[name]||[]).forEach(fn=>fn({detail}))}};
@@ -47,7 +51,9 @@ function world(opts){
   const send=(data,over)=>(handlers.message||[]).forEach(fn=>fn(Object.assign({source:parent,origin:'http://h',data:vm.runInContext('('+JSON.stringify(data)+')',ctx)},over||{})));
   const init=()=>send({rs:1,type:'init',composition:{id:'Scene',width:1280,height:720,fps:30,durationInFrames:300},props:{}});
   const clocks=()=>posted.map(p=>p.m).filter(m=>m.type==='clock');
-  return {player,posted,calls,send,init,clocks,advance:(ms)=>{nowMs+=ms},handlers,win,refs};
+  /* Remotion's playback loop when the next step passes the last frame (`use-playback.js`): it pauses WHERE IT IS and fires `ended`. */
+  const endShort=(frame)=>{player.frame=frame;player.emit('frameupdate',{frame});player.playing=false;player.emit('pause');player.emit('ended')};
+  return {player,posted,calls,send,init,clocks,advance:(ms)=>{nowMs+=ms},handlers,win,refs,endShort,LAST};
 }
 """
 
@@ -75,6 +81,21 @@ def test_play_goes_to_the_frame_then_stops_by_itself_on_the_stop_frame(tmp_path)
     """)
     assert result["calls"] == [["seek", 30], ["play"], ["pause"], ["seek", 60]]
     assert result["midway"] is True and result["playing"] is False and result["frame"] == 60
+
+
+def test_an_order_with_a_frame_to_a_playing_player_pauses_it_before_moving_it(tmp_path):
+    """Slice 06 (native-studio-playback-fix): Remotion's `seekTo` on a playing Player arms a resume that the `play()` after it left armed;
+    at the end of the scene it fired, and `play()` on the last frame restarts at 0 (seen in real Chrome after a scrub while playing)."""
+
+    result = run_child(tmp_path, r"""
+      const w=world();w.init();
+      w.send({rs:1,type:'control',action:'play',frame:0});
+      w.send({rs:1,type:'control',action:'play',frame:200});           // the user scrubbed while it plays
+      w.send({rs:1,type:'control',action:'pause',frame:120});
+      console.log(JSON.stringify({calls:w.calls,playing:w.player.playing}));
+    """)
+    assert result["calls"] == [["seek", 0], ["play"], ["pause"], ["seek", 200], ["play"], ["pause"], ["seek", 120], ["pause"]]
+    assert result["playing"] is False
 
 
 def test_a_stop_frame_already_reached_neither_plays_nor_leaves_the_segment(tmp_path):
@@ -171,3 +192,43 @@ def test_a_scene_that_throws_at_render_is_reported_by_a_stable_error_boundary_ar
         errors:errors.map(e=>e.message),afterFailure:boundary.render()}));
     """)
     assert result == {"same": True, "sceneInside": True, "renders": True, "errors": ["boom at render"], "afterFailure": None}
+
+
+def test_a_player_that_ends_one_or_two_frames_short_lands_and_reports_on_its_last_frame(tmp_path):
+    """Slice 05 rework, B1: with a dropped frame Remotion stops on 298 (or 297) of 0..299 and fires `ended` without setting the frame.
+    The sandbox sends it to 299 and says so; the guarded `seekTo(last)` (which fires `ended` again first) does not recurse."""
+
+    result = run_child(tmp_path, r"""
+      const out={};
+      for(const short of [298,297]){
+        for(const until of [null,299]){
+          const w=world({remotion:true});w.init();
+          const order={rs:1,type:'control',action:'play',frame:250};if(until!==null)order.until=until;
+          w.send(order);
+          w.player.frame=280;w.player.emit('frameupdate',{frame:280});
+          w.advance(400);
+          w.endShort(short);
+          out[short+'/'+until]={frame:w.player.frame,playing:w.player.playing,last:w.clocks().slice(-1)[0],
+            seeksToLast:w.calls.filter(c=>c[0]==='seek'&&c[1]===299).length};
+        }
+      }
+      console.log(JSON.stringify(out));
+    """)
+    for case, got in result.items():
+        assert got["frame"] == 299 and got["playing"] is False, case
+        assert got["last"] == {"rs": 1, "type": "clock", "frame": 299, "playing": False}, case
+        assert got["seeksToLast"] == 1, case
+
+
+def test_a_paused_player_mid_scene_is_not_sent_to_its_end(tmp_path):
+    """Negative case: a pause (the host's order, the user's) is not an end: the Player stays where it was paused."""
+
+    result = run_child(tmp_path, r"""
+      const w=world({remotion:true});w.init();
+      w.send({rs:1,type:'control',action:'play',frame:100});
+      w.player.frame=150;w.player.emit('frameupdate',{frame:150});
+      w.advance(400);
+      w.send({rs:1,type:'control',action:'pause'});w.player.emit('pause');
+      console.log(JSON.stringify({frame:w.player.frame,last:w.clocks().slice(-1)[0],seeks:w.calls.filter(c=>c[0]==='seek').map(c=>c[1])}));
+    """)
+    assert result == {"frame": 150, "last": {"rs": 1, "type": "clock", "frame": 150, "playing": False}, "seeks": [100]}

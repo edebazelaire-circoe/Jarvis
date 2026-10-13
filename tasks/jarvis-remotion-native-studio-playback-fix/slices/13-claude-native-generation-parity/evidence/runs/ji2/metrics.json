@@ -1,0 +1,60 @@
+{
+ "run": "ji2",
+ "label": "Jarvis native, iGuard run 2 (after the key-format and warnings fixes)",
+ "side": "jarvis",
+ "topic": "iguard",
+ "totals": {
+  "cost_usd_last_brain_result": 0.7172789,
+  "brain_results": 2
+ },
+ "agents": {
+  "brain": {
+   "description": "brain",
+   "tool_calls": 1,
+   "by_tool": {
+    "Agent": 1
+   },
+   "refused_or_error": [],
+   "frames_viewed": 0,
+   "usage": {
+    "input_tokens": 8,
+    "output_tokens": 900,
+    "cache_read_input_tokens": 124814,
+    "cache_creation_input_tokens": 40077
+   },
+   "elapsed_s": 375.3
+  },
+  "agent-a1bb3f3c041480a6b": {
+   "description": "[code] [presentation-author] Présentation IAGuard 4 scènes",
+   "tool_calls": 18,
+   "by_tool": {
+    "Read": 9,
+    "ToolSearch": 1,
+    "mcp__jarvis-presentation__presentation_inspect": 1,
+    "mcp__jarvis-presentation__presentation_draft_assemble": 1,
+    "mcp__jarvis-presentation__presentation_source": 6
+   },
+   "refused_or_error": [],
+   "frames_viewed": 8,
+   "usage": {
+    "input_tokens": 20,
+    "output_tokens": 1516,
+    "cache_read_input_tokens": 559085,
+    "cache_creation_input_tokens": 81630
+   },
+   "elapsed_s": 359.7
+  }
+ },
+ "turns": [
+  {
+   "text": "Crée une courte présentation vidéo Remotion de 4 scènes, environ 40 secondes au total, en 1920x1080, qui présente IAGuard, l'agent documentaire souverain à un DSI qui évalue l'outil. Seule source de v",
+   "brain_answer_s": 17.8,
+   "answer": "{\"text\": \"Un agent auteur est lancé. Il construit la présentation IAGuard en quatre scènes à partir du seul README, puis la vérifie. Je vous dis où la voir dès qu'il a fini.\", \"ok\": true, \"error\": null}"
+  }
+ ],
+ "files": {
+  "brain.jsonl": 16,
+  "agent-a1bb3f3c041480a6b.jsonl": 42,
+  "jarvis-trace.jsonl": 137
+ }
+}

@@ -1,0 +1,12 @@
+{
+ "gesture": "Lire",
+ "scrub_kind": "slider",
+ "after": {
+  "frame": 40,
+  "playing": true,
+  "duration": 240,
+  "phase": "ready",
+  "scene": "S2"
+ },
+ "frame_orders_after_scrub_500ms": []
+}

@@ -1502,9 +1502,12 @@ the case that needed it.
   forwarded to the scene's own key handling. `Escape` and any Ctrl/Alt/Meta
   combination stay with the browser. This is **opt-in**: the default is
   `keys: "none"`, which attaches nothing and never takes focus from a prefab (a
-  text field keeps typing). With `keys: "host"` (the presenter playback, Slice 12,
-  passes it) a click inside the frame moves focus into the frame and the host
-  takes it back on the next `blur`, so the keys keep working.
+  text field keeps typing). With `keys: "host"` a click inside the frame moves
+  focus into the frame and the host takes it back on the next `blur`, so the keys
+  keep working. No presentation caller passes `host` since the band was retired
+  (native-studio-playback-fix Slice 09: Variants enters with `keys: "none"` and
+  keeps its own key map); it stays the generic module's public API
+  ([presentation-studio.md](presentation-studio.md) › *Retirement map*, Slice 15).
 - **Display selection is best effort.** `display` is `current` (default),
   `primary`, `other` or an index; the page asks `window.getScreenDetails()` (the
   Window Management API, Chromium only, own permission) and passes `{screen}`.

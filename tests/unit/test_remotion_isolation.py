@@ -209,7 +209,10 @@ def test_the_page_csp_is_closed_by_default_and_carries_the_sandbox_directive():
 
 def test_the_sandbox_value_never_grants_the_dangerous_tokens():
     assert sb.SANDBOX_VALUE == "allow-scripts" and not set(sb.SANDBOX_VALUE.split()) & sb.FORBIDDEN_SANDBOX_TOKENS
-    assert sb.IFRAME_ATTRIBUTES["sandbox"] == "allow-scripts" and sb.IFRAME_ATTRIBUTES["allow"] == ""
+    assert sb.IFRAME_ATTRIBUTES["sandbox"] == "allow-scripts"
+    # Slice 08 (native-studio-playback-fix): `autoplay` is the one browser feature the frame is delegated, and only that one (no origin list,
+    # no `*`, no fullscreen, camera, microphone, clipboard...): the user's click on « Son » in Jarvis's page counts for the scene's sound.
+    assert sb.IFRAME_ATTRIBUTES["allow"] == "autoplay" and sb.IFRAME_ALLOW.split(";") == ["autoplay"]
 
 
 @pytest.mark.parametrize("nonce", ["", "short", "x" * 65, "has space has space!!", "a;b" * 8])

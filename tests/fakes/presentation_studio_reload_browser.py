@@ -3,7 +3,8 @@
 Le navigateur charge une page minimale qui embarque les VRAIS modules du Control Center (`control_center_prefab_protocol.js`,
 `control_center_prefab_host.js`, `control_center_presentation_studio_reload.js`) et la meme logique de synchronisation de scene
 que la page de scene (`JarvisPrefabHost.syncScene`). Le serveur local (`Bridge`) est le Control Center reduit a ce que la page
-appelle : paquets de prefab (`PrefabService.bundle`), instantane de la scene globale (`SceneService`), evenements d'etat des
+appelle : paquets de prefab (`PrefabService.bundle`), instantane de la scene globale (`SceneService`) plus la surface de lecture de
+Variantes (`RunSurface`, Slice 09 : la scene de la lecture n'est plus une fenetre du Board), evenements d'etat des
 cadres (`PrefabEventService`), et les routes du Studio (`apply_source_edit`, rapports de montage, rechargements recents), sur
 les services reels du `Rig`. En-tete `Content-Security-Policy: frame-src 'none'` comme le vrai Control Center.
 
@@ -119,7 +120,9 @@ class Bridge:
         self.rig = rig
         self.hits: dict[str, int] = {}
         self.requests: list[tuple[str, str]] = []
-        self.events = PrefabEventService(rig.scene, rig.prefabs, diagnostics=rig.sink)
+        # Slice 09 (native-studio-playback-fix): the run plays on the Variants run surface, not a Board window; the page of this bench
+        # mounts it beside the Board windows (as the Variants Player mounts it under its id), and its frame's events go to the surface.
+        self.events = PrefabEventService(rig.scene, rig.prefabs, diagnostics=rig.sink, surface=rig.surface)
         app = web.Application()
         app.add_routes([
             web.get("/", self.index), web.get("/api/scene", self.scene),
@@ -160,7 +163,10 @@ class Bridge:
                     "prefab": {"id": item.payload.prefab.prefab_id, "version": item.payload.prefab.version,
                                "props": dict(item.payload.prefab.props), "data": dict(item.payload.prefab.data)}}
                    for item in snapshot.objects if item.payload.prefab is not None]
-        return web.json_response({"revision": snapshot.revision, "objects": objects})
+        surface = self.rig.surface.snapshot()
+        if surface is not None and surface["prefab"] is not None:   # the run's surface, as the Variants Player mounts it
+            objects.insert(0, {"id": surface["surface_id"], "title": surface["title"] or surface["surface_id"], "prefab": surface["prefab"]})
+        return web.json_response({"revision": f"{snapshot.revision}:{self.rig.surface.revision}", "objects": objects})
 
     async def bundle(self, request: web.Request) -> web.Response:
         info = request.match_info

@@ -1,0 +1,236 @@
+{
+ "wall_s": 91.6,
+ "expected_s": 74,
+ "failed": null,
+ "boundaries": [
+  {
+   "from": "S1",
+   "to": "S2",
+   "out_last_frame": 89,
+   "out_expected_last": 89,
+   "out_end_ms": 3726,
+   "in_live_ms": 3906,
+   "in_first_frame": 0,
+   "in_first_play_ms": 3904,
+   "gap_ms": 178
+  },
+  {
+   "from": "S2",
+   "to": "S3",
+   "out_last_frame": 239,
+   "out_expected_last": 239,
+   "out_end_ms": 11859,
+   "in_live_ms": 12007,
+   "in_first_frame": 0,
+   "in_first_play_ms": 12007,
+   "gap_ms": 148
+  },
+  {
+   "from": "S3",
+   "to": "S4",
+   "out_last_frame": 899,
+   "out_expected_last": 899,
+   "out_end_ms": 41995,
+   "in_live_ms": 42156,
+   "in_first_frame": 0,
+   "in_first_play_ms": 42163,
+   "gap_ms": 168
+  },
+  {
+   "from": "S4",
+   "to": "S5",
+   "out_last_frame": 74,
+   "out_expected_last": 74,
+   "out_end_ms": 45127,
+   "in_live_ms": 45292,
+   "in_first_frame": 0,
+   "in_first_play_ms": 45293,
+   "gap_ms": 166
+  },
+  {
+   "from": "S5",
+   "to": "S6",
+   "out_last_frame": 479,
+   "out_expected_last": 479,
+   "out_end_ms": 60159,
+   "in_live_ms": 60322,
+   "in_first_frame": 0,
+   "in_first_play_ms": 60329,
+   "gap_ms": 170
+  },
+  {
+   "from": "S6",
+   "to": "S7",
+   "out_last_frame": 89,
+   "out_expected_last": 89,
+   "out_end_ms": 63312,
+   "in_live_ms": 63471,
+   "in_first_frame": 0,
+   "in_first_play_ms": 63475,
+   "gap_ms": 163
+  },
+  {
+   "from": "S7",
+   "to": "S8",
+   "out_last_frame": 191,
+   "out_expected_last": 191,
+   "out_end_ms": 71422,
+   "in_live_ms": 71572,
+   "in_first_frame": 0,
+   "in_first_play_ms": 71579,
+   "gap_ms": 157
+  },
+  {
+   "from": "S8",
+   "to": "S9",
+   "out_last_frame": 89,
+   "out_expected_last": 89,
+   "out_end_ms": 74559,
+   "in_live_ms": 74891,
+   "in_first_frame": 0,
+   "in_first_play_ms": 74899,
+   "gap_ms": 340
+  }
+ ],
+ "scenes": [
+  {
+   "uid": 1,
+   "scene": "S1",
+   "live_ms": 8,
+   "first_play": [
+    755,
+    0
+   ],
+   "max_frame": 89,
+   "played_ms": 2971,
+   "wraps": [],
+   "duration": 90
+  },
+  {
+   "uid": 2,
+   "scene": "S2",
+   "live_ms": 3906,
+   "first_play": [
+    3904,
+    0
+   ],
+   "max_frame": 239,
+   "played_ms": 7955,
+   "wraps": [],
+   "duration": 240
+  },
+  {
+   "uid": 3,
+   "scene": "S3",
+   "live_ms": 12007,
+   "first_play": [
+    12007,
+    0
+   ],
+   "max_frame": 899,
+   "played_ms": 29988,
+   "wraps": [],
+   "duration": 900
+  },
+  {
+   "uid": 4,
+   "scene": "S4",
+   "live_ms": 42156,
+   "first_play": [
+    42163,
+    0
+   ],
+   "max_frame": 74,
+   "played_ms": 2964,
+   "wraps": [],
+   "duration": 75
+  },
+  {
+   "uid": 5,
+   "scene": "S5",
+   "live_ms": 45292,
+   "first_play": [
+    45293,
+    0
+   ],
+   "max_frame": 479,
+   "played_ms": 14866,
+   "wraps": [],
+   "duration": 480
+  },
+  {
+   "uid": 6,
+   "scene": "S6",
+   "live_ms": 60322,
+   "first_play": [
+    60329,
+    0
+   ],
+   "max_frame": 89,
+   "played_ms": 2983,
+   "wraps": [],
+   "duration": 90
+  },
+  {
+   "uid": 7,
+   "scene": "S7",
+   "live_ms": 63471,
+   "first_play": [
+    63475,
+    0
+   ],
+   "max_frame": 191,
+   "played_ms": 7947,
+   "wraps": [],
+   "duration": 192
+  },
+  {
+   "uid": 8,
+   "scene": "S8",
+   "live_ms": 71572,
+   "first_play": [
+    71579,
+    0
+   ],
+   "max_frame": 89,
+   "played_ms": 2980,
+   "wraps": [],
+   "duration": 90
+  },
+  {
+   "uid": 9,
+   "scene": "S9",
+   "live_ms": 74891,
+   "first_play": [
+    74899,
+    0
+   ],
+   "max_frame": 239,
+   "played_ms": 7975,
+   "wraps": [],
+   "duration": 240
+  }
+ ],
+ "blank_spans_ms": [],
+ "hybrid_or_blank_captures": [],
+ "core_scenes_entered": [
+  1,
+  2,
+  3,
+  4,
+  5,
+  6,
+  7,
+  8,
+  9
+ ],
+ "where_end": {
+  "phase": "playing",
+  "scope": "manual",
+  "position": {
+   "index": 13,
+   "of": 13
+  }
+ },
+ "deadline_traces": []
+}

@@ -1,0 +1,245 @@
+{
+ "row_opened": {
+  "preview": [
+   332,
+   788
+  ],
+  "row": [
+   332,
+   788
+  ],
+  "rowScroll": 456,
+  "rowClient": 456,
+  "kids": [
+   {
+    "cls": "jvx-transport",
+    "left": 332,
+    "right": 700,
+    "scroll": 368,
+    "client": 368,
+    "ellipsis": "clip",
+    "text": "Lire0:00 / 1:14"
+   },
+   {
+    "cls": "jvx-scene-line",
+    "left": 0,
+    "right": 0,
+    "scroll": 0,
+    "client": 0,
+    "ellipsis": "clip",
+    "text": "S1 3s@30"
+   },
+   {
+    "cls": "jvx-scene-count",
+    "left": 712,
+    "right": 788,
+    "scroll": 76,
+    "client": 76,
+    "ellipsis": "ellipsis",
+    "text": "Scène 1 sur 9"
+   }
+  ]
+ },
+ "w_pressed": 77,
+ "w_moved": 77,
+ "pressed": {
+  "phase": "paused",
+  "frame": 1418,
+  "total_frames": 4440,
+  "fps": 60,
+  "playing": false,
+  "scene_index": 2,
+  "scene_count": 9,
+  "scene_id": "pss_000000000003",
+  "scene_title": "S3 30s@30",
+  "starts": [
+   0,
+   180,
+   660,
+   2460,
+   2640,
+   3120,
+   3300,
+   3780,
+   3960
+  ],
+  "scope": "all",
+  "retryable": true,
+  "waiting_ms": 0,
+  "waiting_visible": false,
+  "error": null
+ },
+ "moved": {
+  "phase": "paused",
+  "frame": 3462,
+  "total_frames": 4440,
+  "fps": 60,
+  "playing": false,
+  "scene_index": 6,
+  "scene_count": 9,
+  "scene_id": "pss_000000000007",
+  "scene_title": "S7 8s@24",
+  "starts": [
+   0,
+   180,
+   660,
+   2460,
+   2640,
+   3120,
+   3300,
+   3780,
+   3960
+  ],
+  "scope": "all",
+  "retryable": true,
+  "waiting_ms": 0,
+  "waiting_visible": false,
+  "error": null
+ },
+ "moved_now": "3462",
+ "released": {
+  "readouts": [
+   {
+    "where": "page",
+    "text": "0:58 / 1:14"
+   }
+  ],
+  "label": 7,
+  "selected": "pss_000000000007",
+  "slider": {
+   "now": "3475",
+   "max": "4439",
+   "text": "Scène 7 sur 9, 0:58 sur 1:14",
+   "disabled": false
+  },
+  "player": {
+   "frame": 70,
+   "playing": true,
+   "duration": 192,
+   "phase": "ready",
+   "scene": "S7"
+  },
+  "open": true
+ },
+ "released_view": {
+  "phase": "playing",
+  "frame": 3475,
+  "total_frames": 4440,
+  "fps": 60,
+  "playing": true,
+  "scene_index": 6,
+  "scene_count": 9,
+  "scene_id": "pss_000000000007",
+  "scene_title": "S7 8s@24",
+  "starts": [
+   0,
+   180,
+   660,
+   2460,
+   2640,
+   3120,
+   3300,
+   3780,
+   3960
+  ],
+  "scope": "all",
+  "retryable": true,
+  "waiting_ms": 0,
+  "waiting_visible": false,
+  "error": null
+ },
+ "row_playing": {
+  "preview": [
+   332,
+   788
+  ],
+  "row": [
+   332,
+   788
+  ],
+  "rowScroll": 456,
+  "rowClient": 456,
+  "kids": [
+   {
+    "cls": "jvx-transport",
+    "left": 332,
+    "right": 700,
+    "scroll": 368,
+    "client": 368,
+    "ellipsis": "clip",
+    "text": "Pause0:58 / 1:14"
+   },
+   {
+    "cls": "jvx-scene-line",
+    "left": 0,
+    "right": 0,
+    "scroll": 0,
+    "client": 0,
+    "ellipsis": "clip",
+    "text": "S7 8s@24"
+   },
+   {
+    "cls": "jvx-scene-count",
+    "left": 712,
+    "right": 788,
+    "scroll": 76,
+    "client": 76,
+    "ellipsis": "ellipsis",
+    "text": "Scène 7 sur 9"
+   }
+  ]
+ },
+ "paused_after": {
+  "readouts": [
+   {
+    "where": "page",
+    "text": "0:04 / 1:14"
+   }
+  ],
+  "label": 2,
+  "selected": "pss_000000000002",
+  "slider": {
+   "now": "222",
+   "max": "4439",
+   "text": "Scène 2 sur 9, 0:04 sur 1:14",
+   "disabled": false
+  },
+  "player": {
+   "frame": 21,
+   "playing": false,
+   "duration": 240,
+   "phase": "ready",
+   "scene": "S2"
+  },
+  "open": true
+ },
+ "paused_view": {
+  "phase": "paused",
+  "frame": 222,
+  "total_frames": 4440,
+  "fps": 60,
+  "playing": false,
+  "scene_index": 1,
+  "scene_count": 9,
+  "scene_id": "pss_000000000002",
+  "scene_title": "S2 8s@30",
+  "starts": [
+   0,
+   180,
+   660,
+   2460,
+   2640,
+   3120,
+   3300,
+   3780,
+   3960
+  ],
+  "scope": "all",
+  "retryable": true,
+  "waiting_ms": 0,
+  "waiting_visible": false,
+  "error": null
+ },
+ "failed": null,
+ "core_phase": "idle"
+}

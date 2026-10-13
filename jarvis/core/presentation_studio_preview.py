@@ -1,6 +1,6 @@
 """Scene variant preview state of the playback service (handoff jarvis-interactive-presentation-studio, Slice 17).
 
-The stage window can show a *preview state*: a scene rendered in memory (never written) with a scene-local variant selected,
+The run surface of Variants (Slice 09; the Board stage window before it) can show a *preview state*: a scene rendered in memory (never written) with a scene-local variant selected,
 started by the user while the run is PAUSED. It is memory only and ephemeral: it ends on `end_preview`, on the timeout, on any
 playback command (the service's `_dispatch` calls `_end_preview_locked`), on a committed edit, on stop and on a crash, and every exit
 repaints the canonical scene or releases the stage. Contract: `docs/presentation-studio.md` > *Scene-local variant contract*.
@@ -38,7 +38,7 @@ class ScenePreviewMixin:
 
     async def show_preview(self, presentation_id: str, variant_id: str, scene: Any, *, scene_variant_id: str, revision: int,
                            timeout_s: float) -> dict[str, Any]:
-        """Show `scene` (already rendered in memory by the edit engine, never written) on the stage window, in a user-started
+        """Show `scene` (already rendered in memory by the edit engine, never written) on the run surface of Variants, in a user-started
         PREVIEW state. Only for the variant the run plays and only while the run is PAUSED (the audience never sees a preview
         of a live, moving run). The state is ephemeral: it ends on `end_preview`, on the timeout, on any playback command, on a
         committed edit, on stop and on a crash; every exit repaints the canonical scene (or releases the stage). "Not possible"
@@ -54,13 +54,13 @@ class ScenePreviewMixin:
             await self._studio.require_native_pin(presentation_id, scene.prefab.prefab_id, scene.prefab.version,
                                                   what=f"preview of scene {scene.scene_id} ({scene.prefab.prefab_id}@{scene.prefab.version})")
             await self._end_preview_locked("replaced", repaint=False)
-            await self._stage.show(scene.payload())
+            await self._stage.show(scene.payload(), scene_id=scene.scene_id)
             preview = Preview(scene.scene_id, scene_variant_id)
             self._preview = preview
             preview.timer = asyncio.get_running_loop().create_task(self._preview_timeout(preview, timeout_s))
             self._tasks.add(preview.timer)
             preview.timer.add_done_callback(self._tasks.discard)
-            self._trace("preview_shown", "Apercu de variante locale sur la fenetre de scene", data={
+            self._trace("preview_shown", "Apercu de variante locale sur la surface de Variantes", data={
                 "run_id": self._state.run_id, "scene_id": scene.scene_id, "scene_variant_id": scene_variant_id,
                 "timeout_s": timeout_s})
             return {"staged": True}
@@ -103,7 +103,7 @@ class ScenePreviewMixin:
                 await self._sync_stage()
             except (StageError, PresentationStudioError) as exc:
                 self._notice("stage_sync_after_preview_failed")
-                self._trace("playback_stage_failed", "La fenetre de scene n'est pas revenue de l'apercu", level="error",
+                self._trace("playback_stage_failed", "La surface de Variantes n'est pas revenue de l'apercu", level="error",
                             data={"command": "preview_end", "error": _clip(exc.message), "run_id": self._state.run_id})
         self._trace("preview_ended", "Apercu de variante locale termine", data={
             "run_id": self._state.run_id, "scene_id": scene_id, "reason": reason, "repainted": repaint})
