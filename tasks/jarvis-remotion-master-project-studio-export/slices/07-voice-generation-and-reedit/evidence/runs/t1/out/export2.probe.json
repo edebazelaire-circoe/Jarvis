@@ -1,0 +1,56 @@
+{
+ "artifact_id": "jart_1fc06a2784d84267a424c53c69f70f52",
+ "bytes": 635125,
+ "sha256": "ead5c565eca7b1b4579b0cf511054754d7cdfb8a4086438ceb6d8116a81c7492",
+ "format": {
+  "duration": "15.000000",
+  "format_name": "mov,mp4,m4a,3gp,3g2,mj2",
+  "size": "635125"
+ },
+ "streams": [
+  {
+   "codec_type": "video",
+   "codec_name": "h264",
+   "width": 1920,
+   "height": 1080,
+   "r_frame_rate": "30/1",
+   "nb_frames": "450",
+   "duration": "15.000000"
+  }
+ ],
+ "metadata": {
+  "render_browser": "chrome 155.0.8059.40",
+  "render_codec": "h264",
+  "render_composition": "JarvisPresentation",
+  "render_crf": 23,
+  "render_egress_denied": 20,
+  "render_engine": "4.0.534",
+  "render_engine_drift": false,
+  "render_engine_lock_sha256": "acff3cd562fd6f426040aed8b60cce840b23befe7bac71604d0c7614b8762fbe",
+  "render_flat": true,
+  "render_format": "mp4",
+  "render_fps": 30,
+  "render_frame_end": 449,
+  "render_frame_start": 0,
+  "render_height": 1080,
+  "render_image_format": "mp4",
+  "render_job_id": "rj_324b9459b171",
+  "render_output_sha256": "ead5c565eca7b1b4579b0cf511054754d7cdfb8a4086438ceb6d8116a81c7492",
+  "render_pixel_format": "yuv420p",
+  "render_project_key": "mpk_33edb85ad8356a99c37e085d",
+  "render_sandbox": true,
+  "render_scale": 1.0,
+  "render_scene_count": 3,
+  "render_scope": "master",
+  "render_settings_sha256": "a05f236d861f4ff6e43db1afaaae495627819a1910d51f8e73ef3f05776e1df8",
+  "render_verified_by": "ffprobe",
+  "render_wall_ms": 36175,
+  "render_width": 1920
+ },
+ "frames": [
+  "export2-t002.5.jpg",
+  "export2-t007.5.jpg",
+  "export2-t009.0.jpg",
+  "export2-t012.5.jpg"
+ ]
+}
