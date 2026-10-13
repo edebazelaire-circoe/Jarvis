@@ -131,10 +131,13 @@ async def test_studio_with_a_scene_reads_its_source_pin_from_the_state_and_still
     result = await tools.studio(scene_id=SID)
     assert result["scene"] == {"scene_id": SID, "prefab": {"id": "circoe.demo", "version": 1}}
     # the door opens the scene on screen: the user shows that scene first (Slice 11 QA polish)
-    assert "affiche cette scène dans Variantes, puis clique « Remotion Studio » sous la vidéo et confirme" in result["say"]
-    assert "dans Variantes, clique « Remotion Studio »" in (await tools.studio())["say"], "without a scene: the plain pointer"
+    # master Slice 08: a named scene is opened by the secondary scene door (« Remotion Studio » opens the whole video when it is ready)
+    assert "affiche cette scène dans Variantes, puis clique « Cette scène seule dans Remotion Studio » sous la vidéo" in result["say"]
+    assert "« Remotion Studio » si la vidéo entière n'est pas disponible" in result["say"]
+    plain = (await tools.studio())["say"]
+    assert "dans Variantes, clique « Remotion Studio »" in plain and "la vidéo entière de la variante" in plain, "without a scene: the plain pointer"
     # Slice 13 rework (QA I5): for a named scene the rail is not offered as an equivalent (it opens the scene on screen, not this one)
-    assert result["where"] == "Variantes, cette scène affichée : bouton « Remotion Studio » sous la vidéo" and "rail" not in result["where"]
+    assert result["where"] == "Variantes, cette scène affichée : « Cette scène seule dans Remotion Studio » sous la vidéo" and "rail" not in result["where"]
     assert "rail" in (await tools.studio())["where"], "without a scene, the rail entry is still an equivalent door"
     assert core.named("presentation_studio_scene_controls") == [(PID, VID, SID)] and core.writes == []
     with pytest.raises(PresentationToolError) as caught:

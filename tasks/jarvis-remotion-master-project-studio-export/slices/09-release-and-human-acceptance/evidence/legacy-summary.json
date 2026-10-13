@@ -1,0 +1,72 @@
+{
+ "slice": "09-release-and-human-acceptance",
+ "tested_head": "b658b4d3",
+ "durations_ms": {
+  "variants_and_scene_studio": 61946
+ },
+ "runtime": "RemotionStack (real Core, real Control Center, real remotion studio, real guarded render host), throw-away data root, headless Chrome over CDP; the live Jarvis was never contacted",
+ "master": {
+  "reason": "master_fps_mismatch",
+  "detail": "scene 1 (pss_000000000001) declares fps 30; scene 4 (pss_000000000004), scene 5 (pss_000000000005), scene 7 (pss_000000000007) declare another",
+  "scene_ids": [
+   "pss_000000000001",
+   "pss_000000000002",
+   "pss_000000000003",
+   "pss_000000000004",
+   "pss_000000000005",
+   "pss_000000000006",
+   "pss_000000000007",
+   "pss_000000000008",
+   "pss_000000000009"
+  ],
+  "export_refusal": {
+   "status": 409,
+   "code": "presentation_render_master_incompatible",
+   "reason": "master_fps_mismatch"
+  },
+  "jobs_after_refusal": 0
+ },
+ "variants": {
+  "line": "",
+  "master_line": "Les scènes n’ont pas toutes la même cadence (images par seconde) : la vidéo entière n’est pas disponible ; chaque scène reste lisible. « Remotion Studio » ouvre donc la scène à l’écran.",
+  "export_disabled": "true",
+  "export_title": "Les scènes n’ont pas toutes la même cadence (images par seconde) : la vidéo entière n’est pas disponible ; chaque scène reste lisible. Exportez plutôt les scènes une à une depuis les Artefacts du Board.",
+  "door_target": "scene",
+  "scene_door_shown": false,
+  "dialog": "Ouvrir cette scène hors du bac à sable ?\nSans bac à sable : la scène s’exécute dans votre navigateur avec les droits d’une page web, pas dans le lecteur isolé de Jarvis.\nMême origine que l’API de Remotion Studio : elle peut appeler cette API (lecture de sa copie de travail).\nDonnées : sa source et ses paramètres peuvent sortir de ce poste (Remotion Studio bloque les connexions, mais pas tous les c",
+  "dialog_target": null,
+  "status": "Remotion Studio est prêt sur cette scène. Le navigateur n’ouvre un onglet qu’après un clic :",
+  "play": {
+   "control": "Lire",
+   "before": {
+    "frame": 0,
+    "playing": false,
+    "duration": 90,
+    "phase": "ready",
+    "scene": "S1"
+   },
+   "after_4_5_s": {
+    "frame": 39,
+    "playing": true,
+    "duration": 240,
+    "phase": "ready",
+    "scene": "S2"
+   }
+  },
+  "studio_target": {
+   "kind": "scene",
+   "prefab_id": "presentation-studio.p0000000000a1.s000000000002",
+   "version": 1
+  }
+ },
+ "scene_export": {
+  "state": "complete",
+  "frames": 90,
+  "render_scope": "scene",
+  "render_scene_id": "pss_000000000001"
+ },
+ "canonical_changed": [],
+ "screenshots": [
+  "legacy-variants.png"
+ ]
+}

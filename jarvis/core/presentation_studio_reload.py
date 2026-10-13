@@ -137,7 +137,8 @@ class _Base:
 #: Versions anterieures d'une scene que l'on peut republier (annuler) : bornees, en memoire.
 MAX_RESTORABLE = 16
 #: Slice 13 rework (QA B3): `() -> (base pin or None, unpublished paths)` of the Remotion Studio workspace
-#: (the Remotion Studio service's `workspace_base`); the base has a `prefab_id`.
+#: (the Remotion Studio service's `workspace_base`); the base has a `prefab_id`, or is a `MasterWorkspaceBase` (`kind == "variant_master"`,
+#: master-project-studio-export Slice 05) that answers `edits_on(scene_id, edited)`.
 StudioWorkspaceProbe = Callable[[], Awaitable[tuple[Any, tuple[str, ...]]]]
 
 
@@ -312,9 +313,19 @@ class PresentationStudioReloadService:
         base, edited = await self._studio_workspace()
         if base is None or edited == ():
             return
-        scene = variant_scene(await self._studio.get_variant(presentation_id, variant_id), request.scene_id)
-        if base.prefab_id != scene.prefab.prefab_id:
-            return
+        if getattr(base, "kind", "scene") == "variant_master":
+            # master-project-studio-export Slice 05 (`docs/remotion-master-project.md` § 9): a master workspace blocks scene X only for
+            # per-scene edits on X (`src/scenes/<X>/**`, a `public/**` file only X brings) or an unreadable listing; generated or shared
+            # edits never block a voice edit (they are refused at the next Studio sync instead).
+            if base.presentation_id != presentation_id:
+                return
+            edited = base.edits_on(request.scene_id, edited)
+            if edited == ():
+                return
+        else:
+            scene = variant_scene(await self._studio.get_variant(presentation_id, variant_id), request.scene_id)
+            if base.prefab_id != scene.prefab.prefab_id:
+                return
         if edited is None:
             raise PresentationStudioError(C.SCENE_EDITED_IN_REMOTION, "the Remotion Studio workspace of this scene could not be listed: nothing "
                                                                       "was written; the user checks Remotion Studio first")

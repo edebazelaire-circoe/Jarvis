@@ -192,3 +192,24 @@ for (let k = 0; k < 3000; k++) { G["parent"]["postMessage"]({rs: 1, type: "error
 )
 
 BY_ID = {sample.id: sample for sample in SAMPLES}
+
+#: Module-loader bypasses of the `dynamic_import` rule found by the master QA (Slice 04 B1: the first three bundled a JSON file from
+#: outside the workspace with the pinned webpack). `(id, line appended to src/Scene.tsx, rule code that must refuse it)`.
+LOADER_BYPASSES: tuple[tuple[str, str, str], ...] = (
+    ("escaped_require", r'export const leaked = \u0072equire("../../../../outside/s.json");', "identifier_escape"),
+    ("aliased_require_context", r'const r = require; export const leaked = r.context("../../../../outside", false, /\.json$/);', "dynamic_import"),
+    ("require_context", r'export const leaked = require.context("../../../../outside", false, /\.json$/);', "dynamic_import"),
+    ("escape_mid_name", r'export const leaked = requir\u0065("fs");', "identifier_escape"),
+    ("braced_escape", r'export const leaked = \u{72}equire("fs");', "identifier_escape"),
+    ("require_as_value", "export const leaked = [require];", "dynamic_import"),
+    ("require_ts_cast", 'export const leaked = (require as any)("fs");', "dynamic_import"),
+    ("module_require", 'export const leaked = module.require("fs");', "dynamic_import"),
+    ("context_on_anything", 'const loader: any = {}; export const leaked = loader.context("../..", true);', "dynamic_import"),
+    ("webpack_context", 'export const leaked = import.meta.webpackContext("../..");', "dynamic_import"),
+    ("spaced_import_meta", 'export const leaked = import . meta;', "dynamic_import"),
+    ("commented_import", 'export const leaked = import /* c */ ("./lib/Title");', "dynamic_import"),
+    ("padded_import", 'export const leaked = import' + " " * 100 + '("./lib/Title");', "dynamic_import"),
+    ("module_hot", "export const leaked = module.hot;", "dynamic_import"),
+    ("webpack_require", "export const leaked = __webpack_require__(1);", "dynamic_import"),
+    ("non_webpack_require", 'export const leaked = __non_webpack_require__("fs");', "dynamic_import"),
+)

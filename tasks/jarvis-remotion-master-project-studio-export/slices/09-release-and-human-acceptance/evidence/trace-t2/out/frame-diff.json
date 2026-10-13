@@ -1,0 +1,22 @@
+{
+ "method": "6 fps samples, 96x54 grayscale, mean absolute difference 0..255 (a vs b)",
+ "a": "export1.mp4",
+ "b": "export2.mp4",
+ "scenes": {
+  "scene1": {
+   "sampled_frames": 30,
+   "max": 0.02,
+   "mean": 0.01
+  },
+  "scene2": {
+   "sampled_frames": 30,
+   "max": 12.54,
+   "mean": 11.44
+  },
+  "scene3": {
+   "sampled_frames": 30,
+   "max": 6.14,
+   "mean": 0.22
+  }
+ }
+}

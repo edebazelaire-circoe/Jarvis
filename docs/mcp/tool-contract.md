@@ -112,7 +112,7 @@ ever enters a descriptor.
 | `scene` | Étoiles / Scène | all `jarvis-display` tools |
 | `settings` | Réglages | `settings_describe`, `settings_get`, `settings_set` (`jarvis-console`) |
 | `workspace` | Boards et mémoire | the twenty `jarvis-workspace` tools (§10.12): the nine Board/Session tools (§10.9, moved from `jarvis-console`), Session history, Board inspection, Board memory, Board-artifact links, plus the five `jarvis-memory` tools (§10.16: memory and knowledge search, read, propose) |
-| `presentation` | Présentations | the fourteen `jarvis-presentation` tools (§10.15): inspect, explorer and full screen, playback, semantic edits, undo, variants, comparison, composition, templates, drafting, native scene source (`presentation_source`, native-studio-playback-fix Slice 13: read, write, preview; 20 888 B measured, budget 21 000 B, declared surface 113 700 B) |
+| `presentation` | Présentations | the fourteen `jarvis-presentation` tools (§10.15): inspect, explorer and full screen, playback, semantic edits, undo, variants, comparison, composition, templates, drafting, native scene source (`presentation_source`, native-studio-playback-fix Slice 13: read, write, preview; 20 888 B measured, budget 21 000 B, declared surface 113 700 B); master-project Slice 07: `presentation_inspect` variant names the `master` block, 20 896 B measured (declared surface 113 686 B), budgets unchanged |
 | `capture` | Captures et preuves | the nine `jarvis-capture` tools (§10.11): Contexts, recordings, screenshots, evidence search and transcript reads |
 | `barehands` | Bare Hands | all 16 `jarvis-barehands` tools (`barehands_*` and `calibration_*`, §6) |
 | `external` | Externe | `jarvis-drive` (decision below); *(plugin amendment, implemented by Slice 04)* every managed plugin server |
@@ -1418,3 +1418,20 @@ acknowledgement, licence acknowledgement, `authorised_boards` or `concurrency` p
 Measured 5 178 B of model-visible context (budget `REMOTION_CONTEXT_BUDGET_BYTES` 5 400); the whole-surface budget `DECLARED_CONTEXT_BUDGET_BYTES` rose from 105 000 to 110 000
 for this server only (104 548 + 5 178 = 109 726, 274 B margin), a deliberate raise recorded in the handoff LOG. The server config is written by `ClaudeLocalAgent._remotion_mcp_args`
 next to `jarvis-presentation`'s and the brain prompt block is `BRAIN_REMOTION_PROMPT` (program step `backend.claude.conversation.remotion`, `studio` programs only).
+
+**Master-project Slice 07** (`docs/remotion-master-project.md` § 12): `remotion_export` `settings.scope` (`"scene"` | `"master"`, closed list
+`EXPORT_SETTINGS`). `master` = the whole video of the variant (mp4 only; `scene_id` refused); absent or `"scene"` sends today's body byte for byte
+(an explicit `"scene"` is never sent). The result says which it is (`video: "whole" | "whole_range" | "scene"`, job row `scope`, `project_key`, `scene_count`;
+`whole_range` = a master export with `frame_start`/`frame_end`/`frame`, said « extrait de la vidéo entière (images a–b) », never the whole video);
+an incompatible variant is refused `presentation_render_master_incompatible` with the § 3 sentence and scene exports offered, nothing written.
+The readiness the agent reads is the compact `master` block (`status`, `reason`, `say`, `project_key`, `scenes`, `duration_s`, `spec`) of
+`presentation_inspect` target `variant`, `presentation_source` write/preview and `presentation_draft_assemble` / `_finalize`: a projection of
+`MasterProjectReader.live_plan` (`GET .../master-project`, client `presentation_studio_master_project`), never computed by the tools.
+Measured after the change: `jarvis-remotion` 5 335 B (budget 5 400 B), `jarvis-presentation` 20 896 B (budget 21 000 B), declared surface
+113 686 B (budget 113 700 B); no budget raised. Tests: `tests/unit/test_remotion_master_agent.py`.
+**Master-project Slice 08**: `remotion_studio` stays a pointer that opens nothing; it says « dans Variantes, clique « Remotion Studio » sous la
+vidéo et confirme ; la vidéo entière de la variante (ou la scène à l'écran si la vidéo entière n'est pas disponible) … » and, for a named scene,
+« Cette scène seule dans Remotion Studio » (§ 13, § 14 of `docs/remotion-master-project.md`); the brain prompt adds that a `master.status`
+`unknown` is an unreadable state, never « disponible ». Budgets unchanged (`tests/unit/test_mcp_catalog.py`). **Slice 09 (release)**: the real
+trace create → whole-video export → voice edit → re-export → incompatible refusal was rerun on the release head (run `trace-t2`,
+claude-sonnet-5-5, USD 0.92, 0 refusals; the handoff's `slices/09-release-and-human-acceptance/evidence/trace-t2/`).

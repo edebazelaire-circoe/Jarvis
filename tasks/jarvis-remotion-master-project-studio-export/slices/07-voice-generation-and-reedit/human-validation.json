@@ -1,0 +1,40 @@
+{
+  "checks": [
+    {
+      "id": "HV-RMP-07-01",
+      "instruction": "Speak or type a natural request to create a short video, then request a meaningful edit after the first result; confirm Jarvis can regenerate/re-export the whole video without requiring Remotion Studio and accurately explains what changed.",
+      "requires_evidence_first": true,
+      "prerequisite": "The user restarts their own Jarvis on branch task/jarvis-remotion-master-project-studio-export themselves (Core, Control Center, and Voice if speaking); no agent does it. No migration in this task.",
+      "evidence": [
+        "slices/07-voice-generation-and-reedit/evidence/README.md and runs/t1/ (real trace on 8c7c6c4a, claude-sonnet-5-5, USD 0.95: 9/9 steps)",
+        "slices/09-release-and-human-acceptance/evidence/trace-t2/ (rerun on the release head b658b4d3, USD 0.92, 0 refusals: two whole-video MP4 1920x1080 450 frames, keys mpk_e46b… -> mpk_0ded…, frame diff scene 2 only, out/export*-t007.5.jpg before/after; « Deux cadences » refused with its reason)"
+      ],
+      "checklist": [
+        {
+          "id": "HV-RMP-07-01-a",
+          "step": "Say (or type in the agent box) a request such as « Fais-moi une courte vidéo Remotion de trois scènes sur <sujet>, une quinzaine de secondes. Dis-moi quand c'est prêt. »",
+          "look_at": "Jarvis answers at once in one short sentence and builds the deck in the background; when it says it is ready, the deck plays in Variants and the line under the video says « Vidéo entière : … 3 scènes ».",
+          "record": "pass/fail, total time, subject"
+        },
+        {
+          "id": "HV-RMP-07-01-b",
+          "step": "Ask « Exporte la vidéo en MP4. »",
+          "look_at": "Jarvis says the whole video (N scènes) export is started — never a single scene; the MP4 appears in the Board's Artifacts (or « Ouvrir la vidéo » in Variants) and plays every scene in order with its sound.",
+          "record": "pass/fail"
+        },
+        {
+          "id": "HV-RMP-07-01-c",
+          "step": "Ask for a visible edit of one scene (« Dans la scène 2, change le titre en … et passe le fond en bleu nuit »), then « Réexporte la vidéo avec ce changement. »",
+          "look_at": "Jarvis never asks you to open Remotion Studio and never claims to have edited project files; it says the previous export predates the edit; the new MP4 shows the change in scene 2 only; its explanation of what changed is accurate.",
+          "record": "pass/fail, wording of the explanation"
+        },
+        {
+          "id": "HV-RMP-07-01-d",
+          "step": "Optional: ask Jarvis to export the video of a presentation whose scenes have different frame rates (an old deck).",
+          "look_at": "It says why the whole video is not available (« Les scènes n’ont pas toutes la même cadence… ») and offers scene exports; nothing is exported without your yes.",
+          "record": "pass/fail"
+        }
+      ]
+    }
+  ]
+}

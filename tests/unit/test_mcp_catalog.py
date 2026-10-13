@@ -236,6 +236,8 @@ WORKSPACE_INSTRUCTIONS_BUDGET_BYTES = 950
 #: Native-studio-playback-fix Slice 13 : un quatorzieme outil, `presentation_source` (read / write / preview du code Remotion natif d'une scene,
 #: 1 711 o) : 20 888 o mesures, plafond 21 000 o ; plafond global 113 700 o (113 521 mesures). Decision deliberee : sans lui l'agent ne voit
 #: pas ce qu'il a code et ne peut pas corriger sa propre scene (BENCHMARK.md de la Slice 13) ; la consigne du serveur ne change pas.
+#: Master-project Slice 07 : `presentation_inspect` nomme le bloc `master` de la variante (+34 o, compense en partie) : 20 896 o mesures, plafond
+#: inchange ; plafond global inchange (113 686 o mesures avec `scope` de `remotion_export`).
 PRESENTATION_CONTEXT_BUDGET_BYTES = 21_000
 #: Consigne du serveur `jarvis-presentation` : mesurée 640 o (plafond 700 o).
 PRESENTATION_INSTRUCTIONS_BUDGET_BYTES = 700
@@ -245,7 +247,8 @@ PRESENTATION_INSTRUCTIONS_BUDGET_BYTES = 700
 #: mesurés (export 1 763, import 1 076, upgrades 948, studio 545, status 457, setup 389). Le plafond de ce gate monte de ce serveur seulement :
 #: 104 548 o avant, 109 726 o après, marge de 274 o, plafond 110 000 o. Décision délibérée (handoff Slice 21), mesure dans le LOG.
 DECLARED_CONTEXT_BUDGET_BYTES = 113_700
-#: `jarvis-remotion` : 5 178 o mesurés, plafond 5 400 o ; consigne du serveur (plafond 330 o).
+#: `jarvis-remotion` : 5 178 o mesurés, plafond 5 400 o ; consigne du serveur (plafond 330 o). Master-project Slice 07 : `scope` (scene | master)
+#: dans les réglages de `remotion_export` : 5 335 o mesurés, plafond inchangé.
 REMOTION_CONTEXT_BUDGET_BYTES = 5_400
 REMOTION_INSTRUCTIONS_BUDGET_BYTES = 330
 

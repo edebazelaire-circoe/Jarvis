@@ -978,6 +978,12 @@ class LocalCoreClient:
         return await self._studio(
             "GET", f"/{quote(presentation_id, safe='')}/variants/{quote(variant_id, safe='')}/scenes/{quote(scene_id, safe='')}/source")
 
+    async def presentation_studio_master_project(self, presentation_id: str, variant_id: str) -> dict[str, Any]:
+        """`GET .../variants/{vid}/master-project` (master-project-studio-export Slice 05, `docs/remotion-master-project.md` § 11): `{master:
+        <plan view>}` of the live variant, read only. The agent's readiness read (Slice 07, `presentation_inspect` variant)."""
+
+        return await self._studio("GET", f"/{quote(presentation_id, safe='')}/variants/{quote(variant_id, safe='')}/master-project")
+
     async def presentation_studio_source_edit(self, presentation_id: str, variant_id: str,
                                               request: Mapping[str, Any]) -> dict[str, Any]:
         """`POST .../variants/{id}/source-edits` `{actor, basis, scene_id, files, request_id?, allow_state_reset?}` : le

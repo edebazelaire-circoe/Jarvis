@@ -172,8 +172,8 @@ def build_server(target: PresentationMcpTarget | None = None, *, tools: Presenta
     async def presentation_inspect(
         target: Annotated[Literal["overview", "presentation", "variant", "scene", "score", "history", "playback", "compare", "composition",
                                   "templates", "template", "explorer", "choices", "draft_guide", "rail"],
-                          Field(description="Quoi lire. overview : présentations + lecture + Variantes ; rail : état du rail et de l'écran ; presentation : graphe des variantes ; "
-                                            "variant : scènes ; scene : contrôles, bornes, variantes de scène ; score : items sans texte ; "
+                          Field(description="Quoi lire. overview : présentations, lecture, Variantes ; rail : état du rail et de l'écran ; presentation : graphe des variantes ; "
+                                            "variant : scènes + master (vidéo entière prête ?) ; scene : contrôles, bornes, variantes de scène ; score : items sans texte ; "
                                             "choices : tous les ids valides ; draft_guide : clés exactes et exemple valide d'un brouillon.")],
         presentation_id: PresentationId = None,
         variant_id: VariantId = None,
@@ -194,13 +194,13 @@ def build_server(target: PresentationMcpTarget | None = None, *, tools: Presenta
                                         "Variantes en fenêtre ; rail_show / rail_hide : le rail ; plein écran de la scène de Variantes ; sortie du plein écran.")],
         presentation_id: PresentationId = None,
         variant_id: VariantId = None,
-        fullscreen: Annotated[bool, Field(description="explorer_open : plein écran si demandé (défaut : fenêtré).")] = False,
+        fullscreen: Annotated[bool, Field(description="explorer_open : plein écran.")] = False,
         autoplay: Annotated[bool, Field(description="explorer_open : lecture automatique.")] = False,
     ) -> dict[str, Any]:
         """Ouvrir ou fermer Variantes (window_* : la même, en fenêtre), le rail ; plein écran de la scène.
 
-        explorer_open : fenêtré, plein écran seulement si demandé (la vidéo : stage_fullscreen_enter). Le plein écran exige un clic de l'utilisateur : needs_gesture=true veut dire qu'il n'y est pas encore. Une présentation en cours se
-        montre dans Variantes. rail_* sont des demandes d'écran : relis presentation_inspect target rail. Une archivée ne s'ouvre pas."""
+        explorer_open : fenêtré, plein écran seulement si demandé (la vidéo : stage_fullscreen_enter). Le plein écran exige un clic de l'utilisateur (needs_gesture=true : pas encore fait).
+        rail_* sont des demandes d'écran : relis presentation_inspect target rail. Une archivée ne s'ouvre pas."""
         return await studio.view(op, presentation_id=presentation_id, variant_id=variant_id, fullscreen=fullscreen,
                                   autoplay=autoplay)
 

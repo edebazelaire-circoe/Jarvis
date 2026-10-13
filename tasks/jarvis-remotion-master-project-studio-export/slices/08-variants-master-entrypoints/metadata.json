@@ -1,0 +1,17 @@
+{
+  "slice_id": "08",
+  "title": "Minimal Variants entrypoints for master Studio/export",
+  "dependencies": [
+    "05-remotion-studio-master-project",
+    "06-whole-variant-render-export",
+    "07-voice-generation-and-reedit"
+  ],
+  "task_type": null,
+  "task_type_resolution_required": true,
+  "requires_caveman": true,
+  "requires_coding_guideline": true,
+  "frontend": true,
+  "requires_impeccable": true,
+  "claude_for_frontend_when_available": true,
+  "requires_agent_trace_analysis": false
+}

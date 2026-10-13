@@ -55,7 +55,8 @@ Les modules sont lus **en texte brut, sans lexeur** (un lexeur approximatif est 
 | `network_api` | `fetch`, `XMLHttpRequest`, `WebSocket`, `WebTransport`, `EventSource`, `RTCPeerConnection`, `sendBeacon` |
 | `code_execution` | `eval`, `Function`, `execScript` |
 | `constructor_chain` | `.constructor.constructor`, `.constructor(`, `["constructor"]` |
-| `dynamic_import` | `import()`, `require()`, `import.meta` |
+| `dynamic_import` | `import(` (même avec des espaces ou un commentaire avant la parenthèse), `import.meta` (`import . meta`, `webpackContext`), le nom `require` **sous toute forme** (appel, référence nue, membre `module.require`, alias `const r = require`, `require.context`, `(require as any)`), `.context(` sur n'importe quel objet, `module.hot`, `__webpack_*` / `__non_webpack_require__` : webpack empaquette tout ce qu'il résout depuis ces formes, y compris un fichier **hors de l'espace de travail** (reprise QA S04 B1 du master, fuite prouvée). Exception assumée de la règle « formes de code, pas le mot » : le mot anglais `require` est refusé même dans un texte |
+| `identifier_escape` | toute séquence `\uXXXX` d'un caractère ASCII (< U+0080) et toute forme `\u{…}`, où qu'elles soient (chaînes comprises : sans lexeur, une chaîne ne se distingue pas d'un nom) : `\u0072equire` **est** `require` pour le bundler. Un nom dangereux est ASCII et JavaScript ne normalise pas les noms, donc un échappement non ASCII (`\u00e9`, `\u2014`, `\u2028`) reste permis ; écrire le caractère lui-même |
 | `string_timer` | `setTimeout("...")`, `setInterval("...")`, `setImmediate("...")` |
 | `worker_or_channel` | `Worker`, `SharedWorker`, `ServiceWorker`, `Worklet`, `importScripts`, `MessageChannel`, `BroadcastChannel`, `postMessage`, sélecteurs de fichiers |
 | `realm_access` | `window`, `globalThis`, `self`, `document`, `parent`, `top`, `opener`, `navigator`, `location`, `history`, `localStorage`, `sessionStorage`, `indexedDB`, `caches`, `cookieStore` suivis de `.` ou `[` |
@@ -69,6 +70,8 @@ Les modules sont lus **en texte brut, sans lexeur** (un lexeur approximatif est 
 | `external_resource` | `src=`/`href=`/`poster=`/`action=` vers `http(s)://` ou `//`, `url(http...)`, `@import` : les fichiers vivent dans `public/` et se lisent par `staticFile()` |
 | `obfuscated_name` | `["fe" + "tch"]` (deux littéraux concaténés dans un crochet), `atob()` |
 | `unbounded_loop` | `while (true)`, `for (;;)`, `do {} while (true)` : une animation se calcule à partir du numéro d'image |
+
+Les deux règles de chargement (`dynamic_import`, `identifier_escape`) forment `LOADER_RULES` (`loader_finding`), que le planificateur du master rejoue en défense en profondeur ([remotion-master-project.md](remotion-master-project.md) § 8 a). Les blancs avant `(` / `.` y sont lus sur toute leur longueur (`_GAP`, borné à la taille d'un module) : un remplissage de 65 espaces ne contourne pas la règle. Conformité : `LOADER_BYPASSES` (`tests/fakes/remotion_hostile.py`), refusés par l'analyse, par `parse_source` et par le planificateur.
 
 Une ligne de plus de `MAX_LINE_CHARS` = 50 000 caractères est refusée avant toute expression régulière (code minifié ou généré). Les `.json` ne s'exécutent pas et ne sont pas analysés.
 

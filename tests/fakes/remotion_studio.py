@@ -72,6 +72,7 @@ class FakeStudioRunner:
         self.calls.append("bind_parent")
 
     def modified_work(self):
+        self.calls.append("modified_work")
         if self.modified is not None:
             return self.modified
         paths = set(self.work) | set(self.base) | self.links
@@ -114,6 +115,7 @@ class FakeStudioRunner:
         self.base = dict(files)
 
     def has_workspace(self):
+        self.calls.append("has_workspace")
         return bool(self.work)
 
     def save_modified(self):

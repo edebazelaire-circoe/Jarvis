@@ -208,6 +208,8 @@ const JarvisWorkspaceCore=(function(){
     renderList:()=>'/api/local-capabilities/remotion/render/jobs',
     renderJob:id=>`/api/local-capabilities/remotion/render/jobs/${seg(id)}`,
     renderCancel:id=>`/api/local-capabilities/remotion/render/jobs/${seg(id)}/cancel`,
+    /* La vidéo entière d'une copie figée (master-project-studio-export Slice 06/08, `docs/remotion-master-project.md` § 10, § 13) : lecture seule. */
+    renderMaster:snapshot=>`/api/local-capabilities/remotion/render/master${query({snapshot_id:snapshot})}`,
   });
   const MUTATIONS=new Set(['write','mkdir','move','delete']);
 
@@ -229,6 +231,8 @@ const JarvisWorkspaceCore=(function(){
     }
     if(method!=='GET')return false;
     if(render)return segments.length===5||segments.length===6;
+    /* La préparation de la vidéo entière d'une copie figée : seulement `?snapshot_id=…` (Slice 08 du projet maître). */
+    if(bare==='/api/local-capabilities/remotion/render/master')return /^\/api\/local-capabilities\/remotion\/render\/master\?snapshot_id=[^&=]+$/.test(path);
     if(bare==='/api/boards'||bare==='/api/sessions/current')return true;
     if(bare.startsWith('/api/workspace/'))return true;
     return segments.length===3&&segments[0]==='api'&&segments[1]==='artifacts';
@@ -238,7 +242,7 @@ const JarvisWorkspaceCore=(function(){
   function createClient({fetchImpl,setTimer=setTimeout,clearTimer=clearTimeout}={}){
     async function call(method,path,body){
       if(!allowed(method,path))throw apiError('forbidden_route',0,`adresse refusée par la page : ${method} ${path}`);
-      const deadlineMs=/\/render\/jobs$/.test(path)?DEADLINE_MS.render:isMemoryPath(path)?DEADLINE_MS.memory:DEADLINE_MS.read;
+      const deadlineMs=/\/render\/jobs$|\/render\/master\?/.test(path)?DEADLINE_MS.render:isMemoryPath(path)?DEADLINE_MS.memory:DEADLINE_MS.read;
       const controller=typeof AbortController==='function'?new AbortController():null;
       let timedOut=false;
       const timer=setTimer(()=>{timedOut=true;if(controller)controller.abort()},deadlineMs);
@@ -754,7 +758,8 @@ const JarvisWorkspaceCore=(function(){
         for(const job of list(body.jobs)){
           const snap=job&&job.snapshot_id;
           if(!snap||exportTerminal(job)||S.exports[snap])continue;
-          S.exports[snap]={snapshot:snap,format:job.format,status:'running',started:now()-Math.round((Number(job.elapsed_s)||0)*1000),job,error:null,gen:1};
+          S.exports[snap]={snapshot:snap,format:job.format,status:'running',started:now()-Math.round((Number(job.elapsed_s)||0)*1000),job,error:null,gen:1,
+            scope:job.scope==='master'?'master':undefined,scenes:job.scene_count||null};
           log('info','workspace.export_restored',{snapshot:snap,job:job.job_id,state:job.state});
           changed();
           exportPoll(snap);
@@ -769,10 +774,27 @@ const JarvisWorkspaceCore=(function(){
       if(!snap||(known&&(known.status==='starting'||known.status==='running')))return null;
       const x=S.exports[snap]={snapshot:snap,format,status:'starting',started:now(),job:null,error:null,gen:((known&&known.gen)||0)+1};
       changed();
+      /* Slice 08 du projet maître (§ 13) : un MP4 d'une copie dont la vidéo entière est prête ET compte au moins deux scènes rend la vidéo
+         entière (`scope: "master"`) ; sinon (une seule scène, pas prête, illisible, image, PDF) le corps d'avant, octet pour octet. La page ne
+         décide rien : elle lit la vue de Core. */
+      const body={snapshot_id:snap,format};
+      if(format==='mp4'){
+        try{
+          const read=await client.get(PATHS.renderMaster(snap));
+          const plan=read&&read.master;
+          const scenes=plan&&Array.isArray(plan.scenes)?plan.scenes.length:0;
+          if(plan&&plan.status==='ready'&&scenes>=2){body.settings={scope:'master'};x.scope='master';x.scenes=scenes}
+          log('info','workspace.export_master_read',{snapshot:snap,status:plan&&plan.status,reason:plan&&plan.reason||null,scenes,
+            scope:body.settings?'master':'scene'});
+        }catch(error){
+          /* intentional fallback, said in the log: an unreadable readiness keeps today's body (Core refuses a multi-scene snapshot by its own code) */
+          log('warn','workspace.export_master_read_failed',{snapshot:snap,code:error&&error.code,status:error&&error.status,message:error&&error.message});
+        }
+      }
       try{
-        const answer=await client.post(PATHS.renderCreate(),{snapshot_id:snap,format});
+        const answer=await client.post(PATHS.renderCreate(),body);
         x.job=answer.body.job;x.status=exportTerminal(x.job)?'done':'running';x.started=now();
-        log('info','workspace.export_started',{snapshot:snap,format,job:x.job&&x.job.job_id,artifact:x.job&&x.job.artifact_id});
+        log('info','workspace.export_started',{snapshot:snap,format,scope:x.scope||'scene',job:x.job&&x.job.job_id,artifact:x.job&&x.job.artifact_id});
       }catch(error){exportFailed(x,error,'export_failed');return null}
       changed();
       return x.status==='running'?exportPoll(snap):exportDone(x);
@@ -1387,12 +1409,12 @@ const JarvisWorkspaceCore=(function(){
       const stop=x.status==='running'?(x.cancelling?'<span class="wsp-sub">Annulation…</span>':btn('export-cancel',{snapshot:snap.artifact_id},'Annuler l’export')):'';
       const lost=x.pollErrors?`<span class="wsp-warn"> · lecture de l’état en échec (${x.pollErrors}/3) : ${esc((x.pollError&&x.pollError.message)||'')}</span>`:'';
       return `<div class="wsp-export" role="status" aria-live="polite"><span class="wsp-spin" aria-hidden="true"></span>`
-        +`Export ${esc((RENDER_FORMATS[x.format]||x.format))} en cours — ${esc(phase)}${esc(frames)}${esc(queue)} ${clockHtml(x.started)}${esc(limit)}${lost} ${stop}</div>`;
+        +`Export ${esc((RENDER_FORMATS[x.format]||x.format))}${x.scope==='master'?esc(` (vidéo entière${x.scenes?`, ${x.scenes} scène${x.scenes>1?'s':''}`:''})`):''} en cours — ${esc(phase)}${esc(frames)}${esc(queue)} ${clockHtml(x.started)}${esc(limit)}${lost} ${stop}</div>`;
     }
     let outcome='';
     if(x&&x.status==='error')outcome=errorHtml(x.error,{lead:'Export impossible : '})+btn('export-dismiss',{snapshot:snap.artifact_id},'Fermer');
     else if(x&&x.job&&x.job.state==='complete')
-      outcome=`<div class="notice ok" role="status">Export terminé : ${code(x.job.artifact_id)}${x.job.deduplicated?' — rendu identique déjà existant, rien n’a été refait':''} ${btn('export-dismiss',{snapshot:snap.artifact_id},'Fermer')}</div>`;
+      outcome=`<div class="notice ok" role="status">Export${x.scope==='master'?' de la vidéo entière':''} terminé : ${code(x.job.artifact_id)}${x.job.deduplicated?' — rendu identique déjà existant, rien n’a été refait':''} ${btn('export-dismiss',{snapshot:snap.artifact_id},'Fermer')}</div>`;
     else if(x&&x.job)
       outcome=`<div class="notice bad" role="alert"><strong>${x.job.state==='cancelled'?'Export annulé':'Export échoué'}</strong> <code>${esc(x.job.error_code||'')}</code> `
         +`${esc(x.job.error_detail||'')} ${btn('export-dismiss',{snapshot:snap.artifact_id},'Fermer')}</div>`;

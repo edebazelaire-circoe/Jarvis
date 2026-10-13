@@ -1,0 +1,49 @@
+{
+ "tested_head": "a9aa1ccd",
+ "line": "Vidéo entière : « Horloge », variante 1, 2 scènes (6 s).",
+ "dialog": "Ouvrir une vidéo dont vous n’avez pas écrit toutes les scènes ?\nVidéo entière : « Horloge », variante 1 · 2 scènes · 6 s (1280×720, 30 i/s)\nSans bac à sable : 2 scènes vont tourner hors du bac à sable, dans Remotion Studio : dans votre navigateur avec les droits d’une page web, pas dans le lecteur isolé de Jarvis.\nMême origine que l’API de Remotion Studio : chaque scène peut appeler cette API (lecture de sa copie de travail).\nDonnées : leurs sources et leurs paramètres peuvent sortir de ce poste (Remotion Studio bloque les connexions, mais pas tous les canaux d’un navigateur).\nVersions : 1. « Remotion » v1 · 2. « Remotion » v1\nProvenance : 1 sur 2 n’a pas été écrite par vous (agent, système, import) ou a une provenance illisible\nAttention : au moins une scène n’a pas été écrite par vous et n’a peut-être pas été relue. N’ouvrez la vidéo entière que si vous faites confiance à toutes ses scènes.\n\nVariantes reste ouvert ici. La vidéo entière ne se publie pas dans la variante : pour modifier puis publier une scène, ouvrez-la seule (« Cette scène seule dans Remotion Studio »).\n\nAnnuler\nOuvrir la vidéo entière dans Remotion Studio",
+ "status": "Remotion Studio est ouvert sur la vidéo entière (2 scènes), dans un autre onglet.",
+ "target": {
+  "kind": "variant_master",
+  "presentation_id": "pst_cb10c85bbed6dee7211b951d9f10267c",
+  "variant_id": "psv_5b58cf726ebfae861c5f50e59dfde94e",
+  "variant_revision": 2,
+  "project_key": "mpk_46ec1ed15d4bdc57fdf0c76e",
+  "scenes": [
+   {
+    "scene_id": "pss_0000000000c1",
+    "prefab_id": "presentation-studio.p000000000001.s000000000001",
+    "version": 1
+   },
+   {
+    "scene_id": "pss_0000000000c2",
+    "prefab_id": "presentation-studio.p000000000001.s000000000002",
+    "version": 1
+   }
+  ],
+  "scene_count": 2,
+  "current_project_key": "mpk_46ec1ed15d4bdc57fdf0c76e",
+  "stale": false
+ },
+ "scene_door_style": {
+  "scene": {
+   "weight": "400",
+   "decoration": "none",
+   "color": "rgb(149, 174, 187)",
+   "border": "rgba(0, 0, 0, 0)",
+   "contrast": 8.71
+  },
+  "door": {
+   "weight": "400",
+   "decoration": "none",
+   "color": "rgb(149, 174, 187)",
+   "border": "rgba(130, 200, 226, 0.34)",
+   "contrast": 8.71
+  }
+ },
+ "screenshots": [
+  "variants-master-confirm-1280x720.png",
+  "variants-master-open-1280x720.png",
+  "variants-master-ready-1280x720.png"
+ ]
+}

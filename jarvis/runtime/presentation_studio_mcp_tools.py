@@ -41,6 +41,7 @@ from jarvis.domain.presentation_studio_explorer import DELIVERY_DEADLINE_S, WORK
 from jarvis.domain.presentation_studio_scene_variants import is_scene_variant_id
 from jarvis.domain.presentation_studio_template import is_template_id
 from jarvis.domain.presentation_studio_variants import is_variant_id
+from jarvis.domain.remotion_master_sentences import agent_view
 from jarvis.protocol.client import CoreProtocolError, LocalCoreClient
 from jarvis.runtime.journal import RuntimeJournal
 from jarvis.runtime.presentation_studio_mcp_support import (
@@ -357,6 +358,29 @@ class PresentationTools:
             raise self._refuse(tool, "invalid_id", "scene_id mal formé : prends-le dans presentation_inspect (target variant).")
         return str(value)
 
+    async def _master_block(self, presentation_id: str, variant_id: str) -> dict[str, Any]:
+        """The compact `master` block (`docs/remotion-master-project.md` § 12, Slice 07): the live plan Core computed
+        (`MasterProjectReader.live_plan`, `GET .../master-project`), projected by `agent_view`; readiness is never computed here.
+
+        Best effort, on purpose: it rides along a read or a write that already succeeded, so a failed readiness read is reported in the
+        block (`status: unknown` with Core's code) and journaled, never turned into a failure of that read or write."""
+
+        try:
+            found = await self._core.call(lambda c: c.presentation_studio_master_project(presentation_id, variant_id))
+        except CoreProtocolError as exc:
+            self._emit("presentation_studio.master_unread", f"master-project : {exc.code}", level="warning",
+                       data={"code": exc.code, "status": exc.status, "presentation_id": presentation_id, "variant_id": variant_id})
+            return {"status": "unknown", "error": exc.code or f"http_{exc.status}"}
+        except Exception as exc:  # noqa: BLE001 - argued above: transport or caller failure; journaled with its type, said in the block
+            code = getattr(exc, "code", None) or type(exc).__name__
+            self._emit("presentation_studio.master_unread", f"master-project : {code}", level="warning",
+                       data={"code": str(code)[:60], "presentation_id": presentation_id, "variant_id": variant_id})
+            return {"status": "unknown", "error": str(code)[:60]}
+        wire = found.get("master") if isinstance(found, Mapping) else None
+        if not isinstance(wire, Mapping):
+            return {"status": "unknown", "error": "master_view_missing"}
+        return agent_view(wire)
+
     # ------------------------------------------------------------------ lecture : état courant et choix valides
 
     async def inspect(self, target: str, *, presentation_id: str | None = None, variant_id: str | None = None,
@@ -513,7 +537,8 @@ class PresentationTools:
                                       "local_variants": len(local.get("variants") or []) or None}))
         return self._ok(presentation_id=presentation_id, variant_id=variant_id, revision=variant.get("revision"),
                         title=clip(variant.get("title")), scenes=capped(scenes, 64), has_score=bool(variant.get("score_id")),
-                        has_art_direction=bool(variant.get("art_direction_id")), untrusted=["title", "scenes.items.title"])
+                        has_art_direction=bool(variant.get("art_direction_id")), master=await self._master_block(presentation_id, variant_id),
+                        untrusted=["title", "scenes.items.title"])
 
     async def _score_view(self, presentation_id: str, variant_id: str) -> dict[str, Any]:
         found = await self._c(lambda c: c.presentation_studio_score(presentation_id, variant_id))
@@ -1277,7 +1302,14 @@ class PresentationTools:
                 call = (lambda c: c.presentation_studio_authoring_check(request)) if op == "check" else \
                        (lambda c: c.presentation_studio_authoring_assemble(request))
                 result = await self._c(call)
-            return self._draft_result(tool, op, result)
+            out = self._draft_result(tool, op, result)
+            if op != "check" and out.get("ok_gate") is not False:
+                # Slice 07 (§ 12): the agent knows at once whether the deck it just made is one whole video (and why not).
+                made_pid = result.get("presentation_id")
+                made_vid = result.get("active_variant_id") or result.get("variant_id") or next(iter(result.get("variant_ids") or []), None)
+                if is_presentation_id(made_pid) and is_variant_id(made_vid):
+                    out["master"] = await self._master_block(str(made_pid), str(made_vid))
+            return out
 
         return await self._run(tool, op, {"presentation_id": presentation_id}, body)
 
@@ -1302,7 +1334,7 @@ class PresentationTools:
                 preview = (await self._c(lambda c: c.remotion_render_preview(request))).get("preview") or {}
                 return self._ok("silent", status="previewed", presentation_id=pid, variant_id=vid, scene_id=scene,
                                 prefab=preview.get("prefab"), composition=preview.get("composition"), frames=preview.get("frames"),
-                                elapsed_ms=preview.get("elapsed_ms"),
+                                elapsed_ms=preview.get("elapsed_ms"), master=await self._master_block(pid, vid),
                                 note="Regarde chaque image (outil Read sur path) avant de juger la scène ; corrige avec op write, puis revois.")
             return await self._source_write(tool, pid, vid, scene, files, assets, manifest, request_id)
 
@@ -1332,7 +1364,9 @@ class PresentationTools:
         if status in _SOURCE_STOOD:
             return self._ok("silent", status=status, presentation_id=pid, variant_id=vid, scene_id=scene, prefab=result.get("prefab"),
                             previous=result.get("previous"), mounted=result.get("mounted"), diagnostics=diagnostics,
-                            note="Nouvelle version publiée (la précédente reste restaurable) ; revois-la avec op preview.")
+                            master=await self._master_block(pid, vid),
+                            note="Nouvelle version publiée (la précédente reste restaurable) ; revois-la avec op preview. master = la vidéo "
+                                 "entière après cette écriture (project_key change à chaque édition).")
         # A refusal the author fixes (build error with file:line, stale basis, rollback at mount): returned, not raised, like a draft report.
         return self._ok("silent", status=status or "refused", presentation_id=pid, variant_id=vid, scene_id=scene,
                         code=error.get("code"), message=clip(error.get("message") or result.get("message"), 600), diagnostics=diagnostics,

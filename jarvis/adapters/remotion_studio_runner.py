@@ -43,6 +43,7 @@ from jarvis.adapters import process_tree
 from jarvis.adapters.node_capability_runner import _is_link, _remove_tree, extended_path
 from jarvis.domain import remotion_studio as D
 from jarvis.domain.remotion_studio import StudioError, StudioErrorCode as C
+from jarvis.domain.remotion_studio_master import generated_paths
 from jarvis.domain.remotion_studio_workspace import WorkspaceDiff, listing_digest
 from jarvis.ports.remotion_studio import LaunchResult, SyncReport
 
@@ -54,8 +55,9 @@ STATE_FILE = "state.json"
 MANIFEST_FILE = "work.files.json"
 #: Copies des fichiers non publiés, à côté de `runtime/` (jamais dedans : `uninstall` vide `runtime/`).
 EDITS_DIR = "studio-edits"
-#: Fichiers générés par Jarvis (lecture seule) ; tout le reste de l'espace de travail (`src/**`, `public/**`) est modifiable.
-GENERATED_FILES = (D.WORK_ROOT_FILE, D.WORK_PACKAGE)
+#: Fichiers générés par Jarvis (lecture seule) ; tout le reste de l'espace de travail (`src/**`, `public/**`) est modifiable, sauf
+#: `src/master/**` d'un projet maître (Slice 05 de master-project-studio-export, `remotion_studio_master.generated_paths`).
+GENERATED_FILES = D.GENERATED_TOP_LEVEL
 #: Le cache de l'outil (webpack de Remotion) au premier niveau de l'espace : vidé par `launch`, jamais scanné ni mis de côté.
 TOOL_CACHE_DIR = "node_modules"
 TOOL_CACHE_SUBDIR = ".cache"  # seul contenu que l'outil (webpack) écrit dans `node_modules` de l'espace
@@ -301,16 +303,17 @@ class RemotionStudioRunner:
             for path in files:
                 safe_relative(path)
             wanted = {path: _sha(bytes(data)) for path, data in files.items()}
+            generated = generated_paths(files)
             written = unchanged = removed = 0
             for path in sorted(files):
                 target = work.joinpath(*path.split("/"))
                 self._check_inside(target)
                 if disk.get(path) == wanted[path]:
                     unchanged += 1
-                    if path not in GENERATED_FILES:  # une copie d'avant la Slice 12 était en lecture seule : l'espace devient modifiable
+                    if path not in generated:  # une copie d'avant la Slice 12 était en lecture seule : l'espace devient modifiable
                         _clear_readonly(target)
                     continue
-                self._write_file(path, bytes(files[path]))
+                self._write_file(path, bytes(files[path]), generated=path in generated)
                 written += 1
             for path in sorted(set(disk) - set(files)):
                 target = work.joinpath(*path.split("/"))
@@ -330,15 +333,16 @@ class RemotionStudioRunner:
             raise StudioError(C.SYNC_FAILED, f"{type(exc).__name__}: the Studio work folder could not be written") from None
         return SyncReport(written, removed, unchanged, tuple(saved))
 
-    def _write_file(self, path: str, data: bytes) -> None:
-        """Écrit un fichier de l'espace par renommage atomique ; un fichier généré (`GENERATED_FILES`) est en lecture seule."""
+    def _write_file(self, path: str, data: bytes, *, generated: bool | None = None) -> None:
+        """Écrit un fichier de l'espace par renommage atomique ; un fichier généré (`GENERATED_FILES`, et `src/master/**` d'un projet
+        maître : `generated=True`) est en lecture seule."""
 
         target = self._work.joinpath(*path.split("/"))
         temp = self._studio / ".tmp"
         temp.mkdir(exist_ok=True)
         staged = temp / f"{secrets.token_hex(6)}.part"
         staged.write_bytes(data)
-        if path in GENERATED_FILES:  # généré depuis le manifeste : jamais une source, lecture seule
+        if (path in GENERATED_FILES) if generated is None else generated:  # généré par Jarvis : jamais une source, lecture seule
             os.chmod(staged, stat.S_IREAD)
         target.parent.mkdir(parents=True, exist_ok=True)
         if target.exists() or target.is_symlink():

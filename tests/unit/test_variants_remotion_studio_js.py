@@ -169,7 +169,8 @@ def test_the_button_is_on_the_scene_row_and_a_confirmed_open_sends_the_exact_pin
         logs:env.logs.filter(l=>l[1].includes('remotion_studio')).map(l=>l[1].split(' ')[1])};
     """)
     order = out["before"]["order"]
-    assert order.index("remotion_studio") == order.index("present") - 1, ("beside « Présenter » on the scene row", order)
+    # master Slice 08: « Exporter la vidéo » sits between the door and « Présenter » (hidden until the whole video is asked for)
+    assert order.index("remotion_studio") == order.index("video_export") - 1 == order.index("present") - 2, ("beside « Présenter » on the scene row", order)
     assert order[0] == "jvx-transport", "the transport row stays alone (Slice 10)"
     s = out["seen"]
     assert s["modal"] == "true" and s["inert"] is True and s["opens"] == 0, "a modal confirmation first, nothing launched yet"

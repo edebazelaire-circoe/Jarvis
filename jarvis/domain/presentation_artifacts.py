@@ -53,6 +53,12 @@ _SHA256 = re.compile(r"[0-9a-f]{64}\Z")
 _SNAPSHOT_ID = re.compile(r"jart_ps_[0-9a-f]{32}_[0-9a-f]{32}_p[0-9]{1,10}_v[0-9]{1,10}_a[0-9]{1,2}\Z")
 
 
+def is_snapshot_id(value: object) -> bool:
+    """A snapshot Artifact id (`jart_ps_…`), checked before it is put in a URL or a lookup."""
+
+    return isinstance(value, str) and bool(_SNAPSHOT_ID.fullmatch(value))
+
+
 class RenderFormat(StrEnum):
     """Formats de dérivé. Le nom de fichier et le type MIME sont fixés ici : un seul endroit à lire."""
 
