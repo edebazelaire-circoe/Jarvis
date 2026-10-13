@@ -27,8 +27,8 @@ SCENES = [{"scene_id": "pss_000000000001", "prefab": {"id": "jarvis.window", "ve
 class Core:
     """`async with Core(tmp_path) as core` : `core.call(method, path, **kw) -> (status, json)` direct sur Core."""
 
-    def __init__(self, tmp_path) -> None:
-        self.stack = CaptureStack(tmp_path)
+    def __init__(self, tmp_path, **core_options) -> None:
+        self.stack = CaptureStack(tmp_path, core_options=core_options)
 
     async def __aenter__(self) -> "Core":
         await self.stack.__aenter__()
@@ -70,6 +70,8 @@ def test_the_route_table_has_the_fixed_segment_before_the_id():
         ("PUT", PREFIX + "/{presentation_id}/variants/{variant_id}/art-direction"),
         ("POST", PREFIX + "/{presentation_id}/variants/{variant_id}/art-direction/fallback"),
         ("POST", PREFIX + "/{presentation_id}/variants/{variant_id}/art-direction/candidates"),
+        # native-studio-playback-fix Slice 04: the composition-clock map of the variant (read only)
+        ("GET", PREFIX + "/{presentation_id}/variants/{variant_id}/composition-clock"),
         # Slice 10: the score
         ("GET", PREFIX + "/{presentation_id}/variants/{variant_id}/score"),
         ("POST", PREFIX + "/{presentation_id}/variants/{variant_id}/score"),

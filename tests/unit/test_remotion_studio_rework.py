@@ -153,12 +153,22 @@ def test_no_brain_mcp_or_agent_path_can_open_the_studio():
                "adapters/remotion_render_runner.py", "domain/presentation_render_plan.py", "runtime/presentation_render_relay.py",
                # Slice 21 (`jarvis-remotion`): the agent surface only READS the Studio status (`remotion_studio_status`) and its `remotion_studio` tool returns a
                # pointer to the card; it never calls `open` / `restart` / `sync` nor sends the acknowledgement (`test_remotion_mcp_server.py`, AST scan).
-               "runtime/remotion_mcp.py", "runtime/remotion_mcp_tools.py", "runtime/mcp_tool_meta.py", "runtime/claude_local.py"}
+               "runtime/remotion_mcp.py", "runtime/remotion_mcp_tools.py", "runtime/mcp_tool_meta.py", "runtime/claude_local.py",
+               # native-studio-playback-fix Slice 11: the second USER door, in Variants (a click, then the same confirmation as the card), and
+               # the rail's entry to it. No command of the page channel reaches it (asserted below): the brain still only points.
+               "runtime/control_center_presentation_studio_explorer_remotion.js", "runtime/control_center_presentation_studio_explorer.js",
+               "runtime/control_center_presentation_rail.js",
+               # native-studio-playback-fix Slice 12: the workspace / publish domain and the bridge to the variant's source-edit door (no route,
+               # no process: they cannot open the Studio; who may PUBLISH is held by `test_remotion_studio_publish.py`).
+               "domain/remotion_studio_workspace.py", "core/remotion_studio_publish.py"}
     slice_21_agent_surface = {"runtime/remotion_mcp.py", "runtime/remotion_mcp_tools.py", "runtime/mcp_tool_meta.py"}
     users = {path.relative_to(root).as_posix() for path in root.rglob("*")
              if path.suffix in {".py", ".js", ".html", ".cjs", ".mjs"}
              and any(token in path.read_text(encoding="utf-8", errors="replace") for token in ("remotion_studio", "RemotionStudio", "remotion/studio"))}
     assert users <= allowed, sorted(users - allowed)
+    explorer = (root / "runtime" / "control_center_presentation_studio_explorer.js").read_text(encoding="utf-8")
+    commands = explorer[explorer.index("handleCommand:async(command)=>{"):explorer.index("destroy(){", explorer.index("handleCommand:async(command)=>{"))]
+    assert "remotion" not in commands.lower(), "the page command channel (voice, agents) has no Remotion Studio action"
     for path in root.rglob("*.py"):
         name = path.relative_to(root).as_posix()
         if name in slice_21_agent_surface:
@@ -309,6 +319,29 @@ def test_the_tool_cache_folder_is_wiped_at_each_launch(tmp_path):
     parent = json.loads((runtime / "studio" / "parent.json").read_text(encoding="utf-8"))
     import os
     assert parent["pid"] == os.getpid() and parent["created"]
+
+
+def test_a_planted_node_modules_folder_is_gone_before_the_studio_process_spawns(tmp_path):
+    """S12 polish: the pin is the ORDER (removed before `spawn`), not only the end state. Removing the `_remove_tree(work/node_modules)`
+    line of `launch`, or moving it after the spawn, fails here."""
+
+    runtime = tmp_path / "local_capabilities" / "remotion" / "runtime"
+    (runtime / "node_modules" / "@remotion" / "cli").mkdir(parents=True)
+    (runtime / R.CLI_ENTRY).write_text("//", encoding="utf-8")
+    planted = runtime / "studio" / "work" / "node_modules" / "x" / "index.js"
+    seen_at_spawn: list[bool] = []
+
+    def spawn(*args, **kwargs):
+        seen_at_spawn.append(planted.parent.parent.exists())
+        return 2_000_000_000
+
+    runner = make(runtime, spawn=spawn, sleep=lambda s: None, port_chooser=lambda: 39997)
+    runner.sync_work(files())
+    planted.parent.mkdir(parents=True)
+    planted.write_text("module.exports = 'planted'", encoding="utf-8")
+    with pytest.raises(StudioError):
+        runner.launch(port=None)
+    assert seen_at_spawn == [False], "work/node_modules must be removed before the Studio process is spawned"
 
 
 def test_the_source_for_helper_is_still_importable():

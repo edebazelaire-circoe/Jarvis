@@ -1330,7 +1330,8 @@ def test_l_emplacement_est_declare_dans_la_page_et_hors_des_autres_commandes(tmp
     topbar = raw[raw.index('<div class="topbar">'):]
     assert HOST_ID not in topbar[:topbar.index("</div>")]
     # L'emplacement est un frère des trois emplacements Bare Hands, pas un enfant.
-    assert f'<div id="{HOST_ID}"></div>' in raw
+    # `data-keep-live="run"` (native-studio-playback-fix Slice 09) : vivant au-dessus de Variantes pendant une présentation.
+    assert f'<div id="{HOST_ID}" data-keep-live="run"></div>' in raw
 
 
 def test_le_registre_d_empilement_nomme_le_controle_et_ses_deux_rangs(tmp_path):
@@ -1347,6 +1348,8 @@ def test_le_registre_d_empilement_nomme_le_controle_et_ses_deux_rangs(tmp_path):
     # Et le registre dit *pourquoi* les deux contrôles partagent leurs rangs sans
     # jamais se recouvrir.
     assert "BAS" in registre
+    # Pendant une présentation dans Variantes (9000) : 9150, au-dessus du rail (9100), sous son menu (9300).
+    assert "9150" in registre and "jvx-run" in registre
 
 
 def test_les_rangs_du_module_sont_exactement_ceux_du_registre(tmp_path):

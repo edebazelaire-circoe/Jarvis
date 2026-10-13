@@ -349,6 +349,11 @@ for.
 
 ### The Presentation Studio is a second consumer of this lifetime rule
 
+> **Superseded (2026-10).** Retired by native-studio-playback-fix Slice 09: a run writes no Board object any more (it plays on a memory
+> surface in Variants), so the Studio is no longer a consumer of this rule. What remains is a migration reader that archives the stage
+> and auxiliary windows an older Core left, by the old ledger and by a scan of the retired categories
+> ([presentation-studio.md](presentation-studio.md), *Retirement map and migration readers (Level 3, Slice 15)*). The text below is history.
+
 The Presentation Studio's playback (handoff `jarvis-interactive-presentation-studio`, Slice 12; contract
 [presentation-studio.md](presentation-studio.md) > *Playback runtime contract*) also puts durable scene objects on the screen
 while a person watches: **one stage window per run** and the **auxiliary windows** of a detour. It applies exactly the rules of this

@@ -1,0 +1,16 @@
+{
+  "schema": "jarvis.prefab.publication",
+  "schema_version": 1,
+  "prefab_id": "presentation-studio.rm-slide-c896f159",
+  "version": 1,
+  "fingerprint": "da3ac3b8ff7da0bccc3a1d95995a2f71ddfd70231a42549b2c7af38422d273b3",
+  "published_at": "2026-10-12T18:38:56Z",
+  "provenance": {
+    "origin": "custom",
+    "derived_from": null,
+    "created_by": {
+      "actor": "brain"
+    },
+    "base_edit": null
+  }
+}

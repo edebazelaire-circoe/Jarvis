@@ -427,17 +427,11 @@ async def test_a_builder_that_reports_the_runtime_itself_as_unavailable_is_the_e
 
 
 async def test_live_values_and_the_playback_position_survive_a_staged_swap_of_a_remotion_scene(rig):
-    """The window shows values the frame committed (unsaved preview values) and a run is playing: the swap carries the first over to
-    the new frame and never moves the second (the follower re-applies the segment to the new Player: test_remotion_timeline_js)."""
+    """The run surface shows values besides the stored scene (unsaved preview values) and a run is playing: the swap carries the
+    first over to the new frame and never moves the second (the follower re-applies the segment to the new Player: test_remotion_timeline_js)."""
 
-    from jarvis.domain.scene import SceneActor, SceneCommand, SceneObjectFields, SceneOp, ScenePrefabRef
     before = rig.playback.position(rig.pid)
-    snapshot = await rig.scene.snapshot()
-    stage = snapshot.get_object(rig.stage_object_id())
-    block = stage.payload.prefab
-    live = ScenePrefabRef(block.prefab_id, block.version, {**block.props, "title": "Aperçu non enregistré"}, block.data)
-    await rig.scene.apply(SceneCommand(op=SceneOp.PATCH_OBJECT, actor=SceneActor.USER, object_id=stage.object_id,
-                                       fields=SceneObjectFields(payload=stage.payload.__class__(title=stage.payload.title, prefab=live))))
+    rig.surface_shows(props={"title": "Aperçu non enregistré"})
     result = await rig.edit({"sources": {"src/Scene.tsx": NEW_SCENE}})
     assert result.status is S.RELOADED and result.preserved["playback"] == before and result.preserved["playback_unchanged"] is True
     assert rig.playback.position(rig.pid) == before

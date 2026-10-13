@@ -186,27 +186,24 @@ try{
   await poll1(`window.__rail.rows.find(r=>r.presentation_id.endsWith('2')).title==='Bilan 2026'`);await sleep(300);
   out.renamed=await evaluate(READ);
 
-  /* 6. Clic = fenetre ; la pastille de la fenetre suit ; Echap la ferme ; Jouer lance la lecture. */
-  await click(item(1));
-  await poll1(`!!document.querySelector('#jvPresWindow')&&!document.querySelector('#jvPresWindow').hidden&&document.querySelectorAll('#jvPresWindow .jvw-pip').length===3`);
-  await sleep(200);
-  out.window=await evaluate(READ);
-  await click('#jvPresWindow .jvw-pip:nth-child(3)');await sleep(100);
-  out.window_scene3=await evaluate(READ);
-  await click('#jvPresWindow .jvw-bar button:nth-of-type(2)');   /* Jouer */
-  await sleep(300);
+  /* 6. Clic = Variantes (native-studio-playback-fix Slice 09 : la fenetre flottante est retiree). Variantes est remplace par un double qui
+     note ses ouvertures : c'est le geste du rail qui est mesure ici, Variantes a ses propres preuves. « Presenter » lance la lecture. */
+  const STUB_VARIANTS=`window.__opens=[];window.JarvisStudioExplorer={open:o=>{window.__opens.push(o);return Promise.resolve({state:'opened',mode:'windowed'})},
+    close:()=>({state:'closed'}),isOpen:()=>false,state:()=>({open:false,presentation_id:null})}`;
+  await load(1440,900,PRES_BOARD+';'+STUB_VARIANTS);
+  await click(item(1));await poll1(`window.__opens.length>=1`);await sleep(200);
+  out.opened=await evaluate(READ);out.opened.opens=await evaluate(`window.__opens`);
+  out.opened.windowNode=await evaluate(`!!document.querySelector('#jvPresWindow')`);
+  await rightClick(item(1));await sleep(100);
+  await click('.jvr-menu button[data-act="play"]');
+  await poll1(`window.__rail.commands.length>=1`);await sleep(300);
   out.played=await evaluate(READ);
-  await load(1440,900,PRES_BOARD);
-  await click(item(1));await poll1(`!!document.querySelector('#jvPresWindow')&&!document.querySelector('#jvPresWindow').hidden`);await sleep(200);
-  await evaluate(`document.querySelector('#jvPresWindow').focus()`);
-  await press('Escape');await sleep(150);
-  out.window_closed=await evaluate(READ);
 
-  /* 7. Demandes d'ecran du cerveau : ouvrir la fenetre de la 2, puis masquer le rail. */
-  await load(1440,900,PRES_BOARD);
+  /* 7. Demandes d'ecran du cerveau : masquer puis reafficher le rail ; l'ancienne `open_window` n'ouvre plus rien (MCP : Variantes). */
+  await load(1440,900,PRES_BOARD+';'+STUB_VARIANTS);
   await evaluate(`window.__rail.ui={seq:1,request:{seq:1,action:'open_window',presentation_id:window.__rail.rows[1].presentation_id,age_s:1,fresh:true},reported:null}`);
-  await poll1(`!!document.querySelector('#jvPresWindow')&&!document.querySelector('#jvPresWindow').hidden`);await sleep(900);
-  out.brain_open=await evaluate(READ);
+  await sleep(4800);
+  out.brain_open=await evaluate(READ);out.brain_open.opens=await evaluate(`window.__opens.length`);
   await evaluate(`window.__rail.ui={seq:2,request:{seq:2,action:'hide_rail',presentation_id:null,age_s:1,fresh:true},reported:null}`);
   await poll1(`window.JarvisPresentationRail.state().pref==='hidden'`);await sleep(900);
   out.brain_hide=await evaluate(READ);
@@ -216,17 +213,14 @@ try{
 
   /* 8. Une requete vieille (page rechargee longtemps apres) n'est PAS rejouee. */
   await load(1440,900,PRES_BOARD);
-  out.stale_request=await evaluate(`(async()=>{window.__rail.ui={seq:9,request:{seq:9,action:'open_window',presentation_id:window.__rail.rows[1].presentation_id,age_s:600,fresh:false},reported:null};
-    await new Promise(r=>setTimeout(r,4600));return !!document.querySelector('#jvPresWindow')&&!document.querySelector('#jvPresWindow').hidden})()`);
+  out.stale_request=await evaluate(`(async()=>{window.__rail.ui={seq:9,request:{seq:9,action:'hide_rail',presentation_id:null,age_s:600,fresh:false},reported:null};
+    await new Promise(r=>setTimeout(r,4600));return window.JarvisPresentationRail.state().pref==='hidden'})()`);
 
-  /* 9. Concentration : une presentation passe en travail, rien d'ouvert -> sa fenetre s'ouvre ; deja une fenetre ouverte -> on n'y touche pas. */
-  await load(1440,900,PRES_BOARD);
+  /* 9. Une presentation passe en travail : le rail le montre (pastille), il n'ouvre rien de lui-meme (concentration retiree, Slice 09). */
+  await load(1440,900,PRES_BOARD+';'+STUB_VARIANTS);
   await evaluate(`window.__rail.rows[1].work={state:'working',label:'presentation_edit',age_s:1}`);
-  await poll1(`!!document.querySelector('#jvPresWindow')&&!document.querySelector('#jvPresWindow').hidden`,9000);await sleep(200);
-  out.focus_opened=await evaluate(READ);
-  await evaluate(`window.__rail.rows[2].work={state:'working',label:'presentation_edit',age_s:1}`);
   await sleep(4800);
-  out.focus_kept=await evaluate(READ);
+  out.focus=await evaluate(READ);out.focus.opens=await evaluate(`window.__opens.length`);
 
   /* 10. Studio ouvert : le rail se range a gauche, hors de la zone inerte. */
   await load(1440,900,PRES_BOARD);

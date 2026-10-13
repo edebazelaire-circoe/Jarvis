@@ -552,9 +552,9 @@ PRESENTATION = ServerMeta(
             parameter_rules=(_IDS_RULE, "target scene exige scene_id", "target template exige template_id"),
             output_notes=("liste bornée : {items, total} ; titres et étiquettes d'auteur listés dans untrusted ; la partition est rendue sans ses textes",)),
         "presentation_view": ToolMeta(
-            "Studio, fenêtre, rail et plein écran", "write", True, "single_request", "untyped",
-            parameter_rules=("explorer_open (le Studio) : refusé pendant une lecture", "needs_gesture=true : un clic de l'utilisateur est attendu, le plein écran n'est pas actif",
-                             "window_open / rail_* : demande d'écran, relire inspect target rail"),
+            "Variantes, rail et plein écran", "write", True, "single_request", "untyped",
+            parameter_rules=("explorer_open / window_open (Variantes) : une présentation en cours s'y montre ; une autre est refusée", "needs_gesture=true : un clic de l'utilisateur est attendu, le plein écran n'est pas actif",
+                             "rail_* : demande d'écran, relire inspect target rail"),
             output_notes=(_SILENT_NOTE, "mode : windowed, fullscreen_armed ou fullscreen, constaté par la page")),
         "presentation_library": ToolMeta(
             "Rail : masquer, archiver, renommer", "destructive", True, "single_request", "untyped",
@@ -565,7 +565,8 @@ PRESENTATION = ServerMeta(
             parameter_rules=(_IDS_RULE, "goto : exactement un de item_id, scene_id, position", "reveal / hide : anchor_id",
                              "start ne change jamais le mode d'interaction de sa propre initiative (mode_switch_refused)",
                              "scope (start, play) : manual, scene ou all ; play exige scope ; pas de scope quand Jarvis dit les lignes"),
-            output_notes=(_SILENT_NOTE, "state : « où en est-on » borné, scope dit jusqu'où la lecture avance seule")),
+            output_notes=(_SILENT_NOTE, "state : « où en est-on » borné, scope dit jusqu'où la lecture avance seule",
+                          "start : la présentation se montre dans Variantes ; sans page visible, surface_unavailable (mise en pause)")),
         "presentation_edit": ToolMeta(
             "Éditer sémantiquement", "write", False, "single_request", "untyped",
             parameter_rules=(_IDS_RULE, "ops : 1 à 16, tout ou rien, vocabulaire fermé", "scene.remove : confirmation obligatoire (jeton du premier appel)",
@@ -604,6 +605,11 @@ PRESENTATION = ServerMeta(
         "presentation_draft_finalize": ToolMeta(
             "Adopter une direction exploratoire", "write", False, "single_request", "untyped",
             parameter_rules=(_IDS_RULE,), output_notes=("le contrôle directed est rejoué sur la variante stockée",)),
+        "presentation_source": ToolMeta(
+            "Code Remotion natif d'une scène", "write", False, "single_request", "untyped",
+            parameter_rules=(_IDS_RULE, "write : sa propre scène créée par assemble, sinon request_id d'une demande de l'utilisateur"),
+            output_notes=("write refusé : status, code, diagnostics (fichier, ligne) ; rien ne change à l'écran",
+                          "preview : chemins d'images JPEG à regarder")),
     },
 )
 

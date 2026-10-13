@@ -1,0 +1,142 @@
+{
+ "checks": {
+  "no user activation anywhere": true,
+  "the refusal is said (blocked, notice, pill)": true,
+  "the Player is muted again, never left waiting for audio": true,
+  "playback is never frozen: the image keeps moving": true
+ },
+ "wish": {
+  "scene": "S1",
+  "frame": 0,
+  "playing": false,
+  "duration": 180,
+  "wanted": true,
+  "muted": false,
+  "blocked": false,
+  "keysRelayed": 0,
+  "keysRefused": 0,
+  "frames": [
+   {
+    "staged": false,
+    "wanted": true,
+    "muted": false,
+    "phase": "ready"
+   }
+  ],
+  "button": {
+   "pressed": "true",
+   "title": "Couper le son (M)",
+   "state": null
+  },
+  "pill": "",
+  "sound": {
+   "on": true,
+   "blocked": false,
+   "pressed": true,
+   "title": "Couper le son (M)",
+   "pill": "",
+   "toggles": 1,
+   "refusals": 0
+  },
+  "phase": "paused",
+  "f": 0,
+  "notice": ""
+ },
+ "later": {
+  "scene": "S1",
+  "frame": 73,
+  "playing": true,
+  "duration": 180,
+  "wanted": true,
+  "muted": true,
+  "blocked": true,
+  "keysRelayed": 0,
+  "keysRefused": 0,
+  "frames": [
+   {
+    "staged": false,
+    "wanted": true,
+    "muted": true,
+    "phase": "ready"
+   },
+   {
+    "staged": true,
+    "wanted": null,
+    "muted": true,
+    "phase": "ready"
+   }
+  ],
+  "button": {
+   "pressed": "true",
+   "title": "Son refusé par le navigateur : cliquez une fois dans l'image de la scène (M coupe le son)",
+   "state": "blocked"
+  },
+  "pill": "Son refusé par le navigateur : cliquez une fois dans l'image.",
+  "sound": {
+   "on": true,
+   "blocked": true,
+   "pressed": true,
+   "title": "Son refusé par le navigateur : cliquez une fois dans l'image de la scène (M coupe le son)",
+   "pill": "Son refusé par le navigateur : cliquez une fois dans l'image.",
+   "toggles": 1,
+   "refusals": 1
+  },
+  "phase": "playing",
+  "f": 73,
+  "notice": "Le navigateur a refusé le son de cette scène. Cliquez une fois dans l'image de la scène pour l'autoriser, ou autorisez le son pour ce site (icône à gauche de l'adresse, puis « Son » : « Autoriser »)."
+ },
+ "later2": {
+  "scene": "S1",
+  "frame": 105,
+  "playing": true,
+  "duration": 180,
+  "wanted": true,
+  "muted": true,
+  "blocked": true,
+  "keysRelayed": 0,
+  "keysRefused": 0,
+  "frames": [
+   {
+    "staged": false,
+    "wanted": true,
+    "muted": true,
+    "phase": "ready"
+   },
+   {
+    "staged": true,
+    "wanted": null,
+    "muted": true,
+    "phase": "ready"
+   }
+  ],
+  "button": {
+   "pressed": "true",
+   "title": "Son refusé par le navigateur : cliquez une fois dans l'image de la scène (M coupe le son)",
+   "state": "blocked"
+  },
+  "pill": "Son refusé par le navigateur : cliquez une fois dans l'image.",
+  "sound": {
+   "on": true,
+   "blocked": true,
+   "pressed": true,
+   "title": "Son refusé par le navigateur : cliquez une fois dans l'image de la scène (M coupe le son)",
+   "pill": "Son refusé par le navigateur : cliquez une fois dans l'image.",
+   "toggles": 1,
+   "refusals": 1
+  },
+  "phase": "playing",
+  "f": 105,
+  "notice": "Le navigateur a refusé le son de cette scène. Cliquez une fois dans l'image de la scène pour l'autoriser, ou autorisez le son pour ce site (icône à gauche de l'adresse, puis « Son » : « Autoriser »)."
+ },
+ "later_audio": {
+  "frame": 78,
+  "title": "A 16:9 son",
+  "audio": {
+   "paused": true,
+   "muted": true,
+   "volume": 1,
+   "t": 2.567
+  }
+ },
+ "chrome_args": ""
+}

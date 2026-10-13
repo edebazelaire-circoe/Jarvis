@@ -6,9 +6,9 @@ Handoff `jarvis-remotion-presentation-integration`, Slice 11. **Statut : contrat
 
 | Décision | Conséquence |
 | --- | --- |
-| **Sur demande explicite seulement** (D5, D17). | Rien ne lance le Studio : ni le démarrage de Core, ni l'aperçu, ni la lecture de l'état (`GET`), ni la carte à son affichage. Seul `POST .../studio/open` (bouton « Ouvrir le Studio ») ou `restart` d'une scène déjà ouverte avant. |
+| **Sur demande explicite seulement** (D5, D17). | Rien ne lance le Studio : ni le démarrage de Core, ni l'aperçu, ni la lecture de l'état (`GET`), ni la carte à son affichage. Seul `POST .../studio/open` (bouton « Ouvrir Remotion Studio » de la carte, ou « Remotion Studio » sous la vidéo de Variantes depuis native-studio-playback-fix Slice 11) ou `restart` d'une scène déjà ouverte avant. |
 | **Un seul Studio par profil d'exécution**, jamais un par présentation. | `open` sur une scène différente **change la scène en place** (rechargement à chaud), sans second processus ; `open` sur la même scène **réutilise** l'hôte vivant (`reused: true`). |
-| **Le Studio ne sert que la source de la scène choisie**, matérialisée en copie de travail **en lecture seule**. | Jamais la racine de données, jamais un chemin libre : voir §2. L'écriture vers la bibliothèque ne passe jamais par le Studio (elle passe par `PrefabService`, Slices 14-15). |
+| **Le Studio ne sert que la source de la scène choisie**, matérialisée en **espace de travail** (native-studio-playback-fix Slice 12 ; avant : copie en lecture seule). | Jamais la racine de données, jamais un chemin libre : voir §2. `src/**` et `public/**` y sont modifiables (éditeur, Remotion Studio, rechargement à chaud) ; rien n'atteint la bibliothèque ni la variante sans **« Publier dans la variante… »** (§2 bis), qui passe par la porte d'édition de source de la variante (nouvelle version, jamais une réécriture). |
 | **Boucle locale uniquement**, port libre aléatoire ou imposé. | Le Studio stock lie `0.0.0.0` et `::` ; le garde (§3) le force sur `127.0.0.1`. Vérifié : l'adresse du réseau local refuse le port. |
 | **Aucun secret dans l'environnement du Studio.** | Liste blanche (`process_tree.clean_env`) : ni `OPENAI_API_KEY`, ni jeton de Core ; seuls quatre identifiants de lancement non secrets sont ajoutés (§3). |
 | **Un accusé explicite, à chaque ouverture.** | La scène s'exécute **sans le bac à sable du Player**, à l'origine de l'API du Studio (§11). `open`, `restart` et `sync` d'une AUTRE scène exigent `acknowledge_unsandboxed_scene: true` (400 `remotion_studio_ack_required` sinon, rien ne démarre). Aucun chemin du cerveau, d'un outil MCP ni d'un agent n'appelle ces routes (testé) ; la carte du Control Center affiche une confirmation française avant d'envoyer l'accusé (§8). |
@@ -19,24 +19,59 @@ Handoff `jarvis-remotion-presentation-integration`, Slice 11. **Statut : contrat
 ```
 <racine de données>/local_capabilities/remotion/runtime/studio/
     state.json                 état persistant (statut, scène épinglée, port, référence du processus)
-    work/                      LE dossier servi (racine Remotion : son package.json est le plus proche du processus)
-        package.json           généré : {"name": "jarvis-studio-scene", "private": true}
-        studio-root.tsx        généré : registerRoot + <Composition> de la composition DÉCLARÉE par le manifeste
-        src/**  public/**      les octets de la source, inchangés
-    work.files.json            empreintes de la dernière synchronisation
+    work/                      LE dossier servi = l'ESPACE DE TRAVAIL (racine Remotion : son package.json est le plus proche du processus)
+        package.json           généré, lecture seule : {"name": "jarvis-studio-scene", "private": true}
+        studio-root.tsx        généré, lecture seule : registerRoot + <Composition> de la composition DÉCLARÉE par le manifeste
+        src/**  public/**      les octets de la source ; MODIFIABLES (Slice 12)
+    work.files.json            empreintes de la BASE de l'espace (la version matérialisée, ou la dernière publiée depuis lui)
     parent.json                le Core qui surveille ce Studio : {pid, created} (écrit au lancement ET à l'adoption)
-    edits/<horodatage>/        copies des fichiers modifiés hors de Jarvis (au plus 5 dossiers)
+<racine de données>/local_capabilities/remotion/studio-edits/<AAAAMMJJTHHMMSS.ffffff-seq>/
+                               copies des fichiers non publiés mis de côté, et ce que la forme de l'espace écarte avant un lancement
+                               (§2 bis) ; au plus 5 dossiers : le plus ANCIEN est retiré et nommé dans le journal
+                               (`remotion_studio.edits_rotated`) ; HORS de runtime/ : uninstall ne les emporte pas
     studio-guard.cjs           copie du garde livré, comparée à l'original à chaque lancement
     studio.log  listening.json  activity.json  exit.json
 ```
 
 - **Construit par `plan_workspace` (pur)** à partir de la seule `RemotionSource` relue par `PrefabService.remotion_source` (gardes d'isolation de la Slice 06 comprises, empreintes SHA-256 vérifiées). La scène est repérée par un `StudioPin {prefab_id, version}` **exact** (jamais « la dernière »). Les `sample.props` du manifeste deviennent les `defaultProps` de la composition.
 - **Résolution des paquets** : le dossier est sous `runtime/`, donc `remotion`, `react` et les loaders se résolvent dans l'unique `runtime/node_modules` (aucun `node_modules` par scène). Le cache de webpack du Studio vit dans `work/node_modules/.cache` : ni compté, ni lu, ni retiré par une synchronisation.
-- **Copie en lecture seule** : chaque fichier est écrit via un fichier de préparation puis un renommage, avec l'attribut lecture seule. Une synchronisation ne touche **pas** un fichier identique (le rechargement à chaud ne voit que les fichiers changés), retire ce que la nouvelle version n'a plus, retire un lien ou une jonction posés dans `src/`, `public/` ou à la place de ces dossiers (jamais leur cible), et refuse un chemin qui sort de `work/`.
-- **Fichiers modifiés hors de Jarvis** (depuis le Studio ou à la main : `src/**`, `public/**` ou un fichier de premier niveau, qui serait lu par le Studio, comme `remotion.config.ts`) : détectés par comparaison aux empreintes de la dernière synchronisation, **mis de côté** dans `edits/` (à la fermeture et avant chaque synchronisation), puis remplacés. La vue les compte (`work_copy.modified_files`, `edits_saved`). Rien n'est écrit dans la bibliothèque : une édition utile se refait par la route d'édition de source (Slice 14).
+- **Matérialisation** : chaque fichier est écrit via un fichier de préparation puis un renommage ; `src/**` et `public/**` sont **modifiables**, `studio-root.tsx` et `package.json` en lecture seule (générés). Une synchronisation ne touche **pas** un fichier identique (le rechargement à chaud ne voit que les fichiers changés ; un fichier identique d'une copie d'avant la Slice 12 perd seulement son attribut lecture seule), retire ce que la nouvelle version n'a plus, retire un lien ou une jonction posés dans `src/`, `public/` ou à la place de ces dossiers (jamais leur cible), et refuse un chemin qui sort de `work/`.
+- **Modifications non publiées** (depuis Remotion Studio, un éditeur ou à la main : `src/**`, `public/**` ou un fichier de premier niveau, comme `remotion.config.ts` : vu ici, jamais publié, écarté avant tout lancement par la forme de l'espace, §2 bis) : ce qui diffère des empreintes de la **base** (`work.files.json`). Un lien, une jonction ou un lien dur y compte comme `link` (jamais lu). La vue les nomme **tous** (`work_copy.modified_files`), les compte (`work_copy.unpublished`) et donne l'empreinte de cette liste (`work_copy.digest`, que la confirmation de publication renvoie) **quel que soit le statut** (arrêté compris) ; elles survivent à la fermeture, à l'arrêt automatique et au redémarrage de Core. **Aucune opération ne les remplace en silence** (§2 bis) ; elles ne vont dans la variante que par la publication.
 - **Les bornes** : 400 fichiers, 64 Mio de source ; au-delà, `remotion_studio_sync_failed`.
 - **Chemins** : tout chemin qui touche le disque (écriture, mise de côté) passe par `safe_relative` : relatif, `/`, aucun segment vide, `.` ou `..`, ni antislash, ni deux-points (lecteur, flux de données), ni NUL ; sinon `sync_failed` avant tout accès.
 - **Le cache de l'outil** (`work/node_modules`, non scanné) est effacé à **chaque lancement** : il ne survit pas d'un Studio à l'autre.
+
+## 2 bis. Espace de travail et publication (native-studio-playback-fix Slice 12)
+
+Contrat de bout en bout (Variantes, porte d'édition, retour arrière) : [presentation-studio.md](presentation-studio.md) › *Remotion Studio round trip (Level 3, Slice 12)*. Code : `jarvis/domain/remotion_studio_workspace.py` (pur : relevé, publiable ou non, imports, corps), `jarvis/core/remotion_studio_service.py` (`publish`, refus des modifications non publiées), `jarvis/core/remotion_studio_publish.py` (`VariantScenePublisher` : la variante), `RemotionStudioRunner.workspace_diff` / `rebase_work`.
+
+**Ce que fait l'ancien chemin de synchronisation maintenant** (jamais un remplacement silencieux d'un fichier écrit par l'utilisateur) :
+
+| Opération | Espace sans modification | Espace AVEC modifications non publiées |
+| --- | --- | --- |
+| `open` de la même scène (Studio arrêté, Core relancé) | matérialise puis lance | **garde les fichiers de l'utilisateur** (`src/**`, `public/**`) et lance dessus (`remotion_studio.workspace_kept`), après la **forme de l'espace** (ci-dessous) |
+| `open` / `sync` d'une autre version ou scène, `sync` de la même | matérialise (rechargement à chaud) | 409 `remotion_studio_unpublished_edits` (fichiers nommés, `files`, `count`, `base`), rien ne bouge ; avec `discard_unpublished: true` (geste confirmé de l'utilisateur) : copie dans `studio-edits/`, puis matérialisation |
+| `restart` | comme `open` de la même scène | espace gardé |
+| `close`, arrêt automatique, arrêt de Core | processus arrêté | processus arrêté, **fichiers laissés en place** (ni copiés, ni remplacés) |
+| `update` / `repair` / `uninstall` / `disable` de la capacité | arrêt | copie dans `studio-edits/` (hors de `runtime/`) **avant** l'arrêt ; une copie impossible refuse l'opération de la capacité |
+
+**Forme de l'espace avant CHAQUE lancement** (`RemotionStudioRunner.enforce_shape`, QA Slice 12 rework B1 : la réouverture qui gardait l'espace laissait Node exécuter un `remotion.config.js` posé au premier niveau). Que l'espace soit gardé ou matérialisé (`open`, `restart`), seuls sont admis : au premier niveau `src/` et `public/` (vrais dossiers), `studio-root.tsx` et `package.json` **égaux** à ceux que Jarvis génère (régénérés sinon, lecture seule) et le cache de l'outil `node_modules/.cache`, un vrai dossier (un `.cache` lien ou jonction est mis de côté comme tout lien, avant que le lancement ne vide le cache : sa cible n'est jamais vidée) (vidé au lancement, `node_modules` retiré **avant** le démarrage du processus ; tout autre contenu de `node_modules/` a été posé à la main : mis de côté et dit comme le reste, p. ex. `node_modules/x/`) ; dans `src/**` et `public/**`, des fichiers ordinaires. Tout le reste — un `remotion.config.js` / `.ts`, un `.env`, tout fichier ou dossier de premier niveau ajouté, tout lien, jonction ou lien dur, où qu'il soit — est **déplacé** dans un nouveau dossier `studio-edits/` (jamais supprimé ; un lien est déplacé, jamais sa cible), dit dans la vue (`work_copy.set_aside` : ce que le dernier lancement a écarté ; une ligne de `diagnostics`) et journalisé (`remotion_studio.workspace_set_aside`, `warning`, les chemins). Un déplacement impossible fait échouer le lancement (`failed` / `sync_failed`, « not launched ») : **jamais un lancement avec un fichier étranger au premier niveau**. Variantes dit « Au dernier lancement, n éléments étrangers à l'espace de travail (…) ont été mis de côté dans studio-edits : jamais exécutés ni publiés. »
+
+**Mises de côté (`studio-edits/`)** : un dossier par mise de côté, au nom triable et monotone (`AAAAMMJJTHHMMSS.ffffff-<seq>`, heure locale ; la microseconde ne recule jamais dans un processus). On en garde **5** : une sixième retire le **plus ancien**, et chaque dossier retiré est nommé dans le journal (`remotion_studio.edits_rotated`, `warning`, `removed`) ; rien n'est retiré en silence.
+
+**Publication** `POST .../studio/publish` `{"presentation_id", "variant_id", "scene_id", "base": {"prefab_id", "version"}, "digest", "confirm_publish": true}` (corps exact ; `digest` est le `work_copy.digest` de la liste que la confirmation a montrée, `confirm_publish` est ajouté par la page après la confirmation, jamais par le cerveau) : sous le verrou du service (aucun `open` / `sync` ne remplace l'espace pendant ce temps),
+
+1. `base` doit être la base de l'espace (sinon 409 `publish_base_mismatch`) ;
+1 bis. **ce qui est publié est ce qui a été confirmé** : l'empreinte des octets lus à l'étape 2 (`listing_digest` : chemin, empreinte du contenu, `link` ou supprimé) doit égaler `digest` ; sinon 409 `publish_listing_changed` (`count`, `files`), rien n'est publié, la page relit la liste et l'utilisateur confirme à nouveau ;
+2. relevé en une passe (`lstat` avant et après chaque lecture, et le fichier OUVERT : même fichier que ces `lstat` et chemin réel, lié au descripteur — `GetFinalPathNameByHandleW` sous Windows —, dans `work/` ; un dossier parent changé en jonction entre la vérification et l'ouverture est donc refusé, jamais lu) : un lien, une jonction (fichier, dossier ou sur le chemin), un lien dur (`st_nlink` > 1), un fichier de premier niveau (généré ou ajouté), un nom refusé par la règle des chemins de source, un module non UTF-8 ou trop gros : 422 `publish_invalid_file` qui nomme les fichiers ; la cible d'un lien n'est jamais lue ; rien à publier : 409 `publish_nothing` ;
+3. **frontière de confiance** : un import « nu » hors de `react`, `react/jsx-runtime`, `react/jsx-dev-runtime`, `remotion` est refusé avant toute compilation (422 `publish_import_refused`, `imports`). **Aucun élargissement n'existe** (ni route, ni réglage, ni outil) : paquets tiers, modules Node, fichiers de l'hôte ou réseau demanderaient une approbation explicite et enregistrée de l'Humain par projet, non offerte (HV-RFX-12-01) ;
+4. **conflit** : la scène doit encore épingler la base. Sinon, si l'espace contient exactement la version que la scène épingle (une publication dont le rebasage a été interrompu), l'espace est rebasé sans rien publier (`status: already_published`) ; sinon 409 `publish_conflict` (`base`, `current`), rien n'est publié ;
+5. la porte d'édition de source de la variante (`apply_source_edit`, acteur `user`, base = révision de la variante lue à l'étape 4, `files: {sources, assets}`) : garde, **compilation réelle**, nouvelle version immuable, épinglage par compare-and-set, rapport de montage, retour arrière. Un refus garde son code (`publish_refused`, `publish_code`, `diagnostics` fichier:ligne:colonne) ; une écriture concurrente (`stale`) est un `publish_conflict` ;
+6. une version qui tient (`reloaded`, `reloaded_state_reset`, `repinned`, `pending_mount`) **rebase** l'espace : `state.pin` et `work.files.json` deviennent ceux de la version publiée ; les fichiers du disque ne sont pas touchés (le rechargement à chaud continue ; ce qui a été modifié pendant la publication reste non publié).
+
+Réponse : `{studio: vue, publish: {status, published, previous, variant_revision, mounted, files: {added, changed, removed}, message}}`. Retour arrière : la version précédente n'est jamais touchée ; « Revenir à la v<N> » de Variantes la republie comme nouvelle version (`restore_version`). Journal : `remotion_studio.publish_started`, `published`, `publish_refused`, `publish_conflict`, `publish_listing_changed`, `publish_rebased`, `unpublished_kept`, `workspace_kept`, `workspace_set_aside`, `edits_rotated`, `unpublished_saved`.
+
+**La scène que l'utilisateur ouvre n'est plus à l'agent** (reprise de la Slice 13 de native-studio-playback-fix, QA B3). Après chaque `open` (lancement, réutilisation sur la même scène) et chaque `sync` réussis, le service attend ses écouteurs de scène (`add_scene_listener`, câblé par `v2_app`) avec le pin ouvert : la permission d'auteur de l'agent (`agent_authored_scene`) sur toute scène qui épingle exactement cette version, dans sa variante, prend fin. Un écouteur en panne est journalisé (`remotion_studio.scene_listener_failed`, `error`) sans défaire l'ouverture. `workspace_base()` (lecture seule) rend la base de l'espace et ses fichiers non publiés ; la porte d'édition de source refuse toute écriture de l'agent sur la scène tant qu'il en reste (`presentation_studio_scene_edited_in_remotion`, 409) ; un espace illisible compte comme modifié (`remotion_studio.workspace_unlisted`, `warning`). Contrat : [presentation-studio.md](presentation-studio.md) › *Native Remotion authoring*.
 
 ## 3. Processus et garde
 
@@ -72,6 +107,16 @@ Statut : `stopped`, `starting`, `ready`, `stopping`, `failed`. Vue publique (`ja
 | `runtime_unavailable` | 409 | la capacité Remotion n'est pas `ready`/`running`, ou Node / `@remotion/cli` manquent : installer ou réparer d'abord |
 | `not_running` | 409 | `sync` sans Studio ouvert ; `restart` sans scène précédente |
 | `sync_failed` | 409 | la copie de travail n'a pas pu être écrite (le Studio reste ouvert sur l'ancienne version) |
+| `unpublished_edits` | 409 | `open` / `sync` remplacerait des fichiers non publiés de l'espace de travail : rien ne bouge (§2 bis) ; `discard_unpublished: true` après confirmation |
+| `publish_confirm_required` | 400 | `confirm_publish` absent ou différent de `true` |
+| `publish_nothing` | 409 | aucun espace de travail, ou aucune modification |
+| `publish_base_mismatch` | 409 | la base envoyée n'est pas celle de l'espace (la page relit) |
+| `publish_listing_changed` | 409 | les fichiers de l'espace ne donnent plus l'empreinte (`digest`) de la liste confirmée : rien n'est publié, la page relit (`count`, `files`) |
+| `publish_conflict` | 409 | la scène n'épingle plus la base de l'espace, ou une écriture concurrente (`stale`) : rien n'est publié |
+| `publish_invalid_file` | 422 | lien, jonction, lien dur, fichier de premier niveau, nom refusé, module non UTF-8 ou trop gros |
+| `publish_import_refused` | 422 | import hors de la liste ; aucun élargissement n'existe |
+| `publish_refused` | 422 (ou le statut de la variante) | refus de la porte d'édition de source (compilation, valeurs, partition, cible inconnue) : `publish_code` et `diagnostics` |
+| `publish_unavailable` | 503 | Core sans Studio de présentations |
 | `port_unavailable`, `start_failed`, `start_timeout`, `health_failed`, `process_exited`, `stop_failed`, `store_failed`, `internal_error` | 200, vue `failed` | **échec d'opération = la vue** (comme les capacités), avec `last_error_code` et le journal |
 
 ## 5. Opérations
@@ -79,8 +124,9 @@ Statut : `stopped`, `starting`, `ready`, `stopping`, `failed`. Vue publique (`ja
 | Opération | Effet |
 | --- | --- |
 | `open {prefab_id, version, acknowledge_unsandboxed_scene: true}` | Studio arrêté ou en échec : exige la capacité prête, relit la source, matérialise, lance, attend `/health` de **ce** lancement puis la page (120 s au plus), `ready`. Déjà `ready` : même scène, réutilise ; autre scène, `sync` en place. Un Studio vivant qui ne répond plus est tué puis relancé. Une collision de port aléatoire est retentée **une fois** ; un port imposé n'est jamais remplacé (`port_unavailable`). |
-| `sync {}` ou `{prefab_id, version, acknowledge_unsandboxed_scene: true}` | Rematérialise la scène courante (ou une autre version) : rechargement à chaud, **sans** nouveau processus. Mesuré : l'écran ouvert affiche la nouvelle version en moins de 2 s, sans rechargement de page. |
-| `close` | Met de côté les fichiers modifiés, tue l'arbre, `stopped` (`stop_reason: user`). Idempotent. Ne perd aucun travail : la source vit dans la bibliothèque. |
+| `sync {}` ou `{prefab_id, version, acknowledge_unsandboxed_scene: true}` | Rematérialise la scène courante (ou une autre version) : rechargement à chaud, **sans** nouveau processus. Mesuré : l'écran ouvert affiche la nouvelle version en moins de 2 s, sans rechargement de page. Modifications non publiées : refus (§2 bis) sauf `discard_unpublished: true`. |
+| `close` | Tue l'arbre, `stopped` (`stop_reason: user`). Idempotent. Les fichiers non publiés restent dans l'espace de travail (Slice 12 ; avant : mis de côté). |
+| `publish {presentation_id, variant_id, scene_id, base, digest, confirm_publish: true}` | Publie l'espace dans la scène comme NOUVELLE version (§2 bis), Studio ouvert ou arrêté. |
 | `restart {acknowledge_unsandboxed_scene: true}` | `close` puis `open` sur la dernière scène (`restarts + 1`). Depuis `failed` aussi. |
 | `status` (`GET`) | Lecture seule, relit vivacité, activité et fichiers modifiés ; constate une disparition (`failed`/`process_exited`). Ne lance rien. |
 | surveillance (toutes les 15 s tant que `ready`) | disparition du processus : `failed`/`process_exited` ; aucune requête et aucun WebSocket pendant le délai (30 min par défaut, `JARVIS_REMOTION_STUDIO_IDLE_S`, 60 s à 24 h) : arrêt, `stop_reason: idle_timeout`. Un onglet du Studio ouvert (WebSocket) n'est jamais inactif. |
@@ -99,8 +145,9 @@ Préfixe frère de la famille des capacités : `/v1/local-capabilities/remotion/
 | POST | `/v1/local-capabilities/remotion/studio/sync` | `{}` (scène courante) ou `{"prefab_id", "version", "acknowledge_unsandboxed_scene": true}` |
 | POST | `/v1/local-capabilities/remotion/studio/close` | `{}` |
 | POST | `/v1/local-capabilities/remotion/studio/restart` | `{"acknowledge_unsandboxed_scene": true}` |
+| POST | `/v1/local-capabilities/remotion/studio/publish` | `{"presentation_id", "variant_id", "scene_id", "base": {"prefab_id", "version"}, "digest", "confirm_publish": true}` (§2 bis) |
 
-Réponse : `{studio: vue}`. Refus : `{error: {code, message}}`. Un défaut inattendu d'une route est journalisé durablement (`remotion_studio.route_failed`, niveau `error`) et rendu en 500 `remotion_studio_internal_error`. Une requête avec paramètres de requête, un corps de plus de 1 Kio ou un champ en trop est refusée (`invalid`).
+Réponse : `{studio: vue}` (`publish` : plus `publish`). Refus : `{error: {code, message, ...}}` (une publication refusée ajoute `publish_code`, `diagnostics`, `files`, `base`, `current`, `imports` selon le cas). `open` et `sync` acceptent `"discard_unpublished": true` (seule valeur admise). Un défaut inattendu d'une route est journalisé durablement (`remotion_studio.route_failed`, niveau `error`) et rendu en 500 `remotion_studio_internal_error`. Une requête avec paramètres de requête, un corps de plus de 1 Kio ou un champ en trop est refusée (`invalid`).
 
 ## 7. Réglages
 
@@ -109,9 +156,9 @@ Réponse : `{studio: vue}`. Refus : `{error: {code, message}}`. Un défaut inatt
 | `JARVIS_REMOTION_STUDIO_PORT` | port imposé (1024-65535) ; sinon un port libre de boucle locale à chaque lancement |
 | `JARVIS_REMOTION_STUDIO_IDLE_S` | inactivité avant arrêt automatique, 60 à 86400 s (défaut 1800) ; une valeur illisible est ignorée (défaut), jamais un Core qui ne démarre pas |
 
-## 8. Control Center : la carte « Remotion · Studio »
+## 8. Control Center : la carte « Remotion Studio » et la porte de Variantes
 
-Six adresses relaient **telles quelles** vers Core (`jarvis/runtime/remotion_studio_relay.py`), toutes gardées par Host et origine de boucle locale :
+Sept adresses relaient **telles quelles** vers Core (`jarvis/runtime/remotion_studio_relay.py`), toutes gardées par Host et origine de boucle locale :
 
 | Control Center | Core | Délai |
 | --- | --- | --- |
@@ -121,21 +168,26 @@ Six adresses relaient **telles quelles** vers Core (`jarvis/runtime/remotion_stu
 | POST `/api/local-capabilities/remotion/studio/restart` | POST `.../studio/restart` | 150 s |
 | POST `/api/local-capabilities/remotion/studio/sync` | POST `.../studio/sync` | 40 s |
 | POST `/api/local-capabilities/remotion/studio/close` | POST `.../studio/close` | 40 s |
+| POST `/api/local-capabilities/remotion/studio/publish` | POST `.../studio/publish` | 150 s ; **seulement depuis la page** (`Sec-Fetch-Site: same-origin`, sinon 403 `forbidden_origin`), native-studio-playback-fix Slice 12 |
  **Aucune désinstallation ni mise à jour n'est relayée d'ici** : elles restent une action explicite sur Core ([remotion-runtime.md](remotion-runtime.md) §7). Depuis la Slice 20, seules `install` et `repair` le sont (`POST /api/local-capabilities/remotion/install|repair`, corps vide imposé), pour le geste de la carte « Présentations · moteur ». Le client de Core n'accepte que le préfixe `/v1/local-capabilities/remotion`.
 
-La carte (`control_center_remotion_studio.js`) est en tête de l'onglet « Plugins externes » du dialogue MCP, au-dessus des cartes de plugins (la « carte unique » de [local-capabilities.md](local-capabilities.md) §1) : état de l'environnement Remotion, état du Studio, choix de la scène (scènes Remotion de la bibliothèque, `?engine=remotion`), boutons **Ouvrir le Studio**, **Actualiser la scène**, **Relancer**, **Fermer le Studio**.
+La carte (`control_center_remotion_studio.js`) est en tête de l'onglet « Plugins externes » du dialogue MCP, au-dessus des cartes de plugins (la « carte unique » de [local-capabilities.md](local-capabilities.md) §1) : état de l'environnement Remotion, état du Studio, choix de la scène (scènes Remotion de la bibliothèque, `?engine=remotion`), boutons **Ouvrir Remotion Studio**, **Actualiser la scène**, **Relancer**, **Fermer Remotion Studio** (noms : PX-1 de [presentation-studio.md](presentation-studio.md#presentation-experience-contract-level-2-2026-10), « Remotion Studio », jamais « Studio » tout court ; avant native-studio-playback-fix Slice 11 : « Remotion · Studio », « Ouvrir le Studio », « Fermer le Studio »).
+
+**La porte de Variantes (native-studio-playback-fix Slice 11).** Pour une scène d'une présentation, l'utilisateur n'a pas à chercher cette carte : le bouton « Remotion Studio » sous la vidéo de Variantes (et l'entrée « Remotion Studio… » du rail) ouvre **la scène à l'écran, à son pin exact**, avec le même client, la même confirmation (`confirmSpec`) et les mêmes phrases (`JarvisRemotionStudioCore`, désormais aussi sur `window`). L'état (démarrage avec compteur, prêt, autre scène ou autre version, fichiers modifiés « pas publiés », échec avec son code et « Réessayer ») se dit dans Variantes ; l'onglet s'ouvre tant que le clic de confirmation est récent, sinon un lien « Ouvrir l'onglet Remotion Studio ». Contrat : [presentation-studio.md](presentation-studio.md) › *Remotion Studio from Variants (Level 3, Slice 11)*.
 
 - **Confirmation avant tout lancement** : « Ouvrir cette scène hors du bac à sable ? » nomme le risque (pas de bac à sable, même origine que l'API du Studio, la source et les paramètres peuvent sortir du poste) et la **provenance de la version exacte** (`publication.provenance` : origine et auteur). Une version écrite par vous : confirmation ordinaire ; écrite par un agent ou le système, ou de provenance illisible : titre « Ouvrir une scène que vous n'avez pas écrite ? », bouton rouge, avertissement renforcé. Annuler ne lance rien. Sans le dialogue de la page, la carte refuse d'ouvrir. `restart` redemande la confirmation ; `sync` de la scène courante non.
-- **Ce qui attend se voit** : pastille animée, durée écoulée (« Démarrage du Studio… 12 s écoulées, 2 min au plus. »), boutons désactivés pendant l'opération avec son libellé (« Ouverture du Studio… »), décompte de l'arrêt automatique (« arrêt automatique dans 28 min 12 s », absent tant qu'une fenêtre est ouverte), nombre de fenêtres ouvertes.
+- **Ce qui attend se voit** : pastille animée, durée écoulée (« Démarrage de Remotion Studio… 12 s écoulées, 2 min au plus. »), boutons désactivés pendant l'opération avec son libellé (« Ouverture de Remotion Studio… »), décompte de l'arrêt automatique (« arrêt automatique dans 28 min 12 s », absent tant qu'une fenêtre est ouverte), nombre de fenêtres ouvertes.
 - **Un échec dit ce qui s'est passé** : phrase française du code, code stable affiché, journal du Studio replié ; l'état affiché est celui de Core, relu toutes les 2 s (démarrage, arrêt) ou 10 s.
 - Étroit : la carte tient dans 390 px. Aucune écriture hors d'un clic ; aucun chemin du disque.
 
 ## 9. Ce que le Studio n'est pas
 
-- Pas un outil du cerveau : `remotion_studio` ([remotion-runtime.md](remotion-runtime.md) §13, Slice 21) rend seulement où cliquer ; l'accusé « cette scène tourne sans le bac à sable » est un geste de l'utilisateur dans la page, et le cerveau ne l'envoie jamais.
+- Pas un outil du cerveau : `remotion_studio` ([remotion-runtime.md](remotion-runtime.md) §13, Slice 21) rend seulement où cliquer (depuis native-studio-playback-fix Slice 11 : « Remotion Studio » sous la vidéo de Variantes) ; l'accusé « cette scène tourne sans le bac à sable » est un geste de l'utilisateur dans la page, et le cerveau ne l'envoie jamais.
 - Pas un moteur de rendu : le rendu et l'export sont la Slice 16 ([remotion-render.md](remotion-render.md), processus et garde propres, à partir d'un snapshot figé) ; le garde du Studio refuse les processus enfants, donc le bouton « Render » du Studio échoue visiblement.
-- Pas un éditeur qui écrit dans la bibliothèque : ses modifications sont mises de côté, jamais publiées.
+- Pas un éditeur qui écrit seul dans la bibliothèque : ses modifications restent dans l'espace de travail tant que l'utilisateur ne confirme pas « Publier dans la variante… » (§2 bis) ; la publication passe par la porte d'édition de source de la variante, jamais par ce service ni par un fichier.
 - Pas un lieu d'exécution isolé comme le Player : la scène y tourne dans l'onglet du Studio (§11).
+- Pas l'atelier de l'agent : depuis native-studio-playback-fix Slice 13, l'agent auteur écrit et regarde ses scènes par `presentation_source` (route d'édition de source, aperçu par le processus de rendu gardé), jamais dans l'espace de travail de Remotion Studio ni par sa publication.
+- Pas l'écran « Variantes », ni une surface de lecture de Jarvis : son aperçu sert à éditer une scène et ne fixe jamais le temps d'une présentation. À l'écran, ce processus s'appelle toujours « Remotion Studio », jamais « Studio » tout court. La seule lecture d'une présentation est le Player intégré à l'écran « Variantes ». Contrat (2026-10) : [presentation-studio.md](presentation-studio.md#presentation-experience-contract-level-2-2026-10), § 1 et § 2.
 
 ## 10. Preuves
 
@@ -163,7 +215,8 @@ Tests automatiques (aucun réseau, aucun navigateur) : `tests/unit/test_remotion
 - **Le garde n'est pas un bac à sable du système d'exploitation** : un code natif, un `worker_threads` rechargeant un module non patché, ou `process.binding` y échappent. Aucun accès aux secrets de Jarvis n'existe dans ce processus (environnement en liste blanche), mais il tourne avec les droits de l'utilisateur sur ses fichiers.
 - **Licence Remotion non examinée ici** (contrat distinct, [local-capabilities.md](local-capabilities.md) §6). Le Studio affiche, selon la version et l'usage, des invites ou rappels de licence ; aucune clé n'est configurée, `--disable-ask-ai` coupe l'assistant en ligne, et les appels sortants du Studio (vérification de version, ressources distantes) échouent par construction, ce qui est visible dans `egress_blocked`.
 - **Premier démarrage lent** : webpack construit tout le Studio à froid (30 à 50 s mesurés), 120 s au plus ; ensuite le rechargement à chaud est immédiat.
-- **Un fichier de la copie modifié par le Studio** n'est détecté qu'à la lecture de l'état, à la fermeture et avant une synchronisation (comparaison d'empreintes), pas en continu.
+- **Un fichier de l'espace modifié** n'est détecté qu'à la lecture de l'état (toutes les 15 s dans Variantes tant qu'il y en a, au retour dans l'onglet) et avant une opération (comparaison d'empreintes), pas en continu.
+- **Espace de travail modifiable (Slice 12)** : la scène qui tourne dans l'onglet du Studio (même origine que son API) peut demander à cette API de réécrire des fichiers de l'espace (avant, l'attribut lecture seule l'empêchait sous Windows). Ce qu'elle écrirait reste non publié : la confirmation de publication liste **chaque** fichier (liste défilante, sans troncature) et la publication est liée à cette liste (`digest` : un fichier changé après la confirmation la fait refuser, `publish_listing_changed`), puis passe la garde et la compilation ; le Player reste isolé. Un fichier qu'elle poserait au premier niveau (`remotion.config.js`) n'est jamais exécuté : la forme de l'espace l'écarte avant le lancement suivant (§2 bis). Les copies `studio-edits/` gardent 5 dossiers au plus : une sixième mise de côté retire **la plus ancienne** (noms triables et monotones) et la nomme dans le journal (`remotion_studio.edits_rotated`).
 - **Windows uniquement éprouvé en réel** ; POSIX est couvert par la logique (groupe de processus, `ps`/`/proc`) et les tests unitaires, non exécuté.
 - **Une seule fenêtre d'édition** : un second onglet du même Studio est possible ; Jarvis ne les distingue pas (compte seulement).
 - **Pas de reprise automatique après un plantage** : `failed` + `Relancer` (explicite) ; l'idée est qu'un Studio qui plante à répétition soit vu, pas masqué.

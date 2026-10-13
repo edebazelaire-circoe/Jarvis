@@ -1,0 +1,1681 @@
+{
+ "sha": "33015379",
+ "tag": "before",
+ "runtime": "headless Chrome over CDP, RemotionStack on free loopback ports, throw-away data root; the live Jarvis was never contacted",
+ "inv_800x600": {
+  "vw": 800,
+  "vh": 600,
+  "overflowX": false,
+  "transportBars": 1,
+  "controls": [
+   {
+    "role": "button",
+    "name": "Plein écran",
+    "act": null,
+    "disabled": false,
+    "opacity": 1,
+    "inert": false,
+    "state": null,
+    "box": [
+     702,
+     13,
+     740,
+     49
+    ],
+    "where": "header"
+   },
+   {
+    "role": "button",
+    "name": "Fermer l'explorateur de variantes",
+    "act": null,
+    "disabled": false,
+    "opacity": 1,
+    "inert": false,
+    "state": null,
+    "box": [
+     748,
+     13,
+     786,
+     49
+    ],
+    "where": "header"
+   },
+   {
+    "role": "treeitem",
+    "name": "Variante 1, Neuf scenes, active",
+    "act": null,
+    "disabled": false,
+    "opacity": 1,
+    "inert": false,
+    "state": "true",
+    "box": [
+     0,
+     108,
+     319,
+     156
+    ],
+    "where": "tree"
+   },
+   {
+    "role": "button",
+    "name": "Archivées (0)",
+    "act": null,
+    "disabled": false,
+    "opacity": 1,
+    "inert": false,
+    "state": null,
+    "box": [
+     0,
+     558,
+     319,
+     600
+    ],
+    "where": "tree"
+   },
+   {
+    "role": "button",
+    "name": "Scène précédente",
+    "act": null,
+    "disabled": false,
+    "opacity": 1,
+    "inert": false,
+    "state": null,
+    "box": [
+     332,
+     273,
+     362,
+     303
+    ],
+    "where": "Lecture de la vidéo"
+   },
+   {
+    "role": "button",
+    "name": "Lire",
+    "act": "continuous",
+    "disabled": false,
+    "opacity": 1,
+    "inert": false,
+    "state": "false",
+    "box": [
+     366,
+     273,
+     424,
+     303
+    ],
+    "where": "Lecture de la vidéo"
+   },
+   {
+    "role": "button",
+    "name": "Scène suivante",
+    "act": null,
+    "disabled": false,
+    "opacity": 1,
+    "inert": false,
+    "state": null,
+    "box": [
+     428,
+     273,
+     458,
+     303
+    ],
+    "where": "Lecture de la vidéo"
+   },
+   {
+    "role": "slider",
+    "name": "Position dans la vidéo",
+    "act": null,
+    "disabled": false,
+    "opacity": 1,
+    "inert": false,
+    "state": null,
+    "box": [
+     462,
+     276,
+     521,
+     300
+    ],
+    "where": "Lecture de la vidéo"
+   },
+   {
+    "role": "button",
+    "name": "Son",
+    "act": null,
+    "disabled": false,
+    "opacity": 1,
+    "inert": false,
+    "state": "false",
+    "box": [
+     602,
+     273,
+     632,
+     303
+    ],
+    "where": "Lecture de la vidéo"
+   },
+   {
+    "role": "button",
+    "name": "Plus de lecture",
+    "act": null,
+    "disabled": false,
+    "opacity": 1,
+    "inert": false,
+    "state": null,
+    "box": [
+     636,
+     273,
+     666,
+     303
+    ],
+    "where": "Lecture de la vidéo"
+   },
+   {
+    "role": "button",
+    "name": "Présenter",
+    "act": "present",
+    "disabled": false,
+    "opacity": 1,
+    "inert": false,
+    "state": null,
+    "box": [
+     670,
+     273,
+     700,
+     303
+    ],
+    "where": "Lecture de la vidéo"
+   },
+   {
+    "role": "option",
+    "name": "Scène 1, S1 3s@30",
+    "act": null,
+    "disabled": false,
+    "opacity": 1,
+    "inert": false,
+    "state": "true",
+    "box": [
+     334,
+     317,
+     436,
+     346
+    ],
+    "where": "strip"
+   },
+   {
+    "role": "option",
+    "name": "Scène 2, S2 8s@30",
+    "act": null,
+    "disabled": false,
+    "opacity": 1,
+    "inert": false,
+    "state": "false",
+    "box": [
+     444,
+     317,
+     547,
+     346
+    ],
+    "where": "strip"
+   },
+   {
+    "role": "option",
+    "name": "Scène 3, S3 30s@30",
+    "act": null,
+    "disabled": false,
+    "opacity": 1,
+    "inert": false,
+    "state": "false",
+    "box": [
+     555,
+     317,
+     666,
+     346
+    ],
+    "where": "strip"
+   },
+   {
+    "role": "option",
+    "name": "Scène 4, S4 3s@25",
+    "act": null,
+    "disabled": false,
+    "opacity": 1,
+    "inert": false,
+    "state": "false",
+    "box": [
+     674,
+     317,
+     778,
+     346
+    ],
+    "where": "strip"
+   },
+   {
+    "role": "option",
+    "name": "Scène 5, S5 8s@60",
+    "act": null,
+    "disabled": false,
+    "opacity": 1,
+    "inert": false,
+    "state": "false",
+    "box": [
+     786,
+     317,
+     890,
+     346
+    ],
+    "where": "strip"
+   },
+   {
+    "role": "option",
+    "name": "Scène 6, S6 3s@30",
+    "act": null,
+    "disabled": false,
+    "opacity": 1,
+    "inert": false,
+    "state": "false",
+    "box": [
+     898,
+     317,
+     1002,
+     346
+    ],
+    "where": "strip"
+   },
+   {
+    "role": "option",
+    "name": "Scène 7, S7 8s@24",
+    "act": null,
+    "disabled": false,
+    "opacity": 1,
+    "inert": false,
+    "state": "false",
+    "box": [
+     1010,
+     317,
+     1113,
+     346
+    ],
+    "where": "strip"
+   },
+   {
+    "role": "option",
+    "name": "Scène 8, S8 3s@30",
+    "act": null,
+    "disabled": false,
+    "opacity": 1,
+    "inert": false,
+    "state": "false",
+    "box": [
+     1121,
+     317,
+     1225,
+     346
+    ],
+    "where": "strip"
+   },
+   {
+    "role": "option",
+    "name": "Scène 9, S9 8s@30",
+    "act": null,
+    "disabled": false,
+    "opacity": 1,
+    "inert": false,
+    "state": "false",
+    "box": [
+     1233,
+     317,
+     1337,
+     346
+    ],
+    "where": "strip"
+   },
+   {
+    "role": "button",
+    "name": "Activer",
+    "act": "activate",
+    "disabled": true,
+    "opacity": 0.5,
+    "inert": false,
+    "state": null,
+    "box": [
+     332,
+     508,
+     439,
+     544
+    ],
+    "where": "Actions sur la variante choisie"
+   },
+   {
+    "role": "button",
+    "name": "Brancher d'ici…",
+    "act": "branch",
+    "disabled": false,
+    "opacity": 1,
+    "inert": false,
+    "state": null,
+    "box": [
+     447,
+     508,
+     586,
+     544
+    ],
+    "where": "Actions sur la variante choisie"
+   },
+   {
+    "role": "button",
+    "name": "Renommer…",
+    "act": "rename",
+    "disabled": false,
+    "opacity": 1,
+    "inert": false,
+    "state": null,
+    "box": [
+     594,
+     508,
+     718,
+     544
+    ],
+    "where": "Actions sur la variante choisie"
+   },
+   {
+    "role": "button",
+    "name": "Archiver…",
+    "act": "archive",
+    "disabled": true,
+    "opacity": 0.5,
+    "inert": false,
+    "state": null,
+    "box": [
+     332,
+     552,
+     439,
+     588
+    ],
+    "where": "Actions sur la variante choisie"
+   }
+  ],
+  "time": "0:00 / 1:14",
+  "scene": "Scène 1 sur 9",
+  "sceneTitle": null,
+  "count": "1/64",
+  "treeOpacity": 1,
+  "treeInert": false,
+  "actionsOpacity": 1,
+  "runNote": null,
+  "vbar": true,
+  "hint": null,
+  "rsBars": 0,
+  "forbidden": [],
+  "transportRow": {
+   "box": [
+    332,
+    273,
+    700,
+    303
+   ],
+   "rows": 1
+  }
+ },
+ "inv_1280x720": {
+  "vw": 1280,
+  "vh": 720,
+  "overflowX": false,
+  "transportBars": 1,
+  "controls": [
+   {
+    "role": "button",
+    "name": "Plein écran",
+    "act": null,
+    "disabled": false,
+    "opacity": 1,
+    "inert": false,
+    "state": null,
+    "box": [
+     1033,
+     15,
+     1155,
+     51
+    ],
+    "where": "header"
+   },
+   {
+    "role": "button",
+    "name": "Fermer l'explorateur de variantes",
+    "act": null,
+    "disabled": false,
+    "opacity": 1,
+    "inert": false,
+    "state": null,
+    "box": [
+     1163,
+     15,
+     1260,
+     51
+    ],
+    "where": "header"
+   },
+   {
+    "role": "treeitem",
+    "name": "Variante 1, Neuf scenes, active",
+    "act": null,
+    "disabled": false,
+    "opacity": 1,
+    "inert": false,
+    "state": "true",
+    "box": [
+     188,
+     112,
+     558,
+     160
+    ],
+    "where": "tree"
+   },
+   {
+    "role": "button",
+    "name": "Archivées (0)",
+    "act": null,
+    "disabled": false,
+    "opacity": 1,
+    "inert": false,
+    "state": null,
+    "box": [
+     188,
+     678,
+     558,
+     720
+    ],
+    "where": "tree"
+   },
+   {
+    "role": "button",
+    "name": "Scène précédente",
+    "act": null,
+    "disabled": false,
+    "opacity": 1,
+    "inert": false,
+    "state": null,
+    "box": [
+     579,
+     446,
+     609,
+     476
+    ],
+    "where": "Lecture de la vidéo"
+   },
+   {
+    "role": "button",
+    "name": "Lire",
+    "act": "continuous",
+    "disabled": false,
+    "opacity": 1,
+    "inert": false,
+    "state": "false",
+    "box": [
+     617,
+     446,
+     679,
+     476
+    ],
+    "where": "Lecture de la vidéo"
+   },
+   {
+    "role": "button",
+    "name": "Scène suivante",
+    "act": null,
+    "disabled": false,
+    "opacity": 1,
+    "inert": false,
+    "state": null,
+    "box": [
+     687,
+     446,
+     717,
+     476
+    ],
+    "where": "Lecture de la vidéo"
+   },
+   {
+    "role": "slider",
+    "name": "Position dans la vidéo",
+    "act": null,
+    "disabled": false,
+    "opacity": 1,
+    "inert": false,
+    "state": null,
+    "box": [
+     725,
+     449,
+     789,
+     473
+    ],
+    "where": "Lecture de la vidéo"
+   },
+   {
+    "role": "button",
+    "name": "Son",
+    "act": null,
+    "disabled": false,
+    "opacity": 1,
+    "inert": false,
+    "state": "false",
+    "box": [
+     895,
+     446,
+     925,
+     476
+    ],
+    "where": "Lecture de la vidéo"
+   },
+   {
+    "role": "button",
+    "name": "Plus de lecture",
+    "act": null,
+    "disabled": false,
+    "opacity": 1,
+    "inert": false,
+    "state": null,
+    "box": [
+     933,
+     446,
+     963,
+     476
+    ],
+    "where": "Lecture de la vidéo"
+   },
+   {
+    "role": "button",
+    "name": "Présenter",
+    "act": "present",
+    "disabled": false,
+    "opacity": 1,
+    "inert": false,
+    "state": null,
+    "box": [
+     971,
+     446,
+     1043,
+     476
+    ],
+    "where": "Lecture de la vidéo"
+   },
+   {
+    "role": "option",
+    "name": "Scène 1, S1 3s@30",
+    "act": null,
+    "disabled": false,
+    "opacity": 1,
+    "inert": false,
+    "state": "true",
+    "box": [
+     581,
+     490,
+     731,
+     558
+    ],
+    "where": "strip"
+   },
+   {
+    "role": "option",
+    "name": "Scène 2, S2 8s@30",
+    "act": null,
+    "disabled": false,
+    "opacity": 1,
+    "inert": false,
+    "state": "false",
+    "box": [
+     739,
+     490,
+     889,
+     558
+    ],
+    "where": "strip"
+   },
+   {
+    "role": "option",
+    "name": "Scène 3, S3 30s@30",
+    "act": null,
+    "disabled": false,
+    "opacity": 1,
+    "inert": false,
+    "state": "false",
+    "box": [
+     897,
+     490,
+     1047,
+     558
+    ],
+    "where": "strip"
+   },
+   {
+    "role": "option",
+    "name": "Scène 4, S4 3s@25",
+    "act": null,
+    "disabled": false,
+    "opacity": 1,
+    "inert": false,
+    "state": "false",
+    "box": [
+     1055,
+     490,
+     1205,
+     558
+    ],
+    "where": "strip"
+   },
+   {
+    "role": "option",
+    "name": "Scène 5, S5 8s@60",
+    "act": null,
+    "disabled": false,
+    "opacity": 1,
+    "inert": false,
+    "state": "false",
+    "box": [
+     1213,
+     490,
+     1363,
+     558
+    ],
+    "where": "strip"
+   },
+   {
+    "role": "option",
+    "name": "Scène 6, S6 3s@30",
+    "act": null,
+    "disabled": false,
+    "opacity": 1,
+    "inert": false,
+    "state": "false",
+    "box": [
+     1371,
+     490,
+     1521,
+     558
+    ],
+    "where": "strip"
+   },
+   {
+    "role": "option",
+    "name": "Scène 7, S7 8s@24",
+    "act": null,
+    "disabled": false,
+    "opacity": 1,
+    "inert": false,
+    "state": "false",
+    "box": [
+     1529,
+     490,
+     1679,
+     558
+    ],
+    "where": "strip"
+   },
+   {
+    "role": "option",
+    "name": "Scène 8, S8 3s@30",
+    "act": null,
+    "disabled": false,
+    "opacity": 1,
+    "inert": false,
+    "state": "false",
+    "box": [
+     1687,
+     490,
+     1837,
+     558
+    ],
+    "where": "strip"
+   },
+   {
+    "role": "option",
+    "name": "Scène 9, S9 8s@30",
+    "act": null,
+    "disabled": false,
+    "opacity": 1,
+    "inert": false,
+    "state": "false",
+    "box": [
+     1845,
+     490,
+     1995,
+     558
+    ],
+    "where": "strip"
+   },
+   {
+    "role": "button",
+    "name": "Activer",
+    "act": "activate",
+    "disabled": true,
+    "opacity": 0.5,
+    "inert": false,
+    "state": null,
+    "box": [
+     973,
+     589,
+     1105,
+     625
+    ],
+    "where": "Actions sur la variante choisie"
+   },
+   {
+    "role": "button",
+    "name": "Brancher d'ici…",
+    "act": "branch",
+    "disabled": false,
+    "opacity": 1,
+    "inert": false,
+    "state": null,
+    "box": [
+     1113,
+     589,
+     1260,
+     625
+    ],
+    "where": "Actions sur la variante choisie"
+   },
+   {
+    "role": "button",
+    "name": "Renommer…",
+    "act": "rename",
+    "disabled": false,
+    "opacity": 1,
+    "inert": false,
+    "state": null,
+    "box": [
+     973,
+     633,
+     1105,
+     669
+    ],
+    "where": "Actions sur la variante choisie"
+   },
+   {
+    "role": "button",
+    "name": "Archiver…",
+    "act": "archive",
+    "disabled": true,
+    "opacity": 0.5,
+    "inert": false,
+    "state": null,
+    "box": [
+     1113,
+     633,
+     1260,
+     669
+    ],
+    "where": "Actions sur la variante choisie"
+   }
+  ],
+  "time": "0:00 / 1:14",
+  "scene": "Scène 1 sur 9",
+  "sceneTitle": "S1 3s@30",
+  "count": "1/64",
+  "treeOpacity": 1,
+  "treeInert": false,
+  "actionsOpacity": 1,
+  "runNote": null,
+  "vbar": true,
+  "hint": "↑ ↓ → ← parcourir · Entrée choisir · N brancher · F2 renommer · Suppr archiver · A activer",
+  "rsBars": 0,
+  "forbidden": [],
+  "transportRow": {
+   "box": [
+    579,
+    446,
+    1043,
+    476
+   ],
+   "rows": 1
+  }
+ },
+ "inv_1920x1080": {
+  "vw": 1920,
+  "vh": 1080,
+  "overflowX": false,
+  "transportBars": 1,
+  "controls": [
+   {
+    "role": "button",
+    "name": "Plein écran",
+    "act": null,
+    "disabled": false,
+    "opacity": 1,
+    "inert": false,
+    "state": null,
+    "box": [
+     1673,
+     15,
+     1795,
+     51
+    ],
+    "where": "header"
+   },
+   {
+    "role": "button",
+    "name": "Fermer l'explorateur de variantes",
+    "act": null,
+    "disabled": false,
+    "opacity": 1,
+    "inert": false,
+    "state": null,
+    "box": [
+     1803,
+     15,
+     1900,
+     51
+    ],
+    "where": "header"
+   },
+   {
+    "role": "treeitem",
+    "name": "Variante 1, Neuf scenes, active",
+    "act": null,
+    "disabled": false,
+    "opacity": 1,
+    "inert": false,
+    "state": "true",
+    "box": [
+     188,
+     112,
+     607,
+     160
+    ],
+    "where": "tree"
+   },
+   {
+    "role": "button",
+    "name": "Archivées (0)",
+    "act": null,
+    "disabled": false,
+    "opacity": 1,
+    "inert": false,
+    "state": null,
+    "box": [
+     188,
+     1038,
+     607,
+     1080
+    ],
+    "where": "tree"
+   },
+   {
+    "role": "button",
+    "name": "Scène précédente",
+    "act": null,
+    "disabled": false,
+    "opacity": 1,
+    "inert": false,
+    "state": null,
+    "box": [
+     628,
+     838,
+     658,
+     868
+    ],
+    "where": "Lecture de la vidéo"
+   },
+   {
+    "role": "button",
+    "name": "Lire",
+    "act": "continuous",
+    "disabled": false,
+    "opacity": 1,
+    "inert": false,
+    "state": "false",
+    "box": [
+     666,
+     838,
+     728,
+     868
+    ],
+    "where": "Lecture de la vidéo"
+   },
+   {
+    "role": "button",
+    "name": "Scène suivante",
+    "act": null,
+    "disabled": false,
+    "opacity": 1,
+    "inert": false,
+    "state": null,
+    "box": [
+     736,
+     838,
+     766,
+     868
+    ],
+    "where": "Lecture de la vidéo"
+   },
+   {
+    "role": "slider",
+    "name": "Position dans la vidéo",
+    "act": null,
+    "disabled": false,
+    "opacity": 1,
+    "inert": false,
+    "state": null,
+    "box": [
+     774,
+     841,
+     1429,
+     865
+    ],
+    "where": "Lecture de la vidéo"
+   },
+   {
+    "role": "button",
+    "name": "Son",
+    "act": null,
+    "disabled": false,
+    "opacity": 1,
+    "inert": false,
+    "state": "false",
+    "box": [
+     1535,
+     838,
+     1565,
+     868
+    ],
+    "where": "Lecture de la vidéo"
+   },
+   {
+    "role": "button",
+    "name": "Plus de lecture",
+    "act": null,
+    "disabled": false,
+    "opacity": 1,
+    "inert": false,
+    "state": null,
+    "box": [
+     1573,
+     838,
+     1603,
+     868
+    ],
+    "where": "Lecture de la vidéo"
+   },
+   {
+    "role": "button",
+    "name": "Présenter",
+    "act": "present",
+    "disabled": false,
+    "opacity": 1,
+    "inert": false,
+    "state": null,
+    "box": [
+     1611,
+     838,
+     1683,
+     868
+    ],
+    "where": "Lecture de la vidéo"
+   },
+   {
+    "role": "option",
+    "name": "Scène 1, S1 3s@30",
+    "act": null,
+    "disabled": false,
+    "opacity": 1,
+    "inert": false,
+    "state": "true",
+    "box": [
+     630,
+     882,
+     780,
+     950
+    ],
+    "where": "strip"
+   },
+   {
+    "role": "option",
+    "name": "Scène 2, S2 8s@30",
+    "act": null,
+    "disabled": false,
+    "opacity": 1,
+    "inert": false,
+    "state": "false",
+    "box": [
+     788,
+     882,
+     938,
+     950
+    ],
+    "where": "strip"
+   },
+   {
+    "role": "option",
+    "name": "Scène 3, S3 30s@30",
+    "act": null,
+    "disabled": false,
+    "opacity": 1,
+    "inert": false,
+    "state": "false",
+    "box": [
+     946,
+     882,
+     1096,
+     950
+    ],
+    "where": "strip"
+   },
+   {
+    "role": "option",
+    "name": "Scène 4, S4 3s@25",
+    "act": null,
+    "disabled": false,
+    "opacity": 1,
+    "inert": false,
+    "state": "false",
+    "box": [
+     1104,
+     882,
+     1254,
+     950
+    ],
+    "where": "strip"
+   },
+   {
+    "role": "option",
+    "name": "Scène 5, S5 8s@60",
+    "act": null,
+    "disabled": false,
+    "opacity": 1,
+    "inert": false,
+    "state": "false",
+    "box": [
+     1262,
+     882,
+     1412,
+     950
+    ],
+    "where": "strip"
+   },
+   {
+    "role": "option",
+    "name": "Scène 6, S6 3s@30",
+    "act": null,
+    "disabled": false,
+    "opacity": 1,
+    "inert": false,
+    "state": "false",
+    "box": [
+     1420,
+     882,
+     1570,
+     950
+    ],
+    "where": "strip"
+   },
+   {
+    "role": "option",
+    "name": "Scène 7, S7 8s@24",
+    "act": null,
+    "disabled": false,
+    "opacity": 1,
+    "inert": false,
+    "state": "false",
+    "box": [
+     1578,
+     882,
+     1728,
+     950
+    ],
+    "where": "strip"
+   },
+   {
+    "role": "option",
+    "name": "Scène 8, S8 3s@30",
+    "act": null,
+    "disabled": false,
+    "opacity": 1,
+    "inert": false,
+    "state": "false",
+    "box": [
+     1736,
+     882,
+     1886,
+     950
+    ],
+    "where": "strip"
+   },
+   {
+    "role": "option",
+    "name": "Scène 9, S9 8s@30",
+    "act": null,
+    "disabled": false,
+    "opacity": 1,
+    "inert": false,
+    "state": "false",
+    "box": [
+     1894,
+     882,
+     2044,
+     950
+    ],
+    "where": "strip"
+   },
+   {
+    "role": "button",
+    "name": "Activer",
+    "act": "activate",
+    "disabled": true,
+    "opacity": 0.5,
+    "inert": false,
+    "state": null,
+    "box": [
+     1613,
+     981,
+     1745,
+     1017
+    ],
+    "where": "Actions sur la variante choisie"
+   },
+   {
+    "role": "button",
+    "name": "Brancher d'ici…",
+    "act": "branch",
+    "disabled": false,
+    "opacity": 1,
+    "inert": false,
+    "state": null,
+    "box": [
+     1753,
+     981,
+     1900,
+     1017
+    ],
+    "where": "Actions sur la variante choisie"
+   },
+   {
+    "role": "button",
+    "name": "Renommer…",
+    "act": "rename",
+    "disabled": false,
+    "opacity": 1,
+    "inert": false,
+    "state": null,
+    "box": [
+     1613,
+     1025,
+     1745,
+     1061
+    ],
+    "where": "Actions sur la variante choisie"
+   },
+   {
+    "role": "button",
+    "name": "Archiver…",
+    "act": "archive",
+    "disabled": true,
+    "opacity": 0.5,
+    "inert": false,
+    "state": null,
+    "box": [
+     1753,
+     1025,
+     1900,
+     1061
+    ],
+    "where": "Actions sur la variante choisie"
+   }
+  ],
+  "time": "0:00 / 1:14",
+  "scene": "Scène 1 sur 9",
+  "sceneTitle": "S1 3s@30",
+  "count": "1/64",
+  "treeOpacity": 1,
+  "treeInert": false,
+  "actionsOpacity": 1,
+  "runNote": null,
+  "vbar": true,
+  "hint": "↑ ↓ → ← parcourir · Entrée choisir · N brancher · F2 renommer · Suppr archiver · A activer",
+  "rsBars": 0,
+  "forbidden": [],
+  "transportRow": {
+   "box": [
+    628,
+    838,
+    1683,
+    868
+   ],
+   "rows": 1
+  }
+ },
+ "readout": {
+  "readouts": [
+   {
+    "where": "page",
+    "text": "0:00 / 1:14"
+   }
+  ],
+  "label": 1,
+  "selected": "pss_000000000001",
+  "slider": {
+   "now": "0",
+   "max": "4439",
+   "text": "Scène 1 sur 9, 0:00 sur 1:14",
+   "disabled": false
+  },
+  "player": {
+   "frame": 0,
+   "playing": false,
+   "duration": 90,
+   "phase": "ready",
+   "scene": "S1"
+  },
+  "open": true
+ },
+ "inv_run": {
+  "vw": 1280,
+  "vh": 720,
+  "overflowX": false,
+  "transportBars": 1,
+  "controls": [
+   {
+    "role": "button",
+    "name": "Plein écran",
+    "act": null,
+    "disabled": false,
+    "opacity": 1,
+    "inert": false,
+    "state": null,
+    "box": [
+     1033,
+     15,
+     1155,
+     51
+    ],
+    "where": "header"
+   },
+   {
+    "role": "button",
+    "name": "Fermer l'explorateur de variantes",
+    "act": null,
+    "disabled": false,
+    "opacity": 1,
+    "inert": false,
+    "state": null,
+    "box": [
+     1163,
+     15,
+     1260,
+     51
+    ],
+    "where": "header"
+   },
+   {
+    "role": "treeitem",
+    "name": "Variante 1, Neuf scenes, active, en cours de lecture",
+    "act": null,
+    "disabled": false,
+    "opacity": 1,
+    "inert": true,
+    "state": "true",
+    "box": [
+     188,
+     112,
+     558,
+     160
+    ],
+    "where": "tree"
+   },
+   {
+    "role": "button",
+    "name": "Archivées (0)",
+    "act": null,
+    "disabled": false,
+    "opacity": 1,
+    "inert": true,
+    "state": null,
+    "box": [
+     188,
+     678,
+     558,
+     720
+    ],
+    "where": "tree"
+   },
+   {
+    "role": "button",
+    "name": "Élément précédent",
+    "act": null,
+    "disabled": false,
+    "opacity": 1,
+    "inert": false,
+    "state": null,
+    "box": [
+     579,
+     280,
+     609,
+     310
+    ],
+    "where": "Lecture de la vidéo"
+   },
+   {
+    "role": "button",
+    "name": "Pause",
+    "act": "continuous",
+    "disabled": false,
+    "opacity": 1,
+    "inert": false,
+    "state": "true",
+    "box": [
+     617,
+     280,
+     691,
+     310
+    ],
+    "where": "Lecture de la vidéo"
+   },
+   {
+    "role": "button",
+    "name": "Élément suivant",
+    "act": null,
+    "disabled": false,
+    "opacity": 1,
+    "inert": false,
+    "state": null,
+    "box": [
+     699,
+     280,
+     729,
+     310
+    ],
+    "where": "Lecture de la vidéo"
+   },
+   {
+    "role": "slider",
+    "name": "Position dans la vidéo",
+    "act": null,
+    "disabled": true,
+    "opacity": 0.5,
+    "inert": false,
+    "state": null,
+    "box": [
+     737,
+     283,
+     802,
+     307
+    ],
+    "where": "Lecture de la vidéo"
+   },
+   {
+    "role": "button",
+    "name": "Son",
+    "act": null,
+    "disabled": false,
+    "opacity": 1,
+    "inert": false,
+    "state": "false",
+    "box": [
+     908,
+     280,
+     938,
+     310
+    ],
+    "where": "Lecture de la vidéo"
+   },
+   {
+    "role": "button",
+    "name": "Plus de lecture",
+    "act": null,
+    "disabled": false,
+    "opacity": 1,
+    "inert": false,
+    "state": null,
+    "box": [
+     946,
+     280,
+     976,
+     310
+    ],
+    "where": "Lecture de la vidéo"
+   },
+   {
+    "role": "button",
+    "name": "Arrêter",
+    "act": "stop_run",
+    "disabled": false,
+    "opacity": 1,
+    "inert": false,
+    "state": null,
+    "box": [
+     984,
+     280,
+     1043,
+     310
+    ],
+    "where": "Lecture de la vidéo"
+   },
+   {
+    "role": "option",
+    "name": "Scène 1, S1 3s@30",
+    "act": null,
+    "disabled": false,
+    "opacity": 1,
+    "inert": false,
+    "state": "true",
+    "box": [
+     581,
+     490,
+     731,
+     558
+    ],
+    "where": "strip"
+   },
+   {
+    "role": "option",
+    "name": "Scène 2, S2 8s@30",
+    "act": null,
+    "disabled": false,
+    "opacity": 1,
+    "inert": false,
+    "state": "false",
+    "box": [
+     739,
+     490,
+     889,
+     558
+    ],
+    "where": "strip"
+   },
+   {
+    "role": "option",
+    "name": "Scène 3, S3 30s@30",
+    "act": null,
+    "disabled": false,
+    "opacity": 1,
+    "inert": false,
+    "state": "false",
+    "box": [
+     897,
+     490,
+     1047,
+     558
+    ],
+    "where": "strip"
+   },
+   {
+    "role": "option",
+    "name": "Scène 4, S4 3s@25",
+    "act": null,
+    "disabled": false,
+    "opacity": 1,
+    "inert": false,
+    "state": "false",
+    "box": [
+     1055,
+     490,
+     1205,
+     558
+    ],
+    "where": "strip"
+   },
+   {
+    "role": "option",
+    "name": "Scène 5, S5 8s@60",
+    "act": null,
+    "disabled": false,
+    "opacity": 1,
+    "inert": false,
+    "state": "false",
+    "box": [
+     1213,
+     490,
+     1363,
+     558
+    ],
+    "where": "strip"
+   },
+   {
+    "role": "option",
+    "name": "Scène 6, S6 3s@30",
+    "act": null,
+    "disabled": false,
+    "opacity": 1,
+    "inert": false,
+    "state": "false",
+    "box": [
+     1371,
+     490,
+     1521,
+     558
+    ],
+    "where": "strip"
+   },
+   {
+    "role": "option",
+    "name": "Scène 7, S7 8s@24",
+    "act": null,
+    "disabled": false,
+    "opacity": 1,
+    "inert": false,
+    "state": "false",
+    "box": [
+     1529,
+     490,
+     1679,
+     558
+    ],
+    "where": "strip"
+   },
+   {
+    "role": "option",
+    "name": "Scène 8, S8 3s@30",
+    "act": null,
+    "disabled": false,
+    "opacity": 1,
+    "inert": false,
+    "state": "false",
+    "box": [
+     1687,
+     490,
+     1837,
+     558
+    ],
+    "where": "strip"
+   },
+   {
+    "role": "option",
+    "name": "Scène 9, S9 8s@30",
+    "act": null,
+    "disabled": false,
+    "opacity": 1,
+    "inert": false,
+    "state": "false",
+    "box": [
+     1845,
+     490,
+     1995,
+     558
+    ],
+    "where": "strip"
+   },
+   {
+    "role": "button",
+    "name": "Activer",
+    "act": "activate",
+    "disabled": true,
+    "opacity": 0.5,
+    "inert": true,
+    "state": null,
+    "box": [
+     973,
+     589,
+     1105,
+     625
+    ],
+    "where": "Actions sur la variante choisie"
+   },
+   {
+    "role": "button",
+    "name": "Brancher d'ici…",
+    "act": "branch",
+    "disabled": true,
+    "opacity": 0.5,
+    "inert": true,
+    "state": null,
+    "box": [
+     1113,
+     589,
+     1260,
+     625
+    ],
+    "where": "Actions sur la variante choisie"
+   },
+   {
+    "role": "button",
+    "name": "Renommer…",
+    "act": "rename",
+    "disabled": true,
+    "opacity": 0.5,
+    "inert": true,
+    "state": null,
+    "box": [
+     973,
+     633,
+     1105,
+     669
+    ],
+    "where": "Actions sur la variante choisie"
+   },
+   {
+    "role": "button",
+    "name": "Archiver…",
+    "act": "archive",
+    "disabled": true,
+    "opacity": 0.5,
+    "inert": true,
+    "state": null,
+    "box": [
+     1113,
+     633,
+     1260,
+     669
+    ],
+    "where": "Actions sur la variante choisie"
+   }
+  ],
+  "time": "0:02 / 1:14",
+  "scene": "Scène 1 sur 9",
+  "sceneTitle": "S1 3s@30",
+  "count": "1/64",
+  "treeOpacity": 1,
+  "treeInert": true,
+  "actionsOpacity": 1,
+  "runNote": null,
+  "vbar": true,
+  "hint": "↑ ↓ → ← parcourir · Entrée choisir · N brancher · F2 renommer · Suppr archiver · A activer",
+  "rsBars": 0,
+  "forbidden": [],
+  "transportRow": {
+   "box": [
+    579,
+    280,
+    1043,
+    310
+   ],
+   "rows": 1
+  }
+ }
+}

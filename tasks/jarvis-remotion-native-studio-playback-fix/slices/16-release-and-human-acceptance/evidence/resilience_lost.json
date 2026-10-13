@@ -1,0 +1,502 @@
+{
+ "outage": "lost",
+ "core_down_s": 20.1,
+ "wall_s": 111.4,
+ "content_s": 74,
+ "page_ms": {
+  "core_down": 5120,
+  "core_up": 25247,
+  "ended": 102504
+ },
+ "failed": null,
+ "ended": true,
+ "explorer_open_at_end": true,
+ "view_during": {
+  "phase": "playing",
+  "frame": 548,
+  "total_frames": 4440,
+  "fps": 60,
+  "playing": true,
+  "scene_index": 1,
+  "scene_count": 9,
+  "scene_id": "pss_000000000002",
+  "scene_title": "S2 8s@30",
+  "starts": [
+   0,
+   180,
+   660,
+   2460,
+   2640,
+   3120,
+   3300,
+   3780,
+   3960
+  ],
+  "scope": "all",
+  "retryable": true,
+  "waiting_ms": 0,
+  "waiting_visible": false,
+  "error": null
+ },
+ "view_end": {
+  "phase": "ended",
+  "frame": 4439,
+  "total_frames": 4440,
+  "fps": 60,
+  "playing": false,
+  "scene_index": 8,
+  "scene_count": 9,
+  "scene_id": "pss_000000000009",
+  "scene_title": "S9 8s@30",
+  "starts": [
+   0,
+   180,
+   660,
+   2460,
+   2640,
+   3120,
+   3300,
+   3780,
+   3960
+  ],
+  "scope": "all",
+  "retryable": true,
+  "waiting_ms": 0,
+  "waiting_visible": false,
+  "error": null
+ },
+ "failed_seen_ms": 18685,
+ "view_failed": {
+  "phase": "failed",
+  "frame": 660,
+  "total_frames": 4440,
+  "fps": 60,
+  "playing": false,
+  "scene_index": 2,
+  "scene_count": 9,
+  "scene_id": "pss_000000000003",
+  "scene_title": "S3 30s@30",
+  "starts": [
+   0,
+   180,
+   660,
+   2460,
+   2640,
+   3120,
+   3300,
+   3780,
+   3960
+  ],
+  "scope": "all",
+  "retryable": true,
+  "waiting_ms": 0,
+  "waiting_visible": false,
+  "error": {
+   "code": "scene_failed",
+   "message": "Core is unreachable: ClientConnectorError: Cannot connect to host 127.0.0.1:63014 ssl:default [Le système distant a refusé la connexion réseau]",
+   "scene_index": 2,
+   "scene_id": "pss_000000000003",
+   "scene_title": "S3 30s@30"
+  }
+ },
+ "retry_clicked_ms": 38855,
+ "veil_ground": "rgb(2, 6, 10)",
+ "said_during_outage": [
+  {
+   "ms": 5210,
+   "phase": "playing",
+   "scene": 2,
+   "frame": 180,
+   "error": null,
+   "notice": "",
+   "veil": ""
+  },
+  {
+   "ms": 13214,
+   "phase": "waiting",
+   "scene": 3,
+   "frame": 660,
+   "error": null,
+   "notice": "",
+   "veil": ""
+  },
+  {
+   "ms": 18809,
+   "phase": "failed",
+   "scene": 3,
+   "frame": 660,
+   "error": "scene_failed",
+   "notice": "",
+   "veil": "Scène 3 : lecture impossibleScène 3 « S3 30s@30 » : Core is unreachable: ClientConnectorError: Cannot connect to host 127.0.0.1:63014 ssl:default [Le système di"
+  },
+  {
+   "ms": 22210,
+   "phase": "failed",
+   "scene": 3,
+   "frame": 660,
+   "error": "scene_failed",
+   "notice": "Core ne répond plus : l'arbre affiché peut être périmé (Core est injoignable (Core is unreachable: ClientConnectorError: Cannot connect to host 127.0.0.1:63014 ",
+   "veil": "Scène 3 : lecture impossibleScène 3 « S3 30s@30 » : Core is unreachable: ClientConnectorError: Cannot connect to host 127.0.0.1:63014 ssl:default [Le système di"
+  }
+ ],
+ "said_whole_run": [
+  {
+   "ms": 212,
+   "phase": "idle",
+   "scene": null,
+   "frame": null,
+   "error": null,
+   "notice": "",
+   "veil": "Chargement de l'aperçu…Variante #1 · 0 s"
+  },
+  {
+   "ms": 401,
+   "phase": "paused",
+   "scene": 1,
+   "frame": 0,
+   "error": null,
+   "notice": "",
+   "veil": ""
+  },
+  {
+   "ms": 2073,
+   "phase": "playing",
+   "scene": 1,
+   "frame": 0,
+   "error": null,
+   "notice": "",
+   "veil": ""
+  },
+  {
+   "ms": 5210,
+   "phase": "playing",
+   "scene": 2,
+   "frame": 180,
+   "error": null,
+   "notice": "",
+   "veil": ""
+  },
+  {
+   "ms": 13214,
+   "phase": "waiting",
+   "scene": 3,
+   "frame": 660,
+   "error": null,
+   "notice": "",
+   "veil": ""
+  },
+  {
+   "ms": 18809,
+   "phase": "failed",
+   "scene": 3,
+   "frame": 660,
+   "error": "scene_failed",
+   "notice": "",
+   "veil": "Scène 3 : lecture impossibleScène 3 « S3 30s@30 » : Core is unreachable: ClientConnectorError: Cannot connect to host 127.0.0.1:63014 ssl:default [Le système di"
+  },
+  {
+   "ms": 22210,
+   "phase": "failed",
+   "scene": 3,
+   "frame": 660,
+   "error": "scene_failed",
+   "notice": "Core ne répond plus : l'arbre affiché peut être périmé (Core est injoignable (Core is unreachable: ClientConnectorError: Cannot connect to host 127.0.0.1:63014 ",
+   "veil": "Scène 3 : lecture impossibleScène 3 « S3 30s@30 » : Core is unreachable: ClientConnectorError: Cannot connect to host 127.0.0.1:63014 ssl:default [Le système di"
+  },
+  {
+   "ms": 39001,
+   "phase": "playing",
+   "scene": 3,
+   "frame": 660,
+   "error": null,
+   "notice": "Core ne répond plus : l'arbre affiché peut être périmé (Core est injoignable (Core is unreachable: ClientConnectorError: Cannot connect to host 127.0.0.1:63014 ",
+   "veil": ""
+  },
+  {
+   "ms": 69000,
+   "phase": "waiting",
+   "scene": 4,
+   "frame": 2460,
+   "error": null,
+   "notice": "Core ne répond plus : l'arbre affiché peut être périmé (Core est injoignable (Core is unreachable: ClientConnectorError: Cannot connect to host 127.0.0.1:63014 ",
+   "veil": ""
+  },
+  {
+   "ms": 69400,
+   "phase": "playing",
+   "scene": 4,
+   "frame": 2460,
+   "error": null,
+   "notice": "Core ne répond plus : l'arbre affiché peut être périmé (Core est injoignable (Core is unreachable: ClientConnectorError: Cannot connect to host 127.0.0.1:63014 ",
+   "veil": ""
+  },
+  {
+   "ms": 72601,
+   "phase": "playing",
+   "scene": 5,
+   "frame": 2640,
+   "error": null,
+   "notice": "Core ne répond plus : l'arbre affiché peut être périmé (Core est injoignable (Core is unreachable: ClientConnectorError: Cannot connect to host 127.0.0.1:63014 ",
+   "veil": ""
+  },
+  {
+   "ms": 80600,
+   "phase": "playing",
+   "scene": 6,
+   "frame": 3120,
+   "error": null,
+   "notice": "Core ne répond plus : l'arbre affiché peut être périmé (Core est injoignable (Core is unreachable: ClientConnectorError: Cannot connect to host 127.0.0.1:63014 ",
+   "veil": ""
+  },
+  {
+   "ms": 83601,
+   "phase": "playing",
+   "scene": 7,
+   "frame": 3300,
+   "error": null,
+   "notice": "Core ne répond plus : l'arbre affiché peut être périmé (Core est injoignable (Core is unreachable: ClientConnectorError: Cannot connect to host 127.0.0.1:63014 ",
+   "veil": ""
+  },
+  {
+   "ms": 91406,
+   "phase": "playing",
+   "scene": 8,
+   "frame": 3780,
+   "error": null,
+   "notice": "Core ne répond plus : l'arbre affiché peut être périmé (Core est injoignable (Core is unreachable: ClientConnectorError: Cannot connect to host 127.0.0.1:63014 ",
+   "veil": ""
+  },
+  {
+   "ms": 94601,
+   "phase": "playing",
+   "scene": 9,
+   "frame": 3960,
+   "error": null,
+   "notice": "Core ne répond plus : l'arbre affiché peut être périmé (Core est injoignable (Core is unreachable: ClientConnectorError: Cannot connect to host 127.0.0.1:63014 ",
+   "veil": ""
+  },
+  {
+   "ms": 102601,
+   "phase": "ended",
+   "scene": 9,
+   "frame": 4439,
+   "error": null,
+   "notice": "Core ne répond plus : l'arbre affiché peut être périmé (Core est injoignable (Core is unreachable: ClientConnectorError: Cannot connect to host 127.0.0.1:63014 ",
+   "veil": ""
+  }
+ ],
+ "scenes": [
+  {
+   "scene": "S1",
+   "first_play": [
+    2082,
+    0
+   ],
+   "max_frame": 89,
+   "played_ms": 2997,
+   "wraps": [],
+   "duration": 90
+  },
+  {
+   "scene": "S2",
+   "first_play": [
+    5088,
+    0
+   ],
+   "max_frame": 239,
+   "played_ms": 8006,
+   "wraps": [],
+   "duration": 240
+  },
+  {
+   "scene": "S3",
+   "first_play": null,
+   "max_frame": null,
+   "played_ms": null,
+   "wraps": [],
+   "duration": null
+  },
+  {
+   "scene": "S3",
+   "first_play": [
+    39010,
+    0
+   ],
+   "max_frame": 899,
+   "played_ms": 29982,
+   "wraps": [],
+   "duration": 900
+  },
+  {
+   "scene": "S4",
+   "first_play": [
+    69399,
+    0
+   ],
+   "max_frame": 74,
+   "played_ms": 3010,
+   "wraps": [],
+   "duration": 75
+  },
+  {
+   "scene": "S5",
+   "first_play": [
+    72418,
+    0
+   ],
+   "max_frame": 479,
+   "played_ms": 7997,
+   "wraps": [],
+   "duration": 480
+  },
+  {
+   "scene": "S6",
+   "first_play": [
+    80424,
+    0
+   ],
+   "max_frame": 89,
+   "played_ms": 3001,
+   "wraps": [],
+   "duration": 90
+  },
+  {
+   "scene": "S7",
+   "first_play": [
+    83434,
+    0
+   ],
+   "max_frame": 191,
+   "played_ms": 7965,
+   "wraps": [],
+   "duration": 192
+  },
+  {
+   "scene": "S8",
+   "first_play": [
+    91410,
+    0
+   ],
+   "max_frame": 89,
+   "played_ms": 3018,
+   "wraps": [],
+   "duration": 90
+  },
+  {
+   "scene": "S9",
+   "first_play": [
+    94433,
+    0
+   ],
+   "max_frame": 239,
+   "played_ms": 8010,
+   "wraps": [],
+   "duration": 240
+  }
+ ],
+ "boundaries": [
+  {
+   "from": "S1",
+   "to": "S2",
+   "out_last_frame": 89,
+   "out_expected_last": 89,
+   "out_end_ms": 5079,
+   "in_live_ms": 5097,
+   "in_first_frame": 0,
+   "in_first_play_ms": 5088,
+   "gap_ms": 9
+  },
+  {
+   "from": "S2",
+   "to": "S3",
+   "out_last_frame": 239,
+   "out_expected_last": 239,
+   "out_end_ms": 13094,
+   "in_live_ms": 18630,
+   "in_first_frame": null,
+   "in_first_play_ms": null,
+   "gap_ms": null
+  },
+  {
+   "from": "S3",
+   "to": "S4",
+   "out_last_frame": 899,
+   "out_expected_last": 899,
+   "out_end_ms": 68992,
+   "in_live_ms": 69411,
+   "in_first_frame": 0,
+   "in_first_play_ms": 69399,
+   "gap_ms": 407
+  },
+  {
+   "from": "S4",
+   "to": "S5",
+   "out_last_frame": 74,
+   "out_expected_last": 74,
+   "out_end_ms": 72409,
+   "in_live_ms": 72429,
+   "in_first_frame": 0,
+   "in_first_play_ms": 72418,
+   "gap_ms": 9
+  },
+  {
+   "from": "S5",
+   "to": "S6",
+   "out_last_frame": 479,
+   "out_expected_last": 479,
+   "out_end_ms": 80415,
+   "in_live_ms": 80434,
+   "in_first_frame": 0,
+   "in_first_play_ms": 80424,
+   "gap_ms": 9
+  },
+  {
+   "from": "S6",
+   "to": "S7",
+   "out_last_frame": 89,
+   "out_expected_last": 89,
+   "out_end_ms": 83425,
+   "in_live_ms": 83446,
+   "in_first_frame": 0,
+   "in_first_play_ms": 83434,
+   "gap_ms": 9
+  },
+  {
+   "from": "S7",
+   "to": "S8",
+   "out_last_frame": 191,
+   "out_expected_last": 191,
+   "out_end_ms": 91399,
+   "in_live_ms": 91408,
+   "in_first_frame": 0,
+   "in_first_play_ms": 91410,
+   "gap_ms": 11
+  },
+  {
+   "from": "S8",
+   "to": "S9",
+   "out_last_frame": 89,
+   "out_expected_last": 89,
+   "out_end_ms": 94428,
+   "in_live_ms": 94443,
+   "in_first_frame": 0,
+   "in_first_play_ms": 94433,
+   "gap_ms": 5
+  }
+ ],
+ "core_after": 200,
+ "console_errors": [
+  "frame warning [remotion.stage.scene_error] Object",
+  "frame warning [studio-explorer] preview_host_prefab_error {\"object_id\":\"studio-explorer-preview\",\"prefab\":\"presentation-studio.p0000000000a1.s000000000003@1\",\"message\":\"scene did not load (host or JarvisScene missing)\",\"reason\":\"frame\",\"staged\":true}",
+  "frame warning [presentation-rail] poll_failed {\"code\":\"core_unreachable\",\"message\":\"Core is unreachable: ClientConnectorError: Cannot connect to host 127.0.0.1:63014 ssl:default [Le système distant a ref…\",\"failures\":1}",
+  "frame warning [capture] capture_rail.status_lost {\"code\":\"core_unreachable\",\"status\":503,\"error\":\"Core is unreachable: ClientConnectorError: Cannot connect to host 127.0.0.1:63014 ssl:default [Le système distant a refusé la connexion réseau]\"}",
+  "frame warning [studio] studio.poll_failed {\"error\":\"Core is unreachable: ClientConnectorError: Cannot connect to host 127.0.0.1:63014 ssl:default [Le système distant a refusé la connexion réseau] (core_unreachable)\",\"failures\":1}",
+  "frame error [studio-explorer] sequencer_failed {\"code\":\"scene_failed\",\"scene_id\":\"pss_000000000003\",\"scene_index\":2}",
+  "frame warning [studio-explorer] preview_host_prefab_error {\"object_id\":\"studio-explorer-preview\",\"prefab\":\"presentation-studio.p0000000000a1.s000000000003@1\",\"message\":\"Core is unreachable: ClientConnectorError: Cannot connect to host 127.0.0.1:63014 ssl:default [Le système distant a refusé la connexion réseau]\",",
+  "frame warning [studio-explorer] preview_host_prefab_error {\"object_id\":\"studio-explorer-preview\",\"prefab\":\"presentation-studio.p0000000000a1.s000000000003@1\",\"message\":\"Core is unreachable: ClientConnectorError: Cannot connect to host 127.0.0.1:63014 ssl:default [Le système distant a refusé la connexion réseau]\",",
+  "frame warning [studio] studio.poll_failed {\"error\":\"Core is unreachable: ClientConnectorError: Cannot connect to host 127.0.0.1:63014 ssl:default [Le système distant a refusé la connexion réseau] (core_unreachable)\",\"failures\":2}"
+ ],
+ "failed_attempts": [
+  "S3"
+ ]
+}

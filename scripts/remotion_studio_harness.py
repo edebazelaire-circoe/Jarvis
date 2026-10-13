@@ -607,7 +607,7 @@ async def main_async(args) -> int:
                     await asyncio.sleep(1)
                 seen_starting = [x for x in samples if x["chip"] == "Démarrage…"]
                 check("10.ui_shows_progress_elapsed_time_and_deadline_while_starting",
-                      any(re.search(r"Démarrage du Studio… \d+ s écoulées, 2 min au plus", x["act"]) for x in seen_starting) and all(x["open"] for x in seen_starting),
+                      any(re.search(r"Démarrage de Remotion Studio… \d+ s écoulées, 2 min au plus", x["act"]) for x in seen_starting) and all(x["open"] for x in seen_starting),
                       {"samples": len(samples), "first": seen_starting[:1], "last": samples[-1]})
                 await ui_chrome.wait_for("document.getElementById('rmsOpenLink')", 30)
                 await asyncio.sleep(2)

@@ -1,0 +1,252 @@
+{
+ "d-jarvis-1": {
+  "label": "direct run 1",
+  "totals": {
+   "cost_usd": 0.40030999999999994,
+   "duration_ms": 309572,
+   "num_turns": 14
+  },
+  "agents": {
+   "direct": {
+    "description": null,
+    "tool_calls": 13,
+    "frames_viewed": 4,
+    "elapsed_s": null,
+    "refused_or_error": 1
+   }
+  }
+ },
+ "d-jarvis-2": {
+  "label": "direct run 2",
+  "totals": {
+   "cost_usd": 0.343055,
+   "duration_ms": 149708,
+   "num_turns": 13
+  },
+  "agents": {
+   "direct": {
+    "description": null,
+    "tool_calls": 12,
+    "frames_viewed": 4,
+    "elapsed_s": null,
+    "refused_or_error": 2
+   }
+  }
+ },
+ "d-iguard-1": {
+  "label": "direct run 1",
+  "totals": {
+   "cost_usd": 0.4682812,
+   "duration_ms": 182348,
+   "num_turns": 20
+  },
+  "agents": {
+   "direct": {
+    "description": null,
+    "tool_calls": 19,
+    "frames_viewed": 5,
+    "elapsed_s": null,
+    "refused_or_error": 1
+   }
+  }
+ },
+ "d-iguard-2": {
+  "label": "direct run 2",
+  "totals": {
+   "cost_usd": 0.41672939999999997,
+   "duration_ms": 444490,
+   "num_turns": 15
+  },
+  "agents": {
+   "direct": {
+    "description": null,
+    "tool_calls": 14,
+    "frames_viewed": 5,
+    "elapsed_s": null,
+    "refused_or_error": 1
+   }
+  }
+ },
+ "j-base-jarvis": {
+  "label": "Jarvis BEFORE (HEAD 40cb68a8, guided chain)",
+  "totals": {
+   "cost_usd_last_brain_result": 3.9238253999999997,
+   "brain_results": 5
+  },
+  "agents": {
+   "brain": {
+    "description": "brain",
+    "tool_calls": 4,
+    "frames_viewed": 0,
+    "elapsed_s": 1244.0,
+    "refused_or_error": 0
+   },
+   "agent-a55311b91502fe82f": {
+    "description": "[general] [presentation-review] Relecture vidéo JARVIS",
+    "tool_calls": 25,
+    "frames_viewed": 0,
+    "elapsed_s": 140.0,
+    "refused_or_error": 1
+   },
+   "agent-a6fcfec8b4d6ee72a": {
+    "description": "[general] [presentation-brief] Dossier JARVIS 4 scènes",
+    "tool_calls": 7,
+    "frames_viewed": 0,
+    "elapsed_s": 64.9,
+    "refused_or_error": 0
+   },
+   "agent-a9b01d237a15005e8": {
+    "description": "[code] [presentation-author] Corriger vidéo JARVIS",
+    "tool_calls": 33,
+    "frames_viewed": 0,
+    "elapsed_s": 535.0,
+    "refused_or_error": 10
+   },
+   "agent-ab1a8664bdc069f64": {
+    "description": "[code] [presentation-author] Construire vidéo JARVIS",
+    "tool_calls": 11,
+    "frames_viewed": 0,
+    "elapsed_s": 474.6,
+    "refused_or_error": 4
+   }
+  }
+ },
+ "j-native-jarvis": {
+  "label": "Jarvis native, run 1 (harness defect: data root path too long for Chrome, previews refused)",
+  "totals": {
+   "cost_usd_last_brain_result": 0.5558726,
+   "brain_results": 2
+  },
+  "agents": {
+   "brain": {
+    "description": "brain",
+    "tool_calls": 1,
+    "frames_viewed": 0,
+    "elapsed_s": 178.9,
+    "refused_or_error": 0
+   },
+   "agent-a4e6141f5c5bd4d9c": {
+    "description": "[code] [presentation-author] Présentation vidéo JARVIS",
+    "tool_calls": 9,
+    "frames_viewed": 0,
+    "elapsed_s": 165.2,
+    "refused_or_error": 5
+   }
+  }
+ },
+ "jn2": {
+  "label": "Jarvis native, run 2 (Core and Control Center killed from outside mid-run)",
+  "totals": {
+   "cost_usd_last_brain_result": 0.1676379,
+   "brain_results": 1
+  },
+  "agents": {
+   "brain": {
+    "description": "brain",
+    "tool_calls": 1,
+    "frames_viewed": 0,
+    "elapsed_s": 10.8,
+    "refused_or_error": 0
+   },
+   "agent-a84aa88cbe537cc5a": {
+    "description": "[code] [presentation-author] Présentation vidéo JARVIS",
+    "tool_calls": 11,
+    "frames_viewed": 0,
+    "elapsed_s": 235.2,
+    "refused_or_error": 5
+   }
+  }
+ },
+ "jn3": {
+  "label": "Jarvis native, run 3 (same external kill)",
+  "totals": {
+   "cost_usd_last_brain_result": 0.1683359,
+   "brain_results": 1
+  },
+  "agents": {
+   "brain": {
+    "description": "brain",
+    "tool_calls": 1,
+    "frames_viewed": 0,
+    "elapsed_s": 13.0,
+    "refused_or_error": 0
+   },
+   "agent-a8071e9a05cf2d61a": {
+    "description": "[code] [presentation-author] Présentation Remotion JARVIS",
+    "tool_calls": 9,
+    "frames_viewed": 0,
+    "elapsed_s": 162.3,
+    "refused_or_error": 2
+   }
+  }
+ },
+ "jn4": {
+  "label": "Jarvis native, run 4 (final code for this topic) + the two remotion_studio turns",
+  "totals": {
+   "cost_usd_last_brain_result": 0.6118915999999999,
+   "brain_results": 4
+  },
+  "agents": {
+   "brain": {
+    "description": "brain",
+    "tool_calls": 4,
+    "frames_viewed": 0,
+    "elapsed_s": 426.0,
+    "refused_or_error": 0
+   },
+   "agent-acb2fd1da5bfa8751": {
+    "description": "[code] [presentation-author] Vidéo Remotion JARVIS",
+    "tool_calls": 18,
+    "frames_viewed": 6,
+    "elapsed_s": 305.9,
+    "refused_or_error": 0
+   }
+  }
+ },
+ "ji1": {
+  "label": "Jarvis native, iGuard run 1",
+  "totals": {
+   "cost_usd_last_brain_result": 0.8343574000000001,
+   "brain_results": 2
+  },
+  "agents": {
+   "brain": {
+    "description": "brain",
+    "tool_calls": 1,
+    "frames_viewed": 0,
+    "elapsed_s": 511.8,
+    "refused_or_error": 0
+   },
+   "agent-a38e4c582eb85ecd1": {
+    "description": "[code] [presentation-author] Présentation IAGuard",
+    "tool_calls": 25,
+    "frames_viewed": 12,
+    "elapsed_s": 497.7,
+    "refused_or_error": 1
+   }
+  }
+ },
+ "ji2": {
+  "label": "Jarvis native, iGuard run 2 (after the key-format and warnings fixes)",
+  "totals": {
+   "cost_usd_last_brain_result": 0.7172789,
+   "brain_results": 2
+  },
+  "agents": {
+   "brain": {
+    "description": "brain",
+    "tool_calls": 1,
+    "frames_viewed": 0,
+    "elapsed_s": 375.3,
+    "refused_or_error": 0
+   },
+   "agent-a1bb3f3c041480a6b": {
+    "description": "[code] [presentation-author] Présentation IAGuard 4 scènes",
+    "tool_calls": 18,
+    "frames_viewed": 8,
+    "elapsed_s": 359.7,
+    "refused_or_error": 0
+   }
+  }
+ }
+}

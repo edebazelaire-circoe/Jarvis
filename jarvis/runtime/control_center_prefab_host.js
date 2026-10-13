@@ -39,11 +39,17 @@
      promu) : le suiveur de ligne de temps applique tout de suite ce que Core a dit ; `deps.onClock(objectId)` : la position du lecteur vivant
      vient d'arriver (l'image d'arrêt est vue quand elle est atteinte, pas au tick suivant) ;
    - `host.preload(objectId, instance)` (Slice 23) : charge à côté, invisible et en pause sur l'image 0, la scène qui suit, pour que le passage
-     de l'une à l'autre n'attende ni compilation ni démarrage du bac à sable ; le `mount` de cette scène la prend alors sur-le-champ ;
+     de l'une à l'autre n'attende ni compilation ni démarrage du bac à sable ; le `mount` de cette scène la prend alors sur-le-champ.
+     Slice 05 (native-studio-playback-fix) : un préchargement ne jette jamais le cadre déjà préparé à côté, il attend qu'il ait pris la
+     fenêtre (file d'une place) ; `instance.scene_id` (facultatif) dit quand un nouveau pin est une AUTRE scène et pas une nouvelle version :
+     ses valeurs ne vont alors qu'au cadre entrant, et son échec prend la fenêtre au lieu d'être caché derrière la scène précédente ;
    - `host.counters(objectId)` -> `{starts, mounted, failed, remounts}` de cet objet (survivent à un remontage de version,
      disparaissent au démontage) : les tests de fuite d'un rechargement répété lisent ça et `stats()` ;
    - `deps.postEvent(event)` : envoi d'un événement à Core (Slice 04) ; jamais
-     appelé en mode `preview` (`deps.onPreviewEvent(event)` à la place). Sa
+     appelé en mode `preview` (`deps.onPreviewEvent(event)` à la place), sauf
+     pour un objet que `deps.posts(objectId)` désigne (native-studio-playback-fix
+     Slice 09 : le cadre d'une lecture dans Variantes, monté sous l'id de la surface
+     de lecture, garde les événements qu'il avait dans sa fenêtre de stage). Sa
      promesse rend `{outcome, ...}` ou est rejetée (Core injoignable, statut
      HTTP d'erreur : `error.code` s'il existe, `rate_limited` pour un 429).
      L'issue revient au cadre par `event_result {name, outcome, reason?}`
@@ -123,6 +129,9 @@
      (`flex-shrink`) : un contenu plus haut que la fenêtre défile **dans** le
      cadre (molette, Page haut/bas du prefab), jamais dans deux défileurs
      emboîtés, et au-delà des 4000 px du plafond de `resize` (Slice 05). */
+  /* Staged frames (Slice 05) are transparent, not visibility:hidden: Chrome stops rendering a hidden cross-origin frame, so the first
+     composite after the swap could be black (one dark capture at a run-stage boundary). At opacity 0 a staged frame keeps its painted
+     first frame and is shown at once; inert + aria-hidden keep it out of focus and of the accessibility tree while it waits. */
   const HOST_CSS=`
 .sc-prefab-slot{position:relative;display:flex;flex-direction:column;flex:1 1 auto;min-height:24px;min-width:0}
 .sc-prefab-frame{display:block;flex:0 1 auto;width:100%;min-height:24px;border:0;background:transparent;color-scheme:dark}
@@ -141,7 +150,7 @@
 .sc-prefab-retry:hover{background:rgba(255,107,125,.16)}
 .sc-prefab-retry:focus-visible{outline:1px solid var(--sc-ink,#dcecf4);outline-offset:1px}
 .sc-remotion-frame{flex:0 0 auto;height:auto;min-height:150px;aspect-ratio:16/9;background:#000}
-.sc-prefab-staged{position:absolute;left:0;top:0;visibility:hidden;pointer-events:none}
+.sc-prefab-staged{position:absolute;left:0;top:0;opacity:0;pointer-events:none}
 @media (prefers-reduced-motion:reduce){.sc-prefab-loading::after{animation:none;content:'...'}}
 `;
 
@@ -186,6 +195,14 @@
     const log=typeof d.log==='function'?d.log:()=>{};
     const baseTheme=Object.assign({},DEFAULT_THEME,d.theme||{});
     const swapPrefix=typeof d.swapPrefix==='string'?d.swapPrefix:'';
+    /* Variants (native-studio-playback-fix Slice 06): its Player opens paused and only its transport plays it (§ 4.1). `autoplay: false`
+       drops the grace-period play; `embed` tells the stage page it has no bar of its own (`R.stageUrl`). The run stage keeps both. */
+    const autoplay=d.autoplay!==false;
+    const embed=typeof d.embed==='string'?d.embed:undefined;
+    /* Sound (native-studio-playback-fix Slice 08): the sound the page wants for its Remotion Players (`sound(muted)`), `null` until it says
+       (then each stage keeps the old rule: a click in the scene turns the sound on). Only the LIVE frame of an object gets it: a frame loaded
+       ahead or a hot-reload candidate stays muted until it takes the window (`promote`), so only the scene on screen is ever audible. */
+    let soundMuted=null;
     const frames=new Map();
     const bundles=new Map();
     const departing=new Set();
@@ -329,10 +346,18 @@
       totals.errors++;
       reportOutcome(rec,'failed',reason||'error',message);
       if(rec.staged){
-        /* The attempt failed beside a live frame: the live frame is untouched, no band inside the window. */
-        frameLog(rec,'scene.prefab_error',{message,reason:reason||'error',staged:true});
-        discardStaged(rec);
-        return;
+        const current=frames.get(rec.objectId);
+        if(!(rec.claimed&&current&&current.next===rec&&otherScene(current,rec))){
+          /* The attempt failed beside a live frame (a new version of the same scene, or a scene loaded ahead): the live frame is untouched,
+             no band inside the window. */
+          frameLog(rec,'scene.prefab_error',{message,reason:reason||'error',staged:true});
+          discardStaged(rec);
+          return;
+        }
+        /* The window was told to show ANOTHER scene and that scene failed (compile, load, timeout): its failure takes the window, named and
+           with its retry, instead of the previous scene staying on screen as if nothing happened (Slice 05: never a silent hold or skip). */
+        frameLog(rec,'scene.prefab_error',{message,reason:reason||'error',staged:true,shown:true});
+        promote(rec);
       }
       if(rec.state!=='paused')rec.state='error';
       clearNote(rec);
@@ -365,6 +390,7 @@
       rec.logs=0;rec.errorsIn=[];rec.outcomeSent=false;
       rec.counters.starts++;totals.starts++;
       const iframe=element('iframe',rec.staged?'sc-prefab-frame sc-prefab-staged':'sc-prefab-frame');
+      if(rec.staged)setStagedAttrs(iframe,true);
       /* `sandbox` d'abord : le document ne doit jamais exister sans lui. */
       iframe.setAttribute('sandbox',P.SANDBOX);
       iframe.setAttribute('referrerpolicy','no-referrer');
@@ -416,8 +442,8 @@
       if(!R){fail(rec,'the Remotion frame module is not loaded','bundle');return}
       rec.remotion=true;rec.shellUp=false;rec.bundle=bundle;rec.events=new Map();
       rec.rendered=false;cancel(rec.renderTimer);rec.renderTimer=null;
-      const frame=R.createFrame(doc,rec.prefab,rec.title?`${rec.title} (scène Remotion ${rec.key})`:`Scène Remotion ${rec.key}`);
-      if(rec.staged)frame.className+=' sc-prefab-staged';
+      const frame=R.createFrame(doc,rec.prefab,rec.title?`${rec.title} (scène Remotion ${rec.key})`:`Scène Remotion ${rec.key}`,embed);
+      if(rec.staged){frame.className+=' sc-prefab-staged';setStagedAttrs(frame,true)}
       if(old&&old.parentNode)old.parentNode.replaceChild(frame,old);
       rec.iframe=frame;
       setNote(rec,'sc-prefab-loading',`Chargement de la scène Remotion ${rec.key}`);
@@ -432,6 +458,13 @@
       },REMOTION_READY_TIMEOUT_MS);
     }
 
+    function setStagedAttrs(frame,on){
+      try{
+        if(on){frame.setAttribute('aria-hidden','true');frame.inert=true}
+        else{if(typeof frame.removeAttribute==='function')frame.removeAttribute('aria-hidden');frame.inert=false}
+      }catch(_error){/* intentional: a DOM without `inert` still gets the class; focus is a courtesy, never the swap */}
+    }
+
     function notifyLive(rec){
       if(typeof d.onLive!=='function')return;
       try{d.onLive(rec.objectId)}catch(error){safeLog('scene.prefab_live_hook_failed',{object_id:rec.objectId,error:describe(error)})}
@@ -440,6 +473,7 @@
     /* The Player is paused on frame 0 until something orders it. If nothing does within the grace period (a scene the score does not drive:
        a hot reload, a window opened outside a run), it plays on its own, as a Remotion scene always did. */
     function hold(rec){
+      if(!autoplay)return;
       const generation=rec.generation;
       cancel(rec.holdTimer);
       rec.holdTimer=later(()=>{
@@ -449,9 +483,31 @@
       },HOLD_GRACE_MS);
     }
 
+    function sendSound(rec){
+      if(soundMuted===null||!rec.remotion||!rec.ready||rec.staged||frames.get(rec.objectId)!==rec)return false;
+      return post(rec,R.hostMessage('sound',{muted:soundMuted}));
+    }
+    function liveHook(rec,name,value){
+      if(rec.staged||frames.get(rec.objectId)!==rec||typeof d[name]!=='function')return;
+      try{d[name](rec.objectId,value)}catch(error){safeLog('scene.prefab_hook_failed',{object_id:rec.objectId,hook:name,error:describe(error)})}
+    }
     function onRemotionStatus(rec,event){
       const view=rec.iframe;
       const origin=win.location&&win.location.origin;
+      const type=event&&event.data&&event.data.type;
+      if(type==='audio'){   /* the real state of the sound in the Player (Slice 08): `blocked` when the browser refused it */
+        const parsed=R.parseAudio(event,view,origin);
+        if(!parsed.ok){drop(rec,parsed.reason);return}
+        rec.audio=parsed.audio;
+        liveHook(rec,'onSound',Object.assign({},parsed.audio));
+        return;
+      }
+      if(type==='key'){     /* a § 4.15 key typed in the scene that has the focus (Slice 08): the page's transport acts on it, once */
+        const parsed=R.parseKey(event,view,origin);
+        if(!parsed.ok){drop(rec,parsed.reason);return}
+        liveHook(rec,'onKey',parsed.key);
+        return;
+      }
       if(event&&event.data&&event.data.type==='clock'){   /* position du lecteur (Slice 12) : gardée, bornée, jamais envoyée à Core */
         const clock=R.parseClock(event,view,origin);
         if(!clock.ok){drop(rec,clock.reason);return}
@@ -484,7 +540,7 @@
           rec.ready=true;
           /* Starts paused on the first frame: the timeline (or the grace period) decides what it plays, nothing replays after a mount. */
           post(rec,R.hostMessage('control',{action:'pause',frame:0}));
-          if(!rec.staged){hold(rec);notifyLive(rec)}
+          if(!rec.staged){sendSound(rec);hold(rec);notifyLive(rec)}
           clearNote(rec);
           if(rec.bandReason==='timeout'||rec.state==='error'){clearBand(rec)}
           rec.state='ready';
@@ -566,7 +622,7 @@
       next.staged=false;
       next.counters.remounts++;
       next.lastDraw=now();
-      if(next.iframe&&next.iframe.classList)next.iframe.classList.remove('sc-prefab-staged');
+      if(next.iframe&&next.iframe.classList){next.iframe.classList.remove('sc-prefab-staged');setStagedAttrs(next.iframe,false)}
       const old=current.iframe;
       if(old&&old.style){old.style.position='absolute';old.style.visibility='hidden'}
       frames.set(next.objectId,next);
@@ -576,7 +632,12 @@
       current.state='removed';
       try{if(next.height&&typeof d.onResize==='function')d.onResize(next.objectId,next.height)}catch(_error){/* intentional: layout hint only */}
       safeLog('scene.prefab_swapped',{object_id:next.objectId,prefab:next.key,mode});
-      if(next.remotion){hold(next);notifyLive(next)}   // the Player that waited paused on frame 0 behind the live one takes its orders now
+      if(next.remotion){sendSound(next);hold(next);notifyLive(next)}   // the Player that waited paused on frame 0 behind the live one takes its orders now
+      /* The scene asked to be loaded ahead while this one was still waiting (Slice 05): it starts now, beside the frame just shown. */
+      const queued=current.queued;current.queued=null;
+      if(queued&&!next.next&&next.state==='ready'&&`${queued.prefab.id}@${queued.prefab.version}`!==next.key){
+        stageAhead(next,next.objectId,queued.prefab,`${queued.prefab.id}@${queued.prefab.version}`,queued);
+      }
       return true;
     }
 
@@ -649,6 +710,10 @@
         if(existing.next&&existing.next.key===key&&existing.next.slot===slot){
           const waiting=existing.next;
           waiting.title=instance.title||waiting.title;
+          waiting.claimed=true;
+          /* Another scene: the values are the INCOMING scene's, only its frame gets them. Pushed into the outgoing Player too, the screen showed
+             the last frame of scene k with the title and colours of scene k+1 until the swap (native-studio-playback-fix Slice 03, "hybrid
+             frame"). A new version of the same scene (hot reload) keeps both frames current (`update`). */
           const changed=update(objectId,instance.props,instance.data,instance.theme);
           if(waiting.preload){
             /* The scene that was loaded ahead is now the one the window must show: no new load, it takes the place as soon as it is settled
@@ -662,7 +727,7 @@
           dropNext(existing);
           if(slot.classList)slot.classList.add('sc-prefab-slot');
           const staged=makeRec(objectId,prefab,key,slot,instance,existing.counters);
-          staged.staged=true;
+          staged.staged=true;staged.claimed=true;
           existing.next=staged;
           start(staged);
           safeLog('scene.prefab_mounted',{object_id:objectId,prefab:key,mode,staged:true});
@@ -682,7 +747,12 @@
     }
 
     /* Charge à côté la scène qui suit (Slice 23). Sans effet (`false`) : fenêtre absente ou pas prête, autre espace que `swapPrefix`, même
-       version que le cadre vivant, ou déjà en préparation. */
+       version que le cadre vivant, ou déjà en préparation.
+       Never drops the frame already prepared beside the live one (native-studio-playback-fix Slice 05). That frame is either the scene
+       the window has been told to show (`claimed`, its takeover deferred until it has settled) or a scene loaded ahead that the window has
+       not reached yet. Dropping it lost the scene: the window then waited on a frame that no longer existed and Core skipped the scene
+       (Slice 03, defect A: `preload` -> `dropNext`). The new preload is queued instead, the latest one wins, and it starts the moment the
+       prepared frame takes the window (`promote`). A queued preload is an effect: `true`. */
     function preload(objectId,instance){
       checkInstance(instance);
       const existing=frames.get(objectId);
@@ -690,9 +760,18 @@
       const key=`${prefab.id}@${prefab.version}`;
       if(!existing||existing.state!=='ready'||!swapPrefix||!prefab.id.startsWith(swapPrefix)||existing.key===key)return false;
       if(existing.next&&existing.next.key===key)return false;
-      dropNext(existing);
+      if(existing.next){
+        existing.queued=Object.assign({},instance,{prefab});
+        safeLog('scene.prefab_preload_queued',{object_id:objectId,prefab:key,behind:existing.next.key,mode});
+        return true;
+      }
+      return stageAhead(existing,objectId,prefab,key,instance);
+    }
+
+    function stageAhead(existing,objectId,prefab,key,instance){
+      existing.queued=null;
       const staged=makeRec(objectId,prefab,key,existing.slot,instance,existing.counters);
-      staged.staged=true;staged.preload=true;
+      staged.staged=true;staged.preload=true;staged.ahead=true;
       existing.next=staged;
       start(staged);
       safeLog('scene.prefab_preloaded',{object_id:objectId,prefab:key,mode});
@@ -704,15 +783,24 @@
         props:P.cloneJson(instance.props||{}),data:P.cloneJson(instance.data||{}),
         theme:Object.assign({},baseTheme,instance.theme||{}),state:'loading',generation:0,lastDraw:now(),
         outputs:[],errorsIn:[],dropped:0,rateLimited:0,height:0,pendingHeight:null,resizeTimer:null,sentData:null,
-        iframe:null,readyTimer:null,renderTimer:null,rendered:false,logs:0,outcomeSent:false,settleTimer:null,holdTimer:null,staged:false,preload:false,parked:false,ordered:false,next:null,
+        iframe:null,readyTimer:null,renderTimer:null,rendered:false,logs:0,outcomeSent:false,settleTimer:null,holdTimer:null,staged:false,preload:false,parked:false,ordered:false,claimed:false,queued:null,ahead:false,next:null,sceneId:typeof instance.scene_id==='string'&&instance.scene_id?instance.scene_id:null,
         counters:counters||{starts:0,mounted:0,failed:0,remounts:0}};
       rec.propsJson=json(rec.props);rec.dataJson=json(rec.data);rec.themeJson=json(rec.theme);
       return rec;
     }
 
+    /* Is the frame prepared beside `live` ANOTHER scene (not a new version of the same one, a hot reload)? A frame loaded ahead always is;
+       otherwise the callers say it with `scene_id` (Variants, the run stage preload). Without it, a new pin is treated as a hot reload. */
+    function otherScene(live,next){
+      return next.ahead||(!!live.sceneId&&!!next.sceneId&&live.sceneId!==next.sceneId);
+    }
+
     function update(objectId,props,data,theme){
       const rec=frames.get(objectId);
       if(!rec)return false;
+      /* The window has been told to show ANOTHER scene, prepared beside the live one: values sent now are that scene's, never the outgoing
+         Player's (Slice 05, hybrid frame). A new version of the same scene (hot reload) still keeps both frames current. */
+      if(rec.next&&rec.next.claimed&&otherScene(rec,rec.next))return applyUpdate(rec.next,props,data,theme);
       const changed=applyUpdate(rec,props,data,theme);
       if(rec.next)applyUpdate(rec.next,props,data,theme);   // the frame prepared beside it must start from the latest values
       return changed;
@@ -878,7 +966,7 @@
       }
       const event={object_id:rec.objectId,prefab:{id:rec.prefab.id,version:rec.prefab.version},event:message.name,
         payload:message.payload,basis};
-      if(mode==='preview'){
+      if(mode==='preview'&&!(typeof d.posts==='function'&&d.posts(rec.objectId)===true)){
         totals.previewEvents++;
         try{if(typeof d.onPreviewEvent==='function')d.onPreviewEvent(event)}catch(_error){/* intentional: preview display only */}
         return;
@@ -993,6 +1081,15 @@
       return post(rec,R.hostMessage('cue',{name,frame}));
     }
 
+    /* The sound the page wants for its Remotion Players (Slice 08): sent at once to every live Remotion frame, kept for the next ones. */
+    function sound(muted){
+      if(typeof muted!=='boolean')throw new TypeError('sound: muted must be a boolean');
+      soundMuted=muted;
+      let sent=0;
+      for(const rec of frames.values())if(sendSound(rec))sent++;
+      return sent;
+    }
+
     function stats(){
       let paused=0,ready=0,errors=0,loading=0,staging=0;
       for(const rec of frames.values()){
@@ -1010,7 +1107,9 @@
       for(const objectId of Array.from(frames.keys()))unmount(objectId);
     }
 
-    return Object.freeze({mount,preload,update,unmount,pause,resume,touch,reload,stats,destroy,control,cue,clock,frame,
+    return Object.freeze({mount,preload,update,unmount,pause,resume,touch,reload,stats,destroy,control,cue,clock,frame,sound,
+      soundWanted:()=>soundMuted===null?null:!soundMuted,
+      audio:(objectId)=>{const rec=frames.get(objectId);return rec&&rec.audio?Object.assign({},rec.audio):null},
       has:(objectId)=>frames.has(objectId),
       counters:(objectId)=>{const rec=frames.get(objectId);return rec?Object.assign({},rec.counters):null},
       parked:(objectId)=>{const rec=frames.get(objectId);return !!(rec&&rec.next&&rec.next.parked)},

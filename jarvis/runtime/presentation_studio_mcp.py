@@ -1,13 +1,13 @@
 """Serveur MCP stdio « jarvis-presentation » : le Presentation Studio pour le cerveau (jarvis-interactive-presentation-studio, Slice 21).
 
 Treize outils sémantiques, une opération fermée (`op`) par domaine, des ids lus dans l'état. **Une façade, jamais un propriétaire** :
-Core possède la présentation, ses variantes, sa lecture ; la page possède l'explorateur et le plein écran. Ce serveur est la **seule porte
+Core possède la présentation, ses variantes, sa lecture ; la page possède Variantes et le plein écran. Ce serveur est la **seule porte
 `brain`** : il pose l'acteur `brain` lui-même et n'envoie jamais l'origine d'un démarrage (voir `presentation_studio_mcp_tools`).
 
 | Outil | Rôle |
 | --- | --- |
 | `presentation_inspect` | état courant et ids valides (lecture ciblée : présentations, variantes, scène, partition, historique, lecture, comparaison, modèles) |
-| `presentation_view` | Studio (explorateur de variantes), fenêtre d'une présentation, rail, plein écran (explorateur, scène de lecture) |
+| `presentation_view` | Variantes (plein écran ou en fenêtre), rail, plein écran de la scène de Variantes |
 | `presentation_library` | rail : masquer / afficher, archiver / restaurer (avec accord), renommer, acquitter la pastille orange |
 | `presentation_play` | lire, répéter, naviguer (scène, partition, ancres) |
 | `presentation_edit` | éditions sémantiques et variantes de scène (ordres fermés, révision de base) |
@@ -16,6 +16,7 @@ Core possède la présentation, ses variantes, sa lecture ; la page possède l'e
 | `presentation_compare`, `presentation_compose` | comparer 2 ou 4 variantes ; composer un enfant (plan puis création) |
 | `presentation_template` | promouvoir en modèle (plan, publication), instancier |
 | `presentation_draft_check`, `_assemble`, `_finalize` | rédaction d'une présentation (planificateur de la Slice 11) |
+| `presentation_source` | Slice 13 (native-studio-playback-fix) : lire, écrire (route d'édition de source validée), prévisualiser une scène Remotion |
 
 Pas de `from __future__ import annotations` : FastMCP lit les annotations des outils définis dans `build_server`.
 """
@@ -124,7 +125,7 @@ def build_server(target: PresentationMcpTarget | None = None, *, tools: Presenta
 
     mcp = StrictPresentationMCP(SERVER_NAME, instructions=_SERVER_INSTRUCTIONS)
 
-    PresentationId = Annotated[str | None, Field(max_length=40, description="pst_… ; absent : la présentation de l'état (lecture en cours, explorateur ouvert, ou l'unique).")]
+    PresentationId = Annotated[str | None, Field(max_length=40, description="pst_… ; absent : la présentation de l'état (lecture en cours, Variantes ouvert, ou l'unique).")]
     VariantId = Annotated[str | None, Field(max_length=40, description="psv_… ; absent : la variante active.")]
     SceneId = Annotated[str, Field(max_length=20, description="pss_…, lu dans presentation_inspect.")]
 
@@ -171,15 +172,15 @@ def build_server(target: PresentationMcpTarget | None = None, *, tools: Presenta
     async def presentation_inspect(
         target: Annotated[Literal["overview", "presentation", "variant", "scene", "score", "history", "playback", "compare", "composition",
                                   "templates", "template", "explorer", "choices", "draft_guide", "rail"],
-                          Field(description="Quoi lire. overview : présentations (masquée, archivée, travail) + lecture + explorateur ; rail : état du rail et de l'écran ; presentation : graphe des variantes ; "
+                          Field(description="Quoi lire. overview : présentations (masquée, archivée, travail) + lecture + Variantes ; rail : état du rail et de l'écran ; presentation : graphe des variantes ; "
                                             "variant : scènes ; scene : contrôles, bornes, variantes de scène ; score : items sans texte ; "
                                             "choices : tous les ids valides ; draft_guide : clés exactes et exemple valide d'un brouillon.")],
         presentation_id: PresentationId = None,
         variant_id: VariantId = None,
         scene_id: Annotated[str | None, Field(max_length=20)] = None,
         template_id: Annotated[str | None, Field(max_length=20, description="ptp_…")] = None,
-        kind: Annotated[Literal["presentation", "scene", "art_direction", "motion", "exploratory"] | None,
-                        Field(description="templates : filtre ; draft_guide : exploratory.")] = None,
+        kind: Annotated[Literal["presentation", "scene", "art_direction", "motion", "exploratory", "native"] | None,
+                        Field(description="templates : filtre ; draft_guide : exploratory ou native (code Remotion normal).")] = None,
     ) -> dict[str, Any]:
         """Lire l'état courant et les ids valides du Presentation Studio. Toujours avant de nommer un id."""
         return await studio.inspect(target, presentation_id=presentation_id, variant_id=variant_id, scene_id=scene_id,
@@ -189,16 +190,16 @@ def build_server(target: PresentationMcpTarget | None = None, *, tools: Presenta
     async def presentation_view(
         op: Annotated[Literal["explorer_open", "explorer_close", "stage_fullscreen_enter", "fullscreen_exit", "window_open", "window_close",
                               "rail_show", "rail_hide"],
-                      Field(description="explorer_open : le Studio d'édition (toutes les slides, variantes) ; window_open : la fenêtre de la "
-                                        "présentation ; rail_show / rail_hide : le rail ; plein écran de la scène de lecture ; sortie du plein écran.")],
+                      Field(description="explorer_open : Variantes (toutes les slides, variantes, et la présentation en cours) ; window_open : "
+                                        "Variantes en fenêtre ; rail_show / rail_hide : le rail ; plein écran de la scène de Variantes ; sortie du plein écran.")],
         presentation_id: PresentationId = None,
         variant_id: VariantId = None,
-        fullscreen: Annotated[bool, Field(description="explorer_open : demander le plein écran (faux : le Studio reste à côté du rail).")] = True,
+        fullscreen: Annotated[bool, Field(description="explorer_open : demander le plein écran (faux : Variantes reste à côté du rail).")] = True,
     ) -> dict[str, Any]:
-        """Ouvrir ou fermer le Studio (explorateur de variantes), la fenêtre d'une présentation, le rail ; plein écran.
+        """Ouvrir ou fermer Variantes (window_* : la même, en fenêtre), le rail ; plein écran de la scène.
 
-        Le plein écran exige un clic de l'utilisateur : needs_gesture=true veut dire qu'il n'y est pas encore. Le Studio est refusé pendant
-        une lecture. window_* et rail_* sont des demandes d'écran : relis presentation_inspect target rail. Une archivée ne s'ouvre pas."""
+        Le plein écran exige un clic de l'utilisateur : needs_gesture=true veut dire qu'il n'y est pas encore. Une présentation en cours se
+        montre dans Variantes. rail_* sont des demandes d'écran : relis presentation_inspect target rail. Une archivée ne s'ouvre pas."""
         return await studio.view(op, presentation_id=presentation_id, variant_id=variant_id, fullscreen=fullscreen)
 
     @mcp.tool(annotations=tool_annotations(SERVER_NAME, "presentation_library"))
@@ -358,6 +359,23 @@ def build_server(target: PresentationMcpTarget | None = None, *, tools: Presenta
     ) -> dict[str, Any]:
         """Juger une direction exploratoire avec le contrôle directed avant qu'elle devienne la présentation."""
         return await studio.draft("finalize", presentation_id=presentation_id, variant_id=variant_id, activate=activate)
+
+    @mcp.tool(annotations=tool_annotations(SERVER_NAME, "presentation_source"))
+    async def presentation_source(
+        op: Literal["read", "write", "preview"],
+        scene_id: SceneId,
+        presentation_id: PresentationId = None,
+        variant_id: VariantId = None,
+        files: Annotated[dict[str, str | None] | None, Field(description="write : src/... -> TSX complet, null supprime.")] = None,
+        assets: Annotated[dict[str, str | None] | None, Field(description="write : public/... -> base64.")] = None,
+        manifest: Annotated[dict[str, Any] | None, Field(description="write : manifeste lu (read), modifié.")] = None,
+        frames: Annotated[list[int] | None, Field(max_length=6, description="preview : images (défaut 3).")] = None,
+        scale: Annotated[float | None, Field(description="preview : 0.25, 0.5 ou 1.")] = None,
+        request_id: Annotated[str | None, Field(max_length=20, description="write : psq_… ; inutile sur ta scène créée.")] = None,
+    ) -> dict[str, Any]:
+        """Code Remotion d'une scène : read, write (nouvelle version compilée ; refus avec fichier:ligne), preview (JPEG à lire avec Read)."""
+        return await studio.source(op, presentation_id=presentation_id, variant_id=variant_id, scene_id=scene_id, files=files, assets=assets,
+                                   manifest=manifest, frames=frames, scale=scale, request_id=request_id)
 
     return mcp
 

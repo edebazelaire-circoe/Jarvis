@@ -60,3 +60,30 @@ def test_the_brain_is_told_to_orchestrate_and_how_to_name_the_roles():
     assert PRESENTATION_PRODUCTION_RULE in BRAIN_SYSTEM_PROMPT
     for role in playbooks.PLAYBOOK_ROLES:
         assert f"[{role}]" in PRESENTATION_PRODUCTION_RULE
+
+
+# ---- Slice 13 (native-studio-playback-fix): the default is ONE author writing native Remotion code and looking at it.
+
+#: The author playbook is read by every author sub-agent: it stays short (the old one appended the 9 000-character planner).
+AUTHOR_PLAYBOOK_BUDGET_CHARS = 7000
+
+
+def test_the_author_writes_native_code_and_must_look_at_every_scene_it_renders():
+    from jarvis.domain.presentation_studio_authoring_policy import PLANNER_PROMPT
+
+    text = playbooks.AUTHOR_PLAYBOOK
+    for needle in ('kind: "native"', "presentation_source", "op preview", "Read", "presentation_draft_assemble", "authoring: native"):
+        assert needle in text, needle
+    assert PLANNER_PROMPT not in text, "the guided planner is no longer the author's default method"
+    assert len(text) <= AUTHOR_PLAYBOOK_BUDGET_CHARS
+
+
+def test_the_brain_sends_one_author_by_default_and_the_other_roles_only_when_useful():
+    rule = PRESENTATION_PRODUCTION_RULE
+    assert "Par défaut, UN seul" in rule and "[code] [presentation-author]" in rule
+    assert rule.index("[presentation-author]") < rule.index("[presentation-brief]") < rule.index("[presentation-review]")
+    assert "Seulement si c'est utile" in rule
+
+
+def test_the_reviewer_looks_at_rendered_frames_too():
+    assert "op preview" in playbooks.REVIEW_PLAYBOOK

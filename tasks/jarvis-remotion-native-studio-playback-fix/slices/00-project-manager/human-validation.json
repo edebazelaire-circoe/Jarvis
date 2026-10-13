@@ -1,0 +1,9 @@
+﻿{
+  "checks": [
+    {
+      "id": "HV-RFX-00-01",
+      "instruction": "Human approval only when a real conflict, missing permission or irreversible decision is discovered.",
+      "requires_evidence_first": true
+    }
+  ]
+}

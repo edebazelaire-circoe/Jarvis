@@ -14,7 +14,8 @@ Règles qui tiennent ce module (chacune a un test, `tests/unit/test_remotion_mcp
    n'est pas adressé n'est pas attesté : refus `remotion_user_turn_required`, rien n'est envoyé à Core. `user_request` (les mots de
    l'utilisateur) est obligatoire en plus ; il n'est jamais journalisé.
 3. **L'accusé « cette scène tourne sans le bac à sable » est à l'utilisateur seul.** `remotion_studio` n'appelle JAMAIS
-   `POST .../studio/open` : il rend un pointeur vers la carte « Remotion · Studio » (bouton « Ouvrir le Studio », fenêtre de confirmation).
+   `POST .../studio/open` : il rend un pointeur vers le bouton « Remotion Studio » sous la vidéo de Variantes (native-studio-playback-fix
+   Slice 11 ; la carte « Remotion Studio » du dialogue MCP reste une autre porte), puis la fenêtre de confirmation.
    Même règle pour la licence d'une version plus récente (`licence_ack`) : le cerveau ne la donne jamais, Core la refuse à tout acteur autre
    que `user` (défense en profondeur).
 4. **Le modèle n'invente aucun id.** `job_id` (`rj_…`), `scene_id`, version : lus dans `remotion_status` / `presentation_inspect` ; un id mal
@@ -43,7 +44,10 @@ EXPORT_SETTINGS = frozenset({"scene_id", "frame_start", "frame_end", "frame", "s
 EXPORT_FORMATS = ("mp4", "still", "pdf")
 TARGETS = ("capability", "studio", "exports", "export")
 MAX_WORDS = 200
-CARD_PATH = "onglet « Plugins MCP » du Control Center, carte « Remotion · Studio »"
+#: Où l'utilisateur ouvre Remotion Studio (native-studio-playback-fix Slice 11 : la scène à l'écran de Variantes, son pin exact).
+CARD_PATH = "Variantes, sous la vidéo : bouton « Remotion Studio » (ou le rail : clic droit sur la présentation, « Remotion Studio… »)"
+#: With a `scene_id` (Slice 13 rework, QA I5): only the button under the video of THAT scene; the rail opens the scene on screen, not this one.
+SCENE_CARD_PATH = "Variantes, cette scène affichée : bouton « Remotion Studio » sous la vidéo"
 ENGINE_CARD = "carte « Présentations · moteur »"
 
 
@@ -108,7 +112,7 @@ class RemotionTools(PresentationTools):
                 "idle_in_s": studio.get("idle_in_s"), "error": studio.get("last_error_code"),
                 "detail": clip(studio.get("last_error_detail"), 200) or None,
                 "modified_files": len((studio.get("work_copy") or {}).get("modified_files") or []) or None}),
-                open_by=f"l'utilisateur seul ({CARD_PATH}, bouton « Ouvrir le Studio »)")
+                open_by=f"l'utilisateur seul ({CARD_PATH})")
         if target == "exports":
             available = (await self._c(lambda c: c.remotion_render_availability())).get("render") or {}
             jobs = (await self._c(lambda c: c.remotion_render_jobs())).get("jobs") or []
@@ -201,7 +205,7 @@ class RemotionTools(PresentationTools):
         cap = (await self._c(lambda c: c.remotion_capability())).get("capability") or {}
         if cap.get("status") not in ("ready", "running"):
             return self._ok("say", status="runtime_not_ready", capability=self._capability_view(cap),
-                            say="Remotion n'est pas prêt sur ce poste : il faut l'installer ou le réparer avant d'ouvrir le Studio.",
+                            say="Remotion n'est pas prêt sur ce poste : il faut l'installer ou le réparer avant d'ouvrir Remotion Studio.",
                             note="Propose-le ; remotion_setup seulement si l'utilisateur le demande.")
         scene: dict[str, Any] = {}
         if scene_id is not None:
@@ -210,8 +214,10 @@ class RemotionTools(PresentationTools):
             sid = self._scene(tool, scene_id)
             described = await self._c(lambda c: c.presentation_studio_scene_controls(presentation_id, variant_id, sid))
             scene = {"scene_id": sid, "prefab": described.get("prefab")}
-        return self._ok("say", status="needs_user", where=CARD_PATH, scene=scene or None,
-                        say="Pour ouvrir le Studio, clique sur « Ouvrir le Studio » dans la carte Remotion et confirme : cette scène y tourne hors du bac à sable.",
+        # The door opens the scene ON SCREEN in Variants: for a named scene, the user shows it first (Slice 11 QA polish).
+        where_first = "affiche cette scène dans Variantes, puis clique" if scene else "dans Variantes, clique"
+        return self._ok("say", status="needs_user", where=SCENE_CARD_PATH if scene else CARD_PATH, scene=scene or None,
+                        say=f"Pour ouvrir cette scène dans Remotion Studio : {where_first} « Remotion Studio » sous la vidéo et confirme ; elle y tourne hors du bac à sable.",
                         note="Tu ne peux pas ouvrir le Studio ni confirmer à sa place : l'accusé est à l'utilisateur seul. Dis où cliquer, une fois.")
 
     # ------------------------------------------------------------------ export

@@ -1,0 +1,153 @@
+{
+ "summary": {
+  "loop_false": {
+   "events": [
+    [
+     470,
+     "loop_false",
+     "play",
+     0
+    ],
+    [
+     3474,
+     "loop_false",
+     "pause",
+     89
+    ],
+    [
+     3474,
+     "loop_false",
+     "ended",
+     89
+    ]
+   ],
+   "first_frame": [
+    508,
+    1
+   ],
+   "last_frame": [
+    3475,
+    0
+   ],
+   "max_frame": 89,
+   "wraps_at_ms": [
+    3475
+   ]
+  },
+  "loop_true": {
+   "events": [
+    [
+     470,
+     "loop_true",
+     "play",
+     0
+    ]
+   ],
+   "first_frame": [
+    509,
+    1
+   ],
+   "last_frame": [
+    8475,
+    60
+   ],
+   "max_frame": 89,
+   "wraps_at_ms": [
+    3476,
+    6474
+   ]
+  },
+  "loop_false_seek": {
+   "events": [
+    [
+     470,
+     "loop_false_seek",
+     "play",
+     0
+    ],
+    [
+     1475,
+     "loop_false_seek",
+     "pause",
+     29
+    ],
+    [
+     1476,
+     "loop_false_seek",
+     "seeked",
+     60
+    ],
+    [
+     1477,
+     "loop_false_seek",
+     "play",
+     60
+    ],
+    [
+     2490,
+     "loop_false_seek",
+     "pause",
+     89
+    ],
+    [
+     2490,
+     "loop_false_seek",
+     "ended",
+     89
+    ]
+   ],
+   "first_frame": [
+    509,
+    1
+   ],
+   "last_frame": [
+    2491,
+    0
+   ],
+   "max_frame": 89,
+   "wraps_at_ms": [
+    2491
+   ]
+  },
+  "loop_false_hold": {
+   "events": [
+    [
+     470,
+     "loop_false_hold",
+     "play",
+     0
+    ],
+    [
+     3475,
+     "loop_false_hold",
+     "pause",
+     89
+    ],
+    [
+     3475,
+     "loop_false_hold",
+     "ended",
+     89
+    ]
+   ],
+   "first_frame": [
+    510,
+    1
+   ],
+   "last_frame": [
+    3443,
+    89
+   ],
+   "max_frame": 89,
+   "wraps_at_ms": []
+  }
+ },
+ "frames_at_8s": {
+  "loop_false": 0,
+  "loop_true": 60,
+  "loop_false_seek": 0,
+  "loop_false_hold": 89
+ },
+ "errors": [],
+ "failed": null
+}

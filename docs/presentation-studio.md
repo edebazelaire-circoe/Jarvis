@@ -46,8 +46,9 @@ Every other row is `planned` unless it says otherwise. Written by Slice 01 (cont
 untime/control_center_presentation_studio_explorer_compare*.js, ..._compose.js |
 | Template / promotion | scene, DA or motion promoted: a scene's reusable code published to the shared prefab library; a whole presentation promoted as ONE `ptp_` artefact (embedded sources, score skeleton, catalog block), nothing published to the library; Remotion-aware; project content stripped or parameterized, provenance and licence kept | `jarvis/domain/presentation_studio_template{,_sanitize,_remotion,_score}.py`, `core/presentation_studio_template{,_embed}.py`, `adapters/file_presentation_template_store.py` | [Template and prefab promotion contract](#template-and-prefab-promotion-contract-level-3-slice-20), Slice 20, Remotion Slice 19 | **implemented (Level 3)** |
 | Newer prefab version, trial variant | a pinned scene is told a newer immutable version exists; "try it" creates a child variant; never an auto-upgrade, adoption is explicit | `jarvis/core/presentation_studio_upgrades.py`, `protocol/presentation_studio_upgrades_routes.py`, `runtime/presentation_studio_upgrades_relay.py` | [Newer prefab versions and trial variants](#newer-prefab-versions-and-trial-variants-level-3-remotion-slice-19), Remotion Slice 19 | **implemented (Level 3)** |
+| Presentation experience (two destinations, one video runtime) | « Remotion Studio » (native authoring) vs « Variantes » (history, the only Player); one composition clock; continuous play honours the authored durations, with no per-slide timer; presenter run vs continuous video; control inventory; acceptance matrix | Slices 04-11 of handoff `jarvis-remotion-native-studio-playback-fix` | [Presentation experience contract](#presentation-experience-contract-level-2-2026-10) | **Level 2 contract** (2026-10); implementation: Slices 04-11 |
 | Generic fullscreen surface | real browser fullscreen of a host element; armed request + user gesture; explicit `needs_gesture` / `unsupported` | `jarvis/domain/surface_fullscreen.py`, `runtime/control_center_fullscreen.js` | Slice 03 | implemented (Level 3) |
-| Agent / voice operations | one MCP server `jarvis-presentation`, thirteen `presentation_*` tools, ids read from the state (`presentation_inspect`), the only `brain` door, destructive gestures behind the canonical confirmation | `jarvis/runtime/presentation_studio_mcp{,_tools,_support}.py`, `runtime/presentation_studio_turn.py` | Slice 21, [Agent and voice operations](#agent-and-voice-operations-level-3-slice-21), [mcp/tool-contract.md](mcp/tool-contract.md) | **implemented (Level 3)**; real-model traces: 5 scenarios, limited |
+| Agent / voice operations | one MCP server `jarvis-presentation`, fourteen `presentation_*` tools (Slice 13 of native-studio-playback-fix added `presentation_source`), ids read from the state (`presentation_inspect`), the only `brain` door, destructive gestures behind the canonical confirmation | `jarvis/runtime/presentation_studio_mcp{,_tools,_support}.py`, `runtime/presentation_studio_turn.py` | Slice 21, [Agent and voice operations](#agent-and-voice-operations-level-3-slice-21), [mcp/tool-contract.md](mcp/tool-contract.md) | **implemented (Level 3)**; real-model traces: 5 scenarios, limited |
 
 Exact names (ids, routes, events, tools): `tasks/jarvis-interactive-presentation-studio/docs/09-canonical-names.md`; the Presentation ids, routes, error codes and storage tree are now stated in the contract section below (Slice 02).
 
@@ -110,6 +111,7 @@ reads hit the disk every time (the file is the truth, also after a restart). Rou
 | GET | `/v1/presentation-studio/presentations/{presentation_id}/variants/{variant_id}` | the `variant` document |
 | PUT | `/v1/presentation-studio/presentations/{presentation_id}/variants/{variant_id}` | `{expected_revision, title, scenes, art_direction_id, score_id}` -> the `variant` document (new or changed scenes are checked against their pinned prefab) |
 | GET | `/v1/presentation-studio/presentations/{presentation_id}/variants/{variant_id}/scenes/{scene_id}/controls` | what is editable on a scene (Slice 04, see *Scene and control contract*) |
+| GET | `/v1/presentation-studio/presentations/{presentation_id}/variants/{variant_id}/composition-clock` | `{presentation_id, variant_id, variant_revision, key, clock, problem}`, read-only (native-studio-playback-fix Slice 04, see *Composition clock (Level 3)*); relayed read-only by the Control Center |
 | GET | `/v1/presentation-studio/presentations/{presentation_id}/variants/{variant_id}/score` | `{score, problems}` (Slice 10, see *Score and cue contract*) |
 | POST | `/v1/presentation-studio/presentations/{presentation_id}/variants/{variant_id}/score` | `{expected_variant_revision, start_item_id, items, cues, sequences, recovery_points}` -> 201 `{score, problems: []}` (Slice 10) |
 | PUT | `/v1/presentation-studio/presentations/{presentation_id}/variants/{variant_id}/score` | `{expected_revision, ...content}` -> `{score, problems: []}` (Slice 10) |
@@ -657,6 +659,7 @@ Exact keys; unknown keys refused; a runtime-state name keeps its own code (`pres
 | `max_scenes` | 1..48 |
 | `literal_terms` | <= 8 words of <= 40, one printable line each: terms that look like a placeholder but are the subject (a status deck that says `todo` or `WIP`). They lift the placeholder rule for that span only and the report says so (`placeholder_allowed`, a count, never the term) |
 | `strict_content` | boolean, exploratory only: the `directed` level of every rule applies and only the art direction varies |
+| `authoring` | `guided` (default: the full gate of the workflow) or `native` (normal editable Remotion code, directed or one-shot only; see *Native Remotion authoring* below) |
 
 `language` is checked against the scene texts by a cheap French/English stop-word guess (`language_mismatch`: at least 6 hits and twice the other language; a language the guess does not know is not judged). **`purpose`, `audience` and `tone` are not machine-checkable**: they are untrusted prose with no deterministic test worth the name. They steer the model through the prompt and seed the art direction fallback; the gate does not pretend to read them.
 
@@ -986,7 +989,7 @@ Conversation event `system.presentation_studio.edit_committed` (actor `system`, 
 `control_center_timeline.js` mirror): attributes `presentation_id`, `variant_id`, `scene_id` (when one scene), `op` (names), `tier`, `source` (the actor), `revision`, `status` (`applied`, or `recorded_in_memory` for a source request).
 Never a title, a value or an intent. A storage failure during a commit is `system.failure` with a `code`. No live conversation (`BrainOrchestrator.live_conversation_id()`: the foreground conversation, `None` when none is bound, never the last finished turn): no event, and the
 `edit_committed` journal row says `event_recorded: false`. Diagnostics (ids, op
-names, tier, actor, counts, codes; never values, intents or titles, and the `refused` rows of the variant service carry the code without the refusal message, which may quote the value) `core.presentation_studio.edit_committed`, `edit_previewed`, `edit_refused`, `edit_stale`, `edit_source_recorded`, `controls_suggested` and `source_request_fulfilled` (Slice 06: a source edit answered a recorded request) at `info`, `overlay_rendered` (Slice 12: a playback overlay was rendered in memory, `written: false`, counts only) at `info`, `event_failed`, `commit_listener_failed` (Slice 12: the playback follower of a commit failed; the commit stands) and `source_requests_dropped` at `warning`;
+names, tier, actor, counts, codes; never values, intents or titles, and the `refused` rows of the variant service carry the code without the refusal message, which may quote the value) `core.presentation_studio.edit_committed`, `edit_previewed`, `edit_refused`, `edit_stale`, `edit_source_recorded`, `controls_suggested` and `source_request_fulfilled` (Slice 06: a source edit answered a recorded request) at `info`, `overlay_rendered` (Slice 12: a playback overlay was rendered in memory, `written: false`, counts only) at `info`, `event_failed`, `commit_listener_failed` (Slice 12: the playback follower of a commit failed; the commit stands) and `source_requests_dropped` at `warning`; native-studio-playback-fix Slice 13: `authored_scenes_recorded` (info: an agent's assemble opened its authoring permissions, count and `ttl_s`), `authored_scene_released` (info: the user edited the scene's source or opened it in Remotion Studio, with `reason` `user_source_edit` or `opened_in_remotion`), `authored_scenes_dropped` (warning: the agent's own store was full, oldest agent permissions evicted, never a user request), `authored_released_for_studio` (info: opening or syncing any version of a scene source in Remotion Studio ended the agent's permissions on that source in every variant, with `prefab_id`, `opened_version` and the count `ended`) and `authored_release_unchecked` (warning: a variant could not be read when Remotion Studio opened a scene; that permission stays and the unpublished-edits rule still applies);
 a failure of storage or data is traced at `error` by the variant service (`failed`) and the request returns the coded error.
 
 ### Extension points
@@ -2208,6 +2211,11 @@ rule « an unknown or evicted `request_id` never blocks an edit » now holds for
 4. **Remaining limit, said plainly**: Core trusts the `actor` and `origin` fields of a body presented with the Core token. A holder of the
    token can forge both, so this stops an ambient or spontaneous brain (a turn nobody addressed, a sub-agent launched on a whim, an honest
    brain skipping the step) but not a hostile process that has the token. The token is the boundary for that case, as for every `/v1` route.
+5. **Remotion Studio holds the scene** (native-studio-playback-fix Slice 13 rework, QA B3): while the Remotion Studio workspace holds
+   unpublished files based on this scene's source (the workspace base has the prefab id of the scene's pin in this variant), a `brain` source
+   edit is refused 409 `presentation_studio_scene_edited_in_remotion` after the request check and before any rate-limit charge, composition or
+   build, with or without a `request_id`; a workspace whose files cannot be listed counts as holding edits. The user's own edits (Variants,
+   the Studio's publish) are never refused by this rule.
 
 ### Concurrency
 
@@ -2244,7 +2252,7 @@ The relay forwards no `PUT` and no create: a page changes a Presentation only th
 | Control Center relay | the routes above under `/api/presentation-studio/...`, **actor forced to `user`** on `source-edits`, read-guarded (`Origin: null`, a frame, can neither edit nor report) |
 | Event | `system.presentation_studio.scene_reloaded` (actor `system`, instant, diagnostic, content forbidden; `status`, `code`, `reason`, `revision` = source revision, `source` = actor, `tier` = `source`) |
 | Diagnostics (`core.presentation_studio.<kind>`; ids, statuses, codes, counts, never values) | `reload_published`, `reload_applied`, `reload_refused`, `reload_stale`, `reload_pending` (warning), `reload_rolled_back` (warning), `reload_late` (a mount report that arrived after the call returned; warning when it rolled back), `reload_failed` (error), `reload_confirm_failed`, `reload_rollback_failed` (error), `reload_rate_limited`, `reload_restore_unvalidated`, `reload_announce_failed` (warning), `reload_unverified` (warning, at start), `reload_built` (Slice 14: the source compiled before publication), `reload_build_refused` (warning: code, compile code, number of diagnostics, never a source text), `reload_flush_failed`, `reload_close_timeout`, `reload_recover_failed`, `mount_reported`, `stage_unreadable`, `playback_unreadable`, `pins_ready`, `pins_degraded` (error), `source_request_fulfilled`, `event_failed` |
-| Error codes added | `presentation_studio_source_invalid` (400), `presentation_studio_mount_failed` (409), `presentation_studio_stage_failed` (409), `presentation_studio_reload_unavailable` (409), `presentation_studio_scene_reloading` (409), `presentation_studio_source_edit_rate` (429), `presentation_studio_source_build_failed` (422, Slice 14) |
+| Error codes added | `presentation_studio_source_invalid` (400), `presentation_studio_mount_failed` (409), `presentation_studio_stage_failed` (409), `presentation_studio_reload_unavailable` (409), `presentation_studio_scene_reloading` (409), `presentation_studio_source_edit_rate` (429), `presentation_studio_source_build_failed` (422, Slice 14), `presentation_studio_scene_edited_in_remotion` (409, native-studio-playback-fix Slice 13 rework) |
 
 ### Limits and known gaps
 
@@ -2279,13 +2287,889 @@ The relay forwards no `PUT` and no create: a page changes a Presentation only th
 | a new reset case | `plan_carry_over` + one row in the table above + one test | names only, never values |
 | frame state continuity beyond `data` | a **new, opt-in, size-bounded** `jv` message version | not before a prefab needs it; see the decision above |
 
+## Presentation experience contract (Level 2, 2026-10)
+
+Status: **Level 2 normative contract** (handoff `jarvis-remotion-native-studio-playback-fix`, Slice 02). It is the single target that Slices 04 to 11 implement and that QA tests. Slice 02 builds none of it. **Where an older section of this page says otherwise, this section wins.** Older statements stay for history, each with a *Superseded* note that points here (index in 2026-10 § 10).
+
+- Evidence and owner map (file:line for every control named below): the handoff's `slices/01-independent-intention-and-code-audit/AUDIT.md`, audited at `a8377529` (= `origin/main` `d2332e61` + the handoff mirror).
+- Decisions taken by agent 0 and binding here: `slices/00-project-manager/READINESS.md`.
+- Human sign-off of the two names and of the control hierarchy (HV-RFX-02-01): `slices/02-product-experience-contract/UI-INVENTORY.md`.
+- Words: **must**, **must not** and **may** are normative. "Today" means the code at `d2332e61`.
+
+### 2026-10 § 1. Two destinations, one name each
+
+| User-facing name (French UI) | What it is | What it is for |
+| --- | --- | --- |
+| « Remotion Studio » | the native `remotion studio` process ([remotion-studio.md](remotion-studio.md)) on **one scene pin**, in its own browser tab | authoring a scene's source and timeline (code, props, composition). Reachable from Variants (« Remotion Studio » on the scene row, the scene on screen at its exact pin) and from the rail's « Remotion Studio… » since Slice 11 (*Remotion Studio from Variants (Level 3, Slice 11)*), and from the MCP card « Remotion Studio » (library versions); Slice 12 builds the round trip back to a variant |
+| « Variantes » | the Jarvis screen named *Variant Explorer* in this page (`window.JarvisStudioExplorer`) | history (the tree), the **only** playback surface (the embedded Player, § 2), branch, activate, compare, rename, archive, restore |
+
+Rules:
+
+- The bare word « Studio » **must not** label a control, menu entry, tooltip or spoken answer.
+  - The rail's « Ouvrir le Studio », the window host's « Studio » button and every other « Studio » that means the Variant Explorer become « Variantes » (a menu entry reads « Ouvrir les variantes »).
+  - « Remotion Studio » always carries the word *Remotion*. The MCP card « Remotion · Studio » reads « Remotion Studio », and its labels change as follows (`control_center_remotion_studio.js`):
+    - `:96`: « Ouvrir le Studio sur cette scène » becomes « Ouvrir cette scène dans Remotion Studio »;
+    - `:96`: « Relancer le Studio » becomes « Relancer Remotion Studio »;
+    - `:96`: « Afficher cette scène dans le Studio » becomes « Afficher cette scène dans Remotion Studio »;
+    - `:121` and `:125`: « Ouvrir le Studio » becomes « Ouvrir Remotion Studio »;
+    - the card button « Fermer le Studio » becomes « Fermer Remotion Studio ».
+  - « Explorateur de variantes » is not a user-facing name either: the screen is « Variantes ». Labels and tooltips to change (Slices 10 and 15):
+    - the inspector's button (`control_center_presentation_studio_inspector.js:174`): `aria-label` « Ouvrir l'explorateur de variantes » becomes « Ouvrir les variantes »; its tooltip « Explorateur de variantes : … » becomes « Variantes : … »;
+    - the Variants close button (`control_center_presentation_studio_explorer.js:287`): `aria-label` « Fermer l'explorateur de variantes » becomes « Fermer les variantes ».
+- Rail menu (`control_center_presentation_rail.js:85-93`), meaning of each entry:
+  - « Ouvrir les variantes » (replaces « Ouvrir » and the row click): opens Variants, windowed, on the active variant;
+  - « Remotion Studio… » (replaces « Ouvrir le Studio », which meant the explorer): opens Variants on the active variant, then Remotion Studio on the scene selected there, after the acknowledgment;
+  - « Éditer »: opens Variants plus the edit inspector on the active variant (no window host any more);
+  - « Présenter » (replaces « Jouer »): a presenter run in Variants (§ 5);
+  - « Acquitter le problème » (orange dot only): unchanged, it acknowledges the work problem;
+  - « Masquer / Afficher dans le rail », « Renommer… », « Supprimer… »: unchanged.
+- Internal identifiers are **not** renamed by this contract: `JarvisStudioExplorer`, `presentation-studio.*` pins, `/api/presentation-studio/...` routes, the doc title "Presentation Studio". Renaming them would break routes, stored ids and tests for no user benefit.
+- "Publish" in the Variants vocabulary is **Activer**: the active variant is the one that plays, is presented and is exported. Rendering an export is not a Variants control in this contract.
+- Remotion Studio's own preview is an authoring preview inside its own tab. It is **not** a Jarvis playback surface, not a time authority for Variants, and it never drives a run.
+- Going from Variants to Remotion Studio opens **the scene on screen** (its exact pin), after the existing unsandboxed-scene acknowledgment. The trust boundary does not change (`acknowledge_unsandboxed_scene`, a user click; the brain only says where to click).
+- Going back: what Remotion Studio changes reaches a variant **only** through the publish path of Slice 12. Until then edits are backups in `studio/edits/`, and the screen must say so; it must never imply they were saved.
+- Left rail geometry is deferred (§ 9). Only the rail's **wording** is set here.
+
+### 2026-10 § 2. One video runtime
+
+End state, reached by Slice 09:
+
+- **The Variants Player** is the only surface where a Remotion presentation plays in Jarvis. It is the preview prefab host of the Variants screen, promoted: it gains preload with seamless swap and the composition clock.
+  - This holds whatever starts playback: a button, a key, the rail, voice or MCP, the Jarvis presenter, the cue follower.
+- These **must not** exist as playback surfaces or user controls:
+  - the run stage Board window (category `studio_stage`, id `studio-stage-<run_id>`);
+  - the auxiliary Board windows (`studio_aux`);
+  - the band `#jvStudioBand`;
+  - the presentation window host (`JarvisPresentationWindow`);
+  - the stage page's own bar (`rs-bar`: « Lecture », scrub, faded time);
+  - any second transport row;
+  - any Board window created to play.
+- The edit inspector's preview host stays: an editing preview, with no transport. It is not a playback surface.
+
+What each removed capability becomes (from AUDIT.md § 2 and § 5). **Done by Slice 09** for every row marked 09: see *Variants run surface (Level 3, Slice 09)* below (the deviations are named there: the Tool Brain guard is kept as a reservation of the retired categories; the rail's auto-open is retired with the window, Slice 11 designs its indicator):
+
+| Removed | Capability it carried | Becomes | Slice |
+| --- | --- | --- | --- |
+| run stage window | one stable surface per run, patched, never recreated | the Variants Player bound to the run | 09 |
+| stage: score reveals and anchor overlay, edit repaint, scene-variant preview of a paused run | a visible surface for overlays and previews | the same Player: props refresh, frame seek, preview pin then restore | 07, 09 |
+| aux windows (detours) | a second surface, hidden at birth then revealed | an overlay layer **inside** the Variants stage, never a Board window (decided by agent 0) | 09 |
+| stage ledger and reclaim | cleanup of Board objects after a crash | one last reclaim pass archives leftover `studio-stage-*` / `studio-aux-*` objects; the ledger file is then copied aside and retired (repo data rules). *Slice 15 keeps the reclaim as a migration reader (*Retirement map*)* | 09, 15 |
+| `stage_object_id` | a Board id that fullscreen, hot reload and pins target | a Variants surface id, or dropped, in the playback view and in MCP inspect | 09 |
+| hot reload bound to the stage | object id → scene binding, plus a mount-outcome waiter | rebound to the Variants Player frame (riskiest coupling) | 09 |
+| Tool Brain guard on `studio_stage` / `studio_aux` | keeps the brain off these windows | dropped with the categories. The document-hygiene regex stays while legacy data may still hold stage handles. *Slices 09 and 15 kept the guard as a reservation of the retired categories: a migration reader (*Retirement map*)* | 09, 15 |
+| band (who presents, item, what's next, follower state, sequence exit, stop) | presenter information and commands | the **presenter strip** of Variants (§ 5). The run-state API stays, without UI: `JarvisStudioPlayer.view/refresh/command/startRun` and `jarvis:studio-playback` | 09 |
+| band keys, fullscreen `onNavigate` | keys while the frame has focus | the one Variants key map (§ 4.15) | 06, 10 |
+| band item clock `00:10 / 00:15` | elapsed time of a score item against its soft target | the presenter strip only, labelled as score time, never as media time | 07, 10 |
+| window host (rail click, « Jouer », « Studio », « Plein écran », 5 s refresh) | a light viewer of the active variant; `startRun` with Core's refusal reason | rail click opens Variants on the active variant; `startRun` moves to a shared playback client | 09 |
+| MCP `presentation_view window_open/close`, `stage_fullscreen_enter` | remote open, close and fullscreen | retargeted to Variants open/close and Variants stage fullscreen (`needs_gesture` kept). The MCP contract change is versioned; the catalogue budget test is updated | 09 |
+| stage scene as a pin source (`studio_pins.bind_scene`, `core/v2_app.py:451-455,518-519`) | a frame on screen is never archived under its host | the Variants Player's mounted pins register as a pin source, including a scene-variant preview and in-flight hot-reload pins | 09 |
+| brain prompt (`runtime/claude_local.py:186-191`) | « affiche / ouvre X » = `window_open`; « joue la slide » = scope `scene`; « joue tout » = scope `all` | rewritten in the Variants vocabulary: open = Variants; « lis / joue tout » = the continuous-video command; « présente » = a presenter run | 09 |
+| `window_open` in the rail report (`rail/display-state`), the `jarvis:presentation-window` page event, the `screen` field of `presentation_inspect` | tells the brain whether the window is open | renamed to the Variants open state | 09 |
+| band poll (500 ms to 15 s, `player.js:40-46,492-498,657`) | brings a run started by voice onto the page | moved into the shared playback client (one poll for the page, read by Variants) | 09 |
+| rail auto-open when an agent works | draws attention | a rail indicator only; nothing opens by itself (decided by agent 0) | 11 |
+
+### 2026-10 § 3. One clock
+
+- **Composition.** The ordered scenes of the variant. Each scene brings its manifest `duration_in_frames` and `fps` (`PrefabService.remotion_composition`). The composition length `L` is the sum of the scene intervals.
+  - **Nothing else decides how long a scene plays in video.** No score field, no setting and no dwell does.
+- **Composition frame `f`.** An integer in `0..L-1`, and the **only** position.
+  - Everything visible derives from it: the scene index, the scene title, « Scène n sur N », the scrub position, the time readout, the strip highlight, and the local frame of the mounted Player.
+  - It is a pure interval map. Scene `k` occupies `[start_k, start_k + len_k)`, with `start_1 = 0`. The local frame is `f - start_k`.
+  - The deck uses one integer fps. A scene with another fps is converted by one deterministic integer rule, owned and tested by Slice 04. Every scene start maps exactly to local frame 0.
+- **Transitions.** None exist today: scenes abut (AUDIT.md § 3, no `Series` / `TransitionSeries` anywhere). If Slice 05 adds overlapping transitions, two rules apply:
+  - scene `k` starts on the first frame of its entry transition, which is its local frame 0;
+  - during an overlap, the "current scene" is the incoming one.
+- **Authority.** The composition clock of the Variants Player adapter (one per page, Slices 04 and 06) owns `f`.
+  - The frame the sandboxed Player reports is **advice**. The rules of *Remotion timeline bridge › Security and authority* are unchanged. The adapter reconciles that advice; nothing else seeks the Player.
+  - Core owns the **score position** of a presenter run, and the transport **commands** that come from voice or MCP. Core does **not** own a media clock for continuous video.
+  - Core's `SegmentClock`, the autoplay deadlines and the follower's drift loop **must not** move, cut, restart or fight `f` (refactor: Slices 04 and 05).
+- **Implementation (Slice 04 chooses).** Two options give the same observable behaviour:
+  - an interval map over per-scene sandboxed Players with preload and seamless swap. **Recommended**, because it keeps the per-scene sandbox;
+  - a generated `<Series>` root, allowed only after a security review, because it crosses the per-scene sandbox.
+  - **Chosen (Slice 04):** the interval map. See *Composition clock (Level 3)* below.
+
+### Composition clock (Level 3)
+
+Status: **Level 3** (handoff `jarvis-remotion-native-studio-playback-fix`, Slice 04). It implements § 3 and the position rules of § 4. "Composition" here means the **video** composition (the variant's Remotion scenes end to end). It is unrelated to the Slice 19 *semantic composition* of variants (`presentation_studio_composition.py`, `.../compositions`).
+
+**Decision: one sandboxed Player per scene, one interval map over them.**
+- Each scene keeps its own Remotion Player in its own sandbox iframe, on the dedicated sandbox origin, with the same CSP and static guards ([remotion-isolation.md](remotion-isolation.md)). The isolation is unchanged.
+- The single clock is a **pure interval map** over the per-scene compositions. It is data plus arithmetic; it executes no scene code.
+- **Rejected for now: a generated multi-scene root** (`<Series>` / `<TransitionSeries>` over every scene). It would run several agent-authored scenes in **one** sandbox document. One scene could then read or alter another's DOM, props and timing. A failure or a hang in one would take the whole deck down. The per-scene static guards and size budgets would no longer bound what runs together. A future security review would have to show, at least:
+  - that the guards hold for a bundle that merges N sources (no shared mutable module state, no cross-scene global);
+  - per-scene failure isolation (an error boundary per `<Sequence>`, a typed failure per scene, § 4.11);
+  - a combined size and compile budget, and the same CSP;
+  - that the pins and the hot-reload gate still name one scene per mounted source.
+- **Cost of the choice.** A scene boundary is a swap between two Players. Seamless preload and swap (no blank, no visible remount) is Slice 05's work. Visual transitions across a boundary would need two Players on screen at once; none exist today.
+
+**Timebase and rounding (one integer rule).**
+- The **master fps** `F` is the highest `fps` among the scenes (an integer, 1..120).
+- A scene authored at `fps_k` for `d_k` frames lasts `len_k = ceil(d_k × F / fps_k)` master frames. It is never shorter than authored, and at most one master frame (under `1/F` s) longer.
+- Master local frame `m` shows native frame `floor(m × fps_k / F)`. Native frame `n` is master local frame `ceil(n × F / fps_k)`.
+- Because `fps_k ≤ F`, every native frame has at least one master frame, and native → master → native is the identity (tested on every frame).
+- Integers only: no position is ever a float. The readout is `f / F` seconds.
+- **Known limit (pre-existing).** A non-integer fps (29.97, 23.976) cannot reach the map: the manifest schema refuses it (`remotion_source.py`, `source.composition.fps` must be an integer 1..120).
+- Why not a common multiple of the fps: the least common multiple of arbitrary fps up to 120 grows without bound, and an exact timebase is not needed once every native frame is reachable.
+
+**Transitions.** `transition_in_k` (master frames, **0 by default**, always 0 for the first scene) is how far scene `k` overlaps the end of scene `k-1`.
+- `start_0 = 0`; `start_k = start_(k-1) + len_(k-1) − transition_in_k`; `L = start_last + len_last`.
+- Every scene keeps at least one frame of its own: `transition_in_k + transition_in_(k+1) < len_k`. Otherwise the map is refused (`composition_transition_invalid`).
+- During an overlap the current scene is the **incoming** one, from its local frame 0 (§ 3).
+- No transition is drawn today; the map is only ready for them.
+
+**The map API.** Python: `jarvis/domain/composition_clock.py`, the one implementation. Browser: `jarvis/runtime/control_center_composition_clock.js` (`window.JarvisCompositionClock`), a direct port. One vector table runs through both and must agree exactly, errors included (`tests/unit/test_composition_clock_conformance_js.py`).
+
+| Python | JS | Meaning |
+| --- | --- | --- |
+| `scene_manifest(scene_id, composition)` | `sceneManifest(sceneId, composition)` | a scene from its manifest composition; the bounds are `remotion_timeline.checked_composition`, shared with the anchor map |
+| `build_composition(manifests, transitions=None)` | `build(manifests, transitions)` | the map: `fps` (= `F`), `scenes` (`start`, `length`, `transition_in`, native `fps` and `duration_in_frames`), `total_frames` (`L`) |
+| `map.locate(f)` | `map.locate(f)` | `scene_index`, `scene_id`, `local_frame`, `native_frame`, `local_progress` (= `local_frame / length`) |
+| `map.start_of(k)`, `map.frame_of(k, n)` | `map.startOf(k)`, `map.frameOf(k, n)` | the start of scene `k`; the `f` of native frame `n` of scene `k` (a Player clock tick) |
+| `map.next_start(f)`, `map.previous_start(f)` | `map.nextStart(f)`, `map.previousStart(f)` | § 4.4; `None` / `null` on the last scene (next disabled); previous from scene 1 is 0 |
+| `map.clamp(f)` | `map.clamp(f)` | explicit clamp to `0..L-1` (§ 4.9, after an edit shortens the deck) |
+| `Transport(frame, playing, ended)` | `transport(frame, playing, ended)` | the media clock state, a value |
+| `play`, `pause`, `seek(map, state, Seek.X, value)`, `tick(map, state, k, n, scene_ended=)` | `play`, `pause`, `seek(map, state, 'x', value)`, `tick(map, state, k, n, sceneEnded)` | the transport rules below |
+| `composition_key(presentation_id, variant_id, pins)`, `to_wire(map, key=)` | `fromWire(wire, {key})` | the served map; the browser recomputes it and refuses a mismatch or another key (`composition_wire_mismatch`). The expected `key` is **required** (`composition_key_required`), so the stale-map check cannot be skipped |
+
+**Transport rules.** They are pure. The play state is always kept, unless said otherwise.
+- `next`, `previous`, `scene k` (thumbnail): go to a scene start, so the target scene starts at local frame 0. `next` on the last scene changes nothing.
+- `scrub f`: exactly `f`. `home`: 0. `end`: `L-1`. `step ±1`: only while paused.
+- `pause` holds exactly `f`; `play` continues from `f`.
+- Playing onto `L-1` gives `ended`: the final frame is held, paused. `play` then changes nothing; only `replay` (frame 0, playing) restarts. It never wraps.
+- `tick`: the Player of scene `k` reports native frame `n`, so `f = frame_of(k, n)`.
+  - Only the Player of the **current** scene (the one containing `f`; during an overlap, the incoming one) moves `f`. A tick from another Player (the outgoing one of an overlap, or a stale one after a navigation) changes nothing. A malformed tick (frame or scene out of range) is still an error.
+  - When the current Player reports its own end, the next scene starts at its local frame 0, and `f` never moves backward (`max(f, start_(k+1))`). After the last scene, `ended`.
+  - A tick never resumes a paused clock.
+- **Errors, never silent defaults.** These all raise with their code:
+  - an empty deck (`composition_empty`);
+  - an invalid manifest or a duplicate scene (`composition_scene_invalid`);
+  - a bad overlap (`composition_transition_invalid`);
+  - a frame or scene out of range (`composition_frame_out_of_range`, `composition_scene_out_of_range`).
+
+**Where Core serves it.** `GET /v1/presentation-studio/presentations/{presentation_id}/variants/{variant_id}/composition-clock`, relayed read-only by the Control Center at `/api/presentation-studio/presentations/.../composition-clock`.
+- Answer: `{presentation_id, variant_id, variant_revision, key, clock, problem}`.
+  - `clock` is the wire map `{version: 1, key, fps, total_frames, scenes: [{scene_id, composition_id, fps, duration_in_frames, start, length, transition_in}]}`.
+  - When the variant has no video, `clock` is `null` and `problem` is `{code, message, scene_id}`. The codes: an empty variant (`composition_empty`), an HTML scene (`composition_scene_not_remotion`), an invalid, unknown or tampered pin (`composition_scene_invalid`). This is what disables « Lire » with its reason (§ 4.2).
+  - A catalogue disk fault is a 500 with its real cause.
+- It reads only the manifests of the pins (`PrefabService.remotion_composition`): no source byte, no compilation, nothing written.
+- Owner: `jarvis/core/presentation_studio_composition_clock.py`. Journal: `core.presentation_studio.composition_clock_built` (info) and `core.presentation_studio.composition_clock_refused` (warning), ids and counts only.
+- **Key.** `key = composition_key(presentation_id, variant_id, ordered (scene_id, prefab_id, version))`.
+  - A pinned version is immutable, so the same key means the same map.
+  - Another variant, another pin or another order gives another key. A renamed title keeps the key.
+- The playback view (`GET /v1/presentation-studio/playback`) carries the same `composition_key` while a run is active. There is one map per variant, named by its key, and no second route for runs.
+- **Key-mismatch rule (Slice 05 implements it).** When the run view's `composition_key` differs from the key of the map the page holds:
+  1. the page refetches the map **once**;
+  2. if the keys still differ, the variant changed under the run. The page shows « La variante a changé », and the run is reloaded through the existing hot-reload path.
+  - The page never plays with a stale map.
+
+**Direction of sync (one time authority).**
+- **Player clock → `f`.** The live Player's `clock {frame}` is advice (*Remotion timeline bridge › Security and authority*); it goes through `tick`. From `f`, through `locate`, come the scene index, the scene strip, the global bar and the time readout.
+- **UI seek → `f` → Player.** A button, a key, a thumbnail or the scrub computes the target `f` with `seek`. The adapter then seeks the Player of `locate(f).scene_index` to `locate(f).native_frame`.
+- **Core's score position is separate.** In a presenter run, Core owns the score position. It reaches media frames **only** through explicit anchors (`remotion_timeline.build_frame_map`). It never writes `f`, and `f` never moves the score.
+- Core holds **no** media clock for continuous video.
+
+**What Slices 05 to 07 wire or retire.**
+- **Slice 05** (continuous sequencing), **done**: see *Continuous sequencing in Variants (Level 3, Slice 05)* below:
+  - loads `control_center_composition_clock.js` into the Control Center page, before the explorer;
+  - fetches `.../composition-clock`, preloads the scene at `start_(k+1)`, and swaps on `tick(..., scene_ended=True)`;
+  - stops the autoplay deadlines (`presentation_studio_autoplay.py`: `GRACE_MS` and `LOAD_ALLOWANCE_MS` are removed; `DEFAULT_DWELL_MS` paces only an element without a media segment) and `SegmentClock` from ever advancing, cutting or re-timing a Remotion scene;
+  - sets `loop: false` and `moveToBeginningWhenEnded: false` in the sandbox (moved here from Slice 06: the end of a scene must be a held frame for the sequencer to see it).
+- **Slice 06** (Player lifecycle), **done**: see *Variants transport (Level 3, Slice 06)* below:
+  - makes `Transport` the Variants transport state (the Slice 05 sequencer already holds `f` with it; Slice 06 adds the visible controls);
+  - retires the `rs-bar` and any other position not derived from `f` **in Variants** (the run stage kept its bar until Slice 09 retired that surface: **done**, the run plays in Variants).
+- **Slice 07** (presenter and score):
+  - keeps `SegmentClock` and the timeline follower (`JarvisRemotionFrame.createTimelineFollower`) **only** for score anchors in a presenter run, without a drift re-seek against `f`;
+  - makes a scene entry start at local frame 0 (§ 5).
+
+### Continuous sequencing in Variants (Level 3, Slice 05)
+
+Status: **Level 3** (handoff `jarvis-remotion-native-studio-playback-fix`, Slice 05). It implements § 3, § 4.2, § 4.7 and § 4.11 on the Variants Player. The visible transport (scrub, readout, ⏮ ⏭, keys, « Son ») is Slice 06: *Variants transport (Level 3, Slice 06)* below.
+
+**Owner.** `jarvis/runtime/control_center_presentation_studio_sequencer.js` (`window.JarvisVariantsSequencer.createSequencer`), a controller without DOM, tested by node (`tests/unit/test_continuous_sequencing_js.py`). The explorer (`control_center_presentation_studio_explorer.js`) gives it the preview host, the scenes of the previewed variant, the map fetch, `show(index)` and a render callback; it exposes `JarvisStudioExplorer.playback {toggle, play, pause, view, stats}` (the seam for the Slice 06 transport and for voice).
+
+**Entry point (minimal).** The former « Tout jouer » button is now « Lire » / « Pause » / « Rejouer » (`data-act="continuous"`, `aria-pressed` while playing). It plays **inside Variants**: Variants never closes, Core starts no run, nothing is armed or spoken. Slice 06 moved it into the transport toolbar and replaced « Jouer cette slide » with « ⋯ › Lire seulement cette scène ».
+
+**The map.** On the first « Lire » (since Slice 06: as soon as the preview is ready, `prepare`), `GET .../variants/{id}/composition-clock`, then `JarvisCompositionClock.fromWire(clock, {key: answer.key})` (the key is mandatory; another key, or a map that does not match the arithmetic, is `failed` with its code). The map must describe the preview on screen: the same scene ids in the same order, and `variant_revision` equal to the previewed document's revision. Key-mismatch rule, as applied in Variants: on a mismatch the map is fetched **once** more; if it still differs, « La variante a changé », playback stays stopped and the preview is read again. A new revision of the previewed variant, another variant, the comparison or closing Variants stop playback and drop the map; since Slice 06 a new revision of the previewed variant keeps the position instead (`revise`, below). The run view's `composition_key` is not compared here: a presenter run in Variants is Slices 07/09.
+
+**Sequencing.** `f` lives in the sequencer and moves only by `tick` of the current scene's Player:
+- « Lire » starts at `start_k` of the scene on screen (or continues from `f` after a pause); the Player of scene `k` is ordered `play` from `locate(f).native_frame`;
+- a clock is believed only after the Player has been seen where it was sent (playing, within one second of the ordered frame): a report posted before the order reached the Player (for example the preview's own end frame) never ends a scene;
+- the scene ends when its Player reports its last native frame (`duration_in_frames - 1`), or when it halted by itself (`playing: false`) at most `END_SLACK_FRAMES` 2 frames short of it; `f` becomes `start_(k+1)` (never backward) and the explorer shows scene `k+1`: the host takes the preloaded frame at once, and `onLive` orders it `play` from local frame 0. Why the slack (Slice 05 rework, B1): Remotion 4.0.534 never sets the last frame when a playback step would pass it (`use-playback.js`: with a dropped frame, 238 -> 240 on 240 frames); it pauses where it is and fires `ended`. The sandbox therefore answers `ended` with `seekTo(last)` and a clock on the last frame, and the stage page relays a halted Player whose frame changed at once (it used to fall in the 250 ms window, so the window kept the frame before the seek). A Player halted 3 frames or more short of the end, or after the user's pause, has not ended;
+- a clock earlier than `f` inside the current scene (a stale report) never moves `f` back;
+- each scene plays its **authored** length: the sequencer has no timer that could move a scene (tested with 60 s of fake wall time on a 30 s scene);
+- after the last scene, `ended`: the Player holds its final frame (`loop: false`, `moveToBeginningWhenEnded: false`), nothing more is ordered, the button reads « Rejouer »; « Rejouer » goes to `f = 0` and plays with the same map (deterministic replay);
+- choosing a scene (thumbnail, ‹ ›) once the map exists is a seek to `start_k`, play state kept; the thumbnail of the current scene restarts it.
+
+**Preload and hand-over.** The preview host is created with `swapPrefix: 'presentation-studio.'`: another scene is prepared **beside** the live one and replaces it only when it has rendered (also when the user browses scenes: no empty preview any more). Scene `k+1` is preloaded (`host.preload`) only once scene `k` is the live Player, so it never competes with the scene being entered. Host rules fixed for this (they also hold for a run, which Variants hosts since Slice 09):
+- a preload never drops the frame already prepared beside the live one (the scene the window was told to show, or a scene loaded ahead): it is queued (the latest wins) and starts the moment that frame takes the window (`scene.prefab_preload_queued`). Before, `preload` then `dropNext` threw away the scene being entered, and the run stalled, then skipped it (Slice 03, defect A);
+- the values of the incoming scene go to the incoming frame only, never to the outgoing Player (Slice 03 "hybrid frame"). "Another scene" means a frame loaded ahead, or a `scene_id` (passed by Variants and by the run stage preload) that differs from the live frame's; without that, a new pin is a new version of the same scene (hot reload), which still keeps both frames current;
+- another scene the window was told to show that fails (compile, load, timeout) takes the window with its own failure panel and retry, instead of the previous scene staying on screen as if nothing happened. A scene loaded ahead that fails before it is asked for is dropped and loads again at its turn; a hot-reload pin that fails still leaves the live frame untouched (*Hot reload contract*).
+
+**Waiting, failure.** If scene `k+1` is not on screen at the boundary, the outgoing Player holds its last frame (it is told nothing else), and after 300 ms a small status pill on the stage says « Chargement de la scène n sur N · s » with a live counter (no full veil: the held image is the content; reduced motion stops its pulse). The host's deadlines bound the wait (165 s for a Remotion frame, plus the stage page's own compile deadline). A failure of the wanted scene sets `failed`: playback pauses at that scene's start, the stage veil names it (« Scène n : lecture impossible », with the real message) and offers « Réessayer » and « Scène suivante », and an Error Logs row is written (`studio_explorer_sequencer_failed`). The failure veil is opaque (Slice 16): the scene frame under it may draw its own failure panel, which never shows through, so the user reads one message and one « Réessayer ». « Réessayer » loads the failed scene again (`host.reload`: its frame holds the failure and the same pin, which a new `mount` takes for "already there"), shows the waiting pill while it loads, and plays it from its start once it is live (Slice 05 rework, B2). Never a skip, never a Slidecar fallback.
+
+**Measured** (real Chrome, `tests/unit/test_presentation_continuous_playback_browser.py`, the 9-scene mixed deck of Slice 03, evidence in the handoff's `slices/05-continuous-remotion-sequencing/evidence/`): the 9 scenes in order, each from its local frame 0 to its last frame; 8 boundaries with 10 to 46 ms between the outgoing Player's last frame and the incoming Player's first moving frame; no instant without a ready frame; no blank or hybrid capture; the 30 s scene plays its 900 frames in 30.0 s; the final frame is held 5 s; Variants stays open and Core never runs.
+
+**Observability.** Console and journal keys `studio_explorer_sequencer_map`, `_play`, `_pause`, `_boundary` (`from`, `to`, `gap_ms`, `ready_ahead`), `_ended`, `_reset`, `_retry` (`reloaded`) (info); `_map_mismatch`, `_preload_lost`, `_reload_failed` (warn); `_failed` (error, Error Logs).
+
+### Variants transport (Level 3, Slice 06)
+
+Status: **Level 3** (handoff `jarvis-remotion-native-studio-playback-fix`, Slice 06). It implements § 4.1 to § 4.11, § 4.14 to § 4.16 and the § 6 rows #10 to #20 on the Variants Player, against the single sequencer of *Continuous sequencing in Variants*. PX-4, PX-7, PX-8, PX-9, PX-10, PX-18, PX-19 and PX-21 are proven here (tests below). Presenter-run specifics (read-only scrubber, presenter strip) are Slice 07; fullscreen and unmuting from the toolbar are Slice 08 (done: *Variants media and fullscreen (Level 3, Slice 08)*); the keyboard sheet (`?`) and the control audit are Slice 10 (done: *Variants control audit (Level 3, Slice 10)*: the toolbar holds the playback controls only, « Présenter » and « Scène n sur N » are on a second row under it).
+
+**One transport.** A named toolbar under the stage (`role="toolbar"`, « Lecture de la vidéo », `control_center_presentation_studio_explorer.js` `buildTransport`), read only from the sequencer's view, never from a Player:
+
+| Control | Name | Does |
+| --- | --- | --- |
+| ⏮ | « Scène précédente » | `seek('previous')`: `start_(k-1)`, from scene 1 frame 0; play state kept |
+| ▶ | « Lire » / « Pause » / « Rejouer » (`data-act="continuous"`, `aria-pressed`) | play from `f`, pause, or after the end `f = 0` and play; « Préparation… » while the map is read; `aria-disabled` with « La lecture vidéo n'existe que pour une présentation Remotion » on a variant without video |
+| ⏭ | « Scène suivante » | `seek('next')`: `start_(k+1)`, play state kept; on the last scene `aria-disabled`, and activating it says « Dernière scène. » |
+| scrub | `role="slider"`, « Position dans la vidéo » | `aria-valuemin` 0, `aria-valuemax` `L-1`, `aria-valuenow` `f`, `aria-valuetext` « Scène 3 sur 9, 0:12 sur 1:14 »; one tick per scene boundary; ARIA keys `←` `→` one second, `PageUp` / `PageDown` a scene start, `Home` / `End`; a pointer drag (pointer capture) pauses for the drag and gives the play state back on release, from the scrubbed frame; `pointercancel`, `lostpointercapture` and closing Variants end the drag; before the map is read the keys say « La position paraît dès que la vidéo est prête. », a failure only once the map really failed |
+| readout | `0:12 / 1:14` | `f / F` over `L / F`, rounded to the second: the only time readout of Variants |
+| « Son » | « Son » | muted at opening. *(Slice 06: `aria-disabled` with its reason. Superseded by Slice 08: a toggle, `M` too, see *Variants media and fullscreen*.)* |
+| « ⋯ » | « Plus de lecture » (`aria-haspopup="menu"`) | « Lire seulement cette scène », « Revenir au début » (`Home`, play state kept); the menu closes on `Échap` and gives the focus back to « ⋯ » |
+
+Without a map (a variant without video, or Core unreachable while preparing) the slider is `aria-disabled` and carries no `aria-valuenow`, the readout is empty (§ 4.8: a surface that cannot show `f` shows no position), and ⏮ ⏭ browse the scenes as before. The stage page has no bar of its own in Variants (§ 2, § 6 #10): the preview host asks for `/remotion-stage?id=..&v=..&embed=variants` (`R.stageUrl`, accepted by `remotion_relay.py` `STAGE_EMBEDS`), and that page never puts the `rs-bar` in its document. Since Slice 09 there is no run stage; the bar survives only on a Remotion prefab window of the Board (no `embed`), outside any presentation, where it is that window's only transport (*Retirement map*, Slice 15).
+
+**Keys (§ 4.15), on the stage and the transport.** `Space` play / pause / « Rejouer » (a focused button acts on its own); `→` `PageDown` next scene start; `←` `PageUp` previous scene start; `Home` / `End` `f = 0` / final frame; `,` / `.` one frame back / forward while paused (said when playing); `M` the « Son » toggle and `F` « Plein écran » (Slice 08). A key is consumed once (`preventDefault` and `stopPropagation`). The slider keeps its own ARIA keys and the scene strip its listbox keys (precedence rule); `↑` `↓` no longer browse scenes in the stage.
+
+**Lifecycle (the sequencer, `control_center_presentation_studio_sequencer.js`).**
+- **Opening, paused (§ 4.1, PX-4).** `prepare()` reads the map as soon as the preview is ready and sets `f = start_k` of the selected scene, phase `paused`; nothing is ordered. The preview host is created with `autoplay: false` (no grace-period play) and the stage page with `embed=variants` never plays on `ready`: no Player, not even a frame loaded ahead and hidden, reports `playing` before « Lire ». A map refused while preparing is `unavailable` with its reason, never the failure veil: not retryable for a deck without video (`composition_empty`, `composition_scene_not_remotion`, `composition_scene_invalid`), retryable otherwise (« Lire » reads the map again).
+- **One door for every position (`seek(kind, value)`).** `next`, `previous`, `scene` (thumbnail), `scrub`, `home`, `end`, `step`, `replay`, computed by `JarvisCompositionClock.seek` from `f` **at once**, so the readout, the slider, the scene label and the strip follow on the same frame, and ten fast ⏭ are ten scenes, never two per press and never a drift. The Player is sent there once per animation frame at most (`requestFrame`, one coalesced `bring`), its play state kept; while that frame is pending, a report of the Player's old position is ignored. A scene is always shown before it is ordered, even when it shares its source version with the previous scene (its values, title and strip highlight change).
+- **Pause and resume (§ 4.3, PX-7).** Pause holds `f`; the Player's own halt frame becomes `f` once, never backward: the first halted report after the pause is taken if it is later than `f` and still inside the current scene (no other bound; in practice it is about one report, 250 ms, past `f`); resume plays from that exact frame.
+- **End and restart (§ 4.7, PX-10).** On `L-1` the final frame is held (`ended`, « Rejouer »); `End` while playing lands there too. « Rejouer » is `replay`: `f = 0`, playing, with the same map.
+- **« Lire seulement cette scène » (§ 5 table, PX-21).** `playScene()`: the scene that holds `f`, from its local frame 0 to its last frame, then that frame is held, paused (`sequencer_scene_held`); nothing is loaded ahead, Core starts no run, Variants stays open. A scrub that lands in the same scene keeps that scope; landing in another scene ends it. It replaces « Jouer cette slide », which started a `rehearsal` run and closed Variants (the rehearsal is « Présenter › Répétition », Slice 07).
+- **Failure (§ 4.11, PX-18).** The Slice 05 veil: playback pauses at the failing scene's start, « Scène n : lecture impossible » with the real message, « Réessayer » and « Scène suivante », an Error Logs row (`studio_explorer_sequencer_failed`); never a skip. « Lire » on a failed playback is « Réessayer ».
+- **A new revision while it plays (§ 4.9, PX-19).** `revise()`: the position is kept as (`scene_id`, the scene's native frame), clamped to the scene's new length; the Player on screen holds while the new version loads; the map is read again; the play state is kept, and the new pin's Player, swapped in place, goes on from the kept frame. A pause while that map is read does not cancel the read: the kept (scene, frame) lands paused; a read that does not land keeps it for the next « Lire ». A removed scene gives its place: the scene now at that index, from its start. A map refused after the edit (no video any more) stops playback, said on the transport.
+- **Overlapping commands, lost Core, remount.** A second « Lire » while the map is read does nothing; a pause during that read cancels it (and pauses the Player): nothing starts behind the user's back. A map read that fails or times out (`READ_TIMEOUT_MS`) is said, never a hang. Closing Variants resets the sequencer; reopening prepares again, paused on frame 0.
+
+**Sandbox fix found by the real-Chrome proof.** Remotion 4.0.534's `seekTo` on a **playing** Player arms a "resume after the seek" that the `play()` right after it leaves armed; it fired when the scene ended, and `play()` on the last frame restarts at 0, so a scene scrubbed while playing replayed itself from its start. `remotion_sandbox_child.js` now pauses a playing Player before moving it for an order that carries a frame.
+
+**Tests.** Node: `tests/unit/test_variants_transport_js.py` (sequencer and transport, rapid input, stale reports, scrub across scenes both ways, pause and resume, restart, hot-reload clamp, scene-only, unavailable, lost Core, remount; the stage page and the host in Variants; the explorer's toolbar, keys, menu and focus on the fake DOM), `tests/unit/test_continuous_sequencing_js.py`, `tests/unit/test_remotion_sandbox_child_js.py`. Docs: `tests/unit/test_variants_transport_docs.py`. Real Chrome: `tests/unit/test_variants_transport_browser.py` (including a real CDP mouse drag on the slider at 800×600 and 1280×720, and the row under the stage kept inside the preview on one line: on a narrow preview the scene title leaves the row and the transport tightens, « Scène n sur N » stays whole; evidence and `summary.json` in the handoff's `slices/06-player-lifecycle-and-transport/evidence/`), and the release gate `tests/unit/test_presentation_playback_release_gate_browser.py`, whose `one_clock_every_time_readout_shows_the_composition_time`, `a_scrub_of_the_player_bar_moves_the_shared_clock`, `variants_preview_plays_a_slide_once_and_holds` and `variants_play_this_slide_plays_the_slide_in_scene_scope` pass since Slice 06.
+
+**Measured** (real Chrome, the 9-scene deck): opening paused on S1 frame 0 with `0:00 / 1:14` and no `playing` report before « Lire »; a pause held 5 s on frame 42 and resumed from 42; ⏭ while playing entered S2 on frame 0; three fast ⏭ landed on S4; the slider to S7 + 2 s showed S7 frame 48 with label, strip and `0:57 / 1:14` in agreement, and back to S2 + 3 s frame 90; the final frame of S9 held 5 s, « Rejouer » restarted S1 at frame 0; a scene that throws paused playback on its start, named, never reaching S3; a 30 s scene at frame 200 pinned to a 40 s version went on at frame 200, playing, the readout then over `1:24`.
+
+**Observability.** Console and journal keys, added to Slice 05's: `studio_explorer_sequencer_play_scene`, `_scene_held`, `_revised` (info), `_unavailable` (info for a deck without video, warn otherwise), `_seek_refused` (warn), `studio_explorer_playback_prepare_failed`, `_revise_failed` (error).
+
+### Variants media and fullscreen (Level 3, Slice 08)
+
+Status: **Level 3** (handoff `jarvis-remotion-native-studio-playback-fix`, Slice 08). It implements § 4.12, § 4.13, § 4.14, the `F` / `M` / `Échap` rows of § 4.15, the fullscreen and reduced-motion parts of § 4.16 and the § 6 rows #2, #3 and #19 on the Variants Player. PX-12 is proven here (real Chrome); PX-13 is a Human check (HV-RFX-08-01). The security contract of the sandbox is [remotion-isolation.md](remotion-isolation.md) § 10.6.
+
+**Owners.** `jarvis/runtime/control_center_presentation_studio_stage_media.js` (`window.JarvisVariantsStageMedia`, no DOM: `keyAction`, `createSound`, `createChrome`); the explorer wires it (`control_center_presentation_studio_explorer.js`); the frame side is `remotion_sandbox_child.js`, `control_center_remotion_stage.js`, `control_center_remotion_frame.js`, `control_center_prefab_host.js` (`host.sound(muted)`, hooks `onSound`, `onKey`).
+
+**Sound (§ 4.14).**
+- « Son » is a toggle in the transport (`aria-pressed`, title « Activer le son (M) » / « Couper le son (M) »); `M` is the same control. Variants opens muted, every time (a reload too): the preview host is told `muted` before any frame exists.
+- The wish goes to the **live** frame only (`host.sound`): a frame loaded ahead or a hot-reload candidate stays muted until it takes the window, then gets the wish. It survives scene changes, preloads, hot reload, « Recharger la scène » and a watchdog restart (the stage page keeps it).
+- The browser constraint, measured in real Chrome: a sandboxed frame of another origin gets sound only from a gesture **in that frame**, unless the page delegates autoplay. The frame therefore carries `allow="autoplay"` (the only delegated feature); the user's click on « Son » (or `M`) in Jarvis's page then counts for the scene and for the next ones. Without any gesture anywhere, sound stays refused.
+- A refusal is never a silent no-op: the frame does not unmute against the browser (Remotion would wait for an AudioContext that never starts and freeze the image); it answers `blocked`, and the page says « Le navigateur a refusé le son de cette scène. Cliquez une fois dans l'image de la scène pour l'autoriser, ou autorisez le son pour ce site (…) » (notice, `studio_explorer_sound_blocked` warning), marks the button (`data-sound="blocked"`) and puts a pill on the image (also visible in fullscreen). One real click in the image lifts it. With `allow="autoplay"` the frame's up-front check (`featurePolicy.allowsFeature('autoplay')`) always passes, so without a gesture the refusal is caught after the fact: a Player made audible whose image stops moving for 1.5 s while it plays is muted again and the refusal said (the image goes on), or Remotion mutes itself (`mutechange`). A paused Player is never muted again by this watchdog.
+- Sync is Remotion's own (one Player per scene, `<Audio>` follows the Player's frame). Measured: the asset's `<audio>` within 200 ms of the frame the scene drew at the same instant, while playing, after a jump back and after the boundary into the next audio scene; one audible Player at any sample. The Player runs without shared audio tags (`numberOfSharedAudioTags: 0`: with them, the first unmute dropped an `<Audio>` already mounted, Remotion 4.0.534). Assets: `public/*.wav|mp3|ogg` served by `staticFile` in the Player, copied into the export plan, rendered with `muted: false` (`test_variants_media_export.py`).
+
+**Fullscreen (§ 4.12, PX-12).**
+- The header « Plein écran » and `F` (on the stage, the transport, the strip, or typed in the scene) put the **stage** in fullscreen: the « theater » (`.jvx-theater`, `data-object-id="studio-explorer-stage"`), i.e. the Player and its transport. The tree, the metadata, the actions, the strip and the notices stay out. The Player fills the screen and Remotion letterboxes the composition on black: the whole slide at its own format (measured at 1920×1080 for 16:9, 4:3, 9:16, 1:1).
+- When Variants is already fullscreen (the stage, or the workspace an opening asked for) the same control reads « Quitter le plein écran » and leaves. Opening Variants with `fullscreen: true` (the inspector door, a voice or MCP `open`) is unchanged: it enters, or only **arms** (`needs_gesture`), the workspace fullscreen of the *Variant Explorer interaction contract*; the voice cannot enter the stage fullscreen by itself. Starting a run never enters fullscreen.
+- Entering or leaving changes neither `f` nor the play state (the frames stay in the page; only their box changes).
+- The transport is an overlay at the bottom of the stage. It hides itself 2.5 s (`CHROME_HIDE_MS`) after the last move while the video plays, never while paused, never while the focus is in it or a menu is open; any move over the image, a key or a focus brings it back (a transparent catcher over the image exists only while it is hidden, so a click reaches the scene otherwise). Under `prefers-reduced-motion` it appears and disappears without a fade (measured: no UI transition or animation).
+- `Échap` is nested. An `Échap` that only leaves fullscreen never pauses: the browser keeps the first press to leave fullscreen; if the page receives it anyway in the stage fullscreen, it leaves fullscreen without closing, and the press that just left (400 ms) closes nothing. The next `Échap` closes Variants, and closing Variants during a run pauses the run (*Variants run surface*, below). `F` leaves too.
+- The focus returns to the element that opened fullscreen (the header button; the stage when `F` came from the scene). A refused or merely armed request keeps no opener: a stage fullscreen that starts later gives the focus back to « Plein écran ».
+
+**External display (§ 4.13).** P0: move the Jarvis window to the external screen, then « Plein écran »: the browser opens fullscreen on the window's current screen. Optional, minimal: `Maj+F` or `Maj`+click asks for **another** screen (`display: 'other'` of *Generic fullscreen surface*), and only when the browser already granted the window-management permission (queried, never prompted from here); otherwise the current screen, said (« Choisir l'écran demande l'autorisation « Gestion des fenêtres » … »). The physical projector or second-monitor check is HV-RFX-08-01.
+
+**Keys typed in the scene (§ 4.15).** A click in the image puts the focus in the cross-origin sandbox, which keeps every key. Its bootstrap passes on the § 4.15 keys only (`RemotionSandboxProtocol.KEYS`: Space, arrows, Page, Home, End, `,` `.`, `F`, `M`, `Échap`), real and without modifier; the stage page passes them on only while the scene really has the focus; the host gives them to the live frame only; the explorer applies the same map once, only while its focus is in the stage and no menu or dialog is open. A key the scene posts without the focus is refused (`keysRefused`).
+
+**Layout.** Windowed, the stage keeps 16:9 inside the preview at every window size (measured 1920×1080, 1600×900, 1280×720, 1024×768); a composition of another format is letterboxed inside it by the Player, so a scene change never moves the layout.
+
+**Observability.** Explorer keys `studio_explorer_sound` (info), `_sound_blocked` (warn, Error Logs), `_sound_unblocked`, `_sound_failed` (error), `_fullscreen_stage_entered`, `_fullscreen_stage_left`, `_fullscreen_screen_choice_unavailable`, `_escape_after_fullscreen_ignored` (info); stage page `state()` adds `soundWanted`, `soundBlocked`, `keysRelayed`, `keysRefused`; supervisor state adds `keys`, `keyDropped`, `audio`; `JarvisStudioExplorer.playback.sound()`, `.chrome()`, `.fullscreen()` for proofs.
+
+**Tests.** Node: `tests/unit/test_variants_media_js.py` (key map, sound wish, overlay timer, sandbox child with a fake Player, protocol bounds, stage page, window host, explorer on the fake DOM). Real Chrome: `tests/unit/test_variants_media_fullscreen_browser.py` (real click on « Son » and sync, refusal without delegation lifted by a click in the image, no gesture under the default policy and under `--autoplay-policy=no-user-gesture-required`, fullscreen at 1080p with four formats, keys from the focused scene and a forged key, reduced motion, reload, ten fullscreen and scene cycles without leak). Export: `tests/unit/test_variants_media_export.py`. Evidence: `tasks/jarvis-remotion-native-studio-playback-fix/slices/08-media-fullscreen-stability/evidence/`.
+
+**Limits, said.** Audibility on real speakers, the physical `Échap` and a real second screen or projector are Human checks (evidence `README.md`). In headless Chrome, once the page has been fullscreen, an `Échap` typed inside the cross-origin scene is no longer delivered to it (the top document still gets it); the browser's own `Échap` exit is unaffected. `allow="autoplay"` lets a scene play sound by its own means (`new Audio()`) after any gesture in Jarvis's page, a hidden or preloaded scene included (only its Remotion Player is kept muted) ([remotion-isolation.md](remotion-isolation.md) § 10.6).
+
+### Variants run surface (Level 3, Slice 09)
+
+Status: **Level 3** (handoff `jarvis-remotion-native-studio-playback-fix`, Slice 09). It implements § 2 (the end state: one video runtime), the presenter column of § 4.15, the presenter rows of § 5 and § 6 #21, #29, #30, and PX-11 (run part), PX-14, PX-15 (surface part), PX-16 and PX-20. The floating viewer of screenshot 1 (the Board run stage window `studio-stage-<run_id>`, category `studio_stage`, its auxiliary windows `studio_aux`, the band `#jvStudioBand`) and the window host `JarvisPresentationWindow` are **retired**: no button, key, voice verb, MCP tool, stale view or persisted Board object can bring them back.
+
+**Core: a memory surface, no Board object.** `jarvis/core/presentation_studio_run_surface.py` (`RunSurface`) replaces `SceneStage` behind the playback service's `Stage` protocol.
+- One surface per run, id `variants-run-<run_id>` (the view's `stage_object_id` keeps its name and now carries this id). `show(payload, scene_id=)` replaces the shown block and bumps a revision; a payload already shown writes nothing. Detours are **overlays** of the same surface (`stage_aux` hidden at birth, `reveal_aux`, `retire`), never a Board window (PX-20). Memory only: a Core restart has no run and no surface (`start_service` releases it).
+- Every block goes through the catalogue before it is accepted (`PrefabService.validate_instance`, defaults filled): a refusal is `prefab_invalid` with the catalogue's reason, the run pauses with it; a catalogue fault is `prefab_catalog_unavailable` (closed by default). This is the check the scene's `_check_prefabs` made on the stage window.
+- `pins()` is a pin source (`StudioPinRegistry.add_source("variants_run", ...)`): the scene and the detours on screen are never archived under the Player (§ 8).
+- Frame events: a frame mounted under the surface id posts its `state` / `notify` events to `/v1/prefabs/events` as its Board window did; `PrefabEventService(surface=)` applies the same checks (block of the same id and version, `check_state_event`, basis compared under the surface's lock) and a `state` writes the surface's data (memory): the clicks a frame committed survive a hot reload (`StageWindows.current`). A `notify` is recorded for the brain as before.
+- Routes: the view carries `surface: {id, rev}` while a run shows something, and `timeline_unresolved: <scene_id>` when the timeline of the scene on the surface could not be read. `GET /v1/presentation-studio/playback/surface` answers `{surface: {surface_id, run_id, revision, scene_id, title, prefab: {id, version, props, data}, overlays: [{overlay_id, title, visible, prefab}]}}` or `{surface: null}`; relayed read-only at `/api/presentation-studio/playback/surface`.
+- **A stage sync is bounded and a stop pre-empts it.** `_sync_stage` runs in a task bounded by `STAGE_SYNC_TIMEOUT_S` 20 s: past it the run pauses with `stage_timeout` (« La scène n'a pas pu s'afficher à temps : la lecture est en pause. « Reprendre » réessaie, « Arrêter » arrête. »), never a run stuck forever. `stop` cancels a sync in flight before it takes the lock (`stage_preempted` for the interrupted command), so it never queues behind it. Traces `playback_stage_sync_timeout` (error), `playback_stage_sync_preempted` (warning), `playback_stage_sync_cancelled`.
+- **Every Remotion scene of every run has a timeline.** `build_frame_map(..., whole_scene=True)`: an anchorless scene gets one segment from frame 0 to its last frame, also in a `manual` run the user paces. The Variants Player never plays by itself (no grace play, no play on ready), so Core's order is what starts a scene, once, from frame 0, and the scene then holds its last frame (§ 5). A scene whose timeline cannot be read (`timeline_unresolved`) is named in the view and the page plays it once from frame 0, unguided, as the Slice 10 rule says (« La durée de la scène Remotion est introuvable : elle se joue une fois depuis sa première image… »).
+- **Legacy reclaim (persisted state, PX-16).** `LegacyStageReclaimer` (`presentation_studio_stage.py`) archives, at Core start and before every run, the Board windows an older Core left: the ids of the old ledger `state/presentation-studio-stage-ledger.json` (read once) **and** a scan of the retired categories whatever the id (`studio_stage`, `studio_aux`; at most 64 in one archive). Slice 09 rework: an object of a retired category without our id prefix used to be spared, yet it is never drawn and the Tool Brain refuses it (`studio_owned`): an unreachable orphan. It is archived too (reversible: the scene keeps it as archived), the safer choice than opening the retired categories to the Tool Brain; an object with our id prefix but another category is not ours and survives. Once archived, the ledger file is **kept aside** as `<file>.retired-<UTC timestamp>-<4 hex>` (never deleted, never rewritten; a ledger whose id list is empty is set aside all the same); an unreadable one is kept as `.corrupt-<ts>` and the scan still runs. Traces `legacy_stage_reclaimed` (warning, count), `stage_ledger_retired`, `stage_ledger_unreadable` (error), `stage_ledger_quarantined`. A scene that refuses the archive is `playback_reclaim_failed` (error row) and never blocks Core or a run.
+- The categories stay **reserved**: the Control Center page never draws a `studio_stage` / `studio_aux` object (`control_center_scene_layout.js`, `RETIRED_CATEGORIES`), and the Tool Brain can neither create one nor touch a leftover (`studio_owned`). *Decision flagged for agent 0: § 2's table says the Tool Brain guard is "dropped with the categories"; it is kept as a reservation of the retired categories so that no brain object can be created invisible.*
+- `StageWindows` (`presentation_studio_reload_stage.py`) binds the hot reload to this surface: `current` reads it, `repin` is a compare-and-set on it (`stage_missing`, `stage_changed`, idempotent), the new pin is validated by the catalogue. The Variants Player reports the mount of the run's frame under the surface id (`JarvisStudioReload.hostOutcome`), so a reload during a run is confirmed or rolled back exactly as before.
+
+**The page.** One shared playback client and one Player.
+- `control_center_presentation_studio_player.js` (`window.JarvisStudioPlayer`, run-state API: `view`, `refresh`, `command`, `startRun`, `surface`, `stats`, `state`; the band's chained-play toggle `chain` had no caller left and was removed by Slice 15) draws **nothing** any more. It polls Core (500 ms with a timeline, 1.5 s in a run, 5 s at rest, back-off, hidden tab: nothing) and says, without waiting: `jarvis:studio-view {view}` (every view), `jarvis:studio-playback {running}` (a start or an end), `jarvis:studio-surface {surface}` (read once per surface revision, `null` at the end), `jarvis:studio-timeline {object_id: surface id, timeline, preload}`. Commands are queued (4 at most, `{status: "dropped"}` beyond), bounded by 10 s, and always end in a state the caller says: `applied`, `refused` (`REFUSALS`), `stage_failed` (toast + console), `failed` (transport: toast + console). The follower's segment facts (`jarvis:studio-segment`) go to Core as `advance`, never a command in flight.
+- `control_center_presentation_studio_run.js` (`window.JarvisVariantsRun`, no DOM): `createRunAdapter` mounts the surface in the Variants preview host under its id (`autoplay: false`, `embed: 'variants'`, `swapPrefix`), gives it Core's timeline (`JarvisRemotionFrame.createTimelineFollower`), loads the next scene beside it, mounts the visible detour overlays in the stage's overlay layer, plays an unreadable timeline once unguided; `presenterModel(view)` is the presenter strip, pure; `keyCommand(action, view)` is the presenter column of § 4.15.
+- The explorer hosts the run (`control_center_presentation_studio_explorer.js`, *run mode*):
+  - **Opening.** A run Core started (voice, MCP, the rail, a cue, the Jarvis presenter) opens Variants **windowed** on its presentation and variant, once per run (never fullscreen: § 4.12). Opening Variants during a run of this presentation shows it; opening **another** presentation during a run is refused `explorer_run_in_progress` (« Une autre présentation est en cours : Variantes la montre. Arrêtez-la pour ouvrir celle-ci. »). A run never closes Variants any more.
+  - **What is inert.** The tree, the actions and the upgrade notice are `inert` and, since Slice 10, visibly dimmed with the reason under the actions (*Variants control audit*), with the chip « Présentation en cours » (the variant bar is retired by Slice 10); choosing another variant (`[`, `]`) says why. Continuous video stops (the sequencer is reset, its map dropped): one Player, the run's.
+  - **Transport (§ 5).** ▶ is the run's pause / resume (« Pause », « Reprendre », « Continuer » for Jarvis), ⏮ ⏭ are « Élément précédent » / « Élément suivant », the slider is `aria-disabled` with « La partition mène la présentation… » and shows the read-only composition position of the run's Player (from the variant's composition-clock map; none until the map is read), the readout is that position, « Son » and « Plein écran » are unchanged (Slice 08), « ⋯ » offers « Premier élément » / « Dernier élément », « Présenter » is hidden and « Arrêter » shows (also in the fullscreen overlay).
+  - **Keys (§ 4.15, presenter column).** `Space` pause / resume, `→` `PageDown` next item, `←` `PageUp` previous item, `Home` / `End` first / last item, `S` leaves a locked sequence, `,` `.` say that the score leads; `F`, `M`, `Échap` (nested) as in the video: an `Échap` that only leaves fullscreen never pauses; the `Échap` that closes Variants during a run pauses the run. A thumbnail is `goto {scene_id}` through Core; the strip highlights the scene the run shows.
+  - **Presenter strip** (windowed only, under the stage, it replaces the band): who presents and the phase (with a pending pause or detour), « Scène n/N · élément i/M » and the scene title, the item (`· vous`, `· Jarvis`, silence), the next item and its cue phrase, Jarvis's voice state, the locked-sequence progress, the item's **score time** « Partition 00:12 / 00:30 » (titled « Temps de partition … jamais le temps de la vidéo »), the follower state, the page-wait and problem sentences, and « Sortir de la séquence » (only while a sequence owns the timeline). « Arrêter » is in the transport only (one button, also in the stage fullscreen, where the strip is not).
+  - **« Présenter ▾ »** (§ 6 #21): « Vous présentez », « Jarvis présente », « Répétition » start a run of the variant on screen through the playback client; without a score it is `aria-disabled` with « Cette variante n'a pas de partition ». While a video plays, it pauses and the run goes to the current scene's first item (`goto {scene_id}`).
+  - **Closing Variants during a run pauses it** (a playing run, with the toast « Présentation en pause : Variantes est fermé … ») and the run is never reopened by itself (once per run); the rail or the voice reopens it.
+  - **The end.** The run surface is unmounted, the tree and actions come back, the preview of the selected variant is mounted again paused, and the end is said (« Présentation terminée : la vidéo est de nouveau à vous. », or the problems of `last_run`).
+  - The run's frame posts its events (`posts`) and its mount outcomes go to the hot reload; the preview frame still writes nothing.
+- The scene page no longer follows a timeline and has no `swapPrefix`: the Board shows no presentation run. The edit inspector's preview asks the embedded stage page (`embed: 'variants'`): no `rs-bar` (§ 2). The `rs-bar` remains only on a generic Board Remotion prefab window (not a presentation playback surface; *flagged for Slice 15*).
+- The rail (`control_center_presentation_rail.js`): a click and « Ouvrir les variantes » open Variants windowed; « Présenter » starts a `user_presenter` run (Variants then shows it); « Ouvrir le Studio » (a duplicate once the window is gone) is removed; the « concentration » that opened the window when an agent worked is retired with it (an indicator only, decided by agent 0); the page report is `{rail_visible, variants_open, presentation_id, applied_seq}` (`window_open` is refused).
+
+**Voice and MCP.**
+- `presentation_play start` opens Variants on the run (`/api/presentation-studio/explorer/commands`, `fullscreen: false`, the page's receipt) and answers `surface: "variants"`. With no visible page (`explorer_no_visible_page`) or a refusal of the page, the run is **paused** and the start answers the typed `surface_unavailable` (« Aucune page de JARVIS ne peut montrer la présentation dans Variantes : elle a démarré puis a été mise en pause… »): Jarvis never presents to an empty screen, never into a Board window. The sentence follows the page's own reason (Slice 09 rework): no visible page says to open the JARVIS interface; `explorer_dialog_open` (a form is open in Variants) says to have it closed or validated, then `presentation_view window_open` and `presentation_play resume`; `explorer_command_busy` says to open Variants on the presentation in a moment, then resume — a visible page is never answered « open the interface ». The start waits for the page's receipt at most `HOST_IN_VARIANTS_TIMEOUT_S` = delivery (4 s) + final receipt (10 s) + 2 s = 16 s (was 30 s), then pauses; without a visible page the channel itself answers after 4 s.
+- `presentation_view window_open` / `window_close` keep their names (the brain's habits, its traces) and now open / close Variants windowed through the same command channel, with a receipt; `rail_show` / `rail_hide` stay screen requests. Core refuses the retired screen requests `open_window` / `close_window` (400).
+- `presentation_view stage_fullscreen_enter` opens Variants on the run (receipt), then asks `/api/fullscreen/commands {action: "enter", object_id: "studio-explorer-stage", keys: "none"}`: the Variants **stage** (the Player and its transport); a voice request only arms it (`needs_gesture`), the user's click enters it (§ 4.12, Slice 08).
+- `presentation_inspect target playback` keeps `stage_object_id` (the surface id); `target rail` reports `screen.variants_open`.
+- The prompt says « affiche / ouvre X » = `window_open` (Variants, windowed), « présente X » = `start`, and that a run shows in Variants only.
+
+**Finding 7 of Slice 07, impossible by construction.** A `next` posted to Core (a cue, the voice) used to show the next scene on the run stage, whose host played it by itself 450 ms after it was ready, before the band's 1.5 s poll brought Core's order, which then replayed the entry from frame 0 (measured 78 → 0). In Variants the host never plays by itself (`autoplay: false`) and the stage page never plays on ready (`embed=variants`): a scene's only play is Core's, from frame 0, once. Proved by node on the real host with the retired configuration as the control group (`test_variants_run_js.py`) and in real Chrome (`test_presentation_playback_release_gate_browser.py::test_finding_7_a_next_posted_to_core_enters_the_scene_once_from_frame_zero_without_a_replay`).
+
+**UI ownership and retirement map.**
+
+| Surface / control | Owner since Slice 09 | Retired | Reached by |
+| --- | --- | --- | --- |
+| Run surface (scene, detours) | `RunSurface` (Core memory) | Board window `studio-stage-<run_id>`, `studio-aux-*`, `SceneStage`, the id ledger (read once, kept aside) | `GET .../playback/surface` |
+| Where a run plays | the Variants Player (`JarvisVariantsRun` + explorer run mode) | the scene page's stage frame, timeline follower and `swapPrefix` | `jarvis:studio-surface`, `jarvis:studio-timeline` |
+| Presenter information | the presenter strip `.jvx-presenter` | the band `#jvStudioBand` | `JarvisVariantsRun.presenterModel` |
+| Presenter commands | the Variants transport, « Arrêter », « Sortir de la séquence », the § 4.15 keys | the band's buttons and keys (`P` / `Échap` pause), its fullscreen button, `onNavigate` | `JarvisStudioPlayer.command` |
+| Starting a run from the page | « Présenter ▾ » in Variants, the rail's « Présenter » | the window host's « Jouer », « ▶ Slide » / « ▶▶ Tout » of the band | `JarvisStudioPlayer.startRun` |
+| Light viewer of a presentation | Variants (windowed) | `JarvisPresentationWindow` (`control_center_presentation_window.js`, deleted) | the rail, `window_open` |
+| Polling Core's playback | `control_center_presentation_studio_player.js` (no DOM) | the band's poll, the explorer's own playback check | — |
+| Fullscreen of a run | the Variants stage (header « Plein écran », `F`, `stage_fullscreen_enter` arms it) | `JarvisFullscreen.enter({object_id: stage window, keys: "host"})` | — |
+| Run surface id in the view | `stage_object_id` = `variants-run-<run_id>`, `surface {id, rev}` | `studio-stage-<run_id>[-<n>]`, `stage_closed_by_user`, `stage_closed` (P4 reopen rule) | `presentation_inspect playback` |
+| Legacy Board objects | `LegacyStageReclaimer` (archived at start), never drawn, reserved for the Tool Brain | — | — |
+
+**Level 3 conformance.** Every statement above is tested: Core `tests/unit/test_presentation_studio_run_surface.py` (surface, overlays, pins, compare-and-set, bounded sync, stop pre-emption, whole-scene timeline, unreadable timeline named), `test_presentation_studio_stage.py` (legacy reclaim, ledger kept aside, unreadable ledger, refusal never blocks a run), `test_presentation_studio_playback_service.py` (no Board object in a whole run, detour overlay PX-20, legacy windows archived at start), `test_presentation_studio_playback_rework.py`, `test_presentation_studio_reload_{integration,service,routes,crash}.py` (hot reload on the surface, live values through the real event path), `test_presentation_studio_playback_routes.py` (surface route and relay), `test_presentation_studio_mcp_ops.py` (start hosted or paused `surface_unavailable`, `window_*`, `stage_fullscreen_enter`), `test_presentation_studio_rail.py`; page `tests/unit/test_presentation_studio_player_js.py` (the client draws nothing; cadence, events, commands), `test_presentation_studio_presenter_js.py` (the strip, the key column), `test_variants_run_js.py` (Finding 7 on the real host, overlays, run mode on the fake DOM), `test_control_center_presentation_rail_js.py`, `test_presentation_studio_explorer_lifecycle_js.py`; real Chrome `test_presentation_playback_release_gate_browser.py` (play-all hosted in Variants with no Board stage, the presenter read-only scrubber, the presenter entry from frame 0 through the Variants transport, Finding 7), `test_variants_run_browser.py` (a run Core starts opens Variants windowed, the presenter keys once each, `F` fullscreen, Échap closes and pauses, the strip on screen), `test_presentation_studio_presenter_browser.py` (a refused Jarvis line, a locked sequence, on the strip), `test_presentation_studio_explorer_browser.py` (another presentation refused during a run, the end gives the video back), `test_presentation_studio_reload_real_page_browser.py` (hot reload of the run surface in Variants) and `test_presentation_continuous_playback_browser.py` (`scope: all` from cold in Variants, nothing mounted on the Board). Evidence: `tasks/jarvis-remotion-native-studio-playback-fix/slices/09-remove-legacy-floating-viewer/evidence/`.
+
+**Limits, said.** A run started by a direct Core call while no page action follows waits for the page's next poll (5 s at rest) before Variants opens on it (the voice path opens it at once through the explorer channel). The position on the read-only slider appears once the variant's composition-clock map is read; an HTML (non-Remotion) presentation has none. Variants is a modal dialog, but during a run the interaction-mode HUD stays live and drawn above it, in the rail's column whose list stops above it (`data-keep-live="run"`, `jvx-run` on `<html>`, Slice 09 rework): « Refusé par la voix » and the way out of PRESENTATION stay visible and clickable; the presenter strip never overlaps it. When the run ends the HUD is under the modal again. Closing Variants gives the page back and pauses the run in every active phase: `playing` and `resuming` at once; a `detour` (Core refuses `pause` there) as soon as Core's view leaves it, once (« Présentation en pause au retour »); reopening Variants on the run before that cancels it. The rail's wording beyond « Ouvrir les variantes » / « Présenter » and the Remotion Studio entry are Slices 10 and 11; the keyboard sheet (`?`) is done by Slice 10 (*Variants control audit*).
+
+### Variants control audit (Level 3, Slice 10)
+
+Status: **Level 3** (handoff `jarvis-remotion-native-studio-playback-fix`, Slice 10). It completes § 6 rows #6, #8, #12, #18, #20 and #25, PX-1 for the Variants surface, the control part of PX-11, PX-12 and PX-17, and the « every readout » rule of § 6, on the Variants screen of screenshot 2 (its layout kept). The per-control audit (primary / secondary / obsolete, owner, decision) is `tasks/jarvis-remotion-native-studio-playback-fix/slices/10-variants-interface-control-audit/AUDIT.md`. Nothing here adds a player, a transport or a key map: the Slice 06 transport stays the one transport.
+
+**Owners.** `control_center_presentation_studio_explorer.js` (`build`, `buildTransport`, `openShortcuts`, `setRunInert`, `renderRun`, `renderPresent`), its CSS and the tree keys in `control_center_presentation_studio_explorer_core.js` (`CSS`, `TREE_SHORTCUTS`), the key map in `control_center_presentation_studio_stage_media.js` (`KEY_ACTIONS`, `KEY_NAMES`, `shortcutRows`).
+
+**Two rows under the stage (Slice 02 inventory § 2).** Row 1 is the transport alone (`role="toolbar"` « Lecture de la vidéo »: ⏮, ▶ « Lire » / « Pause » / « Rejouer », ⏭, the slider, the readout `f / L`, « Son », « ⋯ », and « Arrêter » during a run), so the slider takes the width: on one shared row it was squeezed to about 60 px at 1280×720 by the scene title and « Présenter ». Row 2 is « Scène n sur N », the scene title (ellipsis) and « Présenter ▾ » (§ 6 #21: it starts a run, it is not a playback control). During a run row 2 gives way to the presenter strip, which says the scene and the item; in the stage fullscreen only row 1 is drawn. On a short window (640 px high or less) the extra row is paid back by tighter gaps, never by the stage (16:9, at least 300 px wide at 800×600). The theater never shrinks below its stage floor plus its rows (`min-height: auto`): on a crowded preview the preview scrolls, and the presenter strip is never drawn over the transport.
+
+**Each control once.** One play control, one previous / next pair, one slider, one time readout, one fullscreen control (the header's, named « Plein écran » / « Quitter le plein écran » by `aria-label` too, so the name survives a narrow window where its label hides), one « Arrêter ». Removed here:
+- the **variant bar** above the preview (§ 6 #8): the tree is the one place where a variant is chosen; `[` `]` still step to the previous / next live variant (refused, with the reason, during a run);
+- the **tree hint** « ↑ ↓ → ← parcourir · … » (§ 6 #6): replaced by the line « Touche ? : raccourcis clavier » (text, not a second control).
+
+Never in the DOM (asserted at 800×600, 1280×720 and 1920×1080): `rs-bar`, a dwell or « 8 s par slide » control, a loop toggle, « Tout jouer », « Jouer cette slide », a second transport toolbar, a second fullscreen control.
+
+**The keyboard sheet (`?`, § 4.15, § 6 #6 and #20).** `?` anywhere in Variants (not in a text field, not over a menu), or « ⋯ › Raccourcis clavier », opens ONE modal dialog of the explorer's layer (`data-kind="shortcuts"`, `aria-modal`, the rest of Variants inert, Tab kept inside, the focus on « Fermer »). It lists the § 4.15 map of the mode on screen, **derived** from `KEY_ACTIONS` by `shortcutRows('video' | 'run')` (a key added to the map shows in the sheet; a test holds it), the slider keys in video mode, and the tree keys (`TREE_SHORTCUTS`: the keys `treeKey` answers, plus `C`, `Maj+C`, `[` `]`). `?` again or `Échap` closes it and gives the focus back to where it was (the stage, or « ⋯ »). It acts on nothing. Logged `studio_explorer_shortcuts_opened` (info). Limit: a `?` typed while the focus is inside the scene's cross-origin frame is not relayed (the sandbox passes on the § 4.15 keys only); a click outside the image, or « ⋯ », reaches the sheet.
+
+**Menus and dialogs in the stage fullscreen (Slice 10 rework, B1).** While the stage is fullscreen, « ⋯ », « Présenter ▾ », the tree menu and every dialog (the keyboard sheet first) mount in a layer **inside** the fullscreen element (`.jvx-fs-layer`, `overlayLayer`, `mountOverlay`): they are drawn, and the inert set is computed along their own path (`setInertBehind(on, layer)`, which also gives back only what it made inert, never the run's inertness). Nested `Échap` (§ 4.15): the overlay first, the fullscreen on the next press. A browser keeps the first `Échap` of a fullscreen for itself, so while an overlay is open inside the fullscreen stage Variants holds the Keyboard Lock on `Échap` (`navigator.keyboard.lock(['Escape'])`, `escapeLock`) and releases it when no overlay is left. Without the API, or where the browser ends the fullscreen anyway (headless Chrome does, measured), the menu closes and a dialog moves to the windowed layer, still modal, focus inside it. Before this rework `?` in the fullscreen stage opened an unseen sheet and froze the transport.
+
+**The hint on short windows (P3).** At 640 px high or less the line « Touche ? : raccourcis clavier » is compact (smaller type, tighter padding), never hidden.
+
+**Graph actions stay, separate from playback.** « Activer », « Brancher d'ici… », « Renommer… », « Archiver… » (« Restaurer » for an archived variant), the tree menu, `A` `N` `F2` `Suppr` `R` and « Comparer » are unchanged and live under the preview, never in the transport.
+
+**During a run, inert is seen.** The tree, the actions and the upgrade notice are `inert` (Slice 09) **and** dimmed: the host carries `data-run`; the CSS lowers the tree (not its head, which carries the chip « Présentation en cours ») and the upgrade notice to 0.45 opacity, and the actions below an idle disabled action (about 0.4 against 0.5), desaturated. The actions stay on screen, each `aria-disabled` with the reason, and the line `.jvx-run-note` under them says « Présentation en cours : l'arbre et les actions reviennent à l'arrêt (« Arrêter »). ». When the run ends, all of it comes back.
+
+**Every readout is the Player's time or says what it is (§ 6).** The transport readout is `f / L` of the composition (the sequencer's `f`, or the run Player's frame through the composition-clock map; none without a map). The presenter strip's clock is the score time, labelled « Partition » and titled « … jamais le temps de la vidéo ». The wait pill says « Chargement de la scène n sur N · s ». The tree count is authoring metadata and says what it counts: « 3 / 64 variantes » (it was `3/64`, which read like a position). Dates, creators and scene counts of the tree rows and of the metadata are authoring metadata.
+
+**Names (PX-1).** What the user reads in Variants never calls it « explorateur »: « Fermer Variantes », « Variantes reste ouvert … », « Plein écran … : Variantes reste dans la fenêtre », the page refusals `explorer_unavailable` / `explorer_dialog_open` (« … ouvert dans Variantes … », also in the MCP answer), the inspector's door « Ouvrir les variantes »; since the rework (P1) also every refusal, reason and sentence that reaches the user or the brain: `explorer_page_error` « Variantes a rencontré une erreur inattendue. », « Variantes n'est pas ouvert. », the MCP refusals `explorer_unavailable` / `explorer_command_busy` and the armed-fullscreen sentence « Variantes est ouvert ; clique sur « Passer en plein écran » … », the command channel's messages. Code identifiers, reason codes and tool descriptions keep their names.
+
+**Keyboard, focus, selection.** One selected tree row (`aria-selected`), one selected scene in the strip (`aria-selected`, roving `tabindex`), the play button `aria-pressed`; menus and the sheet give the focus back to their opener; every visible control has an accessible name at every size.
+
+**UI ownership and retirement map (Slice 10).**
+
+| Surface / control | Owner since Slice 10 | Retired | Reached by |
+| --- | --- | --- | --- |
+| Choosing a variant | the tree (`[` `]` from anywhere in Variants) | the variant bar `.jvx-vbar` / `.jvx-vchip` | tree keys, `[` `]` |
+| Key help | the keyboard sheet (`openShortcuts`, `shortcutRows`, `TREE_SHORTCUTS`) | the tree hint line « ↑ ↓ → ← parcourir · … » | `?`, « ⋯ › Raccourcis clavier » |
+| Starting a run | « Présenter ▾ » on the scene row | « Présenter » inside the transport toolbar | click |
+| Scene position | the scene row (« Scène n sur N », title); the presenter strip during a run | the scene title squeezed into the transport row | — |
+| Run inertness | `data-run` and `.jvx-run-note` | inert controls that looked enabled | — |
+
+**Level 3 conformance.** Node: `tests/unit/test_variants_controls_js.py` (the sheet derived from the one key map in both modes, its tree keys answered by `treeKey`, each control once and the toolbar holding playback only, the count label, no « explorateur » in what the user reads, `?` / « ⋯ » / `Échap` / focus / a `?` typed in a field, run dimming, the reason and the end). Real Chrome: `tests/unit/test_variants_controls_browser.py` (each control once, named, inside the window, no horizontal overflow and nothing forbidden at 800×600, 1280×720 and 1920×1080; the sheet by `?` and by « ⋯ »; during a run the actions under 0.5 opacity and inert, the tree dimmed, the reason shown, the presenter strip under the transport, everything back after « Arrêter »; the readout audit; with a Remotion runtime the 9-scene video deck, its composition readout and the before / after screenshots). Updated for the new structure: `test_variants_transport_js.py`, `test_variants_transport_browser.py`, `test_presentation_rail_e2e_browser.py`. Fullscreen overlays (rework): `test_variants_controls_browser.py` › `test_in_stage_fullscreen_the_sheet_and_the_overflow_menu_are_drawn_inside_it_and_escape_is_nested` (the sheet and « ⋯ » drawn and hit inside the fullscreen element, the transport inert under the sheet and live after it, the `Échap` lock taken and given back) and `…_space_plays_and_pauses_after_the_sheet_is_closed` (with a Remotion runtime). Docs parity: `tests/unit/test_variants_controls_docs.py`, which also scans the refusals, reasons and spoken sentences of the page, the command channel and the presentation MCP for « explorateur ». Evidence: `tasks/jarvis-remotion-native-studio-playback-fix/slices/10-variants-interface-control-audit/evidence/`.
+
+**Limits, said.** The left presentations rail keeps its geometry (the user's sketch). « Remotion Studio » on the scene row: done by Slice 11 (*Remotion Studio from Variants (Level 3, Slice 11)*). The visual audit on the user's live screen is the Human check HV-RFX-10-01.
+
+### Remotion Studio from Variants (Level 3, Slice 11)
+
+Status: **Level 3** (handoff `jarvis-remotion-native-studio-playback-fix`, Slice 11). It completes § 6 #22, the Remotion Studio half of PX-1 (the MCP card's names, the rail's « Remotion Studio… », the spoken pointer) and PX-2 up to the publish path (Slice 12). Remotion Studio and Variants are two neighbouring spaces with one identity: the scene on screen in Variants, its exact pin. Nothing here adds a player, an editor, a timeline or a second Remotion Studio client: Remotion Studio is the native `remotion studio` process of [remotion-studio.md](remotion-studio.md), in its own tab, its UI untouched.
+
+**Owners.** `control_center_presentation_studio_explorer_remotion.js` (`createRemotionDoor`, `doorModel`, `isRemotionManifest`, `JarvisVariantsRemotionStudio`): the door; it reuses the card's core `JarvisRemotionStudioCore` (`control_center_remotion_studio.js`: `createClient`, `confirmSpec`, `errorText`, now also on `window`) — one client, one confirmation, one vocabulary for both doors. The explorer (`control_center_presentation_studio_explorer.js`) lends it the scene on screen, its dialog layer (`openDialog`, with the new `onClose` hook), the video's pause and its log, and exposes `remotionStudio` (`request`, `open`, `state`, `model`, `refresh`). The rail (`control_center_presentation_rail.js`): `menuModel` entry `studio`, `remotionStudio`. Core is unchanged: `/v1/local-capabilities/remotion/studio*`, relayed by the Control Center (`/api/local-capabilities/remotion/studio*`), and the library read `GET /api/prefabs/{id}/{version}`.
+
+**Where.** « Remotion Studio » is on the scene row, between the scene title and « Présenter ▾ » (§ 6 #22; the Slice 10 transport row stays alone). Under the row, a state line (`.jvx-rms`, `role="status"`) appears only when it has something to say. Hidden during a run (with the scene row) and in the stage fullscreen.
+
+**One identity, chosen once.** The door opens **the scene on screen** of the variant on screen, at its exact pin `{prefab_id, version}` (never « the latest version »; the MCP card's own scene list still offers library versions). Before the click it reads the pin's library entry once (`GET /api/prefabs/{id}/{version}`, cached per pin while Variants is open): its manifest says whether the scene is a Remotion source (the rule of `jarvis.domain.prefab.is_remotion_manifest`, mirrored and held by a test), its publication the provenance shown in the confirmation. A failed read is « unknown », never « not Remotion »: the button stays usable and Core refuses a wrong pin with its own code.
+
+**Relation to the scene on screen** (from Core's view, read as soon as a Remotion scene is on screen — a deck without Remotion never asks, so a Core without Remotion Studio leaves no 503 in the console — then every 2 s while starting or stopping, every 15 s while ready, and at each return to Jarvis's tab: `focus`, `visibilitychange`; never while the tab is hidden):
+
+| Remotion Studio | Button | State line |
+| --- | --- | --- |
+| stopped, never asked | « Remotion Studio » | (none) |
+| starting (this page asked, or Core says `starting`) | `aria-disabled` | « Remotion Studio démarre… 12 s (2 min au plus). » with a pulse |
+| ready on **this pin** | `data-state="here"` (dot), name « Remotion Studio, ouvert sur cette scène »; a click opens ANOTHER tab on Remotion Studio (no confirmation: already acknowledged). The tab is opened `noopener` (security): the browser cannot bring back a tab it opened that way, so each click is a new tab, and the title says so | « Remotion Studio est ouvert sur cette scène (source v1), dans un autre onglet. » and the link « Ouvrir un autre onglet Remotion Studio » (« Ouvrir l'onglet Remotion Studio » while no tab is open) |
+| ready on **another version of the same source** | « Remotion Studio » | « Remotion Studio montre la version 3 de cette scène ; la variante utilise la version 4. … après confirmation. » (said, never corrected silently) |
+| ready on **another scene** | « Remotion Studio » | « Remotion Studio est ouvert sur la scène 2 (« … »). « Remotion Studio » y affiche cette scène, après confirmation. » |
+| files changed in Remotion Studio | (as above) | « n fichiers modifiés dans Remotion Studio, pas encore publiés : la variante n'a pas changé. » and « Publier dans la variante… » — never « enregistré »; said with Remotion Studio stopped too (Slice 12: *Remotion Studio round trip*) |
+| failed | « Remotion Studio » | the code's sentence and the code, « Réessayer », the folded « Journal de Remotion Studio » (Core's last lines) |
+
+**Refused before any dialog, said at the click** (`aria-disabled`, the reason as title and, on click, in the state line): no scene on screen; a scene without a source; a scene that is not a Remotion source; a Core without Remotion Studio (`remotion_studio_unavailable`, « Ce Jarvis n'a pas de Remotion Studio »); the Remotion environment not ready (« … pas prêt (à réparer) : installez-le ou réparez-le (carte « Présentations · moteur », onglet « Plugins externes » du dialogue MCP) … »: installing stays an explicit gesture of that card, never of Variants); a run in progress.
+
+**The click.** ONE modal confirmation in Variants' own layer (`data-kind="remotion_studio"`, the rest of Variants inert): `confirmSpec` of the card (no sandbox, same origin as Remotion Studio's API, data may leave the machine, **the exact version** « Scène 2 sur 9 « … » · source v4 », its **provenance**; a version not written by the user gets the reinforced title « Ouvrir une scène que vous n'avez pas écrite ? », a red button and the focus on « Annuler »), plus « Variantes reste ouvert ici, sur cette scène. Ce que vous changez dans Remotion Studio n'est pas publié dans la variante. » « Annuler », `Échap` or the scrim launch nothing (logged `remotion_studio_cancelled`). « Ouvrir cette scène dans Remotion Studio » (or « Afficher cette scène dans Remotion Studio » when it is open on another pin) then: checks the scene did not change meanwhile, pauses the video if it plays (one playback at a time; the frame is kept), sends Core's `open {prefab_id, version, acknowledge_unsandboxed_scene: true}` (the client adds the acknowledgment only on this user path; the brain has no path here), counts the seconds, and on `ready` opens the tab `window.open(url, 'jarvis-remotion-studio', 'noopener,noreferrer')`.
+
+**Browser permission.** A tab opens by itself only while the confirmation click is still a user activation (`navigator.userActivation.isActive`; 4 s without that API). After a long start (30 to 50 s cold), the browser would block it: the line says « Remotion Studio est prêt sur cette scène. Le navigateur n'ouvre un onglet qu'après un clic : » and offers the real link « Ouvrir l'onglet Remotion Studio » (`target="_blank" rel="noopener noreferrer"`).
+
+**Return path.** Variants is never closed, cleared or re-selected by the door: the variant, the scene, the frame, the tree and the selection stay as they were. The user comes back to Jarvis's tab; that return re-reads Remotion Studio and says its relation and its unpublished files. Remotion Studio's own preview never drives Variants' clock (§ 1).
+
+**Rail.** The menu gains « Remotion Studio… » after « Ouvrir les variantes » (§ 1): it opens Variants on the presentation (windowed, active variant), waits for its preview (15 s at most, otherwise it says « Choisissez une scène, puis « Remotion Studio » sous la vidéo. »), then the same door, the same confirmation (cancelling launches nothing). During a run it says « Une présentation est en cours : Remotion Studio s'ouvre à son arrêt. ». The rail's geometry and indicators are unchanged; its existing active state (the row of the presentation Variants shows, `data-open`, `aria-selected`) is the Variants side of the navigation, the button's `data-state="here"` the Remotion Studio side (decided by agent 0's Work Agent: Core's Studio state knows a pin, not a presentation, so a rail mark would have to guess).
+
+**Names (PX-1).** The MCP card reads « Remotion Studio »; its buttons « Ouvrir Remotion Studio », « Fermer Remotion Studio », its confirmation « Ouvrir cette scène dans Remotion Studio » / « Relancer Remotion Studio » / « Afficher cette scène dans Remotion Studio », its link « Ouvrir l'onglet Remotion Studio », its sentences « Démarrage de Remotion Studio… », and every error sentence of `JarvisRemotionStudioCore.ERRORS` say « Remotion Studio ». The card's subtitle points to Variants for a scene of a presentation. The brain's pointer (`remotion_studio`, `jarvis-remotion`) now says where the user clicks: `where` « Variantes, sous la vidéo : bouton « Remotion Studio » (ou le rail : clic droit sur la présentation, « Remotion Studio… ») », `say` « Pour ouvrir cette scène dans Remotion Studio : dans Variantes, clique « Remotion Studio » sous la vidéo et confirme ; elle y tourne hors du bac à sable. » (with a `scene_id`: `where` « Variantes, cette scène affichée : bouton « Remotion Studio » sous la vidéo », without the rail, whose entry opens the scene on screen and not necessarily this one (Slice 13 rework of native-studio-playback-fix), and `say` « … : affiche cette scène dans Variantes, puis clique « Remotion Studio » sous la vidéo et confirme ; … », since the door opens the scene on screen) It still never calls `open` (MCP behaviour: the answer's words only; tool names, schemas and descriptions unchanged).
+
+**Logs** (`[studio-explorer] <key>`; `warn` / `error` also through `obsClientLog`, hence the Error Logs viewer): `remotion_studio_open_requested`, `remotion_studio_ready` (seconds, `tab: opened | needs_click`), `remotion_studio_tab_opened`, `remotion_studio_cancelled`, `remotion_studio_blocked` (info); `remotion_studio_open_failed` (error, code); `remotion_studio_read_failed` (info for a Core that never answered, `warn` once a read had worked), `remotion_scene_read_failed`; `playback_paused_for_remotion_studio`; rail `remotion_studio_from_rail`.
+
+**UI ownership and retirement map (Slice 11).**
+
+| Surface / control | Owner since Slice 11 | Retired or changed | Reached by |
+| --- | --- | --- | --- |
+| Opening the scene on screen in Remotion Studio | « Remotion Studio » on Variants' scene row (`createRemotionDoor`) | (new; before, only the MCP card, on a library version) | click; rail « Remotion Studio… » |
+| Remotion Studio's state for that scene | the state line `.jvx-rms` and the button's `data-state` | hunting in « Plugins externes » for it | — |
+| The unsandboxed acknowledgment | `confirmSpec`, one confirmation in Variants' layer (and the card's own) | — | click |
+| The library-level Remotion Studio card | `control_center_remotion_studio.js`, renamed « Remotion Studio » (PX-1) | « Remotion · Studio », « Ouvrir le Studio », « Fermer le Studio », « Ouvrir la fenêtre du Studio » | MCP dialog › Plugins externes |
+| The brain's pointer | `remotion_studio` → Variants' button | → the MCP card | voice |
+
+**Level 3 conformance.** Node: `tests/unit/test_variants_remotion_studio_js.py` (the model: every refusal and its words, here / version / other, unpublished files said « pas publiés », the counter, a failure with its code and « Réessayer », the click the browser needs; `isRemotionManifest` against `is_remotion_manifest`; on the fake DOM: the button beside « Présenter », one modal confirmation with the exact version and provenance, « Annuler » and `Échap` launch nothing, the exact pin and the acknowledgment sent, the tab opened while the click is fresh, Variants' variant and scene kept, a failed and a refused start said and logged with their codes, « Réessayer », refusals before any dialog, a long start offering the link, the return re-reading and saying unpublished files, the pause after the confirmation only, a run hiding the door, nothing of Remotion Studio drawn in Variants, the rail entry). Real Chrome: `tests/unit/test_variants_remotion_studio_browser.py` (isolated Core with the real Studio service and a fake `remotion studio` process: the confirmed open on the exact pin, a NEW TAB on Remotion Studio's address, Variants unchanged, the return; a Core without Remotion Studio; a failed start and « Réessayer »; the rail entry; the button named, on the scene row, without overflow at 800×600, 1280×720, 1920×1080). Updated: `test_control_center_remotion_studio.py`, `test_remotion_mcp_tools.py`, `test_control_center_presentation_rail_js.py`, `test_variants_controls_browser.py` (the readout audit knows the state line). Docs parity: `tests/unit/test_variants_remotion_studio_docs.py`. Evidence: `tasks/jarvis-remotion-native-studio-playback-fix/slices/11-studio-variants-navigation/evidence/`.
+
+**Limits, said.** Edits made in Remotion Studio reach the variant only through « Publier dans la variante… » (Slice 12, PX-3, next section). A tab blocked by the browser cannot be detected (`noopener` returns no handle): the link is always offered when the click was not fresh, and stays in the state line once ready. Remotion Studio is one per Core (one pin at a time): opening another scene switches it in place (`sync`, after confirmation). The rail shows no Remotion Studio mark (above). The real `remotion studio` process with this door is the Human check HV-RFX-11-01 (the automated proofs use Core's fake process).
+
+### Remotion Studio round trip (Level 3, Slice 12)
+
+Status: **Level 3** (handoff `jarvis-remotion-native-studio-playback-fix`, Slice 12). It implements PX-3 and closes the publish half of PX-2:
+a change made in Remotion Studio becomes a **new pinned source version** of the scene through an explicit, confirmed publish, survives a Core
+restart, shows in Variants, and can be rolled back. Design note: `tasks/jarvis-remotion-native-studio-playback-fix/slices/12-native-authoring-workspace-roundtrip/DESIGN.md`.
+Process side (workspace, the old sync path, codes): [remotion-studio.md](remotion-studio.md) § 2 bis.
+
+**Three verbs, never mixed.** *Preview*: Remotion Studio's own dev server and its HMR (no MP4 is rendered on an edit), and the sandboxed
+Player of Variants for published versions. *Publish*: « Publier dans la variante… » (this section). *Export*: the render of a frozen
+published version ([remotion-render.md](remotion-render.md)), unchanged.
+
+**Source ownership.**
+
+| What | Owner | Written by |
+| --- | --- | --- |
+| a published source version `(prefab_id, version)` | the prefab library (`PrefabService`), immutable | the source-edit door only (`apply_source_edit`), never rewritten |
+| the scene's pin in a variant | the variant document (`StudioScene.prefab`, `last_valid_pin`, `source_revision`) | the source-edit door (CAS on the variant revision) |
+| the Remotion Studio workspace `runtime/studio/work/src/**`, `public/**` | the user (editor, Remotion Studio) | anyone with the user's rights on the folder; never read into the library except by a confirmed publish |
+| the workspace base `state.pin` + `work.files.json` | `RemotionStudioService` | materialisation (`open` / `sync` / confirmed discard) and a standing publish (rebase) |
+| set-aside copies `local_capabilities/remotion/studio-edits/` | the user (outside `runtime/`) | a confirmed discard, a capability change, the workspace shape before a launch (5 folders kept, the oldest removed and logged `remotion_studio.edits_rotated`) |
+
+**The path.** Variants' state line (Slice 11 door) says
+« n fichiers modifiés dans Remotion Studio, pas encore publiés : la variante n'a pas changé. » whenever the workspace has unpublished files, Remotion Studio open or not. When the workspace base is the scene's exact pin (or a
+base no scene on screen pins: an interrupted publication, a « Revenir », a library version opened from the MCP card — Core decides),
+« Publier dans la variante… » opens ONE confirmation in Variants' layer (`data-kind="remotion_studio_publish"`, the focus on « Annuler »: a stray
+Enter publishes nothing): the scene, EVERY changed file (a scrolling list, never cut), « Jarvis
+compile la scène puis la publie comme NOUVELLE version ; la v<N> n'est pas modifiée et reste disponible », what refuses it. « Annuler »,
+`Échap` or the scrim publish nothing. « Publier » sends `POST /api/local-capabilities/remotion/studio/publish` `{presentation_id,
+variant_id, scene_id, base: <the workspace base the page saw>, digest: <the work_copy.digest of the list the confirmation showed>,
+confirm_publish: true}` (page only: the relay refuses a request that is not `Sec-Fetch-Site: same-origin`); Core publishes only that list
+(`remotion_studio_publish_listing_changed` when the workspace changed since: nothing published, the page lists again), shows « Publication dans la variante… 12 s (2.5 min au plus). » with a pulse, then:
+
+| Outcome | Variants says | Core |
+| --- | --- | --- |
+| published | « Publié dans la variante : nouvelle version de la scène (v<M>) ; la v<N> reste disponible. » + « Revenir à la v<N> » (« la version d'avant » / « Revenir à la version d'avant » when the first publication forked the scene's own source id, whose numbering starts again at 1); the variant is re-read (`ctx.reload`), the Player mounts the new pin at once | new immutable version, pin moved by CAS, workspace rebased |
+| already published | « Déjà publié : la scène utilise la source v<M>. » | an interrupted rebase completed; nothing published |
+| listing changed | « Publication refusée : Les fichiers de Remotion Studio ont changé depuis votre confirmation : rien n'a été publié. … (n fichiers modifiés maintenant) (remotion_studio_publish_listing_changed) »; the list is read again | nothing published; the workspace kept |
+| conflict | « Publication refusée : La scène a changé dans la variante … La variante utilise la v<K> ; Remotion Studio a été ouvert sur la v<N>. (remotion_studio_publish_conflict) » | nothing published; the workspace kept |
+| refused (build, import, file, values, score) | the code's sentence, the code, the diagnostics (`file:line:column`) folded; « Publier dans la variante… » stays | nothing published; workspace and base kept |
+
+« Revenir à … » is the source-edit door's `restore_version` (`POST /api/presentation-studio/presentations/{pid}/variants/{vid}/source-edits`,
+actor `user`): the old content becomes a NEW version (« Revenu au contenu d'avant : publié comme nouvelle version (v<K>). »); nothing is deleted.
+
+**Opening another scene with unpublished files.** The Slice 11 confirmation gains the line « Fichiers non publiés : n fichiers modifiés dans
+Remotion Studio (sur v<N>) seront mis de côté (studio-edits), pas publiés. » and the open carries `discard_unpublished: true`; the same scene
+reopens on its workspace (the user's `src/**` / `public/**` kept; before EVERY launch anything outside the workspace shape — a top-level
+`remotion.config.js`, any other top-level file or folder, a link, a junction, a hard link — is moved into `studio-edits/`, never run, and
+said: `work_copy.set_aside`, « Au dernier lancement, … mis de côté dans studio-edits : jamais exécutés ni publiés. »). Core refuses any other replacement (`remotion_studio_unpublished_edits`); the MCP card turns that refusal
+into a « Mettre de côté les fichiers non publiés ? » confirmation.
+
+**Trust boundary.** Unchanged sandbox for the Player (every published version still passes `SOURCE_GUARDS` and the real build). The publish
+refuses links, junctions, hard links, top-level or generated files and invalid names (their content is never read), and any bare import other
+than `react`, `react/jsx-runtime`, `react/jsx-dev-runtime`, `remotion` **before** the build. **No widening exists** (decided by agent 0's Work
+Agent): no route, setting or tool grants third-party packages, Node built-ins, host files or network; a widening would need an explicit,
+recorded, per-project Human approval and a Player/render host able to serve it — HV-RFX-12-01.
+
+**Agents.** Unchanged: the agent edits a scene through `scene.source_request` then `source-edits` (sandboxed preview, request authority). It
+does not write into the Remotion Studio workspace (code there runs unsandboxed under the user's acknowledgment of a version) and has no path to
+`studio/publish`, `confirm_publish` or `discard_unpublished` (tested). MCP tools, schemas, descriptions and answers are unchanged.
+
+**Interruption and restart.** Killed during the build: nothing published, the workspace and its base intact, the next publish works.
+Killed after the pin, before the rebase: the scene holds the new version, the workspace still names the old base; the next publish finds the
+workspace equal to the scene's version and rebases (`already_published`), publishing nothing more. Unpublished files survive a close, an idle
+stop and a Core restart; a fresh Core shows the published pin in Variants.
+
+**Logs.** Page (`[studio-explorer] <key>`, `warn` / `error` through `obsClientLog`): `remotion_studio_publish_requested`,
+`remotion_studio_published` (status, seconds), `remotion_studio_publish_cancelled`, `remotion_studio_publish_failed` (code, `publish_code`),
+`remotion_studio_revert_requested`, `remotion_studio_reverted`, `remotion_studio_revert_failed`, `remotion_studio_reload_failed`. Core:
+`remotion_studio.publish_*`, `remotion_studio.published`, `remotion_studio.unpublished_kept`, `remotion_studio.workspace_kept`, and the
+door's own `core.presentation_studio.reload_*`. Relay: `remotion_studio.page_door_refused`.
+
+**Level 3 conformance.** `tests/unit/test_remotion_studio_publish.py` (real disk runner, real prefab library, variant and source-edit door:
+publish as a new pinned version with the base intact, add / remove / asset, edits during the publish stay unpublished, nothing to publish,
+stale base and concurrent write = conflict, a base the page did not see, restricted imports refused before the build and no widening field,
+a build failure, an unknown target, symlink / junction / replaced folder / hard link / top-level / generated / bad names, hostile paths,
+another version refused with unpublished files, the capability-change copy outside `runtime/`, rollback, a fresh Core on the same data root),
+`test_remotion_studio_publish_crash.py` (a REAL subprocess killed during the build and after the pin), `test_remotion_studio_publish_routes.py`
+(real Core route, confirmation, exact body, error envelope, discard flag, page-only relay, who may publish), `test_variants_remotion_studio_publish_js.py`
+(model and fake-DOM flows), `test_remotion_studio_publish_docs.py` (this section against the code), the updated Slice 11 / process tests, and
+the opt-in real round trip `test_remotion_studio_roundtrip_real_browser.py` (real `remotion studio`, workspace edit, HMR, publish from
+Variants in real Chrome, a fresh Core). Evidence: `tasks/jarvis-remotion-native-studio-playback-fix/slices/12-native-authoring-workspace-roundtrip/evidence/`.
+
+**Limits, said.** No trust widening (HV-RFX-12-01). The manifest (composition size, fps, duration, inputs) is not edited from the workspace:
+`studio-root.tsx` is generated from it and refused at publish; those changes stay on the validated source-edit path. Unpublished files are
+detected by hash at each read, not continuously. The provenance of a published version is the user (they confirmed it), whatever wrote the
+workspace files (listed in the confirmation). The real `remotion studio` in the user's own browser is HV-RFX-12-01's check.
+
+### Retirement map and migration readers (Level 3, Slice 15)
+
+Status: **Level 3** (handoff `jarvis-remotion-native-studio-playback-fix`, Slice 15). This is the **one index** of what the task retired and of what stays in the code only so that older data still opens. The per-Slice maps above (*Variants run surface*, *Variants control audit*, *Remotion Studio from Variants*) keep the detail of each move; where they and this table disagree, this table wins. Inventory, proofs of unreachability and the rollback plan: `tasks/jarvis-remotion-native-studio-playback-fix/slices/15-retire-duplicate-runtime-and-doc-migration/CLEANUP.md`.
+
+**Retired.** None of these can be reached from a button, a key, the rail, voice, MCP or stored data.
+
+| Retired | By | What is left in the code, and why | Proof |
+| --- | --- | --- | --- |
+| Run stage Board window `studio-stage-<run_id>` (category `studio_stage`) and its detour windows (`studio_aux`) | 09 | **migration readers only**: `LegacyStageReclaimer` + `StageLedger` (`core/presentation_studio_stage.py`, `adapters/file_presentation_studio_stage_ledger.py`) archive what an older Core left; `RETIRED_CATEGORIES` (`control_center_scene_layout.js`) never draws one; the Tool Brain refuses them (`LEGACY_CATEGORIES`, `studio_owned`). `StageError` is the run surface's error type. | `test_presentation_studio_stage.py`, `test_tool_brain_studio_ownership.py`, `test_variants_run_js.py`, `test_presentation_studio_task_base_data.py` |
+| Stage id ledger `state/presentation-studio-stage-ledger.json` | 09 | read once at Core start, kept aside as `.retired-<UTC>` (unreadable: `.corrupt-<UTC>`), never deleted | same |
+| Floating band `#jvStudioBand`, its buttons, keys (`P`, `Échap` pause), item clock, poll | 09 | nothing drawn; `control_center_presentation_studio_player.js` is the page's playback client without DOM. Its chained-play toggle `chain` (the band's « ▶ Slide / ▶▶ Tout ») had no caller left and is **removed by Slice 15**; Core's `play {scope}` verb stays | `test_presentation_studio_player_js.py` |
+| Window host `JarvisPresentationWindow` (`control_center_presentation_window.js`) | 09 | file deleted. Core refuses the retired screen requests `open_window` / `close_window` (400) for an older brain; the MCP names `window_open` / `window_close` stay as Variants, windowed (brain habits, traces) | `test_presentation_studio_rail.py`, `test_presentation_studio_mcp_ops.py` |
+| Stage-page bar `rs-bar` as a presentation transport | 06, 09 | absent in Variants (`embed=variants`). It stays on a **Remotion prefab window of the Board** (no `embed`), outside any presentation, where it is that window's only transport: not a second presentation transport (decided by agent 0's Work Agent, Slice 15) | `test_remotion_stage_js.py`, `test_variants_transport_js.py` |
+| Fullscreen navigation keys for the band (`keys: "host"`, `onNavigate`) | 09 | no presentation caller; kept as the generic fullscreen module's public API ([prefabs.md](prefabs.md) › *Host fullscreen*, `POST /api/fullscreen/commands`) | `test_fullscreen_js.py`, `test_fullscreen_browser.py` |
+| Variant bar, tree hint line | 10 | nothing; the tree carries the variant | `test_variants_controls_js.py`, `test_variants_controls_browser.py` |
+| « Jouer cette slide » / « Tout jouer » (a `manual` run that closed the Explorer) | 05, 06 | nothing; ▶ « Lire » plays the composition | `test_variants_controls_browser.py`, `test_presentation_playback_release_gate_browser.py` |
+| Core deadline cutting a Remotion scene | 05 | `target_duration_ms` still paces an item **without** a media segment (§ 4, *Playback runtime contract*); never a video | `test_presentation_studio_autoplay.py` |
+| « 8 s par slide », loop toggle, the second transport row of screenshot 2 | never in this repository (Slice 01) | nothing to remove; § 2 forbids them | `test_variants_controls_browser.py`, `test_presentation_experience_contract_docs.py` |
+| « Studio » for Variants, « explorateur » in what a person or the brain reads | 10, 11, 15 | the wire names stay (`explorer_open`, `explorer_*` codes, `JarvisStudioExplorer`, routes `/explorer/*`): renaming them would break older brains and traces. Slice 15 replaced the last « explorateur » in the `jarvis-presentation` field descriptions (26 bytes shorter) | `test_variants_controls_js.py`, `test_mcp_catalog.py`, `test_presentation_retirement_map_docs.py` |
+| Style rules for classes no module builds (`.jvx-upgrades`, `.jvx-scene-role`, Slice 10) | 15 | removed; the run now really dims the upgrade notice (`.jvx-upg`) | `test_variants_css_orphans.py` |
+
+**Migration readers kept, and when they could go.** They cost one bounded scan at Core start and a few lines; each is the only way an older install's leftovers are cleaned or refused.
+
+- `LegacyStageReclaimer` / `StageLedger` / `FileStageLedger`: as long as any data root may have run a Core older than Slice 09. A PC cannot prove that, so they stay.
+- `RETIRED_CATEGORIES` (page) and `LEGACY_CATEGORIES` (Tool Brain): an object of these categories in `scene.sqlite3` stays invisible and untouchable until archived; dropping either would let a leftover be drawn or written.
+- The document-hygiene pattern `studio-stage-[\w-]+` (`domain/presentation_studio_template_sanitize.py`): an old template may still name a stage handle.
+- Core's 400 on `open_window` / `close_window`: a brain or a script of the old vocabulary is told, never silently obeyed.
+
+**Saved data.** The task changed **no stored document format and no SQLite schema** (no migration, no version bump): presentations, variants, scores, art directions and prefab versions written by the task base open, map onto the composition clock and play in the Variants run surface, byte-identical afterwards (`test_presentation_studio_task_base_data.py`, data written by the code of `a8377529`). New state lives beside the old one: the Remotion Studio workspace and its `studio-edits/` copies (Slice 12), the `.retired-<ts>` ledger.
+
+**Rollback.** Reverting the task's commits needs no data step, with two exceptions an older Core would not see: (1) the old ledger renamed `.retired-<ts>`: its ids are already archived, so nothing is lost; rename it back only to make an older Core re-read it; (2) unpublished Remotion Studio edits kept in the workspace or `studio-edits/` (Slice 12): an older Core ignores them, copy them out first. No feature flag was added: the retired surfaces have no switch that brings them back, by design (§ 2: no parallel UI). Slidecar stays the explicit Human experiment, never a fallback.
+
+**Level 3 conformance.** `test_presentation_retirement_map_docs.py` pins this section against the code: each retired owner absent, each migration reader present, `rs-bar` only in the stage page, no `chain` in the playback client.
+
+### 2026-10 § 4. Transport semantics (continuous video, the default)
+
+**4.1 Opening.** Variants opens **paused** on local frame 0 of the selected scene (scene 1 by default), sound muted. It never starts playing by itself, including when the voice opens it.
+
+**4.2 Play** (« Lire », ▶, `Space`):
+- Plays **continuously** from `f` to the last frame of the composition.
+- Crosses every scene boundary with no stop, no blank, no visible remount or reload, and no return to an earlier frame.
+- Each scene plays its authored length, and scene `k+1` begins on its local frame 0.
+- **There is no per-slide timer.** Video never reads `target_duration_ms` or any dwell.
+- Play **must not** close Variants, open a window, switch the interaction mode, arm a cue or speak.
+- A variant that is not Remotion (Slidecar or HTML engine): ▶ « Lire » is `aria-disabled` with its reason (« La lecture vidéo n'existe que pour une présentation Remotion »). Its presenter run follows [presentation-engine.md](presentation-engine.md); this contract does not redesign it.
+
+**4.3 Pause and resume.** Pause holds exactly frame `f`. Resume continues from `f`: never a jump to a segment start, never a scene restart.
+
+**4.4 Previous and next scene** (⏮ ⏭, `←` `→`, `PageUp` `PageDown`):
+- `k` is the scene that contains `f`. Next goes to `start_(k+1)`. Previous goes to `start_(k-1)`; from scene 1 it goes to frame 0.
+- The play state is kept: playing continues from the target; paused stays paused on the target's frame 0.
+- Next on the last scene is disabled (« Dernière scène »).
+- To restart the current scene, click its thumbnail.
+
+**4.5 Thumbnail click.** A click on a strip thumbnail goes to `start_k` of that scene, play state kept. The strip highlight is always the scene that contains `f`.
+
+**4.6 Global scrub.**
+- One slider over `[0, L-1]`, with a tick at each scene boundary.
+- Dragging pauses for the drag and restores the previous play state on release.
+- During the drag the Player, the scene label, the readout and the strip all follow, with at most one seek per animation frame.
+- Keys on the focused slider (ARIA slider pattern): `←` / `→` step 1 s; `PageUp` / `PageDown` go to the previous / next scene start; `Home` / `End`.
+
+**4.7 End of the show.**
+- On `L-1` the Player **holds the final frame** and the state reads « Terminé ». It never wraps, never loops and never restarts by itself: the Player runs with `loop: false` (Slice 06).
+- The primary button becomes « Rejouer » (↺). This is the only replay: an explicit gesture that goes to `f = 0`, then plays.
+- `Home` also goes to `f = 0` and keeps the play state.
+
+**4.8 Agreement invariant** (testable by Slices 04 to 06 and by QA):
+- At every sample, `strip.selected == sceneOf(f)`, `slider.value == f`, the readout is `f / fps`, and the mounted Player shows local frame `f - start_k`, within ±1 frame while playing.
+- A surface that cannot show `f` must show no position at all.
+
+**4.9 Edits during playback** (hot reload, an agent edit, a newer revision):
+- The Player swaps in place.
+- The position is kept as `(scene_id, local frame)`, clamped to the new length, and the interval map is rebuilt.
+- The play state is kept.
+
+**4.10 Changing variant** (tree, `[` `]`). Playback pauses, and Variants lands on frame 0 of the same logical scene in the new variant (the Slice 19 seam).
+
+**4.11 Failure.**
+- A scene that fails to compile or load shows its failure in the stage, using the existing typed states (a live counter while it prepares).
+- Playback pauses at that scene's start, with the reason and an action: « Réessayer » or « Scène suivante ».
+- Never a silent skip, never a Slidecar fallback ([presentation-engine.md](presentation-engine.md)).
+
+**4.12 Fullscreen.**
+- **One control:** the Variants header button « Plein écran ». `F` activates that same control; it is not a second control.
+- The fullscreen target is the Variants **stage**: the Player plus a transport overlay that hides itself. The tree, the metadata and the actions stay out, so the audience never sees the workshop.
+- **User-gesture rule.** Entering needs a user activation (a click or a key).
+  - Voice and MCP may only **arm** it (`needs_gesture`, *Generic fullscreen surface*), and the agent must say that the user has to click.
+  - A refusal stays windowed and says why (« plein écran indisponible » / « refusé »).
+- **Exiting.** The browser's `Échap`, or the button. The first `Échap` leaves fullscreen (the page is not told); the next one closes Variants (the existing nested rule).
+- Entering or leaving fullscreen changes neither `f` nor the play state.
+- These **must not** exist: a fullscreen button in the stage page, a transport row, a band or a window host.
+
+**4.13 External display.**
+- **P0 path:** move the Jarvis browser window to the external screen, then press « Plein écran ». Fullscreen opens on the window's current display.
+- **Optional:** when the browser grants the window-management permission, « Plein écran » may offer a choice of screen (`requestFullscreen({screen})`).
+- No second Jarvis window and no separate presenter view on another screen in this task.
+- The physical check is a Human check ([OPERATIONS.md](OPERATIONS.md)).
+
+**4.14 Sound.** Muted at opening. A « Son » toggle (`M`) sits in the transport. Unmuting is a user gesture.
+
+**4.15 Keyboard map: one map for the whole screen.**
+- It acts while the focus is inside the Variants stage, transport or strip, and in stage fullscreen.
+- It never acts in a text field or a dialog.
+- The tree keeps its own keys while it has the focus (*Variant Explorer interaction contract › Keyboard*).
+- A key is consumed once.
+- Precedence: when the focus is on a widget with its own ARIA keys (the scrub slider, the scene-strip listbox, the tree), that widget's keys win. The map below applies everywhere else in scope.
+
+| Key | Continuous video (default) | Presenter run |
+| --- | --- | --- |
+| `Space` | play / pause; at the end, « Rejouer ». A focused native button acts on its own | pause / resume the run |
+| `→` `PageDown` | start of the next scene | next score item |
+| `←` `PageUp` | start of the previous scene | previous score item |
+| `Home` / `End` | `f = 0` / final frame | first / last item |
+| `,` / `.` (paused) | one frame back / forward | (none) |
+| `F` | « Plein écran » (the header control) | same |
+| `M` | sound on / off | same |
+| `S` | (none) | leave a locked sequence (only while one owns the timeline) |
+| `Échap` | nested: menu, dialog, fullscreen (browser), then Variants | same; leaving fullscreen **never pauses**; closing Variants **pauses the run** |
+| `?` | keyboard sheet | same |
+
+Removed:
+- the band's `P` / `Échap` pause;
+- `↑` / `↓` as scene browsing in the stage. They stay as tree keys;
+- any other key map: the band's, the window host's, and the hint of the unknown lower row.
+
+**4.16 Accessibility.**
+- **Transport.** The transport is a `role="toolbar"` with a name. The primary button's name follows its state: « Lire », « Pause », « Rejouer ».
+- **Scrubber.** It is a `role="slider"` with:
+  - `aria-valuemin` 0;
+  - `aria-valuemax` `L-1`;
+  - `aria-valuenow` `f`;
+  - an `aria-valuetext` such as « Scène 3 sur 9, 0:12 sur 1:30 ».
+- **Scene strip.** It is a `listbox`, and `aria-selected` marks the current scene.
+- **Announcements.** A polite live region announces a scene change caused by a user action. Continuous play is not announced, scene by scene or frame by frame.
+- **Disabled controls.** A disabled control is `aria-disabled` with its reason, and says the reason when activated.
+- **Visual baseline** (the explorer's rules): a 2 px focus ring, targets of at least 24 px, text of at least 4.5:1, forced colours supported.
+- **Focus.** Focus returns to the opener after fullscreen, a menu or a dialog.
+- **Reduced motion.** Under `prefers-reduced-motion`, no UI animation or transition runs, and the overlay hides instantly instead of fading. The video is the user's content: it plays when asked, and nothing autoplays anyway.
+
+### 2026-10 § 5. Presenter run versus continuous video
+
+| | Continuous video (« Lire ») | Presenter run (« Présenter ») |
+| --- | --- | --- |
+| Started by | ▶ / `Space` / a voice "lis la vidéo" (the same transport command) | the « Présenter » split button, with three choices: « Vous présentez » (`user_presenter`), « Jarvis présente » (`jarvis_presenter`), « Répétition » (`rehearsal`). Also the rail's « Présenter » and the MCP tool `presentation_play` |
+| Who advances | the composition clock, alone | the score: the presenter's `next`, an armed cue, the Jarvis presenter, a locked sequence |
+| Media time | the authored composition durations | each item plays its segment `[from, until]`, then **holds on its anchor frame** until the score moves |
+| Score, cues, sidekick | not used: nothing armed, no speech, no mode switch | Core-owned, contracts unchanged (roles, armed set, follower, presenter, locked sequences) |
+| `target_duration_ms` | never read | paces **only** an item with no media segment (an HTML scene, a silence, a one-frame hold). Never cuts, shortens, extends or loops a composition |
+| Scrubber | free | read-only position (`aria-disabled`, « La partition mène la présentation ») |
+| Thumbnail click | start of the scene | `goto {scene_id}` through Core; the Player follows |
+| Surface | the Variants Player, windowed or fullscreen | the same Player. Starting a run never enters fullscreen by itself: fullscreen stays the one header control (§ 4.12) |
+| Around it | tree and actions stay usable (choosing another variant pauses) | tree and actions inert, with the reason « Présentation en cours »; the presenter strip is shown while windowed |
+| Requires | a Remotion variant with a ready engine | the same, plus a score. Without one, « Présenter » is `aria-disabled` with « Cette variante n'a pas de partition » (`presentation_studio_unknown_score`). The art-direction rules for serious roles are unchanged |
+| End | holds the final frame, « Terminé » | `ended` holds the last item's frame; « Arrêter » stops and restores the mode |
+
+**Entering a scene in a presenter run.**
+- A **newly entered** scene always starts on its local frame 0 and plays forward to the item's `until`. The entry is played, never joined mid-animation (defect C). Nothing Jarvis does by himself cuts it either: a locked-sequence step or the end of a Jarvis line during the entry continues it to the new stop frame; only explicit input (the user's `next`, a cue) cuts to the new anchor.
+- This holds even when the entering item reveals an anchor with `at_ms > 0`. Anchors only bound where the Player stops and holds (`until`), never where a newly entered scene starts.
+- This overrides the rule of *Remotion timeline bridge › What the score asks for* (`from_frame` = the furthest revealed anchor) for a scene entry. It is a change of the Core timeline bridge (Slices 05 and 07).
+- Going back or jumping (`previous`, `goto`, a recovery point) shows the target item's anchor frame directly and holds it, without replaying earlier segments.
+- Resuming after a pause, in the same scene, continues from the exact frame held.
+
+**Holds.**
+- A presenter run may hold on an explicit score anchor frame for as long as needed.
+- That hold is the only "per-slide" stop that exists. It is authored in the score (anchors), never a global or per-slide duration setting.
+
+**Independence.** The media frame never moves the score, never fires a cue and never speaks (unchanged). The score never shortens a composition.
+
+**Implemented (Level 3, Slice 07).** Score, Core and voice semantics. Since Slice 09 the run is shown in Variants (*Variants run surface (Level 3, Slice 09)*), never on a Board window.
+- **Scene entry.** `jarvis/domain/remotion_timeline.py` › `place` (pure) gives the Player its segment from the move that brought the score there. The playback service names the move from the committed command (`_MOVE_OF` in `jarvis/core/presentation_studio_playback.py`):
+
+  | Move | Commands | Newly entered scene | Same scene |
+  | --- | --- | --- | --- |
+  | forward | `start`, a user's `next`, a cue, `reveal`, the end of a locked sequence, `skip_sequence`, a `return` that lands further | local frame 0 to the item's `until` | the new anchor's segment, from its frame (the Player stopped on the frame before it): an explicit move goes where it is asked |
+  | step | a locked-sequence step (`sequence_step`); the presenter's `next` at the end of Jarvis's own line(s) (`notify(NEXT, line_end=True)`: `line_heard`, `sequence_done`) | local frame 0 to the item's `until` | while the scene's entry still plays, the entry is never cut: it goes on from the frame it reached to the step's `until` (rework I2, below); once the entry finished, the new anchor's segment like forward |
+  | jump | `previous`, `goto`, `hide`, a recovery point, a `return` that lands earlier | the item's stop frame, held | the item's stop frame, held |
+  | none | pause, resume, detour, the stage's acknowledgement, who speaks | (a new entry) | unchanged: same segment, same `seq`; the Player continues from the exact frame it holds |
+
+  A chained play keeps its own rules: `play {scope}` restarts the scene from 0, and a jump inside a chained play plays the target item's segment (a hold there would be paced by a dwell and moved on unseen).
+- **A locked-sequence step, or the end of a Jarvis line, never cuts an entry (Slice 07 rework, I2; 2nd rework).** Step 0 is released when the voice starts the intro line, typically 600 ms or more after the scene entered. While the entry has not finished, a step that reveals a later anchor extends the entry instead of jumping to the anchor: the Player is ordered from the frame the entry reached to the step's `until`. "Finished" and "reached" come from `PresentationStudioPlaybackService._entry_reached`: in a run with page reports (Jarvis paces, chained play) the entry finished when the page said `done`; before its `started` the Player has not begun (frame 0); after it, Core's played time since `started` (`SegmentClock`). In a run without page reports, Core's played time alone, finished once it covers the entry. `place` stays pure (it receives that frame as `entering`). Known limit: the frame is Core's estimate, so the re-ordered Player may step a few frames (the report latency) backwards or forwards; it never jumps to the anchor. The end of a Jarvis presenter line is Jarvis pacing himself, not an input: the presenter's advance after a line it heard in full (`line_heard`) or after its host sequence (`sequence_done`) is sent as `notify(NEXT, line_end=True)`, which the service commits as `Move.STEP`, so it continues the entry exactly like a step. A line the user cut (`line_cut_policy_refused_pause`), a media `done` and a silence's target are not line ends. Explicit input during the entry (a user's `next`, even while Jarvis speaks; a cue) still cuts to the new anchor's segment: it goes where it is asked.
+- **`target_duration_ms`** paces only an item with no media segment, in every role: the chained-play dwell (Slice 05) and, since Slice 07, the Jarvis presenter's explicit silence. A silence of a run Jarvis paces (`jarvis_presenter`, speaking `rehearsal`) on a media segment lasts the media: the page reports `started` / `done` in such a run (`timeline.auto`; an anchorless Remotion scene gets one whole segment), Core records the `done` (`media_segment_done`) and the presenter moves on; a page that says nothing is said (`page_wait`), never skipped. Core never advances on the page's word in such a run: it only learns. A Remotion scene whose timeline cannot be resolved (`timeline_unresolved`) is held the same way during such a silence (the motion is never cut, `target_duration_ms` is never used as a fallback pace), but never silently (Slice 07 rework, I1): once the item has been held for its soft target (or `SILENCE_DEFAULT_MS` 1500) + `PAGE_SILENCE_MARGIN_MS` 15000, pauses excluded, the view carries `page_wait {seq: null, started: false, waited_ms, reason: "timeline_unresolved"}`, `timeline_unresolved_held` is traced once per item entry, and the band says « Scène n : la ligne de temps de la vidéo n'a pas pu être lue, la scène est tenue depuis N s (jamais coupée) ; « Suivant » ou « Arrêter » restent possibles. ». Whether the scene on the stage is a video is always answered for that scene (Slice 07 rework, B1): from its own last resolution or its pin's manifest already read, otherwise `media_segment()` says `pending` and the presenter waits; the stage sync wakes the presenter once it lands (`_commit` wakes it before the sync), so a silence over an HTML scene ends on its target. A user-paced run (`user_presenter`, silent `rehearsal`) has no pace at all. A locked sequence runs on its own authored offsets and `duration_ms`, never on `target_duration_ms`.
+- **Continuous video uses nothing from the score.** « Lire », « Lire seulement cette scène », ⏮ ⏭, the slider, End and « Rejouer » only read the composition-clock map: no run, no armed set, no speech, no mode switch, no cue follower work.
+- **Voice unavailable is a status.** A run whose cue follower never pulls says `follower: absent` and « Suivi vocal indisponible : … La lecture continue au clavier et à la souris. »; a Jarvis line the voice never starts pauses the run with `speech_not_started` (« La voix n'a pas commencé la ligne à temps … »), the media holds its frame, and the keyboard resumes and moves the run on. Continuous video reads neither.
+- Tests: `tests/unit/test_remotion_timeline_placement.py` (rules and a seeded walk), `test_remotion_timeline_service.py`, `test_presentation_studio_presenter_media.py` (fake speech: Jarvis presenter, speaking rehearsal, locked sequence, user presenter with cues, voice unavailable), `test_presentation_studio_presenter_media_rework.py` (a stage whose `show` yields under the real presenter loop, an unresolved timeline held and said, 600 ms of voice latency, resume / stale `done` / `previous` into an earlier scene, a video silence held while its kind is `pending` past its target, the end of a Jarvis line continuing an entry while a user `next` cuts it, the entry clamp, the retime wake), `test_presentation_studio_playback_continuous_isolation.py` (real Core: every route the real Variants page calls while it opens and plays the video, taken from the page itself, arms nothing and says nothing), `test_variants_transport_js.py::test_continuous_video_reads_the_map_and_never_touches_the_score_cues_or_speech`, real Chrome `test_presentation_playback_release_gate_browser.py::test_a_presenter_run_enters_a_scene_on_frame_zero_while_its_entry_reveals_a_later_anchor` (evidence `tasks/jarvis-remotion-native-studio-playback-fix/slices/07-presentation-score-voice-compatibility/evidence/`).
+- Human checks (not run by Slice 07; no live voice proof is claimed): that evidence folder's `README.md`, *Human checks*.
+
+**Switching between the two.**
+- ▶ during a presenter run is the run's pause / resume, not a switch to continuous video.
+- From presenter run to continuous video: « Arrêter », then « Lire ».
+- « Présenter » while a video plays: the video pauses and the run starts at the first item of the current scene.
+
+**Presenter strip** (windowed only, under the stage; it replaces the band):
+- who presents, and the phase;
+- « Scène n/N · élément i/M »;
+- the next item and its cue phrase;
+- the follower state (*Suivi vocal indisponible*, with the reason);
+- the item time against its soft target, labelled as score time;
+- « Sortir de la séquence » (`S`, only while a sequence owns the timeline);
+- « Arrêter ».
+
+In fullscreen (entered by the header control) only the self-hiding transport overlay shows, with « Arrêter ».
+
+**What today's buttons become.** None of these buttons closes Variants or opens a window.
+
+| Today | Today's behaviour (AUDIT.md § 1.1 #13, defect A) | Becomes |
+| --- | --- | --- |
+| « Tout jouer » | starts a `manual` rehearsal (no `scope`), closes the explorer, the floating stage appears, nothing advances | **merged into ▶ « Lire »**: continuous video in Variants |
+| « Jouer cette slide » | same manual rehearsal, from the current scene | overflow menu, « Lire seulement cette scène »: plays the scene from its start frame to its last frame, then holds that frame paused. Video semantics, no run |
+| (the rehearsal both of them started) | | « Présenter › Répétition » |
+| window host « Jouer » / rail « Jouer » (`user_presenter`) | starts a run, then the window closes | « Présenter » (rail menu, Variants) |
+
+**Opening Variants during a presenter run** shows that run. It is no longer refused, and a run that starts no longer closes Variants.
+
+**Voice and MCP.**
+- `presentation_play` starts a presenter run on the Variants surface. Continuous video by voice uses the same Variants transport commands.
+- With no visible Variants page, the request is refused, or the run pauses, with a typed and visible reason. It never plays into a Board window.
+- Exact routes and fields: Slices 07 and 09. **Done (Slice 09):** the start opens Variants on the run with the page's receipt; without a visible page the run pauses and the start answers `surface_unavailable` (*Variants run surface*).
+
+### 2026-10 § 6. Variants control inventory (target)
+
+Today's owners: AUDIT.md § 1.1 (screenshot 2) and § 1.2 (screenshot 1). Each control appears **once**.
+
+| # | Control today | Decision | Target | Key |
+| --- | --- | --- | --- | --- |
+| 1 | title « Variantes », subtitle, counts | retain | unchanged | (none) |
+| 2 | mode chip « Fenêtré » / « Plein écran » | retain (status) | unchanged | (none) |
+| 3 | header « Plein écran » | **retain, the single fullscreen** | stage fullscreen (§ 4.12) | `F` |
+| 4 | « Fermer » | retain | unchanged | `Échap` (nested) |
+| 5 | tree « ÉVOLUTION » and its count | retain | unchanged | tree keys |
+| 6 | tree hint « ↑ ↓ → ← parcourir · … » | merge | the keyboard sheet | `?` |
+| 7 | « Archivées (n) » | retain | unchanged | (none) |
+| 8 | variant bar above the preview (one chip per variant) | merge | into the tree; `[` `]` stay | `[` `]` |
+| 9 | preview stage | **retain, promoted** | the Variants Player | (none) |
+| 10 | inner bar `rs-bar` (« Lecture », scrub, `x.x s / 30.0 s`) | **remove** | replaced by the transport (15 to 19) | (none) |
+| 11 | scene ‹ › above the strip | merge | transport ⏮ ⏭ | `←` `→` `PageUp` `PageDown` |
+| 12 | scene title, « Scène n sur N » | retain, derived from `f` | the scene line | (none) |
+| 13 | « Tout jouer » | merge | ▶ « Lire » (15) | `Space` |
+| 14 | « Jouer cette slide » | overflow | « Lire seulement cette scène » | (none) |
+| 15 | (new) ▶ « Lire » / « Pause » / « Rejouer » | add | the primary transport button | `Space` |
+| 16 | (new) ⏮ ⏭ | add (= 11) | scene start, previous and next | `←` `→` |
+| 17 | (new) global scrubber with scene ticks | add | the only scrub | slider keys |
+| 18 | (new) readout `0:12 / 1:30` | add | the only time readout (composition time) | (none) |
+| 19 | (new) « Son » | add | sound toggle | `M` |
+| 20 | (new) « ⋯ » overflow | add | « Lire seulement cette scène », « Revenir au début », « Raccourcis clavier » | `?` (sheet) |
+| 21 | (new) « Présenter ▾ » | add | presenter run (§ 5) | (none) |
+| 22 | (new) « Remotion Studio » | add (Slice 11) | opens the scene on screen in Remotion Studio, after the acknowledgment | (none) |
+| 23 | scene strip `01 … 09` | retain | goes to the scene start; its highlight follows `f` | strip arrows |
+| 24 | metadata (`#n`, title, parent, date, scenes, chips, art-direction palette, note) | retain | unchanged | (none) |
+| 25 | « Activer », « Brancher d'ici… », « Renommer… », « Archiver… » (« Restaurer » for an archived variant) | retain | unchanged | `A` `N` `F2` `Suppr` (`R`) |
+| 26 | « Comparer » (marked variants, Slice 19) | retain | unchanged | `Maj+C` |
+| 27 | newer-version notice, « Essayer dans une nouvelle variante » | retain (collapsed) | unchanged | (none) |
+| 28 | lower row `\|◀ ◀◀ ▶ ▶▶ ▶\|`, `6/9 · 2 s / 8 s`, « 8 s par slide », loop, second fullscreen, hint « → suivante · ← début … » | **forbidden** | not in the repository at `d2332e61` (AUDIT.md § 1.3): nothing to remove in code, nothing to port | (none) |
+| 29 | band (screenshot 1): « ◀ Précédent », « Pause », « Suivant ▶ », « ▶ Slide », « ▶▶ Tout », « Plein écran », « Arrêter », « Sortir de la séquence », « Ouvrir l'explorateur de variantes » | **remove** (Slice 09) | ⏮ ⏭ (16), ▶ (15), overflow (20), ▶ (15), header (3), presenter strip, presenter strip, *gone* (you are already in Variants) | § 4.15 |
+| 30 | window host: ◀ ▶, strip, « Plein écran », « Jouer », « Studio », « Fermer » | **remove** (Slice 09) | the rail opens Variants | (none) |
+
+Done by Slice 11 (*Remotion Studio from Variants (Level 3, Slice 11)*): #22 (« Remotion Studio » on the scene row, beside « Présenter », after the acknowledgment).
+
+Done by Slice 10 (*Variants control audit (Level 3, Slice 10)*): #6 (the hint is the keyboard sheet), #8 (the variant bar is gone, `[` `]` stay), #12 (« Scène n sur N » and the title on their own row, hidden in a run where the presenter strip says them), #20 (« Raccourcis clavier » in « ⋯ »), #25 (the graph actions dimmed, never removed, during a run).
+
+**Forbidden in video playback, now and later:**
+- any per-slide or per-scene dwell, duration or "seconds per slide" control. The « 8 s par slide » selector is the example;
+- a second transport row;
+- a loop or repeat toggle;
+- a second fullscreen control;
+- any time readout other than composition time, except the presenter strip's score time, which is labelled as such;
+- any control that closes Variants in order to play.
+
+### 2026-10 § 7. Product acceptance matrix
+
+Each row is observable. Later Slices and QA test against it; "real browser" means headless Chrome against an isolated Core.
+
+| ID | Area | Pass criteria | Slices |
+| --- | --- | --- | --- |
+| PX-1 | Naming | on every surface (rail, Variants, inspector, Remotion card, tooltips, `aria-label`s, spoken answers), no string uses the bare word « Studio » or « explorateur de variantes » as a name; the rail menu offers « Ouvrir les variantes » and « Remotion Studio… »; the Variants header reads « Variantes » | 10, 11 |
+| PX-2 | Remotion Studio | from Variants, one click plus the acknowledgment opens the **scene on screen** at its exact pin in Remotion Studio; cancelling launches nothing; the brain cannot launch it; unpublished edits are said to be unpublished | 11, 12 |
+| PX-3 | Remotion Studio round trip | a change made in Remotion Studio becomes a new pinned source version of the variant through the publish path, visible in Variants after a refresh, with rollback | 12 (done: *Remotion Studio round trip (Level 3, Slice 12)*) |
+| PX-4 | Variants opening | opens paused on frame 0 of the selected scene, sound muted; browsing tree and scenes writes nothing (the existing hash test still holds) | 06, 10 |
+| PX-5 | Embedded Player, continuous play | 9-scene deck: ▶ plays scene 1 frame 0 to the final frame with no stop; each scene shows local frames `0..len-1` once, in order; 0 backward steps; never blank between scenes (frame sampler ≤ 50 ms) | 04, 05, 06 |
+| PX-6 | No per-slide cut | a scene of 30 s with a score `target_duration_ms` of 8 s plays its full 30 s in continuous play | 03, 05 |
+| PX-7 | Pause / resume | pausing at frame `f` holds `f` (no drift for 5 s); resume continues from `f` | 06 |
+| PX-8 | Scene navigation | next, previous and a thumbnail click land on the target scene's local frame 0 (sampler) and keep the play state; next is disabled on the last scene | 04, 06 |
+| PX-9 | One clock | during play, scrub and navigation, invariant § 4.8 holds at every sample; scrubbing changes Player, strip, label and readout together | 04, 06 |
+| PX-10 | End | at `L-1` the final frame is held for ≥ 5 s and never wraps; « Rejouer » restarts from frame 0 | 06 |
+| PX-11 | Controls | exactly one play control, one fullscreen control, one scrub, one time readout, one prev/next pair; no `rs-bar`, no band, no window host, no dwell selector, no loop toggle in the DOM | 09, 10 |
+| PX-12 | Fullscreen | the header button (or `F`) puts the stage in fullscreen, without the tree, and keeps `f` and the play state; a voice request only arms it (`needs_gesture`); `Échap` behaves as in § 4.12 | 08, 10 |
+| PX-13 | External display | Human: on a second screen, the stage fills the whole screen, no tree, metadata or Board is visible, and the PX-5 criteria hold (OPERATIONS recipe) | 16 |
+| PX-14 | Presenter mode | « Présenter » starts a `user_presenter` run **in Variants** (no Board window); `next` / a cue advances; each item holds on its anchor frame; entering a scene starts at local frame 0; `previous` shows the anchor frame without replay; « Arrêter » restores the mode; no item is cut by `target_duration_ms` | 07, 09 |
+| PX-15 | Presenter, Jarvis | « Jarvis présente » speaks the score through the existing path; the media follows the score; the band is absent; the presenter strip shows the state | 07, 09 |
+| PX-16 | Floating viewer removed | no `studio_stage` / `studio_aux` object is created by any start (button, rail, voice, MCP, presenter); a leftover object from an older run is archived once at start | 09 |
+| PX-17 | Keyboard and accessibility | the § 4.15 map acts once per key, only in scope; the § 4.16 roles and names are present; reduced motion leaves no UI animation | 10 |
+| PX-18 | Failure | a scene that fails to compile pauses playback at that scene, with the reason and « Réessayer »; no Slidecar, no silent skip, an Error Logs row | 06 |
+| PX-19 | Hot reload during play | a source edit landing while the video plays keeps `(scene_id, local frame)` (clamped to the new length) and the play state; the Player swaps in place (§ 4.9) | 06, 09 |
+| PX-20 | Detour | a score detour shows as an overlay inside the Variants stage, never a Board window; `return` removes it; the frame underneath is unchanged | 09 |
+| PX-21 | Lire seulement cette scène | the overflow entry plays the current scene from its frame 0 to its last frame, then holds that frame paused; no run starts; Variants stays open | 06, 10 |
+
+### 2026-10 § 8. What stays exactly as it is
+
+These contracts are not changed by this section:
+- the score, cue, armed-set, follower, roles, Jarvis-presenter and locked-sequence contracts (Core-owned), **except the scene-entry segment** (§ 5);
+- variant graph operations;
+- pins and retention (`StudioPinRegistry`): the mechanism is unchanged; its "live scene" source moves from the Board stage windows (`studio_pins.bind_scene`) to the Variants Player's mounted pins, including a scene-variant preview and in-flight hot-reload pins (§ 2), so a frame on screen is never archived;
+- the hot-reload gate;
+- the engine gate and no-fallback rule;
+- the sandbox and its security rules;
+- the native Remotion Studio trust boundary;
+- the explorer's tree, actions, refusals, command channel and accessibility rules, except where § 4 to § 6 say otherwise.
+
+### 2026-10 § 9. Deferred, and points for the Human
+
+- **Left rail geometry**: deferred to the user's sketch. It is **not** a P0 blocker: no playback Slice waits for it. Only the rail's wording (§ 1, PX-1) is set here.
+- **To confirm later** (recorded in `slices/02-product-experience-contract/UI-INVENTORY.md`):
+  - the fullscreen target is the stage, not the whole Variants screen (§ 4.12);
+  - « Jouer cette slide » survives only as an overflow entry (§ 5);
+  - `Échap` no longer pauses a presenter run (§ 4.15);
+  - the variant bar is merged into the tree (§ 6 #8);
+  - an external display gets no separate presenter view in this task (§ 4.13);
+  - no automatic fullscreen when a presenter run starts (§ 5);
+  - a newly entered scene starts at frame 0 even when its first item reveals a later anchor (§ 5, decided by agent 0);
+  - discard the unpushed foreign work behind the « 8 s par slide » row (AUDIT.md § 9).
+
+### 2026-10 § 10. Superseded statements (index)
+
+| Where | Old statement | Now |
+| --- | --- | --- |
+| *Playback runtime contract › The stage window* | one Board window per run is where a run is shown | § 2: the Variants Player; the window is removed by Slice 09 |
+| *Playback runtime contract › Page: band and keyboard* | the band, its buttons, its keys (`P` / `Échap` pause), its item clock | § 2, § 4.15, § 5 (presenter strip) |
+| *Playback runtime contract › Human checks and known limits* (last sentence) | « Jouer cette slide » / « Tout jouer » start a `manual` rehearsal | § 5: ▶ « Lire » and the overflow entry, never a manual run |
+| *Remotion timeline bridge › What the score asks for* | the playhead (`from_frame`) is the furthest revealed anchor, also when a scene is entered | § 5: a newly entered scene always starts at local frame 0; anchors only bound `until` and the hold; going back or jumping shows the anchor frame; a resume keeps the exact frame. **Done by Slice 07** (`remotion_timeline.place`; the section now states the rule) |
+| *Remotion timeline bridge › What the score asks for* | an anchorless scene in a chained play "plays ONCE and holds" | true on every surface since Slice 05: the sandbox Player runs with `loop: false` and `moveToBeginningWhenEnded: false` (§ 4.7) |
+| *Remotion timeline bridge › Chained playback* | "no blank, no remount" at a scene change | true for the Variants Player since Slice 05 (`swapPrefix`, preload, queued preload: *Continuous sequencing in Variants*); the edit inspector's preview still remounts |
+| *Remotion timeline bridge › Chained playback* | "A Player starts paused on its first image" | contradicted by the stage page (`play` on ready); kept as a requirement by § 4.1. True in Variants since Slice 06 (`?embed=variants`, host `autoplay: false`); the run stage is retired (Slice 09); only a Remotion prefab window of the Board, outside any presentation, still plays on ready |
+| *Variant Explorer interaction contract › Playback* | opening is refused while a run plays; a starting run closes the explorer | § 5: Variants **is** the run surface |
+| *Variant Explorer interaction contract › Entry points* | the stopped band offers « Ouvrir l'explorateur de variantes » | the band is removed (§ 2) |
+| *Rail des presentations › The page* and *› Studio additions* | rail click opens the window host; « Ouvrir le Studio » means the explorer; « Jouer cette slide » / « Tout jouer » close the Studio when the run applies; the tooltip « toute la présentation d'un coup » (`explorer.js:343`) | § 1 (names), § 2 (no window host), § 5 (buttons) |
+| *Playback runtime contract › State is memory* (ledger row), *› Auxiliary resources*, *› Failure modes* (stage window closed, ledger rows), *› Observability* (`stage_reopened`, `stage_ledger_unwritable`, `stage_ledger_overflow`, `stage_ledger_scan_reclaimed`) | a run writes Board windows and an id ledger, a closed window is reopened (`stage_closed_by_user`, `stage_closed`) | **Slice 09, done**: a memory run surface, no Board object; the ledger is read once by the legacy reclaim and kept aside; *Variants run surface (Level 3, Slice 09)* |
+| *Playback runtime contract › The stage window* and *› Page: band and keyboard* | (already superseded above) | **Slice 09, done**: retired; the run plays in Variants, the band and the window host are deleted |
+| *Remotion timeline bridge › What the score asks for* | "a scene without anchors gets no timeline" in a `manual` run (it free-plays, started by the host's grace play) | **Slice 09, done**: every Remotion scene of every run has a timeline (one whole segment when anchorless): Core's order starts it from frame 0, once |
+| § 1 (Remotion Studio row), *Rail des presentations › The page* | Remotion Studio reachable only from the MCP card « Remotion · Studio » (« Ouvrir le Studio »); the rail indicator left to Slice 11 | **Slice 11, done**: « Remotion Studio » on Variants' scene row and the rail's « Remotion Studio… », the card renamed; no new rail indicator (*Remotion Studio from Variants (Level 3, Slice 11)*) |
+| *Agent and voice operations* (`presentation_view window_open` = a screen request; `stage_fullscreen_enter` targets the stage object) | | **Slice 09, done**: `window_*` open / close Variants with a receipt; `stage_fullscreen_enter` arms the Variants stage; `presentation_play start` is hosted in Variants or paused (`surface_unavailable`) |
+
 ## Playback runtime contract (Level 3, Slice 12)
 
 Status: implemented by Slice 12. Owners: `jarvis/domain/presentation_studio_playback.py` (the pure state machine, plan, progress, "where are we"),
 `jarvis/domain/presentation_studio_playback_requests.py` (strict request bodies), `jarvis/domain/presentation_studio_armed_set.py` (the Core to Voice cue contract),
-`jarvis/core/presentation_studio_playback.py` (the Core service), `jarvis/core/presentation_studio_stage.py` (stage window, auxiliary windows, id ledger),
-`jarvis/adapters/file_presentation_studio_stage_ledger.py`, `jarvis/protocol/presentation_studio_playback_routes.py`, the relay `jarvis/runtime/presentation_studio_relay.py`
-and the page module `jarvis/runtime/control_center_presentation_studio_player.js`. Conformance: `tests/unit/test_presentation_studio_{playback,playback_service,playback_rework,playback_routes,stage,edit_overlay,player_js,player_browser,player_realpage_browser}.py`.
+`jarvis/core/presentation_studio_playback.py` (the Core service), `jarvis/core/presentation_studio_run_surface.py` (since native-studio-playback-fix Slice 09: the run surface of Variants, memory; it replaced the stage window, the auxiliary windows and the id ledger of `jarvis/core/presentation_studio_stage.py`, which keeps only the legacy reclaim), `jarvis/protocol/presentation_studio_playback_routes.py`, the relay `jarvis/runtime/presentation_studio_relay.py`
+and the page modules `jarvis/runtime/control_center_presentation_studio_player.js` (the shared playback client, no DOM since Slice 09) and `control_center_presentation_studio_run.js` (the run in Variants). Conformance: `tests/unit/test_presentation_studio_{playback,playback_service,playback_rework,playback_routes,stage,run_surface,edit_overlay,player_js,presenter_js}.py`, `test_variants_run_js.py`.
 
 The runtime knows **exactly where the presentation is** and can navigate, pause, detour and come back. It is *Presentation* playback, not the generic PRESENTATION interaction mode (which it consumes through Slice 01c). It does **not** match speech to cues (Slice 13), speak the score (Slice 14) or rehearse (Slice 15); it owns the state they all read and the contract they call.
 
@@ -2295,7 +3179,7 @@ The runtime knows **exactly where the presentation is** and can navigate, pause,
 | --- | --- |
 | role, phase, position, reveal progress, detour stack, locked-sequence ownership, armed set, speaker, timers | `PlaybackState`, in Core memory only. A Core restart ends the run; nothing resumes it |
 | the values a score sets (`control_set`, control-bound reveals) | an **ephemeral overlay** rendered by `PresentationStudioEditService.render_overlay` (the Slice 05 engine, same checks, chunks of 16 ops chained) and shown on the stage window. The variant file and its revision are byte-identical after any run (tested over a full run with value actions) |
-| ids of the stage and auxiliary windows | the stage ledger `state/presentation-studio-stage-ledger.json`: ids only, no title, no content, erased when taken back, **outside** `presentations/` |
+| ids of the stage and auxiliary windows | *(retired by Slice 09: a run writes no Board object; the old ledger `state/presentation-studio-stage-ledger.json` is read once by the legacy reclaim and kept aside as `.retired-<ts>`)* the run surface of Variants, memory (*Variants run surface*) |
 
 Only an **explicit edit instruction** writes, and only through Slice 05 (below). Improvisation (what the presenter says, a cue, navigation, speaker changes) never writes: tested by hashing every stored document before and after.
 
@@ -2346,7 +3230,7 @@ Effects are `sync_stage`, `show_aux`, `retire_aux`, `retire_all`, `arm_changed`,
 
 ### Core service, routes, statuses
 
-`POST /v1/presentation-studio/playback/{verb}` with `verb` in `start stop pause resume next previous goto detour return reveal hide edit skip_sequence play advance`; bodies are exact-key objects with a required `actor` (`user` through the Control Center relay, forced; `brain` for the future MCP server): an unexpected field is `invalid_request`. `GET /v1/presentation-studio/playback` is the bounded state; `GET /v1/presentation-studio/playback/preload` is the scene the next element shows when it is another source (*Chained playback*). Statuses: `applied` 200; `refused` 409 (`reason` = a `RefusalCode`, `error.code` = `presentation_studio_playback_refused`), or **422** for `detour_invalid` (the request itself is wrong, not the moment: nothing changed); `stage_failed` 500 (the transition happened but the stage could not follow: `error.code` = `presentation_studio_playback_stage_failed`, `reason` and `message` carry the real cause, the run is paused with a problem). Start also raises coded `PresentationStudioError`s: `presentation_studio_unknown_score` (404, a variant without a score cannot be played), `presentation_studio_score_incompatible` (400, the score has `problems`: a removed scene or control is refused at start, not discovered mid-run), `presentation_studio_playback_stage_failed` (the first scene could not be shown: the run is ended cleanly). Commands are serialised by one lock.
+`POST /v1/presentation-studio/playback/{verb}` with `verb` in `start stop pause resume next previous goto detour return reveal hide edit skip_sequence play advance`; bodies are exact-key objects with a required `actor` (`user` through the Control Center relay, forced; `brain` for the future MCP server): an unexpected field is `invalid_request`. `GET /v1/presentation-studio/playback` is the bounded state; `GET /v1/presentation-studio/playback/preload` is the scene the next element shows when it is another source (*Chained playback*); `GET /v1/presentation-studio/playback/surface` (native-studio-playback-fix Slice 09) is what the Variants Player mounts for the run (*Variants run surface*). The three `GET` are relayed read-only to the page. Statuses: `applied` 200; `refused` 409 (`reason` = a `RefusalCode`, `error.code` = `presentation_studio_playback_refused`), or **422** for `detour_invalid` (the request itself is wrong, not the moment: nothing changed); `stage_failed` 500 (the transition happened but the stage could not follow: `error.code` = `presentation_studio_playback_stage_failed`, `reason` and `message` carry the real cause, the run is paused with a problem). Start also raises coded `PresentationStudioError`s: `presentation_studio_unknown_score` (404, a variant without a score cannot be played), `presentation_studio_score_incompatible` (400, the score has `problems`: a removed scene or control is refused at start, not discovered mid-run), `presentation_studio_playback_stage_failed` (the first scene could not be shown: the run is ended cleanly). Commands are serialised by one lock.
 
 | Command | Notes |
 | --- | --- |
@@ -2361,6 +3245,8 @@ Effects are `sync_stage`, `show_aux`, `retire_aux`, `retire_all`, `arm_changed`,
 Python-only (not an HTTP surface): `notify(kind, ...)` for the timeline owner (`sequence_*`, `speaking`, `boundary`, and since Slice 14 the presenter pacing its own run with `next`, `pause`, `goto`), `halt(problem)`, `finish(reason)`, `resolve_problem`, `add_observer`, `set_presenter_view`: see *Jarvis presenter and locked sequences*.
 
 ### The stage window
+
+> **Superseded (2026-10).** Retired by Slice 09 (done): there is no stage window any more: a run plays in the Variants Player on a memory surface, and every client listed in [Presentation experience contract](#presentation-experience-contract-level-2-2026-10) § 2 is migrated (*Variants run surface (Level 3, Slice 09)*). This subsection describes the code at `d2332e61`, kept for history.
 
 One stable `window` object per run, `studio-stage-<run_id>`, created once and then **patched** with the next scene's `prefab` block (`PATCH_OBJECT` inside `SceneService.apply_if`, actor `user`): a version change remounts the frame, a props/data change is a `host.update`. A payload already on screen is not written again (a frame's own state survives a resume). An archived id keeps its tombstone and cannot be reused, so the id carries the run id, and a stage the user closed is re-created under `-1`, `-2`... (the old id leaves the ledger, the state says `notices: ["stage_closed_by_user"]` and the band says so; after `MAX_STAGE_REOPENS` 3 reopenings in one run the sync fails `stage_closed`: the run pauses with that problem instead of fighting the user, and a `resume` reopens it once more). Core cannot import the brain-side `SceneDisplayTools`; `SceneStage` sends the same scene commands. Studio objects are categories `studio_stage` and `studio_aux`. **Tool Brain:** studio tools have no `ui_surface` and keep working when the Tool Brain owns the screen; with `JARVIS_TOOL_BRAIN` off (default) nothing else writes these objects; the arbiter test of Slice 21 must refuse the Tool Brain adapters on these two categories (open point recorded in the handoff).
 
@@ -2395,6 +3281,8 @@ Tested with a fake follower over the real `/v1/events` WebSocket (`test_presenta
 
 ### Page: band and keyboard
 
+> **Superseded (2026-10).** Retired by Slice 09 (done): the band, its buttons, its keys (`P` / `Échap` pause) and its item clock are removed. Presenter information is the presenter strip of Variants, the commands its transport and the one key map: *Variants run surface (Level 3, Slice 09)* and [Presentation experience contract](#presentation-experience-contract-level-2-2026-10) § 4.15, § 5. `control_center_presentation_studio_player.js` is now the page's playback client, without DOM. The band's browser proofs (`test_presentation_studio_player_browser.py`, `test_presentation_studio_player_realpage_browser.py`) are deleted; `test_variants_run_browser.py` proves the keys, fullscreen and close-pauses on the real page in Variants. The text below is history (the code at `d2332e61`).
+
 `control_center_presentation_studio_player.js` (marker `/*__CONTROL_CENTER_PRESENTATION_STUDIO_PLAYER_JS__*/`, after the fullscreen module). Outside fullscreen a **band** shows who presents (`Vous présentez` / `Jarvis présente` / `Répétition`), the phase, scene `n/N` and title, the item, what comes next and the phrase to say, a live clock against the soft target, and the buttons (previous, pause/resume, next, fullscreen, stop). It states the temporary mode of a Jarvis run and that the stored preference is unchanged. Keys act **only when the target is inside the stage window's host element** (the frame relays none): right/down/page-down/space next, left/up/page-up/backspace previous, Home first, End last, `P` pause/resume, `Esc` pause (only a playing run), `S` leave a locked sequence. The listener is on the document root in the **capture phase**: the scene page has its own keyboard navigation between windows that calls `preventDefault()` on Arrow/Home/End/Escape of a focused window node, so a bubble-phase reader never saw those keys on the real page (QA-1 B1; the first browser proof used a synthetic page without that handler). A consumed key is `preventDefault` + `stopPropagation` (the scene page does not also act); text fields, modifiers, Space on a native button inside the host, and everything outside the host are left alone. In **fullscreen** the player stays out of the way (`document.fullscreenElement`) and the fullscreen module's capture handler forwards the keys with `onNavigate`, so each key acts once. Proved against the real page in headless Chrome (`test_presentation_studio_player_realpage_browser.py`: isolated Core, real Control Center, real CDP key events, windowed and fullscreen, Escape pauses, arrows navigate, another input and another window untouched).
 **Band placement**: the band measures `#interactionModeHud` and sits to its right (above it when the viewport is too narrow), so the mode selector (the way out of a run, and where Voice's refusal shows) is never covered and stays the topmost element at its centre (asserted at 1280x720 and 1920x1080). **Band content** adds the pending interruption (`pause demandée`, the Pause button reads *Pause demandée…*), the follower state, the art direction note (`fallback` / `none`) and the *Sortir de la séquence* button. The same routes as the voice, through the relay. `JarvisFullscreen.enter({object_id, keys: "host"})` is called inside the click on `Plein écran`. Every command is visibly in flight (verb and seconds), ends in a state a human can act from (refusal said in plain words; stage failure: toast + console + the cause in the band; unreachable Core: the duration, once), has a 10 s deadline, and the band of a run that ended with a problem stays until closed. Polling is 1.5 s while running and 5 s idle (one `GET` of about 100 bytes to the local Core, 12 per minute, only while the tab is visible: the price for a run started by the voice to appear without any action), with back-off and a "Core does not answer since N s" line.
 
@@ -2405,28 +3293,33 @@ Tested with a fake follower over the real `/v1/events` WebSocket (`test_presenta
 | stage cannot be shown at start | the run is ended cleanly (aux retired, stage released, mode restored), coded `presentation_studio_playback_stage_failed` with the cause |
 | stage cannot follow mid-run | `stage_failed` status, run `paused`, `problems: ["stage_<code>"]`, band + toast + console |
 | unexpected exception in a command | `playback_crashed` (`error`), the run ends cleanly, the exception propagates to the route boundary (`internal_error`, Error Logs) |
-| Core killed mid-run | state gone; at the next start `reclaim` archives the ledger's ids (by id list) |
+| Core killed mid-run | state gone (the run surface is memory); at the next start the legacy reclaim archives any old Board window |
 | mode changed by the user | the run stops, `mode_changed_by_user`, nothing forced back |
 | mode restore fails | `mode_restore_failed` error + visible problem; mode left as is |
 | score or variant edited | plan re-read at `resume` and after any commit; `score_problems` if it no longer resolves |
 | detour block refused by the catalogue | `detour_invalid` 422, nothing changed, nothing staged |
 | detour window cannot be shown | `stage_failed` 500, the transition is undone (no phantom detour) |
-| stage window closed by the user | reopened (new id, old id dropped from the ledger), `stage_closed_by_user` notice; after 3 reopenings `stage_closed` pauses the run |
-| stage ledger unreadable | file kept as `.corrupt-<ts>`, scene scanned for `studio-stage-*` / `studio-aux-*` objects of the two categories and archived, `warning` rows |
+| ~~stage window closed by the user~~ | retired (Slice 09): the run surface is not a window; closing Variants pauses a playing run |
+| a stage sync that never ends (Slice 09) | bounded: after `STAGE_SYNC_TIMEOUT_S` 20 s the run pauses with `stage_timeout` (« Reprendre » retries, « Arrêter » stops); `stop` cancels a sync in flight before it takes the lock (`stage_preempted`) |
+| Board windows an older Core left (`studio_stage`, `studio_aux`) | archived at Core start and before each run (old ledger ids + every object of a retired category, whatever its id), never drawn by the page; the ledger file is kept aside (`.retired-<ts>`), an unreadable one as `.corrupt-<ts>` |
+| no visible page to show a run started by voice or MCP (Slice 09) | the run is paused and `presentation_play start` answers `surface_unavailable` |
 | no cue follower within 10 s (voice architecture, ambient stack) | `follower: absent`, band says so, the run goes on manually |
+| a silence of a run Jarvis paces waits for a media segment whose page says nothing (Slice 07) | held, never skipped: `page_wait` after the segment's length + 15 s (+ 60 s before `started`), `autoplay_page_silent` once; `next` and `stop` work |
+| a silence of a run Jarvis paces on a Remotion scene whose timeline cannot be resolved (Slice 07 rework, I1) | held, never cut, never paced by `target_duration_ms`: after the item's soft target + 15 s, `page_wait {reason: "timeline_unresolved"}`, `timeline_unresolved_held` (warning) once per item entry, the band says the scene is held and that « Suivant » / « Arrêter » work |
+| a silence of a run Jarvis paces on an HTML scene whose stage sync awaits (Slice 07 rework, B1) | the presenter holds while the scene's kind is `pending`, the stage sync wakes it, the silence ends on its target |
 | a locked sequence | executed by the Jarvis presenter (Slice 14); `skip_sequence` (user only) always leaves it |
 | bus publish fails | `armed_publish_failed` error row; the pull still works |
 | follower silent past 90 s | its reports are refused `armed_set_expired` |
 
 ### Observability
 
-Diagnostics `core.presentation_studio.{playback_started, playback_transition, playback_refused, playback_stopped, playback_crashed, playback_stage_failed, playback_edit, playback_mode_decision, playback_mode_changed, playback_plan_refreshed, playback_plan_problems, playback_art_direction_changed, playback_reclaimed, playback_reclaim_failed, playback_aux_retire_failed, playback_stage_release_failed, playback_foreign_stop_failed, playback_invariant_broken, mode_restore_failed, armed_set_pulled, armed_publish_failed, cue_report_duplicate, cue_report_refused, event_failed, stage_shown, aux_staged, aux_revealed, archived, archive_already_gone, stage_ledger_unreadable, stage_ledger_unwritable, stage_ledger_overflow, stage_ledger_quarantined, stage_ledger_quarantine_failed, stage_ledger_scan_reclaimed, stage_reopened, playback_detour_invalid, playback_detour_engine_refused (Slice 10: a detour block that is not native for the Presentation engine), playback_detour_validator_failed, playback_follower_absent, playback_observer_failed, playback_stage_bind_failed (Slice 06: the reload observer failed to bind, the run goes on), overlay_rendered, commit_listener_failed, preview_shown, preview_ended, preview_timeout_failed, timeline_resolved (Remotion Slice 12: a frame map was computed for the scene on the stage), timeline_unresolved (error: its composition could not be read, the scene plays unguided), autoplay_scope (Slice 23: the scope of the run changed), autoplay_deadline (Core went on by itself: no page said the segment was done), autoplay_finished (the chain reached the end of its scope and holds the last image), autoplay_report_ignored (a segment report for another segment, or in a manual run), autoplay_report_early (a `done` before the segment could have been played: ignored)}`: ids, codes, counts, phases; never a title, a phrase, a note or an error message from the author. One canonical event, `system.presentation_studio.playback_changed` (actor `system`, instant, diagnostic, content forbidden): `status` in `started`, `stopped`, `paused`, `resumed`, `detour`, `returned`, `ended`, `stage_failed`, `edit_committed`, plus `presentation_id`, `variant_id`, `role`, `depth`; identity `(run_id, sequence)`; recorded only with a live conversation. Movement (next, previous, cues) is deliberately not an event.
+Diagnostics `core.presentation_studio.{playback_started, playback_transition, playback_refused, playback_stopped, playback_crashed, playback_stage_failed, playback_edit, playback_mode_decision, playback_mode_changed, playback_plan_refreshed, playback_plan_problems, playback_art_direction_changed, playback_reclaimed, playback_reclaim_failed, playback_aux_retire_failed, playback_stage_release_failed, playback_foreign_stop_failed, playback_invariant_broken, mode_restore_failed, armed_set_pulled, armed_publish_failed, cue_report_duplicate, cue_report_refused, event_failed, stage_shown, aux_staged, aux_revealed, archived, archive_already_gone, stage_ledger_unreadable, stage_ledger_unwritable, stage_ledger_overflow, stage_ledger_quarantined, stage_ledger_quarantine_failed, stage_ledger_scan_reclaimed, stage_reopened, playback_detour_invalid, playback_detour_engine_refused (Slice 10: a detour block that is not native for the Presentation engine), playback_detour_validator_failed, playback_follower_absent, playback_observer_failed, playback_stage_bind_failed (Slice 06: the reload observer failed to bind, the run goes on), overlay_rendered, commit_listener_failed, preview_shown, preview_ended, preview_timeout_failed, timeline_resolved (Remotion Slice 12: a frame map was computed for the scene on the stage), timeline_unresolved (error: its composition could not be read, the scene plays unguided), autoplay_scope (Slice 23: the scope of the run changed), autoplay_deadline (Core went on by itself: no page said the segment was done), autoplay_finished (the chain reached the end of its scope and holds the last image), autoplay_report_ignored (a segment report for another segment, or in a manual run), autoplay_report_early (a `done` before the segment could have been played: ignored), autoplay_page_silent (warning: a media segment held with no news from its page past its length + margin; the view says `page_wait`; Slice 07: also for an explicit silence of a run Jarvis paces), media_segment_done (Slice 07: in a run Jarvis paces, the page said the media segment reached its stop frame; Core learns it, the presenter moves on), timeline_unresolved_held (Slice 07 rework: warning, a Jarvis silence held on a Remotion scene without timeline past its target + margin; the view says `page_wait` with `reason: timeline_unresolved`), playback_stage_sync_timeout (native-studio-playback-fix Slice 09: error, a stage sync did not end within `STAGE_SYNC_TIMEOUT_S` 20 s; the run pauses with `stage_timeout`), playback_stage_sync_preempted (warning: a `stop` interrupted a sync in flight, `stage_preempted`), playback_stage_sync_cancelled (the stop cancelled it), stage_released and stage_repinned (the run surface released at the end of a run, re-pinned by the hot reload), legacy_stage_reclaimed (warning: Board windows an older Core left, archived), stage_ledger_retired (the old ledger kept aside as `.retired-<ts>`), stage_ledger_retired_failed and stage_ledger_quarantined_failed (error: the file could not be kept aside)}`: ids, codes, counts, phases; never a title, a phrase, a note or an error message from the author. One canonical event, `system.presentation_studio.playback_changed` (actor `system`, instant, diagnostic, content forbidden): `status` in `started`, `stopped`, `paused`, `resumed`, `detour`, `returned`, `ended`, `stage_failed`, `edit_committed`, plus `presentation_id`, `variant_id`, `role`, `depth`; identity `(run_id, sequence)`; recorded only with a live conversation. Movement (next, previous, cues) is deliberately not an event.
 
 ### Human checks and known limits
 
 **Fullscreen key gap (known, not fixed in the product).** The browser sets `document.fullscreenElement` one frame before it fires `fullscreenchange`; the fullscreen module binds its host key listener and focuses the host on that event, so a key sent in that single frame (a voice-armed entry followed at once by a key) is dropped by both layers. A person cannot hit it, and the module cannot bind earlier without guessing the browser's answer (`fullscreenchange` is the truth, `docs/presentation-studio.md` > fullscreen). Tests therefore wait for `JarvisFullscreen.state().state === 'entered'` and the host focus before sending keys.
 
-Human-only: the physical Esc key leaving fullscreen (and that it does not also pause), a second screen, the look on a projector, and cue following on an OpenAI ambient stack (Slice 13). Recipe: [OPERATIONS.md](OPERATIONS.md), *Lecture d'une présentation*. Limits: a state a prefab frame writes into the stage window (a click in a counter) is not canonical: a payload already on screen is not rewritten (so a resume keeps it), but the next scene's patch replaces `props`/`data` as a whole. Playback resolves and opens no `ResourceReference` and no `file:`/`scheme:` locator (the Slice 02/04 locator carry-forward is a Slice 11 resolver concern: nothing here dereferences one). PRESENTATION is unavailable on the `legacy`/`duplex` voice architectures; Core cannot see the architecture, so such a run **starts** and the cue follower never pulls: the run says `follower: absent` after 10 s and continues in manual mode (see *Armed-cue delivery*); a stored `ResourceReference` cannot be shown as a detour (only prefab windows); starting a run is exposed to the page through the API (`JarvisStudioPlayer.startRun`) but the explorer UI that offers it is Slice 18.
+Human-only: the physical Esc key leaving fullscreen (and that it does not also pause), a second screen, the look on a projector, and cue following on an OpenAI ambient stack (Slice 13). Recipe: [OPERATIONS.md](OPERATIONS.md), *Lecture d'une présentation*. Limits: a state a prefab frame writes into the stage window (a click in a counter) is not canonical: a payload already on screen is not rewritten (so a resume keeps it), but the next scene's patch replaces `props`/`data` as a whole. Playback resolves and opens no `ResourceReference` and no `file:`/`scheme:` locator (the Slice 02/04 locator carry-forward is a Slice 11 resolver concern: nothing here dereferences one). PRESENTATION is unavailable on the `legacy`/`duplex` voice architectures; Core cannot see the architecture, so such a run **starts** and the cue follower never pulls: the run says `follower: absent` after 10 s and continues in manual mode (see *Armed-cue delivery*); a stored `ResourceReference` cannot be shown as a detour (only prefab windows); starting a run is exposed to the page through the API (`JarvisStudioPlayer.startRun`); the explorer offers it through « Jouer cette slide » / « Tout jouer », both of which start a `manual`-scope rehearsal (no `scope` is sent; see *Presentation rail*). *(Superseded 2026-10: [Presentation experience contract](#presentation-experience-contract-level-2-2026-10) § 5.)*
 
 ## Remotion timeline bridge (Level 3, Remotion handoff Slice 12)
 
@@ -2447,27 +3340,36 @@ A `ScoreAnchor` is `{anchor_id, label, control_id?, at_ms?}`. `at_ms` (integer, 
 
 ### What the score asks for
 
-For the scene on the stage the playhead is the **furthest revealed anchor, by timeline position (furthest wins, not the most recent reveal)** (a manual reveal of an earlier anchor while a later one is revealed does not move the playhead back: hide the later ones to go back) (`reveal` / `hide` folded over the played items, the started steps of a locked sequence and the manual overrides: the existing `progress_of`). Revealing an anchor opens its segment; `hide`, `previous` and `goto` fall back to the furthest anchor still revealed (reversible, like every fold of the score). The `reveal` steps of a locked sequence therefore move the playhead at the sequence clock own beat (the Core clock stays master).
+For the scene on the stage the **target** is the segment of the **furthest revealed anchor, by timeline position (furthest wins, not the most recent reveal)** (a manual reveal of an earlier anchor while a later one is revealed does not move it back: hide the later ones to go back) (`reveal` / `hide` folded over the played items, the started steps of a locked sequence and the manual overrides: the existing `progress_of`). The `reveal` steps of a locked sequence therefore move it at the sequence clock's own beat (the Core clock stays master).
 
-Core puts the answer in the playback view (`GET .../playback`, the route the band polls) as `timeline`, only when the scene on the stage is a Remotion scene **with anchors** and the run is active:
+How the Player arrives on the target (Slice 07, [Presentation experience contract](#presentation-experience-contract-level-2-2026-10) § 5; `remotion_timeline.place`, pure). The anchors bound **only** `until_frame` and the hold, never where a newly entered scene starts.
+- A **newly entered** scene plays from its local frame 0 to the target's `until`, even when the entering item reveals an anchor with `at_ms > 0` (`from_frame` 0).
+- In the same scene, the score going on plays the new anchor's segment from its frame (`from_frame` = the anchor's frame); an item that reveals nothing new keeps the segment and its `seq`.
+- Going back or jumping (`previous`, `goto`, `hide`, a recovery point) **holds the target's stop frame** (`from_frame` = `until_frame`, not playing): no earlier segment is replayed.
+- A pause, a resume or a detour keeps the segment and its `seq`: the Player continues from the exact frame it holds.
+- A chained play's `play {scope}` restarts the scene from 0; a jump inside a chained play plays the target's segment from its anchor (Slice 05 behaviour).
+
+Core puts the answer in the playback view (`GET .../playback`, the route the band polls) as `timeline`, only when the scene on the stage is a Remotion scene **with anchors** and the run is active. *(Since native-studio-playback-fix Slice 09: for EVERY Remotion scene of an active run, an anchorless one getting one whole segment, also in a `manual` run, because the Variants Player never plays by itself; the page's playback client polls it, the band is retired: *Variants run surface (Level 3, Slice 09)*.)*
 
 | Field | Meaning |
 | --- | --- |
 | `scene_id`, `composition_id`, `fps`, `duration_frames` | from the stage scene and the manifest |
-| `anchor_id` | the playhead anchor, `null` for the entry segment |
-| `from_frame`, `until_frame` | the segment; `until_frame` is where the Player stops **by itself** |
+| `anchor_id` | the target anchor, `null` for the entry segment |
+| `from_frame`, `until_frame` | the segment as placed (above); `until_frame` is where the Player stops **by itself** |
 | `playing` | `true` only while the run is `playing` (pause, detour, resuming and ended hold) and the segment has frames to play |
 | `seq` | grows only when the segment changes (same segment after pause / resume: same `seq`) |
 | `play_ms` | time played in this segment by the Core monotonic clock, pauses excluded (`SegmentClock`, observed on every transition and every view) |
 | `tolerance_ms`, `problems` | drift tolerance (500 ms), anchor findings (above) |
 | `prefab` | `id@version` of the source the scene shows (Slice 23): the browser orders only the frame of THIS source, never the one still on screen while the next loads beside it |
-| `auto` | `true` in a chained play (Slice 23): the browser says when a segment started and finished, and does not catch up by seeking |
+| `auto` | `true` in a chained play (Slice 23) and in a run Jarvis paces (Slice 07): the browser says when a segment started and finished, and does not catch up by seeking |
 
-A scene without anchors (in a `manual` run), an HTML scene and a Core wired without a `timeline_source` have **no** `timeline` key and behave exactly as before (a Remotion scene plays on its own, Slice 10). In a chained play (`scope` `scene` or `all`) a Remotion scene without anchors has a one-segment timeline from frame 0 to its last frame: it plays ONCE and holds its last image (it does not loop), so that the chain knows when it is done. The view stays under `MAX_VIEW_BYTES` (tested). The `where` tool of the agent keeps its own key list: the brain never receives the timeline.
+An HTML scene and a Core wired without a `timeline_source` have **no** `timeline` key (a scene whose timeline Core could not read plays once from frame 0, unguided). Since native-studio-playback-fix Slice 09 a Remotion scene without anchors has, in **every** run (a `manual` run the user paces included), in a chained play (`scope` `scene` or `all`) and in a run Jarvis paces (Slice 07), a one-segment timeline from frame 0 to its last frame — the Variants Player never plays by itself, so Core's order is what starts it: it plays ONCE and holds its last image (it does not loop), so that the chain knows when it is done. *(Since Slice 05 this holds on every surface: the Player runs with `loop: false` and `moveToBeginningWhenEnded: false`, [Presentation experience contract](#presentation-experience-contract-level-2-2026-10) § 4.7.)* The view stays under `MAX_VIEW_BYTES` (tested). The `where` tool of the agent keeps its own key list: the brain never receives the timeline.
 
 ### What the browser does (`JarvisRemotionFrame.createTimelineFollower`, one per page)
 
-The band announces each view that carries a `timeline` (and one empty message when it disappears; and the next scene's source, below) to the scene window as the DOM event `jarvis:studio-timeline`; the follower of the window applies it to the frame it owns (`prefabHost.control(objectId, action, frame, until)`). While a timeline is active the band polls every 500 ms instead of 1.5 s.
+The page's playback client (`control_center_presentation_studio_player.js`; the band was retired in Slice 09) announces each view that carries a `timeline` (and one empty message when it disappears; and the next scene's source, below) as the DOM event `jarvis:studio-timeline`; in a run, Variants' run adapter (`control_center_presentation_studio_run.js`) hands it to the follower, which applies it to the run's frame in the Variants Player (`prefabHost.control(objectId, action, frame, until)`). While a timeline is active the client polls every 500 ms instead of 1.5 s.
+
+**Hand-over between scenes (contract tolerance).** When a run moves from a non-final scene to the next, the last 2 frames or fewer of the scene left may go unseen: the follower counts a scene within `END_SLACK_FRAMES` (2) of its stop frame as finished (a dropped frame must not stall the chain, `control_center_remotion_frame.js`), and the next scene, loaded beside it in Variants, takes the screen at once. The continuity proof (`test_remotion_continuity_realpage_browser.py`: an outgoing scene reaches at least frame `last − 2`) accepts that gap and no more; the final scene always shows and holds its last frame exactly.
 
 | Core says | Follower orders |
 | --- | --- |
@@ -2489,6 +3391,12 @@ The band announces each view that carries a `timeline` (and one empty message wh
 
 ### Chained playback (scope, Slice 23)
 
+> **Superseded (2026-10).** Video playback no longer advances by scope or deadline: ▶ « Lire » in Variants plays the whole composition on one clock ([Presentation experience contract](#presentation-experience-contract-level-2-2026-10) § 3, § 4; *Continuous sequencing in Variants (Level 3, Slice 05)*). Of the three claims of this section that held only for the run stage window, two are now true for the Variants Player too (Slice 05): "no blank, no remount" and "plays ONCE and holds" (`loop: false`). The third, "starts paused on its first image", is true in Variants since Slice 06 (`embed=variants`: the stage page never plays on ready); only a Remotion prefab window of the Board, outside any presentation, still plays on ready (*Retirement map*, Slice 15).
+>
+> **Slice 07 changes.** A scene the chain enters (`next`) starts at its local frame 0 (§ 5); `play {scope}` restarts the scene from 0; a `goto` inside a chained play still plays the target item's segment from its anchor. A run Jarvis paces has no scope, but its page now reports `started` / `done` too (`auto`), so that an explicit silence on a media segment lasts the media (*Jarvis presenter and locked sequences*).
+>
+> **Slice 05 changes to the chained play below** (still used by the run stage until Slice 09): no deadline moves a Remotion scene any more (anchorless scenes followed by another scene used to be skipped after a ~48 s stall, Slice 03 defect A); the host no longer drops the scene being entered when the next one is preloaded; the outgoing Player no longer receives the next scene's values.
+
 The score moves by the presenter's `next`, a cue, or (Slice 14) the Jarvis presenter. Slice 23 adds a fourth way, for a silent run: a **scope**.
 
 | Scope | The run advances by itself... |
@@ -2499,9 +3407,9 @@ The score moves by the presenter's `next`, a cue, or (Slice 14) the Jarvis prese
 
 `start {scope}` sets it at the start; `play {scope}` sets it on a run in progress and **restarts the current scene from its first element**; pressing the band's active button, or `play {scope: manual}`, hands the run back. It is **service state** (memory, like the timeline), not machine state: the machine and its closed table are unchanged, an advance is an ordinary `next` through the same door and is refused the same way (a locked sequence owns the timeline, an interruption policy). A run where Jarvis says the lines (`jarvis_presenter`, a speaking rehearsal) is paced by his speech and refuses a scope. While a locked sequence, a detour, a pause or a pending interruption holds the run, nothing advances; the deadline is recomputed on resume from the **played time** (pauses excluded). `where` carries `scope`.
 
-**Who says "the segment is finished": the browser, with Core as the safety net.** The follower sees the Player halt EXACTLY on the stop frame after having seen it move and the page reports `advance {seq, event: done}` (a report of `started` comes when the segment was ordered, so Core's clock restarts from the moment the scene was really playing, not from the moment its frame began to load). Core then does `next`, and the answer to the report carries the new state, so the next segment is ordered at once, not at the next 500 ms poll. Core judges every report against its own segment and clock: a stale `seq` is ignored; a `done` before 75 % of the segment's duration (minus 300 ms) has been played is ignored (`autoplay_report_early`); the run never depends on it, because every element has a **deadline** (`AutoTimings`): the remaining duration of its segment by Core's clock + `GRACE_MS` 3000, plus `LOAD_ALLOWANCE_MS` 45000 until the page said `started` (a scene still compiling is waited for; a page that is not there is not waited for forever), after which Core advances by itself (`autoplay_deadline`, a page closed, a scene that never loads). An element with no segment to play (an HTML scene, an element that does not change the segment, a one-frame hold) stays `max(its target duration, MIN_DWELL_MS 1500)`, `DEFAULT_DWELL_MS` 4000 when the score aims at no duration. Diagnostics: `autoplay_scope`, `autoplay_deadline`, `autoplay_finished`, `autoplay_report_ignored`, `autoplay_report_early`.
+**Who says "the segment is finished": the browser, alone (Slice 05).** The follower sees the Player halt on the stop frame after having seen it move (or at most `END_SLACK_FRAMES` 2 frames short of it, or past it before the sandbox's `seekTo(until)` landed: Remotion stops one step short of the end on a dropped frame, Slice 05 rework B1) and the page reports `advance {seq, event: done}` (a report of `started` comes when the segment was ordered, so Core's clock restarts from the moment the scene was really playing, not from the moment its frame began to load). Core then does `next`, and the answer to the report carries the new state, so the next segment is ordered at once, not at the next 500 ms poll. Core judges every report against its own segment: a stale `seq` is ignored (`autoplay_report_ignored`); a `done` for a segment the page never said `started` is ignored (`autoplay_report_early`). Core's own estimate of the played time no longer gates a `done` (it counted loading and scrubs). **A media segment has no deadline**: a closed page, a scene still compiling or a scene that fails holds the run on that scene and is never skipped; a Remotion scene whose timeline cannot be resolved is held the same way. A scene that fails shows its failure panel on the stage. A hold with nothing on screen (a lost `done`, a `started` never sent, a closed page) is said by Core (Slice 05 rework, P1): once the segment has been played (pauses excluded) for its own length + `PAGE_SILENCE_MARGIN_MS` 15000 (+ `PAGE_SILENCE_BEFORE_START_MS` 60000 while `started` has not come) with no `done`, the view carries `page_wait {seq, started, waited_ms}`, a warning `autoplay_page_silent` is traced once per segment, and the band says « Lecture en attente de la page : la scène n'a rien signalé depuis N s. Elle reste à l'écran, jamais sautée ; « Suivant » ou « Arrêter » restent possibles. ». It is a notice, never an advance: `next` and `stop` work as always. Before Slice 05 every segment had a deadline (remaining duration + `GRACE_MS` 3000, + `LOAD_ALLOWANCE_MS` 45000 before `started`) after which Core advanced by itself: that is how scenes were skipped. Only an element with no media segment to play (an HTML scene, an element that does not change the segment, a one-frame hold) keeps a pace: `max(its target duration, MIN_DWELL_MS 1500)`, `DEFAULT_DWELL_MS` 4000 when the score aims at no duration (`autoplay_deadline`). Diagnostics: `autoplay_scope`, `autoplay_deadline`, `autoplay_finished`, `autoplay_report_ignored`, `autoplay_report_early`, `autoplay_page_silent`.
 
-**The change of scene waits for nothing.** `where` names the next scene (`next_scene {scene_id, prefab, rev}`) when the next element shows another source; the band reads its source and values once (`GET .../playback/preload`: `{preload: {scene_id, title, prefab {id, version, props, data}} | null}`) and gives them to the window with the timeline. The prefab host loads that scene **beside the live one**, invisible, **paused on its first image** (`host.preload`); when the score reaches it, the ordinary mount of that scene finds it ready and takes its place on the spot (`scene.prefab_swapped`), the order for its segment follows in the same task, and the old frame is hidden at the same instant: no blank, no remount, no frame 0 flash of the previous scene, no compilation or sandbox boot between two scenes. If the next scene is not ready yet (slow compile) the live frame simply holds its last image until it is. A scene whose preload fails (compile error, refused values) loads, and fails, when its turn comes: exactly as before.
+**The change of scene waits for nothing.** `where` names the next scene (`next_scene {scene_id, prefab, rev}`) when the next element shows another source; the band reads its source and values once (`GET .../playback/preload`: `{preload: {scene_id, title, prefab {id, version, props, data}} | null}`) and gives them to the window with the timeline. The prefab host loads that scene **beside the live one**, invisible, **paused on its first image** (`host.preload`); when the score reaches it, the ordinary mount of that scene finds it ready and takes its place on the spot (`scene.prefab_swapped`), the order for its segment follows in the same task, and the old frame is hidden at the same instant: no blank, no remount, no frame 0 flash of the previous scene, no compilation or sandbox boot between two scenes. If the next scene is not ready yet (slow compile) the live frame simply holds its last image until it is. A preload that arrives while the window is still taking the entered scene is queued, never allowed to drop it (Slice 05). A scene whose preload fails (compile error, refused values) loads, and fails, when its turn comes; a scene the window was told to show that fails takes the window with its failure panel (Slice 05).
 
 **A Player starts paused on its first image** (every frame the host mounts: first mount, swap, "Recharger la scène"): the timeline, or after `HOLD_GRACE_MS` 450 the host itself, plays it. Before, a Player started playing from frame 0 on its own and the follower then sent it to its segment, so each mount replayed the opening frames; and a scene staged beside the live one played behind it and was promoted mid-animation.
 
@@ -2515,14 +3423,14 @@ What was wrong before, measured in a real Chrome on a chain of three anchored sc
 
 ### Unsupported or limited, said explicitly
 
-- No timeline for a scene with no anchors (it plays freely), for HTML scenes, or when the composition cannot be read (`timeline_unresolved` notice, the run continues unguided).
+- No timeline for a scene with no anchors (it plays freely), for HTML scenes, or when the composition cannot be read (`timeline_unresolved` notice; in a manual run the scene plays unguided, in a chained play it is held, never paced or skipped, Slice 05).
 - A `control_set` / `scene_goto` / `reveal` bound to a control (`control_id`) still goes through the existing overlay (Slice 13 owns Remotion props and controls); the timeline only reads the anchor.
 - No sub-frame or audio-accurate sync: the grain is a frame (1/fps). In a `manual` run the latency of the follower is the 500 ms poll (visible: the first frame of a segment can appear up to about 0.5 s after the reveal; the speech starts at the reveal). In a chained play the next segment does not wait for a poll (the answer to the report carries the new state; measured below). The audio of a scene is muted until a user gesture in the frame (Slice 10).
 - The position the score holds is not persisted (R6): a page opened mid-run joins at the start of the current segment.
 
 ### Tests
 
-`tests/unit/test_remotion_timeline.py` (mapping, segments, clock, carry-over, locked-sequence folds, anchor shape), `test_remotion_timeline_service.py` (the service on the real Slice 12 bench), `test_remotion_timeline_composition.py`, `test_remotion_timeline_js.py` (follower, drift, spoofed and stale reports, stage relay, chained-play reports and the swap wait), `test_remotion_continuity_js.py` (host: paused first image, preload and take-over, hold grace period), `test_presentation_studio_autoplay.py` (scope, deadlines, reports, finishing), `test_remotion_continuity_realpage_browser.py` (real Chrome: three scenes chained), `test_remotion_sandbox_child_js.py` (stop frame, rate), protocol cases in `test_remotion_sandbox_protocol_js.py`, band cases in `test_presentation_studio_player_js.py`; regression net unchanged and green: `test_presentation_studio_sequence*`, `_playback_*`. Real Chrome: `test_remotion_timeline_realpage_browser.py` via `scripts/remotion_player_harness.py --test tests/unit/test_remotion_timeline_realpage_browser.py --slice 12 --report real-timeline.json`.
+`tests/unit/test_remotion_timeline.py` (mapping, segments, clock, carry-over, locked-sequence folds, anchor shape), `test_remotion_timeline_placement.py` (Slice 07: entry from frame 0, holds, resume, seeded walk), `test_remotion_timeline_service.py` (the service on the real Slice 12 bench), `test_remotion_timeline_composition.py`, `test_remotion_timeline_js.py` (follower, drift, spoofed and stale reports, stage relay, chained-play reports and the swap wait), `test_remotion_continuity_js.py` (host: paused first image, preload and take-over, hold grace period), `test_continuous_sequencing_js.py` (Slice 05: queued preload, no hybrid frame, a shown scene's failure, `loop: false`, the Variants sequencer), `test_presentation_studio_autoplay.py` (scope, no deadline for a media segment, reports, finishing), `test_presentation_continuous_playback_browser.py` (Slice 05, real Chrome: the 9-scene deck in Variants and in a run hosted by Variants, per-boundary evidence), `test_remotion_continuity_realpage_browser.py` (real Chrome: three scenes chained), `test_remotion_sandbox_child_js.py` (stop frame, rate), protocol cases in `test_remotion_sandbox_protocol_js.py`, playback-client cases in `test_presentation_studio_player_js.py` and the run in Variants in `test_variants_run_js.py`; regression net unchanged and green: `test_presentation_studio_sequence*`, `_playback_*`. Real Chrome: `test_remotion_timeline_realpage_browser.py` via `scripts/remotion_player_harness.py --test tests/unit/test_remotion_timeline_realpage_browser.py --slice 12 --report real-timeline.json`.
 
 ## Jarvis presenter and locked sequences (Level 3, Slice 14)
 
@@ -2544,7 +3452,7 @@ Jarvis); in a user-presenter run it executes locked **visual** sequences and not
 | Learning the speech id | from the `brain.speech.requested` conversation event whose `supersedes_key` is this run's (Core records it before `announce_notice` returns); nothing in `brain_service.py` changed | the call returns a bool; the event is the existing source of truth |
 | Progress source | the conversation events the Voice process already records (`brain.speech.requested`, `mouth.speech.started / completed / interrupted / superseded / expired / failed / unconfirmed`, `mouth.floor.taken`, `user.transcript.accepted`), folded by `presentation_studio_line.observe`; phase words are those of `tool_brain_speech.py` (parity test) | one source of truth for "what happened to this speech" |
 | One line at a time | a spoken item issues one line and the next only after `completed` (+ `GAP_MS` 300); in a sequence a step's line waits while an earlier line is still unstarted | the shared slot (`supersedes_key`) replaces an UNSTARTED earlier line: issuing faster would silently drop speech |
-| Soft target | pace of an explicit **silence** item (`target_duration_ms`, default `SILENCE_DEFAULT_MS` 1500 without one); for a speech item it is only the band's soft clock (a spoken item ends when the mouth says `completed`, never on a wall clock) | the score contract: a target is soft and never decides what comes next |
+| Soft target | pace of an explicit **silence** item (`target_duration_ms`, default `SILENCE_DEFAULT_MS` 1500 without one) **with no media segment**. A silence on a media segment (a Remotion scene still playing its segment, or whose timeline is not resolved) lasts the media: it ends when the page says the Player reached its stop frame (`media_segment()` of the playback service: `playing`, `done`, `pending` while the kind of the scene on the stage is not known yet (held, no soft-target deadline, the stage sync wakes the presenter; Slice 07 rework, B1) or `None`; native-studio handoff Slice 07). For a speech item it is only the band's soft clock (a spoken item ends when the mouth says `completed`, never on a wall clock) | the score contract: a target is soft and never decides what comes next; `target_duration_ms` never cuts a composition |
 | `user` items in a Jarvis run | Jarvis says nothing and waits for the user's navigation (or cue, Slice 13) | "never speak a non-Jarvis item"; a `note` is the user's intention and is never read |
 | End of a Jarvis-paced run | the presenter stops the run (`last_run.reason: completed`): stage released, auxiliary windows retired, **mode restored** | otherwise the user would stay in SIMPLE after the last item |
 | Pause/stop/escape | the machine's table decides; `skip_sequence` stays the **user-only** escape (the provisional verb of Slice 12 is kept, now next to a real executor) | a presenter must always be able to get out |
@@ -2731,6 +3639,8 @@ Everything is counted in `status()["counters"]`, one line per episode, never a s
 What the **Human** sees: the Control Center band shows `follower: waiting | connected | absent` (Slice 12 rework: it turns `connected` at the first pull of the run, `absent` after a grace period without any pull). The Voice trace holds the lines above.
 Per decision, only `cue_fired` (cue id, rule, offsets, generation, position) and `cue_ambiguous` (candidate cue ids) are written: ordinary chatter writes nothing.
 
+**Cues and the media (native-studio handoff, Slice 07).** A fired cue is an ordinary forward move of the score: a cue whose item enters another scene shows that scene from its local frame 0 (§ 5), never joined at the revealed anchor. Nothing the Player shows can satisfy a cue: the only way in is the typed report above, and continuous video in Variants arms nothing (`test_presentation_studio_playback_continuous_isolation.py`). When the follower never comes (another voice architecture), the run says `follower: absent` and the presenter uses the keyboard; tested with fake speech in `test_presentation_studio_presenter_media.py`.
+
 ### Observability and privacy
 
 Voice diagnostics `presentation.studio.{follower_started, follower_stopped, follower_state, armed_set_changed, cue_fired, cue_ambiguous, cue_report_refused, follower_degraded, follower_recovered, follower_events_lost, follower_events_unavailable,
@@ -2799,7 +3709,7 @@ selected variant's art direction (validated `#rrggbb` only; a default otherwise)
 
 | Part | Content |
 | --- | --- |
-| Header | title, presentation title and counts, the mode chip (`Plein écran` / `Plein écran en attente de votre clic` / `Fenêtré`, and *why* when windowed: `plein écran indisponible` / `refusé`), the fullscreen toggle, close |
+| Header | title, presentation title and counts, the mode chip (`Plein écran` / `Plein écran en attente de votre clic` / `Fenêtré`, and *why* when windowed: `plein écran indisponible` / `refusé`), the fullscreen toggle (since the native-studio-playback-fix Slice 08 it puts the **stage** in fullscreen, `F` too, and leaves any fullscreen of Variants; an opening with `fullscreen` still targets this workspace), close |
 | Tree row | `#12` badge (the immutable number of Core, never recomputed), title, relative creation time, creator (`vous` / `Jarvis` / `système`), number of scenes, `ACTIF` and `En lecture` flags, the rationale as the tooltip, lineage guide lines (a vertical line per ancestor with a later sibling, an elbow into the node), collapsible subtrees, indentation that shrinks with the pane width (14 px a level at most, never more than a quarter of the row) and stops growing after `MAX_DEPTH_SHOWN` 6 levels; from `DEEP_FROM` 3 levels the title takes two lines and the metadata line leaves the row; beyond 6 levels a depth chip (`⋯ ›37`) says how deep the row is; the whole path of the selected variant is a breadcrumb in the metadata and the tooltip of a row names the full title, number and rationale. Typing digits goes to the variant with that number (`TYPEAHEAD_MS` 700 ms buffer; letters stay the action shortcuts). The archived variants are a **collapsed section** (`Archivées (n)`) with their own tree |
 | Preview | the real scene mounted in a `JarvisPrefabHost` of mode `preview` (no event leaves the frame), the scene title and role (`section`), the **local-variant count** of the scene as a badge (`3 variantes locales`: they stay out of the tree until promoted), the scene position, previous / next, the strip |
 | Metadata | `#12`, title, parent (`Issue de #3`), creation, number of scenes, the rationale (text), chips: active, in playback, score linked or not, **art direction** (name, provenance, a palette strip; read-only, `GET .../art-direction`, its own revision) |
@@ -2860,7 +3770,7 @@ the DOM kept in tree order although only the visible rows plus a margin exist.
 | in the preview: `← →` `↑ ↓` `Page` `Home` `End` | browse the scenes (the stage and the strip are focusable); the same scene is kept when another variant is chosen (the seam of Slice 19) |
 | `Échap` | **nested**: the menu, then the dialog, then the explorer (focus returns to the element that opened it) |
 
-In real fullscreen the browser keeps the first `Échap` to leave fullscreen (the page is not told); the explorer then stays open in the window (`Plein écran quitté`),
+In real fullscreen (the workspace, or the stage since Slice 08 of native-studio-playback-fix) the browser keeps the first `Échap` to leave fullscreen (the page is not told; a page that is told in the stage fullscreen leaves it and closes nothing); the explorer then stays open in the window (`Plein écran quitté`),
 and the next `Échap` closes it. This is the browser's rule and the explorer does not fight it (no Keyboard Lock). Keys typed in a dialog field act on nothing else.
 
 ### Entry points
@@ -2888,10 +3798,14 @@ and the next `Échap` closes it. This is the browser's rule and the explorer doe
   the **header of the edit inspector** (Slice 07) carries `Variantes` (`aria-label` « Ouvrir l'explorateur de variantes », a tab stop, opens the presentation and the active variant being edited; the inspector is
   hidden during a run and in fullscreen, so the button is then `aria-disabled` with its reason, and a click in the race window is refused in the inspector's status line); and the **stopped band of the player** (Slice 12:
   « Lecture arrêtée », which stays 12 s after a clean stop and until closed after a problem) carries `Ouvrir l'explorateur de variantes` for the presentation and variant that were played (never offered while a
-  run plays; the band stays while the explorer opened from it is open). Both pass their button as `opener`: closing the explorer returns the focus to it. The fullscreen of the explorer puts the inspector away
+  run plays; the band stays while the explorer opened from it is open). *(Superseded 2026-10, done by Slice 09: the band is removed, so this door goes with it; a run opens Variants itself; *Variants run surface*.)* Both pass their button as `opener`: closing the explorer returns the focus to it. The fullscreen of the explorer puts the inspector away
   (Slice 07 rule), so the explorer announces its closing (`jarvis:studio-explorer-closed` on `window`) and the inspector reopens and focuses its button.
 
 ### Playback
+
+> **Superseded (2026-10).** Variants is now the run surface. Opening it during a run shows that run, and a run that starts never closes it: [Presentation experience contract](#presentation-experience-contract-level-2-2026-10) § 5.
+
+**Continuous video in Variants (Slice 05).** « Lire » (formerly « Tout jouer ») plays the variant's whole composition **in the preview stage**, scene after scene, without closing the explorer and without a Core run: *Continuous sequencing in Variants (Level 3, Slice 05)*. The paragraph below still describes Core runs (« Jouer cette slide »).
 
 The explorer is an authoring surface. **Opening is refused while a run plays** (`explorer_run_in_progress`, French sentence, toast; the page's player is read and Core is asked,
 because the player polls at rest only every 5 s), and **a run that starts while it is open closes it** within 2 s (message, focus restored): one element only can be fullscreen,
@@ -3332,7 +4246,7 @@ Rules for the tool layer: it sets `actor: "brain"` itself, never from the model'
 
 Status: implemented. Owners: `jarvis/core/presentation_studio_rail.py` (Core: flags, work state, screen requests), `jarvis/adapters/file_presentation_studio_store.py`
 (`read_rail` / `write_rail`), `jarvis/protocol/presentation_studio_rail_routes.py` (Core routes), `jarvis/runtime/presentation_studio_relay.py` (relay, actor forced to `user`),
-`control_center_presentation_rail.js` (the rail), `control_center_presentation_window.js` (the window), `control_center_presentation_studio_explorer.js` (the Studio), and the
+`control_center_presentation_rail.js` (the rail), `control_center_presentation_studio_explorer.js` (the Studio: Variants; the floating window host `control_center_presentation_window.js` is retired, Slice 09), and the
 `presentation_*` MCP tools. Conformance: `tests/unit/test_presentation_studio_rail.py` (real Core, real file store, MCP tools),
 `tests/unit/test_control_center_presentation_rail_browser.py` (real Chrome, served page, in-page relay double).
 
@@ -3384,8 +4298,8 @@ The tracker's `revision` counts visible changes (the listing carries it as `work
 
 ### Screen requests (memory only)
 
-The brain asks, Core remembers the last numbered request (`ui.request`: `open_window`, `close_window`, `show_rail`, `hide_rail`; `fresh` for 30 s), the page applies each `seq` once and reports what it
-sees (`rail_visible`, `window_open`, `presentation_id`, `applied_seq`) to `ui.reported`, a dated mirror (`reported_s_ago`): the tool answers `requested`, never "done", and `presentation_inspect target rail`
+The brain asks, Core remembers the last numbered request (`ui.request`: `show_rail`, `hide_rail`; `open_window` / `close_window` are retired with the floating window, Slice 09; `fresh` for 30 s), the page applies each `seq` once and reports what it
+sees (`rail_visible`, `variants_open` since Slice 09, was `window_open`, `presentation_id`, `applied_seq`) to `ui.reported`, a dated mirror (`reported_s_ago`): the tool answers `requested`, never "done", and `presentation_inspect target rail`
 (`screen`) is how to confirm. A request older than its freshness window is not replayed by a page that loads later.
 
 ### Routes
@@ -3396,13 +4310,15 @@ sees (`rail_visible`, `window_open`, `presentation_id`, `applied_seq`) to `ui.re
 | POST | `/v1/presentation-studio/presentations/{id}/rail` | `{action: hide|show|archive|restore|rename|acknowledge, actor?: user|brain, confirmed?, title?}` -> `{presentation_id, action, changed, hidden, archived, restorable}` |
 | POST | `/v1/presentation-studio/presentations/{id}/work` | `{event: begin|success|failure|ack, label?, code?, message?}` -> `{presentation_id, work}` (brain door, not relayed) |
 | POST | `/v1/presentation-studio/rail/display` | `{action, presentation_id?}` -> `{seq, request, reported}` (brain door, not relayed) |
-| POST | `/v1/presentation-studio/rail/display-state` | `{rail_visible, window_open, presentation_id, applied_seq?}` -> same (page report, relayed) |
+| POST | `/v1/presentation-studio/rail/display-state` | `{rail_visible, variants_open, presentation_id, applied_seq?}` -> same (page report, relayed; Slice 09: `window_open` is refused) |
 
 The Control Center relays `GET /api/presentation-studio/rail`, `POST /api/presentation-studio/rail/display-state` and `POST .../presentations/{id}/rail` (actor **forced to `user`**).
 Typed client: `LocalCoreClient.presentation_studio_rail`, `_rail_act`, `_work`, `_rail_display`. Errors reuse the existing codes (`presentation_studio_invalid`, `_unknown_presentation`,
 `_confirmation_required`, `_variant_in_playback`, `_corrupt_document`, `_unsupported_schema_version`); diagnostic `core.presentation_studio.rail_changed` (id, action, actor, changed).
 
 ### The page
+
+> **Superseded (2026-10).** Done by Slice 09: rail click and « Ouvrir les variantes » open Variants (windowed); the window host is deleted. « Ouvrir le Studio » is removed (a duplicate once the window is gone); Slice 11 added « Remotion Studio… » (*Remotion Studio from Variants (Level 3, Slice 11)*). « Jouer » is « Présenter ». The rail auto-opens nothing (the « concentration » and its ◎ button are retired with the window); Slice 11 kept the existing indicators (the work dot, the row Variants shows) and added no Remotion Studio mark (decided by agent 0's Work Agent, reason in that section). See *Variants run surface (Level 3, Slice 09)* and [Presentation experience contract](#presentation-experience-contract-level-2-2026-10) § 1, § 2, § 5; the rail geometry stays deferred.
 
 - **Click** = the presentation's window (`JarvisPresentationWindow`): a floating, non-modal player (draggable, resizable) on the **active variant**, one slide at a time with the slide strip, buttons *Plein ecran* (the host goes
   full screen through `JarvisFullscreen`, arrows / Space / Home / End / F / Esc), *Jouer* (`JarvisStudioPlayer.startRun(id, 'user_presenter')`, the window closes, the real stage takes over), *Studio*, *Fermer*. It re-reads
@@ -3416,6 +4332,8 @@ Typed client: `LocalCoreClient.presentation_studio_rail`, `_rail_act`, `_work`, 
 
 ### Studio additions (variant explorer)
 
+> **Superseded (2026-10).** « Jouer cette slide » and « Tout jouer » start a `manual` run (no `scope`) and close the explorer, which contradicts the tooltip « toute la présentation d'un coup » (`explorer.js:343`). They become ▶ « Lire » (continuous video) and the overflow entry « Lire seulement cette scène »; neither closes Variants. The variant bar merges into the tree (done by Slice 10). See [Presentation experience contract](#presentation-experience-contract-level-2-2026-10) § 5, § 6.
+
 The explorer is the editing workspace (all slides, variant switching, a precise slide). Added: a **variant bar** above the preview (one numbered chip per live variant, green point on the active one, a click chooses it;
 `[` and `]` step to the previous / next variant; the tree stays the place of branches); **Jouer cette slide** (rehearsal, silent, from the slide being looked at) and **Tout jouer** (from the first slide), both through the
 same playback routes as the voice (`start` with `variant_id` then `goto scene_id`); the Studio closes when the run is applied (one tool at a time, as before). Smoothness of the playback itself is not part of this section.
@@ -3425,7 +4343,7 @@ same playback routes as the voice (`start` with `variant_id` then `goto scene_id
 | Tool | Addition |
 | --- | --- |
 | `presentation_inspect` | `overview` rows carry `hidden`, `archived`, `work`, `problem`; `target: rail` also gives `playing` and `screen` (the page's dated report) |
-| `presentation_view` | `window_open` (id), `window_close`, `rail_show`, `rail_hide` (screen requests, answer `requested`); `explorer_open` is the Studio; refused for an archived presentation (`presentation_archived`) |
+| `presentation_view` | `window_open` (id), `window_close` (since Slice 09: Variants, windowed, opened / closed through its command channel with a receipt), `rail_show`, `rail_hide` (screen requests, answer `requested`); `explorer_open` is Variants; refused for an archived presentation (`presentation_archived`) |
 | `presentation_play` | `start` refused for an archived presentation |
 | `presentation_library` (new, 13th tool) | `hide`, `show`, `archive` (`confirmed=true` after the user's yes), `restore`, `rename` (`title`), `acknowledge` |
 
@@ -3441,16 +4359,16 @@ Context budget: `jarvis-presentation` 16 849 -> 18 495 bytes (18 495 alone, 19 1
 
 ## Agent and voice operations (Level 3, Slice 21)
 
-Status: implemented by Slice 21. Owners: `jarvis/runtime/presentation_studio_mcp.py` (the FastMCP server `jarvis-presentation`, 13 tools), `presentation_studio_mcp_tools.py` (the logic, `PresentationTools`), `presentation_studio_mcp_support.py` (targets, errors, confirmation ledger), `presentation_studio_turn.py` (turn attestation in the Control Center), `jarvis/runtime/mcp_tool_meta.py` (`PRESENTATION`), the brain prompt `BRAIN_PRESENTATION_PROMPT` plus the Slice 11 planner prompt in the `*_display_studio_*` programs. Conformance: `tests/unit/test_presentation_studio_mcp{,_ops,_policy,_trace}.py`, `test_tool_brain_studio_ownership.py`, `test_mcp_catalog.py`, `test_brain_capability_parity.py`. Evidence: `tasks/jarvis-interactive-presentation-studio/slices/21-agent-voice-operations/evidence/`.
+Status: implemented by Slice 21. Owners: `jarvis/runtime/presentation_studio_mcp.py` (the FastMCP server `jarvis-presentation`, 14 tools since native-studio-playback-fix Slice 13), `presentation_studio_mcp_tools.py` (the logic, `PresentationTools`), `presentation_studio_mcp_support.py` (targets, errors, confirmation ledger), `presentation_studio_turn.py` (turn attestation in the Control Center), `jarvis/runtime/mcp_tool_meta.py` (`PRESENTATION`), the brain prompt `BRAIN_PRESENTATION_PROMPT` plus the Slice 11 planner prompt in the `*_display_studio_*` programs. Conformance: `tests/unit/test_presentation_studio_mcp{,_ops,_policy,_trace}.py`, `test_tool_brain_studio_ownership.py`, `test_mcp_catalog.py`, `test_brain_capability_parity.py`. Evidence: `tasks/jarvis-interactive-presentation-studio/slices/21-agent-voice-operations/evidence/`.
 
-There is **no natural-language router and no second UI scheduler**: the brain (Claude) understands the sentence, and calls one of thirteen semantic tools with ids it read from the state. A tool is a facade: it calls the Core route (typed `LocalCoreClient`) or the Control Center command channel that already owns the operation, so voice and interface reach the same canonical state through the same validation. The server is the **only `brain` door**: it sets `actor: "brain"` itself (no tool has an `actor` or `origin` argument; a catalogue test fails if one appears), where the Control Center relay forces `user`.
+There is **no natural-language router and no second UI scheduler**: the brain (Claude) understands the sentence, and calls one of fourteen semantic tools with ids it read from the state. A tool is a facade: it calls the Core route (typed `LocalCoreClient`) or the Control Center command channel that already owns the operation, so voice and interface reach the same canonical state through the same validation. The server is the **only `brain` door**: it sets `actor: "brain"` itself (no tool has an `actor` or `origin` argument; a catalogue test fails if one appears), where the Control Center relay forces `user`.
 
-### The thirteen tools
+### The fourteen tools
 
 | Tool | `op` / `target` | Calls | Class |
 | --- | --- | --- | --- |
 | `presentation_inspect` | `overview`, `presentation` (variant graph with numbers), `variant` (scenes), `scene` (controls, bounds, current values, scene-local variants), `score` (items **without** `text` / `note`), `history`, `playback`, `compare`, `composition`, `templates`, `template`, `explorer` (dated mirror + full-screen state), `choices` (every valid id), `draft_guide` (exact brief and draft keys and a valid example to adapt; `kind: exploratory` adds six computed, divergent art-direction profiles; no Core call) | the Core reads, the Control Center mirrors | read |
-| `presentation_view` | `explorer_open` (the Studio; `variant_id?`, `fullscreen?`), `explorer_close`, `stage_fullscreen_enter`, `fullscreen_exit`, `window_open` (`presentation_id`), `window_close`, `rail_show`, `rail_hide` | `POST /api/presentation-studio/explorer/commands`, `POST /api/fullscreen/commands`, `POST /v1/presentation-studio/rail/display` | write |
+| `presentation_view` | `explorer_open` (Variants; `variant_id?`, `fullscreen?`), `explorer_close`, `stage_fullscreen_enter` (Slice 09: the Variants stage, armed), `fullscreen_exit`, `window_open` (`presentation_id`; Slice 09: Variants windowed), `window_close`, `rail_show`, `rail_hide` | `POST /api/presentation-studio/explorer/commands`, `POST /api/fullscreen/commands`, `POST /v1/presentation-studio/rail/display` | write |
 | `presentation_library` | `hide`, `show`, `archive` (`confirmed=true` after the user's yes), `restore`, `rename` (`title`), `acknowledge` | `POST .../presentations/{id}/rail` | destructive class (archive; nothing is deleted) |
 | `presentation_play` | `start` (`role`, `jarvis_speaks?`), `stop`, `pause`, `resume`, `next`, `previous`, `goto` (one of `item_id`, `scene_id`, `position`), `reveal`, `hide`, `return` | `POST .../playback/{verb}` | write |
 | `presentation_edit` | `ops` (1..16; `control.set`, `control.reset`, `scene.remove`, `scene.reorder`, `scene.rename`, `scene.source_request`, `scene_variant.create`, `scene_variant.rename`, `scene_variant.select`, `scene_variant.delete`), `revision?`, `mode` `preview` or `commit`, `confirmation?` | `POST .../variants/{id}/edits` | write |
@@ -3460,6 +4378,7 @@ There is **no natural-language router and no second UI scheduler**: the brain (C
 | `presentation_compose` | `plan`, `create` (`request`: `base`, `scenes`, `narrative`, `motion`, `art_direction`, `title`, ...) | `compositions/plan`, `compositions` | write |
 | `presentation_template` | `plan`, `promote`, `instantiate` | the Slice 20 routes | write |
 | `presentation_draft_check`, `presentation_draft_assemble`, `presentation_draft_finalize` | `brief`, `draft` | `authoring/{check,assemble,finalize}` | read / write |
+| `presentation_source` | `read`, `write` (`files`, `assets?`, `manifest?`, `request_id?`), `preview` (`frames?`, `scale?`) on ONE scene: [Native Remotion authoring](#native-remotion-authoring-level-3-native-studio-playback-fix-slice-13) | `GET .../scenes/{id}/source`, `POST .../source-edits`, `POST /v1/local-capabilities/remotion/render/preview` | write |
 
 Not exposed on purpose: `scene.add`, `scene.set_controls` and the `*.restore_*` forms (they take a whole scene body or are the shape of an undo; use a template or a branch), score writing (`POST/PUT .../score`: the planner assembles it), prefab detours, `skip_sequence` (user only on the wire), the page-side compare API (the compare state is Core's). Deleting a Presentation does not exist.
 
@@ -3469,7 +4388,7 @@ Not exposed on purpose: `scene.add`, `scene.set_controls` and the `*.restore_*` 
 2. **The start origin is attested by the real turn.** Core's start contract takes `origin` from the request and lets `brain` + `explicit_user_request` switch the user's interaction mode (Slice 14 entry condition). `presentation_play start` has no `origin` argument. The Control Center, which serves every brain turn (`agent_ask`), counts the addressed user turns in flight (`presentation_studio_turn.AddressedTurnTracker`; a turn Core opens itself, `source: system`, or a non-addressed turn does not count; a typed panel message does) and answers `GET /api/presentation-studio/agent/turn` `{addressed_user_turn}`. Only then does the server add `origin: explicit_user_request`. Otherwise Core applies `brain_spontaneous` and refuses (`mode_switch_refused`, French sentence: the user starts the run from the player, or asks for it aloud). **Limit:** the attestation says a user turn is running, not that the sentence asked to present; the prompt says to start only on an explicit request.
 3. **Destructive gestures use the canonical confirmation.** Archiving a branch ("delete" = archive, restorable): `archive_plan` returns the exact set (numbers, titles clipped, `includes_active`) and Core's token (HMAC bound to the set, titles and revision, 10 minutes); the tool answers `confirmation_required` with the question to read; `archive` needs the token of a plan **made by this process**, `confirmed: true` (the user's yes) and Core re-checks the token (`presentation_studio_confirmation_stale` when the set grew). Removing a scene: the first `presentation_edit` with `scene.remove` writes nothing and returns a token bound to variant, revision and scene ids; the same request with it commits. Undoing the **user's** last modification (entry `actor` is not `brain`): same two steps, the token bound to the entry. Every undo sends `expected_entry_id` read from the history (Slice 08 condition), so a blind "undo" never undoes someone else's later edit. A preview of a removal needs no token.
 4. **Visual gestures are silent by default.** Every result carries `speech`: `silent` for a successful visual gesture (open / close the explorer, compare, navigate, edit, start / stop / navigate playback, activate, rename, undo) and `say` plus a one-sentence `say` only for: a new fact (variant number created), a confirmation question, a click the user must make (`needs_gesture`), a refusal (tool error), an archive done. This is exactly the PRESENTATION matrix (`COMMAND_CONFIRMATION` and `VISUAL_COMMAND` forbid voice; `ERROR` and `QUESTION` are the safety exceptions); the runtime speech gate stays the enforcement, the tool result and the prompt only stop the model from asking for speech. The classifier gained `compare`, `mélange`, `mixe` as visual verbs. Not classified (no unambiguous verb): "fais une variante", "rends X plus froid"; their confirmation is a short `say` or silence by the prompt.
-5. **Full screen is never claimed.** `explorer_open` rests on the receipt's `mode` (`windowed`, `fullscreen_armed` or `fullscreen`, observed by the page); `fullscreen_armed` and a `needs_gesture` answer say the user must click. `stage_fullscreen_enter` needs a running playback (the stage object id comes from the playback state).
+5. **Full screen is never claimed.** `explorer_open` rests on the receipt's `mode` (`windowed`, `fullscreen_armed` or `fullscreen`, observed by the page); `fullscreen_armed` and a `needs_gesture` answer say the user must click. `stage_fullscreen_enter` needs a running playback; since Slice 09 it opens Variants on the run (receipt) and arms the Variants stage (`studio-explorer-stage`, `keys: "none"`).
 6. **Art direction.** A serious start without one is refused by Core (`presentation_studio_art_direction_required`); the tool's sentence names the fix, `presentation_variant art_direction_fallback` (revision read, not typed).
 7. **Composition.** `create` is offered only after a `plan` of the same request answered; `source_revisions` default to the graph read at the same moment (a state that moved is `stale_revision`); conflicts (`code`, `dimension`, `message`, `fix`) are returned verbatim; `activate` stays false unless asked. The explorer's comparison state is never driven through the page, only through Core (an open explorer shows it at its next read).
 8. **Correlation.** Every call writes one `presentation_studio.tool` line (tool, op, resolved ids, `correlation_id`, `revision`, `speech`, duration, and the canonical event Core posts: `system.presentation_studio.edit_committed`, `system.presentation_studio.variant_changed` or `system.presentation_studio.playback_changed`); a refusal writes `presentation_studio.tool_failed` with its code. No title, value, rationale or spoken line ever reaches the journal (tested with sentinels). The result's `revision` and ids match the event's attributes (tested against the real emitter; the event's `source` is `brain`).
@@ -3495,7 +4414,7 @@ Not exposed on purpose: `scene.add`, `scene.set_controls` and the `*.restore_*` 
 
 ### Tool Brain
 
-With `JARVIS_TOOL_BRAIN=active` the Tool Brain executes scene tools by adapters. `run_scene_plan` (its only scene write path) now refuses any command that targets an object of category `studio_stage` / `studio_aux` (the playback stage window and its auxiliary windows), or imposes such a category, with `studio_owned`; tested adapter by adapter and through filter selections. The presentation tools are not Tool Brain operations (no `ui_surface`), so the Tool Brain never plays or edits a presentation.
+With `JARVIS_TOOL_BRAIN=active` the Tool Brain executes scene tools by adapters. `run_scene_plan` (its only scene write path) now refuses any command that targets an object of category `studio_stage` / `studio_aux` (the retired playback stage window and its auxiliary windows: since Slice 09 these categories are reserved, never drawn, and their leftovers archived at Core start), or imposes such a category, with `studio_owned`; tested adapter by adapter and through filter selections. The presentation tools are not Tool Brain operations (no `ui_surface`), so the Tool Brain never plays or edits a presentation.
 
 ### Real-model traces (Slice 11 / 21 gate)
 
@@ -3508,6 +4427,169 @@ Run by `python -m tests.replay.presentation_studio_mcp_real_trace` (real `claude
 - Score editing, `scene.add`, prefab detours and score `text` reading by the agent are not offered.
 - Voice-undo confirmation and destructive confirmations are enforced by token binding and the prompt; a model that says "oui" for the user cannot be told from the user by the tools (same trust level as `confirm` of `scene_update_many`).
 - Physical checks (a spoken session in PRESENTATION mode, full screen on a projector) are Human checks.
+
+## Native Remotion authoring (Level 3, native-studio-playback-fix Slice 13)
+
+Status: implemented by Slice 13 of `jarvis-remotion-native-studio-playback-fix`. Owners: `jarvis/domain/presentation_studio_authoring.py`
+(`Authoring`, `native_role`, `native_score`), `presentation_studio_authoring_gate.py` (`NATIVE_BLOCKING`, `NATIVE_OFF`),
+`presentation_studio_authoring_guide.py` (`draft_guide("native")`, `NATIVE_LOOP`, `ISOLATION_HINT`), `jarvis/core/presentation_studio_edit.py`
+(`record_authored_scenes`, `drop_authored_scene`, `release_authored_for_pin`, `renew_authored_scene`), `jarvis/core/presentation_studio_reload.py`
+(`_refuse_over_studio_edits`), `jarvis/core/presentation_render_service.py` (`preview`, `BrowserSlot`),
+`jarvis/runtime/presentation_studio_mcp_tools.py` (`PresentationTools.source`), `jarvis/runtime/presentation_playbooks.py` (author playbook),
+`jarvis/runtime/claude_local.py` (`PRESENTATION_PRODUCTION_RULE`). Conformance: `tests/unit/test_presentation_studio_native_authoring.py`,
+`test_presentation_studio_native_loop.py`, `test_presentation_playbooks.py`, `test_mcp_catalog.py`, `test_native_parity_evidence_privacy.py`.
+Evidence and the measured comparison: `tasks/jarvis-remotion-native-studio-playback-fix/slices/13-claude-native-generation-parity/BENCHMARK.md`.
+
+**Why.** Measured on the same brief, an agent in Jarvis needed four sub-agents, 76 tool calls, 15 refusals (13 of them drafts), about 21 minutes and USD 3.9 to
+produce a deck it never looked at, where Claude in a plain Remotion project needed one agent, 12 to 19 calls and USD 0.34 to 0.47, and rendered
+its own frames to check them. The restrictive draft schema (text in props, colours in the `theme` prop, curated controls, cues, a spoken score)
+was the only creation path, and an agent could neither see nor fix the scenes it had just created.
+
+**The default workflow** (author playbook, one `[code] [presentation-author]` sub-agent, the brief and review roles only when useful):
+
+1. read the sources named in the request (and the production brief if one exists);
+2. `presentation_inspect` `target: "draft_guide"`, `kind: "native"`: exact keys, one valid example, the key format, the tags the isolation guard
+   refuses;
+3. storyboard: one scene = one composition (size, fps, duration) and one idea;
+4. write normal React/TSX (text, colours, layout in the code; helper modules in `src/lib/*.tsx`; `react` and `remotion` only);
+5. `presentation_draft_assemble` with `brief.authoring: "native"` (no score, roles or art direction needed);
+6. `presentation_source` `op: "preview"` on every scene, then the agent READS each rendered frame;
+7. `presentation_source` `op: "write"` (complete files) to fix what it saw, and preview again.
+
+**What still blocks a native deck** (`NATIVE_BLOCKING`, one reason each in the code): the request and the draft are understood (`brief_invalid`,
+`draft_schema`), the source is a valid candidate and passes the isolation guards (`prefab_invalid`), it publishes only under
+`presentation-studio.` (`prefab_namespace`), pins and values fit (`pin_unknown`, `scene_incompatible`, `score_incompatible`), documents fit
+their caps (`document_invalid`), every scene is reachable by playback (`scene_no_score`), Remotion only (`prefab_engine_mismatch`), the real
+compiler builds it in time (`tsx_compile`, `tsx_compile_budget`, `tsx_lint_budget`), anchors are inside the composition (`tsx_anchor_range`),
+live Board references and inspirations follow their security contracts (`tsx_live_ref_*`, `tsx_inspiration_unconfirmed`), no network, eval or
+remote reference (`behavior_risky`). That is the floor the source-edit gate already applies to every later change of a scene.
+
+**What is silent** (`NATIVE_OFF`): the rules that judge the guided model itself (text in props, the `theme` prop, curated controls, cues, spoken
+lines, declared transitions, the props-based text density and contrast). **Everything else is a warning.** The guided path is unchanged and
+stays the default of `presentation_draft_assemble` when `authoring` is absent (its brief digest is unchanged).
+
+**Defaults a native draft gets from Core:** roles from the order (`single`, else `opening` / `body` / `closing`), a silent score (one
+`presenter: none` item per scene lasting its declared composition), a generated fallback art direction (the variant keeps its required DA and
+the `theme` prop is still filled for scenes that read it), `speech: none`. `strict_content` is refused (exploratory only), and
+`authoring: native` with `workflow: exploratory` is refused.
+
+**Refining its own scenes.** When the BRAIN assembles a deck, Core records one `agent_authored_scene` permission per created scene
+(`source_requests` in the result). Unlike a user's request it is multi-use: the agent's `presentation_source write` (the existing source-edit
+route: compose, `SOURCE_GUARDS`, carry-over, score references, real build, new immutable version, CAS, rollback) needs no user turn and no
+`request_id` on a scene it created. What is implemented (Slice 13 rework):
+
+- **bound to presentation, variant and scene**: the same scene id in another variant is refused (`presentation_studio_source_request_required`);
+- **30 minutes from the last write that STOOD** (admitted, built, published: `renew_authored_scene`); a refused attempt (build error, stale
+  basis, rollback, rate limit, Studio refusal) never extends it;
+- **ends** when the user's own source edit of that scene stands (Variants, the Studio's publish) and when Remotion Studio OPENS or SYNCS
+  ANY version of that scene's source (same `prefab_id` as its pin, in every variant where the agent holds a permission on it:
+  `release_authored_for_pin`, through `RemotionStudioService.add_scene_listener`), so an agent write that lands while the Studio starts on an
+  older version does not keep the permission; the agent's next write there is refused `presentation_studio_source_request_required`;
+- **refused while the user edits in Remotion Studio**: while the Studio workspace holds unpublished files based on that scene's source, any
+  `brain` write to it is refused 409 `presentation_studio_scene_edited_in_remotion`, request or not (*Hot reload contract* › *Source
+  requests*, rule 5);
+- **kept apart from the user's requests**: its own store of 96 (`MAX_AUTHORED_SCENES`: expired first, then the oldest agent permission,
+  `authored_scenes_dropped`); it never evicts a user's pending `scene.source_request` (ring of 64) and is not listed by
+  `pending_source_requests`;
+- lost at a Core restart (memory only, like every source request).
+
+It authorises nothing the agent could not already do (assemble a new deck). A user's `scene.source_request` keeps its Slice 21 rules.
+
+**Native preview.** `POST /v1/local-capabilities/remotion/render/preview` `{presentation_id, variant_id, scene_id, frames? (1..6), scale?
+(0.25, 0.5, 1)}` renders a few frames of ONE scene of the CURRENT variant with the export path's own assembler (`assemble_preview`: in memory,
+no Board read) and guarded render host, in one bundle and one browser, and keeps them as JPEG files under `<runtime>/render/previews/<job>/`
+(the last 40 folders). Nothing is frozen, no Artifact is created, nothing is queued. Bounds (Slice 13 rework, QA B2): one browser at a time
+with the exports, and an export that wants it always goes before a waiting preview; at most ONE preview waits while one renders, any other is
+refused at once with `presentation_render_preview_busy` (429; the tool tells the agent to wait for the running preview or export); the wait for the
+browser ends at 60 s (same code, nothing rendered); the render itself at 150 s; a caller that left (closed connection, client timeout) cancels
+its preview, while it waits and while it renders. Other typed refusals: `presentation_render_*`. Default frames: 30 %, 65 % and the last frame.
+See [remotion-render.md](remotion-render.md).
+
+**Unchanged on purpose:** the Player sandbox, `SOURCE_GUARDS`, the Slice 12 import gate and publish path, `SCENE_ALLOWED_IMPORTS`, the
+Remotion Studio workspace (no agent writes it), exports (still a user gesture). Known limits: the isolation guard is a case-insensitive filter
+and reads a component named `Link` or `Frame` as the forbidden element (the native guide says so; changing the guard is a trust decision left
+to agent 0); a data root path long enough to push Chrome's profile path past 260 characters makes every render and preview fail
+(`presentation_render_sandbox_unavailable`), as for exports.
+
+## Rendered-frame quality gates (Level 3, native-studio-playback-fix Slice 14)
+
+A compiled scene, a first draft that passes `check_first_draft` and a deck the Human likes are three different facts; a fourth is
+**what the rendered frames actually show**. This contract makes that fourth fact measurable on REAL frames, without a second renderer,
+and keeps it apart from the other three.
+
+**Four separate sections, never merged** (`jarvis.media.frame_quality.report_sections`): `compilation` (the compiler's own verdict),
+`first_draft_gate` (`check_first_draft`), `frame_quality` (this contract: `verdict` `clean` / `warnings` / `blocked`, `counts`,
+`findings`, `thresholds`) and `human_assessment` (always `pending` here). A machine finding never stands in for the Human creative
+assessment, and a clean frame report is not a visual approval.
+
+**Where the frames come from** (no second renderer):
+
+- the **smoke path**: for every scene, `smoke_frames(duration_in_frames)` = first (0), entry (1), middle, exit (last − 1) and last
+  frame, rendered by the guarded render host through `POST /v1/local-capabilities/remotion/render/preview` (one request per scene,
+  at most 6 frames, scale 0.5, the scene's authored fps and size); the **critical transition frames** are the last frame of scene
+  k beside the first frame of scene k+1 (`transition_pairs`);
+- the **recorded flow**: the 9-scene gate deck played by « Lire » in Variants, the Variants Player captured as JPEG about every
+  100 ms by the CDP driver's `record` action, each capture with the Player's own frame and the transport slider read at the same
+  instant;
+- the **scene's page**: `SCENE_DOM_PROBE` (in `tests/unit/remotion_quality_world.py`) evaluated in every live sandbox page of the
+  Variants Player, scene by scene, for fonts, assets and text out of the frame.
+
+Frames are decoded by the pinned ffmpeg of the Remotion runtime (`jarvis/adapters/remotion_media_tools.py`, `compositor_tool`, the
+same binaries the render runner uses to verify an MP4) to luma at `WORK_WIDTH` = 320 pixels. The detectors are pure standard-library
+Python (Core does not depend on numpy).
+
+**Detectors, severities and thresholds.** Profiles: `release_gate` (the machine gate deck: every frame carries text) and `authored`
+(a real deck, where a fade from or to an empty frame is an authoring choice). Thresholds are `THRESHOLDS` (`Thresholds`), measured on
+the gate deck (45 smoke frames, 682 flow captures), a Slice 13 native deck (20 frames) and the control deck (positive controls).
+
+| Code | Input | Severity | Threshold | Measured false positives |
+| --- | --- | --- | --- | --- |
+| `black`, `blank` | frame: edge density (neighbours more than `edge_step` = 20 luma apart) below `blank_edge_density` = 0.0008; `black` when the mean luma is at most `black_mean` = 16 | `authored` first / entry / exit / last: warning; otherwise **blocking**, the `release_gate` first frame included (its frames always carry text; agent 0, Slice 14 rework) | as stated | gate 0 / 45; native 16 / 20, all fades, all warnings |
+| `edge_clipped` | frame: ink (more than `ink_delta` = 48 from the median luma) in the `band_depth` = 4 band of a side over at least `clipped_ink_share` = 5 % of it; a run of ink that touches a corner of the side and whose texture is below `corner_run_texture` = 0.05 is a full-bleed bar (a progress bar, measured 0.006 to 0.013) and does not count | warning | as stated | gate 27 / 45 before the corner rule (all of them its own full-width progress bar, texture 0.006 to 0.013, which the rule skips; real re-measure: Slice 14 evidence `README.md`, Rework); native 0 / 20 |
+| `edge_text_overflow` | same band, ink over at least `overflow_ink_share` = 2 % and edge texture at least `overflow_texture` = 0.4 | warning | as stated | gate 0 / 45 (bar end 0.25), native 0 / 20; control text 0.73 |
+| `static_scene`, `repeated_frames` | sampled frames whose mean luma difference is below `repeat_mean_delta` = 0.005 (identical renders: 0.0; a one-digit change: 0.012 to 0.048) | warning, info | as stated | gate 0, native 0 |
+| `frozen_playback` | captures of a playing Player identical for at least `frozen_span_ms` = 1000 | warning | as stated | flow 0 |
+| `transition_flash` | a black or blank capture of the playing deck | **blocking** | `blank_edge_density` | flow 0 / 682 |
+| `time_carry` | a scene whose Player started on a frame other than 0 | **blocking** | exact | flow 0 / 8 |
+| `truncated` | a scene that never reached its last frame or played less than `truncation_share` = 0.97 of its authored length (the « cut at 8 s ») | **blocking** | as stated | flow 0 / 8 (the 30 s scene: 900 frames in 30.0 s) |
+| `stale_progress` | the transport slider (composition frame) against `CompositionMap.frame_of` of the Player's frame, beyond the sampling tolerance plus `stale_progress_ms` = 500 | **blocking** | as stated | flow 0 / 672 (largest lag 250 to 283 ms, at scene entries) |
+| `stale_scene_bar` | gate deck only: the scene's own drawn progress bar (`bar_share`) against its frame, beyond the sampling tolerance plus `stale_bar_share` = 0.08 | **blocking** | as stated | flow 0 / 672 |
+| `font_fallback`, `font_load_failed` | page: no family of the declared list available and no generic family; an `@font-face` whose file failed | **blocking** | exact | gate 0, native 0 |
+| `font_substituted` | page: the first family missing, a later one of the stack drawn | warning | exact | gate 0, native 0 |
+| `asset_missing` | page: a broken `<img>`, a media element in error, a resource answered 400 or more | **blocking** | exact | gate 0, native 0 |
+| `text_overflow` | page: a text box beyond the composition box, or larger than its own clipping box | warning | 2 composition pixels | gate 0, native 0 |
+| `render_failed` | the guarded host refused or failed the preview of a scene | **blocking** | exact | 0 |
+
+Clipping, overflow and repeated frames start as warnings (decided by agent 0): a full-bleed element, an element sliding in from
+outside and a still title card are legitimate, and pixels alone cannot tell them from a defect. The corner rule of `edge_clipped` trades one
+false negative for it: a smooth block cut by a side AT a corner (a flat panel bleeding off a corner) is not reported; textured content
+there (text strokes) still is. The control deck
+(`CONTROL_SCENES`) proves the other side: black frame, text cut by the frame, a missing font, a missing font file, a missing image and
+a still card fading to black are all found.
+
+**Acceptance evidence of a release** (handoff `slices/14-visual-quality-and-media-gates/evidence/`): the complete recorded flow
+(`flow.mp4`, 10 i/s, 640 px, CRF 34, about 55 KB for 74 s), deterministic timeline markers (`flow-markers.json`: start frame and ms of
+every scene from `build_composition`, beside where each scene was first seen in the video), a per-scene contact sheet from the
+render host (`gate-contact.jpg`: one row per scene, first / entry / middle / exit / last) and from the recording (`flow-contact.jpg`),
+side-by-side transition snapshots (`gate-transitions.jpg`, `flow-transitions.jpg`), and `summary.json` (SHA, runtime versions,
+durations, thresholds, false-positive notes).
+
+**Run it** (an isolated stack only, never the live Jarvis; one test per process; a short `--basetemp`, see
+[remotion-render.md](remotion-render.md) § 12): `JARVIS_REMOTION_RUNTIME_DIR=<runtime> [JARVIS_QUALITY_EVIDENCE_DIR=<dir>] pytest
+tests/unit/test_remotion_frame_quality_real.py -k gate|native|control` (about 100, 50 and 60 s) and
+`tests/unit/test_presentation_flow_quality_browser.py -k recorded|planted` (about 110 and 20 s; `planted` is the negative control:
+a black layer and a held slider planted in the page, never in the product, must be caught).
+
+**Limits.** The detectors are not wired into Core or the preview route: the author agent still reads its preview frames itself
+(Slice 13), and a later Slice may add the `frame_quality` section to the preview answer. A missing image renders as an empty box in
+the render host (no error): only the page probe finds it. Fonts are judged by the browser that plays the scene (this machine's fonts).
+The recording samples about every 100 ms: a flash shorter than one capture can fall between two captures (the Slice 05 burst and the
+Player clocks remain the frame-exact measure). The gate deck's scene bar check applies to that deck only.
+
+**Conformance.** `tests/unit/test_frame_quality.py` (every detector both ways on synthetic frames, the four regressions: transition
+flash, time carry, stale progress bar, cut at 8 s), `tests/unit/test_remotion_media_tools.py`, `tests/unit/test_frame_quality_docs.py`
+(this section against the code), real runtime: `tests/unit/test_remotion_frame_quality_real.py`,
+`tests/unit/test_presentation_flow_quality_browser.py`.
 
 ## Typed variables and fast edits (Level 3, Remotion Slice 13)
 
@@ -3549,6 +4631,7 @@ card and the stage window say why, with `Installer Remotion` / `Réparer Remotio
 | Resource references | `ResourceReference` in `jarvis/domain/presentation_working_set.py` | [presentation-working-set.md](presentation-working-set.md) |
 | Local data root, file-store conventions | `jarvis/data_root.py`, `jarvis/adapters/file_prefab_library.py`, `file_replace.py` | [local-data.md](local-data.md) |
 | UI intents / ownership of the screen by the Tool Brain | `jarvis/runtime/tool_brain_*`, `jarvis/domain/ui_intent.py` | [tool-brain-contracts.md](tool-brain-contracts.md) |
+| Rendered-frame quality (detectors, smoke frames, report sections) | `jarvis/media/frame_quality.py` (pure), `jarvis/adapters/remotion_media_tools.py` (pinned ffmpeg), frames from `POST /v1/local-capabilities/remotion/render/preview` | [Rendered-frame quality gates](#rendered-frame-quality-gates-level-3-native-studio-playback-fix-slice-14) |
 
 ## Generic fullscreen surface (Level 3, Slice 03)
 
@@ -3564,7 +4647,7 @@ What later Slices may rely on, and nothing else:
 - `POST /api/fullscreen/commands {action: "enter"|"exit", ...}` and `GET /api/fullscreen/state` for the agent side
   (Slice 21 wraps them as `presentation_fullscreen`). An `enter` answer is `needs_gesture`: **the agent must say the
   user has to click, never that it is fullscreen.** `entered` is read from `GET /api/fullscreen/state`.
-- Navigation keys (next, previous, first, last) arrive through `onNavigate` while fullscreen; the frame relays none. **Opt-in**: `keys: "host"` (default `none`, which never steals focus from a prefab text field); Slice 12 passes `host` for playback (`control_center_presentation_studio_player.js`).
+- Navigation keys (next, previous, first, last) arrive through `onNavigate` while fullscreen; the frame relays none. **Opt-in**: `keys: "host"` (default `none`, which never steals focus from a prefab text field); no presentation caller passes `host` since the band was retired (Slice 09; Variants enters with `keys: "none"` and keeps its own key map), so `onNavigate` has no listener in the product today: it stays the generic module's public API (*Retirement map*, Slice 15).
 - Slice 22 (hardening) re-checks fullscreen restore; the physical checks (Escape key, multi-monitor, permission
   prompt) stay Human checks.
 
@@ -3601,5 +4684,6 @@ What later Slices may rely on, and nothing else:
 | Cue matching, template and prefab promotion, agent and voice operations | 0-1 | 3 (**done**, Slices 13, 20, 21) |
 | Rehearsal (section loop, restart-a-section, dedicated runbook) | 0-1 | 3 (**not delivered as a Slice**: the `rehearsal` role, `goto`, `previous` and "where are we" exist through Slices 12, 01c and 21; the section loop and the runbook do not, see [presentation-studio-release.md](presentation-studio-release.md)) |
 | Presentation engine semantics (identity on the document, policy, capability matrix, typed failures, compatibility triage) | 0 | 2 contract + domain conformance (**done**, Remotion Slice 02; adapters and runtime gates: later Slices) |
+| Rendered-frame quality gates (smoke frames, detectors and thresholds, recorded flow, separate report sections) | 0 | 3 (**done**, native-studio-playback-fix Slice 14) |
 
 There is no `docs/CONTEXT.md` or documentation-level registry in this repository: the level of a concept is stated in its page header (`Status: Level N`), as in [presentation-mode.md](presentation-mode.md).

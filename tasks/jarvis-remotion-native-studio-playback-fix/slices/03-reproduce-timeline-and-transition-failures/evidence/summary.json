@@ -1,0 +1,40 @@
+{
+ "tested_product_sha": "16d56857",
+ "date": "2026-10-11",
+ "host": "Windows 11 Pro 10.0.26200",
+ "chrome": "154.0.8037.99 (--headless=new, CDP, tests/unit/_remotion_stage_browser.mjs)",
+ "node": "v24.18.0",
+ "remotion": {"remotion": "4.0.534", "@remotion/player": "4.0.534", "react": "19.3.0", "esbuild": "0.28.1"},
+ "runtime_source": "read-only robocopy of <home>/AppData/Local/Temp/jrs22/fresh/local_capabilities/remotion/runtime (runtime-host.mjs + lock sha256 = shipped); no npm install",
+ "isolation": "RemotionStack: in-process Core + protocol + Control Center on free 127.0.0.1 ports, sandbox 127.77.0.2:<free>, CDP 9300-9799, tmp_path data root; live Jarvis untouched",
+ "gate_runs": {
+  "-k 'variants or composition or clock or scrub or without_anchor'": "2 passed, 9 xfailed, 145.9 s",
+  "-k play_all_shows": "1 xfailed, 237.3 s",
+  "no JARVIS_REMOTION_RUNTIME_DIR": "12 skipped, 1.5 s"
+ },
+ "defects": {
+  "A": {"reproduced": "yes",
+        "play_all": {"content_s": 74, "wall_s": 232.9, "never_shown": ["S3", "S6", "S8"], "held_previous_ms": [77975, 51085, 51019]},
+        "variants_tout_jouer": {"core_scope": "manual", "explorer_open_after_click": false, "core_scene_after_9s": 1, "item_ms_after_9s": 10552},
+        "variants_jouer_cette_slide": {"core_scope": "manual", "scene": 3, "explorer_open": false},
+        "manual_anchorless_S1_wraps_ms": [4378, 7311]},
+  "B": {"reproduced": "partly",
+        "variants_remount_per_slide_change": true, "variants_dom_blank_ms": [149, 190], "variants_click_to_first_scene_pixels_ms": [1251, 1226],
+        "run_stage_white_or_dark_captures": 0, "run_stage_swaps_captured": 4,
+        "hybrid_frame": "outgoing Player redrawn with incoming props (prefab_host.js:652 -> update :713-717); seen held 78 s during the S3 stall"},
+  "C": {"reproduced": "partly", "shown_scenes_starting_at_frame_0": "6/6 run, 3/3 preview", "play_on_ready_race_observed": false,
+        "scrub_clears_until": {"manual_S2_frame_5s_after_scrub": 149, "scene_S3_wrap_after_scrub": [13741, 896, 4]}},
+  "D": {"reproduced": "yes",
+        "at_2_6s": {"rs_time": "2.6 s / 30.0 s", "band": "00:04 / 00:08", "core_play_ms": 2770, "core_item_ms": 5060},
+        "after_scrub_to_600": {"player_frame": 640, "rs_time": "21.3 s / 30.0 s", "band": "00:06 / 00:08", "core_play_ms": 4410},
+        "player_reached_end_ms": 13474, "core_scope_end_ms": 33727, "core_late_ms": 20253, "follower_jump": "612 -> 835"},
+  "E": {"reproduced": "no (task base)", "S3_900_frames_target_8000_max_frame": 899, "band_at_end": "00:37 / 00:08"},
+  "F": {"reproduced": "yes", "simultaneous_time_readouts": ["rs-time 2.6 s / 30 s", "band 00:04 / 00:08", "Core segment 2770 ms", "Core item 5060 ms"]}
+ },
+ "control_group_plain_player": {
+  "loop_true_wraps_ms": [3476, 6474],
+  "loop_false_default_frame_after_end": 0,
+  "loop_false_moveToBeginningWhenEnded_false_frame_after_end": 89,
+  "seekTo_while_playing": "pause+seeked+play, continues to the end"
+ }
+}

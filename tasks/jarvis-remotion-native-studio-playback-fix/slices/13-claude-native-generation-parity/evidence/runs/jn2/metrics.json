@@ -1,0 +1,82 @@
+{
+ "run": "jn2",
+ "label": "Jarvis native, run 2 (Core and Control Center killed from outside mid-run)",
+ "side": "jarvis",
+ "topic": "jarvis",
+ "totals": {
+  "cost_usd_last_brain_result": 0.1676379,
+  "brain_results": 1
+ },
+ "agents": {
+  "brain": {
+   "description": "brain",
+   "tool_calls": 1,
+   "by_tool": {
+    "Agent": 1
+   },
+   "refused_or_error": [],
+   "frames_viewed": 0,
+   "usage": {
+    "input_tokens": 4,
+    "output_tokens": 732,
+    "cache_read_input_tokens": 70099,
+    "cache_creation_input_tokens": 38325
+   },
+   "elapsed_s": 10.8
+  },
+  "agent-a84aa88cbe537cc5a": {
+   "description": "[code] [presentation-author] Présentation vidéo JARVIS",
+   "tool_calls": 11,
+   "by_tool": {
+    "ToolSearch": 1,
+    "Read": 1,
+    "mcp__jarvis-presentation__presentation_inspect": 1,
+    "mcp__jarvis-presentation__presentation_draft_assemble": 3,
+    "Bash": 1,
+    "mcp__jarvis-presentation__presentation_source": 4
+   },
+   "refused_or_error": [
+    {
+     "tool": "mcp__jarvis-presentation__presentation_draft_assemble",
+     "result": "{\"ok\":true,\"speech\":\"silent\",\"status\":\"refused\",\"ok_gate\":false,\"report\":{\"ok\":false,\"workflow\":\"directed\",\"stage\":\"schema\",\"subset\":\"full\",\"failures\":[{\"code\":\"prefab_invalid\",\"severity\":\"error\",\"where\":\"bundle:couverture\",\"message\":\"guard: src/Scene.tsx:26: markup_tag - script/iframe/object/embed/"
+    },
+    {
+     "tool": "mcp__jarvis-presentation__presentation_draft_assemble",
+     "result": "{\"ok\":true,\"speech\":\"silent\",\"status\":\"refused\",\"ok_gate\":false,\"report\":{\"ok\":false,\"workflow\":\"directed\",\"stage\":\"partial\",\"subset\":\"full\",\"failures\":[{\"code\":\"prefab_invalid\",\"severity\":\"error\",\"where\":\"bundle:flux\",\"message\":\"guard: src/Scene.tsx:45: markup_tag - script/iframe/object/embed/link/"
+    },
+    {
+     "tool": "mcp__jarvis-presentation__presentation_source",
+     "result": "Refus core_unreachable : Core est injoignable : rien n'a été lu ni fait. (Core : Core est injoignable (ClientOSError))"
+    },
+    {
+     "tool": "mcp__jarvis-presentation__presentation_source",
+     "result": "Refus core_unreachable : Core est injoignable : rien n'a été lu ni fait. (Core : Core est injoignable (ClientConnectorError))"
+    },
+    {
+     "tool": "mcp__jarvis-presentation__presentation_source",
+     "result": "Connection closed"
+    }
+   ],
+   "frames_viewed": 0,
+   "usage": {
+    "input_tokens": 14,
+    "output_tokens": 186,
+    "cache_read_input_tokens": 315941,
+    "cache_creation_input_tokens": 72552
+   },
+   "elapsed_s": 235.2
+  }
+ },
+ "turns": [
+  {
+   "text": "Crée une courte présentation vidéo Remotion de 4 scènes, environ 40 secondes au total, en 1920x1080, qui présente JARVIS, l'assistant vocal local de ce poste à des développeurs qui le découvrent. Seul",
+   "brain_answer_s": 18.4,
+   "answer": "{\"text\": \"J'ai lancé un agent qui construit la présentation Remotion de 4 scènes à partir du README. Je vous dis où la voir dès qu'il a fini.\", \"ok\": true, \"error\": null}"
+  }
+ ],
+ "files": {
+  "brain.jsonl": 14,
+  "agent-a84aa88cbe537cc5a.jsonl": 28,
+  "jarvis-trace.jsonl": 110
+ }
+}

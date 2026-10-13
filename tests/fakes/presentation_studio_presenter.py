@@ -160,13 +160,13 @@ class Voice:
         self._send(T.MOUTH_SPEECH_COMPLETED, speech_id)
 
 
-def make_presenter(rig, *, gap_ms: int = 0, **kwargs: Any) -> tuple[PresentationStudioPresenter, FakeBrain, Voice]:
-    """A presenter on the rig's playback service and clock, driven by hand (`pump()`), with Core's event sink."""
+def make_presenter(rig, *, gap_ms: int = 0, run_loop: bool = False, **kwargs: Any) -> tuple[PresentationStudioPresenter, FakeBrain, Voice]:
+    """A presenter on the rig's playback service and clock, driven by hand (`pump()`; `run_loop`: Core's own loop), with Core's event sink."""
 
     brain = FakeBrain()
     presenter = PresentationStudioPresenter(
         rig.service, brain, events=StudioPresenterEvents(rig.conversation, lambda: "conv-1"), diagnostics=rig.env.sink,
-        monotonic=rig.mono, gap_ms=gap_ms, run_loop=False, **kwargs)
+        monotonic=rig.mono, gap_ms=gap_ms, run_loop=run_loop, **kwargs)
     brain.presenter = presenter
     return presenter, brain, Voice(presenter, brain)
 

@@ -1,0 +1,160 @@
+{
+ "1280x720": {
+  "row": [
+   {
+    "name": "Scène précédente",
+    "act": null,
+    "box": [
+     579,
+     440,
+     609,
+     470
+    ]
+   },
+   {
+    "name": "Lire",
+    "act": "continuous",
+    "box": [
+     617,
+     440,
+     679,
+     470
+    ]
+   },
+   {
+    "name": "Scène suivante",
+    "act": null,
+    "box": [
+     687,
+     440,
+     717,
+     470
+    ]
+   },
+   {
+    "name": "Son",
+    "act": null,
+    "box": [
+     1192,
+     440,
+     1222,
+     470
+    ]
+   },
+   {
+    "name": "Plus de lecture",
+    "act": null,
+    "box": [
+     1230,
+     440,
+     1260,
+     470
+    ]
+   },
+   {
+    "name": "Remotion Studio",
+    "act": "remotion_studio",
+    "box": [
+     1058,
+     478,
+     1172,
+     508
+    ]
+   },
+   {
+    "name": "Présenter",
+    "act": "present",
+    "box": [
+     1184,
+     478,
+     1260,
+     508
+    ]
+   }
+  ],
+  "remotionStudioButton": true,
+  "railMenuHasRemotionStudio": true,
+  "overflowX": false,
+  "vw": 1280,
+  "vh": 720
+ },
+ "800x600": {
+  "row": [
+   {
+    "name": "Scène précédente",
+    "act": null,
+    "box": [
+     332,
+     291,
+     362,
+     321
+    ]
+   },
+   {
+    "name": "Lire",
+    "act": "continuous",
+    "box": [
+     366,
+     291,
+     424,
+     321
+    ]
+   },
+   {
+    "name": "Scène suivante",
+    "act": null,
+    "box": [
+     428,
+     291,
+     458,
+     321
+    ]
+   },
+   {
+    "name": "Son",
+    "act": null,
+    "box": [
+     724,
+     291,
+     754,
+     321
+    ]
+   },
+   {
+    "name": "Plus de lecture",
+    "act": null,
+    "box": [
+     758,
+     291,
+     788,
+     321
+    ]
+   },
+   {
+    "name": "Remotion Studio",
+    "act": "remotion_studio",
+    "box": [
+     586,
+     325,
+     700,
+     355
+    ]
+   },
+   {
+    "name": "Présenter",
+    "act": "present",
+    "box": [
+     712,
+     325,
+     788,
+     355
+    ]
+   }
+  ],
+  "remotionStudioButton": true,
+  "railMenuHasRemotionStudio": true,
+  "overflowX": false,
+  "vw": 800,
+  "vh": 600
+ }
+}

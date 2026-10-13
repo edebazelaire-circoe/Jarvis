@@ -46,8 +46,9 @@ def test_the_bounds_in_the_code_are_the_bounds_in_the_page():
 def test_the_routes_verbs_statuses_and_codes_are_documented():
     text = section()
     routes = {(r.method, r.path) for r in PresentationStudioPlaybackRoutes(object()).routes()}
-    assert routes == {("GET", PLAYBACK), ("GET", PLAYBACK + "/armed"), ("GET", PLAYBACK + "/preload"), ("POST", PLAYBACK + "/{verb}"), ("POST", CUES)}
-    for path in (PLAYBACK, PLAYBACK + "/armed", PLAYBACK + "/preload", PLAYBACK + "/{verb}", CUES):
+    assert routes == {("GET", PLAYBACK), ("GET", PLAYBACK + "/armed"), ("GET", PLAYBACK + "/preload"), ("GET", PLAYBACK + "/surface"),
+                      ("POST", PLAYBACK + "/{verb}"), ("POST", CUES)}
+    for path in (PLAYBACK, PLAYBACK + "/armed", PLAYBACK + "/preload", PLAYBACK + "/surface", PLAYBACK + "/{verb}", CUES):
         assert path in text, path
     assert f"`{' '.join(v.value for v in Verb)}`" in text, "the verb list in the page is the Verb enum, in order"
     for code in (C.PLAYBACK_REFUSED, C.PLAYBACK_STAGE_FAILED, C.UNKNOWN_SCORE, C.SCORE_INCOMPATIBLE):
@@ -64,7 +65,7 @@ def test_the_relay_surface_is_documented_and_never_carries_the_armed_set_or_the_
     relay = PresentationStudioRelayRoutes(transport=lambda: None, journal=None)  # type: ignore[arg-type]
     mine = {(r.method, r.path) for r in relay.routes() if r.path.startswith("/api/presentation-studio/playback")}
     assert mine == {("GET", "/api/presentation-studio/playback"), ("GET", "/api/presentation-studio/playback/preload"),
-                    *(("POST", f"/api/presentation-studio/playback/{v.value}") for v in Verb)}
+                    ("GET", "/api/presentation-studio/playback/surface"), *(("POST", f"/api/presentation-studio/playback/{v.value}") for v in Verb)}
     assert "not relayed" in text and "forced" in text
     relay_doc = (ROOT / "jarvis/runtime/presentation_studio_relay.py").read_text(encoding="utf-8")
     assert "Jamais relayés" in relay_doc and "playback/armed" in relay_doc and "cues/satisfied" in relay_doc
@@ -72,9 +73,12 @@ def test_the_relay_surface_is_documented_and_never_carries_the_armed_set_or_the_
 
 def test_every_diagnostic_the_playback_code_emits_is_documented():
     emitted: set[str] = set()
-    for module in ("jarvis/core/presentation_studio_playback.py", "jarvis/core/presentation_studio_stage.py"):
+    for module in ("jarvis/core/presentation_studio_playback.py", "jarvis/core/presentation_studio_stage.py",
+                   "jarvis/core/presentation_studio_run_surface.py"):
         code = (ROOT / module).read_text(encoding="utf-8")
         emitted |= set(re.findall(r'self\._trace\(\s*"([a-z_]+)"', code))
+        emitted |= set(re.findall(r'_trace\(self\._diagnostics,\s*"([a-z_]+)"', code))
+        emitted |= {f"{kind}_failed" for kind in re.findall(r'_keep_aside\("[a-z]+",\s*"([a-z_]+)"', code)}
     edit = (ROOT / "jarvis/core/presentation_studio_edit.py").read_text(encoding="utf-8")
     emitted |= {k for k in re.findall(r'"core\.presentation_studio\.([a-z_]+)"', edit) if k in ("overlay_rendered", "commit_listener_failed")}
     assert {"playback_started", "playback_stopped", "playback_crashed", "stage_shown", "aux_staged", "archived", "mode_restore_failed",
@@ -101,7 +105,7 @@ def test_owners_exist_and_the_other_pages_carry_their_rows():
     text = section()
     for module in re.findall(r"`(jarvis/[a-z_/]+\.(?:py|js))`", text):
         assert (ROOT / module).is_file(), module
-    for test in ("playback", "playback_service", "playback_routes", "stage", "edit_overlay", "player_js", "player_browser"):
+    for test in ("playback", "playback_service", "playback_routes", "stage", "run_surface", "edit_overlay", "player_js", "presenter_js"):
         assert (ROOT / f"tests/unit/test_presentation_studio_{test}.py").is_file(), test
     assert "state/presentation-studio-stage-ledger.json" in page("local-data.md")
     assert "state/presentation-studio-stage-ledger.json" in page("ARCHITECTURE.md")
@@ -123,18 +127,18 @@ def test_the_armed_cue_contract_states_what_slice_13_must_do():
 
 
 def test_the_rework_contract_is_documented_with_its_constants():
-    """QA-1 rework: skip_sequence, detour_invalid / 422, the follower state, the ledger scan, the reopen rule, the identity token."""
+    """QA-1 rework: skip_sequence, detour_invalid / 422, the follower state, the identity token; Slice 09 (native-studio-playback-fix): the
+    stage window, its reopen rule and its ledger are retired (history kept), the stage sync is bounded and a stop pre-empts it."""
 
     from jarvis.adapters.file_presentation_studio_stage_ledger import KEEP_QUARANTINED
-    from jarvis.core.presentation_studio_playback import FOLLOWER_GRACE_S, MAX_VIEW_BYTES
-    from jarvis.core.presentation_studio_stage import MAX_STAGE_REOPENS
+    from jarvis.core.presentation_studio_playback import FOLLOWER_GRACE_S, MAX_VIEW_BYTES, STAGE_SYNC_TIMEOUT_S
 
     text = section()
-    for needle in (f"`MAX_VIEW_BYTES` {MAX_VIEW_BYTES}", f"`FOLLOWER_GRACE_S` {int(FOLLOWER_GRACE_S)} s",
-                   f"`MAX_STAGE_REOPENS` {MAX_STAGE_REOPENS}", f"`KEEP_QUARANTINED` {KEEP_QUARANTINED}",
+    for needle in (f"`MAX_VIEW_BYTES` {MAX_VIEW_BYTES}", f"`FOLLOWER_GRACE_S` {int(FOLLOWER_GRACE_S)} s", f"`KEEP_QUARANTINED` {KEEP_QUARANTINED}",
+                   f"`STAGE_SYNC_TIMEOUT_S` {int(STAGE_SYNC_TIMEOUT_S)} s", "`stage_timeout`", "`stage_preempted`", ".retired-<ts>",
                    "`skip_sequence`", "`detour_invalid`", "**422**", "`follower: absent`", "`waiting`", "`connected`",
-                   "Sortir de la séquence", ".corrupt-", "stage_ledger_scan_reclaimed", "origin=token", "capture phase",
-                   "Slice 14 keeps it", "Suivi vocal indisponible", "`stage_closed_by_user`", "`stage_closed`"):
+                   "Sortir de la séquence", ".corrupt-", "origin=token", "Slice 14 keeps it", "Suivi vocal indisponible",
+                   "Retired by Slice 09 (done)"):
         assert needle in text, needle
     roles = page("presentation-studio.md")
     assert "Core cannot see the architecture" in roles and "still start" in roles

@@ -135,6 +135,49 @@ async def test_a_resumed_segment_continues_and_a_new_incarnation_of_the_same_sce
     assert result["started"] == 2 and result["again"] == "segment"
 
 
+async def test_a_player_that_halts_one_or_two_frames_short_of_its_stop_frame_has_finished_its_segment(tmp_path):
+    """Slice 05 rework, B1: Remotion stops one step short of the end on a dropped frame (238 of 0..239) and fires `ended`. The follower used
+    to wait for `frame === until_frame` exactly, so `done` never came and the run held forever. Also the frame past the stop frame that the
+    page reports before the sandbox's `seekTo(until)` lands (P2)."""
+
+    result = run_stage_node(tmp_path, FOLLOWER + r"""
+      const out={};
+      for(const [name,over,halt] of [['last-1',{from_frame:200,until_frame:299},298],['last-2',{from_frame:200,until_frame:299},297],
+                                     ['until-1',{},73],['past',{},75],['exact',{},74]]){
+        const b=bench();
+        b.show(over);
+        b.report((over.from_frame||30)+5,true);b.follower.onClock('stage');
+        b.advance(1000);
+        b.report(halt,false);
+        out[name]={outcome:b.follower.onClock('stage'),done:b.reports.filter(r=>r.event==='done').length};
+      }
+      return out;
+    """)
+    for case, got in result.items():
+        assert got == {"outcome": "done", "done": 1}, case
+
+
+async def test_a_player_halted_further_back_or_paused_by_core_has_not_finished_its_segment(tmp_path):
+    """Negative cases: a Player halted 3 frames short or mid-segment is not at its end (it is ordered again after `STALLED_MS`), a Player
+    halted near its end never seen moving is a stale report, and a pause decided by Core is never read as an end."""
+
+    result = run_stage_node(tmp_path, FOLLOWER + r"""
+      const out={};
+      let b=bench();b.show();b.report(40,true);b.follower.onClock('stage');b.report(71,false);
+      out.short3=b.follower.onClock('stage');
+      b=bench();b.show();b.report(40,true);b.follower.onClock('stage');b.report(50,false);
+      out.mid=b.follower.onClock('stage');
+      b=bench();b.show();b.report(73,false);
+      out.unseen=b.follower.onClock('stage');
+      b=bench();b.show();b.report(40,true);b.follower.onClock('stage');
+      b.show({playing:false,play_ms:400});b.report(73,false);
+      out.paused=b.follower.onClock('stage');
+      out.reports=b.reports.filter(r=>r.event==='done').length;
+      return out;
+    """)
+    assert result == {"short3": "halted", "mid": "halted", "unseen": "halted", "paused": "idle", "reports": 0}
+
+
 # ------------------------------------------------------------------ the host: first image, preload, take-over
 
 HOST_BENCH = r"""

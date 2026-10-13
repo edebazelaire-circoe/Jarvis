@@ -37,8 +37,10 @@ def test_the_limits_agree_with_the_python_contract(tmp_path):
     limits = run_node(tmp_path, "return P.LIMITS;")
     assert limits["maxFrame"] == rs.MAX_DURATION_FRAMES and limits["maxFps"] == rs.MAX_FPS
     assert (limits["minCompositionPx"], limits["maxCompositionPx"]) == (rs.MIN_DIMENSION, rs.MAX_DIMENSION)
+    # Slice 08 (native-studio-playback-fix): `sound {muted}` host -> frame, `audio {muted, blocked}` and `key {key}` frame -> host.
     assert run_node(tmp_path, "return {h:P.HOST_TYPES,c:P.CHILD_TYPES};") == {
-        "h": ["init", "props", "control", "cue", "ping", "teardown"], "c": ["ready", "pong", "clock", "violation", "error"]}
+        "h": ["init", "props", "control", "cue", "ping", "teardown", "sound"],
+        "c": ["ready", "pong", "clock", "violation", "error", "audio", "key"]}
 
 
 def test_valid_child_messages_are_accepted_as_clean_copies(tmp_path):

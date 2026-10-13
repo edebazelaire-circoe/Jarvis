@@ -7,8 +7,8 @@ Chrome ; sans eux ces épreuves sont ignorées (elles n'installent jamais rien).
 Prouvé (mesuré, image lue DANS le bac à sable) : le segment d'entrée joue jusqu'à l'image avant la première ancre puis tient ; révéler
 une ancre (`next`) fait aller le lecteur à son image et jouer jusqu'à l'image avant l'ancre suivante, où il s'arrête de lui-même ;
 une cue (le rapport typé du suiveur, comme la voix) fait de même ; pause tient l'image, reprise continue sans revenir en arrière ;
-`previous` ramène à l'ancre précédente ; une scène sans ancre se joue seule (Slice 10) et la vue de Core n'a alors aucune
-`timeline` ; un faux rapport de position venu de la scène est refusé par le chien de garde et ne change rien.
+`previous` tient l'image d'arrêt de l'élément précédent sans rien rejouer (Slice 07 de native-studio-playback-fix, contrat § 5) ; une scène sans ancre se joue en entier (Slice 10), sous l'ordre de Core : depuis la Slice 09 de
+native-studio-playback-fix sa vue porte une `timeline` de scène entière (le lecteur de Variantes ne joue jamais de lui-même) ; un faux rapport de position venu de la scène est refusé par le chien de garde et ne change rien.
 """
 
 from __future__ import annotations
@@ -155,14 +155,6 @@ async def test_the_score_drives_a_remotion_scene_through_its_anchors_a_cue_pause
             {"value": "paused_at", "expr": FRAME, **SANDBOX}, {"wait": 1200}, {"value": "paused_still", "expr": FRAME, **SANDBOX},
             http_step(stack, "resume", "POST", f"{PLAYBACK}/resume", {"actor": "user"}),
             {"until": f"{FRAME}>75", "ms": 15000, **SANDBOX},
-            reached(119), {"wait": 900}, {"value": "middle_a", "expr": FRAME, **SANDBOX}, {"wait": 900}, {"value": "middle_b", "expr": FRAME, **SANDBOX},
-            http_step(stack, "next_end", "POST", f"{PLAYBACK}/next", {"actor": "user"}),
-            {"until": f"{FRAME}>=120", "ms": 15000, **SANDBOX},
-            reached(149), {"wait": 900}, {"value": "end_a", "expr": FRAME, **SANDBOX}, {"wait": 900}, {"value": "end_b", "expr": FRAME, **SANDBOX},
-            {"shot": shot2},
-            # back: hiding is going back, the playhead returns to the furthest anchor still revealed
-            http_step(stack, "previous", "POST", f"{PLAYBACK}/previous", {"actor": "user"}),
-            {"until": f"{FRAME}>=75 && {FRAME}<119", "ms": 15000, **SANDBOX}, {"value": "back_playing", "expr": FRAME, **SANDBOX},
             # pause in the middle of a segment holds the image, resume carries on without going back
             {"until": f"{FRAME}>=90", "ms": 15000, **SANDBOX},
             http_step(stack, "pause_mid", "POST", f"{PLAYBACK}/pause", {"actor": "user"}),
@@ -170,25 +162,37 @@ async def test_the_score_drives_a_remotion_scene_through_its_anchors_a_cue_pause
             http_step(stack, "resume_mid", "POST", f"{PLAYBACK}/resume", {"actor": "user"}),
             {"wait": 600},
             {"value": "after_resume", "expr": FRAME, **SANDBOX},
-            reached(119), {"wait": 700}, {"value": "back_end", "expr": FRAME, **SANDBOX},
+            reached(119), {"wait": 900}, {"value": "middle_a", "expr": FRAME, **SANDBOX}, {"wait": 900}, {"value": "middle_b", "expr": FRAME, **SANDBOX},
+            http_step(stack, "next_end", "POST", f"{PLAYBACK}/next", {"actor": "user"}),
+            {"until": f"{FRAME}>=120", "ms": 15000, **SANDBOX},
+            reached(149), {"wait": 900}, {"value": "end_a", "expr": FRAME, **SANDBOX}, {"wait": 900}, {"value": "end_b", "expr": FRAME, **SANDBOX},
+            {"shot": shot2},
+            # back (§ 5): the previous item's stop frame is shown and held, no earlier segment is replayed
+            http_step(stack, "previous", "POST", f"{PLAYBACK}/previous", {"actor": "user"}),
+            {"until": f"{FRAME}==119", "ms": 15000, **SANDBOX}, {"value": "back_a", "expr": FRAME, **SANDBOX},
+            {"wait": 1500}, {"value": "back_b", "expr": FRAME, **SANDBOX},
         ])
         reads2 = two["reads"]
         assert "failed" not in reads2, reads2
         assert reads2["paused_at"] == reads2["paused_still"] and 75 <= reads2["paused_at"] <= 80, "a page that joins a paused run holds the segment start"
-        assert reads2["middle_a"] == reads2["middle_b"] == 119
-        assert reads2["end_a"] == reads2["end_b"] == 149, "the last segment plays to the end and holds"
-        assert 75 <= reads2["back_playing"] < 119
         assert reads2["mid_a"] == reads2["mid_b"] and 90 <= reads2["mid_a"] < 119, "pause holds the image"
         assert reads2["after_resume"] >= reads2["mid_b"], "resume continues, it never goes back to the anchor"
-        assert reads2["back_end"] == 119
+        assert reads2["middle_a"] == reads2["middle_b"] == 119
+        assert reads2["end_a"] == reads2["end_b"] == 149, "the last segment plays to the end and holds"
+        assert reads2["back_a"] == reads2["back_b"] == 119, "previous holds the previous item's stop frame, nothing replayed (§ 5)"
+        back = ((reads2["previous"].get("body") or {}).get("state") or {}).get("timeline") or {}
+        assert (back.get("from_frame"), back.get("until_frame"), back.get("playing")) == (119, 119, False), back
         assert not noise(two), noise(two)
 
-        # --- a scene with no anchor is left to itself (Slice 10) and Core's view carries no timeline for it
+        # --- a scene with no anchor plays once, whole, under Core's order: since Slice 09 (native-studio-playback-fix) the Variants Player never
+        #     plays by itself, so Core's view carries a whole-scene timeline (no anchor, frame 0 to the last frame, playing)
         for _ in range(2):
             status, moved = await stack.call("POST", f"{PLAYBACK}/next", json={"actor": "user"})
             assert status == 200, moved
         _, state = await stack.call("GET", PLAYBACK)
-        assert state["state"]["scene"]["scene_id"] == S2 and "timeline" not in state["state"]
+        whole = state["state"].get("timeline") or {}
+        assert state["state"]["scene"]["scene_id"] == S2 and whole.get("anchor_id") is None, state["state"]
+        assert (whole.get("from_frame"), whole.get("until_frame"), whole.get("playing")) == (0, 149, True), whole
         three = await run(stack.page_url, [
             {"wait": 500}, READY, {"wait": 800},
             {"value": "free_a", "expr": FRAME, **SANDBOX}, {"wait": 900}, {"value": "free_b", "expr": FRAME, **SANDBOX},

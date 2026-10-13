@@ -71,6 +71,8 @@ STAGE = "document.querySelector('iframe[data-remotion-stage]')"
 SHELL = f"{STAGE}.contentWindow.__remotionStage.state()"
 READY = {"until": f"!!{STAGE} && !!{STAGE}.contentWindow.__remotionStage && {SHELL}.phase==='ready'", "ms": 60000}
 SANDBOX = {"scope": "sandbox"}
+#: The shown frames: Variants loads the next scene beside the shown one (`sc-prefab-staged`, Slice 05), which is not on screen.
+VISIBLE_FRAMES = "document.querySelectorAll('iframe[data-remotion-stage]:not(.sc-prefab-staged)').length"
 TITLE = "document.querySelector('#title') && document.querySelector('#title').textContent"
 
 
@@ -173,7 +175,7 @@ async def test_a_remotion_scene_plays_edits_switches_and_goes_fullscreen_from_a_
             {"value": "shell", "expr": SHELL},
             {"value": "isolation", "expr": "(()=>{let t;try{t=parent.document.title}catch(e){t=e.name}let s;try{s=localStorage.length}catch(e){s=e.name}"
                                              "return {href:location.href.slice(0,24),parent:t,storage:s,origin:self.origin}})()", **SANDBOX},
-            {"value": "frames", "expr": "document.querySelectorAll('iframe[data-remotion-stage]').length"},
+            {"value": "frames", "expr": VISIBLE_FRAMES},
             {"shot": shot},
             # --- editable while it plays: colour, title, timing, five rapid edits; no render, the same sandbox frame
             {"value": "frame_id_before", "expr": "document.querySelector('iframe[data-remotion-stage]').contentWindow.__remotionStage.state().generation"},
@@ -187,7 +189,7 @@ async def test_a_remotion_scene_plays_edits_switches_and_goes_fullscreen_from_a_
             {"until": "getComputedStyle(document.querySelector('#title')).color==='rgb(255, 0, 255)'", "ms": 8000, **SANDBOX},
             {"value": "after_rapid", "expr": "({color:getComputedStyle(document.querySelector('#title')).color,fade:document.querySelector('#fade').textContent})", **SANDBOX},
             {"value": "generation_after_edits", "expr": "document.querySelector('iframe[data-remotion-stage]').contentWindow.__remotionStage.state().generation"},
-            {"value": "same_frame", "expr": "document.querySelectorAll('iframe[data-remotion-stage]').length"},
+            {"value": "same_frame", "expr": VISIBLE_FRAMES},
             # --- play / pause / seek from the window host
             {"value": "pause", "expr": f"{STAGE}.contentWindow.__remotionStage.control('pause')"},
             {"wait": 500},
@@ -207,14 +209,16 @@ async def test_a_remotion_scene_plays_edits_switches_and_goes_fullscreen_from_a_
             {"until": f"{TITLE}==='Premier' || {TITLE}==='Titre modifié'", "ms": 30000, **SANDBOX},
             {"value": "back", "expr": TITLE, **SANDBOX},
             {"until": "document.querySelectorAll('iframe[data-remotion-stage]').length===1", "ms": 3000},
-            # --- the sound is a gesture inside the frame: the scene started silent and a real click unlocks it
+            # --- the sound: the scene starts silent and a real click on Variants' « Son » unlocks it (Slice 08; since Slice 09 of
+            #     native-studio-playback-fix a run plays in Variants, whose sound is that button, not a click inside the frame)
             {"until": f"{SHELL}.phase==='ready'", "ms": 30000},
             {"value": "muted_before", "expr": f"{SHELL}.muted"},
-            {"clickExpr": f"(()=>{{const r={STAGE}.getBoundingClientRect();return {{x:r.left+r.width/2,y:r.top+r.height/2}}}})()"},
+            {"click": "#jvStudioExplorer .jvx-transport [aria-label=\"Son\"]"},
             {"until": f"{SHELL}.muted===false", "ms": 8000},
             {"value": "muted_after", "expr": f"{SHELL}.muted"},
-            # --- fullscreen: a real click on the band's button (the user gesture), the scene fills the screen, Esc-equivalent leaves it
-            {"click": ".jvsp-full"}, {"until": "!!document.fullscreenElement", "ms": 8000}, {"wait": 1000},
+            # --- fullscreen: a real click on Variants' « Plein écran » (the user gesture; Slice 09 of native-studio-playback-fix retired the
+            #     band, a run plays in Variants), the scene fills the screen, Esc-equivalent leaves it
+            {"click": "#jvStudioExplorer .jvx-top-actions .jvx-btn"}, {"until": "!!document.fullscreenElement", "ms": 8000}, {"wait": 1000},
             {"value": "fullscreen", "expr": f"(()=>{{const f={STAGE};const d=f.contentDocument;const r=e=>{{const b=e.getBoundingClientRect();return [Math.round(b.width),Math.round(b.height)]}};"
                                           "return {on:!!document.fullscreenElement,shell:r(f),sandbox:r(d.querySelector('.rs-frame')),vw:innerWidth,vh:innerHeight}})()"},
             {"shot": str(tmp_path / "fullscreen.png")},
@@ -222,7 +226,7 @@ async def test_a_remotion_scene_plays_edits_switches_and_goes_fullscreen_from_a_
             {"value": "after_fullscreen", "expr": f"({{on:!!document.fullscreenElement,phase:{SHELL}.phase}})"},
         ])
         reads = result["reads"]
-        assert "failed" not in reads, reads
+        assert "failed" not in reads, reads.get("failed")
         assert reads["title"] == "Premier" and reads["frame_b"] != reads["frame_a"], "the scene plays without any gesture"
         assert reads["shell"]["phase"] == "ready" and reads["shell"]["muted"] is True and reads["frames"] == 1
         assert reads["isolation"]["href"].startswith("http://127.77.0.2:") and reads["isolation"]["parent"] == "SecurityError"

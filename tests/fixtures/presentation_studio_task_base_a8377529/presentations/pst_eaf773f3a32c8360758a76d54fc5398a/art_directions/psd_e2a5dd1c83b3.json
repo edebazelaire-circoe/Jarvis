@@ -1,0 +1,109 @@
+{
+  "schema": "jarvis.presentation_studio.art_direction",
+  "schema_version": 1,
+  "art_direction_id": "psd_e2a5dd1c83b3",
+  "presentation_id": "pst_eaf773f3a32c8360758a76d54fc5398a",
+  "variant_id": "psv_ff1d369bc1f1e187f99dbf77a47965e1",
+  "profile": {
+    "name": "Fallback - Technical dark",
+    "provenance": {
+      "origin": "generated",
+      "sections": {},
+      "fallback": true,
+      "confidence": 0.3,
+      "notes": [
+        "Generated fallback: no art direction was provided or inferable from the project.",
+        "Direction: Technical dark, chosen from a stable hash of the brief.",
+        "Replace it as soon as a provided or inferred source exists."
+      ]
+    },
+    "palette": {
+      "background": "#0b1118",
+      "surface": "#121b25",
+      "surface_opacity": 100,
+      "text": "#e6eef5",
+      "muted": "#94a7b8",
+      "accent": "#38bdf8",
+      "accent_alt": "#34d399",
+      "gradients": [
+        {
+          "gradient_id": "backdrop",
+          "kind": "linear",
+          "angle": 160,
+          "stops": [
+            {
+              "color": "#0b1118",
+              "at": 0
+            },
+            {
+              "color": "#121b25",
+              "at": 100
+            }
+          ],
+          "text_token": "text"
+        }
+      ]
+    },
+    "typography": {
+      "heading": {
+        "stack": "system_sans",
+        "preferred": null
+      },
+      "body": {
+        "stack": "system_sans",
+        "preferred": null
+      },
+      "text_size": "normal",
+      "scale_ratio": "tight",
+      "heading_weight": 600,
+      "body_weight": 400,
+      "label_case": "uppercase"
+    },
+    "spacing": {
+      "density": "compact",
+      "margin": "standard"
+    },
+    "shapes": {
+      "radius_px": 4,
+      "stroke_px": 1,
+      "elevation": "flat"
+    },
+    "imagery": {
+      "photo": "none",
+      "illustration": "geometric",
+      "icons": "outline",
+      "treatment": "monochrome",
+      "motifs": [
+        "diagram",
+        "grid"
+      ]
+    },
+    "dataviz": {
+      "mode": "categorical",
+      "series": [
+        "#38bdf8",
+        "#34d399",
+        "#fb923c",
+        "#c084fc",
+        "#facc15"
+      ],
+      "grid": "full",
+      "labels": "legend",
+      "emphasis": "multi"
+    },
+    "motion": {
+      "tempo": "measured",
+      "enter_ms": 320,
+      "exit_ms": 200,
+      "emphasis_ms": 200,
+      "easing": "ease_out",
+      "stagger_ms": 40,
+      "transition": "slide",
+      "reduced_motion": "fade_only"
+    },
+    "references": []
+  },
+  "revision": 1,
+  "created_at": "2026-10-12T18:38:56.200586Z",
+  "updated_at": "2026-10-12T18:38:56.200586Z"
+}

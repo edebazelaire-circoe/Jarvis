@@ -258,10 +258,14 @@ async def test_a_configured_port_is_never_silently_replaced():
 async def test_close_stops_the_process_tree_and_keeps_the_work_recorded(stack):
     await stack.service.open(PIN, acknowledged=True)
     ref = next(iter(stack.runner.alive))
-    stack.runner.saved = ("src/Scene.tsx",)
+    stack.runner.work["src/Scene.tsx"] = b"// edited in Remotion Studio"
     view = await stack.service.close()
     assert view["status"] == "stopped" and view["url"] is None and stack.runner.stopped == [ref] and not stack.runner.alive
-    assert view["work_copy"]["edits_saved"] == 1 and view["pin"] == PIN.to_dict(), "the last scene is remembered for restart"
+    assert view["pin"] == PIN.to_dict(), "the last scene is remembered for restart"
+    # Slice 12 (native-studio-playback-fix): close leaves the unpublished file IN the workspace (no copy, no replacement) and says it
+    assert "save_modified" not in stack.runner.calls and stack.runner.work["src/Scene.tsx"] == b"// edited in Remotion Studio"
+    assert view["work_copy"]["modified_files"] == ["src/Scene.tsx"] and view["work_copy"]["unpublished"] == 1
+    assert view["work_copy"]["base"] == PIN.to_dict() and view["work_copy"]["edits_saved"] == 0
     assert (await stack.service.close())["status"] == "stopped", "close is idempotent"
 
 
@@ -398,13 +402,18 @@ async def test_a_second_operation_while_one_runs_is_busy(stack):
     await stack.service.stop()
 
 
-async def test_work_edited_outside_jarvis_is_reported_and_saved_before_a_sync(stack):
+async def test_work_edited_outside_jarvis_is_reported_and_only_a_confirmed_discard_replaces_it(stack):
     await stack.service.open(PIN, acknowledged=True)
     stack.runner.modified = ("src/Scene.tsx",)
     assert (await stack.service.status())["work_copy"]["modified_files"] == ["src/Scene.tsx"]
-    stack.runner.edits_on_sync = ("src/Scene.tsx",)
-    view = await stack.service.sync(PIN2, acknowledged=True)
-    assert view["work_copy"]["edits_saved"] == 1 and any("saved aside" in line for line in view["diagnostics"])
+    # Slice 12: the old sync path never replaces an unpublished file silently
+    with pytest.raises(StudioError) as refused:
+        await stack.service.sync(PIN2, acknowledged=True)
+    assert refused.value.code is C.UNPUBLISHED_EDITS and refused.value.extra["files"] == ["src/Scene.tsx"] and refused.value.http_status == 409
+    assert (await stack.service.status())["pin"] == PIN.to_dict(), "nothing moved"
+    view = await stack.service.sync(PIN2, acknowledged=True, discard=True)
+    assert view["pin"] == PIN2.to_dict() and stack.runner.saved_aside == [("src/Scene.tsx",)]
+    assert view["work_copy"]["edits_saved"] == 1 and any("set aside" in line for line in view["diagnostics"])
     await stack.service.stop()
 
 
@@ -415,3 +424,34 @@ async def test_the_refresh_counter_belongs_to_one_launch(stack):
     await stack.service.close()
     assert (await stack.service.open(PIN, acknowledged=True))["syncs"] == 0
     await stack.service.stop()
+
+
+# ------------------------------------------------------------------ native-studio-playback-fix Slice 13 rework (QA B3)
+
+async def test_open_reuse_and_sync_tell_the_scene_listeners_and_a_failing_listener_never_fails_the_open(stack):
+    seen = []
+
+    async def listener(pin):
+        seen.append(pin)
+
+    stack.service.add_scene_listener(listener)
+    await stack.service.open(PIN, acknowledged=True)
+    await stack.service.open(PIN, acknowledged=True)                 # reused on the same scene: the user is (still) editing it
+    await stack.service.sync(PIN2, acknowledged=True)
+    assert seen == [PIN, PIN, PIN2]
+
+    async def broken(pin):
+        raise RuntimeError("listener down")
+
+    stack.service.add_scene_listener(broken)
+    view = await stack.service.open(PIN_OTHER, acknowledged=True)
+    assert view["status"] == "ready" and seen[-1] == PIN_OTHER and "remotion_studio.scene_listener_failed" in stack.events.kinds()
+
+
+async def test_the_workspace_base_and_its_unpublished_files_are_read_without_changing_anything(stack):
+    assert await stack.service.workspace_base() == (None, ())
+    await stack.service.open(PIN, acknowledged=True)
+    assert await stack.service.workspace_base() == (PIN, ())
+    stack.runner.modified = ("src/Scene.tsx",)
+    assert await stack.service.workspace_base() == (PIN, ("src/Scene.tsx",))
+    assert (await stack.service.status())["status"] == "ready"

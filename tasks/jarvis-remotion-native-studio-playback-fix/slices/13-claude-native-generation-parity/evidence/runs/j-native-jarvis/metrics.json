@@ -1,0 +1,81 @@
+{
+ "run": "j-native-jarvis",
+ "label": "Jarvis native, run 1 (harness defect: data root path too long for Chrome, previews refused)",
+ "side": "jarvis",
+ "topic": "jarvis",
+ "totals": {
+  "cost_usd_last_brain_result": 0.5558726,
+  "brain_results": 2
+ },
+ "agents": {
+  "brain": {
+   "description": "brain",
+   "tool_calls": 1,
+   "by_tool": {
+    "Agent": 1
+   },
+   "refused_or_error": [],
+   "frames_viewed": 0,
+   "usage": {
+    "input_tokens": 8,
+    "output_tokens": 1062,
+    "cache_read_input_tokens": 125036,
+    "cache_creation_input_tokens": 40136
+   },
+   "elapsed_s": 178.9
+  },
+  "agent-a4e6141f5c5bd4d9c": {
+   "description": "[code] [presentation-author] Présentation vidéo JARVIS",
+   "tool_calls": 9,
+   "by_tool": {
+    "ToolSearch": 1,
+    "Read": 1,
+    "mcp__jarvis-presentation__presentation_inspect": 1,
+    "mcp__jarvis-presentation__presentation_draft_assemble": 2,
+    "mcp__jarvis-presentation__presentation_source": 4
+   },
+   "refused_or_error": [
+    {
+     "tool": "mcp__jarvis-presentation__presentation_draft_assemble",
+     "result": "{\"ok\":true,\"speech\":\"silent\",\"status\":\"refused\",\"ok_gate\":false,\"report\":{\"ok\":false,\"workflow\":\"directed\",\"stage\":\"brief\",\"subset\":\"full\",\"failures\":[{\"code\":\"brief_invalid\",\"severity\":\"error\",\"where\":\"brief\",\"message\":\"brief.strict_content belongs to an exploratory request (the other workflows are"
+    },
+    {
+     "tool": "mcp__jarvis-presentation__presentation_source",
+     "result": "Refus presentation_render_sandbox_unavailable : Chrome could not start with its process sandbox ON. If this machine cannot create the sandbox, set JARVIS_REMOTION_RENDER_NO_SANDBOX=1 to render without it (an explicit choice: the scene code then runs unsandboxed); Jarvis never retries without the san"
+    },
+    {
+     "tool": "mcp__jarvis-presentation__presentation_source",
+     "result": "Refus presentation_render_sandbox_unavailable : Chrome could not start with its process sandbox ON. If this machine cannot create the sandbox, set JARVIS_REMOTION_RENDER_NO_SANDBOX=1 to render without it (an explicit choice: the scene code then runs unsandboxed); Jarvis never retries without the san"
+    },
+    {
+     "tool": "mcp__jarvis-presentation__presentation_source",
+     "result": "Refus presentation_render_sandbox_unavailable : Chrome could not start with its process sandbox ON. If this machine cannot create the sandbox, set JARVIS_REMOTION_RENDER_NO_SANDBOX=1 to render without it (an explicit choice: the scene code then runs unsandboxed); Jarvis never retries without the san"
+    },
+    {
+     "tool": "mcp__jarvis-presentation__presentation_source",
+     "result": "Refus presentation_render_sandbox_unavailable : Chrome could not start with its process sandbox ON. If this machine cannot create the sandbox, set JARVIS_REMOTION_RENDER_NO_SANDBOX=1 to render without it (an explicit choice: the scene code then runs unsandboxed); Jarvis never retries without the san"
+    }
+   ],
+   "frames_viewed": 0,
+   "usage": {
+    "input_tokens": 12,
+    "output_tokens": 176,
+    "cache_read_input_tokens": 232950,
+    "cache_creation_input_tokens": 66308
+   },
+   "elapsed_s": 165.2
+  }
+ },
+ "turns": [
+  {
+   "text": "Crée une courte présentation vidéo Remotion de 4 scènes, environ 40 secondes au total, en 1920x1080, qui présente JARVIS, l'assistant vocal local de ce poste à des développeurs qui le découvrent. Seul",
+   "brain_answer_s": 19.4,
+   "answer": "{\"text\": \"C'est lancé : un agent construit la présentation Remotion de quatre scènes à partir du README. Je vous dis où la voir dès qu'il a fini.\", \"ok\": true, \"error\": null}"
+  }
+ ],
+ "files": {
+  "brain.jsonl": 16,
+  "agent-a4e6141f5c5bd4d9c.jsonl": 24,
+  "jarvis-trace.jsonl": 121
+ }
+}

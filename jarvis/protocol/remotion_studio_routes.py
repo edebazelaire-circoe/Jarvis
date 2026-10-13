@@ -10,6 +10,12 @@ Remotion, pas une capacité de plus) ; jeton porteur de Core obligatoire comme t
 | POST | `.../studio/sync` | `{}` (scène courante relue) ou `{"prefab_id", "version", "acknowledge_unsandboxed_scene": true}` | `{studio: vue}` |
 | POST | `.../studio/close` | `{}` | `{studio: vue}` |
 | POST | `.../studio/restart` | `{"acknowledge_unsandboxed_scene": true}` | `{studio: vue}` |
+| POST | `.../studio/publish` | `{"presentation_id", "variant_id", "scene_id", "base": {"prefab_id", "version"}, "digest", "confirm_publish": true}` (`digest` = `work_copy.digest` montré par la confirmation) | `{studio: vue, publish: {status, published, previous, variant_revision, mounted, files, message}}` |
+
+Slice 12 (native-studio-playback-fix) : `open` et `sync` acceptent en plus `"discard_unpublished": true` (geste confirmé : les fichiers non
+publiés de l'espace de travail sont copiés dans `studio-edits/` puis remplacés) ; sans lui, une modification non publiée n'est jamais
+remplacée (409 `remotion_studio_unpublished_edits`). `publish` passe par la porte d'édition de source de la variante (nouvelle version) ;
+ses refus portent `publish_code`, `diagnostics`, `base` / `current` dans l'enveloppe d'erreur.
 
 `open`, `restart` et `sync` d'une AUTRE scène exigent l'accusé explicite : sans lui, 400 `remotion_studio_ack_required` et rien n'est lancé
 (la scène tourne sans le bac à sable du Player). Aucun chemin du cerveau, d'un outil MCP ni d'un agent n'appelle ces routes : `remotion_studio` (Slice 21) rend un pointeur vers la carte, l'accusé est à l'utilisateur.
@@ -29,6 +35,7 @@ from typing import Any
 from aiohttp import web
 
 from jarvis.domain.remotion_studio import StudioError, StudioErrorCode as C, parse_ack_only, parse_open
+from jarvis.domain.remotion_studio_workspace import parse_publish, split_discard
 
 PREFIX = "/v1/local-capabilities/remotion/studio"
 MAX_BODY_BYTES = 1024
@@ -43,7 +50,8 @@ class RemotionStudioProtocolRoutes:
     def routes(self) -> list[web.RouteDef]:
         g = self._guarded
         return [web.get(PREFIX, g(self.status)), web.post(PREFIX + "/open", g(self.open)), web.post(PREFIX + "/sync", g(self.sync)),
-                web.post(PREFIX + "/close", g(self.close)), web.post(PREFIX + "/restart", g(self.restart))]
+                web.post(PREFIX + "/close", g(self.close)), web.post(PREFIX + "/restart", g(self.restart)),
+                web.post(PREFIX + "/publish", g(self.publish))]
 
     def _guarded(self, handler: Handler) -> Handler:
         async def run(request: web.Request) -> web.StreamResponse:
@@ -52,7 +60,8 @@ class RemotionStudioProtocolRoutes:
                     raise StudioError(C.INVALID, "unexpected query parameters")
                 return await handler(request)
             except StudioError as exc:
-                return web.json_response({"error": {"code": exc.code.value, "message": exc.detail or exc.code.value}}, status=exc.http_status)
+                return web.json_response({"error": {**exc.extra, "code": exc.code.value, "message": exc.detail or exc.code.value}},
+                                         status=exc.http_status)
             except asyncio.CancelledError:
                 raise
             except Exception as exc:  # noqa: BLE001 - jamais un défaut muet : journalisé durablement (niveau error), 500 codé
@@ -88,14 +97,19 @@ class RemotionStudioProtocolRoutes:
 
     async def open(self, request: web.Request) -> web.StreamResponse:
         service = self._service()
-        return web.json_response({"studio": await service.open(parse_open(await self._body(request)), acknowledged=True)})
+        body, discard = split_discard(await self._body(request))
+        return web.json_response({"studio": await service.open(parse_open(body), acknowledged=True, discard=discard)})
 
     async def sync(self, request: web.Request) -> web.StreamResponse:
-        body = await self._body(request)
+        body, discard = split_discard(await self._body(request))
         service = self._service()
         if not body:
-            return web.json_response({"studio": await service.sync(None)})
-        return web.json_response({"studio": await service.sync(parse_open(body), acknowledged=True)})
+            return web.json_response({"studio": await service.sync(None, discard=discard)})
+        return web.json_response({"studio": await service.sync(parse_open(body), acknowledged=True, discard=discard)})
+
+    async def publish(self, request: web.Request) -> web.StreamResponse:
+        service = self._service()
+        return web.json_response(await service.publish(parse_publish(await self._body(request))))
 
     async def close(self, request: web.Request) -> web.StreamResponse:
         if await self._body(request):

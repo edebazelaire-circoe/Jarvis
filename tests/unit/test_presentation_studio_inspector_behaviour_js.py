@@ -749,7 +749,7 @@ def test_the_inspector_header_opens_the_variant_explorer_for_the_edited_presenta
       const calls=[];let answer={state:'opened'};
       globalThis.JarvisStudioExplorer={open:async o=>{calls.push(o);return answer},isOpen:()=>false};
       await t.open();
-      const btn=()=>t.find(t.panel(),n=>n.tagName==='BUTTON'&&(n.attrs['aria-label']||'').includes('explorateur de variantes'))[0];
+      const btn=()=>t.find(t.panel(),n=>n.tagName==='BUTTON'&&(n.attrs['aria-label']||'').includes('Ouvrir les variantes'))[0];
       const b=btn();
       const idle={disabled:b.disabled,label:b.textContent,order:t.find(t.panel(),n=>n.className.split(' ').includes('jvi-bar'))[0].children.map(c=>c.tagName+':'+c.textContent).slice(0,3)};
       b.click();await t.env.flush(6);

@@ -19,7 +19,8 @@ Le journal ne porte que des identifiants courts, des états, des durées et des 
 sa réponse sur le `mode` du REÇU de sa propre commande, jamais sur le miroir seul, et dit « dernier état rapporté il y a N s ». Un processus local qui a lu la page peut en
 recopier le jeton : la confiance est celle de la boucle locale, comme pour le plein écran.
 
-**Une ouverture ne contourne rien** : l'explorateur reste refusé pendant une lecture (cause rendue en `refused` + `explorer_run_in_progress`),
+**Une ouverture ne contourne rien** : pendant une lecture, Variantes s'ouvre sur la présentation qui joue et la montre (native-studio-playback-fix
+Slice 09) ; une AUTRE présentation est refusée (cause rendue en `refused` + `explorer_run_in_progress`),
 et le plein écran reste armé quand le navigateur exige un clic.
 """
 
@@ -94,7 +95,7 @@ class ExplorerCommandBroker:
         pending, self._pending = self._pending, None
         if pending is not None and not pending.result.done():
             pending.result.set_exception(ExplorerCommandError(
-                vocab.COMMAND_CANCELLED, "Le Control Center s'arrête : commande de l'explorateur abandonnée.", 503,
+                vocab.COMMAND_CANCELLED, "Le Control Center s'arrête : commande de Variantes abandonnée.", 503,
                 short_id(pending.command_id)))
         self._set_wake()
 
@@ -127,7 +128,7 @@ class ExplorerCommandBroker:
         self._page_seen_at = self._reported_at
         after = self._state["open"], self._state["mode"], self._state["variant_id"]
         if before != after:
-            self._emit("explorer.state_changed", f"explorateur : {'ouvert' if after[0] else 'fermé'} ({after[1] or '-'})",
+            self._emit("explorer.state_changed", f"Variantes : {'ouvert' if after[0] else 'fermé'} ({after[1] or '-'})",
                        data={"open": after[0], "mode": after[1], "fullscreen": self._state["fullscreen"],
                              "variant_number": self._state["variant_number"]})
         return self.snapshot()
@@ -156,12 +157,12 @@ class ExplorerCommandBroker:
         if self._pending is not None:
             self._emit("explorer.command_busy", f"commande {request.action} refusée : une autre est en cours", level="warning",
                        data={"code": vocab.COMMAND_BUSY, "command": request.action, "pending": short_id(self._pending.command_id)})
-            raise ExplorerCommandError(vocab.COMMAND_BUSY, "Une commande de l'explorateur est déjà en cours : réessaie dans une seconde.", 409)
+            raise ExplorerCommandError(vocab.COMMAND_BUSY, "Une commande de Variantes est déjà en cours : réessaie dans une seconde.", 409)
         loop = asyncio.get_running_loop()
         now = loop.time()
         pending = _Pending(secrets.token_urlsafe(24), request, now, now + min(self.deadline_s, request.deadline_s), loop.create_future())
         self._pending = pending
-        self._emit("explorer.command_requested", f"commande de l'explorateur demandée : {request.action}",
+        self._emit("explorer.command_requested", f"commande de Variantes demandée : {request.action}",
                    data={"command": request.action, "id": short_id(pending.command_id), "fullscreen": request.fullscreen,
                          "arm_s": request.arm_s, "deadline_ms": round(self.deadline_s * 1000)})
         self._set_wake()
@@ -201,7 +202,7 @@ class ExplorerCommandBroker:
         duration_ms = round((loop.time() - pending.created) * 1000)
         explanation = vocab.EXPLANATIONS["closed"] if receipt["state"] == "closed" else (
             vocab.EXPLANATIONS[receipt["mode"]] if receipt["state"] == "opened" else
-            "L'explorateur n'a pas été ouvert (voir `code` et `reason`). Dis la cause à l'utilisateur, sans prétendre l'inverse.")
+            "Variantes n'a pas été ouvert (voir `code` et `reason`). Dis la cause à l'utilisateur, sans prétendre l'inverse.")
         answer = {**receipt, "command": request.action, "id": short_id(pending.command_id), "deliveries": pending.deliveries,
                   "duration_ms": duration_ms, "explanation": explanation}
         self._emit("explorer.command_answered", f"commande {request.action} : la page rapporte {receipt['state']}",

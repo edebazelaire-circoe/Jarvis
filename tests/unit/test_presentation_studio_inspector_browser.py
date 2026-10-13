@@ -383,18 +383,20 @@ async def test_while_a_run_plays_the_inspector_is_hidden_and_inert_and_the_keys_
         status, made = await rig.core.call("POST", f"/{rig.pid}/variants/{rig.vid}/score", json=score((await rig.core.call("GET", f"/{rig.pid}/variants/{rig.vid}"))[1]["revision"]))
         assert status == 201, made
         start = json.dumps({"presentation_id": rig.pid, "role": "user_presenter"})
-        stage = '[data-object-id^="studio-stage-"]'
+        # Slice 09 (native-studio-playback-fix): the run plays in Variants, not in a Board window; the keys go to its stage.
+        stage = '#jvStudioExplorer .jvx-stage'
         pos = "(window.JarvisStudioPlayer.view().position||{}).index"
         result = await drive(rig.url, [
             *OPEN,
             {"value": "before", "expr": f"[{VIEW}.open,document.getElementById('jvStudioInspector').hidden]"},
             {"value": "start", "expr": f"fetch('/api/presentation-studio/playback/start',{{method:'POST',headers:{{'Content-Type':'application/json'}},body:{json.dumps(start)}}}).then(r=>r.json()).then(j=>j.status)"},
-            {"until": f"!!document.querySelector('{stage}') && {VIEW}.available===false", "ms": 20000},
+            {"until": f"!!window.JarvisStudioExplorer.run.view() && {VIEW}.available===false", "ms": 20000},
             {"wait": 400},
             {"value": "hidden", "expr": f"""(()=>{{const p=document.getElementById('jvStudioInspector');const b=document.getElementById('openStudioInspector');
               const r=p.getBoundingClientRect();return {{hidden:p.hidden,inert:p.inert,display:getComputedStyle(p).display,w:r.width,dockDisabled:b.disabled,title:b.title,
-              reason:{VIEW}.hiddenReason,open:{VIEW}.open,phase:window.JarvisStudioPlayer.view().phase}}}})()"""},
-            {"click": f"{stage} .sc-wtitle"},
+              reason:{VIEW}.hiddenReason,open:{VIEW}.open,phase:window.JarvisStudioPlayer.view().phase,
+              board:!!document.querySelector('[data-object-id^="studio-stage-"]')}}}})()"""},
+            {"focus": stage},
             {"value": "p0", "expr": pos}, {"key": "ArrowRight"}, {"until": f"{pos}===2", "ms": 8000},
             {"value": "p1", "expr": pos}, {"key": "End"}, {"until": f"{pos}===3", "ms": 8000},
             {"value": "p2", "expr": pos},
@@ -411,6 +413,7 @@ async def test_while_a_run_plays_the_inspector_is_hidden_and_inert_and_the_keys_
         hidden = reads["hidden"]
         assert hidden["hidden"] is True and hidden["inert"] is True and hidden["display"] == "none" and hidden["w"] == 0
         assert hidden["dockDisabled"] is True and "pendant une présentation" in hidden["title"] and hidden["reason"] == "playback" and hidden["open"] is False
+        assert hidden["board"] is False, "no Board stage window any more (Slice 09)"
         assert (reads["p0"], reads["p1"], reads["p2"]) == (1, 2, 3), "navigation keys reach the player, not the inspector"
         stat = json.loads(reads["stat"])
         assert stat["commits"] == 0 and stat["previews"] == 0

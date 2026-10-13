@@ -1,0 +1,60 @@
+{
+ "side": "jarvis",
+ "topic": "iguard",
+ "model": "sonnet",
+ "pack_sha256": "02e4e74dcaf671a975bee10cfa2022161b184b66e8923b12f7511e41cba6ba1d",
+ "tested_head": "4ea12e008c01866772168fe0e1d166391309dd13",
+ "decks": [
+  {
+   "presentation_id": "pst_dee00d589e02e040153cde71a748b97e",
+   "title": "IAGuard, agent documentaire souverain",
+   "revision": 1,
+   "variants": [
+    {
+     "variant_id": "psv_9bc6bcd66434234a33ee77e26ebd08ea",
+     "revision": 3,
+     "title": "IAGuard, agent documentaire souverain",
+     "scenes": [
+      {
+       "scene_id": "pss_331c0a5b829b",
+       "title": "Ouverture",
+       "prefab": {
+        "id": "presentation-studio.rm-ouverture-719e5400",
+        "version": 1
+       },
+       "source_status": 200
+      },
+      {
+       "scene_id": "pss_070ae043d5c9",
+       "title": "Du dossier à la réponse",
+       "prefab": {
+        "id": "presentation-studio.pdee00d589e02.s070ae043d5c9",
+        "version": 1
+       },
+       "source_status": 200
+      },
+      {
+       "scene_id": "pss_67658f688bb0",
+       "title": "Pas de preuve, pas de réponse",
+       "prefab": {
+        "id": "presentation-studio.rm-preuve-f8895142",
+        "version": 1
+       },
+       "source_status": 200
+      },
+      {
+       "scene_id": "pss_f5415a5105ed",
+       "title": "Garde-fous et clôture",
+       "prefab": {
+        "id": "presentation-studio.pdee00d589e02.sf5415a5105ed",
+        "version": 1
+       },
+       "source_status": 200
+      }
+     ]
+    }
+   ]
+  }
+ ],
+ "brief": "Crée une courte présentation vidéo Remotion de 4 scènes, environ 40 secondes au total, en 1920x1080, qui présente IAGuard, l'agent documentaire souverain à un DSI qui évalue l'outil. Seule source de vérité : le fichier <bench>/packs/iguard/README.md ; n'invente aucun chiffre, nom ni fonctionnalité qui n'y soit pas. Direction artistique : fond sombre, sobre, typographie nette, une seule couleur d'accent, animations soignées (entrées échelonnées, schémas ou éléments animés plutôt que des listes de puces). Textes à l'écran en français et courts. N'installe aucune dépendance : utilise seulement react et remotion. Quand c'est prêt, dis-moi en une phrase où la voir."
+}

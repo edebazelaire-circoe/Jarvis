@@ -9,8 +9,10 @@
    - `parseHostMessage(event, expectedSource, expectedOrigin)` : côté cadre, un message n'est accepté que du parent
      (`window.parent`) et de l'origine de l'hôte (un cadre frère ne peut pas lui parler).
    - Types hôte->cadre : `init {composition, props}`, `props {props}`, `control {action, frame?, until?}`, `cue {name, frame}`,
-     `ping {n}`, `teardown {}`. Cadre->hôte : `ready {}`, `pong {n, frame, dropped, heap?}`, `clock {frame, playing}`, `violation {directive, blocked}`,
-     `error {message}`. Champs EXACTS : une clé de plus est un refus.
+     `ping {n}`, `teardown {}`, `sound {muted}` (native-studio-playback-fix Slice 08 : le son voulu par l'hôte). Cadre->hôte : `ready {}`,
+     `pong {n, frame, dropped, heap?}`, `clock {frame, playing}`, `violation {directive, blocked}`, `error {message}`, `audio {muted, blocked}`
+     (l'état réel du son, `blocked` : le navigateur l'a refusé), `key {key}` (une touche de `KEYS` frappée DANS la scène, Slice 08).
+     Champs EXACTS : une clé de plus est un refus.
    - Bornes AVANT travail : taille estimée (`jsonBudget` s'arrête dès que la borne est dépassée), profondeur, nombre de
      nœuds, types JSON seulement, jamais une clé `__proto__`. Une chaîne géante est refusée sans être parcourue.
    - `createSupervisor(options)` : le chien de garde de l'hôte. Il compte les refus (`maxViolations` => retrait du cadre),
@@ -19,22 +21,26 @@
 (function(root){
   'use strict';
   const RS=1;
-  const HOST_TYPES=Object.freeze(['init','props','control','cue','ping','teardown']);
-  const CHILD_TYPES=Object.freeze(['ready','pong','clock','violation','error']);
+  const HOST_TYPES=Object.freeze(['init','props','control','cue','ping','teardown','sound']);
+  const CHILD_TYPES=Object.freeze(['ready','pong','clock','violation','error','audio','key']);
+  /* The keys of the Variants map (contract § 4.15) a scene that has the focus passes on to the transport (Slice 08): the cross-origin frame
+     keeps every key it receives, so without this the transport went deaf after a click in the scene. Nothing else is ever passed on. */
+  const KEYS=Object.freeze([' ','ArrowLeft','ArrowRight','PageUp','PageDown','Home','End',',','.','f','F','m','M','Escape']);
   const CONTROL_ACTIONS=Object.freeze(['play','pause','seek']);
   const LIMITS=Object.freeze({
     maxPropsBytes:64*1024, maxChildBytes:2048, maxDepth:8, maxNodes:2000, maxErrorChars:300, maxBlockedChars:120,
     maxFrame:108000, maxCompositionPx:7680, minCompositionPx:16, maxFps:120,
     maxChildMessagesPerSecond:200, maxViolations:20, pingEveryMs:1000, silentMs:3000, readyMs:10000,
-    maxReportsPerSecond:20, maxHeapMb:768, maxFloodSeconds:3, maxClocksPerSecond:12
+    maxReportsPerSecond:20, maxHeapMb:768, maxFloodSeconds:3, maxClocksPerSecond:12, maxKeysPerSecond:20
   });
   const NAME=/^[a-z][a-z0-9_]{0,39}$/;
   const TOKEN=/^[a-z0-9]{8,32}$/;
   const DIRECTIVE=/^[a-z][a-z-]{0,39}$/;
   const COMPOSITION_ID=/^[A-Za-z][A-Za-z0-9-]{0,63}$/;
   const FIELDS=Object.freeze({
-    init:['composition','props'], props:['props'], control:['action','frame','until'], cue:['name','frame'], ping:['n'], teardown:[],
-    ready:[], pong:['n','frame','dropped','heap','muted'], clock:['frame','playing'], violation:['directive','blocked'], error:['message']
+    init:['composition','props'], props:['props'], control:['action','frame','until'], cue:['name','frame'], ping:['n'], teardown:[], sound:['muted'],
+    ready:[], pong:['n','frame','dropped','heap','muted'], clock:['frame','playing'], violation:['directive','blocked'], error:['message'],
+    audio:['muted','blocked'], key:['key']
   });
 
   function isPlainObject(value){
@@ -136,6 +142,15 @@
       case 'error':
         if(typeof data.message!=='string')return refuse('bad_error');
         out.message=clean(data.message,LIMITS.maxErrorChars);break;
+      case 'sound':
+        if(typeof data.muted!=='boolean')return refuse('bad_sound');
+        out.muted=data.muted;break;
+      case 'audio':
+        if(typeof data.muted!=='boolean'||typeof data.blocked!=='boolean')return refuse('bad_audio');
+        out.muted=data.muted;out.blocked=data.blocked;break;
+      case 'key':
+        if(typeof data.key!=='string'||!KEYS.includes(data.key))return refuse('bad_key');
+        out.key=data.key;break;
       default:break; // ready, teardown : aucun champ
     }
     return {ok:true,message:out,direction};
@@ -182,7 +197,8 @@
     const limits=Object.assign({},LIMITS,options.limits||{});
     const now=options.now;
     const state={ready:false,killed:false,reason:null,startedAt:now(),pending:null,pendingSince:0,lastPingAt:-1e9,lastFrame:-1,violations:0,
-      accepted:0,refused:{},foreign:0,reports:[],windowStart:now(),windowCount:0,pongs:0,childDropped:0,lastHeapMb:-1,muted:true,floodStreak:0,violationsReported:0,errorsReported:0,clocks:0,clockDropped:0,clockWindow:[],lastClock:null};
+      accepted:0,refused:{},foreign:0,reports:[],windowStart:now(),windowCount:0,pongs:0,childDropped:0,lastHeapMb:-1,muted:true,floodStreak:0,violationsReported:0,errorsReported:0,clocks:0,clockDropped:0,clockWindow:[],lastClock:null,
+      keys:0,keyDropped:0,keyWindow:[],audio:null};
     function kill(reason,detail){
       if(state.killed)return;
       state.killed=true;state.reason=reason;
@@ -236,6 +252,15 @@
           if(state.clockWindow.length>=limits.maxClocksPerSecond){state.clockDropped+=1;return refuse('clock_rate')}
           state.clockWindow.push(t);state.clocks+=1;state.lastClock={frame:message.frame,playing:message.playing};
           break;
+        case 'key':
+          /* A key typed in the scene (Slice 08): capped like the clock, dropped beyond the cap without counting as a violation. */
+          state.keyWindow=state.keyWindow.filter(x=>t-x<1000);
+          if(state.keyWindow.length>=limits.maxKeysPerSecond){state.keyDropped+=1;return refuse('key_rate')}
+          state.keyWindow.push(t);state.keys+=1;
+          break;
+        case 'audio':
+          state.audio={muted:message.muted,blocked:message.blocked};state.muted=message.muted;
+          break;
         case 'violation':case 'error':
           state.reports=state.reports.filter(x=>t-x<1000);
           if(state.reports.length>=limits.maxReportsPerSecond){violation('report_flood');return refuse('report_flood')}
@@ -264,7 +289,7 @@
     return {accept,tick,state:()=>JSON.parse(JSON.stringify(state))};
   }
 
-  const api={RS,HOST_TYPES,CHILD_TYPES,CONTROL_ACTIONS,LIMITS,FIELDS,jsonBudget,parseChildMessage,parseHostMessage,hostMessage,childMessage,createSupervisor,strongToken};
+  const api={RS,HOST_TYPES,CHILD_TYPES,CONTROL_ACTIONS,KEYS,LIMITS,FIELDS,jsonBudget,parseChildMessage,parseHostMessage,hostMessage,childMessage,createSupervisor,strongToken};
   if(typeof module==='object'&&module&&module.exports)module.exports=api;
   root.RemotionSandboxProtocol=api;
 })(typeof window!=='undefined'?window:globalThis);

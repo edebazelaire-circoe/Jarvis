@@ -36,7 +36,11 @@ FORBIDDEN_SANDBOX_TOKENS = frozenset({"allow-same-origin", "allow-popups", "allo
                                       "allow-top-navigation", "allow-top-navigation-by-user-activation", "allow-modals",
                                       "allow-downloads", "allow-pointer-lock", "allow-presentation", "allow-orientation-lock"})
 #: Attributs de l'`<iframe>` que l'hôte pose (le Player de la Slice 10 les reprend tels quels).
-IFRAME_ATTRIBUTES = {"sandbox": SANDBOX_VALUE, "allow": "", "referrerpolicy": "no-referrer", "loading": "eager"}
+#: `allow="autoplay"` (native-studio-playback-fix Slice 08) : la SEULE fonction déléguée, pour que le clic de l'utilisateur sur « Son »
+#: dans la page de Jarvis vaille pour le son de la scène (sans elle, Chrome exige un geste DANS chaque cadre, mesuré). `sandbox`, CSP,
+#: origine et `Permissions-Policy` (qui ne nomme que `autoplay=(self)`) inchangés. Résiduel dit dans `docs/remotion-isolation.md` § 10.6.
+IFRAME_ALLOW = "autoplay"
+IFRAME_ATTRIBUTES = {"sandbox": SANDBOX_VALUE, "allow": IFRAME_ALLOW, "referrerpolicy": "no-referrer", "loading": "eager"}
 #: Fonctions du navigateur retirées au document (Permissions-Policy) : aucune n'a de sens dans une scène.
 PERMISSIONS_POLICY = ("accelerometer=(), autoplay=(self), camera=(), clipboard-read=(), clipboard-write=(), display-capture=(), "
                       "geolocation=(), gyroscope=(), hid=(), magnetometer=(), microphone=(), midi=(), payment=(), "

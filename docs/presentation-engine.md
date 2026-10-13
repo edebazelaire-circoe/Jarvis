@@ -103,7 +103,7 @@ editability was requested. The prefab manifest field that stores the declaration
 | Score -> Remotion timeline | **wired** (Slice 12): an adapter only (`domain/remotion_timeline.py`): the score, the playback table and the sequence clock stay the masters; anchors (`ScoreAnchor.at_ms`) map to frames with the manifest composition, the playback view carries a `timeline`, the browser seeks / plays up to a stop frame / pauses the Player and the sandbox reports its position as untrusted advice ([presentation-studio.md](presentation-studio.md) › Remotion timeline bridge, [remotion-isolation.md](remotion-isolation.md) section 11). |
 | Human toggle, diagnostics, persisted-identity migration of old data | **wired** (Slice 20): see [Human engine control](#human-engine-control-slice-20) below. The Control Center card « Présentations · moteur » is the only door that names an engine; `EngineSelectionPolicy.select` is now called by the create path (`EngineChoice.decide`) with the actor the relay set; every Slidecar creation, copy and use is journaled; a Remotion failure is shown with its real reason and a one-click `install` / `repair`, never a Slidecar window; legacy documents were migrated by the v2 -> v3 step (first save keeps `presentation.json.v<N>.bak`). |
 
-`compile_runtime_unavailable` (the compiler's own state) is said `engine_unavailable` at the Core boundary; a sandbox port that cannot be bound is also `engine_unavailable` with the bind error. The user sees the same typed state in the stage window (title, real reason, repair, retry): never a blank frame and never a Slidecar window.
+`compile_runtime_unavailable` (the compiler's own state) is said `engine_unavailable` at the Core boundary; a sandbox port that cannot be bound is also `engine_unavailable` with the bind error. The user sees the same typed state in the stage window (title, real reason, repair, retry): never a blank frame and never a Slidecar window. (2026-10, done by native-studio-playback-fix Slice 09: the stage window is gone and this typed state shows in the Variants Player, the only playback surface, for a run too. The no-fallback rule is unchanged: [presentation-studio.md](presentation-studio.md#presentation-experience-contract-level-2-2026-10), § 2 and § 4.11.)
 
 ## Human engine control (Slice 20)
 
@@ -147,10 +147,16 @@ the journal ring (100 entries, process memory) is for display; what survives a r
 **Fail closed, visibly.** The card turns the adapter's real reason into guidance: capability not installed (button **Installer Remotion**, ~270 MB, confirmation), install failed / repair needed / crashed
 (failure code translated, detail shown, button **Réparer Remotion**), invalid sandbox settings or no adapter or disabled (steps to do yourself, no button: restarting Core is the user's act), always with
 « Aucune présentation Slidecar n'est affichée à la place ». The two buttons call `POST /api/local-capabilities/remotion/install|repair`, relayed with an empty body (`remotion_studio_relay.py`); a compile error
-of a scene stays in the stage window with the compiler's message ([remotion-isolation.md](remotion-isolation.md) section 10). While installing, the card shows a spinner and the elapsed time (15 min limit).
+of a scene stays in the stage window with the compiler's message ([remotion-isolation.md](remotion-isolation.md) section 10). While installing, the card shows a spinner and the elapsed time (15 min limit). *(2026-10, done by Slice 09: this shows in the Variants Player, not a stage window; see [the experience contract](presentation-studio.md#presentation-experience-contract-level-2-2026-10), *Variants run surface*.)*
 
 **Legacy documents.** A stored document without an engine reads as `slidecar` (v2 -> v3, unchanged); reads never rewrite it; the first save writes the new schema and keeps the exact old bytes once in
 `presentation.json.v<N>.bak`; the variant files are not touched by a manifest save (`tests/unit/test_presentation_studio_engine_migration.py`, on the frozen v1 and v2 fixtures).
+
+## Native authoring is not an engine (native-studio-playback-fix Slice 13)
+
+`brief.authoring: "native"` changes how a Remotion draft is JUDGED (only validity and safety block), not which engine runs it: the
+Presentation is created `remotion`, the Player, the isolation guards and the compile are the same, and nothing here can select Slidecar.
+Contract: [presentation-studio.md](presentation-studio.md#native-remotion-authoring-level-3-native-studio-playback-fix-slice-13).
 
 ## Conformance
 

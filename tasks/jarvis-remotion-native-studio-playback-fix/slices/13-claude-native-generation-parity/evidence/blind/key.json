@@ -1,0 +1,26 @@
+{
+ "jarvis": {
+  "deck-A": {
+   "side": "direct",
+   "run": "d-jarvis-1",
+   "frames": 8
+  },
+  "deck-B": {
+   "side": "jarvis",
+   "run": "jn4",
+   "frames": 8
+  }
+ },
+ "iguard": {
+  "deck-A": {
+   "side": "direct",
+   "run": "d-iguard-1",
+   "frames": 8
+  },
+  "deck-B": {
+   "side": "jarvis",
+   "run": "ji2",
+   "frames": 8
+  }
+ }
+}

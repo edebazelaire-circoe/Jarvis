@@ -1,0 +1,197 @@
+{
+ "run": "j-base-jarvis",
+ "label": "Jarvis BEFORE (HEAD 40cb68a8, guided chain)",
+ "side": "jarvis",
+ "topic": "jarvis",
+ "totals": {
+  "cost_usd_last_brain_result": 3.9238253999999997,
+  "brain_results": 5
+ },
+ "agents": {
+  "brain": {
+   "description": "brain",
+   "tool_calls": 4,
+   "by_tool": {
+    "Agent": 4
+   },
+   "refused_or_error": [],
+   "frames_viewed": 0,
+   "usage": {
+    "input_tokens": 26,
+    "output_tokens": 3760,
+    "cache_read_input_tokens": 487918,
+    "cache_creation_input_tokens": 50076
+   },
+   "elapsed_s": 1244.0
+  },
+  "agent-a55311b91502fe82f": {
+   "description": "[general] [presentation-review] Relecture vidéo JARVIS",
+   "tool_calls": 25,
+   "by_tool": {
+    "ToolSearch": 1,
+    "Read": 7,
+    "mcp__jarvis-workspace__board_get_active": 1,
+    "mcp__jarvis-presentation__presentation_inspect": 11,
+    "mcp__jarvis-workspace__board_memory_read": 1,
+    "Grep": 2,
+    "Glob": 1,
+    "mcp__jarvis-workspace__board_memory_write": 1
+   },
+   "refused_or_error": [
+    {
+     "tool": "mcp__jarvis-presentation__presentation_inspect",
+     "result": "Refus presentation_studio_unknown_composition : psv_e1d9cfa65f8a286106492b91b929f6d5 is not the result of a composition (Core : psv_e1d9cfa65f8a286106492b91b929f6d5 is not the result of a composition)"
+    }
+   ],
+   "frames_viewed": 0,
+   "usage": {
+    "input_tokens": 20,
+    "output_tokens": 1356,
+    "cache_read_input_tokens": 478867,
+    "cache_creation_input_tokens": 75137
+   },
+   "elapsed_s": 140.0
+  },
+  "agent-a6fcfec8b4d6ee72a": {
+   "description": "[general] [presentation-brief] Dossier JARVIS 4 scènes",
+   "tool_calls": 7,
+   "by_tool": {
+    "ToolSearch": 1,
+    "Read": 1,
+    "mcp__jarvis-workspace__board_get_active": 1,
+    "mcp__jarvis-workspace__session_current": 1,
+    "mcp__jarvis-workspace__board_memory_tree": 1,
+    "mcp__jarvis-workspace__board_artifacts": 1,
+    "mcp__jarvis-workspace__board_memory_write": 1
+   },
+   "refused_or_error": [],
+   "frames_viewed": 0,
+   "usage": {
+    "input_tokens": 10,
+    "output_tokens": 1161,
+    "cache_read_input_tokens": 154533,
+    "cache_creation_input_tokens": 49304
+   },
+   "elapsed_s": 64.9
+  },
+  "agent-a9b01d237a15005e8": {
+   "description": "[code] [presentation-author] Corriger vidéo JARVIS",
+   "tool_calls": 33,
+   "by_tool": {
+    "ToolSearch": 1,
+    "Read": 8,
+    "mcp__jarvis-workspace__board_get_active": 1,
+    "mcp__jarvis-workspace__board_memory_tree": 1,
+    "mcp__jarvis-workspace__board_memory_read": 2,
+    "mcp__jarvis-presentation__presentation_inspect": 6,
+    "Glob": 2,
+    "mcp__jarvis-presentation__presentation_draft_check": 7,
+    "mcp__jarvis-presentation__presentation_draft_assemble": 3,
+    "Grep": 2
+   },
+   "refused_or_error": [
+    {
+     "tool": "mcp__jarvis-presentation__presentation_draft_check",
+     "result": "{\"ok\":true,\"speech\":\"silent\",\"status\":\"checked\",\"ok_gate\":false,\"report\":{\"ok\":false,\"workflow\":\"directed\",\"stage\":\"brief\",\"subset\":\"full\",\"failures\":[{\"code\":\"brief_invalid\",\"severity\":\"error\",\"where\":\"brief\",\"message\":\"brief.resources[0].kind is not a resource kind\"}],\"warnings\":[],\"rules\":{\"check"
+    },
+    {
+     "tool": "mcp__jarvis-presentation__presentation_draft_check",
+     "result": "{\"ok\":true,\"speech\":\"silent\",\"status\":\"checked\",\"ok_gate\":false,\"report\":{\"ok\":false,\"workflow\":\"directed\",\"stage\":\"partial\",\"subset\":\"full\",\"failures\":[{\"code\":\"draft_schema\",\"severity\":\"error\",\"where\":\"item:1\",\"message\":\"item psi_000000000000: a silence item carries no speech and no note\"},{\"code\""
+    },
+    {
+     "tool": "mcp__jarvis-presentation__presentation_draft_check",
+     "result": "{\"ok\":true,\"speech\":\"silent\",\"status\":\"checked\",\"ok_gate\":false,\"report\":{\"ok\":false,\"workflow\":\"one_shot\",\"stage\":\"brief\",\"subset\":\"full\",\"failures\":[{\"code\":\"brief_invalid\",\"severity\":\"error\",\"where\":\"brief\",\"message\":\"brief.resources[1].kind is not a resource kind\"}],\"warnings\":[],\"rules\":{\"check"
+    },
+    {
+     "tool": "mcp__jarvis-presentation__presentation_draft_assemble",
+     "result": "{\"ok\":true,\"speech\":\"silent\",\"status\":\"refused\",\"ok_gate\":false,\"report\":{\"ok\":false,\"workflow\":\"directed\",\"stage\":\"partial\",\"subset\":\"full\",\"failures\":[{\"code\":\"draft_schema\",\"severity\":\"error\",\"where\":\"art_direction\",\"message\":\"sources[0]: resource locator : schéma « board » hors de la liste blanc"
+    },
+    {
+     "tool": "mcp__jarvis-presentation__presentation_draft_assemble",
+     "result": "{\"ok\":true,\"speech\":\"silent\",\"status\":\"refused\",\"ok_gate\":false,\"report\":{\"ok\":false,\"workflow\":\"directed\",\"stage\":\"partial\",\"subset\":\"full\",\"failures\":[{\"code\":\"draft_schema\",\"severity\":\"error\",\"where\":\"art_direction\",\"message\":\"colors[0] must be a JSON object\"}],\"warnings\":[],\"rules\":{\"checked\":24"
+    },
+    {
+     "tool": "mcp__jarvis-presentation__presentation_draft_check",
+     "result": "{\"ok\":true,\"speech\":\"silent\",\"status\":\"checked\",\"ok_gate\":false,\"report\":{\"ok\":false,\"workflow\":\"one_shot\",\"stage\":\"schema\",\"subset\":\"full\",\"failures\":[{\"code\":\"draft_schema\",\"severity\":\"error\",\"where\":\"draft.scenes\",\"message\":\"draft.scenes must hold 1..48 entries\"},{\"code\":\"draft_schema\",\"severity\""
+    },
+    {
+     "tool": "mcp__jarvis-presentation__presentation_draft_check",
+     "result": "{\"ok\":true,\"speech\":\"silent\",\"status\":\"checked\",\"ok_gate\":false,\"report\":{\"ok\":false,\"workflow\":\"one_shot\",\"stage\":\"schema\",\"subset\":\"full\",\"failures\":[{\"code\":\"draft_schema\",\"severity\":\"error\",\"where\":\"draft.scenes\",\"message\":\"draft.scenes must hold 1..48 entries\"},{\"code\":\"draft_schema\",\"severity\""
+    },
+    {
+     "tool": "mcp__jarvis-presentation__presentation_draft_check",
+     "result": "{\"ok\":true,\"speech\":\"silent\",\"status\":\"checked\",\"ok_gate\":false,\"report\":{\"ok\":false,\"workflow\":\"one_shot\",\"stage\":\"schema\",\"subset\":\"full\",\"failures\":[{\"code\":\"draft_schema\",\"severity\":\"error\",\"where\":\"draft.scenes\",\"message\":\"draft.scenes must hold 1..48 entries\"},{\"code\":\"draft_schema\",\"severity\""
+    },
+    {
+     "tool": "mcp__jarvis-presentation__presentation_draft_check",
+     "result": "{\"ok\":true,\"speech\":\"silent\",\"status\":\"checked\",\"ok_gate\":false,\"report\":{\"ok\":false,\"workflow\":\"one_shot\",\"stage\":\"schema\",\"subset\":\"full\",\"failures\":[{\"code\":\"draft_schema\",\"severity\":\"error\",\"where\":\"draft.scenes\",\"message\":\"draft.scenes must hold 1..48 entries\"},{\"code\":\"draft_schema\",\"severity\""
+    },
+    {
+     "tool": "mcp__jarvis-presentation__presentation_inspect",
+     "result": "Refus presentation_studio_unknown_composition : psv_1d93cc09deef6c1e7c656a2e7bda98cb is not the result of a composition (Core : psv_1d93cc09deef6c1e7c656a2e7bda98cb is not the result of a composition)"
+    }
+   ],
+   "frames_viewed": 0,
+   "usage": {
+    "input_tokens": 50,
+    "output_tokens": 2272,
+    "cache_read_input_tokens": 2984957,
+    "cache_creation_input_tokens": 171481
+   },
+   "elapsed_s": 535.0
+  },
+  "agent-ab1a8664bdc069f64": {
+   "description": "[code] [presentation-author] Construire vidéo JARVIS",
+   "tool_calls": 11,
+   "by_tool": {
+    "ToolSearch": 1,
+    "Read": 1,
+    "mcp__jarvis-workspace__board_get_active": 1,
+    "mcp__jarvis-workspace__board_memory_read": 1,
+    "mcp__jarvis-presentation__presentation_inspect": 2,
+    "mcp__jarvis-presentation__presentation_draft_assemble": 5
+   },
+   "refused_or_error": [
+    {
+     "tool": "mcp__jarvis-presentation__presentation_draft_assemble",
+     "result": "{\"ok\":true,\"speech\":\"silent\",\"status\":\"refused\",\"ok_gate\":false,\"report\":{\"ok\":false,\"workflow\":\"directed\",\"stage\":\"brief\",\"subset\":\"full\",\"failures\":[{\"code\":\"brief_invalid\",\"severity\":\"error\",\"where\":\"brief\",\"message\":\"brief.resources[0].kind is not a resource kind\"}],\"warnings\":[],\"rules\":{\"check"
+    },
+    {
+     "tool": "mcp__jarvis-presentation__presentation_draft_assemble",
+     "result": "{\"ok\":true,\"speech\":\"silent\",\"status\":\"refused\",\"ok_gate\":false,\"report\":{\"ok\":false,\"workflow\":\"directed\",\"stage\":\"partial\",\"subset\":\"full\",\"failures\":[{\"code\":\"draft_schema\",\"severity\":\"error\",\"where\":\"scene:2\",\"message\":\"label must be one printable line of at most 40 characters, without surroundi"
+    },
+    {
+     "tool": "mcp__jarvis-presentation__presentation_draft_assemble",
+     "result": "{\"ok\":true,\"speech\":\"silent\",\"status\":\"refused\",\"ok_gate\":false,\"report\":{\"ok\":false,\"workflow\":\"directed\",\"stage\":\"partial\",\"subset\":\"full\",\"failures\":[{\"code\":\"draft_schema\",\"severity\":\"error\",\"where\":\"item:1\",\"message\":\"score.items[0].visual must be a list\"},{\"code\":\"draft_schema\",\"severity\":\"err"
+    },
+    {
+     "tool": "mcp__jarvis-presentation__presentation_draft_assemble",
+     "result": "{\"ok\":true,\"speech\":\"silent\",\"status\":\"refused\",\"ok_gate\":false,\"report\":{\"ok\":false,\"workflow\":\"directed\",\"stage\":\"complete\",\"subset\":\"full\",\"failures\":[{\"code\":\"scene_incompatible\",\"severity\":\"error\",\"where\":\"scene:trajet\",\"message\":\"data.nodes[0]: unknown keys (2, names not echoed))\"},{\"code\":\"sc"
+    }
+   ],
+   "frames_viewed": 0,
+   "usage": {
+    "input_tokens": 20,
+    "output_tokens": 1881,
+    "cache_read_input_tokens": 779069,
+    "cache_creation_input_tokens": 134020
+   },
+   "elapsed_s": 474.6
+  }
+ },
+ "turns": [
+  {
+   "text": "Crée une courte présentation vidéo Remotion de 4 scènes, environ 40 secondes au total, en 1920x1080, qui présente JARVIS, l'assistant vocal local de ce poste à des développeurs qui le découvrent. Seul",
+   "brain_answer_s": 9.1,
+   "answer": "{\"text\": \"J'ai lancé la première étape, le dossier de production de la présentation à partir du README. La construction suivra ensuite, puis une relecture. Cela prendra du temps, et je vous préviens à chaque étape terminée.\", \"ok\": true, \"error\": null}"
+  }
+ ],
+ "files": {
+  "brain.jsonl": 41,
+  "agent-a55311b91502fe82f.jsonl": 57,
+  "agent-a6fcfec8b4d6ee72a.jsonl": 18,
+  "agent-a9b01d237a15005e8.jsonl": 87,
+  "agent-ab1a8664bdc069f64.jsonl": 31,
+  "jarvis-trace.jsonl": 218
+ }
+}

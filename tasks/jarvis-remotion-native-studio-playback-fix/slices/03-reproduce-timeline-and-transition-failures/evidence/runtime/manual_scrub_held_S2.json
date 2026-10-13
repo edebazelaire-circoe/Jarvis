@@ -1,0 +1,55 @@
+{
+ "before": {
+  "rs_time": "2.0 s / 8.0 s",
+  "band": "00:04 / 00:08",
+  "band_where": "Scène 2/9 · S2 8s@30  — élément 2/13",
+  "frame": 59,
+  "playing": false,
+  "duration": 240
+ },
+ "after_1500": {
+  "rs_time": "0.7 s / 8.0 s",
+  "band": "00:05 / 00:08",
+  "band_where": "Scène 2/9 · S2 8s@30  — élément 2/13",
+  "frame": 20,
+  "playing": false,
+  "duration": 240
+ },
+ "after_forward": {
+  "rs_time": "6.7 s / 8.0 s",
+  "band": "00:09 / 00:08",
+  "band_where": "Scène 2/9 · S2 8s@30  — élément 2/13",
+  "frame": 200,
+  "playing": false,
+  "duration": 240
+ },
+ "core": {
+  "scope": "manual",
+  "phase": "playing",
+  "scene": 2,
+  "play_ms": 2000,
+  "from": 0,
+  "until": 59,
+  "seq": 1,
+  "item_ms": 9777,
+  "item_target_ms": 8000
+ },
+ "orders": [
+  [
+   694,
+   "order",
+   1,
+   "pause",
+   0,
+   null
+  ],
+  [
+   694,
+   "order",
+   1,
+   "play",
+   0,
+   59
+  ]
+ ]
+}

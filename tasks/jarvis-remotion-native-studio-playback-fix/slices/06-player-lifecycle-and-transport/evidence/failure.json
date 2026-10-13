@@ -1,0 +1,98 @@
+{
+ "view": {
+  "phase": "failed",
+  "frame": 90,
+  "total_frames": 270,
+  "fps": 30,
+  "playing": false,
+  "scene_index": 1,
+  "scene_count": 3,
+  "scene_id": "pss_000000000002",
+  "scene_title": "S2",
+  "starts": [
+   0,
+   90,
+   180
+  ],
+  "scope": "all",
+  "retryable": true,
+  "waiting_ms": 0,
+  "waiting_visible": false,
+  "error": {
+   "code": "scene_failed",
+   "message": "scene S2 is broken on purpose",
+   "scene_index": 1,
+   "scene_id": "pss_000000000002",
+   "scene_title": "S2"
+  }
+ },
+ "veil": {
+  "hidden": false,
+  "title": "Scène 2 : lecture impossible",
+  "text": "Scène 2 « S2 » : scene S2 is broken on purpose",
+  "actions": [
+   "Réessayer",
+   "Scène suivante"
+  ]
+ },
+ "readouts": {
+  "readouts": [
+   {
+    "where": "page",
+    "text": "0:03 / 0:09"
+   }
+  ],
+  "label": 2,
+  "selected": "pss_000000000002",
+  "slider": {
+   "now": "90",
+   "max": "269",
+   "text": "Scène 2 sur 3, 0:03 sur 0:09",
+   "disabled": false
+  },
+  "player": {
+   "frame": 0,
+   "playing": false,
+   "duration": 90,
+   "phase": "ready",
+   "scene": "S2"
+  },
+  "open": true
+ },
+ "later": {
+  "phase": "failed",
+  "frame": 90,
+  "total_frames": 270,
+  "fps": 30,
+  "playing": false,
+  "scene_index": 1,
+  "scene_count": 3,
+  "scene_id": "pss_000000000002",
+  "scene_title": "S2",
+  "starts": [
+   0,
+   90,
+   180
+  ],
+  "scope": "all",
+  "retryable": true,
+  "waiting_ms": 0,
+  "waiting_visible": false,
+  "error": {
+   "code": "scene_failed",
+   "message": "scene S2 is broken on purpose",
+   "scene_index": 1,
+   "scene_id": "pss_000000000002",
+   "scene_title": "S2"
+  }
+ },
+ "live_scenes": [
+  "S1",
+  "S2"
+ ],
+ "errors_logged": [
+  "frame error [studio-explorer] sequencer_failed {\"code\":\"scene_failed\",\"scene_id\":\"pss_000000000002\",\"scene_index\":1}"
+ ],
+ "core_phase": "idle",
+ "failed": null
+}

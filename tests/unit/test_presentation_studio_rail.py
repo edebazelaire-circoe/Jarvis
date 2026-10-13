@@ -215,13 +215,20 @@ async def test_work_state_over_the_wire_and_acknowledge(tmp_path):
 async def test_ui_requests_are_numbered_and_the_page_report_is_dated(tmp_path):
     async with Core(tmp_path) as core:
         pid = await create(core, "Ecran")
-        first = await core.client.presentation_studio_rail_display({"action": "open_window", "presentation_id": pid})
+        first = await core.client.presentation_studio_rail_display({"action": "show_rail", "presentation_id": pid})
         assert first["request"]["seq"] == 1 and first["request"]["presentation_id"] == pid and first["reported"] is None
         second = await core.client.presentation_studio_rail_display({"action": "hide_rail"})
         assert second["request"]["seq"] == 2 and second["request"]["action"] == "hide_rail"
-        with pytest.raises(Exception) as bad:
-            await core.client.presentation_studio_rail_display({"action": "open_window"})
-        assert getattr(bad.value, "status", None) == 400
+        # Slice 09: the floating window host is retired; its screen requests are refused (typed 400), Variants has its own channel
+        for retired in ({"action": "open_window", "presentation_id": pid}, {"action": "close_window"}):
+            with pytest.raises(Exception) as bad:
+                await core.client.presentation_studio_rail_display(retired)
+            assert getattr(bad.value, "status", None) == 400
+        rail = core.stack.core.presentation_studio_rail
+        reported = rail.report_ui({"rail_visible": True, "variants_open": True, "presentation_id": pid, "applied_seq": 2})
+        assert reported["reported"]["variants_open"] is True and reported["reported"]["presentation_id"] == pid
+        with pytest.raises(PresentationStudioError):                     # the retired field is refused, never read as Variants
+            rail.report_ui({"rail_visible": True, "window_open": True, "presentation_id": pid})
         listing = await core.client.presentation_studio_rail()
         assert listing["ui"]["seq"] == 2
 
@@ -254,10 +261,11 @@ async def test_mcp_library_inspect_rail_and_the_archived_gate(tmp_path):
                 await call()
             assert gate.value.code == "presentation_archived"
         await tools.library("restore", presentation_id=world.pid)
+        world.cc.answers[("POST", "/api/presentation-studio/explorer/commands")] = (200, {"state": "opened", "mode": "windowed"})
         out = await tools.view("window_open", presentation_id=world.pid)
-        assert out["status"] == "requested" and out["seq"] == 1
+        assert out["status"] == "opened" and out["mode"] == "windowed", "Variants, windowed, with the page's receipt (Slice 09)"
         screen = await tools.view("rail_hide")
-        assert screen["seq"] == 2
+        assert screen["seq"] == 1
         renamed = await tools.library("rename", presentation_id=world.pid, title="Titre rendu")
         assert renamed["changed"] is True and renamed["title"] == "Titre rendu"
         with pytest.raises(PresentationToolError):

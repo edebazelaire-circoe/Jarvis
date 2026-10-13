@@ -307,14 +307,15 @@ référencés ; aucun chemin de la machine, rien lu hors du paquet à la réouve
   (`core.presentation_studio.reconciled`, `reconcile_orphans`). Procédure à la main :
   [OPERATIONS.md](OPERATIONS.md#variantes-du-studio--archive-restauration-et-reprise) ;
 - **aucune rétention automatique** ; l'état de lecture et les identifiants d'objets
-  de la scène n'y sont jamais écrits (mémoire de Core seulement). Une seule exception, **hors** de
-  `presentations/` : `state/presentation-studio-stage-ledger.json` (Slice 12), à côté de `scene.sqlite3`,
-  qui ne liste que les identifiants des fenêtres de lecture du Studio sur la scène de ce poste, pour qu'un
-  Core tué puisse les archiver au démarrage suivant ; sans titre ni contenu, effacé dès qu'ils sont repris,
-  ne se sauvegarde ni ne se déplace avec les Presentations ; s'il est illisible, Core le garde à côté
-  (`presentation-studio-stage-ledger.json.corrupt-<horodatage>`, les trois plus récents, jamais écrasé) et
-  reprend les fenêtres du Studio par balayage de la scène ; une sauvegarde
-  de la racine doit inclure `presentations/`.
+  de la scène n'y sont jamais écrits (mémoire de Core seulement). Depuis native-studio-playback-fix Slice 09, une lecture
+  se montre dans Variantes sur une surface **en mémoire** et n'écrit plus aucun objet de la scène ni aucun registre.
+  L'ancien registre `state/presentation-studio-stage-ledger.json` (Slice 12, à côté de `scene.sqlite3`, **hors** de
+  `presentations/`) n'existe plus que sur un poste qui a fait tourner une version précédente : il ne liste que des
+  identifiants de fenêtres de lecture du Studio ; au démarrage, Core archive ces fenêtres (et toute fenêtre
+  `studio-stage-*` / `studio-aux-*` restée sur la scène), puis **met le fichier de côté**
+  (`presentation-studio-stage-ledger.json.retired-<horodatage>`, jamais supprimé, jamais réécrit) ; illisible, il est gardé
+  en `.corrupt-<horodatage>` (les trois plus récents) et la scène est balayée quand même. Ces fichiers ne se sauvegardent ni
+  ne se déplacent avec les Presentations ; une sauvegarde de la racine doit inclure `presentations/`.
   Les prefabs que les scènes référencent vivent dans `prefabs/` : sauvegarder
   les deux ensemble.
 - **Rechargement à chaud (Slice 06)** : le document de variante est en `schema_version` 3 (chaque scène porte

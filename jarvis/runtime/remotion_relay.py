@@ -2,7 +2,7 @@
 
 | Control Center | Rôle |
 | --- | --- |
-| `GET /remotion-stage?id=<prefab>&v=<version>` | la page de la scène : un document de confiance qui monte le bac à sable. Son en-tête est **`Content-Security-Policy: frame-src <origine du bac à sable>` et rien d'autre** (`embedder_frame_src`) ; `frame-src 'none'` quand Core ne configure aucun bac à sable. Jamais l'origine du visualiseur ni de Core. |
+| `GET /remotion-stage?id=<prefab>&v=<version>[&embed=variants]` | la page de la scène : un document de confiance qui monte le bac à sable (`embed=variants` : le Player de Variantes, sans barre propre et sans lecture au `ready`). Son en-tête est **`Content-Security-Policy: frame-src <origine du bac à sable>` et rien d'autre** (`embedder_frame_src`) ; `frame-src 'none'` quand Core ne configure aucun bac à sable. Jamais l'origine du visualiseur ni de Core. |
 | `GET /api/remotion/sandbox` | relais de `GET /v1/remotion/sandbox` (état du moteur, origine du bac à sable) |
 | `GET /api/remotion/player/{prefab_id}/{version}` | relais de `GET /v1/remotion/player/...` (compile à la demande : délai de 150 s) |
 | `POST /api/remotion/report` | la page de la scène rend compte (`ready`, `failed`, `killed`, `violation`, `scene_error`, `props_rejected`) ; le Control Center journalise `remotion.sandbox.killed`, `remotion.stage.*` ; corps borné, champs d'une liste fermée |
@@ -26,6 +26,8 @@ from jarvis.runtime.capture_relay import CaptureRelayRoutes, _error
 from jarvis.runtime.journal import RuntimeJournal
 
 STAGE_ROUTE = "/remotion-stage"
+#: `embed` values a stage page accepts (`control_center_remotion_frame.js` `EMBEDS`).
+STAGE_EMBEDS = ("variants",)
 API_ROUTE = "/api/remotion"
 #: Préfixes gardés par le Control Center (toutes méthodes).
 GUARDED_PREFIXES = (STAGE_ROUTE, API_ROUTE)
@@ -69,14 +71,17 @@ class RemotionRelayRoutes(CaptureRelayRoutes):
 
     async def stage(self, request: web.Request) -> web.Response:
         prefab_id, version = request.query.get("id", ""), request.query.get("v", "")
-        if set(request.query) - {"id", "v"} or not _PREFAB_ID.fullmatch(prefab_id) or not (version.isascii() and version.isdigit() and 0 < len(version) <= 4):
-            return _error(400, "invalid_request", "a Remotion stage names a prefab id and a version (?id=...&v=...)")
+        # `embed=variants` (native-studio-playback-fix Slice 06): the page is the Variants Player; it shows no bar and never plays on ready.
+        embed = request.query.get("embed")
+        if (set(request.query) - {"id", "v", "embed"} or not _PREFAB_ID.fullmatch(prefab_id)
+                or not (version.isascii() and version.isdigit() and 0 < len(version) <= 4) or embed not in (None, *STAGE_EMBEDS)):
+            return _error(400, "invalid_request", "a Remotion stage names a prefab id and a version (?id=...&v=...[&embed=variants])")
         # The sandbox origin is Core's to say (the CSP names exactly that origin); no Core or no sandbox -> 'none', and the page
         # tells the user why through the typed failure of the player route (engine_unavailable), never a blank frame.
         status, payload = await self._forward("GET", CORE_PREFIX + "/sandbox", action="remotion_sandbox", params=None, body=None, timeout_s=None)
         sandbox = payload.get("sandbox") if status == 200 and isinstance(payload, dict) else None
         origin = sandbox.get("origin") if isinstance(sandbox, dict) and sandbox.get("configured") else None
-        config = {"prefabId": prefab_id, "version": int(version), "iframeAttributes": dict(sb.IFRAME_ATTRIBUTES)}
+        config = {"prefabId": prefab_id, "version": int(version), "iframeAttributes": dict(sb.IFRAME_ATTRIBUTES), "embed": embed}
         body = self._page.replace("__REMOTION_STAGE_CONFIG__", json.dumps(config, separators=(",", ":")))
         return web.Response(text=body, content_type="text/html", headers={
             "Content-Security-Policy": stage_csp(origin), "Cache-Control": "no-store", "X-Content-Type-Options": "nosniff",

@@ -9,7 +9,7 @@ moteur** ; l'accusé du Studio hors bac à sable et la licence d'une version plu
 | --- | --- |
 | `remotion_status` | santé de la capacité + moteurs (lecture seule), Studio, exports (liste, un export) |
 | `remotion_setup` | installer / réparer, sur demande de l'utilisateur |
-| `remotion_studio` | pointeur vers la carte « Remotion · Studio » : l'utilisateur ouvre et confirme lui-même |
+| `remotion_studio` | pointeur vers « Remotion Studio » sous la vidéo de Variantes : l'utilisateur ouvre et confirme lui-même |
 | `remotion_export` | lancer / annuler un export mp4, image ou PDF de la variante, sur demande |
 | `remotion_import` | plan puis import d'un modèle amont (liste blanche de l'utilisateur), sur demande |
 | `remotion_upgrades` | avis de versions plus récentes (lecture) et essai en variante enfant, sur demande |

@@ -1,0 +1,16 @@
+﻿{
+  "slice_id": "06",
+  "title": "Correct Player lifecycle, seek and transport",
+  "dependencies": [
+    "04-canonical-composition-clock",
+    "05-continuous-remotion-sequencing"
+  ],
+  "task_type": null,
+  "task_type_resolution_required": true,
+  "requires_caveman": true,
+  "requires_coding_guideline": true,
+  "frontend": false,
+  "requires_impeccable": false,
+  "claude_for_frontend_when_available": false,
+  "requires_agent_trace_analysis": false
+}

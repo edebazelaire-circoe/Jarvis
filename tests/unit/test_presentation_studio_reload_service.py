@@ -107,15 +107,10 @@ async def test_a_second_edit_revises_the_scenes_own_source_instead_of_forking_ag
 
 
 async def test_live_values_committed_by_the_frame_survive_the_remount(rig):
-    # the frame's own `state` events write the stage window's data (not the variant): a reload must carry them over
-    from jarvis.domain.scene import SceneActor, SceneCommand, SceneObjectFields, SceneOp, ScenePrefabRef
-    snapshot = await rig.scene.snapshot()
-    stage = snapshot.get_object(rig.stage_object_id())
-    block = stage.payload.prefab
-    live = ScenePrefabRef(block.prefab_id, block.version, block.props, {**block.data, "count": 77})
-    await rig.scene.apply(SceneCommand(op=SceneOp.PATCH_OBJECT, actor=SceneActor.USER, object_id=stage.object_id,
-                                       fields=SceneObjectFields(payload=stage.payload.__class__(
-                                           title=stage.payload.title, prefab=live))))
+    # the frame's own `state` events write the run surface's data (not the variant, not a Board object; Slice 09): a reload must
+    # carry them over
+    committed = await rig.frame_commits({"count": 77})
+    assert committed.outcome.value == "applied" and (await rig.stage_block()).data["count"] == 77
     result = await rig.edit({"style": GOOD_STYLE})
     assert result.status is S.RELOADED
     assert (await rig.stage_block()).data["count"] == 77                       # the clicks are not lost
@@ -245,14 +240,7 @@ async def test_a_mount_failure_rolls_back_and_the_last_valid_scene_is_intact(tmp
 
 async def test_a_rollback_restores_the_live_values_the_frame_had_committed(tmp_path):
     rig = await Rig(tmp_path).open(host=failing_studio_sources)
-    from jarvis.domain.scene import SceneActor, SceneCommand, SceneObjectFields, SceneOp, ScenePayload, ScenePrefabRef
-    stage = (await rig.scene.snapshot()).get_object(rig.stage_object_id())
-    block = stage.payload.prefab
-    await rig.scene.apply(SceneCommand(op=SceneOp.PATCH_OBJECT, actor=SceneActor.USER, object_id=stage.object_id,
-                                       fields=SceneObjectFields(payload=ScenePayload(
-                                           title=stage.payload.title,
-                                           prefab=ScenePrefabRef(block.prefab_id, block.version, block.props,
-                                                                 {**block.data, "count": 41})))))
+    assert (await rig.frame_commits({"count": 41})).outcome.value == "applied"
     result = await rig.edit({"style": GOOD_STYLE})
     assert result.status is S.ROLLED_BACK
     assert (await rig.stage_block()).data["count"] == 41
@@ -873,7 +861,7 @@ async def test_when_the_stage_cannot_be_restored_the_scene_is_degraded_visibly_a
         monkeypatch.setattr(rig.stage, "repin", repin)
         result = await rig.edit({"style": GOOD_STYLE})
         assert result.status is S.DEGRADED and result.http_status == 409 and result.mounted is False
-        assert result.code == C.STAGE_FAILED.value and "stage window could not be put back" in result.message
+        assert result.code == C.STAGE_FAILED.value and "run surface could not be put back" in result.message
         assert len(calls) == 1 + 3                                                       # bounded: one patch, three restores
         scene = scene_of(await rig.variant())
         assert scene.prefab.prefab_id.startswith("presentation-studio.") and scene.last_valid_pin == PrefabRef("lab.counter", 1)

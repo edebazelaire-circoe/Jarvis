@@ -1,0 +1,122 @@
+{
+  "schema": "jarvis.presentation_studio.art_direction",
+  "schema_version": 1,
+  "art_direction_id": "psd_aa3a0987bd5f",
+  "presentation_id": "pst_5ba11edc8ea08575b8397379859af675",
+  "variant_id": "psv_4a68694f2f6ae13a13aaed5f7a57b7e0",
+  "profile": {
+    "name": "Derived direction",
+    "provenance": {
+      "origin": "inferred",
+      "sections": {
+        "dataviz": "generated",
+        "imagery": "generated",
+        "motion": "generated",
+        "palette": "inferred",
+        "shapes": "inferred",
+        "spacing": "generated",
+        "typography": "inferred"
+      },
+      "fallback": false,
+      "confidence": 0.85,
+      "notes": [
+        "Derived from 4 colour, 2 font, 2 radius and 2 mention signals.",
+        "Gaps filled with the generated 'Bold contrast' direction (from the mentions)."
+      ]
+    },
+    "palette": {
+      "background": "#0b1020",
+      "surface": "#240046",
+      "surface_opacity": 96,
+      "text": "#e8ecf4",
+      "muted": "#9aa4b8",
+      "accent": "#ff7a00",
+      "accent_alt": null,
+      "gradients": [
+        {
+          "gradient_id": "backdrop",
+          "kind": "linear",
+          "angle": 160,
+          "stops": [
+            {
+              "color": "#0b1020",
+              "at": 0
+            },
+            {
+              "color": "#240046",
+              "at": 100
+            }
+          ],
+          "text_token": "text"
+        }
+      ]
+    },
+    "typography": {
+      "heading": {
+        "stack": "transitional_serif",
+        "preferred": "Playfair Display"
+      },
+      "body": {
+        "stack": "system_sans",
+        "preferred": "Inter"
+      },
+      "text_size": "xlarge",
+      "scale_ratio": "dramatic",
+      "heading_weight": 800,
+      "body_weight": 400,
+      "label_case": "uppercase"
+    },
+    "spacing": {
+      "density": "balanced",
+      "margin": "narrow"
+    },
+    "shapes": {
+      "radius_px": 8,
+      "stroke_px": 2,
+      "elevation": "dramatic"
+    },
+    "imagery": {
+      "photo": "abstract",
+      "illustration": "isometric",
+      "icons": "filled",
+      "treatment": "duotone",
+      "motifs": [
+        "gradient",
+        "motion"
+      ]
+    },
+    "dataviz": {
+      "mode": "categorical",
+      "series": [
+        "#ff7a00",
+        "#e8ecf4",
+        "#38bdf8",
+        "#fb923c",
+        "#34d399"
+      ],
+      "grid": "subtle",
+      "labels": "legend",
+      "emphasis": "multi"
+    },
+    "motion": {
+      "tempo": "lively",
+      "enter_ms": 200,
+      "exit_ms": 120,
+      "emphasis_ms": 200,
+      "easing": "snappy",
+      "stagger_ms": 40,
+      "transition": "scale",
+      "reduced_motion": "fade_only"
+    },
+    "references": [
+      {
+        "kind": "document",
+        "locator": "doc:charte-graphique",
+        "title": "Charte graphique"
+      }
+    ]
+  },
+  "revision": 1,
+  "created_at": "2026-10-12T18:38:56.556076Z",
+  "updated_at": "2026-10-12T18:38:56.556076Z"
+}

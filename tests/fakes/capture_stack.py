@@ -76,8 +76,11 @@ async def until(predicate, timeout: float = 10.0) -> None:  # noqa: ANN001
 class CaptureStack:
     """`async with CaptureStack(tmp_path) as stack` : `stack.core`, `stack.core_url`, `stack.cc` (TestClient)."""
 
-    def __init__(self, tmp_path: Path, *, stt: ScriptedSTT | None = None, transcription: bool = True) -> None:
+    def __init__(self, tmp_path: Path, *, stt: ScriptedSTT | None = None, transcription: bool = True,
+                 core_options: dict | None = None) -> None:
         self.tmp_path = tmp_path
+        #: Extra `JarvisCoreApplication` arguments (native-studio-playback-fix Slice 11: a fake Remotion Studio runner and capability).
+        self.core_options = dict(core_options or {})
         self.stt = stt or ScriptedSTT()
         self.transcription = transcription
 
@@ -89,7 +92,8 @@ class CaptureStack:
         self.core = JarvisCoreApplication(
             data_root=self.data_root, capture_sources=fake_sources(),
             recording_transcription=(lambda: self.stt) if self.transcription else None,
-            authoring_compiler=ScriptedCompiler(), authoring_engine_pin=engine_pin)   # Remotion Slice 15: an agent draft is compiled before it is written; no Node here
+            authoring_compiler=ScriptedCompiler(), authoring_engine_pin=engine_pin,   # Remotion Slice 15: an agent draft is compiled before it is written; no Node here
+            **self.core_options)
         await self.core.start()
         self.core.transcripts._poll_s = 0.05  # rattrapage rapide en test
         self.server = LocalProtocolServer(self.core, host="127.0.0.1", port=port, token=TOKEN)

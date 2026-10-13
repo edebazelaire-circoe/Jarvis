@@ -1,0 +1,9 @@
+﻿{
+  "checks": [
+    {
+      "id": "HV-RFX-02-01",
+      "instruction": "Human signs off the control hierarchy and two-view naming only after a clickable static prototype or UI inventory is available.",
+      "requires_evidence_first": true
+    }
+  ]
+}

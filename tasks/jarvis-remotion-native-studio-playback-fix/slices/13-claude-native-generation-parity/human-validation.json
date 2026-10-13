@@ -1,0 +1,9 @@
+﻿{
+  "checks": [
+    {
+      "id": "HV-RFX-13-01",
+      "instruction": "Human reviews blinded final decks side-by-side; do not claim quality parity from tests alone.",
+      "requires_evidence_first": true
+    }
+  ]
+}

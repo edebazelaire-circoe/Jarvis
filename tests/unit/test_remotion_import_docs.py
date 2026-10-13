@@ -70,6 +70,9 @@ def test_the_routes_and_the_journal_kinds_are_the_code_ones():
 #: `test_remotion_mcp_*`); these are the files that carry it (typed client, server, tools, metadata, brain prompt, refusal sentences).
 SLICE_21_AGENT_DOOR = ("remotion_mcp.py", "remotion_mcp_tools.py", "mcp_tool_meta.py", "claude_local.py", "client.py",
                        "presentation_studio_mcp_support.py")
+#: native-studio-playback-fix Slice 12: pure domain code that reuses the importer's import scanner (`specifiers`, one source of truth for
+#: what an import specifier is). It may hold exactly that import line and nothing else of the importer: no route, no service, no call.
+SCANNER_REUSE = {"remotion_studio_workspace.py": "from jarvis.domain.remotion_import import specifiers"}
 
 
 def test_no_control_center_relay_or_page_references_the_importer_and_the_agent_door_is_the_one_server():
@@ -77,6 +80,11 @@ def test_no_control_center_relay_or_page_references_the_importer_and_the_agent_d
         if path.suffix not in (".py", ".js", ".mjs") or path.name.startswith("remotion_import") or "remotion_upstream" in path.name:
             continue
         text = path.read_text(encoding="utf-8", errors="replace")
+        if path.name in SCANNER_REUSE and path.parent.name == "domain":
+            line = SCANNER_REUSE[path.name]
+            assert line in text and "/v1/remotion/imports" not in text, path.name
+            assert text.replace(line, "").count("remotion_import") == 0, f"{path.name} reaches the importer beyond its scanner"
+            continue
         if "/v1/remotion/imports" in text or "remotion_import" in text:
             assert path.name in ("v2_app.py", "app.py", "server.py", "https_upstream_fetcher.py", "upstream_fetcher.py",
                                  "fake_upstream_fetcher.py", *SLICE_21_AGENT_DOOR), f"unexpected reference to the importer in {path.relative_to(ROOT)}"

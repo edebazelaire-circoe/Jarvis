@@ -1,0 +1,15 @@
+{
+ "explorer_open": false,
+ "core": {
+  "scope": "manual",
+  "phase": "playing",
+  "scene": 3,
+  "play_ms": null,
+  "from": null,
+  "until": null,
+  "seq": null,
+  "item_ms": 2434,
+  "item_target_ms": 8000
+ },
+ "failed": null
+}

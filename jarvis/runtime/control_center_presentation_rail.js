@@ -11,19 +11,21 @@
    - une VUE de `GET /api/presentation-studio/rail` (relais de Core), sondée par le module lui-même (2 s quand un agent travaille, 4 s au
      repos, 20 s onglet caché). Aucune présentation n'est gardée ici : un geste (masquer, archiver, renommer) est une écriture de Core
      (`POST .../presentations/{id}/rail`, acteur `user` imposé par le relais) puis une relecture ; un échec est dit à l'écran ;
-   - le lieu des gestes : clic = ouvrir la fenêtre de la présentation (`JarvisPresentationWindow`), clic droit (ou touche Menu, Maj+F10) =
-     menu Ouvrir / Ouvrir le Studio / Éditer / Jouer / Masquer ou Afficher / Renommer / Supprimer (archiver, restaurable, avec
-     confirmation) ; une archivée ne propose que Restaurer ;
-   - le récepteur des demandes d'écran du cerveau (`ui.request` : ouvrir ou fermer la fenêtre, montrer ou masquer le rail), et le
-     rapporteur de ce que la page constate (`POST .../rail/display-state`), pour que `presentation_inspect target rail` ne devine rien.
+   - le lieu des gestes : clic = ouvrir Variantes sur la présentation (fenêtré, `JarvisStudioExplorer`), clic droit (ou touche Menu,
+     Maj+F10) = menu Ouvrir les variantes / Remotion Studio… / Éditer / Présenter / Masquer ou Afficher / Renommer / Supprimer (archiver, restaurable, avec
+     confirmation) ; une archivée ne propose que Restaurer. La fenêtre de présentation flottante (`JarvisPresentationWindow`) est
+     RETIRÉE (native-studio-playback-fix Slice 09) : Variantes est la seule surface, et une présentation lancée d'ici s'y montre ;
+   - le récepteur des demandes d'écran du cerveau (`ui.request` : montrer ou masquer le rail), et le rapporteur de ce que la page
+     constate (`POST .../rail/display-state` : rail visible, Variantes ouvert et sur quelle présentation), pour que
+     `presentation_inspect target rail` ne devine rien.
 
    Quand il est visible : dans un Board de nature « présentation », en mode d'interaction PRESENTATION, dès qu'un agent travaille ou qu'un
-   problème attend, quand la fenêtre ou le Studio sont ouverts, ou si l'utilisateur l'a épinglé (Alt+Maj+P : automatique, toujours visible, masqué). Épinglé « masqué », il
+   problème attend, quand Variantes est ouvert, ou si l'utilisateur l'a épinglé (Alt+Maj+P : automatique, toujours visible, masqué). Épinglé « masqué », il
    ne se montre que sur demande du cerveau. Pendant le Studio (explorateur de variantes, fenêtré) il se range en colonne à gauche de
    l'explorateur, hors de la zone rendue inerte : la voix et le rail restent utilisables.
 
-   « Concentrer l'affichage » : quand une présentation passe en travail et que rien n'est ouvert, sa fenêtre s'ouvre (une fois par épisode
-   de travail, jamais par-dessus une fenêtre que l'utilisateur a ouverte). Réglable (bouton ◎ de l'en-tête).
+   Rien ne s'ouvre tout seul : la pastille bleue dit qu'un agent travaille (la « concentration » qui ouvrait la fenêtre retirée est retirée
+   avec elle, Slice 09 ; décision d'agent 0 : un indicateur du rail seulement).
 
    Tout texte d'auteur (titre) passe par `textContent`. Chaque échec est journalisé (`[presentation-rail] <clé> {json}`) et dit à l'écran. */
 (function(root){
@@ -71,21 +73,17 @@
     if(c.pref==='hidden')return false;
     if(c.pref==='shown')return true;
     if(!model.total)return false;
-    return !!(c.boardKind==='presentation'||c.mode==='presentation'||model.working.length||model.problems.length||c.windowOpen||c.studioOpen);
-  }
-  /* Quelle présentation passe d'un état à « travail » (les nouvelles, pour la concentration). */
-  function newlyWorking(before,rows){
-    const was=new Set((before||[]).filter(r=>stateOf(r)==='working').map(r=>r.presentation_id));
-    return (rows||[]).filter(r=>stateOf(r)==='working'&&!r.archived&&!was.has(r.presentation_id)).map(r=>r.presentation_id);
+    return !!(c.boardKind==='presentation'||c.mode==='presentation'||model.working.length||model.problems.length||c.studioOpen);
   }
   function menuModel(row,ctx){
     const c=ctx||{};
     if(row.archived)return [{act:'restore',label:'Restaurer'}];
     const items=[
-      {act:'open',label:'Ouvrir'},
-      {act:'studio',label:'Ouvrir le Studio',note:c.playing?'Une lecture est en cours : le Studio est un outil d’édition.':null},
-      {act:'edit',label:'Éditer',note:c.playing?'Une lecture est en cours : l’inspecteur est indisponible.':null},
-      {act:'play',label:'Jouer',note:c.playing?'Une lecture est déjà en cours.':null},
+      {act:'open',label:'Ouvrir les variantes',note:c.playing&&!c.playingThis?'Une autre présentation est en cours : Variantes la montre.':null},
+      /* native-studio-playback-fix Slice 11 (§ 1): Variants on the active variant, then Remotion Studio on the scene on screen, after the confirmation. */
+      {act:'studio',label:'Remotion Studio…',note:c.playing?'Une présentation est en cours : Remotion Studio s’ouvre à son arrêt.':null},
+      {act:'edit',label:'Éditer',note:c.playing?'Une présentation est en cours : l’inspecteur est indisponible.':null},
+      {act:'play',label:'Présenter',note:c.playing?'Une présentation est déjà en cours.':null},
       '-',
       {act:row.hidden?'show':'hide',label:row.hidden?'Afficher dans le rail':'Masquer dans le rail'},
       {act:'rename',label:'Renommer…'}];
@@ -163,9 +161,8 @@ html.jvr-studio.jvr-slim #${DOM.hostId}{width:44px}
     const cancelLater=d.clearTimeout||(id=>clearTimeout(id));
     const now=d.now||(()=>Date.now());
     const sink=d.console||root.console;
-    const notify=typeof d.toast==='function'?d.toast:null;
-    const S={coreOk:false,rows:[],loaded:false,lost:false,pref:'auto',collapsed:false,autoFocus:true,boardKind:null,mode:null,voice:'idle',foldHidden:false,foldArchived:false,
-      lastSeq:null,firstPoll:true,studioOpen:false,notice:null,busy:new Set(),focusedFor:new Set(),playing:null,selected:null,menuRow:null,dialog:null,lastReport:'',lastReportAt:0};
+    const S={coreOk:false,rows:[],loaded:false,lost:false,pref:'auto',collapsed:false,boardKind:null,mode:null,voice:'idle',foldHidden:false,foldArchived:false,
+      lastSeq:null,firstPoll:true,studioOpen:false,notice:null,busy:new Set(),playing:null,selected:null,menuRow:null,dialog:null,lastReport:'',lastReportAt:0};
     const ui={};
     let pollTimer=null,reportTimer=null,noticeTimer=null,polling=false,destroyed=false,failures=0;
 
@@ -173,16 +170,15 @@ html.jvr-studio.jvr-slim #${DOM.hostId}{width:44px}
     function load(){
       try{const raw=storage()&&storage().getItem(STORAGE_KEY);if(!raw)return;const v=JSON.parse(raw);
         if(v&&(v.pref==='auto'||v.pref==='shown'||v.pref==='hidden'))S.pref=v.pref;
-        if(v&&typeof v.collapsed==='boolean')S.collapsed=v.collapsed;if(v&&typeof v.autoFocus==='boolean')S.autoFocus=v.autoFocus;
+        if(v&&typeof v.collapsed==='boolean')S.collapsed=v.collapsed;
         if(v&&typeof v.foldHidden==='boolean')S.foldHidden=v.foldHidden;if(v&&typeof v.foldArchived==='boolean')S.foldArchived=v.foldArchived}
       catch(_e){/* intentional: corrupt remembered layout -> defaults */}
     }
-    function save(){try{if(storage())storage().setItem(STORAGE_KEY,JSON.stringify({pref:S.pref,collapsed:S.collapsed,autoFocus:S.autoFocus,foldHidden:S.foldHidden,foldArchived:S.foldArchived}))}catch(_e){/* intentional */}}
+    function save(){try{if(storage())storage().setItem(STORAGE_KEY,JSON.stringify({pref:S.pref,collapsed:S.collapsed,foldHidden:S.foldHidden,foldArchived:S.foldArchived}))}catch(_e){/* intentional */}}
     function log(key,data,level){
       const line=`[presentation-rail] ${key} ${JSON.stringify(data||{})}`;
       try{if(sink){if(level==='error')sink.error(line);else if(level==='warn')sink.warn(line);else sink.info(line)}}catch(_e){/* intentional */}
     }
-    function tell(title,sub,kind){if(notify){try{notify({title,sub:sub||'',kind:kind||'info',ms:kind==='bad'?9000:5000})}catch(_e){/* intentional: the inline note is the surface */}}}
     function el(tag,cls,text){const n=doc.createElement(tag);if(cls)n.className=cls;if(text!=null)n.textContent=text;return n}
     function clear(n){while(n.firstChild)n.removeChild(n.firstChild)}
 
@@ -203,12 +199,16 @@ html.jvr-studio.jvr-slim #${DOM.hostId}{width:44px}
       }finally{cancelLater(timer)}
     }
 
-    /* ------------------------------------------------------------ fenêtre, studio, lecture : les voisins, lus à la demande */
-    const windowApi=()=>d.windowApi||root.JarvisPresentationWindow||null;
+    /* ------------------------------------------------------------ Variantes, lecture, inspecteur : les voisins, lus à la demande */
     const explorerApi=()=>d.explorer||root.JarvisStudioExplorer||null;
     const playerApi=()=>d.player||root.JarvisStudioPlayer||null;
     const inspectorApi=()=>d.inspector||(root.JarvisStudioInspector&&root.JarvisStudioInspector.instance)||null;
-    function windowPid(){const w=windowApi();return w&&typeof w.pid==='function'?w.pid():null}
+    /* The presentation Variants shows, when it is open (the retired window host's `pid`, Slice 09). */
+    function variantsPid(){
+      const ex=explorerApi();
+      try{return ex&&typeof ex.isOpen==='function'&&ex.isOpen()&&typeof ex.state==='function'?ex.state().presentation_id||null:null}
+      catch(_error){return null /* intentional: an explorer that cannot answer shows nothing to the rail */}
+    }
     function runActive(){
       const p=playerApi(),v=p&&typeof p.view==='function'?p.view():null;
       return !!v&&v.running===true&&v.phase!=='stopped'&&v.phase!=='idle';
@@ -219,7 +219,7 @@ html.jvr-studio.jvr-slim #${DOM.hostId}{width:44px}
     function model(){return modelOf(S.rows,S.pref)}
     function shown(){
       if(S.studioOpen&&(Number(win.innerWidth)||1280)<HIDE_IN_STUDIO_BELOW_PX&&S.pref!=='shown')return false;
-      return shouldShow(model(),{pref:S.pref,boardKind:S.boardKind,mode:S.mode,windowOpen:!!windowPid(),studioOpen:S.studioOpen})}
+      return shouldShow(model(),{pref:S.pref,boardKind:S.boardKind,mode:S.mode,studioOpen:S.studioOpen})}
     function build(){
       if(ui.host)return ui.host;
       if(!doc.getElementById(DOM.styleId)){const style=el('style');style.id=DOM.styleId;style.textContent=CSS;(doc.head||doc.documentElement).appendChild(style)}
@@ -228,11 +228,9 @@ html.jvr-studio.jvr-slim #${DOM.hostId}{width:44px}
       const head=el('div','jvr-head');
       ui.title=el('span','jvr-title','Présentations');
       ui.voice=el('span','jvr-voice');ui.voice.setAttribute('role','status');
-      ui.focusBtn=el('button','jvr-tool','◎');ui.focusBtn.type='button';ui.focusBtn.dataset.role='focus';
-      ui.focusBtn.addEventListener('click',()=>{S.autoFocus=!S.autoFocus;save();render();tell('Rail des présentations',S.autoFocus?'Une présentation en travail s’ouvre toute seule.':'Aucune ouverture automatique.')});
       ui.collapseBtn=el('button','jvr-tool','‹');ui.collapseBtn.type='button';
       ui.collapseBtn.addEventListener('click',()=>{S.collapsed=!S.collapsed;save();render()});
-      head.append(ui.title,ui.voice,ui.focusBtn,ui.collapseBtn);
+      head.append(ui.title,ui.voice,ui.collapseBtn);
       ui.list=el('ul','jvr-list');ui.list.setAttribute('role','listbox');ui.list.setAttribute('aria-label','Présentations');
       ui.hiddenFold=el('div');ui.archivedFold=el('div');
       ui.note=el('div','jvr-note');ui.note.setAttribute('role','status');ui.note.setAttribute('aria-live','polite');
@@ -253,7 +251,7 @@ html.jvr-studio.jvr-slim #${DOM.hostId}{width:44px}
       const b=el('button','jvr-item');b.type='button';b.setAttribute('role','option');b.dataset.id=row.presentation_id;
       const st=stateOf(row);
       b.dataset.state=st;
-      const open=windowPid()===row.presentation_id;
+      const open=variantsPid()===row.presentation_id;
       b.dataset.open=String(open);b.setAttribute('aria-selected',String(open));
       if(opts&&opts.dim)b.dataset.dim='true';
       const thumb=el('span','jvr-thumb',monogram(row.title));thumb.style.setProperty('--h',String(hueOf(row.presentation_id)));thumb.setAttribute('aria-hidden','true');
@@ -281,7 +279,6 @@ html.jvr-studio.jvr-slim #${DOM.hostId}{width:44px}
       const slim=S.collapsed||(S.studioOpen&&(Number(win.innerWidth)||1280)<SLIM_BELOW_PX);
       ui.host.dataset.collapsed=String(slim);
       ui.collapseBtn.textContent=S.collapsed?'›':'‹';ui.collapseBtn.setAttribute('aria-label',S.collapsed?'Déplier le rail':'Replier le rail');
-      ui.focusBtn.setAttribute('aria-pressed',String(S.autoFocus));ui.focusBtn.title=S.autoFocus?'Concentration automatique : active (une présentation en travail s’ouvre toute seule)':'Concentration automatique : coupée';
       ui.voice.dataset.v=S.voice||'idle';ui.voice.setAttribute('aria-label',`Voix : ${S.voice||'idle'}`);ui.voice.title=`Voix de Jarvis : ${S.voice||'idle'} (elle reste utilisable pendant l’affichage)`;
       clear(ui.list);
       if(!S.loaded&&!S.lost)ui.list.appendChild(el('li','jvr-empty','Chargement…'));
@@ -322,16 +319,12 @@ html.jvr-studio.jvr-slim #${DOM.hostId}{width:44px}
       try{
         const answer=await call('GET',ROUTE);
         failures=0;S.lost=false;
-        const before=S.rows;
         S.rows=Array.isArray(answer&&answer.presentations)?answer.presentations:[];
         S.playing=answer&&answer.playing||null;
         S.loaded=true;
-        const first=S.firstPoll;
         S.reportWanted=!!(answer&&answer.ui&&(answer.ui.request||answer.ui.reported));
-        applyUiRequest(answer&&answer.ui,first);
-        focusWorking(before,first);
+        applyUiRequest(answer&&answer.ui);
         S.firstPoll=false;
-        const w=windowApi();if(w&&typeof w.sync==='function'){try{w.sync(S.rows)}catch(syncError){log('window_sync_failed',{error:cleanLine(syncError&&syncError.message,100)},'warn')}}
         render();
       }catch(error){
         failures+=1;
@@ -339,7 +332,7 @@ html.jvr-studio.jvr-slim #${DOM.hostId}{width:44px}
         if(failures>=2&&!S.lost){S.lost=true;render()}
       }finally{polling=false}
     }
-    function applyUiRequest(uiBlock,first){
+    function applyUiRequest(uiBlock){
       const request=uiBlock&&uiBlock.request;
       if(!request)return;
       if(S.lastSeq!==null&&request.seq<=S.lastSeq)return;
@@ -347,25 +340,9 @@ html.jvr-studio.jvr-slim #${DOM.hostId}{width:44px}
       S.lastSeq=request.seq;
       if(!apply)return;
       log('ui_request',{seq:request.seq,action:request.action});
-      if(request.action==='open_window'&&request.presentation_id)openRow(request.presentation_id,'brain');
-      else if(request.action==='close_window'){const w=windowApi();if(w&&w.close)w.close({reason:'brain'})}
-      else if(request.action==='show_rail'){S.pref='shown';save()}
+      if(request.action==='show_rail'){S.pref='shown';save()}
       else if(request.action==='hide_rail'){S.pref='hidden';save()}
       reportSoon(true);
-    }
-    /* Concentration : une présentation passe en travail et rien n'est ouvert -> sa fenêtre s'ouvre, une fois par épisode. */
-    function focusWorking(before,first){
-      const fresh=newlyWorking(before,S.rows);
-      for(const id of Array.from(S.focusedFor)){const row=S.rows.find(r=>r.presentation_id===id);if(!row||stateOf(row)!=='working')S.focusedFor.delete(id)}
-      if(!S.autoFocus||first===true||runActive()||S.studioOpen)return;
-      for(const id of fresh){
-        if(S.focusedFor.has(id))continue;
-        S.focusedFor.add(id);
-        if(windowPid())continue;   /* l'utilisateur regarde déjà quelque chose : on ne la lui prend pas */
-        log('focus_working',{presentation_id:id});
-        openRow(id,'focus');
-        break;
-      }
     }
     function reportSoon(immediate){
       if(destroyed)return;
@@ -378,7 +355,8 @@ html.jvr-studio.jvr-slim #${DOM.hostId}{width:44px}
       reportTimer=later(()=>{reportTimer=null;reportNow()},immediate?0:400);
     }
     function reportBody(){
-      return {rail_visible:!!(ui.host&&!ui.host.hidden),window_open:!!windowPid(),presentation_id:windowPid()||null,applied_seq:S.lastSeq};
+      const shown=variantsPid();
+      return {rail_visible:!!(ui.host&&!ui.host.hidden),variants_open:!!shown,presentation_id:shown||null,applied_seq:S.lastSeq};
     }
     async function reportNow(){
       const body=reportBody();
@@ -388,19 +366,37 @@ html.jvr-studio.jvr-slim #${DOM.hostId}{width:44px}
 
     /* ------------------------------------------------------------ gestes */
     const rowOf=id=>S.rows.find(r=>r.presentation_id===id)||null;
+    /* A row's click, « Ouvrir les variantes », « Éditer »: Variants, windowed (the rail and the voice stay usable), on the active variant. */
     function openRow(id,via){
       const row=rowOf(id);
       if(row&&row.archived){say('failed','Archivée : restaurez-la d’abord.');return false}
-      const w=windowApi();
-      if(!w||typeof w.open!=='function'){say('failed','La fenêtre de présentation n’est pas chargée dans cette page.');return false}
-      Promise.resolve(w.open(id,{via})).then(()=>{render();reportSoon(true)}).catch(error=>{log('window_open_failed',{error:cleanLine(error&&error.message,120)},'error');say('failed',`Ouverture impossible : ${cleanLine(error&&error.message,100)}`)});
+      const ex=explorerApi();
+      if(!ex||typeof ex.open!=='function'){say('failed','Variantes n’est pas chargé dans cette page.');return false}
+      Promise.resolve(ex.open({presentation_id:id,fullscreen:false,via:'rail'})).then(result=>{
+        if(result&&result.state==='refused')say('failed',result.reason||result.code||'Variantes refusé.');
+        render();reportSoon(true);
+      }).catch(error=>{log('variants_open_failed',{via,error:cleanLine(error&&error.message,120)},'error');say('failed',`Ouverture impossible : ${cleanLine(error&&error.message,100)}`)});
       return true;
     }
-    async function openStudio(id){
+    /* « Remotion Studio… » (§ 1, Slice 11): Variants opens on the presentation, then its « Remotion Studio » door on the scene on screen (the
+       confirmation names the scene; « Annuler » launches nothing). Remotion Studio's state and failures are said in Variants. */
+    async function remotionStudio(id){
+      const row=rowOf(id);
+      if(row&&row.archived){say('failed','Archivée : restaurez-la d’abord.');return null}
       const ex=explorerApi();
-      if(!ex||typeof ex.open!=='function'){say('failed','Le Studio n’est pas chargé dans cette page.');return}
-      const result=await ex.open({presentation_id:id,fullscreen:false,via:'rail'});
-      if(result&&result.state==='refused')say('failed',result.reason||result.code||'Studio refusé.');
+      if(!ex||typeof ex.open!=='function'||!ex.remotionStudio||typeof ex.remotionStudio.open!=='function'){say('failed','Variantes n’est pas chargé dans cette page.');return null}
+      try{
+        const opened=await ex.open({presentation_id:id,fullscreen:false,via:'rail'});
+        render();reportSoon(true);
+        if(opened&&opened.state==='refused'){say('failed',opened.reason||opened.code||'Variantes refusé.');return opened}
+        const result=await ex.remotionStudio.open({via:'rail'});
+        log('remotion_studio_from_rail',{state:result&&result.state});
+        return result;
+      }catch(error){
+        log('remotion_studio_from_rail_failed',{error:cleanLine(error&&error.message,120)},'error');
+        say('failed',`Remotion Studio : ${cleanLine(error&&error.message,100)}`);
+        return null;
+      }
     }
     async function edit(id){
       const ins=inspectorApi();
@@ -413,12 +409,13 @@ html.jvr-studio.jvr-slim #${DOM.hostId}{width:44px}
         if(opened===false)say('info','L’inspecteur est indisponible (lecture en cours ou plein écran).');
       }catch(error){log('edit_failed',{error:cleanLine(error&&error.message,120)},'error');say('failed',`Inspecteur : ${cleanLine(error&&error.message,100)}`)}
     }
+    /* « Présenter » (§ 1, § 5): a `user_presenter` run, by the page's playback client; Variants opens on it and shows it. */
     async function play(id){
-      const w=windowApi(),p=playerApi();
-      const result=w&&typeof w.startRun==='function'?await w.startRun(id,'user_presenter'):(p&&typeof p.startRun==='function'?await p.startRun(id,'user_presenter'):null);
-      if(!result)say('failed','Le lecteur n’est pas chargé dans cette page.');
-      else if(result.status==='applied'){if(w&&w.close)w.close({reason:'run_started',quiet:true});say('ok','Lecture lancée.')}
-      else say('failed',`Lecture impossible : ${cleanLine(result.message||result.reason||'refusée',140)}`);
+      const p=playerApi();
+      const result=p&&typeof p.startRun==='function'?await p.startRun(id,'user_presenter'):null;
+      if(!result)say('failed','Le client de lecture n’est pas chargé dans cette page.');
+      else if(result.status==='applied')say('ok','Présentation lancée dans Variantes.');
+      else say('failed',`Présentation impossible : ${cleanLine(result.message||result.reason||'refusée',140)}`);
       return result;
     }
     async function write(id,body,label){
@@ -440,8 +437,8 @@ html.jvr-studio.jvr-slim #${DOM.hostId}{width:44px}
     async function run(action,id){
       const row=rowOf(id);if(!row)return;
       if(action==='open')return openRow(id,'menu');
-      if(action==='studio')return openStudio(id);
       if(action==='edit')return edit(id);
+      if(action==='studio')return remotionStudio(id);
       if(action==='play')return play(id);
       if(action==='hide'||action==='show'){const a=await write(id,{action},action==='hide'?'Masquer':'Afficher');if(a)say('ok',action==='hide'?'Masquée du rail (menu Masquées pour la réafficher).':'Réaffichée dans le rail.');return}
       if(action==='ack')return write(id,{action:'acknowledge'},'Acquitter');
@@ -456,7 +453,7 @@ html.jvr-studio.jvr-slim #${DOM.hostId}{width:44px}
         const ok=await askConfirm({title:`Supprimer « ${cleanLine(row.title,40)} » ?`,
           body:'Elle quitte le rail et ne se lit plus. Rien n’est effacé : elle se restaure à tout moment (Archivées, en bas du rail).',confirmLabel:'Supprimer',danger:true});
         if(!ok)return;
-        const w=windowApi();if(w&&w.pid&&w.pid()===id&&w.close)w.close({reason:'archived',quiet:true});
+        const ex=explorerApi();if(variantsPid()===id&&ex&&typeof ex.close==='function')ex.close({reason:'archived',quiet:true});
         const a=await write(id,{action:'archive'},'Supprimer');if(a)say('ok','Archivée : restaurable depuis « Archivées ».');
       }
     }
@@ -571,9 +568,8 @@ html.jvr-studio.jvr-slim #${DOM.hostId}{width:44px}
       if(d.assumeCore){S.coreOk=true;refresh().then(()=>{render()})}
       doc.addEventListener('visibilitychange',()=>{if(!doc.hidden&&S.coreOk)refresh()});
       win.addEventListener&&win.addEventListener('resize',()=>{if(S.studioOpen)render()});
-      win.addEventListener&&win.addEventListener('jarvis:presentation-window',()=>{render();reportSoon(true)});
-      win.addEventListener&&win.addEventListener('jarvis:studio-explorer-opened',()=>{S.studioOpen=true;render()});
-      win.addEventListener&&win.addEventListener('jarvis:studio-explorer-closed',()=>{S.studioOpen=false;render()});
+      win.addEventListener&&win.addEventListener('jarvis:studio-explorer-opened',()=>{S.studioOpen=true;render();reportSoon(true)});
+      win.addEventListener&&win.addEventListener('jarvis:studio-explorer-closed',()=>{S.studioOpen=false;render();reportSoon(true)});
       log('installed',{});
     }
     function stop(){destroyed=true;for(const t of [pollTimer,reportTimer,noticeTimer])if(t)cancelLater(t);pollTimer=reportTimer=noticeTimer=null}
@@ -596,12 +592,12 @@ html.jvr-studio.jvr-slim #${DOM.hostId}{width:44px}
     function cyclePref(){const order=['auto','shown','hidden'];setPref(order[(order.indexOf(S.pref)+1)%order.length]);return S.pref}
 
     return {start,stop,refresh,render,gate,setPref,cyclePref,run,openMenuFor,closeMenu,
-      state:()=>({pref:S.pref,collapsed:S.collapsed,autoFocus:S.autoFocus,loaded:S.loaded,lost:S.lost,visible:!!(ui.host&&!ui.host.hidden),rows:S.rows.length,
+      state:()=>({pref:S.pref,collapsed:S.collapsed,loaded:S.loaded,lost:S.lost,visible:!!(ui.host&&!ui.host.hidden),rows:S.rows.length,
         studioOpen:S.studioOpen,menuOpen:!!S.menuRow,dialogOpen:!!S.dialog,notice:S.notice}),
       model,host:()=>ui.host,rows:()=>S.rows.slice(),setStudio:on=>{S.studioOpen=!!on;render()}};
   }
 
-  const API=Object.freeze({DOM,ROUTE,STATE_ROUTE,STATE_LABEL,STATE_COLOR,CSS,cleanLine,monogram,hueOf,stateOf,modelOf,shouldShow,newlyWorking,menuModel,createRail});
+  const API=Object.freeze({DOM,ROUTE,STATE_ROUTE,STATE_LABEL,STATE_COLOR,CSS,cleanLine,monogram,hueOf,stateOf,modelOf,shouldShow,menuModel,createRail});
   root.JarvisPresentationRailCore=API;
   if(typeof module!=='undefined'&&module.exports)module.exports=API;
 

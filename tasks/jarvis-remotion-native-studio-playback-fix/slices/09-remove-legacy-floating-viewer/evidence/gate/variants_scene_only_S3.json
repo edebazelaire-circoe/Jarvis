@@ -1,0 +1,51 @@
+{
+ "opened": {
+  "frame": 0,
+  "playing": false,
+  "duration": 900,
+  "phase": "ready",
+  "scene": "S3"
+ },
+ "gesture": "Lire seulement cette scène",
+ "after": {
+  "readouts": [
+   {
+    "where": "page",
+    "text": "0:41 / 1:14"
+   }
+  ],
+  "label": 3,
+  "selected": "pss_000000000003",
+  "slider": {
+   "now": "2458",
+   "max": "4439",
+   "text": "Scène 3 sur 9, 0:41 sur 1:14",
+   "disabled": false
+  },
+  "player": {
+   "frame": 899,
+   "playing": false,
+   "duration": 900,
+   "phase": "ready",
+   "scene": "S3"
+  },
+  "open": true
+ },
+ "core": {
+  "scope": null,
+  "phase": "idle",
+  "scene": null,
+  "play_ms": null,
+  "from": null,
+  "until": null,
+  "seq": null,
+  "item_ms": null,
+  "item_target_ms": null
+ },
+ "first_play_after_gesture": [
+  3396,
+  0
+ ],
+ "max_frame_after_gesture": 899,
+ "wraps_after_gesture": []
+}

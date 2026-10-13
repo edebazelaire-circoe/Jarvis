@@ -37,6 +37,7 @@ import aiohttp
 from jarvis.domain.presentation_studio import is_presentation_id
 from jarvis.domain.presentation_studio_authoring_guide import draft_guide
 from jarvis.domain.presentation_studio_checks import is_scene_id
+from jarvis.domain.presentation_studio_explorer import DELIVERY_DEADLINE_S, WORK_DEADLINE_MAX_S
 from jarvis.domain.presentation_studio_scene_variants import is_scene_variant_id
 from jarvis.domain.presentation_studio_template import is_template_id
 from jarvis.domain.presentation_studio_variants import is_variant_id
@@ -44,10 +45,14 @@ from jarvis.protocol.client import CoreProtocolError, LocalCoreClient
 from jarvis.runtime.journal import RuntimeJournal
 from jarvis.runtime.presentation_studio_mcp_support import (
     BRAIN_ACTOR, CONNECT_TIMEOUT_S, MAX_LISTED, READ_TIMEOUT_S, WRITE_TIMEOUT_S, ConfirmationLedger, PresentationToolError, capped, clip,
-    sentence_for,
+    sentence_for, surface_unavailable_sentence,
 )
 
 ITEM_ID = re.compile(r"psi_[0-9a-f]{12}\Z")
+#: Slice 09 rework: the longest a start waits for Variants to show the run before pausing it. The page's channel answers within its own
+#: deadlines (delivery 4 s: no visible page is known after 4 s; final receipt 10 s after the page accepted, the graph loading); 2 s of
+#: margin bounds a Control Center that hangs. Was 30 s: Jarvis could present to an empty screen that long.
+HOST_IN_VARIANTS_TIMEOUT_S = DELIVERY_DEADLINE_S + WORK_DEADLINE_MAX_S + 2.0
 ANCHOR_ID = re.compile(r"[a-z][a-z0-9_]{0,39}\Z")
 CONTROL_ID = re.compile(r"[A-Za-z][A-Za-z0-9_.-]{0,63}\Z")
 
@@ -67,8 +72,13 @@ OPERATION_EVENTS: dict[str, str | None] = {
 #: Rail des presentations : les outils qui ECRIVENT du travail d'agent allument la pastille bleue de la presentation, un echec reel la passe
 #: en orange (docs/presentation-studio.md > *Rail des presentations*). Les ops de plan et de verification n'ecrivent rien.
 WORK_TOOLS = frozenset({"presentation_edit", "presentation_undo", "presentation_variant", "presentation_compose", "presentation_template",
-                        "presentation_draft_assemble", "presentation_draft_finalize"})
-WORK_READ_OPS = frozenset({"plan", "archive_plan", "check", "scene_preview", "scene_cancel_preview"})
+                        "presentation_draft_assemble", "presentation_draft_finalize", "presentation_source"})
+WORK_READ_OPS = frozenset({"plan", "archive_plan", "check", "scene_preview", "scene_cancel_preview", "read", "preview"})
+#: Slice 13 (native-studio-playback-fix): the agent's native loop on ONE scene source: read it, write it (the validated source-edit route:
+#: compose, isolation guards, real build, new immutable version), look at a few rendered frames (the guarded render host, nothing frozen).
+SOURCE_OPS = ("read", "write", "preview")
+#: Source-edit outcomes that leave the new version standing (`ReloadStatus.stood`).
+_SOURCE_STOOD = frozenset({"reloaded", "reloaded_state_reset", "repinned", "pending_mount"})
 #: Un refus que l'agent corrige lui-meme (id, revision, confirmation, brouillon) n'est pas « un probleme » pour l'utilisateur.
 BENIGN_PREFIXES = ("invalid_", "unknown_", "presentation_studio_unknown_", "presentation_studio_invalid",
                    "presentation_studio_stale_revision", "presentation_studio_confirmation_", "presentation_studio_draft_refused",
@@ -104,6 +114,9 @@ UNKNOWN_ID_CODES = frozenset({
     "presentation_studio_unknown_presentation", "presentation_studio_unknown_variant", "presentation_studio_unknown_scene",
     "presentation_studio_unknown_control", "presentation_studio_unknown_scene_variant", "presentation_studio_unknown_template"})
 
+
+#: The Variants « theater » (the Player and its transport): the one fullscreen target of a presentation (§ 4.12, Slice 08/09).
+VARIANTS_STAGE_OBJECT_ID = "studio-explorer-stage"
 
 class CoreCaller:
     """Production : `LocalCoreClient` avec jeton relu (un 401 rejoue une fois). `call(fn)` rend `await fn(client)`."""
@@ -439,7 +452,7 @@ class PresentationTools:
         ui = found.get("ui") if isinstance(found.get("ui"), Mapping) else {}
         reported = ui.get("reported") if isinstance(ui.get("reported"), Mapping) else None
         return self._ok(presentations=capped(rows), playing=found.get("playing"), problems=(found.get("problems") or [])[:5],
-                        screen=_drop_none({k: reported.get(k) for k in ("rail_visible", "window_open", "presentation_id", "reported_s_ago")})
+                        screen=_drop_none({k: reported.get(k) for k in ("rail_visible", "variants_open", "presentation_id", "reported_s_ago")})
                         if reported else {"note": "aucune page n'a encore rapporté l'état du rail"},
                         work_states="working = un agent édite (bleu) ; done = terminé (vert) ; problem = un échec à voir (orange)",
                         untrusted=["title"])
@@ -607,8 +620,14 @@ class PresentationTools:
         tool = "presentation_view"
         if self._cc is None:
             raise self._refuse(tool, "control_center_unreachable", sentence_for("control_center_unreachable"))
-        if op in ("window_open", "window_close", "rail_show", "rail_hide"):
+        if op in ("rail_show", "rail_hide"):
             return await self._screen_request(tool, op, presentation_id)
+        if op == "window_open":
+            # native-studio-playback-fix Slice 09: the floating window host is retired; « ouvre X » opens Variants, windowed (the rail
+            # and the voice stay usable), with the page's own receipt. The op name stays for the brain's habits and its traces.
+            op, fullscreen = "explorer_open", False
+        if op == "window_close":
+            op = "explorer_close"
         if op == "explorer_open":
             pid = await self._presentation(tool, presentation_id)
             await self._refuse_if_archived(tool, pid)
@@ -620,13 +639,18 @@ class PresentationTools:
             status, receipt = await self._cc.request("POST", "/api/presentation-studio/explorer/commands", {"action": "close"})
             return self._explorer_receipt(op, status, receipt, None, None)
         if op == "stage_fullscreen_enter":
+            # Slice 09: the run plays in Variants, so its fullscreen is the Variants STAGE (the Player and its transport, § 4.12). Variants
+            # is opened on the run first (windowed, receipt); then the stage fullscreen is only ARMED: the user's click enters it.
             state = await self._playback_view()
-            stage = state.get("stage_object_id")
-            if not stage or state.get("phase") in (None, "idle"):
+            if not state.get("stage_object_id") or state.get("phase") in (None, "idle", "stopped"):
                 raise self._refuse(tool, "no_run", "aucune lecture ne tourne : il n'y a pas de scène de présentation à mettre en plein écran. "
                                                     "Lance la lecture d'abord (presentation_play start).")
+            opened = await self._cc.request("POST", "/api/presentation-studio/explorer/commands",
+                                            _drop_none({"action": "open", "presentation_id": state.get("presentation_id"),
+                                                        "variant_id": state.get("variant_id"), "fullscreen": False}), timeout_s=30.0)
+            self._explorer_receipt("explorer_open", *opened, state.get("presentation_id"), state.get("variant_id"))
             return self._fullscreen_receipt(op, *await self._cc.request(
-                "POST", "/api/fullscreen/commands", {"action": "enter", "object_id": stage, "keys": "host"}))
+                "POST", "/api/fullscreen/commands", {"action": "enter", "object_id": VARIANTS_STAGE_OBJECT_ID, "keys": "none"}))
         if op == "fullscreen_exit":
             return self._fullscreen_receipt(op, *await self._cc.request("POST", "/api/fullscreen/commands", {"action": "exit"}))
         raise self._refuse(tool, "unknown_op", f"op inconnue : {clip(op, 30)}.")
@@ -641,14 +665,9 @@ class PresentationTools:
                                                                    "(presentation_library op restore), avec l'accord de l'utilisateur.")
 
     async def _screen_request(self, tool: str, op: str, presentation_id: str | None) -> dict[str, Any]:
-        """Fenetre d'une presentation et rail : une demande d'ecran que la page applique dans la seconde (pas de recu : relis `inspect rail`)."""
+        """Le rail : une demande d'ecran que la page applique dans la seconde (pas de recu : relis `inspect rail`)."""
 
-        body: dict[str, Any] = {"action": {"window_open": "open_window", "window_close": "close_window",
-                                           "rail_show": "show_rail", "rail_hide": "hide_rail"}[op]}
-        if op == "window_open":
-            pid = await self._presentation(tool, presentation_id)
-            await self._refuse_if_archived(tool, pid)
-            body["presentation_id"] = pid
+        body: dict[str, Any] = {"action": {"rail_show": "show_rail", "rail_hide": "hide_rail"}[op]}
         answer = await self._c(lambda c: c.presentation_studio_rail_display(body))
         request = answer.get("request") if isinstance(answer.get("request"), Mapping) else {}
         return self._ok("silent", status="requested", presentation_id=body.get("presentation_id"), seq=request.get("seq"),
@@ -673,7 +692,7 @@ class PresentationTools:
         mode = receipt.get("mode")
         armed = mode == "fullscreen_armed"
         # Un geste attendu de l'utilisateur est la seule réussite qui se dit : il ne sait pas qu'il doit cliquer.
-        return self._ok("say" if armed else "silent", say=("L'explorateur est ouvert ; clique sur « Passer en plein écran » pour le plein écran."
+        return self._ok("say" if armed else "silent", say=("Variantes est ouvert ; clique sur « Passer en plein écran » pour le plein écran."
                                                            if armed else None),
                         status=state, mode=mode, fullscreen=receipt.get("fullscreen"), needs_gesture=armed or None,
                         presentation_id=receipt.get("presentation_id") or pid, variant_id=receipt.get("variant_id") or vid,
@@ -761,8 +780,36 @@ class PresentationTools:
             reason = str(answer.get("reason") or answer.get("code") or status)
             message = clip((answer.get("error") or {}).get("message") if isinstance(answer.get("error"), Mapping) else answer.get("message"), 240)
             raise self._refuse(tool, reason, f"{sentence_for(reason, message)} ({message})" if message else sentence_for(reason), state=view.get("phase"))
+        if op == "start":
+            await self._host_in_variants(tool, view)
         # Démarrer, arrêter, naviguer : l'écran montre le résultat, rien à dire (Jarvis dit ses lignes de partition par son propre chemin).
-        return self._ok("silent", status=status, state=view)
+        return self._ok("silent", status=status, state=view, surface="variants" if op == "start" else None)
+
+    async def _host_in_variants(self, tool: str, view: Mapping[str, Any]) -> None:
+        """Slice 09 (§ 5, « Voice and MCP »): a run plays on the Variants surface, never in a Board window. Variants is opened on it (windowed,
+        never fullscreen) with the page's receipt. With no visible page to show it, the run is PAUSED and the start is a typed refusal
+        (`surface_unavailable`): Jarvis never presents to an empty screen."""
+
+        if self._cc is None:
+            return
+        body = _drop_none({"action": "open", "presentation_id": view.get("presentation_id"), "variant_id": view.get("variant_id"),
+                           "fullscreen": False})
+        try:
+            status, receipt = await self._cc.request("POST", "/api/presentation-studio/explorer/commands", body,
+                                                     timeout_s=HOST_IN_VARIANTS_TIMEOUT_S)
+        except PresentationToolError as exc:
+            status, receipt = 503, {"code": exc.code, "reason": str(exc)}
+        shown = status < 400 and not (isinstance(receipt, Mapping) and receipt.get("state") == "refused")
+        if shown:
+            return
+        error = receipt.get("error") if isinstance(receipt, Mapping) else None
+        code = (error.get("code") if isinstance(error, Mapping) else None) or (receipt.get("code") if isinstance(receipt, Mapping) else None)
+        code = str(code or f"http_{status}")
+        try:
+            await self._c(lambda c: c.presentation_studio_playback("pause", {"actor": BRAIN_ACTOR}))
+        except PresentationToolError:
+            pass   # the refusal below still says why; the run may already be paused or stopped
+        raise self._refuse(tool, "surface_unavailable", surface_unavailable_sentence(code) + f" ({code})", state="paused")
 
     # ------------------------------------------------------------------ rail : masquer, archiver, renommer (niveau présentation)
 
@@ -1231,6 +1278,63 @@ class PresentationTools:
 
         return await self._run(tool, op, {"presentation_id": presentation_id}, body)
 
+    # ------------------------------------------------------------------ Slice 13 : la boucle native sur la source d'une scène
+
+    async def source(self, op: str, *, presentation_id: str | None = None, variant_id: str | None = None, scene_id: str | None = None,
+                     files: Mapping[str, Any] | None = None, assets: Mapping[str, Any] | None = None, manifest: Mapping[str, Any] | None = None,
+                     frames: Sequence[int] | None = None, scale: float | None = None, request_id: str | None = None) -> dict[str, Any]:
+        tool = "presentation_source"
+
+        async def body() -> dict[str, Any]:
+            if op not in SOURCE_OPS:
+                raise self._refuse(tool, "invalid_op", f"op : {', '.join(SOURCE_OPS)}.")
+            scene = self._scene(tool, scene_id)
+            pid = await self._presentation(tool, presentation_id)
+            vid = await self._variant(tool, pid, variant_id)
+            if op == "read":
+                return await self._source_read(pid, vid, scene)
+            if op == "preview":
+                request = _drop_none({"presentation_id": pid, "variant_id": vid, "scene_id": scene, "frames": list(frames) if frames else None,
+                                      "scale": scale})
+                preview = (await self._c(lambda c: c.remotion_render_preview(request))).get("preview") or {}
+                return self._ok("silent", status="previewed", presentation_id=pid, variant_id=vid, scene_id=scene,
+                                prefab=preview.get("prefab"), composition=preview.get("composition"), frames=preview.get("frames"),
+                                elapsed_ms=preview.get("elapsed_ms"),
+                                note="Regarde chaque image (outil Read sur path) avant de juger la scène ; corrige avec op write, puis revois.")
+            return await self._source_write(tool, pid, vid, scene, files, assets, manifest, request_id)
+
+        return await self._run(tool, op, {"presentation_id": presentation_id, "variant_id": variant_id}, body)
+
+    async def _source_read(self, pid: str, vid: str, scene: str) -> dict[str, Any]:
+        source = await self._c(lambda c: c.presentation_studio_scene_source(pid, vid, scene))
+        manifest = source.get("manifest") if isinstance(source.get("manifest"), Mapping) else {}
+        block = manifest.get("source") if isinstance(manifest.get("source"), Mapping) else {}
+        return self._ok("silent", status="read", presentation_id=pid, variant_id=vid, scene_id=scene, prefab=source.get("prefab"),
+                        basis=source.get("basis"), composition=block.get("composition"), entry=block.get("entry"),
+                        sources=source.get("sources"), assets=sorted(source.get("assets") or {}), manifest=manifest,
+                        untrusted=["sources", "manifest"])
+
+    async def _source_write(self, tool: str, pid: str, vid: str, scene: str, files: Mapping[str, Any] | None, assets: Mapping[str, Any] | None,
+                            manifest: Mapping[str, Any] | None, request_id: str | None) -> dict[str, Any]:
+        if not files and not assets and not manifest:
+            raise self._refuse(tool, "invalid_request", "write : donne files (chemin src/... -> texte, null pour supprimer), assets ou manifest.")
+        revision = (await self._c(lambda c: c.presentation_studio_variant(pid, vid))).get("revision")
+        request = _drop_none({"actor": BRAIN_ACTOR, "basis": {"variant_revision": revision}, "scene_id": scene, "request_id": request_id,
+                              "files": _drop_none({"sources": dict(files) if files else None, "assets": dict(assets) if assets else None,
+                                                   "manifest": dict(manifest) if manifest else None})})
+        result = await self._c(lambda c: c.presentation_studio_source_edit(pid, vid, request))
+        status = str(result.get("status") or "")
+        error = result.get("error") if isinstance(result.get("error"), Mapping) else {}
+        diagnostics = [dict(d) for d in (result.get("diagnostics") or []) if isinstance(d, Mapping)][:20] or None
+        if status in _SOURCE_STOOD:
+            return self._ok("silent", status=status, presentation_id=pid, variant_id=vid, scene_id=scene, prefab=result.get("prefab"),
+                            previous=result.get("previous"), mounted=result.get("mounted"), diagnostics=diagnostics,
+                            note="Nouvelle version publiée (la précédente reste restaurable) ; revois-la avec op preview.")
+        # A refusal the author fixes (build error with file:line, stale basis, rollback at mount): returned, not raised, like a draft report.
+        return self._ok("silent", status=status or "refused", presentation_id=pid, variant_id=vid, scene_id=scene,
+                        code=error.get("code"), message=clip(error.get("message") or result.get("message"), 600), diagnostics=diagnostics,
+                        note="Rien n'a changé à l'écran : corrige ce qui est dit (fichier, ligne, colonne) puis renvoie op write.")
+
     def _draft_result(self, tool: str, op: str, result: Mapping[str, Any]) -> dict[str, Any]:
         status = result.get("status")
         report = result.get("report")
@@ -1239,7 +1343,8 @@ class PresentationTools:
             return self._ok("silent", status="refused" if status == "refused" else "checked", ok_gate=False, report=report,
                             workflow=result.get("workflow"), note="Corrige tout ce qui est listé puis resoumets (3 tours au plus).")
         picked = {k: result.get(k) for k in ("presentation_id", "engine", "variant_ids", "scene_ids", "art_direction_id", "score_id", "provenance",
-                                             "workflow", "candidates", "variant_id", "fallback") if k in result}
+                                             "workflow", "candidates", "variant_id", "fallback", "active_variant_id", "scenes",
+                                             "source_requests") if k in result}
         say = None
         if op != "check":
             say = "La présentation est créée." if op == "assemble" else "La direction est adoptée comme présentation."

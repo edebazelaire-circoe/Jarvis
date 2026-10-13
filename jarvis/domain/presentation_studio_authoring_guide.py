@@ -190,9 +190,85 @@ def exploratory_example() -> dict[str, Any]:
     return {"brief": brief, "draft": {"prefabs": [bundle], "scenes": scenes, "score": {"items": items}, "candidates": candidates}}
 
 
-def draft_guide(kind: str | None = None) -> dict[str, Any]:
-    """What `presentation_inspect` target `draft_guide` returns (`kind: "exploratory"`: the exploratory example). A fresh copy each time."""
+#: Slice 13 (native-studio-playback-fix): what a Claude agent writes in a plain Remotion project. Text and colours in the source, its own
+#: helper module, no props, no theme: the native profile accepts it (only validity and safety block).
+NATIVE_TITLE_TSX = """import React from "react";
+import {interpolate, spring, useCurrentFrame, useVideoConfig} from "remotion";
 
+export const Reveal: React.FC<{delay: number; children: React.ReactNode}> = ({delay, children}) => {
+  const frame = useCurrentFrame();
+  const {fps} = useVideoConfig();
+  const enter = spring({frame: frame - delay, fps, config: {damping: 200}});
+  const y = interpolate(enter, [0, 1], [40, 0]);
+  return <div style={{opacity: enter, transform: `translateY(${y}px)`}}>{children}</div>;
+};
+"""
+NATIVE_SCENE_TSX = """import React from "react";
+import {AbsoluteFill} from "remotion";
+import {Reveal} from "./lib/Reveal";
+
+// Normal Remotion code: write the text, the colours and the layout here, split helpers into src/lib/*.tsx.
+export default function Scene() {
+  return (
+    <AbsoluteFill style={{background: "#0a0d14", color: "#f2f4f8", fontFamily: "Segoe UI, system-ui, sans-serif", padding: 140, justifyContent: "center"}}>
+      <Reveal delay={0}><h1 style={{fontSize: 110, margin: 0}}>Remplace ce titre</h1></Reveal>
+      <Reveal delay={12}><p style={{fontSize: 44, color: "#7cf0c4", margin: "24px 0 0"}}>Et cette ligne, par ton propre contenu.</p></Reveal>
+    </AbsoluteFill>
+  );
+}
+"""
+
+
+def native_example() -> dict[str, Any]:
+    """A complete, valid native submission (two scenes, no score, no roles, no art direction): the SHAPE to adapt."""
+
+    def bundle(key: str, frames: int) -> dict[str, Any]:
+        return {"key": key, "remotion": {"title": f"Scene {key}", "composition": {"width": 1920, "height": 1080, "fps": 30, "duration_in_frames": frames},
+                                         "files": {"src/Scene.tsx": NATIVE_SCENE_TSX, "src/lib/Reveal.tsx": NATIVE_TITLE_TSX}}}
+
+    return {"brief": {"title": "Titre de la presentation", "workflow": "directed", "authoring": "native", "language": "fr"},
+            "draft": {"prefabs": [bundle("ouverture", 240), bundle("cloture", 210)],
+                      "scenes": [{"key": "ouverture", "title": "Ouverture", "prefab": {"bundle": "ouverture"}},
+                                 {"key": "cloture", "title": "Cloture", "prefab": {"bundle": "cloture"}}]}}
+
+
+#: The brief keys that mean something to a native deck (`strict_content` is exploratory-only and refused elsewhere; `literal_terms`,
+#: `must_cover`, `resources` feed rules that are only warnings in native): the guide offers these, nothing else, so the author does not probe.
+NATIVE_BRIEF_OPTIONAL = frozenset({"purpose", "audience", "duration_target_s", "tone", "language", "speech"})
+
+#: The isolation guard (`remotion_isolation`, a case-insensitive filter, unchanged: the sandbox stays the wall) reads `<Link`, `<Frame`,
+#: `<Meta`... as the forbidden HTML elements: a real native run lost two submissions to components named `Frame` and `Link`. Said up front.
+ISOLATION_HINT = ("la garde d'isolation refuse les balises script, iframe, frame, frameset, embed, object, applet, link, meta, base, quelle que "
+                  "soit la casse : ne nomme pas un composant Link, Frame, Meta, Base, Object ou Embed (Lien, Cadre, Etape...) ; pas de "
+                  "window, document, fetch, eval, setTimeout avec une chaine")
+
+NATIVE_LOOP = ("CODE REMOTION NATIF (brief.authoring: native). 1) Storyboard : une scene = une composition (taille, fps, duree en images) et "
+               "une idee. 2) Ecris du React/TSX normal : texte, couleurs et mise en page dans le code, modules src/lib/*.tsx ; point d'entree "
+               "src/Scene.tsx (export default) ; imports react et remotion seulement (polices systeme, pas de paquet) ; images en public/** "
+               "(base64) ; aucun reseau. 3) presentation_draft_assemble avec ce brief : seuls compilation, isolation, schema et references "
+               "bloquent ; le reste revient en warnings (a lire, pas a negocier) ; la partition muette et les roles sont deduits. 4) "
+               "presentation_source op preview sur chaque scene, puis Read de chaque image : juge lisibilite, hierarchie, debordements, "
+               "mouvement. 5) Corrige avec presentation_source op write (fichiers complets), revois. Les ids viennent des resultats.")
+
+
+def draft_guide(kind: str | None = None) -> dict[str, Any]:
+    """What `presentation_inspect` target `draft_guide` returns (`kind: "exploratory"`: the exploratory example; `kind: "native"`: normal
+    editable Remotion code, Slice 13). A fresh copy each time."""
+
+    if kind == "native":
+        return {"loop": NATIVE_LOOP,
+                "brief": {"required": ["title", "workflow", "authoring"], "authoring": "native", "workflow": ["directed", "one_shot"],
+                          "optional": sorted(NATIVE_BRIEF_OPTIONAL),
+                          "types": {"duration_target_s": "secondes (entier)", "language": "fr, en, fr-CA", "tone": "liste de mots",
+                                    "speech": "none (defaut natif), jarvis ou user"}},
+                "draft": {"required": ["scenes"], "optional": ["prefabs", "score", "art_direction"],
+                          "prefabs": "[{key, remotion: {title, files: {'src/Scene.tsx': <TSX>, 'src/lib/X.tsx': <TSX>}, composition: "
+                                     "{width, height, fps, duration_in_frames}, assets?: {'public/x.png': <base64>}}}]",
+                          "scenes": "[{key, title, prefab: {bundle: <key>}, role?}] dans l'ordre du deck",
+                          "keys": "key de bundle et de scene : minuscules, chiffres et _ , commence par une lettre (ouverture, scene_2)",
+                          "isolation": ISOLATION_HINT},
+                "note": "FORME seulement : remplace tout le texte, les couleurs, les durees et les mises en page par les tiens.",
+                "example": copy.deepcopy(native_example())}
     if kind == "exploratory":
         return {"note": ("FORME: 6 directions deja divergentes (profils calcules). Garde-en 2 a 6 dans l'ordre, ne les rapproche pas "
                          "(sinon candidates_not_divergent), ecris le titre et la raison de chacune, et tes propres scenes et textes. "
@@ -220,4 +296,4 @@ def draft_guide(kind: str | None = None) -> dict[str, Any]:
         "example": copy.deepcopy(example())}
 
 
-__all__ = ["DRAFT_KEYS", "EXPLORATORY_DIRECTIONS", "draft_guide", "example", "exploratory_example", "layouts"]
+__all__ = ["DRAFT_KEYS", "EXPLORATORY_DIRECTIONS", "NATIVE_LOOP", "draft_guide", "example", "exploratory_example", "layouts", "native_example"]

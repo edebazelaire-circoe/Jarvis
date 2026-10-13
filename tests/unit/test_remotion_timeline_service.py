@@ -92,7 +92,8 @@ async def test_revealing_an_anchor_opens_its_segment_pause_freezes_the_played_ti
     applied(await rig.service.start(rig.start_body()))
     state = applied(await rig.run("next"))                                        # S2: the score reveals "marker" (6 s = frame 180)
     first = state["timeline"]
-    assert (first["scene_id"], first["anchor_id"], first["from_frame"], first["until_frame"], first["playing"]) == (S2, "marker", 180, 299, True)
+    # Slice 07 (§ 5): S2 is newly entered, so it plays from its local frame 0 to the item's stop frame; the anchor bounds only `until`
+    assert (first["scene_id"], first["anchor_id"], first["from_frame"], first["until_frame"], first["playing"]) == (S2, "marker", 0, 299, True)
     assert first["play_ms"] == 0
     rig.mono.t += 1.2
     playing = rig.service.where()["timeline"]
@@ -170,7 +171,8 @@ async def test_findings_about_the_authors_anchors_are_notices(tmp_path):
         applied(await rig.service.start(rig.start_body()))
         state = applied(await rig.run("next"))
         assert "timeline_anchor_clamped" in state["notices"] and "timeline_anchors_partly_timed" not in state["notices"]
-        assert state["timeline"]["from_frame"] == 89 and state["timeline"]["until_frame"] == 89     # clamped to the last frame
+        assert state["timeline"]["anchor_id"] == "marker" and state["timeline"]["until_frame"] == 89  # clamped to the last frame
+        assert state["timeline"]["from_frame"] == 0                                  # a newly entered scene plays from frame 0 (§ 5)
     finally:
         await rig.close()
 
@@ -208,7 +210,7 @@ async def test_a_hot_reload_carries_the_anchors_over_and_recomputes_the_frames(r
     rig, source = remotion
     applied(await rig.service.start(rig.start_body()))
     before = applied(await rig.run("next"))["timeline"]
-    assert (before["fps"], before["duration_frames"], before["from_frame"], before["until_frame"]) == (30, 300, 180, 299)
+    assert (before["fps"], before["duration_frames"], before["from_frame"], before["until_frame"]) == (30, 300, 0, 299)   # entered: from 0
     # The reload moved the pin to a version with another cadence and length; the stage window was patched by the reload itself.
     source.answer = {**COMP, "fps": 60, "duration_in_frames": 1200}
     variant = await rig.studio.get_variant(rig.pid, rig.vid)
@@ -218,23 +220,25 @@ async def test_a_hot_reload_carries_the_anchors_over_and_recomputes_the_frames(r
     await rig.service._on_edit_committed(rig.pid, rig.vid, saved.revision, ReloadOrigin(S2, "confirm"))
     after = rig.service.where()["timeline"]
     assert (after["fps"], after["duration_frames"]) == (60, 1200)
-    assert after["anchor_id"] == "marker" and (after["from_frame"], after["until_frame"]) == (360, 1199)   # 6 s at 60 fps: same at_ms, new frame
+    assert after["anchor_id"] == "marker" and (after["from_frame"], after["until_frame"]) == (0, 1199)   # same entry, frames of the new version
+    assert rig.service._tl_map.frame_of("marker") == 360                          # 6 s at 60 fps: same at_ms, new frame
     assert after["seq"] > before["seq"] and after["playing"] is True and rig.service.where()["phase"] == "playing"
 
 
-async def test_played_time_does_not_survive_leaving_the_timeline_and_coming_back(tmp_path):
+async def test_an_anchorless_scene_has_one_whole_segment_and_its_played_time_restarts_on_re_entry(tmp_path):
     scenes = timed_scenes()
-    scenes[0] = {**scenes[0], "anchors": []}           # S1 has no anchor: it is not on the timeline
+    scenes[0] = {**scenes[0], "anchors": []}           # S1 has no anchor: one whole segment (Slice 09: every run, every Remotion scene)
     rig = await Rig(tmp_path).open(scenes=scenes)
     rig.build(timeline_source=Compositions(COMP))
     try:
         applied(await rig.service.start(rig.start_body()))
-        assert "timeline" not in rig.service.where()
+        whole = rig.service.where()["timeline"]
+        assert whole["scene_id"] == S1 and whole["anchor_id"] is None and whole["from_frame"] == 0
         applied(await rig.run("next"))
         rig.mono.t += 2
         assert rig.service.where()["timeline"]["play_ms"] == 2000
         applied(await rig.run("previous"))
-        assert "timeline" not in rig.service.where()
+        assert rig.service.where()["timeline"]["scene_id"] == S1
         rig.mono.t += 5
         again = applied(await rig.run("next"))["timeline"]
         assert again["anchor_id"] == "marker" and again["play_ms"] == 0

@@ -80,6 +80,7 @@ from jarvis.core.presentation_studio_pins import StudioPinRegistry
 from jarvis.core.presentation_studio_playback import PresentationStudioPlaybackService
 from jarvis.core.presentation_studio_compare import PresentationStudioCompare
 from jarvis.core.presentation_studio_composition import PresentationStudioComposition
+from jarvis.core.presentation_studio_composition_clock import PresentationStudioCompositionClock
 from jarvis.core.presentation_studio_scene_variants import PresentationStudioSceneVariants
 from jarvis.core.presentation_studio_template import PresentationStudioTemplates
 from jarvis.core.presentation_studio_upgrades import PresentationStudioUpgrades
@@ -90,7 +91,8 @@ from jarvis.core.presentation_studio_reload import (
 )
 from jarvis.core.presentation_studio_reload_stage import StageWindows
 from jarvis.core.presentation_studio_service import PresentationStudioService
-from jarvis.core.presentation_studio_stage import SceneStage, StageLedger
+from jarvis.core.presentation_studio_run_surface import RunSurface
+from jarvis.core.presentation_studio_stage import LegacyStageReclaimer, StageLedger
 from jarvis.core.presentation_studio_variant_events import StudioVariantEvents
 from jarvis.core.presentation_studio_variants import PresentationStudioVariants
 from jarvis.core.presentation_studio_rail import PresentationRail
@@ -421,7 +423,8 @@ class JarvisCoreApplication:
         self.presentation_studio_authoring = PresentationStudioAuthoring(
             self.presentation_studio, self.prefabs, variants=self.presentation_studio_variants,
             pins=self.presentation_studio_variants.pin_index, registry=self.studio_pins, compiler=authoring_compiler or remotion_compiler,
-            engine_pin=authoring_engine_pin or (None if composition is None else composition.engine_pin), live_refs=self.live_refs, boards=self._authorised_boards)
+            engine_pin=authoring_engine_pin or (None if composition is None else composition.engine_pin), live_refs=self.live_refs, boards=self._authorised_boards,
+            authored=self.presentation_studio_edit.record_authored_scenes)
         # Pont Presentation -> Artifacts (Remotion Slice 08) : sans etat propre ; la table `board_artifact_links` reste l'unique
         # proprietaire de « quels Boards montrent cette source » (`docs/presentation-artifacts.md`). Le workspace le lit.
         self.presentation_artifacts = PresentationArtifacts(
@@ -442,37 +445,48 @@ class JarvisCoreApplication:
             self.presentation_render = PresentationRenderService(
                 artifacts=self.artifacts, snapshots=self.presentation_artifacts, packager=self.presentation_packager,
                 runner=remotion_render_runner, installed_engine=remotion_render_runner.installed_engine,
-                capability_status=lambda: str(render_capabilities.host.status("remotion").get("status")), diagnostics=diagnostics)
+                capability_status=lambda: str(render_capabilities.host.status("remotion").get("status")), diagnostics=diagnostics,
+                preview_root=getattr(remotion_render_runner, "preview_dir", None))
         self.scene = SceneService(
             scene_repository or SQLiteSceneRepository(root / "state" / "scene.sqlite3"),
             diagnostics=diagnostics,
             prefab_validator=self.prefabs,
         )
         # Rechargement à chaud des scènes (Slice 06) : une édition de source = candidat validé, version publiée par le
-        # coalesceur de la 01a (une rafale = une version), pin ré-écrit, fenêtre stage re-patchée, montage confirmé par
-        # l'hôte ou retour arrière. La scène vivante est aussi une source de pins : un cadre que l'hôte peut recharger
+        # coalesceur de la 01a (une rafale = une version), pin ré-écrit, surface de lecture de Variantes re-épinglée, montage
+        # confirmé par l'hôte ou retour arrière. La scène vivante est aussi une source de pins : un cadre que l'hôte peut recharger
         # n'est jamais archivé sous lui.
         self.studio_pins.bind_scene(self.scene)
         self.prefab_drafts = PrefabDraftCoalescer(self.prefabs, quiet_s=STUDIO_RELOAD_QUIET_S,
                                                   max_wait_s=STUDIO_RELOAD_MAX_WAIT_S, diagnostics=diagnostics)
-        self.studio_stage = StageWindows(self.scene, diagnostics=diagnostics)
+        # Surface de lecture de Variantes (native-studio-playback-fix Slice 09) : une lecture se montre DANS Variantes, en mémoire ;
+        # aucune fenêtre du Board n'est créée pour jouer. Les anciennes fenêtres `studio_stage` / `studio_aux` d'un Core précédent sont
+        # archivées une dernière fois (registre d'ids relu puis mis de côté, balayage par catégorie ET préfixe). Les pins qu'elle montre
+        # (scène, détours) sont une source de pins.
+        self.presentation_studio_stage = RunSurface(
+            validator=self.prefabs, diagnostics=diagnostics,
+            reclaimer=LegacyStageReclaimer(self.scene, StageLedger(FileStageLedger(root), diagnostics=diagnostics),
+                                           diagnostics=diagnostics))
+        self.studio_pins.add_source("variants_run", self.presentation_studio_stage.pins)
+        self.studio_stage = StageWindows(self.presentation_studio_stage, diagnostics=diagnostics)
         self.presentation_studio_reload = PresentationStudioReloadService(
             self.presentation_studio, self.prefabs, self.prefab_drafts, self.studio_stage, pins=self.studio_pins,
             edits=self.presentation_studio_edit, events=studio_events, diagnostics=diagnostics,
-            builder=self.remotion_player)
+            builder=self.remotion_player,
+            studio_workspace=None if self.remotion_studio is None else self.remotion_studio.workspace_base)
         # Événements des cadres (Slice 04) : `state` écrit `prefab.data` par le
         # réducteur (acteur `user`, `basis` contrôlée sous le verrou de la
         # scène), `notify` est consigné ; aucun n'exécute d'outil.
-        self.prefab_events = PrefabEventService(self.scene, self.prefabs, diagnostics=diagnostics)
-        # Lecture d'une Presentation (Slice 12) : etat en memoire de Core (R6), fenetre de stage unique patchee dans
-        # `SceneService.apply_if`, ressources auxiliaires toujours retirees (registre d'ids sur disque pour la reprise apres
-        # un arret brutal), mode d'interaction commute/restaure par `InteractionModeService`. Controle de direction artistique :
+        # Slice 09 (native-studio-playback-fix) : les cadres de la surface de lecture de Variantes envoient leurs événements ici aussi ;
+        # un `state` écrit les données de la surface (mémoire), jamais un objet du Board.
+        self.prefab_events = PrefabEventService(self.scene, self.prefabs, diagnostics=diagnostics,
+                                                surface=self.presentation_studio_stage)
+        # Lecture d'une Presentation (Slice 12) : etat en memoire de Core (R6), une surface de lecture par run (Variantes, Slice 09),
+        # detours en calques toujours retires, mode d'interaction commute/restaure par `InteractionModeService`. Controle de direction artistique :
         # le service de la Slice 09 (`require_art_direction`), obligatoire : une lecture serieuse sans direction artistique est
         # refusee (`presentation_studio_art_direction_required`), et sans ce controle le coeur ne demarre pas.
         if not callable(getattr(self.presentation_studio, "require_art_direction", None)):
             raise RuntimeError("the presentation studio service must provide require_art_direction (playback gate)")
-        self.presentation_studio_stage = SceneStage(
-            self.scene, StageLedger(FileStageLedger(root), diagnostics=diagnostics), diagnostics=diagnostics)
         self.presentation_studio_playback = PresentationStudioPlaybackService(
             self.presentation_studio, self.presentation_studio_edit, self.presentation_studio_stage,
             self.interaction_mode, bus=self.events, diagnostics=diagnostics, stage_observer=self.studio_stage,
@@ -490,8 +504,8 @@ class JarvisCoreApplication:
 
         self.presentation_studio_edit.add_commit_listener(_rail_edit_committed)
         self.presentation_studio_edit.add_failure_listener(self.presentation_studio_rail.on_edit_failed)
-        # Variantes locales d'une scene (Slice 17): lecture, apercu en memoire (la lecture montre l'apercu sur la fenetre de
-        # scene, en pause seulement), promotion par l'operation de branche de la Slice 16. Les ecritures sont des operations
+        # Variantes locales d'une scene (Slice 17): lecture, apercu en memoire (la lecture montre l'apercu sur sa surface de
+        # Variantes, en pause seulement), promotion par l'operation de branche de la Slice 16. Les ecritures sont des operations
         # d'edition (`scene_variant.*`), donc la meme porte que la voix.
         self.presentation_studio_scene_variants = PresentationStudioSceneVariants(
             self.presentation_studio, self.presentation_studio_edit, self.presentation_studio_variants,
@@ -512,11 +526,23 @@ class JarvisCoreApplication:
         # Slice 16), jamais de mise a jour automatique ni de pin remplace sans variante.
         self.presentation_studio_upgrades = PresentationStudioUpgrades(
             self.presentation_studio, self.presentation_studio_variants, self.prefabs, edit=self.presentation_studio_edit)
-        # Slice 06 x Slice 12 : le rechargement lit la position de la lecture et patche la fenetre `studio-stage-<run_id>` que
-        # le stage de la lecture lui a liee (`stage_observer`) ; une scene non affichee est seulement re-epinglee.
+        # Horloge de composition (native-studio-playback-fix Slice 04) : la carte pure des scenes Remotion d'une variante, en lecture
+        # seule (manifestes des pins) ; Core ne tient aucune horloge de media pour la video continue.
+        self.presentation_studio_composition_clock = PresentationStudioCompositionClock(
+            self.presentation_studio, self.prefabs, diagnostics=diagnostics)
+        # Slice 06 x Slice 12 : le rechargement lit la position de la lecture et re-epingle la surface `variants-run-<run_id>` que
+        # la lecture lui a liee (`stage_observer`, Slice 09) ; une scene non affichee est seulement re-epinglee.
         self.presentation_studio_reload.bind_playback(self.presentation_studio_playback)
-        # Pins : une source par magasin (undo 08 ; variantes vivantes et archivees 16 par `rebuild` ; scene vivante, dont les
-        # fenetres de lecture, liee plus haut ; retenues en vol du rechargement).
+        # native-studio-playback-fix Slice 12 : Remotion Studio publie son espace de travail dans une scene par la SEULE porte d'edition de
+        # source (`apply_source_edit`, acteur `user`) : nouvelle version, conflit sur la base, retour arriere = republier.
+        if self.remotion_studio is not None:
+            from jarvis.core.remotion_studio_publish import VariantScenePublisher
+            self.remotion_studio.bind_publisher(VariantScenePublisher(self.presentation_studio, self.presentation_studio_reload))
+            # Slice 13 rework (QA B3): the user opening (or syncing) a scene in Remotion Studio ends the agent's permission on it.
+            edits = self.presentation_studio_edit
+            self.remotion_studio.add_scene_listener(lambda pin: edits.release_authored_for_pin(pin.prefab_id, pin.version))
+        # Pins : une source par magasin (undo 08 ; variantes vivantes et archivees 16 par `rebuild` ; scene vivante et surface de
+        # lecture de Variantes, liees plus haut ; retenues en vol du rechargement).
         self.studio_pins.add_source("undo", self.presentation_studio_history.pins)
         # Projection runtime (Slice 04) : chaque sous-agent et chaque job
         # deviennent des étoiles sans tour du cerveau. Seul écrivain `runtime`

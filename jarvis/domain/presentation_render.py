@@ -80,6 +80,9 @@ class RenderErrorCode(StrEnum):
     LOCKED = "presentation_render_locked"
     STORE_FAILED = "presentation_render_store_failed"
     INTERNAL = "presentation_render_internal_error"
+    #: Slice 13 rework of native-studio-playback-fix (QA B2): a native preview is already waiting for the browser, or this one waited
+    #: `PREVIEW_SLOT_WAIT_S` without getting it: nothing was rendered, retry once the running render is done.
+    PREVIEW_BUSY = "presentation_render_preview_busy"
 
 
 HTTP_STATUS: Mapping[RenderErrorCode, int] = {
@@ -87,7 +90,7 @@ HTTP_STATUS: Mapping[RenderErrorCode, int] = {
     RenderErrorCode.UNAVAILABLE: 503, RenderErrorCode.RUNTIME_UNAVAILABLE: 409, RenderErrorCode.BROWSER_UNAVAILABLE: 409,
     RenderErrorCode.SNAPSHOT_INVALID: 409, RenderErrorCode.SOURCE_REFUSED: 409, RenderErrorCode.ENGINE_MISMATCH: 409,
     RenderErrorCode.LOCKED: 409, RenderErrorCode.QUEUE_FULL: 429, RenderErrorCode.NOT_CANCELLABLE: 409, RenderErrorCode.DISK_LOW: 507,
-    RenderErrorCode.STORE_FAILED: 500, RenderErrorCode.INTERNAL: 500,
+    RenderErrorCode.STORE_FAILED: 500, RenderErrorCode.INTERNAL: 500, RenderErrorCode.PREVIEW_BUSY: 429,
 }
 
 

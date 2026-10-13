@@ -57,7 +57,10 @@ async def test_the_stage_page_carries_frame_src_of_the_sandbox_alone_never_the_v
         assert re.findall(r"setAttribute\('sandbox',([^)]*)\)", text) == ["d.iframeAttributes.sandbox"], "the one sandbox value, from the contract"
         assert "'allow-same-origin'" not in text and '"allow-same-origin"' not in text
         config = json.loads(re.search(r"const config=(\{.*?\});", text).group(1))
-        assert config == {"prefabId": ID, "version": 1, "iframeAttributes": sb.IFRAME_ATTRIBUTES}
+        assert config == {"prefabId": ID, "version": 1, "iframeAttributes": sb.IFRAME_ATTRIBUTES, "embed": None}
+        # Slice 06 (native-studio-playback-fix): the Variants Player asks for its page with `embed=variants` (no bar, no play on ready)
+        status, _, embedded = await stack.get(f"/remotion-stage?id={ID}&v=1&embed=variants")
+        assert status == 200 and json.loads(re.search(r"const config=(\{.*?\});", embedded).group(1))["embed"] == "variants"
         assert text.count("</script>") == 3 and "createStage" in text and "RemotionSandboxProtocol" in text
         # The main page frames the visualizer and the stage DOCUMENT, by its exact address; it never names the sandbox.
         status, headers, main = await stack.get("/")
@@ -90,7 +93,8 @@ async def test_an_installed_runtime_missing_is_a_typed_409_with_its_repair_throu
 
 
 @pytest.mark.parametrize("query", ["", "?id=BAD ID&v=1", "?id=" + "presentation-studio.p000000000001.s000000000001" + "&v=x",
-                                   "?id=jarvis.counter&v=1&extra=1", "?id=jarvis.counter&v=12345", "?v=1"])
+                                   "?id=jarvis.counter&v=1&extra=1", "?id=jarvis.counter&v=12345", "?v=1",
+                                   "?id=jarvis.counter&v=1&embed=board", "?id=jarvis.counter&v=1&embed="])
 async def test_a_stage_page_names_a_prefab_and_a_version_and_nothing_else(tmp_path, query):
     async with RemotionStack(tmp_path) as stack:
         status, _, text = await stack.get("/remotion-stage" + query)

@@ -50,7 +50,7 @@ html,body{margin:0;height:100%;background:transparent;color:var(--ink);font:13px
   }
   const stage=window.JarvisRemotionStage.createStage({
     document:document,window:window,parentWindow:window.parent,origin:window.location.origin,fetch:window.fetch.bind(window),
-    prefabId:config.prefabId,version:config.version,iframeAttributes:config.iframeAttributes,log:log,report:report,
+    prefabId:config.prefabId,version:config.version,iframeAttributes:config.iframeAttributes,embed:config.embed,log:log,report:report,
     now:function(){return Date.now()},setTimeout:function(f,m){return window.setTimeout(f,m)},clearTimeout:function(i){window.clearTimeout(i)},
     setInterval:function(f,m){return window.setInterval(f,m)},clearInterval:function(i){window.clearInterval(i)}
   });

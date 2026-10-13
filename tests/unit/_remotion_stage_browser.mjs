@@ -4,24 +4,31 @@
    autre processus : `Target.setAutoAttach`, sessions aplaties) pour lire ce que la scène a réellement produit.
 
    Usage : node _remotion_stage_browser.mjs <url de la page> <chrome.exe> <planJSON>
-   Environnement : CDP_VIEWPORT=LxH (1280x720 par défaut).
-   Actions (champ `scope` : "page" par défaut, ou "sandbox" pour le cadre du bac à sable) :
-     {eval}, {wait: ms}, {click: selecteur}, {clickAt: [x,y]}, {clickExpr: expr -> {x,y} de la page}, {key: nom}, {value: nom, expr, scope?}, {until: expr, ms, scope?}, {size: [w,h]},
-     {shot: chemin.png}, {http: {method, url, headers?, json?, basisFrom?}, as: nom} (requête de Node, pour parler à Core entre deux étapes ;
-     `basisFrom` : URL d'une variante, sa révision du moment est écrite dans `json.basis.variant_revision`, Slice 14).
+   Environnement : CDP_VIEWPORT=LxH (1280x720 par défaut) ; CDP_CHROME_ARGS (Slice 08 de native-studio-playback-fix) : arguments de Chrome
+   en plus, séparés par des espaces (par ex. `--autoplay-policy=no-user-gesture-required`, seulement là où une mesure l'exige).
+   Actions (champ `scope` : "page" par défaut, "sandbox" pour le cadre du bac à sable, "sandboxes" pour TOUS les cadres de bac à sable
+   vivants, un tableau ; champ `cli: true` : l'API de la ligne de commande des DevTools, par ex. `getEventListeners`) :
+     {eval}, {wait: ms}, {click: selecteur}, {clickAt: [x,y]}, {clickExpr: expr -> {x,y} de la page}, {key: nom}, {value: nom, expr, scope?}, {until: expr, ms, scope?, as?, required?}, {size: [w,h]},
+     {shot: chemin.png}, {burst: dossier, ms, clipExpr?, scale?, prefix?, as?} (rafale de captures datées),
+     {record: dossier, ms, everyMs?, untilExpr?, readExpr?, clipExpr?, scale?, quality?, prefix?, as?} (enregistrement JPEG cadencé, Slice 14), {http: {method, url, headers?, json?, basisFrom?}, as: nom} (requête de Node, pour parler à Core entre deux étapes ;
+     `basisFrom` : URL d'une variante, sa révision du moment est écrite dans `json.basis.variant_revision`, Slice 14),
+     {media: [{name, value}]} (`Emulation.setEmulatedMedia`, par ex. `prefers-reduced-motion: reduce`), {reload: true} (`Page.reload`) ;
+     `key` accepte aussi tout caractère seul (`f`, `M`, `,`...) et `PageUp` / `PageDown` / `ArrowUp` / `ArrowDown`, `shift: true` en option.
    Sortie : {reads, console, errors, targets}. Chrome est tué avec ses enfants, le profil effacé. */
 import {execFileSync, spawn} from 'node:child_process';
-import {mkdtempSync, rmSync, writeFileSync} from 'node:fs';
+import {mkdtempSync, readFileSync, rmSync, writeFileSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 
 const [,,PAGE,CHROME,PLAN]=process.argv;
-const plan=JSON.parse(PLAN);
+/* `@<fichier>` : le plan lu dans un fichier (un plan long dépasse la ligne de commande de Windows, 32 767 caractères). */
+const plan=JSON.parse(PLAN.startsWith('@')?readFileSync(PLAN.slice(1),'utf8'):PLAN);
 const [VIEW_W,VIEW_H]=(process.env.CDP_VIEWPORT||'1280x720').split('x').map(Number);
 const profile=mkdtempSync(join(tmpdir(),'jarvis-rs-cdp-'));
 const port=9300+Math.floor(Math.random()*500);
 const chrome=spawn(CHROME,['--headless=new',`--remote-debugging-port=${port}`,`--user-data-dir=${profile}`,'--no-first-run',
-  '--no-default-browser-check','--disable-gpu','--disable-extensions','--hide-scrollbars','about:blank'],{stdio:'ignore'});
+  '--no-default-browser-check','--disable-gpu','--disable-extensions','--hide-scrollbars',
+  ...String(process.env.CDP_CHROME_ARGS||'').split(' ').filter(Boolean),'about:blank'],{stdio:'ignore'});
 const sleep=ms=>new Promise(r=>setTimeout(r,ms));
 
 try{
@@ -56,8 +63,8 @@ try{
   });
   const {targetId}=await send('Target.createTarget',{url:'about:blank'});
   const {sessionId:page}=await send('Target.attachToTarget',{targetId,flatten:true});
-  const rawEval=async(sid,expression)=>{
-    const r=await send('Runtime.evaluate',{expression,returnByValue:true,awaitPromise:true},sid);
+  const rawEval=async(sid,expression,cli)=>{
+    const r=await send('Runtime.evaluate',{expression,returnByValue:true,awaitPromise:true,includeCommandLineAPI:!!cli},sid);
     if(r.exceptionDetails)throw new Error(r.exceptionDetails.exception?.description||JSON.stringify(r.exceptionDetails));
     return r.result.value;
   };
@@ -70,21 +77,31 @@ try{
     }
     return null;
   };
-  const evaluate=async(expression,scope)=>{
+  const evaluate=async(expression,scope,cli)=>{
+    if(scope==='sandboxes'){
+      const out=[];
+      for(const sid of iframeSessions.slice()){
+        try{if(String(await rawEval(sid,'location.href')).includes('/page/scene-'))out.push(await rawEval(sid,expression))}catch(_e){/* cible fermée */}
+      }
+      return out;
+    }
     if(scope==='sandbox'){
       const sid=await sandboxSession();
       if(!sid)throw new Error('pas de cadre de bac a sable');
       return rawEval(sid,expression);
     }
-    return rawEval(page,expression);
+    return rawEval(page,expression,cli);
   };
   const KEYS={ArrowRight:{code:'ArrowRight',keyCode:39},ArrowLeft:{code:'ArrowLeft',keyCode:37},' ':{code:'Space',keyCode:32,text:' '},
     Escape:{code:'Escape',keyCode:27},Enter:{code:'Enter',keyCode:13,text:'\r'},Home:{code:'Home',keyCode:36},End:{code:'End',keyCode:35},
-    p:{code:'KeyP',keyCode:80,text:'p'},Tab:{code:'Tab',keyCode:9}};
-  const press=async key=>{
-    const k=KEYS[key];if(!k)throw new Error('touche inconnue '+key);
-    await send('Input.dispatchKeyEvent',{type:'keyDown',key,code:k.code,windowsVirtualKeyCode:k.keyCode,nativeVirtualKeyCode:k.keyCode,text:k.text},page);
-    await send('Input.dispatchKeyEvent',{type:'keyUp',key,code:k.code,windowsVirtualKeyCode:k.keyCode,nativeVirtualKeyCode:k.keyCode},page);
+    p:{code:'KeyP',keyCode:80,text:'p'},Tab:{code:'Tab',keyCode:9},PageUp:{code:'PageUp',keyCode:33},PageDown:{code:'PageDown',keyCode:34},
+    ArrowUp:{code:'ArrowUp',keyCode:38},ArrowDown:{code:'ArrowDown',keyCode:40},',':{code:'Comma',keyCode:188,text:','},'.':{code:'Period',keyCode:190,text:'.'},'?':{code:'Slash',keyCode:191,text:'?'}};
+  const single=key=>/^[a-zA-Z]$/.test(key)?{code:'Key'+key.toUpperCase(),keyCode:key.toUpperCase().charCodeAt(0),text:key}:null;
+  const press=async (key,shift)=>{
+    const k=KEYS[key]||single(key);if(!k)throw new Error('touche inconnue '+key);
+    const modifiers=shift?8:0;
+    await send('Input.dispatchKeyEvent',{type:'keyDown',key,code:k.code,windowsVirtualKeyCode:k.keyCode,nativeVirtualKeyCode:k.keyCode,text:k.text,modifiers},page);
+    await send('Input.dispatchKeyEvent',{type:'keyUp',key,code:k.code,windowsVirtualKeyCode:k.keyCode,nativeVirtualKeyCode:k.keyCode,modifiers},page);
   };
   /* Un vrai clic CDP (activation utilisateur) : sur un sélecteur de la page, ou {x,y} dans la page. */
   const clickAt=async(x,y)=>{
@@ -109,13 +126,29 @@ try{
   }
   await sleep(300);
   const reads={};
+  let mouseDown=false;
   for(const action of plan){
     try{
       if(action.eval!==undefined)await evaluate(action.eval,action.scope);
       else if(action.wait!==undefined)await sleep(action.wait);
-      else if(action.key!==undefined)await press(action.key);
+      else if(action.key!==undefined)await press(action.key,!!action.shift);
+      else if(action.media!==undefined)await send('Emulation.setEmulatedMedia',{features:action.media},page);
+      else if(action.reload!==undefined){
+        await send('Page.reload',{ignoreCache:false},page);
+        for(let i=0;i<200;i++){await sleep(50);if(await rawEval(page,"document.readyState==='complete'").catch(()=>false))break}
+      }
       else if(action.click!==undefined)await click(action.click);
       else if(action.clickAt!==undefined)await clickAt(action.clickAt[0],action.clickAt[1]);
+      else if(action.mouse!==undefined){
+        /* Un geste souris CDP pas à pas (glisser) : `mouse` = mouseMoved | mousePressed | mouseReleased, `atExpr` -> {x,y} de la page ; le
+           bouton gauche reste tenu entre mousePressed et mouseReleased (`buttons: 1`), comme une vraie main. */
+        const at=await evaluate(action.atExpr,'page');
+        if(!at)throw new Error('souris : expression sans position');
+        if(action.mouse==='mousePressed')mouseDown=true;
+        if(action.mouse==='mouseReleased')mouseDown=false;
+        await send('Input.dispatchMouseEvent',{type:action.mouse,x:at.x,y:at.y,button:action.mouse==='mouseMoved'&&!mouseDown?'none':'left',
+          buttons:mouseDown?1:0,clickCount:action.mouse==='mouseMoved'?0:1},page);
+      }
       else if(action.clickExpr!==undefined){
         const at=await evaluate(action.clickExpr,'page');
         if(!at)throw new Error('clic : expression sans position');
@@ -126,6 +159,35 @@ try{
       else if(action.shot!==undefined){
         const shot=await send('Page.captureScreenshot',{format:'png'},page);
         writeFileSync(action.shot,Buffer.from(shot.data,'base64'));
+      }else if(action.burst!==undefined){
+        /* Rafale (Slice 03 du handoff rnsp) : captures aussi vite que Chrome les rend pendant `ms`, chacune datée par `performance.now()` de
+           la page (même base que les échantillonneurs). `clipExpr` -> {x,y,width,height} de la page ; `scale` réduit l'image (0.25 défaut). */
+        const clip=action.clipExpr?await evaluate(action.clipExpr,'page'):null;
+        const end=Date.now()+(action.ms||1000);const shots=[];let n=0;
+        while(Date.now()<end){
+          const t=await rawEval(page,'performance.now()');
+          const shot=await send('Page.captureScreenshot',{format:'png',...(clip?{clip:{...clip,scale:action.scale||0.25}}:{})},page);
+          const file=join(action.burst,`${action.prefix||'burst'}-${String(n++).padStart(3,'0')}.png`);
+          writeFileSync(file,Buffer.from(shot.data,'base64'));shots.push([Math.round(t),file]);
+        }
+        reads[action.as||'burst']=shots;
+      }else if(action.record!==undefined){
+        /* Enregistrement (Slice 14 du handoff rnsp) : une capture JPEG toutes les `everyMs` (100 par défaut) jusqu'à `untilExpr` vrai ou
+           `ms` écoulées, chacune datée par `performance.now()` de la page et accompagnée de `readExpr` (lu dans la même évaluation, juste
+           avant la capture). `clipExpr` -> {x,y,width,height} ; `scale` (0.5) ; `quality` JPEG (60). Sortie : [[ms, fichier, lecture]]. */
+        const clip=action.clipExpr?await evaluate(action.clipExpr,'page'):null;
+        const end=Date.now()+(action.ms||60000);const every=action.everyMs||100;const shots=[];let n=0;
+        const probe=`({t:Math.round(performance.now()),v:(${action.readExpr||'null'}),done:!!(${action.untilExpr||'false'})})`;
+        while(Date.now()<end){
+          const started=Date.now();
+          const r=await rawEval(page,probe);
+          const shot=await send('Page.captureScreenshot',{format:'jpeg',quality:action.quality||60,...(clip?{clip:{...clip,scale:action.scale||0.5}}:{})},page);
+          const file=join(action.record,`${action.prefix||'rec'}-${String(n++).padStart(4,'0')}.jpg`);
+          writeFileSync(file,Buffer.from(shot.data,'base64'));shots.push([r.t,file,r.v]);
+          if(r.done)break;
+          const left=every-(Date.now()-started);if(left>0)await sleep(left);
+        }
+        reads[action.as||'record']=shots;
       }else if(action.http!==undefined){
         const h=action.http;
         if(h.basisFrom){
@@ -136,11 +198,14 @@ try{
           body:h.json!==undefined?JSON.stringify(h.json):undefined});
         let body=null;try{body=await response.json()}catch(_e){body=null}
         reads[action.as||'http']={status:response.status,body};
-      }else if(action.value!==undefined)reads[action.value]=await evaluate(action.expr,action.scope);
+      }else if(action.value!==undefined)reads[action.value]=await evaluate(action.expr,action.scope,action.cli);
       else if(action.until!==undefined){
         const end=Date.now()+(action.ms||5000);let ok=false;
         while(Date.now()<end){ok=!!(await evaluate(action.until,action.scope).catch(()=>false));if(ok)break;await sleep(100)}
         reads['until:'+action.until.slice(0,80)]=ok;
+        if(action.as)reads[action.as]=ok;
+        /* `required` : une précondition du plan (cadre prêt...) ; son échéance dépassée arrête le plan et se lit dans `reads.failed`. */
+        if(!ok&&action.required)throw new Error(`until timed out after ${action.ms||5000} ms: ${action.as||action.until.slice(0,120)}`);
       }
     }catch(error){reads.failed={action:JSON.stringify(action).slice(0,200),error:String(error.message||error).slice(0,300)};break}
   }

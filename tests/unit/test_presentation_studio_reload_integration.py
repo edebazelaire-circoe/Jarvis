@@ -1,7 +1,7 @@
 """Le rechargement a chaud integre aux Slices 08, 12 et 16 (jarvis-interactive-presentation-studio, merge de la Slice 06).
 
 Tout est reel sauf le navigateur (`FakeHost`) : magasin de fichiers, prefabs, scene SQLite, registre des pins, historique
-d'annulation (08), **vraie lecture** (12) qui possede la fenetre `studio-stage-<run_id>`, graphe des variantes (16).
+d'annulation (08), **vraie lecture** (12) qui possede la surface `variants-run-<run_id>` (Slice 09), graphe des variantes (16).
 Prouve : le rechargement de la scene qu'un run affiche patche la fenetre de CE run sans le mettre en pause ni le deplacer ; une
 scene non affichee est seulement re-epinglee ; le verrou de scene couvre annuler/retablir et les branches ; une branche n'herite
 jamais d'un pin non verifie ; archiver la variante jouee reste refuse.
@@ -57,7 +57,7 @@ async def control_set(rig: Rig, scene_id: str, control_id: str, value):
 
 async def test_a_reload_of_the_scene_a_run_shows_patches_that_runs_window_and_the_run_goes_on(rig):
     window = rig.stage_object_id()
-    assert window.startswith("studio-stage-") and len(window) == len("studio-stage-") + 12          # `studio-stage-<run_id>`
+    assert window.startswith("variants-run-") and len(window) == len("variants-run-") + 12          # `variants-run-<run_id>` (Slice 09)
     binding = rig.stage.binding_for(rig.pid, rig.vid, SID)
     assert binding is not None and binding.object_id == window                                    # the playback told the reload
     before = rig.playback.position(rig.pid)
@@ -72,8 +72,7 @@ async def test_a_reload_of_the_scene_a_run_shows_patches_that_runs_window_and_th
     assert result.preserved["playback"] == before and result.preserved["playback_unchanged"] is True
     # the run re-read the variant (the pin moved) on the same item: its plan is current, nothing was written by it
     assert rig.playback._plan.variant_revision == (await rig.variant()).revision
-    stage_objects = [o for o in (await rig.scene.snapshot()).objects if o.object_id.startswith("studio-stage-")]
-    assert [o.object_id for o in stage_objects] == [window]
+    assert (await rig.scene.snapshot()).objects == ()                                            # never a Board window (Slice 09)
 
 
 async def test_a_reload_does_not_pause_the_run_even_though_it_is_announced_like_a_commit(rig):
@@ -156,18 +155,18 @@ async def test_when_the_run_ends_the_binding_is_gone_and_a_reload_only_repins(ri
     assert result.status is S.REPINNED and result.preserved["playback"] is None
 
 
-async def test_a_window_the_user_closed_is_reopened_by_the_run_and_the_reload_follows_the_new_id(rig):
-    from jarvis.domain.scene import SceneActor, SceneCommand, SceneOp
+async def test_a_reload_while_the_run_shows_another_scene_only_repins_and_the_run_mounts_it_when_it_comes_back(rig):
+    """Slice 09: nobody can close the run surface (it is not a window); a scene the surface does not show is only re-pinned, and the
+    run shows the new pin when it comes back to that scene, under the same surface id."""
+
     first = rig.stage_object_id()
-    await rig.scene.apply(SceneCommand(op=SceneOp.ARCHIVE, actor=SceneActor.USER, object_id=first))
-    # the reload now finds no window showing the scene: it only re-pins (the next show of the run decides)
+    await rig.playback.next({"actor": "user"})                                                     # the surface shows scene 2
     gone = await rig.edit({"style": "p{color:red}"})
     assert gone.status is S.REPINNED
-    await rig.playback.next({"actor": "user"})
     await rig.playback.previous({"actor": "user"})                                                 # the run re-shows scene 1
-    second = rig.stage_object_id()
-    assert second != first and second.startswith("studio-stage-")
-    assert rig.stage.binding_for(rig.pid, rig.vid, SID).object_id == second                       # rebound to the reopened window
+    assert rig.stage_object_id() == first
+    assert rig.stage.binding_for(rig.pid, rig.vid, SID).object_id == first
+    assert (await rig.stage_block()).prefab_id.startswith("presentation-studio.")
 
 
 # ------------------------------------------------------------------ le verrou de scene : annuler / retablir
@@ -288,9 +287,9 @@ async def test_repin_is_idempotent_when_the_runs_window_already_shows_the_target
     block = await rig.stage_block()
     now = PrefabRef(block.prefab_id, block.version)
     await rig.stage.repin(binding, expect=OLD, to=now, props=dict(block.props), data=dict(block.data))   # already there: no write
-    revision = (await rig.scene.snapshot()).revision
+    revision = rig.surface.revision
     await rig.stage.repin(binding, expect=OLD, to=now, props=dict(block.props), data=dict(block.data))
-    assert (await rig.scene.snapshot()).revision == revision
+    assert rig.surface.revision == revision
     with pytest.raises(StagePatchError) as caught:                                                     # a window on another pin: never overwritten
         await rig.stage.repin(binding, expect=PrefabRef("jarvis.counter", 1), to=PrefabRef("jarvis.counter", 1), props={}, data={})
     assert caught.value.code == "stage_changed"
@@ -300,8 +299,8 @@ async def test_locate_needs_a_live_window_that_shows_the_pin_a_binding_alone_is_
     from jarvis.core.presentation_studio_reload_stage import StageBinding
     assert await rig.stage.locate(rig.pid, rig.vid, SID, OLD) is not None
     assert await rig.stage.locate(rig.pid, rig.vid, SID, PrefabRef("lab.counter", 9)) is None          # shows another pin
-    rig.stage.bind(StageBinding(rig.pid, rig.vid, SID, "studio-stage-gone", "r0"))
-    assert await rig.stage.locate(rig.pid, rig.vid, SID, OLD) is None                                  # the window no longer exists
+    rig.stage.bind(StageBinding(rig.pid, rig.vid, SID, "variants-run-gone", "r0"))
+    assert await rig.stage.locate(rig.pid, rig.vid, SID, OLD) is None                                  # not the surface on screen
     rig.stage.unbind(rig.pid)
     assert rig.stage.bindings() == ()
 

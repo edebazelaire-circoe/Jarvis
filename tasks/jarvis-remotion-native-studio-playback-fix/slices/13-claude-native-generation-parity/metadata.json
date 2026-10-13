@@ -1,0 +1,16 @@
+﻿{
+  "slice_id": "13",
+  "title": "Agent-native creative workflow and Remotion parity benchmark",
+  "dependencies": [
+    "01-independent-intention-and-code-audit",
+    "12-native-authoring-workspace-roundtrip"
+  ],
+  "task_type": null,
+  "task_type_resolution_required": true,
+  "requires_caveman": true,
+  "requires_coding_guideline": true,
+  "frontend": false,
+  "requires_impeccable": false,
+  "claude_for_frontend_when_available": false,
+  "requires_agent_trace_analysis": true
+}

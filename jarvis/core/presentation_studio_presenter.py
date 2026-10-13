@@ -8,7 +8,9 @@ The driver that lets **Jarvis present a prepared score** on top of the Slice 12 
   stack already records (`brain.speech.requested`, `mouth.speech.*`, `mouth.floor.taken`, folded by
   `jarvis/domain/presentation_studio_line.py`, the same phase words as `jarvis/runtime/tool_brain_speech.py`);
 - it advances item by item: a spoken line ends the item when the mouth says `completed`; a silence item (explicit, speaks nothing,
-  still executes its bound actions, which the playback service applies when the item is entered) lasts its soft target duration;
+  still executes its bound actions, which the playback service applies when the item is entered) lasts its soft target duration,
+  except on a media segment (a Remotion scene): then it lasts the media, until the page says the Player reached its stop frame
+  (handoff native-studio-playback-fix Slice 07: `target_duration_ms` never cuts a composition);
   a `user` item is the user's: Jarvis speaks nothing and waits for the user's navigation;
 - it executes **locked sequences** (`presentation_studio_sequence`): every step is released at `t0 + shift + offset` on the
   injected monotonic clock, its actions applied by the Slice 12 stage (a `sequence_step` report), its Jarvis line issued as above;
@@ -73,6 +75,8 @@ PRESENTER_CRASHED = "presenter_crashed"
 _FAILURE_OF = {LinePhase.OBSOLETE: "speech_obsolete", LinePhase.FAILED: "speech_failed",
                LinePhase.UNCONFIRMED: "speech_unconfirmed"}
 _STEP = "step:"
+#: Why the presenter advanced, when it is the end of Jarvis's own line(s): Jarvis pacing himself (Slice 07, § 5). A line the user cut is input.
+_LINE_ENDS = frozenset({"line_heard", "sequence_done"})
 
 
 def _applied(result: Any) -> bool:
@@ -104,11 +108,15 @@ class Playback(Protocol):
 
     def resolve_problem(self, code: str) -> None: ...
 
-    async def notify(self, kind: EventKind, **fields: Any) -> Any: ...
+    async def notify(self, kind: EventKind, *, line_end: bool = False, **fields: Any) -> Any: ...
 
     async def halt(self, problem: str) -> Any: ...
 
     async def finish(self, reason: str) -> Any: ...
+
+    def media_segment(self) -> str | None:
+        """Slice 07: `None` (no media segment), `"playing"`, `"done"`, or `"pending"` (the stage sync of the scene is under way: it
+        wakes the presenter when it lands) for the scene on the stage NOW. Optional (read with `getattr`)."""
 
 
 @dataclass(slots=True)
@@ -517,7 +525,13 @@ class PresentationStudioPresenter:
             return await self._drive_line_item(run, state, item, now)
         if item.presenter is Presenter.JARVIS:
             return await self._drive_after_sequence(run, now)  # a host: its steps spoke
-        # explicit silence: nothing is said, the bound actions were applied when the item was entered; a soft pace
+        # explicit silence: nothing is said, the bound actions were applied when the item was entered. Slice 07: on a media segment it
+        # lasts the media (the Player reaching its stop frame, said by the page), never its soft target; otherwise a soft pace.
+        media = self._media_segment()
+        if media in ("playing", "pending"):   # pending: the stage sync wakes us once it knows the scene (Slice 07 rework, B1)
+            return False
+        if media == "done":
+            return await self._advance(run, "media_done")
         target = item.target_duration_ms if item.target_duration_ms is not None else self._silence_default_ms
         if now - run.item_t0 - run.frozen_total >= target:
             return await self._advance(run, "silence_done")
@@ -574,7 +588,8 @@ class PresentationStudioPresenter:
         return "wait"
 
     async def _advance(self, run: _Run, why: str) -> bool:
-        applied = _applied(await self._playback.notify(EventKind.NEXT))
+        # the end of Jarvis's own line(s) is Jarvis pacing himself, not an input: it never cuts a scene entry still playing (§ 5)
+        applied = _applied(await self._playback.notify(EventKind.NEXT, line_end=why in _LINE_ENDS))
         self._trace("presenter_advanced", "Item suivant", data={"run_id": run.run_id, "why": why, "applied": applied})
         return applied
 
@@ -779,7 +794,8 @@ class PresentationStudioPresenter:
         plan = self._playback.plan
         if run.speaks and state.sequence is None and plan is not None and 0 <= state.position < len(plan):
             item = plan.item_at(state.position)
-            if item.kind is ItemKind.SILENCE:
+            # a media silence is woken by the page's report; a scene still syncing by the end of its stage sync (Slice 07 rework, B1)
+            if item.kind is ItemKind.SILENCE and self._media_segment() is None:
                 target = item.target_duration_ms if item.target_duration_ms is not None else self._silence_default_ms
                 deadlines.append(run.item_t0 + run.frozen_total + target)
         return min(deadlines) if deadlines else None
@@ -795,6 +811,12 @@ class PresentationStudioPresenter:
         except Exception as exc:  # noqa: BLE001 - observability never undoes a presenter decision; the failure is journaled
             self._trace("presenter_event_unrecorded", "Evenement du presentateur non pose", level="warning",
                         data={"error_class": type(exc).__name__, "status": status})
+
+    def _media_segment(self) -> str | None:
+        """`media_segment()` of the playback service (Slice 07); a playback without it (a fake of an older test) has no media to wait for."""
+
+        read = getattr(self._playback, "media_segment", None)
+        return read() if callable(read) else None
 
     def _now_ms(self) -> int:
         return round(self._monotonic() * 1000)

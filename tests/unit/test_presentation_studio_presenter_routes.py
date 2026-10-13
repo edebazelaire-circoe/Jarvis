@@ -76,13 +76,12 @@ async def until(core: Core, predicate, *, timeout: float = 5.0) -> dict:
 
 
 async def stage_body(core: Core, stage_id: str, expected: str, *, timeout: float = 3.0) -> str:
-    """The stage follows the state a moment later (the state moves under the service lock, the scene write ends it)."""
+    """The run surface follows the state a moment later (the state moves under the service lock, the surface write ends it)."""
 
     deadline = asyncio.get_running_loop().time() + timeout
     body = None
     while asyncio.get_running_loop().time() < deadline:
-        snapshot = await core.stack.core.scene.snapshot()
-        body = snapshot.get_object(stage_id).payload.prefab.data["body"]
+        body = core.stack.core.presentation_studio_stage.current_block(stage_id).data["body"]
         if body == expected:
             break
         await asyncio.sleep(0.03)

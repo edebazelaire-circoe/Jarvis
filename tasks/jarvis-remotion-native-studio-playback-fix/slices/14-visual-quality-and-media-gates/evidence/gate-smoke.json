@@ -1,0 +1,1612 @@
+{
+ "deck": "gate",
+ "presentation_id": "pst_9724fdf528fd845220c204d244cee904",
+ "variant_id": "psv_153df67447a609a4fa777fe3c0667c01",
+ "profile": "release_gate",
+ "scale": 0.5,
+ "scenes": [
+  {
+   "scene": "S1",
+   "scene_id": "pss_000000000001",
+   "title": "S1 3s@30",
+   "composition": {
+    "id": "Scene",
+    "width": 1280,
+    "height": 720,
+    "fps": 30,
+    "duration_in_frames": 90
+   },
+   "http": 200,
+   "preview_s": 9.2,
+   "render_elapsed_ms": 9204,
+   "frames": [
+    {
+     "frame": 0,
+     "role": "first",
+     "metrics": {
+      "mean": 64.3,
+      "background": 64,
+      "edge_density": 0.00404,
+      "sides": {
+       "top": {
+        "ink_share": 0.0,
+        "texture": 0.0
+       },
+       "bottom": {
+        "ink_share": 0.0,
+        "texture": 0.0
+       },
+       "left": {
+        "ink_share": 0.0,
+        "texture": 0.0
+       },
+       "right": {
+        "ink_share": 0.0,
+        "texture": 0.0
+       }
+      }
+     },
+     "findings": []
+    },
+    {
+     "frame": 1,
+     "role": "entry",
+     "metrics": {
+      "mean": 64.4,
+      "background": 64,
+      "edge_density": 0.00409,
+      "sides": {
+       "top": {
+        "ink_share": 0.0,
+        "texture": 0.0
+       },
+       "bottom": {
+        "ink_share": 0.009,
+        "texture": 0.333
+       },
+       "left": {
+        "ink_share": 0.033,
+        "texture": 0.25
+       },
+       "right": {
+        "ink_share": 0.0,
+        "texture": 0.0
+       }
+      }
+     },
+     "findings": []
+    },
+    {
+     "frame": 44,
+     "role": "middle",
+     "metrics": {
+      "mean": 67.5,
+      "background": 64,
+      "edge_density": 0.00569,
+      "sides": {
+       "top": {
+        "ink_share": 0.0,
+        "texture": 0.0
+       },
+       "bottom": {
+        "ink_share": 0.0,
+        "texture": 0.0
+       },
+       "left": {
+        "ink_share": 0.0,
+        "texture": 0.0
+       },
+       "right": {
+        "ink_share": 0.0,
+        "texture": 0.0
+       }
+      }
+     },
+     "findings": []
+    },
+    {
+     "frame": 88,
+     "role": "exit",
+     "metrics": {
+      "mean": 70.7,
+      "background": 64,
+      "edge_density": 0.00718,
+      "sides": {
+       "top": {
+        "ink_share": 0.0,
+        "texture": 0.0
+       },
+       "bottom": {
+        "ink_share": 0.0,
+        "texture": 0.0
+       },
+       "left": {
+        "ink_share": 0.0,
+        "texture": 0.0
+       },
+       "right": {
+        "ink_share": 0.033,
+        "texture": 0.25
+       }
+      }
+     },
+     "findings": []
+    },
+    {
+     "frame": 89,
+     "role": "last",
+     "metrics": {
+      "mean": 70.7,
+      "background": 64,
+      "edge_density": 0.00708,
+      "sides": {
+       "top": {
+        "ink_share": 0.0,
+        "texture": 0.0
+       },
+       "bottom": {
+        "ink_share": 0.0,
+        "texture": 0.0
+       },
+       "left": {
+        "ink_share": 0.0,
+        "texture": 0.0
+       },
+       "right": {
+        "ink_share": 0.0,
+        "texture": 0.0
+       }
+      }
+     },
+     "findings": []
+    }
+   ]
+  },
+  {
+   "scene": "S2",
+   "scene_id": "pss_000000000002",
+   "title": "S2 8s@30",
+   "composition": {
+    "id": "Scene",
+    "width": 1280,
+    "height": 720,
+    "fps": 30,
+    "duration_in_frames": 240
+   },
+   "http": 200,
+   "preview_s": 8.5,
+   "render_elapsed_ms": 8482,
+   "frames": [
+    {
+     "frame": 0,
+     "role": "first",
+     "metrics": {
+      "mean": 101.3,
+      "background": 101,
+      "edge_density": 0.00398,
+      "sides": {
+       "top": {
+        "ink_share": 0.0,
+        "texture": 0.0
+       },
+       "bottom": {
+        "ink_share": 0.0,
+        "texture": 0.0
+       },
+       "left": {
+        "ink_share": 0.0,
+        "texture": 0.0
+       },
+       "right": {
+        "ink_share": 0.0,
+        "texture": 0.0
+       }
+      }
+     },
+     "findings": []
+    },
+    {
+     "frame": 1,
+     "role": "entry",
+     "metrics": {
+      "mean": 101.3,
+      "background": 101,
+      "edge_density": 0.00385,
+      "sides": {
+       "top": {
+        "ink_share": 0.0,
+        "texture": 0.0
+       },
+       "bottom": {
+        "ink_share": 0.0,
+        "texture": 0.0
+       },
+       "left": {
+        "ink_share": 0.0,
+        "texture": 0.0
+       },
+       "right": {
+        "ink_share": 0.0,
+        "texture": 0.0
+       }
+      }
+     },
+     "findings": []
+    },
+    {
+     "frame": 119,
+     "role": "middle",
+     "metrics": {
+      "mean": 103.9,
+      "background": 101,
+      "edge_density": 0.00569,
+      "sides": {
+       "top": {
+        "ink_share": 0.0,
+        "texture": 0.0
+       },
+       "bottom": {
+        "ink_share": 0.0,
+        "texture": 0.0
+       },
+       "left": {
+        "ink_share": 0.0,
+        "texture": 0.0
+       },
+       "right": {
+        "ink_share": 0.0,
+        "texture": 0.0
+       }
+      }
+     },
+     "findings": []
+    },
+    {
+     "frame": 238,
+     "role": "exit",
+     "metrics": {
+      "mean": 106.4,
+      "background": 101,
+      "edge_density": 0.00723,
+      "sides": {
+       "top": {
+        "ink_share": 0.0,
+        "texture": 0.0
+       },
+       "bottom": {
+        "ink_share": 0.0,
+        "texture": 0.0
+       },
+       "left": {
+        "ink_share": 0.0,
+        "texture": 0.0
+       },
+       "right": {
+        "ink_share": 0.0,
+        "texture": 0.0
+       }
+      }
+     },
+     "findings": []
+    },
+    {
+     "frame": 239,
+     "role": "last",
+     "metrics": {
+      "mean": 106.4,
+      "background": 101,
+      "edge_density": 0.00726,
+      "sides": {
+       "top": {
+        "ink_share": 0.0,
+        "texture": 0.0
+       },
+       "bottom": {
+        "ink_share": 0.0,
+        "texture": 0.0
+       },
+       "left": {
+        "ink_share": 0.0,
+        "texture": 0.0
+       },
+       "right": {
+        "ink_share": 0.0,
+        "texture": 0.0
+       }
+      }
+     },
+     "findings": []
+    }
+   ]
+  },
+  {
+   "scene": "S3",
+   "scene_id": "pss_000000000003",
+   "title": "S3 30s@30",
+   "composition": {
+    "id": "Scene",
+    "width": 1280,
+    "height": 720,
+    "fps": 30,
+    "duration_in_frames": 900
+   },
+   "http": 200,
+   "preview_s": 8.5,
+   "render_elapsed_ms": 8528,
+   "frames": [
+    {
+     "frame": 0,
+     "role": "first",
+     "metrics": {
+      "mean": 55.4,
+      "background": 55,
+      "edge_density": 0.00484,
+      "sides": {
+       "top": {
+        "ink_share": 0.0,
+        "texture": 0.0
+       },
+       "bottom": {
+        "ink_share": 0.0,
+        "texture": 0.0
+       },
+       "left": {
+        "ink_share": 0.0,
+        "texture": 0.0
+       },
+       "right": {
+        "ink_share": 0.0,
+        "texture": 0.0
+       }
+      }
+     },
+     "findings": []
+    },
+    {
+     "frame": 1,
+     "role": "entry",
+     "metrics": {
+      "mean": 55.4,
+      "background": 55,
+      "edge_density": 0.00473,
+      "sides": {
+       "top": {
+        "ink_share": 0.0,
+        "texture": 0.0
+       },
+       "bottom": {
+        "ink_share": 0.0,
+        "texture": 0.0
+       },
+       "left": {
+        "ink_share": 0.0,
+        "texture": 0.0
+       },
+       "right": {
+        "ink_share": 0.0,
+        "texture": 0.0
+       }
+      }
+     },
+     "findings": []
+    },
+    {
+     "frame": 449,
+     "role": "middle",
+     "metrics": {
+      "mean": 58.8,
+      "background": 55,
+      "edge_density": 0.00673,
+      "sides": {
+       "top": {
+        "ink_share": 0.0,
+        "texture": 0.0
+       },
+       "bottom": {
+        "ink_share": 0.0,
+        "texture": 0.0
+       },
+       "left": {
+        "ink_share": 0.0,
+        "texture": 0.0
+       },
+       "right": {
+        "ink_share": 0.0,
+        "texture": 0.0
+       }
+      }
+     },
+     "findings": []
+    },
+    {
+     "frame": 898,
+     "role": "exit",
+     "metrics": {
+      "mean": 62.1,
+      "background": 55,
+      "edge_density": 0.00815,
+      "sides": {
+       "top": {
+        "ink_share": 0.0,
+        "texture": 0.0
+       },
+       "bottom": {
+        "ink_share": 0.0,
+        "texture": 0.0
+       },
+       "left": {
+        "ink_share": 0.0,
+        "texture": 0.0
+       },
+       "right": {
+        "ink_share": 0.0,
+        "texture": 0.0
+       }
+      }
+     },
+     "findings": []
+    },
+    {
+     "frame": 899,
+     "role": "last",
+     "metrics": {
+      "mean": 62.1,
+      "background": 55,
+      "edge_density": 0.00815,
+      "sides": {
+       "top": {
+        "ink_share": 0.0,
+        "texture": 0.0
+       },
+       "bottom": {
+        "ink_share": 0.0,
+        "texture": 0.0
+       },
+       "left": {
+        "ink_share": 0.0,
+        "texture": 0.0
+       },
+       "right": {
+        "ink_share": 0.0,
+        "texture": 0.0
+       }
+      }
+     },
+     "findings": []
+    }
+   ]
+  },
+  {
+   "scene": "S4",
+   "scene_id": "pss_000000000004",
+   "title": "S4 3s@25",
+   "composition": {
+    "id": "Scene",
+    "width": 1280,
+    "height": 720,
+    "fps": 25,
+    "duration_in_frames": 75
+   },
+   "http": 200,
+   "preview_s": 8.6,
+   "render_elapsed_ms": 8545,
+   "frames": [
+    {
+     "frame": 0,
+     "role": "first",
+     "metrics": {
+      "mean": 151.2,
+      "background": 151,
+      "edge_density": 0.00337,
+      "sides": {
+       "top": {
+        "ink_share": 0.0,
+        "texture": 0.0
+       },
+       "bottom": {
+        "ink_share": 0.0,
+        "texture": 0.0
+       },
+       "left": {
+        "ink_share": 0.0,
+        "texture": 0.0
+       },
+       "right": {
+        "ink_share": 0.0,
+        "texture": 0.0
+       }
+      }
+     },
+     "findings": []
+    },
+    {
+     "frame": 1,
+     "role": "entry",
+     "metrics": {
+      "mean": 151.2,
+      "background": 151,
+      "edge_density": 0.00342,
+      "sides": {
+       "top": {
+        "ink_share": 0.0,
+        "texture": 0.0
+       },
+       "bottom": {
+        "ink_share": 0.009,
+        "texture": 0.333
+       },
+       "left": {
+        "ink_share": 0.033,
+        "texture": 0.25
+       },
+       "right": {
+        "ink_share": 0.0,
+        "texture": 0.0
+       }
+      }
+     },
+     "findings": []
+    },
+    {
+     "frame": 37,
+     "role": "middle",
+     "metrics": {
+      "mean": 152.9,
+      "background": 151,
+      "edge_density": 0.00494,
+      "sides": {
+       "top": {
+        "ink_share": 0.0,
+        "texture": 0.0
+       },
+       "bottom": {
+        "ink_share": 0.0,
+        "texture": 0.0
+       },
+       "left": {
+        "ink_share": 0.0,
+        "texture": 0.0
+       },
+       "right": {
+        "ink_share": 0.0,
+        "texture": 0.0
+       }
+      }
+     },
+     "findings": []
+    },
+    {
+     "frame": 73,
+     "role": "exit",
+     "metrics": {
+      "mean": 154.6,
+      "background": 151,
+      "edge_density": 0.00636,
+      "sides": {
+       "top": {
+        "ink_share": 0.0,
+        "texture": 0.0
+       },
+       "bottom": {
+        "ink_share": 0.0,
+        "texture": 0.0
+       },
+       "left": {
+        "ink_share": 0.0,
+        "texture": 0.0
+       },
+       "right": {
+        "ink_share": 0.033,
+        "texture": 0.25
+       }
+      }
+     },
+     "findings": []
+    },
+    {
+     "frame": 74,
+     "role": "last",
+     "metrics": {
+      "mean": 154.7,
+      "background": 151,
+      "edge_density": 0.00628,
+      "sides": {
+       "top": {
+        "ink_share": 0.0,
+        "texture": 0.0
+       },
+       "bottom": {
+        "ink_share": 0.0,
+        "texture": 0.0
+       },
+       "left": {
+        "ink_share": 0.0,
+        "texture": 0.0
+       },
+       "right": {
+        "ink_share": 0.0,
+        "texture": 0.0
+       }
+      }
+     },
+     "findings": []
+    }
+   ]
+  },
+  {
+   "scene": "S5",
+   "scene_id": "pss_000000000005",
+   "title": "S5 8s@60",
+   "composition": {
+    "id": "Scene",
+    "width": 1280,
+    "height": 720,
+    "fps": 60,
+    "duration_in_frames": 480
+   },
+   "http": 200,
+   "preview_s": 9.0,
+   "render_elapsed_ms": 9035,
+   "frames": [
+    {
+     "frame": 0,
+     "role": "first",
+     "metrics": {
+      "mean": 66.3,
+      "background": 66,
+      "edge_density": 0.00435,
+      "sides": {
+       "top": {
+        "ink_share": 0.0,
+        "texture": 0.0
+       },
+       "bottom": {
+        "ink_share": 0.0,
+        "texture": 0.0
+       },
+       "left": {
+        "ink_share": 0.0,
+        "texture": 0.0
+       },
+       "right": {
+        "ink_share": 0.0,
+        "texture": 0.0
+       }
+      }
+     },
+     "findings": []
+    },
+    {
+     "frame": 1,
+     "role": "entry",
+     "metrics": {
+      "mean": 66.3,
+      "background": 66,
+      "edge_density": 0.00424,
+      "sides": {
+       "top": {
+        "ink_share": 0.0,
+        "texture": 0.0
+       },
+       "bottom": {
+        "ink_share": 0.0,
+        "texture": 0.0
+       },
+       "left": {
+        "ink_share": 0.0,
+        "texture": 0.0
+       },
+       "right": {
+        "ink_share": 0.0,
+        "texture": 0.0
+       }
+      }
+     },
+     "findings": []
+    },
+    {
+     "frame": 239,
+     "role": "middle",
+     "metrics": {
+      "mean": 69.5,
+      "background": 66,
+      "edge_density": 0.00632,
+      "sides": {
+       "top": {
+        "ink_share": 0.0,
+        "texture": 0.0
+       },
+       "bottom": {
+        "ink_share": 0.0,
+        "texture": 0.0
+       },
+       "left": {
+        "ink_share": 0.0,
+        "texture": 0.0
+       },
+       "right": {
+        "ink_share": 0.0,
+        "texture": 0.0
+       }
+      }
+     },
+     "findings": []
+    },
+    {
+     "frame": 478,
+     "role": "exit",
+     "metrics": {
+      "mean": 72.7,
+      "background": 66,
+      "edge_density": 0.00755,
+      "sides": {
+       "top": {
+        "ink_share": 0.0,
+        "texture": 0.0
+       },
+       "bottom": {
+        "ink_share": 0.0,
+        "texture": 0.0
+       },
+       "left": {
+        "ink_share": 0.0,
+        "texture": 0.0
+       },
+       "right": {
+        "ink_share": 0.0,
+        "texture": 0.0
+       }
+      }
+     },
+     "findings": []
+    },
+    {
+     "frame": 479,
+     "role": "last",
+     "metrics": {
+      "mean": 72.7,
+      "background": 66,
+      "edge_density": 0.00759,
+      "sides": {
+       "top": {
+        "ink_share": 0.0,
+        "texture": 0.0
+       },
+       "bottom": {
+        "ink_share": 0.0,
+        "texture": 0.0
+       },
+       "left": {
+        "ink_share": 0.0,
+        "texture": 0.0
+       },
+       "right": {
+        "ink_share": 0.0,
+        "texture": 0.0
+       }
+      }
+     },
+     "findings": []
+    }
+   ]
+  },
+  {
+   "scene": "S6",
+   "scene_id": "pss_000000000006",
+   "title": "S6 3s@30",
+   "composition": {
+    "id": "Scene",
+    "width": 1280,
+    "height": 720,
+    "fps": 30,
+    "duration_in_frames": 90
+   },
+   "http": 200,
+   "preview_s": 70.1,
+   "render_elapsed_ms": 70017,
+   "frames": [
+    {
+     "frame": 0,
+     "role": "first",
+     "metrics": {
+      "mean": 112.3,
+      "background": 112,
+      "edge_density": 0.00393,
+      "sides": {
+       "top": {
+        "ink_share": 0.0,
+        "texture": 0.0
+       },
+       "bottom": {
+        "ink_share": 0.0,
+        "texture": 0.0
+       },
+       "left": {
+        "ink_share": 0.0,
+        "texture": 0.0
+       },
+       "right": {
+        "ink_share": 0.0,
+        "texture": 0.0
+       }
+      }
+     },
+     "findings": []
+    },
+    {
+     "frame": 1,
+     "role": "entry",
+     "metrics": {
+      "mean": 112.3,
+      "background": 112,
+      "edge_density": 0.00396,
+      "sides": {
+       "top": {
+        "ink_share": 0.0,
+        "texture": 0.0
+       },
+       "bottom": {
+        "ink_share": 0.009,
+        "texture": 0.333
+       },
+       "left": {
+        "ink_share": 0.033,
+        "texture": 0.25
+       },
+       "right": {
+        "ink_share": 0.0,
+        "texture": 0.0
+       }
+      }
+     },
+     "findings": []
+    },
+    {
+     "frame": 44,
+     "role": "middle",
+     "metrics": {
+      "mean": 114.6,
+      "background": 112,
+      "edge_density": 0.00556,
+      "sides": {
+       "top": {
+        "ink_share": 0.0,
+        "texture": 0.0
+       },
+       "bottom": {
+        "ink_share": 0.0,
+        "texture": 0.0
+       },
+       "left": {
+        "ink_share": 0.0,
+        "texture": 0.0
+       },
+       "right": {
+        "ink_share": 0.0,
+        "texture": 0.0
+       }
+      }
+     },
+     "findings": []
+    },
+    {
+     "frame": 88,
+     "role": "exit",
+     "metrics": {
+      "mean": 117.0,
+      "background": 112,
+      "edge_density": 0.00707,
+      "sides": {
+       "top": {
+        "ink_share": 0.0,
+        "texture": 0.0
+       },
+       "bottom": {
+        "ink_share": 0.0,
+        "texture": 0.0
+       },
+       "left": {
+        "ink_share": 0.0,
+        "texture": 0.0
+       },
+       "right": {
+        "ink_share": 0.033,
+        "texture": 0.25
+       }
+      }
+     },
+     "findings": []
+    },
+    {
+     "frame": 89,
+     "role": "last",
+     "metrics": {
+      "mean": 117.0,
+      "background": 112,
+      "edge_density": 0.00694,
+      "sides": {
+       "top": {
+        "ink_share": 0.0,
+        "texture": 0.0
+       },
+       "bottom": {
+        "ink_share": 0.0,
+        "texture": 0.0
+       },
+       "left": {
+        "ink_share": 0.0,
+        "texture": 0.0
+       },
+       "right": {
+        "ink_share": 0.0,
+        "texture": 0.0
+       }
+      }
+     },
+     "findings": []
+    }
+   ]
+  },
+  {
+   "scene": "S7",
+   "scene_id": "pss_000000000007",
+   "title": "S7 8s@24",
+   "composition": {
+    "id": "Scene",
+    "width": 1280,
+    "height": 720,
+    "fps": 24,
+    "duration_in_frames": 192
+   },
+   "http": 200,
+   "preview_s": 8.5,
+   "render_elapsed_ms": 8478,
+   "frames": [
+    {
+     "frame": 0,
+     "role": "first",
+     "metrics": {
+      "mean": 123.2,
+      "background": 123,
+      "edge_density": 0.00357,
+      "sides": {
+       "top": {
+        "ink_share": 0.0,
+        "texture": 0.0
+       },
+       "bottom": {
+        "ink_share": 0.0,
+        "texture": 0.0
+       },
+       "left": {
+        "ink_share": 0.0,
+        "texture": 0.0
+       },
+       "right": {
+        "ink_share": 0.0,
+        "texture": 0.0
+       }
+      }
+     },
+     "findings": []
+    },
+    {
+     "frame": 1,
+     "role": "entry",
+     "metrics": {
+      "mean": 123.3,
+      "background": 123,
+      "edge_density": 0.00367,
+      "sides": {
+       "top": {
+        "ink_share": 0.0,
+        "texture": 0.0
+       },
+       "bottom": {
+        "ink_share": 0.009,
+        "texture": 0.333
+       },
+       "left": {
+        "ink_share": 0.033,
+        "texture": 0.25
+       },
+       "right": {
+        "ink_share": 0.0,
+        "texture": 0.0
+       }
+      }
+     },
+     "findings": []
+    },
+    {
+     "frame": 95,
+     "role": "middle",
+     "metrics": {
+      "mean": 125.4,
+      "background": 123,
+      "edge_density": 0.00531,
+      "sides": {
+       "top": {
+        "ink_share": 0.0,
+        "texture": 0.0
+       },
+       "bottom": {
+        "ink_share": 0.0,
+        "texture": 0.0
+       },
+       "left": {
+        "ink_share": 0.0,
+        "texture": 0.0
+       },
+       "right": {
+        "ink_share": 0.0,
+        "texture": 0.0
+       }
+      }
+     },
+     "findings": []
+    },
+    {
+     "frame": 190,
+     "role": "exit",
+     "metrics": {
+      "mean": 127.6,
+      "background": 123,
+      "edge_density": 0.00687,
+      "sides": {
+       "top": {
+        "ink_share": 0.0,
+        "texture": 0.0
+       },
+       "bottom": {
+        "ink_share": 0.0,
+        "texture": 0.0
+       },
+       "left": {
+        "ink_share": 0.0,
+        "texture": 0.0
+       },
+       "right": {
+        "ink_share": 0.033,
+        "texture": 0.25
+       }
+      }
+     },
+     "findings": []
+    },
+    {
+     "frame": 191,
+     "role": "last",
+     "metrics": {
+      "mean": 127.7,
+      "background": 123,
+      "edge_density": 0.00678,
+      "sides": {
+       "top": {
+        "ink_share": 0.0,
+        "texture": 0.0
+       },
+       "bottom": {
+        "ink_share": 0.0,
+        "texture": 0.0
+       },
+       "left": {
+        "ink_share": 0.0,
+        "texture": 0.0
+       },
+       "right": {
+        "ink_share": 0.0,
+        "texture": 0.0
+       }
+      }
+     },
+     "findings": []
+    }
+   ]
+  },
+  {
+   "scene": "S8",
+   "scene_id": "pss_000000000008",
+   "title": "S8 3s@30",
+   "composition": {
+    "id": "Scene",
+    "width": 1280,
+    "height": 720,
+    "fps": 30,
+    "duration_in_frames": 90
+   },
+   "http": 200,
+   "preview_s": 8.4,
+   "render_elapsed_ms": 8441,
+   "frames": [
+    {
+     "frame": 0,
+     "role": "first",
+     "metrics": {
+      "mean": 96.3,
+      "background": 96,
+      "edge_density": 0.00407,
+      "sides": {
+       "top": {
+        "ink_share": 0.0,
+        "texture": 0.0
+       },
+       "bottom": {
+        "ink_share": 0.0,
+        "texture": 0.0
+       },
+       "left": {
+        "ink_share": 0.0,
+        "texture": 0.0
+       },
+       "right": {
+        "ink_share": 0.0,
+        "texture": 0.0
+       }
+      }
+     },
+     "findings": []
+    },
+    {
+     "frame": 1,
+     "role": "entry",
+     "metrics": {
+      "mean": 96.3,
+      "background": 96,
+      "edge_density": 0.00411,
+      "sides": {
+       "top": {
+        "ink_share": 0.0,
+        "texture": 0.0
+       },
+       "bottom": {
+        "ink_share": 0.009,
+        "texture": 0.333
+       },
+       "left": {
+        "ink_share": 0.033,
+        "texture": 0.25
+       },
+       "right": {
+        "ink_share": 0.0,
+        "texture": 0.0
+       }
+      }
+     },
+     "findings": []
+    },
+    {
+     "frame": 44,
+     "role": "middle",
+     "metrics": {
+      "mean": 98.9,
+      "background": 96,
+      "edge_density": 0.00572,
+      "sides": {
+       "top": {
+        "ink_share": 0.0,
+        "texture": 0.0
+       },
+       "bottom": {
+        "ink_share": 0.0,
+        "texture": 0.0
+       },
+       "left": {
+        "ink_share": 0.0,
+        "texture": 0.0
+       },
+       "right": {
+        "ink_share": 0.0,
+        "texture": 0.0
+       }
+      }
+     },
+     "findings": []
+    },
+    {
+     "frame": 88,
+     "role": "exit",
+     "metrics": {
+      "mean": 101.6,
+      "background": 96,
+      "edge_density": 0.00721,
+      "sides": {
+       "top": {
+        "ink_share": 0.0,
+        "texture": 0.0
+       },
+       "bottom": {
+        "ink_share": 0.0,
+        "texture": 0.0
+       },
+       "left": {
+        "ink_share": 0.0,
+        "texture": 0.0
+       },
+       "right": {
+        "ink_share": 0.033,
+        "texture": 0.25
+       }
+      }
+     },
+     "findings": []
+    },
+    {
+     "frame": 89,
+     "role": "last",
+     "metrics": {
+      "mean": 101.6,
+      "background": 96,
+      "edge_density": 0.00711,
+      "sides": {
+       "top": {
+        "ink_share": 0.0,
+        "texture": 0.0
+       },
+       "bottom": {
+        "ink_share": 0.0,
+        "texture": 0.0
+       },
+       "left": {
+        "ink_share": 0.0,
+        "texture": 0.0
+       },
+       "right": {
+        "ink_share": 0.0,
+        "texture": 0.0
+       }
+      }
+     },
+     "findings": []
+    }
+   ]
+  },
+  {
+   "scene": "S9",
+   "scene_id": "pss_000000000009",
+   "title": "S9 8s@30",
+   "composition": {
+    "id": "Scene",
+    "width": 1280,
+    "height": 720,
+    "fps": 30,
+    "duration_in_frames": 240
+   },
+   "http": 200,
+   "preview_s": 8.9,
+   "render_elapsed_ms": 8908,
+   "frames": [
+    {
+     "frame": 0,
+     "role": "first",
+     "metrics": {
+      "mean": 56.4,
+      "background": 56,
+      "edge_density": 0.0044,
+      "sides": {
+       "top": {
+        "ink_share": 0.0,
+        "texture": 0.0
+       },
+       "bottom": {
+        "ink_share": 0.0,
+        "texture": 0.0
+       },
+       "left": {
+        "ink_share": 0.0,
+        "texture": 0.0
+       },
+       "right": {
+        "ink_share": 0.0,
+        "texture": 0.0
+       }
+      }
+     },
+     "findings": []
+    },
+    {
+     "frame": 1,
+     "role": "entry",
+     "metrics": {
+      "mean": 56.4,
+      "background": 56,
+      "edge_density": 0.00426,
+      "sides": {
+       "top": {
+        "ink_share": 0.0,
+        "texture": 0.0
+       },
+       "bottom": {
+        "ink_share": 0.0,
+        "texture": 0.0
+       },
+       "left": {
+        "ink_share": 0.0,
+        "texture": 0.0
+       },
+       "right": {
+        "ink_share": 0.0,
+        "texture": 0.0
+       }
+      }
+     },
+     "findings": []
+    },
+    {
+     "frame": 119,
+     "role": "middle",
+     "metrics": {
+      "mean": 59.7,
+      "background": 56,
+      "edge_density": 0.00615,
+      "sides": {
+       "top": {
+        "ink_share": 0.0,
+        "texture": 0.0
+       },
+       "bottom": {
+        "ink_share": 0.0,
+        "texture": 0.0
+       },
+       "left": {
+        "ink_share": 0.0,
+        "texture": 0.0
+       },
+       "right": {
+        "ink_share": 0.0,
+        "texture": 0.0
+       }
+      }
+     },
+     "findings": []
+    },
+    {
+     "frame": 238,
+     "role": "exit",
+     "metrics": {
+      "mean": 63.0,
+      "background": 56,
+      "edge_density": 0.00769,
+      "sides": {
+       "top": {
+        "ink_share": 0.0,
+        "texture": 0.0
+       },
+       "bottom": {
+        "ink_share": 0.0,
+        "texture": 0.0
+       },
+       "left": {
+        "ink_share": 0.0,
+        "texture": 0.0
+       },
+       "right": {
+        "ink_share": 0.0,
+        "texture": 0.0
+       }
+      }
+     },
+     "findings": []
+    },
+    {
+     "frame": 239,
+     "role": "last",
+     "metrics": {
+      "mean": 63.0,
+      "background": 56,
+      "edge_density": 0.00772,
+      "sides": {
+       "top": {
+        "ink_share": 0.0,
+        "texture": 0.0
+       },
+       "bottom": {
+        "ink_share": 0.0,
+        "texture": 0.0
+       },
+       "left": {
+        "ink_share": 0.0,
+        "texture": 0.0
+       },
+       "right": {
+        "ink_share": 0.0,
+        "texture": 0.0
+       }
+      }
+     },
+     "findings": []
+    }
+   ]
+  }
+ ],
+ "smoke_s": 148.4,
+ "page_s": 23.4,
+ "page_probe": {
+  "S1": [
+   {
+    "page": "/page/scene-d3e07ab7bb44212d2b5bdddeaf03f0cf/host-b933e602657040de671a9e1b5f491d60",
+    "text": "S1 3s@30 30",
+    "fonts": [
+     {
+      "family": "\"Times New Roman\"",
+      "available": {
+       "Times New Roman": true
+      },
+      "failed_faces": []
+     }
+    ],
+    "assets": [],
+    "overflow": []
+   }
+  ],
+  "S2": [
+   {
+    "page": "/page/scene-d3e07ab7bb44212d2b5bdddeaf03f0cf/host-b933e602657040de671a9e1b5f491d60",
+    "text": "S2 8s@30 120",
+    "fonts": [
+     {
+      "family": "\"Times New Roman\"",
+      "available": {
+       "Times New Roman": true
+      },
+      "failed_faces": []
+     }
+    ],
+    "assets": [],
+    "overflow": []
+   }
+  ],
+  "S3": [
+   {
+    "page": "/page/scene-d3e07ab7bb44212d2b5bdddeaf03f0cf/host-b933e602657040de671a9e1b5f491d60",
+    "text": "S3 30s@30 450",
+    "fonts": [
+     {
+      "family": "\"Times New Roman\"",
+      "available": {
+       "Times New Roman": true
+      },
+      "failed_faces": []
+     }
+    ],
+    "assets": [],
+    "overflow": []
+   }
+  ],
+  "S4": [
+   {
+    "page": "/page/scene-d3e07ab7bb44212d2b5bdddeaf03f0cf/host-b933e602657040de671a9e1b5f491d60",
+    "text": "S4 3s@25 25",
+    "fonts": [
+     {
+      "family": "\"Times New Roman\"",
+      "available": {
+       "Times New Roman": true
+      },
+      "failed_faces": []
+     }
+    ],
+    "assets": [],
+    "overflow": []
+   }
+  ],
+  "S5": [
+   {
+    "page": "/page/scene-d3e07ab7bb44212d2b5bdddeaf03f0cf/host-b933e602657040de671a9e1b5f491d60",
+    "text": "S5 8s@60 240",
+    "fonts": [
+     {
+      "family": "\"Times New Roman\"",
+      "available": {
+       "Times New Roman": true
+      },
+      "failed_faces": []
+     }
+    ],
+    "assets": [],
+    "overflow": []
+   }
+  ],
+  "S6": [
+   {
+    "page": "/page/scene-d3e07ab7bb44212d2b5bdddeaf03f0cf/host-b933e602657040de671a9e1b5f491d60",
+    "text": "S6 3s@30 30",
+    "fonts": [
+     {
+      "family": "\"Times New Roman\"",
+      "available": {
+       "Times New Roman": true
+      },
+      "failed_faces": []
+     }
+    ],
+    "assets": [],
+    "overflow": []
+   }
+  ],
+  "S7": [
+   {
+    "page": "/page/scene-d3e07ab7bb44212d2b5bdddeaf03f0cf/host-b933e602657040de671a9e1b5f491d60",
+    "text": "S7 8s@24 96",
+    "fonts": [
+     {
+      "family": "\"Times New Roman\"",
+      "available": {
+       "Times New Roman": true
+      },
+      "failed_faces": []
+     }
+    ],
+    "assets": [],
+    "overflow": []
+   }
+  ],
+  "S8": [
+   {
+    "page": "/page/scene-d3e07ab7bb44212d2b5bdddeaf03f0cf/host-b933e602657040de671a9e1b5f491d60",
+    "text": "S8 3s@30 30",
+    "fonts": [
+     {
+      "family": "\"Times New Roman\"",
+      "available": {
+       "Times New Roman": true
+      },
+      "failed_faces": []
+     }
+    ],
+    "assets": [],
+    "overflow": []
+   }
+  ],
+  "S9": [
+   {
+    "page": "/page/scene-d3e07ab7bb44212d2b5bdddeaf03f0cf/host-b933e602657040de671a9e1b5f491d60",
+    "text": "S9 8s@30 120",
+    "fonts": [
+     {
+      "family": "\"Times New Roman\"",
+      "available": {
+       "Times New Roman": true
+      },
+      "failed_faces": []
+     }
+    ],
+    "assets": [],
+    "overflow": []
+   }
+  ]
+ },
+ "report": {
+  "compilation": {
+   "status": "not_run_here"
+  },
+  "first_draft_gate": {
+   "status": "not_run_here"
+  },
+  "frame_quality": {
+   "verdict": "clean",
+   "counts": {},
+   "findings": [],
+   "thresholds": {
+    "edge_step": 20,
+    "blank_edge_density": 0.0008,
+    "black_mean": 16.0,
+    "ink_delta": 48,
+    "band_depth": 4,
+    "clipped_ink_share": 0.05,
+    "corner_run_texture": 0.05,
+    "overflow_ink_share": 0.02,
+    "overflow_texture": 0.4,
+    "repeat_mean_delta": 0.005,
+    "frozen_span_ms": 1000,
+    "truncation_share": 0.97,
+    "stale_progress_ms": 500,
+    "stale_bar_share": 0.08
+   }
+  },
+  "human_assessment": {
+   "status": "pending",
+   "note": "machine findings never replace the Human creative assessment"
+  }
+ }
+}

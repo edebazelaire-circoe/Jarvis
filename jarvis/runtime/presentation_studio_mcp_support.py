@@ -115,14 +115,17 @@ SENTENCES: dict[str, str] = {
     "presentation_studio_prefab_unavailable": "Le prefab de cette scène n'est pas disponible : rien n'a été écrit.",
     "presentation_studio_draft_refused": "Le brouillon est refusé : le rapport complet est dans la réponse, corrige tout puis resoumets.",
     "presentation_studio_template_selection_required": "Choisis explicitement les scènes et les paramètres du modèle d'après le plan.",
-    "explorer_run_in_progress": "Une lecture tourne : l'explorateur est un outil d'édition, arrête d'abord la lecture.",
+    "explorer_run_in_progress": "Une autre présentation est en cours : Variantes la montre ; arrête-la d'abord (presentation_play stop) pour ouvrir celle-ci.",
     "explorer_unknown_presentation": "La page ne connaît pas cette présentation ou cette variante.",
-    "explorer_unavailable": "L'explorateur n'est pas disponible dans cette page.",
+    "explorer_unavailable": "Variantes n'est pas disponible dans cette page.",
     "explorer_load_failed": "Core n'a pas pu rendre le graphe à la page.",
     "explorer_page_error": "La page a rencontré une erreur : elle est dans les journaux.",
-    "explorer_dialog_open": "Un formulaire est ouvert dans l'explorateur : l'utilisateur doit le fermer ou le valider d'abord.",
+    "explorer_dialog_open": "Un formulaire est ouvert dans Variantes : l'utilisateur doit le fermer ou le valider d'abord.",
     "explorer_no_visible_page": "Aucune page du Control Center n'est visible : l'utilisateur doit ouvrir l'interface de JARVIS.",
-    "explorer_command_busy": "Une autre commande d'explorateur est en cours : réessaie dans un instant.",
+    "explorer_command_busy": "Une autre commande de Variantes est en cours : réessaie dans un instant.",
+    # native-studio-playback-fix Slice 09 : une présentation se montre dans Variantes, jamais dans une fenêtre du Board.
+    "surface_unavailable": ("Aucune page de JARVIS ne peut montrer la présentation dans Variantes : elle a démarré puis a été mise en pause. "
+                            "Dis à l'utilisateur d'ouvrir l'interface de JARVIS ; la présentation reprend avec presentation_play resume."),
     "mode_switch_refused": ("Le mode d'interaction ne se change que sur une demande de l'utilisateur dans le tour en cours : "
                             "l'utilisateur doit lancer cette lecture lui-même (bouton du lecteur) ou le demander à voix haute."),
     "control_center_unreachable": "Le Control Center est injoignable : l'interface de JARVIS doit tourner.",
@@ -130,6 +133,8 @@ SENTENCES: dict[str, str] = {
     # jarvis-remotion (Remotion Slice 21) : les mêmes routes de Core que les cartes du Control Center ; le refus dit quoi dire à l'utilisateur.
     "presentation_studio_source_request_required": ("Core n'édite une source pour le cerveau que sur une demande de source EN ATTENTE, enregistrée dans un tour de "
                                                     "l'utilisateur pour cette scène : demande à renouveler (scene.source_request dans le tour de l'utilisateur)."),
+    "presentation_studio_scene_edited_in_remotion": ("L'utilisateur a des modifications non publiées de cette scène dans Remotion Studio : rien n'est écrit. "
+                                                     "Dis-lui de les publier ou de les mettre de côté ; ne contourne pas."),
     "core_timeout": ("Core n'a pas répondu à temps : l'issue est inconnue, relis l'état avant de réessayer (remotion_status exports pour un export, "
                      "presentation_inspect pour une présentation) : un travail a pu partir."),
     "remotion_user_turn_required": "Ce tour n'est pas une demande de l'utilisateur : rien n'est lancé. Dis en une phrase que tu le fais dès qu'il le demande ; ne réessaie pas.",
@@ -141,6 +146,7 @@ SENTENCES: dict[str, str] = {
     "presentation_render_runtime_unavailable": "Remotion n'est pas prêt sur ce poste : propose à l'utilisateur de l'installer ou de le réparer (remotion_setup, sur sa demande).",
     "presentation_render_browser_unavailable": "Aucun Chrome ni Edge sur ce poste : l'export vidéo est impossible, dis-le tel quel.",
     "presentation_render_queue_full": "Huit exports sont déjà en cours ou en attente : attends qu'un s'achève ou annule-en un (remotion_export cancel, sur demande).",
+    "presentation_render_preview_busy": "Le navigateur des rendus est occupé : attends la fin de l'aperçu ou de l'export en cours, puis redemande un seul aperçu.",
     "presentation_render_disk_low": "Il reste moins de 1,5 Gio de disque : l'export ne part pas. Dis-le à l'utilisateur.",
     "presentation_render_unknown_job": "Cet export n'existe pas (ou a été oublié par Core) : prends un job_id de remotion_status (target exports).",
     "presentation_render_not_cancellable": "Cet export est déjà terminé ou en finalisation : rien à annuler.",
@@ -166,6 +172,27 @@ SENTENCES: dict[str, str] = {
 
 def sentence_for(code: str, fallback: str = "") -> str:
     return SENTENCES.get(code) or fallback or "Refusé."
+
+
+#: `surface_unavailable` (native-studio-playback-fix Slice 09 rework): the run started then was paused because Variants could not show
+#: it; what to do depends on WHY the page could not (the code of its receipt). A page that refused because a form is open or another
+#: explorer command was in flight IS visible: « open the JARVIS interface » would be wrong advice there.
+SURFACE_UNAVAILABLE_ADVICE: dict[str, str] = {
+    "explorer_dialog_open": ("Variantes n'a pas pu la montrer : un formulaire y est ouvert. Demande à l'utilisateur de le fermer ou de le "
+                             "valider, puis ouvre Variantes sur la présentation (presentation_view window_open) et reprends avec "
+                             "presentation_play resume."),
+    "explorer_command_busy": ("Variantes n'a pas pu la montrer : une autre commande de Variantes était en cours. Dans un instant, ouvre "
+                              "Variantes sur la présentation (presentation_view window_open), puis reprends avec presentation_play resume."),
+}
+
+
+def surface_unavailable_sentence(code: str) -> str:
+    """The `surface_unavailable` sentence for the page's own refusal `code` (default: no visible page)."""
+
+    advice = SURFACE_UNAVAILABLE_ADVICE.get(code)
+    if advice is None:
+        return SENTENCES["surface_unavailable"]
+    return "La présentation a démarré puis a été mise en pause. " + advice
 
 
 class ConfirmationLedger:
@@ -206,4 +233,4 @@ class ConfirmationLedger:
 
 
 __all__ = ["BRAIN_ACTOR", "CONFIG_FILE_NAME", "ConfirmationLedger", "PresentationMcpTarget", "PresentationToolError", "SENTENCES",
-           "SERVER_NAME", "capped", "clip", "sentence_for"]
+           "SERVER_NAME", "SURFACE_UNAVAILABLE_ADVICE", "capped", "clip", "sentence_for", "surface_unavailable_sentence"]

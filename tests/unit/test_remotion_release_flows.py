@@ -102,9 +102,12 @@ async def test_the_remotion_journey_from_a_brief_to_exports_import_promotion_and
         with Timer("2_start_the_run"):
             status, started = await stack.call("POST", BASE + "/playback/start", json={"actor": "user", "presentation_id": pid, "role": "user_presenter"})
         assert status == 200 and started["state"]["phase"] == "playing", started
+        # Slice 09 (native-studio-playback-fix): the run shows on the Variants run surface, never on a Board window
         _, snapshot = await stack.call("GET", "/v1/scene/snapshot")
-        [stage] = stage_objects(snapshot)
-        assert stage["payload"]["prefab"]["id"] == scenes[0]["prefab"]["id"], "the stage shows the Remotion scene pinned by the deck"
+        assert stage_objects(snapshot) == [], "no Board stage window for a run"
+        _, surface = await stack.call("GET", BASE + "/playback/surface")
+        stage = surface["surface"]
+        assert stage["surface_id"].startswith("variants-run-") and stage["prefab"]["id"] == scenes[0]["prefab"]["id"],             "the run surface shows the Remotion scene pinned by the deck"
         assert "srcdoc" not in json.dumps(stage), "no HTML document is mounted for a Remotion scene"
         _, armed = await stack.call("GET", BASE + "/playback/armed")
         assert armed["cues"], "the deck's first cue is armed with its phrase"
@@ -126,8 +129,8 @@ async def test_the_remotion_journey_from_a_brief_to_exports_import_promotion_and
         current = next(s for s in after_edit["scenes"] if s["scene_id"] == scene_id)
         assert current["props"].get("headline") == "Chiffre du jour" and current["prefab"] == next(s for s in before_edit["scenes"] if s["scene_id"] == scene_id)["prefab"], \
             "a props edit never republishes the source"
-        _, snapshot = await stack.call("GET", "/v1/scene/snapshot")
-        assert stage_objects(snapshot) == [], "stopping the run removes the stage"
+        _, surface = await stack.call("GET", BASE + "/playback/surface")
+        assert surface["surface"] is None, "stopping the run releases the surface"
 
         # ------------------------------------------------------------ 4. source edit: built before publication; a broken one is refused; the old one is restored
         target = scenes[0]["scene_id"]

@@ -32,7 +32,12 @@ async def world(tmp_path):
 
 
 async def stage_ids(core) -> list[str]:
-    return [o.object_id for o in (await core.stack.core.scene.snapshot()).objects if o.object_id.startswith("studio-stage-")]
+    """The run surface of Variants (Slice 09: `[surface id]` while a run shows something). A run never creates a Board window."""
+
+    board = [o.object_id for o in (await core.stack.core.scene.snapshot()).objects if o.object_id.startswith(("studio-stage-", "studio-aux-"))]
+    assert board == [], "native-studio-playback-fix Slice 09: no Board window is ever created to play"
+    surface = core.stack.core.presentation_studio_stage.stage_object_id
+    return [surface] if surface else []
 
 
 async def numbered(world, pid) -> dict[int, str]:
@@ -60,8 +65,8 @@ async def test_journey_one_shot_report_from_brief_to_the_screen_and_back(world):
     assert started["state"]["phase"] == "playing" and started["state"]["position"] == {"index": 1, "of": 1}
     assert started["state"]["art_direction"] == "fallback"
     [stage] = await stage_ids(world.core)
-    snapshot = await world.core.stack.core.scene.snapshot()
-    assert "quarante-deux fichiers" in snapshot.get_object(stage).payload.prefab.data["body"], "the report is on the screen"
+    surface = world.core.stack.core.presentation_studio_stage
+    assert "quarante-deux fichiers" in surface.current_block(stage).data["body"], "the report is on the screen (the Variants surface)"
     stopped = await world.tools.play("stop")
     assert stopped["state"]["phase"] == "stopped" and await stage_ids(world.core) == []
 
@@ -158,7 +163,7 @@ async def test_journey_rehearsal_section_where_am_i_edit_pause_resume_and_backtr
         resumed = await world.tools.play("resume")
         assert resumed["state"]["phase"] in ("playing", "resuming")
     stage = (await stage_ids(world.core))[0]
-    shown = (await world.core.stack.core.scene.snapshot()).get_object(stage).payload.prefab.props
+    shown = world.core.stack.core.presentation_studio_stage.current_block(stage).props
     assert shown["headline"] == "Marge et coûts", "the refined text is what the rehearsal shows next"
     # backtrack, then forward again: position and refined state survive
     assert (await world.tools.play("previous"))["state"]["position"]["index"] == 3
