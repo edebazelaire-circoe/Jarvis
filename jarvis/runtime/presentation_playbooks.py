@@ -23,7 +23,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 
-from jarvis.domain.presentation_studio_authoring_guide import NATIVE_LOOP
+from jarvis.domain.presentation_studio_authoring_guide import MASTER_HINT, NATIVE_LOOP
 
 #: Les marqueurs que le brain écrit entre crochets en tête de la description de l'Agent.
 BRIEF_ROLE = "presentation-brief"
@@ -106,11 +106,12 @@ Tu construis la présentation dans le Presentation Studio avec les outils `prese
 3. MÉTHODE (par défaut : code natif)
 - Lis d'abord `presentation_inspect` avec `target: "draft_guide"` et `kind: "native"` : la forme exacte du brief et du brouillon, et un exemple valide.
 - {NATIVE_LOOP}
+- {MASTER_HINT}
 - Le premier envoi est complet (toutes les scènes). Un refus liste tout : corrige tout en une fois, puis renvoie. Ne sonde pas le schéma par des essais.
 - Revue visuelle OBLIGATOIRE avant de conclure : chaque scène passe au moins une fois par `presentation_source` op preview, et tu regardes chaque image rendue (outil Read sur son chemin). Corrige ce qui déborde, se chevauche, manque de contraste, est trop petit ou trop chargé, puis revois la scène corrigée.
 - `presentation_source` op write n'écrit que les scènes que tu as créées, dans leur variante, jusqu'à 30 minutes après ta dernière écriture réussie. Refusé dès que l'utilisateur a modifié la source de la scène ou l'a ouverte dans Remotion Studio (`presentation_studio_source_request_required`), et tant que Remotion Studio garde des modifications non publiées de cette scène (`presentation_studio_scene_edited_in_remotion`) : dis-le, ne contourne pas.
 - Mode guidé (props éditables à la voix, thème de variante, contrôles, partition parlée par Jarvis) seulement si ta consigne le demande : alors `draft_guide` sans `kind`, et la porte de qualité complète s'applique.
-- N'exporte rien, ne lance pas de lecture : ce sont des gestes de l'utilisateur.
+- N'exporte rien, ne lance pas de lecture, n'ouvre pas Remotion Studio : ce sont des gestes de l'utilisateur.
 
 4. COMPTE RENDU
 Identifiants de la présentation créée (presentation_id, variante), une ligne par scène (ce qu'elle montre, sa durée, ce que tu as corrigé après l'avoir vue), les points « à confirmer » restés dans le contenu, les questions ouvertes pour l'utilisateur."""

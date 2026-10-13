@@ -4,7 +4,8 @@ Status: **Level 2 — contract; implementation in Slices 03-08 of handoff jarvis
 § 2, § 3 and § 5, the pure planner (Level 3 (Slice 03), `jarvis/domain/remotion_master_project.py`); § 6 and § 7, the workspace files and
 the generated composition (Level 3 (Slice 04), `jarvis/domain/remotion_master_files.py`); § 9 and § 11, the Studio master target and the
 live readiness read (Level 3 (Slice 05), `jarvis/core/remotion_studio_service.py`); § 10, the whole-video render scope (Level 3
-(Slice 06), `jarvis/domain/presentation_render_master.py`). Every other behaviour below is the
+(Slice 06), `jarvis/domain/presentation_render_master.py`); § 12, voice and agent (Level 3 (Slice 07), `jarvis/domain/remotion_master_sentences.py`,
+`jarvis/runtime/remotion_mcp_tools.py`). Every other behaviour below is the
 contract the Slices implement, and every "is" means "must be" until the Slice that owns it lands (owners: § 16). Evidence for the choices: the handoff's Slice 01 audit (`tasks/jarvis-remotion-master-project-studio-export/slices/01-current-state-and-compatibility-audit/AUDIT.md`,
 real runs on the pinned Remotion 4.0.534). Decisions marked *decided by agent 0* were taken by the handoff's orchestrator under the Human's
 delegated autonomy (2026-10-13).
@@ -374,7 +375,7 @@ slot, cancellation, restart recovery, guard, disk budgets); the job runs `render
 `JarvisPresentation` and input props `{}`; a master job view adds `scope`, `project_key`, `scene_count` (its `scene_id` is `null`).
 `RenderRunner.verify(..., audio_required=True)` checks the audio stream. `PresentationRenderService.master_readiness(snapshot_id)` serves
 `GET .../render/master?snapshot_id=` (the only render route that takes a query; the id must be a snapshot id), relayed by the Control Center
-(`jarvis/runtime/presentation_render_relay.py`, the id checked before the relay). MCP `remotion_export` does not take `scope` yet (Slice 07).
+(`jarvis/runtime/presentation_render_relay.py`, the id checked before the relay). MCP `remotion_export` takes `scope` since Slice 07 (§ 12).
 Tests: `tests/unit/test_presentation_render_master.py`, routes and relay tests; real proof `tests/unit/test_presentation_render_master_real.py`.
 
 ## 11. Live readiness read — Level 3 (Slice 05)
@@ -390,7 +391,7 @@ to the Studio service for its master target); the relay row `studio_master_proje
 unknown presentation or variant is the usual 404 `presentation_studio_unknown_*`; a query parameter is 400. The page client reads it with
 `JarvisRemotionStudioCore.createClient(...).masterProject(presentation_id, variant_id)`. Tests: `tests/unit/test_remotion_studio_master_routes.py`.
 
-## 12. Voice and agent
+## 12. Voice and agent — Level 3 (Slice 07)
 
 - **Spec of new scenes (M11, Slice 07)**: authoring a scene into a variant that has scenes uses the variant's shared spec; a brand-new native
   deck uses 1920x1080 @ 30 fps (the native example). Structured and guided defaults (1280x720 @ 30) are unchanged, so a deck authored by one
@@ -408,6 +409,38 @@ unknown presentation or variant is the usual 404 `presentation_studio_unknown_*`
   `project_key` changes, an open master Studio becomes `stale`, and the next whole-video export freezes the new revision and renders the new
   key. The agent compares `render_project_key` with the current key and never reuses an older derivative as "the updated video".
 - **Never**: the agent does not open Remotion Studio, does not write in a master workspace, does not claim it edited master files.
+
+**Implementation (Level 3, Slice 07).**
+
+- **Sentences and view**: `jarvis/domain/remotion_master_sentences.py` holds the § 3 user sentences word for word (`REASON_SENTENCES`; the
+  scene position and the colliding path are filled from `detail` when it names them; an unknown reason is said as « La vidéo entière n'est pas
+  disponible pour cette variante. », never re-labelled) and `agent_view(wire)`, the compact `master` block: ready → `status`,
+  `variant_revision`, `project_key`, `scenes` (count), `duration_s`, `spec` (`1920x1080@30`); incompatible → `status`, `reason`, `say`
+  (the sentence), `detail`, `scene_ids`. It projects the plan view; it never re-checks anything.
+- **Where the agent reads it**: `PresentationTools._master_block` (`jarvis/runtime/presentation_studio_mcp_tools.py`) reads
+  `GET .../master-project` (§ 11) through `LocalCoreClient.presentation_studio_master_project` and adds `master` to `presentation_inspect`
+  target `variant`, to a standing `presentation_source` write (read after the write) and to a preview, and to `presentation_draft_assemble` /
+  `_finalize`. A failed read never fails the call it rides: `master: {status: "unknown", error: <code>}` and a warning
+  `presentation_studio.master_unread` in the journal.
+- **Export**: `remotion_export` `settings.scope` (`EXPORT_SETTINGS`, `EXPORT_SCOPES`). `master` with `scene_id` is `invalid_setting`, with
+  `still`/`pdf` `invalid_format`, both before any Core call; an explicit `"scene"` is dropped, so a scene export's body is today's. The result
+  says `video: "whole"` (« L'export de la vidéo entière (N scènes) est lancé ») or `video: "scene"` (« L'export d'une scène seule est lancé
+  (pas la vidéo entière) »); job rows carry `scope`, `scene_id`, `project_key`, `scene_count`. Core's 409 `presentation_render_master_incompatible`
+  becomes a refusal with the sentence, « Rien n'a été exporté ni modifié » and the scene-export offer; Core froze nothing (§ 10, live pre-check).
+- **Authoring**: `NATIVE_DEFAULT_COMPOSITION` (1920x1080 @ 30, `presentation_studio_authoring_remotion.py`) fills what a NATIVE bundle leaves
+  out (`generate_source(..., native=True)`); guided bundles keep `DEFAULT_COMPOSITION` (1280x720). `MASTER_HINT` (authoring guide, native
+  `draft_guide` `draft.master`, and the author playbook) says: one width/height/fps for every scene (a new deck 1920x1080 @ 30, an added or
+  rewritten scene keeps the variant's), `public/` files named after their scene in the path and in `staticFile()`, never `getInputProps`,
+  read the `master` block. `ISOLATION_HINT` says the guard refuses the word `require` and ASCII `\u` escapes even in displayed text.
+  Technical compatibility only: no content, layout or style rule is added; native warnings stay warnings.
+- **Brain prompt**: `BRAIN_REMOTION_PROMPT` routes « la vidéo » / « exporte-la » to `scope master`, tells the incompatible path, and that a
+  scene export is never « la vidéo » and an older export is not the updated video.
+- **Re-edit**: no new code. The live plan reads the variant's current pins, so a standing `presentation_source` write (new version + repin)
+  changes `project_key` with no sync call, and the next whole-video export freezes the new revision (a new snapshot, never the older
+  derivative). Proof through the real studio, prefab store, source-edit service, packager and render service:
+  `test_a_standing_source_edit_changes_the_key_and_the_next_whole_video_export_renders_the_new_pin`.
+- Not done here: the `remotion_studio` pointer wording for a master target (§ 14) waits for the Variants master button (Slice 08).
+- Tests: `tests/unit/test_remotion_master_agent.py`; real trace: the handoff's `slices/07-voice-generation-and-reedit/evidence/`.
 
 ## 13. Variants and Board entrypoints (Slice 08)
 
@@ -450,7 +483,7 @@ unknown presentation or variant is the usual 404 `presentation_studio_unknown_*`
 | Master workspace files, generated composition, boundary | 3 (Slice 04) | 3 | 04 |
 | Studio master target, ack, `state.json` schema 2, unpublished policy, live readiness route | 3 (Slice 05) | 3 | 05 |
 | Render scope `master`, bounds, Artifact metadata, frozen readiness route | 3 (Slice 06) | 3 | 06 |
-| Voice spec rule, collision-free names, inspect block, `scope` in `remotion_export` | 2 | 3 | 07 |
+| Voice spec rule, collision-free names, inspect block, `scope` in `remotion_export` | 3 (Slice 07) | 3 | 07 |
 | Variants and Board entrypoints | 2 | 3 | 08 |
 | Master publish-back, master Player | 1 (non-goal) | 1 | — |
 

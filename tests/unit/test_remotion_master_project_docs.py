@@ -51,7 +51,7 @@ LEVEL_3_SECTIONS = ("## 2. MasterProjectPlan — Level 3 (Slice 03)", "## 3. Rea
                     "## 5. `project_key` — Level 3 (Slice 03)", "## 6. Workspace layout, generated vs canonical files — Level 3 (Slice 04)",
                     "## 7. Generated master composition — Level 3 (Slice 04)", "## 9. Studio master target — Level 3 (Slice 05)",
                     "## 11. Live readiness read — Level 3 (Slice 05)",
-                    "## 10. Whole-video render scope — Level 3 (Slice 06)")
+                    "## 10. Whole-video render scope — Level 3 (Slice 06)", "## 12. Voice and agent — Level 3 (Slice 07)")
 
 
 def test_the_page_states_level_2_and_claims_level_3_only_for_the_implemented_planner_sections():
@@ -60,12 +60,13 @@ def test_the_page_states_level_2_and_claims_level_3_only_for_the_implemented_pla
     rest = DOC.replace("*Composition clock (Level 3)*", "")
     for marker in ("Level 3 (Slice 03)", "(Level 3, Slice 03)", "Level 3 (Slice 04)", "(Level 3, Slice 04)", "Level 3 (Slice 05)",
                    "(Level 3, Slice 05)", "Level 3\n(Slice 06)",
-                   "Level 3 (Slice 06)", "(Level 3, Slice 06)"):
+                   "Level 3 (Slice 06)", "(Level 3, Slice 06)", "Level 3 (Slice 07)", "(Level 3, Slice 07)"):
         rest = rest.replace(marker, "")
     assert "Level 3" not in rest, "only the Slice 03, 04 and 05 sections claim Level 3"
     for heading in LEVEL_3_SECTIONS:
         assert "\n" + heading + "\n" in DOC, heading
     assert "| MasterProjectPlan, readiness codes, `project_key`, asset merge | 3 (Slice 03) | 3 | 03 |" in DOC
+    assert "| Voice spec rule, collision-free names, inspect block, `scope` in `remotion_export` | 3 (Slice 07) | 3 | 07 |" in DOC
     assert "| Master workspace files, generated composition, boundary | 3 (Slice 04) | 3 | 04 |" in DOC
     assert ("| Studio master target, ack, `state.json` schema 2, unpublished policy, live readiness route | 3 (Slice 05) | 3 | 05 |"
             in DOC)

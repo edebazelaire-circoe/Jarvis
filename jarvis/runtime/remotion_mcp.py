@@ -10,7 +10,7 @@ moteur** ; l'accusé du Studio hors bac à sable et la licence d'une version plu
 | `remotion_status` | santé de la capacité + moteurs (lecture seule), Studio, exports (liste, un export) |
 | `remotion_setup` | installer / réparer, sur demande de l'utilisateur |
 | `remotion_studio` | pointeur vers « Remotion Studio » sous la vidéo de Variantes : l'utilisateur ouvre et confirme lui-même |
-| `remotion_export` | lancer / annuler un export mp4, image ou PDF de la variante, sur demande |
+| `remotion_export` | lancer / annuler un export mp4, image ou PDF, d'une scène ou de la vidéo entière (`scope: master`, Slice 07), sur demande |
 | `remotion_import` | plan puis import d'un modèle amont (liste blanche de l'utilisateur), sur demande |
 | `remotion_upgrades` | avis de versions plus récentes (lecture) et essai en variante enfant, sur demande |
 
@@ -134,6 +134,7 @@ def build_server(target: PresentationMcpTarget | None = None, *, tools: Remotion
         frame: Annotated[int | None, Field(ge=0, le=100000, description="still")] = None
         scale: Annotated[float | None, Field(ge=0.25, le=2)] = None
         crf: Annotated[int | None, Field(ge=16, le=35, description="mp4")] = None
+        scope: Annotated[Literal["scene", "master"] | None, Field(description="master : la vidéo entière (mp4)")] = None
 
     @mcp.tool(annotations=tool_annotations(SERVER_NAME, "remotion_status"))
     async def remotion_status(
@@ -171,7 +172,7 @@ def build_server(target: PresentationMcpTarget | None = None, *, tools: Remotion
         job_id: Annotated[str | None, Field(max_length=20, description="cancel : rj_…")] = None,
         user_request: UserRequest = None,
     ) -> dict[str, Any]:
-        """Exporter la variante ou annuler un export, sur demande de l'utilisateur. Aucun Board lu."""
+        """Exporter ou annuler, sur demande. « la vidéo » : scope master ; sinon une scène. Aucun Board lu."""
         return await remotion.export(op, format=format, settings=None if settings is None else settings.model_dump(exclude_none=True),
                                      presentation_id=presentation_id, variant_id=variant_id, job_id=job_id, user_request=user_request)
 
