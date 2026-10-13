@@ -3635,7 +3635,7 @@ Contrat : [remotion-render.md](remotion-render.md) ; sécurité : SECURITY.md §
 enregistre un Artifact relié à cette copie. Prérequis : la capacité Remotion `ready` (installation unique, section « Capacité locale Remotion ») et un Chrome ou Edge installé
 (sinon `JARVIS_REMOTION_RENDER_BROWSER` ; un navigateur n'est **jamais** téléchargé).
 
-- **Depuis le Control Center** : bouton `WSP` → Artefacts → choisir le Board → sous la copie figée d'une présentation Remotion, « Exporter cette copie » (MP4, image, PDF). Le
+- **Depuis le Control Center** : bouton `WSP` → Artefacts → choisir le Board → sous la copie figée d'une présentation Remotion, « Exporter cette copie » (MP4, image, PDF ; un MP4 rend la vidéo entière quand elle est prête). Depuis Variantes : « Exporter la vidéo » sous la vidéo (la vidéo entière de la variante). Le
   panneau dit la phase, les images faites, les secondes écoulées, le délai, et offre **Annuler l'export**. À la fin le rendu apparaît sous la copie, avec ses dimensions, sa
   durée, un aperçu et la mention « export à plat : non éditable » ; **Ouvrir la source** / **Ouvrir la variante** (au-dessus) mènent à l'origine éditable.
 - **Depuis PowerShell** (jeton comme pour la capacité) :

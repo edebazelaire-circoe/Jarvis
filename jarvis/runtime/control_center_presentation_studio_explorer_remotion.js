@@ -62,6 +62,13 @@
 #${HOST_ID} .jvx-rms-files{margin:4px 0 0;padding:6px 8px 6px 22px;max-height:12em;overflow:auto;border:1px solid var(--jvx-line-strong);border-radius:6px;font:12px/1.4 ui-monospace,Consolas,monospace}
 #${HOST_ID} .jvx-rms-log pre{margin:4px 0 0;max-height:7.5em;overflow:auto;white-space:pre-wrap;font:11.5px/1.35 ui-monospace,Consolas,monospace;color:var(--jvx-mute)}
 #${HOST_ID} .jvx-theater:fullscreen .jvx-stage-note>[data-act="remotion_studio"],#${HOST_ID} .jvx-theater:fullscreen .jvx-rms{display:none}
+#${HOST_ID} .jvx-rms-master{flex:1 1 100%;display:flex;flex-wrap:wrap;align-items:center;gap:4px 12px;min-width:0}
+#${HOST_ID} .jvx-rms-master[hidden]{display:none}
+#${HOST_ID} .jvx-rms-master-text{min-width:0;flex:0 1 auto}
+#${HOST_ID} .jvx-rms[data-master-tone="warn"] .jvx-rms-master-text{color:var(--jvx-warn)}
+#${HOST_ID} .jvx-rms .jvx-rms-scene{min-height:26px;padding:0 4px;border-color:transparent;background:none;color:var(--jvx-accent);font-weight:600;text-decoration:underline;text-underline-offset:3px;white-space:normal;text-align:left}
+#${HOST_ID} .jvx-rms .jvx-rms-scene[aria-disabled="true"]{opacity:.55;cursor:default}
+#${HOST_ID} .jvx-rms .jvx-rms-scene:hover:not([aria-disabled="true"]){border-color:transparent;text-decoration-thickness:2px}
 `;
 
   /* Remotion ou HTML : la règle de `jarvis/domain/prefab.py` › `is_remotion_manifest` (v2 toujours ; v3 quand elle porte `source`), lue
@@ -85,11 +92,57 @@
     const files=Array.isArray(wc.modified_files)?wc.modified_files:[];
     const count=typeof wc.unpublished==='number'?wc.unpublished:files.length;
     const base=wc.base||(st&&st.pin)||null;
-    const relation=!base||!mine?'none':base.prefab_id===mine.id&&Number(base.version)===Number(mine.version)?'here':'other';
+    /* Slice 08 (master-project-studio-export): a workspace of the whole video (a master target) has no scene base: 'master', never publishable. */
+    const master=!!(st&&st.target&&st.target.kind==='variant_master');
+    const relation=master?'master':!base||!mine?'none':base.prefab_id===mine.id&&Number(base.version)===Number(mine.version)?'here':'other';
     /* `digest` : l'empreinte de CETTE liste, renvoyée avec `publish` (Core refuse si l'espace a changé depuis : QA Slice 12, I1).
        `setAside` : ce que le dernier lancement a mis de côté parce que ce n'était pas la forme de l'espace (B1). */
     const setAside=Array.isArray(wc.set_aside)?wc.set_aside:[];
-    return {count,files,base,relation,saved:wc.edits_saved||0,digest:typeof wc.digest==='string'?wc.digest:null,setAside};
+    return {count,files,base,relation,master,saved:wc.edits_saved||0,digest:typeof wc.digest==='string'?wc.digest:null,setAside};
+  }
+
+  /* -------------------------------------------------------------- la vidéo entière (master-project-studio-export Slice 08)
+     `docs/remotion-master-project.md` § 9, § 11, § 13. La préparation est lue UNE fois par révision de la variante sur la route vivante de Core
+     (`GET .../variants/{id}/master-project`) : la page ne calcule aucune compatibilité, elle dit la vue. Prête : « Remotion Studio » ouvre la
+     vidéo entière (cible maître, confirmation qui nomme le nombre de scènes) et la scène seule reste offerte en second (« Cette scène seule
+     dans Remotion Studio »). Pas prête : le bouton garde la porte de la scène et la ligne dit la phrase du § 3. Illisible : la porte de la
+     scène, et la ligne le dit. */
+  const SCENE_DOOR_LABEL='Cette scène seule dans Remotion Studio';
+  const fmtSeconds=seconds=>`${String(Math.round(seconds*10)/10).replace('.',',')} s`;
+  function masterFacts(plan){
+    const c=plan&&plan.composition||{};
+    const n=Array.isArray(plan&&plan.scenes)?plan.scenes.length:0;
+    const seconds=c.fps>0&&Number.isInteger(c.duration_in_frames)?fmtSeconds(c.duration_in_frames/c.fps):null;
+    return {count:n,scenes:plural(n,'scène','scènes'),seconds,spec:c.width&&c.height?`${c.width}×${c.height}, ${c.fps} i/s`:null};
+  }
+  /* « Atelier », variante 2 : the identity the state line and the confirmation name (§ 13). */
+  function projectName(i){
+    const title=cleanLine(i.presentationTitle,60);
+    return `${title?`« ${title} »`:'cette présentation'}${i.variantNumber?`, variante ${i.variantNumber}`:''}`;
+  }
+  /* The master line of the door (pure): `{tone, text, scene}` (`scene`: the secondary door is offered) or null. */
+  function masterLine(i){
+    const m=i.master||null;
+    if(!m||!i.scene)return null;
+    const plan=m.plan;
+    if(plan&&plan.status==='ready'){
+      const f=masterFacts(plan);
+      return {tone:'',scene:true,text:`Vidéo entière : ${projectName(i)}, ${f.scenes}${f.seconds?` (${f.seconds})`:''}.`};
+    }
+    if(plan&&plan.status==='incompatible'){
+      return {tone:'',scene:false,text:`Vidéo entière indisponible dans Remotion Studio : ${Studio().masterReasonSentence(plan.reason,plan.detail)}`};
+    }
+    if(m.state==='error')return {tone:'warn',scene:false,
+      text:`La vidéo entière n’a pas pu être lue (${m.error&&m.error.code||'erreur'}) : « Remotion Studio » ouvre la scène à l’écran.`};
+    return null;
+  }
+  /* How Remotion Studio stands against the whole video on screen: 'here' (this variant, this key), 'stale' (this variant, an older key),
+     'other' (another variant's whole video), 'none'. Core's `stale` (live key) and the page's own read both count. */
+  function masterRelationOf(st,plan,i){
+    const t=st&&st.target;
+    if(!plan||plan.status!=='ready'||!st||st.status!=='ready'||!t||t.kind!=='variant_master')return 'none';
+    if(t.presentation_id!==i.presentationId||t.variant_id!==i.variantId)return 'other';
+    return t.project_key===plan.project_key&&t.stale!==true?'here':'stale';
   }
 
   function doorModel(i){
@@ -107,11 +160,26 @@
     }
     const pin=st&&st.pin||null;
     const relation=!st||st.status!=='ready'||!pin||!mine?'none':pin.prefab_id===mine.id?(Number(pin.version)===Number(mine.version)?'here':'version'):'other';
+    /* Slice 08: a ready whole video makes « Remotion Studio » the door of the VARIANT (master target); the scene stays the secondary door. */
+    const plan=i.master&&i.master.plan;
+    const masterMode=!!(scene&&plan&&plan.status==='ready');
+    const masterRelation=masterMode?masterRelationOf(st,plan,i):'none';
+    const master=masterLine(i);
     const button={label:'Remotion Studio',state:relation==='here'?'here':'idle',blocked,ariaLabel:'Remotion Studio',
       title:blocked||'Ouvrir la scène à l’écran dans Remotion Studio (un onglet à part, après confirmation)'};
     /* The tab is opened `noopener` (security): a browser cannot bring back a tab opened that way, so a click here opens ANOTHER tab; the words
        say so (Slice 11 QA polish, decided by agent 0: keep `noopener`). */
-    if(relation==='here'){button.ariaLabel='Remotion Studio, ouvert sur cette scène';button.title='Ouvrir un autre onglet Remotion Studio sur cette scène (celui déjà ouvert reste où il est)'}
+    if(masterMode){
+      const f=masterFacts(plan);
+      button.state=masterRelation==='here'?'here':'idle';
+      button.ariaLabel=masterRelation==='here'?'Remotion Studio, ouvert sur la vidéo entière':'Remotion Studio, vidéo entière';
+      button.title=blocked||(masterRelation==='here'?'Ouvrir un autre onglet Remotion Studio sur la vidéo entière (celui déjà ouvert reste où il est)'
+        :`Ouvrir la vidéo entière (${f.scenes}) dans Remotion Studio (un onglet à part, après confirmation)`);
+    }else if(relation==='here'){button.ariaLabel='Remotion Studio, ouvert sur cette scène';button.title='Ouvrir un autre onglet Remotion Studio sur cette scène (celui déjà ouvert reste où il est)'}
+    const sceneDoor=masterMode?{label:SCENE_DOOR_LABEL,blocked,title:blocked||(relation==='here'
+      ?'Ouvrir un autre onglet Remotion Studio sur cette scène seule (celui déjà ouvert reste où il est)'
+      :'Ouvrir seulement la scène à l’écran dans Remotion Studio, à sa version exacte : pour la modifier et la publier dans la variante (après confirmation)')}:null;
+    const done=out=>Object.assign(out,{master,masterMode,masterRelation,sceneDoor});
     let status=null;
     const elapsed=since=>C.fmtDuration(Math.max(0,since));
     const ws=workspaceOf(st,mine);
@@ -119,7 +187,7 @@
     if(i.publishing){
       button.state='busy';
       status={tone:'',spin:true,text:`${i.publishing.label} ${elapsed((i.now-i.publishing.at)/1000)} (${Math.round(PUBLISH_LIMIT_S/60*10)/10} min au plus).`};
-      return {button,status,relation,publish};
+      return done({button,status,relation,publish});
     }
     /* A refused or finished publication of THIS scene is said first; the files still unpublished (a retouch after a failed build, new
        edits after a publication) are said with it, and « Publier dans la variante… » stays offered. */
@@ -158,25 +226,47 @@
       const code=st.last_error_code||'remotion_studio_failed';
       status={tone:'danger',text:`Remotion Studio est en échec : ${C.errorText(code)||cleanLine(st.last_error_detail,160)||'raison inconnue'} (${code})`,
         retry:!blocked,diagnostics:(st.diagnostics||[]).slice(-DIAG_LINES)};
+    }else if(masterRelation!=='none'){
+      const f=masterFacts(plan);
+      let tone='ok',link=null,refresh=false;const parts=[];
+      if(masterRelation==='here'){
+        parts.push(i.needsClick?'Remotion Studio est prêt sur la vidéo entière. Le navigateur n’ouvre un onglet qu’après un clic :'
+          :`Remotion Studio est ouvert sur la vidéo entière (${f.scenes}), dans un autre onglet.`);
+        link={url:st.url,label:i.needsClick||!(st.viewers>0)?'Ouvrir l’onglet Remotion Studio':'Ouvrir un autre onglet Remotion Studio'};
+      }else if(masterRelation==='stale'){
+        tone='warn';refresh=!blocked;
+        parts.push(`La vidéo a changé depuis son ouverture dans Remotion Studio (maintenant ${f.scenes}) : « Actualiser » l’y recharge, après confirmation.`);
+      }else{
+        tone='';
+        parts.push('Remotion Studio est ouvert sur la vidéo entière d’une autre variante. « Remotion Studio » y affiche celle-ci, après confirmation.');
+      }
+      const work=masterWorkText(ws);
+      if(work){tone='warn';parts.push(work)}
+      status={tone,text:parts.join(' '),link,refresh,publish:false};
     }else if(relation!=='none'){
       const parts=[];let tone='ok',link=null;
       if(relation==='here'){
         parts.push(i.needsClick?'Remotion Studio est prêt sur cette scène. Le navigateur n’ouvre un onglet qu’après un clic :'
+          :masterMode?`Remotion Studio est ouvert sur cette scène seule (source v${mine.version}), dans un autre onglet. « Remotion Studio » y affiche la vidéo entière, après confirmation.`
           :`Remotion Studio est ouvert sur cette scène (source v${mine.version}), dans un autre onglet.`);
         link={url:st.url,label:i.needsClick||!(st.viewers>0)?'Ouvrir l’onglet Remotion Studio':'Ouvrir un autre onglet Remotion Studio'};
       }else if(relation==='version'){
         tone='warn';
-        parts.push(`Remotion Studio montre la version ${pin.version} de cette scène ; la variante utilise la version ${mine.version}. « Remotion Studio » y affiche la version de la variante, après confirmation.`);
+        parts.push(`Remotion Studio montre la version ${pin.version} de cette scène ; la variante utilise la version ${mine.version}. « ${masterMode?SCENE_DOOR_LABEL:'Remotion Studio'} » y affiche la version de la variante, après confirmation.`);
       }else{
         tone='';
         const other=(i.scenes||[]).findIndex(s=>s.prefab&&s.prefab.id===pin.prefab_id&&Number(s.prefab.version)===Number(pin.version));
         const name=other>=0?`la scène ${other+1} (« ${cleanLine(i.scenes[other].title,50)} »)`:`une autre source (${cleanLine(pin.prefab_id,60)} v${pin.version})`;
-        parts.push(`Remotion Studio est ouvert sur ${name}. « Remotion Studio » y affiche cette scène, après confirmation.`);
+        parts.push(masterMode?`Remotion Studio est ouvert sur ${name}, seule. « Remotion Studio » y affiche la vidéo entière ; « ${SCENE_DOOR_LABEL} », celle-ci (après confirmation).`
+          :`Remotion Studio est ouvert sur ${name}. « Remotion Studio » y affiche cette scène, après confirmation.`);
       }
       const work=workspaceText(ws,i.scenes,blocked);
       if(work){tone='warn';parts.push(work.text);publish.offered=work.offered}
       else if(ws.saved)parts.push(`${plural(ws.saved,'fichier mis','fichiers mis')} de côté (studio-edits) à votre demande : pas ${ws.saved>1?'publiés':'publié'}.`);
       status={tone,text:parts.join(' '),link,publish:publish.offered};
+    }else if(ws.count&&ws.master){
+      /* Remotion Studio stopped on a whole video: its edits are still in the workspace, never publishable (§ 9, § 15). */
+      status={tone:'warn',text:masterWorkText(ws),publish:false};
     }else if(ws.count&&workspaceText(ws,i.scenes,blocked)){
       /* Remotion Studio arrêté (fermé, arrêt automatique, Jarvis relancé) : ses fichiers non publiés sont toujours là, publiables ici. */
       const work=workspaceText(ws,i.scenes,blocked);
@@ -190,11 +280,18 @@
       const said=`Au dernier lancement, ${plural(n,'élément étranger','éléments étrangers')} à l’espace de travail (${named}) ${n>1?'ont été mis':'a été mis'} de côté dans studio-edits : jamais ${n>1?'exécutés':'exécuté'} ni ${n>1?'publiés':'publié'}.`;
       status=status?{...status,tone:status.tone==='danger'?'danger':'warn',text:`${status.text} ${said}`}:{tone:'warn',text:said};
     }
-    return {button,status,relation,publish};
+    return done({button,status,relation,publish});
+  }
+
+  /* Edits made in a whole-video workspace (§ 9): said « pas publiés », with the only way out (the scene alone; they are set aside, confirmed). */
+  function masterWorkText(ws){
+    if(!ws||!ws.count||!ws.master)return null;
+    const n=plural(ws.count,'fichier modifié','fichiers modifiés'),pub=ws.count>1?'publiés':'publié';
+    return `${n} dans Remotion Studio (vidéo entière), pas ${pub} : la vidéo entière ne se publie pas dans la variante. Pour publier une scène, ouvrez-la seule (« ${SCENE_DOOR_LABEL} ») ; ${ws.count>1?'ces fichiers seront mis':'ce fichier sera mis'} de côté (studio-edits), après confirmation.`;
   }
 
   function workspaceText(ws,scenes,blocked){
-    if(!ws.count)return null;
+    if(!ws.count||ws.master)return null;
     const n=plural(ws.count,'fichier modifié','fichiers modifiés'),pub=ws.count>1?'publiés':'publié';
     if(ws.relation==='here')return {offered:!blocked,
       text:`${n} dans Remotion Studio, pas encore ${pub} : la variante n’a pas changé.`};
@@ -207,13 +304,16 @@
   }
 
   /* `ctx` : {doc,win,el,attrs,clear,button,later,cancelLater,now,log,announce,fetch,dialog:{open,close,current},
-     scene()->{presentationId,variantId,variantNumber,revision,scene,index,scenes}|null, running()->bool, pause()->void, isOpen()->bool,
-     reload()->Promise (Slice 12 : relit la variante après une publication ou un retour, pour que Variantes montre la nouvelle version)} */
+     scene()->{presentationId,variantId,variantNumber,revision,presentationTitle,scene,index,scenes}|null, running()->bool, pause()->void, isOpen()->bool,
+     reload()->Promise (Slice 12 : relit la variante après une publication ou un retour, pour que Variantes montre la nouvelle version),
+     onMaster()->void (Slice 08 du master : la préparation de la vidéo entière a changé ; l'export de Variantes la relit)} */
+  const MASTER_ASKS=3;   // a stale key re-asks the confirmation; three variants changing under the dialog in a row: say so and stop
   function createRemotionDoor(ctx){
     const {doc,win,el,attrs,clear,later,cancelLater,now,log,announce}=ctx;
     const S={studio:null,capability:null,readError:null,busy:null,actionError:null,needsClick:false,explain:null,
       details:new Map(),started:false,asked:false,poll:null,ticker:null,reading:null,generation:0,lastOk:null,
-      publishing:null,published:null,publishError:null};
+      publishing:null,published:null,publishError:null,lastTarget:'auto',
+      master:{key:'',state:'idle',plan:null,error:null,reading:null}};
     const ui={};
     let client=null;
     const C=()=>Studio();
@@ -225,12 +325,17 @@
       return client;
     }
     const keyOf=prefab=>prefab?`${prefab.id}@${prefab.version}`:'';
+    /* The master read belongs to ONE variant revision: another variant or revision on screen is another read (§ 11, Slice 08). */
+    const masterKeyOf=at=>at?`${at.presentationId}/${at.variantId}@${at.revision}`:'';
+    function masterNow(at){return S.master.key&&S.master.key===masterKeyOf(at)?S.master:null}
     function view(){
       const at=ctx.scene();
       const scene=at&&at.scene?{id:at.scene.id,title:at.scene.title,number:at.index+1,of:at.scenes.length,prefab:at.scene.prefab}:null;
       return {at,scene,input:{scene,scenes:at?at.scenes:[],detail:scene?S.details.get(keyOf(scene.prefab))||null:null,studio:S.studio,capability:S.capability,
         readError:S.readError,busy:S.busy,actionError:S.actionError,run:ctx.running(),needsClick:S.needsClick,explain:S.explain,now:now(),
-        publishing:S.publishing,published:S.published,publishError:S.publishError}};
+        publishing:S.publishing,published:S.published,publishError:S.publishError,
+        master:masterNow(at),presentationId:at&&at.presentationId,variantId:at&&at.variantId,variantNumber:at&&at.variantNumber,
+        presentationTitle:at&&at.presentationTitle||''}};
     }
     function model(){return doorModel(view().input)}
 
@@ -249,24 +354,44 @@
       ui.publish=ctx.button('Publier dans la variante…','jvx-btn',()=>{publish({via:'button'})},{attrs:{'data-act':'remotion_studio_publish',
         title:'Publier les fichiers modifiés dans Remotion Studio comme nouvelle version de cette scène (après confirmation)'}});ui.publish.hidden=true;
       ui.revert=ctx.button('Revenir','jvx-btn',()=>{revert({via:'button'})},{attrs:{'data-act':'remotion_studio_revert'}});ui.revert.hidden=true;
+      /* Slice 08 (master): « Actualiser » when the whole video changed since Remotion Studio opened it (the same confirmation, then `open`). */
+      ui.refresh=ctx.button('Actualiser','jvx-btn',()=>{request({via:'refresh'})},{attrs:{'data-act':'remotion_studio_master_refresh',
+        title:'Recharger la vidéo entière de la variante dans Remotion Studio (après confirmation)'}});ui.refresh.hidden=true;
       ui.log=el('details','jvx-rms-log');ui.log.hidden=true;
       ui.log.appendChild(el('summary','','Journal de Remotion Studio'));ui.logText=el('pre');ui.log.appendChild(ui.logText);
-      for(const node of [ui.text,ui.link,ui.publish,ui.revert,ui.retry,ui.log])ui.status.appendChild(node);
+      /* The master line: the whole video's identity (or why it is unavailable) and the secondary door, the scene alone (§ 13). */
+      ui.master=el('div','jvx-rms-master');ui.master.hidden=true;
+      ui.masterText=el('span','jvx-rms-master-text');
+      ui.sceneDoor=ctx.button(SCENE_DOOR_LABEL,'jvx-btn jvx-rms-scene',()=>{request({via:'scene_door',target:'scene',returnFocus:ui.sceneDoor})},
+        {attrs:{'data-act':'remotion_studio_scene'}});ui.sceneDoor.hidden=true;
+      ui.master.appendChild(ui.masterText);ui.master.appendChild(ui.sceneDoor);
+      for(const node of [ui.master,ui.text,ui.link,ui.publish,ui.refresh,ui.revert,ui.retry,ui.log])ui.status.appendChild(node);
       return ui.status;
     }
     function render(){
       if(!ui.button)return;
       const m=model();
       const b=m.button;
-      attrs(ui.button,{'aria-disabled':b.blocked||b.state==='busy'?'true':'false','aria-label':b.ariaLabel,title:b.title,'data-state':b.state});
+      attrs(ui.button,{'aria-disabled':b.blocked||b.state==='busy'?'true':'false','aria-label':b.ariaLabel,title:b.title,'data-state':b.state,
+        'data-target':m.masterMode?'master':'scene'});
+      const ml=m.master;
+      ui.master.hidden=!ml;
+      if(ml){
+        if(ui.masterText.textContent!==ml.text)ui.masterText.textContent=ml.text;
+        ui.status.setAttribute('data-master-tone',ml.tone||'');
+      }
+      ui.sceneDoor.hidden=!(ml&&ml.scene&&m.sceneDoor);
+      if(m.sceneDoor)attrs(ui.sceneDoor,{'aria-disabled':m.sceneDoor.blocked||m.button.state==='busy'?'true':'false',title:m.sceneDoor.title});
       const s=m.status;
-      ui.status.hidden=!s;
-      if(!s)return;
+      ui.status.hidden=!s&&!ml;
+      ui.text.hidden=!s;
+      if(!s){for(const node of [ui.link,ui.retry,ui.publish,ui.refresh,ui.revert,ui.log])node.hidden=true;ui.status.setAttribute('data-spin','false');return}
       ui.status.setAttribute('data-tone',s.tone||'');ui.status.setAttribute('data-spin',s.spin?'true':'false');
       if(ui.text.textContent!==s.text)ui.text.textContent=s.text;
       ui.link.hidden=!s.link;
       if(s.link){ui.link.textContent=s.link.label;ui.link.setAttribute('href',s.link.url)}
       ui.retry.hidden=!s.retry;
+      ui.refresh.hidden=!s.refresh;
       ui.publish.hidden=!s.publish;
       ui.revert.hidden=!s.revert;
       if(s.revert&&ui.revert.textContent!==s.revert.label)ui.revert.textContent=s.revert.label;
@@ -332,6 +457,56 @@
       if(win&&typeof win.removeEventListener==='function')win.removeEventListener('focus',onBack);
       if(doc&&typeof doc.removeEventListener==='function')doc.removeEventListener('visibilitychange',onBack);
       S.explain=null;S.actionError=null;S.needsClick=false;S.details.clear();S.asked=false;S.published=null;S.publishError=null;
+      S.master={key:'',state:'idle',plan:null,error:null,reading:null};S.lastTarget='auto';
+    }
+
+    /* -------------------------------------------------------------- la vidéo entière : lue une fois par révision (Slice 08) */
+    function loadMaster(at,reason){
+      const c=api(),core=C();
+      if(!c||!at||typeof c.masterProject!=='function')return Promise.resolve(null);
+      const key=masterKeyOf(at);
+      if(S.master.key===key&&S.master.reading)return S.master.reading;
+      /* The same variant keeps its previous plan on screen while the new revision is read (no flicker); another variant starts empty. */
+      const sameVariant=S.master.key.split('@')[0]===key.split('@')[0];
+      const m={key,state:'loading',plan:sameVariant?S.master.plan:null,error:null,reading:null};
+      S.master=m;
+      m.reading=(async()=>{
+        try{
+          const plan=await c.masterProject(at.presentationId,at.variantId);
+          if(S.master!==m)return null;
+          m.plan=plan&&typeof plan==='object'?plan:null;
+          m.state=m.plan&&m.plan.status==='ready'?'ready':m.plan?'incompatible':'error';
+          if(!m.plan)m.error={code:'master_view_empty',text:'Core n’a rendu aucune vue de la vidéo entière.'};
+          log('remotion_master_read',{why:reason,status:m.plan&&m.plan.status,reason:m.plan&&m.plan.reason||null,
+            scenes:m.plan&&Array.isArray(m.plan.scenes)?m.plan.scenes.length:null,variant_revision:m.plan&&m.plan.variant_revision});
+        }catch(error){
+          if(S.master!==m)return null;
+          m.state='error';m.plan=null;
+          m.error={code:error.code||'network',text:core&&core.errorText(error.code)||cleanLine(error.message,140)||'aucune réponse'};
+          /* A Core without the route (older) or a variant gone is said on the master line; the scene door stays: `warn`, not `error`. */
+          log('remotion_master_read_failed',{why:reason,code:m.error.code,status:error.status},'warn');
+        }finally{
+          if(S.master===m)m.reading=null;
+          render();
+          if(typeof ctx.onMaster==='function')ctx.onMaster();
+        }
+        return m;
+      })();
+      return m.reading;
+    }
+    /* Read when a Remotion scene is on screen (like Remotion Studio's own state: an HTML deck never asks) and its revision is not read yet. */
+    function maybeMaster(reason){
+      const v=view();
+      if(!v.at||!v.scene||!ctx.isOpen())return null;
+      const d=S.details.get(keyOf(v.scene.prefab));
+      if(!(d&&d.state==='ready'&&d.remotion))return null;
+      if(S.master.key===masterKeyOf(v.at))return S.master.reading||null;
+      return loadMaster(v.at,reason);
+    }
+    /* What the export of Variants reads (the same view, never a second read). */
+    function masterState(){
+      const at=ctx.scene(),m=masterNow(at);
+      return m?{state:m.state,plan:m.plan,error:m.error,loading:!!m.reading}:{state:'idle',plan:null,error:null,loading:false};
     }
 
     /* -------------------------------------------------------------- la scène : Remotion ? provenance ? (lu une fois par pin) */
@@ -341,12 +516,20 @@
       const prefab=v.scene&&v.scene.prefab;
       const key=keyOf(prefab);
       if(prefab&&ctx.isOpen()&&!S.details.has(key))loadDetail(prefab);
+      else maybeMaster('revision');   // a new revision of the variant on screen (hot reload, voice edit, publication) is read again
       render();
     }
-    async function loadDetail(prefab){
+    function loadDetail(prefab){
       const key=keyOf(prefab);
-      const record={state:'loading',remotion:null,provenance:null};
+      const known=S.details.get(key);
+      if(known&&known.state==='loading'&&known.promise)return known.promise;   // one read per pin at a time (the rail's click may race it)
+      const record={state:'loading',remotion:null,provenance:null,promise:null};
       S.details.set(key,record);
+      record.promise=readDetail(prefab,record);
+      return record.promise;
+    }
+    async function readDetail(prefab,record){
+      const key=keyOf(prefab);
       const c=api();
       if(!c){record.state='error';return record}
       try{
@@ -357,6 +540,7 @@
         record.state='ready';record.remotion=isRemotionManifest(body&&body.manifest);
         record.provenance=body&&body.publication&&body.publication.provenance||null;
         if(record.remotion&&!S.asked)refresh('scene');   // the first Remotion scene on screen: what is Remotion Studio doing?
+        if(record.remotion)maybeMaster('scene');
       }catch(error){
         /* Unknown is not « not Remotion »: the button stays usable, the click re-reads, Core refuses a wrong pin by its own code. */
         record.state='error';record.code=error.code||'network';
@@ -367,6 +551,12 @@
     }
 
     /* -------------------------------------------------------------- la confirmation (dans la couche de Variantes) */
+    /* The discard line, for a scene base or for a whole-video workspace (Slice 08). */
+    function discardText(discard){
+      const n=plural(discard.count,'fichier modifié','fichiers modifiés');
+      const where=discard.master?' (vidéo entière)':discard.base?` (sur v${discard.base.version})`:'';
+      return `${n} dans Remotion Studio${where} ${discard.count>1?'seront mis de côté (studio-edits), pas publiés':'sera mis de côté (studio-edits), pas publié'}.`;
+    }
     function confirmOpen(sceneView,detail,kind,returnFocus,discard){
       const core=C();
       const label=`Scène ${sceneView.number} sur ${sceneView.of} « ${cleanLine(sceneView.title,60)} » · source v${sceneView.prefab.version}`;
@@ -380,7 +570,7 @@
         const list=el('ul','jvx-confirm-lines');
         for(const [head,text] of spec.lines){const li=el('li');li.appendChild(el('strong','',head));li.appendChild(doc.createTextNode(text));list.appendChild(li)}
         if(discard){const li=el('li');li.setAttribute('data-line','discard');li.appendChild(el('strong','','Fichiers non publiés : '));
-          li.appendChild(doc.createTextNode(`${plural(discard.count,'fichier modifié','fichiers modifiés')} dans Remotion Studio (sur v${discard.base.version}) ${discard.count>1?'seront mis':'sera mis'} de côté (studio-edits), pas publiés.`));list.appendChild(li)}
+          li.appendChild(doc.createTextNode(discardText(discard)));list.appendChild(li)}
         dlg.box.appendChild(list);
         dlg.box.appendChild(el('p','','Variantes reste ouvert ici, sur cette scène. Ce que vous changez dans Remotion Studio n’atteint la variante que par « Publier dans la variante… ».'));
         const actions=el('div','jvx-dialog-actions');
@@ -390,6 +580,134 @@
         actions.appendChild(cancel);actions.appendChild(go);dlg.box.appendChild(actions);
         (spec.danger?cancel:go).focus({preventScroll:true});
       });
+    }
+
+    /* The whole video's confirmation (§ 9): the presentation, the variant, the scene count, the risk, each mounted version and its provenance. */
+    function confirmMaster(at,plan,provenances,kind,returnFocus,discard,note){
+      const core=C(),f=masterFacts(plan);
+      const titles=new Map((at.scenes||[]).map(s=>[s.id,s.title]));
+      const rows=(plan.scenes||[]).map((s,n)=>`${n+1}. « ${cleanLine(titles.get(s.scene_id)||s.scene_id,40)} » v${s.version}`);
+      const versions=rows.slice(0,8).join(' · ')+(rows.length>8?` · … (+${rows.length-8})`:'');
+      const label=`${projectName({presentationTitle:at.presentationTitle,variantNumber:at.variantNumber})} · ${f.scenes}${f.seconds?` · ${f.seconds}`:''}${f.spec?` (${f.spec})`:''}`;
+      const spec=core.masterConfirmSpec({label,sceneCount:f.count,versions},provenances,kind);
+      return new Promise(resolve=>{
+        let settled=false;
+        const finish=value=>{if(settled)return;settled=true;resolve(value)};
+        const dlg=ctx.dialog.open({kind:'remotion_studio',titleId:'jvxDialogTitle',returnFocus,onClose:()=>finish(false)});
+        dlg.box.setAttribute('data-kind','remotion_studio');dlg.box.setAttribute('data-target','master');
+        const h=el('h2','',spec.title);h.id='jvxDialogTitle';dlg.box.appendChild(h);
+        if(note){const p=el('p','jvx-confirm-note',note);p.setAttribute('data-line','stale');dlg.box.appendChild(p)}
+        const list=el('ul','jvx-confirm-lines');
+        for(const [head,text] of spec.lines){const li=el('li');li.appendChild(el('strong','',head));li.appendChild(doc.createTextNode(text));list.appendChild(li)}
+        if(discard){const li=el('li');li.setAttribute('data-line','discard');li.appendChild(el('strong','','Fichiers non publiés : '));
+          li.appendChild(doc.createTextNode(discardText(discard)));list.appendChild(li)}
+        dlg.box.appendChild(list);
+        dlg.box.appendChild(el('p','',`Variantes reste ouvert ici. La vidéo entière ne se publie pas dans la variante : pour modifier puis publier une scène, ouvrez-la seule (« ${SCENE_DOOR_LABEL} »).`));
+        const actions=el('div','jvx-dialog-actions');
+        const cancel=ctx.dialogButton(spec.cancelLabel,()=>{ctx.dialog.close(true);finish(false)});
+        const go=ctx.dialogButton(spec.confirmLabel,()=>{finish(true);ctx.dialog.close(true)},{primary:true,danger:spec.danger});
+        go.setAttribute('data-act','remotion_studio_confirm');
+        actions.appendChild(cancel);actions.appendChild(go);dlg.box.appendChild(actions);
+        (spec.danger?cancel:go).focus({preventScroll:true});
+      });
+    }
+    /* Each mounted version's provenance, read once per pin (the same read as a scene's); unreadable = null (the reinforced warning). */
+    async function masterProvenances(plan){
+      const rows=Array.isArray(plan&&plan.scenes)?plan.scenes:[];
+      return Promise.all(rows.map(async s=>{
+        const prefab={id:s.prefab_id,version:s.version};
+        let d=S.details.get(keyOf(prefab));
+        if(!d||d.state==='loading'||d.state==='error')d=await loadDetail(prefab);
+        return d&&d.state==='ready'?d.provenance:null;
+      }));
+    }
+    /* Edits of the workspace that opening THIS whole video would set aside (another target, or this variant's older key). */
+    function masterDiscard(st,plan){
+      const ws=workspaceOf(st,null);
+      if(!ws.count)return null;
+      const t=st&&st.target;
+      if(t&&t.kind==='variant_master'&&t.project_key===plan.project_key)return null;
+      return {count:ws.count,base:ws.base,master:ws.master};
+    }
+    async function requestMaster(o,v,m){
+      const core=C(),c=api();
+      const st=S.studio;
+      if(m.masterRelation==='here'&&st&&st.url){S.needsClick=!openTab(st.url,'button');render();return {state:'shown',url:st.url}}
+      const at=v.at;
+      let plan=masterNow(at).plan,note=null,discard=masterDiscard(st,plan);
+      for(let ask=0;ask<MASTER_ASKS;ask++){
+        const provenances=await masterProvenances(plan);
+        const live=S.studio&&S.studio.status==='ready';
+        const kind=m.masterRelation==='stale'&&ask===0?'refresh':live?'switch':'open';
+        const ok=await confirmMaster(at,plan,provenances,kind,o.returnFocus||ui.button,discard,note);
+        if(!ok){log('remotion_studio_cancelled',{via:o.via,target:'master'});announce('Remotion Studio : rien n’a été lancé.');return {state:'cancelled'}}
+        const now2=ctx.scene();
+        if(!now2||now2.presentationId!==at.presentationId||now2.variantId!==at.variantId){
+          S.explain='La variante a changé pendant la confirmation : rien n’a été lancé.';render();return {state:'cancelled'}}
+        ctx.pause();
+        const f=masterFacts(plan);
+        S.busy={label:live?'Remotion Studio charge la vidéo entière…':'Remotion Studio démarre sur la vidéo entière…',at:now()};
+        S.actionError=null;S.explain=null;S.needsClick=false;S.generation+=1;S.lastTarget='master';
+        render();tick(true);schedule();
+        log('remotion_studio_open_requested',{via:o.via,kind,target:'master',variant_id:at.variantId,project_key:plan.project_key,scenes:f.count,discard:!!discard});
+        let result=null,again=null;
+        try{
+          const body={kind:core.MASTER_KIND,presentation_id:at.presentationId,variant_id:at.variantId,project_key:plan.project_key};
+          if(discard)body[core.DISCARD_FIELD]=true;   // the user read the discard line: their unpublished files are set aside, never silently
+          const studio=await c.write('open',body);
+          S.studio=studio;S.readError=null;S.lastOk=true;
+          if(studio.status==='failed'){
+            log('remotion_studio_open_failed',{code:studio.last_error_code,target:'master'},'error');
+            result={state:'failed',code:studio.last_error_code};
+          }else if(studio.status==='ready'&&studio.url){
+            const liveClick=activationLive();
+            S.needsClick=!liveClick||!openTab(studio.url,'auto');
+            if(S.needsClick)announce('Remotion Studio est prêt : cliquez « Ouvrir l’onglet Remotion Studio ».');
+            log('remotion_studio_ready',{seconds:Math.round((now()-S.busy.at)/1000),tab:S.needsClick?'needs_click':'opened',target:'master'});
+            result={state:'ready',url:studio.url,tab:S.needsClick?'needs_click':'opened',target:'master'};
+          }else result={state:studio.status,target:'master'};
+        }catch(error){
+          const info=error.info||{};
+          if(error.code==='remotion_studio_master_stale'){
+            /* The variant changed since the dialog (§ 9): re-read the whole video, re-ask with its new scene count. */
+            log('remotion_studio_master_stale',{via:o.via,asked:plan.project_key,current:info.project_key||null,scenes:info.scene_count||null},'info');
+            again='stale';
+          }else if(error.code==='remotion_studio_unpublished_edits'&&!discard){
+            const count=Number(info.count)||(Array.isArray(info.files)?info.files.length:0);
+            log('remotion_studio_unpublished_kept',{via:o.via,target:'master',count},'info');
+            discard={count:count||1,base:info.base||null,master:!!(info.target&&info.target.kind==='variant_master')};
+            note='Remotion Studio garde des fichiers modifiés, pas publiés : les mettre de côté est nécessaire pour ouvrir la vidéo entière.';
+            again='discard';
+          }else{
+            let text=core.errorText(error.code)||cleanLine(error.message,160)||'l’action a échoué';
+            if(error.code==='remotion_studio_master_incompatible'&&info.reason)text=core.masterReasonSentence(info.reason,info.detail);
+            S.actionError={code:error.code||'network',text};
+            log('remotion_studio_open_failed',{code:S.actionError.code,status:error.status,target:'master'},'error');
+            result={state:'failed',code:S.actionError.code};
+            if(error.code==='remotion_studio_master_incompatible')loadMaster(at,'incompatible');   // the line and the button follow Core's view
+          }
+        }finally{
+          S.busy=null;tick(false);render();
+        }
+        if(again==='stale'){
+          const read=await loadMaster(at,'stale');
+          const fresh=read&&read.plan;
+          if(!fresh||fresh.status!=='ready'){
+            S.actionError={code:'remotion_studio_master_stale',text:fresh?`La variante a changé : ${core.masterReasonSentence(fresh.reason,fresh.detail)}`
+              :'La variante a changé et sa vidéo entière n’a pas pu être relue.'};
+            render();refresh('after_open');return {state:'failed',code:'remotion_studio_master_stale'};
+          }
+          plan=fresh;discard=masterDiscard(S.studio,plan);
+          note=`La variante a changé depuis votre confirmation : la vidéo entière compte maintenant ${masterFacts(plan).scenes}. Confirmez de nouveau.`;
+          continue;
+        }
+        if(again==='discard')continue;
+        refresh('after_open');
+        return result;
+      }
+      S.actionError={code:'remotion_studio_master_stale',text:'La variante change sans cesse pendant la confirmation : rien n’a été lancé. Réessayez dans un instant.'};
+      log('remotion_studio_master_gave_up',{via:o.via,asks:MASTER_ASKS},'warn');render();
+      return {state:'failed',code:'remotion_studio_master_stale'};
     }
 
     /* -------------------------------------------------------------- ouvrir */
@@ -409,6 +727,13 @@
       if(!ctx.isOpen())return {state:'refused',reason:'Variantes est fermé.'};
       if(S.busy||S.publishing){announce(S.busy?'Remotion Studio démarre déjà.':'Une publication est en cours.');return {state:'busy'}}
       S.publishError=null;
+      /* The whole video's readiness first (the rail opens Variants then this door at once: the scene's and the video's reads may still be on
+         the way). Unknown stays unknown: a failed read leaves the scene door. */
+      const first=view().scene;
+      const known=first&&first.prefab?S.details.get(keyOf(first.prefab)):null;
+      if(first&&first.prefab&&(!known||known.state==='loading'))await loadDetail(first.prefab);
+      const pending=maybeMaster('request');
+      if(pending)await pending;
       const v=view(),m=doorModel(v.input);
       if(m.button.blocked){
         S.explain=m.button.blocked;render();
@@ -421,6 +746,10 @@
         log('remotion_studio_module_missing',{},'error');
         return {state:'failed',code:'remotion_studio_page_error'};
       }
+      /* « Remotion Studio » opens the whole video when it is ready; the scene door (« Cette scène seule… ») and a retry of a scene open keep
+         the scene. `target`: 'scene' | 'master' | undefined (the primary meaning). */
+      const wantScene=o.target==='scene'||(o.via==='retry'&&S.lastTarget==='scene');
+      if(m.masterMode&&!wantScene)return requestMaster(o,v,m);
       const sc=v.scene,st=S.studio;
       if(m.relation==='here'&&st.url){S.needsClick=!openTab(st.url,'button');render();return {state:'shown',url:st.url}}
       let detail=S.details.get(keyOf(sc.prefab));
@@ -428,7 +757,7 @@
       if(detail.state==='ready'&&!detail.remotion){const again=doorModel(view().input);S.explain=again.button.blocked;render();return {state:'refused',reason:S.explain}}
       const kind=st&&st.status==='ready'?'switch':'open';
       const ws=workspaceOf(st,sc.prefab);
-      const discard=ws.count&&ws.relation==='other'?{count:ws.count,base:ws.base}:null;
+      const discard=ws.count&&(ws.relation==='other'||ws.relation==='master')?{count:ws.count,base:ws.base,master:ws.master}:null;
       const ok=await confirmOpen(sc,detail,kind,o.returnFocus||ui.button,discard);
       if(!ok){log('remotion_studio_cancelled',{via:o.via});announce('Remotion Studio : rien n’a été lancé.');return {state:'cancelled'}}
       /* Still the scene that was confirmed? (a poll, a hot reload or the user may have moved while the dialog was open) */
@@ -436,7 +765,7 @@
       if(!now2||keyOf(now2.prefab)!==keyOf(sc.prefab)){S.explain='La scène a changé pendant la confirmation : rien n’a été lancé.';render();return {state:'cancelled'}}
       ctx.pause();
       S.busy={label:kind==='switch'?'Remotion Studio change de scène…':'Remotion Studio démarre…',at:now()};
-      S.actionError=null;S.explain=null;S.needsClick=false;S.generation+=1;
+      S.actionError=null;S.explain=null;S.needsClick=false;S.generation+=1;S.lastTarget=m.masterMode?'scene':'auto';
       render();tick(true);schedule();
       log('remotion_studio_open_requested',{via:o.via,kind,prefab:keyOf(sc.prefab),scene_id:sc.id});
       let result;
@@ -581,12 +910,13 @@
     }
 
     return Object.freeze({buildButton,buildStatus,render,sync,start,stop,refresh:()=>refresh('api'),request,model,publish,revert,
-      state:()=>({studio:S.studio&&{status:S.studio.status,pin:S.studio.pin,url:S.studio.url,work_copy:S.studio.work_copy||null},busy:!!S.busy,
+      master:masterState,rereadMaster:()=>{const at=ctx.scene();return at?loadMaster(at,'reread'):Promise.resolve(null)},
+      state:()=>({studio:S.studio&&{status:S.studio.status,pin:S.studio.pin,target:S.studio.target||null,url:S.studio.url,work_copy:S.studio.work_copy||null},busy:!!S.busy,
         needsClick:S.needsClick,error:S.actionError,readError:S.readError,explain:S.explain,publishing:!!S.publishing,published:S.published,
-        publishError:S.publishError})});
+        publishError:S.publishError,master:masterState()})});
   }
 
-  const api=Object.freeze({createRemotionDoor,doorModel,workspaceOf,isRemotionManifest,CSS,TAB_NAME,PUBLISH_LIMIT_S});
+  const api=Object.freeze({createRemotionDoor,doorModel,workspaceOf,isRemotionManifest,masterLine,masterRelationOf,CSS,TAB_NAME,PUBLISH_LIMIT_S,SCENE_DOOR_LABEL});
   root.JarvisVariantsRemotionStudio=api;
   if(typeof module!=='undefined'&&module.exports)module.exports=api;
 })(typeof window!=='undefined'?window:globalThis);

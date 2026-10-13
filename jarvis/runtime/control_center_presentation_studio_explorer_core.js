@@ -598,7 +598,8 @@ html:has(#${HOST_ID}:not([hidden])) #jvFullscreenPrompt{top:auto;bottom:18px;lef
 #${HOST_ID} .jvx-theater:fullscreen[data-chrome="hidden"] .jvx-stage-note{opacity:0;pointer-events:none}
 #${HOST_ID} .jvx-theater:fullscreen[data-chrome="hidden"] .jvx-catch{display:block}
 @media (prefers-reduced-motion:no-preference){#${HOST_ID} .jvx-theater:fullscreen .jvx-stage-note{transition:opacity .25s ease}}
-#${HOST_ID} .jvx-strip{display:flex;gap:8px;overflow-x:auto;padding:2px 2px 6px;scrollbar-width:thin;scrollbar-color:var(--jvx-line-strong) transparent}
+#${HOST_ID} .jvx-strip{flex:none;display:flex;gap:8px;overflow-x:auto;padding:2px 2px 6px;scrollbar-width:thin;scrollbar-color:var(--jvx-line-strong) transparent}
+/* master Slice 08: the strip is never crushed by a taller scene row (the whole-video line): the preview column scrolls instead. */
 #${HOST_ID} .jvx-scene{flex:none;display:flex;flex-direction:column;gap:2px;width:150px;padding:8px 10px;text-align:left;border-radius:9px;border:1px solid var(--jvx-line);
   background:var(--jvx-surface)}
 #${HOST_ID} .jvx-scene[aria-selected="true"]{border-color:var(--jvx-accent);background:color-mix(in srgb,var(--jvx-accent) 12%,transparent)}

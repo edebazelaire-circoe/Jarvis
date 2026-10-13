@@ -49,10 +49,13 @@ EXPORT_SCOPES = ("scene", "master")
 MASTER_INCOMPATIBLE = "presentation_render_master_incompatible"
 TARGETS = ("capability", "studio", "exports", "export")
 MAX_WORDS = 200
-#: Où l'utilisateur ouvre Remotion Studio (native-studio-playback-fix Slice 11 : la scène à l'écran de Variantes, son pin exact).
-CARD_PATH = "Variantes, sous la vidéo : bouton « Remotion Studio » (ou le rail : clic droit sur la présentation, « Remotion Studio… »)"
-#: With a `scene_id` (Slice 13 rework, QA I5): only the button under the video of THAT scene; the rail opens the scene on screen, not this one.
-SCENE_CARD_PATH = "Variantes, cette scène affichée : bouton « Remotion Studio » sous la vidéo"
+#: Où l'utilisateur ouvre Remotion Studio (native-studio-playback-fix Slice 11 ; master-project-studio-export Slice 08 : « Remotion Studio » ouvre
+#: la vidéo entière de la variante quand elle est prête, sinon la scène à l'écran ; `docs/remotion-master-project.md` § 13, § 14).
+CARD_PATH = ("Variantes, sous la vidéo : bouton « Remotion Studio », la vidéo entière de la variante "
+             "(ou le rail : clic droit sur la présentation, « Remotion Studio… »)")
+#: With a `scene_id` (Slice 13 rework, QA I5): only the scene door under the video of THAT scene; the rail opens the whole video or the scene on
+#: screen, not this one. Slice 08 of the master handoff: the scene door is the secondary « Cette scène seule dans Remotion Studio ».
+SCENE_CARD_PATH = "Variantes, cette scène affichée : « Cette scène seule dans Remotion Studio » sous la vidéo"
 ENGINE_CARD = "carte « Présentations · moteur »"
 
 
@@ -223,9 +226,12 @@ class RemotionTools(PresentationTools):
             described = await self._c(lambda c: c.presentation_studio_scene_controls(presentation_id, variant_id, sid))
             scene = {"scene_id": sid, "prefab": described.get("prefab")}
         # The door opens the scene ON SCREEN in Variants: for a named scene, the user shows it first (Slice 11 QA polish).
-        where_first = "affiche cette scène dans Variantes, puis clique" if scene else "dans Variantes, clique"
-        return self._ok("say", status="needs_user", where=SCENE_CARD_PATH if scene else CARD_PATH, scene=scene or None,
-                        say=f"Pour ouvrir cette scène dans Remotion Studio : {where_first} « Remotion Studio » sous la vidéo et confirme ; elle y tourne hors du bac à sable.",
+        say = ("Pour ouvrir cette scène seule dans Remotion Studio : affiche cette scène dans Variantes, puis clique « Cette scène seule dans "
+               "Remotion Studio » sous la vidéo (« Remotion Studio » si la vidéo entière n'est pas disponible) et confirme ; elle y tourne hors du "
+               "bac à sable.") if scene else (
+               "Pour ouvrir la présentation dans Remotion Studio : dans Variantes, clique « Remotion Studio » sous la vidéo et confirme ; la vidéo "
+               "entière de la variante (ou la scène à l'écran si la vidéo entière n'est pas disponible) y tourne hors du bac à sable.")
+        return self._ok("say", status="needs_user", where=SCENE_CARD_PATH if scene else CARD_PATH, scene=scene or None, say=say,
                         note="Tu ne peux pas ouvrir le Studio ni confirmer à sa place : l'accusé est à l'utilisateur seul. Dis où cliquer, une fois.")
 
     # ------------------------------------------------------------------ export

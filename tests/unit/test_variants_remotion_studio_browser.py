@@ -45,6 +45,10 @@ from tests.unit.test_variants_run_browser import drive, wire
 X = "#jvStudioExplorer"
 EXPLORER = "window.JarvisStudioExplorer"
 DOOR = f"{X} [data-act=\"remotion_studio\"]"
+#: master-project-studio-export Slice 08: this deck is master-ready (real Core), so « Remotion Studio » opens the whole video and the scene door
+#: is the secondary « Cette scène seule dans Remotion Studio » on the master line; the scene proofs below go through it.
+SCENE_DOOR = f"{X} [data-act=\"remotion_studio_scene\"]"
+SCENE_DOOR_SHOWN = f"(()=>{{const b=document.querySelector('{SCENE_DOOR}');return !!b&&!b.hidden&&b.offsetParent!==null}})()"
 CONFIRM = f"{X} [data-act=\"remotion_studio_confirm\"]"
 DIALOG = f"document.querySelector('{X} [data-kind=\"remotion_studio\"]')"
 RMS_TEXT = f"(document.querySelector('{X} .jvx-rms-text')||{{}}).textContent||''"
@@ -107,7 +111,7 @@ async def _close_studio(core) -> None:
 
 def _confirm_plan(scene_index: int) -> list[dict]:
     return [{"click": f"{X} .jvx-strip [role=\"option\"]:nth-child({scene_index})"}, {"wait": 300},
-            {"click": DOOR}, {"until": f"!!{DIALOG}", "ms": 8000},
+            {"until": SCENE_DOOR_SHOWN, "ms": 8000}, {"click": SCENE_DOOR}, {"until": f"!!{DIALOG}", "ms": 8000},
             {"value": "dialog", "expr": f"{DIALOG}.innerText"},
             {"value": "beforeState", "expr": f"JSON.stringify({EXPLORER}.state())"},
             {"click": CONFIRM},
@@ -132,7 +136,7 @@ async def test_confirmed_open_starts_remotion_studio_on_the_exact_pin_in_a_new_t
     b, a = json.loads(reads["beforeState"]), json.loads(reads["afterState"])
     assert (a["open"], a["selected"], a["active"], a["preview"]["scene"]) == (True, b["selected"], b["active"], b["preview"]["scene"])
     assert a["preview"]["scene"] == S2, "Variants is still on the scene that was opened"
-    assert "ouvert sur cette scène" in reads["status"] and reads["button"] == ["here", "Remotion Studio, ouvert sur cette scène"]
+    assert "ouvert sur cette scène seule" in reads["status"] and reads["button"] == ["idle", "Remotion Studio, vidéo entière"],         "the primary door keeps meaning the whole video while the scene alone is open"
     assert "ouvert sur cette scène" in reads["back"], "coming back re-reads Remotion Studio"
     assert reads["frames"] == 0, "Remotion Studio is never drawn inside Variants"
     state = runner.state or {}
@@ -166,7 +170,7 @@ async def test_a_failed_start_is_said_with_its_code_and_retry_recovers(studio_de
         {"value": "ok", "expr": RMS_TEXT}])
     reads = _ok(result)
     assert "remotion_studio_start_timeout" in reads["failedText"] and "n’a pas répondu dans le délai" in reads["failedText"] and reads["retry"]
-    assert "ouvert sur cette scène" in reads["ok"]
+    assert "ouvert sur la vidéo entière (2 scènes)" in reads["ok"], "« Réessayer » retries the whole video it failed on"
 
 
 async def test_the_rail_entry_opens_variants_then_the_same_confirmation(studio_deck):
@@ -178,7 +182,7 @@ async def test_the_rail_entry_opens_variants_then_the_same_confirmation(studio_d
                                {"value": "dialog", "expr": f"{DIALOG}.innerText"},
                                {"value": "state", "expr": f"JSON.stringify({EXPLORER}.state())"}])
     reads = _ok(result)
-    assert "Scène 1 sur 2" in reads["dialog"] and '"open":true' in reads["state"]
+    assert "2 scènes vont tourner hors du bac à sable" in reads["dialog"] and '"open":true' in reads["state"], "the rail follows the primary meaning"
     assert not runner.launches, "nothing launched before the confirmation"
 
 
@@ -188,7 +192,7 @@ async def test_the_door_is_named_inside_the_window_without_overflow(studio_deck,
     result = await drive(url, _open_variants(pid) + [{"wait": 600}, {"value": "inv", "expr": INVENTORY}], viewport=viewport)
     inv = _ok(result)["inv"]
     door = [c for c in inv["controls"] if c["act"] == "remotion_studio"]
-    assert len(door) == 1 and door[0]["name"] == "Remotion Studio", door
+    assert len(door) == 1 and door[0]["name"] in ("Remotion Studio", "Remotion Studio, vidéo entière"), door
     assert 0 <= door[0]["box"][0] and door[0]["box"][2] <= inv["vw"] and inv["overflowX"] is False
     present = [c for c in inv["controls"] if c["act"] == "present"]
     assert len(present) == 1 and abs(present[0]["box"][1] - door[0]["box"][1]) <= 4, "on the scene row, beside « Présenter »"

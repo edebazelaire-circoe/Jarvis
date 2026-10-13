@@ -1,0 +1,311 @@
+"""Variants entrypoints of the whole video on the REAL Control Center page, in a REAL headless Chrome, against an isolated REAL Core
+(handoff jarvis-remotion-master-project-studio-export, Slice 08; `docs/remotion-master-project.md` § 13).
+
+Part 1 (always): real Core (own data root, own ports), the real prefab library, the real master planner and its live route, the real Remotion
+Studio service with Core's `FakeStudioRunner` (no Node process), the real Control Center relay, real CDP input. Proved: on a master-ready
+deck « Remotion Studio » opens ONE confirmation naming the whole video (keyboard: the focus stays in the dialog, `Échap` closes it and gives
+the focus back, nothing launched), confirming makes Core record the master target (`state.json` schema 2 view: `target.kind`), the line says
+the whole video; an incompatible deck keeps the scene door, says the § 3 sentence and refuses « Exporter la vidéo »; at 800x600, 1280x720 and
+1920x1080 the changed controls are named, inside the window, without horizontal overflow or overlap; in the stage fullscreen they are hidden.
+
+Part 2 (opt-in `JARVIS_REMOTION_RUNTIME_DIR`, Node, Chrome; one real process at a time): `RemotionStack` with the real `remotion studio`
+(private copy of the runtime's `node_modules`) and the real render host. The page's « Remotion Studio » opens the REAL Studio on the master
+(Remotion Studio's own page lists `JarvisPresentation`); then the page's « Exporter la vidéo » renders a verified whole-video MP4 for a small
+3-scene deck (Artefact `render_scope: master`, 3 scenes).
+
+With `JARVIS_VARIANTS_MASTER_EVIDENCE_DIR`: small screenshots (half scale) and `variants-master-summary.json`; the home path and the user
+name are redacted.
+"""
+
+from __future__ import annotations
+
+import json
+import os
+from pathlib import Path
+import shutil
+import subprocess
+import time
+
+import pytest
+
+from jarvis.adapters.file_local_capability_store import FileLocalCapabilityStore
+from jarvis.domain.remotion_master_project import MasterReason
+from jarvis.domain.remotion_master_sentences import REASON_SENTENCES
+from tests.fakes.remotion_studio import FakeStudioRunner
+from tests.unit.presentation_playback_gate_world import redact, run_long
+from tests.unit.test_local_capability_host import FakeRunner
+from tests.unit.test_presentation_studio_composition_clock_routes import FAST, SLOW, presentation, publish_scenes, remotion_scene
+from tests.unit.test_presentation_studio_edit_routes import S1, S2
+from tests.unit.test_presentation_studio_routes import AUTH, Core
+from tests.unit.test_variants_controls_browser import INVENTORY
+from tests.unit.test_variants_remotion_studio_browser import _deck, _free_port, _studio_page
+from tests.unit.test_variants_run_browser import wire
+
+X = "#jvStudioExplorer"
+EXPLORER = "window.JarvisStudioExplorer"
+DOOR = f"{X} [data-act=\"remotion_studio\"]"
+SCENE_DOOR = f"{X} [data-act=\"remotion_studio_scene\"]"
+EXPORT = f"{X} [data-act=\"video_export\"]"
+CONFIRM = f"{X} [data-act=\"remotion_studio_confirm\"]"
+DIALOG = f"document.querySelector('{X} [data-kind=\"remotion_studio\"]')"
+MASTER_LINE = f"((document.querySelector('{X} .jvx-rms-master-text')||{{}}).textContent||'')"
+RMS_TEXT = f"((document.querySelector('{X} .jvx-rms-text')||{{}}).textContent||'')"
+VX_TEXT = f"((document.querySelector('{X} .jvx-vx-text')||{{}}).textContent||'')"
+RMS_STATE = f"{EXPLORER}.remotionStudio.state()"
+MASTER_READY = f"({RMS_STATE}.master||{{}}).state==='ready'"
+SHOWN = "(s=>{const b=document.querySelector(s);return !!b&&!b.hidden&&b.offsetParent!==null})"
+FULL = "({x:0,y:0,width:innerWidth,height:innerHeight})"
+#: Boxes of the changed controls (door, export, « Présenter », the scene door, the lines) for the overlap check.
+BOXES = (f"(()=>{{const r=s=>{{const e=document.querySelector(s);if(!e||e.hidden||e.offsetParent===null)return null;const b=e.getBoundingClientRect();"
+         f"return [Math.round(b.left),Math.round(b.top),Math.round(b.right),Math.round(b.bottom)]}};"
+         f"return {{door:r('{DOOR}'),export:r('{EXPORT}'),present:r('{X} [data-act=\"present\"]'),scene:r('{SCENE_DOOR}'),"
+         f"line:r('{X} .jvx-rms'),vw:innerWidth,overflowX:document.documentElement.scrollWidth>innerWidth}}}})()")
+
+
+def evidence() -> Path | None:
+    raw = os.environ.get("JARVIS_VARIANTS_MASTER_EVIDENCE_DIR")
+    if not raw:
+        return None
+    folder = Path(raw)
+    folder.mkdir(parents=True, exist_ok=True)
+    return folder
+
+
+def shot(folder: Path, name: str) -> dict:
+    """A half-scale screenshot of the whole page (small evidence), written `<name>-000.png` in `folder`."""
+
+    return {"burst": str(folder), "ms": 1, "scale": 0.5, "clipExpr": FULL, "prefix": name, "as": f"shot_{name}"}
+
+
+def keep_shots(raw: Path, folder: Path | None) -> list[str]:
+    if folder is None:
+        return []
+    kept = []
+    for path in sorted(raw.glob("*-000.png")):
+        target = folder / path.name.replace("-000.png", ".png")
+        shutil.copy2(path, target)
+        kept.append(target.name)
+    return kept
+
+
+def open_plan(pid: str) -> list[dict]:
+    return [{"until": f"!!{EXPLORER}", "ms": 20000, "required": True, "as": "explorer"},
+            {"eval": f"{EXPLORER}.open({{presentation_id:'{pid}',fullscreen:false}})"},
+            {"until": f"{EXPLORER}.state().open && {EXPLORER}.state().preview.status==='ready'", "ms": 30000, "required": True, "as": "preview"}]
+
+
+def overlaps(a: list[int] | None, b: list[int] | None) -> bool:
+    return bool(a and b) and a[0] < b[2] and b[0] < a[2] and a[1] < b[3] and b[1] < a[3]
+
+
+@pytest.fixture
+async def stack(tmp_path):
+    """An isolated Core with Remotion Studio (fake process), its capability ready; a 2-scene master-ready deck and an incompatible one."""
+
+    port = _free_port()
+    runner, capability = FakeStudioRunner(port=port), FakeRunner()
+    page = await _studio_page(port)
+    async with Core(tmp_path, local_capability_runner=capability, remotion_studio_runner=runner,
+                    local_capability_store=FileLocalCapabilityStore((tmp_path / "data").resolve())) as core:
+        assert (await core.client.local_capability_action("remotion", "install"))["capability"]["status"] == "ready"
+        url = await wire(core, tmp_path)
+        ready = await _deck(core)
+        await publish_scenes(core)
+        # the same two prefab ids as `_deck` (FAST is PREFAB_A, SLOW is PREFAB_B): `publish_scenes` adds their version 2, SLOW at 24 fps
+        broken, _ = await presentation(core, [remotion_scene(S1, FAST, 2), remotion_scene(S2, SLOW, 2)])
+        yield core, url, ready, broken, runner
+        await core.stack.center.scene_view.aclose()
+    await page.cleanup()
+
+
+async def test_the_whole_video_door_confirms_by_keyboard_and_records_the_master_target(stack, tmp_path):
+    core, url, pid, _broken, runner = stack
+    raw = tmp_path / "shots"
+    raw.mkdir()
+    result = await run_long(url, open_plan(pid) + [
+        {"until": MASTER_READY, "ms": 15000, "required": True, "as": "master_read"}, {"wait": 300},
+        {"value": "line", "expr": MASTER_LINE}, {"value": "door", "expr": f"document.querySelector('{DOOR}').getAttribute('aria-label')"},
+        {"value": "sceneShown", "expr": f"{SHOWN}('{SCENE_DOOR}')"}, {"value": "exportShown", "expr": f"{SHOWN}('{EXPORT}')"},
+        shot(raw, "variants-master-ready-1280x720"),
+        {"click": DOOR}, {"until": f"!!{DIALOG}", "ms": 8000, "required": True, "as": "dialog"}, {"wait": 200},
+        {"value": "dialog", "expr": f"{DIALOG}.innerText"}, {"value": "target", "expr": f"{DIALOG}.getAttribute('data-target')"},
+        {"value": "focus0", "expr": "document.activeElement&&document.activeElement.textContent"},
+        shot(raw, "variants-master-confirm-1280x720"),
+        {"key": "Tab"}, {"key": "Tab"}, {"key": "Tab"},
+        {"value": "trapped", "expr": f"{DIALOG}.contains(document.activeElement)"},
+        {"key": "Escape"}, {"wait": 300},
+        {"value": "closed", "expr": f"!{DIALOG}"}, {"value": "focusBack", "expr": f"document.activeElement===document.querySelector('{DOOR}')"},
+        {"click": DOOR}, {"until": f"!!{DIALOG}", "ms": 8000}, {"click": CONFIRM},
+        {"until": f"{RMS_STATE}.studio && {RMS_STATE}.studio.status==='ready' && !{RMS_STATE}.busy", "ms": 20000, "as": "opened"},
+        {"wait": 400}, {"value": "status", "expr": RMS_TEXT},
+        {"value": "button", "expr": f"[document.querySelector('{DOOR}').dataset.state,document.querySelector('{DOOR}').getAttribute('aria-label')]"},
+        {"value": "target_view", "expr": f"JSON.stringify({RMS_STATE}.studio.target)"},
+        shot(raw, "variants-master-open-1280x720")])
+    reads = result["reads"]
+    assert not reads.get("failed"), reads.get("failed")
+    assert reads["line"] == "Vidéo entière : « Horloge », variante 1, 2 scènes (6 s)." and reads["door"] == "Remotion Studio, vidéo entière"
+    assert reads["sceneShown"] is True and reads["exportShown"] is True
+    assert reads["target"] == "master" and "2 scènes vont tourner hors du bac à sable, dans Remotion Studio" in reads["dialog"]
+    assert "un agent" not in reads["dialog"] and "Attention" in reads["dialog"], "one scene was written by the brain: the reinforced warning"
+    assert reads["focus0"] == "Annuler" and reads["trapped"] is True, "the focus starts on « Annuler » (danger) and stays in the dialog"
+    assert reads["closed"] is True and reads["focusBack"] is True
+    assert reads["opened"] is True and "ouvert sur la vidéo entière (2 scènes)" in reads["status"]
+    assert reads["button"] == ["here", "Remotion Studio, ouvert sur la vidéo entière"]
+    target = json.loads(reads["target_view"])
+    assert target["kind"] == "variant_master" and target["presentation_id"] == pid and target["scene_count"] == 2
+    assert len(runner.launches) == 1, "Core really started the (fake) process once, after the confirmation"
+    async with core.http.get(core.stack.core_url + "/v1/local-capabilities/remotion/studio", headers=AUTH) as response:
+        view = (await response.json())["studio"]
+    assert view["pin"] is None and view["target"]["kind"] == "variant_master"
+    shots = keep_shots(raw, evidence())
+    if evidence():
+        (evidence() / "variants-master-door-summary.json").write_text(redact(json.dumps(
+            {"line": reads["line"], "dialog": reads["dialog"], "status": reads["status"], "target": target, "screenshots": shots},
+            indent=1, ensure_ascii=False)), encoding="utf-8")
+
+
+async def test_an_incompatible_deck_keeps_the_scene_door_says_the_sentence_and_refuses_the_export(stack):
+    core, url, _pid, broken, runner = stack
+    result = await run_long(url, open_plan(broken) + [
+        {"until": f"({RMS_STATE}.master||{{}}).state==='incompatible'", "ms": 15000, "required": True, "as": "master_read"}, {"wait": 300},
+        {"value": "line", "expr": MASTER_LINE}, {"value": "sceneShown", "expr": f"{SHOWN}('{SCENE_DOOR}')"},
+        {"value": "target", "expr": f"document.querySelector('{DOOR}').dataset.target"},
+        {"value": "export", "expr": f"[document.querySelector('{EXPORT}').getAttribute('aria-disabled'),document.querySelector('{EXPORT}').title]"},
+        {"click": EXPORT}, {"wait": 300}, {"value": "exportLine", "expr": VX_TEXT},
+        {"click": DOOR}, {"until": f"!!{DIALOG}", "ms": 8000}, {"value": "dialog", "expr": f"{DIALOG}.innerText"},
+        {"value": "dialogTarget", "expr": f"{DIALOG}.getAttribute('data-target')"}])
+    reads = result["reads"]
+    sentence = REASON_SENTENCES[MasterReason.FPS_MISMATCH]
+    assert reads["line"] == "Vidéo entière indisponible dans Remotion Studio : " + sentence
+    assert reads["sceneShown"] is False and reads["target"] == "scene"
+    assert reads["export"][0] == "true" and sentence in reads["export"][1] and sentence in reads["exportLine"]
+    assert reads["dialogTarget"] is None and "Scène 1 sur 2" in reads["dialog"], "the scene door, as before"
+    assert not runner.launches
+
+
+@pytest.mark.parametrize("viewport", ["800x600", "1280x720", "1920x1080"])
+async def test_the_changed_controls_fit_every_viewport_and_hide_in_the_stage_fullscreen(stack, viewport, tmp_path):
+    core, url, pid, _broken, _runner = stack
+    raw = tmp_path / "shots"
+    raw.mkdir()
+    result = await run_long(url, open_plan(pid) + [
+        {"until": MASTER_READY, "ms": 15000, "required": True, "as": "master_read"}, {"wait": 400},
+        {"value": "inv", "expr": INVENTORY}, {"value": "boxes", "expr": BOXES}, shot(raw, f"variants-master-{viewport}"),
+        {"click": f"{X} .jvx-top-actions .jvx-btn"},
+        {"until": f"document.fullscreenElement===document.querySelector('{X} .jvx-theater')", "ms": 5000, "as": "fullscreen"}, {"wait": 400},
+        {"value": "inFullscreen", "expr": f"[{SHOWN}('{DOOR}'),{SHOWN}('{EXPORT}'),{SHOWN}('{X} .jvx-rms'),{SHOWN}('{X} .jvx-vx')]"},
+        shot(raw, f"variants-master-fullscreen-{viewport}")], viewport=viewport)
+    reads = result["reads"]
+    assert not reads.get("failed"), reads.get("failed")
+    inv, boxes = reads["inv"], reads["boxes"]
+    named = {c["act"]: c for c in inv["controls"] if c["act"] in ("remotion_studio", "video_export", "present", "remotion_studio_scene")}
+    assert set(named) == {"remotion_studio", "video_export", "present", "remotion_studio_scene"}, named
+    assert named["remotion_studio"]["name"] == "Remotion Studio, vidéo entière" and named["video_export"]["name"] == "Exporter la vidéo"
+    assert named["remotion_studio_scene"]["name"] == "Cette scène seule dans Remotion Studio"
+    for act, control in named.items():
+        assert 0 <= control["box"][0] and control["box"][2] <= inv["vw"], (act, control["box"], inv["vw"])
+    assert inv["overflowX"] is False and boxes["overflowX"] is False
+    keys = ("door", "export", "present", "scene")
+    for i, a in enumerate(keys):
+        for b in keys[i + 1:]:
+            assert not overlaps(boxes[a], boxes[b]), (viewport, a, b, boxes)
+    assert reads["fullscreen"] is True and reads["inFullscreen"] == [False, False, False, False], "nothing of this Slice over the slide"
+    keep_shots(raw, evidence())
+
+
+# ---------------------------------------------------------------------------------------------------------------- Part 2: real Studio, real render
+
+RUNTIME = os.environ.get("JARVIS_REMOTION_RUNTIME_DIR", "")
+
+
+@pytest.mark.skipif(not RUNTIME or shutil.which("node") is None or not (Path(RUNTIME or ".") / "node_modules" / "@remotion").is_dir(),
+                    reason="needs JARVIS_REMOTION_RUNTIME_DIR (an installed Remotion runtime), node and Chrome")
+async def test_real_remotion_studio_opens_the_whole_video_and_the_export_renders_one_verified_mp4(tmp_path):
+    from jarvis.adapters.remotion_render_runner import RemotionRenderRunner
+    from jarvis.adapters.remotion_studio_runner import RemotionStudioRunner
+    from jarvis.adapters.remotion_compiler import shipped_engine_pin
+    from jarvis.domain.remotion_source import Composition
+    from tests.fakes.remotion_player_stack import RemotionStack
+    from tests.fakes.remotion_scene import scene_candidate
+    from tests.unit.presentation_playback_gate_world import BASE, PROPS, SCENE_TSX, harness
+    from tests.unit.test_remotion_studio_roundtrip_real_browser import private_runtime_copy
+
+    folder = evidence()
+    raw = tmp_path / "shots"
+    raw.mkdir()
+    head = subprocess.run(["git", "rev-parse", "--short", "HEAD"], capture_output=True, text=True, check=False).stdout.strip()
+    report: dict = {"slice": "08-variants-master-entrypoints", "tested_head": head, "durations_ms": {},
+                    "runtime": "RemotionStack (real Core, real remotion studio and render host) on free loopback ports, throw-away data root, "
+                               "private copy of the gate runtime's node_modules, headless Chrome over CDP; the live Jarvis was never contacted"}
+    started = time.monotonic()
+    private_runtime_copy(tmp_path)
+    report["durations_ms"]["private_runtime_copy"] = round((time.monotonic() - started) * 1000)
+
+    def options(stack) -> dict:
+        runtime = lambda: stack.data_root / "local_capabilities" / "remotion" / "runtime"  # noqa: E731 - the runners take a root factory
+        return {"remotion_studio_runner": RemotionStudioRunner(runtime), "remotion_render_runner": RemotionRenderRunner(runtime)}
+
+    prefabs = [f"presentation-studio.p0000000000c8.s{n:012d}" for n in range(1, 4)]
+    async with RemotionStack(tmp_path, runtime_dir=Path(RUNTIME), core_options=options) as stack:
+        for n, prefab_id in enumerate(prefabs):
+            await stack.core.prefabs.save(scene_candidate(
+                prefab_id, engine=shipped_engine_pin(), title=f"V{n + 1}", composition=Composition("Scene", 640, 360, 30, 20 + 10 * n),
+                files={"src/Scene.tsx": SCENE_TSX}, props=PROPS, sample={"props": {"title": f"V{n + 1}", "bg": "#203060"}, "data": {}}),
+                actor="user")
+        _, created = await stack.call("POST", BASE, json={"title": "Vidéo S08"})
+        pid, variant = created["presentation"]["presentation_id"], created["variants"][0]
+        scenes = [{"scene_id": f"pss_c{n:011d}", "prefab": {"id": prefabs[n], "version": 1}, "title": f"SCENE-{n + 1}",
+                   "props": {"title": f"SCENE-{n + 1}", "bg": ["#a02020", "#20a020", "#2030c0"][n]}, "data": {}} for n in range(3)]
+        status, saved = await stack.call("PUT", f"{BASE}/{pid}/variants/{variant['variant_id']}", json={
+            "expected_revision": variant["revision"], "title": variant["title"], "scenes": scenes,
+            "art_direction_id": variant["art_direction_id"], "score_id": variant["score_id"]})
+        harness(status == 200, f"variant save refused: {saved}")
+        url = stack.page_url
+        # 1. the page's « Remotion Studio »: the real remotion studio on the whole video
+        started = time.monotonic()
+        result = await run_long(url, open_plan(pid) + [
+            {"until": MASTER_READY, "ms": 30000, "required": True, "as": "master_read"},
+            {"click": DOOR}, {"until": f"!!{DIALOG}", "ms": 15000, "required": True, "as": "dialog"},
+            {"value": "dialog", "expr": f"{DIALOG}.innerText"}, {"click": CONFIRM},
+            {"until": f"{RMS_STATE}.studio && {RMS_STATE}.studio.status==='ready' && !{RMS_STATE}.busy", "ms": 200000, "as": "studio_ready"},
+            {"value": "status", "expr": RMS_TEXT}, {"value": "studio", "expr": f"JSON.stringify({RMS_STATE}.studio)"},
+            shot(raw, "real-studio-open-in-variants")], timeout=400)
+        report["durations_ms"]["studio_open_from_page"] = round((time.monotonic() - started) * 1000)
+        reads = result["reads"]
+        harness(not reads.get("failed") and reads.get("studio_ready"), f"Remotion Studio did not open the master: {reads}")
+        studio = json.loads(reads["studio"])
+        assert studio["target"]["kind"] == "variant_master" and studio["target"]["scene_count"] == 3
+        assert "3 scènes vont tourner hors du bac à sable" in reads["dialog"]
+        # a cold start outlives the click's permission to open a tab: the line then offers the link (« prêt … après un clic »)
+        assert ("ouvert sur la vidéo entière (3 scènes)" in reads["status"] or "Remotion Studio est prêt sur la vidéo entière" in reads["status"]), reads["status"]
+        page = await run_long(studio["url"] + "JarvisPresentation", [
+            {"until": "document.body.innerText.includes('JarvisPresentation')", "ms": 150000, "as": "composition_listed"}, {"wait": 1500},
+            shot(raw, "real-studio-master-page")], timeout=300)
+        assert page["reads"].get("composition_listed") is True, "Remotion Studio's own page shows the master composition"
+        report["studio"] = {"target": studio["target"], "status_line": reads["status"]}
+        status, _closed = await stack.call("POST", "/v1/local-capabilities/remotion/studio/close", json={})
+        harness(status == 200, "Remotion Studio did not close")
+        # 2. the page's « Exporter la vidéo »: one whole-video MP4
+        started = time.monotonic()
+        result = await run_long(url, open_plan(pid) + [
+            {"until": MASTER_READY, "ms": 30000, "required": True, "as": "master_read"},
+            {"click": EXPORT}, {"until": f"{VX_TEXT}.includes('Rendu des images')||{VX_TEXT}.includes('exportée')", "ms": 120000, "as": "running"},
+            {"value": "running_text", "expr": VX_TEXT}, shot(raw, "real-export-running"),
+            {"until": f"{VX_TEXT}.startsWith('Vidéo entière exportée')||{VX_TEXT}.includes('échoué')", "ms": 400000, "as": "done"},
+            {"value": "done_text", "expr": VX_TEXT}, {"value": "link", "expr": f"document.querySelector('{X} .jvx-vx-link').getAttribute('href')"},
+            {"value": "job", "expr": f"JSON.stringify({EXPLORER}.videoExport.state().job)"}, shot(raw, "real-export-done")], timeout=600)
+        report["durations_ms"]["export_from_page"] = round((time.monotonic() - started) * 1000)
+        reads = result["reads"]
+        harness(reads.get("done") and reads["done_text"].startswith("Vidéo entière exportée"), f"export did not finish: {reads}")
+        job = json.loads(reads["job"])
+        artifact = await stack.core.artifacts.get(job["artifact_id"])
+        meta = dict(artifact.metadata)
+        assert meta["render_scope"] == "master" and meta["render_scene_count"] == 3 and artifact.kind.value == "presentation_video"
+        assert meta["render_composition"] == "JarvisPresentation" and (artifact.width, artifact.height) == (640, 360)
+        assert reads["link"] == f"/api/artifacts/{job['artifact_id']}/payload"
+        report["export"] = {"running": reads["running_text"], "done": reads["done_text"], "frames": job.get("frames_total"),
+                            "size_bytes": job.get("size_bytes"), "render_scope": meta["render_scope"], "scenes": meta["render_scene_count"],
+                            "verified_by": meta.get("render_verified_by")}
+    report["screenshots"] = keep_shots(raw, folder)
+    if folder:
+        (folder / "variants-master-summary.json").write_text(redact(json.dumps(report, indent=1, ensure_ascii=False, default=str)), encoding="utf-8")

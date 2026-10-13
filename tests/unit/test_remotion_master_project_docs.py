@@ -51,7 +51,8 @@ LEVEL_3_SECTIONS = ("## 2. MasterProjectPlan — Level 3 (Slice 03)", "## 3. Rea
                     "## 5. `project_key` — Level 3 (Slice 03)", "## 6. Workspace layout, generated vs canonical files — Level 3 (Slice 04)",
                     "## 7. Generated master composition — Level 3 (Slice 04)", "## 9. Studio master target — Level 3 (Slice 05)",
                     "## 11. Live readiness read — Level 3 (Slice 05)",
-                    "## 10. Whole-video render scope — Level 3 (Slice 06)", "## 12. Voice and agent — Level 3 (Slice 07)")
+                    "## 10. Whole-video render scope — Level 3 (Slice 06)", "## 12. Voice and agent — Level 3 (Slice 07)",
+                    "## 13. Variants and Board entrypoints — Level 3 (Slice 08)")
 
 
 def test_the_page_states_level_2_and_claims_level_3_only_for_the_implemented_planner_sections():
@@ -60,13 +61,18 @@ def test_the_page_states_level_2_and_claims_level_3_only_for_the_implemented_pla
     rest = DOC.replace("*Composition clock (Level 3)*", "")
     for marker in ("Level 3 (Slice 03)", "(Level 3, Slice 03)", "Level 3 (Slice 04)", "(Level 3, Slice 04)", "Level 3 (Slice 05)",
                    "(Level 3, Slice 05)", "Level 3\n(Slice 06)",
-                   "Level 3 (Slice 06)", "(Level 3, Slice 06)", "Level 3 (Slice 07)", "(Level 3, Slice 07)"):
+                   "Level 3 (Slice 06)", "(Level 3, Slice 06)", "Level 3 (Slice 07)", "(Level 3, Slice 07)", "Level 3 (Slice 08)",
+                   "(Level 3, Slice 08)"):
         rest = rest.replace(marker, "")
     assert "Level 3" not in rest, "only the Slice 03, 04 and 05 sections claim Level 3"
     for heading in LEVEL_3_SECTIONS:
         assert "\n" + heading + "\n" in DOC, heading
     assert "| MasterProjectPlan, readiness codes, `project_key`, asset merge | 3 (Slice 03) | 3 | 03 |" in DOC
     assert "| Voice spec rule, collision-free names, inspect block, `scope` in `remotion_export` | 3 (Slice 07) | 3 | 07 |" in DOC
+    assert "| Variants and Board entrypoints | 3 (Slice 08) | 3 | 08 |" in DOC
+    for needle in ("`tests/unit/test_variants_master_entrypoints_js.py`", "`tests/unit/test_variants_master_entrypoints_browser.py`",
+                   "`JarvisRemotionStudioCore.MASTER_REASONS`", "`createVideoExport`", "`PATHS.renderMaster`"):
+        assert needle in flat(section("## 13. Variants and Board entrypoints")), needle
     assert "| Master workspace files, generated composition, boundary | 3 (Slice 04) | 3 | 04 |" in DOC
     assert ("| Studio master target, ack, `state.json` schema 2, unpublished policy, live readiness route | 3 (Slice 05) | 3 | 05 |"
             in DOC)
@@ -205,8 +211,8 @@ def test_the_scene_lane_documents_qualify_their_single_scene_sentences_and_link_
         "remotion-render.md": ("| **Une scène par export.** |", "- **Une scène par export** (portée de scène", "| `scene_id` | tous |",
                                "puis UNE scène (l'aperçu reste de portée de scène"),
         "remotion-studio.md": ("| **Le Studio ne sert que la source de la scène choisie** (cible de scène, livrée",
-                               "**La porte de Variantes (native-studio-playback-fix Slice 11).** (prévu"),
-        "presentation-studio.md": ("on **one scene pin**, in its own browser tab (planned",),
+                               "**La porte de Variantes (native-studio-playback-fix Slice 11).** (livré par la Slice 08"),
+        "presentation-studio.md": ("on **one scene pin** or on **the whole variant**",),
     }.items():
         text = (DOCS / name).read_text(encoding="utf-8")
         for needle in needles:

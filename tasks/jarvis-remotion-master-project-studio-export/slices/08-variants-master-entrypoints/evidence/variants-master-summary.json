@@ -1,0 +1,55 @@
+{
+ "slice": "08-variants-master-entrypoints",
+ "tested_head": "3cafbbca",
+ "durations_ms": {
+  "private_runtime_copy": 5097,
+  "studio_open_from_page": 67156,
+  "export_from_page": 22871
+ },
+ "runtime": "RemotionStack (real Core, real remotion studio and render host) on free loopback ports, throw-away data root, private copy of the gate runtime's node_modules, headless Chrome over CDP; the live Jarvis was never contacted",
+ "studio": {
+  "target": {
+   "kind": "variant_master",
+   "presentation_id": "pst_d5a2ea973aac42f29c1e3da490ce4326",
+   "variant_id": "psv_d3a8b6bb08017c70187bc1ac7b28849d",
+   "variant_revision": 2,
+   "project_key": "mpk_d7150565934a169c8226901b",
+   "scenes": [
+    {
+     "scene_id": "pss_c00000000000",
+     "prefab_id": "presentation-studio.p0000000000c8.s000000000001",
+     "version": 1
+    },
+    {
+     "scene_id": "pss_c00000000001",
+     "prefab_id": "presentation-studio.p0000000000c8.s000000000002",
+     "version": 1
+    },
+    {
+     "scene_id": "pss_c00000000002",
+     "prefab_id": "presentation-studio.p0000000000c8.s000000000003",
+     "version": 1
+    }
+   ],
+   "scene_count": 3,
+   "current_project_key": "mpk_d7150565934a169c8226901b",
+   "stale": false
+  },
+  "status_line": "Remotion Studio est prêt sur la vidéo entière. Le navigateur n’ouvre un onglet qu’après un clic :"
+ },
+ "export": {
+  "running": "Export de la vidéo entière (3 scènes) — Rendu des images · 0/90 images (0 %) · 8 s · délai 7 min au plus",
+  "done": "Vidéo entière exportée : Artefact jart_9c6aade492134c76a6c9b59d30389cfa (24 Ko).",
+  "frames": 90,
+  "size_bytes": 24187,
+  "render_scope": "master",
+  "scenes": 3,
+  "verified_by": "ffprobe"
+ },
+ "screenshots": [
+  "real-export-done.png",
+  "real-export-running.png",
+  "real-studio-master-page.png",
+  "real-studio-open-in-variants.png"
+ ]
+}

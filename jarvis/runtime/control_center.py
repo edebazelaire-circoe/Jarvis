@@ -571,6 +571,9 @@ STUDIO_RUN_SCRIPT_MARKER = "/*__CONTROL_CENTER_PRESENTATION_STUDIO_RUN_JS__*/"
 # « Remotion Studio » sous la video de Variantes (native-studio-playback-fix Slice 11) : la porte vers l'editeur natif ; avant le controleur.
 STUDIO_REMOTION_DOOR_SCRIPT_FILE = "control_center_presentation_studio_explorer_remotion.js"
 STUDIO_REMOTION_DOOR_SCRIPT_MARKER = "/*__CONTROL_CENTER_PRESENTATION_STUDIO_EXPLORER_REMOTION_JS__*/"
+# « Exporter la video » de Variantes (master-project-studio-export Slice 08) : l'export de la video entiere ; avant le controleur.
+STUDIO_VIDEO_EXPORT_SCRIPT_FILE = "control_center_presentation_studio_explorer_export.js"
+STUDIO_VIDEO_EXPORT_SCRIPT_MARKER = "/*__CONTROL_CENTER_PRESENTATION_STUDIO_EXPLORER_EXPORT_JS__*/"
 STUDIO_EXPLORER_SCRIPT_FILE = "control_center_presentation_studio_explorer.js"
 STUDIO_EXPLORER_SCRIPT_MARKER = "/*__CONTROL_CENTER_PRESENTATION_STUDIO_EXPLORER_JS__*/"
 # Client de lecture partage de la page (studio, Slice 12 ; native-studio-playback-fix Slice 09 : la bande flottante est retiree, la presentation
@@ -2316,6 +2319,7 @@ class ControlCenter:
             (STUDIO_STAGE_MEDIA_SCRIPT_MARKER, STUDIO_STAGE_MEDIA_SCRIPT_FILE),
             (STUDIO_RUN_SCRIPT_MARKER, STUDIO_RUN_SCRIPT_FILE),
             (STUDIO_REMOTION_DOOR_SCRIPT_MARKER, STUDIO_REMOTION_DOOR_SCRIPT_FILE),
+            (STUDIO_VIDEO_EXPORT_SCRIPT_MARKER, STUDIO_VIDEO_EXPORT_SCRIPT_FILE),
         ):
             html = html.replace(marker, page.with_name(file_name).read_text(encoding="utf-8"))
         html = html.replace(

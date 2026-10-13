@@ -5,7 +5,9 @@ Status: **Level 2 — contract; implementation in Slices 03-08 of handoff jarvis
 the generated composition (Level 3 (Slice 04), `jarvis/domain/remotion_master_files.py`); § 9 and § 11, the Studio master target and the
 live readiness read (Level 3 (Slice 05), `jarvis/core/remotion_studio_service.py`); § 10, the whole-video render scope (Level 3
 (Slice 06), `jarvis/domain/presentation_render_master.py`); § 12, voice and agent (Level 3 (Slice 07), `jarvis/domain/remotion_master_sentences.py`,
-`jarvis/runtime/remotion_mcp_tools.py`). Every other behaviour below is the
+`jarvis/runtime/remotion_mcp_tools.py`); § 13, the Variants and Board entrypoints (Level 3 (Slice 08),
+`jarvis/runtime/control_center_presentation_studio_explorer_remotion.js`, `jarvis/runtime/control_center_presentation_studio_explorer_export.js`,
+`jarvis/runtime/control_center_workspace.js`). Every other behaviour below is the
 contract the Slices implement, and every "is" means "must be" until the Slice that owns it lands (owners: § 16). Evidence for the choices: the handoff's Slice 01 audit (`tasks/jarvis-remotion-master-project-studio-export/slices/01-current-state-and-compatibility-audit/AUDIT.md`,
 real runs on the pinned Remotion 4.0.534). Decisions marked *decided by agent 0* were taken by the handoff's orchestrator under the Human's
 delegated autonomy (2026-10-13).
@@ -445,10 +447,10 @@ unknown presentation or variant is the usual 404 `presentation_studio_unknown_*`
   changes `project_key` with no sync call, and the next whole-video export freezes the new revision (a new snapshot, never the older
   derivative). Proof through the real studio, prefab store, source-edit service, packager and render service:
   `test_a_standing_source_edit_changes_the_key_and_the_next_whole_video_export_renders_the_new_pin`.
-- Not done here: the `remotion_studio` pointer wording for a master target (§ 14) waits for the Variants master button (Slice 08).
+- The `remotion_studio` pointer wording for a master target (§ 14) came with the Variants master button (Slice 08, § 13).
 - Tests: `tests/unit/test_remotion_master_agent.py`; real trace: the handoff's `slices/07-voice-generation-and-reedit/evidence/`.
 
-## 13. Variants and Board entrypoints (Slice 08)
+## 13. Variants and Board entrypoints — Level 3 (Slice 08)
 
 - The primary « Remotion Studio » action under the Variants video targets the **variant master** when the plan is `ready`; its state line names
   the presentation, the variant and the scene count, not one scene.
@@ -461,6 +463,72 @@ unknown presentation or variant is the usual 404 `presentation_studio_unknown_*`
   `settings: {scope: "master"}` only when it is `ready`; otherwise it posts today's body unchanged.
 - Current scene selection, Players, transport and the Variants composition clock are untouched.
 
+**Implementation (Level 3, Slice 08).**
+
+- **One read, no decision.** `createRemotionDoor` (`control_center_presentation_studio_explorer_remotion.js`) reads `GET .../master-project`
+  (§ 11, `JarvisRemotionStudioCore.createClient(...).masterProject`) once per `(presentation, variant, variant revision)`, as soon as a Remotion
+  scene is on screen (an HTML deck never asks), and again when the variant's revision changes (the Variants preview reload: hot reload, voice
+  edit, publication). It keeps the same variant's previous plan on screen while the new revision is read. The page computes no compatibility:
+  `doorModel` only reads `status`, `reason`, `detail`, `project_key`, `composition` and `scenes`. The § 3 sentences are
+  `JarvisRemotionStudioCore.MASTER_REASONS` / `masterReasonSentence`, the table of `remotion_master_sentences.py` word for word (a parity
+  test). An unreadable view (an older Core, a variant gone, a network failure) keeps the scene door and says « La vidéo entière n'a pas pu être
+  lue (<code>) : « Remotion Studio » ouvre la scène à l'écran. » (logged `remotion_master_read_failed`, `warn`).
+- **Primary door, master target.** Ready: the button reads « Remotion Studio » (`data-target="master"`, name « Remotion Studio, vidéo entière »),
+  and its master line « Vidéo entière : « Atelier », variante 2, 3 scènes (4,5 s). » with the quiet secondary « Cette scène seule dans Remotion
+  Studio » (an underlined text button on that line, `data-act="remotion_studio_scene"`). A click opens ONE confirmation in Variants' layer
+  (`data-target="master"`, `JarvisRemotionStudioCore.masterConfirmSpec`): « Ouvrir la vidéo entière hors du bac à sable ? », the identity
+  « « Atelier », variante 2 · 3 scènes · 4,5 s (1280×720, 30 i/s) », « 3 scènes vont tourner hors du bac à sable, dans Remotion Studio … »,
+  the same origin and data lines as a scene, each mounted version, their provenance; any version not written by the user (or unreadable) gives
+  « Ouvrir une vidéo dont vous n'avez pas écrit toutes les scènes ? », a red button, the focus on « Annuler » and « Attention : … ». Confirming
+  sends `open {kind: "variant_master", presentation_id, variant_id, project_key}` (the client adds `acknowledge_unsandboxed_project`), plus
+  `discard_unpublished: true` only when the dialog said « Fichiers non publiés : … seront mis de côté (studio-edits), pas publiés. ». `open`
+  also switches or refreshes a running Studio (Core's `_sync_locked`).
+- **Answers.** `remotion_studio_master_stale` (409) → the readiness is read again and the dialog re-asks with « La variante a changé depuis
+  votre confirmation : la vidéo entière compte maintenant N scènes. Confirmez de nouveau. » (three times at most, then said);
+  `remotion_studio_master_incompatible` → the § 3 sentence of the envelope's `reason`, the readiness is read again and the button falls back
+  to the scene door; `remotion_studio_unpublished_edits` not anticipated → the dialog re-asks with the discard line. Every failure:
+  `remotion_studio_open_failed` (`error`).
+- **States of the line** (`.jvx-rms-text`): this whole video open « Remotion Studio est ouvert sur la vidéo entière (3 scènes), dans un autre
+  onglet. » + the link (button `data-state="here"`, « Remotion Studio, ouvert sur la vidéo entière », a click opens another tab without a
+  dialog); an older key (Core's `target.stale`, or the page's key differs) « La vidéo a changé depuis son ouverture dans Remotion Studio
+  (maintenant N scènes) : « Actualiser » l'y recharge, après confirmation. » + « Actualiser » (`data-act="remotion_studio_master_refresh"`,
+  the same dialog, « Actualiser la vidéo entière dans Remotion Studio »); another variant's whole video; a scene open (« … ouvert sur cette
+  scène seule (source v1) … « Remotion Studio » y affiche la vidéo entière, après confirmation. », its publish flow unchanged). Never « ouvert
+  sur la scène N » for a master target.
+- **Publish.** Edits of a whole-video workspace (`workspaceOf(...).relation === "master"`) are said « n fichiers modifiés dans Remotion Studio
+  (vidéo entière), pas publiés : la vidéo entière ne se publie pas dans la variante. Pour publier une scène, ouvrez-la seule (« Cette scène
+  seule dans Remotion Studio ») ; ces fichiers seront mis de côté (studio-edits), après confirmation. »; « Publier dans la variante… » stays
+  hidden for a master target (Studio stopped too). The scene door then sets them aside after its own dialog says so.
+- **Whole-video export.** `createVideoExport` (`control_center_presentation_studio_explorer_export.js`, `JarvisVariantsVideoExport`): « Exporter
+  la vidéo » between « Remotion Studio » and « Présenter » (hidden until the whole video is asked for, during a run and in the stage
+  fullscreen). It reads the door's view (`door.master()`), never a second read. Ready: `POST /api/local-capabilities/remotion/render/jobs`
+  `{presentation_id, variant_id, expected_presentation_revision, expected_variant_revision, format: "mp4", settings: {scope: "master"}}`
+  (Core freezes the variant at those revisions, § 10; no Board is authorised, as for the agent's export: a variant whose scenes read a live
+  Board file is refused by Core, `live_ref_not_authorised`, said with its code). Its line `.jvx-vx`: « Export de la vidéo entière : demande envoyée, la variante est figée… », then « Export de la
+  vidéo entière (3 scènes) — Rendu des images · 40/135 images (29 %) · 12 s · délai 7 min au plus » with « Annuler l'export », polled every
+  2 s (three failed reads in a row: said and stopped; past the job's timeout + 2 min: « Aucune fin lue après … »); done « Vidéo entière
+  exportée : Artefact jart_… (2,3 Mo). » + « Ouvrir la vidéo » (`/api/artifacts/{id}/payload`); failed with Core's code and detail and
+  « Réessayer »; Core's 409 `presentation_render_master_incompatible` → the § 3 sentence (and a re-read), `presentation_studio_stale_revision`
+  → the variant is read again. Not ready: `aria-disabled`, title and click say « Vidéo entière indisponible : <sentence> Chaque scène reste
+  exportable depuis les Artefacts du Board. ». A running master job of this `project_key` (voice, another window) is picked up when Variants
+  shows the variant. Logs `video_export_*`.
+- **Board Artifacts.** `exportStart` (`control_center_workspace.js`) for `mp4` reads `GET /api/local-capabilities/remotion/render/master?snapshot_id=`
+  (`PATHS.renderMaster`, allowed only with exactly that query, the render deadline) and posts `settings: {scope: "master"}` only when
+  `status` is `ready` (its line says « Export MP4 (vidéo entière, N scènes) en cours »); incompatible, unreadable (logged
+  `workspace.export_master_read_failed`), `still` and `pdf` post today's body unchanged.
+- **Rail and voice.** The rail's « Remotion Studio… » opens Variants then this door, which waits for the scene's and the whole video's reads:
+  the whole-video dialog when ready, the scene dialog otherwise. MCP `remotion_studio` (§ 14) says « dans Variantes, clique « Remotion
+  Studio » sous la vidéo et confirme ; la vidéo entière de la variante (ou la scène à l'écran si la vidéo entière n'est pas disponible) … »
+  and, for a named scene, « Cette scène seule dans Remotion Studio ».
+- **Unchanged**: scene selection, Players, transport, presenter, the scene strip, the stage fullscreen and the composition clock.
+- Tests: `tests/unit/test_variants_master_entrypoints_js.py` (sentences parity, models, the fake-DOM flows, the Board body),
+  `tests/unit/test_variants_master_entrypoints_browser.py` (real Chrome on an isolated stack; real Studio and render opt-in with
+  `JARVIS_REMOTION_RUNTIME_DIR`). Real run, 2026-10-13: on a 3-scene deck (640x360 @ 30, 20 + 30 + 40 frames) the page's « Remotion
+  Studio » opened the real `remotion studio` on the master in ~67 s cold (Core's view `target.kind: "variant_master"`, 3 scenes; Remotion
+  Studio's page lists `JarvisPresentation` with the `<Series>` of three sequences), then the page's « Exporter la vidéo » rendered the
+  90-frame whole-video MP4 in ~23 s (`render_scope: master`, 3 scenes, verified by ffprobe). Evidence: the handoff's
+  `slices/08-variants-master-entrypoints/evidence/`.
+
 ## 14. Backward compatibility
 
 | Caller | Contract |
@@ -469,7 +537,7 @@ unknown presentation or variant is the usual 404 `presentation_studio_unknown_*`
 | `plan_workspace`, `plan_files`, their pinned root and `jarvis-studio-scene` package | unchanged; the master has its own planner |
 | render route bodies without `scope` | identical meaning, identical `render_settings_sha256` |
 | Studio scene body, scene ack, scene `state.json` schema 1, scene publish | unchanged |
-| MCP `remotion_studio` | still a pointer, never opens; wording names the master entry when ready (Slice 07) |
+| MCP `remotion_studio` | still a pointer, never opens; wording names the master entry « Remotion Studio » (the whole video when ready) and, for a named scene, « Cette scène seule dans Remotion Studio » (Slice 08) |
 | Variants Players, composition clock, presenter, score and cues | unchanged |
 
 ## 15. Non-goals (A+B)
@@ -490,7 +558,7 @@ unknown presentation or variant is the usual 404 `presentation_studio_unknown_*`
 | Studio master target, ack, `state.json` schema 2, unpublished policy, live readiness route | 3 (Slice 05) | 3 | 05 |
 | Render scope `master`, bounds, Artifact metadata, frozen readiness route | 3 (Slice 06) | 3 | 06 |
 | Voice spec rule, collision-free names, inspect block, `scope` in `remotion_export` | 3 (Slice 07) | 3 | 07 |
-| Variants and Board entrypoints | 2 | 3 | 08 |
+| Variants and Board entrypoints | 3 (Slice 08) | 3 | 08 |
 | Master publish-back, master Player | 1 (non-goal) | 1 | — |
 
 Conformance of this page: `tests/unit/test_remotion_master_project_docs.py` (codes, key inputs, bounds, composition id, acknowledgment, scope

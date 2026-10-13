@@ -123,6 +123,64 @@ const JarvisRemotionStudioCore=(function(){
       confirmLabel:verbs[kind]||verbs.open,cancelLabel:'Annuler',danger:!own,own};
   }
 
+  /* Vidéo entière (master-project-studio-export Slice 08, `docs/remotion-master-project.md` § 3, § 9, § 13). Les phrases de l'utilisateur
+     pour une variante qui n'est pas prête : la colonne « Sentence shown to the user » du § 3 mot pour mot, la même table que
+     `jarvis/domain/remotion_master_sentences.py` (`REASON_SENTENCES`, le test de parité les compare). La page ne DÉCIDE rien : la raison vient
+     de la vue de Core (`GET .../master-project`), on la dit seulement. Deux phrases portent un emplacement que `detail` remplit. */
+  const MASTER_REASONS=Object.freeze({
+    master_empty:"La variante n'a aucune scène : pas de vidéo entière à construire.",
+    master_engine_not_remotion:"Une scène n'est pas une scène Remotion : la vidéo entière n'est pas disponible.",
+    master_source_unavailable:"La source d'une scène est introuvable ou altérée (scène n) : la vidéo entière n'est pas disponible.",
+    master_engine_mismatch:"Les scènes n'ont pas toutes été écrites pour la même version de Remotion.",
+    master_fps_mismatch:"Les scènes n'ont pas toutes la même cadence (images par seconde) : la vidéo entière n'est pas disponible ; chaque scène reste lisible.",
+    master_dimensions_mismatch:"Les scènes n'ont pas toutes la même taille d'image : la vidéo entière n'est pas disponible ; chaque scène reste lisible.",
+    master_source_import_refused:"Une scène importe un module qui n'est pas le sien : la vidéo entière n'est pas disponible.",
+    master_input_props_reader:"Une scène lit les paramètres d'entrée de la vidéo : elle ne peut pas être assemblée.",
+    master_public_asset_collision:"Deux scènes utilisent le même nom de fichier « x » pour des contenus différents.",
+    master_project_too_large:"Le projet de la vidéo entière dépasse 400 fichiers ou 64 Mio.",
+    master_too_long:"La vidéo entière dépasse 9 000 images (5 min à 30 i/s).",
+  });
+  const MASTER_UNKNOWN_REASON="La vidéo entière n'est pas disponible pour cette variante.";
+  /* `reason_sentence` de Python, à l'identique : un code inconnu (un Core plus récent) est dit tel quel, jamais rebaptisé. */
+  function masterReasonSentence(reason,detail){
+    const known=Object.prototype.hasOwnProperty.call(MASTER_REASONS,reason)?MASTER_REASONS[reason]:null;
+    if(!known)return MASTER_UNKNOWN_REASON;
+    const text=typeof detail==='string'?detail:'';
+    if(reason==='master_source_unavailable'){
+      const found=/\bscene (\d{1,3})\b/.exec(text);
+      return known.replace('(scène n)',found?`(scène ${found[1]})`:'').replace('  :',' :');
+    }
+    if(reason==='master_public_asset_collision'){
+      const found=/^(public\/[^\s:(]{1,160})/.exec(text);
+      return known.replace('« x »',found?`« ${found[1]} »`:'').replace('fichier  pour','fichier pour');
+    }
+    return known;
+  }
+  /* La confirmation de la vidéo entière (§ 9) : la présentation, la variante, LE NOMBRE DE SCÈNES qui tourneront hors du bac à sable, le
+     même risque que pour une scène, et l'avertissement renforcé dès qu'une version montée n'a pas été écrite par l'utilisateur (ou que sa
+     provenance est illisible). `project` : {label, sceneCount, versions} ; `provenances` : une `publication.provenance` par scène, ou null. */
+  function masterConfirmSpec(project,provenances,kind){
+    const list=Array.isArray(provenances)?provenances:[];
+    const ownOf=p=>!!(p&&typeof p==='object'&&p.created_by&&p.created_by.actor==='user');
+    const foreign=list.filter(p=>!ownOf(p)).length;
+    const own=list.length>0&&foreign===0;
+    const n=Number(project&&project.sceneCount)||list.length;
+    const lines=[
+      ['Vidéo entière : ',String(project&&project.label||'')],
+      ['Sans bac à sable : ',`${n} scène${n>1?'s vont':' va'} tourner hors du bac à sable, dans Remotion Studio : dans votre navigateur avec les droits d’une page web, pas dans le lecteur isolé de Jarvis.`],
+      ['Même origine que l’API de Remotion Studio : ','chaque scène peut appeler cette API (lecture de sa copie de travail).'],
+      ['Données : ','leurs sources et leurs paramètres peuvent sortir de ce poste (Remotion Studio bloque les connexions, mais pas tous les canaux d’un navigateur).'],
+      ['Versions : ',String(project&&project.versions||'')],
+      ['Provenance : ',own?'toutes ces versions ont été écrites par vous'
+        :`${foreign} sur ${list.length||n} n’${foreign>1?'ont':'a'} pas été écrite${foreign>1?'s':''} par vous (agent, système, import) ou ${foreign>1?'ont':'a'} une provenance illisible`],
+    ];
+    if(!own)lines.push(['Attention : ','au moins une scène n’a pas été écrite par vous et n’a peut-être pas été relue. N’ouvrez la vidéo entière que si vous faites confiance à toutes ses scènes.']);
+    const verbs={open:'Ouvrir la vidéo entière dans Remotion Studio',switch:'Afficher la vidéo entière dans Remotion Studio',
+      refresh:'Actualiser la vidéo entière dans Remotion Studio'};
+    return {title:own?'Ouvrir la vidéo entière hors du bac à sable ?':'Ouvrir une vidéo dont vous n’avez pas écrit toutes les scènes ?',lines,
+      confirmLabel:verbs[kind]||verbs.open,cancelLabel:'Annuler',danger:!own,own};
+  }
+
   /* Une seule phrase par message d'erreur de notification : `sub` et `kind` sont les champs de `toast` de la page. */
   function failureToast(error,fallback){return {title:'Remotion Studio',sub:errorText(error&&error.code)||(error&&error.message)||fallback||'L’action a échoué.',kind:'error'}}
 
@@ -235,9 +293,9 @@ const JarvisRemotionStudioCore=(function(){
   }
 
   return {ROUTE,STUDIO,PREFABS,STATUS,CAPABILITY,ERRORS,STOP_REASON,WRITES,START_LIMIT_S,POLL_FAST_MS,POLL_SLOW_MS,ACK_FIELD,
-    MASTER_KIND,PROJECT_ACK_FIELD,
+    MASTER_KIND,PROJECT_ACK_FIELD,MASTER_REASONS,MASTER_UNKNOWN_REASON,
     CONFIRM_PUBLISH,DISCARD_FIELD,PUBLISH_LIMIT_S,
-    errorText,fmtDuration,viewModel,sceneOption,createClient,confirmSpec,failureToast};
+    errorText,fmtDuration,viewModel,sceneOption,createClient,confirmSpec,failureToast,masterReasonSentence,masterConfirmSpec};
 })();
 
 if(typeof module!=='undefined'&&module.exports)module.exports=JarvisRemotionStudioCore;
@@ -292,7 +350,7 @@ if(typeof window!=='undefined')window.JarvisRemotionStudioCore=JarvisRemotionStu
     const html=`<article class="mcpp-card rms-card" data-state="${m.status==='failed'?'error':m.status==='stopped'?'off':'on'}" aria-labelledby="rmsTitle">
       <div class="mcpp-top"><span class="mcpp-avatar" aria-hidden="true"><span class="mcpp-letter">R</span></span>
         <div class="mcpp-ident"><h3 class="mcpp-name" id="rmsTitle">Remotion Studio</h3>
-          <span class="mcpp-host">L’éditeur de Remotion sur une scène, dans un onglet à part, ouvert seulement à votre demande. Pour une scène d’une présentation : Variantes, « Remotion Studio » sous la vidéo (la version exacte de la variante)</span></div>
+          <span class="mcpp-host">L’éditeur de Remotion sur une scène, dans un onglet à part, ouvert seulement à votre demande. Pour une présentation : Variantes, « Remotion Studio » sous la vidéo (la vidéo entière de la variante ; « Cette scène seule dans Remotion Studio » pour une scène, à sa version exacte)</span></div>
         <div class="mcpp-badges"><span class="chip ${m.capability.tone}" title="Environnement Remotion installé sur ce poste">Environnement : ${esc(m.capability.label)}</span><span class="chip ${m.tone}" id="rmsStatus">${esc(m.label)}</span></div></div>
       ${sceneSelect}${activity}${link}${failure}${actionError}${readError}${m.note?`<p class="rms-hint">${esc(m.note)}</p>`:''}${edits}${diag}
       <div class="mcpp-foot rms-foot">
