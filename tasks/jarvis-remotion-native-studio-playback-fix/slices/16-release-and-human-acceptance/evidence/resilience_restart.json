@@ -1,0 +1,390 @@
+{
+ "outage": "restart",
+ "core_down_s": 3.1,
+ "wall_s": 85.4,
+ "content_s": 74,
+ "page_ms": {
+  "core_down": 5237,
+  "core_up": 8338,
+  "ended": 76409
+ },
+ "failed": null,
+ "ended": true,
+ "explorer_open_at_end": true,
+ "view_during": {
+  "phase": "playing",
+  "frame": 276,
+  "total_frames": 4440,
+  "fps": 60,
+  "playing": true,
+  "scene_index": 1,
+  "scene_count": 9,
+  "scene_id": "pss_000000000002",
+  "scene_title": "S2 8s@30",
+  "starts": [
+   0,
+   180,
+   660,
+   2460,
+   2640,
+   3120,
+   3300,
+   3780,
+   3960
+  ],
+  "scope": "all",
+  "retryable": true,
+  "waiting_ms": 0,
+  "waiting_visible": false,
+  "error": null
+ },
+ "view_end": {
+  "phase": "ended",
+  "frame": 4439,
+  "total_frames": 4440,
+  "fps": 60,
+  "playing": false,
+  "scene_index": 8,
+  "scene_count": 9,
+  "scene_id": "pss_000000000009",
+  "scene_title": "S9 8s@30",
+  "starts": [
+   0,
+   180,
+   660,
+   2460,
+   2640,
+   3120,
+   3300,
+   3780,
+   3960
+  ],
+  "scope": "all",
+  "retryable": true,
+  "waiting_ms": 0,
+  "waiting_visible": false,
+  "error": null
+ },
+ "failed_seen_ms": null,
+ "view_failed": null,
+ "retry_clicked_ms": null,
+ "veil_ground": null,
+ "said_during_outage": [
+  {
+   "ms": 5411,
+   "phase": "playing",
+   "scene": 2,
+   "frame": 180,
+   "error": null,
+   "notice": "",
+   "veil": ""
+  }
+ ],
+ "said_whole_run": [
+  {
+   "ms": 213,
+   "phase": "idle",
+   "scene": null,
+   "frame": null,
+   "error": null,
+   "notice": "",
+   "veil": "Chargement de l'aperçu…Variante #1 · 0 s"
+  },
+  {
+   "ms": 402,
+   "phase": "paused",
+   "scene": 1,
+   "frame": 0,
+   "error": null,
+   "notice": "",
+   "veil": ""
+  },
+  {
+   "ms": 2205,
+   "phase": "playing",
+   "scene": 1,
+   "frame": 0,
+   "error": null,
+   "notice": "",
+   "veil": ""
+  },
+  {
+   "ms": 5207,
+   "phase": "playing",
+   "scene": 2,
+   "frame": 180,
+   "error": null,
+   "notice": "",
+   "veil": ""
+  },
+  {
+   "ms": 13401,
+   "phase": "playing",
+   "scene": 3,
+   "frame": 660,
+   "error": null,
+   "notice": "",
+   "veil": ""
+  },
+  {
+   "ms": 43401,
+   "phase": "playing",
+   "scene": 4,
+   "frame": 2460,
+   "error": null,
+   "notice": "",
+   "veil": ""
+  },
+  {
+   "ms": 46402,
+   "phase": "playing",
+   "scene": 5,
+   "frame": 2640,
+   "error": null,
+   "notice": "",
+   "veil": ""
+  },
+  {
+   "ms": 54400,
+   "phase": "playing",
+   "scene": 6,
+   "frame": 3120,
+   "error": null,
+   "notice": "",
+   "veil": ""
+  },
+  {
+   "ms": 57401,
+   "phase": "playing",
+   "scene": 7,
+   "frame": 3300,
+   "error": null,
+   "notice": "",
+   "veil": ""
+  },
+  {
+   "ms": 65400,
+   "phase": "playing",
+   "scene": 8,
+   "frame": 3780,
+   "error": null,
+   "notice": "",
+   "veil": ""
+  },
+  {
+   "ms": 68401,
+   "phase": "playing",
+   "scene": 9,
+   "frame": 3960,
+   "error": null,
+   "notice": "",
+   "veil": ""
+  },
+  {
+   "ms": 76402,
+   "phase": "ended",
+   "scene": 9,
+   "frame": 4439,
+   "error": null,
+   "notice": "",
+   "veil": ""
+  }
+ ],
+ "scenes": [
+  {
+   "scene": "S1",
+   "first_play": [
+    2189,
+    0
+   ],
+   "max_frame": 89,
+   "played_ms": 3010,
+   "wraps": [],
+   "duration": 90
+  },
+  {
+   "scene": "S2",
+   "first_play": [
+    5210,
+    0
+   ],
+   "max_frame": 239,
+   "played_ms": 8005,
+   "wraps": [],
+   "duration": 240
+  },
+  {
+   "scene": "S3",
+   "first_play": [
+    13225,
+    0
+   ],
+   "max_frame": 899,
+   "played_ms": 30013,
+   "wraps": [],
+   "duration": 900
+  },
+  {
+   "scene": "S4",
+   "first_play": [
+    43247,
+    0
+   ],
+   "max_frame": 74,
+   "played_ms": 2967,
+   "wraps": [],
+   "duration": 75
+  },
+  {
+   "scene": "S5",
+   "first_play": [
+    46223,
+    0
+   ],
+   "max_frame": 479,
+   "played_ms": 8007,
+   "wraps": [],
+   "duration": 480
+  },
+  {
+   "scene": "S6",
+   "first_play": [
+    54240,
+    0
+   ],
+   "max_frame": 89,
+   "played_ms": 3008,
+   "wraps": [],
+   "duration": 90
+  },
+  {
+   "scene": "S7",
+   "first_play": [
+    57256,
+    0
+   ],
+   "max_frame": 191,
+   "played_ms": 8008,
+   "wraps": [],
+   "duration": 192
+  },
+  {
+   "scene": "S8",
+   "first_play": [
+    65277,
+    0
+   ],
+   "max_frame": 89,
+   "played_ms": 3008,
+   "wraps": [],
+   "duration": 90
+  },
+  {
+   "scene": "S9",
+   "first_play": [
+    68292,
+    0
+   ],
+   "max_frame": 239,
+   "played_ms": 8005,
+   "wraps": [],
+   "duration": 240
+  }
+ ],
+ "boundaries": [
+  {
+   "from": "S1",
+   "to": "S2",
+   "out_last_frame": 89,
+   "out_expected_last": 89,
+   "out_end_ms": 5199,
+   "in_live_ms": 5217,
+   "in_first_frame": 0,
+   "in_first_play_ms": 5210,
+   "gap_ms": 11
+  },
+  {
+   "from": "S2",
+   "to": "S3",
+   "out_last_frame": 239,
+   "out_expected_last": 239,
+   "out_end_ms": 13215,
+   "in_live_ms": 13234,
+   "in_first_frame": 0,
+   "in_first_play_ms": 13225,
+   "gap_ms": 10
+  },
+  {
+   "from": "S3",
+   "to": "S4",
+   "out_last_frame": 899,
+   "out_expected_last": 899,
+   "out_end_ms": 43238,
+   "in_live_ms": 43247,
+   "in_first_frame": 0,
+   "in_first_play_ms": 43247,
+   "gap_ms": 9
+  },
+  {
+   "from": "S4",
+   "to": "S5",
+   "out_last_frame": 74,
+   "out_expected_last": 74,
+   "out_end_ms": 46214,
+   "in_live_ms": 46233,
+   "in_first_frame": 0,
+   "in_first_play_ms": 46223,
+   "gap_ms": 9
+  },
+  {
+   "from": "S5",
+   "to": "S6",
+   "out_last_frame": 479,
+   "out_expected_last": 479,
+   "out_end_ms": 54230,
+   "in_live_ms": 54250,
+   "in_first_frame": 0,
+   "in_first_play_ms": 54240,
+   "gap_ms": 10
+  },
+  {
+   "from": "S6",
+   "to": "S7",
+   "out_last_frame": 89,
+   "out_expected_last": 89,
+   "out_end_ms": 57248,
+   "in_live_ms": 57266,
+   "in_first_frame": 0,
+   "in_first_play_ms": 57256,
+   "gap_ms": 8
+  },
+  {
+   "from": "S7",
+   "to": "S8",
+   "out_last_frame": 191,
+   "out_expected_last": 191,
+   "out_end_ms": 65264,
+   "in_live_ms": 65281,
+   "in_first_frame": 0,
+   "in_first_play_ms": 65277,
+   "gap_ms": 13
+  },
+  {
+   "from": "S8",
+   "to": "S9",
+   "out_last_frame": 89,
+   "out_expected_last": 89,
+   "out_end_ms": 68285,
+   "in_live_ms": 68298,
+   "in_first_frame": 0,
+   "in_first_play_ms": 68292,
+   "gap_ms": 7
+  }
+ ],
+ "core_after": 200,
+ "console_errors": [
+  "frame warning [presentation-rail] poll_failed {\"code\":\"core_unreachable\",\"message\":\"Core is unreachable: ClientConnectorError: Cannot connect to host 127.0.0.1:56982 ssl:default [Le système distant a ref…\",\"failures\":1}",
+  "frame warning [capture] capture_rail.status_lost {\"code\":\"core_unreachable\",\"status\":503,\"error\":\"Core is unreachable: ClientConnectorError: Cannot connect to host 127.0.0.1:56982 ssl:default [Le système distant a refusé la connexion réseau]\"}"
+ ],
+ "failed_attempts": []
+}

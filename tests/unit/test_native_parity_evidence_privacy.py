@@ -68,9 +68,11 @@ def findings(text: str) -> list[str]:
 #: Slice 14 (rendered-frame quality gates) committed real smoke and flow evidence too (`*-smoke.json`, `flow*.json`, `summary.json`,
 #: `README.md`): the same sweep covers it (QA Slice 14, P5).
 QUALITY_SLICE = SLICE.parent / "14-visual-quality-and-media-gates"
+#: Slice 16 (release) commits the resilience runs and the final report: same sweep.
+RELEASE_SLICE = SLICE.parent / "16-release-and-human-acceptance"
 
 
-@pytest.mark.parametrize("folder", [SLICE, QUALITY_SLICE], ids=["slice-13", "slice-14"])
+@pytest.mark.parametrize("folder", [SLICE, QUALITY_SLICE, RELEASE_SLICE], ids=["slice-13", "slice-14", "slice-16"])
 def test_no_committed_file_of_the_slice_keeps_a_home_path_a_user_name_an_email_or_a_token(folder):
     assert (folder / "evidence").is_dir(), folder
     leaks = {}

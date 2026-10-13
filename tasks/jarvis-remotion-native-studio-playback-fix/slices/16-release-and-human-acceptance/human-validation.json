@@ -1,9 +1,77 @@
-﻿{
+{
   "checks": [
     {
       "id": "HV-RFX-16-01",
       "instruction": "Approve on target machine with actual display/audio and two comparison presentations.",
-      "requires_evidence_first": true
+      "requires_evidence_first": true,
+      "evidence": [
+        "REPORT.md (to be committed by agent 0 from the Slice 16 Work Agent's report)",
+        "evidence/summary.json",
+        "evidence/*.jpg"
+      ],
+      "prerequisite": "The user restarts Jarvis themselves on the task build (no agent starts, restarts or stops it).",
+      "checklist": [
+        {
+          "id": "HV-RFX-16-01-a",
+          "area": "UI",
+          "step": "Open a Remotion presentation from the rail: Variants opens windowed, paused on scene 1 frame 0, silent; no floating window, no band at the bottom (compare evidence/after-a437e5c2-variants-1280x720.jpg with ../../evidence/01-unwanted-floating-viewer.png and 02-variants-screen-base.png). Row 1 under the image is the transport alone; row 2 « Scène n sur N », title, « Remotion Studio », « Présenter ». Try 800x600 and full HD.",
+          "record": "pass/fail, screen size, screenshot"
+        },
+        {
+          "id": "HV-RFX-16-01-b",
+          "area": "UI",
+          "step": "Rail right-click > « Présenter » (or « Présenter ▾ » > « Vous présentez »): the run plays inside Variants with the presenter strip; tree and actions dimmed with their reason; one « Arrêter »; → ← Début Fin Espace act once; the slider does not move under the mouse. Note whether the run slider shows a thumb/fill (Issue 01 I2).",
+          "record": "pass/fail"
+        },
+        {
+          "id": "HV-RFX-16-01-c",
+          "area": "actual video",
+          "step": "Comparison presentation 1: a deck with an animated scene of 30 s or more and scenes at different fps. « Lire »: every scene starts at its first image, plays to its end, the next scene follows with no black, white or mixed frame and no jump back; the long scene is never cut at its score target; the last image is held, the button reads « Rejouer ».",
+          "record": "pass/fail per hand-over seen, any flash or stall with the time code"
+        },
+        {
+          "id": "HV-RFX-16-01-d",
+          "area": "actual video",
+          "step": "Comparison presentation 2: a deck made by Jarvis (native authoring) or the Slice 13 decks. Scrub forward and back, three fast « Suivant », « Précédent »: each lands once on the right scene, frame 0 for a scene change; the time readout follows the picture (a lag up to about 0.3 s on the slider is a known limit).",
+          "record": "pass/fail, notes"
+        },
+        {
+          "id": "HV-RFX-16-01-e",
+          "area": "actual video",
+          "step": "Native Remotion Studio: « Remotion Studio » > confirm; edit the scene in the Studio tab; back in Variants it says « pas publiés »; « Publier dans la variante… » plays the new version; « Revenir à la version d'avant » restores it.",
+          "record": "pass/fail, cold open time"
+        },
+        {
+          "id": "HV-RFX-16-01-f",
+          "area": "blinded Claude parity (HV-RFX-13-01)",
+          "step": "Open slices/13-claude-native-generation-parity/evidence/blind/<topic>/deck-A and deck-B side by side for both topics; write a verdict per topic (A better / B better / equal, one reason) BEFORE opening blind/key.json. Parity is not claimed by tests.",
+          "record": "verdict per topic, then the key"
+        },
+        {
+          "id": "HV-RFX-16-01-g",
+          "area": "dual-monitor audio (HV-RFX-08-01, HV-RFX-07-01 steps 6-7)",
+          "step": "Drag the Jarvis window to the projector/second monitor. « Son » then « Lire »: sound from the intended output, in time with the image, continuing across a scene change without a click, never doubled; M mutes. « Plein écran » / F fills that screen (black bars where the format differs); the transport hides after about 2.5 s while playing; physical Échap leaves fullscreen without pausing, a second Échap closes Variants. With Voice running, Jarvis's voice and the scene sound do not cut each other.",
+          "record": "pass/fail per step, monitor/projector model, output device"
+        },
+        {
+          "id": "HV-RFX-16-01-h",
+          "area": "failure",
+          "step": "Optional, isolated instance only: stop that instance's Core during « Lire »: a scene that cannot load is named on an opaque veil with « Réessayer » / « Scène suivante »; after Core is back, « Réessayer » continues. Judge whether the technical message and the absence of automatic retry are acceptable (REPORT § 5 limits 3-4).",
+          "record": "acceptable / follow-up wanted"
+        },
+        {
+          "id": "HV-RFX-16-01-i",
+          "area": "licence",
+          "step": "Decide the Remotion licence tier (Free License up to 3 employees / Company License), facts in slices/15-retire-duplicate-runtime-and-doc-migration/CLEANUP.md § 5 and docs/remotion-integration-release.md › Remotion licence. Not decided by any agent.",
+          "record": "decision and date"
+        },
+        {
+          "id": "HV-RFX-16-01-j",
+          "area": "other open checks",
+          "step": "Record the outcome of HV-RFX-02-01, 05-01, 07-01, 08-01, 09-01, 10-01, 11-01, 12-01, 13-01 (recipes in each Slice's evidence README), or fold them into the steps above.",
+          "record": "one line per check"
+        }
+      ]
     }
   ]
 }
