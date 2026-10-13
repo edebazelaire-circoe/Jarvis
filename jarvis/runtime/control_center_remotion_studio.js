@@ -128,19 +128,19 @@ const JarvisRemotionStudioCore=(function(){
      `jarvis/domain/remotion_master_sentences.py` (`REASON_SENTENCES`, le test de parité les compare). La page ne DÉCIDE rien : la raison vient
      de la vue de Core (`GET .../master-project`), on la dit seulement. Deux phrases portent un emplacement que `detail` remplit. */
   const MASTER_REASONS=Object.freeze({
-    master_empty:"La variante n'a aucune scène : pas de vidéo entière à construire.",
-    master_engine_not_remotion:"Une scène n'est pas une scène Remotion : la vidéo entière n'est pas disponible.",
-    master_source_unavailable:"La source d'une scène est introuvable ou altérée (scène n) : la vidéo entière n'est pas disponible.",
-    master_engine_mismatch:"Les scènes n'ont pas toutes été écrites pour la même version de Remotion.",
-    master_fps_mismatch:"Les scènes n'ont pas toutes la même cadence (images par seconde) : la vidéo entière n'est pas disponible ; chaque scène reste lisible.",
-    master_dimensions_mismatch:"Les scènes n'ont pas toutes la même taille d'image : la vidéo entière n'est pas disponible ; chaque scène reste lisible.",
-    master_source_import_refused:"Une scène importe un module qui n'est pas le sien : la vidéo entière n'est pas disponible.",
-    master_input_props_reader:"Une scène lit les paramètres d'entrée de la vidéo : elle ne peut pas être assemblée.",
+    master_empty:"La variante n’a aucune scène : pas de vidéo entière à construire.",
+    master_engine_not_remotion:"Une scène n’est pas une scène Remotion : la vidéo entière n’est pas disponible.",
+    master_source_unavailable:"La source d’une scène est introuvable ou altérée (scène n) : la vidéo entière n’est pas disponible.",
+    master_engine_mismatch:"Les scènes n’ont pas toutes été écrites pour la même version de Remotion.",
+    master_fps_mismatch:"Les scènes n’ont pas toutes la même cadence (images par seconde) : la vidéo entière n’est pas disponible ; chaque scène reste lisible.",
+    master_dimensions_mismatch:"Les scènes n’ont pas toutes la même taille d’image : la vidéo entière n’est pas disponible ; chaque scène reste lisible.",
+    master_source_import_refused:"Une scène importe un module qui n’est pas le sien : la vidéo entière n’est pas disponible.",
+    master_input_props_reader:"Une scène lit les paramètres d’entrée de la vidéo : elle ne peut pas être assemblée.",
     master_public_asset_collision:"Deux scènes utilisent le même nom de fichier « x » pour des contenus différents.",
     master_project_too_large:"Le projet de la vidéo entière dépasse 400 fichiers ou 64 Mio.",
     master_too_long:"La vidéo entière dépasse 9 000 images (5 min à 30 i/s).",
   });
-  const MASTER_UNKNOWN_REASON="La vidéo entière n'est pas disponible pour cette variante.";
+  const MASTER_UNKNOWN_REASON="La vidéo entière n’est pas disponible pour cette variante.";
   /* `reason_sentence` de Python, à l'identique : un code inconnu (un Core plus récent) est dit tel quel, jamais rebaptisé. */
   function masterReasonSentence(reason,detail){
     const known=Object.prototype.hasOwnProperty.call(MASTER_REASONS,reason)?MASTER_REASONS[reason]:null;

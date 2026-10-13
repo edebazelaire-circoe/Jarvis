@@ -774,15 +774,18 @@ const JarvisWorkspaceCore=(function(){
       if(!snap||(known&&(known.status==='starting'||known.status==='running')))return null;
       const x=S.exports[snap]={snapshot:snap,format,status:'starting',started:now(),job:null,error:null,gen:((known&&known.gen)||0)+1};
       changed();
-      /* Slice 08 du projet maître (§ 13) : un MP4 d'une copie dont la vidéo entière est prête rend la vidéo entière (`scope: "master"`) ;
-         sinon (pas prête, illisible, image, PDF) le corps d'avant, inchangé. La page ne décide rien : elle lit la vue de Core. */
+      /* Slice 08 du projet maître (§ 13) : un MP4 d'une copie dont la vidéo entière est prête ET compte au moins deux scènes rend la vidéo
+         entière (`scope: "master"`) ; sinon (une seule scène, pas prête, illisible, image, PDF) le corps d'avant, octet pour octet. La page ne
+         décide rien : elle lit la vue de Core. */
       const body={snapshot_id:snap,format};
       if(format==='mp4'){
         try{
           const read=await client.get(PATHS.renderMaster(snap));
           const plan=read&&read.master;
-          if(plan&&plan.status==='ready'){body.settings={scope:'master'};x.scope='master';x.scenes=Array.isArray(plan.scenes)?plan.scenes.length:null}
-          log('info','workspace.export_master_read',{snapshot:snap,status:plan&&plan.status,reason:plan&&plan.reason||null});
+          const scenes=plan&&Array.isArray(plan.scenes)?plan.scenes.length:0;
+          if(plan&&plan.status==='ready'&&scenes>=2){body.settings={scope:'master'};x.scope='master';x.scenes=scenes}
+          log('info','workspace.export_master_read',{snapshot:snap,status:plan&&plan.status,reason:plan&&plan.reason||null,scenes,
+            scope:body.settings?'master':'scene'});
         }catch(error){
           /* intentional fallback, said in the log: an unreadable readiness keeps today's body (Core refuses a multi-scene snapshot by its own code) */
           log('warn','workspace.export_master_read_failed',{snapshot:snap,code:error&&error.code,status:error&&error.status,message:error&&error.message});
@@ -1406,7 +1409,7 @@ const JarvisWorkspaceCore=(function(){
       const stop=x.status==='running'?(x.cancelling?'<span class="wsp-sub">Annulation…</span>':btn('export-cancel',{snapshot:snap.artifact_id},'Annuler l’export')):'';
       const lost=x.pollErrors?`<span class="wsp-warn"> · lecture de l’état en échec (${x.pollErrors}/3) : ${esc((x.pollError&&x.pollError.message)||'')}</span>`:'';
       return `<div class="wsp-export" role="status" aria-live="polite"><span class="wsp-spin" aria-hidden="true"></span>`
-        +`Export ${esc((RENDER_FORMATS[x.format]||x.format))}${x.scope==='master'?esc(` (vidéo entière${x.scenes?`, ${x.scenes} scènes`:''})`):''} en cours — ${esc(phase)}${esc(frames)}${esc(queue)} ${clockHtml(x.started)}${esc(limit)}${lost} ${stop}</div>`;
+        +`Export ${esc((RENDER_FORMATS[x.format]||x.format))}${x.scope==='master'?esc(` (vidéo entière${x.scenes?`, ${x.scenes} scène${x.scenes>1?'s':''}`:''})`):''} en cours — ${esc(phase)}${esc(frames)}${esc(queue)} ${clockHtml(x.started)}${esc(limit)}${lost} ${stop}</div>`;
     }
     let outcome='';
     if(x&&x.status==='error')outcome=errorHtml(x.error,{lead:'Export impossible : '})+btn('export-dismiss',{snapshot:snap.artifact_id},'Fermer');

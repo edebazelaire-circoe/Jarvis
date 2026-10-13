@@ -426,7 +426,7 @@ def _export_label(whole: bool, chosen: Mapping[str, Any], scene_count: Any) -> t
     if first is not None or last is not None:
         span = f"{first if first is not None else 0}–{last if last is not None else 'fin'}"
         return "whole_range", f"L'export d'un extrait de la vidéo entière (images {span}, pas la vidéo complète)" + tail
-    count = f" ({scene_count} scènes)" if type(scene_count) is int else ""
+    count = f" ({scene_count} scène{'s' if scene_count > 1 else ''})" if type(scene_count) is int else ""
     return "whole", f"L'export de la vidéo entière{count}" + tail
 
 

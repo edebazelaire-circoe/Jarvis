@@ -11,7 +11,10 @@
      Jamais une scène présentée comme la vidéo, jamais un collage d'extraits. Pas prête : le bouton est inerte et dit la phrase du § 3.
    - **Ce qui attend se voit.** Demande puis rendu : pastille animée, phase en mots, images faites sur le total, secondes écoulées, délai de
      Core ; « Annuler l'export » tant que Core l'accepte. Le suivi a une échéance (le délai du travail + 2 min) : passée, la ligne le dit.
-   - **Un échec se dit.** Le code et la phrase de Core, « Réessayer » ; trois lectures d'état ratées de suite : l'erreur reste affichée.
+   - **Un échec se dit.** Une phrase française par code connu (`EXPORT_ERRORS`), le code de Core en petit à côté (et son détail anglais
+     pour un code inconnu) ; « Réessayer » seulement quand un nouvel essai peut réussir (réseau, délai, Core injoignable, rendu échoué, variante
+     relue), jamais pour un poste sans moteur, une copie qui lit un Board en direct ou une vidéo pas prête. Trois lectures d'état ratées de
+     suite : l'erreur reste affichée.
      Chaque étape est journalisée (`[studio-explorer] video_export_*`, `warn` / `error` pour un échec).
    - **Le résultat est un Artefact.** Terminé : son identifiant, sa taille, « Ouvrir la vidéo » (le fichier servi par Jarvis) ; il apparaît
      aussi dans les Artefacts du Board. Un export lancé ailleurs (voix, autre fenêtre) sur la même vidéo entière est repris à l'ouverture. */
@@ -43,10 +46,42 @@
 #${HOST_ID} .jvx-vx[data-tone="danger"] .jvx-vx-text{color:var(--jvx-danger)}
 #${HOST_ID} .jvx-vx[data-spin="true"] .jvx-vx-text::before{content:"";display:inline-block;width:8px;height:8px;margin-right:7px;border-radius:50%;background:var(--jvx-accent);vertical-align:1px}
 @media (prefers-reduced-motion:no-preference){#${HOST_ID} .jvx-vx[data-spin="true"] .jvx-vx-text::before{animation:jvxPulse 1.1s ease-in-out infinite}}
+#${HOST_ID} .jvx-vx-code{flex:none;font:11px/1.3 ui-monospace,Consolas,monospace;color:var(--jvx-mute);overflow-wrap:anywhere}
+#${HOST_ID} .jvx-vx-code[hidden]{display:none}
 #${HOST_ID} .jvx-vx-link{color:var(--jvx-accent);font-weight:600;text-underline-offset:3px;white-space:nowrap}
 #${HOST_ID} .jvx-vx .jvx-btn{min-height:28px;padding:0 10px;font-size:12px}
 #${HOST_ID} .jvx-theater:fullscreen .jvx-stage-note>[data-act="video_export"],#${HOST_ID} .jvx-theater:fullscreen .jvx-vx{display:none}
 `;
+
+  /* A refusal in the user's words (QA Slice 08 polish): what happened and what to do; `retry` only when another try can work. The code
+     stays visible in small print beside the sentence. */
+  const NO_ENGINE='L’export vidéo n’est pas disponible sur ce poste (moteur Remotion absent).';
+  const EXPORT_ERRORS=Object.freeze({
+    presentation_render_unavailable:{text:NO_ENGINE,retry:false},
+    presentation_render_runtime_unavailable:{text:NO_ENGINE,retry:false},
+    presentation_render_browser_unavailable:{text:'L’export vidéo n’est pas disponible sur ce poste : aucun Chrome ni Edge n’a été trouvé pour le rendu.',retry:false},
+    remotion_studio_unavailable:{text:NO_ENGINE,retry:false},
+    live_ref_not_authorised:{text:'Les scènes lisent en direct des fichiers d’un Board : lancez l’export depuis les Artefacts de ce Board.',retry:false},
+    presentation_studio_stale_revision:{text:'La variante a changé depuis sa lecture : elle est relue, relancez l’export.',retry:true},
+    presentation_render_queue_full:{text:'La file d’export de Core est pleine : réessayez quand un export en cours sera fini.',retry:true},
+    presentation_render_no_job:{text:'Core n’a rendu aucun travail d’export.',retry:true},
+  });
+  /* Transient failures: the request or a read did not get through, nothing says the export cannot work. */
+  const TRANSIENT=new Set(['network','timeout','core_unreachable','core_timeout','http_error']);
+  /* `error`: {code, status, message, info}. Returns {code, text, detail, retry}. */
+  function describeExportError(error){
+    const code=error&&error.code||'network',info=error&&error.info||{};
+    if(code==='presentation_render_master_incompatible'){
+      const C=Studio();
+      return {code,text:info.reason&&C?C.masterReasonSentence(info.reason,info.detail):'La vidéo entière n’est pas prête : rien n’a été exporté.',detail:'',retry:false};
+    }
+    const known=EXPORT_ERRORS[code];
+    if(known)return {code,text:known.text,detail:'',retry:known.retry};
+    const detail=cleanLine(error&&error.message,160);
+    if(code==='timeout')return {code,text:`Core n’a pas répondu à temps (${detail}) : l’export a peut-être démarré ; réessayer reprend le même.`,detail:'',retry:true};
+    if(TRANSIENT.has(code)||!(error&&error.status)||error.status>=500)return {code,text:'La demande d’export n’a pas abouti : Core est injoignable ou en erreur.',detail,retry:true};
+    return {code,text:'Core a refusé l’export de la vidéo entière.',detail,retry:false};
+  }
 
   const fmtDuration=s=>{const C=Studio();return C?C.fmtDuration(s):`${Math.round(s)} s`};
   function fmtBytes(n){
@@ -54,11 +89,12 @@
     if(n<1024*1024)return `${Math.max(1,Math.round(n/1024))} Ko`;
     return `${String(Math.round(n/1024/1024*10)/10).replace('.',',')} Mo`;
   }
+  const sceneCount=n=>`${n} scène${n>1?'s':''}`;
   function facts(plan){
     const c=plan&&plan.composition||{};
     const n=Array.isArray(plan&&plan.scenes)?plan.scenes.length:0;
     const seconds=c.fps>0&&Number.isInteger(c.duration_in_frames)?`${String(Math.round(c.duration_in_frames/c.fps*10)/10).replace('.',',')} s`:null;
-    return {count:n,scenes:`${n} scène${n>1?'s':''}`,seconds};
+    return {count:n,scenes:sceneCount(n),seconds};
   }
 
   /* The pure model: the button and the line, from the master view and the export state. `i` :
@@ -68,7 +104,7 @@
     const C=Studio();
     let blocked=null;
     if(i.run)blocked='Une présentation est en cours : l’export de la vidéo se lance à son arrêt (« Arrêter »).';
-    else if(plan&&plan.status==='incompatible')blocked=`Vidéo entière indisponible : ${C.masterReasonSentence(plan.reason,plan.detail)} Chaque scène reste exportable depuis les Artefacts du Board.`;
+    else if(plan&&plan.status==='incompatible')blocked=`${C.masterReasonSentence(plan.reason,plan.detail)} Exportez plutôt les scènes une à une depuis les Artefacts du Board.`;
     else if(!plan&&m.state==='error')blocked=`La vidéo entière n’a pas pu être lue (${m.error&&m.error.code||'erreur'}) : cliquez pour réessayer.`;
     else if(!plan)blocked='Lecture de la vidéo entière…';
     const f=facts(plan);
@@ -87,14 +123,14 @@
       if(job.queue_position)bits.push(`${job.queue_position}e en file`);
       bits.push(elapsed);
       if(job.timeout_s)bits.push(`délai ${Math.round(job.timeout_s/60)} min au plus`);
-      let text=`Export de la vidéo entière (${job.scene_count?`${job.scene_count} scènes`:f.scenes}) — ${bits.join(' · ')}`;
+      let text=`Export de la vidéo entière (${job.scene_count?sceneCount(job.scene_count):f.scenes}) — ${bits.join(' · ')}`;
       if(x.pollErrors)text+=` · lecture de l’état en échec (${x.pollErrors}/${POLL_FAILURES})`;
       status={tone:'',spin:true,text,cancel:job.can_cancel!==false&&!x.cancelling,cancelling:!!x.cancelling};
       if(x.cancelling)status.text+=' · annulation demandée…';
     }else if(x&&x.status==='lost'){
       status={tone:'warn',text:`Aucune fin lue après ${elapsed} : l’export continue peut-être dans Core ; son résultat apparaîtra dans les Artefacts du Board.`,dismiss:true};
     }else if(x&&x.status==='error'){
-      status={tone:'danger',text:`Export impossible : ${x.error.text} (${x.error.code})`,retry:!blocked,dismiss:true};
+      status={tone:'danger',text:x.error.text,code:x.error.detail?`${x.error.code} · ${x.error.detail}`:x.error.code,retry:!!x.error.retry&&!blocked,dismiss:true};
     }else if(x&&x.status==='done'&&x.job){
       const job=x.job;
       if(job.state==='complete'){
@@ -105,8 +141,10 @@
       }else if(job.state==='cancelled'){
         status={tone:'warn',text:'Export de la vidéo entière annulé : aucun fichier n’a été gardé.',retry:!blocked,dismiss:true};
       }else{
-        status={tone:'danger',text:`Export de la vidéo entière échoué : ${cleanLine(job.error_detail,200)||'raison inconnue'} (${job.error_code||'presentation_render_failed'})`,
-          retry:!blocked,dismiss:true};
+        /* A failed render is a transient failure: « Réessayer » relaunches it. Core's English detail goes to the small print with its code. */
+        const detail=cleanLine(job.error_detail,160);
+        status={tone:'danger',text:'Export de la vidéo entière échoué : aucun fichier n’a été gardé.',
+          code:`${job.error_code||'presentation_render_failed'}${detail?` · ${detail}`:''}`,retry:!blocked,dismiss:true};
       }
     }else if(i.explain){
       status={tone:'warn',text:i.explain};
@@ -153,11 +191,12 @@
     function buildStatus(){
       ui.status=el('div','jvx-vx');ui.status.hidden=true;
       ui.text=el('span','jvx-vx-text');attrs(ui.text,{role:'status','aria-live':'polite'});
+      ui.code=el('span','jvx-vx-code');ui.code.hidden=true;
       ui.link=el('a','jvx-vx-link');attrs(ui.link,{target:'_blank',rel:'noopener noreferrer'});ui.link.hidden=true;
       ui.cancel=ctx.button('Annuler l’export','jvx-btn',()=>{cancel({via:'button'})},{attrs:{'data-act':'video_export_cancel'}});ui.cancel.hidden=true;
       ui.retry=ctx.button('Réessayer','jvx-btn',()=>{start({via:'retry'})},{attrs:{'data-act':'video_export_retry'}});ui.retry.hidden=true;
       ui.dismiss=ctx.button('Fermer','jvx-btn',()=>{dismiss()},{attrs:{'data-act':'video_export_dismiss'}});ui.dismiss.hidden=true;
-      for(const node of [ui.text,ui.link,ui.cancel,ui.retry,ui.dismiss])ui.status.appendChild(node);
+      for(const node of [ui.text,ui.code,ui.link,ui.cancel,ui.retry,ui.dismiss])ui.status.appendChild(node);
       return ui.status;
     }
     function render(){
@@ -172,6 +211,8 @@
       if(!s)return;
       ui.status.setAttribute('data-tone',s.tone||'');ui.status.setAttribute('data-spin',s.spin?'true':'false');
       if(ui.text.textContent!==s.text)ui.text.textContent=s.text;
+      ui.code.hidden=!s.code;
+      if(s.code&&ui.code.textContent!==s.code)ui.code.textContent=s.code;
       ui.link.hidden=!s.link;
       if(s.link){ui.link.textContent=s.link.label;ui.link.setAttribute('href',s.link.url)}
       ui.cancel.hidden=!s.cancel;
@@ -222,12 +263,9 @@
         announce('Export de la vidéo entière lancé.');
       }catch(error){
         if(S.x!==x)return {state:'superseded'};
-        const C=Studio(),info=error.info||{};
-        let text=cleanLine(error.message,200)||'la demande a échoué';
-        if(error.code==='presentation_render_master_incompatible'&&info.reason)text=C.masterReasonSentence(info.reason,info.detail);
-        if(error.code==='presentation_studio_stale_revision')text='la variante a changé depuis sa lecture : elle est relue, relancez l’export.';
-        x.status='error';x.error={code:error.code||'network',text};
-        log('video_export_failed',{code:x.error.code,status:error.status},error.status>=500||!error.status?'error':'warn');
+        x.status='error';x.error=describeExportError(error);
+        log('video_export_failed',{code:x.error.code,status:error.status,retry:x.error.retry,message:cleanLine(error.message,160)},
+          error.status>=500||!error.status?'error':'warn');
         if(error.code==='presentation_studio_stale_revision'&&ctx.reload)Promise.resolve(ctx.reload()).catch(e=>log('video_export_reload_failed',{error:cleanLine(e&&e.message,120)},'warn'));
         if(error.code==='presentation_render_master_incompatible')ctx.rereadMaster();
         render();
@@ -259,7 +297,8 @@
             x.pollErrors+=1;
             log('video_export_poll_failed',{job:x.job.job_id,code:error.code,status:error.status,count:x.pollErrors},'warn');
             if(x.pollErrors>=POLL_FAILURES){
-              x.status='error';x.error={code:error.code||'network',text:`l’état de l’export n’a pas pu être lu ${POLL_FAILURES} fois de suite (${cleanLine(error.message,120)}) ; il continue peut-être dans Core.`};
+              x.status='error';x.error={code:error.code||'network',detail:cleanLine(error.message,120),retry:true,
+                text:`L’état de l’export n’a pas pu être lu ${POLL_FAILURES} fois de suite : il continue peut-être dans Core ; son résultat apparaîtra dans les Artefacts du Board.`};
               log('video_export_lost',{job:x.job.job_id,code:x.error.code},'error');render();break;
             }
           }
@@ -331,7 +370,7 @@
       state:()=>({status:S.x&&S.x.status||'idle',job:S.x&&S.x.job,error:S.x&&S.x.error,explain:S.explain})});
   }
 
-  const api=Object.freeze({createVideoExport,exportModel,CSS,PHASES});
+  const api=Object.freeze({createVideoExport,exportModel,describeExportError,EXPORT_ERRORS,CSS,PHASES});
   root.JarvisVariantsVideoExport=api;
   if(typeof module!=='undefined'&&module.exports)module.exports=api;
 })(typeof window!=='undefined'?window:globalThis);

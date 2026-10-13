@@ -66,9 +66,18 @@
 #${HOST_ID} .jvx-rms-master[hidden]{display:none}
 #${HOST_ID} .jvx-rms-master-text{min-width:0;flex:0 1 auto}
 #${HOST_ID} .jvx-rms[data-master-tone="warn"] .jvx-rms-master-text{color:var(--jvx-warn)}
-#${HOST_ID} .jvx-rms .jvx-rms-scene{min-height:26px;padding:0 4px;border-color:transparent;background:none;color:var(--jvx-accent);font-weight:600;text-decoration:underline;text-underline-offset:3px;white-space:normal;text-align:left}
+/* The secondary door stays quieter than the primary « Remotion Studio » (§ 13): the line's muted ink (--jvx-mute, about 8:1 on the stage), normal
+   weight, no underline at rest; the accent and the underline come on hover or keyboard focus (the focus ring is the host's :focus-visible). */
+#${HOST_ID} .jvx-rms .jvx-rms-scene{min-height:26px;padding:0 4px;border-color:transparent;background:none;color:var(--jvx-mute);font-weight:400;text-decoration:none;text-underline-offset:3px;white-space:normal;text-align:left}
 #${HOST_ID} .jvx-rms .jvx-rms-scene[aria-disabled="true"]{opacity:.55;cursor:default}
-#${HOST_ID} .jvx-rms .jvx-rms-scene:hover:not([aria-disabled="true"]){border-color:transparent;text-decoration-thickness:2px}
+/* The open confirmations (scene and whole video): the heading and the action row stay put, the body between them scrolls (12 scenes at
+   800×600 must never push « Annuler » out of view). */
+#${HOST_ID} .jvx-dialog[data-kind="remotion_studio"]{display:flex;flex-direction:column;overflow:hidden}
+#${HOST_ID} .jvx-dialog[data-kind="remotion_studio"]>h2,#${HOST_ID} .jvx-dialog[data-kind="remotion_studio"]>.jvx-dialog-actions{flex:none}
+#${HOST_ID} .jvx-dialog[data-kind="remotion_studio"]>.jvx-dialog-actions{padding-top:12px;border-top:1px solid var(--jvx-line)}
+#${HOST_ID} .jvx-confirm-body{flex:0 1 auto;min-height:0;overflow:auto;overscroll-behavior:contain;display:grid;gap:14px;align-content:start;padding-right:4px}
+#${HOST_ID} .jvx-confirm-body>ul{margin:0;padding-left:20px;display:grid;gap:4px}
+#${HOST_ID} .jvx-rms .jvx-rms-scene:hover:not([aria-disabled="true"]),#${HOST_ID} .jvx-rms .jvx-rms-scene:focus-visible{border-color:transparent;background:none;color:var(--jvx-accent);text-decoration:underline}
 `;
 
   /* Remotion ou HTML : la règle de `jarvis/domain/prefab.py` › `is_remotion_manifest` (v2 toujours ; v3 quand elle porte `source`), lue
@@ -130,7 +139,8 @@
       return {tone:'',scene:true,text:`Vidéo entière : ${projectName(i)}, ${f.scenes}${f.seconds?` (${f.seconds})`:''}.`};
     }
     if(plan&&plan.status==='incompatible'){
-      return {tone:'',scene:false,text:`Vidéo entière indisponible dans Remotion Studio : ${Studio().masterReasonSentence(plan.reason,plan.detail)}`};
+      /* One sentence per state (QA Slice 08 polish): the § 3 sentence says why, the tail says what the button does instead. */
+      return {tone:'',scene:false,text:`${Studio().masterReasonSentence(plan.reason,plan.detail)} « Remotion Studio » ouvre donc la scène à l’écran.`};
     }
     if(m.state==='error')return {tone:'warn',scene:false,
       text:`La vidéo entière n’a pas pu être lue (${m.error&&m.error.code||'erreur'}) : « Remotion Studio » ouvre la scène à l’écran.`};
@@ -361,7 +371,8 @@
       ui.log.appendChild(el('summary','','Journal de Remotion Studio'));ui.logText=el('pre');ui.log.appendChild(ui.logText);
       /* The master line: the whole video's identity (or why it is unavailable) and the secondary door, the scene alone (§ 13). */
       ui.master=el('div','jvx-rms-master');ui.master.hidden=true;
-      ui.masterText=el('span','jvx-rms-master-text');
+      /* A live region of its own (ready -> incompatible is announced); the scene door beside it stays out of it, so nothing is said twice. */
+      ui.masterText=el('span','jvx-rms-master-text');attrs(ui.masterText,{role:'status','aria-live':'polite'});
       ui.sceneDoor=ctx.button(SCENE_DOOR_LABEL,'jvx-btn jvx-rms-scene',()=>{request({via:'scene_door',target:'scene',returnFocus:ui.sceneDoor})},
         {attrs:{'data-act':'remotion_studio_scene'}});ui.sceneDoor.hidden=true;
       ui.master.appendChild(ui.masterText);ui.master.appendChild(ui.sceneDoor);
@@ -557,6 +568,8 @@
       const where=discard.master?' (vidéo entière)':discard.base?` (sur v${discard.base.version})`:'';
       return `${n} dans Remotion Studio${where} ${discard.count>1?'seront mis de côté (studio-edits), pas publiés':'sera mis de côté (studio-edits), pas publié'}.`;
     }
+    /* The scrolling body of an open confirmation (its heading and action row stay pinned, CSS above). */
+    function confirmBody(dlg){const body=el('div','jvx-confirm-body');dlg.box.appendChild(body);return body}
     function confirmOpen(sceneView,detail,kind,returnFocus,discard){
       const core=C();
       const label=`Scène ${sceneView.number} sur ${sceneView.of} « ${cleanLine(sceneView.title,60)} » · source v${sceneView.prefab.version}`;
@@ -567,12 +580,13 @@
         const dlg=ctx.dialog.open({kind:'remotion_studio',titleId:'jvxDialogTitle',returnFocus,onClose:()=>finish(false)});
         dlg.box.setAttribute('data-kind','remotion_studio');
         const h=el('h2','',spec.title);h.id='jvxDialogTitle';dlg.box.appendChild(h);
+        const body=confirmBody(dlg);
         const list=el('ul','jvx-confirm-lines');
         for(const [head,text] of spec.lines){const li=el('li');li.appendChild(el('strong','',head));li.appendChild(doc.createTextNode(text));list.appendChild(li)}
         if(discard){const li=el('li');li.setAttribute('data-line','discard');li.appendChild(el('strong','','Fichiers non publiés : '));
           li.appendChild(doc.createTextNode(discardText(discard)));list.appendChild(li)}
-        dlg.box.appendChild(list);
-        dlg.box.appendChild(el('p','','Variantes reste ouvert ici, sur cette scène. Ce que vous changez dans Remotion Studio n’atteint la variante que par « Publier dans la variante… ».'));
+        body.appendChild(list);
+        body.appendChild(el('p','','Variantes reste ouvert ici, sur cette scène. Ce que vous changez dans Remotion Studio n’atteint la variante que par « Publier dans la variante… ».'));
         const actions=el('div','jvx-dialog-actions');
         const cancel=ctx.dialogButton(spec.cancelLabel,()=>{ctx.dialog.close(true);finish(false)});
         const go=ctx.dialogButton(spec.confirmLabel,()=>{finish(true);ctx.dialog.close(true)},{primary:true,danger:spec.danger});
@@ -596,13 +610,14 @@
         const dlg=ctx.dialog.open({kind:'remotion_studio',titleId:'jvxDialogTitle',returnFocus,onClose:()=>finish(false)});
         dlg.box.setAttribute('data-kind','remotion_studio');dlg.box.setAttribute('data-target','master');
         const h=el('h2','',spec.title);h.id='jvxDialogTitle';dlg.box.appendChild(h);
-        if(note){const p=el('p','jvx-confirm-note',note);p.setAttribute('data-line','stale');dlg.box.appendChild(p)}
+        const body=confirmBody(dlg);
+        if(note){const p=el('p','jvx-confirm-note',note);p.setAttribute('data-line','stale');body.appendChild(p)}
         const list=el('ul','jvx-confirm-lines');
         for(const [head,text] of spec.lines){const li=el('li');li.appendChild(el('strong','',head));li.appendChild(doc.createTextNode(text));list.appendChild(li)}
         if(discard){const li=el('li');li.setAttribute('data-line','discard');li.appendChild(el('strong','','Fichiers non publiés : '));
           li.appendChild(doc.createTextNode(discardText(discard)));list.appendChild(li)}
-        dlg.box.appendChild(list);
-        dlg.box.appendChild(el('p','',`Variantes reste ouvert ici. La vidéo entière ne se publie pas dans la variante : pour modifier puis publier une scène, ouvrez-la seule (« ${SCENE_DOOR_LABEL} »).`));
+        body.appendChild(list);
+        body.appendChild(el('p','',`Variantes reste ouvert ici. La vidéo entière ne se publie pas dans la variante : pour modifier puis publier une scène, ouvrez-la seule (« ${SCENE_DOOR_LABEL} »).`));
         const actions=el('div','jvx-dialog-actions');
         const cancel=ctx.dialogButton(spec.cancelLabel,()=>{ctx.dialog.close(true);finish(false)});
         const go=ctx.dialogButton(spec.confirmLabel,()=>{finish(true);ctx.dialog.close(true)},{primary:true,danger:spec.danger});

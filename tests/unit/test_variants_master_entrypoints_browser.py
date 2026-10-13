@@ -38,7 +38,7 @@ from tests.unit.test_presentation_studio_composition_clock_routes import FAST, S
 from tests.unit.test_presentation_studio_edit_routes import S1, S2
 from tests.unit.test_presentation_studio_routes import AUTH, Core
 from tests.unit.test_variants_controls_browser import INVENTORY
-from tests.unit.test_variants_remotion_studio_browser import _deck, _free_port, _studio_page
+from tests.unit.test_variants_remotion_studio_browser import PREFAB_A, PREFAB_B, _deck, _free_port, _studio_page
 from tests.unit.test_variants_run_browser import wire
 
 X = "#jvStudioExplorer"
@@ -94,6 +94,26 @@ def open_plan(pid: str) -> list[dict]:
             {"until": f"{EXPLORER}.state().open && {EXPLORER}.state().preview.status==='ready'", "ms": 30000, "required": True, "as": "preview"}]
 
 
+#: The scene door against the primary door: computed weight, decoration and WCAG contrast of each text on the opaque colour behind it.
+STYLES = ("(()=>{const rgb=c=>(c.match(/[\\d.]+/g)||[]).map(Number);"
+          "const lum=([r,g,b])=>{const f=v=>{v/=255;return v<=.03928?v/12.92:Math.pow((v+.055)/1.055,2.4)};return .2126*f(r)+.7152*f(g)+.0722*f(b)};"
+          "const bg=e=>{for(let n=e;n;n=n.parentElement){const c=rgb(getComputedStyle(n).backgroundColor);if(c.length>=3&&(c.length<4||c[3]>.5))return c}"
+          "return [4,8,12]};"
+          "const ratio=(a,b)=>{const x=lum(a),y=lum(b);return Math.round((Math.max(x,y)+.05)/(Math.min(x,y)+.05)*100)/100};"
+          f"const one=s=>{{const e=document.querySelector(s),cs=getComputedStyle(e);return {{weight:cs.fontWeight,decoration:cs.textDecorationLine,"
+          f"color:cs.color,border:cs.borderTopColor,contrast:ratio(rgb(cs.color),bg(e))}}}};"
+          f"return {{scene:one('{SCENE_DOOR}'),door:one('{DOOR}')}}}})()")
+#: The open dialog's geometry: the action row and the focused button inside the window, the body scrolling when it must.
+DIALOG_BOX = (f"(()=>{{const d={DIALOG},b=d.querySelector('.jvx-confirm-body'),a=d.querySelector('.jvx-dialog-actions'),"
+              "f=document.activeElement,r=e=>{const x=e.getBoundingClientRect();return [Math.round(x.left),Math.round(x.top),Math.round(x.right),Math.round(x.bottom)]};"
+              "return {vh:innerHeight,vw:innerWidth,box:r(d),actions:r(a),focus:r(f),focusText:f.textContent,focusInActions:a.contains(f),"
+              "scrolls:b.scrollHeight>b.clientHeight+1,bodyScroll:[b.scrollHeight,b.clientHeight],boxScroll:[d.scrollHeight,d.clientHeight]}})()")
+
+
+def _head() -> str:
+    return subprocess.run(["git", "rev-parse", "--short", "HEAD"], capture_output=True, text=True, check=False).stdout.strip()
+
+
 def overlaps(a: list[int] | None, b: list[int] | None) -> bool:
     return bool(a and b) and a[0] < b[2] and b[0] < a[2] and a[1] < b[3] and b[1] < a[3]
 
@@ -126,6 +146,7 @@ async def test_the_whole_video_door_confirms_by_keyboard_and_records_the_master_
         {"until": MASTER_READY, "ms": 15000, "required": True, "as": "master_read"}, {"wait": 300},
         {"value": "line", "expr": MASTER_LINE}, {"value": "door", "expr": f"document.querySelector('{DOOR}').getAttribute('aria-label')"},
         {"value": "sceneShown", "expr": f"{SHOWN}('{SCENE_DOOR}')"}, {"value": "exportShown", "expr": f"{SHOWN}('{EXPORT}')"},
+        {"value": "styles", "expr": STYLES}, {"value": "live", "expr": f"document.querySelector('{X} .jvx-rms-master-text').getAttribute('aria-live')"},
         shot(raw, "variants-master-ready-1280x720"),
         {"click": DOOR}, {"until": f"!!{DIALOG}", "ms": 8000, "required": True, "as": "dialog"}, {"wait": 200},
         {"value": "dialog", "expr": f"{DIALOG}.innerText"}, {"value": "target", "expr": f"{DIALOG}.getAttribute('data-target')"},
@@ -145,6 +166,11 @@ async def test_the_whole_video_door_confirms_by_keyboard_and_records_the_master_
     assert not reads.get("failed"), reads.get("failed")
     assert reads["line"] == "Vidéo entière : « Horloge », variante 1, 2 scènes (6 s)." and reads["door"] == "Remotion Studio, vidéo entière"
     assert reads["sceneShown"] is True and reads["exportShown"] is True
+    st = reads["styles"]
+    assert st["scene"]["weight"] == "400" and st["scene"]["decoration"] == "none", "the secondary door is quiet at rest"
+    assert 4.5 <= st["scene"]["contrast"] <= st["door"]["contrast"], ("never brighter than the primary's text", st)
+    assert st["scene"]["border"] == "rgba(0, 0, 0, 0)" and st["door"]["border"] != "rgba(0, 0, 0, 0)", "the primary keeps its button chrome"
+    assert reads["live"] == "polite"
     assert reads["target"] == "master" and "2 scènes vont tourner hors du bac à sable, dans Remotion Studio" in reads["dialog"]
     assert "un agent" not in reads["dialog"] and "Attention" in reads["dialog"], "one scene was written by the brain: the reinforced warning"
     assert reads["focus0"] == "Annuler" and reads["trapped"] is True, "the focus starts on « Annuler » (danger) and stays in the dialog"
@@ -160,7 +186,8 @@ async def test_the_whole_video_door_confirms_by_keyboard_and_records_the_master_
     shots = keep_shots(raw, evidence())
     if evidence():
         (evidence() / "variants-master-door-summary.json").write_text(redact(json.dumps(
-            {"line": reads["line"], "dialog": reads["dialog"], "status": reads["status"], "target": target, "screenshots": shots},
+            {"tested_head": _head(), "line": reads["line"], "dialog": reads["dialog"], "status": reads["status"], "target": target,
+             "scene_door_style": st, "screenshots": shots},
             indent=1, ensure_ascii=False)), encoding="utf-8")
 
 
@@ -176,11 +203,44 @@ async def test_an_incompatible_deck_keeps_the_scene_door_says_the_sentence_and_r
         {"value": "dialogTarget", "expr": f"{DIALOG}.getAttribute('data-target')"}])
     reads = result["reads"]
     sentence = REASON_SENTENCES[MasterReason.FPS_MISMATCH]
-    assert reads["line"] == "Vidéo entière indisponible dans Remotion Studio : " + sentence
+    assert reads["line"] == sentence + " « Remotion Studio » ouvre donc la scène à l’écran."
     assert reads["sceneShown"] is False and reads["target"] == "scene"
     assert reads["export"][0] == "true" and sentence in reads["export"][1] and sentence in reads["exportLine"]
     assert reads["dialogTarget"] is None and "Scène 1 sur 2" in reads["dialog"], "the scene door, as before"
     assert not runner.launches
+
+
+@pytest.mark.parametrize("viewport", ["800x600", "1280x720"])
+async def test_a_twelve_scene_confirmation_keeps_its_action_row_in_view_and_scrolls_its_body(stack, viewport, tmp_path):
+    """QA Slice 08 polish: 12 scenes at 800x600 pushed the actions out of the dialog and half hid the focused « Annuler »."""
+
+    core, url, _pid, _broken, _runner = stack
+    # eleven scenes written by the user and one by the brain: the reinforced warning (the longest dialog), the focus on « Annuler »
+    scenes = [remotion_scene(f"pss_{n + 1:012d}", PREFAB_B if n == 11 else PREFAB_A) for n in range(12)]
+    pid, _vid = await presentation(core, scenes)
+    raw = tmp_path / "shots"
+    raw.mkdir()
+    result = await run_long(url, open_plan(pid) + [
+        {"until": MASTER_READY, "ms": 20000, "required": True, "as": "master_read"}, {"wait": 300},
+        {"click": DOOR}, {"until": f"!!{DIALOG}", "ms": 8000, "required": True, "as": "dialog"}, {"wait": 300},
+        {"value": "geo", "expr": DIALOG_BOX}, {"value": "text", "expr": f"{DIALOG}.innerText"},
+        shot(raw, f"variants-master-confirm12-{viewport}"),
+        {"key": "Tab"}, {"wait": 100}, {"value": "geo2", "expr": DIALOG_BOX},
+        {"key": "Escape"}, {"wait": 300}, {"value": "closed", "expr": f"!{DIALOG}"}], viewport=viewport)
+    reads = result["reads"]
+    assert not reads.get("failed"), reads.get("failed")
+    assert "12 scènes vont tourner hors du bac à sable" in reads["text"]
+    for geo in (reads["geo"], reads["geo2"]):
+        vh, box, actions, focus = geo["vh"], geo["box"], geo["actions"], geo["focus"]
+        assert 0 <= box[1] and box[3] <= vh, ("the dialog fits the window", geo)
+        assert box[1] <= actions[1] and actions[3] <= box[3] and actions[3] <= vh, ("the action row is inside the dialog and the window", geo)
+        assert geo["focusInActions"] and box[1] <= focus[1] and focus[3] <= box[3] and focus[3] <= vh, ("the focused button is fully visible", geo)
+        assert geo["boxScroll"][0] <= geo["boxScroll"][1] + 1, ("the dialog itself never scrolls: its body does", geo)
+    assert reads["geo"]["focusText"] == "Annuler"
+    if viewport == "800x600":
+        assert reads["geo"]["scrolls"] is True, "at 800x600 the twelve versions scroll inside the body"
+    assert reads["closed"] is True
+    keep_shots(raw, evidence())
 
 
 @pytest.mark.parametrize("viewport", ["800x600", "1280x720", "1920x1080"])

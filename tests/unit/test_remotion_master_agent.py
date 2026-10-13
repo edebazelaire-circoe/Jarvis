@@ -59,7 +59,7 @@ def test_the_placeholders_are_filled_from_the_detail_or_left_generic():
     assert reason_sentence("master_public_asset_collision", "") == "Deux scènes utilisent le même nom de fichier pour des contenus différents."
     assert "(scène 2)" in reason_sentence("master_source_unavailable", "scene 2 (pss_aaaaaaaaaaaa): prefab_store_missing")
     assert reason_sentence("master_source_unavailable", "") == (
-        "La source d'une scène est introuvable ou altérée : la vidéo entière n'est pas disponible.")
+        "La source d’une scène est introuvable ou altérée : la vidéo entière n’est pas disponible.")
     assert reason_sentence("master_fps_mismatch") == REASON_SENTENCES[MasterReason.FPS_MISMATCH]
     assert reason_sentence("master_from_the_future") == UNKNOWN_REASON_SENTENCE, "an unknown reason is never re-labelled"
 

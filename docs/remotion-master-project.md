@@ -118,14 +118,14 @@ Studio exactly as today. Nothing is rewritten to make a variant ready.
 
 | Order | `reason` | When | Sentence shown to the user (Slice 08 / agent) |
 | --- | --- | --- | --- |
-| 1 | `master_empty` | the variant has no scene | « La variante n'a aucune scène : pas de vidéo entière à construire. » |
-| 2 | `master_engine_not_remotion` | `Presentation.engine` is not Remotion, or an active pin has no Remotion `source` block | « Une scène n'est pas une scène Remotion : la vidéo entière n'est pas disponible. » |
-| 3 | `master_source_unavailable` | an active pin is unknown, unreadable, tampered or its digest does not match | « La source d'une scène est introuvable ou altérée (scène n) : la vidéo entière n'est pas disponible. » |
-| 4 | `master_engine_mismatch` | the pins do not share one engine version and lock | « Les scènes n'ont pas toutes été écrites pour la même version de Remotion. » |
-| 5 | `master_fps_mismatch` | the scenes declare different `fps` | « Les scènes n'ont pas toutes la même cadence (images par seconde) : la vidéo entière n'est pas disponible ; chaque scène reste lisible. » |
-| 6 | `master_dimensions_mismatch` | the scenes declare different `width` or `height` | « Les scènes n'ont pas toutes la même taille d'image : la vidéo entière n'est pas disponible ; chaque scène reste lisible. » |
-| 7 | `master_source_import_refused` | the defensive per-scene re-check (§ 8 a) finds a bare specifier outside `SCENE_ALLOWED_IMPORTS` or a relative import resolving outside the scene's own module set | « Une scène importe un module qui n'est pas le sien : la vidéo entière n'est pas disponible. » |
-| 8 | `master_input_props_reader` | a scene module contains `getInputProps` (it would read the master's input props, not its own; zero uses today) | « Une scène lit les paramètres d'entrée de la vidéo : elle ne peut pas être assemblée. » |
+| 1 | `master_empty` | the variant has no scene | « La variante n’a aucune scène : pas de vidéo entière à construire. » |
+| 2 | `master_engine_not_remotion` | `Presentation.engine` is not Remotion, or an active pin has no Remotion `source` block | « Une scène n’est pas une scène Remotion : la vidéo entière n’est pas disponible. » |
+| 3 | `master_source_unavailable` | an active pin is unknown, unreadable, tampered or its digest does not match | « La source d’une scène est introuvable ou altérée (scène n) : la vidéo entière n’est pas disponible. » |
+| 4 | `master_engine_mismatch` | the pins do not share one engine version and lock | « Les scènes n’ont pas toutes été écrites pour la même version de Remotion. » |
+| 5 | `master_fps_mismatch` | the scenes declare different `fps` | « Les scènes n’ont pas toutes la même cadence (images par seconde) : la vidéo entière n’est pas disponible ; chaque scène reste lisible. » |
+| 6 | `master_dimensions_mismatch` | the scenes declare different `width` or `height` | « Les scènes n’ont pas toutes la même taille d’image : la vidéo entière n’est pas disponible ; chaque scène reste lisible. » |
+| 7 | `master_source_import_refused` | the defensive per-scene re-check (§ 8 a) finds a bare specifier outside `SCENE_ALLOWED_IMPORTS` or a relative import resolving outside the scene's own module set | « Une scène importe un module qui n’est pas le sien : la vidéo entière n’est pas disponible. » |
+| 8 | `master_input_props_reader` | a scene module contains `getInputProps` (it would read the master's input props, not its own; zero uses today) | « Une scène lit les paramètres d’entrée de la vidéo : elle ne peut pas être assemblée. » |
 | 9 | `master_public_asset_collision` | two scenes bring different bytes at one case-folded `public/` path, or one merged path is a file another uses as a folder (detail names the path and the scene ids) | « Deux scènes utilisent le même nom de fichier « x » pour des contenus différents. » |
 | 10 | `master_project_too_large` | workspace > 400 files or > 64 MiB, generated files included | « Le projet de la vidéo entière dépasse 400 fichiers ou 64 Mio. » |
 | 11 | `master_too_long` | master `duration_in_frames` > `MAX_MASTER_RENDER_FRAMES` (9000) | « La vidéo entière dépasse 9 000 images (5 min à 30 i/s). » |
@@ -456,13 +456,14 @@ unknown presentation or variant is the usual 404 `presentation_studio_unknown_*`
 
 - The primary « Remotion Studio » action under the Variants video targets the **variant master** when the plan is `ready`; its state line names
   the presentation, the variant and the scene count, not one scene.
-- When the plan is `incompatible`, the same button keeps today's scene door, and the line says « Vidéo entière indisponible dans Remotion
-  Studio : <sentence of the reason> ».
+- When the plan is `incompatible`, the same button keeps today's scene door, and the line says the sentence of the reason followed by
+  « « Remotion Studio » ouvre donc la scène à l’écran. » (one sentence per state, never « indisponible » twice).
 - The scene-only door stays reachable as a secondary entry (« Cette scène seule dans Remotion Studio »), never as prominent as the primary one.
 - One « Exporter la vidéo » action in Variants freezes the active variant and submits `scope: "master"` (format `mp4`); disabled with the reason
   sentence when not ready.
 - The Board Artifacts export button (`control_center_workspace.js`, today `{snapshot_id, format}`) reads the snapshot readiness (§ 10) and adds
-  `settings: {scope: "master"}` only when it is `ready`; otherwise it posts today's body unchanged.
+  `settings: {scope: "master"}` only when it is `ready` with at least two scenes; otherwise it posts today's body unchanged. A single-scene
+  snapshot keeps the scene export body (`{snapshot_id, format}`, no `scope`), byte for byte as before.
 - Current scene selection, Players, transport and the Variants composition clock are untouched.
 
 **Implementation (Level 3, Slice 08).**
@@ -473,11 +474,12 @@ unknown presentation or variant is the usual 404 `presentation_studio_unknown_*`
   edit, publication). It keeps the same variant's previous plan on screen while the new revision is read. The page computes no compatibility:
   `doorModel` only reads `status`, `reason`, `detail`, `project_key`, `composition` and `scenes`. The § 3 sentences are
   `JarvisRemotionStudioCore.MASTER_REASONS` / `masterReasonSentence`, the table of `remotion_master_sentences.py` word for word (a parity
-  test). An unreadable view (an older Core, a variant gone, a network failure) keeps the scene door and says « La vidéo entière n'a pas pu être
-  lue (<code>) : « Remotion Studio » ouvre la scène à l'écran. » (logged `remotion_master_read_failed`, `warn`).
+  test). An unreadable view (an older Core, a variant gone, a network failure) keeps the scene door and says « La vidéo entière n’a pas pu être
+  lue (<code>) : « Remotion Studio » ouvre la scène à l’écran. » (logged `remotion_master_read_failed`, `warn`).
 - **Primary door, master target.** Ready: the button reads « Remotion Studio » (`data-target="master"`, name « Remotion Studio, vidéo entière »),
   and its master line « Vidéo entière : « Atelier », variante 2, 3 scènes (4,5 s). » with the quiet secondary « Cette scène seule dans Remotion
-  Studio » (an underlined text button on that line, `data-act="remotion_studio_scene"`). A click opens ONE confirmation in Variants' layer
+  Studio » (a text button on that line in the line's muted ink and normal weight, accent and underline only on hover or keyboard focus,
+  `data-act="remotion_studio_scene"`; the master line text is its own `role="status"` live region, the button outside it). A click opens ONE confirmation in Variants' layer
   (`data-target="master"`, `JarvisRemotionStudioCore.masterConfirmSpec`): « Ouvrir la vidéo entière hors du bac à sable ? », the identity
   « « Atelier », variante 2 · 3 scènes · 4,5 s (1280×720, 30 i/s) », « 3 scènes vont tourner hors du bac à sable, dans Remotion Studio … »,
   the same origin and data lines as a scene, each mounted version, their provenance; any version not written by the user (or unreadable) gives
@@ -509,15 +511,21 @@ unknown presentation or variant is the usual 404 `presentation_studio_unknown_*`
   Board file is refused by Core, `live_ref_not_authorised`, said with its code). Its line `.jvx-vx`: « Export de la vidéo entière : demande envoyée, la variante est figée… », then « Export de la
   vidéo entière (3 scènes) — Rendu des images · 40/135 images (29 %) · 12 s · délai 7 min au plus » with « Annuler l'export », polled every
   2 s (three failed reads in a row: said and stopped; past the job's timeout + 2 min: « Aucune fin lue après … »); done « Vidéo entière
-  exportée : Artefact jart_… (2,3 Mo). » + « Ouvrir la vidéo » (`/api/artifacts/{id}/payload`); failed with Core's code and detail and
-  « Réessayer »; Core's 409 `presentation_render_master_incompatible` → the § 3 sentence (and a re-read), `presentation_studio_stale_revision`
-  → the variant is read again. Not ready: `aria-disabled`, title and click say « Vidéo entière indisponible : <sentence> Chaque scène reste
-  exportable depuis les Artefacts du Board. ». A running master job of this `project_key` (voice, another window) is picked up when Variants
+  exportée : Artefact jart_… (2,3 Mo). » + « Ouvrir la vidéo » (`/api/artifacts/{id}/payload`). A refusal is a French sentence with
+  Core's code in small print (`.jvx-vx-code`, `describeExportError` / `EXPORT_ERRORS`): no render service or Remotion capability
+  (`presentation_render_unavailable`, `presentation_render_runtime_unavailable`, `remotion_studio_unavailable`) → « L’export vidéo n’est pas
+  disponible sur ce poste (moteur Remotion absent). »; `live_ref_not_authorised` → « Les scènes lisent en direct des fichiers d’un Board :
+  lancez l’export depuis les Artefacts de ce Board. »; `presentation_render_master_incompatible` → the § 3 sentence (and a re-read);
+  `presentation_studio_stale_revision` → the variant is read again; an unknown code → « Core a refusé l’export de la vidéo entière. » with
+  Core's detail beside the code. « Réessayer » only for a failure another try can fix (network, deadline, Core unreachable or 5xx, a failed
+  render job, a stale revision, a full queue). Not ready: `aria-disabled`, title and click say « <sentence> Exportez plutôt les scènes une à
+  une depuis les Artefacts du Board. ». A running master job of this `project_key` (voice, another window) is picked up when Variants
   shows the variant. Logs `video_export_*`.
 - **Board Artifacts.** `exportStart` (`control_center_workspace.js`) for `mp4` reads `GET /api/local-capabilities/remotion/render/master?snapshot_id=`
   (`PATHS.renderMaster`, allowed only with exactly that query, the render deadline) and posts `settings: {scope: "master"}` only when
-  `status` is `ready` (its line says « Export MP4 (vidéo entière, N scènes) en cours »); incompatible, unreadable (logged
-  `workspace.export_master_read_failed`), `still` and `pdf` post today's body unchanged.
+  `status` is `ready` and the plan has at least two scenes (its line says « Export MP4 (vidéo entière, N scènes) en cours »); a single-scene
+  snapshot keeps the scene export body, byte for byte; incompatible, unreadable (logged `workspace.export_master_read_failed`), `still` and
+  `pdf` post today's body unchanged.
 - **Rail and voice.** The rail's « Remotion Studio… » opens Variants then this door, which waits for the scene's and the whole video's reads:
   the whole-video dialog when ready, the scene dialog otherwise. MCP `remotion_studio` (§ 14) says « dans Variantes, clique « Remotion
   Studio » sous la vidéo et confirme ; la vidéo entière de la variante (ou la scène à l'écran si la vidéo entière n'est pas disponible) … »
