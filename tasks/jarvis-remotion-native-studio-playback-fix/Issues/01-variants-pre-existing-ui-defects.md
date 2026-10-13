@@ -24,3 +24,10 @@ rework (4ce22d1e), because it shares the cause of the blocking finding B1.
 | # | Defect | Evidence | Where to look |
 | --- | --- | --- | --- |
 | I6 | The `authored` gate profile blocks a deliberately blank middle frame (e.g. a black beat between two scenes), with no way to mark the blank as intended. Not a Slice 14 rework blocker: the blocking scope agreed for the rework is the first frame on `release_gate`. | Slice 14 QA, profile table reading. | `authored` profile of the frame-quality gates; candidate for Slice 16 or a follow-up. |
+
+## Added after Slice 16 (2026-10-13, on 6aa93f20)
+
+| # | Defect | Evidence | Where to look |
+| --- | --- | --- | --- |
+| I7 | When Core comes back after an outage, a scene on the failure overlay does not retry by itself: the user must press « Réessayer ». Matches the contract (§ 4.11, PX-18); candidate follow-up. | `test_presentation_resilience_browser.py` lost-Core run. | Variants failure veil / scene retry. |
+| I8 | The failure overlay shows the raw technical reason (« Core is unreachable: ClientConnectorError … »). | `slices/16-…/evidence/after-6aa93f20-lost-core-failed-1280x720.jpg`. | Variants failure veil wording. |
