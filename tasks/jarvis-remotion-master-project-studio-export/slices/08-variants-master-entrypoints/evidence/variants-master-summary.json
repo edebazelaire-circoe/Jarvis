@@ -1,6 +1,7 @@
 {
  "slice": "08-variants-master-entrypoints",
- "tested_head": "3cafbbca",
+ "tested_head": "9b0e7185",
+ "tested_head_note": "the real run (Part 2) exercised the Slice 08 working tree just before it was committed as 9b0e7185 (the code commit); the field first held its parent 3cafbbca. Not re-run for the S8 polish (copy, styling and Board single-scene body only); the polish screenshots and variants-master-door-summary.json carry their own tested_head.",
  "durations_ms": {
   "private_runtime_copy": 5097,
   "studio_open_from_page": 67156,
