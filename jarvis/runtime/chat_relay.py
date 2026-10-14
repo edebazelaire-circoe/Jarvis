@@ -41,7 +41,8 @@ morceaux de 64 Kio) et relayé à Core en corps `chunked` par un générateur :
 jamais tenu en mémoire, jamais écrit sur disque ici. Refus tôt si
 `Content-Length` dépasse la borne (`JARVIS_UPLOAD_MAX_BYTES`) plus la marge
 multipart ; la borne exacte est tenue par Core, au morceau près. La réponse
-ajoute `brain_readable` pour l'agent du premier plan ; jamais un chemin.
+rend `brain_readable` tel que Core l'a calculé pour l'agent du premier plan
+(passé en `agent`) ; jamais un chemin.
 Journal `chat.upload.relayed` (statut, code, `artifact_id`, taille, type),
 jamais le nom d'origine ni un octet.
 """
@@ -60,7 +61,7 @@ import uuid
 from aiohttp import web
 
 from jarvis.domain.uploads import (
-    MULTIPART_MARGIN_BYTES, UPLOAD_CHUNK_BYTES, brain_readable, check_client_upload_id, upload_bounds,
+    BRAIN_AGENTS, MULTIPART_MARGIN_BYTES, UPLOAD_CHUNK_BYTES, check_client_upload_id, upload_bounds,
 )
 from jarvis.protocol.strict_json import loads_strict_json, read_bounded
 from jarvis.runtime.capture_relay import CaptureRelayRoutes, _code_of
@@ -178,7 +179,7 @@ class ChatRelayRoutes(CaptureRelayRoutes):
 
         headers = {"Content-Type": file.headers.get("Content-Type") or "application/octet-stream",
                    "X-Jarvis-Upload-Name": quote(file.filename or "", safe="")}
-        params = [("purpose", "chat")] + ([("agent", agent)] if agent in ("claude", "codex") else [])
+        params = [("purpose", "chat")] + ([("agent", agent)] if agent in BRAIN_AGENTS else [])
         path = f"/v1/uploads/{client_upload_id}"
         try:
             status, payload = await transport.forward_upload(path, params=params, headers=headers, body=chunks(),
@@ -207,7 +208,8 @@ class ChatRelayRoutes(CaptureRelayRoutes):
         if ok:
             keys = ("artifact_id", "original_name", "mime_type", "size_bytes", "state", "replayed")
             return web.json_response({"ok": True, **{key: payload.get(key) for key in keys},
-                                      "brain_readable": brain_readable(agent, payload.get("mime_type"))},
+                                      # La valeur de Core, calculée pour le même agent : jamais recalculée ici.
+                                      "brain_readable": payload.get("brain_readable") is True},
                                      status=status)
         return self._answer(status, payload)
 

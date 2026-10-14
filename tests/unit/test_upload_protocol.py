@@ -17,7 +17,7 @@ import aiohttp
 import pytest
 
 from jarvis.domain.artifacts import ArtifactKind, ArtifactQuery, ArtifactState
-from tests.fakes.capture_stack import TOKEN, CaptureStack, until
+from tests.fakes.capture_stack import TOKEN, CaptureStack
 
 BOUNDARY = "jarvis-test-boundary-7d1f"
 PNG = b"\x89PNG\r\n\x1a\n" + bytes(range(256)) * 8
@@ -165,15 +165,32 @@ async def test_fields_out_of_order_or_a_bad_upload_id_are_refused(stack):
 
 
 async def test_a_browser_that_stops_mid_file_leaves_a_failed_artifact_and_no_partial(stack):
-    with pytest.raises(Exception):  # noqa: B017 - the test client sees its own generator fail
-        await upload(stack, "coupé.bin", "application/octet-stream", generated(3_000_000, fail_after=1_000_000))
+    # Deterministic: a raw connection sends the headers and 1 MB of a 3 MB file, then closes; the test waits on
+    # the event set when Core has failed the Artifact (no polling, no timing assumption).
+    abandoned = asyncio.Event()
+    original = stack.core.uploads._abandon
 
-    async def failed():
-        items = await uploads_of(stack)
-        return bool(items) and items[0].state is ArtifactState.FAILED
+    async def abandon(*args, **kwargs):
+        try:
+            return await original(*args, **kwargs)
+        finally:
+            abandoned.set()
 
-    await until(failed)
+    stack.core.uploads._abandon = abandon
+    head = (f"--{BOUNDARY}\r\nContent-Disposition: form-data; name=\"client_upload_id\"\r\n\r\n{uuid.uuid4()}\r\n"
+            f"--{BOUNDARY}\r\nContent-Disposition: form-data; name=\"file\"; filename=\"coupe.bin\"\r\n"
+            f"Content-Type: application/octet-stream\r\n\r\n").encode()
+    reader, writer = await asyncio.open_connection("127.0.0.1", stack.cc_port)
+    writer.write((f"POST /api/chat/uploads HTTP/1.1\r\nHost: 127.0.0.1:{stack.cc_port}\r\n"
+                  f"Content-Type: multipart/form-data; boundary={BOUNDARY}\r\n"
+                  f"Content-Length: {len(head) + 3_000_000}\r\n\r\n").encode() + head)
+    async for chunk in generated(1_000_000):
+        writer.write(chunk)
+        await writer.drain()
+    writer.close()
+    await asyncio.wait_for(abandoned.wait(), 60)
     [artifact] = await uploads_of(stack)
+    assert artifact.state is ArtifactState.FAILED
     assert artifact.error_code == "upload_incomplete"
     assert not (stack.core.artifacts._payloads.root() / artifact.artifact_id).exists()
 
@@ -210,6 +227,15 @@ async def test_brain_readability_follows_the_foreground_agent(stack):
     status, body, _ = await upload(stack, "a.pdf", "application/pdf", as_stream(PDF))
     assert status == 201 and body["brain_readable"] is False
     assert (await stack.core.artifacts.get(body["artifact_id"])).metadata["brain_readable"] is False
+
+
+@pytest.mark.parametrize("agent", ["claude", "codex", "some-future-cli", None])
+async def test_the_relay_answers_core_brain_readable_never_its_own(stack, agent):
+    stack.center._agent_id = agent
+    status, body, _ = await upload(stack, "a.pdf", "application/pdf", as_stream(PDF))
+    stored = await stack.core.artifacts.get(body["artifact_id"])
+    assert status == 201 and body["brain_readable"] is stored.metadata["brain_readable"]
+    assert body["brain_readable"] is (agent != "codex"), "an agent Core does not know is read as claude by both"
 
 
 async def test_no_session_means_no_upload(stack):

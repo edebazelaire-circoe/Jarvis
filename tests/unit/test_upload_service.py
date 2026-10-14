@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import os
 from pathlib import Path
 
 import pytest
@@ -17,7 +18,7 @@ from jarvis.core.artifact_service import ArtifactService
 from jarvis.core.upload_service import UploadRefused, UploadService, upload_view
 from jarvis.core.v2_app import JarvisCoreApplication
 from jarvis.domain.artifacts import ArtifactKind, ArtifactQuery, ArtifactState
-from jarvis.domain.uploads import UploadBounds, upload_artifact_id
+from jarvis.domain.uploads import UploadBounds, upload_artifact_id, upload_bounds
 
 PNG = b"\x89PNG\r\n\x1a\n" + bytes(range(256)) * 4
 UID = "0b6c1f0e-1111-4222-8333-444455556666"
@@ -136,6 +137,25 @@ async def test_bound_exceeded_in_flow_fails_without_final_file_nor_partial(core)
     [artifact] = await uploads_of(core)
     assert artifact.state is ArtifactState.FAILED and artifact.error_code == "upload_too_large"
     assert not folder(core, artifact.artifact_id).exists()
+
+
+@pytest.mark.parametrize("announced", [False, True])
+async def test_exactly_the_bound_is_accepted_and_one_byte_more_is_refused(core, monkeypatch, announced):
+
+    monkeypatch.setenv("JARVIS_UPLOAD_MAX_BYTES", "100000")
+    core.uploads._bounds = lambda: upload_bounds(os.environ)  # the production reader, small bound from the env
+    exact = await put(core, StreamedBody(100_000), content_length=100_000 if announced else None)
+    assert exact.artifact.state is ArtifactState.COMPLETE and exact.artifact.size_bytes == 100_000
+    body = StreamedBody(100_001)
+    with pytest.raises(UploadRefused) as refused:
+        await put(core, body, uid="one-byte-too-many", content_length=None)
+    assert (refused.value.status, refused.value.code) == (413, "upload_too_large")
+    failed = refused.value.artifact
+    assert (failed.state, failed.error_code) == (ArtifactState.FAILED, "upload_too_large")
+    assert not folder(core, failed.artifact_id).exists()
+    with pytest.raises(UploadRefused) as announced_refusal:
+        await put(core, StreamedBody(100_001), uid="one-byte-too-many-2", content_length=100_001)
+    assert (announced_refusal.value.status, announced_refusal.value.code) == (413, "upload_too_large")
 
 
 async def test_content_length_above_the_bound_is_refused_before_reading(core):

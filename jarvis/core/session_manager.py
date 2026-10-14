@@ -837,7 +837,7 @@ class SessionManager:
         payload = {**view.to_payload(), "sessions_root": str(self._workspaces.sessions_root())}
         if self._data_root is not None:
             # Chat Slice 07 : `<data_root>/artifacts`, accordé au CLI par `--add-dir` comme `sessions_root`
-            # (pièces jointes lues par l'outil Read). Jamais rendu au navigateur par le chat.
+            # (pièces jointes lues par l'outil Read). Comme `sessions_root`, visible de la page locale par `/api/sessions/current` (garde de bouclage) ; jamais par les routes du chat.
             payload["artifacts_root"] = str(Path(self._data_root).resolve() / ARTIFACTS_DIR)
         return payload
 

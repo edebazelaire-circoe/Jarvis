@@ -491,8 +491,10 @@ pure rules `jarvis/domain/uploads.py`.
 - Conversation events carry only `attachment_count` on
   `user.transcript.accepted` (never ids, names, paths or bytes;
   [conversation-events.md](conversation-events.md)). Journals
-  (`trace.jsonl`) carry ids, sizes, types and codes; never bytes, never the
-  original name.
+  (`trace.jsonl`) carry ids, sizes, types and codes: the Slice code never
+  writes attachment bytes nor original names. The Brain's own tool-call
+  journal is another matter (*Known limits* 6): what the Brain reads may land
+  there.
 
 ### Control Center `POST /api/chat/uploads`
 
@@ -507,8 +509,9 @@ CLI. Core errors are relayed as is; Core unreachable 503 `core_unreachable`,
 timeout 504 `core_timeout`; the browser stopping mid-file → 400
 `upload_incomplete` (Core fails the Artifact). Answer 201 (new) or 200
 (replay) `{"ok": true, artifact_id, original_name, mime_type, size_bytes,
-state, replayed, brain_readable}` — `brain_readable` for the foreground agent;
-never a path. Journal `chat.upload.relayed` (status, code, `artifact_id`,
+state, replayed, brain_readable}` — `brain_readable` as Core computed it for
+the `agent` the relay passed (an unknown agent is not passed: Core assumes
+`claude`), never recomputed by the relay; never a path. Journal `chat.upload.relayed` (status, code, `artifact_id`,
 size, type).
 
 ### Reference given to the Brain
@@ -517,8 +520,8 @@ size, type).
 `attachments: BrainAttachmentsContext | None`, built by Core at turn time, one
 entry per attachment: `artifact_id`, `original_name` (bounded, control
 characters removed), `mime_type`, `size_bytes`, absolute `path`
-`<data_root>/artifacts/<id>/<payload_name>` (never sent to the browser nor
-written in an event), `brain_readable`. `build_agent_brief` renders it as a
+`<data_root>/artifacts/<id>/<payload_name>` (never sent through the chat
+routes nor written in an event), `brain_readable`. `build_agent_brief` renders it as a
 **data** block:
 
 ```text
@@ -547,7 +550,9 @@ wider than attachments alone (captures, recordings), but the CLI default
 explicit and traceable. The folder is granted only once it exists (a missing
 `--add-dir` path would fail the launch); a turn with an attachment guarantees
 it. A per-turn folder is impossible: `--add-dir` is fixed at
-CLI launch. Images go by path and the CLI's Read tool; `images=` is not used
+CLI launch. Like `sessions_root`, `artifacts_root` is also visible to the
+local page through `/api/sessions/current` (loopback guard), never through the
+chat routes (*Known limits* 7). Images go by path and the CLI's Read tool; `images=` is not used
 (`ClaudeLocalAgent.send(images=…)` refuses outside `speculative_analysis`).
 
 Unsupported formats are stored, announced as such in the UI before sending
@@ -690,4 +695,13 @@ and an isolated root, never a repository database.
    attachments, for want of a per-turn grant.
 4. **No file-only message**: a message must carry text.
 5. **No scene object for a Board drop**: visible through the inspector only.
+6. **The Brain's tool journal may hold what it read.** The CLI event journal
+   (`jarvis/runtime/claude_local.py`, raw tool results in `runtime/trace.jsonl`)
+   already records the Brain's tool results, for any file it reads, voice turns
+   included: a `Read` of an attachment can put its content there. Pre-existing
+   local diagnostic behaviour, out of scope; the chat and upload code itself
+   never writes attachment bytes nor original names.
+7. **`artifacts_root` reaches the local page** through `/api/sessions/current`
+   (`context.artifacts_root`, next to `sessions_root`, loopback guard), as
+   `sessions_root` already does; the chat routes never return a path.
 
