@@ -2025,6 +2025,40 @@ class RealtimeConversationBridge:
             await self._abandon_brain_turn()
             return
         await self._cancel_provider_output(cursor)
+        if getattr(self.session, "requires_local_quiescence_without_output_final", False):
+            await self._rest_after_live_interruption(device_stopped=stopped is not False)
+
+    async def _rest_after_live_interruption(self, *, device_stopped: bool) -> None:
+        """Rendre l'écran après un barge-in sur le fil Live.
+
+        Sur le fil classique, la réponse annulée revient en `response.done`,
+        qui rend l'écoute. GPT-Live n'émet aucune fin de sortie, et la seule
+        fin de parole qu'il reste — la quiescence constatée après un bloc
+        joué — n'arrive plus : l'audio de la sortie coupée est jeté avant
+        lecture. Sans ce retour, l'orbe restait orange pour le reste de la
+        session (trace du 14/10, 19:34:40), y compris pendant que le cerveau
+        travaillait, et repassait à l'orange à chaque silence de l'utilisateur.
+        """
+
+        if device_stopped:
+            # Le périphérique est arrêté : plus rien ne joue ici. Une sortie
+            # suivante rouvre la lecture (`_live_output_quiescent = False`).
+            self._live_output_quiescent = True
+            self._received_outputs.clear()
+            self._live_audible_relayed = False
+        try:
+            await self._rest_surface()
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            self._trace(
+                "voice.live.surface_rest_failed",
+                "Retour de surface impossible après une interruption",
+                level="warning",
+                data={"conversation_id": self.conversation_id,
+                      "code": "live_surface_rest_failed",
+                      "exception_type": type(exc).__name__},
+            )
 
     async def _abandon_brain_turn(self) -> None:
         """Rendre la main quand l'utilisateur coupe un cerveau silencieux.
@@ -4306,7 +4340,10 @@ class RealtimeConversationBridge:
         quiet = self._clock() - self._user_voice_at
         if quiet < self.USER_VOICE_RELEASE_S or self._user_voice_confirmed():
             self._user_voice_check = True
-            delay = max(0.05, self.USER_VOICE_RELEASE_S - quiet)
+            # Silence local déjà passé mais VAD encore vrai : relire au même
+            # rythme que le relâchement, pas 20 fois par seconde.
+            remaining = self.USER_VOICE_RELEASE_S - quiet
+            delay = max(0.05, remaining) if remaining > 0 else self.USER_VOICE_RELEASE_S
             asyncio.get_running_loop().call_later(delay, self._post, "user_voice_check")
             return
         self._user_voice = False

@@ -431,8 +431,10 @@ class PersistentVoiceRuntime:
             return
         requested = self._requested_visual
         if requested == "thinking" and not (self._brain_working or self._brain_busy):
-            requested = "listening"
-        if requested in {"idle", "listening"}:
+            requested = "waiting"
+        # « waiting » est l'état de repos d'une session ouverte depuis WAIT :
+        # l'oublier ici laissait l'orbe violette après la fin du cerveau.
+        if requested in {"idle", "waiting", "listening"}:
             self._visual(requested)
 
     def _cancel_brain_pending_expiry(self) -> None:
@@ -1386,6 +1388,10 @@ class PersistentVoiceRuntime:
             if not bridge_task.cancelling():
                 bridge_task.cancel()
             await asyncio.gather(bridge_task, return_exceptions=True)
+        # Plus de bridge, plus de voix captée. Remis ici et non en fin de
+        # fermeture : une clôture non confirmée sort plus haut, et la session
+        # suivante s'ouvrait verte.
+        self._user_voice = False
         audio_closed = await self._reconcile_audio_close()
         if not inside_bridge and audio_closed:
             # Micro fermé (le bridge a refermé l'audio) : la capture duplex

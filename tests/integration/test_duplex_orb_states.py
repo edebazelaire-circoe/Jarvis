@@ -47,11 +47,13 @@ ORB = Path(__file__).resolve().parents[2] / "jarvis" / "runtime" / "control_cent
 
 def palette() -> dict[str, str]:
     text = ORB.read_text(encoding="utf-8")
-    colors = dict(re.findall(r"(idle|listening|speaking|thinking):\[(\d+,\d+,\d+)\]", text))
-    assert colors["idle"] == "67,170,255", "l'orbe au repos n'est plus bleue"
+    colors = dict(re.findall(r"(idle|waiting|listening|speaking|thinking):\[(\d+,\d+,\d+)\]", text))
+    assert colors["idle"] == "104,128,158", "la veille (SLEEP) n'est plus d'un bleu grisé"
+    assert colors["waiting"] == "67,170,255", "l'attente (WAIT) n'est plus bleue"
+    assert colors["listening"] == "70,247,164", "l'écoute (LISTEN) n'est plus verte"
     assert colors["thinking"] == "175,88,255", "la réflexion n'est plus violette"
     assert colors["speaking"] == "255,151,61"
-    return {"thinking": "violet", "speaking": "orange",
+    return {"thinking": "violet", "speaking": "orange", "waiting": "attente",
             "listening": "écoute", "idle": "veille"}
 
 
@@ -170,6 +172,8 @@ async def rig(bus_root, *, clock=None):  # noqa: ANN001
         on_thinking=runtime.visual_thinking, on_speaking=runtime.visual_speaking,
         on_response_done=runtime.turn_completed,
         on_brain_pending=runtime.brain_pending,
+        # Câblé comme en production : le vert ne vient que de la voix captée.
+        on_user_voice=runtime.user_voice,
     )
     return frontend, session, bus, runtime, bridge
 
@@ -234,7 +238,8 @@ async def test_the_orb_turns_violet_when_the_duplex_brain_starts_working(tmp_pat
     moyen d'annoncer que JARVIS réfléchit.
     """
 
-    frontend, session, bus, runtime, bridge = await rig(tmp_path / "runtime")
+    now = [0.0]
+    frontend, session, bus, runtime, bridge = await rig(tmp_path / "runtime", clock=lambda: now[0])
     colors, counter = Colors(bus), [0]
 
     for index, text in enumerate([" Jarvis", ", compare", " les", " prix"], start=1):
@@ -243,7 +248,12 @@ async def test_the_orb_turns_violet_when_the_duplex_brain_starts_working(tmp_pat
         VoiceDelegationRequested(1), correlation=VoiceCorrelation("live-session")))
     drain(session, frontend)
     await pump(session, bridge, counter)
+    # L'utilisateur parle encore (transcription partielle) : le vert passe devant.
+    assert colors.now == "écoute", colors.seen
 
+    # Sa voix retombe : le relâchement du vert découvre la réflexion.
+    now[0] += 1.0
+    await bridge._check_user_voice()
     assert colors.now == "violet", (
         "en duplex l'orbe ne passe jamais au violet : la délégation du "
         "fournisseur n'est traduite par aucun évènement de surface"
@@ -288,7 +298,7 @@ async def test_the_orb_leaves_speaking_when_the_duplex_device_falls_silent(tmp_p
         "l'orbe reste bloquée sur « JARVIS parle » : rien ne la rend au repos "
         "quand le périphérique s'est tu"
     )
-    assert colors.seen[-1] in {"violet", "écoute", "veille"}
+    assert colors.seen[-1] in {"violet", "attente", "veille"}
 
 
 async def test_the_duplex_orb_alternates_over_several_turns(tmp_path):
@@ -334,15 +344,15 @@ async def test_the_duplex_orb_alternates_over_several_turns(tmp_path):
             async with asyncio.timeout(3):
                 while not bridge._live_output_quiescent:
                     await asyncio.sleep(.01)
-            assert colors.now == "écoute", f"tour {turn}: l'orbe reste sur la parole"
+            assert colors.now == "attente", f"tour {turn}: l'orbe reste sur la parole"
     finally:
         player.cancel()
 
     # `Colors` est posé après le montage : la veille initiale du constructeur
     # précède l'observation, la suite commence donc au premier tour.
     assert colors.seen == [
-        "violet", "orange", "écoute",
-        "violet", "orange", "écoute",
+        "violet", "orange", "attente",
+        "violet", "orange", "attente",
     ], colors.seen
 
 
@@ -433,7 +443,7 @@ async def test_the_orb_stays_green_while_gpt_live_streams_silence(tmp_path):
             frontend.inject(spoken_chunk(frontend, "output-1"))
         await feed(session, frontend, bridge)
         await settle(bridge)
-        assert colors.now == "écoute", "après sa phrase, JARVIS écoute"
+        assert colors.now == "attente", "après sa phrase, JARVIS attend : bleu, pas vert"
         spoken_until = len(colors.seen)
 
         # Il écoute l'utilisateur : le fournisseur n'envoie que du silence,
@@ -497,10 +507,10 @@ async def test_the_orb_is_violet_while_jarvis_acts_and_green_once_done(tmp_path)
     finally:
         player.cancel()
 
-    assert colors.now == "écoute", (
-        f"le travail est fini et tout est dit, l'orbe doit repasser au vert ({colors.seen})"
+    assert colors.now == "attente", (
+        f"le travail est fini et tout est dit, l'orbe doit repasser en attente ({colors.seen})"
     )
-    assert colors.seen[-2:] == ["orange", "écoute"], colors.seen
+    assert colors.seen[-2:] == ["orange", "attente"], colors.seen
     assert colors.seen[:3] == ["violet", "orange", "violet"], colors.seen
 
 
@@ -524,7 +534,7 @@ async def test_a_silent_brain_completion_brings_the_orb_back_to_green(tmp_path):
     assert colors.now == "violet"
 
     await scheduler.handle_core_event(brain_event("completed", "work-1"))
-    assert colors.now == "écoute", (
+    assert colors.now == "attente", (
         "le cerveau a fini sans parler et l'orbe reste violette : rien ne "
         "rend l'écran quand aucune parole ne suit"
     )
@@ -542,7 +552,7 @@ async def test_a_room_segment_during_the_work_keeps_the_orb_violet(tmp_path):
     await runtime.visual_idle()
     assert colors.now == "violet", colors.seen
     await scheduler.handle_core_event(brain_event("failed", "work-1"))
-    assert colors.now == "veille", "la dernière demande était la veille : elle revient"
+    assert colors.now == "attente", "la dernière demande était l'attente : elle revient"
 
 
 # -- L'aller-retour doit tenir toute la session, pas seulement la première minute --
@@ -601,8 +611,8 @@ async def test_the_orb_still_comes_back_green_half_a_minute_after_the_wake(tmp_p
             async with asyncio.timeout(3):
                 while not bridge._live_output_quiescent:
                     await asyncio.sleep(.01)
-            assert colors.now == "écoute", (
-                f"tour {turn}: l'orbe est en {colors.now} alors que JARVIS écoute")
+            assert colors.now == "attente", (
+                f"tour {turn}: l'orbe est en {colors.now} alors que JARVIS attend")
 
             # La pause entre deux tours d'une vraie conversation.
             now[0] += 45.0
@@ -610,6 +620,52 @@ async def test_the_orb_still_comes_back_green_half_a_minute_after_the_wake(tmp_p
         player.cancel()
 
     assert colors.seen == [
-        "violet", "orange", "écoute",
-        "violet", "orange", "écoute",
+        "violet", "orange", "attente",
+        "violet", "orange", "attente",
     ], colors.seen
+
+
+# -- Barge-in sur le fil Live (trace du 14/10, 19:34:40) -----------------------
+#
+# L'utilisateur coupe l'accusé de GPT-Live. Le haut-parleur s'arrête, l'audio
+# restant de la sortie coupée est jeté avant lecture : la quiescence constatée
+# après un bloc joué n'arrive donc jamais, et le fil Live n'émet aucune fin de
+# sortie. L'orbe restait orange pour le reste de la session — y compris pendant
+# les 17 s de travail du cerveau — et repassait à l'orange à chaque silence.
+
+
+async def _speaking_then_barge_in(tmp_path, *, brain_working: bool):
+    frontend, session, bus, runtime, bridge = await rig(tmp_path / "runtime")
+    scheduler = scheduler_for(session, runtime)
+    colors, counter = Colors(bus), [0]
+    if brain_working:
+        frontend.inject(frontend.event(
+            VoiceDelegationRequested(1), correlation=VoiceCorrelation("live-session")))
+    for _ in range(3):
+        frontend.inject(spoken_chunk(frontend, "ack"))
+    drain(session, frontend)
+    # Lecture bloc par bloc, sans la tâche de lecture : c'est exactement l'état
+    # d'une parole coupée avant que le périphérique ait pu constater son silence.
+    await pump(session, bridge, counter)
+    if brain_working:
+        await scheduler.handle_core_event(brain_event("started", "work-1"))
+    assert colors.now == "orange", colors.seen
+
+    await bridge._barge_in()
+    return scheduler, colors
+
+
+async def test_a_barge_in_on_gpt_live_takes_the_orb_off_orange(tmp_path):
+    _, colors = await _speaking_then_barge_in(tmp_path, brain_working=False)
+    assert colors.now == "attente", (
+        f"la parole est coupée et rien ne joue plus : l'orbe reste orange ({colors.seen})")
+
+
+async def test_a_barge_in_while_the_brain_works_shows_violet_then_rests(tmp_path):
+    scheduler, colors = await _speaking_then_barge_in(tmp_path, brain_working=True)
+    assert colors.now == "violet", (
+        f"l'accusé est coupé, le cerveau travaille encore : violet ({colors.seen})")
+
+    # Mode présentation : le cerveau finit sans rien dire. L'écran redescend.
+    await scheduler.handle_core_event(brain_event("completed", "work-1"))
+    assert colors.now == "attente", colors.seen
