@@ -76,15 +76,6 @@ def _entry(event: ConversationEvent) -> TranscriptEntry:
     return TranscriptEntry(item, event.correlation_id, event.producer, event.attributes)
 
 
-def _failure_status(correlation_id: str | None, published: dict[str, int],
-                    failures: dict[str | None, tuple[int, str]]) -> str | None:
-    """Code of the latest failure of the correlation, unless a Brain message was published after it."""
-    if correlation_id is None or correlation_id not in failures:
-        return None
-    sequence, code = failures[correlation_id]
-    return code if published.get(correlation_id, 0) < sequence else None
-
-
 def project_chat(stored_events: Iterable[StoredConversationEvent], *,
                  conversation_id: str) -> tuple[ChatItem, ...]:
     """Chat items of `conversation_id`, ordered by `sequence`, from stored events in any page order.
@@ -98,11 +89,12 @@ def project_chat(stored_events: Iterable[StoredConversationEvent], *,
         if stored.event.conversation_id == conversation_id and is_chat_event(stored.event):
             unique.setdefault(stored.event.event_id, stored)
     rows = sorted(unique.values(), key=lambda s: (s.sequence, s.event.event_id))
-    # Latest publication and latest failure of each correlation (rows ascend, the last one wins).
-    published = {s.event.correlation_id: s.sequence for s in rows
+    published = {s.event.correlation_id for s in rows
                  if s.event.event_type is T.BRAIN_MESSAGE_PUBLISHED and s.event.correlation_id is not None}
-    failures = {s.event.correlation_id: (s.sequence, _failure_code(s.event)) for s in rows
-                if s.event.event_type is T.BRAIN_TURN_FAILED}
+    # The latest failure of a correlation is its status, only while the Brain published nothing for it:
+    # a Brain message (any status, before or after the failure) is the answer, its own words win.
+    failures = {s.event.correlation_id: _failure_code(s.event) for s in rows
+                if s.event.event_type is T.BRAIN_TURN_FAILED and s.event.correlation_id not in published}
     folded = {entry.item.item_id: tuple(c.item_id for c in entry.collapsed)
               for entry in collapse_published_messages(
                   _entry(s.event) for s in rows if s.event.event_type is T.BRAIN_MESSAGE_PUBLISHED)}
@@ -113,7 +105,7 @@ def project_chat(stored_events: Iterable[StoredConversationEvent], *,
             # An uncertain turn is shown, at its own sequence, once the Brain answered its correlation.
             if event.attributes.get("addressing") == _UNCERTAIN and event.correlation_id not in published:
                 continue
-            failure = _failure_status(event.correlation_id, published, failures)
+            failure = failures.get(event.correlation_id) if event.correlation_id is not None else None
             items.append(ChatItem("user", event.event_id, stored.sequence, event.correlation_id, event.content,
                                   None, None, failure))
         elif event.event_type is T.BRAIN_MESSAGE_PUBLISHED and event.event_id in folded:

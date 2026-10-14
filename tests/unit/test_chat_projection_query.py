@@ -71,6 +71,8 @@ def test_projection_param_strict():
     page = ConversationEventPage((), 7, True, 2)
     assert filter_projection(page, None) is page
     assert filter_projection(page, CHAT_PROJECTION) == page
+    with pytest.raises(ValueError, match="projection must be chat"):
+        filter_projection(page, "timeline")
 
 
 async def test_filtered_page_advances_cursor(stack):

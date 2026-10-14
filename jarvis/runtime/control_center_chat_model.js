@@ -93,17 +93,16 @@
      tenue par le fixture partagé joué par pytest et par node. */
   function project(model){
     const rows=[...model.rows.values()].sort((a,b)=>a.sequence-b.sequence||(a.event.event_id<b.event.event_id?-1:a.event.event_id>b.event.event_id?1:0));
-    /* Dernière publication et dernier échec de chaque corrélation (lignes croissantes : la dernière gagne). */
-    const published=new Map(),failures=new Map();
-    for(const {event,sequence} of rows){
-      if(event.event_type===PUBLISHED&&event.correlation_id!=null)published.set(event.correlation_id,sequence);
-      if(event.event_type===FAILED)failures.set(orNull(event.correlation_id),{sequence,code:failureCode(event)});
+    const published=new Set(),failures=new Map();
+    for(const {event} of rows){
+      if(event.event_type===PUBLISHED&&event.correlation_id!=null)published.add(event.correlation_id);
+      /* Le dernier échec d'une corrélation est son statut. */
+      if(event.event_type===FAILED)failures.set(orNull(event.correlation_id),failureCode(event));
     }
-    /* Statut d'échec, miroir de `_failure_status` : le dernier échec, sauf si le Brain a publié après lui. */
-    const failureOf=correlation=>{
-      const failure=correlation!==null?failures.get(correlation):undefined;
-      return failure!==undefined&&(published.get(correlation)??0)<failure.sequence?failure.code:null;
-    };
+    /* Statut d'échec seulement tant que le Brain n'a rien publié pour la corrélation : un message du
+       Brain (tout statut, avant ou après l'échec) est la réponse, ses propres mots l'emportent. */
+    const failureOf=correlation=>correlation!==null&&failures.has(correlation)&&!published.has(correlation)
+      ?failures.get(correlation):null;
     const out=[],last=new Map();
     for(const row of rows){
       const event=row.event,correlation=orNull(event.correlation_id);

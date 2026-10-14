@@ -2114,8 +2114,8 @@
       ]
     },
     {
-      "name": "turn_failed_then_reply_clears_failure",
-      "description": "A `brain.message.published` after the latest `brain.turn.failed` of the correlation clears `failure_code` (the reply arriving after the failure wins).",
+      "name": "turn_failed_then_reply_no_failure",
+      "description": "A `brain.turn.failed` then a `brain.message.published` of the correlation: the Brain message is the answer, the user bubble carries no `failure_code`.",
       "conversation_id": "conv-chat-a",
       "events": [
         {
@@ -2252,8 +2252,8 @@
       ]
     },
     {
-      "name": "reply_then_turn_failed_sets_failure",
-      "description": "A `brain.turn.failed` after the reply of the correlation still sets `failure_code` on the user bubble; the Brain bubble stays.",
+      "name": "reply_then_turn_failed_no_failure",
+      "description": "A `brain.message.published` then a `brain.turn.failed` of the correlation: a Brain message exists, so the user bubble carries no `failure_code`.",
       "conversation_id": "conv-chat-a",
       "events": [
         {
@@ -2373,7 +2373,7 @@
           "text": "Ouvre le rapport",
           "kind": null,
           "status": null,
-          "failure_code": "brain_backend_exception",
+          "failure_code": null,
           "collapsed_event_ids": []
         },
         {
@@ -2384,6 +2384,171 @@
           "text": "Le rapport est ouvert.",
           "kind": "turn_result",
           "status": "completed",
+          "failure_code": null,
+          "collapsed_event_ids": []
+        }
+      ]
+    },
+    {
+      "name": "backend_failure_published_then_turn_failed",
+      "description": "Core's backend-failure order: `brain.message.published` (`status = failed`) is written before `brain.turn.failed`. One Brain failure bubble, no `failure_code` on the user bubble (one failure signal, the Brain's words).",
+      "conversation_id": "conv-chat-a",
+      "events": [
+        {
+          "sequence": 1,
+          "recorded_at": "2026-10-14T09:00:01.005Z",
+          "event": {
+            "schema_version": 1,
+            "event_id": "cev-ad12c030c010d46f1b0dc4d369b7a8a5d3138d940639d6344295035e061f237c",
+            "event_type": "user.transcript.accepted",
+            "actor": "user",
+            "conversation_id": "conv-chat-a",
+            "producer": "core.voice_admission",
+            "visibility": "public",
+            "occurred_at": "2026-10-14T09:00:01.000Z",
+            "started_at": null,
+            "ended_at": null,
+            "span_id": null,
+            "session_id": "voice-session-1",
+            "turn_id": "brain-turn-backend_failure_published_then_turn_failed",
+            "correlation_id": "chat:backend_failure_published_then_turn_failed",
+            "parent_event_id": null,
+            "task_id": null,
+            "work_id": null,
+            "speech_id": null,
+            "outcome_id": null,
+            "trace_ref": null,
+            "content": "Ouvre le rapport",
+            "attributes": {
+              "source": "text",
+              "addressing": "addressed"
+            }
+          }
+        },
+        {
+          "sequence": 2,
+          "recorded_at": "2026-10-14T09:00:02.005Z",
+          "event": {
+            "schema_version": 1,
+            "event_id": "cev-273b4410cdf2b7eb579709668479fe659cd90ed31a6bf229517406a0b60f43c3",
+            "event_type": "brain.turn.accepted",
+            "actor": "brain",
+            "conversation_id": "conv-chat-a",
+            "producer": "core.brain_service",
+            "visibility": "diagnostic",
+            "occurred_at": "2026-10-14T09:00:02.000Z",
+            "started_at": null,
+            "ended_at": null,
+            "span_id": null,
+            "session_id": null,
+            "turn_id": "brain-turn-backend_failure_published_then_turn_failed",
+            "correlation_id": "chat:backend_failure_published_then_turn_failed",
+            "parent_event_id": null,
+            "task_id": null,
+            "work_id": null,
+            "speech_id": null,
+            "outcome_id": null,
+            "trace_ref": null,
+            "content": null,
+            "attributes": {}
+          }
+        },
+        {
+          "sequence": 3,
+          "recorded_at": "2026-10-14T09:00:03.005Z",
+          "event": {
+            "schema_version": 1,
+            "event_id": "cev-b9cfeac0afbc7479232283fb830a650128b6379d662703dbd1aa7aa4cf2dcc2b",
+            "event_type": "brain.message.published",
+            "actor": "brain",
+            "conversation_id": "conv-chat-a",
+            "producer": "core.brain_outcomes",
+            "visibility": "public",
+            "occurred_at": "2026-10-14T09:00:03.000Z",
+            "started_at": null,
+            "ended_at": null,
+            "span_id": null,
+            "session_id": null,
+            "turn_id": null,
+            "correlation_id": "chat:backend_failure_published_then_turn_failed",
+            "parent_event_id": null,
+            "task_id": null,
+            "work_id": null,
+            "speech_id": null,
+            "outcome_id": "outcome-backend_failure_published_then_turn_failed",
+            "trace_ref": {
+              "source": "runtime_journal",
+              "journal_kind": "core.brain.outcome_retained",
+              "join_keys": [
+                "correlation_id",
+                "outcome_id"
+              ]
+            },
+            "content": "Je n'arrive pas à joindre le cerveau.",
+            "attributes": {
+              "kind": "turn_result",
+              "status": "failed"
+            }
+          }
+        },
+        {
+          "sequence": 4,
+          "recorded_at": "2026-10-14T09:00:04.005Z",
+          "event": {
+            "schema_version": 1,
+            "event_id": "cev-125d19aab1b6d19bda286ed5be370f1ddd063132575aa42207f60200e7708fdd",
+            "event_type": "brain.turn.failed",
+            "actor": "brain",
+            "conversation_id": "conv-chat-a",
+            "producer": "core.brain_service",
+            "visibility": "diagnostic",
+            "occurred_at": "2026-10-14T09:00:04.000Z",
+            "started_at": null,
+            "ended_at": null,
+            "span_id": null,
+            "session_id": null,
+            "turn_id": null,
+            "correlation_id": "chat:backend_failure_published_then_turn_failed",
+            "parent_event_id": null,
+            "task_id": null,
+            "work_id": null,
+            "speech_id": null,
+            "outcome_id": null,
+            "trace_ref": {
+              "source": "runtime_journal",
+              "journal_kind": "core.brain.turn_failed",
+              "join_keys": [
+                "conversation_id",
+                "correlation_id"
+              ]
+            },
+            "content": null,
+            "attributes": {
+              "code": "brain_backend_failed"
+            }
+          }
+        }
+      ],
+      "expected": [
+        {
+          "role": "user",
+          "event_id": "cev-ad12c030c010d46f1b0dc4d369b7a8a5d3138d940639d6344295035e061f237c",
+          "sequence": 1,
+          "correlation_id": "chat:backend_failure_published_then_turn_failed",
+          "text": "Ouvre le rapport",
+          "kind": null,
+          "status": null,
+          "failure_code": null,
+          "collapsed_event_ids": []
+        },
+        {
+          "role": "brain",
+          "event_id": "cev-b9cfeac0afbc7479232283fb830a650128b6379d662703dbd1aa7aa4cf2dcc2b",
+          "sequence": 3,
+          "correlation_id": "chat:backend_failure_published_then_turn_failed",
+          "text": "Je n'arrive pas à joindre le cerveau.",
+          "kind": "turn_result",
+          "status": "failed",
           "failure_code": null,
           "collapsed_event_ids": []
         }

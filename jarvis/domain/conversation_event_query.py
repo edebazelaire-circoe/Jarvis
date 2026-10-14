@@ -200,6 +200,8 @@ def filter_projection(page: ConversationEventPage, projection: str | None) -> Co
     """Keep only the events `projection` may need (`is_chat_event`); cursor, `has_more`, `skipped_rows` unchanged."""
     if projection is None:
         return page
+    if projection != CHAT_PROJECTION:
+        raise ValueError(f"projection must be {CHAT_PROJECTION}")
     return replace(page, events=tuple(item for item in page.events if is_chat_event(item.event)))
 
 
