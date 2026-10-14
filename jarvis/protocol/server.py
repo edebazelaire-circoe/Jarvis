@@ -22,7 +22,7 @@ from jarvis.domain.conversation_event_search import SEARCH_PARAMS, encode_search
 from jarvis.core.conversation_event_query import ConversationEventBusyError
 from jarvis.domain.conversation_event_store import ConversationEventStoreError
 from jarvis.domain.conversation_transcript import TranscriptTooLargeError
-from jarvis.domain.conversation_events import ConversationEventError
+from jarvis.domain.conversation_events import MAX_CONTENT_CHARS, ConversationEventError
 from jarvis.domain.interaction_mode import InteractionModeError
 from jarvis.domain.brain_context import BrainPresentationContext
 from jarvis.core.interaction_mode import supported_modes
@@ -102,6 +102,12 @@ def _presentation_context(value: object) -> BrainPresentationContext | None:
     if value is None:
         return None
     return BrainPresentationContext.from_payload(value)
+
+
+def _chat_refusal(status: int, code: str, message: str, **details: str) -> web.Response:
+    """Refus stable d'un tour écrit (`docs/chat.md` › *Error codes*) ; `details` : `reason`, `current_conversation_id`."""
+
+    return web.json_response({"error": {"code": code, "message": message, **details}}, status=status)
 
 
 def _live_enum(enum_type, value: object, field: str):
@@ -630,7 +636,13 @@ class LocalProtocolServer:
           inconnue, `addressing="ambient"`) ;
         - 401 / 426 : authentification ou version de protocole (middleware) ;
         - 404 : conversation inconnue ;
+        - 409 (`source=text` seulement, `docs/chat.md`) : `chat_conversation_not_foreground`,
+          `chat_input_locked` (`reason`), `chat_request_conflict` ; 400 `chat_text_too_long` ;
         - 503 : Core en cours d'arrêt, aucun nouveau tour n'est accepté.
+
+        Tour écrit (`source=text`) : gardes dans l'ordre de `docs/chat.md` (validation,
+        rejeu, binding courant, verrou vocal synchrone) avant `submit`. Les autres
+        sources gardent exactement le chemin d'avant.
         """
 
         body = await request.json()
@@ -661,17 +673,77 @@ class LocalProtocolServer:
             # donc 400 — jamais transmise à moitié à un modèle.
             presentation_context=_presentation_context(body.get("presentation_context")),
         )
+        text_turn = turn.source is BrainTurnSource.TEXT
+        if text_turn:
+            refused, replay = await self._text_turn_guards(turn, body)
+            if refused is not None:
+                return refused
+            # Étape 4 (linéarisation de la course « envoi / réveil vocal ») : lecture
+            # synchrone du verrou, **aucun `await`** d'ici à `submit`. Un rejeu ne la
+            # passe pas : un renvoi après une bascule vocale reste un 200 doublon.
+            reason = None if replay else self.core.voice_channel.write_gate()
+            if reason is not None:
+                return _chat_refusal(409, "chat_input_locked", "the voice channel holds the conversation",
+                                     reason=reason)
         try:
             acceptance = await self.core.brain.submit(turn)
+        except ValueError as exc:
+            # Même `client_request_id`, autre texte, après un redémarrage (le rejeu
+            # mémoire n'existe plus) : `persist_turn` refuse l'identité.
+            if text_turn and "admission identity conflicts" in str(exc):
+                return _chat_refusal(409, "chat_request_conflict", "this client_request_id was sent with another content")
+            raise
         except RuntimeError as exc:
             # `submit()` refuse tout nouveau tour pendant l'arrêt de Core. Ce
             # n'est pas une erreur de l'appelant : la surface peut réessayer sur
             # une instance vivante, avec la même corrélation.
             return web.json_response({"error": {"code": "core_stopping", "message": str(exc)}}, status=503)
+        if text_turn and acceptance.duplicate:
+            # Deux envois concurrents, même `client_request_id`, textes différents : le
+            # second a passé le rejeu avant que le premier soit durable, et le doublon
+            # mémoire de `submit` ne compare pas le texte. Le tour durable tranche.
+            record = await self.core.brain.admitted_turn(turn.conversation_id, turn.correlation_id)
+            if record is None or record.content != turn.text:
+                return _chat_refusal(409, "chat_request_conflict", "this client_request_id was sent with another content")
         source = await self.core.outcomes.source(turn.conversation_id, acceptance.correlation_id)
         payload = {**jsonable(acceptance), **await self.core.brain.speech_context(turn.conversation_id),
                    "source": source.to_payload() if source else None}
         return web.json_response(payload, status=200 if acceptance.duplicate else 202)
+
+    async def _text_turn_guards(self, turn: BrainTurnInput, body: dict) -> tuple[web.Response | None, bool]:
+        """Étapes 1 à 3 de `docs/chat.md` › *Core: same `brain-turns` route* pour un tour écrit.
+
+        Rend `(refus, rejeu)` : un refus stable, ou `rejeu=True` quand le tour durable
+        de cette corrélation existe déjà (les gardes suivantes ne s'appliquent pas,
+        `submit` rendra le doublon). Aucun message ne cite le texte du tour.
+        """
+
+        # 1. Validation. Les pièces jointes arrivent avec la Slice 07.
+        if len(turn.text) > MAX_CONTENT_CHARS:
+            return _chat_refusal(400, "chat_text_too_long", f"content exceeds {MAX_CONTENT_CHARS} characters"), False
+        attachments = body.get("attachments")
+        if attachments is not None and not isinstance(attachments, list):
+            raise ValueError("attachments must be a list of Artifact ids")
+        if attachments:
+            raise ValueError("attachments not supported yet")
+        # 2. Rejeu d'abord : même identité durable que `persist_turn`.
+        record = await self.core.brain.admitted_turn(turn.conversation_id, turn.correlation_id)
+        if record is not None:
+            if (record.content != turn.text or record.metadata.get("source") != turn.source.value
+                    or record.metadata.get("attachments") != (list(turn.attachments) or None)):
+                return _chat_refusal(409, "chat_request_conflict",
+                                     "this client_request_id was sent with another content"), False
+            return None, True
+        # 3. Le tour vise la conversation du binding courant, celle de Voice.
+        unavailable = self._sessions_unavailable()
+        if unavailable is not None:
+            return unavailable, False
+        current = (await self.core.sessions.current()).binding.conversation_id
+        if current != turn.conversation_id:
+            return _chat_refusal(409, "chat_conversation_not_foreground",
+                                 "the conversation is not the one of the current Session binding",
+                                 current_conversation_id=current), False
+        return None, False
 
     async def cancel_brain_turn(self, request: web.Request) -> web.Response:
         """Abandonner la réponse d'un tour en vol (barge-in pendant la réflexion).

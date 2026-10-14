@@ -817,6 +817,15 @@ _BRIEF_STATE_FIELDS: tuple[tuple[str, str], ...] = (
 )
 
 
+#: Canal d'un tour écrit au Chat (`context.channel == "text"`, handoff
+#: jarvis-unified-chat-and-board-drop, `docs/chat.md`) : la réponse est lue, pas
+#: dite. 6000 caractères laissent une marge sous la borne de 8192 d'un évènement.
+BRIEF_TEXT_CHANNEL = (
+    "Canal : écrit (chat). Ta réponse sera lue, pas dite : texte simple, 6000 caractères au plus ; "
+    "au-delà, écris un fichier dans le dossier du Context et donne son chemin."
+)
+
+
 #: Consigne de manifestation du mode PRESENTATION, apposée au tour lui-même et
 #: non à la session : le mode change à chaud (Décision D15), une consigne de
 #: session serait périmée au premier changement. Elle **double** le contrat
@@ -1045,6 +1054,9 @@ def build_agent_brief(context: dict[str, Any], text: str) -> str:
         )
     else:
         lines.append("Adressage : direct. La demande t'est adressée.")
+    # Tour écrit au Chat : absent pour tout autre tour, le brief est celui d'avant.
+    if context.get("channel") == "text":
+        lines.append(BRIEF_TEXT_CHANNEL)
     # Slice 07 : le mode de manifestation, joint à chaque tour parce qu'il
     # change à chaud. La règle est tenue par le runtime (`PresentationSpeechGate`,
     # `jarvis/runtime/presentation_speech_gate.py`) ; cette ligne n'est pas la

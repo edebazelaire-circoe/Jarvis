@@ -173,6 +173,15 @@ shared with the timeline.
   `core_timeout` ("outcome unknown: resend the same `client_request_id`").
 - Journal: `chat.turn.relayed` (status, code, `correlation_id`, attachment
   count), never the text.
+- Body closed: unknown field, `client_request_id` not a UUID, `content` not a
+  string, `conversation_id` not one path segment, `attachments` not a list of
+  strings → 400 `invalid_request`, before Core is called. The Core client's
+  `forward_json` relays `/v1/conversations/{id}/brain-turns` only (exact path,
+  `FORWARDABLE_PATHS` in `jarvis/protocol/client.py`), never `.../cancel` nor
+  `.../turns`.
+- A Core refusal keeps its `reason` (`chat_input_locked`) and
+  `current_conversation_id` (`chat_conversation_not_foreground`) as top-level
+  fields of the Control Center envelope.
 - Answer: 202 (new) or 200 (duplicate) `{"ok": true, "correlation_id",
   "turn_id", "duplicate"}`. The client keeps a local **pending state** (not a
   bubble) until the `user.transcript.accepted` of that `correlation_id`
@@ -205,7 +214,8 @@ order:
    `self.core.brain.submit(turn)`. Writing not allowed → 409
    `chat_input_locked`, `reason` ∈ `voice_active`, `voice_connecting`,
    `voice_switching`, `voice_error`, `voice_unknown`.
-5. **Attachments** (Slice 07): each id exists (404 `attachment_not_found`), is
+5. **Attachments** (Slice 07; until then a non-empty `attachments` is refused
+   at step 1, 400 `invalid_request` "attachments not supported yet"): each id exists (404 `attachment_not_found`), is
    of kind `upload` with provenance `chat_attachment`, `state = complete` (409
    `attachment_not_ready`) and belongs to the open Session (400
    `attachment_not_allowed`).
@@ -225,7 +235,12 @@ Deduplication already exists in memory (`_find_duplicate`) and durably:
 recognizes the durable source, then `claim_backend_dispatch` refuses to
 re-dispatch a duplicate. The same `client_request_id` with another text or other
 attachments raises "admission identity conflicts", answered **409
-`chat_request_conflict`** for `source=text` (instead of the generic 400).
+`chat_request_conflict`** for `source=text` (instead of the generic 400). The
+replay step (2) compares the durable turn first (content, `source`,
+`attachments`); and because the in-memory `_find_duplicate` does not compare
+the text, a `duplicate` answer from `submit` to a text turn is re-checked
+against the durable turn, so two concurrent sends of one id with different texts
+give one 202 and one 409, never a silent 200.
 `persist_turn` adds `attachments` to the compared keys.
 
 ### What the Brain receives
@@ -268,7 +283,14 @@ retention** and **before** `_speech_gate`:
   No answer is lost: the adapter always publishes the answer as a
   `work_result`.
 - Spontaneous notices (`source=system` turns) keep their policy: retained, so
-  visible in the Chat, and spoken only when voice is active.
+  visible in the Chat, and spoken only when voice is active. A notice relayed
+  while the current intention is a text turn (`announce_notice` borrows its
+  correlation, e.g. a sub-agent's end) is withheld like the turn: visible, not
+  spoken, traced once (`speech_withheld_text_channel`, no extra
+  `notice_dropped`).
+- The memory cache is bounded (`MAX_KNOWN_TURN_CHANNELS = 1024`, voice turns
+  cached as `false` too); an evicted correlation is re-read from the durable
+  turn (`BrainOrchestrator.admitted_turn`).
 - `InteractionMode` and `OutputDisposition`
   ([interaction-mode.md](interaction-mode.md)) are **not** reused: they govern
   presentation by mode, not the channel of a turn.

@@ -3,6 +3,7 @@ from __future__ import annotations
 from collections.abc import AsyncIterator, Mapping, Sequence
 import io
 import json
+import re
 from typing import Any, Callable
 from urllib.parse import quote
 
@@ -52,6 +53,9 @@ FORWARDABLE_PREFIXES = ("/v1/boards", "/v1/sessions", "/v1/mcp/plugins", "/v1/mc
                         # Carte Remotion du Control Center (jarvis-remotion-presentation-integration, Slice 11) : l'état de la capacité et le
                         # Studio optionnel ; le relais (`remotion_studio_relay.py`) n'appelle que six adresses, jamais l'installation.
                         "/v1/local-capabilities/remotion")
+#: Chat (jarvis-unified-chat-and-board-drop, Slice 03, `chat_relay.py`) : le tour écrit, et **seulement** lui —
+#: jamais `.../brain-turns/cancel`, `.../turns` ni une autre route de conversation.
+FORWARDABLE_PATHS = (re.compile(r"/v1/conversations/[^/?#]+/brain-turns"),)
 #: Seule route relayée en octets (`forward_bytes`) : le payload d'un Artifact, pour l'interface.
 PAYLOAD_ROUTE_SUFFIX = "/payload"
 #: Paramètres de requête relayés : un mapping, ou des paires (un paramètre répété garde chaque valeur).
@@ -1416,7 +1420,7 @@ class LocalCoreClient:
         d'outil n'existe au Control Center (`docs/mcp/tool-contract.md` §8).
         """
 
-        if not path.startswith(FORWARDABLE_PREFIXES):
+        if not path.startswith(FORWARDABLE_PREFIXES) and not any(p.fullmatch(path) for p in FORWARDABLE_PATHS):
             raise ValueError(f"forward_json only relays board, session, MCP plugin, context, capture, artifact, "
                              f"activity, workspace and prefab routes, not {path[:80]!r}")
         session = await self._http()
