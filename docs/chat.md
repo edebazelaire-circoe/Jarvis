@@ -188,8 +188,10 @@ order:
    `duplicate: true`). A resend after a voice switch never becomes a 409.
 3. **Foreground binding**: `SessionManager.current().binding.conversation_id`
    must equal `{conversation_id}`; else 409 `chat_conversation_not_foreground`
-   (the body names the current conversation so the UI can realign). No
-   Session: see *Open points*.
+   (the body names the current conversation so the UI can realign). No open
+   Session or no binding: the existing `BoardError` codes from
+   `SessionManager.current()`, 404 `session_not_found` / `binding_not_found`;
+   Session service not wired: the existing 503 `core_unavailable`.
 4. **Voice channel** (*Voice channel* below): a **synchronous** read of the
    in-memory state, with no `await` between this read and
    `self.core.brain.submit(turn)`. Writing not allowed → 409
@@ -524,7 +526,8 @@ Core code is relayed as is.
 | `chat_conversation_not_foreground` | 409 | Core | target ≠ current binding |
 | `chat_input_locked` | 409 | Core | voice not disabled (`reason`) |
 | `chat_request_conflict` | 409 | Core | same `client_request_id`, other content |
-| `session_not_found`, `binding_not_found` | see *Open points* | Core | existing codes |
+| `session_not_found`, `binding_not_found` | 404 | Core | existing `BoardError` codes, no open Session or binding |
+| `core_unavailable` | 503 | Core | existing code, Session service not wired |
 | `core_stopping` | 503 | Core | existing code (`submit_brain_turn`) |
 | `core_unreachable` | 503 | CC | Core unreachable |
 | `core_timeout` | 504 | CC | outcome unknown, replay |
@@ -579,13 +582,3 @@ and an isolated root, never a repository database.
 4. **No file-only message**: a message must carry text.
 5. **No scene object for a Board drop**: visible through the inspector only.
 
-## Open points
-
-- **Session codes at the `brain-turns` guard (agent 0).** The design record
-  lists `session_not_found` / `binding_not_found` as existing 503 codes from
-  `_sessions_unavailable`. At HEAD, `_sessions_unavailable`
-  (`jarvis/protocol/server.py`) answers 503 `core_unavailable`, while
-  `SessionManager.current()` raises `BoardError` `session_not_found` /
-  `binding_not_found`, mapped to **404** by `HTTP_STATUS`
-  (`jarvis/domain/workspace_board.py`). The status, and whether
-  `core_unavailable` belongs to the table, is to be settled before Slice 03.

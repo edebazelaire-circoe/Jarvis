@@ -98,7 +98,7 @@ Un contenu d'événement est borné à `MAX_CONTENT_CHARS = 8192` (`jarvis/domai
 
 1. Validation : `content` non vide et `len(content) ≤ 8192` (sinon 400 `chat_text_too_long`) ; `attachments` liste d'au plus `JARVIS_CHAT_MAX_ATTACHMENTS` (défaut 10) ids d'Artifact distincts (400 `too_many_attachments`).
 2. **Rejeu d'abord** : si le tour durable `brain-turn-<stable_identity(conversation, correlation)>` existe déjà (`voice_admission.py:119-121`), la garde est sautée et `submit` rend le doublon (200, `duplicate: true`). Un renvoi après bascule de voix ne doit pas devenir un 409.
-3. **Liaison au premier plan** : `SessionManager.current().binding.conversation_id` doit égaler `{conversation_id}` ; sinon 409 `chat_conversation_not_foreground` (le corps donne la conversation courante, pour que l'UI se recale). Session absente : codes existants `session_not_found` / `binding_not_found` (`_sessions_unavailable`).
+3. **Liaison au premier plan** : `SessionManager.current().binding.conversation_id` doit égaler `{conversation_id}` ; sinon 409 `chat_conversation_not_foreground` (le corps donne la conversation courante, pour que l'UI se recale). Session ou binding absent : codes `BoardError` existants de `SessionManager.current()`, 404 `session_not_found` / `binding_not_found` ; service de Session non câblé : 503 `core_unavailable` existant (`_sessions_unavailable`). Corrigé par l'agent 0 après la Slice 01.
 4. **Canal vocal** (D-VOICE) : lecture **synchrone** de l'état en mémoire, sans `await` entre cette lecture et l'appel de `self.core.brain.submit(turn)`. Si l'écriture n'est pas permise : 409 `chat_input_locked`, `reason` ∈ `voice_active`, `voice_connecting`, `voice_switching`, `voice_error`, `voice_unknown`.
 5. **Pièces jointes** (Slice 07) : chaque id existe (404 `attachment_not_found`), est de nature `upload`, provenance `chat_attachment`, `state = complete` (409 `attachment_not_ready`) et appartient à la Session ouverte (400 `attachment_not_allowed`).
 6. `BrainOrchestrator.submit` (inchangé dans son principe) : persistance unique, `user.transcript.accepted`, dépêche au cerveau du binding.
@@ -273,7 +273,8 @@ Forme Core `{"error": {"code", "message", …}}` ; forme Control Center `{"ok": 
 | `chat_conversation_not_foreground` | 409 | Core | cible ≠ binding courant |
 | `chat_input_locked` | 409 | Core | voix non désactivée (`reason`) |
 | `chat_request_conflict` | 409 | Core | même `client_request_id`, autre contenu |
-| `session_not_found`, `binding_not_found` | 503 | Core | codes existants |
+| `session_not_found`, `binding_not_found` | 404 | Core | codes `BoardError` existants |
+| `core_unavailable` | 503 | Core | code existant, service de Session non câblé |
 | `core_stopping` | 503 | Core | code existant (`server.py:657-664`) |
 | `core_unreachable` | 503 | CC | Core injoignable |
 | `core_timeout` | 504 | CC | issue inconnue, rejouer |
