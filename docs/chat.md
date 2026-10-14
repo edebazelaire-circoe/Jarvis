@@ -569,6 +569,45 @@ Brain, never a new conversation.
 - A « Voir la chronologie complète » link opens the existing timeline
   (`#openTimeline`).
 
+Implementation (Slice 06), beyond the rules above:
+
+- Tab 52 × 40 px, aligned with the dock column; toasts `bottom: 68px`
+  (18 + 40 + 10). When background pills are shown (default theme, column
+  under the dock) the tab moves left of them (`right: 70px`) instead of
+  covering them. Below 940 px wide with the Chat open, toasts move to the top
+  so they never cover the composer. Cosmos: the panel stops at `bottom: 68px`
+  above the tab.
+- One side panel: `openPanel` / `closePanel` of the page close the Chat;
+  opening the Chat calls `closePanel` and closes the Studio inspector, whose
+  own opening calls `closePanel`. Esc in the panel closes it and gives focus
+  back to the tab. Known limit: like `#panel`, the open panel covers the
+  top-bar Boards button; the panel subtitle repeats the active Board title.
+- Pending send: after `202/200` the composer is cleared and a **note** (not a
+  bubble) says « Message transmis · enregistrement… », then « Jarvis traite
+  votre message… » once the user event exists, with an elapsed counter
+  (`aria-hidden`); the 120 s phrase replaces it. Counters never sit inside a
+  `role=status` region, and log rows are reconciled by key so `role=log`
+  announces only new messages.
+- `client_request_id`: one UUID v4 per text; an edited text draws a new one.
+  Unknown outcome (`core_timeout`, client timeout, network) keeps the text
+  and offers « Réessayer » with the same id; `chat_request_conflict` drops the
+  id. The unsent draft (`{id, text}`) and the open state are kept per viewer
+  in `localStorage` (`jarvis.chat.draft.<conversation_id>`,
+  `jarvis.chat.open`), so a reload resumes with the same id.
+- Voice switch: « Passer au chat » posts the disable request, shows « Arrêt du
+  vocal… » and unlocks only when `GET /api/chat/state` says
+  `chat_writable`; our request `failed` / `expired`, or 15 s without an
+  answer client side, shows the code and « Réessayer ». A 409
+  `chat_input_locked` locks the composer until a state read issued after it
+  says writable.
+- Journal: browser console `[chat] chat.<event> {…}` (installed, opened,
+  rescoped, hydrated, turn_sending, turn_admitted, turn_refused,
+  voice_switch_requested, voice_switched, voice_switch_failed, read_failed,
+  state_failed, state_restored, suspended, resumed), never message text.
+- Tests: `tests/unit/test_control_center_chat_ui.py` (page contract) and
+  `tests/unit/test_control_center_chat_browser.py` with
+  `tests/unit/_chat_browser.mjs` (headless Chrome over CDP, fake Core).
+
 ## Error codes
 
 Core shape `{"error": {"code", "message", …}}`; Control Center shape

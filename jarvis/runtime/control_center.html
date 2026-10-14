@@ -274,7 +274,8 @@ pre.block{background:#050b10;border:1px solid rgba(113,144,160,.16);border-radiu
 .cdialog.danger button.go{border-color:rgba(255,101,119,.55);color:var(--danger)}
 .cdialog button.go:hover{background:rgba(110,231,255,.08)}.cdialog.danger button.go:hover{background:rgba(255,101,119,.1)}
 @media(prefers-reduced-motion:reduce){.cdialog{animation:none}}
-.toasts{position:fixed;right:18px;bottom:18px;z-index:70;display:grid;gap:8px;width:min(340px,calc(100vw - 36px));pointer-events:none}
+/* Pile au-dessus de l'onglet Chat (bas-droit, 40 px) : 18 + 40 + 10 px (handoff jarvis-unified-chat-and-board-drop, Slice 06). */
+.toasts{position:fixed;right:18px;bottom:68px;z-index:70;display:grid;gap:8px;width:min(340px,calc(100vw - 36px));pointer-events:none}
 .toast{pointer-events:auto;display:grid;grid-template-columns:auto minmax(0,1fr) auto;gap:10px;align-items:center;padding:10px 8px 10px 12px;background:rgba(6,13,19,.97);border:1px solid var(--line);border-left:2px solid var(--accent);border-radius:8px;box-shadow:0 14px 40px rgba(0,0,0,.55);animation:toastIn .18s ease-out;transition:opacity .2s,transform .2s}
 .toast.ok{border-left-color:var(--ok)}
 .toast.bad{border-left-color:var(--danger)}
@@ -293,6 +294,87 @@ pre.block{background:#050b10;border:1px solid rgba(113,144,160,.16);border-radiu
    la place manque à gauche : la pile reste à droite, comme panneau fermé. */
 @media(min-width:940px){#app:has(.panel.open)~.toasts{right:calc(98px + min(560px,100vw - 120px));width:min(340px,calc(100vw - 676px))}}
 @media(prefers-reduced-motion:reduce){.adot.running,.acard.eph .adot.running,.toast{animation:none}.acard.eph{transition:none}}
+
+/* ---------- Chat (handoff jarvis-unified-chat-and-board-drop, Slice 06) ----------
+   Contrat : `docs/chat.md` › *Panel*. Onglet fixe en bas à droite, dans la
+   colonne du dock (même largeur, même apparence), rang 32 comme le dock.
+   Pastilles d'arrière-plan visibles (colonne sous le dock, right:30px) :
+   l'onglet passe à leur gauche plutôt que de les recouvrir. Le panneau
+   réutilise `.panel` (rang 33, mêmes jetons) et la règle « un seul panneau
+   latéral » : `openPanel`/`closePanel` le ferment, il ferme `#panel` et
+   l'inspecteur du Studio en s'ouvrant. Logique : `control_center_chat.js`. */
+.chat-tab{position:absolute;z-index:32;right:18px;bottom:18px;width:52px;height:40px;padding:0;display:grid;place-items:center;border:1px solid rgba(110,231,255,.26);background:rgba(3,8,12,.82);color:var(--text);border-radius:10px;cursor:pointer;font:inherit;font-size:12px;letter-spacing:.06em;backdrop-filter:blur(12px);transition:border-color .15s,color .15s}
+.chat-tab:hover,.chat-tab[aria-expanded=true]{border-color:var(--accent);color:var(--accent)}
+.chat-tab:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+html:not([data-jarvis-theme="cosmos"]) #app:has(#bgPills:not([hidden])) .chat-tab{right:70px}
+/* Étroit (moins de 940 px), Chat ouvert : la pile passe en haut plutôt que de couvrir le composer. */
+@media(max-width:939px){#app:has(.chat-panel.open)~.toasts{top:12px;bottom:auto}}
+.chat-panel.open{animation:chatIn .2s ease-out}
+@keyframes chatIn{from{opacity:0;transform:translateX(28px)}}
+.chat-panel header{gap:12px}
+.chat-head{min-width:0;display:grid;gap:3px}
+.chat-sub{font-size:11px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.chat-panel header button:focus-visible,.chat-link:focus-visible,.chat-compose button:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.chat-feed{display:flex;align-items:center;gap:8px;padding:8px 17px;border-bottom:1px solid var(--line);font-size:11px;color:var(--muted);min-height:33px}
+.chat-feed .chat-led{flex:0 0 8px;width:8px;height:8px;border-radius:50%;background:var(--muted)}
+.chat-feed[data-tone=ok] .chat-led{background:var(--ok);box-shadow:0 0 8px rgba(104,224,160,.6)}
+.chat-feed[data-tone=busy] .chat-led{background:var(--accent);animation:pulse 1.2s ease-in-out infinite}
+.chat-feed[data-tone=warn] .chat-led{background:var(--warn)}
+.chat-feed[data-tone=bad] .chat-led{background:var(--danger)}
+.chat-feed .chat-feedtxt{flex:0 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.chat-feedtime,.chat-locktime{font-variant-numeric:tabular-nums;white-space:nowrap}
+.chat-feed .chat-link{margin-left:auto}
+.chat-link{flex:0 0 auto;background:none;border:0;padding:2px 0;color:var(--accent);font:inherit;font-size:11px;text-decoration:underline;text-underline-offset:3px;cursor:pointer}
+.chat-link:hover{color:var(--text)}
+.chat-log{flex:1 1 auto;min-height:0;overflow:auto;margin:0;padding:16px 17px;list-style:none;display:flex;flex-direction:column;gap:10px;overscroll-behavior:contain}
+.chat-log:focus-visible{outline:1px solid rgba(110,231,255,.45);outline-offset:-3px}
+.chat-empty{margin:auto 0;padding:24px 8px;text-align:center;color:var(--muted);font-size:12.5px;line-height:1.6}
+.chat-msg{max-width:86%;padding:9px 12px 10px;border:1px solid var(--line);border-radius:12px;font-size:13.5px;line-height:1.5;white-space:pre-wrap;overflow-wrap:anywhere}
+.chat-msg.user{align-self:flex-end;background:rgba(110,231,255,.08);border-color:rgba(110,231,255,.3);border-bottom-right-radius:3px}
+.chat-msg.brain{align-self:flex-start;background:#09131a;border-bottom-left-radius:3px}
+.chat-msg.brain.failed{border-color:rgba(255,101,119,.5);background:rgba(40,8,14,.6)}
+.chat-who{display:block;margin-bottom:3px;font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:var(--muted);white-space:normal}
+.chat-msg.user .chat-who{text-align:right}
+.chat-turnfail{align-self:flex-end;max-width:86%;margin-top:-4px;font-size:11.5px;line-height:1.45;color:#ff9eaa;text-align:right}
+.chat-note{align-self:flex-start;display:flex;align-items:baseline;gap:8px;flex-wrap:wrap;max-width:100%;padding:2px 2px;font-size:12px;line-height:1.45;color:var(--muted)}
+.chat-note .chat-dots{display:inline-flex;gap:3px}
+.chat-note .chat-dots i{width:5px;height:5px;border-radius:50%;background:var(--accent);opacity:.35;animation:chatDot 1.2s ease-in-out infinite}
+.chat-note .chat-dots i:nth-child(2){animation-delay:.2s}.chat-note .chat-dots i:nth-child(3){animation-delay:.4s}
+@keyframes chatDot{50%{opacity:1}}
+.chat-note.late{color:var(--warn)}
+.chat-note time{font-variant-numeric:tabular-nums}
+.chat-compose{flex:0 0 auto;display:grid;gap:8px;padding:12px 17px 14px;border-top:1px solid var(--line)}
+.chat-lock{display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding:9px 11px;border:1px solid rgba(255,184,92,.4);border-left:2px solid var(--warn);border-radius:7px;background:rgba(38,23,5,.55);font-size:12.5px;line-height:1.45;color:#f1d6ae}
+.chat-lock[hidden]{display:none}
+.chat-lock[data-tone=bad]{border-color:rgba(255,101,119,.45);border-left-color:var(--danger);background:rgba(40,8,14,.55);color:#ffc4cc}
+.chat-lock[data-tone=info]{border-color:var(--line);border-left-color:var(--accent);background:rgba(6,16,22,.7);color:var(--text)}
+.chat-lock.flash{animation:chatFlash .5s ease-out}
+@keyframes chatFlash{30%{box-shadow:0 0 0 2px rgba(255,184,92,.45)}}
+.chat-lock .chat-locktxt{flex:0 1 auto;min-width:0}
+.chat-lock .chat-locktime{flex:1 1 auto;opacity:.8}
+.chat-lock button.action{padding:6px 11px;font-size:12px}
+.chat-compose textarea{min-height:64px;max-height:min(220px,32vh);resize:none;line-height:1.5;transition:opacity .2s,border-color .15s}
+.chat-compose textarea:focus{outline:none;border-color:rgba(110,231,255,.55)}
+.chat-compose textarea[aria-disabled=true]{opacity:.5;cursor:not-allowed}
+.chat-compose textarea[aria-busy=true]{opacity:.75}
+.chat-row{display:flex;align-items:center;gap:10px}
+.chat-hint{flex:1 1 auto;min-width:0;font-size:11px;color:var(--muted);line-height:1.4}
+.chat-hint kbd{font:inherit;padding:0 4px;border:1px solid var(--line);border-radius:3px;color:var(--text)}
+.chat-count{font-size:11px;color:var(--muted);font-variant-numeric:tabular-nums}
+.chat-count.over{color:var(--danger)}
+.chat-compose button.primary[aria-disabled=true]{opacity:.45;cursor:not-allowed}
+.chat-compose button.primary[aria-busy=true]{cursor:progress;opacity:.75}
+.chat-send-status{display:flex;align-items:center;gap:10px;flex-wrap:wrap;font-size:12px;line-height:1.45;color:#ff9eaa}
+.chat-send-status[hidden]{display:none}
+.chat-send-status span{flex:1 1 200px;min-width:0}
+.chat-send-status button.action{padding:5px 10px;font-size:12px}
+.chat-sr{position:absolute;width:1px;height:1px;margin:-1px;padding:0;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}
+@media(prefers-reduced-motion:reduce){.chat-panel.open,.chat-lock.flash,.chat-note .chat-dots i,.chat-feed[data-tone=busy] .chat-led{animation:none}.chat-note .chat-dots i{opacity:.8}.chat-tab,.chat-compose textarea{transition:none}}
+/* Cosmos : onglet aux formes du dock Cosmos ; le panneau (bas à 18 px dans ce
+   thème) s'arrête au-dessus de l'onglet. */
+html[data-jarvis-theme="cosmos"] .chat-tab{z-index:50;border-radius:12px;border-color:rgba(174,205,220,.12);background:rgba(5,11,16,.46);color:rgba(213,231,239,.75);backdrop-filter:blur(16px);box-shadow:0 8px 24px rgba(0,0,0,.18)}
+html[data-jarvis-theme="cosmos"] .chat-tab:hover,html[data-jarvis-theme="cosmos"] .chat-tab[aria-expanded=true]{color:var(--accent,#6ee7ff);border-color:color-mix(in srgb,var(--accent,#6ee7ff) 46%,transparent);background:rgba(10,19,26,.72)}
+html[data-jarvis-theme="cosmos"] .panel.chat-panel{bottom:68px}
 
 /* ---------- Pastilles d'arrière-plan (interface principale) ----------
    Petits boutons ronds accolés au bouton Agents, hors de la barre d'outils :
@@ -1659,6 +1741,23 @@ button.wsp-ename:hover{color:var(--accent)}
   </nav>
   <div class="bgpills" id="bgPills" role="group" aria-label="Notifications d’arrière-plan" hidden></div>
   <section class="panel" id="panel"><header><h2 id="panelTitle">Panel</h2><button id="closePanel" aria-label="Fermer">×</button></header><div class="body" id="panelBody"></div></section>
+  <!-- Chat (handoff jarvis-unified-chat-and-board-drop, Slice 06, `docs/chat.md` › Panel) :
+       onglet bas-droit et panneau latéral. Rangs au registre du haut (onglet 32
+       comme le dock, panneau 33 comme `.panel`). Tout le contenu des messages est
+       posé par `control_center_chat.js` en `textContent`, jamais en HTML. -->
+  <button type="button" class="chat-tab" id="chatTab" aria-controls="chatPanel" aria-expanded="false" title="Chat · écrire à Jarvis" aria-label="Chat · écrire à Jarvis">CHAT</button>
+  <section class="panel chat-panel" id="chatPanel" aria-labelledby="chatTitle" hidden>
+    <header><div class="chat-head"><h2 id="chatTitle">Chat</h2><span class="chat-sub" id="chatSub">Même conversation que la voix</span></div><button type="button" id="chatClose" aria-label="Fermer le chat (Échap)">×</button></header>
+    <div class="chat-feed" id="chatFeed" role="status" data-tone="muted"><span class="chat-led" aria-hidden="true"></span><span class="chat-feedtxt" id="chatFeedText">Fermé</span><span class="chat-feedtime" id="chatFeedTime" aria-hidden="true"></span><button type="button" class="chat-link" id="chatTimeline">Voir la chronologie complète</button></div>
+    <ol class="chat-log" id="chatLog" role="log" aria-live="polite" aria-relevant="additions" aria-label="Messages de la conversation" tabindex="0"></ol>
+    <div class="chat-compose" id="chatCompose">
+      <div class="chat-lock" id="chatLock" role="status" hidden><span class="chat-locktxt" id="chatLockText"></span><span class="chat-locktime" id="chatLockTime" aria-hidden="true"></span><button type="button" class="action primary" id="chatSwitch" hidden>Passer au chat</button></div>
+      <label class="chat-sr" for="chatInput">Message à Jarvis</label>
+      <textarea id="chatInput" rows="3" maxlength="8192" placeholder="Écrire à Jarvis…" aria-describedby="chatLockText chatHint" spellcheck="true"></textarea>
+      <div class="chat-send-status" id="chatSendStatus" role="alert" hidden><span id="chatSendText"></span><button type="button" class="action" id="chatRetry" hidden>Réessayer</button></div>
+      <div class="chat-row"><span class="chat-hint" id="chatHint"><kbd>Entrée</kbd> envoie · <kbd>Maj</kbd>+<kbd>Entrée</kbd> : nouvelle ligne</span><span class="chat-count" id="chatCount" aria-live="off"></span><button type="button" class="action primary" id="chatSend">Envoyer</button></div>
+    </div>
+  </section>
 </div>
 <div class="ctxmenu" id="ctxMenu" role="menu" hidden></div>
 <div class="cdialog-back" id="confirmBack" hidden><div class="cdialog" id="confirmDialog" tabindex="-1" role="alertdialog" aria-modal="true" aria-labelledby="confirmTitle" aria-describedby="confirmBody"><h2 id="confirmTitle"></h2><ul id="confirmBody"></ul><div class="crow"><button type="button" id="confirmCancel">Annuler</button><button type="button" class="go" id="confirmGo">Confirmer</button></div></div></div>
@@ -2132,8 +2231,9 @@ document.addEventListener('keydown',e=>{
 window.addEventListener('resize',()=>{if(BG.open)closeBackgroundPop()});
 async function renderErrors(){const archived=errorsView==='archived';title.textContent=archived?'Errors · Archives':'Errors';const items=await api('/api/errors'+(archived?'?archived=1&limit=500':''));body.innerHTML=`<div class="row" style="margin-bottom:12px"><button class="action" id="toggleErrors">${archived?'Erreurs actives':'Erreurs archivées'}</button>${archived?'':'<button class="action danger" id="archiveErrors">Archiver</button>'}<span class="hint">${items.length} entrée(s)</span></div><div>${entries(items)}</div>`;$('#toggleErrors').addEventListener('click',()=>{errorsView=archived?'active':'archived';renderErrors().catch(e=>{body.innerHTML=`<div class="entry error">${esc(e.message)}</div>`})});const archive=$('#archiveErrors');if(archive)archive.addEventListener('click',async()=>{archive.disabled=true;try{await api('/api/errors/archive',{method:'POST'});await renderErrors();refreshStatus()}catch(e){toast({title:'Archivage des erreurs impossible',sub:e.message,kind:'bad'});console.error('errors_archive_failed',e)}finally{archive.disabled=false}})}
 async function refreshStatus(){try{const s=await api('/api/status'),v=s.voice_state||'idle',k=String(s.manual_wake_key||'f9').toUpperCase(),online=s.voice_online===true;renderLive(s.live);$('#voiceState').textContent=online?v.toUpperCase():'OFFLINE';const listening=s.voice_turn_mode==='manual'?`${k} · ENVOYER`:`${k} · ANNULER`;$('#voiceHint').textContent=online?({idle:`${k} · DÉMARRER`,listening,thinking:`${k} · ANNULER`,speaking:`${k} · INTERROMPRE`}[v]||`${k} · CONTRÔLER`):`${k} · VOICE HORS LIGNE`;$('.face').style.visibility=online?'visible':'hidden';$('#agentName').textContent=String(s.agent.name||s.agent_cli||'agent').toUpperCase();$('#agentState').textContent=(s.agent.state||'stopped').toUpperCase();const b=$('#errorBadge');b.textContent=s.error_count;b.style.display=s.error_count?'flex':'none';renderBackgroundPills(s.background,s.boards);try{if(window.JarvisPresentationAttentionControl)JarvisPresentationAttentionControl.gate(s.background)}catch(attentionError){console.error('[attention] presentation_attention_gate_failed',attentionError)}try{if(window.JarvisScene)JarvisScene.gate(s.scene,s.scene_limits)}catch(sceneError){console.error('[scène] scene.gate_failed',sceneError)}try{if(window.JarvisBarehandsCommandChannel)JarvisBarehandsCommandChannel.gate(s.barehands)}catch(handsError){console.error('[barehands] command_gate_failed',handsError)}try{if(window.JarvisBarehands)JarvisBarehands.gate(s.barehands)}catch(switchError){console.error('[barehands] switch_gate_failed',switchError)}try{if(window.JarvisInteractionModeControl)JarvisInteractionModeControl.gate(s.interaction_mode,s.presentation)}catch(modeError){console.error('[mode] interaction_mode_gate_failed',modeError)}try{if(window.JarvisBoardsControl)JarvisBoardsControl.gate(s.boards)}catch(boardsError){console.error('[boards] boards_gate_failed',boardsError)}try{if(window.JarvisPresentationRail)JarvisPresentationRail.gate(s)}catch(railError){console.error('[presentation-rail] gate_failed',railError)}AG.agent=s.agent||null;AG.cli=s.agent_cli||'';if(!(current==='agents'&&coreOk()))updateSubagentBadge(s.subagents,false);watchSubagents(s.subagents)}catch(e){try{if(window.JarvisScene)JarvisScene.statusLost()}catch(_sceneError){/* la scène ne doit pas casser le statut */}try{if(window.JarvisBarehandsCommandChannel)JarvisBarehandsCommandChannel.statusLost()}catch(_handsError){/* le canal de commandes non plus */}try{if(window.JarvisInteractionModeControl)JarvisInteractionModeControl.statusLost()}catch(_modeError){/* le mode d'interaction non plus — et il doit cesser d'afficher une valeur que plus rien ne confirme */}try{if(window.JarvisBoardsControl)JarvisBoardsControl.statusLost()}catch(_boardsError){/* le contrôle Boards non plus : il doit cesser d'afficher un Board que plus rien ne confirme */}try{if(window.JarvisPresentationAttentionControl)JarvisPresentationAttentionControl.statusLost()}catch(_attentionError){/* l'avertissement de vérification non plus : les cartes déjà posées décrivent un fait constaté, elles ne prétendent pas à un état vivant */}$('#voiceState').textContent='OFFLINE';$('#agentState').textContent='OFFLINE';$('#voiceHint').textContent='VOICE HORS LIGNE';$('.face').style.visibility='hidden';updateSubagentBadge(null)}}
-async function openPanel(name){current=name;document.querySelectorAll('.dock button[data-panel]').forEach(b=>b.classList.toggle('active',b.dataset.panel===name));panel.classList.add('open');title.textContent={errors:'Errors',trace:'Trace',agents:'Agents'}[name];closeMenu(false);if(name==='agents'){openAgentsPanel();return}stopAgentsPolling();body.innerHTML='<div class="empty">Chargement…</div>';try{if(name==='errors')await renderErrors();if(name==='trace')body.innerHTML=entries(await api('/api/trace'))}catch(e){body.innerHTML=`<div class="entry error">${esc(e.message)}</div>`}}
-function closePanel(){current=null;panel.classList.remove('open');document.querySelectorAll('.dock button[data-panel]').forEach(b=>b.classList.remove('active'));closeMenu(false);stopAgentsPolling()}
+async function openPanel(name){if(window.JarvisChat)window.JarvisChat.close();current=name;document.querySelectorAll('.dock button[data-panel]').forEach(b=>b.classList.toggle('active',b.dataset.panel===name));panel.classList.add('open');title.textContent={errors:'Errors',trace:'Trace',agents:'Agents'}[name];closeMenu(false);if(name==='agents'){openAgentsPanel();return}stopAgentsPolling();body.innerHTML='<div class="empty">Chargement…</div>';try{if(name==='errors')await renderErrors();if(name==='trace')body.innerHTML=entries(await api('/api/trace'))}catch(e){body.innerHTML=`<div class="entry error">${esc(e.message)}</div>`}}
+/* Un seul panneau latéral : fermer `#panel` ferme aussi le Chat (Échap, inspecteur du Studio). */
+function closePanel(){if(window.JarvisChat)window.JarvisChat.close();current=null;panel.classList.remove('open');document.querySelectorAll('.dock button[data-panel]').forEach(b=>b.classList.remove('active'));closeMenu(false);stopAgentsPolling()}
 
 /* =====================================================================
    Panneau Agents
@@ -2348,6 +2448,12 @@ const STATUS={
 /* Mémoire (jarvis-memory-intelligence-knowledge, Slice 10b) : accroches servies, remplies par les Slices 11 et 12. */
 /*__CONTROL_CENTER_MEMORY_SETTINGS_JS__*/
 /*__CONTROL_CENTER_MEMORY_JS__*/
+/* Chat (handoff jarvis-unified-chat-and-board-drop, Slice 06) : modèle pur de la Slice 02
+   (`control_center_chat_model.js`, `window.JarvisChatModel`) puis la vue
+   (`control_center_chat.js`, `window.JarvisChat`). La vue utilise `closePanel`,
+   déclaration de fonction remontée de ce même `<script>`. */
+/*__CONTROL_CENTER_CHAT_MODEL_JS__*/
+/*__CONTROL_CENTER_CHAT_JS__*/
 // `error_class` normalisées par Core ou ses observateurs ; les autres restent brutes.
 const ERROR_CLASSES={process_stopped:'processus arrêté',producer_restarted:'Control Center redémarré',
   core_restarted:'Core redémarré',core_restarted_unobserved:'non revu après le redémarrage de Core',merged:'doublon fusionné',unknown_status:'statut inconnu',killed:'tué',stopped:'arrêté',cancelled:'annulé'};
