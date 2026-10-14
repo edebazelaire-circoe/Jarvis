@@ -182,6 +182,18 @@ def test_the_duplex_surface_is_told_not_to_refuse_what_the_backend_can_do():
     assert "Bare Hands" in LIVE_OPERATING_RULES
 
 
+def test_the_duplex_surface_never_says_it_is_on_it_without_delegating():
+    """14/10 : « vire tout ce qu'il y a à l'écran » → « je m'en charge », et aucune délégation.
+
+    Mesuré contre le vrai gpt-live-1 : sans cette règle, une action d'écran hors
+    de la liste de verbes recevait un accusé vocal et rien ne partait au cerveau.
+    """
+
+    assert "without a client delegation is forbidden" in LIVE_OPERATING_RULES
+    for verb in ("clear", "remove", "close", "hide", "show"):
+        assert verb in caps.capability_brief(), verb
+
+
 def test_the_continuous_surface_owns_nothing_and_leaves_everything_to_the_brain():
     """Exemption nommée : en mode continu la surface n'a aucun outil et ne répond jamais sur le fond."""
 
