@@ -1136,7 +1136,7 @@ Core (bearer token and `X-Jarvis-Protocol` like every `/v1` route; 401
 |---|---|---|
 | `GET /v1/conversation-events/conversations` | `before_sequence` (optional, ≥ 0), `limit` 1..100 (50) | summary page |
 | `GET /v1/conversation-events/sessions` | `conversation_id` (required), `after_sequence` ≥ 0 (0), `limit` 1..100 (50) | summary page |
-| `GET /v1/conversation-events` | `conversation_id` (required), `after_sequence` ≥ 0 (0), `limit` 1..500 (100), `visibility` `public`\|`diagnostic` (all), `wait_ms` 0..25000 (0) | event page |
+| `GET /v1/conversation-events` | `conversation_id` (required), `after_sequence` ≥ 0 (0), `limit` 1..500 (100), `visibility` `public`\|`diagnostic` (all), `projection` `chat` (none; not with `visibility`), `wait_ms` 0..25000 (0) | event page |
 | `GET /v1/conversation-events/lookup` | `field` ∈ `session_id, turn_id, correlation_id, task_id, work_id, speech_id, outcome_id, span_id` (required), `value` (required), `conversation_id` (optional), `after_sequence`, `limit` 1..500, `visibility` | event page |
 | `GET /v1/conversation-events/events/{event_id}` | none | `{"schema_version": 1, "sequence", "recorded_at", "event"}` |
 
@@ -1256,8 +1256,9 @@ conversation (`jarvis.timeline.<conversation_id>`), and relays over
 - without Web Locks or BroadcastChannel the page runs `solo`: one long-poll per
   tab, exactly the previous behaviour.
 
-Nothing per-tab travels on the channel: the route takes only `conversation_id`,
-`after_sequence`, `limit` and `wait_ms`, and every page filter (Tout/Public,
+Nothing per-tab travels on the channel: the timeline sends only `conversation_id`,
+`after_sequence`, `limit` and `wait_ms` (never `visibility` nor `projection`,
+which the Chat uses — [chat.md](chat.md) › *Reading*), and every page filter (Tout/Public,
 search, lanes, scale, selection) is applied afterwards on the rows held in the
 tab. Tabs share the raw stream and each derives its own view. Two tabs on two
 different conversations keep one leader each — the route cannot serve two

@@ -47,7 +47,7 @@ Invariants held everywhere:
 | `user.transcript.accepted`, `attributes.addressing = uncertain` | User bubble **only once promoted** | promoted when a `brain.message.published` with the **same `correlation_id`** exists; shown at **its own** sequence |
 | `user.transcript.accepted`, any other `addressing` value | never | excluded by prudence |
 | `brain.message.published` | Brain bubble | every `kind` (`turn_result`, `work_result`, `speech_result`) and `status` (`failed` is styled as a failure answer written by the Brain); duplicates folded |
-| `brain.turn.failed` | **status** of the User bubble with the same `correlation_id` (never a bubble) | `attributes.code` rendered as a sentence; ignored when no User bubble of that correlation exists (system turn) |
+| `brain.turn.failed` | **status** of the User bubble with the same `correlation_id` (never a bubble) | `attributes.code` rendered as a sentence; ignored when no User bubble of that correlation exists (system turn); **cleared** by a `brain.message.published` of the correlation with a greater `sequence` (a reply arriving after the failure wins), while a failure after the reply still sets it |
 | every other type (`mouth.*`, `brain.speech.requested`, `brain.work.*`, `subagent.*`, `tool.*`, `tool_brain.*`, `system.*`, `brain.ui_intent.published`, `brain.turn.accepted`) | never | — |
 
 Why `uncertain` is held then promoted: it is Core's own durable rule for "the
@@ -105,10 +105,10 @@ fields (null or empty when not applicable):
 | `event_id`, `sequence`, `correlation_id` | of its `user.transcript.accepted` | of the first publication |
 | `text` | event `content` | event `content` |
 | `kind`, `status` | null | `attributes.kind`, `attributes.status` |
-| `failure_code` | `attributes.code` of the latest `brain.turn.failed` of the same correlation (`brain_turn_failed` when it has no code), else null | null |
+| `failure_code` | `attributes.code` of the latest `brain.turn.failed` of the same correlation (`brain_turn_failed` when it has no code) when no `brain.message.published` of that correlation has a greater `sequence`, else null | null |
 | `collapsed_event_ids` | `[]` | `event_id`s folded into this bubble, in order |
 
-Rules the fixture pins (14 cases): empty input; `addressed` and absent
+Rules the fixture pins (16 cases): empty input; `addressed` and absent
 addressing; `uncertain` promoted; `uncertain` declined (never promoted);
 identical republication folded; A/B/A kept; `brain.turn.failed` on a user turn;
 `brain.turn.failed` on a system turn ignored; `mouth.*`, `subagent.*`,
@@ -118,7 +118,9 @@ conversations (only `conversation_id`'s events count, a shared
 `correlation_id` elsewhere never promotes, folds or fails a bubble here, with
 a second case where the other conversation's identical publication and
 `brain.turn.failed` share the user turn's correlation);
-unknown `addressing` excluded. Events in the fixture are encoded exactly as
+unknown `addressing` excluded; a failure then a reply (the reply clears
+`failure_code`); a reply then a failure (`failure_code` set, the Brain bubble
+stays). Events in the fixture are encoded exactly as
 `encode_stored_event` (`jarvis/domain/conversation_event_query.py`) and
 round-trip through `decode_stored_event`.
 
@@ -143,7 +145,13 @@ live*): `next_cursor` advances past filtered rows, a filtered long-poll waits
 past hidden events, the strict page decoder still holds. `projection` together
 with `visibility` → 400 `invalid_request`. The Control Center passes
 `projection` through `events_query` → `ConversationEventView.events` →
-`LocalCoreClient.list_conversation_events`.
+`LocalCoreClient.list_conversation_events`; on Core,
+`ConversationEventQueryService.events` applies `filter_projection` after
+`filter_visibility`. Without `projection` the route answers exactly as before.
+The filter is stateless: rules that need several rows (promotion, folding,
+failure status) stay in the client model. Tests:
+`tests/unit/test_chat_projection_query.py`,
+`tests/integration/test_chat_projection_protocol.py`.
 
 **Live reading.** Hydrate with `after_sequence=0`, `limit=500`,
 `projection=chat`, follow `next_cursor` while `has_more`, then long-poll

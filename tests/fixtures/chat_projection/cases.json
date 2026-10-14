@@ -2112,6 +2112,282 @@
           "collapsed_event_ids": []
         }
       ]
+    },
+    {
+      "name": "turn_failed_then_reply_clears_failure",
+      "description": "A `brain.message.published` after the latest `brain.turn.failed` of the correlation clears `failure_code` (the reply arriving after the failure wins).",
+      "conversation_id": "conv-chat-a",
+      "events": [
+        {
+          "sequence": 1,
+          "recorded_at": "2026-10-14T09:00:01.005Z",
+          "event": {
+            "schema_version": 1,
+            "event_id": "cev-9be1b1f994dd84ba20d2e28bfd9ef5c7596f383bfb93025f1f263fa46a900025",
+            "event_type": "user.transcript.accepted",
+            "actor": "user",
+            "conversation_id": "conv-chat-a",
+            "producer": "core.voice_admission",
+            "visibility": "public",
+            "occurred_at": "2026-10-14T09:00:01.000Z",
+            "started_at": null,
+            "ended_at": null,
+            "span_id": null,
+            "session_id": "voice-session-1",
+            "turn_id": "brain-turn-turn_failed_then_reply_clears_failure",
+            "correlation_id": "chat:turn_failed_then_reply_clears_failure",
+            "parent_event_id": null,
+            "task_id": null,
+            "work_id": null,
+            "speech_id": null,
+            "outcome_id": null,
+            "trace_ref": null,
+            "content": "Ouvre le rapport",
+            "attributes": {
+              "source": "text",
+              "addressing": "addressed"
+            }
+          }
+        },
+        {
+          "sequence": 2,
+          "recorded_at": "2026-10-14T09:00:02.005Z",
+          "event": {
+            "schema_version": 1,
+            "event_id": "cev-2820cc6b4f16d9436f0092453247bcf5f9260d73ef7b0529fa03a9351b086422",
+            "event_type": "brain.turn.failed",
+            "actor": "brain",
+            "conversation_id": "conv-chat-a",
+            "producer": "core.brain_service",
+            "visibility": "diagnostic",
+            "occurred_at": "2026-10-14T09:00:02.000Z",
+            "started_at": null,
+            "ended_at": null,
+            "span_id": null,
+            "session_id": null,
+            "turn_id": null,
+            "correlation_id": "chat:turn_failed_then_reply_clears_failure",
+            "parent_event_id": null,
+            "task_id": null,
+            "work_id": null,
+            "speech_id": null,
+            "outcome_id": null,
+            "trace_ref": {
+              "source": "runtime_journal",
+              "journal_kind": "core.brain.turn_failed",
+              "join_keys": [
+                "conversation_id",
+                "correlation_id"
+              ]
+            },
+            "content": null,
+            "attributes": {
+              "code": "brain_backend_exception",
+              "error_class": "TimeoutError"
+            }
+          }
+        },
+        {
+          "sequence": 3,
+          "recorded_at": "2026-10-14T09:00:03.005Z",
+          "event": {
+            "schema_version": 1,
+            "event_id": "cev-2305f906a1bb7e6ad07a26cb3f20264437057d485ebadf80b2e0ba0e4035e52c",
+            "event_type": "brain.message.published",
+            "actor": "brain",
+            "conversation_id": "conv-chat-a",
+            "producer": "core.brain_outcomes",
+            "visibility": "public",
+            "occurred_at": "2026-10-14T09:00:03.000Z",
+            "started_at": null,
+            "ended_at": null,
+            "span_id": null,
+            "session_id": null,
+            "turn_id": null,
+            "correlation_id": "chat:turn_failed_then_reply_clears_failure",
+            "parent_event_id": null,
+            "task_id": null,
+            "work_id": null,
+            "speech_id": null,
+            "outcome_id": "outcome-turn_failed_then_reply_clears_failure",
+            "trace_ref": {
+              "source": "runtime_journal",
+              "journal_kind": "core.brain.outcome_retained",
+              "join_keys": [
+                "correlation_id",
+                "outcome_id"
+              ]
+            },
+            "content": "Le rapport est ouvert.",
+            "attributes": {
+              "kind": "turn_result",
+              "status": "completed"
+            }
+          }
+        }
+      ],
+      "expected": [
+        {
+          "role": "user",
+          "event_id": "cev-9be1b1f994dd84ba20d2e28bfd9ef5c7596f383bfb93025f1f263fa46a900025",
+          "sequence": 1,
+          "correlation_id": "chat:turn_failed_then_reply_clears_failure",
+          "text": "Ouvre le rapport",
+          "kind": null,
+          "status": null,
+          "failure_code": null,
+          "collapsed_event_ids": []
+        },
+        {
+          "role": "brain",
+          "event_id": "cev-2305f906a1bb7e6ad07a26cb3f20264437057d485ebadf80b2e0ba0e4035e52c",
+          "sequence": 3,
+          "correlation_id": "chat:turn_failed_then_reply_clears_failure",
+          "text": "Le rapport est ouvert.",
+          "kind": "turn_result",
+          "status": "completed",
+          "failure_code": null,
+          "collapsed_event_ids": []
+        }
+      ]
+    },
+    {
+      "name": "reply_then_turn_failed_sets_failure",
+      "description": "A `brain.turn.failed` after the reply of the correlation still sets `failure_code` on the user bubble; the Brain bubble stays.",
+      "conversation_id": "conv-chat-a",
+      "events": [
+        {
+          "sequence": 1,
+          "recorded_at": "2026-10-14T09:00:01.005Z",
+          "event": {
+            "schema_version": 1,
+            "event_id": "cev-345a069816885c09651e11dd6778c65a6fbe99156f0f414b8b1075c6d19865fb",
+            "event_type": "user.transcript.accepted",
+            "actor": "user",
+            "conversation_id": "conv-chat-a",
+            "producer": "core.voice_admission",
+            "visibility": "public",
+            "occurred_at": "2026-10-14T09:00:01.000Z",
+            "started_at": null,
+            "ended_at": null,
+            "span_id": null,
+            "session_id": "voice-session-1",
+            "turn_id": "brain-turn-reply_then_turn_failed_sets_failure",
+            "correlation_id": "chat:reply_then_turn_failed_sets_failure",
+            "parent_event_id": null,
+            "task_id": null,
+            "work_id": null,
+            "speech_id": null,
+            "outcome_id": null,
+            "trace_ref": null,
+            "content": "Ouvre le rapport",
+            "attributes": {
+              "source": "text",
+              "addressing": "addressed"
+            }
+          }
+        },
+        {
+          "sequence": 2,
+          "recorded_at": "2026-10-14T09:00:02.005Z",
+          "event": {
+            "schema_version": 1,
+            "event_id": "cev-2f08d7d3cfba6d36d0f8903e4441de0b8109c408ae226f43f105f7c8093b80f4",
+            "event_type": "brain.message.published",
+            "actor": "brain",
+            "conversation_id": "conv-chat-a",
+            "producer": "core.brain_outcomes",
+            "visibility": "public",
+            "occurred_at": "2026-10-14T09:00:02.000Z",
+            "started_at": null,
+            "ended_at": null,
+            "span_id": null,
+            "session_id": null,
+            "turn_id": null,
+            "correlation_id": "chat:reply_then_turn_failed_sets_failure",
+            "parent_event_id": null,
+            "task_id": null,
+            "work_id": null,
+            "speech_id": null,
+            "outcome_id": "outcome-reply_then_turn_failed_sets_failure",
+            "trace_ref": {
+              "source": "runtime_journal",
+              "journal_kind": "core.brain.outcome_retained",
+              "join_keys": [
+                "correlation_id",
+                "outcome_id"
+              ]
+            },
+            "content": "Le rapport est ouvert.",
+            "attributes": {
+              "kind": "turn_result",
+              "status": "completed"
+            }
+          }
+        },
+        {
+          "sequence": 3,
+          "recorded_at": "2026-10-14T09:00:03.005Z",
+          "event": {
+            "schema_version": 1,
+            "event_id": "cev-a995aec234d5fe6f9d858a2693f335a832ecb89494cdae81775d08ae4bd97396",
+            "event_type": "brain.turn.failed",
+            "actor": "brain",
+            "conversation_id": "conv-chat-a",
+            "producer": "core.brain_service",
+            "visibility": "diagnostic",
+            "occurred_at": "2026-10-14T09:00:03.000Z",
+            "started_at": null,
+            "ended_at": null,
+            "span_id": null,
+            "session_id": null,
+            "turn_id": null,
+            "correlation_id": "chat:reply_then_turn_failed_sets_failure",
+            "parent_event_id": null,
+            "task_id": null,
+            "work_id": null,
+            "speech_id": null,
+            "outcome_id": null,
+            "trace_ref": {
+              "source": "runtime_journal",
+              "journal_kind": "core.brain.turn_failed",
+              "join_keys": [
+                "conversation_id",
+                "correlation_id"
+              ]
+            },
+            "content": null,
+            "attributes": {
+              "code": "brain_backend_exception",
+              "error_class": "TimeoutError"
+            }
+          }
+        }
+      ],
+      "expected": [
+        {
+          "role": "user",
+          "event_id": "cev-345a069816885c09651e11dd6778c65a6fbe99156f0f414b8b1075c6d19865fb",
+          "sequence": 1,
+          "correlation_id": "chat:reply_then_turn_failed_sets_failure",
+          "text": "Ouvre le rapport",
+          "kind": null,
+          "status": null,
+          "failure_code": "brain_backend_exception",
+          "collapsed_event_ids": []
+        },
+        {
+          "role": "brain",
+          "event_id": "cev-2f08d7d3cfba6d36d0f8903e4441de0b8109c408ae226f43f105f7c8093b80f4",
+          "sequence": 2,
+          "correlation_id": "chat:reply_then_turn_failed_sets_failure",
+          "text": "Le rapport est ouvert.",
+          "kind": "turn_result",
+          "status": "completed",
+          "failure_code": null,
+          "collapsed_event_ids": []
+        }
+      ]
     }
   ]
 }

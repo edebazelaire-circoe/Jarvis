@@ -87,24 +87,31 @@
   /* Repli des republications : règle de `collapseMessages`
      (`control_center_timeline.js`) et de `collapse_published_messages`
      (Python) — une publication égale à la précédente de sa corrélation est
-     fusionnée dans celle-ci ; A, B, A reste trois bulles. */
+     fusionnée dans celle-ci ; A, B, A reste trois bulles. Copie VOULUE de
+     `collapseMessages` (plus bas, dans `project`) : `control_center_timeline.js`
+     est hors périmètre et n'exporte rien de réutilisable ici ; la parité est
+     tenue par le fixture partagé joué par pytest et par node. */
   function project(model){
     const rows=[...model.rows.values()].sort((a,b)=>a.sequence-b.sequence||(a.event.event_id<b.event.event_id?-1:a.event.event_id>b.event.event_id?1:0));
-    const published=new Set(),failures=new Map();
-    for(const {event} of rows){
-      if(event.event_type===PUBLISHED&&event.correlation_id!=null)published.add(event.correlation_id);
-      /* Le dernier échec d'une corrélation est son statut. */
-      if(event.event_type===FAILED)failures.set(orNull(event.correlation_id),failureCode(event));
+    /* Dernière publication et dernier échec de chaque corrélation (lignes croissantes : la dernière gagne). */
+    const published=new Map(),failures=new Map();
+    for(const {event,sequence} of rows){
+      if(event.event_type===PUBLISHED&&event.correlation_id!=null)published.set(event.correlation_id,sequence);
+      if(event.event_type===FAILED)failures.set(orNull(event.correlation_id),{sequence,code:failureCode(event)});
     }
+    /* Statut d'échec, miroir de `_failure_status` : le dernier échec, sauf si le Brain a publié après lui. */
+    const failureOf=correlation=>{
+      const failure=correlation!==null?failures.get(correlation):undefined;
+      return failure!==undefined&&(published.get(correlation)??0)<failure.sequence?failure.code:null;
+    };
     const out=[],last=new Map();
     for(const row of rows){
       const event=row.event,correlation=orNull(event.correlation_id);
       if(event.event_type===USER){
         /* Un tour incertain n'apparaît, à sa propre séquence, qu'une fois que le Brain a répondu à sa corrélation. */
         if(attrs(event).addressing==='uncertain'&&!published.has(correlation))continue;
-        const failure=correlation!==null&&failures.has(correlation)?failures.get(correlation):null;
         out.push({role:'user',event_id:event.event_id,sequence:row.sequence,correlation_id:correlation,
-          text:orNull(event.content),kind:null,status:null,failure_code:failure,collapsed_event_ids:[]});
+          text:orNull(event.content),kind:null,status:null,failure_code:failureOf(correlation),collapsed_event_ids:[]});
       }else if(event.event_type===PUBLISHED){
         const text=orNull(event.content);
         if(correlation!==null){

@@ -65,3 +65,11 @@ Réservé au Project Manager et aux Work Agents. Aucun progrès, verdict QA ou r
 - **Revérification par la QA :** `PASS_WITH_POLISH`.
 - **Course résiduelle :** `ISSUE-02` (`activate`/`mute` sans verrou, déjà dans le code ; le Chat se reverrouille en 1 s au plus).
 - **Fusion :** S4 fusionnée en avance rapide dans la branche de tâche.
+
+## 2026-10-14 — Slice 05
+
+- **Livrables :** M `conversation_event_query.py` (domaine : `projection` dans `EVENTS_PARAMS`, `projection_param` — seule valeur `chat`, avec `visibility` → `ValueError`, donc 400 `invalid_request` —, `filter_projection` à côté de `filter_visibility`) ; M `core/conversation_event_query.py` `events()` (`projection` appliquée au même point que la visibilité : le long-poll attend au-delà des lignes cachées) ; M `server.py`, `client.py`, `conversation_event_view.py` (passage de `projection`) ; M `docs/conversation-events.md` (table des routes, phrase « the route takes only… » corrigée), `docs/chat.md` (*Reading*). Aucune route, aucun stockage nouveaux.
+- **Polish S2 :** `_entry` construit `ConversationItem` par mots-clés ; commentaire de copie voulue de `collapseMessages` dans `control_center_chat_model.js`. **Décision agent 0 :** une `brain.message.published` de séquence supérieure au dernier `brain.turn.failed` de la corrélation efface `failure_code` ; un échec après la réponse le pose toujours (Python `_failure_status` et JS `failureOf`, 2 cas ajoutés au fixture — 16 —, règle dans `docs/chat.md`).
+- **Écart :** `test_conversation_event_query_contract.py` attend désormais `"projection": None` dans `events_query` (forme du dictionnaire ; la réponse de la route sans `projection` est inchangée, testée octet pour octet).
+- **Tests nouveaux :** chat_projection_query 5, chat_projection_protocol 6 (Core réel en `tmp_path`, relais CC, `forbidden_origin`, plafond `MAX_LONG_POLLS` partagé avec la chronologie) : verts.
+- **Régressions :** chat_projection 33, chat_model_js 13, query_contract 12, query_limits 3, conversation_events 142, timeline_js 72, documented_routes 3, capture_relay 35, query_protocol 34, cc_conversation_events 30, et tous les `tests/unit/test_conversation_event*` : verts.

@@ -907,12 +907,14 @@ class LocalProtocolServer:
         `wait_ms` (0 to 25000) turns the request into a long-poll that returns as
         soon as a page holds visible events, or after `wait_ms` with the cursor
         advanced past what was scanned; it also ends when the client disconnects.
+        `projection=chat` keeps the Chat's events only (`docs/chat.md`, "Reading").
         """
         query = events_query(query_params(request.query.items(), EVENTS_PARAMS))
         try:
             page = await self.core.conversation_event_queries.events(
                 query["conversation_id"], after_sequence=query["after_sequence"], limit=query["limit"],
-                visibility=query["visibility"], wait_s=query["wait_ms"] / 1000, interrupt=self._stopping,
+                visibility=query["visibility"], projection=query["projection"], wait_s=query["wait_ms"] / 1000,
+                interrupt=self._stopping,
                 # aiohttp does not cancel a handler whose client left: stop holding the wait ourselves.
                 disconnected=lambda: request.transport is None or request.transport.is_closing())
         except ConversationEventStoreError:

@@ -461,7 +461,7 @@ class LocalCoreClient:
     async def list_conversation_events(self, conversation_id: str, *, after_sequence: int = 0,
                                        limit: int = DEFAULT_EVENT_PAGE_LIMIT,
                                        visibility: ConversationVisibility | None = None,
-                                       wait_ms: int = 0) -> ConversationEventPage:
+                                       projection: str | None = None, wait_ms: int = 0) -> ConversationEventPage:
         """Events after `after_sequence`; resume with `after_sequence=page.next_cursor`.
 
         `wait_ms` > 0 long-polls (at most `MAX_WAIT_MS`): the request timeout is
@@ -472,7 +472,7 @@ class LocalCoreClient:
         timeout = aiohttp.ClientTimeout(total=10 + wait_ms / 1000) if wait_ms else None
         payload = await self._get_json("/v1/conversation-events", {
             "conversation_id": conversation_id, "after_sequence": after_sequence, "limit": limit,
-            "visibility": visibility, "wait_ms": wait_ms or None}, timeout=timeout)
+            "visibility": visibility, "projection": projection, "wait_ms": wait_ms or None}, timeout=timeout)
         return decode_event_page(payload, after_sequence=after_sequence)
 
     async def lookup_conversation_events(self, field: str, value: str, *, conversation_id: str | None = None,
