@@ -104,3 +104,13 @@ Réservé au Project Manager et aux Work Agents. Aucun progrès, verdict QA ou r
   - Le bloc du brief cite les noms entre « ».
 - **Tests :** voir le commit S7 (domaine, service, protocole, contexte du cerveau). Mis à jour : `test_chat_text_ingress` (id inconnu → 404), `test_conversation_events` (clé ajoutée), `test_presentation_artifacts_docs` et `test_workspace_presentations_js` (12 natures).
 - **Hérités inchangés :** empreinte de prompt `87c9ecec` ≠ `20a65470` (scene_artifacts, scene_query_tools), déjà au BASELINE.
+- **QA S7 (palier critique, `4962ca8f`) :** `PASS_WITH_POLISH`.
+  - **Mutation :** 9 mutants tués sur 10 ; le survivant (borne exacte) est tué par la reprise.
+  - **Sécurité à l'exécution :** tous les scénarios sont conformes — borne, coupure en cours de flux, concurrence entre deux processus, noms hostiles, types menteurs, origines. La mémoire reste plate pendant un flux de 24 Mio.
+  - **Traces réelles :** le Brain lit le PDF et le PNG, déclare le zip illisible et ignore l'injection. Coût 0,92 USD.
+  - **Décisions agent 0 :**
+    - le journal diagnostique existant des outils du Brain peut contenir ce que le Brain a lu : limite connue, pas changée ici ;
+    - `artifacts_root` passe au navigateur par `/api/sessions/current`, comme `sessions_root`, derrière la garde de bouclage : accepté.
+  - **Polish `44961382` :** tests de borne exacte, test de coupure rendu déterministe (10 passages sur 10), `brain_readable` relayé depuis Core.
+  - **Pour 07b :** créer un nouveau `client_upload_id` après un échec ou un `upload_conflict`.
+  - **Fusion :** S7 fusionnée dans la branche de tâche.
