@@ -65,3 +65,22 @@ Points de départ **à vérifier au HEAD**, pas une liste exclusive :
 - Task Type prévu : **à résoudre par PM** dans vocabulaire Workspace courant (`metadata.json` n'invente aucun type).
 - Human checks sont séparés dans `human-validation.json` ; avant eux, escalader la validation automatique au maximum raisonnable.
 - - Déposer fichier, image et URL dans un Board puis constater les trois ressources visibles et réutilisables après changement/reprise du Board.
+
+
+## Contrat Slice 00 (agent 0, 2026-10-14)
+
+**Dépendances révisées :** 01, **07** (ingestion), plus 06 seulement pour ne pas éditer `control_center.html` en même temps (séquencement, pas dépendance fonctionnelle). **Palier QA :** standard (`qa-verification`, `code-review`, `runtime-validation` avec captures ; `/impeccable`). Work Agent Claude.
+
+Source : `../../docs/06-resolved-architecture.md`, D-BOARD.
+
+**Décisions :** fichiers et images par `PUT /v1/uploads/{client_upload_id}?purpose=board&board_id=…` (provenance `board_drop`, cible = Board actif sinon 409 `board_drop_target_inactive`, contrôle après création et lien explicite de rattrapage `relinked: true`) ; URL par `POST /v1/uploads/links` → Artifact `kind = link`, `complete`, `text = url`, **jamais récupérée** (`http`/`https`, ≤ 2048, sans identifiants, sinon 400 `link_invalid`) ; visible dans l'inspecteur Workspace ; **pas d'objet de scène** (contrat de scène incompatible, `docs/scene-model.md:484-490` : à proposer en Issue) ; jamais un tour de chat ni un message au cerveau.
+
+**Fichiers :**
+- M `jarvis/domain/artifacts.py` : `ArtifactKind.LINK = "link"` ; M `jarvis/domain/uploads.py` (validation d'URL, `purpose=board`) ; M `jarvis/core/upload_service.py` (cible active, rattrapage par `WorkspaceService.artifact_link(origin=user)`) ; M `jarvis/protocol/upload_routes.py` (`purpose=board`, `POST /v1/uploads/links`) ; M `jarvis/runtime/chat_relay.py` ou N `jarvis/runtime/board_drop_relay.py` (`POST /api/boards/drop` multipart et `POST /api/boards/drop-link`, sous un préfixe ajouté à `READ_GUARDED_ROUTES`).
+- N `jarvis/runtime/control_center_board_drop.js` (calque de dépôt au-dessus de la scène du Board actif, injecté par marqueur ; n'intercepte que `dragenter/dragover/drop` portant des fichiers ou `text/uri-list`, jamais les gestes de la scène) ; M `jarvis/runtime/control_center.html` (marqueur, styles) ; M `jarvis/runtime/control_center.py` (injection) ; M `jarvis/runtime/control_center_workspace.js:69` (libellé `link`) ; M `jarvis/runtime/capture_mcp.py:606` ; M `docs/artifacts.md`, `docs/boards.md`.
+
+**Tests :** `tests/unit/test_board_drop.py` — `test_file_drop_links_active_board`, `test_image_drop_sniffed`, `test_drop_on_inactive_board_409`, `test_switch_race_relinks_target`, `test_url_inert_no_network` (aucune connexion sortante : transport réseau factice qui échoue le test s'il est appelé), `test_url_refused_schemes_and_credentials`, `test_no_conversation_event_no_brain_turn` (store d'événements et orchestrateur inchangés), `test_duplicate_drop_idempotent` ; `tests/unit/_board_drop_browser.mjs` + test Python associé — calque visible au survol avec fichier, dépôt multiple, URL déposée, scène toujours manipulable (clic et déplacement d'un objet après dépôt), Board A/B/A. Régressions : `test_scene_artifacts.py`, `test_workspace_manager_browser.py`, `test_boards_hud_browser.py`, `test_board_artifact_links.py`.
+
+**Acceptation :** un PDF, une image et une URL déposés sur le Board A apparaissent dans ses Artifacts (inspecteur) après rechargement et après A → B → A, absents de B ; aucune conversation, aucun tour, aucune requête réseau vers l'URL.
+
+**Ne pas toucher :** le modèle de scène (`jarvis/domain/scene*.py`, `sqlite_scene.py`), `link_to_active_board`, le panneau Chat, `control_center_timeline.js`.

@@ -1,13 +1,12 @@
 {
   "slice_id": "05-chat-read-sync-relay",
   "title": "Lecture live et rattrapage via événements existants",
-  "task_type": null,
+  "task_type": "waived-by-agent-0",
   "work_intent": "backend: Servir la projection avec cursor, relecture et mises à jour sans créer d'historique bis.",
   "dependencies": [
-    "02-chat-event-projection",
-    "03-direct-brain-text-ingress"
+    "02-chat-event-projection"
   ],
-  "task_type_blocker": "Vocabulaire Workspace Task Type non disponible pendant la création; Project Manager résout et sélectionne un type existant avant dispatch.",
+  "task_type_blocker": "Levé par l'agent 0 (2026-10-14) : aucun vocabulaire Workspace Task Type dans le dépôt ; précédent jarvis-bare-hands-ui-calibration-refinement.",
   "work_agent_assignment": "one Work Agent, resolved by host after Task Type",
   "frontend_claude_preferred": false,
   "skills_required": [

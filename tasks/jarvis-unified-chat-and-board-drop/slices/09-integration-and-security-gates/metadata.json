@@ -1,7 +1,7 @@
 {
   "slice_id": "09-integration-and-security-gates",
   "title": "Intégration isolée, scénarios de régression et preuves",
-  "task_type": null,
+  "task_type": "waived-by-agent-0",
   "work_intent": "qa: Établir une preuve end-to-end objective P0 + extra, sans toucher au Jarvis vivant.",
   "dependencies": [
     "02-chat-event-projection",
@@ -10,9 +10,10 @@
     "05-chat-read-sync-relay",
     "06-chat-panel-and-composer",
     "07-chat-attachments",
+    "07b-chat-attachments-ui",
     "08-board-drop-extra"
   ],
-  "task_type_blocker": "Vocabulaire Workspace Task Type non disponible pendant la création; Project Manager résout et sélectionne un type existant avant dispatch.",
+  "task_type_blocker": "Levé par l'agent 0 (2026-10-14) : aucun vocabulaire Workspace Task Type dans le dépôt ; précédent jarvis-bare-hands-ui-calibration-refinement.",
   "work_agent_assignment": "one Work Agent, resolved by host after Task Type",
   "frontend_claude_preferred": false,
   "skills_required": []

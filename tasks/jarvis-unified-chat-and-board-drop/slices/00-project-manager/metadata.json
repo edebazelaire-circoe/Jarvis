@@ -1,10 +1,10 @@
 {
   "slice_id": "00-project-manager",
   "title": "Readiness, audit aveugle et orchestration",
-  "task_type": null,
+  "task_type": "waived-by-agent-0",
   "work_intent": "management: Accepter une base d'exécution vérifiée et affecter les tâches correctement.",
   "dependencies": [],
-  "task_type_blocker": "Vocabulaire Workspace Task Type non disponible pendant la création; Project Manager résout et sélectionne un type existant avant dispatch.",
+  "task_type_blocker": "Levé par l'agent 0 (2026-10-14) : aucun vocabulaire Workspace Task Type dans le dépôt ; précédent jarvis-bare-hands-ui-calibration-refinement.",
   "work_agent_assignment": "one Work Agent, resolved by host after Task Type",
   "frontend_claude_preferred": false,
   "skills_required": []

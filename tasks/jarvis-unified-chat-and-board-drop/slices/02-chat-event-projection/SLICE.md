@@ -62,3 +62,20 @@ Points de départ **à vérifier au HEAD**, pas une liste exclusive :
 - Task Type prévu : **à résoudre par PM** dans vocabulaire Workspace courant (`metadata.json` n'invente aucun type).
 - Human checks sont séparés dans `human-validation.json` ; avant eux, escalader la validation automatique au maximum raisonnable.
 - - Aucun geste humain exigé pour cette Slice sauf blocage identifié par le PM.
+
+## Contrat Slice 00 (agent 0, 2026-10-14)
+
+**Portée resserrée :** projection **pure**, sans route ni I/O. Le filtre côté Core et le relais sont en 05. Source : `../../docs/06-resolved-architecture.md`, D-PROJ.
+
+**Dépendances :** 01. Peut tourner en parallèle de 04 (fichiers disjoints). **Palier QA :** standard (`qa-verification`, `code-review`).
+
+**Fichiers :**
+- N `jarvis/domain/chat_projection.py` : `CHAT_PROJECTION = "chat"`, `CHAT_EVENT_TYPES`, `is_chat_event(event)` (prédicat sans état : `user.transcript.accepted` dont `addressing` est absent, `addressed` ou `uncertain` ; `brain.message.published` ; `brain.turn.failed`), et `project_chat(stored_events) -> tuple[ChatItem, ...]`, implémentation de référence des règles avec état (promotion `uncertain` par `brain.message.published` de même `correlation_id`, affichée à sa propre séquence ; repli par réutilisation de la règle de `collapse_published_messages`, `jarvis/domain/conversation_transcript.py:150-161`, sans la recopier si un import suffit ; statut d'échec attaché à la bulle utilisateur ; clé `event_id`). Aucune horloge, aucune heuristique de temps.
+- N `jarvis/runtime/control_center_chat_model.js` : mêmes règles en JS pur, sans DOM, exporté comme les autres modèles (`module.exports` sous node, global dans la page). Fonctions : `createChatModel()`, `applyPage(model, page)` (rejouable, idempotente par `event_id`), `items(model)`, `markPending(model, correlationId)`, `reset(model, conversationId)`.
+- N `tests/unit/test_chat_projection.py`, `tests/unit/test_control_center_chat_model_js.py` (node, comme `test_control_center_timeline_js.py`).
+
+**Tests :** `test_fixture_cases_python` et `test_fixture_cases_js` sur `tests/fixtures/chat_projection/cases.json` (parité exacte) ; `test_is_chat_event_allowlist_exhaustive` (parcourt tout `ConversationEventType` : seuls trois passent) ; `test_uncertain_hidden_until_promoted` ; `test_refused_uncertain_never_shown` ; `test_page_replay_idempotent` ; `test_cursor_split_promotion` (tour incertain et message Brain dans deux pages successives) ; `test_failed_on_system_turn_ignored`.
+
+**Acceptation :** les deux implémentations donnent la même sortie sur tout le fixture ; aucune lecture de `RuntimeJournal` ; aucun nouveau stockage.
+
+**Ne pas toucher :** `control_center_timeline.js` (lecture seule pour la parité), `jarvis/core/*`, `jarvis/protocol/*`, `control_center.html`.

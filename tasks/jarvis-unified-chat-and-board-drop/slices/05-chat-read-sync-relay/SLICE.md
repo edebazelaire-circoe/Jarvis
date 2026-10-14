@@ -63,3 +63,21 @@ Points de départ **à vérifier au HEAD**, pas une liste exclusive :
 - Task Type prévu : **à résoudre par PM** dans vocabulaire Workspace courant (`metadata.json` n'invente aucun type).
 - Human checks sont séparés dans `human-validation.json` ; avant eux, escalader la validation automatique au maximum raisonnable.
 - - Aucun geste humain exigé pour cette Slice sauf blocage identifié par le PM.
+
+## Contrat Slice 00 (agent 0, 2026-10-14)
+
+**Dépendances révisées :** 02 seulement (plus 03). Séquencée **après 03** pour ne pas éditer `server.py` en même temps. **Palier QA :** standard (`qa-verification`, `code-review`, `runtime-validation` sur Core + Control Center isolés).
+
+Source : `../../docs/06-resolved-architecture.md`, D-PROJ « Où vit chaque règle » point 2 et « Lecture live ». **Pas de nouvelle route** : un paramètre `projection=chat` sur `GET /v1/conversation-events` et `GET /api/conversations/events`.
+
+**Fichiers :**
+- M `jarvis/domain/conversation_event_query.py` : `projection` dans `EVENTS_PARAMS` (`:64`), `projection_param` (valeur unique `chat`, sinon 400 au message qui nomme la règle), `events_query` (`:141`) le rend ; `projection` + `visibility` ensemble → `ValueError` ; `filter_projection(page, projection)` à côté de `filter_visibility` (`:177`), qui utilise `is_chat_event` de 02 et laisse `next_cursor`, `has_more`, `skipped_rows` intacts.
+- M `jarvis/core/conversation_event_query.py` `events()` (`:186-208`) : paramètre `projection`, appliqué au même point que la visibilité (`:201`), donc le long-poll attend au-delà des événements filtrés.
+- M `jarvis/protocol/server.py` `list_conversation_events` (`:825-841`), `jarvis/protocol/client.py` `list_conversation_events` (`:454`), `jarvis/runtime/conversation_event_view.py` `events` (`:277-292`) : faire passer `projection`.
+- M `docs/conversation-events.md` : table des routes (paramètre `projection`) et phrase « the route takes only… » de *Slice 05 guidance* corrigée.
+
+**Tests :** `tests/unit/test_chat_projection_query.py` — `test_projection_param_strict` (valeur inconnue, répétée, avec `visibility`), `test_filtered_page_advances_cursor` (page sans événement de chat, `has_more` vrai, curseur avancé), `test_long_poll_waits_past_hidden_events` (ajout de `mouth.*` puis d'un `brain.message.published` : réveil seulement sur le second), `test_union_reload_equals_live` (append concurrent dans deux conversations, comme le test existant de la section), `test_unknown_conversation_empty_page`. `tests/integration/test_chat_projection_protocol.py` — Core réel en `tmp_path`, relais Control Center avec la garde (`forbidden_origin`), `MAX_LONG_POLLS` partagé avec une lecture chronologie. Régressions : `test_conversation_event_query_contract.py`, `test_conversation_event_query_limits.py`, `tests/integration/test_conversation_event_query_protocol.py`, `test_control_center_conversation_events.py`.
+
+**Acceptation :** une réhydratation depuis 0 puis un long-poll donnent exactement la projection de 02 sur le même store ; aucune ligne diagnostique autre que `brain.turn.failed` ne sort ; route sans `projection` inchangée octet pour octet.
+
+**Ne pas toucher :** `control_center_timeline.js`, `test_control_center_timeline_ui.py`, la recherche, l'export, la transcription ; pas de SSE ni de WebSocket nouveau.

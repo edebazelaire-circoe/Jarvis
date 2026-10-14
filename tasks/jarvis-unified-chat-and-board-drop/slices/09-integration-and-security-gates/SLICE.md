@@ -67,3 +67,18 @@ Points de départ **à vérifier au HEAD**, pas une liste exclusive :
 - Task Type prévu : **à résoudre par PM** dans vocabulaire Workspace courant (`metadata.json` n'invente aucun type).
 - Human checks sont séparés dans `human-validation.json` ; avant eux, escalader la validation automatique au maximum raisonnable.
 - - Aucun geste humain exigé pour cette Slice sauf blocage identifié par le PM.
+
+
+## Contrat Slice 00 (agent 0, 2026-10-14)
+
+**Dépendances révisées :** 02, 03, 04, 05, 06, 07, **07b**, 08. **Palier QA :** standard (`qa-verification`, `runtime-validation`, `agent-trace-analysis` sur traces réelles). Cette Slice n'écrit pas de code produit ; un défaut trouvé renvoie en rework la Slice qui l'a introduit.
+
+**Environnement :** worktree dédié, `JARVIS_DATA_ROOT` neuf sous le scratchpad, ports Core/Control Center distincts de `127.77.0.1:17653`, jeton propre ; le Core vivant de l'utilisateur n'est ni lancé, ni arrêté, ni réutilisé. Le processus Voice est simulé par un client qui envoie les rapports de D-VOICE (pas de micro) ; une passe avec un vrai processus Voice n'a lieu qu'en Slice 10, sur accord.
+
+**Fichiers :** N `tests/integration/test_chat_end_to_end.py` ; scripts et preuves sous `tasks/jarvis-unified-chat-and-board-drop/` (pas de données dans le dépôt).
+
+**Scénarios obligatoires (un test chacun) :** `voice_active_chat_reads_but_refuses` ; `switch_to_chat_then_text_turn_same_binding` (même `conversation_id`, même `agent_session_id` du binding avant/après) ; `subagent_survives_switch` (sous-agent lancé avant la bascule, terminé après, son résultat publié au chat, rien dit) ; `text_turn_no_speech_requested` (store) ; `reactivation_relocks_and_inflight_turn_kept` ; `retry_after_timeout_no_duplicate` ; `board_switch_A_B_A_no_leak` ; `reload_equals_live_union` ; `core_restart_cursor_survives_and_unknown_grace` ; `attachments_pdf_png_read_by_real_cli` (trace réelle) ; `unreadable_attachment_announced` ; `board_drop_file_image_url_visible_no_turn` ; `security_cross_origin_refused_all_chat_routes` ; `no_bytes_or_names_in_trace_and_events`. Suite de non-régression complète par morceaux (machine à faible mémoire) : Brain, Voice, conversation events, timeline, Boards, Artifacts, Control Center, schéma ; SHA et commandes notés.
+
+**Acceptation :** tous les scénarios verts sur un SHA noté ; aucune régression par rapport à la base `664d767b` + Slices ; preuves (journal, captures, extraits de traces sans contenu privé) jointes au LOG.
+
+**Ne pas toucher :** le JARVIS vivant, `./data`, toute base hors `tmp_path` / scratchpad.

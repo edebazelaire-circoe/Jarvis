@@ -63,3 +63,18 @@ Points de départ **à vérifier au HEAD**, pas une liste exclusive :
 - Human checks sont séparés dans `human-validation.json` ; avant eux, escalader la validation automatique au maximum raisonnable.
 - - Valider parcours Voice puis Chat puis Voice éventuel sur instance volontairement démarrée par utilisateur; confirmer maintien des sous-agents et absence de TTS texte.
 - Approuver la lisibilité finale, les dépôts chat/Board et la documentation d'utilisation.
+
+
+## Contrat Slice 00 (agent 0, 2026-10-14)
+
+**Dépendances :** 09. **Palier QA :** standard (`qa-verification`, `runtime-validation` sur l'instance de l'utilisateur seulement avec son accord explicite dans la conversation en cours).
+
+**Fichiers :** M `docs/chat.md` (passage en L3 : liens vers les tests de conformité de chaque règle), `docs/OPERATIONS.md` (réglages `JARVIS_UPLOAD_MAX_BYTES`, `JARVIS_CHAT_MAX_ATTACHMENTS`, lecture de `GET /api/chat/state`, diagnostics `core.voice_channel.*`, `core.brain.speech_withheld_text_channel`, `chat.turn.relayed`), `docs/SECURITY.md` (garde `/api/chat`, flux de téléversement, URL inertes, octroi `artifacts_root`), `docs/ARCHITECTURE.md` (canal vocal possédé par Core), `docs/local-data.md` (payloads `upload.*` sous `artifacts/`, aucune nouvelle base). Mise à jour de la colonne finale de `../../docs/05-documentation-levels.md`.
+
+**Redémarrage :** les changements de Core, du Control Center et de Voice exigent un redémarrage du JARVIS de l'utilisateur. L'agent le **dit** et laisse l'utilisateur le faire ; il ne lance jamais `project jarvis restart` ni `python -m jarvis …` dans le dépôt principal. Aucune migration : rien à sauvegarder au-delà de la sauvegarde habituelle.
+
+**Contrôles humains :** HV-JCHAT-10-01, HV-JCHAT-10-02 après machine QA complète ; HV-JCHAT-04-01, 06-01, 07-01 (07b), 08-01 regroupés dans la même séance si l'utilisateur le souhaite.
+
+**Acceptation :** un nouvel agent retrouve, depuis `docs/chat.md`, chaque route, code, réglage, limite connue (8192 caractères, lien automatique au Board actif, accès `artifacts_root`, pas d'objet de scène) et test ; aucun second journal de chat n'existe (recherche dans le dépôt notée) ; résultats humains consignés sans invention.
+
+**Ne pas toucher :** code produit (sauf correction documentaire), données de l'utilisateur.

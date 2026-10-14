@@ -16,7 +16,7 @@
     "chat": "P0",
     "board_drop": "extra_in_same_task"
   },
-  "slice_count": 11,
+  "slice_count": 12,
   "human_validation_ids": [
     "HV-JCHAT-00-01",
     "HV-JCHAT-04-01",
