@@ -125,6 +125,9 @@ class VoiceTurnAdmissionService:
         metadata = {"authoritative": True, "final": True, "source": turn.source.value,
                     "addressing": turn.addressing.value, "provider_item_id": turn.provider_item_id,
                     "interrupted_speech_id": turn.interrupted_speech_id}
+        if turn.attachments:
+            # Only when present: every other turn's metadata stays byte-identical (docs/chat.md).
+            metadata["attachments"] = list(turn.attachments)
         if binding is not None:
             if (not isinstance(canonical_order, VoiceTurnOrder) or canonical_order.session_id != binding["session_id"]
                     or canonical_order.turn_id != binding["canonical_turn_id"]):
@@ -134,7 +137,8 @@ class VoiceTurnAdmissionService:
         if record is not None:
             if (record.kind is not TurnKind.USER or record.conversation_id != turn.conversation_id
                     or record.correlation_id != turn.correlation_id or record.content != turn.text
-                    or any(record.metadata.get(key) != metadata[key] for key in ("source", "addressing", "provider_item_id"))
+                    or any(record.metadata.get(key) != metadata.get(key)
+                           for key in ("source", "addressing", "provider_item_id", "attachments"))
                     or (binding is not None and (record.metadata.get("voice_admission") != binding
                         or record.metadata.get("voice_admission_order") != metadata["voice_admission_order"]))):
                 raise ValueError("admission identity conflicts with durable input")

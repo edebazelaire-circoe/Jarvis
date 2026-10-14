@@ -69,8 +69,10 @@ def _failure_code(event: ConversationEvent) -> str:
 
 def _entry(event: ConversationEvent) -> TranscriptEntry:
     """A publication as the transcript sees it, so the folding rule is reused, not copied."""
-    item = ConversationItem(event.event_id, event.actor, event.event_type, "published", event.visibility,
-                            event.occurred_at, event.occurred_at, event.content, None, (event.event_id,))
+    item = ConversationItem(item_id=event.event_id, actor=event.actor, event_type=event.event_type,
+                            status="published", visibility=event.visibility, started_at=event.occurred_at,
+                            ended_at=event.occurred_at, text=event.content, span_id=None,
+                            event_ids=(event.event_id,))
     return TranscriptEntry(item, event.correlation_id, event.producer, event.attributes)
 
 
@@ -89,9 +91,10 @@ def project_chat(stored_events: Iterable[StoredConversationEvent], *,
     rows = sorted(unique.values(), key=lambda s: (s.sequence, s.event.event_id))
     published = {s.event.correlation_id for s in rows
                  if s.event.event_type is T.BRAIN_MESSAGE_PUBLISHED and s.event.correlation_id is not None}
-    # The latest failure of a correlation is its status.
+    # The latest failure of a correlation is its status, only while the Brain published nothing for it:
+    # a Brain message (any status, before or after the failure) is the answer, its own words win.
     failures = {s.event.correlation_id: _failure_code(s.event) for s in rows
-                if s.event.event_type is T.BRAIN_TURN_FAILED}
+                if s.event.event_type is T.BRAIN_TURN_FAILED and s.event.correlation_id not in published}
     folded = {entry.item.item_id: tuple(c.item_id for c in entry.collapsed)
               for entry in collapse_published_messages(
                   _entry(s.event) for s in rows if s.event.event_type is T.BRAIN_MESSAGE_PUBLISHED)}

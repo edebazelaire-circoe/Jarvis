@@ -165,6 +165,9 @@ def _turn_context(
       dans `docs/memory.md`). **Absent quand il est vide** (réglage coupé, rien de
       rappelé, rien de dégradé) : le contexte est alors celui d'avant, octet pour octet.
 
+    - `channel` (handoff jarvis-unified-chat-and-board-drop, Slice 03) : `"text"`
+      pour un tour écrit au Chat (`source=text`). **Absent sinon**.
+
     Rien du tour lui-même n'est ajouté ici : le texte voyage dans `text`, et un
     identifiant de corrélation n'apprendrait rien à un modèle.
     """
@@ -176,6 +179,11 @@ def _turn_context(
         # pour un accord (Bare Hands, calibration adaptative, décision 53).
         # Absent pour tout autre tour : leur contexte est celui d'avant.
         context["source"] = turn.source.value
+    if turn.source is BrainTurnSource.TEXT:
+        # Tour écrit au Chat (docs/chat.md › *What the Brain receives*) : la réponse
+        # sera lue, pas dite ; `build_agent_brief` en fait une ligne. Absent pour
+        # tout autre tour : leur contexte est celui d'avant, octet pour octet.
+        context["channel"] = "text"
     if interaction_mode is not DEFAULT_INTERACTION_MODE:
         context["interaction_mode"] = interaction_mode.value
     if state is not None:

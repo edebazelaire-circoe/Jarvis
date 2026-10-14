@@ -70,7 +70,7 @@ def test_parameters_are_strict_and_never_echo_values():
             events_query({"conversation_id": "a", "after_sequence": raw})
         assert "SECRET" not in str(caught.value) and "1.0" not in str(caught.value)
     assert events_query({"conversation_id": "a"}) == {"conversation_id": "a", "after_sequence": 0, "limit": 100,
-                                                      "visibility": None, "wait_ms": 0}
+                                                      "visibility": None, "projection": None, "wait_ms": 0}
     assert events_query({"conversation_id": "a", "wait_ms": str(MAX_WAIT_MS)})["wait_ms"] == MAX_WAIT_MS
     with pytest.raises(ValueError, match="opaque identifier"):
         events_query({"conversation_id": "a\udc80"})

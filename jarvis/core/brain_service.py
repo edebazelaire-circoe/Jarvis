@@ -146,6 +146,13 @@ BRAIN_WAKE_SKIPPED_KIND = "core.brain.wake_skipped"
 BRAIN_SPEECH_WITHHELD_KIND = "core.brain.speech_withheld_inactive_board"
 #: Raison `_SpeechEmission.reason` d'une parole retenue par cette porte.
 SPEECH_WITHHELD_INACTIVE_BOARD = "inactive_board"
+#: Disposition de sortie par corrélation (handoff jarvis-unified-chat-and-board-drop,
+#: `docs/chat.md` › *Text disposition*) : un tour écrit au Chat ne produit aucune
+#: parole. Son issue est retenue (`brain.message.published`), jamais demandée à la voix.
+BRAIN_SPEECH_WITHHELD_TEXT_CHANNEL_KIND = "core.brain.speech_withheld_text_channel"
+SPEECH_WITHHELD_TEXT_CHANNEL = "text_channel"
+#: Corrélations dont le canal est connu en mémoire ; au-delà, relu du tour durable.
+MAX_KNOWN_TURN_CHANNELS = 1024
 
 #: Budget d'un tour cerveau, en secondes : au-delà, la conversation attend.
 DEFAULT_TURN_BUDGET_S = 8.0
@@ -376,6 +383,10 @@ class BrainOrchestrator:
         self._voice_ledger = voice_ledger
         self._reported_interruptions: dict[str, dict[str, None]] = {}
         self._accepted: dict[str, BrainTurnAcceptance] = {}
+        # Canal d'origine par (conversation, corrélation) : True pour un tour écrit
+        # au Chat (`_text_only`). Rempli par `submit`, complété par le tour durable ;
+        # borné, la plus ancienne entrée sort et se relit au besoin.
+        self._text_channel: OrderedDict[tuple[str, str], bool] = OrderedDict()
         self._tasks: dict[str, asyncio.Task[None]] = {}
         # Conversation de chaque tâche en vol : `cancel_turn()` refuse ainsi
         # d'abandonner le tour d'une autre conversation. Borné par `_tasks`, et
@@ -684,6 +695,8 @@ class BrainOrchestrator:
 
             admitted = await self.admission.persist_turn(turn)
             record = admitted.turn
+            self._note_channel(turn.conversation_id, turn.correlation_id,
+                               record.metadata.get("source") == BrainTurnSource.TEXT.value)
             if not await self.admission.claim_backend_dispatch(admitted):
                 if record.metadata.get("addressing") != AddressingDecision.UNCERTAIN.value:
                     await self.outcomes.repository.activate_brain_source(turn.conversation_id, admitted.source)
@@ -1012,9 +1025,11 @@ class BrainOrchestrator:
         if not emission.published:
             # Retenue par la politique de parole de Core (raison déjà tracée par
             # `_emit_speech`) : ni relayée, ni fait public — le dire serait faux.
-            if emission.reason == SPEECH_WITHHELD_INACTIVE_BOARD:
-                # Déjà tracée par la porte (`speech_withheld_inactive_board`),
-                # comme à la première porte ci-dessus : une seule alerte.
+            if emission.reason in (SPEECH_WITHHELD_INACTIVE_BOARD, SPEECH_WITHHELD_TEXT_CHANNEL):
+                # Déjà tracée par la porte (`speech_withheld_inactive_board`,
+                # `speech_withheld_text_channel`), comme à la première porte
+                # ci-dessus : une seule ligne. Un relais d'un tour écrit reste
+                # visible au Chat (issue retenue), simplement pas dit.
                 return False
             self._diagnostics.emit(
                 BRAIN_NOTICE_DROPPED_KIND,
@@ -1301,6 +1316,43 @@ class BrainOrchestrator:
         if secondary:
             keys.append(f"provider_item:{turn.conversation_id}:{secondary}")
         return tuple(keys)
+
+    # -- canal du tour (Chat) -----------------------------------------------
+
+    async def admitted_turn(self, conversation_id: str, correlation_id: str):
+        """Le tour utilisateur durable de cette corrélation (`ConversationTurn`), ou `None`.
+
+        Même identité que `persist_turn` : `brain-turn-<stable_identity(conversation, correlation)>`.
+        Lu par la route `brain-turns` (rejeu avant les gardes du Chat) et par `_text_only`.
+        """
+
+        return await self.outcomes.repository.get_turn(
+            "brain-turn-" + stable_identity(conversation_id, correlation_id))
+
+    def _note_channel(self, conversation_id: str, correlation_id: str, text_only: bool) -> None:
+        key = (conversation_id, correlation_id)
+        self._text_channel[key] = text_only
+        self._text_channel.move_to_end(key)
+        while len(self._text_channel) > MAX_KNOWN_TURN_CHANNELS:
+            self._text_channel.popitem(last=False)
+
+    async def _text_only(self, conversation_id: str | None, correlation_id: str | None) -> bool:
+        """Vrai si le tour d'origine de cette corrélation a été écrit au Chat (`metadata.source == "text"`).
+
+        Cache mémoire rempli par `submit` ; repli **durable** sur le tour persisté,
+        pour qu'un résultat de sous-agent arrivé des heures plus tard, ou après un
+        redémarrage de Core, reste muet. Une corrélation sans tour (relais sans
+        intention, tour système) n'est pas un tour écrit.
+        """
+
+        if not conversation_id or not correlation_id:
+            return False
+        known = self._text_channel.get((conversation_id, correlation_id))
+        if known is None:
+            record = await self.admitted_turn(conversation_id, correlation_id)
+            known = record is not None and record.metadata.get("source") == BrainTurnSource.TEXT.value
+            self._note_channel(conversation_id, correlation_id, known)
+        return known
 
     # -- état ---------------------------------------------------------------
 
@@ -2643,6 +2695,15 @@ class BrainOrchestrator:
                                                  work_id=speech.work_id, text=speech.text, kind=OutcomeKind.SPEECH_RESULT,
                                                  status=OutcomeStatus.FAILED if speech.kind is SpeechKind.ERROR else OutcomeStatus.COMPLETED,
                                                  dependency_known=not ambiguous_dependency)
+        if await self._text_only(speech.conversation_id, speech.correlation_id):
+            # Disposition `text_channel` (docs/chat.md) : après la rétention, l'issue
+            # est déjà publiée au Chat ; avant la porte des Boards, rien n'est dit.
+            self._diagnostics.emit(
+                BRAIN_SPEECH_WITHHELD_TEXT_CHANNEL_KIND, "parole retenue : le tour a été écrit au Chat",
+                level="info", data={"conversation_id": speech.conversation_id,
+                                    "correlation_id": speech.correlation_id, "speech_id": speech.id,
+                                    "kind": speech.kind.value})
+            return _SpeechEmission(False, None, SPEECH_WITHHELD_TEXT_CHANNEL)
         gate = await self._speech_gate(speech.conversation_id, origin=origin, speech_id=speech.id,
                                        correlation_id=speech.correlation_id)
         if gate.withheld:

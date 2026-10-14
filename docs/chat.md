@@ -47,7 +47,7 @@ Invariants held everywhere:
 | `user.transcript.accepted`, `attributes.addressing = uncertain` | User bubble **only once promoted** | promoted when a `brain.message.published` with the **same `correlation_id`** exists; shown at **its own** sequence |
 | `user.transcript.accepted`, any other `addressing` value | never | excluded by prudence |
 | `brain.message.published` | Brain bubble | every `kind` (`turn_result`, `work_result`, `speech_result`) and `status` (`failed` is styled as a failure answer written by the Brain); duplicates folded |
-| `brain.turn.failed` | **status** of the User bubble with the same `correlation_id` (never a bubble) | `attributes.code` rendered as a sentence; ignored when no User bubble of that correlation exists (system turn) |
+| `brain.turn.failed` | **status** of the User bubble with the same `correlation_id` (never a bubble) | `attributes.code` rendered as a sentence; ignored when no User bubble of that correlation exists (system turn); **only while no `brain.message.published` of the correlation exists** in the conversation (any `status`, before or after the failure): a Brain message is the answer, its own words replace the status. Core's backend-failure path writes `brain.message.published` (`status = failed`) **before** `brain.turn.failed`, so that turn shows the Brain's failure answer and no status |
 | every other type (`mouth.*`, `brain.speech.requested`, `brain.work.*`, `subagent.*`, `tool.*`, `tool_brain.*`, `system.*`, `brain.ui_intent.published`, `brain.turn.accepted`) | never | — |
 
 Why `uncertain` is held then promoted: it is Core's own durable rule for "the
@@ -105,10 +105,10 @@ fields (null or empty when not applicable):
 | `event_id`, `sequence`, `correlation_id` | of its `user.transcript.accepted` | of the first publication |
 | `text` | event `content` | event `content` |
 | `kind`, `status` | null | `attributes.kind`, `attributes.status` |
-| `failure_code` | `attributes.code` of the latest `brain.turn.failed` of the same correlation (`brain_turn_failed` when it has no code), else null | null |
+| `failure_code` | `attributes.code` of the latest `brain.turn.failed` of the same correlation (`brain_turn_failed` when it has no code) when no `brain.message.published` of that correlation exists, else null | null |
 | `collapsed_event_ids` | `[]` | `event_id`s folded into this bubble, in order |
 
-Rules the fixture pins (14 cases): empty input; `addressed` and absent
+Rules the fixture pins (17 cases): empty input; `addressed` and absent
 addressing; `uncertain` promoted; `uncertain` declined (never promoted);
 identical republication folded; A/B/A kept; `brain.turn.failed` on a user turn;
 `brain.turn.failed` on a system turn ignored; `mouth.*`, `subagent.*`,
@@ -118,7 +118,10 @@ conversations (only `conversation_id`'s events count, a shared
 `correlation_id` elsewhere never promotes, folds or fails a bubble here, with
 a second case where the other conversation's identical publication and
 `brain.turn.failed` share the user turn's correlation);
-unknown `addressing` excluded. Events in the fixture are encoded exactly as
+unknown `addressing` excluded; a failure then a reply and a reply then a
+failure (no `failure_code` either way, the Brain bubble carries the answer);
+Core's backend-failure order (`brain.message.published` `status = failed`, then
+`brain.turn.failed`: one Brain failure bubble, no `failure_code`). Events in the fixture are encoded exactly as
 `encode_stored_event` (`jarvis/domain/conversation_event_query.py`) and
 round-trip through `decode_stored_event`.
 
@@ -143,7 +146,13 @@ live*): `next_cursor` advances past filtered rows, a filtered long-poll waits
 past hidden events, the strict page decoder still holds. `projection` together
 with `visibility` → 400 `invalid_request`. The Control Center passes
 `projection` through `events_query` → `ConversationEventView.events` →
-`LocalCoreClient.list_conversation_events`.
+`LocalCoreClient.list_conversation_events`; on Core,
+`ConversationEventQueryService.events` applies `filter_projection` after
+`filter_visibility`. Without `projection` the route answers exactly as before.
+The filter is stateless: rules that need several rows (promotion, folding,
+failure status) stay in the client model. Tests:
+`tests/unit/test_chat_projection_query.py`,
+`tests/integration/test_chat_projection_protocol.py`.
 
 **Live reading.** Hydrate with `after_sequence=0`, `limit=500`,
 `projection=chat`, follow `next_cursor` while `has_more`, then long-poll
@@ -173,6 +182,15 @@ shared with the timeline.
   `core_timeout` ("outcome unknown: resend the same `client_request_id`").
 - Journal: `chat.turn.relayed` (status, code, `correlation_id`, attachment
   count), never the text.
+- Body closed: unknown field, `client_request_id` not a UUID, `content` not a
+  string, `conversation_id` not one path segment, `attachments` not a list of
+  strings → 400 `invalid_request`, before Core is called. The Core client's
+  `forward_json` relays `/v1/conversations/{id}/brain-turns` only (exact path,
+  `FORWARDABLE_PATHS` in `jarvis/protocol/client.py`), never `.../cancel` nor
+  `.../turns`.
+- A Core refusal keeps its `reason` (`chat_input_locked`) and
+  `current_conversation_id` (`chat_conversation_not_foreground`) as top-level
+  fields of the Control Center envelope.
 - Answer: 202 (new) or 200 (duplicate) `{"ok": true, "correlation_id",
   "turn_id", "duplicate"}`. The client keeps a local **pending state** (not a
   bubble) until the `user.transcript.accepted` of that `correlation_id`
@@ -205,7 +223,8 @@ order:
    `self.core.brain.submit(turn)`. Writing not allowed → 409
    `chat_input_locked`, `reason` ∈ `voice_active`, `voice_connecting`,
    `voice_switching`, `voice_error`, `voice_unknown`.
-5. **Attachments** (Slice 07): each id exists (404 `attachment_not_found`), is
+5. **Attachments** (Slice 07; until then a non-empty `attachments` is refused
+   at step 1, 400 `invalid_request` "attachments not supported yet"): each id exists (404 `attachment_not_found`), is
    of kind `upload` with provenance `chat_attachment`, `state = complete` (409
    `attachment_not_ready`) and belongs to the open Session (400
    `attachment_not_allowed`).
@@ -225,7 +244,12 @@ Deduplication already exists in memory (`_find_duplicate`) and durably:
 recognizes the durable source, then `claim_backend_dispatch` refuses to
 re-dispatch a duplicate. The same `client_request_id` with another text or other
 attachments raises "admission identity conflicts", answered **409
-`chat_request_conflict`** for `source=text` (instead of the generic 400).
+`chat_request_conflict`** for `source=text` (instead of the generic 400). The
+replay step (2) compares the durable turn first (content, `source`,
+`attachments`); and because the in-memory `_find_duplicate` does not compare
+the text, a `duplicate` answer from `submit` to a text turn is re-checked
+against the durable turn, so two concurrent sends of one id with different texts
+give one 202 and one 409, never a silent 200.
 `persist_turn` adds `attachments` to the compared keys.
 
 ### What the Brain receives
@@ -268,7 +292,14 @@ retention** and **before** `_speech_gate`:
   No answer is lost: the adapter always publishes the answer as a
   `work_result`.
 - Spontaneous notices (`source=system` turns) keep their policy: retained, so
-  visible in the Chat, and spoken only when voice is active.
+  visible in the Chat, and spoken only when voice is active. A notice relayed
+  while the current intention is a text turn (`announce_notice` borrows its
+  correlation, e.g. a sub-agent's end) is withheld like the turn: visible, not
+  spoken, traced once (`speech_withheld_text_channel`, no extra
+  `notice_dropped`).
+- The memory cache is bounded (`MAX_KNOWN_TURN_CHANNELS = 1024`, voice turns
+  cached as `false` too); an evicted correlation is re-read from the durable
+  turn (`BrainOrchestrator.admitted_turn`).
 - `InteractionMode` and `OutputDisposition`
   ([interaction-mode.md](interaction-mode.md)) are **not** reused: they govern
   presentation by mode, not the channel of a turn.
