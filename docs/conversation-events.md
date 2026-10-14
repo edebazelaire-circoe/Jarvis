@@ -1997,7 +1997,7 @@ Allowlist first, denylist as defense in depth:
 
 1. Envelope fields, event types, actors, visibilities and `trace_ref` fields are
    closed sets; unknown names are rejected.
-2. `attributes` keys must be in `ATTRIBUTE_KEYS`: `addressing, arguments_redacted,
+2. `attributes` keys must be in `ATTRIBUTE_KEYS`: `addressing, arguments_redacted, attachment_count,
    background, code, completion_basis, delivery, depth, duplicate, duration_ms, ephemeral, error_class,
    expires_at, interrupted_speech_id, job_id, kind, live_pause_count, live_pause_max_ms, live_pauses_ms,
    model, op, output_id, paragraph, played_ms, presentation_id,
@@ -2010,9 +2010,10 @@ Allowlist first, denylist as defense in depth:
    only (`docs/OPERATIONS.md`, « Diagnostic du mot d'éveil »).
    `attachment_count` (integer: how many chat attachments a text turn carries,
    on `user.transcript.accepted` only, absent when zero; never their ids,
-   names or bytes) joins this set with Slice 07 of handoff
-   jarvis-unified-chat-and-board-drop ([chat.md](chat.md) › *Attachments*);
-   until that Slice lands it is refused like any unknown key.
+   names, paths or bytes) is in this set since Slice 07 of handoff
+   jarvis-unified-chat-and-board-drop ([chat.md](chat.md) › *Attachments*). It
+   is derived from the durable turn's `metadata.attachments`, so a replay or
+   a backfill rebuilds the same event byte for byte.
 3. Forbidden names are refused at **any depth** of a raw payload (top level,
    `trace_ref`, attributes, nested values) with `ConversationEventRedactionError`:
    reasoning, thinking, thought(s), chain_of_thought, scratchpad, cot, signature,

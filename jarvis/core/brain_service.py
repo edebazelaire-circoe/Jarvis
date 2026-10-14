@@ -332,8 +332,13 @@ class BrainOrchestrator:
         prefab_events: Any = None,
         prefab_events_requeue: Any = None,
         memory_context: Any = None,
+        attachments_context: Any = None,
     ) -> None:
         self._conversations = conversations
+        # Bloc `attachments` d'un tour écrit (handoff jarvis-unified-chat-and-board-drop, Slice 07) :
+        # `turn -> BrainAttachmentsContext | None` (async), lu du registre au moment du tour
+        # (`UploadService.brain_attachments`). Absent, ou tour sans pièce : le contexte est celui d'avant.
+        self._attachments_context = attachments_context
         # Bloc `memory` de chaque tour (handoff jarvis-memory-intelligence-knowledge,
         # Slice 05) : `turn -> BrainMemoryContext | None` (async, ne lève pas :
         # `jarvis/core/memory_context.py`). Absent : le contexte est celui d'avant.
@@ -1875,6 +1880,7 @@ class BrainOrchestrator:
         try:
             board = await self._turn_board(turn)
             session_context = await self._turn_session_context(turn)
+            attachments = await self._turn_attachments(turn)
             memory = await memory_task if memory_task is not None else None
         finally:
             if memory_task is not None and not memory_task.done():
@@ -1896,7 +1902,29 @@ class BrainOrchestrator:
         return await self._backend.run_turn_with_context(
             turn, BrainContext(state=state, work=work, interruptions=interruptions, pending_replies=pending,
                                board=board, session_context=session_context, prefab_events=prefab_events,
-                               presentation=presentation, memory=memory), sink)
+                               presentation=presentation, memory=memory, attachments=attachments), sink)
+
+    async def _turn_attachments(self, turn: BrainTurnInput):  # noqa: ANN202 - BrainAttachmentsContext | None
+        """Le bloc `attachments` d'un tour écrit qui en porte (Slice 07). Ne lève pas.
+
+        Lecture en échec : le tour part sans le bloc, et le dit ; le cerveau ne
+        reçoit alors aucun chemin et ne peut prétendre avoir lu une pièce.
+        """
+
+        if self._attachments_context is None or not turn.attachments:
+            return None
+        try:
+            return await self._attachments_context(turn)
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:  # noqa: BLE001 - capture: the turn leaves without its attachments block, said here
+            self._diagnostics.emit("core.brain.attachments_context_failed",
+                                   "pièces jointes du tour illisibles : le tour part sans bloc attachments",
+                                   level="error", data={"conversation_id": turn.conversation_id,
+                                                        "correlation_id": turn.correlation_id,
+                                                        "attachments": len(turn.attachments),
+                                                        "exception_type": type(exc).__name__})
+            return None
 
     def _take_prefab_events(self, turn: BrainTurnInput) -> tuple[BrainPrefabEvent, ...]:
         """Les `notify` des fenêtres prefab pas encore remis (≤ 8, plus anciens d'abord). Ne lève pas."""

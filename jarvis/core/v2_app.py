@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import inspect
+import os
 from collections.abc import Callable, Mapping
 import dataclasses
 from dataclasses import dataclass
@@ -29,6 +30,9 @@ from jarvis.adapters.sqlite_artifacts import SQLiteArtifactRepository
 from jarvis.adapters.sqlite_session_activity import SQLiteActivityLedger
 from jarvis.adapters.sqlite_captures import SQLiteCaptureRepository
 from jarvis.core.artifact_service import ArtifactService
+from jarvis.core.upload_service import UploadService
+from jarvis.domain.artifacts import ARTIFACTS_DIR
+from jarvis.domain.uploads import upload_bounds
 from jarvis.core.capture_service import CaptureAssociation, CaptureService, NoCaptureSources
 from jarvis.core.recording_transcriber import RecordingTranscriber
 from jarvis.core.capture_api import CaptureApi
@@ -266,6 +270,11 @@ class JarvisCoreApplication:
             SQLiteArtifactRepository(self.state), SQLiteActivityLedger(self.state), FileArtifactPayloads(root),
             diagnostics=diagnostics,
         )
+        # Fichiers téléversés (handoff jarvis-unified-chat-and-board-drop, Slice 07) : pièces jointes du
+        # chat, façade sur le registre ; bornes relues de l'environnement à chaque appel (`upload_bounds`).
+        self.uploads = UploadService(
+            self.artifacts, association=self._upload_association, bounds=lambda: upload_bounds(os.environ),
+            artifacts_root=Path(root).resolve() / ARTIFACTS_DIR, diagnostics=diagnostics)
         # Propriétaire des captures (handoff session-context-recording, Slice
         # 05, D-CAP) : seule vérité d'état ; même base v7, même connexion ;
         # association prise au Context actif du démarrage. Aucune source réelle
@@ -629,6 +638,7 @@ class JarvisCoreApplication:
             board_context=self.sessions.board_context,
             session_context=self._session_context,
             memory_context=self.memory.context,
+            attachments_context=self.uploads.brain_attachments,
             prefab_events=self._take_prefab_events,
             prefab_events_requeue=self.prefab_events.requeue_notify,
         )
@@ -716,8 +726,12 @@ class JarvisCoreApplication:
             # Les rendus de présentation `pending` (Slice 16) ont leur propre reprise (un `.partial` de vidéo n'est jamais promu à l'aveugle) :
             # ils sont laissés ici, puis `reconcile` tue un processus de rendu orphelin et les rend `failed` / `partial`. Ne lève pas.
             render_owner = None if self.presentation_render is None else PresentationRenderService.owns
+            # Téléversements `pending` (Slice 07 chat) : jamais promus `partial` (un fichier tronqué n'est pas
+            # joignable) ; `uploads.recover` les solde `failed` sans payload juste après. Ne lève pas.
             await self.artifacts.recover_pending(
-                owned=self.transcripts.owns if render_owner is None else lambda artifact: self.transcripts.owns(artifact) or render_owner(artifact))
+                owned=lambda artifact: (self.transcripts.owns(artifact) or self.uploads.owns(artifact)
+                                        or (render_owner is not None and render_owner(artifact))))
+            await self.uploads.recover()
             if self.presentation_render is not None:
                 await self.presentation_render.reconcile()
             # Après les reprises : le worker reprend depuis le curseur de chaque Context.
@@ -864,6 +878,12 @@ class JarvisCoreApplication:
 
         return frozenset(value for record in self.captures.status().captures
                          for value in (record.capture_id, record.artifact_id) if value)
+
+    async def _upload_association(self) -> tuple[str, str]:
+        """Session et Context actifs à la création d'un téléversement (`session_not_found` sans Session)."""
+
+        view = await self.sessions.current_context()
+        return view.context.jarvis_session_id, view.context.context_id
 
     async def _capture_association(self) -> CaptureAssociation:
         """Session et Context actifs au démarrage d'une capture (D-CAP, `docs/capture.md`)."""

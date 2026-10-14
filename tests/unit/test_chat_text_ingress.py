@@ -225,8 +225,10 @@ async def test_text_too_long_400(stack):
     status, body, _ = await stack.send(conversation_id, "x" * 8193)
     assert status == 400 and body["error"]["code"] == "chat_text_too_long"
     assert (await stack.send(conversation_id, "x" * 8192))[0] == 202
-    # Pièces jointes : Slice 07. Ici, refusées sans rien écrire.
-    for attachments in (["jart_" + "a" * 32], "jart_x", {"id": 1}):
+    # Pièces jointes (Slice 07) : un id inconnu est 404, une forme fausse 400 ; rien n'est écrit.
+    status, body, _ = await stack.send(conversation_id, attachments=["jart_" + "a" * 32])
+    assert status == 404 and body["error"]["code"] == "attachment_not_found"
+    for attachments in ("jart_x", {"id": 1}):
         status, body, _ = await stack.send(conversation_id, attachments=attachments)
         assert status == 400 and body["error"]["code"] == "invalid_request"
     assert (await stack.send(conversation_id, attachments=[]))[0] == 202

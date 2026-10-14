@@ -55,6 +55,7 @@ from jarvis.protocol.presentation_studio_template_routes import PresentationStud
 from jarvis.protocol.presentation_studio_upgrades_routes import PresentationStudioUpgradesRoutes
 from jarvis.protocol.presentation_studio_variants_routes import PresentationStudioVariantsRoutes
 from jarvis.protocol.workspace_routes import WorkspaceProtocolRoutes
+from jarvis.protocol.upload_routes import UploadProtocolRoutes
 from jarvis.core.scene_capture import SceneCaptureError
 from jarvis.core.ui_intents import UiIntentRefused
 from jarvis.domain.scene_capture import CAPTURE_CANCELLED, MAX_CAPTURE_BYTES, MAX_CAPTURE_REQUEST_BYTES
@@ -269,6 +270,8 @@ class LocalProtocolServer:
             # Slice 09) : `jarvis/protocol/capture_routes.py`, refus codés par leur propre garde.
             *CaptureProtocolRoutes(self.core).routes(),
             *WorkspaceProtocolRoutes(self.core).routes(),
+            # Téléversements (jarvis-unified-chat-and-board-drop, Slice 07) : `upload_routes.py`, corps lu en flux.
+            *UploadProtocolRoutes(getattr(self.core, "uploads", None)).routes(),
             # Mémoire à long terme (jarvis-memory-intelligence-knowledge, Slice 05) : lectures seules, `memory_routes.py`.
             *MemoryProtocolRoutes(self.core).routes(),
             # Catalogue des prefabs (jarvis-scene-window-prefab-foundation, Slice 03) : lectures ; les routes
@@ -660,6 +663,21 @@ class LocalProtocolServer:
         # `ambient` est refusé par le domaine, donc rendu 400 ici : un tour non
         # adressé n'entre pas dans le cerveau par ce chemin ni par un autre.
         addressing = _optional_text(body.get("addressing"), "addressing") or AddressingDecision.ADDRESSED.value
+        text_turn = source == BrainTurnSource.TEXT.value
+        # Étape 1 (tour écrit) : bornes du texte et des pièces jointes, avant toute lecture d'état.
+        if text_turn and len(content) > MAX_CONTENT_CHARS:
+            return _chat_refusal(400, "chat_text_too_long", f"content exceeds {MAX_CONTENT_CHARS} characters")
+        attachments = body.get("attachments")
+        if attachments is not None and not isinstance(attachments, list):
+            raise ValueError("attachments must be a list of Artifact ids")
+        attachments = tuple(attachments or ())
+        if attachments and not text_turn:
+            raise ValueError("attachments are accepted on text turns only")
+        if attachments:
+            uploads = getattr(self.core, "uploads", None)
+            limit = uploads.bounds.max_attachments if uploads is not None else 0
+            if len(attachments) > limit:
+                return _chat_refusal(400, "too_many_attachments", f"a message carries at most {limit} attachments")
         turn = BrainTurnInput(
             conversation_id=request.match_info["conversation_id"],
             text=content,
@@ -672,8 +690,10 @@ class LocalProtocolServer:
             # Absente ou nulle : le tour d'avant. Hors forme : `ValueError`,
             # donc 400 — jamais transmise à moitié à un modèle.
             presentation_context=_presentation_context(body.get("presentation_context")),
+            # Ids d'Artifact distincts (`_check_attachments` : forme, doublon -> 400) ; existence, nature,
+            # Session et état vérifiés par `_text_turn_guards` (étape 5).
+            attachments=attachments,
         )
-        text_turn = turn.source is BrainTurnSource.TEXT
         if text_turn:
             refused, replay = await self._text_turn_guards(turn, body)
             if refused is not None:
@@ -718,14 +738,8 @@ class LocalProtocolServer:
         `submit` rendra le doublon). Aucun message ne cite le texte du tour.
         """
 
-        # 1. Validation. Les pièces jointes arrivent avec la Slice 07.
-        if len(turn.text) > MAX_CONTENT_CHARS:
-            return _chat_refusal(400, "chat_text_too_long", f"content exceeds {MAX_CONTENT_CHARS} characters"), False
-        attachments = body.get("attachments")
-        if attachments is not None and not isinstance(attachments, list):
-            raise ValueError("attachments must be a list of Artifact ids")
-        if attachments:
-            raise ValueError("attachments not supported yet")
+        # 1. Validation : faite par `submit_brain_turn` avant de construire le tour (texte, nombre et
+        # forme des pièces jointes).
         # 2. Rejeu d'abord : même identité durable que `persist_turn`.
         record = await self.core.brain.admitted_turn(turn.conversation_id, turn.correlation_id)
         if record is not None:
@@ -738,11 +752,21 @@ class LocalProtocolServer:
         unavailable = self._sessions_unavailable()
         if unavailable is not None:
             return unavailable, False
-        current = (await self.core.sessions.current()).binding.conversation_id
+        view = await self.core.sessions.current()
+        current = view.binding.conversation_id
         if current != turn.conversation_id:
             return _chat_refusal(409, "chat_conversation_not_foreground",
                                  "the conversation is not the one of the current Session binding",
                                  current_conversation_id=current), False
+        # 5. Pièces jointes (Slice 07) : vérifiées **avant** l'étape 4, qui doit rester la dernière lecture
+        # avant `submit` sans `await` entre les deux (`docs/chat.md` : point de linéarisation).
+        if turn.attachments:
+            uploads = getattr(self.core, "uploads", None)
+            if uploads is None:
+                return _chat_refusal(503, "core_unavailable", "attachments are not wired in this Core"), False
+            refusal = await uploads.attachment_refusal(turn.attachments, view.session.jarvis_session_id)
+            if refusal is not None:
+                return _chat_refusal(refusal.status, refusal.code, refusal.message), False
         return None, False
 
     async def cancel_brain_turn(self, request: web.Request) -> web.Response:

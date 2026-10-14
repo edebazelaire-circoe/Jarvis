@@ -99,6 +99,17 @@ class CoreSessionTransport(CoreWorkTransport):
             timeout_s = CORE_TRANSITION_TIMEOUT_S
         return await self._connect().forward_json(method, path, params=params, body=body, timeout_s=timeout_s)
 
+    async def forward_upload(self, path: str, *, params: QueryParams, headers: dict[str, str], body: Any,
+                             read_timeout_s: float) -> tuple[int, Any]:
+        """Fichier relayé en flux vers `PUT /v1/uploads/…` (chat Slice 07). Un 401 n'est **pas** rejoué : le
+        flux est consommé ; le jeton est relu pour la requête suivante et le refus rendu tel quel."""
+
+        status, payload = await self._connect().forward_upload(path, params=params, headers=headers, body=body,
+                                                               read_timeout_s=read_timeout_s)
+        if status == 401:
+            await self.close()
+        return status, payload
+
     async def forward_bytes(self, path: str, *, range_header: str | None = None,
                             timeout_s: float | None = None) -> tuple[int, dict[str, str], bytes]:
         """Proxy binaire de `/api/artifacts/{id}/payload` (Slice 09) ; 401 relu puis rejoué une fois."""

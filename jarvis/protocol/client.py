@@ -56,6 +56,8 @@ FORWARDABLE_PREFIXES = ("/v1/boards", "/v1/sessions", "/v1/mcp/plugins", "/v1/mc
 #: Chat (jarvis-unified-chat-and-board-drop, Slice 03, `chat_relay.py`) : le tour écrit, et **seulement** lui —
 #: jamais `.../brain-turns/cancel`, `.../turns` ni une autre route de conversation.
 FORWARDABLE_PATHS = (re.compile(r"/v1/conversations/[^/?#]+/brain-turns"),)
+#: Seule route relayée en flux montant (`forward_upload`, chat Slice 07) ; jamais par `forward_json`.
+UPLOAD_PATH = re.compile(r"/v1/uploads/[A-Za-z0-9][A-Za-z0-9_-]{7,127}")
 #: Seule route relayée en octets (`forward_bytes`) : le payload d'un Artifact, pour l'interface.
 PAYLOAD_ROUTE_SUFFIX = "/payload"
 #: Paramètres de requête relayés : un mapping, ou des paires (un paramètre répété garde chaque valeur).
@@ -1434,6 +1436,27 @@ class LocalCoreClient:
                 payload = await response.json(content_type=None)
             except ValueError:
                 payload = None  # argued: the proxy answers the status with its own envelope
+            return response.status, payload
+
+    async def forward_upload(self, path: str, *, params: QueryParams, headers: Mapping[str, str],
+                             body: Any, read_timeout_s: float) -> tuple[int, Any]:
+        """Relais **en flux** d'un fichier vers `PUT /v1/uploads/{client_upload_id}` (chat Slice 07).
+
+        `body` : générateur asynchrone d'octets, envoyé en `Transfer-Encoding: chunked` ; rien n'est tenu en
+        mémoire au-delà d'un morceau. Seul ce chemin. Rend le statut et le JSON de Core ; lève sur une panne
+        de transport. Jamais rejoué (un flux ne se relit pas).
+        """
+
+        if not UPLOAD_PATH.fullmatch(path):
+            raise ValueError(f"forward_upload only relays /v1/uploads/<client_upload_id>, not {path[:80]!r}")
+        session = await self._http()
+        timeout = aiohttp.ClientTimeout(total=None, sock_connect=10, sock_read=read_timeout_s)
+        async with session.put(self.base_url + path, headers={**self.headers, **headers}, params=params, data=body,
+                               timeout=timeout) as response:
+            try:
+                payload = await response.json(content_type=None)
+            except ValueError:
+                payload = None  # argued: the relay answers the status with its own envelope
             return response.status, payload
 
     async def forward_bytes(self, path: str, *, range_header: str | None = None,

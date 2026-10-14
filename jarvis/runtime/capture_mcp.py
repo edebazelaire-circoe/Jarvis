@@ -603,8 +603,8 @@ def build_server(target: ConsoleMcpTarget | None = None, *, tools: CaptureTools 
     async def artifact_search(
         kind: Annotated[list[Literal["audio_recording", "transcript", "transcript_segment", "screenshot",
                                      "screen_recording", "description", "derived", "presentation_snapshot",
-                                     "presentation_video", "presentation_still", "presentation_pdf"]] | None,
-                        Field(max_length=11)] = None,
+                                     "presentation_video", "presentation_still", "presentation_pdf", "upload"]] | None,
+                        Field(max_length=12)] = None,
         scope: Literal["active_context", "session", "all"] = "active_context",
         since_minutes: Annotated[int | None, Field(ge=1, le=10_080)] = None,
         limit: Annotated[int, Field(ge=1, le=MAX_LIST)] = 10,

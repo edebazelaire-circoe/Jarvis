@@ -68,6 +68,11 @@ class VoiceTurnAdmissionService:
             return None
         attributes = {key: record.metadata[key] for key in ("source", "addressing")
                       if isinstance(record.metadata.get(key), str)}
+        attachments = record.metadata.get("attachments")
+        if isinstance(attachments, list) and attachments:
+            # Chat Slice 07 : combien de pièces, jamais leurs ids ni leurs noms. Tiré du tour durable :
+            # le rejeu et le backfill reconstruisent le même événement, octet pour octet.
+            attributes["attachment_count"] = len(attachments)
         return self.conversation_events.record(
             ConversationEventType.USER_TRANSCRIPT_ACCEPTED, producer=PRODUCER_VOICE_ADMISSION,
             conversation_id=record.conversation_id, source_ids=(record.id,), occurred_at=record.created_at,

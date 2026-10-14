@@ -66,8 +66,10 @@ const JarvisWorkspaceCore=(function(){
     audio_recording:'Enregistrement audio',transcript_segment:'Segment de transcription',transcript:'Transcription',
     screenshot:'Capture d’écran',screen_recording:'Enregistrement d’écran',description:'Description',derived:'Dérivé',
     presentation_snapshot:'Présentation figée',presentation_video:'Présentation (vidéo)',presentation_still:'Présentation (image)',
-    presentation_pdf:'Présentation (PDF)',
+    presentation_pdf:'Présentation (PDF)',upload:'Pièce jointe du chat',
   });
+  /* Nature `upload` (chat Slice 07, dépôt Slice 08) : le libellé suit `provenance`, rendue par la liste pour cette nature seulement. */
+  const UPLOAD_PROVENANCES=Object.freeze({chat_attachment:'Pièce jointe du chat',board_drop:'Fichier déposé'});
   /* Présentations (Remotion Slice 08, `docs/presentation-artifacts.md`) : moteur de la source et format d'un rendu. */
   const ENGINES=Object.freeze({slidecar:'Slidecar (HTML)',remotion:'Remotion'});
   const RENDER_FORMATS=Object.freeze({mp4:'MP4',still:'Image',pdf:'PDF'});
@@ -155,7 +157,7 @@ const JarvisWorkspaceCore=(function(){
     const known=LIFECYCLES[value];
     return known?chip(known.label,known.tone,`${value} — ${known.means}`):chip(String(value||'inconnu'),'warn');
   }
-  function artifactKindLabel(kind){return ARTIFACT_KINDS[kind]||String(kind||'?')}
+  function artifactKindLabel(kind,item){if(kind==='upload'&&item){const p=item.provenance||(item.metadata&&item.metadata.provenance);if(UPLOAD_PROVENANCES[p])return UPLOAD_PROVENANCES[p]}return ARTIFACT_KINDS[kind]||String(kind||'?')}
   /* Une valeur d'énumération : libellé français, valeur brute en infobulle ;
      une valeur inconnue s'affiche telle quelle, en avertissement. */
   function enumChip(map,value,field){
@@ -1206,7 +1208,7 @@ const JarvisWorkspaceCore=(function(){
     const b=d.board||{},m=d.memory||{};
     const sessions=list(d.sessions&&d.sessions.items).map(x=>`<li><span class="wsp-node">Session</span> ${code(x.jarvis_session_id)} ${x.session_status==='open'?chip('Ouverte','on'):chip('Close','')}${x.active_in_session?' '+chip('Actif dans la Session',''):''}<ul class="wsp-tree"><li><span class="wsp-node">Liaison</span>${bindingKv(x)}</li></ul></li>`).join('');
     const a=S.relations.artifacts;
-    const arts=a.items.map(x=>`<li><span class="wsp-node">Artefact</span> ${chip(artifactKindLabel(x.kind),'',`kind : ${x.kind}`)}${x.state&&x.state!=='complete'?stateChip(x.state):''} `
+    const arts=a.items.map(x=>`<li><span class="wsp-node">Artefact</span> ${chip(artifactKindLabel(x.kind,x),'',`kind : ${x.kind}`)}${x.state&&x.state!=='complete'?stateChip(x.state):''} `
       +`<button type="button" class="wsp-link" data-act="artifact-show" data-id="${esc(x.artifact_id)}" title="Ouvrir le détail et la provenance">${esc(x.artifact_id)}</button> <span class="wsp-sub">${esc(x.preview||'')}</span></li>`).join('');
     const legacy=list(d.legacy_artifact_refs&&d.legacy_artifact_refs.items);
     return `<div class="wsp-root"><span class="wsp-node">Board</span> <strong>${esc(b.title||b.board_id)}</strong> ${kindChip(b.board_kind)} ${d.active?chip('Actif maintenant','on'):''} ${b.status==='archived'?chip('Archivé','warn'):''} ${code(b.board_id)}</div>`
@@ -1345,7 +1347,7 @@ const JarvisWorkspaceCore=(function(){
       const origins=list(r.origins).map(o=>`<li><span class="wsp-node">Origine</span> Cet artefact est ${relationChip(o.relation,'from')} ${link(o.origin_artifact_id)}</li>`).join('');
       const dependents=list(r.dependents).map(o=>`<li><span class="wsp-node">Issu de lui</span> Cet artefact ${relationChip(o.relation,'to')} ${link(o.artifact_id)}</li>`).join('');
       const boards=list(r.boards&&r.boards.items).map(l=>`<li><strong>${esc(titleOf(S,l.board_id))}</strong> ${chip(LINK_ORIGINS[l.origin]||l.origin,l.origin==='explicit'?'on':'')} ${code(l.board_id)} · ${when(l.linked_at)}</li>`).join('');
-      return `<dl class="kv wsp-kv"><dt>Nature</dt><dd>${esc(artifactKindLabel(a.kind))} ${code(a.kind)}</dd><dt>État</dt><dd>${a.state?stateChip(a.state):'<span class="wsp-none">—</span>'}</dd>`
+      return `<dl class="kv wsp-kv"><dt>Nature</dt><dd>${esc(artifactKindLabel(a.kind,a))} ${code(a.kind)}</dd><dt>État</dt><dd>${a.state?stateChip(a.state):'<span class="wsp-none">—</span>'}</dd>`
         +`<dt>Source</dt><dd>${code(a.source)}</dd><dt>Session</dt><dd>${code(a.jarvis_session_id)}</dd><dt>Context</dt><dd>${code(a.context_id)}</dd>`
         +`<dt>Créé</dt><dd>${when(a.created_at)}</dd><dt>Payload</dt><dd>${a.payload_ref?`${code(a.payload_ref)} ${esc(a.mime_type||'')} ${a.size_bytes!=null?formatBytes(a.size_bytes):''}`:'aucun'}</dd></dl>`
         +(a.text?`<pre class="wsp-text">${esc(a.text)}</pre>${a.text_truncated?`<p class="hint">Texte coupé à ${ARTIFACT_TEXT} caractères sur ${a.text_chars}.</p>`:''}`:'')
@@ -1496,7 +1498,7 @@ const JarvisWorkspaceCore=(function(){
     const rows=p.items.map(x=>{
       const openRow=a.detail.id===x.artifact_id;
       return `<li class="wsp-row${openRow?' is-open':''}"${openRow?' id="wspArtifactOpen" tabindex="-1"':''}><button type="button" class="wsp-toggle" data-act="artifact-toggle" data-id="${esc(x.artifact_id)}" aria-expanded="${openRow}">`
-        +`<span class="wsp-line">${chip(artifactKindLabel(x.kind),'',`kind : ${x.kind}`)}<span class="wsp-label">${esc(x.preview||x.artifact_id)}</span>${x.state&&x.state!=='complete'?stateChip(x.state):''}</span>`
+        +`<span class="wsp-line">${chip(artifactKindLabel(x.kind,x),'',`kind : ${x.kind}`)}<span class="wsp-label">${esc(x.preview||x.artifact_id)}</span>${x.state&&x.state!=='complete'?stateChip(x.state):''}</span>`
         +`<span class="wsp-meta">${esc(formatWhen(x.created_at))} · Session ${esc(x.jarvis_session_id||'—')}${x.context_id?` · Context ${esc(x.context_id)}`:''}${x.size_bytes!=null?` · ${esc(formatBytes(x.size_bytes))}`:''}</span>`
         +`<span class="wsp-sub">${esc(x.artifact_id)}</span></button>${openRow?`<div class="wsp-detail">${artifactDetailHtml(S)}</div>`:''}</li>`;
     }).join('');

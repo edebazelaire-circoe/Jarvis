@@ -88,3 +88,19 @@ Réservé au Project Manager et aux Work Agents. Aucun progrès, verdict QA ou r
   - 160 contrôles d'exécution réussis, octets identiques à la base sans `projection`, parité Python/JS sur 3000 événements.
   - **Décision agent 0 :** le statut d'échec n'apparaît que si aucun `brain.message.published` n'existe pour la corrélation ; il remplace la règle (c) précédente.
   - Polish appliqué dans `b3414bf8`.
+
+## 2026-10-14 — Slice 07 (pièces jointes, backend)
+
+- **Livrables :** N `jarvis/domain/uploads.py` (bornes `upload_bounds(env)`, identité `jart_up_<sha256[:40]>`, `sniff_mime`, `payload_name_for`, nom d'origine nettoyé, `BRAIN_READABLE`), `jarvis/core/upload_service.py` (flux borné, rejeu/conflit, échec sans `.partial`, reprise `upload_interrupted`, garde des pièces, bloc du tour), `jarvis/protocol/upload_routes.py` (`PUT /v1/uploads/{id}`), `jarvis/runtime/attachments_brief.py` (bloc de données du brief, lisibilité recalculée par agent). M `ArtifactKind.UPLOAD`, `BrainAttachmentsContext`, `brain_service` (`attachments_context`), `_turn_context`, `build_agent_brief`, `server.py` (étape 5), `voice_admission` (`attachment_count`), `session_manager` (`artifacts_root`), `control_center.py` (`--add-dir` de `artifacts_root`, même politique de relance), `chat_relay.py` (`POST /api/chat/uploads` multipart en flux, corps `chunked` vers Core), `client.py`/`core_sessions.py` (`forward_upload`), `capture_mcp.py`, `control_center_workspace.js`, `capture_api.artifact_summary` (aperçu = nom, `provenance`). Aucune migration (pas de CHECK sur `kind`).
+- **Polish S1 :** `docs/chat.md` dit maintenant que les événements ne portent que `attachment_count` (jamais ids, noms, chemins) ; `docs/artifacts.md` « All twelve kinds » ; `docs/presentation-artifacts.md` « now 12 ».
+- **Écarts (forcés par le code) :**
+  - L'étape 5 (pièces) passe **avant** l'étape 4 (verrou vocal) : elle lit le registre (`await`), et l'étape 4 doit rester la dernière lecture avant `submit` sans `await`.
+  - Core accepte `Transfer-Encoding: chunked` à la place de `Content-Length` : le CC ne connaît pas la taille du fichier dans un multipart.
+  - Le type est reniflé **avant** la création (le `payload_ref` est figé à la création) ; l'extension du payload suit le type reniflé pour image/PDF.
+  - Texte = UTF-8 sans NUL **ni autre octet de contrôle C0** (tab, fins de ligne, saut de page, ESC exceptés).
+  - Un essai précédent `failed` → 409 `upload_conflict` (nouvel id requis).
+  - Un refus avant le premier octet (vide, `Content-Length` > borne, nom illisible) n'écrit aucun Artifact.
+  - `artifacts_root` n'est accordé que si le dossier existe.
+  - Le bloc du brief cite les noms entre « ».
+- **Tests :** voir le commit S7 (domaine, service, protocole, contexte du cerveau). Mis à jour : `test_chat_text_ingress` (id inconnu → 404), `test_conversation_events` (clé ajoutée), `test_presentation_artifacts_docs` et `test_workspace_presentations_js` (12 natures).
+- **Hérités inchangés :** empreinte de prompt `87c9ecec` ≠ `20a65470` (scene_artifacts, scene_query_tools), déjà au BASELINE.

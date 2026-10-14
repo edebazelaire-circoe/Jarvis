@@ -11,6 +11,7 @@ le transport, panne de Core 503 / délai 504).
 | `GET /api/chat/state` | `GET /v1/chat/state` | 04 |
 | `POST /api/chat/voice/disable` | `POST /v1/voice/channel/disable` | 04 |
 | `POST /api/chat/turns` | `POST /v1/conversations/{id}/brain-turns` (`source=text`) | 03 |
+| `POST /api/chat/uploads` (multipart) | `PUT /v1/uploads/{client_upload_id}?purpose=chat` (flux) | 07 |
 
 Jamais `POST /v1/voice/channel/report` : seul le processus Voice rapporte son
 état, et rien de ce qui vient du navigateur n'est cru (le corps est relayé tel
@@ -33,12 +34,24 @@ application/json` (415 `invalid_content_type`), corps ≤ 64 Kio (413
 code) ; jamais un corps. Tour écrit : `chat.turn.relayed` (statut, code,
 `correlation_id`, nombre de pièces jointes), jamais le texte. Panne de Core :
 `chat.request.core_unreachable`.
+
+**Pièce jointe** (`docs/chat.md` › *Control Center `POST /api/chat/uploads`*) :
+multipart `client_upload_id` puis `file`, lu **en flux** (`request.multipart()`,
+morceaux de 64 Kio) et relayé à Core en corps `chunked` par un générateur :
+jamais tenu en mémoire, jamais écrit sur disque ici. Refus tôt si
+`Content-Length` dépasse la borne (`JARVIS_UPLOAD_MAX_BYTES`) plus la marge
+multipart ; la borne exacte est tenue par Core, au morceau près. La réponse
+ajoute `brain_readable` pour l'agent du premier plan ; jamais un chemin.
+Journal `chat.upload.relayed` (statut, code, `artifact_id`, taille, type),
+jamais le nom d'origine ni un octet.
 """
 
 from __future__ import annotations
 
-from collections.abc import Awaitable, Callable
+import asyncio
+from collections.abc import AsyncIterator, Awaitable, Callable
 import json
+import os
 import re
 from typing import Any
 from urllib.parse import quote
@@ -46,6 +59,9 @@ import uuid
 
 from aiohttp import web
 
+from jarvis.domain.uploads import (
+    MULTIPART_MARGIN_BYTES, UPLOAD_CHUNK_BYTES, brain_readable, check_client_upload_id, upload_bounds,
+)
 from jarvis.protocol.strict_json import loads_strict_json, read_bounded
 from jarvis.runtime.capture_relay import CaptureRelayRoutes, _code_of
 
@@ -61,6 +77,9 @@ CHAT_TURN_TIMEOUT_S = 15.0
 _RELAYED_DETAILS = ("reason", "current_conversation_id")
 #: Corps de `POST /api/chat/turns` : fermé.
 _TURN_FIELDS = frozenset({"conversation_id", "client_request_id", "content", "attachments"})
+#: Attente de la réponse de Core une fois le fichier envoyé (s) : finalisation, `fsync`.
+CHAT_UPLOAD_READ_TIMEOUT_S = 120.0
+_MAX_UPLOAD_ID_FIELD_BYTES = 256
 
 
 def _turn_body(raw: bytes) -> tuple[str, str, dict[str, Any]]:
@@ -102,12 +121,95 @@ class ChatRelayRoutes(CaptureRelayRoutes):
     JOURNAL_PREFIX = "chat.request"
     MAX_BODY_BYTES = MAX_CHAT_BODY_BYTES
 
+    def __init__(self, *, transport: Callable[[], Any], journal: Any,
+                 agent_id: Callable[[], str | None] = lambda: None) -> None:
+        super().__init__(transport=transport, journal=journal)
+        #: CLI du premier plan, relu à chaque requête : décide `brain_readable` d'une pièce jointe.
+        self._agent_id = agent_id
+
     def routes(self) -> list[web.RouteDef]:
         return [
             web.get(CHAT_ROUTE + "/state", self._chat("chat_state", "/v1/chat/state")),
             web.post(CHAT_ROUTE + "/voice/disable", self._chat("voice_disable", "/v1/voice/channel/disable")),
             web.post(CHAT_ROUTE + "/turns", self.turn),
+            web.post(CHAT_ROUTE + "/uploads", self.upload),
         ]
+
+    async def upload(self, request: web.Request) -> web.Response:
+        """`POST /api/chat/uploads` -> `PUT /v1/uploads/{client_upload_id}?purpose=chat`, en flux (Slice 07)."""
+
+        if request.query:
+            return chat_error(400, "invalid_request", "unexpected query parameters")
+        if request.content_type != "multipart/form-data":
+            return chat_error(415, "invalid_content_type", "Content-Type: multipart/form-data expected")
+        bounds = upload_bounds(os.environ)
+        if request.content_length is not None and request.content_length > bounds.max_bytes + MULTIPART_MARGIN_BYTES:
+            return chat_error(413, "upload_too_large", f"the file exceeds the {bounds.max_bytes}-byte upload bound")
+        transport = self._transport()
+        if transport is None:
+            return chat_error(503, "core_unconfigured", "the control center does not know Core")
+        try:
+            reader = await request.multipart()
+            part = await reader.next()
+            if part is None or part.name != "client_upload_id":
+                raise ValueError("the first multipart field must be client_upload_id")
+            raw = await part.read_chunk(_MAX_UPLOAD_ID_FIELD_BYTES + 1)
+            if len(raw) > _MAX_UPLOAD_ID_FIELD_BYTES or await part.read_chunk(1):
+                raise ValueError("client_upload_id is too long")
+            client_upload_id = check_client_upload_id(raw.decode("utf-8", errors="strict").strip())
+            file = await reader.next()
+            if file is None or file.name != "file":
+                raise ValueError("the second multipart field must be file")
+        except (ValueError, UnicodeDecodeError, AttributeError) as exc:
+            return chat_error(400, "invalid_request", str(exc)[:200])
+        except Exception as exc:  # noqa: BLE001 - capture: unreadable multipart framing, said with its cause
+            return chat_error(400, "invalid_request", f"unreadable multipart body ({type(exc).__name__})")
+        agent = self._agent_id()
+        cut: list[str] = []
+
+        async def chunks() -> AsyncIterator[bytes]:
+            # Un morceau à la fois, du navigateur vers Core : la seule mémoire tenue ici.
+            try:
+                while chunk := await file.read_chunk(UPLOAD_CHUNK_BYTES):
+                    yield chunk
+            except Exception as exc:  # noqa: BLE001 - rethrown: Core sees a cut body and fails the upload
+                cut.append(type(exc).__name__)
+                raise
+
+        headers = {"Content-Type": file.headers.get("Content-Type") or "application/octet-stream",
+                   "X-Jarvis-Upload-Name": quote(file.filename or "", safe="")}
+        params = [("purpose", "chat")] + ([("agent", agent)] if agent in ("claude", "codex") else [])
+        path = f"/v1/uploads/{client_upload_id}"
+        try:
+            status, payload = await transport.forward_upload(path, params=params, headers=headers, body=chunks(),
+                                                             read_timeout_s=CHAT_UPLOAD_READ_TIMEOUT_S)
+        except asyncio.CancelledError:
+            raise
+        except asyncio.TimeoutError:
+            self._unreachable("chat_upload", "PUT", "/v1/uploads", "core_timeout", "TimeoutError")
+            status, payload = 504, {"error": {"code": "core_timeout",
+                                              "message": "Core did not answer in time; resend the same client_upload_id"}}
+        except Exception as exc:  # noqa: BLE001 - surfaced: browser cut (400) or Core unreachable (503), journaled
+            if cut:
+                status, payload = 400, {"error": {"code": "upload_incomplete",
+                                                  "message": f"the browser stopped sending the file ({cut[0]})"}}
+            else:
+                self._unreachable("chat_upload", "PUT", "/v1/uploads", "core_unreachable", type(exc).__name__)
+                status, payload = 503, {"error": {"code": "core_unreachable",
+                                                  "message": f"Core is unreachable: {type(exc).__name__}"}}
+        ok = status in (200, 201) and isinstance(payload, dict)
+        self._journal.emit("chat.upload.relayed", f"pièce jointe relayée à Core (HTTP {status})",
+                           level="info" if ok else "warning",
+                           data={"status": status, "code": None if ok else _code_of(payload),
+                                 "artifact_id": payload.get("artifact_id") if ok else None,
+                                 "size_bytes": payload.get("size_bytes") if ok else None,
+                                 "mime_type": payload.get("mime_type") if ok else None})
+        if ok:
+            keys = ("artifact_id", "original_name", "mime_type", "size_bytes", "state", "replayed")
+            return web.json_response({"ok": True, **{key: payload.get(key) for key in keys},
+                                      "brain_readable": brain_readable(agent, payload.get("mime_type"))},
+                                     status=status)
+        return self._answer(status, payload)
 
     async def turn(self, request: web.Request) -> web.Response:
         """`POST /api/chat/turns` -> `POST /v1/conversations/{id}/brain-turns` `source=text` (Slice 03).
