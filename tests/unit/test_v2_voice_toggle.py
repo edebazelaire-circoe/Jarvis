@@ -402,7 +402,7 @@ async def test_second_f9_submits_audio_and_returns_to_background_after_response(
     assert session.finish_calls == 1
     assert order == ["stop_input", "finish_input"]
     assert runtime.runtime.state is VoiceLifecycleState.BACKGROUND
-    assert signals.states == ["idle", "thinking", "listening", "thinking", "speaking", "idle"]
+    assert signals.states == ["idle", "thinking", "waiting", "thinking", "speaking", "idle"]
     assert {event["kind"] for event in journal.events} >= {
         "voice.manual_submit",
         "voice.input_submitted",
@@ -489,7 +489,7 @@ async def test_auto_turn_answers_without_a_second_key_press(monkeypatch):
         assert order == ["stop_input"]
         assert session.closed is True
         assert runtime.runtime.state is VoiceLifecycleState.BACKGROUND
-        assert signals.states == ["idle", "thinking", "listening", "thinking", "speaking", "idle"]
+        assert signals.states == ["idle", "thinking", "waiting", "thinking", "speaking", "idle"]
         assert not run_task.done()
         kinds = [event["kind"] for event in journal.events]
         assert "voice.input_submitted" in kinds

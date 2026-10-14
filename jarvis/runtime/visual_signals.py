@@ -10,7 +10,7 @@ from jarvis.domain.presentation_code import presentation_code
 
 
 class VisualSignalBus:
-    VALID_STATES = {"idle", "listening", "thinking", "speaking"}
+    VALID_STATES = {"idle", "waiting", "listening", "thinking", "speaking"}
     LIVE_RUNTIME_FILE = ".voice_live_runtime"
     VOICE_RUNTIME_FILE = ".voice_runtime"
     LIVE_STOP_REQUEST_FILE = ".voice_live_stop_request"

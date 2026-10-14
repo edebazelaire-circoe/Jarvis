@@ -341,9 +341,9 @@ async def test_one_wake_and_two_turns_keep_the_session_active(monkeypatch):
         assert FakeAudio.instances[0].closed is False
         # Le fond n'est jamais réaffiché : on repasse en écoute après chaque tour.
         assert signals.states == [
-            "idle", "thinking", "listening",
-            "thinking", "speaking", "listening",
-            "thinking", "speaking", "listening",
+            "idle", "thinking", "waiting",
+            "thinking", "speaking", "waiting",
+            "thinking", "speaking", "waiting",
         ]
         assert wakeword.suspensions == 1
     finally:
@@ -370,7 +370,7 @@ async def test_a_response_without_its_own_commit_still_returns_to_listening(monk
         await journal.wait_until(lambda: journal.count("voice.turn_completed") == 1)
 
         assert runtime.runtime.state is VoiceLifecycleState.ACTIVE
-        assert signals.states[-1] == "listening"
+        assert signals.states[-1] == "waiting"
     finally:
         run_task.cancel()
         await asyncio.gather(run_task, return_exceptions=True)

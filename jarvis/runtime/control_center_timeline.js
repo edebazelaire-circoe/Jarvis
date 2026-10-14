@@ -1957,6 +1957,8 @@ if(typeof module!=='undefined'&&module.exports)module.exports=JarvisTimelineCore
     if(S.model&&S.model.openCount>0)scheduleRebuild();
     root.querySelectorAll('[data-since]').forEach(node=>{node.textContent=T.fmtDuration(Date.now()-Number(node.dataset.since))});
     if(S.panel&&(S.search.loading||S.transcript.loading||S.exportJob.loading))renderPanel();
+    /* La transcription suit la conversation en direct : relecture discrète toutes les 4 s tant que le panneau est ouvert. */
+    if(S.panel==='transcript'&&S.transcript.done&&!S.transcript.refreshing&&Date.now()-(S.transcript.loadedAt||0)>TRANSCRIPT_REFRESH_MS)loadTranscript(true);
   }
 
   /* ------------------------------------------------------------- rendu */
@@ -2268,6 +2270,7 @@ if(typeof module!=='undefined'&&module.exports)module.exports=JarvisTimelineCore
      cause réelle de l'échec avec Réessayer. */
   const PANEL_TITLES={search:'Recherche',transcript:'Transcription',export:'Export JSONL'};
   const PANEL_BUTTONS={search:el.searchOpen,transcript:el.transcriptOpen,export:el.exportOpen};
+  const TRANSCRIPT_REFRESH_MS=4000;
   function currentConversation(){return S.selectedId||feed.state.conversationId||null}
   function stateHtml(view){
     const busy=view.tone==='busy';
@@ -2305,7 +2308,10 @@ if(typeof module!=='undefined'&&module.exports)module.exports=JarvisTimelineCore
       const target=kind==='search'?q('#tlSearchInput'):kind==='transcript'?q('input[name="tlTxMode"]:checked'):el.drawerClose;
       if(target)target.focus({preventScroll:true});
     });
-    if(kind==='transcript'&&(!S.transcript.done||S.transcript.conversationId!==conv||S.transcript.loadedMode!==S.transcript.mode))loadTranscript();
+    if(kind==='transcript'){
+      /* Un instantané ne reste jamais affiché tel quel : à chaque ouverture on relit ; si le texte déjà là est de cette conversation, il reste visible pendant la relecture. */
+      loadTranscript(S.transcript.done&&S.transcript.conversationId===conv&&S.transcript.loadedMode===S.transcript.mode);
+    }
     if(kind==='export'&&!S.exportJob.loading)runExport();
   }
   function closePanel(restore){
@@ -2415,22 +2421,25 @@ if(typeof module!=='undefined'&&module.exports)module.exports=JarvisTimelineCore
     }
   }
 
-  async function loadTranscript(){
+  async function loadTranscript(quiet){
     const conv=currentConversation();
     if(S.transcript.controller)S.transcript.controller.abort();
+    const previous=quiet===true&&S.transcript.done?S.transcript:null;
     if(!conv){S.transcript={mode:S.transcript.mode,error:{title:'Aucune conversation',message:'Choisissez une conversation.',hint:''}};renderPanel();return}
     const controller=new AbortController(),mode=S.transcript.mode;
-    S.transcript={mode,loading:true,startedAt:Date.now(),controller,conversationId:conv};
-    renderPanel();
+    S.transcript=previous?{...previous,controller,refreshing:true}:{mode,loading:true,startedAt:Date.now(),controller,conversationId:conv};
+    if(!previous)renderPanel();
+    const startedFetch=Date.now();
     try{
       const offset=T.localOffsetMinutes();
       const text=await fetchText(T.transcriptUrl(conv,mode,offset),{signal:controller.signal,timeoutMs:70000});
       if(S.transcript.controller!==controller)return;
-      S.transcript={mode,done:true,text,bytes:new Blob([text]).size,elapsedMs:Date.now()-S.transcript.startedAt,conversationId:conv,loadedMode:mode,offset};
+      S.transcript={mode,done:true,text,bytes:new Blob([text]).size,elapsedMs:Date.now()-(previous?startedFetch:S.transcript.startedAt),conversationId:conv,loadedMode:mode,offset,loadedAt:Date.now()};
       announce('Transcription chargée');
     }catch(error){
       if(S.transcript.controller!==controller)return;
       const info=T.classifyError(error);
+      if(previous){S.transcript={...previous,loadedAt:Date.now()};return}
       S.transcript={mode,conversationId:conv,error:info.aborted?{title:'Transcription annulée',message:'',hint:''}:info};
       if(!info.aborted&&typeof console!=='undefined')console.error('timeline transcript failed',info.code,info.message);
     }finally{
