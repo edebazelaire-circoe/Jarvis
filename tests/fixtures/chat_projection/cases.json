@@ -1937,6 +1937,181 @@
           "collapsed_event_ids": []
         }
       ]
+    },
+    {
+      "name": "turn_failed_other_conversation_same_correlation",
+      "description": "Another conversation shares the `correlation_id` of a user turn here: its identical publication never folds into this conversation's reply and its `brain.turn.failed` never becomes this bubble's status.",
+      "conversation_id": "conv-chat-a",
+      "events": [
+        {
+          "sequence": 1,
+          "recorded_at": "2026-10-14T09:00:01.005Z",
+          "event": {
+            "schema_version": 1,
+            "event_id": "cev-dcfb14853a786bcb3ef9ec458a283eb6acb88088d0e890589a1f3e17022561f2",
+            "event_type": "user.transcript.accepted",
+            "actor": "user",
+            "conversation_id": "conv-chat-a",
+            "producer": "core.voice_admission",
+            "visibility": "public",
+            "occurred_at": "2026-10-14T09:00:01.000Z",
+            "started_at": null,
+            "ended_at": null,
+            "span_id": null,
+            "session_id": "voice-session-1",
+            "turn_id": "brain-turn-corr-cross",
+            "correlation_id": "corr-cross",
+            "parent_event_id": null,
+            "task_id": null,
+            "work_id": null,
+            "speech_id": null,
+            "outcome_id": null,
+            "trace_ref": null,
+            "content": "Résume la note",
+            "attributes": {
+              "source": "realtime",
+              "addressing": "addressed"
+            }
+          }
+        },
+        {
+          "sequence": 2,
+          "recorded_at": "2026-10-14T09:00:02.005Z",
+          "event": {
+            "schema_version": 1,
+            "event_id": "cev-7f018f61058d51fb9ca5cf841b94ba67ab756b0ff4baf21365b27a0ba10685e8",
+            "event_type": "brain.message.published",
+            "actor": "brain",
+            "conversation_id": "conv-chat-a",
+            "producer": "core.brain_outcomes",
+            "visibility": "public",
+            "occurred_at": "2026-10-14T09:00:02.000Z",
+            "started_at": null,
+            "ended_at": null,
+            "span_id": null,
+            "session_id": null,
+            "turn_id": null,
+            "correlation_id": "corr-cross",
+            "parent_event_id": null,
+            "task_id": null,
+            "work_id": null,
+            "speech_id": null,
+            "outcome_id": "outcome-cross-a",
+            "trace_ref": {
+              "source": "runtime_journal",
+              "journal_kind": "core.brain.outcome_retained",
+              "join_keys": [
+                "correlation_id",
+                "outcome_id"
+              ]
+            },
+            "content": "C'est fait.",
+            "attributes": {
+              "kind": "turn_result",
+              "status": "completed"
+            }
+          }
+        },
+        {
+          "sequence": 3,
+          "recorded_at": "2026-10-14T09:00:03.005Z",
+          "event": {
+            "schema_version": 1,
+            "event_id": "cev-7b34a18f4b0ce6e64fdb6bfd5565d04e1028179e8df71cd3d1d1152e94b7d88d",
+            "event_type": "brain.message.published",
+            "actor": "brain",
+            "conversation_id": "conv-chat-b",
+            "producer": "core.brain_outcomes",
+            "visibility": "public",
+            "occurred_at": "2026-10-14T09:00:03.000Z",
+            "started_at": null,
+            "ended_at": null,
+            "span_id": null,
+            "session_id": null,
+            "turn_id": null,
+            "correlation_id": "corr-cross",
+            "parent_event_id": null,
+            "task_id": null,
+            "work_id": null,
+            "speech_id": null,
+            "outcome_id": "outcome-cross-b",
+            "trace_ref": {
+              "source": "runtime_journal",
+              "journal_kind": "core.brain.outcome_retained",
+              "join_keys": [
+                "correlation_id",
+                "outcome_id"
+              ]
+            },
+            "content": "C'est fait.",
+            "attributes": {
+              "kind": "turn_result",
+              "status": "completed"
+            }
+          }
+        },
+        {
+          "sequence": 4,
+          "recorded_at": "2026-10-14T09:00:04.005Z",
+          "event": {
+            "schema_version": 1,
+            "event_id": "cev-fa268a8f85812539d3ec385c0975f55c050776e66df3cc0800270556b2800f47",
+            "event_type": "brain.turn.failed",
+            "actor": "brain",
+            "conversation_id": "conv-chat-b",
+            "producer": "core.brain_service",
+            "visibility": "diagnostic",
+            "occurred_at": "2026-10-14T09:00:04.000Z",
+            "started_at": null,
+            "ended_at": null,
+            "span_id": null,
+            "session_id": null,
+            "turn_id": null,
+            "correlation_id": "corr-cross",
+            "parent_event_id": null,
+            "task_id": null,
+            "work_id": null,
+            "speech_id": null,
+            "outcome_id": null,
+            "trace_ref": {
+              "source": "runtime_journal",
+              "journal_kind": "core.brain.turn_failed",
+              "join_keys": [
+                "conversation_id",
+                "correlation_id"
+              ]
+            },
+            "content": null,
+            "attributes": {
+              "code": "brain_backend_failed"
+            }
+          }
+        }
+      ],
+      "expected": [
+        {
+          "role": "user",
+          "event_id": "cev-dcfb14853a786bcb3ef9ec458a283eb6acb88088d0e890589a1f3e17022561f2",
+          "sequence": 1,
+          "correlation_id": "corr-cross",
+          "text": "Résume la note",
+          "kind": null,
+          "status": null,
+          "failure_code": null,
+          "collapsed_event_ids": []
+        },
+        {
+          "role": "brain",
+          "event_id": "cev-7f018f61058d51fb9ca5cf841b94ba67ab756b0ff4baf21365b27a0ba10685e8",
+          "sequence": 2,
+          "correlation_id": "corr-cross",
+          "text": "C'est fait.",
+          "kind": "turn_result",
+          "status": "completed",
+          "failure_code": null,
+          "collapsed_event_ids": []
+        }
+      ]
     }
   ]
 }

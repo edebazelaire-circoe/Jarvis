@@ -31,3 +31,10 @@ Réservé au Project Manager et aux Work Agents. Aucun progrès, verdict QA ou r
   - ajouter au fixture un cas `brain.turn.failed` d'une autre conversation **de même corrélation** (confié à 02) ;
   - `chat.md:405` contre `conversation-events.md:2011` sur les ids dans les événements, et `artifacts.md:50` « eleven kinds » (confiés à 07) ;
   - niveaux de `05-documentation-levels.md` à mettre à jour en 10.
+
+## 2026-10-14 — Slice 02
+
+- **Livrables :** N `jarvis/domain/chat_projection.py` (`CHAT_PROJECTION`, `CHAT_EVENT_TYPES`, `is_chat_event`, `ChatItem` à 9 champs, `project_chat` de référence ; repli par import de `collapse_published_messages`, sans copie) ; N `jarvis/runtime/control_center_chat_model.js` (pur, sans DOM : `createChatModel`, `applyPage`, `items`, `markPending`, `isPending`, `reset`) ; N `tests/unit/test_chat_projection.py`, `tests/unit/test_control_center_chat_model_js.py` ; M `tests/fixtures/chat_projection/cases.json` (cas 14 ajouté, 13 premiers inchangés) ; M `docs/chat.md` (signatures, 14 cas).
+- **Polish QA S1 traité :** cas `turn_failed_other_conversation_same_correlation` : une publication identique et un `brain.turn.failed` de B partagent la corrélation d'un tour de A ; la bulle de A n'a ni statut d'échec ni repli.
+- **Écarts au contrat :** `project_chat(stored_events, *, conversation_id)` (le fixture exige la portée par conversation) ; `brain.turn.failed` sans `attributes.code` → `failure_code = "brain_turn_failed"` ; plusieurs échecs d'une corrélation → le dernier par séquence ; `isPending` ajouté à côté de `markPending` (aucun champ hors des 9 dans `items`).
+- **Tests (fichier par fichier) :** chat_projection 31, control_center_chat_model_js 13 (parité Python/JS sur chaque découpage de page de chaque cas), conversation_transcript 27, control_center_timeline_js 72, conversation_events 142 : tous verts. Aucune lecture de `RuntimeJournal`, aucun stockage.

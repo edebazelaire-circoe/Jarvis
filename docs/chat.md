@@ -81,16 +81,22 @@ into it (`collapse_published_messages` in
 2. **Stateful rules, client side** (promotion, folding, failure status, keying
    by `event_id`): the pure module `jarvis/runtime/control_center_chat_model.js`
    (no DOM), with a Python reference implementation
-   `project_chat(stored_events) -> tuple[ChatItem, ...]` in
+   `project_chat(stored_events, *, conversation_id) -> tuple[ChatItem, ...]` in
    `jarvis/domain/chat_projection.py`. The split is forced by the stream: a
-   promotion arrives after the cursor has passed the uncertain turn.
+   promotion arrives after the cursor has passed the uncertain turn. The model:
+   `createChatModel(conversationId)`, `applyPage(model, page)` (a page or its
+   rows; replayable, idempotent by `event_id`), `items(model)`,
+   `reset(model, conversationId)` (empties everything), `markPending(model,
+   correlationId)` / `isPending(model, correlationId)` (a sent text turn with
+   neither a Brain message nor a failure yet). A model without a conversation
+   accepts no row.
 3. **Shared fixture** `tests/fixtures/chat_projection/cases.json`, played by
    pytest and by node (same practice as the folding parity).
 
 ### Projection output (`ChatItem`)
 
-`project_chat` takes the stored events of one conversation, in any page
-order, and returns items ordered by `sequence`. Every item has exactly these
+`project_chat` takes stored events in any page order, keeps those of
+`conversation_id` only, and returns items ordered by `sequence`. Every item has exactly these
 fields (null or empty when not applicable):
 
 | Field | User item | Brain item |
@@ -99,17 +105,19 @@ fields (null or empty when not applicable):
 | `event_id`, `sequence`, `correlation_id` | of its `user.transcript.accepted` | of the first publication |
 | `text` | event `content` | event `content` |
 | `kind`, `status` | null | `attributes.kind`, `attributes.status` |
-| `failure_code` | `attributes.code` of a `brain.turn.failed` of the same correlation, else null | null |
+| `failure_code` | `attributes.code` of the latest `brain.turn.failed` of the same correlation (`brain_turn_failed` when it has no code), else null | null |
 | `collapsed_event_ids` | `[]` | `event_id`s folded into this bubble, in order |
 
-Rules the fixture pins (13 cases): empty input; `addressed` and absent
+Rules the fixture pins (14 cases): empty input; `addressed` and absent
 addressing; `uncertain` promoted; `uncertain` declined (never promoted);
 identical republication folded; A/B/A kept; `brain.turn.failed` on a user turn;
 `brain.turn.failed` on a system turn ignored; `mouth.*`, `subagent.*`,
 `brain.speech.requested` and other types ignored; non-contiguous sequences
 kept as is; a replayed page (same `event_id`, first copy wins); two
 conversations (only `conversation_id`'s events count, a shared
-`correlation_id` elsewhere never promotes, folds or fails a bubble here);
+`correlation_id` elsewhere never promotes, folds or fails a bubble here, with
+a second case where the other conversation's identical publication and
+`brain.turn.failed` share the user turn's correlation);
 unknown `addressing` excluded. Events in the fixture are encoded exactly as
 `encode_stored_event` (`jarvis/domain/conversation_event_query.py`) and
 round-trip through `decode_stored_event`.
