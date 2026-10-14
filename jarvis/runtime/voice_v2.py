@@ -304,6 +304,10 @@ class PersistentVoiceRuntime:
         # Dernier état demandé par la bouche, avant dérivation : il est
         # republié quand l'un des deux faits du cerveau change seul.
         self._requested_visual = "idle"
+        # Troisième fait d'écran, prioritaire sur tous les autres : la voix de
+        # l'utilisateur est captée en ce moment (vert), même pendant que JARVIS
+        # parle ou réfléchit. Voir `user_voice`.
+        self._user_voice = False
         self._stop = asyncio.Event()
         # Rebind sur le Board qui a la parole (handoff board-session, Slice
         # 04b) : demandé par l'ordonnanceur (`board.voice_binding.changed`),
@@ -356,8 +360,17 @@ class PersistentVoiceRuntime:
         seconde est la seule à savoir quand il a fini sur tous les chemins.
         """
 
-        if (self._brain_working or self._brain_busy) and state in {"idle", "listening"}:
+        if state == "idle":
+            # « idle » est la veille (SLEEP) : session au fond, ou pas encore ouverte.
+            return state
+        if self._user_voice:
+            # LISTEN (vert) : l'utilisateur parle, rien ne passe devant.
+            return "listening"
+        if (self._brain_working or self._brain_busy) and state in {"waiting", "listening"}:
             return "thinking"
+        if state == "listening":
+            # Session ouverte, personne ne parle : WAIT (bleu), jamais le vert.
+            return "waiting"
         return state
 
     #: Un tour annoncé par le bridge que Core ne relaie jamais comme travail
@@ -939,6 +952,8 @@ class PersistentVoiceRuntime:
             # L'ordonnanceur ne parle pas par-dessus l'utilisateur, et décide
             # seul si un accusé de réception sert encore.
             on_user_speech=speech.note_user_speech if speech is not None else None,
+            # Orbe verte tant que la voix de l'utilisateur est captée.
+            on_user_voice=self.user_voice,
             on_reflex=speech.request_reflex if speech is not None else None,
             # Slice 07 : le contrat de manifestation du mode présentation. Il
             # est câblé dans **toutes** les architectures continues, et la
@@ -1410,6 +1425,7 @@ class PersistentVoiceRuntime:
         # La session s'en va : plus personne ne réfléchit pour cet écran, et
         # la veille qui suit ne doit pas être repeinte en violet.
         self._brain_working = False
+        self._user_voice = False
         self.runtime.state = VoiceLifecycleState.BACKGROUND
         if self._metrics is not None:
             self._finish_metrics("stopped", live_record=live_record)
@@ -1530,8 +1546,22 @@ class PersistentVoiceRuntime:
         await self.visual_listening()
 
     async def visual_listening(self) -> None:
+        """Session ouverte, en attente : WAIT. Le vert ne vient que de `user_voice`."""
+
         if self.runtime.state is VoiceLifecycleState.ACTIVE:
-            self._visual("listening")
+            self._visual("waiting")
+
+    async def user_voice(self, active: bool) -> None:
+        """Le bridge capte la voix de l'utilisateur, ou ne la capte plus.
+
+        Republie l'état demandé : la couleur en est dérivée (`_displayed`).
+        Le délai d'inactivité, lui, est réarmé par `check_timeout` tant que
+        cette voix dure.
+        """
+
+        self._user_voice = bool(active)
+        if self.runtime.state is VoiceLifecycleState.ACTIVE:
+            self._visual(self._requested_visual)
 
     async def visual_idle(self) -> None:
         """Veille affichée alors que la session reste ACTIVE (mode continu).
@@ -1543,7 +1573,7 @@ class PersistentVoiceRuntime:
         """
 
         if self.runtime.state is VoiceLifecycleState.ACTIVE:
-            self._visual("idle")
+            self._visual("waiting")
 
     async def visual_thinking(self) -> None:
         if self.runtime.state is VoiceLifecycleState.ACTIVE:
@@ -1595,7 +1625,17 @@ class PersistentVoiceRuntime:
     async def check_timeout(self) -> bool:
         # Délai à 0 : `expired()` ne devient jamais vrai, donc ni mute ni
         # `voice.timeout_deferred` à chaque tic de la boucle de supervision.
-        if self.runtime.state is not VoiceLifecycleState.ACTIVE or not self.activity.expired():
+        if self.runtime.state is not VoiceLifecycleState.ACTIVE:
+            return False
+        from jarvis.domain.voice_architecture import VoiceArchitectureId
+        duplex = self.conversation_architecture is VoiceArchitectureId.DUPLEX
+        if duplex and self.activity.enabled and self._live_user_active():
+            # Tant que l'utilisateur parle, le délai repart de zéro à chaque tic :
+            # il ne commence à courir qu'une fois qu'il s'est tu. Le fil Live
+            # n'a pas de transcription finale qui le réarmerait en cours de route.
+            self.activity.reset()
+            return False
+        if not self.activity.expired():
             return False
         # Le délai mesure l'attente de l'utilisateur, pas la durée d'un outil.
         # Couper ici tuait une tâche Claude en plein travail : la session
@@ -1610,8 +1650,6 @@ class PersistentVoiceRuntime:
         # chaque évènement `brain.*` (Décision 32) : le report ci-dessous n'a
         # donc pas à connaître le cerveau, et un cerveau silencieux finit par
         # laisser le délai expirer normalement.
-        from jarvis.domain.voice_architecture import VoiceArchitectureId
-        duplex = self.conversation_architecture is VoiceArchitectureId.DUPLEX
         if duplex and not self._live_idle_ready():
             # Une parole en cours est de l'activité : sans ce réarmement le délai de 60 s expirait pendant
             # un monologue et la session se coupait à la seconde où l'utilisateur se taisait.

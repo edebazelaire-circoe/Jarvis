@@ -106,17 +106,22 @@ if(typeof module!=='undefined'&&module.exports)
   const THEME_ID='cosmos';
   const LEGACY_THEME_ID='omega';
   const TAU=Math.PI*2;
-  const VALID_STATES=new Set(['idle','listening','thinking','speaking']);
+  const VALID_STATES=new Set(['idle','waiting','listening','thinking','speaking']);
   const clamp=(v,min,max)=>Math.max(min,Math.min(max,v));
   const lerp=(a,b,t)=>a+(b-a)*t;
   const rgba=(rgb,a)=>`rgba(${Math.round(rgb[0])},${Math.round(rgb[1])},${Math.round(rgb[2])},${a})`;
+  /* idle = SLEEP (bleu grisé), waiting = WAIT (bleu, session ouverte, personne
+     ne parle), listening = LISTEN (vert, seulement quand la voix de
+     l'utilisateur est captée). OFF (Voice hors ligne) : gris, `OFF_COLOR`. */
+  const OFF_COLOR=[128,134,142];
   const STATE_COLORS={
-    idle:[67,170,255],
+    idle:[104,128,158],
+    waiting:[67,170,255],
     listening:[70,247,164],
     speaking:[255,151,61],
     thinking:[175,88,255],
   };
-  const STATE_LABELS={idle:'IDLE',listening:'LISTENING',speaking:'TALKING',thinking:'THINKING'};
+  const STATE_LABELS={idle:'SLEEP',waiting:'WAIT',listening:'LISTEN',speaking:'TALK',thinking:'THINKING'};
 
   /* ================================================= deux couleurs, deux rôles
 
@@ -468,7 +473,7 @@ html[data-jarvis-theme="cosmos"] .choice.theme-choice.selected{
       const dt=Math.min(.05,Math.max(.001,(now-this.last)/1000));this.last=now;
       const target=this.targets(),ease=1-Math.exp(-dt*5.5);
       for(const key of Object.keys(this.current))this.current[key]=lerp(this.current[key],target[key],ease);
-      const targetColor=this.online?(STATE_COLORS[this.state]||STATE_COLORS.idle):STATE_COLORS.idle;
+      const targetColor=this.online?(STATE_COLORS[this.state]||STATE_COLORS.idle):OFF_COLOR;
       for(let i=0;i<3;i++)this.color[i]=lerp(this.color[i],targetColor[i],ease);
       this.rotation+=this.current.speed*dt*(this.reduced?.22:1);
       this.draw(now/1000);

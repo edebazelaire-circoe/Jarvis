@@ -410,3 +410,108 @@ async def test_a_long_monologue_does_not_expire_the_idle_delay_before_the_user_s
     clock.advance(60)
     assert await runtime.check_timeout() is True
     assert stops == [VoiceStopReason.IDLE]
+
+
+def test_a_hesitation_inside_a_monologue_still_counts_as_the_user_speaking(monkeypatch):
+    """Une pause « euh… » plus longue que le maintien du détecteur ne rend pas la session inactive."""
+
+    from jarvis.runtime import realtime_audio
+    from jarvis.runtime.realtime_audio import SoundDeviceRealtimeAudio
+
+    now = {"t": 100.0}
+    monkeypatch.setattr(realtime_audio.time, "monotonic", lambda: now["t"])
+    audio = SoundDeviceRealtimeAudio()
+    audio.capture = SimpleNamespace(near_end_observed=True)
+    monkeypatch.setattr(audio, "_trace_echo_alignment", lambda: None)
+
+    audio._deliver_capture(480, b"", ())
+    assert audio.input_speech_active
+
+    audio.capture.near_end_observed = False
+    now["t"] += 1.5
+    audio._deliver_capture(480, b"", ())
+    assert audio.input_speech_active
+
+    now["t"] += SoundDeviceRealtimeAudio.NEAR_END_HOLD_S
+    assert not audio.input_speech_active
+
+
+async def test_the_idle_delay_restarts_at_every_tick_while_the_user_speaks(monkeypatch):
+    """Tant que l'utilisateur parle, le délai repart de zéro ; il ne court qu'une fois qu'il s'est tu."""
+
+    from jarvis.domain.live_idle import LiveIdleEvidence
+    from jarvis.domain.voice_frontend import VoiceStopReason
+
+    state = {"evidence": LiveIdleEvidence(True, True, False, False)}
+    runtime, clock, stops = idle_runtime(monkeypatch, state["evidence"])
+    monkeypatch.setattr(runtime._bridge, "live_idle_evidence", lambda: state["evidence"], raising=False)
+
+    clock.advance(4)
+    state["evidence"] = LiveIdleEvidence(True, True, True, False)
+    assert await runtime.check_timeout() is False  # 4 s : il commence à parler
+    state["evidence"] = LiveIdleEvidence(True, True, False, False)
+    clock.advance(4)
+    assert await runtime.check_timeout() is False  # 8 s depuis l'ouverture, 4 s depuis sa voix
+    clock.advance(1)
+    assert await runtime.check_timeout() is True
+    assert stops == [VoiceStopReason.IDLE]
+
+
+@pytest.mark.parametrize("mouth", ["waiting", "speaking", "thinking"])
+async def test_the_user_voice_turns_the_orb_green_over_every_other_state(monkeypatch, mouth):
+    """LISTEN (vert) passe devant TALK et THINKING ; sa fin rend l'état d'avant."""
+
+    from jarvis.domain.live_idle import LiveIdleEvidence
+
+    runtime, _clock, _stops = idle_runtime(monkeypatch, LiveIdleEvidence(True, True, False, False))
+    shown = []
+    runtime.signals = SimpleNamespace(state=shown.append)
+    runtime._brain_busy = mouth == "thinking"
+    runtime._visual("speaking" if mouth == "speaking" else "waiting")
+    await runtime.user_voice(True)
+    assert shown[-1] == "listening"
+    await runtime.user_voice(False)
+    assert shown[-1] == mouth
+
+
+async def test_an_open_session_where_nobody_speaks_is_wait_never_listen(monkeypatch):
+    """Retour au repos après une réponse : WAIT (bleu), pas le vert ; la veille reste SLEEP."""
+
+    from jarvis.domain.live_idle import LiveIdleEvidence
+
+    runtime, _clock, _stops = idle_runtime(monkeypatch, LiveIdleEvidence(True, True, False, False))
+    shown = []
+    runtime.signals = SimpleNamespace(state=shown.append)
+    await runtime.visual_listening()
+    assert shown[-1] == "waiting"
+    await runtime.visual_idle()
+    assert shown[-1] == "waiting"
+    runtime._visual("idle")
+    assert shown[-1] == "idle"
+
+
+def test_only_sustained_voice_raises_the_user_voice_signal(monkeypatch):
+    """35 trames proches sur 500 ms : une voix. Des impulsions éparses (frappe) : rien."""
+
+    from jarvis.runtime import realtime_audio
+    from jarvis.runtime.realtime_audio import USER_VOICE_SIGNAL, SoundDeviceRealtimeAudio
+
+    now = {"t": 10.0}
+    monkeypatch.setattr(realtime_audio.time, "monotonic", lambda: now["t"])
+    raised = []
+    audio = SoundDeviceRealtimeAudio()
+    audio.capture = SimpleNamespace(near_end_observed=False, voiced_frames=0)
+    audio.on_capture_signal = raised.append
+    monkeypatch.setattr(audio, "_trace_echo_alignment", lambda: None)
+
+    for _ in range(25):  # frappe : 1 trame proche sur 2 blocs de 20 ms
+        now["t"] += 0.02
+        audio.capture.voiced_frames += 1
+        audio._deliver_capture(480, b"", ())
+    assert USER_VOICE_SIGNAL not in raised
+
+    for _ in range(25):  # parole : chaque trame de 10 ms est proche
+        now["t"] += 0.02
+        audio.capture.voiced_frames += 2
+        audio._deliver_capture(480, b"", ())
+    assert USER_VOICE_SIGNAL in raised
