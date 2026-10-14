@@ -1,0 +1,9 @@
+{
+  "checks": [
+    {
+      "id": "HV-JCHAT-08-01",
+      "instruction": "Déposer fichier, image et URL dans un Board puis constater les trois ressources visibles et réutilisables après changement/reprise du Board.",
+      "requires_evidence_first": true
+    }
+  ]
+}

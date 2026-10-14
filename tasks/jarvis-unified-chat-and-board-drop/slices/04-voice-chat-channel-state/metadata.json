@@ -1,0 +1,17 @@
+{
+  "slice_id": "04-voice-chat-channel-state",
+  "title": "Verrouillage et bascule Voice vers Chat",
+  "task_type": null,
+  "work_intent": "runtime: Permettre la lecture du chat pendant Voice actif, mais refuser les envois jusqu'à arrêt effectif du canal vocal.",
+  "dependencies": [
+    "01-canonical-contracts",
+    "03-direct-brain-text-ingress"
+  ],
+  "task_type_blocker": "Vocabulaire Workspace Task Type non disponible pendant la création; Project Manager résout et sélectionne un type existant avant dispatch.",
+  "work_agent_assignment": "one Work Agent, resolved by host after Task Type",
+  "frontend_claude_preferred": false,
+  "skills_required": [
+    "/caveman",
+    "/coding-guideline"
+  ]
+}

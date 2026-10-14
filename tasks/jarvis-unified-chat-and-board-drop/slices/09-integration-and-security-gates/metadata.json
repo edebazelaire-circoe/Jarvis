@@ -1,0 +1,19 @@
+{
+  "slice_id": "09-integration-and-security-gates",
+  "title": "Intégration isolée, scénarios de régression et preuves",
+  "task_type": null,
+  "work_intent": "qa: Établir une preuve end-to-end objective P0 + extra, sans toucher au Jarvis vivant.",
+  "dependencies": [
+    "02-chat-event-projection",
+    "03-direct-brain-text-ingress",
+    "04-voice-chat-channel-state",
+    "05-chat-read-sync-relay",
+    "06-chat-panel-and-composer",
+    "07-chat-attachments",
+    "08-board-drop-extra"
+  ],
+  "task_type_blocker": "Vocabulaire Workspace Task Type non disponible pendant la création; Project Manager résout et sélectionne un type existant avant dispatch.",
+  "work_agent_assignment": "one Work Agent, resolved by host after Task Type",
+  "frontend_claude_preferred": false,
+  "skills_required": []
+}

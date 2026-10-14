@@ -1,0 +1,18 @@
+{
+  "slice_id": "08-board-drop-extra",
+  "title": "Extra : dépôt de fichiers, images et URL sur le Board",
+  "task_type": null,
+  "work_intent": "fullstack: Permettre à l'utilisateur d'enrichir un Board par drop direct dans la scène, sans composer de message.",
+  "dependencies": [
+    "01-canonical-contracts",
+    "07-chat-attachments"
+  ],
+  "task_type_blocker": "Vocabulaire Workspace Task Type non disponible pendant la création; Project Manager résout et sélectionne un type existant avant dispatch.",
+  "work_agent_assignment": "one Work Agent, resolved by host after Task Type",
+  "frontend_claude_preferred": true,
+  "skills_required": [
+    "/caveman",
+    "/coding-guideline",
+    "/impeccable"
+  ]
+}

@@ -1,0 +1,13 @@
+{
+  "slice_id": "10-release-and-human-acceptance",
+  "title": "Documentation finale, livraison et validation utilisateur",
+  "task_type": null,
+  "work_intent": "release: Conclure la tâche par une preuve de fonctionnement et une validation humaine ciblée.",
+  "dependencies": [
+    "09-integration-and-security-gates"
+  ],
+  "task_type_blocker": "Vocabulaire Workspace Task Type non disponible pendant la création; Project Manager résout et sélectionne un type existant avant dispatch.",
+  "work_agent_assignment": "one Work Agent, resolved by host after Task Type",
+  "frontend_claude_preferred": false,
+  "skills_required": []
+}

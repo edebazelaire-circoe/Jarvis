@@ -1,0 +1,9 @@
+{
+  "checks": [
+    {
+      "id": "HV-JCHAT-00-01",
+      "instruction": "Décision humaine requise uniquement en cas de conflit durable ou de contrat produit impossible à déterminer à partir du code.",
+      "requires_evidence_first": true
+    }
+  ]
+}

@@ -1,0 +1,18 @@
+{
+  "slice_id": "06-chat-panel-and-composer",
+  "title": "Onglet bas droit, panneau et dialogue texte",
+  "task_type": null,
+  "work_intent": "frontend: Livrer le premier parcours Chat complet sans pièces jointes, sobre et utilisable au clavier.",
+  "dependencies": [
+    "04-voice-chat-channel-state",
+    "05-chat-read-sync-relay"
+  ],
+  "task_type_blocker": "Vocabulaire Workspace Task Type non disponible pendant la création; Project Manager résout et sélectionne un type existant avant dispatch.",
+  "work_agent_assignment": "one Work Agent, resolved by host after Task Type",
+  "frontend_claude_preferred": true,
+  "skills_required": [
+    "/caveman",
+    "/coding-guideline",
+    "/impeccable"
+  ]
+}

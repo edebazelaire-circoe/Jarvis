@@ -1,0 +1,16 @@
+{
+  "slice_id": "03-direct-brain-text-ingress",
+  "title": "Ingress texte Brain, sans dépendance Voice",
+  "task_type": null,
+  "work_intent": "backend: Acheminer un tour texte au Brain actif par Core en gardant Session, Board et capacité de délégation.",
+  "dependencies": [
+    "01-canonical-contracts"
+  ],
+  "task_type_blocker": "Vocabulaire Workspace Task Type non disponible pendant la création; Project Manager résout et sélectionne un type existant avant dispatch.",
+  "work_agent_assignment": "one Work Agent, resolved by host after Task Type",
+  "frontend_claude_preferred": false,
+  "skills_required": [
+    "/caveman",
+    "/coding-guideline"
+  ]
+}
