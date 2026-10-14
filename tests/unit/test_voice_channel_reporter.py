@@ -17,6 +17,7 @@ import pytest
 from jarvis import app
 from jarvis.core.voice_channel import VoiceChannelService
 from jarvis.domain.v2 import VoiceLifecycleState
+from jarvis.runtime.realtime_audio import SoundDeviceRealtimeAudio
 from jarvis.runtime.voice_v2 import PersistentVoiceRuntime
 from jarvis.v2_config import VoiceArchitecture
 
@@ -337,3 +338,150 @@ async def test_the_supervision_loop_switches_to_chat_within_two_seconds():
     assert core.service.write_gate() is None and elapsed <= 2.0
     assert len(mutes) == 1
     assert core.other_calls == []
+
+
+class FakeDeviceAudio(SoundDeviceRealtimeAudio):
+    """Aucun périphérique : le pont tourne sur des octets vides."""
+
+    def __init__(self, **kwargs) -> None:
+        super().__init__(**kwargs)
+        self.closed = False
+
+    async def start(self) -> None:
+        return None
+
+    async def play_b64(self, value: str) -> None:
+        del value
+
+    async def close(self) -> None:
+        self.closed = True
+
+
+class OpenSession:
+    """Session fournisseur qui reste ouverte jusqu'à sa fermeture."""
+
+    def __init__(self) -> None:
+        self.closed = asyncio.Event()
+
+    async def send_audio(self, pcm: bytes) -> None:
+        del pcm
+
+    async def finish_input(self) -> bool:
+        return True
+
+    async def send_tool_result(self, call_id, result) -> None:
+        del call_id, result
+
+    async def send_context(self, text: str) -> None:
+        del text
+
+    async def events(self):
+        await self.closed.wait()
+        if False:
+            yield None
+
+    async def close(self) -> None:
+        self.closed.set()
+
+
+async def test_a_request_during_connecting_waits_for_active_then_mutes(monkeypatch):
+    """QA S4 bloquant : une demande reçue pendant CONNECTING n'est jamais acquittée `accepted` avant le mute réel."""
+
+    import jarvis.runtime.realtime_audio as realtime_audio
+
+    monkeypatch.setattr(realtime_audio, "SoundDeviceRealtimeAudio", FakeDeviceAudio)
+    core, journal = Core(), Journal()
+    session = OpenSession()
+    factory_entered = asyncio.Event()
+
+    async def slow_factory(_context):
+        factory_entered.set()
+        await asyncio.sleep(0.5)
+        return session
+
+    voice = runtime(core, journal, slow_factory)
+    mutes = count_mutes(voice)
+    channel = app.VoiceChannelReporting()
+
+    def never_accepted_while_active():
+        request = core.service.snapshot()["voice"]["request"]
+        if request is not None and request["status"] == "accepted":
+            assert voice.runtime.state is VoiceLifecycleState.BACKGROUND and voice._session is None
+
+    activation = asyncio.create_task(voice.activate())
+    try:
+        await asyncio.wait_for(factory_entered.wait(), 1)
+        assert voice.runtime.state is VoiceLifecycleState.CONNECTING
+        request_id = request_disable(core)
+        await app._report_voice_channel(voice, journal, channel)  # CONNECTING : rien de traité
+        assert mutes == [] and channel.handled_request_id is None and channel.pending_ack is None
+        assert core.service.write_gate() == "voice_switching"
+        never_accepted_while_active()
+
+        await asyncio.wait_for(activation, 2)
+        assert voice.runtime.state is VoiceLifecycleState.ACTIVE
+        assert core.service.write_gate() == "voice_switching"
+        never_accepted_while_active()
+
+        await app._report_voice_channel(voice, journal, channel)  # ACTIVE : mute puis acquittement
+        assert len(mutes) == 1
+        assert voice.runtime.state is VoiceLifecycleState.BACKGROUND and voice._session is None
+        assert session.closed.is_set()
+        assert core.service.snapshot()["voice"]["request"] == {"request_id": request_id, "status": "accepted",
+                                                                "code": None}
+        assert core.service.write_gate() is None
+        never_accepted_while_active()
+    finally:
+        if not activation.done():
+            activation.cancel()
+        await asyncio.gather(activation, return_exceptions=True)
+        await voice.mute()
+
+
+async def test_connecting_beyond_the_expiry_leaves_the_chat_locked():
+    core, journal = Core(), Journal()
+    clock = [500.0]
+    core.service = VoiceChannelService(clock=lambda: clock[0])
+    core.service.started_at -= 10.0
+    voice = runtime(core, journal)
+    mutes = count_mutes(voice)
+    voice.runtime.state = VoiceLifecycleState.CONNECTING
+    channel = app.VoiceChannelReporting()
+    await app._report_voice_channel(voice, journal, channel)
+    request_disable(core)
+    for _ in range(3):
+        await app._report_voice_channel(voice, journal, channel)
+        clock[0] += 4.0
+    await app._report_voice_channel(voice, journal, channel)
+    assert mutes == []
+    assert core.service.snapshot()["voice"]["request"]["status"] == "expired"
+    assert core.service.write_gate() == "voice_connecting"
+
+
+async def test_a_stale_ack_resent_with_a_non_background_state_is_failed():
+    """Ack non livré, puis réveil : l'ack rejoint un rapport `active` -> `failed` / `voice_disable_failed`."""
+
+    core, journal = Core(), Journal()
+    voice = runtime(core, journal)
+    voice.runtime.state = VoiceLifecycleState.ACTIVE
+    count_mutes(voice)
+    channel = app.VoiceChannelReporting()
+    await app._report_voice_channel(voice, journal, channel)
+    request_id = request_disable(core)
+    real = core.voice_channel_report
+
+    async def lose_acks(payload, *, timeout_s):
+        if payload["ack"] is not None:
+            raise ConnectionResetError("lost")
+        return await real(payload, timeout_s=timeout_s)
+
+    core.voice_channel_report = lose_acks  # type: ignore[method-assign]
+    await app._report_voice_channel(voice, journal, channel)
+    assert channel.pending_ack == {"request_id": request_id, "result": "accepted", "code": None}
+    core.voice_channel_report = real  # type: ignore[method-assign]
+    voice.runtime.state = VoiceLifecycleState.ACTIVE  # réveil avant que l'ack ne passe
+    await app._report_voice_channel(voice, journal, channel)
+    assert channel.pending_ack is None
+    request = core.service.snapshot()["voice"]["request"]
+    assert (request["status"], request["code"]) == ("failed", "voice_disable_failed")
+    assert core.service.write_gate() == "voice_active"

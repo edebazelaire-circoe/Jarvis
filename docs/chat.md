@@ -352,7 +352,15 @@ raises or leaves `error`). A request not acknowledged within
 report from Voice while the request is pending (muted meanwhile by the key or
 the idle timeout) settles it `accepted`: the goal is met, nothing is muted
 twice. Voice already in `background` when it receives a request acknowledges
-it without calling `mute()`. Relayed by the Control Center as
+it without calling `mute()`. Voice still `connecting` (its provider session
+not open yet) leaves the request **unhandled**: a `mute()` then would find no
+session and the activation would turn `active` right after; the next tick
+takes it again (`active` → `mute()` and acknowledge; back to `background` or
+`error` on its own → acknowledged by the rules above), or Core expires it and
+the Chat stays locked. An acknowledgement that could not be delivered is
+resent with the next report; if that report is no longer `background` (voice
+woke up meanwhile), Core settles the request `failed` with
+`voice_disable_failed`. Relayed by the Control Center as
 `POST /api/chat/voice/disable`.
 
 ### Reading `GET /v1/chat/state`, relayed as `GET /api/chat/state`
