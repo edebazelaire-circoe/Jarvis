@@ -82,6 +82,7 @@ from jarvis.core.presentation_studio_playback import PresentationStudioPlaybackS
 from jarvis.core.presentation_studio_compare import PresentationStudioCompare
 from jarvis.core.presentation_studio_composition import PresentationStudioComposition
 from jarvis.core.presentation_studio_composition_clock import PresentationStudioCompositionClock
+from jarvis.core.voice_channel import VoiceChannelService
 from jarvis.core.remotion_master_project import MasterProjectReader
 from jarvis.core.presentation_studio_scene_variants import PresentationStudioSceneVariants
 from jarvis.core.presentation_studio_template import PresentationStudioTemplates
@@ -178,6 +179,10 @@ class JarvisCoreApplication:
         # passage SIMPLE ⇄ PRESENTATION ne redémarre jamais Voice ; le
         # changement voyage par `interaction.mode.changed` sur `/v1/events`.
         self.interaction_mode = InteractionModeService(events=self.events, diagnostics=diagnostics)
+        # Canal vocal (handoff jarvis-unified-chat-and-board-drop, Slice 04) : état en
+        # mémoire nourri par les rapports de Voice ; `write_gate()` verrouille le Chat.
+        # Un autre axe qu'`interaction_mode` : jamais lu ni écrit par lui.
+        self.voice_channel = VoiceChannelService(diagnostics=diagnostics)
         # Mémoire de séance PRESENTATION (Slice 04) : sujets, faits avec leur
         # provenance, ressources préparées, et un fil de parole récente qui
         # reste frais même quand l'analyse ambiante est en retard (Décision

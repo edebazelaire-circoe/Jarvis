@@ -46,6 +46,9 @@ FORWARDABLE_PREFIXES = ("/v1/boards", "/v1/sessions", "/v1/mcp/plugins", "/v1/mc
                         "/v1/presentation-studio/engine",  # vue du moteur, lecture seule (remotion-integration S20)
                         "/v1/presentation-studio/rail",  # rail des presentations : liste, etat de travail, rapport d'ecran (relais `presentation_studio_relay.py`)
                         "/v1/memory/", "/v1/remotion/",
+                        # Chat (jarvis-unified-chat-and-board-drop, Slice 04, `chat_relay.py`) : l'état du Chat et la seule
+                        # commande « Passer au chat ». Jamais `/v1/voice/channel/report` : seul Voice rapporte son état.
+                        "/v1/chat/", "/v1/voice/channel/disable",
                         # Carte Remotion du Control Center (jarvis-remotion-presentation-integration, Slice 11) : l'état de la capacité et le
                         # Studio optionnel ; le relais (`remotion_studio_relay.py`) n'appelle que six adresses, jamais l'installation.
                         "/v1/local-capabilities/remotion")
@@ -572,6 +575,35 @@ class LocalCoreClient:
         if source is not None:
             body["source"] = source
         async with session.post(self.base_url + "/v1/interaction-mode", headers=self.headers, json=body) as response:
+            return await self._json(response)
+
+    # ------------------------------------------------------------ canal vocal et Chat (unified-chat Slice 04)
+
+    async def voice_channel_report(self, report: Mapping[str, Any], *, timeout_s: float) -> dict[str, Any]:
+        """`POST /v1/voice/channel/report` (Voice) : `{epoch, revision, accepted, disable_request}`.
+
+        `timeout_s` est obligatoire : ce rapport part de la boucle d'une seconde
+        de Voice, qu'un Core lent ne doit jamais retenir.
+        """
+
+        session = await self._http()
+        async with session.post(self.base_url + "/v1/voice/channel/report", headers=self.headers, json=dict(report),
+                                timeout=aiohttp.ClientTimeout(total=timeout_s)) as response:
+            return await self._json(response)
+
+    async def disable_voice_channel(self, client_request_id: str) -> dict[str, Any]:
+        """`POST /v1/voice/channel/disable` : « Passer au chat » ; `{request_id, state, status}` (202) ou rien à faire (200)."""
+
+        session = await self._http()
+        async with session.post(self.base_url + "/v1/voice/channel/disable", headers=self.headers,
+                                json={"client_request_id": client_request_id}) as response:
+            return await self._json(response)
+
+    async def chat_state(self) -> dict[str, Any]:
+        """`GET /v1/chat/state` : liaison courante, bloc `voice`, `chat_writable`, `locked_reason`."""
+
+        session = await self._http()
+        async with session.get(self.base_url + "/v1/chat/state", headers=self.headers) as response:
             return await self._json(response)
 
     # ------------------------------------------------------------ scène (Slice 03)

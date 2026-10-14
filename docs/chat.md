@@ -304,23 +304,39 @@ failure never blocks activation and is journaled), (c) right after a `mute()`
 caused by a request, with `ack`. `voice_incarnation_id` is drawn at process
 start; `seq` strictly increases per incarnation. Core ignores a report whose
 `seq` is lower or equal for the same incarnation; a new incarnation replaces the
-old one. Answer: `{"epoch", "revision", "disable_request": {"request_id",
-"requested_at"} | null}`.
+old one. Answer: `{"schema_version": 1, "epoch", "revision", "accepted",
+"disable_request": {"request_id", "requested_at"} | null}` (`accepted: false`
+for an ignored stale report, journaled `core.voice_channel.report_rejected`).
+The body is closed (unknown field, wrong type → 400 `invalid_request`); a
+well-formed `lifecycle_state` outside the four reported states reads as
+`unknown`. Voice side (`jarvis/app.py` `_report_voice_channel`,
+`PersistentVoiceRuntime.send_voice_channel_report`): a report never raises;
+a failure is journaled once per episode (`voice.channel.report_failed`, then
+`voice.channel.report_restored`); an acknowledgement not delivered is resent
+with the next report.
 
 ### Control Center → Core `POST /v1/voice/channel/disable`
 
 Body `{"client_request_id": "<uuid>"}`. Creates (or returns, for the same
 `client_request_id`) a request `vcr-…`, revision + 1; answers 202
-`{"request_id", "state": "switching"}`. Voice `absent`, or already
-`background` with no request: 200 `{"state": …, "request_id": null}` (nothing
-to do). Voice takes the request from the answer to its next report (≤ 1 s),
-calls `voice.mute(VoiceStopReason.USER)` like the Live stop, then reports
+`{"request_id", "state": "switching", "status": "pending"}`; while a request
+is pending, any other `client_request_id` gets that same request. Voice
+`absent`, or already `background` with no request: 200 `{"state": …,
+"request_id": null, "status": null}` (nothing to do). Voice takes the
+request from the answer to its next report (≤ 1 s), calls `voice.mute(VoiceStopReason.USER)` like the Live stop, then reports
 `background` with `ack.result = accepted` (or `failed` + code when `mute()`
 raises or leaves `error`). A request not acknowledged within
-`VOICE_DISABLE_TIMEOUT_S = 10` s expires (`expired`). Relayed by the Control
-Center as `POST /api/chat/voice/disable`.
+`VOICE_DISABLE_TIMEOUT_S = 10` s expires (`expired`). A fresh `background`
+report from Voice while the request is pending (muted meanwhile by the key or
+the idle timeout) settles it `accepted`: the goal is met, nothing is muted
+twice. Voice already in `background` when it receives a request acknowledges
+it without calling `mute()`. Relayed by the Control Center as
+`POST /api/chat/voice/disable`.
 
 ### Reading `GET /v1/chat/state`, relayed as `GET /api/chat/state`
+
+No open Session: the existing 404 `session_not_found` / 503 `core_unavailable`
+(as `GET /v1/sessions/current`).
 
 ```json
 {"schema_version": 1, "jarvis_session_id": "…", "board_id": "…", "conversation_id": "…",

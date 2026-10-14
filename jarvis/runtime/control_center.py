@@ -110,6 +110,7 @@ from jarvis.runtime.work_ingress import TrackerWorkObserver, WorkIngressForwarde
 from jarvis.runtime.board_brains import BoardBrain, BoardBrainPool, agent_session_id
 from jarvis.runtime.board_routes import BoardSessionRoutes
 from jarvis.runtime.capture_relay import GUARDED_PREFIXES as CAPTURE_GUARDED_PREFIXES, CaptureRelayRoutes
+from jarvis.runtime.chat_relay import GUARDED_PREFIXES as CHAT_GUARDED_PREFIXES, ChatRelayRoutes
 from jarvis.runtime.memory_relay import GUARDED_PREFIXES as MEMORY_GUARDED_PREFIXES, MemoryRelayRoutes, memory_settings_section
 from jarvis.runtime.memory_settings import MemorySettingsError, apply_memory_settings
 from jarvis.runtime.prefab_relay import GUARDED_PREFIXES as PREFAB_GUARDED_PREFIXES, PrefabRelayRoutes
@@ -297,11 +298,13 @@ AGENT_BINDINGS_ROUTE = "/api/agent/bindings"
 #: contre un cadre de prefab (origine opaque, `Origin: null` refusé).
 #: Presentation Studio (jarvis-interactive-presentation-studio, Slice 05, `presentation_studio_relay.py`) : idem, toutes
 #: les méthodes gardées ; la seule écriture relayée est `.../edits`, acteur forcé à `user`.
+#: Chat (jarvis-unified-chat-and-board-drop, Slice 04, `chat_relay.py`) : état du Chat, canal vocal, puis tours
+#: texte et pièces jointes — toutes les méthodes gardées.
 READ_GUARDED_ROUTES = (CONVERSATIONS_ROUTE, TESTLAB_ROUTE, BAREHANDS_COMMANDS_ROUTE_PREFIX, FULLSCREEN_ROUTE_PREFIX,
                        BAREHANDS_CALIBRATION_SESSION_ROUTE, BAREHANDS_BENCHMARKS_ROUTE, AGENT_BINDINGS_ROUTE,
                        MCP_PLUGINS_ROUTE, *CAPTURE_GUARDED_PREFIXES, *WORKSPACE_GUARDED_PREFIXES, *MEMORY_BRAIN_GUARDED_PREFIXES,
                        *PREFAB_GUARDED_PREFIXES, *REMOTION_GUARDED_PREFIXES, *STUDIO_GUARDED_PREFIXES, *MEMORY_GUARDED_PREFIXES,
-                       *REMOTION_STUDIO_GUARDED_PREFIXES)
+                       *REMOTION_STUDIO_GUARDED_PREFIXES, *CHAT_GUARDED_PREFIXES)
 #: Corps de `POST /api/agent/bindings/activate` : une liaison sérialisée, bornée.
 AGENT_BINDING_MAX_BYTES = 8 * 1024
 #: Adoption de la liaison foreground au démarrage : Core peut démarrer après
@@ -1351,6 +1354,8 @@ class ControlCenter:
         self.capture_routes = CaptureRelayRoutes(transport=lambda: self.sessions, journal=self.journal)
         # Workspace (board-memory-workspace-inspector, Slices 04-05) : relais des lectures et des mutations.
         self.workspace_routes = WorkspaceRelayRoutes(transport=lambda: self.sessions, journal=self.journal)
+        # Chat (unified-chat Slice 04) : état du Chat et « Passer au chat », relayés à Core sans état propre.
+        self.chat_routes = ChatRelayRoutes(transport=lambda: self.sessions, journal=self.journal)
         self.memory_brain_routes = MemoryBrainRelayRoutes(transport=lambda: self.sessions, journal=self.journal)
         # Catalogue des prefabs (Slice 03 prefab-foundation) : relais des lectures, transport relu à chaque requête.
         self.memory_routes = MemoryRelayRoutes(transport=lambda: self.sessions, journal=self.journal)
@@ -1490,6 +1495,7 @@ class ControlCenter:
             *self.board_routes.routes(),
             *self.capture_routes.routes(),
             *self.workspace_routes.routes(),
+            *self.chat_routes.routes(),
             *self.memory_routes.routes(),
             *self.memory_brain_routes.routes(),
             *self.prefab_routes.routes(),

@@ -34,6 +34,7 @@ from jarvis.ports.workspace_board import BoardStoreError
 from jarvis.domain.mcp_plugins import McpErrorCode, McpPlugin, McpPluginError
 from jarvis.ports.mcp_plugins import McpPluginStoreError
 from jarvis.domain.live_lifecycle import LiveCloseEvidence, LiveLifecycleConflict, LiveLifecycleState
+from jarvis.domain.voice_channel import VOICE_CHANNEL_SCHEMA_VERSION
 from jarvis.ports.scene import ScenePatchWindow, SceneStoreError, SceneUnavailableError
 from jarvis.protocol import scene_wire
 from jarvis.protocol.capture_routes import CaptureProtocolRoutes
@@ -70,6 +71,8 @@ TEXT_CHUNK_CHARS = 64 * 1024
 MAX_BOARD_BODY_BYTES = 128 * 1024
 #: Largest `/v1/mcp/*` body (ARCH §4.3), checked in the handler.
 MAX_MCP_BODY_BYTES = 256 * 1024
+#: Largest `/v1/voice/channel/*` body: a report is a few hundred bytes.
+MAX_VOICE_CHANNEL_BODY_BYTES = 4 * 1024
 
 
 def _optional_text(value: object, field: str) -> str | None:
@@ -204,6 +207,10 @@ class LocalProtocolServer:
             web.get("/v1/work/snapshot", self.work_snapshot),
             web.get("/v1/interaction-mode", self.interaction_mode),
             web.post("/v1/interaction-mode", self.set_interaction_mode),
+            # Canal vocal et état du Chat (jarvis-unified-chat-and-board-drop, Slice 04, `docs/chat.md`).
+            web.post("/v1/voice/channel/report", self.voice_channel_report),
+            web.post("/v1/voice/channel/disable", self.voice_channel_disable),
+            web.get("/v1/chat/state", self.chat_state),
             # Boards (handoff board-session, Slice 02). `active` before
             # `{board_id}`: aiohttp matches in registration order.
             web.get("/v1/boards", self.list_boards),
@@ -1023,6 +1030,44 @@ class LocalProtocolServer:
         # module repose sur le fait qu'une révision ordonne des observations.
         return web.json_response({**state.to_payload(), "modes": supported_modes(),
                                   "disposition": disposition.value})
+
+    # ------------------------------------------------------------ Canal vocal et Chat (Slice 04)
+
+    @staticmethod
+    async def _voice_channel_body(request: web.Request) -> object:
+        if request.query:
+            raise ValueError("unexpected voice channel query")
+        raw = await request.read()
+        if len(raw) > MAX_VOICE_CHANNEL_BODY_BYTES:
+            raise ValueError(f"voice channel request exceeds {MAX_VOICE_CHANNEL_BODY_BYTES} bytes")
+        return loads_strict_json(raw, invalid_message="invalid voice channel JSON")
+
+    async def voice_channel_report(self, request: web.Request) -> web.Response:
+        """`POST /v1/voice/channel/report` (Voice) : rapport retenu ou ignoré ; la réponse porte la demande en cours."""
+
+        return web.json_response(self.core.voice_channel.report(await self._voice_channel_body(request)))
+
+    async def voice_channel_disable(self, request: web.Request) -> web.Response:
+        """`POST /v1/voice/channel/disable` (Control Center) : « Passer au chat ». 202 demande, 200 rien à faire.
+
+        Ne touche ni Session, ni Board, ni Brain, ni `InteractionMode` : Voice coupe sa propre session.
+        """
+
+        status, payload = self.core.voice_channel.disable(await self._voice_channel_body(request))
+        return web.json_response(payload, status=status)
+
+    async def chat_state(self, request: web.Request) -> web.Response:
+        """`GET /v1/chat/state` : liaison courante (Session, Board, conversation) et bloc `voice` avec le verrou."""
+
+        if request.query:
+            raise ValueError("unexpected chat state query")
+        unavailable = self._sessions_unavailable()
+        if unavailable is not None:
+            return unavailable
+        binding = (await self.core.sessions.current()).binding
+        return web.json_response({"schema_version": VOICE_CHANNEL_SCHEMA_VERSION,
+                                  "jarvis_session_id": binding.jarvis_session_id, "board_id": binding.board_id,
+                                  "conversation_id": binding.conversation_id, **self.core.voice_channel.snapshot()})
 
     # ------------------------------------------------------------ Boards (Slice 02)
 

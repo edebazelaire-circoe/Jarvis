@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+from dataclasses import dataclass
 import json
 import os
 import sqlite3
@@ -1770,6 +1771,7 @@ async def _voice_timeout_loop(voice, signals, journal=None, switch_coordinator=N
     "voice OFFLINE" and blanks the face while Voice is in fact still running."""
     reported = False
     handled_stop_request: str | None = None
+    channel = VoiceChannelReporting()
     while True:
         await asyncio.sleep(1.0)
         try:
@@ -1806,6 +1808,19 @@ async def _voice_timeout_loop(voice, signals, journal=None, switch_coordinator=N
                     f"Live UI supervision failed: {type(exc).__name__}", level="warning",
                     data={"code": "live_ui_supervision_degraded"},
                 )
+        try:
+            await _report_voice_channel(voice, journal, channel)
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:  # noqa: BLE001 - capture: once per episode, the loop keeps supervising
+            if not channel.degraded and journal is not None:
+                journal.emit("voice.channel.supervision_degraded",
+                             f"Voice channel supervision failed: {type(exc).__name__}", level="warning",
+                             data={"code": "voice_channel_supervision_degraded",
+                                   "exception_type": type(exc).__name__})
+            channel.degraded = True
+        else:
+            channel.degraded = False
         if switch_coordinator is not None:
             try:
                 await switch_coordinator.poll()
@@ -1873,6 +1888,77 @@ async def _handle_live_ui_supervision(voice, signals, journal, handled_request_i
             journal.emit("voice.live_stop_accepted", "Control Center Live stop accepted",
                          data={"request_id": request_id})
     return request_id
+
+
+@dataclass(slots=True)
+class VoiceChannelReporting:
+    """Ce que la boucle de Voice retient d'un tic à l'autre pour le canal vocal (unified-chat Slice 04)."""
+
+    #: Dernière demande « Passer au chat » exécutée : idempotence par `request_id`.
+    handled_request_id: str | None = None
+    #: Acquittement pas encore reçu par Core : rejoint à chaque rapport jusqu'à ce qu'il passe.
+    pending_ack: dict[str, object] | None = None
+    #: Panne de supervision en cours (journalisée une fois par épisode).
+    degraded: bool = False
+
+
+async def _report_voice_channel(voice, journal, channel: VoiceChannelReporting) -> None:
+    """Rapporter l'état du canal à Core ; exécuter au plus une fois la demande « Passer au chat » rendue en réponse.
+
+    Même mécanique que `_handle_live_ui_supervision` (Live stop), la demande
+    venant de Core au lieu d'un fichier : `voice.mute(VoiceStopReason.USER)`,
+    puis un rapport d'acquittement immédiat. Ne touche ni Core, ni Brain, ni
+    Session, ni Board, ni `InteractionMode`. Une panne de rapport est dite par
+    `send_voice_channel_report`, une fois par épisode ; rien ne lève ici.
+    """
+
+    send = getattr(voice, "send_voice_channel_report", None)
+    if not callable(send):
+        return
+    answer = await send(ack=channel.pending_ack)
+    if answer is None:
+        return
+    if answer.get("accepted", True) is True:
+        channel.pending_ack = None
+    request = answer.get("disable_request")
+    request_id = request.get("request_id") if isinstance(request, dict) else None
+    if not isinstance(request_id, str) or request_id == channel.handled_request_id:
+        return
+    channel.handled_request_id = request_id
+    channel.pending_ack = await _honour_voice_disable(voice, journal, request_id)
+    answer = await send(ack=channel.pending_ack)
+    if answer is not None and answer.get("accepted", True) is True:
+        channel.pending_ack = None
+
+
+async def _honour_voice_disable(voice, journal, request_id: str) -> dict[str, object]:
+    """Couper la session vocale pour le Chat ; l'acquittement `accepted` ou `failed` à rendre à Core."""
+
+    from jarvis.domain.voice_channel import VOICE_DISABLE_FAILED
+    from jarvis.domain.voice_frontend import VoiceStopReason
+
+    def state() -> str | None:
+        return getattr(getattr(getattr(voice, "runtime", None), "state", None), "value", None)
+
+    if state() != "background":  # déjà au fond (délai, touche) : rien à couper, le but est atteint
+        try:
+            await voice.mute(VoiceStopReason.USER)
+        except Exception as exc:  # noqa: BLE001 - capture: acknowledged `failed` to Core and journaled
+            if journal is not None:
+                journal.emit("voice.channel.disable_failed", "Chat switch: voice mute failed", level="error",
+                             data={"request_id": request_id, "code": VOICE_DISABLE_FAILED,
+                                   "exception_type": type(exc).__name__})
+            return {"request_id": request_id, "result": "failed", "code": VOICE_DISABLE_FAILED}
+    if state() != "background":
+        if journal is not None:
+            journal.emit("voice.channel.disable_failed", "Chat switch: voice did not return to background",
+                         level="error", data={"request_id": request_id, "code": VOICE_DISABLE_FAILED,
+                                              "voice_state": state()})
+        return {"request_id": request_id, "result": "failed", "code": VOICE_DISABLE_FAILED}
+    if journal is not None:
+        journal.emit("voice.channel.disable_accepted", "Chat switch: voice returned to background",
+                     data={"request_id": request_id})
+    return {"request_id": request_id, "result": "accepted", "code": None}
 
 
 # Les rôles longue durée sont ceux qui peuvent mourir sans témoin ; les
