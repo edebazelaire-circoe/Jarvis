@@ -1924,11 +1924,22 @@ async def _report_voice_channel(voice, journal, channel: VoiceChannelReporting) 
     request_id = request.get("request_id") if isinstance(request, dict) else None
     if not isinstance(request_id, str) or request_id == channel.handled_request_id:
         return
+    if _voice_state(voice) == "connecting":
+        # `activate()` attend encore le fournisseur : un `mute()` maintenant ne
+        # trouverait aucune session à fermer et l'activation passerait ACTIVE
+        # juste après. La demande reste non traitée ; le tic suivant la reprend
+        # (ACTIVE -> mute, retour seul au fond ou en erreur -> acquittement),
+        # sinon Core la fait expirer et le Chat reste verrouillé.
+        return
     channel.handled_request_id = request_id
     channel.pending_ack = await _honour_voice_disable(voice, journal, request_id)
     answer = await send(ack=channel.pending_ack)
     if answer is not None and answer.get("accepted", True) is True:
         channel.pending_ack = None
+
+
+def _voice_state(voice) -> str | None:
+    return getattr(getattr(getattr(voice, "runtime", None), "state", None), "value", None)
 
 
 async def _honour_voice_disable(voice, journal, request_id: str) -> dict[str, object]:
@@ -1938,7 +1949,7 @@ async def _honour_voice_disable(voice, journal, request_id: str) -> dict[str, ob
     from jarvis.domain.voice_frontend import VoiceStopReason
 
     def state() -> str | None:
-        return getattr(getattr(getattr(voice, "runtime", None), "state", None), "value", None)
+        return _voice_state(voice)
 
     if state() != "background":  # déjà au fond (délai, touche) : rien à couper, le but est atteint
         try:
