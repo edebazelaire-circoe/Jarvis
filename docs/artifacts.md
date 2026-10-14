@@ -50,6 +50,25 @@ Artifact ([presentation-artifacts.md](presentation-artifacts.md)). There is no
 `other` bucket: evidence without a kind cannot be indexed. All eleven kinds are accepted by the `artifact_search` kind filter and labelled by the Control Center (Slice 08). A new kind is a new
 `ArtifactKind` value plus this table; no migration (no SQL CHECK on `kind`).
 
+**Uploads and links (contract, handoff jarvis-unified-chat-and-board-drop;
+code in Slices 07 and 08).** Two kinds join the closed set, still without
+migration:
+
+| Kind | What | Created by | Payload / text |
+| --- | --- | --- | --- |
+| `upload` | a file given by the user: a chat attachment or a file dropped on a Board | `PUT /v1/uploads/{client_upload_id}` (Slice 07) | payload `upload.<ext>` (`ext` = original extension lowercased if `[a-z0-9]{1,8}`, else `upload.bin`), streamed through `open_spool`, `pending` → `complete` / `failed` (`upload_too_large`, `upload_incomplete`) |
+| `link` | a URL dropped on a Board | `POST /v1/uploads/links` (Slice 08) | no payload; `text` = the URL, created `complete` at once like `record_text`; **never fetched** |
+
+Their origin is a metadata scalar, **not** a *Provenance* relation row (there is
+no origin artifact): `metadata.provenance` = `chat_attachment` (`source =
+"chat"`) or `board_drop` (`source = "board_drop"`). `upload` metadata also
+carries `original_name`, `declared_mime`, `sha256`, `client_upload_id` and
+`brain_readable`; `link` metadata carries `host`. The stored `mime_type` of an
+upload is the sniffed type, never the declared one alone. Both follow the
+*Board links* rule below unchanged (automatic `active_board` link). Identity,
+bounds, sniffing, errors and Brain access: [chat.md](chat.md) ›
+*Attachments*, *Board drop*.
+
 **States.** `pending` is the only open state (`update_pending` records bytes, duration,
 a rewritten `text` or merged `metadata` so far). `complete`, `partial` and `failed` are terminal for
 every acquisition field: only `enrichment` (and `updated_at`) may change

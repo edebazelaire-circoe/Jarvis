@@ -470,6 +470,14 @@ memory mutations* below.
 | `/boards/{board_id}/memory/read?path=[&offset&max_bytes]` | UTF-8 page, `next_offset`, `eof`, `size`, `sha256` (whole file, ≤ 1 MiB) | `max_bytes` 4..262 144 (65 536) |
 | `/boards/{board_id}/memory/search?q=[&path&limit]` | literal, case-insensitive matches (`path`, `line`, `preview`), `files_scanned`, `files_skipped`, `truncated` (see below) | `q` 1..200 printable characters, `limit` 1..100 (50) |
 
+**Dropping on a Board** (contract, handoff jarvis-unified-chat-and-board-drop,
+Slice 08): a file, an image or a URL dropped on the **displayed** Board
+becomes an Artifact (`upload` or `link`, provenance `board_drop`) linked to
+that Board and listed by `/artifacts?board_id=` above; a drop on a Board that
+is not active is refused (`board_drop_target_inactive`), a URL is never
+fetched, and a drop is never a chat turn nor a scene object. Contract:
+[chat.md](chat.md) › *Board drop*; kinds: [artifacts.md](artifacts.md).
+
 **Memory summary** (`board_inspect`): `locator`, `exists`, `entries`,
 `files`, `directories`, `bytes`, `skipped`, `truncated` (one bounded walk,
 depth 8, 1 000 entries), `summary` (`present`, `path`, `size`,

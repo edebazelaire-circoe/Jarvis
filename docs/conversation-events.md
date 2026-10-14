@@ -1166,6 +1166,15 @@ Parameters are strict: an unknown or repeated name, a non-decimal or
 out-of-range number, an invalid id or lookup field, a malformed `event_id` →
 400. Messages name the parameter and the rule, never the value.
 
+**Chat projection (contract, handoff jarvis-unified-chat-and-board-drop,
+Slice 05).** `GET /v1/conversation-events` and `GET /api/conversations/events`
+gain a `projection` parameter whose only admitted value is `chat`: the page
+keeps `user.transcript.accepted`, `brain.message.published` and
+`brain.turn.failed` only (a user event whose `addressing` is not absent,
+`addressed` or `uncertain` is dropped), filtered like `visibility` (same cursor and long-poll
+rules below); `projection` with `visibility` → 400 `invalid_request`. Rules
+and consumers: [chat.md](chat.md) › *Projection*, *Reading*.
+
 ### Cursor, reconnect and live
 
 - The cursor is the store `sequence` (see Sequence and cursor). A consumer
@@ -1998,6 +2007,11 @@ Allowlist first, denylist as defense in depth:
    Wake-word detections are deliberately **not** timeline events: `keyword`, `score` and
    `threshold` are not attribute keys, and the detection traces live in `runtime/trace.jsonl`
    only (`docs/OPERATIONS.md`, « Diagnostic du mot d'éveil »).
+   `attachment_count` (integer: how many chat attachments a text turn carries,
+   on `user.transcript.accepted` only, absent when zero; never their ids,
+   names or bytes) joins this set with Slice 07 of handoff
+   jarvis-unified-chat-and-board-drop ([chat.md](chat.md) › *Attachments*);
+   until that Slice lands it is refused like any unknown key.
 3. Forbidden names are refused at **any depth** of a raw payload (top level,
    `trace_ref`, attributes, nested values) with `ConversationEventRedactionError`:
    reasoning, thinking, thought(s), chain_of_thought, scratchpad, cot, signature,
