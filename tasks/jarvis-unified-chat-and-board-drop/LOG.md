@@ -58,3 +58,17 @@ Réservé au Project Manager et aux Work Agents. Aucun progrès, verdict QA ou r
 - **Revérification par la QA :** `PASS_WITH_POLISH`.
 - **Course résiduelle :** `ISSUE-02` (`activate`/`mute` sans verrou, déjà dans le code ; le Chat se reverrouille en 1 s au plus).
 - **Fusion :** S4 fusionnée en avance rapide dans la branche de tâche.
+- **QA S3 (palier critique, `a7b46f82`) :** `PASS_WITH_POLISH`.
+  - **Mutation :** 8 mutants tués sur 10. Les deux survivants (`await` entre le verrou et `submit`, `FORWARDABLE_PATHS` élargi) sont confiés en tests à l'agent de 05 (commit `S3: polish`).
+  - **Exécution isolée :** Core et CC isolés, sans Voice. Tous les codes et gardes sont conformes ; un seul `user.transcript.accepted` (`source=text`) par tour, zéro `brain.speech.requested`.
+  - **Traces réelles (Claude CLI) :** la ligne du canal écrit est bien dans le brief. Un sous-agent lancé depuis le chat rend son résultat tardif sans parole. Les tours vocaux gardent un contexte identique à la base. Coût ≈ 0,97 USD.
+  - **Polish et constats :**
+    - Le Brain dépasse la consigne des 6000 caractères (7511, sous la borne de 8192) : consigne seulement, non imposée.
+    - Les annonces suivent le tour courant, pas le tour d'origine : un résultat de sous-agent lancé depuis le chat et fini après le retour en vocal reste muet jusqu'à la prochaine parole (documenté dans `docs/chat.md`).
+    - `select_outcome` n'a pas d'appelant en production, donc pas de fuite TTS.
+    - Le texte figure dans `agent.input` comme avant pour la voix ; pas une régression.
+  - **Isolation :** un Control Center isolé crée des dossiers `retours-utilisateur/<horodatage>` dans les Documents de l'utilisateur. C'est déjà le cas avant la tâche ; la QA a supprimé les 4 dossiers vides qu'elle avait créés. À noter dans 09.
+- **QA S5 (standard, `90856125`) :** `PASS_WITH_POLISH`.
+  - 160 contrôles d'exécution réussis, octets identiques à la base sans `projection`, parité Python/JS sur 3000 événements.
+  - **Décision agent 0 :** le statut d'échec n'apparaît que si aucun `brain.message.published` n'existe pour la corrélation ; il remplace la règle (c) précédente.
+  - Polish appliqué dans `b3414bf8`.
