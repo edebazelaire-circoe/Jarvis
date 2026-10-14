@@ -26,3 +26,8 @@ Réservé au Project Manager et aux Work Agents. Aucun progrès, verdict QA ou r
 - **Tests docs :** fichier par fichier, tous verts (conversation_events 142, conversation_transcript 27, artifact_payloads 24, workspace_board_contract 72, documented_routes 3, wake_word_docs 30, interaction_mode_hud_js 48, presentation_*_docs, published_benchmark_figures 22, knowledge_wiki 28+1 skip).
 - **Écart code / 06 (remonté à l'agent 0) :** `session_not_found` / `binding_not_found` ne sont pas des 503 de `_sessions_unavailable` : celui-ci rend 503 `core_unavailable` ; les deux codes viennent de `SessionManager.current()` (`BoardError`, 404 par `HTTP_STATUS`). Noté en *Open points* de `docs/chat.md`, à trancher avant 03.
 - **Choix d'écriture :** `attachment_count` absent quand nul (sinon les événements utilisateur existants changeraient d'octets au rejeu de backfill) ; forme `ChatItem` fixée (9 champs) pour 02.
+- **Agent 0, `52e0c162` :** écart tranché. Le garde `brain-turns` réutilise les codes existants : 404 `session_not_found` / `binding_not_found` (`BoardError`) et 503 `core_unavailable`. La section *Open points* de `docs/chat.md` est retirée, `06` est corrigé.
+- **QA S1 (`qa-verification` standard, agent Explore) :** `PASS_WITH_POLISH`. Aucun écart avec `06`, 10 faits de code vérifiés, les 13 cas du fixture rejoués par une projection indépendante, ajouts seulement aux docs existantes. Polish reporté :
+  - ajouter au fixture un cas `brain.turn.failed` d'une autre conversation **de même corrélation** (confié à 02) ;
+  - `chat.md:405` contre `conversation-events.md:2011` sur les ids dans les événements, et `artifacts.md:50` « eleven kinds » (confiés à 07) ;
+  - niveaux de `05-documentation-levels.md` à mettre à jour en 10.
