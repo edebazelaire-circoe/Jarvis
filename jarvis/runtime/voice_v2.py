@@ -514,8 +514,10 @@ class PersistentVoiceRuntime:
                     # Do not retry it at scheduler speed while no bridge can
                     # make progress; the durable Live reaper owns recovery.
                     if self._pending_canonical_close is not None:
+                        if await self._release_if_core_resolved():
+                            continue
                         try:
-                            await asyncio.wait_for(self._stop.wait(), timeout=.1)
+                            await asyncio.wait_for(self._stop.wait(), timeout=self.PENDING_CLOSE_RECHECK_S)
                         except TimeoutError:
                             pass
                     continue
@@ -1762,6 +1764,36 @@ class PersistentVoiceRuntime:
 
     def switch_close_pending(self) -> bool:
         return self._pending_canonical_close is not None or self._pending_audio is not None
+
+    #: Rythme de relecture d'une clôture incertaine. Chaque tour relance la
+    #: fermeture locale (déjà échouée, donc instantanée) et trace un
+    #: avertissement : à 0,1 s, la trace en recevait dix par seconde.
+    PENDING_CLOSE_RECHECK_S = 1.0
+
+    async def _release_if_core_resolved(self) -> bool:
+        """Rendre la voix dès que Core n'a plus de session Live en suspens.
+
+        La fermeture locale garde son résultat raté pour toujours : sans cette
+        relecture, une session close par Core (expiration, ou constat de
+        l'utilisateur depuis le Control Center) laissait Voice bloqué jusqu'à
+        sa relance. Core est la seule autorité : une lecture impossible ne
+        libère rien.
+        """
+
+        reader = getattr(self.core, "live_session_status", None)
+        if not callable(reader):
+            return False
+        try:
+            unresolved = await reader()
+        except Exception:
+            return False
+        if unresolved is not None or not self.accept_reaped_live_close():
+            return False
+        self._trace("voice.live_close_released", "Core no longer holds an unresolved Live session",
+                    data={"code": "voice_close_resolved_by_core"})
+        self.runtime.state = VoiceLifecycleState.BACKGROUND
+        await self.mute()
+        return True
 
     def accept_reaped_live_close(self) -> bool:
         """Release a local Live facade only after Core proves no unresolved lease."""

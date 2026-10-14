@@ -23,6 +23,9 @@
       // sinon l'écran remet à courir un compteur que Core a arrêté.
       frozen:live.elapsed_basis==='reaped',
       elapsed:Number(live.elapsed_seconds)||0,details,warning:live.warning||null,
+      // Constat de l'utilisateur : seulement sur une clôture incertaine que
+      // Core sait lire (voir `live_status.py`, `stop.acknowledge`).
+      acknowledge:!!(live.stop&&live.stop.acknowledge===true),
       disabled:!available||!manual||(pending&&!retry)||state==='stopping',
       action:!available?'CORE INDISPONIBLE':!manual?'RÉCUPÉRATION CORE':retry?'RÉESSAYER L’ARRÊT':pending||state==='stopping'?'ARRÊT DEMANDÉ':'ARRÊTER'};
   }

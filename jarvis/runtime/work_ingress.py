@@ -295,6 +295,16 @@ class CoreWorkTransport(CoreLoopbackTransport):
         await self.close()
         return await self._connect().live_session_status()
 
+    async def acknowledge_live_session_closed(self, session_id: str):
+        """Faire constater par Core qu'une clôture incertaine est terminée (bouton du Control Center)."""
+        try:
+            return await self._connect().acknowledge_live_session_closed(session_id)
+        except CoreProtocolError as exc:
+            if exc.status != 401:
+                raise
+        await self.close()
+        return await self._connect().acknowledge_live_session_closed(session_id)
+
 
 class WorkIngressForwarder(CoreBatchForwarder):
     """File bornée d'observations vers Core, vidée par lots depuis sa propre tâche.

@@ -35,6 +35,12 @@ class LiveCloseEvidence(StrEnum):
     # jamais relevé d'usage — sans elle, une fermeture jamais confirmée laisse
     # la session incertaine pour toujours.
     PROVIDER_SESSION_EXPIRED = "provider_session_expired"
+    # L'utilisateur a constaté lui-même, depuis le Control Center, qu'une
+    # clôture jamais confirmée est terminée. Ce n'est pas un reçu du
+    # fournisseur : l'usage reste ce qui a été observé, jamais final. Sans
+    # cette sortie, la voix restait bloquée jusqu'à l'expiration d'une heure,
+    # le rattachement du fournisseur répondant 503 à toutes les sessions.
+    OPERATOR_ACKNOWLEDGED = "operator_acknowledged"
 
 
 class LiveLifecycleOperation(StrEnum):
@@ -236,8 +242,12 @@ class LiveSessionRecord:
                 and self.start_may_have_been_sent and self.provider_session_id is not None
                 and not self.provider_usage_final
             )
+            acknowledged = (
+                self.close_evidence is LiveCloseEvidence.OPERATOR_ACKNOWLEDGED
+                and not self.provider_usage_final
+            )
             if self.stopped_at is None or self.close_reason is None or not (
-                    provider_closed or never_started or expired):
+                    provider_closed or never_started or expired or acknowledged):
                 raise ValueError("STOPPED requires provider receipt or durable not-started proof")
         elif self.stopped_at is not None:
             raise ValueError("only STOPPED has stopped_at")

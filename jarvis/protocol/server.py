@@ -196,6 +196,7 @@ class LocalProtocolServer:
             web.post("/v1/live/sessions/{session_id}/usage", self.update_live_session_usage),
             web.post("/v1/live/sessions/{session_id}/claim-reap", self.claim_live_session_reap),
             web.post("/v1/live/sessions/{session_id}/finalize", self.finalize_live_session),
+            web.post("/v1/live/sessions/{session_id}/acknowledge-closed", self.acknowledge_live_session_closed),
             web.post("/v1/tools/call", self.call_tool),
             web.post("/v1/ui-intents", self.publish_ui_intent),
             web.get("/v1/ui-intents", self.list_ui_intents),
@@ -559,12 +560,22 @@ class LocalProtocolServer:
             "provider_session_id", "active_seconds", "provider_usage_seconds",
             "close_reason", "close_evidence",
         })
+        evidence = _live_enum(LiveCloseEvidence, body["close_evidence"], "close_evidence")
+        if evidence is LiveCloseEvidence.OPERATOR_ACKNOWLEDGED:
+            # Seul le constat explicite de l'utilisateur (route ci-dessous) la pose.
+            raise ValueError("operator acknowledgement has its own route")
         return self._live_response(await self.core.live_lifecycle.finalize(
             request.match_info["session_id"], body["owner_incarnation_id"],
             body["owner_epoch"], body["expected_revision"], body["provider_session_id"],
             body["active_seconds"], body["provider_usage_seconds"],
-            body["close_reason"],
-            _live_enum(LiveCloseEvidence, body["close_evidence"], "close_evidence"),
+            body["close_reason"], evidence,
+        ))
+
+    async def acknowledge_live_session_closed(self, request: web.Request) -> web.Response:
+        """L'utilisateur constate qu'une clôture jamais confirmée est terminée (Control Center)."""
+        await self._voice_body(request, set())
+        return self._live_response(await self.core.live_reaper.acknowledge_closed(
+            request.match_info["session_id"],
         ))
 
     async def append_turn(self, request: web.Request) -> web.Response:
