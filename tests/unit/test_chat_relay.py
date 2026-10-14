@@ -166,3 +166,34 @@ async def test_the_real_chain_admits_a_text_turn(tmp_path):
         assert record.content == TEXT and record.metadata["source"] == "text"
         trace = stack.tmp_path.joinpath("runtime", "trace.jsonl").read_text(encoding="utf-8")
         assert TEXT not in trace and "/api/agent/ask" not in trace
+
+
+async def test_the_core_client_forwards_brain_turns_but_never_cancel_or_turns():
+    """`FORWARDABLE_PATHS` : le chemin exact `.../brain-turns`, jamais `.../brain-turns/cancel` ni `.../turns`."""
+    from aiohttp import web
+
+    from jarvis.protocol.client import LocalCoreClient
+
+    hits: list[str] = []
+
+    async def record(request):
+        hits.append(request.path)
+        return web.json_response({"ok": True}, status=202)
+
+    app = web.Application()
+    app.router.add_route("*", "/{tail:.*}", record)
+    server = TestServer(app)
+    await server.start_server()
+    client = LocalCoreClient(host="127.0.0.1", port=server.port, token="t" * 48)
+    try:
+        for path in ("/v1/conversations/c0nv-1/brain-turns/cancel", "/v1/conversations/c0nv-1/turns",
+                     "/v1/conversations/c0nv-1/brain-turns/", "/v1/conversations/c0nv-1/brain-turns-x"):
+            with pytest.raises(ValueError):
+                await client.forward_json("POST", path, body=b"{}")
+        assert hits == []
+        assert await client.forward_json("POST", "/v1/conversations/c0nv-1/brain-turns", body=b"{}") == (
+            202, {"ok": True})
+        assert hits == ["/v1/conversations/c0nv-1/brain-turns"]
+    finally:
+        await client.close()
+        await server.close()

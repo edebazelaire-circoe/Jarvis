@@ -276,3 +276,31 @@ async def test_delegation_available(stack):
     types = {event.event_type for event in events}
     assert {T.BRAIN_WORK_STARTED, T.BRAIN_WORK_COMPLETED, T.BRAIN_MESSAGE_PUBLISHED} <= types
     assert T.BRAIN_SPEECH_REQUESTED not in types
+
+
+async def test_no_loop_iteration_between_write_gate_and_submit(stack, monkeypatch):
+    """Étape 4 linéarisée : entre la lecture du verrou et `submit`, aucun `await` ne rend la main à la boucle.
+
+    Le faux `write_gate` laisse passer mais programme, au prochain tour de boucle,
+    le verrouillage (un réveil vocal). `submit` doit entrer avant qu'il ne s'exécute.
+    """
+    voice_absent(stack.core)
+    loop = asyncio.get_running_loop()
+    locked: list[bool] = []
+    seen_at_submit: list[bool] = []
+    real_gate, real_submit = stack.core.voice_channel.write_gate, stack.core.brain.submit
+
+    def gate():
+        reason = real_gate()
+        loop.call_soon(locked.append, True)
+        return reason
+
+    async def submit(turn):
+        seen_at_submit.append(bool(locked))
+        return await real_submit(turn)
+
+    monkeypatch.setattr(stack.core.voice_channel, "write_gate", gate)
+    monkeypatch.setattr(stack.core.brain, "submit", submit)
+    status, _, _ = await stack.send(await stack.foreground())
+    assert status == 202
+    assert seen_at_submit == [False]
