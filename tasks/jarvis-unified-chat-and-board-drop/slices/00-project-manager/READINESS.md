@@ -44,9 +44,34 @@ Les révisions sont dans `../../docs/05-documentation-levels.md`. Les 14 écarts
 - **Paliers QA :** les Slices critiques sont 03, 04 et 07, avec au plus 10 mutants chacune ; toutes les autres sont au palier standard.
 - **Limite des 8192 caractères :** une réponse Brain plus longue n'est pas enregistrée dans les événements, donc pas affichée au chat. Atténuée par le brief et un état honnête dans l'interface, mais pas levée ici. L'Issue est déposée dans `../../Issues/`.
 
-## Baseline de tests
+## Baseline de tests (mesurée)
 
-Mesure en cours à 664d767b, dans le worktree détaché `C:/Projects/jarvis/bucq`, sur `tests/unit` puis `tests/integration`, par lots en avant-plan. Les échecs hérités seront listés ici avant le premier dispatch d'une Slice de code (02 ou 04). La Slice 01 est documentaire et n'en dépend pas.
+Mesure du 2026-10-14 à 664d767b, dans le worktree détaché `bucq`, en lots en avant-plan, avec un `JARVIS_DATA_ROOT` vide. Durée : 2 h 23.
+
+| Répertoire | Fichiers | Réussis | Échoués | Ignorés |
+| --- | --- | --- | --- | --- |
+| `tests/unit` | 801 | 21 457 | 22 | 125 |
+| `tests/integration` | 76 | 648 | 4 | 26 |
+
+**26 échecs hérités**, qui ne relèvent pas de cette tâche ; la liste complète des node IDs est dans `BASELINE-664d767b.md`. Ils touchent les fichiers suivants :
+
+- `test_app.py` (1) ;
+- `test_barehands_interaction_js.py` (2) ;
+- `test_brain_capability_parity.py` (1) ;
+- `test_brain_delegation.py` (1) ;
+- `test_control_center_voice_architecture.py` (1) ;
+- `test_interaction_mode_hud_browser.py` (1) ;
+- `test_memory_context.py` (1) ;
+- `test_presentation_studio_explorer_player_js.py` (6) ;
+- `test_scene_artifacts.py` (1) ;
+- `test_scene_group_drag_js.py` (1) ;
+- `test_scene_query_tools.py` (1) ;
+- `test_tool_brain_choices.py` (1) ;
+- `test_tool_brain_intents.py` (3) ;
+- `test_wake_word_settings_browser.py` (1, `[cosmos]`) ;
+- en intégration : `test_settings_redesign_migration.py` (1), `test_testlab_audio_runners.py` (2), `test_testlab_live_runners.py` (1).
+
+Chaque implémenteur reçoit cette liste avec la consigne « pas à toi, ne pas corriger ». Un échec hors de cette liste est imputable à la Slice en cours.
 
 ## Checks humains
 
