@@ -54,7 +54,7 @@ from jarvis.domain.v2 import (
 )
 from jarvis.domain.brain_notice import NOTICE_TYPING_FIELDS
 from jarvis.domain.brain_context import (
-    BrainBoardContext, BrainContext, BrainMemoryContext, BrainPendingReply, BrainPrefabEvent, BrainPresentationContext,
+    BrainAttachmentsContext, BrainBoardContext, BrainContext, BrainMemoryContext, BrainPendingReply, BrainPrefabEvent, BrainPresentationContext,
     BrainSessionContext, BrainSpeechInterruption,
     BrainWorkContext,
 )
@@ -110,6 +110,7 @@ def _turn_context(
     prefab_events: tuple[BrainPrefabEvent, ...] = (),
     presentation: BrainPresentationContext | None = None,
     memory: BrainMemoryContext | None = None,
+    attachments: BrainAttachmentsContext | None = None,
 ) -> dict[str, object]:
     """Le contexte public que Core joint au tour, et rien d'autre.
 
@@ -165,6 +166,14 @@ def _turn_context(
       dans `docs/memory.md`). **Absent quand il est vide** (réglage coupé, rien de
       rappelé, rien de dégradé) : le contexte est alors celui d'avant, octet pour octet.
 
+    - `channel` (handoff jarvis-unified-chat-and-board-drop, Slice 03) : `"text"`
+      pour un tour écrit au Chat (`source=text`). **Absent sinon**.
+
+    - `attachments` (même handoff, Slice 07) : les pièces jointes du tour écrit —
+      nom d'origine, type reniflé, taille, chemin absolu du payload, lisibilité —
+      et `artifacts_root` (`BrainAttachmentsContext`). Le Control Center en fait
+      un bloc de **données** du brief. **Absent sans pièce** : contexte inchangé.
+
     Rien du tour lui-même n'est ajouté ici : le texte voyage dans `text`, et un
     identifiant de corrélation n'apprendrait rien à un modèle.
     """
@@ -176,6 +185,11 @@ def _turn_context(
         # pour un accord (Bare Hands, calibration adaptative, décision 53).
         # Absent pour tout autre tour : leur contexte est celui d'avant.
         context["source"] = turn.source.value
+    if turn.source is BrainTurnSource.TEXT:
+        # Tour écrit au Chat (docs/chat.md › *What the Brain receives*) : la réponse
+        # sera lue, pas dite ; `build_agent_brief` en fait une ligne. Absent pour
+        # tout autre tour : leur contexte est celui d'avant, octet pour octet.
+        context["channel"] = "text"
     if interaction_mode is not DEFAULT_INTERACTION_MODE:
         context["interaction_mode"] = interaction_mode.value
     if state is not None:
@@ -208,6 +222,8 @@ def _turn_context(
         context["presentation"] = presentation.to_payload()
     if memory is not None and not memory.is_empty:
         context["memory"] = memory.to_payload()
+    if attachments is not None:
+        context["attachments"] = attachments.to_payload()
     return context
 
 
@@ -536,7 +552,8 @@ class ControlCenterBrainBackend:
         return await self._run(turn, context.state, context.work, emit, interruptions=context.interruptions,
                                pending_replies=context.pending_replies, board=context.board,
                                session_context=context.session_context, prefab_events=context.prefab_events,
-                               presentation=context.presentation, memory=context.memory)
+                               presentation=context.presentation, memory=context.memory,
+                               attachments=context.attachments)
 
     async def _run(
         self,
@@ -552,6 +569,7 @@ class ControlCenterBrainBackend:
         prefab_events: tuple[BrainPrefabEvent, ...] = (),
         presentation: BrainPresentationContext | None = None,
         memory: BrainMemoryContext | None = None,
+        attachments: BrainAttachmentsContext | None = None,
     ) -> BrainTurnResult:
         work_id = f"brain-turn:{turn.correlation_id}"
         await emit.emit(
@@ -565,7 +583,7 @@ class ControlCenterBrainBackend:
         )
         outcome = await self._ask(turn.text, _turn_context(turn, state, work, interruptions, pending_replies,
                                                            self._interaction_mode, board, session_context,
-                                                           prefab_events, presentation, memory),
+                                                           prefab_events, presentation, memory, attachments),
                                   conversation=_turn_conversation(turn, work_id))
         if outcome.get("ok"):
             answer, retired = _take_retired(_public_answer(outcome.get("text")), pending_replies)

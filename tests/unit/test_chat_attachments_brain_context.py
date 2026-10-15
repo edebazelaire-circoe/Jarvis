@@ -1,0 +1,212 @@
+"""Pièces jointes d'un tour écrit jusqu'au brief du cerveau (chat Slice 07, `docs/chat.md` › *Attachments*).
+
+Core réel derrière le vrai `LocalProtocolServer` (harnais de
+`test_chat_text_ingress.py`), backend qui garde le contexte que l'adaptateur
+du Control Center enverrait ; le brief est rendu par `build_agent_brief`. Le
+chemin absolu d'une pièce va au brief, jamais dans une réponse HTTP vers le
+navigateur ni dans un événement.
+"""
+
+from __future__ import annotations
+
+import json
+from pathlib import Path
+import uuid
+
+import pytest
+
+from jarvis.adapters.control_center_brain import _turn_context
+from jarvis.domain.artifacts import ArtifactKind
+from jarvis.domain.conversation_events import ConversationEventType as T, encode_conversation_event
+from jarvis.runtime.attachments_brief import BRIEF_ATTACHMENTS_HEADER, with_agent_readability
+from jarvis.runtime.control_center import ControlCenter, build_agent_brief
+from tests.unit.test_chat_text_ingress import RecordingBackend, close_stack, open_stack, voice_absent
+
+PNG = b"\x89PNG\r\n\x1a\n" + bytes(range(256)) * 4
+PDF = b"%PDF-1.4\n" + b"0" * 2000 + b"\n%%EOF\n"
+ZIP = b"PK\x03\x04" + b"\x00" * 3000
+
+
+class AttachmentsBackend(RecordingBackend):
+    async def run_turn_with_context(self, turn, context, emit):
+        result = await super().run_turn_with_context(turn, context, emit)
+        self.contexts[-1] = _turn_context(turn, context.state, context.work, context.interruptions,
+                                          context.pending_replies, board=context.board,
+                                          session_context=context.session_context,
+                                          prefab_events=context.prefab_events, presentation=context.presentation,
+                                          memory=context.memory, attachments=context.attachments)
+        return result
+
+
+class Body:
+    def __init__(self, data: bytes) -> None:
+        self.data = data
+
+    async def read(self, n: int) -> bytes:
+        chunk, self.data = self.data[:n], self.data[n:]
+        return chunk
+
+
+@pytest.fixture
+async def stack(tmp_path):
+    opened, server = await open_stack(tmp_path, AttachmentsBackend())
+    voice_absent(opened.core)
+    try:
+        yield opened
+    finally:
+        await close_stack(opened, server)
+
+
+async def attach(stack, data: bytes, name: str) -> str:
+    outcome = await stack.core.uploads.put(client_upload_id=str(uuid.uuid4()), purpose="chat", agent="claude",
+                                           declared_mime=None, name_header=name, content_length=len(data),
+                                           read=Body(data).read)
+    return outcome.artifact.artifact_id
+
+
+async def test_attachments_reach_the_brief_as_data_with_their_paths(stack):
+    conversation_id = await stack.foreground()
+    ids = [await attach(stack, PDF, "rapport.pdf"), await attach(stack, PNG, "photo.png"),
+           await attach(stack, ZIP, "archive.zip")]
+    status, body, correlation_id = await stack.send(conversation_id, "Résume ces fichiers", attachments=ids)
+    assert status == 202, body
+    await stack.settle()
+    [turn] = stack.backend.calls
+    assert turn.attachments == tuple(ids)
+    context = stack.backend.contexts[-1]
+    root = stack.core.artifacts._payloads.root()
+    assert context["attachments"]["artifacts_root"] == str(root)
+    items = context["attachments"]["items"]
+    assert [item["artifact_id"] for item in items] == ids
+    assert [item["mime_type"] for item in items] == ["application/pdf", "image/png", "application/octet-stream"]
+    assert [Path(item["path"]).name for item in items] == ["upload.pdf", "upload.png", "upload.zip"]
+    assert all(Path(item["path"]).is_absolute() and Path(item["path"]).is_file() for item in items)
+    brief = build_agent_brief(with_agent_readability(context, "claude"), "Résume ces fichiers")
+    block = brief[brief.index(BRIEF_ATTACHMENTS_HEADER):brief.index("[Demande]")]
+    assert f"« rapport.pdf » (application/pdf, 2,0 Ko) : lisible avec Read → {items[0]['path']}" in block
+    assert f"« photo.png » (image/png, 1,0 Ko) : lisible avec Read → {items[1]['path']}" in block
+    assert "« archive.zip » (application/octet-stream, 2,9 Ko) : format non lisible par toi" in block
+    assert items[2]["path"] not in block, "an unreadable file is not handed to the CLI"
+    # Codex ne lit rien : rien n'est annoncé lisible, aucun chemin donné.
+    codex = build_agent_brief(with_agent_readability(context, "codex"), "x")
+    assert "lisible avec Read" not in codex and codex.count("format non lisible par toi") == 3
+    # Rien de cela vers le navigateur ni dans un événement : seulement le nombre de pièces.
+    assert str(root) not in json.dumps(body) and not any(i in json.dumps(body) for i in ids)
+    events = await stack.events(conversation_id)
+    [accepted] = [event for event in events if event.event_type is T.USER_TRANSCRIPT_ACCEPTED]
+    assert accepted.attributes["attachment_count"] == 3
+    dumped = json.dumps([encode_conversation_event(event) for event in events], ensure_ascii=False)
+    assert str(root) not in dumped and "upload." not in dumped
+    assert not any(i in dumped for i in ids) and "rapport.pdf" not in dumped
+    record = await stack.core.brain.admitted_turn(conversation_id, correlation_id)
+    assert record.metadata["attachments"] == ids
+
+
+async def test_turn_without_attachments_keeps_its_context_and_brief_byte_for_byte(stack):
+    conversation_id = await stack.foreground()
+    assert (await stack.send(conversation_id, "Bonjour"))[0] == 202
+    await stack.settle()
+    context = stack.backend.contexts[-1]
+    assert "attachments" not in context and with_agent_readability(context, "claude") is context
+    assert BRIEF_ATTACHMENTS_HEADER not in build_agent_brief(context, "Bonjour")
+    events = await stack.events(conversation_id)
+    [accepted] = [event for event in events if event.event_type is T.USER_TRANSCRIPT_ACCEPTED]
+    assert "attachment_count" not in accepted.attributes
+
+
+async def test_an_attachment_deleted_after_admission_is_said_unavailable(stack):
+    conversation_id = await stack.foreground()
+    artifact_id = await attach(stack, PNG, "photo.png")
+    turn = type("Turn", (), {"attachments": (artifact_id,), "correlation_id": "chat:x"})()
+    await stack.core.artifacts.delete(artifact_id)
+    block = await stack.core.uploads.brain_attachments(turn)
+    [item] = block.items
+    assert (item.path, item.brain_readable) == (None, False)
+    brief = build_agent_brief({"addressing": "addressed", "attachments": block.to_payload()}, "x")
+    assert "pièce indisponible" in brief and conversation_id
+
+
+async def test_unknown_foreign_pending_and_other_kind_attachments_are_refused(stack):
+    conversation_id = await stack.foreground()
+    session = (await stack.core.sessions.current()).session
+    pending = await stack.core.artifacts.create(kind=ArtifactKind.UPLOAD, source="chat",
+                                                jarvis_session_id=session.jarvis_session_id,
+                                                payload_name="upload.png", metadata={"provenance": "chat_attachment"})
+    screenshot = await stack.core.artifacts.create(kind=ArtifactKind.SCREENSHOT, source="test",
+                                                   jarvis_session_id=session.jarvis_session_id,
+                                                   payload_name="shot.png")
+    good = await attach(stack, PNG, "ok.png")
+    cases = [
+        ([good, "jart_" + "a" * 32], 404, "attachment_not_found"),
+        ([pending.artifact_id], 409, "attachment_not_ready"),
+        ([screenshot.artifact_id], 400, "attachment_not_allowed"),
+        ([good, good], 400, "invalid_request"),
+        (["not-an-id"], 400, "invalid_request"),
+        ([f"jart_{i:032x}" for i in range(11)], 400, "too_many_attachments"),
+    ]
+    for attachments, status, code in cases:
+        got, body, _ = await stack.send(conversation_id, attachments=attachments)
+        assert (got, body["error"]["code"]) == (status, code), attachments
+    await stack.settle()
+    assert stack.backend.calls == []
+
+
+async def test_an_attachment_of_another_session_is_not_allowed(stack):
+    old = await attach(stack, PNG, "ancienne.png")
+    await stack.core.sessions.start_new_session()
+    conversation_id = await stack.foreground()
+    status, body, _ = await stack.send(conversation_id, attachments=[old])
+    assert (status, body["error"]["code"]) == (400, "attachment_not_allowed")
+
+
+async def test_replay_compares_the_attachments(stack):
+    conversation_id = await stack.foreground()
+    first, second = await attach(stack, PNG, "a.png"), await attach(stack, PDF, "b.pdf")
+    request_id = str(uuid.uuid4())
+    assert (await stack.send(conversation_id, "Voici", request_id=request_id, attachments=[first]))[0] == 202
+    assert (await stack.send(conversation_id, "Voici", request_id=request_id, attachments=[first]))[0] == 200
+    status, body, _ = await stack.send(conversation_id, "Voici", request_id=request_id, attachments=[first, second])
+    assert (status, body["error"]["code"]) == (409, "chat_request_conflict")
+    await stack.settle()
+    assert len(stack.backend.calls) == 1
+
+
+async def test_attachments_on_a_voice_turn_are_refused(stack):
+    conversation_id = await stack.foreground()
+    good = await attach(stack, PNG, "a.png")
+    status, body, _ = await stack.send(conversation_id, source="realtime", attachments=[good])
+    assert (status, body["error"]["code"]) == (400, "invalid_request")
+
+
+async def test_the_session_payload_names_artifacts_root(stack):
+    payload = await stack.core.sessions.context_brief_payload()
+    assert payload["artifacts_root"] == str(stack.core.artifacts._payloads.root())
+
+
+# ------------------------------------------------------------------ `--add-dir` au Control Center
+
+
+class FakeAgent:
+    def __init__(self, launched: tuple[Path, ...]) -> None:
+        self.add_dirs: tuple[Path, ...] = ()
+        self.launched_add_dirs = launched
+        self.requested_add_dirs = launched
+        self.state = "running"
+
+
+def test_artifacts_root_is_granted_like_sessions_root(tmp_path):
+    runtime = tmp_path / "runtime"
+    runtime.mkdir()
+    center = ControlCenter(runtime_root=runtime, project_root=tmp_path)
+    sessions, artifacts = tmp_path / "data" / "sessions", tmp_path / "data" / "artifacts"
+    center._learn_sessions_root(sessions, source="test")
+    center._learn_artifacts_root(artifacts, source="test")
+    assert center._granted_dirs() == (sessions,), "a missing folder is never passed to --add-dir"
+    artifacts.mkdir(parents=True)
+    center._learn_artifacts_root(artifacts, source="test")
+    assert center._granted_dirs() == (sessions, artifacts)
+    assert all(agent.add_dirs == (sessions, artifacts)
+               for entry in center.board_brains.entries() for agent in entry.agents.values()
+               if hasattr(agent, "add_dirs"))
+    assert center._lacks_workspace_grant(FakeAgent((sessions,))) is True
+    assert center._lacks_workspace_grant(FakeAgent((sessions, artifacts))) is False

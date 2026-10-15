@@ -139,6 +139,15 @@ def artifact_summary(artifact: Artifact) -> dict[str, Any]:
     payload["preview"] = None if preview is None else preview + ("…" if clipped else "")
     if artifact.kind in _TRANSCRIPT_KINDS:
         payload["addressed"] = False
+    if artifact.kind is ArtifactKind.UPLOAD:
+        # Fichier donné par l'utilisateur (Slice 07) : son nom d'origine sert d'aperçu, et `provenance`
+        # (pièce jointe du chat ou dépôt sur un Board) choisit le libellé. Jamais un chemin.
+        name = artifact.metadata.get("original_name")
+        payload["preview"] = name if isinstance(name, str) else None
+        payload["provenance"] = artifact.metadata.get("provenance")
+    elif artifact.kind is ArtifactKind.LINK:
+        # URL déposée sur un Board (Slice 08) : l'aperçu est l'URL (`text`), jamais rien de récupéré.
+        payload["provenance"] = artifact.metadata.get("provenance")
     return redact_paths(payload, keep=USER_AUTHORED_FIELDS)
 
 

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import math
+import uuid
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Awaitable, Callable
@@ -116,6 +117,10 @@ class VoiceRuntimeState:
 #: route absente (Core antérieur, 404 texte -> `http_error`) ou aucune Session
 #: ouverte. `binding_not_found` n'en fait pas partie (base abîmée : levée).
 SESSION_UNSUPPORTED_CODES = frozenset({"http_error", "session_not_found"})
+#: Rapport du canal vocal (unified-chat Slice 04) : à chaque tic de supervision,
+#: et, borné plus court, à l'entrée en CONNECTING avant l'ouverture du micro.
+VOICE_CHANNEL_REPORT_TIMEOUT_S = 2.0
+VOICE_CHANNEL_CONNECTING_TIMEOUT_S = 0.5
 
 class PersistentVoiceRuntime:
     """Wake/background lifecycle. Core is never stopped by mute or inactivity.
@@ -314,6 +319,12 @@ class PersistentVoiceRuntime:
         # exécuté par la boucle `run()` elle-même, qui possède la session.
         self._rebind_target: str | None = None
         self._rebind_requested = asyncio.Event()
+        # Canal vocal vu de Core (unified-chat Slice 04, `docs/chat.md`) : une
+        # incarnation par processus, `seq` strictement croissant ; Core ignore
+        # un rapport plus ancien. Une panne de rapport est dite une fois par épisode.
+        self.voice_incarnation_id = f"voice-{uuid.uuid4().hex}"
+        self._channel_seq = 0
+        self._channel_report_failing = False
         self._visual("idle")
 
     @property
@@ -734,6 +745,9 @@ class PersistentVoiceRuntime:
         self._visual("thinking")
         self._trace("voice.connecting", "Opening Realtime session",
                     data=None if source is None else {"source": source.value})
+        # Le Chat se reverrouille avant que le micro s'ouvre (attente bornée,
+        # un échec n'empêche jamais l'activation).
+        await self.send_voice_channel_report(timeout_s=VOICE_CHANNEL_CONNECTING_TIMEOUT_S)
         context = None
         # Handoff board-session, Slice 03 : la conversation de vérité est celle
         # de la liaison du Board actif dans la Session Core ouverte. Le
@@ -1629,6 +1643,47 @@ class PersistentVoiceRuntime:
             "session_id": getattr(session, "session_id", None),
             "runtime_state": self.runtime.state.value,
         }
+
+    def voice_channel_report(self, ack: dict[str, object] | None = None) -> dict[str, object]:
+        """Le prochain rapport `POST /v1/voice/channel/report` ; chaque appel consomme un `seq`."""
+
+        self._channel_seq += 1
+        return {
+            "schema_version": 1,
+            "voice_incarnation_id": self.voice_incarnation_id,
+            "seq": self._channel_seq,
+            "lifecycle_state": self.runtime.state.value,
+            "conversation_id": self.runtime.conversation_id,
+            "ack": ack,
+        }
+
+    async def send_voice_channel_report(self, *, ack: dict[str, object] | None = None,
+                                        timeout_s: float = VOICE_CHANNEL_REPORT_TIMEOUT_S) -> dict[str, object] | None:
+        """Rapporter l'état du canal à Core ; la réponse (avec la demande en cours), ou `None` si Core n'a pas répondu.
+
+        Ne lève jamais (sauf annulation) : la boucle de Voice et l'activation
+        continuent sans Core. La panne est journalisée une fois par épisode,
+        le retour aussi.
+        """
+
+        sender = getattr(self.core, "voice_channel_report", None)
+        if not callable(sender):
+            return None
+        try:
+            answer = await asyncio.wait_for(sender(self.voice_channel_report(ack), timeout_s=timeout_s), timeout_s)
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:  # noqa: BLE001 - capture: journaled once per episode, never blocks Voice
+            if not self._channel_report_failing:
+                self._channel_report_failing = True
+                self._trace("voice.channel.report_failed", "Voice channel report to Core failed", level="warning",
+                            data={"code": getattr(exc, "code", None) or "voice_channel_report_failed",
+                                  "exception_type": type(exc).__name__})
+            return None
+        if self._channel_report_failing:
+            self._channel_report_failing = False
+            self._trace("voice.channel.report_restored", "Voice channel report to Core restored")
+        return answer if isinstance(answer, dict) else None
 
     async def check_timeout(self) -> bool:
         # Délai à 0 : `expired()` ne devient jamais vrai, donc ni mute ni

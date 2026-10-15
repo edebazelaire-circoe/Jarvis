@@ -1190,6 +1190,73 @@ class BrainMemoryContext:
                                 self.omitted)
 
 
+#: Pièces d'un tour écrit remises au cerveau (= `jarvis.domain.v2.MAX_TURN_ATTACHMENTS`, borne dure).
+MAX_BRAIN_ATTACHMENTS = 64
+_MAX_ATTACHMENT_PATH_CHARS = 1_024
+
+
+@dataclass(frozen=True, slots=True)
+class BrainAttachment:
+    """Une pièce jointe d'un tour écrit (`docs/chat.md` › *Reference given to the Brain*).
+
+    `path` : chemin **absolu** du payload final, `None` quand la pièce n'est
+    plus lisible (supprimée, payload absent) — le brief le dit alors. Ne
+    quitte Core que vers le Control Center, pour le brief : jamais vers le
+    navigateur ni dans un événement. `brain_readable` : calculé à l'envoi pour
+    l'agent du premier plan ; le Control Center le recalcule au rendu.
+    """
+
+    artifact_id: str
+    original_name: str
+    mime_type: str
+    size_bytes: int | None
+    path: str | None
+    brain_readable: bool
+
+    def __post_init__(self) -> None:
+        from jarvis.domain.artifacts import check_artifact_id
+        from jarvis.domain.uploads import clean_display_name
+
+        check_artifact_id(self.artifact_id, "attachment")
+        if not isinstance(self.original_name, str):
+            raise TypeError("original_name must be a string")
+        object.__setattr__(self, "original_name", clean_display_name(self.original_name))
+        if not isinstance(self.mime_type, str) or not self.mime_type or len(self.mime_type) > 100:
+            raise ValueError("mime_type must be a short string")
+        if self.size_bytes is not None and (type(self.size_bytes) is not int or self.size_bytes < 0):
+            raise ValueError("size_bytes must be a non-negative integer")
+        if self.path is not None and (not isinstance(self.path, str) or not self.path
+                                      or len(self.path) > _MAX_ATTACHMENT_PATH_CHARS):
+            raise ValueError("path must be a bounded absolute path or None")
+        if not isinstance(self.brain_readable, bool):
+            raise TypeError("brain_readable must be a bool")
+
+    def to_payload(self) -> dict[str, Any]:
+        return {"artifact_id": self.artifact_id, "original_name": self.original_name, "mime_type": self.mime_type,
+                "size_bytes": self.size_bytes, "path": self.path, "brain_readable": self.brain_readable}
+
+
+@dataclass(frozen=True, slots=True)
+class BrainAttachmentsContext:
+    """Bloc `attachments` d'un tour écrit : ses pièces, dans l'ordre du message, et `artifacts_root`
+    (`<data_root>/artifacts`, que le Control Center accorde au CLI par `--add-dir`). Jamais vide."""
+
+    items: tuple[BrainAttachment, ...]
+    artifacts_root: str
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.items, tuple) or not 1 <= len(self.items) <= MAX_BRAIN_ATTACHMENTS:
+            raise ValueError(f"attachments hold 1..{MAX_BRAIN_ATTACHMENTS} items")
+        if not all(isinstance(item, BrainAttachment) for item in self.items):
+            raise TypeError("attachments must be BrainAttachment")
+        if not isinstance(self.artifacts_root, str) or not self.artifacts_root \
+                or len(self.artifacts_root) > _MAX_ATTACHMENT_PATH_CHARS:
+            raise ValueError("artifacts_root must be a bounded absolute path")
+
+    def to_payload(self) -> dict[str, Any]:
+        return {"artifacts_root": self.artifacts_root, "items": [item.to_payload() for item in self.items]}
+
+
 @dataclass(frozen=True, slots=True)
 class BrainContext:
     """Ce que Core remet au backend pour un tour, en plus du tour lui-même.
@@ -1218,8 +1285,13 @@ class BrainContext:
     #: La mémoire à long terme du tour (Slice 05, `BrainMemoryContext`) ; `None` sans service de mémoire,
     #: réglage coupé ou tour système. Un bloc vide n'est jamais sérialisé.
     memory: BrainMemoryContext | None = None
+    #: Les pièces jointes d'un tour écrit (handoff jarvis-unified-chat-and-board-drop, Slice 07), lues du
+    #: registre au moment du tour ; `None` pour tout tour qui n'en porte pas.
+    attachments: BrainAttachmentsContext | None = None
 
     def __post_init__(self) -> None:
+        if self.attachments is not None and not isinstance(self.attachments, BrainAttachmentsContext):
+            raise TypeError("attachments must be a BrainAttachmentsContext")
         if not isinstance(self.state, BrainWorkingState):
             raise TypeError("state must be a BrainWorkingState")
         if self.work is not None and not isinstance(self.work, BrainWorkContext):

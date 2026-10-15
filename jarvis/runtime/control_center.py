@@ -94,6 +94,7 @@ from jarvis.runtime.tool_brain_ownership import DelegationGate
 from jarvis.runtime.presentation_brief import render_presentation_brief
 from jarvis.runtime.memory_brief import render_memory_brief
 from jarvis.runtime.session_context_brief import render_session_context_brief, sessions_root
+from jarvis.runtime.attachments_brief import attachments_root, render_attachments_brief, with_agent_readability
 from jarvis.runtime.work_brief import render_work_brief
 from jarvis.runtime.subagent_conversation import SubagentConversationScope
 from jarvis.runtime.conversation_event_forwarder import ConversationEventForwarder
@@ -110,6 +111,7 @@ from jarvis.runtime.work_ingress import TrackerWorkObserver, WorkIngressForwarde
 from jarvis.runtime.board_brains import BoardBrain, BoardBrainPool, agent_session_id
 from jarvis.runtime.board_routes import BoardSessionRoutes
 from jarvis.runtime.capture_relay import GUARDED_PREFIXES as CAPTURE_GUARDED_PREFIXES, CaptureRelayRoutes
+from jarvis.runtime.chat_relay import GUARDED_PREFIXES as CHAT_GUARDED_PREFIXES, ChatRelayRoutes
 from jarvis.runtime.memory_relay import GUARDED_PREFIXES as MEMORY_GUARDED_PREFIXES, MemoryRelayRoutes, memory_settings_section
 from jarvis.runtime.memory_settings import MemorySettingsError, apply_memory_settings
 from jarvis.runtime.prefab_relay import GUARDED_PREFIXES as PREFAB_GUARDED_PREFIXES, PrefabRelayRoutes
@@ -297,11 +299,13 @@ AGENT_BINDINGS_ROUTE = "/api/agent/bindings"
 #: contre un cadre de prefab (origine opaque, `Origin: null` refusé).
 #: Presentation Studio (jarvis-interactive-presentation-studio, Slice 05, `presentation_studio_relay.py`) : idem, toutes
 #: les méthodes gardées ; la seule écriture relayée est `.../edits`, acteur forcé à `user`.
+#: Chat (jarvis-unified-chat-and-board-drop, Slice 04, `chat_relay.py`) : état du Chat, canal vocal, puis tours
+#: texte et pièces jointes — toutes les méthodes gardées.
 READ_GUARDED_ROUTES = (CONVERSATIONS_ROUTE, TESTLAB_ROUTE, BAREHANDS_COMMANDS_ROUTE_PREFIX, FULLSCREEN_ROUTE_PREFIX,
                        BAREHANDS_CALIBRATION_SESSION_ROUTE, BAREHANDS_BENCHMARKS_ROUTE, AGENT_BINDINGS_ROUTE,
                        MCP_PLUGINS_ROUTE, *CAPTURE_GUARDED_PREFIXES, *WORKSPACE_GUARDED_PREFIXES, *MEMORY_BRAIN_GUARDED_PREFIXES,
                        *PREFAB_GUARDED_PREFIXES, *REMOTION_GUARDED_PREFIXES, *STUDIO_GUARDED_PREFIXES, *MEMORY_GUARDED_PREFIXES,
-                       *REMOTION_STUDIO_GUARDED_PREFIXES)
+                       *REMOTION_STUDIO_GUARDED_PREFIXES, *CHAT_GUARDED_PREFIXES)
 #: Corps de `POST /api/agent/bindings/activate` : une liaison sérialisée, bornée.
 AGENT_BINDING_MAX_BYTES = 8 * 1024
 #: Adoption de la liaison foreground au démarrage : Core peut démarrer après
@@ -738,6 +742,17 @@ MEMORY_SETTINGS_SCRIPT_FILE = "control_center_memory_settings.js"
 MEMORY_SETTINGS_SCRIPT_MARKER = "/*__CONTROL_CENTER_MEMORY_SETTINGS_JS__*/"
 MEMORY_SCRIPT_FILE = "control_center_memory.js"
 MEMORY_SCRIPT_MARKER = "/*__CONTROL_CENTER_MEMORY_JS__*/"
+#: Chat (jarvis-unified-chat-and-board-drop, Slice 06, `docs/chat.md` › Panel) : modèle pur de la Slice 02
+#: (`window.JarvisChatModel`, testé par node) puis la vue (onglet, panneau, composer), qui ne lit que
+#: `/api/chat/*` et `/api/conversations/events?projection=chat`.
+CHAT_MODEL_SCRIPT_FILE = "control_center_chat_model.js"
+CHAT_MODEL_SCRIPT_MARKER = "/*__CONTROL_CENTER_CHAT_MODEL_JS__*/"
+CHAT_SCRIPT_FILE = "control_center_chat.js"
+CHAT_SCRIPT_MARKER = "/*__CONTROL_CENTER_CHAT_JS__*/"
+#: Dépôt sur le Board affiché (Slice 08, `docs/chat.md` › Board drop) : calque de survol au-dessus de la scène et
+#: plateau des envois ; n'écoute que les glisser portant des fichiers ou un lien, jamais les gestes de la scène.
+BOARD_DROP_SCRIPT_FILE = "control_center_board_drop.js"
+BOARD_DROP_SCRIPT_MARKER = "/*__CONTROL_CENTER_BOARD_DROP_JS__*/"
 
 #: Architectures vocales proposées dans l'onglet « Mode vocal ». Comme le reste
 #: de l'écran, leur libellé vit ici et non dans la page. `{key}` est remplacé
@@ -811,6 +826,15 @@ _BRIEF_STATE_FIELDS: tuple[tuple[str, str], ...] = (
     ("active_work_ids", "Travaux en cours"),
     ("known_public_facts", "Déjà dit à l'utilisateur"),
     ("unresolved_questions", "Questions en suspens"),
+)
+
+
+#: Canal d'un tour écrit au Chat (`context.channel == "text"`, handoff
+#: jarvis-unified-chat-and-board-drop, `docs/chat.md`) : la réponse est lue, pas
+#: dite. 6000 caractères laissent une marge sous la borne de 8192 d'un évènement.
+BRIEF_TEXT_CHANNEL = (
+    "Canal : écrit (chat). Ta réponse sera lue, pas dite : texte simple, 6000 caractères au plus ; "
+    "au-delà, écris un fichier dans le dossier du Context et donne son chemin."
 )
 
 
@@ -1042,6 +1066,9 @@ def build_agent_brief(context: dict[str, Any], text: str) -> str:
         )
     else:
         lines.append("Adressage : direct. La demande t'est adressée.")
+    # Tour écrit au Chat : absent pour tout autre tour, le brief est celui d'avant.
+    if context.get("channel") == "text":
+        lines.append(BRIEF_TEXT_CHANNEL)
     # Slice 07 : le mode de manifestation, joint à chaque tour parce qu'il
     # change à chaud. La règle est tenue par le runtime (`PresentationSpeechGate`,
     # `jarvis/runtime/presentation_speech_gate.py`) ; cette ligne n'est pas la
@@ -1092,6 +1119,8 @@ def build_agent_brief(context: dict[str, Any], text: str) -> str:
             lines.append(BRIEF_DELEGATION_REMINDER)
     # Travail en cours tenu par Core (handoff work-state, tâche 12).
     lines.extend(render_work_brief(context.get("work")))
+    # Pièces jointes d'un tour écrit (chat Slice 07) : un bloc de données, juste avant la demande. Absentes : rien.
+    lines.extend(render_attachments_brief(context.get("attachments")))
     lines.append("[Demande]")
     lines.append(text)
     return "\n".join(lines)
@@ -1307,6 +1336,9 @@ class ControlCenter:
         #: Slice 03), appris de `GET /v1/sessions/current` ou du bloc
         #: `session_context` d'un tour : accordé à chaque CLI par `--add-dir`.
         self._sessions_root: Path | None = None
+        #: `<data_root>/artifacts` de Core (chat Slice 07), appris de `GET /v1/sessions/current` ou du bloc
+        #: `attachments` d'un tour : accordé comme `sessions_root`, pour que le CLI lise les pièces jointes.
+        self._artifacts_root: Path | None = None
         self.board_brains = BoardBrainPool(
             factory=agent_factory or self._build_agent,
             selected_cli=lambda: self._agent_id,
@@ -1351,6 +1383,9 @@ class ControlCenter:
         self.capture_routes = CaptureRelayRoutes(transport=lambda: self.sessions, journal=self.journal)
         # Workspace (board-memory-workspace-inspector, Slices 04-05) : relais des lectures et des mutations.
         self.workspace_routes = WorkspaceRelayRoutes(transport=lambda: self.sessions, journal=self.journal)
+        # Chat (unified-chat Slice 04) : état du Chat et « Passer au chat », relayés à Core sans état propre.
+        self.chat_routes = ChatRelayRoutes(transport=lambda: self.sessions, journal=self.journal,
+                                           agent_id=lambda: self._agent_id)
         self.memory_brain_routes = MemoryBrainRelayRoutes(transport=lambda: self.sessions, journal=self.journal)
         # Catalogue des prefabs (Slice 03 prefab-foundation) : relais des lectures, transport relu à chaque requête.
         self.memory_routes = MemoryRelayRoutes(transport=lambda: self.sessions, journal=self.journal)
@@ -1491,6 +1526,7 @@ class ControlCenter:
             *self.board_routes.routes(),
             *self.capture_routes.routes(),
             *self.workspace_routes.routes(),
+            *self.chat_routes.routes(),
             *self.memory_routes.routes(),
             *self.memory_brain_routes.routes(),
             *self.prefab_routes.routes(),
@@ -1552,8 +1588,8 @@ class ControlCenter:
 
     def _wire_agent(self, entry: BoardBrain, agent_id: str, agent: Any) -> None:
         """Câblage d'un agent du pool, quel que soit son Board (Slice 04a : par entrée)."""
-        if self._sessions_root is not None and hasattr(agent, "add_dirs"):
-            agent.add_dirs = (self._sessions_root,)
+        if self._granted_dirs() and hasattr(agent, "add_dirs"):
+            agent.add_dirs = self._granted_dirs()
         if self.global_context_dir is not None and hasattr(agent, "global_context_dir"):
             agent.global_context_dir = self.global_context_dir
         if self.boards_dir is not None and hasattr(agent, "boards_dir"):
@@ -1792,6 +1828,7 @@ class ControlCenter:
                                   data={"code": exc.code.value})
                 return
             self._learn_sessions_root(sessions_root(payload.get("context")), source="sessions_current")
+            self._learn_artifacts_root(attachments_root(payload.get("context")), source="sessions_current")
             async with self._agent_lock:
                 entry = (self.board_brains.adopt(binding) if self.board_brains.foreground.key is None
                          else self.board_brains.find(binding.conversation_id))
@@ -1809,12 +1846,34 @@ class ControlCenter:
         if root is None or root == self._sessions_root:
             return
         self._sessions_root = root
+        self._grant_dirs()
+        self.journal.emit("agent.workspace_root_learned", "Dossier des Sessions accordé aux cerveaux",
+                          data={"sessions_root": str(root), "source": source})
+
+    def _learn_artifacts_root(self, root: Path | None, *, source: str) -> None:
+        """Retenir `<data_root>/artifacts` (chat Slice 07) et l'accorder aux agents du pool (prochain lancement).
+
+        Seulement un dossier qui existe : `--add-dir` d'un chemin absent ferait échouer le lancement. Il
+        existe dès le premier Artifact à payload ; un tour avec pièce jointe le garantit.
+        """
+
+        if root is None or root == self._artifacts_root or not root.is_dir():
+            return
+        self._artifacts_root = root
+        self._grant_dirs()
+        self.journal.emit("agent.artifacts_root_learned", "Dossier des Artifacts accordé aux cerveaux",
+                          data={"artifacts_root": str(root), "source": source})
+
+    def _granted_dirs(self) -> tuple[Path, ...]:
+        """Dossiers de Core accordés à chaque CLI par `--add-dir` : Sessions, puis Artifacts (pièces jointes)."""
+
+        return tuple(root for root in (self._sessions_root, self._artifacts_root) if root is not None)
+
+    def _grant_dirs(self) -> None:
         for entry in self.board_brains.entries():
             for agent in entry.agents.values():
                 if hasattr(agent, "add_dirs"):
-                    agent.add_dirs = (root,)
-        self.journal.emit("agent.workspace_root_learned", "Dossier des Sessions accordé aux cerveaux",
-                          data={"sessions_root": str(root), "source": source})
+                    agent.add_dirs = self._granted_dirs()
 
     def _lacks_workspace_grant(self, agent: Any) -> bool:
         """Le CLI vivant n'a pas été **lancé avec la demande** `--add-dir <sessions_root>` (Claude seulement).
@@ -1825,10 +1884,11 @@ class ControlCenter:
         changement de racine, jamais à chaque tour (reprise QA Slice 03).
         """
 
-        if self._sessions_root is None or not hasattr(agent, "launched_add_dirs"):
+        granted = self._granted_dirs()
+        if not granted or not hasattr(agent, "launched_add_dirs"):
             return False
         attempted = getattr(agent, "requested_add_dirs", agent.launched_add_dirs)
-        return getattr(agent, "state", None) == "running" and self._sessions_root not in attempted
+        return getattr(agent, "state", None) == "running" and any(root not in attempted for root in granted)
 
     async def _refresh_foreground_launch(self, entry: BoardBrain, *, reason: str) -> bool:
         """Relancer le CLI du foreground s'il doit reprendre un fil gardé ou recevoir le dossier des Sessions.
@@ -2422,7 +2482,10 @@ class ControlCenter:
             PREFABS_SCRIPT_MARKER, page.with_name(PREFABS_SCRIPT_FILE).read_text(encoding="utf-8")
         )
         for marker, name in ((MEMORY_SETTINGS_SCRIPT_MARKER, MEMORY_SETTINGS_SCRIPT_FILE),
-                             (MEMORY_SCRIPT_MARKER, MEMORY_SCRIPT_FILE)):
+                             (MEMORY_SCRIPT_MARKER, MEMORY_SCRIPT_FILE),
+                             (CHAT_MODEL_SCRIPT_MARKER, CHAT_MODEL_SCRIPT_FILE),
+                             (CHAT_SCRIPT_MARKER, CHAT_SCRIPT_FILE),
+                             (BOARD_DROP_SCRIPT_MARKER, BOARD_DROP_SCRIPT_FILE)):
             html = html.replace(marker, page.with_name(name).read_text(encoding="utf-8"))
         if self.visualizer_url:
             html = html.replace("__VISUALIZER_URL__", self.visualizer_url)
@@ -6432,6 +6495,14 @@ class ControlCenter:
             if self._lacks_workspace_grant(self.agent):
                 async with self._agent_lock:
                     await self._refresh_foreground_launch(self.board_brains.foreground, reason="workspace_grant")
+        if isinstance(context, dict) and isinstance(context.get("attachments"), dict):
+            # Pièces jointes (chat Slice 07) : le CLI doit avoir reçu `--add-dir <artifacts_root>` pour les
+            # lire. Même politique : relancé avant le tour seulement si rien n'est en vol, sinon au prochain
+            # point sûr (et dit) ; le brief dit la vérité dans les deux cas (`bypassPermissions` lit déjà).
+            self._learn_artifacts_root(attachments_root(context.get("attachments")), source="turn")
+            if self._lacks_workspace_grant(self.agent):
+                async with self._agent_lock:
+                    await self._refresh_foreground_launch(self.board_brains.foreground, reason="artifacts_grant")
         # **Mode calibration** (Slice 06 adaptative, décision 51). La séance est
         # tenue ici — c'est la page qui la déclare au Control Center —, donc le
         # drapeau est joint ici plutôt que par Core : le faire transiter par Core
@@ -6478,6 +6549,9 @@ class ControlCenter:
 
         settings = self._settings()
         behavior_active = bool(agent_behavior.prompt_instruction(settings))
+        if isinstance(context, dict):
+            # Pièces jointes (chat Slice 07) : lisibilité recalculée pour l'agent qui servira ce tour.
+            context = with_agent_readability(context, self._agent_id)
         if isinstance(context, dict) and load_scene_gate(settings)["enabled"]:
             # Seulement quand `jarvis-display` est déclaré au CLI : sans scène, aucun outil d'écran à présenter.
             view = tool_brain_view(self.runtime_root)

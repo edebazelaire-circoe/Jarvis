@@ -22,7 +22,7 @@ from jarvis.domain.conversation_event_search import SEARCH_PARAMS, encode_search
 from jarvis.core.conversation_event_query import ConversationEventBusyError
 from jarvis.domain.conversation_event_store import ConversationEventStoreError
 from jarvis.domain.conversation_transcript import TranscriptTooLargeError
-from jarvis.domain.conversation_events import ConversationEventError
+from jarvis.domain.conversation_events import MAX_CONTENT_CHARS, ConversationEventError
 from jarvis.domain.interaction_mode import InteractionModeError
 from jarvis.domain.brain_context import BrainPresentationContext
 from jarvis.core.interaction_mode import supported_modes
@@ -34,6 +34,7 @@ from jarvis.ports.workspace_board import BoardStoreError
 from jarvis.domain.mcp_plugins import McpErrorCode, McpPlugin, McpPluginError
 from jarvis.ports.mcp_plugins import McpPluginStoreError
 from jarvis.domain.live_lifecycle import LiveCloseEvidence, LiveLifecycleConflict, LiveLifecycleState
+from jarvis.domain.voice_channel import VOICE_CHANNEL_SCHEMA_VERSION
 from jarvis.ports.scene import ScenePatchWindow, SceneStoreError, SceneUnavailableError
 from jarvis.protocol import scene_wire
 from jarvis.protocol.capture_routes import CaptureProtocolRoutes
@@ -54,6 +55,7 @@ from jarvis.protocol.presentation_studio_template_routes import PresentationStud
 from jarvis.protocol.presentation_studio_upgrades_routes import PresentationStudioUpgradesRoutes
 from jarvis.protocol.presentation_studio_variants_routes import PresentationStudioVariantsRoutes
 from jarvis.protocol.workspace_routes import WorkspaceProtocolRoutes
+from jarvis.protocol.upload_routes import UploadProtocolRoutes
 from jarvis.core.scene_capture import SceneCaptureError
 from jarvis.core.ui_intents import UiIntentRefused
 from jarvis.domain.scene_capture import CAPTURE_CANCELLED, MAX_CAPTURE_BYTES, MAX_CAPTURE_REQUEST_BYTES
@@ -70,6 +72,8 @@ TEXT_CHUNK_CHARS = 64 * 1024
 MAX_BOARD_BODY_BYTES = 128 * 1024
 #: Largest `/v1/mcp/*` body (ARCH §4.3), checked in the handler.
 MAX_MCP_BODY_BYTES = 256 * 1024
+#: Largest `/v1/voice/channel/*` body: a report is a few hundred bytes.
+MAX_VOICE_CHANNEL_BODY_BYTES = 4 * 1024
 
 
 def _optional_text(value: object, field: str) -> str | None:
@@ -99,6 +103,12 @@ def _presentation_context(value: object) -> BrainPresentationContext | None:
     if value is None:
         return None
     return BrainPresentationContext.from_payload(value)
+
+
+def _chat_refusal(status: int, code: str, message: str, **details: str) -> web.Response:
+    """Refus stable d'un tour écrit (`docs/chat.md` › *Error codes*) ; `details` : `reason`, `current_conversation_id`."""
+
+    return web.json_response({"error": {"code": code, "message": message, **details}}, status=status)
 
 
 def _live_enum(enum_type, value: object, field: str):
@@ -205,6 +215,10 @@ class LocalProtocolServer:
             web.get("/v1/work/snapshot", self.work_snapshot),
             web.get("/v1/interaction-mode", self.interaction_mode),
             web.post("/v1/interaction-mode", self.set_interaction_mode),
+            # Canal vocal et état du Chat (jarvis-unified-chat-and-board-drop, Slice 04, `docs/chat.md`).
+            web.post("/v1/voice/channel/report", self.voice_channel_report),
+            web.post("/v1/voice/channel/disable", self.voice_channel_disable),
+            web.get("/v1/chat/state", self.chat_state),
             # Boards (handoff board-session, Slice 02). `active` before
             # `{board_id}`: aiohttp matches in registration order.
             web.get("/v1/boards", self.list_boards),
@@ -257,6 +271,8 @@ class LocalProtocolServer:
             # Slice 09) : `jarvis/protocol/capture_routes.py`, refus codés par leur propre garde.
             *CaptureProtocolRoutes(self.core).routes(),
             *WorkspaceProtocolRoutes(self.core).routes(),
+            # Téléversements (jarvis-unified-chat-and-board-drop, Slice 07) : `upload_routes.py`, corps lu en flux.
+            *UploadProtocolRoutes(getattr(self.core, "uploads", None)).routes(),
             # Mémoire à long terme (jarvis-memory-intelligence-knowledge, Slice 05) : lectures seules, `memory_routes.py`.
             *MemoryProtocolRoutes(self.core).routes(),
             # Catalogue des prefabs (jarvis-scene-window-prefab-foundation, Slice 03) : lectures ; les routes
@@ -634,7 +650,13 @@ class LocalProtocolServer:
           inconnue, `addressing="ambient"`) ;
         - 401 / 426 : authentification ou version de protocole (middleware) ;
         - 404 : conversation inconnue ;
+        - 409 (`source=text` seulement, `docs/chat.md`) : `chat_conversation_not_foreground`,
+          `chat_input_locked` (`reason`), `chat_request_conflict` ; 400 `chat_text_too_long` ;
         - 503 : Core en cours d'arrêt, aucun nouveau tour n'est accepté.
+
+        Tour écrit (`source=text`) : gardes dans l'ordre de `docs/chat.md` (validation,
+        rejeu, binding courant, verrou vocal synchrone) avant `submit`. Les autres
+        sources gardent exactement le chemin d'avant.
         """
 
         body = await request.json()
@@ -652,6 +674,21 @@ class LocalProtocolServer:
         # `ambient` est refusé par le domaine, donc rendu 400 ici : un tour non
         # adressé n'entre pas dans le cerveau par ce chemin ni par un autre.
         addressing = _optional_text(body.get("addressing"), "addressing") or AddressingDecision.ADDRESSED.value
+        text_turn = source == BrainTurnSource.TEXT.value
+        # Étape 1 (tour écrit) : bornes du texte et des pièces jointes, avant toute lecture d'état.
+        if text_turn and len(content) > MAX_CONTENT_CHARS:
+            return _chat_refusal(400, "chat_text_too_long", f"content exceeds {MAX_CONTENT_CHARS} characters")
+        attachments = body.get("attachments")
+        if attachments is not None and not isinstance(attachments, list):
+            raise ValueError("attachments must be a list of Artifact ids")
+        attachments = tuple(attachments or ())
+        if attachments and not text_turn:
+            raise ValueError("attachments are accepted on text turns only")
+        if attachments:
+            uploads = getattr(self.core, "uploads", None)
+            limit = uploads.bounds.max_attachments if uploads is not None else 0
+            if len(attachments) > limit:
+                return _chat_refusal(400, "too_many_attachments", f"a message carries at most {limit} attachments")
         turn = BrainTurnInput(
             conversation_id=request.match_info["conversation_id"],
             text=content,
@@ -664,18 +701,84 @@ class LocalProtocolServer:
             # Absente ou nulle : le tour d'avant. Hors forme : `ValueError`,
             # donc 400 — jamais transmise à moitié à un modèle.
             presentation_context=_presentation_context(body.get("presentation_context")),
+            # Ids d'Artifact distincts (`_check_attachments` : forme, doublon -> 400) ; existence, nature,
+            # Session et état vérifiés par `_text_turn_guards` (étape 5).
+            attachments=attachments,
         )
+        if text_turn:
+            refused, replay = await self._text_turn_guards(turn, body)
+            if refused is not None:
+                return refused
+            # Étape 4 (linéarisation de la course « envoi / réveil vocal ») : lecture
+            # synchrone du verrou, **aucun `await`** d'ici à `submit`. Un rejeu ne la
+            # passe pas : un renvoi après une bascule vocale reste un 200 doublon.
+            reason = None if replay else self.core.voice_channel.write_gate()
+            if reason is not None:
+                return _chat_refusal(409, "chat_input_locked", "the voice channel holds the conversation",
+                                     reason=reason)
         try:
             acceptance = await self.core.brain.submit(turn)
+        except ValueError as exc:
+            # Même `client_request_id`, autre texte, après un redémarrage (le rejeu
+            # mémoire n'existe plus) : `persist_turn` refuse l'identité.
+            if text_turn and "admission identity conflicts" in str(exc):
+                return _chat_refusal(409, "chat_request_conflict", "this client_request_id was sent with another content")
+            raise
         except RuntimeError as exc:
             # `submit()` refuse tout nouveau tour pendant l'arrêt de Core. Ce
             # n'est pas une erreur de l'appelant : la surface peut réessayer sur
             # une instance vivante, avec la même corrélation.
             return web.json_response({"error": {"code": "core_stopping", "message": str(exc)}}, status=503)
+        if text_turn and acceptance.duplicate:
+            # Deux envois concurrents, même `client_request_id`, textes différents : le
+            # second a passé le rejeu avant que le premier soit durable, et le doublon
+            # mémoire de `submit` ne compare pas le texte. Le tour durable tranche.
+            record = await self.core.brain.admitted_turn(turn.conversation_id, turn.correlation_id)
+            if record is None or record.content != turn.text:
+                return _chat_refusal(409, "chat_request_conflict", "this client_request_id was sent with another content")
         source = await self.core.outcomes.source(turn.conversation_id, acceptance.correlation_id)
         payload = {**jsonable(acceptance), **await self.core.brain.speech_context(turn.conversation_id),
                    "source": source.to_payload() if source else None}
         return web.json_response(payload, status=200 if acceptance.duplicate else 202)
+
+    async def _text_turn_guards(self, turn: BrainTurnInput, body: dict) -> tuple[web.Response | None, bool]:
+        """Étapes 1 à 3 de `docs/chat.md` › *Core: same `brain-turns` route* pour un tour écrit.
+
+        Rend `(refus, rejeu)` : un refus stable, ou `rejeu=True` quand le tour durable
+        de cette corrélation existe déjà (les gardes suivantes ne s'appliquent pas,
+        `submit` rendra le doublon). Aucun message ne cite le texte du tour.
+        """
+
+        # 1. Validation : faite par `submit_brain_turn` avant de construire le tour (texte, nombre et
+        # forme des pièces jointes).
+        # 2. Rejeu d'abord : même identité durable que `persist_turn`.
+        record = await self.core.brain.admitted_turn(turn.conversation_id, turn.correlation_id)
+        if record is not None:
+            if (record.content != turn.text or record.metadata.get("source") != turn.source.value
+                    or record.metadata.get("attachments") != (list(turn.attachments) or None)):
+                return _chat_refusal(409, "chat_request_conflict",
+                                     "this client_request_id was sent with another content"), False
+            return None, True
+        # 3. Le tour vise la conversation du binding courant, celle de Voice.
+        unavailable = self._sessions_unavailable()
+        if unavailable is not None:
+            return unavailable, False
+        view = await self.core.sessions.current()
+        current = view.binding.conversation_id
+        if current != turn.conversation_id:
+            return _chat_refusal(409, "chat_conversation_not_foreground",
+                                 "the conversation is not the one of the current Session binding",
+                                 current_conversation_id=current), False
+        # 5. Pièces jointes (Slice 07) : vérifiées **avant** l'étape 4, qui doit rester la dernière lecture
+        # avant `submit` sans `await` entre les deux (`docs/chat.md` : point de linéarisation).
+        if turn.attachments:
+            uploads = getattr(self.core, "uploads", None)
+            if uploads is None:
+                return _chat_refusal(503, "core_unavailable", "attachments are not wired in this Core"), False
+            refusal = await uploads.attachment_refusal(turn.attachments, view.session.jarvis_session_id)
+            if refusal is not None:
+                return _chat_refusal(refusal.status, refusal.code, refusal.message), False
+        return None, False
 
     async def cancel_brain_turn(self, request: web.Request) -> web.Response:
         """Abandonner la réponse d'un tour en vol (barge-in pendant la réflexion).
@@ -839,12 +942,14 @@ class LocalProtocolServer:
         `wait_ms` (0 to 25000) turns the request into a long-poll that returns as
         soon as a page holds visible events, or after `wait_ms` with the cursor
         advanced past what was scanned; it also ends when the client disconnects.
+        `projection=chat` keeps the Chat's events only (`docs/chat.md`, "Reading").
         """
         query = events_query(query_params(request.query.items(), EVENTS_PARAMS))
         try:
             page = await self.core.conversation_event_queries.events(
                 query["conversation_id"], after_sequence=query["after_sequence"], limit=query["limit"],
-                visibility=query["visibility"], wait_s=query["wait_ms"] / 1000, interrupt=self._stopping,
+                visibility=query["visibility"], projection=query["projection"], wait_s=query["wait_ms"] / 1000,
+                interrupt=self._stopping,
                 # aiohttp does not cancel a handler whose client left: stop holding the wait ourselves.
                 disconnected=lambda: request.transport is None or request.transport.is_closing())
         except ConversationEventStoreError:
@@ -1034,6 +1139,44 @@ class LocalProtocolServer:
         # module repose sur le fait qu'une révision ordonne des observations.
         return web.json_response({**state.to_payload(), "modes": supported_modes(),
                                   "disposition": disposition.value})
+
+    # ------------------------------------------------------------ Canal vocal et Chat (Slice 04)
+
+    @staticmethod
+    async def _voice_channel_body(request: web.Request) -> object:
+        if request.query:
+            raise ValueError("unexpected voice channel query")
+        raw = await request.read()
+        if len(raw) > MAX_VOICE_CHANNEL_BODY_BYTES:
+            raise ValueError(f"voice channel request exceeds {MAX_VOICE_CHANNEL_BODY_BYTES} bytes")
+        return loads_strict_json(raw, invalid_message="invalid voice channel JSON")
+
+    async def voice_channel_report(self, request: web.Request) -> web.Response:
+        """`POST /v1/voice/channel/report` (Voice) : rapport retenu ou ignoré ; la réponse porte la demande en cours."""
+
+        return web.json_response(self.core.voice_channel.report(await self._voice_channel_body(request)))
+
+    async def voice_channel_disable(self, request: web.Request) -> web.Response:
+        """`POST /v1/voice/channel/disable` (Control Center) : « Passer au chat ». 202 demande, 200 rien à faire.
+
+        Ne touche ni Session, ni Board, ni Brain, ni `InteractionMode` : Voice coupe sa propre session.
+        """
+
+        status, payload = self.core.voice_channel.disable(await self._voice_channel_body(request))
+        return web.json_response(payload, status=status)
+
+    async def chat_state(self, request: web.Request) -> web.Response:
+        """`GET /v1/chat/state` : liaison courante (Session, Board, conversation) et bloc `voice` avec le verrou."""
+
+        if request.query:
+            raise ValueError("unexpected chat state query")
+        unavailable = self._sessions_unavailable()
+        if unavailable is not None:
+            return unavailable
+        binding = (await self.core.sessions.current()).binding
+        return web.json_response({"schema_version": VOICE_CHANNEL_SCHEMA_VERSION,
+                                  "jarvis_session_id": binding.jarvis_session_id, "board_id": binding.board_id,
+                                  "conversation_id": binding.conversation_id, **self.core.voice_channel.snapshot()})
 
     # ------------------------------------------------------------ Boards (Slice 02)
 

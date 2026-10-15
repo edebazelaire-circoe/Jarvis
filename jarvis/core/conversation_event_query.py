@@ -57,7 +57,7 @@ from typing import Any, TypeVar
 from jarvis.domain.conversation_event_export import (
     encode_export_line, export_header, export_trailer,
 )
-from jarvis.domain.conversation_event_query import encode_stored_event, filter_visibility
+from jarvis.domain.conversation_event_query import encode_stored_event, filter_projection, filter_visibility
 from jarvis.domain.conversation_event_search import ConversationEventSearchPage, SearchQuery
 from jarvis.domain.conversation_event_store import (
     ConversationEventPage, ConversationEventStoreError, ConversationEventSummaryPage,
@@ -184,10 +184,11 @@ class ConversationEventQueryService:
         return filter_visibility(page, visibility)
 
     async def events(self, conversation_id: str, *, after_sequence: int, limit: int,
-                     visibility: ConversationVisibility | None, wait_s: float = 0.0,
+                     visibility: ConversationVisibility | None, projection: str | None = None,
+                     wait_s: float = 0.0,
                      interrupt: asyncio.Event | None = None,
                      disconnected: Callable[[], bool] | None = None) -> ConversationEventPage:
-        """Events after `after_sequence`; with `wait_s > 0`, wait for visible events (long-poll)."""
+        """Events after `after_sequence`; with `wait_s > 0`, wait for events left by the filters (long-poll)."""
         if wait_s < 0:
             raise ValueError("wait must not be negative")
         deadline = self._now() + wait_s
@@ -198,7 +199,8 @@ class ConversationEventQueryService:
                     conversation_id, after_sequence=cursor, limit=limit))
                 skipped += page.skipped_rows
                 cursor = page.next_cursor
-                result = replace(filter_visibility(page, visibility), skipped_rows=skipped)
+                result = replace(filter_projection(filter_visibility(page, visibility), projection),
+                                 skipped_rows=skipped)
                 if (result.events or self._now() >= deadline or (interrupt is not None and interrupt.is_set())
                         or (disconnected is not None and disconnected())):
                     return result

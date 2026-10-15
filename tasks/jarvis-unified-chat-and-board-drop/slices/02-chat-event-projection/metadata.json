@@ -1,0 +1,16 @@
+{
+  "slice_id": "02-chat-event-projection",
+  "title": "Projection utilisateur/Brain sans stockage parallèle",
+  "task_type": "waived-by-agent-0",
+  "work_intent": "backend: Dériver le fil de chat depuis le ledger existant, sans jamais copier l'historique.",
+  "dependencies": [
+    "01-canonical-contracts"
+  ],
+  "task_type_blocker": "Levé par l'agent 0 (2026-10-14) : aucun vocabulaire Workspace Task Type dans le dépôt ; précédent jarvis-bare-hands-ui-calibration-refinement.",
+  "work_agent_assignment": "one Work Agent, resolved by host after Task Type",
+  "frontend_claude_preferred": false,
+  "skills_required": [
+    "/caveman",
+    "/coding-guideline"
+  ]
+}

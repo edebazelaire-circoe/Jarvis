@@ -107,6 +107,18 @@ it cannot quietly stop guarding.
 `shows` / `speaks` expose the two channels. `silent` is a legitimate outcome, not a missing one: decision 09 requires
 that a successful brain turn be able to request no speech at all.
 
+### Voice channel and Chat
+
+The Chat's voice lock (handoff jarvis-unified-chat-and-board-drop,
+[chat.md](chat.md) › *Voice channel*) is a third axis, not this one.
+`VoiceChannelService` (Core, in memory) says whether the voice runtime is
+`absent`, `background`, `connecting`, `active`, `error`, `switching` or
+`unknown`, and therefore whether a typed turn may be admitted. It is **not**
+`InteractionMode` (it never reads nor sets the mode, and disabling voice never
+changes it) and **not** `OutputDisposition` (a text turn's silence is a
+per-correlation disposition, `text_channel`, decided in Core's speech
+emission, not a mode-driven presentation outcome).
+
 ## Presentation policy matrix
 
 Encoded as data in `PRESENTATION_POLICY`, read by the runtime (Slice 07) through `policy_for()`

@@ -1,0 +1,2558 @@
+{
+  "schema": "jarvis.chat_projection.cases",
+  "schema_version": 1,
+  "description": "Shared Chat projection cases (docs/chat.md, Projection). `events` are stored conversation events encoded exactly as `encode_stored_event` (one row of a `GET /v1/conversation-events` page); `expected` is the ordered output of `project_chat` for `conversation_id`. Played by pytest (jarvis/domain/chat_projection.py) and by node (jarvis/runtime/control_center_chat_model.js). Timestamps synthetic, ids constructed.",
+  "item_fields": [
+    "role",
+    "event_id",
+    "sequence",
+    "correlation_id",
+    "text",
+    "kind",
+    "status",
+    "failure_code",
+    "collapsed_event_ids"
+  ],
+  "cases": [
+    {
+      "name": "empty",
+      "description": "No stored event: no item.",
+      "conversation_id": "conv-chat-a",
+      "events": [],
+      "expected": []
+    },
+    {
+      "name": "user_addressed",
+      "description": "An `addressed` user turn and a user turn without `addressing` are both shown at once; the Brain reply is a bubble.",
+      "conversation_id": "conv-chat-a",
+      "events": [
+        {
+          "sequence": 1,
+          "recorded_at": "2026-10-14T09:00:01.005Z",
+          "event": {
+            "schema_version": 1,
+            "event_id": "cev-4c3116095703ed113e33abced8fd2be93321bd7a7c27d7bb82ca64797b2e2161",
+            "event_type": "user.transcript.accepted",
+            "actor": "user",
+            "conversation_id": "conv-chat-a",
+            "producer": "core.voice_admission",
+            "visibility": "public",
+            "occurred_at": "2026-10-14T09:00:01.000Z",
+            "started_at": null,
+            "ended_at": null,
+            "span_id": null,
+            "session_id": "voice-session-1",
+            "turn_id": "brain-turn-chat-11111111-1111-4111-8111-111111111111",
+            "correlation_id": "chat:11111111-1111-4111-8111-111111111111",
+            "parent_event_id": null,
+            "task_id": null,
+            "work_id": null,
+            "speech_id": null,
+            "outcome_id": null,
+            "trace_ref": null,
+            "content": "Bonjour Jarvis",
+            "attributes": {
+              "source": "text",
+              "addressing": "addressed"
+            }
+          }
+        },
+        {
+          "sequence": 2,
+          "recorded_at": "2026-10-14T09:00:02.005Z",
+          "event": {
+            "schema_version": 1,
+            "event_id": "cev-d3bb8ac2f8d36ea168b31d33864456b52ad80b1a40a6c08a855cfd52fad777ef",
+            "event_type": "brain.message.published",
+            "actor": "brain",
+            "conversation_id": "conv-chat-a",
+            "producer": "core.brain_outcomes",
+            "visibility": "public",
+            "occurred_at": "2026-10-14T09:00:02.000Z",
+            "started_at": null,
+            "ended_at": null,
+            "span_id": null,
+            "session_id": null,
+            "turn_id": null,
+            "correlation_id": "chat:11111111-1111-4111-8111-111111111111",
+            "parent_event_id": null,
+            "task_id": null,
+            "work_id": null,
+            "speech_id": null,
+            "outcome_id": "outcome-2",
+            "trace_ref": {
+              "source": "runtime_journal",
+              "journal_kind": "core.brain.outcome_retained",
+              "join_keys": [
+                "correlation_id",
+                "outcome_id"
+              ]
+            },
+            "content": "Bonjour. Que puis-je faire ?",
+            "attributes": {
+              "kind": "turn_result",
+              "status": "completed"
+            }
+          }
+        },
+        {
+          "sequence": 3,
+          "recorded_at": "2026-10-14T09:00:03.005Z",
+          "event": {
+            "schema_version": 1,
+            "event_id": "cev-a145b6679846770bdc549d9abfd819be5a16d9627eaa11df90c7c95414da49a2",
+            "event_type": "user.transcript.accepted",
+            "actor": "user",
+            "conversation_id": "conv-chat-a",
+            "producer": "core.voice_admission",
+            "visibility": "public",
+            "occurred_at": "2026-10-14T09:00:03.000Z",
+            "started_at": null,
+            "ended_at": null,
+            "span_id": null,
+            "session_id": "voice-session-1",
+            "turn_id": "brain-turn-corr-voice-3",
+            "correlation_id": "corr-voice-3",
+            "parent_event_id": null,
+            "task_id": null,
+            "work_id": null,
+            "speech_id": null,
+            "outcome_id": null,
+            "trace_ref": null,
+            "content": "Et la météo ?",
+            "attributes": {
+              "source": "realtime"
+            }
+          }
+        }
+      ],
+      "expected": [
+        {
+          "role": "user",
+          "event_id": "cev-4c3116095703ed113e33abced8fd2be93321bd7a7c27d7bb82ca64797b2e2161",
+          "sequence": 1,
+          "correlation_id": "chat:11111111-1111-4111-8111-111111111111",
+          "text": "Bonjour Jarvis",
+          "kind": null,
+          "status": null,
+          "failure_code": null,
+          "collapsed_event_ids": []
+        },
+        {
+          "role": "brain",
+          "event_id": "cev-d3bb8ac2f8d36ea168b31d33864456b52ad80b1a40a6c08a855cfd52fad777ef",
+          "sequence": 2,
+          "correlation_id": "chat:11111111-1111-4111-8111-111111111111",
+          "text": "Bonjour. Que puis-je faire ?",
+          "kind": "turn_result",
+          "status": "completed",
+          "failure_code": null,
+          "collapsed_event_ids": []
+        },
+        {
+          "role": "user",
+          "event_id": "cev-a145b6679846770bdc549d9abfd819be5a16d9627eaa11df90c7c95414da49a2",
+          "sequence": 3,
+          "correlation_id": "corr-voice-3",
+          "text": "Et la météo ?",
+          "kind": null,
+          "status": null,
+          "failure_code": null,
+          "collapsed_event_ids": []
+        }
+      ]
+    },
+    {
+      "name": "uncertain_promoted",
+      "description": "An `uncertain` user turn is shown once a `brain.message.published` of the same `correlation_id` exists, at its own sequence (before the reply).",
+      "conversation_id": "conv-chat-a",
+      "events": [
+        {
+          "sequence": 1,
+          "recorded_at": "2026-10-14T09:00:01.005Z",
+          "event": {
+            "schema_version": 1,
+            "event_id": "cev-75b6abe0f6446c9b107404538b662b675be86d17eb471d5f1acdcfccb56cf052",
+            "event_type": "user.transcript.accepted",
+            "actor": "user",
+            "conversation_id": "conv-chat-a",
+            "producer": "core.voice_admission",
+            "visibility": "public",
+            "occurred_at": "2026-10-14T09:00:01.000Z",
+            "started_at": null,
+            "ended_at": null,
+            "span_id": null,
+            "session_id": "voice-session-1",
+            "turn_id": "brain-turn-corr-unc-1",
+            "correlation_id": "corr-unc-1",
+            "parent_event_id": null,
+            "task_id": null,
+            "work_id": null,
+            "speech_id": null,
+            "outcome_id": null,
+            "trace_ref": null,
+            "content": "tu peux noter ça",
+            "attributes": {
+              "source": "realtime",
+              "addressing": "uncertain"
+            }
+          }
+        },
+        {
+          "sequence": 2,
+          "recorded_at": "2026-10-14T09:00:02.005Z",
+          "event": {
+            "schema_version": 1,
+            "event_id": "cev-a828bca1399ebd33061ae678eff1ae764ae23e37f58825b46e2fa227e090fe77",
+            "event_type": "brain.turn.accepted",
+            "actor": "brain",
+            "conversation_id": "conv-chat-a",
+            "producer": "core.brain_service",
+            "visibility": "diagnostic",
+            "occurred_at": "2026-10-14T09:00:02.000Z",
+            "started_at": null,
+            "ended_at": null,
+            "span_id": null,
+            "session_id": null,
+            "turn_id": "brain-turn-corr-unc-1",
+            "correlation_id": "corr-unc-1",
+            "parent_event_id": null,
+            "task_id": null,
+            "work_id": null,
+            "speech_id": null,
+            "outcome_id": null,
+            "trace_ref": null,
+            "content": null,
+            "attributes": {}
+          }
+        },
+        {
+          "sequence": 3,
+          "recorded_at": "2026-10-14T09:00:03.005Z",
+          "event": {
+            "schema_version": 1,
+            "event_id": "cev-7bb1b739b8b1640f4fac49d9a82293eee1e5fbbdd28eb47fb362b14ea57b97d9",
+            "event_type": "brain.message.published",
+            "actor": "brain",
+            "conversation_id": "conv-chat-a",
+            "producer": "core.brain_outcomes",
+            "visibility": "public",
+            "occurred_at": "2026-10-14T09:00:03.000Z",
+            "started_at": null,
+            "ended_at": null,
+            "span_id": null,
+            "session_id": null,
+            "turn_id": null,
+            "correlation_id": "corr-unc-1",
+            "parent_event_id": null,
+            "task_id": null,
+            "work_id": null,
+            "speech_id": null,
+            "outcome_id": "outcome-unc-1",
+            "trace_ref": {
+              "source": "runtime_journal",
+              "journal_kind": "core.brain.outcome_retained",
+              "join_keys": [
+                "correlation_id",
+                "outcome_id"
+              ]
+            },
+            "content": "C'est noté.",
+            "attributes": {
+              "kind": "turn_result",
+              "status": "completed"
+            }
+          }
+        }
+      ],
+      "expected": [
+        {
+          "role": "user",
+          "event_id": "cev-75b6abe0f6446c9b107404538b662b675be86d17eb471d5f1acdcfccb56cf052",
+          "sequence": 1,
+          "correlation_id": "corr-unc-1",
+          "text": "tu peux noter ça",
+          "kind": null,
+          "status": null,
+          "failure_code": null,
+          "collapsed_event_ids": []
+        },
+        {
+          "role": "brain",
+          "event_id": "cev-7bb1b739b8b1640f4fac49d9a82293eee1e5fbbdd28eb47fb362b14ea57b97d9",
+          "sequence": 3,
+          "correlation_id": "corr-unc-1",
+          "text": "C'est noté.",
+          "kind": "turn_result",
+          "status": "completed",
+          "failure_code": null,
+          "collapsed_event_ids": []
+        }
+      ]
+    },
+    {
+      "name": "uncertain_declined",
+      "description": "An `uncertain` turn the Brain declined (`[pas-pour-moi]`: no public outcome) is never promoted, even when other correlations get replies.",
+      "conversation_id": "conv-chat-a",
+      "events": [
+        {
+          "sequence": 1,
+          "recorded_at": "2026-10-14T09:00:01.005Z",
+          "event": {
+            "schema_version": 1,
+            "event_id": "cev-66fb697062513bb5c5ce01ac557c4a64ff89e810c8c9bbf84b1d0f929a257945",
+            "event_type": "user.transcript.accepted",
+            "actor": "user",
+            "conversation_id": "conv-chat-a",
+            "producer": "core.voice_admission",
+            "visibility": "public",
+            "occurred_at": "2026-10-14T09:00:01.000Z",
+            "started_at": null,
+            "ended_at": null,
+            "span_id": null,
+            "session_id": "voice-session-1",
+            "turn_id": "brain-turn-corr-unc-2",
+            "correlation_id": "corr-unc-2",
+            "parent_event_id": null,
+            "task_id": null,
+            "work_id": null,
+            "speech_id": null,
+            "outcome_id": null,
+            "trace_ref": null,
+            "content": "il fait beau dehors",
+            "attributes": {
+              "source": "realtime",
+              "addressing": "uncertain"
+            }
+          }
+        },
+        {
+          "sequence": 2,
+          "recorded_at": "2026-10-14T09:00:02.005Z",
+          "event": {
+            "schema_version": 1,
+            "event_id": "cev-b20a549890dac1f4eb788d508ea5b53e778d85ee8c490155e4d41d4226bd3e9a",
+            "event_type": "brain.turn.accepted",
+            "actor": "brain",
+            "conversation_id": "conv-chat-a",
+            "producer": "core.brain_service",
+            "visibility": "diagnostic",
+            "occurred_at": "2026-10-14T09:00:02.000Z",
+            "started_at": null,
+            "ended_at": null,
+            "span_id": null,
+            "session_id": null,
+            "turn_id": "brain-turn-corr-unc-2",
+            "correlation_id": "corr-unc-2",
+            "parent_event_id": null,
+            "task_id": null,
+            "work_id": null,
+            "speech_id": null,
+            "outcome_id": null,
+            "trace_ref": null,
+            "content": null,
+            "attributes": {}
+          }
+        },
+        {
+          "sequence": 3,
+          "recorded_at": "2026-10-14T09:00:03.005Z",
+          "event": {
+            "schema_version": 1,
+            "event_id": "cev-a341ee9e5540b25daae4fecb12141587462a8ca46ff9ba9a3d10aacf66531932",
+            "event_type": "user.transcript.accepted",
+            "actor": "user",
+            "conversation_id": "conv-chat-a",
+            "producer": "core.voice_admission",
+            "visibility": "public",
+            "occurred_at": "2026-10-14T09:00:03.000Z",
+            "started_at": null,
+            "ended_at": null,
+            "span_id": null,
+            "session_id": "voice-session-1",
+            "turn_id": "brain-turn-corr-addr-3",
+            "correlation_id": "corr-addr-3",
+            "parent_event_id": null,
+            "task_id": null,
+            "work_id": null,
+            "speech_id": null,
+            "outcome_id": null,
+            "trace_ref": null,
+            "content": "Jarvis, quelle heure est-il ?",
+            "attributes": {
+              "source": "realtime",
+              "addressing": "addressed"
+            }
+          }
+        },
+        {
+          "sequence": 4,
+          "recorded_at": "2026-10-14T09:00:04.005Z",
+          "event": {
+            "schema_version": 1,
+            "event_id": "cev-b7230d9a1c56f6b18fdc13e4a062c664fc9f7eb043f22038d3569e9bcec7e300",
+            "event_type": "brain.message.published",
+            "actor": "brain",
+            "conversation_id": "conv-chat-a",
+            "producer": "core.brain_outcomes",
+            "visibility": "public",
+            "occurred_at": "2026-10-14T09:00:04.000Z",
+            "started_at": null,
+            "ended_at": null,
+            "span_id": null,
+            "session_id": null,
+            "turn_id": null,
+            "correlation_id": "corr-addr-3",
+            "parent_event_id": null,
+            "task_id": null,
+            "work_id": null,
+            "speech_id": null,
+            "outcome_id": "outcome-addr-3",
+            "trace_ref": {
+              "source": "runtime_journal",
+              "journal_kind": "core.brain.outcome_retained",
+              "join_keys": [
+                "correlation_id",
+                "outcome_id"
+              ]
+            },
+            "content": "Il est neuf heures.",
+            "attributes": {
+              "kind": "turn_result",
+              "status": "completed"
+            }
+          }
+        }
+      ],
+      "expected": [
+        {
+          "role": "user",
+          "event_id": "cev-a341ee9e5540b25daae4fecb12141587462a8ca46ff9ba9a3d10aacf66531932",
+          "sequence": 3,
+          "correlation_id": "corr-addr-3",
+          "text": "Jarvis, quelle heure est-il ?",
+          "kind": null,
+          "status": null,
+          "failure_code": null,
+          "collapsed_event_ids": []
+        },
+        {
+          "role": "brain",
+          "event_id": "cev-b7230d9a1c56f6b18fdc13e4a062c664fc9f7eb043f22038d3569e9bcec7e300",
+          "sequence": 4,
+          "correlation_id": "corr-addr-3",
+          "text": "Il est neuf heures.",
+          "kind": "turn_result",
+          "status": "completed",
+          "failure_code": null,
+          "collapsed_event_ids": []
+        }
+      ]
+    },
+    {
+      "name": "republication_collapsed",
+      "description": "A publication equal to the previous publication of its correlation is folded into it (`collapse_published_messages`); the first one keeps its kind and status.",
+      "conversation_id": "conv-chat-a",
+      "events": [
+        {
+          "sequence": 1,
+          "recorded_at": "2026-10-14T09:00:01.005Z",
+          "event": {
+            "schema_version": 1,
+            "event_id": "cev-b772859f47277eee94e2400737e086730485a3993913ac3a8ea36c7f0bfe8b86",
+            "event_type": "user.transcript.accepted",
+            "actor": "user",
+            "conversation_id": "conv-chat-a",
+            "producer": "core.voice_admission",
+            "visibility": "public",
+            "occurred_at": "2026-10-14T09:00:01.000Z",
+            "started_at": null,
+            "ended_at": null,
+            "span_id": null,
+            "session_id": "voice-session-1",
+            "turn_id": "brain-turn-corr-dup",
+            "correlation_id": "corr-dup",
+            "parent_event_id": null,
+            "task_id": null,
+            "work_id": null,
+            "speech_id": null,
+            "outcome_id": null,
+            "trace_ref": null,
+            "content": "Résume le document",
+            "attributes": {
+              "source": "realtime",
+              "addressing": "addressed"
+            }
+          }
+        },
+        {
+          "sequence": 2,
+          "recorded_at": "2026-10-14T09:00:02.005Z",
+          "event": {
+            "schema_version": 1,
+            "event_id": "cev-062d6ca5a545b4950558f200ccba8f1fec652ef000014bc54293aa6e6b9f5b4f",
+            "event_type": "brain.message.published",
+            "actor": "brain",
+            "conversation_id": "conv-chat-a",
+            "producer": "core.brain_outcomes",
+            "visibility": "public",
+            "occurred_at": "2026-10-14T09:00:02.000Z",
+            "started_at": null,
+            "ended_at": null,
+            "span_id": null,
+            "session_id": null,
+            "turn_id": null,
+            "correlation_id": "corr-dup",
+            "parent_event_id": null,
+            "task_id": null,
+            "work_id": null,
+            "speech_id": null,
+            "outcome_id": "outcome-dup-1",
+            "trace_ref": {
+              "source": "runtime_journal",
+              "journal_kind": "core.brain.outcome_retained",
+              "join_keys": [
+                "correlation_id",
+                "outcome_id"
+              ]
+            },
+            "content": "Voici le résumé.",
+            "attributes": {
+              "kind": "speech_result",
+              "status": "completed"
+            }
+          }
+        },
+        {
+          "sequence": 3,
+          "recorded_at": "2026-10-14T09:00:03.005Z",
+          "event": {
+            "schema_version": 1,
+            "event_id": "cev-7fd6beade6090365a0551e9d5165b39dd2adf107091538cd39d2df1ee61773ab",
+            "event_type": "brain.message.published",
+            "actor": "brain",
+            "conversation_id": "conv-chat-a",
+            "producer": "core.brain_outcomes",
+            "visibility": "public",
+            "occurred_at": "2026-10-14T09:00:03.000Z",
+            "started_at": null,
+            "ended_at": null,
+            "span_id": null,
+            "session_id": null,
+            "turn_id": null,
+            "correlation_id": "corr-dup",
+            "parent_event_id": null,
+            "task_id": null,
+            "work_id": null,
+            "speech_id": null,
+            "outcome_id": "outcome-dup-2",
+            "trace_ref": {
+              "source": "runtime_journal",
+              "journal_kind": "core.brain.outcome_retained",
+              "join_keys": [
+                "correlation_id",
+                "outcome_id"
+              ]
+            },
+            "content": "Voici le résumé.",
+            "attributes": {
+              "kind": "turn_result",
+              "status": "completed"
+            }
+          }
+        }
+      ],
+      "expected": [
+        {
+          "role": "user",
+          "event_id": "cev-b772859f47277eee94e2400737e086730485a3993913ac3a8ea36c7f0bfe8b86",
+          "sequence": 1,
+          "correlation_id": "corr-dup",
+          "text": "Résume le document",
+          "kind": null,
+          "status": null,
+          "failure_code": null,
+          "collapsed_event_ids": []
+        },
+        {
+          "role": "brain",
+          "event_id": "cev-062d6ca5a545b4950558f200ccba8f1fec652ef000014bc54293aa6e6b9f5b4f",
+          "sequence": 2,
+          "correlation_id": "corr-dup",
+          "text": "Voici le résumé.",
+          "kind": "speech_result",
+          "status": "completed",
+          "failure_code": null,
+          "collapsed_event_ids": [
+            "cev-7fd6beade6090365a0551e9d5165b39dd2adf107091538cd39d2df1ee61773ab"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "aba_kept",
+      "description": "A, B, A stays three Brain bubbles: only a publication equal to the *previous* one of its correlation is folded. Every kind and the `failed` status are shown.",
+      "conversation_id": "conv-chat-a",
+      "events": [
+        {
+          "sequence": 1,
+          "recorded_at": "2026-10-14T09:00:01.005Z",
+          "event": {
+            "schema_version": 1,
+            "event_id": "cev-8b4131663074150b828674435312e2aade281eaa8fea41733fd3dc33ed0d2359",
+            "event_type": "user.transcript.accepted",
+            "actor": "user",
+            "conversation_id": "conv-chat-a",
+            "producer": "core.voice_admission",
+            "visibility": "public",
+            "occurred_at": "2026-10-14T09:00:01.000Z",
+            "started_at": null,
+            "ended_at": null,
+            "span_id": null,
+            "session_id": "voice-session-1",
+            "turn_id": "brain-turn-corr-aba",
+            "correlation_id": "corr-aba",
+            "parent_event_id": null,
+            "task_id": null,
+            "work_id": null,
+            "speech_id": null,
+            "outcome_id": null,
+            "trace_ref": null,
+            "content": "Lance l'analyse",
+            "attributes": {
+              "source": "realtime",
+              "addressing": "addressed"
+            }
+          }
+        },
+        {
+          "sequence": 2,
+          "recorded_at": "2026-10-14T09:00:02.005Z",
+          "event": {
+            "schema_version": 1,
+            "event_id": "cev-1655e2740e2229a93f6e5e0b0ea0c0086b6c06487c7730b71ba71ba77f605a9b",
+            "event_type": "brain.message.published",
+            "actor": "brain",
+            "conversation_id": "conv-chat-a",
+            "producer": "core.brain_outcomes",
+            "visibility": "public",
+            "occurred_at": "2026-10-14T09:00:02.000Z",
+            "started_at": null,
+            "ended_at": null,
+            "span_id": null,
+            "session_id": null,
+            "turn_id": null,
+            "correlation_id": "corr-aba",
+            "parent_event_id": null,
+            "task_id": null,
+            "work_id": null,
+            "speech_id": null,
+            "outcome_id": "outcome-aba-1",
+            "trace_ref": {
+              "source": "runtime_journal",
+              "journal_kind": "core.brain.outcome_retained",
+              "join_keys": [
+                "correlation_id",
+                "outcome_id"
+              ]
+            },
+            "content": "A",
+            "attributes": {
+              "kind": "turn_result",
+              "status": "completed"
+            }
+          }
+        },
+        {
+          "sequence": 3,
+          "recorded_at": "2026-10-14T09:00:03.005Z",
+          "event": {
+            "schema_version": 1,
+            "event_id": "cev-e02c3096fb932b0a6aa65b71f505529991e57fb8036590e452029c447deb272c",
+            "event_type": "brain.message.published",
+            "actor": "brain",
+            "conversation_id": "conv-chat-a",
+            "producer": "core.brain_outcomes",
+            "visibility": "public",
+            "occurred_at": "2026-10-14T09:00:03.000Z",
+            "started_at": null,
+            "ended_at": null,
+            "span_id": null,
+            "session_id": null,
+            "turn_id": null,
+            "correlation_id": "corr-aba",
+            "parent_event_id": null,
+            "task_id": null,
+            "work_id": null,
+            "speech_id": null,
+            "outcome_id": "outcome-aba-2",
+            "trace_ref": {
+              "source": "runtime_journal",
+              "journal_kind": "core.brain.outcome_retained",
+              "join_keys": [
+                "correlation_id",
+                "outcome_id"
+              ]
+            },
+            "content": "B",
+            "attributes": {
+              "kind": "work_result",
+              "status": "completed"
+            }
+          }
+        },
+        {
+          "sequence": 4,
+          "recorded_at": "2026-10-14T09:00:04.005Z",
+          "event": {
+            "schema_version": 1,
+            "event_id": "cev-668ac4557b147edc7e7f8e60c28456ef1eeb7b9558c771ac34b033978b7860ec",
+            "event_type": "brain.message.published",
+            "actor": "brain",
+            "conversation_id": "conv-chat-a",
+            "producer": "core.brain_outcomes",
+            "visibility": "public",
+            "occurred_at": "2026-10-14T09:00:04.000Z",
+            "started_at": null,
+            "ended_at": null,
+            "span_id": null,
+            "session_id": null,
+            "turn_id": null,
+            "correlation_id": "corr-aba",
+            "parent_event_id": null,
+            "task_id": null,
+            "work_id": null,
+            "speech_id": null,
+            "outcome_id": "outcome-aba-3",
+            "trace_ref": {
+              "source": "runtime_journal",
+              "journal_kind": "core.brain.outcome_retained",
+              "join_keys": [
+                "correlation_id",
+                "outcome_id"
+              ]
+            },
+            "content": "A",
+            "attributes": {
+              "kind": "work_result",
+              "status": "failed"
+            }
+          }
+        }
+      ],
+      "expected": [
+        {
+          "role": "user",
+          "event_id": "cev-8b4131663074150b828674435312e2aade281eaa8fea41733fd3dc33ed0d2359",
+          "sequence": 1,
+          "correlation_id": "corr-aba",
+          "text": "Lance l'analyse",
+          "kind": null,
+          "status": null,
+          "failure_code": null,
+          "collapsed_event_ids": []
+        },
+        {
+          "role": "brain",
+          "event_id": "cev-1655e2740e2229a93f6e5e0b0ea0c0086b6c06487c7730b71ba71ba77f605a9b",
+          "sequence": 2,
+          "correlation_id": "corr-aba",
+          "text": "A",
+          "kind": "turn_result",
+          "status": "completed",
+          "failure_code": null,
+          "collapsed_event_ids": []
+        },
+        {
+          "role": "brain",
+          "event_id": "cev-e02c3096fb932b0a6aa65b71f505529991e57fb8036590e452029c447deb272c",
+          "sequence": 3,
+          "correlation_id": "corr-aba",
+          "text": "B",
+          "kind": "work_result",
+          "status": "completed",
+          "failure_code": null,
+          "collapsed_event_ids": []
+        },
+        {
+          "role": "brain",
+          "event_id": "cev-668ac4557b147edc7e7f8e60c28456ef1eeb7b9558c771ac34b033978b7860ec",
+          "sequence": 4,
+          "correlation_id": "corr-aba",
+          "text": "A",
+          "kind": "work_result",
+          "status": "failed",
+          "failure_code": null,
+          "collapsed_event_ids": []
+        }
+      ]
+    },
+    {
+      "name": "turn_failed_on_user_turn",
+      "description": "`brain.turn.failed` is a status (`failure_code` = `attributes.code`) on the user bubble of the same correlation, never a bubble.",
+      "conversation_id": "conv-chat-a",
+      "events": [
+        {
+          "sequence": 1,
+          "recorded_at": "2026-10-14T09:00:01.005Z",
+          "event": {
+            "schema_version": 1,
+            "event_id": "cev-987abd98378ce363304c09fef602b601afc8af1d54620ff93029d8fb95692f06",
+            "event_type": "user.transcript.accepted",
+            "actor": "user",
+            "conversation_id": "conv-chat-a",
+            "producer": "core.voice_admission",
+            "visibility": "public",
+            "occurred_at": "2026-10-14T09:00:01.000Z",
+            "started_at": null,
+            "ended_at": null,
+            "span_id": null,
+            "session_id": "voice-session-1",
+            "turn_id": "brain-turn-chat-22222222-2222-4222-8222-222222222222",
+            "correlation_id": "chat:22222222-2222-4222-8222-222222222222",
+            "parent_event_id": null,
+            "task_id": null,
+            "work_id": null,
+            "speech_id": null,
+            "outcome_id": null,
+            "trace_ref": null,
+            "content": "Ouvre le rapport",
+            "attributes": {
+              "source": "text",
+              "addressing": "addressed"
+            }
+          }
+        },
+        {
+          "sequence": 2,
+          "recorded_at": "2026-10-14T09:00:02.005Z",
+          "event": {
+            "schema_version": 1,
+            "event_id": "cev-1c1cce924cf98de35d5ada7dbd328ce246e3c7f902cfe6fce422af2ede5c74d7",
+            "event_type": "brain.turn.accepted",
+            "actor": "brain",
+            "conversation_id": "conv-chat-a",
+            "producer": "core.brain_service",
+            "visibility": "diagnostic",
+            "occurred_at": "2026-10-14T09:00:02.000Z",
+            "started_at": null,
+            "ended_at": null,
+            "span_id": null,
+            "session_id": null,
+            "turn_id": "brain-turn-chat-22222222-2222-4222-8222-222222222222",
+            "correlation_id": "chat:22222222-2222-4222-8222-222222222222",
+            "parent_event_id": null,
+            "task_id": null,
+            "work_id": null,
+            "speech_id": null,
+            "outcome_id": null,
+            "trace_ref": null,
+            "content": null,
+            "attributes": {}
+          }
+        },
+        {
+          "sequence": 3,
+          "recorded_at": "2026-10-14T09:00:03.005Z",
+          "event": {
+            "schema_version": 1,
+            "event_id": "cev-4d6a00103c35548558c0d61cf37f321b66d2ffb383a95ccc7e56d87bd0d2a1f4",
+            "event_type": "brain.turn.failed",
+            "actor": "brain",
+            "conversation_id": "conv-chat-a",
+            "producer": "core.brain_service",
+            "visibility": "diagnostic",
+            "occurred_at": "2026-10-14T09:00:03.000Z",
+            "started_at": null,
+            "ended_at": null,
+            "span_id": null,
+            "session_id": null,
+            "turn_id": null,
+            "correlation_id": "chat:22222222-2222-4222-8222-222222222222",
+            "parent_event_id": null,
+            "task_id": null,
+            "work_id": null,
+            "speech_id": null,
+            "outcome_id": null,
+            "trace_ref": {
+              "source": "runtime_journal",
+              "journal_kind": "core.brain.turn_failed",
+              "join_keys": [
+                "conversation_id",
+                "correlation_id"
+              ]
+            },
+            "content": null,
+            "attributes": {
+              "code": "brain_backend_exception",
+              "error_class": "TimeoutError"
+            }
+          }
+        }
+      ],
+      "expected": [
+        {
+          "role": "user",
+          "event_id": "cev-987abd98378ce363304c09fef602b601afc8af1d54620ff93029d8fb95692f06",
+          "sequence": 1,
+          "correlation_id": "chat:22222222-2222-4222-8222-222222222222",
+          "text": "Ouvre le rapport",
+          "kind": null,
+          "status": null,
+          "failure_code": "brain_backend_exception",
+          "collapsed_event_ids": []
+        }
+      ]
+    },
+    {
+      "name": "turn_failed_on_system_turn_ignored",
+      "description": "A `brain.turn.failed` without a user bubble of its correlation (system turn, never recorded) is ignored and does not touch other bubbles.",
+      "conversation_id": "conv-chat-a",
+      "events": [
+        {
+          "sequence": 1,
+          "recorded_at": "2026-10-14T09:00:01.005Z",
+          "event": {
+            "schema_version": 1,
+            "event_id": "cev-715933fb1daef0001b1a6d61585ee0aabe9de2f68b3a75bdef34d42e307b9bb3",
+            "event_type": "brain.turn.failed",
+            "actor": "brain",
+            "conversation_id": "conv-chat-a",
+            "producer": "core.brain_service",
+            "visibility": "diagnostic",
+            "occurred_at": "2026-10-14T09:00:01.000Z",
+            "started_at": null,
+            "ended_at": null,
+            "span_id": null,
+            "session_id": null,
+            "turn_id": null,
+            "correlation_id": "corr-system-notice",
+            "parent_event_id": null,
+            "task_id": null,
+            "work_id": null,
+            "speech_id": null,
+            "outcome_id": null,
+            "trace_ref": {
+              "source": "runtime_journal",
+              "journal_kind": "core.brain.turn_failed",
+              "join_keys": [
+                "conversation_id",
+                "correlation_id"
+              ]
+            },
+            "content": null,
+            "attributes": {
+              "code": "brain_backend_failed"
+            }
+          }
+        },
+        {
+          "sequence": 2,
+          "recorded_at": "2026-10-14T09:00:02.005Z",
+          "event": {
+            "schema_version": 1,
+            "event_id": "cev-d7dca9aca653c3e5c3fab664989a8205247b69c52b1014af50eb52e0f068d924",
+            "event_type": "user.transcript.accepted",
+            "actor": "user",
+            "conversation_id": "conv-chat-a",
+            "producer": "core.voice_admission",
+            "visibility": "public",
+            "occurred_at": "2026-10-14T09:00:02.000Z",
+            "started_at": null,
+            "ended_at": null,
+            "span_id": null,
+            "session_id": "voice-session-1",
+            "turn_id": "brain-turn-corr-after",
+            "correlation_id": "corr-after",
+            "parent_event_id": null,
+            "task_id": null,
+            "work_id": null,
+            "speech_id": null,
+            "outcome_id": null,
+            "trace_ref": null,
+            "content": "Tu es là ?",
+            "attributes": {
+              "source": "realtime",
+              "addressing": "addressed"
+            }
+          }
+        }
+      ],
+      "expected": [
+        {
+          "role": "user",
+          "event_id": "cev-d7dca9aca653c3e5c3fab664989a8205247b69c52b1014af50eb52e0f068d924",
+          "sequence": 2,
+          "correlation_id": "corr-after",
+          "text": "Tu es là ?",
+          "kind": null,
+          "status": null,
+          "failure_code": null,
+          "collapsed_event_ids": []
+        }
+      ]
+    },
+    {
+      "name": "other_types_ignored",
+      "description": "`brain.turn.accepted`, `brain.work.*`, `subagent.*`, `brain.speech.requested` and `mouth.*` (reflex and speech, even public ones with content) never show.",
+      "conversation_id": "conv-chat-a",
+      "events": [
+        {
+          "sequence": 1,
+          "recorded_at": "2026-10-14T09:00:01.005Z",
+          "event": {
+            "schema_version": 1,
+            "event_id": "cev-69be6020a00d8b793765aa1e4a27a7022c867b694f9dbbf6c6bdc8bf4e6a0765",
+            "event_type": "user.transcript.accepted",
+            "actor": "user",
+            "conversation_id": "conv-chat-a",
+            "producer": "core.voice_admission",
+            "visibility": "public",
+            "occurred_at": "2026-10-14T09:00:01.000Z",
+            "started_at": null,
+            "ended_at": null,
+            "span_id": null,
+            "session_id": "voice-session-1",
+            "turn_id": "brain-turn-corr-noise",
+            "correlation_id": "corr-noise",
+            "parent_event_id": null,
+            "task_id": null,
+            "work_id": null,
+            "speech_id": null,
+            "outcome_id": null,
+            "trace_ref": null,
+            "content": "Cherche les factures",
+            "attributes": {
+              "source": "realtime",
+              "addressing": "addressed"
+            }
+          }
+        },
+        {
+          "sequence": 2,
+          "recorded_at": "2026-10-14T09:00:02.005Z",
+          "event": {
+            "schema_version": 1,
+            "event_id": "cev-c5bd6e408aff1ae170c75467ad537e0c255aac31e81b897f902ca5207aab9d4c",
+            "event_type": "brain.turn.accepted",
+            "actor": "brain",
+            "conversation_id": "conv-chat-a",
+            "producer": "core.brain_service",
+            "visibility": "diagnostic",
+            "occurred_at": "2026-10-14T09:00:02.000Z",
+            "started_at": null,
+            "ended_at": null,
+            "span_id": null,
+            "session_id": null,
+            "turn_id": "brain-turn-corr-noise",
+            "correlation_id": "corr-noise",
+            "parent_event_id": null,
+            "task_id": null,
+            "work_id": null,
+            "speech_id": null,
+            "outcome_id": null,
+            "trace_ref": null,
+            "content": null,
+            "attributes": {}
+          }
+        },
+        {
+          "sequence": 3,
+          "recorded_at": "2026-10-14T09:00:03.005Z",
+          "event": {
+            "schema_version": 1,
+            "event_id": "cev-ab6a864a929c5bd1f4b7cf470207b4d4f2371aef4c99ec329b115a0f12b74756",
+            "event_type": "mouth.reflex.started",
+            "actor": "mouth",
+            "conversation_id": "conv-chat-a",
+            "producer": "voice.speech_scheduler",
+            "visibility": "public",
+            "occurred_at": "2026-10-14T09:00:03.000Z",
+            "started_at": null,
+            "ended_at": null,
+            "span_id": null,
+            "session_id": null,
+            "turn_id": null,
+            "correlation_id": "corr-noise",
+            "parent_event_id": null,
+            "task_id": null,
+            "work_id": null,
+            "speech_id": null,
+            "outcome_id": null,
+            "trace_ref": null,
+            "content": "Je regarde.",
+            "attributes": {}
+          }
+        },
+        {
+          "sequence": 4,
+          "recorded_at": "2026-10-14T09:00:04.005Z",
+          "event": {
+            "schema_version": 1,
+            "event_id": "cev-5e2ea9888f9820d908cc195c1d5bde916d39eb174757e2f12e8efa90231624f1",
+            "event_type": "brain.work.started",
+            "actor": "brain",
+            "conversation_id": "conv-chat-a",
+            "producer": "core.brain_service",
+            "visibility": "diagnostic",
+            "occurred_at": "2026-10-14T09:00:04.000Z",
+            "started_at": "2026-10-14T09:00:04.000Z",
+            "ended_at": null,
+            "span_id": "work-1",
+            "session_id": null,
+            "turn_id": null,
+            "correlation_id": "corr-noise",
+            "parent_event_id": null,
+            "task_id": null,
+            "work_id": "work-1",
+            "speech_id": null,
+            "outcome_id": null,
+            "trace_ref": null,
+            "content": null,
+            "attributes": {}
+          }
+        },
+        {
+          "sequence": 5,
+          "recorded_at": "2026-10-14T09:00:05.005Z",
+          "event": {
+            "schema_version": 1,
+            "event_id": "cev-d01296e572e7de5e0ed3a6672064ca6aec3db0d1f855eb3dbbe0e6130d9bea0f",
+            "event_type": "subagent.started",
+            "actor": "subagent",
+            "conversation_id": "conv-chat-a",
+            "producer": "control_center.agent_tasks",
+            "visibility": "diagnostic",
+            "occurred_at": "2026-10-14T09:00:05.000Z",
+            "started_at": "2026-10-14T09:00:05.000Z",
+            "ended_at": null,
+            "span_id": "task-1",
+            "session_id": null,
+            "turn_id": null,
+            "correlation_id": null,
+            "parent_event_id": null,
+            "task_id": "task-1",
+            "work_id": null,
+            "speech_id": null,
+            "outcome_id": null,
+            "trace_ref": null,
+            "content": "Recherche des factures",
+            "attributes": {}
+          }
+        },
+        {
+          "sequence": 6,
+          "recorded_at": "2026-10-14T09:00:06.005Z",
+          "event": {
+            "schema_version": 1,
+            "event_id": "cev-7420d056b6500a3dcd2f25a323cd19592c4f6e42ebe19f25c8d96607fe81b524",
+            "event_type": "subagent.finished",
+            "actor": "subagent",
+            "conversation_id": "conv-chat-a",
+            "producer": "control_center.agent_tasks",
+            "visibility": "diagnostic",
+            "occurred_at": "2026-10-14T09:00:06.000Z",
+            "started_at": null,
+            "ended_at": "2026-10-14T09:00:06.000Z",
+            "span_id": "task-1",
+            "session_id": null,
+            "turn_id": null,
+            "correlation_id": null,
+            "parent_event_id": null,
+            "task_id": "task-1",
+            "work_id": null,
+            "speech_id": null,
+            "outcome_id": null,
+            "trace_ref": null,
+            "content": "Trois factures trouvées",
+            "attributes": {
+              "status": "completed"
+            }
+          }
+        },
+        {
+          "sequence": 7,
+          "recorded_at": "2026-10-14T09:00:07.005Z",
+          "event": {
+            "schema_version": 1,
+            "event_id": "cev-5addaa43c7554aee7fd459b6e27cf2f50af1efbeb77d0b04817abe9eba02d882",
+            "event_type": "brain.work.completed",
+            "actor": "brain",
+            "conversation_id": "conv-chat-a",
+            "producer": "core.brain_service",
+            "visibility": "diagnostic",
+            "occurred_at": "2026-10-14T09:00:07.000Z",
+            "started_at": null,
+            "ended_at": "2026-10-14T09:00:07.000Z",
+            "span_id": "work-1",
+            "session_id": null,
+            "turn_id": null,
+            "correlation_id": "corr-noise",
+            "parent_event_id": null,
+            "task_id": null,
+            "work_id": "work-1",
+            "speech_id": null,
+            "outcome_id": null,
+            "trace_ref": null,
+            "content": null,
+            "attributes": {}
+          }
+        },
+        {
+          "sequence": 8,
+          "recorded_at": "2026-10-14T09:00:08.005Z",
+          "event": {
+            "schema_version": 1,
+            "event_id": "cev-f194dd282c4ffd1a916c36ac460a54d510bf4e8a718f59c088c102c6994e31dd",
+            "event_type": "brain.message.published",
+            "actor": "brain",
+            "conversation_id": "conv-chat-a",
+            "producer": "core.brain_outcomes",
+            "visibility": "public",
+            "occurred_at": "2026-10-14T09:00:08.000Z",
+            "started_at": null,
+            "ended_at": null,
+            "span_id": null,
+            "session_id": null,
+            "turn_id": null,
+            "correlation_id": "corr-noise",
+            "parent_event_id": null,
+            "task_id": null,
+            "work_id": null,
+            "speech_id": null,
+            "outcome_id": "outcome-noise",
+            "trace_ref": {
+              "source": "runtime_journal",
+              "journal_kind": "core.brain.outcome_retained",
+              "join_keys": [
+                "correlation_id",
+                "outcome_id"
+              ]
+            },
+            "content": "J'ai trouvé trois factures.",
+            "attributes": {
+              "kind": "work_result",
+              "status": "completed"
+            }
+          }
+        },
+        {
+          "sequence": 9,
+          "recorded_at": "2026-10-14T09:00:09.005Z",
+          "event": {
+            "schema_version": 1,
+            "event_id": "cev-4c55ede1221b12ccc5e9fd090845400508d752978f3ded75c8956417b734dde4",
+            "event_type": "brain.speech.requested",
+            "actor": "brain",
+            "conversation_id": "conv-chat-a",
+            "producer": "core.brain_service",
+            "visibility": "diagnostic",
+            "occurred_at": "2026-10-14T09:00:09.000Z",
+            "started_at": null,
+            "ended_at": null,
+            "span_id": null,
+            "session_id": null,
+            "turn_id": null,
+            "correlation_id": "corr-noise",
+            "parent_event_id": null,
+            "task_id": null,
+            "work_id": null,
+            "speech_id": "speech-noise",
+            "outcome_id": null,
+            "trace_ref": null,
+            "content": "J'ai trouvé trois factures.",
+            "attributes": {
+              "kind": "result",
+              "priority": 20
+            }
+          }
+        },
+        {
+          "sequence": 10,
+          "recorded_at": "2026-10-14T09:00:10.005Z",
+          "event": {
+            "schema_version": 1,
+            "event_id": "cev-7f48c21c8bc91b60081e7e686752afab8fc5f955524b187e5c6010ad2e797354",
+            "event_type": "mouth.speech.started",
+            "actor": "mouth",
+            "conversation_id": "conv-chat-a",
+            "producer": "voice.speech_scheduler",
+            "visibility": "public",
+            "occurred_at": "2026-10-14T09:00:10.000Z",
+            "started_at": "2026-10-14T09:00:10.000Z",
+            "ended_at": null,
+            "span_id": "speech-noise",
+            "session_id": null,
+            "turn_id": null,
+            "correlation_id": "corr-noise",
+            "parent_event_id": null,
+            "task_id": null,
+            "work_id": null,
+            "speech_id": "speech-noise",
+            "outcome_id": null,
+            "trace_ref": null,
+            "content": "J'ai trouvé trois factures.",
+            "attributes": {}
+          }
+        },
+        {
+          "sequence": 11,
+          "recorded_at": "2026-10-14T09:00:11.005Z",
+          "event": {
+            "schema_version": 1,
+            "event_id": "cev-8bbc25de0751a571001743d9e71eaebb1ec91a8495447da1755824dad68b0306",
+            "event_type": "mouth.speech.completed",
+            "actor": "mouth",
+            "conversation_id": "conv-chat-a",
+            "producer": "voice.speech_scheduler",
+            "visibility": "public",
+            "occurred_at": "2026-10-14T09:00:11.000Z",
+            "started_at": "2026-10-14T09:00:10.000Z",
+            "ended_at": "2026-10-14T09:00:11.000Z",
+            "span_id": "speech-noise",
+            "session_id": null,
+            "turn_id": null,
+            "correlation_id": "corr-noise",
+            "parent_event_id": null,
+            "task_id": null,
+            "work_id": null,
+            "speech_id": "speech-noise",
+            "outcome_id": null,
+            "trace_ref": null,
+            "content": "J'ai trouvé trois factures.",
+            "attributes": {
+              "played_ms": 1800
+            }
+          }
+        }
+      ],
+      "expected": [
+        {
+          "role": "user",
+          "event_id": "cev-69be6020a00d8b793765aa1e4a27a7022c867b694f9dbbf6c6bdc8bf4e6a0765",
+          "sequence": 1,
+          "correlation_id": "corr-noise",
+          "text": "Cherche les factures",
+          "kind": null,
+          "status": null,
+          "failure_code": null,
+          "collapsed_event_ids": []
+        },
+        {
+          "role": "brain",
+          "event_id": "cev-f194dd282c4ffd1a916c36ac460a54d510bf4e8a718f59c088c102c6994e31dd",
+          "sequence": 8,
+          "correlation_id": "corr-noise",
+          "text": "J'ai trouvé trois factures.",
+          "kind": "work_result",
+          "status": "completed",
+          "failure_code": null,
+          "collapsed_event_ids": []
+        }
+      ]
+    },
+    {
+      "name": "non_contiguous_sequences",
+      "description": "Sequences with gaps (rows filtered by `projection=chat`, unreadable rows) keep their own sequence; nothing is renumbered.",
+      "conversation_id": "conv-chat-a",
+      "events": [
+        {
+          "sequence": 4,
+          "recorded_at": "2026-10-14T09:00:01.005Z",
+          "event": {
+            "schema_version": 1,
+            "event_id": "cev-085e902e8b65caad774ee7fb60443ba4875b91223cfdb699de78d841e5842a11",
+            "event_type": "user.transcript.accepted",
+            "actor": "user",
+            "conversation_id": "conv-chat-a",
+            "producer": "core.voice_admission",
+            "visibility": "public",
+            "occurred_at": "2026-10-14T09:00:01.000Z",
+            "started_at": null,
+            "ended_at": null,
+            "span_id": null,
+            "session_id": "voice-session-1",
+            "turn_id": "brain-turn-corr-gap",
+            "correlation_id": "corr-gap",
+            "parent_event_id": null,
+            "task_id": null,
+            "work_id": null,
+            "speech_id": null,
+            "outcome_id": null,
+            "trace_ref": null,
+            "content": "Premier",
+            "attributes": {
+              "source": "realtime",
+              "addressing": "addressed"
+            }
+          }
+        },
+        {
+          "sequence": 9,
+          "recorded_at": "2026-10-14T09:00:02.005Z",
+          "event": {
+            "schema_version": 1,
+            "event_id": "cev-89312b3bf48003eab06586dc433bc8aa242a8d14a660b14356dfa7e7843f1f00",
+            "event_type": "brain.message.published",
+            "actor": "brain",
+            "conversation_id": "conv-chat-a",
+            "producer": "core.brain_outcomes",
+            "visibility": "public",
+            "occurred_at": "2026-10-14T09:00:02.000Z",
+            "started_at": null,
+            "ended_at": null,
+            "span_id": null,
+            "session_id": null,
+            "turn_id": null,
+            "correlation_id": "corr-gap",
+            "parent_event_id": null,
+            "task_id": null,
+            "work_id": null,
+            "speech_id": null,
+            "outcome_id": "outcome-gap",
+            "trace_ref": {
+              "source": "runtime_journal",
+              "journal_kind": "core.brain.outcome_retained",
+              "join_keys": [
+                "correlation_id",
+                "outcome_id"
+              ]
+            },
+            "content": "Réponse",
+            "attributes": {
+              "kind": "turn_result",
+              "status": "completed"
+            }
+          }
+        },
+        {
+          "sequence": 27,
+          "recorded_at": "2026-10-14T09:00:03.005Z",
+          "event": {
+            "schema_version": 1,
+            "event_id": "cev-b33f0372891c1fd69d4b29a335146dc908725fdf3d659c8b8537962b5fe98fc7",
+            "event_type": "user.transcript.accepted",
+            "actor": "user",
+            "conversation_id": "conv-chat-a",
+            "producer": "core.voice_admission",
+            "visibility": "public",
+            "occurred_at": "2026-10-14T09:00:03.000Z",
+            "started_at": null,
+            "ended_at": null,
+            "span_id": null,
+            "session_id": "voice-session-1",
+            "turn_id": "brain-turn-corr-gap-2",
+            "correlation_id": "corr-gap-2",
+            "parent_event_id": null,
+            "task_id": null,
+            "work_id": null,
+            "speech_id": null,
+            "outcome_id": null,
+            "trace_ref": null,
+            "content": "Second",
+            "attributes": {
+              "source": "realtime"
+            }
+          }
+        }
+      ],
+      "expected": [
+        {
+          "role": "user",
+          "event_id": "cev-085e902e8b65caad774ee7fb60443ba4875b91223cfdb699de78d841e5842a11",
+          "sequence": 4,
+          "correlation_id": "corr-gap",
+          "text": "Premier",
+          "kind": null,
+          "status": null,
+          "failure_code": null,
+          "collapsed_event_ids": []
+        },
+        {
+          "role": "brain",
+          "event_id": "cev-89312b3bf48003eab06586dc433bc8aa242a8d14a660b14356dfa7e7843f1f00",
+          "sequence": 9,
+          "correlation_id": "corr-gap",
+          "text": "Réponse",
+          "kind": "turn_result",
+          "status": "completed",
+          "failure_code": null,
+          "collapsed_event_ids": []
+        },
+        {
+          "role": "user",
+          "event_id": "cev-b33f0372891c1fd69d4b29a335146dc908725fdf3d659c8b8537962b5fe98fc7",
+          "sequence": 27,
+          "correlation_id": "corr-gap-2",
+          "text": "Second",
+          "kind": null,
+          "status": null,
+          "failure_code": null,
+          "collapsed_event_ids": []
+        }
+      ]
+    },
+    {
+      "name": "page_replay",
+      "description": "A page replayed after a reconnect delivers the same `event_id`s again: items are keyed by `event_id`, the first copy wins, nothing is doubled or collapsed.",
+      "conversation_id": "conv-chat-a",
+      "events": [
+        {
+          "sequence": 1,
+          "recorded_at": "2026-10-14T09:00:01.005Z",
+          "event": {
+            "schema_version": 1,
+            "event_id": "cev-3063d61ee591b49fea3395671ad0fb26f4f8a7b56cce241a5b56c6ba6eb2bbe6",
+            "event_type": "user.transcript.accepted",
+            "actor": "user",
+            "conversation_id": "conv-chat-a",
+            "producer": "core.voice_admission",
+            "visibility": "public",
+            "occurred_at": "2026-10-14T09:00:01.000Z",
+            "started_at": null,
+            "ended_at": null,
+            "span_id": null,
+            "session_id": "voice-session-1",
+            "turn_id": "brain-turn-corr-replay",
+            "correlation_id": "corr-replay",
+            "parent_event_id": null,
+            "task_id": null,
+            "work_id": null,
+            "speech_id": null,
+            "outcome_id": null,
+            "trace_ref": null,
+            "content": "Bonjour",
+            "attributes": {
+              "source": "realtime",
+              "addressing": "addressed"
+            }
+          }
+        },
+        {
+          "sequence": 2,
+          "recorded_at": "2026-10-14T09:00:02.005Z",
+          "event": {
+            "schema_version": 1,
+            "event_id": "cev-79f03b49690ff4b3a13aaf02197b64b98fa0e0d77debf3b979c0eb1231f28e4f",
+            "event_type": "brain.message.published",
+            "actor": "brain",
+            "conversation_id": "conv-chat-a",
+            "producer": "core.brain_outcomes",
+            "visibility": "public",
+            "occurred_at": "2026-10-14T09:00:02.000Z",
+            "started_at": null,
+            "ended_at": null,
+            "span_id": null,
+            "session_id": null,
+            "turn_id": null,
+            "correlation_id": "corr-replay",
+            "parent_event_id": null,
+            "task_id": null,
+            "work_id": null,
+            "speech_id": null,
+            "outcome_id": "outcome-replay",
+            "trace_ref": {
+              "source": "runtime_journal",
+              "journal_kind": "core.brain.outcome_retained",
+              "join_keys": [
+                "correlation_id",
+                "outcome_id"
+              ]
+            },
+            "content": "Bonjour !",
+            "attributes": {
+              "kind": "turn_result",
+              "status": "completed"
+            }
+          }
+        },
+        {
+          "sequence": 1,
+          "recorded_at": "2026-10-14T09:00:01.005Z",
+          "event": {
+            "schema_version": 1,
+            "event_id": "cev-3063d61ee591b49fea3395671ad0fb26f4f8a7b56cce241a5b56c6ba6eb2bbe6",
+            "event_type": "user.transcript.accepted",
+            "actor": "user",
+            "conversation_id": "conv-chat-a",
+            "producer": "core.voice_admission",
+            "visibility": "public",
+            "occurred_at": "2026-10-14T09:00:01.000Z",
+            "started_at": null,
+            "ended_at": null,
+            "span_id": null,
+            "session_id": "voice-session-1",
+            "turn_id": "brain-turn-corr-replay",
+            "correlation_id": "corr-replay",
+            "parent_event_id": null,
+            "task_id": null,
+            "work_id": null,
+            "speech_id": null,
+            "outcome_id": null,
+            "trace_ref": null,
+            "content": "Bonjour",
+            "attributes": {
+              "source": "realtime",
+              "addressing": "addressed"
+            }
+          }
+        },
+        {
+          "sequence": 2,
+          "recorded_at": "2026-10-14T09:00:02.005Z",
+          "event": {
+            "schema_version": 1,
+            "event_id": "cev-79f03b49690ff4b3a13aaf02197b64b98fa0e0d77debf3b979c0eb1231f28e4f",
+            "event_type": "brain.message.published",
+            "actor": "brain",
+            "conversation_id": "conv-chat-a",
+            "producer": "core.brain_outcomes",
+            "visibility": "public",
+            "occurred_at": "2026-10-14T09:00:02.000Z",
+            "started_at": null,
+            "ended_at": null,
+            "span_id": null,
+            "session_id": null,
+            "turn_id": null,
+            "correlation_id": "corr-replay",
+            "parent_event_id": null,
+            "task_id": null,
+            "work_id": null,
+            "speech_id": null,
+            "outcome_id": "outcome-replay",
+            "trace_ref": {
+              "source": "runtime_journal",
+              "journal_kind": "core.brain.outcome_retained",
+              "join_keys": [
+                "correlation_id",
+                "outcome_id"
+              ]
+            },
+            "content": "Bonjour !",
+            "attributes": {
+              "kind": "turn_result",
+              "status": "completed"
+            }
+          }
+        }
+      ],
+      "expected": [
+        {
+          "role": "user",
+          "event_id": "cev-3063d61ee591b49fea3395671ad0fb26f4f8a7b56cce241a5b56c6ba6eb2bbe6",
+          "sequence": 1,
+          "correlation_id": "corr-replay",
+          "text": "Bonjour",
+          "kind": null,
+          "status": null,
+          "failure_code": null,
+          "collapsed_event_ids": []
+        },
+        {
+          "role": "brain",
+          "event_id": "cev-79f03b49690ff4b3a13aaf02197b64b98fa0e0d77debf3b979c0eb1231f28e4f",
+          "sequence": 2,
+          "correlation_id": "corr-replay",
+          "text": "Bonjour !",
+          "kind": "turn_result",
+          "status": "completed",
+          "failure_code": null,
+          "collapsed_event_ids": []
+        }
+      ]
+    },
+    {
+      "name": "two_conversations",
+      "description": "Only events of `conversation_id` count: another conversation's events are dropped and never promote, fold or fail a bubble here, even with the same `correlation_id`.",
+      "conversation_id": "conv-chat-a",
+      "events": [
+        {
+          "sequence": 1,
+          "recorded_at": "2026-10-14T09:00:01.005Z",
+          "event": {
+            "schema_version": 1,
+            "event_id": "cev-363b687b9344758b675c9217164aff31c8e0a918be532f65254d88104907981f",
+            "event_type": "user.transcript.accepted",
+            "actor": "user",
+            "conversation_id": "conv-chat-a",
+            "producer": "core.voice_admission",
+            "visibility": "public",
+            "occurred_at": "2026-10-14T09:00:01.000Z",
+            "started_at": null,
+            "ended_at": null,
+            "span_id": null,
+            "session_id": "voice-session-1",
+            "turn_id": "brain-turn-corr-shared",
+            "correlation_id": "corr-shared",
+            "parent_event_id": null,
+            "task_id": null,
+            "work_id": null,
+            "speech_id": null,
+            "outcome_id": null,
+            "trace_ref": null,
+            "content": "Ici A",
+            "attributes": {
+              "source": "realtime",
+              "addressing": "uncertain"
+            }
+          }
+        },
+        {
+          "sequence": 2,
+          "recorded_at": "2026-10-14T09:00:02.005Z",
+          "event": {
+            "schema_version": 1,
+            "event_id": "cev-53b908a7b2c7d71dff5365e40d0a3c90d797937ef97b74786a32e417cafa1649",
+            "event_type": "user.transcript.accepted",
+            "actor": "user",
+            "conversation_id": "conv-chat-b",
+            "producer": "core.voice_admission",
+            "visibility": "public",
+            "occurred_at": "2026-10-14T09:00:02.000Z",
+            "started_at": null,
+            "ended_at": null,
+            "span_id": null,
+            "session_id": "voice-session-1",
+            "turn_id": "brain-turn-corr-shared",
+            "correlation_id": "corr-shared",
+            "parent_event_id": null,
+            "task_id": null,
+            "work_id": null,
+            "speech_id": null,
+            "outcome_id": null,
+            "trace_ref": null,
+            "content": "Ici B",
+            "attributes": {
+              "source": "realtime",
+              "addressing": "addressed"
+            }
+          }
+        },
+        {
+          "sequence": 3,
+          "recorded_at": "2026-10-14T09:00:03.005Z",
+          "event": {
+            "schema_version": 1,
+            "event_id": "cev-a55d64b3558053565fc887e8d5865b89f0b256ab206acdc109fa8cd2c66e7555",
+            "event_type": "brain.message.published",
+            "actor": "brain",
+            "conversation_id": "conv-chat-b",
+            "producer": "core.brain_outcomes",
+            "visibility": "public",
+            "occurred_at": "2026-10-14T09:00:03.000Z",
+            "started_at": null,
+            "ended_at": null,
+            "span_id": null,
+            "session_id": null,
+            "turn_id": null,
+            "correlation_id": "corr-shared",
+            "parent_event_id": null,
+            "task_id": null,
+            "work_id": null,
+            "speech_id": null,
+            "outcome_id": "outcome-b",
+            "trace_ref": {
+              "source": "runtime_journal",
+              "journal_kind": "core.brain.outcome_retained",
+              "join_keys": [
+                "correlation_id",
+                "outcome_id"
+              ]
+            },
+            "content": "Réponse dans B",
+            "attributes": {
+              "kind": "turn_result",
+              "status": "completed"
+            }
+          }
+        },
+        {
+          "sequence": 4,
+          "recorded_at": "2026-10-14T09:00:04.005Z",
+          "event": {
+            "schema_version": 1,
+            "event_id": "cev-8c62524cc132c3d4c490034c7c48cfb1bb44a03f474d032465c5a23e80566625",
+            "event_type": "brain.turn.failed",
+            "actor": "brain",
+            "conversation_id": "conv-chat-b",
+            "producer": "core.brain_service",
+            "visibility": "diagnostic",
+            "occurred_at": "2026-10-14T09:00:04.000Z",
+            "started_at": null,
+            "ended_at": null,
+            "span_id": null,
+            "session_id": null,
+            "turn_id": null,
+            "correlation_id": "corr-b-fail",
+            "parent_event_id": null,
+            "task_id": null,
+            "work_id": null,
+            "speech_id": null,
+            "outcome_id": null,
+            "trace_ref": {
+              "source": "runtime_journal",
+              "journal_kind": "core.brain.turn_failed",
+              "join_keys": [
+                "conversation_id",
+                "correlation_id"
+              ]
+            },
+            "content": null,
+            "attributes": {
+              "code": "brain_backend_failed"
+            }
+          }
+        },
+        {
+          "sequence": 5,
+          "recorded_at": "2026-10-14T09:00:05.005Z",
+          "event": {
+            "schema_version": 1,
+            "event_id": "cev-a2f72a19ead7ec341fe29c35f62abc90d2d8588f25338f75e3416c1a630f5807",
+            "event_type": "user.transcript.accepted",
+            "actor": "user",
+            "conversation_id": "conv-chat-a",
+            "producer": "core.voice_admission",
+            "visibility": "public",
+            "occurred_at": "2026-10-14T09:00:05.000Z",
+            "started_at": null,
+            "ended_at": null,
+            "span_id": null,
+            "session_id": "voice-session-1",
+            "turn_id": "brain-turn-corr-a-2",
+            "correlation_id": "corr-a-2",
+            "parent_event_id": null,
+            "task_id": null,
+            "work_id": null,
+            "speech_id": null,
+            "outcome_id": null,
+            "trace_ref": null,
+            "content": "Toujours A",
+            "attributes": {
+              "source": "realtime",
+              "addressing": "addressed"
+            }
+          }
+        }
+      ],
+      "expected": [
+        {
+          "role": "user",
+          "event_id": "cev-a2f72a19ead7ec341fe29c35f62abc90d2d8588f25338f75e3416c1a630f5807",
+          "sequence": 5,
+          "correlation_id": "corr-a-2",
+          "text": "Toujours A",
+          "kind": null,
+          "status": null,
+          "failure_code": null,
+          "collapsed_event_ids": []
+        }
+      ]
+    },
+    {
+      "name": "unknown_addressing_excluded",
+      "description": "A user turn whose `addressing` is neither absent, `addressed` nor `uncertain` is excluded by prudence (`is_chat_event`); a Brain reply of its correlation is still a Brain bubble.",
+      "conversation_id": "conv-chat-a",
+      "events": [
+        {
+          "sequence": 1,
+          "recorded_at": "2026-10-14T09:00:01.005Z",
+          "event": {
+            "schema_version": 1,
+            "event_id": "cev-ccdec709585999c4da20e3693a1991db0ec17bc082a48cf41efcb10cf97b7ea3",
+            "event_type": "user.transcript.accepted",
+            "actor": "user",
+            "conversation_id": "conv-chat-a",
+            "producer": "core.voice_admission",
+            "visibility": "public",
+            "occurred_at": "2026-10-14T09:00:01.000Z",
+            "started_at": null,
+            "ended_at": null,
+            "span_id": null,
+            "session_id": "voice-session-1",
+            "turn_id": "brain-turn-corr-ambient",
+            "correlation_id": "corr-ambient",
+            "parent_event_id": null,
+            "task_id": null,
+            "work_id": null,
+            "speech_id": null,
+            "outcome_id": null,
+            "trace_ref": null,
+            "content": "bruit de fond",
+            "attributes": {
+              "source": "realtime",
+              "addressing": "ambient"
+            }
+          }
+        },
+        {
+          "sequence": 2,
+          "recorded_at": "2026-10-14T09:00:02.005Z",
+          "event": {
+            "schema_version": 1,
+            "event_id": "cev-def5c22b985e9235b3fe769251dad409e3884b625a6427b6cccdda91b9d10bcc",
+            "event_type": "brain.message.published",
+            "actor": "brain",
+            "conversation_id": "conv-chat-a",
+            "producer": "core.brain_outcomes",
+            "visibility": "public",
+            "occurred_at": "2026-10-14T09:00:02.000Z",
+            "started_at": null,
+            "ended_at": null,
+            "span_id": null,
+            "session_id": null,
+            "turn_id": null,
+            "correlation_id": "corr-ambient",
+            "parent_event_id": null,
+            "task_id": null,
+            "work_id": null,
+            "speech_id": null,
+            "outcome_id": "outcome-ambient",
+            "trace_ref": {
+              "source": "runtime_journal",
+              "journal_kind": "core.brain.outcome_retained",
+              "join_keys": [
+                "correlation_id",
+                "outcome_id"
+              ]
+            },
+            "content": "Réponse",
+            "attributes": {
+              "kind": "turn_result",
+              "status": "completed"
+            }
+          }
+        }
+      ],
+      "expected": [
+        {
+          "role": "brain",
+          "event_id": "cev-def5c22b985e9235b3fe769251dad409e3884b625a6427b6cccdda91b9d10bcc",
+          "sequence": 2,
+          "correlation_id": "corr-ambient",
+          "text": "Réponse",
+          "kind": "turn_result",
+          "status": "completed",
+          "failure_code": null,
+          "collapsed_event_ids": []
+        }
+      ]
+    },
+    {
+      "name": "turn_failed_other_conversation_same_correlation",
+      "description": "Another conversation shares the `correlation_id` of a user turn here: its identical publication never folds into this conversation's reply and its `brain.turn.failed` never becomes this bubble's status.",
+      "conversation_id": "conv-chat-a",
+      "events": [
+        {
+          "sequence": 1,
+          "recorded_at": "2026-10-14T09:00:01.005Z",
+          "event": {
+            "schema_version": 1,
+            "event_id": "cev-dcfb14853a786bcb3ef9ec458a283eb6acb88088d0e890589a1f3e17022561f2",
+            "event_type": "user.transcript.accepted",
+            "actor": "user",
+            "conversation_id": "conv-chat-a",
+            "producer": "core.voice_admission",
+            "visibility": "public",
+            "occurred_at": "2026-10-14T09:00:01.000Z",
+            "started_at": null,
+            "ended_at": null,
+            "span_id": null,
+            "session_id": "voice-session-1",
+            "turn_id": "brain-turn-corr-cross",
+            "correlation_id": "corr-cross",
+            "parent_event_id": null,
+            "task_id": null,
+            "work_id": null,
+            "speech_id": null,
+            "outcome_id": null,
+            "trace_ref": null,
+            "content": "Résume la note",
+            "attributes": {
+              "source": "realtime",
+              "addressing": "addressed"
+            }
+          }
+        },
+        {
+          "sequence": 2,
+          "recorded_at": "2026-10-14T09:00:02.005Z",
+          "event": {
+            "schema_version": 1,
+            "event_id": "cev-7f018f61058d51fb9ca5cf841b94ba67ab756b0ff4baf21365b27a0ba10685e8",
+            "event_type": "brain.message.published",
+            "actor": "brain",
+            "conversation_id": "conv-chat-a",
+            "producer": "core.brain_outcomes",
+            "visibility": "public",
+            "occurred_at": "2026-10-14T09:00:02.000Z",
+            "started_at": null,
+            "ended_at": null,
+            "span_id": null,
+            "session_id": null,
+            "turn_id": null,
+            "correlation_id": "corr-cross",
+            "parent_event_id": null,
+            "task_id": null,
+            "work_id": null,
+            "speech_id": null,
+            "outcome_id": "outcome-cross-a",
+            "trace_ref": {
+              "source": "runtime_journal",
+              "journal_kind": "core.brain.outcome_retained",
+              "join_keys": [
+                "correlation_id",
+                "outcome_id"
+              ]
+            },
+            "content": "C'est fait.",
+            "attributes": {
+              "kind": "turn_result",
+              "status": "completed"
+            }
+          }
+        },
+        {
+          "sequence": 3,
+          "recorded_at": "2026-10-14T09:00:03.005Z",
+          "event": {
+            "schema_version": 1,
+            "event_id": "cev-7b34a18f4b0ce6e64fdb6bfd5565d04e1028179e8df71cd3d1d1152e94b7d88d",
+            "event_type": "brain.message.published",
+            "actor": "brain",
+            "conversation_id": "conv-chat-b",
+            "producer": "core.brain_outcomes",
+            "visibility": "public",
+            "occurred_at": "2026-10-14T09:00:03.000Z",
+            "started_at": null,
+            "ended_at": null,
+            "span_id": null,
+            "session_id": null,
+            "turn_id": null,
+            "correlation_id": "corr-cross",
+            "parent_event_id": null,
+            "task_id": null,
+            "work_id": null,
+            "speech_id": null,
+            "outcome_id": "outcome-cross-b",
+            "trace_ref": {
+              "source": "runtime_journal",
+              "journal_kind": "core.brain.outcome_retained",
+              "join_keys": [
+                "correlation_id",
+                "outcome_id"
+              ]
+            },
+            "content": "C'est fait.",
+            "attributes": {
+              "kind": "turn_result",
+              "status": "completed"
+            }
+          }
+        },
+        {
+          "sequence": 4,
+          "recorded_at": "2026-10-14T09:00:04.005Z",
+          "event": {
+            "schema_version": 1,
+            "event_id": "cev-fa268a8f85812539d3ec385c0975f55c050776e66df3cc0800270556b2800f47",
+            "event_type": "brain.turn.failed",
+            "actor": "brain",
+            "conversation_id": "conv-chat-b",
+            "producer": "core.brain_service",
+            "visibility": "diagnostic",
+            "occurred_at": "2026-10-14T09:00:04.000Z",
+            "started_at": null,
+            "ended_at": null,
+            "span_id": null,
+            "session_id": null,
+            "turn_id": null,
+            "correlation_id": "corr-cross",
+            "parent_event_id": null,
+            "task_id": null,
+            "work_id": null,
+            "speech_id": null,
+            "outcome_id": null,
+            "trace_ref": {
+              "source": "runtime_journal",
+              "journal_kind": "core.brain.turn_failed",
+              "join_keys": [
+                "conversation_id",
+                "correlation_id"
+              ]
+            },
+            "content": null,
+            "attributes": {
+              "code": "brain_backend_failed"
+            }
+          }
+        }
+      ],
+      "expected": [
+        {
+          "role": "user",
+          "event_id": "cev-dcfb14853a786bcb3ef9ec458a283eb6acb88088d0e890589a1f3e17022561f2",
+          "sequence": 1,
+          "correlation_id": "corr-cross",
+          "text": "Résume la note",
+          "kind": null,
+          "status": null,
+          "failure_code": null,
+          "collapsed_event_ids": []
+        },
+        {
+          "role": "brain",
+          "event_id": "cev-7f018f61058d51fb9ca5cf841b94ba67ab756b0ff4baf21365b27a0ba10685e8",
+          "sequence": 2,
+          "correlation_id": "corr-cross",
+          "text": "C'est fait.",
+          "kind": "turn_result",
+          "status": "completed",
+          "failure_code": null,
+          "collapsed_event_ids": []
+        }
+      ]
+    },
+    {
+      "name": "turn_failed_then_reply_no_failure",
+      "description": "A `brain.turn.failed` then a `brain.message.published` of the correlation: the Brain message is the answer, the user bubble carries no `failure_code`.",
+      "conversation_id": "conv-chat-a",
+      "events": [
+        {
+          "sequence": 1,
+          "recorded_at": "2026-10-14T09:00:01.005Z",
+          "event": {
+            "schema_version": 1,
+            "event_id": "cev-9be1b1f994dd84ba20d2e28bfd9ef5c7596f383bfb93025f1f263fa46a900025",
+            "event_type": "user.transcript.accepted",
+            "actor": "user",
+            "conversation_id": "conv-chat-a",
+            "producer": "core.voice_admission",
+            "visibility": "public",
+            "occurred_at": "2026-10-14T09:00:01.000Z",
+            "started_at": null,
+            "ended_at": null,
+            "span_id": null,
+            "session_id": "voice-session-1",
+            "turn_id": "brain-turn-turn_failed_then_reply_clears_failure",
+            "correlation_id": "chat:turn_failed_then_reply_clears_failure",
+            "parent_event_id": null,
+            "task_id": null,
+            "work_id": null,
+            "speech_id": null,
+            "outcome_id": null,
+            "trace_ref": null,
+            "content": "Ouvre le rapport",
+            "attributes": {
+              "source": "text",
+              "addressing": "addressed"
+            }
+          }
+        },
+        {
+          "sequence": 2,
+          "recorded_at": "2026-10-14T09:00:02.005Z",
+          "event": {
+            "schema_version": 1,
+            "event_id": "cev-2820cc6b4f16d9436f0092453247bcf5f9260d73ef7b0529fa03a9351b086422",
+            "event_type": "brain.turn.failed",
+            "actor": "brain",
+            "conversation_id": "conv-chat-a",
+            "producer": "core.brain_service",
+            "visibility": "diagnostic",
+            "occurred_at": "2026-10-14T09:00:02.000Z",
+            "started_at": null,
+            "ended_at": null,
+            "span_id": null,
+            "session_id": null,
+            "turn_id": null,
+            "correlation_id": "chat:turn_failed_then_reply_clears_failure",
+            "parent_event_id": null,
+            "task_id": null,
+            "work_id": null,
+            "speech_id": null,
+            "outcome_id": null,
+            "trace_ref": {
+              "source": "runtime_journal",
+              "journal_kind": "core.brain.turn_failed",
+              "join_keys": [
+                "conversation_id",
+                "correlation_id"
+              ]
+            },
+            "content": null,
+            "attributes": {
+              "code": "brain_backend_exception",
+              "error_class": "TimeoutError"
+            }
+          }
+        },
+        {
+          "sequence": 3,
+          "recorded_at": "2026-10-14T09:00:03.005Z",
+          "event": {
+            "schema_version": 1,
+            "event_id": "cev-2305f906a1bb7e6ad07a26cb3f20264437057d485ebadf80b2e0ba0e4035e52c",
+            "event_type": "brain.message.published",
+            "actor": "brain",
+            "conversation_id": "conv-chat-a",
+            "producer": "core.brain_outcomes",
+            "visibility": "public",
+            "occurred_at": "2026-10-14T09:00:03.000Z",
+            "started_at": null,
+            "ended_at": null,
+            "span_id": null,
+            "session_id": null,
+            "turn_id": null,
+            "correlation_id": "chat:turn_failed_then_reply_clears_failure",
+            "parent_event_id": null,
+            "task_id": null,
+            "work_id": null,
+            "speech_id": null,
+            "outcome_id": "outcome-turn_failed_then_reply_clears_failure",
+            "trace_ref": {
+              "source": "runtime_journal",
+              "journal_kind": "core.brain.outcome_retained",
+              "join_keys": [
+                "correlation_id",
+                "outcome_id"
+              ]
+            },
+            "content": "Le rapport est ouvert.",
+            "attributes": {
+              "kind": "turn_result",
+              "status": "completed"
+            }
+          }
+        }
+      ],
+      "expected": [
+        {
+          "role": "user",
+          "event_id": "cev-9be1b1f994dd84ba20d2e28bfd9ef5c7596f383bfb93025f1f263fa46a900025",
+          "sequence": 1,
+          "correlation_id": "chat:turn_failed_then_reply_clears_failure",
+          "text": "Ouvre le rapport",
+          "kind": null,
+          "status": null,
+          "failure_code": null,
+          "collapsed_event_ids": []
+        },
+        {
+          "role": "brain",
+          "event_id": "cev-2305f906a1bb7e6ad07a26cb3f20264437057d485ebadf80b2e0ba0e4035e52c",
+          "sequence": 3,
+          "correlation_id": "chat:turn_failed_then_reply_clears_failure",
+          "text": "Le rapport est ouvert.",
+          "kind": "turn_result",
+          "status": "completed",
+          "failure_code": null,
+          "collapsed_event_ids": []
+        }
+      ]
+    },
+    {
+      "name": "reply_then_turn_failed_no_failure",
+      "description": "A `brain.message.published` then a `brain.turn.failed` of the correlation: a Brain message exists, so the user bubble carries no `failure_code`.",
+      "conversation_id": "conv-chat-a",
+      "events": [
+        {
+          "sequence": 1,
+          "recorded_at": "2026-10-14T09:00:01.005Z",
+          "event": {
+            "schema_version": 1,
+            "event_id": "cev-345a069816885c09651e11dd6778c65a6fbe99156f0f414b8b1075c6d19865fb",
+            "event_type": "user.transcript.accepted",
+            "actor": "user",
+            "conversation_id": "conv-chat-a",
+            "producer": "core.voice_admission",
+            "visibility": "public",
+            "occurred_at": "2026-10-14T09:00:01.000Z",
+            "started_at": null,
+            "ended_at": null,
+            "span_id": null,
+            "session_id": "voice-session-1",
+            "turn_id": "brain-turn-reply_then_turn_failed_sets_failure",
+            "correlation_id": "chat:reply_then_turn_failed_sets_failure",
+            "parent_event_id": null,
+            "task_id": null,
+            "work_id": null,
+            "speech_id": null,
+            "outcome_id": null,
+            "trace_ref": null,
+            "content": "Ouvre le rapport",
+            "attributes": {
+              "source": "text",
+              "addressing": "addressed"
+            }
+          }
+        },
+        {
+          "sequence": 2,
+          "recorded_at": "2026-10-14T09:00:02.005Z",
+          "event": {
+            "schema_version": 1,
+            "event_id": "cev-2f08d7d3cfba6d36d0f8903e4441de0b8109c408ae226f43f105f7c8093b80f4",
+            "event_type": "brain.message.published",
+            "actor": "brain",
+            "conversation_id": "conv-chat-a",
+            "producer": "core.brain_outcomes",
+            "visibility": "public",
+            "occurred_at": "2026-10-14T09:00:02.000Z",
+            "started_at": null,
+            "ended_at": null,
+            "span_id": null,
+            "session_id": null,
+            "turn_id": null,
+            "correlation_id": "chat:reply_then_turn_failed_sets_failure",
+            "parent_event_id": null,
+            "task_id": null,
+            "work_id": null,
+            "speech_id": null,
+            "outcome_id": "outcome-reply_then_turn_failed_sets_failure",
+            "trace_ref": {
+              "source": "runtime_journal",
+              "journal_kind": "core.brain.outcome_retained",
+              "join_keys": [
+                "correlation_id",
+                "outcome_id"
+              ]
+            },
+            "content": "Le rapport est ouvert.",
+            "attributes": {
+              "kind": "turn_result",
+              "status": "completed"
+            }
+          }
+        },
+        {
+          "sequence": 3,
+          "recorded_at": "2026-10-14T09:00:03.005Z",
+          "event": {
+            "schema_version": 1,
+            "event_id": "cev-a995aec234d5fe6f9d858a2693f335a832ecb89494cdae81775d08ae4bd97396",
+            "event_type": "brain.turn.failed",
+            "actor": "brain",
+            "conversation_id": "conv-chat-a",
+            "producer": "core.brain_service",
+            "visibility": "diagnostic",
+            "occurred_at": "2026-10-14T09:00:03.000Z",
+            "started_at": null,
+            "ended_at": null,
+            "span_id": null,
+            "session_id": null,
+            "turn_id": null,
+            "correlation_id": "chat:reply_then_turn_failed_sets_failure",
+            "parent_event_id": null,
+            "task_id": null,
+            "work_id": null,
+            "speech_id": null,
+            "outcome_id": null,
+            "trace_ref": {
+              "source": "runtime_journal",
+              "journal_kind": "core.brain.turn_failed",
+              "join_keys": [
+                "conversation_id",
+                "correlation_id"
+              ]
+            },
+            "content": null,
+            "attributes": {
+              "code": "brain_backend_exception",
+              "error_class": "TimeoutError"
+            }
+          }
+        }
+      ],
+      "expected": [
+        {
+          "role": "user",
+          "event_id": "cev-345a069816885c09651e11dd6778c65a6fbe99156f0f414b8b1075c6d19865fb",
+          "sequence": 1,
+          "correlation_id": "chat:reply_then_turn_failed_sets_failure",
+          "text": "Ouvre le rapport",
+          "kind": null,
+          "status": null,
+          "failure_code": null,
+          "collapsed_event_ids": []
+        },
+        {
+          "role": "brain",
+          "event_id": "cev-2f08d7d3cfba6d36d0f8903e4441de0b8109c408ae226f43f105f7c8093b80f4",
+          "sequence": 2,
+          "correlation_id": "chat:reply_then_turn_failed_sets_failure",
+          "text": "Le rapport est ouvert.",
+          "kind": "turn_result",
+          "status": "completed",
+          "failure_code": null,
+          "collapsed_event_ids": []
+        }
+      ]
+    },
+    {
+      "name": "backend_failure_published_then_turn_failed",
+      "description": "Core's backend-failure order: `brain.message.published` (`status = failed`) is written before `brain.turn.failed`. One Brain failure bubble, no `failure_code` on the user bubble (one failure signal, the Brain's words).",
+      "conversation_id": "conv-chat-a",
+      "events": [
+        {
+          "sequence": 1,
+          "recorded_at": "2026-10-14T09:00:01.005Z",
+          "event": {
+            "schema_version": 1,
+            "event_id": "cev-ad12c030c010d46f1b0dc4d369b7a8a5d3138d940639d6344295035e061f237c",
+            "event_type": "user.transcript.accepted",
+            "actor": "user",
+            "conversation_id": "conv-chat-a",
+            "producer": "core.voice_admission",
+            "visibility": "public",
+            "occurred_at": "2026-10-14T09:00:01.000Z",
+            "started_at": null,
+            "ended_at": null,
+            "span_id": null,
+            "session_id": "voice-session-1",
+            "turn_id": "brain-turn-backend_failure_published_then_turn_failed",
+            "correlation_id": "chat:backend_failure_published_then_turn_failed",
+            "parent_event_id": null,
+            "task_id": null,
+            "work_id": null,
+            "speech_id": null,
+            "outcome_id": null,
+            "trace_ref": null,
+            "content": "Ouvre le rapport",
+            "attributes": {
+              "source": "text",
+              "addressing": "addressed"
+            }
+          }
+        },
+        {
+          "sequence": 2,
+          "recorded_at": "2026-10-14T09:00:02.005Z",
+          "event": {
+            "schema_version": 1,
+            "event_id": "cev-273b4410cdf2b7eb579709668479fe659cd90ed31a6bf229517406a0b60f43c3",
+            "event_type": "brain.turn.accepted",
+            "actor": "brain",
+            "conversation_id": "conv-chat-a",
+            "producer": "core.brain_service",
+            "visibility": "diagnostic",
+            "occurred_at": "2026-10-14T09:00:02.000Z",
+            "started_at": null,
+            "ended_at": null,
+            "span_id": null,
+            "session_id": null,
+            "turn_id": "brain-turn-backend_failure_published_then_turn_failed",
+            "correlation_id": "chat:backend_failure_published_then_turn_failed",
+            "parent_event_id": null,
+            "task_id": null,
+            "work_id": null,
+            "speech_id": null,
+            "outcome_id": null,
+            "trace_ref": null,
+            "content": null,
+            "attributes": {}
+          }
+        },
+        {
+          "sequence": 3,
+          "recorded_at": "2026-10-14T09:00:03.005Z",
+          "event": {
+            "schema_version": 1,
+            "event_id": "cev-b9cfeac0afbc7479232283fb830a650128b6379d662703dbd1aa7aa4cf2dcc2b",
+            "event_type": "brain.message.published",
+            "actor": "brain",
+            "conversation_id": "conv-chat-a",
+            "producer": "core.brain_outcomes",
+            "visibility": "public",
+            "occurred_at": "2026-10-14T09:00:03.000Z",
+            "started_at": null,
+            "ended_at": null,
+            "span_id": null,
+            "session_id": null,
+            "turn_id": null,
+            "correlation_id": "chat:backend_failure_published_then_turn_failed",
+            "parent_event_id": null,
+            "task_id": null,
+            "work_id": null,
+            "speech_id": null,
+            "outcome_id": "outcome-backend_failure_published_then_turn_failed",
+            "trace_ref": {
+              "source": "runtime_journal",
+              "journal_kind": "core.brain.outcome_retained",
+              "join_keys": [
+                "correlation_id",
+                "outcome_id"
+              ]
+            },
+            "content": "Je n'arrive pas à joindre le cerveau.",
+            "attributes": {
+              "kind": "turn_result",
+              "status": "failed"
+            }
+          }
+        },
+        {
+          "sequence": 4,
+          "recorded_at": "2026-10-14T09:00:04.005Z",
+          "event": {
+            "schema_version": 1,
+            "event_id": "cev-125d19aab1b6d19bda286ed5be370f1ddd063132575aa42207f60200e7708fdd",
+            "event_type": "brain.turn.failed",
+            "actor": "brain",
+            "conversation_id": "conv-chat-a",
+            "producer": "core.brain_service",
+            "visibility": "diagnostic",
+            "occurred_at": "2026-10-14T09:00:04.000Z",
+            "started_at": null,
+            "ended_at": null,
+            "span_id": null,
+            "session_id": null,
+            "turn_id": null,
+            "correlation_id": "chat:backend_failure_published_then_turn_failed",
+            "parent_event_id": null,
+            "task_id": null,
+            "work_id": null,
+            "speech_id": null,
+            "outcome_id": null,
+            "trace_ref": {
+              "source": "runtime_journal",
+              "journal_kind": "core.brain.turn_failed",
+              "join_keys": [
+                "conversation_id",
+                "correlation_id"
+              ]
+            },
+            "content": null,
+            "attributes": {
+              "code": "brain_backend_failed"
+            }
+          }
+        }
+      ],
+      "expected": [
+        {
+          "role": "user",
+          "event_id": "cev-ad12c030c010d46f1b0dc4d369b7a8a5d3138d940639d6344295035e061f237c",
+          "sequence": 1,
+          "correlation_id": "chat:backend_failure_published_then_turn_failed",
+          "text": "Ouvre le rapport",
+          "kind": null,
+          "status": null,
+          "failure_code": null,
+          "collapsed_event_ids": []
+        },
+        {
+          "role": "brain",
+          "event_id": "cev-b9cfeac0afbc7479232283fb830a650128b6379d662703dbd1aa7aa4cf2dcc2b",
+          "sequence": 3,
+          "correlation_id": "chat:backend_failure_published_then_turn_failed",
+          "text": "Je n'arrive pas à joindre le cerveau.",
+          "kind": "turn_result",
+          "status": "failed",
+          "failure_code": null,
+          "collapsed_event_ids": []
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,35 @@
+{
+  "project": "Jarvis",
+  "slug": "jarvis-unified-chat-and-board-drop",
+  "title": "Jarvis — Mode Chat unifié et dépôt de ressources sur Board",
+  "source": "Conversation 2026-10-13/14 + inspection GitHub statique 2026-10-14",
+  "repository": "edebazelaire-circoe/Jarvis",
+  "source_snapshot": {
+    "branch": "main",
+    "sha": "664d767bf33e9690b67b2c12e0fd9b8cb894923a",
+    "inspected_date": "2026-10-14"
+  },
+  "drive_destination": "Jarvis/task/to-do/jarvis-unified-chat-and-board-drop/",
+  "entrypoint": "slices/TODO.md",
+  "status": "planned",
+  "priority": {
+    "chat": "P0",
+    "board_drop": "extra_in_same_task"
+  },
+  "slice_count": 12,
+  "human_validation_ids": [
+    "HV-JCHAT-00-01",
+    "HV-JCHAT-04-01",
+    "HV-JCHAT-06-01",
+    "HV-JCHAT-07-01",
+    "HV-JCHAT-08-01",
+    "HV-JCHAT-10-01",
+    "HV-JCHAT-10-02"
+  ],
+  "planning_blockers": [
+    "Workspace Task Type vocabulary not supplied; Slice 00 must resolve types before dispatch.",
+    "Ingress chat, Voice state owner, attachments support require current HEAD audit and contract Slice 01."
+  ],
+  "no_live_jarvis_actions_without_explicit_user_authorization": true,
+  "acceptance": "Voice -> chat readable -> voice disable -> text to same Board Brain -> subagents persist -> attachments; Board file/image/URL drop extra."
+}

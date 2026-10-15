@@ -1136,7 +1136,7 @@ Core (bearer token and `X-Jarvis-Protocol` like every `/v1` route; 401
 |---|---|---|
 | `GET /v1/conversation-events/conversations` | `before_sequence` (optional, ≥ 0), `limit` 1..100 (50) | summary page |
 | `GET /v1/conversation-events/sessions` | `conversation_id` (required), `after_sequence` ≥ 0 (0), `limit` 1..100 (50) | summary page |
-| `GET /v1/conversation-events` | `conversation_id` (required), `after_sequence` ≥ 0 (0), `limit` 1..500 (100), `visibility` `public`\|`diagnostic` (all), `wait_ms` 0..25000 (0) | event page |
+| `GET /v1/conversation-events` | `conversation_id` (required), `after_sequence` ≥ 0 (0), `limit` 1..500 (100), `visibility` `public`\|`diagnostic` (all), `projection` `chat` (none; not with `visibility`), `wait_ms` 0..25000 (0) | event page |
 | `GET /v1/conversation-events/lookup` | `field` ∈ `session_id, turn_id, correlation_id, task_id, work_id, speech_id, outcome_id, span_id` (required), `value` (required), `conversation_id` (optional), `after_sequence`, `limit` 1..500, `visibility` | event page |
 | `GET /v1/conversation-events/events/{event_id}` | none | `{"schema_version": 1, "sequence", "recorded_at", "event"}` |
 
@@ -1165,6 +1165,15 @@ Bodies:
 Parameters are strict: an unknown or repeated name, a non-decimal or
 out-of-range number, an invalid id or lookup field, a malformed `event_id` →
 400. Messages name the parameter and the rule, never the value.
+
+**Chat projection (contract, handoff jarvis-unified-chat-and-board-drop,
+Slice 05).** `GET /v1/conversation-events` and `GET /api/conversations/events`
+gain a `projection` parameter whose only admitted value is `chat`: the page
+keeps `user.transcript.accepted`, `brain.message.published` and
+`brain.turn.failed` only (a user event whose `addressing` is not absent,
+`addressed` or `uncertain` is dropped), filtered like `visibility` (same cursor and long-poll
+rules below); `projection` with `visibility` → 400 `invalid_request`. Rules
+and consumers: [chat.md](chat.md) › *Projection*, *Reading*.
 
 ### Cursor, reconnect and live
 
@@ -1247,8 +1256,9 @@ conversation (`jarvis.timeline.<conversation_id>`), and relays over
 - without Web Locks or BroadcastChannel the page runs `solo`: one long-poll per
   tab, exactly the previous behaviour.
 
-Nothing per-tab travels on the channel: the route takes only `conversation_id`,
-`after_sequence`, `limit` and `wait_ms`, and every page filter (Tout/Public,
+Nothing per-tab travels on the channel: the timeline sends only `conversation_id`,
+`after_sequence`, `limit` and `wait_ms` (never `visibility` nor `projection`,
+which the Chat uses — [chat.md](chat.md) › *Reading*), and every page filter (Tout/Public,
 search, lanes, scale, selection) is applied afterwards on the rows held in the
 tab. Tabs share the raw stream and each derives its own view. Two tabs on two
 different conversations keep one leader each — the route cannot serve two
@@ -1987,7 +1997,7 @@ Allowlist first, denylist as defense in depth:
 
 1. Envelope fields, event types, actors, visibilities and `trace_ref` fields are
    closed sets; unknown names are rejected.
-2. `attributes` keys must be in `ATTRIBUTE_KEYS`: `addressing, arguments_redacted,
+2. `attributes` keys must be in `ATTRIBUTE_KEYS`: `addressing, arguments_redacted, attachment_count,
    background, code, completion_basis, delivery, depth, duplicate, duration_ms, ephemeral, error_class,
    expires_at, interrupted_speech_id, job_id, kind, live_pause_count, live_pause_max_ms, live_pauses_ms,
    model, op, output_id, paragraph, played_ms, presentation_id,
@@ -1998,6 +2008,12 @@ Allowlist first, denylist as defense in depth:
    Wake-word detections are deliberately **not** timeline events: `keyword`, `score` and
    `threshold` are not attribute keys, and the detection traces live in `runtime/trace.jsonl`
    only (`docs/OPERATIONS.md`, « Diagnostic du mot d'éveil »).
+   `attachment_count` (integer: how many chat attachments a text turn carries,
+   on `user.transcript.accepted` only, absent when zero; never their ids,
+   names, paths or bytes) is in this set since Slice 07 of handoff
+   jarvis-unified-chat-and-board-drop ([chat.md](chat.md) › *Attachments*). It
+   is derived from the durable turn's `metadata.attachments`, so a replay or
+   a backfill rebuilds the same event byte for byte.
 3. Forbidden names are refused at **any depth** of a raw payload (top level,
    `trace_ref`, attributes, nested values) with `ConversationEventRedactionError`:
    reasoning, thinking, thought(s), chain_of_thought, scratchpad, cot, signature,
