@@ -81,14 +81,15 @@ def test_opens_bottom_right_no_overlap_with_dock_and_toasts(tmp_path):
     assert (tab["r"], tab["b"]) == (1440 - 18, 900 - 18), "fixed bottom right, right:18px bottom:18px"
     assert r["tabHit"] is True and not _overlap(tab, dock)
     # Toasts sit above the tab (18 + 40 + 10 px), panel closed; panel open, they move to its left.
-    assert closed["toasts"]["b"] <= tab["t"] - 10 + 0.5 and not _overlap(closed["toasts"], tab)
+    # Chat closed: toasts sit left of the dock column, bottom right — never over the tab, the dock (AGT) or the pills.
+    assert not _overlap(closed["toasts"], tab) and not _overlap(closed["toasts"], dock) and not _overlap(closed["toast"], closed["agt"])
     assert r["open"] and r["expanded"] == "true" and r["panel"]["z"] == "33"
     assert not _overlap(r["panel"], tab) and not _overlap(r["panel"], dock) and not _overlap(r["toasts"], r["panel"])
     assert r["inputHit"] is True and r["active"] == "chatInput"
     # Hydrated from 0 with the chat projection, then ONE long-poll from the last cursor.
     calls = r["fake"]["calls"]
     assert "GET /api/conversations/events?conversation_id=conv-a&after_sequence=0&limit=500&projection=chat" in calls
-    assert any(c.endswith("&projection=chat&wait_ms=25000") for c in calls)
+    assert not any("wait_ms" in c for c in calls if "projection=chat" in c), "the Chat never holds a request open"
     assert not any("/api/agent/" in c for c in calls)
     # Bubbles by textContent: HTML-looking content stays text, line breaks are kept.
     assert [b["role"] for b in r["bubbles"]] == ["user", "brain", "user", "brain"]
@@ -208,21 +209,29 @@ def test_server_409_overrides_ui(tmp_path):
 
 
 def test_board_switch_rescopes(tmp_path):
+    board = lambda b, c: {"eval": f"window.__chat.board('{b}','{c}');1"}  # noqa: E731
+    value = "document.getElementById('chatInput').value"
     out = _drive(tmp_path, [
-        OPEN, _until(f"{BUBBLES}===4"), {"eval": "window.__chat.board('board_b','conv-b');1"},
+        OPEN, _until(f"{BUBBLES}===4"), {"type": "Brouillon pour Jarvis"}, board("board_b", "conv-b"),
         _until(f"{BUBBLES}===2", name="rescoped"), {"wait": 200}, READ,
-        # The server's not-foreground refusal re-reads the state and keeps the text.
-        {"eval": "window.__chat.board('default','conv-a');1"}, _until(f"{BUBBLES}===4", name="back"),
-        {"eval": "window.__chat.turnPlan='not_foreground';1"}, {"type": "Pour Atlas"}, {"key": "Enter"},
+        # A draft belongs to its conversation: back on A, it comes back; on B the field was empty.
+        board("default", "conv-a"), _until(f"{BUBBLES}===4&&{value}==='Brouillon pour Jarvis'", name="draft_back"),
+        {"eval": "document.getElementById('chatInput').select();1"}, {"type": "Pour Atlas"},
+        # The server's not-foreground refusal re-reads the state; the text stays a draft of ITS Board.
+        {"eval": "window.__chat.turnPlan='not_foreground';1"}, {"key": "Enter"},
         _until(f"{BUBBLES}===2", name="realigned"), {"wait": 200}, {"value": "realigned"},
+        board("default", "conv-a"), _until(f"{value}==='Pour Atlas'", name="kept_on_a"),
     ])
     r, realigned = out["reads"]["r"], out["reads"]["realigned"]
     assert [b["text"] for b in r["bubbles"]] == ["Ouvre le Board Atlas", "Board Atlas ouvert."]
-    assert r["snap"]["conversation_id"] == "conv-b"
+    assert r["snap"]["conversation_id"] == "conv-b" and r["composer"]["value"] == "", "Board A's text never shows on B"
     assert "GET /api/conversations/events?conversation_id=conv-b&after_sequence=0&limit=500&projection=chat" in r["fake"]["calls"]
+    assert out["reads"]["until:draft_back"] is True
     assert out["reads"]["until:realigned"] is True
-    assert realigned["snap"]["conversation_id"] == "conv-b" and realigned["composer"]["value"] == "Pour Atlas"
+    assert realigned["snap"]["conversation_id"] == "conv-b" and realigned["composer"]["value"] == ""
     assert realigned["sendStatus"]["hidden"] is False and "Le Board affiché a changé" in realigned["sendStatus"]["text"]
+    assert out["reads"]["until:kept_on_a"] is True
+    assert [t["conversation_id"] for t in realigned["fake"]["turns"]] == ["conv-a"], "never sent to B"
 
 
 def test_retry_reuses_client_request_id(tmp_path):
@@ -234,7 +243,8 @@ def test_retry_reuses_client_request_id(tmp_path):
         {"type": "Autre message"}, {"key": "Enter"}, _until(f"{BUBBLES}===8", name="next"), {"value": "next"},
     ])
     unknown, r, nxt = out["reads"]["unknown"], out["reads"]["r"], out["reads"]["next"]
-    assert "Issue inconnue (core_timeout)" in unknown["sendStatus"]["text"] and unknown["sendStatus"]["retryHidden"] is False
+    assert "Jarvis Core ne répond pas (core_timeout)" in unknown["sendStatus"]["text"]
+    assert "sans doublon" in unknown["sendStatus"]["text"] and unknown["sendStatus"]["retryHidden"] is False
     assert unknown["composer"]["value"] == "Rapport ?"
     first, second = r["fake"]["turns"]
     assert first["client_request_id"] == second["client_request_id"] and first["content"] == second["content"]
@@ -266,25 +276,110 @@ def test_reduced_motion(tmp_path):
     assert reduced["motion"] == {"panel": "none", "dots": "none"}
 
 
-def test_one_long_poll_per_profile_and_none_when_closed_or_hidden(tmp_path):
+def test_one_reader_per_profile_and_none_when_closed_or_hidden(tmp_path):
     hold = "navigator.locks.request('jarvis.chat.conv-a',()=>new Promise(r=>{window.__release=r}));1"
     count = "window.__chat.calls.filter(c=>c.includes('/api/chat/')||c.includes('/api/conversations/')).length"
+    events = "window.__chat.calls.filter(c=>c.includes('/api/conversations/events')).length"
     out = _drive(tmp_path, [
-        {"eval": hold}, OPEN, _until(f"{BUBBLES}===4"), {"wait": 600}, {"value": "follower"},
+        # Another holder of the lock: this tab is a follower and reads NO event (it waits for the leader's broadcast).
+        {"eval": hold}, OPEN, {"wait": 2500}, {"value": "follower"}, {"value": "follower_events", "expr": events},
         {"eval": "window.__release();1"}, _until("window.JarvisChat.instance.snapshot().feed.role==='leader'", ms=7000, name="leader"),
+        _until(f"{BUBBLES}===4", name="hydrated"),
         {"eval": "document.getElementById('chatClose').click();1"}, {"wait": 300},
-        {"value": "closed_at", "expr": count}, {"wait": 2500}, {"value": "closed_after", "expr": count},
+        {"value": "closed_at", "expr": count}, {"wait": 3500}, {"value": "closed_after", "expr": count},
         OPEN, {"wait": 600},
         {"eval": "Object.defineProperty(document,'hidden',{configurable:true,get:()=>true});document.dispatchEvent(new Event('visibilitychange'));1"},
-        {"wait": 300}, {"value": "hidden_at", "expr": count}, {"wait": 2500}, {"value": "hidden_after", "expr": count},
+        {"wait": 300}, {"value": "hidden_at", "expr": count}, {"wait": 3500}, {"value": "hidden_after", "expr": count},
     ])
     reads = out["reads"]
     follower = reads["follower"]
-    assert follower["snap"]["feed"]["role"] == "follower" and "un autre onglet écoute" in follower["feed"]
-    assert not any("wait_ms" in c for c in follower["fake"]["calls"] if "/api/conversations/events" in c)
-    assert reads["until:leader"] is True
+    assert follower["snap"]["feed"]["role"] == "follower" and reads["follower_events"] == 0
+    assert any("/api/chat/state" in c for c in follower["fake"]["calls"]), "the state stays a per-tab short read"
+    assert reads["until:leader"] is True and reads["until:hydrated"] is True
     assert reads["closed_after"] == reads["closed_at"], "closed panel: no request at all"
     assert reads["hidden_after"] == reads["hidden_at"], "hidden tab: no request at all"
+
+
+def test_cadence_short_reads_one_at_a_time(tmp_path):
+    """1,5 s au repos, 0,5 s pendant 20 s après un envoi ; jamais deux requêtes du Chat en vol dans un onglet."""
+
+    probe = ("(()=>{const C=window.__chat,f=window.fetch;C.inflight=0;C.maxInflight=0;C.times=[];"
+             "window.fetch=async(p,i)=>{const chat=String(p).includes('/api/chat/state')||String(p).includes('projection=chat');"
+             "if(chat){C.inflight++;C.maxInflight=Math.max(C.maxInflight,C.inflight);if(String(p).includes('/api/chat/state'))C.times.push(Date.now())}"
+             "try{return await f(p,i)}finally{if(chat)C.inflight--}};return 1})()")
+    gaps = "(()=>{const t=window.__chat.times.slice(-4);return t.slice(1).map((x,i)=>x-t[i])})()"
+    out = _drive(tmp_path, [
+        {"eval": probe}, OPEN, _until(f"{BUBBLES}===4"), {"wait": 5000}, {"value": "idle", "expr": gaps},
+        {"type": "Vite"}, {"key": "Enter"}, {"wait": 2500}, {"value": "fast", "expr": gaps},
+        {"value": "max", "expr": "window.__chat.maxInflight"},
+    ])
+    reads = out["reads"]
+    assert all(1300 <= gap <= 2200 for gap in reads["idle"]), reads["idle"]
+    assert all(gap <= 900 for gap in reads["fast"]), reads["fast"]
+    assert reads["max"] == 1, "state and events reads are sequential"
+
+
+def test_late_reply_note_after_the_configured_delay(tmp_path):
+    out = _drive(tmp_path, [
+        OPEN, _until(f"{BUBBLES}===4"), {"eval": "window.JarvisChat.config.replyDeadlineMs=1500;window.__chat.replyMs=null;1"},
+        {"type": "Long travail"}, {"key": "Enter"}, _until(f"{BUBBLES}===5"),
+        _until("!!document.querySelector('#chatLog .chat-note.late')", name="late"), READ,
+    ])
+    r = out["reads"]["r"]
+    assert out["reads"]["until:late"] is True
+    late = [n for n in r["notes"] if n.startswith("chat-note late|")]
+    assert late == ["chat-note late|Toujours en cours, ou réponse non affichable ici —voir la chronologie complète"], r["notes"]
+    assert len(r["bubbles"]) == 5, "never a fake reply"
+
+
+def test_edited_text_after_unknown_outcome_is_a_new_message(tmp_path):
+    out = _drive(tmp_path, [
+        OPEN, _until(f"{BUBBLES}===4"), {"eval": "window.__chat.turnPlan='timeout_once';1"},
+        {"type": "Rapport ?"}, {"key": "Enter"}, _until("!document.getElementById('chatSendStatus').hidden"),
+        {"type": " complet"}, {"wait": 100}, {"value": "edited"},
+        {"key": "Enter"}, _until(f"{BUBBLES}>=6", name="sent"), {"wait": 300}, READ,
+    ])
+    edited, r = out["reads"]["edited"], out["reads"]["r"]
+    assert "sans doublon" not in edited["sendStatus"]["text"] and edited["sendStatus"]["retryHidden"] is True
+    assert "NOUVEAU message" in edited["sendStatus"]["text"] and "peut-être déjà été reçu" in edited["sendStatus"]["text"]
+    first, second = r["fake"]["turns"]
+    assert second["content"] == "Rapport ? complet" and second["client_request_id"] != first["client_request_id"]
+
+
+def test_core_side_failures_name_jarvis_core(tmp_path):
+    out = _drive(tmp_path, [OPEN, {"wait": 2000}, READ], setup="window.__chat.stateError='core_unreachable'")
+    r = out["reads"]["r"]
+    assert r["lock"]["text"] == "Jarvis Core ne répond pas." and r["composer"]["ariaDisabled"] == "true"
+    # No conversation known yet: no events read at all (never `conversation_id=null`).
+    assert not any("/api/conversations/events" in c for c in r["fake"]["calls"]), r["fake"]["calls"]
+
+
+def test_pills_tab_stays_whole_and_clickable_and_panel_spares_it(tmp_path):
+    pills = "window.__chat.background={counts:{failed:1,attention:2,done:3,said:1},unread:7,seq:1,sources:{}}"
+    out = _drive(tmp_path, [TOAST, {"wait": 1200}, {"value": "closed"}, OPEN, _until(f"{BUBBLES}===4"), {"wait": 300}, READ,
+                            _shot(tmp_path, "pills-1440x900"), {"click": "#chatTab"}, {"wait": 200}, {"value": "toggled"}],
+                 setup=pills)
+    closed, r = out["reads"]["closed"], out["reads"]["r"]
+    assert closed["pills"] is not None, "the pills are shown"
+    for seen in (closed, r):
+        tab = seen["tab"]
+        assert seen["tabHit"] is True and tab["l"] >= 0 and tab["r"] <= 1440 and tab["b"] <= 900
+        assert not _overlap(tab, seen["pills"]) and not _overlap(tab, seen["dock"])
+    assert not _overlap(closed["toasts"], closed["pills"]) and not _overlap(closed["toast"], closed["agt"])
+    assert not _overlap(r["panel"], r["tab"]), "the open panel never covers the tab"
+    assert out["reads"]["toggled"]["open"] is False, "the tab still closes the panel by a real click"
+
+
+@pytest.mark.parametrize("theme", ["default", "cosmos"])
+def test_narrow_toasts_spare_the_panel_header_and_voice_hint_hides(tmp_path, theme):
+    cosmos = [{"eval": "window.JarvisThemeAPI.activate('cosmos',{persist:false});1"}, {"wait": 600}] if theme == "cosmos" else []
+    out = _drive(tmp_path, [*cosmos, OPEN, _until(f"{BUBBLES}===4"), TOAST, {"wait": 1500}, READ,
+                            _shot(tmp_path, f"narrow-toast-{theme}-600x800")], width=600, height=800)
+    r = out["reads"]["r"]
+    assert r["toast"] is not None
+    assert not _overlap(r["toast"], r["head"]) and not _overlap(r["toast"], r["close"]) and r["closeHit"] is True
+    assert not _overlap(r["toast"], r["input"]) and r["inputHit"] is True
+    assert r["voicehint"] == "hidden"
 
 
 def test_board_and_studio_open_alongside(tmp_path):

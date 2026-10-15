@@ -63,7 +63,7 @@ const FAKE=`(()=>{
     const method=(init&&init.method)||'GET',url=new URL(path,'http://x'),signal=init&&init.signal;
     C.calls.push(method+' '+path);
     if(path==='/api/status')return json(200,{voice_state:'idle',voice_online:false,agent:{name:'claude',state:'running'},
-      agent_cli:'claude',error_count:0,background:null,
+      agent_cli:'claude',error_count:0,background:C.background||null,
       boards:{available:true,active:{board_id:C.state.board_id,title:C.boards[C.state.board_id]},jarvis_session_id:'jsess_1',
         bindings:[{board_id:C.state.board_id,lifecycle:'foreground',agent_cli:'claude',closed:false}],error:null}});
     if(url.pathname==='/api/boards'&&method==='GET')return json(200,{boards:Object.entries(C.boards).map(([board_id,title])=>
@@ -71,7 +71,7 @@ const FAKE=`(()=>{
     if(url.pathname==='/api/sessions/current')return json(200,{session:{jarvis_session_id:'jsess_1',
       started_at:new Date().toISOString(),visited_board_ids:['default']}});
     if(url.pathname==='/api/presentation-studio/presentations')return json(200,{presentations:[],problems:[]});
-    if(url.pathname==='/api/chat/state')return json(200,JSON.parse(JSON.stringify(C.state)));
+    if(url.pathname==='/api/chat/state')return C.stateError?refuse(503,C.stateError):json(200,JSON.parse(JSON.stringify(C.state)));
     if(url.pathname==='/api/conversations/events'){
       const q=url.searchParams,conv=q.get('conversation_id'),after=+q.get('after_sequence'),limit=+q.get('limit'),
         wait=+(q.get('wait_ms')||0);
@@ -121,7 +121,9 @@ const READ=`(()=>{
   const snap=window.JarvisChat&&window.JarvisChat.instance?window.JarvisChat.instance.snapshot():null;
   return {
     tab:box(tab),panel:box(panel),dock:box(q('.dock')),toasts:box(q('#toasts')),sidePanel:box(q('#panel.open')),
-    input:box(input),send:box(q('#chatSend')),boardsPanel:box(q('#boardsPanel')),inspector:box(q('#jvStudioInspector')),
+    input:box(input),send:box(q('#chatSend')),head:box(q('#chatPanel header')),close:box(q('#chatClose')),
+    pills:box(q('#bgPills:not([hidden])')),agt:box(q('#agentsButton')),toast:box(q('#toasts .toast')),
+    voicehint:getComputedStyle(q('#voiceHint')).visibility,closeHit:hit(q('#chatClose')),boardsPanel:box(q('#boardsPanel')),inspector:box(q('#jvStudioInspector')),
     tabHit:hit(tab),inputHit:hit(input),
     open:panel.classList.contains('open')&&!panel.hidden,sideOpen:q('#panel').classList.contains('open'),
     expanded:tab.getAttribute('aria-expanded'),

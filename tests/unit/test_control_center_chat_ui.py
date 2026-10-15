@@ -70,8 +70,12 @@ def test_tab_and_panel_ids_roles_and_reuse_of_panel():
 def test_layout_rules_tab_bottom_right_toasts_above_it_one_panel_at_a_time():
     html = PAGE.read_text(encoding="utf-8")
     assert re.search(r"\.chat-tab\{position:absolute;z-index:32;right:18px;bottom:18px;width:52px;height:40px;", html)
-    # Toasts: 18 px + tab (40 px) + 10 px; the open-panel offset still applies.
-    assert ".toasts{position:fixed;right:18px;bottom:68px;" in html
+    # Toasts: left of the dock column (never over AGT, the pills or the tab), above the tab row (18 + 40 + 10 px);
+    # the open-panel offset still applies.
+    assert ".toasts{position:fixed;right:86px;bottom:68px;z-index:70;display:grid;gap:8px;width:clamp(220px,calc(100vw - 232px),340px);" in html
+    assert ".panel.chat-panel{bottom:68px}" in html, "the open Chat never covers its own tab"
+    assert "#app:has(.chat-panel.open) .voicehint{visibility:hidden}" in html
+    assert "#app:has(.chat-panel.open)~.toasts{top:var(--chat-toasts-top,124px);bottom:auto}" in html
     assert "#app:has(.panel.open)~.toasts{right:calc(98px + min(560px,100vw - 120px))" in html
     assert "@media(prefers-reduced-motion:reduce){.chat-panel.open," in html
     assert "async function openPanel(name){if(window.JarvisChat)window.JarvisChat.close();" in html
@@ -87,8 +91,12 @@ def test_the_view_only_calls_chat_routes_and_never_the_agent_bridge():
     assert "/api/agent" not in module.replace("Les routes `/api/agent/*` contournent", "")
     routes = set(re.findall(r"'(/api/[A-Za-z0-9_/.-]+)'", module))
     assert routes == {"/api/chat/state", "/api/conversations/events", "/api/chat/turns", "/api/chat/voice/disable"}
-    assert "projection=chat" in module and "wait_ms=" in module
+    assert "projection=chat" in module
+    # QA S06: the Chat holds NO pending connection — short reads only, one reader per profile, shared.
+    assert "wait_ms=" not in module and "wait_ms:" not in module, "no long-poll in the code"
     assert "LOCK_NAME='jarvis.chat.'" in module and "ifAvailable:true" in module
+    assert "new root.BroadcastChannel(LOCK_NAME+cid)" in module
+    assert "tickMs:1500,fastMs:500,fastWindowMs:20000" in module
 
 
 def test_no_event_content_reaches_html():

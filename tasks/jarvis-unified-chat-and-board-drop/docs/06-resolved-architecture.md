@@ -72,7 +72,13 @@ La conversation affichée est `binding.conversation_id` de la Session ouverte et
 
 ### Lecture live
 
-Hydratation `after_sequence=0`, `limit=500`, `projection=chat`, suivie de `next_cursor` tant que `has_more`, puis long-poll `wait_ms=25000` depuis le **dernier `next_cursor` reçu**. Une seule attente longue par profil de navigateur : verrou Web Locks `jarvis.chat.<conversation_id>` ; les autres onglets font une lecture `wait_ms=0` toutes les 5 s ; sans Web Locks, mode solo. Le panneau fermé ou l'onglet caché ne tient **aucune** attente. Le plafond du Control Center (`MAX_LONG_POLLS = 8`, `conversation_event_view.py:75`) est partagé avec la chronologie : la réalisation le vérifie avec un onglet chronologie ouvert.
+**Révisé après la QA bloquante de la Slice 06 (décision agent 0, 2026-10-14) : aucun long-poll pour le Chat.** Chrome partage **six** connexions HTTP/1.1 par origine entre tous les onglets ; chaque onglet du Control Center tient déjà ses propres attentes longues (commandes plein écran, explorateur du Studio, chronologie). Un long-poll de 25 s par onglet affamait `/api/status`, `/api/chat/state` et l'envoi (> 9 s) dès deux onglets.
+
+- Une boucle par onglet, **séquentielle** (jamais deux requêtes du Chat en vol) : `GET /api/chat/state` puis la lecture des événements, toutes les **1,5 s** ; toutes les **0,5 s** pendant **20 s** après un envoi (le sien ou celui d'un suiveur) ou un changement d'état.
+- Événements : lecture **courte** (jamais `wait_ms`), `projection=chat`, `limit=500`, depuis le **dernier `next_cursor` reçu** (hydratation depuis `after_sequence=0`), suivie tant que `has_more`.
+- **Un seul lecteur par profil** : le détenteur du verrou Web Locks `jarvis.chat.<conversation_id>` lit les événements et les diffuse sur `BroadcastChannel('jarvis.chat.<conversation_id>')` ; les suiveurs ne lisent aucun événement (demande d'historique `hello`, envoi signalé `poke`) et reprennent le verrou quand le meneur part. Sans Web Locks ou sans BroadcastChannel : solo, même cadence.
+- Panneau fermé ou onglet caché : **aucune** requête, verrou rendu.
+- Preuve : `tests/unit/test_control_center_chat_tabs_browser.py` (vrai serveur HTTP qui tient les attentes de la page). Limite constatée hors du Chat : trois onglets visibles plus la chronologie dépassent déjà les six connexions **Chat fermé** (attentes de la page elle-même) ; le Chat n'y ajoute aucune attente. Mesure réelle (Core + Control Center isolés, 2026-10-15) : deux onglets Chat, `/api/status` 23 / 13 ms et envoi d'un suiveur reçu dans les deux en 0,7 s ; trois onglets quelconques, Chat ouvert ou fermé, `/api/status` ≈ 8,3 s / 8,6 s, car chaque onglet tient deux attentes de 25 s (`/api/fullscreen/commands`, `/api/presentation-studio/explorer/commands`).
 
 ### Limite connue (non corrigée ici)
 

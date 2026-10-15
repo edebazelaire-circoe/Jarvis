@@ -5,14 +5,20 @@
    Session+Board actif — la MÊME que la voix — et y écrit par le MÊME Brain.
 
    **Routes.** Uniquement :
-   - `GET /api/chat/state` : Board, conversation, état vocal, verrou. Lu chaque
-     seconde, panneau ouvert et onglet visible ; rien sinon.
-   - `GET /api/conversations/events?projection=chat` : hydratation depuis 0
-     (`limit=500`, `next_cursor` tant que `has_more`), puis long-poll
-     `wait_ms=25000` depuis le dernier `next_cursor` reçu. Une seule attente
-     longue par profil : verrou Web Locks `jarvis.chat.<conversation_id>` ; les
-     autres onglets lisent avec `wait_ms=0` toutes les 5 s ; sans Web Locks,
-     mode solo. Panneau fermé ou onglet caché : aucune requête.
+   - `GET /api/chat/state` : Board, conversation, état vocal, verrou.
+   - `GET /api/conversations/events?projection=chat` : lecture COURTE (jamais
+     `wait_ms`) depuis le dernier `next_cursor` reçu, `limit=500`, suivie tant
+     que `has_more`.
+   **Aucune requête tenue en attente** (QA S06) : Chrome partage six
+   connexions par origine entre tous les onglets et la page en tient déjà
+   plusieurs ; un long-poll par onglet affamait `/api/status` dès deux onglets.
+   Une boucle par onglet, séquentielle (jamais deux requêtes du Chat en vol) :
+   état puis événements, toutes les 1,5 s, toutes les 0,5 s pendant 20 s après
+   un envoi ou un changement d'état. Seul le meneur (verrou Web Locks
+   `jarvis.chat.<conversation_id>`) lit les événements et les diffuse sur
+   `BroadcastChannel('jarvis.chat.<conversation_id>')` ; les suiveurs n'en
+   lisent aucun. Sans l'un des deux : solo, même cadence. Panneau fermé ou
+   onglet caché : aucune requête.
    - `POST /api/chat/turns` : un UUID v4 par message composé, réutilisé à
      chaque reprise (504 `core_timeout` = issue inconnue → même id).
    - `POST /api/chat/voice/disable` : « Passer au chat ».
@@ -48,9 +54,12 @@
     count:'chatCount',send:'chatSend'});
   const ROUTES=Object.freeze({state:'/api/chat/state',events:'/api/conversations/events',turns:'/api/chat/turns',
     disable:'/api/chat/voice/disable'});
-  const TIMING=Object.freeze({stateMs:1000,stateTimeoutMs:8000,longWaitMs:25000,followerMs:5000,pageLimit:500,readGraceMs:10000,
-    sendTimeoutMs:20000,disableTimeoutMs:10000,replyDeadlineMs:120000,switchDeadlineMs:15000,
-    retryMs:[1000,2000,5000,10000]});
+  /* Cadences et échéances (ms). `JarvisChat.config` est modifiable à chaud (tests : délai de 120 s
+     raccourci sans toucher `Date.now`) ; `DEFAULTS` garde les valeurs du contrat. */
+  const DEFAULTS=Object.freeze({tickMs:1500,fastMs:500,fastWindowMs:20000,helloMs:1000,stateTimeoutMs:8000,
+    readTimeoutMs:10000,pageLimit:500,sendTimeoutMs:20000,disableTimeoutMs:10000,replyDeadlineMs:120000,
+    switchDeadlineMs:15000,retryMs:Object.freeze([1000,2000,5000,10000])});
+  const config={...DEFAULTS};
   /* Bornes du contrat (`docs/chat.md` › *Configurable bounds*). */
   const MAX_TEXT=8192;
   const STORAGE={open:'jarvis.chat.open',draft:'jarvis.chat.draft.'};
@@ -63,21 +72,23 @@
     chat_conversation_not_foreground:'Le Board affiché a changé : message non envoyé. Vérifiez la conversation puis renvoyez.',
     session_not_found:'Aucune Session ouverte : message non envoyé.',
     binding_not_found:'Ce Board n’a pas d’agent lié : message non envoyé.',
-    core_unreachable:'Core injoignable : message non envoyé.',
-    core_unavailable:'Core indisponible : message non envoyé.',
+    core_unreachable:'Jarvis Core ne répond pas : message non envoyé.',
+    core_unavailable:'Jarvis Core ne répond pas : message non envoyé.',
     core_stopping:'Core s’arrête : message non envoyé.',
     core_unauthorized:'Core a refusé le jeton du Control Center : message non envoyé.',
     invalid_core_response:'Réponse de Core illisible : message non envoyé.',
     forbidden_origin:'Origine refusée par le Control Center.',
     request_too_large:'Message trop volumineux pour le Control Center.',
+    edited_after_unknown:'Texte modifié : il partira comme un NOUVEAU message. Le précédent a peut-être déjà été reçu par Jarvis — vérifiez le fil avant d’envoyer.',
   });
   /* Issue inconnue : le tour a peut-être été admis. Seule reprise sûre : le même id. */
   const UNKNOWN_OUTCOME=new Set(['core_timeout','client_timeout','network_error']);
   const STATE_ERRORS=Object.freeze({
     session_not_found:'Aucune Session ouverte : ouvrez un Board pour écrire.',
     binding_not_found:'Ce Board n’a pas d’agent lié.',
-    core_unreachable:'Core injoignable.',core_unavailable:'Core indisponible.',core_timeout:'Core ne répond pas.',
-    core_unconfigured:'Core non configuré.',network_error:'Control Center injoignable.',client_timeout:'Control Center ne répond pas.',
+    /* Codes de Core relayés (503/504) : c'est Jarvis Core qui ne répond pas, pas le Control Center. */
+    core_unreachable:'Jarvis Core ne répond pas.',core_unavailable:'Jarvis Core ne répond pas.',core_timeout:'Jarvis Core ne répond pas.',
+    core_unconfigured:'Jarvis Core non configuré.',network_error:'Control Center injoignable.',client_timeout:'Control Center ne répond pas.',
   });
 
   const now=()=>Date.now();
@@ -157,35 +168,78 @@
     if(!Model)throw new Error('JarvisChatModel absent');
 
     const model=Model.createChatModel(null);
-    const S={open:false,state:null,stateError:null,lastStateErrorCode:null,stateSeq:0,stateInFlight:false,serverLock:null,
+    const S={open:false,state:null,stateError:null,lastStateErrorCode:null,stateSeq:0,serverLock:null,stateSig:null,
       switch:{phase:'idle',startedAt:null,code:null,requestId:null},
       sending:false,draft:null,sendError:null,sent:new Map(),
-      feed:{gen:0,cursor:0,hydrated:false,role:'solo',phase:'idle',error:null,retryAt:null,ctl:null,wake:null},
-      timer:null,savedScroll:null,stickBottom:true,stats:{stateReads:0,eventReads:0,longPolls:0,sends:0}};
+      feed:{cid:null,cursor:0,hydrated:false,role:'idle',phase:'idle',error:null,attempt:0,retryAt:null,rows:[],
+        channel:null,release:null,leading:false,helloAt:0},
+      loop:{gen:0,wake:null,fastUntil:0},
+      savedScroll:null,stickBottom:true,stats:{stateReads:0,eventReads:0,ticks:0,shared:0,sends:0}};
 
     const visible=()=>!doc.hidden;
     const active=()=>S.open&&visible();
+    const locks=()=>root.navigator&&root.navigator.locks&&typeof root.navigator.locks.request==='function'?root.navigator.locks:null;
+    const canShare=()=>!!(locks()&&typeof root.BroadcastChannel==='function');
+
+    /* ---------- boucle : UNE requête courte à la fois, jamais d'attente tenue ----------
+       Chrome partage six connexions par origine entre tous les onglets, et la
+       page en tient déjà plusieurs (commandes plein écran, explorateur…). Le
+       Chat n'en tient donc aucune : chaque tic lit l'état, puis — meneur ou
+       solo seulement — les événements (`wait_ms` absent), en séquence. */
+    function fast(reason){
+      S.loop.fastUntil=now()+config.fastWindowMs;
+      if(reason)log('fast_window',{reason});
+      wakeLoop();
+    }
+    function wakeLoop(){if(S.loop.wake)S.loop.wake()}
+    function startLoop(){
+      const gen=++S.loop.gen;
+      runLoop(gen);
+    }
+    function stopLoop(){S.loop.gen++;wakeLoop()}
+    async function runLoop(gen){
+      const alive=()=>gen===S.loop.gen&&active();
+      while(alive()){
+        S.stats.ticks++;
+        try{
+          await readState();
+          if(!alive())break;
+          await feedStep(alive);
+        }catch(error){
+          /* Garde-fou : un tic ne casse jamais la boucle. */
+          log('tick_failed',{error:String(error&&error.message||error)},'error');
+        }
+        render();
+        if(!alive())break;
+        const delay=now()<S.loop.fastUntil?config.fastMs:config.tickMs;
+        await new Promise(resolve=>{
+          const done=()=>{clearTimeout(timer);if(S.loop.wake===done)S.loop.wake=null;resolve()};
+          const timer=setTimeout(done,delay);S.loop.wake=done;
+        });
+      }
+    }
 
     /* ---------- état ---------- */
     async function readState(){
-      if(S.stateInFlight||!active())return;
-      S.stateInFlight=true;const seq=++S.stateSeq;S.stats.stateReads++;
+      const seq=++S.stateSeq;S.stats.stateReads++;
       try{
-        const {value}=await request(ROUTES.state,{timeoutMs:TIMING.stateTimeoutMs});
+        const {value}=await request(ROUTES.state,{timeoutMs:config.stateTimeoutMs});
         if(S.lastStateErrorCode)log('state_restored',{after:S.lastStateErrorCode});
-        S.state=value;S.stateError=null;
+        S.state=value;S.stateError=null;S.lastStateErrorCode=null;
         if(S.serverLock&&value.chat_writable&&seq>S.serverLock.seq)S.serverLock=null;
         if(S.switch.phase==='failed'&&value.chat_writable)S.switch={phase:'idle',startedAt:null,code:null,requestId:null};
         followSwitch(value);
+        const voice=value.voice||{};
+        const sig=`${value.conversation_id}|${voice.state}|${value.chat_writable}`;
+        if(S.stateSig!==null&&sig!==S.stateSig)fast('state_changed');
+        S.stateSig=sig;
         if(value.conversation_id!==model.conversationId)rescope(value.conversation_id||null);
       }catch(error){
         S.stateError={code:error.code||'unknown',at:now()};
         /* Session fermée ou Board sans binding : plus rien à montrer ni à écrire. */
         if(error.status===404){S.state=null;if(model.conversationId)rescope(null)}
-        if(!S.lastStateErrorCode||S.lastStateErrorCode!==S.stateError.code)log('state_failed',{code:S.stateError.code,status:error.status},'warn');
-      }finally{
-        S.lastStateErrorCode=S.stateError&&S.stateError.code;
-        S.stateInFlight=false;render();
+        if(S.lastStateErrorCode!==S.stateError.code)log('state_failed',{code:S.stateError.code,status:error.status},'warn');
+        S.lastStateErrorCode=S.stateError.code;
       }
     }
     function followSwitch(state){
@@ -197,109 +251,131 @@
         if(S.open)el.input.focus();
       }else if(req&&(!sw.requestId||req.request_id===sw.requestId)&&(req.status==='failed'||req.status==='expired')){
         sw.phase='failed';sw.code=req.code||`voice_disable_${req.status}`;log('voice_switch_failed',{code:sw.code},'warn');
-      }else if(now()-sw.startedAt>TIMING.switchDeadlineMs){
+      }else if(now()-sw.startedAt>config.switchDeadlineMs){
         sw.phase='failed';sw.code='voice_disable_expired';log('voice_switch_failed',{code:sw.code,client_deadline:true},'warn');
       }
     }
-    /* Changement de Board (ou de Session) : rien de l'ancienne conversation ne reste. */
+    /* Changement de Board (ou de Session) : rien de l'ancienne conversation ne reste,
+       pas même le texte du champ — un brouillon appartient à SA conversation. */
     function rescope(conversationId){
       const before=model.conversationId;
-      stopFeed();Model.reset(model,conversationId);
-      S.feed.cursor=0;S.feed.hydrated=false;S.sent.clear();S.stickBottom=true;nodes.clear();el.log.replaceChildren();
-      /* Le texte en cours reste dans le champ (il part, s'il part, comme un NOUVEAU message de ce Board :
-         nouvel id). Champ vide : le brouillon gardé pour cette conversation revient (reprise après rechargement). */
+      leaveFeed();Model.reset(model,conversationId);
+      S.sent.clear();S.stickBottom=true;nodes.clear();el.log.replaceChildren();
       if(S.sendError&&S.sendError.code!=='chat_conversation_not_foreground')S.sendError=null;
-      if(el.input.value){S.draft=null}else{S.draft=loadDraft(conversationId);el.input.value=S.draft?S.draft.text:''}
+      S.draft=loadDraft(conversationId);el.input.value=S.draft?S.draft.text:'';
       log('rescoped',{from:before,to:conversationId});
-      if(conversationId&&active())startFeed();
     }
 
-    /* ---------- lecture des événements ---------- */
-    function eventsUrl(conversationId,cursor,waitMs){
-      return `${ROUTES.events}?conversation_id=${encodeURIComponent(conversationId)}&after_sequence=${cursor}&limit=${TIMING.pageLimit}&projection=chat${waitMs?`&wait_ms=${waitMs}`:''}`;
+    /* ---------- lecture des événements : un meneur par profil, partagé ----------
+       Meneur = détenteur du verrou Web Locks `jarvis.chat.<conversation_id>` :
+       lui seul lit `GET /api/conversations/events?projection=chat` (courte) et
+       diffuse ses lignes sur `BroadcastChannel('jarvis.chat.<conversation_id>')`.
+       Un suiveur ne lit aucun événement : il demande l'historique (`hello`) et
+       signale ses envois (`poke`) pour que le meneur accélère. Sans Web Locks ou
+       sans BroadcastChannel : solo, même cadence. */
+    function joinFeed(cid){
+      const f=S.feed;
+      f.cid=cid;f.cursor=0;f.hydrated=false;f.rows=[];f.error=null;f.attempt=0;f.retryAt=null;f.helloAt=0;
+      f.phase='hydrating';f.role=canShare()?'follower':'solo';
+      if(canShare()){
+        try{f.channel=new root.BroadcastChannel(LOCK_NAME+cid);f.channel.onmessage=event=>onShared(cid,event.data)}
+        catch(error){f.channel=null;f.role='solo';log('channel_failed',{error:String(error)},'warn')}
+      }
     }
-    function startFeed(){
-      stopFeed();
-      if(!active()||!model.conversationId)return;
-      const gen=++S.feed.gen;runFeed(gen,model.conversationId);
+    function leaveFeed(){
+      const f=S.feed;
+      if(f.release){f.release();f.release=null}
+      f.leading=false;
+      if(f.channel){try{f.channel.close()}catch(_error){/* argued: closing a closed channel is a no-op */}f.channel=null}
+      f.cid=null;f.role='idle';f.phase='idle';
     }
-    function stopFeed(){
-      S.feed.gen++;
-      if(S.feed.ctl){S.feed.ctl.abort();S.feed.ctl=null}
-      if(S.feed.wake)S.feed.wake();
-      S.feed.phase='idle';
+    function share(message){
+      const f=S.feed;if(!f.channel)return;
+      try{f.channel.postMessage(message);S.stats.shared++}catch(error){log('share_failed',{error:String(error)},'warn')}
     }
-    function pokeFeed(){if(S.feed.wake)S.feed.wake()}
-    function pause(ms,alive){
+    function onShared(cid,message){
+      const f=S.feed;
+      if(!message||typeof message!=='object'||f.cid!==cid||model.conversationId!==cid)return;
+      if(message.type==='rows'&&f.role==='follower'&&Array.isArray(message.rows)){
+        Model.applyPage(model,message.rows);f.rows.push(...message.rows);
+        if(Number.isInteger(message.cursor)&&message.cursor>f.cursor)f.cursor=message.cursor;
+        if(!f.hydrated){f.hydrated=true;log('hydrated',{conversation_id:cid,shared:true,items:Model.items(model).length})}
+        f.phase='live';f.error=message.error||null;
+        render();
+      }else if(message.type==='hello'&&f.leading){
+        share({type:'rows',rows:f.rows,cursor:f.cursor,error:f.error});
+      }else if(message.type==='poke'&&f.leading){
+        fast('follower_sent');
+      }
+    }
+    /* Prend le verrou s'il est libre ; le garde jusqu'à `leaveFeed`. */
+    function tryLead(cid){
       return new Promise(resolve=>{
-        const done=()=>{clearTimeout(timer);if(S.feed.wake===done)S.feed.wake=null;resolve()};
-        const timer=setTimeout(done,ms);S.feed.wake=done;
-        if(!alive())done();
+        locks().request(LOCK_NAME+cid,{ifAvailable:true},lock=>{
+          if(!lock||S.feed.cid!==cid){resolve(false);return undefined}
+          resolve(true);
+          return new Promise(release=>{S.feed.release=release});
+        }).catch(error=>{log('lock_failed',{error:String(error)},'warn');resolve(false)});
       });
     }
-    async function runFeed(gen,conversationId){
-      const alive=()=>gen===S.feed.gen&&active()&&model.conversationId===conversationId;
-      const read=async waitMs=>{
-        /* Contrôleur propre à CETTE requête : une génération qui s'achève ne doit pas oublier celui de la suivante. */
-        const ctl=new AbortController();S.feed.ctl=ctl;S.stats.eventReads++;if(waitMs)S.stats.longPolls++;
-        let page;
-        try{({value:page}=await request(eventsUrl(conversationId,S.feed.cursor,waitMs),{timeoutMs:waitMs+TIMING.readGraceMs,signal:ctl.signal}))}
-        finally{if(S.feed.ctl===ctl)S.feed.ctl=null}
-        if(!alive())return null;
-        if(!Array.isArray(page.events)||!Number.isInteger(page.next_cursor)||page.next_cursor<S.feed.cursor||typeof page.has_more!=='boolean'){
-          const invalid=new Error('page d’événements hors contrat');invalid.code='invalid_page';throw invalid;
-        }
-        Model.applyPage(model,page);S.feed.cursor=page.next_cursor;S.feed.error=null;S.feed.attempt=0;
-        render();
-        return page;
-      };
-      const catchUp=async()=>{let page;do{page=await read(0)}while(page&&page.has_more&&alive())};
-      const locks=root.navigator&&root.navigator.locks&&typeof root.navigator.locks.request==='function'?root.navigator.locks:null;
-      S.feed.attempt=0;
-      while(alive()){
-        try{
-          if(!S.feed.hydrated){
-            S.feed.phase='hydrating';render();
-            await catchUp();if(!alive())return;
-            S.feed.hydrated=true;log('hydrated',{conversation_id:conversationId,cursor:S.feed.cursor,items:Model.items(model).length});
-          }
-          S.feed.phase='live';render();
-          if(locks){
-            const led=await locks.request(LOCK_NAME+conversationId,{ifAvailable:true},async lock=>{
-              if(!lock)return false;
-              S.feed.role='leader';render();
-              while(alive()){const page=await read(TIMING.longWaitMs);if(page&&page.has_more)await catchUp()}
-              return true;
-            });
-            if(!led&&alive()){S.feed.role='follower';render();await catchUp();await pause(TIMING.followerMs,alive)}
-          }else{
-            S.feed.role='solo';
-            const page=await read(TIMING.longWaitMs);if(page&&page.has_more)await catchUp();
-          }
-        }catch(error){
-          if(!alive()||error.code==='aborted')return;
-          const delay=TIMING.retryMs[Math.min(S.feed.attempt,TIMING.retryMs.length-1)];S.feed.attempt++;
-          S.feed.phase='retry';S.feed.error={code:error.code||'unknown',status:error.status};S.feed.retryAt=now()+delay;
-          log('read_failed',{code:S.feed.error.code,status:error.status,retry_ms:delay},'warn');
-          render();
-          await pause(delay,alive);
+    async function feedStep(alive){
+      const cid=model.conversationId,f=S.feed;
+      /* Pas encore de conversation (état pas lu, ou en échec) : aucune lecture d'événements. */
+      if(!cid){if(f.cid)leaveFeed();return}
+      if(f.cid!==cid){leaveFeed();joinFeed(cid)}
+      if(f.role==='follower'&&!f.leading){
+        if(await tryLead(cid)){
+          if(!alive()||f.cid!==cid){if(f.release){f.release();f.release=null}return}
+          f.leading=true;f.role='leader';log('leading',{conversation_id:cid,cursor:f.cursor});
+        }else{
+          if(!f.hydrated&&now()-f.helloAt>config.helloMs){f.helloAt=now();share({type:'hello'})}
+          return;
         }
       }
+      if(f.retryAt&&now()<f.retryAt)return;
+      try{
+        let page;
+        do{
+          S.stats.eventReads++;
+          ({value:page}=await request(eventsUrl(cid,f.cursor),{timeoutMs:config.readTimeoutMs}));
+          if(!alive()||f.cid!==cid)return;
+          if(!Array.isArray(page.events)||!Number.isInteger(page.next_cursor)||page.next_cursor<f.cursor||typeof page.has_more!=='boolean'){
+            const invalid=new Error('page d’événements hors contrat');invalid.code='invalid_page';throw invalid;
+          }
+          const fresh=page.events.filter(row=>row&&row.event&&row.event.conversation_id===cid);
+          Model.applyPage(model,fresh);f.cursor=page.next_cursor;
+          if(fresh.length){f.rows.push(...fresh);share({type:'rows',rows:fresh,cursor:f.cursor})}
+          else if(!f.hydrated)share({type:'rows',rows:[],cursor:f.cursor});
+        }while(page.has_more&&alive());
+        if(!f.hydrated){f.hydrated=true;log('hydrated',{conversation_id:cid,cursor:f.cursor,items:Model.items(model).length})}
+        if(f.error)log('read_restored',{after:f.error.code});
+        f.phase='live';f.error=null;f.attempt=0;f.retryAt=null;
+      }catch(error){
+        if(!alive()||f.cid!==cid)return;
+        const delay=config.retryMs[Math.min(f.attempt,config.retryMs.length-1)];f.attempt++;
+        f.phase='retry';f.error={code:error.code||'unknown',status:error.status};f.retryAt=now()+delay;
+        log('read_failed',{code:f.error.code,status:error.status,retry_ms:delay},'warn');
+        share({type:'rows',rows:[],cursor:f.cursor,error:f.error});
+      }
+    }
+    function eventsUrl(conversationId,cursor){
+      return `${ROUTES.events}?conversation_id=${encodeURIComponent(conversationId)}&after_sequence=${cursor}&limit=${config.pageLimit}&projection=chat`;
     }
 
     /* ---------- envoi ---------- */
     function loadDraft(conversationId){
       if(!conversationId)return null;
       try{const v=JSON.parse(store('get',STORAGE.draft+conversationId)||'null');
-        return v&&typeof v.id==='string'&&typeof v.text==='string'?v:null}catch(_error){return null}
+        return v&&typeof v.id==='string'&&typeof v.text==='string'?{id:v.id,text:v.text,cid:conversationId}:null}catch(_error){return null}
     }
+    /* Le brouillon est rangé sous SA conversation : jamais envoyé dans une autre. */
     function saveDraft(){
-      if(!model.conversationId)return;
+      const cid=model.conversationId;if(!cid)return;
       const text=el.input.value;
-      if(!text){store('set',STORAGE.draft+model.conversationId,null);return}
+      if(!text){S.draft=null;store('set',STORAGE.draft+cid,null);return}
       /* Un texte modifié est un nouveau message : nouvel id. Inchangé : même id (reprise). */
-      if(!S.draft||S.draft.text!==text)S.draft={id:uuid4(),text};
-      store('set',STORAGE.draft+model.conversationId,JSON.stringify(S.draft));
+      if(!S.draft||S.draft.cid!==cid||S.draft.text!==text)S.draft={id:uuid4(),text,cid};
+      store('set',STORAGE.draft+cid,JSON.stringify({id:S.draft.id,text}));
     }
     async function send(){
       const view=composerView(S);
@@ -308,35 +384,35 @@
       const text=el.input.value;
       if(!text.trim()){el.input.focus();return}
       if(text.length>MAX_TEXT){S.sendError={code:'chat_text_too_long',retry:false};render();return}
-      if(!S.draft||S.draft.text!==text)S.draft={id:uuid4(),text};
       saveDraft();
       const conversationId=model.conversationId,id=S.draft.id;
       S.sending=true;S.sendError=null;S.sendStartedAt=now();S.stats.sends++;render();
       log('turn_sending',{correlation_id:'chat:'+id,conversation_id:conversationId,chars:text.length});
       try{
-        const {status,value}=await request(ROUTES.turns,{method:'POST',timeoutMs:TIMING.sendTimeoutMs,
+        const {status,value}=await request(ROUTES.turns,{method:'POST',timeoutMs:config.sendTimeoutMs,
           body:{conversation_id:conversationId,client_request_id:id,content:text}});
         const correlation=typeof value.correlation_id==='string'&&value.correlation_id?value.correlation_id:'chat:'+id;
         log('turn_admitted',{correlation_id:correlation,status,duplicate:!!value.duplicate});
         if(model.conversationId===conversationId){
           Model.markPending(model,correlation);
           if(!S.sent.has(correlation))S.sent.set(correlation,{at:now()});
+          if(el.input.value===text)el.input.value='';
+          S.draft=null;
         }
-        if(el.input.value===text)el.input.value='';
-        S.draft=null;store('set',STORAGE.draft+conversationId,null);
-        S.stickBottom=true;pokeFeed();
+        store('set',STORAGE.draft+conversationId,null);
+        S.stickBottom=true;
+        if(S.feed.leading||S.feed.role==='solo')fast('sent');else{share({type:'poke'});S.loop.fastUntil=now()+config.fastWindowMs}
       }catch(error){
         const code=error.code||'unknown';
         log('turn_refused',{correlation_id:'chat:'+id,status:error.status,code},'warn');
         if(code==='chat_input_locked'){
-          S.serverLock={reason:(error.body&&error.body.reason)||'voice_unknown',seq:S.stateSeq};
-          S.stateInFlight=false;readState();
+          S.serverLock={reason:(error.body&&error.body.reason)||'voice_unknown',seq:S.stateSeq};fast('locked');
         }else if(code==='chat_conversation_not_foreground'){
-          S.sendError={code,retry:false};readState();
+          S.sendError={code,retry:false};fast('not_foreground');
         }else if(code==='chat_request_conflict'){
           S.draft=null;S.sendError={code,retry:false};
         }else{
-          S.sendError={code,retry:UNKNOWN_OUTCOME.has(code)||error.status>=500||error.status===0};
+          S.sendError={code,retry:UNKNOWN_OUTCOME.has(code)||error.status>=500||error.status===0,text,id};
         }
       }finally{
         S.sending=false;render();
@@ -350,13 +426,13 @@
       S.switch={phase:'pending',startedAt:now(),code:null,requestId:null};render();
       log('voice_switch_requested',{});
       try{
-        const {value}=await request(ROUTES.disable,{method:'POST',timeoutMs:TIMING.disableTimeoutMs,body:{client_request_id:uuid4()}});
+        const {value}=await request(ROUTES.disable,{method:'POST',timeoutMs:config.disableTimeoutMs,body:{client_request_id:uuid4()}});
         S.switch.requestId=value.request_id||null;
         if(!value.request_id){S.switch.phase='idle'}
       }catch(error){
         S.switch.phase='failed';S.switch.code=error.code||'unknown';
         log('voice_switch_failed',{code:S.switch.code,status:error.status},'warn');
-      }finally{S.stateInFlight=false;readState()}
+      }finally{fast('voice_switch');render()}
     }
 
     /* ---------- rendu ---------- */
@@ -375,7 +451,8 @@
         const left=Math.max(0,Math.ceil(((f.retryAt||now())-now())/1000));
         return {tone:'warn',text:`Lecture interrompue (${f.error.code}) · nouvel essai`,time:`dans ${left} s`};
       }
-      if(f.phase==='live')return {tone:'ok',text:f.role==='follower'?'En direct · relu toutes les 5 s (un autre onglet écoute)':'En direct'};
+      if(f.role==='follower'&&f.error)return {tone:'warn',text:`Lecture interrompue (${f.error.code}) · l’onglet qui lit réessaie`};
+      if(f.phase==='live')return {tone:'ok',text:f.role==='follower'?'En direct · lu par un autre onglet':'En direct'};
       return {tone:'muted',text:'En pause'};
     }
     function boardLabel(){
@@ -407,7 +484,7 @@
       for(const [correlation,info] of S.sent){
         const user=items.find(i=>i.role==='user'&&i.correlation_id===correlation);
         if(user&&!Model.isPending(model,correlation)){S.sent.delete(correlation);continue}
-        const late=now()-info.at>TIMING.replyDeadlineMs;
+        const late=now()-info.at>config.replyDeadlineMs;
         wanted.push([`n:${correlation}:${user?'admitted':'sent'}:${late?'late':'wait'}`,()=>note(info.at,!!user,late)]);
       }
       if(!wanted.length&&model.conversationId&&S.feed.hydrated)
@@ -445,6 +522,9 @@
     function put(node,text){if(node.textContent!==text)node.textContent=text}
     function render(){
       if(!S.open)return;
+      /* Écran étroit : la pile de notifications se pose sous l'en-tête et la ligne d'état (règle de la page). */
+      const below=Math.round(el.feed.getBoundingClientRect().bottom+8);
+      if(below>8&&below!==S.toastsTop){S.toastsTop=below;doc.documentElement.style.setProperty('--chat-toasts-top',below+'px')}
       put(el.sub,boardLabel());
       /* Les compteurs vivent hors des zones `role=status` (aria-hidden) : le lecteur d'écran n'est pas relancé chaque seconde. */
       const feed=feedLine();el.feed.dataset.tone=feed.tone;put(el.feedText,feed.text);put(el.feedTime,feed.time||'');
@@ -470,7 +550,7 @@
       el.sendStatus.hidden=!err;
       if(err){
         put(el.sendText,UNKNOWN_OUTCOME.has(err.code)
-          ?`Issue inconnue (${err.code}) : le message est peut-être déjà parti. « Réessayer » le renvoie sans doublon.`
+          ?`Issue inconnue : ${err.code==='core_timeout'?'Jarvis Core':'le Control Center'} ne répond pas (${err.code}). Le message est peut-être déjà parti ; « Réessayer » le renvoie sans doublon.`
           :(SEND_ERRORS[err.code]||`Message non envoyé (${err.code}).`));
         el.retry.hidden=!err.retry;
       }
@@ -478,15 +558,17 @@
 
     /* ---------- ouverture ---------- */
     function openTimeline(){const b=doc.getElementById('openTimeline');if(b)b.click()}
-    function tick(){if(!active())return;readState();render()}
-    function startTimers(){if(!S.timer)S.timer=setInterval(tick,TIMING.stateMs)}
-    function stopTimers(){if(S.timer){clearInterval(S.timer);S.timer=null}}
+    /* Compteurs à la seconde : rendu local seulement, aucune requête. */
+    let uiTimer=null;
     function resume(){
       if(!active())return;
-      startTimers();S.stateInFlight=false;readState();
-      if(model.conversationId)startFeed();
+      if(!uiTimer)uiTimer=setInterval(render,1000);
+      startLoop();
     }
-    function suspend(){stopTimers();stopFeed()}
+    function suspend(){
+      if(uiTimer){clearInterval(uiTimer);uiTimer=null}
+      stopLoop();leaveFeed();
+    }
     function open(options){
       if(S.open)return;
       /* Un seul panneau latéral : `#panel` (closePanel nous ferme aussi : sans effet ici) et l'inspecteur du Studio. */
@@ -532,7 +614,11 @@
         if((event.key.length===1||event.key==='Backspace'||event.key==='Delete')&&!event.ctrlKey&&!event.metaKey&&composerView(S).locked)flashLock();
       });
       el.input.addEventListener('input',()=>{
-        if(S.sendError&&!UNKNOWN_OUTCOME.has(S.sendError.code))S.sendError=null;
+        const err=S.sendError;
+        /* Après une issue inconnue, un texte modifié est un autre message (nouvel id) : la promesse
+           « sans doublon » ne vaut plus, et le précédent a peut-être été reçu. */
+        if(err&&UNKNOWN_OUTCOME.has(err.code)){if(el.input.value!==err.text)S.sendError={code:'edited_after_unknown',retry:false}}
+        else if(err&&err.code!=='edited_after_unknown')S.sendError=null;
         saveDraft();render();
       });
       el.panel.addEventListener('keydown',event=>{
@@ -541,17 +627,17 @@
       doc.addEventListener('visibilitychange',()=>{if(!S.open)return;if(visible()){log('resumed',{});resume()}else{log('suspended',{});suspend()}});
       /* Reprise : panneau rouvert au rechargement, après la fin du `<script>` de la page (closePanel et ses voisins initialisés). */
       if(store('get',STORAGE.open)==='1')setTimeout(()=>open({noFocus:true}),0);
-      log('installed',{panel:DOM.panel,locks:!!(root.navigator&&root.navigator.locks)});
+      log('installed',{panel:DOM.panel,shared:canShare()});
     }
 
     return {install,open,close,toggle:()=>S.open?close({restoreFocus:true}):open(),isOpen:()=>S.open,
       snapshot:()=>({open:S.open,conversation_id:model.conversationId,cursor:S.feed.cursor,feed:{phase:S.feed.phase,role:S.feed.role,
-        hydrated:S.feed.hydrated,error:S.feed.error},state:S.state,serverLock:S.serverLock,switch:{...S.switch},sending:S.sending,
+        hydrated:S.feed.hydrated,error:S.feed.error,leading:S.feed.leading},state:S.state,serverLock:S.serverLock,switch:{...S.switch},sending:S.sending,
         sendError:S.sendError,draft:S.draft?{id:S.draft.id}:null,pending:[...S.sent.keys()],stats:{...S.stats},view:composerView(S),
         items:Model.items(model)})};
   }
 
-  const api={DOM,ROUTES,TIMING,MAX_TEXT,composerView,uuid4,createChat,instance:null,
+  const api={DOM,ROUTES,DEFAULTS,config,MAX_TEXT,composerView,uuid4,createChat,instance:null,
     open:o=>api.instance&&api.instance.open(o),close:o=>api.instance&&api.instance.close(o),
     isOpen:()=>!!(api.instance&&api.instance.isOpen())};
   if(typeof module==='object'&&module.exports)module.exports=api;
