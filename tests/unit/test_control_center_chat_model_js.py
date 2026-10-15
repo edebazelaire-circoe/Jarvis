@@ -205,3 +205,129 @@ def test_malformed_rows_ignored(tmp_path):
       out({added,items:CM.items(m),none:CM.applyPage(m,null)+CM.applyPage(m,{})});
     """, [row(1, user("a"))])
     assert got["added"] == 1 and roles(got["items"]) == [["user", 1]] and got["none"] == 0
+
+
+# ---------- Slice 07b : état pur des pièces jointes du composer ----------
+
+def test_attachment_count_and_stored_rows_bounded(tmp_path):
+    with_files = make_event(T.USER_TRANSCRIPT_ACCEPTED, "files", attributes={"source": "text", "addressing": "addressed",
+                                                                             "attachment_count": 2})
+    page = [row(1, user("a")), row(2, with_files), row(3, reply("a"))]
+    got = run_node(tmp_path, """
+      const m=CM.createChatModel('conv-a');
+      for(let i=0;i<5;i++)CM.applyPage(m,{events:DATA});
+      const ids=CM.items(m).map(i=>i.event_id);
+      out({counts:ids.map(id=>CM.attachmentCount(m,id)),stored:CM.storedRows(m).map(r=>r.sequence),fields:Object.keys(CM.items(m)[0])});
+    """, page)
+    assert got["counts"] == [0, 2, 0]
+    assert got["stored"] == [1, 2, 3], "five replays of the same page: one row per event"
+    assert got["fields"] == ["role", "event_id", "sequence", "correlation_id", "text", "kind", "status", "failure_code",
+                             "collapsed_event_ids"], "the projection item shape (parity with Python) is unchanged"
+
+
+def test_attachment_lifecycle_states_and_send_rules(tmp_path):
+    got = run_node(tmp_path, """
+      const L=CM.createAttachments(),snap=()=>CM.attachmentView(L,'conv-a');
+      const a=CM.addAttachment(L,{name:'photo.png',size:100,mime:'image/png',cid:'conv-a',clientUploadId:'u1'});
+      const b=CM.addAttachment(L,{name:'archive.zip',size:50,mime:'application/zip',cid:'conv-a',clientUploadId:'u2'});
+      CM.attachmentProgress(L,a.key,40,100);const progress={loaded:a.loaded,total:a.total};
+      const uploading=snap();
+      CM.attachmentSent(L,a.key);const phase=a.phase;
+      CM.attachmentReady(L,a.key,{artifact_id:'jart_up_a',brain_readable:true,mime_type:'image/png',size_bytes:100});
+      CM.attachmentReady(L,b.key,{artifact_id:'jart_up_b',brain_readable:false});
+      const ready=snap();
+      const late=CM.attachmentReady(L,a.key,{artifact_id:'other'});
+      const bad=CM.addAttachment(L,{name:'x',size:1,cid:'conv-a',clientUploadId:'u3'});
+      CM.attachmentReady(L,bad.key,{});const malformed=snap().items[2].error.code;
+      CM.removeAttachment(L,bad.key);
+      const sig=CM.attachmentSignature(L,'conv-a');
+      const sent=CM.takeSent(L,'conv-a',['jart_up_a','jart_up_b']);
+      out({progress,phase,uploading:{blocked:uploading.blocked,n:uploading.uploading,status:uploading.items.map(i=>i.status)},
+        ready:{blocked:ready.blocked,ids:ready.ids,status:ready.items.map(i=>i.status)},late,malformed,sig,
+        sent:sent.map(s=>[s.name,s.readable]),after:snap().items.length});
+    """)
+    assert got["progress"] == {"loaded": 40, "total": 100} and got["phase"] == "checking"
+    assert got["uploading"] == {"blocked": "uploading", "n": 2, "status": ["uploading", "uploading"]}
+    assert got["ready"] == {"blocked": None, "ids": ["jart_up_a", "jart_up_b"], "status": ["ready", "unreadable"]}
+    assert got["late"] is None, "a settled attachment ignores a late answer"
+    assert got["malformed"] == "invalid_response"
+    assert got["sig"] == "jart_up_a,jart_up_b"
+    assert got["sent"] == [["photo.png", True], ["archive.zip", False]] and got["after"] == 0
+
+
+def test_attachment_retry_identity_rules(tmp_path):
+    """Issue inconnue → même id ; échec connu → nouvel id ; même id qui apprend `upload_conflict` → nouvel id auto."""
+
+    got = run_node(tmp_path, """
+      const L=CM.createAttachments(),add=(n,id)=>CM.addAttachment(L,{name:n,size:1,cid:'c',clientUploadId:id});
+      const out1={};
+      for(const code of ['core_timeout','client_timeout','network_error','upload_in_progress','upload_incomplete','upload_conflict','upload_storage_failed','core_unreachable']){
+        const it=add(code,'id-'+code);const f=CM.attachmentFailed(L,it.key,{code,status:0});
+        const r=CM.retryAttachment(L,it.key,'fresh-'+code);
+        out1[code]={same:r.clientUploadId==='id-'+code,replay:r.replay,attempts:r.attempts,auto:f.autoRetry};
+      }
+      const z=add('z','id-z');CM.attachmentFailed(L,z.key,{code:'core_timeout'});CM.retryAttachment(L,z.key,'nope');
+      const conflict=CM.attachmentFailed(L,z.key,{code:'upload_conflict',status:409});
+      const big=add('big','id-big');CM.attachmentFailed(L,big.key,{code:'upload_too_large',limitBytes:67108864});
+      const bigView=CM.attachmentView(L,'c').items.find(i=>i.key===big.key);
+      out({codes:out1,conflict:conflict.autoRetry,bigRetry:CM.retryAttachment(L,big.key,'x'),bigError:bigView.error,
+        failedBlocks:CM.attachmentView(L,'c').blocked});
+    """)
+    codes = got["codes"]
+    for code in ("core_timeout", "client_timeout", "network_error", "upload_in_progress"):
+        assert codes[code]["same"] is True and codes[code]["replay"] is True, code
+    for code in ("upload_incomplete", "upload_conflict", "upload_storage_failed", "core_unreachable"):
+        assert codes[code]["same"] is False and codes[code]["replay"] is False, code
+    assert all(c["attempts"] == 2 and c["auto"] is False for c in codes.values())
+    assert got["conflict"] is True, "a same-id replay answered upload_conflict retries at once with a new id"
+    assert got["bigRetry"] is None and got["bigError"]["retryable"] is False and got["bigError"]["limitBytes"] == 67108864
+    assert got["failedBlocks"] == "uploading", "uploading outranks failed: the first thing to wait for"
+
+
+def test_attachment_scope_stale_rebind_restore_and_helpers(tmp_path):
+    got = run_node(tmp_path, """
+      const L=CM.createAttachments();
+      const a=CM.addAttachment(L,{name:'a.txt',size:3,cid:'conv-a',clientUploadId:'u1'});
+      CM.attachmentReady(L,a.key,{artifact_id:'jart_up_a',brain_readable:true});
+      const onB=CM.attachmentView(L,'conv-b'),onA=CM.attachmentView(L,'conv-a');
+      const same=CM.rebindAttachment(L,a.key,'conv-a','u9');
+      const moved=CM.rebindAttachment(L,a.key,'conv-b','u2');
+      const movedView=CM.attachmentView(L,'conv-b');
+      const R=CM.createAttachments();
+      const restored=CM.restoreAttachment(R,{name:'r.pdf',size:9,cid:'conv-a',artifactId:'jart_up_r',readable:false});
+      const dup=CM.restoreAttachment(R,{name:'r.pdf',size:9,cid:'conv-a',artifactId:'jart_up_r'});
+      const lost=CM.restoreAttachment(R,{name:'big.mov',size:9,cid:'conv-a',interrupted:true});
+      out({onB:{ids:onB.ids,stale:onB.stale,status:onB.items[0].status,blocked:onB.blocked},onA:{ids:onA.ids,stale:onA.stale},
+        same,moved:{cid:moved.cid,id:moved.clientUploadId,state:moved.state},movedBlocked:movedView.blocked,
+        restored:[restored.state,restored.readable,restored.artifactId],dup,lost:[lost.state,lost.error.code,lost.error.retryable],
+        bytes:[0,1023,1024,1536,10*1024*1024,64*1024*1024,3*1024*1024*1024].map(CM.formatBytes),
+        limit:[CM.uploadLimitFrom('the file exceeds the 67108864-byte upload bound'),CM.uploadLimitFrom('nope')]});
+    """)
+    assert got["onB"] == {"ids": [], "stale": 1, "status": "stale", "blocked": None}, "never sent from another conversation"
+    assert got["onA"] == {"ids": ["jart_up_a"], "stale": 0}
+    assert got["same"] is None
+    assert got["moved"] == {"cid": "conv-b", "id": "u2", "state": "uploading"} and got["movedBlocked"] == "uploading"
+    assert got["restored"] == ["ready", False, "jart_up_r"] and got["dup"] is None
+    assert got["lost"] == ["failed", "upload_interrupted_reload", False]
+    assert got["bytes"] == ["0 o", "1023 o", "1 Ko", "1,5 Ko", "10 Mo", "64 Mo", "3 Go"]
+    assert got["limit"] == [67108864, None]
+
+
+def test_restore_dedupes_by_client_upload_id(tmp_path):
+    """QA S7b : l'enregistrement de reprise d'une pièce encore en cours ne double jamais la pièce vivante."""
+
+    got = run_node(tmp_path, """
+      const L=CM.createAttachments();
+      const live=CM.addAttachment(L,{name:'medium.png',size:9,cid:'conv-a',clientUploadId:'u-live'});
+      const whileUploading=CM.restoreAttachment(L,{name:'medium.png',size:9,cid:'conv-a',clientUploadId:'u-live',interrupted:true});
+      CM.attachmentReady(L,live.key,{artifact_id:'jart_up_live',brain_readable:true});
+      const afterReady=CM.restoreAttachment(L,{name:'medium.png',size:9,cid:'conv-a',clientUploadId:'u-live',interrupted:true});
+      const other=CM.restoreAttachment(L,{name:'medium.png',size:9,cid:'conv-a',clientUploadId:'u-other',interrupted:true});
+      const legacy=CM.restoreAttachment(L,{name:'old.png',size:9,cid:'conv-a',interrupted:true});
+      out({whileUploading,afterReady,other:other&&other.error.code,legacy:legacy&&legacy.state,
+        states:CM.attachmentView(L,'conv-a').items.map(i=>[i.clientUploadId,i.state])});
+    """)
+    assert got["whileUploading"] is None and got["afterReady"] is None, "the live attachment wins"
+    assert got["other"] == "upload_interrupted_reload", "another upload's record is still restored"
+    assert got["legacy"] == "failed", "a record without an id (older draft) is still said, never lost"
+    assert got["states"] == [["u-live", "ready"], ["u-other", "failed"], ["", "failed"]]

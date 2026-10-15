@@ -39,13 +39,15 @@ def _shot(tmp_path: Path, name: str) -> dict:
 
 
 def _drive(tmp_path: Path, actions: list, *, width: int = 1440, height: int = 900, setup: str = "",
-           reduced_motion: bool = False) -> dict:
+           reduced_motion: bool = False, extra: Path | None = None) -> dict:
     node = shutil.which("node")
     if node is None:
         pytest.skip("node absent")
     chrome = _chrome()
     page = _served_page(tmp_path)
     step = {"width": width, "height": height, "setup": setup, "reducedMotion": reduced_motion, "actions": actions}
+    if extra is not None:
+        step["extra"] = str(extra)
     done = subprocess.run([node, str(HARNESS), str(page), chrome, json.dumps(step)],
                           capture_output=True, text=True, encoding="utf-8", timeout=240, check=False)
     assert done.returncode == 0, done.stderr
@@ -134,7 +136,8 @@ def test_keyboard_enter_shift_enter_tab_order(tmp_path):
     assert sending["composer"]["sendText"].startswith("Envoi…")
     assert reads["until:once"] is True
     assert [t["content"] for t in reads["double"]["fake"]["turns"]] == ["Ligne 1\nLigne 2", "Une seule fois"]
-    assert [reads[k] for k in ("t1", "t2", "t3", "t4", "t5")] == ["chatTimeline", "chatLog", "chatInput", "chatSend", "chatInput"]
+    # Slice 07b: « Joindre » sits between the composer and Envoyer.
+    assert [reads[k] for k in ("t1", "t2", "t3", "t4", "t5")] == ["chatTimeline", "chatLog", "chatInput", "chatAttach", "chatInput"]
     escaped = reads["escaped"]
     assert escaped["open"] is False and escaped["active"] == "chatTab"
 
@@ -406,3 +409,97 @@ def test_cosmos_theme_keeps_tab_panel_and_dock_apart(tmp_path, width, height):
     assert not _overlap(r["panel"], r["tab"]) and not _overlap(r["tab"], r["dock"]) and not _overlap(r["panel"], r["dock"])
     assert r["tabHit"] is True and r["inputHit"] is True
     assert r["panel"]["b"] <= r["tab"]["t"] - 10 + 0.5
+
+
+# ---------- Polish QA S06, réglé en Slice 07b ----------
+
+def test_core_hang_blames_core_not_the_control_center(tmp_path):
+    """(a) Le relais rend 504 `core_timeout` à 10 s ; la lecture d'état l'attend (13 s) au lieu de couper à 8 s
+    et d'accuser le Control Center. Pendant l'attente, la ligne d'état le dit, avec son compteur."""
+
+    hang = ("(()=>{const C=window.__chat,f=window.fetch;window.fetch=async(p,i)=>{"
+            "if(C.hang&&String(p)==='/api/chat/state'){await new Promise(r=>setTimeout(r,10200));"
+            "return new Response(JSON.stringify({ok:false,code:'core_timeout',error:'',core_status:null}),{status:504})}"
+            "return f(p,i)};return 1})()")
+    out = _drive(tmp_path, [
+        {"eval": hang}, OPEN, _until(f"{BUBBLES}===4"), {"eval": "window.__chat.hang=true;1"}, {"wait": 6000},
+        {"value": "waiting"}, _until("document.getElementById('chatLockText').textContent!==''", ms=12000, name="locked"),
+        READ,
+    ])
+    waiting, r = out["reads"]["waiting"], out["reads"]["r"]
+    assert waiting["feed"] == "Jarvis tarde à répondre · lecture de l’état", waiting["feed"]
+    assert out["reads"]["until:locked"] is True
+    assert r["lock"]["text"] == "Jarvis Core ne répond pas.", r["lock"]["text"]
+    assert r["snap"]["state"] is not None and r["snap"]["view"]["locked"] is True
+
+
+def test_retry_in_flight_never_sticks_at_zero(tmp_path):
+    """(b) Échéance de reprise passée et requête en file : « nouvel essai en cours » et un compteur qui monte."""
+
+    fail = ("(()=>{const C=window.__chat,f=window.fetch;window.fetch=async(p,i)=>{const u=String(p);"
+            "if(C.failEvents&&u.includes('/api/conversations/events'))return new Response(JSON.stringify({ok:false,code:'core_unreachable',error:''}),{status:503});"
+            "if(C.queue&&u==='/api/chat/state')await new Promise(r=>setTimeout(r,C.queue));"
+            "return f(p,i)};return 1})()")
+    texts = "(()=>{const t=document.getElementById('chatFeedText').textContent,c=document.getElementById('chatFeedTime').textContent;return t+'|'+c})()"
+    out = _drive(tmp_path, [
+        {"eval": fail}, OPEN, _until(f"{BUBBLES}===4"), {"eval": "window.__chat.failEvents=true;1"},
+        _until("document.getElementById('chatFeedText').textContent.startsWith('Lecture interrompue')", name="failing"),
+        # The next read waits 4 s in the "browser queue" (the state read ahead of it).
+        {"eval": "window.__chat.queue=4000;1"}, {"wait": 3500}, {"value": "a", "expr": texts}, {"wait": 1500}, {"value": "b", "expr": texts},
+    ])
+    a, b = out["reads"]["a"], out["reads"]["b"]
+    for seen in (a, b):
+        assert "dans 0 s" not in seen, seen
+    in_flight = [x for x in (a, b) if "nouvel essai en cours" in x]
+    assert in_flight, (a, b)
+    secs = [int(x.split("|")[1].split(" ")[0]) for x in in_flight]
+    assert len(secs) < 2 or secs[1] > secs[0], "the counter moves"
+
+
+def test_one_coherent_status_never_live_beside_the_lock(tmp_path):
+    """(c) État illisible : la ligne d'état ne dit plus « En direct » à côté du verrou « ne répond pas »."""
+
+    out = _drive(tmp_path, [
+        OPEN, _until(f"{BUBBLES}===4"), {"value": "live"}, {"eval": "window.__chat.stateError='core_unreachable';1"},
+        _until("!document.getElementById('chatLock').hidden", name="locked"), {"wait": 1200}, READ,
+        {"eval": "window.__chat.stateError=null;1"}, _until("document.getElementById('chatFeedText').textContent==='En direct'", name="back"),
+    ])
+    live, r = out["reads"]["live"], out["reads"]["r"]
+    assert live["feed"] == "En direct"
+    assert r["lock"]["text"] == "Jarvis Core ne répond pas."
+    assert r["feed"].startswith("Connexion interrompue · Jarvis Core ne répond pas · nouvel essai"), r["feed"]
+    assert out["reads"]["until:back"] is True
+
+
+def test_follower_rows_stay_bounded_after_many_hellos(tmp_path):
+    """(d) Un suiveur qui reçoit l'historique plusieurs fois (un `rows` par `hello` de chaque onglet) ne garde
+    qu'une ligne par événement : pas de doublon, mémoire bornée."""
+
+    hold = "navigator.locks.request('jarvis.chat.conv-a',()=>new Promise(r=>{window.__release=r}));1"
+    # A fake leader in the same page: answers every hello with the whole history, and replays it 6 more times.
+    leader = ("(()=>{const ch=new BroadcastChannel('jarvis.chat.conv-a');const rows=()=>window.__chat.rows.filter(r=>r.event.conversation_id==='conv-a');"
+              "window.__hellos=0;ch.onmessage=e=>{if(e.data&&e.data.type==='hello'){window.__hellos++;"
+              "ch.postMessage({type:'rows',rows:rows(),cursor:window.__chat.seq})}};"
+              "window.__replay=()=>{for(let i=0;i<6;i++)ch.postMessage({type:'rows',rows:rows(),cursor:window.__chat.seq})};return 1})()")
+    out = _drive(tmp_path, [
+        {"eval": hold}, {"eval": leader}, OPEN, _until(f"{BUBBLES}===4", name="hydrated"),
+        {"value": "first", "expr": "window.JarvisChat.instance.snapshot().feed"},
+        {"eval": "window.__replay();1"}, {"wait": 800}, READ,
+    ])
+    first, r = out["reads"]["first"], out["reads"]["r"]
+    assert first["role"] == "follower" and first["heldRows"] == 4
+    assert r["snap"]["feed"]["heldRows"] == 4, "six more copies of the history: still one row per event"
+    assert len(r["bubbles"]) == 4
+
+
+def test_low_viewport_toast_spares_the_panel_and_its_hint(tmp_path):
+    """(e) 1024×480 : la notification ne mord plus sur le panneau ni sur l'indice « Entrée »."""
+
+    hint = "(()=>{const r=document.getElementById('chatHint').getBoundingClientRect();return {l:r.left,t:r.top,r:r.right,b:r.bottom}})()"
+    out = _drive(tmp_path, [TOAST, OPEN, _until(f"{BUBBLES}===4"), {"wait": 300}, READ, {"value": "hint", "expr": hint},
+                            _shot(tmp_path, "low-480h-toast-1024x480")], width=1024, height=480)
+    r = out["reads"]["r"]
+    assert r["toast"] is not None
+    assert not _overlap(r["toast"], r["panel"]), (r["toast"], r["panel"])
+    assert not _overlap(r["toast"], out["reads"]["hint"])
+    assert r["toast"]["l"] >= 0

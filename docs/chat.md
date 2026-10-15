@@ -18,7 +18,7 @@ that implements it; the page reaches Level 3 at Slice 10.
 | *Sending text* | `POST /api/chat/turns` → `brain-turns` `source=text`, guards, idempotence | `jarvis/runtime/chat_relay.py`, `jarvis/protocol/server.py` | 03 |
 | *Text disposition* | no TTS for a text turn (`text_channel`) | `jarvis/core/brain_service.py` | 03 |
 | *Voice channel* | Core-owned voice state, disable request, lock | `jarvis/domain/voice_channel.py`, `jarvis/core/voice_channel.py` | 04 |
-| *Attachments* | upload route, bounds, sniffing, `brain_readable`, brief block, `artifacts_root` | `jarvis/domain/uploads.py`, `jarvis/core/upload_service.py`, `jarvis/protocol/upload_routes.py` | 07, 07b |
+| *Attachments* | upload route, bounds, sniffing, `brain_readable`, brief block, `artifacts_root` | `jarvis/domain/uploads.py`, `jarvis/core/upload_service.py`, `jarvis/protocol/upload_routes.py`; UI `jarvis/runtime/control_center_chat.js` + `control_center_chat_model.js` | 07, 07b |
 | *Board drop* | file or inert URL dropped on the displayed Board | same upload service, `kind = link` | 08 |
 | *Panel* | Control Center tab and panel behaviour | `jarvis/runtime/control_center_chat.js` | 06, 07b |
 
@@ -587,6 +587,120 @@ Unsupported formats are stored, announced as such in the UI before sending
 as analysed. A message must carry text: there is no file-only send
 (`BrainTurnInput` requires text); the UI says so instead of inventing one.
 
+### UI (Slice 07b)
+
+The Chat panel (`jarvis/runtime/control_center_chat.js`, view) on the pure
+attachment state of `control_center_chat_model.js` (`createAttachments`,
+`addAttachment`, `attachmentProgress`, `attachmentSent`, `attachmentReady`,
+`attachmentFailed`, `retryAttachment`, `rebindAttachment`, `removeAttachment`,
+`attachmentView`, `takeSent`, `restoreAttachment`). One upload client, one
+chat state owner: no second module.
+
+- **Attach.** A **Joindre** button (a real `<button>`, Tab-reachable between
+  the composer and Envoyer, Enter or Space opens the native chooser) drives a
+  hidden `<input type="file" multiple>`. **Drop zone = the Chat panel only**:
+  while files are dragged over it an overlay says « Déposez les fichiers pour
+  les joindre au message ». A file dropped anywhere else in the page does
+  nothing: a document-level `dragover` guard cancels the browser default with
+  `dropEffect = none`, so the browser never opens the file in place of the
+  page (a later drop target that calls `preventDefault` first, such as the
+  Board drop of Slice 08, keeps the hand).
+- **One request per file**: `XMLHttpRequest` `POST /api/chat/uploads`,
+  `FormData` `client_upload_id` (UUID v4) then `file`; the send progress comes
+  from `xhr.upload.onprogress`. Nothing else in the page uploads.
+- **States per attachment** (a row above the composer: name, size, state,
+  elapsed counter, action, ×):
+  - `uploading` « Envoi N % » with a progress bar and counter, then
+    « Vérification par Jarvis Core… » once the last byte left (Core bounds,
+    sniffs, stores);
+  - `ready` « Prête »;
+  - `ready` with `brain_readable = false` « Prête · jointe, mais le Brain ne
+    pourra pas la lire » — said **before** sending; the file is stored and
+    sent, never presented as analysed;
+  - `failed`: the code's sentence (`upload_too_large` states Core's bound,
+    « Trop volumineux : 64 Mo au plus par fichier. », read from Core's message
+    « the file exceeds the N-byte upload bound » since the relay carries no
+    separate field); « Réessayer » when a retry makes sense (not for
+    `upload_too_large`, `upload_empty`, `upload_name_invalid`);
+  - removed (×): leaves the list; an upload in flight is aborted. The
+    Artifact Core may already hold stays in the Board's Artifacts (no delete
+    route; *Known limits* 2).
+  - `stale` « À renvoyer : jointe sur un autre Board, elle ne partira pas
+    d'ici. » — see *Board or Session change*.
+- **Deadlines** (RULE ZERO): no upload progress for `uploadStallMs` (30 s), or
+  no answer `uploadAnswerMs` (130 s, above the relay's 120 s read budget)
+  after the last byte → `client_timeout`, an unknown outcome, said « Jarvis
+  Core ne répond pas. »: the relay streams the bytes to Core and waits for
+  Core's answer, so a stall blames Core, like the composer lock (a Control
+  Center that cannot be reached is `network_error`, « Control Center
+  injoignable »).
+- **`client_upload_id` on retry** (reconciles Slice 07 QA and the contract
+  test `retry_reuses_client_upload_id`):
+  - **unknown outcome** (`core_timeout`, `client_timeout`, `network_error`,
+    `upload_in_progress`): « Réessayer » reuses the **same** id. If Core had
+    finished, it replays (200 `replayed`, the same Artifact, no duplicate);
+  - **known failure** (`upload_incomplete`, `upload_conflict`,
+    `upload_storage_failed`, `core_unreachable`, any other refusal): the retry
+    draws a **new** id — Core keeps the `failed` row and would answer 409
+    `upload_conflict` to the old one;
+  - a same-id retry answered 409 `upload_conflict` (the unknown attempt had in
+    fact failed in Core) restarts **at once, once**, with a new id.
+- **Sending.** `attachments` = the ids of the conversation's ready
+  attachments. Sending is refused while one is `uploading` (« Envoi possible
+  dès que la pièce est prête. ») or `failed` (« Une pièce est en échec :
+  réessayez-la ou retirez-la avant d'envoyer. » — no silent loss), and without
+  text (« Ajoutez un message pour accompagner les fichiers. »: no file-only
+  message). The `client_request_id` of a draft changes when its text **or**
+  its set of ready attachments changes; after an unknown send outcome,
+  changing either makes a new message (the « sans doublon » offer is
+  withdrawn). The voice lock blocks the **send**, not the preparation:
+  attaching stays possible while `chat_writable` is false. Attaching is off
+  without a conversation and during a send.
+- **The user bubble** shows « N pièce(s) jointe(s) » from
+  `attributes.attachment_count` (`JarvisChatModel.attachmentCount`, read on the
+  stored row; the projection item shape is unchanged). The names live only in
+  the local state of the message sent from this tab (last 50 messages); after
+  a reload or from another tab: the count and a « voir dans l'inspecteur »
+  link that opens the Workspace inspector on the conversation's Board
+  (`JarvisWorkspace.openBoard`), where the Artifacts are listed.
+- **Board or Session change.** An attachment belongs to the conversation it
+  was attached in. Seen from another conversation it is `stale`: never sent
+  there, offered « Renvoyer ici » (a new upload of the same file, new id, into
+  the current context) and ×; back on its own Board it is ready again.
+- **Reload.** The draft (`jarvis.chat.draft.<conversation_id>`) keeps the
+  ready attachments (Artifact id, name, size, readability, `client_upload_id`)
+  and restores them; one still uploading at reload comes back `failed`
+  `upload_interrupted_reload` (« joignez le fichier à nouveau »), never lost
+  silently. This stored draft is the **reload-recovery record only**: it is
+  read once per conversation per page load. A Board round trip (A → B → A) is
+  not a reload: the attachments in memory stay authoritative, an upload still
+  running on A keeps its live row and finishes there. The record of a
+  conversation follows its attachments even while another Board is shown (an
+  upload that finishes, a × or « Renvoyer ici » seen from B rewrites A's
+  record), and a restore never duplicates an attachment already present (same
+  `client_upload_id` or Artifact) — QA S7b, phantom « interrompu » row.
+- **Layout.** A file row never shrinks below its content (name, state, ×);
+  the list is bounded (`min(168px, 24vh)`) and scrolls. The composer keeps its
+  size first and the message list takes the rest; on a low panel only the file
+  list (down to about one row) and the text field (down to two lines) give
+  way, so the Joindre/Envoyer row always stays inside the panel — checked with
+  10 files (Core's default per message) at 1440×900, 1024×480 and 600×800.
+  The key hint stays on one line (« Entrée envoie · Maj+Entrée : à la ligne »,
+  ellipsis if ever too narrow).
+- **Names in the user bubble** are each in a `<bdi>` (text nodes, never HTML):
+  a bidi override (U+202E) in one name cannot reverse the next.
+- **Journal** (console `[chat] chat.<event>`): `attached` (via button|drop,
+  count), `upload_started`, `upload_ready` (`artifact_id`, size, type,
+  `brain_readable`, `replayed`), `upload_failed` (code, status, `same_id`,
+  `auto_retry`), `upload_retry`, `upload_rebound`, `upload_removed`,
+  `drop_ignored`, `turn_held` (reason), `inspector_opened`. Never a file name
+  or a byte.
+- Tests: `tests/unit/test_control_center_chat_attachments_browser.py` with
+  `tests/unit/_chat_attachments_browser.mjs` (fake relay as an `extra` of
+  `_chat_browser.mjs`; real files set by CDP `DOM.setFileInputFiles`, the
+  intercepted native chooser, and a real `Input.dispatchDragEvent` drop), and
+  the pure cases of `tests/unit/test_control_center_chat_model_js.py`.
+
 ## Board drop
 
 An extra of the same upload service. Never a chat turn, never a message to the
@@ -657,7 +771,10 @@ Implementation (Slice 06), beyond the rules above:
   (`right: 70px`). The Chat panel always stops at `bottom: 68px`, above the
   tab. Below 940 px wide with the Chat open, toasts sit under the panel header
   and status line (`--chat-toasts-top`, measured by the view): never over the
-  composer, the title or ×. The bottom-centre F9 voice hint is hidden while
+  composer, the title or ×. At 480 px high or less (and ≥ 940 px wide) the
+  dock turns into rows and the panel moves to `right: 136px`; the toast stack
+  moves left by the same 50 px (it overlapped the panel by 38 px and hid the
+  « Entrée » hint at 1024×480). The bottom-centre F9 voice hint is hidden while
   the Chat is open (it would be cut under the panel).
 - One side panel: `openPanel` / `closePanel` of the page close the Chat;
   opening the Chat calls `closePanel` and closes the Studio inspector, whose
@@ -681,7 +798,22 @@ Implementation (Slice 06), beyond the rules above:
   `chat_conversation_not_foreground` refusal leaves it on its own Board).
 - Core-side `core_unreachable`, `core_timeout`, `core_unavailable` read
   « Jarvis Core ne répond pas »; « Control Center ne répond pas » only for the
-  browser's own timeout or network failure.
+  browser's own timeout or network failure. A relayed read must **outlast the
+  relay** (QA S06, Slice 07b): the relay answers 504 `core_timeout` after 10 s
+  (the Control Center's HTTP session budget towards Core), so the state read
+  waits 13 s and the voice-disable request 12 s; a shorter client timeout cut
+  that answer and blamed the Control Center. A state read slower than 3 s
+  shows « Jarvis tarde à répondre · lecture de l'état » with its counter.
+- **One coherent status line**: while the state cannot be read the feed line
+  says « Connexion interrompue · <cause> · nouvel essai » with the time since
+  the first failure, never « En direct » next to a « ne répond pas » lock. A
+  read retry whose delay has passed but which waits in the browser's
+  connection queue says « nouvel essai en cours » with a rising counter, never
+  a frozen « dans 0 s ».
+- **Followers stay bounded**: a follower keeps no row list of its own; it
+  applies the leader's rows to the model (one row per `event_id`), and the
+  leader answers a `hello` with the model's stored rows. Any number of
+  `hello` replies leaves one row per event.
 - Delays and cadences live in `JarvisChat.config` (defaults in
   `JarvisChat.DEFAULTS`): tests shorten the 120 s late note
   (`replyDeadlineMs`) without touching `Date.now`.
@@ -695,7 +827,8 @@ Implementation (Slice 06), beyond the rules above:
   rescoped, hydrated, turn_sending, turn_admitted, turn_refused,
   voice_switch_requested, voice_switched, voice_switch_failed, leading,
   fast_window, read_failed, read_restored, state_failed, state_restored,
-  suspended, resumed), never message text.
+  suspended, resumed; attachments: see *Attachments* › *UI*), never message
+  text nor a file name.
 - Tests: `tests/unit/test_control_center_chat_ui.py` (page contract),
   `tests/unit/test_control_center_chat_browser.py` with
   `tests/unit/_chat_browser.mjs` (headless Chrome over CDP, fake Core), and
@@ -786,4 +919,7 @@ and an isolated root, never a repository database.
 7. **`artifacts_root` reaches the local page** through `/api/sessions/current`
    (`context.artifacts_root`, next to `sessions_root`, loopback guard), as
    `sessions_root` already does; the chat routes never return a path.
+8. **Retry on `upload_in_progress`** is manual (« Réessayer », same id), not
+   automatic; and the **same file attached twice** makes two uploads, hence two
+   Artifacts (no client-side dedupe by content). Recorded by QA S7b, left as is.
 

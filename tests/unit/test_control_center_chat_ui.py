@@ -90,7 +90,8 @@ def test_the_view_only_calls_chat_routes_and_never_the_agent_bridge():
     assert "/api/agent/ask" not in module and "/api/agent/send" not in module
     assert "/api/agent" not in module.replace("Les routes `/api/agent/*` contournent", "")
     routes = set(re.findall(r"'(/api/[A-Za-z0-9_/.-]+)'", module))
-    assert routes == {"/api/chat/state", "/api/conversations/events", "/api/chat/turns", "/api/chat/voice/disable"}
+    assert routes == {"/api/chat/state", "/api/conversations/events", "/api/chat/turns", "/api/chat/voice/disable",
+                      "/api/chat/uploads"}
     assert "projection=chat" in module
     # QA S06: the Chat holds NO pending connection — short reads only, one reader per profile, shared.
     assert "wait_ms=" not in module and "wait_ms:" not in module, "no long-poll in the code"
@@ -105,3 +106,42 @@ def test_no_event_content_reaches_html():
         assert sink not in module, sink
     # Message text is a text node.
     assert "doc.createTextNode(item.text==null?'':String(item.text))" in module
+
+
+def test_attachment_markup_and_one_upload_client():
+    """Slice 07b : bouton « Joindre » accessible, `input type=file multiple` caché, liste, consigne, zone de dépôt."""
+
+    markup = _chat_markup(PAGE.read_text(encoding="utf-8"))
+    assert re.search(r'<button type="button" class="action chat-attach" id="chatAttach"[^>]*>Joindre</button>', markup)
+    assert '<input type="file" id="chatFile" multiple hidden tabindex="-1" aria-hidden="true">' in markup
+    assert '<ul class="chat-files" id="chatFiles" aria-label="Pièces jointes du message" hidden></ul>' in markup
+    assert '<div class="chat-attnote" id="chatAttNote" role="status" hidden></div>' in markup
+    assert 'id="chatDrop" aria-hidden="true" hidden' in markup
+    module = MODULE.read_text(encoding="utf-8")
+    # One upload client (XMLHttpRequest for the send progress), one request per file, client_upload_id then file.
+    assert module.count("new root.XMLHttpRequest()") == 1
+    assert "form.append('client_upload_id',item.clientUploadId);form.append('file',file,file.name);" in module
+    # Never a file name in the console journal: upload logs carry keys, sizes, codes.
+    for event in ("upload_started", "upload_ready", "upload_failed", "upload_removed", "attached"):
+        call = re.search(r"log\('" + event + r"',\{([^}]*)\}", module)
+        assert call and "name" not in call.group(1), event
+
+
+def test_state_read_outlasts_the_relay_so_core_is_blamed():
+    """QA S06 (a) : le relais rend `core_timeout` à 10 s (session HTTP du Control Center) ; le client attend plus."""
+
+    module = MODULE.read_text(encoding="utf-8")
+    client = (ROOT / "jarvis" / "protocol" / "client.py").read_text(encoding="utf-8")
+    assert "aiohttp.ClientTimeout(total=10)" in client, "the relay budget this test pins"
+    state = int(re.search(r"stateTimeoutMs:(\d+)", module).group(1))
+    disable = int(re.search(r"disableTimeoutMs:(\d+)", module).group(1))
+    assert state > 10_000 and disable > 10_000
+
+
+def test_low_viewport_toasts_follow_the_shifted_panel():
+    """QA S06 (e) : à 480 px de haut le panneau recule à right:136px ; la pile recule d'autant."""
+
+    html = PAGE.read_text(encoding="utf-8")
+    assert "@media(min-width:940px) and (max-height:480px){#app:has(.panel.open)~.toasts{right:calc(148px + min(560px,100vw - 120px))" in html
+    assert html.index("@media(min-width:940px) and (max-height:480px){#app:has(.panel.open)~.toasts") > html.index(
+        "@media(min-width:940px){#app:has(.panel.open)~.toasts")
