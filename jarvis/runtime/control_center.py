@@ -742,6 +742,13 @@ MEMORY_SETTINGS_SCRIPT_FILE = "control_center_memory_settings.js"
 MEMORY_SETTINGS_SCRIPT_MARKER = "/*__CONTROL_CENTER_MEMORY_SETTINGS_JS__*/"
 MEMORY_SCRIPT_FILE = "control_center_memory.js"
 MEMORY_SCRIPT_MARKER = "/*__CONTROL_CENTER_MEMORY_JS__*/"
+#: Chat (jarvis-unified-chat-and-board-drop, Slice 06, `docs/chat.md` › Panel) : modèle pur de la Slice 02
+#: (`window.JarvisChatModel`, testé par node) puis la vue (onglet, panneau, composer), qui ne lit que
+#: `/api/chat/*` et `/api/conversations/events?projection=chat`.
+CHAT_MODEL_SCRIPT_FILE = "control_center_chat_model.js"
+CHAT_MODEL_SCRIPT_MARKER = "/*__CONTROL_CENTER_CHAT_MODEL_JS__*/"
+CHAT_SCRIPT_FILE = "control_center_chat.js"
+CHAT_SCRIPT_MARKER = "/*__CONTROL_CENTER_CHAT_JS__*/"
 
 #: Architectures vocales proposées dans l'onglet « Mode vocal ». Comme le reste
 #: de l'écran, leur libellé vit ici et non dans la page. `{key}` est remplacé
@@ -2470,7 +2477,9 @@ class ControlCenter:
             PREFABS_SCRIPT_MARKER, page.with_name(PREFABS_SCRIPT_FILE).read_text(encoding="utf-8")
         )
         for marker, name in ((MEMORY_SETTINGS_SCRIPT_MARKER, MEMORY_SETTINGS_SCRIPT_FILE),
-                             (MEMORY_SCRIPT_MARKER, MEMORY_SCRIPT_FILE)):
+                             (MEMORY_SCRIPT_MARKER, MEMORY_SCRIPT_FILE),
+                             (CHAT_MODEL_SCRIPT_MARKER, CHAT_MODEL_SCRIPT_FILE),
+                             (CHAT_SCRIPT_MARKER, CHAT_SCRIPT_FILE)):
             html = html.replace(marker, page.with_name(name).read_text(encoding="utf-8"))
         if self.visualizer_url:
             html = html.replace("__VISUALIZER_URL__", self.visualizer_url)

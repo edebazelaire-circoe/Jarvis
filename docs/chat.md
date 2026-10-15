@@ -154,13 +154,40 @@ failure status) stay in the client model. Tests:
 `tests/unit/test_chat_projection_query.py`,
 `tests/integration/test_chat_projection_protocol.py`.
 
-**Live reading.** Hydrate with `after_sequence=0`, `limit=500`,
-`projection=chat`, follow `next_cursor` while `has_more`, then long-poll
-`wait_ms=25000` from the **last `next_cursor` received**. One long wait per
-browser profile: Web Locks lock `jarvis.chat.<conversation_id>`; other tabs read
-with `wait_ms=0` every 5 s; without Web Locks, solo mode. A closed panel or a
-hidden tab holds **no** wait. The Control Center cap (`MAX_LONG_POLLS = 8`) is
-shared with the timeline.
+**Live reading: short reads only, no long-poll.** The Chat never holds a
+request open. Why (QA Slice 06, blocking): Chrome shares **six** HTTP/1.1
+connections per origin across all tabs, and every Control Center tab already
+holds long-polls of its own (fullscreen commands, Studio explorer, timeline).
+A 25 s Chat long-poll per tab starved `/api/status`, `/api/chat/state` and the
+send itself (> 9 s) from two tabs on. The rules:
+
+- One loop per tab, **sequential** (never two Chat requests in flight in a
+  tab): `GET /api/chat/state`, then the events read, every **1.5 s**; every
+  **0.5 s** for **20 s** after the tab's own send, a follower's send, or a
+  state change (conversation, voice state, writability).
+- Events: `projection=chat`, `limit=500`, from the **last `next_cursor`
+  received** (hydration starts at `after_sequence=0`), following `next_cursor`
+  while `has_more`; never `wait_ms`.
+- **One reader per browser profile**: only the holder of the Web Locks lock
+  `jarvis.chat.<conversation_id>` (the leader) reads events, and posts the rows
+  on `BroadcastChannel('jarvis.chat.<conversation_id>')`. Followers read no
+  events: they ask the history (`hello`), apply what the leader shares, and
+  announce their sends (`poke`) so the leader goes fast; they try the lock on
+  every tick and take over when the leader leaves. Without Web Locks or
+  BroadcastChannel: solo, same cadence. The state stays a per-tab short read.
+- A closed panel or a hidden tab makes **no** request (and releases the lock).
+
+Measured (`tests/unit/test_control_center_chat_tabs_browser.py`, a real HTTP
+server that holds the page's long-polls): two Chat tabs answer `/api/status` in
+milliseconds and a follower's send lands in both; with three Chat tabs and a
+timeline tab the Chat asks for no long wait beyond the page's own — that page,
+Chat closed, already exceeds Chrome's six connections (outside the Chat).
+Real isolated Core + Control Center, headless Chrome (2026-10-15): two Chat
+tabs, `/api/status` 23 / 13 ms, a follower's send 202 and shown in both tabs
+in 0.7 s, events read by one tab only. Any **three** visible Control Center
+tabs (Chat open or closed) hold six 25 s waits (`/api/fullscreen/commands`,
+`/api/presentation-studio/explorer/commands`, two per tab): `/api/status`
+≈ 8.3 s Chat open, ≈ 8.6 s Chat closed — a page limit, not the Chat's.
 
 ## Sending text
 
@@ -619,6 +646,61 @@ Brain, never a new conversation.
   the timeline, never a fake message.
 - A « Voir la chronologie complète » link opens the existing timeline
   (`#openTimeline`).
+
+Implementation (Slice 06), beyond the rules above:
+
+- Tab 52 × 40 px, aligned with the dock column. Toasts sit left of the dock
+  column (`right: 86px`) above the tab row (`bottom: 68px` = 18 + 40 + 10), so
+  they never cover the tab, the dock (AGT) or the pills; Cosmos (dock and pills
+  at the top): `right: 18px; bottom: 68px`. When background pills are shown
+  (default theme, column under the dock) the tab moves left of them
+  (`right: 70px`). The Chat panel always stops at `bottom: 68px`, above the
+  tab. Below 940 px wide with the Chat open, toasts sit under the panel header
+  and status line (`--chat-toasts-top`, measured by the view): never over the
+  composer, the title or ×. The bottom-centre F9 voice hint is hidden while
+  the Chat is open (it would be cut under the panel).
+- One side panel: `openPanel` / `closePanel` of the page close the Chat;
+  opening the Chat calls `closePanel` and closes the Studio inspector, whose
+  own opening calls `closePanel`. Esc in the panel closes it and gives focus
+  back to the tab. Known limit: like `#panel`, the open panel covers the
+  top-bar Boards button; the panel subtitle repeats the active Board title.
+- Pending send: after `202/200` the composer is cleared and a **note** (not a
+  bubble) says « Message transmis · enregistrement… », then « Jarvis traite
+  votre message… » once the user event exists, with an elapsed counter
+  (`aria-hidden`); the 120 s phrase replaces it. Counters never sit inside a
+  `role=status` region, and log rows are reconciled by key so `role=log`
+  announces only new messages.
+- `client_request_id`: one UUID v4 per text; an edited text draws a new one.
+  Unknown outcome (`core_timeout`, client timeout, network) keeps the text
+  and offers « Réessayer » with the same id; editing the text then replaces
+  that offer with « a NEW message; the previous one may already have been
+  received ». `chat_request_conflict` drops the id. A draft belongs to its
+  conversation: kept per viewer in `localStorage`
+  (`jarvis.chat.draft.<conversation_id>`, with `jarvis.chat.open`), restored
+  when that Board comes back, never carried to another Board (a
+  `chat_conversation_not_foreground` refusal leaves it on its own Board).
+- Core-side `core_unreachable`, `core_timeout`, `core_unavailable` read
+  « Jarvis Core ne répond pas »; « Control Center ne répond pas » only for the
+  browser's own timeout or network failure.
+- Delays and cadences live in `JarvisChat.config` (defaults in
+  `JarvisChat.DEFAULTS`): tests shorten the 120 s late note
+  (`replyDeadlineMs`) without touching `Date.now`.
+- Voice switch: « Passer au chat » posts the disable request, shows « Arrêt du
+  vocal… » and unlocks only when `GET /api/chat/state` says
+  `chat_writable`; our request `failed` / `expired`, or 15 s without an
+  answer client side, shows the code and « Réessayer ». A 409
+  `chat_input_locked` locks the composer until a state read issued after it
+  says writable.
+- Journal: browser console `[chat] chat.<event> {…}` (installed, opened,
+  rescoped, hydrated, turn_sending, turn_admitted, turn_refused,
+  voice_switch_requested, voice_switched, voice_switch_failed, leading,
+  fast_window, read_failed, read_restored, state_failed, state_restored,
+  suspended, resumed), never message text.
+- Tests: `tests/unit/test_control_center_chat_ui.py` (page contract),
+  `tests/unit/test_control_center_chat_browser.py` with
+  `tests/unit/_chat_browser.mjs` (headless Chrome over CDP, fake Core), and
+  `tests/unit/test_control_center_chat_tabs_browser.py` with
+  `tests/unit/_chat_tabs_browser.mjs` (several real tabs, real HTTP server).
 
 ## Error codes
 
