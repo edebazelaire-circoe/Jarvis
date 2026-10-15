@@ -30,7 +30,7 @@ from jarvis.adapters.sqlite_artifacts import SQLiteArtifactRepository
 from jarvis.adapters.sqlite_session_activity import SQLiteActivityLedger
 from jarvis.adapters.sqlite_captures import SQLiteCaptureRepository
 from jarvis.core.artifact_service import ArtifactService
-from jarvis.core.upload_service import UploadService
+from jarvis.core.upload_service import BoardDropSeam, UploadService
 from jarvis.domain.artifacts import ARTIFACTS_DIR
 from jarvis.domain.uploads import upload_bounds
 from jarvis.core.capture_service import CaptureAssociation, CaptureService, NoCaptureSources
@@ -274,7 +274,11 @@ class JarvisCoreApplication:
         # chat, façade sur le registre ; bornes relues de l'environnement à chaque appel (`upload_bounds`).
         self.uploads = UploadService(
             self.artifacts, association=self._upload_association, bounds=lambda: upload_bounds(os.environ),
-            artifacts_root=Path(root).resolve() / ARTIFACTS_DIR, diagnostics=diagnostics)
+            artifacts_root=Path(root).resolve() / ARTIFACTS_DIR, diagnostics=diagnostics,
+            # Dépôt sur le Board affiché (Slice 08) : Board actif, liens, lien explicite de rattrapage. Lus à
+            # l'appel : `self.workspace` et `self.board_artifact_links` sont construits plus bas.
+            board_drop=BoardDropSeam(active_board=self._active_board_id, boards_of=self._boards_of_artifact,
+                                     link=self._link_dropped_artifact))
         # Propriétaire des captures (handoff session-context-recording, Slice
         # 05, D-CAP) : seule vérité d'état ; même base v7, même connexion ;
         # association prise au Context actif du démarrage. Aucune source réelle
@@ -884,6 +888,20 @@ class JarvisCoreApplication:
 
         view = await self.sessions.current_context()
         return view.context.jarvis_session_id, view.context.context_id
+
+    async def _active_board_id(self) -> str:
+        """Board affiché : `active_board_id` de la Session ouverte (`session_not_found` sans Session)."""
+
+        return (await self.sessions.current()).session.active_board_id
+
+    async def _boards_of_artifact(self, artifact_id: str) -> tuple[str, ...]:
+        links = await self.board_artifact_links.boards_of_artifact(artifact_id, limit=500)
+        return tuple(link.board_id for link in links)
+
+    async def _link_dropped_artifact(self, board_id: str, artifact_id: str) -> None:
+        """Rattrapage d'un dépôt dont le Board a changé pendant la création : lien explicite, `origin=user`."""
+
+        await self.workspace.artifact_link(board_id, artifact_id, origin="user")
 
     async def _capture_association(self) -> CaptureAssociation:
         """Session et Context actifs au démarrage d'une capture (D-CAP, `docs/capture.md`)."""

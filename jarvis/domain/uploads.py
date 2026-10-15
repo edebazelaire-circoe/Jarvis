@@ -18,6 +18,9 @@ garde des pièces d'un tour écrit, bloc du brief) et par le Control Center
   ne sert qu'à l'affichage et au brief, jamais de nom de fichier sur disque.
 - **Lisibilité par le cerveau** (`BRAIN_READABLE`, `brain_readable`) : par
   agent, ce que son CLI sait réellement lire.
+- **URL déposée sur un Board** (`check_link_url`, Slice 08) : `http`/`https`,
+  ≤ 2048 caractères, sans identifiants ni caractère de contrôle. Une règle
+  de forme seulement : l'URL n'est **jamais** récupérée.
 """
 
 from __future__ import annotations
@@ -29,7 +32,7 @@ import hashlib
 import re
 from types import MappingProxyType
 import unicodedata
-from urllib.parse import unquote
+from urllib.parse import unquote, urlsplit
 
 from jarvis.domain.artifacts import ARTIFACT_ID_PREFIX
 
@@ -247,3 +250,46 @@ def brain_readable(agent: str | None, mime_type: str | None) -> bool:
     """Vrai seulement si l'agent sait lire ce type. Agent inconnu : faux."""
 
     return bool(mime_type) and mime_type in BRAIN_READABLE.get(str(agent or ""), frozenset())
+
+
+# ------------------------------------------------------------------ URL déposée (Slice 08)
+
+MAX_LINK_URL_CHARS = 2048
+LINK_SCHEMES = frozenset({"http", "https"})
+
+
+class LinkInvalid(ValueError):
+    """URL refusée : 400 `link_invalid` (`docs/chat.md` › *Board drop*)."""
+
+
+def check_link_url(value: object) -> tuple[str, str]:
+    """(URL, hôte en minuscules) d'une URL déposée, ou `LinkInvalid` qui dit pourquoi.
+
+    Règle de **forme** : aucune résolution DNS, aucune requête, aucun aperçu. Les
+    espaces de tête et de fin sont retirés (une ligne de `text/uri-list` finit par
+    `
+`) ; tout autre caractère de contrôle ou espace refuse l'URL.
+    """
+
+    if not isinstance(value, str):
+        raise LinkInvalid("url must be a string")
+    url = value.strip()
+    if not url:
+        raise LinkInvalid("url is empty")
+    if len(url) > MAX_LINK_URL_CHARS:
+        raise LinkInvalid(f"url exceeds {MAX_LINK_URL_CHARS} characters")
+    if any(char.isspace() or unicodedata.category(char) in ("Cc", "Cf") for char in url):
+        raise LinkInvalid("url contains a space or a control character")
+    try:
+        parts = urlsplit(url)
+        host = parts.hostname
+        parts.port  # noqa: B018 - un port illisible lève ValueError ici, refusé comme la forme
+    except ValueError as exc:
+        raise LinkInvalid(f"url is malformed ({exc})") from None
+    if parts.scheme.lower() not in LINK_SCHEMES:
+        raise LinkInvalid("only http and https URLs are accepted")
+    if "@" in parts.netloc:
+        raise LinkInvalid("url must not carry credentials (user:password@)")
+    if not host:
+        raise LinkInvalid("url has no host")
+    return url, host.lower()

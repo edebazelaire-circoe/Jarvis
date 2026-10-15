@@ -460,8 +460,9 @@ POST /api/chat/turns {..., attachments:[artifact_id]} -> Core -> BrainContext.at
 `jarvis/protocol/upload_routes.py`, façade `jarvis/core/upload_service.py`,
 pure rules `jarvis/domain/uploads.py`.
 
-- Parameters: `purpose=chat|board` (`board` → 400 `invalid_request` until
-  Slice 08); `board_id` required for `board`; `agent=claude|codex` (the
+- Parameters: `purpose=chat|board` (`board`: *Board drop* below, Slice 08);
+  `board_id` required for `board` and refused with `chat` (400
+  `invalid_request`); `agent=claude|codex` (the
   foreground CLI, set by the Control Center; computes `brain_readable`).
   Headers: `Content-Length`, or `Transfer-Encoding: chunked` (the Control
   Center relays a browser multipart whose file size it does not know);
@@ -682,8 +683,20 @@ chat state owner: no second module.
 
 ## Board drop
 
-An extra of the same upload service. Never a chat turn, never a message to the
-Brain, never a new conversation.
+An extra of the same upload service (code since Slice 08). Never a chat turn,
+never a message to the Brain, never a new conversation, never a scene object.
+`jarvis/core/upload_service.py` (`put(purpose=board)`, `put_link`, seam
+`BoardDropSeam` wired by `JarvisCoreApplication`: active Board, Board links,
+explicit link), `jarvis/protocol/upload_routes.py`,
+`jarvis/domain/uploads.py` (`check_link_url`), relay
+`jarvis/runtime/chat_relay.py`, page `jarvis/runtime/control_center_board_drop.js`.
+
+```text
+page (drop on the scene) --multipart, 1 file per request--> CC POST /api/boards/drop?board_id=<displayed Board>
+  CC (same streamed relay as /api/chat/uploads) --PUT stream--> Core PUT /v1/uploads/{id}?purpose=board&board_id=…
+  Core: board_id == active Board? -> sniff -> Artifact upload (auto-linked) -> check link -> relink if needed
+page (drop of a link) --JSON--> CC POST /api/boards/drop-link --> Core POST /v1/uploads/links -> Artifact link (never fetched)
+```
 
 - **Files and images**: `PUT /v1/uploads/{client_upload_id}?purpose=board&board_id=…`,
   provenance `board_drop`, `source = "board_drop"`. Core requires
@@ -693,12 +706,69 @@ Brain, never a new conversation.
   creation: if `boards_of_artifact` lacks the target (switch between the check
   and the transaction), Core links it explicitly through
   `WorkspaceService.artifact_link(origin=user)` and says so (`relinked: true`).
+  The active Board is checked **before** the first byte is read; the 409 body
+  carries `active_board_id` (relayed by the Control Center) so the page can
+  say which Board is displayed now. Same replayable identity as an attachment;
+  an id already used by a chat attachment or a link → 409 `upload_conflict`.
+  Answer: the attachment fields plus `board_id` and `relinked`.
 - **URL**: `POST /v1/uploads/links` `{client_upload_id, url, board_id}` →
   Artifact `kind = link`, created `complete` at once with `text = url` (like
   `record_text`), metadata `provenance = board_drop`, `host`. Accepted URL:
   `http`/`https` only, ≤ 2048 characters, no credentials (`user:pass@`), no
   control characters; else 400 `link_invalid`. **Never** fetched (no network
-  request, no preview).
+  request, no DNS lookup, no preview). Answer 201 (new) or 200 (replay: same
+  `client_upload_id` and same URL; another URL or kind → 409 `upload_conflict`)
+  `{artifact_id, kind: "link", url, host, state, replayed, board_id, relinked}`.
+  Body closed, ≤ 16 KiB. In list items the link's `preview` is the URL and its
+  `provenance` is given, as for an upload.
+- **Control Center**: `POST /api/boards/drop?board_id=` (multipart
+  `client_upload_id` then `file`, the **same** streamed relay as
+  `/api/chat/uploads`, `ChatRelayRoutes._stream_upload`; exactly one
+  `board_id` query parameter, else 400 `invalid_request`) and
+  `POST /api/boards/drop-link` (closed JSON `{client_upload_id, url,
+  board_id}`, three strings, ≤ 64 KiB; `/v1/uploads/links` is the only upload
+  path `forward_json` relays). Both are in `GUARDED_PREFIXES` (every method:
+  loopback Host and Origin, never `Sec-Fetch-Site: cross-site`). Journal
+  `board.drop.relayed` (status, code, `artifact_id`, size, type, `relinked`)
+  and `board.drop_link.relayed` (status, code, `artifact_id`, `relinked`):
+  never a file name, a byte or the URL.
+- **Page** (`control_center_board_drop.js`, `window.JarvisBoardDrop`):
+  - **zone** = `#app` itself, the background (`.face`) and the scene
+    (`#sceneLayer`, nodes included). Page controls (dock, top bar, Boards
+    control, panels, Chat) are not: the Chat panel keeps its own drop
+    (Slice 07b) and a drop on it never also lands on the Board;
+  - listens **only** to `dragenter` / `dragover` / `dragleave` / `drop` on
+    `#app`, and only when they carry `Files` or `text/uri-list` (files win when
+    both are there): no pointer listener, the scene gestures (click, drag,
+    menu) never pass through it. A link dropped on a page control outside an
+    editable field is cancelled (`dropEffect = none`) so the browser never
+    navigates away from the Control Center;
+  - **layer** `#boardDrop` above the scene (z 21, `pointer-events: none`):
+    « Déposer sur « <Board> » » while hovering, or the refusal in words (no
+    confirmed displayed Board, Board switch in flight); it leaves on
+    `dragleave`, on drop, or 450 ms without `dragover`;
+  - **target** = the Board the Boards control shows (`JarvisBoardsControl`,
+    status at 1 Hz); Core stays the judge (409);
+  - **tray** `#boardDropTray` (bottom centre, z 34): one row per item, one
+    upload at a time (queue), « Envoi N % » then « Vérification par Jarvis
+    Core… », live counter, deadlines (no progress 30 s, no answer 130 s, link
+    20 s → `client_timeout`), success « Ajouté au Board « … » » (with the
+    relink and replay said) and « Voir dans l'inspecteur » (Workspace view
+    Artefacts filtered on that Board), failures in words with « Réessayer »
+    (same `client_upload_id` for an unknown outcome, a new one otherwise; none
+    for `upload_too_large`, `upload_empty`, `upload_name_invalid`,
+    `link_invalid`), × cancels an upload in flight; at most 20 items per
+    drop, a folder is refused;
+  - journal `[board-drop] board_drop.<event>` (`hover`, `dropped`,
+    `upload_started`, `upload_done`, `upload_failed`, `link_started`,
+    `link_done`, `link_failed`, `retry`, `cancelled`, `inspector_opened`,
+    `drop_ignored`): ids, sizes, types, codes; never a file name nor a URL.
+- **Tests**: `tests/unit/test_board_drop.py` (Core and relay on a real stack,
+  URL inert under a network transport that fails the test on any outbound
+  connection or lookup) and `tests/unit/test_board_drop_browser.py` with
+  `tests/unit/_board_drop_browser.mjs` (real Core + real Control Center in
+  headless Chrome: hover layer, multi-drop, URL, Chat panel drop, scene click
+  and move read back in Core, Board A → B → A, reload, refusals, 600 px).
 - **Visibility**: the Workspace inspector (Artifacts by Board,
   `GET /v1/workspace/artifacts?board_id=`), labels `upload` « Fichier déposé »
   / « Pièce jointe du chat » by provenance, `link` « Lien »
@@ -888,7 +958,10 @@ and an isolated root, never a repository database.
 3. **`--add-dir` grants all of `<data_root>/artifacts`**, not only
    attachments, for want of a per-turn grant.
 4. **No file-only message**: a message must carry text.
-5. **No scene object for a Board drop**: visible through the inspector only.
+5. **No scene object for a Board drop**: visible through the inspector only
+   (proposal: `tasks/jarvis-unified-chat-and-board-drop/Issues/`). A drop on a
+   prefab window of the scene (its own `iframe`) reaches that frame, not the
+   page: nothing happens there.
 6. **The Brain's tool journal may hold what it read.** The CLI event journal
    (`jarvis/runtime/claude_local.py`, raw tool results in `runtime/trace.jsonl`)
    already records the Brain's tool results, for any file it reads, voice turns

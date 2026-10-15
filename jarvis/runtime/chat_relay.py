@@ -12,6 +12,8 @@ le transport, panne de Core 503 / délai 504).
 | `POST /api/chat/voice/disable` | `POST /v1/voice/channel/disable` | 04 |
 | `POST /api/chat/turns` | `POST /v1/conversations/{id}/brain-turns` (`source=text`) | 03 |
 | `POST /api/chat/uploads` (multipart) | `PUT /v1/uploads/{client_upload_id}?purpose=chat` (flux) | 07 |
+| `POST /api/boards/drop?board_id=` (multipart) | `PUT /v1/uploads/{client_upload_id}?purpose=board&board_id=` (flux) | 08 |
+| `POST /api/boards/drop-link` | `POST /v1/uploads/links` | 08 |
 
 Jamais `POST /v1/voice/channel/report` : seul le processus Voice rapporte son
 état, et rien de ce qui vient du navigateur n'est cru (le corps est relayé tel
@@ -45,6 +47,14 @@ rend `brain_readable` tel que Core l'a calculé pour l'agent du premier plan
 (passé en `agent`) ; jamais un chemin.
 Journal `chat.upload.relayed` (statut, code, `artifact_id`, taille, type),
 jamais le nom d'origine ni un octet.
+
+**Dépôt sur le Board** (Slice 08, `docs/chat.md` › *Board drop*) : le même
+relais en flux, `purpose=board` et le `board_id` affiché par la page ; l'URL
+déposée part en JSON fermé `{client_upload_id, url, board_id}` vers
+`POST /v1/uploads/links`. Ni tour, ni conversation, ni requête vers l'URL.
+`/api/boards/drop` et `/api/boards/drop-link` sont gardés comme `/api/chat`
+(`GUARDED_PREFIXES`). Journal `board.drop.relayed` / `board.drop_link.relayed`
+(statut, code, `artifact_id`, `relinked`), jamais un nom, un octet ni l'URL.
 """
 
 from __future__ import annotations
@@ -67,7 +77,10 @@ from jarvis.protocol.strict_json import loads_strict_json, read_bounded
 from jarvis.runtime.capture_relay import CaptureRelayRoutes, _code_of
 
 CHAT_ROUTE = "/api/chat"
-GUARDED_PREFIXES = (CHAT_ROUTE,)
+#: Dépôt sur le Board affiché (Slice 08) : fichier (multipart, en flux) et URL inerte.
+BOARD_DROP_ROUTE = "/api/boards/drop"
+BOARD_DROP_LINK_ROUTE = "/api/boards/drop-link"
+GUARDED_PREFIXES = (CHAT_ROUTE, BOARD_DROP_ROUTE, BOARD_DROP_LINK_ROUTE)
 #: Corps JSON relayé au plus (`docs/chat.md` › *Error codes*).
 MAX_CHAT_BODY_BYTES = 64 * 1024
 #: Codes rendus quand Core n'a pas répondu (pas de `core_status`).
@@ -75,12 +88,16 @@ _TRANSPORT_CODES = frozenset({"core_unreachable", "core_unconfigured", "core_tim
 #: Budget d'un tour écrit relayé (s) : au-delà, 504 `core_timeout`, issue inconnue, rejouer.
 CHAT_TURN_TIMEOUT_S = 15.0
 #: Champs d'un refus de Core rendus au navigateur en plus du code (`docs/chat.md`).
-_RELAYED_DETAILS = ("reason", "current_conversation_id")
+_RELAYED_DETAILS = ("reason", "current_conversation_id", "active_board_id")
 #: Corps de `POST /api/chat/turns` : fermé.
 _TURN_FIELDS = frozenset({"conversation_id", "client_request_id", "content", "attachments"})
 #: Attente de la réponse de Core une fois le fichier envoyé (s) : finalisation, `fsync`.
 CHAT_UPLOAD_READ_TIMEOUT_S = 120.0
 _MAX_UPLOAD_ID_FIELD_BYTES = 256
+#: Corps de `POST /api/boards/drop-link` : fermé, trois chaînes.
+_LINK_FIELDS = frozenset({"client_upload_id", "url", "board_id"})
+#: Un id de Board tient dans un paramètre (Core le revalide contre le Board actif).
+_BOARD_ID = re.compile(r"[A-Za-z0-9_.:-]{1,128}")
 
 
 def _turn_body(raw: bytes) -> tuple[str, str, dict[str, Any]]:
@@ -117,7 +134,7 @@ def chat_error(status: int, code: str, message: str, core_status: int | None = N
 
 
 class ChatRelayRoutes(CaptureRelayRoutes):
-    """Relais `/api/chat*` -> Core. Voir l'en-tête."""
+    """Relais `/api/chat*` et dépôt sur le Board (`/api/boards/drop*`) -> Core. Voir l'en-tête."""
 
     JOURNAL_PREFIX = "chat.request"
     MAX_BODY_BYTES = MAX_CHAT_BODY_BYTES
@@ -134,6 +151,8 @@ class ChatRelayRoutes(CaptureRelayRoutes):
             web.post(CHAT_ROUTE + "/voice/disable", self._chat("voice_disable", "/v1/voice/channel/disable")),
             web.post(CHAT_ROUTE + "/turns", self.turn),
             web.post(CHAT_ROUTE + "/uploads", self.upload),
+            web.post(BOARD_DROP_ROUTE, self.board_drop),
+            web.post(BOARD_DROP_LINK_ROUTE, self.board_drop_link),
         ]
 
     async def upload(self, request: web.Request) -> web.Response:
@@ -141,6 +160,56 @@ class ChatRelayRoutes(CaptureRelayRoutes):
 
         if request.query:
             return chat_error(400, "invalid_request", "unexpected query parameters")
+        return await self._stream_upload(request, purpose="chat", board_id=None)
+
+    async def board_drop(self, request: web.Request) -> web.Response:
+        """`POST /api/boards/drop?board_id=` -> `PUT /v1/uploads/{id}?purpose=board&board_id=`, en flux (Slice 08)."""
+
+        board_id = request.query.get("board_id", "")
+        if set(request.query) != {"board_id"} or len(request.query.getall("board_id")) != 1 \
+                or not _BOARD_ID.fullmatch(board_id):
+            return chat_error(400, "invalid_request", "query must be ?board_id=<the displayed Board>")
+        return await self._stream_upload(request, purpose="board", board_id=board_id)
+
+    async def board_drop_link(self, request: web.Request) -> web.Response:
+        """`POST /api/boards/drop-link` -> `POST /v1/uploads/links` (Slice 08). L'URL n'est jamais récupérée."""
+
+        if request.query:
+            return chat_error(400, "invalid_request", "unexpected query parameters")
+        if request.content_type != "application/json":
+            return chat_error(415, "invalid_content_type", "Content-Type: application/json expected")
+        if request.content_length is not None and request.content_length > self.MAX_BODY_BYTES:
+            return chat_error(413, "request_too_large", f"JSON body exceeds {self.MAX_BODY_BYTES} bytes")
+        try:
+            raw = await read_bounded(request.content, self.MAX_BODY_BYTES)
+        except ValueError:
+            return chat_error(413, "request_too_large", f"JSON body exceeds {self.MAX_BODY_BYTES} bytes")
+        try:
+            body = loads_strict_json(raw, invalid_message="invalid link drop JSON")
+            if not isinstance(body, dict) or set(body) != _LINK_FIELDS or not all(isinstance(body[key], str)
+                                                                                 for key in _LINK_FIELDS):
+                raise ValueError("body must be {client_upload_id, url, board_id}, three strings")
+        except ValueError as exc:
+            return chat_error(400, "invalid_request", str(exc)[:200])
+        status, payload = await self._forward("POST", "/v1/uploads/links", action="board_drop_link", params=None,
+                                              body=json.dumps(body, ensure_ascii=False).encode("utf-8"),
+                                              timeout_s=None)
+        ok = status in (200, 201) and isinstance(payload, dict)
+        self._journal.emit("board.drop_link.relayed", f"URL déposée relayée à Core (HTTP {status})",
+                           level="info" if ok else "warning",
+                           data={"status": status, "code": None if ok else _code_of(payload),
+                                 "artifact_id": payload.get("artifact_id") if ok else None,
+                                 "relinked": payload.get("relinked") if ok else None})
+        if ok:
+            keys = ("artifact_id", "kind", "url", "host", "state", "replayed", "board_id", "relinked")
+            return web.json_response({"ok": True, **{key: payload.get(key) for key in keys}}, status=status)
+        return self._answer(status, payload)
+
+    async def _stream_upload(self, request: web.Request, *, purpose: str, board_id: str | None) -> web.Response:
+        """Un fichier du navigateur vers Core, en flux : le seul relais de téléversement (chat et Board)."""
+
+        action, journal = ("chat_upload", "chat.upload.relayed") if board_id is None else \
+            ("board_drop", "board.drop.relayed")
         if request.content_type != "multipart/form-data":
             return chat_error(415, "invalid_content_type", "Content-Type: multipart/form-data expected")
         bounds = upload_bounds(os.environ)
@@ -179,7 +248,8 @@ class ChatRelayRoutes(CaptureRelayRoutes):
 
         headers = {"Content-Type": file.headers.get("Content-Type") or "application/octet-stream",
                    "X-Jarvis-Upload-Name": quote(file.filename or "", safe="")}
-        params = [("purpose", "chat")] + ([("agent", agent)] if agent in BRAIN_AGENTS else [])
+        params = [("purpose", purpose)] + ([("board_id", board_id)] if board_id is not None else []) \
+            + ([("agent", agent)] if agent in BRAIN_AGENTS else [])
         path = f"/v1/uploads/{client_upload_id}"
         try:
             status, payload = await transport.forward_upload(path, params=params, headers=headers, body=chunks(),
@@ -187,7 +257,7 @@ class ChatRelayRoutes(CaptureRelayRoutes):
         except asyncio.CancelledError:
             raise
         except asyncio.TimeoutError:
-            self._unreachable("chat_upload", "PUT", "/v1/uploads", "core_timeout", "TimeoutError")
+            self._unreachable(action, "PUT", "/v1/uploads", "core_timeout", "TimeoutError")
             status, payload = 504, {"error": {"code": "core_timeout",
                                               "message": "Core did not answer in time; resend the same client_upload_id"}}
         except Exception as exc:  # noqa: BLE001 - surfaced: browser cut (400) or Core unreachable (503), journaled
@@ -195,21 +265,24 @@ class ChatRelayRoutes(CaptureRelayRoutes):
                 status, payload = 400, {"error": {"code": "upload_incomplete",
                                                   "message": f"the browser stopped sending the file ({cut[0]})"}}
             else:
-                self._unreachable("chat_upload", "PUT", "/v1/uploads", "core_unreachable", type(exc).__name__)
+                self._unreachable(action, "PUT", "/v1/uploads", "core_unreachable", type(exc).__name__)
                 status, payload = 503, {"error": {"code": "core_unreachable",
                                                   "message": f"Core is unreachable: {type(exc).__name__}"}}
         ok = status in (200, 201) and isinstance(payload, dict)
-        self._journal.emit("chat.upload.relayed", f"pièce jointe relayée à Core (HTTP {status})",
-                           level="info" if ok else "warning",
-                           data={"status": status, "code": None if ok else _code_of(payload),
-                                 "artifact_id": payload.get("artifact_id") if ok else None,
-                                 "size_bytes": payload.get("size_bytes") if ok else None,
-                                 "mime_type": payload.get("mime_type") if ok else None})
+        data = {"status": status, "code": None if ok else _code_of(payload),
+                "artifact_id": payload.get("artifact_id") if ok else None,
+                "size_bytes": payload.get("size_bytes") if ok else None,
+                "mime_type": payload.get("mime_type") if ok else None}
+        if board_id is not None:
+            data["relinked"] = payload.get("relinked") if ok else None
+        self._journal.emit(journal, f"{'fichier déposé' if board_id else 'pièce jointe'} relayé à Core (HTTP {status})",
+                           level="info" if ok else "warning", data=data)
         if ok:
             keys = ("artifact_id", "original_name", "mime_type", "size_bytes", "state", "replayed")
+            extra = {} if board_id is None else {key: payload.get(key) for key in ("board_id", "relinked")}
             return web.json_response({"ok": True, **{key: payload.get(key) for key in keys},
                                       # La valeur de Core, calculée pour le même agent : jamais recalculée ici.
-                                      "brain_readable": payload.get("brain_readable") is True},
+                                      "brain_readable": payload.get("brain_readable") is True, **extra},
                                      status=status)
         return self._answer(status, payload)
 

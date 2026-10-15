@@ -27,13 +27,23 @@ Ce que tient ce module :
 - **journal** (`runtime/trace.jsonl`) : ids, tailles, types et codes ; jamais
   le nom d'origine ni un octet ;
 - **pièces d'un tour écrit** : `attachment_refusal` (garde de
-  `brain-turns`) et `brain_attachments` (bloc du tour, chemin absolu).
+  `brain-turns`) et `brain_attachments` (bloc du tour, chemin absolu) ;
+- **dépôt sur un Board** (Slice 08, `docs/chat.md` › *Board drop*) :
+  `purpose=board` pour un fichier, `put_link` pour une URL (Artifact `link`,
+  `complete` d'un coup, **jamais récupérée**). La cible doit être le Board
+  actif de la Session ouverte (409 `board_drop_target_inactive`) ; le lien
+  automatique de la transaction de création est le lien Board, et si une
+  bascule passe entre le contrôle et la transaction, la cible est liée
+  explicitement (`WorkspaceService.artifact_link`, `origin=user`) et la
+  réponse le dit (`relinked`). Jamais un événement de conversation, jamais un
+  tour du cerveau.
 """
 
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Awaitable, Callable, Mapping
+import dataclasses
+from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass
 import hashlib
 from pathlib import Path
@@ -43,9 +53,9 @@ from jarvis.core.artifact_service import ArtifactService
 from jarvis.domain.artifacts import Artifact, ArtifactError, ArtifactErrorCode, ArtifactKind, ArtifactQuery, ArtifactState
 from jarvis.domain.brain_context import BrainAttachment, BrainAttachmentsContext
 from jarvis.domain.uploads import (
-    BRAIN_AGENTS, SNIFF_BYTES, UPLOAD_CHUNK_BYTES, Provenance, SOURCE_BY_PROVENANCE, UploadBounds, UploadNameError,
-    UploadPurpose, brain_readable, check_client_upload_id, decode_upload_name, payload_name_for, sniff_mime,
-    upload_artifact_id,
+    BRAIN_AGENTS, SNIFF_BYTES, UPLOAD_CHUNK_BYTES, LinkInvalid, Provenance, SOURCE_BY_PROVENANCE, UploadBounds,
+    UploadNameError, UploadPurpose, brain_readable, check_client_upload_id, check_link_url, decode_upload_name,
+    payload_name_for, sniff_mime, upload_artifact_id,
 )
 from jarvis.ports.artifacts import ArtifactPayloadError
 from jarvis.ports.v2 import DiagnosticSink
@@ -59,9 +69,12 @@ _MAX_DECLARED_MIME_CHARS = 200
 class UploadRefused(Exception):
     """Refus stable d'un téléversement ou d'une pièce jointe : `status`, `code` (`docs/chat.md` › *Error codes*)."""
 
-    def __init__(self, status: int, code: str, message: str, *, artifact: Artifact | None = None) -> None:
+    def __init__(self, status: int, code: str, message: str, *, artifact: Artifact | None = None,
+                 details: Mapping[str, str] | None = None) -> None:
         super().__init__(message)
         self.status, self.code, self.message, self.artifact = status, code, message, artifact
+        #: Champs sûrs ajoutés au refus (`active_board_id` d'un dépôt hors du Board affiché).
+        self.details = dict(details or {})
 
 
 @dataclass(frozen=True, slots=True)
@@ -69,6 +82,21 @@ class UploadOutcome:
     artifact: Artifact
     #: Vrai : rejeu reconnu (200) ; faux : nouvel Artifact (201).
     replayed: bool
+    #: Dépôt sur un Board (Slice 08) : le Board ciblé, et vrai si Core a dû le lier explicitement.
+    board_id: str | None = None
+    relinked: bool = False
+
+
+@dataclass(frozen=True, slots=True)
+class BoardDropSeam:
+    """Ce que le dépôt sur un Board lit et écrit hors du registre (Slice 08), câblé par `JarvisCoreApplication`."""
+
+    #: `active_board_id` de la Session ouverte ; `BoardError` (`session_not_found`) sans Session.
+    active_board: Callable[[], Awaitable[str]]
+    #: Ids des Boards liés à un Artifact (`board_artifact_links`).
+    boards_of: Callable[[str], Awaitable[Sequence[str]]]
+    #: Lien explicite (`WorkspaceService.artifact_link(board_id, artifact_id, origin="user")`).
+    link: Callable[[str, str], Awaitable[Any]]
 
 
 def upload_view(artifact: Artifact) -> dict[str, Any]:
@@ -81,13 +109,21 @@ def upload_view(artifact: Artifact) -> dict[str, Any]:
             "error_code": artifact.error_code}
 
 
+def link_view(artifact: Artifact) -> dict[str, Any]:
+    """Une URL déposée : l'URL telle que donnée et son hôte, jamais rien de récupéré."""
+
+    return {"artifact_id": artifact.artifact_id, "kind": artifact.kind.value, "url": artifact.text,
+            "host": artifact.metadata.get("host"), "state": artifact.state.value}
+
+
 class UploadService:
     """Voir l'en-tête du module. Construit par `JarvisCoreApplication`."""
 
     def __init__(self, artifacts: ArtifactService, *, association: Callable[[], Awaitable[tuple[str, str]]],
                  bounds: Callable[[], UploadBounds], artifacts_root: Path,
-                 diagnostics: DiagnosticSink | None = None) -> None:
+                 diagnostics: DiagnosticSink | None = None, board_drop: BoardDropSeam | None = None) -> None:
         self._artifacts = artifacts
+        self._board_drop = board_drop
         self._association = association
         self._bounds = bounds
         self._artifacts_root = Path(artifacts_root)
@@ -102,17 +138,23 @@ class UploadService:
     # ------------------------------------------------------------ téléversement
 
     async def put(self, *, client_upload_id: str, purpose: str, agent: str | None, declared_mime: str | None,
-                  name_header: str | None, content_length: int | None, read: Reader) -> UploadOutcome:
-        """Un fichier, en flux. `UploadRefused` pour tout refus ; `BoardError` sans Session ouverte."""
+                  name_header: str | None, content_length: int | None, read: Reader,
+                  board_id: str | None = None) -> UploadOutcome:
+        """Un fichier, en flux. `UploadRefused` pour tout refus ; `BoardError` sans Session ouverte.
+
+        `purpose=board` (Slice 08) : `board_id` doit être le Board affiché ; contrôlé **avant** de lire
+        un octet, puis le lien est vérifié après création (`_ensure_board_link`).
+        """
 
         try:
             check_client_upload_id(client_upload_id)
         except ValueError as exc:
             raise UploadRefused(400, "invalid_request", str(exc)) from None
-        if purpose == UploadPurpose.BOARD:
-            raise UploadRefused(400, "invalid_request", "purpose=board is not served yet (board drop, Slice 08)")
-        if purpose != UploadPurpose.CHAT:
-            raise UploadRefused(400, "invalid_request", "purpose must be 'chat'")
+        if purpose not in (UploadPurpose.CHAT, UploadPurpose.BOARD):
+            raise UploadRefused(400, "invalid_request", "purpose must be 'chat' or 'board'")
+        if purpose == UploadPurpose.CHAT and board_id is not None:
+            raise UploadRefused(400, "invalid_request", "board_id is only accepted with purpose=board")
+        provenance = Provenance.BOARD_DROP if purpose == UploadPurpose.BOARD else Provenance.CHAT_ATTACHMENT
         if agent is not None and agent not in BRAIN_AGENTS:
             raise UploadRefused(400, "invalid_request", f"agent must be one of {sorted(BRAIN_AGENTS)}")
         try:
@@ -120,6 +162,8 @@ class UploadService:
         except UploadNameError as exc:
             raise UploadRefused(400, "upload_name_invalid", str(exc)) from None
         declared = (declared_mime or "").strip()[:_MAX_DECLARED_MIME_CHARS] or None
+        if purpose == UploadPurpose.BOARD:
+            board_id = await self._drop_target(board_id, client_upload_id)
         max_bytes = self._bounds().max_bytes
         if content_length is not None and content_length > max_bytes:
             raise self._refused(UploadRefused(413, "upload_too_large",
@@ -132,12 +176,97 @@ class UploadService:
         try:
             existing = await self._existing(artifact_id)
             if existing is not None:
-                return await self._replay(existing, content_length, read, max_bytes)
-            return await self._store(artifact_id, client_upload_id=client_upload_id, agent=agent, declared=declared,
-                                     original_name=original_name, content_length=content_length, read=read,
-                                     max_bytes=max_bytes)
+                if existing.kind is not ArtifactKind.UPLOAD or existing.metadata.get("provenance") != provenance:
+                    raise self._refused(UploadRefused(409, "upload_conflict", "this client_upload_id was used for "
+                                                      "another kind of upload; use a new id", artifact=existing),
+                                        artifact_id)
+                outcome = await self._replay(existing, content_length, read, max_bytes)
+            else:
+                outcome = await self._store(artifact_id, client_upload_id=client_upload_id, agent=agent,
+                                            declared=declared, original_name=original_name,
+                                            content_length=content_length, read=read, max_bytes=max_bytes,
+                                            provenance=provenance)
         finally:
             self._active.discard(artifact_id)
+        if board_id is None:
+            return outcome
+        relinked = await self._ensure_board_link(board_id, outcome.artifact.artifact_id)
+        return dataclasses.replace(outcome, board_id=board_id, relinked=relinked)
+
+    # ------------------------------------------------------------ dépôt sur un Board (Slice 08)
+
+    async def put_link(self, *, client_upload_id: str, url: object, board_id: object) -> UploadOutcome:
+        """Une URL déposée sur le Board affiché : Artifact `link` `complete`, `text` = l'URL. **Jamais récupérée.**
+
+        Même identité rejouable qu'un fichier (`client_upload_id`) : même URL → rejeu 200, autre URL ou
+        autre nature → 409 `upload_conflict`.
+        """
+
+        try:
+            check_client_upload_id(client_upload_id)
+        except ValueError as exc:
+            raise UploadRefused(400, "invalid_request", str(exc)) from None
+        try:
+            link_url, host = check_link_url(url)
+        except LinkInvalid as exc:
+            raise self._refused(UploadRefused(400, "link_invalid", str(exc)), client_upload_id) from None
+        target = await self._drop_target(board_id, client_upload_id)
+        artifact_id = upload_artifact_id(client_upload_id)
+        existing = await self._existing(artifact_id)
+        replayed = existing is not None
+        if existing is None:
+            session_id, context_id = await self._association()
+            try:
+                existing = await self._artifacts.record_text(
+                    artifact_id=artifact_id, kind=ArtifactKind.LINK,
+                    source=SOURCE_BY_PROVENANCE[Provenance.BOARD_DROP], text=link_url, jarvis_session_id=session_id,
+                    context_id=context_id, started_at=None, ended_at=None, duration_ms=None, origins=(),
+                    metadata={"provenance": Provenance.BOARD_DROP, "host": host, "client_upload_id": client_upload_id})
+            except ArtifactError as exc:
+                if exc.code is not ArtifactErrorCode.ARTIFACT_CONFLICT:
+                    raise
+                # Même id créé entre la lecture et l'écriture (double dépôt) : comparé comme un rejeu.
+                existing, replayed = await self._artifacts.get(artifact_id), True
+        if replayed and (existing.kind is not ArtifactKind.LINK or existing.text != link_url):
+            raise self._refused(UploadRefused(409, "upload_conflict", "this client_upload_id was used for another "
+                                              "drop; use a new id", artifact=existing), artifact_id)
+        self._trace("core.upload.link_replayed" if replayed else "core.upload.link_stored",
+                    "URL déposée sur le Board, jamais récupérée",
+                    data={"artifact_id": artifact_id, "board_id": target, "replayed": replayed})
+        relinked = await self._ensure_board_link(target, artifact_id)
+        return UploadOutcome(existing, replayed=replayed, board_id=target, relinked=relinked)
+
+    async def _drop_target(self, board_id: object, key: str) -> str:
+        """Le Board ciblé s'il est le Board actif de la Session ouverte ; sinon un refus codé."""
+
+        if self._board_drop is None:
+            raise UploadRefused(503, "core_unavailable", "board drop is not wired in this Core")
+        if not isinstance(board_id, str) or not board_id.strip():
+            raise self._refused(UploadRefused(400, "invalid_request", "board_id is required for a board drop"), key)
+        active = await self._board_drop.active_board()
+        if board_id != active:
+            raise self._refused(UploadRefused(
+                409, "board_drop_target_inactive",
+                f"board {board_id[:80]} is not the displayed Board; drop on the Board shown on screen",
+                details={"active_board_id": active}), key)
+        return board_id
+
+    async def _ensure_board_link(self, board_id: str, artifact_id: str) -> bool:
+        """Contrôle après création : la cible porte-t-elle le lien ? Sinon lien explicite, et on le dit."""
+
+        assert self._board_drop is not None  # `_drop_target` l'a exigé
+        if board_id in await self._board_drop.boards_of(artifact_id):
+            return False
+        try:
+            await self._board_drop.link(board_id, artifact_id)
+        except Exception as exc:
+            # Rethrow : la route rend le refus du Board (archivé, inconnu) ; l'Artifact reste, un rejeu relie.
+            self._trace("core.upload.board_relink_failed", "dépôt : lien du Board ciblé impossible", level="error",
+                        data={"artifact_id": artifact_id, "board_id": board_id, "exception_type": type(exc).__name__})
+            raise
+        self._trace("core.upload.board_relinked", "dépôt : Board changé pendant le dépôt, cible liée explicitement",
+                    level="warning", data={"artifact_id": artifact_id, "board_id": board_id})
+        return True
 
     async def _existing(self, artifact_id: str) -> Artifact | None:
         try:
@@ -192,7 +321,8 @@ class UploadService:
         return bytes(head), False
 
     async def _store(self, artifact_id: str, *, client_upload_id: str, agent: str | None, declared: str | None,
-                     original_name: str, content_length: int | None, read: Reader, max_bytes: int) -> UploadOutcome:
+                     original_name: str, content_length: int | None, read: Reader, max_bytes: int,
+                     provenance: str) -> UploadOutcome:
         try:
             head, ended = await self._read_head(read)
         except Exception as exc:  # noqa: BLE001 - capture: nothing written yet, said with its code
@@ -202,7 +332,6 @@ class UploadService:
             raise self._refused(UploadRefused(400, "upload_empty", "the file is empty"), artifact_id)
         mime = sniff_mime(head, whole=ended)
         session_id, context_id = await self._association()
-        provenance = Provenance.CHAT_ATTACHMENT
         metadata = {"original_name": original_name, "declared_mime": declared, "provenance": provenance,
                     "client_upload_id": client_upload_id, "brain_readable": brain_readable(agent or "claude", mime)}
         try:
