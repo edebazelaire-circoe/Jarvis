@@ -114,3 +114,14 @@ Réservé au Project Manager et aux Work Agents. Aucun progrès, verdict QA ou r
   - **Polish `44961382` :** tests de borne exacte, test de coupure rendu déterministe (10 passages sur 10), `brain_readable` relayé depuis Core.
   - **Pour 07b :** créer un nouveau `client_upload_id` après un échec ou un `upload_conflict`.
   - **Fusion :** S7 fusionnée dans la branche de tâche.
+
+## 2026-10-14 — Slice 06 (onglet Chat, panneau, saisie)
+
+- **S6 `0763bfd6` (`feat/ucb-s06`, worktree `bu06`) :** onglet bas droit, panneau latéral, saisie au clavier, sans pièce jointe.
+- **QA S6 (standard, pile réelle isolée + Chrome CDP) : `BLOCKING`.**
+  - Passent : parcours au clavier seul, verrou vocal et bascule (échec et expiration compris), course 409 `connecting`, reprise 504 avec le même `client_request_id` (aucun doublon), changement de Board sans fuite, XSS inerte, région live, aucun appel `/api/agent/ask|send`, un seul panneau latéral, brouillon conservé.
+  - **Bloquant :** deux onglets CC se figent. Chrome partage 6 connexions par origine entre tous les onglets ; chaque onglet CC tient déjà 2 à 3 longues attentes, la longue attente de 25 s du Chat en ajoutait une. `/api/status` > 9 s, envoi du 2ᵉ onglet jamais parti. Sans le Chat, 3 onglets + chronologie se figent déjà (préexistant).
+  - **Cause :** le contrat (`docs/chat.md` « Live reading », `06` § « Lecture live ») prescrivait lui-même une longue attente ; ce n'est pas un défaut d'implémentation mais un contrat qui ignorait le budget de connexions du navigateur. Le contrat est donc corrigé avec le code.
+  - **Décision agent 0 :** le Chat ne tient aucune connexion en attente. Lectures courtes : le meneur (Web Locks) lit toutes les 1,5 s (0,5 s pendant 20 s après un envoi ou un changement d'état) et partage par `BroadcastChannel` ; les suiveurs ne lisent pas les événements ; repli solo à la même cadence. Preuve exigée : 3 onglets Chat + chronologie, `/api/status` < 1 s, envoi d'un suiveur réussi.
+  - **Polish confié à la reprise :** brouillon lié à sa conversation ; note « Réessayer » retirée après édition ; onglet visible avec les pastilles ; notifications hors de l'en-tête et du × sous 940 px ; indice F9 masqué proprement ; codes Core 503/504 → « Jarvis Core ne répond pas » ; délai de la note tardive (120 s) réglable par les tests.
+- **2026-10-15 :** la session précédente s'est arrêtée avec la reprise écrite mais non commitée dans `bu06`. Un nouvel agent la vérifie, la termine et la commite (`S6: rework - …`), puis QA de revérification.
