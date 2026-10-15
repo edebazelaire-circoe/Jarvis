@@ -132,6 +132,19 @@
     if(presenter.line==='pending'&&view.phase==='playing')return {state:'waiting',text:'Jarvis va parler…'};
     return {state:'quiet',text:'Jarvis se tait'};
   }
+  /* WHY a run is paused, in the user's words: the voice cases are named (Core's `presenter.interrupt_source`), never a silent pause. */
+  const INTERRUPT_CAUSE=Object.freeze({
+    user_turn:'vous avez pris la parole',
+    floor_taken:'un son a été capté : Jarvis s’est arrêté pour vous laisser la parole',
+    speech_interrupted:'la parole de Jarvis a été coupée'});
+  function pauseReason(v){
+    const presenter=v&&v.presenter||{};
+    if(presenter.interrupted){
+      const named=INTERRUPT_CAUSE[presenter.interrupt_source];
+      return named||'la voix a interrompu la lecture';
+    }
+    return null;
+  }
   /* `view`: Core's playback view; `elapsedMs`: the item's score time now (`view.elapsed.item_ms` advanced locally while it plays). */
   function presenterModel(view,elapsedMs,extra){
     const P=Player();
@@ -151,8 +164,8 @@
     else if(v.art_direction==='none')lines.push('Répétition sans direction artistique.');
     if(v.pending)lines.push(v.pending==='pause'?'Pause demandée : elle prend effet à la fin de l\'élément en cours (séquence ou parole qui ne se coupe pas).':
       'Détour demandé : il s\'affiche à la fin de l\'élément en cours.');
-    if(v.presenter&&v.presenter.interrupted&&(phase==='paused'||v.pending==='pause'))lines.push(
-      'Interrompu : Jarvis attend votre « continuer » (il reprendra la ligne depuis son début), il ne repart jamais seul.');
+    const cause=pauseReason(v);
+    if(cause&&(phase==='paused'||v.pending==='pause'))lines.push(`En pause : ${cause}. Jarvis attend votre « continuer » (il reprendra la ligne depuis son début), il ne repart jamais seul.`);
     if(v.follower==='absent')lines.push(P.FOLLOWER_ABSENT);
     else if(v.follower==='waiting')lines.push(P.FOLLOWER_WAITING);
     const pageWait=v.page_wait?P.pageWaitText(v.page_wait,scene):null;
@@ -179,6 +192,7 @@
         (next.cue&&next.cue.armable?` — dites « ${(next.cue.phrases||[])[0]||next.cue.label} »`+(next.cue.armed?'':' (pas encore armé)'):''):'Dernier élément.',
       clock:'Partition '+P.clock(ms)+(el.item_target_ms?` / ${P.clock(el.item_target_ms)}`:''),clockTitle:SCORE_TIME_TITLE,
       over:!!(el.item_target_ms&&ms>el.item_target_ms),voice:voiceState(v),sequence,lines,
+      pauseReason:phase==='paused'||v.pending==='pause'?(pauseReason(v)||(phase==='paused'?'vous l’avez demandée':'pause demandée')):null,
       kind:problems.length||pageWait||v.follower==='absent'||x.linkLostMs?'problem':'ok',
       pause:{label:phase==='paused'?(v.jarvis_speaks?'Continuer':'Reprendre'):v.pending==='pause'?'Pause demandée…':'Pause',
         command:phase==='paused'?'resume':'pause',disabled:busy||phase==='detour'||phase==='ended'||v.pending==='pause'},
@@ -194,6 +208,7 @@
     if(action==='toggle')return {verb:v.phase==='paused'?'resume':'pause',body:{}};
     if(action==='next')return {verb:'next',body:{}};
     if(action==='previous')return {verb:'previous',body:{}};
+    if(action==='restart')return {verb:'goto',body:{position:(v.position&&v.position.index)||1}};
     if(action==='home')return {verb:'goto',body:{position:1}};
     if(action==='end')return {verb:'goto',body:{position:(v.position&&v.position.of)||1}};
     if(action==='step_back'||action==='step_forward')return {said:'Image par image : seulement en vidéo continue. Pendant la présentation, la partition mène.'};
@@ -236,11 +251,18 @@ ${H} .jvx-presenter-seqbar>span{display:block;height:100%;width:0;background:var
 ${H} .jvx-presenter-actions{display:flex;flex-wrap:wrap;gap:8px;justify-content:flex-end}
 ${H} .jvx-presenter-actions .jvx-btn[hidden]{display:none}
 ${H} .jvx-transport .jvx-btn[hidden]{display:none}
+${H} .jvx-fs-status{display:none}
+${H} .jvx-theater:fullscreen .jvx-fs-status:not([hidden]){display:flex;flex-wrap:wrap;align-items:baseline;gap:4px 10px;position:absolute;left:16px;top:16px;z-index:6;
+  max-width:min(70%,720px);padding:7px 14px;border-radius:12px;background:rgba(2,6,10,.82);border:1px solid var(--jvx-line-strong);color:var(--jvx-ink);
+  font-size:14px;line-height:1.4;pointer-events:none}
+${H} .jvx-theater:fullscreen .jvx-fs-status[data-kind="paused"]{border-color:var(--jvx-warn)}
+${H} .jvx-theater:fullscreen .jvx-fs-status[data-kind="problem"]{border-color:var(--jvx-danger)}
+${H} .jvx-fs-status strong{color:var(--jvx-accent)}
 ${H} .jvx-btn[data-act="stop_run"],${H} .jvx-presenter-actions .jvx-btn[data-danger]{border-color:var(--jvx-danger);color:var(--jvx-danger)}
 @media (forced-colors:active){${H} .jvx-presenter{border-color:CanvasText}${H} .jvx-presenter-seqbar>span{background:Highlight}}
 `;
 
-  const api=Object.freeze({SURFACE_PREFIX,SCORE_TIME_TITLE,CSS,isRun,isSurface,createRunAdapter,presenterModel,keyCommand});
+  const api=Object.freeze({SURFACE_PREFIX,SCORE_TIME_TITLE,CSS,isRun,isSurface,createRunAdapter,presenterModel,keyCommand,pauseReason,INTERRUPT_CAUSE});
   root.JarvisVariantsRun=api;
   if(typeof module!=='undefined'&&module.exports)module.exports=api;
 })(typeof globalThis!=='undefined'?globalThis:this);

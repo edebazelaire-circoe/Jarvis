@@ -29,6 +29,11 @@
   const WAIT_VISIBLE_MS=300;
   const WAIT_TICK_MS=500;
   const MAX_BOUNDARIES=64;
+  /* Stall watchdog: while `playing`, no forward progress for STALL_MS (checked every STALL_CHECK_MS) is recovered from, at most
+     MAX_RECOVERIES times, then the playback fails visibly (« Réessayer »). A hidden page is not a stall. */
+  const STALL_MS=4000;
+  const STALL_CHECK_MS=1000;
+  const MAX_RECOVERIES=2;
   /* A Player that halted by itself this close to its last frame has ended (Slice 05 rework, B1): Remotion pauses one step short of the end
      when a frame is dropped and fires `ended` without setting the frame; the sandbox then seeks the last frame, this covers a lost report.
      Never wider: a Player halted further back has not finished, and a user pause is ours (the phase is no longer `playing`). */
@@ -48,6 +53,7 @@
     const later=typeof d.setTimeout==='function'?d.setTimeout:(fn,ms)=>setTimeout(fn,ms);
     const cancel=typeof d.clearTimeout==='function'?d.clearTimeout:(id)=>clearTimeout(id);
     const log=typeof d.log==='function'?d.log:()=>{};
+    const visible=typeof d.visible==='function'?d.visible:()=>true;
     const revision=typeof d.revision==='function'?d.revision:()=>null;
     const selectedIndex=typeof d.selectedIndex==='function'?d.selectedIndex:()=>0;
     /* One seek reaches the Player per animation frame at most (§ 4.6). Without it (node benches), a seek reaches it at once. */
@@ -56,11 +62,12 @@
        unavailable (carte refusée à la préparation : pas de vidéo, ou Core injoignable ; la raison est dite, rien ne joue) */
     let S=fresh();
     let waitTimer=null;
+    let stallTimer=null;
     const boundaries=[];
 
     function fresh(){
       return {phase:'idle',map:null,mapKey:null,t:null,k:-1,want:null,synced:false,ordered:null,waitingSince:0,error:null,retryable:true,generation:0,
-        boundaryAt:null,from:null,changed:0,scope:null,pending:false,queued:false,shown:-1,settling:false,keep:null};
+        boundaryAt:null,from:null,progressAt:0,lastFrame:-1,recoveries:0,changed:0,scope:null,pending:false,queued:false,shown:-1,settling:false,keep:null};
     }
 
     function host(){try{return d.host()}catch(_error){return null /* intentional: no host means no playback; the page says why */}}
@@ -92,6 +99,55 @@
           waitTimer=later(tick,WAIT_VISIBLE_MS);
         }
       }else if(waitTimer!==null){cancel(waitTimer);waitTimer=null}
+      if(phase==='playing'){
+        if(stallTimer===null){S.progressAt=now();stallTimer=later(stallTick,STALL_CHECK_MS)}
+      }else if(stallTimer!==null){cancel(stallTimer);stallTimer=null}
+    }
+
+    function stallTick(){
+      stallTimer=null;
+      if(S.phase!=='playing')return;
+      if(!visible()||S.pending)S.progressAt=now();   // a hidden page (or a seek waiting for its frame) is not a stall
+      else if(now()-S.progressAt>=STALL_MS)recover();
+      if(S.phase==='playing'&&stallTimer===null)stallTimer=later(stallTick,STALL_CHECK_MS);
+    }
+
+    /* No progress while `playing`: believe the host's own clock if it shows the Player where it should be (a late first report, a lost end),
+       else order play again from where the Player stands; a third silence is a visible failure naming the scene. */
+    function recover(){
+      const index=S.k;
+      const idle=now()-S.progressAt;
+      S.progressAt=now();
+      if(S.recoveries>=MAX_RECOVERIES){
+        log('sequencer_stall_failed',{scene_index:index,attempts:S.recoveries},'error');
+        const list=scenes();
+        const title=list[index]&&list[index].title?` « ${list[index].title} »`:'';
+        fail('playback_stalled',`La lecture ne répond plus sur la scène ${index+1}${title} : « Réessayer » reprend à cet endroit.`,index);
+        return;
+      }
+      S.recoveries++;
+      log('sequencer_stall_detected',{scene_index:index,idle_ms:idle,attempt:S.recoveries},'warn');
+      const h=host();
+      const span=S.map&&index>=0?S.map.scenes[index]:null;
+      if(!h||!span)return;
+      const last=span.duration_in_frames-1;
+      const live=h.key(objectId)===keyOf(scenes()[index]);
+      const clock=live?h.clock(objectId):null;
+      if(clock){
+        const frame=Math.max(0,Math.min(last,clock.frame));
+        const from=S.ordered===null?0:S.ordered;
+        if(frame>=last-END_SLACK_FRAMES||(clock.playing&&frame>=from&&frame>S.lastFrame)){   // a playing clock that has not moved since the last accepted report is stale
+          S.synced=true;
+          const before=S.t?S.t.frame:null;
+          readClock(true);
+          log('sequencer_stall_recovered',{scene_index:index,how:'clock',moved:S.phase!=='playing'||S.k!==index||(S.t&&S.t.frame!==before)},'warn');
+          return;
+        }
+      }
+      let native=clock?Math.max(0,Math.min(last,clock.frame)):(S.t?S.map.locate(S.t.frame).native_frame:0);
+      const ok=order(native);
+      S.lastFrame=-1;
+      log('sequencer_stall_recovered',{scene_index:index,how:'reorder',native_frame:native,ordered:ok},'warn');
     }
 
     function errorOf(code,message,index){
@@ -176,7 +232,7 @@
       const h=host();
       if(!h)return false;
       const ok=h.control(objectId,'play',native)===true;
-      S.synced=false;S.ordered=ok?native:null;
+      S.synced=false;S.ordered=ok?native:null;S.lastFrame=-1;S.progressAt=now();
       return ok;
     }
 
@@ -223,6 +279,7 @@
           if(boundaries.length>MAX_BOUNDARIES)boundaries.shift();
           log('sequencer_boundary',{from:S.from,to:want.k,gap_ms:at-S.boundaryAt,ready_ahead:S.readyAhead===true});
           S.boundaryAt=null;
+          S.recoveries=0;
         }
         setPhase('playing');
         S.want=null;
@@ -445,6 +502,13 @@
 
     function onClock(id){
       if(id===objectId&&S.phase==='paused'&&S.settling)return settle();
+      if(id!==objectId)return;
+      readClock(false);
+    }
+
+    /* `healing`: called by the watchdog on the host's clock, which is not a fresh report (it proves no progress by itself). */
+    function readClock(healing){
+      const id=objectId;
       /* A seek waiting for its animation frame: the Player still reports where it was, which is no longer `f`. */
       if(id!==objectId||S.phase!=='playing'||!S.map||S.k<0||S.pending)return;
       const h=host();
@@ -462,6 +526,7 @@
         if(!near&&!(from>=last&&frame>=last))return;
         S.synced=true;
       }
+      if(!healing&&clock.playing&&frame>S.lastFrame){S.lastFrame=frame;S.progressAt=now();S.recoveries=0}
       if(frame>=last||(!clock.playing&&frame>=last-END_SLACK_FRAMES)){
         if(S.scope===S.k){
           /* One scene only: its last frame is held, paused (the Player does not loop: it stays there by itself, nothing is ordered). */

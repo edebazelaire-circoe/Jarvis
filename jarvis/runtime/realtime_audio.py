@@ -58,6 +58,10 @@ NEAR_END_SIGNAL = "near_end"
 # Signal de la capture duplex : un préfixe du propriétaire a été rejoué vers le
 # fournisseur (`jarvis.audio.duplex.OWNER_REPLAY`, recopié pour la même raison).
 OWNER_REPLAY_SIGNAL = "owner_replay"
+# Signal de la file de capture : une voix soutenue est captée (l'orbe passe au
+# vert). Produit par `_deliver_capture` à partir des trames proches comptées par
+# le détecteur ; une frappe ou un claquement, trop brefs, ne le déclenchent pas.
+USER_VOICE_SIGNAL = "user_voice"
 # Signal de la file d'envoi : un bloc portant un rejeu du propriétaire a tout de
 # même été perdu. Ne vient pas de la capture ; produit par `_put_input`.
 OWNER_REPLAY_DROPPED_SIGNAL = "owner_replay_dropped"
@@ -422,6 +426,10 @@ class SoundDeviceRealtimeAudio:
         self.captured_bytes = 0
         self.sent_bytes = 0
         self._last_capture_at: float | None = None
+        self._last_near_end_at: float | None = None
+        # (instant, trames proches cumulées) des derniers blocs, pour mesurer
+        # la part de voix dans la fenêtre glissante `USER_VOICE_WINDOW_S`.
+        self._voiced_marks: deque[tuple[float, int]] = deque()
         self._input = None
         self._output = None
         self._queue: asyncio.Queue[bytes | None] = asyncio.Queue(maxsize=64)
@@ -565,6 +573,11 @@ class SoundDeviceRealtimeAudio:
 
         self.captured_bytes += captured
         self._last_capture_at = time.monotonic()
+        if getattr(self.capture, "near_end_observed", False):
+            self._last_near_end_at = self._last_capture_at
+        if self._sustained_voice(self._last_capture_at):
+            self._last_near_end_at = self._last_capture_at
+            signals = (*signals, USER_VOICE_SIGNAL)
         if processed:
             # Le bloc qui porte un rejeu contient un début de phrase que la
             # capture a déjà marqué envoyé (`_sent_until`) : personne ne le
@@ -576,6 +589,24 @@ class SoundDeviceRealtimeAudio:
             for signal in signals:
                 callback(signal)
         self._trace_echo_alignment()
+
+    #: Voix « confirmée » : au moins `USER_VOICE_MIN_FRAMES` trames de 10 ms
+    #: proches dans les `USER_VOICE_WINDOW_S` dernières secondes. 70 % de la
+    #: fenêtre : une parole y arrive, une frappe ou un objet posé non.
+    USER_VOICE_WINDOW_S = 0.5
+    USER_VOICE_MIN_FRAMES = 35
+
+    def _sustained_voice(self, now: float) -> bool:
+        voiced = getattr(self.capture, "voiced_frames", None)
+        if type(voiced) is not int:
+            return False
+        marks = self._voiced_marks
+        if marks and voiced < marks[-1][1]:
+            marks.clear()
+        marks.append((now, voiced))
+        while len(marks) > 1 and now - marks[1][0] >= self.USER_VOICE_WINDOW_S:
+            marks.popleft()
+        return voiced - marks[0][1] >= self.USER_VOICE_MIN_FRAMES
 
     def _trace_echo_alignment(self) -> None:
         """Journaliser l'avance de la référence sur l'écho, quand elle change.
@@ -717,12 +748,20 @@ class SoundDeviceRealtimeAudio:
             and observed is not None and time.monotonic() - observed <= 2.5
         )
 
+    #: Une hésitation (« euh… ») ou une respiration au milieu d'un monologue
+    #: dure plus que le maintien du détecteur (250 ms). Sans cette mémoire, le
+    #: délai d'inactivité qui tombait sur une pause coupait la session en
+    #: pleine phrase : le fil Live n'émet pas de `speech_started` à relire.
+    NEAR_END_HOLD_S = 3.0
+
     @property
     def input_speech_active(self) -> bool:
-        return bool(
-            self.capture is not None
-            and getattr(self.capture, "near_end_observed", False)
-        )
+        if self.capture is None:
+            return False
+        if getattr(self.capture, "near_end_observed", False):
+            return True
+        heard = self._last_near_end_at
+        return heard is not None and time.monotonic() - heard <= self.NEAR_END_HOLD_S
 
     @property
     def output_evidence_available(self) -> bool:
@@ -1452,6 +1491,7 @@ class RealtimeConversationBridge:
         on_interruption: Callable[[PlaybackCursor | None], object] | None = None,
         on_turn_abandoned: Callable[[str | None], object] | None = None,
         on_user_speech: Callable[[bool], object] | None = None,
+        on_user_voice: Callable[[bool], object] | None = None,
         on_reflex: Callable[..., object] | None = None,
         on_addressed_turn: Callable[..., object] | None = None,
         output_admission: Callable[[str], OutputAdmission | None] | None = None,
@@ -1596,6 +1636,16 @@ class RealtimeConversationBridge:
         # Prévient l'ordonnanceur que l'utilisateur parle (VAD serveur) : il ne
         # lance pas une phrase par-dessus lui.
         self.on_user_speech = on_user_speech
+        # Fait d'écran : la voix de l'utilisateur est captée en ce moment
+        # (orbe verte). Distinct de `on_user_speech`, qui ne suit que le VAD du
+        # fournisseur ou le candidat local : le fil Live n'émet aucun
+        # `speech_started`, et l'orbe restait orange ou violette pendant que
+        # JARVIS entendait l'utilisateur. Sources : voix soutenue captée
+        # localement, transcription partielle de l'entrée, VAD, candidat local.
+        self.on_user_voice = on_user_voice
+        self._user_voice = False
+        self._user_voice_at = 0.0
+        self._user_voice_check = False
         # Demande d'accusé de réception à l'ordonnanceur, après un tour adressé.
         self.on_reflex = on_reflex
         # Slice 07 : le tour adressé qui part au cerveau est aussi ce qui
@@ -1975,6 +2025,40 @@ class RealtimeConversationBridge:
             await self._abandon_brain_turn()
             return
         await self._cancel_provider_output(cursor)
+        if getattr(self.session, "requires_local_quiescence_without_output_final", False):
+            await self._rest_after_live_interruption(device_stopped=stopped is not False)
+
+    async def _rest_after_live_interruption(self, *, device_stopped: bool) -> None:
+        """Rendre l'écran après un barge-in sur le fil Live.
+
+        Sur le fil classique, la réponse annulée revient en `response.done`,
+        qui rend l'écoute. GPT-Live n'émet aucune fin de sortie, et la seule
+        fin de parole qu'il reste — la quiescence constatée après un bloc
+        joué — n'arrive plus : l'audio de la sortie coupée est jeté avant
+        lecture. Sans ce retour, l'orbe restait orange pour le reste de la
+        session (trace du 14/10, 19:34:40), y compris pendant que le cerveau
+        travaillait, et repassait à l'orange à chaque silence de l'utilisateur.
+        """
+
+        if device_stopped:
+            # Le périphérique est arrêté : plus rien ne joue ici. Une sortie
+            # suivante rouvre la lecture (`_live_output_quiescent = False`).
+            self._live_output_quiescent = True
+            self._received_outputs.clear()
+            self._live_audible_relayed = False
+        try:
+            await self._rest_surface()
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            self._trace(
+                "voice.live.surface_rest_failed",
+                "Retour de surface impossible après une interruption",
+                level="warning",
+                data={"conversation_id": self.conversation_id,
+                      "code": "live_surface_rest_failed",
+                      "exception_type": type(exc).__name__},
+            )
 
     async def _abandon_brain_turn(self) -> None:
         """Rendre la main quand l'utilisateur coupe un cerveau silencieux.
@@ -2749,6 +2833,10 @@ class RealtimeConversationBridge:
 
         if signal == NEAR_END_SIGNAL:
             self._post("near_end")
+        elif signal == USER_VOICE_SIGNAL and self.barge_in_authority is not BargeInAuthority.OWNER:
+            # Solo Owner : une voix captée n'est pas forcément celle du
+            # propriétaire ; c'est son candidat local (`_local_speech`) qui compte.
+            self._post("user_voice")
         elif signal == OWNER_REPLAY_SIGNAL:
             self._post("owner_replay")
         elif signal == OWNER_REPLAY_DROPPED_SIGNAL:
@@ -2866,7 +2954,9 @@ class RealtimeConversationBridge:
             device_known=bool(getattr(self.audio, "output_evidence_available", False)),
             user_speaking=bool(
                 self._user_speaking or self._local_speech or self._barge_pending
-                or getattr(self.audio, "input_speech_active", False)
+                or (self._user_voice and self._clock() - self._user_voice_at < self.USER_VOICE_RELEASE_S)
+                or (self.barge_in_authority is not BargeInAuthority.OWNER
+                    and getattr(self.audio, "input_speech_active", False))
             ),
             output_pending=bool(
                 not self._live_output_quiescent or self._playing
@@ -3141,6 +3231,10 @@ class RealtimeConversationBridge:
                         raise item
                     if kind == "near_end":
                         await self._on_near_end()
+                    elif kind == "user_voice":
+                        await self._note_user_voice()
+                    elif kind == "user_voice_check":
+                        await self._check_user_voice()
                     elif kind == "barge_timeout":
                         await self._on_barge_timeout(item)
                     elif kind == "barge_sustain":
@@ -4209,10 +4303,51 @@ class RealtimeConversationBridge:
         """
 
         speaking = self._user_speaking or self._local_speech
+        if self._user_voice_confirmed():
+            await self._note_user_voice()
         if speaking == self._notified_speech:
             return
         self._notified_speech = speaking
         await self._call_with(self.on_user_speech, speaking)
+
+    #: Silence après lequel la voix de l'utilisateur n'est plus affichée. Plus
+    #: long qu'un blanc entre deux mots, pour que l'orbe ne clignote pas.
+    USER_VOICE_RELEASE_S = 0.8
+
+    def _user_voice_confirmed(self) -> bool:
+        """VAD du fournisseur, ou propriétaire reconnu — jamais un candidat encore à juger."""
+
+        if self._user_speaking:
+            return True
+        return self._local_speech and self._owner_state_value() == OwnerState.OWNER_CONFIRMED.value
+
+    async def _note_user_voice(self) -> None:
+        """La voix de l'utilisateur est captée : l'orbe passe au vert, aussitôt."""
+
+        self._user_voice_at = self._clock()
+        if not self._user_voice_check:
+            self._user_voice_check = True
+            asyncio.get_running_loop().call_later(self.USER_VOICE_RELEASE_S, self._post, "user_voice_check")
+        if self._user_voice:
+            return
+        self._user_voice = True
+        await self._call_with(self.on_user_voice, True)
+
+    async def _check_user_voice(self) -> None:
+        self._user_voice_check = False
+        if not self._user_voice:
+            return
+        quiet = self._clock() - self._user_voice_at
+        if quiet < self.USER_VOICE_RELEASE_S or self._user_voice_confirmed():
+            self._user_voice_check = True
+            # Silence local déjà passé mais VAD encore vrai : relire au même
+            # rythme que le relâchement, pas 20 fois par seconde.
+            remaining = self.USER_VOICE_RELEASE_S - quiet
+            delay = max(0.05, remaining) if remaining > 0 else self.USER_VOICE_RELEASE_S
+            asyncio.get_running_loop().call_later(delay, self._post, "user_voice_check")
+            return
+        self._user_voice = False
+        await self._call_with(self.on_user_voice, False)
 
     async def _note_addressed_turn(
         self, text: str, correlation_id: str | None, *, opened: tuple[object, object] | None = None,
@@ -4309,7 +4444,9 @@ class RealtimeConversationBridge:
             # Transcription partielle de l'entrée : une observation
             # révisable, pas un tour adressé (Décisions 07 et 10). Elle
             # ne réarme pas le délai, et elle n'est pas journalisée :
-            # elle arrive plusieurs fois par seconde.
+            # elle arrive plusieurs fois par seconde. Elle prouve en revanche
+            # que l'utilisateur parle : l'orbe passe au vert.
+            await self._note_user_voice()
             await self._call(self.on_ambient)
         elif event.message_type == "realtime.brain_pending":
             # Le cerveau se met au travail, annoncé par la façade duplex faute

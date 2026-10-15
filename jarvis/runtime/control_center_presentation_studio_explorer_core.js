@@ -393,6 +393,10 @@
     alert:['M12 5l8 14H4z','M12 10v4','M12 17v.01'],
     compare:['M4 5h7v14H4z','M13 5h7v14h-7z'],
     play:['M8 5l11 7-11 7z'],
+    restart:['M6 5v14','M18 6l-9 6 9 6z'],
+    rewind:['M12 6l-7 6 7 6','M20 6l-7 6 7 6'],
+    forward:['M4 6l7 6-7 6','M12 6l7 6-7 6'],
+    repeat:['M4 11V9a3 3 0 0 1 3-3h11','M15 3l3 3-3 3','M20 13v2a3 3 0 0 1-3 3H6','M9 21l-3-3 3-3'],
     pause:['M8 5v14','M16 5v14'],
     first:['M6 5v14','M18 6l-8 6 8 6'],
     last:['M18 5v14','M6 6l8 6-8 6'],
@@ -400,6 +404,32 @@
     muted:['M4 10v4h4l5 4V6l-5 4z','M17 10l4 4','M21 10l-4 4'],
     more:['M5 12h.01','M12 12h.01','M19 12h.01'],
   });
+
+  /* ------------------------------------------------------------------ lecture automatique de Variantes (pur : l'horloge et la flèche gauche) */
+  /* Une variante sans vidéo (scènes HTML) ne se lit pas en continu : ses slides défilent à un rythme réglable, DANS Variantes (aucune lecture
+     Core, rien n'est écrit). Une variante vidéo se lit par le séquenceur. */
+  const AUTO_DWELL_CHOICES=Object.freeze([4000,8000,15000,30000]);
+  const AUTO_DWELL_DEFAULT=8000;
+  const AUTO_TICK_MS=250;
+  const AUTO_SKIP_MS=5000;
+  /* Deux flèches gauche à moins de ce délai : la slide d'avant (une seule : le début de la slide). */
+  const DOUBLE_LEFT_MS=650;
+  function autoStep(input){
+    const dwell=Math.max(1000,Number(input&&input.dwellMs)||AUTO_DWELL_DEFAULT);
+    const elapsed=Math.max(0,Number(input&&input.elapsedMs)||0);
+    const index=Number(input&&input.index)||0,count=Number(input&&input.count)||0;
+    if(elapsed<dwell)return {action:'stay',elapsedMs:elapsed};
+    if(index<count-1)return {action:'next',elapsedMs:0};
+    return input&&input.loop&&count>1?{action:'wrap',elapsedMs:0}:{action:'end',elapsedMs:dwell};
+  }
+  function leftKeyAction(lastLeftAt,at){
+    return lastLeftAt&&at-lastLeftAt>=0&&at-lastLeftAt<=DOUBLE_LEFT_MS?'previous':'restart';
+  }
+  function nextDwell(current){
+    const i=AUTO_DWELL_CHOICES.indexOf(current);
+    return AUTO_DWELL_CHOICES[(i+1)%AUTO_DWELL_CHOICES.length];
+  }
+  function dwellLabel(ms){return `${Math.round(ms/1000)} s par slide`}
 
   /* ------------------------------------------------------------------ feuille de style */
   /* Un seul parti pris : l'explorateur est un atelier sombre dont la lueur prend la palette de la variante regardée. Le flou est celui
@@ -555,6 +585,10 @@ html:has(#${HOST_ID}:not([hidden])) #jvFullscreenPrompt{top:auto;bottom:18px;lef
 #${HOST_ID} .jvx-transport .jvx-btn svg{width:13px;height:13px}
 #${HOST_ID} .jvx-transport .jvx-icon-slot{display:inline-flex}
 #${HOST_ID} .jvx-transport .jvx-btn[aria-pressed="true"]{border-color:var(--jvx-accent);color:var(--jvx-accent)}
+/* The one play button: a glyph (its word is read, never drawn), a little larger than its neighbours. */
+#${HOST_ID} .jvx-transport .jvx-t-play{width:40px;min-width:40px;padding:0;justify-content:center;border-color:var(--jvx-line-strong)}
+#${HOST_ID} .jvx-transport .jvx-t-play svg{width:18px;height:18px}
+#${HOST_ID} .jvx-transport .jvx-t-play .jvx-sr{position:absolute}
 #${HOST_ID} .jvx-transport .jvx-btn[aria-disabled="true"]{opacity:.55;cursor:default}
 #${HOST_ID} .jvx-scrub{position:relative;flex:1 1 auto;min-width:44px;height:24px;cursor:pointer;touch-action:none;border-radius:6px}
 #${HOST_ID} .jvx-scrub[aria-disabled="true"]{cursor:default;opacity:.5}
@@ -573,6 +607,7 @@ html:has(#${HOST_ID}:not([hidden])) #jvFullscreenPrompt{top:auto;bottom:18px;lef
   #${HOST_ID} .jvx-transport .jvx-btn[data-act="stop_run"]{width:30px;padding:0;font-size:0}
   #${HOST_ID} .jvx-transport .jvx-btn[data-act="stop_run"]::before{content:"■";font-size:12px}
   #${HOST_ID} .jvx-transport .jvx-time{min-width:0}
+  #${HOST_ID} .jvx-transport .jvx-t-skip{display:none}
   #${HOST_ID} .jvx-scrub{min-width:40px}
 }
 /* Le plein écran de la scène (native-studio-playback-fix Slice 08, § 4.12) : la cible est le « théâtre » (la scène et son transport), jamais
@@ -734,6 +769,7 @@ html:has(#${HOST_ID}:not([hidden])) #jvFullscreenPrompt .jvfs-bar{display:none}
     ROUTE,PLAYBACK_ROUTE,COMMAND_ROUTE,STATE_ROUTE,HOST_ID,OBJECT_ID,PREVIEW_OBJECT_ID,STAGE_OBJECT_ID,STYLE_ID,STORAGE_KEY,ROW_H,OVERSCAN,MAX_LIVE,MAX_ARCHIVED,
     MAX_TITLE,MAX_RATIONALE,MAX_RATIONALE_BYTES,MAX_DEPTH_SHOWN,INDENT_PX,DEEP_FROM,TYPEAHEAD_MS,PAGE_TOKEN,PAGE_TOKEN_HEADER,REQUEST_TIMEOUT_MS,READ_TIMEOUT_MS,LONG_PRESS_MS,
     PREVIEW_SETTLE_MS,NOTICE_MS,PREFS_MAX_COLLAPSED,REFUSALS,COMMAND_REFUSALS,ICONS,CSS,TREE_SHORTCUTS,
+    AUTO_DWELL_CHOICES,AUTO_DWELL_DEFAULT,AUTO_TICK_MS,AUTO_SKIP_MS,DOUBLE_LEFT_MS,autoStep,leftKeyAction,nextDwell,dwellLabel,
     clip,cleanLine,utf8Length,rationaleBytes,checkTitle,checkRationale,absoluteTime,relativeTime,creatorLabel,shortId,
     buildForest,childrenOf,ancestorsOf,subtreeIds,flatten,windowOf,treeKey,typeAhead,describeRefusal,planModel,blockedText,sameSet,readPrefs,writePrefs,
   });

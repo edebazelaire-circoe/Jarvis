@@ -227,7 +227,7 @@ async def test_a_malformed_receipt_settles_the_command_at_once_with_its_cause(ru
 
 @pytest.mark.parametrize("body", [
     None, [], {}, {"action": "toggle"}, {"action": "open"}, {**OPEN, "presentation_id": "pst_x"},
-    {**OPEN, "variant_id": "psv_x"}, {**OPEN, "fullscreen": "yes"}, {**OPEN, "arm_s": 1}, {**OPEN, "arm_s": True},
+    {**OPEN, "variant_id": "psv_x"}, {**OPEN, "fullscreen": "yes"}, {**OPEN, "autoplay": "yes"}, {**OPEN, "autoplay": 1}, {**OPEN, "arm_s": 1}, {**OPEN, "arm_s": True},
     {**OPEN, "arm_s": 9999}, {**OPEN, "title": "ignored?"}, {**OPEN, "display": "other"},
 ])
 async def test_a_bad_request_is_refused_before_any_page_is_asked(running, session, body):
@@ -380,3 +380,11 @@ async def test_without_the_early_ack_the_short_delivery_deadline_still_applies_a
     status, _, code = await running.receipt(session, "x" * 32, {"state": "accepted"})
     assert status == 404 and code == vocab.UNKNOWN_COMMAND_ID, "an accepted ack for no command in flight is refused"
 
+
+
+def test_autoplay_is_an_optional_boolean_of_the_open_command_and_travels_to_the_page_only_when_true():
+    assert vocab.parse_request(OPEN).autoplay is False and "autoplay" not in vocab.parse_request(OPEN).to_wire()
+    on = vocab.parse_request({**OPEN, "autoplay": True})
+    assert on.autoplay is True and on.to_wire()["autoplay"] is True
+    with pytest.raises(vocab.ExplorerCommandError):
+        vocab.parse_request({"action": "close", "autoplay": True})

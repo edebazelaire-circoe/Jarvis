@@ -242,3 +242,17 @@ def test_transcript_panel_requests_the_local_offset_and_export_panel_maps_broken
     assert "T.transcriptUrl(conv,mode,offset)" in load and "T.localOffsetMinutes()" in load
     export = browser[browser.index("async function runExport("):]
     assert "T.exportFailure(error,{received:job.received,timedOut:!!job.timedOut})" in export
+
+
+def test_transcript_panel_follows_the_live_conversation_instead_of_freezing_a_snapshot():
+    """Retour utilisateur : la transcription ne montrait pas ce qui se disait, puis « revenait » seulement
+    quand le panneau était rouvert. Le texte est relu à chaque ouverture et en continu, sans effacer l'écran."""
+    source = MODULE.read_text(encoding="utf-8")
+    browser = source[source.index("(function installJarvisTimeline(){"):]
+    opening = browser[browser.index("function openPanel("):browser.index("function closePanel(")]
+    assert "!S.transcript.done||" not in opening  # plus de cache qui court-circuite la relecture
+    assert "loadTranscript(" in opening
+    tick = browser[browser.index("function tick(){"):browser.index("/* ------------------------------------------------------------- rendu */")]
+    assert "S.panel==='transcript'" in tick and "loadTranscript(true)" in tick
+    load = browser[browser.index("async function loadTranscript("):browser.index("function saveBlob(")]
+    assert "previous" in load and "loadedAt" in load

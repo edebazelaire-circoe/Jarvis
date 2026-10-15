@@ -1421,6 +1421,7 @@ class ControlCenter:
             web.get("/", self.index),
             web.get("/api/status", self.status),
             web.post("/api/live/stop", self.live_stop),
+            web.post("/api/live/acknowledge-closed", self.live_acknowledge_closed),
             web.get("/api/trace", self.trace),
             web.get("/api/errors", self.errors),
             web.post("/api/errors/archive", self.archive_errors),
@@ -3103,6 +3104,51 @@ class ControlCenter:
         live["stop"] = {**live["stop"], "pending": True,
                         "request_id": stop_request["request_id"]}
         return web.json_response({"ok": True, "live": live})
+
+    async def live_acknowledge_closed(self, request: web.Request) -> web.Response:
+        """L'utilisateur constate qu'une clôture GPT-Live incertaine est terminée.
+
+        Core clôt la session (preuve `operator_acknowledged`, usage jamais
+        final) et la voix peut rouvrir sans attendre l'expiration d'une heure.
+        Refusé tant que la session n'est pas incertaine : un arrêt normal en
+        cours se termine seul.
+        """
+        del request
+        settings = self._settings()
+        heartbeat = self.runtime_root / ".voice_heartbeat"
+        try:
+            voice_online = time.time() - float(heartbeat.read_text(encoding="utf-8")) <= VOICE_HEARTBEAT_MAX_AGE_S
+        except (OSError, ValueError):
+            voice_online = False
+        live = await self._live_status(settings, voice_online=voice_online)
+        session_id = live.get("session_id")
+        if not live.get("visible") or not isinstance(session_id, str):
+            return web.json_response(
+                {"code": "live_not_active", "error": "Aucune session GPT-Live non résolue."}, status=409,
+            )
+        if not (live.get("stop") or {}).get("acknowledge"):
+            return web.json_response(
+                {"code": "live_close_not_uncertain",
+                 "error": "La clôture de cette session n'est pas incertaine : elle se termine seule."},
+                status=409,
+            )
+        assert self.live_view is not None
+        try:
+            await self.live_view.acknowledge_closed(session_id)
+        except Exception as exc:
+            self.journal.emit(
+                "voice.live_close_acknowledge_failed", "GPT-Live close acknowledgement refused",
+                level="warning", data={"session_id": session_id, "exception_type": type(exc).__name__},
+            )
+            return web.json_response(
+                {"code": "live_acknowledge_failed",
+                 "error": f"Core n'a pas pu clore la session : {type(exc).__name__}."}, status=502,
+            )
+        self.journal.emit(
+            "voice.live_close_acknowledged", "GPT-Live close acknowledged from Control Center",
+            data={"session_id": session_id},
+        )
+        return web.json_response({"ok": True, "live": await self._live_status(settings, voice_online=voice_online)})
 
     async def trace(self, request: web.Request) -> web.Response:
         try:

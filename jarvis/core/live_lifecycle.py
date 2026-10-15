@@ -372,6 +372,11 @@ class LiveLifecycleService:
         # confirmée.
         if expired and usage is not None:
             raise LiveLifecycleConflict("live_close_unconfirmed")
+        # Constat de l'utilisateur : réservé à une clôture déjà incertaine, sur
+        # la même identité fournisseur, et jamais porteur d'un usage final.
+        acknowledged = close_evidence is LiveCloseEvidence.OPERATOR_ACKNOWLEDGED
+        if acknowledged and (usage is not None or provider_id != record.provider_session_id):
+            raise LiveLifecycleConflict("live_identity_conflict")
         if provider_closed and (not record.start_may_have_been_sent
                                 or record.provider_session_id is None or provider_id is None
                                 or record.provider_session_id != provider_id):

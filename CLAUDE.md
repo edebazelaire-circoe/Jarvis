@@ -57,3 +57,10 @@ dépôt principal, et pour tout `Stop-Process` sur ces processus.
   propres ports et sa propre racine de données, jamais le JARVIS vivant.
 - Si une migration ou un changement exige un redémarrage, le dire et laisser
   l'utilisateur le faire.
+
+## Présentations : skill jarvis-presentation
+
+Toute demande de présentation (slides, vidéo MP4, PowerPoint, Remotion) suit le
+skill `jarvis-presentation` : conception menée à la voix avec les recherches du
+background, puis création avec Remotion. Le contenu vit dans le skill, pas ici :
+`C:\DevTools\skills-lib\jarvis-presentation\SKILL.md`.

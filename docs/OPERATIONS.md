@@ -179,6 +179,19 @@ puis le défaut calculé (voir « Deux architectures vocales »). Une combinaiso
 conversation continue avec Gemini Live, ou avec une fin de tour manuelle — est
 refusée à l'enregistrement, avec la raison.
 
+**Clôture GPT-Live incertaine.** Si OpenAI ne confirme pas la fermeture d'une
+session Duplex dans les 5 s (réseau dégradé), le bandeau GPT-Live passe en
+« CLÔTURE INCERTAINE » et Core refuse toute nouvelle session tant qu'elle n'est
+pas résolue (`live_lease_held`). Le rattachement du fournisseur
+(`/v1/live/sessions/{id}/attach`) répond 503 à toutes les sessions, ouvertes ou
+fermées (mesuré le 14/10/2026) : le watchdog ne peut pas conclure seul avant
+l'expiration d'une heure. Le bouton **« Considérer comme fermée »** du bandeau,
+offert seulement dans cet état et confirmé par un second clic, fait clore la
+session par Core (`POST /api/live/acknowledge-closed` →
+`/v1/live/sessions/{id}/acknowledge-closed`, preuve `operator_acknowledged`,
+usage observé conservé et jamais final). Voice relit Core chaque seconde et
+rouvre dès qu'aucune session n'est en suspens, sans relance.
+
 The architecture does not say **who** may talk to JARVIS: that is the separate
 role of the conversation mode (`open_room` / `solo_owner`), set right below it in
 the **Qui peut parler à JARVIS** block of this tab and described in

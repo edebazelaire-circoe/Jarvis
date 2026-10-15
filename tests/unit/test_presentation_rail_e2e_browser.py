@@ -95,7 +95,7 @@ async def test_the_rail_lists_real_presentations_with_their_real_work_state_and_
         assert reads["studio"]["vbar"] == 0, "Slice 10: no variant bar (merged into the tree)"
         # Slice 06 (native-studio-playback-fix): one transport toolbar; « Jouer cette slide » became the « ⋯ » entry « Lire seulement cette scène »;
         # Slice 10: « Présenter » is on the scene row under it
-        assert reads["studio"]["play"] == ["Scène précédente", "Lire", "Scène suivante", "Son", "Plus de lecture"] and reads["studio"]["windowOpen"] is False
+        assert reads["studio"]["play"] == ["Scène précédente", "Début de la slide", "Reculer de 5 secondes", "Lire", "Avancer de 5 secondes", "Scène suivante", "Son", "Plein écran", "Plus de lecture"] and reads["studio"]["windowOpen"] is False
         assert reads["studio_menu"]["onTop"] is True and reads["studio_still_open"] is True, "Escape in the rail menu does not close the Studio"
         assert reads["stepped"][0] != reads["before_step"] and reads["stepped"][1] == 1, (reads["before_step"], reads["stepped"])
         assert not noise(result), noise(result)
@@ -175,18 +175,21 @@ async def test_read_only_this_scene_never_starts_a_run_nor_closes_variants(tmp_p
             {"until": "JarvisStudioExplorer.playback.view().phase==='unavailable'", "ms": 20000},
             {"value": "scene", "expr": "document.querySelector('#jvStudioExplorer .jvx-scene-line .jvx-scene-title').textContent"},
             {"value": "lire", "expr": "(()=>{const b=document.querySelector('#jvStudioExplorer [role=\"toolbar\"] [data-act=\"continuous\"]');return [b.getAttribute('aria-disabled'),b.title]})()"},
+            {"click": "#jvStudioExplorer [role=\"toolbar\"] [data-act=\"continuous\"]"},
+            {"wait": 800},
+            {"value": "auto", "expr": "JarvisStudioExplorer.state().auto.on"},
+            {"value": "pressed", "expr": "document.querySelector('#jvStudioExplorer [data-act=\"continuous\"]').getAttribute('aria-pressed')"},
             {"click": "#jvStudioExplorer [aria-haspopup=\"menu\"]"},
             {"until": "!!document.querySelector('#jvStudioExplorer .jvx-menu')", "ms": 5000},
-            {"eval": "[...document.querySelectorAll('#jvStudioExplorer .jvx-menu [role=\"menuitem\"]')].find(b=>b.textContent.includes('Lire seulement cette scène')).click()"},
-            {"wait": 1500},
-            {"value": "notice", "expr": "document.querySelector('#jvStudioExplorer .jvx-notice-text').textContent"},
+            {"value": "menu", "expr": "[...document.querySelectorAll('#jvStudioExplorer .jvx-menu [role=\"menuitem\"]')].map(b=>b.textContent)"},
             {"value": "explorer_open", "expr": "JarvisStudioExplorer.isOpen()"},
         ], viewport="1440x900", timeout=240)
         reads = result["reads"]
         state = (await core.client.presentation_studio_playback_state())["state"]
         assert reads["scene"] == "Chiffres"
-        assert reads["lire"][0] == "true" and "présentation Remotion" in reads["lire"][1], "« Lire » is disabled with its reason"
-        assert "présentation Remotion" in reads["notice"], "the overflow entry says the same reason when activated"
+        assert reads["lire"][0] == "false" and "slides" in reads["lire"][1], "« Lire » plays the slides by their own rhythm when there is no video"
+        assert reads["auto"] is True and reads["pressed"] == "true", "the automatic play is running inside Variants, the button says so"
+        assert any("Recommencer à la fin" in item for item in reads["menu"]), "the overflow menu offers the automatic play's loop"
         assert reads["explorer_open"] is True, "Variants stays open"
         assert state.get("running") is not True and state.get("role") != "rehearsal", f"no run started: {state}"
         assert not noise(result), noise(result)

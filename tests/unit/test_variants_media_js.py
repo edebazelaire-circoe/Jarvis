@@ -59,7 +59,7 @@ def test_one_key_map_for_the_stage_the_transport_and_the_keys_a_scene_passes_on(
       const keys=[' ','ArrowRight','PageDown','ArrowLeft','PageUp','Home','End',',','.','f','F','m','M','Escape','s','?','ArrowUp','Tab','Enter'];
       return {map:keys.map(k=>[k,M.keyAction(k)]),protocol:P.KEYS,frame:R.KEYS,proto:M.keyAction('__proto__')};
     """)
-    assert dict(out["map"]) == {" ": "toggle", "ArrowRight": "next", "PageDown": "next", "ArrowLeft": "previous", "PageUp": "previous",
+    assert dict(out["map"]) == {" ": "toggle", "ArrowRight": "next", "PageDown": "next", "ArrowLeft": "restart", "PageUp": "previous",
                                 "Home": "home", "End": "end", ",": "step_back", ".": "step_forward", "f": "fullscreen", "F": "fullscreen",
                                 "m": "sound", "M": "sound", "Escape": "escape", "s": None, "?": None, "ArrowUp": None, "Tab": None, "Enter": None}
     assert out["proto"] is None

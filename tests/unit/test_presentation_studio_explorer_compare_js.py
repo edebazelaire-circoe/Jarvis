@@ -114,7 +114,7 @@ env.key(paneOf(2),'End');await env.advance(200);
 const b={s1:statusOf(1),s2:statusOf(2),scene1:sceneOfPane(1),scene2:sceneOfPane(2)};
 paneOf(1).querySelector('.jvx-cmp-select').value=sid(1);paneOf(1).querySelector('.jvx-cmp-select').dispatchEvent(new (require(process.env.JARVIS_EXPLORER_DOM).FakeEvent)('change'));await env.advance(200);
 const c={scene2:sceneOfPane(2),body:cmpWorld.calls.filter(x=>x.url==='/compare/navigate').pop().body};
-return {a,b,c,live:q('.jvx-sr').textContent,line2:lineOf(2),errors:env.errors};
+return {a,b,c,live:q('.jvx-sr[role="status"]').textContent,line2:lineOf(2),errors:env.errors};
 """)
     assert out["a"]["s1"] == "Choisie" and out["a"]["s2"] == "Synchronisée" and out["a"]["scene1"] == out["a"]["scene2"] == "pss_000000000002"
     assert out["a"]["count"] == "2 / 3" and out["a"]["body"]["step"] == "next" and out["a"]["body"]["variant_id"].endswith("01")

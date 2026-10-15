@@ -38,9 +38,10 @@ ORB = Path(__file__).resolve().parents[2] / "jarvis" / "runtime" / "control_cent
 
 def palette() -> dict[str, str]:
     text = ORB.read_text(encoding="utf-8")
-    colors = dict(re.findall(r"(idle|listening|speaking|thinking):\[(\d+,\d+,\d+)\]", text))
+    colors = dict(re.findall(r"(idle|waiting|listening|speaking|thinking):\[(\d+,\d+,\d+)\]", text))
     assert colors["thinking"] == "175,88,255" and colors["speaking"] == "255,151,61"
-    return {"thinking": "violet", "speaking": "orange",
+    assert colors["waiting"] == "67,170,255", "l'attente (WAIT) n'est plus bleue"
+    return {"thinking": "violet", "speaking": "orange", "waiting": "attente",
             "listening": "écoute", "idle": "veille"}
 
 
@@ -196,16 +197,16 @@ async def test_the_orb_returns_to_thinking_between_the_preamble_and_the_answer(p
             provider_response(wire, output_id, response_id=f"answer-{turn}", text=answer.text)
             await pump(bridge, events, counter)
             assert bridge._brain_pending is False
-            assert colors.now == "écoute"
+            assert colors.now == "attente"
 
-        # 5. Plus personne ne réfléchit : la veille reste la veille.
+        # 5. Plus personne ne réfléchit : session ouverte, l'orbe reste en attente
+        # (WAIT). La veille (SLEEP) n'existe qu'hors session.
         await runtime.visual_idle()
-        assert colors.now == "veille"
+        assert colors.now == "attente"
 
         assert colors.seen == [
-            "violet", "orange", "violet", "orange", "écoute",  # premier tour
-            "violet", "orange", "violet", "orange", "écoute",  # second tour
-            "veille",
+            "violet", "orange", "violet", "orange", "attente",  # premier tour
+            "violet", "orange", "violet", "orange", "attente",  # second tour
         ]
     finally:
         await scheduler.stop()

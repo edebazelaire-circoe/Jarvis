@@ -120,7 +120,8 @@ async def test_each_control_appears_once_named_inside_the_window_and_nothing_for
     assert len([c for c in controls if c["act"] == "continuous"]) == 1, "one play / pause button"
     assert len(_by_name(controls, "Scène précédente")) == 1 and len(_by_name(controls, "Scène suivante")) == 1, controls
     assert len([c for c in controls if c["role"] == "slider"]) == 1, "one scrub"
-    assert len([c for c in controls if "Plein écran" in c["name"]]) == 1, "one fullscreen control (the header's)"
+    fullscreen = [c for c in controls if "Plein écran" in c["name"]]
+    assert len(fullscreen) == 2 and sum(c["act"] == "fullscreen" for c in fullscreen) == 1, "two fullscreen controls: the header's and the transport's"
     assert len([c for c in controls if c["name"] == "Arrêter"]) == 0 and len([c for c in controls if c["act"] == "present"]) == 1
     assert [c["name"] for c in controls if c["name"] in GRAPH_ACTIONS] == GRAPH_ACTIONS, "the four graph actions, once each"
     assert not [c for c in controls if not c["name"]], ("every visible control has a name", [c for c in controls if not c["name"]])

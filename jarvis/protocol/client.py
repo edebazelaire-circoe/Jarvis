@@ -250,6 +250,9 @@ class LocalCoreClient:
             "session_id": session_id, "owner_incarnation_id": owner_incarnation_id,
         })
 
+    async def acknowledge_live_session_closed(self, session_id: str) -> LiveSessionRecord:
+        return await self._live_post(f"/v1/live/sessions/{session_id}/acknowledge-closed", {})
+
     async def live_session_status(self, session_id: str | None = None) -> LiveSessionRecord | None:
         session = await self._http()
         path = f"/v1/live/sessions/{session_id}" if session_id is not None else "/v1/live/sessions/current"

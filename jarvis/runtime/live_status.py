@@ -137,7 +137,13 @@ def project_live_status(record: LiveSessionRecord | None, *, now: datetime,
                      "manual": not orphaned,
                      "request_id": request.get("request_id") if request_matches else None,
                      "can_retry": (record.state is LiveLifecycleState.UNKNOWN_REAP_REQUIRED
-                                   or stop_failed) and not orphaned}}
+                                   or stop_failed) and not orphaned,
+                     # Sortie de secours : l'utilisateur constate que la session
+                     # incertaine est terminée. Le rattachement du fournisseur
+                     # répond 503 à toutes les sessions ; sans elle, la voix
+                     # restait bloquée jusqu'à l'expiration d'une heure.
+                     "acknowledge": (record.state is LiveLifecycleState.UNKNOWN_REAP_REQUIRED
+                                     and core_reachable and not stale)}}
 
 
 class CoreLiveStatusView:
@@ -169,6 +175,14 @@ class CoreLiveStatusView:
         self._failure_reported = False
         self._held = record if record is not None and record.state in _VISIBLE else None
         return self._held, True, False
+
+    async def acknowledge_closed(self, session_id: str) -> LiveSessionRecord:
+        """Relayer le constat de l'utilisateur ; le record rendu par Core remplace celui retenu."""
+        record = await asyncio.wait_for(
+            self.reader.acknowledge_live_session_closed(session_id), timeout=self.timeout_s,
+        )
+        self._held = record if record is not None and record.state in _VISIBLE else None
+        return record
 
     async def aclose(self) -> None:
         await self.reader.close()

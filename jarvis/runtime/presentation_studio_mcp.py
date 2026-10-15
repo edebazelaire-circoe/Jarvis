@@ -172,7 +172,7 @@ def build_server(target: PresentationMcpTarget | None = None, *, tools: Presenta
     async def presentation_inspect(
         target: Annotated[Literal["overview", "presentation", "variant", "scene", "score", "history", "playback", "compare", "composition",
                                   "templates", "template", "explorer", "choices", "draft_guide", "rail"],
-                          Field(description="Quoi lire. overview : présentations (masquée, archivée, travail), lecture, Variantes ; rail : état du rail et de l'écran ; presentation : graphe des variantes ; "
+                          Field(description="Quoi lire. overview : présentations, lecture, Variantes ; rail : état du rail et de l'écran ; presentation : graphe des variantes ; "
                                             "variant : scènes + master (vidéo entière prête ?) ; scene : contrôles, bornes, variantes de scène ; score : items sans texte ; "
                                             "choices : tous les ids valides ; draft_guide : clés exactes et exemple valide d'un brouillon.")],
         presentation_id: PresentationId = None,
@@ -194,13 +194,15 @@ def build_server(target: PresentationMcpTarget | None = None, *, tools: Presenta
                                         "Variantes en fenêtre ; rail_show / rail_hide : le rail ; plein écran de la scène de Variantes ; sortie du plein écran.")],
         presentation_id: PresentationId = None,
         variant_id: VariantId = None,
-        fullscreen: Annotated[bool, Field(description="explorer_open : demander le plein écran (faux : Variantes reste à côté du rail).")] = True,
+        fullscreen: Annotated[bool, Field(description="explorer_open : plein écran.")] = False,
+        autoplay: Annotated[bool, Field(description="explorer_open : lecture automatique.")] = False,
     ) -> dict[str, Any]:
         """Ouvrir ou fermer Variantes (window_* : la même, en fenêtre), le rail ; plein écran de la scène.
 
-        Le plein écran exige un clic de l'utilisateur : needs_gesture=true veut dire qu'il n'y est pas encore. Une présentation en cours se
-        montre dans Variantes. rail_* sont des demandes d'écran : relis presentation_inspect target rail. Une archivée ne s'ouvre pas."""
-        return await studio.view(op, presentation_id=presentation_id, variant_id=variant_id, fullscreen=fullscreen)
+        explorer_open : fenêtré, plein écran seulement si demandé (la vidéo : stage_fullscreen_enter). Le plein écran exige un clic de l'utilisateur (needs_gesture=true : pas encore fait).
+        rail_* sont des demandes d'écran : relis presentation_inspect target rail. Une archivée ne s'ouvre pas."""
+        return await studio.view(op, presentation_id=presentation_id, variant_id=variant_id, fullscreen=fullscreen,
+                                  autoplay=autoplay)
 
     @mcp.tool(annotations=tool_annotations(SERVER_NAME, "presentation_library"))
     async def presentation_library(
@@ -225,7 +227,7 @@ def build_server(target: PresentationMcpTarget | None = None, *, tools: Presenta
         scene_id: Annotated[str | None, Field(max_length=20, description="goto : pss_…")] = None,
         position: Annotated[int | None, Field(ge=1, le=256, description="goto : rang, 1 = premier.")] = None,
         anchor_id: Annotated[str | None, Field(max_length=40, description="reveal / hide : ancre de presentation_inspect target scene.")] = None,
-        scope: Annotated[Literal["manual", "scene", "all"] | None, Field(description="start / play : jusqu'où la lecture avance seule. scene = joue la slide courante d'un bout à l'autre puis tient sa dernière image ; all = enchaîne toutes les slides sans geste ; manual = rend la main (défaut de start).")] = None,
+        scope: Annotated[Literal["manual", "scene", "all"] | None, Field(description="start / play : jusqu'où la lecture avance seule. scene = la slide courante puis sa dernière image ; all = toutes les slides ; manual = rend la main (défaut de start).")] = None,
     ) -> dict[str, Any]:
         """Lire, répéter (rehearsal) ou naviguer dans une présentation.
 

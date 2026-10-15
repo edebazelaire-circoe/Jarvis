@@ -129,7 +129,7 @@ class ExplorerRequest:
     """Une demande d'ouverture ou de fermeture, validée.
 
     `variant_id` : la variante à sélectionner à l'ouverture (`None` : l'active). `fullscreen` : demander le plein écran (armé
-    si le navigateur exige un clic). `arm_s` : combien de temps l'invite attend ce clic.
+    si le navigateur exige un clic). `autoplay` : démarrer la lecture automatique à l'ouverture. `arm_s` : combien de temps l'invite attend ce clic.
     """
 
     action: str
@@ -138,12 +138,15 @@ class ExplorerRequest:
     fullscreen: bool = True
     arm_s: float = ARM_DEFAULT_S
     deadline_s: float = WORK_DEADLINE_DEFAULT_S
+    autoplay: bool = False
 
     def to_wire(self) -> dict[str, Any]:
         wire: dict[str, Any] = {"action": self.action}
         if self.action == "open":
             wire.update(presentation_id=self.presentation_id, variant_id=self.variant_id, fullscreen=self.fullscreen,
                         arm_s=self.arm_s)
+            if self.autoplay:
+                wire["autoplay"] = True
         return wire
 
 
@@ -152,7 +155,7 @@ def parse_request(raw: object) -> ExplorerRequest:
 
     if not isinstance(raw, dict):
         raise ExplorerCommandError(BAD_REQUEST, "le corps doit être un objet JSON", 400)
-    unknown = set(raw) - {"action", "presentation_id", "variant_id", "fullscreen", "arm_s", "deadline_s"}
+    unknown = set(raw) - {"action", "presentation_id", "variant_id", "fullscreen", "arm_s", "deadline_s", "autoplay"}
     if unknown:
         raise ExplorerCommandError(BAD_REQUEST, "champ inconnu : " + ", ".join(sorted(unknown)), 400)
     action = raw.get("action")
@@ -172,13 +175,16 @@ def parse_request(raw: object) -> ExplorerRequest:
     fullscreen = raw.get("fullscreen", True)
     if type(fullscreen) is not bool:
         raise ExplorerCommandError(BAD_REQUEST, "fullscreen doit être true ou false", 400)
+    autoplay = raw.get("autoplay", False)
+    if type(autoplay) is not bool:
+        raise ExplorerCommandError(BAD_REQUEST, "autoplay doit être true ou false", 400)
     arm_s = raw.get("arm_s", ARM_DEFAULT_S)
     if isinstance(arm_s, bool) or not isinstance(arm_s, (int, float)) or not ARM_MIN_S <= float(arm_s) <= ARM_MAX_S:
         raise ExplorerCommandError(BAD_REQUEST, f"arm_s doit être entre {ARM_MIN_S:g} et {ARM_MAX_S:g}", 400)
     deadline_s = raw.get("deadline_s", WORK_DEADLINE_DEFAULT_S)
     if isinstance(deadline_s, bool) or not isinstance(deadline_s, (int, float)) or not WORK_DEADLINE_MIN_S <= float(deadline_s) <= WORK_DEADLINE_MAX_S:
         raise ExplorerCommandError(BAD_REQUEST, f"deadline_s doit être entre {WORK_DEADLINE_MIN_S:g} et {WORK_DEADLINE_MAX_S:g}", 400)
-    return ExplorerRequest("open", presentation_id, variant_id, fullscreen, float(arm_s), float(deadline_s))
+    return ExplorerRequest("open", presentation_id, variant_id, fullscreen, float(arm_s), float(deadline_s), autoplay)
 
 
 def _common(raw: object, what: str, allowed_keys: set[str]) -> dict[str, Any]:

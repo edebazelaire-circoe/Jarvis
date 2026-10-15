@@ -51,7 +51,7 @@ def test_the_sheet_lists_every_key_of_the_one_key_map_in_both_modes():
     assert out["video"] == [] and out["run"] == [], "every key of the § 4.15 map is in the sheet, in both modes"
     assert out["unnamed"] == [], "every key of the map has a display name"
     assert out["does"] == [], "every row says what it does"
-    assert set(out["actionsVideo"]) == {"toggle", "next", "previous", "home", "end", "step_back", "step_forward", "fullscreen", "sound", "escape", "help"}
+    assert set(out["actionsVideo"]) == {"toggle", "next", "restart", "previous", "home", "end", "step_back", "step_forward", "fullscreen", "sound", "escape", "help"}
     assert "skip" in out["actionsRun"] and "skip" not in out["actionsVideo"], "S (leave a locked sequence) exists in a run only"
     assert out["frozen"] is True
 
@@ -88,7 +88,7 @@ def test_each_control_once_the_toolbar_holds_playback_only_and_the_count_says_wh
         fsName:q('.jvx-top-actions').children[2].getAttribute('aria-label'),close:q('.jvx-top-actions').children[3].getAttribute('aria-label'),
         explorateur:texts.filter(t=>/explorateur/i.test(t))};
     """)
-    assert out["names"] == ["Scène précédente", "Lire", "Scène suivante", "Son", "Plus de lecture"], out["names"]
+    assert out["names"] == ["Scène précédente", "Début de la slide", "Reculer de 5 secondes", "Lire", "Avancer de 5 secondes", "Scène suivante", "Son", "Plein écran", "Plus de lecture"], out["names"]
     assert out["vbar"] == 0, "the variant bar is merged into the tree (§ 6 #8)"
     assert out["presentInBar"] is False and out["presentInNote"] is True, "« Présenter » is on the scene row, not a playback control"
     assert out["rowOrder"][0] == "jvx-transport" and out["rowOrder"][1] == "jvx-scene-count", out["rowOrder"]

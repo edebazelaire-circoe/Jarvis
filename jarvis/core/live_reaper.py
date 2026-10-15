@@ -81,6 +81,9 @@ class LiveLifecycleWatchdog:
         self._next_attempt_at = 0.0
         self._backoff = self.retry_min_seconds
         self.attempts = 0
+        # Une tentative du watchdog et un constat de l'utilisateur ne doivent
+        # jamais s'entrelacer sur la même révision du record.
+        self._operation_lock = asyncio.Lock()
 
     @property
     def pending_receipt(self) -> LiveTerminalReceipt | None:
@@ -204,6 +207,45 @@ class LiveLifecycleWatchdog:
         )
 
     async def run_once(self) -> None:
+        async with self._operation_lock:
+            await self._run_once_unlocked()
+
+    async def acknowledge_closed(self, session_id: str) -> LiveSessionRecord:
+        """Clore, sur constat de l'utilisateur, une session dont la fermeture reste incertaine.
+
+        Réservé à `UNKNOWN_REAP_REQUIRED` (ou à la tentative de fermeture que
+        le watchdog en a tirée) : une session qu'un processus Voice possède
+        encore et ferme normalement n'est pas concernée. Idempotent : une
+        session déjà arrêtée est rendue telle quelle. L'usage observé est
+        conservé, jamais final.
+        """
+        session_id = live_id(session_id, "session_id")
+        async with self._operation_lock:
+            record = await self.lifecycle.status(session_id)
+            if record is None:
+                raise LiveLifecycleConflict("live_session_not_found")
+            if record.state is LiveLifecycleState.STOPPED:
+                return record
+            reaping = (record.state is LiveLifecycleState.STOPPING
+                       and record.owner_kind is LiveOwnerKind.REAPER)
+            if record.state is not LiveLifecycleState.UNKNOWN_REAP_REQUIRED and not reaping:
+                raise LiveLifecycleConflict("live_invalid_transition")
+            owned = await self._claim_or_owned(record)
+            if owned is None:
+                raise LiveLifecycleConflict("live_lease_held")
+            owned = await self._renew_if_due(owned)
+            stopped = await self.lifecycle.finalize(
+                owned.session_id, self.incarnation_id, owned.owner_epoch, owned.revision,
+                owned.provider_session_id, owned.active_seconds, None,
+                "operator_acknowledged", LiveCloseEvidence.OPERATOR_ACKNOWLEDGED,
+            )
+            self._pending = None
+            self._backoff = self.retry_min_seconds
+            self._next_attempt_at = 0.0
+            self._emit("live.reaper.operator_acknowledged", stopped)
+            return stopped
+
+    async def _run_once_unlocked(self) -> None:
         pending = self._pending
         record = await self.lifecycle.status(pending.session_id) if pending is not None else await self.lifecycle.status()
         if record is None:

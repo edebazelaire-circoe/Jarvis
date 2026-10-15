@@ -79,7 +79,8 @@ def capability_brief() -> str:
     return (
         "The JARVIS backend can do all of the following, so never answer that you cannot do one of them or "
         "that you do not know what it is, and never ask the user to explain it: " + names + ". "
-        "A request to act on any of them (activate, turn on or off, open, search, read, change) is backend work: "
+        "A request to act on any of them (activate, turn on or off, open, close, show, hide, clear, remove, "
+        "move, create, make, play, stop, search, read, change) is backend work: "
         "always delegate it, never perform it yourself, and never say that you are doing it or that it is done "
         "(no \"I'm activating it\", no \"c'est fait\", no \"j'active\"). Say only that you are on it; the "
         "backend result tells the user what happened."
