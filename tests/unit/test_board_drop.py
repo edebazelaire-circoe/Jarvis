@@ -10,6 +10,7 @@ connexion sortante autre que le bouclage de Core fait échouer le test.
 from __future__ import annotations
 
 import asyncio
+import dataclasses
 import json
 import socket
 import uuid
@@ -159,11 +160,36 @@ async def test_drop_on_inactive_board_409(stack):
     assert await board_artifacts(stack, other.board_id) == {}
 
 
-async def test_switch_race_relinks_target(stack):
-    """La bascule passe entre le contrôle du Board actif et la transaction de création : Core relie la cible."""
+class RecordingSink:
+    """Journal de diagnostic de Core (le banc n'en câble pas) : `(kind, level, data)` émis."""
+
+    def __init__(self) -> None:
+        self.entries: list[tuple[str, str, dict]] = []
+
+    def emit(self, kind: str, message: str, *, level: str = "info", data: dict | None = None) -> None:
+        self.entries.append((kind, level, dict(data or {})))
+
+    def of(self, kind: str) -> list[tuple[str, dict]]:
+        return [(level, data) for name, level, data in self.entries if name == kind]
+
+
+def wrap_seam(stack, **overrides) -> None:
+    """Remplace des fonctions du `BoardDropSeam` câblé ; chaque surcharge reçoit la fonction réelle."""
+
+    seam = stack.core.uploads._board_drop
+    stack.core.uploads._board_drop = dataclasses.replace(
+        seam, **{name: wrapper(getattr(seam, name)) for name, wrapper in overrides.items()})
+
+
+async def links_of(stack, artifact_id: str) -> dict[str, str]:
+    return {link.board_id: link.origin.value
+            for link in await stack.core.board_artifact_links.boards_of_artifact(artifact_id, limit=10)}
+
+
+async def switch_race(stack, board_b: str, *, upload_id: str | None = None):
+    """Dépôt sur le Board affiché A ; la bascule vers B passe entre le contrôle et la transaction de création."""
 
     board_a = await active_board(stack)
-    board_b = (await stack.core.boards.create({"title": "Projet B"})).board_id
     gate, reached = asyncio.Event(), asyncio.Event()
 
     async def read(n: int) -> bytes:  # corps tenu après le contrôle, avant la création
@@ -174,17 +200,83 @@ async def test_switch_race_relinks_target(stack):
         return b""
 
     task = asyncio.create_task(stack.core.uploads.put(
-        client_upload_id=str(uuid.uuid4()), purpose="board", board_id=board_a, agent="claude",
+        client_upload_id=upload_id or str(uuid.uuid4()), purpose="board", board_id=board_a, agent="claude",
         declared_mime="image/png", name_header="a.png", content_length=None, read=read))
     await asyncio.wait_for(reached.wait(), 10)
     await stack.core.boards.switch(board_b)
     gate.set()
-    outcome = await asyncio.wait_for(task, 10)
-    assert outcome.relinked is True and outcome.board_id == board_a
-    links = {link.board_id: link.origin.value
-             for link in await stack.core.board_artifact_links.boards_of_artifact(outcome.artifact.artifact_id,
-                                                                                   limit=10)}
-    assert links == {board_b: "active_board", board_a: "explicit"}
+    return board_a, await asyncio.wait_for(task, 10)
+
+
+async def test_switch_race_relinks_target(stack):
+    """Bascule pendant le dépôt : Core relie A et retire le lien automatique posé sur B. Le fichier est sur A seul."""
+
+    board_b = (await stack.core.boards.create({"title": "Projet B"})).board_id
+    sink = RecordingSink()
+    stack.core.uploads._diagnostics = sink
+    board_a, outcome = await switch_race(stack, board_b)
+    assert outcome.relinked is True and outcome.board_id == board_a and outcome.also_linked_board_id is None
+    assert await links_of(stack, outcome.artifact.artifact_id) == {board_a: "explicit"}
+    assert sink.of("core.upload.board_auto_link_removed") == [
+        ("warning", {"artifact_id": outcome.artifact.artifact_id, "board_id": board_a, "auto_board_id": board_b})]
+    assert outcome.artifact.artifact_id in await board_artifacts(stack, board_a)
+    assert outcome.artifact.artifact_id not in await board_artifacts(stack, board_b)
+
+
+async def test_switch_race_keeps_explicit_link_of_other_board(stack):
+    """Un lien `explicit` sur B posé par quelqu'un d'autre pendant le dépôt n'est jamais retiré."""
+
+    board_b = (await stack.core.boards.create({"title": "Projet B"})).board_id
+
+    def link(real):  # noqa: ANN001, ANN202
+        async def linked_by_someone_else_first(board_id: str, artifact_id: str) -> None:
+            # Quelqu'un relie explicitement l'Artifact à B (retrait du lien auto puis lien `explicit`).
+            await stack.core.workspace.artifact_unlink(board_b, artifact_id)
+            await stack.core.workspace.artifact_link(board_b, artifact_id, origin="brain")
+            await real(board_id, artifact_id)
+        return linked_by_someone_else_first
+
+    wrap_seam(stack, link=link)
+    board_a, outcome = await switch_race(stack, board_b)
+    assert outcome.relinked is True and outcome.also_linked_board_id is None
+    assert await links_of(stack, outcome.artifact.artifact_id) == {board_a: "explicit", board_b: "explicit"}
+
+
+async def test_switch_race_unlink_failure_keeps_target(stack):
+    """Retrait du lien automatique impossible : journal `error`, le fichier reste sur A et la réponse nomme B."""
+
+    board_b = (await stack.core.boards.create({"title": "Projet B"})).board_id
+    sink = RecordingSink()
+    stack.core.uploads._diagnostics = sink
+
+    def unlink(real):  # noqa: ANN001, ANN202, ARG001
+        async def failing(board_id: str, artifact_id: str) -> None:
+            raise OSError("disk unavailable")
+        return failing
+
+    wrap_seam(stack, unlink=unlink)
+    board_a, outcome = await switch_race(stack, board_b)
+    assert outcome.relinked is True and outcome.board_id == board_a and outcome.also_linked_board_id == board_b
+    assert await links_of(stack, outcome.artifact.artifact_id) == {board_a: "explicit", board_b: "active_board"}
+    [(level, data)] = sink.of("core.upload.board_auto_link_remove_failed")
+    assert level == "error" and data["auto_board_id"] == board_b and data["exception_type"] == "OSError"
+
+
+async def test_replay_never_removes_auto_link(stack):
+    """Un rejeu qui relie la cible ne retire aucun autre lien : il a pu être voulu entre-temps."""
+
+    board_a = await active_board(stack)
+    board_b = (await stack.core.boards.create({"title": "Projet B"})).board_id
+    await stack.core.boards.switch(board_b)
+    upload_id = str(uuid.uuid4())
+    status, body, text = await drop_file(stack, board_b, "a.png", "image/png", PNG, upload_id=upload_id)
+    assert status == 201, text
+    artifact_id = body["artifact_id"]
+    await stack.core.boards.switch(board_a)
+    status, body, text = await drop_file(stack, board_a, "a.png", "image/png", PNG, upload_id=upload_id)
+    assert status == 200, text
+    assert body["replayed"] is True and body["relinked"] is True and body["also_linked_board_id"] is None
+    assert await links_of(stack, artifact_id) == {board_b: "active_board", board_a: "explicit"}
 
 
 async def test_url_inert_no_network(stack, monkeypatch):
@@ -195,6 +287,7 @@ async def test_url_inert_no_network(stack, monkeypatch):
     assert guard.attempts == []
     assert (body["kind"], body["url"], body["host"], body["state"]) == ("link", URL, "example.invalid", "complete")
     assert body["board_id"] == board and body["relinked"] is False and body["replayed"] is False
+    assert body["also_linked_board_id"] is None
     artifact = await stack.core.artifacts.get(body["artifact_id"])
     assert artifact.kind is ArtifactKind.LINK and artifact.state is ArtifactState.COMPLETE
     assert artifact.text == URL and artifact.payload_ref is None and artifact.source == "board_drop"

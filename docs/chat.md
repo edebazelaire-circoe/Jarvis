@@ -706,11 +706,21 @@ page (drop of a link) --JSON--> CC POST /api/boards/drop-link --> Core POST /v1/
   creation: if `boards_of_artifact` lacks the target (switch between the check
   and the transaction), Core links it explicitly through
   `WorkspaceService.artifact_link(origin=user)` and says so (`relinked: true`).
+  The user dropped on that Board only: when the Artifact was created by this
+  very request (never on a replay), Core then removes the automatic
+  `active_board` link that creation put on the Board that became active
+  (`WorkspaceService.artifact_unlink(origin=user)`), and only a link of that
+  origin; an `explicit` link (made by someone else) stays. Journal
+  `core.upload.board_auto_link_removed` (`warning`). If that unlink fails,
+  Core logs `core.upload.board_auto_link_remove_failed` at `error` and still
+  answers with the target linked, naming the Board that keeps the stray link
+  in `also_linked_board_id` (otherwise `null`; the page may ignore it).
   The active Board is checked **before** the first byte is read; the 409 body
   carries `active_board_id` (relayed by the Control Center) so the page can
   say which Board is displayed now. Same replayable identity as an attachment;
   an id already used by a chat attachment or a link → 409 `upload_conflict`.
-  Answer: the attachment fields plus `board_id` and `relinked`.
+  Answer: the attachment fields plus `board_id`, `relinked` and
+  `also_linked_board_id`.
 - **URL**: `POST /v1/uploads/links` `{client_upload_id, url, board_id}` →
   Artifact `kind = link`, created `complete` at once with `text = url` (like
   `record_text`), metadata `provenance = board_drop`, `host`. Accepted URL:
@@ -718,7 +728,8 @@ page (drop of a link) --JSON--> CC POST /api/boards/drop-link --> Core POST /v1/
   control characters; else 400 `link_invalid`. **Never** fetched (no network
   request, no DNS lookup, no preview). Answer 201 (new) or 200 (replay: same
   `client_upload_id` and same URL; another URL or kind → 409 `upload_conflict`)
-  `{artifact_id, kind: "link", url, host, state, replayed, board_id, relinked}`.
+  `{artifact_id, kind: "link", url, host, state, replayed, board_id, relinked,
+  also_linked_board_id}` (same relink rule as a file).
   Body closed, ≤ 16 KiB. In list items the link's `preview` is the URL and its
   `provenance` is given, as for an upload.
 - **Control Center**: `POST /api/boards/drop?board_id=` (multipart

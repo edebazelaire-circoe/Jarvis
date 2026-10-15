@@ -69,7 +69,10 @@ carries `original_name`, `declared_mime`, `sha256`, `client_upload_id` and
 its `provenance`, a `link` its URL as `preview` and its `provenance`; never a path.
 A Board drop is linked by the creation transaction (`active_board`); when the
 Board switched between Core's check and that transaction, Core adds an
-`explicit` link to the dropped-on Board ([chat.md](chat.md) › *Board drop*). The stored `mime_type` of an
+`explicit` link to the dropped-on Board, then removes the automatic
+`active_board` link that this creation put on the Board that became active
+(never an `explicit` link, never on a replay), so the drop ends on the
+dropped-on Board only ([chat.md](chat.md) › *Board drop*). The stored `mime_type` of an
 upload is the sniffed type, never the declared one alone. Both follow the
 *Board links* rule below unchanged (automatic `active_board` link). Identity,
 bounds, sniffing, errors and Brain access: [chat.md](chat.md) ›

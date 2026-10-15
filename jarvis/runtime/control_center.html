@@ -429,14 +429,17 @@ html[data-jarvis-theme="cosmos"] .panel.chat-panel{bottom:68px}
 html[data-jarvis-theme="cosmos"] .toasts{right:18px;bottom:68px;width:min(340px,calc(100vw - 36px))}
 
 /* ---------- Dépôt sur le Board affiché (unified-chat Slice 08, `control_center_board_drop.js`) ----------
-   Calque au-dessus de la scène (20) et sous les commandes de la page (31+),
-   sans jamais prendre un pointeur ; plateau des envois en bas au centre,
-   au-dessus de l'indication vocale et de l'onglet du Chat. */
-.board-drop{position:absolute;inset:0;z-index:21;pointer-events:none;display:grid;place-items:center;padding:24px}
+   Calque sans rang propre (aucun contexte d'empilement) : son cadre en
+   pointillés se range au-dessus de la scène (21) et sous les commandes de la
+   page (30+), sa carte au-dessus d'elles (34 : rail de capture et palette 30,
+   bouton des mains 32), pour rester lisible à 600 px. Rien de tout cela ne
+   prend un pointeur, et le calque est `hidden` hors d'un glisser. Plateau des
+   envois en bas au centre, au-dessus de l'indication vocale et de l'onglet du Chat. */
+.board-drop{position:absolute;inset:0;pointer-events:none;display:grid;place-items:center;padding:24px}
 .board-drop[hidden]{display:none}
-.board-drop::before{content:"";position:absolute;inset:14px;border:2px dashed var(--accent);border-radius:16px;background:rgba(3,14,20,.38);box-shadow:inset 0 0 60px rgba(110,231,255,.12);animation:boardDropPulse 1.6s ease-in-out infinite}
+.board-drop::before{content:"";position:absolute;z-index:21;inset:14px;border:2px dashed var(--accent);border-radius:16px;background:rgba(3,14,20,.38);box-shadow:inset 0 0 60px rgba(110,231,255,.12);animation:boardDropPulse 1.6s ease-in-out infinite}
 .board-drop[data-tone=bad]::before{border-color:var(--danger,#ff6577);background:rgba(30,6,10,.42);box-shadow:inset 0 0 60px rgba(255,101,119,.12)}
-.board-drop-card{position:relative;display:grid;gap:6px;max-width:min(520px,calc(100vw - 64px));padding:16px 22px;border:1px solid rgba(110,231,255,.35);border-radius:12px;background:rgba(3,10,15,.9);text-align:center;backdrop-filter:blur(10px)}
+.board-drop-card{position:relative;z-index:34;display:grid;gap:6px;max-width:min(520px,calc(100vw - 64px));padding:16px 22px;border:1px solid rgba(110,231,255,.35);border-radius:12px;background:rgba(3,10,15,.9);text-align:center;backdrop-filter:blur(10px)}
 .board-drop[data-tone=bad] .board-drop-card{border-color:rgba(255,101,119,.5)}
 .board-drop-card strong{font-size:16px;letter-spacing:.02em;color:var(--accent);overflow-wrap:anywhere}
 .board-drop[data-tone=bad] .board-drop-card strong{color:#ffb3bd}
@@ -1854,7 +1857,7 @@ button.wsp-ename:hover{color:var(--accent)}
     <div class="chat-drop" id="chatDrop" aria-hidden="true" hidden><span>Déposez les fichiers pour les joindre au message</span></div>
   </section>
   <!-- Dépôt sur le Board affiché (handoff jarvis-unified-chat-and-board-drop, Slice 08, `docs/chat.md` › Board drop) :
-       calque de survol au-dessus de la scène (rang 21, aucun pointeur) et plateau des envois (rang 34).
+       calque de survol au-dessus de la scène (cadre rang 21, carte rang 34, aucun pointeur) et plateau des envois (rang 34).
        Remplis par `control_center_board_drop.js` en `textContent`. -->
   <div class="board-drop" id="boardDrop" aria-hidden="true" hidden><div class="board-drop-card"><strong id="boardDropTitle"></strong><span id="boardDropSub"></span></div></div>
   <section class="board-drop-tray" id="boardDropTray" aria-label="Dépôts sur le Board" hidden><ul id="boardDropList" role="log" aria-live="polite" aria-label="Envois vers le Board"></ul></section>

@@ -277,8 +277,8 @@ class JarvisCoreApplication:
             artifacts_root=Path(root).resolve() / ARTIFACTS_DIR, diagnostics=diagnostics,
             # Dépôt sur le Board affiché (Slice 08) : Board actif, liens, lien explicite de rattrapage. Lus à
             # l'appel : `self.workspace` et `self.board_artifact_links` sont construits plus bas.
-            board_drop=BoardDropSeam(active_board=self._active_board_id, boards_of=self._boards_of_artifact,
-                                     link=self._link_dropped_artifact))
+            board_drop=BoardDropSeam(active_board=self._active_board_id, links_of=self._links_of_artifact,
+                                     link=self._link_dropped_artifact, unlink=self._unlink_dropped_artifact))
         # Propriétaire des captures (handoff session-context-recording, Slice
         # 05, D-CAP) : seule vérité d'état ; même base v7, même connexion ;
         # association prise au Context actif du démarrage. Aucune source réelle
@@ -894,14 +894,19 @@ class JarvisCoreApplication:
 
         return (await self.sessions.current()).session.active_board_id
 
-    async def _boards_of_artifact(self, artifact_id: str) -> tuple[str, ...]:
+    async def _links_of_artifact(self, artifact_id: str) -> dict[str, str]:
         links = await self.board_artifact_links.boards_of_artifact(artifact_id, limit=500)
-        return tuple(link.board_id for link in links)
+        return {link.board_id: link.origin.value for link in links}
 
     async def _link_dropped_artifact(self, board_id: str, artifact_id: str) -> None:
         """Rattrapage d'un dépôt dont le Board a changé pendant la création : lien explicite, `origin=user`."""
 
         await self.workspace.artifact_link(board_id, artifact_id, origin="user")
+
+    async def _unlink_dropped_artifact(self, board_id: str, artifact_id: str) -> None:
+        """Après ce rattrapage : retrait du lien automatique posé sur le Board devenu actif (`origin=user`)."""
+
+        await self.workspace.artifact_unlink(board_id, artifact_id, origin="user")
 
     async def _capture_association(self) -> CaptureAssociation:
         """Session et Context actifs au démarrage d'une capture (D-CAP, `docs/capture.md`)."""

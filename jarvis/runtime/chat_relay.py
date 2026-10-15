@@ -201,7 +201,8 @@ class ChatRelayRoutes(CaptureRelayRoutes):
                                  "artifact_id": payload.get("artifact_id") if ok else None,
                                  "relinked": payload.get("relinked") if ok else None})
         if ok:
-            keys = ("artifact_id", "kind", "url", "host", "state", "replayed", "board_id", "relinked")
+            keys = ("artifact_id", "kind", "url", "host", "state", "replayed", "board_id", "relinked",
+                    "also_linked_board_id")
             return web.json_response({"ok": True, **{key: payload.get(key) for key in keys}}, status=status)
         return self._answer(status, payload)
 
@@ -279,7 +280,8 @@ class ChatRelayRoutes(CaptureRelayRoutes):
                            level="info" if ok else "warning", data=data)
         if ok:
             keys = ("artifact_id", "original_name", "mime_type", "size_bytes", "state", "replayed")
-            extra = {} if board_id is None else {key: payload.get(key) for key in ("board_id", "relinked")}
+            extra = {} if board_id is None else {key: payload.get(key)
+                                                 for key in ("board_id", "relinked", "also_linked_board_id")}
             return web.json_response({"ok": True, **{key: payload.get(key) for key in keys},
                                       # La valeur de Core, calculée pour le même agent : jamais recalculée ici.
                                       "brain_readable": payload.get("brain_readable") is True, **extra},

@@ -474,7 +474,9 @@ memory mutations* below.
 a file, an image or a URL dropped on the scene of the **displayed** Board
 becomes an Artifact (`upload` or `link`, provenance `board_drop`) linked to
 that Board and listed by `/artifacts?board_id=` above; a drop on a Board that
-is not active is refused (`board_drop_target_inactive`), a URL is never
+is not active is refused (`board_drop_target_inactive`), a drop that races a
+Board switch ends on the dropped-on Board only (Core relinks it and removes
+the automatic link left on the newly active Board), a URL is never
 fetched, and a drop is never a chat turn nor a scene object. The page says
 where each item went (« Ajouté au Board « … » ») and opens this inspector's
 Artefacts view on that Board. Contract and routes (`POST /api/boards/drop`,

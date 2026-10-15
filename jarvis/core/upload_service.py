@@ -35,7 +35,9 @@ Ce que tient ce module :
   automatique de la transaction de création est le lien Board, et si une
   bascule passe entre le contrôle et la transaction, la cible est liée
   explicitement (`WorkspaceService.artifact_link`, `origin=user`) et la
-  réponse le dit (`relinked`). Jamais un événement de conversation, jamais un
+  réponse le dit (`relinked`) ; le lien automatique que cette création a
+  posé sur le Board devenu actif est alors retiré (`artifact_unlink`), un
+  lien `explicit` jamais. Jamais un événement de conversation, jamais un
   tour du cerveau.
 """
 
@@ -43,7 +45,7 @@ from __future__ import annotations
 
 import asyncio
 import dataclasses
-from collections.abc import Awaitable, Callable, Mapping, Sequence
+from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass
 import hashlib
 from pathlib import Path
@@ -51,6 +53,7 @@ from typing import Any
 
 from jarvis.core.artifact_service import ArtifactService
 from jarvis.domain.artifacts import Artifact, ArtifactError, ArtifactErrorCode, ArtifactKind, ArtifactQuery, ArtifactState
+from jarvis.domain.board_artifact_links import BoardArtifactLinkOrigin
 from jarvis.domain.brain_context import BrainAttachment, BrainAttachmentsContext
 from jarvis.domain.uploads import (
     BRAIN_AGENTS, SNIFF_BYTES, UPLOAD_CHUNK_BYTES, LinkInvalid, Provenance, SOURCE_BY_PROVENANCE, UploadBounds,
@@ -85,6 +88,8 @@ class UploadOutcome:
     #: Dépôt sur un Board (Slice 08) : le Board ciblé, et vrai si Core a dû le lier explicitement.
     board_id: str | None = None
     relinked: bool = False
+    #: Rattrapage fait mais lien automatique du Board devenu actif impossible à retirer : ce Board le porte aussi.
+    also_linked_board_id: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -93,10 +98,12 @@ class BoardDropSeam:
 
     #: `active_board_id` de la Session ouverte ; `BoardError` (`session_not_found`) sans Session.
     active_board: Callable[[], Awaitable[str]]
-    #: Ids des Boards liés à un Artifact (`board_artifact_links`).
-    boards_of: Callable[[str], Awaitable[Sequence[str]]]
+    #: Liens d'un Artifact (`board_artifact_links`) : `{board_id: origine}` (`active_board` ou `explicit`).
+    links_of: Callable[[str], Awaitable[Mapping[str, str]]]
     #: Lien explicite (`WorkspaceService.artifact_link(board_id, artifact_id, origin="user")`).
     link: Callable[[str, str], Awaitable[Any]]
+    #: Retrait d'un lien (`WorkspaceService.artifact_unlink(board_id, artifact_id, origin="user")`).
+    unlink: Callable[[str, str], Awaitable[Any]]
 
 
 def upload_view(artifact: Artifact) -> dict[str, Any]:
@@ -190,8 +197,9 @@ class UploadService:
             self._active.discard(artifact_id)
         if board_id is None:
             return outcome
-        relinked = await self._ensure_board_link(board_id, outcome.artifact.artifact_id)
-        return dataclasses.replace(outcome, board_id=board_id, relinked=relinked)
+        relinked, stray = await self._ensure_board_link(board_id, outcome.artifact.artifact_id,
+                                                        fresh=not outcome.replayed)
+        return dataclasses.replace(outcome, board_id=board_id, relinked=relinked, also_linked_board_id=stray)
 
     # ------------------------------------------------------------ dépôt sur un Board (Slice 08)
 
@@ -233,8 +241,9 @@ class UploadService:
         self._trace("core.upload.link_replayed" if replayed else "core.upload.link_stored",
                     "URL déposée sur le Board, jamais récupérée",
                     data={"artifact_id": artifact_id, "board_id": target, "replayed": replayed})
-        relinked = await self._ensure_board_link(target, artifact_id)
-        return UploadOutcome(existing, replayed=replayed, board_id=target, relinked=relinked)
+        relinked, stray = await self._ensure_board_link(target, artifact_id, fresh=not replayed)
+        return UploadOutcome(existing, replayed=replayed, board_id=target, relinked=relinked,
+                             also_linked_board_id=stray)
 
     async def _drop_target(self, board_id: object, key: str) -> str:
         """Le Board ciblé s'il est le Board actif de la Session ouverte ; sinon un refus codé."""
@@ -251,12 +260,18 @@ class UploadService:
                 details={"active_board_id": active}), key)
         return board_id
 
-    async def _ensure_board_link(self, board_id: str, artifact_id: str) -> bool:
-        """Contrôle après création : la cible porte-t-elle le lien ? Sinon lien explicite, et on le dit."""
+    async def _ensure_board_link(self, board_id: str, artifact_id: str, *,
+                                 fresh: bool) -> tuple[bool, str | None]:
+        """Contrôle après création : la cible porte-t-elle le lien ? Sinon lien explicite, et on le dit.
+
+        Rend `(relinked, also_linked_board_id)`. Après le rattrapage d'un Artifact créé par **cet** appel
+        (`fresh`), le lien automatique posé sur le Board devenu actif est retiré (`_drop_auto_link`) ; jamais
+        sur un rejeu, où un lien a pu être posé entre-temps par quelqu'un d'autre.
+        """
 
         assert self._board_drop is not None  # `_drop_target` l'a exigé
-        if board_id in await self._board_drop.boards_of(artifact_id):
-            return False
+        if board_id in await self._board_drop.links_of(artifact_id):
+            return False, None
         try:
             await self._board_drop.link(board_id, artifact_id)
         except Exception as exc:
@@ -266,7 +281,34 @@ class UploadService:
             raise
         self._trace("core.upload.board_relinked", "dépôt : Board changé pendant le dépôt, cible liée explicitement",
                     level="warning", data={"artifact_id": artifact_id, "board_id": board_id})
-        return True
+        return True, (await self._drop_auto_link(board_id, artifact_id) if fresh else None)
+
+    async def _drop_auto_link(self, target: str, artifact_id: str) -> str | None:
+        """Retire le lien **automatique** que la création a posé sur le Board devenu actif pendant le dépôt.
+
+        Seul un lien d'origine `active_board` hors de la cible est retiré ; un lien `explicit` reste. Échec :
+        journalisé `error`, l'Artifact reste lié à la cible et la réponse nomme le Board qui porte encore le
+        lien automatique (`also_linked_board_id`, que la page peut ignorer).
+        """
+
+        assert self._board_drop is not None
+        auto = BoardArtifactLinkOrigin.ACTIVE_BOARD.value
+        board: str | None = None
+        try:
+            links = await self._board_drop.links_of(artifact_id)
+            for board in [other for other, origin in links.items() if other != target and origin == auto]:
+                await self._board_drop.unlink(board, artifact_id)
+                self._trace("core.upload.board_auto_link_removed",
+                            "dépôt : lien automatique du Board devenu actif retiré, l'Artifact reste sur la cible",
+                            level="warning", data={"artifact_id": artifact_id, "board_id": target,
+                                                   "auto_board_id": board})
+        except Exception as exc:  # noqa: BLE001 - capture: the file is on the right Board; the stray link is said
+            self._trace("core.upload.board_auto_link_remove_failed",
+                        "dépôt : lien automatique du Board devenu actif impossible à retirer", level="error",
+                        data={"artifact_id": artifact_id, "board_id": target, "auto_board_id": board,
+                              "exception_type": type(exc).__name__})
+            return board
+        return None
 
     async def _existing(self, artifact_id: str) -> Artifact | None:
         try:

@@ -267,8 +267,7 @@ def check_link_url(value: object) -> tuple[str, str]:
 
     Règle de **forme** : aucune résolution DNS, aucune requête, aucun aperçu. Les
     espaces de tête et de fin sont retirés (une ligne de `text/uri-list` finit par
-    `
-`) ; tout autre caractère de contrôle ou espace refuse l'URL.
+    `\\r\\n`) ; tout autre caractère de contrôle ou espace refuse l'URL.
     """
 
     if not isinstance(value, str):

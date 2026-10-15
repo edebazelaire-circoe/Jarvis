@@ -20,9 +20,12 @@ Jamais un chemin, ni absolu ni relatif.
 
 Dépôt sur un Board (Slice 08, `docs/chat.md` › *Board drop*) :
 `PUT /v1/uploads/{client_upload_id}?purpose=board&board_id=…` (même flux ;
-la réponse ajoute `board_id` et `relinked`) et `POST /v1/uploads/links`
-`{client_upload_id, url, board_id}` → `{artifact_id, kind: "link", url, host,
-state, replayed, board_id, relinked}`, 201 ou 200 (rejeu). L'URL n'est
+la réponse ajoute `board_id`, `relinked` et `also_linked_board_id`) et
+`POST /v1/uploads/links` `{client_upload_id, url, board_id}` →
+`{artifact_id, kind: "link", url, host, state, replayed, board_id, relinked,
+also_linked_board_id}`, 201 ou 200 (rejeu). `also_linked_board_id` est `null`
+sauf si, après un rattrapage, le lien automatique du Board devenu actif n'a
+pas pu être retiré. L'URL n'est
 **jamais** récupérée. Refus : 400 `link_invalid`, 409
 `board_drop_target_inactive` (avec `active_board_id`).
 """
@@ -76,7 +79,8 @@ class UploadProtocolRoutes:
             return _refusal(refusal)
         body = {**upload_view(outcome.artifact), "replayed": outcome.replayed}
         if outcome.board_id is not None:
-            body.update(board_id=outcome.board_id, relinked=outcome.relinked)
+            body.update(board_id=outcome.board_id, relinked=outcome.relinked,
+                        also_linked_board_id=outcome.also_linked_board_id)
         return web.json_response(body, status=200 if outcome.replayed else 201)
 
     async def link(self, request: web.Request) -> web.Response:
@@ -102,5 +106,6 @@ class UploadProtocolRoutes:
         except UploadRefused as refusal:
             return _refusal(refusal)
         return web.json_response({**link_view(outcome.artifact), "replayed": outcome.replayed,
-                                  "board_id": outcome.board_id, "relinked": outcome.relinked},
+                                  "board_id": outcome.board_id, "relinked": outcome.relinked,
+                                  "also_linked_board_id": outcome.also_linked_board_id},
                                  status=200 if outcome.replayed else 201)
