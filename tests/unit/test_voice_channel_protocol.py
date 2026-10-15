@@ -166,7 +166,8 @@ async def test_the_chat_prefix_is_guarded_for_every_method(stack):
 async def test_the_relay_never_forwards_a_voice_report():
     relay = ChatRelayRoutes(transport=lambda: None, journal=None)  # type: ignore[arg-type]
     paths = {route.path for route in relay.routes()}
-    assert paths == {"/api/chat/state", "/api/chat/voice/disable", "/api/chat/turns", "/api/chat/uploads"}
+    assert paths == {"/api/chat/state", "/api/chat/voice/disable", "/api/chat/turns", "/api/chat/uploads",
+                     "/api/boards/drop", "/api/boards/drop-link"}  # dépôt sur le Board (Slice 08), même relais
     # `_agent_id` est un fournisseur (lisibilité par le Brain, Slice 07), pas un état du Chat.
     assert set(vars(relay)) == {"_transport", "_journal", "_agent_id"}  # aucun état du Chat dans le Control Center
     client = LocalCoreClient(host="127.0.0.1", port=9, token=TOKEN)
