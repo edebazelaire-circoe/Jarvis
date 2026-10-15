@@ -1,0 +1,22 @@
+{
+  "slice_id": "06-bottom-status-and-hidden-toggle",
+  "title": "Slice 06 - Bottom status center, recording indicators, and hidden-object eye",
+  "task_type": null,
+  "task_type_resolution": "PROJECT_MANAGER_MUST_RESOLVE_FROM_CURRENT_WORKSPACE_VOCABULARY",
+  "dependencies": [
+    "01-shell-contract-and-design-system",
+    "04-capture-wheel-migration"
+  ],
+  "frontend": true,
+  "code": true,
+  "required_qa": [
+    "qa-verification",
+    "code-review",
+    "runtime-validation"
+  ],
+  "required_skills": [
+    "/caveman",
+    "/coding-guideline",
+    "/impeccable"
+  ]
+}

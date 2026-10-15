@@ -1,0 +1,10 @@
+{
+  "checks": [
+    {
+      "id": "HV-02-01",
+      "when": "After Mouse/keyboard/Bare Hands runtime validation passes",
+      "instruction": "Use the left edge naturally and confirm the anchor is discoverable but not visually noisy; open and select each wedge.",
+      "acceptance": "Wheel feels immediate, readable and easy to point at; closed state is unobtrusive."
+    }
+  ]
+}

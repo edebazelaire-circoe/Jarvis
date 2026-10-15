@@ -1,0 +1,10 @@
+{
+  "checks": [
+    {
+      "id": "HV-04-01",
+      "when": "After isolated capture runtime tests pass",
+      "instruction": "Start/stop Audio and Video and take a Screenshot through the wheel.",
+      "acceptance": "Actions are obvious, stop is easy to find, and timers remain visible after the wheel closes."
+    }
+  ]
+}

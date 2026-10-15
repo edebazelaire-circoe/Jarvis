@@ -1,0 +1,21 @@
+{
+  "slice_id": "01-shell-contract-and-design-system",
+  "title": "Slice 01 - Shell contract, design language, and layer registry",
+  "task_type": null,
+  "task_type_resolution": "PROJECT_MANAGER_MUST_RESOLVE_FROM_CURRENT_WORKSPACE_VOCABULARY",
+  "dependencies": [
+    "00-project-manager"
+  ],
+  "frontend": true,
+  "code": true,
+  "required_qa": [
+    "qa-verification",
+    "code-review",
+    "runtime-validation"
+  ],
+  "required_skills": [
+    "/caveman",
+    "/coding-guideline",
+    "/impeccable"
+  ]
+}

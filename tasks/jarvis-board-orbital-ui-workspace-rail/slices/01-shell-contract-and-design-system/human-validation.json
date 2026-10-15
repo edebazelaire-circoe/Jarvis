@@ -1,0 +1,10 @@
+{
+  "checks": [
+    {
+      "id": "HV-01-01",
+      "when": "After automated layer/accessibility checks pass",
+      "instruction": "Compare the shell zones and visual tokens to the approved target reference without requiring pixel identity.",
+      "acceptance": "Board remains the strongest visual element and the planned zones are coherent."
+    }
+  ]
+}

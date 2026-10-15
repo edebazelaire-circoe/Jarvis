@@ -1,0 +1,10 @@
+{
+  "checks": [
+    {
+      "id": "HV-07-01",
+      "when": "After rail data/action tests pass",
+      "instruction": "Inspect a mixed rail of presentations/media with multiple statuses and open several items.",
+      "acceptance": "Type is recognizable at a glance, previews feel truthful, and status differences are understandable without relying only on color."
+    }
+  ]
+}

@@ -1,0 +1,23 @@
+{
+  "slice_id": "08-global-chrome-and-context-zone",
+  "title": "Slice 08 - Simplify global chrome and consolidate the bottom-left context zone",
+  "task_type": null,
+  "task_type_resolution": "PROJECT_MANAGER_MUST_RESOLVE_FROM_CURRENT_WORKSPACE_VOCABULARY",
+  "dependencies": [
+    "01-shell-contract-and-design-system",
+    "06-bottom-status-and-hidden-toggle",
+    "07-right-active-workspace-rail"
+  ],
+  "frontend": true,
+  "code": true,
+  "required_qa": [
+    "qa-verification",
+    "code-review",
+    "runtime-validation"
+  ],
+  "required_skills": [
+    "/caveman",
+    "/coding-guideline",
+    "/impeccable"
+  ]
+}

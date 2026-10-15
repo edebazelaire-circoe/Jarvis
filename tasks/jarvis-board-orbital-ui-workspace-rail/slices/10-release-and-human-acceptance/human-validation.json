@@ -1,0 +1,10 @@
+{
+  "checks": [
+    {
+      "id": "HV-10-01",
+      "when": "Only after all automated QA is green",
+      "instruction": "Compare final build side by side with `assets/current-ui.png` and `assets/target-ui-reference.png`.",
+      "acceptance": "Transformation is clearly achieved: retractable left wheel, bottom status center, right rich workspace rail, simplified chrome, preserved bottom-left context control, premium Cosmos direction."
+    }
+  ]
+}

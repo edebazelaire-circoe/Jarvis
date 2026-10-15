@@ -1,0 +1,26 @@
+{
+  "slice_id": "09-integration-responsive-accessibility",
+  "title": "Slice 09 - Integration, responsive behavior, accessibility, and visual polish",
+  "task_type": null,
+  "task_type_resolution": "PROJECT_MANAGER_MUST_RESOLVE_FROM_CURRENT_WORKSPACE_VOCABULARY",
+  "dependencies": [
+    "03-selection-input-arbitration",
+    "04-capture-wheel-migration",
+    "05-screenshot-preview",
+    "06-bottom-status-and-hidden-toggle",
+    "07-right-active-workspace-rail",
+    "08-global-chrome-and-context-zone"
+  ],
+  "frontend": true,
+  "code": true,
+  "required_qa": [
+    "qa-verification",
+    "code-review",
+    "runtime-validation"
+  ],
+  "required_skills": [
+    "/caveman",
+    "/coding-guideline",
+    "/impeccable"
+  ]
+}
