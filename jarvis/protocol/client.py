@@ -55,7 +55,8 @@ FORWARDABLE_PREFIXES = ("/v1/boards", "/v1/sessions", "/v1/mcp/plugins", "/v1/mc
                         "/v1/local-capabilities/remotion")
 #: Chat (jarvis-unified-chat-and-board-drop, Slice 03, `chat_relay.py`) : le tour écrit, et **seulement** lui —
 #: jamais `.../brain-turns/cancel`, `.../turns` ni une autre route de conversation.
-FORWARDABLE_PATHS = (re.compile(r"/v1/conversations/[^/?#]+/brain-turns"),)
+#: Dépôt d'une URL sur le Board affiché (Slice 08, `chat_relay.py`) : le chemin exact, jamais une autre route d'upload.
+FORWARDABLE_PATHS = (re.compile(r"/v1/conversations/[^/?#]+/brain-turns"), re.compile(r"/v1/uploads/links"))
 #: Seule route relayée en flux montant (`forward_upload`, chat Slice 07) ; jamais par `forward_json`.
 UPLOAD_PATH = re.compile(r"/v1/uploads/[A-Za-z0-9][A-Za-z0-9_-]{7,127}")
 #: Seule route relayée en octets (`forward_bytes`) : le payload d'un Artifact, pour l'interface.

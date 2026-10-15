@@ -749,6 +749,10 @@ CHAT_MODEL_SCRIPT_FILE = "control_center_chat_model.js"
 CHAT_MODEL_SCRIPT_MARKER = "/*__CONTROL_CENTER_CHAT_MODEL_JS__*/"
 CHAT_SCRIPT_FILE = "control_center_chat.js"
 CHAT_SCRIPT_MARKER = "/*__CONTROL_CENTER_CHAT_JS__*/"
+#: Dépôt sur le Board affiché (Slice 08, `docs/chat.md` › Board drop) : calque de survol au-dessus de la scène et
+#: plateau des envois ; n'écoute que les glisser portant des fichiers ou un lien, jamais les gestes de la scène.
+BOARD_DROP_SCRIPT_FILE = "control_center_board_drop.js"
+BOARD_DROP_SCRIPT_MARKER = "/*__CONTROL_CENTER_BOARD_DROP_JS__*/"
 
 #: Architectures vocales proposées dans l'onglet « Mode vocal ». Comme le reste
 #: de l'écran, leur libellé vit ici et non dans la page. `{key}` est remplacé
@@ -2480,7 +2484,8 @@ class ControlCenter:
         for marker, name in ((MEMORY_SETTINGS_SCRIPT_MARKER, MEMORY_SETTINGS_SCRIPT_FILE),
                              (MEMORY_SCRIPT_MARKER, MEMORY_SCRIPT_FILE),
                              (CHAT_MODEL_SCRIPT_MARKER, CHAT_MODEL_SCRIPT_FILE),
-                             (CHAT_SCRIPT_MARKER, CHAT_SCRIPT_FILE)):
+                             (CHAT_SCRIPT_MARKER, CHAT_SCRIPT_FILE),
+                             (BOARD_DROP_SCRIPT_MARKER, BOARD_DROP_SCRIPT_FILE)):
             html = html.replace(marker, page.with_name(name).read_text(encoding="utf-8"))
         if self.visualizer_url:
             html = html.replace("__VISUALIZER_URL__", self.visualizer_url)

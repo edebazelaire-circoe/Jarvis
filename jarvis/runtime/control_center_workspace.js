@@ -66,7 +66,7 @@ const JarvisWorkspaceCore=(function(){
     audio_recording:'Enregistrement audio',transcript_segment:'Segment de transcription',transcript:'Transcription',
     screenshot:'Capture d’écran',screen_recording:'Enregistrement d’écran',description:'Description',derived:'Dérivé',
     presentation_snapshot:'Présentation figée',presentation_video:'Présentation (vidéo)',presentation_still:'Présentation (image)',
-    presentation_pdf:'Présentation (PDF)',upload:'Pièce jointe du chat',
+    presentation_pdf:'Présentation (PDF)',upload:'Pièce jointe du chat',link:'Lien',
   });
   /* Nature `upload` (chat Slice 07, dépôt Slice 08) : le libellé suit `provenance`, rendue par la liste pour cette nature seulement. */
   const UPLOAD_PROVENANCES=Object.freeze({chat_attachment:'Pièce jointe du chat',board_drop:'Fichier déposé'});
