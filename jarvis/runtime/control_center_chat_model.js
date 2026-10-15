@@ -11,7 +11,9 @@
    dans une page plus tardive s'applique donc sans état intermédiaire, et une
    page rejouée après une reconnexion ne change rien. Seules les lignes de la
    conversation du modèle entrent ; `reset` change de conversation et vide
-   tout (jamais de fusion de deux Boards). */
+   tout (jamais de fusion de deux Boards).
+
+   Slice 07b ajoute l'état pur des pièces jointes du composer (plus bas). */
 (function(root){
   'use strict';
   const USER='user.transcript.accepted',PUBLISHED='brain.message.published',FAILED='brain.turn.failed';
@@ -130,8 +132,152 @@
     return model.cache.map(item=>({...item,collapsed_event_ids:[...item.collapsed_event_ids]}));
   }
 
+  /* `attributes.attachment_count` du tour utilisateur `eventId` (Slice 07b) : 0 sans pièce.
+     Lu sur la ligne stockée, hors `ITEM_FIELDS` (la parité avec `project_chat` reste intacte). */
+  function attachmentCount(model,eventId){
+    const row=model.rows.get(eventId),count=row&&attrs(row.event).attachment_count;
+    return Number.isSafeInteger(count)&&count>0?count:0;
+  }
+  /* Toutes les lignes gardées, dans l'ordre des séquences : ce qu'un meneur rend à un `hello`.
+     Une par `event_id` : la mémoire suit la conversation, pas le nombre de `hello`. */
+  function storedRows(model){
+    return [...model.rows.values()].sort((a,b)=>a.sequence-b.sequence);
+  }
+
+  /* ---------- Pièces jointes du composer (Slice 07b, `docs/chat.md` › *Attachments* › UI) ----------
+     État PUR des pièces d'un brouillon : aucun octet, aucun `File`, aucune requête.
+     Une pièce appartient à la conversation où elle a été jointe (`cid`) ; vue
+     depuis une autre conversation, elle est « à renvoyer » et n'est jamais
+     envoyée. États : `uploading` (en cours), `ready` (prête ; `readable=false`
+     = prête, non lisible par le Brain), `failed` (échec), `removed` (retirée).
+
+     **Identité de téléversement** (`client_upload_id`, UUID v4) :
+     - issue INCONNUE (délai, réseau, `core_timeout`, `upload_in_progress`) → la
+       reprise garde le MÊME id : si Core a fini, il rejoue (200, aucun doublon) ;
+     - échec CONNU (refus, `upload_incomplete`, `upload_conflict`…) → la reprise
+       tire un NOUVEL id : Core garde la ligne `failed` et répondrait 409
+       `upload_conflict` à l'ancien ;
+     - une reprise au même id qui reçoit `upload_conflict` (l'essai inconnu
+       avait échoué côté Core) repart aussitôt, une fois, avec un nouvel id. */
+  const ATTACHMENT_STATES=Object.freeze(['uploading','ready','failed','removed']);
+  const UNKNOWN_UPLOAD_CODES=Object.freeze(['core_timeout','client_timeout','network_error','upload_in_progress']);
+  /* Échecs dont la reprise n'a pas de sens : le même fichier serait refusé pareil. */
+  const FINAL_UPLOAD_CODES=Object.freeze(['upload_too_large','upload_empty','upload_name_invalid','upload_interrupted_reload']);
+
+  function createAttachments(){return {items:[],seq:0}}
+  function findAttachment(list,key){return list.items.find(item=>item.key===key)||null}
+  function addAttachment(list,{name,size,mime,cid,clientUploadId}){
+    const item={key:'att-'+(++list.seq),name:String(name==null?'':name),size:Number.isFinite(size)?size:0,
+      mime:typeof mime==='string'?mime:'',cid:typeof cid==='string'&&cid?cid:null,clientUploadId:String(clientUploadId),
+      state:'uploading',phase:'sending',loaded:0,total:Number.isFinite(size)?size:0,attempts:1,replay:false,
+      artifactId:null,readable:null,error:null};
+    list.items.push(item);
+    return item;
+  }
+  function attachmentProgress(list,key,loaded,total){
+    const item=findAttachment(list,key);if(!item||item.state!=='uploading')return null;
+    if(Number.isFinite(total)&&total>0)item.total=total;
+    if(Number.isFinite(loaded))item.loaded=Math.max(item.loaded,Math.min(loaded,item.total||loaded));
+    return item;
+  }
+  /* Corps entièrement parti : Core borne, renifle et range ; on attend sa réponse. */
+  function attachmentSent(list,key){
+    const item=findAttachment(list,key);if(!item||item.state!=='uploading')return null;
+    item.phase='checking';item.loaded=item.total;return item;
+  }
+  /* Réponse 200/201 du relais. Une pièce retirée entre-temps le reste. */
+  function attachmentReady(list,key,answer){
+    const item=findAttachment(list,key);if(!item||item.state!=='uploading')return null;
+    if(!answer||typeof answer.artifact_id!=='string'||!answer.artifact_id)
+      return attachmentFailed(list,key,{code:'invalid_response'}).item;
+    item.state='ready';item.phase=null;item.artifactId=answer.artifact_id;item.readable=answer.brain_readable===true;
+    if(typeof answer.mime_type==='string')item.mime=answer.mime_type;
+    if(Number.isFinite(answer.size_bytes))item.size=answer.size_bytes;
+    item.error=null;return item;
+  }
+  /* Rend `{item, autoRetry}` : `autoRetry` = reprise immédiate avec un nouvel id (voir plus haut). */
+  function attachmentFailed(list,key,{code,status=null,limitBytes=null}={}){
+    const item=findAttachment(list,key);if(!item||item.state!=='uploading')return {item:null,autoRetry:false};
+    const failure=typeof code==='string'&&code?code:'unknown';
+    const autoRetry=failure==='upload_conflict'&&item.replay;
+    item.state='failed';item.phase=null;
+    item.error={code:failure,status,limitBytes:Number.isFinite(limitBytes)?limitBytes:null,
+      sameId:UNKNOWN_UPLOAD_CODES.includes(failure),retryable:!FINAL_UPLOAD_CODES.includes(failure)};
+    return {item,autoRetry};
+  }
+  /* Reprise : même id après une issue inconnue, sinon `freshId`. Rend la pièce (ou null). */
+  function retryAttachment(list,key,freshId){
+    const item=findAttachment(list,key);if(!item||item.state!=='failed'||!item.error||!item.error.retryable)return null;
+    const same=item.error.sameId;
+    item.replay=same;if(!same)item.clientUploadId=String(freshId);
+    item.state='uploading';item.phase='sending';item.loaded=0;item.attempts++;item.error=null;
+    return item;
+  }
+  /* « Renvoyer ici » : une pièce d'une autre conversation repart vers `cid`, comme une nouvelle pièce. */
+  function rebindAttachment(list,key,cid,freshId){
+    const item=findAttachment(list,key);if(!item||item.state==='removed'||item.cid===cid)return null;
+    Object.assign(item,{cid,clientUploadId:String(freshId),state:'uploading',phase:'sending',loaded:0,attempts:1,replay:false,
+      artifactId:null,readable:null,error:null});
+    return item;
+  }
+  /* Retirée : rend l'état d'avant (`uploading` → l'appelant annule la requête). */
+  function removeAttachment(list,key){
+    const item=findAttachment(list,key);if(!item||item.state==='removed')return null;
+    const before=item.state;item.state='removed';item.phase=null;
+    list.items=list.items.filter(other=>other!==item);
+    return before;
+  }
+  /* Ce que la conversation `cid` montre et peut envoyer. */
+  function attachmentView(list,cid){
+    const items=list.items.filter(item=>item.state!=='removed').map(item=>({...item,
+      status:item.cid!==cid?'stale':item.state==='ready'?(item.readable?'ready':'unreadable'):item.state,
+      error:item.error?{...item.error}:null}));
+    const mine=items.filter(item=>item.status!=='stale');
+    const ids=mine.filter(item=>item.state==='ready').map(item=>item.artifactId);
+    const uploading=mine.filter(item=>item.state==='uploading').length,failed=mine.filter(item=>item.state==='failed').length;
+    return {items,ids,uploading,failed,stale:items.length-mine.length,
+      blocked:uploading?'uploading':failed?'failed':null};
+  }
+  /* Message admis : ses pièces quittent le composer. Rend les pièces envoyées (noms : état local de la vue). */
+  function takeSent(list,cid,ids){
+    const sent=list.items.filter(item=>item.cid===cid&&item.state==='ready'&&ids.includes(item.artifactId));
+    list.items=list.items.filter(item=>!sent.includes(item));
+    return sent.map(item=>({key:item.key,artifactId:item.artifactId,name:item.name,size:item.size,mime:item.mime,readable:item.readable}));
+  }
+  /* Pièce relue d'un brouillon gardé (rechargement) : prête si elle avait son Artifact, sinon interrompue. */
+  function restoreAttachment(list,saved){
+    if(!saved||typeof saved.name!=='string')return null;
+    if(typeof saved.artifactId==='string'&&list.items.some(item=>item.artifactId===saved.artifactId))return null;
+    const item=addAttachment(list,{name:saved.name,size:saved.size,mime:saved.mime,cid:saved.cid,
+      clientUploadId:typeof saved.clientUploadId==='string'?saved.clientUploadId:''});
+    if(typeof saved.artifactId==='string'&&saved.artifactId)
+      return attachmentReady(list,item.key,{artifact_id:saved.artifactId,brain_readable:saved.readable===true});
+    return attachmentFailed(list,item.key,{code:'upload_interrupted_reload'}).item;
+  }
+  /* Signature des pièces prêtes d'une conversation : un autre jeu de pièces est un autre message (nouvel id). */
+  function attachmentSignature(list,cid){
+    return attachmentView(list,cid).ids.slice().sort().join(',');
+  }
+  /* Taille lisible (octets → « 12 o », « 3,4 Ko », « 64 Mo »), unités binaires comme la borne de Core. */
+  function formatBytes(bytes){
+    if(!Number.isFinite(bytes)||bytes<0)return '';
+    if(bytes<1024)return `${bytes} o`;
+    const units=['Ko','Mo','Go'];let value=bytes/1024,unit=0;
+    while(value>=1024&&unit<units.length-1){value/=1024;unit++}
+    const text=value>=10?String(Math.round(value)):value.toFixed(1).replace(/\.0$/,'').replace('.',',');
+    return `${text} ${units[unit]}`;
+  }
+  /* Borne de Core dans son message (« the file exceeds the N-byte upload bound ») : le relais ne la porte pas à part. */
+  function uploadLimitFrom(message){
+    const match=/(\d+)-byte/.exec(String(message||''));
+    return match?Number(match[1]):null;
+  }
+
   const api=Object.freeze({CHAT_PROJECTION,CHAT_EVENT_TYPES,UNKNOWN_FAILURE_CODE,ITEM_FIELDS,
-    isChatEvent,createChatModel,applyPage,items,markPending,isPending,reset});
+    isChatEvent,createChatModel,applyPage,items,markPending,isPending,reset,attachmentCount,storedRows,
+    ATTACHMENT_STATES,UNKNOWN_UPLOAD_CODES,FINAL_UPLOAD_CODES,createAttachments,addAttachment,attachmentProgress,
+    attachmentSent,attachmentReady,attachmentFailed,retryAttachment,rebindAttachment,removeAttachment,attachmentView,
+    takeSent,restoreAttachment,attachmentSignature,formatBytes,uploadLimitFrom});
   if(typeof module==='object'&&module.exports)module.exports=api;
   if(root)root.JarvisChatModel=api;
 })(typeof window!=='undefined'?window:(typeof globalThis!=='undefined'?globalThis:null));

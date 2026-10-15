@@ -295,6 +295,9 @@ pre.block{background:#050b10;border:1px solid rgba(113,144,160,.16);border-radiu
    bas du panneau (dernières entrées de trace, envoi au brain). Plus étroit,
    la place manque à gauche : la pile reste à droite, comme panneau fermé. */
 @media(min-width:940px){#app:has(.panel.open)~.toasts{right:calc(98px + min(560px,100vw - 120px));width:min(340px,calc(100vw - 676px))}}
+/* 480 px de haut ou moins : le dock passe en lignes et le panneau recule à right:136px (règle plus bas) ; la pile
+   recule d'autant, sinon elle mord 38 px sur le panneau et cache l'indice « Entrée » (QA S06, 1024×480). */
+@media(min-width:940px) and (max-height:480px){#app:has(.panel.open)~.toasts{right:calc(148px + min(560px,100vw - 120px));width:min(340px,calc(100vw - 726px))}}
 @media(prefers-reduced-motion:reduce){.adot.running,.acard.eph .adot.running,.toast{animation:none}.acard.eph{transition:none}}
 
 /* ---------- Chat (handoff jarvis-unified-chat-and-board-drop, Slice 06) ----------
@@ -376,6 +379,45 @@ html:not([data-jarvis-theme="cosmos"]) #app:has(#bgPills:not([hidden])) .chat-ta
 .chat-send-status[hidden]{display:none}
 .chat-send-status span{flex:1 1 200px;min-width:0}
 .chat-send-status button.action{padding:5px 10px;font-size:12px}
+/* Pièces jointes (Slice 07b, `docs/chat.md` › *Attachments* › UI) : liste au-dessus du champ, une ligne par pièce
+   (nom, taille, état, compteur, Réessayer/Renvoyer ici, ×), barre de progression ; zone de dépôt = le panneau. */
+.chat-files{list-style:none;margin:0;padding:0;display:grid;gap:6px;max-height:min(168px,24vh);overflow:auto}
+.chat-files[hidden]{display:none}
+.chat-file{position:relative;display:grid;grid-template-columns:minmax(0,1fr) auto auto;grid-template-areas:"name meta x" "state act x";column-gap:10px;row-gap:1px;align-items:center;padding:6px 4px 7px 10px;border:1px solid var(--line);border-radius:7px;background:rgba(6,16,22,.7);font-size:12px;line-height:1.4;overflow:hidden}
+.chat-file-name{grid-area:name;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:var(--text)}
+.chat-file-meta{grid-area:meta;color:var(--muted);font-size:11px;font-variant-numeric:tabular-nums;white-space:nowrap}
+.chat-file-state{grid-area:state;min-width:0;display:flex;gap:6px;color:var(--muted);font-size:11.5px}
+.chat-file-time{font-variant-numeric:tabular-nums;white-space:nowrap}
+.chat-file-act{grid-area:act;justify-self:end}
+.chat-file-act[hidden]{display:none}
+.chat-file-x{grid-area:x;align-self:center;background:none;border:0;color:var(--muted);font-size:17px;line-height:1;cursor:pointer;padding:4px 7px;border-radius:5px}
+.chat-file-x:hover{color:var(--text)}
+.chat-file-x:focus-visible,.chat-attach:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.chat-file-bar{position:absolute;left:0;right:0;bottom:0;height:2px;background:rgba(110,231,255,.12)}
+.chat-file-bar[hidden]{display:none}
+.chat-file-bar i{display:block;height:100%;background:var(--accent);transition:width .2s linear}
+.chat-file.indeterminate .chat-file-bar i{animation:pulse 1.2s ease-in-out infinite}
+.chat-file[data-status=ready] .chat-file-state{color:var(--ok)}
+.chat-file[data-status=unreadable]{border-color:rgba(255,184,92,.4)}
+.chat-file[data-status=unreadable] .chat-file-state{color:#f1d6ae}
+.chat-file[data-status=failed]{border-color:rgba(255,101,119,.45);background:rgba(40,8,14,.5)}
+.chat-file[data-status=failed] .chat-file-state{color:#ff9eaa}
+.chat-file[data-status=stale]{border-style:dashed;border-color:rgba(255,184,92,.45)}
+.chat-file[data-status=stale] .chat-file-name{color:var(--muted);text-decoration:line-through}
+.chat-file[data-status=stale] .chat-file-state{color:#f1d6ae}
+.chat-attnote{font-size:12px;line-height:1.45;color:var(--muted)}
+.chat-attnote[hidden]{display:none}
+.chat-attnote[data-tone=warn]{color:#f1d6ae}
+.chat-attnote.flash{animation:chatFlash .5s ease-out}
+.chat-row .chat-attach{flex:0 0 auto;padding:6px 10px;font-size:12px}
+.chat-attach[aria-disabled=true]{opacity:.45;cursor:not-allowed}
+.chat-drop{position:absolute;inset:8px;z-index:5;display:grid;place-items:center;padding:24px;border:2px dashed var(--accent);border-radius:10px;background:rgba(3,14,20,.9);color:var(--accent);font-size:14px;letter-spacing:.03em;text-align:center;pointer-events:none}
+.chat-drop[hidden]{display:none}
+.chat-att{display:block;margin-top:6px;padding-top:5px;border-top:1px solid rgba(110,231,255,.18);font-size:11.5px;line-height:1.45;color:var(--muted);white-space:normal}
+.chat-att-count{color:var(--text)}
+.chat-att-names{display:block;overflow-wrap:anywhere}
+.chat-att .chat-link{margin-left:8px}
+@media(prefers-reduced-motion:reduce){.chat-file.indeterminate .chat-file-bar i,.chat-attnote.flash{animation:none}.chat-file-bar i{transition:none}}
 .chat-sr{position:absolute;width:1px;height:1px;margin:-1px;padding:0;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}
 @media(prefers-reduced-motion:reduce){.chat-panel.open,.chat-lock.flash,.chat-note .chat-dots i,.chat-feed[data-tone=busy] .chat-led{animation:none}.chat-note .chat-dots i{opacity:.8}.chat-tab,.chat-compose textarea{transition:none}}
 /* Cosmos : onglet aux formes du dock Cosmos ; le panneau (bas à 18 px dans ce
@@ -1762,11 +1804,14 @@ button.wsp-ename:hover{color:var(--accent)}
     <ol class="chat-log" id="chatLog" role="log" aria-live="polite" aria-relevant="additions" aria-label="Messages de la conversation" tabindex="0"></ol>
     <div class="chat-compose" id="chatCompose">
       <div class="chat-lock" id="chatLock" role="status" hidden><span class="chat-locktxt" id="chatLockText"></span><span class="chat-locktime" id="chatLockTime" aria-hidden="true"></span><button type="button" class="action primary" id="chatSwitch" hidden>Passer au chat</button></div>
+      <ul class="chat-files" id="chatFiles" aria-label="Pièces jointes du message" hidden></ul>
       <label class="chat-sr" for="chatInput">Message à Jarvis</label>
       <textarea id="chatInput" rows="3" maxlength="8192" placeholder="Écrire à Jarvis…" aria-describedby="chatLockText chatHint" spellcheck="true"></textarea>
+      <div class="chat-attnote" id="chatAttNote" role="status" hidden></div>
       <div class="chat-send-status" id="chatSendStatus" role="alert" hidden><span id="chatSendText"></span><button type="button" class="action" id="chatRetry" hidden>Réessayer</button></div>
-      <div class="chat-row"><span class="chat-hint" id="chatHint"><kbd>Entrée</kbd> envoie · <kbd>Maj</kbd>+<kbd>Entrée</kbd> : nouvelle ligne</span><span class="chat-count" id="chatCount" aria-live="off"></span><button type="button" class="action primary" id="chatSend">Envoyer</button></div>
+      <div class="chat-row"><button type="button" class="action chat-attach" id="chatAttach" aria-disabled="true" title="Joindre des fichiers (ou les déposer sur le panneau)">Joindre</button><input type="file" id="chatFile" multiple hidden tabindex="-1" aria-hidden="true"><span class="chat-hint" id="chatHint"><kbd>Entrée</kbd> envoie · <kbd>Maj</kbd>+<kbd>Entrée</kbd> : nouvelle ligne</span><span class="chat-count" id="chatCount" aria-live="off"></span><button type="button" class="action primary" id="chatSend">Envoyer</button></div>
     </div>
+    <div class="chat-drop" id="chatDrop" aria-hidden="true" hidden><span>Déposez les fichiers pour les joindre au message</span></div>
   </section>
 </div>
 <div class="ctxmenu" id="ctxMenu" role="menu" hidden></div>

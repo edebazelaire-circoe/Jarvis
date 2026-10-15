@@ -9,18 +9,25 @@
    touches (`Input.dispatchKeyEvent`, `Input.insertText`) et de vrais clics, et
    relève rectangles, styles calculés, focus et appels réseau.
 
-   Usage : node _chat_browser.mjs <page.html> <chrome.exe> <stepJSON>
-   Étape : {width, height, reducedMotion?, setup?: js, actions: [...]}
-   Action : {eval}, {value, expr}, {key: 'Enter'|'Shift+Enter'|'Tab'|'Shift+Tab'|'Escape'},
-            {type: texte}, {click: sélecteur}, {wait: ms}, {until: js, ms}, {shot: chemin.png}
+   Usage : node _chat_browser.mjs <page.html|http://…> <chrome.exe> <stepJSON> (URL http : vrai Control Center, aucun double)
+   Étape : {width, height, reducedMotion?, setup?: js, extra?: module.mjs, actions: [...]}
+   `extra` : module qui exporte `FAKE` (source JS posée après le faux Core, ex. le faux relais
+   de pièces jointes `_chat_attachments_browser.mjs`, Slice 07b).
+   Action : {eval}, {value, expr}, {key: 'Enter'|'Shift+Enter'|'Tab'|'Shift+Tab'|'Escape'|'Space'},
+            {type: texte}, {click: sélecteur}, {wait: ms}, {until: js, ms}, {shot: chemin.png},
+            {files: sélecteur d'input, paths} (DOM.setFileInputFiles), {drop: sélecteur, paths}
+            (vrai glisser-déposer CDP `Input.dispatchDragEvent`), {chooserFiles: paths} (répond au
+            sélecteur de fichiers natif intercepté ; `reads.choosers` compte ses ouvertures)
    Sortie : {reads, console, errors}. */
 import {spawn, execFileSync} from 'node:child_process';
 import {mkdtempSync, rmSync, writeFileSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
+import {pathToFileURL} from 'node:url';
 
 const [,,PAGE,CHROME,STEP]=process.argv;
 const step=JSON.parse(STEP);
+const EXTRA=step.extra?(await import(pathToFileURL(step.extra).href)).FAKE:'';
 
 const FAKE=`(()=>{
   const ev=(seq,type,conv,corr,content,attrs)=>({sequence:seq,recorded_at:new Date(Date.UTC(2026,9,14,9,0,seq)).toISOString(),
@@ -54,7 +61,9 @@ const FAKE=`(()=>{
     const seen=C.rows.some(r=>r.event.correlation_id===corr&&r.event.event_type==='user.transcript.accepted')||C.admitted&&C.admitted.has(corr);
     if(seen)return {corr,duplicate:true};
     (C.admitted=C.admitted||new Set()).add(corr);
-    const write=()=>{C.user(body.conversation_id,corr,body.content);
+    const count=Array.isArray(body.attachments)?body.attachments.length:0;
+    const write=()=>{C.add('user.transcript.accepted',body.conversation_id,corr,body.content,
+        Object.assign({source:'text',addressing:'addressed'},count?{attachment_count:count}:{}));
       if(C.replyMs!==null)setTimeout(()=>C.say(body.conversation_id,corr,'Réponse : '+body.content),C.replyMs)};
     if(C.acceptMs)setTimeout(write,C.acceptMs);else write();
     return {corr,duplicate:false};
@@ -136,11 +145,18 @@ const READ=`(()=>{
       switchHidden:sw.hidden,switchText:sw.textContent},
     composer:{ariaDisabled:input.getAttribute('aria-disabled'),readOnly:input.readOnly,disabled:input.disabled,value:input.value,
       sendDisabled:q('#chatSend').getAttribute('aria-disabled'),sendText:q('#chatSend').textContent},
+    files:[...document.querySelectorAll('#chatFiles .chat-file')].map(li=>({status:li.dataset.status,
+      name:li.querySelector('.chat-file-name').textContent,meta:li.querySelector('.chat-file-meta').textContent,
+      state:li.querySelector('.chat-file-text').textContent,time:li.querySelector('.chat-file-time').textContent,
+      act:li.querySelector('.chat-file-act').hidden?null:li.querySelector('.chat-file-act').textContent})),
+    attNote:q('#chatAttNote').hidden?null:q('#chatAttNote').textContent,attach:{ariaDisabled:q('#chatAttach').getAttribute('aria-disabled'),box:box(q('#chatAttach'))},
+    drop:!q('#chatDrop').hidden,
+    attLines:[...document.querySelectorAll('#chatLog .chat-msg .chat-att')].map(n=>n.textContent),
     sendStatus:{hidden:q('#chatSendStatus').hidden,text:q('#chatSendText').textContent,retryHidden:q('#chatRetry').hidden},
     active:document.activeElement&&(document.activeElement.id||document.activeElement.className||document.activeElement.tagName),
     motion:{panel:getComputedStyle(panel).animationName,dots:(()=>{const d=q('#chatLog .chat-dots i');return d?getComputedStyle(d).animationName:null})()},
     scrollWidth:document.documentElement.scrollWidth,viewport:{w:innerWidth,h:innerHeight},
-    fake:{calls:window.__chat.calls.slice(),turns:window.__chat.turns.slice(),disables:window.__chat.disables.slice()},
+    fake:window.__chat?{calls:window.__chat.calls.slice(),turns:window.__chat.turns.slice(),disables:window.__chat.disables.slice()}:null,
     snap};
 })()`;
 
@@ -157,7 +173,7 @@ try{
   const target=await poll(`http://127.0.0.1:${port}/json/list`);
   const ws=new WebSocket(target.webSocketDebuggerUrl);
   await new Promise((ok,ko)=>{ws.onopen=ok;ws.onerror=()=>ko(new Error('websocket refuse'))});
-  let id=0;const pending=new Map();const consoleLines=[],errors=[];
+  let id=0;const pending=new Map();const consoleLines=[],errors=[],choosers=[];
   ws.onmessage=event=>{
     const msg=JSON.parse(event.data);
     if(msg.id&&pending.has(msg.id)){
@@ -166,6 +182,8 @@ try{
     }else if(msg.method==='Runtime.consoleAPICalled'){
       const text=(msg.params.args||[]).map(a=>a.value!==undefined?String(a.value):(a.description||'')).join(' ');
       if(text.startsWith('[chat]')||msg.params.type==='error')consoleLines.push(msg.params.type+' '+text);
+    }else if(msg.method==='Page.fileChooserOpened'){
+      choosers.push(msg.params);
     }else if(msg.method==='Runtime.exceptionThrown'){
       errors.push(msg.params.exceptionDetails.exception?.description||msg.params.exceptionDetails.text);
     }
@@ -178,13 +196,15 @@ try{
     if(r.exceptionDetails)throw new Error(r.exceptionDetails.exception?.description||JSON.stringify(r.exceptionDetails));
     return r.result.value;
   };
-  const KEYS={Enter:{code:'Enter',keyCode:13,text:'\r'},Tab:{code:'Tab',keyCode:9},Escape:{code:'Escape',keyCode:27}};
+  const KEYS={Enter:{code:'Enter',keyCode:13,text:'\r'},Tab:{code:'Tab',keyCode:9},Escape:{code:'Escape',keyCode:27},
+    Space:{code:'Space',keyCode:32,text:' ',key:' '}};
   const press=async combo=>{
     const shift=combo.startsWith('Shift+'),key=shift?combo.slice(6):combo,k=KEYS[key];
     if(!k)throw new Error('touche inconnue '+combo);
     const modifiers=shift?8:0;
-    await send('Input.dispatchKeyEvent',{type:'keyDown',key,code:k.code,windowsVirtualKeyCode:k.keyCode,nativeVirtualKeyCode:k.keyCode,text:k.text,modifiers});
-    await send('Input.dispatchKeyEvent',{type:'keyUp',key,code:k.code,windowsVirtualKeyCode:k.keyCode,nativeVirtualKeyCode:k.keyCode,modifiers});
+    const name=k.key||key;
+    await send('Input.dispatchKeyEvent',{type:'keyDown',key:name,code:k.code,windowsVirtualKeyCode:k.keyCode,nativeVirtualKeyCode:k.keyCode,text:k.text,modifiers});
+    await send('Input.dispatchKeyEvent',{type:'keyUp',key:name,code:k.code,windowsVirtualKeyCode:k.keyCode,nativeVirtualKeyCode:k.keyCode,modifiers});
   };
   const click=async selector=>{
     const at=await evaluate(`(()=>{const el=document.querySelector(${JSON.stringify(selector)});
@@ -194,11 +214,20 @@ try{
       await send('Input.dispatchMouseEvent',{type,x:at.x,y:at.y,button:'left',clickCount:1});
   };
 
-  await send('Page.enable');await send('Runtime.enable');
-  await send('Page.addScriptToEvaluateOnNewDocument',{source:FAKE+(step.setup?';'+step.setup:'')});
+  const centre=async selector=>{
+    const at=await evaluate(`(()=>{const el=document.querySelector(${JSON.stringify(selector)});
+      if(!el)return null;const r=el.getBoundingClientRect();return r.width?{x:r.left+r.width/2,y:r.top+r.height/2}:null})()`);
+    if(!at)throw new Error('cible introuvable ou cachée '+selector);
+    return at;
+  };
+  await send('Page.enable');await send('Runtime.enable');await send('DOM.enable');
+  await send('Page.setInterceptFileChooserDialog',{enabled:true});
+  /* Une URL http = la page d'un VRAI Control Center, sans aucun double (preuve sur pile isolée). */
+  const REAL=/^https?:/.test(PAGE);
+  await send('Page.addScriptToEvaluateOnNewDocument',{source:REAL?(step.setup||'1'):FAKE+(EXTRA?';'+EXTRA:'')+(step.setup?';'+step.setup:'')});
   await send('Emulation.setEmulatedMedia',{features:step.reducedMotion?[{name:'prefers-reduced-motion',value:'reduce'}]:[]});
   await send('Emulation.setDeviceMetricsOverride',{width:step.width,height:step.height,deviceScaleFactor:1,mobile:false});
-  await send('Page.navigate',{url:'file:///'+PAGE.replace(/\\/g,'/')});
+  await send('Page.navigate',{url:REAL?PAGE:'file:///'+PAGE.replace(/\\/g,'/')});
   for(let i=0;i<200;i+=1){
     await sleep(50);
     if(await evaluate(`document.readyState==='complete'&&!!(window.JarvisChat&&window.JarvisChat.instance)`).catch(()=>false))break;
@@ -212,6 +241,20 @@ try{
       else if(action.key!==undefined)await press(action.key);
       else if(action.type!==undefined)await send('Input.insertText',{text:action.type});
       else if(action.click!==undefined)await click(action.click);
+      else if(action.files!==undefined){
+        const {root}=await send('DOM.getDocument',{depth:0});
+        const {nodeId}=await send('DOM.querySelector',{nodeId:root.nodeId,selector:action.files});
+        if(!nodeId)throw new Error('input introuvable '+action.files);
+        await send('DOM.setFileInputFiles',{nodeId,files:action.paths});
+      }else if(action.drop!==undefined){
+        const at=await centre(action.drop),data={items:[],files:action.paths,dragOperationsMask:1};
+        for(const type of ['dragEnter','dragOver','drop'])
+          await send('Input.dispatchDragEvent',{type,x:at.x,y:at.y,data,modifiers:0});
+      }else if(action.chooserFiles!==undefined){
+        const last=choosers[choosers.length-1];
+        if(!last)throw new Error('aucun sélecteur de fichiers ouvert');
+        await send('DOM.setFileInputFiles',{backendNodeId:last.backendNodeId,files:action.chooserFiles});
+      }
       else if(action.wait!==undefined)await sleep(action.wait);
       else if(action.until!==undefined){
         const end=Date.now()+(action.ms||5000);let ok=false;
@@ -223,6 +266,7 @@ try{
       }
     }catch(error){reads.failed={action,error:String(error.message||error).slice(0,400)};break}
   }
+  reads.choosers=choosers.length;
   ws.close();
   process.stdout.write(JSON.stringify({reads,console:consoleLines,errors}));
 }finally{
