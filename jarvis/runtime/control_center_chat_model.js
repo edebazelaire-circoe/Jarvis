@@ -244,10 +244,13 @@
     list.items=list.items.filter(item=>!sent.includes(item));
     return sent.map(item=>({key:item.key,artifactId:item.artifactId,name:item.name,size:item.size,mime:item.mime,readable:item.readable}));
   }
-  /* Pièce relue d'un brouillon gardé (rechargement) : prête si elle avait son Artifact, sinon interrompue. */
+  /* Pièce relue d'un brouillon gardé (rechargement) : prête si elle avait son Artifact, sinon interrompue.
+     Une pièce déjà présente (même `client_upload_id`, ou même Artifact) n'est jamais doublée : la pièce
+     vivante l'emporte sur l'enregistrement de reprise (QA S7b, ligne fantôme après un aller-retour de Board). */
   function restoreAttachment(list,saved){
     if(!saved||typeof saved.name!=='string')return null;
     if(typeof saved.artifactId==='string'&&list.items.some(item=>item.artifactId===saved.artifactId))return null;
+    if(typeof saved.clientUploadId==='string'&&saved.clientUploadId&&list.items.some(item=>item.clientUploadId===saved.clientUploadId))return null;
     const item=addAttachment(list,{name:saved.name,size:saved.size,mime:saved.mime,cid:saved.cid,
       clientUploadId:typeof saved.clientUploadId==='string'?saved.clientUploadId:''});
     if(typeof saved.artifactId==='string'&&saved.artifactId)

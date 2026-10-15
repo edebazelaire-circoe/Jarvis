@@ -17,7 +17,9 @@
             {type: texte}, {click: sélecteur}, {wait: ms}, {until: js, ms}, {shot: chemin.png},
             {files: sélecteur d'input, paths} (DOM.setFileInputFiles), {drop: sélecteur, paths}
             (vrai glisser-déposer CDP `Input.dispatchDragEvent`), {chooserFiles: paths} (répond au
-            sélecteur de fichiers natif intercepté ; `reads.choosers` compte ses ouvertures)
+            sélecteur de fichiers natif intercepté ; `reads.choosers` compte ses ouvertures),
+            {reload: true} (vrai `Page.reload` : les doubles reviennent, le localStorage reste),
+            {viewport: [largeur, hauteur]}
    Sortie : {reads, console, errors}. */
 import {spawn, execFileSync} from 'node:child_process';
 import {mkdtempSync, rmSync, writeFileSync} from 'node:fs';
@@ -116,7 +118,8 @@ const FAKE=`(()=>{
     }
     return json(404,{ok:false,code:'http_error',error:'not stubbed'});
   };
-  try{localStorage.clear()}catch(_){}
+  /* Stockage vidé au PREMIER document de l'onglet seulement : un {reload} garde le brouillon (sessionStorage survit). */
+  try{if(!sessionStorage.getItem('__chatTab')){localStorage.clear();sessionStorage.setItem('__chatTab','1')}}catch(_){}
   return 'ok';
 })()`;
 
@@ -227,12 +230,15 @@ try{
   await send('Page.addScriptToEvaluateOnNewDocument',{source:REAL?(step.setup||'1'):FAKE+(EXTRA?';'+EXTRA:'')+(step.setup?';'+step.setup:'')});
   await send('Emulation.setEmulatedMedia',{features:step.reducedMotion?[{name:'prefers-reduced-motion',value:'reduce'}]:[]});
   await send('Emulation.setDeviceMetricsOverride',{width:step.width,height:step.height,deviceScaleFactor:1,mobile:false});
+  const settled=async()=>{
+    for(let i=0;i<200;i+=1){
+      await sleep(50);
+      if(await evaluate(`document.readyState==='complete'&&!!(window.JarvisChat&&window.JarvisChat.instance)`).catch(()=>false))break;
+    }
+    await sleep(1200);
+  };
   await send('Page.navigate',{url:REAL?PAGE:'file:///'+PAGE.replace(/\\/g,'/')});
-  for(let i=0;i<200;i+=1){
-    await sleep(50);
-    if(await evaluate(`document.readyState==='complete'&&!!(window.JarvisChat&&window.JarvisChat.instance)`).catch(()=>false))break;
-  }
-  await sleep(1200);
+  await settled();
   const reads={};
   for(const action of step.actions){
     try{
@@ -255,6 +261,8 @@ try{
         if(!last)throw new Error('aucun sélecteur de fichiers ouvert');
         await send('DOM.setFileInputFiles',{backendNodeId:last.backendNodeId,files:action.chooserFiles});
       }
+      else if(action.reload!==undefined){await send('Page.reload',{ignoreCache:true});await sleep(100);await settled()}
+      else if(action.viewport!==undefined)await send('Emulation.setDeviceMetricsOverride',{width:action.viewport[0],height:action.viewport[1],deviceScaleFactor:1,mobile:false});
       else if(action.wait!==undefined)await sleep(action.wait);
       else if(action.until!==undefined){
         const end=Date.now()+(action.ms||5000);let ok=false;

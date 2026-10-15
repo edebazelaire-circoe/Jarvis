@@ -119,7 +119,9 @@
     upload_interrupted_reload:'Envoi interrompu par le rechargement de la page : joignez le fichier à nouveau.',
     core_unreachable:'Jarvis Core ne répond pas.',core_unavailable:'Jarvis Core ne répond pas.',core_unconfigured:'Jarvis Core non configuré.',
     core_stopping:'Jarvis Core s’arrête.',core_timeout:'Jarvis Core ne répond pas.',
-    client_timeout:'Le Control Center ne répond plus.',network_error:'Control Center injoignable.',
+    /* Délai client : le relais passe les octets à Core en flux et attend SA réponse — c'est Jarvis Core qui ne
+       répond pas, comme le dit le verrou (QA S7b). Control Center injoignable = aucune connexion (`network_error`). */
+    client_timeout:'Jarvis Core ne répond pas.',network_error:'Control Center injoignable.',
     invalid_response:'Réponse illisible du Control Center.',
   });
   function uploadErrorText(error){
@@ -216,6 +218,9 @@
       /* Pièces jointes : état pur (modèle) ; `File` et requêtes en cours par clé ; noms des pièces d'un
          message envoyé, par corrélation (état local, perdu au rechargement : le nombre reste, `docs/chat.md`). */
       att:Model.createAttachments(),attTried:false,sentNames:new Map(),
+      /* Conversations dont le brouillon gardé a déjà été relu dans CETTE page : le brouillon gardé ne sert
+         qu'au rechargement ; ensuite la mémoire fait foi (un aller-retour de Board n'est pas un rechargement). */
+      restored:new Set(),
       savedScroll:null,stickBottom:true,stats:{stateReads:0,eventReads:0,ticks:0,shared:0,sends:0}};
 
     const visible=()=>!doc.hidden;
@@ -309,7 +314,12 @@
       S.sent.clear();S.stickBottom=true;nodes.clear();el.log.replaceChildren();
       if(S.sendError&&S.sendError.code!=='chat_conversation_not_foreground')S.sendError=null;
       S.draft=loadDraft(conversationId);el.input.value=S.draft?S.draft.text:'';
-      if(S.draft)for(const saved of S.draft.att)Model.restoreAttachment(S.att,{...saved,cid:conversationId});
+      /* Pièces gardées : relues UNE fois par page (rechargement). Un retour sur un Board déjà vu garde les
+         pièces vivantes de la mémoire — un envoi encore en cours n'est pas « interrompu par le rechargement »
+         (QA S7b). Le modèle écarte en plus toute pièce déjà présente (même `client_upload_id`). */
+      if(S.draft&&conversationId&&!S.restored.has(conversationId))
+        for(const saved of S.draft.att)Model.restoreAttachment(S.att,{...saved,cid:conversationId});
+      if(conversationId)S.restored.add(conversationId);
       S.attTried=false;
       /* Les pièces jointes restent, liées à LEUR conversation : vues d'ici, elles sont « à renvoyer ». */
       const stale=Model.attachmentView(S.att,conversationId).stale;
@@ -423,13 +433,30 @@
     }
     /* Le brouillon est rangé sous SA conversation : jamais envoyé dans une autre. Il garde le texte et
        les pièces jointes prêtes (id d'Artifact, nom, taille) ; une pièce encore en cours est notée
-       interrompue : au rechargement elle le dit, jamais perdue en silence. */
+       interrompue (avec son `client_upload_id`) : c'est l'enregistrement de REPRISE APRÈS RECHARGEMENT,
+       relu une fois par page (`rescope`) — au rechargement elle le dit, jamais perdue en silence. */
+    function draftAttachments(cid){
+      return Model.attachmentView(S.att,cid).items.filter(i=>i.status!=='stale'&&i.state!=='failed')
+        .map(i=>i.state==='ready'?{name:i.name,size:i.size,mime:i.mime,artifactId:i.artifactId,readable:i.readable,clientUploadId:i.clientUploadId}
+          :{name:i.name,size:i.size,clientUploadId:i.clientUploadId,interrupted:true});
+    }
+    /* Brouillon gardé de la conversation `cid`, même quand elle n'est pas affichée : une pièce qui finit,
+       qu'on retire ou qu'on « Renvoie ici » depuis un autre Board met à jour SON brouillon (sinon un
+       rechargement la dirait interrompue alors qu'elle est prête). Texte inchangé ; un autre jeu de pièces
+       prêtes est un autre message (nouvel id). */
+    function persistDraft(cid){
+      if(!cid)return;
+      if(cid===model.conversationId){saveDraft();return}
+      const saved=loadDraft(cid),att=draftAttachments(cid),text=saved?saved.text:'';
+      if(!text&&!att.length){store('set',STORAGE.draft+cid,null);return}
+      const ready=list=>list.filter(a=>a.artifactId).map(a=>a.artifactId).sort().join(',');
+      const id=saved&&ready(saved.att)===ready(att)?saved.id:uuid4();
+      store('set',STORAGE.draft+cid,JSON.stringify({id,text,att}));
+    }
     function saveDraft(){
       const cid=model.conversationId;if(!cid)return;
       const text=el.input.value,sig=Model.attachmentSignature(S.att,cid);
-      const att=Model.attachmentView(S.att,cid).items.filter(i=>i.status!=='stale'&&i.state!=='failed')
-        .map(i=>i.state==='ready'?{name:i.name,size:i.size,mime:i.mime,artifactId:i.artifactId,readable:i.readable,clientUploadId:i.clientUploadId}
-          :{name:i.name,size:i.size,interrupted:true});
+      const att=draftAttachments(cid);
       if(!text&&!att.length){S.draft=null;store('set',STORAGE.draft+cid,null);return}
       /* Un texte ou un jeu de pièces modifié est un nouveau message : nouvel id. Inchangé : même id (reprise). */
       if(!S.draft||S.draft.cid!==cid||S.draft.text!==text||(S.draft.sig!==null&&S.draft.sig!==sig))S.draft={id:uuid4(),text,cid,att:[],sig};
@@ -529,7 +556,9 @@
       const job={xhr,startedAt:now(),lastAt:now(),sentAt:null,why:null,timer:null};
       uploads.set(key,job);
       log('upload_started',{key,size:file.size,attempt:item.attempts,same_id:item.replay});
-      const settle=fn=>{if(uploads.get(key)!==job)return;clearInterval(job.timer);uploads.delete(key);fn();saveDraft();render()};
+      /* Le brouillon gardé suivi est celui de la conversation de la PIÈCE, pas celle affichée (QA S7b). */
+      const settle=fn=>{if(uploads.get(key)!==job)return;clearInterval(job.timer);uploads.delete(key);fn();
+        const held=S.att.items.find(i=>i.key===key);persistDraft(held?held.cid:item.cid);render()};
       xhr.upload.onprogress=event=>{
         job.lastAt=now();Model.attachmentProgress(S.att,key,event.loaded,event.lengthComputable?event.total:file.size);
         if(now()-(job.paintAt||0)>200){job.paintAt=now();render()}
@@ -579,12 +608,14 @@
     function rebindUpload(key){
       const cid=model.conversationId;
       if(!cid||!files.has(key))return;
+      const before=S.att.items.find(i=>i.key===key),from=before&&before.cid;
       const item=Model.rebindAttachment(S.att,key,cid,uuid4());
       if(!item)return;
       log('upload_rebound',{key,conversation_id:cid});
-      upload(key);draftEdited();
+      upload(key);draftEdited();persistDraft(from);
     }
     function removeUpload(key){
+      const held=S.att.items.find(i=>i.key===key),from=held&&held.cid;
       const before=Model.removeAttachment(S.att,key);
       if(before===null)return;
       const job=uploads.get(key);
@@ -592,7 +623,7 @@
       files.delete(key);
       log('upload_removed',{key,was:before});
       say('Pièce retirée.');
-      draftEdited();
+      draftEdited();if(from!==model.conversationId)persistDraft(from);
       el.input.focus();
     }
 
@@ -670,7 +701,12 @@
       box.append(head);
       if(names&&names.length){
         const list=doc.createElement('span');list.className='chat-att-names';
-        list.textContent=names.map(n=>n.readable===false?`${n.name} (non lisible par le Brain)`:n.name).join(' · ');
+        /* Chaque nom isolé (`<bdi>`, texte seulement) : un U+202E dans un nom ne retourne pas le suivant. */
+        names.forEach((n,i)=>{
+          if(i)list.append(doc.createTextNode(' · '));
+          const name=doc.createElement('bdi');name.textContent=n.name;list.append(name);
+          if(n.readable===false)list.append(doc.createTextNode(' (non lisible par le Brain)'));
+        });
         box.append(list);
       }else{
         const link=doc.createElement('button');link.type='button';link.className='chat-link';link.textContent='voir dans l’inspecteur';

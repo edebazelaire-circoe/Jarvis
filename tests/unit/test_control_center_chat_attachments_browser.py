@@ -18,6 +18,8 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
+import pytest
+
 from tests.unit.test_control_center_chat_browser import BUBBLES, OPEN, READ, _drive, _until
 
 EXTRA = Path(__file__).parent / "_chat_attachments_browser.mjs"
@@ -327,3 +329,171 @@ def test_keyboard_accessible_attach_button(tmp_path):
     assert reads["next"] == "chatSend"
     assert reads["remove_label"] == "Retirer notes.txt"
     assert [x["name"] for x in reads["r"]["files"]] == ["photo.png"] and reads["r"]["active"] == "chatInput"
+
+
+# ---------- Rework QA S7b ----------
+
+BOARD = lambda b, c: {"eval": f"window.__chat.board('{b}','{c}');1"}  # noqa: E731
+QUICK = {"eval": "window.JarvisChat.config.tickMs=250;1"}
+DRAFT_A = {"value": "draft_a", "expr": "localStorage.getItem('jarvis.chat.draft.conv-a')"}
+INTERRUPTED = "Envoi interrompu par le rechargement de la page : joignez le fichier à nouveau."
+
+
+@pytest.mark.parametrize("finish_on", ["b", "a"])
+def test_board_round_trip_keeps_the_live_upload(tmp_path, finish_on):
+    """QA S7b BLOCKING 1 : un aller-retour de Board n'est pas un rechargement. Envoi lent sur A, passage sur B,
+    retour sur A — que l'envoi ait fini sur B ou soit encore en cours au retour : UNE ligne, l'état vivant,
+    et l'envoi part ensuite. Jamais « interrompu par le rechargement » sans rechargement."""
+
+    f = _files(tmp_path)
+    slow = 2500 if finish_on == "b" else 6000
+    finished = f"{SNAP}.attachments.items.length===1&&{SNAP}.attachments.items[0].state==='ready'"
+    back = _until(f"{SNAP}.conversation_id==='conv-a'&&{BUBBLES}===4&&{FILES}.length>=1", name="back")
+    wait_b = [_until(finished, ms=8000, name="finished_on_b")] if finish_on == "b" else [{"wait": 200}]
+    out = _run(tmp_path, [
+        QUICK, {"eval": f"window.__chat.slowMs={slow};window.__chat.uploadPlans['photo.png']='slow';1"},
+        OPEN, _until(f"{BUBBLES}===4"), {"files": "#chatFile", "paths": [f["photo.png"]]}, {"wait": 300},
+        BOARD("board_b", "conv-b"), _until(f"{SNAP}.conversation_id==='conv-b'&&{BUBBLES}===2", name="on_b"),
+        *wait_b, {"value": "on_b"},
+        BOARD("default", "conv-a"), back, {"wait": 700}, {"value": "back_a"},
+        _shot(tmp_path, f"board-round-trip-{finish_on}-1440x900"),
+        _until(f"{READY}===1", ms=8000, name="ready"), {"wait": 300}, {"value": "ready_a"}, DRAFT_A,
+        {"type": "Après le retour"}, {"key": "Enter"}, _until(f"{BUBBLES}===6", name="sent"), {"wait": 200}, READ, UPLOADS,
+    ])
+    reads = out["reads"]
+    assert reads["until:on_b"] is True and reads["until:back"] is True
+    if finish_on == "b":
+        assert reads["until:finished_on_b"] is True
+    assert [x["status"] for x in reads["on_b"]["files"]] == ["stale"]
+    rows = reads["back_a"]["files"]
+    assert len(rows) == 1, rows
+    assert rows[0]["name"] == "photo.png" and rows[0]["state"] != INTERRUPTED
+    assert rows[0]["status"] == ("ready" if finish_on == "b" else "uploading"), rows
+    assert [x["status"] for x in reads["ready_a"]["files"]] == ["ready"]
+    assert "interrupted" not in (reads["draft_a"] or ""), "the reload record follows the live upload, even seen from B"
+    assert len(reads["uploads"]) == 1, "one upload, never restarted by the round trip"
+    turn = reads["r"]["fake"]["turns"][-1]
+    assert turn["conversation_id"] == "conv-a" and turn["content"] == "Après le retour"
+    assert turn["attachments"] == ["jart_up_" + reads["uploads"][0]["id"].replace("-", "")[:40]]
+    assert reads["r"]["files"] == [] and reads["r"]["sendStatus"]["hidden"] is True
+
+
+def test_real_reload_during_upload_shows_interrupted_once(tmp_path):
+    """Un VRAI rechargement pendant un envoi : la pièce revient une fois, « interrompu par le rechargement »,
+    et ni un tic ni un aller-retour de Board ne la double."""
+
+    f = _files(tmp_path)
+    out = _run(tmp_path, [
+        QUICK, {"eval": "window.__chat.uploadPlans['photo.png']='hang';1"}, OPEN, _until(f"{BUBBLES}===4"),
+        {"files": "#chatFile", "paths": [f["photo.png"]]}, {"wait": 300}, DRAFT_A,
+        {"reload": True}, QUICK, _until(f"{BUBBLES}===4&&{FILES}.length>=1", ms=8000, name="reloaded"), {"wait": 600},
+        {"value": "after_reload"}, _shot(tmp_path, "reload-interrupted-1440x900"),
+        BOARD("board_b", "conv-b"), _until(f"{SNAP}.conversation_id==='conv-b'&&{BUBBLES}===2", name="on_b"),
+        BOARD("default", "conv-a"), _until(f"{SNAP}.conversation_id==='conv-a'&&{BUBBLES}===4", name="back"), {"wait": 600},
+        {"value": "back_a"}, {"click": "#chatFiles .chat-file-x"}, {"wait": 100},
+        {"type": "Sans la photo"}, {"key": "Enter"}, _until(f"{BUBBLES}===6", name="sent"), READ,
+    ])
+    reads = out["reads"]
+    record = reads["draft_a"]
+    assert record and '"interrupted":true' in record and '"clientUploadId"' in record, record
+    assert reads["until:reloaded"] is True
+    for name in ("after_reload", "back_a"):
+        rows = reads[name]["files"]
+        assert [(x["name"], x["status"], x["state"], x["act"]) for x in rows] == [("photo.png", "failed", INTERRUPTED, None)], name
+        assert reads[name]["composer"]["sendDisabled"] == "true"
+    assert reads["until:sent"] is True and reads["r"]["fake"]["turns"][-1]["content"] == "Sans la photo"
+
+
+ROW_CHECK = """(()=>{
+  const R=e=>e.getBoundingClientRect(),list=document.getElementById('chatFiles'),panel=R(document.getElementById('chatPanel'));
+  const inside=(a,b)=>a.width>0&&a.height>0&&a.top>=b.top-0.5&&a.bottom<=b.bottom+0.5&&a.left>=b.left-0.5&&a.right<=b.right+0.5;
+  const hits=(el,box)=>{const r=R(el),h=document.elementFromPoint(r.left+Math.min(r.width/2,8),r.top+r.height/2);return !!h&&(el.contains(h)||h.contains(el))&&box.contains(h)};
+  const rows=[...list.querySelectorAll('.chat-file')].map(li=>{
+    li.scrollIntoView({block:'nearest'});
+    const r=R(li),l=R(list),text=li.querySelector('.chat-file-text'),x=li.querySelector('.chat-file-x'),name=li.querySelector('.chat-file-name');
+    return {h:Math.round(r.height),clipped:li.scrollHeight>li.clientHeight+1,inList:inside(r,l),state:inside(R(text),r)&&hits(text,li),
+      x:inside(R(x),r)&&hits(x,li),name:inside(R(name),r)};
+  });
+  const row=R(document.querySelector('#chatCompose .chat-row')),send=R(document.getElementById('chatSend')),
+    attach=R(document.getElementById('chatAttach')),hint=document.getElementById('chatHint');
+  return {rows,scrolls:list.scrollHeight>list.clientHeight+1,listH:list.clientHeight,panel:{t:panel.top,b:panel.bottom,l:panel.left,r:panel.right},
+    rowInside:inside(row,panel)&&inside(send,panel)&&inside(attach,panel),
+    rowHit:hits(document.getElementById('chatSend'),document.getElementById('chatPanel')),
+    input:Math.round(R(document.getElementById('chatInput')).height),hintH:Math.round(R(hint).height),
+    note:!document.getElementById('chatAttNote').hidden&&inside(R(document.getElementById('chatAttNote')),panel),
+    scrollWidth:document.documentElement.scrollWidth};
+})()"""
+
+
+@pytest.mark.parametrize("width,height", [(1440, 900), (1024, 480), (600, 800)])
+def test_ten_files_rows_keep_their_content_and_composer_stays_in_panel(tmp_path, width, height):
+    """QA S7b BLOCKING 2 : dix pièces (la borne par défaut de Core). Chaque ligne garde nom, état et × ; la liste,
+    bornée, défile ; la rangée Joindre/Envoyer reste dans le panneau."""
+
+    folder = tmp_path / "ten"
+    folder.mkdir()
+    paths = []
+    for i in range(10):
+        ext = ["png", "txt", "zip", "pdf", "mov"][i % 5]
+        name = f"piece-{i:02d}-{'un-nom-de-fichier-vraiment-tres-long-' if i == 3 else ''}{ext}.{ext}"
+        (folder / name).write_bytes(PNG if ext == "png" else b"x" * (64 + i))
+        paths.append(str(folder / name))
+    big = "piece-04-mov.mov"
+    out = _run(tmp_path, [
+        {"eval": f"window.__chat.uploadPlans['{big}']='big';1"}, OPEN, _until(f"{BUBBLES}===4"),
+        {"files": "#chatFile", "paths": paths},
+        _until(f"{SNAP}.attachments.uploading===0&&{FILES}.length===10", ms=8000, name="settled"),
+        {"wait": 300}, {"value": "layout", "expr": ROW_CHECK}, {"eval": "document.getElementById('chatFiles').scrollTop=0;1"},
+        {"wait": 100}, _shot(tmp_path, f"ten-files-{width}x{height}"), READ,
+    ], width=width, height=height)
+    reads = out["reads"]
+    assert reads["until:settled"] is True
+    lay = reads["layout"]
+    assert len(lay["rows"]) == 10
+    bad = [(i, row) for i, row in enumerate(lay["rows"])
+           if row["clipped"] or not (row["inList"] and row["state"] and row["x"] and row["name"])]
+    assert bad == [], bad
+    assert all(row["h"] >= 40 for row in lay["rows"]), [row["h"] for row in lay["rows"]]
+    assert lay["scrolls"] is True, "ten rows scroll inside the bounded list"
+    assert lay["rowInside"] is True and lay["rowHit"] is True, lay
+    assert lay["note"] is True, "the failed file's instruction stays visible"
+    assert lay["input"] >= 40 and lay["hintH"] <= 18, lay
+    assert lay["scrollWidth"] <= width
+    states = {x["status"] for x in reads["r"]["files"]}
+    assert {"ready", "unreadable", "failed"} <= states
+
+
+def test_sent_names_are_bidi_isolated(tmp_path):
+    """Un U+202E dans un nom ne retourne pas le nom suivant : chaque nom dans son `<bdi>` (texte seulement)."""
+
+    folder = tmp_path / "bidi"
+    folder.mkdir()
+    rlo = folder / "rapport‮gnp.exe"
+    plain = folder / "notes.txt"
+    rlo.write_bytes(b"MZ" + bytes(64))
+    plain.write_bytes(b"Ordre du jour\n")
+    names = ("(()=>[...document.querySelectorAll('#chatLog .chat-att-names')].slice(-1).map(n=>({html:n.children.length,"
+             "bdi:[...n.querySelectorAll('bdi')].map(b=>[b.textContent,getComputedStyle(b).unicodeBidi,b.children.length])}))[0])()")
+    out = _run(tmp_path, [
+        OPEN, _until(f"{BUBBLES}===4"), {"files": "#chatFile", "paths": [str(rlo), str(plain)]},
+        _until(f"{READY}===2", name="ready"), {"type": "Deux noms"}, {"key": "Enter"},
+        _until(f"{BUBBLES}===6", name="sent"), {"wait": 200}, {"value": "names", "expr": names}, READ,
+    ])
+    got = out["reads"]["names"]
+    assert got["bdi"] == [["rapport‮gnp.exe", "isolate", 0], ["notes.txt", "isolate", 0]]
+    assert got["html"] == 2, "only the two isolates, no markup from a name"
+    assert out["reads"]["r"]["attLines"][-1] == "2 pièces jointesrapport‮gnp.exe (non lisible par le Brain) · notes.txt"
+
+
+@pytest.mark.parametrize("theme", ["default", "cosmos"])
+def test_hint_stays_on_one_line(tmp_path, theme):
+    cosmos = [{"eval": "window.JarvisThemeAPI.activate('cosmos',{persist:false});1"}, {"wait": 600}] if theme == "cosmos" else []
+    hint = ("(()=>{const h=document.getElementById('chatHint');return {h:Math.round(h.getBoundingClientRect().height),"
+            "full:h.scrollWidth<=h.clientWidth+1,text:h.textContent}})()")
+    f = _files(tmp_path)
+    out = _run(tmp_path, [*cosmos, OPEN, _until(f"{BUBBLES}===4"), {"files": "#chatFile", "paths": [f["notes.txt"], f["archive.zip"]]},
+                          _until(f"{READY}===2", name="ready"), {"type": "Message Cosmos"}, {"wait": 200},
+                          {"value": "hint", "expr": hint}, _shot(tmp_path, f"hint-{theme}-1440x900")])
+    got = out["reads"]["hint"]
+    assert got["h"] <= 18 and got["full"] is True, got
+    assert got["text"] == "Entrée envoie · Maj+Entrée : à la ligne"

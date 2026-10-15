@@ -311,3 +311,23 @@ def test_attachment_scope_stale_rebind_restore_and_helpers(tmp_path):
     assert got["lost"] == ["failed", "upload_interrupted_reload", False]
     assert got["bytes"] == ["0 o", "1023 o", "1 Ko", "1,5 Ko", "10 Mo", "64 Mo", "3 Go"]
     assert got["limit"] == [67108864, None]
+
+
+def test_restore_dedupes_by_client_upload_id(tmp_path):
+    """QA S7b : l'enregistrement de reprise d'une pièce encore en cours ne double jamais la pièce vivante."""
+
+    got = run_node(tmp_path, """
+      const L=CM.createAttachments();
+      const live=CM.addAttachment(L,{name:'medium.png',size:9,cid:'conv-a',clientUploadId:'u-live'});
+      const whileUploading=CM.restoreAttachment(L,{name:'medium.png',size:9,cid:'conv-a',clientUploadId:'u-live',interrupted:true});
+      CM.attachmentReady(L,live.key,{artifact_id:'jart_up_live',brain_readable:true});
+      const afterReady=CM.restoreAttachment(L,{name:'medium.png',size:9,cid:'conv-a',clientUploadId:'u-live',interrupted:true});
+      const other=CM.restoreAttachment(L,{name:'medium.png',size:9,cid:'conv-a',clientUploadId:'u-other',interrupted:true});
+      const legacy=CM.restoreAttachment(L,{name:'old.png',size:9,cid:'conv-a',interrupted:true});
+      out({whileUploading,afterReady,other:other&&other.error.code,legacy:legacy&&legacy.state,
+        states:CM.attachmentView(L,'conv-a').items.map(i=>[i.clientUploadId,i.state])});
+    """)
+    assert got["whileUploading"] is None and got["afterReady"] is None, "the live attachment wins"
+    assert got["other"] == "upload_interrupted_reload", "another upload's record is still restored"
+    assert got["legacy"] == "failed", "a record without an id (older draft) is still said, never lost"
+    assert got["states"] == [["u-live", "ready"], ["u-other", "failed"], ["", "failed"]]

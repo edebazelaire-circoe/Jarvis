@@ -629,7 +629,11 @@ chat state owner: no second module.
     d'ici. » — see *Board or Session change*.
 - **Deadlines** (RULE ZERO): no upload progress for `uploadStallMs` (30 s), or
   no answer `uploadAnswerMs` (130 s, above the relay's 120 s read budget)
-  after the last byte → `client_timeout`, an unknown outcome.
+  after the last byte → `client_timeout`, an unknown outcome, said « Jarvis
+  Core ne répond pas. »: the relay streams the bytes to Core and waits for
+  Core's answer, so a stall blames Core, like the composer lock (a Control
+  Center that cannot be reached is `network_error`, « Control Center
+  injoignable »).
 - **`client_upload_id` on retry** (reconciles Slice 07 QA and the contract
   test `retry_reuses_client_upload_id`):
   - **unknown outcome** (`core_timeout`, `client_timeout`, `network_error`,
@@ -664,10 +668,27 @@ chat state owner: no second module.
   there, offered « Renvoyer ici » (a new upload of the same file, new id, into
   the current context) and ×; back on its own Board it is ready again.
 - **Reload.** The draft (`jarvis.chat.draft.<conversation_id>`) keeps the
-  ready attachments (Artifact id, name, size, readability) and restores them;
-  one still uploading at reload comes back `failed`
+  ready attachments (Artifact id, name, size, readability, `client_upload_id`)
+  and restores them; one still uploading at reload comes back `failed`
   `upload_interrupted_reload` (« joignez le fichier à nouveau »), never lost
-  silently.
+  silently. This stored draft is the **reload-recovery record only**: it is
+  read once per conversation per page load. A Board round trip (A → B → A) is
+  not a reload: the attachments in memory stay authoritative, an upload still
+  running on A keeps its live row and finishes there. The record of a
+  conversation follows its attachments even while another Board is shown (an
+  upload that finishes, a × or « Renvoyer ici » seen from B rewrites A's
+  record), and a restore never duplicates an attachment already present (same
+  `client_upload_id` or Artifact) — QA S7b, phantom « interrompu » row.
+- **Layout.** A file row never shrinks below its content (name, state, ×);
+  the list is bounded (`min(168px, 24vh)`) and scrolls. The composer keeps its
+  size first and the message list takes the rest; on a low panel only the file
+  list (down to about one row) and the text field (down to two lines) give
+  way, so the Joindre/Envoyer row always stays inside the panel — checked with
+  10 files (Core's default per message) at 1440×900, 1024×480 and 600×800.
+  The key hint stays on one line (« Entrée envoie · Maj+Entrée : à la ligne »,
+  ellipsis if ever too narrow).
+- **Names in the user bubble** are each in a `<bdi>` (text nodes, never HTML):
+  a bidi override (U+202E) in one name cannot reverse the next.
 - **Journal** (console `[chat] chat.<event>`): `attached` (via button|drop,
   count), `upload_started`, `upload_ready` (`artifact_id`, size, type,
   `brain_readable`, `replayed`), `upload_failed` (code, status, `same_id`,
@@ -898,4 +919,7 @@ and an isolated root, never a repository database.
 7. **`artifacts_root` reaches the local page** through `/api/sessions/current`
    (`context.artifacts_root`, next to `sessions_root`, loopback guard), as
    `sessions_root` already does; the chat routes never return a path.
+8. **Retry on `upload_in_progress`** is manual (« Réessayer », same id), not
+   automatic; and the **same file attached twice** makes two uploads, hence two
+   Artifacts (no client-side dedupe by content). Recorded by QA S7b, left as is.
 
