@@ -173,8 +173,8 @@ SETUP = r"""(()=>{
   const realGUM=navigator.mediaDevices.getUserMedia.bind(navigator.mediaDevices);
   window.__tracks=[];
   navigator.mediaDevices.getUserMedia=async c=>{const s=await realGUM(c);window.__tracks.push(...s.getTracks());return s};
-  JarvisToolWheel.enabled=true;
-  return {flagDefault:true,installed:!!window.JarvisInputArbitration,webgl:!!document.createElement('canvas').getContext('webgl2')};
+  /* Slice 04 : plus de drapeau, la roue est construite d'office et visible. */
+  return {flagDefault:!document.getElementById('toolWheel').hidden,installed:!!window.JarvisInputArbitration,webgl:!!document.createElement('canvas').getContext('webgl2')};
 })()"""
 
 STATE = r"""(()=>{
@@ -283,7 +283,7 @@ def run(tmp_path_factory, shots):
         "offered": {"actions": [
             RESET_OFF, _ev(SETUP), _ev(STATE), *open_selection, _ev(STATE),
             {"a": "shot", "path": str(shots / "selection-subarc.png")},
-            _ev("(()=>{JarvisToolWheel.enabled=false;const s=id=>getComputedStyle(document.getElementById(id)).display;"
+            _ev("(()=>{document.getElementById('toolWheel').hidden=true;const s=id=>getComputedStyle(document.getElementById(id)).display;"
                 "return {hud:s('barehandsHud'),palette:s('barehandsPalette')}})()"),
         ]},
         "bare_hands": {"actions": [
@@ -396,15 +396,16 @@ def _evals(steps: list) -> list:
 def test_only_mouse_and_bare_hands_offered(run):
     steps = run["offered"]
     setup, closed, opened = steps[1], steps[2], _evals(steps)[1]
-    assert setup["installed"] is True
-    # Roue allumée : le contrôle du haut-gauche et la bande d'outils quittent la vue par défaut.
+    assert setup["installed"] is True and setup["flagDefault"] is True
+    # Roue visible (d'office depuis la Slice 04) : le contrôle du haut-gauche et la bande d'outils
+    # quittent la vue par défaut.
     assert closed["hudShown"] is False and closed["paletteShown"] is False
     # Bare Hands éteint au chargement : Sélection projette Souris.
     assert closed["view"]["method"] == "mouse" and closed["wedgeName"] == "Sélection — Souris"
     assert [(i["id"], i["role"], i["checked"], i["icon"]) for i in opened["items"]] == [
         ("mouse", "menuitemradio", "true", True), ("bare_hands", "menuitemradio", "false", True)]
     assert [i["name"] for i in opened["items"]] == ["Souris", "Bare Hands"]
-    # Roue éteinte (retour arrière) : le contrôle et la bande reviennent.
+    # Roue cachée (retour arrière) : le contrôle et la bande reviennent.
     assert steps[-1] == {"hud": "flex", "palette": "flex"}
 
 

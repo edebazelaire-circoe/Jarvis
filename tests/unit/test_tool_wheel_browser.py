@@ -2,8 +2,8 @@
 
 Contrat : `docs/control-center-shell.md` › Tool wheel (orbital-ui Slice 02).
 `test_tool_wheel_js.py` tient le modèle pur ; ce fichier charge la page
-**servie** (composée comme `ControlCenter.index`), allume le drapeau
-`JarvisToolWheel.enabled`, branche quatre actions qui notent leurs appels, et
+**servie** (composée comme `ControlCenter.index`) — la roue y est construite
+d'office depuis la Slice 04 —, branche quatre actions qui notent leurs appels, et
 conduit la roue :
 
 - souris : de vrais `Input.dispatchMouseEvent` (CDP) vers l'ancre, un
@@ -36,18 +36,21 @@ ROOT = Path(__file__).resolve().parents[2]
 MODULE = ROOT / "jarvis" / "runtime" / "control_center_tool_wheel.js"
 W, H = 1440, 900
 
-#: Allume la roue et branche quatre actions qui notent leurs appels. Sélection
+#: Branche quatre actions qui notent leurs appels (la roue est construite d'office). Sélection
 #: propose un sous-arc à deux choix, les autres un seul choix informatif.
 SETUP = r"""(()=>{
   const theme=%s;
   if(theme&&window.JarvisThemeAPI)window.JarvisThemeAPI.activate(theme,{persist:false});
   const Wh=window.JarvisToolWheel;
   if(!Wh)return {error:'module absent'};
-  const defaultEnabled=Wh.enabled,hiddenBefore=document.getElementById('toolWheel').hidden;
+  const builtAtLoad=!!document.querySelector('#toolWheel .tw-anchor'),hiddenBefore=document.getElementById('toolWheel').hidden;
   window.__tw={activate:[],secondary:[],items:[],logs:[]};
   const info=console.info.bind(console);
   console.info=(...a)=>{window.__tw.logs.push(String(a[0]));info(...a)};
-  Wh.enabled=true;
+  /* Slice 04 : les vues de capture projettent l'état de Core sur Vidéo,
+     Capture d'écran et Audio ; ce fichier éprouve la roue seule. */
+  for(const id of ['video','screenshot','audio'])Wh.setStatus(id,null);
+  if(window.JarvisCaptureRail)window.JarvisCaptureRail.subscribe(()=>{for(const id of ['video','screenshot','audio'])Wh.setStatus(id,null)});
   for(const id of Wh.SLOTS.map(s=>s.id))Wh.register({id,
     onActivate:ctx=>{window.__tw.activate.push(ctx)},
     onSecondary:ctx=>{window.__tw.secondary.push(ctx);
@@ -57,7 +60,7 @@ SETUP = r"""(()=>{
         :[{id:'default',label:'Écran principal — seule cible disponible',onActivate:pick}]}});
   let refused=null;
   try{Wh.register({id:'filler',onActivate(){}})}catch(e){refused=e.code}
-  return {defaultEnabled,hiddenBefore,refused,theme:document.documentElement.getAttribute('data-jarvis-theme')||''};
+  return {builtAtLoad,hiddenBefore,refused,theme:document.documentElement.getAttribute('data-jarvis-theme')||''};
 })()"""
 
 STATE = r"""(()=>{
@@ -314,7 +317,7 @@ def run(tmp_path_factory, shots):
 def test_mouse_hotspot_opens_and_leaving_closes(run):
     (setup, closed, _shot, _m1, _m2, opened, _w, _m3, focus, _shot2, _m4, beyond, _m5, leaving, waited, after,
      *rest) = run["mouse"]
-    assert setup["defaultEnabled"] is False and setup["hiddenBefore"] is True  # drapeau éteint par défaut
+    assert setup["builtAtLoad"] is True and setup["hiddenBefore"] is False  # Slice 04 : plus de drapeau, roue là
     assert setup["refused"] == "tool_wheel_unknown_slot"  # aucun outil de remplissage
     # Fermée : l'ancre seule, au rang du bord gauche.
     assert closed["open"] is False and closed["expanded"] == "false" and closed["z"] == "30"

@@ -210,7 +210,7 @@ processes with its own lifecycle.
 | --- | --- | --- |
 | Core | `python -m jarvis core` | conversations, jobs, tools, confirmation policy, public brain state; loopback HTTP + `/v1/events` WebSocket; Sessions (resumed at start), Contexts and their folders, Artifacts and the activity ledger, explicit captures (its own microphone stream, GDI screenshots, an `ffmpeg` child in a Job Object for screen recording), recording transcription, the Context enrichment worker (one restricted `claude` child per round) |
 | Voice | `python -m jarvis voice` | wake word, microphone/speakers, the Realtime session, speech scheduling; no part in explicit captures |
-| Control Center | `python -m jarvis control-center` | browser panel, trace/error console, settings, the local Claude/Codex agent behind `POST /api/agent/ask`; the left capture rail and the capture relay; the Brain's `jarvis-capture` and `jarvis-workspace` MCP servers are children of the Brain CLI |
+| Control Center | `python -m jarvis control-center` | browser panel, trace/error console, settings, the local Claude/Codex agent behind `POST /api/agent/ask`; the capture controls (tool wheel wedges and `#recIndicators`, orbital UI Slice 04) and the capture relay; the Brain's `jarvis-capture` and `jarvis-workspace` MCP servers are children of the Brain CLI |
 
 Sessions, Contexts, evidence and capture (who survives which restart, costs,
 privacy, rollback): [session-context-capture.md](session-context-capture.md).
@@ -3154,11 +3154,14 @@ then both themes share the Cosmos geometry, launcher row at −77, see
 (one row) or 71 (two rows). The margins are 12–18 px. Larger windows give the
 controls fewer units; a window that is not 16:9 but narrower than 1280 px, the
 GPT-Live banner (a transient alert) and the Barehands badge (test mode) can
-still cover the edges. **The left column is not part of this calibration**: the
-Bare Hands control and palette and, below them, the capture rail
-(`#captureRail`, session-context-recording Slice 10) occupy x 18–82 px from
-y 76 px down to about 541 px at 1280 × 720, i.e. inside the safe area's left
-band (x −152 is 32 px there). User gestures stop against them (they are in
+still cover the edges. **The left column is not part of this calibration**:
+before the orbital UI the Bare Hands control and palette and, below them, the
+capture rail (`#captureRail`, session-context-recording Slice 10) occupied
+x 18–82 px from y 76 px down to about 541 px at 1280 × 720, i.e. inside the
+safe area's left band (x −152 is 32 px there). Since its Slice 04 the left edge
+holds only the tool wheel anchor (14 × 112 px, vertically centred; the wheel
+opens over the scene at rank 37) and the capture indicators sit in the bottom
+row (`#recIndicators`). User gestures stop against them (they are in
 `CONTROL_SELECTOR`); what the resolver proposes does not know them yet
 (Issue `tasks/jarvis-session-context-recording-runtime/Issues/scene-safe-area-left-column.md`).
 The resolver places only inside the safe area. The brain

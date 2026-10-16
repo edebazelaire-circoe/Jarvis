@@ -122,6 +122,9 @@ const READ=`(function(){
   };
   box('card','.pa-card');
   box('palette','#barehandsPalette');
+  /* Orbital UI Slice 04 : la roue est visible d'office, la palette quitte la vue. */
+  box('wheel','#toolWheel .tw-anchor');
+  box('indicators','#recIndicators');
   box('modeBtn','#interactionModeButton');
   box('hint','.voicehint');
   box('dock','.dock');

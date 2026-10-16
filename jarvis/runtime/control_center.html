@@ -21,7 +21,7 @@ html,body{margin:0;height:100%;background:var(--bg);color:var(--text);font:15px 
    @shell-layer 0: .face, #cosmosFace
    @shell-layer 20: #sceneLayer
    @shell-layer 21: .board-drop::before
-   @shell-layer 30: #toolWheel, #barehandsPalette, #captureRail, #presentationRail
+   @shell-layer 30: #toolWheel, #barehandsPalette, #presentationRail
    @shell-layer 31: .topbar, #voiceHint
    @shell-layer 32: .dock, #chatTab, #barehandsHud, #interactionModeHud
    @shell-layer 33: .panel
@@ -29,7 +29,7 @@ html,body{margin:0;height:100%;background:var(--bg);color:var(--text);font:15px 
    @shell-layer 35: .live-banner
    @shell-layer 36: #boardsPanel, .bh-hud-pop, .im-pop
    @shell-layer 37: #toolWheel[data-open]
-   @shell-layer 40: #bgPills
+   @shell-layer 40: #bgPills, #recIndicators
    @shell-layer 55: .tl, .tlab, .mcpi, .wsp, .pfb
    @shell-layer 60: .overlay
    @shell-layer 70: .toasts
@@ -444,6 +444,18 @@ html[data-jarvis-theme="cosmos"] .chat-tab:hover,html[data-jarvis-theme="cosmos"
    est le dernier geste de l'utilisateur —, sous l'aperçu de capture (38) et
    le centre d'état (40). Le reste de sa feuille vit dans son module. */
 #toolWheel[data-open]{z-index:37}
+/* Indicateurs de capture (orbital-ui Slice 04, `control_center_capture_wheel.js`) :
+   une puce par enregistrement ouvert (REC + durée, micro + durée), une attente,
+   une capture d'écran prise, la note d'un refus. Rang 40, celui du centre
+   d'état (registre). Place PROVISOIRE (la Slice 06 les range dans le centre
+   d'état) : sur la rangée du bas, à DROITE de l'indication vocale — à gauche,
+   la note de la scène (`.sc-status`) et le bouton de mode prennent une largeur
+   qui varie —, jusqu'à l'onglet Chat ; plusieurs puces passent à la ligne vers
+   le haut. Sous 700 px la rangée du bas n'a plus de place libre : colonne au
+   bord droit, à mi-hauteur. Caché tant qu'il n'y a rien à dire. */
+#recIndicators{position:absolute;z-index:40;left:calc(50% + 124px);bottom:var(--shell-bottom);max-width:calc(50% - 124px - 52px - var(--shell-gutter) - 16px);display:flex;flex-direction:column;align-items:flex-start}
+#recIndicators[hidden]{display:none}
+@media(max-width:700px){#recIndicators{left:auto;right:var(--shell-gutter);bottom:auto;top:50%;transform:translateY(-50%);max-width:calc(100vw - 2 * var(--shell-gutter) - 24px);align-items:flex-end}}
 
 /* ---------- Dépôt sur le Board affiché (unified-chat Slice 08, `control_center_board_drop.js`) ----------
    Calque sans rang propre (aucun contexte d'empilement) : son cadre en
@@ -1775,22 +1787,19 @@ button.wsp-ename:hover{color:var(--accent)}
        sous un nom cherchable si cet emplacement manque — sans emporter le
        contrôle de cycle de vie, qui est le plus important des deux. -->
   <div id="barehandsPalette" data-shell-control></div>
-  <!-- Emplacement du rail de capture (session-context-recording, Slice 10,
-       décisions D14/D15) : capture d'écran, enregistrement audio et
-       enregistrement d'écran. Un hôte **frère** de la palette, pas un de ses
-       outils : rien ici n'entre dans `#barehandsPaletteStrip` ni dans
-       `BH.TOOL`. Il se pose SOUS la colonne Bare Hands, séparé par un filet, ou
-       à côté d'elle quand la place manque ; Bare Hands absent, il prend le haut
-       de la colonne. Rang 30, celui de la palette, déclaré dans la feuille de
-       son module. Rempli par `control_center_capture_rail.js`, qui refuse de se
-       dessiner sous un nom cherchable si cet emplacement manque. -->
-  <div id="captureRail" data-shell-control></div>
   <!-- Hôte de la roue d'outils (jarvis-board-orbital-ui-workspace-rail,
-       Slices 01-02) : déclaré ici, vide et caché ; `control_center_tool_wheel.js`
-       y dessine l'ancre et la roue quand `JarvisToolWheel.enabled` est vrai
-       (faux par défaut jusqu'à la Slice 04). Rangs 30 au repos, 37 ouvert.
-       Contrat : docs/control-center-shell.md › Roue d'outils. -->
+       Slices 01-04) : déclaré ici, vide et caché ; `control_center_tool_wheel.js`
+       y dessine l'ancre et la roue à son installation et le rend visible
+       (plus de drapeau depuis la Slice 04 ; module absent : il reste caché et
+       la colonne Bare Hands revient). Ses secteurs Vidéo, Capture d'écran et
+       Audio remplacent le rail de capture de la Slice 10. Rangs 30 au repos,
+       37 ouvert. Contrat : docs/control-center-shell.md › Roue d'outils. -->
   <div id="toolWheel" data-shell-control hidden></div>
+  <!-- Indicateurs de capture persistants (orbital-ui Slice 04, D6) : rempli par
+       `control_center_capture_wheel.js` depuis le contrôleur de capture ; ce
+       qui enregistre reste visible et s'arrête d'un geste quand la roue est
+       repliée. Rang 40 au registre ; caché tant qu'il n'y a rien à dire. -->
+  <div id="recIndicators" data-shell-control hidden></div>
   <!-- Emplacement des deux cartes rapides Bare Hands (Slice 04, décisions 15
        et 16) : Aide / Gestes et Diagnostic, ouvertes depuis le menu du clic
        droit du contrôle ci-dessus. **Un seul** emplacement pour les deux, une
@@ -2475,16 +2484,19 @@ const STATUS={
    deux déclarations de fonction de ce même `<script>`, donc remontées et
    disponibles quelle que soit la position de ce marqueur. */
 /*__CONTROL_CENTER_INTERACTION_MODE_JS__*/
-/* Rail de capture du bord gauche (session-context-recording, Slice 10) :
-   `control_center_capture_rail.js`. Hôte frère de la palette Bare Hands, il ne
-   lit aucun module de page : il sonde `/api/captures/status` lui-même et mesure
-   la colonne de gauche pour s'y poser. */
+/* Contrôleur de capture (session-context-recording Slice 10, découpé en
+   orbital-ui Slice 04) : `control_center_capture_rail.js`. Ne dessine rien : il
+   sonde `/api/captures/status` lui-même et publie `JarvisCaptureRail`. */
 /*__CONTROL_CENTER_CAPTURE_RAIL_JS__*/
 /* Roue d'outils orbitale du bord gauche (jarvis-board-orbital-ui-workspace-rail,
-   Slice 02) : `control_center_tool_wheel.js`. Remplit `#toolWheel` quand
-   `JarvisToolWheel.enabled` passe à vrai ; ne lit que le contrat Bare Hands
-   (`isBareHandsPointerId`) et `toast`, déclaration remontée de ce `<script>`. */
+   Slices 02-04) : `control_center_tool_wheel.js`. Remplit `#toolWheel` à son
+   installation ; ne lit que le contrat Bare Hands (`isBareHandsPointerId`) et
+   `toast`, déclaration remontée de ce `<script>`. */
 /*__CONTROL_CENTER_TOOL_WHEEL_JS__*/
+/* Vues de capture (orbital-ui Slice 04) : `control_center_capture_wheel.js`.
+   APRÈS le contrôleur et la roue, qu'il lit au chargement : secteurs Vidéo,
+   Capture d'écran, Audio, sous-arcs des cibles, indicateurs `#recIndicators`. */
+/*__CONTROL_CENTER_CAPTURE_WHEEL_JS__*/
 /* Sélection Souris / Bare Hands et reprise souris (jarvis-board-orbital-ui-workspace-rail,
    Slice 03) : `control_center_input_arbitration.js`. APRÈS la roue et le contrôle
    Bare Hands (`JarvisToolWheel`, `JarvisBarehandsHudControl`), qu'il lit au chargement. */

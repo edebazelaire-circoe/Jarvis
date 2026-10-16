@@ -1,4 +1,12 @@
-"""Rail de capture du bord gauche, modèle pur exécuté par node (session-context-recording, Slice 10).
+"""Contrôleur de capture et ses vues pures, exécutés par node.
+
+Né avec le rail de gauche (session-context-recording, Slice 10) ; depuis la
+Slice 04 de `jarvis-board-orbital-ui-workspace-rail` le contrôleur ne dessine
+plus rien (`control_center_capture_rail.js`) et ses vues sont la roue d'outils
+et les indicateurs (`control_center_capture_wheel.js`). Les tests du
+contrôleur sont gardés tels quels ; les parties de vue (hôte, placement,
+dessin) ont migré vers les vues pures ci-dessous et vers
+`test_capture_wheel_browser.py`.
 
 Ce que ce fichier épingle :
 
@@ -14,12 +22,16 @@ Ce que ce fichier épingle :
 - statut perdu : « état inconnu », aucun démarrage, mais l'arrêt d'une capture
   que l'on savait ouverte reste proposé ;
 - les textes d'erreur sont courts, en français, et gardent leur code ;
-- le placement : sous la colonne Bare Hands quand ça tient, à côté sinon, en
-  haut de la colonne quand Bare Hands est absent ;
-- le module est inséré dans la page servie, son emplacement est déclaré après
-  la palette et **hors** d'elle, et il n'emprunte rien à `BH.TOOL`.
+- plusieurs captures par canal (un écran par enregistrement) : chacune
+  listée, chacune arrêtable, même quand le statut tombe ;
+- les vues pures : l'état projeté sur un secteur, une puce par capture
+  ouverte au nom stable, le sous-arc des cibles réelles (règle de l'entrée
+  unique, aucune cible inventée) ;
+- les modules sont insérés dans la page servie (contrôleur, roue, vues, dans
+  cet ordre), l'hôte des indicateurs est déclaré, l'ancien rail ne l'est plus,
+  et rien n'emprunte à `BH.TOOL`.
 
-Le DOM et le réseau sont prouvés dans Chrome par `test_capture_rail_browser.py`.
+Le DOM et le réseau sont prouvés dans Chrome par `test_capture_wheel_browser.py`.
 """
 
 from __future__ import annotations
@@ -33,15 +45,20 @@ import subprocess
 import pytest
 
 from jarvis.runtime.control_center import (
-    BAREHANDS_HUD_SCRIPT_MARKER,
     CAPTURE_RAIL_SCRIPT_FILE,
     CAPTURE_RAIL_SCRIPT_MARKER,
-    INTERACTION_MODE_SCRIPT_MARKER,
+    CAPTURE_WHEEL_SCRIPT_FILE,
+    CAPTURE_WHEEL_SCRIPT_MARKER,
+    INPUT_ARBITRATION_SCRIPT_MARKER,
+    TOOL_WHEEL_SCRIPT_FILE,
+    TOOL_WHEEL_SCRIPT_MARKER,
 )
 
 ROOT = Path(__file__).resolve().parents[2]
 RUNTIME = ROOT / "jarvis" / "runtime"
 MODULE = RUNTIME / CAPTURE_RAIL_SCRIPT_FILE
+VIEWS = RUNTIME / CAPTURE_WHEEL_SCRIPT_FILE
+WHEEL = RUNTIME / TOOL_WHEEL_SCRIPT_FILE
 PAGE_HTML = RUNTIME / "control_center.html"
 SCENE_PAGE = RUNTIME / "control_center_scene_page.js"
 
@@ -56,6 +73,8 @@ def run(tmp_path: Path, body: str):
     script = tmp_path / "rail.js"
     script.write_text(
         f"const M=require({json.dumps(str(MODULE))});\n"
+        f"const V=require({json.dumps(str(VIEWS))});\n"
+        f"const W=require({json.dumps(str(WHEEL))});\n"
         "const out=v=>process.stdout.write(JSON.stringify(v));\n"
         f"const NOW={NOW};\n"
         "const cap=(channel,state,extra)=>Object.assign({capture_id:'jcap_'+channel,channel,mode:'continuous',"
@@ -295,29 +314,35 @@ def test_un_enregistrement_reste_dit_quand_une_autre_commande_est_en_erreur(tmp_
     assert v == ["REC 1 !", "REC 1 !", "ERREUR"]
 
 
-def test_un_canal_ouvert_garde_son_dessin_et_porte_la_pastille_d_arret(tmp_path):
+def test_un_canal_ouvert_garde_son_dessin_et_porte_la_marque_d_arret(tmp_path):
+    """Migré (Slice 04) : deux canaux ouverts restent distincts — une puce
+    par capture, chacune de son canal (le REC de l'écran, le micro de
+    l'audio) — et la marque d'arrêt suit l'action, comme sur l'ancien rail."""
+
     v = run(tmp_path, r"""
-      const both=M.viewOf({status:st([cap('audio','active'),cap('screen','stopping')]),reachable:true,now:NOW}).controls;
+      const both=M.viewOf({status:st([cap('audio','active'),cap('screen','stopping')]),reachable:true,now:NOW});
       const stuck=M.viewOf({status:st([cap('screen','stopping')],[{capture_id:'jcap_screen',error_code:'e'}]),
         reachable:true,now:NOW}).controls.screen;
       const known=M.viewOf({reachable:false,now:NOW,known:{audio:{capture_id:'jcap_audio'}}}).controls.audio;
-      out({glyphs:[M.glyphOf(both.audio),M.glyphOf(both.screen)],marks:[both.audio.stopMark,both.screen.stopMark],
-        stuck:[M.glyphOf(stuck),stuck.stopMark],known:known.stopMark,art:Object.keys(M.ART)});
+      out({chips:V.chipsOf(both).map(c=>[c.channel,c.state,c.action]),marks:[both.controls.audio.stopMark,
+        both.controls.screen.stopMark],stuck:[stuck.state,stuck.stopMark],known:known.stopMark,
+        art:Object.keys(W.ART)});
     """)
-    assert v["glyphs"] == ["audio", "screen"], "deux canaux ouverts restent distincts"
+    assert v["chips"] == [["screen", "stopping", None], ["audio", "active", "stop"]]
     assert v["marks"] == [True, True]
-    assert v["stuck"] == ["screen", False], "le coin porte le « ! » d'un arrêt bloqué"
-    assert v["known"] is True, "statut perdu : la capture connue ouverte s'arrête encore, la pastille le dit"
-    assert "stop" not in v["art"]
+    assert v["stuck"] == ["stuck", False], "un arrêt bloqué porte « ! », pas la marque d'arrêt"
+    assert v["known"] is True, "statut perdu : la capture connue ouverte s'arrête encore"
+    for glyph in ("video", "screenshot", "audio", "stop", "done"):
+        assert glyph in v["art"], glyph
 
 
 def test_la_capture_d_ecran_ne_ressemble_pas_a_l_outil_select(tmp_path):
     hud = RUNTIME / "control_center_barehands_hud.js"
     select = re.search(r"\[BH\.TOOL\.SELECT\]:Object\.freeze\(\{\s*paths:Object\.freeze\(\[(.*?)\]\)",
                        hud.read_text(encoding="utf-8"), re.S).group(1)
-    v = run(tmp_path, "out(M.ART.screenshot.paths)")
+    v = run(tmp_path, "out(W.ART.screenshot.paths)")
     # Les équerres de visée du `select` (`M4.7 9.2V6.1…`) n'ont pas d'équivalent ici :
-    # aucun tracé du rail ne commence par un coin ouvert.
+    # aucun tracé de la capture d'écran ne commence par un coin ouvert.
     assert not any(re.match(r"M\S+ \S+V", path) for path in v), v
     assert "V6.1" in select
     assert any("h2.4l1.5-2.2" in path for path in v), "le boîtier d'un appareil photo"
@@ -329,75 +354,29 @@ def test_les_durees_s_ecrivent_en_minutes_puis_en_heures(tmp_path):
     assert v == ["0:00", "0:59", "1:01", "1:00:00", "1:02:05", None]
 
 
-# ------------------------------------------------------------ placement
-
-
-def _slot(tmp_path, m: dict):
-    return run(tmp_path, f"out(M.slotOf({json.dumps(m)}))")
-
-
-COLUMN = {"left": 18, "top": 76, "right": 82, "bottom": 345}
-
-
-def test_le_rail_se_pose_sous_la_colonne_quand_la_place_existe(tmp_path):
-    s = _slot(tmp_path, {"vw": 1440, "vh": 900, "rail": {"w": 64, "h": 186}, "column": COLUMN,
-                         "base": {"left": 18, "top": 76}, "obstacles": [
-                             {"left": 18, "top": 818, "right": 195, "bottom": 878}]})
-    assert s == {"mode": "below", "left": 18, "top": 355, "fits": True, "score": 0}
-
-
-def test_un_ecran_court_le_fait_passer_a_cote_plutot_que_sur_le_bouton_de_mode(tmp_path):
-    s = _slot(tmp_path, {"vw": 1280, "vh": 600, "rail": {"w": 64, "h": 186}, "column": COLUMN,
-                         "base": {"left": 18, "top": 76}, "obstacles": [
-                             {"left": 18, "top": 518, "right": 195, "bottom": 578}]})
-    assert s["mode"] == "beside" and s["left"] == 82 and s["top"] == 76 and s["fits"]
-
-
-def test_a_320_le_rail_remonte_au_dessus_du_bouton_de_mode(tmp_path):
-    """MINOR-3 : mesures du direct (QA) à 320 × 568, indicateur de scène présent :
-    le bouton de mode, levé, commence à y 394 ; le rail à côté finissait à 398."""
-
-    s = _slot(tmp_path, {"vw": 320, "vh": 568, "rail": {"w": 64, "h": 155},
-                         "column": {"left": 10, "top": 243, "right": 74, "bottom": 490},
-                         "base": {"left": 10, "top": 243}, "obstacles": [
-                             {"left": 84, "top": 394, "right": 261, "bottom": 454},
-                             {"left": 258, "top": 72, "right": 310, "bottom": 496}]})
-    assert s["mode"] == "beside-up" and s["fits"] is True, s
-    assert s["left"] == 74 and s["top"] + 155 <= 394 - 8, s
-
-
-def test_bare_hands_absent_le_rail_prend_le_haut_de_la_colonne(tmp_path):
-    s = _slot(tmp_path, {"vw": 1440, "vh": 900, "rail": {"w": 64, "h": 186}, "column": None,
-                         "base": {"left": 18, "top": 76}, "obstacles": []})
-    assert s["mode"] == "alone" and (s["left"], s["top"]) == (18, 76)
-
-
-def test_sans_aucune_place_libre_le_moindre_mal_est_choisi_et_dit(tmp_path):
-    s = _slot(tmp_path, {"vw": 300, "vh": 240, "rail": {"w": 64, "h": 186}, "column": COLUMN,
-                         "base": {"left": 18, "top": 76}, "obstacles": []})
-    assert s["fits"] is False
-
-
 # ------------------------------------------------------------ insertion
+#
+# Le placement mesuré du rail (sous la colonne Bare Hands, à côté, seul) n'a
+# plus d'objet : la roue a son ancre au bord gauche et les indicateurs leur
+# place au rang 40 (`test_capture_wheel_browser.py` mesure leur non-recouvrement).
 
 
-def test_le_module_est_servi_et_son_emplacement_est_frere_de_la_palette():
+def test_les_modules_sont_servis_dans_l_ordre_et_l_hote_des_indicateurs_est_declare():
     html = PAGE_HTML.read_text(encoding="utf-8")
-    assert CAPTURE_RAIL_SCRIPT_MARKER in html
-    assert html.index(BAREHANDS_HUD_SCRIPT_MARKER) < html.index(CAPTURE_RAIL_SCRIPT_MARKER)
-    assert html.index(INTERACTION_MODE_SCRIPT_MARKER) < html.index(CAPTURE_RAIL_SCRIPT_MARKER)
-    rail = re.search(r'<div id="captureRail"[^>]*></div>', html)
-    palette = re.search(r'<div id="barehandsPalette"[^>]*></div>', html)
-    assert rail and palette
-    # Après la palette, hors d'elle : un frère, pas un enfant.
-    assert palette.end() <= rail.start()
+    order = [html.index(m) for m in (CAPTURE_RAIL_SCRIPT_MARKER, TOOL_WHEEL_SCRIPT_MARKER,
+                                     CAPTURE_WHEEL_SCRIPT_MARKER, INPUT_ARBITRATION_SCRIPT_MARKER)]
+    assert order == sorted(order), "contrôleur, roue, vues de capture, puis Sélection"
+    assert re.search(r'<div id="recIndicators" data-shell-control hidden></div>', html)
+    # L'ancien rail de gauche n'est plus déclaré : ses commandes sont dans la roue.
+    assert 'id="captureRail"' not in html
+    assert '<div id="toolWheel" data-shell-control hidden></div>' in html
 
 
 def test_le_rail_n_emprunte_rien_aux_outils_bare_hands(tmp_path):
-    source = MODULE.read_text(encoding="utf-8")
-    code = re.sub(r"/\*.*?\*/", "", source, flags=re.S)
-    for forbidden in ("data-bh-tool", "describeTools", "BH.TOOL", "barehandsPaletteStrip", "JarvisBarehands.tool"):
-        assert forbidden not in code, forbidden
+    for module in (MODULE, VIEWS):
+        code = re.sub(r"/\*.*?\*/", "", module.read_text(encoding="utf-8"), flags=re.S)
+        for forbidden in ("data-bh-tool", "describeTools", "BH.TOOL", "barehandsPaletteStrip", "JarvisBarehands.tool"):
+            assert forbidden not in code, (module.name, forbidden)
     # Le contrat Bare Hands n'a pas bougé : toujours exactement trois outils.
     contracts = RUNTIME / "control_center_barehands_contracts.js"
     tools = run(tmp_path, f"const B=require({json.dumps(str(contracts))});"
@@ -405,28 +384,29 @@ def test_le_rail_n_emprunte_rien_aux_outils_bare_hands(tmp_path):
     assert tools == ["pointer", "pan", "select"]
 
 
-def test_la_scene_mesure_le_rail_comme_une_commande():
-    """Depuis la Slice 01 de l'orbital UI, la liste des commandes vit dans la
-    coque (`JarvisShell.CONTROL_SELECTOR`) : un hôte est mesuré parce qu'il
-    porte `data-shell-control`. La conformité complète (chaque hôte, la copie
+def test_la_scene_mesure_les_indicateurs_et_la_roue_comme_des_commandes():
+    """Migré (Slice 04) : l'hôte mesuré n'est plus `#captureRail` mais la roue
+    (ancre) et les indicateurs ; la conformité complète (chaque hôte, la copie
     de repli identique) est dans `test_control_center_shell_layers.py`."""
 
     html = PAGE_HTML.read_text(encoding="utf-8")
-    for host in ("captureRail", "barehandsPalette"):
+    for host in ("toolWheel", "recIndicators"):
         assert re.search(rf'<div id="{host}"[^>]*\bdata-shell-control\b', html), host
     page = SCENE_PAGE.read_text(encoding="utf-8")
     assert "SHELL.CONTROL_SELECTOR" in page
     shell = (RUNTIME / "control_center_shell.js").read_text(encoding="utf-8")
     assert "const CONTROL_SELECTOR=`[${CONTROL_ATTRIBUTE}],#sceneLayer>.sc-status`" in shell
-    # Le rail lui-même évite ces commandes, sauf la colonne qui le porte.
-    source = MODULE.read_text(encoding="utf-8")
-    assert "document.querySelectorAll(obstacleSelector(log))" in source
-    assert "const NOT_OBSTACLES=Object.freeze([...COLUMN_SELECTORS,'.panel','#presentationRail'])" in source
+    assert "selector:'#recIndicators',zone:'bottom-centre'" in shell
+    assert "#captureRail" not in shell
 
 
-def test_le_rail_est_au_rang_de_la_palette(tmp_path):
-    style = run(tmp_path, "out(M.STYLE)")
-    assert re.search(r"#captureRail\{position:absolute;z-index:30;", style)
+def test_les_indicateurs_sont_au_rang_du_centre_d_etat(tmp_path):
+    html = PAGE_HTML.read_text(encoding="utf-8")
+    assert re.search(r"#recIndicators\{position:absolute;z-index:40;", html)
+    assert "@shell-layer 40: #bgPills, #recIndicators" in html
+    source = VIEWS.read_text(encoding="utf-8")
+    style = source[source.index("const STYLE=`"):source.index("/* ------------------------------------------------- le bloc navigateur")]
+    assert "z-index" not in style, "le rang vit dans la page et au registre, pas dans la feuille du module"
     # Mouvement réduit : la respiration et le balayage s'arrêtent dans la feuille.
     reduced = style[style.index("prefers-reduced-motion"):]
     assert "animation:none" in reduced
@@ -442,24 +422,15 @@ def test_un_demarrage_en_vol_que_core_referme_reste_un_demarrage(tmp_path):
 # Le contrôleur, DOM factice et horloge factice (reprise QA de la Slice 10)
 # ==========================================================================
 #
-# Repris des sondes de la QA (`probe.js`, `probe2.js`) : `createCaptureRail`
-# monté sur un DOM minimal, un `fetch` dont chaque réponse a son délai, et une
+# Repris des sondes de la QA (`probe.js`, `probe2.js`) : le contrôleur
+# (`createCaptureController`, sans DOM depuis la Slice 04 de l'orbital UI), un
+# `fetch` dont chaque réponse a son délai, et une
 # horloge qui n'avance que quand le test le dit. Chaque test ci-dessous tue un
 # mutant précis : retrait du vol unique, cadence cachée ignorée, échéance
 # 6 s → 60 s, arrêt en attente peint en démarrage, relecture périmée après
 # écriture, minuterie orpheline après un réveil, recul absent.
 
 CONTROLLER = r"""
-function fakeDoc(){
-  const mk=tag=>{const el={tagName:tag,children:[],attrs:{},style:{},hidden:false,offsetTop:0,listeners:{},_text:'',
-    sets:{},
-    setAttribute(k,v){this.attrs[k]=String(v);this.sets[k]=(this.sets[k]||0)+1},
-    getAttribute(k){return k in this.attrs?this.attrs[k]:null},removeAttribute(k){delete this.attrs[k]},
-    appendChild(c){this.children.push(c);return c},append(...c){this.children.push(...c)},
-    addEventListener(t,f){(this.listeners[t]=this.listeners[t]||[]).push(f)},focus(){},
-    set textContent(v){this._text=v;this.children=[]},get textContent(){return this._text}};return el};
-  return {createElement:mk,createElementNS:(_ns,t)=>mk(t),getElementById:()=>null,head:mk('head'),mk};
-}
 function harness(opts){
   let clock=Date.parse('2026-10-01T10:00:00Z');const timers=new Map();let seq=0;
   const later=(fn,ms)=>{const id=++seq;timers.set(id,{at:clock+ms,fn,every:0});return id};
@@ -476,9 +447,8 @@ function harness(opts){
       if(r.delay)later(deliver,r.delay);else deliver();
       if(init.signal)init.signal.addEventListener('abort',
         ()=>reject(Object.assign(new Error('aborted'),{name:'AbortError'})));});};
-  const doc=fakeDoc();const host=doc.mk('div');
   const logs=[],paints=[];let rail=null;
-  rail=M.createCaptureRail({document:doc,host,fetch,now:()=>clock,setTimeout:later,clearTimeout:unlater,
+  rail=M.createCaptureController({fetch,now:()=>clock,setTimeout:later,clearTimeout:unlater,
     setInterval:every,clearInterval:unlater,hidden:()=>hidden,log:(l,e,d)=>logs.push(e),
     onPaint:v=>paints.push({audio:v.controls.audio.state,screen:v.controls.screen.state,
       shot:v.controls.screenshot.state,pressed:v.controls.audio.pressed,
@@ -492,14 +462,12 @@ function harness(opts){
     clock=end;await flush();}
   const gets=()=>calls.filter(c=>c.method==='GET').length;
   const pollTimers=()=>[...timers.values()].filter(t=>!t.every).length;
-  return {rail,calls,gets,advance,setHidden:h=>{hidden=h},timers,pollTimers,logs,paints,host,clock:()=>clock};
+  return {rail,calls,gets,advance,setHidden:h=>{hidden=h},timers,pollTimers,logs,paints,clock:()=>clock};
 }
 const iso=ms=>new Date(ms).toISOString();
 const row=(ch,state,x)=>Object.assign({capture_id:'jcap_'+ch,channel:ch,mode:'continuous',state,
   created_at:'2026-10-01T09:59:00Z',activated_at:'2026-10-01T09:59:01Z',stop_requested_at:null},x||{});
 const ok=(captures,recent,delay)=>({status:200,body:{captures:captures||[],stuck:[],recent:recent||[]},delay});
-const button=(h,id)=>h.host.children.find(c=>c.id==='captureRailStrip').children
-  .find(b=>b.attrs['data-capture-control']===id);
 """
 
 
@@ -544,8 +512,7 @@ def test_apres_un_arret_aucun_actif_perime(tmp_path):
       h.rail.act('audio');const seen=[];
       for(let i=0;i<30;i+=1){await h.advance(100);const c=h.rail.view().controls.audio;
         seen.push(c.state+(c.pressed?'*':''))}
-      const b=button(h,'audio');
-      out({before,seen,note:h.rail.note(),pressed:b.attrs['aria-pressed']});
+      out({before,seen,note:h.rail.note(),pressed:String(h.rail.view().controls.audio.pressed)});
     """)
     assert v["before"] == "active"
     seen = v["seen"]
@@ -715,24 +682,27 @@ def test_un_refus_ne_montre_jamais_l_attente_a_cote_de_la_note(tmp_path):
 
 
 def test_le_nom_accessible_ne_bouge_pas_chaque_seconde(tmp_path):
-    """MINOR-5 : le chronomètre vit dans la description, pas dans le nom."""
+    """MINOR-5, migré (Slice 04) : le chronomètre vit dans la description de la
+    puce, pas dans son nom ; le canal reste reconnaissable, l'arrêt est dit à
+    part (action `stop`)."""
 
     v = ctl(tmp_path, r"""
       const h=harness({status:()=>ok([row('audio','active',{activated_at:'2026-10-01T09:59:55Z'})])});
+      const names=[],details=[];
+      h.rail.subscribe(view=>{const c=V.chipsOf(view).find(x=>x.channel==='audio');
+        if(c){names.push(c.name);details.push(c.detail)}});
       h.rail.start();await h.advance(1200);
-      const b=button(h,'audio');
-      const sets=b.sets['aria-label'];const detail=b.children.find(c=>c.className==='cr-sr');const d1=detail.textContent;
+      const d1=details[details.length-1];
       await h.advance(5000);
-      out({label:b.attrs['aria-label'],title:b.attrs.title,grew:b.sets['aria-label']-sets,
-        describedby:b.attrs['aria-describedby'],detailId:detail.id,d1,d2:detail.textContent,
-        stop:b.attrs['data-cr-stop'],glyph:b.children[0].children[0].attrs['data-cr-glyph']});
+      const chip=V.chipsOf(h.rail.view()).find(x=>x.channel==='audio');
+      out({names:[...new Set(names)],d1,d2:details[details.length-1],chip:[chip.channel,chip.action,chip.timer],
+        wedge:V.wedgeStatusOf(h.rail.view().controls.audio)});
     """)
-    assert v["label"] == v["title"] == "Arrêter l’enregistrement audio"
-    assert v["grew"] == 0, "aria-label réécrit pendant que le chronomètre tourne"
-    assert v["describedby"] == v["detailId"] == "captureRailDetail-audio"
+    assert v["names"] == ["Arrêter l’enregistrement audio"], "nom réécrit pendant que le chronomètre tourne"
     assert v["d1"] == "en cours depuis 0:06" and v["d2"] == "en cours depuis 0:11"
-    # MAJOR-1 : le canal reste reconnaissable, l'arrêt est une pastille à part.
-    assert v["glyph"] == "audio" and v["stop"] == "true"
+    assert v["chip"] == ["audio", "stop", "0:11"]
+    # Le secteur est coché, sans compteur dans son texte (il rejoint son nom accessible).
+    assert v["wedge"] == {"text": "en cours", "checked": True}
 
 
 # ==========================================================================
@@ -791,7 +761,7 @@ def test_un_arret_part_pendant_notre_demarrage_en_vol(tmp_path):
       h.rail.start();await h.advance(100);
       h.rail.act('audio');await h.advance(1500);
       const offered=h.rail.view().controls.audio;
-      const b=button(h,'audio');const disabled=b.attrs['aria-disabled'],chip=b.attrs['data-cr-stop'];
+      const disabled=String(!offered.action),chip=String(offered.stopMark);
       h.rail.act('audio');await h.advance(100);
       const during=h.rail.view().controls.audio.state;
       // La fin du démarrage (2,6 s) ne doit pas effacer l'arrêt encore en vol.
@@ -882,3 +852,198 @@ def test_une_fin_venue_d_ailleurs_dit_precedent_interrompu(tmp_path):
     assert v["label"] == "Démarrer l’enregistrement audio — précédent interrompu : source perdue en cours de route"
     assert "dernier essai" not in v["label"]
     assert v["note"] == "Enregistrement audio interrompu — source perdue en cours de route (source_lost)."
+
+
+# ==========================================================================
+# Slice 04 de l'orbital UI : API du contrôleur pour la roue, plusieurs
+# captures par canal, vues pures (secteur, puces, sous-arc des cibles).
+# ==========================================================================
+
+
+def test_plusieurs_ecrans_chaque_capture_listee_et_arretable_meme_statut_perdu(tmp_path):
+    v = ctl(tmp_path, r"""
+      let down=false;
+      const two=[row('screen','active',{capture_id:'jcap_a',device:'default',created_at:'2026-10-01T09:59:00Z'}),
+        row('screen','active',{capture_id:'jcap_b',device:'display2',created_at:'2026-10-01T09:59:30Z',
+          activated_at:'2026-10-01T09:59:31Z'})];
+      let open=two.slice();
+      const h=harness({status:()=>down?{throw:true}:ok(open),
+        write:url=>{const id=decodeURIComponent(url.split('/')[3]);open=open.filter(r=>r.capture_id!==id);
+          return {status:200,body:{capture:{capture_id:id,state:'complete'}},delay:500}}});
+      h.rail.start();await h.advance(1500);
+      const live=h.rail.view().controls.screen;
+      down=true;await h.advance(1500);
+      const lost=h.rail.view().controls.screen;
+      // Statut perdu : chacune s'arrête encore (vie privée d'abord), par son id.
+      const first=h.rail.stop('jcap_a');await h.advance(50);
+      const during=h.rail.view().controls.screen.captures.map(c=>[c.captureId,c.state,c.action]);
+      await h.advance(600);await first;
+      const after=h.rail.view().controls.screen.captures.map(c=>[c.captureId,c.state,c.action]);
+      const unknownId=await h.rail.stop('jcap_zz');
+      out({live:[live.state,live.captureId,live.captures.map(c=>[c.captureId,c.device,c.state,c.timer])],
+        lost:[lost.state,lost.action,lost.captures.map(c=>[c.captureId,c.device,c.state,c.action])],
+        during,after,unknownId,posts:h.calls.filter(c=>c.method==='POST').map(c=>c.url)});
+    """)
+    # La plus récente décrit le canal ; toutes sont listées, la plus ancienne d'abord.
+    assert v["live"][0:2] == ["active", "jcap_b"]
+    assert v["live"][2] == [["jcap_a", "default", "active", "1:00"], ["jcap_b", "display2", "active", "0:30"]]
+    assert v["lost"][0:2] == ["unknown", "stop"]
+    assert v["lost"][2] == [["jcap_a", "default", "unknown", "stop"], ["jcap_b", "display2", "unknown", "stop"]]
+    assert v["during"] == [["jcap_a", "stopping", None], ["jcap_b", "unknown", "stop"]]
+    assert v["after"] == [["jcap_b", "unknown", "stop"]], "l'arrêt accepté oublie celle-là, pas l'autre"
+    assert v["unknownId"] is None
+    assert v["posts"] == ["/api/captures/jcap_a/stop"], "un id que personne ne connaît n'est pas envoyé"
+
+
+def test_deux_arrets_partent_sans_s_attendre(tmp_path):
+    """Vie privée d'abord : arrêter deux enregistrements d'un même canal ne
+    fait pas attendre le second derrière le premier."""
+
+    v = ctl(tmp_path, r"""
+      const rows=[row('screen','active',{capture_id:'jcap_a'}),row('screen','active',{capture_id:'jcap_b',device:'display2'})];
+      const h=harness({status:()=>ok(rows),write:()=>({status:200,body:{capture:{state:'complete'}},delay:3000})});
+      h.rail.start();await h.advance(1500);
+      h.rail.stop('jcap_a');h.rail.stop('jcap_b');h.rail.stop('jcap_b');await h.advance(100);
+      out(h.calls.filter(c=>c.method==='POST').map(c=>c.url));
+    """)
+    assert v == ["/api/captures/jcap_a/stop", "/api/captures/jcap_b/stop"]
+
+
+def test_un_demarrage_sur_une_cible_choisie_porte_son_appareil_et_le_simple_non(tmp_path):
+    v = ctl(tmp_path, r"""
+      const bodies=[];
+      const h=harness({status:()=>ok([]),write:(url,init)=>{bodies.push(url+' '+init.body);
+        return url.endsWith('screenshot')
+          ?{status:201,body:{capture:{capture_id:'jcap_s',mode:'one_shot',state:'complete'},artifact:{artifact_id:'jart_s',kind:'screenshot'}}}
+          :{status:201,body:{capture:row('screen','active')}}}});
+      h.rail.start();await h.advance(200);
+      await h.rail.act('screen');
+      await h.rail.startChannel('screen',{device:'display2'});
+      await h.rail.startChannel('audio',{device:'default'});
+      const shot=await h.rail.screenshot({device:'display2'});
+      const simple=await h.rail.act('screenshot');
+      out({bodies,shot,last:h.rail.lastShot(),view:h.rail.view().shot,simple});
+    """)
+    assert v["bodies"] == [
+        '/api/captures/start {"channel":"screen"}',
+        '/api/captures/start {"channel":"screen","options":{"device":"display2"}}',
+        '/api/captures/start {"channel":"audio"}',
+        '/api/captures/screenshot {"options":{"device":"display2"}}',
+        "/api/captures/screenshot {}",
+    ]
+    # Le résultat entier, pour l'aperçu de la Slice 05 : rendu et publié.
+    assert v["shot"] == {"capture": {"capture_id": "jcap_s", "mode": "one_shot", "state": "complete"},
+                         "artifact": {"artifact_id": "jart_s", "kind": "screenshot"}}
+    assert v["simple"]["artifact"]["artifact_id"] == "jart_s"
+    assert v["view"]["artifact"]["artifact_id"] == "jart_s" and v["view"]["device"] == "default"
+
+
+def test_statut_inconnu_ni_demarrage_ni_capture_d_ecran_et_la_raison_est_dite(tmp_path):
+    v = ctl(tmp_path, r"""
+      const h=harness({status:()=>({throw:true})});
+      h.rail.start();await h.advance(3000);
+      const n=h.gets();
+      const a=await h.rail.startChannel('audio',{device:'x'});const b=await h.rail.screenshot({});
+      out({a,b,posts:h.calls.filter(c=>c.method==='POST').length,reads:h.gets()-n,note:h.rail.note(),
+        logs:h.logs.filter(e=>e.endsWith('_refused'))});
+    """)
+    assert v["a"] is None and v["b"] is None and v["posts"] == 0
+    assert v["reads"] == 2, "chaque demande relit le statut tout de suite"
+    assert v["note"]["text"] == ("Capture d’écran non prise — état des captures inconnu, Jarvis injoignable "
+                                 "(status_unknown).")
+    assert v["logs"] == ["capture_rail.start_refused", "capture_rail.screenshot_refused"]
+
+
+def test_les_cibles_sont_lues_chez_core_et_un_echec_garde_son_code(tmp_path):
+    v = ctl(tmp_path, r"""
+      let fail=false;
+      const listing={screen:{available:true,devices:[{token:'default',label:'Écran principal'}]},
+        audio:{available:false,devices:[],code:'unsupported_source'}};
+      const h=harness({status:()=>ok([]),write:url=>fail
+        ?{ok:false,status:503,body:{error:{code:'core_unreachable',message:'down'}}}:{status:200,body:listing}});
+      h.rail.start();await h.advance(200);
+      const got=await h.rail.targets();
+      fail=true;let code=null;
+      try{await h.rail.targets()}catch(e){code=e.code}
+      out({got,code,urls:h.calls.filter(c=>c.url.includes('targets')).map(c=>c.method+' '+c.url),
+        logs:h.logs.filter(e=>e.includes('targets'))});
+    """)
+    assert v["got"]["screen"]["devices"][0]["token"] == "default"
+    assert v["code"] == "core_unreachable"
+    assert v["urls"] == ["GET /api/captures/targets", "GET /api/captures/targets"]
+    assert v["logs"] == ["capture_rail.targets_read", "capture_rail.targets_failed"]
+
+
+def test_le_secteur_dit_l_etat_du_canal_sans_compteur(tmp_path):
+    v = run(tmp_path, r"""
+      const s=(o)=>V.wedgeStatusOf(M.viewOf(Object.assign({now:NOW},o)).controls.audio);
+      const shot=(o)=>V.wedgeStatusOf(M.viewOf(Object.assign({now:NOW},o)).controls.screenshot);
+      out({idle:s({status:st(),reachable:true}),active:s({status:st([cap('audio','active')]),reachable:true}),
+        starting:s({status:st(),reachable:true,pending:{audio:{kind:'start',since:NOW}}}),
+        error:s({status:st(),reachable:true,failure:{audio:{code:'source_unavailable',text:'micro indisponible'}}}),
+        stuck:s({status:st([cap('audio','stopping')],[{capture_id:'jcap_audio',error_code:'store_unavailable'}]),reachable:true}),
+        lostKnown:s({reachable:false,known:{audio:{capture_id:'jcap_audio'}}}),lost:s({reachable:false}),
+        shotIdle:shot({status:st(),reachable:true}),shotBusy:shot({status:st(),reachable:true,pending:{screenshot:{since:NOW}}}),
+        shotLost:shot({reachable:false})});
+    """)
+    assert v["idle"] == {"checked": False}
+    assert v["active"] == {"text": "en cours", "checked": True}
+    assert v["starting"] == {"tone": "wait", "text": "démarrage…", "checked": False}
+    assert v["error"] == {"tone": "error", "text": "échec (source_unavailable)", "checked": False}
+    assert v["stuck"] == {"tone": "error", "text": "arrêt bloqué (store_unavailable)", "checked": True}
+    # Statut perdu : « ? » (n'alarme pas l'ancre), jamais coché ; l'arrêt possible est dit.
+    assert v["lostKnown"] == {"tone": "unknown", "text": "état inconnu — arrêt possible", "checked": False}
+    assert v["lost"]["tone"] == "unknown" and v["lost"]["checked"] is False
+    assert v["shotIdle"] is None and v["shotBusy"]["tone"] == "wait" and v["shotLost"]["tone"] == "unknown"
+
+
+def test_une_puce_par_capture_une_attente_et_la_capture_d_ecran(tmp_path):
+    v = run(tmp_path, r"""
+      const view=M.viewOf({status:st([cap('screen','active',{device:'display2'}),cap('audio','active')]),reachable:true,
+        now:NOW,pending:{screenshot:{since:NOW-2000}}});
+      const waiting=M.viewOf({status:st(),reachable:true,now:NOW,pending:{audio:{kind:'start',since:NOW-3000,device:'Casque-USB'}}});
+      const done=M.viewOf({status:st(),reachable:true,now:NOW,shotAt:NOW-500});
+      const pick=c=>[c.channel,c.state,c.action,c.timer,c.name,c.tag];
+      out({view:V.chipsOf(view).map(pick),waiting:V.chipsOf(waiting).map(pick),done:V.chipsOf(done).map(pick),
+        idle:V.chipsOf(M.viewOf({status:st(),reachable:true,now:NOW})).length});
+    """)
+    assert v["view"] == [
+        ["screen", "active", "stop", "1:00", "Arrêter l’enregistrement d’écran (écran 2)", "écran 2"],
+        ["audio", "active", "stop", "1:00", "Arrêter l’enregistrement audio", ""],
+        ["screenshot", "busy", None, "2 s", "Capture d’écran en cours…", ""],
+    ]
+    assert v["waiting"] == [["audio", "starting", None, "3 s", "Enregistrement audio : démarrage… (Casque-USB)",
+                             "Casque-USB"]]
+    assert v["done"] == [["screenshot", "done", None, "", "Capture d’écran enregistrée", ""]]
+    assert v["idle"] == 0, "rien à dire : aucune puce"
+
+
+def test_le_sous_arc_ne_propose_que_des_cibles_reelles_et_l_entree_unique_le_dit(tmp_path):
+    v = run(tmp_path, r"""
+      const idle=M.viewOf({status:st(),reachable:true,now:NOW}).controls;
+      const rec=M.viewOf({status:st([cap('screen','active')]),reachable:true,now:NOW}).controls;
+      const lost=M.viewOf({reachable:false,now:NOW,known:{screen:{capture_id:'jcap_screen'}}}).controls;
+      const one={available:true,devices:[{token:'default',label:'Écran principal',primary:true,width:1920,height:1080}]};
+      const two={available:true,devices:[...one.devices,{token:'display2',label:'Écran 2',primary:false,width:1280,height:1024}]};
+      const pick=items=>items.map(i=>[i.kind,i.label,(i.kind==='stop'?i.captureId:i.device)||null,!!i.disabled]);
+      const err=Object.assign(new Error('x'),{code:'core_unreachable'});
+      out({single:pick(V.targetItemsOf('screen',idle.screen,one,null,true)),
+        shot:pick(V.targetItemsOf('screenshot',idle.screenshot,two,null,true)),
+        recording:pick(V.targetItemsOf('screen',rec.screen,two,null,true)),
+        lost:pick(V.targetItemsOf('screen',lost.screen,two,null,false)),
+        failed:pick(V.targetItemsOf('audio',idle.audio,null,err,true,c=>M.refusalText(c,'',null))),
+        none:pick(V.targetItemsOf('audio',idle.audio,{available:false,devices:[],code:'unsupported_source'},null,true)),
+        unreadable:V.targetItemsOf('screen',idle.screen,{available:true,code:'targets_unreadable',devices:one.devices},null,true)[0].detail});
+    """)
+    # Une seule cible : une entrée, qui le dit — jamais omise, jamais un faux choix.
+    assert v["single"] == [["target", "Écran principal — seule cible disponible", "default", False]]
+    assert v["shot"] == [["target", "Écran principal", "default", False], ["target", "Écran 2", "display2", False]]
+    # Un écran qui enregistre : son arrêt en tête, sa cible non proposée une seconde fois.
+    assert v["recording"] == [["stop", "Arrêter — écran principal", "jcap_screen", False],
+                              ["target", "Écran principal", "default", True], ["target", "Écran 2", "display2", False]]
+    # Statut perdu : l'arrêt reste offert, aucun démarrage.
+    assert v["lost"] == [["stop", "Arrêter — écran principal", "jcap_screen", False],
+                         ["target", "Écran principal", "default", True], ["target", "Écran 2", "display2", True]]
+    assert v["failed"] == [["none", "Cibles illisibles", None, True]]
+    assert v["none"] == [["none", "Aucune cible", None, True]]
+    assert "targets_unreadable" in v["unreadable"]

@@ -618,25 +618,29 @@ STUDIO_INSPECTOR_SCRIPT_MARKER = "/*__CONTROL_CENTER_PRESENTATION_STUDIO_INSPECT
 #: emporter les autres modules avec lui.
 INTERACTION_MODE_SCRIPT_FILE = "control_center_interaction_mode.js"
 INTERACTION_MODE_SCRIPT_MARKER = "/*__CONTROL_CENTER_INTERACTION_MODE_JS__*/"
-#: Rail de capture du bord gauche (session-context-recording, Slice 10) :
-#: capture d'écran, enregistrement audio et enregistrement d'écran, dans un hôte
-#: **frère** de la palette Bare Hands (`#captureRail`), jamais dans ses outils
-#: (D15). Sa seule vérité est `GET /api/captures/status` (relais de Core,
-#: `capture_relay.py`), sondé par le module lui-même ; ses écritures passent par
-#: `POST /api/captures/start|screenshot|{id}/stop`. Il mesure la colonne Bare
-#: Hands pour se poser dessous (ou à côté quand la place manque) et ne dépend
-#: d'aucun autre module. Refus d'installation rattrapé, comme le contrôle de mode.
+#: Contrôleur de capture (session-context-recording Slice 10 ; découpé en
+#: orbital-ui Slice 04) : capture d'écran, enregistrement audio et
+#: enregistrement d'écran. Sa seule vérité est `GET /api/captures/status`
+#: (relais de Core, `capture_relay.py`), sondé par le module lui-même ; ses
+#: écritures passent par `POST /api/captures/start|screenshot|{id}/stop`, ses
+#: cibles par `GET /api/captures/targets`. Il ne dessine rien : il publie un
+#: modèle de vue (`JarvisCaptureRail.subscribe`). Pas un outil Bare Hands (D15).
 CAPTURE_RAIL_SCRIPT_FILE = "control_center_capture_rail.js"
 CAPTURE_RAIL_SCRIPT_MARKER = "/*__CONTROL_CENTER_CAPTURE_RAIL_JS__*/"
 #: Roue d'outils orbitale du bord gauche (jarvis-board-orbital-ui-workspace-rail,
-#: Slice 02, décision D3) : ancre au repos, demi-cercle Sélection / Vidéo /
+#: Slices 02-04, décision D3) : ancre au repos, demi-cercle Sélection / Vidéo /
 #: Capture d'écran / Audio déployé par la souris, le clavier ou le pointeur Bare
 #: Hands. Ce que fait chaque secteur est injecté (`JarvisToolWheel.register`) ;
-#: aucun appel réseau, aucun sondage. Derrière le drapeau
-#: `JarvisToolWheel.enabled` (faux par défaut) jusqu'à la Slice 04. Contrat :
-#: `docs/control-center-shell.md` › Roue d'outils. Refus d'installation rattrapé.
+#: aucun appel réseau, aucun sondage. Plus de drapeau depuis la Slice 04.
+#: Contrat : `docs/control-center-shell.md` › Roue d'outils. Refus rattrapé.
 TOOL_WHEEL_SCRIPT_FILE = "control_center_tool_wheel.js"
 TOOL_WHEEL_SCRIPT_MARKER = "/*__CONTROL_CENTER_TOOL_WHEEL_JS__*/"
+#: Vues de capture (orbital-ui Slice 04, D6) : secteurs Vidéo / Capture d'écran /
+#: Audio de la roue, sous-arcs des cibles réelles, indicateurs persistants
+#: `#recIndicators` (rang 40). Lit le contrôleur et la roue : inséré APRÈS eux.
+#: Contrat : `docs/capture.md` › Interface. Refus d'installation rattrapé.
+CAPTURE_WHEEL_SCRIPT_FILE = "control_center_capture_wheel.js"
+CAPTURE_WHEEL_SCRIPT_MARKER = "/*__CONTROL_CENTER_CAPTURE_WHEEL_JS__*/"
 #: Sélection Souris / Bare Hands et reprise de la main par la souris
 #: (jarvis-board-orbital-ui-workspace-rail, Slice 03, D5) : projection du cycle
 #: de vie Bare Hands sur le secteur Sélection de la roue, sous-arc Souris /
@@ -2447,6 +2451,10 @@ class ControlCenter:
         html = html.replace(
             TOOL_WHEEL_SCRIPT_MARKER,
             page.with_name(TOOL_WHEEL_SCRIPT_FILE).read_text(encoding="utf-8"),
+        )
+        html = html.replace(
+            CAPTURE_WHEEL_SCRIPT_MARKER,
+            page.with_name(CAPTURE_WHEEL_SCRIPT_FILE).read_text(encoding="utf-8"),
         )
         html = html.replace(
             INPUT_ARBITRATION_SCRIPT_MARKER,

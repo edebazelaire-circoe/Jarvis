@@ -135,10 +135,14 @@ def test_sous_700px_le_bouton_ne_recouvre_plus_la_palette_bare_hands(tmp_path, w
     explicite de cette Slice.
 
     La sortie est horizontale : on passe à droite d'une colonne dont la largeur,
-    elle, est fixe."""
+    elle, est fixe.
+
+    Orbital UI Slice 04 : la roue d'outils est visible d'office et la colonne
+    Bare Hands quitte la vue ; elle revient quand la roue est cachée (retour
+    arrière). Le relevé se fait donc roue cachée, là où la colonne existe."""
 
     seen = _drive(tmp_path, [{"width": width, "height": height, "mountPalette": True,
-                              "toast": True}])[0]
+                              "toast": True, "wheelHidden": True}])[0]
     button, palette = seen["modeBtn"], seen["palette"]
     assert palette, "la palette est bien montée : sans elle ce test ne prouve rien"
     # **Aucun recouvrement**, ni partiel ni total.
@@ -161,7 +165,9 @@ def test_a_pleine_largeur_le_controle_ne_bouge_pas(tmp_path):
     button = seen["modeBtn"]
     # Toujours sur le rail gauche, à son offset d'origine.
     assert round(button["l"]) == 18
-    for name in ("palette", "bhHud", "hint", "toast", "dock", "pills"):
+    # Slice 04 de l'orbital UI : la roue est visible d'office, la colonne cachée.
+    assert seen["wheel"] and not seen.get("palette"), (seen["wheel"], seen.get("palette"))
+    for name in ("palette", "bhHud", "wheel", "hint", "toast", "dock", "pills"):
         assert _overlap(button, seen.get(name)) is None, (name, button, seen.get(name))
 
 

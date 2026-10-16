@@ -4,7 +4,8 @@ Explicit media capture of Jarvis — audio recording, screen recording,
 screenshot — and its continuity guarantee (handoff
 `jarvis-session-context-recording-runtime`, Slice 05; decisions D01, D11–D13,
 D18, D-CAP). Media families plug into this owner: microphone in Slice 06,
-desktop in Slice 07. HTTP/MCP (Slice 09) and the left toolbar (Slice 10) only
+desktop in Slice 07. HTTP/MCP (Slice 09) and the interface (left rail in
+Slice 10, tool wheel wedges and indicators since orbital UI Slice 04) only
 read and call it. Overview of the whole feature (guarantees, operations,
 costs, privacy, troubleshooting, rollback):
 [session-context-capture.md](session-context-capture.md).
@@ -712,6 +713,7 @@ prefixes added deliberately to `FORWARDABLE_PREFIXES`, pinned by
 | GET | `/v1/contexts/current` | active Context |
 | POST | `/v1/contexts/{context_id}/activate` | reactivate `{origin?}` → `{context, previous_context_id, changed}` |
 | GET | `/v1/captures/status[?recent=0..20]` | open captures (live bytes, gaps), `stuck`, last finished (`recent`, default 5), `recovery`, `enrichment` (worker state); each capture carries its `transcription` |
+| GET | `/v1/captures/targets` | targets the installed sources can really take, per channel (below; orbital UI Slice 04) |
 | POST | `/v1/captures/start` | `{channel: audio\|screen, options?: {source?, device?}, origin?}` → 201 `{capture}` |
 | POST | `/v1/captures/screenshot` | `{options?, origin?}` → 201 `{capture, artifact}` |
 | GET | `/v1/captures/{capture_id}` | one capture and its transcription |
@@ -722,6 +724,34 @@ prefixes added deliberately to `FORWARDABLE_PREFIXES`, pinned by
 | GET | `/v1/artifacts`, `/v1/artifacts/{id}`, `…/relations`, `…/transcript`, `…/payload`; DELETE `/v1/artifacts/{id}` | [artifacts.md](artifacts.md) › *HTTP API* |
 | GET | `/v1/activity` | ledger tail, [artifacts.md](artifacts.md) › *HTTP API* |
 
+- **Targets** (`CaptureService.targets()`, read-only, never opens a source):
+  `{screen: {available, devices, code?}, audio: {available, devices, code?}}`.
+  A device is `{token, label, primary?, width?, height?, default?}`; its
+  `token` is the `options.device` that selects it, and `default` always comes
+  first. Screen (`ScreenCaptureSources.targets`, the same
+  `DisplayProvider.displays()` as a capture, read at each call): `default` =
+  the primary display (`Écran principal`, its physical size), then every
+  **other** display `display2..N` in the source order (*Source policy*);
+  `display1` is the primary, already named by `default`, so it is not listed
+  twice (two entries for one screen would be a fake choice, and two
+  recordings of one screen under two tokens). Audio
+  (`AudioRecordingSources.targets`, given `list_inputs` =
+  `SoundDeviceAudioDiagnostics.list_devices`, the Voice settings'
+  enumeration): `default` = the Voice input setting, labelled `Micro de Voice
+  — <resolved name>`, then the other inputs of the default host API (the one
+  of the system default input; the same microphone through another host API
+  is not repeated), token **derived from the name** (`input_token`: characters
+  outside `[A-Za-z0-9_.-]` become `-`, ≤ 96, a `-2` suffix for a duplicate
+  name; the domain refuses spaces in `device`) so it survives PortAudio index
+  drift; a start with such a token resolves the name's **current** index,
+  an unknown token is `source_unavailable`. No source for a channel →
+  `available: false`, no device, the refusal code (`unsupported_source`,
+  `unsupported_platform`). Enumeration failure, a timeout (5 s, daemon thread)
+  or a list without `default` first → `default` only, `code:
+  targets_unreadable`, journal `core.capture.targets_unreadable` (channel,
+  exception type) — never an error page. Labels are system-derived: paths
+  masked (`redact_paths`). No window capture, no all-displays capture, no
+  system audio (*Source policy*).
 - **Origin.** `origin` is `user` (default) or `brain`; a capture's row keeps
   it in `data` (`{"origin": "brain"}`), a Context transition in its activity.
   A Context switch by the brain is **not** deferred to the end of its turn
@@ -764,91 +794,136 @@ prefixes added deliberately to `FORWARDABLE_PREFIXES`, pinned by
   value) and re-encodes each path parameter (a `%2F` never reaches another
   Core route).
 
-## Interface: the left capture rail (Slice 10)
+## Interface: tool wheel wedges and persistent indicators (orbital UI Slice 04)
 
-`jarvis/runtime/control_center_capture_rail.js` draws three controls in the
-host `#captureRail` that `control_center.html` declares right after
-`#barehandsPalette`: **screenshot** (momentary action), **audio recording** and
-**screen recording** (toggles). Decisions D14/D15: it is the left floating rail,
-not the right `.dock`, and these are **not** Bare Hands tools — the host is a
-sibling of the palette, nothing goes into `#barehandsPaletteStrip`, `BH.TOOL` or
-`describeTools()`, and no button carries `data-bh-tool`.
+Born as the left capture rail (session-context-recording Slice 10, decisions
+D14/D15); moved into the orbital tool wheel by Slice 04 of
+`jarvis-board-orbital-ui-workspace-rail` (resolved architecture §5 D6, D3,
+D4). The rail's host `#captureRail` and its measured placement are gone; its
+controller and every truth rule below are kept.
+
+| Piece | Code | Role |
+| --- | --- | --- |
+| Controller / view-model | `jarvis/runtime/control_center_capture_rail.js` (`window.JarvisCaptureRail`) | polls Core through the relay, writes, re-reads; draws nothing |
+| Views | `jarvis/runtime/control_center_capture_wheel.js` (`window.JarvisCaptureViews`) | Vidéo / Capture d'écran / Audio wedges of `#toolWheel`, target sub-arcs, indicators `#recIndicators` |
+| Wheel | `jarvis/runtime/control_center_tool_wheel.js` | the surface ([control-center-shell.md](control-center-shell.md) › *Tool wheel*) |
+
+These are **not** Bare Hands tools: nothing goes into `BH.TOOL`,
+`describeTools()` or `#barehandsPaletteStrip`, and no element carries
+`data-bh-tool`. Captures stay usable with Bare Hands off or absent.
+
+**Controller API** (`JarvisCaptureRail`): `subscribe(fn)` (called at once,
+then on every paint; returns the unsubscribe function), `start(channel,
+{device})`, `screenshot({device})` (resolves `{capture, artifact}` or `null`;
+the last result is also `view().shot` and `lastShot()`, for the preview of
+Slice 05), `stop(captureId)`, `targets()` (`GET /api/captures/targets`,
+rejects with the real code), `act(control)` (a wedge's simple activation),
+`view()`, `note()`, `dismiss()`, `poll()`, `wake()`. A start or a screenshot
+without a chosen device sends no `options` (= `default`, as before); a chosen
+one sends `options.device`. Starts and screenshots are refused without a
+network call while the status is unknown (the note says `état des captures
+inconnu`, the status is re-read at once) or while the same request is in
+flight.
 
 | Rule | How |
 | --- | --- |
-| Backend truth only | `GET /api/captures/status?recent=3` (the relay). Cadence: every 1 s while a capture is open, a write is in flight, or for 10 s after a write; 3 s when idle; 20 s when the tab is hidden; status lost → exponential backoff 1, 2, 4, 8, then 15 s, back to normal on the first success. 6 s deadline per read. After every write the page waits for any read already in flight (it may carry the state from before the write), then reads again; the request stays painted as a wait until that fresh read lands, so a start never flashes a stale idle and a stop never a stale active. A channel is painted open (`aria-pressed="true"`) **only** when that status lists an open continuous capture for it. A click opens a visible wait; it never paints "active" |
-| Elapsed time | from Core's `activated_at` (else `created_at`), frozen at `stop_requested_at`; never from the local click |
-| Concurrency | audio and screen are independent (one open capture per channel/device, see *States*); the screenshot stays available while both record |
-| Failed start | the button returns to idle with an error mark (`!`) and a note `<control> non démarré — <cause> (<code>)`; `already_active` is not an error (the status shows the holder) |
-| Stop | `POST /api/captures/{id}/stop` on the id the status gave; `partial`/`failed` results say so (`arrêté mais incomplet`). Also offered during this page's own start once the status lists the row as `starting` (Core accepts it); the start's failure that follows is not reported as a refusal |
-| `stuck` | a capture listed in `status.stuck` is shown as an error (`arrêt bloqué (<code>)`); clicking stops it again |
-| Ended elsewhere | an open capture that disappears into `recent` as `partial`/`failed` without this page stopping it is announced (`interrompu — <cause>`); the tooltip then says `précédent interrompu : <cause>`, never `dernier essai` (the user tried nothing); a refused start (`stop_reason: start_failed`) this page asked for is reported once, as `non démarré` |
-| Status lost | relay or Core unreachable, timeout, unreadable body → every control shows **état inconnu** (`?` mark, dashed border, `aria-pressed="false"`), starts are refused; a capture known open just before can still be **stopped** (privacy first: its button keeps the stop chip, the `?` moves to the left corner) and is forgotten once Core accepts that stop; a click on any control during the loss reads the status at once instead of waiting for the backoff (still no start) |
-| Waits | every write has a 50 s deadline (relay 45 s); then the page gives the hand back and re-reads the status (`pas de réponse à temps, issue inconnue`) |
+| Backend truth only | `GET /api/captures/status?recent=3` (the relay). Cadence: every 1 s while a capture is open, a write is in flight, or for 10 s after a write; 3 s when idle; 20 s when the tab is hidden; status lost → exponential backoff 1, 2, 4, 8, then 15 s, back to normal on the first success. 6 s deadline per read. After every write the controller waits for any read already in flight (it may carry the state from before the write), then reads again; the request stays a wait until that fresh read lands, so a start never flashes a stale idle and a stop never a stale active. A channel is said open (`pressed`, wedge `aria-checked="true"`, an indicator) **only** when that status lists an open continuous capture for it. An activation opens a visible wait; it never paints "active" |
+| Several captures per channel | Core holds one open continuous capture per channel **and device** (two displays can record together): the model lists every open capture of a channel (`controls.<channel>.captures`, oldest first, each with its device, state, Core-derived timer and stop action); the channel fields describe the most recent |
+| Elapsed time | from Core's `activated_at` (else `created_at`), frozen at `stop_requested_at`; never from the local click — a reload or a second tab shows the same duration |
+| Concurrency | audio and screen are independent; the screenshot stays available while both record |
+| Failed start | the wedge gets an error mark (`!`, the wheel anchor too, so it shows with the wheel closed) and the indicators show a note `<control> non démarré — <cause> (<code>)`; `already_active` is not an error (the status shows the holder) |
+| Stop | `POST /api/captures/{id}/stop` on the id the status gave; `partial`/`failed` results say so (`arrêté mais incomplet`). Stops are tracked **per capture**: two recordings stop without waiting for each other. Also offered during this page's own start once the status lists the row as `starting` (Core accepts it); the start's failure that follows is not reported as a refusal |
+| `stuck` | a capture listed in `status.stuck` is an error (`arrêt bloqué (<code>)`); activating it stops it again |
+| Ended elsewhere | an open capture that disappears into `recent` as `partial`/`failed` without this page stopping it is announced (`interrompu — <cause>`); the label then says `précédent interrompu : <cause>`, never `dernier essai` |
+| Status lost | relay or Core unreachable, timeout, unreadable body → nothing is said open, starts are refused; every capture known open just before can still be **stopped** (privacy first: its indicator stays, dashed, with `?` and the stop mark) and is forgotten once Core accepts that stop; an activation during the loss reads the status at once (still no start). The Vidéo / Capture d'écran / Audio wedges carry a muted `?` that does **not** colour the anchor |
+| Waits | every write has a 50 s deadline (relay 45 s); then the controller gives the hand back and re-reads the status (`pas de réponse à temps, issue inconnue`) |
 
-States painted (`data-capture-state`): `idle`, `starting`, `active`,
-`stopping`, `stuck`, `error`, `unknown`, and for the screenshot `busy` and
-`done` (a check for 2.5 s). Cues never rely on colour alone: an open channel
-**keeps its own icon** (microphone or screen, so two open channels stay
-distinct) and carries an 18 px **stop chip** (filled square on amber, top-right
-corner; shown exactly when a click stops, dimmed while stopping, part of the
-button's click target), a 3 px side bar (like the palette's active tool)
-and its timer **inside** the button; errors carry `!`, unknown `?` and a dashed
-border; waits show a sweep bar and a seconds counter. The screenshot icon is a
-camera (aiming brackets read as the Bare Hands `select` tool just above). The
-caption reads `CAPTURE`, `REC n`, `REC n !` (recording while another control is
-in error), `ERREUR` or `ÉTAT ?`. Under
-`prefers-reduced-motion` the bar and sweep stop moving, the counters keep
-counting; `forced-colors` maps states to system colours. Short French error
-texts by code: `refusalText()` (`source_unavailable` → micro / écran
-indisponible, or the ffmpeg install hint when Core's message names ffmpeg;
-`permission_denied`, `storage_full`, `core_unreachable`, `core_timeout`, …; an
-unknown code is shown as `échec (<code>)`).
+**Wedges** (`JarvisToolWheel.register`, D3/D4). Simple activation (click,
+`Enter`/`Space`, Bare Hands primary pinch) = the default target: **Vidéo**
+and **Audio** start their channel on `default`, or stop its open capture;
+with **two or more** open captures the activation opens the stop list instead
+(`menu` read at each click), it never guesses which one. **Capture d'écran**
+takes the primary display at once. Each wedge projects the controller's state
+(`setStatus`): Vidéo / Audio are `menuitemcheckbox`, `aria-checked` = Core
+says a capture is open (amber ring and filled corner dot), `wait` while
+starting or stopping, `error` on a refusal or a stuck stop, `?` when the
+status is lost; the text joins the wedge name without any counter (`Audio —
+en cours`, `Vidéo — 2 en cours`). Before the first status read nothing is
+projected.
 
-Keyboard: `role="toolbar"`, vertical, one tab stop (roving), arrows in both
-axes, Home/End; Enter/Space are the native `<button>`; Escape closes the note.
-Every control has an `aria-label` equal to its tooltip, which never carries a
-counter (a name that changes every second is re-announced); the running time
-or wait (`en cours depuis 1:05`, `attente depuis 3 s`) is the description
-(`aria-describedby` → `#captureRailDetail-<control>`), next to the note when
-one is open; state changes are announced in a polite live region. Error
-sentences carry no parentheses of their own (the code follows in one) and never
-repeat the note's verb.
+**Targets** (`GET /v1/captures/targets`, D6). Secondary activation (right
+click, Bare Hands thumb + middle pinch, `ContextMenu`, `Shift+F10`; never a
+long press) opens the sub-arc: first the open captures of that channel, each
+with its stop (`Arrêter — écran 2`, timer as a short note), then the targets
+Core can **really** take, in Core's order. A target already recording is
+listed but `aria-disabled` (`déjà en cours d’enregistrement sur cette cible`);
+while the status is lost every target is disabled (stops are not). **Single
+entry rule:** a channel whose only target is `default` still opens its
+sub-arc with that one focusable entry, which says it
+(`Écran principal — seule cible disponible`); activating it does what the
+simple activation does. Never omitted silently, never a fake choice. A channel
+without a source shows `Aucune cible — <cause>`; an unreadable list
+(`targets_unreadable`) offers `default` only and says why; a failed read shows
+`Cibles illisibles — <cause> (<code>)`. Screen: `default` (primary display)
+then the other displays (`display2..N`, labels `Écran N`, physical size as a
+note); audio: `default` (the Voice input, labelled with its resolved name)
+then the other inputs of the default host API. No window capture, no
+all-displays capture, no system audio.
 
-Placement (measured, not assumed — the palette's height depends on the tools
-installed and the column is centred under 700 px): **below** the Bare Hands
-column, same 64 px column, separated by a rule; when that would leave the
-window or touch another control (interaction-mode button, voice hint, dock,
-chips, top bar, GPT-Live banner, scene status), **beside** the column, aligned
-on its top, then lifted just above the first control it would touch
-(`beside-up`, e.g. 320 × 568 with the scene status raising the
-interaction-mode button), then aligned on its bottom (`data-capture-slot`). Bare Hands not mounted →
-the top of the column (`alone`). Stacking rank 30, the palette's. The scene
-measures the rail as a control (its host carries `data-shell-control`, matched
-by the shared `JarvisShell.CONTROL_SELECTOR`, [control-center-shell.md](control-center-shell.md)
-› *Controls*), so a held object stops against it. Since that slice the rail's
-obstacles are the same shared selector minus the Bare Hands column it docks to
-and the side panels, which cover it by rank: the chat tab, the presentation rail
-and the drop tray are now avoided too. The scene
-**resolver** and the brain's safe area do not yet exclude the enlarged left
-column (it reaches y 541 at 1280 × 720): accepted V1 deviation, see
-`tasks/jarvis-session-context-recording-runtime/Issues/scene-safe-area-left-column.md`.
+**Indicators** `#recIndicators` (rank 40, page sheet; hidden when there is
+nothing to say). One chip per open capture: screen = `REC` + Core-derived
+duration (a breathing dot, `écran N` when not the default display), audio =
+microphone + duration; a start in flight whose row Core does not list yet is
+a wait chip (`N s`, sweep bar); a screenshot shows `N s` then a check and
+`enregistrée` for 2.5 s (the preview is Slice 05). They **stay visible when the
+wheel is closed**; activating a recording chip stops **that** capture (the
+filled square says so; stuck = `!`, lost status = `?` + dashed border). The
+chip's `aria-label` never changes with the timer (`Arrêter l’enregistrement
+d’écran (écran 2)`); the duration is its description (`en cours depuis 1:05`).
+The note of the last refusal sits above the chips (close button, `Escape`);
+state changes are announced in a polite live region. A chip that disappears
+while focused hands the focus to the next chip, else to the wheel anchor.
+**Provisional slot**: in the bottom row right of the voice hint, up to the
+chat tab, wrapping upwards; at 700 px and below, a column on the right edge,
+vertically centred (the bottom row has no free width there). Slice 06 moves
+them into the status centre.
 
-Journal (browser console, `[capture]`): `capture_rail.installed`, `placed`,
+Cues never rely on colour alone (checked ring + corner dot, `!`, `?` + dashes,
+filled stop square, sweep bars, counters). Under `prefers-reduced-motion` the
+dot and sweeps stop, the counters keep counting; `forced-colors` maps them to
+system colours (`Highlight` for an open recording). Short French error texts
+by code: `refusalText()` (`source_unavailable` → micro / écran indisponible, or
+the ffmpeg install hint when Core's message names ffmpeg; `permission_denied`,
+`storage_full`, `core_unreachable`, `core_timeout`, …; an unknown code is shown
+as `échec (<code>)`).
+
+Journal (browser console, `[capture]`): controller `capture_rail.installed`,
 `status_received`, `status_lost` / `status_restored`, `start_requested` /
-`started` / `start_failed` / `start_already_active`, `stop_requested` /
-`stopped` / `stopped_incomplete` / `stop_failed`, `screenshot_requested` /
-`screenshot_taken` / `screenshot_failed`, `capture_interrupted`,
-`capture_ended_elsewhere`, `no_free_slot`.
+`started` / `start_failed` / `start_already_active` / `start_superseded` /
+`start_refused`, `stop_requested` / `stopped` / `stopped_incomplete` /
+`stop_failed` / `stop_unknown_capture`, `screenshot_requested` /
+`screenshot_taken` / `screenshot_failed` / `screenshot_refused`,
+`targets_read` / `targets_failed`, `capture_interrupted`,
+`capture_ended_elsewhere`, `subscriber_failed`; views `capture_views.installed`,
+`activate`, `targets_offered`, `target_chosen`, `stop_chosen`, `chip_stop`,
+`wedge_paint_failed`, `install_failed`.
 
-Tests: `tests/unit/test_capture_rail_js.py` (pure model, placement, insertion,
-and the controller on a fake DOM with fake timers: single flight, cadence,
-hidden tab, 6 s deadline, backoff, no stale read after a write, no orphan
-timer after a wake, failed write never painted as a wait),
-`tests/unit/test_capture_rail_browser.py` (headless Chrome: placement at 1440 →
-375 px with Bare Hands off/on/absent, keyboard, failed start, status loss,
-concurrency, stuck, reduced motion, forced colours, axe-core when
-`JARVIS_AXE_JS` points to `axe.min.js`).
+Tests: `tests/unit/test_capture_rail_js.py` (node: pure model, several
+captures per channel, the controller with fake timers — single flight,
+cadence, hidden tab, 6 s deadline, backoff, no stale read after a write, no
+orphan timer, Core-derived timers, status-loss stop, per-capture stops,
+device-bearing starts, screenshot result —, and the pure views: wedge status,
+chips, target sub-arc and its single entry rule; insertion order);
+`tests/unit/test_capture_targets.py` (Core and relay: display order, audio
+name tokens, enumeration failure, read guard);
+`tests/unit/test_capture_wheel_browser.py` (headless Chrome on a real Control
+Center and a real Core with **fake** capture sources: audio and video
+toggles against `status()`, REC timer through a wheel close, a reload and a
+second tab, a real one-shot screenshot artifact, the sub-arc with one and two
+displays chosen by keyboard, Core really stopped then restarted (status
+loss), a stop sent during a page-only loss, independence, refused start,
+keyboard, no overlap at five sizes, reduced motion, forced colours,
+axe-core when `JARVIS_AXE_JS` points to `axe.min.js`).
 
 ## Activity and journal
 
@@ -864,7 +939,7 @@ One-shot screenshots write no `capture.*` event (the artifact events say it).
 Journal mirror `core.capture.*` (`started`, `stopped`, `gap`, `refused`,
 `failure`, `finalize_failed`, `recovered`, `recovery`, `repair_failed`,
 `repair_timeout`, `recover_one_failed`, `stop_stuck`, `stopping_refused`,
-`orphan_recovered`, `orphan_unrecovered`, `left_open`, `association_changed`, `listener_failed`, `media_details_refused`, `encoder_sync_refused`...) and
+`orphan_recovered`, `orphan_unrecovered`, `left_open`, `association_changed`, `listener_failed`, `media_details_refused`, `encoder_sync_refused`, `targets_unreadable`...) and
 `core.transcript.*` (`started`, `segment`, `segment_empty`,
 `attempt_failed`, `waiting`, `retry_requested`, `replay_adopted`,
 `finished`, `failed`, `recovery`...): ids, states, codes and counts only,

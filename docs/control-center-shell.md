@@ -48,10 +48,10 @@ the Bare Hands column, from 1024 px down.
 | `top-left` | `.topbar`: `#boardsHud`, `.state` (the `.brand` element stays in the markup, hidden in both themes: the target shows Board then state) | page, `control_center_boards.js` |
 | `top-right` | `.dock` (global launcher, one row of 34 px buttons); `#bgPills` left of it until Slice 06 | page |
 | `top-centre` | `.live-banner` (GPT-Live, transient) | page |
-| `left-edge` | `#toolWheel` anchor and orbital tool wheel (Slice 02, behind `JarvisToolWheel.enabled` until Slice 04); `#barehandsHud`, `#barehandsPalette`, `#captureRail`, `#presentationRail` until Slices 03, 04, 07 move them | their modules |
+| `left-edge` | `#toolWheel` anchor and orbital tool wheel (Slice 02; live by default since Slice 04: Sélection, Vidéo, Capture d'écran, Audio); `#presentationRail` until Slice 07 moves it; `#barehandsHud`, `#barehandsPalette` hosts stay declared but hidden while the wheel is visible (Slice 03) | their modules |
 | `left-low` | `#screenshotPreview` (Slice 05) | — |
 | `bottom-left` | `#interactionModeHud`, `.sc-status` notes of the scene | `control_center_interaction_mode.js`, scene |
-| `bottom-centre` | `#voiceHint` (until Slice 06), `#boardDropTray`; status centre from Slice 06 | page, `control_center_board_drop.js` |
+| `bottom-centre` | `#voiceHint` (until Slice 06), `#boardDropTray`, `#recIndicators` (Slice 04, provisional slot left of centre); status centre from Slice 06 | page, `control_center_board_drop.js`, `control_center_capture_wheel.js` |
 | `bottom-right` | `#chatTab` | `control_center_chat.js` |
 | `right` | side panels (`#panel`, `#chatPanel`, `#jvStudioInspector`); workspace rail from Slice 07 | page, modules |
 | `centre` | Board / scene (`#sceneLayer`) | scene |
@@ -138,7 +138,6 @@ The rule is written exactly as in the sheet, `${…}` interpolations included.
 | 21 | `.board-drop::before` | `control_center.html` | `.board-drop::before` | drop frame, just above the scene, below the controls |
 | 30 | `#toolWheel` | `control_center.html` | `#toolWheel` | wheel anchor at rest |
 | 30 | `#barehandsPalette` | `control_center_barehands_hud.js` | `#${DOM.paletteId}` | below the Bare Hands control and its selector, which open over it |
-| 30 | `#captureRail` | `control_center_capture_rail.js` | `${H}` | sibling of the palette, same rank for the same reason |
 | 30 | `#presentationRail` | `control_center_presentation_rail.js` | `#${DOM.hostId}` | rail outside the Studio |
 | 31 | `.topbar` | `control_center.html` | `.topbar` | state line; `#boardsHud` lives inside it |
 | 31 | `#voiceHint` | `control_center.html` | `.voicehint` | wake key hint (removed in Slice 06) |
@@ -157,6 +156,7 @@ The rule is written exactly as in the sheet, `${…}` interpolations included.
 | 36 | `.im-pop` | `control_center_interaction_mode.js` | `#${DOM.hostId} .im-pop` | mode chooser |
 | 37 | `#toolWheel[data-open]` | `control_center.html` | `#toolWheel[data-open]` | open wheel and its radial sub-arcs: above the choosers, the wheel is the user's latest focus |
 | 40 | `#bgPills` | `control_center.html` | `.bgpills` | background pills (status centre from Slice 06) |
+| 40 | `#recIndicators` | `control_center.html` | `#recIndicators` | capture indicators (Slice 04): an open recording stays visible above the open wheel, below toasts |
 | 55 | `.tl` | `control_center.html` | `.tl` | conversation timeline, full-screen launcher view |
 | 55 | `.tlab` | `control_center.html` | `.tlab` | Test Lab (one full-screen view at a time) |
 | 55 | `.mcpi` | `control_center.html` | `.mcpi` | MCP inspector |
@@ -208,7 +208,7 @@ them for something else. They become page layers when their slice lands.
 | Rank | Surface | Slice |
 | --- | --- | --- |
 | 38 | `#screenshotPreview` | S05 |
-| 40 | status centre: `#recIndicators`, `#hiddenEye` beside `#bgPills` | S06 |
+| 40 | status centre: `#hiddenEye` beside `#bgPills` (`#recIndicators` took its rank in S04; S06 moves it beside the pills) | S06 |
 | 60 | screenshot lightbox, annotation editor (the `.overlay` pattern) | S05 |
 
 ### Invariants
@@ -222,8 +222,8 @@ Checked on the registry rows by `test_relative_order_of_the_old_registry_is_kept
 - choosers (36) are above the GPT-Live banner (35) and below the pills,
   toasts, context menu and confirmation;
 - the open wheel (37) is above the choosers and below the status centre
-  (40), toasts and context menu; closed, its anchor is at the left-edge
-  rank (30);
+  (40: pills and capture indicators), toasts and context menu; closed, its
+  anchor is at the left-edge rank (30);
 - `.ctxmenu` (80) < `#barehandsCards` (82) < `.cdialog-back` (85);
 - full-screen launcher views (55) are above every control and below
   `.overlay` < `.toasts` < `.ctxmenu` < `.cdialog-back`;
@@ -246,7 +246,7 @@ both themes.
 ## Controls (`CONTROL_SELECTOR`)
 
 A **control** is a page surface the scene must not slide under: a held object
-stops against it, and the capture rail avoids it. Every control host carries
+stops against it. Every control host carries
 the attribute `data-shell-control`; the shared selector is
 
 ```
@@ -254,10 +254,10 @@ the attribute `data-shell-control`; the shared selector is
 ```
 
 published as `JarvisShell.CONTROL_SELECTOR` by `control_center_shell.js`, read
-by the scene (`control_center_scene_page.js`, measured walls) and the capture
-rail (`control_center_capture_rail.js`, obstacles, minus the Bare Hands column
-it docks to and the side panels that cover it). Both keep an identical
-fallback literal and journal `shell.missing` if the module is absent.
+by the scene (`control_center_scene_page.js`, measured walls), which keeps an
+identical fallback literal and journals `shell.missing` if the module is
+absent. (Until Slice 04 the left capture rail also read it to dodge the other
+controls; the wheel and the indicators are placed by the sheet instead.)
 
 | Host | Zone | Declared by |
 | --- | --- | --- |
@@ -266,11 +266,11 @@ fallback literal and journal `shell.missing` if the module is absent.
 | `#bgPills` | top-right (bottom-centre from S06) | page |
 | `.live-banner` | top-centre | page |
 | `#panel`, `#chatPanel` | right | page |
-| `#barehandsHud`, `#barehandsPalette`, `#captureRail` | left-edge | page (hosts) |
+| `#barehandsHud`, `#barehandsPalette` | left-edge (hidden while the wheel is visible) | page (hosts) |
 | `#toolWheel` | left-edge | page |
 | `#presentationRail` | left-edge (right from S07) | `control_center_presentation_rail.js` (creates the host and the attribute) |
 | `#interactionModeHud` | bottom-left | page |
-| `#voiceHint`, `#boardDropTray` | bottom-centre | page |
+| `#voiceHint`, `#boardDropTray`, `#recIndicators` | bottom-centre | page |
 | `#chatTab` | bottom-right | page |
 | `#screenshotPreview` | left-low | S05 |
 
@@ -290,14 +290,19 @@ Slice 02, decisions D3 and D4 of the handoff's resolved architecture. Module
 `jarvis/runtime/control_center_tool_wheel.js` (`window.JarvisToolWheel`),
 served by `ControlCenter.index` (`TOOL_WHEEL_SCRIPT_FILE`). A **new surface**:
 not the Bare Hands palette, not the capture rail. Slice 03 moved the palette
-(and the top-left lifecycle control) into Selection: with the wheel on they
-leave the default view (see Selection method below); the capture rail stays
-until Slice 04 (rollback = leave the flag off, or remove `#toolWheel`).
+(and the top-left lifecycle control) into Selection: with the wheel visible
+they leave the default view (see Selection method below); Slice 04 moved the
+left capture rail into the Vidéo, Capture d'écran and Audio wedges plus the
+persistent indicators `#recIndicators` ([capture.md](capture.md) ›
+*Interface*).
 
-**Feature flag.** `JarvisToolWheel.enabled` is `false` by default: the host
-stays `hidden`, nothing is built, no listener is attached. Setting it to
-`true` builds the anchor and the wheel; tests do so. Slice 04 removes the
-flag once every wedge is wired.
+**Live by default (Slice 04).** The former `JarvisToolWheel.enabled` flag is
+gone: every wedge is wired, the module builds the anchor and the wheel at
+install and un-hides its host. The host stays declared `hidden` in the page,
+so if the module fails to install the wheel never shows and the Bare Hands
+column comes back by itself. Rollback = hide or remove `#toolWheel` (the
+column returns, `body:has(#toolWheel:not([hidden]))`); the capture views then
+have no wedges but the indicators still show and stop open recordings.
 
 **Closed.** Only the anchor shows: a `--shell-anchor-w` (14 px) × 112 px
 glass tab with a thin cyan stroke, centred on the left edge, `<button
@@ -347,15 +352,22 @@ notification instead of doing nothing silently. A callback that throws or
 rejects is journalled (`tool_wheel.action_failed`, real cause) and shown as a
 notification; the wheel itself is unaffected. A slot registered with
 `menu:true` opens its sub-arc on **primary** activation instead of acting
-(Selection, Slice 03). Capture wiring is Slice 04.
+(Selection, Slice 03); `menu` may also be a function read at each click
+(Vidéo / Audio with two or more open captures open their stop list, Slice 04).
+Capture wiring: `control_center_capture_wheel.js` ([capture.md](capture.md)
+› *Interface*).
 
 **Slot status.** `JarvisToolWheel.setStatus(id, {icon?, tone?:
-'error'|'wait', text?} | null)` lets an action **project** its owner's state
-onto its wedge (Selection: the current method): the dot icon is swapped
-(`icon`: an `ART` key), a badge marks `error` (« ! », `--sem-problem`) or
-`wait` (spinning ring, `--sem-working`, static under reduced motion), and
-`text` joins the wedge name (`Sélection — Souris`) and its label pill
-(`Sélection · Souris`). The anchor carries the worst projected tone
+'error'|'wait'|'unknown', text?, checked?} | null)` lets an action **project**
+its owner's state onto its wedge (Selection: the current method; Vidéo /
+Audio: Core's capture state): the dot icon is swapped (`icon`: an `ART` key),
+a badge marks `error` (« ! », `--sem-problem`), `wait` (spinning ring,
+`--sem-working`, static under reduced motion) or `unknown` (« ? », muted,
+dashed; capture status lost), and `text` joins the wedge name
+(`Sélection — Souris`, `Vidéo — en cours`) and its label pill. `checked`
+(boolean, Slice 04) turns the wedge into a `menuitemcheckbox` with
+`aria-checked` and draws an amber ring plus a filled corner dot: an open
+recording reads without colour. The anchor carries the worst projected tone
 (`data-tw-tone`, coloured stroke + « ! » / « … » mark, `aria-label`/`title`
 `Outils — <text>`), so a failure or a pending start stays visible with the
 wheel closed. The wheel stores nothing else: the action re-reads its owner
@@ -364,7 +376,8 @@ and calls `setStatus` again on each change (journal `tool_wheel.status`).
 **Radial sub-arc** (the reusable submenu pattern). `onSecondary` returns the
 entries `[{id?, label, disabled?, checked?, icon?, note?, detail?, tone?,
 onActivate?(ctx), onSecondary?(ctx)}]` (or a promise of them; « Chargement… »
-shows while it is pending). `icon` draws an `ART` glyph in the pill, `note`
+shows while it is pending). `icon` draws an `ART` glyph in the pill (`ART`
+is published as `JarvisToolWheel.ART`; `stop` and `done` joined in Slice 04), `note`
 a short muted second text, `detail` the long reason that goes into the
 accessible name and the tooltip, `tone` an `error`/`wait` mark; `id` is
 exposed as `data-tw-item`. They are laid out on an
@@ -408,7 +421,7 @@ a `menuitemradio` entry is drawn with `content:"● " / ""`, so it never enters
 the accessible name.
 
 **Journal.** `[tool_wheel] <key> {json}`: `tool_wheel.installed`,
-`.enabled`, `.registered`, `.open {reason: mouse|barehands|keyboard|api}`,
+`.registered`, `.menu_failed`, `.open {reason: mouse|barehands|keyboard|api}`,
 `.close {reason: leave|activate|escape|outside|blur|api|disabled}`,
 `.activate`, `.secondary`, `.secondary_none`, `.item`, `.item_inert`,
 `.item_secondary`, `.item_secondary_none`, `.status`, `.unbound`,
@@ -419,7 +432,7 @@ slot, second level, no network, served page);
 `tests/unit/test_tool_wheel_browser.py` (headless Chrome via CDP, real input
 events: mouse hotspot, keyboard, Bare Hands synthetic pointer 9001, pinch on
 the anchor, late thumb + middle pinch, `Esc` with outside focus, `Space`,
-reduced motion, focus, far pointer).
+reduced motion, focus, far pointer; built at load since Slice 04). Capture wedges, target sub-arcs and `#recIndicators`: `tests/unit/test_capture_wheel_browser.py` (real Control Center and Core, fake capture sources).
 
 ## Selection method (`control_center_input_arbitration.js`)
 
@@ -462,10 +475,11 @@ A refusal is shown (wheel notification with the real cause, plus Bare Hands'
 own toast) and journalled (`selection.method_refused`). Réglages and Tester
 stay reachable from the Bare Hands settings tab.
 
-**Wheel on = Selection owns the column.** While `#toolWheel` is not
-`hidden`, the HUD sheet hides the top-left lifecycle control
-(`#barehandsHud`) and the tool strip (`#barehandsPalette`) with
-`body:has(#toolWheel:not([hidden]))`; flag off, both come back (rollback).
+**Wheel visible = Selection owns the column.** While `#toolWheel` is not
+`hidden` (by default since Slice 04), the HUD sheet hides the top-left
+lifecycle control (`#barehandsHud`) and the tool strip (`#barehandsPalette`)
+with `body:has(#toolWheel:not([hidden]))`; wheel hidden or not installed,
+both come back (rollback).
 Nothing is uninstalled: `JarvisBarehandsHudControl`, `JarvisBarehandsPalette`
 and their seams stay live.
 
