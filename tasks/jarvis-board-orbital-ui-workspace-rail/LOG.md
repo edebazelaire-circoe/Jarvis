@@ -99,3 +99,28 @@
 - Status never by colour alone, also in the 72 px strip: a mark shape per state in every density and for the header's urgent mark and the hover bubble — working ring (pulsing), problem triangle, unreviewed diamond, done check, unknown dashed ring.
 - Tooltip: the review is said in words (« Modifiée par Jarvis — à revoir »); the internal `unreviewed.label` (tool id) is no longer shown.
 - Tests: rail browser 19 -> 22 (`test_focus_survives_polls_on_board_and_folded_cards_and_escape_returns_to_the_board_card`, `test_every_state_has_its_own_shape_in_every_density`, `test_the_tooltip_says_the_review_in_words_never_a_tool_identifier`); green after: rail_js 13, e2e 3, shell_layers 9, workspace_rail_model_js 3, presentation_studio_rail 22. Evidence PNGs refreshed.
+
+## 2026-10-16 - Slice 02 QA
+
+- **S2 `76280fbf` QA (tier ui, `boqa`): `PASS_WITH_POLISH`.** 12/12 acceptance tests meaningful and green; flag off verified at runtime (no listener, 0x0 host); BH pinch fires once; no network/polling; rank 37 consistent.
+- **Polish handed to the S03 implementer (same file):** P1 BH pinch on the anchor read as keyboard (`detail===0`); P2 BH secondary reported as `mouse` > 800 ms after a pinch; P3 Escape with outside focus; P4 sub-arc left open when hovering another wedge; P5 `●` in the accessible name; P6 document the no-`title` exemption; tests for P1/P2/P3/Space.
+- Cosmetic for S09: the « Vidéo » icon reads as "screen".
+
+## 2026-10-16 - Slice 07 QA
+
+- **S7 (`feat/obr-s07`, `b054f857` Stage A, `f0be33ae`, `241e9838` Stage B) QA (tier ui, `boqa` at 241e9838): `PASS_WITH_POLISH`**, 300 tests green across 18 files; preview lineage resisted forged snapshots/uploads (probe), `review` refused for the brain at MCP and Core, `rail.json` writers all under `studio.exclusive()`, Stage B membership from Board links with stale answers dropped.
+- **Agent 0 rates blocking (rework sent to the S07 implementer, frozen scope):** focus lost on « Sur ce Board » and folded cards at each poll + menu Escape restores a detached node; slim density distinguishes states by colour alone (contract: never colour alone); tooltip shows the tool id `(presentation_edit)`.
+- **Polish -> S06/S09:** toasts (70) over the rail bottom at every size; drop tray over the rail tab at 600x800. Accepted: placeholder when the newest still is outside the 64 newest.
+- **S7 rework `756fee03`:** focus restored by `data-id` anywhere in the rail and after menu close; one shape per state in every density (ring / triangle / diamond / check / dashed); French review wording. 3 new browser tests; rail browser 22, rail js 13, e2e 3, shell layers 9. Re-verified by agent 0 (diff read). **S7 accepted**; merge of `feat/obr-s07` into the task branch after S04 frees `bor`.
+
+## 2026-10-16 - Slice 03 QA
+
+- **S3 `74d6f339` (+ `445605a2` harness, `ca1491f8`, `8d4f79fd` S2 polish) QA (tier ui, `boq3`): `REWORK`.** Arbitration resisted 86 synthetic/foreign events (0 takeovers); property tests 10k seeds; lifecycle stays the only truth; S2 polish P1-P6 verified; harness cleanup verified (18/18 harnesses).
+- **Blocking B1:** a mouse click during a Bare Hands calibration/test flow turns BH off and leaves the flow with a black preview. Rework on `fix/obr-s3-rework` (worktree `boq3`) with P3 (takeover stuck after a busy HUD), P2 (reachability test passing with BH already off) and a brain prompt line « passe en souris » -> `settings_set(barehands.enabled,false)` (agent-trace-analysis due in S09/S10).
+- **Agent 0 decisions:** P1 (toast names the wheel while the flag is off) moot once S04 removes the flag; P4 (raw error code cut on the wheel) -> S09; I1 (moving the mouse to the wheel takes over before « Souris ») kept — it is the requested rule (deliberate mouse use) — and added to HV-03.
+- **S3 rework `eaf25b57` + `76f432f6` (`fix/obr-s3-rework`):** takeover exempt while `JarvisBarehands.openFlow()` names a flow (calibration/benchmark clicks proven, takeover back after close); refused takeover rearms (`input_arbitration.takeover_rearmed`); reachability test now keyboard-driven with BH active throughout; brain prompt + `barehands_deactivate` description: « passe en souris » = `settings_set(barehands.enabled,false)`, MCP catalog budget kept. arbitration 13, selection browser 11, wheel browser 10, catalog 92; 4 baseline prompt failures unchanged. Re-verified by agent 0 (diff + counts). **S3 accepted**; cherry-picked into the task branch after S04.
+
+## 2026-10-16 - Integration (agent 0)
+
+- Human merged the task branch up to S3 `74d6f339` into main (`456a36fb`).
+- S04 `d32389d5` + `ccc261a8` reviewed; S3 rework cherry-picked (`eaf25b57`, `76f432f6`); `feat/obr-s07` merged `--no-ff` (`410f5cdd`): conflicts only in registry/zone wording (left-edge = wheel only; rank 30 = `#presentationRail` right zone, `#captureRail` gone) and LOG. S04 QA at tier critical next.
