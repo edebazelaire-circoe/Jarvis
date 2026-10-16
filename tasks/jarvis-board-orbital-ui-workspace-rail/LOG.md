@@ -39,3 +39,10 @@
 - Docs: `docs/control-center-shell.md` › Tool wheel (+ zones, layer row 37, invariants); `docs/05-documentation-levels.md` new L3 row.
 - Harness `tests/unit/_interaction_mode_browser.mjs` (additive): `mouse` action (real CDP mouse event at a point), `shift` on `key`, F10/ContextMenu/ArrowLeft/ArrowRight codes, `@file` plan.
 - Tests: new `test_tool_wheel_js.py` (11) and `test_tool_wheel_browser.py` (9: mouse, keyboard, BH synthetic 9001, reduced motion, focus, far pointer, Cosmos, 900x600 and 600x800). Sweep of the 150 test files referencing the touched files: only pre-existing failures (barehands_interaction_js 2, control_center_voice_architecture 1, interaction_mode_hud_browser 2-3 load-sensitive, brain_delegation 1, presentation_attention 1 — the last two verified identical on a clean `6cf5983a` worktree).
+
+## 2026-10-16 - Slice 01 QA
+
+- **S1 `6cf5983a` QA (tier ui, worktree `boqa`): `PASS_WITH_POLISH`.** No weakened guard among the migrated tests; headless Chrome probe (2 themes x 4 sizes x 5 states, ~37 targets) against base `5ae4c49f`: several old overlaps fixed (bgpills off-screen, panels over chat tab/Boards/state line).
+- **Polish batched** (agent 0, no rework loop): P1 GPT-Live banner over the capture-rail screenshot button at 900x600 circuit-board; P2 drop tray under the banner at 600x800 Cosmos; P3 toasts over the drop tray with a panel open at 1280x720 -> S06/S09. P4 the "scene objects stop against #chatTab" claim is only proven by selector membership -> S09 real held-object test. P6 `control_center.py:448` lost the `WORK_SCRIPT_FILE` comment; P7 `control_center_boards.js:1506` comment still says top-right -> next implementer. Registry-test blind spots (inline `style=` z-index, JS `style.zIndex`, non-Cosmos theme overrides) -> S09.
+- **For the Human (HV-01-01):** default circuit-board theme now uses the Cosmos geometry (top tool row, no brand).
+- **Environment:** C: fell to 127 MB free during QA; the browser harnesses leave a ~12 MB Chrome profile per run in `%TEMP%\jarvis-*-cdp-*`.

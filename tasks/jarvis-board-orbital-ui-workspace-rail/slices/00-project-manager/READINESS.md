@@ -69,4 +69,27 @@ None found. Non-blocking dependency: unified-chat must land in `main` before thi
 
 ## Baseline failures
 
-_To be filled by agent 0 from the baseline sweep on `b956fd49` (worktree `boq` moved to that SHA)._
+Wide sweep at the branch point `c8e753e5` (= `origin/main` 57f28a74 + mirror), worktree `boq`, isolated `JARVIS_DATA_ROOT`, foreground chunks, HEAD checked before/after each chunk. Totals: unit 804 files — 21 493 passed, 19 failed (13 reproducible, 6 flaky), 123 skipped; integration 76 files — 650 passed, 1 failed, 26 skipped; e2e 1 passed.
+
+**Reproducible at the branch point — not this task's, do not fix:**
+
+| File | Test(s) | Cause |
+|---|---|---|
+| `tests/unit/test_app.py` | `test_the_control_center_receives_a_tools_gateway_target_built_from_core_settings` | stale fixture (`SimpleNamespace` lacks `data_root`) |
+| `tests/unit/test_barehands_interaction_js.py` | `…practice_frame_is_moved_by_one_zone…`, `…practice_frame_resizes_only_on_two_distinct_compatible_zones` | geometry drift |
+| `tests/unit/test_brain_capability_parity.py` | `test_every_tool_of_a_declared_server_is_documented_in_the_brain_prompt` | `ui_intent_publish` undocumented |
+| `tests/unit/test_brain_delegation.py` | `test_the_voice_agent_starts_with_the_rule_and_with_the_agent_tool_available` | voice prompt gained a settings section |
+| `tests/unit/test_scene_artifacts.py` | `…other_prompts_are_byte_identical` | prompt hash drift |
+| `tests/unit/test_scene_query_tools.py` | `…other_prompts_stay_byte_identical` | prompt hash drift |
+| `tests/unit/test_control_center_voice_architecture.py` | `test_async_browser_render_does_not_restore_a_previous_panel` | `agenda_reminders` undefined |
+| `tests/unit/test_scene_group_drag_js.py` | `test_the_page_commits_a_group_drag_through_one_command_and_a_single_drag_unchanged` | source fragment no longer present |
+| `tests/unit/test_tool_brain_choices.py` | `test_ui_projection_is_consistent_in_the_single_metadata_copy` | `memory_propose` reversibility |
+| `tests/unit/test_tool_brain_intents.py` | 3 tests | `BrainOrchestrator.publish_ui_intent` missing |
+| `tests/unit/test_memory_context.py` | `test_recall_over_2000_notes_…_stays_in_budget` | 30 s readiness timeout (load-sensitive) |
+| `tests/integration/test_settings_redesign_migration.py` | `test_assembled_primary_navigation_has_six_tabs_and_no_legacy_navigation` | assembled JS SyntaxError |
+
+**Flaky under load (passed alone):** `test_control_center_timeline_browser.py` (3), `test_presentation_render_service.py` (1), `test_self_dev.py` (1), `test_wake_word_settings_browser.py` (2).
+
+**Inherited from the unified-chat merge (`b956fd49`), measured by the S01 implementer before its change:** `test_interaction_mode_hud_browser.py` 3, `test_workspace_presentations_js.py` 1. (`test_boards_hud_browser.py` 6 and `test_control_center_chat_browser.py` 9 were also red before S01 and S01 made them green.)
+
+**Environment:** browser tests leave ~12 MB Chrome profiles in `%TEMP%\jarvis-*-cdp-*`; 1 106 (~14 GB) filled C: during the sweep. Every agent cleans its own profiles after a run.
