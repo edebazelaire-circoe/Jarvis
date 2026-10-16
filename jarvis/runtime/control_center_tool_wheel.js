@@ -24,8 +24,13 @@
      servira au choix Souris / Bare Hands de Sélection (S03) et aux cibles de
      capture (S04).
    - Ce que fait un secteur est **injecté** (`register`) : la sémantique de
-     Sélection arrive en S03, les captures en S04. Un secteur non branché le
-     dit (journal + notification), il ne fait pas semblant.
+     Sélection arrive en S03 (`control_center_input_arbitration.js`), les
+     captures en S04. Un secteur non branché le dit (journal + notification),
+     il ne fait pas semblant. Un secteur `menu:true` (Sélection) ouvre son
+     sous-arc dès l'activation principale ; une entrée du sous-arc qui porte
+     `onSecondary` ouvre à son tour un **second niveau** à la place du premier
+     (Sélection › Bare Hands : outils, Veille, Aide, Diagnostic, Calibration),
+     `Échap` / flèche gauche y ramène.
    - Le déploiement ne dépend d'aucun aller-retour réseau et n'ajoute aucune
      boucle de sondage : ce module n'appelle ni `fetch` ni minuterie
      périodique ; sa seule minuterie est le délai de grâce d'une sortie du
@@ -103,10 +108,13 @@
   }
 
   /* Entrées d'un sous-arc, centrées sur l'angle du secteur parent, tenues
-     dans ±subLimitDeg (une liste longue glisse vers le centre). */
-  function layoutSubArc(count,midDeg,g=GEOMETRY){
+     dans ±subLimitDeg (une liste longue glisse vers le centre).
+     `align:'start'` (second niveau, Slice 03) : la liste **part** de l'angle
+     donné (l'entrée parente) et descend, au lieu de s'y centrer — elle ne
+     remonte donc pas dans le coin du haut, où vivent d'autres contrôles. */
+  function layoutSubArc(count,midDeg,g=GEOMETRY,align){
     const span=g.subStepDeg*(count-1);
-    let first=midDeg-span/2;
+    let first=align==='start'?midDeg:midDeg-span/2;
     first=Math.max(-g.subLimitDeg,Math.min(first,g.subLimitDeg-span));
     const out=[];
     for(let i=0;i<count;i+=1){
@@ -123,8 +131,13 @@
 
      Entrées : `{type, target:'anchor'|'wedge'|'item'|'outside', index,
      inside, key, shiftKey, detail, source, t}`.
-     Effets : `activate`, `secondary`, `item`, `focus`, `restoreFocus`,
-     `armLeave`, `cancelLeave`, `preventDefault`, `journal`. */
+     Effets : `activate`, `secondary`, `item`, `itemSecondary`, `subBack`,
+     `focus`, `restoreFocus`, `armLeave`, `cancelLeave`, `preventDefault`,
+     `journal`.
+
+     `input.menu` (clic sur un secteur) : le secteur ouvre son sous-arc au lieu
+     d'agir. `subOpen` porte `level` (1 ou 2), `parent` (l'entrée du niveau 1
+     qui a ouvert le niveau 2) et `focus` (l'entrée à mettre en avant). */
   const LEAVE_GRACE_MS=400;
   const SECONDARY_DEDUPE_MS=500;
 
@@ -142,7 +155,10 @@
     };
     const close=(reason,restore)=>{
       if(!s.open)return;
-      s.open=false;s.openedBy=null;s.sub=null;s.focus=-1;
+      /* La déduplication des activations secondaires ne vaut que pour une
+         ouverture : rouvrir et redemander dans la demi-seconde est un geste
+         neuf (Slice 03, Sélection rouverte juste après un choix). */
+      s.open=false;s.openedBy=null;s.sub=null;s.focus=-1;s.lastSecondary=null;
       fx.push({do:'cancelLeave'});
       if(restore)fx.push({do:'restoreFocus'});
       fx.push({do:'journal',key:'tool_wheel.close',data:{reason}});
@@ -158,6 +174,17 @@
       s.lastSecondary={index:i,t};
       s.focus=i;
       fx.push({do:'secondary',index:i,source:by});
+    };
+    /* Activation secondaire d'une entrée du premier niveau : même
+       déduplication que pour un secteur (Maj+F10 puis le `contextmenu` que le
+       navigateur en tire comptent une fois). */
+    const itemSecondary=(j,by,t)=>{
+      if(!s.sub||s.sub.level!==1)return;
+      const key=`item:${s.sub.slot}:${j}`;
+      const last=s.lastSecondary;
+      if(last&&last.index===key&&Number.isFinite(t)&&t-last.t<SECONDARY_DEDUPE_MS)return;
+      s.lastSecondary={index:key,t};
+      fx.push({do:'itemSecondary',slot:s.sub.slot,index:j,source:by});
     };
     switch(input.type){
       case 'pointerover':
@@ -193,6 +220,8 @@
           if(!s.open)openWith(by,by==='keyboard'?'keyboard':(input.source||'mouse'));
           else if(by==='keyboard')s.openedBy='keyboard';
           if(by==='keyboard')focusWedge(s.focus<0?0:s.focus,true);
+        }else if(s.open&&input.target==='wedge'&&input.menu){
+          secondary(input.index,input.source||'mouse',input.t);
         }else if(s.open&&input.target==='wedge'){
           s.focus=input.index;
           fx.push({do:'activate',index:input.index,source:input.source});
@@ -204,7 +233,10 @@
         break;
       case 'contextmenu':
         if(s.open&&input.target==='wedge')secondary(input.index,input.source||'mouse',input.t);
-        else if(s.open&&input.target==='item')fx.push({do:'preventDefault'});
+        else if(s.open&&input.target==='item'){
+          fx.push({do:'preventDefault'});
+          itemSecondary(input.index,input.source||'mouse',input.t);
+        }
         break;
       case 'keydown':{
         const key=input.key;
@@ -235,18 +267,30 @@
             const k=((moves[key]%m)+m)%m;
             s.sub={...s.sub,focus:k};
             fx.push({do:'focus',target:'item',index:k});
+          }else if((key==='Escape'||key==='ArrowLeft')&&s.sub.level>1){
+            /* Second niveau : retour au premier, sur l'entrée qui l'a ouvert. */
+            s.lastSecondary=null;
+            fx.push({do:'preventDefault'},{do:'subBack',slot:s.sub.slot,parent:s.sub.parent});
           }else if(key==='Escape'||key==='ArrowLeft'){
             fx.push({do:'preventDefault'});
             const parent=s.sub.slot;s.sub=null;
             focusWedge(parent,true);
-          }else if(key==='ContextMenu'||(key==='F10'&&input.shiftKey))fx.push({do:'preventDefault'});
+          }else if(key==='ContextMenu'||(key==='F10'&&input.shiftKey)){
+            fx.push({do:'preventDefault'});
+            itemSecondary(j,'keyboard',input.t);
+          }
         }
         break;
       }
       case 'subOpen':
         if(!s.open)break;
-        s.sub={slot:input.slot,count:input.count,focus:input.source==='keyboard'&&input.count?0:-1};
-        if(s.sub.focus===0)fx.push({do:'focus',target:'item',index:0});
+        {
+          const level=input.level===2?2:1;
+          const wanted=Number.isInteger(input.focus)&&input.focus>=0&&input.focus<input.count?input.focus
+            :(input.source==='keyboard'&&input.count?0:-1);
+          s.sub={slot:input.slot,count:input.count,focus:wanted,level,parent:level===2?input.parent:-1};
+          if(wanted>=0&&input.source==='keyboard')fx.push({do:'focus',target:'item',index:wanted});
+        }
         break;
       case 'focusOutside':
         close('blur',false);
@@ -274,7 +318,8 @@
       wedges:SLOTS.slice(0,state.count).map((slot,i)=>({id:slot.id,focused:state.open&&state.focus===i,
         tabindex:i===(state.focus<0?0:state.focus)?0:-1})),
       label:state.open&&state.focus>=0&&!state.sub?SLOTS[state.focus].label:null,
-      sub:state.open&&state.sub?{slot:state.sub.slot,count:state.sub.count,focus:state.sub.focus}:null,
+      sub:state.open&&state.sub?{slot:state.sub.slot,count:state.sub.count,focus:state.sub.focus,
+        level:state.sub.level||1}:null,
     };
   }
 
@@ -297,6 +342,29 @@
     audio:Object.freeze({paths:Object.freeze([
       'M12 3.6a2.6 2.6 0 0 1 2.6 2.6v5a2.6 2.6 0 0 1-5.2 0v-5A2.6 2.6 0 0 1 12 3.6z',
       'M6.6 11.2a5.4 5.4 0 0 0 10.8 0','M12 16.6v3.6','M9.2 20.2h5.6']),dots:Object.freeze([])}),
+    /* ---- Slice 03 : les deux méthodes de Sélection et le second niveau ----
+       Souris : le corps et la molette, rien d'autre. Bare Hands : **pas** la
+       main de l'ancien sélecteur (rejetée par l'utilisateur) ; un cadre de
+       suivi (les quatre coins de la caméra) autour du geste qui clique : le
+       pouce et l'index qui montent se rejoindre sur un point de contact, le
+       pincement. Même grille de 24, même trait de 1.5, bouts ronds. */
+    mouse:Object.freeze({paths:Object.freeze([
+      'M12 3.6c-2.9 0-5.1 2.3-5.1 5.2v6.4c0 2.9 2.2 5.2 5.1 5.2s5.1-2.3 5.1-5.2V8.8c0-2.9-2.2-5.2-5.1-5.2z',
+      'M12 6.6v2.8']),dots:Object.freeze([])}),
+    bare_hands:Object.freeze({paths:Object.freeze([
+      'M4 8.4V6.2A2.2 2.2 0 0 1 6.2 4h2.2','M15.6 4h2.2A2.2 2.2 0 0 1 20 6.2v2.2',
+      'M20 15.6v2.2a2.2 2.2 0 0 1-2.2 2.2h-2.2','M8.4 20H6.2A2.2 2.2 0 0 1 4 17.8v-2.2',
+      'M7.2 16.6c-.4-4.4 2.2-8 6-8.6','M10.6 16.8c.6-2.2 1.8-3.8 3.2-4.6']),dots:Object.freeze([[14.4,8.6,1.2]])}),
+    pointer:Object.freeze({paths:Object.freeze(['M6.2 3.8l11.2 8.4-5.1 1 2.9 5.4-2.2 1.2-2.9-5.5-3.9 3.3z']),dots:Object.freeze([])}),
+    pan:Object.freeze({paths:Object.freeze(['M12 4v16','M4 12h16','M9.6 6.4L12 4l2.4 2.4','M9.6 17.6L12 20l2.4-2.4',
+      'M6.4 9.6L4 12l2.4 2.4','M17.6 9.6L20 12l-2.4 2.4']),dots:Object.freeze([])}),
+    select:Object.freeze({paths:Object.freeze(['M9 4.5h6','M9 19.5h6','M12 4.5v15']),dots:Object.freeze([])}),
+    sleep:Object.freeze({paths:Object.freeze(['M19.2 14.4A7.4 7.4 0 1 1 9.6 4.8a5.9 5.9 0 0 0 9.6 9.6z']),dots:Object.freeze([])}),
+    help:Object.freeze({paths:Object.freeze(['M12 3.8a8.2 8.2 0 1 1 0 16.4a8.2 8.2 0 1 1 0-16.4z',
+      'M9.6 9.7a2.5 2.5 0 1 1 3.5 2.3c-.7.3-1.1.8-1.1 1.5v.5']),dots:Object.freeze([[12,16.7,.9]])}),
+    diagnostics:Object.freeze({paths:Object.freeze(['M3.5 12.5h4l2.1-5.5 4 10 2.2-4.5h4.7']),dots:Object.freeze([])}),
+    calibration:Object.freeze({paths:Object.freeze(['M12 6a6 6 0 1 1 0 12a6 6 0 1 1 0-12z',
+      'M12 3v3','M12 18v3','M3 12h3','M18 12h3']),dots:Object.freeze([[12,12,1]])}),
   });
 
   const DOM=Object.freeze({hostId:'toolWheel',styleId:'toolWheelStyle',menuId:'toolWheelMenu',
@@ -327,6 +395,13 @@ ${H} .tw-anchor{position:relative;display:block;width:var(--shell-anchor-w);heig
   transition:border-color var(--shell-dur-fast) var(--shell-ease),background var(--shell-dur-fast) var(--shell-ease)}
 ${H} .tw-anchor::before{content:"";position:absolute;left:4px;top:28px;bottom:28px;width:2px;border-radius:2px;
   background:color-mix(in srgb,${ACCENT} 55%,transparent)}
+${H} .tw-anchor[data-tw-tone=error]{border-color:var(--sem-problem,#ff6a4d)}
+${H} .tw-anchor[data-tw-tone=error]::before{background:var(--sem-problem,#ff6a4d)}
+${H} .tw-anchor[data-tw-tone=wait]{border-color:var(--sem-working,#4da3ff)}
+${H} .tw-anchor[data-tw-tone=wait]::before{background:var(--sem-working,#4da3ff)}
+${H} .tw-anchor[data-tw-tone]::after{position:absolute;left:0;right:0;top:8px;text-align:center;
+  font:700 10px/1 ui-monospace,Consolas,monospace;content:"!" / "";color:var(--sem-problem,#ff6a4d)}
+${H} .tw-anchor[data-tw-tone=wait]::after{content:"…" / "";color:var(--sem-working,#4da3ff)}
 ${H} .tw-anchor:hover,${H} .tw-anchor[aria-expanded=true]{border-color:var(--shell-stroke-active);
   background:var(--shell-glass-strong)}
 ${H} .tw-panel{position:absolute;left:0;top:50%;width:calc(var(--shell-wheel-r) + 1px);height:calc(var(--shell-wheel-r) * 2);
@@ -364,6 +439,20 @@ ${H} .tw-item{position:absolute;transform:translateY(-50%);max-width:260px;overf
   transition:border-color var(--shell-dur-fast) var(--shell-ease),color var(--shell-dur-fast) var(--shell-ease)}
 ${H} .tw-item.is-focus{border-color:${ACCENT};color:${ACCENT}}
 ${H} .tw-item[aria-checked=true]::before{content:"● " / "";color:${ACCENT}}
+${H} .tw-item{display:inline-flex;align-items:center;gap:8px}
+${H} .tw-item svg{flex:none;width:18px;height:18px}
+${H} .tw-item .tw-text{overflow:hidden;text-overflow:ellipsis}
+${H} .tw-item .tw-note{color:var(--muted,#7190a0);font-size:11px;overflow:hidden;text-overflow:ellipsis}
+${H} .tw-item[data-tw-tone=error]{border-color:color-mix(in srgb,var(--sem-problem,#ff6a4d) 70%,transparent)}
+${H} .tw-item[data-tw-tone=error] .tw-note{color:var(--sem-problem,#ff6a4d)}
+${H} .tw-item[data-tw-tone=wait] .tw-note{color:var(--sem-working,#4da3ff)}
+${H} .tw-dot .tw-badge{position:absolute;right:-3px;top:-3px;width:16px;height:16px;border-radius:50%;
+  display:grid;place-items:center;font:700 11px/1 ui-monospace,Consolas,monospace;color:#0b0f14;pointer-events:none}
+${H} .tw-dot .tw-badge[data-tw-tone=error]{background:var(--sem-problem,#ff6a4d)}
+${H} .tw-dot .tw-badge[data-tw-tone=wait]{background:transparent;border:2px solid var(--sem-working,#4da3ff);
+  border-right-color:transparent;animation:tw-spin 1s linear infinite}
+@keyframes tw-spin{to{transform:rotate(360deg)}}
+@media(prefers-reduced-motion:reduce){${H} .tw-dot .tw-badge[data-tw-tone=wait]{animation:none}}
 ${H} .tw-item[aria-disabled=true]{color:var(--muted,#7190a0);cursor:default}
 ${H} .tw-sr{position:absolute;width:1px;height:1px;margin:-1px;padding:0;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}
 @media(forced-colors:active){
@@ -394,12 +483,15 @@ ${H} .tw-sr{position:absolute;width:1px;height:1px;margin:-1px;padding:0;overflo
     for(const [k,v] of Object.entries(attrs))el.setAttribute(k,String(v));
     return el;
   }
+  /* `name` : une clé d'`ART`, ou un dessin `{paths, dots}` fourni par une
+     action injectée. */
   function icon(name){
-    const art=ART[name];
+    const art=typeof name==='string'?ART[name]:name;
+    if(!art||!Array.isArray(art.paths))return null;
     const svg=svgEl('svg',{viewBox:'0 0 24 24',width:22,height:22,fill:'none',stroke:'currentColor',
       'stroke-width':1.5,'stroke-linecap':'round','stroke-linejoin':'round','aria-hidden':'true',focusable:'false'});
     for(const d of art.paths)svg.appendChild(svgEl('path',{d}));
-    for(const [cx,cy,r] of art.dots)svg.appendChild(svgEl('circle',{cx,cy,r,fill:'currentColor',stroke:'none'}));
+    for(const [cx,cy,r] of art.dots||[])svg.appendChild(svgEl('circle',{cx,cy,r,fill:'currentColor',stroke:'none'}));
     return svg;
   }
   /* L'anneau : arc extérieur, arc du moyeu, une graduation par frontière de
@@ -427,13 +519,18 @@ ${H} .tw-sr{position:absolute;width:1px;height:1px;margin:-1px;padding:0;overflo
       throw Object.assign(new Error(`JarvisToolWheel : l’emplacement #${DOM.hostId} manque dans control_center.html`),
         {code:'tool_wheel_host_missing'});
     const actions=new Map();
+    /* L'état qu'une action injectée **projette** sur son secteur (Slice 03 :
+       la méthode de Sélection, sa panne, son attente) : icône, ton, phrase.
+       Ce n'est pas un état de la roue — l'action le relit chez son
+       propriétaire et le repose ici à chaque changement. */
+    const statuses=new Map();
     const wedgesGeo=layoutWedges();
     let enabled=false,state=initialState(),built=null,leaveTimer=null,focusInside=false;
     /* Le dernier `pointerdown` vu sur la roue : un `click` Bare Hands est un
        `MouseEvent` sans `pointerId` ; la source se lit sur l'appui qui l'a
        précédé. */
     let lastDown={pointerId:null,t:0};
-    /* Le dernier `pointerover` vu sur la roue (reprise QA P2) : un
+    /* Le dernier `pointerover` vu sur la roue (Slice 02, reprise QA P2) : un
        `contextmenu` Bare Hands (pincement pouce + majeur) n'a pas de
        `pointerId` et ne suit pas forcément un pincement récent ; le pointeur
        qui survolait la cible dit qui l'a envoyé. */
@@ -474,6 +571,9 @@ ${H} .tw-sr{position:absolute;width:1px;height:1px;margin:-1px;padding:0;overflo
         const dot=document.createElement('span');dot.className='tw-dot';
         dot.style.left=`${geo.x}px`;dot.style.top=`${GEOMETRY.radius+geo.y}px`;
         dot.appendChild(icon(slot.id));
+        const badge=document.createElement('span');badge.className='tw-badge';badge.hidden=true;
+        badge.setAttribute('aria-hidden','true');
+        dot.appendChild(badge);
         b.appendChild(dot);
         menu.appendChild(b);
         return b;
@@ -497,7 +597,8 @@ ${H} .tw-sr{position:absolute;width:1px;height:1px;margin:-1px;padding:0;overflo
       /* L'ancre avant le panneau : ordre de tabulation ancre → secteur →
          suite de la page (Tab sort de la roue et la ferme). */
       host.appendChild(anchor);host.appendChild(panel);
-      return {panel,menu,wedges,label,sub,anchor,items:[],itemSpecs:[]};
+      return {panel,menu,wedges,label,sub,anchor,items:[],itemSpecs:[],parentSpecs:null,
+        shownIcons:SLOTS.map(slot=>slot.id)};
     }
 
     function targetOf(el){
@@ -515,15 +616,28 @@ ${H} .tw-sr{position:absolute;width:1px;height:1px;margin:-1px;padding:0;overflo
       const view=viewOf(state);
       if(view.panel.visible)host.setAttribute('data-open','');else host.removeAttribute('data-open');
       built.anchor.setAttribute('aria-expanded',String(view.anchor.expanded));
+      /* Au repos seule l'ancre se voit : une panne ou une attente projetée
+         sur un secteur s'y lit aussi (marque + phrase dans le nom), sinon un
+         démarrage lancé depuis la roue disparaîtrait avec elle. */
+      const toned=[...statuses.values()].find(st=>st.tone==='error')||[...statuses.values()].find(st=>st.tone==='wait');
+      if(toned){
+        built.anchor.setAttribute('data-tw-tone',toned.tone);
+        built.anchor.setAttribute('aria-label',`Outils — ${toned.text}`);built.anchor.title=`Outils — ${toned.text}`;
+      }else{
+        built.anchor.removeAttribute('data-tw-tone');
+        built.anchor.setAttribute('aria-label','Outils');built.anchor.title='Outils';
+      }
       built.wedges.forEach((b,i)=>{
         const w=view.wedges[i];
         b.classList.toggle('is-focus',w.focused);
         b.tabIndex=w.tabindex;
         b.setAttribute('aria-disabled',String(!actions.has(SLOTS[i].id)));
+        paintStatus(i);
       });
       if(view.label){
         const geo=wedgesGeo[state.focus];
-        built.label.textContent=view.label;
+        const status=statuses.get(SLOTS[state.focus].id);
+        built.label.textContent=status&&status.text?`${view.label} · ${status.text}`:view.label;
         built.label.style.left=`${geo.x+38}px`;built.label.style.top=`${GEOMETRY.radius+geo.y}px`;
         built.label.hidden=false;
       }else built.label.hidden=true;
@@ -536,19 +650,54 @@ ${H} .tw-sr{position:absolute;width:1px;height:1px;margin:-1px;padding:0;overflo
       }
     }
 
-    function fillSub(slotIndex,items){
+    /* Ce qu'une action projette sur son secteur : l'icône (la méthode de
+       Sélection courante), une marque (panne, attente) et la phrase, ajoutée
+       au nom accessible — l'état ne passe jamais par la couleur seule. */
+    function paintStatus(i){
+      const slot=SLOTS[i],b=built.wedges[i],status=statuses.get(slot.id)||null;
+      const dot=b.querySelector('.tw-dot'),badge=dot.querySelector('.tw-badge');
+      const want=status&&status.icon?status.icon:slot.id;
+      if(built.shownIcons[i]!==want){
+        const svg=icon(want)||icon(slot.id);
+        const old=dot.querySelector('svg');
+        if(old)dot.replaceChild(svg,old);else dot.insertBefore(svg,badge);
+        built.shownIcons[i]=want;
+      }
+      const tone=status&&(status.tone==='error'||status.tone==='wait')?status.tone:null;
+      badge.hidden=!tone;
+      if(tone){badge.setAttribute('data-tw-tone',tone);badge.textContent=tone==='error'?'!':''}
+      else{badge.removeAttribute('data-tw-tone');badge.textContent=''}
+      b.setAttribute('aria-label',status&&status.text?`${slot.label} — ${status.text}`:slot.label);
+    }
+
+    function fillSub(slotIndex,items,fromDeg){
       built.sub.textContent='';
-      const geo=layoutSubArc(items.length,wedgesGeo[slotIndex].midDeg);
+      const geo=Number.isFinite(fromDeg)?layoutSubArc(items.length,fromDeg,GEOMETRY,'start')
+        :layoutSubArc(items.length,wedgesGeo[slotIndex].midDeg);
       built.sub.setAttribute('aria-label',SLOTS[slotIndex].label);
       built.itemSpecs=items;
       built.items=items.map((spec,j)=>{
         const b=document.createElement('button');
         b.type='button';b.className='tw-item';
+        if(spec.id!=null)b.setAttribute('data-tw-item',String(spec.id));
         b.setAttribute('role',typeof spec.checked==='boolean'?'menuitemradio':'menuitem');
         if(typeof spec.checked==='boolean')b.setAttribute('aria-checked',String(spec.checked));
         if(spec.disabled)b.setAttribute('aria-disabled','true');
-        b.textContent=String(spec.label==null?'':spec.label);
-        b.title=b.textContent;
+        if(spec.tone==='error'||spec.tone==='wait')b.setAttribute('data-tw-tone',spec.tone);
+        const text=String(spec.label==null?'':spec.label);
+        const note=spec.note==null?'':String(spec.note);
+        /* `detail` : la phrase longue (un motif d'indisponibilité), dans le nom
+           accessible et l'infobulle ; `note` reste courte à l'écran. */
+        const detail=spec.detail==null?note:String(spec.detail);
+        const art=spec.icon?icon(spec.icon):null;
+        if(art)b.appendChild(art);
+        if(art||note){
+          const t=document.createElement('span');t.className='tw-text';t.textContent=text;b.appendChild(t);
+          if(note){const n=document.createElement('span');n.className='tw-note';n.textContent=note;b.appendChild(n)}
+          b.setAttribute('aria-label',detail?`${text} — ${detail}`:text);
+        }else b.textContent=text;
+        b.title=detail?`${text} — ${detail}`:text;
+        if(typeof spec.onSecondary==='function')b.setAttribute('aria-haspopup','menu');
         b.style.left=`${geo[j].x}px`;b.style.top=`${GEOMETRY.radius+geo[j].y}px`;
         built.sub.appendChild(b);
         return b;
@@ -588,7 +737,8 @@ ${H} .tw-sr{position:absolute;width:1px;height:1px;margin:-1px;padding:0;overflo
           return;
         }
         fillSub(index,items);
-        dispatch({type:'subOpen',slot:index,count:items.length,source});
+        built.parentSpecs=null;
+        dispatch({type:'subOpen',slot:index,count:items.length,source,level:1});
       };
       const out=invoke('secondary',slot.label,action.onSecondary,{slot:slot.id,source});
       if(out&&typeof out.then==='function'){
@@ -598,6 +748,40 @@ ${H} .tw-sr{position:absolute;width:1px;height:1px;margin:-1px;padding:0;overflo
           if(state.sub&&state.sub.slot===index)dispatch({type:'keydown',target:'item',index:0,key:'Escape'});
         });
       }else show(out,'sync');
+    }
+
+    /* Second niveau : l'entrée `itemIndex` du premier niveau fournit ses
+       propres choix (`onSecondary`), posés **à la place** du premier niveau ;
+       celui-ci est gardé pour le retour (`subBack`). */
+    function openItemSecondary(slotIndex,itemIndex,source,specs){
+      const slot=SLOTS[slotIndex],spec=specs[itemIndex];
+      if(!spec||spec.disabled||typeof spec.onSecondary!=='function'){
+        log('info','tool_wheel.item_secondary_none',{slot:slot.id,index:itemIndex,source});
+        return;
+      }
+      const parents=specs;
+      log('info','tool_wheel.item_secondary',{slot:slot.id,item:spec.id==null?itemIndex:spec.id,source});
+      const show=items=>{
+        if(!state.open||!state.sub||state.sub.slot!==slotIndex)return;
+        if(!Array.isArray(items)){log('info','tool_wheel.item_secondary_none',{slot:slot.id,index:itemIndex,source});return}
+        /* Le second niveau part de l'angle de l'entrée parente. */
+        const from=layoutSubArc(parents.length,wedgesGeo[slotIndex].midDeg)[itemIndex];
+        fillSub(slotIndex,items,from?from.deg:undefined);
+        built.parentSpecs=parents;
+        dispatch({type:'subOpen',slot:slotIndex,count:items.length,source,level:2,parent:itemIndex});
+      };
+      const out=invoke('secondary',String(spec.label),spec.onSecondary,{slot:slot.id,item:spec.id,source});
+      if(out&&typeof out.then==='function'){
+        show([{label:'Chargement…',disabled:true}]);
+        out.then(show,()=>{});
+      }else show(out);
+    }
+    function subBack(slotIndex,parent){
+      const parents=built&&built.parentSpecs;
+      if(!parents||!state.open)return;
+      fillSub(slotIndex,parents);
+      built.parentSpecs=null;
+      dispatch({type:'subOpen',slot:slotIndex,count:parents.length,source:'keyboard',level:1,focus:parent});
     }
 
     function run(effects,event,specs){
@@ -637,6 +821,8 @@ ${H} .tw-sr{position:absolute;width:1px;height:1px;margin:-1px;padding:0;overflo
             break;
           }
           case 'secondary':openSecondary(fx.index,fx.source);break;
+          case 'itemSecondary':openItemSecondary(fx.slot,fx.index,fx.source,specs);break;
+          case 'subBack':subBack(fx.slot,fx.parent);break;
           case 'item':{
             const spec=specs[fx.index];
             const slot=SLOTS[fx.slot];
@@ -645,6 +831,8 @@ ${H} .tw-sr{position:absolute;width:1px;height:1px;margin:-1px;padding:0;overflo
               break;
             }
             log('info','tool_wheel.item',{slot:slot.id,item:spec.id==null?fx.index:spec.id,source:fx.source});
+            /* Le choix ferme la roue ; le second niveau gardé n'a plus d'objet. */
+            if(built)built.parentSpecs=null;
             invoke('item',String(spec.label),spec.onActivate,{slot:slot.id,item:spec.id,source:fx.source});
             break;
           }
@@ -674,6 +862,7 @@ ${H} .tw-sr{position:absolute;width:1px;height:1px;margin:-1px;padding:0;overflo
         }else{
           document.removeEventListener('pointerdown',onDocDown,true);
           document.removeEventListener('keydown',onDocKey,true);
+          if(built)built.parentSpecs=null;
         }
       }
     }
@@ -703,7 +892,8 @@ ${H} .tw-sr{position:absolute;width:1px;height:1px;margin:-1px;padding:0;overflo
     function onClick(event){
       const t=targetOf(event.target);
       if(t.target==='anchor'||t.target==='wedge'||t.target==='item')
-        dispatch({type:'click',...t,detail:event.detail,source:clickSource(event)},event);
+        dispatch({type:'click',...t,detail:event.detail,source:clickSource(event),
+          menu:t.target==='wedge'&&!!(actions.get(SLOTS[t.index].id)||{}).menu},event);
     }
     function onContext(event){
       const t=targetOf(event.target);
@@ -745,10 +935,11 @@ ${H} .tw-sr{position:absolute;width:1px;height:1px;margin:-1px;padding:0;overflo
       log('info','tool_wheel.enabled',{enabled});
     }
 
-    /* Branche un emplacement. `action` : `{id, onActivate(ctx), onSecondary?(ctx)}`
-       — `onSecondary` rend la liste du sous-arc (`[{id?, label, disabled?,
-       checked?, onActivate?(ctx)}]`) ou une promesse de cette liste.
-       Rend la fonction qui débranche. */
+    /* Branche un emplacement. `action` : `{id, onActivate(ctx), onSecondary?(ctx),
+       menu?}` — `onSecondary` rend la liste du sous-arc (`[{id?, label,
+       disabled?, checked?, icon?, note?, tone?, onActivate?(ctx),
+       onSecondary?(ctx)}]`) ou une promesse de cette liste ; `menu:true` ouvre
+       ce sous-arc dès l'activation principale. Rend la fonction qui débranche. */
     function register(action){
       if(!action||!SLOT_IDS.includes(action.id))
         throw Object.assign(new TypeError(`JarvisToolWheel.register : emplacement inconnu « ${action&&action.id} » (attendus : ${SLOT_IDS.join(', ')})`),
@@ -762,10 +953,27 @@ ${H} .tw-sr{position:absolute;width:1px;height:1px;margin:-1px;padding:0;overflo
       return ()=>{if(actions.get(action.id)===action){actions.delete(action.id);render()}};
     }
 
+    /* Ce qu'une action projette sur son secteur : `{icon?, tone?:'error'|'wait',
+       text?}` (ou `null` pour l'effacer). Peint tout de suite, roue ouverte
+       ou non ; journalisé seulement quand il change. */
+    function setStatus(id,status){
+      if(!SLOT_IDS.includes(id))
+        throw Object.assign(new TypeError(`JarvisToolWheel.setStatus : emplacement inconnu « ${id} »`),
+          {code:'tool_wheel_unknown_slot'});
+      const next=status&&typeof status==='object'
+        ?Object.freeze({icon:status.icon||null,tone:status.tone||null,text:status.text==null?'':String(status.text)}):null;
+      const before=statuses.get(id)||null;
+      if(JSON.stringify(before)===JSON.stringify(next))return;
+      if(next)statuses.set(id,next);else statuses.delete(id);
+      render();
+      log('info','tool_wheel.status',{slot:id,tone:next&&next.tone,text:next&&next.text});
+    }
+
     root.JarvisToolWheel=Object.freeze({
       get enabled(){return enabled},
       set enabled(value){setEnabled(value)},
-      register,
+      register,setStatus,
+      status:id=>statuses.get(id)||null,
       open(){if(enabled)dispatch({type:'open'})},
       close(){if(enabled)dispatch({type:'close'})},
       isOpen:()=>state.open,

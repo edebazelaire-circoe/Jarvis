@@ -1542,3 +1542,39 @@ def test_the_status_heartbeat_is_what_feeds_the_switch_and_nothing_polls_twice(t
     assert "applyEnabled(state&&state.enabled===true)" in source, (
         "`applyServerState` passe par le même moteur"
     )
+
+
+def test_select_method_is_the_same_sequence_as_the_chooser(tmp_path):
+    """Slice 03 de la roue orbitale (D5) : `selectMethod` n'est pas une porte de
+    plus. Souris = `choose('off')` (`disable`, avec le seul motif qui change la
+    phrase du toast), Bare Hands = `choose('active')` (`activate` puis
+    `enable`) ; une méthode inconnue se refuse sous un nom."""
+
+    result = run_node(tmp_path, browser() + """
+      const box=sandbox();
+      let seen=null;const real=box.surface.disable;
+      box.surface.disable=options=>{seen=options===undefined?'none':options;return real()};
+      box.start({lifecycle:'active',state:'active',enabled:true});
+      await box.control.selectMethod('mouse',{reason:'mouse_takeover'});await settle();
+      const mouse={calls:[...box.calls],seen,landed:[box.at().lifecycle,box.at().enabled]};
+      box.calls.length=0;
+      await box.control.selectMethod('bare_hands');await settle();
+      const hands={calls:[...box.calls],landed:[box.at().lifecycle,box.at().enabled]};
+      let refused=null;try{await box.control.selectMethod('pen')}catch(e){refused=e.code}
+      out({mouse,hands,refused,exported:Object.keys(window.JarvisBarehandsHudControl).includes('selectMethod')});
+    """, name="select-method")
+    assert result["mouse"] == {"calls": ["disable"], "seen": {"reason": "mouse_takeover"}, "landed": ["off", False]}
+    assert result["hands"] == {"calls": ["activate", "enable"], "landed": ["active", True]}
+    assert result["refused"] == "barehands_hud_method_unknown"
+    assert result["exported"] is True
+
+
+def test_the_wheel_takes_the_column_only_while_it_is_on():
+    """Roue allumée, le contrôle du haut-gauche et la bande d'outils quittent la
+    vue par défaut (leurs fonctions sont dans Sélection) ; roue éteinte — son
+    drapeau, retrait en Slice 04 — ils restent : c'est le retour arrière. Le
+    navigateur le mesure (`test_selection_method_browser`)."""
+
+    source = HUD.read_text(encoding="utf-8")
+    assert "body:has(#toolWheel:not([hidden])) #${DOM.hostId}," in source
+    assert "body:has(#toolWheel:not([hidden])) #${DOM.paletteId}{display:none}" in source

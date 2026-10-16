@@ -1251,7 +1251,18 @@
   #${DOM.cardsId} .bh-card{animation:none}
   #${DOM.cardsId} .bh-rec-led,#${DOM.cardsId} .bh-rec-sweep::after{animation:none}
   #${DOM.cardsId} .bh-rec-btn,#${DOM.cardsId} .bh-card-close{transition:none}
-}`;
+}
+/* **La roue reprend la colonne** (jarvis-board-orbital-ui-workspace-rail,
+   Slice 03, D5). Roue d'outils allumée, le choix Souris / Bare Hands vit dans
+   Sélection, et les outils, la veille, l'aide, le diagnostic et la
+   calibration dans son sous-arc Bare Hands (même portes : \`selectMethod\`,
+   \`tool(id)\`, \`runQuick\`). Le contrôle du haut-gauche et la bande d'outils
+   quittent donc la vue par défaut ; roue éteinte (son drapeau, retrait en
+   Slice 04), ils restent : c'est le retour arrière. Rien n'est désinstallé —
+   la couture, \`JarvisBarehandsHudControl\` et \`JarvisBarehandsPalette\`
+   restent vivants pour la console et les tests. */
+body:has(#toolWheel:not([hidden])) #${DOM.hostId},
+body:has(#toolWheel:not([hidden])) #${DOM.paletteId}{display:none}`;
 
   /* ------------------------------------------------------- le contrôle DOM */
 
@@ -1641,7 +1652,7 @@
        Rien n'est réimplanté : une seconde implantation de « réveiller »
        diverge le jour où l'une des deux change, et personne ne voit laquelle
        l'utilisateur a prise. */
-    async function choose(mode){
+    async function choose(mode,options){
       if(choosing)return null;
       if(!MODES.includes(mode))
         throw Object.assign(new Error(`mode Bare Hands inconnu : ${mode}`),
@@ -1657,8 +1668,10 @@
           /* OFF est le seul mode où la posture en C ne peut rien, parce que
              c'est le seul où la caméra est **rendue** et l'interrupteur maître
              écrit à faux — donc le seul qui survive au rechargement. C'est
-             `disable()`, jamais `sleep()`. */
-          await surface.disable();
+             `disable()`, jamais `sleep()`. `options` (Slice 03 de la roue) ne
+             porte que le **motif** (`{reason:'mouse_takeover'}`), qui change
+             la phrase du toast d'arrêt et rien d'autre. */
+          await surface.disable(options);
         }else if(mode===BH.LIFECYCLE.SLEEP){
           /* Endormir d'abord si la main pilote : `enable()` ne fait pas sortir
              d'ACTIVE, personne d'autre ne le ferait. */
@@ -1729,6 +1742,18 @@
     return {
       element:host,trigger,chooser:pop,
       render,choose,open,close,
+      /* **La méthode de Sélection** (jarvis-board-orbital-ui-workspace-rail,
+         Slice 03, D5) : Souris = `off` (`disable`, la seule où la posture en
+         C ne peut rien), Bare Hands = la séquence `active` ci-dessus
+         (`activate` puis `enable`). Une seule fonction pour la roue, le
+         contrôle et la reprise souris ; aucun état de plus. */
+      selectMethod:(method,options)=>{
+        if(method==='mouse')return choose(BH.LIFECYCLE.OFF,options);
+        if(method==='bare_hands')return choose(BH.LIFECYCLE.ACTIVE);
+        return Promise.reject(Object.assign(new Error(`méthode de sélection inconnue : ${method}`),
+          {code:'barehands_hud_method_unknown'}));
+      },
+      busy:()=>choosing,
       /* Les actions rapides, atteignables sans souris ni clavier : c'est ce
          que les tests exercent, et ce que la console atteint. */
       openQuickMenu:pos=>openQuickMenu(pos||anchorBelowTrigger()),
@@ -2609,6 +2634,7 @@
       presentation:control.presentation,snapshot:control.snapshot,
       isOpen:control.isOpen,open:control.open,close:control.close,
       choose:control.choose,failure:control.failure,
+      selectMethod:control.selectMethod,busy:control.busy,
       openQuickMenu:control.openQuickMenu,quickItems:control.quickItems,
       runQuick:control.runQuick,
     });

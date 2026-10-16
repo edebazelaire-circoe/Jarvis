@@ -2485,6 +2485,10 @@ const STATUS={
    `JarvisToolWheel.enabled` passe à vrai ; ne lit que le contrat Bare Hands
    (`isBareHandsPointerId`) et `toast`, déclaration remontée de ce `<script>`. */
 /*__CONTROL_CENTER_TOOL_WHEEL_JS__*/
+/* Sélection Souris / Bare Hands et reprise souris (jarvis-board-orbital-ui-workspace-rail,
+   Slice 03) : `control_center_input_arbitration.js`. APRÈS la roue et le contrôle
+   Bare Hands (`JarvisToolWheel`, `JarvisBarehandsHudControl`), qu'il lit au chargement. */
+/*__CONTROL_CENTER_INPUT_ARBITRATION_JS__*/
 /* Contrôle Boards du haut-droit (jarvis-board-session-context-runtime, Slice 06) :
    `control_center_boards.js`. Sa seule source vivante est le bloc `boards` de
    `/api/status` ; il utilise `api`, `refreshStatus`, `toast` et `confirmDialog`,

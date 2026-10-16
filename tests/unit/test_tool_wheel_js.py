@@ -81,7 +81,11 @@ def test_four_primary_slots_in_order_selection_video_screenshot_audio(tmp_path):
                       "wedges:M.layoutWedges().length})")
     assert v["ids"] == ["selection", "video", "screenshot", "audio"]
     assert v["labels"] == ["Sélection", "Vidéo", "Capture d’écran", "Audio"]
-    assert sorted(v["art"]) == sorted(v["ids"])
+    # Chaque secteur a son dessin ; les autres dessins sont ceux des sous-arcs
+    # de Sélection (Slice 03), jamais un secteur de remplissage.
+    assert set(v["ids"]) <= set(v["art"])
+    assert set(v["art"]) - set(v["ids"]) == {"mouse", "bare_hands", "pointer", "pan", "select",
+                                             "sleep", "help", "diagnostics", "calibration"}
     assert v["wedges"] == 4
 
 
@@ -269,7 +273,7 @@ async def test_module_is_served_after_the_capture_rail_and_host_declared(tmp_pat
     assert "z-index" not in re.sub(r"/\*.*?\*/", "", MODULE.read_text(encoding="utf-8"), flags=re.S)
 
 
-# ------------------------------------------------------------ reprise QA de la Slice 02
+# ------------------------------------------------------------ Slice 03 et reprise QA de la Slice 02
 
 
 def test_hovering_another_wedge_closes_the_open_sub_arc(tmp_path):
@@ -288,3 +292,28 @@ def test_bh_pinch_on_anchor_is_a_pointer_not_the_keyboard(tmp_path):
       const kb=play([{type:'click',target:'anchor',detail:0,source:'keyboard'}]);
       out({bh:[bh.s.openedBy,did(bh.fx,'focus').length],kb:[kb.s.openedBy,did(kb.fx,'focus').length]})""")
     assert v == {"bh": ["pointer", 0], "kb": ["keyboard", 1]}
+
+
+def test_menu_slot_opens_its_sub_arc_on_primary_and_items_drill_down(tmp_path):
+    v = run(tmp_path, f"""
+      const o=play([{OPEN}]).s;
+      const menu=play([{{type:'click',target:'wedge',index:0,detail:1,source:'mouse',menu:true,t:10}}],o);
+      const l1=play([{{type:'subOpen',slot:0,count:2,source:'mouse',level:1}}],menu.s).s;
+      const right=play([{{type:'contextmenu',target:'item',index:1,source:'mouse',t:20}}],l1);
+      const twice=play([{{type:'keydown',target:'item',index:1,key:'F10',shiftKey:true,t:30}},
+                        {{type:'contextmenu',target:'item',index:1,source:'keyboard',t:60}}],l1);
+      const l2=play([{{type:'subOpen',slot:0,count:7,source:'keyboard',level:2,parent:1}}],l1).s;
+      const esc=play([{{type:'keydown',target:'item',index:3,key:'Escape'}}],l2);
+      const back=play([{{type:'subOpen',slot:0,count:2,source:'keyboard',level:1,focus:1}}],esc.s);
+      const leave=play([{{type:'keydown',target:'item',index:1,key:'Escape'}}],back.s);
+      out({{menu:[menu.s.open,did(menu.fx,'activate').length,did(menu.fx,'secondary')],
+        right:did(right.fx,'itemSecondary'),twice:did(twice.fx,'itemSecondary').length,
+        l2:[l2.sub.level,l2.sub.parent,l2.sub.focus],esc:[did(esc.fx,'subBack'),esc.s.sub.level],
+        back:[back.s.sub.level,back.s.sub.focus,did(back.fx,'focus')],leave:[leave.s.sub,leave.s.open,leave.s.focus]}})""")
+    assert v["menu"] == [True, 0, [{"do": "secondary", "index": 0, "source": "mouse"}]]
+    assert v["right"] == [{"do": "itemSecondary", "slot": 0, "index": 1, "source": "mouse"}]
+    assert v["twice"] == 1  # Maj+F10 puis le `contextmenu` natif : une fois
+    assert v["l2"] == [2, 1, 0]
+    assert v["esc"] == [[{"do": "subBack", "slot": 0, "parent": 1}], 2]
+    assert v["back"] == [1, 1, [{"do": "focus", "target": "item", "index": 1}]]
+    assert v["leave"] == [None, True, 0]  # Échap au premier niveau : retour au secteur

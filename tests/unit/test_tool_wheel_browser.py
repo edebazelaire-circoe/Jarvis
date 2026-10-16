@@ -422,7 +422,8 @@ def test_cosmos_skin_same_wheel(run):
     setup, _shot, _m, _w, _m2, state, _shot2 = run["theme-cosmos"]
     assert setup["theme"] == "cosmos"
     assert state["open"] is True and state["z"] == "37" and state["focused"] == ["selection"]
-    assert state["label"] == "Sélection"
+    # Slice 03 : le libellé porte la méthode projetée par Sélection (Souris au chargement).
+    assert state["label"] == "Sélection · Souris"
 
 
 @pytest.mark.parametrize("width,height", ((900, 600), (600, 800)))

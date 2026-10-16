@@ -159,6 +159,9 @@ const chrome=spawn(CHROME,[
   '--headless=new',`--remote-debugging-port=${port}`,`--user-data-dir=${profile}`,
   '--no-first-run','--no-default-browser-check','--disable-gpu',
   '--disable-extensions','--allow-file-access-from-files','--hide-scrollbars',
+  /* `CDP_CHROME_FLAGS` : drapeaux en plus, séparés par des espaces (Slice 03 de
+     la roue orbitale : caméra factice `--use-fake-device-for-media-stream`). */
+  ...String(process.env.CDP_CHROME_FLAGS||'').split(/\s+/).filter(Boolean),
   'about:blank',
 ],{stdio:'ignore'});
 disposeChromeOnExit(chrome,profile);
@@ -271,8 +274,9 @@ try{
         }
       }
       case 'click':{
-        const box=await evaluate(`(()=>{const r=document.querySelector(${JSON.stringify(action.selector)})
-          .getBoundingClientRect();return {x:r.left+r.width/2,y:r.top+r.height/2}})()`);
+        const box=await evaluate(`(()=>{const e=document.querySelector(${JSON.stringify(action.selector)});
+          if(!e)throw new Error('click : introuvable '+${JSON.stringify(JSON.stringify(action.selector))});
+          const r=e.getBoundingClientRect();return {x:r.left+r.width/2,y:r.top+r.height/2}})()`);
         for(const type of ['mouseMoved','mousePressed','mouseReleased'])
           await send('Input.dispatchMouseEvent',{type,x:box.x,y:box.y,button:'left',clickCount:1});
         await sleep(60);

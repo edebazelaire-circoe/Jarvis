@@ -637,6 +637,16 @@ CAPTURE_RAIL_SCRIPT_MARKER = "/*__CONTROL_CENTER_CAPTURE_RAIL_JS__*/"
 #: `docs/control-center-shell.md` › Roue d'outils. Refus d'installation rattrapé.
 TOOL_WHEEL_SCRIPT_FILE = "control_center_tool_wheel.js"
 TOOL_WHEEL_SCRIPT_MARKER = "/*__CONTROL_CENTER_TOOL_WHEEL_JS__*/"
+#: Sélection Souris / Bare Hands et reprise de la main par la souris
+#: (jarvis-board-orbital-ui-workspace-rail, Slice 03, D5) : projection du cycle
+#: de vie Bare Hands sur le secteur Sélection de la roue, sous-arc Souris /
+#: Bare Hands (puis outils, veille, aide, diagnostic, calibration), et `decide`
+#: pur qui rend la main à la souris sur un vrai clic ou un mouvement délibéré.
+#: Inséré APRÈS la roue et le contrôle Bare Hands, qu'il lit au chargement ;
+#: refus d'installation rattrapé. Contrat : `docs/control-center-shell.md` ›
+#: Selection method.
+INPUT_ARBITRATION_SCRIPT_FILE = "control_center_input_arbitration.js"
+INPUT_ARBITRATION_SCRIPT_MARKER = "/*__CONTROL_CENTER_INPUT_ARBITRATION_JS__*/"
 #: Avertissement flottant de vérification (Slice 09 de
 #: `jarvis-presentation-interaction-mode`) : une carte discrète, posée en bas de
 #: la pile d'infusions existante, pour une contradiction vérifiée. Il lit le
@@ -2437,6 +2447,10 @@ class ControlCenter:
         html = html.replace(
             TOOL_WHEEL_SCRIPT_MARKER,
             page.with_name(TOOL_WHEEL_SCRIPT_FILE).read_text(encoding="utf-8"),
+        )
+        html = html.replace(
+            INPUT_ARBITRATION_SCRIPT_MARKER,
+            page.with_name(INPUT_ARBITRATION_SCRIPT_FILE).read_text(encoding="utf-8"),
         )
         html = html.replace(
             BOARDS_SCRIPT_MARKER,

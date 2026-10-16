@@ -6958,7 +6958,9 @@ try{
        sonner deux fois avant la veille. */
     const notify=status.state===BH.LIFECYCLE.ERROR||BH.isLiveLifecycle(status.state)
       ||(status.code==='disabled'&&previous.state!==BH.LIFECYCLE.ERROR);
-    if(notify&&typeof toast==='function')
+    if(notify&&status.code==='disabled'&&disableNotice&&typeof toast==='function')
+      toast({title:disableNotice.title,sub:disableNotice.sub,kind:'info',ms:5000});
+    else if(notify&&typeof toast==='function')
       toast({title:status.title,sub:status.message,
         kind:status.state==='error'?'bad':status.state===BH.LIFECYCLE.ACTIVE?'ok':'warn',
         ms:status.state==='error'?9000:4000});
@@ -8995,7 +8997,19 @@ try{
      éteinte, la case le dit — et la seule chose qui reste divergente, le
      réglage resté « allumé » sur le serveur, est **nommée** : c'est ce que
      l'utilisateur retrouvera au prochain chargement. */
-  async function setEnabled(enabled){
+  /* Les phrases d'arrêt **voulues pour une raison nommée** (Slice 03 de la
+     roue orbitale, D5). Seule la phrase change : un `disable` reste un
+     `disable`. `mouse_takeover` : la souris a repris la main pendant que Bare
+     Hands pilotait — le toast générique « Barehands arrêté » laisserait
+     croire à une panne ou à un geste de l'utilisateur sur l'interrupteur. */
+  const DISABLE_NOTICE=Object.freeze({
+    mouse_takeover:Object.freeze({title:'Souris reprise — Bare Hands éteint',
+      sub:'Pour revenir : Sélection › Bare Hands dans la roue d’outils, ou demandez-le à Jarvis.'}),
+  });
+  /* Posée le temps du seul `controller.disable()` synchrone qui émet
+     `disabled` ; jamais lue ailleurs. */
+  let disableNotice=null;
+  async function setEnabled(enabled,options){
     /* **Éteindre éteint, quel que soit l'état de départ.** La garde qui
        protège « Caméra refusée » d'être écrasée par « Barehands arrêté —
        caméra libérée » ne vit pas ici : elle vit dans `controller.disable()`
@@ -9017,7 +9031,12 @@ try{
        a bien été libérée, c'est le réglage qui n'a pas été enregistré » plus
        bas : sans objectif ouvert, cette phrase-là n'aurait rien à dire. */
     const released=!enabled&&Core.isEngagedState(controller.state());
-    if(!enabled)controller.disable();
+    if(!enabled){
+      const reason=options&&typeof options==='object'?String(options.reason||''):'';
+      disableNotice=DISABLE_NOTICE[reason]||null;
+      try{controller.disable()}finally{disableNotice=null}
+      if(reason)barehandsLog('info','barehands.disabled_for_reason',{reason,released});
+    }
     const saved=await saveSettings({enabled});
     if(saved!==null||!released)return saved;
     view.enabled=false;
@@ -9629,7 +9648,10 @@ try{
        qu'on ne peut pas relire là où il agit est un réglage qu'on ne peut pas
        dire branché. */
     engine:()=>controller.options(),
-    enable:()=>setEnabled(true),disable:()=>setEnabled(false),
+    /* `disable({reason})` : le motif ne change que la **phrase** du toast
+       d'arrêt (reprise souris de la roue, Slice 03 orbitale) ; l'extinction
+       est la même. */
+    enable:()=>setEnabled(true),disable:options=>setEnabled(false,options),
     /* **L'interrupteur maître relu du serveur**, sur le battement que la page
        fait déjà tourner (`refreshStatus` → `/api/status` → `barehands`). Même
        forme et même contrat que `JarvisScene.gate` et que

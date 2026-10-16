@@ -289,9 +289,10 @@ else does.
 Slice 02, decisions D3 and D4 of the handoff's resolved architecture. Module
 `jarvis/runtime/control_center_tool_wheel.js` (`window.JarvisToolWheel`),
 served by `ControlCenter.index` (`TOOL_WHEEL_SCRIPT_FILE`). A **new surface**:
-not the Bare Hands palette, not the capture rail; both stay functional until
-Slices 03 and 04 migrate them (rollback = leave the flag off, or remove
-`#toolWheel`).
+not the Bare Hands palette, not the capture rail. Slice 03 moved the palette
+(and the top-left lifecycle control) into Selection: with the wheel on they
+leave the default view (see Selection method below); the capture rail stays
+until Slice 04 (rollback = leave the flag off, or remove `#toolWheel`).
 
 **Feature flag.** `JarvisToolWheel.enabled` is `false` by default: the host
 stays `hidden`, nothing is built, no listener is attached. Setting it to
@@ -332,9 +333,10 @@ Hands primary pinch. Never `pointerup`, so the Bare Hands sequence
 Secondary = the existing channel (D4): `contextmenu` (right click, Bare Hands
 thumb + middle pinch), `ContextMenu` key, `Shift+F10`; a keyboard secondary
 followed by the browser's own `contextmenu` on the same wedge within 500 ms
-counts once. Never long press. A Bare Hands `contextmenu` (thumb + middle
-pinch) is attributed to `barehands` from the `pointerId` of the last
-`pointerover` on the wheel, however long after the last pinch.
+counts once (the dedupe is reset when the wheel closes or a second level
+returns). Never long press. A Bare Hands `contextmenu` (thumb + middle pinch)
+is attributed to `barehands` from the `pointerId` of the last `pointerover`
+on the wheel, however long after the last pinch.
 
 **Injected actions.** `JarvisToolWheel.register({id, onActivate(ctx),
 onSecondary?(ctx)})` binds a slot (unknown slot → `TypeError`, code
@@ -343,12 +345,29 @@ onSecondary?(ctx)})` binds a slot (unknown slot → `TypeError`, code
 `aria-disabled`; activating it journals `tool_wheel.unbound` and shows a
 notification instead of doing nothing silently. A callback that throws or
 rejects is journalled (`tool_wheel.action_failed`, real cause) and shown as a
-notification; the wheel itself is unaffected. Selection semantics are Slice
-03, capture wiring Slice 04.
+notification; the wheel itself is unaffected. A slot registered with
+`menu:true` opens its sub-arc on **primary** activation instead of acting
+(Selection, Slice 03). Capture wiring is Slice 04.
+
+**Slot status.** `JarvisToolWheel.setStatus(id, {icon?, tone?:
+'error'|'wait', text?} | null)` lets an action **project** its owner's state
+onto its wedge (Selection: the current method): the dot icon is swapped
+(`icon`: an `ART` key), a badge marks `error` (« ! », `--sem-problem`) or
+`wait` (spinning ring, `--sem-working`, static under reduced motion), and
+`text` joins the wedge name (`Sélection — Souris`) and its label pill
+(`Sélection · Souris`). The anchor carries the worst projected tone
+(`data-tw-tone`, coloured stroke + « ! » / « … » mark, `aria-label`/`title`
+`Outils — <text>`), so a failure or a pending start stays visible with the
+wheel closed. The wheel stores nothing else: the action re-reads its owner
+and calls `setStatus` again on each change (journal `tool_wheel.status`).
 
 **Radial sub-arc** (the reusable submenu pattern). `onSecondary` returns the
-entries `[{id?, label, disabled?, checked?, onActivate?(ctx)}]` (or a promise
-of them; « Chargement… » shows while it is pending). They are laid out on an
+entries `[{id?, label, disabled?, checked?, icon?, note?, detail?, tone?,
+onActivate?(ctx), onSecondary?(ctx)}]` (or a promise of them; « Chargement… »
+shows while it is pending). `icon` draws an `ART` glyph in the pill, `note`
+a short muted second text, `detail` the long reason that goes into the
+accessible name and the tooltip, `tone` an `error`/`wait` mark; `id` is
+exposed as `data-tw-item`. They are laid out on an
 outer arc (radius 236 px, 15° apart) centred on the parent wedge and kept
 within ±78°, as text pills (`role="menuitem"`, or `menuitemradio` with
 `aria-checked` when `checked` is a boolean); labels go through `textContent`.
@@ -356,10 +375,17 @@ within ±78°, as text pills (`role="menuitem"`, or `menuitemradio` with
 the parent wedge. Hovering **another** wedge while a sub-arc is open closes
 the sub-arc (its label comes back).
 
-**Close.** `Esc` (topmost first: sub-arc, then wheel; with the focus
-elsewhere in the page, `Esc` still closes a pointer-opened wheel), activating
-a wedge or an entry, a `pointerdown` outside (document `pointerdown` and
-`keydown` listeners present **only while open**), focus leaving the host (`Tab` away: no focus trap), and — when the
+**Second level.** An entry that carries `onSecondary` (`aria-haspopup="menu"`)
+opens, on its secondary activation (right click, thumb + middle pinch,
+`ContextMenu`, `Shift+F10`), a second list **in place of** the first, laid
+out from the parent entry's angle downwards (`layoutSubArc(..., 'start')`, so
+it never climbs into the top-left corner). `Esc` / `ArrowLeft` return to the
+first level with the parent entry focused; journal `tool_wheel.item_secondary`.
+
+**Close.** `Esc` (topmost first: second level, sub-arc, then wheel; with
+the focus elsewhere in the page, `Esc` still closes a pointer-opened wheel),
+activating a wedge or an entry, a `pointerdown` outside (document
+`pointerdown` and `keydown` listeners present **only while open**), focus leaving the host (`Tab` away: no focus trap), and — when the
 wheel was opened by a pointer — the pointer leaving it for 400 ms (grace that
 covers the gaps between anchor, wedges and sub-arc; Bare Hands sends
 `pointerout` without `relatedTarget`). Closing never touches domain state.
@@ -385,13 +411,120 @@ the accessible name.
 `.enabled`, `.registered`, `.open {reason: mouse|barehands|keyboard|api}`,
 `.close {reason: leave|activate|escape|outside|blur|api|disabled}`,
 `.activate`, `.secondary`, `.secondary_none`, `.item`, `.item_inert`,
-`.unbound`, `.action_failed`, `.install_failed`.
+`.item_secondary`, `.item_secondary_none`, `.status`, `.unbound`,
+`.action_failed`, `.install_failed`.
 
-**Tests.** `tests/unit/test_tool_wheel_js.py` (node: geometry, reducer, no
-network, served page); `tests/unit/test_tool_wheel_browser.py` (headless
-Chrome via CDP, real input events: mouse hotspot, keyboard, Bare Hands
-synthetic pointer 9001, pinch on the anchor, late thumb + middle pinch, `Esc`
-with outside focus, `Space`, reduced motion, focus, far pointer).
+**Tests.** `tests/unit/test_tool_wheel_js.py` (node: geometry, reducer, menu
+slot, second level, no network, served page);
+`tests/unit/test_tool_wheel_browser.py` (headless Chrome via CDP, real input
+events: mouse hotspot, keyboard, Bare Hands synthetic pointer 9001, pinch on
+the anchor, late thumb + middle pinch, `Esc` with outside focus, `Space`,
+reduced motion, focus, far pointer).
+
+## Selection method (`control_center_input_arbitration.js`)
+
+Slice 03, decision D5 of the handoff's resolved architecture (binding).
+Module `jarvis/runtime/control_center_input_arbitration.js`
+(`window.JarvisInputArbitration`, `INPUT_ARBITRATION_SCRIPT_FILE`), served
+after the tool wheel and the Bare Hands HUD, which it reads at load; an
+install refusal is caught and journalled (`input_arbitration.install_failed`,
+`code: input_arbitration_dependency_missing`).
+
+**No new owner.** The selection method is a **projection** of the Bare Hands
+lifecycle (`JarvisBarehands.openLifecycleSeam('selection', …)`):
+
+| Bare Hands lifecycle | Selection shows | Wedge / anchor |
+| --- | --- | --- |
+| `active`, `sleep` | Bare Hands (`sleep`: « Bare Hands · veille ») | Bare Hands icon |
+| `off` | Souris | mouse icon |
+| `error` | Bare Hands, never Souris | « ! » badge, `Bare Hands · interrompu (<code>)` |
+| starting | Bare Hands | wait ring, `Bare Hands · démarrage N s` (1 s counter; « choisissez Souris pour annuler ») |
+
+**Sub-arc.** The Selection wedge is a `menu:true` slot: its primary
+activation opens exactly **Souris** and **Bare Hands** (`menuitemradio`, the
+mouse icon and the Bare Hands icon — tracking-frame corners around a thumb +
+index pinch; the former hand icon is not reused). Bare Hands' secondary
+activation opens the second level: the **installed** tools
+(`JarvisBarehands.tools()`, checked = current tool, uninstalled =
+`aria-disabled` + reason), then **Veille**, **Aide**, **Diagnostic**,
+**Calibration** (refused with the HUD's own reason, e.g. « Bare Hands est
+éteint »).
+
+| Choice | Gate (single write path) |
+| --- | --- |
+| Souris | `JarvisBarehandsHudControl.selectMethod('mouse')` = HUD `choose('off')` = `JarvisBarehands.disable()`: camera released, master switch written false, `c_pose` cannot wake |
+| Bare Hands | `selectMethod('bare_hands')` = HUD `choose('active')`: `activate()` then `enable()` to persist |
+| a tool | `JarvisBarehands.tool(id)` → `saveSettings({tool})` |
+| Veille | HUD `choose('sleep')` |
+| Aide / Diagnostic / Calibration | HUD `runQuick('help' / 'diagnostics' / 'calibration')` |
+
+A refusal is shown (wheel notification with the real cause, plus Bare Hands'
+own toast) and journalled (`selection.method_refused`). Réglages and Tester
+stay reachable from the Bare Hands settings tab.
+
+**Wheel on = Selection owns the column.** While `#toolWheel` is not
+`hidden`, the HUD sheet hides the top-left lifecycle control
+(`#barehandsHud`) and the tool strip (`#barehandsPalette`) with
+`body:has(#toolWheel:not([hidden]))`; flag off, both come back (rollback).
+Nothing is uninstalled: `JarvisBarehandsHudControl`, `JarvisBarehandsPalette`
+and their seams stay live.
+
+**Mouse takeover** (pure `decide(state, event, params)`):
+
+- input = real pointer events only, listened on `document` in capture,
+  passive, never prevented: `isTrusted === true` **and** a `pointerId` outside
+  9001-9002; a keyboard `click` (`detail` 0) is not the mouse;
+- only while the lifecycle is `active` (in `sleep` the hand drives nothing;
+  `off` / `error` / starting never call);
+- `pointerdown` / `click` / `wheel` / `contextmenu` → immediate (`reason:
+  'click'`);
+- `pointermove` → path length `>= distancePx` **and** net displacement
+  `>= netPx` within a sliding `windowMs` (`reason: 'movement'`); jitter
+  cancels in the net, slow drift never reaches the path within the window;
+- one transition per episode (`pending` until the lifecycle changes),
+  accumulator reset; `cooldownMs` after every entry into `active` (explicit
+  choice, voice, `c_pose` wake) and after an explicit Bare Hands request;
+- defaults `distancePx 48`, `netPx 24`, `windowMs 400`, `cooldownMs 1500`;
+  tunable live with `JarvisInputArbitration.configure(patch)` (bounded,
+  `netPx <= distancePx`, refusals `input_arbitration_bad_param` /
+  `input_arbitration_unknown_param`, journal `input_arbitration.configured`).
+
+Reaching for the wheel with the mouse while Bare Hands is active is itself a
+deliberate move: control passes to the mouse before the click on « Souris ».
+
+The takeover calls `selectMethod('mouse', {reason: 'mouse_takeover'})`; the
+reason only changes Bare Hands' stop toast to « Souris reprise — Bare Hands
+éteint » (`JarvisBarehands.disable({reason})`). **Return to Bare Hands is
+explicit only**: the wheel, or voice — `barehands_activate`; from `off` the
+broker first answers `barehands_disabled` and the brain turns the switch on
+(`settings_set(barehands.enabled, true)`), the status heartbeat re-arms the
+page (sleep), then `barehands_activate` wakes it.
+
+**Journal.** `[input_arbitration] <key> {json}`: `input_arbitration.installed`,
+`.configured`, `.takeover {reason, input, distance_px, net_px, window_ms}`
+(aggregates only), `selection.method_requested`, `.method_selected`,
+`.method_refused`, `.method_busy`, `.projected`, `.tool_selected`,
+`.bare_hands_return {ms, lifecycle, code}` (return latency, also
+`JarvisInputArbitration.stats().lastReturnMs`).
+
+**Return latency** (measured by `test_selection_method_browser.py`, headless
+Chrome, fake camera, real MediaPipe 0.10.14 assets via
+`SELECTION_REAL_VENDOR`, CPU / SwiftShader): 389-877 ms from the click to
+`active` (the first, cold run is the slowest); with the fake landmarker
+~150 ms. Under the 3 s threshold of D5, so the `idle_wake` fallback is not
+filed. A real webcam's warm-up is not in this figure (Human check HV-03-01).
+
+**Tests.** `tests/unit/test_input_arbitration_js.py` (node: `decide`
+properties over 10 000 seeds — zero-mean jitter, slow drift —, click, Bare
+Hands pointer ids, one transition per episode, cooldown, params, projection,
+sub-arc items, served order); `tests/unit/test_selection_method_browser.py`
+(headless Chrome, real page and real Bare Hands engine, fake camera, a test
+HTTP server running the real `barehands_test_mode` settings: only Mouse and
+Bare Hands offered, Bare Hands activates and persists, real jitter ignored
+then a real deliberate move takes over, Mouse releases the camera and no
+frame is analysed afterwards, failed activation shown with its cause, tools
+and quick actions through the second level, voice return through the
+command channel, latency).
 
 ## Accessibility and motion rules
 
