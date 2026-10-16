@@ -33,6 +33,7 @@ import {createServer} from 'node:http';
 import {readFileSync, writeFileSync, mkdtempSync, rmSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
+import {disposeChromeOnExit} from './_cdp_profile.mjs';
 
 const [,,PAGE,CHROME,PLAN]=process.argv;
 const plan=JSON.parse(PLAN);
@@ -165,6 +166,7 @@ const chrome=spawn(CHROME,[
   '--hide-scrollbars','--autoplay-policy=no-user-gesture-required','--mute-audio',
   'about:blank',
 ],{stdio:'ignore'});
+disposeChromeOnExit(chrome,profile);
 
 const sleep=ms=>new Promise(r=>setTimeout(r,ms));
 const reads=[];

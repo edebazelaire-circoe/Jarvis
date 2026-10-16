@@ -18,6 +18,7 @@ import {spawn, execFileSync} from 'node:child_process';
 import {mkdtempSync, rmSync, writeFileSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
+import {disposeChromeOnExit} from './_cdp_profile.mjs';
 
 const [,,PAGE,CHROME,STEP]=process.argv;
 const step=JSON.parse(STEP);
@@ -27,6 +28,7 @@ const chrome=spawn(CHROME,[
   '--headless=new',`--remote-debugging-port=${port}`,`--user-data-dir=${profile}`,
   '--no-first-run','--no-default-browser-check','--disable-gpu','--disable-extensions','--hide-scrollbars','about:blank',
 ],{stdio:'ignore'});
+disposeChromeOnExit(chrome,profile);
 const sleep=ms=>new Promise(r=>setTimeout(r,ms));
 
 /* Un point du fond : `elementFromPoint` y rend `#app`, `.face` ou la scène, jamais un nœud ni une commande. */

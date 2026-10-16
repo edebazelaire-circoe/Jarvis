@@ -15,12 +15,14 @@ import {spawn} from 'node:child_process';
 import {mkdtempSync, readFileSync, rmSync, writeFileSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
+import {disposeChromeOnExit} from './_cdp_profile.mjs';
 
 const [,,URL_,CHROME,PLAN_FILE]=process.argv;
 const plan=JSON.parse(readFileSync(PLAN_FILE,'utf8'));
 const profile=mkdtempSync(join(tmpdir(),'jarvis-sve-cdp-'));
 const chrome=spawn(CHROME,['--headless=new','--remote-debugging-port=0',`--user-data-dir=${profile}`,'--no-first-run',
   '--no-default-browser-check','--disable-gpu','--disable-extensions','--hide-scrollbars','about:blank'],{stdio:'ignore'});
+disposeChromeOnExit(chrome,profile);
 const sleep=ms=>new Promise(r=>setTimeout(r,ms));
 const reads={},network=[],consoleLines=[];
 

@@ -15,6 +15,7 @@ import {spawn, execFileSync} from 'node:child_process';
 import {mkdtempSync, rmSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
+import {disposeChromeOnExit} from './_cdp_profile.mjs';
 
 const [,,BASE,CHROME,PLAN]=process.argv;
 const plan=JSON.parse(PLAN);
@@ -23,6 +24,7 @@ const profile=mkdtempSync(join(tmpdir(),'jarvis-chat-tabs-'));
 const port=9222+Math.floor(Math.random()*500);
 const chrome=spawn(CHROME,['--headless=new',`--remote-debugging-port=${port}`,`--user-data-dir=${profile}`,
   '--no-first-run','--no-default-browser-check','--disable-gpu','--disable-extensions','--hide-scrollbars','about:blank'],{stdio:'ignore'});
+disposeChromeOnExit(chrome,profile);
 
 async function poll(url){
   for(let i=0;i<100;i+=1){
