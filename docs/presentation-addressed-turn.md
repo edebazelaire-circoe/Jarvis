@@ -598,6 +598,9 @@ ambient speech is still `ambient`, never a brain turn, an admission, an `on_addr
 `ActionBroker` request. The three enforcement points are untouched, byte for byte and by test:
 `decide_turn_authority` (and `TurnAuthority`, `is_vocative_address`), `BrainTurnInput.__post_init__` (an ambient turn is
 never submitted) and `PresentationOutputPolicy.__post_init__` (`authorizes_action` needs `requires_explicit_address`).
+One later, reviewed re-pin: handoff jarvis-unified-chat-and-board-drop (Slice 03) added to `BrainTurnInput.__post_init__`
+only a validation of written-turn attachments (`_check_attachments`: Artifact ids, distinct, bounded). It can only refuse a
+turn, the ambient refusal is unchanged, and the pin moved from `217a7c1daf8acc82` to `356020e626e2a0c8`.
 `AmbientTriggerKind` stays closed (a cue match is not a trigger kind); `AmbientUtterance`, `AmbientTrigger` and
 `AmbientAnalysis` keep `authorizes_actions = False`.
 
