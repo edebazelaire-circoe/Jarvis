@@ -15,12 +15,27 @@ import pytest
 from tests.fakes.presentation_studio_inspector_browser import InspectorRig, drive
 from tests.unit.test_control_center_presentation_rail_browser import BLUE, GREEN, ORANGE
 from tests.unit.test_presentation_studio_playback_routes import score
+from tests.unit.test_presentation_studio_rail import _still
 
 pytestmark = pytest.mark.asyncio
 
 ITEMS = "[...document.querySelectorAll('#presentationRail .jvr-item')].map(b=>[b.querySelector('.jvr-name').textContent,b.dataset.state,getComputedStyle(b.querySelector('.jvr-dot')).backgroundColor])"
 CONTEXT = "document.querySelector('#presentationRail .jvr-item[data-id=\"%s\"]').dispatchEvent(new MouseEvent('contextmenu',{bubbles:true,cancelable:true,clientX:120,clientY:130}))"
 HTTP_REFUSAL = "Failed to load resource: the server responded with a status of 4"
+
+
+def png(width: int, height: int) -> bytes:
+    """A real PNG (gradient), the bytes a still render would hold: the preview goes through the real relay and Core payload route."""
+
+    import struct
+    import zlib
+
+    rows = b"".join(b"\x00" + bytes(v for x in range(width) for v in (40 + x * 160 // width, 60 + y * 120 // height, 140)) for y in range(height))
+
+    def chunk(kind: bytes, data: bytes) -> bytes:
+        return struct.pack(">I", len(data)) + kind + data + struct.pack(">I", zlib.crc32(kind + data) & 0xFFFFFFFF)
+
+    return b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", struct.pack(">IIBBBBB", width, height, 8, 2, 0, 0, 0)) + chunk(b"IDAT", zlib.compress(rows)) + chunk(b"IEND", b"")
 
 
 def noise(result: dict) -> list:
@@ -42,6 +57,8 @@ async def test_the_rail_lists_real_presentations_with_their_real_work_state_and_
         await core.client.presentation_studio_work(pid2, {"event": "begin", "label": "presentation_edit"})
         await core.client.presentation_studio_work(pid3, {"event": "failure", "code": "presentation_studio_storage_io", "message": "disque plein"})
         await core.client.presentation_studio_rail_act(pid4, {"action": "archive", "actor": "user"})
+        # Slice 07 (D10): a real still render of the first presentation is its card's preview (real registry, real relay, real payload)
+        still = await _still(core, rig.pid, width=160, height=90, payload=png(160, 90))
 
         result = await drive(rig.url, [
             {"until": "!!window.JarvisPresentationRail", "ms": 20000},
@@ -49,7 +66,9 @@ async def test_the_rail_lists_real_presentations_with_their_real_work_state_and_
             {"until": "JarvisPresentationRail.state().loaded===true&&document.querySelectorAll('#presentationRail .jvr-item').length>=3", "ms": 20000},
             {"value": "items", "expr": ITEMS},
             {"value": "folds", "expr": "[...document.querySelectorAll('#presentationRail .jvr-fold')].map(b=>b.textContent.trim())"},
-            {"value": "palette", "expr": "(()=>{const a=document.querySelector('#barehandsPalette').getBoundingClientRect(),b=document.querySelector('#presentationRail').getBoundingClientRect();return [a.right,b.left]})()"},
+            {"until": "[...document.querySelectorAll('#presentationRail .jvr-thumb img')].every(i=>i.complete)", "ms": 8000},
+            {"value": "zone", "expr": "(()=>{const b=s=>{const r=document.querySelector(s).getBoundingClientRect();return {l:r.left,t:r.top,r:r.right,b:r.bottom}};return {palette:b('#barehandsPalette'),rail:b('#presentationRail'),dock:b('.dock'),chat:b('#chatTab'),vw:innerWidth}})()"},
+            {"value": "preview", "expr": "(()=>{const i=document.querySelector('#presentationRail .jvr-thumb img');return i?{src:i.getAttribute('src'),ok:i.complete&&i.naturalWidth===160}:null})()"},
             {"shot": str(tmp_path / "rail.png")},
             # hide Roadmap through the real context menu and the real relay
             {"eval": CONTEXT % pid3},
@@ -65,7 +84,7 @@ async def test_the_rail_lists_real_presentations_with_their_real_work_state_and_
             {"until": "!!window.JarvisStudioExplorer&&JarvisStudioExplorer.isOpen&&JarvisStudioExplorer.isOpen()", "ms": 15000},
             {"until": "JarvisStudioExplorer.state().live===2", "ms": 15000},
             {"wait": 500},
-            {"value": "studio", "expr": "(()=>{const r=document.querySelector('#presentationRail').getBoundingClientRect(),x=document.querySelector('#jvStudioExplorer').getBoundingClientRect();return {docked:document.documentElement.classList.contains('jvr-studio'),railLeft:r.left,railTop:r.top,explorerLeft:x.left,railInert:!!document.querySelector('#presentationRail').closest('[inert]'),chips:JarvisStudioExplorer.state().live,vbar:document.querySelectorAll('#jvStudioExplorer .jvx-vbar,#jvStudioExplorer .jvx-vchip').length,play:[...document.querySelectorAll('#jvStudioExplorer .jvx-transport button')].filter(b=>!b.hidden).map(b=>b.getAttribute('aria-label')||b.textContent.trim()),windowOpen:!!document.querySelector('#jvPresWindow'),pid:JarvisStudioExplorer.state().presentation_id,fullscreen:!!document.fullscreenElement}})()"},
+            {"value": "studio", "expr": "(()=>{const r=document.querySelector('#presentationRail').getBoundingClientRect(),x=document.querySelector('#jvStudioExplorer').getBoundingClientRect();return {docked:document.documentElement.classList.contains('jvr-studio'),railLeft:r.left,railRight:r.right,railTop:r.top,explorerLeft:x.left,explorerRight:x.right,railInert:!!document.querySelector('#presentationRail').closest('[inert]'),chips:JarvisStudioExplorer.state().live,vbar:document.querySelectorAll('#jvStudioExplorer .jvx-vbar,#jvStudioExplorer .jvx-vchip').length,play:[...document.querySelectorAll('#jvStudioExplorer .jvx-transport button')].filter(b=>!b.hidden).map(b=>b.getAttribute('aria-label')||b.textContent.trim()),windowOpen:!!document.querySelector('#jvPresWindow'),pid:JarvisStudioExplorer.state().presentation_id,fullscreen:!!document.fullscreenElement}})()"},
             {"shot": str(tmp_path / "studio.png")},
             # the rail stays usable inside the Studio: its menu opens above it
             {"eval": CONTEXT % pid2},
@@ -86,11 +105,17 @@ async def test_the_rail_lists_real_presentations_with_their_real_work_state_and_
         assert by_name["Roadmap produit"] == ("problem", ORANGE), "real failure from Core"
         assert by_name["Atelier du cadran"] == ("done", GREEN)
         assert [f.replace(" ", "") for f in reads["folds"]] == ["▸Archivées(1)"]
-        assert reads["palette"][1] > reads["palette"][0], "right of the tool palette"
+        zone = reads["zone"]
+        # Slice 07 (D10) migrates « right of the tool palette » to the right zone: never over the left column, the launcher or the chat tab
+        assert zone["rail"]["l"] > zone["palette"]["r"] and zone["rail"]["r"] == zone["vw"] - 18 and zone["rail"]["t"] >= zone["dock"]["b"]
+        assert zone["rail"]["b"] <= zone["chat"]["t"]
+        assert reads["preview"] == {"src": f"/api/artifacts/{still}/payload", "ok": True}, "the real still, through the bounded payload route"
         assert reads["menu"] == ["open", "studio", "edit", "play", "hide", "rename", "ack", "archive"]  # « Remotion Studio… » (Slice 11)
         assert sorted(i[0] for i in reads["after_hide"]) == ["Atelier du cadran", "Bilan trimestriel"]
         assert reads["studio"]["pid"] == rig.pid, "the rail click opens Variants on that presentation"
-        assert reads["studio"]["docked"] is True and reads["studio"]["railLeft"] == 8 and reads["studio"]["explorerLeft"] > 150
+        # Slice 07 (D10): the docking is mirrored, the rail is the right column and Variants stops at its left edge
+        assert reads["studio"]["docked"] is True and reads["studio"]["railRight"] == 1440 - 8 and reads["studio"]["explorerLeft"] == 0
+        assert reads["studio"]["explorerRight"] <= reads["studio"]["railLeft"]
         assert reads["studio"]["railInert"] is False and reads["studio"]["chips"] == 2 and reads["studio"]["fullscreen"] is False
         assert reads["studio"]["vbar"] == 0, "Slice 10: no variant bar (merged into the tree)"
         # Slice 06 (native-studio-playback-fix): one transport toolbar; « Jouer cette slide » became the « ⋯ » entry « Lire seulement cette scène »;

@@ -172,7 +172,7 @@ Versioning is therefore per file (`schema_version` + `UPGRADES`), not `_MIGRATIO
 
 ```
 <data_root>/presentations/<presentation_id>/presentation.json
-<data_root>/presentations/<presentation_id>/rail.json            # rail display state: hidden, archived (no schema bump, see *Rail des presentations*)
+<data_root>/presentations/<presentation_id>/rail.json            # rail display state: hidden, archived, optional unreviewed (no schema bump, see *Rail des presentations*)
 <data_root>/presentations/<presentation_id>/variants/<variant_id>.json
 <data_root>/presentations/<presentation_id>/scores/<score_id>.json     # Slice 10
 <data_root>/presentations/<presentation_id>/art_directions/<art_direction_id>.json   # Slice 09
@@ -4282,6 +4282,10 @@ Status: implemented. Owners: `jarvis/core/presentation_studio_rail.py` (Core: fl
 `presentation_*` MCP tools. Conformance: `tests/unit/test_presentation_studio_rail.py` (real Core, real file store, MCP tools),
 `tests/unit/test_control_center_presentation_rail_browser.py` (real Chrome, served page, in-page relay double).
 
+> **Superseded (2026-10, orbital shell Slice 07, D10).** The rail is now the right-zone *active workspace rail*: cards with a real preview or a typed placeholder, a fourth
+> state `unreviewed` (yellow) and a docking mirrored to the right of the Studio. See [Active workspace rail](#active-workspace-rail-level-3-orbital-shell-slice-07) below; the
+> paragraph that follows describes the original left column.
+
 **What the user sees.** A discreet column at the left edge, just right of the tool palette (`#barehandsPalette`, 64 px at 18 px; the rail starts at 94 px), that lists every
 presentation: a monogram tile (hue from the id), a short title (22 characters, full title in the tooltip) and a status dot. Several presentations live in parallel: an agent can
 correct one while the user looks at another. The dot is **blue** (an agent is working on it), **green** (finished, or nobody touched it) or **orange** (a problem happened; the
@@ -4338,8 +4342,8 @@ sees (`rail_visible`, `variants_open` since Slice 09, was `window_open`, `presen
 
 | Method | Core route | Body -> answer |
 | --- | --- | --- |
-| GET | `/v1/presentation-studio/rail` | `{presentations: [{...summary, hidden, archived, work: {state, label, age_s, code?, message?}}], problems, work_revision, ui, playing}`, visible then hidden then archived, newest first |
-| POST | `/v1/presentation-studio/presentations/{id}/rail` | `{action: hide|show|archive|restore|rename|acknowledge, actor?: user|brain, confirmed?, title?}` -> `{presentation_id, action, changed, hidden, archived, restorable}` |
+| GET | `/v1/presentation-studio/rail` | `{presentations: [{...summary, hidden, archived, work: {state, label, age_s, code?, message?}, unreviewed, preview, type}], problems, work_revision, ui, playing}`, visible then hidden then archived, newest first (Slice 07 keys: below) |
+| POST | `/v1/presentation-studio/presentations/{id}/rail` | `{action: hide|show|archive|restore|rename|acknowledge|review, actor?: user|brain, confirmed?, title?}` -> `{presentation_id, action, changed, hidden, archived, restorable}` (`review`: actor `user` only, else 400) |
 | POST | `/v1/presentation-studio/presentations/{id}/work` | `{event: begin|success|failure|ack, label?, code?, message?}` -> `{presentation_id, work}` (brain door, not relayed) |
 | POST | `/v1/presentation-studio/rail/display` | `{action, presentation_id?}` -> `{seq, request, reported}` (brain door, not relayed) |
 | POST | `/v1/presentation-studio/rail/display-state` | `{rail_visible, variants_open, presentation_id, applied_seq?}` -> same (page report, relayed; Slice 09: `window_open` is refused) |
@@ -4385,9 +4389,64 @@ Context budget: `jarvis-presentation` 16 849 -> 18 495 bytes (18 495 alone, 19 1
 
 - The work state is as good as the tools that report it: an agent that edits through another route (a shell, a source edit through `presentation_edit` is covered) shows green. A restart of Core forgets blue and orange.
 - A screen request is eventually applied (the page polls every 2 s busy, 4 s idle, 20 s hidden tab) and has no receipt; the brain reads `target rail` to confirm.
-- The monogram is a tile, not a rendered thumbnail of the first slide (a real thumbnail needs a render pass per presentation).
+- ~~The monogram is a tile, not a rendered thumbnail of the first slide.~~ Since Slice 07 (orbital shell) the card shows the newest complete still render when one exists;
+  the rail never starts a render itself, so a presentation never rendered keeps its typed placeholder.
 - "Jouer" from the rail uses the `user_presenter` role (the user presents, PRESENTATION mode); rehearsal with Jarvis speaking stays in the player band and the voice tools.
 - The Studio in full screen hides the rail (browser rule); the windowed Studio is the mode that keeps rail and voice visible.
+
+### Active workspace rail (Level 3, orbital shell Slice 07)
+
+Status: implemented by handoff `jarvis-board-orbital-ui-workspace-rail`, Slice 07, decision D10 (Stage A). Owners: `jarvis/core/presentation_studio_rail.py` (`preview`,
+`type`, `unreviewed`, action `review`), `control_center_presentation_rail.js` (cards, densities, docking). Geometry and densities: `docs/control-center-shell.md` ›
+*Workspace rail*. Conformance: `tests/unit/test_presentation_studio_rail.py` (`test_row_preview_is_latest_complete_still_without_path`, `test_preview_cache_bounded`,
+`test_brain_success_marks_unreviewed_user_review_clears`, `test_old_rail_json_reads_without_unreviewed`, `test_problem_never_reported_as_unreviewed`),
+`test_control_center_presentation_rail_js.py`, `test_control_center_presentation_rail_browser.py`, `test_presentation_rail_e2e_browser.py` (real still, real relay).
+
+**Where.** The rail moved from the left edge to the shell's `right` zone (under the launcher, above the chat tab, `--shell-rail-w` wide: 300 px, 72 px below 1100 px,
+a tab below 700 px). With Variants open it docks as the right column (rank 9100) and Variants stops at its left edge (`right: 188px`): the mirror of the old docking.
+Visibility (`shouldShow`), `Alt+Shift+P`, the brain's `rail_show` / `rail_hide`, the page's display-state report and every context action are unchanged.
+
+**Row keys added by Core** (additive; an older page ignores them):
+
+| Key | Value | Source |
+| --- | --- | --- |
+| `preview` | `{artifact_id, kind: "presentation_still", width, height}` or `null` | the newest `complete` `presentation_still` artifact `rendered_from` a snapshot of this presentation (`docs/presentation-artifacts.md`). Read by the page through `GET /api/artifacts/{id}/payload` (Core `/v1/artifacts/{id}/payload`, ≤ 8 MiB per answer); never a filesystem path |
+| `type` | `{engine}` (`remotion`, `slidecar`) | the presentation's own engine |
+| `unreviewed` | `{since, label}` or `null` | `rail.json` (below); always `null` while the work state is `problem` |
+
+**Bounded previews.** One registry query per rail read (`PREVIEW_SCAN` = 64 newest complete stills, newest first). A still's lineage (still → `rendered_from` snapshot →
+`source_presentation_id`) is immutable, so it is resolved once and kept in an LRU of `PREVIEW_LINEAGE_MAX` = 512; at most `PREVIEW_RESOLVES` = 16 new lineages are resolved per
+read (the next read finishes the rest). The `presentation_id -> preview` map is recomputed only when the set of newest stills changes. A presentation whose newest still is older
+than the 64 newest stills of the registry shows its placeholder (limit, not a guess). A registry failure keeps the last known map and is traced
+(`core.presentation_studio.rail_preview_unavailable`); an unreadable lineage is traced (`rail_preview_lineage`) and never matched. **Absent preview**: the page draws a typed
+placeholder (« Présentation · Remotion » / « Slidecar », a drawn screen glyph), never a fake first slide; an image that fails to load falls back to it and is journalled
+(`[presentation-rail] preview_failed`).
+
+**« À revoir » (yellow), no SQLite migration.** Owner: the Core rail service. Persisted as an additive optional key of `rail.json`, schema still v1:
+
+```json
+{"schema": "jarvis.presentation_studio.rail", "schema_version": 1, "hidden": false, "archived": false, "hidden_at": null, "archived_at": null,
+ "unreviewed": {"since": "2026-10-16T09:00:00Z", "label": "presentation_edit"}}
+```
+
+- **Set** when the brain reports work `success` (`POST .../work`), under the Studio's write lock; already set: nothing is rewritten (`since` stays the first unseen work).
+  A `rail.json` that cannot be read keeps the work state and loses the yellow (traced `rail_unreviewed_failed`).
+- **Cleared** by the rail action `review` (actor `user` only; the brain gets 400): the page sends it when you open the presentation from the rail (click, « Ouvrir les
+  variantes », « Éditer », « Remotion Studio… ») or pick « Marquer comme vu » (offered only when yellow).
+- **Compatibility.** `parse_rail` reads the key when present and well formed, ignores it otherwise (never an error). Without it the document is byte-for-byte the v1 an
+  older Core writes. An **older Core** ignores the key and drops it at its next write of that `rail.json` (hide, show, archive, restore): the presentation degrades to
+  « not yellow », nothing else changes. Hide / show / archive / restore keep the key (flags are replaced field by field).
+- Persisted, unlike the work state: a Core restart keeps the yellow.
+
+**Displayed state** (page, `displayState`): `working` (blue) > `problem` (orange-red, triangle, own card stroke) > `unreviewed` (yellow) > `done` (green); a row without a
+readable work state is `unknown` (dashed ring, « État inconnu »), never green. A text label always accompanies the dot (« En cours », « Problème », « À revoir », « Prête »,
+« État inconnu »); the tooltip and the accessible name carry the long label and, for a problem, its message.
+
+**Card.** Preview (or placeholder) with the engine badge, title (40 characters, two lines; full title in the tooltip), `engine · N variantes`, dot + label + « il y a … »
+(from `updated_at`), and a « ⋯ » button that opens the same context menu as a right click.
+
+**Limits.** Stage B (Board-linked uploads, links, screenshots in the same rail) is a separate adapter; the rail never renders a still itself; the yellow says « the brain
+finished work you have not opened from the rail since », not « the content differs ».
 
 ## Agent and voice operations (Level 3, Slice 21)
 
