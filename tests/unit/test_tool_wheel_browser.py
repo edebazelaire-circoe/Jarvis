@@ -257,6 +257,33 @@ def run(tmp_path_factory, shots):
             _state(),
         ]},
     }
+    # Reprise QA de la Slice 02 (P1-P3, P5) : pincement sur l'ancre, menu Bare
+    # Hands loin d'un pincement, Échap avec le focus ailleurs, Espace sur l'ancre.
+    focus_name = ("(()=>{const e=document.activeElement;return !e||e===document.body?'body':"
+                  "e.closest&&e.closest('#toolWheel')?(e.dataset.twSlot||e.className):(e.id||e.tagName)})()")
+    plan["polish"] = {"width": W, "height": H, "mountPalette": True, "actions": [
+        _setup(),
+        # P1 : le pincement Bare Hands sur l'ancre ouvre comme un pointeur, sans prendre le focus.
+        {"a": "eval", "expr": "document.body.focus();document.activeElement&&document.activeElement.blur();true"},
+        {"a": "eval", "expr": BH % (f"hover({anchor[0]},{anchor[1]});JarvisToolWheel.close();"
+                                    f"hover(400,450);hover({anchor[0]},{anchor[1]});"
+                                    f"pinch({anchor[0]},{anchor[1]});return true;")},
+        _state(), {"a": "eval", "expr": focus_name},
+        # P2 : pouce + majeur sur un secteur, plus de 800 ms après le dernier pincement.
+        {"a": "eval", "expr": "new Promise(r=>setTimeout(()=>r(true),900))"},
+        {"a": "eval", "expr": BH % (f"hover({s0x},{s0y});context({s0x},{s0y});"
+                                    "return JSON.parse(JSON.stringify(__tw.secondary));")},
+        # P5 : le point de la coche ne fait pas partie du nom accessible.
+        {"a": "ax", "selector": "#toolWheel .tw-item[aria-checked=true]"},
+        # P3 : roue ouverte à la souris, focus ailleurs dans la page, Échap ferme.
+        {"a": "eval", "expr": "JarvisToolWheel.close();document.activeElement&&document.activeElement.blur();true"},
+        {"a": "focus", "selector": ".dock button"},
+        _move(400, 450), _move(*anchor), _wait(OPENED),
+        {"a": "focus", "selector": ".dock button"}, {"a": "key", "key": "Escape"}, _state(),
+        # Espace sur l'ancre : le clavier ouvre et place le focus sur le premier secteur.
+        _move(900, 450), _wait(CLOSED), {"a": "focus", "selector": "#toolWheel .tw-anchor"},
+        {"a": "key", "key": " "}, _state(),
+    ]}
     for theme in ("cosmos",):
         plan[f"theme-{theme}"] = {"width": W, "height": H, "mountPalette": True, "actions": [
             _setup(theme), {"a": "shot", "path": str(shots / f"closed-anchor-{theme}.png")},
@@ -406,3 +433,24 @@ def test_open_wheel_fits_small_windows(run, width, height):
     for dot in state["dots"]:
         assert 0 <= dot["t"] and dot["b"] <= height and dot["r"] <= width
     assert state["labelBox"]["r"] <= width and state["labelBox"]["b"] <= height
+
+
+# ------------------------------------------------------------ reprise QA de la Slice 02
+
+
+def test_qa_polish_bh_anchor_pinch_context_escape_space(run):
+    (setup, _blur, _pinch, pinched, focus_after_pinch, _wait900, secondary, ax,
+     _close, _f0, _m1, _m2, _w, _focus, _esc, escaped, _m3, _w2, _focus2, _space, spaced) = run["polish"]
+    # P1 : un pincement Bare Hands sur l'ancre est un pointeur, pas le clavier.
+    assert pinched["open"] is True
+    assert '"reason":"barehands"' in pinched["journal"][-1]
+    assert focus_after_pinch == "tw-anchor" or "tw-wedge" not in focus_after_pinch
+    assert pinched["focused"] == [] and pinched["label"] is None
+    # P2 : pouce + majeur loin de tout pincement reste « barehands ».
+    assert secondary[-1] == {"slot": "selection", "source": "barehands"}
+    # P5 : nom accessible sans le point de coche.
+    assert ax["name"] == "Souris"
+    # P3 : Échap ferme une roue ouverte à la souris quand le focus est ailleurs.
+    assert escaped["open"] is False and '"reason":"escape"' in escaped["journal"][-1]
+    # Espace sur l'ancre : ouverte au clavier, focus sur le premier secteur.
+    assert spaced["open"] is True and spaced["active"] == "selection"

@@ -267,3 +267,24 @@ async def test_module_is_served_after_the_capture_rail_and_host_declared(tmp_pat
     assert "#toolWheel[data-open]{z-index:37}" in html
     # Aucun rang dans la feuille du module.
     assert "z-index" not in re.sub(r"/\*.*?\*/", "", MODULE.read_text(encoding="utf-8"), flags=re.S)
+
+
+# ------------------------------------------------------------ reprise QA de la Slice 02
+
+
+def test_hovering_another_wedge_closes_the_open_sub_arc(tmp_path):
+    v = run(tmp_path, f"""
+      const o=play([{OPEN},{{type:'contextmenu',target:'wedge',index:0,source:'mouse',t:10}},
+                    {{type:'subOpen',slot:0,count:2,source:'mouse'}}]).s;
+      const same=play([{{type:'pointerover',target:'wedge',index:0}}],o).s;
+      const other=play([{{type:'pointerover',target:'wedge',index:2}}],o).s;
+      out({{same:!!same.sub,other:other.sub,label:M.viewOf(other).label}})""")
+    assert v == {"same": True, "other": None, "label": "Capture d’écran"}
+
+
+def test_bh_pinch_on_anchor_is_a_pointer_not_the_keyboard(tmp_path):
+    v = run(tmp_path, """
+      const bh=play([{type:'click',target:'anchor',detail:0,source:'barehands'}]);
+      const kb=play([{type:'click',target:'anchor',detail:0,source:'keyboard'}]);
+      out({bh:[bh.s.openedBy,did(bh.fx,'focus').length],kb:[kb.s.openedBy,did(kb.fx,'focus').length]})""")
+    assert v == {"bh": ["pointer", 0], "kb": ["keyboard", 1]}

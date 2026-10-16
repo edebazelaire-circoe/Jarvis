@@ -308,7 +308,7 @@ aria-haspopup="menu" aria-expanded="false">` named « Outils » (`aria-label` =
 | Input | Reveal | Focus |
 | --- | --- | --- |
 | Mouse | `pointerover` on the anchor | not moved (hover highlights only) |
-| Bare Hands | the synthetic hand pointer (`pointerId` 9001-9002, `JarvisBarehandsContracts.isBareHandsPointerId`) reaching the anchor: the same `pointerover`; a pinch on the anchor is a `click` | not moved |
+| Bare Hands | the synthetic hand pointer (`pointerId` 9001-9002, `JarvisBarehandsContracts.isBareHandsPointerId`) reaching the anchor: the same `pointerover`; a pinch on the anchor is a `click` (`detail` 0, but its source is read from the preceding Bare Hands `pointerdown`, so it is a pointer, not the keyboard) | not moved |
 | Keyboard | `Enter` / `Space` (native `click`, `detail` 0) or `ArrowRight` on the anchor | first (or last highlighted) wedge |
 
 No new Bare Hands gesture: a "leftward reveal" gesture does not exist and is
@@ -332,7 +332,9 @@ Hands primary pinch. Never `pointerup`, so the Bare Hands sequence
 Secondary = the existing channel (D4): `contextmenu` (right click, Bare Hands
 thumb + middle pinch), `ContextMenu` key, `Shift+F10`; a keyboard secondary
 followed by the browser's own `contextmenu` on the same wedge within 500 ms
-counts once. Never long press.
+counts once. Never long press. A Bare Hands `contextmenu` (thumb + middle
+pinch) is attributed to `barehands` from the `pointerId` of the last
+`pointerover` on the wheel, however long after the last pinch.
 
 **Injected actions.** `JarvisToolWheel.register({id, onActivate(ctx),
 onSecondary?(ctx)})` binds a slot (unknown slot → `TypeError`, code
@@ -351,11 +353,13 @@ outer arc (radius 236 px, 15° apart) centred on the parent wedge and kept
 within ±78°, as text pills (`role="menuitem"`, or `menuitemradio` with
 `aria-checked` when `checked` is a boolean); labels go through `textContent`.
 `ArrowUp` / `ArrowDown` / `Home` / `End` move, `Esc` or `ArrowLeft` return to
-the parent wedge.
+the parent wedge. Hovering **another** wedge while a sub-arc is open closes
+the sub-arc (its label comes back).
 
-**Close.** `Esc` (topmost first: sub-arc, then wheel), activating a wedge or
-an entry, a `pointerdown` outside (document listener present **only while
-open**), focus leaving the host (`Tab` away: no focus trap), and — when the
+**Close.** `Esc` (topmost first: sub-arc, then wheel; with the focus
+elsewhere in the page, `Esc` still closes a pointer-opened wheel), activating
+a wedge or an entry, a `pointerdown` outside (document `pointerdown` and
+`keydown` listeners present **only while open**), focus leaving the host (`Tab` away: no focus trap), and — when the
 wheel was opened by a pointer — the pointer leaving it for 400 ms (grace that
 covers the gaps between anchor, wedges and sub-arc; Bare Hands sends
 `pointerout` without `relatedTarget`). Closing never touches domain state.
@@ -372,6 +376,11 @@ returns to the anchor.
 transition end. `forced-colors` maps strokes to `CanvasText`, the highlight
 to `Highlight`.
 
+**Accessible names.** Wedges carry `aria-label` but **no** `title`: the label
+pill is their tooltip (a native tooltip would double it). The checked mark of
+a `menuitemradio` entry is drawn with `content:"● " / ""`, so it never enters
+the accessible name.
+
 **Journal.** `[tool_wheel] <key> {json}`: `tool_wheel.installed`,
 `.enabled`, `.registered`, `.open {reason: mouse|barehands|keyboard|api}`,
 `.close {reason: leave|activate|escape|outside|blur|api|disabled}`,
@@ -381,7 +390,8 @@ to `Highlight`.
 **Tests.** `tests/unit/test_tool_wheel_js.py` (node: geometry, reducer, no
 network, served page); `tests/unit/test_tool_wheel_browser.py` (headless
 Chrome via CDP, real input events: mouse hotspot, keyboard, Bare Hands
-synthetic pointer 9001, reduced motion, focus, far pointer).
+synthetic pointer 9001, pinch on the anchor, late thumb + middle pinch, `Esc`
+with outside focus, `Space`, reduced motion, focus, far pointer).
 
 ## Accessibility and motion rules
 

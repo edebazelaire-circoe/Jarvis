@@ -166,6 +166,9 @@
           else fx.push({do:'cancelLeave'});
         }else if(s.open&&input.target==='wedge'){
           fx.push({do:'cancelLeave'});
+          /* Un autre secteur pointé : le sous-arc ouvert ne lui appartient
+             pas, il se ferme (sinon il resterait affiché sans libellé). */
+          if(s.sub&&s.sub.slot!==input.index)s.sub=null;
           focusWedge(input.index,false);
           fx.push({do:'focus',target:'wedge',index:s.focus,onlyIfInside:true});
         }else if(s.open&&input.target==='item'&&s.sub){
@@ -182,7 +185,11 @@
         break;
       case 'click':
         if(input.target==='anchor'){
-          const by=input.detail===0?'keyboard':'pointer';
+          /* La source vient du bloc navigateur (`clickSource`) : un pincement
+             Bare Hands est un `click` de `detail` 0, comme le clavier, mais
+             il ne déplace pas le focus. Sans source (tests), `detail`. */
+          const by=input.source?(input.source==='keyboard'?'keyboard':'pointer')
+            :(input.detail===0?'keyboard':'pointer');
           if(!s.open)openWith(by,by==='keyboard'?'keyboard':(input.source||'mouse'));
           else if(by==='keyboard')s.openedBy='keyboard';
           if(by==='keyboard')focusWedge(s.focus<0?0:s.focus,true);
@@ -356,7 +363,7 @@ ${H} .tw-item{position:absolute;transform:translateY(-50%);max-width:260px;overf
   cursor:pointer;pointer-events:auto;
   transition:border-color var(--shell-dur-fast) var(--shell-ease),color var(--shell-dur-fast) var(--shell-ease)}
 ${H} .tw-item.is-focus{border-color:${ACCENT};color:${ACCENT}}
-${H} .tw-item[aria-checked=true]::before{content:"● ";color:${ACCENT}}
+${H} .tw-item[aria-checked=true]::before{content:"● " / "";color:${ACCENT}}
 ${H} .tw-item[aria-disabled=true]{color:var(--muted,#7190a0);cursor:default}
 ${H} .tw-sr{position:absolute;width:1px;height:1px;margin:-1px;padding:0;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}
 @media(forced-colors:active){
@@ -426,12 +433,22 @@ ${H} .tw-sr{position:absolute;width:1px;height:1px;margin:-1px;padding:0;overflo
        `MouseEvent` sans `pointerId` ; la source se lit sur l'appui qui l'a
        précédé. */
     let lastDown={pointerId:null,t:0};
+    /* Le dernier `pointerover` vu sur la roue (reprise QA P2) : un
+       `contextmenu` Bare Hands (pincement pouce + majeur) n'a pas de
+       `pointerId` et ne suit pas forcément un pincement récent ; le pointeur
+       qui survolait la cible dit qui l'a envoyé. */
+    let lastOverId=null;
 
     const isBareHands=id=>{
       const BH=root.JarvisBarehandsContracts;
       return !!(BH&&typeof BH.isBareHandsPointerId==='function'&&BH.isBareHandsPointerId(id));
     };
     const pointerSource=event=>isBareHands(event&&event.pointerId)?'barehands':'mouse';
+    const contextSource=event=>{
+      if(isBareHands(event.pointerId)||isBareHands(lastOverId)
+        ||isBareHands(lastDown.pointerId)&&Date.now()-lastDown.t<800)return 'barehands';
+      return event.button===2||event.detail?'mouse':'keyboard';
+    };
     const clickSource=event=>{
       if(event.detail===0&&Date.now()-lastDown.t>800)return 'keyboard';
       return isBareHands(lastDown.pointerId)&&Date.now()-lastDown.t<800?'barehands':'mouse';
@@ -651,15 +668,26 @@ ${H} .tw-sr{position:absolute;width:1px;height:1px;margin:-1px;padding:0;overflo
       run(out.effects,event,specs);
       if(before!==state.open){
         /* Écouteurs de document seulement tant que la roue est ouverte. */
-        if(state.open)document.addEventListener('pointerdown',onDocDown,true);
-        else document.removeEventListener('pointerdown',onDocDown,true);
+        if(state.open){
+          document.addEventListener('pointerdown',onDocDown,true);
+          document.addEventListener('keydown',onDocKey,true);
+        }else{
+          document.removeEventListener('pointerdown',onDocDown,true);
+          document.removeEventListener('keydown',onDocKey,true);
+        }
       }
     }
 
     function onDocDown(event){
       if(!host.contains(event.target))dispatch({type:'pointerdownOutside'},event);
     }
+    /* Échap ferme aussi une roue ouverte à la souris quand le focus est
+       ailleurs dans la page (reprise QA P3) ; dans la roue, `onKey` décide. */
+    function onDocKey(event){
+      if(event.key==='Escape'&&!host.contains(event.target))dispatch({type:'close',reason:'escape'},event);
+    }
     function onOver(event){
+      lastOverId=event.pointerId===undefined?null:event.pointerId;
       const t=targetOf(event.target);
       if(t.target==='anchor'||t.target==='wedge'||t.target==='item')
         dispatch({type:'pointerover',...t,source:pointerSource(event)},event);
@@ -680,9 +708,7 @@ ${H} .tw-sr{position:absolute;width:1px;height:1px;margin:-1px;padding:0;overflo
     function onContext(event){
       const t=targetOf(event.target);
       if(t.target==='wedge'||t.target==='item'){
-        const source=isBareHands(event.pointerId)||isBareHands(lastDown.pointerId)&&Date.now()-lastDown.t<800
-          ?'barehands':(event.button===2||event.detail?'mouse':'keyboard');
-        dispatch({type:'contextmenu',...t,source},event);
+        dispatch({type:'contextmenu',...t,source:contextSource(event)},event);
       }
     }
     function onKey(event){
