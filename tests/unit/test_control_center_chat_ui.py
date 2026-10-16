@@ -149,10 +149,10 @@ def test_low_viewport_toasts_follow_the_shifted_panel():
     panneau (mêmes jetons)."""
 
     html = PAGE.read_text(encoding="utf-8")
-<<<<<<< HEAD
-    assert "@media(min-width:940px) and (max-height:480px){#app:has(.panel.open)~.toasts{right:calc(148px + min(560px,100vw - 120px))" in html
-    assert html.index("@media(min-width:940px) and (max-height:480px){#app:has(.panel.open)~.toasts") > html.index(
-        "@media(min-width:940px){#app:has(.panel.open)~.toasts")
+    assert "max-height:480px" not in html and "right:136px" not in html
+    assert ".panel{position:absolute;z-index:33;top:var(--shell-panel-top);right:var(--shell-gutter);bottom:var(--shell-panel-bottom);width:min(var(--shell-panel-w),calc(100% - 2 * var(--shell-gutter)));" in html
+    offset = "#app:has(.panel.open)~.toasts{right:calc(var(--shell-gutter) + 12px + min(var(--shell-panel-w),100vw - 2 * var(--shell-gutter)))"
+    assert html.count(offset) == 1
 
 
 def test_every_core_attachment_refusal_of_a_turn_has_its_own_sentence():
@@ -167,9 +167,3 @@ def test_every_core_attachment_refusal_of_a_turn_has_its_own_sentence():
     for code in sorted(codes):
         assert re.search(rf"\b{code}:'[^']+'", send_errors), code
     assert "autre Board" in send_errors
-=======
-    assert "max-height:480px" not in html and "right:136px" not in html
-    assert ".panel{position:absolute;z-index:33;top:var(--shell-panel-top);right:var(--shell-gutter);bottom:var(--shell-panel-bottom);width:min(var(--shell-panel-w),calc(100% - 2 * var(--shell-gutter)));" in html
-    offset = "#app:has(.panel.open)~.toasts{right:calc(var(--shell-gutter) + 12px + min(var(--shell-panel-w),100vw - 2 * var(--shell-gutter)))"
-    assert html.count(offset) == 1
->>>>>>> task/jarvis-board-orbital-ui-workspace-rail
