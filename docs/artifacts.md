@@ -57,7 +57,7 @@ set, still without migration:
 
 | Kind | What | Created by | Payload / text |
 | --- | --- | --- | --- |
-| `upload` | a file given by the user: a chat attachment or a file dropped on a Board | `PUT /v1/uploads/{client_upload_id}` (Slice 07) | payload `upload.<ext>` (`ext` = original extension lowercased if `[a-z0-9]{1,8}`, else `upload.bin`), streamed through `open_spool`, `pending` → `complete` / `failed` (`upload_too_large`, `upload_incomplete`, `upload_storage_failed`; a dead Core's `pending` upload → `failed` `upload_interrupted`, never `partial`); a failed upload keeps its row, its folder is removed (no `.partial` left) |
+| `upload` | a file given by the user: a chat attachment or a file dropped on a Board | `PUT /v1/uploads/{client_upload_id}` (Slice 07) | payload `upload.<ext>` (extension rule: [chat.md](chat.md) › *Attachments*; never the original name), streamed through `open_spool`, `pending` → `complete` / `failed` (`upload_too_large`, `upload_incomplete`, `upload_storage_failed`; a dead Core's `pending` upload → `failed` `upload_interrupted`, never `partial`); a failed upload keeps its row, its folder is removed (no `.partial` left) |
 | `link` | a URL dropped on a Board | `POST /v1/uploads/links` (Slice 08) | no payload; `text` = the URL, created `complete` at once like `record_text`; **never fetched** |
 
 Their origin is a metadata scalar, **not** a *Provenance* relation row (there is
