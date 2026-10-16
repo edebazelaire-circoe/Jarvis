@@ -159,6 +159,37 @@ async def test_an_attachment_of_another_session_is_not_allowed(stack):
     assert (status, body["error"]["code"]) == (400, "attachment_not_allowed")
 
 
+async def test_an_attachment_of_another_board_is_refused_and_the_replay_still_answers(stack):
+    """Constat 1 de la Slice 09 : la garde est de Core, pas de la page (`stale`). Une pièce jointe liée au Board A
+    ne part pas d'un tour du Board B, même Session ; le rejeu du tour admis sur A reste un doublon 200."""
+
+    conv_a = await stack.foreground()
+    board_a = (await stack.core.sessions.current()).session.active_board_id
+    on_a = await attach(stack, PNG, "seulement-a.png")
+    request_id = str(uuid.uuid4())
+    assert (await stack.send(conv_a, "Voici", request_id=request_id, attachments=[on_a]))[0] == 202
+    await stack.settle()
+    board_b = (await stack.core.boards.create({"title": "Projet B"})).board_id
+    await stack.core.boards.switch(board_b)
+    conv_b = await stack.foreground()
+    assert conv_b != conv_a
+    status, body, _ = await stack.send(conv_b, "Et celle-ci ?", attachments=[on_a])
+    assert (status, body["error"]["code"]) == (409, "attachment_other_board"), body
+    assert on_a in body["error"]["message"] and "seulement-a" not in json.dumps(body)
+    on_b = await attach(stack, PNG, "pour-b.png")
+    assert (await stack.send(conv_b, "Et celle-là", attachments=[on_b]))[0] == 202
+    await stack.settle()
+    assert [(t.conversation_id, t.attachments) for t in stack.backend.calls] == [(conv_a, (on_a,)), (conv_b, (on_b,))]
+    # Le même tour de A rejoué (même id, même pièce), B affiché puis A de retour : le doublon, jamais un refus.
+    for board in (None, board_a):
+        if board is not None:
+            await stack.core.boards.switch(board)
+        status, body, _ = await stack.send(conv_a, "Voici", request_id=request_id, attachments=[on_a])
+        assert (status, body.get("duplicate")) == (200, True), body
+    await stack.settle()
+    assert len(stack.backend.calls) == 2
+
+
 async def test_replay_compares_the_attachments(stack):
     conversation_id = await stack.foreground()
     first, second = await attach(stack, PNG, "a.png"), await attach(stack, PDF, "b.pdf")

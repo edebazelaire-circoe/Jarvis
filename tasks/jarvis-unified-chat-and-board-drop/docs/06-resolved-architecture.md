@@ -106,7 +106,7 @@ Un contenu d'événement est borné à `MAX_CONTENT_CHARS = 8192` (`jarvis/domai
 2. **Rejeu d'abord** : si le tour durable `brain-turn-<stable_identity(conversation, correlation)>` existe déjà (`voice_admission.py:119-121`), la garde est sautée et `submit` rend le doublon (200, `duplicate: true`). Un renvoi après bascule de voix ne doit pas devenir un 409.
 3. **Liaison au premier plan** : `SessionManager.current().binding.conversation_id` doit égaler `{conversation_id}` ; sinon 409 `chat_conversation_not_foreground` (le corps donne la conversation courante, pour que l'UI se recale). Session ou binding absent : codes `BoardError` existants de `SessionManager.current()`, 404 `session_not_found` / `binding_not_found` ; service de Session non câblé : 503 `core_unavailable` existant (`_sessions_unavailable`). Corrigé par l'agent 0 après la Slice 01.
 4. **Canal vocal** (D-VOICE) : lecture **synchrone** de l'état en mémoire, sans `await` entre cette lecture et l'appel de `self.core.brain.submit(turn)`. Si l'écriture n'est pas permise : 409 `chat_input_locked`, `reason` ∈ `voice_active`, `voice_connecting`, `voice_switching`, `voice_error`, `voice_unknown`.
-5. **Pièces jointes** (Slice 07) : chaque id existe (404 `attachment_not_found`), est de nature `upload`, provenance `chat_attachment`, `state = complete` (409 `attachment_not_ready`) et appartient à la Session ouverte (400 `attachment_not_allowed`).
+5. **Pièces jointes** (Slice 07) : chaque id existe (404 `attachment_not_found`), est de nature `upload`, provenance `chat_attachment`, `state = complete` (409 `attachment_not_ready`), appartient à la Session ouverte (400 `attachment_not_allowed`) et est liée au Board du binding visé (409 `attachment_other_board`, reprise post-Slice 09).
 6. `BrainOrchestrator.submit` (inchangé dans son principe) : persistance unique, `user.transcript.accepted`, dépêche au cerveau du binding.
 
 Point de linéarisation de la course « envoi / réveil vocal » : l'étape 4. Un rapport vocal traité après elle n'annule pas le tour : il a été admis légalement, son résultat reste écrit (D-NOTTS) et l'UI le montre.
@@ -276,6 +276,7 @@ Forme Core `{"error": {"code", "message", …}}` ; forme Control Center `{"ok": 
 | `attachment_not_found` | 404 | Core | id inconnu |
 | `attachment_not_ready` | 409 | Core | pièce non `complete` |
 | `attachment_not_allowed` | 400 | Core | autre nature, provenance ou Session |
+| `attachment_other_board` | 409 | Core | pièce non liée au Board de la conversation du tour (reprise post-Slice 09) |
 | `chat_conversation_not_foreground` | 409 | Core | cible ≠ binding courant |
 | `chat_input_locked` | 409 | Core | voix non désactivée (`reason`) |
 | `chat_request_conflict` | 409 | Core | même `client_request_id`, autre contenu |

@@ -496,9 +496,15 @@ class UploadService:
 
     # ------------------------------------------------------------ pièces d'un tour écrit
 
-    async def attachment_refusal(self, artifact_ids: tuple[str, ...], jarvis_session_id: str) -> UploadRefused | None:
+    async def attachment_refusal(self, artifact_ids: tuple[str, ...], jarvis_session_id: str,
+                                 board_id: str) -> UploadRefused | None:
         """Étape 5 de `docs/chat.md` › *Core: same `brain-turns` route* : chaque pièce existe, est une pièce
-        jointe du chat, de la Session ouverte, et `complete`. Rend le premier refus, ou `None`."""
+        jointe du chat, de la Session ouverte, liée au Board du tour (`board_id`, celui du binding visé), et
+        `complete`. Rend le premier refus, ou `None`.
+
+        Le Board d'une pièce jointe est son lien Board (`board_artifact_links`) : le lien automatique
+        `active_board` posé dans la transaction de création, ou un lien `explicit`. Une pièce envoyée sur A puis
+        citée par un tour de B (même Session) est refusée ici, pas seulement par la page (`stale`)."""
 
         for artifact_id in artifact_ids:
             artifact = await self._existing(artifact_id)
@@ -509,6 +515,14 @@ class UploadService:
                     or artifact.jarvis_session_id != jarvis_session_id):
                 return UploadRefused(400, "attachment_not_allowed",
                                      f"attachment {artifact_id} is not a chat attachment of the open Session")
+            if self._board_drop is None:
+                # Garde fermée : sans lecture des liens Board, on ne sait pas à quel Board la pièce appartient.
+                return UploadRefused(503, "core_unavailable", "board links are not wired in this Core")
+            if board_id not in await self._board_drop.links_of(artifact_id):
+                self._trace("core.upload.attachment_other_board", "pièce jointe d'un autre Board refusée",
+                            level="warning", data={"artifact_id": artifact_id, "board_id": board_id})
+                return UploadRefused(409, "attachment_other_board",
+                                     f"attachment {artifact_id} belongs to another Board than this conversation's")
             if artifact.state is not ArtifactState.COMPLETE:
                 return UploadRefused(409, "attachment_not_ready",
                                      f"attachment {artifact_id} is {artifact.state.value}, not complete")
