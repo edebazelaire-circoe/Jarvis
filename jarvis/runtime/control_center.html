@@ -321,6 +321,17 @@ html:not([data-jarvis-theme="cosmos"]) #app:has(#bgPills:not([hidden])) .chat-ta
 /* Étroit (moins de 940 px), Chat ouvert : la pile passe sous l'en-tête et la ligne d'état du panneau
    (`--chat-toasts-top`, mesuré par `control_center_chat.js`) : elle ne couvre ni le composer, ni le titre, ni ×. */
 @media(max-width:939px){#app:has(.chat-panel.open)~.toasts{top:var(--chat-toasts-top,124px);bottom:auto}}
+/* 700 px de large ou moins : le bouton du mode d'interaction quitte le rail gauche (left:84px, jusqu'à ~260 px) et la
+   pile, à bottom:68px, le recouvrait (115×41 px à 500×700). Elle passe en haut, sous la barre (top:62px), toujours à
+   gauche du dock : ni le bouton, ni l'onglet Chat. La règle est restreinte plutôt que contrée (QA S10) : bandeau GPT-Live
+   affiché (même place, bouton d'arrêt), elle reste en bas ; Chat ouvert, la règle du panneau (ci-dessus) s'applique.
+   Cosmos : le dock et les pastilles occupent le haut à droite (`control_center_work.js`), la pile passe dessous
+   (130 px, 168 px à 620 px et moins, sous la double rangée d'outils) ; sans `bottom:auto`, la grille `.toasts`
+   étirait une seule notification sur toute la hauteur. */
+@media(max-width:700px){
+html:not([data-jarvis-theme="cosmos"]) #app:not(:has(#liveBanner:not([hidden]))):not(:has(.chat-panel.open))~.toasts{top:62px;bottom:auto}
+html[data-jarvis-theme="cosmos"] #app:not(:has(#liveBanner:not([hidden]))):not(:has(.chat-panel.open))~.toasts{top:130px;bottom:auto}}
+@media(max-width:620px){html[data-jarvis-theme="cosmos"] #app:not(:has(#liveBanner:not([hidden]))):not(:has(.chat-panel.open))~.toasts{top:168px}}
 .chat-panel.open{animation:chatIn .2s ease-out}
 @keyframes chatIn{from{opacity:0;transform:translateX(28px)}}
 .chat-panel header{gap:12px}

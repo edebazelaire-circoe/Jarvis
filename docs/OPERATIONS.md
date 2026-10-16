@@ -3669,7 +3669,7 @@ de Core) : l'agent lit d'abord la source (`GET .../scenes/<scene_id>/source`), p
   --test tests/unit/test_remotion_source_edit_realpage_browser.py --evidence tasks/jarvis-remotion-presentation-integration/slices/14-source-edit-hmr-and-agents/evidence`.
 #### Export d'une présentation : MP4, image, PDF (Slice 16)
 
-Contrat : [remotion-render.md](remotion-render.md) ; sécurité : SECURITY.md § 20. Un export **rend une copie figée** (jamais la source vivante, jamais une valeur de contrôle) et
+Contrat : [remotion-render.md](remotion-render.md) ; sécurité : SECURITY.md § 21. Un export **rend une copie figée** (jamais la source vivante, jamais une valeur de contrôle) et
 enregistre un Artifact relié à cette copie. Prérequis : la capacité Remotion `ready` (installation unique, section « Capacité locale Remotion ») et un Chrome ou Edge installé
 (sinon `JARVIS_REMOTION_RENDER_BROWSER` ; un navigateur n'est **jamais** téléchargé).
 
@@ -5134,6 +5134,101 @@ démarrage suivant à partir de `runtime/deployment.json` seul.
 N'utilisez jamais `git reset --hard`, `git push --force` ni `git stash` pour
 débloquer une de ces situations : rien dans le chemin automatique ne le fait, et
 c'est précisément ce qui rend l'auto-modification acceptable.
+
+## Chat et dépôt sur le Board
+
+Le Chat du Control Center écrit au **même** cerveau que la voix (le binding
+Session + Board actif) ; le dépôt sur le Board range un fichier ou une URL dans
+les Artifacts du Board affiché. Contrat, routes, codes et tests :
+[chat.md](chat.md) ; contrôles de sécurité : [SECURITY.md](SECURITY.md),
+contrôle 22. Aucune base nouvelle, aucune migration : rien à sauvegarder au-delà
+de la sauvegarde habituelle de la racine de données.
+
+### Réglages
+
+| Variable | Défaut | Plafond dur | Lue par |
+| --- | --- | --- | --- |
+| `JARVIS_UPLOAD_MAX_BYTES` | 67108864 (64 Mio par fichier) | 4 Gio | Core (flux de téléversement) et Control Center (refus anticipé sur `Content-Length`) |
+| `JARVIS_CHAT_MAX_ATTACHMENTS` | 10 pièces par message | 64 | Core (`brain-turns`, tour écrit) |
+
+- Mettez la même valeur dans l'environnement de Core **et** du Control Center,
+  puis redémarrez JARVIS vous-même : un processus lancé ne relit pas son
+  environnement.
+- Une valeur qui n'est pas un entier positif, ou qui dépasse le plafond, est
+  ignorée et le défaut s'applique ; **aucune ligne de journal ne le signale**
+  aujourd'hui. Vérifiez l'effet par le message d'un refus (`upload_too_large`
+  dit la borne en octets, `too_many_attachments` le nombre).
+- Bornes fixes : texte 8192 caractères (`chat_text_too_long`), corps JSON
+  64 Kio, nom de fichier 255 caractères, URL 2048 caractères.
+
+### Lire l'état du Chat : `GET /api/chat/state`
+
+```powershell
+curl.exe -s http://127.0.0.1:17654/api/chat/state | ConvertFrom-Json
+```
+
+Relais de `GET /v1/chat/state` de Core (forme exacte : [chat.md](chat.md) ›
+*Voice channel*). À lire :
+
+- `conversation_id`, `board_id` : la conversation que le Chat affiche, celle du
+  binding actif ;
+- `chat_writable` / `locked_reason` : `false` avec `voice_active`,
+  `voice_connecting`, `voice_switching`, `voice_error` ou `voice_unknown` tant
+  que la voix n'est pas en arrière-plan ; `absent` (aucun rapport de Voice
+  depuis 5 s) laisse écrire ;
+- `voice.state`, `voice.report_age_ms` (âge du dernier rapport de Voice, ≤ 1 s
+  en marche normale), `voice.epoch` (change à chaque démarrage de Core : 5 s
+  `unknown` ensuite), `voice.request` (dernière demande « Passer au chat » :
+  `pending`, `accepted`, `failed` + `code`, `expired` après 10 s).
+
+404 `session_not_found` : aucune Session ouverte ; 503 `core_unreachable` :
+Core injoignable.
+
+### Diagnostics
+
+Tous dans `runtime/trace.jsonl` (Core et Control Center y écrivent tous deux).
+Ils portent des identifiants, tailles, types et codes ; **jamais** le texte d'un
+message, un nom de fichier, un octet ni une URL.
+
+| Événement | Émis par | Quand | Champs utiles |
+| --- | --- | --- | --- |
+| `core.voice_channel.report_rejected` | Core | rapport de Voice ancien ignoré (`seq` non croissant) | `code` = `voice_report_stale`, `voice_incarnation_id`, `seq`, `last_seq` |
+| `core.voice_channel.disable_requested` | Core | « Passer au chat » reçu | `request_id`, `voice_state` |
+| `core.voice_channel.disable_settled` | Core | demande close (`info` si acceptée, sinon `warning`) | `request_id`, `status` (`accepted`, `failed`, `expired`), `code` |
+| `voice.channel.report_failed` / `voice.channel.report_restored` | Voice | rapport à Core en échec, une fois par épisode, puis rétabli | — |
+| `voice.channel.disable_accepted` / `voice.channel.disable_failed` | Voice | `mute()` fait / en échec (`voice_disable_failed`) | — |
+| `core.brain.speech_withheld_text_channel` | Core | résultat d'un tour écrit retenu de la parole (publié au Chat, jamais dit) | `conversation_id`, `correlation_id`, `speech_id`, `kind` |
+| `chat.turn.relayed` | Control Center | chaque tour écrit relayé à Core | `status`, `code`, `correlation_id` (`chat:<client_request_id>`), `attachments` (nombre) |
+| `chat.request.relayed` / `chat.request.core_unreachable` | Control Center | autre requête du Chat relayée / Core injoignable | action, `status`, `code` |
+| `chat.upload.relayed` | Control Center | pièce jointe relayée | `status`, `code`, `artifact_id`, taille, type |
+| `core.upload.refused` | Core | téléversement refusé (`error` si HTTP ≥ 500, sinon `warning`) | `code`, `status`, `artifact_id` ; pour `upload_storage_failed`, `cause` : `payload_code`, `stage` (`open`, `write`, `finalize`), `cause_type`, `os_error`, `errno`, `winerror`, `path_chars`, `path_limit` (jamais le chemin) |
+| `core.upload.attachment_other_board` | Core | tour écrit refusé 409 : pièce jointe liée à un autre Board | `artifact_id`, `board_id` |
+| `core.upload.stored`, `core.upload.replayed` | Core | pièce stockée / rejouée (mêmes octets, même Artifact) | `artifact_id`, `size_bytes`, `mime_type` ; `stored` ajoute `provenance`, `brain_readable` |
+| `core.upload.recovered` | Core | au démarrage, téléversements `pending` d'un Core mort soldés `failed` `upload_interrupted` | `recovered` (nombre) |
+| `core.upload.board_relinked`, `core.upload.board_auto_link_removed`, `core.upload.board_auto_link_remove_failed` | Core | dépôt pendant un changement de Board : relié au Board visé, lien automatique retiré (ou échec, `error`) | `artifact_id`, `board_id` |
+| `board.drop.relayed`, `board.drop_link.relayed` | Control Center | dépôt de fichier / d'URL relayé | `status`, `code`, `artifact_id`, `relinked` |
+| `agent.artifacts_root_learned` | Control Center | dossier `artifacts/` accordé au CLI (`--add-dir`) | `artifacts_root`, `source` |
+
+Côté navigateur, la console porte `[chat] chat.<événement>` et
+`[board-drop] board_drop.<événement>` (liste : [chat.md](chat.md) › *Panel*,
+*Attachments* › *UI*, *Board drop*).
+
+Recettes :
+
+- **« Le Chat reste verrouillé »** : lisez `/api/chat/state`. `voice_active`
+  ou `voice_connecting` : la voix est en marche, cliquez « Passer au chat ».
+  `voice.request.status = expired` : Voice n'a pas répondu en 10 s ; un
+  `voice.report_age_ms` qui grandit dit que Voice ne rapporte plus (cherchez
+  `voice.channel.report_failed`).
+- **« Ma réponse a été dite à voix haute »** : un tour écrit ne doit jamais
+  l'être. Cherchez `core.brain.speech_withheld_text_channel` avec la
+  `correlation_id` `chat:…` du tour ; son absence est un défaut.
+- **« Envoi refusé »** : `chat.turn.relayed` donne le `code` (table de
+  [chat.md](chat.md) › *Error codes*).
+- **« Échec d'envoi de la pièce »** : `core.upload.refused` donne le `code` ;
+  pour `upload_storage_failed`, `cause.path_limit` non nul signale un chemin
+  trop long (limite Windows MAX_PATH, racine de données trop profonde :
+  [chat.md](chat.md) › *Known limits* 10).
 
 ## Tests
 
