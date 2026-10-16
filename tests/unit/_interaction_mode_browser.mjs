@@ -28,7 +28,9 @@
      {"a":"ax","selector":"..."}         -> {role,name,description} calcules
      {"a":"eval","expr":"..."}
      {"a":"read"}
-     {"a":"shot","path":"...png"} */
+     {"a":"shot","path":"...png"}
+   Une etape peut aussi porter `setup`, une expression evaluee apres la mise a
+   la taille et avant les montages. */
 import {spawn} from 'node:child_process';
 import {mkdtempSync, rmSync, writeFileSync, renameSync, unlinkSync} from 'node:fs';
 import {tmpdir} from 'node:os';
@@ -109,6 +111,11 @@ const READ=`(()=>{
   box('pills','.bgpills');
   box('hint','.voicehint');
   box('toast','.toasts .toast');
+  box('chatTab','#chatTab');
+  box('chatPanel','#chatPanel');
+  box('composer','#chatInput');
+  box('chatLock','#chatLock');
+  box('liveBanner','#liveBanner');
   box('pres','#interactionModePresence');
   box('presText','#interactionModePresence .im-pres-text');
   const host=document.getElementById('interactionModeHud');
@@ -213,6 +220,8 @@ try{
     await send('Emulation.setDeviceMetricsOverride',
       {width:step.width,height:step.height,deviceScaleFactor:1,mobile:false});
     await sleep(250);
+    /* `setup` : une expression jouee avant les montages (theme, bandeau, panneau ouvert). */
+    if(step.setup){await evaluate(step.setup);await sleep(400)}
     if(step.mountPalette){
       const said=await evaluate(MOUNT_PALETTE);
       if(said!=='ok')throw new Error('palette : '+said);
