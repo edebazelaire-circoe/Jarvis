@@ -28,7 +28,15 @@ seuls. Schéma inchangé : `_SCHEMA_VERSION` 8 (`sqlite_state.py`) et 1 (`sqlite
 - **Limites connues** 1 à 10 (8192 caractères, lien automatique au Board actif, accès `artifacts_root`, pas de message
   sans texte, pas d'objet de scène, journal d'outils du CLI, `artifacts_root` visible de la page, reprise manuelle,
   Board d'une pièce jointe, MAX_PATH), chacune avec sa ligne *Held by* ou « no test ».
-- **Tests** : tableau des sections en tête, section *Conformance* (règle → test). Les 236 références `fichier::test`
-  ont été vérifiées par script au HEAD (fichier présent, `def test_…` présent) : aucune manquante.
-- **Sécurité** : `docs/SECURITY.md` contrôle 21 ; **architecture** : `docs/ARCHITECTURE.md` › *Text channel: the Chat,
+- **Tests** : tableau des sections en tête, section *Conformance* (règle → test). Décompte (racine du worktree) :
+
+  ```bash
+  grep -oE '`[A-Za-z0-9_/.]*test_[A-Za-z0-9_]+\.py::test_[A-Za-z0-9_]+`' docs/chat.md | wc -l
+  grep -oE '`[A-Za-z0-9_/.]*test_[A-Za-z0-9_]+\.py::test_[A-Za-z0-9_]+`' docs/chat.md \
+    | sed -E 's#`##g; s#^tests/##; s#^unit/##' | sort -u | wc -l
+  ```
+
+  270 occurrences, 218 couples `fichier::test` distincts (préfixes `tests/` et `unit/` ramenés à un seul chemin).
+  Chaque couple a été vérifié par script au HEAD (fichier présent, `def test_…` présent) : aucun manquant.
+- **Sécurité** : `docs/SECURITY.md` contrôle 22 ; **architecture** : `docs/ARCHITECTURE.md` › *Text channel: the Chat,
   and the voice channel owned by Core* ; **données** : `docs/local-data.md` › *Fichiers des Artifacts*.

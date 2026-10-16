@@ -15,7 +15,7 @@ Slice 10 HEAD), the *Test* column of *Error codes*, and a *Held by* line under
 each known limit. A rule without a test says so. Routes at a glance: *Routes*
 below. Operating (settings, state reading, diagnostics):
 [OPERATIONS.md](OPERATIONS.md) › *Chat et dépôt sur le Board*; security
-controls: [SECURITY.md](SECURITY.md) › control 21.
+controls: [SECURITY.md](SECURITY.md) › control 22.
 
 | Section | What it fixes | Code | Conformance tests | Slice |
 | --- | --- | --- | --- | --- |
@@ -993,6 +993,7 @@ Tests are `file::test` under `tests/` (`unit/` unless written `integration/`).
 | `core_stopping` | 503 | Core | existing code (`submit_brain_turn`) | `test_chat_relay.py::test_core_codes_are_relayed` (relay), `integration/test_v2_brain_protocol.py::test_brain_turn_is_refused_with_503_while_core_stops` |
 | `core_unreachable` | 503 | CC | Core unreachable | `test_chat_relay.py::test_core_timeout_is_a_504_to_replay`, `test_voice_channel_protocol.py::test_core_unreachable_is_a_503_without_core_status` |
 | `core_timeout` | 504 | CC | outcome unknown, replay | `test_chat_relay.py::test_core_timeout_is_a_504_to_replay`, `integration/test_chat_end_to_end.py::test_retry_after_timeout_no_duplicate` |
+| `core_unconfigured` | 503 | CC | the Control Center does not know Core (no transport configured; `jarvis/runtime/chat_relay.py`) | no test |
 | `core_unauthorized`, `invalid_core_response` | 502 | CC | existing codes | no chat-specific test (existing relay codes) |
 | `voice_disable_failed` | — (in `request.code`) | Voice | `mute()` raised or left `error` | `test_voice_channel_reporter.py::test_a_mute_that_raises_is_acknowledged_failed`, `test_voice_channel_service.py::test_failed_ack_falls_back_to_the_last_report` |
 | `voice_disable_expired` | — (in `request.code`) | Core | no ack within 10 s | `test_voice_channel_service.py::test_request_expires_after_ten_seconds` |

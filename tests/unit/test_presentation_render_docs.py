@@ -131,8 +131,8 @@ def test_the_documented_guard_layers_exist_in_the_guard_file():
 def test_the_pages_that_must_know_about_renders_link_to_the_contract():
     for page in ("presentation-artifacts.md", "artifacts.md", "local-capabilities.md", "remotion-studio.md", "remotion-isolation.md", "local-data.md"):
         assert "remotion-render.md" in (DOCS / page).read_text(encoding="utf-8"), page
-    assert "### 20. Presentation render" in (DOCS / "SECURITY.md").read_text(encoding="utf-8")
-    assert "remotion-render.md" in (DOCS / "OPERATIONS.md").read_text(encoding="utf-8") and "SECURITY.md § 20" in (DOCS / "OPERATIONS.md").read_text(encoding="utf-8")
+    assert "### 21. Presentation render" in (DOCS / "SECURITY.md").read_text(encoding="utf-8")
+    assert "remotion-render.md" in (DOCS / "OPERATIONS.md").read_text(encoding="utf-8") and "SECURITY.md § 21" in (DOCS / "OPERATIONS.md").read_text(encoding="utf-8")
 
 
 def test_the_pdf_decision_matches_the_code():

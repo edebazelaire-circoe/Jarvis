@@ -15,8 +15,9 @@ tâche pour les prendre. Aucun agent ne l'a fait et aucun ne le fera.
 3. Ouvrez le Control Center (`http://127.0.0.1:17654/`). Vous devez voir l'onglet **CHAT** en bas à droite.
 
 Aucune migration : vos bases ne changent pas de version, rien à sauvegarder au-delà de votre sauvegarde habituelle.
-Pour revenir en arrière : revenez sur `main` et relancez de la même façon ; les pièces jointes déjà déposées restent
-dans `artifacts/` comme des Artifacts ordinaires.
+Pour revenir en arrière : replacez votre dépôt sur le commit de `main` d'avant la fusion, `57f28a74`
+(`git switch --detach 57f28a74`), et relancez de la même façon ; les pièces jointes déjà déposées restent dans
+`artifacts/` comme des Artifacts ordinaires.
 
 ## HV-JCHAT-04-01 — « Passer au chat » coupe la voix, pas le travail
 
@@ -39,14 +40,17 @@ Verdict : ☐ conforme ☐ non conforme — remarque :
 3. Vérifiez qu'aucune notification ne masque l'onglet CHAT, le dock, le bouton du mode d'interaction ni le bas du
    panneau, y compris dans une fenêtre étroite (environ 500 px de large).
 4. Ouvrez le panneau des Boards ou l'inspecteur du Studio : attendu, un seul panneau latéral à la fois.
-5. Cliquez « Voir la chronologie complète ». Attendu : la chronologie détaillée s'ouvre sur la même conversation.
+5. Menus, Chat ouvert : ouvrez le menu du mode d'interaction et les menus du dock. Attendu : chacun s'affiche entier
+   et reste cliquable, sans passer sous le panneau. Le bouton Boards de la barre du haut est couvert par le panneau
+   ouvert (limite connue, comme pour les autres panneaux) : fermez le Chat pour l'atteindre.
+6. Cliquez « Voir la chronologie complète ». Attendu : la chronologie détaillée s'ouvre sur la même conversation.
 
 Verdict : ☐ conforme ☐ non conforme — remarque :
 
 ## HV-JCHAT-07-01 — Deux pièces jointes de types différents
 
 1. Dans le Chat, cliquez **Joindre** et choisissez un PDF ; puis glissez une image (PNG ou JPEG) sur le panneau.
-   Attendu : deux lignes, chacune « Envoi N % » puis « Prête ».
+   Attendu : deux lignes, chacune « Envoi N % », puis « Vérification par Jarvis Core… », puis « Prête ».
 2. Écrivez « Que contiennent ces deux fichiers ? » et envoyez. Attendu : la bulle porte « 2 pièces jointes ».
 3. Attendu : la réponse de JARVIS décrit le contenu réel des deux fichiers (pas une supposition).
 4. Facultatif : joignez un fichier `.zip`. Attendu : « Prête · jointe, mais le Brain ne pourra pas la lire » avant
@@ -62,7 +66,11 @@ Verdict : ☐ conforme ☐ non conforme — remarque :
 2. Cliquez « Voir dans l'inspecteur ». Attendu : les trois ressources sont listées (« Fichier déposé », « Lien »).
 3. Passez sur un autre Board, puis revenez. Attendu : les trois ressources sont toujours là sur le premier Board et
    absentes du second.
-4. Attendu : aucun message n'est parti vers JARVIS et le lien n'a pas été ouvert ni prévisualisé.
+4. Ressource réutilisable après le changement de Board : de retour sur le premier Board, sélectionnez chacune des trois
+   ressources dans l'inspecteur. Attendu : ses détails s'affichent (nom, taille et type pour le fichier et l'image ;
+   l'URL en texte pour le lien), comme avant le changement. Facultatif : après un redémarrage de JARVIS fait par vous,
+   elles sont toujours là.
+5. Attendu : aucun message n'est parti vers JARVIS et le lien n'a pas été ouvert ni prévisualisé.
 
 Verdict : ☐ conforme ☐ non conforme — remarque :
 

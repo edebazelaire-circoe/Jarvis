@@ -3669,7 +3669,7 @@ de Core) : l'agent lit d'abord la source (`GET .../scenes/<scene_id>/source`), p
   --test tests/unit/test_remotion_source_edit_realpage_browser.py --evidence tasks/jarvis-remotion-presentation-integration/slices/14-source-edit-hmr-and-agents/evidence`.
 #### Export d'une présentation : MP4, image, PDF (Slice 16)
 
-Contrat : [remotion-render.md](remotion-render.md) ; sécurité : SECURITY.md § 20. Un export **rend une copie figée** (jamais la source vivante, jamais une valeur de contrôle) et
+Contrat : [remotion-render.md](remotion-render.md) ; sécurité : SECURITY.md § 21. Un export **rend une copie figée** (jamais la source vivante, jamais une valeur de contrôle) et
 enregistre un Artifact relié à cette copie. Prérequis : la capacité Remotion `ready` (installation unique, section « Capacité locale Remotion ») et un Chrome ou Edge installé
 (sinon `JARVIS_REMOTION_RENDER_BROWSER` ; un navigateur n'est **jamais** téléchargé).
 
@@ -5141,7 +5141,7 @@ Le Chat du Control Center écrit au **même** cerveau que la voix (le binding
 Session + Board actif) ; le dépôt sur le Board range un fichier ou une URL dans
 les Artifacts du Board affiché. Contrat, routes, codes et tests :
 [chat.md](chat.md) ; contrôles de sécurité : [SECURITY.md](SECURITY.md),
-contrôle 21. Aucune base nouvelle, aucune migration : rien à sauvegarder au-delà
+contrôle 22. Aucune base nouvelle, aucune migration : rien à sauvegarder au-delà
 de la sauvegarde habituelle de la racine de données.
 
 ### Réglages

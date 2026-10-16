@@ -219,7 +219,7 @@ One row per contract. Docs are in `docs/`; `tests/unit/test_remotion_release_doc
 | Semantic prefab catalog, manifest v3 | 17, 19 | `prefabs.md` | `test_prefab_catalog.py` |
 | Upstream import | 18 | `remotion-import.md` | `test_remotion_upstream.py`, `test_remotion_import.py` |
 | Agent verbs, ownership | 21 | `mcp/tool-contract.md` (10.17), `tool-brain-contracts.md` (19) | `test_remotion_mcp_tools.py`, `test_remotion_mcp_server.py` |
-| Security | 06, 11, 16, 18, 20 | `SECURITY.md` (18 to 20) | the isolation, studio and render guards above |
+| Security | 06, 11, 16, 18, 20 | `SECURITY.md` (18 to 21) | the isolation, studio and render guards above |
 | Data layout | all | `local-data.md` | `test_schema_migrations.py` |
 | Release gate (this page) | 22 | this page | `test_remotion_release_flows.py`, `test_remotion_release_faults.py`, `test_remotion_no_fallback_privacy.py`, `test_remotion_release_gate.py` |
 
