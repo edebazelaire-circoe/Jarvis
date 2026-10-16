@@ -6,7 +6,7 @@ seule la source de preuve (registre d'intentions, tours utilisateur) est scénar
 - `scene_archive` n'est exécutable que par la garde : sans preuve, sans tour utilisateur, sans garde, rien ne s'écrit ;
 - avec la preuve (intention `dismiss` visant chaque objet, ce tour, tour utilisateur récent) elle s'exécute et rend un reçu ;
 - jamais sur un objet épinglé par l'utilisateur ni du runtime ; ids explicites ; bornes ; débit par tour et par fenêtre ;
-- le masquage en masse confirmé est gardé comme l'archive ; les actions réversibles restent libres ;
+- le masquage en masse confirmé est gardé plus légèrement que l'archive (une intention dismiss du tour, budget large) ; les actions réversibles restent libres ;
 - un refus de garde est final : typé, tracé, et il ne réveille pas le décideur (pas de martèlement).
 """
 
@@ -203,7 +203,7 @@ async def test_a_confirmed_bulk_hide_needs_the_same_evidence_but_a_reversible_hi
     refused = await run(armed, "b1", DISPLAY, "scene_update_many", args, conversation_id=CONV, correlation_id=CORR)
     assert (refused.status, refused.code) == (INVALIDATED, "no_user_intent_evidence")
     assert (await get(armed, C)).visibility is Visibility.VISIBLE
-    armed.evidence.dismiss([A, B, C])
+    armed.evidence.dismiss([A])  # a dismiss of this turn: refs per object are not required for a reversible hide
     armed.clock.now += 6
     allowed = await run(armed, "b2", DISPLAY, "scene_update_many", args, conversation_id=CONV, correlation_id=CORR)
     assert allowed.status == DONE and (await get(armed, C)).visibility is Visibility.HIDDEN
@@ -212,6 +212,72 @@ async def test_a_confirmed_bulk_hide_needs_the_same_evidence_but_a_reversible_hi
 async def test_the_unconfirmed_broad_hide_keeps_its_own_refusal_and_is_not_a_guard_case(armed):
     result = await run(armed, "b0", DISPLAY, "scene_update_many", {"object_ids": [A, B, C], "visibility": "hidden"})
     assert (result.status, result.code) == (INVALIDATED, "selection_too_broad") and "guard" not in result.detail
+
+
+async def test_bulk_hide_needs_a_dismiss_of_this_turn_but_no_ref_per_object_and_skips_pinned(armed):
+    args = {"object_ids": [A, B, C], "visibility": "hidden", "confirm": True}
+    armed.evidence.dismiss([A], kind="reveal")  # wrong kind
+    armed.evidence.dismiss([A, B, C], corr="corr-other")  # another turn
+    refused = await run(armed, "b1", DISPLAY, "scene_update_many", args, conversation_id=CONV, correlation_id=CORR)
+    assert codes(refused) == ["no_user_intent_evidence"] and "ui_intent_publish" in refused.detail["refusals"][0]["detail"]
+    await armed.scene.service.apply(SceneCommand(op=SceneOp.PIN_SELECTION, actor=SceneActor.USER,
+                                                 selection=SceneSelection(ids=(B,))))
+    armed.evidence.dismiss([])  # subject-only dismiss: a clear scope is the decider's call
+    armed.clock.now += 6
+    done = await run(armed, "b2", DISPLAY, "scene_update_many", args, conversation_id=CONV, correlation_id=CORR)
+    assert done.status == DONE
+    assert (await get(armed, A)).visibility is Visibility.HIDDEN and (await get(armed, C)).visibility is Visibility.HIDDEN
+    assert (await get(armed, B)).visibility is Visibility.VISIBLE  # pinned by the user: skipped, not hidden
+
+
+async def test_bulk_hide_has_its_own_wide_budget_and_never_spends_the_archive_one(armed):
+    armed.evidence.dismiss([A])
+    armed.executor._guard._config = GuardrailConfig(max_bulk_targets=2, max_bulk_targets_per_window=2)
+    hide = lambda ids: {"object_ids": ids, "visibility": "hidden", "confirm": True}  # noqa: E731
+    run_hide = lambda name, ids: run(armed, name, DISPLAY, "scene_update_many", hide(ids),  # noqa: E731
+                                     conversation_id=CONV, correlation_id=CORR)
+    assert "too_many_targets" in codes(await run_hide("b0", [A, B, C]))
+    assert (await run_hide("b1", [A, B])).status == DONE
+    armed.clock.now += 6
+    over = await run_hide("b2", [C])
+    assert codes(over) == ["rate_limited_window"]  # 2 + 1 > 2
+    armed.evidence.dismiss([C])
+    assert (await archive(armed, "a1", [C])).status == DONE  # the archive budget (1 per turn, 5 per window) is untouched
+
+
+async def test_a_bulk_hide_of_forty_objects_passes_with_the_default_budget(armed):
+    guard = armed.executor._guard
+    assert guard._config.max_bulk_targets >= 40 and guard._config.max_bulk_targets_per_window >= 40
+    assert guard._config.max_targets == 3  # archive unchanged
+
+
+def test_a_refusal_reason_is_deposited_for_the_next_turn_block_and_expires(tmp_path):
+    from jarvis.runtime.tool_brain_brief import render_tool_brain_brief, tool_brain_brief_block
+    from jarvis.runtime.tool_brain_guardrails import read_recent_refusals, record_refusal
+
+    now = [1000.0]
+    refusal = [{"code": "no_user_intent_evidence", "detail": "no dismiss intent published this user turn"}]
+    assert record_refusal(tmp_path, tool="scene_update_many", kind=BULK_HIDE, refusals=refusal, wall=lambda: now[0])
+    seen = read_recent_refusals(tmp_path, wall=lambda: now[0] + 10)
+    assert seen[0]["code"] == "no_user_intent_evidence" and seen[0]["age_s"] == 10
+    text = chr(10).join(render_tool_brain_brief(tool_brain_brief_block("tool_brain", guard_refusals=seen)))
+    assert "Refus du garde-fou" in text and "NON fait" in text and "masquage" in text and "no_user_intent_evidence" in text
+    assert read_recent_refusals(tmp_path, wall=lambda: now[0] + 400) == []
+    assert read_recent_refusals(None) == [] and not record_refusal(None, tool="x", kind=None, refusals=refusal)
+
+
+async def test_the_runtime_deposits_the_refusal_when_the_guard_refuses(armed, tmp_path):
+    from jarvis.runtime.tool_brain_guardrails import read_recent_refusals
+    from jarvis.runtime.tool_brain_runtime import ToolBrainConfig, ToolBrainMode, ToolBrainRuntime
+
+    result = await run(armed, "b1", DISPLAY, "scene_update_many", {"object_ids": [A], "visibility": "hidden", "confirm": True},
+                       conversation_id=CONV, correlation_id=CORR)
+    runtime = ToolBrainRuntime(object(), object(), lambda: None, config=ToolBrainConfig(mode=ToolBrainMode.SHADOW))
+    runtime.guard_refusal_root = tmp_path
+    _, record = armed.results[-1]
+    runtime._on_action_result(result, record)
+    deposited = read_recent_refusals(tmp_path, wall=lambda: __import__("time").time())
+    assert deposited and deposited[0]["code"] == "no_user_intent_evidence" and deposited[0]["kind"] == BULK_HIDE
 
 
 # ------------------------------------------------------------------ refus final, tracé, sans martèlement

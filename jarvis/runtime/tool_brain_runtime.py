@@ -252,6 +252,8 @@ class ToolBrainRuntime:
         #: et une action planifiée en double serait une seconde exécution. `None` : toujours (tests, avant S8).
         self._owner_gate = owner_gate
         self._last_outcome: str | None = None
+        #: Dossier runtime où le motif d'un refus de garde est déposé pour le bloc du tour suivant (`None` : trace seule).
+        self.guard_refusal_root: Any = None
         if queue is not None and queue_source is None:
             self._queue = queue.section
         if executor is not None:
@@ -492,6 +494,13 @@ class ToolBrainRuntime:
             self.trace("tool_brain.guard.refused", "Tool Brain : action gardée refusée", level="warning",
                        data={"action_id": result.action_id, "tool": record.tool if record else None, "code": result.code,
                              "codes": [item.get("code") for item in result.detail.get("refusals", ())][:6]})
+            # Jamais silencieux : le motif (code + détail court) va au bloc « Tool Brain — écran » du tour suivant.
+            from jarvis.runtime.tool_brain_guardrails import guard_class, record_refusal
+
+            if record is not None:
+                record_refusal(self.guard_refusal_root, tool=record.tool,
+                               kind=guard_class(record.server, record.tool, record.arguments),
+                               refusals=result.detail.get("refusals", ()), conversation_id=record.conversation_id)
             return
         if result.status == INVALIDATED:
             if self._replan_streak >= MAX_REPLAN_STREAK:

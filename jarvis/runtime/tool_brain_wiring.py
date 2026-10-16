@@ -197,6 +197,7 @@ def build_tool_brain(core: Any, *, control_settings: Callable[[], Mapping[str, o
         intents_source=intents, queue=queue, executor=executor, owner_gate=lambda: bool(arbiters) and arbiters[0].owns(),
         diagnostics=diagnostics, events=events)
     holder.append(runtime)
+    runtime.guard_refusal_root = runtime_root
     def on_ownership_change(old: Any, new: Any) -> None:
         # S9 : le changement de propriétaire est dit d'abord (repli compris), puis la file de l'ancien propriétaire est vidée.
         events.ownership(new.ownership, previous=old.ownership, reason=new.reason, fallback=new.fallback, mode=mode.value)

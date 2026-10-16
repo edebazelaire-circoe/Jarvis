@@ -34,7 +34,7 @@ INTENT_TOOL = "ui_intent_publish"
 MISSING_SURFACES: tuple[str, ...] = ()
 BRIEF_HEADER = "[Tool Brain — écran]"
 #: Plafond du rendu (octets UTF-8) : ajouté à chaque tour, il doit rester discret.
-MAX_BRIEF_BYTES = 1900
+MAX_BRIEF_BYTES = 2800
 
 
 def tool_brain_view(runtime_root: Path | str | None = None) -> OwnershipView:
@@ -69,7 +69,8 @@ def ui_capability_surface() -> dict[str, dict[str, list[str]]]:
 
 
 def tool_brain_brief_block(ownership: str | None = None, *, fallback: bool = False,
-                           runtime_root: Path | str | None = None) -> dict[str, Any]:
+                           runtime_root: Path | str | None = None,
+                           guard_refusals: list[dict[str, Any]] | None = None) -> dict[str, Any]:
     """Valeur de `context["tool_brain"]` : données seulement, la formulation est rendue ici (Décision 23).
 
     `fallback` : le mode actif voulait déléguer mais Jarvis garde l'écran (panne du Tool Brain) ; le bloc le dit.
@@ -79,7 +80,8 @@ def tool_brain_brief_block(ownership: str | None = None, *, fallback: bool = Fal
     if mode not in OWNERSHIPS:
         raise ValueError(f"ownership must be one of {OWNERSHIPS}")
     return {"ownership": mode, "surface": ui_capability_surface(), "missing": list(MISSING_SURFACES),
-            "intent_tool": INTENT_TOOL, "delegated_only": delegated_only_surfaces(), "fallback": bool(fallback)}
+            "intent_tool": INTENT_TOOL, "delegated_only": delegated_only_surfaces(), "fallback": bool(fallback),
+            "guard_refusals": list(guard_refusals or ())}
 
 
 def delegated_only_surfaces() -> list[str]:
@@ -134,8 +136,10 @@ def render_tool_brain_brief(block: Any) -> list[str]:
         lines.append(
             "Mode actuel : délégué. Le Tool Brain exécute l'affichage : les outils d'action d'écran "
             f"({', '.join(refused)}) te sont refusés (ui_delegated), n'essaie pas ; lecture, création et rangement de "
-            "contenu restent à toi. Dis ce que l'utilisateur doit voir avec l'intention ; pour retirer un objet, "
-            "seulement sur demande explicite de l'utilisateur, intention dismiss sur cet objet. Si le Tool Brain tombe, "
+            "contenu restent à toi. Dis ce que l'utilisateur doit voir avec l'intention ; pour retirer ou masquer, "
+            "seulement sur demande explicite de l'utilisateur : intention dismiss avec des refs lues dans scene_query "
+            "quand tu peux (archivage : une ref par objet, 3 au plus), sinon un subject clair qui nomme la portée "
+            "(« tâches terminées »). Masquer est réversible et large ; archiver est définitif. Si le Tool Brain tombe, "
             "tes outils reviennent seuls (le bloc du tour suivant le dit).")
     else:
         lines.append(
@@ -145,6 +149,13 @@ def render_tool_brain_brief(block: Any) -> list[str]:
              "Mode actuel : observation. Le Tool Brain regarde mais n'agit pas encore : exécute toi-même l'affichage "
              "avec ces outils, comme avant, une seule fois par geste.")
             + (" La navigation web n'existe qu'en mode délégué : dis-le, ne la promets pas." if only_tool_brain else ""))
+    for item in list(block.get("guard_refusals") or ())[-2:]:
+        if isinstance(item, dict) and item.get("code"):
+            what = "archivage" if item.get("kind") == "irreversible" else "masquage" if item.get("kind") == "bulk_hide" else "action"
+            lines.append(
+                f"Refus du garde-fou, il y a {int(item.get('age_s') or 0)} s : {what} {item.get('tool', '')} NON fait "
+                f"({item['code']} : {str(item.get('detail') or '')[:160]}). Ne dis pas que c'est fait ; dis-le à "
+                "l'utilisateur et, si sa demande tient, republie une intention dismiss claire (refs ou subject) puis réessaie.")
     tool = block.get("intent_tool") or INTENT_TOOL
     lines.append(
         f"Intention : {tool}(kind reveal|attention|relevance|dismiss, refs [{{kind object|board, id}}] lus dans "
