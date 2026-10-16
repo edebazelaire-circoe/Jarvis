@@ -47,6 +47,10 @@ Catégorie 2 : convention du dépôt (`skipif` + `JARVIS_LIVE_CLAUDE=1`) ; les m
 Captures `2026-10-15-s09-real-0{1..5}-*.png`, DOM `journey.json`, analyse `analysis.json`. 0 erreur console,
 0 appel `/api/agent/ask|send` du navigateur.
 
+Note (Slice 10) : `journey.json` porte `"writable": false` à cause d'une coquille du script, qui lisait
+`snapshot().chat_writable` au lieu de `snapshot().state.chat_writable` (corrigé dans `journey.mjs`, parcours
+non relancé). Le Chat était bien inscriptible : les trois envois ci-dessus ont été admis et ont reçu leur réponse.
+
 ## Analyse de trace (réelle)
 
 - Brief reçu par le CLI (transcription de session du CLI) : ligne « Canal : écrit (chat)… » dans 3/3 tours écrits ;

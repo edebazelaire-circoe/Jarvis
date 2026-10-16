@@ -11,7 +11,7 @@ const R = {steps: {}};
 const save = () => writeFileSync(join(info.out, 'journey.json'), JSON.stringify(R, null, 1));
 const bubbles = `[...document.querySelectorAll('#chatLog .chat-msg')].map(li=>({brain:li.classList.contains('brain'),text:li.textContent.slice(0,400)}))`;
 const brainCount = `document.querySelectorAll('#chatLog .chat-msg.brain').length`;
-const writable = `JarvisChat.instance.snapshot().chat_writable===true`;
+const writable = `JarvisChat.instance.snapshot().state?.chat_writable===true`;
 
 async function send(p, text) {
   await p.eval(`document.querySelector('#chatInput').focus()`);
