@@ -145,3 +145,17 @@ def test_low_viewport_toasts_follow_the_shifted_panel():
     assert "@media(min-width:940px) and (max-height:480px){#app:has(.panel.open)~.toasts{right:calc(148px + min(560px,100vw - 120px))" in html
     assert html.index("@media(min-width:940px) and (max-height:480px){#app:has(.panel.open)~.toasts") > html.index(
         "@media(min-width:940px){#app:has(.panel.open)~.toasts")
+
+
+def test_every_core_attachment_refusal_of_a_turn_has_its_own_sentence():
+    """Chaque refus de pièce jointe d'un tour (`docs/chat.md` › *Stable error codes*) se dit en mots dans le
+    panneau, dont `attachment_other_board` (garde de Board de Core, reprise post-Slice 09)."""
+
+    doc = (ROOT / "docs" / "chat.md").read_text(encoding="utf-8")
+    codes = set(re.findall(r"^\| `(attachment_[a-z_]+)` \| \d{3} \| Core \|", doc, re.MULTILINE))
+    assert "attachment_other_board" in codes, codes
+    module = MODULE.read_text(encoding="utf-8")
+    send_errors = module[module.index("const SEND_ERRORS=Object.freeze({"):module.index("const UNKNOWN_OUTCOME")]
+    for code in sorted(codes):
+        assert re.search(rf"\b{code}:'[^']+'", send_errors), code
+    assert "autre Board" in send_errors

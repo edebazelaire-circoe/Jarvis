@@ -775,7 +775,8 @@ class LocalProtocolServer:
             uploads = getattr(self.core, "uploads", None)
             if uploads is None:
                 return _chat_refusal(503, "core_unavailable", "attachments are not wired in this Core"), False
-            refusal = await uploads.attachment_refusal(turn.attachments, view.session.jarvis_session_id)
+            refusal = await uploads.attachment_refusal(turn.attachments, view.session.jarvis_session_id,
+                                                     view.binding.board_id)
             if refusal is not None:
                 return _chat_refusal(refusal.status, refusal.code, refusal.message), False
         return None, False

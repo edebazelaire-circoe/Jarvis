@@ -57,7 +57,8 @@ def test_the_artifact_kind_filter_offers_the_four_presentation_kinds(tmp_path):
     """)
     for kind in ("presentation_snapshot", "presentation_video", "presentation_still", "presentation_pdf"):
         assert kind in seen["kinds"] and f'<option value="{kind}"' in seen["html"], kind
-    assert len(seen["kinds"]) == 12  # + `upload` (unified chat Slice 07)
+    assert len(seen["kinds"]) == 13  # + `upload` (unified chat Slice 07) and `link` (Slice 08)
+    assert "<option value=\"link\"" in seen["html"] and seen["labels"]["link"] == "Lien"
     assert "<option value=\"upload\"" in seen["html"] and seen["labels"]["upload"] == "Pièce jointe du chat"
     text = _text(seen["html"])
     assert "Présentation figée" in text and "Aucune présentation figée sur ce Board" in text

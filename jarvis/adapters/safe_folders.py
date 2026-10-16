@@ -38,13 +38,17 @@ FAILED = "failed"
 
 
 class SafeFolderError(Exception):
-    """`kind` : `unsafe` (refus de sécurité) ou `failed` (le disque a refusé)."""
+    """`kind` : `unsafe` (refus de sécurité) ou `failed` (le disque a refusé).
 
-    def __init__(self, kind: str, path: Path, reason: str) -> None:
+    `path_limit` : la limite Windows dépassée (`WINDOWS_MAX_FILE_PATH` ou `WINDOWS_MAX_DIR_PATH`) quand le refus
+    vient de la longueur du chemin, `None` sinon ; lu par les journaux pour nommer MAX_PATH sans écrire le chemin."""
+
+    def __init__(self, kind: str, path: Path, reason: str, *, path_limit: int | None = None) -> None:
         super().__init__(reason)
         self.kind = kind
         self.path = path
         self.reason = reason
+        self.path_limit = path_limit
 
 
 def is_link(info: os.stat_result) -> bool:
@@ -80,7 +84,8 @@ def check_file_path(path: Path) -> None:
     if os.name == "nt" and len(str(path)) > WINDOWS_MAX_FILE_PATH:
         raise SafeFolderError(
             FAILED, path, f"file path is {len(str(path))} characters, above the Windows limit of "
-                          f"{WINDOWS_MAX_FILE_PATH}: shorten the data root or the payload name")
+                          f"{WINDOWS_MAX_FILE_PATH}: shorten the data root or the payload name",
+            path_limit=WINDOWS_MAX_FILE_PATH)
 
 
 def ensure_folder_tree(data_root: Path, parts: Sequence[str]) -> tuple[Path, bool]:
@@ -91,7 +96,8 @@ def ensure_folder_tree(data_root: Path, parts: Sequence[str]) -> tuple[Path, boo
     if os.name == "nt" and len(str(final)) > WINDOWS_MAX_DIR_PATH:
         raise SafeFolderError(
             FAILED, final, f"path is {len(str(final))} characters, above the Windows folder limit of "
-                           f"{WINDOWS_MAX_DIR_PATH}: shorten the data root or the ids")
+                           f"{WINDOWS_MAX_DIR_PATH}: shorten the data root or the ids",
+            path_limit=WINDOWS_MAX_DIR_PATH)
     created = False
     current = root
     try:

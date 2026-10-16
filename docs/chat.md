@@ -252,8 +252,16 @@ order:
    `voice_switching`, `voice_error`, `voice_unknown`.
 5. **Attachments** (Slice 07): each id exists (404 `attachment_not_found`), is
    of kind `upload` with provenance `chat_attachment` and belongs to the open
-   Session (400 `attachment_not_allowed`), and is `complete` (409
-   `attachment_not_ready`); the first refusal in message order wins. This step
+   Session (400 `attachment_not_allowed`), is linked to the Board of the
+   target binding (409 `attachment_other_board`, journal
+   `core.upload.attachment_other_board` with the id and the Board, never a
+   name), and is `complete` (409 `attachment_not_ready`); the first refusal in
+   message order wins. The Board of an attachment is its Board link
+   (`board_artifact_links`): the automatic `active_board` link written by its
+   creation transaction, or an `explicit` link made later in the Workspace
+   inspector. This is Core's guard; the page's `stale` state only avoids
+   sending a refused turn (Slice 09 finding 1). A replay (step 2) answers
+   before this step: re-sending an admitted turn stays a 200 duplicate. This step
    **runs right after step 3, before step 4**: it reads the registry (an
    `await`), and step 4 must stay the last read before `submit` with no
    `await` in between. Attachments on a non-text turn: 400 `invalid_request`;
@@ -494,7 +502,12 @@ pure rules `jarvis/domain/uploads.py`.
   bound, told to the user) is exceeded → spool closed, Artifact `failed` code
   `upload_too_large`, 413. Body shorter than `Content-Length`, or cut (client
   gone) → `failed` `upload_incomplete`, 400. Payload refused by the store
-  (`artifact_payload_*`) → `failed` 503 `upload_storage_failed`. A `failed`
+  (`artifact_payload_*`) → `failed` 503 `upload_storage_failed`; the message
+  and `core.upload.refused` (level `error`, field `cause`) say the real cause
+  without the path nor the original name: `payload_code`, `stage` (`open`,
+  `write`, `finalize`), `cause_type`, `os_error` / `errno` / `winerror` of the
+  chained `OSError`, `path_chars` and `path_limit` (the Windows limit exceeded,
+  *Known limits* 10). A `failed`
   upload keeps its registry row; its folder is removed: no `.partial` is left
   (a `.partial` found there before the spool opened is neither overwritten nor
   removed). Refused before the first byte, nothing is written: empty → 400
@@ -665,8 +678,10 @@ chat state owner: no second module.
   link that opens the Workspace inspector on the conversation's Board
   (`JarvisWorkspace.openBoard`), where the Artifacts are listed.
 - **Board or Session change.** An attachment belongs to the conversation it
-  was attached in. Seen from another conversation it is `stale`: never sent
-  there, offered « Renvoyer ici » (a new upload of the same file, new id, into
+  was attached in (Core enforces it by Board, 409 `attachment_other_board`,
+  « Une pièce jointe a été ajoutée sur un autre Board : retirez-la, joignez le
+  fichier à nouveau ici, puis renvoyez. »). Seen from another conversation it
+  is `stale`: never sent there, offered « Renvoyer ici » (a new upload of the same file, new id, into
   the current context) and ×; back on its own Board it is ready again.
 - **Reload.** The draft (`jarvis.chat.draft.<conversation_id>`) keeps the
   ready attachments (Artifact id, name, size, readability, `client_upload_id`)
@@ -933,6 +948,7 @@ Core code is relayed as is.
 | `attachment_not_found` | 404 | Core | unknown id |
 | `attachment_not_ready` | 409 | Core | attachment not `complete` |
 | `attachment_not_allowed` | 400 | Core | other kind, provenance or Session |
+| `attachment_other_board` | 409 | Core | attachment not linked to the Board of the turn's conversation |
 | `chat_conversation_not_foreground` | 409 | Core | target ≠ current binding |
 | `chat_input_locked` | 409 | Core | voice not disabled (`reason`) |
 | `chat_request_conflict` | 409 | Core | same `client_request_id`, other content |
@@ -1007,3 +1023,17 @@ and an isolated root, never a repository database.
    automatic; and the **same file attached twice** makes two uploads, hence two
    Artifacts (no client-side dedupe by content). Recorded by QA S7b, left as is.
 
+9. **An attachment's Board is the one active when Core creates it.** A chat
+   upload carries no Board: its automatic link goes to the Board active in its
+   creation transaction (after Core has read the first 64 KiB). A Board switch
+   in that instant links it to the new Board, and a turn of the original
+   conversation then gets 409 `attachment_other_board` (« joignez le fichier à
+   nouveau ici »); never the reverse leak. An `explicit` link made in the
+   Workspace inspector makes the attachment sendable from that Board too.
+10. **Windows MAX_PATH on payloads.** A payload path longer than the Windows
+    limit (259 characters for the file, 248 for its folder; no long-path
+    prefix, `LongPathsEnabled` not assumed) is refused before any disk access:
+    503 `upload_storage_failed`, `cause.path_limit` set in `core.upload.refused`.
+    It only happens with a deep data root (`JARVIS_DATA_ROOT`); the default
+    `~/.jarvis/instances/...` root normally stays below. Not fixed: shorten the data
+    root.
