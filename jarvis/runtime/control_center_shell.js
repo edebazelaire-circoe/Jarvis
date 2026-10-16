@@ -32,8 +32,8 @@
   const CONTROL_SELECTOR=`[${CONTROL_ATTRIBUTE}],#sceneLayer>.sc-status`;
 
   /* Hôtes qui doivent porter l'attribut (le test vérifie la page servie). Un
-     hôte absent aujourd'hui (aperçu de capture, Slice 05) est listé avec la
-     slice qui le déclarera. */
+     hôte pas encore déclaré serait listé avec la slice qui le déclarera
+     (`slice`) ; l'aperçu de capture l'est depuis la Slice 05. */
   const CONTROL_HOSTS=Object.freeze([
     Object.freeze({selector:'#boardsHud',zone:'top-left'}),
     Object.freeze({selector:'.topbar>.state',zone:'top-left'}),
@@ -51,7 +51,7 @@
     Object.freeze({selector:'#boardDropTray',zone:'bottom-centre'}),
     Object.freeze({selector:'#recIndicators',zone:'bottom-centre'}),
     Object.freeze({selector:'#chatTab',zone:'bottom-right'}),
-    Object.freeze({selector:'#screenshotPreview',zone:'left-low',slice:'S05'}),
+    Object.freeze({selector:'#screenshotPreview',zone:'left-low'}),
   ]);
   /* Zones de la coque (docs/06 §9). `right` : le rail actif de l'espace de
      travail (Slice 07), sous les panneaux latéraux qui s'ouvrent par-dessus. */
@@ -60,7 +60,7 @@
     'top-right':'lanceur global (dock) et pastilles d’arrière-plan jusqu’à la Slice 06',
     'top-centre':'bandeau GPT-Live (transitoire)',
     'left-edge':'ancre et roue d’outils (Sélection, Vidéo, Capture d’écran, Audio)',
-    'left-low':'aperçu de capture d’écran (Slice 05)',
+    'left-low':'aperçu de la dernière capture d’écran (Slice 05), au-dessus du contexte bas-gauche',
     'bottom-left':'zone de contexte : mode d’interaction, notes de la scène',
     'bottom-centre':'centre d’état (Slice 06) ; indication vocale, plateau de dépôt et indicateurs de capture aujourd’hui',
     'bottom-right':'onglet Chat',

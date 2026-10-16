@@ -268,7 +268,9 @@ def test_board_linked_artifacts_are_typed_cards_and_a_board_switch_drops_them(r)
         ("contrat.pdf", "PDF", "problem", "Problème", "placeholder")], "no yellow for Board artifacts"
     assert items[0]["thumb"]["img"]["ok"] is True and [i["dot"] for i in items] == [GREEN, GREEN, GREEN, BLUE, ORANGE]
     assert r["board_items"]["wsCalls"] == ["b"] and len(r["board_items"]["items"]) == 5, "presentations are still listed apart"
-    assert r["board_open"] == [["open"], ["artifact-show", "jart_" + "c" * 32]], "without the Slice 05 preview, an image opens its detail"
+    # Slice 05 : l'aperçu des captures est servi, une image s'ouvre dans SA visionneuse (même route bornée), pas dans l'inspecteur.
+    assert r["board_open"] == [], "an image opens the Slice 05 lightbox, not the detail"
+    assert r["board_lightbox"] == {"open": True, "href": "/api/artifacts/jart_" + "c" * 32 + "/payload"}
     assert [i["act"] for i in r["board_menu"]["menu"]["items"]] == ["ws-open", "ws-link"]
     assert r["board_switched_now"]["wsItems"] == [] and r["board_switched_now"]["wsCalls"] == ["b", "c"], "the previous Board's items leave at once"
     assert r["board_switched"]["wsItems"] == [] and r["board_switched"]["wsHead"] is None

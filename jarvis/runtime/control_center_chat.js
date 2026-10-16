@@ -70,7 +70,7 @@
      `uploadAnswerMs` après le dernier octet (relais : 120 s de lecture) → issue inconnue. */
   const DEFAULTS=Object.freeze({tickMs:1500,fastMs:500,fastWindowMs:20000,helloMs:1000,stateTimeoutMs:13000,
     readTimeoutMs:10000,pageLimit:500,sendTimeoutMs:20000,disableTimeoutMs:12000,replyDeadlineMs:120000,
-    switchDeadlineMs:15000,slowStateMs:3000,uploadStallMs:30000,uploadAnswerMs:130000,
+    switchDeadlineMs:15000,slowStateMs:3000,uploadStallMs:30000,uploadAnswerMs:130000,existingWaitMs:15000,
     retryMs:Object.freeze([1000,2000,5000,10000])});
   const config={...DEFAULTS};
   /* Bornes du contrat (`docs/chat.md` › *Configurable bounds*). */
@@ -324,6 +324,7 @@
       /* Les pièces jointes restent, liées à LEUR conversation : vues d'ici, elles sont « à renvoyer ». */
       const stale=Model.attachmentView(S.att,conversationId).stale;
       log('rescoped',{from:before,to:conversationId,stale_attachments:stale});
+      flushExisting();
     }
 
     /* ---------- lecture des événements : un meneur par profil, partagé ----------
@@ -437,7 +438,8 @@
        relu une fois par page (`rescope`) — au rechargement elle le dit, jamais perdue en silence. */
     function draftAttachments(cid){
       return Model.attachmentView(S.att,cid).items.filter(i=>i.status!=='stale'&&i.state!=='failed')
-        .map(i=>i.state==='ready'?{name:i.name,size:i.size,mime:i.mime,artifactId:i.artifactId,readable:i.readable,clientUploadId:i.clientUploadId}
+        .map(i=>i.state==='ready'?{name:i.name,size:i.size,mime:i.mime,artifactId:i.artifactId,readable:i.readable,clientUploadId:i.clientUploadId,
+          ...(i.existing?{existing:true}:{})}
           :{name:i.name,size:i.size,clientUploadId:i.clientUploadId,interrupted:true});
     }
     /* Brouillon gardé de la conversation `cid`, même quand elle n'est pas affichée : une pièce qui finit,
@@ -625,6 +627,50 @@
       say('Pièce retirée.');
       draftEdited();if(from!==model.conversationId)persistDraft(from);
       el.input.focus();
+    }
+
+    /* ---------- pièce déjà chez Core (orbital-ui Slice 05, D7) ----------
+       « Envoyer à Jarvis » d'une capture d'écran : la pièce est un Artifact `complete` de Core ; ni
+       téléversement, ni octet dans la page (le brouillon garde l'id, le nom, la taille). Le panneau
+       s'ouvre et le champ prend le focus : le texte reste exigé, rien ne part tout seul. Sans
+       conversation connue (panneau jamais ouvert), la pièce attend la première lecture d'état, au plus
+       `existingWaitMs` ; Core reste juge à l'envoi (`attachment_not_allowed`, `attachment_not_ready`). */
+    let waitingExisting=null;
+    function attachExisting(spec){
+      const id=spec&&typeof spec.artifact_id==='string'?spec.artifact_id:'';
+      if(!/^jart_[A-Za-z0-9_]{1,96}$/.test(id)){log('attach_existing_refused',{reason:'bad_artifact_id'},'warn');return {ok:false,code:'invalid_artifact_id'}}
+      if(S.sending){
+        say('Envoi du message en cours : joignez la capture juste après.');
+        log('attach_existing_refused',{artifact_id:id,reason:'sending'},'warn');return {ok:false,code:'sending'};
+      }
+      const item={artifactId:id,name:String(spec.original_name||'pièce').slice(0,200),
+        size:Number.isFinite(spec.size_bytes)?spec.size_bytes:0,mime:typeof spec.mime_type==='string'?spec.mime_type:''};
+      open();
+      if(!model.conversationId){
+        if(waitingExisting)clearTimeout(waitingExisting.timer);
+        waitingExisting={item,timer:setTimeout(()=>{
+          waitingExisting=null;
+          say('Aucune conversation liée : la capture n’a pas été jointe.');
+          log('attach_existing_refused',{artifact_id:id,reason:'no_conversation'},'warn');render();
+        },config.existingWaitMs)};
+        log('attach_existing_waiting',{artifact_id:id});
+        return {ok:true,pending:true};
+      }
+      return {ok:true,pending:false,key:placeExisting(item)};
+    }
+    function placeExisting(item){
+      const cid=model.conversationId;
+      const placed=Model.addExistingAttachment(S.att,{...item,cid});
+      log('attached_existing',{artifact_id:item.artifactId,conversation_id:cid,key:placed.key});
+      say('Capture jointe : écrivez votre message puis envoyez.');
+      draftEdited();
+      if(S.open)el.input.focus();
+      return placed.key;
+    }
+    function flushExisting(){
+      if(!waitingExisting||!model.conversationId)return;
+      const {item,timer}=waitingExisting;waitingExisting=null;clearTimeout(timer);
+      placeExisting(item);
     }
 
     /* ---------- bascule voix → chat ---------- */
@@ -979,7 +1025,7 @@
       log('installed',{panel:DOM.panel,shared:canShare()});
     }
 
-    return {install,open,close,toggle:()=>S.open?close({restoreFocus:true}):open(),isOpen:()=>S.open,
+    return {install,open,close,attachExisting,toggle:()=>S.open?close({restoreFocus:true}):open(),isOpen:()=>S.open,
       snapshot:()=>({open:S.open,conversation_id:model.conversationId,cursor:S.feed.cursor,feed:{phase:S.feed.phase,role:S.feed.role,
         hydrated:S.feed.hydrated,error:S.feed.error,leading:S.feed.leading,heldRows:Model.storedRows(model).length},
         attachments:Model.attachmentView(S.att,model.conversationId),sentNames:[...S.sentNames.keys()],state:S.state,serverLock:S.serverLock,switch:{...S.switch},sending:S.sending,
@@ -989,6 +1035,8 @@
 
   const api={DOM,ROUTES,DEFAULTS,config,MAX_TEXT,composerView,uuid4,createChat,instance:null,
     open:o=>api.instance&&api.instance.open(o),close:o=>api.instance&&api.instance.close(o),
+    /* Slice 05 (orbital-ui) : joindre un Artifact déjà chez Core ; `{ok:false, code:'chat_unavailable'}` sans panneau. */
+    attachExisting:spec=>api.instance?api.instance.attachExisting(spec):{ok:false,code:'chat_unavailable'},
     isOpen:()=>!!(api.instance&&api.instance.isOpen())};
   if(typeof module==='object'&&module.exports)module.exports=api;
   if(doc&&typeof root.fetch==='function'&&doc.getElementById('chatPanel')){

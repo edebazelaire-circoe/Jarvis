@@ -785,6 +785,12 @@ CHAT_SCRIPT_MARKER = "/*__CONTROL_CENTER_CHAT_JS__*/"
 #: plateau des envois ; n'écoute que les glisser portant des fichiers ou un lien, jamais les gestes de la scène.
 BOARD_DROP_SCRIPT_FILE = "control_center_board_drop.js"
 BOARD_DROP_SCRIPT_MARKER = "/*__CONTROL_CENTER_BOARD_DROP_JS__*/"
+#: Aperçu de capture d'écran et actions rapides (jarvis-board-orbital-ui-workspace-rail, Slice 05, D7) :
+#: `#screenshotPreview` (rang 38) après une capture RÉUSSIE du contrôleur de capture, visionneuse sur le motif
+#: `.overlay` (60), Supprimer / Envoyer à Jarvis par les routes canoniques. Lit `JarvisCaptureRail` au chargement
+#: et `JarvisChat` au clic : inséré APRÈS eux. Contrat : `docs/capture.md` › Interface. Refus d'installation rattrapé.
+SCREENSHOT_PREVIEW_SCRIPT_FILE = "control_center_screenshot_preview.js"
+SCREENSHOT_PREVIEW_SCRIPT_MARKER = "/*__CONTROL_CENTER_SCREENSHOT_PREVIEW_JS__*/"
 
 #: Architectures vocales proposées dans l'onglet « Mode vocal ». Comme le reste
 #: de l'écran, leur libellé vit ici et non dans la page. `{key}` est remplacé
@@ -2536,7 +2542,8 @@ class ControlCenter:
                              (MEMORY_SCRIPT_MARKER, MEMORY_SCRIPT_FILE),
                              (CHAT_MODEL_SCRIPT_MARKER, CHAT_MODEL_SCRIPT_FILE),
                              (CHAT_SCRIPT_MARKER, CHAT_SCRIPT_FILE),
-                             (BOARD_DROP_SCRIPT_MARKER, BOARD_DROP_SCRIPT_FILE)):
+                             (BOARD_DROP_SCRIPT_MARKER, BOARD_DROP_SCRIPT_FILE),
+                             (SCREENSHOT_PREVIEW_SCRIPT_MARKER, SCREENSHOT_PREVIEW_SCRIPT_FILE)):
             html = html.replace(marker, page.with_name(name).read_text(encoding="utf-8"))
         if self.visualizer_url:
             html = html.replace("__VISUALIZER_URL__", self.visualizer_url)

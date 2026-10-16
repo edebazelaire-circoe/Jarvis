@@ -875,7 +875,7 @@ nothing to say). One chip per open capture: screen = `REC` + Core-derived
 duration (a breathing dot, `écran N` when not the default display), audio =
 microphone + duration; a start in flight whose row Core does not list yet is
 a wait chip (`N s`, sweep bar); a screenshot shows `N s` then a check and
-`enregistrée` for 2.5 s (the preview is Slice 05). They **stay visible when the
+`enregistrée` for 2.5 s (the preview below shows the image). They **stay visible when the
 wheel is closed**; activating a recording chip stops **that** capture (the
 filled square says so; stuck = `!`, lost status = `?` + dashed border). The
 chip's `aria-label` never changes with the timer (`Arrêter l’enregistrement
@@ -924,6 +924,53 @@ displays chosen by keyboard, Core really stopped then restarted (status
 loss), a stop sent during a page-only loss, independence, refused start,
 keyboard, no overlap at five sizes, reduced motion, forced colours,
 axe-core when `JARVIS_AXE_JS` points to `axe.min.js`).
+
+### Screenshot preview and quick actions (orbital UI Slice 05)
+
+Resolved architecture §6 (D7) of `jarvis-board-orbital-ui-workspace-rail`.
+Module `jarvis/runtime/control_center_screenshot_preview.js`
+(`window.JarvisScreenshotPreview`, `SCREENSHOT_PREVIEW_SCRIPT_FILE`, served
+after the controller and the Chat), host `#screenshotPreview` (rank 38, zone
+`left-low`, [control-center-shell.md](control-center-shell.md)).
+
+| Rule | How |
+| --- | --- |
+| Trigger | only a **successful** screenshot taken by this page's controller: a new `view().shot` (`{capture, artifact}`, a new object per success) whose artifact is `kind=screenshot`, `state=complete`, with a valid id. A failed screenshot leaves `shot` unchanged: nothing shows. The `shot` present when the module subscribes (a capture from before the page loaded) is seen, never shown. A screenshot taken by the brain (MCP) or another tab shows nothing here |
+| No truth of its own | the preview holds only what it displays; it never writes the capture or its artifact. Dismissing it (× , `Escape`, the delay) **never deletes** |
+| Thumbnail | lazy `<img decoding=async>` on `GET /api/artifacts/{id}/payload` (the bounded relay route, same origin), at most 240×135 by the sheet. Load failure or no load within 8 s → typed placeholder `Capture d’écran · PNG` + `Aperçu indisponible : <cause> (<code>)`, the code read by a one-byte range request (`artifact_not_found`, `artifact_payload_missing`, `core_unreachable`, `payload_timeout`…); Envoyer / Ouvrir / Supprimer stay offered. A presentation error only: capture state untouched |
+| Delay | 6 s, suspended while the pointer is over the card, the focus is in it, an action is in flight or the lightbox is open; it restarts **in full** on release (predictable). A thin bar shows the remaining time (still under `prefers-reduced-motion`) |
+| Non-modal | no veil, nothing made `inert`, the focus is **never** taken when it appears (announced in a polite live region); only the card receives the pointer. `Escape` dismisses it when the focus is in it, the pointer is over it, or the focus is on the page itself (other surfaces — lightbox, Chat, menus — take the key first). A dismissal with the focus inside hands it to the wheel anchor |
+| Envoyer à Jarvis | `JarvisChat.attachExisting({artifact_id, original_name, mime_type, size_bytes})`: a **ready** chip without upload (the artifact is already in Core), the Chat panel opens and its input takes the focus; text is still required, nothing is sent by itself. Core admits the screenshot at send time ([chat.md](chat.md) › *Attachments*, step 5). The preview closes once the chip is placed |
+| Ouvrir | lightbox `#screenshotLightbox` on the `.overlay` pattern (rank 60, `role=dialog`, `aria-modal`): the full image from the same payload URL and « Ouvrir dans un onglet » (`target=_blank`, `rel=noopener noreferrer`, same URL). `Escape`, « Fermer » or a click on the backdrop close it; `Tab` stays inside; the focus returns where it was |
+| Supprimer | the page's `confirmDialog` (danger), then `DELETE /api/artifacts/{id}` through the relay. One deletion in flight (a second click is ignored, journal `delete_ignored`); a refusal keeps the preview and says the phrase **and** the code (`artifact_not_found`, `artifact_has_dependents` — an annotation derives from it —, `artifact_still_pending`, `core_unreachable`, `core_timeout`…). A lightbox showing the deleted image closes |
+| Annotate | not offered (Slice 05.B: see the task Issue `screenshot-annotate.md` if absent) |
+
+`openLightbox({artifact_id, url, title})` is also the seam of the workspace
+rail (Slice 07: a Board-linked image card opens this lightbox). The URL is
+always **rebuilt** from the validated id (`jart_…`; anything else throws
+`invalid_artifact_id`, the rail then falls back to the Artifact detail).
+No artifact byte goes to browser storage: the Chat draft keeps the id, name
+and size only.
+
+Journal (console `[screenshot_preview]`, never a file name or path):
+`installed`, `preview_shown`, `preview_skipped` (`not_complete`,
+`not_a_screenshot`, `no_artifact`), `preview_payload_failed`,
+`preview_dismissed` (`timeout`, `close`, `escape`, `sent`, `deleted`),
+`preview_opened`, `lightbox_opened` / `lightbox_closed` /
+`lightbox_payload_failed` / `lightbox_url_ignored`, `delete_requested` /
+`delete_cancelled` / `delete_ignored` / `delete_refused` / `deleted`,
+`sent_to_chat` / `send_refused`, `capture_controller_missing`,
+`install_failed`.
+
+Tests: `tests/unit/test_screenshot_preview_js.py` (node: shown only after a
+successful screenshot, delay and holds, dismissal never deletes, payload
+failure keeps the actions, delete single flight / cancel / refusal, send
+refusal); `tests/unit/test_screenshot_preview_browser.py` (headless Chrome,
+real Control Center + real Core, fake one-shot source returning a 480×270
+PNG: lightbox and tab, the rail → lightbox seam, delete with confirmation,
+delete refused, send → ready chip → turn admitted by Core with the
+screenshot, non-blocking pointer and focus, no overlap at 1440×900,
+1280×720, 900×600, 600×800).
 
 ## Activity and journal
 

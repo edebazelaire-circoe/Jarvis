@@ -49,7 +49,7 @@ the Bare Hands column, from 1024 px down.
 | `top-right` | `.dock` (global launcher, one row of 34 px buttons); `#bgPills` left of it until Slice 06 | page |
 | `top-centre` | `.live-banner` (GPT-Live, transient) | page |
 | `left-edge` | `#toolWheel` anchor and orbital tool wheel (Slice 02; live by default since Slice 04: Sélection, Vidéo, Capture d'écran, Audio); `#barehandsHud`, `#barehandsPalette` hosts stay declared but hidden while the wheel is visible (Slice 03) | their modules |
-| `left-low` | `#screenshotPreview` (Slice 05) | — |
+| `left-low` | `#screenshotPreview` (Slice 05): preview of the last successful screenshot, right of the wheel anchor, its bottom 172 px above the page bottom so it clears the bottom-left context zone (mode button and scene notes stacked up to 162 px) | `control_center_screenshot_preview.js` |
 | `bottom-left` | `#interactionModeHud`, `.sc-status` notes of the scene | `control_center_interaction_mode.js`, scene |
 | `bottom-centre` | `#voiceHint` (until Slice 06), `#boardDropTray`, `#recIndicators` (Slice 04, provisional slot left of centre); status centre from Slice 06 | page, `control_center_board_drop.js`, `control_center_capture_wheel.js` |
 | `bottom-right` | `#chatTab` | `control_center_chat.js` |
@@ -155,6 +155,7 @@ The rule is written exactly as in the sheet, `${…}` interpolations included.
 | 36 | `.bh-hud-pop` | `control_center_barehands_hud.js` | `#${DOM.hostId} .bh-hud-pop` | Bare Hands lifecycle selector |
 | 36 | `.im-pop` | `control_center_interaction_mode.js` | `#${DOM.hostId} .im-pop` | mode chooser |
 | 37 | `#toolWheel[data-open]` | `control_center.html` | `#toolWheel[data-open]` | open wheel and its radial sub-arcs: above the choosers, the wheel is the user's latest focus |
+| 38 | `#screenshotPreview` | `control_center.html` | `#screenshotPreview` | screenshot preview (Slice 05): transient, non-modal, above the open wheel that took the shot, below the status centre, toasts and the lightbox |
 | 40 | `#bgPills` | `control_center.html` | `.bgpills` | background pills (status centre from Slice 06) |
 | 40 | `#recIndicators` | `control_center.html` | `#recIndicators` | capture indicators (Slice 04): an open recording stays visible above the open wheel, below toasts |
 | 55 | `.tl` | `control_center.html` | `.tl` | conversation timeline, full-screen launcher view |
@@ -162,7 +163,7 @@ The rule is written exactly as in the sheet, `${…}` interpolations included.
 | 55 | `.mcpi` | `control_center.html` | `.mcpi` | MCP inspector |
 | 55 | `.wsp` | `control_center.html` | `.wsp` | Sessions & Boards |
 | 55 | `.pfb` | `control_center.html` | `.pfb` | prefab library |
-| 60 | `.overlay` | `control_center.html` | `.overlay` | settings and modal overlays |
+| 60 | `.overlay` | `control_center.html` | `.overlay` | settings and modal overlays; the screenshot lightbox `#screenshotLightbox` (Slice 05) takes the class, no rank of its own |
 | 70 | `.toasts` | `control_center.html` | `.toasts` | toasts |
 | 75 | `.bgpop` | `control_center.html` | `.bgpop` | background pill popover |
 | 75 | `#jvStudioReloadBand` | `control_center_presentation_studio_reload.js` | `#${BAND_ID}` | Studio reload band |
@@ -207,9 +208,7 @@ them for something else. They become page layers when their slice lands.
 
 | Rank | Surface | Slice |
 | --- | --- | --- |
-| 38 | `#screenshotPreview` | S05 |
 | 40 | status centre: `#hiddenEye` beside `#bgPills` (`#recIndicators` took its rank in S04; S06 moves it beside the pills) | S06 |
-| 60 | screenshot lightbox, annotation editor (the `.overlay` pattern) | S05 |
 
 ### Invariants
 
@@ -224,6 +223,8 @@ Checked on the registry rows by `test_relative_order_of_the_old_registry_is_kept
 - the open wheel (37) is above the choosers and below the status centre
   (40: pills and capture indicators), toasts and context menu; closed, its
   anchor is at the left-edge rank (30);
+- the screenshot preview (38) is above the open wheel and below the status
+  centre (40), toasts and the lightbox (`.overlay`, 60);
 - `.ctxmenu` (80) < `#barehandsCards` (82) < `.cdialog-back` (85);
 - full-screen launcher views (55) are above every control and below
   `.overlay` < `.toasts` < `.ctxmenu` < `.cdialog-back`;
@@ -272,7 +273,7 @@ controls; the wheel and the indicators are placed by the sheet instead.)
 | `#interactionModeHud` | bottom-left | page |
 | `#voiceHint`, `#boardDropTray`, `#recIndicators` | bottom-centre | page |
 | `#chatTab` | bottom-right | page |
-| `#screenshotPreview` | left-low | S05 |
+| `#screenshotPreview` | left-low | page (host), `control_center_screenshot_preview.js` (content) |
 
 Before Slice 01 the scene's literal list missed `#interactionModeHud`,
 `#chatTab`, `#presentationRail` and `#boardDropTray`: a held object could

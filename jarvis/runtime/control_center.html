@@ -29,6 +29,7 @@ html,body{margin:0;height:100%;background:var(--bg);color:var(--text);font:15px 
    @shell-layer 35: .live-banner
    @shell-layer 36: #boardsPanel, .bh-hud-pop, .im-pop
    @shell-layer 37: #toolWheel[data-open]
+   @shell-layer 38: #screenshotPreview
    @shell-layer 40: #bgPills, #recIndicators
    @shell-layer 55: .tl, .tlab, .mcpi, .wsp, .pfb
    @shell-layer 60: .overlay
@@ -456,6 +457,15 @@ html[data-jarvis-theme="cosmos"] .chat-tab:hover,html[data-jarvis-theme="cosmos"
 #recIndicators{position:absolute;z-index:40;left:calc(50% + 124px);bottom:var(--shell-bottom);max-width:calc(50% - 124px - 52px - var(--shell-gutter) - 16px);display:flex;flex-direction:column;align-items:flex-start}
 #recIndicators[hidden]{display:none}
 @media(max-width:700px){#recIndicators{left:auto;right:var(--shell-gutter);bottom:auto;top:50%;transform:translateY(-50%);max-width:calc(100vw - 2 * var(--shell-gutter) - 24px);align-items:flex-end}}
+/* Aperçu de capture d'écran (orbital-ui Slice 05, `control_center_screenshot_preview.js`) : zone
+   `left-low`, à droite de l'ancre de la roue et AU-DESSUS du contexte bas-gauche (bouton de mode et
+   notes de la scène, jusqu'à 162 px du bas quand ils s'empilent ; 174 px sous 700 px de large, où le
+   bouton se lève) ; jamais au centre bas. Rang 38 :
+   au-dessus de la roue ouverte (37), sous le centre d'état (40) et la visionneuse (60). Non modal : seule
+   sa carte reçoit le pointeur. Caché tant qu'aucune capture réussie n'est à montrer. */
+#screenshotPreview{position:absolute;z-index:38;left:calc(var(--shell-anchor-w) + var(--shell-gutter));bottom:calc(var(--shell-bottom) + 154px)}
+#screenshotPreview[hidden]{display:none}
+@media(max-width:700px){#screenshotPreview{bottom:calc(var(--shell-bottom) + 182px)}}
 
 /* ---------- Dépôt sur le Board affiché (unified-chat Slice 08, `control_center_board_drop.js`) ----------
    Calque sans rang propre (aucun contexte d'empilement) : son cadre en
@@ -1800,6 +1810,10 @@ button.wsp-ename:hover{color:var(--accent)}
        qui enregistre reste visible et s'arrête d'un geste quand la roue est
        repliée. Rang 40 au registre ; caché tant qu'il n'y a rien à dire. -->
   <div id="recIndicators" data-shell-control hidden></div>
+  <!-- Aperçu de la dernière capture d'écran réussie (orbital-ui Slice 05, D7) : rempli par
+       `control_center_screenshot_preview.js` ; Ouvrir, Envoyer à Jarvis, Supprimer. Non modal,
+       se ferme seul (6 s, suspendu au survol / focus) sans jamais supprimer. Rang 38 au registre. -->
+  <div id="screenshotPreview" data-shell-control hidden></div>
   <!-- Emplacement des deux cartes rapides Bare Hands (Slice 04, décisions 15
        et 16) : Aide / Gestes et Diagnostic, ouvertes depuis le menu du clic
        droit du contrôle ci-dessus. **Un seul** emplacement pour les deux, une
@@ -2607,6 +2621,10 @@ const STATUS={
 /* Dépôt sur le Board affiché (Slice 08) : `control_center_board_drop.js`, `window.JarvisBoardDrop`. Après le Chat :
    son écouteur de lien sur `document` passe après la garde des fichiers du Chat, et lit `JarvisBoardsControl`. */
 /*__CONTROL_CENTER_BOARD_DROP_JS__*/
+/* Aperçu de capture d'écran (orbital-ui Slice 05) : `control_center_screenshot_preview.js`,
+   `window.JarvisScreenshotPreview`. APRÈS le contrôleur de capture et le Chat ; utilise
+   `confirmDialog`, déclaration de fonction remontée de ce même `<script>`. */
+/*__CONTROL_CENTER_SCREENSHOT_PREVIEW_JS__*/
 // `error_class` normalisées par Core ou ses observateurs ; les autres restent brutes.
 const ERROR_CLASSES={process_stopped:'processus arrêté',producer_restarted:'Control Center redémarré',
   core_restarted:'Core redémarré',core_restarted_unobserved:'non revu après le redémarrage de Core',merged:'doublon fusionné',unknown_status:'statut inconnu',killed:'tué',stopped:'arrêté',cancelled:'annulé'};

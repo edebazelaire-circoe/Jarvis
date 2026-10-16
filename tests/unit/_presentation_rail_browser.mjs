@@ -364,8 +364,9 @@ try{
   await poll1(`document.querySelector('${item(1)} .jvr-thumb').dataset.kind==='placeholder'`);await sleep(200);
   out.broken_preview=await evaluate(READ);
 
-  /* 18. Etape B : les Artifacts du Board actif (double de la route du workspace), type par MIME / hote, etat sans jaune ; clic = inspecteur
-     (double de JarvisWorkspace, l'apercu des captures de la Slice 05 n'est pas encore la) ; changer de Board vide puis relit, sans fuite. */
+  /* 18. Etape B : les Artifacts du Board actif (double de la route du workspace), type par MIME / hote, etat sans jaune ; clic sur une
+     image = visionneuse de l'apercu des captures (Slice 05, `JarvisScreenshotPreview.openLightbox`), le reste = inspecteur (double de
+     JarvisWorkspace) ; changer de Board vide puis relit, sans fuite. */
   const STUB_WS=`window.__wsOpen=[];window.JarvisWorkspace={open:()=>{window.__wsOpen.push(['open'])},act:(n,d)=>{window.__wsOpen.push([n,d&&d.id]);return Promise.resolve()}}`;
   await load(1440,900,STUB_WS+';'+PRES_BOARD,'#cards');
   await poll1(`document.querySelectorAll('#presentationRail .jvr-ws .jvr-item').length===5`);
@@ -375,6 +376,8 @@ try{
   await shot('rail-board-items-1440.png');
   await click(`#presentationRail .jvr-ws .jvr-item[data-id="jart_${'c'.repeat(32)}"]`);await sleep(150);
   out.board_open=await evaluate(`window.__wsOpen`);
+  out.board_lightbox=await evaluate(`(lb=>lb?{open:lb.classList.contains('open'),href:lb.querySelector('a').getAttribute('href')}:null)(document.getElementById('screenshotLightbox'))`);
+  await press('Escape');await sleep(100);
   await rightClick(`#presentationRail .jvr-ws .jvr-item[data-id="jart_${'e'.repeat(32)}"]`);await sleep(150);
   out.board_menu=await evaluate(READ);
   await press('Escape');
