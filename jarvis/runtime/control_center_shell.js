@@ -45,7 +45,7 @@
     Object.freeze({selector:'#barehandsHud',zone:'left-edge'}),
     Object.freeze({selector:'#barehandsPalette',zone:'left-edge'}),
     Object.freeze({selector:'#toolWheel',zone:'left-edge'}),
-    Object.freeze({selector:'#presentationRail',zone:'left-edge',createdBy:'control_center_presentation_rail.js'}),
+    Object.freeze({selector:'#presentationRail',zone:'right',createdBy:'control_center_presentation_rail.js'}),
     Object.freeze({selector:'#interactionModeHud',zone:'bottom-left'}),
     Object.freeze({selector:'#voiceHint',zone:'bottom-centre'}),
     Object.freeze({selector:'#boardDropTray',zone:'bottom-centre'}),
@@ -53,19 +53,18 @@
     Object.freeze({selector:'#chatTab',zone:'bottom-right'}),
     Object.freeze({selector:'#screenshotPreview',zone:'left-low',slice:'S05'}),
   ]);
-
-  /* Zones de la coque (docs/06 §9). `right` : le rail de l'espace de travail
-     y arrive en Slice 07 ; aujourd'hui seuls les panneaux latéraux l'occupent. */
+  /* Zones de la coque (docs/06 §9). `right` : le rail actif de l'espace de
+     travail (Slice 07), sous les panneaux latéraux qui s'ouvrent par-dessus. */
   const ZONES=Object.freeze({
     'top-left':'ligne d’état : Board, voix, agent',
     'top-right':'lanceur global (dock) et pastilles d’arrière-plan jusqu’à la Slice 06',
     'top-centre':'bandeau GPT-Live (transitoire)',
-    'left-edge':'ancre et roue d’outils (Sélection, Vidéo, Capture d’écran, Audio) ; rail des présentations jusqu’à la Slice 07',
+    'left-edge':'ancre et roue d’outils (Sélection, Vidéo, Capture d’écran, Audio)',
     'left-low':'aperçu de capture d’écran (Slice 05)',
     'bottom-left':'zone de contexte : mode d’interaction, notes de la scène',
     'bottom-centre':'centre d’état (Slice 06) ; indication vocale, plateau de dépôt et indicateurs de capture aujourd’hui',
     'bottom-right':'onglet Chat',
-    'right':'rail de l’espace de travail (Slice 07) ; panneaux latéraux par-dessus',
+    'right':'rail actif de l’espace de travail (#presentationRail, Slice 07) ; panneaux latéraux par-dessus',
     'centre':'Board / scène',
   });
 

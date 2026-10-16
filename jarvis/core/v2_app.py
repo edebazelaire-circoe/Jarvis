@@ -520,6 +520,8 @@ class JarvisCoreApplication:
         # orange, alimente par les outils du cerveau, `edit_committed` et les echecs d'edition) et demandes d'ecran du cerveau.
         self.presentation_studio_rail = PresentationRail(self.presentation_studio)
         self.presentation_studio_rail.bind_playback(self.presentation_studio_playback)
+        # Rail actif (S07, D10) : apercu = dernier `presentation_still` complet de chaque presentation, lu dans le registre (borne, cache).
+        self.presentation_studio_rail.bind_artifacts(self.artifacts)
 
         async def _rail_edit_committed(presentation_id: str, _variant_id: str, _revision: int, _origin: object | None) -> None:
             self.presentation_studio_rail.on_edit_committed(presentation_id)

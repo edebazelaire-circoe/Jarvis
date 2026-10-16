@@ -82,3 +82,61 @@ def test_the_menu_has_every_action_says_why_one_is_unavailable_and_an_archived_r
 def test_monograms_and_hues_are_stable_and_text_is_cleaned():
     out = node("return [R.monogram('Lancement produit'),R.monogram('bilan'),R.monogram('  '),R.hueOf('pst_a')===R.hueOf('pst_a'),R.cleanLine('a\\u202eb\\n\\tc',10),R.cleanLine('x'.repeat(50),10)]")
     assert out == ["LP", "BI", "?", True, "a b c", "xxxxxxxxx…"]
+
+
+# ------------------------------------------------------------------ rail actif (Slice 07 du handoff orbital, D10)
+
+UNSEEN = "{since:'2026-10-16T09:00:00Z',label:'presentation_edit'}"
+
+
+def test_state_precedence_working_problem_unreviewed_done():
+    out = node(f"""const row=(state,unseen)=>({{presentation_id:'{P1}',title:'A',work:state?{{state}}:undefined,unreviewed:unseen?{UNSEEN}:null}});
+      return [R.displayState(row('working',true)),R.displayState(row('problem',true)),R.displayState(row('done',true)),R.displayState(row('done',false)),
+              R.displayState(row(null,true)),R.displayState({{presentation_id:'{P1}',work:{{state:'bizarre'}}}})]""")
+    assert out == ["working", "problem", "unreviewed", "done", "unknown", "unknown"], "working > problem > unreviewed > done; unknown is never green"
+    model = node(f"""const m=R.modelOf([{{presentation_id:'{P1}',title:'A',work:{{state:'done'}},unreviewed:{UNSEEN}}},
+      {{presentation_id:'{P2}',title:'B',work:{{state:'problem'}},unreviewed:{UNSEEN}}}]);return [m.unreviewed.length,m.problems.length,m.working.length]""")
+    assert model == [1, 1, 0], "a problem stays a problem (its own treatment), never counted as to-review"
+    colors = node("return R.STATE_COLOR")
+    assert colors["problem"] != colors["unreviewed"] and "--sem-problem" in colors["problem"] and "--sem-review" in colors["unreviewed"]
+    assert "--sem-working" in colors["working"] and "--sem-done" in colors["done"] and colors["unknown"] == "transparent"
+
+
+def test_label_accompanies_every_dot():
+    cards = node(f"""const now=Date.parse('2026-10-16T12:00:00Z');
+      return [['working',null],['problem',null],['done',{UNSEEN}],['done',null],[null,null]].map(([state,unseen])=>
+        R.cardOf({{presentation_id:'{P1}',title:'Deck',updated_at:'2026-10-16T10:00:00Z',work:state?{{state}}:undefined,unreviewed:unseen,type:{{engine:'remotion'}}}},now))
+        .map(c=>[c.state,c.stateShort,c.stateLabel,c.color])""")
+    assert [c[0] for c in cards] == ["working", "problem", "unreviewed", "done", "unknown"]
+    for state, short, long, color in cards:
+        assert short and long and color, state
+    assert [c[1] for c in cards] == ["En cours", "Problème", "À revoir", "Prête", "État inconnu"]
+    source = (RUNTIME / "control_center_presentation_rail.js").read_text(encoding="utf-8")
+    assert "status.append(dot,el('span','jvr-state',card.stateShort))" in source, "the dot is always drawn with its label beside it"
+
+
+def test_placeholder_when_no_preview():
+    out = node(f"""const base={{presentation_id:'{P1}',title:'Deck',work:{{state:'done'}}}};
+      return [R.previewOf({{...base,type:{{engine:'remotion'}},preview:null}}),R.previewOf({{...base,type:{{engine:'slidecar'}}}}),
+        R.previewOf({{...base,preview:{{artifact_id:'../../etc/passwd',kind:'presentation_still'}}}}),
+        R.previewOf({{...base,preview:{{artifact_id:'jart_0123456789abcdef',kind:'presentation_video'}}}}),
+        R.previewOf({{...base,type:{{engine:'remotion'}},preview:{{artifact_id:'jart_0123456789abcdef',kind:'presentation_still',width:1280,height:720}}}})]""")
+    assert out[0] == {"kind": "placeholder", "label": "Présentation · Remotion"}
+    assert out[1] == {"kind": "placeholder", "label": "Présentation · Slidecar"}
+    assert out[2]["kind"] == "placeholder" and out[3]["kind"] == "placeholder", "a malformed id or another kind is never fetched"
+    assert out[4] == {"kind": "image", "url": "/api/artifacts/jart_0123456789abcdef/payload", "artifact_id": "jart_0123456789abcdef",
+                      "width": 1280, "height": 720}, "the bounded payload route, never a path"
+    assert node("return R.typeOf({}).label") == "Présentation", "unknown engine: a generic type, never a guess"
+
+
+def test_card_metadata_density_and_review_menu():
+    now = "Date.parse('2026-10-16T12:00:00Z')"
+    agos = node(f"return ['2026-10-16T11:59:40Z','2026-10-16T11:30:00Z','2026-10-16T10:00:00Z','2026-10-13T12:00:00Z','2026-09-20T12:00:00Z','nope'].map(t=>R.ago(t,{now}))")
+    assert agos == ["à l’instant", "il y a 30 min", "il y a 2 h", "il y a 3 j", "il y a 4 sem.", ""]
+    card = node(f"return R.cardOf({{presentation_id:'{P1}',title:'Deck',variant_count:3,updated_at:'2026-10-16T10:00:00Z',work:{{state:'done'}},type:{{engine:'remotion'}}}},{now})")
+    assert card["meta"] == "Remotion · 3 variantes" and card["when"] == "il y a 2 h"
+    densities = node("""return [R.densityOf({width:1440}),R.densityOf({width:1440,collapsed:true}),R.densityOf({width:1000}),R.densityOf({width:700}),
+      R.densityOf({width:375}),R.densityOf({width:1440,studio:true}),R.densityOf({width:1000,studio:true})]""")
+    assert densities == ["full", "slim", "slim", "drawer", "drawer", "compact", "slim"], "D10 widths: 300 / 72 below 1100 / tab below 700"
+    menu = node(f"return R.menuModel({{presentation_id:'{P1}',title:'A',work:{{state:'done'}},unreviewed:{UNSEEN}}},{{}}).map(i=>i==='-'?'-':i.act)")
+    assert menu == ["open", "studio", "edit", "play", "-", "hide", "rename", "review", "-", "archive"], "« Marquer comme vu » only when yellow"

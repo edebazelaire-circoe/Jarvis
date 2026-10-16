@@ -48,12 +48,12 @@ the Bare Hands column, from 1024 px down.
 | `top-left` | `.topbar`: `#boardsHud`, `.state` (the `.brand` element stays in the markup, hidden in both themes: the target shows Board then state) | page, `control_center_boards.js` |
 | `top-right` | `.dock` (global launcher, one row of 34 px buttons); `#bgPills` left of it until Slice 06 | page |
 | `top-centre` | `.live-banner` (GPT-Live, transient) | page |
-| `left-edge` | `#toolWheel` anchor and orbital tool wheel (Slice 02; live by default since Slice 04: Sélection, Vidéo, Capture d'écran, Audio); `#presentationRail` until Slice 07 moves it; `#barehandsHud`, `#barehandsPalette` hosts stay declared but hidden while the wheel is visible (Slice 03) | their modules |
+| `left-edge` | `#toolWheel` anchor and orbital tool wheel (Slice 02; live by default since Slice 04: Sélection, Vidéo, Capture d'écran, Audio); `#barehandsHud`, `#barehandsPalette` hosts stay declared but hidden while the wheel is visible (Slice 03) | their modules |
 | `left-low` | `#screenshotPreview` (Slice 05) | — |
 | `bottom-left` | `#interactionModeHud`, `.sc-status` notes of the scene | `control_center_interaction_mode.js`, scene |
 | `bottom-centre` | `#voiceHint` (until Slice 06), `#boardDropTray`, `#recIndicators` (Slice 04, provisional slot left of centre); status centre from Slice 06 | page, `control_center_board_drop.js`, `control_center_capture_wheel.js` |
 | `bottom-right` | `#chatTab` | `control_center_chat.js` |
-| `right` | side panels (`#panel`, `#chatPanel`, `#jvStudioInspector`); workspace rail from Slice 07 | page, modules |
+| `right` | active workspace rail `#presentationRail` (Slice 07, see [Workspace rail](#workspace-rail-presentationrail)); side panels (`#panel`, `#chatPanel`, `#jvStudioInspector`) open over it | `control_center_presentation_rail.js`, page, modules |
 | `centre` | Board / scene (`#sceneLayer`) | scene |
 
 `JarvisShell.ZONES` mirrors this table (one line per zone).
@@ -98,7 +98,7 @@ only in the `@media` blocks listed here. `JarvisShell.TOKENS` and
 | `--shell-panel-top` | `64px` | `88px` at 700, `126px` at 620 | top of side panels and of the GPT-Live banner (below the launcher) |
 | `--shell-panel-w` | `500px` | | side panel width (capped by the window) |
 | `--shell-panel-bottom` | `68px` | | bottom of side panels: they stop above the chat tab row (18 + 40 + 10), so the tab stays whole and clickable |
-| `--shell-rail-w` | `300px` | `72px` at `max-width:1099px`, `0px` at 700 | workspace rail width (Slice 07) |
+| `--shell-rail-w` | `300px` | `72px` at `max-width:1099px`, `0px` at 700 | workspace rail width (Slice 07); `0px` = the rail is a tab |
 | `--shell-anchor-w` | `14px` | | visible part of the wheel anchor at rest (Slice 02) |
 | `--shell-wheel-r` | `200px` | | wheel radius (Slice 02) |
 | `--shell-wedge-min` | `48px` | | minimum target size of a wedge |
@@ -138,7 +138,7 @@ The rule is written exactly as in the sheet, `${…}` interpolations included.
 | 21 | `.board-drop::before` | `control_center.html` | `.board-drop::before` | drop frame, just above the scene, below the controls |
 | 30 | `#toolWheel` | `control_center.html` | `#toolWheel` | wheel anchor at rest |
 | 30 | `#barehandsPalette` | `control_center_barehands_hud.js` | `#${DOM.paletteId}` | below the Bare Hands control and its selector, which open over it |
-| 30 | `#presentationRail` | `control_center_presentation_rail.js` | `#${DOM.hostId}` | rail outside the Studio |
+| 30 | `#presentationRail` | `control_center_presentation_rail.js` | `#${DOM.hostId}` | workspace rail (right zone) outside the Studio; side panels (33) open over it |
 | 31 | `.topbar` | `control_center.html` | `.topbar` | state line; `#boardsHud` lives inside it |
 | 31 | `#voiceHint` | `control_center.html` | `.voicehint` | wake key hint (removed in Slice 06) |
 | 32 | `.dock` | `control_center.html` | `.dock` | launcher |
@@ -170,7 +170,7 @@ The rule is written exactly as in the sheet, `${…}` interpolations included.
 | 82 | `#barehandsCards` | `control_center_barehands_hud.js` | `#${DOM.cardsId}` | Bare Hands quick cards, opened from the context menu |
 | 85 | `.cdialog-back` | `control_center.html` | `.cdialog-back` | in-page confirmation |
 | 9000 | `#jvStudioExplorer` | `control_center_presentation_studio_explorer_core.js` | `#${HOST_ID}` | Variantes (Studio explorer) |
-| 9100 | `html.jvr-studio #presentationRail` | `control_center_presentation_rail.js` | `html.jvr-studio #${DOM.hostId}` | rail beside the Studio |
+| 9100 | `html.jvr-studio #presentationRail` | `control_center_presentation_rail.js` | `html.jvr-studio #${DOM.hostId}` | rail docked as the right column beside the Studio |
 | 9150 | `html.jvx-run #interactionModeHud` | `control_center_presentation_studio_explorer_core.js` | `html.jvx-run #interactionModeHud` | mode control during a run shown in Variantes |
 | 9300 | `.jvr-menu` | `control_center_presentation_rail.js` | `.jvr-menu` | rail menu |
 | 9400 | `.jvr-dialog-back` | `control_center_presentation_rail.js` | `.jvr-dialog-back` | rail dialog |
@@ -268,7 +268,7 @@ controls; the wheel and the indicators are placed by the sheet instead.)
 | `#panel`, `#chatPanel` | right | page |
 | `#barehandsHud`, `#barehandsPalette` | left-edge (hidden while the wheel is visible) | page (hosts) |
 | `#toolWheel` | left-edge | page |
-| `#presentationRail` | left-edge (right from S07) | `control_center_presentation_rail.js` (creates the host and the attribute) |
+| `#presentationRail` | right | `control_center_presentation_rail.js` (creates the host and the attribute) |
 | `#interactionModeHud` | bottom-left | page |
 | `#voiceHint`, `#boardDropTray`, `#recIndicators` | bottom-centre | page |
 | `#chatTab` | bottom-right | page |
@@ -283,6 +283,54 @@ full-screen views, `#barehandsCards`) and the Studio surfaces.
 `test_every_declared_control_host_matches_control_selector` checks that every
 host in the page that the table names carries the attribute and that nothing
 else does.
+
+## Workspace rail (`#presentationRail`)
+
+Slice 07, decision D10 of the handoff's resolved architecture. Module
+`jarvis/runtime/control_center_presentation_rail.js` (`window.JarvisPresentationRail`);
+data, actions and Core contract: `docs/presentation-studio.md` › *Rail des
+presentations* › *Active workspace rail*.
+
+**Place.** Zone `right`: top `--shell-panel-top` (under the launcher and the
+pills), right `--shell-gutter`, bottom at most `--shell-panel-bottom` (above
+the chat tab), width `--shell-rail-w`. It never covers the left column, the
+launcher, the pills or the chat tab (`test_rail_right_no_overlap_launcher_chat_tab`,
+1440×900, 1280×720, 900×600, 600×800). Side panels (33) open over it.
+
+**Densities** (`JarvisPresentationRailCore.densityOf`, from the window width):
+
+| Density | When | Card |
+| --- | --- | --- |
+| `full` | ≥ 1100 px | 300 px: preview 88 px 16:9 with type badge, title (2 lines), type · variants, dot + state label · age, « ⋯ » |
+| `slim` | < 1100 px, or folded by the user | 72 px: preview + dot; the title, type and state label show in a bubble beside the card on hover and focus |
+| `drawer` | ≤ 700 px (`--shell-rail-w` = 0) | a tab (title, count, most urgent dot); its button opens the list over the scene and closes it |
+| `compact` | beside the Studio | 172 px column: small preview, title, dot + label |
+
+**Studio docking** is the mirror of the old left docking: with Variants open
+(windowed) the rail is the right column (`html.jvr-studio`, rank 9100, 8 px
+from the edges) and `#jvStudioExplorer:not(:fullscreen)` stops at
+`right: 188px` (60 px when slim); during a run the interaction-mode control
+sits at the bottom of that right column (`control_center_presentation_studio_explorer_core.js`).
+
+**State, never by colour alone.** Every card shows a mark with its own
+**shape** in every density (also in the 72 px strip, where the label shows
+only on hover and focus) **and** a label: `working` « En cours »
+`--sem-working`, pulsing ring; `problem` « Problème » `--sem-problem`,
+triangle and an orange-red card stroke (never relabelled as review);
+`unreviewed` « À revoir » `--sem-review`, diamond; `done` « Prête » / « Prêt »
+`--sem-done`, check; `unknown` « État inconnu », dashed hollow ring. Precedence
+working > problem > unreviewed > done.
+
+**Stage B.** A second listbox « Sur ce Board » under the presentations shows the Artifacts linked to the active Board in the same cards
+(adapter `control_center_workspace_rail_model.js`, contract in `docs/presentation-studio.md` › *Active workspace rail*); it scrolls on its own
+(at most 42 vh) and hides in the closed tab.
+
+**Focus.** The list is one listbox (arrows, `ContextMenu` / `Shift+F10`, `F2`,
+`Delete`); the « ⋯ » button is a pointer and Bare Hands affordance with
+`tabindex=-1`. The list is rebuilt on every Core read and the focused card
+keeps the focus, wherever it is (main list, « Sur ce Board », the Masquées /
+Archivées folds); closing a card's menu with `Esc` returns the focus to that
+card even if it was redrawn meanwhile (restored by its id).
 
 ## Tool wheel (`#toolWheel`)
 
