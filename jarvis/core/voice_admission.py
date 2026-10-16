@@ -68,6 +68,11 @@ class VoiceTurnAdmissionService:
             return None
         attributes = {key: record.metadata[key] for key in ("source", "addressing")
                       if isinstance(record.metadata.get(key), str)}
+        attachments = record.metadata.get("attachments")
+        if isinstance(attachments, list) and attachments:
+            # Chat Slice 07 : combien de pièces, jamais leurs ids ni leurs noms. Tiré du tour durable :
+            # le rejeu et le backfill reconstruisent le même événement, octet pour octet.
+            attributes["attachment_count"] = len(attachments)
         return self.conversation_events.record(
             ConversationEventType.USER_TRANSCRIPT_ACCEPTED, producer=PRODUCER_VOICE_ADMISSION,
             conversation_id=record.conversation_id, source_ids=(record.id,), occurred_at=record.created_at,
@@ -125,6 +130,9 @@ class VoiceTurnAdmissionService:
         metadata = {"authoritative": True, "final": True, "source": turn.source.value,
                     "addressing": turn.addressing.value, "provider_item_id": turn.provider_item_id,
                     "interrupted_speech_id": turn.interrupted_speech_id}
+        if turn.attachments:
+            # Only when present: every other turn's metadata stays byte-identical (docs/chat.md).
+            metadata["attachments"] = list(turn.attachments)
         if binding is not None:
             if (not isinstance(canonical_order, VoiceTurnOrder) or canonical_order.session_id != binding["session_id"]
                     or canonical_order.turn_id != binding["canonical_turn_id"]):
@@ -134,7 +142,8 @@ class VoiceTurnAdmissionService:
         if record is not None:
             if (record.kind is not TurnKind.USER or record.conversation_id != turn.conversation_id
                     or record.correlation_id != turn.correlation_id or record.content != turn.text
-                    or any(record.metadata.get(key) != metadata[key] for key in ("source", "addressing", "provider_item_id"))
+                    or any(record.metadata.get(key) != metadata.get(key)
+                           for key in ("source", "addressing", "provider_item_id", "attachments"))
                     or (binding is not None and (record.metadata.get("voice_admission") != binding
                         or record.metadata.get("voice_admission_order") != metadata["voice_admission_order"]))):
                 raise ValueError("admission identity conflicts with durable input")

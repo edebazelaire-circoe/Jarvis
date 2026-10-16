@@ -1449,6 +1449,7 @@ SPECULATIVE_SERVICE_CLOSURE = {
     "jarvis.domain.ambient_observation",
     "jarvis.domain.back_brain",
     "jarvis.domain.brain_context",
+    "jarvis.domain.chat_projection",
     "jarvis.domain.conversation_event_query",
     "jarvis.domain.conversation_event_search",
     "jarvis.domain.conversation_event_store",

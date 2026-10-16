@@ -1,0 +1,113 @@
+{
+ "steps": {
+  "question": {
+   "ok": true,
+   "brain": [
+    {
+     "brain": true,
+     "text": "Jarvis391"
+    }
+   ],
+   "ms": 3040,
+   "wall_ms": 3162
+  },
+  "chooser": true,
+  "attachments_ready": true,
+  "rows": [
+   "ready · Prête",
+   "ready · Prête"
+  ],
+  "attachments": {
+   "ok": true,
+   "brain": [
+    {
+     "brain": true,
+     "text": "JarvisLa phrase secrète du PDF est « licorne violette 2026 ».\n\nSur l'image, on lit « CODE ORANGE 47 »."
+    }
+   ],
+   "ms": 14160,
+   "wall_ms": 14180
+  },
+  "attachment_line": [
+   "2 pièces jointesnote-de-test.pdf · etiquette-de-test.png"
+  ],
+  "subagent_ack": {
+   "ok": true,
+   "brain": [
+    {
+     "brain": true,
+     "text": "JarvisJ'ai lancé un sous-agent en arrière-plan pour compter les fichiers .md placés directement dans le dossier docs, sans les sous-dossiers. Je vous donne le nombre dès qu'il a fini."
+    }
+   ],
+   "ms": 7055,
+   "wall_ms": 7068
+  },
+  "subagent_late": {
+   "ok": true,
+   "brain": [
+    {
+     "brain": true,
+     "text": "JarvisLe dossier docs contient 58 fichiers .md à sa racine, sans compter les sous-dossiers. Ce nombre vaut pour la copie du dépôt sur laquelle je travaille ; sur une autre branche, il peut être différent."
+    }
+   ],
+   "ms": 11095,
+   "wall_ms": 18164
+  }
+ },
+ "hydrated": true,
+ "writable": false,
+ "final": [
+  {
+   "brain": false,
+   "text": "VousCombien font 17 fois 23 ? Réponds seulement le nombre."
+  },
+  {
+   "brain": true,
+   "text": "Jarvis391"
+  },
+  {
+   "brain": false,
+   "text": "VousLis les deux pièces jointes. Donne la phrase secrète du PDF, puis le texte visible sur l'image.2 pièces jointesnote-de-test.pdf · etiquette-de-test.png"
+  },
+  {
+   "brain": true,
+   "text": "JarvisLa phrase secrète du PDF est « licorne violette 2026 ».\n\nSur l'image, on lit « CODE ORANGE 47 »."
+  },
+  {
+   "brain": false,
+   "text": "VousLance un sous-agent en arrière-plan qui compte les fichiers .md placés directement dans le dossier docs du dépôt (pas les sous-dossiers). Réponds-moi tout de suite en une phrase que c'est lancé ; quand il aura fini, donne-moi le nombre."
+  },
+  {
+   "brain": true,
+   "text": "JarvisJ'ai lancé un sous-agent en arrière-plan pour compter les fichiers .md placés directement dans le dossier docs, sans les sous-dossiers. Je vous donne le nombre dès qu'il a fini."
+  },
+  {
+   "brain": true,
+   "text": "JarvisLe dossier docs contient 58 fichiers .md à sa racine, sans compter les sous-dossiers. Ce nombre vaut pour la copie du dépôt sur laquelle je travaille ; sur une autre branche, il peut être différent."
+  }
+ ],
+ "console_errors": [],
+ "page_errors": [],
+ "forbidden_calls": 0,
+ "chat_log_lines": [
+  "[chat] chat.installed {\"panel\":\"chatPanel\",\"shared\":true}",
+  "[chat] chat.opened {\"conversation_id\":null}",
+  "[chat] chat.rescoped {\"from\":null,\"to\":\"99587d76-97d8-4764-9eac-8c376d8e2624\",\"stale_attachments\":0}",
+  "[chat] chat.leading {\"conversation_id\":\"99587d76-97d8-4764-9eac-8c376d8e2624\",\"cursor\":0}",
+  "[chat] chat.hydrated {\"conversation_id\":\"99587d76-97d8-4764-9eac-8c376d8e2624\",\"cursor\":0,\"items\":0}",
+  "[chat] chat.turn_sending {\"correlation_id\":\"chat:92959f6c-6894-42cd-9b2c-c1ab5c3933cf\",\"conversation_id\":\"99587d76-97d8-4764-9eac-8c376d8e2624\",\"chars\":54,\"atta",
+  "[chat] chat.turn_admitted {\"correlation_id\":\"chat:92959f6c-6894-42cd-9b2c-c1ab5c3933cf\",\"status\":202,\"duplicate\":false,\"attachments\":0}",
+  "[chat] chat.fast_window {\"reason\":\"sent\"}",
+  "[chat] chat.upload_started {\"key\":\"att-1\",\"size\":662,\"attempt\":1,\"same_id\":false}",
+  "[chat] chat.upload_started {\"key\":\"att-2\",\"size\":549,\"attempt\":1,\"same_id\":false}",
+  "[chat] chat.attached {\"via\":\"button\",\"count\":2,\"conversation_id\":\"99587d76-97d8-4764-9eac-8c376d8e2624\"}",
+  "[chat] chat.upload_ready {\"key\":\"att-2\",\"artifact_id\":\"jart_up_17455e8454ed922db766b926e5b53e7a2191ef5c\",\"size\":549,\"mime\":\"image/png\",\"brain_readable\":true,\"re",
+  "[chat] chat.upload_ready {\"key\":\"att-1\",\"artifact_id\":\"jart_up_deaee02e595f37468378c5e91cb136259fe326b4\",\"size\":662,\"mime\":\"application/pdf\",\"brain_readable\":tr",
+  "[chat] chat.turn_sending {\"correlation_id\":\"chat:c14aae0d-d0fd-4d39-81fa-a0ef205a4528\",\"conversation_id\":\"99587d76-97d8-4764-9eac-8c376d8e2624\",\"chars\":95,\"atta",
+  "[chat] chat.turn_admitted {\"correlation_id\":\"chat:c14aae0d-d0fd-4d39-81fa-a0ef205a4528\",\"status\":202,\"duplicate\":false,\"attachments\":2}",
+  "[chat] chat.fast_window {\"reason\":\"sent\"}",
+  "[chat] chat.turn_sending {\"correlation_id\":\"chat:af088113-e740-4164-b659-210f8b9f39c3\",\"conversation_id\":\"99587d76-97d8-4764-9eac-8c376d8e2624\",\"chars\":236,\"att",
+  "[chat] chat.turn_admitted {\"correlation_id\":\"chat:af088113-e740-4164-b659-210f8b9f39c3\",\"status\":202,\"duplicate\":false,\"attachments\":0}",
+  "[chat] chat.fast_window {\"reason\":\"sent\"}"
+ ]
+}

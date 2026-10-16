@@ -153,6 +153,38 @@ def test_sous_700px_le_bouton_ne_recouvre_plus_la_palette_bare_hands(tmp_path, w
         assert _overlap(button, seen.get(name)) is None, (name, button, seen.get(name))
 
 
+#: Theme Cosmos, et bandeau GPT-Live affiche avec le Chat ouvert : les deux cas ou la pile du haut (700 px ou moins,
+#: S6) etait contree par une autre regle (QA S10, B1 et B2).
+COSMOS = "document.documentElement.setAttribute('data-jarvis-theme','cosmos')"
+LIVE_AND_CHAT = ("(()=>{document.getElementById('liveBanner').hidden=false;"
+                 "document.getElementById('chatTab').click();"
+                 "document.getElementById('chatLock').hidden=false;return 'ok'})()")
+
+
+@pytest.mark.parametrize("width", [500, 650])
+def test_sous_700px_en_cosmos_la_notification_garde_sa_taille_et_sa_place(tmp_path, width):
+    """B1 : la regle Cosmos remettait `bottom:68px` sans retirer `top:62px` ; la grille `.toasts` etirait alors une
+    seule notification sur toute la hauteur, par-dessus le dock Cosmos."""
+
+    seen = _drive(tmp_path, [{"width": width, "height": 700, "setup": COSMOS, "toast": True}])[0]
+    toast = seen["toast"]
+    assert toast and toast["h"] < 120, toast
+    for name in ("modeBtn", "chatTab", "dock", "pills"):
+        assert _overlap(toast, seen.get(name)) is None, (name, toast, seen.get(name))
+
+
+def test_sous_700px_bandeau_live_et_chat_ouvert_la_notification_epargne_le_composer(tmp_path):
+    """B2 : avec le bandeau GPT-Live, la regle « reste en bas » l'emportait sur celle du Chat ouvert et posait la
+    notification sur le composer et sur « Passer au chat »."""
+
+    seen = _drive(tmp_path, [{"width": 500, "height": 700, "setup": LIVE_AND_CHAT, "toast": True}])[0]
+    toast = seen["toast"]
+    assert seen["chatPanel"] and seen["liveBanner"], seen
+    assert toast and toast["h"] < 120, toast
+    for name in ("composer", "chatLock", "chatTab", "modeBtn"):
+        assert _overlap(toast, seen.get(name)) is None, (name, toast, seen.get(name))
+
+
 def test_a_pleine_largeur_le_controle_ne_bouge_pas(tmp_path):
     """La correction est bornée au petit écran ; le grand est déjà mesuré bon."""
 

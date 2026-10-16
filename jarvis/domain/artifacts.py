@@ -155,6 +155,12 @@ class ArtifactKind(StrEnum):
     PRESENTATION_VIDEO = "presentation_video"
     PRESENTATION_STILL = "presentation_still"
     PRESENTATION_PDF = "presentation_pdf"
+    #: Fichier donné par l'utilisateur (pièce jointe du chat ; dépôt sur un Board, Slice 08) : payload `upload.<ext>`,
+    #: `metadata.provenance` dit lequel (handoff jarvis-unified-chat-and-board-drop, Slice 07, `jarvis/domain/uploads.py`).
+    UPLOAD = "upload"
+    #: URL déposée sur un Board (handoff jarvis-unified-chat-and-board-drop, Slice 08) : aucun payload, `text` = l'URL,
+    #: créée `complete` d'un coup ; **jamais récupérée** (`jarvis/domain/uploads.py` › `check_link_url`).
+    LINK = "link"
 
 
 class ArtifactState(StrEnum):

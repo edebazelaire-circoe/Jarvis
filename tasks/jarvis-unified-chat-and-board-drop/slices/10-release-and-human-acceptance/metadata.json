@@ -1,0 +1,13 @@
+{
+  "slice_id": "10-release-and-human-acceptance",
+  "title": "Documentation finale, livraison et validation utilisateur",
+  "task_type": "waived-by-agent-0",
+  "work_intent": "release: Conclure la tâche par une preuve de fonctionnement et une validation humaine ciblée.",
+  "dependencies": [
+    "09-integration-and-security-gates"
+  ],
+  "task_type_blocker": "Levé par l'agent 0 (2026-10-14) : aucun vocabulaire Workspace Task Type dans le dépôt ; précédent jarvis-bare-hands-ui-calibration-refinement.",
+  "work_agent_assignment": "one Work Agent, resolved by host after Task Type",
+  "frontend_claude_preferred": false,
+  "skills_required": []
+}

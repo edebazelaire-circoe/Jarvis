@@ -3,6 +3,7 @@ from __future__ import annotations
 from collections.abc import AsyncIterator, Mapping, Sequence
 import io
 import json
+import re
 from typing import Any, Callable
 from urllib.parse import quote
 
@@ -46,9 +47,18 @@ FORWARDABLE_PREFIXES = ("/v1/boards", "/v1/sessions", "/v1/mcp/plugins", "/v1/mc
                         "/v1/presentation-studio/engine",  # vue du moteur, lecture seule (remotion-integration S20)
                         "/v1/presentation-studio/rail",  # rail des presentations : liste, etat de travail, rapport d'ecran (relais `presentation_studio_relay.py`)
                         "/v1/memory/", "/v1/remotion/",
+                        # Chat (jarvis-unified-chat-and-board-drop, Slice 04, `chat_relay.py`) : l'état du Chat et la seule
+                        # commande « Passer au chat ». Jamais `/v1/voice/channel/report` : seul Voice rapporte son état.
+                        "/v1/chat/", "/v1/voice/channel/disable",
                         # Carte Remotion du Control Center (jarvis-remotion-presentation-integration, Slice 11) : l'état de la capacité et le
                         # Studio optionnel ; le relais (`remotion_studio_relay.py`) n'appelle que six adresses, jamais l'installation.
                         "/v1/local-capabilities/remotion")
+#: Chat (jarvis-unified-chat-and-board-drop, Slice 03, `chat_relay.py`) : le tour écrit, et **seulement** lui —
+#: jamais `.../brain-turns/cancel`, `.../turns` ni une autre route de conversation.
+#: Dépôt d'une URL sur le Board affiché (Slice 08, `chat_relay.py`) : le chemin exact, jamais une autre route d'upload.
+FORWARDABLE_PATHS = (re.compile(r"/v1/conversations/[^/?#]+/brain-turns"), re.compile(r"/v1/uploads/links"))
+#: Seule route relayée en flux montant (`forward_upload`, chat Slice 07) ; jamais par `forward_json`.
+UPLOAD_PATH = re.compile(r"/v1/uploads/[A-Za-z0-9][A-Za-z0-9_-]{7,127}")
 #: Seule route relayée en octets (`forward_bytes`) : le payload d'un Artifact, pour l'interface.
 PAYLOAD_ROUTE_SUFFIX = "/payload"
 #: Paramètres de requête relayés : un mapping, ou des paires (un paramètre répété garde chaque valeur).
@@ -457,7 +467,7 @@ class LocalCoreClient:
     async def list_conversation_events(self, conversation_id: str, *, after_sequence: int = 0,
                                        limit: int = DEFAULT_EVENT_PAGE_LIMIT,
                                        visibility: ConversationVisibility | None = None,
-                                       wait_ms: int = 0) -> ConversationEventPage:
+                                       projection: str | None = None, wait_ms: int = 0) -> ConversationEventPage:
         """Events after `after_sequence`; resume with `after_sequence=page.next_cursor`.
 
         `wait_ms` > 0 long-polls (at most `MAX_WAIT_MS`): the request timeout is
@@ -468,7 +478,7 @@ class LocalCoreClient:
         timeout = aiohttp.ClientTimeout(total=10 + wait_ms / 1000) if wait_ms else None
         payload = await self._get_json("/v1/conversation-events", {
             "conversation_id": conversation_id, "after_sequence": after_sequence, "limit": limit,
-            "visibility": visibility, "wait_ms": wait_ms or None}, timeout=timeout)
+            "visibility": visibility, "projection": projection, "wait_ms": wait_ms or None}, timeout=timeout)
         return decode_event_page(payload, after_sequence=after_sequence)
 
     async def lookup_conversation_events(self, field: str, value: str, *, conversation_id: str | None = None,
@@ -575,6 +585,35 @@ class LocalCoreClient:
         if source is not None:
             body["source"] = source
         async with session.post(self.base_url + "/v1/interaction-mode", headers=self.headers, json=body) as response:
+            return await self._json(response)
+
+    # ------------------------------------------------------------ canal vocal et Chat (unified-chat Slice 04)
+
+    async def voice_channel_report(self, report: Mapping[str, Any], *, timeout_s: float) -> dict[str, Any]:
+        """`POST /v1/voice/channel/report` (Voice) : `{epoch, revision, accepted, disable_request}`.
+
+        `timeout_s` est obligatoire : ce rapport part de la boucle d'une seconde
+        de Voice, qu'un Core lent ne doit jamais retenir.
+        """
+
+        session = await self._http()
+        async with session.post(self.base_url + "/v1/voice/channel/report", headers=self.headers, json=dict(report),
+                                timeout=aiohttp.ClientTimeout(total=timeout_s)) as response:
+            return await self._json(response)
+
+    async def disable_voice_channel(self, client_request_id: str) -> dict[str, Any]:
+        """`POST /v1/voice/channel/disable` : « Passer au chat » ; `{request_id, state, status}` (202) ou rien à faire (200)."""
+
+        session = await self._http()
+        async with session.post(self.base_url + "/v1/voice/channel/disable", headers=self.headers,
+                                json={"client_request_id": client_request_id}) as response:
+            return await self._json(response)
+
+    async def chat_state(self) -> dict[str, Any]:
+        """`GET /v1/chat/state` : liaison courante, bloc `voice`, `chat_writable`, `locked_reason`."""
+
+        session = await self._http()
+        async with session.get(self.base_url + "/v1/chat/state", headers=self.headers) as response:
             return await self._json(response)
 
     # ------------------------------------------------------------ scène (Slice 03)
@@ -1387,7 +1426,7 @@ class LocalCoreClient:
         d'outil n'existe au Control Center (`docs/mcp/tool-contract.md` §8).
         """
 
-        if not path.startswith(FORWARDABLE_PREFIXES):
+        if not path.startswith(FORWARDABLE_PREFIXES) and not any(p.fullmatch(path) for p in FORWARDABLE_PATHS):
             raise ValueError(f"forward_json only relays board, session, MCP plugin, context, capture, artifact, "
                              f"activity, workspace and prefab routes, not {path[:80]!r}")
         session = await self._http()
@@ -1401,6 +1440,27 @@ class LocalCoreClient:
                 payload = await response.json(content_type=None)
             except ValueError:
                 payload = None  # argued: the proxy answers the status with its own envelope
+            return response.status, payload
+
+    async def forward_upload(self, path: str, *, params: QueryParams, headers: Mapping[str, str],
+                             body: Any, read_timeout_s: float) -> tuple[int, Any]:
+        """Relais **en flux** d'un fichier vers `PUT /v1/uploads/{client_upload_id}` (chat Slice 07).
+
+        `body` : générateur asynchrone d'octets, envoyé en `Transfer-Encoding: chunked` ; rien n'est tenu en
+        mémoire au-delà d'un morceau. Seul ce chemin. Rend le statut et le JSON de Core ; lève sur une panne
+        de transport. Jamais rejoué (un flux ne se relit pas).
+        """
+
+        if not UPLOAD_PATH.fullmatch(path):
+            raise ValueError(f"forward_upload only relays /v1/uploads/<client_upload_id>, not {path[:80]!r}")
+        session = await self._http()
+        timeout = aiohttp.ClientTimeout(total=None, sock_connect=10, sock_read=read_timeout_s)
+        async with session.put(self.base_url + path, headers={**self.headers, **headers}, params=params, data=body,
+                               timeout=timeout) as response:
+            try:
+                payload = await response.json(content_type=None)
+            except ValueError:
+                payload = None  # argued: the relay answers the status with its own envelope
             return response.status, payload
 
     async def forward_bytes(self, path: str, *, range_header: str | None = None,

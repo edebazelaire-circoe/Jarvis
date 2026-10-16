@@ -642,6 +642,27 @@ class BrainNotice(str):
         return notice
 
 
+#: Borne dure des pièces jointes d'un tour ; la borne réglable de la route
+#: (`JARVIS_CHAT_MAX_ATTACHMENTS`, Slice 07) reste en dessous.
+MAX_TURN_ATTACHMENTS = 64
+
+
+def _check_attachments(attachments: object) -> None:
+    """Ids d'Artifact (`jart_…`), distincts, bornés. `ValueError` sinon (400 à la route)."""
+
+    # Import local : `artifacts` vit plus haut dans le domaine que ce module.
+    from jarvis.domain.artifacts import check_artifact_id
+
+    if not isinstance(attachments, tuple):
+        raise ValueError("attachments must be a tuple of Artifact ids")
+    if len(attachments) > MAX_TURN_ATTACHMENTS:
+        raise ValueError(f"at most {MAX_TURN_ATTACHMENTS} attachments per turn")
+    for item in attachments:
+        check_artifact_id(item, "attachment")
+    if len(set(attachments)) != len(attachments):
+        raise ValueError("attachments must be distinct")
+
+
 @dataclass(frozen=True, slots=True)
 class BrainTurnInput:
     """Tour utilisateur complet faisant autorite, soumis au cerveau.
@@ -669,10 +690,17 @@ class BrainTurnInput:
     #: n'atteint que le backend. Typé `object` ici parce que `brain_context`
     #: importe ce module ; la nature est vérifiée à la construction.
     presentation_context: object | None = field(default=None, repr=False, compare=False)
+    #: Pièces jointes d'un tour écrit (handoff jarvis-unified-chat-and-board-drop,
+    #: `docs/chat.md` › *What the Brain receives*) : ids d'Artifact distincts,
+    #: au plus `MAX_TURN_ATTACHMENTS`. Vide pour tout autre tour ; persisté dans
+    #: `metadata.attachments` seulement quand il ne l'est pas.
+    attachments: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
         if not self.conversation_id:
             raise ValueError("conversation_id is required")
+        if self.attachments:
+            _check_attachments(self.attachments)
         if not self.text.strip():
             raise ValueError("turn text is required")
         if not self.correlation_id:

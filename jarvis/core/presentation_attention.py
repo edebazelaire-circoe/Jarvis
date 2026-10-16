@@ -517,6 +517,7 @@ ALLOWED_IMPORT_CLOSURE: frozenset[str] = frozenset(
         "jarvis.domain._checks",
         "jarvis.domain.back_brain",
         "jarvis.domain.brain_context",
+        "jarvis.domain.chat_projection",
         "jarvis.domain.conversation_event_query",
         "jarvis.domain.conversation_event_search",
         "jarvis.domain.conversation_event_store",

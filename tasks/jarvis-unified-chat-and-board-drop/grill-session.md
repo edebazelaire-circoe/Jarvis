@@ -1,0 +1,13 @@
+# Historique de cadrage (reconstitution fidèle, non verbatim intégral)
+
+Source : conversation Jarvis des 13–14 octobre 2026. Les phrases citées sont des extraits du propos utilisateur ; les résumés relient les interventions mais ne prétendent pas reconstituer un enregistrement mot à mot.
+
+1. **Demande initiale.** « Il faut absolument ajouter un mode chat à Jarvis. » Onglet en bas à droite, panneau horizontal comme les menus, fenêtre texte, bouton envoyer, documents, historique voix et chat synchronisé. Le canal texte joint directement le Brain : si Voice s'arrête, le Brain et sa subdivision en sous-agents continuent. Le chat est une alternative complète au vocal, parfois pénible. Voix active : chat consultable, mais saisie grisée avec explication ; voix coupée : on peut écrire.
+2. **Clarification sur les contenus.** « Oui, uniquement la réponse du Brain, pas les sous-agents. » Le gros transcript de debug reste pour les détails. Le chat montre uniquement ce dont l'utilisateur a besoin pour dialoguer : ses messages et ceux du Brain ; pas les sous-agents ni la réponse réflexe.
+3. **Clarification sur la persistance.** « C'est déjà fait techniquement parce que la réponse du Brain elle est loggée [...] dans nos traces. » L'utilisateur veut un **lien/projection** vers les données existantes, « la même vue mais en filtré », pas un second historique. Inspection du dépôt après coup : le contrat canonique est le store `ConversationEventStore` (`docs/conversation-events.md`), avec `brain.message.published`, plus le journal diagnostique lié par `trace_ref` ; cela **raffine** le mot oral « logs » sans changer l'intention.
+4. **Pièces jointes.** Glisser-déposer des documents directement dans le chat « un peu comme ChatGPT » ; aussi pouvoir déposer des fichiers, images, URL et documentations dans la scène/Board avec les points de lumière et les artefacts.
+5. **Découpage.** L'utilisateur souhaite conserver deux volets conceptuels, mais inclure le dépôt Board **dans le même dossier de tâche** comme extra, et non créer un autre projet.
+6. **Limites initiales.** Aucune limite de type/taille/nombre imposée par l'utilisateur. Le système doit respecter les contraintes techniques et de sécurité existantes, les communiquer et ne pas échouer silencieusement.
+7. **Commande finale.** « Utilise le skill create-task pour créer le dossier d'implémentation. » Ce dossier formalise le travail ; il n'autorise pas à lancer/modifier le Jarvis vivant.
+
+Les suggestions d'assistant telles que streaming, bouton « Passer au chat », tests et mécanismes précis sont des **options de conception** ou des garanties de qualité à valider contre la base de code ; elles ne sont pas des verbatim utilisateur.

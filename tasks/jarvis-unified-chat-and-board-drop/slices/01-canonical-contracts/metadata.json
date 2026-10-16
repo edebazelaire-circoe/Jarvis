@@ -1,0 +1,13 @@
+{
+  "slice_id": "01-canonical-contracts",
+  "title": "Contrats produit, événements, canal et attachments",
+  "task_type": "waived-by-agent-0",
+  "work_intent": "architecture: Définir des contrats testables avant tout comportement nouveau et verrouiller les propriétaires.",
+  "dependencies": [
+    "00-project-manager"
+  ],
+  "task_type_blocker": "Levé par l'agent 0 (2026-10-14) : aucun vocabulaire Workspace Task Type dans le dépôt ; précédent jarvis-bare-hands-ui-calibration-refinement.",
+  "work_agent_assignment": "one Work Agent, resolved by host after Task Type",
+  "frontend_claude_preferred": false,
+  "skills_required": []
+}

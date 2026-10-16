@@ -1,0 +1,9 @@
+{
+  "checks": [
+    {
+      "id": "HV-JCHAT-04-01",
+      "instruction": "Sur instance utilisateur autorisée, confirmer que Passer au chat coupe seulement Voice, pas les travaux en cours.",
+      "requires_evidence_first": true
+    }
+  ]
+}

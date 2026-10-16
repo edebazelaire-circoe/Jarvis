@@ -275,11 +275,11 @@ class ConversationEventView:
             conversation_id, after_sequence=after_sequence, limit=limit))
 
     async def events(self, conversation_id: str, *, after_sequence: int, limit: int,
-                     visibility: ConversationVisibility | None, wait_ms: int,
+                     visibility: ConversationVisibility | None, wait_ms: int, projection: str | None = None,
                      disconnected: Callable[[], bool] | None = None) -> ConversationEventPage:
         def call(wait: int):
             return lambda r: r.list_conversation_events(conversation_id, after_sequence=after_sequence, limit=limit,
-                                                        visibility=visibility, wait_ms=wait)
+                                                        visibility=visibility, projection=projection, wait_ms=wait)
 
         if wait_ms <= 0:
             return await self._read("events", call(0))

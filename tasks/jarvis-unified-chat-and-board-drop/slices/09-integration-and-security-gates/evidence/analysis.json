@@ -1,0 +1,100 @@
+{
+ "ports": [
+  62839,
+  62840
+ ],
+ "node_exit": 0,
+ "analysis": {
+  "cost_usd_by_session": {
+   "cffe45ad-fb76-4485-beb8-fc4c5d5ebbda": 0.3431618
+  },
+  "cost_usd_total": 0.3432,
+  "turns": [
+   {
+    "duration_ms": 1550,
+    "subtype": "success",
+    "denials": 0
+   },
+   {
+    "duration_ms": 4662,
+    "subtype": "success",
+    "denials": 0
+   },
+   {
+    "duration_ms": 5792,
+    "subtype": "success",
+    "denials": 0
+   }
+  ],
+  "tool_calls": [
+   [
+    "Read",
+    {
+     "file_path": "%TEMP%\\jarvis-s9j-m687jf8b\\stack\\data\\artifacts\\jart_up_deaee02e595f37468378c5e91cb136259fe326b4\\upload.pdf"
+    }
+   ],
+   [
+    "Read",
+    {
+     "file_path": "%TEMP%\\jarvis-s9j-m687jf8b\\stack\\data\\artifacts\\jart_up_17455e8454ed922db766b926e5b53e7a2191ef5c\\upload.png"
+    }
+   ],
+   [
+    "Agent",
+    {
+     "description": "[fast] Compter les .md de docs",
+     "run_in_background": "True",
+     "subagent_type": "general-purpose"
+    }
+   ],
+   [
+    "Bash",
+    {
+     "command": "cd /c/Projects/jarvis/bu09/docs && find . -maxdepth 1 -type f -iname '*.md' | sort; find . -maxdepth 1 -type f -iname '*.md' | wc -l",
+     "description": "List .md files directly in docs"
+    }
+   ]
+  ],
+  "briefs_with_text_channel_line": 3,
+  "briefs_total": 3,
+  "briefs_with_attachments_block": 1,
+  "event_types": {
+   "user.transcript.accepted": 3,
+   "brain.turn.accepted": 3,
+   "brain.work.started": 3,
+   "brain.message.published": 7,
+   "brain.work.completed": 3,
+   "subagent.started": 1,
+   "subagent.finished": 1
+  },
+  "speech_requested": 0,
+  "withheld_text_channel": 4,
+  "notice_relayed": 0,
+  "unsolicited_results": 1,
+  "subagent_kinds": [
+   "agent.subagent.finished",
+   "agent.subagent.started"
+  ],
+  "turn_failed": [],
+  "errors": [],
+  "leaks_in_events": {
+   "pdf_name": false,
+   "png_name": false,
+   "payload_pdf": false,
+   "payload_png": false,
+   "artifacts_path": false
+  },
+  "names_in_trace": {
+   "pdf_name": false,
+   "png_name": false
+  },
+  "secret_in_trace": false,
+  "trace_unparsable_lines": 0
+ },
+ "feedback_removed": [
+  "C:\\Projects\\jarvis\\bu09\\retours-utilisateur\\1792066844"
+ ],
+ "leftover_processes": [
+  "17580"
+ ]
+}

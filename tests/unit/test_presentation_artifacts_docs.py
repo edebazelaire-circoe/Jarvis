@@ -30,7 +30,7 @@ def test_the_page_names_every_new_kind_relation_key_and_operation():
 
 
 def test_the_page_states_the_closed_kind_count_the_code_has():
-    assert len(ArtifactKind) == 11 and "(now 11)" in TEXT
+    assert len(ArtifactKind) == 13 and "(now 13)" in TEXT
     for spec in pa.RENDERS.values():
         assert f"`{spec.payload_name}`" in TEXT or spec.payload_name in TEXT
     assert pa.SNAPSHOT_PAYLOAD_NAME in TEXT and str(pa.MAX_SNAPSHOT_ATTEMPTS) in TEXT

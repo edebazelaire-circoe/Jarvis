@@ -16,6 +16,8 @@ Invariants:
   events than `limit`, even none, while `next_cursor` still advances. A consumer
   always resumes from `next_cursor`, so reload and live polling converge on the
   same event set;
+- a `projection=chat` filter (Chat, `docs/chat.md` "Reading") obeys the same
+  rule: stateless, applied after the scan, cursor unchanged;
 - query parameters are strict: unknown or repeated names, non-decimal numbers,
   out-of-range limits, invalid ids are a `ValueError` whose message names the
   parameter and the rule, never the offending value;
@@ -30,6 +32,7 @@ from dataclasses import replace
 import re
 from typing import Any
 
+from jarvis.domain.chat_projection import CHAT_PROJECTION, is_chat_event
 from jarvis.domain.conversation_event_store import (
     DEFAULT_EVENT_PAGE_LIMIT, DEFAULT_SUMMARY_PAGE_LIMIT, LOOKUP_FIELDS, MAX_EVENT_PAGE_LIMIT, MAX_SUMMARY_PAGE_LIMIT,
     ConversationEventPage, ConversationEventSummary, ConversationEventSummaryPage, StoredConversationEvent,
@@ -61,7 +64,7 @@ _EVENT_FIELDS = frozenset({"schema_version", "sequence", "recorded_at", "event"}
 #: Allowed query parameters per route (Core and Control Center share them).
 CONVERSATIONS_PARAMS = frozenset({"before_sequence", "limit"})
 SESSIONS_PARAMS = frozenset({"conversation_id", "after_sequence", "limit"})
-EVENTS_PARAMS = frozenset({"conversation_id", "after_sequence", "limit", "visibility", "wait_ms"})
+EVENTS_PARAMS = frozenset({"conversation_id", "after_sequence", "limit", "visibility", "projection", "wait_ms"})
 LOOKUP_PARAMS = frozenset({"field", "value", "conversation_id", "after_sequence", "limit", "visibility"})
 #: Slice 06 projections (search parameters: `conversation_event_search.SEARCH_PARAMS`).
 TRANSCRIPT_PARAMS = frozenset({"conversation_id", "mode", "utc_offset_minutes"})
@@ -112,6 +115,18 @@ def visibility_param(params: Mapping[str, str]) -> ConversationVisibility | None
         raise ValueError(f"visibility must be one of {', '.join(v.value for v in ConversationVisibility)}") from None
 
 
+def projection_param(params: Mapping[str, str]) -> str | None:
+    """`projection` of `GET .../conversation-events`: only `chat`, never together with `visibility`."""
+    raw = params.get("projection")
+    if raw is None:
+        return None
+    if raw != CHAT_PROJECTION:
+        raise ValueError(f"projection must be {CHAT_PROJECTION}")
+    if "visibility" in params:
+        raise ValueError("projection and visibility must not be combined")
+    return raw
+
+
 def lookup_field_param(params: Mapping[str, str]) -> str:
     raw = params.get("field")
     if raw not in LOOKUP_FIELDS:
@@ -143,7 +158,7 @@ def events_query(params: Mapping[str, str]) -> dict[str, Any]:
             "after_sequence": int_param(params, "after_sequence", default=0, minimum=0, maximum=MAX_SEQUENCE),
             "limit": int_param(params, "limit", default=DEFAULT_EVENT_PAGE_LIMIT, minimum=1,
                                maximum=MAX_EVENT_PAGE_LIMIT),
-            "visibility": visibility_param(params),
+            "visibility": visibility_param(params), "projection": projection_param(params),
             "wait_ms": int_param(params, "wait_ms", default=0, minimum=0, maximum=MAX_WAIT_MS)}
 
 
@@ -179,6 +194,15 @@ def filter_visibility(page: ConversationEventPage, visibility: ConversationVisib
     if visibility is None:
         return page
     return replace(page, events=tuple(item for item in page.events if item.event.visibility is visibility))
+
+
+def filter_projection(page: ConversationEventPage, projection: str | None) -> ConversationEventPage:
+    """Keep only the events `projection` may need (`is_chat_event`); cursor, `has_more`, `skipped_rows` unchanged."""
+    if projection is None:
+        return page
+    if projection != CHAT_PROJECTION:
+        raise ValueError(f"projection must be {CHAT_PROJECTION}")
+    return replace(page, events=tuple(item for item in page.events if is_chat_event(item.event)))
 
 
 # ------------------------------------------------------------------- encoding

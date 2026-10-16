@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import inspect
+import os
 from collections.abc import Callable, Mapping
 import dataclasses
 from dataclasses import dataclass
@@ -29,6 +30,9 @@ from jarvis.adapters.sqlite_artifacts import SQLiteArtifactRepository
 from jarvis.adapters.sqlite_session_activity import SQLiteActivityLedger
 from jarvis.adapters.sqlite_captures import SQLiteCaptureRepository
 from jarvis.core.artifact_service import ArtifactService
+from jarvis.core.upload_service import BoardDropSeam, UploadService
+from jarvis.domain.artifacts import ARTIFACTS_DIR
+from jarvis.domain.uploads import upload_bounds
 from jarvis.core.capture_service import CaptureAssociation, CaptureService, NoCaptureSources
 from jarvis.core.recording_transcriber import RecordingTranscriber
 from jarvis.core.capture_api import CaptureApi
@@ -82,6 +86,7 @@ from jarvis.core.presentation_studio_playback import PresentationStudioPlaybackS
 from jarvis.core.presentation_studio_compare import PresentationStudioCompare
 from jarvis.core.presentation_studio_composition import PresentationStudioComposition
 from jarvis.core.presentation_studio_composition_clock import PresentationStudioCompositionClock
+from jarvis.core.voice_channel import VoiceChannelService
 from jarvis.core.remotion_master_project import MasterProjectReader
 from jarvis.core.presentation_studio_scene_variants import PresentationStudioSceneVariants
 from jarvis.core.presentation_studio_template import PresentationStudioTemplates
@@ -178,6 +183,10 @@ class JarvisCoreApplication:
         # passage SIMPLE ⇄ PRESENTATION ne redémarre jamais Voice ; le
         # changement voyage par `interaction.mode.changed` sur `/v1/events`.
         self.interaction_mode = InteractionModeService(events=self.events, diagnostics=diagnostics)
+        # Canal vocal (handoff jarvis-unified-chat-and-board-drop, Slice 04) : état en
+        # mémoire nourri par les rapports de Voice ; `write_gate()` verrouille le Chat.
+        # Un autre axe qu'`interaction_mode` : jamais lu ni écrit par lui.
+        self.voice_channel = VoiceChannelService(diagnostics=diagnostics)
         # Mémoire de séance PRESENTATION (Slice 04) : sujets, faits avec leur
         # provenance, ressources préparées, et un fil de parole récente qui
         # reste frais même quand l'analyse ambiante est en retard (Décision
@@ -261,6 +270,15 @@ class JarvisCoreApplication:
             SQLiteArtifactRepository(self.state), SQLiteActivityLedger(self.state), FileArtifactPayloads(root),
             diagnostics=diagnostics,
         )
+        # Fichiers téléversés (handoff jarvis-unified-chat-and-board-drop, Slice 07) : pièces jointes du
+        # chat, façade sur le registre ; bornes relues de l'environnement à chaque appel (`upload_bounds`).
+        self.uploads = UploadService(
+            self.artifacts, association=self._upload_association, bounds=lambda: upload_bounds(os.environ),
+            artifacts_root=Path(root).resolve() / ARTIFACTS_DIR, diagnostics=diagnostics,
+            # Dépôt sur le Board affiché (Slice 08) : Board actif, liens, lien explicite de rattrapage. Lus à
+            # l'appel : `self.workspace` et `self.board_artifact_links` sont construits plus bas.
+            board_drop=BoardDropSeam(active_board=self._active_board_id, links_of=self._links_of_artifact,
+                                     link=self._link_dropped_artifact, unlink=self._unlink_dropped_artifact))
         # Propriétaire des captures (handoff session-context-recording, Slice
         # 05, D-CAP) : seule vérité d'état ; même base v7, même connexion ;
         # association prise au Context actif du démarrage. Aucune source réelle
@@ -624,6 +642,7 @@ class JarvisCoreApplication:
             board_context=self.sessions.board_context,
             session_context=self._session_context,
             memory_context=self.memory.context,
+            attachments_context=self.uploads.brain_attachments,
             prefab_events=self._take_prefab_events,
             prefab_events_requeue=self.prefab_events.requeue_notify,
         )
@@ -711,8 +730,12 @@ class JarvisCoreApplication:
             # Les rendus de présentation `pending` (Slice 16) ont leur propre reprise (un `.partial` de vidéo n'est jamais promu à l'aveugle) :
             # ils sont laissés ici, puis `reconcile` tue un processus de rendu orphelin et les rend `failed` / `partial`. Ne lève pas.
             render_owner = None if self.presentation_render is None else PresentationRenderService.owns
+            # Téléversements `pending` (Slice 07 chat) : jamais promus `partial` (un fichier tronqué n'est pas
+            # joignable) ; `uploads.recover` les solde `failed` sans payload juste après. Ne lève pas.
             await self.artifacts.recover_pending(
-                owned=self.transcripts.owns if render_owner is None else lambda artifact: self.transcripts.owns(artifact) or render_owner(artifact))
+                owned=lambda artifact: (self.transcripts.owns(artifact) or self.uploads.owns(artifact)
+                                        or (render_owner is not None and render_owner(artifact))))
+            await self.uploads.recover()
             if self.presentation_render is not None:
                 await self.presentation_render.reconcile()
             # Après les reprises : le worker reprend depuis le curseur de chaque Context.
@@ -859,6 +882,31 @@ class JarvisCoreApplication:
 
         return frozenset(value for record in self.captures.status().captures
                          for value in (record.capture_id, record.artifact_id) if value)
+
+    async def _upload_association(self) -> tuple[str, str]:
+        """Session et Context actifs à la création d'un téléversement (`session_not_found` sans Session)."""
+
+        view = await self.sessions.current_context()
+        return view.context.jarvis_session_id, view.context.context_id
+
+    async def _active_board_id(self) -> str:
+        """Board affiché : `active_board_id` de la Session ouverte (`session_not_found` sans Session)."""
+
+        return (await self.sessions.current()).session.active_board_id
+
+    async def _links_of_artifact(self, artifact_id: str) -> dict[str, str]:
+        links = await self.board_artifact_links.boards_of_artifact(artifact_id, limit=500)
+        return {link.board_id: link.origin.value for link in links}
+
+    async def _link_dropped_artifact(self, board_id: str, artifact_id: str) -> None:
+        """Rattrapage d'un dépôt dont le Board a changé pendant la création : lien explicite, `origin=user`."""
+
+        await self.workspace.artifact_link(board_id, artifact_id, origin="user")
+
+    async def _unlink_dropped_artifact(self, board_id: str, artifact_id: str) -> None:
+        """Après ce rattrapage : retrait du lien automatique posé sur le Board devenu actif (`origin=user`)."""
+
+        await self.workspace.artifact_unlink(board_id, artifact_id, origin="user")
 
     async def _capture_association(self) -> CaptureAssociation:
         """Session et Context actifs au démarrage d'une capture (D-CAP, `docs/capture.md`)."""

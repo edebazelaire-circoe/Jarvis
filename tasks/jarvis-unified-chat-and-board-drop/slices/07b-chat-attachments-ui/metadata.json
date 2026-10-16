@@ -1,0 +1,17 @@
+{
+  "slice_id": "07b-chat-attachments-ui",
+  "title": "Pièces jointes dans le panneau Chat (UI)",
+  "task_type": "waived-by-agent-0",
+  "work_intent": "frontend: Joindre plusieurs fichiers à un message du Chat par bouton ou glisser-déposer, sur le backend de la Slice 07.",
+  "dependencies": [
+    "06-chat-panel-and-composer",
+    "07-chat-attachments"
+  ],
+  "work_agent_assignment": "one Work Agent (Claude sub-agent)",
+  "frontend_claude_preferred": true,
+  "skills_required": [
+    "/caveman",
+    "/coding-guideline",
+    "/impeccable"
+  ]
+}

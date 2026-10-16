@@ -82,8 +82,9 @@ Rules worth stating twice:
   is a new Artifact. Only `enrichment` stays open, as for every Artifact.
 - **Deleting is the registry's own rule**: a snapshot with renders is refused (`artifact_has_dependents`) unless the user explicitly cascades;
   nothing is deleted automatically. Deleting the *source* never deletes snapshots: their lineage stays readable (`source: {"exists": false}`).
-- **Artifact kinds are closed (now 11)**: `presentation_snapshot`, `presentation_video`, `presentation_still`, `presentation_pdf` were added with the
-  relation kind `rendered_from`; no migration (no SQL `CHECK` on either column, `jarvis.sqlite3` stays v8).
+- **Artifact kinds are closed (now 13)**: `presentation_snapshot`, `presentation_video`, `presentation_still`, `presentation_pdf` were added with the
+  relation kind `rendered_from`; no migration (no SQL `CHECK` on either column, `jarvis.sqlite3` stays v8). `upload` (chat
+  attachments, [chat.md](chat.md)) and `link` (URL dropped on a Board, never fetched) joined later, still without migration.
 
 ## Which Boards show this? One owner: the Artifact link service (decision)
 

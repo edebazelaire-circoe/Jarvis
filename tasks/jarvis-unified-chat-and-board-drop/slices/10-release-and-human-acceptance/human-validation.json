@@ -1,0 +1,14 @@
+{
+  "checks": [
+    {
+      "id": "HV-JCHAT-10-01",
+      "instruction": "Valider parcours Voice puis Chat puis Voice éventuel sur instance volontairement démarrée par utilisateur; confirmer maintien des sous-agents et absence de TTS texte.",
+      "requires_evidence_first": true
+    },
+    {
+      "id": "HV-JCHAT-10-02",
+      "instruction": "Approuver la lisibilité finale, les dépôts chat/Board et la documentation d'utilisation.",
+      "requires_evidence_first": true
+    }
+  ]
+}

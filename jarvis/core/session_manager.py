@@ -77,6 +77,7 @@ from pathlib import Path
 from typing import Any
 
 from jarvis.core.board_hydration import read_board_memory
+from jarvis.domain.artifacts import ARTIFACTS_DIR
 from jarvis.core.board_service import BoardService, activate_on_host, publish_voice_binding, restore_on_host
 from jarvis.core.session_contexts import ensure_context
 from jarvis.core.speech_authority import SpeechAuthority
@@ -833,7 +834,12 @@ class SessionManager:
             return None
         view = await self.current_context()
         assert self._workspaces is not None
-        return {**view.to_payload(), "sessions_root": str(self._workspaces.sessions_root())}
+        payload = {**view.to_payload(), "sessions_root": str(self._workspaces.sessions_root())}
+        if self._data_root is not None:
+            # Chat Slice 07 : `<data_root>/artifacts`, accordé au CLI par `--add-dir` comme `sessions_root`
+            # (pièces jointes lues par l'outil Read). Comme `sessions_root`, visible de la page locale par `/api/sessions/current` (garde de bouclage) ; jamais par les routes du chat.
+            payload["artifacts_root"] = str(Path(self._data_root).resolve() / ARTIFACTS_DIR)
+        return payload
 
     def trace_context_failure(self, exc: BaseException, *, origin: str) -> None:
         """Dire un échec de lecture du Context rencontré par un appelant (route), avec son code."""

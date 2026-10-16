@@ -1,0 +1,9 @@
+{
+  "checks": [
+    {
+      "id": "HV-JCHAT-06-01",
+      "instruction": "Valider ergonomie du panneau bas droite, bulles, focus, menus et accès au transcript détaillé sur l'écran habituel.",
+      "requires_evidence_first": true
+    }
+  ]
+}
