@@ -144,13 +144,18 @@ def test_the_cosmos_theme_knows_every_dock_tool_and_moves_the_pills():
     assert "['openTimeline','timeline',2]" in work and "['openTestLab','testlab',3]" in work
     assert "['openMcpInspector','mcp',6]" in work and "['openWorkspace','workspace',7]" in work
     assert "['openPrefabs','prefabs',8]" in work and "['openStudioInspector','inspector',9]" in work and "[null,'errors',10]" in work
-    # 10 × 34 px + 9 × 6 px = 394 px de rangée depuis right:18px, puis 10 px de marge.
-    assert 'html[data-jarvis-theme="cosmos"] .bgpills{top:22px;right:422px;' in work
-    assert 'html[data-jarvis-theme="cosmos"] .topbar{left:18px;right:422px;' in work
-    # Dock vertical : 10 × 52 px + 9 × 10 px = 610 px, centré, plus 12 px de marge.
-    assert ".bgpills{position:absolute;z-index:40;right:30px;top:calc(50% + 317px);" in html
-    # Écran bas : 10 × 44 px + 9 × 6 px = 494 px (247 de demi-hauteur), plus 14 px de marge.
-    assert ".bgpills{top:calc(50% + 261px)}" in html
+    # Depuis la Slice 01 de l'orbital UI, une seule géométrie pour les deux thèmes,
+    # écrite avec les jetons de la coque : 10 × 34 px + 9 × 6 px = 394 px de rangée,
+    # deux rangées de 5 (5 × 34 + 4 × 6 = 194 px) à 620 px et moins ; pastilles et
+    # ligne d'état s'arrêtent 10 px avant le lanceur.
+    tools_w = len(tools) * 34 + (len(tools) - 1) * 6
+    assert f"--shell-launcher-w:{tools_w}px" in html and "--shell-control:34px" in html
+    half = len(tools) // 2
+    assert f"--shell-launcher-w:{half * 34 + (half - 1) * 6}px" in html
+    assert ".bgpills{position:absolute;z-index:40;right:calc(var(--shell-gutter) + var(--shell-launcher-w) + 10px);" in html
+    assert "right:calc(var(--shell-gutter) + var(--shell-launcher-w) + 10px);display:flex;justify-content:flex-start" in html
+    assert ".dock{position:absolute;z-index:32;right:var(--shell-gutter);top:var(--shell-gutter);display:flex;gap:6px}" in html
+    assert 'html[data-jarvis-theme="cosmos"] .bgpills{' not in work and 'html[data-jarvis-theme="cosmos"] .topbar{' not in work
 
 
 def test_the_timeline_module_parses_with_node():
@@ -180,13 +185,14 @@ def test_the_open_dialog_makes_the_rest_of_the_page_inert_and_restores_it():
 
 
 def test_the_cosmos_theme_keeps_the_voice_state_readable_on_a_phone():
-    work = WORK.read_text(encoding="utf-8")
-    narrow = work[work.index('@media(max-width:700px){\n  html[data-jarvis-theme="cosmos"] .dock{right:10px;top:10px}'):]
-    narrow = narrow[: narrow.index("\n}")]
-    pills = re.search(r"\.bgpills\{right:(\d+)px;top:(\d+)px\}", narrow)
-    assert pills and int(pills.group(2)) >= 50  # pills move below the 34 px tool row instead of covering the state
-    panel_top = int(re.search(r"\.panel\{left:10px;right:10px;top:(\d+)px", narrow).group(1))
-    assert panel_top > int(pills.group(2)) + 28
+    """Les deux thèmes partagent cette géométrie depuis la Slice 01 de l'orbital UI."""
+
+    html = PAGE.read_text(encoding="utf-8")
+    pills = re.search(r"@media\(max-width:700px\)\{\.bgpills\{right:var\(--shell-gutter\);top:(\d+)px\}\}", html)
+    assert pills and int(pills.group(1)) >= 50  # pills move below the 34 px tool row instead of covering the state
+    panel_top = int(re.search(r"@media\(max-width:700px\)\{:root\{[^}]*--shell-panel-top:(\d+)px", html).group(1))
+    assert panel_top > int(pills.group(1)) + 28
+    assert ".topbar>.state{max-width:100%;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}" in html
 
 
 def test_dot_labels_are_bounded_and_never_widen_the_scroll_area():

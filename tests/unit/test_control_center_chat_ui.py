@@ -69,14 +69,15 @@ def test_tab_and_panel_ids_roles_and_reuse_of_panel():
 
 def test_layout_rules_tab_bottom_right_toasts_above_it_one_panel_at_a_time():
     html = PAGE.read_text(encoding="utf-8")
-    assert re.search(r"\.chat-tab\{position:absolute;z-index:32;right:18px;bottom:18px;width:52px;height:40px;", html)
-    # Toasts: left of the dock column (never over AGT, the pills or the tab), above the tab row (18 + 40 + 10 px);
-    # the open-panel offset still applies.
-    assert ".toasts{position:fixed;right:86px;bottom:68px;z-index:70;display:grid;gap:8px;width:clamp(220px,calc(100vw - 232px),340px);" in html
+    # Bottom-right zone of the shell (docs/control-center-shell.md), the same in both themes.
+    assert re.search(r"\.chat-tab\{position:absolute;z-index:32;right:var\(--shell-gutter\);bottom:var\(--shell-bottom\);width:52px;height:40px;", html)
+    # Toasts: bottom-right above the tab row (18 + 40 + 10 px), never over the left column; the launcher and
+    # the pills live in the top row since Slice 01 of the orbital UI, so the stack no longer dodges a dock column.
+    assert ".toasts{position:fixed;right:var(--shell-gutter);bottom:68px;z-index:70;display:grid;gap:8px;width:clamp(220px,calc(100vw - 164px),340px);" in html
     assert ".panel.chat-panel{bottom:68px}" in html, "the open Chat never covers its own tab"
     assert "#app:has(.chat-panel.open) .voicehint{visibility:hidden}" in html
     assert "#app:has(.chat-panel.open)~.toasts{top:var(--chat-toasts-top,124px);bottom:auto}" in html
-    assert "#app:has(.panel.open)~.toasts{right:calc(98px + min(560px,100vw - 120px))" in html
+    assert "#app:has(.panel.open)~.toasts{right:calc(var(--shell-gutter) + 12px + min(var(--shell-panel-w),100vw - 2 * var(--shell-gutter)))" in html
     assert "@media(prefers-reduced-motion:reduce){.chat-panel.open," in html
     assert "async function openPanel(name){if(window.JarvisChat)window.JarvisChat.close();" in html
     assert "function closePanel(){if(window.JarvisChat)window.JarvisChat.close();" in html
@@ -139,9 +140,16 @@ def test_state_read_outlasts_the_relay_so_core_is_blamed():
 
 
 def test_low_viewport_toasts_follow_the_shifted_panel():
-    """QA S06 (e) : à 480 px de haut le panneau recule à right:136px ; la pile recule d'autant."""
+    """QA S06 (e) : la pile ne mord jamais sur le panneau ouvert.
+
+    Avant la Slice 01 de l'orbital UI, à 480 px de haut le dock vertical passait
+    en deux colonnes et le panneau reculait à right:136px ; la pile reculait
+    d'autant. Le lanceur est désormais une rangée en haut à droite : le panneau
+    ne recule plus à aucune hauteur, et la pile suit la seule géométrie du
+    panneau (mêmes jetons)."""
 
     html = PAGE.read_text(encoding="utf-8")
-    assert "@media(min-width:940px) and (max-height:480px){#app:has(.panel.open)~.toasts{right:calc(148px + min(560px,100vw - 120px))" in html
-    assert html.index("@media(min-width:940px) and (max-height:480px){#app:has(.panel.open)~.toasts") > html.index(
-        "@media(min-width:940px){#app:has(.panel.open)~.toasts")
+    assert "max-height:480px" not in html and "right:136px" not in html
+    assert ".panel{position:absolute;z-index:33;top:var(--shell-panel-top);right:var(--shell-gutter);bottom:var(--shell-panel-bottom);width:min(var(--shell-panel-w),calc(100% - 2 * var(--shell-gutter)));" in html
+    offset = "#app:has(.panel.open)~.toasts{right:calc(var(--shell-gutter) + 12px + min(var(--shell-panel-w),100vw - 2 * var(--shell-gutter)))"
+    assert html.count(offset) == 1

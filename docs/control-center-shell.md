@@ -1,0 +1,322 @@
+# Control Center shell (contract)
+
+Canonical contract, documentation **Level 3**: this document (zones, tokens,
+layer registry, control membership, accessibility rules), the reusable module
+`jarvis/runtime/control_center_shell.js` (`window.JarvisShell`), the tokens on
+`:root` of `jarvis/runtime/control_center.html`, and the conformance suite
+`tests/unit/test_control_center_shell_layers.py`, which reads the **real**
+stylesheets (the page, the Cosmos theme `STYLE` of `control_center_work.js`
+and every module sheet `control_center*.js`) and compares them to the tables
+below.
+
+Origin: handoff `tasks/jarvis-board-orbital-ui-workspace-rail/`, Slice 01
+(resolved architecture `docs/06-resolved-architecture.md` §2, §9, §10, §11).
+It replaces the stacking comment that lived at the top of
+`control_center.html` and the "Stacking registry" table of
+`docs/ARCHITECTURE.md`; both now point here.
+
+**Rule for every later change.** A surface that is added, moved, or gets a
+`z-index` updates, in the same commit: its row below, the stylesheet, the
+mirror comment at the top of `control_center.html` and, for a control, its
+`data-shell-control` attribute. The suite fails otherwise.
+
+## One geometry, two skins
+
+The Control Center has two themes: `circuit-board` (default,
+`control_center_work.js`, registry default) and `Cosmos` (what the user runs).
+Until this slice they placed the same surfaces differently (vertical dock on
+the right in circuit-board, top-right row in Cosmos; panel, pills, banner and
+toasts offset accordingly) and each theme had its own stacking ranks. Every
+later slice would have had to place each surface twice.
+
+Since Slice 01 **the Cosmos zone geometry is the base geometry of both
+themes**, written once in `control_center.html` with the tokens below. A theme
+is a **skin** only: colours, borders, radii, blur, fonts, icons. The Cosmos
+`STYLE` (and any `html[data-jarvis-theme="cosmos"]` rule of the page) carries
+no `position`, `top`, `right`, `bottom`, `left`, `inset`, `z-index`,
+`transform`, `width`, `max-width`, `flex-direction` or `flex-wrap` on a shell
+surface (`test_cosmos_overrides_no_shell_position_or_rank`). The circuit-board
+skin keeps its text labels in the launcher (`ERR`, `TRC`, …), at the shared
+34 px size. The `JARVIS` brand of the state line is hidden in both themes (Cosmos
+already hid it): in circuit-board it pushed the state onto a second row, over
+the Bare Hands column, from 1024 px down.
+
+## Zones
+
+| Zone | Surfaces today | Owner of the content |
+| --- | --- | --- |
+| `top-left` | `.topbar`: `#boardsHud`, `.state` (the `.brand` element stays in the markup, hidden in both themes: the target shows Board then state) | page, `control_center_boards.js` |
+| `top-right` | `.dock` (global launcher, one row of 34 px buttons); `#bgPills` left of it until Slice 06 | page |
+| `top-centre` | `.live-banner` (GPT-Live, transient) | page |
+| `left-edge` | `#toolWheel` anchor (empty host until Slice 02); `#barehandsHud`, `#barehandsPalette`, `#captureRail`, `#presentationRail` until Slices 03, 04, 07 move them | their modules |
+| `left-low` | `#screenshotPreview` (Slice 05) | — |
+| `bottom-left` | `#interactionModeHud`, `.sc-status` notes of the scene | `control_center_interaction_mode.js`, scene |
+| `bottom-centre` | `#voiceHint` (until Slice 06), `#boardDropTray`; status centre from Slice 06 | page, `control_center_board_drop.js` |
+| `bottom-right` | `#chatTab` | `control_center_chat.js` |
+| `right` | side panels (`#panel`, `#chatPanel`, `#jvStudioInspector`); workspace rail from Slice 07 | page, modules |
+| `centre` | Board / scene (`#sceneLayer`) | scene |
+
+`JarvisShell.ZONES` mirrors this table (one line per zone).
+
+Placement rules that hold in both themes (measured by
+`tests/unit/test_control_center_shell_browser.py` at 1440×900, 1280×720,
+900×600 and 600×800):
+
+- **State line** (`top-left`): one row above 700 px, ending 10 px before the
+  launcher, and before the background pills while they sit left of it
+  (`#app:has(#bgPills:not([hidden])) .topbar`, 4 × 28 px + gaps reserved until
+  Slice 06 moves them). The Board control and the state shorten (ellipsis)
+  rather than wrap onto the left-edge column, whose top is at 76 px. At 700 px
+  and below the column moves to the middle of the screen and the state may
+  wrap under the Board.
+- **Launcher** (`top-right`): one row of 34 px buttons at
+  `--shell-gutter`; two rows of five at 620 px and below. Pills sit left of it,
+  below it at 700 px and below.
+- **Side panels** (`right`): `#panel`, `#chatPanel` and the Studio inspector
+  `#jvStudioInspector` share the zone: top `--shell-panel-top` (under the
+  launcher and the pills), bottom `--shell-panel-bottom` (above the chat tab),
+  right `--shell-gutter`, full width minus the gutters at 700 px and below.
+  Toasts move left of an open panel from 940 px up.
+- **Board drop tray** (`bottom-centre`): above the bottom row; at 760 px and
+  below it climbs to `--shell-panel-top` + 8 px, under the launcher and pills.
+
+## Tokens
+
+Defined **once** on `:root` in `control_center.html`; no theme and no module
+sheet redefines a `--shell-*` or `--sem-*` token. Responsive values are set
+only in the `@media` blocks listed here. `JarvisShell.TOKENS` and
+`JarvisShell.RESPONSIVE_TOKENS` mirror them (`test_tokens_defined_once_and_reduced_motion_zeroes_durations`).
+
+| Token | Base | Responsive | Use |
+| --- | --- | --- | --- |
+| `--shell-gutter` | `18px` | `10px` at `max-width:700px` | distance of every edge surface to the window edge |
+| `--shell-top-h` | `40px` | | height of the state line |
+| `--shell-bottom` | `18px` | | bottom baseline of bottom surfaces |
+| `--shell-status-h` | `44px` | | height of the bottom status centre (Slice 06) |
+| `--shell-control` | `34px` | | launcher button size |
+| `--shell-launcher-w` | `394px` | `194px` at `max-width:620px` | launcher width: 10 buttons × 34 + 9 gaps × 6; two rows of 5 below 620 px |
+| `--shell-panel-top` | `64px` | `88px` at 700, `126px` at 620 | top of side panels and of the GPT-Live banner (below the launcher) |
+| `--shell-panel-w` | `500px` | | side panel width (capped by the window) |
+| `--shell-panel-bottom` | `68px` | | bottom of side panels: they stop above the chat tab row (18 + 40 + 10), so the tab stays whole and clickable |
+| `--shell-rail-w` | `300px` | `72px` at `max-width:1099px`, `0px` at 700 | workspace rail width (Slice 07) |
+| `--shell-anchor-w` | `14px` | | visible part of the wheel anchor at rest (Slice 02) |
+| `--shell-wheel-r` | `200px` | | wheel radius (Slice 02) |
+| `--shell-wedge-min` | `48px` | | minimum target size of a wedge |
+| `--shell-icon` / `--shell-icon-sm` | `20px` / `15px` | | icon sizes (status centre, launcher) |
+| `--shell-radius` | `12px` | | shell surface radius |
+| `--shell-glass-bg` / `--shell-glass-strong` | `rgba(5,11,16,.46)` / `rgba(4,10,15,.80)` | | glass surfaces (controls / panels) |
+| `--shell-stroke` / `--shell-stroke-active` | `rgba(174,205,220,.12)` / `color-mix(in srgb,var(--accent) 46%,transparent)` | | thin strokes, resting / selected |
+| `--shell-focus`, `--shell-focus-w`, `--shell-focus-offset` | `var(--accent)`, `2px`, `2px` | | focus ring |
+| `--sem-alert` | `#ff9f43` | | orange: warning / failure to look at |
+| `--sem-done` | `var(--ok)` | | green: ready / done |
+| `--sem-question` | `var(--accent)` | | cyan: a question waiting for the user |
+| `--sem-working` | `#4da3ff` | | blue: being worked on |
+| `--sem-review` | `#ffd166` | | yellow: changed since reviewed |
+| `--sem-problem` | `#ff6a4d` | | orange-red: canonical problem / error state (never relabelled as review) |
+| `--shell-ease` | `cubic-bezier(.2,.7,.2,1)` | | shell motion curve |
+| `--shell-dur-fast` / `--shell-dur` | `120ms` / `180ms` | `0ms` under `prefers-reduced-motion: reduce` | shell motion durations |
+
+Colour is never the only carrier of a state: every semantic colour comes with
+an icon or a text label.
+
+## Layer registry
+
+Single source of every `z-index` of the Control Center page. Same ranks in
+both themes: since Slice 01 no theme has its own rank. Values are compared to
+the stylesheets by `test_every_rank_in_css_matches_the_registry`: a `z-index`
+in a sheet that matches neither a page layer row (same sheet, same rule, same
+rank) nor a contained prefix fails, and so does a row that no sheet declares.
+The rule is written exactly as in the sheet, `${…}` interpolations included.
+
+### Page layers
+
+| Rank | Surface | Sheet | Rule | Why |
+| --- | --- | --- | --- | --- |
+| 0 | `.face` | `control_center.html` | `.face` | visualizer iframe, bottom of the page |
+| 0 | `#cosmosFace` | `control_center_work.js` | `#cosmosFace` | Cosmos canvas, same place as the face |
+| 20 | `#sceneLayer` | `control_center_scene_page.js` | `.scene` | Board / scene, above the face, below every control; its own stacking context |
+| 21 | `.board-drop::before` | `control_center.html` | `.board-drop::before` | drop frame, just above the scene, below the controls |
+| 30 | `#toolWheel` | `control_center.html` | `#toolWheel` | wheel anchor at rest (empty host until Slice 02) |
+| 30 | `#barehandsPalette` | `control_center_barehands_hud.js` | `#${DOM.paletteId}` | below the Bare Hands control and its selector, which open over it |
+| 30 | `#captureRail` | `control_center_capture_rail.js` | `${H}` | sibling of the palette, same rank for the same reason |
+| 30 | `#presentationRail` | `control_center_presentation_rail.js` | `#${DOM.hostId}` | rail outside the Studio |
+| 31 | `.topbar` | `control_center.html` | `.topbar` | state line; `#boardsHud` lives inside it |
+| 31 | `#voiceHint` | `control_center.html` | `.voicehint` | wake key hint (removed in Slice 06) |
+| 32 | `.dock` | `control_center.html` | `.dock` | launcher |
+| 32 | `#chatTab` | `control_center.html` | `.chat-tab` | page control of the same class as the launcher |
+| 32 | `#barehandsHud` | `control_center_barehands_hud.js` | `#${DOM.hostId} .bh-hud-btn` | Bare Hands control button |
+| 32 | `#barehandsHud` | `control_center_barehands_hud.js` | `#${DOM.hostId} .bh-hud-cap` | its state cap |
+| 32 | `#interactionModeHud` | `control_center_interaction_mode.js` | `#${DOM.hostId} .im-btn` | mode button |
+| 33 | `.panel` | `control_center.html` | `.panel` | side panels (`#panel`, `#chatPanel`) |
+| 34 | `.board-drop-card` | `control_center.html` | `.board-drop-card` | drop card, readable over the left column at 600 px |
+| 34 | `#boardDropTray` | `control_center.html` | `.board-drop-tray` | drop tray, above the voice hint and the chat tab |
+| 34 | `#jvStudioInspector` | `control_center_presentation_studio_inspector_core.js` | `#${PANEL_ID}` | Studio inspector side panel, above the panel it replaces |
+| 35 | `.live-banner` | `control_center.html` | `.live-banner` | GPT-Live banner over the controls |
+| 36 | `#boardsPanel` | `control_center.html` | `#boardsPanel` | Board chooser, opened by the user over the banner |
+| 36 | `.bh-hud-pop` | `control_center_barehands_hud.js` | `#${DOM.hostId} .bh-hud-pop` | Bare Hands lifecycle selector |
+| 36 | `.im-pop` | `control_center_interaction_mode.js` | `#${DOM.hostId} .im-pop` | mode chooser |
+| 40 | `#bgPills` | `control_center.html` | `.bgpills` | background pills (status centre from Slice 06) |
+| 55 | `.tl` | `control_center.html` | `.tl` | conversation timeline, full-screen launcher view |
+| 55 | `.tlab` | `control_center.html` | `.tlab` | Test Lab (one full-screen view at a time) |
+| 55 | `.mcpi` | `control_center.html` | `.mcpi` | MCP inspector |
+| 55 | `.wsp` | `control_center.html` | `.wsp` | Sessions & Boards |
+| 55 | `.pfb` | `control_center.html` | `.pfb` | prefab library |
+| 60 | `.overlay` | `control_center.html` | `.overlay` | settings and modal overlays |
+| 70 | `.toasts` | `control_center.html` | `.toasts` | toasts |
+| 75 | `.bgpop` | `control_center.html` | `.bgpop` | background pill popover |
+| 75 | `#jvStudioReloadBand` | `control_center_presentation_studio_reload.js` | `#${BAND_ID}` | Studio reload band |
+| 80 | `.ctxmenu` | `control_center.html` | `.ctxmenu` | the one shared context menu, above the choosers it replaces |
+| 82 | `#barehandsCards` | `control_center_barehands_hud.js` | `#${DOM.cardsId}` | Bare Hands quick cards, opened from the context menu |
+| 85 | `.cdialog-back` | `control_center.html` | `.cdialog-back` | in-page confirmation |
+| 9000 | `#jvStudioExplorer` | `control_center_presentation_studio_explorer_core.js` | `#${HOST_ID}` | Variantes (Studio explorer) |
+| 9100 | `html.jvr-studio #presentationRail` | `control_center_presentation_rail.js` | `html.jvr-studio #${DOM.hostId}` | rail beside the Studio |
+| 9150 | `html.jvx-run #interactionModeHud` | `control_center_presentation_studio_explorer_core.js` | `html.jvx-run #interactionModeHud` | mode control during a run shown in Variantes |
+| 9300 | `.jvr-menu` | `control_center_presentation_rail.js` | `.jvr-menu` | rail menu |
+| 9400 | `.jvr-dialog-back` | `control_center_presentation_rail.js` | `.jvr-dialog-back` | rail dialog |
+| 9500 | `#jvFullscreenPrompt` | `control_center_fullscreen.js` | `#${PROMPT_ID}` | fullscreen prompt |
+| 2147482000 | `#jarvisFlow` | `control_center_barehands_calibration.js` | `${R}` | Bare Hands calibration / benchmark flow, above the toasts |
+| 2147483000 | `#jarvisHands` | `control_center_barehands.js` | `#jarvisHands` | Bare Hands pointer, paints over everything |
+
+### Contained ranks
+
+Ranks that only order children **inside** a stacking context created by a
+page layer; they never compete with the page layers. A `z-index` whose rule
+starts with one of these prefixes, in that sheet, is accepted whatever its
+value.
+
+| Container | Sheet | Rule prefix | Why |
+| --- | --- | --- | --- |
+| `#sceneLayer` (20) | `control_center_scene_page.js` | `.sc-` | node layers 0–1000, band, status chips; nodes also get an inline `z-index` |
+| `#sceneLayer` (20) | `control_center_barehands_target.js` | `.jh-target` | Bare Hands target ring inside a node |
+| `#sceneLayer` (20) | `control_center_barehands_target.js` | `.sc-node` | node raised under the hand |
+| `.tl` (55) | `control_center.html` | `.tl-` | timeline internals 1–30 |
+| `.overlay` / `.panel` | `control_center.html` | `.catalog-table` | sticky table header |
+| `#chatPanel` (33) | `control_center.html` | `.chat-drop` | drop veil inside the chat panel |
+| `#jarvisFlow` | `control_center_barehands_calibration.js` | `${R} ` | calibration internals |
+| `#jarvisFlow` | `control_center_barehands_benchmark_ui.js` | `${R} ` | benchmark internals |
+| `#jarvisFlow` | `control_center_barehands_calibration_agent.js` | `${sel} ` | calibration agent card |
+| `#jvStudioExplorer` (9000) | `control_center_presentation_studio_explorer_core.js` | `#${HOST_ID} ` | Variantes internals |
+| `#jvStudioExplorer` (9000) | `control_center_presentation_studio_run.js` | `${H} ` | run overlay internals |
+| `.overlay` (60) | `control_center_wake_word.js` | `#wakeWordSettings ` | settings tooltip |
+
+### Reserved ranks
+
+Declared by later slices of the orbital shell; listed so that nobody takes
+them for something else. They become page layers when their slice lands.
+
+| Rank | Surface | Slice |
+| --- | --- | --- |
+| 37 | `#toolWheel` open, radial sub-arcs (Selection, targets, Bare Hands tools) | S02 |
+| 38 | `#screenshotPreview` | S05 |
+| 40 | status centre: `#recIndicators`, `#hiddenEye` beside `#bgPills` | S06 |
+| 60 | screenshot lightbox, annotation editor (the `.overlay` pattern) | S05 |
+
+### Invariants
+
+Checked on the registry rows by `test_relative_order_of_the_old_registry_is_kept`:
+
+- every page control is above the scene (20); the face and the Cosmos canvas
+  are below it;
+- `.topbar` ≤ `.dock` < `.panel` < `.live-banner` < `#boardsPanel` <
+  `#bgPills` < `.toasts` < `.cdialog-back`;
+- choosers (36) are above the GPT-Live banner (35) and below the pills,
+  toasts, context menu and confirmation;
+- `.ctxmenu` (80) < `#barehandsCards` (82) < `.cdialog-back` (85);
+- full-screen launcher views (55) are above every control and below
+  `.overlay` < `.toasts` < `.ctxmenu` < `.cdialog-back`;
+- Variantes 9000 < rail beside it 9100 < mode control during a run 9150 <
+  rail menu 9300 < rail dialog 9400;
+- `#jarvisHands` is the top of the page.
+
+**Cosmos rank collapse (Slice 01).** Cosmos used to raise `.topbar` 45,
+`.panel` 42, `.live-banner` 48, `.dock`/`.bgpills`/`.chat-tab` 50,
+`.board-drop-tray` 49, `#boardsPanel` 51. `git log -S` traces them to the
+theme's first commit (`2868528e`, "add Omega visual theme") and to slices
+that kept "one above the Cosmos dock" (`98f28604`, `4b99853b`); none records
+a stacking conflict. With the geometry shared, the surfaces they ordered no
+longer overlap (panel and banner start at `--shell-panel-top`, below the
+launcher row; the Board chooser opens below the pills at every width; every
+side panel stops at `--shell-panel-bottom`, above the chat tab, where Cosmos
+used to draw the tab over the panel's last row), so the base ranks apply to
+both themes.
+
+## Controls (`CONTROL_SELECTOR`)
+
+A **control** is a page surface the scene must not slide under: a held object
+stops against it, and the capture rail avoids it. Every control host carries
+the attribute `data-shell-control`; the shared selector is
+
+```
+[data-shell-control],#sceneLayer>.sc-status
+```
+
+published as `JarvisShell.CONTROL_SELECTOR` by `control_center_shell.js`, read
+by the scene (`control_center_scene_page.js`, measured walls) and the capture
+rail (`control_center_capture_rail.js`, obstacles, minus the Bare Hands column
+it docks to and the side panels that cover it). Both keep an identical
+fallback literal and journal `shell.missing` if the module is absent.
+
+| Host | Zone | Declared by |
+| --- | --- | --- |
+| `#boardsHud`, `.topbar>.state` | top-left | page |
+| `.dock` | top-right | page |
+| `#bgPills` | top-right (bottom-centre from S06) | page |
+| `.live-banner` | top-centre | page |
+| `#panel`, `#chatPanel` | right | page |
+| `#barehandsHud`, `#barehandsPalette`, `#captureRail` | left-edge | page (hosts) |
+| `#toolWheel` | left-edge | page |
+| `#presentationRail` | left-edge (right from S07) | `control_center_presentation_rail.js` (creates the host and the attribute) |
+| `#interactionModeHud` | bottom-left | page |
+| `#voiceHint`, `#boardDropTray` | bottom-centre | page |
+| `#chatTab` | bottom-right | page |
+| `#screenshotPreview` | left-low | S05 |
+
+Before Slice 01 the scene's literal list missed `#interactionModeHud`,
+`#chatTab`, `#presentationRail` and `#boardDropTray`: a held object could
+stop under them. They are now measured. Not controls: transient layers that
+open over everything by rank (choosers, menus, popovers, toasts, dialogs,
+full-screen views, `#barehandsCards`) and the Studio surfaces.
+
+`test_every_declared_control_host_matches_control_selector` checks that every
+host in the page that the table names carries the attribute and that nothing
+else does.
+
+## Accessibility and motion rules
+
+- **Icon-only control**: `aria-label` and tooltip (`title`) carry the same
+  words; neither carries a ticking counter (a timer goes in
+  `aria-describedby`, not in the name).
+- **State never by colour alone**: icon, shape or text with every semantic
+  colour.
+- **Focus**: `:focus-visible` shows a `--shell-focus-w` ring in
+  `--shell-focus`, offset `--shell-focus-offset`. The page sets it, at zero
+  specificity (`:where(...)`), on every focusable element of a control host;
+  a module may draw its own ring, never remove it. Focus is never left on a
+  hidden element: hiding a surface returns focus to its opener.
+- **Keyboard**: one tab stop per group (roving tabindex), arrows inside the
+  group, `Home`/`End`, `Enter`/`Space` on native buttons, `Esc` closes the
+  topmost transient surface. Secondary activation is the existing channel:
+  `contextmenu` (mouse right-click, Bare Hands thumb + middle pinch),
+  `ContextMenu` key, `Shift+F10`. Never long press.
+- **Announcements**: one polite live region per module; urgent only for what
+  the user must act on now.
+- **Target size**: at least `--shell-wedge-min` (48 px) for wheel wedges,
+  32 px for status-centre buttons, the launcher's 34 px for launcher buttons.
+- **Reduced motion**: under `prefers-reduced-motion: reduce` the shell
+  durations are `0ms`; surfaces change state without travel.
+- **Forced colours**: under `forced-colors: active` control borders use
+  `CanvasText` and the focus ring `Highlight`.
+- **Zoom**: usable at 200 % (the narrow breakpoints apply).
+- All French UI strings address the user as « vous ».
+
+## Validation
+
+- `tests/unit/test_control_center_shell_layers.py`: registry against the real
+  sheets, Cosmos without geometry or rank, controls marked, tokens once,
+  reduced motion, mirror comment, shared selector read by scene and rail.
+- `tests/unit/test_scene_renderer_logic.py::test_the_scene_layer_sits_above_the_face_and_below_every_control`:
+  the scene's own rank relations.
+- Runtime: both themes at 1440×900, 1280×720, 900×600 and 600×800 in headless
+  Chrome on an isolated instance (no control overlapping another, scene
+  objects stop against every control including `#chatTab`,
+  `#interactionModeHud` and `#presentationRail`).

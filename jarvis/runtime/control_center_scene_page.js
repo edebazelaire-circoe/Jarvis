@@ -2465,15 +2465,18 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
     return clock?clock.turn(lastField):0;
   }
 
-  /* Commandes de la page posées au-dessus de la scène : barre du haut, dock,
-     indication vocale, bandeau GPT-Live, pastilles, panneau, commandes Bare
-     Hands, indicateurs de la scène. **Mesurées au moment de la prise**, pas
-     supposées : un objet s'arrête contre celles qui sont là, et nulle part
-     ailleurs (22/09/2026 — la zone sûre, calibrée pour 1280 × 720, laissait
-     jusqu'à 452 px interdits sans rien dessus sur un grand écran). Le rail de
-     capture (`#captureRail`, session-context-recording Slice 10) allonge la
-     colonne de gauche : il est mesuré au même titre que la palette. */
-  const CONTROL_SELECTOR='.topbar>*,.dock,.voicehint,.live-banner,.bgpills,.panel,#barehandsHud,#barehandsPalette,#captureRail,#sceneLayer>.sc-status';
+  /* Commandes de la page posées au-dessus de la scène. **Mesurées au moment
+     de la prise**, pas supposées : un objet s'arrête contre celles qui sont
+     là, et nulle part ailleurs (22/09/2026 — la zone sûre, calibrée pour
+     1280 × 720, laissait jusqu'à 452 px interdits sans rien dessus sur un
+     grand écran). La liste vit dans la coque (`JarvisShell.CONTROL_SELECTOR`,
+     docs/control-center-shell.md › Controls) : chaque hôte de commande porte
+     `data-shell-control`. Copie de repli identique (testée) si la coque
+     manque, et une ligne au journal pour le dire. */
+  const SHELL_FALLBACK_SELECTOR='[data-shell-control],#sceneLayer>.sc-status';
+  const SHELL=window.JarvisShell||null;
+  const CONTROL_SELECTOR=SHELL&&typeof SHELL.CONTROL_SELECTOR==='string'?SHELL.CONTROL_SELECTOR:SHELL_FALLBACK_SELECTOR;
+  if(!SHELL)consoleLog('warn','shell.missing',{fallback:SHELL_FALLBACK_SELECTOR});
   function controlRects(){
     if(!root)return [];
     const origin=root.getBoundingClientRect();

@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+import re
 import shutil
 import subprocess
 
@@ -890,8 +891,9 @@ def test_the_served_page_puts_the_tools_on_the_palette_and_not_in_the_settings(t
     assert "tool:value=>value===undefined?view.settings.tool:saveSettings({tool:value})" in served
     # 3. Et il est atteignable depuis l'écran principal : l'emplacement est
     #    déclaré dans la page, avec son rang au registre.
-    assert '<div id="barehandsPalette"></div>' in served
-    assert "palette d'outils Bare Hands 30" in served
+    assert re.search(r'<div id="barehandsPalette"[^>]*></div>', served)
+    # Registre : docs/control-center-shell.md, miroir en tête de page (Slice 01 de l'orbital UI).
+    assert re.search(r"@shell-layer 30:[^\n]*#barehandsPalette", served)
     assert served.index('id="barehandsHud"') < served.index('id="barehandsPalette"'), \
         "la main d'abord, ses outils dessous : c'est la colonne que l'Humain a demandée"
     # 4. La palette le remplit, et elle lit le contrat plutôt qu'une liste.

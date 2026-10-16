@@ -525,7 +525,10 @@ def test_every_element_the_browser_block_reaches_for_exists_and_page_shortcuts_s
     assert not re.search(r"#6ee7ff|#ff6577|#ffb85c|#68e0a0", css, re.I), "page tokens, not new brand colours"
     assert "@media(max-width:700px)" in css and "@media(prefers-reduced-motion:reduce){.pfb-spin{animation:none}" in css
     # Le registre d'empilement nomme la vue au rang des autres vues plein écran.
-    assert "bibliothèque des prefabs `.pfb`" in html[: html.index("</style>")]
+    # Registre : docs/control-center-shell.md (Slice 01 de l'orbital UI), miroir en tête de page.
+    assert re.search(r"@shell-layer 55: [^\n]*\.pfb", html[: html.index("</style>")])
+    registry = (Path(__file__).resolve().parents[2] / "docs" / "control-center-shell.md").read_text(encoding="utf-8")
+    assert "| 55 | `.pfb` | `control_center.html` | `.pfb` | prefab library |" in registry
 
 
 def test_a_missing_view_is_refused_by_name_without_throwing(tmp_path):

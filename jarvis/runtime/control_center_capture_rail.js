@@ -1140,9 +1140,23 @@ ${H} .cr-sr{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflo
     return geo;
   }
   const COLUMN_SELECTORS=Object.freeze(['#barehandsHud','#barehandsPalette']);
-  /* Ce que le rail ne doit jamais recouvrir. */
-  const OBSTACLE_SELECTOR='#interactionModeButton,.topbar>*,.dock,.voicehint,.bgpills,.live-banner,'
-    +'#sceneLayer>.sc-status';
+  /* Ce que le rail ne doit jamais recouvrir : les commandes de la coque
+     (`JarvisShell.CONTROL_SELECTOR`, docs/control-center-shell.md › Controls),
+     moins la colonne Bare Hands contre laquelle il se pose (mesurée à part),
+     les panneaux latéraux, qui le recouvrent par leur rang, et le rail des
+     présentations : à côté du Studio il se range au-dessus de tout (9100) sur
+     ce même bord, et l'éviter laisserait le rail de capture sans place alors
+     que Variantes les recouvre tous deux ; il passe à droite en Slice 07 de
+     l'orbital UI. Copie de repli identique (testée) si la coque manque. */
+  const SHELL_FALLBACK_SELECTOR='[data-shell-control],#sceneLayer>.sc-status';
+  const NOT_OBSTACLES=Object.freeze([...COLUMN_SELECTORS,'.panel','#presentationRail']);
+  let shellWarned=false;
+  function obstacleSelector(log){
+    const shell=window.JarvisShell;
+    if(shell&&typeof shell.CONTROL_SELECTOR==='string')return shell.CONTROL_SELECTOR;
+    if(!shellWarned){shellWarned=true;log('warn','shell.missing',{fallback:SHELL_FALLBACK_SELECTOR})}
+    return SHELL_FALLBACK_SELECTOR;
+  }
 
   function shown(el){
     if(!el||el.hidden||el.closest('[hidden]'))return null;
@@ -1170,8 +1184,8 @@ ${H} .cr-sr{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflo
       const narrow=window.matchMedia&&window.matchMedia('(max-width:700px)').matches;
       const base=narrow?{left:geo.narrowLeft,top:o.height/2+geo.narrowTop}:{left:geo.left,top:geo.top};
       const obstacles=[];
-      for(const el of document.querySelectorAll(OBSTACLE_SELECTOR)){
-        if(host.contains(el))continue;
+      for(const el of document.querySelectorAll(obstacleSelector(log))){
+        if(host.contains(el)||NOT_OBSTACLES.some(selector=>el.matches(selector)))continue;
         const r=shown(el);
         if(r)obstacles.push(rel(r));
       }

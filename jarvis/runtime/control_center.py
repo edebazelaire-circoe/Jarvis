@@ -447,6 +447,12 @@ def _short(value: object) -> str | None:
 
 #: Logique pure du panneau Agents, gardée à part pour être exécutée par les
 #: tests (node) et insérée dans la page à la place de ce repère.
+#: Coque du Control Center (jarvis-board-orbital-ui-workspace-rail, Slice 01) :
+#: zones, jetons et `CONTROL_SELECTOR` partagés (`window.JarvisShell`), sans état.
+#: Inséré en premier : la scène et le rail de capture le lisent. Contrat :
+#: `docs/control-center-shell.md`.
+SHELL_SCRIPT_FILE = "control_center_shell.js"
+SHELL_SCRIPT_MARKER = "/*__CONTROL_CENTER_SHELL_JS__*/"
 WORK_SCRIPT_FILE = "control_center_work.js"
 WORK_SCRIPT_MARKER = "/*__CONTROL_CENTER_WORK_JS__*/"
 LIVE_SCRIPT_FILE = "control_center_live.js"
@@ -2298,6 +2304,9 @@ class ControlCenter:
         # insérée ici telle quelle, la page restant un document unique sans
         # ressource externe — aucun cache ne peut donc en servir une autre
         # version que celle du serveur.
+        html = html.replace(
+            SHELL_SCRIPT_MARKER, page.with_name(SHELL_SCRIPT_FILE).read_text(encoding="utf-8")
+        )
         html = html.replace(
             WORK_SCRIPT_MARKER, page.with_name(WORK_SCRIPT_FILE).read_text(encoding="utf-8")
         )

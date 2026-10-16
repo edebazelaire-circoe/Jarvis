@@ -9,71 +9,71 @@
 *{box-sizing:border-box}
 html,body{margin:0;height:100%;background:var(--bg);color:var(--text);font:15px ui-monospace,SFMono-Regular,Consolas,monospace;overflow:hidden;cursor:default}
 #app{position:relative;width:100%;height:100%}
-/* Registre d'empilement (Slice 05). Le visage (0) et le canevas Cosmos (0) sont
-   au fond ; la scène constellation (20, conteneur #sceneLayer créé par
-   control_center_scene_page.js seulement si scene.enabled) passe au-dessus ;
-   toute commande de la page reste au-dessus de la scène : barre du haut et
-   indication vocale 31, palette d'outils Bare Hands 30 (Slice 03 : juste
-   SOUS le contrôle de cycle de vie et son sélecteur, qu'elle jouxte sur le
-   bord gauche — le sélecteur s'ouvre par-dessus elle et ne doit jamais se
-   faire recouvrir par la colonne d'icônes qu'il masque le temps d'un choix),
-   rail de capture 30 (session-context-recording, Slice 10 : hôte frère de la
-   palette, sous elle ou à côté, au même rang qu'elle et pour la même raison),
-   dock 32, contrôle Bare Hands du haut-gauche 32 (même
-   rang que le dock : c'est une commande de page de la même classe, de l'autre
-   côté de l'écran) et son sélecteur de mode 36 (juste au-dessus du bandeau
-   GPT-Live, qu'un choix ouvert par l'utilisateur doit pouvoir recouvrir, et
-   sous les pastilles et les modales, qui le recouvrent),
-   contrôle de mode d'interaction du bas-gauche 32 et son sélecteur 36
-   (jarvis-presentation-interaction-mode, Slice 03 : les deux MÊMES rangs que le
-   contrôle Bare Hands, et pour les mêmes raisons — c'est une commande de page
-   de la même classe, et son sélecteur doit pouvoir recouvrir la bannière
-   GPT-Live le temps d'un choix. Les deux contrôles ne se recouvrent jamais :
-   Bare Hands et sa palette tiennent le HAUT du bord gauche, ce contrôle-ci le
-   BAS, et son sélecteur s'ouvre vers le haut depuis le bas de l'écran, pas vers
-   le bas depuis le haut), contrôle Boards du haut-droit (jarvis-board-session-
-   context-runtime, Slice 06) : son bouton `#boardsHud` vit DANS `.topbar`, donc
-   au rang 31 de la barre, et rend les événements de pointeur que la barre coupe
-   (`pointer-events:auto`) ; son panneau `#boardsPanel` 36, HORS de la barre —
-   la barre est un contexte d'empilement, le panneau y serait enfermé sous le
-   dock (32) —, au-dessus du bandeau GPT-Live (35) qu'un choix ouvert peut
-   recouvrir, sous les notifications et la confirmation en page (archivage,
-   nouvelle session) qui s'ouvrent par-dessus ; Cosmos : 51, au-dessus du dock
-   et des pastilles (50). Panneau 33, bandeau GPT-Live 35, pastilles
-   40, chronologie de conversation 55 (modale plein écran `.tl` ; les autres
-   vues plein écran du dock — Test Lab `.tlab`, inspecteur MCP `.mcpi`,
-   Sessions & Boards `.wsp`, bibliothèque des prefabs `.pfb` — au même rang :
-   une seule est ouverte à la fois),
-   fond des
-   réglages 60, notifications 70, liste des pastilles 75, menu
-   contextuel 80 — un seul `.ctxmenu` partagé : cartes d'agents, objets de la
-   scène et, depuis la Slice 02, les quatre actions rapides du contrôle Bare
-   Hands ; 80 est au-dessus du sélecteur de mode (36), donc le menu recouvre
-   bien le sélecteur qu'il remplace et non l'inverse —,
-   cartes rapides Bare Hands 82 (Slice 04 : Aide / Gestes et Diagnostic,
-   ouvertes **depuis** le menu contextuel, donc au-dessus de ses 80 — une carte
-   qui se ferait recouvrir par le menu qui l'a ouverte serait illisible — et en
-   dessous de la confirmation en page, qui doit pouvoir les recouvrir),
-   confirmation en page 85, Barehands 2147483000. Variantes (explorateur du
-   Studio) 9000, rail des présentations à côté 9100, son menu 9300 ; pendant
-   une présentation montrée dans Variantes, l'emplacement du contrôle de mode
-   d'interaction prend 9150 (`html.jvx-run`, feuille de l'explorateur,
-   native-studio-playback-fix Slice 09) : au-dessus de Variantes et du rail,
-   sous le menu du rail ; ce contexte d'empilement n'enferme alors rien que
-   ses propres bouton (32) et sélecteur (36), toujours dans cet ordre. Thème Cosmos :
-   panneau 42, barre 45, bandeau 48, dock et pastilles 50. Les couches de la
-   scène (0–1000) ne s'empilent qu'à l'intérieur de son conteneur ; les rangs
-   internes de la chronologie (`.tl-*`, 1–30) et de l'écran d'aiguillage (aucun :
-   un profil éteint se marque par `.routing-off` et par `disabled`, jamais par
-   une superposition) restent dans leur propre conteneur. L'ordre est vérifié
-   par `tests/unit/test_scene_renderer_logic.py`. */
+/* Coque du Control Center — contrat canonique : docs/control-center-shell.md
+   (zones, jetons, registre d'empilement, commandes mesurées par la scène,
+   règles d'accessibilité). Il remplace le registre qui vivait ici. Aucun
+   z-index ne s'écrit sans sa ligne au registre du document :
+   tests/unit/test_control_center_shell_layers.py lit les feuilles réelles
+   (cette page, le STYLE Cosmos de control_center_work.js, la feuille de chaque
+   module) et les compare au tableau. Les deux thèmes partagent la même
+   géométrie et les mêmes rangs ; un thème n'est qu'une peau. Miroir des rangs
+   (mêmes surfaces que le tableau « Page layers », vérifié par le même test) :
+   @shell-layer 0: .face, #cosmosFace
+   @shell-layer 20: #sceneLayer
+   @shell-layer 21: .board-drop::before
+   @shell-layer 30: #toolWheel, #barehandsPalette, #captureRail, #presentationRail
+   @shell-layer 31: .topbar, #voiceHint
+   @shell-layer 32: .dock, #chatTab, #barehandsHud, #interactionModeHud
+   @shell-layer 33: .panel
+   @shell-layer 34: .board-drop-card, #boardDropTray, #jvStudioInspector
+   @shell-layer 35: .live-banner
+   @shell-layer 36: #boardsPanel, .bh-hud-pop, .im-pop
+   @shell-layer 40: #bgPills
+   @shell-layer 55: .tl, .tlab, .mcpi, .wsp, .pfb
+   @shell-layer 60: .overlay
+   @shell-layer 70: .toasts
+   @shell-layer 75: .bgpop, #jvStudioReloadBand
+   @shell-layer 80: .ctxmenu
+   @shell-layer 82: #barehandsCards
+   @shell-layer 85: .cdialog-back
+   @shell-layer 9000: #jvStudioExplorer
+   @shell-layer 9100: html.jvr-studio #presentationRail
+   @shell-layer 9150: html.jvx-run #interactionModeHud
+   @shell-layer 9300: .jvr-menu
+   @shell-layer 9400: .jvr-dialog-back
+   @shell-layer 9500: #jvFullscreenPrompt
+   @shell-layer 2147482000: #jarvisFlow
+   @shell-layer 2147483000: #jarvisHands */
+/* Jetons de la coque (docs/control-center-shell.md › Tokens), définis une
+   seule fois ici ; miroir : JarvisShell.TOKENS (control_center_shell.js). */
+:root{--shell-gutter:18px;--shell-top-h:40px;--shell-bottom:18px;--shell-status-h:44px;--shell-control:34px;--shell-launcher-w:394px;--shell-panel-top:64px;--shell-panel-w:500px;--shell-panel-bottom:68px;--shell-rail-w:300px;--shell-anchor-w:14px;--shell-wheel-r:200px;--shell-wedge-min:48px;--shell-icon:20px;--shell-icon-sm:15px;--shell-radius:12px;--shell-glass-bg:rgba(5,11,16,.46);--shell-glass-strong:rgba(4,10,15,.80);--shell-stroke:rgba(174,205,220,.12);--shell-stroke-active:color-mix(in srgb,var(--accent) 46%,transparent);--shell-focus:var(--accent);--shell-focus-w:2px;--shell-focus-offset:2px;--sem-alert:#ff9f43;--sem-done:var(--ok);--sem-question:var(--accent);--sem-working:#4da3ff;--sem-review:#ffd166;--sem-problem:#ff6a4d;--shell-ease:cubic-bezier(.2,.7,.2,1);--shell-dur-fast:120ms;--shell-dur:180ms}
+@media(max-width:1099px){:root{--shell-rail-w:72px}}
+/* Étroit : le lanceur (10 boutons de 34 px) reste une rangée jusqu'à 620 px,
+   puis deux rangées de 5 ; panneaux et bandeau se reposent dessous. */
+@media(max-width:700px){:root{--shell-gutter:10px;--shell-panel-top:88px;--shell-rail-w:0px}}
+@media(max-width:620px){:root{--shell-launcher-w:194px;--shell-panel-top:126px}}
+@media(prefers-reduced-motion:reduce){:root{--shell-dur-fast:0ms;--shell-dur:0ms}}
+/* Anneau de focus des commandes de la coque, à spécificité nulle : un module
+   peut dessiner le sien, jamais le retirer. */
+:where([data-shell-control]) :where(button,a,input,select,textarea,[tabindex]):focus-visible,:where([data-shell-control]):focus-visible{outline:var(--shell-focus-w) solid var(--shell-focus);outline-offset:var(--shell-focus-offset)}
+@media(forced-colors:active){:where([data-shell-control]) :where(button){border-color:CanvasText}:where([data-shell-control]) :where(button,a,[tabindex]):focus-visible{outline-color:Highlight}}
 .face{position:absolute;inset:0;z-index:0;width:100%;height:100%;border:0;background:#000;pointer-events:none;cursor:default}
-.topbar{position:absolute;z-index:31;top:18px;left:18px;right:18px;display:flex;justify-content:space-between;align-items:center;pointer-events:none}
+/* Ligne d'état (zone haut-gauche) : elle s'arrête 10 px avant le lanceur — et
+   avant les pastilles quand elles sont là — sans jamais glisser dessous. Une seule
+   rangée au-dessus de 700 px : le Board et l'état s'abrègent plutôt que de passer
+   à la ligne sur la colonne du bord gauche (Bare Hands en haut à 76 px). En dessous,
+   la colonne passe au centre de l'écran : l'état peut aller à la ligne. */
+.topbar{position:absolute;z-index:31;top:var(--shell-gutter);left:var(--shell-gutter);right:calc(var(--shell-gutter) + var(--shell-launcher-w) + 10px);display:flex;justify-content:flex-start;flex-wrap:nowrap;row-gap:6px;align-items:center;pointer-events:none}
+/* La marque « JARVIS » ne fait pas partie de la ligne d'état de la coque (cible
+   approuvée : Board puis état) : masquée dans les deux thèmes, comme Cosmos le
+   faisait déjà. Elle prenait la place qui faisait passer l'état à la ligne, sur
+   la colonne Bare Hands, dès 1024 px au circuit imprimé. */
+.topbar>.brand{display:none}
 .brand,.state,.voicehint{background:rgba(3,8,12,.72);border:1px solid rgba(110,231,255,.18);backdrop-filter:blur(10px);padding:8px 12px;letter-spacing:.14em;text-transform:uppercase}
 .state{font-size:12px;color:var(--muted)}
 .state strong{color:var(--accent)}
-.voicehint{position:absolute;z-index:31;left:50%;bottom:22px;transform:translateX(-50%);font-size:12px;color:var(--accent);pointer-events:none;box-shadow:0 0 30px rgba(0,0,0,.35)}
-.live-banner{position:absolute;z-index:35;top:68px;left:50%;transform:translateX(-50%);width:min(720px,calc(100vw - 170px));display:grid;grid-template-columns:auto minmax(0,1fr) auto;gap:14px;align-items:center;padding:12px 14px;background:rgba(35,7,12,.94);border:2px solid var(--danger);border-radius:10px;box-shadow:0 0 32px rgba(255,101,119,.28);pointer-events:auto}
+.voicehint{position:absolute;z-index:31;left:50%;bottom:var(--shell-bottom);transform:translateX(-50%);font-size:12px;color:var(--accent);pointer-events:none;box-shadow:0 0 30px rgba(0,0,0,.35)}
+.live-banner{position:absolute;z-index:35;top:var(--shell-panel-top);left:50%;transform:translateX(-50%);width:min(680px,calc(100vw - 44px));display:grid;grid-template-columns:auto minmax(0,1fr) auto;gap:14px;align-items:center;padding:12px 14px;background:rgba(35,7,12,.94);border:2px solid var(--danger);border-radius:10px;box-shadow:0 0 32px rgba(255,101,119,.28);pointer-events:auto}
 .live-banner.uncertain{border-color:var(--warn);background:rgba(38,23,5,.96);box-shadow:0 0 32px rgba(255,184,92,.24)}
 .live-led{width:13px;height:13px;border-radius:50%;background:var(--danger);box-shadow:0 0 15px var(--danger);animation:pulse 1.2s ease-in-out infinite}
 .live-banner.uncertain .live-led{background:var(--warn);box-shadow:0 0 15px var(--warn)}
@@ -84,17 +84,27 @@ html,body{margin:0;height:100%;background:var(--bg);color:var(--text);font:15px 
 .live-stop{border:1px solid var(--danger);background:#26070c;color:#fff;padding:9px 13px;border-radius:7px;font:700 12px inherit;letter-spacing:.08em;cursor:pointer}.live-stop:hover{background:#3c0a12}.live-stop:disabled{opacity:.6;cursor:wait}
 /* Contrôle Boards (Slice 06) : emplacements et rangs ; l'apparence vient de
    `control_center_boards.js`. */
-#boardsHud{pointer-events:auto;margin-left:auto;margin-right:10px;min-width:0;max-width:min(340px,42vw);display:flex}
-#boardsHud~.state{flex-shrink:0;white-space:nowrap}
+#boardsHud{pointer-events:auto;margin-left:0;margin-right:10px;min-width:0;max-width:min(340px,42vw);display:flex}
+#boardsHud~.state{flex-shrink:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+/* Pastilles visibles (rangée à gauche du lanceur jusqu'à la Slice 06) : la ligne
+   d'état s'arrête avant elles (4 pastilles de 28 px, 3 écarts de 6 px, 10 px d'air). */
+@media(min-width:701px){#app:has(#bgPills:not([hidden])) .topbar{right:calc(var(--shell-gutter) + var(--shell-launcher-w) + 150px)}}
 #boardsPanel{position:absolute;z-index:36;top:62px;right:18px}
-html[data-jarvis-theme="cosmos"] #boardsPanel{z-index:51}
-.dock{position:absolute;z-index:32;right:18px;top:50%;transform:translateY(-50%);display:grid;gap:10px}
-.dock button{width:52px;height:52px;border:1px solid rgba(110,231,255,.26);background:rgba(3,8,12,.82);color:var(--text);border-radius:10px;cursor:pointer;font:12px inherit;backdrop-filter:blur(12px)}
+/* Lanceur global (zone haut-droit) : une rangée de boutons de 34 px dans les deux
+   thèmes ; le circuit imprimé y garde ses étiquettes (ERR, TRC…), Cosmos ses icônes. */
+.dock{position:absolute;z-index:32;right:var(--shell-gutter);top:var(--shell-gutter);display:flex;gap:6px}
+.dock button{width:var(--shell-control);height:var(--shell-control);padding:0;border:1px solid rgba(110,231,255,.26);background:rgba(3,8,12,.82);color:var(--text);border-radius:10px;cursor:pointer;font-family:inherit;font-size:10px;letter-spacing:.02em;backdrop-filter:blur(12px)}
 .dock button:hover,.dock button.active{border-color:var(--accent);color:var(--accent)}
 .badge{position:absolute;right:-5px;top:-5px;min-width:18px;height:18px;border-radius:9px;background:var(--danger);color:white;font-size:10px;display:none;align-items:center;justify-content:center}
 .tool{position:relative}
-.panel{position:absolute;z-index:33;top:18px;right:86px;bottom:18px;width:min(560px,calc(100% - 120px));background:var(--panel);border:1px solid var(--line);backdrop-filter:blur(18px);display:none;flex-direction:column;box-shadow:0 0 50px rgba(0,0,0,.45)}
+.panel{position:absolute;z-index:33;top:var(--shell-panel-top);right:var(--shell-gutter);bottom:var(--shell-panel-bottom);width:min(var(--shell-panel-w),calc(100% - 2 * var(--shell-gutter)));background:var(--panel);border:1px solid var(--line);backdrop-filter:blur(18px);display:none;flex-direction:column;box-shadow:0 0 50px rgba(0,0,0,.45)}
 .panel.open{display:flex}
+/* Étroit (700 px et moins, puis 620) : les mêmes zones dans les deux thèmes.
+   La ligne d'état lâche la marque, le Board et l'état s'abrègent ; panneau et bandeau
+   prennent la largeur sous le lanceur (`--shell-panel-top`) ; à 620 px le lanceur
+   passe sur deux rangées de 5 au lieu de recouvrir le bouton Boards. */
+@media(max-width:700px){.topbar{flex-wrap:wrap}#boardsHud{max-width:100%}.topbar>.state{max-width:100%;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.panel{left:var(--shell-gutter);right:var(--shell-gutter);width:auto}.live-banner{left:var(--shell-gutter);right:var(--shell-gutter);width:auto;transform:none}}
+@media(max-width:620px){.dock{flex-wrap:wrap;width:var(--shell-launcher-w);justify-content:flex-end}}
 .panel header{display:flex;justify-content:space-between;align-items:center;padding:15px 17px;border-bottom:1px solid var(--line)}
 .panel header h2{font-size:14px;margin:0;letter-spacing:.12em;text-transform:uppercase}
 .panel header button{background:none;color:var(--muted);border:0;font-size:20px;cursor:pointer}
@@ -275,10 +285,9 @@ pre.block{background:#050b10;border:1px solid rgba(113,144,160,.16);border-radiu
 .cdialog.danger button.go{border-color:rgba(255,101,119,.55);color:var(--danger)}
 .cdialog button.go:hover{background:rgba(110,231,255,.08)}.cdialog.danger button.go:hover{background:rgba(255,101,119,.1)}
 @media(prefers-reduced-motion:reduce){.cdialog{animation:none}}
-/* Pile à gauche de la colonne du dock (dock 52 px à right:18 + 16 px d’air) et au-dessus de la rangée de l’onglet Chat (18 + 40 + 10 px) ; étroite, elle laisse la colonne gauche
-   (Bare Hands, rail de capture : 146 px) : elle ne couvre ni le
-   dock (AGT), ni les pastilles, ni l'onglet Chat (handoff jarvis-unified-chat-and-board-drop, Slice 06). */
-.toasts{position:fixed;right:86px;bottom:68px;z-index:70;display:grid;gap:8px;width:clamp(220px,calc(100vw - 232px),340px);pointer-events:none}
+/* Pile en bas à droite, au-dessus de la rangée de l'onglet Chat (18 + 40 + 10 px) ;
+   étroite, elle laisse la colonne gauche (Bare Hands, rail de capture : 146 px). */
+.toasts{position:fixed;right:var(--shell-gutter);bottom:68px;z-index:70;display:grid;gap:8px;width:clamp(220px,calc(100vw - 164px),340px);pointer-events:none}
 .toast{pointer-events:auto;display:grid;grid-template-columns:auto minmax(0,1fr) auto;gap:10px;align-items:center;padding:10px 8px 10px 12px;background:rgba(6,13,19,.97);border:1px solid var(--line);border-left:2px solid var(--accent);border-radius:8px;box-shadow:0 14px 40px rgba(0,0,0,.55);animation:toastIn .18s ease-out;transition:opacity .2s,transform .2s}
 .toast.ok{border-left-color:var(--ok)}
 .toast.bad{border-left-color:var(--danger)}
@@ -295,26 +304,19 @@ pre.block{background:#050b10;border:1px solid rgba(113,144,160,.16);border-radiu
 /* Panneau ouvert : la pile passe à sa gauche, en bas, pour ne pas masquer le
    bas du panneau (dernières entrées de trace, envoi au brain). Plus étroit,
    la place manque à gauche : la pile reste à droite, comme panneau fermé. */
-@media(min-width:940px){#app:has(.panel.open)~.toasts{right:calc(98px + min(560px,100vw - 120px));width:min(340px,calc(100vw - 676px))}}
-/* 480 px de haut ou moins : le dock passe en lignes et le panneau recule à right:136px (règle plus bas) ; la pile
-   recule d'autant, sinon elle mord 38 px sur le panneau et cache l'indice « Entrée » (QA S06, 1024×480). */
-@media(min-width:940px) and (max-height:480px){#app:has(.panel.open)~.toasts{right:calc(148px + min(560px,100vw - 120px));width:min(340px,calc(100vw - 726px))}}
+@media(min-width:940px){#app:has(.panel.open)~.toasts{right:calc(var(--shell-gutter) + 12px + min(var(--shell-panel-w),100vw - 2 * var(--shell-gutter)));width:min(340px,calc(100vw - 548px))}}
 @media(prefers-reduced-motion:reduce){.adot.running,.acard.eph .adot.running,.toast{animation:none}.acard.eph{transition:none}}
 
 /* ---------- Chat (handoff jarvis-unified-chat-and-board-drop, Slice 06) ----------
    Contrat : `docs/chat.md` › *Panel*. Onglet fixe en bas à droite, dans la
-   colonne du dock (même largeur, même apparence), rang 32 comme le dock.
-   Pastilles d'arrière-plan visibles (colonne sous le dock, right:30px) :
-   l'onglet passe à leur gauche plutôt que de les recouvrir. Le panneau
+   zone bas-droit de la coque, rang 32 comme le lanceur. Le panneau
    réutilise `.panel` (rang 33, mêmes jetons) et la règle « un seul panneau
    latéral » : `openPanel`/`closePanel` le ferment, il ferme `#panel` et
    l'inspecteur du Studio en s'ouvrant. Logique : `control_center_chat.js`. */
-.chat-tab{position:absolute;z-index:32;right:18px;bottom:18px;width:52px;height:40px;padding:0;display:grid;place-items:center;border:1px solid rgba(110,231,255,.26);background:rgba(3,8,12,.82);color:var(--text);border-radius:10px;cursor:pointer;font:inherit;font-size:12px;letter-spacing:.06em;backdrop-filter:blur(12px);transition:border-color .15s,color .15s}
+.chat-tab{position:absolute;z-index:32;right:var(--shell-gutter);bottom:var(--shell-bottom);width:52px;height:40px;padding:0;display:grid;place-items:center;border:1px solid rgba(110,231,255,.26);background:rgba(3,8,12,.82);color:var(--text);border-radius:10px;cursor:pointer;font:inherit;font-size:12px;letter-spacing:.06em;backdrop-filter:blur(12px);transition:border-color .15s,color .15s}
 .chat-tab:hover,.chat-tab[aria-expanded=true]{border-color:var(--accent);color:var(--accent)}
 .chat-tab:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
-html:not([data-jarvis-theme="cosmos"]) #app:has(#bgPills:not([hidden])) .chat-tab{right:70px}
-/* Le panneau du Chat s'arrête au-dessus de l'onglet (18 + 40 + 10 px) : l'onglet reste entier et cliquable,
-   même décalé à gauche des pastilles. */
+/* Le panneau du Chat s'arrête au-dessus de l'onglet (18 + 40 + 10 px) : l'onglet reste entier et cliquable. */
 .panel.chat-panel{bottom:68px}
 /* L'indication F9 du bas-centre passerait sous le panneau, coupée au milieu d'un mot : masquée tant qu'il est ouvert. */
 #app:has(.chat-panel.open) .voicehint{visibility:hidden}
@@ -428,13 +430,14 @@ html:not([data-jarvis-theme="cosmos"]) #app:has(#bgPills:not([hidden])) .chat-ta
 @media(prefers-reduced-motion:reduce){.chat-file.indeterminate .chat-file-bar i,.chat-attnote.flash{animation:none}.chat-file-bar i{transition:none}}
 .chat-sr{position:absolute;width:1px;height:1px;margin:-1px;padding:0;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}
 @media(prefers-reduced-motion:reduce){.chat-panel.open,.chat-lock.flash,.chat-note .chat-dots i,.chat-feed[data-tone=busy] .chat-led{animation:none}.chat-note .chat-dots i{opacity:.8}.chat-tab,.chat-compose textarea{transition:none}}
-/* Cosmos : onglet aux formes du dock Cosmos ; le panneau (bas à 18 px dans ce
-   thème) s'arrête au-dessus de l'onglet. */
-html[data-jarvis-theme="cosmos"] .chat-tab{z-index:50;border-radius:12px;border-color:rgba(174,205,220,.12);background:rgba(5,11,16,.46);color:rgba(213,231,239,.75);backdrop-filter:blur(16px);box-shadow:0 8px 24px rgba(0,0,0,.18)}
+/* Cosmos : onglet aux formes du lanceur Cosmos (peau seulement). */
+html[data-jarvis-theme="cosmos"] .chat-tab{border-radius:12px;border-color:rgba(174,205,220,.12);background:rgba(5,11,16,.46);color:rgba(213,231,239,.75);backdrop-filter:blur(16px);box-shadow:0 8px 24px rgba(0,0,0,.18)}
 html[data-jarvis-theme="cosmos"] .chat-tab:hover,html[data-jarvis-theme="cosmos"] .chat-tab[aria-expanded=true]{color:var(--accent,#6ee7ff);border-color:color-mix(in srgb,var(--accent,#6ee7ff) 46%,transparent);background:rgba(10,19,26,.72)}
-html[data-jarvis-theme="cosmos"] .panel.chat-panel{bottom:68px}
-/* Cosmos : dock et pastilles en haut ; la pile reste au-dessus de l'onglet, sur la droite. */
-html[data-jarvis-theme="cosmos"] .toasts{right:18px;bottom:68px;width:min(340px,calc(100vw - 36px))}
+
+/* Hôte de la roue d'outils (zone bord-gauche, Slice 01) : déclaré vide et caché ;
+   la Slice 02 le remplit. Rang 30 au repos (registre). */
+#toolWheel{position:absolute;z-index:30;left:0;top:50%;transform:translateY(-50%);width:var(--shell-anchor-w)}
+#toolWheel[hidden]{display:none}
 
 /* ---------- Dépôt sur le Board affiché (unified-chat Slice 08, `control_center_board_drop.js`) ----------
    Calque sans rang propre (aucun contexte d'empilement) : son cadre en
@@ -475,24 +478,16 @@ html[data-jarvis-theme="cosmos"] .toasts{right:18px;bottom:68px;width:min(340px,
 .board-drop-item[data-status=failed] .board-drop-bar,.board-drop-item[data-status=cancelled] .board-drop-bar{display:none}
 @keyframes boardDropRun{from{transform:translateX(-100%)}to{transform:translateX(340%)}}
 @media(prefers-reduced-motion:reduce){.board-drop::before,.board-drop-item[data-status=uploading]::after{animation:none}}
-html[data-jarvis-theme="cosmos"] .board-drop-tray{z-index:49}
-/* Écran étroit : le bas appartient au mode d'interaction et aux colonnes gauche/droite ; le plateau monte sous la barre. */
-@media(max-width:760px){.board-drop-tray{top:96px;bottom:auto;width:calc(100vw - 180px);max-height:min(50vh,360px)}}
+/* Écran étroit : le bas appartient au mode d'interaction et aux colonnes gauche/droite ; le plateau monte sous le lanceur et les pastilles (`--shell-panel-top`). */
+@media(max-width:760px){.board-drop-tray{top:calc(var(--shell-panel-top) + 8px);bottom:auto;width:calc(100vw - 180px);max-height:min(50vh,360px)}}
 
 /* ---------- Pastilles d'arrière-plan (interface principale) ----------
-   Petits boutons ronds accolés au bouton Agents, hors de la barre d'outils :
-   une pastille par catégorie non vue. Dock de 9 outils (9×52 + 8×10 = 548 px,
-   centré, bas à 50% + 274 px) : la colonne commence 12 px sous le dernier
-   bouton. */
-.bgpills{position:absolute;z-index:40;right:30px;top:calc(50% + 317px);display:flex;flex-direction:column;gap:8px}
-/* Écran bas (moins de 640 px) : les 9 outils ne tiennent plus entre la barre du
-   haut et le bas de l'écran ; boutons de 44 px, écart de 6 px (9×44 + 8×6 =
-   444 px, bas à 50% + 222 px), pastilles 12 px dessous, toujours visibles. */
-@media(max-height:719px){.dock{gap:6px}.dock button{width:44px;height:44px}.bgpills{top:calc(50% + 261px)}}
-/* Dix outils depuis l'inspecteur du Studio (Slice 07) : 10 × 38 px + 9 × 6 px = 434 px, plus 12 px de marge, pour que les pastilles restent à l'écran à 520 px de haut. */
-@media(max-height:560px){.dock button{height:38px}.bgpills{top:calc(50% + 229px)}}
-/* Très bas (480 px et moins, paysage d'un téléphone) : deux colonnes de 5 (5 × 38 + 4 × 6 = 214 px de haut), jamais un outil hors de l'écran. */
-@media(max-height:480px){.dock{grid-auto-flow:column;grid-template-rows:repeat(5,auto)}.bgpills{top:calc(50% + 119px)}.panel{right:136px}}
+   Petits boutons ronds en rangée, juste à gauche du lanceur (même marge que la
+   ligne d'état), une pastille par catégorie non vue. Étroit : sous le lanceur.
+   Elles rejoignent le centre d'état du bas en Slice 06. */
+.bgpills{position:absolute;z-index:40;right:calc(var(--shell-gutter) + var(--shell-launcher-w) + 10px);top:calc(var(--shell-gutter) + 4px);display:flex;flex-direction:row-reverse;gap:6px}
+@media(max-width:700px){.bgpills{right:var(--shell-gutter);top:52px}}
+@media(max-width:620px){.bgpills{top:92px}}
 .bgpill{--pill:var(--accent);position:relative;width:28px;height:28px;padding:0;border-radius:50%;display:grid;place-items:center;border:1px solid var(--pill);background:rgba(3,8,12,.86);color:var(--pill);font:700 11px ui-monospace,SFMono-Regular,Consolas,monospace;cursor:pointer;backdrop-filter:blur(12px);box-shadow:0 0 12px color-mix(in srgb,var(--pill) 35%,transparent);transition:transform .15s,background-color .15s}
 .bgpill.bad{--pill:var(--danger)}.bgpill.warn{--pill:var(--warn)}.bgpill.ok{--pill:var(--ok)}
 .bgpill:hover,.bgpill.active{transform:scale(1.12);background:color-mix(in srgb,var(--pill) 18%,#03080c)}
@@ -635,13 +630,11 @@ details.rd[open]>summary{margin-bottom:14px}
   .keyform{grid-template-columns:1fr}
 }
 @media(max-width:700px){
-  .panel{left:12px;right:76px;top:12px;bottom:12px;width:auto}
-  .dock{right:10px}
-  .bgpills{right:22px}
-  .topbar{left:10px;right:74px}
-  .live-banner{top:62px;left:10px;right:74px;width:auto;transform:none;grid-template-columns:auto minmax(0,1fr)}
+  /* Géométrie de la coque à cette largeur : règle commune aux deux thèmes plus
+     haut (zones de docs/control-center-shell.md). Ici, seulement la mise en
+     page interne du bandeau GPT-Live. */
+  .live-banner{grid-template-columns:auto minmax(0,1fr)}
   .live-actions{grid-column:1/-1}.live-stop,.live-ack{width:100%}
-  .brand{display:none}
   .catalog-toolbar{grid-template-columns:1fr}
   .catalog-table-wrap{overflow:visible;border:0}
   .catalog-table thead{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0,0,0,0)}
@@ -1758,7 +1751,7 @@ button.wsp-ename:hover{color:var(--accent)}
 <body>
 <div id="app">
   <iframe class="face" src="__VISUALIZER_URL__" title="Jarvis visualizer"></iframe>
-  <div class="topbar"><div class="brand">JARVIS</div><div id="boardsHud"></div><div class="state">VOICE <strong id="voiceState">IDLE</strong> · <strong id="agentName">CLAUDE</strong> <strong id="agentState">STOPPED</strong><span id="subagentState" hidden> · <strong id="subagentCount">0</strong> <span id="subagentWord">SOUS-AGENTS</span></span></div></div>
+  <div class="topbar"><div class="brand">JARVIS</div><div id="boardsHud" data-shell-control></div><div class="state" data-shell-control>VOICE <strong id="voiceState">IDLE</strong> · <strong id="agentName">CLAUDE</strong> <strong id="agentState">STOPPED</strong><span id="subagentState" hidden> · <strong id="subagentCount">0</strong> <span id="subagentWord">SOUS-AGENTS</span></span></div></div>
   <!-- Emplacement du contrôle de cycle de vie Bare Hands : un contrôle autonome
        du haut-gauche, hors de `.dock` (qui reste à droite) et hors de `.topbar`
        (dont les événements de pointeur sont coupés). Il est **déclaré ici**, et
@@ -1766,7 +1759,7 @@ button.wsp-ename:hover{color:var(--accent)}
        registre ci-dessus avec tous les autres ; `control_center_barehands_hud.js`
        le remplit, et refuse de s'installer sous un nom cherchable s'il manque.
        C'est aussi le haut de la colonne où la palette d'outils viendra. -->
-  <div id="barehandsHud"></div>
+  <div id="barehandsHud" data-shell-control></div>
   <!-- Emplacement de la palette d'outils Bare Hands (Slice 03, décisions 11 à
        13) : une bande verticale **fixe** d'icônes sur le bord gauche, sous le
        contrôle ci-dessus — la main et ses outils voisinent. Déclaré ici pour
@@ -1775,7 +1768,7 @@ button.wsp-ename:hover{color:var(--accent)}
        rempli par `control_center_barehands_hud.js`, qui refuse de la dessiner
        sous un nom cherchable si cet emplacement manque — sans emporter le
        contrôle de cycle de vie, qui est le plus important des deux. -->
-  <div id="barehandsPalette"></div>
+  <div id="barehandsPalette" data-shell-control></div>
   <!-- Emplacement du rail de capture (session-context-recording, Slice 10,
        décisions D14/D15) : capture d'écran, enregistrement audio et
        enregistrement d'écran. Un hôte **frère** de la palette, pas un de ses
@@ -1785,7 +1778,12 @@ button.wsp-ename:hover{color:var(--accent)}
        de la colonne. Rang 30, celui de la palette, déclaré dans la feuille de
        son module. Rempli par `control_center_capture_rail.js`, qui refuse de se
        dessiner sous un nom cherchable si cet emplacement manque. -->
-  <div id="captureRail"></div>
+  <div id="captureRail" data-shell-control></div>
+  <!-- Hôte de la roue d'outils (jarvis-board-orbital-ui-workspace-rail,
+       Slice 01) : déclaré ici, vide et caché, pour que son rang (30) et sa
+       zone (bord gauche) soient fixés avant la Slice 02 qui le remplit.
+       Contrat : docs/control-center-shell.md. -->
+  <div id="toolWheel" data-shell-control hidden></div>
   <!-- Emplacement des deux cartes rapides Bare Hands (Slice 04, décisions 15
        et 16) : Aide / Gestes et Diagnostic, ouvertes depuis le menu du clic
        droit du contrôle ci-dessus. **Un seul** emplacement pour les deux, une
@@ -1815,7 +1813,7 @@ button.wsp-ename:hover{color:var(--accent)}
        dans Variantes, le contrôle reste vivant et dessiné au-dessus de
        Variantes — un « Refusé par la voix » et la sortie du mode restent
        visibles (`control_center_presentation_studio_explorer*.js`). -->
-  <div id="interactionModeHud" data-keep-live="run"></div>
+  <div id="interactionModeHud" data-keep-live="run" data-shell-control></div>
   <!-- Emplacements du contrôle Boards (jarvis-board-session-context-runtime,
        Slice 06). Le bouton `#boardsHud` est dans `.topbar` ci-dessus (titre du
        Board actif toujours visible, en haut à droite à côté de l'état) ; son
@@ -1824,7 +1822,7 @@ button.wsp-ename:hover{color:var(--accent)}
        Remplis par `control_center_boards.js`, qui refuse de s'installer sous
        un nom cherchable si l'un des deux manque. -->
   <div id="boardsPanel" hidden></div>
-  <section class="live-banner" id="liveBanner" role="status" aria-live="assertive" aria-label="État de la session GPT-Live" hidden>
+  <section class="live-banner" id="liveBanner" role="status" aria-live="assertive" aria-label="État de la session GPT-Live" data-shell-control hidden>
     <span class="live-led" aria-hidden="true"></span>
     <div class="live-main"><div class="live-title">GPT-LIVE <strong id="liveState">ACTIF</strong> · <span id="liveElapsed">00:00</span></div><div class="live-meta" id="liveMeta"></div></div>
     <div class="live-actions">
@@ -1835,8 +1833,8 @@ button.wsp-ename:hover{color:var(--accent)}
       <button class="live-ack" id="liveAck" type="button" hidden title="La session est terminée de votre côté : Core la clôt sans relevé d'usage final et la voix peut rouvrir.">CONSIDÉRER COMME FERMÉE</button>
     </div>
   </section>
-  <div class="voicehint" id="voiceHint">F9 · DÉMARRER</div>
-  <nav class="dock" aria-label="Jarvis tools">
+  <div class="voicehint" id="voiceHint" data-shell-control>F9 · DÉMARRER</div>
+  <nav class="dock" aria-label="Jarvis tools" data-shell-control>
     <div class="tool"><button data-panel="errors" title="Errors">ERR</button><span class="badge" id="errorBadge">0</span></div>
     <div class="tool"><button data-panel="trace" title="Trace">TRC</button></div>
     <div class="tool"><button id="openTestLab" title="Test Lab · diagnostics ciblés" aria-label="Test Lab · diagnostics ciblés" aria-haspopup="dialog" aria-expanded="false" aria-controls="testlab">LAB</button></div>
@@ -1848,14 +1846,14 @@ button.wsp-ename:hover{color:var(--accent)}
     <div class="tool"><button id="openStudioInspector" title="Inspecteur · réglages de la présentation" aria-label="Inspecteur · réglages de la présentation" aria-expanded="false" aria-controls="jvStudioInspector">INS</button></div>
     <div class="tool"><button data-panel="agents" id="agentsButton" title="Agents">AGT</button><span class="badge count" id="agentBadge">0</span></div>
   </nav>
-  <div class="bgpills" id="bgPills" role="group" aria-label="Notifications d’arrière-plan" hidden></div>
-  <section class="panel" id="panel"><header><h2 id="panelTitle">Panel</h2><button id="closePanel" aria-label="Fermer">×</button></header><div class="body" id="panelBody"></div></section>
+  <div class="bgpills" id="bgPills" data-shell-control role="group" aria-label="Notifications d’arrière-plan" hidden></div>
+  <section class="panel" id="panel" data-shell-control><header><h2 id="panelTitle">Panel</h2><button id="closePanel" aria-label="Fermer">×</button></header><div class="body" id="panelBody"></div></section>
   <!-- Chat (handoff jarvis-unified-chat-and-board-drop, Slice 06, `docs/chat.md` › Panel) :
        onglet bas-droit et panneau latéral. Rangs au registre du haut (onglet 32
        comme le dock, panneau 33 comme `.panel`). Tout le contenu des messages est
        posé par `control_center_chat.js` en `textContent`, jamais en HTML. -->
-  <button type="button" class="chat-tab" id="chatTab" aria-controls="chatPanel" aria-expanded="false" title="Chat · écrire à Jarvis" aria-label="Chat · écrire à Jarvis">CHAT</button>
-  <section class="panel chat-panel" id="chatPanel" aria-labelledby="chatTitle" hidden>
+  <button type="button" class="chat-tab" id="chatTab" data-shell-control aria-controls="chatPanel" aria-expanded="false" title="Chat · écrire à Jarvis" aria-label="Chat · écrire à Jarvis">CHAT</button>
+  <section class="panel chat-panel" id="chatPanel" data-shell-control aria-labelledby="chatTitle" hidden>
     <header><div class="chat-head"><h2 id="chatTitle">Chat</h2><span class="chat-sub" id="chatSub">Même conversation que la voix</span></div><button type="button" id="chatClose" aria-label="Fermer le chat (Échap)">×</button></header>
     <div class="chat-feed" id="chatFeed" role="status" data-tone="muted"><span class="chat-led" aria-hidden="true"></span><span class="chat-feedtxt" id="chatFeedText">Fermé</span><span class="chat-feedtime" id="chatFeedTime" aria-hidden="true"></span><button type="button" class="chat-link" id="chatTimeline">Voir la chronologie complète</button></div>
     <ol class="chat-log" id="chatLog" role="log" aria-live="polite" aria-relevant="additions" aria-label="Messages de la conversation" tabindex="0"></ol>
@@ -1874,7 +1872,7 @@ button.wsp-ename:hover{color:var(--accent)}
        calque de survol au-dessus de la scène (cadre rang 21, carte rang 34, aucun pointeur) et plateau des envois (rang 34).
        Remplis par `control_center_board_drop.js` en `textContent`. -->
   <div class="board-drop" id="boardDrop" aria-hidden="true" hidden><div class="board-drop-card"><strong id="boardDropTitle"></strong><span id="boardDropSub"></span></div></div>
-  <section class="board-drop-tray" id="boardDropTray" aria-label="Dépôts sur le Board" hidden><ul id="boardDropList" role="log" aria-live="polite" aria-label="Envois vers le Board"></ul></section>
+  <section class="board-drop-tray" id="boardDropTray" data-shell-control aria-label="Dépôts sur le Board" hidden><ul id="boardDropList" role="log" aria-live="polite" aria-label="Envois vers le Board"></ul></section>
 </div>
 <div class="ctxmenu" id="ctxMenu" role="menu" hidden></div>
 <div class="cdialog-back" id="confirmBack" hidden><div class="cdialog" id="confirmDialog" tabindex="-1" role="alertdialog" aria-modal="true" aria-labelledby="confirmTitle" aria-describedby="confirmBody"><h2 id="confirmTitle"></h2><ul id="confirmBody"></ul><div class="crow"><button type="button" id="confirmCancel">Annuler</button><button type="button" class="go" id="confirmGo">Confirmer</button></div></div></div>
@@ -2055,6 +2053,7 @@ button.wsp-ename:hover{color:var(--accent)}
 </div>
 
 <script>
+/*__CONTROL_CENTER_SHELL_JS__*/
 /*__CONTROL_CENTER_LIVE_JS__*/
 /*__CONTROL_CENTER_CATALOG_JS__*/
 /*__CONTROL_CENTER_SCENE_JS__*/

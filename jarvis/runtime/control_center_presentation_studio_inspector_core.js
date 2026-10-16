@@ -34,7 +34,7 @@
 
   /* ------------------------------------------------------------------ styles */
   const CSS=`
-#${PANEL_ID}{position:absolute;z-index:34;top:18px;right:86px;bottom:18px;width:min(420px,calc(100% - 120px));box-sizing:border-box;display:flex;flex-direction:column;
+#${PANEL_ID}{position:absolute;z-index:34;top:var(--shell-panel-top,64px);right:var(--shell-gutter,18px);bottom:var(--shell-panel-bottom,68px);width:min(420px,calc(100% - 2 * var(--shell-gutter,18px)));box-sizing:border-box;display:flex;flex-direction:column;
   background:var(--panel,rgba(6,12,18,.94));color:var(--text,#d8edf7);border:1px solid var(--line,#183343);border-radius:10px;overflow:hidden;
   backdrop-filter:blur(18px);-webkit-backdrop-filter:blur(18px);box-shadow:0 0 50px rgba(0,0,0,.45);font:13px/1.45 system-ui,sans-serif;container-type:inline-size}
 #${PANEL_ID}[hidden]{display:none}
@@ -152,8 +152,8 @@
 @keyframes jviSpin{to{transform:rotate(360deg)}}
 @media (prefers-reduced-motion:reduce){#${PANEL_ID} .jvi-spin{animation:none;border-top-color:var(--accent,#6ee7ff);border-style:dotted}
   #${PANEL_ID} .jvi-switch,#${PANEL_ID} .jvi-switch::after,#${PANEL_ID} .jvi-range::-webkit-slider-thumb,#${PANEL_ID} .jvi-icon{transition:none}}
-@media (max-width:700px){#${PANEL_ID}{left:12px;right:76px;top:12px;bottom:12px;width:auto}}
-@media (max-height:480px){#${PANEL_ID}{right:136px}}
+/* Étroit : la zone des panneaux latéraux de la coque (docs/control-center-shell.md), sous le lanceur. */
+@media (max-width:700px){#${PANEL_ID}{left:var(--shell-gutter,10px);right:var(--shell-gutter,10px);width:auto}}
 /* Écran bas (700 px et moins) : l'aperçu ouvert reste compact et sa note disparaît, la liste de réglages garde de la place. */
 @media (max-height:700px){#${PANEL_ID} .jvi-slot{max-height:150px}#${PANEL_ID} .jvi-stagenote{display:none}#${PANEL_ID} .jvi-pick{padding-top:8px}}
 @container (max-width:320px){#${PANEL_ID} .jvi-num{flex-basis:70px;width:70px}#${PANEL_ID} .jvi-hex{flex-basis:84px;width:84px}}

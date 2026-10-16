@@ -3148,7 +3148,9 @@ clipped and counted in "N objets hors champ".
 parity test). It is the part of the frame no control covers at 1280 × 720, the
 smallest supported 16:9 size (4 px per unit), in both themes. Measured there: top
 bar bottom y −76.5 (circuit brand and state; Cosmos state pill −78.5, Cosmos dock
-−77); circuit dock left edge x 142.5; voice hint top y 76.5; status chips top y 79
+−77); circuit dock left edge x 142.5 (before Slice 01 of the orbital UI; since
+then both themes share the Cosmos geometry, launcher row at −77, see
+[control-center-shell.md](control-center-shell.md)); voice hint top y 76.5; status chips top y 79
 (one row) or 71 (two rows). The margins are 12–18 px. Larger windows give the
 controls fewer units; a window that is not 16:9 but narrower than 1280 px, the
 GPT-Live banner (a transient alert) and the Barehands badge (test mode) can
@@ -3168,28 +3170,12 @@ y -70 ; bas droite : x + w ≤ 138, y + h ≤ 68"). Browser check: a brain windo
 (−150, −70, 60 × 36) overlaps no control at 1920 × 1080, 1366 × 768 and
 1280 × 720 in both themes (corner and title hit tests return the window).
 
-**Stacking registry.** Theme-independent. The scene container is its own
-stacking context, so scene layers (0–1000) never escape it.
-
-| Element | z-index (circuit-board) | z-index (Cosmos) |
-| --- | --- | --- |
-| `.face` iframe / `#cosmosFace` canvas | 0 | 0 |
-| `#sceneLayer.scene` | **20** | **20** |
-| `.topbar` / `.voicehint` | 31 / 31 | 45 / 31 |
-| `#boardsHud` (Boards button, inside `.topbar`, `pointer-events:auto`; board-session Slice 06) | 31 (the bar's) | 45 (the bar's) |
-| `.dock` | 32 | 50 |
-| `.panel` | 33 | 42 |
-| `.live-banner` | 35 | 48 |
-| `#boardsPanel` (Boards panel, outside the bar; board-session Slice 06) | 36 | 51 |
-| `.bgpills` | 40 | 50 |
-| `.tl` (conversation timeline, full-screen modal) | 55 | 55 |
-| `.tlab`, `.mcpi`, `.wsp` (Test Lab, MCP inspector, Sessions & Boards: the other full-screen dock views, one open at a time) | 55 | 55 |
-| `.overlay` (settings) | 60 | 60 |
-| `.toasts` | 70 | 70 |
-| `.bgpop` | 75 | 75 |
-| `.ctxmenu` | 80 | 80 |
-| `.cdialog-back` (confirmation, Slice 08) | 85 | 85 |
-| `#jarvisHands` (Barehands) | 2147483000 | 2147483000 |
+**Stacking registry.** Moved to [control-center-shell.md](control-center-shell.md)
+› *Layer registry* (handoff jarvis-board-orbital-ui-workspace-rail, Slice 01):
+one table for every `z-index` of the page, the Cosmos theme and the module
+sheets, the same ranks in both themes, compared to the real stylesheets by
+`tests/unit/test_control_center_shell_layers.py`. The scene container (rank 20)
+is its own stacking context, so scene layers (0–1000) never escape it.
 
 The conversation timeline (`#timeline`, main's conversation-observability
 Slice 05) is a full-screen modal above every control and the scene; toasts,
@@ -3210,8 +3196,9 @@ container, the SVG is at 0 and each node at
 below 2³¹; ties follow Core order, which is DOM order); the status indicator
 sits above all nodes. A hovered or focused point is raised so its label stays
 readable; the status chips and the live region sit above all nodes.
-`tests/unit/test_scene_renderer_logic.py` checks the registry against the CSS of
-the three files.
+`tests/unit/test_control_center_shell_layers.py` checks the registry against the
+CSS of every sheet; `tests/unit/test_scene_renderer_logic.py` keeps the scene's
+own relations.
 
 **View model and visual grammar.** `viewModel(state, layout, viewport)` returns
 the visible nodes in Core order (hidden objects are neither drawn, nor placed,

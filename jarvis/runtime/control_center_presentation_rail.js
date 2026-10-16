@@ -224,6 +224,8 @@ html.jvr-studio.jvr-slim #${DOM.hostId}{width:44px}
       if(ui.host)return ui.host;
       if(!doc.getElementById(DOM.styleId)){const style=el('style');style.id=DOM.styleId;style.textContent=CSS;(doc.head||doc.documentElement).appendChild(style)}
       const host=doc.getElementById(DOM.hostId)||(()=>{const n=el('div');n.id=DOM.hostId;doc.body.appendChild(n);return n})();
+      /* Une commande de la coque : la scène la mesure (docs/control-center-shell.md › Controls). */
+      host.setAttribute('data-shell-control','');
       host.hidden=true;host.setAttribute('role','navigation');host.setAttribute('aria-label','Présentations');host.setAttribute('data-keep-live','true');
       const head=el('div','jvr-head');
       ui.title=el('span','jvr-title','Présentations');

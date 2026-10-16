@@ -980,7 +980,11 @@ async def test_the_page_serves_the_pointer_before_the_hud_that_subscribes_to_it(
     # L'emplacement est déclaré dans la page : c'est lui qui porte le rang
     # d'empilement du registre, et le module refuse de s'installer sans lui.
     assert 'id="barehandsHud"' in raw
-    assert "contrôle Bare Hands du haut-gauche 32" in raw, "le registre d'empilement le nomme"
+    # Le registre d'empilement le nomme : docs/control-center-shell.md depuis la
+    # Slice 01 de l'orbital UI, avec un miroir en tête de page.
+    registry = (ROOT / "docs" / "control-center-shell.md").read_text(encoding="utf-8")
+    assert "| 32 | `#barehandsHud` | `control_center_barehands_hud.js` | `#${DOM.hostId} .bh-hud-btn` |" in registry
+    assert "@shell-layer 32: .dock, #chatTab, #barehandsHud" in raw, "le registre d'empilement le nomme"
     # Le contrôle n'entre pas dans le dock : le dock reste six boutons de texte.
     dock = raw[raw.index('<nav class="dock"'):raw.index("</nav>")]
     assert "barehandsHud" not in dock
@@ -1387,7 +1391,9 @@ def test_the_page_lets_the_control_take_the_menu_it_does_not_build(tmp_path):
     assert "JarvisBarehandsHud" not in served[served.index('class="ctxmenu"'):
                                              served.index('class="ctxmenu"') + 400]
     # Les rangs : le menu (80) au-dessus du sélecteur de mode (36).
-    assert "menu\n   contextuel 80" in raw or "menu contextuel 80" in raw
+    registry = (ROOT / "docs" / "control-center-shell.md").read_text(encoding="utf-8")
+    assert "| 80 | `.ctxmenu` | `control_center.html` | `.ctxmenu` | the one shared context menu, above the choosers it replaces |" in registry
+    assert "@shell-layer 80: .ctxmenu" in raw
     assert ".ctxmenu{position:fixed;z-index:80" in raw
     assert "z-index:36" in served, "le sélecteur de mode garde son rang"
 

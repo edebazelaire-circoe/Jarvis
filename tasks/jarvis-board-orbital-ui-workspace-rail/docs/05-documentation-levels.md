@@ -10,8 +10,8 @@ The PM must re-evaluate these levels against current HEAD before dispatch. The l
 | Bare Hands lifecycle | L3 | L3 | Preserve |
 | Bare Hands tool presentation | L2/L3 implementation-specific | L3 for new wheel contract | Establish wheel contract before migration |
 | Mouse/Bare Hands arbitration | L0/L1 for this exact policy | L3 | New contract + pure tests + runtime validation |
-| Control Center shell/layout | L1/L2 spread across CSS/comments | L3 for new shell | Create/extend canonical UI contract and layer map |
-| Z-index/layer registry | L2/L3 in code/tests | L3 | Rewrite deliberately and keep tests authoritative |
+| Control Center shell/layout | **L3 (S01)**: `docs/control-center-shell.md` (zones, tokens, a11y rules), `control_center_shell.js` (`JarvisShell`), conformance `tests/unit/test_control_center_shell_layers.py` | L3 for new shell | Done in S01; later slices update the doc, the sheet and the mirror in the same commit |
+| Z-index/layer registry | **L3 (S01)**: single table in `docs/control-center-shell.md`, compared to every real sheet (page, Cosmos, modules); same ranks in both themes | L3 | Done in S01; reserved ranks 37/38/40/60 for S02/S05/S06 |
 | Background notifications UI | L1/L2 | L3 | Separate category model from rendering; document semantics |
 | Hidden-object visibility | L2/L3 in scene interaction | L3 | Preserve canonical owner; add eye control contract |
 | Presentation rail | L2/L3 implementation | L3 | Document new right-rail behavior and retained actions |

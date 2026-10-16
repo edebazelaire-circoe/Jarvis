@@ -157,13 +157,11 @@ html[data-jarvis-theme="cosmos"] .face{display:none!important}
 html[data-jarvis-theme="cosmos"] #app{background:
   radial-gradient(circle at 50% 48%,rgba(27,50,72,.18),transparent 34%),
   linear-gradient(180deg,#05090d 0%,#030609 100%)}
-/* La barre du haut (bouton Boards + état vocal) s'arrête avant le dock
-   (10 outils : 10×34 + 9×6 = 394 px depuis right:18px, + 10 px d'air) et passe
-   à la ligne plutôt que de glisser dessous (QA board-session 06/07, point 6). */
-html[data-jarvis-theme="cosmos"] .topbar{left:18px;right:422px;top:18px;z-index:45;
-  justify-content:flex-start;flex-wrap:wrap;row-gap:6px}
-html[data-jarvis-theme="cosmos"] #boardsHud{margin-left:0}
-html[data-jarvis-theme="cosmos"] .brand{display:none}
+/* Peau seulement (docs/control-center-shell.md › One geometry, two skins) :
+   la place et le rang de chaque surface de la coque sont ceux de la page, les
+   mêmes dans les deux thèmes. Ici : couleurs, bordures, rayons, flou, icônes.
+   tests/unit/test_control_center_shell_layers.py refuse toute position ou tout
+   rang posé ici sur une surface de la coque. */
 html[data-jarvis-theme="cosmos"] .state{
   border:1px solid color-mix(in srgb,var(--accent,#6ee7ff) 24%,transparent);
   border-radius:999px;background:rgba(3,8,12,.46);backdrop-filter:blur(16px);
@@ -171,38 +169,31 @@ html[data-jarvis-theme="cosmos"] .state{
   box-shadow:0 8px 30px rgba(0,0,0,.2)}
 html[data-jarvis-theme="cosmos"] .state strong{color:var(--accent,#6ee7ff)}
 html[data-jarvis-theme="cosmos"] .voicehint{
-  bottom:18px;border:0;border-radius:999px;background:rgba(3,8,12,.42);
+  border:0;border-radius:999px;background:rgba(3,8,12,.42);
   color:rgba(210,229,238,.58);font-size:10px;padding:7px 11px;
   letter-spacing:.11em;backdrop-filter:blur(14px);box-shadow:none}
-html[data-jarvis-theme="cosmos"] .dock{
-  right:18px;top:18px;transform:none;display:flex;gap:6px;z-index:50}
 html[data-jarvis-theme="cosmos"] .dock .tool{display:block}
 html[data-jarvis-theme="cosmos"] .dock button{
-  width:34px;height:34px;border-radius:10px;padding:0;display:grid;place-items:center;
-  border:1px solid rgba(174,205,220,.12);background:rgba(5,11,16,.46);
+  border-radius:10px;display:grid;place-items:center;
+  border:1px solid var(--shell-stroke,rgba(174,205,220,.12));background:var(--shell-glass-bg,rgba(5,11,16,.46));
   color:rgba(213,231,239,.65);backdrop-filter:blur(16px);
-  box-shadow:0 8px 24px rgba(0,0,0,.18);transition:.18s ease}
-html[data-jarvis-theme="cosmos"] .dock button svg{width:15px;height:15px;display:block}
+  box-shadow:0 8px 24px rgba(0,0,0,.18);transition:var(--shell-dur,.18s) var(--shell-ease,ease)}
+html[data-jarvis-theme="cosmos"] .dock button svg{width:var(--shell-icon-sm,15px);height:var(--shell-icon-sm,15px);display:block}
 html[data-jarvis-theme="cosmos"] .dock button:hover,
 html[data-jarvis-theme="cosmos"] .dock button.active{
-  color:var(--accent,#6ee7ff);border-color:color-mix(in srgb,var(--accent,#6ee7ff) 46%,transparent);
+  color:var(--accent,#6ee7ff);border-color:var(--shell-stroke-active,color-mix(in srgb,var(--accent,#6ee7ff) 46%,transparent));
   background:rgba(10,19,26,.72);transform:translateY(-1px)}
 html[data-jarvis-theme="cosmos"] .dock .badge{right:-4px;top:-4px;transform:scale(.82)}
-/* Pastilles d'arrière-plan : en ligne, juste à gauche du bouton Agents (premier
-   des 9 outils : 9×34 + 8×6 = 354 px depuis right:18px). */
-html[data-jarvis-theme="cosmos"] .bgpills{top:22px;right:422px;flex-direction:row-reverse;gap:6px;z-index:50}
 html[data-jarvis-theme="cosmos"] .bgpill{width:26px;height:26px;font-size:10px;background:rgba(5,11,16,.56);backdrop-filter:blur(16px)}
 html[data-jarvis-theme="cosmos"] .bgpop{border-radius:14px;background:rgba(4,10,15,.92);backdrop-filter:blur(26px)}
 html[data-jarvis-theme="cosmos"] .panel{
-  top:64px;right:18px;bottom:18px;width:min(500px,calc(100% - 36px));
   border:1px solid rgba(151,191,209,.14);border-radius:16px;
-  background:rgba(4,10,15,.80);backdrop-filter:blur(26px);
-  box-shadow:0 24px 80px rgba(0,0,0,.50);overflow:hidden;z-index:42}
+  background:var(--shell-glass-strong,rgba(4,10,15,.80));backdrop-filter:blur(26px);
+  box-shadow:0 24px 80px rgba(0,0,0,.50);overflow:hidden}
 html[data-jarvis-theme="cosmos"] .panel header{border-bottom-color:rgba(151,191,209,.12)}
 html[data-jarvis-theme="cosmos"] .panel header h2{font-size:12px;letter-spacing:.1em}
 html[data-jarvis-theme="cosmos"] .live-banner{
-  top:66px;width:min(680px,calc(100vw - 44px));border-width:1px;border-radius:14px;
-  backdrop-filter:blur(18px);z-index:48}
+  border-width:1px;border-radius:14px;backdrop-filter:blur(18px)}
 html[data-jarvis-theme="cosmos"] .overlay{backdrop-filter:blur(9px)}
 html[data-jarvis-theme="cosmos"] .modal{
   border:1px solid rgba(151,191,209,.15);border-radius:18px;
@@ -223,26 +214,6 @@ html[data-jarvis-theme="cosmos"] .choice.theme-choice.selected{
   border-radius:50%;left:50%;top:50%;transform:translate(-50%,-50%);box-shadow:0 0 18px rgba(67,170,255,.28)}
 .theme-preview.cosmos::after{content:'';position:absolute;width:12px;height:12px;border-radius:50%;
   left:50%;top:50%;transform:translate(-50%,-50%);background:#43aaff;box-shadow:0 0 16px #43aaff}
-@media(max-width:700px){
-  html[data-jarvis-theme="cosmos"] .dock{right:10px;top:10px}
-  /* Étroit : les pastilles passent sous la barre d'outils, l'état vocal reste lisible. */
-  html[data-jarvis-theme="cosmos"] .bgpills{right:10px;top:52px}
-  /* 10 outils sur une rangée : 394 px depuis right:10px + 10 px d'air = 414 px (la barre du haut garde au moins 60 px de bouton Boards au-delà de 620 px). */
-  html[data-jarvis-theme="cosmos"] .topbar{left:10px;top:10px;right:414px}
-  html[data-jarvis-theme="cosmos"] #boardsHud{max-width:100%}
-  html[data-jarvis-theme="cosmos"] .state{max-width:100%;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-  html[data-jarvis-theme="cosmos"] .panel{left:10px;right:10px;top:88px;bottom:10px;width:auto}
-  html[data-jarvis-theme="cosmos"] .live-banner{top:88px;left:10px;right:10px;width:auto;transform:none}
-}
-/* Étroit (620 px et moins) : la rangée de 10 outils passe sur DEUX rangées de 5 (5×34 + 4×6 = 194 px de large, 2×34 + 6 = 74 px de haut)
-   au lieu de déborder à gauche et de recouvrir le bouton Boards ; la barre du haut, les pastilles et les panneaux se reposent dessous. */
-@media(max-width:620px){
-  html[data-jarvis-theme="cosmos"] .dock{flex-wrap:wrap;width:194px;justify-content:flex-end}
-  html[data-jarvis-theme="cosmos"] .topbar{right:214px}
-  html[data-jarvis-theme="cosmos"] .bgpills{top:92px}
-  html[data-jarvis-theme="cosmos"] .panel{top:126px}
-  html[data-jarvis-theme="cosmos"] .live-banner{top:126px}
-}
 @media(prefers-reduced-motion:reduce){
   html[data-jarvis-theme="cosmos"] .dock button{transition:none}
 }`;
