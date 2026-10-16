@@ -29,6 +29,10 @@
    « masqué », il ne se montre que sur demande du cerveau. Pendant le Studio (Variantes, fenêtré) il se range en colonne à DROITE de
    l'explorateur (miroir de l'ancien rangement à gauche), hors de la zone rendue inerte : la voix et le rail restent utilisables.
 
+   Étape B (adaptateur pur `control_center_workspace_rail_model.js`, séparable) : sous les présentations, une section « Sur ce Board » montre les
+   Artifacts liés au Board actif (fichiers déposés, liens, captures, enregistrements, rendus) en cartes du même dessin, état sans jaune ; le
+   clic ouvre l'image dans l'aperçu des captures quand il existe (Slice 05), sinon le détail de l'Artifact dans l'inspecteur (`JarvisWorkspace`).
+
    Tout texte d'auteur (titre) passe par `textContent`. Chaque échec est journalisé (`[presentation-rail] <clé> {json}`) et dit à l'écran. */
 (function(root){
   'use strict';
@@ -45,6 +49,10 @@
   const STATE_LABEL=Object.freeze({working:'Un agent travaille dessus',problem:'Un problème est survenu',unreviewed:'Modifiée par Jarvis, à revoir',
     done:'Terminé',unknown:'État inconnu'});
   const STATE_SHORT=Object.freeze({working:'En cours',problem:'Problème',unreviewed:'À revoir',done:'Prête',unknown:'État inconnu'});
+  /* Étape B : état d'un Artifact du Board (pas de jaune : aucun propriétaire canonique de « revu »). */
+  const ITEM_STATE=Object.freeze({working:{state:'working',short:'En cours',label:'En cours d’acquisition'},ready:{state:'done',short:'Prêt',label:'Prêt'},
+    problem:{state:'problem',short:'Problème',label:'Acquisition en échec ou partielle'},unknown:{state:'unknown',short:'État inconnu',label:'État inconnu'}});
+  const WORKSPACE_REFRESH_MS=10000;
   const STATE_COLOR=Object.freeze({working:'var(--sem-working,#4da3ff)',problem:'var(--sem-problem,#ff6a4d)',unreviewed:'var(--sem-review,#ffd166)',
     done:'var(--sem-done,#68e0a0)',unknown:'transparent'});
   const ENGINE_LABEL=Object.freeze({remotion:'Remotion',slidecar:'Slidecar'});
@@ -152,7 +160,15 @@
   }
 
   /* Pictogramme de la vignette typée (une présentation : un écran sur pied), dessiné, pas une image de diapositive. */
-  const GLYPH=Object.freeze([['rect',{x:'3',y:'4',width:'18',height:'12',rx:'1.5'}],['path',{d:'M12 16v4M8 20h8M7 12l3-3 2 2 3-4 2 2'}]]);
+  /* Pictogrammes des vignettes typées, par famille (`WorkspaceRailItem.media_type`) ; une présentation : un écran sur pied. */
+  const GLYPHS=Object.freeze({
+    presentation:[['rect',{x:'3',y:'4',width:'18',height:'12',rx:'1.5'}],['path',{d:'M12 16v4M8 20h8M7 12l3-3 2 2 3-4 2 2'}]],
+    video:[['rect',{x:'3',y:'5',width:'18',height:'14',rx:'2'}],['path',{d:'M10 9l5 3-5 3z'}]],
+    document:[['path',{d:'M7 3h7l4 4v14H7z'}],['path',{d:'M14 3v4h4M9.5 12h6M9.5 15h6M9.5 18h4'}]],
+    link:[['path',{d:'M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7l-1 1'}],['path',{d:'M14 10a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1-1'}]],
+    image:[['rect',{x:'3',y:'4',width:'18',height:'16',rx:'2'}],['path',{d:'M3 16l5-5 4 4 3-3 6 6'}],['circle',{cx:'16',cy:'8.5',r:'1.5'}]]});
+  const GLYPH_OF=Object.freeze({video:'video',audio:'video',pdf:'document',word:'document',excel:'document',table:'document',text:'document',archive:'document',
+    file:'document',powerpoint:'presentation',google_slides:'presentation',google_docs:'document',google_sheets:'document',image:'image'});
 
   const CSS=`
 #${DOM.hostId}{--jvr-ink:var(--text,#d8edf7);--jvr-mute:var(--muted,#7190a0);--jvr-line:var(--shell-stroke,rgba(174,205,220,.12));--jvr-bg:var(--shell-glass-strong,rgba(4,10,15,.8));--jvr-hot:var(--shell-stroke-active,rgba(110,231,255,.4));
@@ -205,6 +221,11 @@
 #${DOM.hostId} .jvr-fold{display:flex;align-items:center;gap:6px;padding:6px 6px 2px;color:var(--jvr-mute);font:600 10px/1.2 ui-monospace,SFMono-Regular,Consolas,monospace;letter-spacing:.1em;text-transform:uppercase;text-align:left;width:100%;border-top:1px solid var(--jvr-line);margin-top:2px}
 #${DOM.hostId} .jvr-fold:hover{color:var(--jvr-ink)}
 #${DOM.hostId} .jvr-fold + .jvr-list{margin-top:6px}
+#${DOM.hostId} .jvr-ws{display:flex;flex-direction:column;min-height:0;flex:0 1 auto;max-height:42vh}
+#${DOM.hostId} .jvr-ws>.jvr-list{overflow:auto;min-height:0}
+#${DOM.hostId} .jvr-ws:empty{display:none}
+#${DOM.hostId} .jvr-ws .jvr-empty[data-kind=failed]{color:var(--sem-alert,#ff9f43)}
+#${DOM.hostId} .jvr-ws .jvr-thumb{--h:200}
 #${DOM.hostId} .jvr-empty,#${DOM.hostId} .jvr-note{padding:6px;color:var(--jvr-mute);font-size:11.5px;line-height:1.4}
 #${DOM.hostId} .jvr-note[data-kind=failed]{color:var(--sem-alert,#ff9f43)}
 #${DOM.hostId} .jvr-peek{position:absolute;right:calc(100% + 8px);top:0;width:220px;padding:8px 10px;border-radius:9px;background:var(--panel,rgba(6,12,18,.96));border:1px solid var(--jvr-hot);box-shadow:0 10px 30px rgba(0,0,0,.45);
@@ -223,7 +244,7 @@
 #${DOM.hostId}[data-density=compact] .jvr-name{font-size:12px;-webkit-line-clamp:1}
 #${DOM.hostId}[data-density=drawer]{width:auto;max-width:calc(100vw - 2 * var(--shell-gutter,10px));padding:6px 8px}
 #${DOM.hostId}[data-density=drawer][data-drawer=open]{width:min(300px,calc(100vw - 2 * var(--shell-gutter,10px)));padding:10px 8px 8px}
-#${DOM.hostId}[data-density=drawer]:not([data-drawer=open]) .jvr-list,#${DOM.hostId}[data-density=drawer]:not([data-drawer=open]) .jvr-folds,#${DOM.hostId}[data-density=drawer]:not([data-drawer=open]) .jvr-note{display:none}
+#${DOM.hostId}[data-density=drawer]:not([data-drawer=open]) .jvr-list,#${DOM.hostId}[data-density=drawer]:not([data-drawer=open]) .jvr-folds,#${DOM.hostId}[data-density=drawer]:not([data-drawer=open]) .jvr-ws,#${DOM.hostId}[data-density=drawer]:not([data-drawer=open]) .jvr-note{display:none}
 #${DOM.hostId}[data-density=drawer]:not([data-drawer=open]) .jvr-urgent{display:block}
 html.jvr-studio #${DOM.hostId}{z-index:9100;top:8px;right:8px;left:auto;bottom:8px;max-height:none;width:${STUDIO_WIDTH_PX-16}px;background:rgba(3,8,12,.92)}
 html.jvr-studio #${DOM.hostId} .jvr-list{flex:1 1 auto}
@@ -258,21 +279,25 @@ html.jvr-studio.jvr-slim #${DOM.hostId}{width:44px;padding:8px 4px}
     const cancelLater=d.clearTimeout||(id=>clearTimeout(id));
     const now=d.now||(()=>Date.now());
     const sink=d.console||root.console;
-    const S={coreOk:false,rows:[],loaded:false,lost:false,pref:'auto',collapsed:false,drawer:false,density:'full',boardKind:null,mode:null,voice:'idle',foldHidden:false,foldArchived:false,
+    const S={coreOk:false,rows:[],loaded:false,lost:false,pref:'auto',collapsed:false,drawer:false,density:'full',boardKind:null,boardId:null,mode:null,voice:'idle',foldHidden:false,foldArchived:false,foldWorkspace:false,
       lastSeq:null,firstPoll:true,studioOpen:false,notice:null,busy:new Set(),playing:null,selected:null,menuRow:null,dialog:null,lastReport:'',lastReportAt:0};
     const ui={};
     let pollTimer=null,reportTimer=null,noticeTimer=null,polling=false,destroyed=false,failures=0;
     const brokenPreviews=new Set();
+    /* Étape B : la source des Artifacts du Board actif (adaptateur pur, injecté ou lu sur la page). Absente : le rail reste celui des présentations. */
+    const wsModel=d.workspaceModel||root.JarvisWorkspaceRailModel||null;
+    const ws=wsModel&&typeof wsModel.createSource==='function'?wsModel.createSource({fetch:fetchImpl,onChange:()=>{if(ui.host)render()},log:(key,data,level)=>log(key,data,level)}):null;
 
     function storage(){try{return d.storage||root.localStorage||null}catch(_e){return null /* intentional: blocked storage only costs the remembered layout */}}
     function load(){
       try{const raw=storage()&&storage().getItem(STORAGE_KEY);if(!raw)return;const v=JSON.parse(raw);
         if(v&&(v.pref==='auto'||v.pref==='shown'||v.pref==='hidden'))S.pref=v.pref;
         if(v&&typeof v.collapsed==='boolean')S.collapsed=v.collapsed;
-        if(v&&typeof v.foldHidden==='boolean')S.foldHidden=v.foldHidden;if(v&&typeof v.foldArchived==='boolean')S.foldArchived=v.foldArchived}
+        if(v&&typeof v.foldHidden==='boolean')S.foldHidden=v.foldHidden;if(v&&typeof v.foldArchived==='boolean')S.foldArchived=v.foldArchived;
+        if(v&&typeof v.foldWorkspace==='boolean')S.foldWorkspace=v.foldWorkspace}
       catch(_e){/* intentional: corrupt remembered layout -> defaults */}
     }
-    function save(){try{if(storage())storage().setItem(STORAGE_KEY,JSON.stringify({pref:S.pref,collapsed:S.collapsed,foldHidden:S.foldHidden,foldArchived:S.foldArchived}))}catch(_e){/* intentional */}}
+    function save(){try{if(storage())storage().setItem(STORAGE_KEY,JSON.stringify({pref:S.pref,collapsed:S.collapsed,foldHidden:S.foldHidden,foldArchived:S.foldArchived,foldWorkspace:S.foldWorkspace}))}catch(_e){/* intentional */}}
     function log(key,data,level){
       const line=`[presentation-rail] ${key} ${JSON.stringify(data||{})}`;
       try{if(sink){if(level==='error')sink.error(line);else if(level==='warn')sink.warn(line);else sink.info(line)}}catch(_e){/* intentional */}
@@ -341,7 +366,8 @@ html.jvr-studio.jvr-slim #${DOM.hostId}{width:44px;padding:8px 4px}
       /* Bande de vignettes : le titre et l'état d'une carte s'affichent à côté d'elle au survol et au focus (une seule bulle, hors de la liste
          qui défile, pour ne pas être rognée). */
       ui.peek=el('div','jvr-peek');ui.peek.hidden=true;ui.peek.setAttribute('aria-hidden','true');
-      host.append(head,ui.list,ui.folds,ui.note,ui.peek);
+      ui.ws=el('div','jvr-ws');ui.ws.setAttribute('role','group');ui.ws.setAttribute('aria-label','Sur ce Board');
+      host.append(head,ui.list,ui.ws,ui.folds,ui.note,ui.peek);
       const peekOn=event=>{const item=event.target&&event.target.closest&&event.target.closest('.jvr-item');if(item&&S.density==='slim')showPeek(item);else hidePeek()};
       host.addEventListener('focusin',peekOn);host.addEventListener('mouseover',peekOn);
       host.addEventListener('focusout',()=>hidePeek());host.addEventListener('mouseleave',()=>hidePeek());
@@ -402,19 +428,20 @@ html.jvr-studio.jvr-slim #${DOM.hostId}{width:44px;padding:8px 4px}
         thumb.append(img,el('span','jvr-badge',card.type.badge));
       }else{
         thumb.dataset.kind='placeholder';
-        thumb.append(glyph(),el('span','jvr-ph',card.type.badge),el('span','jvr-badge',card.type.badge));
+        thumb.append(glyph('presentation'),el('span','jvr-ph',card.type.badge),el('span','jvr-badge',card.type.badge));
       }
       return thumb;
     }
-    function glyph(){
+    function glyph(kind){
       const NS='http://www.w3.org/2000/svg',svg=doc.createElementNS(NS,'svg');
       for(const [k,v] of [['viewBox','0 0 24 24'],['width','22'],['height','22'],['fill','none'],['stroke','currentColor'],['stroke-width','1.6'],['stroke-linecap','round'],['stroke-linejoin','round'],['aria-hidden','true']])svg.setAttribute(k,v);
-      for(const [tag,attrs] of GLYPH){const n=doc.createElementNS(NS,tag);for(const [k,v] of Object.entries(attrs))n.setAttribute(k,v);svg.appendChild(n)}
+      for(const [tag,attrs] of GLYPHS[kind]||GLYPHS.presentation){const n=doc.createElementNS(NS,tag);for(const [k,v] of Object.entries(attrs))n.setAttribute(k,v);svg.appendChild(n)}
       return svg;
     }
     function showPeek(item){
-      const row=rowOf(item.dataset.id);if(!row||!ui.peek)return;
-      const card=cardOf(row,now());
+      const wsItem=item.dataset.ws?wsItemOf(item.dataset.id):null;
+      const row=wsItem?null:rowOf(item.dataset.id);if((!row&&!wsItem)||!ui.peek)return;
+      const card=wsItem?wsCardOf(wsItem):cardOf(row,now());
       clear(ui.peek);
       const status=el('span','jvr-status');status.style.setProperty('--c',card.color);
       const dot=el('span','jvr-dot');status.append(dot,el('span','jvr-state',card.stateShort));
@@ -423,6 +450,102 @@ html.jvr-studio.jvr-slim #${DOM.hostId}{width:44px;padding:8px 4px}
       ui.peek.style.top=`${Math.round(r.top-h.top+r.height/2)}px`;ui.peek.hidden=false;
     }
     function hidePeek(){if(ui.peek&&!ui.peek.hidden){ui.peek.hidden=true;clear(ui.peek)}}
+    /* ------------------------------------------------------------ étape B : Artifacts du Board actif */
+    const wsItemOf=id=>ws?ws.view().items.find(i=>i.id===id)||null:null;
+    function wsCardOf(item){
+      const st=ITEM_STATE[item.activity_state]||ITEM_STATE.unknown;
+      const when=ago(item.updated_at,now());
+      return {title:item.title,short:cleanLine(item.title,TITLE_SHORT),state:st.state,stateShort:st.short,stateLabel:st.label,color:STATE_COLOR[st.state],
+        meta:item.type.badge,when,type:{badge:item.type.badge,label:item.type.badge}};
+    }
+    function wsThumb(item,card){
+      const thumb=el('span','jvr-thumb');thumb.setAttribute('aria-hidden','true');
+      if(item.preview.kind==='image'&&!brokenPreviews.has(item.id)){
+        thumb.dataset.kind='image';
+        const img=el('img');img.alt='';img.loading='lazy';img.decoding='async';img.draggable=false;
+        img.addEventListener('error',()=>{
+          if(brokenPreviews.has(item.id))return;
+          brokenPreviews.add(item.id);
+          log('preview_failed',{artifact_id:item.id,kind:item.artifact_kind},'warn');
+          thumb.replaceWith(wsThumb({...item,preview:{kind:'placeholder',label:card.type.badge}},card));
+        },{once:true});
+        img.src=item.preview.url;
+        thumb.append(img,el('span','jvr-badge',card.type.badge));
+      }else{
+        thumb.dataset.kind='placeholder';
+        thumb.dataset.media=item.media_type;
+        thumb.append(glyph(GLYPH_OF[item.media_type]||(item.artifact_kind==='link'?'link':'document')),el('span','jvr-ph',card.type.badge),el('span','jvr-badge',card.type.badge));
+      }
+      return thumb;
+    }
+    function wsCardFor(item){
+      const card=wsCardOf(item);
+      const li=el('li','jvr-card');li.setAttribute('role','none');
+      const b=el('button','jvr-item');b.type='button';b.setAttribute('role','option');b.dataset.id=item.id;b.dataset.ws=item.artifact_kind;
+      b.dataset.state=card.state;b.style.setProperty('--c',card.color);b.setAttribute('aria-selected','false');
+      b.append(wsThumb(item,card));
+      const body=el('span','jvr-body');
+      const name=el('span','jvr-name',card.short);name.setAttribute('dir','auto');
+      const status=el('span','jvr-status');const dot=el('span','jvr-dot');dot.setAttribute('aria-hidden','true');
+      status.append(dot,el('span','jvr-state',card.stateShort));
+      if(card.when)status.append(el('span','jvr-when',`· ${card.when}`));
+      body.append(name,el('span','jvr-meta',card.meta),status);b.append(body);
+      b.title=`${card.title}\n${card.meta}\n${card.stateLabel}${card.when?`\nAjouté ${card.when}`:''}`;
+      b.setAttribute('aria-label',`${card.title}, ${card.meta} : ${card.stateLabel.toLowerCase()}`);
+      b.addEventListener('click',()=>openWsItem(item,'click'));
+      b.addEventListener('contextmenu',e=>{e.preventDefault();openWsMenu(item,b,e.clientX,e.clientY)});
+      const more=el('button','jvr-more','⋯');more.type='button';more.tabIndex=-1;more.setAttribute('aria-label',`Actions : ${card.title}`);more.title='Actions';
+      more.addEventListener('click',e=>{e.stopPropagation();openWsMenu(item,b)});
+      li.append(b,more);return li;
+    }
+    function renderWorkspace(){
+      clear(ui.ws);
+      if(!ws)return;
+      const v=ws.view();
+      if(!v.boardId||(v.status==='ready'&&!v.items.length)||v.status==='idle')return;
+      ui.ws.appendChild(foldButton('Sur ce Board',v.items.length,!S.foldWorkspace,()=>{S.foldWorkspace=!S.foldWorkspace;save();render()}));
+      if(S.foldWorkspace)return;
+      if(v.status==='loading'){ui.ws.appendChild(el('div','jvr-empty','Chargement des éléments du Board…'));return}
+      if(v.status==='failed'&&!v.items.length){const n=el('div','jvr-empty',`Éléments du Board indisponibles : ${v.error||'raison inconnue'}`);n.dataset.kind='failed';ui.ws.appendChild(n);return}
+      const ul=el('ul','jvr-list');ul.setAttribute('role','listbox');ul.setAttribute('aria-label','Éléments liés au Board');
+      for(const item of v.items)ul.appendChild(wsCardFor(item));
+      ui.ws.appendChild(ul);
+    }
+    /* Clic : une image s'ouvre dans l'aperçu des captures (Slice 05) s'il est chargé ; sinon, et pour tout le reste, le détail de l'Artifact dans
+       l'inspecteur. Un lien n'est jamais ouvert de lui-même (le menu le propose). */
+    function openWsItem(item,via){
+      const preview=root.JarvisScreenshotPreview;
+      if(item.primary_action==='lightbox'&&preview&&typeof preview.openLightbox==='function'){
+        try{preview.openLightbox({artifact_id:item.id,url:item.preview.url,title:item.title});log('workspace_item_opened',{artifact_id:item.id,via,surface:'lightbox'});return true}
+        catch(error){log('workspace_item_open_failed',{artifact_id:item.id,surface:'lightbox',error:cleanLine(error&&error.message,120)},'error')}
+      }
+      const W=root.JarvisWorkspace;
+      if(!W||typeof W.open!=='function'||typeof W.act!=='function'){say('failed','L’inspecteur des espaces de travail n’est pas chargé dans cette page.');return false}
+      try{
+        W.open();
+        Promise.resolve(W.act('artifact-show',{id:item.id})).catch(error=>{
+          log('workspace_item_open_failed',{artifact_id:item.id,surface:'detail',error:cleanLine(error&&error.message,120)},'error');
+          say('failed',`Détail indisponible : ${cleanLine(error&&error.message,100)}`)});
+        log('workspace_item_opened',{artifact_id:item.id,via,surface:'detail'});
+        return true;
+      }catch(error){
+        log('workspace_item_open_failed',{artifact_id:item.id,surface:'detail',error:cleanLine(error&&error.message,120)},'error');
+        say('failed',`Détail indisponible : ${cleanLine(error&&error.message,100)}`);return false;
+      }
+    }
+    function openWsMenu(item,origin,x,y){
+      const items=[{act:'ws-open',label:item.primary_action==='lightbox'?'Ouvrir l’image':'Ouvrir le détail'}];
+      if(item.primary_action==='lightbox')items.push({act:'ws-detail',label:'Ouvrir le détail'});
+      if(item.url)items.push({act:'ws-link',label:'Ouvrir le lien dans un onglet'});
+      openMenu(item.title,items,origin,x,y,act=>{
+        if(act==='ws-open')openWsItem(item,'menu');
+        else if(act==='ws-detail')openWsItem({...item,primary_action:'detail'},'menu');
+        else if(act==='ws-link'){
+          try{const w=win.open(item.url,'_blank','noopener,noreferrer');log('workspace_link_opened',{artifact_id:item.id,opened:!!w});if(!w)say('failed','Le navigateur a bloqué l’ouverture de l’onglet.')}
+          catch(error){log('workspace_link_failed',{artifact_id:item.id,error:cleanLine(error&&error.message,120)},'error');say('failed',`Lien : ${cleanLine(error&&error.message,100)}`)}
+        }
+      });
+    }
     function foldButton(label,count,open,onToggle){
       const b=el('button','jvr-fold');b.type='button';b.setAttribute('aria-expanded',String(open));
       b.append(el('span','',open?'▾':'▸'),el('span','',`${label} (${count})`));
@@ -468,6 +591,7 @@ html.jvr-studio.jvr-slim #${DOM.hostId}{width:44px;padding:8px 4px}
         ui.archivedFold.appendChild(foldButton('Archivées',m.archived.length,S.foldArchived,()=>{S.foldArchived=!S.foldArchived;save();render()}));
         if(S.foldArchived){const ul=el('ul','jvr-list');for(const row of m.archived)ul.appendChild(itemFor(row,{dim:true}));ui.archivedFold.appendChild(ul)}
       }
+      renderWorkspace();
       const note=S.lost?{kind:'failed',text:'Rail injoignable : l’état affiché n’est plus confirmé.'}:S.notice;
       ui.note.hidden=!note;ui.note.textContent=note?note.text:'';ui.note.dataset.kind=note?note.kind:'';
       ui.note.title=note&&!S.lost?'Cliquer pour masquer ce message':'';
@@ -646,12 +770,16 @@ html.jvr-studio.jvr-slim #${DOM.hostId}{width:44px;padding:8px 4px}
 
     /* ------------------------------------------------------------ menu contextuel et boîtes (propres au rail : elles doivent passer AU-DESSUS du Studio) */
     function openMenuFor(row,origin,x,y){
+      const items=menuModel(row,{playing:runActive(),playingThis:playingId()===row.presentation_id});
+      openMenu(row.title,items,origin,x,y,act=>run(act,row.presentation_id),row);
+    }
+    /* Le menu du rail (présentations et, étape B, éléments du Board) : en-tête, entrées, une note dit pourquoi une entrée est indisponible. */
+    function openMenu(title,items,origin,x,y,onPick,row){
       closeMenu(false);
       const rect=origin.getBoundingClientRect();
-      const items=menuModel(row,{playing:runActive(),playingThis:playingId()===row.presentation_id});
-      S.menuRow={row,origin};
+      S.menuRow={row:row||null,origin};
       clear(ui.menu);
-      const head=el('div','jvr-mhead',cleanLine(row.title,40));ui.menu.appendChild(head);
+      const head=el('div','jvr-mhead',cleanLine(title,40));ui.menu.appendChild(head);
       for(const it of items){
         if(it==='-'){ui.menu.appendChild(el('div','jvr-sep'));continue}
         const b=el('button','',it.label);b.type='button';b.setAttribute('role','menuitem');b.dataset.act=it.act;
@@ -659,7 +787,8 @@ html.jvr-studio.jvr-slim #${DOM.hostId}{width:44px;padding:8px 4px}
         if(it.note){b.setAttribute('aria-disabled','true');b.title=it.note}
         b.addEventListener('click',()=>{
           if(it.note){say('info',it.note);return}
-          const target=S.menuRow&&S.menuRow.row;closeMenu(true);if(target)run(it.act,target.presentation_id);
+          if(!S.menuRow)return;
+          closeMenu(true);onPick(it.act);
         });
         ui.menu.appendChild(b);
       }
@@ -690,7 +819,7 @@ html.jvr-studio.jvr-slim #${DOM.hostId}{width:44px;padding:8px 4px}
       const all=Array.from(ui.host.querySelectorAll('.jvr-item')),i=all.indexOf(item),row=rowOf(item.dataset.id);
       if(event.key==='ArrowDown'&&i<all.length-1){event.preventDefault();all[i+1].focus()}
       else if(event.key==='ArrowUp'&&i>0){event.preventDefault();all[i-1].focus()}
-      else if(event.key==='ContextMenu'||(event.key==='F10'&&event.shiftKey)){event.preventDefault();if(row)openMenuFor(row,item)}
+      else if(event.key==='ContextMenu'||(event.key==='F10'&&event.shiftKey)){event.preventDefault();if(row)openMenuFor(row,item);else if(item.dataset.ws){const w=wsItemOf(item.dataset.id);if(w)openWsMenu(w,item)}}
       else if(event.key==='F2'&&row&&!row.archived){event.preventDefault();run('rename',row.presentation_id)}
       else if(event.key==='Delete'&&row&&!row.archived){event.preventDefault();run('archive',row.presentation_id)}
     }
@@ -747,7 +876,14 @@ html.jvr-studio.jvr-slim #${DOM.hostId}{width:44px;padding:8px 4px}
     function schedule(){
       if(destroyed)return;
       if(pollTimer)cancelLater(pollTimer);
-      pollTimer=later(async()=>{pollTimer=null;if(S.coreOk)await refresh();schedule()},interval());
+      pollTimer=later(async()=>{pollTimer=null;if(S.coreOk){await refresh();refreshWorkspace(false)}schedule()},interval());
+    }
+    /* Étape B : le Board actif vient du statut 1 Hz ; un changement vide et relit, sinon une relecture au plus toutes les 10 s, rail visible. */
+    function refreshWorkspace(force){
+      if(!ws||!S.coreOk)return;
+      if(ws.view().boardId!==S.boardId){ws.setBoard(S.boardId);return}
+      if(!S.boardId||!ui.host||ui.host.hidden)return;
+      if(force||now()-ws.loadedAt>=WORKSPACE_REFRESH_MS)ws.refresh();
     }
     function start(){
       load();build();render();
@@ -765,6 +901,7 @@ html.jvr-studio.jvr-slim #${DOM.hostId}{width:44px;padding:8px 4px}
     function gate(status){
       const s=status||{};
       const kind=s.boards&&s.boards.active&&s.boards.active.board_kind||null;
+      const boardId=s.boards&&s.boards.active&&typeof s.boards.active.board_id==='string'?s.boards.active.board_id:null;
       const mode=s.interaction_mode&&s.interaction_mode.mode||null;
       const voice=s.voice_online===false?'hors ligne':String(s.voice_state||'idle');
       const coreOk=!!(s.boards&&s.boards.available===true);
@@ -772,7 +909,9 @@ html.jvr-studio.jvr-slim #${DOM.hostId}{width:44px;padding:8px 4px}
       S.coreOk=coreOk;
       if(coreOk&&!wasOk)refresh().then(()=>render());
       if(!coreOk&&wasOk&&S.loaded){S.lost=true}
-      if(kind===S.boardKind&&mode===S.mode&&voice===S.voice&&coreOk===wasOk)return;
+      const boardChanged=boardId!==S.boardId;S.boardId=boardId;
+      if(boardChanged||(coreOk&&!wasOk))refreshWorkspace(true);
+      if(kind===S.boardKind&&mode===S.mode&&voice===S.voice&&coreOk===wasOk&&!boardChanged)return;
       S.boardKind=kind;S.mode=mode;S.voice=voice;render();
     }
     function setPref(value){if(value==='auto'||value==='shown'||value==='hidden'){S.pref=value;save();render();return true}return false}
@@ -781,7 +920,7 @@ html.jvr-studio.jvr-slim #${DOM.hostId}{width:44px;padding:8px 4px}
     return {start,stop,refresh,render,gate,setPref,cyclePref,run,openMenuFor,closeMenu,
       state:()=>({pref:S.pref,collapsed:S.collapsed,density:S.density,drawer:S.drawer,loaded:S.loaded,lost:S.lost,visible:!!(ui.host&&!ui.host.hidden),rows:S.rows.length,
         studioOpen:S.studioOpen,menuOpen:!!S.menuRow,dialogOpen:!!S.dialog,notice:S.notice}),
-      model,host:()=>ui.host,rows:()=>S.rows.slice(),setStudio:on=>{S.studioOpen=!!on;render()}};
+      model,host:()=>ui.host,rows:()=>S.rows.slice(),workspace:()=>ws?ws.view():null,setStudio:on=>{S.studioOpen=!!on;render()}};
   }
 
   const API=Object.freeze({DOM,ROUTE,STATE_ROUTE,STATE_LABEL,STATE_SHORT,STATE_COLOR,CSS,cleanLine,monogram,hueOf,stateOf,displayState,typeOf,ago,previewOf,cardOf,
@@ -793,7 +932,7 @@ html.jvr-studio.jvr-slim #${DOM.hostId}{width:44px;padding:8px 4px}
   function installRail(){
     const rail=createRail({document,window,toast:typeof toast==='function'?toast:null});
     root.JarvisPresentationRail=Object.freeze({gate:rail.gate,refresh:rail.refresh,state:rail.state,setPref:rail.setPref,cyclePref:rail.cyclePref,run:rail.run,
-      model:rail.model,render:rail.render});
+      model:rail.model,render:rail.render,workspace:rail.workspace});
     /* Pas de bouton au dock (sa géométrie est comptée pour dix outils, y compris celle du thème Cosmos) : Alt+Maj+P fait tourner automatique / toujours visible / masqué. */
     document.addEventListener('keydown',event=>{
       if(!(event.altKey&&event.shiftKey&&!event.ctrlKey&&!event.metaKey&&(event.key==='P'||event.key==='p')))return;

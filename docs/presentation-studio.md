@@ -4445,8 +4445,20 @@ readable work state is `unknown` (dashed ring, « État inconnu »), never green
 **Card.** Preview (or placeholder) with the engine badge, title (40 characters, two lines; full title in the tooltip), `engine · N variantes`, dot + label + « il y a … »
 (from `updated_at`), and a « ⋯ » button that opens the same context menu as a right click.
 
-**Limits.** Stage B (Board-linked uploads, links, screenshots in the same rail) is a separate adapter; the rail never renders a still itself; the yellow says « the brain
-finished work you have not opened from the rail since », not « the content differs ».
+**Stage B: « Sur ce Board ».** Under the presentations, the rail lists the Artifacts linked to the active Board (`upload`, `link`, `screenshot`,
+`screen_recording`, `presentation_still` / `_video` / `_pdf`) read from `GET /api/workspace/artifacts?board_id=<active Board>` (relay of `/v1/workspace/artifacts`,
+24 newest). The pure adapter `jarvis/runtime/control_center_workspace_rail_model.js` (`window.JarvisWorkspaceRailModel`) turns each into a `WorkspaceRailItem`
+(view, never stored): type badge by kind, `mime_type` (PowerPoint, Word, Excel, PDF, Image, Vidéo…) or link host (`docs.google.com/presentation` -> Google Slides, Docs,
+Sheets, Drive, YouTube, Figma, GitHub, Notion; else the host name; the URL is never loaded), image preview only for a `complete` screenshot / image upload / still render
+through the payload route, typed placeholder otherwise; state `pending` « En cours », `complete` « Prêt », `failed` / `partial` « Problème », other « État inconnu »,
+**no yellow** (no canonical review owner). The active Board comes from the page's 1 Hz status: a Board switch empties the section at once and re-reads; a late answer for
+the previous Board is dropped (no leakage). Re-read at most every 10 s while the rail is visible. Click: an image opens in the screenshot preview when its module is
+loaded (`JarvisScreenshotPreview.openLightbox`, Slice 05 seam), otherwise — and for every other item — the Artifact detail in the workspace inspector
+(`JarvisWorkspace.act('artifact-show')`); a link opens in a tab only from the menu. A failing read says « Éléments du Board indisponibles » with the real cause and is
+journalled (`workspace_items_failed`). Conformance: `tests/unit/test_workspace_rail_model_js.py`, `test_control_center_presentation_rail_browser.py`, and the e2e test
+(a real still linked to the active Board shows there through the real relay).
+
+**Limits.** The rail never renders a still itself; the yellow says « the brain finished work you have not opened from the rail since », not « the content differs ».
 
 ## Agent and voice operations (Level 3, Slice 21)
 

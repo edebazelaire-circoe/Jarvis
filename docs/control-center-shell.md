@@ -319,6 +319,10 @@ review); `unreviewed` « À revoir » `--sem-review`; `done` « Prête »
 `--sem-done`; `unknown` « État inconnu », dashed hollow ring. Precedence
 working > problem > unreviewed > done.
 
+**Stage B.** A second listbox « Sur ce Board » under the presentations shows the Artifacts linked to the active Board in the same cards
+(adapter `control_center_workspace_rail_model.js`, contract in `docs/presentation-studio.md` › *Active workspace rail*); it scrolls on its own
+(at most 42 vh) and hides in the closed tab.
+
 **Focus.** The list is one listbox (arrows, `ContextMenu` / `Shift+F10`, `F2`,
 `Delete`); the « ⋯ » button is a pointer and Bare Hands affordance with
 `tabindex=-1`. The list is rebuilt on every Core read and the focused card

@@ -29,7 +29,7 @@ const FAKE=`(()=>{
   /* What Core sends since Slice 07 (D10): type, preview (none here), unreviewed (none here). */
   rows.forEach(r=>{r.type={engine:r.engine};r.preview=null;r.unreviewed=null});
   if(location.hash==='#calm')rows.forEach(r=>{r.work={state:'done',label:'',age_s:null}});
-  const STILL='jart_'+'a'.repeat(32),STILL2='jart_'+'b'.repeat(32);
+  const STILL='jart_'+'a'.repeat(32),STILL2='jart_'+'b'.repeat(32),SHOT='jart_'+'c'.repeat(32);
   if(location.hash==='#cards'){
     /* Every state at once: working + preview, unreviewed + preview, problem, done (Slidecar, no render), unknown (no work state). */
     rows[0].preview={artifact_id:STILL,kind:'presentation_still',width:1280,height:720};
@@ -40,7 +40,14 @@ const FAKE=`(()=>{
   }
   const slide=(a,b,title)=>'<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="720" viewBox="0 0 1280 720"><defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="'+a+'"/><stop offset="1" stop-color="'+b+'"/></linearGradient></defs><rect width="1280" height="720" fill="url(#g)"/><text x="96" y="380" font-family="Segoe UI,sans-serif" font-size="120" font-weight="700" fill="#fff">'+title+'</text><rect x="96" y="430" width="420" height="16" rx="8" fill="#ffffff88"/></svg>';
   const rail=window.__rail={rows,calls:[],reports:[],ui:{seq:0,request:null,reported:null},down:false,refuse:null,playing:null,commands:[],payloads:[],
-    previews:{[STILL]:slide('#1d2b64','#f8cdda','JARVIS'),[STILL2]:slide('#0f2027','#2c5364','Bilan')}};
+    previews:{[STILL]:slide('#1d2b64','#f8cdda','JARVIS'),[STILL2]:slide('#0f2027','#2c5364','Bilan'),[SHOT]:slide('#134e5e','#71b280','Capture')},boardArtifacts:{}};
+  /* Stage B: the Board-linked artifacts the workspace route returns, per Board (only with #cards; empty Boards otherwise). */
+  if(location.hash==='#cards')rail.boardArtifacts.b=[
+    {artifact_id:SHOT,kind:'screenshot',state:'complete',mime_type:'image/png',has_payload:true,created_at:'2026-10-16T08:00:00Z'},
+    {artifact_id:'jart_'+'d'.repeat(32),kind:'upload',state:'complete',mime_type:'application/vnd.openxmlformats-officedocument.presentationml.presentation',preview:'Roadmap Q4.pptx',has_payload:true,created_at:'2026-10-15T08:00:00Z'},
+    {artifact_id:'jart_'+'e'.repeat(32),kind:'link',state:'complete',preview:'https://docs.google.com/presentation/d/abc/edit',has_payload:false,created_at:'2026-10-14T08:00:00Z'},
+    {artifact_id:'jart_'+'f'.repeat(32),kind:'upload',state:'pending',mime_type:'video/mp4',preview:'demo.mp4',has_payload:true,created_at:'2026-10-16T10:00:00Z'},
+    {artifact_id:'jart_'+'0'.repeat(31)+'9',kind:'upload',state:'failed',mime_type:'application/pdf',preview:'contrat.pdf',has_payload:true,created_at:'2026-10-13T08:00:00Z'}];
   /* Double of the bounded payload route, where the page reads it: an <img> src. */
   const srcDesc=Object.getOwnPropertyDescriptor(HTMLImageElement.prototype,'src');
   Object.defineProperty(HTMLImageElement.prototype,'src',{configurable:true,enumerable:true,get(){return srcDesc.get.call(this)},set(v){
@@ -51,6 +58,11 @@ const FAKE=`(()=>{
   const sorted=()=>[...rows].sort((a,b)=>(a.archived-b.archived)||(a.hidden-b.hidden));
   window.fetch=async(url,init)=>{
     const u=String(url),method=(init&&init.method)||'GET';
+    if(u.startsWith('/api/workspace/artifacts?')){
+      const board=new URL('http://x'+u).searchParams.get('board_id');rail.calls.push({method,url:u,body:null});
+      if(rail.down)throw new TypeError('Failed to fetch');
+      return json(200,{artifacts:rail.boardArtifacts[board]||[],scope:{board_id:board},next_cursor:null});
+    }
     if(!u.startsWith('/api/presentation-studio'))throw new TypeError('Failed to fetch');
     rail.calls.push({method,url:u,body:init&&init.body||null});
     if(rail.down)throw new TypeError('Failed to fetch');
@@ -88,7 +100,11 @@ const READ=`(()=>{
   const box=el=>{if(!el)return null;const r=el.getBoundingClientRect();if(!r.width&&!r.height)return null;return {l:r.left,t:r.top,r:r.right,b:r.bottom,w:r.width,h:r.height}};
   const q=s=>document.querySelector(s),qa=s=>[...document.querySelectorAll(s)];
   const host=q('#presentationRail');
-  const items=qa('#presentationRail .jvr-item').map(b=>({id:b.dataset.id,state:b.dataset.state,open:b.dataset.open,dim:b.dataset.dim||null,name:b.querySelector('.jvr-name').textContent,
+  const wsItems=qa('#presentationRail .jvr-ws .jvr-item').map(b=>({id:b.dataset.id,ws:b.dataset.ws,state:b.dataset.state,name:b.querySelector('.jvr-name').textContent,
+    meta:(b.querySelector('.jvr-meta')||{}).textContent||'',stateText:(b.querySelector('.jvr-state')||{}).textContent||'',
+    thumb:(t=>({kind:t.dataset.kind,badge:(t.querySelector('.jvr-badge')||{}).textContent||'',img:(i=>i?{ok:i.complete&&i.naturalWidth>0}:null)(t.querySelector('img'))}))(b.querySelector('.jvr-thumb')),
+    dot:getComputedStyle(b.querySelector('.jvr-dot')).backgroundColor}));
+  const items=qa('#presentationRail .jvr-item:not([data-ws])').map(b=>({id:b.dataset.id,state:b.dataset.state,open:b.dataset.open,dim:b.dataset.dim||null,name:b.querySelector('.jvr-name').textContent,
     full:b.title,label:b.getAttribute('aria-label'),dot:getComputedStyle(b.querySelector('.jvr-dot')).backgroundColor,dotAnim:getComputedStyle(b.querySelector('.jvr-dot')).animationName,
     thumb:(t=>({kind:t.dataset.kind,badge:(t.querySelector('.jvr-badge')||{}).textContent||'',img:(i=>i?{ok:i.complete&&i.naturalWidth>0,payload:/^data:image\\/svg/.test(i.getAttribute('src')||'')}:null)(t.querySelector('img'))}))(b.querySelector('.jvr-thumb')),
     stateText:(b.querySelector('.jvr-state')||{}).textContent||'',when:(b.querySelector('.jvr-when')||{}).textContent||'',meta:(b.querySelector('.jvr-meta')||{}).textContent||'',
@@ -107,7 +123,8 @@ const READ=`(()=>{
     density:host&&host.dataset.density,drawer:host&&host.dataset.drawer,
     explorer:box(q('#jvStudioExplorer')),
     peek:(p=>p&&!p.hidden?p.textContent:null)(q('#presentationRail .jvr-peek')),
-    payloads:window.__rail.payloads.slice(),
+    payloads:window.__rail.payloads.slice(),wsItems,wsHead:(f=>f?f.textContent.trim():null)(q('#presentationRail .jvr-ws .jvr-fold')),
+    wsCalls:window.__rail.calls.filter(c=>c.url.startsWith('/api/workspace/')).map(c=>new URL('http://x'+c.url).searchParams.get('board_id')),
     api:window.JarvisPresentationRail?window.JarvisPresentationRail.state():null,
     voice:((q('#presentationRail .jvr-voice')||{}).dataset||{}).v||'',
     zRail:host&&getComputedStyle(host).zIndex,
@@ -344,6 +361,25 @@ try{
   await load(1440,900,`window.__rail.previews={};`+PRES_BOARD,'#cards');
   await poll1(`document.querySelector('${item(1)} .jvr-thumb').dataset.kind==='placeholder'`);await sleep(200);
   out.broken_preview=await evaluate(READ);
+
+  /* 18. Etape B : les Artifacts du Board actif (double de la route du workspace), type par MIME / hote, etat sans jaune ; clic = inspecteur
+     (double de JarvisWorkspace, l'apercu des captures de la Slice 05 n'est pas encore la) ; changer de Board vide puis relit, sans fuite. */
+  const STUB_WS=`window.__wsOpen=[];window.JarvisWorkspace={open:()=>{window.__wsOpen.push(['open'])},act:(n,d)=>{window.__wsOpen.push([n,d&&d.id]);return Promise.resolve()}}`;
+  await load(1440,900,STUB_WS+';'+PRES_BOARD,'#cards');
+  await poll1(`document.querySelectorAll('#presentationRail .jvr-ws .jvr-item').length===5`);
+  await poll1(`[...document.querySelectorAll('#presentationRail .jvr-ws .jvr-thumb img')].every(i=>i.complete)`);await sleep(200);
+  out.board_items=await evaluate(READ);
+  await evaluate(`document.querySelector('#presentationRail .jvr-list').scrollTop=0;document.querySelector('#presentationRail .jvr-ws').scrollIntoView({block:'end'})`);
+  await shot('rail-board-items-1440.png');
+  await click(`#presentationRail .jvr-ws .jvr-item[data-id="jart_${'c'.repeat(32)}"]`);await sleep(150);
+  out.board_open=await evaluate(`window.__wsOpen`);
+  await rightClick(`#presentationRail .jvr-ws .jvr-item[data-id="jart_${'e'.repeat(32)}"]`);await sleep(150);
+  out.board_menu=await evaluate(READ);
+  await press('Escape');
+  await evaluate(`window.JarvisPresentationRail.gate({boards:{available:true,active:{board_id:'c',board_kind:'presentation'}},interaction_mode:{mode:'assistant'},voice_state:'listening',voice_online:true})`);
+  out.board_switched_now=await evaluate(READ);
+  await sleep(500);
+  out.board_switched=await evaluate(READ);
 
   ws.close();
   process.stdout.write(JSON.stringify({results:out,console:consoleLines}));

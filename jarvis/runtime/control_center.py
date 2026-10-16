@@ -595,6 +595,9 @@ STUDIO_PLAYER_SCRIPT_MARKER = "/*__CONTROL_CENTER_PRESENTATION_STUDIO_PLAYER_JS_
 #: Masquer / Renommer / Supprimer (archiver). La fenetre flottante d'une presentation est retiree (Slice 09). Apres le client de lecture.
 PRESENTATION_RAIL_SCRIPT_FILE = "control_center_presentation_rail.js"
 PRESENTATION_RAIL_SCRIPT_MARKER = "/*__CONTROL_CENTER_PRESENTATION_RAIL_JS__*/"
+#: Rail actif, etape B (Slice 07) : adaptateur pur des Artifacts lies au Board actif (`WorkspaceRailItem`), lu par le rail. Juste avant lui.
+WORKSPACE_RAIL_MODEL_SCRIPT_FILE = "control_center_workspace_rail_model.js"
+WORKSPACE_RAIL_MODEL_SCRIPT_MARKER = "/*__CONTROL_CENTER_WORKSPACE_RAIL_MODEL_JS__*/"
 # Inspecteur d'edition (studio, Slice 07) : panneau du dock `INS`, widgets generes de l'introspection, ecritures par le relais.
 # Apres la bande de lecture dont il lit l'etat (`JarvisStudioPlayer.view()`) pour se cacher entierement pendant une lecture.
 # Trois fichiers, dans cet ordre : fonctions pures + CSS, widgets générés, contrôleur (le seul qui s'installe et publie `window.JarvisStudioInspector`).
@@ -2409,6 +2412,10 @@ class ControlCenter:
         html = html.replace(
             STUDIO_PLAYER_SCRIPT_MARKER,
             page.with_name(STUDIO_PLAYER_SCRIPT_FILE).read_text(encoding="utf-8"),
+        )
+        html = html.replace(
+            WORKSPACE_RAIL_MODEL_SCRIPT_MARKER,
+            page.with_name(WORKSPACE_RAIL_MODEL_SCRIPT_FILE).read_text(encoding="utf-8"),
         )
         html = html.replace(
             PRESENTATION_RAIL_SCRIPT_MARKER,

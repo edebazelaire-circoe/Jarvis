@@ -224,7 +224,8 @@ def test_cards_show_real_preview_typed_placeholder_and_every_state_in_both_theme
         assert items["Notes de recherche"]["thumb"] == {"kind": "placeholder", "badge": "Slidecar", "img": None}
         assert items["Architecture technique"]["meta"] == "Remotion · 3 variantes" and items["Bilan"]["when"].startswith("· il y a")
         assert all(i["more"] for i in cards["items"])
-        assert sorted(set(cards["payloads"])) == ["jart_" + "a" * 32, "jart_" + "b" * 32], "only the bounded payload route is read"
+        # the presentations' stills (and, Stage B, the Board's screenshot): only the bounded payload route is read
+        assert {"jart_" + "a" * 32, "jart_" + "b" * 32} <= set(cards["payloads"]) <= {"jart_" + "a" * 32, "jart_" + "b" * 32, "jart_" + "c" * 32}
     slim = r["slim_cosmos"]
     assert slim["density"] == "slim" and slim["box"]["w"] == 72 and slim["peek"] and "Lancement produit automne" in slim["peek"] and "En cours" in slim["peek"]
 
@@ -251,3 +252,23 @@ def test_brain_show_hide_rail_and_display_state(r):
     assert r["brain_hide"]["reports"][-1]["rail_visible"] is False, "the page reports what it shows"
     assert r["brain_show"]["visible"] is True and r["brain_show"]["api"]["pref"] == "shown"
     assert r["brain_show"]["reports"][-1]["rail_visible"] is True and r["brain_show"]["reports"][-1]["applied_seq"] == 3
+
+
+# ------------------------------------------------------------------ Slice 07, etape B : Artifacts du Board actif (adaptateur pur)
+
+
+def test_board_linked_artifacts_are_typed_cards_and_a_board_switch_drops_them(r):
+    items = r["board_items"]["wsItems"]
+    assert r["board_items"]["wsHead"].replace(" ", "") == "▾SurceBoard(5)"
+    assert [(i["name"], i["meta"], i["state"], i["stateText"], i["thumb"]["kind"]) for i in items] == [
+        ("Capture d’écran", "Capture", "done", "Prêt", "image"),
+        ("Roadmap Q4.pptx", "PowerPoint", "done", "Prêt", "placeholder"),
+        ("docs.google.com/presentation/d/abc/edit", "Google Slides", "done", "Prêt", "placeholder"),
+        ("demo.mp4", "Vidéo", "working", "En cours", "placeholder"),
+        ("contrat.pdf", "PDF", "problem", "Problème", "placeholder")], "no yellow for Board artifacts"
+    assert items[0]["thumb"]["img"]["ok"] is True and [i["dot"] for i in items] == [GREEN, GREEN, GREEN, BLUE, ORANGE]
+    assert r["board_items"]["wsCalls"] == ["b"] and len(r["board_items"]["items"]) == 5, "presentations are still listed apart"
+    assert r["board_open"] == [["open"], ["artifact-show", "jart_" + "c" * 32]], "without the Slice 05 preview, an image opens its detail"
+    assert [i["act"] for i in r["board_menu"]["menu"]["items"]] == ["ws-open", "ws-link"]
+    assert r["board_switched_now"]["wsItems"] == [] and r["board_switched_now"]["wsCalls"] == ["b", "c"], "the previous Board's items leave at once"
+    assert r["board_switched"]["wsItems"] == [] and r["board_switched"]["wsHead"] is None

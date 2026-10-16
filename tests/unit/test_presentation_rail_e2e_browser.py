@@ -19,7 +19,7 @@ from tests.unit.test_presentation_studio_rail import _still
 
 pytestmark = pytest.mark.asyncio
 
-ITEMS = "[...document.querySelectorAll('#presentationRail .jvr-item')].map(b=>[b.querySelector('.jvr-name').textContent,b.dataset.state,getComputedStyle(b.querySelector('.jvr-dot')).backgroundColor])"
+ITEMS = "[...document.querySelectorAll('#presentationRail .jvr-item:not([data-ws])')].map(b=>[b.querySelector('.jvr-name').textContent,b.dataset.state,getComputedStyle(b.querySelector('.jvr-dot')).backgroundColor])"
 CONTEXT = "document.querySelector('#presentationRail .jvr-item[data-id=\"%s\"]').dispatchEvent(new MouseEvent('contextmenu',{bubbles:true,cancelable:true,clientX:120,clientY:130}))"
 HTTP_REFUSAL = "Failed to load resource: the server responded with a status of 4"
 
@@ -63,19 +63,22 @@ async def test_the_rail_lists_real_presentations_with_their_real_work_state_and_
         result = await drive(rig.url, [
             {"until": "!!window.JarvisPresentationRail", "ms": 20000},
             {"eval": "JarvisPresentationRail.setPref('shown')"},
-            {"until": "JarvisPresentationRail.state().loaded===true&&document.querySelectorAll('#presentationRail .jvr-item').length>=3", "ms": 20000},
+            {"until": "JarvisPresentationRail.state().loaded===true&&document.querySelectorAll('#presentationRail .jvr-item:not([data-ws])').length>=3", "ms": 20000},
             {"value": "items", "expr": ITEMS},
-            {"value": "folds", "expr": "[...document.querySelectorAll('#presentationRail .jvr-fold')].map(b=>b.textContent.trim())"},
+            {"value": "folds", "expr": "[...document.querySelectorAll('#presentationRail .jvr-folds .jvr-fold')].map(b=>b.textContent.trim())"},
             {"until": "[...document.querySelectorAll('#presentationRail .jvr-thumb img')].every(i=>i.complete)", "ms": 8000},
             {"value": "zone", "expr": "(()=>{const b=s=>{const r=document.querySelector(s).getBoundingClientRect();return {l:r.left,t:r.top,r:r.right,b:r.bottom}};return {palette:b('#barehandsPalette'),rail:b('#presentationRail'),dock:b('.dock'),chat:b('#chatTab'),vw:innerWidth}})()"},
-            {"value": "preview", "expr": "(()=>{const i=document.querySelector('#presentationRail .jvr-thumb img');return i?{src:i.getAttribute('src'),ok:i.complete&&i.naturalWidth===160}:null})()"},
+            # Stage B: the still is linked to the active Board by Core, so the real workspace route lists it under « Sur ce Board »
+            {"until": "[...document.querySelectorAll('#presentationRail .jvr-ws .jvr-item img')].some(i=>i.complete&&i.naturalWidth>0)", "ms": 15000},
+            {"value": "board_items", "expr": "[...document.querySelectorAll('#presentationRail .jvr-ws .jvr-item')].map(b=>[b.querySelector('.jvr-name').textContent,b.dataset.ws,b.dataset.state,(i=>i?i.complete&&i.naturalWidth===160:null)(b.querySelector('img'))])"},
+            {"value": "preview", "expr":"(()=>{const i=document.querySelector('#presentationRail .jvr-thumb img');return i?{src:i.getAttribute('src'),ok:i.complete&&i.naturalWidth===160}:null})()"},
             {"shot": str(tmp_path / "rail.png")},
             # hide Roadmap through the real context menu and the real relay
             {"eval": CONTEXT % pid3},
             {"until": "!!document.querySelector('.jvr-menu:not([hidden])')", "ms": 5000},
             {"value": "menu", "expr": "[...document.querySelectorAll('.jvr-menu button')].map(b=>b.dataset.act)"},
             {"click": ".jvr-menu button[data-act=\"hide\"]"},
-            {"until": "document.querySelectorAll('#presentationRail .jvr-item').length===2", "ms": 8000},
+            {"until": "document.querySelectorAll('#presentationRail .jvr-item:not([data-ws])').length===2", "ms": 8000},
             {"value": "after_hide", "expr": ITEMS},
             # a click on the first presentation opens Variants on it, windowed (Slice 09 of native-studio-playback-fix: the floating
             # window host is retired, Variants is the one surface): rail docked, the tree's two variants, transport (Slice 10: the variant bar
@@ -110,6 +113,7 @@ async def test_the_rail_lists_real_presentations_with_their_real_work_state_and_
         assert zone["rail"]["l"] > zone["palette"]["r"] and zone["rail"]["r"] == zone["vw"] - 18 and zone["rail"]["t"] >= zone["dock"]["b"]
         assert zone["rail"]["b"] <= zone["chat"]["t"]
         assert reads["preview"] == {"src": f"/api/artifacts/{still}/payload", "ok": True}, "the real still, through the bounded payload route"
+        assert ["Rendu image", "presentation_still", "done", True] in reads["board_items"], ("Stage B through the real workspace route", reads["board_items"])
         assert reads["menu"] == ["open", "studio", "edit", "play", "hide", "rename", "ack", "archive"]  # « Remotion Studio… » (Slice 11)
         assert sorted(i[0] for i in reads["after_hide"]) == ["Atelier du cadran", "Bilan trimestriel"]
         assert reads["studio"]["pid"] == rig.pid, "the rail click opens Variants on that presentation"
@@ -143,22 +147,22 @@ async def test_archive_confirm_rename_and_restore_through_the_real_page(tmp_path
         result = await drive(rig.url, [
             {"until": "!!window.JarvisPresentationRail", "ms": 20000},
             {"eval": "JarvisPresentationRail.setPref('shown')"},
-            {"until": "document.querySelectorAll('#presentationRail .jvr-item').length===2", "ms": 20000},
+            {"until": "document.querySelectorAll('#presentationRail .jvr-item:not([data-ws])').length===2", "ms": 20000},
             {"eval": CONTEXT % pid2},
             {"until": "!!document.querySelector('.jvr-menu:not([hidden])')", "ms": 5000},
             {"click": ".jvr-menu button[data-act=\"archive\"]"},
             {"until": "!!document.querySelector('.jvr-dialog-back:not([hidden]) .jvr-dialog')", "ms": 5000},
             {"value": "dialog", "expr": "document.querySelector('.jvr-dialog').textContent"},
             {"click": ".jvr-dialog button[data-danger]"},
-            {"until": "document.querySelectorAll('#presentationRail .jvr-item').length===1", "ms": 8000},
-            {"click": "#presentationRail .jvr-fold"},
+            {"until": "document.querySelectorAll('#presentationRail .jvr-item:not([data-ws])').length===1", "ms": 8000},
+            {"click": "#presentationRail .jvr-folds .jvr-fold"},
             {"value": "archived", "expr": ITEMS},
             # an archived row offers only "restore"
             {"eval": "document.querySelector('#presentationRail .jvr-item[data-dim=\"true\"]').dispatchEvent(new MouseEvent('contextmenu',{bubbles:true,cancelable:true,clientX:120,clientY:130}))"},
             {"until": "!!document.querySelector('.jvr-menu:not([hidden])')", "ms": 5000},
             {"value": "archived_menu", "expr": "[...document.querySelectorAll('.jvr-menu button')].map(b=>b.dataset.act)"},
             {"click": ".jvr-menu button[data-act=\"restore\"]"},
-            {"until": "!document.querySelector('#presentationRail .jvr-fold')&&document.querySelectorAll('#presentationRail .jvr-item').length===2", "ms": 8000},
+            {"until": "!document.querySelector('#presentationRail .jvr-folds .jvr-fold')&&document.querySelectorAll('#presentationRail .jvr-item:not([data-ws])').length===2", "ms": 8000},
             # rename
             {"eval": CONTEXT % pid2},
             {"until": "!!document.querySelector('.jvr-menu:not([hidden])')", "ms": 5000},
