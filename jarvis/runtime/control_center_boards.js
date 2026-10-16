@@ -1503,8 +1503,8 @@ ${P} .bd-sr{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflo
       throw Object.assign(
         new Error(`JarvisBoards : l’emplacement #${!host?DOM.hostId:DOM.panelId} manque dans control_center.html`),
         {code:'boards_host_missing'});
-    /* Le panneau s'ancre sous le bouton, où qu'il soit (haut-droit par
-       défaut, haut-gauche dans le thème Cosmos), sans sortir de l'écran. */
+    /* Le panneau s'ancre sous le bouton, où qu'il soit (haut-gauche dans
+       les deux thèmes aujourd'hui), sans sortir de l'écran. */
     const place=(pane,button)=>{
       const r=button.getBoundingClientRect(),gutter=12;
       const width=Math.min(372,window.innerWidth-gutter*2);

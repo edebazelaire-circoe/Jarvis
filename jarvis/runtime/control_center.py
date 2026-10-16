@@ -445,14 +445,14 @@ def _short(value: object) -> str | None:
 
     return None if value is None else str(value)[:MAX_JOURNALLED_VALUE_CHARS]
 
-#: Logique pure du panneau Agents, gardée à part pour être exécutée par les
-#: tests (node) et insérée dans la page à la place de ce repère.
 #: Coque du Control Center (jarvis-board-orbital-ui-workspace-rail, Slice 01) :
 #: zones, jetons et `CONTROL_SELECTOR` partagés (`window.JarvisShell`), sans état.
 #: Inséré en premier : la scène et le rail de capture le lisent. Contrat :
 #: `docs/control-center-shell.md`.
 SHELL_SCRIPT_FILE = "control_center_shell.js"
 SHELL_SCRIPT_MARKER = "/*__CONTROL_CENTER_SHELL_JS__*/"
+#: Logique pure du panneau Agents, gardée à part pour être exécutée par les
+#: tests (node) et insérée dans la page à la place de ce repère.
 WORK_SCRIPT_FILE = "control_center_work.js"
 WORK_SCRIPT_MARKER = "/*__CONTROL_CENTER_WORK_JS__*/"
 LIVE_SCRIPT_FILE = "control_center_live.js"
