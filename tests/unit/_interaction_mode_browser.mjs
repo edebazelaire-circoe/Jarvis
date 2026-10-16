@@ -6,7 +6,7 @@
    faire. Il vit en JavaScript parce que le WebSocket dont il a besoin est celui
    que node fournit depuis la v22 — aucune dependance a installer.
 
-   Usage : node _interaction_mode_browser.mjs <page> <chrome.exe> <planJSON> [runtimeRoot]
+   Usage : node _interaction_mode_browser.mjs <page> <chrome.exe> <planJSON|@plan.json> [runtimeRoot]
    Il ecrit sur la sortie standard un tableau JSON, un objet par etape du plan.
 
    `<page>` est un fichier compose, ou l'URL d'un VRAI Control Center
@@ -24,18 +24,21 @@
      {"a":"wait","expr":"...","timeoutMs":3000}                 -> {ok,ms}
      {"a":"click","selector":"..."}      (vrai clic souris, au centre)
      {"a":"focus","selector":"..."}
-     {"a":"key","key":"ArrowDown"}       (vraie frappe clavier)
+     {"a":"key","key":"ArrowDown"}       (vraie frappe clavier ; "shift":true pour Maj)
+     {"a":"mouse","type":"mouseMoved","x":0,"y":0,"button":"none"}
+                                         (vrai evenement souris a un point ; roue d'outils)
      {"a":"ax","selector":"..."}         -> {role,name,description} calcules
      {"a":"eval","expr":"..."}
      {"a":"read"}
      {"a":"shot","path":"...png"} */
 import {spawn} from 'node:child_process';
-import {mkdtempSync, rmSync, writeFileSync, renameSync, unlinkSync} from 'node:fs';
+import {mkdtempSync, rmSync, writeFileSync, renameSync, unlinkSync, readFileSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 
 const [,,PAGE,CHROME,PLAN,RUNTIME]=process.argv;
-const plan=JSON.parse(PLAN);
+/* `@<fichier>` : le plan lu dans un fichier (un long plan depasse la ligne de commande Windows). */
+const plan=JSON.parse(PLAN.startsWith('@')?readFileSync(PLAN.slice(1),'utf-8'):PLAN);
 const REMOTE=/^https?:\/\//.test(PAGE);
 
 /* Ecriture atomique, comme `VisualSignalBus._atomic_text` : le Control Center
@@ -276,10 +279,17 @@ try{
       case 'focus':
         await evaluate(`document.querySelector(${JSON.stringify(action.selector)}).focus()`);
         return {a:'focus'};
+      case 'mouse':
+        await send('Input.dispatchMouseEvent',{type:action.type,x:action.x,y:action.y,
+          button:action.button||'none',buttons:action.type==='mousePressed'?(action.button==='right'?2:1):0,
+          clickCount:action.type==='mouseMoved'?0:1});
+        await sleep(action.settleMs??40);
+        return {a:'mouse'};
       case 'key':{
-        const codes={ArrowDown:40,ArrowUp:38,Escape:27,Enter:13,Tab:9,Home:36,End:35,' ':32};
+        const codes={ArrowDown:40,ArrowUp:38,ArrowLeft:37,ArrowRight:39,Escape:27,Enter:13,Tab:9,Home:36,End:35,' ':32,
+          F10:121,ContextMenu:93};
         const base={key:action.key,code:action.key===' '?'Space':action.key,
-          windowsVirtualKeyCode:codes[action.key]||0};
+          windowsVirtualKeyCode:codes[action.key]||0,modifiers:action.shift?8:0};
         await send('Input.dispatchKeyEvent',{type:'keyDown',...base,
           ...(action.key==='Enter'?{text:'\r'}:action.key===' '?{text:' '}:{})});
         await send('Input.dispatchKeyEvent',{type:'keyUp',...base});

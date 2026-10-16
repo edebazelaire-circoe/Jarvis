@@ -48,7 +48,7 @@ the Bare Hands column, from 1024 px down.
 | `top-left` | `.topbar`: `#boardsHud`, `.state` (the `.brand` element stays in the markup, hidden in both themes: the target shows Board then state) | page, `control_center_boards.js` |
 | `top-right` | `.dock` (global launcher, one row of 34 px buttons); `#bgPills` left of it until Slice 06 | page |
 | `top-centre` | `.live-banner` (GPT-Live, transient) | page |
-| `left-edge` | `#toolWheel` anchor (empty host until Slice 02); `#barehandsHud`, `#barehandsPalette`, `#captureRail`, `#presentationRail` until Slices 03, 04, 07 move them | their modules |
+| `left-edge` | `#toolWheel` anchor and orbital tool wheel (Slice 02, behind `JarvisToolWheel.enabled` until Slice 04); `#barehandsHud`, `#barehandsPalette`, `#captureRail`, `#presentationRail` until Slices 03, 04, 07 move them | their modules |
 | `left-low` | `#screenshotPreview` (Slice 05) | — |
 | `bottom-left` | `#interactionModeHud`, `.sc-status` notes of the scene | `control_center_interaction_mode.js`, scene |
 | `bottom-centre` | `#voiceHint` (until Slice 06), `#boardDropTray`; status centre from Slice 06 | page, `control_center_board_drop.js` |
@@ -136,7 +136,7 @@ The rule is written exactly as in the sheet, `${…}` interpolations included.
 | 0 | `#cosmosFace` | `control_center_work.js` | `#cosmosFace` | Cosmos canvas, same place as the face |
 | 20 | `#sceneLayer` | `control_center_scene_page.js` | `.scene` | Board / scene, above the face, below every control; its own stacking context |
 | 21 | `.board-drop::before` | `control_center.html` | `.board-drop::before` | drop frame, just above the scene, below the controls |
-| 30 | `#toolWheel` | `control_center.html` | `#toolWheel` | wheel anchor at rest (empty host until Slice 02) |
+| 30 | `#toolWheel` | `control_center.html` | `#toolWheel` | wheel anchor at rest |
 | 30 | `#barehandsPalette` | `control_center_barehands_hud.js` | `#${DOM.paletteId}` | below the Bare Hands control and its selector, which open over it |
 | 30 | `#captureRail` | `control_center_capture_rail.js` | `${H}` | sibling of the palette, same rank for the same reason |
 | 30 | `#presentationRail` | `control_center_presentation_rail.js` | `#${DOM.hostId}` | rail outside the Studio |
@@ -155,6 +155,7 @@ The rule is written exactly as in the sheet, `${…}` interpolations included.
 | 36 | `#boardsPanel` | `control_center.html` | `#boardsPanel` | Board chooser, opened by the user over the banner |
 | 36 | `.bh-hud-pop` | `control_center_barehands_hud.js` | `#${DOM.hostId} .bh-hud-pop` | Bare Hands lifecycle selector |
 | 36 | `.im-pop` | `control_center_interaction_mode.js` | `#${DOM.hostId} .im-pop` | mode chooser |
+| 37 | `#toolWheel[data-open]` | `control_center.html` | `#toolWheel[data-open]` | open wheel and its radial sub-arcs: above the choosers, the wheel is the user's latest focus |
 | 40 | `#bgPills` | `control_center.html` | `.bgpills` | background pills (status centre from Slice 06) |
 | 55 | `.tl` | `control_center.html` | `.tl` | conversation timeline, full-screen launcher view |
 | 55 | `.tlab` | `control_center.html` | `.tlab` | Test Lab (one full-screen view at a time) |
@@ -206,7 +207,6 @@ them for something else. They become page layers when their slice lands.
 
 | Rank | Surface | Slice |
 | --- | --- | --- |
-| 37 | `#toolWheel` open, radial sub-arcs (Selection, targets, Bare Hands tools) | S02 |
 | 38 | `#screenshotPreview` | S05 |
 | 40 | status centre: `#recIndicators`, `#hiddenEye` beside `#bgPills` | S06 |
 | 60 | screenshot lightbox, annotation editor (the `.overlay` pattern) | S05 |
@@ -221,6 +221,9 @@ Checked on the registry rows by `test_relative_order_of_the_old_registry_is_kept
   `#bgPills` < `.toasts` < `.cdialog-back`;
 - choosers (36) are above the GPT-Live banner (35) and below the pills,
   toasts, context menu and confirmation;
+- the open wheel (37) is above the choosers and below the status centre
+  (40), toasts and context menu; closed, its anchor is at the left-edge
+  rank (30);
 - `.ctxmenu` (80) < `#barehandsCards` (82) < `.cdialog-back` (85);
 - full-screen launcher views (55) are above every control and below
   `.overlay` < `.toasts` < `.ctxmenu` < `.cdialog-back`;
@@ -280,6 +283,105 @@ full-screen views, `#barehandsCards`) and the Studio surfaces.
 `test_every_declared_control_host_matches_control_selector` checks that every
 host in the page that the table names carries the attribute and that nothing
 else does.
+
+## Tool wheel (`#toolWheel`)
+
+Slice 02, decisions D3 and D4 of the handoff's resolved architecture. Module
+`jarvis/runtime/control_center_tool_wheel.js` (`window.JarvisToolWheel`),
+served by `ControlCenter.index` (`TOOL_WHEEL_SCRIPT_FILE`). A **new surface**:
+not the Bare Hands palette, not the capture rail; both stay functional until
+Slices 03 and 04 migrate them (rollback = leave the flag off, or remove
+`#toolWheel`).
+
+**Feature flag.** `JarvisToolWheel.enabled` is `false` by default: the host
+stays `hidden`, nothing is built, no listener is attached. Setting it to
+`true` builds the anchor and the wheel; tests do so. Slice 04 removes the
+flag once every wedge is wired.
+
+**Closed.** Only the anchor shows: a `--shell-anchor-w` (14 px) × 112 px
+glass tab with a thin cyan stroke, centred on the left edge, `<button
+aria-haspopup="menu" aria-expanded="false">` named « Outils » (`aria-label` =
+`title`).
+
+**Reveal.** One wheel, three ways in, none of them network-bound:
+
+| Input | Reveal | Focus |
+| --- | --- | --- |
+| Mouse | `pointerover` on the anchor | not moved (hover highlights only) |
+| Bare Hands | the synthetic hand pointer (`pointerId` 9001-9002, `JarvisBarehandsContracts.isBareHandsPointerId`) reaching the anchor: the same `pointerover`; a pinch on the anchor is a `click` | not moved |
+| Keyboard | `Enter` / `Space` (native `click`, `detail` 0) or `ArrowRight` on the anchor | first (or last highlighted) wedge |
+
+No new Bare Hands gesture: a "leftward reveal" gesture does not exist and is
+deferred (`tasks/jarvis-board-orbital-ui-workspace-rail/Issues/bh-left-reveal-gesture.md`).
+Pointer movement elsewhere on the page never opens the wheel: it only listens
+on its own host.
+
+**Open.** A half-disc of radius `--shell-wheel-r` (200 px) whose centre is on
+the left edge, rank 37. Exactly four primary wedges, in this order:
+**Sélection, Vidéo, Capture d'écran, Audio** (`JarvisToolWheel.SLOTS`), no
+filler. They share 156° equally (39° each); each whole sector, from the hub
+(44 px) to the rim, is the pointer target (`clip-path`), so a hand never
+falls into a gap between two wedges. Icon dots are 52 px (≥
+`--shell-wedge-min`) at 122 px from the centre, 83 px apart along the arc
+(minimum: target + 8 px, `minSeparationDeg()`). Hover or pointing **highlights**
+one wedge and shows its label, the only label on screen.
+
+**Activation.** Primary = `click` only: mouse click, `Enter` / `Space`, Bare
+Hands primary pinch. Never `pointerup`, so the Bare Hands sequence
+(`pointerdown`, `mousedown`, `pointerup`, `mouseup`, `click`) fires once.
+Secondary = the existing channel (D4): `contextmenu` (right click, Bare Hands
+thumb + middle pinch), `ContextMenu` key, `Shift+F10`; a keyboard secondary
+followed by the browser's own `contextmenu` on the same wedge within 500 ms
+counts once. Never long press.
+
+**Injected actions.** `JarvisToolWheel.register({id, onActivate(ctx),
+onSecondary?(ctx)})` binds a slot (unknown slot → `TypeError`, code
+`tool_wheel_unknown_slot`) and returns an unregister function. `ctx` =
+`{slot, source: 'mouse'|'barehands'|'keyboard'}`. A slot with no action is
+`aria-disabled`; activating it journals `tool_wheel.unbound` and shows a
+notification instead of doing nothing silently. A callback that throws or
+rejects is journalled (`tool_wheel.action_failed`, real cause) and shown as a
+notification; the wheel itself is unaffected. Selection semantics are Slice
+03, capture wiring Slice 04.
+
+**Radial sub-arc** (the reusable submenu pattern). `onSecondary` returns the
+entries `[{id?, label, disabled?, checked?, onActivate?(ctx)}]` (or a promise
+of them; « Chargement… » shows while it is pending). They are laid out on an
+outer arc (radius 236 px, 15° apart) centred on the parent wedge and kept
+within ±78°, as text pills (`role="menuitem"`, or `menuitemradio` with
+`aria-checked` when `checked` is a boolean); labels go through `textContent`.
+`ArrowUp` / `ArrowDown` / `Home` / `End` move, `Esc` or `ArrowLeft` return to
+the parent wedge.
+
+**Close.** `Esc` (topmost first: sub-arc, then wheel), activating a wedge or
+an entry, a `pointerdown` outside (document listener present **only while
+open**), focus leaving the host (`Tab` away: no focus trap), and — when the
+wheel was opened by a pointer — the pointer leaving it for 400 ms (grace that
+covers the gaps between anchor, wedges and sub-arc; Bare Hands sends
+`pointerout` without `relatedTarget`). Closing never touches domain state.
+Focus is never left on a hidden element: if it was inside the wheel, it
+returns to the anchor.
+
+**Keyboard.** One tab stop (roving `tabindex` on the wedges), `ArrowUp` /
+`ArrowLeft` previous, `ArrowDown` / `ArrowRight` next (wrapping), `Home` /
+`End`. A screen-reader description on every wedge names the secondary keys.
+
+**Motion.** The half-disc slides 28 px out of the edge and fades in over
+`--shell-dur`; dots scale on highlight over `--shell-dur-fast`. Under
+`prefers-reduced-motion: reduce` both are 0 ms and nothing waits for a
+transition end. `forced-colors` maps strokes to `CanvasText`, the highlight
+to `Highlight`.
+
+**Journal.** `[tool_wheel] <key> {json}`: `tool_wheel.installed`,
+`.enabled`, `.registered`, `.open {reason: mouse|barehands|keyboard|api}`,
+`.close {reason: leave|activate|escape|outside|blur|api|disabled}`,
+`.activate`, `.secondary`, `.secondary_none`, `.item`, `.item_inert`,
+`.unbound`, `.action_failed`, `.install_failed`.
+
+**Tests.** `tests/unit/test_tool_wheel_js.py` (node: geometry, reducer, no
+network, served page); `tests/unit/test_tool_wheel_browser.py` (headless
+Chrome via CDP, real input events: mouse hotspot, keyboard, Bare Hands
+synthetic pointer 9001, reduced motion, focus, far pointer).
 
 ## Accessibility and motion rules
 

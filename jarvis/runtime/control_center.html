@@ -28,6 +28,7 @@ html,body{margin:0;height:100%;background:var(--bg);color:var(--text);font:15px 
    @shell-layer 34: .board-drop-card, #boardDropTray, #jvStudioInspector
    @shell-layer 35: .live-banner
    @shell-layer 36: #boardsPanel, .bh-hud-pop, .im-pop
+   @shell-layer 37: #toolWheel[data-open]
    @shell-layer 40: #bgPills
    @shell-layer 55: .tl, .tlab, .mcpi, .wsp, .pfb
    @shell-layer 60: .overlay
@@ -434,10 +435,15 @@ pre.block{background:#050b10;border:1px solid rgba(113,144,160,.16);border-radiu
 html[data-jarvis-theme="cosmos"] .chat-tab{border-radius:12px;border-color:rgba(174,205,220,.12);background:rgba(5,11,16,.46);color:rgba(213,231,239,.75);backdrop-filter:blur(16px);box-shadow:0 8px 24px rgba(0,0,0,.18)}
 html[data-jarvis-theme="cosmos"] .chat-tab:hover,html[data-jarvis-theme="cosmos"] .chat-tab[aria-expanded=true]{color:var(--accent,#6ee7ff);border-color:color-mix(in srgb,var(--accent,#6ee7ff) 46%,transparent);background:rgba(10,19,26,.72)}
 
-/* Hôte de la roue d'outils (zone bord-gauche, Slice 01) : déclaré vide et caché ;
-   la Slice 02 le remplit. Rang 30 au repos (registre). */
+/* Hôte de la roue d'outils (zone bord-gauche) : déclaré vide et caché ; le
+   module `control_center_tool_wheel.js` le remplit quand son drapeau est
+   allumé (Slice 02). Rang 30 au repos, 37 ouvert (registre). */
 #toolWheel{position:absolute;z-index:30;left:0;top:50%;transform:translateY(-50%);width:var(--shell-anchor-w)}
 #toolWheel[hidden]{display:none}
+/* Roue ouverte (Slice 02) : rang 37, au-dessus des sélecteurs (36) — la roue
+   est le dernier geste de l'utilisateur —, sous l'aperçu de capture (38) et
+   le centre d'état (40). Le reste de sa feuille vit dans son module. */
+#toolWheel[data-open]{z-index:37}
 
 /* ---------- Dépôt sur le Board affiché (unified-chat Slice 08, `control_center_board_drop.js`) ----------
    Calque sans rang propre (aucun contexte d'empilement) : son cadre en
@@ -1780,9 +1786,10 @@ button.wsp-ename:hover{color:var(--accent)}
        dessiner sous un nom cherchable si cet emplacement manque. -->
   <div id="captureRail" data-shell-control></div>
   <!-- Hôte de la roue d'outils (jarvis-board-orbital-ui-workspace-rail,
-       Slice 01) : déclaré ici, vide et caché, pour que son rang (30) et sa
-       zone (bord gauche) soient fixés avant la Slice 02 qui le remplit.
-       Contrat : docs/control-center-shell.md. -->
+       Slices 01-02) : déclaré ici, vide et caché ; `control_center_tool_wheel.js`
+       y dessine l'ancre et la roue quand `JarvisToolWheel.enabled` est vrai
+       (faux par défaut jusqu'à la Slice 04). Rangs 30 au repos, 37 ouvert.
+       Contrat : docs/control-center-shell.md › Roue d'outils. -->
   <div id="toolWheel" data-shell-control hidden></div>
   <!-- Emplacement des deux cartes rapides Bare Hands (Slice 04, décisions 15
        et 16) : Aide / Gestes et Diagnostic, ouvertes depuis le menu du clic
@@ -2473,6 +2480,11 @@ const STATUS={
    lit aucun module de page : il sonde `/api/captures/status` lui-même et mesure
    la colonne de gauche pour s'y poser. */
 /*__CONTROL_CENTER_CAPTURE_RAIL_JS__*/
+/* Roue d'outils orbitale du bord gauche (jarvis-board-orbital-ui-workspace-rail,
+   Slice 02) : `control_center_tool_wheel.js`. Remplit `#toolWheel` quand
+   `JarvisToolWheel.enabled` passe à vrai ; ne lit que le contrat Bare Hands
+   (`isBareHandsPointerId`) et `toast`, déclaration remontée de ce `<script>`. */
+/*__CONTROL_CENTER_TOOL_WHEEL_JS__*/
 /* Contrôle Boards du haut-droit (jarvis-board-session-context-runtime, Slice 06) :
    `control_center_boards.js`. Sa seule source vivante est le bloc `boards` de
    `/api/status` ; il utilise `api`, `refreshStatus`, `toast` et `confirmDialog`,

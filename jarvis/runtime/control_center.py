@@ -628,6 +628,15 @@ INTERACTION_MODE_SCRIPT_MARKER = "/*__CONTROL_CENTER_INTERACTION_MODE_JS__*/"
 #: d'aucun autre module. Refus d'installation rattrapé, comme le contrôle de mode.
 CAPTURE_RAIL_SCRIPT_FILE = "control_center_capture_rail.js"
 CAPTURE_RAIL_SCRIPT_MARKER = "/*__CONTROL_CENTER_CAPTURE_RAIL_JS__*/"
+#: Roue d'outils orbitale du bord gauche (jarvis-board-orbital-ui-workspace-rail,
+#: Slice 02, décision D3) : ancre au repos, demi-cercle Sélection / Vidéo /
+#: Capture d'écran / Audio déployé par la souris, le clavier ou le pointeur Bare
+#: Hands. Ce que fait chaque secteur est injecté (`JarvisToolWheel.register`) ;
+#: aucun appel réseau, aucun sondage. Derrière le drapeau
+#: `JarvisToolWheel.enabled` (faux par défaut) jusqu'à la Slice 04. Contrat :
+#: `docs/control-center-shell.md` › Roue d'outils. Refus d'installation rattrapé.
+TOOL_WHEEL_SCRIPT_FILE = "control_center_tool_wheel.js"
+TOOL_WHEEL_SCRIPT_MARKER = "/*__CONTROL_CENTER_TOOL_WHEEL_JS__*/"
 #: Avertissement flottant de vérification (Slice 09 de
 #: `jarvis-presentation-interaction-mode`) : une carte discrète, posée en bas de
 #: la pile d'infusions existante, pour une contradiction vérifiée. Il lit le
@@ -2424,6 +2433,10 @@ class ControlCenter:
         html = html.replace(
             CAPTURE_RAIL_SCRIPT_MARKER,
             page.with_name(CAPTURE_RAIL_SCRIPT_FILE).read_text(encoding="utf-8"),
+        )
+        html = html.replace(
+            TOOL_WHEEL_SCRIPT_MARKER,
+            page.with_name(TOOL_WHEEL_SCRIPT_FILE).read_text(encoding="utf-8"),
         )
         html = html.replace(
             BOARDS_SCRIPT_MARKER,

@@ -9,9 +9,10 @@ The PM must re-evaluate these levels against current HEAD before dispatch. The l
 | Interaction mode | L3 | L3 | Preserve; update UI screenshots/entry docs if needed |
 | Bare Hands lifecycle | L3 | L3 | Preserve |
 | Bare Hands tool presentation | L2/L3 implementation-specific | L3 for new wheel contract | Establish wheel contract before migration |
+| Orbital tool wheel (reveal, wedges, activation, radial sub-arc) | **L3 (S02)**: `docs/control-center-shell.md` › Tool wheel, `control_center_tool_wheel.js` (`JarvisToolWheel`: pure geometry + reducer, injected actions), `tests/unit/test_tool_wheel_js.py` + `test_tool_wheel_browser.py` | L3 | Done in S02 behind `JarvisToolWheel.enabled=false`; S03 wires Selection, S04 captures and removes the flag |
 | Mouse/Bare Hands arbitration | L0/L1 for this exact policy | L3 | New contract + pure tests + runtime validation |
 | Control Center shell/layout | **L3 (S01)**: `docs/control-center-shell.md` (zones, tokens, a11y rules), `control_center_shell.js` (`JarvisShell`), conformance `tests/unit/test_control_center_shell_layers.py` | L3 for new shell | Done in S01; later slices update the doc, the sheet and the mirror in the same commit |
-| Z-index/layer registry | **L3 (S01)**: single table in `docs/control-center-shell.md`, compared to every real sheet (page, Cosmos, modules); same ranks in both themes | L3 | Done in S01; reserved ranks 37/38/40/60 for S02/S05/S06 |
+| Z-index/layer registry | **L3 (S01)**: single table in `docs/control-center-shell.md`, compared to every real sheet (page, Cosmos, modules); same ranks in both themes | L3 | Done in S01; rank 37 taken by S02 (open wheel); reserved 38/40/60 for S05/S06 |
 | Background notifications UI | L1/L2 | L3 | Separate category model from rendering; document semantics |
 | Hidden-object visibility | L2/L3 in scene interaction | L3 | Preserve canonical owner; add eye control contract |
 | Presentation rail | L2/L3 implementation | L3 | Document new right-rail behavior and retained actions |
