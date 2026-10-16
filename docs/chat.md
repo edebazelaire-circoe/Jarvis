@@ -502,7 +502,12 @@ pure rules `jarvis/domain/uploads.py`.
   bound, told to the user) is exceeded → spool closed, Artifact `failed` code
   `upload_too_large`, 413. Body shorter than `Content-Length`, or cut (client
   gone) → `failed` `upload_incomplete`, 400. Payload refused by the store
-  (`artifact_payload_*`) → `failed` 503 `upload_storage_failed`. A `failed`
+  (`artifact_payload_*`) → `failed` 503 `upload_storage_failed`; the message
+  and `core.upload.refused` (level `error`, field `cause`) say the real cause
+  without the path nor the original name: `payload_code`, `stage` (`open`,
+  `write`, `finalize`), `cause_type`, `os_error` / `errno` / `winerror` of the
+  chained `OSError`, `path_chars` and `path_limit` (the Windows limit exceeded,
+  *Known limits* 10). A `failed`
   upload keeps its registry row; its folder is removed: no `.partial` is left
   (a `.partial` found there before the spool opened is neither overwritten nor
   removed). Refused before the first byte, nothing is written: empty → 400
@@ -1025,3 +1030,10 @@ and an isolated root, never a repository database.
    conversation then gets 409 `attachment_other_board` (« joignez le fichier à
    nouveau ici »); never the reverse leak. An `explicit` link made in the
    Workspace inspector makes the attachment sendable from that Board too.
+10. **Windows MAX_PATH on payloads.** A payload path longer than the Windows
+    limit (259 characters for the file, 248 for its folder; no long-path
+    prefix, `LongPathsEnabled` not assumed) is refused before any disk access:
+    503 `upload_storage_failed`, `cause.path_limit` set in `core.upload.refused`.
+    It only happens with a deep data root (`JARVIS_DATA_ROOT`); the default
+    `~/.jarvis/instances/...` root normally stays below. Not fixed: shorten the data
+    root.

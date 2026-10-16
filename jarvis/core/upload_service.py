@@ -106,6 +106,39 @@ class BoardDropSeam:
     unlink: Callable[[str, str], Awaitable[Any]]
 
 
+def storage_cause(exc: ArtifactPayloadError, stage: str) -> dict[str, Any]:
+    """Cause réelle d'un refus du magasin de payloads (constat 3 de la Slice 09), sans le chemin (dossier de
+    l'utilisateur), sans un nom, sans un message d'OS (qui cite le chemin).
+
+    `stage` : `open` (spool), `write`, `finalize`. `cause_type` : classe de la cause enchaînée par l'adaptateur
+    (`raise ... from exc`) ; `os_error`, `errno`, `winerror` : la première `OSError` de la chaîne ; `path_limit` :
+    la limite Windows dépassée (MAX_PATH, `SafeFolderError.path_limit`), avec `path_chars`."""
+
+    chain: list[BaseException] = []
+    current = exc.__cause__
+    while current is not None and len(chain) < 4:
+        chain.append(current)
+        current = current.__cause__
+    os_error = next((item for item in chain if isinstance(item, OSError)), None)
+    path_limit = next((item.path_limit for item in chain if getattr(item, "path_limit", None)), None)
+    return {"payload_code": exc.code, "stage": stage,
+            "cause_type": type(chain[0]).__name__ if chain else None,
+            "os_error": type(os_error).__name__ if os_error is not None else None,
+            "errno": getattr(os_error, "errno", None), "winerror": getattr(os_error, "winerror", None),
+            "path_chars": len(str(exc.path)), "path_limit": path_limit}
+
+
+def _cause_text(cause: Mapping[str, Any]) -> str:
+    """La cause en une phrase sûre pour le message du refus (aucun chemin)."""
+
+    parts = [f"{cause['payload_code']} at {cause['stage']}", str(cause["cause_type"] or "no chained cause")]
+    if cause["os_error"] is not None:
+        parts.append(f"{cause['os_error']} errno={cause['errno']} winerror={cause['winerror']}")
+    if cause["path_limit"] is not None:
+        parts.append(f"path of {cause['path_chars']} characters above the Windows limit of {cause['path_limit']}")
+    return "; ".join(parts)
+
+
 def upload_view(artifact: Artifact) -> dict[str, Any]:
     """Ce que le navigateur peut savoir d'un téléversement : jamais un chemin (ni absolu, ni `payload_ref`)."""
 
@@ -396,9 +429,12 @@ class UploadService:
         spool = None
         opened = False
         failure: UploadRefused | None = None
+        cause: dict[str, Any] = {}
+        stage = "open"
         try:
             spool = await asyncio.to_thread(self._artifacts.open_spool, artifact)
             opened = True
+            stage = "write"
             chunk = head
             while chunk:
                 size += len(chunk)
@@ -416,6 +452,7 @@ class UploadService:
                                         f"received {size} of the {content_length} announced bytes")
             if failure is None:
                 await self._artifacts.update_pending(artifact.artifact_id, metadata={"sha256": digest.hexdigest()})
+                stage = "finalize"
                 await asyncio.to_thread(spool.finalize)
                 spool = None
                 done = await self._artifacts.finalize(artifact.artifact_id)
@@ -428,7 +465,11 @@ class UploadService:
             await asyncio.shield(self._abandon(artifact, spool, "upload_incomplete", purge=opened))
             raise
         except ArtifactPayloadError as exc:
-            failure = UploadRefused(503, "upload_storage_failed", f"the payload store refused the file ({exc.code})")
+            # Constat 3 de la Slice 09 : la cause réelle (classe, errno, MAX_PATH) va au journal et au message ;
+            # jamais le chemin (dossier de l'utilisateur) ni le nom d'origine.
+            cause = storage_cause(exc, stage)
+            failure = UploadRefused(503, "upload_storage_failed",
+                                    f"the payload store refused the file ({_cause_text(cause)})")
         except ArtifactError:
             await self._abandon(artifact, spool, "upload_storage_failed", purge=opened)
             raise
@@ -436,7 +477,7 @@ class UploadService:
             failure = UploadRefused(400, "upload_incomplete", f"the body stopped early ({type(exc).__name__})")
         failed = await self._abandon(artifact, spool, failure.code, purge=opened)
         failure.artifact = failed
-        raise self._refused(failure, artifact.artifact_id)
+        raise self._refused(failure, artifact.artifact_id, cause=cause)
 
     async def _abandon(self, artifact: Artifact, spool: Any, code: str, *, purge: bool = True) -> Artifact | None:
         """Spool fermé, Artifact `failed` codé, dossier retiré : aucun `.partial` orphelin. Ne lève pas.
@@ -566,10 +607,14 @@ class UploadService:
 
     # ------------------------------------------------------------ journal
 
-    def _refused(self, refusal: UploadRefused, key: str) -> UploadRefused:
-        self._trace("core.upload.refused", "téléversement refusé", level="warning",
-                    data={"code": refusal.code, "status": refusal.status,
-                          "artifact_id": key if key.startswith("jart_") else upload_artifact_id(key)})
+    def _refused(self, refusal: UploadRefused, key: str, *,
+                 cause: Mapping[str, Any] | None = None) -> UploadRefused:
+        data = {"code": refusal.code, "status": refusal.status,
+                "artifact_id": key if key.startswith("jart_") else upload_artifact_id(key)}
+        if cause:
+            data["cause"] = dict(cause)
+        self._trace("core.upload.refused", "téléversement refusé",
+                    level="error" if refusal.status >= 500 else "warning", data=data)
         return refusal
 
     def _trace(self, kind: str, message: str, *, level: str = "info", data: Mapping[str, Any] | None = None) -> None:

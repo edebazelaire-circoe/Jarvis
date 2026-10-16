@@ -19,6 +19,7 @@ from jarvis.core.upload_service import UploadRefused, UploadService, upload_view
 from jarvis.core.v2_app import JarvisCoreApplication
 from jarvis.domain.artifacts import ArtifactKind, ArtifactQuery, ArtifactState
 from jarvis.domain.uploads import UploadBounds, upload_artifact_id, upload_bounds
+from jarvis.ports.artifacts import ArtifactPayloadError
 
 PNG = b"\x89PNG\r\n\x1a\n" + bytes(range(256)) * 4
 UID = "0b6c1f0e-1111-4222-8333-444455556666"
@@ -27,9 +28,11 @@ UID = "0b6c1f0e-1111-4222-8333-444455556666"
 class Diagnostics:
     def __init__(self) -> None:
         self.events: list[tuple[str, str, dict]] = []
+        self.levels: list[tuple[str, str]] = []
 
     def emit(self, kind, message, *, level="info", data=None):  # noqa: ANN001
         self.events.append((kind, message, dict(data or {})))
+        self.levels.append((kind, level))
 
 
 class StreamedBody:
@@ -254,13 +257,48 @@ async def test_a_partial_left_there_is_never_overwritten(core):
 async def test_a_path_beyond_max_path_is_a_coded_storage_failure(core, tmp_path):
     deep = tmp_path / ("d" * 120) / ("e" * 120)
     artifacts = ArtifactService(core.artifacts._repo, core.artifacts._ledger, FileArtifactPayloads(deep))
+    journal = Diagnostics()
     service = UploadService(artifacts, association=core._upload_association, bounds=core.uploads._bounds,
-                            artifacts_root=deep / "artifacts")
+                            artifacts_root=deep / "artifacts", diagnostics=journal)
     with pytest.raises(UploadRefused) as refused:
         await service.put(client_upload_id=UID, purpose="chat", agent="claude", declared_mime=None,
-                          name_header="a.png", content_length=None, read=BytesBody(PNG).read)
+                          name_header="secret-medical.png", content_length=None, read=BytesBody(PNG).read)
     assert (refused.value.status, refused.value.code) == (503, "upload_storage_failed")
     assert (await artifacts.get(upload_artifact_id(UID))).state is ArtifactState.FAILED
+    # Constat 3 de la Slice 09 : le journal dit la cause réelle, jamais le chemin ni le nom d'origine.
+    [data] = [data for kind, _, data in journal.events if kind == "core.upload.refused"]
+    cause = data["cause"]
+    assert ("core.upload.refused", "error") in journal.levels  # a storage failure reaches the Error Logs feed
+    assert (data["code"], data["status"]) == ("upload_storage_failed", 503)
+    assert (cause["payload_code"], cause["stage"]) == ("artifact_payload_failed", "open")
+    if os.name == "nt":
+        assert cause["cause_type"] == "SafeFolderError" and cause["path_limit"] in (248, 259)
+        assert cause["path_chars"] > cause["path_limit"]
+        assert f"above the Windows limit of {cause['path_limit']}" in refused.value.message
+    text = repr(journal.events) + refused.value.message
+    assert "secret" not in text and str(tmp_path) not in text and "d" * 120 not in text
+
+
+async def test_a_storage_refusal_names_its_os_error_and_errno(core, monkeypatch):
+    """Toute cause enchaînée par l'adaptateur, pas seulement MAX_PATH : ici un disque plein (errno 28)."""
+
+    def full_disk(self, artifact_id, name):  # noqa: ANN001
+        try:
+            raise OSError(28, "No space left on device", str(Path("C:/Users/someone") / artifact_id / name))
+        except OSError as exc:
+            raise ArtifactPayloadError("artifact_payload_failed", Path("x") / artifact_id / name, str(exc)) from exc
+
+    monkeypatch.setattr(FileArtifactPayloads, "open_spool", full_disk)
+    with pytest.raises(UploadRefused) as refused:
+        await put(core, BytesBody(PNG), name="secret.png")
+    assert refused.value.code == "upload_storage_failed" and "OSError errno=28" in refused.value.message
+    [data] = [data for kind, _, data in core.test_diagnostics.events if kind == "core.upload.refused"]
+    assert data["cause"] == {"payload_code": "artifact_payload_failed", "stage": "open", "cause_type": "OSError",
+                             "os_error": "OSError", "errno": 28, "winerror": None,
+                             "path_chars": len(str(Path("x") / upload_artifact_id(UID) / "upload.png")),
+                             "path_limit": None}
+    text = repr(core.test_diagnostics.events) + refused.value.message
+    assert "someone" not in text and "secret" not in text and "No space" not in text
 
 
 @pytest.mark.parametrize("kwargs,code", [
