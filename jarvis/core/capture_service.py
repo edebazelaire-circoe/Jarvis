@@ -66,8 +66,8 @@ from jarvis.domain.session_activity import ActivityDraft, ActivityKind
 from jarvis.domain.v2 import utc_now
 from jarvis.ports.artifacts import ArtifactPayloadError, ArtifactSpool
 from jarvis.ports.capture import (
-    CaptureRepair, CaptureRepository, CaptureSource, CaptureSourceError, CaptureSourceRegistry, MediaInfo,
-    OneShotSource, RepairOutcome, RepairTarget,
+    CaptureRepair, CaptureRepository, CaptureSource, CaptureSourceError, CaptureSourceRegistry, CaptureTarget,
+    MediaInfo, OneShotSource, RepairOutcome, RepairTarget,
 )
 from jarvis.ports.v2 import DiagnosticSink
 from jarvis.ports.workspace_board import BoardStoreError
@@ -84,6 +84,8 @@ DEFAULT_REPAIR_TIMEOUT_S = 45.0
 #: Captures ouvertes réconciliées par lot au démarrage.
 RECOVERY_BATCH = 64
 RECENT_LIMIT = 20
+#: Énumération des cibles de capture (écrans, entrées audio ; orbital-ui S04) : au-delà, `default` seul.
+TARGETS_TIMEOUT_S = 5.0
 
 _DISK_FULL_ERRNOS = frozenset({errno.ENOSPC, *([errno.EDQUOT] if hasattr(errno, "EDQUOT") else [])})
 #: ERROR_HANDLE_DISK_FULL (39), ERROR_DISK_FULL (112).
@@ -215,6 +217,16 @@ class CaptureStatus:
                 "stuck": [s.to_payload() for s in self.stuck]}
 
 
+#: Libellé de la cible `default` quand rien d'autre n'est connu (énumération illisible).
+DEFAULT_TARGET_LABELS = {CaptureChannel.SCREEN: "Écran principal", CaptureChannel.AUDIO: "Micro de Voice"}
+
+
+def _default_target(channel: CaptureChannel) -> dict[str, Any]:
+    return CaptureTarget(token=DEFAULT_DEVICE, label=DEFAULT_TARGET_LABELS.get(channel, DEFAULT_DEVICE),
+                         primary=True if channel is CaptureChannel.SCREEN else None,
+                         default=True if channel is CaptureChannel.AUDIO else None).to_payload()
+
+
 class NoCaptureSources:
     """Registre vide : aucune source installée (les adaptateurs réels arrivent aux Slices 06 et 07)."""
 
@@ -229,6 +241,9 @@ class NoCaptureSources:
         raise self._refuse(channel)
 
     def source_name(self, channel: CaptureChannel, mode: CaptureMode, source: str | None) -> str:
+        raise self._refuse(channel)
+
+    def targets(self, channel: CaptureChannel) -> list[CaptureTarget]:
         raise self._refuse(channel)
 
 
@@ -457,6 +472,42 @@ class CaptureService:
 
     async def recent(self, *, limit: int = RECENT_LIMIT) -> tuple[CaptureRecord, ...]:
         return tuple(await self._repo.recent_captures(limit=limit))
+
+    async def targets(self) -> dict[str, dict[str, Any]]:
+        """Cibles de chaque canal, telles que les sources installées les exécutent (orbital-ui S04, D6).
+
+        Par canal : `{available, devices, code?}`. Aucune source pour le canal :
+        `available: false`, aucune cible, le code du refus (`unsupported_*`).
+        Énumération illisible (exception, échéance `TARGETS_TIMEOUT_S`) :
+        `default` seul, `code: targets_unreadable`, journal
+        `core.capture.targets_unreadable` — jamais une page d'erreur, jamais une
+        cible inventée. Lecture seule : aucune capture n'est ouverte ici.
+        """
+
+        return {channel.value: await self._targets_of(channel) for channel in CaptureChannel}
+
+    async def _targets_of(self, channel: CaptureChannel) -> dict[str, Any]:
+        lister = getattr(self._sources, "targets", None)
+        if not callable(lister):
+            return {"available": True, "devices": [_default_target(channel)]}
+        try:
+            found = await asyncio.wait_for(_in_daemon_thread(lister, channel), TARGETS_TIMEOUT_S)
+        except CaptureError as exc:
+            if exc.code in (CaptureErrorCode.UNSUPPORTED_SOURCE, CaptureErrorCode.UNSUPPORTED_PLATFORM):
+                return {"available": False, "devices": [], "code": exc.code.value}
+            return self._unreadable_targets(channel, exc)
+        except Exception as exc:  # noqa: BLE001 - enumeration failure: default only, cause journaled
+            return self._unreadable_targets(channel, exc)
+        devices = [target.to_payload() for target in found]
+        if not devices or devices[0].get("token") != DEFAULT_DEVICE:
+            return self._unreadable_targets(channel, ValueError("registry listed no default target first"))
+        return {"available": True, "devices": devices}
+
+    def _unreadable_targets(self, channel: CaptureChannel, exc: BaseException) -> dict[str, Any]:
+        reason = "timeout" if isinstance(exc, (asyncio.TimeoutError, TimeoutError)) else type(exc).__name__
+        self._trace("core.capture.targets_unreadable", f"Cibles de capture illisibles : {reason}: {str(exc)[:200]}",
+                    level="warning", data={"channel": channel.value, "reason": reason})
+        return {"available": True, "code": "targets_unreadable", "devices": [_default_target(channel)]}
 
     @staticmethod
     def _live(run: _Run) -> CaptureRecord:

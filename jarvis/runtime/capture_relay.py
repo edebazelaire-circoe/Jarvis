@@ -9,7 +9,7 @@ le serveur MCP `jarvis-capture` du cerveau appellent — jamais Core en direct.
 | Control Center | Core | Délai |
 | --- | --- | --- |
 | `GET/POST /api/contexts`, `GET /api/contexts/current`, `POST /api/contexts/{id}/activate` | même chemin sous `/v1` | 10 s |
-| `GET /api/captures/status`, `GET /api/captures/{id}`, `GET /api/captures/{id}/transcript` | idem | 10 s |
+| `GET /api/captures/status`, `GET /api/captures/targets`, `GET /api/captures/{id}`, `GET /api/captures/{id}/transcript` | idem | 10 s |
 | `POST /api/captures/start`, `/screenshot`, `/{id}/stop`, `/{id}/transcription/retry\\|abandon` | idem | 45 s |
 | `GET /api/artifacts`, `GET/DELETE /api/artifacts/{id}`, `GET …/relations`, `GET …/transcript` | idem | 10 s (DELETE 30 s) |
 | `GET /api/artifacts/{id}/payload` | idem, **en octets** (`forward_bytes`, `Range` relayé) | 30 s |
@@ -97,6 +97,7 @@ class CaptureRelayRoutes:
             web.post(CONTEXTS_ROUTE + "/{context_id}/activate",
                      self._relay("context_activate", "/v1/contexts/{context_id}/activate")),
             web.get(CAPTURES_ROUTE + "/status", self._relay("capture_status", "/v1/captures/status")),
+            web.get(CAPTURES_ROUTE + "/targets", self._relay("capture_targets", "/v1/captures/targets")),
             web.post(CAPTURES_ROUTE + "/start", self._relay("capture_start", "/v1/captures/start", w)),
             web.post(CAPTURES_ROUTE + "/screenshot", self._relay("screenshot", "/v1/captures/screenshot", w)),
             web.get(capture, self._relay("capture_get", "/v1/captures/{capture_id}")),

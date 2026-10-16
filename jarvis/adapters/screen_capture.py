@@ -49,13 +49,13 @@ import time
 from typing import Any, Protocol
 
 from jarvis.adapters.windows_display import Display, Frame, parse_display_token, pick_display
-from jarvis.domain.capture import CaptureChannel, CaptureError, CaptureErrorCode, CaptureMode
+from jarvis.domain.capture import DEFAULT_DEVICE, CaptureChannel, CaptureError, CaptureErrorCode, CaptureMode
 from jarvis.domain.v2 import utc_now
 from jarvis.media.fmp4 import scan
 from jarvis.media.png import bgra_to_png
 from jarvis.ports.capture import (
-    CaptureSink, CaptureSource, CaptureSourceError, MediaInfo, OneShotResult, OneShotSource, RepairOutcome,
-    RepairTarget, SourceHealth,
+    CaptureSink, CaptureSource, CaptureSourceError, CaptureTarget, MediaInfo, OneShotResult, OneShotSource,
+    RepairOutcome, RepairTarget, SourceHealth,
 )
 
 DESKTOP_SOURCE = "desktop"
@@ -625,6 +625,28 @@ class ScreenCaptureSources:
             raise CaptureError(CaptureErrorCode.UNSUPPORTED_SOURCE,
                                f"no capture source {source or 'default'!r} for channel {CaptureChannel(channel).value}")
         return DESKTOP_SOURCE
+
+    def targets(self, channel: CaptureChannel) -> list[CaptureTarget]:
+        """`default` (l'écran principal), puis chaque **autre** écran `displayN`, dans l'ordre de la source.
+
+        `display1` est l'écran principal, déjà nommé par `default` : il n'est pas
+        rendu une seconde fois (deux entrées pour un même écran seraient un faux
+        choix, et deux enregistrements du même écran sous deux jetons). Même
+        énumération que la prise (`DisplayProvider.displays`), lue à l'appel.
+        """
+
+        self._check(channel, None, DEFAULT_DEVICE)
+        displays = self._displays().displays()
+        primary = next((d for d in displays if d.primary), displays[0] if displays else None)
+        out = [CaptureTarget(token=DEFAULT_DEVICE, label="Écran principal", primary=True,
+                             width=primary.width if primary else None, height=primary.height if primary else None)]
+        for display in displays:
+            if display is primary:
+                continue
+            index = parse_display_token(display.name)
+            out.append(CaptureTarget(token=display.name, label=f"Écran {index}", primary=display.primary,
+                                     width=display.width, height=display.height))
+        return out
 
 
 # ------------------------------------------------------------------ réparation

@@ -267,6 +267,11 @@ class CaptureApi:
     async def capture(self, capture_id: str) -> dict[str, Any]:
         return {"capture": await self._capture(await self._captures.get(capture_id))}
 
+    async def targets(self) -> dict[str, Any]:
+        """Cibles exécutables par canal (`CaptureService.targets`, orbital-ui S04) ; libellés système masqués."""
+
+        return redact_paths(await self._captures.targets())
+
     async def start(self, channel: str, options: Any) -> dict[str, Any]:
         return {"capture": await self._capture(await self._captures.start(channel, options))}
 

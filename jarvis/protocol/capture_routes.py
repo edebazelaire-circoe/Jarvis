@@ -13,6 +13,7 @@ pour le serveur MCP `jarvis-capture` du cerveau. Contrat : `docs/capture.md` ›
 | GET | `/v1/contexts/current` | Context actif |
 | POST | `/v1/contexts/{context_id}/activate` | réactiver un Context dormant `{origin?}` |
 | GET | `/v1/captures/status[?recent=N]` | captures ouvertes, arrêts bloqués, dernières finies, transcription, enrichissement |
+| GET | `/v1/captures/targets` | cibles exécutables par canal (`default` d'abord ; orbital-ui S04) |
 | POST | `/v1/captures/start` | `{channel: audio\\|screen, options?: {source?, device?}, origin?}` (201) |
 | POST | `/v1/captures/screenshot` | `{options?, origin?}` (201) |
 | GET | `/v1/captures/{capture_id}` | une capture et sa transcription |
@@ -201,8 +202,9 @@ class CaptureProtocolRoutes:
             web.post("/v1/contexts", g(self.create_context)),
             web.get("/v1/contexts/current", g(self.current_context)),
             web.post("/v1/contexts/{context_id}/activate", g(self.activate_context)),
-            # `status`, `start`, `screenshot` avant `{capture_id}` : aiohttp apparie dans l'ordre.
+            # `status`, `targets`, `start`, `screenshot` avant `{capture_id}` : aiohttp apparie dans l'ordre.
             web.get("/v1/captures/status", g(self.status)),
+            web.get("/v1/captures/targets", g(self.targets)),
             web.post("/v1/captures/start", g(self.start)),
             web.post("/v1/captures/screenshot", g(self.screenshot)),
             web.get("/v1/captures/{capture_id}", g(self.capture)),
@@ -265,6 +267,11 @@ class CaptureProtocolRoutes:
         self._ready()
         recent = _int(request, "recent", DEFAULT_RECENT_CAPTURES, 0, MAX_RECENT_CAPTURES)
         return web.json_response(await self._api.status(recent=recent))
+
+    async def targets(self, request: web.Request) -> web.Response:
+        _only(request, set())
+        self._ready()
+        return web.json_response(await self._api.targets())
 
     async def start(self, request: web.Request) -> web.Response:
         _only(request, set())
