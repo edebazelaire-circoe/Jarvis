@@ -272,3 +272,34 @@ def test_board_linked_artifacts_are_typed_cards_and_a_board_switch_drops_them(r)
     assert [i["act"] for i in r["board_menu"]["menu"]["items"]] == ["ws-open", "ws-link"]
     assert r["board_switched_now"]["wsItems"] == [] and r["board_switched_now"]["wsCalls"] == ["b", "c"], "the previous Board's items leave at once"
     assert r["board_switched"]["wsItems"] == [] and r["board_switched"]["wsHead"] is None
+
+
+# ------------------------------------------------------------------ Slice 07 rework (QA) : focus de toute carte, forme par etat, infobulle
+
+
+def test_focus_survives_polls_on_board_and_folded_cards_and_escape_returns_to_the_board_card(r):
+    assert r["focus_board"] == {"active": "jart_" + "c" * 32, "polls": r["focus_board"]["polls"]} and r["focus_board"]["polls"] >= 2
+    assert r["focus_folded"]["active"] == "pst_" + "5".zfill(32) and r["focus_folded"]["polls"] >= 2
+    assert r["menu_open_active"] == "menu"
+    assert r["focus_after_menu"] == "jart_" + "c" * 32, "Escape returns focus to the card, re-rendered meanwhile"
+
+
+SHAPES = {"working": ("none", "radial-gradient"), "problem": ("polygon(50% 0px, 100% 100%, 0px 100%)", "none"),
+          "unreviewed": ("polygon(50% 0px, 100% 50%, 50% 100%, 0px 50%)", "none"), "done": ("polygon(0px 52%", "none"),
+          "unknown": ("none", "none")}
+
+
+def test_every_state_has_its_own_shape_in_every_density(r):
+    for read in (r["cards_circuit-board"], r["cards_cosmos"], r["slim_cosmos"], r["slim_circuit-board"]):
+        seen = set()
+        for item in read["items"]:
+            clip, mask = SHAPES[item["state"]]
+            assert item["dotShape"].startswith(clip) and (mask in item["dotMask"]), (read["density"], item["state"], item["dotShape"], item["dotMask"])
+            seen.add((item["dotShape"], item["dotMask"][:20], item["dotBorder"]))
+        assert len(seen) == 5, "five states, five distinct shapes (status never by colour alone, also at 72 px)"
+
+
+def test_the_tooltip_says_the_review_in_words_never_a_tool_identifier(r):
+    bilan = next(i for i in r["cards_cosmos"]["items"] if i["state"] == "unreviewed")
+    assert "Modifiée par Jarvis — à revoir" in bilan["full"] and "presentation_edit" not in bilan["full"]
+    assert "presentation_edit" not in bilan["label"]

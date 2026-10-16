@@ -108,7 +108,7 @@ const READ=`(()=>{
     full:b.title,label:b.getAttribute('aria-label'),dot:getComputedStyle(b.querySelector('.jvr-dot')).backgroundColor,dotAnim:getComputedStyle(b.querySelector('.jvr-dot')).animationName,
     thumb:(t=>({kind:t.dataset.kind,badge:(t.querySelector('.jvr-badge')||{}).textContent||'',img:(i=>i?{ok:i.complete&&i.naturalWidth>0,payload:/^data:image\\/svg/.test(i.getAttribute('src')||'')}:null)(t.querySelector('img'))}))(b.querySelector('.jvr-thumb')),
     stateText:(b.querySelector('.jvr-state')||{}).textContent||'',when:(b.querySelector('.jvr-when')||{}).textContent||'',meta:(b.querySelector('.jvr-meta')||{}).textContent||'',
-    dotShape:getComputedStyle(b.querySelector('.jvr-dot')).clipPath,dotBorder:getComputedStyle(b.querySelector('.jvr-dot')).borderTopStyle,
+    dotShape:getComputedStyle(b.querySelector('.jvr-dot')).clipPath,dotMask:(cs=>cs.maskImage||cs.webkitMaskImage||'none')(getComputedStyle(b.querySelector('.jvr-dot'))),dotBorder:getComputedStyle(b.querySelector('.jvr-dot')).borderTopStyle,
     more:!!b.parentElement.querySelector('.jvr-more')}));
   const win=q('#jvPresWindow');
   return {visible:!!host&&!host.hidden,box:box(host),items,
@@ -380,6 +380,29 @@ try{
   out.board_switched_now=await evaluate(READ);
   await sleep(500);
   out.board_switched=await evaluate(READ);
+
+  /* 19. Le focus survit aux relevés pour TOUTE carte du rail (Sur ce Board, plis) ; Echap depuis le menu d'une carte du Board y rend le focus,
+     meme si la carte a ete redessinee pendant que le menu etait ouvert. */
+  const ACTIVE=`(()=>{const a=document.activeElement;return a&&a.classList&&a.classList.contains('jvr-item')?a.dataset.id:(a?a.tagName:null)})()`;
+  const SHOT_CARD=`#presentationRail .jvr-ws .jvr-item[data-id="jart_${'c'.repeat(32)}"]`;
+  await load(1440,900,STUB_WS+';'+PRES_BOARD,'#cards');
+  await poll1(`!!document.querySelector('${SHOT_CARD}')`);
+  await evaluate(`document.querySelector('${SHOT_CARD}').focus()`);
+  const polls0=await evaluate(`window.__rail.calls.filter(c=>c.url==='/api/presentation-studio/rail').length`);
+  await poll1(`window.__rail.calls.filter(c=>c.url==='/api/presentation-studio/rail').length>=${polls0}+2`,9000);await sleep(150);
+  out.focus_board={active:await evaluate(ACTIVE),polls:(await evaluate(`window.__rail.calls.filter(c=>c.url==='/api/presentation-studio/rail').length`))-polls0};
+  await evaluate(`(()=>{const f=[...document.querySelectorAll('#presentationRail .jvr-folds .jvr-fold')].pop();if(f.getAttribute('aria-expanded')!=='true')f.click()})()`);await sleep(150);
+  const FOLDED=`#presentationRail .jvr-folds .jvr-item[data-id="pst_${'5'.padStart(32,'0')}"]`;
+  await evaluate(`document.querySelector('${FOLDED}').focus()`);
+  const polls1=await evaluate(`window.__rail.calls.filter(c=>c.url==='/api/presentation-studio/rail').length`);
+  await poll1(`window.__rail.calls.filter(c=>c.url==='/api/presentation-studio/rail').length>=${polls1}+2`,9000);await sleep(150);
+  out.focus_folded={active:await evaluate(ACTIVE),polls:(await evaluate(`window.__rail.calls.filter(c=>c.url==='/api/presentation-studio/rail').length`))-polls1};
+  await rightClick(SHOT_CARD);await sleep(150);
+  out.menu_open_active=await evaluate(`document.activeElement&&document.activeElement.closest('.jvr-menu')?'menu':null`);
+  const polls2=await evaluate(`window.__rail.calls.filter(c=>c.url==='/api/presentation-studio/rail').length`);
+  await poll1(`window.__rail.calls.filter(c=>c.url==='/api/presentation-studio/rail').length>=${polls2}+1`,9000);await sleep(150);
+  await press('Escape');await sleep(150);
+  out.focus_after_menu=await evaluate(ACTIVE);
 
   ws.close();
   process.stdout.write(JSON.stringify({results:out,console:consoleLines}));

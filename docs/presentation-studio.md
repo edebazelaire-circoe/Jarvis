@@ -4439,7 +4439,8 @@ placeholder (« Présentation · Remotion » / « Slidecar », a drawn screen gl
 - Persisted, unlike the work state: a Core restart keeps the yellow.
 
 **Displayed state** (page, `displayState`): `working` (blue) > `problem` (orange-red, triangle, own card stroke) > `unreviewed` (yellow) > `done` (green); a row without a
-readable work state is `unknown` (dashed ring, « État inconnu »), never green. A text label always accompanies the dot (« En cours », « Problème », « À revoir », « Prête »,
+readable work state is `unknown` (dashed ring, « État inconnu »), never green. Each state has its own mark shape in every density (ring, triangle, diamond,
+check, dashed ring) and a text label always accompanies it (« En cours », « Problème », « À revoir », « Prête »,
 « État inconnu »); the tooltip and the accessible name carry the long label and, for a problem, its message.
 
 **Card.** Preview (or placeholder) with the engine badge, title (40 characters, two lines; full title in the tooltip), `engine · N variantes`, dot + label + « il y a … »

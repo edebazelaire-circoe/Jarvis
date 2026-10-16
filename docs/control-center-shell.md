@@ -312,11 +312,13 @@ from the edges) and `#jvStudioExplorer:not(:fullscreen)` stops at
 `right: 188px` (60 px when slim); during a run the interaction-mode control
 sits at the bottom of that right column (`control_center_presentation_studio_explorer_core.js`).
 
-**State, never by colour alone.** Every card shows a dot **and** a label:
-`working` « En cours » `--sem-working`, pulsing; `problem` « Problème »
-`--sem-problem`, a triangle and an orange-red card stroke (never relabelled as
-review); `unreviewed` « À revoir » `--sem-review`; `done` « Prête »
-`--sem-done`; `unknown` « État inconnu », dashed hollow ring. Precedence
+**State, never by colour alone.** Every card shows a mark with its own
+**shape** in every density (also in the 72 px strip, where the label shows
+only on hover and focus) **and** a label: `working` « En cours »
+`--sem-working`, pulsing ring; `problem` « Problème » `--sem-problem`,
+triangle and an orange-red card stroke (never relabelled as review);
+`unreviewed` « À revoir » `--sem-review`, diamond; `done` « Prête » / « Prêt »
+`--sem-done`, check; `unknown` « État inconnu », dashed hollow ring. Precedence
 working > problem > unreviewed > done.
 
 **Stage B.** A second listbox « Sur ce Board » under the presentations shows the Artifacts linked to the active Board in the same cards
@@ -326,7 +328,9 @@ working > problem > unreviewed > done.
 **Focus.** The list is one listbox (arrows, `ContextMenu` / `Shift+F10`, `F2`,
 `Delete`); the « ⋯ » button is a pointer and Bare Hands affordance with
 `tabindex=-1`. The list is rebuilt on every Core read and the focused card
-keeps the focus.
+keeps the focus, wherever it is (main list, « Sur ce Board », the Masquées /
+Archivées folds); closing a card's menu with `Esc` returns the focus to that
+card even if it was redrawn meanwhile (restored by its id).
 
 ## Tool wheel (`#toolWheel`)
 

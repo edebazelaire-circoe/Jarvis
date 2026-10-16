@@ -46,7 +46,7 @@
   const ID_ARTIFACT=/^[a-z][a-z0-9]*_[A-Za-z0-9_]{6,80}$/;
   const STORAGE_KEY='jarvis.presentationRail.v1';
   /* Le libellé accompagne TOUJOURS la pastille (la couleur ne porte jamais l'état seule) : long pour l'infobulle et l'ARIA, court à l'écran. */
-  const STATE_LABEL=Object.freeze({working:'Un agent travaille dessus',problem:'Un problème est survenu',unreviewed:'Modifiée par Jarvis, à revoir',
+  const STATE_LABEL=Object.freeze({working:'Un agent travaille dessus',problem:'Un problème est survenu',unreviewed:'Modifiée par Jarvis — à revoir',
     done:'Terminé',unknown:'État inconnu'});
   const STATE_SHORT=Object.freeze({working:'En cours',problem:'Problème',unreviewed:'À revoir',done:'Prête',unknown:'État inconnu'});
   /* Étape B : état d'un Artifact du Board (pas de jaune : aucun propriétaire canonique de « revu »). */
@@ -209,10 +209,14 @@
 #${DOM.hostId} .jvr-item[data-state=unknown] .jvr-state{color:var(--jvr-mute)}
 #${DOM.hostId} .jvr-when{color:var(--jvr-mute);overflow:hidden;text-overflow:ellipsis}
 #${DOM.hostId} .jvr-dot{flex:0 0 auto;width:8px;height:8px;border-radius:50%;background:var(--c);box-shadow:0 0 0 2px rgba(0,0,0,.35)}
-#${DOM.hostId} .jvr-item[data-state=working] .jvr-dot{animation:jvr-pulse 1.3s ease-in-out infinite;box-shadow:0 0 8px var(--c)}
-#${DOM.hostId} .jvr-item[data-state=problem] .jvr-dot{width:10px;height:9px;border-radius:1px;clip-path:polygon(50% 0,100% 100%,0 100%);box-shadow:none}
-#${DOM.hostId} .jvr-item[data-state=unreviewed] .jvr-dot{box-shadow:0 0 0 2px color-mix(in srgb,var(--c) 30%,transparent)}
-#${DOM.hostId} .jvr-item[data-state=unknown] .jvr-dot{border:1px dashed var(--jvr-mute);box-shadow:none}
+/* A shape per state (status never by colour alone, also in the 72 px strip where the label hides): working = ring (pulsing), problem =
+   triangle, unreviewed = diamond, done = check, unknown = dashed hollow ring. Same rules for the header's « most urgent » mark and the bubble. */
+#${DOM.hostId} :is([data-state=working] .jvr-dot,.jvr-urgent[data-state=working]){-webkit-mask:radial-gradient(circle,transparent 2px,#000 2.6px);mask:radial-gradient(circle,transparent 2px,#000 2.6px);box-shadow:none}
+#${DOM.hostId} .jvr-item[data-state=working] .jvr-dot{animation:jvr-pulse 1.3s ease-in-out infinite}
+#${DOM.hostId} :is([data-state=problem] .jvr-dot,.jvr-urgent[data-state=problem]){width:10px;height:9px;border-radius:1px;clip-path:polygon(50% 0,100% 100%,0 100%);box-shadow:none}
+#${DOM.hostId} :is([data-state=unreviewed] .jvr-dot,.jvr-urgent[data-state=unreviewed]){width:9px;height:9px;border-radius:1px;clip-path:polygon(50% 0,100% 50%,50% 100%,0 50%);box-shadow:none}
+#${DOM.hostId} :is([data-state=done] .jvr-dot,.jvr-urgent[data-state=done]){width:10px;height:9px;border-radius:0;clip-path:polygon(0 52%,16% 36%,40% 60%,84% 8%,100% 24%,40% 94%);box-shadow:none}
+#${DOM.hostId} [data-state=unknown] .jvr-dot{border:1px dashed var(--jvr-mute);box-shadow:none}
 #${DOM.hostId} .jvr-item[data-state=problem]{border-color:color-mix(in srgb,var(--sem-problem,#ff6a4d) 45%,transparent)}
 @keyframes jvr-pulse{50%{opacity:.35;transform:scale(.8)}}
 @media (prefers-reduced-motion:reduce){#${DOM.hostId} .jvr-item[data-state=working] .jvr-dot{animation:none}#${DOM.hostId} .jvr-item{transition:none}}
@@ -399,8 +403,7 @@ html.jvr-studio.jvr-slim #${DOM.hostId}{width:44px;padding:8px 4px}
       if(card.when)status.append(el('span','jvr-when',`· ${card.when}`));
       body.append(name,meta,status);b.append(body);
       const detail=card.state==='problem'&&row.work&&row.work.message?` — ${cleanLine(row.work.message,120)}`:'';
-      const review=card.state==='unreviewed'&&row.unreviewed&&row.unreviewed.label?` (${cleanLine(row.unreviewed.label,40)})`:'';
-      b.title=`${card.title}\n${card.meta}\n${card.stateLabel}${detail}${review}${card.when?`\nModifiée ${card.when}`:''}${row.hidden?'\nMasquée du rail':''}${row.archived?'\nArchivée (restaurable)':''}`;
+      b.title=`${card.title}\n${card.meta}\n${card.stateLabel}${detail}${card.when?`\nModifiée ${card.when}`:''}${row.hidden?'\nMasquée du rail':''}${row.archived?'\nArchivée (restaurable)':''}`;
       b.setAttribute('aria-label',`${card.title}, ${card.type.label} : ${card.stateLabel.toLowerCase()}${row.hidden?', masquée':''}${row.archived?', archivée':''}`);
       b.addEventListener('click',()=>{if(row.archived){openMenuFor(row,b);return}openRow(row.presentation_id,'click')});
       b.addEventListener('contextmenu',e=>{e.preventDefault();openMenuFor(row,b,e.clientX,e.clientY)});
@@ -443,7 +446,7 @@ html.jvr-studio.jvr-slim #${DOM.hostId}{width:44px;padding:8px 4px}
       const row=wsItem?null:rowOf(item.dataset.id);if((!row&&!wsItem)||!ui.peek)return;
       const card=wsItem?wsCardOf(wsItem):cardOf(row,now());
       clear(ui.peek);
-      const status=el('span','jvr-status');status.style.setProperty('--c',card.color);
+      const status=el('span','jvr-status');status.style.setProperty('--c',card.color);status.dataset.state=card.state;
       const dot=el('span','jvr-dot');status.append(dot,el('span','jvr-state',card.stateShort));
       ui.peek.append(el('span','jvr-name',card.title),el('span','jvr-meta',card.meta),status);
       const h=ui.host.getBoundingClientRect(),r=item.getBoundingClientRect();
@@ -567,6 +570,7 @@ html.jvr-studio.jvr-slim #${DOM.hostId}{width:44px;padding:8px 4px}
       ui.count.textContent=m.visible.length?`(${m.visible.length})`:'';
       const urgent=m.problems.length?'problem':m.working.length?'working':m.unreviewed.length?'unreviewed':null;
       ui.urgent.style.setProperty('--c',urgent?STATE_COLOR[urgent]:'transparent');ui.urgent.title=urgent?STATE_LABEL[urgent]:'';
+      if(urgent)ui.urgent.dataset.state=urgent;else delete ui.urgent.dataset.state;
       if(density==='drawer'){
         ui.collapseBtn.textContent=S.drawer?'›':'‹';ui.collapseBtn.setAttribute('aria-expanded',String(S.drawer));
         ui.collapseBtn.setAttribute('aria-label',S.drawer?'Fermer le rail des présentations':`Ouvrir le rail des présentations${urgent?` (${STATE_SHORT[urgent].toLowerCase()})`:''}`);
@@ -577,7 +581,8 @@ html.jvr-studio.jvr-slim #${DOM.hostId}{width:44px;padding:8px 4px}
       ui.collapseBtn.title=ui.collapseBtn.getAttribute('aria-label');
       ui.voice.dataset.v=S.voice||'idle';ui.voice.setAttribute('aria-label',`Voix : ${S.voice||'idle'}`);ui.voice.title=`Voix de Jarvis : ${S.voice||'idle'} (elle reste utilisable pendant l’affichage)`;
       /* La liste est reconstruite à chaque relevé : la carte qui avait le focus le retrouve (sinon le clavier le perdrait toutes les 2 à 4 s). */
-      const focused=doc.activeElement&&ui.list.contains(doc.activeElement)&&doc.activeElement.dataset?doc.activeElement.dataset.id:null;
+      const active=doc.activeElement;
+      const focused=active&&ui.host.contains(active)&&active.classList&&active.classList.contains('jvr-item')?active.dataset.id:null;
       clear(ui.list);
       if(!S.loaded&&!S.lost)ui.list.appendChild(el('li','jvr-empty','Chargement…'));
       else if(!m.visible.length)ui.list.appendChild(el('li','jvr-empty',m.total?'Toutes sont masquées ou archivées.':'Aucune présentation.'));
@@ -597,7 +602,7 @@ html.jvr-studio.jvr-slim #${DOM.hostId}{width:44px;padding:8px 4px}
       ui.note.title=note&&!S.lost?'Cliquer pour masquer ce message':'';
       doc.documentElement.classList.toggle('jvr-studio',!!(S.studioOpen&&visible));
       doc.documentElement.classList.toggle('jvr-slim',!!(S.studioOpen&&visible&&slim));
-      if(focused){const again=ui.host.querySelector(`.jvr-item[data-id="${focused}"]`);if(again){again.focus({preventScroll:true});if(slim)showPeek(again)}}
+      if(focused&&doc.activeElement!==ui.host.querySelector(`.jvr-item[data-id="${focused}"]`)){const again=itemById(focused);if(again){again.focus({preventScroll:true});if(slim)showPeek(again)}}
       syncStudioInset(visible);
       reportSoon();
     }
@@ -777,7 +782,7 @@ html.jvr-studio.jvr-slim #${DOM.hostId}{width:44px;padding:8px 4px}
     function openMenu(title,items,origin,x,y,onPick,row){
       closeMenu(false);
       const rect=origin.getBoundingClientRect();
-      S.menuRow={row:row||null,origin};
+      S.menuRow={row:row||null,origin,id:origin&&origin.dataset?origin.dataset.id:null};
       clear(ui.menu);
       const head=el('div','jvr-mhead',cleanLine(title,40));ui.menu.appendChild(head);
       for(const it of items){
@@ -800,9 +805,11 @@ html.jvr-studio.jvr-slim #${DOM.hostId}{width:44px;padding:8px 4px}
       const first=ui.menu.querySelector('button:not([aria-disabled=true])');if(first)first.focus({preventScroll:true});
       log('menu_opened',{items:items.length});
     }
+    /* A card by its canonical id (the list is rebuilt on every Core read: a kept DOM node may be detached). */
+    function itemById(id){return id&&ui.host?Array.from(ui.host.querySelectorAll('.jvr-item')).find(n=>n.dataset.id===id)||null:null}
     function closeMenu(restore){
       const was=S.menuRow;S.menuRow=null;if(ui.menu){ui.menu.hidden=true;clear(ui.menu)}
-      if(restore&&was&&was.origin&&was.origin.isConnected)was.origin.focus({preventScroll:true});
+      if(restore&&was&&was.origin){const target=was.origin.isConnected?was.origin:itemById(was.id);if(target)target.focus({preventScroll:true})}
     }
     function onMenuKey(event){
       const buttons=Array.from(ui.menu.querySelectorAll('button'));const i=buttons.indexOf(doc.activeElement);

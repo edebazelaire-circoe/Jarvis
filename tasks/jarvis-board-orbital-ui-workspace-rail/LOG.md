@@ -65,3 +65,10 @@
 - Tests: new `test_workspace_rail_model_js.py` (3: `test_items_from_board_artifacts_typed_by_mime_and_host`, `test_board_switch_drops_previous_items`, failure path); rail browser +1 (`test_board_linked_artifacts_are_typed_cards_and_a_board_switch_drops_them`) -> 19; e2e: the real still, auto-linked to the active Board by Core, appears under « Sur ce Board » through the real workspace relay (3 passed). After: rail_js 13, shell_layers 9, shell_browser 20, variants_run_browser 6, catalog_ui 14, fullscreen_commands 36, memory_settings_endpoints 17, inspector_docs 9, continuous_sequencing_docs 3, barehands_benchmark_ui_js 29, prefab_protocol_js 14 — all green.
 - Cut procedure: revert this commit; Stage A (`b054f857`) stands alone.
 - Evidence: `evidence/rail-board-items-1440.png`.
+
+## 2026-10-16 - S07 rework (QA blocking points, frozen scope)
+
+- Focus: kept across poll re-renders for every card of the rail (`ui.host`, main list, « Sur ce Board », Masquées / Archivées folds), restored by `data-id`; `Esc` from a card menu returns focus to the card by id even when the card node was redrawn while the menu was open.
+- Status never by colour alone, also in the 72 px strip: a mark shape per state in every density and for the header's urgent mark and the hover bubble — working ring (pulsing), problem triangle, unreviewed diamond, done check, unknown dashed ring.
+- Tooltip: the review is said in words (« Modifiée par Jarvis — à revoir »); the internal `unreviewed.label` (tool id) is no longer shown.
+- Tests: rail browser 19 -> 22 (`test_focus_survives_polls_on_board_and_folded_cards_and_escape_returns_to_the_board_card`, `test_every_state_has_its_own_shape_in_every_density`, `test_the_tooltip_says_the_review_in_words_never_a_tool_identifier`); green after: rail_js 13, e2e 3, shell_layers 9, workspace_rail_model_js 3, presentation_studio_rail 22. Evidence PNGs refreshed.
