@@ -25,8 +25,8 @@
      prendre (`GET /api/captures/targets`). Une seule cible : une entrée
      unique qui le dit (« Écran principal — seule cible disponible »), jamais
      omise, jamais un faux choix.
-   - **Indicateurs** `#recIndicators` (rang 40, place provisoire à gauche du
-     centre bas ; la Slice 06 les range près du centre d'état) : une puce par
+   - **Indicateurs** `#recIndicators` (rang 40, place provisoire à droite de
+     l'indication vocale ; la Slice 06 les range dans le centre d'état) : une puce par
      capture ouverte — `REC` + durée pour l'écran, micro + durée pour l'audio
      —, qui reste quand la roue se replie ; l'activer arrête **cette**
      capture (vie privée d'abord, statut perdu compris). Une attente de
@@ -87,7 +87,9 @@
     const more=open>1?`${open} en cours`:'en cours';
     switch(control.state){
       case 'starting':return {tone:'wait',text:'démarrage…',checked:!!control.pressed};
-      case 'stopping':return {tone:'wait',text:'arrêt…',checked:true};
+      /* Coché = Core dit une capture ouverte (`pressed`) : un arrêt en attente
+         pendant la perte du statut ne l'est plus (QA S04 P6). */
+      case 'stopping':return {tone:'wait',text:'arrêt…',checked:!!control.pressed};
       case 'stuck':return {tone:'error',text:`arrêt bloqué (${control.code||'inconnu'})`,checked:true};
       case 'active':return control.pendingStart
         ?{tone:'wait',text:`${more}, démarrage…`,checked:true}:{text:more,checked:true};

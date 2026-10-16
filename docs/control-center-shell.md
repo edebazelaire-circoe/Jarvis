@@ -51,7 +51,7 @@ the Bare Hands column, from 1024 px down.
 | `left-edge` | `#toolWheel` anchor and orbital tool wheel (Slice 02; live by default since Slice 04: Sélection, Vidéo, Capture d'écran, Audio); `#barehandsHud`, `#barehandsPalette` hosts stay declared but hidden while the wheel is visible (Slice 03) | their modules |
 | `left-low` | `#screenshotPreview` (Slice 05): preview of the last successful screenshot, right of the wheel anchor, its bottom 172 px above the page bottom so it clears the bottom-left context zone (mode button and scene notes stacked up to 162 px) | `control_center_screenshot_preview.js` |
 | `bottom-left` | `#interactionModeHud`, `.sc-status` notes of the scene | `control_center_interaction_mode.js`, scene |
-| `bottom-centre` | `#voiceHint` (until Slice 06), `#boardDropTray`, `#recIndicators` (Slice 04, provisional slot left of centre); status centre from Slice 06 | page, `control_center_board_drop.js`, `control_center_capture_wheel.js` |
+| `bottom-centre` | `#voiceHint` (until Slice 06), `#boardDropTray`, `#recIndicators` (Slice 04, provisional slot right of the voice hint); status centre from Slice 06 | page, `control_center_board_drop.js`, `control_center_capture_wheel.js` |
 | `bottom-right` | `#chatTab` | `control_center_chat.js` |
 | `right` | active workspace rail `#presentationRail` (Slice 07, see [Workspace rail](#workspace-rail-presentationrail)); side panels (`#panel`, `#chatPanel`, `#jvStudioInspector`) open over it | `control_center_presentation_rail.js`, page, modules |
 | `centre` | Board / scene (`#sceneLayer`) | scene |

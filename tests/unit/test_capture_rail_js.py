@@ -1047,3 +1047,95 @@ def test_le_sous_arc_ne_propose_que_des_cibles_reelles_et_l_entree_unique_le_dit
     assert v["failed"] == [["none", "Cibles illisibles", None, True]]
     assert v["none"] == [["none", "Aucune cible", None, True]]
     assert "targets_unreadable" in v["unreadable"]
+
+
+# ==========================================================================
+# QA de la Slice 04 (orbital UI), polish P1, P2, P6, P7 : mutants survivants.
+# ==========================================================================
+
+
+def test_un_demarrage_refuse_par_une_ligne_ouverte_n_est_pas_une_interruption(tmp_path):
+    """P1 : Core refuse un démarrage en passant par une ligne ouverte
+    (`starting`, puis fermée `failed`, `stop_reason: start_failed`). Tant que
+    le `POST` de cette page est en vol, la réponse dira le refus, mieux : la
+    relecture qui voit la ligne fermée n'est **pas** une interruption venue
+    d'ailleurs (`control_center_capture_rail.js`, `absorb`)."""
+
+    v = ctl(tmp_path, r"""
+      let phase='idle';
+      const failed=row('audio','failed',{stop_reason:'start_failed',error_code:'source_unavailable'});
+      const h=harness({status:()=>phase==='idle'?ok([]):phase==='open'?ok([row('audio','starting',{activated_at:null})])
+          :ok([],[failed]),
+        write:()=>({status:502,ok:false,body:{error:{code:'source_unavailable',message:'micro absent'}},delay:4000})});
+      h.rail.start();await h.advance(1200);
+      h.rail.act('audio');phase='open';await h.advance(1500);
+      const during=h.rail.view().controls.audio.state;
+      phase='closed';await h.advance(1500);
+      const beforeAnswer={note:h.rail.note(),state:h.rail.view().controls.audio.state};
+      await h.advance(2500);
+      out({during,beforeAnswer,after:h.rail.note(),logs:h.logs});
+    """)
+    assert v["during"] == "starting"
+    assert v["beforeAnswer"]["note"] is None, "la ligne refermée ne parle pas avant la réponse du POST"
+    assert v["beforeAnswer"]["state"] == "starting"
+    assert "capture_rail.capture_interrupted" not in v["logs"]
+    # La réponse du POST, elle, dit le refus avec son message.
+    assert v["after"]["tone"] == "bad" and "(source_unavailable)" in v["after"]["text"], v["after"]
+    assert "capture_rail.start_failed" in v["logs"]
+
+
+def test_pas_de_second_post_pendant_un_demarrage_en_vol(tmp_path):
+    """P2 : un démarrage en vol bloque tout autre démarrage du canal, par
+    l'activation simple comme par une cible choisie (`startChannel`)."""
+
+    v = ctl(tmp_path, r"""
+      const h=harness({status:()=>ok([]),write:()=>({status:201,body:{capture:row('audio','active')},delay:3000})});
+      h.rail.start();await h.advance(1200);
+      h.rail.act('audio');await h.advance(50);
+      const again=await Promise.all([h.rail.act('audio'),h.rail.startChannel('audio',{device:'Casque'}),
+        h.rail.startChannel('audio')]);
+      await h.advance(4000);
+      out({posts:h.calls.filter(c=>c.method==='POST').map(c=>c.url),again,logs:h.logs});
+    """)
+    assert v["posts"] == ["/api/captures/start"], v["posts"]
+    assert v["again"] == [None, None, None]
+    assert v["logs"].count("capture_rail.start_refused") == 2
+
+
+def test_l_activation_simple_arrete_celle_qui_tourne_quand_la_plus_recente_s_arrete(tmp_path):
+    """P7 : deux écrans enregistrent ; la plus récente est déjà en arrêt (ici
+    ou chez Core). L'activation simple arrête **celle qui reste**, au lieu de
+    ne rien faire."""
+
+    v = ctl(tmp_path, r"""
+      const a=row('screen','active',{capture_id:'jcap_a',created_at:'2026-10-01T09:59:00Z'});
+      let b=row('screen','active',{capture_id:'jcap_b',device:'display2',created_at:'2026-10-01T09:59:30Z'});
+      const h=harness({status:()=>ok([a,b]),write:url=>({status:200,body:{capture:{state:'complete'}},delay:5000})});
+      h.rail.start();await h.advance(1200);
+      h.rail.stop('jcap_b');await h.advance(50);
+      const mine=h.rail.view().controls.screen;
+      h.rail.act('screen');await h.advance(50);
+      const posts=h.calls.filter(c=>c.method==='POST').map(c=>c.url);
+      // Même chose quand c'est Core qui la tient en arrêt (demandé ailleurs).
+      const other=M.viewOf({status:{captures:[a,Object.assign({},b,{state:'stopping'})],stuck:[],recent:[]},
+        reachable:true,now:Date.parse('2026-10-01T10:00:00Z')}).controls.screen;
+      out({mine:[mine.state,mine.action,mine.captureId],posts,other:[other.state,other.action,other.captureId]});
+    """)
+    assert v["mine"] == ["active", "stop", "jcap_a"]
+    assert v["posts"] == ["/api/captures/jcap_b/stop", "/api/captures/jcap_a/stop"]
+    assert v["other"] == ["active", "stop", "jcap_a"]
+
+
+def test_un_arret_en_attente_pendant_la_perte_n_est_pas_coche(tmp_path):
+    """P6 : coché = Core dit une capture ouverte. Pendant la perte du statut,
+    un arrêt en attente n'est plus « ouvert » selon Core."""
+
+    v = run(tmp_path, r"""
+      const lost=M.viewOf({reachable:false,now:NOW,known:{audio:[{capture_id:'jcap_audio'}]},
+        stops:{jcap_audio:{since:NOW,captureId:'jcap_audio',channel:'audio'}}}).controls.audio;
+      const live=M.viewOf({status:st([cap('audio','active')]),reachable:true,now:NOW,
+        stops:{jcap_audio:{since:NOW,captureId:'jcap_audio',channel:'audio'}}}).controls.audio;
+      out({lost:[lost.state,V.wedgeStatusOf(lost)],live:[live.state,V.wedgeStatusOf(live)]});
+    """)
+    assert v["lost"] == ["stopping", {"tone": "wait", "text": "arrêt…", "checked": False}]
+    assert v["live"] == ["stopping", {"tone": "wait", "text": "arrêt…", "checked": True}]

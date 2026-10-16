@@ -188,3 +188,38 @@ async def test_relay_is_read_guarded(tmp_path, headers):
         assert status == 200 and via_cc == direct
         status, refused, _ = await stack.call("GET", "/api/captures/targets", headers=headers)
         assert status == 403 and refused["code"] == "forbidden_origin"
+
+
+async def test_a_lister_that_hangs_times_out_to_default_only(tmp_path, monkeypatch):
+    """QA S04 P3 : une énumération qui ne rend jamais la main (pilote bloqué)
+    s'arrête à `TARGETS_TIMEOUT_S` : `default` seul, `targets_unreadable`,
+    raison `timeout` au journal — la route répond, la page ne reste pas en
+    « Chargement… »."""
+
+    import threading
+    import time
+
+    from jarvis.core import capture_service
+
+    monkeypatch.setattr(capture_service, "TARGETS_TIMEOUT_S", 0.2)
+    release = threading.Event()
+    async with CaptureStack(tmp_path) as stack:
+        journal = Recorder()
+        stack.core.captures._diagnostics = journal
+
+        def stuck() -> list[CaptureTarget]:
+            release.wait(10)
+            return [CaptureTarget(token="default", label="Écran principal")]
+
+        stack.core.captures._sources.target_lists[SCREEN] = stuck
+        started = time.monotonic()
+        try:
+            status, body, _, _ = await core(stack, "GET", "/v1/captures/targets")
+        finally:
+            release.set()
+        assert status == 200, body
+        assert time.monotonic() - started < 5
+        assert body["screen"] == {"available": True, "code": "targets_unreadable",
+                                  "devices": [{"token": "default", "label": "Écran principal", "primary": True}]}
+        line = [entry for entry in journal.lines if entry[0] == "core.capture.targets_unreadable"]
+        assert line == [("core.capture.targets_unreadable", "warning", {"channel": "screen", "reason": "timeout"})]

@@ -953,7 +953,6 @@ ${H} .tw-sr{position:absolute;width:1px;height:1px;margin:-1px;padding:0;overflo
       state=initialState();
       built=build();
       for(const [type,fn] of LISTENERS)host.addEventListener(type,fn);
-      host.hidden=false;
       render();
     }
 
@@ -1007,6 +1006,11 @@ ${H} .tw-sr{position:absolute;width:1px;height:1px;margin:-1px;padding:0;overflo
       snapshot:()=>({...state,sub:state.sub&&{...state.sub}}),
       SLOTS,GEOMETRY,ART,
     });
+    /* Montrée **après** sa publication (QA S04 P8) : une roue visible sans
+       `JarvisToolWheel` serait une ancre que personne ne peut brancher, et la
+       colonne Bare Hands, qui revient quand l'hôte reste caché, serait
+       masquée pour rien. */
+    host.hidden=false;
     log('info','tool_wheel.installed',{host:DOM.hostId});
   }
 

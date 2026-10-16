@@ -321,3 +321,17 @@ def test_menu_slot_opens_its_sub_arc_on_primary_and_items_drill_down(tmp_path):
     assert v["esc"] == [[{"do": "subBack", "slot": 0, "parent": 1}], 2]
     assert v["back"] == [1, 1, [{"do": "focus", "target": "item", "index": 1}]]
     assert v["leave"] == [None, True, 0]  # Échap au premier niveau : retour au secteur
+
+
+def test_the_host_is_shown_only_after_the_wheel_is_published():
+    """QA S04 P8 : l'hôte est rendu visible **après** la publication de
+    `JarvisToolWheel`. Une exception entre les deux laisse l'hôte caché, donc
+    la colonne Bare Hands revient (repli), au lieu d'une ancre que rien ne
+    peut brancher."""
+
+    code = re.sub(r"/\*.*?\*/", "", MODULE.read_text(encoding="utf-8"), flags=re.S)
+    mount = code[code.index("function mount(){"):code.index("function register(action)")]
+    assert "host.hidden=false" not in mount
+    published = code.index("root.JarvisToolWheel=Object.freeze({")
+    assert code.count("host.hidden=false") == 1
+    assert code.index("host.hidden=false") > published

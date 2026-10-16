@@ -256,7 +256,15 @@
         ||(legacyStop&&(!legacyStop.captureId||legacyStop.captureId===id)?legacyStop:null);
       const anyStop=legacyStop||Object.values(stops).find(s=>isObject(s)&&s.channel===channel)||null;
       const opens=status?opensOf(status,channel):[];
-      const open=opens.length?opens[opens.length-1]:null;
+      /* La capture qui décrit le canal (et que l'activation simple arrête) :
+         la plus récente **qui tourne encore**. Une plus récente déjà en arrêt
+         (ici ou chez Core) n'a plus rien à arrêter ; la laisser décrire le
+         canal rendait l'activation simple muette alors qu'une autre
+         enregistre toujours (QA S04 P7). Un arrêt bloqué, lui, reste à
+         reprendre : il décrit le canal. */
+      const live=status?opens.filter(row=>stuckOf(status,row.capture_id)
+        ||(!stopFor(row.capture_id)&&row.state!=='stopping')):[];
+      const open=live.length?live[live.length-1]:(opens.length?opens[opens.length-1]:null);
       const fail=isObject(failure[channel])?failure[channel]:null;
       let state,action=null,captureId=null,since=null,until=null,stuck=null,waitSince=null;
       if(!reachable){
