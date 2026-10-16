@@ -590,8 +590,8 @@ STUDIO_EXPLORER_SCRIPT_MARKER = "/*__CONTROL_CENTER_PRESENTATION_STUDIO_EXPLORER
 # se montre dans Variantes) : releve de Core, commandes, evenements `jarvis:studio-*`.
 STUDIO_PLAYER_SCRIPT_FILE = "control_center_presentation_studio_player.js"
 STUDIO_PLAYER_SCRIPT_MARKER = "/*__CONTROL_CENTER_PRESENTATION_STUDIO_PLAYER_JS__*/"
-#: Rail permanent des presentations : le rail (bord gauche, a droite de la palette) liste toutes les presentations avec leur pastille d'etat (bleu :
-#: un agent travaille, vert : termine, orange : probleme), le clic ouvre Variantes, le clic droit offre Ouvrir les variantes / Editer / Presenter /
+#: Rail permanent des presentations : le rail actif (zone droite, Slice 07 du shell orbital) liste toutes les presentations en cartes (apercu ou vignette
+#: typee, pastille et libelle d'etat : bleu en cours, orange probleme, jaune a revoir, vert prete), le clic ouvre Variantes, le clic droit offre Ouvrir les variantes / Editer / Presenter /
 #: Masquer / Renommer / Supprimer (archiver). La fenetre flottante d'une presentation est retiree (Slice 09). Apres le client de lecture.
 PRESENTATION_RAIL_SCRIPT_FILE = "control_center_presentation_rail.js"
 PRESENTATION_RAIL_SCRIPT_MARKER = "/*__CONTROL_CENTER_PRESENTATION_RAIL_JS__*/"
