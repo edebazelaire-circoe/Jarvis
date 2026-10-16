@@ -238,6 +238,10 @@ la phrase du toast d'arrêt : `mouse_takeover` → « Souris reprise — Bare Ha
 éteint ». « Souris » est `off` et jamais `sleep` : c'est le seul état où la
 posture en C ne peut pas rendre la main, donc le retour à Bare Hands reste
 explicite (roue, ou voix `barehands_activate`) par construction.
+`JarvisBarehands.openFlow()` rend le parcours ouvert (`'calibration'`,
+`'benchmark'`) ou `null` — le même garde que le refus d'un second parcours :
+la reprise souris s'en abstient tant qu'il rend un nom, parce que ces parcours
+se conduisent à la souris.
 
 | Présentation | Quand | Rendu |
 |---|---|---|

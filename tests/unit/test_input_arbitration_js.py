@@ -258,3 +258,30 @@ async def test_inserted_after_the_wheel_and_the_hud_in_the_served_page(tmp_path)
     assert "fetch(" not in source and source.count("setInterval(") == 1
     # Rien n'est empêché : la reprise n'avale jamais le clic qui la déclenche.
     assert "preventDefault" not in source and "stopPropagation" not in source
+
+
+def test_open_bare_hands_flow_never_takes_over(tmp_path):
+    """B1 : un parcours (calibration, test) se conduit à la souris — aucune reprise."""
+
+    v = run(tmp_path, """
+      const kinds=['pointerdown','click','wheel','contextmenu'];
+      const inFlow=kinds.map(type=>feed([{type,t:10,x:5,y:5,trusted:true,flow:'calibration'}]).took.length);
+      const moved=feed(Array.from({length:10},(_,i)=>mv(10+i*10,100+i*40,100,{flow:'benchmark'})));
+      // Le parcours fermé : le clic suivant reprend la main.
+      const after=feed([{type:'click',t:10,x:5,y:5,trusted:true,flow:'calibration'},
+        {type:'click',t:20,x:5,y:5,trusted:true,flow:null}]);
+      out({inFlow,moved:moved.took.length,samples:moved.s.samples.length,after:after.took.length});""")
+    assert v == {"inFlow": [0, 0, 0, 0], "moved": 0, "samples": 0, "after": 1}
+
+
+def test_refused_takeover_rearms_the_episode(tmp_path):
+    """P3 : une reprise refusée (choix en vol) ne laisse pas `pending` vrai pour toujours."""
+
+    v = run(tmp_path, """
+      const click=t=>({type:'click',t,x:5,y:5,trusted:true});
+      const first=feed([click(10),click(20)]);
+      const stuck=first.s.pending;
+      const rearmed=M.decide(first.s,{type:'takeover_refused',t:30}).state;
+      const retry=feed([click(40)],rearmed);
+      out({first:first.took.length,stuck,pending:rearmed.pending,retry:retry.took.length,after:retry.s.pending});""")
+    assert v == {"first": 1, "stuck": True, "pending": False, "retry": 1, "after": True}

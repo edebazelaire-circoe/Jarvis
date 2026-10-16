@@ -495,8 +495,20 @@ and their seams stay live.
 - `pointermove` → path length `>= distancePx` **and** net displacement
   `>= netPx` within a sliding `windowMs` (`reason: 'movement'`); jitter
   cancels in the net, slow drift never reaches the path within the window;
+- **open Bare Hands flows are exempt**: while `JarvisBarehands.openFlow()`
+  names a flow (`calibration`, `benchmark` — the `#jarvisFlow` overlay, the
+  same guard that refuses a second flow and that an explicit sleep closes,
+  `SLEEP_ENDS_FLOW`), no pointer event takes over; those flows are driven by
+  mouse clicks by design, and a takeover would turn Bare Hands off under an
+  overlay left open. Journal `input_arbitration.flow_exempt` /
+  `.flow_closed`, counter `stats().flowExempt`; once the flow closes, the
+  next deliberate event takes over again;
 - one transition per episode (`pending` until the lifecycle changes),
-  accumulator reset; `cooldownMs` after every entry into `active` (explicit
+  accumulator reset; a takeover the gate does not apply (`selectMethod`
+  busy with a choice in flight, or refused) reopens the episode
+  (`{type:'takeover_refused'}`, journal `input_arbitration.takeover_rearmed`,
+  `stats().refusedTakeovers`) so the next deliberate event retries;
+  `cooldownMs` after every entry into `active` (explicit
   choice, voice, `c_pose` wake) and after an explicit Bare Hands request;
 - defaults `distancePx 48`, `netPx 24`, `windowMs 400`, `cooldownMs 1500`;
   tunable live with `JarvisInputArbitration.configure(patch)` (bounded,
