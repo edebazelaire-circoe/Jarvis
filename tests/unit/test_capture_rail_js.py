@@ -386,9 +386,11 @@ def test_le_module_est_servi_et_son_emplacement_est_frere_de_la_palette():
     assert CAPTURE_RAIL_SCRIPT_MARKER in html
     assert html.index(BAREHANDS_HUD_SCRIPT_MARKER) < html.index(CAPTURE_RAIL_SCRIPT_MARKER)
     assert html.index(INTERACTION_MODE_SCRIPT_MARKER) < html.index(CAPTURE_RAIL_SCRIPT_MARKER)
-    assert '<div id="captureRail"></div>' in html
+    rail = re.search(r'<div id="captureRail"[^>]*></div>', html)
+    palette = re.search(r'<div id="barehandsPalette"[^>]*></div>', html)
+    assert rail and palette
     # Après la palette, hors d'elle : un frère, pas un enfant.
-    assert html.index('<div id="barehandsPalette"></div>') < html.index('<div id="captureRail"></div>')
+    assert palette.end() <= rail.start()
 
 
 def test_le_rail_n_emprunte_rien_aux_outils_bare_hands(tmp_path):
@@ -404,10 +406,22 @@ def test_le_rail_n_emprunte_rien_aux_outils_bare_hands(tmp_path):
 
 
 def test_la_scene_mesure_le_rail_comme_une_commande():
+    """Depuis la Slice 01 de l'orbital UI, la liste des commandes vit dans la
+    coque (`JarvisShell.CONTROL_SELECTOR`) : un hôte est mesuré parce qu'il
+    porte `data-shell-control`. La conformité complète (chaque hôte, la copie
+    de repli identique) est dans `test_control_center_shell_layers.py`."""
+
+    html = PAGE_HTML.read_text(encoding="utf-8")
+    for host in ("captureRail", "barehandsPalette"):
+        assert re.search(rf'<div id="{host}"[^>]*\bdata-shell-control\b', html), host
     page = SCENE_PAGE.read_text(encoding="utf-8")
-    selector = re.search(r"const CONTROL_SELECTOR='([^']+)'", page).group(1)
-    assert "#captureRail" in selector.split(",")
-    assert "#barehandsPalette" in selector.split(",")
+    assert "SHELL.CONTROL_SELECTOR" in page
+    shell = (RUNTIME / "control_center_shell.js").read_text(encoding="utf-8")
+    assert "const CONTROL_SELECTOR=`[${CONTROL_ATTRIBUTE}],#sceneLayer>.sc-status`" in shell
+    # Le rail lui-même évite ces commandes, sauf la colonne qui le porte.
+    source = MODULE.read_text(encoding="utf-8")
+    assert "document.querySelectorAll(obstacleSelector(log))" in source
+    assert "const NOT_OBSTACLES=Object.freeze([...COLUMN_SELECTORS,'.panel','#presentationRail'])" in source
 
 
 def test_le_rail_est_au_rang_de_la_palette(tmp_path):

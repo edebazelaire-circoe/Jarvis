@@ -90,7 +90,7 @@ def test_the_limits_say_the_hud_stays_live_and_every_active_phase_pauses_on_clos
     for phase in ("`playing`", "`resuming`", "`detour`"):
         assert phase in sec, phase
     html = (ROOT / "jarvis" / "runtime" / "control_center.html").read_text(encoding="utf-8")
-    assert '<div id="interactionModeHud" data-keep-live="run"></div>' in html
+    assert re.search(r'<div id="interactionModeHud" data-keep-live="run"[^>]*></div>', html)
 
 
 def test_stale_viewer_wording_is_gone_and_the_handover_tolerance_is_stated():

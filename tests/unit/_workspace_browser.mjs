@@ -24,6 +24,7 @@ import {spawn} from 'node:child_process';
 import {existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
+import {disposeChromeOnExit} from './_cdp_profile.mjs';
 
 const [,,URL_,CHROME,PLAN,SHOTS]=process.argv;
 const plan=JSON.parse(PLAN);
@@ -35,6 +36,7 @@ const chrome=spawn(CHROME,[
   '--no-first-run','--no-default-browser-check','--disable-gpu','--disable-extensions',
   '--hide-scrollbars','about:blank',
 ],{stdio:'ignore'});
+disposeChromeOnExit(chrome,profile);
 const sleep=ms=>new Promise(r=>setTimeout(r,ms));
 const KEYS={Enter:{code:'Enter',windowsVirtualKeyCode:13,text:'\r'},Escape:{code:'Escape',windowsVirtualKeyCode:27},
   Tab:{code:'Tab',windowsVirtualKeyCode:9}};

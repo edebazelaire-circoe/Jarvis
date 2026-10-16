@@ -445,6 +445,12 @@ def _short(value: object) -> str | None:
 
     return None if value is None else str(value)[:MAX_JOURNALLED_VALUE_CHARS]
 
+#: Coque du Control Center (jarvis-board-orbital-ui-workspace-rail, Slice 01) :
+#: zones, jetons et `CONTROL_SELECTOR` partagés (`window.JarvisShell`), sans état.
+#: Inséré en premier : la scène et le rail de capture le lisent. Contrat :
+#: `docs/control-center-shell.md`.
+SHELL_SCRIPT_FILE = "control_center_shell.js"
+SHELL_SCRIPT_MARKER = "/*__CONTROL_CENTER_SHELL_JS__*/"
 #: Logique pure du panneau Agents, gardée à part pour être exécutée par les
 #: tests (node) et insérée dans la page à la place de ce repère.
 WORK_SCRIPT_FILE = "control_center_work.js"
@@ -622,6 +628,25 @@ INTERACTION_MODE_SCRIPT_MARKER = "/*__CONTROL_CENTER_INTERACTION_MODE_JS__*/"
 #: d'aucun autre module. Refus d'installation rattrapé, comme le contrôle de mode.
 CAPTURE_RAIL_SCRIPT_FILE = "control_center_capture_rail.js"
 CAPTURE_RAIL_SCRIPT_MARKER = "/*__CONTROL_CENTER_CAPTURE_RAIL_JS__*/"
+#: Roue d'outils orbitale du bord gauche (jarvis-board-orbital-ui-workspace-rail,
+#: Slice 02, décision D3) : ancre au repos, demi-cercle Sélection / Vidéo /
+#: Capture d'écran / Audio déployé par la souris, le clavier ou le pointeur Bare
+#: Hands. Ce que fait chaque secteur est injecté (`JarvisToolWheel.register`) ;
+#: aucun appel réseau, aucun sondage. Derrière le drapeau
+#: `JarvisToolWheel.enabled` (faux par défaut) jusqu'à la Slice 04. Contrat :
+#: `docs/control-center-shell.md` › Roue d'outils. Refus d'installation rattrapé.
+TOOL_WHEEL_SCRIPT_FILE = "control_center_tool_wheel.js"
+TOOL_WHEEL_SCRIPT_MARKER = "/*__CONTROL_CENTER_TOOL_WHEEL_JS__*/"
+#: Sélection Souris / Bare Hands et reprise de la main par la souris
+#: (jarvis-board-orbital-ui-workspace-rail, Slice 03, D5) : projection du cycle
+#: de vie Bare Hands sur le secteur Sélection de la roue, sous-arc Souris /
+#: Bare Hands (puis outils, veille, aide, diagnostic, calibration), et `decide`
+#: pur qui rend la main à la souris sur un vrai clic ou un mouvement délibéré.
+#: Inséré APRÈS la roue et le contrôle Bare Hands, qu'il lit au chargement ;
+#: refus d'installation rattrapé. Contrat : `docs/control-center-shell.md` ›
+#: Selection method.
+INPUT_ARBITRATION_SCRIPT_FILE = "control_center_input_arbitration.js"
+INPUT_ARBITRATION_SCRIPT_MARKER = "/*__CONTROL_CENTER_INPUT_ARBITRATION_JS__*/"
 #: Avertissement flottant de vérification (Slice 09 de
 #: `jarvis-presentation-interaction-mode`) : une carte discrète, posée en bas de
 #: la pile d'infusions existante, pour une contradiction vérifiée. Il lit le
@@ -2299,6 +2324,9 @@ class ControlCenter:
         # ressource externe — aucun cache ne peut donc en servir une autre
         # version que celle du serveur.
         html = html.replace(
+            SHELL_SCRIPT_MARKER, page.with_name(SHELL_SCRIPT_FILE).read_text(encoding="utf-8")
+        )
+        html = html.replace(
             WORK_SCRIPT_MARKER, page.with_name(WORK_SCRIPT_FILE).read_text(encoding="utf-8")
         )
         html = html.replace(
@@ -2415,6 +2443,14 @@ class ControlCenter:
         html = html.replace(
             CAPTURE_RAIL_SCRIPT_MARKER,
             page.with_name(CAPTURE_RAIL_SCRIPT_FILE).read_text(encoding="utf-8"),
+        )
+        html = html.replace(
+            TOOL_WHEEL_SCRIPT_MARKER,
+            page.with_name(TOOL_WHEEL_SCRIPT_FILE).read_text(encoding="utf-8"),
+        )
+        html = html.replace(
+            INPUT_ARBITRATION_SCRIPT_MARKER,
+            page.with_name(INPUT_ARBITRATION_SCRIPT_FILE).read_text(encoding="utf-8"),
         )
         html = html.replace(
             BOARDS_SCRIPT_MARKER,

@@ -1331,7 +1331,7 @@ def test_l_emplacement_est_declare_dans_la_page_et_hors_des_autres_commandes(tmp
     assert HOST_ID not in topbar[:topbar.index("</div>")]
     # L'emplacement est un frère des trois emplacements Bare Hands, pas un enfant.
     # `data-keep-live="run"` (native-studio-playback-fix Slice 09) : vivant au-dessus de Variantes pendant une présentation.
-    assert f'<div id="{HOST_ID}" data-keep-live="run"></div>' in raw
+    assert re.search(rf'<div id="{HOST_ID}" data-keep-live="run"[^>]*></div>', raw)
 
 
 def test_le_registre_d_empilement_nomme_le_controle_et_ses_deux_rangs(tmp_path):
@@ -1341,15 +1341,19 @@ def test_le_registre_d_empilement_nomme_le_controle_et_ses_deux_rangs(tmp_path):
     vérifier en lisant la page — et c'est exactement ce que ce registre existe
     pour empêcher."""
 
+    # Depuis la Slice 01 de l'orbital UI, le registre est `docs/control-center-shell.md`
+    # (comparé aux feuilles réelles par `test_control_center_shell_layers.py`), avec
+    # un miroir en tête de page.
     raw = PAGE_HTML.read_text(encoding="utf-8")
-    registre = raw[raw.index("Registre d'empilement"):raw.index("Thème Cosmos")]
-    assert "contrôle de mode d'interaction du bas-gauche 32" in registre
-    assert "son sélecteur 36" in registre
-    # Et le registre dit *pourquoi* les deux contrôles partagent leurs rangs sans
-    # jamais se recouvrir.
-    assert "BAS" in registre
+    registre = (ROOT / "docs" / "control-center-shell.md").read_text(encoding="utf-8")
+    assert "| 32 | `#interactionModeHud` | `control_center_interaction_mode.js` | `#${DOM.hostId} .im-btn` |" in registre
+    assert "| 36 | `.im-pop` | `control_center_interaction_mode.js` | `#${DOM.hostId} .im-pop` | mode chooser |" in registre
+    # Et il dit *pourquoi* les deux contrôles partagent leurs rangs sans jamais se
+    # recouvrir : chacun sa zone, le haut du bord gauche et le bas-gauche.
+    assert "| `bottom-left` | `#interactionModeHud`" in registre and "| `left-edge` |" in registre
     # Pendant une présentation dans Variantes (9000) : 9150, au-dessus du rail (9100), sous son menu (9300).
-    assert "9150" in registre and "jvx-run" in registre
+    assert "| 9150 | `html.jvx-run #interactionModeHud` |" in registre
+    assert re.search(r"@shell-layer 9150: html\.jvx-run #interactionModeHud", raw)
 
 
 def test_les_rangs_du_module_sont_exactement_ceux_du_registre(tmp_path):
@@ -1466,15 +1470,23 @@ def test_le_controle_se_hisse_au_dessus_de_l_indication_vocale(tmp_path):
     raw = PAGE_HTML.read_text(encoding="utf-8")
     work = (RUNTIME / "control_center_work.js").read_text(encoding="utf-8")
 
-    bottoms = [int(m) for m in re.findall(r"\.voicehint\{[^}]*?bottom:(\d+)px", raw)]
-    bottoms += [int(m) for m in re.findall(
-        r'voicehint\{\s*bottom:(\d+)px', work)]
-    assert bottoms, "l'indication vocale declare bien un bas quelque part"
-    # Elle est centree, et la page ne la deplace a aucune largeur.
-    assert ".voicehint{position:absolute;z-index:31;left:50%" in raw
-    narrow_block = raw[raw.index("@media(max-width:700px){"):]
-    narrow_block = narrow_block[:narrow_block.index(chr(10) + "}")]
-    assert "voicehint" not in narrow_block
+    # Depuis la Slice 01 de l'orbital UI, son bas est le jeton de la coque
+    # `--shell-bottom`, le même dans les deux thèmes : aucun thème ne la déplace.
+    assert ".voicehint{position:absolute;z-index:31;left:50%;bottom:var(--shell-bottom);" in raw
+    bottoms = [int(re.search(r"--shell-bottom:(\d+)px", raw).group(1))]
+    assert not re.search(r"voicehint\{[^}]*bottom:", work), "un thème déplace l'indication"
+    # Elle est centree, et la page ne la deplace a aucune largeur : aucun bloc
+    # `@media(max-width:700px)` ne la nomme.
+    blocks = []
+    for start in [m.start() for m in re.finditer(re.escape("@media(max-width:700px){"), raw)]:
+        depth = 0
+        for index in range(start, len(raw)):
+            depth += {"{": 1, "}": -1}.get(raw[index], 0)
+            if raw[index] == "}" and depth == 0:
+                blocks.append(raw[start:index + 1])
+                break
+    assert blocks
+    assert not any("voicehint" in block for block in blocks)
 
     lift_below, lift, narrow_below = geo["liftBelow"], geo["lift"], geo["narrowBelow"]
     # Le relevement arrive **avant** le resserrement du rail : la fenetre a

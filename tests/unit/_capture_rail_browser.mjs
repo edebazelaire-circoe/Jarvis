@@ -17,6 +17,7 @@ import {spawn} from 'node:child_process';
 import {mkdtempSync, readFileSync, rmSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
+import {disposeChromeOnExit} from './_cdp_profile.mjs';
 
 const [,,PAGE,CHROME,PLAN]=process.argv;
 const plan=JSON.parse(PLAN);
@@ -205,6 +206,7 @@ const chrome=spawn(CHROME,[
   '--disable-extensions','--allow-file-access-from-files','--hide-scrollbars',
   'about:blank',
 ],{stdio:'ignore'});
+disposeChromeOnExit(chrome,profile);
 
 const sleep=ms=>new Promise(r=>setTimeout(r,ms));
 

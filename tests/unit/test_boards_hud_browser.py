@@ -61,9 +61,16 @@ def test_the_control_is_clickable_top_right_and_its_panel_stays_on_screen(tmp_pa
     trigger, state, panel, dock = seen["trigger"], seen["state"], seen["panel"], seen["dock"]
     assert seen["title"] == "Jarvis" and seen["tone"] == "ready"
     assert seen["triggerHit"] is True, "the top bar cuts pointer events; the slot gives them back"
-    assert trigger["r"] <= state["l"] and not _overlap(trigger, state)
-    assert 0 <= state["l"] - trigger["r"] <= 12, "top-right, right next to the state"
-    assert abs(trigger["t"] - state["t"]) <= 2, "same row as the state"
+    assert not _overlap(trigger, state)
+    # Depuis la Slice 01 de l'orbital UI, la ligne d'état est en haut à gauche dans
+    # les deux thèmes et s'arrête avant le lanceur : le Board d'abord, l'état juste
+    # après sur la même rangée, ou, quand la place manque (500 px), l'état passe à
+    # la ligne sous le Board plutôt que de glisser sous le lanceur.
+    if abs(trigger["t"] - state["t"]) <= 2:
+        assert 0 <= state["l"] - trigger["r"] <= 12, "right next to the state, same row"
+    else:
+        assert width <= 700 and state["t"] >= trigger["b"] - 1, "the state wraps below the Board, never over it"
+    assert trigger["l"] <= 18 + 1, "the Board leads the top-left state line"
     assert panel is not None and panel["z"] == "36"
     assert panel["t"] >= trigger["b"] and panel["l"] >= 12 and panel["r"] <= width - 12 + 1
     assert panel["b"] <= height

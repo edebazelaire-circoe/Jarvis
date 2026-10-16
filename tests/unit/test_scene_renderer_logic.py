@@ -1375,6 +1375,17 @@ def _z(css: str, selector: str) -> int:
 
 
 def test_the_scene_layer_sits_above_the_face_and_below_every_control():
+    """Le rang de la scène et ses voisins immédiats.
+
+    Le registre complet — chaque `z-index` de la page, du thème Cosmos et des
+    feuilles de modules contre `docs/control-center-shell.md`, l'ordre relatif
+    hérité de l'ancien registre (dock, panneau, bandeau, sélecteur de Board,
+    pastilles, vues plein écran, menus, confirmation) et l'absence de rang
+    propre au thème Cosmos — est tenu par
+    `tests/unit/test_control_center_shell_layers.py` (Slice 01 de
+    jarvis-board-orbital-ui-workspace-rail). Ici : la scène au-dessus du
+    visage, sous chaque commande, dans les deux thèmes."""
+
     html = PAGE_HTML.read_text(encoding="utf-8")
     work = (RUNTIME / "control_center_work.js").read_text(encoding="utf-8")
     page = PAGE_JS.read_text(encoding="utf-8")
@@ -1382,35 +1393,17 @@ def test_the_scene_layer_sits_above_the_face_and_below_every_control():
     scene = _z(page, ".scene")
     assert scene == 20
     assert _z(html, ".face") < scene and _z(work, "#cosmosFace") < scene
-    for selector in (".topbar", ".voicehint", ".dock", ".panel", ".live-banner", ".bgpills", ".overlay", ".toasts", ".bgpop", ".ctxmenu", ".tl", ".cdialog-back"):
+    # `.voicehint` reste mesurée jusqu'à son retrait (Slice 06 de l'orbital UI).
+    for selector in (".topbar", ".voicehint", ".dock", ".panel", ".live-banner", ".bgpills", ".chat-tab",
+                     ".board-drop-tray", "#toolWheel", ".overlay", ".toasts", ".bgpop", ".ctxmenu", ".tl", ".cdialog-back"):
         assert _z(html, selector) > scene, selector
-    # Chronologie de conversation (modale plein écran, intégration de main) :
-    # au-dessus de tous les contrôles de la page, sous les menus, toasts et
-    # confirmations qui peuvent s'ouvrir par-dessus.
-    for selector in (".dock", ".panel", ".live-banner", ".bgpills"):
-        assert _z(html, ".tl") > _z(html, selector) and _z(html, ".tl") > _z(work, f'html[data-jarvis-theme="cosmos"] {selector}'), selector
-    assert _z(html, ".tl") < _z(html, ".overlay") < _z(html, ".toasts") < _z(html, ".ctxmenu") < _z(html, ".cdialog-back")
-    # Les autres vues plein écran du dock partagent le rang de la chronologie
-    # (Test Lab, inspecteur MCP, Sessions & Boards — board-memory-workspace-inspector S07).
-    for selector in (".tlab", ".mcpi", ".wsp"):
-        assert _z(html, selector) == _z(html, ".tl"), selector
-    for selector in (".topbar", ".dock", ".panel", ".live-banner", ".bgpills"):
-        assert _z(work, f'html[data-jarvis-theme="cosmos"] {selector}') > scene, selector
+    # Une géométrie, deux peaux : aucun thème ne reclasse une surface, donc les
+    # rangs ci-dessus valent aussi sous Cosmos.
+    assert not re.search(r'html\[data-jarvis-theme="cosmos"\][^{]*\{[^}]*z-index', html + work)
     assert _z(barehands, "#jarvisHands") == 2147483000
-    # Relative order of the controls kept from before the registry.
-    assert _z(html, ".topbar") <= _z(html, ".dock") < _z(html, ".panel") < _z(html, ".live-banner") < _z(html, ".bgpills")
-    # Contrôle Boards (board-session, Slice 06) : bouton dans `.topbar` (rang de
-    # la barre), panneau hors de la barre, au-dessus du dock, du panneau et du
-    # bandeau GPT-Live, sous les pastilles, notifications et la confirmation qui
-    # s'ouvre par-dessus lui (archivage, nouvelle session). Cosmos : au-dessus
-    # du dock et des pastilles (50), toujours sous les notifications.
     boards = _z(html, "#boardsPanel")
     assert scene < _z(html, ".topbar") < _z(html, ".dock") < _z(html, ".panel") < _z(html, ".live-banner") < boards
     assert boards < _z(html, ".bgpills") < _z(html, ".toasts") < _z(html, ".cdialog-back")
-    cosmos_boards = _z(html, 'html[data-jarvis-theme="cosmos"] #boardsPanel')
-    for selector in (".topbar", ".dock", ".panel", ".live-banner", ".bgpills"):
-        assert _z(work, f'html[data-jarvis-theme="cosmos"] {selector}') < cosmos_boards, selector
-    assert cosmos_boards < _z(html, ".toasts")
     assert re.search(r"#boardsHud\{[^}]*pointer-events:auto", html), "the bar cuts pointer events"
 
 

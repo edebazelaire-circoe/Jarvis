@@ -104,8 +104,11 @@ def test_background_notifications_are_round_pills_in_the_main_interface_not_a_to
     # Chaque pastille s'acquitte seule, et mène au panneau Agents.
     assert "JSON.stringify({seq:data.seq,category})" in html
     assert "openAgentsAt(id?'trace':'list',id||null)" in html
+    # Une géométrie pour les deux thèmes (Slice 01 de l'orbital UI) : la rangée
+    # de pastilles juste à gauche du lanceur, sous Cosmos comme au circuit imprimé.
+    assert ".bgpills{position:absolute;z-index:40;right:calc(var(--shell-gutter) + var(--shell-launcher-w) + 10px);" in html
     work = CONTROL_CENTER_HTML.with_name("control_center_work.js").read_text(encoding="utf-8")
-    assert 'html[data-jarvis-theme="cosmos"] .bgpills{' in work
+    assert 'html[data-jarvis-theme="cosmos"] .bgpills{' not in work
 
 
 def test_settings_window_is_a_modal_that_closes_on_an_outside_click():

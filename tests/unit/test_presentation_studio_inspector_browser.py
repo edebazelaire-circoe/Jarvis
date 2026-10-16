@@ -110,7 +110,10 @@ async def test_the_panel_renders_a_widget_per_type_from_the_introspection_with_n
         assert kinds["accent"] == ["input:color", "input:text"] and kinds["palette"].count("input:color") == 2 and kinds["tags"] == ["textarea"]
         assert reads["tabs"] == [["Contenu5", "true"], ["Style3", "false"], ["Mise en page3", "false"], ["Mouvement3", "false"]]
         assert "Fallback" in reads["chip"] and "contraste" in reads["chip"]
-        assert reads["geometry"][0] + reads["geometry"][2] <= 1280 - 60 and reads["geometry"][1] >= 0, "docked left of the dock buttons, inside the page"
+        # Depuis la Slice 01 de l'orbital UI le lanceur est une rangée en haut à droite
+        # (18 + 34 px) : le panneau se range dessous, dans la page.
+        left, top, width, _height = reads["geometry"]
+        assert top >= 18 + 34 and left >= 0 and left + width <= 1280, "docked under the launcher row, inside the page"
         assert reads["dock"] == ["true", True]
         assert not noise(result), noise(result)
         info = [c["text"] for c in result["console"] if c["text"].startswith("[studio-inspector]")]
@@ -447,7 +450,9 @@ async def test_the_panel_fits_the_screen_and_every_group_is_reachable_at_both_si
         assert g["panel"][0] >= 0 and g["panel"][2] <= g["vw"] and g["panel"][1] >= 0 and g["panel"][3] <= g["vh"]
         assert g["hscroll"] is False and g["overflowX"] is False, "no horizontal scroll at any width"
         assert g["main"][0] > 120, f"the scrolling list keeps real height ({g['main'][0]}px) beside the pinned preview and tabs"
-        assert g["panel"][2] <= g["dock"][0] + 1, "the panel never covers the dock buttons"
+        # Le lanceur est une rangée en haut à droite (Slice 01 de l'orbital UI) : le
+        # panneau ne le couvre jamais, il passe dessous.
+        assert g["panel"][1] >= g["dock"][3] - 1 or g["panel"][2] <= g["dock"][0] + 1, "the panel never covers the dock buttons"
         if name == "phone":
             assert g["panel"][2] - g["panel"][0] >= 250
         assert reads["rowwidths"] is True and reads["touch"] == 0, "no row overflows; every target is at least 24 px"

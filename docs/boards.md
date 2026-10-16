@@ -1451,15 +1451,17 @@ stay on `jarvis-capture` (`artifact_get`, `artifact_search`): no duplicate.
 `tests/unit/test_boards_hud_js.py` (node, DOM double),
 `tests/unit/test_boards_hud_browser.py` (headless Chrome, served page, `fetch`
 double), `tests/unit/test_boards_status.py` (`boards` status block, real Core +
-Control Center), z-index registry in `tests/unit/test_scene_renderer_logic.py`.
+Control Center), z-index registry in `docs/control-center-shell.md` checked by
+`tests/unit/test_control_center_shell_layers.py`.
 No Galaxy map or minimap (V1 non-goal).
 
 **Placement.** Two slots declared in `control_center.html`: `#boardsHud` inside
-`.topbar`, right next to the voice/agent state (top-right; top-left in the
-Cosmos theme, where the bar moves) — the bar cuts pointer events, the slot
-gives them back (`pointer-events:auto`); `#boardsPanel` outside the bar
-(z-index 36, Cosmos 51: above dock, side panel and GPT-Live banner, below
-toasts and the page confirmation), anchored under the button and clamped to the
+`.topbar`, right next to the voice/agent state (top-left: since Slice 01 of the
+orbital UI both themes share the Cosmos geometry, `docs/control-center-shell.md`)
+— the bar cuts pointer events, the slot gives them back
+(`pointer-events:auto`); `#boardsPanel` outside the bar (z-index 36 in both
+themes: above dock, side panel and GPT-Live banner, below the pills, toasts and
+the page confirmation), anchored under the button and clamped to the
 viewport. The module refuses to install, by name (`boards.install_failed`,
 `boards_host_missing`), when a slot is missing, without breaking the other page
 modules.

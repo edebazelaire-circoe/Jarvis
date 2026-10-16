@@ -1,0 +1,10 @@
+{
+  "checks": [
+    {
+      "id": "HV-03-01",
+      "when": "After threshold tests pass",
+      "instruction": "Use Bare Hands, then intentionally move/click the mouse; also leave the mouse physically still and observe incidental jitter.",
+      "acceptance": "Intentional Mouse use takes over quickly; incidental movement does not; return to Bare Hands is explicit."
+    }
+  ]
+}

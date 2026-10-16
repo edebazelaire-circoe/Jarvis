@@ -19,6 +19,7 @@ import {execFileSync, spawn} from 'node:child_process';
 import {mkdtempSync, readFileSync, rmSync, writeFileSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
+import {disposeChromeOnExit} from './_cdp_profile.mjs';
 
 const [,,PAGE,CHROME,PLAN]=process.argv;
 /* `@<fichier>` : le plan lu dans un fichier (un plan long dépasse la ligne de commande de Windows, 32 767 caractères). */
@@ -29,6 +30,7 @@ const port=9300+Math.floor(Math.random()*500);
 const chrome=spawn(CHROME,['--headless=new',`--remote-debugging-port=${port}`,`--user-data-dir=${profile}`,'--no-first-run',
   '--no-default-browser-check','--disable-gpu','--disable-extensions','--hide-scrollbars',
   ...String(process.env.CDP_CHROME_ARGS||'').split(' ').filter(Boolean),'about:blank'],{stdio:'ignore'});
+disposeChromeOnExit(chrome,profile);
 const sleep=ms=>new Promise(r=>setTimeout(r,ms));
 
 try{

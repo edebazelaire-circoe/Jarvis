@@ -870,8 +870,10 @@ The selector opens **upward**, and carries `max-height` plus `overflow-y: auto`
 clip off-screen with no way back, exactly as `.bgpop` guards against.
 
 Stacking ranks (32 for the button, 36 for the selector) are the same as the Bare
-Hands control's, for the same reasons, and are recorded in the registry comment
-at the top of `control_center.html`.
+Hands control's, for the same reasons, and are recorded in the layer registry of
+[control-center-shell.md](control-center-shell.md) (a mirror sits at the top of
+`control_center.html`; `tests/unit/test_control_center_shell_layers.py` compares
+both to the real sheets).
 
 Geometry and motion are asserted by `tests/unit/test_interaction_mode_hud_browser.py`,
 which composes the served page, loads it in headless Chrome and reads

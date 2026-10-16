@@ -1,0 +1,10 @@
+{
+  "checks": [
+    {
+      "id": "HV-09-01",
+      "when": "After full runtime matrix passes",
+      "instruction": "Use the redesigned shell for a normal end-to-end work session with Board, wheel, rail, notifications and one capture.",
+      "acceptance": "No control feels like it competes with the Board; transitions and spatial hierarchy match the approved art direction."
+    }
+  ]
+}

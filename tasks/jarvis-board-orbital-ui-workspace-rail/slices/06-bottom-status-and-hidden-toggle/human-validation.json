@@ -1,0 +1,10 @@
+{
+  "checks": [
+    {
+      "id": "HV-06-01",
+      "when": "After count/scene tests pass",
+      "instruction": "Observe the bottom status center with several categories and toggle hidden objects.",
+      "acceptance": "Counters are readable but discreet; eye state is understandable; bottom area is not crowded."
+    }
+  ]
+}

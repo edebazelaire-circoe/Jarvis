@@ -6,7 +6,7 @@
    faire. Il vit en JavaScript parce que le WebSocket dont il a besoin est celui
    que node fournit depuis la v22 — aucune dependance a installer.
 
-   Usage : node _interaction_mode_browser.mjs <page> <chrome.exe> <planJSON> [runtimeRoot]
+   Usage : node _interaction_mode_browser.mjs <page> <chrome.exe> <planJSON|@plan.json> [runtimeRoot]
    Il ecrit sur la sortie standard un tableau JSON, un objet par etape du plan.
 
    `<page>` est un fichier compose, ou l'URL d'un VRAI Control Center
@@ -24,7 +24,9 @@
      {"a":"wait","expr":"...","timeoutMs":3000}                 -> {ok,ms}
      {"a":"click","selector":"..."}      (vrai clic souris, au centre)
      {"a":"focus","selector":"..."}
-     {"a":"key","key":"ArrowDown"}       (vraie frappe clavier)
+     {"a":"key","key":"ArrowDown"}       (vraie frappe clavier ; "shift":true pour Maj)
+     {"a":"mouse","type":"mouseMoved","x":0,"y":0,"button":"none"}
+                                         (vrai evenement souris a un point ; roue d'outils)
      {"a":"ax","selector":"..."}         -> {role,name,description} calcules
      {"a":"eval","expr":"..."}
      {"a":"read"}
@@ -32,12 +34,14 @@
    Une etape peut aussi porter `setup`, une expression evaluee apres la mise a
    la taille et avant les montages. */
 import {spawn} from 'node:child_process';
-import {mkdtempSync, rmSync, writeFileSync, renameSync, unlinkSync} from 'node:fs';
+import {mkdtempSync, rmSync, writeFileSync, renameSync, unlinkSync, readFileSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
+import {disposeChromeOnExit} from './_cdp_profile.mjs';
 
 const [,,PAGE,CHROME,PLAN,RUNTIME]=process.argv;
-const plan=JSON.parse(PLAN);
+/* `@<fichier>` : le plan lu dans un fichier (un long plan depasse la ligne de commande Windows). */
+const plan=JSON.parse(PLAN.startsWith('@')?readFileSync(PLAN.slice(1),'utf-8'):PLAN);
 const REMOTE=/^https?:\/\//.test(PAGE);
 
 /* Ecriture atomique, comme `VisualSignalBus._atomic_text` : le Control Center
@@ -162,8 +166,12 @@ const chrome=spawn(CHROME,[
   '--headless=new',`--remote-debugging-port=${port}`,`--user-data-dir=${profile}`,
   '--no-first-run','--no-default-browser-check','--disable-gpu',
   '--disable-extensions','--allow-file-access-from-files','--hide-scrollbars',
+  /* `CDP_CHROME_FLAGS` : drapeaux en plus, séparés par des espaces (Slice 03 de
+     la roue orbitale : caméra factice `--use-fake-device-for-media-stream`). */
+  ...String(process.env.CDP_CHROME_FLAGS||'').split(/\s+/).filter(Boolean),
   'about:blank',
 ],{stdio:'ignore'});
+disposeChromeOnExit(chrome,profile);
 
 const sleep=ms=>new Promise(r=>setTimeout(r,ms));
 
@@ -275,8 +283,9 @@ try{
         }
       }
       case 'click':{
-        const box=await evaluate(`(()=>{const r=document.querySelector(${JSON.stringify(action.selector)})
-          .getBoundingClientRect();return {x:r.left+r.width/2,y:r.top+r.height/2}})()`);
+        const box=await evaluate(`(()=>{const e=document.querySelector(${JSON.stringify(action.selector)});
+          if(!e)throw new Error('click : introuvable '+${JSON.stringify(JSON.stringify(action.selector))});
+          const r=e.getBoundingClientRect();return {x:r.left+r.width/2,y:r.top+r.height/2}})()`);
         for(const type of ['mouseMoved','mousePressed','mouseReleased'])
           await send('Input.dispatchMouseEvent',{type,x:box.x,y:box.y,button:'left',clickCount:1});
         await sleep(60);
@@ -285,10 +294,17 @@ try{
       case 'focus':
         await evaluate(`document.querySelector(${JSON.stringify(action.selector)}).focus()`);
         return {a:'focus'};
+      case 'mouse':
+        await send('Input.dispatchMouseEvent',{type:action.type,x:action.x,y:action.y,
+          button:action.button||'none',buttons:action.type==='mousePressed'?(action.button==='right'?2:1):0,
+          clickCount:action.type==='mouseMoved'?0:1});
+        await sleep(action.settleMs??40);
+        return {a:'mouse'};
       case 'key':{
-        const codes={ArrowDown:40,ArrowUp:38,Escape:27,Enter:13,Tab:9,Home:36,End:35,' ':32};
+        const codes={ArrowDown:40,ArrowUp:38,ArrowLeft:37,ArrowRight:39,Escape:27,Enter:13,Tab:9,Home:36,End:35,' ':32,
+          F10:121,ContextMenu:93};
         const base={key:action.key,code:action.key===' '?'Space':action.key,
-          windowsVirtualKeyCode:codes[action.key]||0};
+          windowsVirtualKeyCode:codes[action.key]||0,modifiers:action.shift?8:0};
         await send('Input.dispatchKeyEvent',{type:'keyDown',...base,
           ...(action.key==='Enter'?{text:'\r'}:action.key===' '?{text:' '}:{})});
         await send('Input.dispatchKeyEvent',{type:'keyUp',...base});

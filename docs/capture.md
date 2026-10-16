@@ -824,8 +824,12 @@ on its top, then lifted just above the first control it would touch
 (`beside-up`, e.g. 320 × 568 with the scene status raising the
 interaction-mode button), then aligned on its bottom (`data-capture-slot`). Bare Hands not mounted →
 the top of the column (`alone`). Stacking rank 30, the palette's. The scene
-measures the rail as a control (`#captureRail` in `CONTROL_SELECTOR` of
-`control_center_scene_page.js`), so a held object stops against it. The scene
+measures the rail as a control (its host carries `data-shell-control`, matched
+by the shared `JarvisShell.CONTROL_SELECTOR`, [control-center-shell.md](control-center-shell.md)
+› *Controls*), so a held object stops against it. Since that slice the rail's
+obstacles are the same shared selector minus the Bare Hands column it docks to
+and the side panels, which cover it by rank: the chat tab, the presentation rail
+and the drop tray are now avoided too. The scene
 **resolver** and the brain's safe area do not yet exclude the enlarged left
 column (it reaches y 541 at 1280 × 720): accepted V1 deviation, see
 `tasks/jarvis-session-context-recording-runtime/Issues/scene-safe-area-left-column.md`.

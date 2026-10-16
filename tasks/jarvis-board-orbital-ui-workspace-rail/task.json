@@ -1,0 +1,27 @@
+{
+  "project_name": "Jarvis",
+  "slug": "jarvis-board-orbital-ui-workspace-rail",
+  "title": "Jarvis Board - Orbital UI, contextual tool wheel, bottom status center, and active workspace rail",
+  "planning_date": "2026-10-15",
+  "repository": "edebazelaire-circoe/Jarvis",
+  "reference_commit_observed": "57f28a7472577f8a193303023a99b026855f09ba",
+  "entrypoint": "slices/TODO.md",
+  "task_type": "waived",
+  "task_type_resolution": "WAIVED_NO_WORKSPACE_VOCABULARY_SEE_READINESS_D0",
+  "visual_references": [
+    "assets/current-ui.png",
+    "assets/target-ui-reference.png"
+  ],
+  "locked_scope": [
+    "retractable orbital tool wheel",
+    "Selection = Mouse or Bare Hands",
+    "intelligent Mouse takeover",
+    "Video/Screenshot/Audio capture controls",
+    "bottom-center notification/status center",
+    "eye toggle for hidden objects",
+    "right active workspace rail with rich previews",
+    "bottom-left mode/Board context zone",
+    "global chrome simplification"
+  ],
+  "implementation_status": "planned_only"
+}

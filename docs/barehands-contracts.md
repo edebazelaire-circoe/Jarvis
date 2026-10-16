@@ -222,6 +222,23 @@ trois variantes, directement cliquables. Ce n'est ni une liste déroulante, ni
 un cycle aveugle, et ce n'est pas un bouton du `.dock` : le dock reste à
 droite, la main est du côté gauche, avec la palette d'outils.
 
+**Roue d'outils allumée, le sélecteur passe dans Sélection** (handoff
+`jarvis-board-orbital-ui-workspace-rail`, Slice 03, D5). La méthode de
+Sélection de la roue (`control_center_input_arbitration.js`, contrat
+`docs/control-center-shell.md` › Selection method) est une **projection** de
+ce même cycle de vie : Souris = `off`, Bare Hands = `sleep`/`active`, panne
+montrée Bare Hands avec son `code`, démarrage avec son compteur. Elle passe par
+les **mêmes portes**, exportées par ce contrôle :
+`JarvisBarehandsHudControl.selectMethod('mouse' | 'bare_hands')` = `choose('off')`
+/ `choose('active')`, sans état de plus. Tant que `#toolWheel` n'est pas
+`hidden`, la feuille de ce module retire le bouton du haut-gauche et la bande
+d'outils de la vue par défaut (`body:has(#toolWheel:not([hidden]))`) ; roue
+éteinte, ils reviennent. `disable({reason})` accepte un motif qui ne change que
+la phrase du toast d'arrêt : `mouse_takeover` → « Souris reprise — Bare Hands
+éteint ». « Souris » est `off` et jamais `sleep` : c'est le seul état où la
+posture en C ne peut pas rendre la main, donc le retour à Bare Hands reste
+explicite (roue, ou voix `barehands_activate`) par construction.
+
 | Présentation | Quand | Rendu |
 |---|---|---|
 | `off` | `lifecycle === 'off'` | gris fortement atténué, aucun halo |
@@ -1794,7 +1811,31 @@ refus nommé pour un outil inconnu.
 
 ### La palette d'outils du bord gauche (décisions 11 à 13, Slice 03)
 
-**La palette de gauche est la surface canonique de sélection d'outil en V1.**
+**Le sélecteur canonique d'outil se déplace** (handoff
+`jarvis-board-orbital-ui-workspace-rail`, Slice 03, D5). Roue d'outils
+allumée, la surface canonique de sélection d'outil est le **second niveau de
+Sélection › Bare Hands** dans la roue (activation secondaire de l'entrée
+« Bare Hands » : clic droit, pincement pouce + majeur, `ContextMenu`,
+`Maj+F10`), et non plus la bande fixe, retirée de la vue par défaut. Les
+invariants ci-dessous valent pour ce sous-arc à l'identique, et
+`tests/unit/test_selection_method_browser.py::test_tools_reachable_in_bare_hands_subarc_single_write_path`
+les éprouve dans Chrome :
+
+| Invariant de la bande | Dans le sous-arc |
+|---|---|
+| exactement les outils installés | `JarvisBarehands.tools()` (= `describeTools()`) à chaque ouverture, aucune liste en dur |
+| outil sans moteur pas un contrôle | `aria-disabled="true"`, « non installé », motif dans le nom accessible ; choix inerte et journalisé |
+| outil actif lisible | `menuitemradio` + `aria-checked` + point de coche (hors nom accessible) |
+| un seul chemin d'écriture | `JarvisBarehands.tool(id)` → `saveSettings({tool})` ; un refus remonte en notification avec sa cause |
+| synchronisation bidirectionnelle | relu à chaque ouverture ; la bande (toujours installée) suit par sa couture |
+| aide, diagnostic, calibration atteignables | mêmes entrées, même sous-arc : Veille (`choose('sleep')`), Aide, Diagnostic, Calibration (`runQuick`, refus motivé du contrôle du haut) |
+
+Réglages et Tester restent dans l'onglet de réglages Bare Hands. Roue éteinte
+(drapeau, retiré en Slice 04 de ce handoff), la bande décrite ci-dessous
+reste la surface, inchangée — c'est le retour arrière.
+
+**La palette de gauche est la surface canonique de sélection d'outil en V1**
+(roue d'outils éteinte).
 `control_center_barehands_hud.js` — le même module que le contrôle de cycle de
 vie, parce que c'est la même famille et le même coin d'écran — dessine sous la
 main une bande verticale **fixe** de trois icônes en trait, dans l'emplacement

@@ -1,0 +1,10 @@
+{
+  "checks": [
+    {
+      "id": "HV-05-01",
+      "when": "After preview action tests pass",
+      "instruction": "Take a screenshot and ignore the preview once, then repeat and use each quick action.",
+      "acceptance": "Preview never blocks work; actions are understandable and useful."
+    }
+  ]
+}

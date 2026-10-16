@@ -921,12 +921,17 @@ async def test_the_served_page_inserts_the_module_and_declares_both_slots(tmp_pa
     html = (await control.index(None)).text
     assert BOARDS_SCRIPT_MARKER not in html
     assert "installJarvisBoards" in html
-    assert re.search(r'<div class="topbar">.*?<div id="boardsHud"></div>.*?</div>', html)
+    assert re.search(r'<div class="topbar">.*?<div id="boardsHud"[^>]*></div>.*?</div>', html)
     assert '<div id="boardsPanel" hidden></div>' in html
     assert "JarvisBoardsControl.gate(s.boards)" in html and "JarvisBoardsControl.statusLost()" in html
     source = PAGE_HTML.read_text(encoding="utf-8")
+    # Registre : docs/control-center-shell.md (Slice 01 de l'orbital UI) ; le
+    # bouton vit dans la barre (son rang), le panneau a sa propre ligne.
     registry = source[:source.index("*/")]
-    assert "#boardsHud" in registry and "#boardsPanel" in registry
+    assert re.search(r"@shell-layer 36:[^\n]*#boardsPanel", registry)
+    shell_doc = (PAGE_HTML.parents[2] / "docs" / "control-center-shell.md").read_text(encoding="utf-8")
+    assert "| 31 | `.topbar` |" in shell_doc and "`#boardsHud` lives inside it" in shell_doc
+    assert "| 36 | `#boardsPanel` |" in shell_doc
     assert re.search(r"#boardsHud\{[^}]*pointer-events:auto", source)
 
 
