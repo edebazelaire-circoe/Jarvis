@@ -1,8 +1,8 @@
 {
   "slice_id": "09-integration-responsive-accessibility",
   "title": "Slice 09 - Integration, responsive behavior, accessibility, and visual polish",
-  "task_type": null,
-  "task_type_resolution": "PROJECT_MANAGER_MUST_RESOLVE_FROM_CURRENT_WORKSPACE_VOCABULARY",
+  "task_type": "waived",
+  "task_type_resolution": "WAIVED_NO_WORKSPACE_VOCABULARY_SEE_READINESS_D0",
   "dependencies": [
     "03-selection-input-arbitration",
     "04-capture-wheel-migration",
@@ -22,5 +22,6 @@
     "/caveman",
     "/coding-guideline",
     "/impeccable"
-  ]
+  ],
+  "qa_tier": "ui"
 }

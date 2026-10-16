@@ -51,3 +51,17 @@ Update the canonical concept documentation and `../../docs/05-documentation-leve
 
 ## Handoff notes
 Task Type is intentionally not invented in this handoff. Slice 00 resolves it from the current Workspace vocabulary before delegation. Human validation is separate in `human-validation.json` and happens only after automated validation is maximized.
+
+## Slice 00 contract
+
+Binding reference: `../../docs/06-resolved-architecture.md`. QA tier: **docs**.
+
+**Files.** `docs/control-center-shell.md`, `docs/capture.md`, `docs/chat.md`, `docs/barehands-contracts.md`, `docs/presentation-studio.md`, `docs/scene-model.md`, `docs/interaction-mode.md`, `docs/boards.md` (only if changed), `docs/artifacts.md` (annotation relation, if S05.B landed), task `LOG.md`, `docs/05-documentation-levels.md`, `Issues/`.
+
+**Acceptance tests.** Full targeted suites of every touched area run in foreground chunks (low-RAM host) on the final SHA; `test_schema_migrations.py` green (no schema change expected); isolated runtime evidence for wheel, capture, preview, status centre, eye, rail, launcher, overlays; Human checks HV-01..HV-10 only after machine evidence.
+
+**Not in this slice.** Product code (a defect returns to its owning slice).
+
+**Preserved invariants.** No task-introduced regression parked in `Issues/`; live Jarvis never started/stopped; lands after unified-chat is in `main` (D1).
+
+**Test migrations here.** None.

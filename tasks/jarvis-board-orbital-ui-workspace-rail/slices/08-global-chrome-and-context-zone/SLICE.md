@@ -57,3 +57,19 @@ Update the canonical concept documentation and `../../docs/05-documentation-leve
 
 ## Handoff notes
 Task Type is intentionally not invented in this handoff. Slice 00 resolves it from the current Workspace vocabulary before delegation. Human validation is separate in `human-validation.json` and happens only after automated validation is maximized.
+
+## Slice 00 contract
+
+Binding reference: `../../docs/06-resolved-architecture.md` D11 (changed), §9 zones, §11. QA tier: **ui**.
+
+**Files.** `jarvis/runtime/control_center.html` (`<nav class="dock">` kept with every button id; re-skinned into a compact top-right launcher: 3-4 frequent icons visible plus a "Plus" popover rank 36 holding the rest; badges ERR/AGT kept visible); `control_center_work.js` (Cosmos dock skin); `docs/control-center-shell.md` (destination matrix); `docs/boards.md` § Placement only if the Human picks the fallback. Tests: new `tests/unit/test_global_launcher_browser.py`.
+
+**Destination matrix (to confirm in the slice).** ERR (badge) visible; AGT (badge) visible; SET visible; CNV visible; TRC, LAB, MCP, WSP, PFB, INS in the "Plus" popover; keyboard shortcuts unchanged. Interaction mode stays bottom-left; `#boardsHud` stays in the top state line (D11).
+
+**Acceptance tests.** `test_global_launcher_browser.py::test_every_pre_refactor_tool_has_a_route` (ids from the old dock list), `::test_popover_keyboard_roving_escape`, `::test_badges_visible_without_opening`, `::test_board_control_visible_and_switches_board`, `::test_mode_control_bottom_left_unchanged`; existing dock slicer tests stay green.
+
+**Not in this slice.** Deleting any tool; merging mode and Board state; moving `#boardsHud` (unless HV-08-01 picks the fallback: then sibling right of `#interactionModeButton`, same `JarvisBoardsControl`).
+
+**Preserved invariants.** No duplicate Board/mode owner; every tool reachable by mouse, keyboard and its existing shortcut; ERR/agent badges never hidden behind a click.
+
+**Test migrations here.** None if ids and `<nav class="dock">` are kept: `test_control_center_mvp.py:94-108`, `test_interaction_mode_hud_js.py:1328`, `test_barehands_hud_js.py:985`, `test_prefab_library.py:497`, `test_control_center_mcp_inspector_js.py:821`, `test_presentation_studio_inspector_docs.py:117`, `test_control_center_timeline_ui.py`; otherwise one shared helper (§11). `test_boards_hud_js.py:924` only under the fallback.

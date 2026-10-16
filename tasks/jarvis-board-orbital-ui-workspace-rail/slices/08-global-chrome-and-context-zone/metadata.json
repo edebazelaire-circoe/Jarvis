@@ -1,8 +1,8 @@
 {
   "slice_id": "08-global-chrome-and-context-zone",
   "title": "Slice 08 - Simplify global chrome and consolidate the bottom-left context zone",
-  "task_type": null,
-  "task_type_resolution": "PROJECT_MANAGER_MUST_RESOLVE_FROM_CURRENT_WORKSPACE_VOCABULARY",
+  "task_type": "waived",
+  "task_type_resolution": "WAIVED_NO_WORKSPACE_VOCABULARY_SEE_READINESS_D0",
   "dependencies": [
     "01-shell-contract-and-design-system",
     "06-bottom-status-and-hidden-toggle",
@@ -19,5 +19,6 @@
     "/caveman",
     "/coding-guideline",
     "/impeccable"
-  ]
+  ],
+  "qa_tier": "ui"
 }

@@ -1,8 +1,8 @@
 {
   "slice_id": "10-release-and-human-acceptance",
   "title": "Slice 10 - Release evidence, documentation closeout, and human acceptance",
-  "task_type": null,
-  "task_type_resolution": "PROJECT_MANAGER_MUST_RESOLVE_FROM_CURRENT_WORKSPACE_VOCABULARY",
+  "task_type": "waived",
+  "task_type_resolution": "WAIVED_NO_WORKSPACE_VOCABULARY_SEE_READINESS_D0",
   "dependencies": [
     "09-integration-responsive-accessibility"
   ],
@@ -14,5 +14,6 @@
   ],
   "required_skills": [
     "/impeccable"
-  ]
+  ],
+  "qa_tier": "docs"
 }

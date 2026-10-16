@@ -56,3 +56,17 @@ Update the canonical concept documentation and `../../docs/05-documentation-leve
 
 ## Handoff notes
 Task Type is intentionally not invented in this handoff. Slice 00 resolves it from the current Workspace vocabulary before delegation. Human validation is separate in `human-validation.json` and happens only after automated validation is maximized.
+
+## Slice 00 contract
+
+Binding reference: `../../docs/06-resolved-architecture.md` §4 (D5). QA tier: **ui** + property-style tests of the pure arbitration function.
+
+**Files.** New `jarvis/runtime/control_center_input_arbitration.js` (pure `decide(state, event, params)` + browser seam listening to trusted pointer events) + script constant/injection in `control_center.py`; `control_center_tool_wheel.js` (Selection sub-arc Mouse / Bare Hands, Bare Hands secondary sub-arc: tools pointer/pan/select, Veille, Aide, Diagnostic, Calibration); `control_center_barehands_hud.js` (export the `choose` sequence as `JarvisBarehandsHudControl.selectMethod('mouse'|'bare_hands')`; remove the permanent palette strip and top-left lifecycle control from the default view once the sub-arc passes); `control_center_barehands.js` (`disable({reason})` toast wording only); new BH selector icon (inline SVG); `docs/barehands-contracts.md` (§ Palette rewritten, § 1 selector note), `docs/control-center-shell.md`; tests `tests/unit/test_input_arbitration_js.py`, `tests/unit/test_selection_method_browser.py`.
+
+**Acceptance tests.** `test_input_arbitration_js.py::test_click_takes_over_immediately`, `::test_untrusted_or_bh_pointer_id_ignored`, `::test_jitter_below_net_threshold_never_takes_over` (property: random zero-mean walks, 10k seeds), `::test_slow_drift_outside_window_never_takes_over`, `::test_deliberate_move_takes_over_once_and_resets`, `::test_no_transition_when_not_active`, `::test_cooldown_after_explicit_bare_hands`; `test_selection_method_browser.py::test_only_mouse_and_bare_hands_offered`, `::test_mouse_choice_disables_bh_and_c_pose_cannot_wake`, `::test_bare_hands_choice_activates_and_persists`, `::test_failed_activation_rendered_with_cause`, `::test_tools_reachable_in_bare_hands_subarc_single_write_path`, `::test_voice_activate_returns_to_bare_hands`.
+
+**Not in this slice.** No new BH lifecycle state or persisted field; no change to `c_pose` or the pinch engine; captures untouched.
+
+**Preserved invariants.** BH lifecycle authoritative; one tool write path (`saveSettings({tool})`); help/diagnostic/calibration reachable; error state never shown as Mouse; return to Bare Hands only by explicit UI or voice.
+
+**Test migrations here.** `test_barehands_palette_js.py` (strip -> sub-arc, same invariants), `test_barehands_hud_js.py` parts that assert the top-left control is visible by default. Measure return latency; > 3 s -> Issue `Issues/barehands-return-latency.md`.

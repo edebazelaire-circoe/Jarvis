@@ -56,3 +56,17 @@ Update the canonical concept documentation and `../../docs/05-documentation-leve
 
 ## Handoff notes
 Task Type is intentionally not invented in this handoff. Slice 00 resolves it from the current Workspace vocabulary before delegation. Human validation is separate in `human-validation.json` and happens only after automated validation is maximized.
+
+## Slice 00 contract
+
+Binding reference: `../../docs/06-resolved-architecture.md` (D3, D4, §4 last bullet, §10 ranks 30/37). QA tier: **ui**.
+
+**Files.** New `jarvis/runtime/control_center_tool_wheel.js` (pure geometry/model block + browser block; `window.JarvisToolWheel` with `register(action)`, `open/close`, injected callbacks), `TOOL_WHEEL_SCRIPT_FILE` + injection in `control_center.py`; `control_center.html` (host `#toolWheel` `data-shell-control`, rank rows 30/37); `docs/control-center-shell.md` (wheel section); new `tests/unit/test_tool_wheel_js.py` (node), `tests/unit/test_tool_wheel_browser.py` (headless Chrome, CDP).
+
+**Acceptance tests.** `test_tool_wheel_js.py::test_closed_by_default_only_anchor`, `::test_four_primary_slots_in_order_selection_video_screenshot_audio`, `::test_wedge_angles_separated_by_at_least_min`, `::test_activation_on_click_only_never_pointerup`, `::test_secondary_on_contextmenu_and_shift_f10`, `::test_no_network_on_reveal`; `test_tool_wheel_browser.py::test_mouse_hotspot_opens_and_leaving_closes`, `::test_keyboard_anchor_roving_enter_escape`, `::test_bh_synthetic_pointer_9001_opens_and_pinch_fires_once`, `::test_reduced_motion_no_transition_dependency`, `::test_focus_never_lost_behind_scene`, `::test_far_pointer_movement_never_opens`.
+
+**Not in this slice.** Selection semantics (S03) and capture wiring (S04). Until then the wheel host stays behind a feature flag (`JarvisToolWheel.enabled=false` by default, test-enabled) so no unwired wedge reaches the user; the flag is removed in S04. No new BH gesture (Issue `Issues/bh-left-reveal-gesture.md`).
+
+**Preserved invariants.** Old palette and capture rail fully functional (rollback = remove `#toolWheel`); no polling loop added; BH synthetic events not double-fired.
+
+**Test migrations here.** None expected.

@@ -53,8 +53,8 @@ The central Board/constellation remains the hero surface. The transformation is 
 ### Capture controls
 
 - Video, Screenshot, and Audio are direct wheel actions.
-- **Audio:** first activation starts; second activation stops; running duration/state remains visible after the wheel retracts. Long-press/secondary action opens available source choices.
-- **Video:** first activation starts immediately; second activation stops; persistent `REC + duration` remains visible after wheel retracts. Long-press/secondary action opens available capture target choices.
+- **Audio:** first activation starts; second activation stops; running duration/state remains visible after the wheel retracts. Secondary activation (right-click, thumb+middle pinch, ContextMenu/Shift+F10; never long press, see docs/06 D4) opens available source choices.
+- **Video:** first activation starts immediately; second activation stops; persistent `REC + duration` remains visible after wheel retracts. Secondary activation (right-click, thumb+middle pinch, ContextMenu/Shift+F10; never long press, see docs/06 D4) opens available capture target choices.
 - **Screenshot:** activation captures and saves immediately. Then show a short-lived non-blocking thumbnail with quick actions: open, annotate, send to Jarvis, delete. Ignoring the preview must never interrupt work.
 - **Screenshot/Video targeting:** simple activation uses the current/default target. A secondary/long activation exposes supported target choices. The implementation must surface only targets the current capture contract can actually execute; no fake UI choices.
 - Capture state, timers, errors, recovery, multi-tab truth and stop behavior stay owned by Core. The current capture rail already follows this architecture and should be migrated/refactored rather than bypassed.
@@ -140,7 +140,7 @@ The exact screenshot proportions are guidance. Responsive behavior, accessibilit
 ## Planning boundaries / unknowns deliberately left for PM audit
 
 - Exact mouse-movement threshold for takeover is a tunable interaction parameter. Define from measured deliberate movement, add hysteresis, and prove no jitter flapping.
-- Exact long-press mapping must reuse the current input/gesture vocabulary where possible. Do not invent a new Bare Hands gesture if an existing canonical gesture can represent secondary activation.
+- Secondary activation mapping (resolved in docs/06 D4: the existing `contextmenu` channel) must reuse the current input/gesture vocabulary where possible. Do not invent a new Bare Hands gesture if an existing canonical gesture can represent secondary activation.
 - Exact default screen-capture target must preserve current behavior unless product evidence supports changing it.
 - The exact fourth notification category is not locked.
 - Rich thumbnails for every external format may require new preview providers. The rail must degrade gracefully to a typed placeholder when a real preview is unavailable; never fake a first-slide image.

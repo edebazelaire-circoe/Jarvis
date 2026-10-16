@@ -3,7 +3,7 @@
     {
       "id": "HV-08-01",
       "when": "After destination-matrix tests pass",
-      "instruction": "Locate Settings, diagnostics/workspace tools, change interaction mode and change Board without prior instructions.",
+      "instruction": "Locate Settings, diagnostics/workspace tools, change interaction mode and change Board without prior instructions. Then say whether the Board control should stay in the top state line (approved target, default per docs/06 D11) or move bottom-left next to the mode control (fallback).",
       "acceptance": "Global functions remain discoverable while the shell is visibly less cluttered."
     }
   ]

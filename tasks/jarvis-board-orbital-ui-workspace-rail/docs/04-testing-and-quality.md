@@ -59,7 +59,7 @@ Re-run and extend existing capture rail tests rather than replace them.
 - duration derives from Core timestamps, not click time;
 - stale poll cannot overwrite post-write fresh status;
 - reload/new tab projects active capture correctly;
-- long/secondary options list only supported sources/targets.
+- secondary-activation options list only supported sources/targets.
 
 ### Screenshot preview
 

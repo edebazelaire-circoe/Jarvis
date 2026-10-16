@@ -53,3 +53,17 @@ Update the canonical concept documentation and `../../docs/05-documentation-leve
 
 ## Handoff notes
 Task Type is intentionally not invented in this handoff. Slice 00 resolves it from the current Workspace vocabulary before delegation. Human validation is separate in `human-validation.json` and happens only after automated validation is maximized.
+
+## Slice 00 contract
+
+Binding reference: `../../docs/06-resolved-architecture.md` (§2, §9, §10, §11). QA tier: **ui**.
+
+**Files.** New `docs/control-center-shell.md`; new `jarvis/runtime/control_center_shell.js` (tokens doc mirror, zones, `CONTROL_SELECTOR`) + `SHELL_SCRIPT_FILE` and injection in `jarvis/runtime/control_center.py` (`ControlCenter.index`); `jarvis/runtime/control_center.html` (registry comment replaced by pointer + mirror, `:root` tokens, `data-shell-control` on every control host, empty `#toolWheel` host declared, default-theme geometry aligned on the Cosmos zones); `jarvis/runtime/control_center_work.js` (Cosmos `STYLE`: no position/z-index for shell surfaces unless a registry row says so); `jarvis/runtime/control_center_scene_page.js:2476` and `jarvis/runtime/control_center_capture_rail.js:1144` read the shared selector; new `tests/unit/test_control_center_shell_layers.py`; `tests/unit/test_scene_renderer_logic.py` (registry part delegated); `tests/unit/test_capture_rail_js.py:408` (selector source).
+
+**Acceptance tests.** `test_control_center_shell_layers.py::test_every_rank_in_css_matches_the_registry` (base + Cosmos + module sheets), `::test_registry_lists_chat_drop_and_rail_dialog_ranks`, `::test_cosmos_overrides_no_shell_position_or_rank`, `::test_every_declared_control_host_matches_control_selector`, `::test_tokens_defined_once_and_reduced_motion_zeroes_durations`; `test_scene_renderer_logic.py::test_the_scene_layer_sits_above_the_face_and_below_every_control` (still green); browser: both themes at 1440x900, 1280x720, 900x600, 600x800, scene objects stop against every control incl. `#chatTab`, `#interactionModeHud`, `#presentationRail`.
+
+**Not in this slice.** No wheel behaviour, no feature moved between zones except the default-theme geometry alignment; no removal of `#voiceHint`, palette or capture rail.
+
+**Preserved invariants.** Every control above the scene (20); relative order of the old registry; Studio/Variantes 9000+ untouched; `#jarvisHands` top; Board chooser and mode chooser stack as today; both themes functional.
+
+**Test migrations here.** `test_scene_renderer_logic.py:1376-1414` (selector list -> shell test, `.voicehint` kept until S06), `test_capture_rail_js.py:389-415` (`CONTROL_SELECTOR` literal -> shell module).

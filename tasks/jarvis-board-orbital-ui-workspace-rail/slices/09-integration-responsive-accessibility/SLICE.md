@@ -59,3 +59,17 @@ Update the canonical concept documentation and `../../docs/05-documentation-leve
 
 ## Handoff notes
 Task Type is intentionally not invented in this handoff. Slice 00 resolves it from the current Workspace vocabulary before delegation. Human validation is separate in `human-validation.json` and happens only after automated validation is maximized.
+
+## Slice 00 contract
+
+Binding reference: `../../docs/06-resolved-architecture.md` §9-§11, `04-testing-and-quality.md` runtime matrix. QA tier: **ui**.
+
+**Files.** Only shell CSS/JS touched by S01-S08, `docs/control-center-shell.md`, layering/browser tests; new `tests/unit/test_control_center_shell_browser.py` (matrix runner).
+
+**Acceptance tests.** `test_control_center_shell_layers.py` all green (both themes); `test_control_center_shell_browser.py::test_runtime_matrix` covering the 15 states of `04-testing-and-quality.md` × both themes, with screenshots saved as evidence; `::test_keyboard_only_full_path`, `::test_mouse_only_full_path`, `::test_reduced_motion`, `::test_forced_colors`, `::test_axe_when_available` (`JARVIS_AXE_JS`), `::test_zoom_200`, `::test_narrow_700_and_short_560`; BH path on the real input where available (else replayed trace, stated).
+
+**Not in this slice.** New features; re-deciding D5-D11; product changes outside fixes of findings.
+
+**Preserved invariants.** All previous slices' invariants; registry single source; no arbitrary 99999 ranks.
+
+**Test migrations here.** None new; any leftover from S01-S08 must be closed before S10.

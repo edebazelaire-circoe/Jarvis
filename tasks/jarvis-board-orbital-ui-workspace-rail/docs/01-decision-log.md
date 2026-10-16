@@ -24,7 +24,7 @@ The current hand icon is explicitly rejected by the user.
 Explicit click always activates Mouse. Meaningful movement also can, with jitter filtering. Return to Bare Hands is explicit only.
 
 ### D08 - Capture interaction model is hybrid
-Direct/simple activation uses the default behavior immediately; long/secondary activation opens supported options.
+Direct/simple activation uses the default behavior immediately; secondary activation (the existing `contextmenu` channel, never long press; docs/06 D4) opens supported options.
 
 ### D09 - Audio is toggle recording
 Start on first activation, stop on second, duration visible while active, source chooser on secondary activation.

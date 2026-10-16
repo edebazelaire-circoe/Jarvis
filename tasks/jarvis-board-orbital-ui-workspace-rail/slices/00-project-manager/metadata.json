@@ -1,13 +1,14 @@
 {
   "slice_id": "00-project-manager",
   "title": "Slice 00 - Project Manager readiness and reconciliation gate",
-  "task_type": null,
-  "task_type_resolution": "PROJECT_MANAGER_MUST_RESOLVE_FROM_CURRENT_WORKSPACE_VOCABULARY",
+  "task_type": "waived",
+  "task_type_resolution": "WAIVED_NO_WORKSPACE_VOCABULARY_SEE_READINESS_D0",
   "dependencies": [],
   "frontend": false,
   "code": false,
   "required_qa": [
     "qa-verification"
   ],
-  "required_skills": []
+  "required_skills": [],
+  "qa_tier": "docs"
 }

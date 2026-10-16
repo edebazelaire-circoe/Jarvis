@@ -1,8 +1,8 @@
 {
   "slice_id": "03-selection-input-arbitration",
   "title": "Slice 03 - Mouse/Bare Hands selection arbitration",
-  "task_type": null,
-  "task_type_resolution": "PROJECT_MANAGER_MUST_RESOLVE_FROM_CURRENT_WORKSPACE_VOCABULARY",
+  "task_type": "waived",
+  "task_type_resolution": "WAIVED_NO_WORKSPACE_VOCABULARY_SEE_READINESS_D0",
   "dependencies": [
     "02-orbital-tool-wheel"
   ],
@@ -17,5 +17,6 @@
     "/caveman",
     "/coding-guideline",
     "/impeccable"
-  ]
+  ],
+  "qa_tier": "ui"
 }

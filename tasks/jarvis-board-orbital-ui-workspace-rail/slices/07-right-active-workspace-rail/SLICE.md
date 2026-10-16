@@ -57,3 +57,17 @@ Update the canonical concept documentation and `../../docs/05-documentation-leve
 
 ## Handoff notes
 Task Type is intentionally not invented in this handoff. Slice 00 resolves it from the current Workspace vocabulary before delegation. Human validation is separate in `human-validation.json` and happens only after automated validation is maximized.
+
+## Slice 00 contract
+
+Binding reference: `../../docs/06-resolved-architecture.md` §8 (D10), D13. QA tier: **ui** (no SQLite migration; would become critical if one were added).
+
+**Files.** Core `jarvis/core/presentation_studio_rail.py` (row `preview` + `type`, cached; `unreviewed` key in `rail.json` v1; action `review`; set on brain work `success`), `jarvis/protocol/presentation_studio_rail_routes.py` (docstring table), relay docstring `jarvis/runtime/presentation_studio_relay.py`; UI `jarvis/runtime/control_center_presentation_rail.js` (right zone, cards: preview/placeholder, type badge, title, metadata, state label+dot, menu affordance; Studio docking mirrored), new `jarvis/runtime/control_center_workspace_rail_model.js` (Stage B, pure) + script constant/injection; `docs/presentation-studio.md` (› Rail), `docs/control-center-shell.md`. Tests: `tests/unit/test_presentation_studio_rail.py` (Core), `tests/unit/test_control_center_presentation_rail_js.py`, `tests/unit/test_control_center_presentation_rail_browser.py`, `tests/unit/test_presentation_rail_e2e_browser.py`, new `tests/unit/test_workspace_rail_model_js.py`.
+
+**Acceptance tests.** `test_presentation_studio_rail.py::test_row_preview_is_latest_complete_still_without_path`, `::test_preview_cache_bounded`, `::test_brain_success_marks_unreviewed_user_review_clears`, `::test_old_rail_json_reads_without_unreviewed`, `::test_problem_never_reported_as_unreviewed`; `test_control_center_presentation_rail_js.py::test_state_precedence_working_problem_unreviewed_done`, `::test_label_accompanies_every_dot`, `::test_placeholder_when_no_preview`; browser `::test_rail_right_no_overlap_launcher_chat_tab`, `::test_studio_docks_left_of_rail`, `::test_context_actions_preserved`, `::test_brain_show_hide_rail_and_display_state`; `test_workspace_rail_model_js.py::test_items_from_board_artifacts_typed_by_mime_and_host`, `::test_board_switch_drops_previous_items`.
+
+**Not in this slice.** Generic file library; crawling files; yellow for Stage B items; changes to `jarvis.sqlite3`. Touches `control_center.html` only for the rail host line and its registry row (parallel with S02).
+
+**Preserved invariants.** Rail is a view of Core; open/edit/present/hide/show/rename/archive/restore unchanged; `problem` keeps its own treatment; visibility rule and `Alt+Maj+P`; text via `textContent`.
+
+**Test migrations here.** `test_presentation_rail_e2e_browser.py:52,68` (rail right of palette / left of Studio -> right zone / Studio bounded by rail).

@@ -1,8 +1,8 @@
 {
   "slice_id": "04-capture-wheel-migration",
   "title": "Slice 04 - Migrate Video, Screenshot, and Audio into the wheel",
-  "task_type": null,
-  "task_type_resolution": "PROJECT_MANAGER_MUST_RESOLVE_FROM_CURRENT_WORKSPACE_VOCABULARY",
+  "task_type": "waived",
+  "task_type_resolution": "WAIVED_NO_WORKSPACE_VOCABULARY_SEE_READINESS_D0",
   "dependencies": [
     "02-orbital-tool-wheel",
     "03-selection-input-arbitration"
@@ -18,5 +18,6 @@
     "/caveman",
     "/coding-guideline",
     "/impeccable"
-  ]
+  ],
+  "qa_tier": "critical"
 }

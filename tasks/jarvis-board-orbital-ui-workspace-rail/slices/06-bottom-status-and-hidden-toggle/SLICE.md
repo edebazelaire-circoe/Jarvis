@@ -54,3 +54,17 @@ Update the canonical concept documentation and `../../docs/05-documentation-leve
 
 ## Handoff notes
 Task Type is intentionally not invented in this handoff. Slice 00 resolves it from the current Workspace vocabulary before delegation. Human validation is separate in `human-validation.json` and happens only after automated validation is maximized.
+
+## Slice 00 contract
+
+Binding reference: `../../docs/06-resolved-architecture.md` D8, §7 (D9), §10 rank 40, §11. QA tier: **ui**.
+
+**Files.** `jarvis/runtime/control_center.html` (status centre container bottom-centre: `#recIndicators` | `#bgPills` | `#hiddenEye`; `BG_CATS` icons as inline SVG, larger targets; `#voiceHint` element and its CSS removed; `refreshStatus` writes the key hint into `.state` description; `.board-drop-tray` bottom from tokens); `control_center_capture_rail.js` (indicator view placed in `#recIndicators`); `control_center_scene_view.js` (`showHidden` field); `control_center_scene_layout.js` (`viewModel` `options.showHidden`, `ghost` nodes); `control_center_scene_page.js` (ghost rendering, ghost menu "Réafficher", `sc-hidden` note removed, eye wiring + `openHiddenMenu` on secondary); `control_center_interaction_mode.js` (rung selectors); `docs/control-center-shell.md`, `docs/scene-model.md` (view pref), `docs/interaction-mode.md` (rungs), `docs/boards.md` (alert pills location). Tests: `tests/unit/test_status_centre_browser.py`, `tests/unit/test_scene_view_prefs.py`, `tests/unit/test_scene_renderer_logic.py`.
+
+**Acceptance tests.** `test_status_centre_browser.py::test_same_counts_and_categories_as_status_summary`, `::test_click_opens_same_popover_and_ack_clears`, `::test_icons_have_label_and_count_not_colour_only`, `::test_recording_indicator_distinct_from_counters_and_stops`, `::test_no_overlap_with_mode_control_rail_chat_tab_tray_at_1440_1280_900_600`, `::test_status_centre_clears_open_chat_panel`, `::test_no_voicehint_and_f9_still_wakes`; `test_scene_view_prefs.py::test_show_hidden_defaults_false_and_normalizes`; `test_scene_renderer_logic.py::test_show_hidden_emits_ghosts_without_writing_scene`, `::test_one_reveal_one_set_visibility`; browser `::test_eye_toggle_aria_pressed_and_secondary_lists_hidden`.
+
+**Not in this slice.** Moving `#boardsHud`; launcher/dock changes (S08); archived objects.
+
+**Preserved invariants.** Background category truth, sound cue rules, multi-tab leader, Board-elsewhere attribution, ack semantics; F9 keyboard; per-object visibility untouched by the eye; other `.sc-status` notes still shown.
+
+**Test migrations here.** `test_control_center_mvp.py:74`, `test_scene_renderer_logic.py` (`.voicehint` in selector list), `test_interaction_mode_hud_js.py:1397,1469`, `test_barehands_contracts_js.py:194`, `test_presentation_attention_browser.py:606`, `test_control_center_chat_ui.py:77`, `test_control_center_chat_browser.py:385` — each mapped in §11; `test_board_alerts_browser.py:31` must stay unchanged (ids kept).

@@ -55,3 +55,18 @@ Update the canonical concept documentation and `../../docs/05-documentation-leve
 
 ## Handoff notes
 Task Type is intentionally not invented in this handoff. Slice 00 resolves it from the current Workspace vocabulary before delegation. Human validation is separate in `human-validation.json` and happens only after automated validation is maximized.
+
+## Slice 00 contract
+
+Binding reference: `../../docs/06-resolved-architecture.md` §6 (D7). QA tier: **ui** + adversarial on Delete, Send and the annotation route; `agent-trace-analysis` on a real Send turn (attachment rule change).
+
+**S05.A files.** New `jarvis/runtime/control_center_screenshot_preview.js` (preview `#screenshotPreview` rank 38, lightbox on `.overlay` 60) + script constant/injection; `control_center_capture_rail.js` (publishes `{capture, artifact}` of a successful screenshot); `control_center_chat.js` + `control_center_chat_model.js` (`JarvisChat.attachExisting`, ready chip without upload); Core `jarvis/core/upload_service.py:499` (`attachment_refusal` admits `screenshot`, `complete`, same Session); `docs/chat.md` (step 5, *Attachments*), `docs/capture.md` (§ Interface, preview), `docs/control-center-shell.md`.
+**S05.B files (gated).** Core `POST /v1/artifacts/{id}/annotations` (`jarvis/protocol/capture_routes.py`, `jarvis/core/capture_api.py`), relay `POST /api/artifacts/{id}/annotations` (`capture_relay.py`), editor in `control_center_screenshot_preview.js`; `docs/artifacts.md` (relation use), `docs/capture.md`.
+
+**Acceptance tests.** `tests/unit/test_screenshot_preview_js.py::test_shown_only_after_successful_screenshot`, `::test_auto_dismiss_paused_on_hover_focus_and_never_deletes`, `::test_payload_failure_shows_placeholder_keeps_actions`; `tests/unit/test_screenshot_preview_browser.py::test_open_lightbox_and_tab`, `::test_delete_requires_confirm_and_removes_artifact`, `::test_send_attaches_existing_artifact_to_chat_composer`, `::test_preview_never_blocks_board_pointer`; `tests/unit/test_chat_attachments_brain_context.py::test_screenshot_of_open_session_is_admitted`, `::test_screenshot_of_other_session_is_refused`, `::test_non_complete_screenshot_refused`; S05.B: `tests/unit/test_screenshot_annotation.py::test_creates_new_derived_screenshot_original_untouched`, `::test_rejects_non_png_oversize_and_dimension_mismatch`, `::test_loopback_guard`.
+
+**Not in this slice.** No auto-send (text still required); no editing of the original artifact; Annotate button absent unless S05.B passed QA (else Issue `Issues/screenshot-annotate.md`).
+
+**Preserved invariants.** Preview errors never change capture truth; no artifact bytes copied into browser storage; Chat keeps one upload client / one state owner; brief shows no path through chat routes.
+
+**Test migrations here.** None expected.
