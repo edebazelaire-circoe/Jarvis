@@ -321,6 +321,11 @@ html:not([data-jarvis-theme="cosmos"]) #app:has(#bgPills:not([hidden])) .chat-ta
 /* Étroit (moins de 940 px), Chat ouvert : la pile passe sous l'en-tête et la ligne d'état du panneau
    (`--chat-toasts-top`, mesuré par `control_center_chat.js`) : elle ne couvre ni le composer, ni le titre, ni ×. */
 @media(max-width:939px){#app:has(.chat-panel.open)~.toasts{top:var(--chat-toasts-top,124px);bottom:auto}}
+/* 700 px de large ou moins : le bouton du mode d'interaction quitte le rail gauche (left:84px, jusqu'à ~260 px) et la
+   pile, à bottom:68px, le recouvrait (115×41 px à 500×700). Elle passe en haut, sous la barre (top:62px), toujours à
+   gauche du dock : ni le bouton, ni l'onglet Chat. Bandeau GPT-Live affiché (même place, bouton d'arrêt) : elle reste
+   en bas plutôt que de le masquer. */
+@media(max-width:700px){.toasts{top:62px;bottom:auto}#app:has(#liveBanner:not([hidden]))~.toasts{top:auto;bottom:68px}}
 .chat-panel.open{animation:chatIn .2s ease-out}
 @keyframes chatIn{from{opacity:0;transform:translateX(28px)}}
 .chat-panel header{gap:12px}
