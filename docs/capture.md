@@ -722,6 +722,7 @@ prefixes added deliberately to `FORWARDABLE_PREFIXES`, pinned by
 | POST | `/v1/captures/{capture_id}/transcription/abandon` | explicit abandon `{reason?}` (above) |
 | GET | `/v1/captures/{capture_id}/transcript` | bounded segments (below) |
 | GET | `/v1/artifacts`, `/v1/artifacts/{id}`, `…/relations`, `…/transcript`, `…/payload`; DELETE `/v1/artifacts/{id}` | [artifacts.md](artifacts.md) › *HTTP API* |
+| POST | `/v1/artifacts/{id}/annotations` (raw PNG; orbital-ui S05.B) | new annotated screenshot derived from `{id}`, original untouched; [artifacts.md](artifacts.md) › *HTTP API* |
 | GET | `/v1/activity` | ledger tail, [artifacts.md](artifacts.md) › *HTTP API* |
 
 - **Targets** (`CaptureService.targets()`, read-only, never opens a source):
@@ -943,7 +944,7 @@ after the controller and the Chat), host `#screenshotPreview` (rank 38, zone
 | Envoyer à Jarvis | `JarvisChat.attachExisting({artifact_id, original_name, mime_type, size_bytes})`: a **ready** chip without upload (the artifact is already in Core), the Chat panel opens and its input takes the focus; text is still required, nothing is sent by itself. Core admits the screenshot at send time ([chat.md](chat.md) › *Attachments*, step 5). The preview closes once the chip is placed |
 | Ouvrir | lightbox `#screenshotLightbox` on the `.overlay` pattern (rank 60, `role=dialog`, `aria-modal`): the full image from the same payload URL and « Ouvrir dans un onglet » (`target=_blank`, `rel=noopener noreferrer`, same URL). `Escape`, « Fermer » or a click on the backdrop close it; `Tab` stays inside; the focus returns where it was |
 | Supprimer | the page's `confirmDialog` (danger), then `DELETE /api/artifacts/{id}` through the relay. One deletion in flight (a second click is ignored, journal `delete_ignored`); a refusal keeps the preview and says the phrase **and** the code (`artifact_not_found`, `artifact_has_dependents` — an annotation derives from it —, `artifact_still_pending`, `core_unreachable`, `core_timeout`…). A lightbox showing the deleted image closes |
-| Annotate | not offered (Slice 05.B: see the task Issue `screenshot-annotate.md` if absent) |
+| Annoter (Slice 05.B) | editor `#screenshotAnnotate` on the `.overlay` pattern (rank 60, `role=dialog`, `aria-modal`): the image drawn on a canvas **copy** (same origin), a pen with three named inks (Rouge, Jaune, Cyan; `aria-pressed`, never colour alone), « Annuler le trait » (`Ctrl+Z`), « Annuler » (`Escape`, taken at window level in capture while open), « Enregistrer une copie annotée ». Save = `POST /api/artifacts/{id}/annotations` with the canvas PNG: Core creates a **new** screenshot derived from the original ([artifacts.md](artifacts.md) › HTTP API), which the preview then shows; the original is untouched. The wait says « Enregistrement de la copie annotée… N s » (35 s deadline, then unknown outcome); a refusal stays in the editor with its phrase and code (`annotation_too_large` — a very large screenshot can exceed 8 MiB once re-encoded —, `annotation_dimensions_mismatch`, `artifact_not_found`, `core_timeout`…). An image that cannot be loaded says so and saving stays off. Bare Hands pointer events draw too (no pointer capture needed) |
 
 `openLightbox({artifact_id, url, title})` is also the seam of the workspace
 rail (Slice 07: a Board-linked image card opens this lightbox). The URL is
@@ -956,7 +957,9 @@ Journal (console `[screenshot_preview]`, never a file name or path):
 `installed`, `preview_shown`, `preview_skipped` (`not_complete`,
 `not_a_screenshot`, `no_artifact`), `preview_payload_failed`,
 `preview_dismissed` (`timeout`, `close`, `escape`, `sent`, `deleted`),
-`preview_opened`, `lightbox_opened` / `lightbox_closed` /
+`preview_opened`, `annotate_opened` / `annotate_shown` / `annotate_closed` (`cancel`, `escape`, `saved`) /
+`annotation_requested` / `annotation_refused` / `annotation_saved` / `annotate_failed`,
+`lightbox_opened` / `lightbox_closed` /
 `lightbox_payload_failed` / `lightbox_url_ignored`, `delete_requested` /
 `delete_cancelled` / `delete_ignored` / `delete_refused` / `deleted`,
 `sent_to_chat` / `send_refused`, `capture_controller_missing`,
@@ -970,7 +973,11 @@ real Control Center + real Core, fake one-shot source returning a 480×270
 PNG: lightbox and tab, the rail → lightbox seam, delete with confirmation,
 delete refused, send → ready chip → turn admitted by Core with the
 screenshot, non-blocking pointer and focus, no overlap at 1440×900,
-1280×720, 900×600, 600×800).
+1280×720, 900×600, 600×800, annotate with real mouse strokes → a new
+derived screenshot, original bytes untouched, cancel writes nothing);
+`tests/unit/test_screenshot_annotation.py` (Core route and relay: derived
+artifact and relation, original untouched, non-PNG / oversize / wrong
+dimensions / wrong source refused, loopback guard and bearer token).
 
 ## Activity and journal
 

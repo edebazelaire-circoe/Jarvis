@@ -110,6 +110,16 @@ class CoreSessionTransport(CoreWorkTransport):
             await self.close()
         return status, payload
 
+    async def forward_annotation(self, path: str, *, body: bytes, timeout_s: float) -> tuple[int, Any]:
+        """PNG d'une capture annotée vers `POST /v1/artifacts/{id}/annotations` (orbital-ui Slice 05.B). Corps en
+        mémoire (≤ 8 Mio, borné par le relais) : un 401 est relu puis rejoué une fois, Core a refusé avant la route."""
+
+        status, payload = await self._connect().forward_annotation(path, body=body, timeout_s=timeout_s)
+        if status != 401:
+            return status, payload
+        await self.close()
+        return await self._connect().forward_annotation(path, body=body, timeout_s=timeout_s)
+
     async def forward_bytes(self, path: str, *, range_header: str | None = None,
                             timeout_s: float | None = None) -> tuple[int, dict[str, str], bytes]:
         """Proxy binaire de `/api/artifacts/{id}/payload` (Slice 09) ; 401 relu puis rejoué une fois."""

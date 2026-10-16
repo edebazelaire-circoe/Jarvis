@@ -35,6 +35,10 @@
      sans téléversement ; le panneau Chat s'ouvre, le champ prend le focus, le
      texte reste exigé (aucun envoi automatique). Core admet la capture
      (`attachment_refusal`, `docs/chat.md` étape 5).
+   - **Annoter** (Slice 05.B) : éditeur sur le motif `.overlay` (60) — stylo,
+     trois encres nommées, annuler le trait, Annuler, Enregistrer ; le PNG
+     part à `POST /api/artifacts/{id}/annotations` et Core crée une NOUVELLE
+     capture dérivée (l'originale intacte), montrée ensuite dans l'aperçu.
 
    Deux blocs : le **contrôleur pur** (`createPreviewController`, horloge et
    actions injectées, exécuté par node dans `tests/unit/test_screenshot_preview_js.py`)
@@ -45,8 +49,21 @@
   'use strict';
 
   const DOM=Object.freeze({hostId:'screenshotPreview',styleId:'screenshotPreviewStyle',liveId:'screenshotPreviewLive',
-    lightboxId:'screenshotLightbox',hintId:'screenshotPreviewHint'});
-  const TIMING=Object.freeze({dismissMs:6000,thumbDeadlineMs:8000,probeMs:5000,deleteMs:35000});
+    lightboxId:'screenshotLightbox',hintId:'screenshotPreviewHint',editorId:'screenshotAnnotate'});
+  const TIMING=Object.freeze({dismissMs:6000,thumbDeadlineMs:8000,probeMs:5000,deleteMs:35000,annotateMs:35000});
+  /* Annoter (Slice 05.B) : trois encres, nommées (jamais la couleur seule). */
+  const INKS=Object.freeze([Object.freeze({id:'red',label:'Rouge',color:'#ff4d5e'}),
+    Object.freeze({id:'yellow',label:'Jaune',color:'#ffd23f'}),Object.freeze({id:'cyan',label:'Cyan',color:'#4dd9ff'})]);
+  const ANNOTATE_TEXT=Object.freeze({
+    annotation_too_large:'image annotée trop lourde (8 Mo au plus)',
+    annotation_dimensions_mismatch:'dimensions différentes de la capture',
+    annotation_not_png:'image non PNG',annotation_empty:'image vide',
+    annotation_source_not_ready:'la capture n’est pas terminée',annotation_source_invalid:'ce n’est pas une capture d’écran',
+    artifact_not_found:'la capture n’existe plus chez Jarvis Core',
+    core_unreachable:'Jarvis Core est injoignable',network_error:'le Control Center est injoignable',
+    core_timeout:'pas de réponse à temps : issue inconnue, vérifiez avant de réessayer',
+    client_timeout:'pas de réponse à temps : issue inconnue, vérifiez avant de réessayer',
+  });
   const ID=/^jart_[A-Za-z0-9_]{1,96}$/;
   /* Phrases d'un refus de suppression ; le code est toujours montré à côté. */
   const DELETE_TEXT=Object.freeze({
@@ -106,13 +123,17 @@
     return `Suppression refusée : ${known||String(message||'raison inconnue').slice(0,140)} (${code||'inconnu'}).`;
   }
   function payloadText(code){return `Aperçu indisponible : ${PAYLOAD_TEXT[code]||'erreur'} (${code||'inconnu'}).`}
+  function annotateText(code,message){
+    return `Annotation non enregistrée : ${ANNOTATE_TEXT[code]||String(message||'raison inconnue').slice(0,140)} (${code||'inconnu'}).`;
+  }
 
   /* ------------------------------------------------- le contrôleur pur
 
      deps : `later(fn, ms)` / `unlater(id)`, `now()`, `log(level, key, data)`,
      `onChange(view)`, et `actions` — `confirm(item)` → booléen,
      `remove(id)` → promesse (rejet `{code, message}`), `attach(spec)` →
-     `{ok, code?}`, `openLightbox(item, onClose)`, `say(text)`. */
+     `{ok, code?}`, `openLightbox(item, onClose)`, `openEditor(item, {saved(artifact), closed()})` (Slice 05.B),
+     `say(text)`. */
   function createPreviewController(deps){
     const {later,unlater,now,log,onChange,actions}=deps;
     const dismissMs=Number.isFinite(deps.dismissMs)?deps.dismissMs:TIMING.dismissMs;
@@ -231,11 +252,39 @@
       dismiss('sent');
       return 'sent';
     }
+    /* Annoter (Slice 05.B) : l'éditeur retient l'aperçu ; une annotation enregistrée est une NOUVELLE capture
+       (Core), montrée à la place de l'originale, qui reste intacte. */
+    function annotate(){
+      const item=S.item;
+      if(!item)return 'none';
+      if(S.busy)return 'busy';
+      hold('annotate');
+      try{
+        actions.openEditor(item,{
+          saved:artifact=>{
+            release('annotate');
+            const next=shotOf({capture:null,artifact,at:now()}).item;
+            log('info','annotation_saved',{artifact_id:item.artifactId,derived_id:next?next.artifactId:null});
+            actions.say('Capture annotée enregistrée ; l’originale est conservée.');
+            if(next)show(next);
+          },
+          closed:()=>release('annotate'),
+        });
+      }catch(error){
+        release('annotate');
+        S.note={tone:'bad',code:'editor_failed',text:'Éditeur d’annotation indisponible.'};changed();
+        log('error','annotate_failed',{error:String(error&&error.message||error)});
+        return 'failed';
+      }
+      log('info','annotate_opened',{artifact_id:item.artifactId});
+      return 'opened';
+    }
     function current(){return S.item}
-    return {accept,show,hold,release,imageReady,imageFailed,dismiss,open,remove,send,view,current};
+    return {accept,show,hold,release,imageReady,imageFailed,dismiss,open,annotate,remove,send,view,current};
   }
 
-  const MODULE=Object.freeze({DOM,TIMING,ID,DELETE_TEXT,PAYLOAD_TEXT,payloadUrl,shotOf,clockOf,sizeText,typeOf,deleteText,payloadText,
+  const MODULE=Object.freeze({DOM,TIMING,ID,INKS,DELETE_TEXT,PAYLOAD_TEXT,ANNOTATE_TEXT,payloadUrl,shotOf,clockOf,sizeText,typeOf,
+    deleteText,payloadText,annotateText,
     createPreviewController});
   root.JarvisScreenshotPreviewModule=MODULE;
   /* Exécution par les tests (node) ; dans la page, `module` n'existe pas. */
@@ -247,7 +296,7 @@
 
      Aucun `z-index` dans cette feuille : le rang de l'hôte (38) vit dans la
      page et au registre ; la visionneuse prend la classe `.overlay` (60). */
-  const H='#'+DOM.hostId,L='#'+DOM.lightboxId;
+  const H='#'+DOM.hostId,L='#'+DOM.lightboxId,E='#'+DOM.editorId;
   const STYLE=`
 ${H}{width:min(272px,calc(100vw - var(--shell-anchor-w,14px) - 2 * var(--shell-gutter,18px)));font:12px/1.35 ui-monospace,SFMono-Regular,Consolas,monospace;color:var(--text,#d8edf7)}
 ${H} .sp-card{position:relative;margin:0;padding:8px;border:1px solid var(--shell-stroke,rgba(110,231,255,.22));border-radius:var(--shell-radius,12px);
@@ -301,6 +350,22 @@ ${L} a,${L} button{display:inline-flex;align-items:center;gap:6px;min-height:32p
   background:rgba(3,14,20,.9);color:var(--text,#d8edf7);font:inherit;font-size:12.5px;text-decoration:none;cursor:pointer}
 ${L} a{border-color:color-mix(in srgb,var(--accent,#6ee7ff) 45%,transparent);color:var(--accent,#6ee7ff)}
 ${L} a:focus-visible,${L} button:focus-visible{outline:2px solid var(--shell-focus,#6ee7ff);outline-offset:2px}
+${E} .sp-ed{display:grid;grid-template-rows:auto minmax(0,1fr) auto;gap:10px;width:min(96vw,1600px);max-height:94vh;padding:12px;
+  background:var(--solid,#070d13);border:1px solid var(--line,#183343);border-radius:12px;box-shadow:0 34px 90px rgba(0,0,0,.65)}
+${E} header{display:flex;flex-wrap:wrap;align-items:center;gap:8px;min-width:0}
+${E} h2{flex:1 1 180px;margin:0;font-size:13px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+${E} .sp-inks{display:flex;gap:4px}
+${E} button{display:inline-flex;align-items:center;gap:6px;min-height:32px;padding:0 10px;border:1px solid var(--line,#183343);border-radius:7px;
+  background:rgba(3,14,20,.9);color:var(--text,#d8edf7);font:inherit;font-size:12.5px;cursor:pointer}
+${E} button:focus-visible{outline:2px solid var(--shell-focus,#6ee7ff);outline-offset:2px}
+${E} button[aria-disabled=true]{opacity:.5;cursor:not-allowed}
+${E} .sp-ink[aria-pressed=true]{border-color:currentColor;box-shadow:inset 0 0 0 1px currentColor}
+${E} .sp-ink i{width:12px;height:12px;border-radius:50%;background:currentColor}
+${E} .sp-save{border-color:color-mix(in srgb,var(--accent,#6ee7ff) 50%,transparent);color:var(--accent,#6ee7ff)}
+${E} .sp-stage{display:grid;place-items:center;min-height:120px;overflow:hidden;border-radius:8px;background:#03080c}
+${E} canvas{max-width:100%;max-height:calc(94vh - 150px);cursor:crosshair;touch-action:none;display:block}
+${E} .sp-ed-status{min-height:18px;margin:0;font-size:12px;color:var(--muted,#7190a0)}
+${E} .sp-ed-status[data-tone=bad]{color:var(--danger,#ff6577)}
 @media(prefers-reduced-motion:reduce){
   ${H} .sp-card{animation:none}
   ${H} .sp-time i{animation:none;transform:none}
@@ -317,6 +382,7 @@ ${L} a:focus-visible,${L} button:focus-visible{outline:2px solid var(--shell-foc
     open:'M2 6V2h4M14 6V2h-4M2 10v4h4M14 10v4h-4',
     send:'M2 8l12-6-5 12-2-5z',
     delete:'M3 4h10M6 4V2.5h4V4M4.5 4l.8 9.5h5.4l.8-9.5',
+    annotate:'M3 13l1-3.5L11 2.5l2.5 2.5L6.5 12zM9.5 4l2.5 2.5',
   });
   function icon(name){
     const svg=document.createElementNS(SVG_NS,'svg');
@@ -414,6 +480,145 @@ ${L} a:focus-visible,${L} button:focus-visible{outline:2px solid var(--shell-foc
     return {show,shut,isOpen:()=>L.open,id:()=>L.id};
   }
 
+  /* ------------------------------------------------- l'éditeur d'annotation (Slice 05.B, motif `.overlay`, rang 60)
+
+     Le dessin se fait sur une COPIE de l'image (canvas, même origine : jamais altéré) ; « Enregistrer » envoie le
+     PNG à `POST /api/artifacts/{id}/annotations` : Core crée une nouvelle capture dérivée. Stylo, trois encres,
+     annuler le dernier trait (`Ctrl+Z`), Annuler (`Échap`) ; l'attente d'enregistrement se voit et a une échéance. */
+  function createEditor(){
+    const back=el('div','overlay');back.id=DOM.editorId;back.hidden=true;
+    const box=el('div','sp-ed');box.setAttribute('role','dialog');box.setAttribute('aria-modal','true');
+    const head=el('header'),title=el('h2');title.id=DOM.editorId+'Title';box.setAttribute('aria-labelledby',title.id);
+    const inks=el('div','sp-inks');inks.setAttribute('role','group');inks.setAttribute('aria-label','Encre');
+    const inkButtons=INKS.map(ink=>{const b=el('button','sp-ink');b.type='button';b.dataset.spInk=ink.id;b.style.color=ink.color;
+      b.append(el('i'),document.createTextNode(ink.label));b.setAttribute('aria-pressed','false');inks.append(b);return b});
+    const undo=el('button','sp-undo','Annuler le trait');undo.type='button';undo.title='Annuler le dernier trait (Ctrl+Z)';
+    const cancel=el('button','sp-cancel','Annuler');cancel.type='button';
+    const save=el('button','sp-save','Enregistrer une copie annotée');save.type='button';
+    head.append(title,inks,undo,cancel,save);
+    const stage=el('div','sp-stage'),canvas=document.createElement('canvas');
+    canvas.setAttribute('role','img');stage.append(canvas);
+    const status=el('p','sp-ed-status');status.setAttribute('role','status');
+    box.append(head,stage,status);back.append(box);document.body.appendChild(back);
+    const ctx=canvas.getContext('2d');
+    const X={open:false,item:null,img:null,strokes:[],live:null,ink:INKS[0],busy:null,tick:0,previous:null,hooks:null,ready:false};
+    function say(text,tone){status.textContent=text;status.dataset.tone=tone||''}
+    function widthOf(){return Math.max(3,Math.round(canvas.width/300))}
+    function draw(stroke){
+      if(!stroke.points.length)return;
+      ctx.strokeStyle=stroke.color;ctx.lineWidth=stroke.width;ctx.lineCap='round';ctx.lineJoin='round';
+      ctx.beginPath();ctx.moveTo(stroke.points[0][0],stroke.points[0][1]);
+      for(const [x,y] of stroke.points.slice(1))ctx.lineTo(x,y);
+      if(stroke.points.length===1)ctx.lineTo(stroke.points[0][0]+.01,stroke.points[0][1]);
+      ctx.stroke();
+    }
+    function redraw(){if(!X.img)return;ctx.drawImage(X.img,0,0);for(const s of X.strokes)draw(s)}
+    function paint(){
+      back.dataset.spReady=String(X.ready);
+      for(const b of inkButtons)b.setAttribute('aria-pressed',String(b.dataset.spInk===X.ink.id));
+      undo.setAttribute('aria-disabled',String(!X.strokes.length||!!X.busy));
+      save.setAttribute('aria-disabled',String(!X.ready||!X.strokes.length||!!X.busy));
+      cancel.setAttribute('aria-disabled',String(!!X.busy));
+      if(X.busy)say(`Enregistrement de la copie annotée… ${Math.floor((Date.now()-X.busy)/1000)} s`);
+    }
+    function point(event){
+      const r=canvas.getBoundingClientRect();
+      return [Math.round((event.clientX-r.left)*canvas.width/r.width),Math.round((event.clientY-r.top)*canvas.height/r.height)];
+    }
+    canvas.addEventListener('pointerdown',event=>{
+      if(!X.ready||X.busy||event.button>0)return;
+      event.preventDefault();
+      try{canvas.setPointerCapture(event.pointerId)}catch(_error){/* pointeur synthétique (Bare Hands) : pas de capture, le tracé suit quand même */}
+      X.live={color:X.ink.color,width:widthOf(),points:[point(event)]};X.strokes.push(X.live);draw(X.live);paint();
+    });
+    canvas.addEventListener('pointermove',event=>{
+      if(!X.live)return;
+      const at=point(event),last=X.live.points[X.live.points.length-1];
+      X.live.points.push(at);
+      ctx.strokeStyle=X.live.color;ctx.lineWidth=X.live.width;ctx.lineCap='round';
+      ctx.beginPath();ctx.moveTo(last[0],last[1]);ctx.lineTo(at[0],at[1]);ctx.stroke();
+    });
+    const end=()=>{if(X.live){X.live=null;say(`${X.strokes.length} trait${X.strokes.length>1?'s':''}. Enregistrer crée une copie ; l’originale ne change pas.`)}paint()};
+    canvas.addEventListener('pointerup',end);canvas.addEventListener('pointercancel',end);
+    for(const b of inkButtons)b.addEventListener('click',()=>{X.ink=INKS.find(i=>i.id===b.dataset.spInk)||INKS[0];paint()});
+    function undoLast(){if(X.busy||!X.strokes.length)return;X.strokes.pop();redraw();say('Dernier trait retiré.');paint()}
+    undo.addEventListener('click',undoLast);
+    function shut(reason){
+      if(!X.open||X.busy)return;
+      X.open=false;back.classList.remove('open');back.hidden=true;
+      const hooks=X.hooks,previous=X.previous,id=X.item&&X.item.artifactId;
+      X.hooks=null;X.item=null;X.img=null;X.strokes=[];X.previous=null;X.ready=false;
+      log('info','annotate_closed',{artifact_id:id,reason});
+      if(previous&&previous.isConnected&&typeof previous.focus==='function')try{previous.focus({preventScroll:true})}catch(_error){/* disparu */}
+      if(hooks&&typeof hooks.closed==='function')hooks.closed();
+    }
+    cancel.addEventListener('click',()=>shut('cancel'));
+    async function store(){
+      if(!X.ready||X.busy||!X.strokes.length)return;
+      const item=X.item;
+      X.busy=Date.now();X.tick=setInterval(paint,1000);paint();
+      log('info','annotation_requested',{artifact_id:item.artifactId,strokes:X.strokes.length});
+      let answer=null,failure=null;
+      try{
+        const blob=await new Promise((ok,ko)=>canvas.toBlob(b=>b?ok(b):ko(Object.assign(new Error('toBlob'),{code:'annotation_encode_failed'})),'image/png'));
+        const ctl=typeof AbortController==='function'?new AbortController():null;
+        const timer=setTimeout(()=>{if(ctl)ctl.abort()},TIMING.annotateMs);
+        let response;
+        try{response=await fetch(`/api/artifacts/${encodeURIComponent(item.artifactId)}/annotations`,
+          {method:'POST',headers:{'Content-Type':'image/png'},body:blob,signal:ctl?ctl.signal:undefined})}
+        catch(error){throw {code:error&&error.name==='AbortError'?'client_timeout':'network_error'}}
+        finally{clearTimeout(timer)}
+        const body=await response.json().catch(()=>null);
+        if(!response.ok){const err=body&&body.error;throw {code:err&&err.code||`http_${response.status}`,message:err&&err.message}}
+        if(!body||!isObject(body.artifact))throw {code:'invalid_response'};
+        answer=body.artifact;
+      }catch(error){failure={code:error&&error.code||'unknown',message:error&&error.message}}
+      finally{clearInterval(X.tick);X.tick=0;X.busy=null}
+      if(failure){
+        log('warn','annotation_refused',{artifact_id:item.artifactId,code:failure.code});
+        say(annotateText(failure.code,failure.message),'bad');paint();return;
+      }
+      const hooks=X.hooks;X.hooks=null;
+      shut('saved');
+      if(hooks&&typeof hooks.saved==='function')hooks.saved(answer);
+    }
+    save.addEventListener('click',()=>{if(save.getAttribute('aria-disabled')!=='true')store()});
+    /* Modal : les touches sont prises au niveau de la fenêtre, en capture, tant que l'éditeur est ouvert (comme
+       `confirmDialog`) — Échap annule même si le focus a quitté la boîte (un trait au pointeur, un clic sur le voile). */
+    window.addEventListener('keydown',event=>{
+      if(!X.open)return;
+      if(event.key==='Escape'){event.preventDefault();event.stopImmediatePropagation();shut('escape');return}
+      if((event.ctrlKey||event.metaKey)&&event.key.toLowerCase()==='z'){event.preventDefault();event.stopImmediatePropagation();undoLast();return}
+      if(event.key==='Tab'){
+        event.stopImmediatePropagation();
+        const stops=[...inkButtons,undo,cancel,save];const at=stops.indexOf(document.activeElement);
+        event.preventDefault();stops[(at+(event.shiftKey?stops.length-1:1)+stops.length)%stops.length].focus();
+      }
+    },true);
+    function show(item,hooks){
+      if(X.open)shut('replaced');
+      Object.assign(X,{open:true,item,hooks,previous:document.activeElement,strokes:[],live:null,ready:false,busy:null});
+      title.textContent=`Annoter · ${item.title}`;canvas.setAttribute('aria-label',`Annotation de ${item.title}`);
+      canvas.width=item.width||640;canvas.height=item.height||360;ctx.clearRect(0,0,canvas.width,canvas.height);
+      say('Chargement de l’image…');
+      back.hidden=false;back.classList.add('open');paint();
+      inkButtons[0].focus({preventScroll:true});
+      const img=new Image();img.decoding='async';
+      img.onload=()=>{
+        if(X.item!==item)return;
+        canvas.width=img.naturalWidth;canvas.height=img.naturalHeight;X.img=img;X.ready=true;redraw();
+        say('Dessinez sur l’image (stylo). Enregistrer crée une copie annotée ; l’originale ne change pas.');paint();
+      };
+      img.onerror=()=>{
+        if(X.item!==item)return;
+        probe(item.url).then(code=>{if(X.item===item){say(`Image indisponible : annotation impossible (${code}).`,'bad');paint()}});
+      };
+      img.src=item.url;
+      log('info','annotate_shown',{artifact_id:item.artifactId});
+    }
+    return {show,shut,isOpen:()=>X.open};
+  }
+
   function installScreenshotPreview(){
     const host=document.getElementById(DOM.hostId);
     if(!host)
@@ -427,6 +632,7 @@ ${L} a:focus-visible,${L} button:focus-visible{outline:2px solid var(--shell-foc
     document.body.appendChild(live);
     const say=text=>{live.textContent='';setTimeout(()=>{live.textContent=text},30)};
     const lightbox=createLightbox();
+    const editor=createEditor();
 
     host.textContent='';host.hidden=true;
     host.setAttribute('role','region');host.setAttribute('aria-label','Aperçu de la capture d’écran');
@@ -440,7 +646,8 @@ ${L} a:focus-visible,${L} button:focus-visible{outline:2px solid var(--shell-foc
     const button=(act,label,iconName)=>{const b=el('button');b.type='button';b.dataset.spAct=act;b.append(icon(iconName),document.createTextNode(label));return b};
     const openB=button('open','Ouvrir','open'),sendB=button('send','Envoyer à Jarvis','send'),deleteB=button('delete','Supprimer','delete');
     const deleteLabel=deleteB.lastChild;let busyTick=0;
-    actions.append(sendB,openB,deleteB);
+    const annotateB=button('annotate','Annoter','annotate');
+    actions.append(sendB,openB,annotateB,deleteB);
     const close=el('button','sp-close','×');close.type='button';
     close.setAttribute('aria-label','Fermer l’aperçu (la capture reste enregistrée)');close.title='Fermer l’aperçu — la capture reste enregistrée';
     const note=el('p','sp-note');note.hidden=true;note.setAttribute('role','status');
@@ -471,6 +678,7 @@ ${L} a:focus-visible,${L} button:focus-visible{outline:2px solid var(--shell-foc
           return chat.attachExisting(spec);
         },
         openLightbox:(item,onClose)=>lightbox.show({id:item.artifactId,title:item.title,onClose}),
+        openEditor:(item,hooks)=>editor.show(item,hooks),
         say,
       },
     });
@@ -501,7 +709,7 @@ ${L} a:focus-visible,${L} button:focus-visible{outline:2px solid var(--shell-foc
         thumbTimer=setTimeout(()=>{thumbTimer=0;if(controller.view().image==='loading')controller.imageFailed(item.artifactId,'payload_timeout')},
           TIMING.thumbDeadlineMs);
         host.hidden=false;
-        say(`${item.title} enregistrée. Aperçu affiché : Envoyer à Jarvis, Ouvrir ou Supprimer.`);
+        say(`${item.title} enregistrée. Aperçu affiché : Envoyer à Jarvis, Ouvrir, Annoter ou Supprimer.`);
       }
       thumb.dataset.spImage=v.image;
       if(v.image==='failed')phText.textContent=payloadText(v.imageCode);
@@ -513,6 +721,7 @@ ${L} a:focus-visible,${L} button:focus-visible{outline:2px solid var(--shell-foc
       if(waiting&&!busyTick)busyTick=setInterval(()=>render(controller.view()),1000);
       if(!waiting&&busyTick){clearInterval(busyTick);busyTick=0}
       sendB.setAttribute('aria-disabled',String(!!v.busy));
+      annotateB.setAttribute('aria-disabled',String(!!v.busy));
       note.hidden=!v.note;
       note.textContent=v.note?v.note.text:'';
     }
@@ -526,6 +735,7 @@ ${L} a:focus-visible,${L} button:focus-visible{outline:2px solid var(--shell-foc
     });
     thumb.addEventListener('click',()=>controller.open());
     openB.addEventListener('click',()=>controller.open());
+    annotateB.addEventListener('click',()=>{if(annotateB.getAttribute('aria-disabled')!=='true')controller.annotate()});
     sendB.addEventListener('click',()=>{if(sendB.getAttribute('aria-disabled')!=='true')controller.send()});
     deleteB.addEventListener('click',()=>{controller.remove()});
     close.addEventListener('click',()=>controller.dismiss('close'));
@@ -538,7 +748,7 @@ ${L} a:focus-visible,${L} button:focus-visible{outline:2px solid var(--shell-foc
     /* Échap ferme l'aperçu quand il est la surface du moment : focus dedans, pointeur dessus, ou rien d'autre
        n'a pris la touche (focus sur la page). La visionneuse, le Chat, les menus la prennent avant. */
     window.addEventListener('keydown',event=>{
-      if(event.key!=='Escape'||event.defaultPrevented||!controller.current()||lightbox.isOpen())return;
+      if(event.key!=='Escape'||event.defaultPrevented||!controller.current()||lightbox.isOpen()||editor.isOpen())return;
       const active=document.activeElement;
       const mine=host.contains(active),idle=!active||active===document.body||active===document.documentElement;
       if(!mine&&!idle&&!controller.view().holds.includes('hover'))return;

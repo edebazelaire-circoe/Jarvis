@@ -163,7 +163,7 @@ The rule is written exactly as in the sheet, `${…}` interpolations included.
 | 55 | `.mcpi` | `control_center.html` | `.mcpi` | MCP inspector |
 | 55 | `.wsp` | `control_center.html` | `.wsp` | Sessions & Boards |
 | 55 | `.pfb` | `control_center.html` | `.pfb` | prefab library |
-| 60 | `.overlay` | `control_center.html` | `.overlay` | settings and modal overlays; the screenshot lightbox `#screenshotLightbox` (Slice 05) takes the class, no rank of its own |
+| 60 | `.overlay` | `control_center.html` | `.overlay` | settings and modal overlays; the screenshot lightbox `#screenshotLightbox` and annotation editor `#screenshotAnnotate` (Slice 05) take the class, no rank of their own |
 | 70 | `.toasts` | `control_center.html` | `.toasts` | toasts |
 | 75 | `.bgpop` | `control_center.html` | `.bgpop` | background pill popover |
 | 75 | `#jvStudioReloadBand` | `control_center_presentation_studio_reload.js` | `#${BAND_ID}` | Studio reload band |

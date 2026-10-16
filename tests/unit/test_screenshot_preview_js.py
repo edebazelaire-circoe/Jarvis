@@ -190,3 +190,27 @@ def test_delete_adversarial_double_click_refusal_and_cancel():
     assert out["said"] == [view["note"]["text"]]
     assert out["gone"] == "refused" and out["goneNote"]["code"] == "artifact_not_found"
     assert out["sendRefused"] == "refused" and out["sendShown"] is True and out["sendNote"]["code"] == "sending"
+
+
+def test_annotate_holds_preview_and_shows_the_derived_screenshot():
+    """S05.B : l'éditeur retient l'aperçu ; une annotation enregistrée (NOUVELLE capture de Core) prend la place de
+    l'originale dans l'aperçu ; un éditeur fermé sans enregistrer relâche le délai ; rien n'est supprimé."""
+
+    out = node("""
+      const r={};let hooks=null;
+      const b=bench();b.c.accept({shot:null});b.c.accept({shot:shot(1)});
+      r.noEditor=b.c.annotate();                                 // le banc n'a pas d'éditeur : refus dit, aperçu gardé
+      r.note=b.c.view().note;
+      const c=M.createPreviewController({now:b.now,later:(fn,ms)=>setTimeout(fn,0)&&0,unlater:()=>{},log:()=>{},onChange:()=>{},
+        dismissMs:6000,actions:{openEditor:(item,h)=>{hooks=h},say:()=>{},confirm:async()=>true,remove:async()=>{},attach:()=>({ok:true}),openLightbox:()=>{}}});
+      c.accept({shot:null});c.accept({shot:shot(2)});
+      r.opened=c.annotate();r.paused=c.view().paused;r.holds=c.view().holds;
+      hooks.closed();r.afterClose=c.view().holds;
+      c.annotate();
+      hooks.saved({...art(3),artifact_id:'jart_'+'3'.padStart(32,'0')});
+      r.after=c.view().item.artifactId;r.holdsAfter=c.view().holds;
+      return r;""")
+    assert out["noEditor"] == "failed" and out["note"]["code"] == "editor_failed"
+    assert out["opened"] == "opened" and out["paused"] is True and out["holds"] == ["annotate"]
+    assert out["afterClose"] == []
+    assert out["after"] == "jart_" + "3".zfill(32) and out["holdsAfter"] == []

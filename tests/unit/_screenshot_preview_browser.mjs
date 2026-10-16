@@ -8,7 +8,7 @@
    Usage : node _screenshot_preview_browser.mjs <http://127.0.0.1:port/> <chrome.exe> <stepJSON|@fichier>
    Étape : {width, height, reducedMotion?, forcedColors?, actions: [...]}
    Action : {eval}, {value, expr}, {wait: ms}, {until: js, ms, name}, {shot: chemin.png},
-            {click: sélecteur}, {right: sélecteur}, {move: sélecteur}, {at: {x, y}, button?} (clic en un point),
+            {click: sélecteur}, {right: sélecteur}, {move: sélecteur}, {at: {x, y}, button?} (clic en un point), {drag: sélecteur} (trait),
             {hover: {x, y}}, {key, shift?}, {type: texte}, {focus: sélecteur}, {resize: {width, height}},
             {axe: nom, file, selector}.
    Sortie : {reads, console, errors}. */
@@ -96,14 +96,25 @@ try{
       }else if(action.click!==undefined)await mouse(await point(action.click),'left');
       else if(action.right!==undefined)await mouse(await point(action.right),'right');
       else if(action.at!==undefined)await mouse(action.at,action.button||'left');
+      else if(action.drag!==undefined){
+        /* Un trait de souris réel sur l'élément : de 25 % à 75 % de sa largeur, en diagonale, par petits pas. */
+        const r=await evaluate(`(()=>{const b=document.querySelector(${JSON.stringify(action.drag)}).getBoundingClientRect();return {l:b.left,t:b.top,w:b.width,h:b.height}})()`);
+        const at=f=>({x:Math.round(r.l+r.w*(.25+.5*f)),y:Math.round(r.t+r.h*(.3+.4*f))});
+        await send('Input.dispatchMouseEvent',{type:'mouseMoved',...at(0),button:'none'});
+        await send('Input.dispatchMouseEvent',{type:'mousePressed',...at(0),button:'left',buttons:1,clickCount:1});
+        for(let i=1;i<=12;i+=1){await send('Input.dispatchMouseEvent',{type:'mouseMoved',...at(i/12),button:'left',buttons:1});await sleep(10)}
+        await send('Input.dispatchMouseEvent',{type:'mouseReleased',...at(1),button:'left',buttons:0,clickCount:1});
+      }
       else if(action.move!==undefined){
         const at=await point(action.move);
         await send('Input.dispatchMouseEvent',{type:'mouseMoved',x:at.x,y:at.y,button:'none'});
       }else if(action.hover!==undefined){
         await send('Input.dispatchMouseEvent',{type:'mouseMoved',x:action.hover.x,y:action.hover.y,button:'none'});
       }else if(action.key!==undefined){
-        const base={key:action.key,code:action.key===' '?'Space':action.key,windowsVirtualKeyCode:CODES[action.key]||0,
-          modifiers:action.shift?8:0};
+        const letter=/^[a-z]$/i.test(action.key);
+        const base={key:action.key,code:action.key===' '?'Space':letter?'Key'+action.key.toUpperCase():action.key,
+          windowsVirtualKeyCode:CODES[action.key]||(letter?action.key.toUpperCase().charCodeAt(0):0),
+          modifiers:(action.shift?8:0)|(action.ctrl?2:0)};
         await send('Input.dispatchKeyEvent',{type:'keyDown',...base,...(action.key==='Enter'?{text:'\r'}:{})});
         await send('Input.dispatchKeyEvent',{type:'keyUp',...base});
         await sleep(60);

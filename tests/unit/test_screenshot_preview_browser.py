@@ -23,6 +23,7 @@ import shutil
 import pytest
 
 from jarvis.adapters.fake_capture import FakeOneShotSource
+from jarvis.core.screenshot_annotation import PNG_MAGIC
 from jarvis.domain.artifacts import ArtifactError, ArtifactKind, ArtifactQuery
 from jarvis.domain.capture import CaptureChannel
 from tests.fakes.capture_stack import CaptureStack
@@ -168,7 +169,7 @@ async def test_open_lightbox_and_tab(stack, tmp_path):
     assert shown["hidden"] is False and shown["z"] == "38" and shown["control"] is True
     assert shown["natural"] == [WIDTH, HEIGHT] and shown["src"] == payload, "a real thumbnail through the payload route"
     assert shown["title"].startswith("Capture d’écran · ") and shown["meta"].startswith(f"{WIDTH}×{HEIGHT} · ")
-    assert [b[0] for b in shown["buttons"]] == ["send", "open", "delete"], "no Annotate button outside S05.B"
+    assert [b[0] for b in shown["buttons"]] == ["send", "open", "annotate", "delete"]
     assert shown["focusInPreview"] is False, "the preview never takes the focus when it appears"
     _no_overlap_with_neighbours(shown)
     lb = r["lightbox"]["lightbox"]
@@ -360,3 +361,57 @@ async def test_preview_never_blocks_board_pointer(stack, tmp_path):
     assert len(await _screenshots(stack)) == 3, "timeouts and Escape never delete"
     lines = "\n".join(out["console"])
     assert '"reason":"timeout"' in lines and '"reason":"escape"' in lines
+
+
+EDITOR_OPEN = "document.getElementById('screenshotAnnotate').classList.contains('open')"
+EDITOR_READY = EDITOR_OPEN + "&&document.getElementById('screenshotAnnotate').dataset.spReady==='true'"
+
+
+async def test_annotate_saves_a_new_screenshot_and_keeps_the_original(stack, tmp_path):
+    """S05.B : Annoter ouvre l'éditeur sur une copie ; un trait de souris réel, « Enregistrer » : Core crée une
+    NOUVELLE capture dérivée, que l'aperçu montre ensuite ; l'originale est intacte. Annuler n'écrit rien."""
+
+    out = await _drive(stack.url, [
+        TAKE, _until(SHOWN, 8000, "shown"),
+        {"value": "original", "expr": "window.__orig=window.JarvisScreenshotPreview.view().item.artifactId"},
+        # Annuler (Échap) : rien n'est écrit, l'aperçu reste.
+        {"click": "#screenshotPreview [data-sp-act=annotate]"}, _until(EDITOR_READY, 5000, "editor"),
+        {"drag": "#screenshotAnnotate canvas"}, {"wait": 150},
+        {"value": "beforeCancel", "expr": "document.querySelector('#screenshotAnnotate .sp-ed-status').textContent"},
+        {"key": "Escape"}, _until("!" + EDITOR_OPEN, 2000, "cancelled"),
+        {"value": "focusBack", "expr": "document.activeElement.dataset.spAct||null"},
+        {"value": "afterCancel", "expr": "window.JarvisScreenshotPreview.view().shown"},
+        {"click": "#screenshotPreview [data-sp-act=annotate]"}, _until(EDITOR_READY, 5000, "editor again"),
+        {"value": "editor", "expr": """(()=>{const e=document.getElementById('screenshotAnnotate');return {z:getComputedStyle(e).zIndex,
+            modal:e.querySelector('[role=dialog]').getAttribute('aria-modal'),inks:[...e.querySelectorAll('.sp-ink')].map(b=>[b.textContent,b.getAttribute('aria-pressed')]),
+            focus:document.activeElement.textContent,paused:window.JarvisScreenshotPreview.view().paused}})()"""},
+        {"click": "#screenshotAnnotate .sp-ink[data-sp-ink=yellow]"},
+        {"drag": "#screenshotAnnotate canvas"}, {"click": "#screenshotAnnotate .sp-ink[data-sp-ink=cyan]"},
+        {"drag": "#screenshotAnnotate canvas"}, {"key": "z", "ctrl": True},
+        {"value": "status", "expr": "document.querySelector('#screenshotAnnotate .sp-ed-status').textContent"},
+        {"drag": "#screenshotAnnotate canvas"}, _shot(tmp_path, "annotate-editor-1440x900"),
+        {"click": "#screenshotAnnotate .sp-save"},
+        _until("!" + EDITOR_OPEN + "&&window.JarvisScreenshotPreview.view().shown"
+               "&&window.JarvisScreenshotPreview.view().item.artifactId!==window.__orig", 15000, "saved"),
+        _until(SHOWN, 8000, "derived shown"), _read("derived"), _shot(tmp_path, "annotated-preview-1440x900"),
+    ], tmp_path=tmp_path)
+    r = out["reads"]
+    assert r["afterCancel"] is True and r["focusBack"] == "annotate", "Escape cancels and returns the focus to « Annoter »"
+    assert r["beforeCancel"].startswith("1 trait."), "a real mouse stroke was drawn before the cancel"
+    editor = r["editor"]
+    assert editor["z"] == "60" and editor["modal"] == "true" and editor["paused"] is True
+    assert [i[0] for i in editor["inks"]] == ["Rouge", "Jaune", "Cyan"] and editor["inks"][0][1] == "true"
+    assert editor["focus"] == "Rouge"
+    assert r["status"] == "Dernier trait retiré."
+    original_id = r["original"]
+    derived_id = r["derived"]["view"]["item"]["artifactId"]
+    assert derived_id != original_id and r["derived"]["natural"] == [WIDTH, HEIGHT]
+    shots = await _screenshots(stack)
+    assert sorted(a.artifact_id for a in shots) == sorted([original_id, derived_id]), "cancel wrote nothing; save wrote one"
+    original = await stack.core.artifacts.get(original_id)
+    derived = await stack.core.artifacts.get(derived_id)
+    assert Path(stack.core.artifacts.payload_path(original)).read_bytes() == IMAGE, "the original bytes are untouched"
+    annotated = Path(stack.core.artifacts.payload_path(derived)).read_bytes()
+    assert annotated != IMAGE and annotated.startswith(PNG_MAGIC) and derived.metadata["annotated_from"] == original_id
+    lines = "\n".join(out["console"])
+    assert "annotate_closed" in lines and '"reason":"escape"' in lines and "annotation_saved" in lines

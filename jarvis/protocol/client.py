@@ -59,6 +59,8 @@ FORWARDABLE_PREFIXES = ("/v1/boards", "/v1/sessions", "/v1/mcp/plugins", "/v1/mc
 FORWARDABLE_PATHS = (re.compile(r"/v1/conversations/[^/?#]+/brain-turns"), re.compile(r"/v1/uploads/links"))
 #: Seule route relayée en flux montant (`forward_upload`, chat Slice 07) ; jamais par `forward_json`.
 UPLOAD_PATH = re.compile(r"/v1/uploads/[A-Za-z0-9][A-Za-z0-9_-]{7,127}")
+#: Capture annotée (orbital-ui Slice 05.B) : le seul chemin que `forward_annotation` relaie.
+ANNOTATION_PATH = re.compile(r"/v1/artifacts/[A-Za-z0-9_%-]{1,200}/annotations")
 #: Seule route relayée en octets (`forward_bytes`) : le payload d'un Artifact, pour l'interface.
 PAYLOAD_ROUTE_SUFFIX = "/payload"
 #: Paramètres de requête relayés : un mapping, ou des paires (un paramètre répété garde chaque valeur).
@@ -1457,6 +1459,22 @@ class LocalCoreClient:
         timeout = aiohttp.ClientTimeout(total=None, sock_connect=10, sock_read=read_timeout_s)
         async with session.put(self.base_url + path, headers={**self.headers, **headers}, params=params, data=body,
                                timeout=timeout) as response:
+            try:
+                payload = await response.json(content_type=None)
+            except ValueError:
+                payload = None  # argued: the relay answers the status with its own envelope
+            return response.status, payload
+
+    async def forward_annotation(self, path: str, *, body: bytes, timeout_s: float) -> tuple[int, Any]:
+        """Relais de `POST /v1/artifacts/{id}/annotations` (orbital-ui Slice 05.B) : un PNG déjà borné par le
+        relais (8 Mio), `Content-Type: image/png`. Seul ce chemin ; rend le statut et le JSON de Core, lève sur
+        une panne de transport."""
+
+        if not ANNOTATION_PATH.fullmatch(path):
+            raise ValueError(f"forward_annotation only relays /v1/artifacts/<id>/annotations, not {path[:80]!r}")
+        session = await self._http()
+        async with session.post(self.base_url + path, headers={**self.headers, "Content-Type": "image/png"}, data=body,
+                                timeout=aiohttp.ClientTimeout(total=timeout_s)) as response:
             try:
                 payload = await response.json(content_type=None)
             except ValueError:
