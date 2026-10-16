@@ -558,6 +558,9 @@ async def test_board_switch_A_B_A_no_leak(stack):
     assert rows_b == []
     status, body, _ = await stack.send(conv_a, "Envoyé vers A alors que B est affiché")
     assert (status, body["code"], body["current_conversation_id"]) == (409, "chat_conversation_not_foreground", conv_b)
+    # Constat 1 de la Slice 09 : la pièce jointe de A ne part pas d'un tour de B, refusée par Core (pas par la page).
+    status, body, _ = await stack.send(conv_b, "Avec la pièce de A", attachments=[attachment["artifact_id"]])
+    assert (status, body["code"], body["core_status"]) == (409, "attachment_other_board", 409), body
     status, _, on_b = await stack.send(conv_b, "Message du Board B")
     assert status == 202
     await stack.settle()

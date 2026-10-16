@@ -13,6 +13,7 @@ from datetime import datetime
 import errno
 import os
 from pathlib import Path
+from types import SimpleNamespace
 import sqlite3
 import threading
 import time
@@ -745,7 +746,20 @@ async def test_core_start_reconciles_captures_before_the_generic_artifact_recove
 
     async def artifacts_after(**kwargs):  # noqa: ANN003
         order.append("artifacts")
-        assert kwargs["owned"] == core.transcripts.owns
+        # Ce que la reprise générique laisse à leurs propriétaires, jugé sur le comportement et non sur l'identité
+        # du prédicat (Slice 07 en compose plusieurs) : une projection reprise par les transcriptions et un
+        # téléversement (soldé ensuite par `uploads.recover`, jamais promu `partial`) sont gardés ; une capture
+        # d'écran `pending` ne l'est pas, la reprise générique la solde.
+        owned = kwargs["owned"]
+        transcript = SimpleNamespace(artifact_id="jart_owned_by_transcripts", kind=ArtifactKind.TRANSCRIPT)
+        core.transcripts.owns = lambda artifact: artifact.artifact_id == transcript.artifact_id  # type: ignore[method-assign]
+        try:
+            assert owned(transcript)
+            assert owned(SimpleNamespace(artifact_id="jart_up_1", kind=ArtifactKind.UPLOAD))
+            assert not owned(SimpleNamespace(artifact_id="jart_shot_1", kind=ArtifactKind.SCREENSHOT))
+            assert not owned(SimpleNamespace(artifact_id="jart_other_transcript", kind=ArtifactKind.TRANSCRIPT))
+        finally:
+            del core.transcripts.owns
         return await artifact_recover(**kwargs)
 
     core.captures.recover = captures_first  # type: ignore[method-assign]

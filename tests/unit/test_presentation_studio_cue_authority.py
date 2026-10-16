@@ -266,11 +266,14 @@ def _digest(obj: object) -> str:
 
 #: Pinned at the start of Slice 13 (branch point a0d5ef5b). A change to any of these is an amendment of the P2 rule and
 #: needs its own decision, its own tests and `docs/presentation-addressed-turn.md` section 12: update the pin there, not here.
+#: Re-pinned once: `BrainTurnInput.__post_init__` 217a7c1daf8acc82 -> 356020e626e2a0c8 (handoff
+#: jarvis-unified-chat-and-board-drop, Slice 03, ae195443) adds only `if self.attachments: _check_attachments(...)`, a
+#: refusal that cannot admit anything; the ambient refusal is unchanged. Recorded in section 12, *What is not amended*.
 PINNED = {
     "decide_turn_authority": (decide_turn_authority, "e714150258729829"),
     "is_vocative_address": (is_vocative_address, "2e7bdc83f37636d1"),
     "TurnAuthority": (TurnAuthority, "c5ada1496e034029"),
-    "BrainTurnInput.__post_init__": (v2.BrainTurnInput.__post_init__, "217a7c1daf8acc82"),
+    "BrainTurnInput.__post_init__": (v2.BrainTurnInput.__post_init__, "356020e626e2a0c8"),
     "PresentationOutputPolicy.__post_init__": (PresentationOutputPolicy.__post_init__, "dd8dc9d97d3288cd"),
 }
 

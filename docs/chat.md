@@ -1,4 +1,4 @@
-# Chat (contract, Level 2)
+# Chat (contract, Level 3)
 
 A text conversation with the **same** Brain as voice: the Brain of the open
 Session's active Board binding, reading and writing the **same** conversation.
@@ -7,20 +7,49 @@ text ingress on the existing `brain-turns` route; it is not a second transcript,
 a second Brain pipeline or a voice bridge.
 
 Handoff `tasks/jarvis-unified-chat-and-board-drop/` (design record:
-`docs/06-resolved-architecture.md` of that handoff). This page is **Level 2**:
-the normative contract written before the code. Each section names the Slice
-that implements it; the page reaches Level 3 at Slice 10.
+`docs/06-resolved-architecture.md` of that handoff). This page is **Level 3**:
+the normative contract (written before the code, Level 2 at Slice 01), its
+implementation and its conformance tests. Every rule names the test that holds
+it: *Conformance* at the end of the page (test paths and names checked at the
+Slice 10 HEAD), the *Test* column of *Error codes*, and a *Held by* line under
+each known limit. A rule without a test says so. Routes at a glance: *Routes*
+below. Operating (settings, state reading, diagnostics):
+[OPERATIONS.md](OPERATIONS.md) › *Chat et dépôt sur le Board*; security
+controls: [SECURITY.md](SECURITY.md) › control 22.
 
-| Section | What it fixes | Code (planned) | Slice |
+| Section | What it fixes | Code | Conformance tests | Slice |
+| --- | --- | --- | --- | --- |
+| *Projection* | which events the Chat shows and how | `jarvis/domain/chat_projection.py`, `jarvis/runtime/control_center_chat_model.js`, fixture `tests/fixtures/chat_projection/cases.json` | `tests/unit/test_chat_projection.py`, `tests/unit/test_control_center_chat_model_js.py` | 02 |
+| *Reading* | `projection=chat` on the event routes, hydration and live | `jarvis/domain/conversation_event_query.py`, `jarvis/core/conversation_event_query.py`, `jarvis/runtime/conversation_event_view.py` | `tests/unit/test_chat_projection_query.py`, `tests/integration/test_chat_projection_protocol.py`, `tests/unit/test_control_center_chat_tabs_browser.py` | 05, 06 |
+| *Sending text* | `POST /api/chat/turns` → `brain-turns` `source=text`, guards, idempotence | `jarvis/runtime/chat_relay.py`, `jarvis/protocol/server.py` | `tests/unit/test_chat_relay.py`, `tests/unit/test_chat_text_ingress.py` | 03 |
+| *Text disposition* | no TTS for a text turn (`text_channel`) | `jarvis/core/brain_service.py` | `tests/unit/test_speech_text_channel.py` | 03 |
+| *Voice channel* | Core-owned voice state, disable request, lock | `jarvis/domain/voice_channel.py`, `jarvis/core/voice_channel.py`, Voice side `jarvis/app.py` | `tests/unit/test_voice_channel_domain.py`, `tests/unit/test_voice_channel_service.py`, `tests/unit/test_voice_channel_protocol.py`, `tests/unit/test_voice_channel_reporter.py` | 04 |
+| *Attachments* | upload route, bounds, sniffing, `brain_readable`, brief block, `artifacts_root` | `jarvis/domain/uploads.py`, `jarvis/core/upload_service.py`, `jarvis/protocol/upload_routes.py`; UI `jarvis/runtime/control_center_chat.js` + `control_center_chat_model.js` | `tests/unit/test_uploads_domain.py`, `tests/unit/test_upload_service.py`, `tests/unit/test_upload_protocol.py`, `tests/unit/test_chat_attachments_brain_context.py`, `tests/unit/test_control_center_chat_attachments_browser.py` | 07, 07b |
+| *Board drop* | file or inert URL dropped on the displayed Board | same upload service, `kind = link`, `jarvis/runtime/control_center_board_drop.js` | `tests/unit/test_board_drop.py`, `tests/unit/test_board_drop_browser.py` | 08 |
+| *Panel* | Control Center tab and panel behaviour | `jarvis/runtime/control_center_chat.js` | `tests/unit/test_control_center_chat_ui.py`, `tests/unit/test_control_center_chat_browser.py`, `tests/unit/test_control_center_chat_tabs_browser.py` | 06, 07b |
+| all | the whole chain on a real Core and Control Center | — | `tests/integration/test_chat_end_to_end.py` (13 scenarios, plus one Category 2 behind `JARVIS_LIVE_CLAUDE=1`) | 09 |
+
+### Routes
+
+| Route | Served by | Relays to | Section |
 | --- | --- | --- | --- |
-| *Projection* | which events the Chat shows and how | `jarvis/domain/chat_projection.py`, `jarvis/runtime/control_center_chat_model.js`, fixture `tests/fixtures/chat_projection/cases.json` | 02 |
-| *Reading* | `projection=chat` on the event routes, hydration and live | `jarvis/domain/conversation_event_query.py`, `jarvis/core/conversation_event_query.py`, `jarvis/runtime/conversation_event_view.py` | 05 |
-| *Sending text* | `POST /api/chat/turns` → `brain-turns` `source=text`, guards, idempotence | `jarvis/runtime/chat_relay.py`, `jarvis/protocol/server.py` | 03 |
-| *Text disposition* | no TTS for a text turn (`text_channel`) | `jarvis/core/brain_service.py` | 03 |
-| *Voice channel* | Core-owned voice state, disable request, lock | `jarvis/domain/voice_channel.py`, `jarvis/core/voice_channel.py` | 04 |
-| *Attachments* | upload route, bounds, sniffing, `brain_readable`, brief block, `artifacts_root` | `jarvis/domain/uploads.py`, `jarvis/core/upload_service.py`, `jarvis/protocol/upload_routes.py`; UI `jarvis/runtime/control_center_chat.js` + `control_center_chat_model.js` | 07, 07b |
-| *Board drop* | file or inert URL dropped on the displayed Board | same upload service, `kind = link` | 08 |
-| *Panel* | Control Center tab and panel behaviour | `jarvis/runtime/control_center_chat.js` | 06, 07b |
+| `GET /api/chat/state` | Control Center | `GET /v1/chat/state` | *Voice channel* › *Reading* |
+| `POST /api/chat/voice/disable` | Control Center | `POST /v1/voice/channel/disable` | *Voice channel* |
+| — | Core (Voice only) | `POST /v1/voice/channel/report` | *Voice channel* |
+| `POST /api/chat/turns` | Control Center | `POST /v1/conversations/{conversation_id}/brain-turns` | *Sending text* |
+| `POST /api/chat/uploads` | Control Center | `PUT /v1/uploads/{client_upload_id}?purpose=chat` | *Attachments* |
+| `GET /api/conversations/events?projection=chat` | Control Center | `GET /v1/conversation-events?projection=chat` | *Reading* |
+| `POST /api/boards/drop?board_id=` | Control Center | `PUT /v1/uploads/{client_upload_id}?purpose=board&board_id=` | *Board drop* |
+| `POST /api/boards/drop-link` | Control Center | `POST /v1/uploads/links` | *Board drop* |
+| `GET /api/sessions/current` | Control Center | `GET /v1/sessions/current` (`context.artifacts_root`) | *Reference given to the Brain* |
+
+Every `/api/chat*` and `/api/boards/drop*` route sits behind the Control
+Center origin guard; every `/v1` route needs Core's token. Held by
+`tests/integration/test_chat_end_to_end.py::test_security_cross_origin_refused_all_chat_routes`,
+`tests/unit/test_voice_channel_protocol.py::test_the_chat_prefix_is_guarded_for_every_method`,
+`tests/unit/test_board_drop.py::test_the_drop_routes_are_guarded`,
+`tests/unit/test_voice_channel_protocol.py::test_core_routes_require_the_token`,
+`tests/unit/test_upload_protocol.py::test_core_route_needs_the_token_and_a_closed_query`.
 
 Invariants held everywhere:
 
@@ -254,9 +283,17 @@ order:
    of kind `upload` with provenance `chat_attachment` **or of kind
    `screenshot`** (orbital-ui Slice 05, D7: « Envoyer à Jarvis » from the
    screenshot preview) and belongs to the open Session (400
-   `attachment_not_allowed`), and is `complete` (409 `attachment_not_ready`);
-   the first refusal in message order wins. Any other kind (a recording, a
-   transcript, a Board drop, a link, a render) stays refused. This step
+   `attachment_not_allowed`), is linked to the Board of the
+   target binding (409 `attachment_other_board`, journal
+   `core.upload.attachment_other_board` with the id and the Board, never a
+   name), and is `complete` (409 `attachment_not_ready`); the first refusal in
+   message order wins. Any other kind (a recording, a transcript, a Board
+   drop, a link, a render) stays refused. The Board of an attachment is its Board link
+   (`board_artifact_links`): the automatic `active_board` link written by its
+   creation transaction (a screenshot like an upload), or an `explicit` link made later in the Workspace
+   inspector. This is Core's guard; the page's `stale` state only avoids
+   sending a refused turn (Slice 09 finding 1). A replay (step 2) answers
+   before this step: re-sending an admitted turn stays a 200 duplicate. This step
    **runs right after step 3, before step 4**: it reads the registry (an
    `await`), and step 4 must stay the last read before `submit` with no
    `await` in between. Attachments on a non-text turn: 400 `invalid_request`;
@@ -497,7 +534,12 @@ pure rules `jarvis/domain/uploads.py`.
   bound, told to the user) is exceeded → spool closed, Artifact `failed` code
   `upload_too_large`, 413. Body shorter than `Content-Length`, or cut (client
   gone) → `failed` `upload_incomplete`, 400. Payload refused by the store
-  (`artifact_payload_*`) → `failed` 503 `upload_storage_failed`. A `failed`
+  (`artifact_payload_*`) → `failed` 503 `upload_storage_failed`; the message
+  and `core.upload.refused` (level `error`, field `cause`) say the real cause
+  without the path nor the original name: `payload_code`, `stage` (`open`,
+  `write`, `finalize`), `cause_type`, `os_error` / `errno` / `winerror` of the
+  chained `OSError`, `path_chars` and `path_limit` (the Windows limit exceeded,
+  *Known limits* 10). A `failed`
   upload keeps its registry row; its folder is removed: no `.partial` is left
   (a `.partial` found there before the spool opened is neither overwritten nor
   removed). Refused before the first byte, nothing is written: empty → 400
@@ -700,8 +742,10 @@ chat state owner: no second module.
   link that opens the Workspace inspector on the conversation's Board
   (`JarvisWorkspace.openBoard`), where the Artifacts are listed.
 - **Board or Session change.** An attachment belongs to the conversation it
-  was attached in. Seen from another conversation it is `stale`: never sent
-  there, offered « Renvoyer ici » (a new upload of the same file, new id, into
+  was attached in (Core enforces it by Board, 409 `attachment_other_board`,
+  « Une pièce jointe a été ajoutée sur un autre Board : retirez-la, joignez le
+  fichier à nouveau ici, puis renvoyez. »). Seen from another conversation it
+  is `stale`: never sent there, offered « Renvoyer ici » (a new upload of the same file, new id, into
   the current context) and ×; back on its own Board it is ready again.
 - **Reload.** The draft (`jarvis.chat.draft.<conversation_id>`) keeps the
   ready attachments (Artifact id, name, size, readability, `client_upload_id`)
@@ -887,7 +931,12 @@ Implementation (Slice 06), beyond the rules above:
   (`right: 70px`). The Chat panel always stops at `bottom: 68px`, above the
   tab. Below 940 px wide with the Chat open, toasts sit under the panel header
   and status line (`--chat-toasts-top`, measured by the view): never over the
-  composer, the title or ×. At 480 px high or less (and ≥ 940 px wide) the
+  composer, the title or ×. At 700 px wide or less with the Chat closed, the
+  interaction-mode button leaves the left rail (`left: 84px`, up to ~260 px)
+  and the bottom stack covered it (115 × 41 px at 500 × 700): toasts then sit
+  at the top, under the bar (`top: 62px`), still left of the dock, so they
+  cover neither that button nor the tab; while the GPT-Live banner is shown
+  (same place, stop button) they stay at the bottom. At 480 px high or less (and ≥ 940 px wide) the
   dock turns into rows and the panel moves to `right: 136px`; the toast stack
   moves left by the same 50 px (it overlapped the panel by 38 px and hid the
   « Entrée » hint at 1024×480). The bottom-centre F9 voice hint is hidden while
@@ -957,37 +1006,41 @@ Core shape `{"error": {"code", "message", …}}`; Control Center shape
 `{"ok": false, "code", "error", "core_status"}` (as `/api/conversations`). A
 Core code is relayed as is.
 
-| Code | HTTP | Emitter | Case |
-| --- | --- | --- | --- |
-| `forbidden_origin` | 403 | CC | `/api/chat` guard |
-| `invalid_content_type` | 415 | CC | JSON expected |
-| `request_too_large` | 413 | CC | JSON body > 64 KiB |
-| `invalid_request` | 400 | Core, CC | parameter or body outside the contract |
-| `chat_text_too_long` | 400 | Core | `content` > 8192 characters |
-| `too_many_attachments` | 400 | Core | > `JARVIS_CHAT_MAX_ATTACHMENTS` |
-| `attachment_not_found` | 404 | Core | unknown id |
-| `attachment_not_ready` | 409 | Core | attachment not `complete` |
-| `attachment_not_allowed` | 400 | Core | other kind (neither a chat attachment nor a screenshot), provenance or Session |
-| `chat_conversation_not_foreground` | 409 | Core | target ≠ current binding |
-| `chat_input_locked` | 409 | Core | voice not disabled (`reason`) |
-| `chat_request_conflict` | 409 | Core | same `client_request_id`, other content |
-| `session_not_found`, `binding_not_found` | 404 | Core | existing `BoardError` codes, no open Session or binding |
-| `core_unavailable` | 503 | Core | existing code, Session service not wired |
-| `core_stopping` | 503 | Core | existing code (`submit_brain_turn`) |
-| `core_unreachable` | 503 | CC | Core unreachable |
-| `core_timeout` | 504 | CC | outcome unknown, replay |
-| `core_unauthorized`, `invalid_core_response` | 502 | CC | existing codes |
-| `voice_disable_failed` | — (in `request.code`) | Voice | `mute()` raised or left `error` |
-| `voice_disable_expired` | — (in `request.code`) | Core | no ack within 10 s |
-| `upload_too_large` | 413 | Core | bound exceeded |
-| `upload_empty` | 400 | Core | empty body |
-| `upload_incomplete` | 400 | Core | fewer bytes than `Content-Length` |
-| `upload_name_invalid` | 400 | Core | unreadable or too long name |
-| `upload_conflict` | 409 | Core | same `client_upload_id`, other bytes |
-| `upload_in_progress` | 409 | Core | same `client_upload_id` in progress |
-| `upload_storage_failed` | 503 | Core | payload refused (`artifact_payload_*`) |
-| `board_drop_target_inactive` | 409 | Core | drop on a Board that is not active |
-| `link_invalid` | 400 | Core | URL refused |
+Tests are `file::test` under `tests/` (`unit/` unless written `integration/`).
+
+| Code | HTTP | Emitter | Case | Test |
+| --- | --- | --- | --- | --- |
+| `forbidden_origin` | 403 | CC | `/api/chat` guard | `integration/test_chat_end_to_end.py::test_security_cross_origin_refused_all_chat_routes`, `test_chat_relay.py::test_the_guard_refuses_foreign_requests` |
+| `invalid_content_type` | 415 | CC | JSON expected | `test_chat_relay.py::test_json_only_and_bounded`, `test_upload_protocol.py::test_the_chat_guard_refuses_foreign_uploads` |
+| `request_too_large` | 413 | CC | JSON body > 64 KiB | `test_chat_relay.py::test_json_only_and_bounded` |
+| `invalid_request` | 400 | Core, CC | parameter or body outside the contract | `test_chat_relay.py::test_the_core_body_is_closed_and_the_answer_is_reshaped`, `integration/test_chat_projection_protocol.py::test_invalid_projection_is_400_on_core_and_control_center`, `test_upload_protocol.py::test_fields_out_of_order_or_a_bad_upload_id_are_refused`, `test_board_drop.py::test_the_drop_relay_wants_one_board_id` |
+| `chat_text_too_long` | 400 | Core | `content` > 8192 characters | `test_chat_text_ingress.py::test_text_too_long_400` |
+| `too_many_attachments` | 400 | Core | > `JARVIS_CHAT_MAX_ATTACHMENTS` | `test_chat_attachments_brain_context.py::test_unknown_foreign_pending_and_other_kind_attachments_are_refused` |
+| `attachment_not_found` | 404 | Core | unknown id | same test |
+| `attachment_not_ready` | 409 | Core | attachment not `complete` | same test, `test_chat_attachments_brain_context.py::test_non_complete_screenshot_refused` |
+| `attachment_not_allowed` | 400 | Core | other kind (neither a chat attachment nor a screenshot), provenance or Session | same test, `test_chat_attachments_brain_context.py::test_an_attachment_of_another_session_is_not_allowed`, `test_chat_attachments_brain_context.py::test_screenshot_of_other_session_is_refused` |
+| `attachment_other_board` | 409 | Core | attachment not linked to the Board of the turn's conversation | `test_chat_attachments_brain_context.py::test_an_attachment_of_another_board_is_refused_and_the_replay_still_answers`, `integration/test_chat_end_to_end.py::test_board_switch_A_B_A_no_leak` |
+| `chat_conversation_not_foreground` | 409 | Core | target ≠ current binding | `test_chat_text_ingress.py::test_not_foreground_409` |
+| `chat_input_locked` | 409 | Core | voice not disabled (`reason`) | `test_chat_text_ingress.py::test_locked_by_voice_409_each_reason`, `integration/test_chat_end_to_end.py::test_voice_active_chat_reads_but_refuses` |
+| `chat_request_conflict` | 409 | Core | same `client_request_id`, other content | `test_chat_text_ingress.py::test_same_request_other_text_409_conflict`, `test_chat_attachments_brain_context.py::test_replay_compares_the_attachments` |
+| `session_not_found`, `binding_not_found` | 404 | Core | existing `BoardError` codes, no open Session or binding | `test_chat_relay.py::test_core_codes_are_relayed`, `test_upload_protocol.py::test_no_session_means_no_upload` (existing codes: `test_workspace_board_contract.py::test_error_codes_are_stable_and_all_mapped_to_http`) |
+| `core_unavailable` | 503 | Core | existing code, Session service not wired | `test_chat_relay.py::test_core_codes_are_relayed` (relayed as is) |
+| `core_stopping` | 503 | Core | existing code (`submit_brain_turn`) | `test_chat_relay.py::test_core_codes_are_relayed` (relay), `integration/test_v2_brain_protocol.py::test_brain_turn_is_refused_with_503_while_core_stops` |
+| `core_unreachable` | 503 | CC | Core unreachable | `test_chat_relay.py::test_core_timeout_is_a_504_to_replay`, `test_voice_channel_protocol.py::test_core_unreachable_is_a_503_without_core_status` |
+| `core_timeout` | 504 | CC | outcome unknown, replay | `test_chat_relay.py::test_core_timeout_is_a_504_to_replay`, `integration/test_chat_end_to_end.py::test_retry_after_timeout_no_duplicate` |
+| `core_unconfigured` | 503 | CC | the Control Center does not know Core (no transport configured; `jarvis/runtime/chat_relay.py`) | no test |
+| `core_unauthorized`, `invalid_core_response` | 502 | CC | existing codes | no chat-specific test (existing relay codes) |
+| `voice_disable_failed` | — (in `request.code`) | Voice | `mute()` raised or left `error` | `test_voice_channel_reporter.py::test_a_mute_that_raises_is_acknowledged_failed`, `test_voice_channel_service.py::test_failed_ack_falls_back_to_the_last_report` |
+| `voice_disable_expired` | — (in `request.code`) | Core | no ack within 10 s | `test_voice_channel_service.py::test_request_expires_after_ten_seconds` |
+| `upload_too_large` | 413 | Core | bound exceeded | `test_upload_service.py::test_exactly_the_bound_is_accepted_and_one_byte_more_is_refused`, `test_upload_protocol.py::test_the_bound_is_held_through_the_relay` |
+| `upload_empty` | 400 | Core | empty body | `test_upload_service.py::test_an_empty_file_is_refused_and_writes_nothing` |
+| `upload_incomplete` | 400 | Core | fewer bytes than `Content-Length` | `test_upload_service.py::test_a_short_body_is_incomplete_and_failed`, `test_upload_protocol.py::test_a_browser_that_stops_mid_file_leaves_a_failed_artifact_and_no_partial` |
+| `upload_name_invalid` | 400 | Core | unreadable or too long name | `test_uploads_domain.py::test_unreadable_or_too_long_names_are_refused` (domain rule; the HTTP mapping has no dedicated test) |
+| `upload_conflict` | 409 | Core | same `client_upload_id`, other bytes | `test_upload_service.py::test_replay_with_other_bytes_is_a_conflict`, `test_upload_service.py::test_a_replay_after_a_failed_attempt_is_a_conflict` |
+| `upload_in_progress` | 409 | Core | same `client_upload_id` in progress | `test_upload_service.py::test_a_concurrent_upload_of_the_same_id_is_in_progress` |
+| `upload_storage_failed` | 503 | Core | payload refused (`artifact_payload_*`) | `test_upload_service.py::test_a_storage_refusal_names_its_os_error_and_errno`, `test_upload_service.py::test_a_path_beyond_max_path_is_a_coded_storage_failure` |
+| `board_drop_target_inactive` | 409 | Core | drop on a Board that is not active | `test_board_drop.py::test_drop_on_inactive_board_409` |
+| `link_invalid` | 400 | Core | URL refused | `test_board_drop.py::test_url_refused_schemes_and_credentials` |
 
 ## Configurable bounds
 
@@ -1001,6 +1054,20 @@ original name 255 characters, URL 2048 characters, voice freshness 5 s,
 disable expiry 10 s, Core relay budget 15 s. The bounds are technical; the UI
 and the errors state them.
 
+Both settings are read from the process environment at each use
+(`upload_bounds(os.environ)`, `jarvis/domain/uploads.py`): by Core for the
+upload stream and the per-message count, by the Control Center for its early
+`Content-Length` refusal, so both processes must see the same value. A value
+that is not a positive integer, or above the hard cap (4 GiB per file, 64
+attachments = `MAX_TURN_ATTACHMENTS`), is ignored and the default kept; no
+journal line says so today. How to set them: [OPERATIONS.md](OPERATIONS.md)
+› *Chat et dépôt sur le Board*. Held by
+`tests/unit/test_uploads_domain.py::test_bounds_are_read_from_the_environment_and_never_beyond_the_hard_cap`,
+`tests/unit/test_uploads_domain.py::test_upload_is_a_kind_and_hard_bounds_agree`,
+`tests/unit/test_upload_service.py::test_exactly_the_bound_is_accepted_and_one_byte_more_is_refused`,
+`tests/unit/test_upload_protocol.py::test_an_announced_body_above_the_bound_is_refused_by_the_control_center`,
+`tests/unit/test_chat_text_ingress.py::test_text_too_long_400`.
+
 ## Data locations
 
 Everything under the PC's data root ([local-data.md](local-data.md)): events
@@ -1008,6 +1075,12 @@ and turns in `state/jarvis.sqlite3` (unchanged), attachment and drop payloads in
 `artifacts/<artifact_id>/upload.<ext>`. The voice channel state is in Core's
 memory. Files under `runtime/` (`.voice_*`) gain nothing. Tests use `tmp_path`
 and an isolated root, never a repository database.
+
+**No second chat log.** There is no chat table, chat JSONL, transcript file or
+durable message cache: the Chat reads the conversation events only. Checked at
+Slice 10 by a repository search (command and result in the handoff,
+`slices/10-release-and-human-acceptance/evidence/RESULTS.md`); no SQLite schema change (`tests/unit/test_schema_migrations.py`,
+schema versions unchanged at 8 and 1).
 
 ## Known limits
 
@@ -1018,27 +1091,135 @@ and an isolated root, never a repository database.
    8192 (`chat_text_too_long`); the text-channel brief asks for at most 6000
    characters and a file beyond; the 120 s pending message. Raising the bound
    is an event contract change, out of scope (handoff ISSUE-01).
+   Held by `tests/unit/test_conversation_events.py::test_invalid_payloads_fail_with_precise_messages`
+   (« content exceeds »), `tests/unit/test_chat_text_ingress.py::test_text_too_long_400`
+   (8192 admitted, 8193 refused), `tests/unit/test_control_center_chat_ui.py::test_tab_and_panel_ids_roles_and_reuse_of_panel`
+   (`maxlength="8192"`).
 2. **Automatic link to the active Board.** The existing rule links every new
    Artifact to the active Board (`link_to_active_board`): a chat attachment
    appears in the Board's Artifacts, marked `chat_attachment`. Changing that
    global rule is out of scope.
+   Held by `tests/unit/test_chat_attachments_brain_context.py::test_an_attachment_of_another_board_is_refused_and_the_replay_still_answers`
+   (the attachment belongs to the Board active at its upload) and
+   `tests/unit/test_board_drop.py::test_file_drop_links_active_board`.
 3. **`--add-dir` grants all of `<data_root>/artifacts`**, not only
    attachments, for want of a per-turn grant.
-4. **No file-only message**: a message must carry text.
+   Held by `tests/unit/test_chat_attachments_brain_context.py::test_artifacts_root_is_granted_like_sessions_root`.
+4. **No file-only message**: a message must carry text. Held by
+   `tests/unit/test_control_center_chat_attachments_browser.py::test_text_required_with_files`.
 5. **No scene object for a Board drop**: visible through the inspector only
    (proposal: `tasks/jarvis-unified-chat-and-board-drop/Issues/`). A drop on a
    prefab window of the scene (its own `iframe`) reaches that frame, not the
-   page: nothing happens there.
+   page: nothing happens there. Held by
+   `tests/integration/test_chat_end_to_end.py::test_board_drop_file_image_url_visible_no_turn`
+   (no `scene_object`, no event, no Brain turn) and
+   `tests/unit/test_board_drop.py::test_no_conversation_event_no_brain_turn`; the prefab-window case
+   has no test (not reproduced by QA S8).
 6. **The Brain's tool journal may hold what it read.** The CLI event journal
    (`jarvis/runtime/claude_local.py`, raw tool results in `runtime/trace.jsonl`)
    already records the Brain's tool results, for any file it reads, voice turns
    included: a `Read` of an attachment can put its content there. Pre-existing
    local diagnostic behaviour, out of scope; the chat and upload code itself
    never writes attachment bytes nor original names.
+   The chat side is held by `tests/unit/test_upload_service.py::test_the_journal_never_carries_the_original_name`
+   and `tests/integration/test_chat_end_to_end.py::test_no_bytes_or_names_in_trace_and_events`;
+   the CLI journal itself has no test (pre-existing).
 7. **`artifacts_root` reaches the local page** through `/api/sessions/current`
    (`context.artifacts_root`, next to `sessions_root`, loopback guard), as
-   `sessions_root` already does; the chat routes never return a path.
+   `sessions_root` already does; the chat routes never return a path. Held by
+   `tests/unit/test_chat_attachments_brain_context.py::test_the_session_payload_names_artifacts_root`.
 8. **Retry on `upload_in_progress`** is manual (« Réessayer », same id), not
    automatic; and the **same file attached twice** makes two uploads, hence two
    Artifacts (no client-side dedupe by content). Recorded by QA S7b, left as is.
+   The manual same-id retry is held by
+   `tests/unit/test_control_center_chat_model_js.py::test_attachment_retry_identity_rules`; the
+   double upload has no test (recorded behaviour, not a rule).
 
+9. **An attachment's Board is the one active when Core creates it.** A chat
+   upload carries no Board: its automatic link goes to the Board active in its
+   creation transaction (after Core has read the first 64 KiB). A Board switch
+   in that instant links it to the new Board, and a turn of the original
+   conversation then gets 409 `attachment_other_board` (« joignez le fichier à
+   nouveau ici »); never the reverse leak. An `explicit` link made in the
+   Workspace inspector makes the attachment sendable from that Board too. The
+   refusal is held by `tests/unit/test_chat_attachments_brain_context.py::test_an_attachment_of_another_board_is_refused_and_the_replay_still_answers`;
+   the switch inside the creation instant has no test.
+10. **Windows MAX_PATH on payloads.** A payload path longer than the Windows
+    limit (259 characters for the file, 248 for its folder; no long-path
+    prefix, `LongPathsEnabled` not assumed) is refused before any disk access:
+    503 `upload_storage_failed`, `cause.path_limit` set in `core.upload.refused`.
+    It only happens with a deep data root (`JARVIS_DATA_ROOT`); the default
+    `~/.jarvis/instances/...` root normally stays below. Not fixed: shorten the data
+    root. Held by `tests/unit/test_upload_service.py::test_a_path_beyond_max_path_is_a_coded_storage_failure`.
+
+## Conformance
+
+Level 3 index: each rule of this page and the test that holds it. Paths are
+under `tests/` (`unit/` unless written `integration/`); names were checked
+against the Slice 10 HEAD of handoff jarvis-unified-chat-and-board-drop. The
+end-to-end file `integration/test_chat_end_to_end.py` replays the chain on a
+real Core and Control Center (fake Brain backend; one Category 2 scenario with
+the real CLI behind `JARVIS_LIVE_CLAUDE=1`). Error codes: *Error codes* ›
+*Test*; bounds: *Configurable bounds*; limits: *Known limits* › *Held by*.
+
+| Section | Rule | Test |
+| --- | --- | --- |
+| *Projection* | the three types only, `addressing` allow-list | `test_chat_projection.py::test_is_chat_event_allowlist_exhaustive`, `test_chat_projection.py::test_is_chat_event_addressing`, `test_control_center_chat_model_js.py::test_is_chat_event_allowlist_exhaustive` |
+| *Projection* | `uncertain` held until promoted, declined never shown | `test_chat_projection.py::test_uncertain_hidden_until_promoted`, `test_chat_projection.py::test_refused_uncertain_never_shown`, `test_chat_projection.py::test_cursor_split_promotion` |
+| *Projection* | `brain.turn.failed` = status of the user bubble, ignored on a system turn | `test_chat_projection.py::test_failed_status_on_user_bubble`, `test_chat_projection.py::test_failed_on_system_turn_ignored`, `test_chat_projection.py::test_failed_on_unpromoted_uncertain_ignored` |
+| *Projection* | the 17 fixture cases, Python and JS alike; `ChatItem` shape | `test_chat_projection.py::test_fixture_cases_python`, `test_chat_projection.py::test_fixture_item_shape_is_the_contract`, `test_control_center_chat_model_js.py::test_fixture_parity_with_python_reference` |
+| *Projection* | idempotent replay by `event_id`, any page order | `test_chat_projection.py::test_page_replay_idempotent`, `test_chat_projection.py::test_fixture_cases_any_page_order` |
+| *Scope* | only the binding's conversation; a Board change never merges | `test_chat_projection.py::test_other_conversation_never_counts`, `test_control_center_chat_model_js.py::test_reset_on_board_change_never_merges`, `integration/test_chat_end_to_end.py::test_board_switch_A_B_A_no_leak`, `test_control_center_chat_browser.py::test_board_switch_rescopes` |
+| *Reading* | `projection=chat` strict, cursor past filtered rows, long-poll past hidden events | `test_chat_projection_query.py::test_projection_param_strict`, `test_chat_projection_query.py::test_filtered_page_advances_cursor`, `test_chat_projection_query.py::test_long_poll_waits_past_hidden_events` |
+| *Reading* | reload = live; route without `projection` unchanged; origin guard | `test_chat_projection_query.py::test_union_reload_equals_live`, `integration/test_chat_projection_protocol.py::test_hydration_then_long_poll_equals_the_projection_of_the_store`, `integration/test_chat_projection_protocol.py::test_the_route_without_projection_is_unchanged`, `integration/test_chat_projection_protocol.py::test_the_origin_guard_holds_for_the_chat_projection`, `integration/test_chat_end_to_end.py::test_reload_equals_live_union` |
+| *Reading* › live | short sequential reads, one reader per profile, none when closed or hidden | `test_control_center_chat_browser.py::test_cadence_short_reads_one_at_a_time`, `test_control_center_chat_browser.py::test_one_reader_per_profile_and_none_when_closed_or_hidden`, `test_control_center_chat_tabs_browser.py::test_two_visible_chat_tabs_stay_responsive_and_a_follower_send_succeeds`, `test_control_center_chat_tabs_browser.py::test_the_chat_adds_no_held_connection_with_three_tabs_and_a_timeline` |
+| *Sending text* › CC | guard, JSON only, 64 KiB, closed body, Core codes relayed with `reason` / `current_conversation_id` | `test_chat_relay.py::test_the_guard_refuses_foreign_requests`, `test_chat_relay.py::test_json_only_and_bounded`, `test_chat_relay.py::test_the_core_body_is_closed_and_the_answer_is_reshaped`, `test_chat_relay.py::test_core_codes_are_relayed` |
+| *Sending text* › CC | 504 `core_timeout` to replay; `forward_json` never relays `cancel` nor `turns` | `test_chat_relay.py::test_core_timeout_is_a_504_to_replay`, `test_chat_relay.py::test_the_core_client_forwards_brain_turns_but_never_cancel_or_turns`, `test_chat_relay.py::test_the_real_chain_admits_a_text_turn` |
+| *Sending text* › CC | the browser never calls `/api/agent/ask` nor `/api/agent/send` | `test_control_center_chat_ui.py::test_the_view_only_calls_chat_routes_and_never_the_agent_bridge` |
+| *Sending text* › Core | step 1 (8192 characters, attachment count) | `test_chat_text_ingress.py::test_text_too_long_400`, `test_chat_attachments_brain_context.py::test_unknown_foreign_pending_and_other_kind_attachments_are_refused` |
+| *Sending text* › Core | step 2 replay first (200 duplicate even when locked) | `test_chat_text_ingress.py::test_replay_after_lock_returns_duplicate_200` |
+| *Sending text* › Core | step 3 foreground binding | `test_chat_text_ingress.py::test_text_turn_reaches_foreground_binding_brain`, `test_chat_text_ingress.py::test_not_foreground_409` |
+| *Sending text* › Core | step 4 voice lock, each `reason`; voice absent allows; no `await` before `submit` | `test_chat_text_ingress.py::test_locked_by_voice_409_each_reason`, `test_chat_text_ingress.py::test_voice_absent_allows`, `test_chat_text_ingress.py::test_no_loop_iteration_between_write_gate_and_submit`, `test_voice_channel_service.py::test_write_gate_is_synchronous` |
+| *Sending text* › Core | step 5 attachments, in message order; a voice turn with attachments is refused | `test_chat_attachments_brain_context.py::test_unknown_foreign_pending_and_other_kind_attachments_are_refused`, `test_chat_attachments_brain_context.py::test_an_attachment_of_another_session_is_not_allowed`, `test_chat_attachments_brain_context.py::test_an_attachment_of_another_board_is_refused_and_the_replay_still_answers`, `test_chat_attachments_brain_context.py::test_attachments_on_a_voice_turn_are_refused` |
+| *Sending text* › Core | step 6 one user event per turn | `test_chat_text_ingress.py::test_single_user_event_per_turn` |
+| *Sending text* | race: a turn admitted before a voice wake-up stays | `integration/test_chat_end_to_end.py::test_reactivation_relocks_and_inflight_turn_kept` |
+| *Idempotence* | same id with other text or attachments → 409; a retry after a timeout makes no duplicate | `test_chat_text_ingress.py::test_same_request_other_text_409_conflict`, `test_chat_attachments_brain_context.py::test_replay_compares_the_attachments`, `integration/test_chat_end_to_end.py::test_retry_after_timeout_no_duplicate`, `test_control_center_chat_browser.py::test_retry_reuses_client_request_id`, `test_control_center_chat_browser.py::test_edited_text_after_unknown_outcome_is_a_new_message` |
+| *What the Brain receives* | `channel = text`, brief line, same tools and sub-agents | `test_chat_text_ingress.py::test_delegation_available`, `integration/test_chat_end_to_end.py::test_text_turn_no_speech_requested` |
+| *What the Brain receives* | a turn without attachments is unchanged byte for byte | `test_chat_attachments_brain_context.py::test_turn_without_attachments_keeps_its_context_and_brief_byte_for_byte` |
+| *Text disposition* | text turn published, never spoken, also after a Core restart; voice turn still spoken; notices unchanged | `test_speech_text_channel.py::test_text_turn_result_published_not_spoken`, `test_speech_text_channel.py::test_late_work_result_after_core_restart_not_spoken`, `test_speech_text_channel.py::test_voice_turn_still_spoken`, `test_speech_text_channel.py::test_notice_policy_unchanged` |
+| *Voice channel* › report | closed body, `seq` per incarnation, stale ignored and journaled, token | `test_voice_channel_domain.py::test_strict_validation`, `test_voice_channel_domain.py::test_seq_ordering_and_incarnations`, `test_voice_channel_service.py::test_stale_seq_is_ignored_and_journaled`, `test_voice_channel_protocol.py::test_a_malformed_report_is_a_strict_400`, `test_voice_channel_protocol.py::test_a_stale_report_is_answered_but_ignored`, `test_voice_channel_protocol.py::test_core_routes_require_the_token` |
+| *Voice channel* › Voice side | reports never raise, `connecting` before the microphone, bounded wait, ack resent | `test_voice_channel_reporter.py::test_reports_carry_one_incarnation_and_a_strictly_increasing_seq`, `test_voice_channel_reporter.py::test_connecting_is_reported_before_the_microphone_opens`, `test_voice_channel_reporter.py::test_a_slow_core_delays_activation_at_most_half_a_second`, `test_voice_channel_reporter.py::test_core_unreachable_never_raises_and_is_journaled_once_per_episode`, `test_voice_channel_reporter.py::test_an_ack_that_could_not_be_delivered_is_resent` |
+| *Voice channel* › disable | idempotent request, nothing to do when absent or background, 10 s expiry, failed ack, settled by `background` | `test_voice_channel_service.py::test_disable_round_trip_accepted`, `test_voice_channel_service.py::test_same_client_request_id_is_idempotent`, `test_voice_channel_service.py::test_nothing_to_do_when_absent_or_background`, `test_voice_channel_service.py::test_request_expires_after_ten_seconds`, `test_voice_channel_service.py::test_failed_ack_falls_back_to_the_last_report`, `test_voice_channel_service.py::test_background_without_ack_settles_the_request` |
+| *Voice channel* › disable | Voice mutes once and acknowledges; `connecting` waits for `active`; beyond the expiry the Chat stays locked | `test_voice_channel_reporter.py::test_a_request_mutes_once_then_acknowledges_and_unlocks_the_chat`, `test_voice_channel_reporter.py::test_already_in_background_acknowledges_without_muting`, `test_voice_channel_reporter.py::test_a_request_during_connecting_waits_for_active_then_mutes`, `test_voice_channel_reporter.py::test_connecting_beyond_the_expiry_leaves_the_chat_locked`, `test_voice_channel_reporter.py::test_a_stale_ack_resent_with_a_non_background_state_is_failed` |
+| *Voice channel* › state | the state table, 5 s freshness, start-up grace, wake-up during `switching`, new epoch | `test_voice_channel_domain.py::test_the_full_state_table`, `test_voice_channel_domain.py::test_freshness_boundary`, `test_voice_channel_domain.py::test_startup_grace_without_any_report`, `test_voice_channel_service.py::test_wake_up_during_switching_stays_locked_and_relocks_after`, `test_voice_channel_service.py::test_a_new_core_has_a_new_epoch`, `integration/test_chat_end_to_end.py::test_core_restart_cursor_survives_and_unknown_grace` |
+| *Voice channel* | the whole switch through Core and the Control Center; the relay never forwards a report | `test_voice_channel_protocol.py::test_the_full_switch_through_core_and_the_control_center`, `test_voice_channel_protocol.py::test_the_relay_never_forwards_a_voice_report`, `integration/test_chat_end_to_end.py::test_switch_to_chat_then_text_turn_same_binding` |
+| *Voice channel* | the switch never stops a sub-agent | `integration/test_chat_end_to_end.py::test_subagent_survives_switch` |
+| *Attachments* › Core | replayable identity, replay, conflict, in progress | `test_uploads_domain.py::test_identity_is_deterministic_and_a_valid_artifact_id`, `test_upload_service.py::test_identical_replay_returns_the_same_artifact_never_a_double`, `test_upload_service.py::test_replay_with_other_bytes_is_a_conflict`, `test_upload_service.py::test_a_concurrent_upload_of_the_same_id_is_in_progress` |
+| *Attachments* › Core | stream bound, no `.partial` left, a dead Core's `pending` → `upload_interrupted` | `test_upload_service.py::test_bound_exceeded_in_flow_fails_without_final_file_nor_partial`, `test_upload_service.py::test_a_body_cut_mid_stream_is_incomplete_and_leaves_no_partial`, `test_upload_service.py::test_a_partial_left_there_is_never_overwritten`, `test_upload_service.py::test_a_pending_upload_from_a_dead_core_is_failed_without_payload` |
+| *Attachments* › Core | the sniffed type wins over name and declared type; display name cleaned | `test_uploads_domain.py::test_sniffing_by_leading_bytes`, `test_uploads_domain.py::test_the_declared_name_never_changes_the_sniffed_type_nor_the_payload_extension`, `test_upload_service.py::test_declared_type_and_lying_extension_lose_to_the_sniffed_bytes`, `test_uploads_domain.py::test_original_names_are_cleaned_for_display` |
+| *Attachments* › Core | `brain_readable` per agent (Codex reads nothing) | `test_uploads_domain.py::test_brain_readability_is_per_agent`, `test_upload_service.py::test_codex_reads_nothing`, `test_upload_protocol.py::test_brain_readability_follows_the_foreground_agent` |
+| *Attachments* › Core | journal: ids, sizes, codes, `cause` without a path; never a name nor a byte | `test_upload_service.py::test_the_journal_never_carries_the_original_name`, `test_upload_service.py::test_a_storage_refusal_names_its_os_error_and_errno`, `test_upload_protocol.py::test_the_journal_has_ids_sizes_and_codes_never_the_name_nor_bytes`, `integration/test_chat_end_to_end.py::test_no_bytes_or_names_in_trace_and_events` |
+| *Attachments* › CC | streamed relay (> 6 MiB), early 413, malformed requests never reach Core, guard, no Session → 404 | `test_upload_protocol.py::test_a_file_above_six_mib_goes_through_as_a_stream`, `test_upload_protocol.py::test_an_announced_body_above_the_bound_is_refused_by_the_control_center`, `test_upload_protocol.py::test_malformed_requests_never_reach_core`, `test_upload_protocol.py::test_the_chat_guard_refuses_foreign_uploads`, `test_upload_protocol.py::test_no_session_means_no_upload` |
+| *Attachments* › CC | `brain_readable` is Core's, never recomputed by the relay | `test_upload_protocol.py::test_the_relay_answers_core_brain_readable_never_its_own` |
+| *Reference given to the Brain* | data block with paths, unreadable without a path, a deleted one said unavailable | `test_chat_attachments_brain_context.py::test_attachments_reach_the_brief_as_data_with_their_paths`, `test_chat_attachments_brain_context.py::test_an_attachment_deleted_after_admission_is_said_unavailable`, `integration/test_chat_end_to_end.py::test_unreadable_attachment_announced` |
+| *Reference given to the Brain* | `artifacts_root` in the Session payload, granted like `sessions_root` | `test_chat_attachments_brain_context.py::test_the_session_payload_names_artifacts_root`, `test_chat_attachments_brain_context.py::test_artifacts_root_is_granted_like_sessions_root` |
+| *Reference given to the Brain* | the real CLI reads a PDF and a PNG (Category 2) | `integration/test_chat_end_to_end.py::test_attachments_pdf_png_read_by_real_cli` (`JARVIS_LIVE_CLAUDE=1`) |
+| *Attachments* › UI | attach by button and panel drop; a drop elsewhere is ignored; keyboard | `test_control_center_chat_attachments_browser.py::test_select_two_files_then_send`, `test_control_center_chat_attachments_browser.py::test_drop_two_files_on_panel`, `test_control_center_chat_attachments_browser.py::test_drop_outside_panel_ignored`, `test_control_center_chat_attachments_browser.py::test_keyboard_accessible_attach_button` |
+| *Attachments* › UI | states; unreadable and too large said before sending; remove | `test_control_center_chat_attachments_browser.py::test_unreadable_format_announced`, `test_control_center_chat_attachments_browser.py::test_too_large_shows_limit`, `test_control_center_chat_attachments_browser.py::test_remove_before_send`, `test_control_center_chat_model_js.py::test_attachment_lifecycle_states_and_send_rules` |
+| *Attachments* › UI | `client_upload_id` on retry | `test_control_center_chat_attachments_browser.py::test_retry_reuses_client_upload_id`, `test_control_center_chat_model_js.py::test_attachment_retry_identity_rules` |
+| *Attachments* › UI | send rules: uploading, text required, the voice lock blocks the send only | `test_control_center_chat_attachments_browser.py::test_send_blocked_while_uploading`, `test_control_center_chat_attachments_browser.py::test_text_required_with_files`, `test_control_center_chat_attachments_browser.py::test_voice_lock_blocks_send_not_preparation` |
+| *Attachments* › UI | Board change `stale`, round trip, reload record | `test_control_center_chat_attachments_browser.py::test_board_switch_marks_pending_attachments`, `test_control_center_chat_attachments_browser.py::test_board_round_trip_keeps_the_live_upload`, `test_control_center_chat_attachments_browser.py::test_real_reload_during_upload_shows_interrupted_once`, `test_control_center_chat_model_js.py::test_restore_dedupes_by_client_upload_id` |
+| *Attachments* › UI | layout with 10 files, `<bdi>` names, one-line hint, one sentence per refusal | `test_control_center_chat_attachments_browser.py::test_ten_files_rows_keep_their_content_and_composer_stays_in_panel`, `test_control_center_chat_attachments_browser.py::test_sent_names_are_bidi_isolated`, `test_control_center_chat_attachments_browser.py::test_hint_stays_on_one_line`, `test_control_center_chat_ui.py::test_every_core_attachment_refusal_of_a_turn_has_its_own_sentence` |
+| *Board drop* | file and image on the active Board; inactive Board → 409 | `test_board_drop.py::test_file_drop_links_active_board`, `test_board_drop.py::test_image_drop_sniffed`, `test_board_drop.py::test_drop_on_inactive_board_409` |
+| *Board drop* | switch race: relink, remove only this creation's automatic link, keep `explicit`, never on a replay | `test_board_drop.py::test_switch_race_relinks_target`, `test_board_drop.py::test_switch_race_keeps_explicit_link_of_other_board`, `test_board_drop.py::test_switch_race_unlink_failure_keeps_target`, `test_board_drop.py::test_replay_never_removes_auto_link` |
+| *Board drop* | URL inert (no network, no DNS); refused schemes and credentials | `test_board_drop.py::test_url_inert_no_network`, `test_board_drop.py::test_url_refused_schemes_and_credentials`, `test_board_drop.py::test_check_link_url_keeps_the_url_and_lowercases_the_host`, `test_board_drop.py::test_the_network_guard_bites` |
+| *Board drop* | never a turn, an event or a conversation; idempotent; ids never shared with the chat | `test_board_drop.py::test_no_conversation_event_no_brain_turn`, `test_board_drop.py::test_duplicate_drop_idempotent`, `test_board_drop.py::test_a_chat_attachment_id_is_never_replayed_as_a_board_drop`, `test_board_drop.py::test_a_chat_upload_refuses_a_board_id` |
+| *Board drop* | A → B → A; relay guard and closed bodies | `test_board_drop.py::test_drops_stay_on_board_a_across_a_b_a`, `test_board_drop.py::test_the_drop_routes_are_guarded`, `test_board_drop.py::test_the_drop_relay_wants_one_board_id`, `test_board_drop.py::test_the_link_relay_wants_a_closed_body` |
+| *Board drop* › page | real page: layer, multi-drop, URL, Chat panel drop, scene still usable, refusals in words, narrow screens | `test_board_drop_browser.py::test_board_drop_in_a_real_page`, `test_board_drop_browser.py::test_refusals_are_said_in_words_and_narrow_screens_fit`, `integration/test_chat_end_to_end.py::test_board_drop_file_image_url_visible_no_turn` |
+| *Panel* | markers, ids and roles, one side panel, no event content as HTML | `test_control_center_chat_ui.py::test_markers_are_replaced_model_before_view_inside_the_page_script`, `test_control_center_chat_ui.py::test_tab_and_panel_ids_roles_and_reuse_of_panel`, `test_control_center_chat_ui.py::test_no_event_content_reaches_html`, `test_control_center_chat_browser.py::test_board_and_studio_open_alongside` |
+| *Panel* | layout: tab, dock, toasts, pills, narrow and low screens, Cosmos | `test_control_center_chat_ui.py::test_layout_rules_tab_bottom_right_toasts_above_it_one_panel_at_a_time`, `test_control_center_chat_browser.py::test_opens_bottom_right_no_overlap_with_dock_and_toasts`, `test_control_center_chat_browser.py::test_pills_tab_stays_whole_and_clickable_and_panel_spares_it`, `test_control_center_chat_browser.py::test_narrow_viewport_480px`, `test_control_center_chat_browser.py::test_narrow_toasts_spare_the_panel_header_and_voice_hint_hides`, `test_control_center_chat_browser.py::test_low_viewport_toast_spares_the_panel_and_its_hint`, `test_control_center_chat_browser.py::test_cosmos_theme_keeps_tab_panel_and_dock_apart` |
+| *Panel* | toasts clear of the interaction-mode button at 700 px wide or less | `test_interaction_mode_hud_browser.py::test_sous_700px_le_bouton_ne_recouvre_plus_la_palette_bare_hands` (500 × 700), `test_interaction_mode_hud_browser.py::test_un_releve_force_affiche_sa_ligne_et_son_code` (`deaf`, 500 × 700) |
+| *Panel* | keyboard, pending note not a bubble, late note, reduced motion | `test_control_center_chat_browser.py::test_keyboard_enter_shift_enter_tab_order`, `test_control_center_chat_browser.py::test_pending_is_a_state_not_a_bubble_until_accepted`, `test_control_center_chat_browser.py::test_late_reply_note_after_the_configured_delay`, `test_control_center_chat_browser.py::test_reduced_motion` |
+| *Panel* | voice lock, « Passer au chat », a failure stays locked, the server 409 wins | `test_control_center_chat_browser.py::test_locked_when_voice_active_and_explains`, `test_control_center_chat_browser.py::test_switch_to_chat_unlocks_after_ack`, `test_control_center_chat_browser.py::test_switch_failure_stays_locked`, `test_control_center_chat_browser.py::test_server_409_overrides_ui`, `integration/test_chat_end_to_end.py::test_voice_active_chat_reads_but_refuses` |
+| *Panel* | Core blamed for Core's failures; one coherent status; no frozen countdown; bounded followers | `test_control_center_chat_browser.py::test_core_side_failures_name_jarvis_core`, `test_control_center_chat_browser.py::test_core_hang_blames_core_not_the_control_center`, `test_control_center_chat_ui.py::test_state_read_outlasts_the_relay_so_core_is_blamed`, `test_control_center_chat_browser.py::test_one_coherent_status_never_live_beside_the_lock`, `test_control_center_chat_browser.py::test_retry_in_flight_never_sticks_at_zero`, `test_control_center_chat_browser.py::test_follower_rows_stay_bounded_after_many_hellos` |
+| Invariants | every chat route behind the guard; no SQLite migration | `integration/test_chat_end_to_end.py::test_security_cross_origin_refused_all_chat_routes`, `test_schema_migrations.py` (versions 8 and 1 unchanged) |

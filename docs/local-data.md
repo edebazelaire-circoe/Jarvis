@@ -164,7 +164,21 @@ casse aucun enregistrement.
 - **aucune rétention automatique** : ce ne sont pas des captures de
   diagnostic (`runtime/scene-captures/`). Seule une suppression explicite
   retire un dossier, après la base ;
-- une sauvegarde de la racine doit les inclure avec `state/`.
+- une sauvegarde de la racine doit les inclure avec `state/` ;
+- **pièces jointes du Chat et dépôts sur le Board** (handoff
+  jarvis-unified-chat-and-board-drop) : Artifacts `upload` dont le fichier est
+  `artifacts/<artifact_id>/upload.<ext>` (le nom d'origine n'est jamais un nom
+  de fichier ; règle de l'extension : [chat.md](chat.md) › *Attachments*) ; une URL déposée est un Artifact `link` **sans**
+  fichier (l'URL est dans la base). Un téléversement en échec garde sa ligne et
+  son dossier est retiré (aucun `.partial` laissé) ; un téléversement `pending`
+  d'un Core mort passe `failed` (`upload_interrupted`) au démarrage suivant,
+  jamais `partial`. Ces Artifacts sont liés au Board actif comme les autres.
+  **Aucune nouvelle base ni migration** : tout passe par les colonnes JSON
+  existantes (`artifacts.data`, `turns.data.metadata`) et la liste fermée des
+  natures d'Artifact, sans `CHECK` SQL (`_SCHEMA_VERSION` reste 8 et 1). L'état
+  du canal vocal du Chat vit dans la mémoire de Core, rien sous `runtime/`.
+  Bornes, chemins et refus : [chat.md](chat.md) › *Attachments*, *Data
+  locations*.
 
 Détail : [artifacts.md](artifacts.md).
 

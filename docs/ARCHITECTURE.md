@@ -570,6 +570,41 @@ microphone ──► Realtime surface (reflexes only, no tools)
               Voice SpeechScheduler ──► session.speak() ──► speakers
 ```
 
+### Text channel: the Chat, and the voice channel owned by Core
+
+The Control Center Chat (handoff `jarvis-unified-chat-and-board-drop`) is a
+second **ingress** to the same Brain, not a second pipeline. A text turn goes
+`POST /api/chat/turns` → Core `POST /v1/conversations/{id}/brain-turns` with
+`source = "text"`, through the same `BrainOrchestrator`, binding, tools and
+sub-agents as a voice turn; it never touches the Voice bridge. The Chat reads
+the conversation events only (`projection=chat` on the existing event routes):
+no chat table, no second transcript. Its outcome is published, never spoken
+(`text_channel` disposition in `_emit_speech`).
+
+**The voice channel state belongs to Core.** The real voice lifecycle lives in
+the Voice process, but the judge of "may the Chat write now?" is Core, which
+admits turns: `VoiceChannelService` (`jarvis/core/voice_channel.py`, pure
+domain `jarvis/domain/voice_channel.py`) is an in-memory Core service fed by
+Voice reports (`POST /v1/voice/channel/report`, every second and on entering
+`connecting`). The « Passer au chat » request is created in Core
+(`POST /v1/voice/channel/disable`, relayed by the Control Center) and handed to
+Voice in the answer to its next report; Voice mutes and acknowledges. Core
+reads the state synchronously right before `submit`, so the lock is a server
+guard, not a page convention. The Control Center only relays; it keeps no Chat
+or voice state. Voice does not own the Brain's lifetime: disabling voice never
+closes the Session, switches the Board, cancels the Brain or stops a
+sub-agent. This is neither `InteractionMode` nor `OutputDisposition` (above).
+A Core restart starts `unknown` for 5 s, then the first report restores the
+truth.
+
+```text
+Voice ──report (1 s)──► Core VoiceChannelService ◄──disable── CC /api/chat/voice/disable ◄── page
+                              │ synchronous read
+browser /api/chat/turns ──► CC ──► Core brain-turns (source=text) ──► BrainOrchestrator (same binding)
+```
+
+Contract, routes, codes and tests: [chat.md](chat.md).
+
 ## Contracts
 
 Provider-neutral ports live in `jarvis/ports/v2.py`: `BrainBackend` (and its

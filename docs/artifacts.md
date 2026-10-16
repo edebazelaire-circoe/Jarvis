@@ -47,7 +47,7 @@ Remotion integration (Slice 07) `presentation_snapshot`, `presentation_video`,
 `presentation_still`, `presentation_pdf` — frozen copies of a Presentation
 variant and their renders only; the editable Presentation itself is **not** an
 Artifact ([presentation-artifacts.md](presentation-artifacts.md)) — and, since
-the unified chat (Slice 07), `upload` (below). There is no
+the unified chat, `upload` (Slice 07) and `link` (Slice 08) (below). There is no
 `other` bucket: evidence without a kind cannot be indexed. All thirteen kinds are accepted by the `artifact_search` kind filter and labelled by the Control Center (Slice 08; `upload` is labelled by its `provenance`: « Pièce jointe du chat » or « Fichier déposé », `link` « Lien »). A new kind is a new
 `ArtifactKind` value plus this table; no migration (no SQL CHECK on `kind`).
 
@@ -57,7 +57,7 @@ set, still without migration:
 
 | Kind | What | Created by | Payload / text |
 | --- | --- | --- | --- |
-| `upload` | a file given by the user: a chat attachment or a file dropped on a Board | `PUT /v1/uploads/{client_upload_id}` (Slice 07) | payload `upload.<ext>` (`ext` = original extension lowercased if `[a-z0-9]{1,8}`, else `upload.bin`), streamed through `open_spool`, `pending` → `complete` / `failed` (`upload_too_large`, `upload_incomplete`, `upload_storage_failed`; a dead Core's `pending` upload → `failed` `upload_interrupted`, never `partial`); a failed upload keeps its row, its folder is removed (no `.partial` left) |
+| `upload` | a file given by the user: a chat attachment or a file dropped on a Board | `PUT /v1/uploads/{client_upload_id}` (Slice 07) | payload `upload.<ext>` (extension rule: [chat.md](chat.md) › *Attachments*; never the original name), streamed through `open_spool`, `pending` → `complete` / `failed` (`upload_too_large`, `upload_incomplete`, `upload_storage_failed`; a dead Core's `pending` upload → `failed` `upload_interrupted`, never `partial`); a failed upload keeps its row, its folder is removed (no `.partial` left) |
 | `link` | a URL dropped on a Board | `POST /v1/uploads/links` (Slice 08) | no payload; `text` = the URL, created `complete` at once like `record_text`; **never fetched** |
 
 Their origin is a metadata scalar, **not** a *Provenance* relation row (there is
@@ -67,12 +67,9 @@ carries `original_name`, `declared_mime`, `sha256`, `client_upload_id` and
 `brain_readable`; `link` metadata carries `host` and `client_upload_id`. In list items
 (`artifact_summary`), an `upload` shows its `original_name` as `preview` and
 its `provenance`, a `link` its URL as `preview` and its `provenance`; never a path.
-A Board drop is linked by the creation transaction (`active_board`); when the
-Board switched between Core's check and that transaction, Core adds an
-`explicit` link to the dropped-on Board, then removes the automatic
-`active_board` link that this creation put on the Board that became active
-(never an `explicit` link, never on a replay), so the drop ends on the
-dropped-on Board only ([chat.md](chat.md) › *Board drop*). The stored `mime_type` of an
+A Board drop always ends on the dropped-on Board only, even when the Board
+switches during the drop (relink and removal rule: [chat.md](chat.md) ›
+*Board drop*). The stored `mime_type` of an
 upload is the sniffed type, never the declared one alone. Both follow the
 *Board links* rule below unchanged (automatic `active_board` link). Identity,
 bounds, sniffing, errors and Brain access: [chat.md](chat.md) ›

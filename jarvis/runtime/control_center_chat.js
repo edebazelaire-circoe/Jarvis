@@ -96,6 +96,7 @@
     attachment_not_found:'Une pièce jointe n’existe plus chez Jarvis Core : retirez-la, joignez le fichier à nouveau, puis renvoyez.',
     attachment_not_ready:'Une pièce jointe n’est pas encore prête chez Jarvis Core : réessayez dans un instant.',
     attachment_not_allowed:'Une pièce jointe appartient à une autre Session : retirez-la, joignez le fichier à nouveau, puis renvoyez.',
+    attachment_other_board:'Une pièce jointe a été ajoutée sur un autre Board : retirez-la, joignez le fichier à nouveau ici, puis renvoyez.',
     edited_after_unknown:'Texte modifié : il partira comme un NOUVEAU message. Le précédent a peut-être déjà été reçu par Jarvis — vérifiez le fil avant d’envoyer.',
   });
   /* Issue inconnue : le tour a peut-être été admis. Seule reprise sûre : le même id. */

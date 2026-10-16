@@ -30,7 +30,9 @@
      {"a":"ax","selector":"..."}         -> {role,name,description} calcules
      {"a":"eval","expr":"..."}
      {"a":"read"}
-     {"a":"shot","path":"...png"} */
+     {"a":"shot","path":"...png"}
+   Une etape peut aussi porter `setup`, une expression evaluee apres la mise a
+   la taille et avant les montages. */
 import {spawn} from 'node:child_process';
 import {mkdtempSync, rmSync, writeFileSync, renameSync, unlinkSync, readFileSync} from 'node:fs';
 import {tmpdir} from 'node:os';
@@ -114,6 +116,11 @@ const READ=`(()=>{
   box('pills','.bgpills');
   box('hint','.voicehint');
   box('toast','.toasts .toast');
+  box('chatTab','#chatTab');
+  box('chatPanel','#chatPanel');
+  box('composer','#chatInput');
+  box('chatLock','#chatLock');
+  box('liveBanner','#liveBanner');
   box('pres','#interactionModePresence');
   box('presText','#interactionModePresence .im-pres-text');
   const host=document.getElementById('interactionModeHud');
@@ -225,6 +232,8 @@ try{
     /* `wheelHidden` (orbital-ui Slice 04) : la roue d'outils cachée, c'est-à-dire
        le retour arrière où la colonne Bare Hands revient à sa place. */
     if(step.wheelHidden)await evaluate(`document.getElementById('toolWheel').hidden=true`);
+    /* `setup` : une expression jouee avant les montages (theme, bandeau, panneau ouvert). */
+    if(step.setup){await evaluate(step.setup);await sleep(400)}
     if(step.mountPalette){
       const said=await evaluate(MOUNT_PALETTE);
       if(said!=='ok')throw new Error('palette : '+said);
