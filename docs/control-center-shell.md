@@ -90,7 +90,7 @@ Placement rules that hold in both themes (measured by
   beside the panel (Slice 09).
 - **Stacking by geometry, not by rank (Slice 09).** Surfaces whose height is
   only known at runtime are tied with CSS anchor positioning (Chrome/Edge
-  125+; without it the fallback values below apply): `.live-banner`
+  125+): `.live-banner`
   (`anchor-name: --jv-live`) and `#boardDropTray` (`--jv-tray`). The GPT-Live
   banner is centred between the two columns and never covers the rail
   (`width: min(680px, 100vw - 2 × (gutter + --shell-rail-w + 12px))`); at
@@ -102,11 +102,28 @@ Placement rules that hold in both themes (measured by
   + 48px, banner bottom + 8, tray bottom + 8)`). Under 940 px with a side
   panel open the toasts stay at the right, over the panel, for the length of
   a toast (no room on its left) — the one accepted overlap.
+  **Fallback without anchors (QA S09 P1).** An unknown `anchor()` invalidates its whole declaration, so each
+  anchored rule is preceded by a separate rule that sets the fallback value
+  with the banner's bottom estimated by `--jv-live-fb` (set on `body` while
+  `#liveBanner` shows: 118 px under `--shell-panel-top`, 166 px at 700 px and
+  below; 110 px is the tallest banner measured, at 600 px): the tray goes
+  under the rail tab row (`--shell-panel-top` + 48 px) or under that estimate,
+  or + 8 px beside an open panel; toasts go under the same row or estimate,
+  plus 8 px + `min(30vh, 200px)` when the tray shows; above a bottom tray:
+  `bottom: --shell-bottom + --shell-status-h + 16 px + min(46vh, 360px)`.
+  Without anchors nothing leaves the screen at 500-1280 px and the tray covers
+  neither the launcher, the rail tab nor the banner
+  (`test_without_css_anchors_the_fallbacks_hold`).
 - **Screenshot preview vs mode control.** The preview's bottom rises with the
   scene notes exactly as the mode control's rung does
   (`+ max(0, --sc-status-h − 24px)`); at 640 px of height and below its card
   is compact (72 px thumbnail, two rows of actions) so it fits between the
-  state line and the mode control, 200 % zoom included. When the wheel is
+  state line and the mode control, 200 % zoom included. With the Bare Hands
+  badge shown the mode control takes the rail's second rung (86 instead of
+  52 px, lifted 42 px under 820 px and 62 px at 700 px and below): the
+  preview rises with it (`body:has(#jarvisHands .jh-badge)`: + 188 px under
+  820 px, + 216 px at 700 px and below; QA S09 P2, matrix state 19 at
+  600 × 800 with the real badge). When the wheel is
   reopened while the preview shows, the preview steps to the right of the
   wheel's radius (`#app:has(#toolWheel[data-open])`) so every wedge stays
   under the pointer (Slice 09).
@@ -832,9 +849,10 @@ Selection focused; 3 Selection › Souris / Bare Hands; 4 audio recording;
 popover; 8 rail with every card state and the Board-linked items; 9 Variantes
 + rail (real isolated Core, `tests/fakes/explorer_browser.py`); 10 mode
 chooser; 11 Board chooser; 12 800×600; 13 1280×540 with the wheel open;
-14 reduced motion; 15 200 % zoom (720×450 CSS px at scale 2); 16-18 Bare
-Hands badge + frozen-scene note on two lines + fresh screenshot at 1440,
-1280 and 900 px. Every state is audited the same way: no control over
+14 reduced motion; 15 200 % zoom (720×450 CSS px at scale 2); 16-19 the real
+Bare Hands badge (« MAINS · ACTIF », text and rules read from
+`control_center_barehands.js`) + frozen-scene note (two lines above 700 px) +
+Core lost + fresh screenshot at 1440, 1280, 900 and 600 px. Every state is audited the same way: no control over
 another (the side panel over the rail and the banner over a panel are the
 registry's), every interactive target of every control hit-testable at its
 centre (or under the state's own surface), no unnamed control, no clipped
@@ -843,7 +861,8 @@ horizontal scroll, the state's surface whole and on top. Next to it: keyboard
 only and mouse only full paths, reduced motion (nothing in the shell animates
 or transitions), forced colours, axe-core (`JARVIS_AXE_JS`), 200 % zoom,
 700 px wide / 560 px high, the GPT-Live banner + drop tray + toasts + rail
-stack at four sizes with a panel closed and open, and a real held object
+stack at four sizes with a panel closed and open (and again with every
+`anchor()` declaration removed, for the fallbacks), and a real held object
 dragged into `#chatTab`, the mode button and the rail (it stops against each).
 
 ## Validation

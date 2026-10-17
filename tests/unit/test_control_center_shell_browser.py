@@ -41,6 +41,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shutil
 import subprocess
 from pathlib import Path
@@ -396,11 +397,26 @@ RAIL_CARDS = r"""[...document.querySelectorAll('#presentationRail .jvr-item')].m
   img:!!c.querySelector('.jvr-thumb img'),kind:(c.querySelector('.jvr-thumb')||{dataset:{}}).dataset.kind||null}))"""
 OPEN_OF = r"""(s=>{const e=document.querySelector(s);return !!e&&!e.hidden&&e.checkVisibility()})(%s)"""
 
-#: Le badge Bare Hands (hôte `#jarvisHands`, comme le pointeur le pose), puis la scène qui perd Core : sa note
-#: « Scène figée · <cause> » passe sur deux lignes ; puis une capture d'écran par la roue (sonde QA S08).
-BADGE = ("(()=>{let h=document.getElementById('jarvisHands');if(!h){h=document.createElement('div');h.id='jarvisHands';"
-         "document.body.append(h)}const b=document.createElement('div');b.className='jh-badge';b.textContent='BH';"
-         "b.style.cssText='position:absolute;left:18px;bottom:18px';h.append(b);return 1})()")
+def _real_badge() -> str:
+    """Le badge Bare Hands tel que `control_center_barehands.js` le pose (QA S09 P3) : son texte « actif »
+    (`BADGE.active`) et les règles de sa feuille (`#jarvisHands{…}`, `#jarvisHands .jh-badge{…}`), lus
+    dans le module et non recopiés."""
+    source = (Path(__file__).resolve().parents[2] / "jarvis" / "runtime" / "control_center_barehands.js").read_text(encoding="utf-8")
+    accent = re.search(r"const ACCENT='([^']+)'", source).group(1)
+    text = re.search(r"const BADGE=Object\.freeze\(\{[^}]*active:'([^']+)'", source).group(1)
+    rules = [re.search(r"^#jarvisHands\{[^}]*\}", source, re.M).group(0),
+             re.search(r"^#jarvisHands \.jh-badge\{[^}]*\}", source, re.M).group(0)]
+    css = " ".join(r.replace("${ACCENT}", accent).replace("\n", " ") for r in rules)
+    return ("(()=>{const st=document.createElement('style');st.textContent=" + json.dumps(css) + ";document.head.append(st);"
+            "let h=document.getElementById('jarvisHands');if(!h){h=document.createElement('div');h.id='jarvisHands';document.body.append(h)}"
+            "const b=document.createElement('div');b.className='jh-badge';b.textContent=" + json.dumps(text) + ";h.append(b);"
+            "const r=b.getBoundingClientRect();return {text:b.textContent,w:Math.round(r.width),h:Math.round(r.height),"
+            "fixed:getComputedStyle(b).position==='fixed'}})()")
+
+
+#: Le vrai badge Bare Hands, puis la scène qui perd Core : sa note « Scène figée · <cause> » passe sur deux
+#: lignes ; puis une capture d'écran par la roue (sonde QA S08).
+BADGE = _real_badge()
 FREEZE = ("(()=>{const f=window.fetch;window.fetch=(p,i)=>String(p).startsWith('/api/scene')?Promise.reject(new TypeError('Failed to fetch'))"
           ":f(p,i);window.__sc.waiters.splice(0).forEach(fn=>fn([]));return 1})()")
 NOTE_LINES = "Math.round(document.querySelector('#sceneLayer>.sc-status').getBoundingClientRect().height)"
@@ -438,10 +454,12 @@ STATES = (
      [["eval", "wheel", WHEEL_STATE, 50],
       ["eval", "dur", "getComputedStyle(document.documentElement).getPropertyValue('--shell-dur').trim()", 50]]),
     ("15", "zoom-200", 720, 450, {"seed": BUSY, "scale": 2}, [], [], []),
-    # QA S08 P1 : badge Bare Hands + scène figée (note sur deux lignes) + capture fraîche, aux trois largeurs mesurées.
+    # QA S08 P1 : badge Bare Hands + scène figée (note sur deux lignes au-dessus de 700 px) + capture fraîche, aux quatre largeurs.
     ("16", "badge-frozen-scene-preview-1440", 1440, 900, LOST_MODE, DEGRADED_SHOT, ["#screenshotPreview"], [["eval", "preview", PREVIEW, 50]]),
     ("17", "badge-frozen-scene-preview-1280", 1280, 720, LOST_MODE, DEGRADED_SHOT, ["#screenshotPreview"], [["eval", "preview", PREVIEW, 50]]),
     ("18", "badge-frozen-scene-preview-900", 900, 600, LOST_MODE, DEGRADED_SHOT, ["#screenshotPreview"], [["eval", "preview", PREVIEW, 50]]),
+    # QA S09 P2 : à 700 px et moins, sous la vraie pastille, le bouton de mode passe au second barreau du rail.
+    ("19", "badge-frozen-scene-preview-600", 600, 800, LOST_MODE, DEGRADED_SHOT, ["#screenshotPreview"], [["eval", "preview", PREVIEW, 50]]),
 )
 
 
@@ -494,9 +512,12 @@ def test_runtime_matrix(matrix, number, theme):
     if number == "05":
         chips = results["chips"]
         assert len(chips) == 1 and "écran" in chips[0]["label"] and "REC" in chips[0]["text"], (label, chips)
+    if number in ("16", "17", "18", "19"):
+        badge = results["badge"]
+        assert badge["text"] == "MAINS · ACTIF" and badge["fixed"] and badge["w"] > 90 and badge["h"] >= 20, (label, badge)
     if number in ("16", "17", "18"):
         assert results["noteH"] >= 40, (label, "la note de la scène figée tient sur deux lignes", results["noteH"])
-    if number in ("06", "16", "17", "18"):
+    if number in ("06", "16", "17", "18", "19"):
         preview = results["preview"]
         assert preview["shown"] and preview["loaded"] and preview["image"] == "ready", (label, preview)
         assert {"open", "send", "delete"} <= set(preview["actions"]), (label, preview)
@@ -872,6 +893,51 @@ def test_banner_tray_toasts_and_rail_never_cover_each_other(tmp_path, theme):
             for t in o["toasts"]:
                 for name in (("panel", "tray", "mode", "dock") if w >= 940 else ("tray", "mode", "dock")):
                     assert _no_overlap(t, o[name]), (where, "infusion, panneau ouvert", name, t, o[name])
+        assert _errors(step) == [], _errors(step)
+
+
+#: Un navigateur sans ancres CSS : chaque déclaration à `anchor(` est retirée par le CSSOM (un parseur qui ne
+#: connaît pas `anchor()` la jette entière) ; les règles de repli, séparées, restent.
+NO_ANCHOR = r"""(()=>{let n=0;const walk=rules=>{for(const r of rules){if(r.cssRules)walk(r.cssRules);
+  if(r.style)for(const p of [...r.style])if(String(r.style.getPropertyValue(p)).includes('anchor(')){r.style.removeProperty(p);n+=1}}};
+  for(const s of document.styleSheets){try{walk(s.cssRules)}catch(e){}}return n})()"""
+
+
+def _inside(box: dict, vw: int, vh: int) -> bool:
+    return box["l"] >= -0.5 and box["t"] >= -0.5 and box["r"] <= vw + 0.5 and box["b"] <= vh + 0.5
+
+
+def test_without_css_anchors_the_fallbacks_hold(tmp_path):
+    """QA S09 P1 : un `anchor()` inconnu invalide toute sa déclaration ; la valeur
+    de repli vit donc dans une règle séparée, juste avant. Sans aucune
+    déclaration à ancre, bandeau GPT-Live, plateau et infusions affichés, panneau
+    fermé puis ouvert : rien ne sort de l'écran, le plateau ne passe ni sur le
+    lanceur, ni sur l'onglet du rail, ni sur le bandeau (hauteur estimée,
+    `--jv-live-fb`), les infusions ni sur eux ni sur le plateau. Sous 700 px le
+    panneau ouvert prend toute la largeur : bandeau et plateau passent dessus
+    par rang, comme avec les ancres."""
+    shots = _evidence(tmp_path)
+    sizes = ((500, 700), (600, 800), (900, 600), (1280, 720))
+    plan = [{"width": w, "height": h, "theme": "cosmos", "seed": {**MIXED, "live": LIVE, "mode": MODE, "previews": PREVIEWS}, "actions": [
+        ["eval", "tray", TRAY, 100], ["eval", "toasts", TOASTS, 500],
+        ["eval", "removed", NO_ANCHOR, 300], ["eval", "closed", STACK, 50],
+        ["shot", "s1", str(shots / f"no-anchor-{w}x{h}.png"), 50],
+        ["eval", "panel", PANEL_OPEN, 400], ["eval", "opened", STACK, 50],
+        ["shot", "s2", str(shots / f"no-anchor-{w}x{h}-panel.png"), 50]]} for (w, h) in sizes]
+    for (w, h), step in zip(sizes, _centre(tmp_path, plan)):
+        r = step["results"]
+        assert r["removed"] == 5, ("les cinq déclarations à ancre de control_center.html", r["removed"])
+        for state in ("closed", "opened"):
+            s = r[state]
+            where = (w, h, state)
+            assert s["tray"] and len(s["toasts"]) == 2, (where, s)
+            for name, box in (("tray", s["tray"]), *(("toast", t) for t in s["toasts"])):
+                assert _inside(box, w, h), (where, name, "sort de l'écran", box)
+            for name in ("dock", "banner") + (("rail",) if w <= 700 else ()):
+                assert _no_overlap(s["tray"], s[name]), (where, "plateau", name, s["tray"], s[name])
+            for t in s["toasts"]:
+                for name in ("dock", "tray", "banner"):
+                    assert _no_overlap(t, s[name]), (where, "infusion", name, t, s[name])
         assert _errors(step) == [], _errors(step)
 
 

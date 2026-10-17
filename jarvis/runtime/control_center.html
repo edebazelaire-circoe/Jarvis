@@ -331,9 +331,18 @@ pre.block{background:#050b10;border:1px solid rgba(113,144,160,.16);border-radiu
    la place manque à gauche : la pile reste à droite, comme panneau fermé. */
 /* Rail de droite affiché (orbital-ui Slice 09, QA S07) : la pile passe à sa gauche au lieu de couvrir le bas de ses
    cartes ; plateau de dépôt affiché en bas, elle monte au-dessus (ancre `--jv-tray`, QA S01 P3) ; sous 1100 px un panneau
-   ouvert fait monter le plateau en haut à gauche : la pile garde alors sa place du bas. */
+   ouvert fait monter le plateau en haut à gauche : la pile garde alors sa place du bas.
+   Repli sans ancres CSS : un `anchor()` inconnu invalide toute la déclaration ; chaque règle à ancre est donc précédée
+   d'une règle séparée qui pose la valeur de repli (QA S09 P1, `docs/control-center-shell.md` › *Stacking by geometry*).
+   `--jv-live-fb` : sans ancre, le bas estimé du bandeau GPT-Live sous `--shell-panel-top` (110 px de haut au plus
+   mesurés à 600 px, + 8) ; à 700 px et moins il descend sous la rangée de l'onglet du rail (+ 48). Un plateau affiché
+   y compte pour 200 px au plus (30vh) : au-delà, la pile le chevauche plutôt que de sortir de l'écran. */
+body:has(#liveBanner:not([hidden])){--jv-live-fb:118px}
+@media(max-width:700px){body:has(#liveBanner:not([hidden])){--jv-live-fb:166px}}
 @media(min-width:701px){body:has(>#presentationRail:not([hidden])) .toasts{right:calc(var(--shell-gutter) + var(--shell-rail-w) + 12px)}}
+@media(min-width:1100px){#app:has(#boardDropTray:not([hidden])):not(:has(.chat-panel.open))~.toasts{bottom:calc(var(--shell-bottom) + var(--shell-status-h) + 16px + min(46vh,360px))}}
 @media(min-width:1100px){#app:has(#boardDropTray:not([hidden])):not(:has(.chat-panel.open))~.toasts{bottom:max(68px,calc(anchor(--jv-tray top,0px) + 8px))}}
+@media(min-width:761px) and (max-width:1099px){#app:has(#boardDropTray:not([hidden])):not(:has(.panel.open))~.toasts{bottom:calc(var(--shell-bottom) + var(--shell-status-h) + 16px + min(46vh,360px))}}
 @media(min-width:761px) and (max-width:1099px){#app:has(#boardDropTray:not([hidden])):not(:has(.panel.open))~.toasts{bottom:max(68px,calc(anchor(--jv-tray top,0px) + 8px))}}
 @media(min-width:940px){#app:has(.panel.open)~.toasts{right:calc(var(--shell-gutter) + 12px + min(var(--shell-panel-w),100vw - 2 * var(--shell-gutter)));width:min(340px,calc(100vw - 548px))}}
 @media(prefers-reduced-motion:reduce){.adot.running,.acard.eph .adot.running,.toast{animation:none}.acard.eph{transition:none}}
@@ -360,6 +369,7 @@ pre.block{background:#050b10;border:1px solid rgba(113,144,160,.16);border-radiu
    le bandeau GPT-Live et sous le plateau de dépôt s'ils sont affichés (ancres `--jv-live`, `--jv-tray`, orbital-ui
    Slice 09 : avec le bandeau, elle restait en bas, sur le bouton de mode hissé) ; sans `bottom:auto`, la grille
    `.toasts` étirait une seule notification sur toute la hauteur. */
+@media(max-width:700px){#app:not(:has(.chat-panel.open))~.toasts{top:calc(var(--shell-panel-top) + max(48px,var(--jv-live-fb,0px)));bottom:auto}#app:has(:where(#boardDropTray:not([hidden]))):not(:has(.chat-panel.open))~.toasts{top:calc(var(--shell-panel-top) + max(48px,var(--jv-live-fb,0px)) + 8px + min(30vh,200px))}}
 @media(max-width:700px){#app:not(:has(.chat-panel.open))~.toasts{top:max(calc(var(--shell-panel-top) + 48px),calc(anchor(--jv-live bottom,0px) + 8px),calc(anchor(--jv-tray bottom,0px) + 8px));bottom:auto}}
 .chat-panel.open{animation:chatIn .2s ease-out}
 @keyframes chatIn{from{opacity:0;transform:translateX(28px)}}
@@ -544,6 +554,11 @@ html[data-jarvis-theme="cosmos"] .chat-tab:hover,html[data-jarvis-theme="cosmos"
 #screenshotPreview{position:absolute;z-index:38;left:calc(var(--shell-anchor-w) + var(--shell-gutter));bottom:calc(var(--shell-bottom) + 154px + max(0px,var(--sc-status-h,24px) - 24px))}
 #screenshotPreview[hidden]{display:none}
 @media(max-width:700px){#screenshotPreview{bottom:calc(var(--shell-bottom) + 182px + max(0px,var(--sc-status-h,24px) - 24px))}}
+/* Pastille Bare Hands affichée : le bouton de mode prend le second barreau du rail (86 au lieu de 52, +34 px,
+   `control_center_interaction_mode.js` › GEO), relevé de 42 px sous 820 px et de 62 px sous 700 px ; deux lignes
+   (« MODE ? », Core perdu) = 60 px. L'aperçu monte d'autant (QA S09 P2 : 8 à 10 px de recouvrement à 600 px). */
+@media(max-width:820px){body:has(#jarvisHands .jh-badge) #screenshotPreview{bottom:calc(var(--shell-bottom) + 188px + max(0px,var(--sc-status-h,24px) - 24px))}}
+@media(max-width:700px){body:has(#jarvisHands .jh-badge) #screenshotPreview{bottom:calc(var(--shell-bottom) + 216px + max(0px,var(--sc-status-h,24px) - 24px))}}
 /* Roue rouverte pendant l'aperçu : la roue est le dernier geste, ses coins restent sous le pointeur ; l'aperçu (38, au-dessus
    de la roue ouverte par registre) se range à sa droite le temps qu'elle est ouverte (orbital-ui Slice 09). */
 #app:has(#toolWheel[data-open]) #screenshotPreview{left:min(calc(var(--shell-anchor-w) + var(--shell-wheel-r) + var(--shell-gutter)),calc(100vw - 272px - var(--shell-gutter)))}
@@ -590,11 +605,13 @@ html[data-jarvis-theme="cosmos"] .chat-tab:hover,html[data-jarvis-theme="cosmos"
 /* Écran étroit : le bas appartient au mode d'interaction et aux colonnes gauche/droite ; le plateau monte sous le lanceur,
    sous la rangée de l'onglet du rail (40 px, qu'il recouvrait à 600 px) et sous le bandeau GPT-Live s'il est affiché
    (ancre `--jv-live`, qu'il passait dessous à 600 px) : orbital-ui Slice 09, QA S01 P2, QA S06/S08. */
+@media(max-width:760px){.board-drop-tray{top:calc(var(--shell-panel-top) + max(48px,var(--jv-live-fb,0px)))}}
 @media(max-width:760px){.board-drop-tray{top:calc(max(anchor(--jv-live bottom,0px),var(--shell-panel-top) + 40px) + 8px);bottom:auto;width:calc(100vw - 180px);max-height:min(50vh,360px)}}
 /* Panneau latéral ouvert (orbital-ui Slice 09) : le plateau (34) passait sur le bas du panneau (33). De 1100 px, il se
    centre dans l'espace libre entre la zone du mode (bas-gauche, 254 px) et le panneau ; plus étroit, cet espace manque :
    il monte en haut à gauche, sous la ligne d'état et le bandeau, à gauche du panneau. */
 @media(min-width:1100px){#app:has(.panel.open) .board-drop-tray{left:calc(var(--shell-gutter) + 254px);right:calc(var(--shell-gutter) + 12px + min(var(--shell-panel-w),100vw - 2 * var(--shell-gutter)));width:auto;max-width:460px;margin-inline:auto;transform:none}}
+@media(min-width:761px) and (max-width:1099px){#app:has(.panel.open) .board-drop-tray{top:calc(var(--shell-panel-top) + max(8px,var(--jv-live-fb,0px)))}}
 @media(min-width:761px) and (max-width:1099px){#app:has(.panel.open) .board-drop-tray{top:calc(max(anchor(--jv-live bottom,0px),var(--shell-panel-top)) + 8px);bottom:auto;left:var(--shell-gutter);right:calc(var(--shell-gutter) + 12px + min(var(--shell-panel-w),100vw - 2 * var(--shell-gutter)));width:auto;transform:none}}
 
 /* ---------- Pastilles d'arrière-plan (centre d'état du bas, Slice 06, D8) ----------
