@@ -7,6 +7,13 @@ Make Sélection the contextual manipulation entry for Board scene objects, with 
 ## Dependencies
 
 - `05-dossier-contract-projection`
+- `04-jarvis-runtime-capture-controls` (added by Slice 00: both Slices register wheel entries and edit `control_center.html`; serialize them)
+
+## Slice 00 reconciliation (read first)
+
+Confirmed at HEAD (`../../docs/08-readiness-audit.md` §7): hidden = active + not rendered + recoverable; archived = out of the active scene with tombstone; batch ops `patch_selection {visibility, representation}`, `archive_selection`, `archive_many` (orphan scene artifacts only, `not_bulk_archivable` otherwise), MCP hide guard (`display_mcp.py`). No third disposition.
+
+"Afficher les masqués (N)" already exists as machinery from orbital-ui S06, whose eye Slice 02 removed from the shell: the browser view pref `showHidden` (`control_center_scene_view.js`, ghosts at stored geometry, "Réafficher" = one `set_visibility visible`) and the hidden list `openHiddenMenu` with "Tout réafficher" (`control_center_scene_page.js`). Re-expose both inside the Sélection tree with the count in the entry label; do not rewrite ghost rendering. Keep the distinction: the ghost view never rewrites `visibility`; "Tout réafficher" does (canonical).
 
 ## Scope / implementation steps
 
@@ -27,13 +34,15 @@ Make Sélection the contextual manipulation entry for Board scene objects, with 
 - Automatically archiving tasks because they are complete (follow-up Issue).
 - Creating a new scene disposition called `stored` or `dossier`.
 
-## Files likely touched
+## Files likely touched (verified at HEAD 2fb66040)
 
-- wheel selection registrations / input arbitration UI
-- scene client/MCP command adapters
-- Dossier integration service/relay
-- scene selection tests/browser tests
-- docs for scene/Dossier commands
+- `jarvis/runtime/control_center_input_arbitration.js` (Sélection tree), `jarvis/runtime/control_center_tool_wheel.js` (registrations only)
+- `jarvis/runtime/control_center_scene_page.js` (selection -> batch commands, hidden list), `jarvis/runtime/control_center_scene_view.js` (`showHidden`), `jarvis/runtime/control_center_scene_layout.js` (ghosts, unchanged unless needed)
+- `jarvis/runtime/display_mcp.py` (brain tools for voice parity), Slice 05 Dossier relay/MCP
+- `docs/scene-selection-batch.md`, `docs/scene-model.md` › *Visibility vs disposition* (eye wording), `docs/control-center-shell.md`, `docs/dossier.md`
+- tests: `test_scene_selection.py`, `test_scene_batch.py`, `test_scene_batch_tools.py`, `test_scene_view_prefs.py`, `test_scene_renderer_logic.py`, `test_selection_method_browser.py`, `test_tool_wheel_browser.py`, a new Ranger browser test
+
+Note: the worktree `C:/Projects/jarvis/eph` holds uncommitted runtime-archive changes to `jarvis/domain/scene.py` (completed ephemeral stars). Do not import them; they belong to the follow-up Issue.
 
 ## Architecture constraints
 

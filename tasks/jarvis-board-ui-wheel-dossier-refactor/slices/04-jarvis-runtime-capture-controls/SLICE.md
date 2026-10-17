@@ -8,6 +8,13 @@ Wire the JARVIS and Capture wheel categories to canonical runtime/capture truth 
 
 - `03-orbital-wheel-redesign`
 
+## Slice 00 reconciliation (read first)
+
+- **JARVIS submenu, real capabilities at HEAD:** the page knows, from the one `/api/status` beat (`refreshStatus` in `control_center.html`), `voice_online`, `voice_state` (idle/waiting/listening/speaking/thinking → SLEEP/WAIT/LISTEN/TALK/THINKING), `voice_turn_mode`, `manual_wake_key` (F9 by default, Voice's global shortcut), `agent.name` / `agent_cli`, `agent.state`, sub-agent count, `live`. There is **no** Control Center or Core route to sleep/wake Voice or to change a « thinking » mode (only `GET/POST /api/wake-word` for the wake-word *settings*). So the JARVIS submenu is status-only plus the wake-key hint (removed from `.state` by Slice 02) and links to existing settings (voice/wake word in Réglages). Any click-to-wake/sleep control is out of scope and must not be faked; it is recorded as a follow-up, not invented.
+- **Recording indicators already exist and are already transient:** `#recIndicators` (status centre, rank 40, `control_center_capture_wheel.js` view of `JarvisCaptureRail`) shows one chip per **open** Core capture with Core duration, `REC` for the screen and a microphone for audio, and activating a chip stops that capture; refusal note `.ri-note`; right-edge column at ≤ 700 px. Reuse them: move the host to the top-left zone freed by Slice 02 (the Human asked for the video REC « en haut à gauche »), restyle per `../../docs/06-ui-visual-spec.md` §E, and update the status-centre layout (pills only) and registry. Do not build a second indicator system.
+- **Paramètres:** register the wheel's `settings` category to open the same `#openSettings` route; fold the launcher's `SET` button into « Plus d’outils » (shortcut `s` unchanged, `docs/control-center-shell.md` › *Global launcher* destination matrix updated, `test_global_launcher_browser.py`).
+- No Pause: `CaptureService` has no pause state/API at HEAD (`docs/capture.md`).
+
 ## Scope / implementation steps
 
 ### JARVIS category
@@ -44,14 +51,15 @@ Wire the JARVIS and Capture wheel categories to canonical runtime/capture truth 
 - Changing Session/Artifact capture continuity guarantees.
 - Inventing new model switches.
 
-## Files likely touched
+## Files likely touched (verified at HEAD 2fb66040)
 
-- `jarvis/runtime/control_center_capture_wheel.js`
+- `jarvis/runtime/control_center_capture_wheel.js` (category tree, `#recIndicators` view)
 - `jarvis/runtime/control_center_capture_rail.js` only if view-model adaptation is needed
-- `jarvis/runtime/control_center_tool_wheel.js` registrations/icons
-- lifecycle/status module(s) for JARVIS submenu
-- `control_center.html` recording host/layers
-- `docs/capture.md`, `docs/control-center-shell.md`
+- `jarvis/runtime/control_center_tool_wheel.js` (registrations/icons only)
+- a small new module for the JARVIS submenu fed by the existing `refreshStatus` beat (no second poll), or a registration inside `control_center.html`'s status code
+- `jarvis/runtime/control_center.html` (`#recIndicators` host/zone, status centre, launcher `SET`, registry mirror)
+- `docs/capture.md` › *Interface*, `docs/control-center-shell.md` (*Status centre*, *Global launcher*, *Tool wheel*, registry, matrix)
+- tests: `test_capture_wheel_browser.py` (+ `_capture_wheel_browser.mjs`), `test_capture_rail_js.py`, `test_capture_targets.py`, `test_status_centre_browser.py`, `test_global_launcher_browser.py`, `test_tool_wheel_js.py`, `test_control_center_shell_layers.py`, `test_control_center_shell_browser.py`, `test_screenshot_preview_browser.py`, `test_board_drop_browser.py` (tray above the status centre)
 
 ## Architecture constraints
 

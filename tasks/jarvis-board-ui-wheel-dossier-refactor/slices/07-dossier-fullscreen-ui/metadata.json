@@ -1,8 +1,8 @@
 {
   "slice_id": "07-dossier-fullscreen-ui",
   "title": "Slice 07 — Full-screen Dossier workspace and Jarvis-guided navigation",
-  "task_type": null,
-  "task_type_resolution": "INHERIT_FROM_SLICE_00_PROJECT_MANAGER_RESOLUTION",
+  "task_type": "waived",
+  "task_type_resolution": "WAIVED_NO_WORKSPACE_VOCABULARY_SEE_SLICE00_READINESS",
   "dependencies": [
     "05-dossier-contract-projection",
     "06-selection-object-actions"

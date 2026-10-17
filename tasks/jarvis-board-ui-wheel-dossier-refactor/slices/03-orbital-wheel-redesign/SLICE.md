@@ -8,6 +8,14 @@ Transform the existing four-action orbital wheel into the five-category Jarvis c
 
 - `02-shell-cleanup-board-switcher`
 
+## Slice 00 reconciliation (read first)
+
+Reducer verdict (step 8 of Slice 00): **preserve** the pure `reduce` / `initialState` / `viewOf`, `register` / `setStatus`, the activation rules (primary = `click` only, Bare Hands `pointerId` 9001-9002 attribution, keyboard secondary dedupe 500 ms, close reasons, 400 ms leave grace) and the radial sub-arc + second level, which already replaces the first level **in place** (one visible subtree). Replace: `SLOTS` (4 → 5 categories), the geometry (`layoutWedges`, `sectorPolygon`, 156°/39° wedges, radius tokens `--shell-wheel-r` 200 px, sub-arc radius 236 px / 15°), the skin, and label visibility (today only the hovered wedge shows a label pill; the 5 categories need readable labels when open). `menu:true` already makes a primary activation open the category tree — use it for every category that has a tree.
+
+Current registrations to migrate: Sélection in `control_center_input_arbitration.js` (`register({id:'selection', menu:true})`), Vidéo / Capture d'écran / Audio in `control_center_capture_wheel.js` (slot ids `video`, `screenshot`, `audio`; capture semantics move in Slice 04 — in this Slice keep them reachable under the `capture` category tree so no intermediate commit loses capture). JARVIS / Dossier / Paramètres get injected placeholder handlers (`tool_wheel.unbound` notification), wired by Slices 04/05-07/04.
+
+Contract to update: `docs/control-center-shell.md` › *Tool wheel* (« Exactly four primary wedges … Sélection, Vidéo, Capture d'écran, Audio »), *Layer registry* (`#toolWheel`, `#toolWheel[data-open]`), *Integration matrix*, *Tokens*; `docs/capture.md` › *Interface* when the wedges move.
+
 ## Canonical context
 
 Preserve mature input behaviour of the existing wheel where valid: left-edge reveal, mouse/pointer, keyboard and Bare Hands synthesized click/context interactions, escape/outside close, no network round-trip for reveal. Replace its product IA and graphics.
@@ -34,13 +42,13 @@ Preserve mature input behaviour of the existing wheel where valid: left-edge rev
 - Rewriting capture ownership.
 - Copying every decorative feature from the generated reference.
 
-## Files likely touched
+## Files likely touched (verified at HEAD 2fb66040)
 
-- `jarvis/runtime/control_center_tool_wheel.js`
-- `jarvis/runtime/control_center.html` tokens/host if needed
-- theme/shell CSS modules
-- tool-wheel unit/browser tests
-- `docs/control-center-shell.md`
+- `jarvis/runtime/control_center_tool_wheel.js` (`SLOTS`, geometry, skin, labels, `ART` icons)
+- `jarvis/runtime/control_center_input_arbitration.js`, `jarvis/runtime/control_center_capture_wheel.js` (registrations only)
+- `jarvis/runtime/control_center.html` (tokens `--shell-wheel-r`, `--shell-anchor-w`, `--shell-wedge-min`, host, registry mirror), `jarvis/runtime/control_center_work.js` (Cosmos skin), `jarvis/runtime/control_center_shell.js` if tokens are mirrored
+- `docs/control-center-shell.md`, `docs/capture.md` › *Interface*
+- tests: `test_tool_wheel_js.py`, `test_tool_wheel_browser.py`, `test_selection_method_browser.py`, `test_capture_wheel_browser.py` (+ `_capture_wheel_browser.mjs`), `test_control_center_shell_layers.py`, `test_control_center_shell_browser.py`, `test_screenshot_preview_browser.py` (preview steps right of the open wheel's radius)
 
 ## Architecture constraints
 

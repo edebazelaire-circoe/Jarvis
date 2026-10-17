@@ -1,11 +1,10 @@
 {
   "slice_id": "05-dossier-contract-projection",
   "title": "Slice 05 — Dossier contract, projection and semantic operations",
-  "task_type": null,
-  "task_type_resolution": "INHERIT_FROM_SLICE_00_PROJECT_MANAGER_RESOLUTION",
+  "task_type": "waived",
+  "task_type_resolution": "WAIVED_NO_WORKSPACE_VOCABULARY_SEE_SLICE00_READINESS",
   "dependencies": [
-    "01-board-type-contract-migration",
-    "03-orbital-wheel-redesign"
+    "01-board-type-contract-migration"
   ],
   "frontend": false,
   "code": true,

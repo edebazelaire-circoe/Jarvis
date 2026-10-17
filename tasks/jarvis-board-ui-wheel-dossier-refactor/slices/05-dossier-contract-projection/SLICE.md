@@ -6,8 +6,13 @@ Define and implement the canonical **Dossier** service/projection so the human a
 
 ## Dependencies
 
-- `01-board-type-contract-migration`
-- `03-orbital-wheel-redesign`
+- `01-board-type-contract-migration` (Slice 01a). Slice 00 removed the dependency on Slice 03: this Slice is backend/contract only and touches no wheel file, so it may run in parallel with Slices 01b-04 (respect the 3-agent limit of this machine; it shares no code file with them, coordinate edits of `docs/boards.md`).
+
+## Slice 00 reconciliation (read first)
+
+`../../docs/08-readiness-audit.md` §6 lists what already exists (reuse as-is: memory tree/stat/read/search/write/mkdir/move/delete through `WorkspaceService` + Core `/v1/workspace/boards/{id}/memory/*` + relay `/api/workspace/...` + MCP `board_memory_*`; v8 Board-artifact links and `board_artifacts` / `board_artifact_link`; artifact relations; per-Board presentation sources; `session_activity` family `board` for "what changed"; windows bound to a file via `payload.source_path`) and the five genuinely missing operations: composed Dossier listing, scene -> durable-backing resolver, composed Ranger, present-from-Dossier, agent -> UI navigation seam. No new table is needed.
+
+Naming trap to settle in `docs/dossier.md`: a **scene artifact** (`kind=artifact` scene object: title/summary/items, `docs/scene-model.md` › *Semantic artifacts*) is not a **registry Artifact** (`artifacts` table, `docs/artifacts.md`). Ranger of a scene artifact or scene note materializes its payload once into Board memory (Markdown with provenance) through `memory_write`; Ranger of a scene object already bound to a durable source (`source_path` inside the Board's memory root, or a registry-Artifact reference) only confirms the link. A scene reference to a registry Artifact is a JSON payload key (no scene DDL; same rule as `source_path`, emitted only when set).
 
 ## Canonical context
 
@@ -48,17 +53,14 @@ The existing deep Workspace manager is diagnostic/operability UI; Dossier is a n
 - Replacing SessionContext with Board Dossier.
 - Exposing arbitrary host filesystem paths.
 
-## Files likely touched
+## Files likely touched (verified at HEAD 2fb66040)
 
-Resolve in audit, likely:
-
-- Board memory domain/store/service modules
-- Workspace service/routes/relay/MCP
-- Artifact link/query service
-- scene/presentation link helpers only where semantic reference is needed
-- new focused Dossier domain/service/view-model modules if cleaner
-- canonical `docs/boards.md` plus a new `docs/dossier.md` contract
-- focused unit/integration tests
+- `jarvis/core/workspace_service.py`, `jarvis/domain/board_memory.py`, `jarvis/adapters/board_memory_store.py`, `jarvis/adapters/sqlite_board_artifact_links.py`, `jarvis/adapters/sqlite_artifacts.py` (read side)
+- Core workspace routes (`jarvis/protocol/server.py` or their routes module), relay in `jarvis/runtime/control_center.py`, MCP `jarvis/runtime/workspace_mcp.py` (+ `docs/mcp/tool-contract.md` §10.12)
+- scene reference only where needed: `jarvis/domain/scene.py` (payload key), `jarvis/runtime/display_mcp.py`
+- new focused `jarvis/domain/dossier.py` / `jarvis/core/dossier_service.py` if cleaner
+- `docs/dossier.md` (new), `docs/boards.md`, `docs/artifacts.md`, `docs/scene-model.md`
+- tests: new `test_dossier_*`, plus `test_workspace_inspection_api.py`, `test_workspace_memory_mutations.py`, `test_workspace_mcp.py`, `test_board_memory_store.py`, `test_board_memory_contract.py`, `test_board_artifact_links.py`, `test_scene_selection.py`, `test_scene_batch.py`, `test_mcp_catalog.py`
 
 ## Architecture constraints
 

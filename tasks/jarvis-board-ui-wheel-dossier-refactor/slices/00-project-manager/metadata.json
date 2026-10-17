@@ -1,8 +1,8 @@
 {
   "slice_id": "00-project-manager",
   "title": "Slice 00 — Project Manager readiness and reconciliation gate",
-  "task_type": null,
-  "task_type_resolution": "INHERIT_FROM_SLICE_00_PROJECT_MANAGER_RESOLUTION",
+  "task_type": "waived",
+  "task_type_resolution": "WAIVED_NO_WORKSPACE_VOCABULARY_SEE_SLICE00_READINESS",
   "dependencies": [],
   "frontend": false,
   "code": false,

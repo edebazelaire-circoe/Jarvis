@@ -30,7 +30,7 @@ Prove the refactor works as one system, remove compatibility debris that is no l
 
 ## Files likely touched
 
-Cross-cutting tests/docs and any integration fixes discovered. PM must keep changes narrowly tied to the task.
+Cross-cutting tests/docs and any integration fixes discovered. PM must keep changes narrowly tied to the task. Slice 00 references at HEAD: the shell *Integration matrix (Slice 09)* of `docs/control-center-shell.md` and `tests/unit/test_control_center_shell_browser.py` (four viewports, both themes) are the regression baseline to re-run and update; Board/Session E2E `tests/integration/test_board_session_e2e.py`, `tests/integration/test_board_workspace_e2e.py`; presentation `tests/integration/test_presentation_scenarios.py`. Isolated real-run recipe used by the orbital task: sandbox data root, `CORE_PORT 27653`, `UI_PORT 27654`, `VISUALIZER_ENABLED=0`, driven by `tests/unit/_interaction_mode_browser.mjs <url>` or its successor; never the live instance.
 
 ## Architecture constraints
 

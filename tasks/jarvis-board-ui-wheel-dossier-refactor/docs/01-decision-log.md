@@ -47,3 +47,14 @@ The planning recommendation is:
 8. active behaviour derives from type; no independent user toggle remains.
 
 Slice 00/01 must verify actual storage/schema/compatibility before locking this exact mechanism.
+
+## Slice 00 validation (2026-10-17, HEAD `2fb66040`)
+
+- D21 confirmed: `BoardKind` is evolved to `assistant|presentation|meeting`; no parallel `BoardType`.
+- D22 confirmed against real storage (JSON keys in `work_boards.data`) and real data (3 Boards on this PC). Rule 3/4 use only Boards whose stored mode origin is `user` or `migrated`; an `unset` Board ignores the legacy global key (it already behaves as assistant at HEAD). Mechanism: versioned data-only migration v9 (`docs/08-readiness-audit.md` §4). Open human question Q1 (LOG Slice 00): the active Board « Jarvis PRESENTATION » is `presentation` with a user-chosen `assistant` mode; rule 1 makes it Présentation.
+- D23 refined: `InteractionModeService` survives as the internal live seam; its baseline comes only from the active Board's type; the only other writer is the transient Presentation Studio run (`source="presentation_studio_run"`, Studio Decision A), which is an activity, not a user mode toggle, and restores to the Board-derived baseline.
+- D24 refined: a Meeting Board behaves as `behaving_interaction_mode(meeting)` = assistant with an explicit planned status; a switch to it never rolls back.
+- D06 applies at HEAD to the permanent eye `#hiddenEye` that replaced the « N objets masqués » note (orbital-ui S06).
+- D05: the wake-key hint and the Voice presence report currently carried by `.state` and the mode HUD are critical feedback; they move (JARVIS submenu, Board card), they are not dropped.
+- Architecture §2 (no duplicate Settings entry): the launcher's `SET` folds into « Plus d’outils » when the wheel's Paramètres ships (Slice 04).
+- JARVIS submenu: HEAD has no sleep/wake or « thinking » control API; the submenu is status-only plus the wake-key hint (docs/07 ambiguity confirmed, nothing invented).

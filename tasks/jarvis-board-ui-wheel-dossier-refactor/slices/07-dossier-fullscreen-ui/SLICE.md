@@ -32,9 +32,9 @@ Deliver the human-facing full-screen Dossier interface: organized browsing on th
 - Replacing the technical Workspace manager if it remains useful for diagnostics.
 - Generic web research browser as a Dossier tab.
 
-## Files likely touched
+## Files likely touched (verified at HEAD 2fb66040)
 
-Likely new focused `control_center_dossier*.js` module(s), shell host/layer registry, Dossier client, existing workspace preview helpers/routes, tests and canonical Dossier docs. Resolve exact composition at HEAD.
+New focused `jarvis/runtime/control_center_dossier*.js` module(s) served like the other modules (see how `ControlCenter.index` serves `TOOL_WHEEL_SCRIPT_FILE` in `jarvis/runtime/control_center.py`); a full-screen layer next to the existing rank-55 views (`.wsp`, `.tl`, `.tlab`, `.mcpi`, `.pfb`) in the registry of `docs/control-center-shell.md` and its mirror in `control_center.html`; a Dossier client over the Slice 05 relay routes; reuse of the read/preview helpers of `jarvis/runtime/control_center_workspace.js` (memory pages, artifact previews) without exposing its technical UI; the agent -> UI seam modelled on the Studio explorer channel that opens Variants on a voice-started run (`control_center_presentation_studio_explorer*.js`). Tests: new `test_dossier_*_js.py` / `test_dossier_*_browser.py`, `test_control_center_shell_layers.py`, `test_control_center_shell_browser.py`, `test_workspace_manager_browser.py` (no regression of the technical manager).
 
 ## Architecture constraints
 

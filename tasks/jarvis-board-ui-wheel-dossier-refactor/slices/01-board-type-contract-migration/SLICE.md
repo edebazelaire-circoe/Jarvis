@@ -1,8 +1,12 @@
-# Slice 01 — Fixed Board type contract and interaction-mode migration
+# Slice 01a — Fixed Board type contract and stored-data migration (v9)
 
 ## Goal
 
-Make the Board's type the authoritative product behaviour input and retire the independent user-mutable interaction-mode axis without losing legacy Board intent.
+Make the Board's type the authoritative, immutable product type and migrate stored Boards to it without losing legacy intent. **Split by Slice 00:** this Slice owns the domain, storage, API and MCP contract of the type **and** the Core-side derivation of the live mode from it (steps 1-6, 8-9, 11-12 below: removing the Board's stored mode fields cannot land without replacing `BoardService`'s mode listener in the same change). Retiring the remaining user-facing mode writers (Control Center route and replay, global key, `settings_set`, brain prompt, Core `POST` restriction — steps 7 and 10) moved to `01b-derived-interaction-mode`.
+
+## Slice 00 reconciliation (read first)
+
+`../../docs/08-readiness-audit.md` §2 and §4 are the audited plan. At HEAD `board_kind`, `interaction_mode` and `interaction_mode_origin` are JSON keys of `work_boards.data` (no column), decoded strictly; `jarvis.sqlite3` is at v8. The migration is a new versioned **v9 data-only step** (no DDL change, version bumped on purpose so a v8 binary refuses the file instead of crashing on `assistant`), with snapshot `tests/schema/jarvis_state.v9.sql`, following `CLAUDE.md` › *Tout changement de schéma passe par une migration versionnée*. Real data on this PC: 3 Boards; the active « Jarvis PRESENTATION » Board is `board_kind=presentation` with a user-chosen `assistant` mode — D22 rule 1 makes it Présentation (see LOG Slice 00, human question Q1; implement rule 1 unless the Human answers otherwise).
 
 ## Dependencies
 
@@ -23,11 +27,11 @@ At planning time `docs/boards.md` made `board_kind` (`empty|meeting|presentation
    - otherwise empty/missing becomes Assistant.
 5. New Board creation requires/derives one type; legacy clients omitting the field may safely default to Assistant if compatibility requires it.
 6. Normal Board update no longer changes type. Remove it from ordinary editable fields/routes/MCP updates or return a stable explicit refusal. Migration/admin repair must be separate if needed.
-7. Retire legacy global interaction-mode replay as an authority over Board behaviour.
-8. Derive effective product behaviour from active Board type. If existing Presentation runtime still consumes `InteractionMode`, drive that internal service from Board activation/type only; it is no longer separately persisted/user-selected truth.
+7. *(moved to Slice 01b)* Retire legacy global interaction-mode replay as an authority over Board behaviour. In this Slice the replay must merely become harmless: `BoardService` no longer adopts or stores anything, and re-applies the Board-derived mode after any replay.
+8. Derive effective product behaviour from active Board type (`../../docs/08-readiness-audit.md` §4, Slice 01b plan items 1-2 are implemented **here**: `BoardService` sets the `InteractionModeService` baseline from the kind at Core start and on switch; the persistence listener `_persist_mode` / `with_unchanged` / `NON_PERSISTED_SOURCES` path is deleted). If existing Presentation runtime still consumes `InteractionMode`, drive that internal service from Board activation/type only; it is no longer separately persisted/user-selected truth.
 9. Meeting: do not invent a full runtime. Ensure a Meeting Board can remain a valid/openable Board; expose planned/unavailable behaviour explicitly and use the existing safest deterministic fallback if dedicated meeting behaviour is not implemented. Do not roll the Board switch back merely because a legacy mode setter refuses `meeting`.
-10. Remove/disable ordinary user mutation route semantics for `/api/interaction-mode` after all internal callers migrate. If a compatibility endpoint remains temporarily, it must not create divergence from Board type and must be documented deprecated/derived.
-11. Update README and canonical `docs/boards.md` / `docs/interaction-mode.md` in the same change. Remove contradictory old statements rather than appending a second story.
+10. *(moved to Slice 01b)* Remove/disable ordinary user mutation route semantics for `/api/interaction-mode` after all internal callers migrate. If a compatibility endpoint remains temporarily, it must not create divergence from Board type and must be documented deprecated/derived.
+11. Update README and canonical `docs/boards.md` (and the *Persistence owner* part of `docs/interaction-mode.md`) in the same change. Remove contradictory old statements rather than appending a second story.
 12. Add migration fixtures/tests for legacy payload combinations and restart/switch behaviour.
 
 ## Out of scope
@@ -36,18 +40,16 @@ At planning time `docs/boards.md` made `board_kind` (`empty|meeting|presentation
 - Visual wheel/Board switcher work (later Slices).
 - Changing voice architecture or speaker authorization axes.
 
-## Files likely touched
+## Files likely touched (verified at HEAD 2fb66040)
 
-Verify at HEAD, likely:
-
-- `jarvis/domain/workspace_board.py`
-- `jarvis/adapters/sqlite_workspace_board.py`
-- `jarvis/core/board_service.py`
-- `jarvis/core/interaction_mode.py`
-- Board/protocol parsing and workspace MCP/update surfaces
-- runtime interaction-mode settings/observer compatibility seams
-- `docs/boards.md`, `docs/interaction-mode.md`, `README.md`
-- relevant Board/interaction-mode tests
+- `jarvis/domain/workspace_board.py` (`BoardKind`, `DEFAULT_BOARD_KIND`, `Board` fields, `from_payload`, `update_board`, `EDITABLE_FIELDS`/`parse_board_edits`)
+- `jarvis/adapters/sqlite_state.py` (`_MIGRATIONS[9]`, `_SCHEMA_VERSION = 9`) + `tests/schema/jarvis_state.v9.sql`
+- `jarvis/adapters/sqlite_workspace_board.py` (only if the cross-check changes)
+- `jarvis/core/board_service.py` (create/update paths; the mode listener itself is 01b)
+- `jarvis/protocol/server.py` / `jarvis/protocol/client.py` (Board routes), `jarvis/runtime/workspace_boards.py`, `jarvis/runtime/workspace_mcp.py` (`board_create`, `board_update`)
+- readers of `board_kind`: `jarvis/domain/brain_context.py` (`board_kind: str = "empty"`, « Nature » line), `jarvis/runtime/board_brief.py`, `jarvis/runtime/tool_brain_choices.py:218`, `jarvis/runtime/tool_brain_perception.py:374`, `jarvis/runtime/control_center_boards.js` (`BOARD_KINDS` labels, `empty` default — UI rework itself is Slice 02), `jarvis/runtime/control_center_workspace.js`
+- `docs/boards.md` (*Board kind*, *Persistence*, *Core routes*, *MCP tools*), `docs/mcp/tool-contract.md` §10.9/§10.12, `README.md`
+- tests: `test_workspace_board_contract.py`, `test_board_store_sqlite.py`, `test_board_service.py`, `test_board_protocol.py`, `test_board_switch.py`, `test_board_memory_contract.py`, `test_board_memory_hydration.py`, `test_board_context_and_host.py`, `test_boards_status.py`, `test_workspace_inspection_api.py`, `test_workspace_mcp.py`, `test_mcp_catalog.py`, `test_schema_migrations.py` (+ new legacy-payload migration test), `tests/integration/test_board_workspace_e2e.py`, `tests/integration/test_board_session_e2e.py`
 
 ## Architecture constraints
 
@@ -61,7 +63,8 @@ Verify at HEAD, likely:
 
 - `qa-verification`
 - `code-review`
-- `runtime-validation` using isolated data roots with migrated legacy fixtures
+- `runtime-validation` using isolated data roots with migrated legacy fixtures (a copy of a v8 file, never the live DB)
+- `agent-trace-analysis` (MCP `board_create`/`board_update` contract changes)
 - Board domain/store/service/protocol/switch/session E2E regression
 - interaction-mode tests updated to the derived/compatibility contract
 

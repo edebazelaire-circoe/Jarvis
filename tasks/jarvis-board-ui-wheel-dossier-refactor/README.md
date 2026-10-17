@@ -105,6 +105,8 @@ Relevant owners at that revision:
 
 Slice 00 must re-audit current HEAD before dispatching anything. These pointers are planning evidence, not permission to ignore newer code.
 
+**Slice 00 result (2026-10-17):** the audited owners, the BoardKind/InteractionMode migration plan, the orbital-ui S04-S10 deltas (eye, F9 hint, status centre, launcher) and the missing Dossier operations are in `docs/08-readiness-audit.md`, which supersedes the pointers above where they disagree.
+
 ## Target mental model
 
 ```text

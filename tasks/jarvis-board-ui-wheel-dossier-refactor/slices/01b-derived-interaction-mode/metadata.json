@@ -1,0 +1,22 @@
+{
+  "slice_id": "01b-derived-interaction-mode",
+  "title": "Slice 01b — Retire user-facing interaction-mode writers (derived mode only)",
+  "task_type": "waived",
+  "task_type_resolution": "WAIVED_NO_WORKSPACE_VOCABULARY_SEE_SLICE00_READINESS",
+  "dependencies": [
+    "01-board-type-contract-migration"
+  ],
+  "frontend": false,
+  "code": true,
+  "required_qa": [
+    "qa-verification",
+    "code-review",
+    "runtime-validation",
+    "agent-trace-analysis"
+  ],
+  "required_skills": [
+    "/caveman",
+    "/coding-guideline"
+  ],
+  "agent_routing": null
+}

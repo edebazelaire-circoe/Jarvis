@@ -24,3 +24,10 @@ Particular stale statements that must not survive the final task:
 - README section teaching users to switch SIMPLE/PRESENTATION as a separate mode.
 - shell docs listing the old bottom-left interaction-mode HUD and old top-left Board HUD placement.
 - capture docs saying Video/Screenshot/Audio are first-level wheel wedges after the new Capture category ships.
+
+Added by Slice 00 (HEAD `2fb66040`): levels above verified (shell, Boards, interaction mode, capture, scene and scene selection are Level 3 contracts with conformance tests). Further stale statements that must not survive:
+
+- `docs/control-center-shell.md`: *Status centre* row 3 (`#hiddenEye`), *Zones* `top-left` (`#boardsHud`, `.state`) and `bottom-left` (`#interactionModeHud`), *Global launcher* rows « Board / Interaction mode unchanged », the mode-control rungs and 254 px insets, *Tool wheel* « exactly four primary wedges ».
+- `docs/scene-model.md` › *Visibility vs disposition*: « toggled by the eye `#hiddenEye` of the status centre ».
+- `docs/presentation-studio.md`: the interaction-mode HUD kept live over Variants (`data-keep-live="run"`) as « the way out of PRESENTATION », the reload band placed against `#interactionModeHud`, restore « reapplies the stored per-Board preference ».
+- `jarvis/runtime/claude_local.py` prompt line « passe en mode présentation / simple / réunion ».

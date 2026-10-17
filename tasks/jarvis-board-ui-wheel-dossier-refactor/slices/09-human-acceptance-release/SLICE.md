@@ -12,7 +12,7 @@ Run the explicit human validation only after machine QA is green, compare the re
 
 1. Project Manager verifies no automated finding remains open from this task.
 2. Re-read `../../grill-session.md` and `../../docs/07-human-intent-audit.md` before inviting human acceptance.
-3. Execute all `human-validation.json` checks from earlier Slices plus the final holistic check below.
+3. Execute all `human-validation.json` checks from earlier Slices plus the final holistic check below. Also fold in the still-valid checks of `tasks/jarvis-board-orbital-ui-workspace-rail/HUMAN-CHECKS.md` (HV-03-01, HV-05-01..05, HV-07-01, HV-08-02..05 re-worded after `SET` moved, HV-09-07, HV-09-08) and re-worded accessibility checks (contrast, 200 % zoom, screen reader, Windows voice access) against the new shell; the obsolete orbital checks are listed in `../../docs/08-readiness-audit.md` §5 and are not asked.
 4. Show actual runtime screenshots/states, not generated concept art, for Board shell, wheel categories, active recordings and Dossier.
 5. Ask human to judge visual hierarchy/style, not only whether buttons work.
 6. If human feedback contradicts a locked decision or reveals a regression, return to the responsible Slice; do not patch around it in release notes.

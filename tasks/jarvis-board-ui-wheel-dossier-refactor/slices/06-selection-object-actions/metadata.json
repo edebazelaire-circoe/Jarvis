@@ -1,9 +1,10 @@
 {
   "slice_id": "06-selection-object-actions",
   "title": "Slice 06 — Selection and Board-object actions",
-  "task_type": null,
-  "task_type_resolution": "INHERIT_FROM_SLICE_00_PROJECT_MANAGER_RESOLUTION",
+  "task_type": "waived",
+  "task_type_resolution": "WAIVED_NO_WORKSPACE_VOCABULARY_SEE_SLICE00_READINESS",
   "dependencies": [
+    "04-jarvis-runtime-capture-controls",
     "05-dossier-contract-projection"
   ],
   "frontend": true,

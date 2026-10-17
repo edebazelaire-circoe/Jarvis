@@ -1,8 +1,8 @@
 {
   "slice_id": "04-jarvis-runtime-capture-controls",
   "title": "Slice 04 — JARVIS runtime controls, Capture submenu and transient recording HUD",
-  "task_type": null,
-  "task_type_resolution": "INHERIT_FROM_SLICE_00_PROJECT_MANAGER_RESOLUTION",
+  "task_type": "waived",
+  "task_type_resolution": "WAIVED_NO_WORKSPACE_VOCABULARY_SEE_SLICE00_READINESS",
   "dependencies": [
     "03-orbital-wheel-redesign"
   ],
