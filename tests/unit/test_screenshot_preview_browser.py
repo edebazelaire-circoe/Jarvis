@@ -415,3 +415,35 @@ async def test_annotate_saves_a_new_screenshot_and_keeps_the_original(stack, tmp
     assert annotated != IMAGE and annotated.startswith(PNG_MAGIC) and derived.metadata["annotated_from"] == original_id
     lines = "\n".join(out["console"])
     assert "annotate_closed" in lines and '"reason":"escape"' in lines and "annotation_saved" in lines
+
+
+#: La grille d'actions et la croix (QA S05, polish 6) : « Supprimer » sur sa ligne, la croix hors de la vignette.
+LAYOUT = r"""(()=>{const q=s=>document.querySelector(s);const box=el=>{const r=el.getBoundingClientRect();return {l:r.left,t:r.top,r:r.right,b:r.bottom}};
+  const b=a=>box(q(`#screenshotPreview [data-sp-act=${a}]`));
+  return {send:b('send'),open:b('open'),annotate:b('annotate'),del:b('delete'),close:box(q('#screenshotPreview .sp-close')),
+    thumb:box(q('#screenshotPreview .sp-thumb')),actions:box(q('#screenshotPreview .sp-actions')),
+    theme:document.documentElement.getAttribute('data-jarvis-theme')||''}})()"""
+
+
+@pytest.mark.parametrize("size", ((1440, 900), (1280, 720)), ids=lambda s: f"{s[0]}x{s[1]}")
+async def test_cosmos_theme_preview_layout_and_neighbours(stack, tmp_path, size):
+    """QA S05, polish 5 : le thème que l'utilisateur fait tourner (Cosmos) ; et polish 6, la mise en page
+    des actions : « Supprimer » occupe sa ligne, la croix ne couvre pas la vignette."""
+
+    width, height = size
+    out = await _drive(stack.url, [
+        {"eval": "window.JarvisThemeAPI.activate('cosmos',{persist:false})"}, {"wait": 400},
+        TAKE, _until(SHOWN, 8000, "shown"), {"wait": 250}, _read("shown"), {"value": "layout", "expr": LAYOUT},
+        _shot(tmp_path, f"preview-cosmos-{width}x{height}"),
+    ], width=width, height=height, tmp_path=tmp_path)
+    r = out["reads"]
+    shown, lay = r["shown"], r["layout"]
+    assert lay["theme"] == "cosmos" and shown["hidden"] is False and shown["z"] == "38"
+    _no_overlap_with_neighbours(shown)
+    # Envoyer, puis Ouvrir | Annoter, puis Supprimer sur toute la largeur.
+    assert round(lay["send"]["r"] - lay["send"]["l"]) == round(lay["actions"]["r"] - lay["actions"]["l"])
+    assert round(lay["open"]["t"]) == round(lay["annotate"]["t"]) and lay["open"]["r"] <= lay["annotate"]["l"]
+    assert round(lay["del"]["l"]) == round(lay["actions"]["l"]) and round(lay["del"]["r"]) == round(lay["actions"]["r"])
+    assert lay["del"]["t"] >= lay["open"]["b"]
+    # La croix est sous la vignette (dans la légende), jamais sur son coin.
+    assert lay["close"]["t"] >= lay["thumb"]["b"] and lay["close"]["b"] <= lay["actions"]["t"]

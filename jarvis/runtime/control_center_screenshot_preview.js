@@ -108,14 +108,19 @@
     if(!isObject(a)||typeof a.artifact_id!=='string'||!ID.test(a.artifact_id))return {item:null,reason:'no_artifact'};
     if(a.kind!=='screenshot')return {item:null,reason:'not_a_screenshot'};
     if(a.state!=='complete')return {item:null,reason:'not_complete'};
-    const at=Number.isFinite(shot.at)?shot.at:Date.now(),clock=clockOf(at);
+    const at=Number.isFinite(shot.at)?shot.at:Date.now();
+    /* L'heure de création de Core quand elle est lisible : c'est d'elle que Core tire le nom de la pièce
+       dans le brief du cerveau (`screenshot_attachment_name`), la puce du Chat dit donc le même nom. */
+    const made=typeof a.created_at==='string'?Date.parse(a.created_at):NaN,clock=clockOf(Number.isFinite(made)?made:at);
+    const annotated=a.source==='annotation'||(isObject(a.metadata)&&typeof a.metadata.annotated_from==='string');
     const mime=typeof a.mime_type==='string'&&a.mime_type?a.mime_type:'image/png';
     return {item:Object.freeze({
       artifactId:a.artifact_id,captureId:isObject(shot.capture)&&typeof shot.capture.capture_id==='string'?shot.capture.capture_id:null,
       url:payloadUrl(a.artifact_id),mime,type:typeOf(mime),
       width:Number.isInteger(a.width)&&a.width>0?a.width:null,height:Number.isInteger(a.height)&&a.height>0?a.height:null,
       size:Number.isInteger(a.size_bytes)&&a.size_bytes>=0?a.size_bytes:null,at,
-      title:`Capture d’écran · ${clock.hm}`,name:`Capture d’écran ${clock.file}.${typeOf(mime).toLowerCase()}`,
+      title:`Capture d’écran · ${clock.hm}${annotated?' · annotée':''}`,
+      name:`Capture d’écran ${clock.file}${annotated?' annotée':''}.${typeOf(mime).toLowerCase()}`,
     }),reason:null};
   }
   function deleteText(code,message){
@@ -212,10 +217,20 @@
       if(!item)return 'none';
       if(S.busy){log('info','delete_ignored',{artifact_id:item.artifactId,busy:S.busy});return 'busy'}
       S.busy='delete';S.note=null;disarm();changed();
-      let confirmed=false;
+      let confirmed=false,confirmFailed=false;
       try{confirmed=await actions.confirm(item)===true}
-      catch(error){log('error','delete_confirm_failed',{error:String(error&&error.message||error)})}
-      if(S.item!==item)return 'gone';
+      catch(error){confirmFailed=true;log('error','delete_confirm_failed',{error:String(error&&error.message||error)})}
+      /* Une autre capture a pris la place pendant la confirmation : rien n'est supprimé, et on le dit. */
+      if(S.item!==item){
+        log('info','delete_abandoned',{artifact_id:item.artifactId,reason:'replaced'});
+        actions.say('Une nouvelle capture a remplacé l’aperçu : rien n’a été supprimé.');
+        return 'gone';
+      }
+      if(confirmFailed){
+        const text='Confirmation impossible : la capture n’a pas été supprimée.';
+        S.busy=null;S.busySince=null;S.note={tone:'bad',code:'confirm_unavailable',text};arm();changed();actions.say(text);
+        return 'refused';
+      }
       if(!confirmed){S.busy=null;S.busySince=null;arm();changed();log('info','delete_cancelled',{artifact_id:item.artifactId});return 'cancelled'}
       log('info','delete_requested',{artifact_id:item.artifactId});
       /* L'attente se voit (« Suppression… N s ») et a une échéance (`TIMING.deleteMs`, côté navigateur). */
@@ -311,11 +326,11 @@ ${H} .sp-thumb[data-sp-image=failed] img,${H} .sp-thumb[data-sp-image=loading] i
 ${H} .sp-ph{position:absolute;inset:0;display:grid;place-content:center;gap:4px;padding:8px;text-align:center;color:var(--muted,#7190a0)}
 ${H} .sp-ph b{color:var(--text,#d8edf7);font-weight:600;letter-spacing:.04em}
 ${H} .sp-thumb[data-sp-image=ready] .sp-ph{display:none}
-${H} .sp-cap{display:grid;gap:1px;margin:7px 2px 7px;min-width:0}
+${H} .sp-cap{position:relative;display:grid;gap:1px;margin:7px 2px 7px;min-width:0;min-height:32px;padding-right:38px;align-content:center}
 ${H} .sp-title{font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 ${H} .sp-meta{color:var(--muted,#7190a0);font-size:11px;font-variant-numeric:tabular-nums}
 ${H} .sp-actions{display:grid;grid-template-columns:1fr 1fr;gap:6px}
-${H} .sp-actions button[data-sp-act=send]{grid-column:1/-1}
+${H} .sp-actions button[data-sp-act=send],${H} .sp-actions button[data-sp-act=delete]{grid-column:1/-1}
 ${H} .sp-actions button{display:inline-flex;align-items:center;justify-content:center;gap:6px;min-height:32px;padding:0 8px;
   border:1px solid var(--line,#183343);border-radius:7px;background:rgba(3,14,20,.9);color:var(--text,#d8edf7);font:inherit;cursor:pointer;
   transition:border-color var(--shell-dur-fast,120ms) var(--shell-ease,ease),background var(--shell-dur-fast,120ms) var(--shell-ease,ease)}
@@ -325,7 +340,7 @@ ${H} .sp-actions button[data-sp-act=delete]{color:var(--danger,#ff6577)}
 ${H} .sp-actions button[data-sp-act=delete]:hover{border-color:color-mix(in srgb,var(--danger,#ff6577) 55%,transparent);background:rgba(255,101,119,.08)}
 ${H} .sp-actions button[aria-disabled=true]{opacity:.55;cursor:progress}
 ${H} .sp-actions svg{flex:none;width:14px;height:14px}
-${H} .sp-close{position:absolute;top:12px;right:12px;width:32px;height:32px;display:grid;place-items:center;padding:0;border:1px solid var(--line,#183343);
+${H} .sp-close{position:absolute;top:50%;right:0;transform:translateY(-50%);width:32px;height:32px;display:grid;place-items:center;padding:0;border:1px solid var(--line,#183343);
   border-radius:7px;background:rgba(3,10,15,.86);color:var(--muted,#7190a0);font:inherit;font-size:14px;cursor:pointer}
 ${H} .sp-close:hover{color:var(--text,#d8edf7)}
 ${H} .sp-note{margin:7px 2px 0;padding:6px 8px;border:1px solid color-mix(in srgb,var(--sem-problem,#ff6a4d) 55%,transparent);border-radius:7px;
@@ -641,7 +656,7 @@ ${E} .sp-ed-status[data-tone=bad]{color:var(--danger,#ff6577)}
     const img=el('img');img.decoding='async';img.loading='lazy';
     const ph=el('span','sp-ph');const phType=el('b'),phText=el('span');ph.append(phType,phText);
     thumb.append(img,ph);
-    const cap=el('figcaption','sp-cap'),title=el('span','sp-title'),meta=el('span','sp-meta');cap.append(title,meta);
+    const cap=el('figcaption','sp-cap'),title=el('span','sp-title'),meta=el('span','sp-meta');
     const actions=el('div','sp-actions');actions.setAttribute('role','group');actions.setAttribute('aria-label','Actions sur la capture');
     const button=(act,label,iconName)=>{const b=el('button');b.type='button';b.dataset.spAct=act;b.append(icon(iconName),document.createTextNode(label));return b};
     const openB=button('open','Ouvrir','open'),sendB=button('send','Envoyer à Jarvis','send'),deleteB=button('delete','Supprimer','delete');
@@ -650,11 +665,13 @@ ${E} .sp-ed-status[data-tone=bad]{color:var(--danger,#ff6577)}
     actions.append(sendB,openB,annotateB,deleteB);
     const close=el('button','sp-close','×');close.type='button';
     close.setAttribute('aria-label','Fermer l’aperçu (la capture reste enregistrée)');close.title='Fermer l’aperçu — la capture reste enregistrée';
+    /* La croix vit dans la légende, à droite du titre : elle ne couvre plus le coin de la vignette (QA S05, polish 6). */
+    cap.append(title,meta,close);
     const note=el('p','sp-note');note.hidden=true;note.setAttribute('role','status');
     const hint=el('span','sp-sr','Se ferme seul après 6 secondes, sauf au survol ou au focus. Échap le ferme ; la capture reste enregistrée.');
     hint.id=DOM.hintId;
     const time=el('span','sp-time');time.setAttribute('aria-hidden','true');time.appendChild(el('i'));
-    card.append(thumb,cap,actions,note,close,time,hint);
+    card.append(thumb,cap,actions,note,time,hint);
     card.setAttribute('aria-describedby',DOM.hintId);
     card.style.setProperty('--sp-ms',`${TIMING.dismissMs}ms`);
     host.appendChild(card);

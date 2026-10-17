@@ -27,14 +27,16 @@ from tests.fakes.capture_stack import TOKEN, CaptureStack
 W, H = 64, 36
 
 
-def png(width: int, height: int, shade: int = 0) -> bytes:
+def png(width: int, height: int, shade: int = 0, padding: int = 0) -> bytes:
     rows = b"".join(b"\x00" + bytes((x * 4 + shade) % 256 for x in range(width) for _ in range(3)) for _ in range(height))
 
     def chunk(kind: bytes, data: bytes) -> bytes:
         return struct.pack(">I", len(data)) + kind + data + struct.pack(">I", zlib.crc32(kind + data) & 0xFFFFFFFF)
 
     return (b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", struct.pack(">IIBBBBB", width, height, 8, 2, 0, 0, 0))
-            + chunk(b"IDAT", zlib.compress(rows)) + chunk(b"IEND", b""))
+            + chunk(b"IDAT", zlib.compress(rows))
+            # `padding` : un bloc auxiliaire privé (`prVt`, ignoré des lecteurs) pour un PNG lourd mais entier.
+            + (chunk(b"prVt", b"\x00" * padding) if padding else b"") + chunk(b"IEND", b""))
 
 
 ORIGINAL = png(W, H)
@@ -106,9 +108,14 @@ async def test_rejects_non_png_oversize_and_dimension_mismatch(stack):
     pending = await stack.core.artifacts.create(kind=ArtifactKind.SCREENSHOT, source="test", payload_name="screenshot.png")
     jpeg = b"\xff\xd8\xff\xe0" + b"\x00" * 200
     broken = b"\x89PNG\r\n\x1a\n" + b"\x00" * 40
+    # Un en-tête valide suivi de zéros (QA S05, polish 4) et un PNG tronqué avant `IEND` : pas des images.
+    trailing_zeros = png(W, H) + b"\x00" * 64
+    truncated = ANNOTATED[:-12]
     cases = [
         (original_id, jpeg, "image/png", 415, "annotation_not_png"),
         (original_id, broken, "image/png", 415, "annotation_not_png"),
+        (original_id, trailing_zeros, "image/png", 415, "annotation_not_png"),
+        (original_id, truncated, "image/png", 415, "annotation_not_png"),
         (original_id, ANNOTATED, "image/jpeg", 415, "annotation_not_png"),
         (original_id, png(W + 1, H), "image/png", 400, "annotation_dimensions_mismatch"),
         (original_id, png(W, H * 2), "image/png", 400, "annotation_dimensions_mismatch"),
@@ -128,7 +135,7 @@ async def test_rejects_non_png_oversize_and_dimension_mismatch(stack):
         async with http.post(f"{stack.core_url}/v1/artifacts/{original_id}/annotations", headers=headers,
                              data=b"\x89PNG" + b"\x00" * (MAX_ANNOTATION_BYTES + 10)) as response:
             assert response.status == 413 and (await response.json())["error"]["code"] == "annotation_too_large"
-        big = png(W, H) + b"\x00" * (7 * 1024 * 1024)  # 7 Mio : au-dessus de la borne du serveur, sous celle de l'annotation
+        big = png(W, H, padding=7 * 1024 * 1024)  # 7 Mio : au-dessus de la borne du serveur, sous celle de l'annotation
         async with http.post(f"{stack.core_url}/v1/artifacts/{original_id}/annotations", headers=headers, data=big) as response:
             assert response.status == 201, await response.text()
     shots = await _screenshots(stack)

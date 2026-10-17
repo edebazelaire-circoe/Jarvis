@@ -9,6 +9,7 @@ navigateur ni dans un événement.
 
 from __future__ import annotations
 
+import dataclasses
 import json
 from pathlib import Path
 import uuid
@@ -16,6 +17,7 @@ import uuid
 import pytest
 
 from jarvis.adapters.control_center_brain import _turn_context
+from jarvis.core.upload_service import screenshot_attachment_name
 from jarvis.domain.artifacts import ArtifactKind
 from jarvis.domain.conversation_events import ConversationEventType as T, encode_conversation_event
 from jarvis.runtime.attachments_brief import BRIEF_ATTACHMENTS_HEADER, with_agent_readability
@@ -221,15 +223,27 @@ async def test_screenshot_of_open_session_is_admitted(stack):
     assert turn.attachments == (shot,)
     [item] = stack.backend.contexts[-1]["attachments"]["items"]
     payload = stack.core.artifacts.payload_path(before)
+    # Le nom que montre la pièce du Chat : l'heure locale de la capture (QA S05, polish 2).
+    name = f"Capture d’écran {before.created_at.astimezone():%H-%M-%S}.png"
     assert (item["artifact_id"], item["original_name"], item["mime_type"], item["path"]) == (
-        shot, "capture d’écran.png", "image/png", payload), "le chemin du payload de la capture, jamais une copie"
+        shot, name, "image/png", payload), "le chemin du payload de la capture, jamais une copie"
     brief = build_agent_brief(with_agent_readability(stack.backend.contexts[-1], "claude"), "Que vois-tu ?")
     block = brief[brief.index(BRIEF_ATTACHMENTS_HEADER):brief.index("[Demande]")]
-    assert block.splitlines()[1] == f"- « capture d’écran.png » (image/png, 1,0 Ko) : lisible avec Read → {payload}"
+    assert block.splitlines()[1] == f"- « {name} » (image/png, 1,0 Ko) : lisible avec Read → {payload}"
     after = await stack.core.artifacts.get(shot)
     assert (after.state, after.size_bytes, after.metadata, after.kind) == (
         before.state, before.size_bytes, before.metadata, before.kind), "la capture n'est pas modifiée"
     assert str(Path(payload).parent) not in json.dumps(body), "aucun chemin vers le navigateur"
+
+
+async def test_screenshot_names_follow_the_capture_clock_and_mark_annotations(stack):
+    """QA S05, polish 2 : deux captures d'un même message ne s'appellent plus toutes deux
+    « capture d’écran.png » ; le nom est celui de la pièce du Chat (heure locale de la capture)."""
+
+    shot = await stack.core.artifacts.get(await screenshot(stack))
+    clock = f"{shot.created_at.astimezone():%H-%M-%S}"
+    assert screenshot_attachment_name(shot) == f"Capture d’écran {clock}.png"
+    assert screenshot_attachment_name(dataclasses.replace(shot, source="annotation")) == f"Capture d’écran {clock} annotée.png"
 
 
 async def test_screenshot_of_other_session_is_refused(stack):

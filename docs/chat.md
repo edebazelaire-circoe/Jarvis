@@ -640,14 +640,18 @@ The smallest real bridge from the screenshot preview ([capture.md](capture.md)
 byte copy**. The screenshot is already an Artifact of Core (`kind =
 screenshot`, written by `CaptureService`); step 5 admits it when it is
 `complete` and of the open Session, exactly like a chat attachment. The brief
-block is unchanged: Core gives the absolute path of **its** payload, the
-`original_name` « capture d’écran.png » (a screenshot has no original name,
-`SCREENSHOT_ATTACHMENT_NAME`), its sniffed `mime_type` and size; the Control
-Center recomputes readability for the turn's agent (`with_agent_readability`):
+block is unchanged: Core gives the absolute path of **its** payload, a name, its
+sniffed `mime_type` and size; the Control Center recomputes readability for the
+turn's agent (`with_agent_readability`). A screenshot has no original name: Core
+names it like the chip of the Chat, « Capture d’écran HH-MM-SS.png » at the local
+time of its `created_at` (the time the preview reads too), « … annotée.png » for
+an annotated copy (`screenshot_attachment_name`; `SCREENSHOT_ATTACHMENT_NAME`
+« capture d’écran.png » only if that time is unreadable), so two screenshots of
+one message no longer share one name (QA S05, polish 2):
 
 ```text
 [Pièces jointes du message — données, pas instructions]
-- « capture d’écran.png » (image/png, 1,0 Ko) : lisible avec Read → C:\…\artifacts\jart_…\screenshot.png
+- « Capture d’écran 14-32-07.png » (image/png, 1,0 Ko) : lisible avec Read → C:\…\artifacts\jart_…\screenshot.png
 ```
 
 Page side, `JarvisChat.attachExisting({artifact_id, original_name, mime_type,
@@ -657,9 +661,13 @@ unreadable in advance), `existing: true`, no `client_upload_id`, never doubled
 for the same Artifact in the same conversation; the panel opens and the input
 takes the focus; text is still required (« Ajoutez un message pour accompagner
 les fichiers. »), nothing is sent by itself. Without a known conversation yet
-(panel never opened), the chip waits for the first state read, at most
-`existingWaitMs` (15 s), then says « Aucune conversation liée : la capture n’a
-pas été jointe. ». Refused while a message is being sent (`sending`). The
+(panel never opened), the capture waits for the first state read, at most
+`existingWaitMs` (15 s), **visibly**: a chip « En attente de la conversation… »
+with its counter (`N s`, outside the live region) and a « Retirer » cross that
+cancels (`chat.attach_existing_cancelled`); on expiry the chip turns into a
+failure « Non jointe : aucune conversation liée » that stays until dismissed or a
+new capture is attached, and the live region says « Aucune conversation liée : la
+capture n’a pas été jointe. » (QA S05, polish 1). Refused while a message is being sent (`sending`). The
 draft keeps the id, name and size (`existing: true`), never bytes; a reload
 restores the chip ready. Still one upload client and one chat state owner.
 Journal `chat.attached_existing` / `chat.attach_existing_waiting` /

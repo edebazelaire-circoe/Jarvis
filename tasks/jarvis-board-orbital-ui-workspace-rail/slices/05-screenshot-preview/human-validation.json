@@ -5,6 +5,30 @@
       "when": "After preview action tests pass",
       "instruction": "Take a screenshot and ignore the preview once, then repeat and use each quick action.",
       "acceptance": "Preview never blocks work; actions are understandable and useful."
+    },
+    {
+      "id": "HV-05-02",
+      "when": "After the QA S05 polish (PASS_WITH_POLISH)",
+      "instruction": "Sur le JARVIS réel, prenez une capture, « Envoyer à Jarvis », écrivez une question et envoyez ; regardez la trace du tour.",
+      "acceptance": "Le cerveau répond à propos de l’image, après un seul Read du payload de la capture (nom « Capture d’écran HH-MM-SS.png »)."
+    },
+    {
+      "id": "HV-05-03",
+      "when": "After the QA S05 polish (PASS_WITH_POLISH)",
+      "instruction": "Rechargez la page sans jamais ouvrir le Chat, prenez une capture puis « Envoyer à Jarvis ».",
+      "acceptance": "La puce « En attente de la conversation… N s » se voit puis devient prête ; si rien ne vient, l’échec est dit clairement."
+    },
+    {
+      "id": "HV-05-04",
+      "when": "After the QA S05 polish (PASS_WITH_POLISH)",
+      "instruction": "Sur un écran de 1920 px ou plus, « Annoter » une capture plein écran, tracez, enregistrez.",
+      "acceptance": "L’éditeur tient dans l’écran, la copie annotée s’enregistre (sous 8 Mo) et l’aperçu dit « · annotée »."
+    },
+    {
+      "id": "HV-05-05",
+      "when": "After the QA S05 polish (PASS_WITH_POLISH)",
+      "instruction": "En thème Cosmos avec Bare Hands actif, prenez une capture et utilisez l’aperçu.",
+      "acceptance": "L’aperçu ne bloque ni la main ni la souris ; ses actions répondent au pincement."
     }
   ]
 }

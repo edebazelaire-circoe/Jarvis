@@ -214,3 +214,48 @@ def test_annotate_holds_preview_and_shows_the_derived_screenshot():
     assert out["opened"] == "opened" and out["paused"] is True and out["holds"] == ["annotate"]
     assert out["afterClose"] == []
     assert out["after"] == "jart_" + "3".zfill(32) and out["holdsAfter"] == []
+
+
+def test_confirmation_failure_or_replacement_is_said_never_silent():
+    """QA S05, polish 3 : une confirmation impossible (`confirmDialog` absent, levée) ne vaut pas une annulation
+    muette — l'aperçu le dit et rien n'est supprimé ; un aperçu remplacé pendant la confirmation le dit aussi."""
+
+    out = node("""
+      const r={};
+      const b=bench();
+      const failing=M.createPreviewController({now:b.now,later:()=>0,unlater:()=>{},log:()=>{},onChange:()=>{},dismissMs:6000,
+        actions:{confirm:async()=>{throw new Error('confirmDialog absent')},remove:async()=>{r.removed=true},
+          say:t=>{(r.said=r.said||[]).push(t)},attach:()=>({ok:true}),openLightbox:()=>{}}});
+      failing.accept({shot:null});failing.accept({shot:shot(2)});
+      r.failed=await failing.remove();r.failedView=failing.view();
+      let release=null;
+      const slow=M.createPreviewController({now:b.now,later:()=>0,unlater:()=>{},log:()=>{},onChange:()=>{},dismissMs:6000,
+        actions:{confirm:()=>new Promise(ok=>{release=ok}),remove:async()=>{r.removedSlow=true},
+          say:t=>{(r.saidSlow=r.saidSlow||[]).push(t)},attach:()=>({ok:true}),openLightbox:()=>{}}});
+      slow.accept({shot:null});slow.accept({shot:shot(3)});
+      const pending=slow.remove();slow.accept({shot:shot(4)});release(true);
+      r.replaced=await pending;r.replacedItem=slow.view().item.artifactId;
+      return r;""")
+    assert out["failed"] == "refused" and "removed" not in out
+    view = out["failedView"]
+    assert view["shown"] is True and view["busy"] is None
+    assert view["note"] == {"tone": "bad", "code": "confirm_unavailable", "text": "Confirmation impossible : la capture n’a pas été supprimée."}
+    assert out["said"] == [view["note"]["text"]]
+    assert out["replaced"] == "gone" and "removedSlow" not in out and out["replacedItem"].endswith("4")
+    assert out["saidSlow"] == ["Une nouvelle capture a remplacé l’aperçu : rien n’a été supprimé."]
+
+
+def test_name_and_title_follow_core_clock_and_mark_annotated_copies():
+    """QA S05, polish 2 et 6 : le nom de la pièce suit l'heure de Core (`created_at`, celle du brief du cerveau),
+    et une copie annotée se dit « annotée » dans le titre et le nom."""
+
+    out = node("""
+      const iso='2026-10-17T12:34:56Z',d=new Date(iso),two=n=>String(n).padStart(2,'0');
+      const b=bench();b.c.accept({shot:null});b.c.accept({shot:shot(1,{created_at:iso},Date.parse(iso)+4000)});
+      const plain=b.c.view().item;
+      b.c.accept({shot:shot(2,{created_at:iso,source:'annotation',metadata:{annotated_from:'jart_'+'1'.padStart(32,'0')}})});
+      const marked=b.c.view().item;
+      return {plain:[plain.title,plain.name],marked:[marked.title,marked.name],
+        hm:two(d.getHours())+':'+two(d.getMinutes()),file:two(d.getHours())+'-'+two(d.getMinutes())+'-'+two(d.getSeconds())};""")
+    assert out["plain"] == [f"Capture d’écran · {out['hm']}", f"Capture d’écran {out['file']}.png"]
+    assert out["marked"] == [f"Capture d’écran · {out['hm']} · annotée", f"Capture d’écran {out['file']} annotée.png"]

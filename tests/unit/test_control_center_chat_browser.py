@@ -507,3 +507,42 @@ def test_low_viewport_toast_spares_the_panel_and_its_hint(tmp_path):
     assert not _overlap(r["toast"], r["panel"]), (r["toast"], r["panel"])
     assert not _overlap(r["toast"], out["reads"]["hint"])
     assert r["toast"]["l"] >= 0
+
+
+def test_existing_capture_waiting_for_a_conversation_is_visible_cancellable_and_fails_clearly(tmp_path):
+    """QA S05, polish 1 (RULE ZERO) : « Envoyer à Jarvis » avant toute conversation connue attendait
+    jusqu'à 15 s sans rien de visible. La lecture d'état ne répond jamais ici : la capture se voit en
+    attente avec son compteur, la croix l'annule, et l'échéance laisse une puce d'échec lisible."""
+
+    hang = ("(()=>{const f=window.fetch;window.fetch=(p,i)=>String(p)==='/api/chat/state'"
+            "?new Promise(()=>{}):f(p,i);window.JarvisChat.config.existingWaitMs=3000;return 1})()")
+    spec = "{artifact_id:'jart_s05wait',original_name:'Capture d’écran 10-00-00.png',mime_type:'image/png',size_bytes:1024}"
+    chip = ("(()=>{const li=document.querySelector('#chatFiles .chat-file-existing');const box=document.getElementById('chatFiles');"
+            "return li&&!box.hidden&&li.isConnected?{status:li.dataset.status,name:li.querySelector('.chat-file-name').textContent,"
+            "text:li.querySelector('.chat-file-text').textContent,time:li.querySelector('.chat-file-time').textContent,"
+            "x:li.querySelector('.chat-file-x').getAttribute('aria-label'),"
+            "shown:li.getBoundingClientRect().height>0}:null})()")
+    out = _drive(tmp_path, [
+        {"eval": hang},
+        {"value": "answer", "expr": f"JSON.stringify(window.JarvisChat.attachExisting({spec}))"},
+        {"wait": 1300}, {"value": "waiting", "expr": chip},
+        {"click": "#chatFiles .chat-file-existing .chat-file-x"}, {"wait": 300},
+        {"value": "cancelled", "expr": chip},
+        {"value": "again", "expr": f"JSON.stringify(window.JarvisChat.attachExisting({spec}))"},
+        {"wait": 3800}, {"value": "expired", "expr": chip},
+        {"click": "#chatFiles .chat-file-existing .chat-file-x"}, {"wait": 300},
+        {"value": "closed", "expr": chip},
+        {"value": "items", "expr": "window.JarvisChat.instance.snapshot().attachments.items.length"},
+    ])
+    r = out["reads"]
+    assert json.loads(r["answer"]) == {"ok": True, "pending": True}
+    waiting = r["waiting"]
+    assert waiting and waiting["shown"] and waiting["status"] == "waiting", waiting
+    assert waiting["name"] == "Capture d’écran 10-00-00.png" and waiting["text"] == "En attente de la conversation…"
+    assert waiting["time"] in ("1 s", "2 s") and waiting["x"] == "Annuler l’ajout de la capture"
+    assert r["cancelled"] is None
+    failed = r["expired"]
+    assert failed and failed["status"] == "failed" and failed["text"] == "Non jointe : aucune conversation liée", failed
+    assert failed["x"] == "Fermer ce message"
+    assert r["closed"] is None and r["items"] == 0, "rien n'a été joint"
+    assert any("attach_existing_cancelled" in line for line in out["console"]), out["console"]

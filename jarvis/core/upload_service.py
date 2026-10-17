@@ -160,6 +160,21 @@ def link_view(artifact: Artifact) -> dict[str, Any]:
 SCREENSHOT_ATTACHMENT_NAME = "capture d’écran.png"
 
 
+def screenshot_attachment_name(artifact: Artifact) -> str:
+    """Le nom d'une capture d'écran dans le brief, celui de sa pièce dans le Chat : « Capture d’écran
+    HH-MM-SS.png » à l'heure locale de sa création (`created_at`, la même que lit l'aperçu du Control
+    Center), « … annotée » pour une copie annotée. Deux captures d'un même message ne portent plus le
+    même nom (QA S05, polish 2). Sans heure lisible : `SCREENSHOT_ATTACHMENT_NAME`."""
+
+    try:
+        clock = artifact.created_at.astimezone().strftime("%H-%M-%S")
+    except (AttributeError, ValueError, OSError):
+        return SCREENSHOT_ATTACHMENT_NAME
+    annotated = " annotée" if artifact.source == "annotation" else ""
+    extension = {"image/jpeg": "jpg", "image/webp": "webp"}.get(artifact.mime_type or "", "png")
+    return f"Capture d’écran {clock}{annotated}.{extension}"
+
+
 def attachable(artifact: Artifact) -> bool:
     """Peut accompagner un message écrit : une pièce jointe du chat, ou une capture d'écran (Slice 05, D7).
 
@@ -601,7 +616,7 @@ class UploadService:
                 continue
             path = self._readable_path(artifact)
             meta: Mapping[str, Any] = artifact.metadata
-            fallback = SCREENSHOT_ATTACHMENT_NAME if artifact.kind is ArtifactKind.SCREENSHOT else "fichier"
+            fallback = screenshot_attachment_name(artifact) if artifact.kind is ArtifactKind.SCREENSHOT else "fichier"
             items.append(BrainAttachment(
                 artifact_id=artifact.artifact_id, original_name=str(meta.get("original_name") or fallback),
                 mime_type=artifact.mime_type or "application/octet-stream", size_bytes=artifact.size_bytes,

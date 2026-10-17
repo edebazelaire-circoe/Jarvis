@@ -31,6 +31,8 @@ from jarvis.domain.artifacts import Artifact, ArtifactKind, ArtifactRelationKind
 #: Corps accepté : la borne d'une réponse de payload (`MAX_PAYLOAD_CHUNK_BYTES`), pour qu'une annotation se relise d'un coup.
 MAX_ANNOTATION_BYTES = 8 * 1024 * 1024
 PNG_MAGIC = b"\x89PNG\r\n\x1a\n"
+#: Le bloc final d'un PNG entier : longueur 0, `IEND`, son CRC fixe.
+PNG_IEND = b"\x00\x00\x00\x00IEND\xaeB`\x82"
 ANNOTATION_SOURCE = "annotation"
 ANNOTATION_PAYLOAD_NAME = "screenshot.png"
 
@@ -46,7 +48,10 @@ class AnnotationRefused(Exception):
 
 
 def png_size(data: bytes) -> tuple[int, int]:
-    """(largeur, hauteur) d'un PNG, lues dans son premier bloc `IHDR` ; `AnnotationRefused` 415 sinon."""
+    """(largeur, hauteur) d'un PNG, lues dans son premier bloc `IHDR` ; `AnnotationRefused` 415 sinon.
+
+    Le corps doit aussi **finir** par le bloc `IEND` : un en-tête valide suivi de n'importe quoi
+    (des zéros, un fichier tronqué) n'est pas une image (QA S05, polish 4)."""
 
     if not data.startswith(PNG_MAGIC) or len(data) < 33 or data[12:16] != b"IHDR":
         raise AnnotationRefused(415, "annotation_not_png", "the annotation must be a PNG image")
@@ -54,6 +59,8 @@ def png_size(data: bytes) -> tuple[int, int]:
     width, height = struct.unpack(">II", data[16:24])
     if length != 13 or width == 0 or height == 0:
         raise AnnotationRefused(415, "annotation_not_png", "the PNG header is unreadable")
+    if not data.endswith(PNG_IEND):
+        raise AnnotationRefused(415, "annotation_not_png", "the PNG does not end with its IEND chunk")
     return width, height
 
 
