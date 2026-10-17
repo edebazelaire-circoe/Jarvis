@@ -272,7 +272,10 @@ def test_mode_control_bottom_left_unchanged(tmp_path, theme):
         # Mode : en bas à gauche, ni dans le lanceur ni dans la ligne d'état.
         mode = closed["mode"]
         assert not closed["modeInDock"] and not closed["modeInTop"]
-        assert mode["l"] < w / 2 and mode["b"] > h * 0.6 and mode["b"] <= h, mode
+        # Géométrie réelle (QA S08 P2) : `GEO` de control_center_interaction_mode.js — left 18, bottom 22 ; sous
+        # 700 px le bouton quitte le rail gauche (`narrowLeft` 84) et se hisse de `narrowLift` 62 au-dessus du centre d'état.
+        assert round(mode["l"]) == (84 if w <= 700 else 18), mode
+        assert round(h - mode["b"]) == (22 + 62 if w <= 700 else 22), (h - mode["b"], mode)
         for other in ("dock", "topbar", "chatTab", "rail", "wheel"):
             assert not _overlap(mode, closed[other]), (other, mode, closed[other])
         for chip in closed["centre"]:

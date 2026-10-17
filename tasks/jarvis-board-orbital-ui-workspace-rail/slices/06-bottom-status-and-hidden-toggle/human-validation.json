@@ -47,6 +47,12 @@
       "when": "After the S06 rework (QA S06)",
       "instruction": "Coupez la lecture de la scène (Control Center injoignable) à 1440 et 1280 px de large.",
       "acceptance": "La note « Scène figée · <cause> » se lit en entier, sans recouvrir le bouton de mode ni le centre d'état."
+    },
+    {
+      "id": "HV-06-09",
+      "when": "After S09 (QA S08 polish P1)",
+      "instruction": "Bare Hands actif (badge visible), coupez la lecture de la scène (note « Scène figée » sur deux lignes), puis prenez une capture d'écran depuis la roue.",
+      "acceptance": "L'aperçu de la capture se pose au-dessus du bouton de mode, sans le recouvrir ; la note reste lisible."
     }
   ]
 }

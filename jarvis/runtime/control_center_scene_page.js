@@ -967,10 +967,11 @@ body:has(#jarvisHands .jh-badge) .sc-status{bottom:52px}
 @media(min-width:821px){.sc-status{max-width:min(calc(50vw - 150px),calc(var(--shell-gutter,18px) + 228px))}}
 @media(max-width:820px){.sc-status,body:has(#jarvisHands .jh-badge) .sc-status{bottom:calc(var(--shell-bottom,18px) + var(--shell-status-h,44px) + 4px)}}
 .sc-status[hidden]{display:none}
-.sc-note{display:flex;flex-wrap:wrap;align-items:center;gap:2px 8px;min-width:0;max-width:100%;padding:6px 12px 6px 10px;border-radius:14px;
+.sc-note{position:relative;display:flex;flex-wrap:wrap;align-items:center;gap:2px 8px;min-width:0;max-width:100%;padding:6px 12px 6px 24px;border-radius:14px;
   background:rgba(3,8,12,.7);box-shadow:inset 0 0 0 1px var(--sc-edge);backdrop-filter:blur(14px);
   font-size:10px;line-height:1.4;letter-spacing:.08em;text-transform:uppercase;color:rgba(214,232,240,.82);white-space:normal}
-.sc-note::before{content:'';flex:none;width:6px;height:6px;border-radius:50%;background:var(--sc-muted)}
+/* La puce sort du flux (QA S08 P3) : une ligne meta renvoyée à la ligne s'aligne sur le texte (24 px), pas sous la puce. */
+.sc-note::before{content:'';position:absolute;left:10px;top:10px;width:6px;height:6px;border-radius:50%;background:var(--sc-muted)}
 .sc-note-main{min-width:0;flex:1 1 140px;overflow-wrap:anywhere}
 .sc-note-meta{flex:none;color:var(--sc-muted);font-variant-numeric:tabular-nums}
 /* Indicateur actionnable (Slice 08) : scène pleine → archivage (les masqués sont à l’œil du centre d’état depuis l’orbital UI S06). */
