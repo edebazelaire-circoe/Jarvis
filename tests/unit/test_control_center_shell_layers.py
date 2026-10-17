@@ -287,10 +287,13 @@ def test_cosmos_overrides_no_shell_position_or_rank():
 
 # ------------------------------------------------------------ angles morts (Slice 09, QA S01)
 
-#: Un rang écrit par script ou en attribut : `el.style.zIndex=`, `setProperty('z-index'`, un `cssText`
-#: ou un `style="…"` qui porte `z-index`. Les feuilles n'en disent rien ; le registre doit le dire.
+#: Un rang écrit par script ou en attribut : `el.style.zIndex=`, `el.style['zIndex']=` (QA S09 P5),
+#: `Object.assign(el.style,{zIndex…})` (QA S09 P5), `setProperty('z-index'`, un `cssText` ou un `style="…"`
+#: qui porte `z-index`. Les feuilles n'en disent rien ; le registre doit le dire.
 _INLINE_RANK = re.compile(
-    r"""\.style\.zIndex\s*=(?!=)|setProperty\(\s*['"]z-index['"]|cssText\s*[+]?=\s*['"`][^'"`]*z-index|style=\\?["'][^"'>]*z-index""")
+    r"""\.style\.zIndex\s*=(?!=)|\.style\[\s*['"`](?:zIndex|z-index)['"`]\s*\]\s*=(?!=)"""
+    r"""|Object\.assign\(\s*[\w$.\[\]'"]*\.style\s*,\s*\{[^}]*(?:\bzIndex\b|['"]z-index['"])"""
+    r"""|setProperty\(\s*['"]z-index['"]|cssText\s*[+]?=\s*['"`][^'"`]*z-index|style=\\?["'][^"'>]*z-index""")
 
 
 def inline_ranks() -> list[dict]:
@@ -299,8 +302,10 @@ def inline_ranks() -> list[dict]:
 
 
 def _inline_kind(found: str) -> str:
-    if found.startswith(".style.zIndex"):
+    if found.startswith((".style.zIndex", ".style[")):
         return "style.zIndex"
+    if found.startswith("Object.assign"):
+        return "Object.assign(style)"
     if found.startswith("setProperty"):
         return "style.setProperty"
     return "cssText" if found.startswith("cssText") else "style attribute"
@@ -326,12 +331,16 @@ def test_inline_ranks_are_contained_and_listed():
 
 
 def test_inline_rank_detector_sees_every_form():
-    """Le détecteur lui-même : les quatre formes sont vues, un `zIndex` lu ne l'est pas."""
+    """Le détecteur lui-même : les six formes sont vues, un `zIndex` lu ne l'est pas."""
 
     for sample in ("el.style.zIndex=String(n)", "el.style.setProperty('z-index','40')",
-                   "el.style.cssText='position:fixed;z-index:30'", '<div style="z-index:5">'):
+                   "el.style.cssText='position:fixed;z-index:30'", '<div style="z-index:5">',
+                   "el.style['zIndex']=String(n)", 'node.style["z-index"] = "4"',
+                   "Object.assign(el.style,{left:'0',zIndex:'40'})", "Object.assign(this.box.style, {'z-index': 3})"):
         assert _INLINE_RANK.search(sample), sample
-    assert not _INLINE_RANK.search("if(el.style.zIndex==='3')")
+    for sample in ("if(el.style.zIndex==='3')", "if(el.style['zIndex']==='3')", "Object.assign(el.style,{left:'0'})",
+                   "Object.assign(opts,{zIndex:3})"):
+        assert not _INLINE_RANK.search(sample), sample
 
 
 #: Tout sélecteur de thème, quel qu'il soit (`html[data-jarvis-theme="…"]`, `:root[data-jarvis-theme…]`,

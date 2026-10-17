@@ -252,8 +252,9 @@ value.
 
 ### Inline ranks
 
-Ranks written by script on an element (`style.zIndex`, `style.setProperty('z-index', …)`,
-a `cssText` or a `style="…"` attribute carrying `z-index`). Like contained ranks, they only
+Ranks written by script on an element (`style.zIndex` or `style['zIndex']`,
+`Object.assign(el.style, {zIndex…})`, `style.setProperty('z-index', …)`, a `cssText` or a
+`style="…"` attribute carrying `z-index`). Like contained ranks, they only
 order children inside a page layer's stacking context. Any other inline rank fails
 `test_inline_ranks_are_contained_and_listed` (Slice 09: the sheet test could not see them).
 
