@@ -16,6 +16,7 @@
      ["click", name, selector, waitMs]     vrai clic souris au centre
      ["rclick", name, selector, waitMs]    vrai clic droit au centre
      ["key", name, key, waitMs, shift?]    vraie frappe sur l'element focalise
+     ["drag", name, selector, waitMs, [dx,dy]]  vrai glisser souris depuis le centre
      ["shot", name, path, waitMs]
    Sortie : un tableau JSON, un objet par etape {results, console, calls, bodies}. */
 import {spawn} from 'node:child_process';
@@ -169,12 +170,23 @@ try{
     await send('Input.dispatchMouseEvent',{type:'mousePressed',x,y,button,buttons:button==='right'?2:1,clickCount:1});
     await send('Input.dispatchMouseEvent',{type:'mouseReleased',x,y,button,buttons:0,clickCount:1});
   };
-  const KEYS={Tab:9,Enter:13,Escape:27,F10:121,ContextMenu:93,' ':32};
+  const KEYS={Tab:9,Enter:13,Escape:27,F10:121,ContextMenu:93,' ':32,
+    End:35,Home:36,ArrowLeft:37,ArrowUp:38,ArrowRight:39,ArrowDown:40};
   const key=async(name,shift)=>{
     const code=KEYS[name]||0;
     const base={key:name,code:name==='ContextMenu'?'ContextMenu':name,windowsVirtualKeyCode:code,nativeVirtualKeyCode:code,modifiers:shift?8:0};
     await send('Input.dispatchKeyEvent',{type:'rawKeyDown',...base});
     await send('Input.dispatchKeyEvent',{type:'keyUp',...base});
+  };
+  const drag=async(selector,[dx,dy])=>{
+    const {x,y}=await center(selector);
+    await send('Input.dispatchMouseEvent',{type:'mouseMoved',x,y,button:'none'});
+    await send('Input.dispatchMouseEvent',{type:'mousePressed',x,y,button:'left',buttons:1,clickCount:1});
+    for(let i=1;i<=8;i+=1){
+      await send('Input.dispatchMouseEvent',{type:'mouseMoved',x:x+dx*i/8,y:y+dy*i/8,button:'left',buttons:1});
+      await sleep(30);
+    }
+    await send('Input.dispatchMouseEvent',{type:'mouseReleased',x:x+dx,y:y+dy,button:'left',buttons:0,clickCount:1});
   };
   await send('Page.enable');await send('Runtime.enable');
   await send('Page.addScriptToEvaluateOnNewDocument',{source:SERVER});
@@ -206,6 +218,7 @@ try{
         else if(kind==='click'){await mouse(arg,'left');results[name]='ok'}
         else if(kind==='rclick'){await mouse(arg,'right');results[name]='ok'}
         else if(kind==='key'){await key(arg,!!extra);results[name]='ok'}
+        else if(kind==='drag'){await drag(arg,extra);results[name]='ok'}
         else if(kind==='shot'){
           const shot=await send('Page.captureScreenshot',{format:'png'});
           writeFileSync(arg,Buffer.from(shot.data,'base64'));results[name]=arg;

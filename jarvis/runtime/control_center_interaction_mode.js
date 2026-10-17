@@ -657,6 +657,11 @@ body:has(${GEO.badgeSelector}):has(${GEO.sceneSelector}) #${DOM.hostId}{--im-rai
 /* Le mot d'un geste étouffé s'insère à 46→72 : il implique la pastille, donc il
    vaut d'emblée le second barreau. */
 body:has(${GEO.noteSelector}) #${DOM.hostId}{--im-rail:${GEO.railTwo}px}
+/* Une note de la scène qui va à la ligne (S06 rework, QA B1) : la page publie sa
+   hauteur (\`--sc-status-h\`, \`control_center_scene_page.js\`) et ce contrôle passe
+   au-dessus d'elle, jamais plus bas que le barreau. Une ligne = 24 px : 24 + 28 = 52. */
+body:has(${GEO.sceneSelector}) #${DOM.hostId}{--im-rail:max(${GEO.railOne}px,calc(var(--sc-status-h,24px) + ${GEO.railOne - 24}px))}
+body:has(${GEO.badgeSelector}):has(${GEO.sceneSelector}) #${DOM.hostId}{--im-rail:max(${GEO.railTwo}px,calc(var(--sc-status-h,24px) + ${GEO.railTwo - 24}px))}
 #${DOM.hostId}[${DOM.toneAttribute}=presentation]{
   --im-ink:${WARN};
   --im-line:color-mix(in srgb,${WARN} 52%,transparent);

@@ -433,3 +433,67 @@ def test_toasts_never_cover_the_capture_note_or_its_close(tmp_path, size):
     # La note est au-dessus de la rangée, jamais dessus.
     for item in seen["items"]:
         assert not _overlap(item, seen["note"]) and seen["note"]["b"] <= item["t"]
+
+
+# ------------------------------------------------- S06 rework (QA S06 : B1, P1, P2)
+
+#: La lecture de la scène échoue (Control Center injoignable) : la scène se fige et le dit.
+BREAK_SCENE = r"""(()=>{const f=window.fetch;window.fetch=(p,i)=>String(p).startsWith('/api/scene')
+  ?Promise.reject(new TypeError('Failed to fetch')):f(p,i);window.__sc.waiters.splice(0).forEach(fn=>fn([]));return 1})()"""
+
+NOTES = r"""(()=>{const box=el=>{if(!el)return null;const r=el.getBoundingClientRect();return r.width>0?{l:r.left,t:r.top,r:r.right,b:r.bottom}:null};
+  return {notes:[...document.querySelectorAll('#sceneLayer>.sc-status .sc-note')].map(n=>{const m=n.querySelector('.sc-note-main');
+    return {text:n.textContent,main:m.textContent,title:n.title,fits:m.scrollWidth<=m.clientWidth,box:box(n)}}),
+    mode:box(document.getElementById('interactionModeButton')),
+    centre:[...document.querySelectorAll('#recIndicators .ri-chip, #bgPills .bgpill, #hiddenEye')].map(box).filter(Boolean),
+    rail:box(document.getElementById('presentationRail')),chatTab:box(document.getElementById('chatTab'))}})()"""
+
+
+@pytest.mark.parametrize("size", ((1440, 900), (1280, 720)), ids=lambda s: f"{s[0]}x{s[1]}")
+def test_degraded_scene_note_reads_whole_cause_without_overlap(tmp_path, size):
+    """B1 : au-dessus de 820 px, la note « Scène figée · <cause> » était plafonnée à
+    246 px et la cause disparaissait dans les points de suspension. Elle se lit en
+    entier, son `title` porte le texte entier, et elle ne touche ni le bouton de
+    mode ni le centre d'état."""
+    width, height = size
+    step = _drive(tmp_path, [{"width": width, "height": height, "actions": [
+        ["eval", "break", BREAK_SCENE, 6000],
+        ["eval", "seen", NOTES, 100],
+        *_shot(f"s06-rework-degraded-note-{width}x{height}"),
+    ]}])[0]
+    seen = step["results"]["seen"]
+    frozen = [n for n in seen["notes"] if n["main"].startswith("Scène")]
+    assert frozen, seen["notes"]
+    for note in seen["notes"]:
+        assert note["fits"], note
+        assert note["title"] and note["title"].startswith(note["main"]), note
+        for other in [seen["mode"], seen["rail"], seen["chatTab"], *seen["centre"]]:
+            assert not _overlap(note["box"], other), (note, other)
+    assert "injoignable" in frozen[0]["main"].lower(), frozen[0]
+
+
+def test_eye_announces_ghosts_and_ghosts_never_move(tmp_path):
+    """P1 : l'œil annonce les fantômes dessinés (2 : le masqué sans place n'en a
+    pas), et le nombre de la liste (3). P2 : glisser un fantôme ou le pousser au
+    clavier (Maj+flèches) n'envoie aucune commande — garde explicite `node.ghost`."""
+    live = "(document.querySelector('#sceneLayer .sc-sr-actions')||{}).textContent||''"
+    sent = "window.__sc.bodies.filter(b=>b.path==='/api/scene/commands').length"
+    ghost = '#sceneLayer [data-object-id="jobj_hidden_win"]'
+    step = _drive(tmp_path, [{"width": 1440, "height": 900, "actions": [
+        ["click", "on", "#hiddenEye", 900],
+        ["eval", "said", live, 100],
+        ["drag", "drag", ghost, 1200, [140, 90]],
+        ["eval", "afterDrag", sent, 100],
+        ["eval", "focus", f"document.querySelector('{ghost}').focus();document.activeElement.dataset.objectId", 100],
+        ["key", "k1", "ArrowRight", 150, True],
+        ["key", "k2", "ArrowDown", 150, True],
+        ["key", "k3", "ArrowRight", 1500],
+        ["eval", "afterKeys", sent, 100],
+        ["eval", "keySaid", live, 100],
+    ]}])[0]
+    r = step["results"]
+    assert r["said"] == "2 objets masqués affichés en fantômes ; 3 dans la liste de l’œil.", r["said"]
+    assert r["focus"] == "jobj_hidden_win"
+    assert r["afterDrag"] == 0 and r["afterKeys"] == 0, r
+    assert "réaffichez-le" in r["keySaid"], r["keySaid"]
+    _no_errors(step)

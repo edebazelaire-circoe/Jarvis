@@ -308,8 +308,13 @@ second line would climb into the lifted mode control): the chips keep the
 Slice 04 right-edge column, vertically centred (measured down to 375 px with
 three recordings); with a side panel open (full width there) they come back
 into the row, below the panel. The scene's `.sc-status` notes stop before the
-row's reserved width above 820 px (ellipsis) and sit above the row (66 px) at
-820 px and below, under the lifted mode control.
+row's reserved width above 820 px and **wrap** there (never an ellipsis: a frozen
+scene's cause, « Control Center injoignable », must stay readable; the whole
+text is also the note's `title`); they sit above the row (66 px) at 820 px and
+below. The scene publishes their height as `--sc-status-h` on the page and the
+mode control's rung is `max(52px, --sc-status-h + 28px)` (`max(86px, … + 62px)`
+with the Bare Hands badge), so a multi-line note never slides under it (S06
+rework, QA B1).
 
 | Order | Host | Owner | What it shows |
 | --- | --- | --- | --- |

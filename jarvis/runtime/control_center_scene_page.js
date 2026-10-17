@@ -957,18 +957,21 @@ ${orbitKeyframes()}
 body:has(#jarvisHands .jh-badge) .sc-status{bottom:52px}
 /* Le centre d'état du bas (orbital-ui Slice 06, docs/control-center-shell.md › Status
    centre) partage cette rangée. Au-dessus de 820 px il réserve la largeur du bouton de
-   mode (gouttière + 254 px) de chaque côté : les notes s'arrêtent avant (texte coupé
-   en points de suspension). À 820 px et moins il ne réserve plus
+   mode (gouttière + 254 px) de chaque côté : les notes s'arrêtent avant et vont à la
+   ligne (S06 rework, QA B1 : coupée en points de suspension, la cause d'une scène
+   figée disparaissait) ; le texte entier est aussi le \`title\` de la note, et la
+   page publie leur hauteur (\`--sc-status-h\`) pour que le bouton de mode se
+   hisse au-dessus d'une note de plusieurs lignes. À 820 px et moins il ne réserve plus
    que l'onglet Chat : les notes passent au-dessus de la rangée (18 + 44 + 4), comme le
    bouton de mode, qui se hisse au-dessus d'elles (rail de \`control_center_interaction_mode.js\`). */
 @media(min-width:821px){.sc-status{max-width:min(calc(50vw - 150px),calc(var(--shell-gutter,18px) + 228px))}}
 @media(max-width:820px){.sc-status,body:has(#jarvisHands .jh-badge) .sc-status{bottom:calc(var(--shell-bottom,18px) + var(--shell-status-h,44px) + 4px)}}
 .sc-status[hidden]{display:none}
-.sc-note{display:flex;align-items:center;gap:8px;min-width:0;max-width:100%;padding:6px 12px 6px 10px;border-radius:999px;
+.sc-note{display:flex;flex-wrap:wrap;align-items:center;gap:2px 8px;min-width:0;max-width:100%;padding:6px 12px 6px 10px;border-radius:14px;
   background:rgba(3,8,12,.7);box-shadow:inset 0 0 0 1px var(--sc-edge);backdrop-filter:blur(14px);
-  font-size:10px;letter-spacing:.08em;text-transform:uppercase;color:rgba(214,232,240,.82);white-space:nowrap}
+  font-size:10px;line-height:1.4;letter-spacing:.08em;text-transform:uppercase;color:rgba(214,232,240,.82);white-space:normal}
 .sc-note::before{content:'';flex:none;width:6px;height:6px;border-radius:50%;background:var(--sc-muted)}
-.sc-note-main{min-width:0;overflow:hidden;text-overflow:ellipsis}
+.sc-note-main{min-width:0;flex:1 1 140px;overflow-wrap:anywhere}
 .sc-note-meta{flex:none;color:var(--sc-muted);font-variant-numeric:tabular-nums}
 /* Indicateur actionnable (Slice 08) : scène pleine → archivage (les masqués sont à l’œil du centre d’état depuis l’orbital UI S06). */
 button.sc-note{pointer-events:auto;border:0;font:inherit;font-size:10px;letter-spacing:.08em;text-transform:uppercase;cursor:pointer;text-align:left}
@@ -1016,7 +1019,7 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
     core_refused:'Core refuse la lecture',invalid_scene_response:'réponse invalide',timeout:'pas de réponse',
     patch_waits_busy:'trop de pages ouvertes',TypeError:'Control Center injoignable',network_error:'Control Center injoignable'};
 
-  let enabled=false,root=null,linksEl=null,fieldEl=null,fixedEl=null,statusEl=null,liveEl=null,raf=0,statusTicker=null;
+  let enabled=false,root=null,linksEl=null,fieldEl=null,fixedEl=null,statusEl=null,statusResize=null,liveEl=null,raf=0,statusTicker=null;
   let lastView=null,lastState=null,layout=null,layoutState=null,edgesSig='',statusSig='',announced='',readyTimer=0;
   let lastModel=null,focusId=null,tabStopId=null,statusFailed=false,visibilityToken=0,animTimer=0,driftTimer=0,controlsObserver=null,controlsAdded=null;
   /* Réglages d'affichage de l'utilisateur (ce navigateur), et la section des
@@ -1426,6 +1429,7 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
     linksEl.append(fieldEl,fixedEl);
     statusEl=document.createElement('div');
     statusEl.className='sc-status';statusEl.hidden=true;
+    if(typeof ResizeObserver==='function'){statusResize=new ResizeObserver(publishStatusHeight);statusResize.observe(statusEl)}
     /* Région vivante à part : annonce les changements d'état, jamais les
        compteurs qui défilent chaque seconde. */
     liveEl=document.createElement('div');
@@ -1496,6 +1500,8 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
     if(driftTimer){window.clearInterval(driftTimer);driftTimer=0}
     if(controlsObserver){controlsObserver.disconnect();controlsObserver=null}
     if(controlsAdded){controlsAdded.disconnect();controlsAdded=null}
+    if(statusResize){statusResize.disconnect();statusResize=null}
+    document.documentElement.style.removeProperty('--sc-status-h');
     if(prefabHost){prefabHost.destroy();prefabHost=null}
     root=null;linksEl=null;fieldEl=null;fixedEl=null;statusEl=null;liveEl=null;actionLiveEl=null;nodes.clear();freshUntil.clear();
     /* La section des réglages vit dans le modal : elle survit à la scène. */
@@ -2522,12 +2528,21 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
     return options===null||calm||reducedMotion()?null:L.orbitField(nodesNow,vp,options);
   }
 
+  /* Hauteur des notes de la scène, publiée sur la page (`--sc-status-h`) pour le
+     bouton de mode, qui se hisse au-dessus d'une note de plusieurs lignes (S06
+     rework, QA B1 : une note coupée en points de suspension perdait sa cause). */
+  function publishStatusHeight(){
+    const h=statusEl&&!statusEl.hidden?Math.ceil(statusEl.getBoundingClientRect().height):0;
+    document.documentElement.style.setProperty('--sc-status-h',h+'px');
+  }
+
   /* Ce que le bureau des tenues sait d'un objet : son nœud dessiné, sa place
      enregistrée, sa représentation. */
   function holdTarget(id){
     const node=nodeOf(id),box=drawnBox(id),state=viewState();
     const item=state&&state.objects.get(id);
-    if(!node||!box||!item||!nodes.has(id))return null;
+    /* Un fantôme (objet masqué, Slice 06) ne se tient pas : il n'a pas de place. */
+    if(!node||node.ghost||!box||!item||!nodes.has(id))return null;
     return {node,box:{x:box.x,y:box.y,w:box.w,h:box.h},representation:item.representation};
   }
 
@@ -2929,6 +2944,7 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
        sauf sur ses objets (`pointer-events`), donc le rectangle de sélection
        naît du document (`onDocumentPointerDown`). */
     if(!el)return;
+    if((nodeOf(el.dataset.objectId)||{}).ghost)return;  // fantôme : « Réafficher » seulement (QA S06 P2)
     raiseWindow(el.dataset.objectId);
     /* Lien d'entrée ou origine d'un artefact : leur clic natif, pas de geste. */
     if(event.target.closest('.sc-item-link,.sc-origin'))return;
@@ -3167,6 +3183,12 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
   function keyAdjust(el,intent){
     const id=el.dataset.objectId,state=viewState(),item=state&&state.objects.get(id);
     if(!item)return;
+    const adjusted=nodeOf(id);
+    if(adjusted&&adjusted.ghost){
+      announce('Objet masqué : réaffichez-le (menu contextuel) avant de le déplacer.');
+      consoleLog('info','scene.ghost_key_refused',{object_id:id});
+      return;
+    }
     if(intent.type==='resize'&&!I.resizable(item.representation)){
       announce('Un point ne se redimensionne pas : changer sa forme depuis le menu.');
       return;
@@ -3373,8 +3395,16 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
     if(view.inert){announce('Aucun objet masqué.');consoleLog('info','scene.hidden_view_inert',{});return}
     const field=V.FIELD_BY_ID.get('showHidden');
     setViewField(field,!view.pressed);
-    announce(view.pressed?'Objets masqués cachés.':`${view.count} ${view.count>1?'objets masqués affichés':'objet masqué affiché'} en fantômes.`);
-    consoleLog('info','scene.hidden_view',{show:!view.pressed,hidden:view.count});
+    /* Un fantôme n'est dessiné que pour un objet masqué qui a une place
+       enregistrée (`JarvisSceneLayout.viewModel`) : on annonce ceux-là, et la
+       liste de l'œil, qui les tient tous (QA S06, P1). */
+    const state=viewState();
+    const ghosts=state?[...state.objects.values()].filter(o=>o.visibility!=='visible'&&o.geometry).length:0;
+    const listed=`${view.count} dans la liste de l’œil.`;
+    announce(view.pressed?'Objets masqués cachés.'
+      :ghosts?`${ghosts} ${ghosts>1?'objets masqués affichés':'objet masqué affiché'} en fantômes ; ${listed}`
+      :`Aucun objet masqué n’a de place enregistrée ; ${listed}`);
+    consoleLog('info','scene.hidden_view',{show:!view.pressed,hidden:view.count,ghosts});
     syncEye();
   }
 
@@ -3956,6 +3986,7 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
     statusEl.replaceChildren(...notes.map(n=>{
       const note=element(n.action?'button':'div',`sc-note ${n.cls}`.trim());
       note.append(element('span','sc-note-main',n.main));
+      note.title=n.meta?`${n.main} · ${n.meta}`:n.main;
       if(n.meta)note.append(element('span','sc-note-meta',n.meta));
       if(n.action){
         note.type='button';note.dataset.action=n.action;note.setAttribute('aria-label',n.label||n.main);
@@ -3967,6 +3998,7 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
     }));
     if(focused){const again=statusEl.querySelector(`[data-action="${focused}"]`);if(again)again.focus({preventScroll:true})}
     statusEl.hidden=!notes.length;
+    publishStatusHeight();
   }
 
   function onLoopUpdate(view){
