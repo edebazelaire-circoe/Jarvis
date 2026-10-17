@@ -71,7 +71,13 @@ def test_runtime_journal_tail_limit(tmp_path):
 def test_control_center_keeps_pointer_visible_and_explains_configured_voice_toggle():
     html = CONTROL_CENTER_HTML.read_text(encoding="utf-8")
     assert "pointer-events:none;cursor:default" in html
+    # Orbital UI Slice 06 (D8) : plus de capsule `#voiceHint` au bas-centre ; la
+    # touche d'éveil reste découvrable dans la ligne d'état (description
+    # accessible + infobulle), mise à jour par chaque statut.
     assert "F9 · DÉMARRER" in html
+    assert 'class="state" data-shell-control title="F9 · DÉMARRER" aria-description="F9 · DÉMARRER"' in html
+    assert "voiceHint" not in html and "voicehint" not in html
+    assert "setWakeHint(online?(" in html and "setWakeHint('VOICE HORS LIGNE')" in html
     # Under server VAD the key never means "send" while a turn is open: it can
     # only cancel. The "send" wording is kept for the manual turn mode.
     assert "s.voice_turn_mode==='manual'?`${k} · ENVOYER`:`${k} · ANNULER`" in html
@@ -104,9 +110,12 @@ def test_background_notifications_are_round_pills_in_the_main_interface_not_a_to
     # Chaque pastille s'acquitte seule, et mène au panneau Agents.
     assert "JSON.stringify({seq:data.seq,category})" in html
     assert "openAgentsAt(id?'trace':'list',id||null)" in html
-    # Une géométrie pour les deux thèmes (Slice 01 de l'orbital UI) : la rangée
-    # de pastilles juste à gauche du lanceur, sous Cosmos comme au circuit imprimé.
-    assert ".bgpills{position:absolute;z-index:40;right:calc(var(--shell-gutter) + var(--shell-launcher-w) + 10px);" in html
+    # Une géométrie pour les deux thèmes (Slice 01 de l'orbital UI) ; depuis la
+    # Slice 06, les pastilles sont au centre d'état du bas (même code, mêmes ids),
+    # sous Cosmos comme au circuit imprimé.
+    assert ".bgpills{position:relative;z-index:40;" in html
+    centre = html[html.index('<div class="status-centre" id="statusCentre">'):]
+    assert centre.index('id="bgPills"') < centre.index('id="hiddenEye"') < centre.index('id="panel"')
     work = CONTROL_CENTER_HTML.with_name("control_center_work.js").read_text(encoding="utf-8")
     assert 'html[data-jarvis-theme="cosmos"] .bgpills{' not in work
 

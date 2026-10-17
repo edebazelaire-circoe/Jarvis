@@ -450,9 +450,11 @@
   -webkit-backdrop-filter:blur(26px) saturate(.75);backdrop-filter:blur(26px) saturate(.75)}
 #${HOST_ID}[hidden],#${HOST_ID} [hidden]{display:none!important}
 /* Slice 09 rework: during a run (\`jvx-run\` on <html>) the interaction-mode HUD (\`data-keep-live="run"\`) is drawn above Variants (9000)
-   and the presentations rail (9100), under the rail's menu (9300); beside Variants, in the rail's column, whose list stops above it. */
+   and the presentations rail (9100), under the rail's menu (9300); beside Variants, in the rail's column, whose list stops above it.
+   Slice 07 (orbital shell, D10): the rail docks at the RIGHT of Variants, so the control sits at the bottom of that right column. */
 html.jvx-run #interactionModeHud{z-index:9150}
-html.jvx-run.jvr-studio #interactionModeHud{left:12px}
+html.jvx-run.jvr-studio #interactionModeHud{left:auto;right:12px;align-items:flex-end}
+html.jvx-run.jvr-studio #interactionModeHud .im-pop{left:auto;right:0}
 html.jvx-run.jvr-studio #interactionModeHud .im-btn{min-width:0;max-width:166px;gap:8px;padding:8px 9px}
 html.jvx-run.jvr-studio #interactionModeHud .im-label{letter-spacing:.04em}
 html.jvx-run.jvr-studio #interactionModeHud .im-sub,html.jvx-run.jvr-studio #interactionModeHud .im-pres{letter-spacing:.04em}

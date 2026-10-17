@@ -1393,8 +1393,9 @@ def test_the_scene_layer_sits_above_the_face_and_below_every_control():
     scene = _z(page, ".scene")
     assert scene == 20
     assert _z(html, ".face") < scene and _z(work, "#cosmosFace") < scene
-    # `.voicehint` reste mesurée jusqu'à son retrait (Slice 06 de l'orbital UI).
-    for selector in (".topbar", ".voicehint", ".dock", ".panel", ".live-banner", ".bgpills", ".chat-tab",
+    # `.voicehint` est retirée par la Slice 06 de l'orbital UI ; le centre d'état
+    # (indicateurs, pastilles, œil) est au-dessus de la scène.
+    for selector in (".topbar", ".dock", ".panel", ".live-banner", ".bgpills", "#recIndicators", "#hiddenEye", ".chat-tab",
                      ".board-drop-tray", "#toolWheel", ".overlay", ".toasts", ".bgpop", ".ctxmenu", ".tl", ".cdialog-back"):
         assert _z(html, selector) > scene, selector
     # Une géométrie, deux peaux : aucun thème ne reclasse une surface, donc les
@@ -1839,7 +1840,7 @@ def test_a_live_alert_stays_louder_than_the_finish_mark_on_the_same_star():
     page = PAGE_JS.read_text(encoding="utf-8")
     assert "if(node.alerted)classes.push('sc-alerted')" in page
     # L'alerte qui s'éteint redessine l'étoile : `alerted` est dans la signature du contenu.
-    assert "node.itemCount,node.explains,node.alerted,node.ephemeral,node.task,node.group,node.type]);" in page
+    assert "node.itemCount,node.explains,node.alerted,node.ephemeral,node.task,node.group,node.type,node.ghost]);" in page
     dimmed = re.search(
         r"\.sc-point\.sc-alerted\.sc-exec-completed \.sc-ring,\.sc-point\.sc-alerted\.sc-exec-failed \.sc-ring\{([^}]*)\}", page
     )
@@ -2061,3 +2062,70 @@ def test_retired_run_viewer_windows_are_never_drawn(tmp_path):
     assert {"studio-stage:run-1", "studio-aux-run-1-notes"} <= set(result["placed"])
     assert result["drawn"] == ["report"]
     assert result["hidden"] == 0
+
+
+# ------------------------------------------- objets masqués : fantômes (orbital-ui S06, D9)
+
+
+def test_show_hidden_emits_ghosts_without_writing_scene(tmp_path):
+    """L'œil du centre d'état allume le réglage de vue `showHidden` : un objet
+    masqué **qui a une place enregistrée** devient un fantôme à cette place.
+    Rien n'est écrit : l'état reste masqué, le résolveur ne le place pas, aucun
+    placement n'est proposé à Core, aucun fil ne le rejoint ; il reste compté
+    dans `hidden`. Un masqué sans place n'a pas de fantôme."""
+
+    result = run_node(tmp_path, r"""
+      const s=state([obj('shown','agent'),
+        obj('ghostWin','window',{visibility:'hidden',geometry:{x:-20,y:-10,w:30,h:20},payload:{title:'Rapport',summary:'',items:[]}}),
+        obj('ghostStar','agent',{visibility:'hidden',geometry:{x:30,y:20,w:4,h:4},exec_state:'running'}),
+        obj('nowhere','agent',{visibility:'hidden'})],[rel('p','parent_of','shown','ghostWin')]);
+      const before=JSON.stringify([...s.objects.values()]);
+      const layout=L.resolveLayout(s),vp=L.viewport(1280,720);
+      const off=L.viewModel(s,layout,vp),on=L.viewModel(s,layout,vp,{showHidden:true});
+      const pick=n=>({id:n.id,ghost:n.ghost,label:n.label,animate:n.animate,live:n.live});
+      return {off:{nodes:off.nodes.map(n=>[n.id,n.ghost]),hidden:off.hidden},
+        on:{nodes:on.nodes.map(pick),hidden:on.hidden,edges:on.edges.length,offscreen:on.offscreen},
+        placed:[...layout.placements.keys()],commits:L.commitCandidates(s,layout,new Map(),0).map(c=>c.objectId),
+        untouched:JSON.stringify([...s.objects.values()])===before,
+        visibility:[...s.objects.values()].map(o=>o.visibility)};
+    """)
+
+    assert result["off"] == {"nodes": [["shown", False]], "hidden": 3}
+    ghosts = {n["id"]: n for n in result["on"]["nodes"]}
+    assert list(ghosts) == ["shown", "ghostWin", "ghostStar"], "un masqué sans place n'a pas de fantôme"
+    assert ghosts["shown"]["ghost"] is False
+    for gid in ("ghostWin", "ghostStar"):
+        assert ghosts[gid]["ghost"] is True
+        assert ghosts[gid]["label"].endswith("masqué"), ghosts[gid]["label"]
+        assert ghosts[gid]["animate"] is False and ghosts[gid]["live"] is False
+    assert result["on"]["hidden"] == 3, "toujours compté parmi les masqués"
+    assert result["on"]["edges"] == 0, "aucun fil vers un fantôme"
+    assert result["placed"] == ["shown"] and result["commits"] == ["shown"]
+    assert result["untouched"] is True
+    assert result["visibility"] == ["visible", "hidden", "hidden", "hidden"]
+
+
+def test_one_reveal_one_set_visibility(tmp_path):
+    """« Réafficher » sur un fantôme = `showObjects([id])` : une seule
+    commande `set_visibility visible` pour cet objet, rien d'autre au menu.
+    Le parcours réel (clic droit sur le fantôme, `POST /api/scene/commands`)
+    est mesuré dans Chrome par `test_status_centre_browser.py`."""
+
+    page = PAGE_JS.read_text(encoding="utf-8")
+    ghost_menu = page[page.index("if(node&&node.ghost){"):page.index("const model=I.menuModel(state,id,")]
+    assert "items:[{act:'reveal',label:'Réafficher'}]" in ghost_menu
+    assert "if(act==='reveal')showObjects([id])" in ghost_menu
+    assert ghost_menu.count("showObjects(") == 1 and "setVisibility" not in ghost_menu
+    show = page[page.index("async function showObjects(ids){"):page.index("function openHiddenMenu(anchor){")]
+    assert show.count("I.commands.setVisibility(id,'visible')") == 1
+    # La commande elle-même : une opération, un objet, `visible`.
+    interact = RUNTIME / "control_center_scene_interact.js"
+    node = shutil.which("node")
+    if node is None:
+        pytest.skip("node absent")
+    out = subprocess.run([node, "-e", f"const I=require({json.dumps(str(interact))});"
+                          "process.stdout.write(JSON.stringify(I.commands.setVisibility('jobj_1','visible')))"],
+                         capture_output=True, text=True, encoding="utf-8", timeout=60, check=False)
+    assert out.returncode == 0, out.stderr
+    assert json.loads(out.stdout) == {"schema_version": 1, "op": "set_visibility", "object_id": "jobj_1",
+                                      "visibility": "visible"}

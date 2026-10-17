@@ -13,6 +13,7 @@ pour le serveur MCP `jarvis-capture` du cerveau. Contrat : `docs/capture.md` ›
 | GET | `/v1/contexts/current` | Context actif |
 | POST | `/v1/contexts/{context_id}/activate` | réactiver un Context dormant `{origin?}` |
 | GET | `/v1/captures/status[?recent=N]` | captures ouvertes, arrêts bloqués, dernières finies, transcription, enrichissement |
+| GET | `/v1/captures/targets` | cibles exécutables par canal (`default` d'abord ; orbital-ui S04) |
 | POST | `/v1/captures/start` | `{channel: audio\\|screen, options?: {source?, device?}, origin?}` (201) |
 | POST | `/v1/captures/screenshot` | `{options?, origin?}` (201) |
 | GET | `/v1/captures/{capture_id}` | une capture et sa transcription |
@@ -26,6 +27,7 @@ pour le serveur MCP `jarvis-capture` du cerveau. Contrat : `docs/capture.md` ›
 | GET | `/v1/artifacts/{artifact_id}/relations[?direction=]` | provenance |
 | GET | `/v1/artifacts/{artifact_id}/transcript` | comme celle d'une capture |
 | GET | `/v1/artifacts/{artifact_id}/payload` | octets (plages HTTP, ≤ 8 Mio par réponse) |
+| POST | `/v1/artifacts/{artifact_id}/annotations` | capture annotée : corps PNG brut (`Content-Type: image/png`, ≤ 8 Mio, mêmes dimensions) → NOUVEL Artifact `screenshot` dérivé (201) ; l'original intact (orbital-ui S05.B) |
 | GET | `/v1/activity` | queue du ledger de la Session ouverte (`after_seq`, `limit` ≤ 200, `context_id`, `kind`) |
 
 Refus : `{"error": {"code", "message"[, "capture_id"]}}`, code stable du
@@ -47,6 +49,7 @@ from jarvis.core.capture_api import (
     MAX_RECENT_CAPTURES, MAX_TEXT_CHARS, MAX_TRANSCRIPT_CHARS, ORIGINS, EvidenceApiError, redact_paths,
 )
 from jarvis.core.capture_service import CaptureOptions
+from jarvis.core.screenshot_annotation import MAX_ANNOTATION_BYTES
 from jarvis.domain.artifacts import (
     MAX_ARTIFACT_TEXT_CHARS, ArtifactError, ArtifactKind, ArtifactState, check_artifact_id,
 )
@@ -201,8 +204,9 @@ class CaptureProtocolRoutes:
             web.post("/v1/contexts", g(self.create_context)),
             web.get("/v1/contexts/current", g(self.current_context)),
             web.post("/v1/contexts/{context_id}/activate", g(self.activate_context)),
-            # `status`, `start`, `screenshot` avant `{capture_id}` : aiohttp apparie dans l'ordre.
+            # `status`, `targets`, `start`, `screenshot` avant `{capture_id}` : aiohttp apparie dans l'ordre.
             web.get("/v1/captures/status", g(self.status)),
+            web.get("/v1/captures/targets", g(self.targets)),
             web.post("/v1/captures/start", g(self.start)),
             web.post("/v1/captures/screenshot", g(self.screenshot)),
             web.get("/v1/captures/{capture_id}", g(self.capture)),
@@ -216,6 +220,7 @@ class CaptureProtocolRoutes:
             web.get("/v1/artifacts/{artifact_id}/relations", g(self.relations)),
             web.get("/v1/artifacts/{artifact_id}/transcript", g(self.artifact_transcript)),
             web.get("/v1/artifacts/{artifact_id}/payload", g(self.payload)),
+            web.post("/v1/artifacts/{artifact_id}/annotations", g(self.annotate)),
             web.get("/v1/activity", g(self.activity)),
         ]
 
@@ -265,6 +270,11 @@ class CaptureProtocolRoutes:
         self._ready()
         recent = _int(request, "recent", DEFAULT_RECENT_CAPTURES, 0, MAX_RECENT_CAPTURES)
         return web.json_response(await self._api.status(recent=recent))
+
+    async def targets(self, request: web.Request) -> web.Response:
+        _only(request, set())
+        self._ready()
+        return web.json_response(await self._api.targets())
 
     async def start(self, request: web.Request) -> web.Response:
         _only(request, set())
@@ -387,6 +397,26 @@ class CaptureProtocolRoutes:
         if chunk.status == 206:
             headers["Content-Range"] = f"bytes {chunk.start}-{chunk.end}/{chunk.total}"
         return web.Response(body=chunk.data, status=chunk.status, headers=headers)
+
+    async def annotate(self, request: web.Request) -> web.Response:
+        """Capture annotée (orbital-ui Slice 05.B) : corps PNG lu **en flux** et borné à `MAX_ANNOTATION_BYTES`
+        (la borne du corps entier de ce serveur ne s'applique pas à `request.content`) ; 413 dès qu'il déborde."""
+
+        _only(request, set())
+        self._ready()
+        artifact_id = self._artifact_id(request)
+        if request.content_type != "image/png":
+            return error_response(415, "annotation_not_png", "Content-Type must be image/png")
+        if request.content_length is not None and request.content_length > MAX_ANNOTATION_BYTES:
+            return error_response(413, "annotation_too_large",
+                                  f"the annotation exceeds the {MAX_ANNOTATION_BYTES}-byte bound")
+        data = bytearray()
+        async for chunk in request.content.iter_chunked(64 * 1024):
+            data += chunk
+            if len(data) > MAX_ANNOTATION_BYTES:
+                return error_response(413, "annotation_too_large",
+                                      f"the annotation exceeds the {MAX_ANNOTATION_BYTES}-byte bound")
+        return web.json_response(await self._api.annotate(artifact_id, bytes(data)), status=201)
 
     async def activity(self, request: web.Request) -> web.Response:
         _only(request, {"after_seq", "limit", "context_id", "kind"})

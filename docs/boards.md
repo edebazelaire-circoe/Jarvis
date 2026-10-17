@@ -1680,6 +1680,14 @@ popover) carries the source Board; no second notification system. Modules:
 persistence), `jarvis/core/board_attribution.py` (Core stamping),
 `jarvis/runtime/control_center_boards.js` (`alertBoardOf`, `elsewhereOf`,
 `pillLabelOf`, `goToBoardFromAlert`), `control_center.html` (pills, popover).
+**Location (orbital UI Slice 06):** the pills live in the bottom **status
+centre** (`#recIndicators | #bgPills | #hiddenEye`, rank 40,
+[control-center-shell.md](control-center-shell.md) › *Status centre*), no
+longer left of the launcher; same ids (`#bgPills`, `.bgpill`, `#bgPop`), same
+code. Each pill is a 32 px round button with an inline SVG icon per category
+and its count in a badge (top right); the other-Board satellite moved to the
+bottom right. The popover opens **above** the pill, centred on it and bounded
+to the screen.
 Suites: `tests/unit/test_board_alerts.py` (ledger, store, Core gate, real Core +
 Control Center), `tests/unit/test_board_alerts_js.py` (node, DOM double),
 `tests/unit/test_board_alerts_browser.py` (headless Chrome, served page).
@@ -1731,7 +1739,8 @@ label that appeared only "elsewhere" would change meaning at every switch;
 the emphasis, not the presence, marks what comes from elsewhere. An alert
 whose line named no Board (voice process, pre-Board history) shows no label.
 The pills cannot list alerts: a pill that counts unread alerts from another
-Board carries a small filled satellite dot and its label says
+Board carries a small filled satellite dot (bottom right since the orbital UI
+Slice 06) and its label says
 `… · dont N sur « <title> »`. When the active Board is unknown (Core without
 Boards or unreachable, status without `boards`), nothing is marked as
 "elsewhere": the pills carry no satellite, and in the popover every attributed

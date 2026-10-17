@@ -210,7 +210,7 @@ processes with its own lifecycle.
 | --- | --- | --- |
 | Core | `python -m jarvis core` | conversations, jobs, tools, confirmation policy, public brain state; loopback HTTP + `/v1/events` WebSocket; Sessions (resumed at start), Contexts and their folders, Artifacts and the activity ledger, explicit captures (its own microphone stream, GDI screenshots, an `ffmpeg` child in a Job Object for screen recording), recording transcription, the Context enrichment worker (one restricted `claude` child per round) |
 | Voice | `python -m jarvis voice` | wake word, microphone/speakers, the Realtime session, speech scheduling; no part in explicit captures |
-| Control Center | `python -m jarvis control-center` | browser panel, trace/error console, settings, the local Claude/Codex agent behind `POST /api/agent/ask`; the left capture rail and the capture relay; the Brain's `jarvis-capture` and `jarvis-workspace` MCP servers are children of the Brain CLI |
+| Control Center | `python -m jarvis control-center` | browser panel, trace/error console, settings, the local Claude/Codex agent behind `POST /api/agent/ask`; the capture controls (tool wheel wedges and `#recIndicators`, orbital UI Slice 04) and the capture relay; the Brain's `jarvis-capture` and `jarvis-workspace` MCP servers are children of the Brain CLI |
 
 Sessions, Contexts, evidence and capture (who survives which restart, costs,
 privacy, rollback): [session-context-capture.md](session-context-capture.md).
@@ -2558,7 +2558,7 @@ the agent snapshot flags `display_tools` / `barehands_tools` / `console_tools`
 (only then can a restart be pending). Contract:
 [mcp/tool-contract.md](mcp/tool-contract.md) §4.3, §8, §10.6.
 
-MCP inspector view (Slice 07). The dock button **MCP** (between `SET` and `AGT`)
+MCP inspector view (Slice 07). The dock button **MCP** (since orbital-ui Slice 08 in the launcher's « Plus d’outils » popover, `docs/control-center-shell.md` › *Global launcher*)
 opens a full-screen `role="dialog"` built by
 `jarvis/runtime/control_center_mcp_inspector.js` (`JarvisMcpInspector`, injected
 at `/*__CONTROL_CENTER_MCP_INSPECTOR_JS__*/`). It reads only the two `GET`
@@ -2587,7 +2587,7 @@ below. Contract:
 §8, §10.6–§10.7.
 
 Sessions & Boards manager (board-memory-workspace-inspector, Slice 07). The
-dock button **WSP** (between `MCP` and `AGT`) opens a full-screen
+dock button **WSP** (since orbital-ui Slice 08 in « Plus d’outils ») opens a full-screen
 `role="dialog"` built by `jarvis/runtime/control_center_workspace.js`
 (`JarvisWorkspace`, injected at `/*__CONTROL_CENTER_WORKSPACE_JS__*/`): current
 Session/Board/Context/foreground binding, Session history, every Board
@@ -3189,11 +3189,14 @@ then both themes share the Cosmos geometry, launcher row at −77, see
 (one row) or 71 (two rows). The margins are 12–18 px. Larger windows give the
 controls fewer units; a window that is not 16:9 but narrower than 1280 px, the
 GPT-Live banner (a transient alert) and the Barehands badge (test mode) can
-still cover the edges. **The left column is not part of this calibration**: the
-Bare Hands control and palette and, below them, the capture rail
-(`#captureRail`, session-context-recording Slice 10) occupy x 18–82 px from
-y 76 px down to about 541 px at 1280 × 720, i.e. inside the safe area's left
-band (x −152 is 32 px there). User gestures stop against them (they are in
+still cover the edges. **The left column is not part of this calibration**:
+before the orbital UI the Bare Hands control and palette and, below them, the
+capture rail (`#captureRail`, session-context-recording Slice 10) occupied
+x 18–82 px from y 76 px down to about 541 px at 1280 × 720, i.e. inside the
+safe area's left band (x −152 is 32 px there). Since its Slice 04 the left edge
+holds only the tool wheel anchor (14 × 112 px, vertically centred; the wheel
+opens over the scene at rank 37) and the capture indicators sit in the bottom
+row (`#recIndicators`). User gestures stop against them (they are in
 `CONTROL_SELECTOR`); what the resolver proposes does not know them yet
 (Issue `tasks/jarvis-session-context-recording-runtime/Issues/scene-safe-area-left-column.md`).
 The resolver places only inside the safe area. The brain
@@ -3776,13 +3779,14 @@ no client-log route, and none was added. `JarvisScene.gate` runs in its own
 `try` inside `refreshStatus`: a scene error is logged
 (`[scène] scene.gate_failed`) and never breaks the status display.
 
-**Status indicator** (bottom left, on the voice hint's line, outside the
+**Status indicator** (bottom left, on the status centre's line, outside the
 composition safe area; raised above the Barehands badge when it is shown; chips
 wrap upwards, two rows at most in practice, never blocking): loading; "Scène
 figée · <raison>" plus a muted "N s · réessai N s" that is never truncated (a 1 s
 ticker runs only while degraded); "Scène pleine — archiver des travaux terminés"
-with "n/512", a button that opens the bulk archive confirmation (Slice 08); "N objets masqués", a button
-listing hidden objects to show them again (Slice 08); "N signaux d'échec sous des fenêtres"
+with "n/512", a button that opens the bulk archive confirmation (Slice 08); (the "N objets masqués" button
+of Slice 08 moved to the eye `#hiddenEye` of the bottom status centre in the orbital UI Slice 06,
+see control-center-shell.md › Status centre); "N signaux d'échec sous des fenêtres"
 and "N signaux à vérifier sous des fenêtres"; "N objets hors champ". The visible chips
 are not a live region. A separate visually hidden `role=status` region announces
 state changes only ("Scène figée · Core injoignable. Nouvel essai automatique.",
@@ -3842,7 +3846,7 @@ Files:
 | menu › Afficher en point / capsule / fenêtre | menu | `set_representation` with the new default size around the same centre | rolled back, toast |
 | menu › Épingler ici / Désépingler | menu | `pin` / `unpin` (the drawn place is committed first when the object had none) | rolled back, toast |
 | menu › Masquer | menu | `set_visibility hidden`; toast offers to show it again; the selection moves to the reading neighbour | rolled back, toast |
-| chip « N objets masqués » › Afficher / Tout réafficher | chip is a button | `set_visibility visible`, one per object (≤ 512); the first object shown is selected | count of failures in a toast |
+| eye `#hiddenEye` (status centre, orbital UI S06) › secondary: Afficher / Tout réafficher; ghost › Réafficher | eye is a toggle button | `set_visibility visible`, one per object (≤ 512); the first object shown is selected | count of failures in a toast |
 | menu › Archiver… (confirmation) | menu | `archive` (Core cascades the star's runtime signals); short confirmation toast; selection moves to the neighbour | rolled back, toast |
 | menu › Archiver les travaux terminés (N objets)… or the « Scène pleine » chip (confirmation with counts) | menu / chip button | `archive_many` (one command in practice) | whole selection rolled back; `not_bulk_archivable` → counts recomputed and confirmed again once, then a toast offering « Cliquer ici pour réessayer » |
 | menu › Arrêter la tâche… (job stars only, confirmation) | menu | `POST /api/jobs/cancel`; the star shows « arrêt en cours » until Core says it ended, or until the relay deadline | toast with Core's outcome in French |

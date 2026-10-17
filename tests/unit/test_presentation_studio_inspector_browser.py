@@ -30,7 +30,8 @@ pytestmark = pytest.mark.asyncio
 PANEL = "#jvStudioInspector"
 VIEW = "JarvisStudioInspector.instance.view()"
 STATS = "JarvisStudioInspector.instance.stats()"
-OPEN = [{"click": "#openStudioInspector"},
+# Orbital UI Slice 08 : l'inspecteur est dans le popover « Plus d’outils » du lanceur.
+OPEN = [{"click": "#dockMore"}, {"click": "#openStudioInspector"},
         {"until": "!!document.querySelector('#jvStudioInspector [data-control-id=\"size\"]')", "ms": 20000},
         {"wait": 300}]
 
@@ -437,7 +438,7 @@ async def test_the_panel_fits_the_screen_and_every_group_is_reachable_at_both_si
             tab("layout"), {"wait": 300}, {"shot": str(shots_dir(tmp_path) / f"panel-{viewport}-layout.png")},
             {"value": "geometry", "expr": f"""(()=>{{const p=document.getElementById('jvStudioInspector').getBoundingClientRect();
               const main=document.querySelector('{PANEL} .jvi-main').getBoundingClientRect();
-              const d=document.getElementById('openStudioInspector').getBoundingClientRect();
+              const d=document.querySelector('.dock').getBoundingClientRect();
               return {{panel:[p.left,p.top,p.right,p.bottom],main:[main.height,document.querySelector('{PANEL} .jvi-main').scrollHeight],dock:[d.left,d.top,d.right,d.bottom],
                 vw:innerWidth,vh:innerHeight,hscroll:document.documentElement.scrollWidth>innerWidth,
                 overflowX:document.querySelector('{PANEL}').scrollWidth>document.querySelector('{PANEL}').clientWidth}}}})()"""},
@@ -452,7 +453,7 @@ async def test_the_panel_fits_the_screen_and_every_group_is_reachable_at_both_si
         assert g["main"][0] > 120, f"the scrolling list keeps real height ({g['main'][0]}px) beside the pinned preview and tabs"
         # Le lanceur est une rangée en haut à droite (Slice 01 de l'orbital UI) : le
         # panneau ne le couvre jamais, il passe dessous.
-        assert g["panel"][1] >= g["dock"][3] - 1 or g["panel"][2] <= g["dock"][0] + 1, "the panel never covers the dock buttons"
+        assert g["panel"][1] >= g["dock"][3] - 1 or g["panel"][2] <= g["dock"][0] + 1, "the panel never covers the launcher (its button now sits in the closed « Plus d’outils » popover)"
         if name == "phone":
             assert g["panel"][2] - g["panel"][0] >= 250
         assert reads["rowwidths"] is True and reads["touch"] == 0, "no row overflows; every target is at least 24 px"
@@ -462,7 +463,7 @@ async def test_the_panel_fits_the_screen_and_every_group_is_reachable_at_both_si
 async def test_reduced_motion_stops_the_spinner_and_the_page_stays_quiet(tmp_path):
     async with InspectorRig(tmp_path) as rig:
         result = await drive(rig.url, [
-            {"click": "#openStudioInspector"},
+            {"click": "#dockMore"}, {"click": "#openStudioInspector"},
             {"value": "anim", "expr": f"getComputedStyle(document.querySelector('{PANEL} .jvi-spin')).animationName"},
             {"until": f"!!document.querySelector('{row('size')}')", "ms": 20000},
             {"value": "transition", "expr": f"getComputedStyle(document.querySelector('{row('glow')} [role=switch]')).transitionDuration"},

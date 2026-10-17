@@ -156,6 +156,37 @@ def link_view(artifact: Artifact) -> dict[str, Any]:
             "host": artifact.metadata.get("host"), "state": artifact.state.value}
 
 
+#: Nom donné au cerveau pour une capture d'écran jointe (elle n'a pas de nom d'origine).
+SCREENSHOT_ATTACHMENT_NAME = "capture d’écran.png"
+
+
+def screenshot_attachment_name(artifact: Artifact) -> str:
+    """Le nom d'une capture d'écran dans le brief, celui de sa pièce dans le Chat : « Capture d’écran
+    HH-MM-SS.png » à l'heure locale de sa création (`created_at`, la même que lit l'aperçu du Control
+    Center), « … annotée » pour une copie annotée. Deux captures d'un même message ne portent plus le
+    même nom (QA S05, polish 2). Sans heure lisible : `SCREENSHOT_ATTACHMENT_NAME`."""
+
+    try:
+        clock = artifact.created_at.astimezone().strftime("%H-%M-%S")
+    except (AttributeError, ValueError, OSError):
+        return SCREENSHOT_ATTACHMENT_NAME
+    annotated = " annotée" if artifact.source == "annotation" else ""
+    extension = {"image/jpeg": "jpg", "image/webp": "webp"}.get(artifact.mime_type or "", "png")
+    return f"Capture d’écran {clock}{annotated}.{extension}"
+
+
+def attachable(artifact: Artifact) -> bool:
+    """Peut accompagner un message écrit : une pièce jointe du chat, ou une capture d'écran (Slice 05, D7).
+
+    La Session et l'état `complete` sont vérifiés à part (`attachment_refusal`). Une capture d'écran
+    n'est jamais copiée : le brief donne le chemin de SON payload, comme pour un fichier joint.
+    """
+
+    if artifact.kind is ArtifactKind.SCREENSHOT:
+        return True
+    return artifact.kind is ArtifactKind.UPLOAD and artifact.metadata.get("provenance") == Provenance.CHAT_ATTACHMENT
+
+
 class UploadService:
     """Voir l'en-tête du module. Construit par `JarvisCoreApplication`."""
 
@@ -540,20 +571,20 @@ class UploadService:
     async def attachment_refusal(self, artifact_ids: tuple[str, ...], jarvis_session_id: str,
                                  board_id: str) -> UploadRefused | None:
         """Étape 5 de `docs/chat.md` › *Core: same `brain-turns` route* : chaque pièce existe, est une pièce
-        jointe du chat, de la Session ouverte, liée au Board du tour (`board_id`, celui du binding visé), et
-        `complete`. Rend le premier refus, ou `None`.
+        jointe du chat **ou une capture d'écran** (« Envoyer à Jarvis », orbital-ui Slice 05, D7), de la
+        Session ouverte, liée au Board du tour (`board_id`, celui du binding visé), et `complete`. Rend le
+        premier refus, ou `None`.
 
         Le Board d'une pièce jointe est son lien Board (`board_artifact_links`) : le lien automatique
-        `active_board` posé dans la transaction de création, ou un lien `explicit`. Une pièce envoyée sur A puis
-        citée par un tour de B (même Session) est refusée ici, pas seulement par la page (`stale`)."""
+        `active_board` posé dans la transaction de création (une capture d'écran comme un téléversement), ou un
+        lien `explicit`. Une pièce envoyée sur A puis citée par un tour de B (même Session) est refusée ici, pas
+        seulement par la page (`stale`)."""
 
         for artifact_id in artifact_ids:
             artifact = await self._existing(artifact_id)
             if artifact is None:
                 return UploadRefused(404, "attachment_not_found", f"attachment {artifact_id} does not exist")
-            if (artifact.kind is not ArtifactKind.UPLOAD
-                    or artifact.metadata.get("provenance") != Provenance.CHAT_ATTACHMENT
-                    or artifact.jarvis_session_id != jarvis_session_id):
+            if not attachable(artifact) or artifact.jarvis_session_id != jarvis_session_id:
                 return UploadRefused(400, "attachment_not_allowed",
                                      f"attachment {artifact_id} is not a chat attachment of the open Session")
             if self._board_drop is None:
@@ -585,8 +616,9 @@ class UploadService:
                 continue
             path = self._readable_path(artifact)
             meta: Mapping[str, Any] = artifact.metadata
+            fallback = screenshot_attachment_name(artifact) if artifact.kind is ArtifactKind.SCREENSHOT else "fichier"
             items.append(BrainAttachment(
-                artifact_id=artifact.artifact_id, original_name=str(meta.get("original_name") or "fichier"),
+                artifact_id=artifact.artifact_id, original_name=str(meta.get("original_name") or fallback),
                 mime_type=artifact.mime_type or "application/octet-stream", size_bytes=artifact.size_bytes,
                 path=path, brain_readable=path is not None and bool(meta.get("brain_readable"))))
         missing = sum(1 for item in items if item.path is None)

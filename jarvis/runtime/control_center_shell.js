@@ -32,40 +32,39 @@
   const CONTROL_SELECTOR=`[${CONTROL_ATTRIBUTE}],#sceneLayer>.sc-status`;
 
   /* Hôtes qui doivent porter l'attribut (le test vérifie la page servie). Un
-     hôte absent aujourd'hui (aperçu de capture, Slice 05) est listé avec la
-     slice qui le déclarera. */
+     hôte pas encore déclaré serait listé avec la slice qui le déclarera
+     (`slice`) ; l'aperçu de capture l'est depuis la Slice 05. */
   const CONTROL_HOSTS=Object.freeze([
     Object.freeze({selector:'#boardsHud',zone:'top-left'}),
     Object.freeze({selector:'.topbar>.state',zone:'top-left'}),
     Object.freeze({selector:'.dock',zone:'top-right'}),
-    Object.freeze({selector:'#bgPills',zone:'top-right'}),
+    Object.freeze({selector:'#bgPills',zone:'bottom-centre'}),
     Object.freeze({selector:'.live-banner',zone:'top-centre'}),
     Object.freeze({selector:'#panel',zone:'right'}),
     Object.freeze({selector:'#chatPanel',zone:'right'}),
     Object.freeze({selector:'#barehandsHud',zone:'left-edge'}),
     Object.freeze({selector:'#barehandsPalette',zone:'left-edge'}),
-    Object.freeze({selector:'#captureRail',zone:'left-edge'}),
     Object.freeze({selector:'#toolWheel',zone:'left-edge'}),
-    Object.freeze({selector:'#presentationRail',zone:'left-edge',createdBy:'control_center_presentation_rail.js'}),
+    Object.freeze({selector:'#presentationRail',zone:'right',createdBy:'control_center_presentation_rail.js'}),
     Object.freeze({selector:'#interactionModeHud',zone:'bottom-left'}),
-    Object.freeze({selector:'#voiceHint',zone:'bottom-centre'}),
     Object.freeze({selector:'#boardDropTray',zone:'bottom-centre'}),
+    Object.freeze({selector:'#recIndicators',zone:'bottom-centre'}),
+    Object.freeze({selector:'#hiddenEye',zone:'bottom-centre'}),
     Object.freeze({selector:'#chatTab',zone:'bottom-right'}),
-    Object.freeze({selector:'#screenshotPreview',zone:'left-low',slice:'S05'}),
+    Object.freeze({selector:'#screenshotPreview',zone:'left-low'}),
   ]);
-
-  /* Zones de la coque (docs/06 §9). `right` : le rail de l'espace de travail
-     y arrive en Slice 07 ; aujourd'hui seuls les panneaux latéraux l'occupent. */
+  /* Zones de la coque (docs/06 §9). `right` : le rail actif de l'espace de
+     travail (Slice 07), sous les panneaux latéraux qui s'ouvrent par-dessus. */
   const ZONES=Object.freeze({
     'top-left':'ligne d’état : Board, voix, agent',
-    'top-right':'lanceur global (dock) et pastilles d’arrière-plan jusqu’à la Slice 06',
+    'top-right':'lanceur global : Conversation, Agents, Errors, Réglages, « Plus d’outils » (Slice 08)',
     'top-centre':'bandeau GPT-Live (transitoire)',
-    'left-edge':'ancre et roue d’outils ; colonne Bare Hands et rails hérités jusqu’aux Slices 03, 04, 07',
-    'left-low':'aperçu de capture d’écran (Slice 05)',
+    'left-edge':'ancre et roue d’outils (Sélection, Vidéo, Capture d’écran, Audio)',
+    'left-low':'aperçu de la dernière capture d’écran (Slice 05), au-dessus du contexte bas-gauche',
     'bottom-left':'zone de contexte : mode d’interaction, notes de la scène',
-    'bottom-centre':'centre d’état (Slice 06) ; indication vocale et plateau de dépôt aujourd’hui',
+    'bottom-centre':'centre d’état (Slice 06) : indicateurs de capture, pastilles d’arrière-plan, œil des objets masqués ; plateau de dépôt au-dessus',
     'bottom-right':'onglet Chat',
-    'right':'rail de l’espace de travail (Slice 07) ; panneaux latéraux par-dessus',
+    'right':'rail actif de l’espace de travail (#presentationRail, Slice 07) ; panneaux latéraux par-dessus',
     'centre':'Board / scène',
   });
 
@@ -77,7 +76,7 @@
     '--shell-bottom':'18px',
     '--shell-status-h':'44px',
     '--shell-control':'34px',
-    '--shell-launcher-w':'394px',
+    '--shell-launcher-w':'194px',
     '--shell-panel-top':'64px',
     '--shell-panel-w':'500px',
     '--shell-panel-bottom':'68px',
@@ -108,7 +107,6 @@
   const RESPONSIVE_TOKENS=Object.freeze({
     'max-width:1099px':Object.freeze({'--shell-rail-w':'72px'}),
     'max-width:700px':Object.freeze({'--shell-gutter':'10px','--shell-panel-top':'88px','--shell-rail-w':'0px'}),
-    'max-width:620px':Object.freeze({'--shell-launcher-w':'194px','--shell-panel-top':'126px'}),
   });
   /* Sous `prefers-reduced-motion: reduce`, ces durées valent 0 ms. */
   const MOTION_TOKENS=Object.freeze(['--shell-dur-fast','--shell-dur']);

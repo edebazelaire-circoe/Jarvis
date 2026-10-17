@@ -634,6 +634,16 @@ html:not([data-jarvis-theme="cosmos"]) .scene{--sc-edge:rgba(110,231,255,.2);--s
    entoure l'étoile assombrit au lieu d'éclairer. Elle est donc lisible comme
    passagère, et ne ressemble ni à un travail ordinaire ni à une alerte. */
 .scene .sc-node.sc-ephemeral{--tone:#3fb6ff}
+/* Fantôme d'un objet masqué (orbital-ui Slice 06, D9 ; œil du centre d'état
+   allumé) : atténué, contour en tirets, aucune animation. Le masquage n'est
+   pas levé : seul « Réafficher » (menu du fantôme) le fait. Jamais la couleur
+   seule : le tiret et le mot « masqué » du nom accessible le disent aussi. */
+.scene .sc-node.sc-ghost{opacity:.42;filter:saturate(.35)}
+.scene .sc-node.sc-ghost:hover,.scene .sc-node.sc-ghost:focus-visible{opacity:.72}
+.scene .sc-ghost .sc-ring{border-style:dashed!important}
+.scene .sc-ghost.sc-capsule,.scene .sc-ghost.sc-window{outline:1px dashed color-mix(in srgb,var(--sc-ink) 70%,transparent);outline-offset:2px}
+.scene .sc-ghost.sc-point::before{content:'';position:absolute;inset:-5px;border-radius:50%;border:1px dashed color-mix(in srgb,var(--sc-ink) 75%,transparent);pointer-events:none}
+.scene .sc-ghost,.scene .sc-ghost *{animation:none!important}
 .scene .sc-ephemeral .sc-mark{box-shadow:0 0 calc(var(--sc-star) * .6) color-mix(in srgb,var(--tone) 55%,transparent),
   0 0 calc(var(--sc-star) * 2.4) rgba(2,6,10,.85)}
 .scene .sc-ephemeral .sc-mark::after{background:radial-gradient(circle,rgba(2,6,10,.8) 0,rgba(2,6,10,.5) 38%,transparent 74%)}
@@ -945,14 +955,26 @@ ${orbitKeyframes()}
 .sc-status{position:absolute;left:18px;bottom:18px;z-index:2147483600;display:flex;flex-wrap:wrap-reverse;align-items:center;gap:6px;
   max-width:calc(50vw - 150px);pointer-events:none}
 body:has(#jarvisHands .jh-badge) .sc-status{bottom:52px}
+/* Le centre d'état du bas (orbital-ui Slice 06, docs/control-center-shell.md › Status
+   centre) partage cette rangée. Au-dessus de 820 px il réserve la largeur du bouton de
+   mode (gouttière + 254 px) de chaque côté : les notes s'arrêtent avant et vont à la
+   ligne (S06 rework, QA B1 : coupée en points de suspension, la cause d'une scène
+   figée disparaissait) ; le texte entier est aussi le \`title\` de la note, et la
+   page publie leur hauteur (\`--sc-status-h\`) pour que le bouton de mode se
+   hisse au-dessus d'une note de plusieurs lignes. À 820 px et moins il ne réserve plus
+   que l'onglet Chat : les notes passent au-dessus de la rangée (18 + 44 + 4), comme le
+   bouton de mode, qui se hisse au-dessus d'elles (rail de \`control_center_interaction_mode.js\`). */
+@media(min-width:821px){.sc-status{max-width:min(calc(50vw - 150px),calc(var(--shell-gutter,18px) + 228px))}}
+@media(max-width:820px){.sc-status,body:has(#jarvisHands .jh-badge) .sc-status{bottom:calc(var(--shell-bottom,18px) + var(--shell-status-h,44px) + 4px)}}
 .sc-status[hidden]{display:none}
-.sc-note{display:flex;align-items:center;gap:8px;min-width:0;max-width:100%;padding:6px 12px 6px 10px;border-radius:999px;
+.sc-note{position:relative;display:flex;flex-wrap:wrap;align-items:center;gap:2px 8px;min-width:0;max-width:100%;padding:6px 12px 6px 24px;border-radius:14px;
   background:rgba(3,8,12,.7);box-shadow:inset 0 0 0 1px var(--sc-edge);backdrop-filter:blur(14px);
-  font-size:10px;letter-spacing:.08em;text-transform:uppercase;color:rgba(214,232,240,.82);white-space:nowrap}
-.sc-note::before{content:'';flex:none;width:6px;height:6px;border-radius:50%;background:var(--sc-muted)}
-.sc-note-main{min-width:0;overflow:hidden;text-overflow:ellipsis}
+  font-size:10px;line-height:1.4;letter-spacing:.08em;text-transform:uppercase;color:rgba(214,232,240,.82);white-space:normal}
+/* La puce sort du flux (QA S08 P3) : une ligne meta renvoyée à la ligne s'aligne sur le texte (24 px), pas sous la puce. */
+.sc-note::before{content:'';position:absolute;left:10px;top:10px;width:6px;height:6px;border-radius:50%;background:var(--sc-muted)}
+.sc-note-main{min-width:0;flex:1 1 140px;overflow-wrap:anywhere}
 .sc-note-meta{flex:none;color:var(--sc-muted);font-variant-numeric:tabular-nums}
-/* Indicateur actionnable (Slice 08) : masqués → liste, scène pleine → archivage. */
+/* Indicateur actionnable (Slice 08) : scène pleine → archivage (les masqués sont à l’œil du centre d’état depuis l’orbital UI S06). */
 button.sc-note{pointer-events:auto;border:0;font:inherit;font-size:10px;letter-spacing:.08em;text-transform:uppercase;cursor:pointer;text-align:left}
 button.sc-note:hover{background:rgba(10,24,32,.86);color:#eef6fa}
 button.sc-note:focus-visible{outline:1px solid var(--sc-ink);outline-offset:2px}
@@ -967,7 +989,8 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
 @keyframes sc-alert{0%{opacity:.95;transform:scale(.62)}80%,100%{opacity:0;transform:scale(1.75)}}
 /* Respiration d'un halo : lente, bornée, sans extinction ni éclat. */
 @keyframes sc-glow{0%,100%{opacity:.58;transform:scale(.9)}50%{opacity:1;transform:scale(1.13)}}
-@media(max-width:700px){.sc-status{left:10px;bottom:12px;max-width:calc(100vw - 90px)}}
+/* Étroit : bord gauche resserré ; toujours au-dessus de la rangée du centre d'état (Slice 06). */
+@media(max-width:700px){.sc-status,body:has(#jarvisHands .jh-badge) .sc-status{left:10px;bottom:calc(var(--shell-bottom,18px) + var(--shell-status-h,44px) + 4px);max-width:calc(100vw - 90px)}}
 @media(prefers-reduced-motion:reduce){
   .scene .sc-node{transition:none!important}
   .scene .sc-ring,.scene .sc-note::before,.scene .sc-node.sc-stopping .sc-ring{animation:none!important}
@@ -997,7 +1020,7 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
     core_refused:'Core refuse la lecture',invalid_scene_response:'réponse invalide',timeout:'pas de réponse',
     patch_waits_busy:'trop de pages ouvertes',TypeError:'Control Center injoignable',network_error:'Control Center injoignable'};
 
-  let enabled=false,root=null,linksEl=null,fieldEl=null,fixedEl=null,statusEl=null,liveEl=null,raf=0,statusTicker=null;
+  let enabled=false,root=null,linksEl=null,fieldEl=null,fixedEl=null,statusEl=null,statusResize=null,liveEl=null,raf=0,statusTicker=null;
   let lastView=null,lastState=null,layout=null,layoutState=null,edgesSig='',statusSig='',announced='',readyTimer=0;
   let lastModel=null,focusId=null,tabStopId=null,statusFailed=false,visibilityToken=0,animTimer=0,driftTimer=0,controlsObserver=null,controlsAdded=null;
   /* Réglages d'affichage de l'utilisateur (ce navigateur), et la section des
@@ -1275,7 +1298,7 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
     const live=element('div','sc-view-live');
     live.setAttribute('role','status');live.setAttribute('aria-live','polite');
     section.append(title,lead);
-    viewRows=V.FIELDS.map(field=>{
+    viewRows=(V.PANEL_FIELDS||V.FIELDS).map(field=>{
       const row=element('div','sc-view-row');
       row.title=field.hint;
       const input=document.createElement('input');
@@ -1306,7 +1329,7 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
     const reset=element('button','sc-view-reset','Réinitialiser');
     reset.type='button';
     reset.addEventListener('click',()=>{
-      viewPrefs=V.normalize(null);
+      viewPrefs=V.reset?V.reset(viewPrefs):V.normalize(null);
       saveViewPrefs();applyViewPrefs();syncViewPanel();
       announceView('Étoiles et orbites réinitialisées.');
       consoleLog('info','scene.view_reset',{});
@@ -1407,6 +1430,7 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
     linksEl.append(fieldEl,fixedEl);
     statusEl=document.createElement('div');
     statusEl.className='sc-status';statusEl.hidden=true;
+    if(typeof ResizeObserver==='function'){statusResize=new ResizeObserver(publishStatusHeight);statusResize.observe(statusEl)}
     /* Région vivante à part : annonce les changements d'état, jamais les
        compteurs qui défilent chaque seconde. */
     liveEl=document.createElement('div');
@@ -1477,6 +1501,8 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
     if(driftTimer){window.clearInterval(driftTimer);driftTimer=0}
     if(controlsObserver){controlsObserver.disconnect();controlsObserver=null}
     if(controlsAdded){controlsAdded.disconnect();controlsAdded=null}
+    if(statusResize){statusResize.disconnect();statusResize=null}
+    document.documentElement.style.removeProperty('--sc-status-h');
     if(prefabHost){prefabHost.destroy();prefabHost=null}
     root=null;linksEl=null;fieldEl=null;fixedEl=null;statusEl=null;liveEl=null;actionLiveEl=null;nodes.clear();freshUntil.clear();
     /* La section des réglages vit dans le modal : elle survit à la scène. */
@@ -1488,6 +1514,7 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
     if(pruneTimer){window.clearTimeout(pruneTimer);pruneTimer=0}
     if(ephemeralTimer){window.clearTimeout(ephemeralTimer);ephemeralTimer=0}
     edgesSig='';statusSig='';announced='';focusId=null;tabStopId=null;
+    syncEye();
   }
 
   function scheduleRender(){
@@ -1678,6 +1705,7 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
     if(node.signal)classes.push('sc-signal',`sc-urgency-${node.urgency}`);
     if(node.pinned)classes.push('sc-pinned');
     if(node.compact)classes.push('sc-compact');
+    if(node.ghost)classes.push('sc-ghost');
     /* Le contenu seulement : les classes d'état (tenu, lâché, orbite,
        sélection…) restent — `L.nodeClassName`. */
     if(node.prefab&&node.shape==='window')classes.push('sc-prefab-window');
@@ -2074,7 +2102,7 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
       /* `prefabKey` et non `props`/`data` : un changement de données d'un prefab
          est un message au cadre (`syncPrefab`), jamais un nouveau dessin. */
       const content=JSON.stringify([node.shape,node.kind,node.tone,node.exec,node.urgency,node.pinned,node.titleSpans,
-        node.category,node.summary,node.items,node.label,node.prefabKey,node.itemCount,node.explains,node.alerted,node.ephemeral,node.task,node.group,node.type]);
+        node.category,node.summary,node.items,node.label,node.prefabKey,node.itemCount,node.explains,node.alerted,node.ephemeral,node.task,node.group,node.type,node.ghost]);
       if(content!==record.content){
         const inside=record.el.contains(document.activeElement);
         fill(record.el,node);record.content=content;record.anim=null;
@@ -2501,12 +2529,21 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
     return options===null||calm||reducedMotion()?null:L.orbitField(nodesNow,vp,options);
   }
 
+  /* Hauteur des notes de la scène, publiée sur la page (`--sc-status-h`) pour le
+     bouton de mode, qui se hisse au-dessus d'une note de plusieurs lignes (S06
+     rework, QA B1 : une note coupée en points de suspension perdait sa cause). */
+  function publishStatusHeight(){
+    const h=statusEl&&!statusEl.hidden?Math.ceil(statusEl.getBoundingClientRect().height):0;
+    document.documentElement.style.setProperty('--sc-status-h',h+'px');
+  }
+
   /* Ce que le bureau des tenues sait d'un objet : son nœud dessiné, sa place
      enregistrée, sa représentation. */
   function holdTarget(id){
     const node=nodeOf(id),box=drawnBox(id),state=viewState();
     const item=state&&state.objects.get(id);
-    if(!node||!box||!item||!nodes.has(id))return null;
+    /* Un fantôme (objet masqué, Slice 06) ne se tient pas : il n'a pas de place. */
+    if(!node||node.ghost||!box||!item||!nodes.has(id))return null;
     return {node,box:{x:box.x,y:box.y,w:box.w,h:box.h},representation:item.representation};
   }
 
@@ -2908,6 +2945,7 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
        sauf sur ses objets (`pointer-events`), donc le rectangle de sélection
        naît du document (`onDocumentPointerDown`). */
     if(!el)return;
+    if((nodeOf(el.dataset.objectId)||{}).ghost)return;  // fantôme : « Réafficher » seulement (QA S06 P2)
     raiseWindow(el.dataset.objectId);
     /* Lien d'entrée ou origine d'un artefact : leur clic natif, pas de geste. */
     if(event.target.closest('.sc-item-link,.sc-origin'))return;
@@ -3146,6 +3184,12 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
   function keyAdjust(el,intent){
     const id=el.dataset.objectId,state=viewState(),item=state&&state.objects.get(id);
     if(!item)return;
+    const adjusted=nodeOf(id);
+    if(adjusted&&adjusted.ghost){
+      announce('Objet masqué : réaffichez-le (menu contextuel) avant de le déplacer.');
+      consoleLog('info','scene.ghost_key_refused',{object_id:id});
+      return;
+    }
     if(intent.type==='resize'&&!I.resizable(item.representation)){
       announce('Un point ne se redimensionne pas : changer sa forme depuis le menu.');
       return;
@@ -3197,6 +3241,17 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
     if(typeof showMenu!=='function'){consoleLog('warn','scene.menu_unavailable',{});return}
     const state=viewState();
     if(!state||!state.objects.has(id))return;
+    /* Fantôme (Slice 06, D9) : une seule action, « Réafficher » — le même
+       `showObjects([id])` que la liste de l'œil, donc un seul
+       `set_visibility visible`. Rien d'autre ne s'applique à un objet masqué. */
+    const node=nodeOf(id);
+    if(node&&node.ghost){
+      actionStats.menus++;
+      showMenu({title:titleOf(id),items:[{act:'reveal',label:'Réafficher'}],pos,origin,run:act=>{
+        if(act==='reveal')showObjects([id]).catch(error=>actionFailed('Réaffichage',id,error));
+      }});
+      return;
+    }
     const model=I.menuModel(state,id,{title:titleOf(id),finished:lastState?I.bulkSelection(lastState).objects:0,
       orphans:lastState?L.orphanArtifacts(lastState).length:0});
     if(!model)return;
@@ -3298,6 +3353,85 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
     if(shown)announce(shown>1?`${shown} objets réaffichés.`:`${quoted(ids[0])} réaffiché.`);
     if(failed)reportRefusal(shown?`Réaffichage de ${ids.length-shown} objet(s)`:'Réaffichage',ids[0],failed);
     else if(ids.length>1)notify({title:`${shown} objets réaffichés`,kind:'ok',ms:3000});
+  }
+
+  /* ------------------------------------------------------------------
+     L'œil des objets masqués (orbital-ui Slice 06, D9).
+
+     Un bouton du centre d'état bas-centre (`#hiddenEye`, déclaré par la page,
+     rang 40), seul contrôle permanent des objets masqués. Il ne tient aucun
+     état : il projette le réglage de vue `showHidden` (`JarvisSceneView`, ce
+     navigateur, jamais envoyé à Core) et le compte `hidden` du dernier modèle
+     de vue. Activation simple : allume ou éteint les fantômes ; activation
+     secondaire (clic droit, pincement pouce + majeur, `ContextMenu`,
+     `Maj+F10`) : la liste existante (`openHiddenMenu`, « Tout réafficher »).
+     Aucun objet masqué : il reste focalisable, l'air inerte, et le dit.
+     Scène éteinte : caché. */
+  const EYE_ID='hiddenEye';
+  let eyeKbdAt=0,eyeWired=false,eyeSig='';
+  function eyeElement(){return document.getElementById(EYE_ID)}
+
+  function syncEye(){
+    const eye=eyeElement();
+    if(!eye)return;
+    if(!eyeWired)wireEye(eye);
+    const shown=!!(enabled&&root&&V&&I);
+    if(!shown){if(!eye.hidden){eye.hidden=true;eyeSig=''}return}
+    const view=V.hiddenEye(viewPrefs,lastModel?lastModel.hidden:0);
+    const sig=`${view.pressed}|${view.inert}|${view.label}`;
+    if(eye.hidden)eye.hidden=false;
+    if(sig===eyeSig)return;
+    eyeSig=sig;
+    eye.setAttribute('aria-pressed',view.pressed?'true':'false');
+    eye.setAttribute('aria-disabled',view.inert?'true':'false');
+    eye.setAttribute('aria-label',view.label);
+    eye.title=view.label;
+    eye.dataset.eye=view.pressed?'on':'off';
+  }
+
+  function toggleEye(){
+    const eye=eyeElement();
+    if(!eye||!enabled||!V)return;
+    const view=V.hiddenEye(viewPrefs,lastModel?lastModel.hidden:0);
+    if(view.inert){announce('Aucun objet masqué.');consoleLog('info','scene.hidden_view_inert',{});return}
+    const field=V.FIELD_BY_ID.get('showHidden');
+    setViewField(field,!view.pressed);
+    /* Un fantôme n'est dessiné que pour un objet masqué qui a une place
+       enregistrée (`JarvisSceneLayout.viewModel`) : on annonce ceux-là, et la
+       liste de l'œil, qui les tient tous (QA S06, P1). */
+    const state=viewState();
+    const ghosts=state?[...state.objects.values()].filter(o=>o.visibility!=='visible'&&o.geometry).length:0;
+    const listed=`${view.count} dans la liste de l’œil.`;
+    announce(view.pressed?'Objets masqués cachés.'
+      :ghosts?`${ghosts} ${ghosts>1?'objets masqués affichés':'objet masqué affiché'} en fantômes ; ${listed}`
+      :`Aucun objet masqué n’a de place enregistrée ; ${listed}`);
+    consoleLog('info','scene.hidden_view',{show:!view.pressed,hidden:view.count,ghosts});
+    syncEye();
+  }
+
+  function eyeSecondary(eye){
+    if(!enabled)return;
+    const count=lastModel?lastModel.hidden:0;
+    consoleLog('info','scene.hidden_menu',{hidden:count});
+    if(!count){announce('Aucun objet masqué.');return}
+    openHiddenMenu(eye);
+  }
+
+  function wireEye(eye){
+    eyeWired=true;
+    eye.addEventListener('click',event=>{event.preventDefault();toggleEye()});
+    eye.addEventListener('contextmenu',event=>{
+      event.preventDefault();
+      /* La touche Menu / Maj+F10 a déjà ouvert la liste : le `contextmenu`
+         que le navigateur envoie ensuite compte une fois. */
+      if(performance.now()-eyeKbdAt<700)return;
+      eyeSecondary(eye);
+    });
+    eye.addEventListener('keydown',event=>{
+      if(event.key==='ContextMenu'||(event.key==='F10'&&event.shiftKey)){
+        event.preventDefault();eyeKbdAt=performance.now();eyeSecondary(eye);
+      }
+    });
   }
 
   function openHiddenMenu(anchor){
@@ -3712,7 +3846,7 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
     nextEphemeralMs=Infinity;
     lastModel=L.viewModel(viewState(),current,vp,{objectLimit:lastView?lastView.objectLimit:L.OBJECT_LIMIT,errorLabels:errorLabels(),
       animatable:node=>(freshUntil.get(node.id)||{until:0}).until>now,
-      workView:item=>workViewOf(item,now),work:workIndex,raised});
+      workView:item=>workViewOf(item,now),work:workIndex,raised,showHidden:!!(viewPrefs&&viewPrefs.showHidden)});
     armEphemeralTimer();
     /* Gravitation : le centre, la période et le resserrement du champ sont
        calculés pour ce rendu ; le rayon et la phase, eux, appartiennent à
@@ -3837,10 +3971,9 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
     for(const entry of stopping.values()){
       notes.push({cls:'sc-busy',main:`Arrêt de ${entry.label} en cours`,meta:elapsed(Date.now()-entry.started)});
     }
-    if(I&&lastModel&&lastModel.hidden){
-      const n=lastModel.hidden;
-      notes.push({cls:'sc-hidden',main:`${n} ${n>1?'objets masqués':'objet masqué'}`,meta:'afficher',action:'hidden',label:`${n} ${n>1?'objets masqués':'objet masqué'} : les lister pour les réafficher`});
-    }
+    /* Les objets masqués ne sont plus une note ici (Slice 06, D9) : l'œil du
+       centre d'état (`#hiddenEye`) les compte et les montre. */
+    syncEye();
     if(lastModel&&lastModel.offscreen){
       notes.push({cls:'',main:`${lastModel.offscreen} ${lastModel.offscreen>1?'objets':'objet'} hors champ`,meta:''});
       announce.push('Des objets sont hors champ.');
@@ -3854,18 +3987,19 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
     statusEl.replaceChildren(...notes.map(n=>{
       const note=element(n.action?'button':'div',`sc-note ${n.cls}`.trim());
       note.append(element('span','sc-note-main',n.main));
+      note.title=n.meta?`${n.main} · ${n.meta}`:n.main;
       if(n.meta)note.append(element('span','sc-note-meta',n.meta));
       if(n.action){
         note.type='button';note.dataset.action=n.action;note.setAttribute('aria-label',n.label||n.main);
         note.addEventListener('click',()=>{
-          if(n.action==='hidden')openHiddenMenu(note);
-          else if(n.action==='bulk')archiveFinished().catch(error=>consoleLog('error','scene.user_action_failed',{action:'bulk',error:String(error&&error.message||error)}));
+          if(n.action==='bulk')archiveFinished().catch(error=>consoleLog('error','scene.user_action_failed',{action:'bulk',error:String(error&&error.message||error)}));
         });
       }
       return note;
     }));
     if(focused){const again=statusEl.querySelector(`[data-action="${focused}"]`);if(again)again.focus({preventScroll:true})}
     statusEl.hidden=!notes.length;
+    publishStatusHeight();
   }
 
   function onLoopUpdate(view){

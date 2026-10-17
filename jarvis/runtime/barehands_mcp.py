@@ -628,10 +628,11 @@ def build_server(target: BarehandsMcpTarget | None = None, *, tools: BarehandsCo
         """Remettre Bare Hands en veille : la main ne pilote plus, la caméra reste prête.
 
         À appeler quand l'utilisateur demande d'arrêter, de désactiver ou de mettre en pause les mains.
-        C'est la **veille**, pas l'extinction : la caméra reste prête et la posture en C réveille.
-        Si l'utilisateur veut éteindre Bare Hands pour de bon (« éteins complètement », « coupe la
-        webcam »), ce n'est pas cet outil : appelle settings_set(barehands.enabled, false) du serveur
-        jarvis-console, qui bascule le vrai interrupteur. Ne renvoie pas l'utilisateur au Control Center.
+        C'est la **veille**, pas l'extinction : la posture en C réveille.
+        Pour éteindre pour de bon (« éteins complètement », « coupe la webcam ») ou passer en
+        souris (« passe en souris », « reprends la souris »), ce n'est pas cet outil :
+        settings_set(barehands.enabled, false) du serveur jarvis-console, le vrai interrupteur.
+        Ne renvoie pas l'utilisateur au Control Center.
         """
         return await hands.send("barehands_deactivate", "deactivate")
 

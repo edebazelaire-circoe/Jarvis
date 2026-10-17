@@ -37,6 +37,7 @@ import re
 from typing import Any
 
 from jarvis.core.recording_transcriber import projection_id_of, segment_id_of
+from jarvis.core.screenshot_annotation import AnnotationRefused, annotate_screenshot
 from jarvis.domain.artifacts import (
     Artifact, ArtifactError, ArtifactErrorCode, ArtifactKind, ArtifactQuery, ArtifactState,
 )
@@ -267,6 +268,11 @@ class CaptureApi:
     async def capture(self, capture_id: str) -> dict[str, Any]:
         return {"capture": await self._capture(await self._captures.get(capture_id))}
 
+    async def targets(self) -> dict[str, Any]:
+        """Cibles exécutables par canal (`CaptureService.targets`, orbital-ui S04) ; libellés système masqués."""
+
+        return redact_paths(await self._captures.targets())
+
     async def start(self, channel: str, options: Any) -> dict[str, Any]:
         return {"capture": await self._capture(await self._captures.start(channel, options))}
 
@@ -478,6 +484,16 @@ class CaptureApi:
         for item in directions:
             out[item.value] = [relation.to_payload() for relation in await self._artifacts.relations(artifact_id, item)]
         return out
+
+    async def annotate(self, artifact_id: str, data: bytes) -> dict[str, Any]:
+        """Capture annotée (orbital-ui Slice 05.B) : NOUVEL Artifact `screenshot` dérivé, original intact
+        (`jarvis/core/screenshot_annotation.py`). Rend le résumé de la dérivée, jamais un chemin."""
+
+        try:
+            derived = await annotate_screenshot(self._artifacts, artifact_id, data)
+        except AnnotationRefused as exc:
+            raise EvidenceApiError(exc.status, exc.code, exc.message) from None
+        return {"artifact": artifact_summary(derived), "annotated_from": artifact_id}
 
     async def delete(self, artifact_id: str, *, cascade: bool, origin: str) -> dict[str, Any]:
         result = await self._artifacts.delete(artifact_id, cascade=cascade, origin=origin)

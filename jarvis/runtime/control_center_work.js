@@ -168,10 +168,6 @@ html[data-jarvis-theme="cosmos"] .state{
   font-size:10px;padding:7px 10px;letter-spacing:.1em;color:#6f8591;
   box-shadow:0 8px 30px rgba(0,0,0,.2)}
 html[data-jarvis-theme="cosmos"] .state strong{color:var(--accent,#6ee7ff)}
-html[data-jarvis-theme="cosmos"] .voicehint{
-  border:0;border-radius:999px;background:rgba(3,8,12,.42);
-  color:rgba(210,229,238,.58);font-size:10px;padding:7px 11px;
-  letter-spacing:.11em;backdrop-filter:blur(14px);box-shadow:none}
 html[data-jarvis-theme="cosmos"] .dock .tool{display:block}
 html[data-jarvis-theme="cosmos"] .dock button{
   border-radius:10px;display:grid;place-items:center;
@@ -184,7 +180,7 @@ html[data-jarvis-theme="cosmos"] .dock button.active{
   color:var(--accent,#6ee7ff);border-color:var(--shell-stroke-active,color-mix(in srgb,var(--accent,#6ee7ff) 46%,transparent));
   background:rgba(10,19,26,.72);transform:translateY(-1px)}
 html[data-jarvis-theme="cosmos"] .dock .badge{right:-4px;top:-4px;transform:scale(.82)}
-html[data-jarvis-theme="cosmos"] .bgpill{width:26px;height:26px;font-size:10px;background:rgba(5,11,16,.56);backdrop-filter:blur(16px)}
+html[data-jarvis-theme="cosmos"] .bgpill{background:rgba(5,11,16,.56);backdrop-filter:blur(16px)}
 html[data-jarvis-theme="cosmos"] .bgpop{border-radius:14px;background:rgba(4,10,15,.92);backdrop-filter:blur(26px)}
 html[data-jarvis-theme="cosmos"] .panel{
   border:1px solid rgba(151,191,209,.14);border-radius:16px;
@@ -243,30 +239,41 @@ html[data-jarvis-theme="cosmos"] .choice.theme-choice.selected{
     return icons[name]||icons.trace;
   }
 
+  /* Une icône par outil du lanceur (rangée et popover « Plus d’outils »). L'ordre
+     est celui de la page, le même dans les deux thèmes (orbital-ui Slice 08) :
+     la peau ne remplace que le libellé texte par l'icône. */
   function setCosmosTools(enabled){
     const specs=[
-      ['agentsButton','agents',1],
-      ['openTimeline','timeline',2],
-      ['openTestLab','testlab',3],
-      [null,'trace',4],
-      ['openSettings','settings',5],
-      ['openMcpInspector','mcp',6],
-      ['openWorkspace','workspace',7],
-      ['openPrefabs','prefabs',8],
-      ['openStudioInspector','inspector',9],
-      [null,'errors',10],
+      ['openTimeline','timeline'],
+      ['agentsButton','agents'],
+      [null,'errors'],
+      ['openSettings','settings'],
+      [null,'trace'],
+      ['openTestLab','testlab'],
+      ['openMcpInspector','mcp'],
+      ['openWorkspace','workspace'],
+      ['openPrefabs','prefabs'],
+      ['openStudioInspector','inspector'],
     ];
-    for(const [id,name,order] of specs){
+    for(const [id,name] of specs){
       const button=id?document.getElementById(id):document.querySelector(`.dock button[data-panel="${name}"]`);
       if(!button)continue;
       if(!button.dataset.jarvisOriginalHtml)button.dataset.jarvisOriginalHtml=button.innerHTML;
+      /* Le nom du circuit imprimé est gardé et rendu au retour (QA S09 : après un aller-retour, WSP perdait
+         « · mémoire, relations, artefacts ») ; en Cosmos l'icône remplace le code, qui sort du nom. Un nom réécrit
+         entre-temps par un autre module (badge) est le plus frais : il n'est pas écrasé. */
       if(enabled){
         button.innerHTML=toolIcon(name);
-        button.parentElement.style.order=String(order);
-        button.setAttribute('aria-label',button.title||name);
+        if(button.dataset.jarvisOriginalLabel===undefined)button.dataset.jarvisOriginalLabel=button.getAttribute('aria-label')||'';
+        const plain=(button.dataset.jarvisOriginalLabel||button.title||name).replace(/ · [A-Z]{2,4}$/,'');
+        button.setAttribute('aria-label',plain);button.dataset.jarvisCosmosLabel=plain;
       }else{
         button.innerHTML=button.dataset.jarvisOriginalHtml;
-        button.parentElement.style.order='';
+        const original=button.dataset.jarvisOriginalLabel;
+        if(original!==undefined&&button.getAttribute('aria-label')===button.dataset.jarvisCosmosLabel){
+          if(original)button.setAttribute('aria-label',original);else button.removeAttribute('aria-label');
+        }
+        delete button.dataset.jarvisOriginalLabel;delete button.dataset.jarvisCosmosLabel;
       }
     }
   }

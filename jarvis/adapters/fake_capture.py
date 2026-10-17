@@ -23,9 +23,11 @@ from pathlib import Path
 import threading
 import time
 
-from jarvis.domain.capture import CaptureChannel, CaptureError, CaptureErrorCode, CaptureMode
+from jarvis.domain.capture import DEFAULT_DEVICE, CaptureChannel, CaptureError, CaptureErrorCode, CaptureMode
 from jarvis.ports.artifacts import PAYLOAD_FAILED, ArtifactPayloadError, ArtifactPayloadStore, PayloadInfo
-from jarvis.ports.capture import CaptureSink, CaptureSourceError, MediaInfo, OneShotResult, SourceHealth
+from jarvis.ports.capture import (
+    CaptureSink, CaptureSourceError, CaptureTarget, MediaInfo, OneShotResult, SourceHealth,
+)
 
 FAKE_SOURCE = "fake"
 #: 10 ms de PCM16 mono à 8 kHz : une trame déterministe.
@@ -154,10 +156,13 @@ class FakeCaptureSources:
         one_shot: Mapping[CaptureChannel, Callable[[], FakeOneShotSource]] | None = None,
         *,
         platform_supported: bool = True,
+        targets: Mapping[CaptureChannel, Callable[[], list[CaptureTarget]]] | None = None,
     ) -> None:
         self._continuous = dict(continuous or {})
         self._one_shot = dict(one_shot or {})
         self.platform_supported = platform_supported
+        #: Cibles par canal (orbital-ui S04) ; un canal servi sans entrée ici n'a que `default`.
+        self.target_lists = dict(targets or {})
         self.created: list[FakeCaptureSource | FakeOneShotSource] = []
 
     def _check(self, channel: CaptureChannel, source: str | None, factories: Mapping) -> Callable:
@@ -179,6 +184,16 @@ class FakeCaptureSources:
 
     def source_name(self, channel: CaptureChannel, mode: CaptureMode, source: str | None) -> str:
         return FAKE_SOURCE
+
+    def targets(self, channel: CaptureChannel) -> list[CaptureTarget]:
+        if channel not in self._continuous and channel not in self._one_shot:
+            self._check(channel, None, {})
+        if not self.platform_supported:
+            self._check(channel, None, {})
+        if channel in self.target_lists:
+            return self.target_lists[channel]()
+        label = "Écran principal" if channel is CaptureChannel.SCREEN else "Micro de Voice"
+        return [CaptureTarget(token=DEFAULT_DEVICE, label=label)]
 
 
 # ------------------------------------------------------------------ stockage défaillant

@@ -820,7 +820,10 @@ async def test_the_served_page_carries_the_dock_button_the_dialog_and_the_module
     assert html.index("const JarvisTestLabCore=") < html.index("const JarvisMcpInspectorCore=")
     dock = html[html.index('<nav class="dock"'): html.index("</nav>", html.index('<nav class="dock"'))]
     order = re.findall(r">([A-Z]{3})</button>", dock)
-    assert order == ["ERR", "TRC", "LAB", "CNV", "SET", "MCP", "WSP", "PFB", "INS", "AGT"]
+    # Orbital UI Slice 08 : quatre outils visibles, puis les six du popover « Plus d’outils ».
+    assert order == ["CNV", "AGT", "ERR", "SET", "TRC", "LAB", "MCP", "WSP", "PFB", "INS"]
+    more = dock[dock.index('id="dockMorePop"'):]
+    assert 'id="openMcpInspector"' in more
     button = re.search(r'<button id="openMcpInspector"[^>]*>MCP</button>', dock).group(0)
     for attribute in ('aria-haspopup="dialog"', 'aria-expanded="false"', 'aria-controls="mcpInspector"', "aria-label="):
         assert attribute in button
@@ -877,5 +880,6 @@ def test_reduced_motion_stops_the_status_light_whatever_its_tone():
 
 def test_the_cosmos_theme_draws_the_mcp_tool_like_its_neighbours():
     work = WORK.read_text(encoding="utf-8")
-    # Même ordre relatif que le dock vertical : MCP juste après SET (§10.7).
-    assert "['openSettings','settings',5],\n      ['openMcpInspector','mcp',6]," in work and "mcp:`<svg ${common}>" in work
+    # Une icône comme ses voisins ; depuis l'orbital UI Slice 08, l'ordre est celui de la
+    # page (MCP dans le popover « Plus d’outils », juste après LAB), la peau ne le change plus.
+    assert "['openTestLab','testlab'],\n      ['openMcpInspector','mcp']," in work and "mcp:`<svg ${common}>" in work

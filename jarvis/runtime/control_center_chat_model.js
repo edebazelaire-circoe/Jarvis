@@ -220,6 +220,18 @@
       artifactId:null,readable:null,error:null});
     return item;
   }
+  /* Pièce DÉJÀ chez Core (« Envoyer à Jarvis » d'une capture d'écran, orbital-ui Slice 05, D7) : prête
+     d'emblée, sans téléversement ni octet (`clientUploadId` vide, `existing`). Sa lisibilité par le Brain
+     n'est connue qu'au tour (`readable=null`, montrée « prête ») : le brief la dit pour l'agent du tour.
+     La même pièce, déjà jointe à cette conversation, n'est jamais doublée : rend celle qui y est. */
+  function addExistingAttachment(list,{artifactId,name,size,mime,cid}){
+    if(typeof artifactId!=='string'||!artifactId||typeof cid!=='string'||!cid)return null;
+    const held=list.items.find(item=>item.artifactId===artifactId&&item.cid===cid&&item.state!=='removed');
+    if(held)return held;
+    const item=addAttachment(list,{name,size,mime,cid,clientUploadId:''});
+    Object.assign(item,{state:'ready',phase:null,loaded:item.total,artifactId,readable:null,existing:true});
+    return item;
+  }
   /* Retirée : rend l'état d'avant (`uploading` → l'appelant annule la requête). */
   function removeAttachment(list,key){
     const item=findAttachment(list,key);if(!item||item.state==='removed')return null;
@@ -230,7 +242,7 @@
   /* Ce que la conversation `cid` montre et peut envoyer. */
   function attachmentView(list,cid){
     const items=list.items.filter(item=>item.state!=='removed').map(item=>({...item,
-      status:item.cid!==cid?'stale':item.state==='ready'?(item.readable?'ready':'unreadable'):item.state,
+      status:item.cid!==cid?'stale':item.state==='ready'?(item.readable===false?'unreadable':'ready'):item.state,
       error:item.error?{...item.error}:null}));
     const mine=items.filter(item=>item.status!=='stale');
     const ids=mine.filter(item=>item.state==='ready').map(item=>item.artifactId);
@@ -251,6 +263,7 @@
     if(!saved||typeof saved.name!=='string')return null;
     if(typeof saved.artifactId==='string'&&list.items.some(item=>item.artifactId===saved.artifactId))return null;
     if(typeof saved.clientUploadId==='string'&&saved.clientUploadId&&list.items.some(item=>item.clientUploadId===saved.clientUploadId))return null;
+    if(saved.existing===true)return addExistingAttachment(list,{artifactId:saved.artifactId,name:saved.name,size:saved.size,mime:saved.mime,cid:saved.cid});
     const item=addAttachment(list,{name:saved.name,size:saved.size,mime:saved.mime,cid:saved.cid,
       clientUploadId:typeof saved.clientUploadId==='string'?saved.clientUploadId:''});
     if(typeof saved.artifactId==='string'&&saved.artifactId)
@@ -279,7 +292,7 @@
   const api=Object.freeze({CHAT_PROJECTION,CHAT_EVENT_TYPES,UNKNOWN_FAILURE_CODE,ITEM_FIELDS,
     isChatEvent,createChatModel,applyPage,items,markPending,isPending,reset,attachmentCount,storedRows,
     ATTACHMENT_STATES,UNKNOWN_UPLOAD_CODES,FINAL_UPLOAD_CODES,createAttachments,addAttachment,attachmentProgress,
-    attachmentSent,attachmentReady,attachmentFailed,retryAttachment,rebindAttachment,removeAttachment,attachmentView,
+    attachmentSent,attachmentReady,attachmentFailed,retryAttachment,rebindAttachment,addExistingAttachment,removeAttachment,attachmentView,
     takeSent,restoreAttachment,attachmentSignature,formatBytes,uploadLimitFrom});
   if(typeof module==='object'&&module.exports)module.exports=api;
   if(root)root.JarvisChatModel=api;

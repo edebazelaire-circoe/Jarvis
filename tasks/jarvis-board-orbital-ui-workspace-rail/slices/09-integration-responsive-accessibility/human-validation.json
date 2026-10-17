@@ -5,6 +5,48 @@
       "when": "After full runtime matrix passes",
       "instruction": "Use the redesigned shell for a normal end-to-end work session with Board, wheel, rail, notifications and one capture.",
       "acceptance": "No control feels like it competes with the Board; transitions and spatial hierarchy match the approved art direction."
+    },
+    {
+      "id": "HV-09-02",
+      "when": "After the S09 QA (PASS_WITH_POLISH)",
+      "instruction": "Dans Edge ou Chrome, zoomez réellement la page à 200 % (Ctrl et +), fenêtre 1440×900 ; ouvrez la roue, prenez une capture d'écran, ouvrez les alertes et le sélecteur de mode.",
+      "acceptance": "Tout reste dans l'écran, rien ne se recouvre, l'aperçu de capture tient entre la ligne d'état et le bouton de mode (le test n'émule que le zoom : viewport 720×450 à l'échelle 2)."
+    },
+    {
+      "id": "HV-09-03",
+      "when": "After the S09 QA (PASS_WITH_POLISH)",
+      "instruction": "Activez un thème à contraste élevé de Windows (Paramètres › Accessibilité › Thèmes de contraste), puis parcourez la coque : roue, centre d'état, rail, lanceur, bouton de mode.",
+      "acceptance": "Chaque commande a un bord visible, le focus se voit partout, les états ne passent pas par la couleur seule (le test n'émule que forced-colors)."
+    },
+    {
+      "id": "HV-09-04",
+      "when": "After the S09 QA (PASS_WITH_POLISH)",
+      "instruction": "Avec le Narrateur ou NVDA, écoutez les nouveaux noms : une puce d'enregistrement d'écran, une ligne du choix du Board, un outil de la roue « en cours », les boutons du lanceur en circuit imprimé puis en Cosmos.",
+      "acceptance": "La puce dit « REC — arrêter l’enregistrement d’écran » et sa durée en description ; une ligne de Board dit son titre puis « Basculer sur ce Board » (ou « Board actif ») ; les noms du lanceur sont complets et identiques après un aller-retour de thème."
+    },
+    {
+      "id": "HV-09-05",
+      "when": "After the S09 QA (PASS_WITH_POLISH)",
+      "instruction": "Avec l'Accès vocal de Windows, dites « cliquer Mode Assistant », « cliquer CNV » et, un enregistrement d'écran en cours, « cliquer REC ».",
+      "acceptance": "Chaque commande vocale atteint le bon bouton du premier coup ; « cliquer REC » arrête l'enregistrement d'écran."
+    },
+    {
+      "id": "HV-09-06",
+      "when": "After the S09 QA (PASS_WITH_POLISH)",
+      "instruction": "Fenêtre de 700 px de large ou moins, Bare Hands actif (pastille « MAINS · ACTIF »), Core coupé : prenez une capture d'écran par la roue.",
+      "acceptance": "L'aperçu de capture ne recouvre ni le bouton de mode (« MODE ? ») ni la note « Scène figée » ; ses quatre actions restent cliquables."
+    },
+    {
+      "id": "HV-09-07",
+      "when": "After the S09 QA (PASS_WITH_POLISH)",
+      "instruction": "Ouvrez Variantes (fenêtré) avec le rail des présentations affiché ; regardez l'interstice entre Variantes et le rail, et l'en-tête du rail.",
+      "acceptance": "Aucun morceau du lanceur (CNV) ne dépasse dans l'interstice ; l'en-tête du rail lit « PRÉSENTATIONS » en entier (le compte peut passer à la ligne)."
+    },
+    {
+      "id": "HV-09-08",
+      "when": "After the S09 QA (PASS_WITH_POLISH)",
+      "instruction": "Fenêtre de moins de 940 px de large, un panneau latéral ouvert (Agents ou Erreurs), provoquez deux infusions (une tâche qui se termine, un sous-agent en échec).",
+      "acceptance": "Les infusions qui passent sur le panneau le temps de leur affichage restent acceptables (seul recouvrement admis, faute de place à sa gauche)."
     }
   ]
 }

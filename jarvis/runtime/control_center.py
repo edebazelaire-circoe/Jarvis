@@ -590,11 +590,14 @@ STUDIO_EXPLORER_SCRIPT_MARKER = "/*__CONTROL_CENTER_PRESENTATION_STUDIO_EXPLORER
 # se montre dans Variantes) : releve de Core, commandes, evenements `jarvis:studio-*`.
 STUDIO_PLAYER_SCRIPT_FILE = "control_center_presentation_studio_player.js"
 STUDIO_PLAYER_SCRIPT_MARKER = "/*__CONTROL_CENTER_PRESENTATION_STUDIO_PLAYER_JS__*/"
-#: Rail permanent des presentations : le rail (bord gauche, a droite de la palette) liste toutes les presentations avec leur pastille d'etat (bleu :
-#: un agent travaille, vert : termine, orange : probleme), le clic ouvre Variantes, le clic droit offre Ouvrir les variantes / Editer / Presenter /
+#: Rail permanent des presentations : le rail actif (zone droite, Slice 07 du shell orbital) liste toutes les presentations en cartes (apercu ou vignette
+#: typee, pastille et libelle d'etat : bleu en cours, orange probleme, jaune a revoir, vert prete), le clic ouvre Variantes, le clic droit offre Ouvrir les variantes / Editer / Presenter /
 #: Masquer / Renommer / Supprimer (archiver). La fenetre flottante d'une presentation est retiree (Slice 09). Apres le client de lecture.
 PRESENTATION_RAIL_SCRIPT_FILE = "control_center_presentation_rail.js"
 PRESENTATION_RAIL_SCRIPT_MARKER = "/*__CONTROL_CENTER_PRESENTATION_RAIL_JS__*/"
+#: Rail actif, etape B (Slice 07) : adaptateur pur des Artifacts lies au Board actif (`WorkspaceRailItem`), lu par le rail. Juste avant lui.
+WORKSPACE_RAIL_MODEL_SCRIPT_FILE = "control_center_workspace_rail_model.js"
+WORKSPACE_RAIL_MODEL_SCRIPT_MARKER = "/*__CONTROL_CENTER_WORKSPACE_RAIL_MODEL_JS__*/"
 # Inspecteur d'edition (studio, Slice 07) : panneau du dock `INS`, widgets generes de l'introspection, ecritures par le relais.
 # Apres la bande de lecture dont il lit l'etat (`JarvisStudioPlayer.view()`) pour se cacher entierement pendant une lecture.
 # Trois fichiers, dans cet ordre : fonctions pures + CSS, widgets générés, contrôleur (le seul qui s'installe et publie `window.JarvisStudioInspector`).
@@ -618,25 +621,29 @@ STUDIO_INSPECTOR_SCRIPT_MARKER = "/*__CONTROL_CENTER_PRESENTATION_STUDIO_INSPECT
 #: emporter les autres modules avec lui.
 INTERACTION_MODE_SCRIPT_FILE = "control_center_interaction_mode.js"
 INTERACTION_MODE_SCRIPT_MARKER = "/*__CONTROL_CENTER_INTERACTION_MODE_JS__*/"
-#: Rail de capture du bord gauche (session-context-recording, Slice 10) :
-#: capture d'écran, enregistrement audio et enregistrement d'écran, dans un hôte
-#: **frère** de la palette Bare Hands (`#captureRail`), jamais dans ses outils
-#: (D15). Sa seule vérité est `GET /api/captures/status` (relais de Core,
-#: `capture_relay.py`), sondé par le module lui-même ; ses écritures passent par
-#: `POST /api/captures/start|screenshot|{id}/stop`. Il mesure la colonne Bare
-#: Hands pour se poser dessous (ou à côté quand la place manque) et ne dépend
-#: d'aucun autre module. Refus d'installation rattrapé, comme le contrôle de mode.
+#: Contrôleur de capture (session-context-recording Slice 10 ; découpé en
+#: orbital-ui Slice 04) : capture d'écran, enregistrement audio et
+#: enregistrement d'écran. Sa seule vérité est `GET /api/captures/status`
+#: (relais de Core, `capture_relay.py`), sondé par le module lui-même ; ses
+#: écritures passent par `POST /api/captures/start|screenshot|{id}/stop`, ses
+#: cibles par `GET /api/captures/targets`. Il ne dessine rien : il publie un
+#: modèle de vue (`JarvisCaptureRail.subscribe`). Pas un outil Bare Hands (D15).
 CAPTURE_RAIL_SCRIPT_FILE = "control_center_capture_rail.js"
 CAPTURE_RAIL_SCRIPT_MARKER = "/*__CONTROL_CENTER_CAPTURE_RAIL_JS__*/"
 #: Roue d'outils orbitale du bord gauche (jarvis-board-orbital-ui-workspace-rail,
-#: Slice 02, décision D3) : ancre au repos, demi-cercle Sélection / Vidéo /
+#: Slices 02-04, décision D3) : ancre au repos, demi-cercle Sélection / Vidéo /
 #: Capture d'écran / Audio déployé par la souris, le clavier ou le pointeur Bare
 #: Hands. Ce que fait chaque secteur est injecté (`JarvisToolWheel.register`) ;
-#: aucun appel réseau, aucun sondage. Derrière le drapeau
-#: `JarvisToolWheel.enabled` (faux par défaut) jusqu'à la Slice 04. Contrat :
-#: `docs/control-center-shell.md` › Roue d'outils. Refus d'installation rattrapé.
+#: aucun appel réseau, aucun sondage. Plus de drapeau depuis la Slice 04.
+#: Contrat : `docs/control-center-shell.md` › Roue d'outils. Refus rattrapé.
 TOOL_WHEEL_SCRIPT_FILE = "control_center_tool_wheel.js"
 TOOL_WHEEL_SCRIPT_MARKER = "/*__CONTROL_CENTER_TOOL_WHEEL_JS__*/"
+#: Vues de capture (orbital-ui Slice 04, D6) : secteurs Vidéo / Capture d'écran /
+#: Audio de la roue, sous-arcs des cibles réelles, indicateurs persistants
+#: `#recIndicators` (rang 40). Lit le contrôleur et la roue : inséré APRÈS eux.
+#: Contrat : `docs/capture.md` › Interface. Refus d'installation rattrapé.
+CAPTURE_WHEEL_SCRIPT_FILE = "control_center_capture_wheel.js"
+CAPTURE_WHEEL_SCRIPT_MARKER = "/*__CONTROL_CENTER_CAPTURE_WHEEL_JS__*/"
 #: Sélection Souris / Bare Hands et reprise de la main par la souris
 #: (jarvis-board-orbital-ui-workspace-rail, Slice 03, D5) : projection du cycle
 #: de vie Bare Hands sur le secteur Sélection de la roue, sous-arc Souris /
@@ -778,6 +785,12 @@ CHAT_SCRIPT_MARKER = "/*__CONTROL_CENTER_CHAT_JS__*/"
 #: plateau des envois ; n'écoute que les glisser portant des fichiers ou un lien, jamais les gestes de la scène.
 BOARD_DROP_SCRIPT_FILE = "control_center_board_drop.js"
 BOARD_DROP_SCRIPT_MARKER = "/*__CONTROL_CENTER_BOARD_DROP_JS__*/"
+#: Aperçu de capture d'écran et actions rapides (jarvis-board-orbital-ui-workspace-rail, Slice 05, D7) :
+#: `#screenshotPreview` (rang 38) après une capture RÉUSSIE du contrôleur de capture, visionneuse sur le motif
+#: `.overlay` (60), Supprimer / Envoyer à Jarvis par les routes canoniques. Lit `JarvisCaptureRail` au chargement
+#: et `JarvisChat` au clic : inséré APRÈS eux. Contrat : `docs/capture.md` › Interface. Refus d'installation rattrapé.
+SCREENSHOT_PREVIEW_SCRIPT_FILE = "control_center_screenshot_preview.js"
+SCREENSHOT_PREVIEW_SCRIPT_MARKER = "/*__CONTROL_CENTER_SCREENSHOT_PREVIEW_JS__*/"
 
 #: Architectures vocales proposées dans l'onglet « Mode vocal ». Comme le reste
 #: de l'écran, leur libellé vit ici et non dans la page. `{key}` est remplacé
@@ -2421,6 +2434,10 @@ class ControlCenter:
             page.with_name(STUDIO_PLAYER_SCRIPT_FILE).read_text(encoding="utf-8"),
         )
         html = html.replace(
+            WORKSPACE_RAIL_MODEL_SCRIPT_MARKER,
+            page.with_name(WORKSPACE_RAIL_MODEL_SCRIPT_FILE).read_text(encoding="utf-8"),
+        )
+        html = html.replace(
             PRESENTATION_RAIL_SCRIPT_MARKER,
             page.with_name(PRESENTATION_RAIL_SCRIPT_FILE).read_text(encoding="utf-8"),
         )
@@ -2447,6 +2464,10 @@ class ControlCenter:
         html = html.replace(
             TOOL_WHEEL_SCRIPT_MARKER,
             page.with_name(TOOL_WHEEL_SCRIPT_FILE).read_text(encoding="utf-8"),
+        )
+        html = html.replace(
+            CAPTURE_WHEEL_SCRIPT_MARKER,
+            page.with_name(CAPTURE_WHEEL_SCRIPT_FILE).read_text(encoding="utf-8"),
         )
         html = html.replace(
             INPUT_ARBITRATION_SCRIPT_MARKER,
@@ -2521,7 +2542,8 @@ class ControlCenter:
                              (MEMORY_SCRIPT_MARKER, MEMORY_SCRIPT_FILE),
                              (CHAT_MODEL_SCRIPT_MARKER, CHAT_MODEL_SCRIPT_FILE),
                              (CHAT_SCRIPT_MARKER, CHAT_SCRIPT_FILE),
-                             (BOARD_DROP_SCRIPT_MARKER, BOARD_DROP_SCRIPT_FILE)):
+                             (BOARD_DROP_SCRIPT_MARKER, BOARD_DROP_SCRIPT_FILE),
+                             (SCREENSHOT_PREVIEW_SCRIPT_MARKER, SCREENSHOT_PREVIEW_SCRIPT_FILE)):
             html = html.replace(marker, page.with_name(name).read_text(encoding="utf-8"))
         if self.visualizer_url:
             html = html.replace("__VISUALIZER_URL__", self.visualizer_url)

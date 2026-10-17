@@ -69,10 +69,13 @@ def test_closed_by_default_only_anchor(tmp_path):
     assert view["panel"] == {"visible": False}
     assert view["label"] is None and view["sub"] is None
     assert not any(w["focused"] for w in view["wedges"])
-    # Le drapeau est éteint par défaut dans le module livré ; l'hôte de la
-    # page reste déclaré vide et caché.
+    # Slice 04 : plus de drapeau. L'hôte reste déclaré vide et caché dans la
+    # page (module absent : il le reste, la colonne Bare Hands revient) ; le
+    # module le construit et le rend visible à son installation.
     source = MODULE.read_text(encoding="utf-8")
-    assert re.search(r"let enabled=false,", source)
+    assert "enabled" not in re.sub(r"/\*.*?\*/", "", source, flags=re.S)
+    assert re.search(r"function mount\(\)\{.*?host\.hidden=false;", source, re.S)
+    assert "    mount();\n    root.JarvisToolWheel=" in source
     assert '<div id="toolWheel" data-shell-control hidden></div>' in PAGE_HTML.read_text(encoding="utf-8")
 
 
@@ -82,10 +85,11 @@ def test_four_primary_slots_in_order_selection_video_screenshot_audio(tmp_path):
     assert v["ids"] == ["selection", "video", "screenshot", "audio"]
     assert v["labels"] == ["Sélection", "Vidéo", "Capture d’écran", "Audio"]
     # Chaque secteur a son dessin ; les autres dessins sont ceux des sous-arcs
-    # de Sélection (Slice 03), jamais un secteur de remplissage.
+    # de Sélection (Slice 03) et des captures (Slice 04 : arrêter, capture
+    # prise), jamais un secteur de remplissage.
     assert set(v["ids"]) <= set(v["art"])
     assert set(v["art"]) - set(v["ids"]) == {"mouse", "bare_hands", "pointer", "pan", "select",
-                                             "sleep", "help", "diagnostics", "calibration"}
+                                             "sleep", "help", "diagnostics", "calibration", "stop", "done"}
     assert v["wedges"] == 4
 
 
@@ -317,3 +321,17 @@ def test_menu_slot_opens_its_sub_arc_on_primary_and_items_drill_down(tmp_path):
     assert v["esc"] == [[{"do": "subBack", "slot": 0, "parent": 1}], 2]
     assert v["back"] == [1, 1, [{"do": "focus", "target": "item", "index": 1}]]
     assert v["leave"] == [None, True, 0]  # Échap au premier niveau : retour au secteur
+
+
+def test_the_host_is_shown_only_after_the_wheel_is_published():
+    """QA S04 P8 : l'hôte est rendu visible **après** la publication de
+    `JarvisToolWheel`. Une exception entre les deux laisse l'hôte caché, donc
+    la colonne Bare Hands revient (repli), au lieu d'une ancre que rien ne
+    peut brancher."""
+
+    code = re.sub(r"/\*.*?\*/", "", MODULE.read_text(encoding="utf-8"), flags=re.S)
+    mount = code[code.index("function mount(){"):code.index("function register(action)")]
+    assert "host.hidden=false" not in mount
+    published = code.index("root.JarvisToolWheel=Object.freeze({")
+    assert code.count("host.hidden=false") == 1
+    assert code.index("host.hidden=false") > published

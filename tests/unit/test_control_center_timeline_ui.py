@@ -141,18 +141,24 @@ def test_the_cosmos_theme_knows_every_dock_tool_and_moves_the_pills():
     assert len(tools) == 10, tools
     for name in ("timeline", "testlab", "mcp", "workspace", "prefabs", "inspector", "trace", "settings", "errors", "agents"):
         assert f"{name}:`<svg ${{common}}>" in work or f"'{name}'," in work, name
-    assert "['openTimeline','timeline',2]" in work and "['openTestLab','testlab',3]" in work
-    assert "['openMcpInspector','mcp',6]" in work and "['openWorkspace','workspace',7]" in work
-    assert "['openPrefabs','prefabs',8]" in work and "['openStudioInspector','inspector',9]" in work and "[null,'errors',10]" in work
-    # Depuis la Slice 01 de l'orbital UI, une seule géométrie pour les deux thèmes,
-    # écrite avec les jetons de la coque : 10 × 34 px + 9 × 6 px = 394 px de rangée,
-    # deux rangées de 5 (5 × 34 + 4 × 6 = 194 px) à 620 px et moins ; pastilles et
-    # ligne d'état s'arrêtent 10 px avant le lanceur.
-    tools_w = len(tools) * 34 + (len(tools) - 1) * 6
+    # Depuis la Slice 08 de l'orbital UI, la peau ne réordonne plus le lanceur : l'ordre est
+    # celui de la page dans les deux thèmes ; elle n'échange que le libellé contre l'icône.
+    for spec in ("['openTimeline','timeline']", "['agentsButton','agents']", "[null,'errors']", "['openSettings','settings']",
+                 "[null,'trace']", "['openTestLab','testlab']", "['openMcpInspector','mcp']", "['openWorkspace','workspace']",
+                 "['openPrefabs','prefabs']", "['openStudioInspector','inspector']"):
+        assert spec in work, spec
+    assert "style.order" not in work
+    # Une seule géométrie pour les deux thèmes, écrite avec les jetons de la coque. Depuis
+    # la Slice 08, la rangée tient quatre outils et « Plus d’outils » (les six autres sont
+    # dans son popover) : 5 × 34 px + 4 × 6 px = 194 px, une rangée à toutes les largeurs ;
+    # la ligne d'état s'arrête 10 px avant le lanceur. Les pastilles ont quitté le
+    # haut-droit pour le centre d'état du bas (Slice 06 de l'orbital UI).
+    row = re.findall(r'<button (?:type="button" )?id="([^"]+)"|<button data-panel="([^"]+)"', dock[: dock.index('id="dockMorePop"')])
+    assert len(row) == 5, row
+    tools_w = len(row) * 34 + (len(row) - 1) * 6
     assert f"--shell-launcher-w:{tools_w}px" in html and "--shell-control:34px" in html
-    half = len(tools) // 2
-    assert f"--shell-launcher-w:{half * 34 + (half - 1) * 6}px" in html
-    assert ".bgpills{position:absolute;z-index:40;right:calc(var(--shell-gutter) + var(--shell-launcher-w) + 10px);" in html
+    assert "--shell-launcher-w" not in html[html.index("@media(max-width:700px){:root"):][:200]
+    assert ".bgpills{position:relative;z-index:40;" in html and "@media(max-width:700px){.bgpills" not in html
     assert "right:calc(var(--shell-gutter) + var(--shell-launcher-w) + 10px);display:flex;justify-content:flex-start" in html
     assert ".dock{position:absolute;z-index:32;right:var(--shell-gutter);top:var(--shell-gutter);display:flex;gap:6px}" in html
     assert 'html[data-jarvis-theme="cosmos"] .bgpills{' not in work and 'html[data-jarvis-theme="cosmos"] .topbar{' not in work
@@ -188,10 +194,12 @@ def test_the_cosmos_theme_keeps_the_voice_state_readable_on_a_phone():
     """Les deux thèmes partagent cette géométrie depuis la Slice 01 de l'orbital UI."""
 
     html = PAGE.read_text(encoding="utf-8")
-    pills = re.search(r"@media\(max-width:700px\)\{\.bgpills\{right:var\(--shell-gutter\);top:(\d+)px\}\}", html)
-    assert pills and int(pills.group(1)) >= 50  # pills move below the 34 px tool row instead of covering the state
+    # Orbital UI Slice 06 : les pastilles ne sont plus dans le haut (centre d'état
+    # du bas) ; rien ne peut donc plus couvrir la ligne d'état sur un téléphone, et
+    # les panneaux commencent toujours sous la double rangée du lanceur.
+    assert "@media(max-width:700px){.bgpills" not in html
     panel_top = int(re.search(r"@media\(max-width:700px\)\{:root\{[^}]*--shell-panel-top:(\d+)px", html).group(1))
-    assert panel_top > int(pills.group(1)) + 28
+    assert panel_top >= 18 + 34 + 6 + 28
     assert ".topbar>.state{max-width:100%;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}" in html
 
 

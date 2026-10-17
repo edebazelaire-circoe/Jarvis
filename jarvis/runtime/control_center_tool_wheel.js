@@ -25,9 +25,12 @@
      capture (S04).
    - Ce que fait un secteur est **injecté** (`register`) : la sémantique de
      Sélection arrive en S03 (`control_center_input_arbitration.js`), les
-     captures en S04. Un secteur non branché le dit (journal + notification),
-     il ne fait pas semblant. Un secteur `menu:true` (Sélection) ouvre son
-     sous-arc dès l'activation principale ; une entrée du sous-arc qui porte
+     captures en S04 (`control_center_capture_wheel.js`). Un secteur non
+     branché le dit (journal + notification), il ne fait pas semblant. Un
+     secteur `menu:true` (Sélection) ouvre son sous-arc dès l'activation
+     principale — `menu` peut aussi être une fonction relue à chaque clic
+     (Vidéo avec deux enregistrements ouverts : la liste d'arrêt) ; une
+     entrée du sous-arc qui porte
      `onSecondary` ouvre à son tour un **second niveau** à la place du premier
      (Sélection › Bare Hands : outils, Veille, Aide, Diagnostic, Calibration),
      `Échap` / flèche gauche y ramène.
@@ -36,9 +39,11 @@
      périodique ; sa seule minuterie est le délai de grâce d'une sortie du
      pointeur.
 
-   Drapeau : `JarvisToolWheel.enabled` vaut `false` par défaut (aucun secteur
-   non branché n'atteint l'utilisateur) ; les tests l'allument, la Slice 04 le
-   retire. Éteinte, la roue ne construit rien et son hôte reste `hidden`.
+   Plus de drapeau depuis la Slice 04 : les quatre secteurs sont branchés, la
+   roue se construit à l'installation et rend son hôte visible. L'hôte est
+   déclaré `hidden` dans la page : si ce module ne s'installe pas, il le
+   reste, et la colonne Bare Hands (masquée tant que la roue est visible)
+   revient d'elle-même. Retour arrière : cacher ou retirer `#toolWheel`.
 
    Deux blocs : le **modèle pur** (géométrie, réducteur d'événements → effets),
    exécuté par node dans `tests/unit/test_tool_wheel_js.py`, et le **bloc
@@ -325,11 +330,11 @@
 
   /* ------------------------------------------------- les icônes
 
-     Vocabulaire de la palette Bare Hands et du rail de capture : grille de 24,
-     trait de 1.5, bouts ronds. Écran, appareil photo et micro sont les dessins
-     du rail de capture (`control_center_capture_rail.js` › ART), recopiés
-     pour que la roue et le rail se lisent pareil pendant leur coexistence ;
-     la copie du rail disparaît avec lui en Slice 04. */
+     Vocabulaire de la palette Bare Hands : grille de 24, trait de 1.5, bouts
+     ronds. Écran, appareil photo et micro sont les dessins de l'ancien rail
+     de capture (Slice 10), qui vivent ici seuls depuis la Slice 04 : les vues
+     de capture (`control_center_capture_wheel.js`) les lisent sur
+     `JarvisToolWheel.ART`. `stop` : le carré plein des listes d'arrêt. */
   const ART=Object.freeze({
     selection:Object.freeze({paths:Object.freeze(['M6.2 3.8l11.2 8.4-5.1 1 2.9 5.4-2.2 1.2-2.9-5.5-3.9 3.3z']),dots:Object.freeze([])}),
     video:Object.freeze({paths:Object.freeze([
@@ -365,6 +370,9 @@
     diagnostics:Object.freeze({paths:Object.freeze(['M3.5 12.5h4l2.1-5.5 4 10 2.2-4.5h4.7']),dots:Object.freeze([])}),
     calibration:Object.freeze({paths:Object.freeze(['M12 6a6 6 0 1 1 0 12a6 6 0 1 1 0-12z',
       'M12 3v3','M12 18v3','M3 12h3','M18 12h3']),dots:Object.freeze([[12,12,1]])}),
+    /* ---- Slice 04 : arrêter un enregistrement, et la coche d'une capture prise ---- */
+    stop:Object.freeze({paths:Object.freeze(['M7.5 7.5h9v9h-9z']),dots:Object.freeze([])}),
+    done:Object.freeze({paths:Object.freeze(['M5.5 12.5l4.2 4.2 8.8-9.4']),dots:Object.freeze([])}),
   });
 
   const DOM=Object.freeze({hostId:'toolWheel',styleId:'toolWheelStyle',menuId:'toolWheelMenu',
@@ -449,6 +457,14 @@ ${H} .tw-item[data-tw-tone=wait] .tw-note{color:var(--sem-working,#4da3ff)}
 ${H} .tw-dot .tw-badge{position:absolute;right:-3px;top:-3px;width:16px;height:16px;border-radius:50%;
   display:grid;place-items:center;font:700 11px/1 ui-monospace,Consolas,monospace;color:#0b0f14;pointer-events:none}
 ${H} .tw-dot .tw-badge[data-tw-tone=error]{background:var(--sem-problem,#ff6a4d)}
+/* Slice 04 : « ? » d'un état inconnu (statut des captures perdu) — gris et
+   pointillé, jamais la couleur seule ; il ne colore pas l'ancre. */
+${H} .tw-dot .tw-badge[data-tw-tone=unknown]{background:var(--muted,#7190a0);outline:1px dashed var(--text,#d8edf7);outline-offset:1px}
+/* Un canal ouvert (Vidéo, Audio) : anneau ambre et point plein au coin —
+   l'état coché du secteur (aria-checked), lisible sans la couleur. */
+${H} .tw-wedge[aria-checked=true] .tw-dot{border-color:var(--sem-alert,#ff9f43);color:var(--sem-alert,#ff9f43)}
+${H} .tw-wedge[aria-checked=true] .tw-dot::after{content:"";position:absolute;left:-2px;top:-2px;width:12px;height:12px;
+  border-radius:50%;background:var(--sem-alert,#ff9f43);box-shadow:0 0 0 2px var(--shell-glass-strong)}
 ${H} .tw-dot .tw-badge[data-tw-tone=wait]{background:transparent;border:2px solid var(--sem-working,#4da3ff);
   border-right-color:transparent;animation:tw-spin 1s linear infinite}
 @keyframes tw-spin{to{transform:rotate(360deg)}}
@@ -458,6 +474,8 @@ ${H} .tw-sr{position:absolute;width:1px;height:1px;margin:-1px;padding:0;overflo
 @media(forced-colors:active){
   ${H} .tw-anchor,${H} .tw-dot,${H} .tw-item,${H} .tw-label{border-color:CanvasText}
   ${H} .tw-wedge.is-focus .tw-dot,${H} .tw-item.is-focus{border-color:Highlight;color:Highlight}
+  ${H} .tw-wedge[aria-checked=true] .tw-dot{border:2px solid Highlight}
+  ${H} .tw-wedge[aria-checked=true] .tw-dot::after,${H} .tw-dot .tw-badge{forced-color-adjust:none;background:Highlight;color:HighlightText}
   ${H} .tw-ring,${H} .tw-ring .tw-ring-outer,${H} .tw-ring .tw-tick{stroke:CanvasText}
 }`;
 
@@ -525,7 +543,7 @@ ${H} .tw-sr{position:absolute;width:1px;height:1px;margin:-1px;padding:0;overflo
        propriétaire et le repose ici à chaque changement. */
     const statuses=new Map();
     const wedgesGeo=layoutWedges();
-    let enabled=false,state=initialState(),built=null,leaveTimer=null,focusInside=false;
+    let state=initialState(),built=null,leaveTimer=null,focusInside=false;
     /* Le dernier `pointerdown` vu sur la roue : un `click` Bare Hands est un
        `MouseEvent` sans `pointerId` ; la source se lit sur l'appui qui l'a
        précédé. */
@@ -655,6 +673,11 @@ ${H} .tw-sr{position:absolute;width:1px;height:1px;margin:-1px;padding:0;overflo
        au nom accessible — l'état ne passe jamais par la couleur seule. */
     function paintStatus(i){
       const slot=SLOTS[i],b=built.wedges[i],status=statuses.get(slot.id)||null;
+      /* `checked` (Slice 04) : un canal de capture ouvert. Le secteur devient
+         une case à cocher de menu, son état se lit sans la couleur. */
+      if(status&&typeof status.checked==='boolean'){
+        b.setAttribute('role','menuitemcheckbox');b.setAttribute('aria-checked',String(status.checked));
+      }else{b.setAttribute('role','menuitem');b.removeAttribute('aria-checked')}
       const dot=b.querySelector('.tw-dot'),badge=dot.querySelector('.tw-badge');
       const want=status&&status.icon?status.icon:slot.id;
       if(built.shownIcons[i]!==want){
@@ -663,9 +686,9 @@ ${H} .tw-sr{position:absolute;width:1px;height:1px;margin:-1px;padding:0;overflo
         if(old)dot.replaceChild(svg,old);else dot.insertBefore(svg,badge);
         built.shownIcons[i]=want;
       }
-      const tone=status&&(status.tone==='error'||status.tone==='wait')?status.tone:null;
+      const tone=status&&(status.tone==='error'||status.tone==='wait'||status.tone==='unknown')?status.tone:null;
       badge.hidden=!tone;
-      if(tone){badge.setAttribute('data-tw-tone',tone);badge.textContent=tone==='error'?'!':''}
+      if(tone){badge.setAttribute('data-tw-tone',tone);badge.textContent=tone==='error'?'!':tone==='unknown'?'?':''}
       else{badge.removeAttribute('data-tw-tone');badge.textContent=''}
       b.setAttribute('aria-label',status&&status.text?`${slot.label} — ${status.text}`:slot.label);
     }
@@ -689,14 +712,19 @@ ${H} .tw-sr{position:absolute;width:1px;height:1px;margin:-1px;padding:0;overflo
         /* `detail` : la phrase longue (un motif d'indisponibilité), dans le nom
            accessible et l'infobulle ; `note` reste courte à l'écran. */
         const detail=spec.detail==null?note:String(spec.detail);
+        const spoken=!detail?text:note&&!detail.startsWith(note)?`${text} — ${note} — ${detail}`:`${text} — ${detail}`;
         const art=spec.icon?icon(spec.icon):null;
         if(art)b.appendChild(art);
         if(art||note){
           const t=document.createElement('span');t.className='tw-text';t.textContent=text;b.appendChild(t);
-          if(note){const n=document.createElement('span');n.className='tw-note';n.textContent=note;b.appendChild(n)}
-          b.setAttribute('aria-label',detail?`${text} — ${detail}`:text);
+          /* Une espace entre le texte et la note (sans effet dans la boîte flex) : lu d'un trait, « principal1:08 »
+             n'était plus dans le nom (axe, WCAG 2.5.3). */
+          if(note){const n=document.createElement('span');n.className='tw-note';n.textContent=note;b.append(' ',n)}
+          /* Le nom commence par ce que l'entrée montre, texte puis note (WCAG 2.5.3, orbital-ui QA S09 P6) : une
+             phrase longue qui ne reprend pas la note s'ajoute après elle. */
+          b.setAttribute('aria-label',spoken);
         }else b.textContent=text;
-        b.title=detail?`${text} — ${detail}`:text;
+        b.title=spoken;
         if(typeof spec.onSecondary==='function')b.setAttribute('aria-haspopup','menu');
         b.style.left=`${geo[j].x}px`;b.style.top=`${GEOMETRY.radius+geo[j].y}px`;
         built.sub.appendChild(b);
@@ -889,11 +917,18 @@ ${H} .tw-sr{position:absolute;width:1px;height:1px;margin:-1px;padding:0;overflo
       dispatch({type:'pointerout',inside:!!(to&&host.contains(to))},event);
     }
     function onDown(event){lastDown={pointerId:event.pointerId,t:Date.now()}}
+    /* `menu` : un booléen, ou une fonction relue à chaque clic (Slice 04). */
+    function isMenu(action){
+      if(!action)return false;
+      if(typeof action.menu!=='function')return !!action.menu;
+      try{return !!action.menu()}
+      catch(error){log('error','tool_wheel.menu_failed',{slot:action.id,error:errorText(error)});return false}
+    }
     function onClick(event){
       const t=targetOf(event.target);
       if(t.target==='anchor'||t.target==='wedge'||t.target==='item')
         dispatch({type:'click',...t,detail:event.detail,source:clickSource(event),
-          menu:t.target==='wedge'&&!!(actions.get(SLOTS[t.index].id)||{}).menu},event);
+          menu:t.target==='wedge'&&isMenu(actions.get(SLOTS[t.index].id))},event);
     }
     function onContext(event){
       const t=targetOf(event.target);
@@ -913,33 +948,25 @@ ${H} .tw-sr{position:absolute;width:1px;height:1px;margin:-1px;padding:0;overflo
     const LISTENERS=[['pointerover',onOver],['pointerout',onOut],['pointerdown',onDown],['click',onClick],
       ['contextmenu',onContext],['keydown',onKey],['focusout',onFocusOut]];
 
-    function setEnabled(value){
-      const next=value===true;
-      if(next===enabled)return;
-      enabled=next;
-      if(enabled){
-        if(!document.getElementById(DOM.styleId)){
-          const style=document.createElement('style');
-          style.id=DOM.styleId;style.textContent=STYLE;document.head.appendChild(style);
-        }
-        state=initialState();
-        built=build();
-        for(const [type,fn] of LISTENERS)host.addEventListener(type,fn);
-        host.hidden=false;
-        render();
-      }else{
-        if(state.open)dispatch({type:'close',reason:'disabled'});
-        for(const [type,fn] of LISTENERS)host.removeEventListener(type,fn);
-        host.textContent='';host.hidden=true;host.removeAttribute('data-open');built=null;
+    /* La roue se construit une fois, à l'installation (Slice 04 : plus de
+       drapeau). */
+    function mount(){
+      if(!document.getElementById(DOM.styleId)){
+        const style=document.createElement('style');
+        style.id=DOM.styleId;style.textContent=STYLE;document.head.appendChild(style);
       }
-      log('info','tool_wheel.enabled',{enabled});
+      state=initialState();
+      built=build();
+      for(const [type,fn] of LISTENERS)host.addEventListener(type,fn);
+      render();
     }
 
     /* Branche un emplacement. `action` : `{id, onActivate(ctx), onSecondary?(ctx),
        menu?}` — `onSecondary` rend la liste du sous-arc (`[{id?, label,
        disabled?, checked?, icon?, note?, tone?, onActivate?(ctx),
-       onSecondary?(ctx)}]`) ou une promesse de cette liste ; `menu:true` ouvre
-       ce sous-arc dès l'activation principale. Rend la fonction qui débranche. */
+       onSecondary?(ctx)}]`) ou une promesse de cette liste ; `menu:true` (ou
+       une fonction qui le rend) ouvre ce sous-arc dès l'activation
+       principale. Rend la fonction qui débranche. */
     function register(action){
       if(!action||!SLOT_IDS.includes(action.id))
         throw Object.assign(new TypeError(`JarvisToolWheel.register : emplacement inconnu « ${action&&action.id} » (attendus : ${SLOT_IDS.join(', ')})`),
@@ -953,34 +980,43 @@ ${H} .tw-sr{position:absolute;width:1px;height:1px;margin:-1px;padding:0;overflo
       return ()=>{if(actions.get(action.id)===action){actions.delete(action.id);render()}};
     }
 
-    /* Ce qu'une action projette sur son secteur : `{icon?, tone?:'error'|'wait',
-       text?}` (ou `null` pour l'effacer). Peint tout de suite, roue ouverte
-       ou non ; journalisé seulement quand il change. */
+    /* Ce qu'une action projette sur son secteur : `{icon?, tone?:'error'|'wait'|
+       'unknown', text?, checked?}` (ou `null` pour l'effacer). `unknown` marque
+       le secteur d'un « ? » sans colorer l'ancre ; `checked` (booléen) en
+       fait une case cochée (`menuitemcheckbox`). Peint tout de suite, roue
+       ouverte ou non ; journalisé seulement quand il change. */
     function setStatus(id,status){
       if(!SLOT_IDS.includes(id))
         throw Object.assign(new TypeError(`JarvisToolWheel.setStatus : emplacement inconnu « ${id} »`),
           {code:'tool_wheel_unknown_slot'});
       const next=status&&typeof status==='object'
-        ?Object.freeze({icon:status.icon||null,tone:status.tone||null,text:status.text==null?'':String(status.text)}):null;
+        ?Object.freeze({icon:status.icon||null,tone:status.tone||null,text:status.text==null?'':String(status.text),
+          checked:typeof status.checked==='boolean'?status.checked:null}):null;
       const before=statuses.get(id)||null;
       if(JSON.stringify(before)===JSON.stringify(next))return;
       if(next)statuses.set(id,next);else statuses.delete(id);
       render();
-      log('info','tool_wheel.status',{slot:id,tone:next&&next.tone,text:next&&next.text});
+      log('info','tool_wheel.status',{slot:id,tone:next&&next.tone,text:next&&next.text,checked:next&&next.checked});
     }
 
+    mount();
     root.JarvisToolWheel=Object.freeze({
-      get enabled(){return enabled},
-      set enabled(value){setEnabled(value)},
       register,setStatus,
       status:id=>statuses.get(id)||null,
-      open(){if(enabled)dispatch({type:'open'})},
-      close(){if(enabled)dispatch({type:'close'})},
+      open(){dispatch({type:'open'})},
+      close(){dispatch({type:'close'})},
       isOpen:()=>state.open,
+      /* L'ancre : là où le focus revient quand un indicateur disparaît. */
+      focusAnchor(){if(built)try{built.anchor.focus({preventScroll:true})}catch(_){built.anchor.focus()}},
       snapshot:()=>({...state,sub:state.sub&&{...state.sub}}),
-      SLOTS,GEOMETRY,
+      SLOTS,GEOMETRY,ART,
     });
-    log('info','tool_wheel.installed',{host:DOM.hostId,enabled});
+    /* Montrée **après** sa publication (QA S04 P8) : une roue visible sans
+       `JarvisToolWheel` serait une ancre que personne ne peut brancher, et la
+       colonne Bare Hands, qui revient quand l'hôte reste caché, serait
+       masquée pour rien. */
+    host.hidden=false;
+    log('info','tool_wheel.installed',{host:DOM.hostId});
   }
 
   try{installToolWheel()}

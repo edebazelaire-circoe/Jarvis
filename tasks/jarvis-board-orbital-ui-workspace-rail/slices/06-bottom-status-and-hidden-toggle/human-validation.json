@@ -5,6 +5,54 @@
       "when": "After count/scene tests pass",
       "instruction": "Observe the bottom status center with several categories and toggle hidden objects.",
       "acceptance": "Counters are readable but discreet; eye state is understandable; bottom area is not crowded."
+    },
+    {
+      "id": "HV-06-02",
+      "when": "After the S06 rework (QA S06)",
+      "instruction": "Survolez la ligne d'état (infobulle « F9 · DÉMARRER » et variantes), puis utilisez le push-to-talk.",
+      "acceptance": "L'infobulle F9 est trouvable ; dites si la consigne visible de l'ancienne capsule vous manque en push-to-talk."
+    },
+    {
+      "id": "HV-06-03",
+      "when": "After the S06 rework (QA S06)",
+      "instruction": "En Bare Hands, faites le pincement pouce + majeur sur l'œil du centre d'état.",
+      "acceptance": "La liste des objets masqués s'ouvre (activation secondaire), comme au clic droit."
+    },
+    {
+      "id": "HV-06-04",
+      "when": "After the S06 rework (QA S06)",
+      "instruction": "Activez le contraste élevé de Windows et regardez le centre d'état (pastilles, œil, puces REC).",
+      "acceptance": "Chaque commande reste visible et lisible, l'état ne dépend pas de la couleur."
+    },
+    {
+      "id": "HV-06-05",
+      "when": "After the S06 rework (QA S06)",
+      "instruction": "Zoomez le Control Center à 200 % pour de vrai.",
+      "acceptance": "Le centre d'état, le bouton de mode et l'onglet Chat restent utilisables, sans chevauchement."
+    },
+    {
+      "id": "HV-06-06",
+      "when": "After the S06 rework (QA S06)",
+      "instruction": "Allumez l'œil (fantômes visibles), puis rechargez la page.",
+      "acceptance": "L'œil revient allumé avec les mêmes fantômes (préférence de ce navigateur)."
+    },
+    {
+      "id": "HV-06-07",
+      "when": "After the S06 rework (QA S06)",
+      "instruction": "À 700 px de large ou moins, lancez un enregistrement d'écran.",
+      "acceptance": "La puce REC est dans la colonne de droite, lisible, et l'arrête d'un geste."
+    },
+    {
+      "id": "HV-06-08",
+      "when": "After the S06 rework (QA S06)",
+      "instruction": "Coupez la lecture de la scène (Control Center injoignable) à 1440 et 1280 px de large.",
+      "acceptance": "La note « Scène figée · <cause> » se lit en entier, sans recouvrir le bouton de mode ni le centre d'état."
+    },
+    {
+      "id": "HV-06-09",
+      "when": "After S09 (QA S08 polish P1)",
+      "instruction": "Bare Hands actif (badge visible), coupez la lecture de la scène (note « Scène figée » sur deux lignes), puis prenez une capture d'écran depuis la roue.",
+      "acceptance": "L'aperçu de la capture se pose au-dessus du bouton de mode, sans le recouvrir ; la note reste lisible."
     }
   ]
 }

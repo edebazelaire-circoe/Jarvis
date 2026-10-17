@@ -422,10 +422,12 @@
       return `Mode d’interaction : ${view.label||view.mode} — non confirmé par Core.`
         +`${view.diverged?` ${view.storedLabel||view.stored} est le mode choisi.`:''}`
         +action;
+    /* Le nom commence par ce que le bouton montre (« MODE » puis le libellé) : WCAG 2.5.3, la commande vocale
+       « cliquer Mode Assistant » la trouve (orbital-ui Slice 09, relevé par axe-core). */
     if(view.diverged)
-      return `Mode d’interaction : ${view.label} en vigueur ; `
+      return `Mode ${view.label} : mode d’interaction en vigueur ; `
         +`${view.storedLabel||view.stored} est le mode choisi.${action}`;
-    return `Mode d’interaction : ${view.label}.${action}`;
+    return `Mode ${view.label} : mode d’interaction en vigueur.${action}`;
   }
 
   /* Le bandeau du sélecteur : ce qu'il faut savoir avant de choisir. Vide quand
@@ -585,8 +587,11 @@
     badgeSelector:'#jarvisHands .jh-badge',
     noteSelector:'#jarvisHands .jh-note',
     sceneSelector:'.sc-status:not([hidden])',
-    /* L'indication vocale est centrée en bas à **toutes** les largeurs
-       (`left:50%; bottom:22px`), et la page ne la déplace jamais. Son texte le
+    /* Depuis la Slice 06 de l'orbital UI, c'est le centre d'état du bas
+       (`--shell-bottom` + `--shell-status-h` : jusqu'à 62 px) qui tient cette
+       place ; le relèvement de 42 px passe au-dessus (64 px). Historique —
+       l'indication vocale était centrée en bas à **toutes** les largeurs
+       (`left:50%; bottom:22px`), et la page ne la déplaçait jamais. Son texte le
        plus long — `F9 · VOICE HORS LIGNE` — fait environ 230 px, donc sous
        plus long — `F9 · VOICE HORS LIGNE` — fait 200 px mesures, et le bord
        droit de ce bouton est a 195 px : ils ne se rencontreraient donc qu'en
@@ -654,6 +659,11 @@ body:has(${GEO.badgeSelector}):has(${GEO.sceneSelector}) #${DOM.hostId}{--im-rai
 /* Le mot d'un geste étouffé s'insère à 46→72 : il implique la pastille, donc il
    vaut d'emblée le second barreau. */
 body:has(${GEO.noteSelector}) #${DOM.hostId}{--im-rail:${GEO.railTwo}px}
+/* Une note de la scène qui va à la ligne (S06 rework, QA B1) : la page publie sa
+   hauteur (\`--sc-status-h\`, \`control_center_scene_page.js\`) et ce contrôle passe
+   au-dessus d'elle, jamais plus bas que le barreau. Une ligne = 24 px : 24 + 28 = 52. */
+body:has(${GEO.sceneSelector}) #${DOM.hostId}{--im-rail:max(${GEO.railOne}px,calc(var(--sc-status-h,24px) + ${GEO.railOne - 24}px))}
+body:has(${GEO.badgeSelector}):has(${GEO.sceneSelector}) #${DOM.hostId}{--im-rail:max(${GEO.railTwo}px,calc(var(--sc-status-h,24px) + ${GEO.railTwo - 24}px))}
 #${DOM.hostId}[${DOM.toneAttribute}=presentation]{
   --im-ink:${WARN};
   --im-line:color-mix(in srgb,${WARN} 52%,transparent);
@@ -822,11 +832,13 @@ body:has(${GEO.noteSelector}) #${DOM.hostId}{--im-rail:${GEO.railTwo}px}
 #${DOM.hostId} .im-sr{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;
   clip:rect(0,0,0,0);white-space:nowrap;border:0}
 
-/* L'indication vocale est centrée en bas à toutes les largeurs et la page ne la
-   déplace jamais : sous ~820 px, elle et ce bouton se rencontrent. Le contrôle
-   se hisse au-dessus d'elle — et il le fait **avant** le resserrement de 700 px,
-   parce que la fenêtre 701→820 est précisément celle où les deux tenaient
-   encore chacun leur moitié et ne la tiennent plus. */
+/* Le centre d'état (orbital-ui Slice 06, qui remplace l'indication vocale) est
+   centré en bas à toutes les largeurs, de \`--shell-bottom\` (18) sur
+   \`--shell-status-h\` (44), donc jusqu'à 62 px. Au-dessus de 820 px il garde la
+   largeur de ce bouton de chaque côté ; en dessous il ne réserve plus que
+   l'onglet Chat, et ce contrôle se hisse au-dessus de la rangée (22 + 42 = 64)
+   — **avant** le resserrement de 700 px, la fenêtre 701→820 étant celle où les
+   deux ne tiennent plus chacun leur moitié. */
 @media(max-width:${GEO.liftBelow}px){
   #${DOM.hostId}{--im-lift:${GEO.lift}px}
 }
@@ -924,7 +936,9 @@ body:has(${GEO.noteSelector}) #${DOM.hostId}{--im-rail:${GEO.railTwo}px}
     const textBox=doc.createElement('span');
     textBox.className='im-text';
     const eyebrow=doc.createElement('span');
-    eyebrow.className='im-eyebrow';eyebrow.textContent='Mode';
+    /* L'espace final sépare « Mode » du libellé dans le texte du bouton (sans lui : « ModeASSISTANT », hors du nom accessible
+       pour axe, WCAG 2.5.3 ; orbital-ui Slice 09) ; en fin de bloc, il ne se voit pas. */
+    eyebrow.className='im-eyebrow';eyebrow.textContent='Mode ';
     textBox.appendChild(eyebrow);
     const label=doc.createElement('span');
     label.id=DOM.labelId;label.className='im-label';
@@ -977,6 +991,11 @@ body:has(${GEO.noteSelector}) #${DOM.hostId}{--im-rail:${GEO.railTwo}px}
     const hint=doc.createElement('p');
     hint.id=DOM.hintId;hint.className='im-hint';
     pop.appendChild(hint);
+    /* Un menu ne contient que des entrées (axe-core, `aria-required-children` ; orbital-ui Slice 09) : le titre, la note
+       et l'aide sont de simples textes dans l'arbre d'accessibilité ; le menu est nommé par `aria-label` et décrit par
+       la note et l'aide, que le lecteur d'écran dit à l'ouverture. */
+    for(const part of [popTitle,note,hint])part.setAttribute('role','none');
+    pop.setAttribute('aria-describedby',`${DOM.noteId} ${DOM.hintId}`);
     host.appendChild(pop);
 
     const announce=doc.createElement('div');

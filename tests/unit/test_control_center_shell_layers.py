@@ -44,7 +44,7 @@ COSMOS = 'html[data-jarvis-theme="cosmos"]'
 SHELL_SURFACES = (
     ".topbar", ".state", "#boardsHud", ".dock", ".bgpills", "#bgPills", ".panel", ".live-banner",
     ".voicehint", ".chat-tab", ".board-drop-tray", "#boardsPanel", ".toasts", "#toolWheel",
-    "#interactionModeHud", "#barehandsHud", "#barehandsPalette", "#captureRail", "#presentationRail",
+    "#interactionModeHud", "#barehandsHud", "#barehandsPalette", "#recIndicators", "#presentationRail",
 )
 GEOMETRY_PROPERTIES = (
     "position", "top", "right", "bottom", "left", "inset", "z-index", "transform", "width",
@@ -250,7 +250,12 @@ def test_relative_order_of_the_old_registry_is_kept():
     for chooser in ("#boardsPanel", ".bh-hud-pop", ".im-pop"):
         assert rank_of(chooser) == 36 and rank_of(".live-banner") < rank_of(chooser) < rank_of("#bgPills")
     assert rank_of("#barehandsPalette") < rank_of("#barehandsHud") < rank_of(".bh-hud-pop")
-    assert rank_of("#captureRail") == rank_of("#barehandsPalette")
+    # Slice 04 : le rail de capture n'existe plus ; ses indicateurs persistants
+    # sont au rang du centre d'état, au-dessus de la roue ouverte.
+    assert rank_of("#recIndicators") == rank_of("#bgPills") == 40
+    assert rank_of("#toolWheel[data-open]") < rank_of("#recIndicators") < rank_of(".toasts")
+    # Aperçu de capture (Slice 05) : au-dessus de la roue ouverte qui l'a prise, sous le centre d'état et la visionneuse.
+    assert rank_of("#toolWheel[data-open]") < rank_of("#screenshotPreview") < rank_of("#recIndicators") < rank_of(".overlay")
     assert rank_of(".ctxmenu") < rank_of("#barehandsCards") < rank_of(".cdialog-back")
     views = {rank_of(view) for view in (".tl", ".tlab", ".mcpi", ".wsp", ".pfb")}
     assert len(views) == 1
@@ -278,6 +283,94 @@ def test_cosmos_overrides_no_shell_position_or_rank():
             if bad:
                 offenders.append((sheet, context, part.strip(), bad))
     assert not offenders, f"le thème Cosmos place ou classe une surface de la coque : {offenders}"
+
+
+# ------------------------------------------------------------ angles morts (Slice 09, QA S01)
+
+#: Un rang écrit par script ou en attribut : `el.style.zIndex=`, `el.style['zIndex']=` (QA S09 P5),
+#: `Object.assign(el.style,{zIndex…})` (QA S09 P5), `setProperty('z-index'`, un `cssText` ou un `style="…"`
+#: qui porte `z-index`. Les feuilles n'en disent rien ; le registre doit le dire.
+_INLINE_RANK = re.compile(
+    r"""\.style\.zIndex\s*=(?!=)|\.style\[\s*['"`](?:zIndex|z-index)['"`]\s*\]\s*=(?!=)"""
+    r"""|Object\.assign\(\s*[\w$.\[\]'"]*\.style\s*,\s*\{[^}]*(?:\bzIndex\b|['"]z-index['"])"""
+    r"""|setProperty\(\s*['"]z-index['"]|cssText\s*[+]?=\s*['"`][^'"`]*z-index|style=\\?["'][^"'>]*z-index""")
+
+
+def inline_ranks() -> list[dict]:
+    return [{"container": container, "sheet": sheet, "write": write}
+            for container, sheet, write, _why in _table(_doc_section("Inline ranks"))]
+
+
+def _inline_kind(found: str) -> str:
+    if found.startswith((".style.zIndex", ".style[")):
+        return "style.zIndex"
+    if found.startswith("Object.assign"):
+        return "Object.assign(style)"
+    if found.startswith("setProperty"):
+        return "style.setProperty"
+    return "cssText" if found.startswith("cssText") else "style attribute"
+
+
+def test_inline_ranks_are_contained_and_listed():
+    """Angle mort du test de registre (QA S01) : un `z-index` posé en ligne ou en
+    JS échappait à `z_rules`. Chacun doit avoir sa ligne « Inline ranks » (un rang
+    contenu dans une couche de page), et chaque ligne doit exister dans le code."""
+
+    listed = {(row["sheet"], row["write"]) for row in inline_ranks()}
+    seen, stray = set(), []
+    for path in _sheets():
+        text = _COMMENT.sub("", path.read_text(encoding="utf-8"))
+        for match in _INLINE_RANK.finditer(text):
+            key = (path.name, _inline_kind(match.group(0)))
+            (seen.add if key in listed else stray.append)(key if key in listed else (*key, match.group(0)[:60]))
+    assert not stray, f"rang en ligne sans ligne « Inline ranks » au registre : {stray}"
+    assert listed == seen, {"lignes sans écriture dans le code": listed - seen}
+    for row in inline_ranks():
+        container = row["container"].split()[0].strip("`")
+        assert any(container == layer["surface"] for layer in page_layers()), row
+
+
+def test_inline_rank_detector_sees_every_form():
+    """Le détecteur lui-même : les six formes sont vues, un `zIndex` lu ne l'est pas."""
+
+    for sample in ("el.style.zIndex=String(n)", "el.style.setProperty('z-index','40')",
+                   "el.style.cssText='position:fixed;z-index:30'", '<div style="z-index:5">',
+                   "el.style['zIndex']=String(n)", 'node.style["z-index"] = "4"',
+                   "Object.assign(el.style,{left:'0',zIndex:'40'})", "Object.assign(this.box.style, {'z-index': 3})"):
+        assert _INLINE_RANK.search(sample), sample
+    for sample in ("if(el.style.zIndex==='3')", "if(el.style['zIndex']==='3')", "Object.assign(el.style,{left:'0'})",
+                   "Object.assign(opts,{zIndex:3})"):
+        assert not _INLINE_RANK.search(sample), sample
+
+
+#: Tout sélecteur de thème, quel qu'il soit (`html[data-jarvis-theme="…"]`, `:root[data-jarvis-theme…]`,
+#: `:not([data-jarvis-theme…])`), dans la page, dans le `STYLE` des thèmes et dans chaque module.
+_THEME_RULE = re.compile(r"([^{}`;]*\[data-jarvis-theme[^{}]*)\{([^{}]*)\}")
+
+
+def test_no_theme_places_or_ranks_a_shell_surface():
+    """Angle mort (QA S01) : seul Cosmos, et seulement dans deux feuilles, était
+    lu. Un thème quelconque (le circuit imprimé, un thème futur), dans n'importe
+    quelle feuille, ne place ni ne classe une surface de la coque."""
+
+    offenders = []
+    for path in _sheets():
+        text = _sheet_source(path)
+        for match in _THEME_RULE.finditer(text):
+            selector, body = " ".join(match.group(1).split()), match.group(2)
+            for part in selector.split(","):
+                if "data-jarvis-theme" not in part:
+                    continue
+                subject = re.split(r"\s*[>+~]\s*|\s+", part.strip())[-1]
+                if not any(re.search(re.escape(surface) + r"(?![\w-])", subject) for surface in SHELL_SURFACES):
+                    continue
+                bad = sorted(set(declarations(body)) & set(GEOMETRY_PROPERTIES))
+                if bad:
+                    offenders.append((path.name, _unmask(part.strip()), bad))
+    assert not offenders, f"un thème place ou classe une surface de la coque : {offenders}"
+    # Le détecteur voit bien un thème autre que Cosmos.
+    probe = 'html[data-jarvis-theme="circuit-board"] .dock{top:4px}'
+    assert _THEME_RULE.search(probe)
 
 
 def test_html_mirror_matches_the_registry():
@@ -341,15 +434,19 @@ def test_every_declared_control_host_matches_control_selector():
 
 
 def test_scene_and_capture_rail_read_the_shared_selector():
+    """Depuis la Slice 04, la scène est la seule lectrice : le rail de capture
+    (qui évitait les commandes en les mesurant) a laissé la place à la roue et
+    aux indicateurs, posés par la feuille ; ses modules ne mesurent plus rien."""
+
     shell = shell_module()
     scene = (RUNTIME / "control_center_scene_page.js").read_text(encoding="utf-8")
-    rail = (RUNTIME / "control_center_capture_rail.js").read_text(encoding="utf-8")
-    for source in (scene, rail):
-        fallback = re.search(r"const SHELL_FALLBACK_SELECTOR='([^']+)'", source).group(1)
-        assert fallback == shell["CONTROL_SELECTOR"]
-        assert "JarvisShell" in source and "shell.missing" in source
+    fallback = re.search(r"const SHELL_FALLBACK_SELECTOR='([^']+)'", scene).group(1)
+    assert fallback == shell["CONTROL_SELECTOR"]
+    assert "JarvisShell" in scene and "shell.missing" in scene
     assert "const CONTROL_SELECTOR='" not in scene
-    assert "const OBSTACLE_SELECTOR='" not in rail
+    for module in ("control_center_capture_rail.js", "control_center_capture_wheel.js"):
+        source = (RUNTIME / module).read_text(encoding="utf-8")
+        assert "SHELL_FALLBACK_SELECTOR" not in source and "CONTROL_SELECTOR" not in source, module
 
 
 async def test_the_shell_module_is_served_before_its_readers(tmp_path):

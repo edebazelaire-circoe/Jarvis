@@ -462,7 +462,8 @@ async def test_the_workspace_fills_the_screen_at_three_sizes_with_nothing_clippe
         geometry = """(()=>{
           const r=s=>{const e=document.querySelector('#jvStudioExplorer '+s);if(!e)return null;const b=e.getBoundingClientRect();return [Math.round(b.left),Math.round(b.top),Math.round(b.right),Math.round(b.bottom)]};
           const body=r('.jvx-body');
-          return {docked:document.documentElement.classList.contains('jvr-studio'),hostRect:(()=>{const b=document.querySelector('#jvStudioExplorer').getBoundingClientRect();return [b.left,b.top,b.right,b.bottom]})(),
+          const rail=document.getElementById('presentationRail');const rb=rail&&!rail.hidden?rail.getBoundingClientRect():null;
+          return {docked:document.documentElement.classList.contains('jvr-studio'),rail:rb&&rb.width>0?[Math.round(rb.left),Math.round(rb.top),Math.round(rb.right),Math.round(rb.bottom)]:null,hostRect:(()=>{const b=document.querySelector('#jvStudioExplorer').getBoundingClientRect();return [b.left,b.top,b.right,b.bottom]})(),
             body,tree:r('.jvx-treepane'),stage:r('.jvx-stage'),strip:r('.jvx-strip'),actions:r('.jvx-actions'),meta:r('.jvx-meta'),close:r('.jvx-top-actions .jvx-btn:last-child'),
             overflowX:document.documentElement.scrollWidth>innerWidth,docScroll:[document.documentElement.scrollWidth,innerWidth],
             hostScroll:[document.querySelector('#jvStudioExplorer').scrollHeight,document.querySelector('#jvStudioExplorer').clientHeight]}})()"""
@@ -482,8 +483,13 @@ async def test_the_workspace_fills_the_screen_at_three_sizes_with_nothing_clippe
         reads = result["reads"]
         assert "failed" not in reads, reads.get("failed")
         geo = reads["geometry"]
-        # The presentation rail docks as a column to the left of the windowed Studio (rail rework): the workspace covers the rest of the screen.
-        assert geo["docked"] is (width >= 900) and geo["hostRect"] == [0 if width < 900 else 60 if width < 1100 else 188, 0, width, height],             "the workspace covers the whole screen right of the docked rail (a strip of tiles on a narrow screen, no rail below 900 px)"
+        # The presentation rail docks as a column on the RIGHT of the windowed Studio (orbital UI Slice 07: the workspace rail
+        # lives in the right zone): the workspace covers the rest of the screen, left of the rail, and never runs under it.
+        reserved = 0 if width < 900 else 60 if width < 1100 else 188
+        assert geo["docked"] is (width >= 900) and geo["hostRect"] == [0, 0, width - reserved, height],             f"the workspace covers the whole screen left of the docked rail (no rail below 900 px): {geo['hostRect']}"
+        if reserved:
+            rail = geo["rail"]
+            assert rail is not None and rail[0] >= geo["hostRect"][2] and rail[2] <= width,                 f"the docked rail sits in the reserved right column, beside the workspace, never over it: {rail}"
         assert geo["overflowX"] is False and geo["hostScroll"][0] <= geo["hostScroll"][1] + 1, f"nothing scrolls the workspace itself: {geo}"
         for key in ("tree", "stage", "strip", "actions", "meta", "close"):
             box = geo[key]
@@ -622,7 +628,8 @@ LEAVE = (
     {"eval": "document.fullscreenElement&&document.exitFullscreen()"}, {"wait": 400},
     {"key": "Escape"},
 )
-INSPECTOR_OPEN = {"click": "#openStudioInspector"}
+# Orbital UI Slice 08 : l'inspecteur est dans le popover « Plus d’outils » du lanceur.
+INSPECTOR_OPEN = ({"click": "#dockMore"}, {"click": "#openStudioInspector"})
 EXPLORE_BTN = "button.jvi-explore"
 INSPECTOR_READY = {"until": "!!JarvisStudioInspector.instance.view().presentation_id&&!JarvisStudioInspector.instance.view().loading&&!!document.querySelector('button.jvi-explore')&&!document.querySelector('button.jvi-explore').disabled", "ms": 20000}
 FOCUS_OBJ = "{cls:String(document.activeElement&&document.activeElement.className),tag:document.activeElement&&document.activeElement.tagName}"
@@ -635,7 +642,7 @@ async def test_the_inspector_header_opens_the_explorer_with_a_real_click_gives_f
         other, _ = await presentation_with_score(rig.core)
         hosted = f"{STATE}.open&&{STATE}.presentation_id==='{other}'&&!!JarvisStudioExplorer.run.view()"
         result = await drive(rig.url, [
-            INSPECTOR_OPEN, INSPECTOR_READY,
+            *INSPECTOR_OPEN, INSPECTOR_READY,
             {"value": "button", "expr": "JSON.stringify((()=>{const b=document.querySelector('button.jvi-explore');const r=b.getBoundingClientRect();"
                                          "return {label:b.getAttribute('aria-label'),text:b.textContent,w:r.width,h:r.height,tab:b.tabIndex,vis:r.width>0&&r.height>0}})())"},
             {"value": "inspector_id", "expr": "JarvisStudioInspector.instance.view().presentation_id"},

@@ -273,7 +273,7 @@ def test_the_active_title_is_always_visible_and_follows_the_status(tmp_path):
         popup:m.trigger.getAttribute('aria-haspopup'),hidden:m.panel.hidden,calls:m.server.calls.length});
     """)
     assert result["first"] == {"title": "Jarvis", "tone": "ready",
-                               "label": "Board actif : Jarvis. Ouvrir la liste des Boards", "sub": ""}
+                               "label": "Board Jarvis : Board actif. Ouvrir la liste des Boards", "sub": ""}
     assert result["moved"] == {"title": "Projet B", "sub": "1 en arrière-plan"}
     assert result["lost"] == {"title": "Inconnu", "tone": "unknown", "sub": "Statut perdu"}
     down = result["down"]

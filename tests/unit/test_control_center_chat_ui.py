@@ -75,7 +75,11 @@ def test_layout_rules_tab_bottom_right_toasts_above_it_one_panel_at_a_time():
     # the pills live in the top row since Slice 01 of the orbital UI, so the stack no longer dodges a dock column.
     assert ".toasts{position:fixed;right:var(--shell-gutter);bottom:68px;z-index:70;display:grid;gap:8px;width:clamp(220px,calc(100vw - 164px),340px);" in html
     assert ".panel.chat-panel{bottom:68px}" in html, "the open Chat never covers its own tab"
-    assert "#app:has(.chat-panel.open) .voicehint{visibility:hidden}" in html
+    # Orbital UI Slice 06 : plus d'indication vocale à masquer. Le centre d'état
+    # du bas (haut à 18 + 44 = 62 px) reste sous le bas du panneau (68 px) : le
+    # panneau ouvert ne le recouvre jamais (mesuré par test_status_centre_browser.py).
+    assert "voicehint" not in html
+    assert ".status-centre{position:absolute;" in html and "bottom:var(--shell-bottom);min-height:var(--shell-status-h);" in html
     assert "#app:has(.chat-panel.open)~.toasts{top:var(--chat-toasts-top,124px);bottom:auto}" in html
     assert "#app:has(.panel.open)~.toasts{right:calc(var(--shell-gutter) + 12px + min(var(--shell-panel-w),100vw - 2 * var(--shell-gutter)))" in html
     assert "@media(prefers-reduced-motion:reduce){.chat-panel.open," in html
@@ -149,10 +153,10 @@ def test_low_viewport_toasts_follow_the_shifted_panel():
     panneau (mêmes jetons)."""
 
     html = PAGE.read_text(encoding="utf-8")
-<<<<<<< HEAD
-    assert "@media(min-width:940px) and (max-height:480px){#app:has(.panel.open)~.toasts{right:calc(148px + min(560px,100vw - 120px))" in html
-    assert html.index("@media(min-width:940px) and (max-height:480px){#app:has(.panel.open)~.toasts") > html.index(
-        "@media(min-width:940px){#app:has(.panel.open)~.toasts")
+    assert "max-height:480px" not in html and "right:136px" not in html
+    assert ".panel{position:absolute;z-index:33;top:var(--shell-panel-top);right:var(--shell-gutter);bottom:var(--shell-panel-bottom);width:min(var(--shell-panel-w),calc(100% - 2 * var(--shell-gutter)));" in html
+    offset = "#app:has(.panel.open)~.toasts{right:calc(var(--shell-gutter) + 12px + min(var(--shell-panel-w),100vw - 2 * var(--shell-gutter)))"
+    assert html.count(offset) == 1
 
 
 def test_every_core_attachment_refusal_of_a_turn_has_its_own_sentence():
@@ -167,9 +171,3 @@ def test_every_core_attachment_refusal_of_a_turn_has_its_own_sentence():
     for code in sorted(codes):
         assert re.search(rf"\b{code}:'[^']+'", send_errors), code
     assert "autre Board" in send_errors
-=======
-    assert "max-height:480px" not in html and "right:136px" not in html
-    assert ".panel{position:absolute;z-index:33;top:var(--shell-panel-top);right:var(--shell-gutter);bottom:var(--shell-panel-bottom);width:min(var(--shell-panel-w),calc(100% - 2 * var(--shell-gutter)));" in html
-    offset = "#app:has(.panel.open)~.toasts{right:calc(var(--shell-gutter) + 12px + min(var(--shell-panel-w),100vw - 2 * var(--shell-gutter)))"
-    assert html.count(offset) == 1
->>>>>>> task/jarvis-board-orbital-ui-workspace-rail

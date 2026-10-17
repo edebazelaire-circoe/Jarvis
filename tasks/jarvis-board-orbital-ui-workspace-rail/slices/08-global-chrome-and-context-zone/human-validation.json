@@ -5,6 +5,30 @@
       "when": "After destination-matrix tests pass",
       "instruction": "Locate Settings, diagnostics/workspace tools, change interaction mode and change Board without prior instructions. Then say whether the Board control should stay in the top state line (approved target, default per docs/06 D11) or move bottom-left next to the mode control (fallback).",
       "acceptance": "Global functions remain discoverable while the shell is visibly less cluttered."
+    },
+    {
+      "id": "HV-08-02",
+      "when": "After the S08 QA (PASS_WITH_POLISH)",
+      "instruction": "À 1280×720, le rail des présentations affiché, ouvrez « Plus d’outils ».",
+      "acceptance": "Le popover qui passe sur le haut du rail est acceptable : il se ferme d'un clic ailleurs ou par Échap, et le rail est intact après."
+    },
+    {
+      "id": "HV-08-03",
+      "when": "After the S08 QA (PASS_WITH_POLISH)",
+      "instruction": "En thème Cosmos, regardez la rangée du lanceur.",
+      "acceptance": "L'ordre CNV, AGT, ERR, SET (puis « Plus d’outils ») vous convient ; il est le même qu'en circuit imprimé."
+    },
+    {
+      "id": "HV-08-04",
+      "when": "After the S08 QA (PASS_WITH_POLISH)",
+      "instruction": "Avec Bare Hands actif, pincez « Plus d’outils », puis pincez un outil du popover.",
+      "acceptance": "Le popover s'ouvre au premier pincement, l'outil s'ouvre au second, une seule fois, et le popover se ferme."
+    },
+    {
+      "id": "HV-08-05",
+      "when": "After the S08 QA (PASS_WITH_POLISH)",
+      "instruction": "Avec un lecteur d'écran (Narrateur ou NVDA), parcourez le groupe « Plus d’outils » au clavier.",
+      "acceptance": "Le bouton, son état replié/déplié, chaque outil et l'outil ouvert (« Ouvert : … ») sont annoncés."
     }
   ]
 }

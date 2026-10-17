@@ -9,10 +9,11 @@ le serveur MCP `jarvis-capture` du cerveau appellent — jamais Core en direct.
 | Control Center | Core | Délai |
 | --- | --- | --- |
 | `GET/POST /api/contexts`, `GET /api/contexts/current`, `POST /api/contexts/{id}/activate` | même chemin sous `/v1` | 10 s |
-| `GET /api/captures/status`, `GET /api/captures/{id}`, `GET /api/captures/{id}/transcript` | idem | 10 s |
+| `GET /api/captures/status`, `GET /api/captures/targets`, `GET /api/captures/{id}`, `GET /api/captures/{id}/transcript` | idem | 10 s |
 | `POST /api/captures/start`, `/screenshot`, `/{id}/stop`, `/{id}/transcription/retry\\|abandon` | idem | 45 s |
 | `GET /api/artifacts`, `GET/DELETE /api/artifacts/{id}`, `GET …/relations`, `GET …/transcript` | idem | 10 s (DELETE 30 s) |
 | `GET /api/artifacts/{id}/payload` | idem, **en octets** (`forward_bytes`, `Range` relayé) | 30 s |
+| `POST /api/artifacts/{id}/annotations` | idem, corps PNG brut (`image/png`, ≤ 8 Mio lus en flux ici ; orbital-ui S05.B) | 30 s |
 | `GET /api/activity` | `GET /v1/activity` | 10 s |
 
 **Relais transparent.** Requête relayée paire par paire (un paramètre répété,
@@ -44,6 +45,7 @@ from urllib.parse import quote
 
 from aiohttp import web
 
+from jarvis.core.screenshot_annotation import MAX_ANNOTATION_BYTES
 from jarvis.protocol.strict_json import read_bounded
 from jarvis.runtime.journal import RuntimeJournal
 
@@ -59,6 +61,7 @@ MAX_PROXY_BODY_BYTES = 64 * 1024
 WRITE_TIMEOUT_S = 45.0
 DELETE_TIMEOUT_S = 30.0
 PAYLOAD_TIMEOUT_S = 30.0
+ANNOTATION_TIMEOUT_S = 30.0
 #: Plus gros payload rendu au navigateur par blocs (`_stream_large`) : un rendu fait au plus 512 Mio (`docs/remotion-render.md`).
 MAX_STREAMED_PAYLOAD_BYTES = 1024 * 1024 * 1024
 
@@ -97,6 +100,7 @@ class CaptureRelayRoutes:
             web.post(CONTEXTS_ROUTE + "/{context_id}/activate",
                      self._relay("context_activate", "/v1/contexts/{context_id}/activate")),
             web.get(CAPTURES_ROUTE + "/status", self._relay("capture_status", "/v1/captures/status")),
+            web.get(CAPTURES_ROUTE + "/targets", self._relay("capture_targets", "/v1/captures/targets")),
             web.post(CAPTURES_ROUTE + "/start", self._relay("capture_start", "/v1/captures/start", w)),
             web.post(CAPTURES_ROUTE + "/screenshot", self._relay("screenshot", "/v1/captures/screenshot", w)),
             web.get(capture, self._relay("capture_get", "/v1/captures/{capture_id}")),
@@ -113,6 +117,7 @@ class CaptureRelayRoutes:
             web.get(artifact + "/transcript",
                     self._relay("artifact_transcript", "/v1/artifacts/{artifact_id}/transcript")),
             web.get(artifact + "/payload", self.payload),
+            web.post(artifact + "/annotations", self.annotate),
             web.get(ACTIVITY_ROUTE, self._relay("activity", "/v1/activity")),
         ]
 
@@ -169,6 +174,47 @@ class CaptureRelayRoutes:
         if not request.can_read_body:
             return None
         return await read_bounded(request.content, self.MAX_BODY_BYTES) or None
+
+    # ------------------------------------------------------------ capture annotée (orbital-ui Slice 05.B)
+
+    async def annotate(self, request: web.Request) -> web.Response:
+        """`POST /api/artifacts/{id}/annotations` : PNG brut du navigateur, lu en flux et borné ici (la borne du
+        Control Center, 1 Mio, ne vaut que pour `read()`), relayé tel quel ; Core vérifie signature et dimensions."""
+
+        if request.query:
+            return _error(400, "invalid_request", "unexpected query parameters")
+        if request.content_type != "image/png":
+            return _error(415, "annotation_not_png", "Content-Type must be image/png")
+        if request.content_length is not None and request.content_length > MAX_ANNOTATION_BYTES:
+            return _error(413, "annotation_too_large", f"the annotation exceeds the {MAX_ANNOTATION_BYTES}-byte bound")
+        body = bytearray()
+        async for chunk in request.content.iter_chunked(64 * 1024):
+            body += chunk
+            if len(body) > MAX_ANNOTATION_BYTES:
+                return _error(413, "annotation_too_large", f"the annotation exceeds the {MAX_ANNOTATION_BYTES}-byte bound")
+        if not body:
+            return _error(400, "annotation_empty", "the annotation body is empty")
+        path = f"/v1/artifacts/{quote(request.match_info['artifact_id'], safe='')}/annotations"
+        transport = self._transport()
+        if transport is None:
+            return _error(503, "core_unconfigured", "the control center does not know Core")
+        try:
+            status, payload = await transport.forward_annotation(path, body=bytes(body), timeout_s=ANNOTATION_TIMEOUT_S)
+        except asyncio.CancelledError:
+            raise
+        except asyncio.TimeoutError:
+            self._unreachable("artifact_annotate", "POST", path, "core_timeout", "TimeoutError")
+            return _error(504, "core_timeout", "Core did not answer in time; the outcome is unknown, read the artifacts back")
+        except Exception as exc:  # noqa: BLE001 - surfaced: 503 with the real cause, and journaled
+            self._unreachable("artifact_annotate", "POST", path, "core_unreachable", type(exc).__name__)
+            return _error(503, "core_unreachable", f"Core is unreachable: {type(exc).__name__}: {str(exc)[:200]}")
+        self._journal.emit(f"{self.JOURNAL_PREFIX}.relayed", f"artifact_annotate relayé à Core (HTTP {status})",
+                           level="info" if status < 400 else "warning",
+                           data={"action": "artifact_annotate", "status": status, "code": _code_of(payload),
+                                 "size_bytes": len(body)})
+        if payload is None:
+            return _error(status if status >= 400 else 502, "http_error", f"Core answered HTTP {status} without JSON")
+        return web.json_response(payload, status=status)
 
     # ------------------------------------------------------------ octets
 

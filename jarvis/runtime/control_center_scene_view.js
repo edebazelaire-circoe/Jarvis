@@ -57,7 +57,19 @@
        variable CSS (`classes`, `cssVars` l'ignorent). */
     Object.freeze({id:'showEphemeral',type:'toggle',label:'Afficher les tâches éphémères',value:true,
       hint:'Les sous-agents rapides qui s’effacent d’eux-mêmes à la fin, sans compte rendu. Éteint, ils ne s’affichent pas du tout, dans le panneau Agents comme sur la scène ; un échec reste toujours visible. Ce navigateur seulement : le cerveau voit toujours ces tâches.'}),
+    /* Objets masqués (orbital-ui Slice 06, D9) : allumé, la scène les dessine
+       en **fantômes** (atténués, anneau en tirets, « masqué ») à leur place
+       enregistrée ; chacun garde son masquage, que seul « Réafficher » lève.
+       Une décision de vue, jamais une écriture dans la scène. Réglé par l'œil
+       du centre d'état, pas dans Réglages → Apparence (`panel:false`), et
+       « Réinitialiser » ne le touche pas. */
+    Object.freeze({id:'showHidden',type:'toggle',label:'Afficher les objets masqués',value:false,panel:false,
+      hint:'Les objets que vous avez masqués réapparaissent en fantômes, sans être réaffichés : la scène enregistrée ne change pas.'}),
   ]);
+  /* Les réglages de la section Réglages → Apparence (ceux qui n'ont pas
+     `panel:false`) : ce que la fenêtre montre, ce que « Réinitialiser »
+     remet. */
+  const PANEL_FIELDS=Object.freeze(FIELDS.filter(f=>f.panel!==false));
 
   const DEFAULTS=Object.freeze(Object.fromEntries(FIELDS.map(f=>[f.id,f.value])));
   const FIELD_BY_ID=new Map(FIELDS.map(f=>[f.id,f]));
@@ -99,10 +111,19 @@
 
   function encode(settings){return JSON.stringify({version:1,view:normalize(settings)})}
 
+  /* « Réinitialiser » ne s'allume que pour un réglage de la fenêtre : l'œil
+     du centre d'état a son propre interrupteur. */
   const isDefault=settings=>{
     const value=normalize(settings);
-    return FIELDS.every(f=>value[f.id]===f.value);
+    return PANEL_FIELDS.every(f=>value[f.id]===f.value);
   };
+
+  /* Les défauts de la fenêtre, en gardant ce qu'elle ne montre pas. */
+  function reset(settings){
+    const value=normalize(settings),out=normalize(null);
+    for(const field of FIELDS)if(field.panel===false)out[field.id]=value[field.id];
+    return out;
+  }
 
   /* Un réglage grisé (son `needs` est éteint) garde sa valeur : la page ne
      l'applique simplement pas. */
@@ -121,11 +142,11 @@
     return `${trim(value)} ×`;
   }
 
-  /* Modèle de vue de la fenêtre : un `rows` par réglage, dans l'ordre. */
+  /* Modèle de vue de la fenêtre : un `rows` par réglage de la fenêtre, dans l'ordre. */
   function describe(settings){
     const value=normalize(settings);
     return {
-      rows:FIELDS.map(field=>({field,value:value[field.id],label:valueLabel(field,value[field.id]),
+      rows:PANEL_FIELDS.map(field=>({field,value:value[field.id],label:valueLabel(field,value[field.id]),
         enabled:active(value,field)})),
       custom:!isDefault(value),
     };
@@ -220,8 +241,18 @@
   /* Phrase annoncée après un changement (région vivante de la scène). */
   function changeSentence(field,value){return `${field.label} : ${valueLabel(field,value)}.`}
 
-  const api=Object.freeze({version:1,KEY,FIELDS,FIELD_BY_ID,DEFAULTS,CLASSES,EPHEMERAL_LINGER_MS,
-    normalize,decode,encode,isDefault,active,describe,valueLabel,cssVars,classes,orbitOptions,changeSentence,
+  /* L'œil du centre d'état (Slice 06, D9) : son nom accessible, son état
+     pressé. `hidden` : objets masqués de la scène (fantômes compris). Le
+     compte n'est que dans le nom et l'infobulle, jamais dessiné. */
+  function hiddenEye(settings,hidden){
+    const on=normalize(settings).showHidden===true;
+    const n=Math.max(0,Math.floor(Number(hidden)||0));
+    const label=on?'Cacher les objets masqués':n?`Afficher les objets masqués (${n})`:'Aucun objet masqué';
+    return {pressed:on,count:n,inert:!on&&n===0,label};
+  }
+
+  const api=Object.freeze({version:1,KEY,FIELDS,PANEL_FIELDS,FIELD_BY_ID,DEFAULTS,CLASSES,EPHEMERAL_LINGER_MS,
+    normalize,decode,encode,isDefault,reset,active,describe,valueLabel,cssVars,classes,orbitOptions,changeSentence,hiddenEye,
     ephemeralVisibility,ephemeralVisibilityFor,indexWork});
   root.JarvisSceneView=api;
   if(typeof module!=='undefined'&&module.exports)module.exports=api;

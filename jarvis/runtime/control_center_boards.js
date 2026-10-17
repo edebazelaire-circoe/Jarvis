@@ -652,7 +652,7 @@ ${P} .bd-sr{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflo
     trigger.id=DOM.triggerId;trigger.setAttribute('type','button');
     trigger.setAttribute('aria-haspopup','dialog');trigger.setAttribute('aria-expanded','false');
     trigger.setAttribute('aria-controls',DOM.panelId);
-    const eyebrow=el('span','bd-eyebrow','Board');
+    const eyebrow=el('span','bd-eyebrow','Board ');  // espace : « Board Jarvis » et non « BoardJarvis » dans le texte du bouton
     const title=el('span','bd-title');title.id=DOM.titleId;
     const sub=el('span','bd-sub');sub.id=DOM.subId;
     const chev=el('span','bd-chev');chev.appendChild(icon(doc,'chevron',14));
@@ -739,7 +739,8 @@ ${P} .bd-sr{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflo
       host.setAttribute(DOM.busyAttribute,pending&&(pending.kind==='switch'||pending.kind==='new_session')?'true':'false');
       if(title.textContent!==view.title)title.textContent=view.title;
       if(sub.textContent!==view.sub)sub.textContent=view.sub;
-      const label=view.tone==='ready'?`Board actif : ${view.title}. Ouvrir la liste des Boards`
+      /* Le nom commence par ce que le bouton montre (« BOARD » puis le titre) : WCAG 2.5.3 (orbital-ui Slice 09, axe-core). */
+      const label=view.tone==='ready'?`Board ${view.title} : Board actif. Ouvrir la liste des Boards`
         :view.tone==='pending'?`${view.title} — ${view.sub}. Ouvrir la liste des Boards`
         :`Boards ${view.title.toLowerCase()} (${view.sub}${view.code?` · ${view.code}`:''}). Ouvrir la liste des Boards`;
       trigger.setAttribute('aria-label',label);
@@ -841,8 +842,11 @@ ${P} .bd-sr{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflo
       const pick=el('button','bd-pick');pick.setAttribute('type','button');
       pick.setAttribute(DOM.boardAttribute,row.board_id);pick.setAttribute(DOM.actionAttribute,'switch');
       if(row.active)pick.setAttribute('aria-current','true');
-      pick.setAttribute('aria-label',row.active?`${row.title} — Board actif`
-        :`Basculer sur ${row.title}${row.working?' (travail en arrière-plan)':''}`);
+      /* Le nom vient du contenu (titre, état, nature, dernière ouverture) : il commence par ce que la ligne montre,
+         ce que l'Accès vocal et WCAG 2.5.3 attendent (orbital-ui QA S09 P4, axe `label-content-name-mismatch`) ;
+         l'action passe en description. */
+      pick.setAttribute('aria-description',row.active?'Board actif'
+        :`Basculer sur ce Board${row.working?' (travail en arrière-plan)':''}`);
       disable(pick,!!pending&&!row.active);
       const state=el('span','bd-state');state.setAttribute('data-role','state');
       pick.appendChild(dotOf());pick.appendChild(textOf(row,state));
@@ -970,6 +974,8 @@ ${P} .bd-sr{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflo
         else if(row.working){said='En fond';tone='working'}
         if(state.textContent!==said)state.textContent=said;
         state.setAttribute('data-tone',tone);
+        /* Une attente compte les secondes : jamais dans un nom (la phrase entière est dans le bandeau du panneau). */
+        if(tone==='wait')state.setAttribute('aria-hidden','true');else state.removeAttribute('aria-hidden');
       }
     }
 
