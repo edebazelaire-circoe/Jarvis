@@ -4450,7 +4450,7 @@ check, dashed ring) and a text label always accompanies it (« En cours », « P
 `screen_recording`, `presentation_still` / `_video` / `_pdf`) read from `GET /api/workspace/artifacts?board_id=<active Board>` (relay of `/v1/workspace/artifacts`,
 24 newest). The pure adapter `jarvis/runtime/control_center_workspace_rail_model.js` (`window.JarvisWorkspaceRailModel`) turns each into a `WorkspaceRailItem`
 (view, never stored): type badge by kind, `mime_type` (PowerPoint, Word, Excel, PDF, Image, Vidéo…) or link host (`docs.google.com/presentation` -> Google Slides, Docs,
-Sheets, Drive, YouTube, Figma, GitHub, Notion; else the host name; the URL is never loaded), image preview only for a `complete` screenshot / image upload / still render
+Sheets, Drive, YouTube, Figma, GitHub, Notion; else the host name; the URL is never loaded; a link's title is its host, never a path cut mid-word), image preview only for a `complete` screenshot / image upload / still render
 through the payload route, typed placeholder otherwise; state `pending` « En cours », `complete` « Prêt », `failed` / `partial` « Problème », other « État inconnu »,
 **no yellow** (no canonical review owner). The active Board comes from the page's 1 Hz status: a Board switch empties the section at once and re-reads; a late answer for
 the previous Board is dropped (no leakage). Re-read at most every 10 s while the rail is visible. Click: an image opens in the screenshot preview when its module is

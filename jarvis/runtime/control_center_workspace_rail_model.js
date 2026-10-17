@@ -89,7 +89,9 @@
   }
   function titleOf(a,type){
     if(a.kind==='upload'&&a.preview)return clean(a.preview,80);
-    if(a.kind==='link'){const u=parseLink(a.preview);return u?clean(u.hostname.replace(/^www\./,'')+(u.pathname!=='/'?u.pathname:''),80):clean(a.preview,80)||'Lien'}
+    /* Un lien se nomme par son hôte : hôte + chemin se coupait au milieu d'un mot dans la carte (« docs.google.com/prese|ntation… »,
+       QA S09) ; le type (badge) dit déjà Google Slides, Docs…, et l'adresse entière s'ouvre depuis le menu. */
+    if(a.kind==='link'){const u=parseLink(a.preview);return u?clean(u.hostname.replace(/^www\./,''),80):clean(a.preview,80)||'Lien'}
     return KIND_LABEL[a.kind]||type.badge;
   }
   /* `WorkspaceRailItem` (vue, jamais stockée). `null` si l'Artifact n'est pas montrable (nature hors liste, id illisible). */

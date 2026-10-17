@@ -931,6 +931,40 @@ def test_banner_tray_toasts_and_rail_never_cover_each_other(tmp_path, theme):
         assert _errors(step) == [], _errors(step)
 
 
+LAUNCHER_NAMES = r"""Object.fromEntries([...document.querySelectorAll('.dock .tool>button')].map(b=>[b.id||b.dataset.panel,b.getAttribute('aria-label')||'']))"""
+TO_THEME = "(()=>{JarvisThemeAPI.activate(%s,{persist:false});return 1})()"
+
+
+def test_launcher_names_survive_a_theme_round_trip(tmp_path):
+    """QA S09 : après Cosmos puis circuit imprimé, le nom de WSP perdait
+    « · mémoire, relations, artefacts ». Chaque nom du lanceur revient à
+    l'identique ; en Cosmos (icônes) il garde ses mots, sans le code ; ERR se
+    dit en français."""
+    step = _centre(tmp_path, [{"width": 1440, "height": 900, "theme": "circuit-board", "seed": {"mode": MODE}, "actions": [
+        ["eval", "before", LAUNCHER_NAMES, 600],
+        ["eval", "sw", TO_THEME % json.dumps("cosmos"), 800], ["eval", "cosmos", LAUNCHER_NAMES, 50],
+        ["eval", "sw2", TO_THEME % json.dumps("circuit-board"), 800], ["eval", "after", LAUNCHER_NAMES, 50]]}])[0]
+    r = step["results"]
+    assert r["after"] == r["before"], ("les noms du circuit imprimé reviennent à l'identique", r["before"], r["after"])
+    assert r["before"]["openWorkspace"] == "Sessions & Boards · mémoire, relations, artefacts · WSP", r["before"]
+    assert r["before"]["errors"] == "Erreurs · ERR", r["before"]
+    assert r["cosmos"]["openWorkspace"] == "Sessions & Boards · mémoire, relations, artefacts", r["cosmos"]
+    assert all(not re.search(r" · [A-Z]{2,4}$", name) for name in r["cosmos"].values()), ("en Cosmos le code n'est pas montré", r["cosmos"])
+    assert _errors(step) == [], _errors(step)
+
+
+def test_the_banner_takes_the_width_back_when_the_rail_is_hidden(tmp_path):
+    """QA S09 : le bandeau GPT-Live gardait la largeur réduite par le rail une
+    fois le rail masqué. 1280 px : 620 px à côté du rail, 680 px sans lui."""
+    width = "Math.round(document.getElementById('liveBanner').getBoundingClientRect().width)"
+    hide = "(()=>{const r=document.getElementById('presentationRail');r.hidden=true;return r.hidden})()"
+    step = _centre(tmp_path, [{"width": 1280, "height": 720, "seed": {**MIXED, "live": LIVE, "mode": MODE}, "actions": [
+        ["eval", "beside", width, 400], ["eval", "hide", hide, 300], ["eval", "alone", width, 50]]}])[0]
+    r = step["results"]
+    assert r["beside"] == 620 and r["hide"] is True and r["alone"] == 680, r
+    assert _errors(step) == [], _errors(step)
+
+
 #: Un navigateur sans ancres CSS : chaque déclaration à `anchor(` est retirée par le CSSOM (un parseur qui ne
 #: connaît pas `anchor()` la jette entière) ; les règles de repli, séparées, restent.
 NO_ANCHOR = r"""(()=>{let n=0;const walk=rules=>{for(const r of rules){if(r.cssRules)walk(r.cssRules);

@@ -65,7 +65,7 @@ def test_items_from_board_artifacts_typed_by_mime_and_host():
     assert {k: v["activity_state"] for k, v in by_id.items()} == {
         "01": "ready", "02": "ready", "03": "ready", "04": "working", "05": "ready", "06": "ready", "07": "ready",
         "08": "problem", "09": "problem", "0c": "unknown"}, "no yellow for Board artifacts: no canonical review owner"
-    assert by_id["02"]["title"] == "Roadmap Q4.pptx" and by_id["05"]["title"] == "docs.google.com/presentation/d/abc/edit"
+    assert by_id["02"]["title"] == "Roadmap Q4.pptx" and by_id["05"]["title"] == "docs.google.com"
     assert by_id["05"]["url"] == "https://docs.google.com/presentation/d/abc/edit" and by_id["01"]["url"] is None
     assert by_id["01"]["source_scope"] == {"board_id": B1} and by_id["01"]["context_actions"] == ["detail"]
     url = node(f"return M.urlFor({json.dumps(B1)})")

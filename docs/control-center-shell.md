@@ -93,7 +93,8 @@ Placement rules that hold in both themes (measured by
   125+): `.live-banner`
   (`anchor-name: --jv-live`) and `#boardDropTray` (`--jv-tray`). The GPT-Live
   banner is centred between the two columns and never covers the rail
-  (`width: min(680px, 100vw - 2 × (gutter + --shell-rail-w + 12px))`); at
+  (`width: min(680px, 100vw - 2 × (gutter + --shell-rail-w + 12px))`;
+  rail hidden or absent: `min(680px, 100vw - 2 × (gutter + 12px))`); at
   700 px and below it sits under the rail tab row (`--shell-panel-top` +
   48 px). Toasts sit left of the visible rail above 700 px (`right: gutter +
   --shell-rail-w + 12px`), rise above a visible bottom drop tray
@@ -362,7 +363,7 @@ shortcuts are those of `jarvis/runtime/shortcuts.py`, unchanged):
 | --- | --- | --- | --- | --- |
 | Conversation (timeline) | `#openTimeline` `CNV` | dock row | **visible** | — |
 | Agents (+ count badge `#agentBadge`) | `#agentsButton` `AGT` | dock row | **visible**, badge never behind a click | `a` |
-| Errors (+ badge `#errorBadge`) | `[data-panel=errors]` `ERR` | dock row | **visible**, badge never behind a click | `e` |
+| Erreurs (+ badge `#errorBadge`) | `[data-panel=errors]` `ERR` | dock row | **visible**, badge never behind a click | `e` |
 | Réglages | `#openSettings` `SET` | dock row | **visible** | `s` |
 | Trace | `[data-panel=trace]` `TRC` | dock row | « Plus d’outils » | `t` |
 | Test Lab | `#openTestLab` `LAB` | dock row | « Plus d’outils » | — |

@@ -263,7 +263,7 @@ def test_board_linked_artifacts_are_typed_cards_and_a_board_switch_drops_them(r)
     assert [(i["name"], i["meta"], i["state"], i["stateText"], i["thumb"]["kind"]) for i in items] == [
         ("Capture d’écran", "Capture", "done", "Prêt", "image"),
         ("Roadmap Q4.pptx", "PowerPoint", "done", "Prêt", "placeholder"),
-        ("docs.google.com/presentation/d/abc/edit", "Google Slides", "done", "Prêt", "placeholder"),
+        ("docs.google.com", "Google Slides", "done", "Prêt", "placeholder"),
         ("demo.mp4", "Vidéo", "working", "En cours", "placeholder"),
         ("contrat.pdf", "PDF", "problem", "Problème", "placeholder")], "no yellow for Board artifacts"
     assert items[0]["thumb"]["img"]["ok"] is True and [i["dot"] for i in items] == [GREEN, GREEN, GREEN, BLUE, ORANGE]

@@ -83,6 +83,8 @@ html,body{margin:0;height:100%;background:var(--bg);color:var(--text);font:15px 
    descend sous la rangée de l'onglet du rail (40 + 8 px). Ancre `--jv-live` : le plateau de dépôt et
    les infusions se posent dessous plutôt que dessus ou dessous en rang. */
 .live-banner{position:absolute;z-index:35;top:var(--shell-panel-top);left:50%;transform:translateX(-50%);width:min(680px,calc(100vw - 2 * (var(--shell-gutter) + var(--shell-rail-w) + 12px)));anchor-name:--jv-live;display:grid;grid-template-columns:auto minmax(0,1fr) auto;gap:14px;align-items:center;padding:12px 14px;background:rgba(35,7,12,.94);border:2px solid var(--danger);border-radius:10px;box-shadow:0 0 32px rgba(255,101,119,.28);pointer-events:auto}
+/* Rail masqué ou absent (QA S09) : le bandeau reprend la largeur des seules gouttières. */
+@media(min-width:701px){body:not(:has(>#presentationRail:not([hidden]))) .live-banner{width:min(680px,calc(100vw - 2 * (var(--shell-gutter) + 12px)))}}
 .live-banner.uncertain{border-color:var(--warn);background:rgba(38,23,5,.96);box-shadow:0 0 32px rgba(255,184,92,.24)}
 .live-led{width:13px;height:13px;border-radius:50%;background:var(--danger);box-shadow:0 0 15px var(--danger);animation:pulse 1.2s ease-in-out infinite}
 .live-banner.uncertain .live-led{background:var(--warn);box-shadow:0 0 15px var(--warn)}
@@ -1986,7 +1988,7 @@ button.wsp-ename:hover{color:var(--accent)}
   <nav class="dock" aria-label="Outils de Jarvis" data-shell-control>
     <div class="tool"><button id="openTimeline" title="Conversation · chronologie en direct" aria-label="Conversation · chronologie en direct" aria-haspopup="dialog" aria-expanded="false" aria-controls="timeline">CNV</button></div>
     <div class="tool"><button data-panel="agents" id="agentsButton" title="Agents">AGT</button><span class="badge count" id="agentBadge">0</span></div>
-    <div class="tool"><button data-panel="errors" title="Errors">ERR</button><span class="badge" id="errorBadge">0</span></div>
+    <div class="tool"><button data-panel="errors" title="Erreurs">ERR</button><span class="badge" id="errorBadge">0</span></div>
     <div class="tool"><button id="openSettings" title="Réglages">SET</button></div>
     <div class="tool dock-more"><button type="button" id="dockMore" aria-expanded="false" aria-controls="dockMorePop" aria-label="Plus d’outils" title="Plus d’outils"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true" focusable="false"><circle cx="5.5" cy="12" r="1.7"/><circle cx="12" cy="12" r="1.7"/><circle cx="18.5" cy="12" r="1.7"/></svg></button>
       <div class="dock-pop" id="dockMorePop" role="group" aria-label="Plus d’outils" hidden>

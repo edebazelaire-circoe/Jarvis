@@ -259,11 +259,21 @@ html[data-jarvis-theme="cosmos"] .choice.theme-choice.selected{
       const button=id?document.getElementById(id):document.querySelector(`.dock button[data-panel="${name}"]`);
       if(!button)continue;
       if(!button.dataset.jarvisOriginalHtml)button.dataset.jarvisOriginalHtml=button.innerHTML;
+      /* Le nom du circuit imprimé est gardé et rendu au retour (QA S09 : après un aller-retour, WSP perdait
+         « · mémoire, relations, artefacts ») ; en Cosmos l'icône remplace le code, qui sort du nom. Un nom réécrit
+         entre-temps par un autre module (badge) est le plus frais : il n'est pas écrasé. */
       if(enabled){
         button.innerHTML=toolIcon(name);
-        button.setAttribute('aria-label',button.title||name);
+        if(button.dataset.jarvisOriginalLabel===undefined)button.dataset.jarvisOriginalLabel=button.getAttribute('aria-label')||'';
+        const plain=(button.dataset.jarvisOriginalLabel||button.title||name).replace(/ · [A-Z]{2,4}$/,'');
+        button.setAttribute('aria-label',plain);button.dataset.jarvisCosmosLabel=plain;
       }else{
         button.innerHTML=button.dataset.jarvisOriginalHtml;
+        const original=button.dataset.jarvisOriginalLabel;
+        if(original!==undefined&&button.getAttribute('aria-label')===button.dataset.jarvisCosmosLabel){
+          if(original)button.setAttribute('aria-label',original);else button.removeAttribute('aria-label');
+        }
+        delete button.dataset.jarvisOriginalLabel;delete button.dataset.jarvisCosmosLabel;
       }
     }
   }
