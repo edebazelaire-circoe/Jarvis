@@ -141,7 +141,7 @@ const makeServer=()=>{
       .map(b=>Object.assign({},b)),active_board_id:s.active};
     if(key==='GET /api/sessions/current')return {session:s.session,binding:{}};
     if(key==='POST /api/boards/switch'){s.active=body.board_id;return {changed:true}}
-    if(key==='POST /api/boards'){const b=board('board_new','X',{board_kind:body.board_kind||'empty'});b.title=body.title;s.boards.push(b);return {board:b,active:false}}
+    if(key==='POST /api/boards'){const b=board('board_new','X',{board_kind:body.board_kind||'assistant'});b.title=body.title;s.boards.push(b);return {board:b,active:false}}
     if(method==='PATCH'){const id=decodeURIComponent(path.split('/').pop());const b=s.boards.find(x=>x.board_id===id);
       if(body.title!==undefined)b.title=body.title;if(body.board_kind!==undefined)b.board_kind=body.board_kind;return {board:b}}
     if(path.endsWith('/archive')){const id=decodeURIComponent(path.split('/')[3]);s.boards.find(x=>x.board_id===id).status='archived';return {}}
@@ -655,9 +655,9 @@ def test_kind_words_are_the_deep_managers_and_last_opened_reads_relative(tmp_pat
           .map(iso=>B.openedOf(iso,now).label),
         exact:B.openedOf('2026-10-01T12:00:00Z',now).exact});
     """)
-    assert result["hud"] == result["manager"] == {"empty": "Générique", "meeting": "Réunion",
-                                                  "presentation": "Présentation"}
-    assert result["kinds"] == [{"kind": "empty", "label": "Générique"}, {"kind": "meeting", "label": "Réunion"},
+    assert result["hud"] == result["manager"] == {"assistant": "Assistant", "presentation": "Présentation",
+                                                  "meeting": "Réunion"}
+    assert result["kinds"] == [{"kind": "assistant", "label": "Assistant"}, {"kind": "meeting", "label": "Réunion"},
                                {"kind": "demo", "label": "demo"}], "an unknown kind is shown as is"
     assert result["opened"] == ["jamais ouvert", "jamais ouvert", "ouvert à l’instant", "ouvert à l’instant",
                                 "ouvert il y a 45 min", "ouvert il y a 5 h", "ouvert il y a 2 j",
@@ -668,14 +668,14 @@ def test_kind_words_are_the_deep_managers_and_last_opened_reads_relative(tmp_pat
 def test_each_row_shows_its_kind_and_last_opening_from_the_server(tmp_path):
     result = run_node(tmp_path, r"""
       const m=mount();
-      Object.assign(m.server.boards[0],{board_kind:'empty',last_opened_at:'2026-09-29T14:00:00Z'});
+      Object.assign(m.server.boards[0],{board_kind:'assistant',last_opened_at:'2026-09-29T14:00:00Z'});
       Object.assign(m.server.boards[1],{board_kind:'meeting',last_opened_at:'2026-09-29T11:02:00Z'});
       m.server.boards.push(board('board_c','Démo client',{board_kind:'presentation'}));
       m.trigger.fire('click');await settle();
       out({shown:m.shown(),gets:m.server.calls.map(c=>c.path)});
     """)
     assert result["shown"] == [
-        {"id": "default", "kind": "empty", "label": "Générique", "opened": "ouvert il y a 2 min", "state": "Actif",
+        {"id": "default", "kind": "assistant", "label": "Assistant", "opened": "ouvert il y a 2 min", "state": "Actif",
          "archived": False, "actions": ["switch", "rename", "inspect", "archive"]},
         {"id": "board_b", "kind": "meeting", "label": "Réunion", "opened": "ouvert il y a 3 h", "state": "",
          "archived": False, "actions": ["switch", "rename", "inspect", "archive"]},
@@ -758,21 +758,23 @@ def test_create_sends_the_chosen_kind_and_the_default_one_is_left_to_core(tmp_pa
       out({options,afterMeeting,bodies:m.server.calls.filter(c=>c.method==='POST'&&c.path==='/api/boards').map(c=>c.body),
         toast:m.toasts.map(t=>t.title)});
     """)
-    assert result["options"] == [["empty", "Générique"], ["meeting", "Réunion"], ["presentation", "Présentation"]]
+    assert result["options"] == [["assistant", "Assistant"], ["presentation", "Présentation"], ["meeting", "Réunion"]]
     assert result["bodies"] == [{"title": "Réunion hebdo", "board_kind": "meeting"}, {"title": "Notes"}]
-    assert result["afterMeeting"]["kind"] == "empty", "the selector resets after success"
+    assert result["afterMeeting"]["kind"] == "assistant", "the selector resets after success"
     assert result["afterMeeting"]["row"]["kind"] == "meeting", "the row shows what the server kept"
     assert result["toast"][0] == "Board « Réunion hebdo » créé (Réunion)."
 
 
-def test_edit_changes_the_kind_with_one_patch_painted_only_after_the_server_confirms(tmp_path):
+def test_edit_renames_only_the_type_is_never_offered_and_a_patch_is_painted_after_the_server(tmp_path):
+    """D02 (Slice 01a) : le type se choisit à la création ; l'édition ne propose que le titre."""
+
     result = run_node(tmp_path, r"""
       const m=mount();
       m.trigger.fire('click');await settle();
       m.control_('board_b','rename').fire('click');await settle();
-      const select=m.control_('board_b','kind');
-      const initial=select.value;
-      select.value='presentation';select.fire('change');
+      const offered={kind:!!m.control_('board_b','kind'),title:!!m.control_('board_b','title'),
+        selects:all(m.panel).filter(n=>n.tag==='select').length};
+      m.control_('board_b','title').value='Projet B2';
       m.server.plan['PATCH /api/boards/board_b']=[{delay:3000}];
       m.control_('board_b','save').fire('click');await settle();
       const during={row:m.shown().find(r=>r.id==='board_b'),note:m.note()};
@@ -782,31 +784,25 @@ def test_edit_changes_the_kind_with_one_patch_painted_only_after_the_server_conf
       m.control_('board_b','rename').fire('click');await settle();
       m.control_('board_b','save').fire('click');await settle();
       const unchanged={editing:!!m.control_('board_b','title')};
-      // Titre et nature ensemble : un seul PATCH, les deux champs.
-      m.control_('default','rename').fire('click');await settle();
-      m.control_('default','title').value='Jarvis 2';m.control_('default','kind').value='meeting';
-      m.control_('default','save').fire('click');await settle();await settle();
-      // Un refus de Core garde la saisie et dit pourquoi, dans la ligne.
+      // Un refus de Core (client hérité) garde la saisie et dit pourquoi, dans la ligne.
       m.control_('board_b','rename').fire('click');await settle();
-      m.control_('board_b','kind').value='meeting';m.control_('board_b','kind').fire('change');
-      m.server.plan['PATCH /api/boards/board_b']=[{status:400,code:'invalid_board',message:'board_kind must be one of'}];
+      m.control_('board_b','title').value='Projet B3';
+      m.server.plan['PATCH /api/boards/board_b']=[{status:409,code:'board_kind_immutable',message:'board_kind is fixed'}];
       m.control_('board_b','save').fire('click');await settle();await settle();
-      const refused={kind:m.control_('board_b','kind').value,error:all(m.panel).find(n=>n.className==='bd-rowerr').textContent,
-        row:m.server.boards.find(b=>b.board_id==='board_b').board_kind};
-      out({initial,during,after,unchanged,refused,patches:m.server.calls.filter(c=>c.method==='PATCH').map(c=>c.body),
+      const refused={title:m.control_('board_b','title').value,error:all(m.panel).find(n=>n.className==='bd-rowerr').textContent};
+      out({offered,during,after,unchanged,refused,patches:m.server.calls.filter(c=>c.method==='PATCH').map(c=>c.body),
         events:m.journal.map(j=>j.event).filter(e=>e.startsWith('boards.update'))});
     """)
-    assert result["initial"] == "empty"
+    assert result["offered"] == {"kind": False, "title": True, "selects": 1}, "only the create row keeps a type selector"
     assert result["during"]["row"]["kind"] is None, "while waiting the row is the edit form, not a guessed badge"
     assert result["during"]["note"].startswith("Enregistrement… ")
-    assert result["after"]["kind"] == "presentation" and result["after"]["label"] == "Présentation"
+    assert result["after"]["kind"] == "assistant" and result["after"]["label"] == "Assistant", "the type never moves"
     assert result["unchanged"] == {"editing": False}
-    assert result["patches"] == [{"board_kind": "presentation"}, {"title": "Jarvis 2", "board_kind": "meeting"},
-                                 {"board_kind": "meeting"}]
-    assert result["refused"] == {"kind": "meeting", "error": "Demande refusée par Core : Board invalide.",
-                                 "row": "presentation"}
+    assert result["patches"] == [{"title": "Projet B2"}, {"title": "Projet B3"}]
+    assert result["refused"]["title"] == "Projet B3"
+    assert result["refused"]["error"].startswith("Le type d’un Board est fixé à sa création.")
     assert result["events"] == ["boards.update_requested", "boards.update_done", "boards.update_requested",
-                                "boards.update_done", "boards.update_requested", "boards.update_failed"]
+                                "boards.update_failed"]
 
 
 def test_inspect_hands_the_board_to_the_deep_manager_and_says_when_it_cannot(tmp_path):

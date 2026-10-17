@@ -470,7 +470,7 @@ async def test_board_routes_of_the_control_center_carry_board_kind(tmp_path):
         status, body, _ = await stack.call("GET", "/api/boards", params={"include_archived": "true"})
         assert status == 200
         kinds = {b["board_id"]: b["board_kind"] for b in body["boards"]}
-        assert kinds[w.board_a] == "meeting" and kinds[w.board_archived] == "empty"
+        assert kinds[w.board_a] == "meeting" and kinds[w.board_archived] == "assistant"
         _, one, _ = await stack.call("GET", f"/api/boards/{w.board_a}")
         assert one["board"]["board_kind"] == "meeting"
 

@@ -2240,9 +2240,14 @@ tables are never touched. Each enabled run emits
 
 ### Migration
 
-The state DB `schema_version` goes 1 to 2 through `sqlite_state._MIGRATIONS`:
-forward-only, additive, one `BEGIN IMMEDIATE` transaction per step (DDL + version
-bump), version re-read under the write lock; a failing `ROLLBACK` is attached to
+The state DB `schema_version` goes 1 to 2 (and on, to the current version) through
+`sqlite_state._MIGRATIONS`: forward-only, one `BEGIN IMMEDIATE` transaction per
+step (statements + version bump), version re-read under the write lock, always
+after the one-time `<db>.v<N>.bak` copy below. DDL steps are additive; a step may
+also rewrite JSON payloads when the version bump protects older binaries (they
+refuse the newer file instead of misreading it): v9, the first such step, fixes
+the Board type ([boards.md](boards.md#persistence)). A published step is never
+rewritten; a failing `ROLLBACK` is attached to
 the original error as a note, never raised instead of it. A fresh file starts at
 v1 and takes the same steps, without backup. A crash mid-migration rolls back and
 the next start retries.

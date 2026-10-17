@@ -251,52 +251,50 @@ effective value, and deliberately no fourth copy anywhere.
 | Owner | What it owns | Where |
 | --- | --- | --- |
 | Core | the **effective live mode** and its **revision** | `jarvis/core/interaction_mode.py` |
-| Core, per Board | the **stored preference**, on the active Board (since board-session Slice 02) | `jarvis/core/board_service.py`, column `interaction_mode` of `work_boards` |
-| Control Center | the **legacy global preference**: migration input and no-Board fallback | `jarvis/runtime/interaction_mode_settings.py` |
+| Core, per Board | nothing stored: the active **Board type** designates the mode (schema v9) | `jarvis/core/board_service.py`, `board_kind` of `work_boards.data` |
+| Control Center | the **legacy global preference**: no-Board fallback only | `jarvis/runtime/interaction_mode_settings.py` |
 | Voice | a read-only **observation** of Core's value | `jarvis/runtime/interaction_mode_observer.py` |
 
 Conformance suites: `tests/unit/test_interaction_mode_control_plane.py` and
 `tests/unit/test_interaction_mode_protocol.py`.
 
-### Persistence owner — the active Board (board-session Slice 02)
+### Persistence owner — none: the mode is derived from the Board type
 
-**Since Boards exist, the persisted preference is per Board**
-([boards.md](boards.md#persistence)). `BoardService` subscribes to
-`InteractionModeService` (`add_listener`) and writes every change on the
-**active Board** (`interaction_mode`, origin `user`). At Core start it
-re-applies the active Board's mode through the same strict `request()`, with
-`source="board_restore"`; a Board never set (`unset`) requests nothing, so Core
-stays at revision 0. A Board switch (board-session Slice 04b) applies the
-target Board's mode the same way with `source="board_switch"` (strict: a
-refused mode rolls the switch back, [boards.md](boards.md#switch-and-speech-authority));
-an `unset` target gets the **default mode** (assistant), never the mode of the
-Board left, so every Board is deterministic (Slice 04b QA rework, S1). Neither
-source is written back. A user choice of the mode that is already effective
-(`disposition: unchanged`) is still stored on the active Board (see
-`with_unchanged` below); it publishes no event.
+**Since the fixed Board type (Slice 01a of `jarvis-board-ui-wheel-dossier-refactor`,
+schema v9), no mode is persisted anywhere for a Core with Boards**
+([boards.md](boards.md#board-type)). A Board has one fixed type, chosen at
+creation (`board_kind`: `assistant`, `presentation`, `meeting`); the mode it
+designates is `board_kind_mode(kind)`, and the behaviour that runs is
+`behaving_interaction_mode` of it (a Réunion Board behaves as assistant, the
+trace says `meeting_planned`). `BoardService` requests that mode through the
+same strict `request()` at Core start (`source="board_restore"`) and on every
+Board switch (`source="board_switch"`); it no longer listens to
+`InteractionModeService` and writes nothing. The v9 migration turned every
+stored per-Board mode into the Board's type once (rules in
+[boards.md](boards.md#persistence)).
 
-The Control Center's global setting below **stays**, with a narrower role:
+**Accepted intermediate state until Slice 01b.** The legacy writers
+(`POST /api/interaction-mode` behind the HUD chooser, `POST /v1/interaction-mode`
+with any source, `settings_set("interaction_mode")`) still change the **live**
+mode. Nothing persists that change, and the next Board switch or Core start
+re-applies the Board type's mode (tests: `test_board_service.py`,
+`test_board_switch.py`, `test_board_session_e2e.py`). Slice 01b retires them.
 
-- **migration input.** Revision 0 still arms the Control Center replay
-  (sources `startup` / `core_restart`). On an `unset` Board the replayed value
-  is adopted **once** (origin `migrated`); on a Board that already has a mode
-  the replay does not overwrite it and Core re-applies the Board's mode
-  (`core.board.interaction_mode.legacy_replay_overridden`). A restored
-  non-default Board mode puts Core at revision 1, so no replay is armed at all.
-- **`save_retry` is not a replay:** it is the user's click delivered late, and
-  is stored like any choice (origin `user`).
-- **display and no-Board fallback.** A click (`POST /api/interaction-mode`)
-  applies live; Core's listener stores it on the active Board. The global key
-  is written **only** when Core has no Boards (legacy fallback).
-- **retired once Core has Boards (board-session Slice 04a).** The Control
-  Center asks Core `GET /v1/boards/active` before any replay and before writing
-  the global key. Board with its own mode (`migrated`/`user`): no replay
-  (`interaction.mode.replay_retired`), no global write — the replay used to
-  flip the live mode twice on every Core restart (presentation -> assistant ->
-  presentation). Board `unset`: the replay runs as the one-time migration input.
-  Undetermined (Core unreachable): nothing is replayed; a click is not written
-  globally if Core was already seen with Boards in this process (the 503 then
-  says *not saved*). Legacy note: [legacy/voice-conversation-pointer.md](legacy/voice-conversation-pointer.md).
+The Control Center's global setting below **stays** only as the no-Board
+fallback:
+
+- **retired once Core has Boards.** The Control Center asks Core
+  `GET /v1/boards/active` before any replay and before writing the global key.
+  Any active Board with a valid `board_kind` owns the mode: no replay
+  (`interaction.mode.replay_retired`, said once per process), no global write.
+  A Board without a valid type (an out-of-contract answer) is undetermined:
+  said (`interaction.mode.board_unknown`, `invalid_board_snapshot`, warning) and
+  nothing is replayed. The « stored » mode the page shows is the active Board
+  type's (`_board_stored_mode`), REUNION included.
+- **no-Board fallback.** Only a Core without Boards still replays the global
+  value at revision 0 (sources `startup` / `core_restart`, `save_retry` for a
+  click delivered late) and has the global key written by a click.
+  Legacy note: [legacy/voice-conversation-pointer.md](legacy/voice-conversation-pointer.md).
 
 The legacy global preference lives under its own root key in
 `runtime/control-center-settings.json`:
@@ -383,17 +381,10 @@ migration input.
   `test_la_seance_est_retiree_avant_que_le_changement_ne_soit_publie` fails if
   it is inverted.
   `add_listener(callable, with_state=True)` hands the listener the change's
-  `InteractionModeState` (mode, revision, source) instead of the mode alone
-  (`BoardService` needs the source); `remove_listener(callable)` unsubscribes
-  (`BoardService.stop()`).
-  `add_listener(callable, with_unchanged=True)` (implies `with_state`, Slice
-  04b QA rework) also hands the listener every accepted request that changed
-  nothing, as the current state attributed to the request's `source` (same
-  revision). No revision, no event, and listeners registered without the flag
-  are not called: the PRESENTATION working set only sees real changes.
-  `BoardService` uses it so that choosing the mode already active is recorded
-  on the active Board (otherwise that Board stayed `unset` and a later switch
-  back to it kept the other Board's mode).
+  `InteractionModeState` (mode, revision, source) instead of the mode alone;
+  `remove_listener(callable)` unsubscribes. A request that changes nothing
+  (`disposition: unchanged`) reaches no listener and publishes nothing (the
+  former `with_unchanged` flag left with the per-Board mode writes, Slice 01a).
 
   The contract is deliberately narrow: typed mode in, synchronous, no veto. A
   listener that raises is journalled (`interaction.mode.listener_failed`) and

@@ -470,25 +470,25 @@ async def test_the_turn_that_says_continue_is_the_cause_of_the_resume_not_a_new_
 from tests.unit.test_board_service import world as board_world  # noqa: E402,F401  (the real Board + mode service fixture)
 
 
-async def test_the_temporary_mode_is_never_stored_and_a_core_restart_brings_back_the_stored_preference(tmp_path, board_world):
+async def test_the_temporary_mode_is_never_stored_and_a_core_restart_brings_back_the_board_type_mode(tmp_path, board_world):
     from jarvis.domain.interaction_mode import InteractionMode  # noqa: PLC0415
     from jarvis.domain.presentation_studio_roles import STUDIO_RUN_MODE_SOURCE  # noqa: PLC0415
+    from jarvis.domain.workspace_board import BoardKind, open_session  # noqa: PLC0415
     from tests.fakes.presentation_studio_presenter import lines_content  # noqa: PLC0415
 
-    service, modes, _, journal = board_world
-    await service.start()
-    await modes.request("presentation", source="control_center")        # the user's preference, stored on the Board
-    await service.drain()
+    service, modes, repo, journal = board_world
+    await service.ensure_default()
+    board = await service.create({"title": "Démo", "board_kind": "presentation"})
+    await repo.save_session(open_session(board, now=board.created_at))
+    await service.start(ensure_default=False)                             # the Board type's mode: PRESENTATION
     rig = await Rig(tmp_path).open(content=lines_content())
     rig.mode = modes
     rig.build()
     set_ms(rig, START)
     presenter, brain, voice = make_presenter(rig)
     state = applied(await rig.service.start(rig.start_body("jarvis_presenter")))
-    await service.drain()
     assert modes.mode is InteractionMode.ASSISTANT and modes.state.source == STUDIO_RUN_MODE_SOURCE and state["mode"] == "assistant"
-    board = await service.get_active()
-    assert board.interaction_mode is InteractionMode.PRESENTATION      # the stored preference was never touched by the run
+    assert (await service.get_active()) == board and board.board_kind is BoardKind.PRESENTATION  # the run wrote nothing
     # Core restarts mid-run: the run and the presenter are memory and are gone; the Board restore is the only thing that sets the mode
     rig.build()
     await service.restore_interaction_mode()

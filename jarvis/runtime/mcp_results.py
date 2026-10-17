@@ -237,7 +237,8 @@ class SettingsSetResult(ToolResult):
 # (`workspace_boards.py`, serveur `jarvis-workspace`) : l'écran d'un Board, sans
 # `scene_ref` ni `runtime_metadata` qui appartiennent au runtime. Ordre = ordre du dict construit.
 
-BoardKindValue = Literal["empty", "meeting", "presentation"]
+#: Type fixé du Board (`BoardKind`, schéma v9).
+BoardKindValue = Literal["assistant", "presentation", "meeting"]
 
 
 class BoardSummary(ToolResult):
@@ -249,7 +250,6 @@ class BoardSummary(ToolResult):
     status: Literal["active", "archived"]
     #: Le Board actif de la Session : celui où la conversation et la voix sont.
     active: bool
-    interaction_mode: str
     last_opened_at: str | None
 
 
@@ -268,7 +268,6 @@ class BoardResult(ToolResult):
     board_kind: BoardKindValue
     status: Literal["active", "archived"]
     active: bool
-    interaction_mode: str
     last_opened_at: str | None
     context_summary: str
     task_refs: list[str]

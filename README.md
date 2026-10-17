@@ -187,23 +187,28 @@ acoustic echo, VAD retriggering, audible barge-in) and no run against the real
 OpenAI Realtime service have been executed for this path. See
 `docs/handoff-realtime-brain/FINAL-REPORT.md` and `docs/ACCEPTANCE_STATUS.md`.
 
-## Interaction modes: SIMPLE and PRESENTATION
+## Board types: Assistant, Présentation, Réunion
 
 Orthogonal to the voice architectures above, and to who may speak to JARVIS,
-there is a third axis: **how he behaves**. It is chosen in the Control Center
-and it changes live, without restarting Voice.
+there is a third axis: **how he behaves**. It is the **type of the active
+Board**, chosen when the Board is created and never changed afterwards (to
+present, create or open a Présentation Board). Switching Boards changes the
+behaviour live, without restarting Voice. There is no separate mode to choose:
+the internal interaction mode is derived from the Board type
+(`docs/boards.md` › *Board type*; stored Boards were converted once by the
+`jarvis.sqlite3` v9 migration, rollback from `jarvis.sqlite3.v8.bak`).
 
-- **SIMPLE** (`assistant`, the default and the regression boundary) - exactly
-  the behaviour described everywhere else in this file. Nothing of PRESENTATION
-  is constructed while it is selected.
-- **PRESENTATION** - JARVIS listens to the room continuously, prepares ahead of
+- **Assistant** (`assistant`, shown SIMPLE by the mode display; the default and
+  the regression boundary) - exactly the behaviour described everywhere else in
+  this file. Nothing of PRESENTATION is constructed while it is active.
+- **Présentation** (`presentation`) - JARVIS listens to the room continuously, prepares ahead of
   it, stays externally quiet, and answers immediately when he is explicitly
   addressed. One microphone owner instead of two, a bounded in-memory session
   working set instead of a transcript, silence as a first-class successful
   outcome, and a discreet visual card (never speech) when a claim is
   contradicted.
-- **REUNION** (`meeting`) is reserved: displayable, `implemented=false`, with no
-  behaviour behind it.
+- **Réunion** (`meeting`) is a valid Board whose dedicated behaviour does not
+  exist yet: it behaves as Assistant and says so (`meeting_planned`).
 
 PRESENTATION keeps its own privacy line: no raw audio is persisted anywhere, the
 room's speech lives only in a bounded in-memory working set that is retired the

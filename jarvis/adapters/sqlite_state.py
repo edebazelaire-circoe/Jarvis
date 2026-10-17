@@ -28,7 +28,8 @@ T = TypeVar("T")
 #: v6 (2026-10-01): Artifact registry, provenance and Session activity ledger (`docs/artifacts.md`).
 #: v7 (2026-10-01): capture owner (`docs/capture.md`).
 #: v8 (2026-10-02): Board-artifact links (`docs/artifacts.md` › *Board links*).
-_SCHEMA_VERSION = 8
+#: v9 (2026-10-17): fixed Board type, data only (`docs/boards.md` › *Board type*, *Persistence*).
+_SCHEMA_VERSION = 9
 
 #: Envelope ids with a partial index `(<id>, sequence)`; mirrors
 #: `conversation_event_store.LOOKUP_FIELDS` (checked by the store tests).
@@ -36,8 +37,11 @@ _CONVERSATION_EVENT_LOOKUP_COLUMNS = ("session_id", "turn_id", "correlation_id",
                                       "speech_id", "outcome_id", "span_id")
 
 #: Forward-only migrations, one transaction each, keyed by the version they
-#: produce. Additive only: an older binary refuses the newer file ("newer than
-#: supported") instead of misreading it. Contract: `docs/conversation-events.md`.
+#: produce, always run after the `<db>.v<N>.bak` copy. DDL steps are additive;
+#: a step may also rewrite JSON payloads (v9, the first one) because the version
+#: bump makes an older binary refuse the newer file ("newer than supported")
+#: instead of misreading it. A published step is never rewritten.
+#: Contract: `docs/conversation-events.md` › *Migration*.
 _MIGRATIONS: dict[int, tuple[str, ...]] = {
     2: (
         # AUTOINCREMENT: a sequence is never reused, even after the highest row
@@ -271,6 +275,35 @@ _MIGRATIONS: dict[int, tuple[str, ...]] = {
         # Listing a Board's links newest first, paginated by `(linked_at, artifact_id)`.
         "CREATE INDEX IF NOT EXISTS idx_board_artifact_links_board_time ON board_artifact_links(board_id, linked_at, "
         "artifact_id)",
+    ),
+    9: (
+        # Fixed Board type (handoff board-ui-wheel-dossier-refactor, Slice 01a,
+        # D01-D03, D22). Data only, no DDL: `board_kind` becomes
+        # `assistant|presentation|meeting` and the per-Board mode keys
+        # `interaction_mode` / `interaction_mode_origin` leave the payload (the
+        # mode is now derived from the type). The bump is deliberate: a v8
+        # binary would crash decoding `assistant`, it refuses the file instead.
+        # Normalization (D22): an explicit `presentation`/`meeting` kind wins
+        # (even over a user-chosen `assistant` mode, human decision Q1); an
+        # `empty`/absent kind takes a `presentation`/`meeting` mode the user
+        # chose (origin `user` or `migrated`) once; anything else is
+        # `assistant` (an `unset` Board already behaved as assistant). Only rows
+        # that still carry legacy data are touched, so a re-run changes nothing;
+        # a malformed payload or an out-of-contract kind is left as is (the
+        # strict decoder keeps reporting it, never repaired here).
+        """UPDATE work_boards SET data = json_remove(json_set(data, '$.board_kind', CASE
+                WHEN json_extract(data, '$.board_kind') IN ('assistant', 'presentation', 'meeting')
+                    THEN json_extract(data, '$.board_kind')
+                WHEN json_extract(data, '$.interaction_mode_origin') IN ('user', 'migrated')
+                     AND json_extract(data, '$.interaction_mode') IN ('presentation', 'meeting')
+                    THEN json_extract(data, '$.interaction_mode')
+                ELSE 'assistant' END), '$.interaction_mode', '$.interaction_mode_origin')
+            WHERE json_valid(data)
+              AND (json_type(data, '$.board_kind') IS NULL
+                   OR json_extract(data, '$.board_kind') IN ('empty', 'assistant', 'presentation', 'meeting'))
+              AND (json_type(data, '$.board_kind') IS NULL OR json_extract(data, '$.board_kind') = 'empty'
+                   OR json_type(data, '$.interaction_mode') IS NOT NULL
+                   OR json_type(data, '$.interaction_mode_origin') IS NOT NULL)""",
     ),
 }
 

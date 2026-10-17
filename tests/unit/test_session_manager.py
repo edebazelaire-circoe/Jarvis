@@ -69,7 +69,6 @@ async def world(tmp_path):
     try:
         yield sessions, boards, repo, state, journal
     finally:
-        await boards.stop()
         await state.close()
 
 
@@ -212,7 +211,6 @@ async def test_new_session_leaves_boards_mode_and_jobs_untouched(tmp_path):
     try:
         other = await core.boards.create({"title": "Projet B", "task_refs": ["t1"]})
         await core.interaction_mode.request("presentation", source="control_center")
-        await core.boards.drain()
         before = await core.sessions.current()
         job = Job(kind="noop", payload={}, requested_by_conversation_id=before.binding.conversation_id)
         await core.state.save_job(job)
@@ -220,7 +218,6 @@ async def test_new_session_leaves_boards_mode_and_jobs_untouched(tmp_path):
         stored_job = await core.state.get_job(job.id)
 
         _, view = await core.sessions.start_new_session()
-        await core.boards.drain()
 
         # Seul le Board actif de la Session neuve est rouvert (`last_opened_at`, `updated_at`).
         after = await core.boards.list(include_archived=True)

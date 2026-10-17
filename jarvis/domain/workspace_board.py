@@ -3,8 +3,9 @@
 Trois valeurs, un vocabulaire (glossaire complet : `docs/boards.md`) :
 
 - `Board` : l'espace de travail **durable** et la frontière de contexte
-  (résumé, nature `board_kind`, références de tâches/artefacts/projets, scène,
-  mode d'interaction). Sa mémoire libre d'agent n'est pas ici : elle vit dans
+  (résumé, type `board_kind` fixé à la création, références de
+  tâches/artefacts/projets, scène). Son type désigne le mode d'interaction
+  vivant (`board_kind_mode`) ; le Board ne stocke aucun mode. Sa mémoire libre d'agent n'est pas ici : elle vit dans
   des fichiers sous `boards/<board_id>/memory/` (`jarvis/domain/board_memory.py`).
   Rien à voir avec le « board » Barehands (`jarvis/ports/board.py`) : d'où le
   nom de module `workspace_board` et la table `work_boards` ;
@@ -42,7 +43,7 @@ import uuid
 from jarvis.domain._checks import (
     MAX_ID_CHARS, TOKEN, check_aware, freeze_runtime_metadata, parse_dt, parse_enum, preview, strict_keys,
 )
-from jarvis.domain.interaction_mode import DEFAULT_INTERACTION_MODE, InteractionMode
+from jarvis.domain.interaction_mode import InteractionMode
 
 # ------------------------------------------------------------------ constantes
 
@@ -100,6 +101,9 @@ class BoardErrorCode(StrEnum):
     #: L'hôte (Control Center) n'a pas pu activer l'agent de la liaison cible :
     #: bascule abandonnée avant toute écriture (06 section D).
     BOARD_ACTIVATION_FAILED = "board_activation_failed"
+    #: Changer le type d'un Board existant (D02) : il est fixé à la création.
+    #: Pour un autre type, on crée un autre Board.
+    BOARD_KIND_IMMUTABLE = "board_kind_immutable"
     #: Une étape après l'activation a échoué (mode du Board refusé, écriture) :
     #: l'activation précédente a été rétablie, rien n'est validé, l'ancien Board
     #: reste actif. Défaut côté serveur, d'où 500.
@@ -121,6 +125,7 @@ HTTP_STATUS: Mapping[BoardErrorCode, int] = MappingProxyType({
     BoardErrorCode.INVALID_SESSION: 400,
     BoardErrorCode.INVALID_BINDING: 400,
     BoardErrorCode.BRAIN_NOT_FOREGROUND: 409,
+    BoardErrorCode.BOARD_KIND_IMMUTABLE: 409,
     #: 502 : c'est l'hôte en amont (le Control Center) qui a échoué.
     BoardErrorCode.BOARD_ACTIVATION_FAILED: 502,
     BoardErrorCode.BOARD_SWITCH_ROLLED_BACK: 500,
@@ -190,34 +195,45 @@ class BrainLifecycle(StrEnum):
     SUSPENDED = "suspended"
 
 
-class InteractionModeOrigin(StrEnum):
-    """D'où vient le mode stocké sur un Board (06 sections F et H)."""
-
-    #: Jamais choisi : le Board porte le défaut.
-    UNSET = "unset"
-    #: Repris une fois du réglage global historique à la migration.
-    MIGRATED = "migrated"
-    #: Choisi explicitement (UI, MCP, commande vocale).
-    USER = "user"
-
-
 class BoardKind(StrEnum):
-    """Nature d'un Board : métadonnée de gestion, choisie par l'humain ou l'agent.
+    """Type d'un Board : Assistant, Présentation ou Réunion (`docs/boards.md` › *Board type*).
 
-    Pure étiquette (handoff board-memory-workspace-inspector, R1) : elle ne
-    change **jamais** `interaction_mode` ni aucun comportement vivant ; un
-    Board `meeting` peut être en mode `assistant` et inversement. Les
-    comportements propres à une réunion ou une présentation sont hors contrat.
+    Choisi à la création, **jamais modifié** ensuite (D01, D02 : refus
+    `board_kind_immutable`). C'est la seule vérité du comportement : le mode
+    d'interaction vivant en est dérivé (`board_kind_mode`), aucun Board ne
+    stocke de mode. Valeurs internes, jamais affichées.
     """
 
-    #: Board générique, sans nature déclarée ; défaut, et valeur des Boards
-    #: écrits avant ce champ.
-    EMPTY = "empty"
-    MEETING = "meeting"
+    ASSISTANT = "assistant"
     PRESENTATION = "presentation"
+    #: Valide et ouvrable. Le comportement réunion n'existe pas encore : le mode
+    #: dérivé est `meeting` (affiché), son comportement celui d'assistant
+    #: (`behaving_interaction_mode`), jamais un refus.
+    MEETING = "meeting"
 
 
-DEFAULT_BOARD_KIND = BoardKind.EMPTY
+DEFAULT_BOARD_KIND = BoardKind.ASSISTANT
+#: Ancienne valeur « générique » d'avant le schéma v9. Acceptée seulement en
+#: **entrée** de création, alias déprécié d'`assistant` ; jamais stockée : la
+#: migration v9 a réécrit les Boards existants (`sqlite_state._MIGRATIONS[9]`).
+LEGACY_EMPTY_BOARD_KIND = "empty"
+
+#: Mode d'interaction que désigne chaque type : le seul lien entre les deux axes.
+_BOARD_KIND_MODES: Mapping[BoardKind, InteractionMode] = MappingProxyType({
+    BoardKind.ASSISTANT: InteractionMode.ASSISTANT,
+    BoardKind.PRESENTATION: InteractionMode.PRESENTATION,
+    BoardKind.MEETING: InteractionMode.MEETING,
+})
+
+
+def board_kind_mode(kind: BoardKind) -> InteractionMode:
+    """Mode d'interaction que désigne un type de Board, `meeting` compris (lecture d'affichage).
+
+    Pour le comportement qui tourne réellement, passer le résultat à
+    `behaving_interaction_mode` : `meeting` n'a pas encore de comportement.
+    """
+
+    return _BOARD_KIND_MODES[BoardKind(kind)]
 
 
 class SceneRefKind(StrEnum):
@@ -359,8 +375,6 @@ class Board:
     artifact_refs: tuple[str, ...] = ()
     project_refs: tuple[str, ...] = ()
     scene_ref: SceneRef | None = None
-    interaction_mode: InteractionMode = DEFAULT_INTERACTION_MODE
-    interaction_mode_origin: InteractionModeOrigin = InteractionModeOrigin.UNSET
     runtime_metadata: Mapping[str, Any] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
@@ -389,8 +403,6 @@ class Board:
             _check_refs(name, getattr(self, name))
         if self.scene_ref is not None and not isinstance(self.scene_ref, SceneRef):
             raise _fail(code, "scene_ref must be a SceneRef")
-        _check_enum(code, "interaction_mode", self.interaction_mode, InteractionMode)
-        _check_enum(code, "interaction_mode_origin", self.interaction_mode_origin, InteractionModeOrigin)
         # Immuable jusque dans ses métadonnées : un appelant ne modifie pas un
         # Board stocké en gardant une référence au dict qu'il a passé.
         object.__setattr__(self, "runtime_metadata", _freeze_metadata(self.runtime_metadata))
@@ -413,8 +425,6 @@ class Board:
             "artifact_refs": list(self.artifact_refs),
             "project_refs": list(self.project_refs),
             "scene_ref": None if self.scene_ref is None else self.scene_ref.to_payload(),
-            "interaction_mode": self.interaction_mode.value,
-            "interaction_mode_origin": self.interaction_mode_origin.value,
             "runtime_metadata": dict(self.runtime_metadata),
         }
 
@@ -423,8 +433,6 @@ class Board:
         code = BoardErrorCode.INVALID_BOARD
         data = _strict_keys(code, "board", payload, _BOARD_KEYS, required=_BOARD_REQUIRED)
         scene = data.get("scene_ref")
-        # Strict : la valeur interne exacte, pas l'étiquette ni une autre casse.
-        mode = _parse_enum(code, "interaction_mode", data.get("interaction_mode", DEFAULT_INTERACTION_MODE.value), InteractionMode)
         return cls(
             board_id=data["board_id"],
             title=data["title"],
@@ -432,18 +440,14 @@ class Board:
             created_at=_parse_dt(code, "created_at", data["created_at"]),
             updated_at=_parse_dt(code, "updated_at", data["updated_at"]),
             last_opened_at=_parse_dt(code, "last_opened_at", data.get("last_opened_at"), required=False),
-            # Absent (Board écrit avant le champ) : `empty`. Présent : valeur exacte.
+            # Présent : la valeur interne exacte (`empty` n'existe plus depuis v9).
+            # Absent : `assistant`, ce que la migration v9 écrit pour un tel Board.
             board_kind=_parse_enum(code, "board_kind", data.get("board_kind", DEFAULT_BOARD_KIND.value), BoardKind),
             context_summary=data.get("context_summary", ""),
             task_refs=_parse_list(code, "task_refs", data.get("task_refs", [])),
             artifact_refs=_parse_list(code, "artifact_refs", data.get("artifact_refs", [])),
             project_refs=_parse_list(code, "project_refs", data.get("project_refs", [])),
             scene_ref=None if scene is None else SceneRef.from_payload(scene),
-            interaction_mode=mode,
-            interaction_mode_origin=_parse_enum(
-                code, "interaction_mode_origin",
-                data.get("interaction_mode_origin", InteractionModeOrigin.UNSET.value), InteractionModeOrigin,
-            ),
             runtime_metadata=data.get("runtime_metadata", {}),
         )
 
@@ -597,8 +601,7 @@ class BoardConversationBinding:
 _SCENE_REF_KEYS = frozenset({"kind", "scene_id", "revision_at_leave"})
 _BOARD_KEYS = frozenset({
     "board_id", "title", "status", "created_at", "updated_at", "last_opened_at", "board_kind", "context_summary",
-    "task_refs", "artifact_refs", "project_refs", "scene_ref", "interaction_mode",
-    "interaction_mode_origin", "runtime_metadata",
+    "task_refs", "artifact_refs", "project_refs", "scene_ref", "runtime_metadata",
 })
 _BOARD_REQUIRED = frozenset({"board_id", "title", "created_at", "updated_at"})
 _SESSION_KEYS = frozenset({
@@ -639,15 +642,32 @@ def _parse_list(code: BoardErrorCode, name: str, raw: object) -> tuple[Any, ...]
 # ------------------------------------------------------------------ transitions : Board
 
 
-def create_board(title: str, *, now: datetime, board_id: str | None = None) -> Board:
-    """Nouveau Board actif ; le titre est débarrassé de ses espaces de bord."""
+def parse_board_kind_input(value: object) -> BoardKind:
+    """Type demandé à la création (route, MCP, UI) -> `BoardKind` ; `empty` : alias déprécié d'`assistant`.
+
+    Strict sinon : la valeur interne exacte, pas l'étiquette ni une autre casse.
+    Le décodage du magasin, lui, n'accepte pas `empty` (`Board.from_payload`).
+    """
+
+    if value == LEGACY_EMPTY_BOARD_KIND:
+        return BoardKind.ASSISTANT
+    if not isinstance(value, str) or value not in {kind.value for kind in BoardKind}:
+        raise _fail(BoardErrorCode.INVALID_BOARD,
+                    f"board_kind must be one of {[kind.value for kind in BoardKind]}, got {preview(value)}")
+    return BoardKind(value)
+
+
+def create_board(title: str, *, now: datetime, board_kind: BoardKind = DEFAULT_BOARD_KIND,
+                 board_id: str | None = None) -> Board:
+    """Nouveau Board actif, de type `board_kind` pour toujours ; le titre est débarrassé de ses espaces de bord."""
 
     clean = title.strip() if isinstance(title, str) else title
-    return Board(board_id=board_id or new_board_id(), title=clean, created_at=now, updated_at=now)  # type: ignore[arg-type]
+    return Board(board_id=board_id or new_board_id(), title=clean, created_at=now,  # type: ignore[arg-type]
+                 updated_at=now, board_kind=board_kind)
 
 
 def default_board(*, now: datetime) -> Board:
-    """Board `default` de la migration mono-espace ; mode `unset` (06 section H)."""
+    """Board `default` de la migration mono-espace ; type `assistant` (06 section H)."""
 
     return Board(board_id=DEFAULT_BOARD_ID, title=DEFAULT_BOARD_TITLE, created_at=now, updated_at=now)
 
@@ -665,7 +685,6 @@ def update_board(
     *,
     now: datetime,
     title: str = _UNSET,
-    board_kind: BoardKind = _UNSET,
     context_summary: str = _UNSET,
     task_refs: list[str] | tuple[str, ...] = _UNSET,
     artifact_refs: list[str] | tuple[str, ...] = _UNSET,
@@ -675,15 +694,13 @@ def update_board(
 ) -> Board:
     """Renommer ou éditer le contexte d'un Board non archivé. Seuls les champs passés changent.
 
-    `board_kind` ne touche ni `interaction_mode` ni son origine (R1).
+    Le type (`board_kind`) n'en fait pas partie : il est fixé à la création (D02).
     """
 
     _require_open_board(board)
     changes: dict[str, Any] = {"updated_at": max(now, board.updated_at)}
     if title is not _UNSET:
         changes["title"] = title.strip() if isinstance(title, str) else title
-    if board_kind is not _UNSET:
-        changes["board_kind"] = board_kind
     if context_summary is not _UNSET:
         changes["context_summary"] = context_summary
     for name, value in (("task_refs", task_refs), ("artifact_refs", artifact_refs), ("project_refs", project_refs)):
@@ -698,30 +715,6 @@ def update_board(
     if runtime_metadata is not _UNSET:
         changes["runtime_metadata"] = runtime_metadata
     return replace(board, **changes)
-
-
-def set_interaction_mode(
-    board: Board, mode: InteractionMode, *, now: datetime, origin: InteractionModeOrigin = InteractionModeOrigin.USER
-) -> Board:
-    """Mode choisi pour ce Board (06 section F). `origin=unset` n'est pas un choix."""
-
-    _require_open_board(board)
-    if origin is InteractionModeOrigin.UNSET:
-        raise _fail(BoardErrorCode.INVALID_BOARD, "a chosen interaction mode needs origin user or migrated")
-    return replace(board, interaction_mode=mode, interaction_mode_origin=origin, updated_at=max(now, board.updated_at))
-
-
-def adopt_legacy_interaction_mode(board: Board, mode: InteractionMode, *, now: datetime) -> Board:
-    """Reprise unique du mode global historique (06 section H), idempotente.
-
-    Seul un Board `unset` l'adopte (origine `migrated`) ; un Board déjà
-    migré ou choisi par l'utilisateur est rendu inchangé, pour qu'un rejeu de
-    la migration n'écrase jamais un choix.
-    """
-
-    if board.interaction_mode_origin is not InteractionModeOrigin.UNSET:
-        return board
-    return set_interaction_mode(board, mode, now=now, origin=InteractionModeOrigin.MIGRATED)
 
 
 def archive_board(board: Board, *, active_board_id: str | None, now: datetime) -> Board:

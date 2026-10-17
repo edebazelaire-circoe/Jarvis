@@ -352,8 +352,10 @@ def _sql(db: Path, query: str) -> list[tuple]:
         conn.close()
 
 
-async def test_a_v2_store_migrates_to_one_default_board_that_adopts_the_voice_conversation_and_the_legacy_mode(
+async def test_a_v2_store_migrates_to_one_assistant_default_board_that_adopts_the_voice_conversation(
         bench, monkeypatch):
+    """Slice 01a (D22) : le réglage global historique n'est plus repris ; le Board `default` est Assistant."""
+
     db = bench.data / "state" / "jarvis.sqlite3"
     legacy_conversation = await _v2_database(db, monkeypatch)
     assert _sql(db, "SELECT version FROM schema_version") == [(2,)]
@@ -374,13 +376,10 @@ async def test_a_v2_store_migrates_to_one_default_board_that_adopts_the_voice_co
     assert current["binding"]["conversation_id"] == legacy_conversation, "the voice conversation survives"
     await bench.until(lambda: bench.control.board_brains.foreground.key == legacy_conversation, what="adoption")
 
-    async def migrated() -> bool:
-        board = (await bench.ok("GET", "/api/boards/active"))["board"]
-        return board["interaction_mode_origin"] == "migrated"
-
-    await bench.until(migrated, what="legacy mode adopted once")
-    assert (await bench.ok("GET", "/api/boards/active"))["board"]["interaction_mode"] == "presentation"
-    assert core.interaction_mode.mode is InteractionMode.PRESENTATION
+    board = (await bench.ok("GET", "/api/boards/active"))["board"]
+    assert board["board_kind"] == "assistant" and "interaction_mode" not in board
+    await bench.until(lambda: bool(bench.trace("interaction.mode.replay_retired")), what="global replay retired")
+    assert core.interaction_mode.mode is InteractionMode.ASSISTANT, "the global preference is never replayed"
 
     # Deuxième démarrage : rien n'est adopté ni recréé, la Session est **reprise**
     # (Slice 03 session-context, D02 ; avant : une Session neuve).
@@ -392,7 +391,8 @@ async def test_a_v2_store_migrates_to_one_default_board_that_adopts_the_voice_co
     assert again["context"]["context"]["origin"] == "created" and again["context"]["context"]["status"] == "active"
     assert [b["board_id"] for b in (await bench.ok("GET", "/api/boards"))["boards"]] == [DEFAULT_BOARD_ID]
     assert len((await bench.ok("GET", "/api/sessions", params={"limit": "10"}))["sessions"]) == 1
-    assert core.interaction_mode.mode is InteractionMode.PRESENTATION, "restored from the Board"
+    assert core.interaction_mode.mode is InteractionMode.ASSISTANT, "restored from the Board type"
+    assert core.interaction_mode.state.source in {"default", "board_restore"}
     assert sorted(p.name for p in db.parent.glob("*.bak")) == ["jarvis.sqlite3.v2.bak"]
     assert len(bench.trace("core.board.default_created")) == 1
     bench.assert_one_speech_authority()
@@ -532,35 +532,40 @@ async def test_inactive_board_completion_and_failure_are_attributed_alerts_that_
 # ------------------------------------------------------------------ 5. mode par Board
 
 
-async def test_each_board_restores_its_mode_and_an_unset_board_gets_the_default(bench):
+async def test_each_board_applies_the_mode_of_its_type_and_a_live_screen_change_is_never_kept(bench):
+    """Slice 01a : le mode suit le type du Board actif, à chaque bascule et au démarrage de Core."""
+
     core = await up(bench)
-    b_board = (await bench.ok("POST", "/api/boards", json={"title": "Démo"}))["board"]["board_id"]
+    b_board = (await bench.ok("POST", "/api/boards", json={"title": "Démo", "board_kind": "presentation"}))["board"]
     c_board = (await bench.ok("POST", "/api/boards", json={"title": "Vierge"}))["board"]["board_id"]
+    m_board = (await bench.ok("POST", "/api/boards", json={"title": "Point", "board_kind": "meeting"}))["board"]
+    assert (b_board["board_kind"], m_board["board_kind"]) == ("presentation", "meeting")
+    b_board, m_board = b_board["board_id"], m_board["board_id"]
     await bench.ok("POST", "/api/boards/switch", json={"board_id": b_board})
-    await bench.ok("POST", "/api/interaction-mode", json={"mode": "presentation"})  # route de l'écran
-
-    async def stored(board_id: str, mode: str, origin: str) -> bool:
-        board = (await bench.ok("GET", f"/api/boards/{board_id}"))["board"]
-        return board["interaction_mode"] == mode and board["interaction_mode_origin"] == origin
-
-    await bench.until(lambda: stored(b_board, "presentation", "user"), what="mode stored on B")
     assert core.interaction_mode.mode is InteractionMode.PRESENTATION
 
+    # Écrivain hérité (route de l'écran, retirée par 01b) : le mode vivant change, rien n'est enregistré.
+    await bench.ok("POST", "/api/interaction-mode", json={"mode": "assistant"})
+    assert core.interaction_mode.mode is InteractionMode.ASSISTANT
+    stored = (await bench.ok("GET", f"/api/boards/{b_board}"))["board"]
+    assert stored["board_kind"] == "presentation" and "interaction_mode" not in stored
+
     await bench.ok("POST", "/api/boards/switch", json={"board_id": c_board})
-    assert core.interaction_mode.mode is InteractionMode.ASSISTANT, "unset Board: default mode, not B's"
-    assert (await bench.ok("GET", f"/api/boards/{c_board}"))["board"]["interaction_mode_origin"] == "unset"
-    await bench.ok("POST", "/api/boards/switch", json={"board_id": b_board})
-    assert core.interaction_mode.mode is InteractionMode.PRESENTATION, "B restores its own mode"
-    await bench.ok("POST", "/api/boards/switch", json={"board_id": DEFAULT_BOARD_ID})
     assert core.interaction_mode.mode is InteractionMode.ASSISTANT
     await bench.ok("POST", "/api/boards/switch", json={"board_id": b_board})
+    assert core.interaction_mode.mode is InteractionMode.PRESENTATION, "B applies its type again"
+    await bench.ok("POST", "/api/boards/switch", json={"board_id": m_board})
+    assert core.interaction_mode.mode is InteractionMode.ASSISTANT, "Réunion: assistant behaviour, never refused"
+    await bench.ok("POST", "/api/boards/switch", json={"board_id": b_board})
+    await bench.ok("POST", "/api/interaction-mode", json={"mode": "assistant"})  # vivant seulement
 
     await bench.stop_core()                                      # Core redémarre sur B
     core = await bench.start_core()
     assert (await core.sessions.current()).session.active_board_id == b_board
-    assert core.interaction_mode.mode is InteractionMode.PRESENTATION, "restored at Core start"
+    assert core.interaction_mode.mode is InteractionMode.PRESENTATION, "the type's mode at Core start, not the live one"
     applied = bench.trace("core.board.interaction_mode.applied")
     assert {r["data"].get("source") for r in applied} >= {"board_switch", "board_restore"}
+    assert any(r["data"].get("status") == "meeting_planned" for r in applied)
     bench.assert_one_speech_authority()
 
 
@@ -630,10 +635,10 @@ async def test_a_failed_switch_rolls_back_everything_and_a_dead_resume_id_falls_
     core = await up(bench)
     a_conv = (await core.sessions.current()).binding.conversation_id
     await bench.turn("tour sur A")                               # le CLI de A connaît son id
-    b_board = (await bench.ok("POST", "/api/boards", json={"title": "Projet B"}))["board"]["board_id"]
+    b_board = (await bench.ok("POST", "/api/boards", json={"title": "Projet B", "board_kind": "presentation"})
+               )["board"]["board_id"]
     await bench.ok("POST", "/api/boards/switch", json={"board_id": b_board})
-    await bench.ok("POST", "/api/interaction-mode", json={"mode": "presentation"})
-    await bench.until(lambda: core.interaction_mode.mode is InteractionMode.PRESENTATION, what="mode on B")
+    assert core.interaction_mode.mode is InteractionMode.PRESENTATION, "B's type designates its mode"
     await bench.ok("POST", "/api/boards/switch", json={"board_id": DEFAULT_BOARD_ID})
     c_board = (await bench.ok("POST", "/api/boards", json={"title": "Projet C"}))["board"]["board_id"]
     before = await bench.ok("GET", "/api/sessions/current")

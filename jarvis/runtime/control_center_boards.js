@@ -8,10 +8,10 @@
 
    **Navigateur rapide** (handoff jarvis-board-memory-workspace-inspector,
    Slice 08). Le même panneau, pas un second sélecteur : chaque ligne dit la
-   nature du Board (`board_kind`) et sa dernière ouverture (lue sur le
+   type du Board (`board_kind`) et sa dernière ouverture (lue sur le
    serveur), un filtre « En service / Archivés » montre les archivés à part
-   (lisibles, jamais ouvrables), la nature se choisit à la création et se
-   change avec le titre (`PATCH /api/boards/{id}`), et « Inspecter » ouvre le
+   (lisibles, jamais ouvrables), le type se choisit à la création et ne change
+   plus (D02 : seul le titre se modifie, `PATCH /api/boards/{id}`), et « Inspecter » ouvre le
    gestionnaire profond (`WSP`, `window.JarvisWorkspace.openBoard`) sur ce
    Board. L'inspection profonde (mémoire, Sessions, artefacts) reste là-bas.
 
@@ -85,12 +85,12 @@
   const DEADLINE_MS=Object.freeze({
     switch:165000,new_session:165000,create:15000,update:15000,archive:15000,list:15000});
 
-  /* Nature d'un Board (`BoardKind`, `docs/boards.md` › *Board kind*), mots
+  /* Type d'un Board (`BoardKind`, `docs/boards.md` › *Board type*), mots
      identiques à ceux du gestionnaire profond (`JarvisWorkspaceCore.BOARD_KINDS`,
      épinglé par `test_boards_hud_js`). L'ordre est celui du sélecteur. Une
      valeur inconnue s'affiche telle quelle, jamais maquillée. */
-  const BOARD_KINDS=Object.freeze({empty:'Générique',meeting:'Réunion',presentation:'Présentation'});
-  const DEFAULT_KIND='empty';
+  const BOARD_KINDS=Object.freeze({assistant:'Assistant',presentation:'Présentation',meeting:'Réunion'});
+  const DEFAULT_KIND='assistant';
 
   /* Issue inconnue (échéance client, ou 504 `core_transition_timeout` du
      relais) d'une bascule ou d'une nouvelle Session : on relit le serveur
@@ -133,6 +133,7 @@
     invalid_request:'Demande mal formée, refusée par le Control Center.',
     board_activation_failed:'L’agent du Board n’a pas pu démarrer. Rien n’a changé : le Board précédent reste actif.',
     board_switch_rolled_back:'La bascule a échoué en cours de route et a été annulée. Le Board précédent reste actif.',
+    board_kind_immutable:'Le type d’un Board est fixé à sa création. Créez un autre Board pour un autre type.',
     board_store_unreadable:'Le stockage des Boards est illisible.',
     board_store_failed:'Le stockage des Boards est indisponible.',
     core_unreachable:'Core ne répond pas. Rien n’a changé.',
@@ -241,7 +242,7 @@
       sub:working?`${working} en arrière-plan`:''};
   }
 
-  /* La nature d'un Board en mots. Absente : `empty`, comme Core la décode. */
+  /* Le type d'un Board en mots. Absent : `assistant`, comme Core le décode. */
   function kindOf(raw){
     const kind=text(raw)||DEFAULT_KIND;
     return {kind,label:BOARD_KINDS[kind]||kind};
@@ -528,9 +529,9 @@ ${P} .bd-meta{display:flex;align-items:center;gap:7px;min-width:0;font-size:10.5
 ${P} .bd-meta span:last-child{overflow:hidden;text-overflow:ellipsis}
 ${P} .bd-kind{flex:0 0 auto;padding:1px 6px;border:1px solid ${LINE};border-radius:999px;font-size:9.5px;
   letter-spacing:.08em;text-transform:uppercase;color:${MUTED}}
-/* Nature : ton neutre, plus lisible que « Générique » mais jamais l'accent
+/* Type : ton neutre, plus lisible que « Assistant » mais jamais l'accent
    cyan, réservé au Board actif (QA S08, critique HV-WS-UI-002). */
-${P} .bd-kind:not([data-kind=empty]){color:color-mix(in srgb,${INK} 82%,transparent);
+${P} .bd-kind:not([data-kind=assistant]){color:color-mix(in srgb,${INK} 82%,transparent);
   border-color:color-mix(in srgb,${INK} 22%,transparent);background:color-mix(in srgb,${INK} 5%,transparent)}
 ${P} .bd-still{display:grid;grid-template-columns:auto minmax(0,1fr);gap:10px;align-items:center;min-width:0;
   padding:9px 8px 9px 10px;color:${MUTED}}
@@ -636,7 +637,7 @@ ${P} .bd-sr{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflo
     const inspect=typeof deps.inspect==='function'?deps.inspect:null;
 
     let block=null,listing=null,session=null,listError=null,loading=false,loadSeq=0;
-    let pending=null,failure=null,editing=null,editError='',editDraft=null,editKind=null,opened=false,ticker=0,listSignature='';
+    let pending=null,failure=null,editing=null,editError='',editDraft=null,opened=false,ticker=0,listSignature='';
     /* Filtre du panneau : `active` (en service) ou `archived`. */
     let view='active';
     const waits=new Set();
@@ -711,7 +712,7 @@ ${P} .bd-sr{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflo
     createInput.setAttribute('type','text');createInput.setAttribute('autocomplete','off');
     createInput.setAttribute('placeholder','Titre du Board');createInput.setAttribute('maxlength',String(TITLE_MAX*2));
     createInput.setAttribute('aria-describedby',DOM.createErrorId);
-    const createKind=kindSelect(DOM.createKindId,'Nature du nouveau Board',DEFAULT_KIND);
+    const createKind=kindSelect(DOM.createKindId,'Type du nouveau Board (fixé à la création)',DEFAULT_KIND);
     const createButton=el('button','bd-act primary','Créer');createButton.id=DOM.createButtonId;
     createButton.setAttribute('type','button');
     createRow.appendChild(createInput);createRow.appendChild(createKind);createRow.appendChild(createButton);
@@ -789,7 +790,7 @@ ${P} .bd-sr{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflo
     function setView(next){
       const target=next==='archived'?'archived':'active';
       if(target===view)return;
-      view=target;editing=null;editError='';editDraft=null;editKind=null;
+      view=target;editing=null;editError='';editDraft=null;
       log('info','boards.filter_changed',{view});
       paint(true);
       /* Une autre liste : elle commence en haut, jamais à la hauteur de la
@@ -842,7 +843,7 @@ ${P} .bd-sr{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflo
       const pick=el('button','bd-pick');pick.setAttribute('type','button');
       pick.setAttribute(DOM.boardAttribute,row.board_id);pick.setAttribute(DOM.actionAttribute,'switch');
       if(row.active)pick.setAttribute('aria-current','true');
-      /* Le nom vient du contenu (titre, état, nature, dernière ouverture) : il commence par ce que la ligne montre,
+      /* Le nom vient du contenu (titre, état, type, dernière ouverture) : il commence par ce que la ligne montre,
          ce que l'Accès vocal et WCAG 2.5.3 attendent (orbital-ui QA S09 P4, axe `label-content-name-mismatch`) ;
          l'action passe en description. */
       pick.setAttribute('aria-description',row.active?'Board actif'
@@ -855,7 +856,7 @@ ${P} .bd-sr{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflo
 
       const rename=el('button','bd-icon');rename.setAttribute('type','button');
       rename.setAttribute(DOM.boardAttribute,row.board_id);rename.setAttribute(DOM.actionAttribute,'rename');
-      rename.setAttribute('aria-label',`Modifier ${row.title} (titre, nature)`);rename.setAttribute('title','Renommer, changer la nature');
+      rename.setAttribute('aria-label',`Renommer ${row.title}`);rename.setAttribute('title','Renommer');
       rename.appendChild(icon(doc,'rename',15));disable(rename,!!pending);
       rename.addEventListener('click',()=>{startEdit(row.board_id)});
       li.appendChild(rename);
@@ -874,7 +875,7 @@ ${P} .bd-sr{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflo
 
     const dotOf=()=>{const dot=el('span','bd-dot');dot.setAttribute('aria-hidden','true');return dot};
 
-    /* Titre et état sur une ligne, nature et dernière ouverture dessous : ce
+    /* Titre et état sur une ligne, type et dernière ouverture dessous : ce
        qu'on lit pour choisir, sans que l'état ne rogne la date. */
     function textOf(row,state){
       const box=el('span','bd-text');
@@ -883,7 +884,7 @@ ${P} .bd-sr{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflo
       line.appendChild(name);line.appendChild(state);
       const meta=el('span','bd-meta');
       const kind=el('span','bd-kind',row.kindLabel);kind.setAttribute('data-kind',row.kind);
-      kind.setAttribute('data-role','kind');kind.setAttribute('title',`Nature : ${row.kindLabel}`);
+      kind.setAttribute('data-role','kind');kind.setAttribute('title',`Type : ${row.kindLabel}`);
       const when=el('span','',row.opened);
       when.setAttribute('data-role','opened');if(row.openedExact)when.setAttribute('title',row.openedExact);
       meta.appendChild(kind);meta.appendChild(when);
@@ -894,7 +895,7 @@ ${P} .bd-sr{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflo
     /* « Inspecter » : le gestionnaire profond sur ce Board, archivé compris. */
     function inspectButton(row){
       /* Une icône comme ses voisines (crayon, boîte) : un libellé visible
-         rognait la nature et la dernière ouverture de chaque ligne (372 px).
+         rognait le type et la dernière ouverture de chaque ligne (372 px).
          Le glyphe dit « ouvrir ailleurs », le nom accessible et l'infobulle
          nomment le gestionnaire. */
       const b=el('button','bd-icon');b.setAttribute('type','button');
@@ -937,10 +938,6 @@ ${P} .bd-sr{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflo
         else if(event.key==='Escape'){event.preventDefault();event.stopPropagation&&event.stopPropagation();cancelEdit()}
       };
       field.addEventListener('keydown',keys);
-      const kind=kindSelect('',`Nature de ${row.title}`,editKind!==null?editKind:row.kind);
-      kind.setAttribute(DOM.boardAttribute,row.board_id);kind.setAttribute(DOM.actionAttribute,'kind');
-      kind.addEventListener('change',()=>{editKind=kind.value});
-      kind.addEventListener('keydown',event=>{if(event.key==='Escape')keys(event)});
       const save=el('button','bd-act primary','Enregistrer');save.setAttribute('type','button');
       save.setAttribute(DOM.boardAttribute,row.board_id);save.setAttribute(DOM.actionAttribute,'save');
       disable(save,!!pending);
@@ -948,7 +945,7 @@ ${P} .bd-sr{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflo
       const cancel=el('button','bd-act','Annuler');cancel.setAttribute('type','button');
       cancel.setAttribute(DOM.boardAttribute,row.board_id);cancel.setAttribute(DOM.actionAttribute,'cancel');
       cancel.addEventListener('click',()=>{cancelEdit()});
-      box.appendChild(field);box.appendChild(kind);box.appendChild(save);box.appendChild(cancel);
+      box.appendChild(field);box.appendChild(save);box.appendChild(cancel);
       li.appendChild(box);
       const error=el('p','bd-rowerr',editError);error.setAttribute('role','alert');li.appendChild(error);
       const wait=el('span','bd-wait');wait.setAttribute('aria-hidden','true');li.appendChild(wait);
@@ -1012,7 +1009,7 @@ ${P} .bd-sr{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflo
 
     function close(options){
       if(!opened)return;
-      opened=false;editing=null;editError='';editDraft=null;editKind=null;
+      opened=false;editing=null;editError='';editDraft=null;
       panel.hidden=true;
       trigger.setAttribute('aria-expanded','false');
       if(options&&options.focus)trigger.focus();
@@ -1254,7 +1251,7 @@ ${P} .bd-sr{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflo
       }
       createError.textContent='';
       let createdId=null;
-      /* La nature n'est envoyée que choisie : absente, Core pose `empty`. */
+      /* Le type n'est envoyé que choisi : absent, Core pose `assistant`. Fixé à la création (D02). */
       const kind=text(createKind.value)||DEFAULT_KIND;
       const body=kind===DEFAULT_KIND?{title:check.value}:{title:check.value,board_kind:kind};
       const result=await run('create',Object.assign({},body),async()=>{
@@ -1274,7 +1271,7 @@ ${P} .bd-sr{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflo
 
     function startEdit(boardId){
       if(pending)return;
-      editing=String(boardId);editError='';editDraft=null;editKind=null;
+      editing=String(boardId);editError='';editDraft=null;
       paint(true);
       const field=findRowControl(editing,'title');
       if(field){field.focus();if(typeof field.select==='function')field.select()}
@@ -1282,37 +1279,32 @@ ${P} .bd-sr{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflo
 
     function cancelEdit(){
       const id=editing;
-      editing=null;editError='';editDraft=null;editKind=null;
+      editing=null;editError='';editDraft=null;
       paint(true);
       const back=id&&findRowControl(id,'rename');
       if(back)back.focus();
     }
 
-    const kindOfId=id=>{const row=rowsOf(listing,block,null).find(r=>r.board_id===id);return row?row.kind:DEFAULT_KIND};
-
-    /* Titre et nature en un seul `PATCH`, qui ne porte que ce qui change. Rien
-       ne change : aucune requête. La ligne n'est repeinte qu'après relecture
-       de la liste : la nature affichée est celle que le serveur a gardée. */
+    /* Le titre seul, en un `PATCH` : le type est fixé à la création (D02).
+       Rien ne change : aucune requête. La ligne n'est repeinte qu'après
+       relecture de la liste. */
     async function saveEdit(boardId){
       if(pending||editing!==String(boardId))return null;
-      const id=editing,field=findRowControl(id,'title'),select=findRowControl(id,'kind');
+      const id=editing,field=findRowControl(id,'title');
       const check=validateTitle(field?field.value:editDraft);
-      const kind=text(select?select.value:editKind)||kindOfId(id);
-      if(!check.ok){editError=check.error;editDraft=field?field.value:editDraft;editKind=kind;paint(true);
+      if(!check.ok){editError=check.error;editDraft=field?field.value:editDraft;paint(true);
         const again=findRowControl(id,'title');if(again)again.focus();return null}
       const body={};
       if(check.value!==titleOf(id))body.title=check.value;
-      if(kind!==kindOfId(id))body.board_kind=kind;
       if(!Object.keys(body).length){cancelEdit();return null}
-      editDraft=check.value;editKind=kind;
+      editDraft=check.value;
       const result=await run('update',Object.assign({boardId:id},body),async()=>{
         try{return await post(PATH.board(id),body,'PATCH')}
         catch(error){editError=refusalOf(error).text;throw error}
       },()=>{
-        editing=null;editError='';editDraft=null;editKind=null;
+        editing=null;editError='';editDraft=null;
         const parts=[];
         if(body.title!==undefined)parts.push(`renommé en « ${body.title} »`);
-        if(body.board_kind!==undefined)parts.push(`nature ${kindOf(body.board_kind).label}`);
         announce.textContent=`Board ${parts.join(', ')}.`;
       },{inline:true});
       if(result){paint(true);const back=findRowControl(id,'rename');if(back)back.focus()}

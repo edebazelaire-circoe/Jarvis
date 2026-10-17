@@ -88,7 +88,7 @@ def test_a_small_board_block_has_every_ref_and_no_omission_marker():
     board = update_board(create_board("Petit", now=T0), now=T0, task_refs=("T-1",), project_refs=("repo",))
     payload = BrainBoardContext.from_board(board).to_payload()
     # `board_kind` (board-memory-workspace-inspector, R1/R3) part toujours ; `memory` seulement quand Core en a un magasin.
-    assert payload == {"board_id": board.board_id, "title": "Petit", "board_kind": "empty", "context_summary": "",
+    assert payload == {"board_id": board.board_id, "title": "Petit", "board_kind": "assistant", "context_summary": "",
                        "task_refs": ["T-1"], "artifact_refs": [], "project_refs": ["repo"]}
 
 

@@ -31,8 +31,8 @@ from jarvis.domain.interaction_mode import InteractionMode
 from jarvis.domain.v2 import BRAIN_NOT_ADDRESSED_ANSWER, SpeechKind
 
 #: `source` sent to `InteractionModeService.request` by a studio run, for the switch **and** the
-#: restore. `BoardService` must not persist it as the Board preference (see
-#: `TRANSIENT_MODE_SOURCES`), otherwise a Core restart mid-run would keep the temporary mode.
+#: restore. Nothing stores a mode on a Board (the mode is derived from the Board type, schema v9),
+#: so a Core restart mid-run reapplies the type's mode, never this temporary one.
 STUDIO_RUN_MODE_SOURCE = "presentation_studio_run"
 #: Sources that are a temporary, run-scoped mode and never a user preference.
 TRANSIENT_MODE_SOURCES = frozenset({STUDIO_RUN_MODE_SOURCE})

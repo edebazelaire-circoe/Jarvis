@@ -12,7 +12,7 @@ choisit seulement **ce que le modèle lit** (vues compactes et bornées).
 
 **Pourquoi un serveur à part** (R5) : `jarvis-console` mélangeait réglages et
 espaces de travail. Les neuf outils Board/Session y ont été **déplacés** (mêmes
-noms, mêmes sémantiques, `board_kind` en plus ; aucun alias laissé) ; la
+noms, mêmes sémantiques, `board_kind` en plus à la création ; aucun alias laissé) ; la
 console ne garde que `settings_*`.
 
 **Inspecter n'active rien.** Les lectures (`session_list`, `session_get`,
@@ -68,8 +68,8 @@ DISK_TIMEOUT_S = 35.0
 BOARD_ID_PATTERN = r"^(default|board_[A-Za-z0-9_-]+)$"
 MAX_BOARD_ID_CHARS = 80
 SESSION_ID_PATTERN = r"^jsess_[A-Za-z0-9_-]+$"
-#: `BoardKind` (`workspace_board.py`) : empty (défaut), meeting, presentation.
-BOARD_KIND_PATTERN = r"^(empty|meeting|presentation)$"
+#: `BoardKind` (`workspace_board.py`) : assistant (défaut), presentation, meeting. Création seulement.
+BOARD_KIND_PATTERN = r"^(assistant|presentation|meeting)$"
 ARTIFACT_ID_PATTERN = r"^jart_[a-z0-9_-]+$"
 #: Chemin relatif à `memory/` (`BoardMemoryPath`, 240 caractères au plus) ; Core le valide en entier.
 MAX_MEMORY_PATH_CHARS = 240
@@ -267,7 +267,7 @@ class WorkspaceTools:
         artifacts = body.get("artifacts") if isinstance(body.get("artifacts"), Mapping) else {}
         result = {
             "board_id": board.get("board_id"), "title": board.get("title"),
-            "board_kind": board.get("board_kind") or "empty", "status": board.get("status"),
+            "board_kind": board.get("board_kind") or "assistant", "status": board.get("status"),
             "active": bool(body.get("active")), "created_at": board.get("created_at"),
             "last_opened_at": board.get("last_opened_at"),
             "sessions": [{"jarvis_session_id": item.get("jarvis_session_id"),
@@ -386,7 +386,7 @@ class WorkspaceTools:
 
 _SERVER_INSTRUCTIONS = (
     "Boards, Sessions et mémoire des Boards de JARVIS, tenus par le cœur : les gestes de l'interface. Un Board est "
-    "un espace de travail durable (titre, nature, résumé, références, dossier mémoire). board_switch y déplace la "
+    "un espace de travail durable (titre, type fixé à la création, résumé, références, dossier mémoire). board_switch y déplace la "
     "conversation et la voix ; session_new ouvre une nouvelle conversation sur le même Board. Pendant ton tour, ces "
     "deux-là partent à la fin du tour (status scheduled) : dis la note rendue, une phrase courte, sans dire que "
     "c'est fait. Pour regarder un autre Board ou un ancien (archivé compris) : board_inspect, board_memory_*, "
@@ -469,7 +469,8 @@ def build_server(target: ConsoleMcpTarget | None = None, *, tools: WorkspaceTool
     # Motif plutôt qu'enum, délibérément : `list_tools` (jarvis-tools) indexe les valeurs d'un enum, et
     # `meeting` y faisait passer board_create / board_update devant les outils d'agenda pour « réunion »,
     # « rendez-vous » (recall@3 de `test_tool_relevance` 0,88 < 0,90). Le motif reste strict ; Core revalide.
-    Kind = Annotated[str, Field(pattern=BOARD_KIND_PATTERN, description="Nature du Board, simple étiquette.")]
+    Kind = Annotated[str, Field(pattern=BOARD_KIND_PATTERN, description=(
+        "Type du Board, choisi à la création et jamais modifié ensuite (défaut assistant)."))]
     Summary = Annotated[str, Field(max_length=MAX_CONTEXT_SUMMARY_CHARS, description=(
         f"Résumé du contexte du Board ({MAX_CONTEXT_SUMMARY_CHARS} caractères au plus) : de quoi il s'agit, où on "
         "en est. Il accompagne chaque tour de ce Board ; condense plutôt que tronquer."))]
@@ -498,7 +499,7 @@ def build_server(target: ConsoleMcpTarget | None = None, *, tools: WorkspaceTool
 
     @mcp.tool(annotations=tool_annotations(SERVER_NAME, "board_get"))
     async def board_get(board_id: BoardId) -> BoardResult:
-        """Lire un Board : titre, nature, résumé de contexte, références, mode d'interaction, s'il est actif."""
+        """Lire un Board : titre, type, résumé de contexte, références, s'il est actif."""
         return await ws.boards.get_board(board_id)
 
     @mcp.tool(annotations=tool_annotations(SERVER_NAME, "board_get_active"))
@@ -528,18 +529,18 @@ def build_server(target: ConsoleMcpTarget | None = None, *, tools: WorkspaceTool
     async def board_update(
         board_id: BoardId,
         title: Title | None = None,
-        board_kind: Kind | None = None,
         context_summary: Summary | None = None,
         task_refs: Refs | None = None,
         artifact_refs: Refs | None = None,
         project_refs: Refs | None = None,
     ) -> BoardResult:
-        """Modifier un Board : renommer, réécrire son résumé de contexte, remplacer ses références ou sa nature.
+        """Modifier un Board : renommer, réécrire son résumé de contexte, remplacer ses références.
 
         Au moins un champ. Une liste de références remplace la précédente en entier : relis le Board
-        (board_get) pour y ajouter un élément. Un Board archivé ne se modifie plus.
+        (board_get) pour y ajouter un élément. Un Board archivé ne se modifie plus. Le type ne change
+        jamais : pour un autre type, crée un autre Board (board_create).
         """
-        return await ws.boards.update_board(board_id, title=title, board_kind=board_kind,
+        return await ws.boards.update_board(board_id, title=title,
                                             context_summary=context_summary, task_refs=task_refs,
                                             artifact_refs=artifact_refs, project_refs=project_refs)
 

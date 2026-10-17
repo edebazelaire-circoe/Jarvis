@@ -10,7 +10,7 @@ Jamais Core directement : le Control Center est l'unique entrée UI/MCP
 (`docs/boards.md` › *Ownership*), et c'est lui qui diffère une demande du
 cerveau pendant son propre tour.
 
-- Un **Board** est un espace de travail durable (titre, nature, résumé de
+- Un **Board** est un espace de travail durable (titre, type, résumé de
   contexte, références). Basculer déplace la conversation et la voix sur ce
   Board ; le Board quitté garde son travail de fond.
 - Une **Session** est un épisode de conversation. `session_new` ouvre un fil
@@ -64,9 +64,10 @@ NEW_SESSION_ROUTE = "/api/sessions/new"
 #: Origine des demandes de ces outils (`board_routes.ORIGINS`).
 BRAIN_ORIGIN = "brain"
 
-#: Champs qu'un outil écrit sur un Board : ceux de l'écran, nature comprise (Slice 06). `scene_ref` et
+#: Champs qu'un outil modifie sur un Board : ceux de l'écran (Slice 06), sans le type, fixé à la création
+#: (`board_kind_immutable`, `board_create` seul le choisit). `scene_ref` et
 #: `runtime_metadata` sont éditables par Core mais appartiennent au runtime.
-BOARD_EDIT_FIELDS = ("title", "board_kind", "context_summary", "task_refs", "artifact_refs", "project_refs")
+BOARD_EDIT_FIELDS = ("title", "context_summary", "task_refs", "artifact_refs", "project_refs")
 
 READ_TIMEOUT_S = 15.0
 #: Une bascule ou une nouvelle Session immédiate (hors tour) attend le relais,
@@ -98,6 +99,8 @@ ERROR_SENTENCES: dict[str, str] = {
     "brain_not_foreground": "Ce cerveau n'a plus la parole : un autre Board est au premier plan.",
     "board_activation_failed": ("Le cerveau du Board cible n'a pas pu démarrer : rien n'a changé, "
                                 "le Board actuel reste actif."),
+    "board_kind_immutable": ("Le type d'un Board est fixé à sa création : rien n'a été écrit. Pour un autre type, "
+                             "crée un autre Board (board_create) puis bascule dessus."),
     "board_switch_rolled_back": ("La bascule a échoué après l'activation et a été annulée : "
                                  "le Board précédent reste actif, rien n'a été écrit."),
     "invalid_title": "Titre refusé (1 à 120 caractères, une ligne, sans espace autour) : rien n'a été écrit.",
@@ -260,7 +263,7 @@ class BoardTools:
         payload = {name: value for name, value in fields.items() if value is not None}
         if not payload:
             self._failed("board_update", "invalid_board", _board_route(board_id), reason="no_field")
-            raise self._error("invalid_board", "Rien à modifier : donne au moins un champ (title, board_kind, "
+            raise self._error("invalid_board", "Rien à modifier : donne au moins un champ (title, "
                                                "context_summary, task_refs, artifact_refs, project_refs). "
                                                "Rien n'a été écrit.")
         return await self._board("board_update", "PATCH", _board_route(board_id), payload=payload,
@@ -400,8 +403,8 @@ def _summary(board: Mapping[str, Any], active: bool) -> dict[str, Any]:
     """Ligne de `board_list` : de quoi reconnaître un Board, sans son contenu (board_get le rend)."""
 
     return {"board_id": board.get("board_id"), "title": board.get("title"),
-            "board_kind": board.get("board_kind") or "empty", "status": board.get("status"), "active": active,
-            "interaction_mode": board.get("interaction_mode"), "last_opened_at": board.get("last_opened_at")}
+            "board_kind": board.get("board_kind") or "assistant", "status": board.get("status"), "active": active,
+            "last_opened_at": board.get("last_opened_at")}
 
 
 def _detail(board: Mapping[str, Any], active: bool) -> dict[str, Any]:

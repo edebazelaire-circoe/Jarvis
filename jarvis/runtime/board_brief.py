@@ -88,8 +88,8 @@ def render_board_brief(board: Any) -> list[str]:
     if isinstance(omitted, int) and not isinstance(omitted, bool) and omitted > 0:
         lines.append(f"({omitted} référence(s) du Board non jointe(s) : demande board_get si tu en as besoin.)")
     kind = _text(board.get("board_kind"), 24)
-    if kind and kind != "empty":
-        lines[0] += f" Nature : {kind}."
+    if kind and kind != "assistant":
+        lines[0] += f" Type : {kind}."
     if "memory" in board:
         lines.extend(render_board_memory(board.get("memory"), str(board.get("board_id") or "")))
     return lines

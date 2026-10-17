@@ -941,8 +941,10 @@ Claude Code 2.1.282, 2026-09-25, isolated Core/Control Center, evidence in
 
 > **Moved (board-memory-workspace-inspector, Slice 06, §10.12).** These nine
 > tools now live on `jarvis-workspace` with the same names and semantics
-> (`board_kind` added to `board_create` / `board_update` and to every Board
-> result); `console_boards.py` became `workspace_boards.py` (`BoardTools`,
+> (`board_kind` added to `board_create` and to every Board result; since the
+> fixed Board type, Slice 01a of `jarvis-board-ui-wheel-dossier-refactor`,
+> `board_update` no longer takes it and Board results no longer carry
+> `interaction_mode`); `console_boards.py` became `workspace_boards.py` (`BoardTools`,
 > `WorkspaceToolError`), and no alias is left on `jarvis-console`. The facts
 > below are kept as the record of their design.
 
@@ -967,10 +969,10 @@ three settings tools (registration order = `mcp_tool_meta.CONSOLE`), logic in
 | `session_new` | `GET /api/sessions/current`, then `POST /api/sessions/new {origin:"brain", expected_session_id}` | write / no | `SessionNewResult {status: applied \| scheduled \| unknown, closed_session_id, board_id, jarvis_session_id?, merged, note}` |
 
 Writes are `single_request`, reads `none`; all `structured`. `BoardResult` is
-the Board as the screen shows it: `board_id, title, status, active,
-interaction_mode, last_opened_at, context_summary, task_refs, artifact_refs,
-project_refs, updated_at` (no `scene_ref`, `runtime_metadata`,
-`interaction_mode_origin`: runtime fields). No low-level voice, brain-binding
+the Board as the screen shows it: `board_id, title, board_kind, status, active,
+last_opened_at, context_summary, task_refs, artifact_refs, project_refs,
+updated_at` (no `scene_ref`, `runtime_metadata`: runtime fields; no mode: it is
+derived from `board_kind`, [../boards.md](../boards.md) › *Board type*). No low-level voice, brain-binding
 or speech-authority tool, and `origin` is never a model argument.
 
 - **Input schemas.** `board_id` pattern `^(default|board_[A-Za-z0-9_-]+)$`
@@ -1204,7 +1206,7 @@ rules, the per-Board lock and the ledger. Mutations send `origin: "brain"`.
 
 | Tool | Route(s) | Class / idempotent | Result (`mcp_results`) |
 | --- | --- | --- | --- |
-| `board_list` … `session_new` (9) | §10.9 (`/api/boards*`, `/api/sessions*`) | §10.9 | §10.9, `board_kind` added to `BoardSummary` / `BoardResult` |
+| `board_list` … `session_new` (9) | §10.9 (`/api/boards*`, `/api/sessions*`) | §10.9 | §10.9, `board_kind` (`assistant` \| `presentation` \| `meeting`) in `BoardSummary` / `BoardResult`; `board_create` takes it, `board_update` never does (a fixed type; Core refuses a change `board_kind_immutable`, an error sentence of `workspace_boards.ERROR_SENTENCES`) |
 | `session_list` | `GET /api/workspace/sessions?limit≤20&cursor` | read / yes | `SessionListResult {sessions[{jarvis_session_id, status, started_at, ended_at, active_board_id, visited_board_ids ≤ 20}], next_cursor?}` |
 | `session_get` | `GET /api/workspace/sessions/{id}` | read / yes | `SessionGetResult {…, boards[≤ 20 {board_id, title?, board_kind?, status?, active, visited, binding?, missing?}], boards_total, contexts[newest ≤ 10], contexts_total, active_context_id, problems[codes], speech_authority_board_id? (open only)}` |
 | `board_inspect` | `GET /api/workspace/boards/{id}` | read / yes | `BoardInspectResult {board_id, title, board_kind, status, active, created_at, last_opened_at, sessions[≤ 10 {jarvis_session_id, session_status, lifecycle, active_in_session, created_at, last_active_at}], sessions_truncated, linked_artifacts, legacy_artifact_refs[≤ 10], memory {exists, entries?, files?, bytes?, truncated?, summary_md?, error?}}` |
@@ -1229,7 +1231,8 @@ replaces the provisional `workspace_inspect` of R5: Session relations are
 - **Shared schema pieces** (one definition, reused): `BoardId` (pattern
   `^(default|board_[A-Za-z0-9_-]+)$`, ≤ 80), `MemoryPath` (1..240),
   `Cursor` (≤ 400), `SessionId` (`jsess_…`), `ArtifactId` (`jart_…`), `Kind`
-  (pattern `^(empty|meeting|presentation)$`, **deliberately not an enum**:
+  (pattern `^(assistant|presentation|meeting)$`, `board_create` only,
+  **deliberately not an enum**:
   `list_tools` indexes enum values, and `meeting` put `board_create` /
   `board_update` ahead of the calendar tools for « réunion », « rendez-vous »
   — recall@3 of `test_tool_relevance` fell to 0.88; the pattern stays strict

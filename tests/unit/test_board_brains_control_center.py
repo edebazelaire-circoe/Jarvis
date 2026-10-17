@@ -347,14 +347,16 @@ async def test_restart_new_conversation_keeps_the_historical_behaviour_without_c
 
 
 class BoardsCore:
-    """`GET /v1/boards/active` d'un Core à Boards, origine du mode au choix."""
+    """`GET /v1/boards/active` d'un Core à Boards ; `kind=None` : Board hors contrat (forme d'avant v9)."""
 
-    def __init__(self, origin: str) -> None:
-        self.origin = origin
+    def __init__(self, kind: str | None) -> None:
+        self.kind = kind
 
     async def active_board(self) -> dict:
-        return {"board": {"board_id": "default", "interaction_mode": "assistant",
-                          "interaction_mode_origin": self.origin}, "active": True}
+        if self.kind is None:
+            return {"board": {"board_id": "default", "interaction_mode": "assistant",
+                              "interaction_mode_origin": "unset"}, "active": True}
+        return {"board": {"board_id": "default", "board_kind": self.kind}, "active": True}
 
     async def close(self) -> None:
         return None
@@ -385,12 +387,12 @@ class Bus:
         self.published.append(envelope)
 
 
-async def _core_restart_replay(tmp_path, monkeypatch, origin: str):  # noqa: ANN202
+async def _core_restart_replay(tmp_path, monkeypatch, kind: str | None):  # noqa: ANN202
     monkeypatch.setattr(control_center_module, "INTERACTION_MODE_REPLAY_BACKOFF_S", 0.0)
     bus = Bus()
     service = InteractionModeService(events=bus)
     reader = ServiceReader(service)
-    control = make_control(tmp_path, sessions=BoardsCore(origin),
+    control = make_control(tmp_path, sessions=BoardsCore(kind),
                            interaction_mode_view=CoreInteractionModeView(reader))
     settings = control._settings()
     mode_settings.apply(settings, {"mode": "presentation"})  # préférence globale ≠ Board (assistant)
@@ -401,23 +403,29 @@ async def _core_restart_replay(tmp_path, monkeypatch, origin: str):  # noqa: ANN
     return control, service, reader, bus
 
 
-async def test_no_mode_flip_on_core_restart_when_the_active_board_owns_its_mode(tmp_path, monkeypatch):
-    control, service, reader, bus = await _core_restart_replay(tmp_path, monkeypatch, "user")
+@pytest.mark.parametrize("kind", ["assistant", "presentation", "meeting"])
+async def test_no_mode_flip_on_core_restart_when_the_active_board_owns_its_mode(tmp_path, monkeypatch, kind):
+    """Slice 01a : tout Board valide possède son mode (dérivé de son type) ; le rejeu global est retiré."""
+
+    control, service, reader, bus = await _core_restart_replay(tmp_path, monkeypatch, kind)
     assert reader.writes == [] and bus.published == [], "no presentation -> assistant flip"
     assert service.mode is InteractionMode.ASSISTANT
     assert trace(tmp_path, "interaction.mode.replay_retired")[-1]["data"]["source"] == "core_restart"
 
 
-async def test_the_legacy_mode_is_still_replayed_once_as_migration_input(tmp_path, monkeypatch):
-    control, service, reader, _ = await _core_restart_replay(tmp_path, monkeypatch, "unset")
-    assert reader.writes == [("presentation", "core_restart")]
-    assert service.mode is InteractionMode.PRESENTATION
+async def test_an_out_of_contract_board_is_said_and_never_triggers_the_replay(tmp_path, monkeypatch):
+    """Board sans type valide (forme d'avant v9) : indéterminé, dit en warning, rien n'est rejoué."""
+
+    control, service, reader, _ = await _core_restart_replay(tmp_path, monkeypatch, None)
+    assert reader.writes == [] and service.mode is InteractionMode.ASSISTANT
+    unknown = trace(tmp_path, "interaction.mode.board_unknown")
+    assert unknown and unknown[-1]["level"] == "warning" and unknown[-1]["data"]["code"] == "invalid_board_snapshot"
 
 
 async def test_a_mode_chosen_with_board_core_is_not_written_to_the_global_preference(tmp_path):
     service = InteractionModeService(events=Bus())
     reader = ServiceReader(service)
-    control = make_control(tmp_path, sessions=BoardsCore("user"), interaction_mode_view=CoreInteractionModeView(reader))
+    control = make_control(tmp_path, sessions=BoardsCore("assistant"), interaction_mode_view=CoreInteractionModeView(reader))
 
     response = await control.save_interaction_mode(JsonRequest({"mode": "presentation"}))
 

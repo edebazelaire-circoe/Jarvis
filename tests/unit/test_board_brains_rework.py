@@ -186,15 +186,22 @@ async def test_s2_a_failed_start_leaves_core_and_the_control_center_unchanged(st
 # ------------------------------------------------------------------ S3
 
 
-async def test_s3_the_stored_mode_shown_is_the_active_board_mode(stack):
+async def test_s3_the_stored_mode_shown_is_the_mode_of_the_active_board_type(stack):
+    """Slice 01a : le mode affiché « enregistré » est celui que désigne le type du Board actif."""
+
     core = await stack.start_core()
-    await core.interaction_mode.request("presentation", source="control_center")   # choix sur le Board
-    await core.boards.drain()
     settings = stack.control._settings()
     assert settings.get("interaction_mode", {}).get("mode", "assistant") != "presentation"
+    board = await core.boards.create({"title": "Démo", "board_kind": "presentation"})
+    await core.boards.switch(board.board_id)
+    await core.interaction_mode.request("assistant", source="control_center")   # écrivain hérité : vivant seulement
 
     status = await stack.control._interaction_mode_status(settings)
-    assert status["stored"] == "presentation", "the Board's mode, not the global preference"
+    assert status["stored"] == "presentation", "the Board type's mode, not the live one nor the global preference"
+    meeting = await core.boards.create({"title": "Réunion", "board_kind": "meeting"})
+    await core.boards.switch(meeting.board_id)
+    status = await stack.control._interaction_mode_status(settings)
+    assert (status["stored"], status["mode"]) == ("meeting", "assistant")  # Réunion affichée, comportement assistant
 
 
 # ------------------------------------------------------------------ S4

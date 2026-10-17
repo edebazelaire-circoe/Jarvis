@@ -14,7 +14,7 @@ feuille de style ne prouve :
 
 Slice 08 (board-memory-workspace-inspector) : un dernier parcours, sans aucun
 double, contre un vrai Core et un vrai Control Center (`CaptureStack`) — créer
-un Board « Réunion », changer sa nature, filtrer les archivés, « Inspecter »
+un Board « Réunion », le renommer (son type ne change pas, D02), filtrer les archivés, « Inspecter »
 ouvre le gestionnaire sur ce Board. Captures dans `JARVIS_S8_EVIDENCE_DIR`.
 
 Se saute si Chrome ou node manque.
@@ -171,17 +171,17 @@ def _quick_plan(w) -> dict:
         {"get": "created_focus", "expr": "document.activeElement&&document.activeElement.closest('.bd-row')&&"
                                          "document.activeElement.closest('.bd-row').getAttribute('data-board-id')===window.__s8"},
         {"shot": "02-created-meeting.png"},
-        # Changer sa nature (et son titre) depuis le formulaire de la ligne.
+        # Renommer depuis le formulaire de la ligne : le type n'y est pas proposé (D02, Slice 01a).
         {"do": action("Point hebdo S8", "rename")},
-        {"wait": "document.querySelector('#boardsList [data-bd-action=kind]')"},
+        {"wait": "document.querySelector('#boardsList [data-bd-action=title]')"},
+        {"get": "edit_kind_offered", "expr": "!!document.querySelector('#boardsList [data-bd-action=kind]')"},
         {"do": "(()=>{const f=document.querySelector('#boardsList [data-bd-action=title]');f.value='Démo S8';"
                "f.dispatchEvent(new Event('input',{bubbles:true}));return true})()"},
-        {"do": pick("#boardsList [data-bd-action=kind]", "presentation")},
-        {"shot": "03-edit-kind.png"},
+        {"shot": "03-edit-title.png"},
         {"do": "document.querySelector('#boardsList [data-bd-action=save]').click()", "ms": 400},
-        {"wait": f"({row('Démo S8')})&&{kind_of('Démo S8')}==='Présentation'"},
+        {"wait": f"({row('Démo S8')})&&{kind_of('Démo S8')}==='Réunion'"},
         {"get": "edited_kind", "expr": kind_of("Démo S8")},
-        {"shot": "04-kind-changed.png"},
+        {"shot": "04-renamed.png"},
         # Archivés : à part, sans bascule, inspectables.
         {"do": "document.getElementById('boardsFilterArchived').click()"},
         {"wait": f"({row('Ancien')})"},
@@ -265,7 +265,7 @@ async def test_quick_browser_creates_edits_filters_and_inspects_against_the_real
             {"do": "document.getElementById('boardsButton').click()"},
             {"wait": "document.querySelector('#boardsList [data-bd-action=inspect]')"},
             {"do": "document.querySelector('#boardsList .bd-row[data-active=false] [data-bd-action=rename]').click()"},
-            {"wait": "document.querySelector('#boardsList [data-bd-action=kind]')"},
+            {"wait": "document.querySelector('#boardsList [data-bd-action=title]')"},
             {"get": "overflow", "expr": "(()=>{const p=document.getElementById('boardsPanel');"
                                         "return {panel:p.scrollWidth-p.clientWidth,page:document.documentElement.scrollWidth-innerWidth,"
                                         "right:p.getBoundingClientRect().right}})()"},
@@ -302,13 +302,13 @@ async def test_quick_browser_creates_edits_filters_and_inspects_against_the_real
     r = seen["results"]
     rows = {row["title"]: row for row in r["list"]}
     assert set(rows) == {"Board principal", "Projet A", "Projet B"}, "archived Boards stay out of the list in service"
-    assert rows["Projet A"]["kind"] == "Réunion" and rows["Projet B"]["kind"] == "Générique"
+    assert rows["Projet A"]["kind"] == "Réunion" and rows["Projet B"]["kind"] == "Assistant"
     assert rows["Projet B"]["active"] == "true" and rows["Projet B"]["state"] == "Actif"
     assert rows["Projet A"]["opened"].startswith("ouvert") and rows["Projet B"]["opened"] == "ouvert à l’instant"
     assert rows["Board principal"]["opened"].startswith("ouvert"),         "the Board a Session opened on is opened (QA S08 point 2), never « jamais ouvert »"
     assert "En service3" in r["filter"] and "Archivés1" in r["filter"]
     assert r["created_kind"] == "Réunion" and r["created_focus"] is True
-    assert r["edited_kind"] == "Présentation"
+    assert r["edited_kind"] == "Réunion" and r["edit_kind_offered"] is False, "renaming never changes the type"
     assert r["archived"] == [{"title": "Ancien", "state": "Archivé", "actions": ["inspect"]}]
     inspected = r["inspect_archived"]
     assert inspected["id"] == w.board_archived and inspected["tab"] == "Boards" and inspected["panelHidden"] is True
@@ -321,7 +321,7 @@ async def test_quick_browser_creates_edits_filters_and_inspects_against_the_real
     assert len(taken) == 8 and taken <= {p.name for p in shots.glob("*.png")}
 
     created = [b for b in listing if b["title"] == "Démo S8"]
-    assert len(created) == 1 and created[0]["board_kind"] == "presentation" and created[0]["status"] == "active"
+    assert len(created) == 1 and created[0]["board_kind"] == "meeting" and created[0]["status"] == "active"
     assert [b["status"] for b in listing if b["board_id"] == w.board_archived] == ["archived"]
     assert active_after["board"]["board_id"] == active_before["board"]["board_id"],         "creating, editing and inspecting never switch; the real A/B/A ends where it started"
 

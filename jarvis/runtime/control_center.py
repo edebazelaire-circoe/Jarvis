@@ -133,7 +133,7 @@ from jarvis.runtime.core_sessions import CoreSessionTransport, is_unsupported
 from jarvis.runtime.mcp_plugin_routes import PLUGINS_ROUTE as MCP_PLUGINS_ROUTE, McpPluginRoutes
 from jarvis.runtime.presentation_render_relay import PresentationRenderRelayRoutes
 from jarvis.runtime.remotion_studio_relay import GUARDED_PREFIXES as REMOTION_STUDIO_GUARDED_PREFIXES, RemotionStudioRelayRoutes
-from jarvis.domain.workspace_board import BoardConversationBinding, BoardError, BoardErrorCode, InteractionModeOrigin
+from jarvis.domain.workspace_board import BoardConversationBinding, BoardError, BoardErrorCode, BoardKind, board_kind_mode
 from jarvis.runtime.work_view import CORE_UNREACHABLE, NOT_CONFIGURED, CoreWorkView, unavailable_payload
 from jarvis.protocol import scene_wire
 from jarvis.protocol.client import CoreProtocolError
@@ -2747,27 +2747,30 @@ class ControlCenter:
             return _ActiveBoardRead(None, {"code": "http_error", "message": "Core answered without a board"}, True)
         return _ActiveBoardRead(board, None, True)
 
-    async def _board_stored_mode(self, active: _ActiveBoardRead | None = None) -> InteractionMode | None:
-        """Mode enregistré sur le Board actif de Core, quand ce Board l'a choisi (reprise QA 04a, S3).
+    @staticmethod
+    def _board_kind_of(board: object) -> BoardKind | None:
+        """Type d'un Board lu chez Core (`board_kind`), `None` s'il est absent ou hors contrat."""
 
-        Depuis les Boards, la préférence vit sur le Board : l'afficher depuis le
-        réglage global montrait une divergence « CHOISI » périmée après chaque
-        changement. `None` : Core sans Boards (retenu pour la vie du processus),
-        Board `unset` (le réglage global reste l'entrée de migration), ou lecture
-        en échec (dit, limité ; le battement suivant réessaie). Ne lève pas.
-        `active` : la lecture déjà faite par ce battement (`status`), sinon relue.
+        kind = board.get("board_kind") if isinstance(board, dict) else None
+        return BoardKind(kind) if kind in {item.value for item in BoardKind} else None
+
+    async def _board_stored_mode(self, active: _ActiveBoardRead | None = None) -> InteractionMode | None:
+        """Mode que désigne le type du Board actif de Core (`board_kind_mode`, `docs/boards.md` › *Board type*).
+
+        Le Board ne stocke plus de mode : son type le désigne (Réunion compris,
+        affiché tel quel). `None` : Core sans Boards (retenu pour la vie du
+        processus), lecture en échec (dit, limité ; le battement suivant
+        réessaie) ou type hors contrat (dit par `_core_boards_own_interaction_mode`).
+        Ne lève pas. `active` : la lecture déjà faite par ce battement (`status`), sinon relue.
         """
 
         if active is None:
             active = await self._read_active_board()
-        board = active.board
-        if board is None or board.get("interaction_mode_origin") in (None, InteractionModeOrigin.UNSET.value):
+        kind = self._board_kind_of(active.board)
+        if kind is None:
             return None
         self._core_has_boards = True
-        try:
-            return InteractionMode(board.get("interaction_mode"))
-        except ValueError:
-            return None  # argued: an out-of-contract Board is reported by `_core_boards_own_interaction_mode`
+        return board_kind_mode(kind)
 
     def _boards_status(self, active: _ActiveBoardRead) -> dict[str, Any]:
         """Bloc `boards` de `/api/status` (handoff board-session, Slice 06). Ne lève pas, n'écrit rien.
@@ -2800,12 +2803,10 @@ class ControlCenter:
     async def _core_boards_own_interaction_mode(self) -> bool | None:
         """Le mode d'interaction appartient-il au Board actif de Core ? (Slice 04a, reprise QA Slice 02)
 
-        - `False` : Core sans Boards (pas de transport, 404 texte), ou Board
-          actif encore `unset` : la préférence globale est l'entrée de migration
-          et se rejoue (une fois : Core la marque `migrated`) ;
-        - `True` : le Board a son mode (`migrated`/`user`) : plus de rejeu, plus
-          d'écriture de la préférence globale — sinon chaque redémarrage de Core
-          fait basculer le mode vivant deux fois ;
+        - `False` : Core sans Boards (pas de transport, 404 texte) : la
+          préférence globale est le seul mode et se rejoue ;
+        - `True` : tout Board actif valide (son type désigne le mode, schéma
+          v9) : plus de rejeu, plus d'écriture de la préférence globale ;
         - `None` : indéterminé (Core injoignable, réponse hors contrat).
         """
 
@@ -2826,15 +2827,14 @@ class ControlCenter:
             )
             return None
         board = payload.get("board") if isinstance(payload, dict) else None
-        origin = board.get("interaction_mode_origin") if isinstance(board, dict) else None
-        if origin not in {item.value for item in InteractionModeOrigin}:
+        if self._board_kind_of(board) is None:
             self._report_interaction_mode(
-                "interaction.mode.board_unknown", "Board actif de Core hors contrat (origine du mode absente)",
+                "interaction.mode.board_unknown", "Board actif de Core hors contrat (type du Board absent ou inconnu)",
                 level="warning", data={"code": "invalid_board_snapshot"},
             )
             return None
         self._core_has_boards = True
-        return origin != InteractionModeOrigin.UNSET.value
+        return True
 
     async def _replay_interaction_mode(self, source: str) -> None:
         try:
@@ -4158,9 +4158,10 @@ class ControlCenter:
             # le texte. Le code stable, lui, voyage dans l'en-tête dans les deux cas.
             error = (web.HTTPConflict if exc.code == "interaction_mode_not_implemented" else web.HTTPBadRequest)
             raise error(text=str(exc), headers={SETTINGS_ERROR_CODE_HEADER: exc.code}) from exc
-        # Slice 04a : un Core à Boards garde le mode sur le Board actif (son
-        # écouteur l'y enregistre, origine `user`). La préférence globale n'est
-        # plus écrite : elle ne sert plus que d'entrée de migration.
+        # Un Core à Boards dérive le mode du type du Board actif : la préférence
+        # globale n'est pas écrite, et ce changement-ci ne vaut que pour le mode
+        # vivant, jusqu'à la prochaine bascule ou au prochain démarrage de Core
+        # (état intermédiaire Slice 01a ; la Slice 01b retire cette route).
         # Boards déjà vus dans cette vie : pas d'aller-retour (jusqu'à 5 s) avant d'appliquer.
         owned = True if self._core_has_boards else await self._core_boards_own_interaction_mode()
         board_owned = owned is not False and (owned is True or self._core_has_boards)

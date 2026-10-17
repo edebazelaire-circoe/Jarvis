@@ -1158,8 +1158,6 @@ class JarvisCoreApplication:
         # allonger ce chemin-là) : vidange bornée, le reste est compté et tracé.
         # Après la scène : fichier distinct, aucun des deux n'écrit dans l'autre.
         await self.conversation_event_emitter.stop()
-        # Écritures de mode sur le Board encore en vol : finies avant la fermeture.
-        await self.boards.stop()
         # Le worker d'embeddings s'arrête : un index dérivé ne retient rien de durable.
         await self.memory.stop()
         # Aucune écriture de plugin en vol à la fermeture ; connexions fermées ≤ 5 s (Slice 03).

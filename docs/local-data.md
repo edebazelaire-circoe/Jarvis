@@ -116,6 +116,13 @@ sur `.v7.bak` restaurée, même Session
 d'un coup en v7 et ne reçoit qu'**une** sauvegarde, `jarvis.sqlite3.v4.bak` ;
 ce `main` refuse ensuite la base v7 sans la toucher. Retour arrière mesuré :
 [session-context-capture.md](session-context-capture.md#schema-migration-and-rollback).
+v9 (2026-10-17) : type de Board fixé, **données seules** (aucun DDL, première
+migration qui réécrit des payloads) : chaque Board reçoit son `board_kind`
+définitif (`assistant`, `presentation` ou `meeting`) et perd ses clés de mode
+`interaction_mode` / `interaction_mode_origin` ; sauvegarde
+`jarvis.sqlite3.v8.bak`. Le code v8 refuse ensuite la base
+(`state DB schema 9 is newer than supported 8`). Règles et retour arrière :
+[boards.md](boards.md#persistence).
 
 Le schéma de chaque version est figé dans `tests/schema/<base>.v<N>.sql`.
 `tests/unit/test_schema_migrations.py` échoue dès qu'un DDL change sans

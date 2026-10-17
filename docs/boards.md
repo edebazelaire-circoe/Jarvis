@@ -15,9 +15,9 @@ deterministic — there is no global reasoning Brain.
 | Section | What it fixes | Code | Proof |
 | --- | --- | --- | --- |
 | *Glossary*, *Values*, *Lifecycle*, *Invariants*, *Errors* | vocabulary, values, transitions | `jarvis/domain/workspace_board.py`, `jarvis/ports/workspace_board.py` | `tests/unit/test_workspace_board_contract.py` |
-| *Board kind*, *Board memory*, *Non-activating inspection* | `board_kind`, memory locator and paths, memory errors, Board vs SessionContext ownership, memory disk store | `jarvis/domain/workspace_board.py`, `jarvis/domain/board_memory.py`, `jarvis/adapters/board_memory_store.py` | `tests/unit/test_board_memory_contract.py`, `tests/unit/test_board_memory_store.py` |
+| *Board type*, *Board memory*, *Non-activating inspection* | `board_kind` (fixed type, derived mode), memory locator and paths, memory errors, Board vs SessionContext ownership, memory disk store | `jarvis/domain/workspace_board.py`, `jarvis/domain/board_memory.py`, `jarvis/adapters/board_memory_store.py` | `tests/unit/test_board_memory_contract.py`, `tests/unit/test_board_memory_store.py` |
 | *Workspace inspection API* | side-effect-free reads of Sessions, Boards, bindings, Contexts, Artifacts, memory (`/v1/workspace/*`, `/api/workspace/*`) | `jarvis/core/workspace_service.py`, `jarvis/protocol/workspace_routes.py`, `jarvis/runtime/workspace_relay.py` | `tests/unit/test_workspace_inspection_api.py` |
-| *Persistence* | SQLite v3, default-Board migration, mode per Board | `jarvis/adapters/sqlite_workspace_board.py`, `jarvis/core/board_service.py` | `test_board_store_sqlite.py`, `test_board_service.py`, `test_board_protocol.py` |
+| *Persistence* | SQLite v3, default-Board migration, v9 type migration, mode derived from the type | `jarvis/adapters/sqlite_workspace_board.py`, `jarvis/adapters/sqlite_state.py` (`_MIGRATIONS[9]`), `jarvis/core/board_service.py` | `test_board_store_sqlite.py`, `test_board_kind_migration_v9.py`, `test_board_service.py`, `test_board_protocol.py` |
 | *Sessions* | Core start = resume the open Session, bindings, Voice conversation | `jarvis/core/session_manager.py` | `test_session_manager.py`, `test_session_protocol.py`, `test_voice_session_binding.py` |
 | *Board agent pool* | one CLI per binding in the Control Center | `jarvis/runtime/board_brains.py` | `test_board_brains*.py` |
 | *Switch and speech authority* | atomic switch, one speaker, Voice rebind, `board` block | `board_service.py`, `jarvis/core/speech_authority.py`, `brain_service.py`, `jarvis/runtime/board_routes.py`, `jarvis/runtime/board_brief.py` | `test_board_switch*.py`, `test_board_speech_authority.py`, `test_voice_board_rebind.py`, `test_board_brief.py` |
@@ -33,7 +33,7 @@ Words that look alike and must never be confused, then the runtime terms.
 
 | Term | What it is | Where |
 | --- | --- | --- |
-| **Board** | The durable workspace and context boundary, like a ChatGPT Project: title, kind (`board_kind`), bounded context summary, task/artifact/project references, scene reference, interaction mode, plus a free-form **Board memory** folder. Survives Sessions. User-facing word: "Board". | `Board` in `jarvis/domain/workspace_board.py`; table `work_boards` |
+| **Board** | The durable workspace and context boundary, like a ChatGPT Project: title, fixed type (`board_kind`: Assistant, Présentation or Réunion, chosen at creation), bounded context summary, task/artifact/project references, scene reference, plus a free-form **Board memory** folder. Its type designates the live interaction mode; no mode is stored on it. Survives Sessions. User-facing word: "Board". | `Board` in `jarvis/domain/workspace_board.py`; table `work_boards` |
 | **Barehands board** | The pinned third-party AGPL stage (`stage.html`, port 8794) Jarvis presents on. Unrelated to Boards. Owns the unprefixed word `board` in code (`jarvis/ports/board.py`, config key `board`, `--no-board`). | `docs/ARCHITECTURE.md` › *Barehands (upstream board)* |
 | **Session** (Jarvis Session) | One human/Jarvis conversation episode. Opens at the first Core start of a database or when a new Session is explicitly asked for; every later Core, Control Center or Brain restart **resumes** it (session-context-recording, D02); may visit several Boards; once closed, immutable history. Cross-module field `jarvis_session_id`, ids `jsess_…`. | `JarvisSession` |
 | **Core conversation** | The Core `Conversation` (`conversation_id`) that carries the turns of one Session on one Board. One per binding. | `jarvis/domain/v2.py` |
@@ -68,14 +68,12 @@ conversation-event `session_id`, the Presentation session.
 | `board_id` | `"default"` (migration Board) or `board_<hex>` |
 | `title` | 1–120 chars, single printable line, no surrounding spaces (`invalid_title`) |
 | `status` | `active` \| `archived` |
-| `board_kind` | `BoardKind`: `empty` (default) \| `meeting` \| `presentation`, strict; a payload without the key decodes as `empty` (*Board kind*) |
+| `board_kind` | `BoardKind`: `assistant` (default) \| `presentation` \| `meeting`, strict, **fixed at creation** (*Board type*); a payload without the key decodes as `assistant`; `empty` exists only as a deprecated create input |
 | `created_at`, `updated_at`, `last_opened_at` | timezone-aware; `updated_at ≥ created_at`; `last_opened_at` optional |
 | `context_summary` | ≤ **1 500** chars, printable text plus `
 ` and `	` only (`invalid_board` otherwise). Refused above (`context_summary_too_long`), never truncated: the editor (UI, MCP, the Board's own brain) condenses. The limit keeps the per-turn `board` block (title + summary + refs) near 2 KB. |
 | `task_refs`, `artifact_refs`, `project_refs` | a list or tuple (a string is refused, never split into characters) of opaque ids/paths, ≤ 64 each, ≤ 256 chars each, unique |
 | `scene_ref` | optional `{kind:"global", scene_id, revision_at_leave}`; V1 scene is shared |
-| `interaction_mode` | `InteractionMode` internal value (`assistant`, `presentation`, `meeting`), strict |
-| `interaction_mode_origin` | `unset` (never chosen), `migrated` (legacy global setting adopted once), `user` |
 | `runtime_metadata` | flat map, ≤ 16 token keys, JSON scalar values (strings ≤ 256); frozen |
 
 ### Session
@@ -153,8 +151,8 @@ active): [session-context.md](session-context.md).
 5. **The active Board is never archived** (`board_is_active`).
 6. **No transition cancels work.** Demotion and closure only change the
    lifecycle; the Control Center keeps a CLI with running sub-agents.
-7. **Legacy mode is adopted once** (`adopt_legacy_interaction_mode`): only an
-   `unset` Board takes it (→ `migrated`); a re-run never overwrites a choice.
+7. **The type never changes.** `update_board` has no `board_kind` argument;
+   the service refuses a `PATCH` carrying it (`board_kind_immutable`).
 8. Every transition takes `now` explicitly; values are frozen dataclasses.
 
 ## System invariants (V1)
@@ -186,9 +184,9 @@ What the running system guarantees, each proven end to end by
 5. **Contexts never merge.** A turn carries only its own Board's block and
    the active Board's work (plus untagged work); other Boards' results reach
    the user as alerts, never as brain context.
-6. **Mode per Board.** Entering a Board applies its stored mode; an `unset`
-   Board gets the default (assistant), never the previous Board's mode; Core
-   start restores the active Board's mode.
+6. **Mode from the Board type.** Entering a Board applies the mode its type
+   designates (never the previous Board's mode); Core start applies the active
+   Board's. A Réunion Board behaves as assistant (`meeting_planned`), never refused.
 7. **Same semantics on screen and in MCP.** Both call the same Control Center
    routes and get the same codes.
 8. **Absence is survivable.** Core start resumes the open Session (same id,
@@ -197,24 +195,37 @@ What the running system guarantees, each proven end to end by
    (`agent_session_id`); alerts, their Board and their read state survive both
    restarts.
 
-## Board kind
+## Board type
 
-`Board.board_kind` (`BoardKind`, `jarvis/domain/workspace_board.py`) says what
-a Board is for: `empty` (generic, default), `meeting`, `presentation`.
-Management metadata only (handoff `jarvis-board-memory-workspace-inspector`, R1):
+A Board has **one fixed type** (D01-D03 of `jarvis-board-ui-wheel-dossier-refactor`):
+`Board.board_kind` (`BoardKind`, `jarvis/domain/workspace_board.py`), internal
+values `assistant` (default), `presentation`, `meeting`; user words Assistant /
+Présentation / Réunion. It is the only truth of the Board's behaviour: there is no
+separate, user-selected interaction mode any more.
 
-- stored in the Board payload JSON (`work_boards.data`): **no DDL**; a payload
-  written before the field decodes as `empty`, and the next write adds it;
-- edited through the existing path: `update_board(board_kind=…)`, Core
-  `POST`/`PATCH /v1/boards*` (`parse_board_edits`, `EDITABLE_FIELDS`),
-  relayed unchanged by the Control Center `/api/boards*`. Archived Board:
-  `board_archived`. The `jarvis-workspace` MCP tools `board_create` /
-  `board_update` take it and every Board result carries it (Slice 06); the
-  Boards control shows it as a badge and sets it at creation and edit
-  (Slice 08, *Control Center Boards control*);
-- **never** touches `interaction_mode` nor its origin, and the mode never
-  changes the kind: a `meeting` Board may be in `assistant` mode. No meeting or
-  presentation live behavior hangs on it.
+- **Chosen at creation, never changed.** `create_board(board_kind=…)`, Core
+  `POST /v1/boards` (`board_kind` optional, `assistant` when omitted; `empty` is
+  accepted there only as a deprecated alias of `assistant`, never stored:
+  `parse_board_kind_input`, trace `core.board.created` with `deprecated_kind`).
+  `update_board` has no `board_kind`; a `PATCH /v1/boards/{id}` carrying it,
+  even with the same value, is refused **409 `board_kind_immutable`** before any
+  other check, nothing written, trace `core.board.kind_change_refused`
+  (warning). For another type, create another Board. The MCP tool
+  `board_create` takes it, `board_update` does not; the Boards control chooses it
+  only in the create row.
+- **The mode is derived.** `board_kind_mode(kind)` is the one mapping
+  (`assistant` → `assistant`, `presentation` → `presentation`, `meeting` →
+  `meeting`, shown as such); the behaviour that runs is
+  `behaving_interaction_mode` of it, so a Réunion Board behaves as assistant.
+  `BoardService` requests it from `InteractionModeService` at Core start
+  (`source="board_restore"`) and on every switch (`source="board_switch"`).
+  The Control Center shows the same mapping as the « stored » mode
+  (`_board_stored_mode`).
+- **Réunion** is a valid, openable Board; no meeting behaviour is invented: the
+  mode trace says `status: "meeting_planned"`, and a switch to it is never
+  rolled back for its mode.
+- Stored in the Board payload JSON (`work_boards.data`), no column. Boards
+  written before v9 were normalized once by the v9 migration (*Persistence*).
 
 ## Board memory
 
@@ -237,7 +248,7 @@ the same file).
 
 | Concept | Owns | Lives in | Lifetime |
 | --- | --- | --- | --- |
-| `Board` (structured) | identity, title, `board_kind`, status, timestamps, refs, scene ref, interaction mode: management metadata, validated and bounded | `work_boards.data` JSON | durable, across Sessions |
+| `Board` (structured) | identity, title, fixed `board_kind`, status, timestamps, refs, scene ref: management metadata, validated and bounded | `work_boards.data` JSON | durable, across Sessions |
 | Board memory | free-form agent files (notes, decisions, plans) | `<data_root>/boards/<board_id>/memory/` | durable, across Sessions; kept when the Board is archived (writes then refused `board_archived`) |
 | `SessionContext` | the active agent's current cognitive workspace in **one** Session | `<data_root>/sessions/<jsess>/contexts/<jctx>/` ([session-context.md](session-context.md)) | one Session; no `board_id` |
 | Artifact | media and derived payloads + provenance | artifact registry ([artifacts.md](artifacts.md)) | own lifecycle; linked to Boards by a link table (v8), never copied into the memory |
@@ -376,7 +387,7 @@ gives back A's memory.
 
 | Piece | Rule |
 | --- | --- |
-| `board_kind` | always in the block, counted in its 2 048-character budget; rendered `Nature : <kind>.` unless `empty` |
+| `board_kind` | always in the block, counted in its 2 048-character budget; rendered `Type : <kind>.` unless `assistant` |
 | `memory.locator` | `boards/<board_id>/memory`, relative to the data root (the API form) |
 | `memory.path` | the same folder, absolute: what the brain opens with its file tools |
 | `memory.entries` | `FileBoardMemoryStore.tree(depth=2, max_entries=40)`: name (relative to `memory/`), kind (`file`, `directory`, `link`), size of a file; never content. At most `MAX_BRAIN_BOARD_MANIFEST_ENTRIES = 40`, depth `MAX_BRAIN_BOARD_MANIFEST_DEPTH = 2`, serialized list <= `MAX_BRAIN_BOARD_MANIFEST_CHARS = 2 048`; `truncated: true` when more exist |
@@ -715,7 +726,7 @@ table and key); it is never skipped nor repaired. Any other SQLite failure
   a crash mid-step leaves v2 intact and the next start retries. The migration
   carries no product data.
 - **Default Board** (06 section H). `BoardService.ensure_default()` inserts
-  `board_id="default"` (`interaction_mode_origin="unset"`) only when
+  `board_id="default"` (type `assistant`) only when
   `work_boards` is empty, in one transaction (`insert_board_if_empty`):
   idempotent across restarts and concurrent starts. The **first Session** of
   the store (no Session row yet) adopts the most recent Core conversation into
@@ -729,35 +740,55 @@ is open (only before Core start: every Core start resumes or opens a
 Session). Slice 04b moves it by writing the Session (`commit_switch`) — a
 second pointer would be a second truth.
 
-### Interaction mode per Board
+- **Schema v9: fixed Board type** (Slice 01a of
+  `jarvis-board-ui-wheel-dossier-refactor`). One **data-only** step
+  (`sqlite_state._MIGRATIONS[9]`, no DDL: `tests/schema/jarvis_state.v9.sql`
+  has the v8 DDL), in one transaction after the automatic
+  `jarvis.sqlite3.v8.bak` copy. Each `work_boards.data` payload gets its fixed
+  `board_kind` and loses `interaction_mode` / `interaction_mode_origin`:
+
+  | Legacy payload (v8) | v9 `board_kind` |
+  | --- | --- |
+  | `board_kind` `presentation` or `meeting` (whatever the stored mode, even a user-chosen `assistant`) | kept |
+  | `board_kind` `empty` or absent, mode `presentation` / `meeting` with origin `user` or `migrated` | that mode |
+  | anything else (`unset` origin, `assistant` mode, no mode) | `assistant` |
+
+  The legacy global setting is not read: an `unset` Board already behaved as
+  assistant. Only rows still carrying legacy data are touched (a re-run changes
+  nothing); a malformed payload or an unknown kind is left as is and keeps being
+  reported by the strict decoder (`board_store_unreadable`), never repaired.
+  The version bump is deliberate although no DDL changes: a v8 binary would
+  crash decoding `assistant`, it refuses the file instead (`state DB schema 9 is
+  newer than supported 8`). Proof: `tests/unit/test_board_kind_migration_v9.py`
+  (whole matrix, idempotence, backup, strict re-read, refusal by a v8 binary).
+  **Rollback:** stop Jarvis, set `jarvis.sqlite3` and its `-wal`/`-shm` aside
+  (never delete them without a copy), restore `jarvis.sqlite3.v8.bak` as
+  `jarvis.sqlite3`, run the previous code ([local-data.md](local-data.md)).
+
+### Interaction mode from the Board type
 
 At Core start, before any route: `ensure_default()`, then the Session opens
-(*Sessions* below), then `BoardService.start(ensure_default=False)`
-re-applies the active Board's mode
-(`source="board_restore"`; skipped for an `unset` Board), then subscribes to
-`InteractionModeService` (`add_listener(..., with_state=True,
-with_unchanged=True)`: the listener receives the change's own state, so its
-`source` is never read later from the service, and also the requests that
-changed nothing — a user choosing the mode already effective is a choice, and
-is stored on the active Board without any mode event; Slice 04b QA rework, S1). Each change is written on the active Board by a background task
-(`drain()` waits for them; `BoardService.stop()`, called by Core `stop()`
-before closing the DB, unsubscribes then drains). A background write never
-raises: every failure, including an unexpected one, is a
-`core.board.interaction_mode.persist_failed` error line with `code` and
-`exception_type`:
+(*Sessions* below), then `BoardService.start(ensure_default=False)` requests
+the mode of the active Board's type (`source="board_restore"`, *Board type*).
+Every switch requests the target's (`source="board_switch"`). `BoardService`
+does not listen to `InteractionModeService` and writes no mode anywhere.
 
-| `source` of the change | Active Board `unset` | Active Board `migrated`/`user` |
-| --- | --- | --- |
-| `startup`, `core_restart` (Control Center replay) | adopted once → `migrated` | not overwritten; Board mode re-applied (`board_restore`) |
-| `board_restore`, `board_switch` (from the Board itself) | nothing written | nothing written |
-| anything else (`control_center`, `save_retry`, `protocol`, …) | stored → `user` | stored → `user` |
+**Accepted intermediate state (Slice 01a → 01b).** The legacy writers
+`POST /api/interaction-mode` (Control Center, HUD chooser),
+`POST /v1/interaction-mode` (any source) and `settings_set("interaction_mode")`
+can still change the **live** mode; nothing persists it, and the next switch or
+Core start re-applies the Board type's mode. The Control Center's global replay
+(`startup` / `core_restart`) never reaches a Core with Boards: any valid active
+Board owns its mode (`_core_boards_own_interaction_mode`), the replay is said
+retired once (`interaction.mode.replay_retired`). Slice 01b retires these writers.
 
 Diagnostics (`runtime/trace.jsonl`): `core.board.default_created`,
-`core.board.default_absent` (warning), `core.board.created` / `updated` /
-`archived`, `core.board.interaction_mode.restore_skipped`, `.applied`,
-`.migrated`, `.persisted`, `.legacy_replay_overridden` (warning),
-`.apply_failed` / `.restore_failed` / `.persist_failed` (error, with the real
-cause). Ids, codes and mode values only.
+`core.board.default_absent` (warning), `core.board.created` (with
+`board_kind`) / `updated` / `archived`, `core.board.kind_change_refused`
+(warning), `core.board.interaction_mode.applied` (`board_kind`, `mode`,
+`source`, `status: meeting_planned` for a Réunion Board),
+`.apply_failed` / `.restore_failed` (error, with the real cause). Ids, codes and
+mode values only.
 
 ### Core routes
 
@@ -767,16 +798,15 @@ Authenticated like every `/v1` route; errors are
 | Route | Body | Answer |
 | --- | --- | --- |
 | `GET /v1/boards[?include_archived=true]` | — | 200 `{boards: [...], active_board_id}` |
-| `POST /v1/boards` | `{title, board_kind?, context_summary?, task_refs?, artifact_refs?, project_refs?, scene_ref?, runtime_metadata?}` | 201 `{board, active}`; 400 `invalid_title` / `invalid_board` / `context_summary_too_long` |
+| `POST /v1/boards` | `{title, board_kind?, context_summary?, task_refs?, artifact_refs?, project_refs?, scene_ref?, runtime_metadata?}` (`board_kind` defaults to `assistant`) | 201 `{board, active}`; 400 `invalid_title` / `invalid_board` / `context_summary_too_long` |
 | `GET /v1/boards/active` | — | 200 `{board, active: true}` |
 | `GET /v1/boards/{board_id}` | — | 200 `{board, active}`; 404 `board_not_found` |
-| `PATCH /v1/boards/{board_id}` | any non-empty subset of the editable fields | 200 `{board, active}`; 404; 409 `board_archived`; 400 |
+| `PATCH /v1/boards/{board_id}` | any non-empty subset of the editable fields (never `board_kind`) | 200 `{board, active}`; 404; 409 `board_kind_immutable` (checked first) / `board_archived`; 400 |
 | `POST /v1/boards/{board_id}/archive` | empty | 200 `{board, active}` (replayable); 409 `board_is_active`; 404 |
 | `POST /v1/boards/switch` (Slice 04b) | `{board_id}` | 200 `{session, binding, board, previous_board_id, changed}`; 404 `board_not_found`; 409 `board_archived`; 400 `invalid_board`; 502 `board_activation_failed`; 500 `board_switch_rolled_back`; 503 `core_unavailable` |
 
 Unknown fields and query parameters are 400; a body above 128 KiB is 400.
-`board_kind` is editable on create and `PATCH` (strict internal value, `invalid_board` otherwise) and never changes the mode. `interaction_mode` is not an editable field: the mode changes through
-`/v1/interaction-mode` and the listener stores it. The Control Center relays
+`board_kind` is chosen on create only (strict internal value or the deprecated `empty`, `invalid_board` otherwise); a `PATCH` carrying it is `board_kind_immutable`. `interaction_mode` is not a Board field: it is derived from the type (*Board type*). The Control Center relays
 these routes as `/api/boards*` (Slice 04b, *Switch and speech authority*);
 client methods `LocalCoreClient.list_boards`, `active_board`, `get_board`,
 `create_board`, `update_board`, `archive_board`, `switch_board`.
@@ -1108,7 +1138,7 @@ before `SessionManager`'s own lock:
 | 1. validate: open Session, Board exists and is not archived; the active Board is a no-op (`changed: false`) | 404 `board_not_found`, 409 `board_archived`, 400 `invalid_board` | nothing |
 | 2. `binding_for(session, board)` (A/B/A returns the first binding) | as `binding_for` | only a new `suspended` binding, reused by the next visit |
 | 3. `host.activate(target)` -> `POST /api/agent/bindings/activate` | 502 `board_activation_failed` (the host's own `session_closed` / `invalid_binding` keep their code); when the host state is **unknown** (timeout, unreadable answer) the previous binding is re-activated first | nothing |
-| 4. target Board's mode applied, `source="board_switch"` (an `unset` Board gets the default mode, assistant — never the previous Board's mode; nothing is written on it) | previous binding re-activated on the host, 500 `board_switch_rolled_back` | nothing |
+| 4. mode of the target Board's type applied, `source="board_switch"` (never the previous Board's mode; a Réunion Board gets the assistant behaviour, never a refusal; nothing is written) | previous binding re-activated on the host, 500 `board_switch_rolled_back` | nothing |
 | 5. `commit_promotion`: one `commit_switch` — Session (active + visited), bindings (target foreground with the CLI the host reported, previous demoted to the lifecycle the host reported: `background_running` if it works, else `suspended`), Board `last_opened_at`; everything re-read under the lock | host and mode restored, 500 `board_switch_rolled_back` | nothing (one SQLite transaction) |
 | 6. `SpeechAuthority.set(target)` — no `await` between the commit and this line | — | — |
 | 7. publish `board.switched`, then `board.voice_binding.changed {conversation_id, board_id, jarvis_session_id, reason}` | — | — |
@@ -1367,8 +1397,8 @@ and **moved** here without alias: `jarvis-console` keeps only `settings_*`).
 | --- | --- | --- |
 | `board_list` | Boards + active id (summary rows, with `board_kind`) | `GET /api/boards` |
 | `board_get` / `board_get_active` | one Board as the screen shows it | `GET /api/boards/{id}` / `/active` |
-| `board_create` | new Board (`board_kind` optional); does **not** switch | `POST /api/boards` |
-| `board_update` | title, kind, summary, refs (a list replaces the previous one) | `PATCH /api/boards/{id}` |
+| `board_create` | new Board (`board_kind` optional, fixed for good); does **not** switch | `POST /api/boards` |
+| `board_update` | title, summary, refs (a list replaces the previous one); never the type | `PATCH /api/boards/{id}` |
 | `board_archive` | archive (never the active Board) | `POST /api/boards/{id}/archive` |
 | `board_switch` | conversation and voice move to that Board; the left Board keeps its background work | `POST /api/boards/switch`, `origin: brain` |
 | `session_current` | open Session, active Board, visited Boards | `GET /api/sessions/current` |
@@ -1481,10 +1511,10 @@ arrow keys / Home / End move between Boards, outside click closes):
 
 | Element | Behaviour | Route |
 | --- | --- | --- |
-| Board list | Core order; filter `En service N` / `Archivés N` (`#boardsFilter`, `aria-pressed`, back to « En service » at each opening; changing it scrolls the list back to the top, « En service » to its active row). Each row: title, `board_kind` badge (`Générique` / `Réunion` / `Présentation`, the deep manager's words, `BOARD_KINDS`; an unknown value is shown raw) in a neutral tone (the cyan accent belongs to the active Board) and last opening relative to the page clock from the server's `last_opened_at` (« ouvert il y a 3 h », « jamais ouvert », exact date in the tooltip; Core sets it on every switch and on every Session open/resume, *Sessions*). Active one marked (filled dot, frame, `aria-current`, `Actif`); other Boards whose agent is `background_running` show `En fond`. Archived rows: `Archivé`, **no switch button**, only « Inspecter ». Loaded at each opening and when the status shows another active Board or Session | `GET /api/boards?include_archived=true`, `GET /api/sessions/current` |
+| Board list | Core order; filter `En service N` / `Archivés N` (`#boardsFilter`, `aria-pressed`, back to « En service » at each opening; changing it scrolls the list back to the top, « En service » to its active row). Each row: title, `board_kind` badge (`Assistant` / `Présentation` / `Réunion`, the deep manager's words, `BOARD_KINDS`; an unknown value is shown raw) in a neutral tone (the cyan accent belongs to the active Board) and last opening relative to the page clock from the server's `last_opened_at` (« ouvert il y a 3 h », « jamais ouvert », exact date in the tooltip; Core sets it on every switch and on every Session open/resume, *Sessions*). Active one marked (filled dot, frame, `aria-current`, `Actif`); other Boards whose agent is `background_running` show `En fond`. Archived rows: `Archivé`, **no switch button**, only « Inspecter ». Loaded at each opening and when the status shows another active Board or Session | `GET /api/boards?include_archived=true`, `GET /api/sessions/current` |
 | Switch | click a Board; the active one just closes the panel | `POST /api/boards/switch {board_id}` |
-| Create | `Nouveau Board` field + kind selector (`#boardsCreateKind`, `Générique` default) + `Créer` (Enter); title trimmed, 1–120 code points, one printable line, checked before sending; `board_kind` sent only when not `empty` (Core's default); refusal shown under the field; the new Board is **not** opened (focus moves to it) | `POST /api/boards {title, board_kind?}` |
-| Edit | pencil → inline title field + kind selector, `Enregistrer` / Enter saves, Escape cancels; one `PATCH` carrying **only the changed fields**, nothing sent when nothing changed; the badge shown is the re-read list's, never the selector's (refusal, e.g. `invalid_board`, stays in the row with the input kept). Changing the kind never starts a meeting or presentation (*Board kind*) | `PATCH /api/boards/{id} {title?, board_kind?}` |
+| Create | `Nouveau Board` field + type selector (`#boardsCreateKind`, `Assistant` default; the only place a type is chosen) + `Créer` (Enter); title trimmed, 1–120 code points, one printable line, checked before sending; `board_kind` sent only when not `assistant` (Core's default); refusal shown under the field; the new Board is **not** opened (focus moves to it) | `POST /api/boards {title, board_kind?}` |
+| Edit | pencil → inline title field, `Enregistrer` / Enter saves, Escape cancels; the type is **not** offered (fixed at creation, *Board type*); one `PATCH {title}`, nothing sent when nothing changed; the row is repainted from the re-read list (a refusal, e.g. `board_kind_immutable` from an older client, stays in the row with the input kept) | `PATCH /api/boards/{id} {title}` |
 | Inspecter | « Inspecter » icon (an « open elsewhere » arrow, not a magnifier read as « search »; accessible name « Inspecter X dans Sessions & Boards », same tooltip) on every row, archived included: closes the panel and opens the deep manager (`window.JarvisWorkspace.openBoard(id, {opener: #boardsButton})`, looked up at click time; Escape there brings the focus back to `#boardsButton`) on its **Boards** view, filter « Tous », that Board's row expanded and focused. A read, never a switch. Manager absent or refusing: the panel stays open and says so (`workspace_manager_missing`); a later rejection becomes a toast carrying its code. Inert while another Boards action is in flight | `/api/workspace/boards/{id}` (by the manager) |
 | Archive | page confirmation (`confirmDialog`, danger; says it is irreversible in V1); **disabled for the active Board** (`aria-disabled`, still focusable: clicking it explains why, no request) | `POST /api/boards/{id}/archive` |
 | Nouvelle session | page confirmation: new conversation on the same Board; Board, tasks and background work kept; sends the Session it read as `expected_session_id` (second click / other tab → `session_closed`). Its always-visible help line folds away at viewport heights ≤ 600 px (still the button's `aria-describedby`) so more rows fit | `POST /api/sessions/new` |
@@ -1843,7 +1873,9 @@ and `store_warning`. Events of `GET /api/background` gain `board_id` and
    (`board_inspect`, `board_memory_*`, `session_get`: *Non-activating
    inspection*); it never loads another Board's conversation. No Galaxy map /
    minimap.
-9. **Schema v8 is forward-only.** Once Core has migrated `jarvis.sqlite3` to
+9. **Schemas v8 and v9 are forward-only.** v9 (fixed Board type) is rolled back
+   the same way from `jarvis.sqlite3.v8.bak` (*Persistence*).
+   **v8:** Once Core has migrated `jarvis.sqlite3` to
    v8, a binary from before `jarvis-board-memory-workspace-inspector` refuses
    the base (`state DB schema 8 is newer than supported 7`, exit 2, base
    untouched). Going back = stop Jarvis, set the base and its `-wal`/`-shm`
@@ -1861,12 +1893,12 @@ default): real `JarvisCoreApplication` + `LocalProtocolServer` and real
 `jarvis/app.py`; `claude` replaced by a real Python process speaking
 stream-json (sub-agents, relays, `fail-start`, `fail-resume`, `fail-<task>`
 flags). Scenarios: v2 store migration (backup, default Board, adopted voice
-conversation, legacy mode adopted once, idempotent restart); A/B/A binding
+conversation, the legacy global mode no longer replayed, idempotent restart); A/B/A binding
 reuse, `--resume` of a suspended Board, new Session clean and hydrated from
 the Board with its background work still running; inactive-Board completion
 and failure as attributed alerts with no speech, surviving a Control Center
-restart with re-alignment and a Core restart that resumes the same Session; mode per Board incl. `unset` default and
-Core-start restore; MCP tools vs screen routes incl. archive guards; failed
+restart with re-alignment and a Core restart that resumes the same Session; mode from the Board type on every switch
+(Réunion as assistant) and at Core start, a live screen change never kept; MCP tools vs screen routes incl. archive guards; failed
 switch rollback and dead-resume fallback. Every scenario ends with the
 single-authority timeline check. Real-CLI evidence (real `claude`, isolated
 Core + Control Center):

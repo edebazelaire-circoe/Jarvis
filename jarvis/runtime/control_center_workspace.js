@@ -55,7 +55,7 @@ const JarvisWorkspaceCore=(function(){
   /* ----------------------------------------------------------- vocabulaire
      Miroir des énumérations du domaine. Une valeur inconnue s'affiche telle
      quelle, jamais maquillée en une valeur connue. */
-  const BOARD_KINDS=Object.freeze({empty:'Générique',meeting:'Réunion',presentation:'Présentation'});
+  const BOARD_KINDS=Object.freeze({assistant:'Assistant',presentation:'Présentation',meeting:'Réunion'});
   const LIFECYCLES=Object.freeze({
     foreground:{label:'Premier plan',tone:'on',means:'CLI vivant : reçoit les tours, seule autorité de parole.'},
     background_running:{label:'En fond',tone:'warn',means:'CLI vivant gardé pour ses sous-agents : aucun tour, aucune parole.'},
@@ -150,8 +150,8 @@ const JarvisWorkspaceCore=(function(){
     return `<span class="chip${tone?' '+tone:''}"${title?` title="${esc(title)}"`:''}>${esc(label)}</span>`;
   }
   function kindChip(kind){
-    const k=String(kind||'empty');
-    return chip(BOARD_KINDS[k]||k,k==='empty'?'':'on',`board_kind : ${k}`);
+    const k=String(kind||'assistant');
+    return chip(BOARD_KINDS[k]||k,k==='assistant'?'':'on',`board_kind : ${k}`);
   }
   function lifecycleChip(value){
     const known=LIFECYCLES[value];
@@ -321,7 +321,7 @@ const JarvisWorkspaceCore=(function(){
     };
   }
 
-  /* Le Board d'après la liste lue (titre, nature, archivage). */
+  /* Le Board d'après la liste lue (titre, type, archivage). */
   function boardsOf(S){return list(S.boards.data&&S.boards.data.boards)}
   function boardById(S,id){return boardsOf(S).find(b=>b.board_id===id)||null}
   function titleOf(S,id,fallback){const b=boardById(S,id);return (b&&b.title)||fallback||id||'—'}
@@ -1066,7 +1066,7 @@ const JarvisWorkspaceCore=(function(){
         +`<td>${b.binding?lifecycleChip(b.binding.lifecycle):'<span class="wsp-none">—</span>'}</td><td>${code(b.binding&&b.binding.conversation_id)}</td></tr>`).join('');
       return problemsHtml(detail.problems)
         +`<div class="wsp-facts">${fact('Session courante',sessionBody)}${fact('Board actif',boardBody,' is-current')}${fact('Context actif',contextBody)}${fact('Liaison au premier plan',bindingBody)}</div>`
-        +`<section class="wsp-sect"><h4>Boards de cette Session</h4>${rows?`<div class="wsp-scroll"><table class="catalog-table wsp-table"><thead><tr><th>Board</th><th>Nature</th><th>Rôle</th><th>Agent</th><th>Conversation</th></tr></thead><tbody>${rows}</tbody></table></div>`:'<p class="wsp-none">Aucun Board.</p>'}</section>`
+        +`<section class="wsp-sect"><h4>Boards de cette Session</h4>${rows?`<div class="wsp-scroll"><table class="catalog-table wsp-table"><thead><tr><th>Board</th><th>Type</th><th>Rôle</th><th>Agent</th><th>Conversation</th></tr></thead><tbody>${rows}</tbody></table></div>`:'<p class="wsp-none">Aucun Board.</p>'}</section>`
         +'<p class="hint">Tout ici est lu sur le serveur, jamais supposé. « Actualiser » relit tout.</p>';
     });
   }

@@ -479,7 +479,6 @@ async def real_boards(tmp_path):
     try:
         yield boards, bus, journal
     finally:
-        await boards.stop()
         await state.close()
 
 
