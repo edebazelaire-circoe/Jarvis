@@ -173,8 +173,8 @@ SETUP = r"""(()=>{
   const realGUM=navigator.mediaDevices.getUserMedia.bind(navigator.mediaDevices);
   window.__tracks=[];
   navigator.mediaDevices.getUserMedia=async c=>{const s=await realGUM(c);window.__tracks.push(...s.getTracks());return s};
-  JarvisToolWheel.enabled=true;
-  return {flagDefault:true,installed:!!window.JarvisInputArbitration,webgl:!!document.createElement('canvas').getContext('webgl2')};
+  /* Slice 04 : plus de drapeau, la roue est construite d'office et visible. */
+  return {flagDefault:!document.getElementById('toolWheel').hidden,installed:!!window.JarvisInputArbitration,webgl:!!document.createElement('canvas').getContext('webgl2')};
 })()"""
 
 STATE = r"""(()=>{
@@ -243,6 +243,15 @@ SUB = "document.querySelectorAll('#toolWheel .tw-item').length>0&&!document.quer
 LEVEL1 = "!!document.querySelector('#toolWheel .tw-item[data-tw-item=bare_hands]')"
 LEVEL2 = "!!document.querySelector('#toolWheel .tw-item[data-tw-item=sleep]')"
 RESET_OFF = _post("/api/test/reset", {"enabled": False, "assets": True})
+#: La roue au **clavier** (aucun événement de pointeur réel : rien ne reprend la main).
+KB_SELECTION = [{"a": "focus", "selector": "#toolWheel .tw-anchor"}, {"a": "key", "key": "Enter"},
+                {"a": "key", "key": "Enter"}]
+FLOW = "JarvisBarehands.openFlow()"
+#: Ce que le parcours montre : son nom, son écran (ses boutons), le cycle de vie, les reprises.
+FLOW_STATE = ("(()=>({flow:JarvisBarehands.openFlow(),step:JarvisBarehands.calibration().step,lifecycle:JarvisBarehands.lifecycleStatus().lifecycle,"
+              "actions:[...document.querySelectorAll('#jarvisFlow [data-flow-action]')].map(b=>b.getAttribute('data-flow-action')),"
+              "stats:JarvisInputArbitration.stats(),arb:JarvisInputArbitration.state(),"
+              "logs:__sel.logs.filter(l=>/input_arbitration\\.(flow|takeover)/.test(l))}))()")
 
 
 @pytest.fixture(scope="module")
@@ -283,7 +292,7 @@ def run(tmp_path_factory, shots):
         "offered": {"actions": [
             RESET_OFF, _ev(SETUP), _ev(STATE), *open_selection, _ev(STATE),
             {"a": "shot", "path": str(shots / "selection-subarc.png")},
-            _ev("(()=>{JarvisToolWheel.enabled=false;const s=id=>getComputedStyle(document.getElementById(id)).display;"
+            _ev("(()=>{document.getElementById('toolWheel').hidden=true;const s=id=>getComputedStyle(document.getElementById(id)).display;"
                 "return {hud:s('barehandsHud'),palette:s('barehandsPalette')}})()"),
         ]},
         "bare_hands": {"actions": [
@@ -315,25 +324,91 @@ def run(tmp_path_factory, shots):
             *open_selection, _ev(STATE),
             {"a": "shot", "path": str(shots / "selection-failed.png")},
         ]},
+        # Bare Hands **reste actif** de bout en bout : la roue est conduite au
+        # clavier, sans un seul événement de pointeur réel (la souris qui irait
+        # jusqu'à la roue reprendrait la main et éteindrait Bare Hands).
         "tools": {"actions": [
             _post("/api/test/reset", {"enabled": False, "assets": True}), _ev(SETUP),
             _ev("JarvisInputArbitration.selectMethod('bare_hands')"), _wait(PERSISTED),
             {"a": "eval", "expr": "new Promise(r=>setTimeout(()=>r(true),1600))"},
-            *open_selection, *_click(*bh_item, button="right"), _wait(LEVEL2, 3000), _ev(STATE),
+            _ev("(window.__toolWrites=[],(()=>{const f=window.fetch;window.fetch=(u,o)=>{"
+                "if(String(u).endsWith('/api/barehands')&&o&&o.method==='POST')window.__toolWrites.push(JSON.parse(o.body));"
+                "return f(u,o)}})(),true)"),
+            *KB_SELECTION, _wait(LEVEL1, 3000),
+            {"a": "focus", "selector": "#toolWheel .tw-item[data-tw-item=bare_hands]"},
+            {"a": "key", "key": "F10", "shift": True}, _wait(LEVEL2, 3000), _ev(STATE),
             {"a": "shot", "path": str(shots / "bare-hands-subarc.png")},
-            {"a": "click", "selector": "#toolWheel .tw-item[data-tw-item='tool:pan']"},
+            {"a": "focus", "selector": "#toolWheel .tw-item[data-tw-item='tool:pan']"}, {"a": "key", "key": "Enter"},
             _wait("JarvisBarehands.tool()==='pan'", 4000), _ev(STATE),
             {"a": "eval", "expr": "fetch('/api/barehands').then(r=>r.json()).then(j=>j.tool)"},
             {"a": "eval", "expr": "JarvisBarehandsPalette.model().items.filter(i=>i.active||i.state==='active').map(i=>i.id)"},
+            _ev("window.__toolWrites"),
             # Clavier : Maj+F10 sur « Bare Hands », Échap ramène au premier niveau.
-            *open_selection, {"a": "focus", "selector": "#toolWheel .tw-item[data-tw-item=bare_hands]"},
+            *KB_SELECTION, _wait(LEVEL1, 3000),
+            {"a": "focus", "selector": "#toolWheel .tw-item[data-tw-item=bare_hands]"},
             {"a": "key", "key": "F10", "shift": True}, _wait(LEVEL2, 3000), _ev(STATE),
             {"a": "key", "key": "Escape"}, _wait(LEVEL1, 3000), _ev(STATE),
             # Aide : la carte s'ouvre par la même porte que le menu du haut.
             {"a": "key", "key": "F10", "shift": True}, _wait(LEVEL2, 3000),
-            {"a": "click", "selector": "#toolWheel .tw-item[data-tw-item=help]"},
+            {"a": "focus", "selector": "#toolWheel .tw-item[data-tw-item=help]"}, {"a": "key", "key": "Enter"},
             _wait("!!document.querySelector('#barehandsCards[data-bh-card]')", 3000), _ev(STATE),
+            # Rendre la main : le pas suivant charge sa page avant son `reset`, et
+            # un maître laissé vrai sur le serveur la ferait démarrer Bare Hands.
+            _ev("JarvisInputArbitration.selectMethod('mouse')"), _wait(OFF, 5000),
         ]},
+        # B1 : un parcours Bare Hands se conduit à la souris. Calibration ouverte,
+        # de vrais clics sur ses boutons : aucune reprise, Bare Hands reste actif,
+        # le parcours avance ; fermé, le clic suivant reprend la main.
+        "flow": {"actions": [
+            _post("/api/test/reset", {"enabled": False, "assets": True}), _ev(SETUP),
+            _ev("JarvisInputArbitration.selectMethod('bare_hands')"), _wait(PERSISTED),
+            {"a": "eval", "expr": "new Promise(r=>setTimeout(()=>r(true),1600))"},
+            _ev("JarvisBarehandsHudControl.runQuick('calibration').then(o=>!!(o&&o.ok))"),
+            _wait(FLOW + "==='calibration'&&!!document.querySelector('#jarvisFlow [data-flow-action=skip]')", 8000),
+            _ev(FLOW_STATE),
+            *[_move(300 + 30 * i, 300, settle=15) for i in range(10)],
+            {"a": "click", "selector": "#jarvisFlow [data-flow-action=skip]"},
+            _wait("!!document.querySelector('#jarvisFlow [data-flow-action=back]')", 4000), _ev(FLOW_STATE),
+            # Le choix de la raison entre par une animation : on clique une fois posé.
+            {"a": "eval", "expr": "new Promise(r=>setTimeout(()=>r(true),600))"},
+            {"a": "click", "selector": "#jarvisFlow [data-flow-action=skip-later]"},
+            _wait("JarvisBarehands.calibration().step!=='neutral'", 4000), _ev(FLOW_STATE),
+            {"a": "shot", "path": str(shots / "calibration-no-takeover.png")},
+            {"a": "click", "selector": "#jarvisFlow [data-flow-close]"},
+            _wait("!" + FLOW, 6000), _ev(FLOW_STATE),
+            *_click(700, 450), _wait(OFF, 5000), _ev(FLOW_STATE),
+        ]},
+        # Le test (même coque) : son ouverture exempte aussi ; fermé, la reprise revient.
+        "benchmark": {"actions": [
+            _post("/api/test/reset", {"enabled": False, "assets": True}), _ev(SETUP),
+            _ev("JarvisInputArbitration.selectMethod('bare_hands')"), _wait(PERSISTED),
+            {"a": "eval", "expr": "new Promise(r=>setTimeout(()=>r(true),1600))"},
+            _ev("JarvisBarehandsHudControl.runQuick('benchmark').then(o=>!!(o&&o.ok))"),
+            _wait(FLOW + "==='benchmark'", 8000),
+            *_click(700, 450), *_click(720, 470, button="right"), _ev(FLOW_STATE),
+            {"a": "click", "selector": "#jarvisFlow [data-flow-close]"},
+            _wait("!" + FLOW, 6000), _ev(FLOW_STATE),
+            *_click(700, 450), _wait(OFF, 5000), _ev(FLOW_STATE),
+        ]},
+        # P3 : une reprise émise pendant qu'un choix est en vol (`method_busy`)
+        # n'éteint pas la reprise pour toujours ; l'événement délibéré suivant retente.
+        "busy": {"actions": [
+            _post("/api/test/reset", {"enabled": False, "assets": True}), _ev(SETUP),
+            # Actif sans maître persisté : `choose('active')` n'aura plus que
+            # l'écriture `enable()` à faire, et elle est tenue 2 s en vol.
+            _ev("JarvisBarehands.activate().then(()=>true)"), _wait(ACTIVE),
+            {"a": "eval", "expr": "new Promise(r=>setTimeout(()=>r(true),1600))"},
+            _ev("(()=>{const f=window.fetch;window.__realFetch=f;window.fetch=(u,o)=>"
+                "String(u).endsWith('/api/barehands')&&o&&o.method==='POST'"
+                "?new Promise(r=>setTimeout(r,2000)).then(()=>f(u,o)):f(u,o);"
+                "window.__held=JarvisBarehandsHudControl.choose('active');return JarvisBarehandsHudControl.busy()})()"),
+            *_click(700, 450),
+            _wait("JarvisInputArbitration.stats().refusedTakeovers>=1", 3000), _ev(FLOW_STATE),
+            _wait("!JarvisBarehandsHudControl.busy()", 6000),
+            _ev("(window.fetch=window.__realFetch,true)"),
+            *_click(700, 450), _wait(OFF, 5000), _ev(FLOW_STATE),
+        ]},
+
         "voice": {"actions": [
             _post("/api/test/reset", {"enabled": False, "assets": True}), _ev(SETUP), _ev(STATE),
             # Ce que fait `settings_set(barehands.enabled, true)` côté serveur ;
@@ -396,15 +471,16 @@ def _evals(steps: list) -> list:
 def test_only_mouse_and_bare_hands_offered(run):
     steps = run["offered"]
     setup, closed, opened = steps[1], steps[2], _evals(steps)[1]
-    assert setup["installed"] is True
-    # Roue allumée : le contrôle du haut-gauche et la bande d'outils quittent la vue par défaut.
+    assert setup["installed"] is True and setup["flagDefault"] is True
+    # Roue visible (d'office depuis la Slice 04) : le contrôle du haut-gauche et la bande d'outils
+    # quittent la vue par défaut.
     assert closed["hudShown"] is False and closed["paletteShown"] is False
     # Bare Hands éteint au chargement : Sélection projette Souris.
     assert closed["view"]["method"] == "mouse" and closed["wedgeName"] == "Sélection — Souris"
     assert [(i["id"], i["role"], i["checked"], i["icon"]) for i in opened["items"]] == [
         ("mouse", "menuitemradio", "true", True), ("bare_hands", "menuitemradio", "false", True)]
     assert [i["name"] for i in opened["items"]] == ["Souris", "Bare Hands"]
-    # Roue éteinte (retour arrière) : le contrôle et la bande reviennent.
+    # Roue cachée (retour arrière) : le contrôle et la bande reviennent.
     assert steps[-1] == {"hud": "flex", "palette": "flex"}
 
 
@@ -474,6 +550,14 @@ def test_tools_reachable_in_bare_hands_subarc_single_write_path(run):
     steps = run["tools"]
     states = _evals(steps)
     level2, picked, kb_level2, back, helped = states
+    # Bare Hands **actif de bout en bout** : la roue a été conduite au clavier,
+    # aucune reprise souris ne l'a éteint en chemin.
+    assert [s["lifecycle"] for s in states] == ["active"] * 5
+    assert all(s["stats"]["takeovers"] == 0 for s in states)
+    # Bare Hands **actif de bout en bout** : la roue a été conduite au clavier,
+    # aucune reprise souris ne l'a éteint en chemin.
+    assert [s["lifecycle"] for s in states] == ["active"] * 5
+    assert all(s["stats"]["takeovers"] == 0 for s in states)
     assert [i["id"] for i in level2["items"]] == [
         "tool:pointer", "tool:pan", "tool:select", "sleep", "help", "diagnostics", "calibration"]
     tools = level2["items"][:3]
@@ -484,6 +568,10 @@ def test_tools_reachable_in_bare_hands_subarc_single_write_path(run):
     assert picked["tool"] == "pan"
     i = steps.index(picked)
     assert steps[i + 1] == "pan" and steps[i + 2] == ["pan"]
+    # Écrit par `saveSettings` (POST /api/barehands), une écriture portant l'outil.
+    assert [w.get("tool") for w in steps[i + 3] if "tool" in w] == ["pan"]
+    # Écrit par `saveSettings` (POST /api/barehands), une écriture portant l'outil.
+    assert [w.get("tool") for w in steps[i + 3] if "tool" in w] == ["pan"]
     assert any("selection.tool_selected" in l for l in picked["logs"])
     # Clavier : Maj+F10 ouvre le second niveau, Échap ramène sur « Bare Hands ».
     assert [i["id"] for i in kb_level2["items"]][:3] == ["tool:pointer", "tool:pan", "tool:select"]
@@ -491,6 +579,103 @@ def test_tools_reachable_in_bare_hands_subarc_single_write_path(run):
     assert [i["id"] for i in back["items"]] == ["mouse", "bare_hands"]
     # Aide : la carte du contrôle du haut, par sa porte (`runQuick('help')`).
     assert helped["card"] == "help"
+
+
+def _flow_states(steps: list) -> list:
+    return [s for s in steps if isinstance(s, dict) and "flow" in s and "actions" in s]
+
+
+def test_open_calibration_flow_never_taken_over_by_mouse(run):
+    """B1 : de vrais clics dans la calibration ne reprennent pas la main ; fermée, oui."""
+
+    steps = run["flow"]
+    assert steps[5] is True  # runQuick('calibration') confirmé
+    opened, skipped, back, closed, after = _flow_states(steps)
+    for s in (opened, skipped, back):
+        assert s["flow"] == "calibration" and s["lifecycle"] == "active", s
+        assert s["stats"]["takeovers"] == 0 and s["arb"]["pending"] is False
+    # Le parcours avance sous les clics : « Passer » ouvre le choix de la raison, « Plus tard »
+    # passe l'étape (l'étape courante change).
+    assert opened["step"] == "neutral" and "skip" in opened["actions"]
+    assert "skip-later" in skipped["actions"] and back["step"] not in (None, "neutral")
+    assert back["stats"]["flowExempt"] > 0
+    assert any("input_arbitration.flow_exempt" in l and "calibration" in l for l in back["logs"])
+    # La croix « Quitter ce parcours » est elle-même un clic exempté ; le parcours fermé, Bare Hands est toujours actif.
+    assert closed["flow"] is None and closed["lifecycle"] == "active" and closed["stats"]["takeovers"] == 0
+    # Puis le premier clic hors parcours reprend la main.
+    assert after["lifecycle"] == "off" and after["stats"]["takeovers"] == 1
+    assert after["stats"]["lastTakeover"]["reason"] == "click"
+    assert any("input_arbitration.flow_closed" in l for l in after["logs"])
+
+
+def test_open_benchmark_flow_never_taken_over_by_mouse(run):
+    steps = run["benchmark"]
+    assert steps[5] is True  # runQuick('benchmark') confirmé
+    clicked, closed, after = _flow_states(steps)
+    assert clicked["flow"] == "benchmark" and clicked["lifecycle"] == "active"
+    assert clicked["stats"]["takeovers"] == 0
+    assert closed["flow"] is None and closed["lifecycle"] == "active" and closed["stats"]["takeovers"] == 0
+    assert after["lifecycle"] == "off" and after["stats"]["takeovers"] == 1
+
+
+def test_takeover_refused_while_choice_in_flight_rearms(run):
+    """P3 : `method_busy` rouvre l'épisode ; le clic suivant reprend la main."""
+
+    steps = run["busy"]
+    held, after = _flow_states(steps)
+    assert held["lifecycle"] == "active" and held["stats"]["refusedTakeovers"] >= 1
+    assert held["arb"]["pending"] is False
+    assert any("input_arbitration.takeover_rearmed" in l for l in steps[-1]["logs"]) or \
+        held["stats"]["refusedTakeovers"] >= 1
+    assert after["lifecycle"] == "off" and after["stats"]["takeovers"] == held["stats"]["takeovers"] + 1
+
+
+def _flow_states(steps: list) -> list:
+    return [s for s in steps if isinstance(s, dict) and "flow" in s and "actions" in s]
+
+
+def test_open_calibration_flow_never_taken_over_by_mouse(run):
+    """B1 : de vrais clics dans la calibration ne reprennent pas la main ; fermée, oui."""
+
+    steps = run["flow"]
+    assert steps[5] is True  # runQuick('calibration') confirmé
+    opened, skipped, back, closed, after = _flow_states(steps)
+    for s in (opened, skipped, back):
+        assert s["flow"] == "calibration" and s["lifecycle"] == "active", s
+        assert s["stats"]["takeovers"] == 0 and s["arb"]["pending"] is False
+    # Le parcours avance sous les clics : « Passer » ouvre le choix de la raison, « Plus tard »
+    # passe l'étape (l'étape courante change).
+    assert opened["step"] == "neutral" and "skip" in opened["actions"]
+    assert "skip-later" in skipped["actions"] and back["step"] not in (None, "neutral")
+    assert back["stats"]["flowExempt"] > 0
+    assert any("input_arbitration.flow_exempt" in l and "calibration" in l for l in back["logs"])
+    # La croix « Quitter ce parcours » est elle-même un clic exempté ; le parcours fermé, Bare Hands est toujours actif.
+    assert closed["flow"] is None and closed["lifecycle"] == "active" and closed["stats"]["takeovers"] == 0
+    # Puis le premier clic hors parcours reprend la main.
+    assert after["lifecycle"] == "off" and after["stats"]["takeovers"] == 1
+    assert after["stats"]["lastTakeover"]["reason"] == "click"
+    assert any("input_arbitration.flow_closed" in l for l in after["logs"])
+
+
+def test_open_benchmark_flow_never_taken_over_by_mouse(run):
+    steps = run["benchmark"]
+    assert steps[5] is True  # runQuick('benchmark') confirmé
+    clicked, closed, after = _flow_states(steps)
+    assert clicked["flow"] == "benchmark" and clicked["lifecycle"] == "active"
+    assert clicked["stats"]["takeovers"] == 0
+    assert closed["flow"] is None and closed["lifecycle"] == "active" and closed["stats"]["takeovers"] == 0
+    assert after["lifecycle"] == "off" and after["stats"]["takeovers"] == 1
+
+
+def test_takeover_refused_while_choice_in_flight_rearms(run):
+    """P3 : `method_busy` rouvre l'épisode ; le clic suivant reprend la main."""
+
+    steps = run["busy"]
+    held, after = _flow_states(steps)
+    assert held["lifecycle"] == "active" and held["stats"]["refusedTakeovers"] >= 1
+    assert held["arb"]["pending"] is False
+    assert any("input_arbitration.takeover_rearmed" in l for l in held["logs"])
+    assert after["lifecycle"] == "off" and after["stats"]["takeovers"] == held["stats"]["takeovers"] + 1
 
 
 def test_voice_activate_returns_to_bare_hands(run):

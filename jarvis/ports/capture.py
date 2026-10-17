@@ -191,6 +191,41 @@ class CaptureSourceRegistry(Protocol):
         ...
 
 
+@dataclass(frozen=True, slots=True)
+class CaptureTarget:
+    """Une cible qu'une source installée sait **vraiment** prendre (orbital-ui Slice 04, D6).
+
+    `token` est la valeur de `options.device` qui la choisit (`default` d'abord) ;
+    `label` est affiché tel quel par l'interface. Écran : `primary`, `width`,
+    `height` (pixels physiques). Audio : `default`. Jamais une cible inventée.
+    """
+
+    token: str
+    label: str
+    primary: bool | None = None
+    width: int | None = None
+    height: int | None = None
+    default: bool | None = None
+
+    def to_payload(self) -> dict[str, Any]:
+        return {key: value for key, value in (("token", self.token), ("label", self.label),
+                                              ("primary", self.primary), ("width", self.width),
+                                              ("height", self.height), ("default", self.default))
+                if value is not None}
+
+
+class CaptureTargetLister(Protocol):
+    """Facultatif sur un `CaptureSourceRegistry` : les cibles d'un canal, `default` en tête.
+
+    Appelé hors de la boucle (énumération des écrans, des entrées audio) ;
+    `CaptureError` `unsupported_*` si aucune source du canal n'est installée,
+    toute autre exception = énumération illisible (Core rend alors `default`
+    seul et journalise `core.capture.targets_unreadable`).
+    """
+
+    def targets(self, channel: CaptureChannel) -> list[CaptureTarget]: ...
+
+
 # ------------------------------------------------------------------ réparation
 
 

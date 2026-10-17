@@ -8,7 +8,7 @@ the whole and how to operate it; the contracts it links are the reference:
 | --- | --- |
 | [session-context.md](session-context.md) | Session lifetime (resume, explicit new Session), Contexts (one active, dormant ones), Context folders, agent hydration, enrichment worker (`summary.md`), Brain catch-up |
 | [artifacts.md](artifacts.md) | Artifact registry (kinds, states, provenance), payload files, Session activity ledger, deletion, HTTP queries |
-| [capture.md](capture.md) | `CaptureService` (Core): states, error codes, continuity guarantee, loss bounds, recovery, microphone recording and transcription, screenshot and screen recording, HTTP API, the left capture rail |
+| [capture.md](capture.md) | `CaptureService` (Core): states, error codes, continuity guarantee, loss bounds, recovery, microphone recording and transcription, screenshot and screen recording, HTTP API, the capture controls (tool wheel wedges + persistent indicators, orbital UI Slice 04) |
 | [mcp/tool-contract.md](mcp/tool-contract.md) §10.11 | the Brain's `jarvis-capture` MCP tools |
 | [local-data.md](local-data.md), [state-model.md](state-model.md) | where the data lives, schema versions v5–v7, backups and rollback |
 | [boards.md](boards.md) | Boards and their bindings inside a Session |
@@ -40,7 +40,7 @@ supervisor ─┬─ Core ───────── SessionManager (Sessions, 
             │                 RecordingTranscriber (OpenAI STT, from the durable WAV spool)
             │                 ContextEnrichmentWorker ── restricted `claude` child per round (haiku, no tools)
             ├─ Control Center ─ capture relay (/api/captures, /api/contexts, /api/artifacts, /api/activity)
-            │                   left capture rail (#captureRail, polls the status)
+            │                   capture controller + tool wheel wedges + #recIndicators (polls the status)
             │                   Brain CLI ── `jarvis-capture` MCP server (calls the relay)
             └─ Voice ──────── nothing of the above (its microphone streams are separate)
 ```

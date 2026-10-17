@@ -138,8 +138,12 @@ def test_every_control_is_measured_and_none_covers_another(measured, theme, size
     assert read["selector"] == "[data-shell-control],#sceneLayer>.sc-status"
     names = [c["name"] for c in read["controls"]]
     for required in ("#chatTab", "#interactionModeHud", "#presentationRail", ".dock", "#bgPills",
-                     "#barehandsHud", "#barehandsPalette", "#voiceHint", "#boardsHud"):
+                     "#toolWheel", "#voiceHint", "#boardsHud"):
         assert required in names, (required, names)
+    # Slice 04 : la roue est visible d'office ; la colonne Bare Hands quitte la vue
+    # (Sélection la tient) et le rail de capture n'existe plus.
+    for gone in ("#barehandsHud", "#barehandsPalette", "#captureRail"):
+        assert gone not in names, (gone, names)
     # `#presentationRail` est mesuré (la scène s'arrête contre lui) mais garde sa
     # place héritée sur le bord gauche (left:94px) jusqu'à la Slice 07, qui le
     # range dans la zone de droite : son voisinage n'est pas une promesse de cette

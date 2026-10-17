@@ -42,6 +42,7 @@ from dataclasses import dataclass
 from datetime import datetime
 import os
 import queue
+import re
 import struct
 import threading
 import time
@@ -52,8 +53,8 @@ from jarvis.audio.wav_pcm import HEADER_BYTES, WavFormatError, parse_wav_header,
 from jarvis.domain.capture import DEFAULT_DEVICE, CaptureChannel, CaptureError, CaptureErrorCode, CaptureMode
 from jarvis.domain.v2 import utc_now
 from jarvis.ports.capture import (
-    CaptureSink, CaptureSource, CaptureSourceError, CaptureSourceRegistry, MediaInfo, OneShotSource, RepairOutcome,
-    RepairTarget, SourceHealth,
+    CaptureSink, CaptureSource, CaptureSourceError, CaptureSourceRegistry, CaptureTarget, MediaInfo, OneShotSource,
+    RepairOutcome, RepairTarget, SourceHealth,
 )
 
 MICROPHONE_SOURCE = "microphone"
@@ -428,19 +429,45 @@ def device_from_token(token: str, configured: Callable[[], int | str | None]) ->
     return int(token) if token.isdigit() else token
 
 
+#: Un nom d'entrée devient un jeton de `device` valide (domaine : `[A-Za-z0-9][A-Za-z0-9_.-]*`, ≤ 128).
+_TOKEN_UNSAFE = re.compile(r"[^A-Za-z0-9_.-]+")
+MAX_INPUT_TOKEN_CHARS = 96
+#: Libellé de la cible `default` : le réglage de Voice (orbital-ui S04, D6).
+VOICE_INPUT_LABEL = "Micro de Voice"
+
+
+def input_token(name: str) -> str:
+    """Jeton stable d'une entrée, tiré de son **nom** (l'index PortAudio change quand un appareil
+    se branche ; le nom non). `Microphone (Realtek(R) Audio)` -> `Microphone-Realtek-R-Audio`."""
+
+    slug = _TOKEN_UNSAFE.sub("-", name).strip("-._")[:MAX_INPUT_TOKEN_CHARS].rstrip("-._")
+    if not slug or slug == DEFAULT_DEVICE or slug.isdigit():
+        slug = f"input-{slug}" if slug else "input"
+    return slug
+
+
+#: Liste des entrées, forme de `SoundDeviceAudioDiagnostics.list_devices` :
+#: `{inputs: [{id, name, hostapi}], defaults: {input}}`.
+InputLister = Callable[[], Any]
+
+
 class AudioRecordingSources:
     """`CaptureSourceRegistry` de production : micro pour `audio`/`continuous`, le reste délégué ou refusé.
 
     `others` : registre des autres familles (écran, Slice 07) ; sans lui, refus
-    `unsupported_source` comme `NoCaptureSources`.
+    `unsupported_source` comme `NoCaptureSources`. `list_inputs` (orbital-ui
+    S04) : l'énumération des entrées ; sans elle, seule la cible `default`
+    existe et un jeton nommé passe tel quel à PortAudio (comportement d'avant).
     """
 
     def __init__(self, *, configured_device: Callable[[], int | str | None],
                  backend_factory: Callable[[], InputBackend] = SoundDeviceInput,
-                 others: CaptureSourceRegistry | None = None, **source_options: Any) -> None:
+                 others: CaptureSourceRegistry | None = None, list_inputs: InputLister | None = None,
+                 **source_options: Any) -> None:
         self._configured = configured_device
         self._backend_factory = backend_factory
         self._others = others
+        self._list_inputs = list_inputs
         self._options = source_options
 
     def _is_microphone(self, channel: CaptureChannel, source: str | None) -> bool:
@@ -450,10 +477,44 @@ class AudioRecordingSources:
         return CaptureError(CaptureErrorCode.UNSUPPORTED_SOURCE,
                             f"no capture source {source or 'default'!r} for channel {CaptureChannel(channel).value}")
 
+    def _inputs(self) -> tuple[list[tuple[str, int, str]], int | None]:
+        """Entrées de l'API hôte par défaut (celle de l'entrée par défaut), jetons uniques, ordre de la source."""
+
+        listing = self._list_inputs() if self._list_inputs is not None else {}
+        inputs = [item for item in (listing.get("inputs") or []) if isinstance(item, dict)]
+        default_index = (listing.get("defaults") or {}).get("input")
+        by_id = {int(item["id"]): item for item in inputs}
+        hostapi = by_id[default_index].get("hostapi") if default_index in by_id else None
+        out: list[tuple[str, int, str]] = []
+        seen: dict[str, int] = {}
+        for item in inputs:
+            if hostapi is not None and item.get("hostapi") != hostapi:
+                continue
+            name = str(item.get("name") or f"input {item['id']}")
+            base = input_token(name)
+            seen[base] = seen.get(base, 0) + 1
+            out.append((base if seen[base] == 1 else f"{base}-{seen[base]}", int(item["id"]), name))
+        return out, default_index if isinstance(default_index, int) else None
+
+    def _resolve(self, token: str) -> int | str | None:
+        if token == DEFAULT_DEVICE or token.isdigit() or self._list_inputs is None:
+            return device_from_token(token, self._configured)
+        try:
+            inputs, _ = self._inputs()
+        except Exception as exc:  # noqa: BLE001 - enumeration refused: the start is refused with its cause
+            raise CaptureError(CaptureErrorCode.SOURCE_UNAVAILABLE,
+                               f"audio inputs unreadable: {type(exc).__name__}: {exc}"[:300]) from exc
+        for found, index, _ in inputs:
+            if found == token:
+                return index
+        raise CaptureError(CaptureErrorCode.SOURCE_UNAVAILABLE, f"audio input {token!r} is not attached")
+
     def continuous(self, channel: CaptureChannel, *, source: str | None, device: str) -> CaptureSource:
         if self._is_microphone(channel, source):
             try:
-                resolved = device_from_token(device, self._configured)
+                resolved = self._resolve(device)
+            except CaptureError:
+                raise
             except Exception as exc:  # noqa: BLE001 - unreadable setting: refused with its cause
                 raise CaptureError(CaptureErrorCode.SOURCE_UNAVAILABLE,
                                    f"configured input device unreadable: {type(exc).__name__}: {exc}"[:300]) from exc
@@ -461,6 +522,34 @@ class AudioRecordingSources:
         if self._others is not None:
             return self._others.continuous(channel, source=source, device=device)
         raise self._refuse(channel, source)
+
+    def targets(self, channel: CaptureChannel) -> list[CaptureTarget]:
+        """Audio : `default` (le réglage de Voice, libellé du nom résolu), puis les **autres** entrées de
+        l'API hôte par défaut, jeton = nom (`input_token`). Écran : délégué. Jamais de son système."""
+
+        if CaptureChannel(channel) is not CaptureChannel.AUDIO:
+            lister = getattr(self._others, "targets", None)
+            if lister is None:
+                raise self._refuse(channel, None)
+            return lister(channel)
+        if self._list_inputs is None:
+            return [CaptureTarget(token=DEFAULT_DEVICE, label=VOICE_INPUT_LABEL, default=True)]
+        inputs, system_default = self._inputs()
+        configured = self._configured()
+        names = {index: name for _, index, name in inputs}
+        if configured is None:
+            chosen = system_default
+            label = names.get(system_default) if system_default is not None else None
+        elif isinstance(configured, int):
+            chosen, label = configured, names.get(configured)
+        else:
+            chosen = next((index for _, index, name in inputs if name == configured), None)
+            label = configured
+        out = [CaptureTarget(token=DEFAULT_DEVICE, default=True,
+                             label=f"{VOICE_INPUT_LABEL} — {label}" if label else VOICE_INPUT_LABEL)]
+        out.extend(CaptureTarget(token=token, label=name, default=False)
+                   for token, index, name in inputs if index != chosen)
+        return out
 
     def one_shot(self, channel: CaptureChannel, *, source: str | None, device: str) -> OneShotSource:
         if self._others is not None:
@@ -521,5 +610,5 @@ class WavCaptureRepair:
 __all__ = [
     "AudioRecordingSources", "HEADER_BYTES", "InputBackend", "MICROPHONE_SOURCE", "MicrophoneRecordingSource",
     "OpenedInput", "RECORDING_SAMPLE_RATES", "SoundDeviceInput", "WavCaptureRepair", "device_from_token",
-    "source_error",
+    "input_token", "source_error",
 ]

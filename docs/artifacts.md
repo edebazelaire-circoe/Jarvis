@@ -121,7 +121,7 @@ Explicit rows, never opaque metadata (D08): “`artifact_id` *relation*
 | `segment_of` | segment of a whole (segment → transcript) |
 | `frame_from` | image extracted from a screen recording |
 | `described_from` | description of a capture, image or excerpt |
-| `derived_from` | any other derivation (summary, observation) |
+| `derived_from` | any other derivation (summary, observation; an **annotated screenshot** → its original screenshot, orbital-ui Slice 05.B) |
 | `rendered_from` | MP4, still or PDF of a **complete** `presentation_snapshot` (exactly one origin; [presentation-artifacts.md](presentation-artifacts.md)) |
 
 No self relation; ≤ 64 origins per artifact; both ends must exist; adding an
@@ -328,6 +328,7 @@ Served by Core (`jarvis/protocol/capture_routes.py`, facade
 | `GET /v1/artifacts/{id}/transcript` | bounded transcript of an audio, transcript or segment artifact ([capture.md](capture.md)) |
 | `GET /v1/artifacts/{id}/payload` | the bytes, **for the interface only** (no MCP tool calls it): terminal artifacts only (`artifact_still_pending` 409), `artifact_no_payload` / `artifact_payload_missing` 404; one `Range: bytes=` range (`a-b`, `a-`, `-n`) → 206 with `Content-Range`; at most 8 MiB per answer (`MAX_PAYLOAD_CHUNK_BYTES`): a whole read of a larger payload is 413 `artifact_payload_too_large` (read by ranges), an open range is served by chunk; invalid range 416 `artifact_range_invalid` with `Content-Range: bytes */<size>` (a bound longer than 19 digits included: never Python's integer-size error). Headers: the artifact's MIME type, `Content-Disposition: inline; filename="<payload name>"`, `X-Content-Type-Options: nosniff`, `Cache-Control: no-store`, `Accept-Ranges: bytes`. The Control Center relays the bytes (`forward_bytes`, `Range` passed through) and refuses a body above 8 MiB with 502 `payload_too_large_for_relay` — never half a payload |
 | `DELETE /v1/artifacts/{id}[?cascade=true&origin=user\|brain]` | explicit delete (*Deletion* above) → `{deleted, orphan_folders}` |
+| `POST /v1/artifacts/{id}/annotations` | annotated screenshot (orbital-ui Slice 05.B): raw PNG body (`Content-Type: image/png`, ≤ 8 MiB read as a stream, signature + `IHDR`, same dimensions as the original) → 201 `{artifact, annotated_from}`: a **new** `screenshot` artifact, `source = annotation`, `metadata.annotated_from`, relation `derived_from` to the original, same Session and Context; the original is never rewritten (and can no longer be deleted alone: `artifact_has_dependents`). Refusals: 404 `artifact_not_found`, 400 `annotation_source_invalid` / `annotation_empty` / `annotation_dimensions_mismatch`, 409 `annotation_source_not_ready`, 413 `annotation_too_large`, 415 `annotation_not_png`; nothing is written on a refusal ([capture.md](capture.md) › *Screenshot preview and quick actions*) |
 | `GET /v1/activity` | ledger tail of the **open** Session: `after_seq` cursor, `limit` 1..200 (default 50), `context_id` (`active` alias), `kind` (comma list) → `{events, latest_seq}`; ids and small codes only |
 
 ## Presentation derivatives (Remotion Slice 16)

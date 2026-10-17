@@ -28,7 +28,13 @@
      tremblement s'annule dans le net, une dérive lente n'atteint jamais le
      trajet dans la fenêtre. Une transition par épisode, puis plus rien tant
      que le cycle de vie n'a pas changé ; `cooldownMs` après chaque entrée en
-     `active` (choix explicite, voix, réveil en C).
+     `active` (choix explicite, voix, réveil en C). Une reprise **refusée**
+     (choix en vol, échec) rouvre l'épisode : l'événement délibéré suivant
+     retente.
+   - **Parcours exemptés** : tant qu'un parcours Bare Hands est ouvert
+     (`JarvisBarehands.openFlow()` : calibration, test), aucune reprise — ces
+     parcours se conduisent à la souris par construction, et une reprise y
+     éteindrait Bare Hands sous une surimpression restée ouverte.
 
    Deux blocs, comme la roue : le **modèle pur** (exécuté par node dans
    `tests/unit/test_input_arbitration_js.py`, propriétés sur 10 000 tirages)
@@ -89,7 +95,11 @@
        délai de grâce ;
      - `{type:'explicit', method:'bare_hands', t}` — le choix explicite (arme
        le délai avant même que le cycle de vie n'ait atterri) ;
-     - `{type, t, x, y, trusted, bareHands}` pour `pointermove` et `DISCRETE`. */
+     - `{type:'takeover_refused', t}` — la reprise émise n'a pas abouti
+       (`selectMethod` occupé ou en échec) : l'épisode se rouvre, sans quoi
+       `pending` resterait vrai pour toujours et la souris ne reprendrait plus ;
+     - `{type, t, x, y, trusted, bareHands, flow}` pour `pointermove` et
+       `DISCRETE` ; `flow` : le nom du parcours Bare Hands ouvert, ou rien. */
   function decide(state,event,params=DEFAULTS){
     const p=params;
     const s={...state};
@@ -104,6 +114,10 @@
       }
       return none();
     }
+    if(event.type==='takeover_refused'){
+      s.pending=false;s.samples=[];
+      return none();
+    }
     if(event.type==='explicit'){
       if(event.method==='bare_hands'){s.cooldownUntil=t+p.cooldownMs;s.samples=[]}
       return none();
@@ -114,6 +128,11 @@
        `isTrusted`, et un `pointerId` de Bare Hands. Ni l'un ni l'autre ne
        reprend la main — sinon la main se couperait elle-même. */
     if(event.trusted!==true||event.bareHands===true)return none();
+    /* Un parcours (calibration, test) se conduit à la souris : exempté. */
+    if(event.flow){
+      if(s.samples.length)s.samples=[];
+      return none();
+    }
     if(s.lifecycle!=='active'||s.pending){
       if(s.samples.length)s.samples=[];
       return none();
@@ -240,7 +259,9 @@
 
     let params=DEFAULTS,state=initialState(),snapshot=null,startedAt=0,startTimer=null;
     let returnStartedAt=0;
-    const stats={takeovers:0,ignoredSynthetic:0,lastTakeover:null,lastReturnMs:null,lastReturnOutcome:null};
+    const stats={takeovers:0,ignoredSynthetic:0,flowExempt:0,refusedTakeovers:0,lastTakeover:null,
+      lastReturnMs:null,lastReturnOutcome:null};
+    let exemptFlow=null;
     const now=()=>performance.now();
 
     function feed(event){
@@ -255,7 +276,26 @@
       stats.takeovers+=1;stats.lastTakeover={...info,at:Date.now()};
       log('info','input_arbitration.takeover',{reason:info.reason,input:info.input,distance_px:info.distance_px,
         net_px:info.net_px,window_ms:info.window_ms});
-      choose('mouse',{source:'takeover',reason:'mouse_takeover'});
+      choose('mouse',{source:'takeover',reason:'mouse_takeover'}).then(out=>{
+        if(out!==null)return;
+        stats.refusedTakeovers+=1;
+        feed({type:'takeover_refused',t:now()});
+        log('warn','input_arbitration.takeover_rearmed',{reason:info.reason,refused:stats.refusedTakeovers});
+      }).catch(error=>log('error','input_arbitration.takeover_failed',{error:errorText(error)}));
+    }
+
+    /* Le parcours Bare Hands ouvert (calibration, test), lu à la source
+       (`JarvisBarehands.openFlow()`, le garde qui refuse un second parcours).
+       Journalisé à l'entrée et à la sortie de l'exemption. */
+    function openFlowName(){
+      let name=null;
+      try{name=typeof surface.openFlow==='function'?surface.openFlow():null}
+      catch(error){log('error','input_arbitration.flow_unreadable',{error:errorText(error)})}
+      if(name!==exemptFlow){
+        log('info',name?'input_arbitration.flow_exempt':'input_arbitration.flow_closed',{flow:name||exemptFlow});
+        exemptFlow=name;
+      }
+      return name;
     }
 
     async function choose(method,ctx){
@@ -327,7 +367,9 @@
       if(!event.isTrusted||bareHands){stats.ignoredSynthetic+=1;return}
       /* Un `click` né du clavier (Entrée, Espace) n'est pas la souris. */
       if(event.type==='click'&&event.detail===0)return;
-      feed({type:event.type,t:now(),x:event.clientX,y:event.clientY,trusted:event.isTrusted===true,bareHands});
+      const flow=openFlowName();
+      if(flow)stats.flowExempt+=1;
+      feed({type:event.type,t:now(),x:event.clientX,y:event.clientY,trusted:event.isTrusted===true,bareHands,flow});
     };
     for(const type of ['pointerdown','pointermove','click','contextmenu'])
       document.addEventListener(type,onPointer,{capture:true,passive:true});

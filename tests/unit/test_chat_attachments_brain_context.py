@@ -132,14 +132,15 @@ async def test_unknown_foreign_pending_and_other_kind_attachments_are_refused(st
     pending = await stack.core.artifacts.create(kind=ArtifactKind.UPLOAD, source="chat",
                                                 jarvis_session_id=session.jarvis_session_id,
                                                 payload_name="upload.png", metadata={"provenance": "chat_attachment"})
-    screenshot = await stack.core.artifacts.create(kind=ArtifactKind.SCREENSHOT, source="test",
-                                                   jarvis_session_id=session.jarvis_session_id,
-                                                   payload_name="shot.png")
+    # Une autre nature que pièce jointe ou capture d'écran (Slice 05 admet `screenshot`) : refusée.
+    recording = await stack.core.artifacts.create(kind=ArtifactKind.SCREEN_RECORDING, source="test",
+                                                  jarvis_session_id=session.jarvis_session_id,
+                                                  payload_name="screen.mp4")
     good = await attach(stack, PNG, "ok.png")
     cases = [
         ([good, "jart_" + "a" * 32], 404, "attachment_not_found"),
         ([pending.artifact_id], 409, "attachment_not_ready"),
-        ([screenshot.artifact_id], 400, "attachment_not_allowed"),
+        ([recording.artifact_id], 400, "attachment_not_allowed"),
         ([good, good], 400, "invalid_request"),
         (["not-an-id"], 400, "invalid_request"),
         ([f"jart_{i:032x}" for i in range(11)], 400, "too_many_attachments"),
@@ -188,6 +189,73 @@ async def test_an_attachment_of_another_board_is_refused_and_the_replay_still_an
         assert (status, body.get("duplicate")) == (200, True), body
     await stack.settle()
     assert len(stack.backend.calls) == 2
+
+
+# ------------------------------------------------------------------ « Envoyer à Jarvis » (orbital-ui Slice 05, D7)
+
+
+async def screenshot(stack, *, session_id: str | None = "current", complete: bool = True) -> str:
+    """Une capture d'écran du registre, comme `CaptureService.screenshot` la laisse : aucun écran lu."""
+
+    if session_id == "current":
+        session_id = (await stack.core.sessions.current()).session.jarvis_session_id
+    shot = await stack.core.artifacts.create(kind=ArtifactKind.SCREENSHOT, source="capture.screen",
+                                             jarvis_session_id=session_id, payload_name="screenshot.png",
+                                             mime_type="image/png", metadata={"capture_id": None, "device": None})
+    if complete:
+        await stack.core.artifacts.store_payload(shot.artifact_id, PNG, width=1, height=1)
+    return shot.artifact_id
+
+
+async def test_screenshot_of_open_session_is_admitted(stack):
+    """Une capture `complete` de la Session ouverte accompagne un message écrit ; le cerveau reçoit le
+    chemin de SON payload (aucune copie), comme un fichier joint, et le Control Center la dit lisible."""
+
+    conversation_id = await stack.foreground()
+    shot = await screenshot(stack)
+    before = await stack.core.artifacts.get(shot)
+    status, body, _ = await stack.send(conversation_id, "Que vois-tu sur cette capture ?", attachments=[shot])
+    assert status == 202, body
+    await stack.settle()
+    [turn] = stack.backend.calls
+    assert turn.attachments == (shot,)
+    [item] = stack.backend.contexts[-1]["attachments"]["items"]
+    payload = stack.core.artifacts.payload_path(before)
+    assert (item["artifact_id"], item["original_name"], item["mime_type"], item["path"]) == (
+        shot, "capture d’écran.png", "image/png", payload), "le chemin du payload de la capture, jamais une copie"
+    brief = build_agent_brief(with_agent_readability(stack.backend.contexts[-1], "claude"), "Que vois-tu ?")
+    block = brief[brief.index(BRIEF_ATTACHMENTS_HEADER):brief.index("[Demande]")]
+    assert block.splitlines()[1] == f"- « capture d’écran.png » (image/png, 1,0 Ko) : lisible avec Read → {payload}"
+    after = await stack.core.artifacts.get(shot)
+    assert (after.state, after.size_bytes, after.metadata, after.kind) == (
+        before.state, before.size_bytes, before.metadata, before.kind), "la capture n'est pas modifiée"
+    assert str(Path(payload).parent) not in json.dumps(body), "aucun chemin vers le navigateur"
+
+
+async def test_screenshot_of_other_session_is_refused(stack):
+    old = await screenshot(stack)
+    await stack.core.sessions.start_new_session()
+    conversation_id = await stack.foreground()
+    status, body, _ = await stack.send(conversation_id, "Et celle-ci ?", attachments=[old])
+    assert (status, body["error"]["code"]) == (400, "attachment_not_allowed")
+    # Sans Session (aucune association) : pas de la Session ouverte non plus.
+    loose = await screenshot(stack, session_id=None)
+    status, body, _ = await stack.send(conversation_id, "Et celle-là ?", attachments=[loose])
+    assert (status, body["error"]["code"]) == (400, "attachment_not_allowed")
+    await stack.settle()
+    assert stack.backend.calls == []
+
+
+async def test_non_complete_screenshot_refused(stack):
+    conversation_id = await stack.foreground()
+    pending = await screenshot(stack, complete=False)
+    failed = await screenshot(stack, complete=False)
+    await stack.core.artifacts.fail(failed, error_code="source_unavailable")
+    for artifact_id in (pending, failed):
+        status, body, _ = await stack.send(conversation_id, "Regarde", attachments=[artifact_id])
+        assert (status, body["error"]["code"]) == (409, "attachment_not_ready"), artifact_id
+    await stack.settle()
+    assert stack.backend.calls == []
 
 
 async def test_replay_compares_the_attachments(stack):

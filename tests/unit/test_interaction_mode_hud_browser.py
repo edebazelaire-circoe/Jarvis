@@ -135,10 +135,14 @@ def test_sous_700px_le_bouton_ne_recouvre_plus_la_palette_bare_hands(tmp_path, w
     explicite de cette Slice.
 
     La sortie est horizontale : on passe à droite d'une colonne dont la largeur,
-    elle, est fixe."""
+    elle, est fixe.
+
+    Orbital UI Slice 04 : la roue d'outils est visible d'office et la colonne
+    Bare Hands quitte la vue ; elle revient quand la roue est cachée (retour
+    arrière). Le relevé se fait donc roue cachée, là où la colonne existe."""
 
     seen = _drive(tmp_path, [{"width": width, "height": height, "mountPalette": True,
-                              "toast": True}])[0]
+                              "toast": True, "wheelHidden": True}])[0]
     button, palette = seen["modeBtn"], seen["palette"]
     assert palette, "la palette est bien montée : sans elle ce test ne prouve rien"
     # **Aucun recouvrement**, ni partiel ni total.
@@ -161,12 +165,14 @@ LIVE_AND_CHAT = ("(()=>{document.getElementById('liveBanner').hidden=false;"
                  "document.getElementById('chatLock').hidden=false;return 'ok'})()")
 
 
+@pytest.mark.parametrize("theme", [COSMOS, None], ids=["cosmos", "circuit"])
 @pytest.mark.parametrize("width", [500, 650])
-def test_sous_700px_en_cosmos_la_notification_garde_sa_taille_et_sa_place(tmp_path, width):
+def test_sous_700px_en_cosmos_la_notification_garde_sa_taille_et_sa_place(tmp_path, width, theme):
     """B1 : la regle Cosmos remettait `bottom:68px` sans retirer `top:62px` ; la grille `.toasts` etirait alors une
-    seule notification sur toute la hauteur, par-dessus le dock Cosmos."""
+    seule notification sur toute la hauteur, par-dessus le dock Cosmos. Les deux themes partagent la geometrie de la
+    coque (orbital-ui S01) : une seule regle, verifiee dans les deux."""
 
-    seen = _drive(tmp_path, [{"width": width, "height": 700, "setup": COSMOS, "toast": True}])[0]
+    seen = _drive(tmp_path, [{"width": width, "height": 700, "setup": theme, "toast": True}])[0]
     toast = seen["toast"]
     assert toast and toast["h"] < 120, toast
     for name in ("modeBtn", "chatTab", "dock", "pills"):
@@ -193,7 +199,9 @@ def test_a_pleine_largeur_le_controle_ne_bouge_pas(tmp_path):
     button = seen["modeBtn"]
     # Toujours sur le rail gauche, à son offset d'origine.
     assert round(button["l"]) == 18
-    for name in ("palette", "bhHud", "hint", "toast", "dock", "pills"):
+    # Slice 04 de l'orbital UI : la roue est visible d'office, la colonne cachée.
+    assert seen["wheel"] and not seen.get("palette"), (seen["wheel"], seen.get("palette"))
+    for name in ("palette", "bhHud", "wheel", "hint", "toast", "dock", "pills"):
         assert _overlap(button, seen.get(name)) is None, (name, button, seen.get(name))
 
 

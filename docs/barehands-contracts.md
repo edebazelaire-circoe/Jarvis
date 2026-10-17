@@ -238,6 +238,10 @@ la phrase du toast d'arrêt : `mouse_takeover` → « Souris reprise — Bare Ha
 éteint ». « Souris » est `off` et jamais `sleep` : c'est le seul état où la
 posture en C ne peut pas rendre la main, donc le retour à Bare Hands reste
 explicite (roue, ou voix `barehands_activate`) par construction.
+`JarvisBarehands.openFlow()` rend le parcours ouvert (`'calibration'`,
+`'benchmark'`) ou `null` — le même garde que le refus d'un second parcours :
+la reprise souris s'en abstient tant qu'il rend un nom, parce que ces parcours
+se conduisent à la souris.
 
 | Présentation | Quand | Rendu |
 |---|---|---|
@@ -1901,14 +1905,15 @@ chargement.
 
 **Les commandes de capture ne sont pas des outils** (session-context-recording,
 Slice 10, décisions D14/D15). Capture d'écran, enregistrement audio et
-enregistrement d'écran vivent dans un rail **frère** de la palette,
-`#captureRail` (`control_center_capture_rail.js`), posé sous la colonne Bare
-Hands dans le même langage visuel et séparé d'elle par un filet. Rien n'en
-entre dans `TOOL`, `describeTools()`, `#barehandsPaletteStrip` ni
-`data-bh-tool` : un outil est un choix **exclusif** tenu par les réglages, une
-capture un canal **concurrent** tenu par Core, et le rail reste utilisable
-Bare Hands éteint ou absent. La palette ne sait rien du rail ; c'est le rail
-qui mesure la colonne pour se poser. Contrat : `docs/capture.md` › *Interface*.
+enregistrement d'écran ont vécu dans un rail **frère** de la palette
+(`#captureRail`) ; depuis la Slice 04 de l'orbital UI ce sont les secteurs
+Vidéo, Capture d'écran et Audio de la roue d'outils, plus les indicateurs
+persistants `#recIndicators` (`control_center_capture_wheel.js`, sur le
+contrôleur `control_center_capture_rail.js`). Rien n'en entre dans `TOOL`,
+`describeTools()`, `#barehandsPaletteStrip` ni `data-bh-tool` : un outil est
+un choix **exclusif** tenu par les réglages, une capture un canal
+**concurrent** tenu par Core, et les captures restent utilisables Bare Hands
+éteint ou absent. Contrat : `docs/capture.md` › *Interface*.
 
 **Un outil est une exigence sur la cible, et rien d'autre.** `TOOL_CAPABILITY`
 donne la capacité de chacun, et cette capacité **est** un mode de contenu du

@@ -4,15 +4,19 @@
    dans la page et avant tout script, par un double en memoire (`window.__rail`) : c'est l'interface qui est mesuree ici ; la chaine reelle
    jusqu'a Core est prouvee par `test_presentation_studio_rail.py` (vrai Core) et par la verification en bac a sable.
 
-   Usage : node _presentation_rail_browser.mjs <page.html> <chrome.exe>
+   Slice 07 (rail actif, D10) : la route bornee des apercus (`/api/artifacts/{id}/payload`) est doublee aussi, au seul endroit ou la page la
+   lit (`img.src`) : une image SVG en memoire tient lieu du PNG que Core servirait ; un id sans image rend une image illisible (le repli est
+   ainsi mesure). La chaine reelle (vrai rendu, vrai relais) est prouvee par `test_presentation_rail_e2e_browser.py`.
+
+   Usage : node _presentation_rail_browser.mjs <page.html> <chrome.exe> [dossier des captures]
    Sortie : un objet JSON `{scenario: lectures}` sur la sortie standard. */
 import {spawn} from 'node:child_process';
-import {mkdtempSync, rmSync} from 'node:fs';
+import {mkdtempSync, rmSync, writeFileSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {disposeChromeOnExit} from './_cdp_profile.mjs';
 
-const [,,PAGE,CHROME]=process.argv;
+const [,,PAGE,CHROME,SHOTS]=process.argv;
 
 const FAKE=`(()=>{
   const PID=n=>'pst_'+String(n).padStart(32,'0');
@@ -23,12 +27,43 @@ const FAKE=`(()=>{
     {presentation_id:PID(4),title:'Brouillon cache',active_variant_id:'psv_'+'4'.repeat(32),variant_count:1,engine:'remotion',revision:1,updated_at:'2026-10-10T07:00:00Z',hidden:true,archived:false,work:{state:'done',label:'',age_s:null}},
     {presentation_id:PID(5),title:'Ancienne',active_variant_id:'psv_'+'5'.repeat(32),variant_count:1,engine:'remotion',revision:1,updated_at:'2026-10-10T06:00:00Z',hidden:false,archived:true,work:{state:'done',label:'',age_s:null}},
   ];
+  /* What Core sends since Slice 07 (D10): type, preview (none here), unreviewed (none here). */
+  rows.forEach(r=>{r.type={engine:r.engine};r.preview=null;r.unreviewed=null});
   if(location.hash==='#calm')rows.forEach(r=>{r.work={state:'done',label:'',age_s:null}});
-  const rail=window.__rail={rows,calls:[],reports:[],ui:{seq:0,request:null,reported:null},down:false,refuse:null,playing:null,commands:[]};
+  const STILL='jart_'+'a'.repeat(32),STILL2='jart_'+'b'.repeat(32),SHOT='jart_'+'c'.repeat(32);
+  if(location.hash==='#cards'){
+    /* Every state at once: working + preview, unreviewed + preview, problem, done (Slidecar, no render), unknown (no work state). */
+    rows[0].preview={artifact_id:STILL,kind:'presentation_still',width:1280,height:720};
+    rows[1].unreviewed={since:'2026-10-16T09:00:00Z',label:'presentation_edit'};rows[1].preview={artifact_id:STILL2,kind:'presentation_still',width:1280,height:720};
+    rows[3].hidden=false;rows[3].engine='slidecar';rows[3].type={engine:'slidecar'};rows[3].title='Notes de recherche';
+    rows.push({presentation_id:PID(6),title:'Architecture technique',active_variant_id:'psv_'+'6'.repeat(32),variant_count:3,engine:'remotion',type:{engine:'remotion'},revision:2,
+      updated_at:'2026-10-09T08:00:00Z',hidden:false,archived:false,preview:null,unreviewed:null});
+  }
+  const slide=(a,b,title)=>'<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="720" viewBox="0 0 1280 720"><defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="'+a+'"/><stop offset="1" stop-color="'+b+'"/></linearGradient></defs><rect width="1280" height="720" fill="url(#g)"/><text x="96" y="380" font-family="Segoe UI,sans-serif" font-size="120" font-weight="700" fill="#fff">'+title+'</text><rect x="96" y="430" width="420" height="16" rx="8" fill="#ffffff88"/></svg>';
+  const rail=window.__rail={rows,calls:[],reports:[],ui:{seq:0,request:null,reported:null},down:false,refuse:null,playing:null,commands:[],payloads:[],
+    previews:{[STILL]:slide('#1d2b64','#f8cdda','JARVIS'),[STILL2]:slide('#0f2027','#2c5364','Bilan'),[SHOT]:slide('#134e5e','#71b280','Capture')},boardArtifacts:{}};
+  /* Stage B: the Board-linked artifacts the workspace route returns, per Board (only with #cards; empty Boards otherwise). */
+  if(location.hash==='#cards')rail.boardArtifacts.b=[
+    {artifact_id:SHOT,kind:'screenshot',state:'complete',mime_type:'image/png',has_payload:true,created_at:'2026-10-16T08:00:00Z'},
+    {artifact_id:'jart_'+'d'.repeat(32),kind:'upload',state:'complete',mime_type:'application/vnd.openxmlformats-officedocument.presentationml.presentation',preview:'Roadmap Q4.pptx',has_payload:true,created_at:'2026-10-15T08:00:00Z'},
+    {artifact_id:'jart_'+'e'.repeat(32),kind:'link',state:'complete',preview:'https://docs.google.com/presentation/d/abc/edit',has_payload:false,created_at:'2026-10-14T08:00:00Z'},
+    {artifact_id:'jart_'+'f'.repeat(32),kind:'upload',state:'pending',mime_type:'video/mp4',preview:'demo.mp4',has_payload:true,created_at:'2026-10-16T10:00:00Z'},
+    {artifact_id:'jart_'+'0'.repeat(31)+'9',kind:'upload',state:'failed',mime_type:'application/pdf',preview:'contrat.pdf',has_payload:true,created_at:'2026-10-13T08:00:00Z'}];
+  /* Double of the bounded payload route, where the page reads it: an <img> src. */
+  const srcDesc=Object.getOwnPropertyDescriptor(HTMLImageElement.prototype,'src');
+  Object.defineProperty(HTMLImageElement.prototype,'src',{configurable:true,enumerable:true,get(){return srcDesc.get.call(this)},set(v){
+    const m=String(v).match(/^\\/api\\/artifacts\\/([^/]+)\\/payload$/);
+    if(m){rail.payloads.push(m[1]);const svg=rail.previews[m[1]];v=svg?'data:image/svg+xml;charset=utf-8,'+encodeURIComponent(svg):'data:image/png;base64,AAAA';}
+    srcDesc.set.call(this,v)}});
   const json=(status,obj)=>new Response(JSON.stringify(obj),{status,headers:{'Content-Type':'application/json'}});
   const sorted=()=>[...rows].sort((a,b)=>(a.archived-b.archived)||(a.hidden-b.hidden));
   window.fetch=async(url,init)=>{
     const u=String(url),method=(init&&init.method)||'GET';
+    if(u.startsWith('/api/workspace/artifacts?')){
+      const board=new URL('http://x'+u).searchParams.get('board_id');rail.calls.push({method,url:u,body:null});
+      if(rail.down)throw new TypeError('Failed to fetch');
+      return json(200,{artifacts:rail.boardArtifacts[board]||[],scope:{board_id:board},next_cursor:null});
+    }
     if(!u.startsWith('/api/presentation-studio'))throw new TypeError('Failed to fetch');
     rail.calls.push({method,url:u,body:init&&init.body||null});
     if(rail.down)throw new TypeError('Failed to fetch');
@@ -44,6 +79,7 @@ const FAKE=`(()=>{
       else if(body.action==='archive')row.archived=true;else if(body.action==='restore')row.archived=false;
       else if(body.action==='rename')row.title=body.title;
       else if(body.action==='acknowledge')row.work={state:'done',label:'',age_s:null};
+      else if(body.action==='review')row.unreviewed=null;
       return json(200,{presentation_id:row.presentation_id,action:body.action,changed:true,hidden:row.hidden,archived:row.archived});
     }
     m=u.match(/^\\/api\\/presentation-studio\\/presentations\\/(pst_[0-9a-f]{32})$/);
@@ -65,9 +101,16 @@ const READ=`(()=>{
   const box=el=>{if(!el)return null;const r=el.getBoundingClientRect();if(!r.width&&!r.height)return null;return {l:r.left,t:r.top,r:r.right,b:r.bottom,w:r.width,h:r.height}};
   const q=s=>document.querySelector(s),qa=s=>[...document.querySelectorAll(s)];
   const host=q('#presentationRail');
-  const items=qa('#presentationRail .jvr-item').map(b=>({id:b.dataset.id,state:b.dataset.state,open:b.dataset.open,dim:b.dataset.dim||null,name:b.querySelector('.jvr-name').textContent,
+  const wsItems=qa('#presentationRail .jvr-ws .jvr-item').map(b=>({id:b.dataset.id,ws:b.dataset.ws,state:b.dataset.state,name:b.querySelector('.jvr-name').textContent,
+    meta:(b.querySelector('.jvr-meta')||{}).textContent||'',stateText:(b.querySelector('.jvr-state')||{}).textContent||'',
+    thumb:(t=>({kind:t.dataset.kind,badge:(t.querySelector('.jvr-badge')||{}).textContent||'',img:(i=>i?{ok:i.complete&&i.naturalWidth>0}:null)(t.querySelector('img'))}))(b.querySelector('.jvr-thumb')),
+    dot:getComputedStyle(b.querySelector('.jvr-dot')).backgroundColor}));
+  const items=qa('#presentationRail .jvr-item:not([data-ws])').map(b=>({id:b.dataset.id,state:b.dataset.state,open:b.dataset.open,dim:b.dataset.dim||null,name:b.querySelector('.jvr-name').textContent,
     full:b.title,label:b.getAttribute('aria-label'),dot:getComputedStyle(b.querySelector('.jvr-dot')).backgroundColor,dotAnim:getComputedStyle(b.querySelector('.jvr-dot')).animationName,
-    thumb:b.querySelector('.jvr-thumb').textContent}));
+    thumb:(t=>({kind:t.dataset.kind,badge:(t.querySelector('.jvr-badge')||{}).textContent||'',img:(i=>i?{ok:i.complete&&i.naturalWidth>0,payload:/^data:image\\/svg/.test(i.getAttribute('src')||'')}:null)(t.querySelector('img'))}))(b.querySelector('.jvr-thumb')),
+    stateText:(b.querySelector('.jvr-state')||{}).textContent||'',when:(b.querySelector('.jvr-when')||{}).textContent||'',meta:(b.querySelector('.jvr-meta')||{}).textContent||'',
+    dotShape:getComputedStyle(b.querySelector('.jvr-dot')).clipPath,dotMask:(cs=>cs.maskImage||cs.webkitMaskImage||'none')(getComputedStyle(b.querySelector('.jvr-dot'))),dotBorder:getComputedStyle(b.querySelector('.jvr-dot')).borderTopStyle,
+    more:!!b.parentElement.querySelector('.jvr-more')}));
   const win=q('#jvPresWindow');
   return {visible:!!host&&!host.hidden,box:box(host),items,
     folds:qa('#presentationRail .jvr-fold').map(b=>b.textContent.trim()),
@@ -78,6 +121,11 @@ const READ=`(()=>{
       count:win.querySelector('.jvw-count').textContent,veil:win.querySelector('.jvw-veil').hidden?'':win.querySelector('.jvw-veil strong').textContent,
       dot:getComputedStyle(win.querySelector('.jvw-dot')).backgroundColor,buttons:[...win.querySelectorAll('.jvw-bar button')].map(b=>b.textContent)}:null,
     studioClass:document.documentElement.classList.contains('jvr-studio'),
+    density:host&&host.dataset.density,drawer:host&&host.dataset.drawer,
+    explorer:box(q('#jvStudioExplorer')),
+    peek:(p=>p&&!p.hidden?p.textContent:null)(q('#presentationRail .jvr-peek')),
+    payloads:window.__rail.payloads.slice(),wsItems,wsHead:(f=>f?f.textContent.trim():null)(q('#presentationRail .jvr-ws .jvr-fold')),
+    wsCalls:window.__rail.calls.filter(c=>c.url.startsWith('/api/workspace/')).map(c=>new URL('http://x'+c.url).searchParams.get('board_id')),
     api:window.JarvisPresentationRail?window.JarvisPresentationRail.state():null,
     voice:((q('#presentationRail .jvr-voice')||{}).dataset||{}).v||'',
     zRail:host&&getComputedStyle(host).zIndex,
@@ -130,6 +178,7 @@ try{
   };
   const click=s=>mouse(s,'left'),rightClick=s=>mouse(s,'right');
   const item=n=>`#presentationRail .jvr-item[data-id="pst_${String(n).padStart(32,'0')}"]`;
+  const shot=async name=>{if(!SHOTS)return;const r=await send('Page.captureScreenshot',{format:'png'});writeFileSync(join(SHOTS,name),Buffer.from(r.data,'base64'))};
   const poll1=async (expr,ms=6000)=>{const t0=Date.now();while(Date.now()-t0<ms){if(await evaluate(expr))return true;await sleep(80)}return false};
   let loads=0;
   const load=async (width,height,setup,hash)=>{
@@ -210,7 +259,7 @@ try{
   await poll1(`window.JarvisPresentationRail.state().pref==='hidden'`);await sleep(900);
   out.brain_hide=await evaluate(READ);
   await evaluate(`window.__rail.ui={seq:3,request:{seq:3,action:'show_rail',presentation_id:null,age_s:1,fresh:true},reported:null}`);
-  await poll1(`window.JarvisPresentationRail.state().pref==='shown'`);await sleep(300);
+  await poll1(`window.JarvisPresentationRail.state().pref==='shown'`);await sleep(900);
   out.brain_show=await evaluate(READ);
 
   /* 8. Une requete vieille (page rechargee longtemps apres) n'est PAS rejouee. */
@@ -253,6 +302,112 @@ try{
   await load(800,600,PRES_BOARD+";JarvisPresentationRail.setPref('auto')");
   await evaluate(`window.dispatchEvent(new CustomEvent('jarvis:studio-explorer-opened',{detail:{}}))`);await sleep(250);
   out.studio_tiny=await evaluate(READ);
+
+  /* 14. Zone droite (Slice 07, D10) : a chaque taille, le rail ne recouvre ni le lanceur, ni les pastilles, ni l'onglet Chat, ni la colonne
+     gauche ; sous 700 px c'est un onglet, qui s'ouvre par-dessus la scene et se referme. */
+  const ZONE=`(()=>{const box=el=>{if(!el||el.hidden)return null;const r=el.getBoundingClientRect();if(!r.width&&!r.height)return null;return {l:r.left,t:r.top,r:r.right,b:r.bottom}};
+    const q=s=>document.querySelector(s);const pills=q('#bgPills');
+    return {rail:box(q('#presentationRail')),dock:box(q('.dock')),chat:box(q('#chatTab')),pills:pills&&!pills.hidden?box(pills):null,palette:box(q('#barehandsPalette')),
+      wheel:box(q('#toolWheel')),density:q('#presentationRail').dataset.density,drawer:q('#presentationRail').dataset.drawer,vw:innerWidth,vh:innerHeight,
+      cards:document.querySelectorAll('#presentationRail .jvr-item').length,listShown:getComputedStyle(q('#presentationRail .jvr-list')).display!=='none'}})()`;
+  out.zones={};
+  for(const [w,h] of [[1440,900],[1280,720],[900,600],[600,800]]){
+    await load(w,h,PRES_BOARD);
+    out.zones[`${w}x${h}`]=await evaluate(ZONE);
+  }
+  await click('#presentationRail .jvr-tool');await sleep(200);
+  out.zones.drawer_open=await evaluate(ZONE);
+  await shot('rail-drawer-600.png');
+  await click('#presentationRail .jvr-tool');await sleep(200);
+  out.zones.drawer_closed=await evaluate(ZONE);
+
+  /* 15. Cartes, dans les deux themes : apercu reel (double de la route bornee), vignette typee, badge, metadonnee, chaque etat avec son
+     libelle, puis Variantes ouvert (double de l'hote) : le rail se range a DROITE, Variantes a sa gauche. */
+  /* The host's own sheet places it (`inset:0`, rank 9000): a stylesheet rule here too, so the rail's docking rule can move its right edge. */
+  const FAKE_EXPLORER=`(()=>{const st=document.createElement('style');st.textContent='#jvStudioExplorer{position:fixed;inset:0;z-index:9000;background:linear-gradient(135deg,#071019,#0d2233)}';document.head.appendChild(st);
+    const x=document.createElement('div');x.id='jvStudioExplorer';document.body.appendChild(x);
+    window.dispatchEvent(new CustomEvent('jarvis:studio-explorer-opened',{detail:{}}))})()`;
+  for(const theme of ['circuit-board','cosmos']){
+    await load(1440,900,`window.JarvisThemeAPI&&window.JarvisThemeAPI.activate('${theme}',{persist:false});`+PRES_BOARD,'#cards');
+    await poll1(`[...document.querySelectorAll('#presentationRail .jvr-thumb img')].every(i=>i.complete)`);await sleep(400);
+    out['cards_'+theme]=await evaluate(READ);
+    out['cards_'+theme].theme=await evaluate(`document.documentElement.getAttribute('data-jarvis-theme')||''`);
+    await shot(`rail-cards-${theme}-1440.png`);
+    await evaluate(FAKE_EXPLORER);await sleep(300);
+    out['studio_'+theme]=await evaluate(READ);
+    await shot(`rail-studio-${theme}-1440.png`);
+    await load(1000,700,`window.JarvisThemeAPI&&window.JarvisThemeAPI.activate('${theme}',{persist:false});`+PRES_BOARD,'#cards');
+    await sleep(400);
+    {const p=await at('#presentationRail .jvr-item');await send('Input.dispatchMouseEvent',{type:'mouseMoved',x:p.x,y:p.y});}await sleep(200);
+    out['slim_'+theme]=await evaluate(READ);
+    await shot(`rail-slim-${theme}-1000.png`);
+  }
+
+  /* 16. Les gestes de la carte : « ⋯ » ouvre le meme menu ; « Marquer comme vu » ecrit `review` ; ouvrir depuis le rail ecrit `review`. */
+  await load(1440,900,PRES_BOARD+';'+STUB_VARIANTS,'#cards');
+  await click(`${item(1)} ~ .jvr-more`);await sleep(150);
+  out.more_menu=await evaluate(READ);
+  await press('Escape');await sleep(100);
+  await rightClick(item(2));await sleep(150);
+  out.review_menu=await evaluate(READ);
+  await click('.jvr-menu button[data-act="review"]');
+  await poll1(`window.__rail.rows[1].unreviewed===null&&document.querySelector('${item(2)}').dataset.state==='done'`);await sleep(200);
+  out.reviewed=await evaluate(READ);
+  await evaluate(`window.__rail.rows[1].unreviewed={since:'2026-10-16T10:00:00Z',label:'presentation_edit'};JarvisPresentationRail.refresh()`);
+  await poll1(`document.querySelector('${item(2)}').dataset.state==='unreviewed'`);
+  await click(item(2));
+  await poll1(`window.__rail.rows[1].unreviewed===null`);await sleep(300);
+  out.open_reviews=await evaluate(READ);out.open_reviews.opens=await evaluate(`window.__opens`);
+
+  /* 17. Une image d'apercu illisible : la carte retombe sur la vignette typee et le journal le dit. */
+  await load(1440,900,`window.__rail.previews={};`+PRES_BOARD,'#cards');
+  await poll1(`document.querySelector('${item(1)} .jvr-thumb').dataset.kind==='placeholder'`);await sleep(200);
+  out.broken_preview=await evaluate(READ);
+
+  /* 18. Etape B : les Artifacts du Board actif (double de la route du workspace), type par MIME / hote, etat sans jaune ; clic sur une
+     image = visionneuse de l'apercu des captures (Slice 05, `JarvisScreenshotPreview.openLightbox`), le reste = inspecteur (double de
+     JarvisWorkspace) ; changer de Board vide puis relit, sans fuite. */
+  const STUB_WS=`window.__wsOpen=[];window.JarvisWorkspace={open:()=>{window.__wsOpen.push(['open'])},act:(n,d)=>{window.__wsOpen.push([n,d&&d.id]);return Promise.resolve()}}`;
+  await load(1440,900,STUB_WS+';'+PRES_BOARD,'#cards');
+  await poll1(`document.querySelectorAll('#presentationRail .jvr-ws .jvr-item').length===5`);
+  await poll1(`[...document.querySelectorAll('#presentationRail .jvr-ws .jvr-thumb img')].every(i=>i.complete)`);await sleep(200);
+  out.board_items=await evaluate(READ);
+  await evaluate(`document.querySelector('#presentationRail .jvr-list').scrollTop=0;document.querySelector('#presentationRail .jvr-ws').scrollIntoView({block:'end'})`);
+  await shot('rail-board-items-1440.png');
+  await click(`#presentationRail .jvr-ws .jvr-item[data-id="jart_${'c'.repeat(32)}"]`);await sleep(150);
+  out.board_open=await evaluate(`window.__wsOpen`);
+  out.board_lightbox=await evaluate(`(lb=>lb?{open:lb.classList.contains('open'),href:lb.querySelector('a').getAttribute('href')}:null)(document.getElementById('screenshotLightbox'))`);
+  await press('Escape');await sleep(100);
+  await rightClick(`#presentationRail .jvr-ws .jvr-item[data-id="jart_${'e'.repeat(32)}"]`);await sleep(150);
+  out.board_menu=await evaluate(READ);
+  await press('Escape');
+  await evaluate(`window.JarvisPresentationRail.gate({boards:{available:true,active:{board_id:'c',board_kind:'presentation'}},interaction_mode:{mode:'assistant'},voice_state:'listening',voice_online:true})`);
+  out.board_switched_now=await evaluate(READ);
+  await sleep(500);
+  out.board_switched=await evaluate(READ);
+
+  /* 19. Le focus survit aux relevés pour TOUTE carte du rail (Sur ce Board, plis) ; Echap depuis le menu d'une carte du Board y rend le focus,
+     meme si la carte a ete redessinee pendant que le menu etait ouvert. */
+  const ACTIVE=`(()=>{const a=document.activeElement;return a&&a.classList&&a.classList.contains('jvr-item')?a.dataset.id:(a?a.tagName:null)})()`;
+  const SHOT_CARD=`#presentationRail .jvr-ws .jvr-item[data-id="jart_${'c'.repeat(32)}"]`;
+  await load(1440,900,STUB_WS+';'+PRES_BOARD,'#cards');
+  await poll1(`!!document.querySelector('${SHOT_CARD}')`);
+  await evaluate(`document.querySelector('${SHOT_CARD}').focus()`);
+  const polls0=await evaluate(`window.__rail.calls.filter(c=>c.url==='/api/presentation-studio/rail').length`);
+  await poll1(`window.__rail.calls.filter(c=>c.url==='/api/presentation-studio/rail').length>=${polls0}+2`,9000);await sleep(150);
+  out.focus_board={active:await evaluate(ACTIVE),polls:(await evaluate(`window.__rail.calls.filter(c=>c.url==='/api/presentation-studio/rail').length`))-polls0};
+  await evaluate(`(()=>{const f=[...document.querySelectorAll('#presentationRail .jvr-folds .jvr-fold')].pop();if(f.getAttribute('aria-expanded')!=='true')f.click()})()`);await sleep(150);
+  const FOLDED=`#presentationRail .jvr-folds .jvr-item[data-id="pst_${'5'.padStart(32,'0')}"]`;
+  await evaluate(`document.querySelector('${FOLDED}').focus()`);
+  const polls1=await evaluate(`window.__rail.calls.filter(c=>c.url==='/api/presentation-studio/rail').length`);
+  await poll1(`window.__rail.calls.filter(c=>c.url==='/api/presentation-studio/rail').length>=${polls1}+2`,9000);await sleep(150);
+  out.focus_folded={active:await evaluate(ACTIVE),polls:(await evaluate(`window.__rail.calls.filter(c=>c.url==='/api/presentation-studio/rail').length`))-polls1};
+  await rightClick(SHOT_CARD);await sleep(150);
+  out.menu_open_active=await evaluate(`document.activeElement&&document.activeElement.closest('.jvr-menu')?'menu':null`);
+  const polls2=await evaluate(`window.__rail.calls.filter(c=>c.url==='/api/presentation-studio/rail').length`);
+  await poll1(`window.__rail.calls.filter(c=>c.url==='/api/presentation-studio/rail').length>=${polls2}+1`,9000);await sleep(150);
+  await press('Escape');await sleep(150);
+  out.focus_after_menu=await evaluate(ACTIVE);
 
   ws.close();
   process.stdout.write(JSON.stringify({results:out,console:consoleLines}));

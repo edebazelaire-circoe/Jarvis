@@ -44,7 +44,7 @@ COSMOS = 'html[data-jarvis-theme="cosmos"]'
 SHELL_SURFACES = (
     ".topbar", ".state", "#boardsHud", ".dock", ".bgpills", "#bgPills", ".panel", ".live-banner",
     ".voicehint", ".chat-tab", ".board-drop-tray", "#boardsPanel", ".toasts", "#toolWheel",
-    "#interactionModeHud", "#barehandsHud", "#barehandsPalette", "#captureRail", "#presentationRail",
+    "#interactionModeHud", "#barehandsHud", "#barehandsPalette", "#recIndicators", "#presentationRail",
 )
 GEOMETRY_PROPERTIES = (
     "position", "top", "right", "bottom", "left", "inset", "z-index", "transform", "width",
@@ -250,7 +250,12 @@ def test_relative_order_of_the_old_registry_is_kept():
     for chooser in ("#boardsPanel", ".bh-hud-pop", ".im-pop"):
         assert rank_of(chooser) == 36 and rank_of(".live-banner") < rank_of(chooser) < rank_of("#bgPills")
     assert rank_of("#barehandsPalette") < rank_of("#barehandsHud") < rank_of(".bh-hud-pop")
-    assert rank_of("#captureRail") == rank_of("#barehandsPalette")
+    # Slice 04 : le rail de capture n'existe plus ; ses indicateurs persistants
+    # sont au rang du centre d'état, au-dessus de la roue ouverte.
+    assert rank_of("#recIndicators") == rank_of("#bgPills") == 40
+    assert rank_of("#toolWheel[data-open]") < rank_of("#recIndicators") < rank_of(".toasts")
+    # Aperçu de capture (Slice 05) : au-dessus de la roue ouverte qui l'a prise, sous le centre d'état et la visionneuse.
+    assert rank_of("#toolWheel[data-open]") < rank_of("#screenshotPreview") < rank_of("#recIndicators") < rank_of(".overlay")
     assert rank_of(".ctxmenu") < rank_of("#barehandsCards") < rank_of(".cdialog-back")
     views = {rank_of(view) for view in (".tl", ".tlab", ".mcpi", ".wsp", ".pfb")}
     assert len(views) == 1
@@ -341,15 +346,19 @@ def test_every_declared_control_host_matches_control_selector():
 
 
 def test_scene_and_capture_rail_read_the_shared_selector():
+    """Depuis la Slice 04, la scène est la seule lectrice : le rail de capture
+    (qui évitait les commandes en les mesurant) a laissé la place à la roue et
+    aux indicateurs, posés par la feuille ; ses modules ne mesurent plus rien."""
+
     shell = shell_module()
     scene = (RUNTIME / "control_center_scene_page.js").read_text(encoding="utf-8")
-    rail = (RUNTIME / "control_center_capture_rail.js").read_text(encoding="utf-8")
-    for source in (scene, rail):
-        fallback = re.search(r"const SHELL_FALLBACK_SELECTOR='([^']+)'", source).group(1)
-        assert fallback == shell["CONTROL_SELECTOR"]
-        assert "JarvisShell" in source and "shell.missing" in source
+    fallback = re.search(r"const SHELL_FALLBACK_SELECTOR='([^']+)'", scene).group(1)
+    assert fallback == shell["CONTROL_SELECTOR"]
+    assert "JarvisShell" in scene and "shell.missing" in scene
     assert "const CONTROL_SELECTOR='" not in scene
-    assert "const OBSTACLE_SELECTOR='" not in rail
+    for module in ("control_center_capture_rail.js", "control_center_capture_wheel.js"):
+        source = (RUNTIME / module).read_text(encoding="utf-8")
+        assert "SHELL_FALLBACK_SELECTOR" not in source and "CONTROL_SELECTOR" not in source, module
 
 
 async def test_the_shell_module_is_served_before_its_readers(tmp_path):

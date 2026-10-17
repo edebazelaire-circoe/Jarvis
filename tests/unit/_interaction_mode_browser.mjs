@@ -111,6 +111,7 @@ const READ=`(()=>{
   box('modeBtn','#interactionModeButton');
   box('palette','#barehandsPalette');
   box('bhHud','#barehandsHud');
+  box('wheel','#toolWheel .tw-anchor');
   box('dock','.dock');
   box('pills','.bgpills');
   box('hint','.voicehint');
@@ -228,6 +229,9 @@ try{
     await send('Emulation.setDeviceMetricsOverride',
       {width:step.width,height:step.height,deviceScaleFactor:1,mobile:false});
     await sleep(250);
+    /* `wheelHidden` (orbital-ui Slice 04) : la roue d'outils cachée, c'est-à-dire
+       le retour arrière où la colonne Bare Hands revient à sa place. */
+    if(step.wheelHidden)await evaluate(`document.getElementById('toolWheel').hidden=true`);
     /* `setup` : une expression jouee avant les montages (theme, bandeau, panneau ouvert). */
     if(step.setup){await evaluate(step.setup);await sleep(400)}
     if(step.mountPalette){

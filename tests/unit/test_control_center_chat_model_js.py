@@ -331,3 +331,29 @@ def test_restore_dedupes_by_client_upload_id(tmp_path):
     assert got["other"] == "upload_interrupted_reload", "another upload's record is still restored"
     assert got["legacy"] == "failed", "a record without an id (older draft) is still said, never lost"
     assert got["states"] == [["u-live", "ready"], ["u-other", "failed"], ["", "failed"]]
+
+
+def test_existing_artifact_is_a_ready_attachment_without_upload(tmp_path):
+    """Orbital-ui Slice 05 (D7) : « Envoyer à Jarvis » joint une capture déjà chez Core — prête d'emblée, sans
+    `client_upload_id`, jamais doublée, gardée au brouillon (id, nom, taille : aucun octet) et relue telle quelle."""
+
+    got = run_node(tmp_path, """
+      const L=CM.createAttachments();
+      const a=CM.addExistingAttachment(L,{artifactId:'jart_shot',name:'Capture d’écran 14-32-05.png',size:2048,mime:'image/png',cid:'conv-a'});
+      const again=CM.addExistingAttachment(L,{artifactId:'jart_shot',name:'x',size:1,mime:'image/png',cid:'conv-a'});
+      const noCid=CM.addExistingAttachment(L,{artifactId:'jart_x',name:'x',size:1,mime:'image/png',cid:null});
+      const view=CM.attachmentView(L,'conv-a');
+      const other=CM.attachmentView(L,'conv-b');
+      const sent=CM.takeSent(CM.createAttachments(),'conv-a',['jart_shot']);
+      const R=CM.createAttachments();
+      const restored=CM.restoreAttachment(R,{name:a.name,size:a.size,mime:a.mime,cid:'conv-a',artifactId:'jart_shot',readable:null,
+        clientUploadId:'',existing:true});
+      out({same:again===a,noCid,view:view.items.map(i=>[i.status,i.state,i.clientUploadId,i.existing,i.readable]),ids:view.ids,
+        blocked:view.blocked,other:other.items.map(i=>i.status),sent,
+        restored:[restored.state,restored.existing,CM.attachmentView(R,'conv-a').items[0].status]});
+    """)
+    assert got["same"] is True and got["noCid"] is None
+    assert got["view"] == [["ready", "ready", "", True, None]] and got["ids"] == ["jart_shot"] and got["blocked"] is None
+    assert got["other"] == ["stale"], "an attachment belongs to its conversation"
+    assert got["sent"] == []
+    assert got["restored"] == ["ready", True, "ready"], "a reload keeps the existing attachment ready, not unreadable"

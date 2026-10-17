@@ -180,7 +180,7 @@ async def test_board_drop_in_a_real_page(stack, tmp_path, monkeypatch):
     assert hover["hidden"] is False and hover["tone"] == "ok" and hover["title"] == "Déposer sur « Jarvis »" \
         or hover["title"].startswith("Déposer sur « "), hover
     assert hover["z"] == "auto" and hover["frame"] == "21" and hover["pe"] == "none", "above the scene, no pointer"
-    assert hover["card"] == "34", "the card stays above the capture rail and the hands button (30-32)"
+    assert hover["card"] == "34", "the card stays above the wheel anchor and the hands button (30-32)"
     assert reads["after_cancel"]["hidden"] is True, "the layer leaves without a drop"
     tray = reads["tray"]
     assert [row["status"] for row in tray] == ["done", "done", "done"], tray
@@ -231,10 +231,10 @@ async def test_refusals_are_said_in_words_and_narrow_screens_fit(stack, tmp_path
         {"value": "inactive", "expr": TRAY},
         {"eval": "document.documentElement.dataset.jarvisTheme='cosmos';1"}, {"wait": 200},
         {"hover": "free", "paths": [__file__]}, {"wait": 100}, _shot(tmp_path, "hover-cosmos-600x800"),
-        # La carte n'est couverte par aucune commande (rail de capture, palette, bouton des mains) à 600 px.
+        # La carte n'est couverte par aucune commande (roue, indicateurs de capture, palette, bouton des mains) à 600 px.
         {"value": "cover", "expr": "(()=>{const card=document.querySelector('#boardDrop .board-drop-card');"
                                    "const r=card.getBoundingClientRect(),z=+getComputedStyle(card).zIndex;"
-                                   "return [...document.querySelectorAll('#captureRail,#captureRail *,#barehandsPalette,"
+                                   "return [...document.querySelectorAll('#toolWheel,#toolWheel *,#recIndicators *,#barehandsPalette,"
                                    "#barehandsPalette *,#barehandsHud *')].filter(el=>{const b=el.getBoundingClientRect();"
                                    "const ez=+getComputedStyle(el).zIndex||0;return b.width&&b.right>r.left&&b.left<r.right"
                                    "&&b.bottom>r.top&&b.top<r.bottom&&ez>=z}).map(el=>el.id||el.className)})()"},

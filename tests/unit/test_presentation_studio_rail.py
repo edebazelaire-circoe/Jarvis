@@ -294,3 +294,159 @@ async def test_mcp_edit_lights_the_blue_dot_and_a_real_failure_the_orange_one(tm
         assert row["work"]["state"] == "done"
     finally:
         await core.__aexit__(None, None, None)
+
+
+# ------------------------------------------------------------------ rail actif (S07, D10) : apercu, type, « a revoir »
+
+async def _still(core: Core, pid: str, *, width: int = 1280, height: int = 720, finish: bool = True, payload: bytes = b"PNG-still") -> str:
+    """Un vrai `presentation_still` : snapshot fige de la revision vivante, puis rendu `rendered_from` ce snapshot (registre reel)."""
+
+    import hashlib
+
+    from jarvis.domain import presentation_artifacts as pa
+    from jarvis.domain.artifacts import ArtifactState
+
+    app = core.stack.core
+    view = await app.presentation_studio.get(pid)
+    variant = view.variants[0]
+    began = await app.presentation_artifacts.begin_snapshot(pid, variant.variant_id, expected_presentation_revision=view.presentation.revision,
+                                                            expected_variant_revision=variant.revision)
+    sid = began["artifact_id"]
+    if began["state"] == "pending":
+        spool = app.artifacts.open_spool(await app.artifacts.get(sid))
+        spool.write(b"PK-frozen")
+        spool.finalize()
+        await app.presentation_artifacts.finalize_snapshot(sid, content_sha256=hashlib.sha256(b"PK-frozen").hexdigest())
+    render = await app.presentation_artifacts.begin_render(sid, pa.RenderFormat.STILL)
+    if finish:
+        spool = app.artifacts.open_spool(render)
+        spool.write(payload)
+        spool.finalize()
+        await app.artifacts.finalize(render.artifact_id, state=ArtifactState.COMPLETE, width=width, height=height)
+    return render.artifact_id
+
+
+async def test_row_preview_is_latest_complete_still_without_path(tmp_path):
+    async with Core(tmp_path) as core:
+        shown, bare = await create(core, "Avec apercu"), await create(core, "Sans apercu")
+        await _still(core, shown, width=640, height=360)
+        newest = await _still(core, shown)
+        await _still(core, shown, finish=False)  # a pending render is never a preview
+        rows = {r["presentation_id"]: r for r in (await core.client.presentation_studio_rail())["presentations"]}
+        assert rows[shown]["preview"] == {"artifact_id": newest, "kind": "presentation_still", "width": 1280, "height": 720}
+        assert rows[bare]["preview"] is None, "no render: the page draws a typed placeholder, never a fake slide"
+        assert rows[shown]["type"] == {"engine": "remotion"} and rows[bare]["type"] == {"engine": "remotion"}
+        wire = json.dumps(rows)
+        assert str(tmp_path) not in wire and str(tmp_path).replace("\\", "/") not in wire and "payload_ref" not in wire, "never a filesystem path"
+
+
+async def test_preview_cache_bounded():
+    from types import SimpleNamespace
+
+    from jarvis.core import presentation_studio_rail as rail_module
+    from jarvis.core.presentation_studio_rail import PREVIEW_LINEAGE_MAX, PREVIEW_RESOLVES, PresentationRail
+    from jarvis.domain.artifacts import ArtifactKind
+
+    def page(start: int) -> list:
+        return [SimpleNamespace(artifact_id=f"jart_{n:032x}", kind=ArtifactKind.PRESENTATION_STILL, width=10, height=10)
+                for n in range(start, start + rail_module.PREVIEW_SCAN)]
+
+    stills = page(0)
+    queries: list[object] = []
+
+    class Registry:
+        async def query(self, query):
+            queries.append(query)
+            return SimpleNamespace(items=list(stills), next_cursor=None)
+
+    rail = PresentationRail(SimpleNamespace(trace=lambda *a, **k: None))  # type: ignore[arg-type]
+    rail.bind_artifacts(Registry())
+    resolved: list[str] = []
+
+    async def owner_of(still):
+        resolved.append(still.artifact_id)
+        return "pst_" + still.artifact_id[-32:]
+
+    rail._owner_of = owner_of  # type: ignore[method-assign]
+    first = await rail.previews()
+    assert len(resolved) == PREVIEW_RESOLVES and len(first) == PREVIEW_RESOLVES, "a read resolves at most PREVIEW_RESOLVES new lineages"
+    reads = 1
+    while len(resolved) < len(stills):
+        await rail.previews()
+        reads += 1
+    assert reads == -(-len(stills) // PREVIEW_RESOLVES)
+    before = len(resolved)
+    again = await rail.previews()
+    assert len(resolved) == before and len(again) == len(stills), "same newest stills: nothing is resolved again"
+    assert queries[-1].limit == rail_module.PREVIEW_SCAN and [k.value for k in queries[-1].kinds] == ["presentation_still"]
+    assert [s.value for s in queries[-1].states] == ["complete"]
+    start = 10_000
+    while len(resolved) < PREVIEW_LINEAGE_MAX + 2 * rail_module.PREVIEW_SCAN:
+        stills[:] = page(start)
+        start += rail_module.PREVIEW_SCAN
+        while True:
+            count = len(resolved)
+            await rail.previews()
+            if len(resolved) == count:
+                break
+    assert len(rail._lineage) <= PREVIEW_LINEAGE_MAX, "the lineage cache is bounded"
+
+
+async def test_brain_success_marks_unreviewed_user_review_clears(tmp_path):
+    def row(listing: dict, pid: str) -> dict:
+        return next(r for r in listing["presentations"] if r["presentation_id"] == pid)
+
+    async with Core(tmp_path) as core:
+        pid = await create(core, "Revue")
+
+        def rail_file() -> dict:
+            return json.loads(next(tmp_path.rglob(f"{pid}/rail.json")).read_text(encoding="utf-8"))
+
+        assert row(await core.client.presentation_studio_rail(), pid)["unreviewed"] is None
+        await core.client.presentation_studio_work(pid, {"event": "begin", "label": "presentation_edit"})
+        assert row(await core.client.presentation_studio_rail(), pid)["unreviewed"] is None, "work in progress is not yet to review"
+        await core.client.presentation_studio_work(pid, {"event": "success", "label": "presentation_edit"})
+        marked = row(await core.client.presentation_studio_rail(), pid)["unreviewed"]
+        assert marked["label"] == "presentation_edit" and marked["since"]
+        assert rail_file()["unreviewed"] == marked and rail_file()["schema_version"] == 1, "additive key, schema stays v1"
+        await core.client.presentation_studio_work(pid, {"event": "success", "label": "presentation_variant"})
+        assert rail_file()["unreviewed"] == marked, "already to review: the first unreviewed work keeps its date"
+        # a hide keeps the mark (flags are replaced, never rebuilt from scratch)
+        await core.client.presentation_studio_rail_act(pid, {"action": "hide", "actor": "user"})
+        assert rail_file()["unreviewed"] == marked and rail_file()["hidden"] is True
+        with pytest.raises(Exception) as brain:
+            await core.client.presentation_studio_rail_act(pid, {"action": "review", "actor": "brain"})
+        assert getattr(brain.value, "status", None) == 400, "only the user marks a presentation as seen"
+        seen = await core.client.presentation_studio_rail_act(pid, {"action": "review", "actor": "user"})
+        assert seen["changed"] is True and seen["unreviewed"] is None
+        assert "unreviewed" not in rail_file() and rail_file()["hidden"] is True
+        assert (await core.client.presentation_studio_rail_act(pid, {"action": "review", "actor": "user"}))["changed"] is False
+        assert row(await core.client.presentation_studio_rail(), pid)["unreviewed"] is None
+        await core.client.presentation_studio_work(pid, {"event": "success", "label": "presentation_edit"})
+    async with Core(tmp_path) as core:  # persisted: a restart keeps the yellow, unlike the work state
+        listed = row(await core.client.presentation_studio_rail(), pid)
+        assert listed["unreviewed"]["label"] == "presentation_edit" and listed["work"]["state"] == "done"
+
+
+def test_old_rail_json_reads_without_unreviewed():
+    old = {"schema": RAIL_SCHEMA, "schema_version": 1, "hidden": True, "archived": False, "hidden_at": "2026-10-10T10:00:00Z", "archived_at": None}
+    flags = parse_rail(json.dumps(old))
+    assert flags.unreviewed is None and flags.hidden is True
+    assert flags.to_document() == old, "nothing to review: the document is exactly the v1 an older Core writes"
+    marked = parse_rail(json.dumps({**old, "unreviewed": {"since": "2026-10-11T09:00:00Z", "label": "presentation_edit"}}))
+    assert marked.unreviewed == {"since": "2026-10-11T09:00:00Z", "label": "presentation_edit"}
+    assert parse_rail(json.dumps(marked.to_document())) == marked
+    for bad in ("yes", {"label": "x"}, {"since": 3}, {"since": ""}, None, []):
+        assert parse_rail(json.dumps({**old, "unreviewed": bad})).unreviewed is None, bad
+
+
+async def test_problem_never_reported_as_unreviewed(tmp_path):
+    async with Core(tmp_path) as core:
+        pid = await create(core, "Probleme")
+        await core.client.presentation_studio_work(pid, {"event": "success", "label": "presentation_edit"})
+        await core.client.presentation_studio_work(pid, {"event": "failure", "code": "presentation_studio_storage_io", "message": "disque plein"})
+        row = (await core.client.presentation_studio_rail())["presentations"][0]
+        assert row["work"]["state"] == "problem" and row["unreviewed"] is None, "a problem keeps its own treatment"
+        await core.client.presentation_studio_rail_act(pid, {"action": "acknowledge", "actor": "user"})
+        row = (await core.client.presentation_studio_rail())["presentations"][0]
+        assert row["work"]["state"] == "done" and row["unreviewed"]["label"] == "presentation_edit", "acknowledged: the unseen work is still to review"

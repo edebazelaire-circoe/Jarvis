@@ -443,8 +443,12 @@ def test_la_carte_ne_recouvre_aucun_occupant_du_bas(tmp_path, width, height):
     seen = out["reads"][0][0]
     card = seen["card"]
     assert card, "la carte n'est pas dessinée : sans elle ce test ne prouve rien"
-    assert seen["palette"], "la palette est bien montée : sans elle ce test ne prouve rien"
-    for name in ("palette", "modeBtn", "hint"):
+    # Orbital UI Slice 04 : la roue d'outils est visible d'office et la palette
+    # Bare Hands quitte la vue (Sélection la tient) ; l'occupant du bord gauche
+    # est désormais l'ancre de la roue.
+    assert seen["wheel"], "l'ancre de la roue est là : sans elle ce test ne prouve rien"
+    assert not seen.get("palette"), "la palette est cachée tant que la roue est visible"
+    for name in ("wheel", "modeBtn", "hint", "indicators"):
         assert _overlap(card, seen.get(name)) is None, (name, card, seen.get(name))
     # Et elle tient dans la fenêtre : une carte poussée hors écran serait un
     # avertissement perdu, ce qui est le défaut que D11 interdit.

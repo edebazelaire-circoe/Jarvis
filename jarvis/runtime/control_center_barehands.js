@@ -9861,6 +9861,12 @@ try{
        parce que « profil enregistré » et « profil appliqué » ne sont pas la
        même chose — c'est la règle que `engine()` a posée à la Slice 07. */
     profile:()=>view.profile,
+    /* **Le parcours ouvert** (`calibration`, `benchmark`) ou `null` : le
+       même garde qui refuse un second parcours et que la veille demandée
+       ferme (`SLEEP_ENDS_FLOW`). La reprise souris (Slice 03 de
+       `jarvis-board-orbital-ui-workspace-rail`) s'en abstient tant qu'il
+       rend un nom : ces parcours se conduisent à la souris. */
+    openFlow:()=>{const open=openFlow();return open?open.name:null},
     calibration:()=>Object.freeze({running:!!(calibration&&calibration.isRunning()),
       step:calibration?calibration.stepId():null,
       /* Le chien de garde de l'échéance, lu **sur la minuterie elle-même**

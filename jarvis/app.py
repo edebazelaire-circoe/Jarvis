@@ -432,7 +432,7 @@ def _audio_recording_from_env(runtime_root: Path) -> dict[str, object]:
     from jarvis.adapters.sounddevice_recording import AudioRecordingSources, WavCaptureRepair
     from jarvis.domain.capture import CaptureChannel
     from jarvis.runtime import credentials as creds
-    from jarvis.runtime.audio_devices import normalize_device_id
+    from jarvis.runtime.audio_devices import SoundDeviceAudioDiagnostics, normalize_device_id
 
     def configured_device():
         overrides = _control_settings(runtime_root)
@@ -457,7 +457,9 @@ def _audio_recording_from_env(runtime_root: Path) -> dict[str, object]:
         return os.getenv(name, "1").strip().lower() not in {"0", "false", "no", "off"}
 
     screen = ScreenCaptureSources() if flag("JARVIS_SCREEN_CAPTURE") else None
-    sources = (AudioRecordingSources(configured_device=configured_device, others=screen)
+    # Cibles audio (orbital-ui S04) : la même énumération que les réglages de Voice.
+    sources = (AudioRecordingSources(configured_device=configured_device, others=screen,
+                                     list_inputs=SoundDeviceAudioDiagnostics().list_devices)
                if flag("JARVIS_AUDIO_RECORDING") else screen)
     # Worker d'enrichissement du Context actif (Slice 08) : CLI Claude natif en
     # profil restreint sans outil, relu à chaque tour ; sinon `None` (worker
