@@ -3958,6 +3958,8 @@ Known window (kept): a run started by the voice is learned by the player on its 
 
 Below 700 px of height the local preview starts **folded** (unless the user chose otherwise: the stored preference wins), an open preview keeps at most 150 px and loses its note, and the reload card is two lines. The dock now holds **ten** tools: cosmos row 10 x 34 + 9 x 6 = 394 px; at 620 px of width and below the cosmos row wraps into **two rows of five** (194 x 74 px) and the top bar, the pills and the panels sit under it; the vertical dock shrinks to 44 px buttons below 720 px of height, 38 px below 560 px and, at 480 px and below, becomes **two columns of five** (the panels move 50 px left). Checked by a geometry sweep over widths 360 / 500 / 566 / 700 / 1024 / 1280 and heights 600 / 720 / 900 in both themes (all ten buttons on screen, none overlapping the Boards button, the voice state, the pills or each other) and by `test_boards_hud_browser.py` unmodified.
 
+> **Superseded for the dock (2026-10, orbital shell Slices 01 and 08).** There is no vertical dock any more and no two-row wrap: both themes share one geometry and the ten former dock tools are a one-row top-right launcher of four tools plus « Plus d’outils » (`--shell-launcher-w` 194 px = 5 x 34 + 4 x 6), whose popover holds the other six, the Studio inspector `INS` among them. See [control-center-shell.md](control-center-shell.md) › *Global launcher*. The preview folding rules above are unchanged.
+
 ### Art direction chip (read-only) and the theme variables decision
 
 A chip reads `GET .../variants/{vid}/art-direction` (relay, actor `user`, no write): name, provenance (`fournie` / `déduite` / `générée`, `repli`), the text-on-background contrast recomputed from the palette

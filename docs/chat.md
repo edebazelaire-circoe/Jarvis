@@ -906,7 +906,9 @@ page (drop of a link) --JSON--> CC POST /api/boards/drop-link --> Core POST /v1/
   `control_center.py` like `LIVE_SCRIPT_MARKER`. `control_center_timeline.js`
   and its tests are not modified.
 - A **Chat** tab fixed bottom right (`right:18px; bottom:18px`), outside the
-  centred vertical dock. Toasts, bottom right today, move above the tab
+  centred vertical dock (gone since the orbital UI: the tools are a top-right
+  launcher, [control-center-shell.md](control-center-shell.md) › *Global
+  launcher*; the tab is the `#chatTab` host of the shell's `bottom-right` zone). Toasts, bottom right today, move above the tab
   (`bottom` = 18 px + tab height + 10 px); their existing offset when a panel
   is open still applies.
 - Panel `<section class="panel chat-panel" id="chatPanel">` reusing `.panel`

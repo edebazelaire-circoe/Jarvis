@@ -13,7 +13,12 @@ Origin: handoff `tasks/jarvis-board-orbital-ui-workspace-rail/`, Slice 01
 (resolved architecture `docs/06-resolved-architecture.md` §2, §9, §10, §11).
 It replaces the stacking comment that lived at the top of
 `control_center.html` and the "Stacking registry" table of
-`docs/ARCHITECTURE.md`; both now point here.
+`docs/ARCHITECTURE.md`; both now point here. Slices 02 to 09 of that handoff
+filled it in as they landed (wheel, Selection method, capture wedges and
+indicators, screenshot preview, status centre and eye, workspace rail, global
+launcher, integration matrix); the release check of Slice 10 re-read it
+against the code of the task branch at `9c2848cc` (every cited file, id and
+test exists).
 
 **Rule for every later change.** A surface that is added, moved, or gets a
 `z-index` updates, in the same commit: its row below, the stylesheet, the
@@ -265,9 +270,10 @@ order children inside a page layer's stacking context. Any other inline rank fai
 
 ### Reserved ranks
 
-Declared by later slices of the orbital shell; listed so that nobody takes
-them for something else. They become page layers when their slice lands.
-None is reserved today: the status centre (rank 40) landed in Slice 06.
+None. The orbital shell reserved ranks 37, 38 and 40 for its later slices
+while they were being built; all three are now page layers (open wheel 37,
+Slice 02; screenshot preview 38, Slice 05; status centre children 40,
+Slices 04 and 06). A new rank is added straight to the page layers table.
 
 ### Invariants
 

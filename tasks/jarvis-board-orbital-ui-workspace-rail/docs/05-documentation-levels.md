@@ -1,6 +1,6 @@
 # 05 - Documentation levels and prerequisite gaps
 
-The PM must re-evaluate these levels against current HEAD before dispatch. The levels below are planning estimates based on the inspected code/docs.
+Started as planning estimates; each Slice updated its rows when it landed. **Slice 10 (release, 2026-10-17)** re-checked every row against the task branch at `9c2848cc`: the levels below are the final ones, every L3 row is backed by the cited doc section, module and tests (references grepped, suites re-run, see the S10 entry of `../LOG.md`). The canonical docs describe what landed, not a plan; the pre-orbital wording left in `docs/presentation-studio.md` (dock of ten tools) and `docs/chat.md` (vertical dock) now carries a superseded note. Two concepts stay below L3 by design: the Board/mode composition (L2, D11 kept, Human choice HV-08-01) and the review state of Board-linked rail items (none: no canonical review owner).
 
 | Concept | Current estimate | Required by this task | Gap / action |
 | --- | --- | --- | --- |
