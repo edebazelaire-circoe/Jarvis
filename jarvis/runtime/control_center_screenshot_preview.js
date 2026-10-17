@@ -135,7 +135,7 @@
   /* ------------------------------------------------- le contrôleur pur
 
      deps : `later(fn, ms)` / `unlater(id)`, `now()`, `log(level, key, data)`,
-     `onChange(view)`, et `actions` — `confirm(item)` → booléen,
+     `onChange(view)`, et `actions` — `actions.confirm` (item) → booléen,
      `remove(id)` → promesse (rejet `{code, message}`), `attach(spec)` →
      `{ok, code?}`, `openLightbox(item, onClose)`, `openEditor(item, {saved(artifact), closed()})` (Slice 05.B),
      `say(text)`. */
