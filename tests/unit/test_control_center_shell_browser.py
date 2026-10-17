@@ -548,7 +548,11 @@ async def test_runtime_matrix_studio_and_rail(tmp_path):
     geometry = r"""(()=>{const b=s=>{const e=document.querySelector(s);if(!e||e.hidden)return null;const r=e.getBoundingClientRect();
       return r.width>0?[Math.round(r.left),Math.round(r.top),Math.round(r.right),Math.round(r.bottom)]:null};
       return {docked:document.documentElement.classList.contains('jvr-studio'),studio:b('#jvStudioExplorer'),rail:b('#presentationRail'),
-        theme:document.documentElement.getAttribute('data-jarvis-theme')||'',overflowX:document.documentElement.scrollWidth>innerWidth}})()"""
+        theme:document.documentElement.getAttribute('data-jarvis-theme')||'',overflowX:document.documentElement.scrollWidth>innerWidth,
+        titleCut:(t=>!!t&&t.scrollWidth>t.clientWidth+1)(document.querySelector('#presentationRail .jvr-title')),
+        gapHits:(()=>{const s=document.getElementById('jvStudioExplorer').getBoundingClientRect(),r=document.getElementById('presentationRail').getBoundingClientRect();
+          const out=[];for(let y=4;y<innerHeight;y+=4){const h=document.elementFromPoint((s.right+r.left)/2,y);
+            if(h&&h.closest(window.JarvisShell.CONTROL_SELECTOR)&&!h.closest('#presentationRail'))out.push([y,h.id||h.className])}return out.slice(0,6)})()}})()"""
     async with ExplorerRig(tmp_path) as rig:
         for theme in THEMES:
             result = await drive(rig.url, [
@@ -568,6 +572,12 @@ async def test_runtime_matrix_studio_and_rail(tmp_path):
                 assert audit["keys"][key]["visible"] and audit["keys"][key]["misses"] == [], (theme, key, audit["keys"][key])
             assert audit["unnamed"] == [], (theme, audit["unnamed"])
             assert audit["clipped"] == [], (theme, "texte coupé sans son texte entier", audit["clipped"])
+            # QA S09 P7 : l'audit entier, comme les autres états ; le titre du rail n'est pas coupé (« PRÉSENTATION… »).
+            assert audit["overlaps"] == [], (theme, "commandes l'une sur l'autre", audit["overlaps"])
+            assert audit["covered"] == [], (theme, "commande couverte en son centre", audit["covered"])
+            assert audit["offscreen"] == [], (theme, audit["offscreen"])
+            assert geo["titleCut"] is False, (theme, "titre du rail coupé", geo)
+            assert geo["gapHits"] == [], (theme, "une commande dépasse dans l'interstice Studio / rail", geo["gapHits"])
             assert (shots / f"matrix-09-studio-and-rail-{theme}.png").stat().st_size > 20000
 
 

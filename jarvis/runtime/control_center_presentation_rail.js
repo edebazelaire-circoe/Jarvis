@@ -252,6 +252,9 @@
 #${DOM.hostId}[data-density=drawer]:not([data-drawer=open]) .jvr-urgent{display:block}
 html.jvr-studio #${DOM.hostId}{z-index:9100;top:8px;right:8px;left:auto;bottom:8px;max-height:none;width:${STUDIO_WIDTH_PX-16}px;background:rgba(3,8,12,.92)}
 html.jvr-studio #${DOM.hostId} .jvr-list{flex:1 1 auto}
+/* Colonne du Studio (156 px utiles) : le titre se resserre et passe à la ligne au besoin, il ne se coupe plus en « PRÉSENTATION… » (QA S09 P7). */
+html.jvr-studio #${DOM.hostId} .jvr-head{letter-spacing:.04em}
+html.jvr-studio #${DOM.hostId} .jvr-title{white-space:normal}
 html.jvr-studio #jvStudioExplorer:not(:fullscreen){right:${STUDIO_WIDTH_PX}px}
 html.jvr-studio.jvr-slim #jvStudioExplorer:not(:fullscreen){right:60px}
 html.jvr-studio.jvr-slim #${DOM.hostId}{width:44px;padding:8px 4px}

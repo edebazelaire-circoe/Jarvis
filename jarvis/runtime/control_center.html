@@ -105,6 +105,10 @@ html,body{margin:0;height:100%;background:var(--bg);color:var(--text);font:15px 
    ouvert, tout le lanceur passe au rang des sélecteurs (36), au-dessus des
    panneaux latéraux (33) et du bandeau (35) qu'il recouvre un instant. */
 .dock{position:absolute;z-index:32;right:var(--shell-gutter);top:var(--shell-gutter);display:flex;gap:6px}
+/* Variantes ouvert, fenêtré (`html.jvr-studio`) : la page dessous est inerte et le Studio couvre le lanceur et l'onglet Chat,
+   sauf un demi-rond de CNV dans l'interstice de 8 px entre le Studio et le rail, visible mais non cliquable (QA S09 P7).
+   Ils ne se dessinent pas tant que le Studio est là. */
+html.jvr-studio .dock,html.jvr-studio #chatTab{visibility:hidden}
 .dock[data-more-open]{z-index:36}
 #dockMore svg{width:var(--shell-icon-sm);height:var(--shell-icon-sm);display:block;margin:auto}
 #dockMore[aria-expanded="true"],#dockMore.active{border-color:var(--accent);color:var(--accent)}

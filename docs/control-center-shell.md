@@ -508,6 +508,11 @@ launcher, the pills or the chat tab (`test_rail_right_no_overlap_launcher_chat_t
 from the edges) and `#jvStudioExplorer:not(:fullscreen)` stops at
 `right: 188px` (60 px when slim); during a run the interaction-mode control
 sits at the bottom of that right column (`control_center_presentation_studio_explorer_core.js`).
+The page under the Studio is inert; the launcher and the chat tab, which it
+covers, are not drawn meanwhile (`html.jvr-studio .dock, #chatTab
+{visibility:hidden}`: a half CNV button showed, unclickable, in the 8 px gap
+before the rail). In that column the rail title tightens and may wrap
+(« PRÉSENTATIONS » / « (1) »), never cut (QA S09 P7, matrix state 9).
 
 **State, never by colour alone.** Every card shows a mark with its own
 **shape** in every density (also in the 72 px strip, where the label shows
