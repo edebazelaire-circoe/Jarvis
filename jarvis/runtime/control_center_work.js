@@ -239,30 +239,31 @@ html[data-jarvis-theme="cosmos"] .choice.theme-choice.selected{
     return icons[name]||icons.trace;
   }
 
+  /* Une icône par outil du lanceur (rangée et popover « Plus d’outils »). L'ordre
+     est celui de la page, le même dans les deux thèmes (orbital-ui Slice 08) :
+     la peau ne remplace que le libellé texte par l'icône. */
   function setCosmosTools(enabled){
     const specs=[
-      ['agentsButton','agents',1],
-      ['openTimeline','timeline',2],
-      ['openTestLab','testlab',3],
-      [null,'trace',4],
-      ['openSettings','settings',5],
-      ['openMcpInspector','mcp',6],
-      ['openWorkspace','workspace',7],
-      ['openPrefabs','prefabs',8],
-      ['openStudioInspector','inspector',9],
-      [null,'errors',10],
+      ['openTimeline','timeline'],
+      ['agentsButton','agents'],
+      [null,'errors'],
+      ['openSettings','settings'],
+      [null,'trace'],
+      ['openTestLab','testlab'],
+      ['openMcpInspector','mcp'],
+      ['openWorkspace','workspace'],
+      ['openPrefabs','prefabs'],
+      ['openStudioInspector','inspector'],
     ];
-    for(const [id,name,order] of specs){
+    for(const [id,name] of specs){
       const button=id?document.getElementById(id):document.querySelector(`.dock button[data-panel="${name}"]`);
       if(!button)continue;
       if(!button.dataset.jarvisOriginalHtml)button.dataset.jarvisOriginalHtml=button.innerHTML;
       if(enabled){
         button.innerHTML=toolIcon(name);
-        button.parentElement.style.order=String(order);
         button.setAttribute('aria-label',button.title||name);
       }else{
         button.innerHTML=button.dataset.jarvisOriginalHtml;
-        button.parentElement.style.order='';
       }
     }
   }

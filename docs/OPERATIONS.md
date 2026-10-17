@@ -1892,7 +1892,10 @@ vue, la liste reste ouverte et le dit (`workspace_manager_missing`).
 
 ### Sessions & Boards (bouton `WSP` du dock)
 
-Le bouton **WSP** ouvre « Sessions & Boards », une vue plein écran pour vérifier
+Depuis l'orbital UI (Slice 08), `WSP` est dans « Plus d’outils » (les trois
+points, en haut à droite) avec `TRC`, `LAB`, `MCP`, `PFB` et `INS` ; restent
+visibles `CNV`, `AGT`, `ERR` et `SET` (`docs/control-center-shell.md` ›
+*Global launcher*). Le bouton **WSP** ouvre « Sessions & Boards », une vue plein écran pour vérifier
 où vit la mémoire de chaque Board et ce qu'elle contient. Tout y est lu sur le
 serveur ; « Actualiser » relit tout, Échap ferme.
 
@@ -2443,7 +2446,7 @@ octet pour octet, annuler / rétablir, la base périmée, le 409 de rechargement
 d'accessibilité, contraste, ordre de tabulation) et deux tailles d'écran, dans un vrai Chrome sans tête contre un Core isolé. Ce que le sans-tête
 ne prouve pas est à regarder une fois, sur un vrai écran, dans une instance isolée (`JARVIS_DATA_ROOT` à part, jamais le Jarvis vivant) :
 
-1. **Toucher** : ouvrir `INS` dans le dock, choisir une scène, faire glisser un curseur (taille, durée) à la souris, au doigt si l'écran est tactile :
+1. **Toucher** : ouvrir `INS` dans le dock (« Plus d’outils »), choisir une scène, faire glisser un curseur (taille, durée) à la souris, au doigt si l'écran est tactile :
    la poignée suit sans à-coup, le cadre d'aperçu bouge en même temps, la ligne dit « aperçu · non enregistré » ; au relâchement elle dit « enregistré ».
    Le geste ne laisse **qu'une** entrée dans l'historique (un seul `↶` le défait).
 2. **Couleur et dégradé** : le sélecteur de couleur natif et la barre de dégradé se lisent bien ; ajouter, déplacer, retirer une étape.
@@ -2457,7 +2460,7 @@ ne prouve pas est à regarder une fois, sur un vrai écran, dans une instance is
 6. **Rechargement** : demander à Jarvis une modification de source de la scène et, pendant « Rechargement en cours », régler un curseur : l'inspecteur dit
    qu'il attend, réessaie tout seul, puis enregistre ; « Arrêter d'attendre » rend la main.
 7. **Direction artistique** : le chip montre le nom, la provenance et le contraste ; les 10 variables non livrées au cadre sont marquées « non appliqué ».
-8. **Petit écran** : fenêtre étroite (360 px) : pas de défilement horizontal, les onglets défilent, aucune cible trop petite, les dix outils du dock sont tous visibles (deux rangées dans le thème cosmos) et ne recouvrent pas le bouton Boards. Écran bas (600 px de haut) : l'aperçu démarre replié.
+8. **Petit écran** : fenêtre étroite (360 px) : pas de défilement horizontal, les onglets défilent, aucune cible trop petite, le lanceur (quatre outils et « Plus d’outils », une rangée dans les deux thèmes depuis l'orbital UI S08) ne recouvre pas le bouton Boards. Écran bas (600 px de haut) : l'aperçu démarre replié.
    **Flèches sur un champ numérique** : cinq appuis sur ↑ dans « Inclinaison » ne laissent **qu'une** entrée d'historique (un seul `↶` les défait) ; maintenir ↑ ou rouler la molette de même ; Ctrl+Z avec un réglage en cours l'abandonne d'abord.
 9. **Mouvement réduit** (réglage système) : plus d'animation du sablier de chargement ni des transitions.
 
@@ -3482,8 +3485,8 @@ prochain démarrage prend la configuration courante. Tout autre méthode que
 
 #### Inspecteur MCP (bouton `MCP` du dock)
 
-Le bouton **MCP** du dock de droite (entre `SET` et `AGT`, avec les autres vues
-d'inspection) ouvre une vue plein écran qui lit ces deux routes, en `GET`
+Le bouton **MCP** du lanceur (dans « Plus d’outils » depuis l'orbital UI S08,
+avec les autres vues d'inspection) ouvre une vue plein écran qui lit ces deux routes, en `GET`
 seulement : **aucun outil n'est exécuté d'ici** (contrat
 `docs/mcp/tool-contract.md` §10.7).
 

@@ -622,7 +622,8 @@ LEAVE = (
     {"eval": "document.fullscreenElement&&document.exitFullscreen()"}, {"wait": 400},
     {"key": "Escape"},
 )
-INSPECTOR_OPEN = {"click": "#openStudioInspector"}
+# Orbital UI Slice 08 : l'inspecteur est dans le popover « Plus d’outils » du lanceur.
+INSPECTOR_OPEN = ({"click": "#dockMore"}, {"click": "#openStudioInspector"})
 EXPLORE_BTN = "button.jvi-explore"
 INSPECTOR_READY = {"until": "!!JarvisStudioInspector.instance.view().presentation_id&&!JarvisStudioInspector.instance.view().loading&&!!document.querySelector('button.jvi-explore')&&!document.querySelector('button.jvi-explore').disabled", "ms": 20000}
 FOCUS_OBJ = "{cls:String(document.activeElement&&document.activeElement.className),tag:document.activeElement&&document.activeElement.tagName}"
@@ -635,7 +636,7 @@ async def test_the_inspector_header_opens_the_explorer_with_a_real_click_gives_f
         other, _ = await presentation_with_score(rig.core)
         hosted = f"{STATE}.open&&{STATE}.presentation_id==='{other}'&&!!JarvisStudioExplorer.run.view()"
         result = await drive(rig.url, [
-            INSPECTOR_OPEN, INSPECTOR_READY,
+            *INSPECTOR_OPEN, INSPECTOR_READY,
             {"value": "button", "expr": "JSON.stringify((()=>{const b=document.querySelector('button.jvi-explore');const r=b.getBoundingClientRect();"
                                          "return {label:b.getAttribute('aria-label'),text:b.textContent,w:r.width,h:r.height,tab:b.tabIndex,vis:r.width>0&&r.height>0}})())"},
             {"value": "inspector_id", "expr": "JarvisStudioInspector.instance.view().presentation_id"},

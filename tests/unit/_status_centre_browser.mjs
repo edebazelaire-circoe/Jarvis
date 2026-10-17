@@ -50,6 +50,8 @@ const SERVER=`(()=>{
       obj('jobj_nowhere','agent',{visibility:'hidden',payload:{title:'Sans place',summary:'',items:[]}}),
     ],
     waiters:[],
+    /* Boards (test_global_launcher_browser.py) : la bascule change le Board actif du statut. */
+    boards:[{board_id:'default',title:'Jarvis',status:'active'}],activeBoard:'default',
   },seed);
   /* Une capture semee avec \`age_s\` : ses heures sont posees par rapport a maintenant. */
   S.captures=S.captures.map(c=>c.age_s!=null?Object.assign({},c,{created_at:iso(now-c.age_s*1000-1000),activated_at:iso(now-c.age_s*1000)}):c);
@@ -74,11 +76,13 @@ const SERVER=`(()=>{
     if(url==='/api/status'){
       const counts={};let unread=0;for(const [k,v] of Object.entries(S.counts))if(v>0){counts[k]=v;unread+=v}
       return json(200,{voice_state:'idle',voice_online:true,manual_wake_key:S.wakeKey||'f9',voice_turn_mode:'server',
-        agent:{name:'claude',state:'running'},agent_cli:'claude',error_count:0,
+        agent:{name:'claude',state:'running'},agent_cli:'claude',error_count:S.errorCount||0,subagents:S.subagents||null,
         background:{seq:S.seq,unread,counts,sources:[]},
-        boards:{available:true,active:{board_id:'default',title:'Jarvis'},jarvis_session_id:'jsess_1',bindings:[],error:null},
+        boards:{available:true,active:{board_id:S.activeBoard,title:(S.boards.find(b=>b.board_id===S.activeBoard)||{}).title||S.activeBoard},jarvis_session_id:'jsess_1',bindings:[],error:null},
         scene:{enabled:S.sceneOn,source:'core'},scene_limits:{job_cancel_timeout_s:30}});
     }
+    /* Raccourcis d'interface (valeurs par défaut de jarvis/runtime/shortcuts.py). */
+    if(url==='/api/shortcuts')return json(200,{values:{ui_settings:'s',ui_close:'Escape',ui_panel_errors:'e',ui_panel_trace:'t',ui_panel_agents:'a'}});
     if(url.startsWith('/api/background?'))return json(200,{ok:true,seq:S.seq,acknowledged:0,unread:1,counts:S.counts,events:eventsOf().filter(e=>S.counts[e.category]>0)});
     if(url==='/api/background/ack'){const b=JSON.parse(init.body);S.acks.push(b);S.counts[b.category]=0;S.seq+=1;
       return json(200,{ok:true,seq:S.seq,acknowledged:1});}
@@ -106,7 +110,9 @@ const SERVER=`(()=>{
       }
       return json(200,{outcome:'applied',revision:S.revision});
     }
-    if(url.split('?')[0]==='/api/boards')return json(200,{boards:[{board_id:'default',title:'Jarvis',status:'active'}],active_board_id:'default'});
+    if(url.split('?')[0]==='/api/boards')return json(200,{boards:S.boards,active_board_id:S.activeBoard});
+    if(url==='/api/boards/switch'&&method==='POST'){S.activeBoard=JSON.parse(init.body).board_id;return json(200,{changed:true});}
+    if(url==='/api/sessions/current')return json(200,{session:{jarvis_session_id:'jsess_1',started_at:iso(now),visited_board_ids:[S.activeBoard]}});
     if(url.startsWith('/api/work'))return json(200,{items:[]});
     /* Le rail actif de l'espace de travail (zone droite) : deux presentations, pour qu'il soit mesure. */
     if(url==='/api/presentation-studio/rail'&&method==='GET'){
@@ -176,6 +182,8 @@ try{
     const code=KEYS[name]||0;
     const base={key:name,code:name==='ContextMenu'?'ContextMenu':name,windowsVirtualKeyCode:code,nativeVirtualKeyCode:code,modifiers:shift?8:0};
     await send('Input.dispatchKeyEvent',{type:'rawKeyDown',...base});
+    /* Entree active un bouton sur son caractere, comme un vrai clavier. */
+    if(name==='Enter')await send('Input.dispatchKeyEvent',{type:'char',text:String.fromCharCode(13),unmodifiedText:String.fromCharCode(13),...base});
     await send('Input.dispatchKeyEvent',{type:'keyUp',...base});
   };
   const drag=async(selector,[dx,dy])=>{

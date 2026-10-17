@@ -69,7 +69,8 @@ async def test_the_library_browses_by_type_engine_and_stack_and_never_guesses_a_
             f"(()=>{{const s=document.querySelector('{sel}');s.value={value!r};s.dispatchEvent(new Event('change',{{bubbles:true}}))}})()")}
         result = await drive(url, [
             {"size": [1400, 900]}, {"wait": 500},
-            {"click": "#openPrefabs"}, _until("document.querySelectorAll('#pfbList .pfb-row').length>=8", 15000),
+            # Orbital UI Slice 08 : PFB est dans le popover « Plus d’outils » du lanceur.
+            {"click": "#dockMore"}, {"click": "#openPrefabs"}, _until("document.querySelectorAll('#pfbList .pfb-row').length>=8", 15000),
             {"wait": 800},
             {"value": "all", "expr": rows},
             {"value": "type_options", "expr": "[...document.querySelectorAll('#pfbType option')].map(o=>o.value)"},

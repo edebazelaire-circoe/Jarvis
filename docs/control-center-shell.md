@@ -36,8 +36,9 @@ is a **skin** only: colours, borders, radii, blur, fonts, icons. The Cosmos
 no `position`, `top`, `right`, `bottom`, `left`, `inset`, `z-index`,
 `transform`, `width`, `max-width`, `flex-direction` or `flex-wrap` on a shell
 surface (`test_cosmos_overrides_no_shell_position_or_rank`). The circuit-board
-skin keeps its text labels in the launcher (`ERR`, `TRC`, …), at the shared
-34 px size. The `JARVIS` brand of the state line is hidden in both themes (Cosmos
+skin keeps its text labels in the launcher (`ERR`, `SET`, …), at the shared
+34 px size; Cosmos swaps them for icons. The launcher's order is the page's, the
+same in both themes (since Slice 08 the Cosmos skin no longer reorders it). The `JARVIS` brand of the state line is hidden in both themes (Cosmos
 already hid it): in circuit-board it pushed the state onto a second row, over
 the Bare Hands column, from 1024 px down.
 
@@ -46,7 +47,7 @@ the Bare Hands column, from 1024 px down.
 | Zone | Surfaces today | Owner of the content |
 | --- | --- | --- |
 | `top-left` | `.topbar`: `#boardsHud`, `.state` (the `.brand` element stays in the markup, hidden in both themes: the target shows Board then state) | page, `control_center_boards.js` |
-| `top-right` | `.dock` (global launcher, one row of 34 px buttons) | page |
+| `top-right` | `.dock` (global launcher, Slice 08: one row of five 34 px buttons, the « Plus d’outils » popover under it; see [Global launcher](#global-launcher-dock)) | page |
 | `top-centre` | `.live-banner` (GPT-Live, transient) | page |
 | `left-edge` | `#toolWheel` anchor and orbital tool wheel (Slice 02; live by default since Slice 04: Sélection, Vidéo, Capture d'écran, Audio); `#barehandsHud`, `#barehandsPalette` hosts stay declared but hidden while the wheel is visible (Slice 03) | their modules |
 | `left-low` | `#screenshotPreview` (Slice 05): preview of the last successful screenshot, right of the wheel anchor, its bottom 172 px above the page bottom so it clears the bottom-left context zone (mode button and scene notes stacked up to 162 px) | `control_center_screenshot_preview.js` |
@@ -71,8 +72,9 @@ Placement rules that hold in both themes (measured by
   rather than wrap onto the left-edge column, whose top is at 76 px. At 700 px
   and below the column moves to the middle of the screen and the state may
   wrap under the Board.
-- **Launcher** (`top-right`): one row of 34 px buttons at
-  `--shell-gutter`; two rows of five at 620 px and below.
+- **Launcher** (`top-right`): one row of five 34 px buttons at
+  `--shell-gutter`, at every width (Slice 08); its popover opens under the
+  row, right-aligned.
 - **Side panels** (`right`): `#panel`, `#chatPanel` and the Studio inspector
   `#jvStudioInspector` share the zone: top `--shell-panel-top` (under the
   launcher and the pills), bottom `--shell-panel-bottom` (above the chat tab),
@@ -96,8 +98,8 @@ only in the `@media` blocks listed here. `JarvisShell.TOKENS` and
 | `--shell-bottom` | `18px` | | bottom baseline of bottom surfaces |
 | `--shell-status-h` | `44px` | | height of the bottom status centre (Slice 06); the drop tray and the lifted mode control sit above it |
 | `--shell-control` | `34px` | | launcher button size |
-| `--shell-launcher-w` | `394px` | `194px` at `max-width:620px` | launcher width: 10 buttons × 34 + 9 gaps × 6; two rows of 5 below 620 px |
-| `--shell-panel-top` | `64px` | `88px` at 700, `126px` at 620 | top of side panels and of the GPT-Live banner (below the launcher) |
+| `--shell-launcher-w` | `194px` | | launcher width: 5 buttons × 34 + 4 gaps × 6 (Slice 08: four tools and « Plus d’outils »), one row at every width |
+| `--shell-panel-top` | `64px` | `88px` at 700 | top of side panels and of the GPT-Live banner (below the launcher; at 700 px and below, below the state line on two rows) |
 | `--shell-panel-w` | `500px` | | side panel width (capped by the window) |
 | `--shell-panel-bottom` | `68px` | | bottom of side panels: they stop above the chat tab row (18 + 40 + 10), so the tab stays whole and clickable |
 | `--shell-rail-w` | `300px` | `72px` at `max-width:1099px`, `0px` at 700 | workspace rail width (Slice 07); `0px` = the rail is a tab |
@@ -155,6 +157,7 @@ The rule is written exactly as in the sheet, `${…}` interpolations included.
 | 36 | `#boardsPanel` | `control_center.html` | `#boardsPanel` | Board chooser, opened by the user over the banner |
 | 36 | `.bh-hud-pop` | `control_center_barehands_hud.js` | `#${DOM.hostId} .bh-hud-pop` | Bare Hands lifecycle selector |
 | 36 | `.im-pop` | `control_center_interaction_mode.js` | `#${DOM.hostId} .im-pop` | mode chooser |
+| 36 | `.dock[data-more-open]` | `control_center.html` | `.dock[data-more-open]` | launcher with its « Plus d’outils » popover open (Slice 08): the whole launcher rises to the choosers' rank, over the side panels and the banner it briefly covers |
 | 37 | `#toolWheel[data-open]` | `control_center.html` | `#toolWheel[data-open]` | open wheel and its radial sub-arcs: above the choosers, the wheel is the user's latest focus |
 | 38 | `#screenshotPreview` | `control_center.html` | `#screenshotPreview` | screenshot preview (Slice 05): transient, non-modal, above the open wheel that took the shot, below the status centre, toasts and the lightbox |
 | 40 | `#recIndicators` | `control_center.html` | `#recIndicators` | status centre (Slice 06), left: capture indicators (Slice 04); an open recording stays visible above the open wheel, below toasts |
@@ -217,8 +220,8 @@ Checked on the registry rows by `test_relative_order_of_the_old_registry_is_kept
   are below it;
 - `.topbar` ≤ `.dock` < `.panel` < `.live-banner` < `#boardsPanel` <
   `#bgPills` < `.toasts` < `.cdialog-back`;
-- choosers (36) are above the GPT-Live banner (35) and below the pills,
-  toasts, context menu and confirmation;
+- choosers (36), the open launcher popover among them, are above the GPT-Live
+  banner (35) and below the pills, toasts, context menu and confirmation;
 - the open wheel (37) is above the choosers and below the status centre
   (40: capture indicators, pills, eye), toasts and context menu; closed, its
   anchor is at the left-edge rank (30);
@@ -283,6 +286,81 @@ full-screen views, `#barehandsCards`) and the Studio surfaces.
 `test_every_declared_control_host_matches_control_selector` checks that every
 host in the page that the table names carries the attribute and that nothing
 else does.
+
+## Global launcher (`.dock`)
+
+Slice 08, decision D11 of the handoff's resolved architecture. The former
+right dock of ten buttons is a compact top-right launcher: **four frequent
+tools visible, the six others in a « Plus d’outils » popover**. Nothing was
+deleted or renamed: `<nav class="dock">` keeps every button with its id, its
+label (`ERR`, `TRC`…), its attributes and its module wiring; only where the
+button sits changed. The Board control `#boardsHud` stays in the top state
+line (D11, HV-08-01 kept the approved target); the interaction-mode control
+stays bottom-left. They are two owners (`control_center_boards.js`,
+`control_center_interaction_mode.js`): the launcher holds neither.
+
+**Destination matrix** (before = the Slice 01 row of ten; keyboard
+shortcuts are those of `jarvis/runtime/shortcuts.py`, unchanged):
+
+| Tool | Button | Before | After | Shortcut |
+| --- | --- | --- | --- | --- |
+| Conversation (timeline) | `#openTimeline` `CNV` | dock row | **visible** | — |
+| Agents (+ count badge `#agentBadge`) | `#agentsButton` `AGT` | dock row | **visible**, badge never behind a click | `a` |
+| Errors (+ badge `#errorBadge`) | `[data-panel=errors]` `ERR` | dock row | **visible**, badge never behind a click | `e` |
+| Réglages | `#openSettings` `SET` | dock row | **visible** | `s` |
+| Trace | `[data-panel=trace]` `TRC` | dock row | « Plus d’outils » | `t` |
+| Test Lab | `#openTestLab` `LAB` | dock row | « Plus d’outils » | — |
+| MCP inspector | `#openMcpInspector` `MCP` | dock row | « Plus d’outils » | — |
+| Sessions & Boards | `#openWorkspace` `WSP` | dock row | « Plus d’outils » | — |
+| Prefabs | `#openPrefabs` `PFB` | dock row | « Plus d’outils » | — |
+| Studio inspector | `#openStudioInspector` `INS` | dock row | « Plus d’outils » | — |
+| Board | `#boardsHud` | top state line | top state line (unchanged) | — |
+| Interaction mode | `#interactionModeHud` | bottom-left | bottom-left (unchanged) | — |
+
+`Escape` (`ui_close`) closes the popover first when it is open (topmost
+transient), then the side panel as before.
+
+**Row.** `CNV`, `AGT`, `ERR`, `SET`, then `#dockMore` (three dots,
+`aria-label` = `title` = « Plus d’outils », `aria-expanded`,
+`aria-controls="dockMorePop"`), in this order in both themes; 5 × 34 px +
+4 × 6 px = `--shell-launcher-w` (194 px), one row at every width.
+
+**Popover** `#dockMorePop` (`role="group"`, inside the launcher, hidden by
+default): a list under the row, right-aligned, each tool on one 36 px line
+with its label or icon and its short name (`data-dock-label`, drawn by CSS;
+the accessible name stays the button's own). Open, the launcher carries
+`data-more-open` and rises to rank 36 (registry row `.dock[data-more-open]`).
+
+| Input | Effect |
+| --- | --- |
+| Click on « Plus d’outils » (mouse, Bare Hands pinch) | opens or closes; focus stays on the button |
+| `Enter` / `Space` / `ArrowDown` on it | opens, focus on the first tool; `ArrowUp` on the last |
+| `ArrowDown` / `ArrowUp` (wrapping), `Home` / `End` | move in the list (roving `tabindex`: one tab stop) |
+| `Escape` | closes, focus back on « Plus d’outils » |
+| activating a tool | the tool opens as before, the popover closes |
+| `pointerdown` outside, `Tab` out | closes |
+
+Focus is never left on a hidden element: a view that gives the focus back to
+its button (Test Lab, MCP, Prefabs…) while that button sits in the closed
+popover gives it to « Plus d’outils ». While a popover tool is open (`active`
+or `aria-expanded="true"`), « Plus d’outils » shows the accent and a dot and
+names it in `aria-description` (« Ouvert : Trace »): state is not hidden by the
+fold, and not by colour alone.
+
+**Journal.** `[launcher] launcher.installed {visible, more}`, `.open
+{reason: pointer|keyboard}`, `.close {reason: toggle|escape|activate|outside|blur}`,
+`.install_failed {code: launcher_host_missing}` (the page keeps its row; the
+popover tools then stay unreachable by mouse but keep their shortcuts — the
+markup declares every host, so this only fires if the page itself is broken).
+
+**Tests.** `tests/unit/test_global_launcher_browser.py` (served page, the
+status-centre fetch double, both themes, 1440×900, 1280×720, 900×600,
+600×800): every pre-refactor tool has a route, popover keyboard (roving,
+`Escape`), badges visible closed, Board control visible and switching,
+mode control bottom-left unchanged. The dock slicers
+(`test_control_center_mvp.py`, `test_prefab_library.py`,
+`test_control_center_mcp_inspector_js.py`, …) keep reading
+`<nav class="dock">`.
 
 ## Status centre (`#statusCentre`)
 

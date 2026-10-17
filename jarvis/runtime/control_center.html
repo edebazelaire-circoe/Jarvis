@@ -27,7 +27,7 @@ html,body{margin:0;height:100%;background:var(--bg);color:var(--text);font:15px 
    @shell-layer 33: .panel
    @shell-layer 34: .board-drop-card, #boardDropTray, #jvStudioInspector
    @shell-layer 35: .live-banner
-   @shell-layer 36: #boardsPanel, .bh-hud-pop, .im-pop
+   @shell-layer 36: #boardsPanel, .bh-hud-pop, .im-pop, .dock[data-more-open]
    @shell-layer 37: #toolWheel[data-open]
    @shell-layer 38: #screenshotPreview
    @shell-layer 40: #recIndicators, #bgPills, #hiddenEye
@@ -48,12 +48,11 @@ html,body{margin:0;height:100%;background:var(--bg);color:var(--text);font:15px 
    @shell-layer 2147483000: #jarvisHands */
 /* Jetons de la coque (docs/control-center-shell.md › Tokens), définis une
    seule fois ici ; miroir : JarvisShell.TOKENS (control_center_shell.js). */
-:root{--shell-gutter:18px;--shell-top-h:40px;--shell-bottom:18px;--shell-status-h:44px;--shell-control:34px;--shell-launcher-w:394px;--shell-panel-top:64px;--shell-panel-w:500px;--shell-panel-bottom:68px;--shell-rail-w:300px;--shell-anchor-w:14px;--shell-wheel-r:200px;--shell-wedge-min:48px;--shell-icon:20px;--shell-icon-sm:15px;--shell-radius:12px;--shell-glass-bg:rgba(5,11,16,.46);--shell-glass-strong:rgba(4,10,15,.80);--shell-stroke:rgba(174,205,220,.12);--shell-stroke-active:color-mix(in srgb,var(--accent) 46%,transparent);--shell-focus:var(--accent);--shell-focus-w:2px;--shell-focus-offset:2px;--sem-alert:#ff9f43;--sem-done:var(--ok);--sem-question:var(--accent);--sem-working:#4da3ff;--sem-review:#ffd166;--sem-problem:#ff6a4d;--shell-ease:cubic-bezier(.2,.7,.2,1);--shell-dur-fast:120ms;--shell-dur:180ms}
+:root{--shell-gutter:18px;--shell-top-h:40px;--shell-bottom:18px;--shell-status-h:44px;--shell-control:34px;--shell-launcher-w:194px;--shell-panel-top:64px;--shell-panel-w:500px;--shell-panel-bottom:68px;--shell-rail-w:300px;--shell-anchor-w:14px;--shell-wheel-r:200px;--shell-wedge-min:48px;--shell-icon:20px;--shell-icon-sm:15px;--shell-radius:12px;--shell-glass-bg:rgba(5,11,16,.46);--shell-glass-strong:rgba(4,10,15,.80);--shell-stroke:rgba(174,205,220,.12);--shell-stroke-active:color-mix(in srgb,var(--accent) 46%,transparent);--shell-focus:var(--accent);--shell-focus-w:2px;--shell-focus-offset:2px;--sem-alert:#ff9f43;--sem-done:var(--ok);--sem-question:var(--accent);--sem-working:#4da3ff;--sem-review:#ffd166;--sem-problem:#ff6a4d;--shell-ease:cubic-bezier(.2,.7,.2,1);--shell-dur-fast:120ms;--shell-dur:180ms}
 @media(max-width:1099px){:root{--shell-rail-w:72px}}
-/* Étroit : le lanceur (10 boutons de 34 px) reste une rangée jusqu'à 620 px,
-   puis deux rangées de 5 ; panneaux et bandeau se reposent dessous. */
+/* Étroit : le lanceur (5 boutons de 34 px depuis la Slice 08) reste une rangée à
+   toutes les largeurs ; panneaux et bandeau se reposent sous la ligne d'état. */
 @media(max-width:700px){:root{--shell-gutter:10px;--shell-panel-top:88px;--shell-rail-w:0px}}
-@media(max-width:620px){:root{--shell-launcher-w:194px;--shell-panel-top:126px}}
 @media(prefers-reduced-motion:reduce){:root{--shell-dur-fast:0ms;--shell-dur:0ms}}
 /* Anneau de focus des commandes de la coque, à spécificité nulle : un module
    peut dessiner le sien, jamais le retirer. */
@@ -93,21 +92,38 @@ html,body{margin:0;height:100%;background:var(--bg);color:var(--text);font:15px 
 #boardsHud{pointer-events:auto;margin-left:0;margin-right:10px;min-width:0;max-width:min(340px,42vw);display:flex}
 #boardsHud~.state{flex-shrink:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 #boardsPanel{position:absolute;z-index:36;top:62px;right:18px}
-/* Lanceur global (zone haut-droit) : une rangée de boutons de 34 px dans les deux
-   thèmes ; le circuit imprimé y garde ses étiquettes (ERR, TRC…), Cosmos ses icônes. */
+/* Lanceur global (zone haut-droit, orbital-ui Slice 08) : une rangée de cinq boutons
+   de 34 px dans les deux thèmes — Conversation, Agents, Errors, Réglages, « Plus
+   d’outils » ; le circuit imprimé y garde ses étiquettes (ERR, SET…), Cosmos ses
+   icônes. Le popover « Plus d’outils » s'ouvre sous la rangée, aligné à droite ;
+   ouvert, tout le lanceur passe au rang des sélecteurs (36), au-dessus des
+   panneaux latéraux (33) et du bandeau (35) qu'il recouvre un instant. */
 .dock{position:absolute;z-index:32;right:var(--shell-gutter);top:var(--shell-gutter);display:flex;gap:6px}
+.dock[data-more-open]{z-index:36}
+#dockMore svg{width:var(--shell-icon-sm);height:var(--shell-icon-sm);display:block;margin:auto}
+#dockMore[aria-expanded="true"],#dockMore.active{border-color:var(--accent);color:var(--accent)}
+#dockMore{position:relative}
+#dockMore.active::after{content:"";position:absolute;right:4px;top:4px;width:6px;height:6px;border-radius:50%;background:var(--accent)}
+.dock-pop{position:absolute;top:calc(100% + 6px);right:0;width:max-content;min-width:216px;max-width:calc(100vw - 2 * var(--shell-gutter));display:grid;gap:2px;padding:6px;background:var(--shell-glass-strong);border:1px solid var(--shell-stroke);border-radius:var(--shell-radius);backdrop-filter:blur(22px);box-shadow:0 18px 50px rgba(0,0,0,.45);transform-origin:top right;animation:dockPopIn var(--shell-dur) var(--shell-ease)}
+.dock-pop[hidden]{display:none}
+.dock-pop .tool{display:block}
+#dockMorePop button{width:100%;height:36px;display:flex;align-items:center;justify-content:flex-start;gap:10px;padding:0 12px 0 8px;border-color:transparent;background:transparent;border-radius:8px;text-align:left;transform:none;box-shadow:none;backdrop-filter:none}
+#dockMorePop button svg{flex:none}
+#dockMorePop button::after{content:attr(data-dock-label);font-size:12px;letter-spacing:.02em;color:var(--text);white-space:nowrap}
+#dockMorePop button:hover,#dockMorePop button:focus-visible,#dockMorePop button.active,#dockMorePop button[aria-expanded="true"]{background:color-mix(in srgb,var(--accent) 10%,transparent);border-color:var(--shell-stroke-active)}
+#dockMorePop button:disabled{opacity:.5;cursor:not-allowed}
+@keyframes dockPopIn{from{opacity:0;transform:translateY(-4px)}to{opacity:1;transform:none}}
 .dock button{width:var(--shell-control);height:var(--shell-control);padding:0;border:1px solid rgba(110,231,255,.26);background:rgba(3,8,12,.82);color:var(--text);border-radius:10px;cursor:pointer;font-family:inherit;font-size:10px;letter-spacing:.02em;backdrop-filter:blur(12px)}
 .dock button:hover,.dock button.active{border-color:var(--accent);color:var(--accent)}
 .badge{position:absolute;right:-5px;top:-5px;min-width:18px;height:18px;border-radius:9px;background:var(--danger);color:white;font-size:10px;display:none;align-items:center;justify-content:center}
 .tool{position:relative}
 .panel{position:absolute;z-index:33;top:var(--shell-panel-top);right:var(--shell-gutter);bottom:var(--shell-panel-bottom);width:min(var(--shell-panel-w),calc(100% - 2 * var(--shell-gutter)));background:var(--panel);border:1px solid var(--line);backdrop-filter:blur(18px);display:none;flex-direction:column;box-shadow:0 0 50px rgba(0,0,0,.45)}
 .panel.open{display:flex}
-/* Étroit (700 px et moins, puis 620) : les mêmes zones dans les deux thèmes.
+/* Étroit (700 px et moins) : les mêmes zones dans les deux thèmes.
    La ligne d'état lâche la marque, le Board et l'état s'abrègent ; panneau et bandeau
-   prennent la largeur sous le lanceur (`--shell-panel-top`) ; à 620 px le lanceur
-   passe sur deux rangées de 5 au lieu de recouvrir le bouton Boards. */
+   prennent la largeur sous le lanceur (`--shell-panel-top`). Le lanceur, cinq
+   boutons depuis la Slice 08, reste une rangée. */
 @media(max-width:700px){.topbar{flex-wrap:wrap}#boardsHud{max-width:100%}.topbar>.state{max-width:100%;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.panel{left:var(--shell-gutter);right:var(--shell-gutter);width:auto}.live-banner{left:var(--shell-gutter);right:var(--shell-gutter);width:auto;transform:none}}
-@media(max-width:620px){.dock{flex-wrap:wrap;width:var(--shell-launcher-w);justify-content:flex-end}}
 .panel header{display:flex;justify-content:space-between;align-items:center;padding:15px 17px;border-bottom:1px solid var(--line)}
 .panel header h2{font-size:14px;margin:0;letter-spacing:.12em;text-transform:uppercase}
 .panel header button{background:none;color:var(--muted);border:0;font-size:20px;cursor:pointer}
@@ -1914,17 +1930,29 @@ button.wsp-ename:hover{color:var(--accent)}
       <button class="live-ack" id="liveAck" type="button" hidden title="La session est terminée de votre côté : Core la clôt sans relevé d'usage final et la voix peut rouvrir.">CONSIDÉRER COMME FERMÉE</button>
     </div>
   </section>
-  <nav class="dock" aria-label="Jarvis tools" data-shell-control>
-    <div class="tool"><button data-panel="errors" title="Errors">ERR</button><span class="badge" id="errorBadge">0</span></div>
-    <div class="tool"><button data-panel="trace" title="Trace">TRC</button></div>
-    <div class="tool"><button id="openTestLab" title="Test Lab · diagnostics ciblés" aria-label="Test Lab · diagnostics ciblés" aria-haspopup="dialog" aria-expanded="false" aria-controls="testlab">LAB</button></div>
+  <!-- Lanceur global (zone haut-droit ; orbital-ui Slice 08, D11 ;
+       docs/control-center-shell.md › Global launcher). Quatre outils fréquents
+       visibles — dont les deux qui portent un badge (Agents, Errors), jamais
+       cachés derrière un clic — puis « Plus d’outils », un popover (rang 36,
+       `.dock[data-more-open]`) qui tient les six autres. Aucun outil supprimé :
+       chaque bouton garde son id, son libellé, ses attributs et son raccourci ;
+       les modules les branchent comme avant. Popover : roving tabindex, flèches,
+       Home/End, Échap rend le focus à « Plus d’outils ». -->
+  <nav class="dock" aria-label="Outils de Jarvis" data-shell-control>
     <div class="tool"><button id="openTimeline" title="Conversation · chronologie en direct" aria-label="Conversation · chronologie en direct" aria-haspopup="dialog" aria-expanded="false" aria-controls="timeline">CNV</button></div>
-    <div class="tool"><button id="openSettings" title="Réglages">SET</button></div>
-    <div class="tool"><button id="openMcpInspector" title="MCP · outils du brain et plugins externes" aria-label="MCP · outils du brain et plugins externes" aria-haspopup="dialog" aria-expanded="false" aria-controls="mcpInspector">MCP</button></div>
-    <div class="tool"><button id="openWorkspace" title="Sessions &amp; Boards" aria-label="Sessions &amp; Boards · mémoire, relations, artefacts" aria-haspopup="dialog" aria-expanded="false" aria-controls="workspaceManager">WSP</button></div>
-    <div class="tool"><button id="openPrefabs" title="Prefabs · bibliothèque partagée" aria-label="Prefabs · bibliothèque partagée, aperçu et fork" aria-haspopup="dialog" aria-expanded="false" aria-controls="prefabLibrary">PFB</button></div>
-    <div class="tool"><button id="openStudioInspector" title="Inspecteur · réglages de la présentation" aria-label="Inspecteur · réglages de la présentation" aria-expanded="false" aria-controls="jvStudioInspector">INS</button></div>
     <div class="tool"><button data-panel="agents" id="agentsButton" title="Agents">AGT</button><span class="badge count" id="agentBadge">0</span></div>
+    <div class="tool"><button data-panel="errors" title="Errors">ERR</button><span class="badge" id="errorBadge">0</span></div>
+    <div class="tool"><button id="openSettings" title="Réglages">SET</button></div>
+    <div class="tool dock-more"><button type="button" id="dockMore" aria-expanded="false" aria-controls="dockMorePop" aria-label="Plus d’outils" title="Plus d’outils"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true" focusable="false"><circle cx="5.5" cy="12" r="1.7"/><circle cx="12" cy="12" r="1.7"/><circle cx="18.5" cy="12" r="1.7"/></svg></button>
+      <div class="dock-pop" id="dockMorePop" role="group" aria-label="Plus d’outils" hidden>
+        <div class="tool"><button data-panel="trace" title="Trace" aria-label="Trace" data-dock-label="Trace">TRC</button></div>
+        <div class="tool"><button id="openTestLab" title="Test Lab · diagnostics ciblés" aria-label="Test Lab · diagnostics ciblés" aria-haspopup="dialog" aria-expanded="false" aria-controls="testlab" data-dock-label="Test Lab">LAB</button></div>
+        <div class="tool"><button id="openMcpInspector" title="MCP · outils du brain et plugins externes" aria-label="MCP · outils du brain et plugins externes" aria-haspopup="dialog" aria-expanded="false" aria-controls="mcpInspector" data-dock-label="MCP">MCP</button></div>
+        <div class="tool"><button id="openWorkspace" title="Sessions &amp; Boards" aria-label="Sessions &amp; Boards · mémoire, relations, artefacts" aria-haspopup="dialog" aria-expanded="false" aria-controls="workspaceManager" data-dock-label="Sessions &amp; Boards">WSP</button></div>
+        <div class="tool"><button id="openPrefabs" title="Prefabs · bibliothèque partagée" aria-label="Prefabs · bibliothèque partagée, aperçu et fork" aria-haspopup="dialog" aria-expanded="false" aria-controls="prefabLibrary" data-dock-label="Prefabs">PFB</button></div>
+        <div class="tool"><button id="openStudioInspector" title="Inspecteur · réglages de la présentation" aria-label="Inspecteur · réglages de la présentation" aria-expanded="false" aria-controls="jvStudioInspector" data-dock-label="Inspecteur">INS</button></div>
+      </div>
+    </div>
   </nav>
   <!-- Centre d'état du bas (orbital-ui Slice 06, D8 / D9 ; docs/control-center-shell.md
        › Status centre). Une mise en page sans rang ; ses trois commandes sont au rang 40 :
@@ -5262,6 +5290,79 @@ window.addEventListener('keydown',event=>{
 });
 
 document.querySelectorAll('.dock button[data-panel]').forEach(b=>b.addEventListener('click',()=>{if(b.dataset.panel==='errors')errorsView='active';if(b.dataset.panel==='agents'&&current==='agents'){showList();return}openPanel(b.dataset.panel)}));
+/* Lanceur global : popover « Plus d’outils » (orbital-ui Slice 08, D11 ;
+   docs/control-center-shell.md › Global launcher). Une vue seulement : chaque
+   outil garde son bouton, son id, son raccourci et le branchement de son module ;
+   ce bloc ouvre et ferme le popover qui en tient six, rien d'autre. Roving
+   tabindex (une tabulation), flèches, Home/End ; Échap, un clic dehors, une
+   activation ou la tabulation qui sort le ferment. Un module qui rend le focus à
+   son bouton resté dans le popover fermé le rend à « Plus d’outils » : jamais à
+   un élément caché. Journal : `[launcher] launcher.<clé> {json}`. */
+(function installDockLauncher(){
+  const dock=document.querySelector('nav.dock'),more=document.getElementById('dockMore'),pop=document.getElementById('dockMorePop');
+  const log=(level,key,data)=>{const line=`[launcher] launcher.${key} ${JSON.stringify(data||{})}`;if(level==='error')console.error(line);else console.info(line)};
+  if(!dock||!more||!pop){log('error','install_failed',{code:'launcher_host_missing'});return}
+  const wrap=more.parentElement;
+  const items=()=>[...pop.querySelectorAll('button')];
+  const usable=()=>items().filter(b=>!b.disabled);
+  const isOpen=()=>!pop.hidden;
+  let pointerAt=-Infinity;
+  const rove=target=>{for(const b of items())b.tabIndex=b===target?0:-1};
+  const focusItem=target=>{if(!target)return;rove(target);target.focus({preventScroll:true})};
+  const pick=where=>{const list=usable();return where==='last'?list[list.length-1]:where==='first'?list[0]:null};
+  for(const b of items()){
+    const native=b.focus;
+    b.focus=function(options){if(pop.hidden){more.focus(options);return}native.call(this,options)};
+  }
+  function onOutside(event){if(!wrap.contains(event.target))close('outside')}
+  function onKey(event){if(event.key==='Escape'){event.preventDefault();event.stopPropagation();close('escape',true)}}
+  function open(reason,where){
+    if(!isOpen()){
+      pop.hidden=false;dock.setAttribute('data-more-open','');more.setAttribute('aria-expanded','true');
+      document.addEventListener('pointerdown',onOutside,true);document.addEventListener('keydown',onKey);
+      log('info','open',{reason});
+    }
+    if(where)focusItem(pick(where));
+  }
+  function close(reason,focus){
+    if(!isOpen())return;
+    const inside=pop.contains(document.activeElement);
+    pop.hidden=true;dock.removeAttribute('data-more-open');more.setAttribute('aria-expanded','false');
+    document.removeEventListener('pointerdown',onOutside,true);document.removeEventListener('keydown',onKey);
+    if(focus||inside)more.focus({preventScroll:true});
+    log('info','close',{reason});
+  }
+  more.addEventListener('pointerdown',()=>{pointerAt=performance.now()});
+  more.addEventListener('click',event=>{
+    if(isOpen()){close('toggle',true);return}
+    /* `detail` 0 sans pointeur juste avant : Entrée ou Espace, le focus entre dans la liste.
+       Un pincement Bare Hands est un clic de détail 0 précédé de son `pointerdown`. */
+    const keyboard=event.detail===0&&performance.now()-pointerAt>1000;
+    open(keyboard?'keyboard':'pointer',keyboard?'first':null);
+  });
+  more.addEventListener('keydown',event=>{
+    if(event.key!=='ArrowDown'&&event.key!=='ArrowUp')return;
+    event.preventDefault();open('keyboard',event.key==='ArrowUp'?'last':'first');
+  });
+  pop.addEventListener('keydown',event=>{
+    const list=usable(),at=list.indexOf(document.activeElement);
+    const next={ArrowDown:list[(at+1)%list.length],ArrowUp:list[(at-1+list.length)%list.length],Home:list[0],End:list[list.length-1]}[event.key];
+    if(next){event.preventDefault();focusItem(next)}
+  });
+  pop.addEventListener('click',event=>{if(event.target.closest('button'))close('activate')});
+  wrap.addEventListener('focusout',event=>{if(isOpen()&&event.relatedTarget&&!wrap.contains(event.relatedTarget))close('blur')});
+  /* Un outil du popover ouvert (Trace, Inspecteur…) se voit aussi popover fermé :
+     « Plus d’outils » prend l'accent et un point, et le nomme en description. */
+  const syncActive=()=>{
+    const on=items().filter(b=>b.classList.contains('active')||b.getAttribute('aria-expanded')==='true');
+    more.classList.toggle('active',on.length>0);
+    if(on.length)more.setAttribute('aria-description','Ouvert : '+on.map(b=>b.dataset.dockLabel).join(', '));
+    else more.removeAttribute('aria-description');
+  };
+  new MutationObserver(syncActive).observe(pop,{subtree:true,attributes:true,attributeFilter:['class','aria-expanded']});
+  rove(pick('first'));syncActive();
+  log('info','installed',{visible:dock.querySelectorAll(':scope>.tool>button').length,more:items().length});
+})();
 $('#closePanel').addEventListener('click',closePanel);
 // Les raccourcis d'interface doivent répondre avant même la première ouverture
 // des réglages : leurs valeurs sont donc chargées au démarrage.

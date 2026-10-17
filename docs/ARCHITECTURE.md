@@ -2558,7 +2558,7 @@ the agent snapshot flags `display_tools` / `barehands_tools` / `console_tools`
 (only then can a restart be pending). Contract:
 [mcp/tool-contract.md](mcp/tool-contract.md) §4.3, §8, §10.6.
 
-MCP inspector view (Slice 07). The dock button **MCP** (between `SET` and `AGT`)
+MCP inspector view (Slice 07). The dock button **MCP** (since orbital-ui Slice 08 in the launcher's « Plus d’outils » popover, `docs/control-center-shell.md` › *Global launcher*)
 opens a full-screen `role="dialog"` built by
 `jarvis/runtime/control_center_mcp_inspector.js` (`JarvisMcpInspector`, injected
 at `/*__CONTROL_CENTER_MCP_INSPECTOR_JS__*/`). It reads only the two `GET`
@@ -2587,7 +2587,7 @@ below. Contract:
 §8, §10.6–§10.7.
 
 Sessions & Boards manager (board-memory-workspace-inspector, Slice 07). The
-dock button **WSP** (between `MCP` and `AGT`) opens a full-screen
+dock button **WSP** (since orbital-ui Slice 08 in « Plus d’outils ») opens a full-screen
 `role="dialog"` built by `jarvis/runtime/control_center_workspace.js`
 (`JarvisWorkspace`, injected at `/*__CONTROL_CENTER_WORKSPACE_JS__*/`): current
 Session/Board/Context/foreground binding, Session history, every Board

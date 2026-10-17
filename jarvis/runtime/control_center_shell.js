@@ -57,7 +57,7 @@
      travail (Slice 07), sous les panneaux latéraux qui s'ouvrent par-dessus. */
   const ZONES=Object.freeze({
     'top-left':'ligne d’état : Board, voix, agent',
-    'top-right':'lanceur global (dock)',
+    'top-right':'lanceur global : Conversation, Agents, Errors, Réglages, « Plus d’outils » (Slice 08)',
     'top-centre':'bandeau GPT-Live (transitoire)',
     'left-edge':'ancre et roue d’outils (Sélection, Vidéo, Capture d’écran, Audio)',
     'left-low':'aperçu de la dernière capture d’écran (Slice 05), au-dessus du contexte bas-gauche',
@@ -76,7 +76,7 @@
     '--shell-bottom':'18px',
     '--shell-status-h':'44px',
     '--shell-control':'34px',
-    '--shell-launcher-w':'394px',
+    '--shell-launcher-w':'194px',
     '--shell-panel-top':'64px',
     '--shell-panel-w':'500px',
     '--shell-panel-bottom':'68px',
@@ -107,7 +107,6 @@
   const RESPONSIVE_TOKENS=Object.freeze({
     'max-width:1099px':Object.freeze({'--shell-rail-w':'72px'}),
     'max-width:700px':Object.freeze({'--shell-gutter':'10px','--shell-panel-top':'88px','--shell-rail-w':'0px'}),
-    'max-width:620px':Object.freeze({'--shell-launcher-w':'194px','--shell-panel-top':'126px'}),
   });
   /* Sous `prefers-reduced-motion: reduce`, ces durées valent 0 ms. */
   const MOTION_TOKENS=Object.freeze(['--shell-dur-fast','--shell-dur']);
