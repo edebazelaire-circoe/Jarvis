@@ -585,8 +585,11 @@
     badgeSelector:'#jarvisHands .jh-badge',
     noteSelector:'#jarvisHands .jh-note',
     sceneSelector:'.sc-status:not([hidden])',
-    /* L'indication vocale est centrée en bas à **toutes** les largeurs
-       (`left:50%; bottom:22px`), et la page ne la déplace jamais. Son texte le
+    /* Depuis la Slice 06 de l'orbital UI, c'est le centre d'état du bas
+       (`--shell-bottom` + `--shell-status-h` : jusqu'à 62 px) qui tient cette
+       place ; le relèvement de 42 px passe au-dessus (64 px). Historique —
+       l'indication vocale était centrée en bas à **toutes** les largeurs
+       (`left:50%; bottom:22px`), et la page ne la déplaçait jamais. Son texte le
        plus long — `F9 · VOICE HORS LIGNE` — fait environ 230 px, donc sous
        plus long — `F9 · VOICE HORS LIGNE` — fait 200 px mesures, et le bord
        droit de ce bouton est a 195 px : ils ne se rencontreraient donc qu'en
@@ -822,11 +825,13 @@ body:has(${GEO.noteSelector}) #${DOM.hostId}{--im-rail:${GEO.railTwo}px}
 #${DOM.hostId} .im-sr{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;
   clip:rect(0,0,0,0);white-space:nowrap;border:0}
 
-/* L'indication vocale est centrée en bas à toutes les largeurs et la page ne la
-   déplace jamais : sous ~820 px, elle et ce bouton se rencontrent. Le contrôle
-   se hisse au-dessus d'elle — et il le fait **avant** le resserrement de 700 px,
-   parce que la fenêtre 701→820 est précisément celle où les deux tenaient
-   encore chacun leur moitié et ne la tiennent plus. */
+/* Le centre d'état (orbital-ui Slice 06, qui remplace l'indication vocale) est
+   centré en bas à toutes les largeurs, de \`--shell-bottom\` (18) sur
+   \`--shell-status-h\` (44), donc jusqu'à 62 px. Au-dessus de 820 px il garde la
+   largeur de ce bouton de chaque côté ; en dessous il ne réserve plus que
+   l'onglet Chat, et ce contrôle se hisse au-dessus de la rangée (22 + 42 = 64)
+   — **avant** le resserrement de 700 px, la fenêtre 701→820 étant celle où les
+   deux ne tiennent plus chacun leur moitié. */
 @media(max-width:${GEO.liftBelow}px){
   #${DOM.hostId}{--im-lift:${GEO.lift}px}
 }

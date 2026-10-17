@@ -939,8 +939,10 @@ Implementation (Slice 06), beyond the rules above:
   (same place, stop button) they stay at the bottom. At 480 px high or less (and ≥ 940 px wide) the
   dock turns into rows and the panel moves to `right: 136px`; the toast stack
   moves left by the same 50 px (it overlapped the panel by 38 px and hid the
-  « Entrée » hint at 1024×480). The bottom-centre F9 voice hint is hidden while
-  the Chat is open (it would be cut under the panel).
+  « Entrée » hint at 1024×480). Since the orbital UI Slice 06 there is no
+  bottom-centre F9 voice hint any more; the bottom status centre stays visible
+  with the Chat open (its top, 62 px, is below the panel's bottom, 68 px) and
+  re-centres in the free space left of the panel from 1100 px up.
 - One side panel: `openPanel` / `closePanel` of the page close the Chat;
   opening the Chat calls `closePanel` and closes the Studio inspector, whose
   own opening calls `closePanel`. Esc in the panel closes it and gives focus

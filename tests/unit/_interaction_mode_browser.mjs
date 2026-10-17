@@ -114,7 +114,9 @@ const READ=`(()=>{
   box('wheel','#toolWheel .tw-anchor');
   box('dock','.dock');
   box('pills','.bgpills');
-  box('hint','.voicehint');
+  /* Le centre d'état du bas (orbital UI Slice 06, qui a remplacé l'indication
+     vocale) : sa bande réservée, toujours mesurable (hauteur minimale 44 px). */
+  box('hint','#statusCentre');
   box('toast','.toasts .toast');
   box('chatTab','#chatTab');
   box('chatPanel','#chatPanel');

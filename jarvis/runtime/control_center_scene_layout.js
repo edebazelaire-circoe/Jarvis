@@ -1702,23 +1702,40 @@
      hidden}` : une tâche éphémère n'est plus affichée (effacée ou réglage
      éteint). L'objet reste dans `state` et n'est pas compté dans `hidden`,
      qui est le masquage voulu par l'utilisateur : c'est une décision de vue,
-     jamais une écriture dans la scène. */
+     jamais une écriture dans la scène.
+
+     `options.showHidden` (orbital-ui Slice 06, D9 ; réglage de vue
+     `JarvisSceneView` du même nom) : un objet masqué **qui a une place
+     enregistrée** est rendu en fantôme (`ghost: true`, nom accessible suffixé
+     « masqué ») à cette place, toujours compté dans `hidden`. Un fantôme
+     n'est ni placé par le résolveur, ni obstacle, ni bout d'un fil, ni membre
+     d'une constellation, ni animé : il ne fait que se montrer, et seul
+     « Réafficher » (un `set_visibility visible`) le ramène. Un objet masqué
+     sans place enregistrée n'a pas de fantôme (sa place inventée ne serait
+     pas la sienne) : il reste dans la liste de l'œil (« Tout réafficher »). */
   function viewModel(state,layout,vp,options){
     const limit=options&&Number.isInteger(options.objectLimit)?options.objectLimit:OBJECT_LIMIT;
     const errorLabels=options&&options.errorLabels||null;
     const animatable=options&&typeof options.animatable==='function'?options.animatable:()=>true;
     const workView=options&&typeof options.workView==='function'?options.workView:null;
     const raised=options&&options.raised instanceof Map?options.raised:null;
+    const showHidden=!!(options&&options.showHidden===true);
     const nodes=[],centers=new Map();let offscreen=0,hidden=0,ephemeralHidden=0;
     const explains=explainsIndex(state);
     for(const item of state.objects.values()){
-      if(item.visibility!=='visible'){hidden++;continue}
+      let ghost=false;
+      if(item.visibility!=='visible'){
+        hidden++;
+        if(!showHidden||!item.geometry)continue;
+        ghost=true;
+      }
       /* The retired floating viewer of a presentation run (native-studio-playback-fix Slice 09): a `studio_stage` / `studio_aux` window an
          older Core left is never drawn (Core archives it at start); a run plays inside Variants. */
       if(RETIRED_CATEGORIES.has(item.category))continue;
       const work=workView?workView(item):null;
-      if(work&&work.hidden){ephemeralHidden++;continue}
-      const stored=layout.placements.get(item.object_id);
+      if(work&&work.hidden){if(!ghost)ephemeralHidden++;continue}
+      const g=ghost?item.geometry:null;
+      const stored=ghost?{x:g.x,y:g.y,w:g.w,h:g.h}:layout.placements.get(item.object_id);
       if(!stored)continue;
       const representation=['point','capsule','window'].includes(item.representation)?item.representation:'point';
       const drawn=nodeGeometry(vp,representation,stored);
@@ -1754,11 +1771,15 @@
         itemCount:count,
         explains:artifact?explainedTarget(state,item.object_id,errorLabels,explains):null,
         prefab,prefabKey:prefab?`${prefab.id}@${prefab.version}`:'',
+        ghost,
       };
       node.label=artifact
         ?[node.title,KIND_LABELS.artifact,node.category,count?`${count} ${count>1?'entrées':'entrée'}`:'',
-          node.explains?`explique « ${node.explains.title} »`:'',node.pinned?'épinglé':''].filter(Boolean).join(' · ')
-        :[node.title,KIND_LABELS[item.kind]||item.kind,node.type&&node.type.kind!=='other'?node.type.label:'',node.execLabel,node.ephemeral?'éphémère':'',signal&&!node.live?'retiré':'',node.pinned?'épinglé':''].filter(Boolean).join(' · ');
+          node.explains?`explique « ${node.explains.title} »`:'',node.pinned?'épinglé':'',ghost?'masqué':''].filter(Boolean).join(' · ')
+        :[node.title,KIND_LABELS[item.kind]||item.kind,node.type&&node.type.kind!=='other'?node.type.label:'',node.execLabel,node.ephemeral?'éphémère':'',signal&&!node.live?'retiré':'',node.pinned?'épinglé':'',ghost?'masqué':''].filter(Boolean).join(' · ');
+      /* Un fantôme ne fait que se montrer : ni fil, ni constellation, ni
+         signal porté, ni compte « hors champ ». */
+      if(ghost){node.live=false;node.urgency='none';nodes.push(node);continue}
       const outside=screen.left+screen.width<0||screen.top+screen.height<0||screen.left>vp.width||screen.top>vp.height;
       if(outside)offscreen++;
       nodes.push(node);centers.set(node.id,node);
@@ -1769,7 +1790,7 @@
        (Décision 8). */
     const anchors=anchorsOf(state);
     for(const node of nodes){
-      if(!node.signal)continue;
+      if(!node.signal||node.ghost)continue;
       const anchor=anchors.get(node.id);
       const star=anchor&&anchor.kind==='signal'?centers.get(anchor.to):null;
       if(!star)continue;
@@ -1781,7 +1802,7 @@
     /* Signaux vivants urgents recouverts par une fenêtre dessinée au-dessus
        d'eux : comptés pour l'indicateur (test de rectangles, à chaque rendu). */
     const coveredSignals={high:0,medium:0};
-    const windows=nodes.filter(n=>n.shape==='window');
+    const windows=nodes.filter(n=>n.shape==='window'&&!n.ghost);
     for(const node of nodes){
       if(node.urgency!=='high'&&node.urgency!=='medium')continue;
       if(state.objects.get(node.id).origin!=='runtime')continue;
@@ -1791,7 +1812,7 @@
     /* Borne des animations : urgence haute, moyenne, puis exécution en cours. */
     let budget=MAX_ANIMATED;
     for(const pass of [n=>n.urgency==='high',n=>n.urgency==='medium',n=>!n.signal&&n.exec==='running']){
-      for(const node of nodes){if(budget<=0)break;if(!node.animate&&pass(node)&&animatable(node)){node.animate=true;budget--}}
+      for(const node of nodes){if(budget<=0)break;if(!node.ghost&&!node.animate&&pass(node)&&animatable(node)){node.animate=true;budget--}}
     }
     /* Constellations de tâches : l'étoile principale porte la pastille, toutes
        les étoiles de la tâche partagent sa couleur. */

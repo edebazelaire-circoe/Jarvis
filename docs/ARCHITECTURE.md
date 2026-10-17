@@ -3779,13 +3779,14 @@ no client-log route, and none was added. `JarvisScene.gate` runs in its own
 `try` inside `refreshStatus`: a scene error is logged
 (`[scène] scene.gate_failed`) and never breaks the status display.
 
-**Status indicator** (bottom left, on the voice hint's line, outside the
+**Status indicator** (bottom left, on the status centre's line, outside the
 composition safe area; raised above the Barehands badge when it is shown; chips
 wrap upwards, two rows at most in practice, never blocking): loading; "Scène
 figée · <raison>" plus a muted "N s · réessai N s" that is never truncated (a 1 s
 ticker runs only while degraded); "Scène pleine — archiver des travaux terminés"
-with "n/512", a button that opens the bulk archive confirmation (Slice 08); "N objets masqués", a button
-listing hidden objects to show them again (Slice 08); "N signaux d'échec sous des fenêtres"
+with "n/512", a button that opens the bulk archive confirmation (Slice 08); (the "N objets masqués" button
+of Slice 08 moved to the eye `#hiddenEye` of the bottom status centre in the orbital UI Slice 06,
+see control-center-shell.md › Status centre); "N signaux d'échec sous des fenêtres"
 and "N signaux à vérifier sous des fenêtres"; "N objets hors champ". The visible chips
 are not a live region. A separate visually hidden `role=status` region announces
 state changes only ("Scène figée · Core injoignable. Nouvel essai automatique.",
@@ -3845,7 +3846,7 @@ Files:
 | menu › Afficher en point / capsule / fenêtre | menu | `set_representation` with the new default size around the same centre | rolled back, toast |
 | menu › Épingler ici / Désépingler | menu | `pin` / `unpin` (the drawn place is committed first when the object had none) | rolled back, toast |
 | menu › Masquer | menu | `set_visibility hidden`; toast offers to show it again; the selection moves to the reading neighbour | rolled back, toast |
-| chip « N objets masqués » › Afficher / Tout réafficher | chip is a button | `set_visibility visible`, one per object (≤ 512); the first object shown is selected | count of failures in a toast |
+| eye `#hiddenEye` (status centre, orbital UI S06) › secondary: Afficher / Tout réafficher; ghost › Réafficher | eye is a toggle button | `set_visibility visible`, one per object (≤ 512); the first object shown is selected | count of failures in a toast |
 | menu › Archiver… (confirmation) | menu | `archive` (Core cascades the star's runtime signals); short confirmation toast; selection moves to the neighbour | rolled back, toast |
 | menu › Archiver les travaux terminés (N objets)… or the « Scène pleine » chip (confirmation with counts) | menu / chip button | `archive_many` (one command in practice) | whole selection rolled back; `not_bulk_archivable` → counts recomputed and confirmed again once, then a toast offering « Cliquer ici pour réessayer » |
 | menu › Arrêter la tâche… (job stars only, confirmation) | menu | `POST /api/jobs/cancel`; the star shows « arrêt en cours » until Core says it ended, or until the relay deadline | toast with Core's outcome in French |

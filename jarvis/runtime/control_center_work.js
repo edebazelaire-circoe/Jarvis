@@ -168,10 +168,6 @@ html[data-jarvis-theme="cosmos"] .state{
   font-size:10px;padding:7px 10px;letter-spacing:.1em;color:#6f8591;
   box-shadow:0 8px 30px rgba(0,0,0,.2)}
 html[data-jarvis-theme="cosmos"] .state strong{color:var(--accent,#6ee7ff)}
-html[data-jarvis-theme="cosmos"] .voicehint{
-  border:0;border-radius:999px;background:rgba(3,8,12,.42);
-  color:rgba(210,229,238,.58);font-size:10px;padding:7px 11px;
-  letter-spacing:.11em;backdrop-filter:blur(14px);box-shadow:none}
 html[data-jarvis-theme="cosmos"] .dock .tool{display:block}
 html[data-jarvis-theme="cosmos"] .dock button{
   border-radius:10px;display:grid;place-items:center;
@@ -184,7 +180,7 @@ html[data-jarvis-theme="cosmos"] .dock button.active{
   color:var(--accent,#6ee7ff);border-color:var(--shell-stroke-active,color-mix(in srgb,var(--accent,#6ee7ff) 46%,transparent));
   background:rgba(10,19,26,.72);transform:translateY(-1px)}
 html[data-jarvis-theme="cosmos"] .dock .badge{right:-4px;top:-4px;transform:scale(.82)}
-html[data-jarvis-theme="cosmos"] .bgpill{width:26px;height:26px;font-size:10px;background:rgba(5,11,16,.56);backdrop-filter:blur(16px)}
+html[data-jarvis-theme="cosmos"] .bgpill{background:rgba(5,11,16,.56);backdrop-filter:blur(16px)}
 html[data-jarvis-theme="cosmos"] .bgpop{border-radius:14px;background:rgba(4,10,15,.92);backdrop-filter:blur(26px)}
 html[data-jarvis-theme="cosmos"] .panel{
   border:1px solid rgba(151,191,209,.14);border-radius:16px;

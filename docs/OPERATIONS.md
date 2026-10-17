@@ -2926,7 +2926,7 @@ objets ») :
 | --- | --- |
 | déplacer (et donc épingler) | glisser, ou Maj+flèches |
 | épingler / désépingler | menu (clic droit, appui long au doigt ou au stylet, Maj+F10) |
-| masquer, puis réafficher | menu « Masquer » ; pastille « N objets masqués · afficher » |
+| masquer, puis réafficher | menu « Masquer » ; œil du centre d'état (bas-centre) : clic = fantômes, clic droit = liste ; « Réafficher » sur un fantôme |
 | changer de forme | menu « Afficher en point / capsule / fenêtre » |
 | archiver un objet | menu « Archiver… » ; une étoile emporte ses signaux, **pas** ses artefacts |
 | archiver en groupe | « Archiver les travaux terminés (N objets)… » (terminés, en échec, annulés, interrompus) et « Archiver les artefacts orphelins (N)… » (artefacts dont l'étoile est archivée) |
@@ -4056,7 +4056,6 @@ les changements d'état sont annoncés.
 | `Scène figée · Core injoignable` `42 s · réessai 8 s` | la lecture a échoué ; la dernière scène connue reste affichée ; nouvel essai automatique (1 s, 2 s, 4 s… jusqu'à 30 s), immédiat quand le Control Center répond de nouveau | démarrer Core ; la page reprend seule |
 | `Scène indisponible · …` | même chose, mais aucune scène n'a encore été lue | idem |
 | `Scène pleine — archiver des travaux terminés` `512/512` | 512 objets actifs : Core met les nouvelles étoiles en attente et refuse toute nouvelle note | cliquer la pastille : archivage groupé des travaux terminés, avec confirmation |
-| `N objets masqués` `afficher` | des objets masqués restent dans la scène | cliquer la pastille : liste, « Afficher » ou « Tout réafficher » |
 | `N signaux d'échec sous une fenêtre` / `N signaux à vérifier sous des fenêtres` | un signal d'échec ou de blocage est caché : son étoile est sous une fenêtre de résultat, et le signal suit son étoile | masquer ou déplacer la fenêtre (le cerveau peut le faire), ou ouvrir le panneau Agents |
 | `N objets hors champ` | des objets sont placés au-delà du bord de la fenêtre | agrandir la fenêtre, ou demander au cerveau de les rapprocher |
 
@@ -4163,10 +4162,14 @@ Actions du menu :
   l'arrêt du brain entier, depuis le panneau Agents, les interrompt ;
 - **Archiver les travaux terminés (N objets)…** : voir ci-dessous.
 
-**Retrouver ce qui est masqué.** Tant qu'un objet est masqué, la pastille
-« N objets masqués · afficher » apparaît en bas à gauche. Un clic (ou Entrée)
-ouvre la liste : « Afficher « titre » » pour un objet, « Tout réafficher » pour
-tous.
+**Retrouver ce qui est masqué.** L'œil du centre d'état, en bas au centre
+(« Afficher les objets masqués (N) » au survol et pour le lecteur d'écran), le
+dit. Un clic montre les objets masqués en **fantômes** à leur place (atténués,
+en tirets) sans les réafficher ; un nouveau clic les cache. Clic droit (ou
+Maj+F10, touche Menu) : la liste, « Afficher « titre » » pour un objet, « Tout
+réafficher » pour tous. Sur un fantôme, le clic droit propose « Réafficher ».
+Un objet masqué qui n'a jamais eu de place n'a pas de fantôme : il est dans la
+liste. Ce réglage ne vaut que pour ce navigateur.
 
 **Archiver les travaux terminés.** Depuis le menu d'une étoile, ou directement
 depuis la pastille « Scène pleine — archiver des travaux terminés » quand la scène

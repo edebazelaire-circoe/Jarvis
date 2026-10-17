@@ -881,13 +881,19 @@ wheel is closed**; activating a recording chip stops **that** capture (the
 filled square says so; stuck = `!`, lost status = `?` + dashed border). The
 chip's `aria-label` never changes with the timer (`Arrêter l’enregistrement
 d’écran (écran 2)`); the duration is its description (`en cours depuis 1:05`).
-The note of the last refusal sits above the chips (close button, `Escape`);
+The note of the last refusal sits above the status centre (close button, `Escape`);
 state changes are announced in a polite live region. A chip that disappears
 while focused hands the focus to the next chip, else to the wheel anchor.
-**Provisional slot**: in the bottom row right of the voice hint, up to the
-chat tab, wrapping upwards; at 700 px and below, a column on the right edge,
-vertically centred (the bottom row has no free width there). Slice 06 moves
-them into the status centre.
+**Place** (orbital UI Slice 06): the first item of the bottom **status centre**
+(`#recIndicators | #bgPills | #hiddenEye`, [control-center-shell.md](control-center-shell.md)
+› *Status centre*), left of the background pills, so a recording is never
+read as a counter; chips wrap upwards when the row is full. At 700 px and below
+the row cannot hold a chip beside the pills and the eye: the chips keep the
+right-edge column, vertically centred (back in the row while a full-width side
+panel is open). The refusal note opens
+above the row, centred on the indicators; while it is shown the toasts rise
+above it (`--ri-note-h`, measured by the module, so neither the note nor its ×
+is ever under a toast — QA S04 P4).
 
 Cues never rely on colour alone (checked ring + corner dot, `!`, `?` + dashes,
 filled stop square, sweep bars, counters). Under `prefers-reduced-motion` the

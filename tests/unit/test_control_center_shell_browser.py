@@ -138,8 +138,10 @@ def test_every_control_is_measured_and_none_covers_another(measured, theme, size
     assert read["selector"] == "[data-shell-control],#sceneLayer>.sc-status"
     names = [c["name"] for c in read["controls"]]
     for required in ("#chatTab", "#interactionModeHud", "#presentationRail", ".dock", "#bgPills",
-                     "#toolWheel", "#voiceHint", "#boardsHud"):
+                     "#toolWheel", "#boardsHud"):
         assert required in names, (required, names)
+    # Slice 06 : la capsule de l'indication vocale n'existe plus (centre d'état du bas).
+    assert "#voiceHint" not in names
     # Slice 04 : la roue est visible d'office ; la colonne Bare Hands quitte la vue
     # (Sélection la tient) et le rail de capture n'existe plus.
     for gone in ("#barehandsHud", "#barehandsPalette", "#captureRail"):

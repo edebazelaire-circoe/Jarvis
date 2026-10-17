@@ -382,7 +382,11 @@ def test_narrow_toasts_spare_the_panel_header_and_voice_hint_hides(tmp_path, the
     assert r["toast"] is not None
     assert not _overlap(r["toast"], r["head"]) and not _overlap(r["toast"], r["close"]) and r["closeHit"] is True
     assert not _overlap(r["toast"], r["input"]) and r["inputHit"] is True
-    assert r["voicehint"] == "hidden"
+    # Orbital UI Slice 06 : plus d'indication vocale ; le centre d'état du bas reste
+    # visible, sous le bas du panneau ouvert, jamais couvert par lui ni par la pile.
+    assert r["voicehint"] is False
+    assert r["statusCentre"] is not None
+    assert not _overlap(r["statusCentre"], r["panel"]) and not _overlap(r["statusCentre"], r["toast"])
 
 
 def test_board_and_studio_open_alongside(tmp_path):

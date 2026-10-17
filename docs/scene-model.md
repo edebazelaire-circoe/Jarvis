@@ -82,7 +82,21 @@ is `rejected_authority` (`runtime_composition`).
 - **Completion is not removal** (decision 12): an `exec_state` change never
   touches `visibility` or `disposition`. A completed, unreviewed star stays
   active and visible.
-- **Hidden** = active but not rendered; recoverable (decision 13).
+- **Hidden** = active but not rendered; recoverable (decision 13). Since the
+  orbital UI Slice 06 (D9) a **view preference** of the browser can show hidden
+  objects as **ghosts**: `showHidden` in `JarvisSceneView`
+  (`control_center_scene_view.js`, stored in `jarvis.scene.view`, never sent to
+  Core, like `showEphemeral`), toggled by the eye `#hiddenEye` of the status
+  centre. `JarvisSceneLayout.viewModel(..., {showHidden:true})` emits every
+  hidden object **that has a stored geometry** with `ghost: true` at that place
+  (dimmed, dashed, accessible name suffixed « masqué »), still counted in
+  `hidden`; a ghost is never placed by the resolver, never an obstacle, never
+  the end of a link and never committed. Its only action is « Réafficher » =
+  one `set_visibility visible`. The eye never rewrites `visibility`: bulk
+  rewriting would lose which objects the user hid. A hidden object without
+  geometry has no ghost and stays in the eye's list (« Tout réafficher »).
+  Contract of the eye: [control-center-shell.md](control-center-shell.md) ›
+  *Status centre*.
 - **Archived** = out of the active scene, kept for history. `brain` and `user`
   both archive (19/09/2026: the brain has exactly the user's hand, decision 14
   lifted). Archiving removes the object from `SceneSnapshot.objects`,

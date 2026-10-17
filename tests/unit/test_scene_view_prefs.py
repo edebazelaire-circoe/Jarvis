@@ -51,7 +51,12 @@ DEFAULTS = {
     "speed": 1,
     "links": True,
     "showEphemeral": True,
+    # Orbital UI Slice 06 (D9) : l'œil du centre d'état, éteint par défaut.
+    "showHidden": False,
 }
+#: Ce que la section Réglages → Apparence montre : tout sauf l'œil, qui a son
+#: propre interrupteur dans le centre d'état.
+PANEL = [key for key in DEFAULTS if key != "showHidden"]
 
 
 def _node(expression: str) -> Any:
@@ -149,7 +154,7 @@ def test_the_spread_slider_stops_where_the_renderer_does(tmp_path):
 def test_a_setting_without_effect_is_greyed_but_never_forgotten():
     model = _node("V.describe({orbit:false,spread:1.2,halo:0,breathe:true})")
     rows = {row["field"]["id"]: row for row in model["rows"]}
-    assert [row["field"]["id"] for row in model["rows"]] == list(DEFAULTS)
+    assert [row["field"]["id"] for row in model["rows"]] == PANEL
     # Gravitation éteinte : l'ampleur et la vitesse sont grisées, leur valeur gardée.
     assert rows["spread"]["enabled"] is False and rows["spread"]["value"] == 1.2
     assert rows["speed"]["enabled"] is False
@@ -244,3 +249,35 @@ def test_the_settings_live_in_the_appearance_tab_and_the_storage_can_always_fail
         assert f"id:{field}" in view, field
     assert "input.id=`scView_${field.id}`;" in page
     assert "element('button','sc-view-reset'" in page
+
+
+def test_show_hidden_defaults_false_and_normalizes():
+    """Orbital UI Slice 06, D9 : l'œil des objets masqués est un réglage de vue
+    de ce navigateur (`showHidden`, même stockage que `showEphemeral`), jamais
+    une écriture dans la scène. Éteint par défaut ; normalisé comme les autres
+    interrupteurs ; hors de la section Réglages → Apparence, et
+    « Réinitialiser » ne le touche pas."""
+
+    assert normalize(None)["showHidden"] is False
+    assert normalize({"showHidden": True})["showHidden"] is True
+    assert normalize({"showHidden": "false"})["showHidden"] is False
+    assert normalize({"showHidden": 0})["showHidden"] is False
+    assert _node('V.decode(V.encode({showHidden:true}))')["showHidden"] is True
+    field = _node("V.FIELD_BY_ID.get('showHidden')")
+    assert field["type"] == "toggle" and field["value"] is False and field["panel"] is False
+    assert "showHidden" not in [f["id"] for f in _node("V.PANEL_FIELDS")]
+    # L'œil allumé n'est pas « personnalisé » pour la fenêtre, et la remise à zéro le garde.
+    assert _node("V.isDefault({showHidden:true})") is True
+    assert _node("V.reset({showHidden:true,size:2})") == {**DEFAULTS, "showHidden": True}
+    # Ni classe ni variable CSS : un filtre de vue, pas un dessin.
+    assert _node("V.classes({showHidden:true})") == []
+    assert _node("V.cssVars({showHidden:true})") == _node("V.cssVars(null)")
+    # Le nom accessible de l'œil : le compte n'y est que tant qu'il y a quelque chose à montrer.
+    assert _node("V.hiddenEye(null,3)") == {"pressed": False, "count": 3, "inert": False,
+                                            "label": "Afficher les objets masqués (3)"}
+    assert _node("V.hiddenEye({showHidden:true},3)") == {"pressed": True, "count": 3, "inert": False,
+                                                         "label": "Cacher les objets masqués"}
+    assert _node("V.hiddenEye(null,0)") == {"pressed": False, "count": 0, "inert": True,
+                                            "label": "Aucun objet masqué"}
+    # Allumé sans rien de masqué (tout réaffiché) : il reste actionnable pour s'éteindre.
+    assert _node("V.hiddenEye({showHidden:true},0)")["inert"] is False

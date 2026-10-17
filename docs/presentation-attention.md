@@ -266,7 +266,11 @@ Three rules are its own, all measured, and two of them are corrections:
   left onto the centred hint. The card blocks no click there
   (`.voicehint` is `pointer-events:none`) but it persistently hides the page's
   voice affordance. A threshold that is wrong in one case will be wrong in
-  another, so there is no threshold;
+  another, so there is no threshold. Since the orbital UI Slice 06 the voice
+  hint is gone and the bottom **status centre** (up to 62 px, background pills
+  included) holds that place; the margin still clears it
+  (`test_la_carte_ne_recouvre_jamais_l_indication_vocale` measures it against
+  `#bgPills`);
 - **a 52 px right margin**, clearing the background pill column. The pills follow
   the viewport **centre** (`top:calc(50% + 193px)`) while this rail is anchored
   to the **bottom**, so on a short viewport they descend into it. Measured with

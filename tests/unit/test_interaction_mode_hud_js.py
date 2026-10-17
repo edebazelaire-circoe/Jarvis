@@ -1457,45 +1457,38 @@ def test_le_controle_et_la_colonne_bare_hands_ne_se_croisent_pas(tmp_path):
 
 
 def test_le_controle_se_hisse_au_dessus_de_l_indication_vocale(tmp_path):
-    """L'indication vocale est centree en bas a **toutes** les largeurs.
+    """Le centre d'etat du bas (orbital-ui Slice 06, qui remplace l'indication
+    vocale `.voicehint`) est centre en bas a **toutes** les largeurs.
 
-    La page ne la deplace jamais — elle est absente de son bloc a 700 px — donc
-    il existe une fenetre ou elle et ce bouton tiennent chacun une moitie qui se
-    recouvrent. Le seuil de relevement se lit sur la page, pas sur une constante
-    recopiee : sous le theme Cosmos l'indication descend a 18 px, et un test qui
-    aurait grave 22 px n'aurait pas vu le deplacement."""
+    Au-dessus de 820 px il garde la largeur de ce bouton de chaque cote ; en
+    dessous il ne reserve plus que l'onglet Chat, et ce bouton doit passer
+    au-dessus de la rangee. Son bas et sa hauteur se lisent sur la page (jetons
+    de la coque `--shell-bottom` et `--shell-status-h`), pas sur une constante
+    recopiee : aucun theme ne la deplace."""
 
     css = run_node(tmp_path, "out({style:M.STYLE,geo:M.GEO});", name="lift")
     module, geo = css["style"], css["geo"]
     raw = PAGE_HTML.read_text(encoding="utf-8")
     work = (RUNTIME / "control_center_work.js").read_text(encoding="utf-8")
 
-    # Depuis la Slice 01 de l'orbital UI, son bas est le jeton de la coque
-    # `--shell-bottom`, le même dans les deux thèmes : aucun thème ne la déplace.
-    assert ".voicehint{position:absolute;z-index:31;left:50%;bottom:var(--shell-bottom);" in raw
-    bottoms = [int(re.search(r"--shell-bottom:(\d+)px", raw).group(1))]
-    assert not re.search(r"voicehint\{[^}]*bottom:", work), "un thème déplace l'indication"
-    # Elle est centree, et la page ne la deplace a aucune largeur : aucun bloc
-    # `@media(max-width:700px)` ne la nomme.
-    blocks = []
-    for start in [m.start() for m in re.finditer(re.escape("@media(max-width:700px){"), raw)]:
-        depth = 0
-        for index in range(start, len(raw)):
-            depth += {"{": 1, "}": -1}.get(raw[index], 0)
-            if raw[index] == "}" and depth == 0:
-                blocks.append(raw[start:index + 1])
-                break
-    assert blocks
-    assert not any("voicehint" in block for block in blocks)
+    # L'ancienne capsule n'existe plus ; la rangee est posee sur les jetons de la coque.
+    assert "voicehint" not in raw and "voicehint" not in work
+    assert ".status-centre{position:absolute;left:calc(var(--shell-gutter) + 254px);right:calc(var(--shell-gutter) + 254px);bottom:var(--shell-bottom);min-height:var(--shell-status-h);" in raw
+    assert "@media(max-width:820px){.status-centre{left:calc(var(--shell-gutter) + 64px);right:calc(var(--shell-gutter) + 64px)}}" in raw
+    assert not re.search(r"status-centre\{[^}]*bottom:", work), "un thème déplace le centre d'état"
+    bottom = int(re.search(r"--shell-bottom:(\d+)px", raw).group(1))
+    height = int(re.search(r"--shell-status-h:(\d+)px", raw).group(1))
+    # Au-dessus de 820 px la marge laterale couvre le bouton le plus large.
+    # (marge = gouttière 18 + 254 ; bord droit du bouton = left + maxWidth ; 12 px d air.)
+    assert 18 + 254 >= geo["left"] + geo["maxWidth"] + 12, geo
 
     lift_below, lift, narrow_below = geo["liftBelow"], geo["lift"], geo["narrowBelow"]
-    # Le relevement arrive **avant** le resserrement du rail : la fenetre a
-    # risque est 701 → 820, precisement celle que 700 px laissait ouverte.
-    assert lift_below > narrow_below
-    # Et le bouton passe vraiment au-dessus d'elle : son bas releve doit depasser
-    # le SOMMET de l'indication, pas seulement son bas. Celle-ci fait environ
-    # 30 px de haut (12 px de texte, 8 px de marge, une bordure).
-    assert geo["bottom"] + lift > max(bottoms) + 30
+    # Le relevement arrive **avant** le resserrement du rail, et au seuil ou la
+    # rangee cesse de reserver la largeur du bouton.
+    assert lift_below == 820 and lift_below > narrow_below
+    # Et le bouton passe vraiment au-dessus d'elle : son bas releve depasse le
+    # SOMMET de la rangee (bas + hauteur), pas seulement son bas.
+    assert geo["bottom"] + lift > bottom + height
     assert f"@media(max-width:{lift_below}px)" in module
     assert "--im-lift:%dpx" % lift in module
 

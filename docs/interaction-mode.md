@@ -804,7 +804,8 @@ unreachable afterwards stayed hidden behind a stale sentence.
 
 Bottom left: `left: 18px`, with the vertical offset composed from two custom
 properties, `--im-rail` (which rung of the bottom-left stack) and `--im-lift`
-(clearing the voice hint).
+(clearing the bottom status centre, which replaced the voice hint in the orbital
+UI Slice 06).
 
 **That corner is not empty, and the first version of this module wrongly said it
 was.** Three elements already live on the same rail, all of them positioned by
@@ -840,12 +841,18 @@ gesture appears exactly while the user is mid-gesture, and a control that jumped
 34 px at that instant would be far worse than one that is permanently 34 px
 over-conservative. The 34 px buys never moving under someone's hand.
 
-The voice hint is centred at the bottom **at every width** and the page never
-moves it, so the control lifts above it below 820 px. Measured, its longest text
-(`F9 · VOICE HORS LIGNE`) is 200 px and the button's right edge is at 195 px, so
-they would in fact only meet below ~708 px. The threshold stays at 820 px on
-purpose: being early costs nothing, and a tight number breaks at the first
-longer label.
+The bottom **status centre** (orbital UI Slice 06; it replaced the voice hint
+capsule) is centred at the bottom at every width, from `--shell-bottom` (18 px)
+over `--shell-status-h` (44 px), so up to 62 px. Above 820 px it keeps this
+button's width (236 px at most, plus the gutter and 18 px of air) free on both
+sides; at 820 px and below it only reserves the chat tab, and the control lifts
+above the row (22 + 42 = 64 px). The lift threshold, 820 px, is unchanged:
+the rungs and the `.sc-status:not([hidden])` selector are unchanged too — the
+scene's « N objets masqués » note, one of the `.sc-status` notes, is gone (the
+eye of the status centre replaced it), so the scene rung engages less often.
+History: the voice hint's longest text (`F9 · VOICE HORS LIGNE`) was 200 px and
+the button's right edge at 195 px, so they only met below ~708 px; 820 px was
+kept on purpose (being early costs nothing).
 
 **Below 700 px the left rail is abandoned entirely.** At that width the Bare
 Hands column becomes centre-relative (`top: calc(50% + …)`) and its palette's

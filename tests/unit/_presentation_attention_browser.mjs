@@ -126,7 +126,8 @@ const READ=`(function(){
   box('wheel','#toolWheel .tw-anchor');
   box('indicators','#recIndicators');
   box('modeBtn','#interactionModeButton');
-  box('hint','.voicehint');
+  /* Le centre d'état du bas (orbital UI Slice 06), à la place de l'indication vocale. */
+  box('hint','#statusCentre');
   box('dock','.dock');
   box('pills','.bgpills');
   box('toast','.toasts .toast');

@@ -460,7 +460,7 @@ PAGE = ROOT / "jarvis" / "runtime" / "control_center.html"
 
 #: Ce que l'extraction prend de la page, dans l'ordre où la page le déclare.
 CUE_DECLARATIONS = ("BG", "bgActiveId", "bgBoards", "BG_TONES", "bgCue", "bgCueTone", "bgCueAllowed",
-                    "BG_CATS", "bgCat", "bgCount", "renderBackgroundPills")
+                    "BG_CATS", "bgCat", "bgIcon", "bgCount", "renderBackgroundPills")
 
 CUE_WORLD = """
 const AUDIO={contexts:0,freqs:[],peaks:[],tones:[]};

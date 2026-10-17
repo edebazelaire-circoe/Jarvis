@@ -136,7 +136,7 @@ const READ=`(()=>{
     tab:box(tab),panel:box(panel),dock:box(q('.dock')),toasts:box(q('#toasts')),sidePanel:box(q('#panel.open')),
     input:box(input),send:box(q('#chatSend')),head:box(q('#chatPanel header')),close:box(q('#chatClose')),
     pills:box(q('#bgPills:not([hidden])')),agt:box(q('#agentsButton')),toast:box(q('#toasts .toast')),
-    voicehint:getComputedStyle(q('#voiceHint')).visibility,closeHit:hit(q('#chatClose')),boardsPanel:box(q('#boardsPanel')),inspector:box(q('#jvStudioInspector')),
+    statusCentre:box(q('#statusCentre')),voicehint:!!q('#voiceHint'),closeHit:hit(q('#chatClose')),boardsPanel:box(q('#boardsPanel')),inspector:box(q('#jvStudioInspector')),
     tabHit:hit(tab),inputHit:hit(input),
     open:panel.classList.contains('open')&&!panel.hidden,sideOpen:q('#panel').classList.contains('open'),
     expanded:tab.getAttribute('aria-expanded'),

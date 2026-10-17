@@ -75,7 +75,11 @@ def test_layout_rules_tab_bottom_right_toasts_above_it_one_panel_at_a_time():
     # the pills live in the top row since Slice 01 of the orbital UI, so the stack no longer dodges a dock column.
     assert ".toasts{position:fixed;right:var(--shell-gutter);bottom:68px;z-index:70;display:grid;gap:8px;width:clamp(220px,calc(100vw - 164px),340px);" in html
     assert ".panel.chat-panel{bottom:68px}" in html, "the open Chat never covers its own tab"
-    assert "#app:has(.chat-panel.open) .voicehint{visibility:hidden}" in html
+    # Orbital UI Slice 06 : plus d'indication vocale à masquer. Le centre d'état
+    # du bas (haut à 18 + 44 = 62 px) reste sous le bas du panneau (68 px) : le
+    # panneau ouvert ne le recouvre jamais (mesuré par test_status_centre_browser.py).
+    assert "voicehint" not in html
+    assert ".status-centre{position:absolute;" in html and "bottom:var(--shell-bottom);min-height:var(--shell-status-h);" in html
     assert "#app:has(.chat-panel.open)~.toasts{top:var(--chat-toasts-top,124px);bottom:auto}" in html
     assert "#app:has(.panel.open)~.toasts{right:calc(var(--shell-gutter) + 12px + min(var(--shell-panel-w),100vw - 2 * var(--shell-gutter)))" in html
     assert "@media(prefers-reduced-motion:reduce){.chat-panel.open," in html

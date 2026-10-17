@@ -25,8 +25,8 @@
      prendre (`GET /api/captures/targets`). Une seule cible : une entrée
      unique qui le dit (« Écran principal — seule cible disponible »), jamais
      omise, jamais un faux choix.
-   - **Indicateurs** `#recIndicators` (rang 40, place provisoire à droite de
-     l'indication vocale ; la Slice 06 les range dans le centre d'état) : une puce par
+   - **Indicateurs** `#recIndicators` (rang 40, à gauche des pastilles dans
+     le centre d'état du bas depuis la Slice 06) : une puce par
      capture ouverte — `REC` + durée pour l'écran, micro + durée pour l'audio
      —, qui reste quand la roue se replie ; l'activer arrête **cette**
      capture (vie privée d'abord, statut perdu compris). Une attente de
@@ -211,8 +211,8 @@
   const STYLE=`
 ${H}{font:12px/1.2 ui-monospace,SFMono-Regular,Consolas,monospace;color:var(--text,#d8edf7)}
 ${H} [hidden]{display:none!important}
-${H} .ri-chips{display:flex;flex-wrap:wrap-reverse;justify-content:flex-start;gap:6px}
-@media(max-width:700px){${H} .ri-chips{flex-direction:column;flex-wrap:nowrap;align-items:flex-end}}
+${H} .ri-chips{display:flex;flex-wrap:wrap-reverse;justify-content:center;gap:6px}
+@media(max-width:700px){#app:not(:has(.panel.open)) ${H} .ri-chips{flex-direction:column;flex-wrap:nowrap;align-items:flex-end}}
 ${H} .ri-chip{--ri-ink:var(--sem-alert,#ff9f43);position:relative;display:inline-flex;align-items:center;gap:7px;
   height:34px;margin:0;padding:0 10px 0 9px;border:1px solid color-mix(in srgb,var(--ri-ink) 55%,transparent);
   border-radius:var(--shell-radius,12px);background:var(--shell-glass-strong,rgba(4,10,15,.8));
@@ -242,12 +242,17 @@ ${H} .ri-wait{position:absolute;left:9px;right:9px;bottom:3px;height:2px;border-
 ${H} .ri-wait::after{content:"";position:absolute;top:0;bottom:0;left:0;width:42%;border-radius:2px;
   background:var(--ri-ink);animation:riSweep 1.25s ease-in-out infinite}
 @keyframes riSweep{from{transform:translateX(-115%)}to{transform:translateX(255%)}}
-/* La note : la phrase d'un refus, au-dessus des puces. */
-${H} .ri-note{position:relative;width:max-content;max-width:min(360px,calc(100vw - 40px));margin:0 0 8px;
+/* La note : la phrase d'un refus, posée au-dessus du centre d'état (Slice 06), centrée
+   sur les indicateurs ; l'hôte occupe toute la hauteur de la rangée. */
+${H}{align-self:stretch;justify-content:center}
+${H} .ri-note{position:absolute;left:50%;bottom:calc(100% + 8px);transform:translateX(-50%);
+  width:max-content;max-width:min(420px,calc(100vw - 2 * var(--shell-gutter,18px)));margin:0;
   padding:8px 32px 8px 11px;border:1px solid var(--shell-stroke-active,rgba(110,231,255,.4));border-radius:10px;
   background:var(--panel,rgba(6,12,18,.94));color:var(--text,#d8edf7);font-size:11.5px;line-height:1.45;
   box-shadow:0 10px 28px rgba(0,0,0,.45)}
 ${H} .ri-note[hidden]{display:none}
+/* Colonne du bord droit (700 px et moins) : la note s'aligne sur son bord droit. */
+@media(max-width:700px){#app:not(:has(.panel.open)) ${H} .ri-note{left:auto;right:0;transform:none}}
 ${H} .ri-note[data-ri-tone=bad]{border-color:color-mix(in srgb,var(--sem-problem,#ff6a4d) 60%,transparent);background:rgba(35,7,12,.94)}
 ${H} .ri-note[data-ri-tone=warn]{border-color:color-mix(in srgb,var(--sem-alert,#ff9f43) 60%,transparent);background:rgba(38,23,5,.94)}
 ${H} .ri-note-close{position:absolute;right:5px;top:5px;width:22px;height:22px;display:grid;place-items:center;padding:0;
@@ -417,6 +422,16 @@ ${H} .ri-sr{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflo
       return list.length;
     }
 
+    /* La hauteur de la note, pour que les infusions (même bande, à droite)
+       montent au-dessus d'elle tant qu'elle est là (`--ri-note-h`, feuille de
+       la page ; QA S04 P4). */
+    function measureNote(){
+      const rootStyle=document.documentElement.style;
+      if(noteBox.hidden){rootStyle.removeProperty('--ri-note-h');return}
+      const h=Math.ceil(noteBox.getBoundingClientRect().height);
+      rootStyle.setProperty('--ri-note-h',`${h}px`);
+    }
+
     function renderNote(view){
       const note=view.note;
       if(note){
@@ -438,6 +453,7 @@ ${H} .ri-sr{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflo
       const count=renderChips(view);
       const noted=renderNote(view);
       host.hidden=!(count||noted);
+      measureNote();
       if(view.announce&&view.announce.seq!==lastAnnounce){
         lastAnnounce=view.announce.seq;live.textContent=view.announce.text||'';
       }
