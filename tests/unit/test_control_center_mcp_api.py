@@ -465,7 +465,7 @@ async def test_the_api_does_not_change_the_model_visible_display_surface(tmp_pat
     # (-16, -16, -15), description de prefab_edit_base reformulée (-26) et user_request « nomment ce prefab » (+21) :
     # outils 4 707 o (search 804, get 641, validate 642, save 1 011, edit_base 1 081, events 528).
     # Tool Brain S4 : +1 225 o = `ui_intent_publish` (intention d'écran de Jarvis, tool-contract amendement S4).
-    assert _servers(body)["jarvis-display"]["context_bytes"] == 39_516
+    assert _servers(body)["jarvis-display"]["context_bytes"] == 39_513
     names = [card["name"] for card in body["tools"] if card["server"] == "jarvis-display"]
     assert names == list(tool_names("jarvis-display")) and len(names) == 20
 

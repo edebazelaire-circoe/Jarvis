@@ -1154,9 +1154,18 @@ code, and is final: the runtime counts `guard_refused`, traces `tool_brain.guard
 | `targets_not_explicit` | archive: `object_ids` only, never a `select` filter (the adapter refuses it too) |
 | `too_many_targets` | archive: at most 3 objects per action |
 | `protected_pinned` / `protected_runtime_owned` | archive: never an object pinned by the user, never a runtime-origin object (agent/job stars, signals) |
-| `no_user_intent_evidence` | no published `dismiss` intent of **this** turn (same conversation and correlation) with an `object` ref for **each** target |
+| `no_user_intent_evidence` | archive: no published `dismiss` intent of **this** turn (same conversation and correlation) with an `object` ref for **each** target. Confirmed bulk hide: no `dismiss` intent of this turn at all (refs optional, a clear `subject` naming the scope is enough; whether the intent is clear is the decider's judgement) |
 | `evidence_unreadable` | the intent registry raised: closed, with the cause |
-| `rate_limited_turn` / `rate_limited_window` | at most 1 guarded action per turn; at most 5 guarded objects per 600 s (budget spent when the check passes, kept on failure) |
+| `rate_limited_turn` / `rate_limited_window` | archive: at most 1 guarded action per turn; at most 5 guarded objects per 600 s (budget spent when the check passes, kept on failure). Bulk hide has its **own** budget: 3 actions per turn, 120 objects per 600 s, at most 60 objects per action (`too_many_targets`) |
+
+**Two levels.** Archive (final) keeps the strict rule above. Bulk hide (reversible, `visibility=hidden`, `confirm=true`) is light:
+recent user turn (< 120 s), a `dismiss` intent of this turn, its own wide budget (so "hide every finished task", ~40 objects, goes
+through). It acts only on the objects the *fresh* scene resolves; objects pinned by the user are skipped (never hidden), runtime-owned
+ones (task stars) may be hidden since it is reversible.
+
+**A refusal is never silent.** Besides the `tool_brain.guard.refused` trace, the runtime deposits the reason (first code + short
+detail, last 4, `runtime/tool-brain-guard-refusals.json`) and the next turn's "Tool Brain - ecran" block (section 12) says
+"refus du garde-fou, <outil> NON fait (<code> : <detail>)", so Jarvis tells the user instead of claiming success. Entries expire after 300 s.
 
 Evidence = the existing `ui_intent_publish` kind `dismiss` (no new kind: the intent schema is pinned) from the turn the user
 spoke in. The user-turn ledger (first-seen time per turn, never refreshed) blocks Jarvis initiative *outside* user turns. Within a user

@@ -6613,7 +6613,10 @@ class ControlCenter:
         if isinstance(context, dict) and load_scene_gate(settings)["enabled"]:
             # Seulement quand `jarvis-display` est déclaré au CLI : sans scène, aucun outil d'écran à présenter.
             view = tool_brain_view(self.runtime_root)
-            context = {**context, "tool_brain": tool_brain_brief_block(view.ownership, fallback=view.fallback)}
+            from jarvis.runtime.tool_brain_guardrails import read_recent_refusals
+
+            context = {**context, "tool_brain": tool_brain_brief_block(
+                view.ownership, fallback=view.fallback, guard_refusals=read_recent_refusals(self.runtime_root))}
         # Toujours par le composeur : sans contexte ni comportement il rend le texte
         # tel quel, sauf si le tour déclare la passerelle (couche outils, E20).
         from jarvis.runtime.prompt_overrides import prompt_override_document

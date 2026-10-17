@@ -2894,7 +2894,7 @@ suffit pas. Rend le chemin du fichier (runtime/scene-captures/) et l'image. Refu
     async def ui_intent_publish(
         kind: Annotated[Literal["reveal", "attention", "relevance", "dismiss"], Field(description="Montrer, attirer l'œil, concerne ma réponse (à toi de juger), n'est plus utile.")],
         refs: Annotated[list[IntentRefArg] | None, Field(max_length=8)] = None,
-        subject: Annotated[str | None, Field(max_length=80, description="Sans id : quelques mots.")] = None,
+        subject: Annotated[str | None, Field(max_length=80, description="Sans id : la portée.")] = None,
         timing: Annotated[Literal["now", "with_speech", "after_speech"] | None, Field(description="Défaut with_speech.")] = None,
         paragraph: Annotated[Integer | None, Field(ge=0, le=15, description="Paragraphe de ta réponse (base 0), avec with_speech.")] = None,
     ) -> UiIntentResult:
