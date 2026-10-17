@@ -827,10 +827,22 @@ command channel, latency).
   … », « Board Jarvis : Board actif … », the circuit-board launcher codes
   (`Trace · TRC`, completed by the launcher after every module that rewrites
   `aria-label`). A text eyebrow ends with a space (« Mode », « Board ») so the
-  visible text reads as two words. Two written exceptions: a recording chip
-  (its visible text is a ticking duration, which a name never carries) and a
-  rail card (its name is the title then the state in words; the engine badge,
-  variant count and age are visible extras).
+  visible text reads as two words; a wheel item's note follows its text after
+  a space. A recording chip's name starts with the word it shows (« REC —
+  arrêter l’enregistrement d’écran (écran 2) »); a busy target's long phrase
+  starts with its note (« en cours d’enregistrement sur cette cible »); a
+  Board row in the chooser takes its name from its content (title, state,
+  kind, last opened) and says its action in `aria-description` (« Basculer
+  sur ce Board », « Board actif »), its ticking wait `aria-hidden`. Two
+  written exceptions, `label-content-name-mismatch` only: a recording chip
+  (its ticking duration, which a name never carries — everything else it
+  shows is in the name, checked word by word) and a rail card (its name is
+  the title then the state in words; the engine badge, variant count and age
+  are visible extras). axe runs in both themes on the wheel (closed, open,
+  sub-arc), status centre with two recordings, mode control and chooser,
+  launcher, rail, Board control and chooser (`#boardsPanel`), a rail card
+  menu (`.jvr-menu`), the alert popover, `#chatTab` and the screenshot
+  preview; it finds nothing else.
 - **Menus and listboxes** hold only their entries in the accessibility tree:
   the mode chooser's title, note and hint are `role="none"` (the menu is named
   and `aria-describedby` its note and hint); a rail card's « ⋯ » button is

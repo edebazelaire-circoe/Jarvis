@@ -267,10 +267,10 @@ async def test_secondary_lists_only_real_targets_single_entry_informative(stack,
     rows = _open_rows(stack, SCREEN)
     assert [row.device for row in rows] == ["display2"], "la cible choisie est celle que Core enregistre"
     chip = next(c for c in r["recording"]["chips"] if c["channel"] == "screen")
-    assert chip["dev"] == "écran 2" and chip["label"] == "Arrêter l’enregistrement d’écran (écran 2)"
+    assert chip["dev"] == "écran 2" and chip["label"] == "REC — arrêter l’enregistrement d’écran (écran 2)"
     labels = [(i["label"], i["disabled"]) for i in r["withStop"]["items"]]
     assert labels[0][0].startswith("Arrêter — écran 2") and labels[0][1] is None, labels
-    assert ("Écran 2 — déjà en cours d’enregistrement sur cette cible", "true") in labels, labels
+    assert ("Écran 2 — en cours d’enregistrement sur cette cible", "true") in labels, labels
     assert ("Écran principal — 1920×1080", None) in labels
     lines = "\n".join(first["console"] + out["console"])
     assert "capture_rail.targets_read" in lines and "capture_views.target_chosen" in lines
@@ -479,14 +479,32 @@ async def test_axe_finds_no_violation_in_the_wheel_and_indicators(stack, tmp_pat
     if not axe or not Path(axe).is_file():
         pytest.skip("JARVIS_AXE_JS absent (axe-core n'est pas une dépendance du dépôt)")
     await stack.call("POST", "/api/captures/start", json={"channel": "audio"})
+    await stack.call("POST", "/api/captures/start", json={"channel": "screen"})
+    # Ce que chaque puce montre hors de sa durée est dans son nom (« REC », l'écran choisi ; QA S09 P6). Une cible
+    # signalée se reconnaît à sa balise (`html`), pas à son sélecteur, qui change de forme avec deux puces.
+    targets = r"""(()=>{const norm=t=>t.toLowerCase().replace(/[^\p{L}\p{N}]+/gu,' ').trim();
+      const chips=[...document.querySelectorAll('#recIndicators .ri-chip')].map(c=>{const k=c.cloneNode(true);
+        k.querySelectorAll('.ri-time,.ri-sr,[hidden]').forEach(n=>n.remove());
+        const words=norm(k.textContent).split(' ').filter(Boolean),name=norm(c.getAttribute('aria-label')||'').split(' ');
+        return {channel:c.dataset.riChannel,label:c.getAttribute('aria-label'),missing:words.filter(w=>!name.includes(w))}});
+      return {chips}})()"""
     out = await _drive(stack.url, [
-        _until(_chip("audio"), 6000), {"axe": "indicators", "file": axe, "selector": "#recIndicators"},
+        _until("document.querySelectorAll('#recIndicators .ri-chip[data-ri-state=active]').length===2", 6000, "two"),
+        {"value": "chips", "expr": targets},
+        {"axe": "indicators", "file": axe, "selector": "#recIndicators"},
         *_open_wheel(), {"right": DOT.format(slot="video")}, _until(SUB, 4000),
         {"axe": "wheel", "file": axe, "selector": "#toolWheel"},
     ], tmp_path=tmp_path)
-    for name, violations in out["reads"].items():
+    reads = out["reads"]
+    assert reads["until:two"] is True, reads
+    chips = {c["channel"]: c for c in reads["chips"]["chips"]}
+    assert set(chips) == {"audio", "screen"} and chips["screen"]["label"].startswith("REC — "), chips
+    assert all(c["missing"] == [] for c in chips.values()), ("ce que la puce montre manque à son nom", chips)
+    for name, violations in reads.items():
         if name.startswith("axe:"):
             # Exception écrite (Slice 09, docs/control-center-shell.md › Accessibility) : la puce montre une durée
-            # qui avance, qu'un nom ne porte jamais ; axe (WCAG 2.5.3) la voit hors du nom. Rien d'autre n'est admis.
-            rest = [v for v in violations if not (v["id"] == "label-content-name-mismatch" and set(v["nodes"]) <= {".ri-chip"})]
+            # qui avance, qu'un nom ne porte jamais ; axe (WCAG 2.5.3) la voit hors du nom. Tout le reste de ce
+            # qu'elle montre est dans le nom (ci-dessus). Rien d'autre n'est admis.
+            rest = [v for v in violations if not (v["id"] == "label-content-name-mismatch"
+                                                  and v["html"] and all('class="ri-chip"' in h.split(">", 1)[0] for h in v["html"]))]
             assert rest == [], (name, rest)

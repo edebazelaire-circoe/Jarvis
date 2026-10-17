@@ -712,14 +712,19 @@ ${H} .tw-sr{position:absolute;width:1px;height:1px;margin:-1px;padding:0;overflo
         /* `detail` : la phrase longue (un motif d'indisponibilité), dans le nom
            accessible et l'infobulle ; `note` reste courte à l'écran. */
         const detail=spec.detail==null?note:String(spec.detail);
+        const spoken=!detail?text:note&&!detail.startsWith(note)?`${text} — ${note} — ${detail}`:`${text} — ${detail}`;
         const art=spec.icon?icon(spec.icon):null;
         if(art)b.appendChild(art);
         if(art||note){
           const t=document.createElement('span');t.className='tw-text';t.textContent=text;b.appendChild(t);
-          if(note){const n=document.createElement('span');n.className='tw-note';n.textContent=note;b.appendChild(n)}
-          b.setAttribute('aria-label',detail?`${text} — ${detail}`:text);
+          /* Une espace entre le texte et la note (sans effet dans la boîte flex) : lu d'un trait, « principal1:08 »
+             n'était plus dans le nom (axe, WCAG 2.5.3). */
+          if(note){const n=document.createElement('span');n.className='tw-note';n.textContent=note;b.append(' ',n)}
+          /* Le nom commence par ce que l'entrée montre, texte puis note (WCAG 2.5.3, orbital-ui QA S09 P6) : une
+             phrase longue qui ne reprend pas la note s'ajoute après elle. */
+          b.setAttribute('aria-label',spoken);
         }else b.textContent=text;
-        b.title=detail?`${text} — ${detail}`:text;
+        b.title=spoken;
         if(typeof spec.onSecondary==='function')b.setAttribute('aria-haspopup','menu');
         b.style.left=`${geo[j].x}px`;b.style.top=`${GEOMETRY.radius+geo[j].y}px`;
         built.sub.appendChild(b);

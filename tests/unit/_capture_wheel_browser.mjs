@@ -207,7 +207,7 @@ try{
         await tab.evaluate(readFileSync(action.file,'utf8'));
         reads['axe:'+action.axe]=await tab.evaluate(`axe.run(document.querySelector(${JSON.stringify(action.selector)}),
           {resultTypes:['violations']}).then(r=>r.violations.map(v=>({id:v.id,impact:v.impact,
-          nodes:v.nodes.map(n=>n.target.join(' '))})))`);
+          nodes:v.nodes.map(n=>n.target.join(' ')),html:v.nodes.map(n=>n.html.slice(0,160))})))`);
       }
     }catch(error){reads.failed={action,error:String(error.message||error).slice(0,400)};break}
   }

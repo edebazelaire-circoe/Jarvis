@@ -512,6 +512,7 @@ def test_runtime_matrix(matrix, number, theme):
     if number == "05":
         chips = results["chips"]
         assert len(chips) == 1 and "écran" in chips[0]["label"] and "REC" in chips[0]["text"], (label, chips)
+        assert chips[0]["label"].startswith("REC — "), (label, "le nom commence par le mot montré", chips)
     if number in ("16", "17", "18", "19"):
         badge = results["badge"]
         assert badge["text"] == "MAINS · ACTIF" and badge["fixed"] and badge["w"] > 90 and badge["h"] >= 20, (label, badge)
@@ -755,36 +756,60 @@ def test_forced_colors(tmp_path, theme):
     assert r["audit"]["unnamed"] == [] and r["audit"]["overlaps"] == [], r["audit"]
 
 
+#: Une puce d'enregistrement : tout ce qu'elle montre, hors la durée qui avance (`.ri-time`) et le texte réservé
+#: (`.ri-sr`), est dans son nom (« REC », l'écran choisi) ; liste des puces qui y manquent (QA S09 P6).
+CHIP_WORDS = r"""(()=>{const norm=t=>t.toLowerCase().normalize('NFC').replace(/[^\p{L}\p{N}]+/gu,' ').trim();
+  return [...document.querySelectorAll('#recIndicators .ri-chip')].map(c=>{const k=c.cloneNode(true);
+    k.querySelectorAll('.ri-time,.ri-sr,[hidden]').forEach(n=>n.remove());
+    return {words:norm(k.textContent),name:norm(c.getAttribute('aria-label')||'')}}).filter(x=>!x.words.split(' ').filter(Boolean).every(w=>x.name.split(' ').includes(w))).map(x=>x.words+' ⊄ '+x.name)})()"""
+
+
 def test_axe_when_available(tmp_path):
     """axe-core sur la coque (`JARVIS_AXE_JS` : axe.min.js ; ce n'est pas une
-    dépendance du dépôt) : état chargé, roue et sous-arc ouverts, popover
-    d'alertes, rail aux états mêlés. Aucune violation."""
+    dépendance du dépôt), dans les deux thèmes : état chargé (deux
+    enregistrements), roue et sous-arc ouverts, popover d'alertes, sélecteur de
+    mode, choix du Board, menu d'une carte du rail, aperçu de capture. Aucune
+    violation hors des deux exceptions écrites."""
     axe = os.environ.get("JARVIS_AXE_JS")
     if not axe or not Path(axe).is_file():
         pytest.skip("JARVIS_AXE_JS absent (axe-core n'est pas une dépendance du dépôt)")
-    seed = {**BUSY, "mode": MODE, "previews": PREVIEWS}
+    seed = {**MIXED, "captures": [AUDIO, VIDEO], "mode": MODE, "previews": PREVIEWS}
     hosts = ("#toolWheel", "#statusCentre", "#interactionModeHud", ".dock", "#presentationRail", "#boardsHud", "#chatTab")
     actions = [["axe", f"axe:{h}", h, 50, axe] for h in hosts]
-    actions += [*WHEEL_OPEN, ["key", "k", "Enter", 600], ["axe", "axe:wheel-open", "#toolWheel", 50, axe],
+    actions += [["eval", "chipWords", CHIP_WORDS, 50],
+                *WHEEL_OPEN, ["key", "k", "Enter", 600], ["axe", "axe:wheel-open", "#toolWheel", 50, axe],
                 ["key", "k", "Escape", 300], ["key", "k", "Escape", 300],
                 ["click", "pill", '#bgPills [data-bg-cat="failed"]', 800], ["axe", "axe:bgPop", "#bgPop", 50, axe],
-                ["click", "mode", "#interactionModeButton", 600], ["axe", "axe:mode-open", "#interactionModeHud", 50, axe]]
-    step = _centre(tmp_path, [{"width": 1440, "height": 900, "seed": seed, "actions": actions}])[0]
-    seen = 0
-    for name, violations in step["results"].items():
-        if name.startswith("axe:"):
-            seen += 1
-            assert isinstance(violations, list), (name, violations)
-            # Exceptions écrites, une seule règle (WCAG 2.5.3, `label-content-name-mismatch`), deux surfaces
-            # (docs/control-center-shell.md › Accessibility) : la puce d'un enregistrement montre une durée qui avance,
-            # qu'un nom ne porte jamais (réannoncée chaque seconde) — le nom dit l'action, la durée passe par
-            # `aria-describedby` ; une carte du rail montre titre, moteur, variantes, état et âge, son nom dit le titre
-            # (en tête, ce que la commande vocale cherche) puis l'état en clair. Toute autre violation échoue.
-            allowed = ('class="ri-chip"', 'class="jvr-item"')
-            rest = [v for v in violations if not (v["id"] == "label-content-name-mismatch"
-                                                  and all(any(a in h.split(">", 1)[0] for a in allowed) for h in v["html"]))]
-            assert rest == [], (name, rest)
-    assert seen == 10, step["results"].keys()
+                ["click", "away", ".topbar>.state", 400],
+                ["click", "mode", "#interactionModeButton", 600], ["axe", "axe:mode-open", "#interactionModeHud", 50, axe],
+                ["key", "k", "Escape", 400],
+                ["click", "boards", "#boardsButton", 900], ["axe", "axe:boardsPanel", "#boardsPanel", 50, axe],
+                ["key", "k", "Escape", 400],
+                ["rclick", "railmenu", "#presentationRail .jvr-item", 700], ["axe", "axe:railMenu", ".jvr-menu", 50, axe],
+                ["key", "k", "Escape", 400], ["click", "away", ".topbar>.state", 400],
+                *WHEEL_OPEN, ["key", "v", "ArrowDown", 120], ["key", "s", "ArrowDown", 120], ["key", "shoot", "Enter", 1600],
+                ["axe", "axe:preview", "#screenshotPreview", 50, axe]]
+    steps = _centre(tmp_path, [{"width": 1440, "height": 900, "theme": theme, "seed": seed, "actions": actions} for theme in THEMES])
+    for theme, step in zip(THEMES, steps):
+        results = step["results"]
+        # « REC » et l'écran choisi sont dans le nom de chaque puce : seule la durée qui avance en reste dehors.
+        assert results["chipWords"] == [], (theme, results["chipWords"])
+        seen = 0
+        for name, violations in results.items():
+            if name.startswith("axe:"):
+                seen += 1
+                assert isinstance(violations, list), (theme, name, violations)
+                # Exceptions écrites, une seule règle (WCAG 2.5.3, `label-content-name-mismatch`), deux surfaces
+                # (docs/control-center-shell.md › Accessibility) : la puce d'un enregistrement montre une durée qui
+                # avance, qu'un nom ne porte jamais (réannoncée chaque seconde) — son nom porte tout le reste de ce
+                # qu'elle montre (`chipWords` ci-dessus), la durée passe par `aria-describedby` ; une carte du rail
+                # montre titre, moteur, variantes, état et âge, son nom dit le titre (en tête, ce que la commande
+                # vocale cherche) puis l'état en clair. Toute autre violation échoue.
+                allowed = ('class="ri-chip"', 'class="jvr-item"')
+                rest = [v for v in violations if not (v["id"] == "label-content-name-mismatch"
+                                                      and all(any(a in h.split(">", 1)[0] for a in allowed) for h in v["html"]))]
+                assert rest == [], (theme, name, rest)
+        assert seen == 13, (theme, results.keys())
 
 
 def test_zoom_200(tmp_path):

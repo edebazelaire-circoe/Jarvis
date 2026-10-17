@@ -106,7 +106,10 @@
      audio), une puce d'attente pour un démarrage dont Core ne montre pas
      encore la ligne, une puce pour la capture d'écran en cours ou juste
      prise. `name` est stable (le nom accessible), `detail` porte la durée
-     (la description), `timer` est ce que l'œil lit. */
+     (la description), `timer` est ce que l'œil lit. Une puce d'écran montre
+     « REC » : son nom commence par ce mot, pour l'Accès vocal (« cliquer REC »)
+     et WCAG 2.5.3 (orbital-ui QA S09 P6). */
+  const recName=(channel,name)=>channel==='screen'?`REC — ${name.charAt(0).toLowerCase()}${name.slice(1)}`:name;
   function chipsOf(view){
     const out=[];
     if(!isObject(view)||!isObject(view.controls))return out;
@@ -118,14 +121,14 @@
         const tag=deviceTag(c.device);
         out.push(Object.freeze({key:c.captureId,channel,captureId:c.captureId,device:c.device,tag,state:c.state,
           action:c.action,timer:c.timer,detail:c.detail,code:c.code||null,
-          name:tag?`${c.label} (${tag})`:c.label}));
+          name:recName(channel,tag?`${c.label} (${tag})`:c.label)}));
       }
       const pend=control.pendingStart;
       if(pend&&!captures.some(c=>c.state==='starting')){
         const tag=deviceTag(pend.device);
         out.push(Object.freeze({key:`start:${channel}`,channel,captureId:null,device:pend.device,tag,
           state:'starting',action:null,timer:`${pend.waited} s`,detail:`attente depuis ${pend.waited} s`,code:null,
-          name:`${NAMES[channel]} : démarrage…${tag?` (${tag})`:''}`}));
+          name:recName(channel,`${NAMES[channel]} : démarrage…${tag?` (${tag})`:''}`)}));
       }
     }
     const shot=view.controls.screenshot;
@@ -186,7 +189,9 @@
       let label=String(d.label||d.token),note=size||undefined,detail,disabled;
       if(only)label=`${label} — seule cible disponible`;
       if(only&&listing.code)detail=`${say(listing.code)} (${listing.code}) : seule la cible par défaut est proposée`;
-      if(busy){disabled=true;note='en cours';detail='déjà en cours d’enregistrement sur cette cible'}
+      /* La phrase longue commence par la note montrée (« en cours ») : le nom commence par ce que l'entrée montre
+         (WCAG 2.5.3, orbital-ui QA S09 P6). */
+      if(busy){disabled=true;note='en cours';detail='en cours d’enregistrement sur cette cible'}
       else if(!reachable){disabled=true;detail='état des captures inconnu, Jarvis injoignable : rien ne démarre'}
       items.push({id:`target:${d.token}`,kind:'target',device:d.token,icon,label,note,detail,disabled});
     }

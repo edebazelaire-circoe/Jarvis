@@ -1011,7 +1011,7 @@ def test_une_puce_par_capture_une_attente_et_la_capture_d_ecran(tmp_path):
         idle:V.chipsOf(M.viewOf({status:st(),reachable:true,now:NOW})).length});
     """)
     assert v["view"] == [
-        ["screen", "active", "stop", "1:00", "Arrêter l’enregistrement d’écran (écran 2)", "écran 2"],
+        ["screen", "active", "stop", "1:00", "REC — arrêter l’enregistrement d’écran (écran 2)", "écran 2"],
         ["audio", "active", "stop", "1:00", "Arrêter l’enregistrement audio", ""],
         ["screenshot", "busy", None, "2 s", "Capture d’écran en cours…", ""],
     ]
