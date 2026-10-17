@@ -407,8 +407,10 @@ html.jvr-studio.jvr-slim #${DOM.hostId}{width:44px;padding:8px 4px}
       b.setAttribute('aria-label',`${card.title}, ${card.type.label} : ${card.stateLabel.toLowerCase()}${row.hidden?', masquée':''}${row.archived?', archivée':''}`);
       b.addEventListener('click',()=>{if(row.archived){openMenuFor(row,b);return}openRow(row.presentation_id,'click')});
       b.addEventListener('contextmenu',e=>{e.preventDefault();openMenuFor(row,b,e.clientX,e.clientY)});
-      /* « ⋯ » : le même menu, pour la souris et la main ; le clavier a déjà Menu / Maj+F10 (pas de seconde tabulation par carte). */
-      const more=el('button','jvr-more','⋯');more.type='button';more.tabIndex=-1;more.setAttribute('aria-label',`Actions : ${card.title}`);more.title='Actions';
+      /* « ⋯ » : le même menu, pour la souris et la main ; le clavier a déjà Menu / Maj+F10 (pas de seconde tabulation par carte).
+         Caché de l'arbre d'accessibilité (orbital-ui Slice 09, axe-core) : une liste d'options ne contient que des options, et
+         l'option porte déjà le menu (Menu, Maj+F10, clic droit). */
+      const more=el('button','jvr-more','⋯');more.type='button';more.tabIndex=-1;more.setAttribute('aria-hidden','true');more.title='Actions';
       more.addEventListener('click',e=>{e.stopPropagation();openMenuFor(row,b)});
       li.append(b,more);return li;
     }
@@ -497,7 +499,7 @@ html.jvr-studio.jvr-slim #${DOM.hostId}{width:44px;padding:8px 4px}
       b.setAttribute('aria-label',`${card.title}, ${card.meta} : ${card.stateLabel.toLowerCase()}`);
       b.addEventListener('click',()=>openWsItem(item,'click'));
       b.addEventListener('contextmenu',e=>{e.preventDefault();openWsMenu(item,b,e.clientX,e.clientY)});
-      const more=el('button','jvr-more','⋯');more.type='button';more.tabIndex=-1;more.setAttribute('aria-label',`Actions : ${card.title}`);more.title='Actions';
+      const more=el('button','jvr-more','⋯');more.type='button';more.tabIndex=-1;more.setAttribute('aria-hidden','true');more.title='Actions';
       more.addEventListener('click',e=>{e.stopPropagation();openWsMenu(item,b)});
       li.append(b,more);return li;
     }

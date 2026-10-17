@@ -486,4 +486,7 @@ async def test_axe_finds_no_violation_in_the_wheel_and_indicators(stack, tmp_pat
     ], tmp_path=tmp_path)
     for name, violations in out["reads"].items():
         if name.startswith("axe:"):
-            assert violations == [], (name, violations)
+            # Exception écrite (Slice 09, docs/control-center-shell.md › Accessibility) : la puce montre une durée
+            # qui avance, qu'un nom ne porte jamais ; axe (WCAG 2.5.3) la voit hors du nom. Rien d'autre n'est admis.
+            rest = [v for v in violations if not (v["id"] == "label-content-name-mismatch" and set(v["nodes"]) <= {".ri-chip"})]
+            assert rest == [], (name, rest)

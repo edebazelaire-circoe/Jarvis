@@ -78,10 +78,16 @@ html,body{margin:0;height:100%;background:var(--bg);color:var(--text);font:15px 
    accessible et en infobulle (`refreshStatus`) ; la touche elle-même est le raccourci
    global de Voice, inchangé. L'état reçoit donc le pointeur (infobulle) malgré la barre. */
 .topbar>.state{pointer-events:auto;cursor:help}
-.live-banner{position:absolute;z-index:35;top:var(--shell-panel-top);left:50%;transform:translateX(-50%);width:min(680px,calc(100vw - 44px));display:grid;grid-template-columns:auto minmax(0,1fr) auto;gap:14px;align-items:center;padding:12px 14px;background:rgba(35,7,12,.94);border:2px solid var(--danger);border-radius:10px;box-shadow:0 0 32px rgba(255,101,119,.28);pointer-events:auto}
+/* Bandeau GPT-Live (orbital-ui Slice 09) : centré entre les deux colonnes, il ne passe jamais sur le
+   rail de droite (`--shell-rail-w` : 300 / 72 px, 12 px d'air de chaque côté) ; 700 px et moins, il
+   descend sous la rangée de l'onglet du rail (40 + 8 px). Ancre `--jv-live` : le plateau de dépôt et
+   les infusions se posent dessous plutôt que dessus ou dessous en rang. */
+.live-banner{position:absolute;z-index:35;top:var(--shell-panel-top);left:50%;transform:translateX(-50%);width:min(680px,calc(100vw - 2 * (var(--shell-gutter) + var(--shell-rail-w) + 12px)));anchor-name:--jv-live;display:grid;grid-template-columns:auto minmax(0,1fr) auto;gap:14px;align-items:center;padding:12px 14px;background:rgba(35,7,12,.94);border:2px solid var(--danger);border-radius:10px;box-shadow:0 0 32px rgba(255,101,119,.28);pointer-events:auto}
 .live-banner.uncertain{border-color:var(--warn);background:rgba(38,23,5,.96);box-shadow:0 0 32px rgba(255,184,92,.24)}
 .live-led{width:13px;height:13px;border-radius:50%;background:var(--danger);box-shadow:0 0 15px var(--danger);animation:pulse 1.2s ease-in-out infinite}
 .live-banner.uncertain .live-led{background:var(--warn);box-shadow:0 0 15px var(--warn)}
+/* Mouvement réduit : le voyant reste allumé, sans pulsation (orbital-ui Slice 09, relevé par `test_reduced_motion`). */
+@media(prefers-reduced-motion:reduce){.live-led{animation:none}}
 .live-main{min-width:0}.live-title{font-size:13px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:#fff}.live-title strong{color:var(--danger)}
 .live-banner.uncertain .live-title strong{color:var(--warn)}
 .live-meta{margin-top:4px;font-size:11px;color:#d9b9bf;line-height:1.45}.live-banner.uncertain .live-meta{color:#ead1ae}.live-warning{display:block;color:var(--warn);margin-top:3px}
@@ -123,7 +129,7 @@ html,body{margin:0;height:100%;background:var(--bg);color:var(--text);font:15px 
    La ligne d'état lâche la marque, le Board et l'état s'abrègent ; panneau et bandeau
    prennent la largeur sous le lanceur (`--shell-panel-top`). Le lanceur, cinq
    boutons depuis la Slice 08, reste une rangée. */
-@media(max-width:700px){.topbar{flex-wrap:wrap}#boardsHud{max-width:100%}.topbar>.state{max-width:100%;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.panel{left:var(--shell-gutter);right:var(--shell-gutter);width:auto}.live-banner{left:var(--shell-gutter);right:var(--shell-gutter);width:auto;transform:none}}
+@media(max-width:700px){.topbar{flex-wrap:wrap}#boardsHud{max-width:100%}.topbar>.state{max-width:100%;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.panel{left:var(--shell-gutter);right:var(--shell-gutter);width:auto}.live-banner{top:calc(var(--shell-panel-top) + 48px);left:var(--shell-gutter);right:var(--shell-gutter);width:auto;transform:none}}
 .panel header{display:flex;justify-content:space-between;align-items:center;padding:15px 17px;border-bottom:1px solid var(--line)}
 .panel header h2{font-size:14px;margin:0;letter-spacing:.12em;text-transform:uppercase}
 .panel header button{background:none;color:var(--muted);border:0;font-size:20px;cursor:pointer}
@@ -323,6 +329,12 @@ pre.block{background:#050b10;border:1px solid rgba(113,144,160,.16);border-radiu
 /* Panneau ouvert : la pile passe à sa gauche, en bas, pour ne pas masquer le
    bas du panneau (dernières entrées de trace, envoi au brain). Plus étroit,
    la place manque à gauche : la pile reste à droite, comme panneau fermé. */
+/* Rail de droite affiché (orbital-ui Slice 09, QA S07) : la pile passe à sa gauche au lieu de couvrir le bas de ses
+   cartes ; plateau de dépôt affiché en bas, elle monte au-dessus (ancre `--jv-tray`, QA S01 P3) ; sous 1100 px un panneau
+   ouvert fait monter le plateau en haut à gauche : la pile garde alors sa place du bas. */
+@media(min-width:701px){body:has(>#presentationRail:not([hidden])) .toasts{right:calc(var(--shell-gutter) + var(--shell-rail-w) + 12px)}}
+@media(min-width:1100px){#app:has(#boardDropTray:not([hidden])):not(:has(.chat-panel.open))~.toasts{bottom:max(68px,calc(anchor(--jv-tray top,0px) + 8px))}}
+@media(min-width:761px) and (max-width:1099px){#app:has(#boardDropTray:not([hidden])):not(:has(.panel.open))~.toasts{bottom:max(68px,calc(anchor(--jv-tray top,0px) + 8px))}}
 @media(min-width:940px){#app:has(.panel.open)~.toasts{right:calc(var(--shell-gutter) + 12px + min(var(--shell-panel-w),100vw - 2 * var(--shell-gutter)));width:min(340px,calc(100vw - 548px))}}
 @media(prefers-reduced-motion:reduce){.adot.running,.acard.eph .adot.running,.toast{animation:none}.acard.eph{transition:none}}
 
@@ -342,13 +354,13 @@ pre.block{background:#050b10;border:1px solid rgba(113,144,160,.16);border-radiu
 @media(max-width:939px){#app:has(.chat-panel.open)~.toasts{top:var(--chat-toasts-top,124px);bottom:auto}}
 /* 700 px de large ou moins : le bouton du mode d'interaction quitte le rail gauche (left:84px, jusqu'à ~260 px) et la
    pile, à bottom:68px, le recouvrait (115×41 px à 500×700). Elle passe en haut : ni le bouton, ni l'onglet Chat.
-   La règle est restreinte plutôt que contrée (QA S10) : bandeau GPT-Live affiché (même place, bouton d'arrêt), elle reste en bas ; Chat ouvert, la règle du panneau (ci-dessus) s'applique.
-   Les deux thèmes partagent la géométrie de la coque (`docs/control-center-shell.md`) : le dock et les pastilles
-   occupent le haut à droite, la pile passe dessous (130 px, 168 px à 620 px et moins, sous la double rangée
-   d'outils), sans règle par thème ; sans `bottom:auto`, la grille `.toasts` étirait une seule notification sur
-   toute la hauteur. */
-@media(max-width:700px){#app:not(:has(#liveBanner:not([hidden]))):not(:has(.chat-panel.open))~.toasts{top:130px;bottom:auto}}
-@media(max-width:620px){#app:not(:has(#liveBanner:not([hidden]))):not(:has(.chat-panel.open))~.toasts{top:168px}}
+   Chat ouvert, la règle du panneau (ci-dessus) s'applique.
+   Les deux thèmes partagent la géométrie de la coque (`docs/control-center-shell.md`) : le lanceur occupe le haut à
+   droite (une rangée depuis la Slice 08), l'onglet du rail est dessous ; la pile passe sous cet onglet (136 px), sous
+   le bandeau GPT-Live et sous le plateau de dépôt s'ils sont affichés (ancres `--jv-live`, `--jv-tray`, orbital-ui
+   Slice 09 : avec le bandeau, elle restait en bas, sur le bouton de mode hissé) ; sans `bottom:auto`, la grille
+   `.toasts` étirait une seule notification sur toute la hauteur. */
+@media(max-width:700px){#app:not(:has(.chat-panel.open))~.toasts{top:max(calc(var(--shell-panel-top) + 48px),calc(anchor(--jv-live bottom,0px) + 8px),calc(anchor(--jv-tray bottom,0px) + 8px));bottom:auto}}
 .chat-panel.open{animation:chatIn .2s ease-out}
 @keyframes chatIn{from{opacity:0;transform:translateX(28px)}}
 .chat-panel header{gap:12px}
@@ -527,9 +539,14 @@ html[data-jarvis-theme="cosmos"] .chat-tab:hover,html[data-jarvis-theme="cosmos"
    bouton se lève) ; jamais au centre bas. Rang 38 :
    au-dessus de la roue ouverte (37), sous le centre d'état (40) et la visionneuse (60). Non modal : seule
    sa carte reçoit le pointeur. Caché tant qu'aucune capture réussie n'est à montrer. */
-#screenshotPreview{position:absolute;z-index:38;left:calc(var(--shell-anchor-w) + var(--shell-gutter));bottom:calc(var(--shell-bottom) + 154px)}
+/* Une note de scène sur plusieurs lignes hisse le bouton de mode de `--sc-status-h` − 24 px (son barreau,
+   `control_center_interaction_mode.js`) : l'aperçu monte d'autant (QA S08 P1, orbital-ui Slice 09). */
+#screenshotPreview{position:absolute;z-index:38;left:calc(var(--shell-anchor-w) + var(--shell-gutter));bottom:calc(var(--shell-bottom) + 154px + max(0px,var(--sc-status-h,24px) - 24px))}
 #screenshotPreview[hidden]{display:none}
-@media(max-width:700px){#screenshotPreview{bottom:calc(var(--shell-bottom) + 182px)}}
+@media(max-width:700px){#screenshotPreview{bottom:calc(var(--shell-bottom) + 182px + max(0px,var(--sc-status-h,24px) - 24px))}}
+/* Roue rouverte pendant l'aperçu : la roue est le dernier geste, ses coins restent sous le pointeur ; l'aperçu (38, au-dessus
+   de la roue ouverte par registre) se range à sa droite le temps qu'elle est ouverte (orbital-ui Slice 09). */
+#app:has(#toolWheel[data-open]) #screenshotPreview{left:min(calc(var(--shell-anchor-w) + var(--shell-wheel-r) + var(--shell-gutter)),calc(100vw - 272px - var(--shell-gutter)))}
 
 /* ---------- Dépôt sur le Board affiché (unified-chat Slice 08, `control_center_board_drop.js`) ----------
    Calque sans rang propre (aucun contexte d'empilement) : son cadre en
@@ -548,7 +565,7 @@ html[data-jarvis-theme="cosmos"] .chat-tab:hover,html[data-jarvis-theme="cosmos"
 .board-drop[data-tone=bad] .board-drop-card strong{color:#ffb3bd}
 .board-drop-card span{font-size:12.5px;line-height:1.45;color:var(--muted)}
 @keyframes boardDropPulse{50%{border-color:rgba(110,231,255,.45)}}
-.board-drop-tray{position:absolute;z-index:34;left:50%;bottom:calc(var(--shell-bottom) + var(--shell-status-h) + 8px);transform:translateX(-50%);width:min(460px,calc(100vw - 32px));max-height:min(46vh,360px);overflow:auto;padding:8px;border:1px solid var(--line);border-radius:10px;background:rgba(4,10,15,.94);backdrop-filter:blur(14px);box-shadow:0 14px 40px rgba(0,0,0,.5)}
+.board-drop-tray{position:absolute;z-index:34;left:50%;bottom:calc(var(--shell-bottom) + var(--shell-status-h) + 8px);transform:translateX(-50%);width:min(460px,calc(100vw - 32px));anchor-name:--jv-tray;max-height:min(46vh,360px);overflow:auto;padding:8px;border:1px solid var(--line);border-radius:10px;background:rgba(4,10,15,.94);backdrop-filter:blur(14px);box-shadow:0 14px 40px rgba(0,0,0,.5)}
 .board-drop-tray[hidden]{display:none}
 .board-drop-tray ul{list-style:none;margin:0;padding:0;display:grid;gap:6px}
 .board-drop-item{position:relative;display:grid;grid-template-columns:minmax(0,1fr) auto auto;align-items:center;gap:2px 8px;padding:8px 10px 10px;border:1px solid rgba(110,231,255,.16);border-radius:8px;background:rgba(9,18,25,.85);font-size:12.5px;overflow:hidden}
@@ -570,8 +587,15 @@ html[data-jarvis-theme="cosmos"] .chat-tab:hover,html[data-jarvis-theme="cosmos"
 .board-drop-item[data-status=failed] .board-drop-bar,.board-drop-item[data-status=cancelled] .board-drop-bar{display:none}
 @keyframes boardDropRun{from{transform:translateX(-100%)}to{transform:translateX(340%)}}
 @media(prefers-reduced-motion:reduce){.board-drop::before,.board-drop-item[data-status=uploading]::after{animation:none}}
-/* Écran étroit : le bas appartient au mode d'interaction et aux colonnes gauche/droite ; le plateau monte sous le lanceur et les pastilles (`--shell-panel-top`). */
-@media(max-width:760px){.board-drop-tray{top:calc(var(--shell-panel-top) + 8px);bottom:auto;width:calc(100vw - 180px);max-height:min(50vh,360px)}}
+/* Écran étroit : le bas appartient au mode d'interaction et aux colonnes gauche/droite ; le plateau monte sous le lanceur,
+   sous la rangée de l'onglet du rail (40 px, qu'il recouvrait à 600 px) et sous le bandeau GPT-Live s'il est affiché
+   (ancre `--jv-live`, qu'il passait dessous à 600 px) : orbital-ui Slice 09, QA S01 P2, QA S06/S08. */
+@media(max-width:760px){.board-drop-tray{top:calc(max(anchor(--jv-live bottom,0px),var(--shell-panel-top) + 40px) + 8px);bottom:auto;width:calc(100vw - 180px);max-height:min(50vh,360px)}}
+/* Panneau latéral ouvert (orbital-ui Slice 09) : le plateau (34) passait sur le bas du panneau (33). De 1100 px, il se
+   centre dans l'espace libre entre la zone du mode (bas-gauche, 254 px) et le panneau ; plus étroit, cet espace manque :
+   il monte en haut à gauche, sous la ligne d'état et le bandeau, à gauche du panneau. */
+@media(min-width:1100px){#app:has(.panel.open) .board-drop-tray{left:calc(var(--shell-gutter) + 254px);right:calc(var(--shell-gutter) + 12px + min(var(--shell-panel-w),100vw - 2 * var(--shell-gutter)));width:auto;max-width:460px;margin-inline:auto;transform:none}}
+@media(min-width:761px) and (max-width:1099px){#app:has(.panel.open) .board-drop-tray{top:calc(max(anchor(--jv-live bottom,0px),var(--shell-panel-top)) + 8px);bottom:auto;left:var(--shell-gutter);right:calc(var(--shell-gutter) + 12px + min(var(--shell-panel-w),100vw - 2 * var(--shell-gutter)));width:auto;transform:none}}
 
 /* ---------- Pastilles d'arrière-plan (centre d'état du bas, Slice 06, D8) ----------
    Une pastille ronde de 32 px par catégorie non vue, dans l'ordre du registre
@@ -5310,6 +5334,9 @@ document.querySelectorAll('.dock button[data-panel]').forEach(b=>b.addEventListe
   const rove=target=>{for(const b of items())b.tabIndex=b===target?0:-1};
   const focusItem=target=>{if(!target)return;rove(target);target.focus({preventScroll:true})};
   const pick=where=>{const list=usable();return where==='last'?list[list.length-1]:where==='first'?list[0]:null};
+  /* Repli d'un `focus()` sur un bouton du popover fermé (une vue rend le focus à son bouton) : méthode posée sur
+     chaque instance. Un appel `HTMLElement.prototype.focus.call(b)` la contournerait ; aucun code de la page ne le
+     fait (QA S08 P5, documenté dans docs/control-center-shell.md › Global launcher). */
   for(const b of items()){
     const native=b.focus;
     b.focus=function(options){if(pop.hidden){more.focus(options);return}native.call(this,options)};
@@ -5360,6 +5387,19 @@ document.querySelectorAll('.dock button[data-panel]').forEach(b=>b.addEventListe
     else more.removeAttribute('aria-description');
   };
   new MutationObserver(syncActive).observe(pop,{subtree:true,attributes:true,attributeFilter:['class','aria-expanded']});
+  /* Le code montré (CNV, AGT, TRC… en circuit imprimé) fait partie du nom (WCAG 2.5.3 : la commande vocale « cliquer
+     CNV » trouve le bouton ; relevé par axe-core, orbital-ui Slice 09). Plusieurs modules réécrivent `aria-label`
+     (badges, thème) : le lanceur le complète après chacun, une seule fois (garde : le code déjà dit). En Cosmos le
+     bouton montre une icône : rien n'est ajouté, et le thème rend le nom de l'infobulle. */
+  const codeInName=()=>{
+    for(const b of dock.querySelectorAll('.tool>button')){
+      const code=(b.textContent||'').trim(),label=b.getAttribute('aria-label')||b.title||'';
+      if(!code||!label||!/^[A-Z]{2,4}$/.test(code)||label.toUpperCase().split(/[^A-Z0-9]+/).includes(code))continue;
+      b.setAttribute('aria-label',`${label} · ${code}`);
+    }
+  };
+  new MutationObserver(codeInName).observe(dock,{subtree:true,childList:true,attributes:true,attributeFilter:['aria-label','title']});
+  codeInName();
   rove(pick('first'));syncActive();
   log('info','installed',{visible:dock.querySelectorAll(':scope>.tool>button').length,more:items().length});
 })();

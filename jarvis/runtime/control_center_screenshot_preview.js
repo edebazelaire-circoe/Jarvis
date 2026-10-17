@@ -340,6 +340,10 @@ ${H} .sp-actions button[data-sp-act=delete]{color:var(--danger,#ff6577)}
 ${H} .sp-actions button[data-sp-act=delete]:hover{border-color:color-mix(in srgb,var(--danger,#ff6577) 55%,transparent);background:rgba(255,101,119,.08)}
 ${H} .sp-actions button[aria-disabled=true]{opacity:.55;cursor:progress}
 ${H} .sp-actions svg{flex:none;width:14px;height:14px}
+/* Fenêtre basse (640 px et moins, dont 1440×900 zoomé à 200 %) : la carte entière passait sous la ligne d'état. Vignette
+   plus basse, actions sur deux rangées : 205 px au lieu de 307, entre la ligne d'état et le bouton de mode (orbital-ui
+   Slice 09, test_zoom_200). */
+@media(max-height:640px){${H} .sp-thumb{max-height:72px}${H} .sp-actions button[data-sp-act=send],${H} .sp-actions button[data-sp-act=delete]{grid-column:auto}}
 ${H} .sp-close{position:absolute;top:50%;right:0;transform:translateY(-50%);width:32px;height:32px;display:grid;place-items:center;padding:0;border:1px solid var(--line,#183343);
   border-radius:7px;background:rgba(3,10,15,.86);color:var(--muted,#7190a0);font:inherit;font-size:14px;cursor:pointer}
 ${H} .sp-close:hover{color:var(--text,#d8edf7)}

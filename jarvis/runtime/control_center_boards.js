@@ -652,7 +652,7 @@ ${P} .bd-sr{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflo
     trigger.id=DOM.triggerId;trigger.setAttribute('type','button');
     trigger.setAttribute('aria-haspopup','dialog');trigger.setAttribute('aria-expanded','false');
     trigger.setAttribute('aria-controls',DOM.panelId);
-    const eyebrow=el('span','bd-eyebrow','Board');
+    const eyebrow=el('span','bd-eyebrow','Board ');  // espace : « Board Jarvis » et non « BoardJarvis » dans le texte du bouton
     const title=el('span','bd-title');title.id=DOM.titleId;
     const sub=el('span','bd-sub');sub.id=DOM.subId;
     const chev=el('span','bd-chev');chev.appendChild(icon(doc,'chevron',14));
@@ -739,7 +739,8 @@ ${P} .bd-sr{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflo
       host.setAttribute(DOM.busyAttribute,pending&&(pending.kind==='switch'||pending.kind==='new_session')?'true':'false');
       if(title.textContent!==view.title)title.textContent=view.title;
       if(sub.textContent!==view.sub)sub.textContent=view.sub;
-      const label=view.tone==='ready'?`Board actif : ${view.title}. Ouvrir la liste des Boards`
+      /* Le nom commence par ce que le bouton montre (« BOARD » puis le titre) : WCAG 2.5.3 (orbital-ui Slice 09, axe-core). */
+      const label=view.tone==='ready'?`Board ${view.title} : Board actif. Ouvrir la liste des Boards`
         :view.tone==='pending'?`${view.title} — ${view.sub}. Ouvrir la liste des Boards`
         :`Boards ${view.title.toLowerCase()} (${view.sub}${view.code?` · ${view.code}`:''}). Ouvrir la liste des Boards`;
       trigger.setAttribute('aria-label',label);

@@ -82,7 +82,34 @@ Placement rules that hold in both themes (measured by
   Toasts move left of an open panel from 940 px up.
 - **Board drop tray** (`bottom-centre`): above the status centre,
   `bottom: calc(var(--shell-bottom) + var(--shell-status-h) + 8px)`; at 760 px
-  and below it climbs to `--shell-panel-top` + 8 px, under the launcher.
+  and below it climbs under the launcher, below the rail tab row
+  (`--shell-panel-top` + 40 px) and below the GPT-Live banner when it shows
+  (CSS anchor `--jv-live`), + 8 px. With a side panel open it never runs
+  under the panel: from 1100 px it is centred between the mode zone
+  (gutter + 254 px) and the panel; from 761 to 1099 px it climbs top-left,
+  beside the panel (Slice 09).
+- **Stacking by geometry, not by rank (Slice 09).** Surfaces whose height is
+  only known at runtime are tied with CSS anchor positioning (Chrome/Edge
+  125+; without it the fallback values below apply): `.live-banner`
+  (`anchor-name: --jv-live`) and `#boardDropTray` (`--jv-tray`). The GPT-Live
+  banner is centred between the two columns and never covers the rail
+  (`width: min(680px, 100vw - 2 × (gutter + --shell-rail-w + 12px))`); at
+  700 px and below it sits under the rail tab row (`--shell-panel-top` +
+  48 px). Toasts sit left of the visible rail above 700 px (`right: gutter +
+  --shell-rail-w + 12px`), rise above a visible bottom drop tray
+  (`bottom: max(68px, anchor(--jv-tray top) + 8px)`), and at 700 px and below
+  go under the rail tab, the banner and the tray (`top: max(--shell-panel-top
+  + 48px, banner bottom + 8, tray bottom + 8)`). Under 940 px with a side
+  panel open the toasts stay at the right, over the panel, for the length of
+  a toast (no room on its left) — the one accepted overlap.
+- **Screenshot preview vs mode control.** The preview's bottom rises with the
+  scene notes exactly as the mode control's rung does
+  (`+ max(0, --sc-status-h − 24px)`); at 640 px of height and below its card
+  is compact (72 px thumbnail, two rows of actions) so it fits between the
+  state line and the mode control, 200 % zoom included. When the wheel is
+  reopened while the preview shows, the preview steps to the right of the
+  wheel's radius (`#app:has(#toolWheel[data-open])`) so every wedge stays
+  under the pointer (Slice 09).
 
 ## Tokens
 
@@ -205,6 +232,17 @@ value.
 | `#jvStudioExplorer` (9000) | `control_center_presentation_studio_explorer_core.js` | `#${HOST_ID} ` | Variantes internals |
 | `#jvStudioExplorer` (9000) | `control_center_presentation_studio_run.js` | `${H} ` | run overlay internals |
 | `.overlay` (60) | `control_center_wake_word.js` | `#wakeWordSettings ` | settings tooltip |
+
+### Inline ranks
+
+Ranks written by script on an element (`style.zIndex`, `style.setProperty('z-index', …)`,
+a `cssText` or a `style="…"` attribute carrying `z-index`). Like contained ranks, they only
+order children inside a page layer's stacking context. Any other inline rank fails
+`test_inline_ranks_are_contained_and_listed` (Slice 09: the sheet test could not see them).
+
+| Container | Sheet | Write | Why |
+| --- | --- | --- | --- |
+| `#sceneLayer` (20) | `control_center_scene_page.js` | `style.zIndex` | node stacking order (`node.stack`, raised window) inside the scene |
 
 ### Reserved ranks
 
@@ -342,7 +380,10 @@ the accessible name stays the button's own). Open, the launcher carries
 
 Focus is never left on a hidden element: a view that gives the focus back to
 its button (Test Lab, MCP, Prefabs…) while that button sits in the closed
-popover gives it to « Plus d’outils ». While a popover tool is open (`active`
+popover gives it to « Plus d’outils » (a `focus` method set on each folded
+button: a call through `HTMLElement.prototype.focus.call(button)` would bypass
+it — no page code does; a fallback in every view's close path was judged not
+worth it, QA S08 P5). While a popover tool is open (`active`
 or `aria-expanded="true"`), « Plus d’outils » shows the accent and a dot and
 names it in `aria-description` (« Ouvert : Trace »): state is not hidden by the
 fold, and not by colour alone.
@@ -764,7 +805,46 @@ command channel, latency).
 - **Forced colours**: under `forced-colors: active` control borders use
   `CanvasText` and the focus ring `Highlight`.
 - **Zoom**: usable at 200 % (the narrow breakpoints apply).
+- **Label in name** (WCAG 2.5.3, checked by axe-core): the accessible name
+  starts with, or contains, the words the control shows — « Mode Assistant :
+  … », « Board Jarvis : Board actif … », the circuit-board launcher codes
+  (`Trace · TRC`, completed by the launcher after every module that rewrites
+  `aria-label`). A text eyebrow ends with a space (« Mode », « Board ») so the
+  visible text reads as two words. Two written exceptions: a recording chip
+  (its visible text is a ticking duration, which a name never carries) and a
+  rail card (its name is the title then the state in words; the engine badge,
+  variant count and age are visible extras).
+- **Menus and listboxes** hold only their entries in the accessibility tree:
+  the mode chooser's title, note and hint are `role="none"` (the menu is named
+  and `aria-describedby` its note and hint); a rail card's « ⋯ » button is
+  `aria-hidden` (mouse and hand only; the option itself opens the same menu
+  with `ContextMenu` / `Shift+F10` / right click).
 - All French UI strings address the user as « vous ».
+
+## Integration matrix (Slice 09)
+
+`tests/unit/test_control_center_shell_browser.py` replays the runtime matrix of
+the handoff (`docs/04-testing-and-quality.md`) on the served page with the
+`fetch` double of `_status_centre_browser.mjs`, in both themes, one screenshot
+per state (`JARVIS_S09_EVIDENCE_DIR`): 1 Board, wheel closed; 2 wheel open,
+Selection focused; 3 Selection › Souris / Bare Hands; 4 audio recording;
+5 screen recording; 6 screenshot preview (taken through the wheel); 7 alert
+popover; 8 rail with every card state and the Board-linked items; 9 Variantes
++ rail (real isolated Core, `tests/fakes/explorer_browser.py`); 10 mode
+chooser; 11 Board chooser; 12 800×600; 13 1280×540 with the wheel open;
+14 reduced motion; 15 200 % zoom (720×450 CSS px at scale 2); 16-18 Bare
+Hands badge + frozen-scene note on two lines + fresh screenshot at 1440,
+1280 and 900 px. Every state is audited the same way: no control over
+another (the side panel over the rail and the banner over a panel are the
+registry's), every interactive target of every control hit-testable at its
+centre (or under the state's own surface), no unnamed control, no clipped
+text without its full text in a `title` / name, no control off-screen, no
+horizontal scroll, the state's surface whole and on top. Next to it: keyboard
+only and mouse only full paths, reduced motion (nothing in the shell animates
+or transitions), forced colours, axe-core (`JARVIS_AXE_JS`), 200 % zoom,
+700 px wide / 560 px high, the GPT-Live banner + drop tray + toasts + rail
+stack at four sizes with a panel closed and open, and a real held object
+dragged into `#chatTab`, the mode button and the rail (it stops against each).
 
 ## Validation
 

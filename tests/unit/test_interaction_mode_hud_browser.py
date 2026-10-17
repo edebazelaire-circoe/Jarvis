@@ -472,7 +472,7 @@ async def test_clavier_et_lecteur_d_ecran_gardent_leurs_noms(served, tmp_path):
     assert actions[0]["status"] == 200 and actions[2]["ok"], actions[:3]
     trigger = actions[4]
     assert trigger["role"] == "button"
-    assert trigger["name"].startswith("Mode d’interaction : PRESENTATION.")
+    assert trigger["name"].startswith("Mode PRESENTATION : mode d’interaction en vigueur.")
     assert "sourde à la salle" in trigger["name"]
     assert trigger["name"].endswith("Ouvrir le choix du mode.")
     # La flèche ouvre et pose le focus sur le mode en vigueur.

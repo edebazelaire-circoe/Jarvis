@@ -285,6 +285,85 @@ def test_cosmos_overrides_no_shell_position_or_rank():
     assert not offenders, f"le thème Cosmos place ou classe une surface de la coque : {offenders}"
 
 
+# ------------------------------------------------------------ angles morts (Slice 09, QA S01)
+
+#: Un rang écrit par script ou en attribut : `el.style.zIndex=`, `setProperty('z-index'`, un `cssText`
+#: ou un `style="…"` qui porte `z-index`. Les feuilles n'en disent rien ; le registre doit le dire.
+_INLINE_RANK = re.compile(
+    r"""\.style\.zIndex\s*=(?!=)|setProperty\(\s*['"]z-index['"]|cssText\s*[+]?=\s*['"`][^'"`]*z-index|style=\\?["'][^"'>]*z-index""")
+
+
+def inline_ranks() -> list[dict]:
+    return [{"container": container, "sheet": sheet, "write": write}
+            for container, sheet, write, _why in _table(_doc_section("Inline ranks"))]
+
+
+def _inline_kind(found: str) -> str:
+    if found.startswith(".style.zIndex"):
+        return "style.zIndex"
+    if found.startswith("setProperty"):
+        return "style.setProperty"
+    return "cssText" if found.startswith("cssText") else "style attribute"
+
+
+def test_inline_ranks_are_contained_and_listed():
+    """Angle mort du test de registre (QA S01) : un `z-index` posé en ligne ou en
+    JS échappait à `z_rules`. Chacun doit avoir sa ligne « Inline ranks » (un rang
+    contenu dans une couche de page), et chaque ligne doit exister dans le code."""
+
+    listed = {(row["sheet"], row["write"]) for row in inline_ranks()}
+    seen, stray = set(), []
+    for path in _sheets():
+        text = _COMMENT.sub("", path.read_text(encoding="utf-8"))
+        for match in _INLINE_RANK.finditer(text):
+            key = (path.name, _inline_kind(match.group(0)))
+            (seen.add if key in listed else stray.append)(key if key in listed else (*key, match.group(0)[:60]))
+    assert not stray, f"rang en ligne sans ligne « Inline ranks » au registre : {stray}"
+    assert listed == seen, {"lignes sans écriture dans le code": listed - seen}
+    for row in inline_ranks():
+        container = row["container"].split()[0].strip("`")
+        assert any(container == layer["surface"] for layer in page_layers()), row
+
+
+def test_inline_rank_detector_sees_every_form():
+    """Le détecteur lui-même : les quatre formes sont vues, un `zIndex` lu ne l'est pas."""
+
+    for sample in ("el.style.zIndex=String(n)", "el.style.setProperty('z-index','40')",
+                   "el.style.cssText='position:fixed;z-index:30'", '<div style="z-index:5">'):
+        assert _INLINE_RANK.search(sample), sample
+    assert not _INLINE_RANK.search("if(el.style.zIndex==='3')")
+
+
+#: Tout sélecteur de thème, quel qu'il soit (`html[data-jarvis-theme="…"]`, `:root[data-jarvis-theme…]`,
+#: `:not([data-jarvis-theme…])`), dans la page, dans le `STYLE` des thèmes et dans chaque module.
+_THEME_RULE = re.compile(r"([^{}`;]*\[data-jarvis-theme[^{}]*)\{([^{}]*)\}")
+
+
+def test_no_theme_places_or_ranks_a_shell_surface():
+    """Angle mort (QA S01) : seul Cosmos, et seulement dans deux feuilles, était
+    lu. Un thème quelconque (le circuit imprimé, un thème futur), dans n'importe
+    quelle feuille, ne place ni ne classe une surface de la coque."""
+
+    offenders = []
+    for path in _sheets():
+        text = _sheet_source(path)
+        for match in _THEME_RULE.finditer(text):
+            selector, body = " ".join(match.group(1).split()), match.group(2)
+            for part in selector.split(","):
+                if "data-jarvis-theme" not in part:
+                    continue
+                subject = re.split(r"\s*[>+~]\s*|\s+", part.strip())[-1]
+                if not any(re.search(re.escape(surface) + r"(?![\w-])", subject) for surface in SHELL_SURFACES):
+                    continue
+                bad = sorted(set(declarations(body)) & set(GEOMETRY_PROPERTIES))
+                if bad:
+                    offenders.append((path.name, _unmask(part.strip()), bad))
+    assert not offenders, f"un thème place ou classe une surface de la coque : {offenders}"
+    # Le détecteur voit bien un thème autre que Cosmos.
+    probe = 'html[data-jarvis-theme="circuit-board"] .dock{top:4px}'
+    assert _THEME_RULE.search(probe)
+
+
 def test_html_mirror_matches_the_registry():
     head = PAGE_HTML.read_text(encoding="utf-8").split("</style>", 1)[0]
     mirror = set()

@@ -422,10 +422,12 @@
       return `Mode d’interaction : ${view.label||view.mode} — non confirmé par Core.`
         +`${view.diverged?` ${view.storedLabel||view.stored} est le mode choisi.`:''}`
         +action;
+    /* Le nom commence par ce que le bouton montre (« MODE » puis le libellé) : WCAG 2.5.3, la commande vocale
+       « cliquer Mode Assistant » la trouve (orbital-ui Slice 09, relevé par axe-core). */
     if(view.diverged)
-      return `Mode d’interaction : ${view.label} en vigueur ; `
+      return `Mode ${view.label} : mode d’interaction en vigueur ; `
         +`${view.storedLabel||view.stored} est le mode choisi.${action}`;
-    return `Mode d’interaction : ${view.label}.${action}`;
+    return `Mode ${view.label} : mode d’interaction en vigueur.${action}`;
   }
 
   /* Le bandeau du sélecteur : ce qu'il faut savoir avant de choisir. Vide quand
@@ -934,7 +936,9 @@ body:has(${GEO.badgeSelector}):has(${GEO.sceneSelector}) #${DOM.hostId}{--im-rai
     const textBox=doc.createElement('span');
     textBox.className='im-text';
     const eyebrow=doc.createElement('span');
-    eyebrow.className='im-eyebrow';eyebrow.textContent='Mode';
+    /* L'espace final sépare « Mode » du libellé dans le texte du bouton (sans lui : « ModeASSISTANT », hors du nom accessible
+       pour axe, WCAG 2.5.3 ; orbital-ui Slice 09) ; en fin de bloc, il ne se voit pas. */
+    eyebrow.className='im-eyebrow';eyebrow.textContent='Mode ';
     textBox.appendChild(eyebrow);
     const label=doc.createElement('span');
     label.id=DOM.labelId;label.className='im-label';
@@ -987,6 +991,11 @@ body:has(${GEO.badgeSelector}):has(${GEO.sceneSelector}) #${DOM.hostId}{--im-rai
     const hint=doc.createElement('p');
     hint.id=DOM.hintId;hint.className='im-hint';
     pop.appendChild(hint);
+    /* Un menu ne contient que des entrées (axe-core, `aria-required-children` ; orbital-ui Slice 09) : le titre, la note
+       et l'aide sont de simples textes dans l'arbre d'accessibilité ; le menu est nommé par `aria-label` et décrit par
+       la note et l'aide, que le lecteur d'écran dit à l'ouverture. */
+    for(const part of [popTitle,note,hint])part.setAttribute('role','none');
+    pop.setAttribute('aria-describedby',`${DOM.noteId} ${DOM.hintId}`);
     host.appendChild(pop);
 
     const announce=doc.createElement('div');

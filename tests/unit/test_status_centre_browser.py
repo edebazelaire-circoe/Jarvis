@@ -497,3 +497,43 @@ def test_eye_announces_ghosts_and_ghosts_never_move(tmp_path):
     assert r["afterDrag"] == 0 and r["afterKeys"] == 0, r
     assert "réaffichez-le" in r["keySaid"], r["keySaid"]
     _no_errors(step)
+
+
+def test_a_ghost_is_never_pressed_into_a_gesture_nor_held(tmp_path):
+    """QA S08 P4, le comportement que les gardes `node.ghost` protègent, de
+    bout en bout : un vrai appui tenu sur un fantôme n'ouvre aucun geste
+    (`JarvisScene.inspect().gesture` reste vide) alors que le même appui sur un
+    objet visible en ouvre un ; la main (couture `JarvisScene.frames.begin`,
+    qui passe par `holdTarget`) ne prend pas un fantôme alors qu'elle prend un
+    objet visible ; rien ne part à Core. Le focus qui suit l'appui sélectionne
+    le fantôme, comme au clavier (S06 : il reste focalisable pour « Réafficher »).
+
+    Mutation (Slice 09, LOG) : retirer UNE des deux gardes ne fait pas tomber
+    ce test, car un fantôme n'a pas de boîte dessinée (`drawnBox` vide : il
+    n'entre pas dans la disposition résolue) et `onPointerDown` comme
+    `holdTarget` s'arrêtent aussi sur elle. Les gardes sont une seconde serrure
+    explicite ; ce test tient la première et la seconde ensemble."""
+    ghost = '#sceneLayer [data-object-id="jobj_hidden_win"]'
+    gesture = "JSON.stringify(JarvisScene.inspect().gesture)"
+    hold = ("(()=>{const g=JarvisScene.frames.begin('jobj_hidden_win');const held=JarvisScene.inspect().holding.slice();"
+            "const v=JarvisScene.frames.begin('jobj_star');const both=JarvisScene.inspect().holding.slice();"
+            "if(v)JarvisScene.frames.cancel('jobj_star');return {ghost:g,heldAfterGhost:held,visible:!!v,heldAfterVisible:both}})()")
+    sent = "window.__sc.bodies.filter(b=>b.path==='/api/scene/commands').length"
+    step = _drive(tmp_path, [{"width": 1440, "height": 900, "actions": [
+        ["click", "on", "#hiddenEye", 900],
+        ["press", "down", ghost, 200],
+        ["eval", "pressed", gesture, 50],
+        ["release", "up", ghost, 400],
+        ["press", "down2", '#sceneLayer [data-object-id="jobj_star"]', 200],
+        ["eval", "pressedVisible", gesture, 50],
+        ["release", "up2", '#sceneLayer [data-object-id="jobj_star"]', 600],
+        ["eval", "hold", hold, 300],
+        ["eval", "sent", sent, 100],
+    ]}])[0]
+    r = step["results"]
+    assert r["pressed"] == "null", ("aucun geste sur un fantôme", r["pressed"])
+    assert '"id":"jobj_star"' in r["pressedVisible"], ("le même appui sur un objet visible ouvre un geste", r["pressedVisible"])
+    assert r["hold"]["ghost"] is None and r["hold"]["heldAfterGhost"] == [], r["hold"]
+    assert r["hold"]["visible"] is True and r["hold"]["heldAfterVisible"] == ["jobj_star"], r["hold"]
+    assert r["sent"] == 0, r
+    _no_errors(step)

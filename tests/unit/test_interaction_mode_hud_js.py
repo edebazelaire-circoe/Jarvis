@@ -1627,7 +1627,7 @@ def test_presentation_status_line_per_state(tmp_path):
     assert result["deaf"]["label"].endswith("Ouvrir le choix du mode.")
     assert "refusé" in result["refused"]["label"]
     assert "Séance" not in result["inactive_simple"]["label"]
-    assert result["voice_offline"]["label"] == "Mode d’interaction : PRESENTATION. Ouvrir le choix du mode."
+    assert result["voice_offline"]["label"] == "Mode PRESENTATION : mode d’interaction en vigueur. Ouvrir le choix du mode."
     # La région vivante la dit aussi : un refus d'entrée s'entend.
     assert "refusé" in result["refused"]["said"]
     # Le bandeau du sélecteur dit refus, échec et surdité, code compris.
