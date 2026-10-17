@@ -1,0 +1,23 @@
+{
+  "slice_id": "06-selection-object-actions",
+  "title": "Slice 06 — Selection and Board-object actions",
+  "task_type": null,
+  "task_type_resolution": "INHERIT_FROM_SLICE_00_PROJECT_MANAGER_RESOLUTION",
+  "dependencies": [
+    "05-dossier-contract-projection"
+  ],
+  "frontend": true,
+  "code": true,
+  "required_qa": [
+    "qa-verification",
+    "code-review",
+    "runtime-validation",
+    "agent-trace-analysis"
+  ],
+  "required_skills": [
+    "/caveman",
+    "/coding-guideline",
+    "/impeccable"
+  ],
+  "agent_routing": "Use a Claude Work Agent for frontend implementation/review where supported by the host."
+}

@@ -1,0 +1,10 @@
+{
+  "checks": [
+    {
+      "id": "HVAL-04-01",
+      "when": "After automated capture/runtime validation passes",
+      "instruction": "Start a short audio recording and a short screen recording together from the Capture wheel category, observe the HUD, then stop both from their indicators.",
+      "acceptance": "Capture feels like one coherent function; active states are obvious only while recording, both recordings can coexist, and no stale capture controls remain afterward."
+    }
+  ]
+}

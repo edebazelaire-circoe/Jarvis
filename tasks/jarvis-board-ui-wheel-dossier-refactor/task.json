@@ -1,0 +1,22 @@
+{
+  "project_name": "Jarvis",
+  "slug": "jarvis-board-ui-wheel-dossier-refactor",
+  "title": "Jarvis Board UI — radial wheel refactor, fixed Board types, Board switcher and Dossier workspace",
+  "planning_date": "2026-10-17",
+  "repository": "edebazelaire-circoe/Jarvis",
+  "reference_branch": "main",
+  "reference_commit_observed": "cd5dfa47c53e6d8c7baa39892a5f0ffbe225bef5",
+  "entrypoint": "slices/TODO.md",
+  "task_type": null,
+  "task_type_resolution": "PROJECT_MANAGER_MUST_RESOLVE_FROM_CURRENT_WORKSPACE_VOCABULARY",
+  "visual_references": [
+    "assets/current-ui-before.png",
+    "assets/style-reference-radial-ui.png"
+  ],
+  "planning_basis": [
+    "Current Control Center shell and orbital wheel merged on main on 2026-10-17",
+    "Human design discussion captured in grill-session.md",
+    "Canonical contracts inspected at planning time: Boards, interaction mode, capture, scene, workspace memory"
+  ],
+  "implementation_status": "planned_only"
+}

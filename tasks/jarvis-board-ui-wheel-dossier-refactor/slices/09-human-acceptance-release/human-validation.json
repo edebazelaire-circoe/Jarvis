@@ -1,0 +1,10 @@
+{
+  "checks": [
+    {
+      "id": "HVAL-09-01",
+      "when": "Only after Slice 08 machine QA/review/runtime/trace validation is green",
+      "instruction": "Use the real Control Center for a normal Board session: switch Boards, open each wheel category, start/stop a capture, hide/range/re-present content, spend several minutes in Dossier, then return to the Board. Compare the wheel visually with the style reference and the main shell with the old screenshot.",
+      "acceptance": "The mental model is Board type + Board switcher (not interaction mode); obsolete controls are gone; wheel looks substantially redesigned and never stacks two submenus; capture status is transient; Dossier is pleasant enough to read/work in and clearly represents context Jarvis can use."
+    }
+  ]
+}

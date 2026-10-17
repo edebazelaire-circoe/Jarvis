@@ -1,0 +1,23 @@
+{
+  "slice_id": "05-dossier-contract-projection",
+  "title": "Slice 05 — Dossier contract, projection and semantic operations",
+  "task_type": null,
+  "task_type_resolution": "INHERIT_FROM_SLICE_00_PROJECT_MANAGER_RESOLUTION",
+  "dependencies": [
+    "01-board-type-contract-migration",
+    "03-orbital-wheel-redesign"
+  ],
+  "frontend": false,
+  "code": true,
+  "required_qa": [
+    "qa-verification",
+    "code-review",
+    "runtime-validation",
+    "agent-trace-analysis"
+  ],
+  "required_skills": [
+    "/caveman",
+    "/coding-guideline"
+  ],
+  "agent_routing": null
+}

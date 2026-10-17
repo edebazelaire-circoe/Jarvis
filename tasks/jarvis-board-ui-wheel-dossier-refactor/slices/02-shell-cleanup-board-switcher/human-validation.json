@@ -1,0 +1,10 @@
+{
+  "checks": [
+    {
+      "id": "HVAL-02-01",
+      "when": "After automated browser/runtime validation passes",
+      "instruction": "Open the normal Board view and use the bottom-left Board card to switch between at least two Boards and create a temporary Board of a chosen type.",
+      "acceptance": "The card feels compact and obvious; there is no competing Board/mode selector elsewhere, and the selected type is shown but not editable afterward."
+    }
+  ]
+}

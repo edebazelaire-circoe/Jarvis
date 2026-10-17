@@ -1,0 +1,22 @@
+{
+  "slice_id": "02-shell-cleanup-board-switcher",
+  "title": "Slice 02 — Shell cleanup and bottom-left Board switcher",
+  "task_type": null,
+  "task_type_resolution": "INHERIT_FROM_SLICE_00_PROJECT_MANAGER_RESOLUTION",
+  "dependencies": [
+    "01-board-type-contract-migration"
+  ],
+  "frontend": true,
+  "code": true,
+  "required_qa": [
+    "qa-verification",
+    "code-review",
+    "runtime-validation"
+  ],
+  "required_skills": [
+    "/caveman",
+    "/coding-guideline",
+    "/impeccable"
+  ],
+  "agent_routing": "Use a Claude Work Agent for frontend implementation/review where supported by the host."
+}

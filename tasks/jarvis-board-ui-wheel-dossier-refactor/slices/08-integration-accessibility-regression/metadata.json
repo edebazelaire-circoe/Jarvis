@@ -1,0 +1,24 @@
+{
+  "slice_id": "08-integration-accessibility-regression",
+  "title": "Slice 08 — Integration, accessibility, trace and regression closure",
+  "task_type": null,
+  "task_type_resolution": "INHERIT_FROM_SLICE_00_PROJECT_MANAGER_RESOLUTION",
+  "dependencies": [
+    "04-jarvis-runtime-capture-controls",
+    "07-dossier-fullscreen-ui"
+  ],
+  "frontend": true,
+  "code": true,
+  "required_qa": [
+    "qa-verification",
+    "code-review",
+    "runtime-validation",
+    "agent-trace-analysis"
+  ],
+  "required_skills": [
+    "/caveman",
+    "/coding-guideline",
+    "/impeccable"
+  ],
+  "agent_routing": "Use a Claude Work Agent for frontend implementation/review where supported by the host."
+}

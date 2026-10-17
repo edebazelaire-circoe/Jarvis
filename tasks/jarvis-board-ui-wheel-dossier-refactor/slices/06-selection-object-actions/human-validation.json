@@ -1,0 +1,10 @@
+{
+  "checks": [
+    {
+      "id": "HVAL-06-01",
+      "when": "After automated scene/Dossier/runtime validation passes",
+      "instruction": "Select one durable artifact and one ordinary visible scene object. Try Masquer/Show, representation changes, Ranger, and Retirer du Board; then recover the Dossier item onto the Board.",
+      "acceptance": "The difference between hiding, putting away, changing representation and removing the Board representation is obvious; no content is unexpectedly lost."
+    }
+  ]
+}
