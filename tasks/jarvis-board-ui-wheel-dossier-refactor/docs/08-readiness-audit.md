@@ -26,7 +26,7 @@ disagree. Every later Slice reads it before its own `SLICE.md`.
 | Voice follower | `jarvis/runtime/interaction_mode_observer.py`, `jarvis/runtime/voice_v2.py`, `jarvis/runtime/speech_scheduler.py`, presentation runtime modules | `test_interaction_mode_follower.py`, `tests/integration/test_presentation_scenarios.py` |
 | Brain surfaces that mutate mode/kind | `settings_set("interaction_mode")` in `jarvis/runtime/settings_mcp.py`; `board_create`/`board_update(board_kind)` in `jarvis/runtime/workspace_mcp.py` / `workspace_boards.py`; prompt line in `jarvis/runtime/claude_local.py:245` (« passe en mode présentation… ») ; perception `jarvis/runtime/tool_brain_perception.py:374-378`, `tool_brain_choices.py:218` | `test_settings_mcp.py`, `test_workspace_mcp.py`, `test_mcp_catalog.py` |
 | Presentation Studio run transient mode | `jarvis/domain/presentation_studio_roles.py` (`plan_mode_entry`), source `presentation_studio_run` (transient, never persisted) | `docs/presentation-studio.md` › *Playback roles and speech authority* (Decision A); `test_presentation_studio_roles.py`, `test_variants_run_*` |
-| Mode HUD (bottom-left) incl. Voice presence report (« Refusé par la voix », deaf session, mic failure) and « way out of PRESENTATION » during a Variants run | `jarvis/runtime/control_center_interaction_mode.js` (1 575 lines); kept live over Variants by `data-keep-live="run"` / `html.jvx-run` (`control_center_presentation_studio_explorer*.js`, registry rank 9150); Studio reload band measures `#interactionModeHud` (`control_center_presentation_studio_reload.js`) | `test_interaction_mode_hud_js.py`, `test_interaction_mode_hud_browser.py`, `test_variants_run_browser.py`, `test_variants_run_surface_docs.py` |
+| Mode HUD (bottom-left) incl. Voice presence report (« Refusé par la voix », deaf session, mic failure) and « way out of PRESENTATION » during a Variants run | `jarvis/runtime/control_center_interaction_mode.js` (1 575 lines); kept live over Variants by `data-keep-live="run"` / `html.jvx-run` (`control_center_presentation_studio_explorer*.js`, registry rank 9150); the coupling is CSS `html.jvx-run #interactionModeHud` / `html.jvx-run.jvr-studio #interactionModeHud …` in `control_center_presentation_studio_explorer_core.js:452-460` plus `JarvisShell.ZONES` (`control_center_shell.js:49`); `control_center_presentation_studio_reload.js` does **not** reference it (the « band measures `#interactionModeHud` » sentence of `docs/presentation-studio.md:3319` is probably stale) | `test_interaction_mode_hud_js.py`, `test_interaction_mode_hud_browser.py`, `test_variants_run_browser.py`, `test_variants_run_surface_docs.py` |
 | Board quick control (top-left, in `.topbar`) | `jarvis/runtime/control_center_boards.js` (`#boardsHud`, `#boardsPanel`, kind badges `Générique/Réunion/Présentation`, kind on create **and edit**) | `docs/boards.md` › *Control Center Boards control*; `test_boards_hud_js.py`, `test_boards_hud_browser.py`, `test_boards_status.py` |
 | Shell zones, layer registry, controls | `docs/control-center-shell.md` (Level 3), `jarvis/runtime/control_center_shell.js` (`JarvisShell.ZONES`), tokens in `control_center.html` | `test_control_center_shell_layers.py`, `test_control_center_shell_browser.py` |
 | Orbital wheel | `jarvis/runtime/control_center_tool_wheel.js` (`SLOTS` 4 wedges, pure `reduce`, `register`, `setStatus`, radial sub-arc + second level **in place of** the first) | `test_tool_wheel_js.py`, `test_tool_wheel_browser.py` |
@@ -48,7 +48,7 @@ disagree. Every later Slice reads it before its own `SLICE.md`.
 | Background pills | Moved into the status centre (S06). | Unaffected; status centre keeps the pills. |
 | Recording indicators | `#recIndicators` already transient (one chip per **open** Core capture, Core duration, activation stops it), bottom-centre in the status centre; right-edge column at ≤ 700 px. | Slice 04 reuses them; the human asked for video REC « en haut à gauche » → relocate to the top-left zone freed by Slice 02 (not a new HUD). |
 | Launcher | 10-button dock → row CNV/AGT/ERR/SET + « Plus d’outils » (S08). D11 kept Board in the top line pending HV-08-01. | HV-08-01 is now answered by D04 (Board bottom-left). `SET` duplicates the wheel's Paramètres: Slice 02/04 fold `SET` into « Plus d’outils » (shortcut `s` kept), wheel Paramètres opens the same `#openSettings` route. |
-| Geometry coupled to the mode control | Status centre side insets `--shell-gutter + 254 px`, screenshot preview rung, `.sc-status` rung `max(52px, --sc-status-h + 28px)`, Bare Hands badge second rung, Board drop tray centring, Studio reload band placement all measure the bottom-left mode control. | Slice 02 replaces those references with the Board card's geometry in the same commit (registry + conformance tests). |
+| Geometry coupled to the mode control | Status centre side insets `--shell-gutter + 254 px`, screenshot preview rung, `.sc-status` rung `max(52px, --sc-status-h + 28px)`, Bare Hands badge second rung, Board drop tray centring and the Variants-run placement (`html.jvx-run(.jvr-studio) #interactionModeHud`) all depend on the bottom-left mode control. | Slice 02 replaces those references with the Board card's geometry in the same commit (registry + conformance tests). |
 | Integration matrix | `docs/control-center-shell.md` › *Integration matrix (Slice 09)* and `test_control_center_shell_browser.py` (889 added lines) assert the current layout at 1440×900, 1280×720, 900×600, 600×800. | Every UI Slice updates the matrix rows it invalidates; Slice 08 re-runs the whole matrix. |
 
 ## 4. BoardKind / InteractionMode — real storage and migration plan
@@ -98,7 +98,7 @@ archived « Mon Q » (`empty`, `assistant`, `unset`), active
 6. Rollback: restore `jarvis.sqlite3.v8.bak` (never delete the v9 file without a copy), revert
    the code. Written in `docs/boards.md` › *Persistence*.
 
-**Plan (derived interaction mode).** Items 1-2 land in **Slice 01a** (they cannot be separated from removing the stored mode fields); items 3-5 are **Slice 01b**.
+**Plan (derived interaction mode).** Items 1-2 land in **Slice 01a** (they cannot be separated from removing the stored mode fields), together with the minimal adaptation of every reader of the removed fields (`tool_brain_perception.py:378`, `control_center.py:2750-2836`, `interaction_mode.py:317` `with_unchanged`); the 01a/01b boundary table and the accepted intermediate state are in `slices/01-board-type-contract-migration/SLICE.md`. Items 3-5 are **Slice 01b**. v9 is the first data-rewriting migration: 01a updates the « additive only » contract (`sqlite_state.py:38-40`, `docs/conversation-events.md` ~l. 2244).
 
 1. `InteractionModeService` stays as the internal live seam (Voice, speech scheduler,
    presentation runtime, Studio consume it unchanged — D23). Its baseline is set **only** by
@@ -117,8 +117,8 @@ archived « Mon Q » (`empty`, `assistant`, `unset`), active
    (the key is left in the file, ignored), `settings_set("interaction_mode")` item of
    `settings_mcp.py`, prompt line `claude_local.py:245` (rewritten: behaviour follows the
    Board type; to present, open/create a Présentation Board). Core `POST /v1/interaction-mode`
-   accepts only the transient Studio source (other sources → stable refusal, e.g.
-   `interaction_mode_derived`, 409). `GET` routes and `/api/status.interaction_mode` stay
+   refuses every source (e.g. `interaction_mode_derived`, 409): the Studio calls the service
+   in-process (`presentation_studio_playback.py:763`, `:889`), never over HTTP. `GET` routes and `/api/status.interaction_mode` stay
    read-only for display.
 5. Agent-visible surfaces change → `agent-trace-analysis` required (real trace: « passe en
    mode présentation » must lead to Board creation/switch guidance, never a mode write).
@@ -159,6 +159,11 @@ Genuinely missing (Slice 05 scope):
 4. A **present-from-Dossier** operation creating/reusing a scene object pointing at the same
    source (window with `source_path` for a memory file is reusable; a registry Artifact needs
    a scene reference field — JSON payload key, no scene DDL).
+Extension point for 1: `WorkspaceService.board_inspect` / `_memory_summary`
+(`jarvis/core/workspace_service.py:406-463`). Compatibility note for 4: `ScenePayload.from_payload`
+uses `check_wire_keys` (`jarvis/domain/scene.py:688`), which refuses unknown keys, so an older
+binary will refuse a scene payload carrying a new Artifact-reference key (rollback must say so).
+
 5. An **agent → UI navigation seam** to open/focus Dossier entries (precedent: the Studio
    explorer channel that opens Variants on a voice-started run).
 
@@ -168,8 +173,9 @@ No new table is needed for any of these.
 
 Confirmed at HEAD: hidden = active, not rendered, recoverable (`set_visibility`), plus a
 browser-only ghost view; archived = out of `SceneSnapshot.objects`, tombstone, history.
-Batch ops exist: `patch_selection {visibility, representation, …}`, `archive_selection`,
-`archive_many` (orphan scene artifacts only), MCP hide guard. No third disposition is needed;
+Batch ops exist: `patch_selection {visibility, representation, …}` and `archive_selection`
+(`jarvis/domain/scene_batch.py:353`, `:422`), `archive_many` (orphan scene artifacts only,
+`jarvis/domain/scene.py:1862`), MCP hide guard. No third disposition is needed;
 Dossier durability is a separate dimension. Destructive durable deletion already exists only
 as `memory/delete` (confirm policy) — never through scene archive.
 

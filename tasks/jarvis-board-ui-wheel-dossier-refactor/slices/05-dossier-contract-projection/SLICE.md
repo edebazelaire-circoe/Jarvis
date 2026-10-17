@@ -6,13 +6,15 @@ Define and implement the canonical **Dossier** service/projection so the human a
 
 ## Dependencies
 
-- `01-board-type-contract-migration` (Slice 01a). Slice 00 removed the dependency on Slice 03: this Slice is backend/contract only and touches no wheel file, so it may run in parallel with Slices 01b-04 (respect the 3-agent limit of this machine; it shares no code file with them, coordinate edits of `docs/boards.md`).
+- `01b-derived-interaction-mode` (Slice 00 rework P1: this Slice shares `jarvis/protocol/server.py`, `jarvis/runtime/control_center.py`, `docs/mcp/tool-contract.md` and `test_mcp_catalog.py` with 01b, and `docs/boards.md` with 01a/02). The former dependency on Slice 03 is removed: no wheel file is touched, so it may run beside Slices 02-04 (3-agent limit; `docs/boards.md` is a merge zone with Slice 02 — edit distinct sections and merge carefully).
 
 ## Slice 00 reconciliation (read first)
 
 `../../docs/08-readiness-audit.md` §6 lists what already exists (reuse as-is: memory tree/stat/read/search/write/mkdir/move/delete through `WorkspaceService` + Core `/v1/workspace/boards/{id}/memory/*` + relay `/api/workspace/...` + MCP `board_memory_*`; v8 Board-artifact links and `board_artifacts` / `board_artifact_link`; artifact relations; per-Board presentation sources; `session_activity` family `board` for "what changed"; windows bound to a file via `payload.source_path`) and the five genuinely missing operations: composed Dossier listing, scene -> durable-backing resolver, composed Ranger, present-from-Dossier, agent -> UI navigation seam. No new table is needed.
 
-Naming trap to settle in `docs/dossier.md`: a **scene artifact** (`kind=artifact` scene object: title/summary/items, `docs/scene-model.md` › *Semantic artifacts*) is not a **registry Artifact** (`artifacts` table, `docs/artifacts.md`). Ranger of a scene artifact or scene note materializes its payload once into Board memory (Markdown with provenance) through `memory_write`; Ranger of a scene object already bound to a durable source (`source_path` inside the Board's memory root, or a registry-Artifact reference) only confirms the link. A scene reference to a registry Artifact is a JSON payload key (no scene DDL; same rule as `source_path`, emitted only when set).
+Naming trap to settle in `docs/dossier.md`: a **scene artifact** (`kind=artifact` scene object: title/summary/items, `docs/scene-model.md` › *Semantic artifacts*) is not a **registry Artifact** (`artifacts` table, `docs/artifacts.md`). Ranger of a scene artifact or scene note materializes its payload once into Board memory (Markdown with provenance) through `memory_write`; Ranger of a scene object already bound to a durable source (`source_path` inside the Board's memory root, or a registry-Artifact reference) only confirms the link. A scene reference to a registry Artifact is a JSON payload key (no scene DDL; same rule as `source_path`, emitted only when set). `ScenePayload.from_payload` validates keys with `check_wire_keys` (`jarvis/domain/scene.py:688`), which refuses unknown keys: an older binary will refuse such a payload, so `docs/dossier.md` must state it in its rollback notes.
+
+Extension point for the composed listing: `WorkspaceService.board_inspect` / `_memory_summary` (`jarvis/core/workspace_service.py:406-463`).
 
 ## Canonical context
 

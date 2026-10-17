@@ -8,6 +8,20 @@ Make the Board's type the authoritative, immutable product type and migrate stor
 
 `../../docs/08-readiness-audit.md` §2 and §4 are the audited plan. At HEAD `board_kind`, `interaction_mode` and `interaction_mode_origin` are JSON keys of `work_boards.data` (no column), decoded strictly; `jarvis.sqlite3` is at v8. The migration is a new versioned **v9 data-only step** (no DDL change, version bumped on purpose so a v8 binary refuses the file instead of crashing on `assistant`), with snapshot `tests/schema/jarvis_state.v9.sql`, following `CLAUDE.md` › *Tout changement de schéma passe par une migration versionnée*. Real data on this PC: 3 Boards; the active « Jarvis PRESENTATION » Board is `board_kind=presentation` with a user-chosen `assistant` mode — D22 rule 1 makes it Présentation (see LOG Slice 00, human question Q1; implement rule 1 unless the Human answers otherwise).
 
+
+### 01a / 01b boundary (Slice 00 rework B1)
+
+Slice 01a removes `interaction_mode` / `interaction_mode_origin` from `Board`. Everything that reads those fields or persists them breaks in the same commit, so **all of it is 01a scope** (minimal adaptation, no product redesign):
+
+| Reader / writer at HEAD | 01a change | Asserted by |
+| --- | --- | --- |
+| `jarvis/core/board_service.py`: `_on_mode_changed`, `_persist_mode`, `NON_PERSISTED_SOURCES` (l. 88), `add_listener(..., with_state=True, with_unchanged=True)` (l. 293), `restore_interaction_mode` | listener and persistence deleted; restore/switch request the mode derived from `board_kind` (sources `board_restore` / `board_switch`) | `test_board_service.py`, `test_board_switch.py` |
+| `jarvis/core/interaction_mode.py:317` `add_listener(with_unchanged=...)` and the `unchanged_only` notification (l. 309-311, 358-359) | `BoardService` was the only `with_unchanged` user: remove the parameter and its branch (or keep it unused only if another caller appears; grep at implementation time) | `test_interaction_mode_control_plane.py` |
+| `jarvis/runtime/tool_brain_perception.py:378` `board.interaction_mode.value` | drop the key (keep `board_kind`) | `test_tool_brain_perception.py` |
+| `jarvis/runtime/control_center.py:2750-2836` `_board_stored_mode`, `_core_boards_own_interaction_mode` (and callers l. 2680, 2841, 4165) | `_board_stored_mode` derives the displayed stored mode from the Board's `board_kind` (one shared domain mapping, no second table); `_core_boards_own_interaction_mode` answers `True` for any valid active Board (no origin check), so the replay is retired from 01a on and no `interaction.mode.board_unknown` / `invalid_board_snapshot` warning fires on a contract-valid v9 Board | `test_interaction_mode_control_plane.py`, `test_control_center_presentation_status.py` |
+
+**Accepted intermediate state between 01a and 01b (asserted by tests in 01a):** no Board stores a mode any more (no stored divergence possible); the replay code still exists but never runs (Boards always own the mode); `POST /api/interaction-mode`, `POST /v1/interaction-mode` (any source), `settings_set("interaction_mode")` and the HUD chooser can still change the **live** mode until the next switch or Core restart, which re-apply the Board-derived mode. 01a adds a test that a live change through these paths is neither persisted nor survives a switch/restart. 01b closes the live divergence.
+
 ## Dependencies
 
 - `00-project-manager` = READY
@@ -45,7 +59,9 @@ At planning time `docs/boards.md` made `board_kind` (`empty|meeting|presentation
 - `jarvis/domain/workspace_board.py` (`BoardKind`, `DEFAULT_BOARD_KIND`, `Board` fields, `from_payload`, `update_board`, `EDITABLE_FIELDS`/`parse_board_edits`)
 - `jarvis/adapters/sqlite_state.py` (`_MIGRATIONS[9]`, `_SCHEMA_VERSION = 9`) + `tests/schema/jarvis_state.v9.sql`
 - `jarvis/adapters/sqlite_workspace_board.py` (only if the cross-check changes)
-- `jarvis/core/board_service.py` (create/update paths; the mode listener itself is 01b)
+- `jarvis/core/board_service.py` (create/update paths, mode listener and persistence deleted, restore/switch derivation)
+- `jarvis/core/interaction_mode.py` (`with_unchanged`), `jarvis/runtime/control_center.py` (`_board_stored_mode`, `_core_boards_own_interaction_mode`), `jarvis/runtime/tool_brain_perception.py:378` (see boundary table)
+- `jarvis/adapters/sqlite_state.py:38-40` comment « Additive only » and `docs/conversation-events.md` (schema-version paragraph near l. 2244, « forward-only, additive »): v9 is the **first data-rewriting migration**; update the contract text to say migrations are forward-only, one transaction per step, may rewrite JSON payloads when a version bump protects older binaries, and always run after the `.v<N>.bak` copy
 - `jarvis/protocol/server.py` / `jarvis/protocol/client.py` (Board routes), `jarvis/runtime/workspace_boards.py`, `jarvis/runtime/workspace_mcp.py` (`board_create`, `board_update`)
 - readers of `board_kind`: `jarvis/domain/brain_context.py` (`board_kind: str = "empty"`, « Nature » line), `jarvis/runtime/board_brief.py`, `jarvis/runtime/tool_brain_choices.py:218`, `jarvis/runtime/tool_brain_perception.py:374`, `jarvis/runtime/control_center_boards.js` (`BOARD_KINDS` labels, `empty` default — UI rework itself is Slice 02), `jarvis/runtime/control_center_workspace.js`
 - `docs/boards.md` (*Board kind*, *Persistence*, *Core routes*, *MCP tools*), `docs/mcp/tool-contract.md` §10.9/§10.12, `README.md`
@@ -73,7 +89,7 @@ At planning time `docs/boards.md` made `board_kind` (`empty|meeting|presentation
 - New Board has exactly one fixed type.
 - Ordinary update cannot mutate type.
 - Active behaviour is derived from active Board type.
-- No user operation can create `Board type = X` and independent `interaction mode = Y` divergence.
+- No stored divergence: no Board payload carries a mode, and nothing persists a mode (01a). The live divergence still possible through the legacy write paths until 01b is bounded: it is never persisted and is undone by the next switch or Core restart (tested). 01b closes it.
 - Legacy Board migration matrix passes.
 - Presentation Boards retain Presentation intent across restart/switch.
 - Meeting Board remains a valid Board without pretending meeting behaviour exists.

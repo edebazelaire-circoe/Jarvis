@@ -29,3 +29,7 @@ The UI refactor may expose existing archive/hide controls, but it must not imple
 - traceability back to archived work item;
 - user preferences and manual override;
 - interaction with background tasks and Boards not currently active.
+
+## Existing uncommitted work (noted by Slice 00, 2026-10-17)
+
+The worktree `C:/Projects/jarvis/eph` (branch `task/jarvis-ephemeral-tasks@39ea9909`, already an ancestor of `main`) holds 13 **uncommitted** files dated 2026-10-07 that implement part of this idea: `runtime` may archive the star of a successfully completed ephemeral task (`EPHEMERAL_CATEGORY = "ephemere"` and the `_plan_archive` exception in `jarvis/domain/scene.py`, plus `agent_tasks.py`, `work_ingress.py`, `scene_projector.py`, `work_state.py`, `claude_local.py`, `control_center.html`, `control_center_scene_layout.js`, `control_center_work.js` and tests). Decision of agent 0: keep the worktree intact (no commit, no cleanup, never `git stash`); whoever takes this Issue starts by reviewing that diff. It must not be merged into the wheel/Dossier refactor branch.

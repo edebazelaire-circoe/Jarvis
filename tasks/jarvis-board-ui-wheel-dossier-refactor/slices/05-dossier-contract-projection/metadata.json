@@ -4,7 +4,7 @@
   "task_type": "waived",
   "task_type_resolution": "WAIVED_NO_WORKSPACE_VOCABULARY_SEE_SLICE00_READINESS",
   "dependencies": [
-    "01-board-type-contract-migration"
+    "01b-derived-interaction-mode"
   ],
   "frontend": false,
   "code": true,

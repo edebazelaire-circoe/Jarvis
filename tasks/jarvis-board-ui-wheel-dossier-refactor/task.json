@@ -28,8 +28,11 @@
     "slices_split": [
       "01 -> 01a (01-board-type-contract-migration) + 01b (01b-derived-interaction-mode)"
     ],
-    "open_human_questions": [
-      "Q1 migration of the active Board 'Jarvis PRESENTATION' (kind presentation, user-chosen mode assistant): blocks Slice 01a acceptance, not dispatch"
+    "open_human_questions": [],
+    "agent0_decisions": [
+      "Q1: Board 'Jarvis PRESENTATION' becomes Présentation (D22 rule 1, D01); the Human may still revert",
+      "Q2: worktree eph left intact, its 13 uncommitted files kept and cited by the follow-up Issue",
+      "Q3: still-valid orbital-ui checks folded into Slice 09"
     ]
   }
 }

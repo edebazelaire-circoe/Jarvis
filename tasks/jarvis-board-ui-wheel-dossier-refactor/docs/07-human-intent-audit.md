@@ -57,3 +57,18 @@ No material human intent found in the visible conversation is omitted from the i
 2. Dossier must be built on existing Board memory/artifact truth rather than becoming another storage system.
 
 The completed-task lifecycle is intentionally retained as a follow-up Issue instead of being accidentally implemented inside the UI refactor.
+
+## Re-audit by Slice 00 against HEAD `2fb66040` and the revised plan (2026-10-17)
+
+`grill-session.md` and the checklist above were re-read row by row against the revised Slices (01a/01b split, `docs/08-readiness-audit.md`). All 28 rows stay PASS; the coverage moved as follows:
+
+| Human intent (row above) | Revised coverage |
+| --- | --- |
+| Board has a type / fixed after creation | Slice 01a (contract, v9 migration, Core derivation, no stored divergence) + 01b (no live divergence: every user/agent mode writer retired) |
+| Old Voice/Claude persistent status must go/move into menu | Slice 02 removes `.state`; Slice 04 JARVIS submenu shows the same facts (voice state, agent, sub-agents, wake key). The Voice **presentation presence report** that lived in the mode HUD moves to the Board card (Slice 02): critical feedback kept |
+| Permanent hidden-object chip/count must go | At HEAD the chip had become the permanent eye `#hiddenEye` (orbital-ui S06): Slice 02 removes it, Slice 06 re-exposes « Afficher les masqués (N) » and « Tout réafficher » inside Sélection |
+| Active video should show REC (« en haut à gauche »); audio orb; simultaneous | Slice 04 reuses the existing transient `#recIndicators` and moves them to the top-left zone freed by Slice 02 |
+| Settings remains a valid primary wheel item | Slice 04 wires Paramètres to `#openSettings` and folds the duplicate launcher `SET` into « Plus d’outils » |
+| Existing useful owners not duplicated | Slice 00 owner table (`docs/08` §2); Dossier = projection, five missing operations only (`docs/08` §6) |
+
+Still bounded, not overclaimed: the grill's wish to « forcer manuellement par le clic le mode de pensée de Jarvis » has no canonical API at HEAD (no sleep/wake or thinking control route); the JARVIS submenu is status-only and the gap is stated, not faked. A Studio run may still switch the live mode transiently (activity, not a user selector), consistent with « Jarvis se met dans le type de board dans lequel il est » as the baseline.

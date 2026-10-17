@@ -11,7 +11,7 @@ Make Sélection the contextual manipulation entry for Board scene objects, with 
 
 ## Slice 00 reconciliation (read first)
 
-Confirmed at HEAD (`../../docs/08-readiness-audit.md` §7): hidden = active + not rendered + recoverable; archived = out of the active scene with tombstone; batch ops `patch_selection {visibility, representation}`, `archive_selection`, `archive_many` (orphan scene artifacts only, `not_bulk_archivable` otherwise), MCP hide guard (`display_mcp.py`). No third disposition.
+Confirmed at HEAD (`../../docs/08-readiness-audit.md` §7): hidden = active + not rendered + recoverable; archived = out of the active scene with tombstone; batch ops `patch_selection {visibility, representation}` and `archive_selection` (`jarvis/domain/scene_batch.py:353`, `:422`), `archive_many` (orphan scene artifacts only, `not_bulk_archivable` otherwise; `jarvis/domain/scene.py:1862`), MCP hide guard (`display_mcp.py`). No third disposition.
 
 "Afficher les masqués (N)" already exists as machinery from orbital-ui S06, whose eye Slice 02 removed from the shell: the browser view pref `showHidden` (`control_center_scene_view.js`, ghosts at stored geometry, "Réafficher" = one `set_visibility visible`) and the hidden list `openHiddenMenu` with "Tout réafficher" (`control_center_scene_page.js`). Re-expose both inside the Sélection tree with the count in the entry label; do not rewrite ghost rendering. Keep the distinction: the ghost view never rewrites `visibility`; "Tout réafficher" does (canonical).
 
