@@ -886,7 +886,7 @@ channel row (right click, Bare Hands thumb + middle pinch, `ContextMenu`,
 `Shift+F10`, `ArrowRight`; never a long press) opens its second level, in
 place of the three rows, inside the Capture tree (titled with the row's
 label): first the open captures of that channel, each
-with its stop (`Arrêter — écran 2`, timer as a short note), then the targets
+with its stop (title `Arrêter`, note `écran 2 · 00:12`: target and timer; the accessible name says both), then the targets
 Core can **really** take, in Core's order. A target already recording is
 listed but `aria-disabled` (`déjà en cours d’enregistrement sur cette cible`);
 while the status is lost every target is disabled (stops are not). **Single

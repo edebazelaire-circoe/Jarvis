@@ -1048,10 +1048,10 @@ def test_le_sous_arc_ne_propose_que_des_cibles_reelles_et_l_entree_unique_le_dit
     assert v["single"] == [["target", "Écran principal — seule cible disponible", "default", False]]
     assert v["shot"] == [["target", "Écran principal", "default", False], ["target", "Écran 2", "display2", False]]
     # Un écran qui enregistre : son arrêt en tête, sa cible non proposée une seconde fois.
-    assert v["recording"] == [["stop", "Arrêter — écran principal", "jcap_screen", False],
+    assert v["recording"] == [["stop", "Arrêter", "jcap_screen", False],
                               ["target", "Écran principal", "default", True], ["target", "Écran 2", "display2", False]]
     # Statut perdu : l'arrêt reste offert, aucun démarrage.
-    assert v["lost"] == [["stop", "Arrêter — écran principal", "jcap_screen", False],
+    assert v["lost"] == [["stop", "Arrêter", "jcap_screen", False],
                          ["target", "Écran principal", "default", True], ["target", "Écran 2", "display2", True]]
     assert v["failed"] == [["none", "Cibles illisibles", None, True]]
     assert v["none"] == [["none", "Aucune cible", None, True]]

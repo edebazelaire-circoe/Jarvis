@@ -155,11 +155,17 @@ async def test_audio_toggle_start_stop_matches_status(stack, tmp_path):
     loop = asyncio.get_running_loop()
     seen: dict = {}
 
-    def release() -> None:
+    async def release() -> None:
+        # Polish S04 P3 (Slice 08) : la source se libérait à 4 s après le lancement du navigateur, parfois avant
+        # le clic sous charge. Elle se libère désormais 3,5 s après que Core tient la ligne en démarrage : la page
+        # a toujours le temps de dire l'attente, quelle que soit la durée du démarrage de Chrome.
+        while not _open_rows(stack, AUDIO):
+            await asyncio.sleep(0.05)
+        await asyncio.sleep(3.5)
         seen["while_starting"] = [r.state.value for r in _open_rows(stack, AUDIO)]
         gate.set()
 
-    loop.call_later(4.0, release)
+    releaser = loop.create_task(release())
     out = await _drive(stack.url, [
         _until(SETTLED, 5000, "settled"), {"read": "idle"}, _shot(tmp_path, "wheel-idle"),
         *_open_capture(), _shot(tmp_path, "wheel-open"), {"click": ITEM.format(slot="audio")}, _until(CLOSED, 3000),
@@ -169,6 +175,7 @@ async def test_audio_toggle_start_stop_matches_status(stack, tmp_path):
         _shot(tmp_path, "audio-rec-wheel-closed"),
         *_activate("audio"), _until(_no_chip("audio"), 9000, "stopped"), {"read": "stopped"},
     ], tmp_path=tmp_path)
+    releaser.cancel()
     sources._continuous[AUDIO] = real_audio
     r = out["reads"]
     idle = r["idle"]
@@ -472,6 +479,29 @@ async def test_indicators_cover_no_neighbouring_control(stack, tmp_path, width, 
     assert seen["overflowX"] is False
     for row in stack.core.captures.status().captures:
         await stack.core.captures.stop(row.capture_id)
+
+
+@pytest.mark.parametrize("width,height", [(1280, 720), (600, 800), (500, 800), (375, 667)])
+async def test_the_refusal_note_never_covers_the_launcher(stack, tmp_path, width, height):
+    """Polish S04 P1 (Slice 08) : sous 600 px la note du refus couvrait CNV, AGT, ERR et « Plus d'outils ».
+    Le test précédent appelle `dismiss()` avant de mesurer ; celui-ci mesure la note elle-même."""
+    sources = stack.core.captures._sources
+    real = sources._continuous[SCREEN]
+    sources._continuous[SCREEN] = lambda: FakeCaptureSource(refuse=CaptureErrorCode.SOURCE_UNAVAILABLE)
+    try:
+        out = await _drive(stack.url, [
+            *_activate("video"), _until("!document.getElementById('recIndicatorsNote').hidden", 9000, "note"),
+            {"wait": 300}, {"read": "seen"}, _shot(tmp_path, f"refusal-note-{width}x{height}"),
+        ], width=width, height=height, tmp_path=tmp_path)
+    finally:
+        sources._continuous[SCREEN] = real
+    seen = out["reads"]["seen"]
+    note, dock = seen["note"]["box"], seen["boxes"]["dock"]
+    assert note and dock, seen["note"]
+    assert note["l"] >= 0 and note["r"] <= width, note
+    overlap = min(note["r"], dock["r"]) - max(note["l"], dock["l"]), min(note["b"], dock["b"]) - max(note["t"], dock["t"])
+    assert not (overlap[0] > 0.5 and overlap[1] > 0.5), ("la note couvre le lanceur", note, dock)
+    assert seen["overflowX"] is False
 
 
 async def test_reduced_motion_and_forced_colours_keep_the_information(stack, tmp_path):

@@ -208,8 +208,10 @@
           recording.add(String(c.device||DEFAULT_DEVICE));
         const tag=deviceTag(c.device);
         const what=controlId==='screen'?(tag||'écran principal'):(tag||'micro de Voice');
+        /* Le verbe en titre, la cible et la durée en note (Slice 08 : « Arrêter — écran princip… » était coupé
+           dans les 256 px de la ligne) ; le nom reste « Arrêter — écran principal · 00:12 — … ». */
         items.push({id:`stop:${c.captureId}`,kind:'stop',captureId:c.captureId,device:c.device,icon:'stop',
-          label:c.state==='stuck'?`Réessayer l’arrêt — ${what}`:`Arrêter — ${what}`,note:c.timer||undefined,
+          label:c.state==='stuck'?'Réessayer l’arrêt':'Arrêter',note:c.timer?`${what} · ${c.timer}`:what,
           detail:c.label+(c.detail?`, ${c.detail}`:''),disabled:c.action!=='stop'||undefined,
           tone:c.state==='stuck'?'error':c.state==='stopping'?'wait':undefined});
       }
@@ -312,9 +314,10 @@ ${H} .ri-wait{position:absolute;left:9px;right:9px;bottom:3px;height:2px;border-
 ${H} .ri-wait::after{content:"";position:absolute;top:0;bottom:0;left:0;width:42%;border-radius:2px;
   background:var(--ri-ink);animation:riSweep 1.25s ease-in-out infinite}
 @keyframes riSweep{from{transform:translateX(-115%)}to{transform:translateX(255%)}}
-/* La note : la phrase d'un refus, posée sous les puces, alignée sur leur bord gauche (Slice 04). */
+/* La note : la phrase d'un refus, posée sous les puces, alignée sur leur bord gauche (Slice 04). Elle
+   s'arrête avant le lanceur comme l'hôte (Slice 08 : sous 600 px elle couvrait CNV, AGT, ERR, « Plus d'outils »). */
 ${H} .ri-note{position:absolute;left:0;top:calc(100% + 8px);
-  width:max-content;max-width:min(420px,calc(100vw - 2 * var(--shell-gutter,18px)));margin:0;
+  width:max-content;max-width:min(420px,calc(100vw - 2 * var(--shell-gutter,18px) - var(--shell-launcher-w,154px) - 12px));margin:0;
   padding:8px 32px 8px 11px;border:1px solid var(--shell-stroke-active,rgba(110,231,255,.4));border-radius:10px;
   background:var(--panel,rgba(6,12,18,.94));color:var(--text,#d8edf7);font-size:11.5px;line-height:1.45;
   box-shadow:0 10px 28px rgba(0,0,0,.45)}
