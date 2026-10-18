@@ -472,7 +472,7 @@ class FakeContext{
   resume(){return Promise.resolve()}
 }
 const window={AudioContext:FakeContext};
-const box={innerHTML:'',hidden:true,querySelector(){return null}};
+const box={innerHTML:'',hidden:true,querySelector(){return null},removeAttribute(){},hasAttribute(){return false}};
 const $=selector=>selector==='#bgPills'?box:null;
 const document={querySelector(){return null}};
 const esc=value=>String(value);
