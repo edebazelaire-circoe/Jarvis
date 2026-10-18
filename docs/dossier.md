@@ -257,7 +257,13 @@ and 502 to the waiting agent at once, `unknown_command_id` 404, `bad_request` /
 
 **Consumer (Slice 07).** The view `control_center_dossier.js` carries
 `__JARVIS_DOSSIER_PAGE_TOKEN__` (the Control Center replaces it once the view is
-inserted), long-polls while the tab is visible (`visible=0` when hidden), and
+inserted), long-polls while the tab is visible (`visible=0` when hidden) — since
+Slice 08 **one visible tab only**, the holder of the Web Locks lock
+`jarvis.dossier.navigation` (`NAVIGATION_LOCK`): one long-poll per tab took
+Chrome's six connections per origin and starved `/api/status` with two tabs
+(`test_control_center_chat_tabs_browser.py::test_only_one_visible_tab_holds_the_dossier_navigation_long_poll`);
+a hidden tab leaves the queue or gives the lock back, Jarvis's order opens in
+the leader tab; without Web Locks each visible tab polls as before — and
 answers **what it did**: `opened` once the Dossier is visible with an
 `article[data-entry=…]` of that entry in the DOM (checked, not assumed; the
 text may still be loading), or `refused` with `board_not_displayed` (another

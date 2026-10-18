@@ -1141,7 +1141,7 @@
   const channel=(function(){
     const pageId='dsr'+Math.random().toString(36).slice(2,12);
     let visible=document.visibilityState!=='hidden',running=false,failures=0,controller=null;
-    const stats={polls:0,received:0,opened:0,refused:0,receiptFailed:0};
+    const stats={polls:0,received:0,opened:0,refused:0,receiptFailed:0,leader:false};
     const sleep=ms=>new Promise(r=>setTimeout(r,ms));
     async function request(url,options){
       const ctl=typeof AbortController==='function'?new AbortController():null;
@@ -1217,10 +1217,32 @@
         }
       }finally{running=false}
     }
-    function start(){if(visible&&!running)loop().catch(error=>log('error','dossier.navigation_loop_failed',{error:String(error&&error.message||error)}))}
+    /* Un seul onglet visible tient le long-poll (Slice 08) : Chrome partage six connexions par origine entre tous
+       les onglets, et un long-poll par onglet affamait `/api/status` dès deux onglets ouverts
+       (`test_control_center_chat_tabs_browser.py`). Le meneur est le détenteur d'un verrou Web Locks ; un onglet
+       caché quitte la file ou rend le verrou, un autre onglet visible le prend. Sans Web Locks : un long-poll par
+       onglet, comme avant. L'ordre de Jarvis s'ouvre dans l'onglet meneur et le reçu dit ce que son DOM a montré. */
+    const locks=typeof navigator!=='undefined'&&navigator.locks&&typeof navigator.locks.request==='function'?navigator.locks:null;
+    let queued=null;
+    function runLoop(){return loop().catch(error=>log('error','dossier.navigation_loop_failed',{error:String(error&&error.message||error)}))}
+    function start(){
+      if(!visible||running||queued)return;
+      if(!locks){runLoop();return}
+      const ac=typeof AbortController==='function'?new AbortController():null;
+      queued=ac||{};
+      locks.request(C.NAVIGATION_LOCK,ac?{signal:ac.signal}:{},async()=>{
+        queued=null;
+        if(!visible)return;
+        stats.leader=true;log('info','dossier.navigation_leader',{page:pageId});
+        try{await runLoop()}finally{stats.leader=false}
+      }).catch(error=>{
+        if(!(error&&error.name==='AbortError'))log('error','dossier.navigation_lock_failed',{error:String(error&&error.message||error)});
+      }).finally(()=>{if(queued===(ac||queued))queued=null;if(visible&&!running)start()});
+    }
     document.addEventListener('visibilitychange',()=>{
       const next=document.visibilityState!=='hidden';if(next===visible)return;visible=next;
       if(!visible){
+        if(queued&&typeof queued.abort==='function')try{queued.abort()}catch(_e){/* intentional: leaves the queue either way */}
         if(controller)try{controller.abort()}catch(_e){/* intentional: dropped either way */}
         request(`${C.COMMAND_ROUTE}?wait_s=0&page=${pageId}&visible=0`,{timeoutMs:4000}).catch(error=>log('warn','dossier.hidden_notice_failed',{error:String(error&&error.message||error)}));
       }

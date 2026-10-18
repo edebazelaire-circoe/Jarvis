@@ -193,3 +193,12 @@ async def test_the_chat_adds_no_held_connection_with_three_tabs_and_a_timeline(t
     assert held(opened) == held(closed), (held(opened), held(closed))
     assert not any("/api/chat/" in url or "/api/conversations/events" in url for url in held(opened) if url not in held(closed))
     _no_chat_wait(opened)
+
+
+async def test_only_one_visible_tab_holds_the_dossier_navigation_long_poll(tmp_path):
+    """Slice 08 de la refonte roue/Dossier : le canal Jarvis -> Dossier (Slice 07) tenait un long-poll par onglet
+    visible et, à deux onglets, `/api/status` attendait 9 s. Un seul onglet, le meneur Web Locks, le tient."""
+    plan = {"chatTabs": 3, "timelineTab": False, "settleMs": 6000, "sendFrom": 2, "text": "x", "chatOpen": False}
+    seen, _ = await _run(tmp_path, plan)
+    holders = [urls for urls in seen["held"] if any("/api/dossier/navigation/commands" in url for url in urls)]
+    assert len(holders) == 1, seen["held"]
