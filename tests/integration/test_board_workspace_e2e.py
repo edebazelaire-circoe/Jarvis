@@ -424,7 +424,9 @@ async def test_each_board_turn_carries_its_own_memory_and_never_the_other_boards
     await bench.ok("POST", "/api/boards/switch", json={"board_id": b})
     await bench.turn("tour sur B")
     on_b = last_input()
-    assert "BRAVO-9" in on_b and "b-seul.md" in on_b and f"boards/{b}/memory" in on_b and "meeting" in on_b
+    assert "BRAVO-9" in on_b and "b-seul.md" in on_b and f"boards/{b}/memory" in on_b and re.search(r"Type : R.{1,4}union\.", on_b)
+    # Slice 08 : le type dit avec le mot de l'interface, plus la valeur interne (le « é » peut arriver réencodé par
+    # le double du CLI selon l'encodage de la console, d'où le motif).
     assert "ALPHA-7" not in on_b and "a-seul.md" not in on_b
 
     # Une écriture sur A pendant que B est actif n'atteint pas le tour de B ; elle est là au retour sur A.
