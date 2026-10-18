@@ -36,6 +36,7 @@ from jarvis.domain.uploads import upload_bounds
 from jarvis.core.capture_service import CaptureAssociation, CaptureService, NoCaptureSources
 from jarvis.core.recording_transcriber import RecordingTranscriber
 from jarvis.core.capture_api import CaptureApi
+from jarvis.core.dossier_service import DossierService
 from jarvis.core.workspace_service import WorkspaceService
 from jarvis.core.context_catchup import build_catchup
 from jarvis.core.context_enrichment import ContextEnrichmentWorker
@@ -478,6 +479,12 @@ class JarvisCoreApplication:
         # confirmé par l'hôte ou retour arrière. La scène vivante est aussi une source de pins : un cadre que l'hôte peut recharger
         # n'est jamais archivé sous lui.
         self.studio_pins.bind_scene(self.scene)
+        # Dossier du Board (handoff jarvis-board-ui-wheel-dossier-refactor, Slice 05) : projection de la mémoire et
+        # des Artifacts liés, Ranger et « Afficher sur le Board » ; ne possède rien (`docs/dossier.md`).
+        self.dossier = DossierService(
+            workspace=self.workspace, boards=SQLiteBoardRepository(self.state), artifacts=self.artifacts,
+            links=self.board_artifact_links, memory=FileBoardMemoryStore(root), scene=self.scene, data_root=root,
+            diagnostics=diagnostics)
         self.prefab_drafts = PrefabDraftCoalescer(self.prefabs, quiet_s=STUDIO_RELOAD_QUIET_S,
                                                   max_wait_s=STUDIO_RELOAD_MAX_WAIT_S, diagnostics=diagnostics)
         # Surface de lecture de Variantes (native-studio-playback-fix Slice 09) : une lecture se montre DANS Variantes, en mémoire ;

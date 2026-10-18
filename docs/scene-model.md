@@ -578,6 +578,24 @@ Brain tools: `source_path` on `scene_create_object` / `scene_update_object`
 announced; a missing file is announced after a second check 0.5 s later; a bound object's summary written by hand is overwritten at
 the next file change.
 
+## Dossier references
+
+`payload.registry_artifact_id` (optional `jart_…` id, wire key emitted only when
+set, same rule as `source_path`: payloads are JSON, so no storage migration)
+binds a representation to a **registry Artifact** — its durable source in the
+Board's Dossier ([dossier.md](dossier.md)). It is not a `kind=artifact` scene
+object. The domain checks the id's shape only (`check_prefixed_id`), never its
+existence; Core's `DossierService` sets it (« Afficher sur le Board ») and reads
+it (`Ranger` links instead of copying). No brain tool writes it; `scene_get`
+returns it when set, and `scene_update_object` keeps it (`_merged_payload`).
+Together with `source_path` inside a Board's memory, it is how the Dossier
+resolves the durable backing of a scene object; any other content object is
+materialized once by `Ranger`.
+
+**Compatibility.** `ScenePayload.from_payload` refuses unknown keys
+(`check_wire_keys`): a Core from before this key cannot load a scene whose
+active objects carry it. Rollback steps: [dossier.md](dossier.md) › *Rollback*.
+
 ## Markdown in the payload
 
 The brain writes prose, so it writes markdown. Since 21/09/2026 (user request:

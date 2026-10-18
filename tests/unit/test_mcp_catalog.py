@@ -220,7 +220,11 @@ CONSOLE_INSTRUCTIONS_BUDGET_BYTES = 900
 #: mesurés — les neuf outils Board/Session déplacés (≈ 6 640 o, `board_kind` en plus) et onze outils typés
 #: d'historique, de mémoire et de liens. Pièces de schéma partagées (identifiant, chemin, curseur) et
 #: descriptions d'une ligne. Plafond : un outil de plus ou une description qui enfle se voit ici.
-WORKSPACE_CONTEXT_BUDGET_BYTES = 14_500
+#: Wheel-dossier-refactor Slice 05 : quatre outils Dossier (`dossier_list` 649 o, `dossier_ranger` 771 o,
+#: `dossier_present` 665 o, `dossier_view` 536 o, +2 621 o) : 16 417 o mesurés, plafond 16 700 o. Décision
+#: délibérée : sans eux le cerveau recompose la liste (board_memory_tree + board_artifacts), ne peut ni ranger
+#: (durabilité puis retrait, une sémantique de Core) ni afficher une entrée sans recopier son contenu.
+WORKSPACE_CONTEXT_BUDGET_BYTES = 16_700
 #: Consigne du serveur `jarvis-workspace` : 874 o mesurés (la console en a perdu 495).
 WORKSPACE_INSTRUCTIONS_BUDGET_BYTES = 950
 #: Tous les serveurs natifs que Jarvis déclare au cerveau Claude (display, console, workspace, capture,
@@ -238,6 +242,8 @@ WORKSPACE_INSTRUCTIONS_BUDGET_BYTES = 950
 #: pas ce qu'il a code et ne peut pas corriger sa propre scene (BENCHMARK.md de la Slice 13) ; la consigne du serveur ne change pas.
 #: Master-project Slice 07 : `presentation_inspect` nomme le bloc `master` de la variante (+34 o, compense en partie) : 20 896 o mesures, plafond
 #: inchange ; plafond global inchange (113 686 o mesures avec `scope` de `remotion_export`).
+#: Wheel-dossier-refactor Slice 05 : les quatre outils Dossier de `jarvis-workspace` (+2 621 o, voir
+#: WORKSPACE_CONTEXT_BUDGET_BYTES) : 116 259 o mesurés, plafond 116 500 o ; aucun autre serveur ne change.
 PRESENTATION_CONTEXT_BUDGET_BYTES = 21_000
 #: Consigne du serveur `jarvis-presentation` : mesurée 640 o (plafond 700 o).
 PRESENTATION_INSTRUCTIONS_BUDGET_BYTES = 700
@@ -246,7 +252,7 @@ PRESENTATION_INSTRUCTIONS_BUDGET_BYTES = 700
 #: Remotion Slice 21 : `jarvis-remotion` (six outils, serveur SÉPARÉ de `jarvis-presentation` dont le plafond reste 17 100 o) ajoute 5 178 o
 #: mesurés (export 1 763, import 1 076, upgrades 948, studio 545, status 457, setup 389). Le plafond de ce gate monte de ce serveur seulement :
 #: 104 548 o avant, 109 726 o après, marge de 274 o, plafond 110 000 o. Décision délibérée (handoff Slice 21), mesure dans le LOG.
-DECLARED_CONTEXT_BUDGET_BYTES = 113_700
+DECLARED_CONTEXT_BUDGET_BYTES = 116_500
 #: `jarvis-remotion` : 5 178 o mesurés, plafond 5 400 o ; consigne du serveur (plafond 330 o). Master-project Slice 07 : `scope` (scene | master)
 #: dans les réglages de `remotion_export` : 5 335 o mesurés, plafond inchangé.
 REMOTION_CONTEXT_BUDGET_BYTES = 5_400
@@ -289,16 +295,20 @@ async def test_the_workspace_server_lists_its_tools_in_order_within_its_budget(c
         "board_list", "board_get", "board_get_active", "board_create", "board_update", "board_archive",
         "board_switch", "session_current", "session_new", "session_list", "session_get", "board_inspect",
         "board_memory_tree", "board_memory_read", "board_memory_search", "board_memory_write", "board_memory_move",
-        "board_memory_delete", "board_artifacts", "board_artifact_link"]
+        "board_memory_delete", "board_artifacts", "board_artifact_link", "dossier_list", "dossier_ranger",
+        "dossier_present", "dossier_view"]
     effects = {entry["name"]: (entry["side_effect"], entry["idempotent"]) for entry in described}
     assert {name for name, (effect, _) in effects.items() if effect == "read"} == {
         "board_list", "board_get", "board_get_active", "session_current", "session_list", "session_get",
-        "board_inspect", "board_memory_tree", "board_memory_read", "board_memory_search", "board_artifacts"}
+        "board_inspect", "board_memory_tree", "board_memory_read", "board_memory_search", "board_artifacts",
+        "dossier_list"}
     assert {name for name, (effect, _) in effects.items() if effect == "destructive"} == {
         "board_archive", "board_memory_write", "board_memory_delete"}  # write : mode=replace écrase
     assert effects["board_create"] == ("write", False) and effects["session_new"] == ("write", False)
     assert effects["board_switch"] == ("write", True) and effects["board_artifact_link"] == ("write", True)
     assert effects["board_memory_write"] == ("destructive", False) and effects["board_memory_move"] == ("write", False)
+    # Ranger retire une représentation dont la source durable est confirmée : write, jamais destructive.
+    assert all(effects[name] == ("write", True) for name in ("dossier_ranger", "dossier_present", "dossier_view"))
     assert all(entry["category"] == "workspace" and entry["output"]["format"] == "structured" for entry in described)
     # Pas d'échappatoire générique : un outil typé par intention.
     assert not any("execute" in name or "command" in name for name in wire)

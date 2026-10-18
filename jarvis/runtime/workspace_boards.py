@@ -124,6 +124,17 @@ ERROR_SENTENCES: dict[str, str] = {
     "memory_path_escape": "Chemin hors de la mémoire du Board (absolu, lecteur ou ..) : refusé.",
     "memory_not_found": "Rien à ce chemin dans la mémoire de ce Board : relis board_memory_tree.",
     "memory_exists": "Un fichier existe déjà à ce chemin : rien n'a été écrit (mode replace ou append pour le changer).",
+    # Dossier (wheel-dossier-refactor, Slice 05) : phrases vouvoyées.
+    "dossier_board_not_active": ("Ranger et Afficher sur le Board agissent sur le Board affiché : donnez le Board "
+                                 "actif (board_get_active)."),
+    "dossier_entry_not_found": "Cette entrée n'est pas dans ce Dossier : relisez dossier_list.",
+    "dossier_entry_invalid": "Identifiant d'entrée mal formé : reprenez un entry_id de dossier_list.",
+    "scene_unavailable": "La scène n'est pas servie en ce moment : rien n'a été rangé ni affiché.",
+    "no_visible_page": ("Aucune page du Control Center n'a répondu : l'entrée n'est pas ouverte. Dites-le, et "
+                        "proposez de l'ouvrir quand l'interface sera visible."),
+    "command_expired": ("La page a pris la demande sans répondre : l'issue est inconnue, ne dites pas qu'elle est "
+                        "ouverte."),
+    "command_busy": "Une autre ouverture est en cours : réessayez dans une seconde.",
     "memory_conflict": ("Conflit : le fichier a changé depuis ta lecture (expected_sha256), ou dossier/fichier "
                         "inattendu, ou dossier non vide sans recursive. Relis puis réessaie."),
     "memory_too_large": "Trop gros (256 Kio par appel) : découpe.",

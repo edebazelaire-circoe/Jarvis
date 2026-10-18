@@ -129,6 +129,7 @@ from jarvis.runtime.presentation_studio_relay import (
     GUARDED_PREFIXES as STUDIO_GUARDED_PREFIXES, PresentationStudioRelayRoutes,
 )
 from jarvis.runtime.presentation_studio_explorer_commands import PresentationStudioExplorerRoutes
+from jarvis.runtime.dossier_navigation import GUARDED_PREFIXES as DOSSIER_GUARDED_PREFIXES, PAGE_TOKEN_MARKER as DOSSIER_PAGE_TOKEN_MARKER, DossierNavigationRoutes
 from jarvis.runtime.presentation_studio_turn import AddressedTurnTracker
 from jarvis.runtime.memory_relay import MEMORY_BRAIN_GUARDED_PREFIXES, MemoryBrainRelayRoutes
 from jarvis.runtime.workspace_relay import GUARDED_PREFIXES as WORKSPACE_GUARDED_PREFIXES, WorkspaceRelayRoutes
@@ -308,7 +309,7 @@ READ_GUARDED_ROUTES = (CONVERSATIONS_ROUTE, TESTLAB_ROUTE, BAREHANDS_COMMANDS_RO
                        BAREHANDS_CALIBRATION_SESSION_ROUTE, BAREHANDS_BENCHMARKS_ROUTE, AGENT_BINDINGS_ROUTE,
                        MCP_PLUGINS_ROUTE, *CAPTURE_GUARDED_PREFIXES, *WORKSPACE_GUARDED_PREFIXES, *MEMORY_BRAIN_GUARDED_PREFIXES,
                        *PREFAB_GUARDED_PREFIXES, *REMOTION_GUARDED_PREFIXES, *STUDIO_GUARDED_PREFIXES, *MEMORY_GUARDED_PREFIXES,
-                       *REMOTION_STUDIO_GUARDED_PREFIXES, *CHAT_GUARDED_PREFIXES)
+                       *REMOTION_STUDIO_GUARDED_PREFIXES, *CHAT_GUARDED_PREFIXES, *DOSSIER_GUARDED_PREFIXES)
 #: Corps de `POST /api/agent/bindings/activate` : une liaison sérialisée, bornée.
 AGENT_BINDING_MAX_BYTES = 8 * 1024
 #: Adoption de la liaison foreground au démarrage : Core peut démarrer après
@@ -1430,6 +1431,8 @@ class ControlCenter:
         self.studio_authoring_routes = PresentationStudioAuthoringRelayRoutes(transport=lambda: self.sessions, journal=self.journal)
         # Explorateur de variantes (Slice 18) : canal de commandes (ouvrir / fermer par la voix ou un agent) + miroir d'etat de la page.
         self.studio_explorer = PresentationStudioExplorerRoutes(journal=self.journal)
+        # Dossier (wheel-dossier-refactor, Slice 05) : canal agent -> page pour ouvrir une entrée ; la page (Slice 07) rend le reçu.
+        self.dossier_navigation = DossierNavigationRoutes(journal=self.journal)
         # Tour adresse de l'utilisateur en vol (Slice 21) : l'origine d'un demarrage de lecture par le cerveau vient de LA, jamais d'un argument.
         self.studio_turn = AddressedTurnTracker()
         self._apply_agent_settings(settings)
@@ -1551,6 +1554,7 @@ class ControlCenter:
             *self.studio_upgrades_routes.routes(),
             *self.studio_authoring_routes.routes(),
             *self.studio_explorer.routes(),
+            *self.dossier_navigation.routes(),
             *self.studio_turn.routes(),
             web.get("/api/background", self.background_events),
             web.post("/api/background/ack", self.background_ack),
@@ -2241,6 +2245,7 @@ class ControlCenter:
         self.barehands_commands.close()
         self.fullscreen.close()
         self.studio_explorer.close()
+        self.dossier_navigation.close()
         self.barehands_calibration.close()
         self._calibration_event_next = None
         analysis, self._calibration_event_task = self._calibration_event_task, None
@@ -2385,7 +2390,8 @@ class ControlCenter:
             STUDIO_EXPLORER_SCRIPT_MARKER,
             page.with_name(STUDIO_EXPLORER_SCRIPT_FILE).read_text(encoding="utf-8"),
         )
-        html = html.replace("__JARVIS_EXPLORER_PAGE_TOKEN__", self.studio_explorer.broker.page_token)   # remis AVEC la page : reçus et rapports d'état l'exigent
+        html = html.replace("__JARVIS_EXPLORER_PAGE_TOKEN__", self.studio_explorer.broker.page_token)
+        html = html.replace(DOSSIER_PAGE_TOKEN_MARKER, self.dossier_navigation.broker.page_token)   # Slice 07 pose le marqueur dans la page   # remis AVEC la page : reçus et rapports d'état l'exigent
         html = html.replace(
             STUDIO_PLAYER_SCRIPT_MARKER,
             page.with_name(STUDIO_PLAYER_SCRIPT_FILE).read_text(encoding="utf-8"),

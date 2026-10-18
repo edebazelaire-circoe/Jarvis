@@ -59,6 +59,12 @@ _ROUTES = (
     ("POST", "workspace_memory_delete", "/boards/{board_id}/memory/delete", DISK_TIMEOUT_S),
     ("POST", "workspace_artifact_link", "/boards/{board_id}/artifacts/{artifact_id}", None),
     ("DELETE", "workspace_artifact_unlink", "/boards/{board_id}/artifacts/{artifact_id}", None),
+    # Dossier (wheel-dossier-refactor, Slice 05) : liste, entrée, source durable, Ranger, Afficher sur le Board.
+    ("GET", "workspace_dossier", "/boards/{board_id}/dossier", DISK_TIMEOUT_S),
+    ("GET", "workspace_dossier_entry", "/boards/{board_id}/dossier/entry", None),
+    ("GET", "workspace_dossier_backing", "/boards/{board_id}/dossier/backing", None),
+    ("POST", "workspace_dossier_ranger", "/boards/{board_id}/dossier/ranger", DISK_TIMEOUT_S),
+    ("POST", "workspace_dossier_present", "/boards/{board_id}/dossier/present", None),
 )
 
 

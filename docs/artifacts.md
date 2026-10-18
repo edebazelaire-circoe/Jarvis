@@ -277,6 +277,23 @@ included; a Presentation source is shown through them, never linked itself
   artifact's Boards by `GET /v1/workspace/artifacts/{id}/relations`
   ([boards.md](boards.md) › *Workspace inspection API*).
 
+## Dossier
+
+A Board's **Dossier** ([dossier.md](dossier.md)) lists the registry Artifacts
+linked to the Board (this table) next to its memory files, one entry
+`artifact:<jart_…>` per link, with a human title (given file name, URL, or a
+dated label), kind, preview and provenance (« ajouté au Dossier » for an
+explicit link, « ajouté automatiquement » for `active_board`). Nothing is
+copied: the entry opens the registry Artifact itself.
+
+Naming trap: a **scene artifact** (`kind=artifact` scene object,
+[scene-model.md](scene-model.md) › *Semantic artifacts*) is **not** a
+registry Artifact. `Ranger` of a scene artifact writes its content once into
+Board memory as Markdown; it never creates a registry Artifact. A scene
+representation of a registry Artifact carries `payload.registry_artifact_id`
+([scene-model.md](scene-model.md) › *Dossier references*), and `Ranger` of it
+only links the Artifact to the Board (`board.artifact.linked`, `origin`).
+
 ## Activity ledger
 
 Factual backend truth of what happens to a Session (D10). Table

@@ -365,6 +365,18 @@ refusals stay `BoardErrorCode`: `board_not_found`, `board_archived`,
 › *Activity ledger*); written by the workspace service (*Board memory
 mutations* below), never by the store.
 
+## Dossier
+
+The **Dossier** is the human documentary view of one Board: its Board memory
+and its linked registry Artifacts as one list, plus `Ranger` (durable first,
+then the representation leaves the scene), « Afficher sur le Board » and the
+agent -> UI channel that opens an entry on screen. It is a projection over the
+two owners above, with no table of its own; every write goes through *Board
+memory mutations* and the Board-artifact links, so the archive rule
+(`board_archived`) and the ledger rows are unchanged. Contract, routes
+(`/v1/workspace/boards/{board_id}/dossier*`), MCP tools (`dossier_*`) and codes:
+[dossier.md](dossier.md) (handoff jarvis-board-ui-wheel-dossier-refactor, Slice 05).
+
 ## Non-activating inspection
 
 Reading any Board, Session or memory (current, other or archived) is
