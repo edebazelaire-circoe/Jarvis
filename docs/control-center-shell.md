@@ -220,7 +220,7 @@ The rule is written exactly as in the sheet, `${…}` interpolations included.
 | 55 | `.mcpi` | `control_center.html` | `.mcpi` | MCP inspector |
 | 55 | `.wsp` | `control_center.html` | `.wsp` | Sessions & Boards |
 | 55 | `.pfb` | `control_center.html` | `.pfb` | prefab library |
-| 55 | `#dossierView` | `control_center.html` | `.dsr` | full-screen Dossier of the Board (wheel/dossier refactor Slice 07): one full-screen view among the others; below `.overlay`, toasts and the page confirmation; Variantes (9000) covers it, so it never opens while the Studio is shown ([Dossier](#dossier-full-screen-view)) |
+| 55 | `#dossierView` | `control_center.html` | `.dsr` | full-screen Dossier of the Board (wheel/dossier refactor Slice 07): one full-screen view among the others; below `.overlay`, toasts and the page confirmation; Variantes (9000) covers it, so it never opens while the Studio is shown ([Dossier](#dossier-full-screen-view-dossierview)) |
 | 60 | `.overlay` | `control_center.html` | `.overlay` | settings and modal overlays; the screenshot lightbox `#screenshotLightbox` and annotation editor `#screenshotAnnotate` (Slice 05) take the class, no rank of their own |
 | 70 | `.toasts` | `control_center.html` | `.toasts` | toasts |
 | 75 | `.bgpop` | `control_center.html` | `.bgpop` | background pill popover |
@@ -734,7 +734,7 @@ category does comes from its registrant.
 | --- | --- | --- |
 | JARVIS | `control_center_jarvis_wheel.js` (Slice 04) | status rows Voix, touche d'éveil, Agent; actions Sous-agents, Réglages de la voix — see *JARVIS and Paramètres* below |
 | Sélection | `control_center_input_arbitration.js` (method rows) + `JarvisScene.selectionMenu` (Slice 06, action rows) | Souris / Bare Hands (then Bare Hands › tools, Veille, Aide, Diagnostic, Calibration); then the selection: a count, Ranger dans le Dossier, Masquer, Masqués (N) ›, Changer la forme ›, Retirer du Board… — or « Aucun objet sélectionné » and the hidden row — see *Selection actions* below |
-| Dossier | placeholder; wired by Slices 05-07 | one inert row « Ouvrir le Dossier du Board — pas encore branché » |
+| Dossier | `control_center_dossier.js` (Slice 07; the `PLACEHOLDERS` row stays only as the fallback when that module fails to install) | « Ouvrir le Dossier » (displayed Board title as note), then up to four most recent entries (read from `…/dossier` when the tree opens, 3 s deadline; a failed read adds an error status row); disabled with its reason when the Board is unknown (status lost) or Variantes covers the screen — see [Dossier full-screen view](#dossier-full-screen-view-dossierview) |
 | Capture | `control_center_capture_wheel.js` | Capture d'écran, Enregistrer l'écran, Enregistrer l'audio, each with its second level (stop list, then Core's real targets); live while open (`refresh`) — [capture.md](capture.md) › *Interface* |
 | Paramètres | `control_center_jarvis_wheel.js` (Slice 04) | one row per settings tab (`settingsTabs()`), each opens the settings modal on that tab |
 
@@ -943,6 +943,60 @@ rows with a selection (the arc holds nine): forms and the hidden list are second
 levels. Retirer du Board is the only confirmed action (page `confirmDialog`);
 there is no durable delete in the wheel.
 
+## Dossier full-screen view (`#dossierView`)
+
+Handoff `jarvis-board-ui-wheel-dossier-refactor`, Slice 07. Contract of the
+content and of the agent channel: [dossier.md](dossier.md) › *Full-screen
+Dossier (UI)*. Modules: `control_center_dossier_core.js` (pure, node tests
+`test_dossier_core_js.py`) then `control_center_dossier.js` (view, Chrome tests
+`test_dossier_fullscreen_browser.py`), inserted after the wheel they register on.
+
+- **Layer.** `#dossierView` (`.dsr`) is a page layer at **55**, one of the
+  full-screen launcher views: above every control, below `.overlay`, toasts,
+  context menu and the page confirmation (85). Variantes (`#jvStudioExplorer`,
+  9000) covers it: the Dossier refuses to open while Variantes is open or a run
+  is shown (`html.jvx-run`), from the wheel (disabled row with the reason) and
+  from Jarvis (receipt `refused dossier_unavailable`). If Variantes opens over
+  an open Dossier, the Dossier stays underneath, unchanged, and its Escape
+  handler stands aside while the Studio covers it. The permanent-delete
+  confirmation is drawn **inside** the Dossier, never in a layer the Studio could
+  hide, and is disabled during a run.
+- **Opening.** Wheel › Dossier, `JarvisDossier.open()` (the displayed Board),
+  `JarvisDossier.openBoard(id)` (a precise Board, e.g. an archived row of the
+  Board panel), `JarvisDossier.openEntry({entry_id})` (Ranger toast), Jarvis's
+  `open_entry`. Opening closes the wheel, makes the rest of the page `inert`
+  (except toasts, Variantes, the page confirmation, the Bare Hands pointer and
+  the fullscreen prompt) and puts focus in the view.
+- **Board switch.** A Dossier opened on the displayed Board **follows** it: on a
+  switch it is rebound (tabs closed, list re-read, generation counter drops any
+  answer of the old Board) and says so in its notice line; the header title is
+  the one the list answer carries, so Board A's title never sits on Board B's
+  content. A Dossier opened on a precise Board (`openBoard`, archived) does not
+  move. A switch while an edit is unsaved holds the Dossier on the old Board
+  (said, Afficher sur le Board off) until it is closed.
+- **Layout.** ≥ 1280 px: organisation 264 px (232 under 1280), centre, context
+  300 px docked (open by default from 1500 px). Under 1280 px the context is a
+  drawer over the centre. Under 900 px the organisation becomes a drawer too
+  (« Organisation » button), header labels shrink to icons with names. Two
+  documents side by side only when the centre keeps 960 px; otherwise the second
+  stays a tab. No horizontal page scroll at 600 px.
+- **Accessibility.** `role="dialog"`, `aria-modal`, labelled by its title line
+  (« Dossier », Board type, Board title), described by a hidden help line. Tab
+  cycles inside the view; tabs are a `tablist` (arrows, `Home`, `End`); menus
+  are `role="menu"` (arrows, focus on the first item). **Escape** closes, in
+  order: an open menu, the delete confirmation, the move form, the editor (an
+  unsaved edit asks « Abandonner vos modifications ? », focus on « Continuer à
+  modifier »), a drawer, then the Dossier. Closing returns focus to the element
+  that opened it, else to the wheel anchor. Every waiting state shows its label
+  and a seconds counter in the status line; a disabled action keeps its reason as
+  tooltip and says it in the notice line when activated. Reduced motion: no
+  transitions. Forced colours: borders follow `CanvasText`.
+- **Journal** (`[dossier]` console lines): `dossier.installed`, `opened`,
+  `closed`, `list_read`, `doc_read`, `save`, `move`, `delete`, `present`,
+  `search`, `rebound`, `rebind_held`, `stale_list_dropped`,
+  `navigation_answered`, `navigation_receipt_failed`, `navigation_poll_failed`,
+  `open_refused`, `wheel_menu` — entry kinds and codes, never a title.
+
 ## Selection method (`control_center_input_arbitration.js`)
 
 Slice 03, decision D5 of the handoff's resolved architecture (binding).
@@ -1073,6 +1127,7 @@ command channel, latency).
   specificity (`:where(...)`), on every focusable element of a control host;
   a module may draw its own ring, never remove it. Focus is never left on a
   hidden element: hiding a surface returns focus to its opener.
+- **Full-screen views** (`.wsp`, `#dossierView`…): focus trapped inside while open, the rest of the page `inert`, focus restored to the opener on close ([Dossier full-screen view](#dossier-full-screen-view-dossierview)).
 - **Keyboard**: one tab stop per group (roving tabindex), arrows inside the
   group, `Home`/`End`, `Enter`/`Space` on native buttons, `Esc` closes the
   topmost transient surface. Secondary activation is the existing channel:

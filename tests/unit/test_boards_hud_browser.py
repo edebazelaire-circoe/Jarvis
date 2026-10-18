@@ -319,7 +319,8 @@ async def test_quick_browser_creates_edits_filters_and_inspects_against_the_real
     assert "En service3" in r["filter"] and "Archivés1" in r["filter"]
     assert r["created_kind"] == "Réunion" and r["created_focus"] is True
     assert r["edited_kind"] == "Réunion" and r["edit_kind_offered"] is False, "renaming never changes the type"
-    assert r["archived"] == [{"title": "Ancien", "state": "Archivé", "actions": ["inspect"]}]
+    # Slice 07 (refonte roue/dossier) : un Board archivé se lit aussi dans le Dossier plein écran (lecture seule).
+    assert r["archived"] == [{"title": "Ancien", "state": "Archivé", "actions": ["dossier", "inspect"]}]
     inspected = r["inspect_archived"]
     assert inspected["id"] == w.board_archived and inspected["tab"] == "Boards" and inspected["panelHidden"] is True
     assert "Archivé" in inspected["text"] and inspected["focus"] == w.board_archived

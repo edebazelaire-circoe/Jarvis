@@ -29,7 +29,8 @@
   const READ_BYTES=65536;
   /* Le propriétaire écrit 256 Kio au plus par appel (`memory_too_large`). */
   const MAX_EDIT_BYTES=262144;
-  const ARTIFACT_TEXT_CHARS=20000;
+  /* La borne de `GET /api/artifacts/{id}?text_chars=` (0..16000, refus 400 au-delà). */
+  const ARTIFACT_TEXT_CHARS=16000;
   const MAX_TABS=8;
   /* Deux ouvertures de Jarvis à moins de 30 s : « montre-moi les deux notes », côte à côte si l'écran le permet. */
   const PAIR_WINDOW_MS=30000;

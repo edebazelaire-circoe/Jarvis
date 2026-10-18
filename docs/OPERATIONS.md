@@ -4242,6 +4242,48 @@ Sélectionnez un ou plusieurs objets, puis la roue › Sélection :
   qui n'était pas rangé n'est plus sur le Board : rangez-le d'abord pour le
   garder.
 
+Après Masquer, Ranger ou Retirer, le focus clavier passe à un objet voisin,
+mais la sélection ne le suit pas : elle se vide (ou ne garde que ce qui est
+resté sur le Board). L'action suivante de la roue ne touche donc jamais un objet
+que vous n'avez pas choisi.
+
+**Le Dossier du Board, en plein écran.** La roue › Dossier › « Ouvrir le
+Dossier » (ou l'une des entrées récentes listées dessous). À gauche :
+l'organisation (vue d'ensemble, collections, dossiers de la mémoire, et le
+champ « Filtrer le Dossier » ; Entrée cherche aussi dans le texte des notes).
+Au centre : un onglet par document ; « Comparer… » en met deux côte à côte sur
+un grand écran. À droite, repliable : la source, la date, la provenance, et les
+« Détails techniques » (identifiants) seulement si vous les ouvrez. Sur chaque
+document :
+
+- **Afficher sur le Board** (Fenêtre, Capsule ou Étoile) pose une représentation
+  du **même** fichier sur le Board ; rien n'est copié, et une représentation
+  existante est reprise ;
+- **Modifier** édite une note de la mémoire du Board (Ctrl+S enregistre). Si le
+  fichier a changé entre-temps (Jarvis l'a réécrit), rien n'est écrasé : votre
+  texte reste affiché à côté de la version actuelle, et c'est vous qui décidez
+  d'enregistrer par-dessus ;
+- **Plus… › Renommer ou déplacer**, **Plus… › Supprimer du Dossier** (définitif,
+  après confirmation ; c'est la seule suppression durable).
+
+Échap ferme d'abord le menu ou le formulaire ouvert, puis revient au Board, le
+focus là où vous étiez. Un Board archivé se lit depuis sa ligne du panneau des
+Boards (icône du Dossier) : lecture seule. Si vous changez de Board, le Dossier
+ouvert devient celui du nouveau Board et le dit. Vous pouvez aussi demander à
+Jarvis : « Ouvre le compte rendu dans le Dossier », « Montre-moi les deux notes
+qui expliquent la décision budget » (côte à côte), « Affiche cette note sur le
+Board ». Jarvis ne dit qu'une entrée est ouverte que si la page l'a
+effectivement montrée ; sinon il dit pourquoi (Board non affiché, entrée
+absente, Variantes à l'écran, aucune page visible).
+
+**Bac à sable et onglets du navigateur (exploitation).** Chaque lancement de
+`python -m jarvis control-center` ouvre un onglet du navigateur par défaut ;
+cet onglet reste ensuite à l'écoute des ordres de Jarvis (Dossier, Variantes)
+tant qu'il est ouvert, même après l'arrêt du bac à sable. Pour un bac à sable,
+posez `BROWSER` sur une commande vide (par exemple
+`$env:BROWSER = "cmd /c exit %s"`) avant de le lancer, et fermez les onglets
+laissés sur d'anciens ports.
+
 **Archiver les travaux terminés.** Depuis le menu d'une étoile, ou directement
 depuis la pastille « Scène pleine — archiver des travaux terminés » quand la scène
 atteint 512 objets. La confirmation donne les comptes : étoiles terminées, en

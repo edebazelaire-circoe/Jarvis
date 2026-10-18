@@ -56,6 +56,15 @@ outside the acceptance of the Slice that found it.
 11. **Duplicate comment on the `DOSSIER_PAGE_TOKEN_MARKER` line of `control_center.py`** — fixed in the S05 rework commit (explorer comment restored on its own line).
 12. **Brain, outside the Slice:** the 8 s turn budget was exceeded, and a stray text block « Single small file read is allowed. » appeared in the answer.
 
+- **Resolved in Slice 07**: items 1 (a Ranger note is titled by its `#` heading, else the slug without the
+  digest), 2 (`no_visible_page` sentence: « rien ne l'ouvrira de soi-même », no promise), 4 (an upload's
+  `metadata.provenance` gives « déposé sur le Board » / « joint dans la conversation »), 5 (`present` and
+  `dossier_view` use the entry id as stored on disk) and 7 (`docs/dossier.md`: only a page receipt is a 200).
+  Item 3 is narrowed, not closed: `BRAIN_WORKSPACE_PROMPT` now says « une note se lit par board_memory_read »,
+  yet in the S07 sandbox the brain still read a note once with `Read` and once with `Bash cat` on the absolute
+  path before calling `dossier_view` (Slice 08 agent trace). Item 6 is handled in the UI (the editor reads the
+  whole file to get `sha256`), the route still gives none.
+
 ## From Slice 02 QA (Board card, shell cleanup)
 
 1. **Target Slice 03 — the open wheel (rank 37) sits under the open Board panel (rank 39)**: with both open, the
@@ -120,6 +129,7 @@ outside the acceptance of the Slice that found it.
    reads « étoile ». Fine for forms; a kind word may help in mixed selections.
 5. **Brain turn over budget** on « masque ça » (9.4 s vs 8 s) — pre-existing brain latency, not Slice 06 code.
 6. Sélection holds 8 rows with a selection (arc limit 9): any new action must go into a second level.
+   - Item 3: **resolved in Slice 07** (see Slice 06 QA item 1).
 
 ## From Slice 06 QA (Selection actions) — targets Slices 07/08
 
@@ -137,3 +147,34 @@ outside the acceptance of the Slice that found it.
    only the generic message.
 7. Seen in the sandbox, not compared with the base: a click / Ctrl+click on a star produced `set_representation`.
 8. Not verified: a real agent star (actor `brain` refused by `execution_node`, `runtime` forbidden over HTTP).
+   - Item 1: **resolved in Slice 07** (commit `5028bb20`): after Masquer, Retirer or Ranger the focus moves to
+     the neighbour without selecting it; the selection keeps only what stayed drawn
+     (`test_after_masquer_or_retirer_the_focus_moves_but_nothing_unrelated_is_selected`).
+
+## From Slice 07 implementation (full-screen Dossier) — targets Slice 08
+
+1. **Each `python -m jarvis control-center` start opens a browser tab** (`webbrowser.open` in `jarvis/app.py`,
+   unconditional). That tab then keeps polling the navigation channels (Dossier, Variantes) of its port, even
+   for a sandbox: in the S07 sandbox, tabs of the user's Chrome left on 27654 / 27674 took Jarvis's
+   `open_entry` commands and answered `opened` in their own DOM. Proposal: an opt-out (`JARVIS_OPEN_BROWSER=0`)
+   for sandboxes and tests; meanwhile operators set `BROWSER` to a no-op (`docs/OPERATIONS.md`). The tabs the
+   S07 sandbox opened in the user's Chrome (ports 27654, 27674, 28654; earlier sandboxes likely did the same) are hers to close.
+2. **Two parallel `dossier_view` calls** can collide on the broker (one command in flight → `command_busy` 409).
+   Seen serialised in the sandbox (the second waits for its own `…/entry` read), not guaranteed. The tool could
+   retry once on `command_busy`, or the broker could queue one.
+3. **The brain still reads notes by path** (`Read`, `Bash cat`) before `dossier_view` (S05 polish 3), and once
+   emitted an English working sentence (« Note decision-budget plus arbitrages-licences, side by side. ») and
+   the known « previous response had no visible output » retry; turns over the 8 s budget (9-15 s).
+4. **The brain cannot see which pane has focus**: « Affiche cette note sur le Board » with two notes side by side
+   is answered by a question (honest). A page → turn context (active Dossier entry) would let « cette note »
+   resolve; same gap as Slice 06 polish 1 (page selection).
+5. **After an external archive the brain guessed** « la note apparaît sans doute deux fois » instead of reading
+   the scene: `dossier_present` answers `created` but the brain does not check `scene_inspect`.
+6. `Images et médias`: audio and video play the registry payload with the native controls; not exercised with a
+   real recording in the sandbox (no capture made). A PDF opens in a new tab (no in-page viewer: `frame-src` CSP).
+7. List titles of ordinary notes stay the file stem (« decision-budget ») while the open document shows its `#`
+   heading (« Décision budget »); reading every note's head in the list would cost one read per entry. The
+   service could cache headings, or the UI could fill row titles as documents are read.
+8. `test_brain_capability_parity` was already failing before Slice 07 (Dossier tools and `ui_intent_publish`
+   absent from the brain prompt); the Dossier tools are now named, `ui_intent_publish` (display, S4 of another
+   handoff) still is not.

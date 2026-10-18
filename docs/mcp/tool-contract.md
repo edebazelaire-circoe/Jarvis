@@ -1469,6 +1469,19 @@ Core revalidates), `representation` `window|capsule|point`. Refusals: the
 `no_visible_page`, `command_expired`, `command_busy`); per-object refusals of
 `dossier_ranger` are results, not tool errors, each with its own sentence.
 
+**Slice 07 (2026-10-18).** `dossier_view` now really opens the entry: the
+full-screen Dossier of the Control Center page (`control_center_dossier.js`)
+takes the command and answers `opened` (the entry is shown, checked in its
+DOM) or `refused` with `board_not_displayed`, `entry_not_found` or
+`dossier_unavailable` (Variantes covers the screen, Board unknown, page
+error). It sends the page the `entry_id` Core resolved (file name as stored,
+QA S05 polish 5). Two `dossier_view` calls within 30 s are shown side by side.
+Descriptions sharpened for routing (« Montrer … à l'écran » for `dossier_view`,
+« Poser … sur le Board ; pour la montrer à lire : dossier_view » for
+`dossier_present`), within the existing budgets (`test_mcp_catalog.py`
+green); the `no_visible_page` sentence no longer lets the brain promise a
+later reopening (« rien ne l'ouvrira de soi-même »).
+
 **Context cost** (2026-10-18): `dossier_list` 649 B, `dossier_ranger` 771 B,
 `dossier_present` 665 B, `dossier_view` 536 B (+2 621 B):
 `jarvis-workspace` **16 417 B** (budget `WORKSPACE_CONTEXT_BUDGET_BYTES` raised

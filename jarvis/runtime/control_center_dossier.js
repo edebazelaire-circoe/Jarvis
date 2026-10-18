@@ -659,7 +659,7 @@
         else if(entry.open==='none')mode='none';
         const parts=C.markdownBlocks(a.text||'');
         patch={status:'ok',mode,artifactId:artId,mime,url:String(a.text||entry.preview||'').trim(),text:a.text||'',blocks:parts.blocks,meta:parts.meta,eof:true,
-          truncated:a.text_truncated?`Texte tronqué à ${C.formatBytes(a.text_chars)||'20 000 caractères'} pour la lecture.`:''};
+          truncated:a.text_truncated?`Lecture limitée aux 16 000 premiers caractères${typeof a.text_chars==='number'?` sur ${a.text_chars.toLocaleString('fr-FR')}`:''}.`:''};
         if(mode==='text'&&!a.text)patch.blocks=[{t:'p',inline:[{t:'text',v:'Cet élément n’a pas de texte lisible.'}]}];
       }
     }
@@ -1227,6 +1227,7 @@
 #dossierView .dsr-tab[data-selected="2"]{border-color:var(--dsr-rule)}
 #dossierView .dsr-tab-btn{display:flex;align-items:center;gap:7px;min-width:0;min-height:36px;padding:0 6px 0 12px;border:0;background:none;color:var(--dsr-soft);cursor:pointer}
 #dossierView .dsr-tab[data-selected="1"] .dsr-tab-btn{color:var(--dsr-ink)}
+#dossierView :is(.dsr-tab-btn,.dsr-nav,.dsr-btn,.dsr-close,.dsr-title)>svg{flex:none}
 #dossierView .dsr-tab-label{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 #dossierView .dsr-tab-x{display:inline-flex;align-items:center;justify-content:center;width:26px;height:26px;margin-right:4px;border:0;border-radius:6px;background:none;color:var(--dsr-faint);cursor:pointer}
 #dossierView .dsr-tab-x:hover{background:rgba(255,255,255,.06);color:var(--dsr-ink)}
@@ -1283,7 +1284,7 @@
 #dossierView .dsr-prose hr{border:0;border-top:1px solid var(--dsr-rule);margin:1.6em 0}
 #dossierView .dsr-prose a,#dossierView .dsr-url{color:var(--accent);text-underline-offset:3px;overflow-wrap:anywhere}
 #dossierView .dsr-excerpt{font-size:15.5px;max-height:15em;overflow:hidden;mask-image:linear-gradient(180deg,#000 70%,transparent)}
-#dossierView .dsr-figure{margin:0;display:flex;flex-direction:column;align-items:flex-start;gap:10px}
+#dossierView .dsr-figure{margin:0;display:flex;flex-direction:column;align-items:center;gap:10px}
 #dossierView .dsr-figure img{max-width:100%;max-height:calc(100vh - 290px);object-fit:contain;border-radius:8px;border:1px solid var(--dsr-rule);background:#02060a}
 #dossierView .dsr-figure[data-zoom="1"] img{max-width:none;max-height:none}
 #dossierView .dsr-doc-body:has(.dsr-figure){max-width:none}

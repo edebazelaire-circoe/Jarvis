@@ -4,7 +4,8 @@
 `tasks/jarvis-board-ui-wheel-dossier-refactor/`, Slice 05 (contract, projection
 and semantic operations). The full-screen human UI is Slice 07; scene selection
 actions (the `Ranger` button) are Slice 06. Both consume this contract and
-nothing else.
+nothing else. The full-screen UI and its policies are in *Full-screen Dossier
+(UI)* below.
 
 | Layer | Module |
 | --- | --- |
@@ -64,11 +65,11 @@ Default (human) view, one object per entry:
 | --- | --- |
 | `entry_id`, `source` | locator; `memory` or `artifact` |
 | `kind` | `memory_summary` (`summary.md`), `note` (`.md`, `.markdown`, `.txt`), `document` (other text formats, PDF of a presentation), `image`, `media`, `transcript`, `report` (description, derived), `presentation` (snapshot), `link`, `file` |
-| `title` | memory: file stem (`summary.md` -> « Résumé du Board ») ; Artifact: the given file name, the URL of a link, otherwise a dated French label (« Transcription du 18/10/2026 14:05 ») — never the raw id |
+| `title` | memory: file stem (`summary.md` -> « Résumé du Board »); a note Ranger wrote (`notes/<slug>-<8 hex>[-<8 hex>].md`) takes its `#` heading, read in the first 1 KiB through `memory_read` (Slice 07, QA S05 polish 1), else the slug without its digest suffix (« Pistes de financement »); Artifact: the given file name, the URL of a link, otherwise a dated French label (« Transcription du 18/10/2026 14:05 ») — never the raw id |
 | `open` | `text` (`memory/read`, or the Artifact `text`), `media` (Artifact payload), `link` (URL, never fetched), `none` (a binary memory file: listed, never pretended openable) |
 | `modified_at` | memory: file mtime; Artifact: the later of `updated_at` and the link date |
 | memory only | `folder`, `path`, `size` |
-| Artifact only | `preview` (the registry's short preview), `state`, `added_at` (link date), `provenance` (« ajouté au Dossier » for an explicit link, « ajouté automatiquement (Board actif à sa création) » for an automatic one) |
+| Artifact only | `preview` (the registry's short preview), `state`, `added_at` (link date), `provenance`: « déposé sur le Board » / « joint dans la conversation » for an upload (its `metadata.provenance`, since a drop links with `origin=active_board`: Slice 07, QA S05 polish 4), otherwise « ajouté au Dossier » for an explicit link, « ajouté automatiquement (Board actif à sa création) » for an automatic one |
 
 `advanced=true` adds an `advanced` object per entry (memory: relative locator;
 Artifact: `artifact_id`, `artifact_kind`, `source`, `link_origin`,
@@ -220,6 +221,10 @@ or left untouched when it already is (`revision: null`). Otherwise one
 
 `representation`: `window` (default), `capsule`, `point`. Same active-Board
 rule as Ranger. Ranger of a presented representation confirms its source.
+The answer's `entry_id` (and the `source_path` of a new window) name the file
+**as stored** on disk: `memory:Notes/PLAN.md` on Windows answers
+`memory:notes/plan.md` (Slice 07, QA S05 polish 5; `dossier_view` sends the
+page the id Core resolved, likewise).
 
 ### 5. Agent -> UI navigation
 
@@ -235,19 +240,89 @@ a deadline (5 s).
 | `POST /api/dossier/navigation/commands` | agent | `{board_id, entry_id}` -> 200 `{state: opened\|refused, code, reason, command, board_id, entry_id, id, duration_ms, explanation}` |
 | `POST /api/dossier/navigation/commands/{id}` | page, header `X-Jarvis-Page-Token` | `{state: "opened"}` or `{state: "refused", code, reason?}` |
 
+Only a **page receipt** is a 200: `state` is then what the page did,
+`opened` or `refused` with the page's code. Every other outcome is an HTTP
+refusal, never a 200 (Slice 07, QA S05 polish 7).
+
 Refusals: `no_visible_page` 504 (nobody took it), `command_expired` 504 (taken,
 never answered: outcome unknown), `command_busy` 409, `command_cancelled` 503
 (Control Center stopping), `bad_page_token` 403, `bad_receipt` 400 to the page
 and 502 to the waiting agent at once, `unknown_command_id` 404, `bad_request` /
 `dossier_entry_invalid` 400. `/api/dossier` is in `READ_GUARDED_ROUTES`.
 
-**Slice 07 obligations (consumer).** Put `__JARVIS_DOSSIER_PAGE_TOKEN__` in the
-page (the Control Center replaces it), long-poll while visible
-(`visible=0` when hidden), open the full-screen Dossier on `entry_id` when
-`board_id` is the displayed Board, and answer **what it did**: `opened`, or
-`refused` with a stable code (suggested: `board_not_displayed`,
-`entry_not_found`, `dossier_unavailable`). Until then every request ends in
-`no_visible_page`: honest, never a success by default.
+**Consumer (Slice 07).** The view `control_center_dossier.js` carries
+`__JARVIS_DOSSIER_PAGE_TOKEN__` (the Control Center replaces it once the view is
+inserted), long-polls while the tab is visible (`visible=0` when hidden), and
+answers **what it did**: `opened` once the Dossier is visible with an
+`article[data-entry=…]` of that entry in the DOM (checked, not assumed; the
+text may still be loading), or `refused` with `board_not_displayed` (another
+Board is displayed), `entry_not_found` (the page's own `…/dossier/entry` read
+says 404) or `dossier_unavailable` (Variantes covers the screen, the displayed
+Board is unknown, a page error; `reason` says which). Several pages may poll
+(two tabs): the command goes to one of them, and its receipt is that page's.
+
+## Full-screen Dossier (UI)
+
+Slice 07. Modules `jarvis/runtime/control_center_dossier_core.js` (pure:
+routes, organisation, Markdown as data, tabs, outcomes, capabilities, channel
+decisions) and `jarvis/runtime/control_center_dossier.js` (view). Shell rules
+(rank 55, focus, Escape, layout): [control-center-shell.md](control-center-shell.md)
+› *Dossier full-screen view*. Tests: `test_dossier_core_js.py`,
+`test_dossier_fullscreen_browser.py`.
+
+### Screen
+
+| Zone | What it shows | Source |
+| --- | --- | --- |
+| header | « Dossier », Board type chip, Board title, « Archivé · lecture seule » when so; filter field; Contexte; Retour au Board (Échap) | the `board` of the list answer (never the status block) |
+| organisation (left) | Vue d'ensemble; collections (Synthèses, Notes, Documents, Transcriptions, Images et médias, Liens) with counts; the memory folders as a tree | the list entries only (`kind`, `folder`) |
+| centre | a « Parcourir » tab (overview: `summary.md` excerpt and the 10 most recent; or the chosen section or filter, then « Chercher dans le texte » = `memory/search`) and one tab per opened document (8 at most, the oldest unmodified one leaves) | entries; documents read on demand |
+| context (right, collapsible) | En bref (Artifact preview or first paragraph), nature, source, modified, size, provenance; « Jarvis peut lire ce document à la demande… » (no read telemetry exists: nothing is claimed); « Détails techniques » disclosure | the entry; `…/dossier/entry?advanced=true` read only when the disclosure opens; Ranger's machine comment |
+| status line | entry count, reading or waiting with a seconds counter, refusals | the reads in flight |
+
+A document renders with reading typography (serif body, sans headings), from
+Markdown turned into **data** (`markdownBlocks`: headings, paragraphs, lists,
+quotes, code, links opening in a new tab); author HTML stays text. The first
+`#` heading becomes the document title (tab and header). Ranger's machine
+comment leaves the reading and shows under « Détails techniques ». Long notes
+read by 64 KiB chunks (« Lire la suite »). An image Artifact shows its payload
+(`/api/artifacts/{id}/payload`, fit or real size); audio and video play the
+payload; a PDF opens in a new tab; a link shows its URL (never fetched); a
+binary memory file says it is listed, not readable.
+
+### Actions and their canonical path
+
+| Action | Path | Rule |
+| --- | --- | --- |
+| list, entry, details | `GET …/dossier?limit=100`, `…/dossier/entry?id=[&advanced=true]` | readable on any Board, archived included |
+| read | `GET …/memory/read?path&offset&max_bytes=65536`; Artifact `GET /api/artifacts/{id}?text_chars=16000` (the registry's bound) | — |
+| search in text | `GET …/memory/search?q=` | from the filter (Entrée) |
+| Afficher sur le Board | `POST …/dossier/present {entry_id, representation}` (Fenêtre, Capsule, Étoile) | displayed Board only; 201 « Affiché sur le Board », 200 « Déjà sur le Board : la représentation existante est reprise » |
+| Modifier | whole file read first (≤ 256 KiB), then `POST …/memory/write {path, content, mode: replace, expected_sha256}` | memory notes only, never an Artifact; 409 `memory_conflict` keeps the draft, shows the disk version beside it, and the next save is an explicit overwrite with the new sha; a timeout is « issue inconnue » with « Relire » |
+| Renommer ou déplacer | `POST …/memory/move {from, to}` | memory only; the tab follows the new id |
+| Supprimer du Dossier | `POST …/memory/delete {path}` | the only durable delete; confirmation inside the view (focus on Annuler); disabled during a Variantes run |
+| open from outside | wheel, `JarvisDossier.open / openBoard / openEntry`, Ranger toast | the entry is resolved by the service, never assumed |
+
+Writes are refused by the page before the network when the Board is archived,
+when the status is lost (« Core ne répond pas » : nothing is written until the
+state is read again), or for an Artifact; each disabled action carries its
+reason. The client reaches only these routes (`allowed`); anything else is
+refused before the network (`forbidden_route`).
+
+### Policies
+
+- **Board switch.** A Dossier following the displayed Board rebinds to the new
+  one (tabs closed, list read again; answers of the old Board dropped by a
+  generation counter) and says so; a Dossier opened on a precise Board stays.
+  An unsaved edit holds the Dossier on the old Board until it is closed.
+- **Jarvis navigation.** `open_entry` opens (or focuses) the entry's tab, marked
+  « Jarvis »; two Jarvis openings within 30 s are shown side by side when the
+  centre keeps 960 px, else as tabs. Manual and voice navigation share the same
+  state (same tabs, same view). The brain is told when to use it
+  (`BRAIN_WORKSPACE_PROMPT`: « montre-moi » = `dossier_view`, one call per entry;
+  `dossier_present` only on request; a note is read with `board_memory_read`).
+- **Escape, focus, narrow screens, layer**: [control-center-shell.md](control-center-shell.md)
+  › *Dossier full-screen view*.
 
 ## Context and retrieval rule
 
@@ -318,4 +393,8 @@ Ranger are the owners' (`board.memory.written`, `board.artifact.linked`, with
   2 000 characters, Windows notifications).
 - The listing reads at most 500 memory entries and the 100 most recently linked
   Artifacts per call (`truncated` says so); no cursor yet.
-- The page consumer of the navigation channel is Slice 07.
+- The page that takes a navigation command is whichever visible Control Center
+  tab polls first: with two visible tabs, Jarvis may open the entry in the other
+  one (its receipt is still true). Each `python -m jarvis control-center` start
+  opens a browser tab (`webbrowser.open` in `jarvis/app.py`); a sandbox sets
+  `BROWSER` to a no-op command so it leaves no poller behind.

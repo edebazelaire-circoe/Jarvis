@@ -812,12 +812,12 @@ def build_server(target: ConsoleMcpTarget | None = None, *, tools: WorkspaceTool
         entry_id: EntryId,
         representation: Literal["window", "capsule", "point"] = "window",
     ) -> DossierPresentResult:
-        """Afficher sur le Board une entrée du Dossier : même source, rien n'est recopié."""
+        """Poser une entrée du Dossier sur le Board, même source. Pour la montrer à lire : dossier_view."""
         return await ws.dossier_present(board_id, entry_id, representation=representation)
 
     @mcp.tool(annotations=tool_annotations(SERVER_NAME, "dossier_view"))
     async def dossier_view(board_id: BoardId, entry_id: EntryId) -> DossierViewResult:
-        """Ouvrir le Dossier à l'écran sur une entrée ; rend le reçu de la page."""
+        """Montrer une entrée du Dossier à l'écran (une par appel, deux côte à côte) ; rend le reçu de la page."""
         return await ws.dossier_view(board_id, entry_id)
 
     return mcp

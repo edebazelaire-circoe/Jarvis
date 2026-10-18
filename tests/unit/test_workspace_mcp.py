@@ -1238,4 +1238,8 @@ def test_the_brain_prompt_says_how_to_look_at_another_board_without_switching():
     # 2026-10-09 (memory-intelligence-knowledge S5b) : 1000 -> 1300, les cinq outils de `jarvis-memory` y sont nommes.
     # 2026-10-18 (board-ui-wheel-dossier-refactor S01b) : 1300 -> 1550, « passe en mode présentation » se répond
     # par le type du Board (bascule / création), plus par un réglage : la règle vit ici, avec les outils qu'elle nomme.
-    assert len(BRAIN_WORKSPACE_PROMPT.encode("utf-8")) <= 1550
+    # 2026-10-18 (board-ui-wheel-dossier-refactor S07) : 1550 -> 1800. Le Dossier n'y était pas nommé : le cerveau
+    # répondait « montre-moi les deux notes » par dossier_present (fenêtres sous le Dossier ouvert) ou par Read sur
+    # un chemin absolu (trace du bac à sable S07) ; une ligne dit dossier_view, son reçu, et board_memory_read.
+    assert len(BRAIN_WORKSPACE_PROMPT.encode("utf-8")) <= 1800
+    assert "dossier_view" in BRAIN_WORKSPACE_PROMPT and "dossier_present seulement sur demande" in BRAIN_WORKSPACE_PROMPT
