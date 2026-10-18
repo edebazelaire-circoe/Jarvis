@@ -318,7 +318,24 @@ refused before the network (`forbidden_route`).
 - **Board switch.** A Dossier following the displayed Board rebinds to the new
   one (tabs closed, list read again; answers of the old Board dropped by a
   generation counter) and says so; a Dossier opened on a precise Board stays.
-  An unsaved edit holds the Dossier on the old Board until it is closed.
+  An unsaved edit holds the Dossier on the old Board until it is closed. Since
+  Slice 08 **every** answer checks the generation (list, document, more text,
+  advanced details, open-by-id, present, save, re-read, rename, delete): an
+  answer that arrives after a rebind is dropped (`dossier.stale_answer_dropped
+  {what}`), never applied to the new Board.
+- **Core stopped, Control Center still answering** (Slice 08). The status then
+  carries a `boards` block without an active Board and with its `error`: the
+  Dossier treats it as « Core ne répond pas » (`dossier.core_lost`, the notice,
+  every write and Afficher sur le Board off with that reason, nothing sent),
+  not as « ce Board n'est pas le Board affiché ». The next beat that names an
+  active Board ends it.
+- **Messages and titles.** An earlier message of a document (« Déjà sur le
+  Board… ») is not shown while it is being edited or in conflict. A note that
+  has been read once is listed by its `#` heading (the list otherwise shows the
+  file stem: reading every note's head would cost one read per entry).
+- **Links.** A dropped link becomes a clickable `href` only when it is an
+  absolute `http(s)` URL (`safeLinkUrl`, defence in depth over `check_link_url`);
+  any other scheme is shown as text, `dossier.link_refused`.
 - **Unsaved edits are never dropped silently** (QA S07, B1/B2). Every tab whose
   editor differs from the loaded text is `dirty`. A dirty tab is never evicted
   by the 8-tab bound; when all 8 are dirty, opening another entry is refused

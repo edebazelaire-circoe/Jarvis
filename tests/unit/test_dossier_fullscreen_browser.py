@@ -496,3 +496,59 @@ def test_renaming_says_so(tmp_path):
     assert any("Renommé : notes/decision-budget-2027.md" in f for f in r["flash"]), r["flash"]
     assert r["state"]["active"] == "memory:notes/decision-budget-2027.md"
     _no_errors(step)
+
+
+def test_core_stopped_while_the_control_center_answers_is_said_as_core_lost(tmp_path):
+    """QA S07 1 (Slice 08) : Core arrêté, le Control Center répond encore ; le bloc `boards` du statut arrive sans
+    Board actif et avec son erreur. Le Dossier dit « Core ne répond pas » (et non « pas le Board affiché ») et
+    Afficher sur le Board ne part pas sur le réseau ; il revient quand Core répond."""
+    entry = "memory:comptes-rendus/comite-14-octobre.md"
+    down = ("window.__sc.status={boards:{available:false,active:null,jarvis_session_id:null,bindings:[],"
+            "error:{code:'core_unreachable',message:'Core injoignable'}}};1")
+    step = _drive(tmp_path, [{"width": 1440, "height": 900, "seed": seed(), "actions": [
+        ["eval", "open", "JarvisDossier.open().ok", 900], _open(entry),
+        ["eval", "down", down, 2200], ["eval", "lost", "JarvisDossier.state().coreLost", 50], ["eval", "notice", NOTICE, 50],
+        ["click", "menu", _act("present-menu", entry), 300],
+        ["eval", "items", "[...document.querySelectorAll('#dsrMenu [role=menuitem]')].map(n=>n.dataset.value)", 50],
+        ["click", "window", "#dsrMenu [data-act='present'][data-value='window']", 500], ["eval", "flash", FLASH, 50],
+        ["eval", "up", "delete window.__sc.status;1", 2200], ["eval", "back", "JarvisDossier.state().coreLost", 50],
+    ]}])[0]
+    r = step["results"]
+    assert r["lost"] is True and "Core ne répond pas" in r["notice"], r["notice"]
+    sent = [b for b in step["bodies"] if b["path"].endswith("/dossier/present")]
+    assert sent == [], "nothing goes to the network while Core does not answer"
+    assert all("pas le Board affiché" not in f for f in r["flash"]), r["flash"]
+    assert any("Core ne répond pas" in f for f in r["flash"]) or not r["items"], r
+    assert r["back"] is False
+
+
+def test_an_old_present_message_is_not_shown_during_an_edit(tmp_path):
+    """QA S07 4 (Slice 08) : « Déjà sur le Board » restait affiché pendant la modification et le conflit."""
+    entry = "memory:comptes-rendus/comite-14-octobre.md"
+    pick = "#dsrMenu [data-act='present'][data-value='{}']"
+    step = _drive(tmp_path, [{"width": 1440, "height": 900, "seed": seed(), "actions": [
+        ["eval", "open", "JarvisDossier.open().ok", 900], _open(entry),
+        ["click", "menu", _act("present-menu", entry), 300], ["click", "window", pick.format("window"), 700],
+        ["click", "menu2", _act("present-menu", entry), 300], ["click", "again", pick.format("window"), 700],
+        ["eval", "before", FLASH, 50],
+        ["click", "edit", _act("edit", entry), 600], ["eval", "during", FLASH, 50],
+    ]}])[0]
+    r = step["results"]
+    assert any("Déjà sur le Board" in f for f in r["before"]), r["before"]
+    assert r["during"] == [], r["during"]
+    _no_errors(step)
+
+
+def test_a_note_read_once_is_listed_by_its_heading(tmp_path):
+    """Polish S07 impl 7 (Slice 08) : la liste montrait le nom du fichier (« decision-budget ») alors que le document
+    ouvert montrait son titre `#` (« Décision budget ») ; une note lue est listée par son titre."""
+    rows = "[...document.querySelectorAll('#dossierView .dsr-row-title')].map(n=>n.textContent)"
+    step = _drive(tmp_path, [{"width": 1440, "height": 900, "seed": seed(), "actions": [
+        ["eval", "open", "JarvisDossier.open().ok", 900], ["eval", "before", rows, 50],
+        _open("memory:notes/decision-budget.md"),
+        ["click", "browse", "#dossierView [data-tab='browse']", 400], ["eval", "after", rows, 50],
+    ]}])[0]
+    r = step["results"]
+    assert "decision-budget" in r["before"], r["before"]
+    assert "Décision budget" in r["after"] and "decision-budget" not in r["after"], r["after"]
+    _no_errors(step)

@@ -197,3 +197,15 @@ def test_a_dirty_tab_is_never_evicted_and_a_full_dirty_set_refuses(tmp_path):
     assert r["full"] is True and r["len"] == 8 and r["active"] == "memory:3.md"
     assert r["guardBoard"]["code"] == "edit_in_progress" and r["guardSame"]["ok"] is True
     assert r["guardFull"] == "edit_in_progress" and r["clean"] is True
+
+
+def test_only_an_absolute_http_link_becomes_a_href(tmp_path):
+    """QA S07 3 (Slice 08) : défense en profondeur ; `check_link_url` vérifie déjà en amont."""
+    r = run(tmp_path, r"""
+      const u=['https://intranet.exemple/budget','http://exemple.fr/a?b=1','javascript:alert(1)','JAVASCRIPT:alert(1)',
+        'data:text/html,<b>x</b>','file:///C:/x','/relatif','  https://exemple.fr  ','https://a b','', null,'x'.repeat(3000)];
+      return u.map(v=>C.safeLinkUrl(v));
+    """)
+    assert r[:2] == ["https://intranet.exemple/budget", "http://exemple.fr/a?b=1"]
+    assert r[2:7] == [None] * 5
+    assert r[7] == "https://exemple.fr/" and r[8:] == [None] * 4

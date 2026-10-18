@@ -265,7 +265,7 @@
     const b=btn('dsr-row','',{'data-open':e.entry_id,'data-fk':`row:${e.entry_id}`});
     const ic=el('span','dsr-row-ic');ic.appendChild(icon(kindIcon(e.kind),18));ic.dataset.kind=e.kind;
     const main=el('span','dsr-row-main');
-    main.appendChild(el('span','dsr-row-title',e.title||'Sans titre'));
+    main.appendChild(el('span','dsr-row-title',titleOf(e.entry_id)));
     const meta=[C.KIND_LABELS[e.kind]||e.kind];
     if(e.folder)meta.push(e.folder);
     const when=C.relativeTime(e.modified_at,now());if(when)meta.push(when);
@@ -369,7 +369,7 @@
     const d=docOf(entryId);
     const art=el('article','dsr-doc');art.dataset.entry=entryId;art.setAttribute('role','tabpanel');
     if(!e){art.appendChild(errorBox(C.errorOf('dossier_entry_not_found',404,''),null));return art}
-    art.setAttribute('aria-label',e.title||'Document');
+    art.setAttribute('aria-label',titleOf(e.entry_id));
     const caps=C.capabilities(e,{board:S.board,displayedBoardId:S.displayed,running:running(),coreLost:S.coreLost});
     const dh=el('header','dsr-doc-head');
     const h=el('h3','dsr-doc-title',titleOf(entryId));h.tabIndex=-1;h.dataset.fk=`title:${entryId}`;h.setAttribute('dir','auto');
@@ -381,7 +381,7 @@
     const tab=S.tabs.find(t=>t.entryId===entryId);
     if(tab&&tab.opener==='jarvis'){const j=el('span','dsr-by','Ouvert par Jarvis');m.appendChild(document.createTextNode(' '));m.appendChild(j)}
     dh.appendChild(m);
-    const bar=el('div','dsr-actions');bar.setAttribute('role','toolbar');bar.setAttribute('aria-label',`Actions sur ${e.title}`);
+    const bar=el('div','dsr-actions');bar.setAttribute('role','toolbar');bar.setAttribute('aria-label',`Actions sur ${titleOf(e.entry_id)}`);
     const action=(act,label,cap,extra)=>{
       const b=btn('dsr-btn',label,{'data-act':act,'data-entry':entryId,'data-fk':`${act}:${entryId}`,'aria-disabled':cap&&!cap.ok?'true':null,
         title:cap&&!cap.ok?cap.reason:null,...(extra||{})});
@@ -391,7 +391,7 @@
     if(!editing){
       bar.appendChild(action('present-menu','Afficher sur le Board',caps.present,{'aria-haspopup':'menu','aria-expanded':S.menu&&S.menu.kind==='present'&&S.menu.entryId===entryId?'true':'false'}));
       if(e.source==='memory')bar.appendChild(action('edit','Modifier',caps.edit));
-      if(e.source==='memory')bar.appendChild(action('more-menu','Plus…',null,{'aria-haspopup':'menu','aria-expanded':S.menu&&S.menu.kind==='more'&&S.menu.entryId===entryId?'true':'false','aria-label':`Plus d’actions sur ${e.title}`}));
+      if(e.source==='memory')bar.appendChild(action('more-menu','Plus…',null,{'aria-haspopup':'menu','aria-expanded':S.menu&&S.menu.kind==='more'&&S.menu.entryId===entryId?'true':'false','aria-label':`Plus d’actions sur ${titleOf(e.entry_id)}`}));
       const others=S.tabs.filter(t=>t.entryId!==entryId);
       if(paired)bar.appendChild(action('unsplit','Lire seul',null));
       else if(others.length&&layout().split)bar.appendChild(action('compare-menu','Comparer…',null,{'aria-haspopup':'menu'}));
@@ -402,7 +402,9 @@
     if(!editing&&reason&&S.board&&(S.board.status==='archived'||S.coreLost))dh.appendChild(el('p','dsr-why',reason.reason));
     if(S.form&&S.form.entryId===entryId)dh.appendChild(renderMoveForm(e));
     if(S.confirm&&S.confirm.entryId===entryId)dh.appendChild(renderDeleteConfirm(e));
-    if(d&&d.flash)dh.appendChild(el('p',`dsr-flash dsr-${d.flash.tone}`,d.flash.text));
+    /* Pendant une modification ou un conflit, un ancien message (« Déjà sur le Board… ») ne reste pas affiché
+       (Slice 08, QA S07 4) : l'éditeur dit son propre état. */
+    if(d&&d.flash&&!editing)dh.appendChild(el('p',`dsr-flash dsr-${d.flash.tone}`,d.flash.text));
     art.appendChild(dh);
     const bodyEl=el('div','dsr-doc-body');
     if(editing)bodyEl.appendChild(renderEditor(e,d));
@@ -448,7 +450,7 @@
   function renderDeleteConfirm(e){
     const c=S.confirm;
     const box=el('div','dsr-confirm');box.setAttribute('role','alertdialog');box.setAttribute('aria-labelledby','dsrDelTitle');
-    const t=el('strong','',`Supprimer « ${e.title} » du Dossier ?`);t.id='dsrDelTitle';box.appendChild(t);
+    const t=el('strong','',`Supprimer « ${titleOf(e.entry_id)} » du Dossier ?`);t.id='dsrDelTitle';box.appendChild(t);
     box.appendChild(el('p','',`Le fichier ${e.path} est retiré définitivement de la mémoire du Board. Ni Masquer ni Retirer du Board ne font cela : c’est la seule suppression durable.`));
     const row=el('div','dsr-form-row');
     row.append(btn('dsr-btn','Annuler',{'data-act':'delete-cancel','data-fk':'delete-cancel'}),
@@ -486,7 +488,11 @@
     }
     if(d.mode==='link'){
       box.appendChild(el('p','dsr-quiet','Lien déposé sur le Board ; Jarvis ne l’a pas visité.'));
-      const a=el('a','dsr-url',d.url);a.href=d.url;a.target='_blank';a.rel='noopener noreferrer';box.appendChild(a);return box;
+      /* Seul un lien http(s) devient cliquable ; un autre schéma s'affiche en texte (Slice 08, QA S07 3). */
+      const href=C.safeLinkUrl(d.url);
+      if(!href){box.appendChild(el('p','dsr-url',d.url));box.appendChild(el('p','dsr-quiet','Adresse non http(s) : elle n’est pas ouverte d’ici.'));
+        log('warn','dossier.link_refused',{scheme:String(d.url||'').split(':')[0].slice(0,16)});return box}
+      const a=el('a','dsr-url',d.url);a.href=href;a.target='_blank';a.rel='noopener noreferrer';box.appendChild(a);return box;
     }
     if(d.mode==='none'){
       box.appendChild(el('p','dsr-quiet',`Ce fichier n’est pas du texte (${C.formatBytes(e.size)||'taille inconnue'}) : il est listé dans le Dossier, il ne se lit pas ici.`));return box;
@@ -502,7 +508,7 @@
     const ed=d.edit;
     const box=el('div','dsr-editor');
     const id=`dsrEdit-${C.PATHS.payload(e.entry_id).length}-${S.tabs.findIndex(t=>t.entryId===e.entry_id)}`;
-    const lab=el('label','sr',`Texte de ${e.title}`);lab.htmlFor=id;box.appendChild(lab);
+    const lab=el('label','sr',`Texte de ${titleOf(e.entry_id)}`);lab.htmlFor=id;box.appendChild(lab);
     if(ed.conflict){
       const c=el('div','dsr-conflict');c.setAttribute('role','alert');
       c.appendChild(el('strong','','Le fichier a changé depuis votre lecture : rien n’a été écrit.'));
@@ -601,6 +607,13 @@
   }
 
   /* ------------------------------------------------------------ lectures */
+  /* Une réponse arrivée après un changement de Board du Dossier (`S.gen`) ne touche plus rien : elle visait l'ancien
+     Board (Slice 08, QA S07 2 — `openById`, `loadAdvanced`, `move`, `remove`, `present`, `save`, `reread`). */
+  function stale(gen,what){
+    if(gen===S.gen)return false;
+    log('info','dossier.stale_answer_dropped',{what});
+    return true;
+  }
   async function loadList(){
     const gen=S.gen,board=S.boardId;
     if(!board)return;
@@ -682,8 +695,10 @@
     render();
   }
   async function loadAdvanced(id){
+    const gen=S.gen;
     S.adv.set(id,{status:'loading'});render();
     const answer=await client.get(C.PATHS.entry(S.boardId,id,true));
+    if(stale(gen,'advanced'))return;
     S.adv.set(id,answer.ok?{status:'ok',advanced:answer.body.entry&&answer.body.entry.advanced||{}}:{status:'error',error:answer.error});
     render();
   }
@@ -717,7 +732,9 @@
     if(e)return openEntry(e);
     /* Un résultat de recherche hors des 100 listées : l'entrée est résolue par le service. */
     S.busy={label:'Ouverture',since:now()};render();
+    const gen=S.gen;
     client.get(C.PATHS.entry(S.boardId,id,false)).then(answer=>{
+      if(stale(gen,'open_by_id'))return;
       S.busy=null;
       if(answer.ok&&answer.body.entry)openEntry(answer.body.entry);
       else{S.notice={tone:'bad',text:`${answer.error.title}. ${answer.error.hint}`};render()}
@@ -729,7 +746,9 @@
     S.menu=null;
     if(!caps.present.ok){setDoc(id,{flash:{tone:'bad',text:caps.present.reason}});render();return}
     S.busy={label:'Affichage sur le Board',since:now()};render();
+    const gen=S.gen;
     const answer=await client.post(C.PATHS.present(S.boardId),{entry_id:id,representation});
+    if(stale(gen,'present'))return;
     S.busy=null;
     const out=C.presentOutcome(answer,representation);
     log(out.kind==='ok'?'info':'warn','dossier.present',{entry:id.split(':')[0],representation,status:answer.status,created:out.created||false,code:out.error&&out.error.code||null});
@@ -746,6 +765,7 @@
       if(!ok)return;
       const doc=docOf(id);
       doc.edit={draft:doc.text,base:doc.text,sha:doc.sha,status:'idle',conflict:false,unknown:false,theirs:null,error:null};
+      doc.flash=null;
       render();
       const ta=host.querySelector(`[data-fk="edit:${CSS.escape(id)}"]`);if(ta)ta.focus();
       log('info','dossier.edit_started',{entry:'memory',bytes:doc.text.length});
@@ -768,7 +788,9 @@
     ed.status='saving';ed.since=now();ed.error=null;render();
     const body={path:e.path,content:ed.draft,mode:'replace'};
     if(ed.sha)body.expected_sha256=ed.sha;
+    const gen=S.gen;
     const answer=await client.post(C.PATHS.mutate(S.boardId,'write'),body);
+    if(stale(gen,'save'))return;
     const out=C.writeOutcome(answer);
     log(out.kind==='saved'?'info':'warn','dossier.save',{outcome:out.kind,status:answer.status,code:out.error&&out.error.code||null,ms:answer.ms});
     if(out.kind==='saved'){
@@ -791,7 +813,9 @@
   }
   async function reread(id){
     const d=docOf(id),e=entryOf(id);if(!d||!d.edit||!e)return;
+    const gen=S.gen;
     const cur=await client.get(C.PATHS.read(S.boardId,e.path,0));
+    if(stale(gen,'reread')||!d.edit)return;
     if(cur.ok){d.edit.theirs=cur.body.text||'';d.edit.sha=cur.body.sha256||null;d.edit.unknown=false;d.edit.conflict=(cur.body.text||'')!==d.edit.draft}
     else d.edit.error=cur.error;
     render();
@@ -801,8 +825,10 @@
     const target=String(to||'').trim();
     if(!target||target===e.path){f.error=C.errorOf('memory_path_invalid',0,'même chemin');render();return}
     f.status='busy';f.since=now();f.error=null;render();
+    const gen=S.gen;
     const answer=await client.post(C.PATHS.mutate(S.boardId,'move'),{from:e.path,to:target});
     log(answer.ok?'info':'warn','dossier.move',{status:answer.status,code:answer.ok?null:answer.error.code});
+    if(stale(gen,'move'))return;
     if(!answer.ok){f.status='idle';f.error=answer.error;render();return}
     S.form=null;
     const newId=`memory:${answer.body.to||target}`;
@@ -819,8 +845,10 @@
     const caps=C.capabilities(e,{board:S.board,displayedBoardId:S.displayed,running:running(),coreLost:S.coreLost});
     if(!caps.delete.ok){c.error=C.errorOf('refused',0,caps.delete.reason);render();return}
     c.status='busy';render();
+    const gen=S.gen;
     const answer=await client.post(C.PATHS.mutate(S.boardId,'delete'),{path:e.path});
     log(answer.ok?'info':'warn','dossier.delete',{status:answer.status,code:answer.ok?null:answer.error.code});
+    if(stale(gen,'delete'))return;
     if(!answer.ok){c.status='idle';c.error=answer.error;render();return}
     S.confirm=null;
     const r=C.closeTab(S.tabs,id,S.active);S.tabs=r.tabs;S.active=r.active||'browse';S.docs.delete(id);
@@ -1033,6 +1061,12 @@
   let displayedTitle=null;
   function gate(block){
     const active=block&&block.active&&block.active.board_id?String(block.active.board_id):null;
+    /* Core arrêté alors que le Control Center répond (Slice 08, QA S07 1) : le statut arrive, mais sans Board actif
+       et avec son erreur. C'est « Core ne répond pas », pas « ce Board n'est pas le Board affiché ». */
+    if(!active&&(!block||block.available===false||block.error)){
+      if(!S.coreLost)log('warn','dossier.core_lost',{code:block&&block.error&&block.error.code||null});
+      statusLost();return;
+    }
     const was=S.displayed;
     S.coreLost=false;
     S.displayed=active;

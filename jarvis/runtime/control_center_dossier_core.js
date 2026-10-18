@@ -350,6 +350,16 @@
   /* ------------------------------------------------------------ capacités d'une entrée */
 
   /* Ce que l'humain peut faire d'une entrée, avec la raison quand il ne le peut pas (jamais un bouton mort). */
+  /* Un lien déposé ne devient un `href` que s'il est http(s) absolu (défense en profondeur, Slice 08, QA S07 3 :
+     `check_link_url` le vérifie déjà en amont). Rend l'URL normalisée, ou `null`. */
+  function safeLinkUrl(raw){
+    const text=String(raw==null?'':raw).trim();
+    if(!text||text.length>2048||/\s/.test(text)||[...text].some(c=>c.charCodeAt(0)<32))return null;
+    let url;
+    try{url=new URL(text)}catch(_){return null}
+    return url.protocol==='http:'||url.protocol==='https:'?url.href:null;
+  }
+
   function capabilities(entry,{board,displayedBoardId,running,coreLost}){
     const writable=!!(board&&board.writable);
     const displayed=!!(board&&displayedBoardId&&board.board_id===displayedBoardId);
@@ -440,7 +450,7 @@
     DEADLINE_MS,LIST_LIMIT,READ_BYTES,MAX_EDIT_BYTES,MAX_TABS,PAIR_WINDOW_MS,SPLIT_MIN_PX,NARROW_PX,WIDE_PX,
     COMMAND_ROUTE,PAGE_TOKEN_HEADER,BOARD_KINDS,COLLECTIONS,KIND_LABELS,ERRORS,REPRESENTATIONS,PATHS,
     errorOf,allowed,createClient,collectionOf,organize,filterEntries,entriesOfSection,splitMachine,inline,markdownBlocks,leadHeading,
-    openTab,closeTab,layoutFor,pairFor,editGuard,EDIT_IN_PROGRESS,writeOutcome,presentOutcome,capabilities,openDecision,rebindOnSwitch,
+    openTab,closeTab,layoutFor,pairFor,editGuard,EDIT_IN_PROGRESS,writeOutcome,presentOutcome,capabilities,safeLinkUrl,openDecision,rebindOnSwitch,
     relativeTime,absoluteTime,formatBytes,sourceLine,wheelItems,
   });
   root.JarvisDossierCore=api;
