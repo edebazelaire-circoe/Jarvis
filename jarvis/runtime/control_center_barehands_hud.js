@@ -864,10 +864,10 @@
 #${DOM.hostId}{position:absolute;top:${GEO.top}px;left:${GEO.left}px;width:${GEO.button}px;
   display:flex;flex-direction:column;align-items:center;gap:${GEO.gap}px;
   font:12px/1.2 ui-monospace,SFMono-Regular,Consolas,monospace;
-  /* \`.topbar\` coupe les événements de pointeur pour laisser passer les clics
-     vers le visage. Ce contrôle vit à côté d'elle et non dedans, mais il les
-     rétablit chez lui : rangé un jour sous un parent inerte, il resterait
-     cliquable au lieu de se taire. */
+  /* Ce contrôle rétablit les événements de pointeur chez lui : rangé un jour sous un
+     parent qui les coupe (comme la barre du haut, retirée par la Slice 02 de
+     jarvis-board-ui-wheel-dossier-refactor, le faisait), il resterait cliquable au
+     lieu de se taire. */
   pointer-events:auto}
 #${DOM.hostId}[data-bh-tone=off],#${DOM.hostId} [data-bh-tone=off]{
   --bh-hud-ink:color-mix(in srgb,${MUTED} 55%,transparent);

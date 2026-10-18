@@ -178,6 +178,7 @@ const mount=options=>{
     refresh:async()=>{refreshes+=1;control.gate(server.block())},
     toast:spec=>toasts.push(spec),
     confirm:opts.noConfirm?undefined:async spec=>{confirms.push(spec);return answer},
+    runBlocked:opts.runBlocked,
     inspect:opts.inspect,
     log:(level,event,data)=>journal.push({level,event,data}),
   });
@@ -1259,3 +1260,46 @@ async def test_the_served_page_has_no_retired_shell_controls(tmp_path):
     assert "document.getElementById('wakeHint')" in html
     # Une seule entrée quotidienne de Board : la carte. Aucun autre hôte ne porte le bouton.
     assert html.count('id="boardsHud"') == 1
+
+
+def test_during_a_studio_run_actions_that_would_open_a_hidden_layer_are_off_and_say_why(tmp_path):
+    """QA Slice 02, B1 : pendant une lecture (`jvx-run`), le panneau est au-dessus de Variantes mais la
+    confirmation de la page et le gestionnaire restent dessous. Archiver, Nouvelle session et Inspecter
+    sont éteints et le disent ; rien n'est ouvert ni envoyé, même appelés directement. La bascule, la
+    création et le renommage restent permis. La lecture finie, tout se rallume au battement suivant."""
+
+    result = run_node(tmp_path, r"""
+      let running=true;
+      const m=mount({runBlocked:()=>running,inspect:()=>{m.inspected=(m.inspected||0)+1;return Promise.resolve()}});
+      m.trigger.fire('click');await settle();
+      const state=id=>{const a=m.control_(id,'archive'),i=m.control_(id,'inspect'),n=m.newSession();
+        const hint=byId(m.panel,B.DOM.newSessionId+'Hint');
+        return {archive:[a.getAttribute('aria-disabled'),a.getAttribute('title')],
+          inspect:[i.getAttribute('aria-disabled'),i.getAttribute('title')],
+          session:[n.getAttribute('aria-disabled'),n.getAttribute('title')],hint:hint.textContent,
+          rename:m.control_(id,'rename').getAttribute('aria-disabled'),
+          create:byId(m.panel,B.DOM.createButtonId).getAttribute('aria-disabled')}};
+      const during=state('board_b');
+      await m.control.archiveBoard('board_b');await m.control.startNewSession();m.control.inspectBoard('board_b');await settle();
+      const tried={confirms:m.confirms.length,inspected:m.inspected||0,writes:m.calls(),note:m.note(),
+        logged:m.journal.filter(j=>j.event==='boards.action_blocked_during_run').map(j=>j.data.action)};
+      m.createInput().value='Pendant la lecture';byId(m.panel,B.DOM.createButtonId).fire('click');await settle();await settle();
+      await m.control.switchTo('board_b');await settle();await settle();
+      const allowed=m.calls();
+      running=false;
+      m.trigger.fire('click');await settle();
+      m.control.gate(m.server.block());await settle();
+      out({during,tried,allowed,after:state('default')});
+    """, name="run-blocked")
+    blocked = "Indisponible pendant la lecture : arrêtez la présentation dans Variantes, puis réessayez."
+    during = result["during"]
+    assert during["archive"] == ["true", blocked] and during["inspect"] == ["true", blocked]
+    assert during["session"] == ["true", blocked] and during["hint"] == blocked
+    assert during["rename"] is None and during["create"] is None, "rename and create open no hidden layer"
+    tried = result["tried"]
+    assert (tried["confirms"], tried["inspected"], tried["writes"]) == (0, 0, []), tried
+    assert tried["note"].startswith(blocked) and tried["logged"] == ["archive", "new_session", "inspect"]
+    assert result["allowed"] == ["POST /api/boards", "POST /api/boards/switch"]
+    after = result["after"]
+    assert after["archive"][0] is None and after["archive"][1] == "Archiver", after
+    assert after["inspect"][0] is None and after["session"] == [None, None], after

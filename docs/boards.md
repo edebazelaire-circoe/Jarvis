@@ -1519,7 +1519,10 @@ above the open wheel and the screenshot preview it may cover, below the
 status centre, toasts and the page confirmation), opened **above** the card,
 aligned on its edge and clamped to the viewport. During a Studio run shown in
 Variantes both are drawn at 9150, in the rail's column when the Studio is
-windowed. Geometry and ranks: [control-center-shell.md](control-center-shell.md)
+windowed; Archiver, Nouvelle session and Inspecter are then off (their page
+confirmation and the deep manager would open under Variantes, invisible) and
+say « Indisponible pendant la lecture : arrêtez la présentation dans
+Variantes, puis réessayez. »; switch, create and rename stay. Geometry and ranks: [control-center-shell.md](control-center-shell.md)
 › *Board card*. The module refuses to install, by name
 (`boards.install_failed`, `boards_host_missing`), when a slot is missing,
 without breaking the other page modules.

@@ -55,3 +55,12 @@ outside the acceptance of the Slice that found it.
 10. **`boards_of_artifact(limit=500)`** in `_resolve_entry`: an Artifact linked to more than 500 Boards would read as not in this Dossier; use a direct link lookup.
 11. **Duplicate comment on the `DOSSIER_PAGE_TOKEN_MARKER` line of `control_center.py`** — fixed in the S05 rework commit (explorer comment restored on its own line).
 12. **Brain, outside the Slice:** the 8 s turn budget was exceeded, and a stray text block « Single small file read is allowed. » appeared in the answer.
+
+## From Slice 02 QA (Board card, shell cleanup)
+
+1. **Target Slice 03 — the open wheel (rank 37) sits under the open Board panel (rank 39)**: with both open, the
+   wedges the panel covers cannot be reached. The wheel redesign decides which wins (close the panel when the wheel
+   opens, or the reverse) and the registry follows.
+2. **One Escape closes both the wheel and the Board panel** when both are open; it should close the topmost only.
+3. **Long Board titles are cut at 1440 and 1920 px** (card capped at 236 px) while the same title fits at 600 px
+   (`max-width: calc(100vw - 102px)` there); consider a wider cap on large screens, within the status-centre insets.

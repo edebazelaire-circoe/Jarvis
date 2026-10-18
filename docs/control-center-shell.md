@@ -470,7 +470,15 @@ from the removed interaction-mode control (critical feedback kept, D05).
 **Studio run.** `data-keep-live="run"` on the card and its panel; during a run
 shown in Variantes both are drawn at 9150, in the rail's right column when the
 Studio is windowed (`html.jvx-run.jvr-studio #boardsHud`). The way out of a
-run is the Studio's own stop; the card adds no mode toggle.
+run is the Studio's own stop; the card adds no mode toggle. The page layers the
+panel would open (the confirmation `.cdialog-back`, 85; the Sessions & Boards
+manager `.wsp`, 55) stay **under** Variantes, so during a run the panel turns
+off the actions that open them — Archiver, Nouvelle session, Inspecter —
+(`aria-disabled`, tooltip and help line « Indisponible pendant la lecture… »,
+journal `boards.action_blocked_during_run`); switching, creating and renaming
+open no layer and stay available; everything comes back at the next status beat
+after the run (QA Slice 02, B1;
+`test_variants_run_browser.py::test_during_a_run_the_board_panel_opens_no_hidden_layer`).
 
 **Accessibility.** One button (`aria-haspopup="dialog"`): its name starts
 with what it shows (type then title), then the planned note and the presence

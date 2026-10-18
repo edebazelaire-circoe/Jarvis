@@ -234,3 +234,52 @@ async def test_the_presenter_strip_never_overlaps_the_board_card_and_stays_on_sc
     assert band["l"] >= 0 and band["r"] <= geometry["vw"] and band["t"] >= 0 and band["b"] <= geometry["vh"], geometry
     assert shot.stat().st_size > 1000
     _no_noise(result)
+
+
+#: QA Slice 02, B1 : ce que le panneau Board montre et permet pendant une lecture.
+RUN_PANEL = """(()=>{const q=s=>document.querySelector(s),attr=(e,k)=>e?e.getAttribute(k):'absent';
+  const other=q('#boardsList .bd-row[data-active=false]');const a=other&&other.querySelector('[data-bd-action=archive]');
+  const i=other&&other.querySelector('[data-bd-action=inspect]');const n=q('#boardsNewSession');
+  return {archive:[attr(a,'aria-disabled'),attr(a,'title')],inspect:[attr(i,'aria-disabled'),attr(i,'title')],
+    session:[attr(n,'aria-disabled'),attr(n,'title')],hint:(q('#boardsNewSessionHint')||{}).textContent,
+    confirmOpen:!q('#confirmBack').hidden,managerOpen:!q('#workspaceManager').hidden,
+    note:(q('#boardsNote')||{}).hidden===false?q('#boardsNote').textContent:''}})()"""
+
+
+async def test_during_a_run_the_board_panel_opens_no_hidden_layer(run, tmp_path):
+    """QA Slice 02, B1 : la carte et son panneau sont au-dessus de Variantes (9150), la confirmation de la
+    page (85) et le gestionnaire Sessions & Boards (55) dessous. Pendant la lecture, Archiver, Nouvelle
+    session et Inspecter sont éteints et disent pourquoi ; un vrai clic n'ouvre aucune couche invisible."""
+    core, url = run
+    # Les routes Boards du Control Center parlent au Core isolé (comme dans `test_boards_hud_browser.py`, Slice 08).
+    core.stack.center.board_routes._transport = core.stack.sessions
+    shot = tmp_path / "run-board-panel.png"
+    result = await drive(url, [
+        {"wait": 600}, READY, {"wait": 400},
+        {"value": "created", "expr": "fetch('/api/boards',{method:'POST',headers:{'Content-Type':'application/json'},"
+                                     "body:JSON.stringify({title:'Autre Board'})}).then(r=>r.status)"},
+        {"click": "#boardsButton"},
+        {"until": "!document.getElementById('boardsPanel').hidden&&!!document.querySelector('#boardsList .bd-row[data-active=false]')",
+         "ms": 6000},
+        {"value": "before", "expr": RUN_PANEL},
+        {"click": "#boardsList .bd-row[data-active=false] [data-bd-action=archive]"}, {"wait": 500},
+        {"click": "#boardsList .bd-row[data-active=false] [data-bd-action=inspect]"}, {"wait": 500},
+        {"click": "#boardsNewSession"}, {"wait": 500},
+        {"value": "after", "expr": RUN_PANEL},
+        {"value": "panelOnTop", "expr": "(()=>{const r=document.getElementById('boardsPanel').getBoundingClientRect();"
+                                        "const t=document.elementFromPoint(r.left+r.width/2,r.top+30);"
+                                        "return !!t&&document.getElementById('boardsPanel').contains(t)})()"},
+        {"shot": str(shot)},
+    ], viewport="1280x720")
+    reads = result["reads"]
+    assert reads["created"] == 201, reads
+    blocked = "Indisponible pendant la lecture : arrêtez la présentation dans Variantes, puis réessayez."
+    before = reads["before"]
+    assert before["archive"] == ["true", blocked] and before["inspect"] == ["true", blocked], before
+    assert before["session"] == ["true", blocked] and before["hint"] == blocked, before
+    after = reads["after"]
+    assert after["confirmOpen"] is False and after["managerOpen"] is False, after
+    assert after["note"].startswith(blocked), after
+    assert reads["panelOnTop"] is True
+    assert shot.stat().st_size > 1000
+    _no_noise(result)

@@ -196,6 +196,13 @@
     core_boards_unsupported:'Core sans Boards',core_unavailable:'Core pas prêt'});
   const VERIFYING='Résultat inconnu, vérification…';
 
+  /* Pendant une lecture montrée dans Variantes (`html.jvx-run`), la carte et son panneau sont
+     dessinés au-dessus du Studio (9150), mais la confirmation de la page (`.cdialog-back`, 85) et
+     le gestionnaire Sessions & Boards (`.wsp`, 55) restent dessous, invisibles : une action qui
+     les ouvrirait rendrait la page inerte sans rien montrer (QA Slice 02, B1). Ces actions
+     — Archiver, Nouvelle session, Inspecter — sont donc éteintes le temps de la lecture, et le
+     disent ; la bascule, la création et le renommage n'ouvrent aucune couche et restent permis. */
+  const RUN_BLOCKED='Indisponible pendant la lecture : arrêtez la présentation dans Variantes, puis réessayez.';
   const ARCHIVE_ACTIVE_REASON='Le Board actif ne peut pas être archivé : basculez d’abord sur un autre Board.';
   const NEW_SESSION_HINT='Nouvelle conversation avec Jarvis sur ce Board. Le Board, ses tâches et le travail en cours sont conservés.';
   const ARCHIVED_HINT='Archivés : lisibles dans le gestionnaire Sessions & Boards, ils ne s’ouvrent plus.';
@@ -664,7 +671,7 @@
   });
 
   /* La place de la carte et son apparence vivent ici, le rang de son bouton
-     (32) et celui du panneau (36) au registre d'empilement
+     (32) et celui du panneau (39 ; 9150 pendant une lecture) au registre d'empilement
      (`docs/control-center-shell.md`). **Aucun `z-index` sur l'emplacement** :
      il ouvrirait un contexte d'empilement. */
   const STYLE=`
@@ -841,6 +848,7 @@ ${P} .bd-session{font-size:10px;letter-spacing:.06em;color:${MUTED}}
 ${P} .bd-session:empty{display:none}
 ${P} .bd-foot .bd-act{display:inline-flex;align-items:center;gap:8px;justify-self:start}
 ${P} .bd-foot p{margin:0;font-size:10.5px;line-height:1.5;color:${MUTED}}
+${P} .bd-foot p[data-tone=warn]{color:${WARN}}
 ${H} .bd-sr,${P} .bd-sr{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}
 /* Le centre d'état ne réserve plus la largeur de la carte sous 820 px : elle se
    hisse au-dessus de sa rangée, avant le resserrement de 700 px (voir \`GEO\`). */
@@ -889,6 +897,9 @@ ${H} .bd-sr,${P} .bd-sr{position:absolute;width:1px;height:1px;padding:0;margin:
     const place=typeof deps.place==='function'?deps.place:null;
     /* Ouvrir le gestionnaire profond sur un Board (Slice 08). */
     const inspect=typeof deps.inspect==='function'?deps.inspect:null;
+    /* Une lecture tient le Studio par-dessus la page : vrai tant que les couches de la page
+       (confirmation, gestionnaire) seraient cachées (voir `RUN_BLOCKED`). */
+    const runBlocked=typeof deps.runBlocked==='function'?()=>!!deps.runBlocked():()=>false;
 
     let block=null,listing=null,session=null,listError=null,loading=false,loadSeq=0;
     /* La présence de la voix (Slice 02) : le bloc `interaction_mode` et le
@@ -1088,7 +1099,7 @@ ${H} .bd-sr,${P} .bd-sr{position:absolute;width:1px;height:1px;padding:0;margin:
     }
 
     function signatureOfRows(rows){
-      return JSON.stringify([rows,view,editing,editError,!!pending,loading,listing===null]);
+      return JSON.stringify([rows,view,editing,editError,!!pending,loading,listing===null,runBlocked()]);
     }
     const currentRows=()=>rowsOf(listing,block,pending,{view,now:now()});
 
@@ -1181,9 +1192,10 @@ ${H} .bd-sr,${P} .bd-sr{position:absolute;width:1px;height:1px;padding:0;margin:
 
       const archive=el('button','bd-icon');archive.setAttribute('type','button');
       archive.setAttribute(DOM.boardAttribute,row.board_id);archive.setAttribute(DOM.actionAttribute,'archive');
-      archive.setAttribute('aria-label',row.canArchive?`Archiver ${row.title}`:`Archiver ${row.title} — impossible : ${row.archiveReason}`);
-      archive.setAttribute('title',row.canArchive?'Archiver':row.archiveReason);
-      archive.appendChild(icon(doc,'archive',15));disable(archive,!row.canArchive||!!pending);
+      const archiveReason=!row.canArchive?row.archiveReason:runBlocked()?RUN_BLOCKED:'';
+      archive.setAttribute('aria-label',archiveReason?`Archiver ${row.title} — impossible : ${archiveReason}`:`Archiver ${row.title}`);
+      archive.setAttribute('title',archiveReason||'Archiver');
+      archive.appendChild(icon(doc,'archive',15));disable(archive,!!archiveReason||!!pending);
       archive.addEventListener('click',()=>{archiveBoard(row.board_id)});
       li.appendChild(archive);
       const wait=el('span','bd-wait');wait.setAttribute('aria-hidden','true');li.appendChild(wait);
@@ -1218,9 +1230,10 @@ ${H} .bd-sr,${P} .bd-sr{position:absolute;width:1px;height:1px;padding:0;margin:
          nomment le gestionnaire. */
       const b=el('button','bd-icon');b.setAttribute('type','button');
       b.setAttribute(DOM.boardAttribute,row.board_id);b.setAttribute(DOM.actionAttribute,'inspect');
-      b.setAttribute('aria-label',`Inspecter ${row.title} dans Sessions & Boards`);
-      b.setAttribute('title','Inspecter dans Sessions & Boards (mémoire, Sessions, artefacts)');
-      b.appendChild(icon(doc,'inspect',15));disable(b,!!pending);
+      const blocked=runBlocked();
+      b.setAttribute('aria-label',`Inspecter ${row.title} dans Sessions & Boards${blocked?` — impossible : ${RUN_BLOCKED}`:''}`);
+      b.setAttribute('title',blocked?RUN_BLOCKED:'Inspecter dans Sessions & Boards (mémoire, Sessions, artefacts)');
+      b.appendChild(icon(doc,'inspect',15));disable(b,blocked||!!pending);
       b.addEventListener('click',()=>{inspectBoard(row.board_id)});
       return b;
     }
@@ -1296,7 +1309,13 @@ ${H} .bd-sr,${P} .bd-sr{position:absolute;width:1px;height:1px;padding:0;margin:
 
     function paintControls(){
       const busy=!!pending;
-      disable(createButton,busy);disable(newSession,busy||!(block&&block.available));
+      const blocked=runBlocked();
+      disable(createButton,busy);disable(newSession,busy||blocked||!(block&&block.available));
+      /* La raison se lit sur le bouton (infobulle) et sous lui (l'aide du pied la remplace). */
+      if(blocked)newSession.setAttribute('title',RUN_BLOCKED);else newSession.removeAttribute('title');
+      const help=blocked?RUN_BLOCKED:NEW_SESSION_HINT;
+      if(newSessionHint.textContent!==help)newSessionHint.textContent=help;
+      newSessionHint.setAttribute('data-tone',blocked?'warn':'');
       createInput.setAttribute('aria-invalid',createError.textContent?'true':'false');
       const line=sessionLineOf(session);
       if(sessionLine.textContent!==line)sessionLine.textContent=line;
@@ -1633,8 +1652,18 @@ ${H} .bd-sr,${P} .bd-sr{position:absolute;width:1px;height:1px;padding:0;margin:
       return result;
     }
 
+    /* Une action éteinte pendant la lecture, déclenchée quand même (clavier, appel direct) :
+       rien n'est ouvert, la raison est dite dans le bandeau du panneau et au journal. */
+    function refuseDuringRun(kind,data){
+      failure=Object.freeze({text:RUN_BLOCKED,tone:'warn',detail:'presentation_run'});
+      announce.textContent=RUN_BLOCKED;
+      log('info','boards.action_blocked_during_run',Object.assign({action:kind},data||{}));
+      paint(true);
+    }
+
     async function archiveBoard(boardId){
       if(pending)return null;
+      if(runBlocked()){refuseDuringRun('archive',{board_id:String(boardId)});return null}
       const id=String(boardId),name=titleOf(id);
       if(id===activeIdOf(block,listing)){
         /* Refusé **ici**, sans aller-retour : le serveur répondrait 409
@@ -1671,6 +1700,7 @@ ${H} .bd-sr,${P} .bd-sr{position:absolute;width:1px;height:1px;padding:0;margin:
        gestionnaire (promesse rejetée) passe par l'infusion. */
     function inspectBoard(boardId){
       if(pending)return false;
+      if(runBlocked()){refuseDuringRun('inspect',{board_id:String(boardId)});return false}
       const id=String(boardId),name=titleOf(id);
       if(!inspect){
         fail({code:'workspace_manager_missing',text:INSPECT_MISSING},'inspect',{board_id:id});
@@ -1701,6 +1731,7 @@ ${H} .bd-sr,${P} .bd-sr{position:absolute;width:1px;height:1px;padding:0;margin:
 
     async function startNewSession(){
       if(pending)return null;
+      if(runBlocked()){refuseDuringRun('new_session',{});return null}
       if(!(block&&block.available)){
         failure=Object.freeze({text:REFUSAL.core_unavailable,tone:'warn',detail:''});paint(true);return null}
       const boardTitle=text(block.active&&block.active.title);
@@ -1818,7 +1849,7 @@ ${H} .bd-sr,${P} .bd-sr{position:absolute;width:1px;height:1px;padding:0;margin:
      `<script>`, où `api` est déjà sa porte réseau. */
   const BOARDS_API=Object.freeze({
     DOM,TITLE_MAX,DEADLINE_MS,VERIFY,PATH,REFUSAL,UNAVAILABLE,WAITING,ARCHIVE_ACTIVE_REASON,NEW_SESSION_HINT,STYLE,
-    BOARD_KINDS,DEFAULT_KIND,PLANNED,ARCHIVED_HINT,INSPECT_MISSING,GEO,
+    BOARD_KINDS,DEFAULT_KIND,PLANNED,ARCHIVED_HINT,INSPECT_MISSING,GEO,RUN_BLOCKED,
     PRESENCE,PRESENCE_TEXT,STALE_REPORT_MARGIN_S,presenceOf,freshReport,
     validateTitle,refusalOf,activeIdOf,workingIdsOf,triggerViewOf,rowsOf,sessionLineOf,kindOf,openedOf,countsOf,
     alertBoardOf,elsewhereOf,pillLabelOf,goToBoardFromAlert,
@@ -1863,6 +1894,8 @@ ${H} .bd-sr,${P} .bd-sr{position:absolute;width:1px;height:1px;padding:0;margin:
       confirm:typeof confirmDialog==='function'?spec=>confirmDialog(spec):undefined,
       /* Le gestionnaire profond s'installe APRÈS ce module (même `<script>`) :
          il est cherché au clic, pas à l'installation. */
+      /* `jvx-run` : posé par Variantes le temps d'une lecture (control_center_presentation_studio_explorer.js). */
+      runBlocked:()=>document.documentElement.classList.contains('jvx-run'),
       inspect:(id,options)=>{
         const manager=window.JarvisWorkspace;
         if(!manager||typeof manager.openBoard!=='function')
