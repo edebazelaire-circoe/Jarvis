@@ -824,7 +824,8 @@ def build_server(target: ConsoleMcpTarget | None = None, *, tools: WorkspaceTool
     ) -> DossierRangerResult:
         """Ranger des objets du Board dans son Dossier : contenu gardé d'abord, puis retiré du Board.
 
-        Pas « masquer » : masquer ne range rien. Un refus laisse l'objet en place.
+        Pas « masquer » : masquer ne range rien. Pas « retirer du Board » : c'est scene_archive. Un refus laisse
+        l'objet en place.
         """
         return await ws.dossier_ranger(board_id, object_ids, dry_run=dry_run)
 
