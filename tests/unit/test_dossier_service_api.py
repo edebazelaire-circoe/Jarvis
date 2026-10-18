@@ -186,15 +186,68 @@ async def test_ranger_materializes_ephemeral_content_once_then_removes_the_repre
         assert f"memory:{expected_path}" in [e["entry_id"] for e in listed["entries"]], "Ranger -> Dossier entry"
 
 
-async def test_ranger_finds_an_earlier_copy_and_never_writes_a_second(tmp_path):
+async def test_ranger_never_overwrites_a_file_that_holds_another_body(tmp_path):
     async with CaptureStack(tmp_path) as stack:
         w = await on_board_a(stack)
         await put(stack, "brain-artifact-r2", payload=RESEARCH)
-        path = ranger_path(await active(stack, "brain-artifact-r2")).value
+        item = await active(stack, "brain-artifact-r2")
+        path = ranger_path(item).value
         await stack.core.workspace.memory_write(w.board_a, path=path, content="déjà rangé, puis corrigé\n")
         status, body = await post(stack, f"/boards/{w.board_a}/dossier/ranger", {"object_ids": ["brain-artifact-r2"]})
-        assert status == 200 and body["results"][0]["action"] == "confirmed" and body["results"][0]["archived"]
+        [result] = body["results"]
+        variant = ranger_path(item, content_variant=True).value
+        assert status == 200 and (result["action"], result["path"], result["archived"]) == ("materialized", variant, True)
+        assert result["entry_id"] == f"memory:{variant}", "the answer names the file that holds the shown content"
         assert memory_file(stack, w.board_a, path).read_text(encoding="utf-8") == "déjà rangé, puis corrigé\n"
+        assert "Bpifrance d'abord." in memory_file(stack, w.board_a, variant).read_text(encoding="utf-8")
+
+
+async def _ranger_refused_by_the_scene(stack, monkeypatch, board_id: str, object_id: str) -> dict:
+    """Ranger dont le retrait est refusé par le vrai réducteur (acteur `runtime`) : durable, encore affiché."""
+
+    scene = stack.core.scene
+    real = scene.apply_if
+
+    async def refusing(plan):
+        command = plan(await scene.snapshot())
+        return await real(lambda _s: SceneCommand(op=command.op, actor=SceneActor.RUNTIME, selection=command.selection))
+
+    monkeypatch.setattr(scene, "apply_if", refusing)
+    _, body = await post(stack, f"/boards/{board_id}/dossier/ranger", {"object_ids": [object_id]})
+    monkeypatch.setattr(scene, "apply_if", real)
+    return body["results"][0]
+
+
+async def test_a_second_ranger_of_the_same_content_confirms_the_first_file(tmp_path, monkeypatch):
+    async with CaptureStack(tmp_path) as stack:
+        w = await on_board_a(stack)
+        await put(stack, "brain-artifact-same", payload=RESEARCH)
+        first = await _ranger_refused_by_the_scene(stack, monkeypatch, w.board_a, "brain-artifact-same")
+        assert (first["action"], first["code"]) == ("materialized", "dossier_archive_failed")
+        before = memory_file(stack, w.board_a, first["path"]).read_bytes()
+        _, body = await post(stack, f"/boards/{w.board_a}/dossier/ranger", {"object_ids": ["brain-artifact-same"]})
+        [second] = body["results"]
+        assert (second["action"], second["path"], second["archived"]) == ("confirmed", first["path"], True)
+        assert memory_file(stack, w.board_a, first["path"]).read_bytes() == before
+        assert len(list(memory_file(stack, w.board_a, "notes").glob("pistes-de-financement-*.md"))) == 1
+
+
+async def test_same_title_changed_content_second_ranger_keeps_both_versions(tmp_path, monkeypatch):
+    """QA S05 B1 : même titre, contenu modifié après un retrait refusé ; le second Ranger garde la version affichée."""
+
+    async with CaptureStack(tmp_path) as stack:
+        w = await on_board_a(stack)
+        await put(stack, "brain-artifact-b1", payload=RESEARCH)
+        first = await _ranger_refused_by_the_scene(stack, monkeypatch, w.board_a, "brain-artifact-b1")
+        old_text = memory_file(stack, w.board_a, first["path"]).read_text(encoding="utf-8")
+        edited = ScenePayload(title=RESEARCH.title, summary="Version corrigée : Bpifrance puis la Région.")
+        await put(stack, "brain-artifact-b1", payload=edited)
+        _, body = await post(stack, f"/boards/{w.board_a}/dossier/ranger", {"object_ids": ["brain-artifact-b1"]})
+        [second] = body["results"]
+        assert second["action"] == "materialized" and second["path"] != first["path"] and second["archived"] is True
+        assert "Version corrigée" in memory_file(stack, w.board_a, second["path"]).read_text(encoding="utf-8")
+        assert memory_file(stack, w.board_a, first["path"]).read_text(encoding="utf-8") == old_text, "old file intact"
+        assert await active(stack, "brain-artifact-b1") is None
 
 
 async def test_ranger_confirms_or_links_durable_sources(tmp_path):
@@ -301,7 +354,7 @@ async def test_ranger_never_removes_content_changed_while_it_was_stored(tmp_path
 
         async def write_then_edit(*args, **kwargs):
             written = await real(*args, **kwargs)
-            await put(stack, "brain-artifact-c", payload=ScenePayload(title="Pistes", summary="éditée entre-temps"))
+            await put(stack, "brain-artifact-c", payload=ScenePayload(title=RESEARCH.title, summary="éditée entre-temps"))
             return written
 
         monkeypatch.setattr(workspace, "memory_write", write_then_edit)
@@ -309,6 +362,13 @@ async def test_ranger_never_removes_content_changed_while_it_was_stored(tmp_path
         [result] = body["results"]
         assert (result["durable"], result["archived"], result["code"]) == (True, False, "dossier_changed_meanwhile")
         assert (await active(stack, "brain-artifact-c")).payload.summary == "éditée entre-temps"
+        monkeypatch.setattr(workspace, "memory_write", real)
+        # « Rangez-le de nouveau » : même titre, autre corps -> un second fichier, l'ancien reste, puis le retrait.
+        _, again = await post(stack, f"/boards/{w.board_a}/dossier/ranger", {"object_ids": ["brain-artifact-c"]})
+        [second] = again["results"]
+        assert (second["action"], second["archived"]) == ("materialized", True) and second["path"] != result["path"]
+        assert "éditée entre-temps" in memory_file(stack, w.board_a, second["path"]).read_text(encoding="utf-8")
+        assert "Bpifrance d'abord." in memory_file(stack, w.board_a, result["path"]).read_text(encoding="utf-8")
 
 
 async def test_ranger_and_present_need_the_active_board(tmp_path):

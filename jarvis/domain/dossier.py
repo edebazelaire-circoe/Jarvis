@@ -317,19 +317,29 @@ def _slug(title: str) -> str:
     return slug or "note"
 
 
-def ranger_path(item: SceneObject) -> BoardMemoryPath:
+def ranger_path(item: SceneObject, *, content_variant: bool = False) -> BoardMemoryPath:
     """Chemin déterministe du contenu rangé : `notes/<titre>-<empreinte de l'objet>.md`.
 
     L'empreinte vient de l'`object_id` (stable pour toute la vie de l'objet) : un second Ranger du même objet
-    après un retrait refusé retrouve ce fichier (`memory_exists`) au lieu d'en écrire un second.
+    après un retrait refusé retrouve ce fichier (`memory_exists`) au lieu d'en écrire un second. Si ce fichier
+    porte un **autre** corps que celui affiché (contenu modifié depuis, même titre), `content_variant=True`
+    donne le chemin propre à ce corps : `notes/<titre>-<objet>-<empreinte du corps>.md`. L'ancien fichier
+    n'est jamais écrasé, et un même corps retombe toujours sur le même chemin.
     """
 
     digest = hashlib.sha256(item.object_id.encode("utf-8")).hexdigest()[:8]
-    return BoardMemoryPath.parse(f"{RANGER_FOLDER}/{_slug(item.payload.title)}-{digest}.md")
+    suffix = ""
+    if content_variant:
+        suffix = "-" + hashlib.sha256(ranger_body(item).encode("utf-8")).hexdigest()[:8]
+    return BoardMemoryPath.parse(f"{RANGER_FOLDER}/{_slug(item.payload.title)}-{digest}{suffix}.md")
 
 
-def ranger_markdown(item: SceneObject, *, stored_at: datetime, origin: str) -> str:
-    """Le contenu de la représentation, une fois, en Markdown ; la provenance en pied (lisible, puis machine)."""
+#: Début du pied de provenance écrit par `ranger_markdown` (ligne `---` puis cette phrase).
+_FOOTER_MARK = "\n---\nRangé depuis le Board le "
+
+
+def ranger_body(item: SceneObject) -> str:
+    """Le corps rangé (titre, texte, entrées), sans pied de provenance : ce qui se compare d'un Ranger à l'autre."""
 
     payload = item.payload
     lines: list[str] = []
@@ -342,6 +352,20 @@ def ranger_markdown(item: SceneObject, *, stored_at: datetime, origin: str) -> s
         lines.append(f"- {entry.label}" + (f" ({target})" if target else ""))
     if payload.items:
         lines.append("")
+    return "\n".join(lines)
+
+
+def stored_body(text: str) -> str:
+    """Le corps d'un fichier déjà rangé : tout ce qui précède le **dernier** pied de provenance."""
+
+    cut = text.rfind(_FOOTER_MARK)
+    return text if cut < 0 else text[:cut]
+
+
+def ranger_markdown(item: SceneObject, *, stored_at: datetime, origin: str) -> str:
+    """Le contenu de la représentation, une fois, en Markdown ; la provenance en pied (lisible, puis machine)."""
+
+    lines = [ranger_body(item)] if ranger_body(item) else []
     who = "par Jarvis" if origin == "brain" else "par vous"
     lines += ["---", f"Rangé depuis le Board le {stored_at.astimezone().strftime('%d/%m/%Y à %H:%M')}, {who}.",
               f"<!-- jarvis:dossier object_id={item.object_id} kind={item.kind.value} category={item.category} "
@@ -354,5 +378,5 @@ __all__ = [
     "EntryKind", "EntrySource", "MAX_LINKED_SCAN", "MAX_LIST_LIMIT", "MAX_RANGER_OBJECTS", "MEMORY_PREFIX",
     "MEMORY_SCAN_DEPTH", "MEMORY_SCAN_ENTRIES", "OpenMode", "PRESENT_CATEGORY", "RANGER_FOLDER", "SceneBacking",
     "artifact_entry_kind", "artifact_entry_title", "classify_scene_object", "memory_entry_kind",
-    "memory_entry_title", "ranger_markdown", "ranger_path",
+    "memory_entry_title", "ranger_body", "ranger_markdown", "ranger_path", "stored_body",
 ]

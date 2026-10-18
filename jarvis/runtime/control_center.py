@@ -2390,8 +2390,8 @@ class ControlCenter:
             STUDIO_EXPLORER_SCRIPT_MARKER,
             page.with_name(STUDIO_EXPLORER_SCRIPT_FILE).read_text(encoding="utf-8"),
         )
-        html = html.replace("__JARVIS_EXPLORER_PAGE_TOKEN__", self.studio_explorer.broker.page_token)
-        html = html.replace(DOSSIER_PAGE_TOKEN_MARKER, self.dossier_navigation.broker.page_token)   # Slice 07 pose le marqueur dans la page   # remis AVEC la page : reçus et rapports d'état l'exigent
+        html = html.replace("__JARVIS_EXPLORER_PAGE_TOKEN__", self.studio_explorer.broker.page_token)   # remis AVEC la page : reçus et rapports d'état l'exigent
+        html = html.replace(DOSSIER_PAGE_TOKEN_MARKER, self.dossier_navigation.broker.page_token)   # idem pour le Dossier (marqueur posé par la Slice 07)
         html = html.replace(
             STUDIO_PLAYER_SCRIPT_MARKER,
             page.with_name(STUDIO_PLAYER_SCRIPT_FILE).read_text(encoding="utf-8"),

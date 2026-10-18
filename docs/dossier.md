@@ -149,9 +149,19 @@ Dossier is a separate dimension, never a third disposition.
    summary (Markdown kept as written), the items as a list, then a footer
    « Rangé depuis le Board le … , par vous|par Jarvis. » and a machine comment
    `<!-- jarvis:dossier object_id=… kind=… category=… origin=… stored_at=… -->`.
-   The path is deterministic: a second Ranger of the same object finds the file
-   (`memory_exists`) and keeps it as it is (`confirmed`, never overwritten,
-   never a second copy). A failed write (`memory_*`, `board_*`) leaves the
+   The path is deterministic. When a second Ranger of the same object finds a
+   file there (`memory_exists`), it compares that file's **body** (everything
+   before the last provenance footer) with the body rendered from what is shown
+   now: identical -> `confirmed` (idempotent, no second copy); different (the
+   content changed since, same title: after `dossier_changed_meanwhile` or
+   `dossier_archive_failed` and an edit) -> it writes, still in mode `create`,
+   the body's own path `notes/<slug>-<sha256(object_id)[:8]>-<sha256(body)[:8]>.md`
+   (or confirms it if it already holds that body) and only then removes the
+   representation. An existing file is never overwritten, and the shown content
+   is always durable before it leaves the Board
+   (`test_same_title_changed_content_second_ranger_keeps_both_versions`). The
+   answer's `entry_id` / `path` name the file that holds the shown content.
+   A failed write (`memory_*`, `board_*`) leaves the
    object visible, `status: refused`, `durable: false`, with the owner's code.
    `workspace_ledger_failed` after a write counts as durable (the file exists)
    and is said (`ledger_failed: true`).

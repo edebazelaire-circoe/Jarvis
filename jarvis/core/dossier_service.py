@@ -44,14 +44,15 @@ from typing import Any, Callable
 import uuid
 
 from jarvis.core.capture_api import artifact_summary, redact_paths
-from jarvis.core.workspace_service import LEDGER_FAILED, WorkspaceError
+from jarvis.core.workspace_service import LEDGER_FAILED, MAX_READ_BYTES, WorkspaceError
 from jarvis.domain.artifacts import Artifact, ArtifactError, ArtifactErrorCode
 from jarvis.domain.board_artifact_links import BoardArtifactLink, BoardArtifactLinkOrigin
 from jarvis.domain.board_memory import BoardMemoryError, BoardMemoryErrorCode, BoardMemoryPath
 from jarvis.domain.dossier import (
     DEFAULT_LIST_LIMIT, MAX_LINKED_SCAN, MAX_LIST_LIMIT, MAX_RANGER_OBJECTS, MEMORY_SCAN_DEPTH, PRESENT_CATEGORY,
     BackingKind, DossierCode, DossierEntryRef, EntryKind, EntrySource, artifact_entry_kind, artifact_entry_title,
-    classify_scene_object, memory_entry_kind, memory_entry_title, ranger_markdown, ranger_path,
+    classify_scene_object, memory_entry_kind, memory_entry_title, ranger_body, ranger_markdown, ranger_path,
+    stored_body,
 )
 from jarvis.domain.scene import (
     MAX_SOURCE_PATH_CHARS, MAX_TITLE_CHARS, Representation, SceneActor, SceneCommand, SceneCommandOutcome,
@@ -395,21 +396,33 @@ class DossierService:
             return ("linked" if linked["created"] else "confirmed"), {"artifact_id": resolved.ref.key}
         if resolved.backing == "memory":
             return "confirmed", {"path": resolved.ref.key}
-        text = ranger_markdown(resolved.item, stored_at=self._clock(), origin=origin)
-        try:
-            written = await self._workspace.memory_write(board.board_id, path=resolved.ref.key, content=text,
-                                                         origin=origin)
-        except BoardMemoryError as exc:
-            if exc.code is not BoardMemoryErrorCode.MEMORY_EXISTS:
-                raise
-            # Déjà rangé une fois (même objet, même chemin déterministe) : on garde ce fichier, jamais d'écrasement.
-            return "confirmed", {"path": resolved.ref.key}
-        except WorkspaceError as exc:
-            if exc.code != LEDGER_FAILED:
-                raise
-            # Le fichier EST écrit (`applied: true`) : la durabilité est acquise, la ligne d'activité manque.
-            return "materialized", {"path": resolved.ref.key, "ledger_failed": True}
-        return "materialized", {"path": written["path"], "sha256": written["sha256"]}
+        item = resolved.item
+        text = ranger_markdown(item, stored_at=self._clock(), origin=origin)
+        # Chemin de l'objet, puis, s'il porte un autre corps (contenu modifié depuis, même titre), celui de ce corps :
+        # jamais d'écrasement, et seul un fichier au corps identique à l'affiché vaut « confirmé » (QA S05 B1).
+        for path in (resolved.ref.key, ranger_path(item, content_variant=True).value):
+            try:
+                written = await self._workspace.memory_write(board.board_id, path=path, content=text, origin=origin)
+            except BoardMemoryError as exc:
+                if exc.code is not BoardMemoryErrorCode.MEMORY_EXISTS:
+                    raise
+                if await self._holds_body(board.board_id, path, ranger_body(item)):
+                    return "confirmed", {"path": path}
+                continue  # un autre corps (l'ancienne version) : il reste intact, on essaie le chemin de ce corps-ci
+            except WorkspaceError as exc:
+                if exc.code != LEDGER_FAILED:
+                    raise
+                # Le fichier EST écrit (`applied: true`) : la durabilité est acquise, la ligne d'activité manque.
+                return "materialized", {"path": path, "ledger_failed": True}
+            return "materialized", {"path": written["path"], "sha256": written["sha256"]}
+        raise BoardMemoryError(BoardMemoryErrorCode.MEMORY_EXISTS,
+                               f"{path}: already holds another content for this object; nothing overwritten")
+
+    async def _holds_body(self, board_id: str, path: str, body: str) -> bool:
+        """Le fichier rangé à `path` porte-t-il exactement ce corps (pied de provenance exclu) ?"""
+
+        page = await self._workspace.memory_read(board_id, path=path, max_bytes=MAX_READ_BYTES)
+        return bool(page["eof"]) and stored_body(page["text"]) == body
 
     async def ranger(self, board_id: str, object_ids: object, *, origin: str = "user") -> dict[str, Any]:
         """Ranger : source durable d'abord, retrait de la représentation ensuite ; résultat par objet."""
@@ -439,8 +452,9 @@ class DossierService:
                 continue
             assert resolved.ref is not None
             durable[object_id] = resolved
+            entry_id = DossierEntryRef.memory(detail["path"]).entry_id if "path" in detail else resolved.ref.entry_id
             results[object_id] = {"object_id": object_id, "status": "stored", "backing": resolved.backing,
-                                  "action": action, "entry_id": resolved.ref.entry_id, "durable": True,
+                                  "action": action, "entry_id": entry_id, "durable": True,
                                   "archived": False, **detail}
         revision = await self._archive_durable(board, durable, results, origin)
         stored = sum(1 for item in results.values() if item["status"] == "stored")
