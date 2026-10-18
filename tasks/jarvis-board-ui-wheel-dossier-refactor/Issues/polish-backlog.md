@@ -120,3 +120,20 @@ outside the acceptance of the Slice that found it.
    reads « étoile ». Fine for forms; a kind word may help in mixed selections.
 5. **Brain turn over budget** on « masque ça » (9.4 s vs 8 s) — pre-existing brain latency, not Slice 06 code.
 6. Sélection holds 8 rows with a selection (arc limit 9): any new action must go into a second level.
+
+## From Slice 06 QA (Selection actions) — targets Slices 07/08
+
+1. **(assigned to Slice 07, first step)** After Masquer / Retirer / Ranger, an unrelated neighbouring object becomes
+   the selection (`dossier-memory-…` after « 2 objets masqués », `brain-window-cachee` after Retirer); the next wheel
+   action would act on it. Same as Slice 06 polish item 3.
+2. Voice/UI parity: « retire-la du Board » makes the brain call `dossier_ranger` (writes a `notes/…` file, then
+   archives) whereas the UI « Retirer du Board » writes nothing to the Dossier. Safe and truthfully reported, but the
+   same words do not give the same operation. Brain prompt/tool wording, Slice 08.
+3. Registry image window: a screenshot renders as a ~60×34 px thumbnail in a mostly empty window.
+4. « Aucun objet masqué » row shows an orphan small circle at 600×800.
+5. `docs/mcp/tool-contract.md` §10.18 could say that `dry_run` returns `refused dossier_board_not_active` on a Board
+   that is not displayed.
+6. `backing.reason` (e.g. « un groupe n'est qu'un cadre : rangez ses objets un par un ») is not shown; the UI shows
+   only the generic message.
+7. Seen in the sandbox, not compared with the base: a click / Ctrl+click on a star produced `set_representation`.
+8. Not verified: a real agent star (actor `brain` refused by `execution_node`, `runtime` forbidden over HTTP).
