@@ -60,7 +60,8 @@ import math
 from typing import TYPE_CHECKING, Any, Callable
 
 from jarvis.domain._checks import (
-    MAX_ID_CHARS, MAX_PREFAB_VERSION, check_id, check_text, check_token, is_prefab_id, is_prefab_version, preview,
+    MAX_ID_CHARS, MAX_PREFAB_VERSION, check_id, check_prefixed_id, check_text, check_token, is_prefab_id,
+    is_prefab_version, preview,
 )
 from jarvis.domain.work_state import MAX_SOURCE_CHARS
 
@@ -89,6 +90,9 @@ MAX_ANNOTATION_CHARS = 60
 MAX_SOURCE_PATH_CHARS = 512
 MAX_ITEM_REF_CHARS = 256
 MAX_URL_CHARS = 2_048
+#: Préfixe d'un Artifact du registre (`jarvis.domain.artifacts.ARTIFACT_ID_PREFIX`, parité testée) : recopié ici
+#: parce que le domaine de la scène n'importe aucun autre domaine que `work_state` (`test_scene_module_is_pure_domain`).
+REGISTRY_ARTIFACT_ID_PREFIX = "jart_"
 #: Taille JSON UTF-8 compacte d'une charge. Refusée au-delà, jamais tronquée.
 MAX_PAYLOAD_BYTES = 16_384
 #: Objets actifs d'un instantané. Au-delà, une création est `invalid`
@@ -644,6 +648,12 @@ class ScenePayload:
     reste dessinée par la page, son corps est le cadre sandboxé de la
     définition. Seule une `window` en porte un (`SceneObject`). Absent : le fil
     ne change pas (même règle qu'`annotation`).
+
+    `registry_artifact_id` (Dossier, `docs/dossier.md`) lie la représentation à
+    un **Artifact du registre** (`jart_…`, table `artifacts`) : sa source
+    durable. Ce n'est pas un objet `kind=artifact` (artefact de scène). Vide :
+    aucun lien, clé absente du fil (même règle que `source_path`). Le domaine
+    vérifie la forme de l'identifiant, jamais son existence.
     """
 
     title: str = ""
@@ -652,11 +662,17 @@ class ScenePayload:
     annotation: str = ""
     source_path: str = ""
     prefab: ScenePrefabRef | None = None
+    registry_artifact_id: str = ""
 
     def __post_init__(self) -> None:
         check_text("title", self.title, MAX_TITLE_CHARS)
         check_text("annotation", self.annotation, MAX_ANNOTATION_CHARS)
         check_text("source_path", self.source_path, MAX_SOURCE_PATH_CHARS)
+        if self.registry_artifact_id:
+            check_prefixed_id(ValueError, "registry_artifact_id", self.registry_artifact_id,
+                              REGISTRY_ARTIFACT_ID_PREFIX)
+        elif not isinstance(self.registry_artifact_id, str):
+            raise TypeError("registry_artifact_id must be a string")
         _check_multiline_text("summary", self.summary, MAX_PAYLOAD_SUMMARY_CHARS)
         if not isinstance(self.items, tuple) or not all(isinstance(item, ScenePayloadItem) for item in self.items):
             raise TypeError("items must be a tuple of ScenePayloadItem")
@@ -681,11 +697,13 @@ class ScenePayload:
             wire["source_path"] = self.source_path
         if self.prefab is not None:
             wire["prefab"] = self.prefab.to_payload()
+        if self.registry_artifact_id:
+            wire["registry_artifact_id"] = self.registry_artifact_id
         return wire
 
     @classmethod
     def from_payload(cls, payload: object) -> ScenePayload:
-        data = check_wire_keys("payload", payload, frozenset(), frozenset({"title", "summary", "items", "annotation", "source_path", "prefab"}))
+        data = check_wire_keys("payload", payload, frozenset(), _PAYLOAD_OPTIONAL_KEYS)
         items = _list("items", data.get("items", []), MAX_PAYLOAD_ITEMS)
         return cls(
             title=data.get("title", ""),
@@ -694,7 +712,14 @@ class ScenePayload:
             annotation=data.get("annotation", ""),
             source_path=data.get("source_path", ""),
             prefab=_optional_nested(ScenePrefabRef, data, "prefab"),
+            registry_artifact_id=data.get("registry_artifact_id", ""),
         )
+
+
+#: Clés de la charge, toutes facultatives. `registry_artifact_id` (Dossier) : un binaire plus ancien la refuse
+#: (`check_wire_keys`) ; voir `docs/dossier.md` › *Rollback*.
+_PAYLOAD_OPTIONAL_KEYS = frozenset({"title", "summary", "items", "annotation", "source_path", "prefab",
+                                    "registry_artifact_id"})
 
 
 @dataclass(frozen=True, slots=True)

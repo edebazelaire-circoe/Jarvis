@@ -462,6 +462,27 @@ WORKSPACE = ServerMeta(
             "Lier ou délier un Artifact", "write", True, "single_request", "structured",
             parameter_rules=(_NAMED_BOARD_RULE, "linked=false : retire le lien"),
             output_notes=("changed=false : déjà dans cet état (aucune ligne d'activité)",)),
+        # Dossier (wheel-dossier-refactor, Slice 05, `docs/dossier.md`) : projection de la mémoire et des
+        # Artifacts liés, Ranger, Afficher sur le Board, ouvrir à l'écran. Pas des opérations d'interface
+        # du Tool Brain (`ui_surface` nul, comme la mémoire) : elles passent par Core.
+        "dossier_list": ToolMeta(
+            "Lire le Dossier d'un Board", "read", True, "none", "structured",
+            parameter_rules=(_NAMED_BOARD_RULE, "since : date ISO avec fuseau"),
+            output_notes=("≤ 50 entrées, summary.md d'abord puis les plus récentes ; truncated au-delà",)),
+        "dossier_ranger": ToolMeta(
+            "Ranger des objets dans le Dossier", "write", True, "single_request", "structured",
+            parameter_rules=("board_id = le Board actif (dossier_board_not_active sinon)", "≤ 20 object_ids",
+                             "dry_run=true : rien n'est écrit"),
+            output_notes=("par objet : stored (archived dit s'il a quitté le Board) ou refused (code, message) ; "
+                          "un refus laisse l'objet affiché",)),
+        "dossier_present": ToolMeta(
+            "Afficher une entrée sur le Board", "write", True, "single_request", "structured",
+            parameter_rules=("board_id = le Board actif", "entry_id de dossier_list"),
+            output_notes=("created=false : la représentation de la même source est réutilisée",)),
+        "dossier_view": ToolMeta(
+            "Ouvrir une entrée du Dossier à l'écran", "write", True, "single_request", "structured",
+            parameter_rules=("entry_id de dossier_list",),
+            output_notes=("state = reçu de la page ; no_visible_page : aucune page n'a répondu",)),
     },
 )
 

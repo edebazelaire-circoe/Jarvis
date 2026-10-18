@@ -93,6 +93,17 @@ MAX_SEARCH_QUERY_CHARS = 200
 #: 256 Kio par écriture côté Core (`MAX_MEMORY_IO_BYTES`) : au plus autant de caractères ici, Core compte les octets.
 MAX_WRITE_CHARS = 256 * 1024
 
+#: Dossier (wheel-dossier-refactor, Slice 05) : entrées par appel, objets par Ranger.
+MAX_DOSSIER_LIST = 50
+DEFAULT_DOSSIER_LIST = 20
+MAX_DOSSIER_OBJECTS = 20
+#: `memory:<chemin>` ou `artifact:<jart_…>` (`jarvis/domain/dossier.py`) ; Core le valide en entier.
+ENTRY_ID_PATTERN = r"^(memory:.+|artifact:jart_[a-z0-9_-]+)$"
+MAX_ENTRY_ID_CHARS = 260
+DOSSIER_ROUTE = "/api/dossier/navigation/commands"
+#: Le canal attend la page 5 s (`dossier_navigation.DELIVERY_DEADLINE_S`) : un peu plus.
+NAVIGATION_TIMEOUT_S = 8.0
+
 #: `truncated: true` d'une recherche : une borne a arrêté le parcours, l'absence de résultat ne prouve rien.
 SEARCH_INCOMPLETE_NOTE = ("Recherche incomplète : une borne a arrêté le parcours (fichiers ou octets). "
                           "Ne conclus pas « rien trouvé » ; affine path.")
@@ -384,6 +395,79 @@ class WorkspaceTools:
         return {"board_id": board_id, "artifact_id": artifact_id, "linked": linked, "changed": changed}
 
 
+    # ------------------------------------------------------------ Dossier (wheel-dossier-refactor, Slice 05)
+
+    async def dossier_list(self, board_id: str, *, limit: int = DEFAULT_DOSSIER_LIST,
+                           since: str | None = None) -> dict[str, Any]:
+        route = _board_route(board_id) + "/dossier"
+        body = await self._send("dossier_list", "GET", route, timeout_s=DISK_TIMEOUT_S,
+                                params=_drop_none({"limit": str(limit), "since": since}))
+        board = self._shape("dossier_list", route, body.get("board"), dict)
+        entries = [{"entry_id": item.get("entry_id"), "kind": item.get("kind"), "title": item.get("title"),
+                    "open": item.get("open"), "modified_at": item.get("modified_at"),
+                    **_drop_none({"size": item.get("size"), "preview": item.get("preview"),
+                                  "provenance": item.get("provenance")})}
+                   for item in self._shape("dossier_list", route, body.get("entries"), list)
+                   if isinstance(item, Mapping)]
+        sources = body.get("sources") if isinstance(body.get("sources"), Mapping) else {}
+        memory = sources.get("memory") if isinstance(sources.get("memory"), Mapping) else {}
+        self._done("dossier_list", f"{len(entries)} entrée(s)", board_id=board_id, count=len(entries))
+        return _drop_none({"board_id": board_id, "writable": bool(board.get("writable")), "entries": entries,
+                           "total": int(body.get("total") or 0), "truncated": bool(body.get("truncated")),
+                           "memory_error": memory.get("error")})
+
+    @staticmethod
+    def _ranger_item(item: Mapping[str, Any], status: Any) -> dict[str, Any]:
+        return {"object_id": item.get("object_id"), "status": status, "backing": item.get("backing"),
+                "entry_id": item.get("entry_id"),
+                **_drop_none({"action": item.get("action"), "archived": item.get("archived"),
+                              "code": item.get("code"), "message": item.get("message")})}
+
+    async def dossier_ranger(self, board_id: str, object_ids: list[str], *, dry_run: bool = False) -> dict[str, Any]:
+        if dry_run:
+            route = _board_route(board_id) + "/dossier/backing"
+            body = await self._send("dossier_ranger", "GET", route,
+                                    params=[("object_id", object_id) for object_id in object_ids])
+            results = [self._ranger_item(item, "rangeable" if item.get("rangeable") else "refused")
+                       for item in self._shape("dossier_ranger", route, body.get("objects"), list)
+                       if isinstance(item, Mapping)]
+            refused = sum(1 for item in results if item["status"] == "refused")
+            self._done("dossier_ranger", f"aperçu : {len(results) - refused} rangeable(s)", board_id=board_id,
+                       dry_run=True, count=len(results))
+            return {"board_id": board_id, "dry_run": True, "stored": 0, "refused": refused, "results": results}
+        route = _board_route(board_id) + "/dossier/ranger"
+        body = await self._send("dossier_ranger", "POST", route, timeout_s=DISK_TIMEOUT_S,
+                                payload={"object_ids": object_ids, "origin": BRAIN_ORIGIN})
+        results = [self._ranger_item(item, item.get("status"))
+                   for item in self._shape("dossier_ranger", route, body.get("results"), list)
+                   if isinstance(item, Mapping)]
+        self._done("dossier_ranger", f"{body.get('stored')} rangé(s), {body.get('refused')} refusé(s)",
+                   board_id=board_id, stored=body.get("stored"), refused=body.get("refused"))
+        return {"board_id": board_id, "dry_run": False, "stored": int(body.get("stored") or 0),
+                "refused": int(body.get("refused") or 0), "results": results}
+
+    async def dossier_present(self, board_id: str, entry_id: str, *, representation: str = "window") -> dict[str, Any]:
+        route = _board_route(board_id) + "/dossier/present"
+        body = await self._send("dossier_present", "POST", route,
+                                payload={"entry_id": entry_id, "representation": representation,
+                                         "origin": BRAIN_ORIGIN})
+        self._done("dossier_present", "créée" if body.get("created") else "réutilisée", board_id=board_id,
+                   created=body.get("created"))
+        return {"board_id": board_id, "entry_id": body.get("entry_id"), "object_id": body.get("object_id"),
+                "created": bool(body.get("created")), "representation": body.get("representation")}
+
+    async def dossier_view(self, board_id: str, entry_id: str) -> dict[str, Any]:
+        # L'entrée existe dans CE Dossier (refus codé de Core sinon) avant de déranger l'écran.
+        await self._send("dossier_view", "GET", _board_route(board_id) + "/dossier/entry", params={"id": entry_id})
+        body = await self._send("dossier_view", "POST", DOSSIER_ROUTE, timeout_s=NAVIGATION_TIMEOUT_S,
+                                payload={"board_id": board_id, "entry_id": entry_id})
+        state = body.get("state")
+        self._done("dossier_view", str(state), board_id=board_id, state=state, code=body.get("code"))
+        return {"board_id": board_id, "entry_id": entry_id, "state": state,
+                **_drop_none({"code": body.get("code"), "reason": body.get("reason")}),
+                "explanation": body.get("explanation")}
+
+
 _SERVER_INSTRUCTIONS = (
     "Boards, Sessions et mémoire des Boards de JARVIS, tenus par le cœur : les gestes de l'interface. Un Board est "
     "un espace de travail durable (titre, type fixé à la création, résumé, références, dossier mémoire). board_switch y déplace la "
@@ -413,7 +497,8 @@ def build_server(target: ConsoleMcpTarget | None = None, *, tools: WorkspaceTool
     )
     from jarvis.runtime.mcp_results import (
         OUTPUT_CONTRACT_MESSAGE, BoardArtifactLinkResult, BoardArtifactsResult, BoardInspectResult, BoardListResult,
-        BoardResult, BoardSwitchResult, MemoryDeleteResult, MemoryMoveResult, MemoryReadResult, MemorySearchResult,
+        BoardResult, BoardSwitchResult, DossierListResult, DossierViewResult, DossierPresentResult,
+        DossierRangerResult, MemoryDeleteResult, MemoryMoveResult, MemoryReadResult, MemorySearchResult,
         MemoryTreeResult, MemoryWriteResult, SessionCurrentResult, SessionGetResult, SessionListResult,
         SessionNewResult, output_contract_fields,
     )
@@ -681,6 +766,48 @@ def build_server(target: ConsoleMcpTarget | None = None, *, tools: WorkspaceTool
     ) -> BoardArtifactLinkResult:
         """Lier un Artifact à un Board (ou retirer le lien)."""
         return await ws.artifact_link(board_id, artifact_id, linked=linked)
+
+    # ------------------------------------------------------------ Dossier (wheel-dossier-refactor, Slice 05)
+
+    EntryId = Annotated[str, Field(pattern=ENTRY_ID_PATTERN, max_length=MAX_ENTRY_ID_CHARS,
+                                   description="entry_id rendu par dossier_list.")]
+
+    @mcp.tool(annotations=tool_annotations(SERVER_NAME, "dossier_list"))
+    async def dossier_list(
+        board_id: BoardId,
+        limit: Annotated[int, Field(ge=1, le=MAX_DOSSIER_LIST)] = DEFAULT_DOSSIER_LIST,
+        since: Annotated[str | None, Field(max_length=40, description=(
+            "Date ISO avec fuseau : seulement ce qui a changé depuis."))] = None,
+    ) -> DossierListResult:
+        """Le Dossier d'un Board, comme l'humain le voit : sa mémoire et ses Artifacts liés, une entrée par source."""
+        return await ws.dossier_list(board_id, limit=limit, since=since)
+
+    @mcp.tool(annotations=tool_annotations(SERVER_NAME, "dossier_ranger"))
+    async def dossier_ranger(
+        board_id: BoardId,
+        object_ids: Annotated[list[Annotated[str, Field(min_length=1, max_length=128)]], Field(
+            min_length=1, max_length=MAX_DOSSIER_OBJECTS, description="Ids rendus par scene_inspect.")],
+        dry_run: Annotated[bool, Field(description="Seulement dire ce que Ranger ferait.")] = False,
+    ) -> DossierRangerResult:
+        """Ranger des objets du Board dans son Dossier : contenu gardé d'abord, puis retiré du Board.
+
+        Pas « masquer » : masquer ne range rien. Un refus laisse l'objet en place.
+        """
+        return await ws.dossier_ranger(board_id, object_ids, dry_run=dry_run)
+
+    @mcp.tool(annotations=tool_annotations(SERVER_NAME, "dossier_present"))
+    async def dossier_present(
+        board_id: BoardId,
+        entry_id: EntryId,
+        representation: Literal["window", "capsule", "point"] = "window",
+    ) -> DossierPresentResult:
+        """Afficher sur le Board une entrée du Dossier : même source, rien n'est recopié."""
+        return await ws.dossier_present(board_id, entry_id, representation=representation)
+
+    @mcp.tool(annotations=tool_annotations(SERVER_NAME, "dossier_view"))
+    async def dossier_view(board_id: BoardId, entry_id: EntryId) -> DossierViewResult:
+        """Ouvrir le Dossier à l'écran sur une entrée ; rend le reçu de la page."""
+        return await ws.dossier_view(board_id, entry_id)
 
     return mcp
 

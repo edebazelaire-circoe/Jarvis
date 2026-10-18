@@ -1440,3 +1440,45 @@ vidéo et confirme ; la vidéo entière de la variante (ou la scène à l'écran
 `unknown` is an unreadable state, never « disponible ». Budgets unchanged (`tests/unit/test_mcp_catalog.py`). **Slice 09 (release)**: the real
 trace create → whole-video export → voice edit → re-export → incompatible refusal was rerun on the release head (run `trace-t2`,
 claude-sonnet-5-5, USD 0.92, 0 refusals; the handoff's `slices/09-release-and-human-acceptance/evidence/trace-t2/`).
+
+### 10.18 Wheel-dossier-refactor, Slice 05 — Dossier tools on `jarvis-workspace`
+
+Handoff `tasks/jarvis-board-ui-wheel-dossier-refactor/`. Contract of the
+semantics, routes and codes: [../dossier.md](../dossier.md). Four tools appended
+to `jarvis-workspace` (§10.12), after `board_artifact_link`, category
+`workspace`, all `structured`, **no `ui_surface`** (like the memory tools: they
+are documentary operations served by Core, not Tool Brain UI operations). A
+facade as the rest of the server: Core's `DossierService` owns every rule;
+writes send `origin: "brain"`.
+
+| Tool | Route(s) | Class / idempotent | Result (`mcp_results`) |
+| --- | --- | --- | --- |
+| `dossier_list` | `GET /api/workspace/boards/{id}/dossier?limit≤50&since` | read / yes | `DossierListResult {board_id, writable, entries[{entry_id, kind, title, open, modified_at, size?, preview?, provenance?}], total, truncated, memory_error?}` — the human view only (no `path`, no `advanced`) |
+| `dossier_ranger` | `POST …/dossier/ranger {object_ids ≤ 20, origin: brain}`; `dry_run=true`: `GET …/dossier/backing?object_id=…` | write / yes | `DossierRangerResult {board_id, dry_run, stored, refused, results[{object_id, status: stored\|refused\|rangeable, backing, entry_id, action?, archived?, code?, message?}]}` |
+| `dossier_present` | `POST …/dossier/present {entry_id, representation, origin: brain}` | write / yes | `DossierPresentResult {board_id, entry_id, object_id, created, representation}` |
+| `dossier_view` | `GET …/dossier/entry?id=` then `POST /api/dossier/navigation/commands {board_id, entry_id}` | write / yes | `DossierViewResult {board_id, entry_id, state: opened\|refused, code?, reason?, explanation}` — the page's receipt, never assumed |
+
+(`…` = `/api/workspace/boards/{board_id}`.) `dossier_ranger` is `write`, not
+`destructive`: it removes a representation only after its durable source is
+confirmed, and never deletes durable content. Schema pieces: `BoardId`
+(§10.12), `EntryId` (pattern `^(memory:.+|artifact:jart_[a-z0-9_-]+)$`, ≤ 260;
+Core revalidates), `representation` `window|capsule|point`. Refusals: the
+§10.12 format with the new vouvoyées sentences of
+`workspace_boards.ERROR_SENTENCES` (`dossier_board_not_active`,
+`dossier_entry_not_found`, `dossier_entry_invalid`, `scene_unavailable`,
+`no_visible_page`, `command_expired`, `command_busy`); per-object refusals of
+`dossier_ranger` are results, not tool errors, each with its own sentence.
+
+**Context cost** (2026-10-18): `dossier_list` 649 B, `dossier_ranger` 771 B,
+`dossier_present` 665 B, `dossier_view` 536 B (+2 621 B):
+`jarvis-workspace` **16 417 B** (budget `WORKSPACE_CONTEXT_BUDGET_BYTES` raised
+14 500 -> 16 700), declared surface **116 259 B** (budget
+`DECLARED_CONTEXT_BUDGET_BYTES` raised 113 700 -> 116 500, this server only).
+Written reason: without them the brain merges `board_memory_tree` and
+`board_artifacts` itself, cannot Ranger (durability then removal is a Core
+semantic, not two tool calls) and cannot show an entry without copying its
+content. Server instructions unchanged (894 B, budget 950 B). Tests:
+`tests/unit/test_dossier_mcp.py` (real MCP session -> real Control Center ->
+Core: human view, dry run, origin brain in the ledger, codes, a simulated page
+answering `dossier_view`, `no_visible_page`), `tests/unit/test_mcp_catalog.py`
+(order, classes, budgets).

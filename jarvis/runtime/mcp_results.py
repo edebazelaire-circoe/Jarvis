@@ -861,6 +861,76 @@ class BoardArtifactLinkResult(ToolResult):
     changed: bool
 
 
+# ------------------------------------------------------------------ Dossier (wheel-dossier-refactor, Slice 05)
+# `jarvis-workspace` : formes de `/api/workspace/boards/{id}/dossier*` et `/api/dossier/navigation/commands`
+# (`docs/dossier.md`). Vue humaine seulement : jamais un chemin absolu, jamais le détail « avancé ».
+
+
+class DossierEntryItem(ToolResult):
+    entry_id: str
+    kind: str
+    title: str
+    #: text | media | link | none : comment l'entrée s'ouvre (`board_memory_read`, `artifact_get`).
+    open: str
+    modified_at: str | None
+    size: int | None = None
+    preview: str | None = None
+    provenance: str = None  # type: ignore[assignment]
+
+
+class DossierListResult(ToolResult):
+    """`dossier_list` : mémoire du Board et Artifacts liés, `summary.md` d'abord puis les plus récents."""
+
+    board_id: str
+    writable: bool
+    entries: list[DossierEntryItem]
+    total: int
+    truncated: bool
+    memory_error: str = None  # type: ignore[assignment]
+
+
+class DossierRangerItem(ToolResult):
+    object_id: str
+    #: stored (mis en Dossier) | refused | rangeable (dry_run : Ranger le garderait).
+    status: Literal["stored", "refused", "rangeable"]
+    backing: str | None
+    entry_id: str | None
+    action: str = None  # type: ignore[assignment]
+    archived: bool = None  # type: ignore[assignment]
+    code: str = None  # type: ignore[assignment]
+    message: str = None  # type: ignore[assignment]
+
+
+class DossierRangerResult(ToolResult):
+    """`dossier_ranger` : par objet ; un refus laisse l'objet sur le Board."""
+
+    board_id: str
+    dry_run: bool
+    stored: int
+    refused: int
+    results: list[DossierRangerItem]
+
+
+class DossierPresentResult(ToolResult):
+    board_id: str
+    entry_id: str
+    object_id: str
+    #: Faux : une représentation de la même source était déjà là, réutilisée.
+    created: bool
+    representation: str
+
+
+class DossierViewResult(ToolResult):
+    """`dossier_view` : le reçu de la page, jamais une supposition."""
+
+    board_id: str
+    entry_id: str
+    state: Literal["opened", "refused"]
+    code: str = None  # type: ignore[assignment]
+    reason: str = None  # type: ignore[assignment]
+    explanation: str
+
+
 # ------------------------------------------------------------------ violation du contrat de sortie
 
 # ------------------------------------------------------------------ mémoire à long terme et connaissance

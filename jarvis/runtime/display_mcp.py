@@ -557,7 +557,8 @@ def _merged_payload(
     """Charge complète à envoyer : la charge actuelle, avec ce qui est donné (le domaine remplace la charge entière).
 
     Le bloc `prefab` actuel est gardé quand `prefab` n'est pas donné (Slice 07 prefabs : changer le titre d'une
-    fenêtre prefab ne la ramène pas à une fenêtre ordinaire).
+    fenêtre prefab ne la ramène pas à une fenêtre ordinaire). Le lien Dossier `registry_artifact_id` est toujours
+    gardé : aucun outil ne le pose, seul `dossier_present` (Core) le fait.
     """
 
     return ScenePayload(
@@ -567,6 +568,7 @@ def _merged_payload(
         annotation=base.annotation if annotation is None else annotation,
         source_path=base.source_path if source_path is None else source_path,
         prefab=base.prefab if prefab is None else prefab,
+        registry_artifact_id=base.registry_artifact_id,
     )
 
 
@@ -1585,6 +1587,8 @@ class SceneDisplayTools(SurfaceToolsMixin):
             "explained_by": [brief(other_id) for other_id in explained_by[:MAX_GET_LINKED]],
             "explains": [brief(other_id) for other_id in explains[:MAX_GET_LINKED]],
         }
+        if item.payload.registry_artifact_id:
+            detail["registry_artifact_id"] = item.payload.registry_artifact_id  # source durable (Dossier)
         if item.payload.prefab is not None:
             ref = item.payload.prefab
             detail["prefab"] = {"id": ref.prefab_id, "version": ref.version,
@@ -2247,6 +2251,7 @@ def get_text_schema() -> dict[str, Any]:
         "work_ref": {"anyOf": [{"type": "object"}, {"type": "null"}]}, "representation": _STR,
         "geometry": _GEOMETRY_ROW, "layer": _INT, "order": _INT, "visibility": _STR,
         "constraints": {"type": "object"}, "title": _STR, "annotation": _STR, "source_path": _STR, "summary": _STR,
+        "registry_artifact_id": _STR,
         "items": {"type": "array", "items": item},
         "relations": _closed({"out": {"type": "array", "items": link}, "in": {"type": "array", "items": link},
                               "omitted": _INT}, ("out", "in")),

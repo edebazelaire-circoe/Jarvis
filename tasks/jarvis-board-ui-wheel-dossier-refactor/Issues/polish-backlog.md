@@ -40,3 +40,18 @@ outside the acceptance of the Slice that found it.
   se fera à la fin de ce message » and the model claimed a switch was « déjà programmé » (sandbox evidence
   `s01b/evidence/trace-turn-b2.txt`). The Board-session context should mark an announced switch as done/left,
   or the brain should verify `board_get_active` before stating a switch state.
+
+## From Slice 05 QA (Dossier contract and projection) — targets Slices 07/08
+
+1. **Title of a Ranger note** shows the file name with its digest suffix (`pistes-de-financement-2352da72`) instead of the `#` heading of the note (Slice 07 view, or a title read from the heading).
+2. **After `no_visible_page`** the agent promised « je la rouvre dès que l'interface est visible »: harden the `ERROR_SENTENCES["no_visible_page"]` sentence (nothing reopens by itself; say so, no promise).
+3. **The agent read a note with `Read` on an absolute path** instead of `board_memory_read` (prompt/tool guidance, Slice 08 agent trace).
+4. **An explicit drop on the Board** is listed as « ajouté automatiquement (Board actif à sa création) »: the drop links with `origin=active_board`; tell a drop apart (upload `provenance`) in the Dossier provenance.
+5. **`present` echoes `entry_id` in the received case**, not canonicalized to the file name on disk (`Summary.md` vs `summary.md`).
+6. **`memory/stat` gives no `sha256`**: an editor must `memory/read` the whole file to get the `expected_sha256` of a safe replace.
+7. **Navigation doc** « 200 `{state…}` » reads as if every answer were a 200; say first that `no_visible_page` / `command_expired` are 504 refusals (`docs/dossier.md` › *Agent -> UI navigation*).
+8. **`dry_run` / `backing` does not check the active Board**: it answers `rangeable` where Ranger then refuses 409 `dossier_board_not_active`; say the Board rule in the preview.
+9. **Ranger of an Artifact window presented from Board A while B is active** links the Artifact to B without the user seeing it; consider refusing or saying the cross-Board link.
+10. **`boards_of_artifact(limit=500)`** in `_resolve_entry`: an Artifact linked to more than 500 Boards would read as not in this Dossier; use a direct link lookup.
+11. **Duplicate comment on the `DOSSIER_PAGE_TOKEN_MARKER` line of `control_center.py`** — fixed in the S05 rework commit (explorer comment restored on its own line).
+12. **Brain, outside the Slice:** the 8 s turn budget was exceeded, and a stray text block « Single small file read is allowed. » appeared in the answer.

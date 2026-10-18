@@ -112,7 +112,7 @@ DEFAULT_ORIGIN = "user"
 LEDGER_FAILED = "workspace_ledger_failed"
 #: Opérations qui écrivent (leurs refus sont journalisés `core.workspace.mutation_failed`).
 MUTATIONS = frozenset({"memory_write", "memory_mkdir", "memory_move", "memory_delete", "artifact_link",
-                       "artifact_unlink"})
+                       "artifact_unlink", "dossier_ranger", "dossier_present"})
 _SHA256 = re.compile(r"[0-9a-f]{64}")
 
 _TRACE_EXCEPTION_CHARS = 200

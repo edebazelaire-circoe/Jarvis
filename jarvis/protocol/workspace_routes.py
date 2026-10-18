@@ -31,6 +31,14 @@ l'URL, jamais le Board actif implicite, et n'activent rien. Contrat :
 | POST | `/v1/workspace/boards/{board_id}/memory/delete` | `{path, recursive?=false, origin?}` (destructif) |
 | POST | `/v1/workspace/boards/{board_id}/artifacts/{artifact_id}` | lien explicite `{origin?}` (201 créé, 200 déjà là) |
 | DELETE | `/v1/workspace/boards/{board_id}/artifacts/{artifact_id}[?origin=]` | retire le lien |
+| GET | `/v1/workspace/boards/{board_id}/dossier[?limit&since&advanced]` | Dossier : entrées composées (mémoire + Artifacts liés) |
+| GET | `/v1/workspace/boards/{board_id}/dossier/entry?id=[&advanced]` | une entrée du Dossier, résolue chez son propriétaire |
+| GET | `/v1/workspace/boards/{board_id}/dossier/backing?object_id=…` | source durable d'objets de scène (≤ 20, paramètre répété) |
+| POST | `/v1/workspace/boards/{board_id}/dossier/ranger` | `{object_ids, origin?}` : durabilité puis retrait, résultat par objet |
+| POST | `/v1/workspace/boards/{board_id}/dossier/present` | `{entry_id, representation?, origin?}` : « Afficher sur le Board » (201 créé, 200 réutilisé) |
+
+Dossier (handoff jarvis-board-ui-wheel-dossier-refactor, Slice 05) : logique
+dans `jarvis/core/dossier_service.py`, contrat `docs/dossier.md`.
 
 Corps des mutations : objet JSON strict (champ inconnu, doublon, type faux :
 `invalid_request`), au plus `MAX_MUTATION_BODY_BYTES` ; `origin` `user|brain`
@@ -63,6 +71,7 @@ from jarvis.core.workspace_service import (
 )
 from jarvis.domain.artifacts import ArtifactError, ArtifactKind, check_artifact_id
 from jarvis.domain.board_memory import BoardMemoryError
+from jarvis.domain.dossier import DEFAULT_LIST_LIMIT, MAX_LIST_LIMIT, MAX_RANGER_OBJECTS, DossierError
 from jarvis.domain.presentation_studio import PresentationStudioError
 from jarvis.domain.session_activity import ActivityError, ActivityKind
 from jarvis.domain.session_context import SessionContextError
@@ -70,7 +79,7 @@ from jarvis.domain.workspace_board import BoardError
 from jarvis.ports.board_memory import BoardMemoryUnavailable
 from jarvis.ports.session_context import ContextStoreError
 from jarvis.ports.workspace_board import BoardStoreError
-from jarvis.protocol.capture_routes import _body, _datetime, _enums, _int, _only, error_response
+from jarvis.protocol.capture_routes import _body, _datetime, _enums, _flag, _int, _only, error_response
 from jarvis.protocol.strict_json import read_bounded
 
 Handler = Callable[[web.Request], Awaitable[web.StreamResponse]]
@@ -78,7 +87,7 @@ PREFIX = "/v1/workspace"
 #: Refus codés des domaines : leur `code` et leur `status` voyagent tels quels.
 #: `BoardMemoryError` et `WorkspaceError` sont des `ValueError` : attrapés **avant** elle.
 _CODED = (WorkspaceError, BoardMemoryError, BoardError, SessionContextError, ArtifactError, ActivityError,
-          PresentationStudioError)
+          PresentationStudioError, DossierError)
 
 
 def _code(exc: BaseException) -> str:
@@ -119,6 +128,11 @@ class WorkspaceProtocolRoutes:
             web.post(board + "/memory/delete", g("memory_delete", self.memory_delete)),
             web.post(board + "/artifacts/{artifact_id}", g("artifact_link", self.artifact_link)),
             web.delete(board + "/artifacts/{artifact_id}", g("artifact_unlink", self.artifact_unlink)),
+            web.get(board + "/dossier", g("dossier_list", self.dossier_list)),
+            web.get(board + "/dossier/entry", g("dossier_entry", self.dossier_entry)),
+            web.get(board + "/dossier/backing", g("dossier_backing", self.dossier_backing)),
+            web.post(board + "/dossier/ranger", g("dossier_ranger", self.dossier_ranger)),
+            web.post(board + "/dossier/present", g("dossier_present", self.dossier_present)),
         ]
 
     def _guarded(self, operation: str, handler: Handler) -> Handler:
@@ -314,3 +328,42 @@ class WorkspaceProtocolRoutes:
         return web.json_response(await self._service.artifact_unlink(
             request.match_info["board_id"], request.match_info["artifact_id"],
             origin=request.query.get("origin", DEFAULT_ORIGIN)))
+
+    # ------------------------------------------------------------ Dossier (wheel-dossier-refactor, Slice 05)
+
+    @property
+    def _dossier(self) -> Any:
+        return self._core.dossier
+
+    async def dossier_list(self, request: web.Request) -> web.Response:
+        _only(request, {"limit", "since", "advanced"})
+        self._ready()
+        return web.json_response(await self._dossier.list_entries(
+            request.match_info["board_id"], limit=self._limit(request, DEFAULT_LIST_LIMIT, MAX_LIST_LIMIT),
+            since=_datetime(request, "since"), advanced=_flag(request, "advanced")))
+
+    async def dossier_entry(self, request: web.Request) -> web.Response:
+        _only(request, {"id", "advanced"})
+        self._ready()
+        return web.json_response(await self._dossier.entry(
+            request.match_info["board_id"], self._required(request, "id"), advanced=_flag(request, "advanced")))
+
+    async def dossier_backing(self, request: web.Request) -> web.Response:
+        _only(request, {"object_id"})
+        ids = request.query.getall("object_id", [])
+        if not ids or len(ids) > MAX_RANGER_OBJECTS:
+            raise WorkspaceError("invalid_request", f"give 1..{MAX_RANGER_OBJECTS} object_id parameters")
+        self._ready()
+        return web.json_response(await self._dossier.backing(request.match_info["board_id"], ids))
+
+    async def dossier_ranger(self, request: web.Request) -> web.Response:
+        body = await self._mutation(request, {"object_ids"}, {"object_ids"})
+        return web.json_response(await self._dossier.ranger(
+            request.match_info["board_id"], body["object_ids"], origin=body.get("origin", DEFAULT_ORIGIN)))
+
+    async def dossier_present(self, request: web.Request) -> web.Response:
+        body = await self._mutation(request, {"entry_id", "representation"}, {"entry_id"})
+        result = await self._dossier.present(
+            request.match_info["board_id"], body["entry_id"], representation=body.get("representation", "window"),
+            origin=body.get("origin", DEFAULT_ORIGIN))
+        return web.json_response(result, status=201 if result["created"] else 200)
