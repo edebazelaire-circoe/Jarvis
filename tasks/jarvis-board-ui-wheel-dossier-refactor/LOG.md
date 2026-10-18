@@ -89,3 +89,12 @@ Implementation agents append factual progress here. Record exact commit SHA, tes
 - B3 (MCP sentence never reached): `StrictWorkspaceMCP.call_tool` intercepts `board_update` carrying `board_kind` before the unknown-argument guard and raises the coded refusal `Refus board_kind_immutable : <sentence> (jarvis-workspace : ...)` through `BoardTools.kind_change_refused` (journal `board.tool_failed`, warning); nothing is sent. Test `test_through_mcp_board_update_with_a_type_is_refused_board_kind_immutable_before_sending`; `docs/mcp/tool-contract.md` §10.12 row says so.
 - Non-blocking QA findings recorded: Slice 01b step 8 (switch_noop does not re-apply the mode; `POST /api/interaction-mode` payload fields) and step 7 (interaction-mode.md « persist » lines ~419/568/910, README ~196); Slice 02 step 3 (Réunion « planned » state visible on screen); new `Issues/polish-backlog.md` for Slice 08 (no migration log line, brief shows internal type values, quoted `requested_kind`, interleaved non-JSON trace lines, `.v8.bak` left in WAL).
 - Tests after rework: `test_board_kind_migration_v9` + `test_schema_migrations` + `test_workspace_mcp` + `test_mcp_catalog` + 43 docs test files: 502 passed; board lot (contract, store, service, protocol, switch, memory contract/hydration, context/host, boards_status, inspection API, perception, presentation_status, switch_control_center, artifact_links, board_brains_control_center/rework, boards_hud_js): 502 passed; interaction lot (contract, control plane, follower, HUD JS, protocol) + both board e2e: 282 passed.
+
+## Slice 01a — accepted by agent 0 (2026-10-18)
+
+- Commits: `22770774`, `4a084fd1`, `9292fe0e`, `c1cac015`.
+- QA + code-review: FAIL (docs) -> blockers fixed in `9292fe0e`; 13/13 targeted mutations killed. Runtime + agent-trace (isolated sandbox 27653/27654, synthetic v8 + copy of the real DB, real `claude-opus-5-5` turns): PASS_WITH_POLISH.
+- Rework escalated QA polish P1 (v9 silently repaired out-of-contract rows) to blocking because v9 is unpublished and becomes frozen once merged; plus MCP `board_kind_immutable` sentence reachability.
+- Agent 0 re-check: `test_board_kind_migration_v9`, `test_schema_migrations`, `test_workspace_mcp`, `test_board_service` = 105 passed at `c1cac015`.
+- Non-blocking polish recorded in Slice 01b/02 contracts and `Issues/polish-backlog.md`.
+- Human-visible consequence after merge + Core restart: « Jarvis PRESENTATION » starts in PRESENTATION mode (Q1).
