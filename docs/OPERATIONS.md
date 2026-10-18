@@ -1863,20 +1863,23 @@ Le bouton **Board** en haut de l'écran montre toujours le Board actif, tel que
 le serveur le confirme. Un clic (ou ↓) ouvre la liste de tous les Boards ; c'est
 le geste de tous les jours. L'inspection profonde reste dans `WSP` (ci-dessous).
 
-- **Lire la liste** : chaque ligne donne le titre, la nature (Générique,
-  Réunion, Présentation) et la dernière ouverture (« ouvert il y a 3 h »,
+- **Lire la liste** : chaque ligne donne le titre, le type (Assistant,
+  Présentation, Réunion) et la dernière ouverture (« ouvert il y a 3 h »,
   « jamais ouvert » ; l'heure exacte au survol). Le Board actif a le point
   plein, le cadre et « Actif » ; « En fond » signale un autre Board dont l'agent
   travaille encore.
 - **Basculer** : cliquer un Board. Le bouton du haut compte les secondes
   (« Bascule · N s ») et ne change de titre qu'une fois le serveur d'accord ;
   un refus laisse le Board précédent et dit pourquoi.
-- **Créer** : « Nouveau Board », un titre, la nature (Générique par défaut),
-  « Créer ». Le Board n'est pas ouvert : choisissez-le ensuite pour y basculer.
-- **Renommer ou changer la nature** : le crayon de la ligne ouvre le titre et
-  la nature ; « Enregistrer » (ou Entrée) envoie seulement ce qui a changé,
-  Échap annule. La ligne n'affiche la nouvelle nature qu'après la réponse du
-  serveur. Changer la nature ne démarre ni réunion ni présentation.
+- **Créer** : « Nouveau Board », un titre, le type (Assistant par défaut,
+  Présentation ou Réunion), « Créer ». Le type est fixé à la création et
+  décide du comportement de JARVIS sur ce Board (une présentation se fait sur
+  un Board Présentation ; un Board Réunion se comporte pour l'instant en
+  Assistant). Le Board n'est pas ouvert : choisissez-le ensuite pour y basculer.
+- **Renommer** : le crayon de la ligne ouvre le titre seul ; « Enregistrer »
+  (ou Entrée) l'envoie s'il a changé, Échap annule. Le type ne se change pas :
+  pour un autre type, créez un autre Board (une demande de changement de type
+  est refusée avec le code `board_kind_immutable`).
 - **Archivés** : le filtre « En service / Archivés » montre les Boards archivés
   à part. Ils ne s'ouvrent plus (pas de bascule) mais restent lisibles.
 - **Inspecter** : l'icône flèche « ouvrir ailleurs » d'une ligne, archivée ou non, ouvre
@@ -1905,8 +1908,8 @@ serveur ; « Actualiser » relit tout, Échap ferme.
 - **Sessions** : l'historique complet, ouvert et clos, page par page ; une ligne
   dépliée montre ses Boards, ses liaisons, ses Contexts et son journal (les
   écritures de mémoire y apparaissent en `board.memory.*`).
-- **Boards** : tous, archivés compris, avec leur nature (Générique, Réunion,
-  Présentation) ; « Basculer sur ce Board » fait la même bascule que le bouton
+- **Boards** : tous, archivés compris, avec leur type (Assistant, Présentation,
+  Réunion) ; « Basculer sur ce Board » fait la même bascule que le bouton
   Board du haut.
 - **Relations** : d'une Session vers ses Boards et liaisons, ou d'un Board vers
   sa mémoire, ses artefacts, ses références héritées (legacy) et ses Sessions.

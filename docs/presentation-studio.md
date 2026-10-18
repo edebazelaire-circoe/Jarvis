@@ -4294,7 +4294,7 @@ correct one while the user looks at another. The dot is **blue** (an agent is wo
 tooltip says what; it stays until acknowledged or until the next work). The header carries the voice state (the voice stays usable while anything is displayed), a focus switch
 and a collapse button; **Alt+Shift+P** cycles *automatic / always / hidden* (no dock button: the dock geometry, the Cosmos theme included, is computed for ten tools).
 
-**When it is visible** (pure rule `shouldShow`): preference `shown`; or, in `auto`, at least one presentation and (the active Board's nature is `presentation` (`/api/status.boards.active.board_kind`),
+**When it is visible** (pure rule `shouldShow`): preference `shown`; or, in `auto`, at least one presentation and (the active Board's type is `presentation` (`/api/status.boards.active.board_kind`),
 or the interaction mode is `presentation`, or an agent works or a problem waits, or the window or the Studio is open). Preference `hidden` shows it only when the brain asks (`rail_show`).
 Collapsed, it is a strip of tiles with their dots.
 

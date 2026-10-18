@@ -5,3 +5,4 @@ Only ideas or defects that are genuinely outside the locked scope belong here. A
 Current follow-up:
 
 - `task-completion-lifecycle-follow-up.md` — post-completion task-card/result/archive lifecycle, explicitly requested to be preserved but kept outside this UI refactor.
+- `polish-backlog.md` — non-blocking polish found by Slice QA (first entries: Slice 01a), for Slice 08.

@@ -288,9 +288,12 @@ _MIGRATIONS: dict[int, tuple[str, ...]] = {
         # `empty`/absent kind takes a `presentation`/`meeting` mode the user
         # chose (origin `user` or `migrated`) once; anything else is
         # `assistant` (an `unset` Board already behaved as assistant). Only rows
-        # that still carry legacy data are touched, so a re-run changes nothing;
-        # a malformed payload or an out-of-contract kind is left as is (the
-        # strict decoder keeps reporting it, never repaired here).
+        # that still carry legacy data are touched, so a re-run changes nothing.
+        # Never repaired here, left exactly as is (the strict decoder keeps
+        # reporting them): a payload that is not a JSON object, a kind that is
+        # not a string of the v8 contract, and a present `interaction_mode` /
+        # `interaction_mode_origin` outside its v8 values (`7`, `"Presentation"`,
+        # `null`): the v8 code refused those rows already.
         """UPDATE work_boards SET data = json_remove(json_set(data, '$.board_kind', CASE
                 WHEN json_extract(data, '$.board_kind') IN ('assistant', 'presentation', 'meeting')
                     THEN json_extract(data, '$.board_kind')
@@ -298,9 +301,13 @@ _MIGRATIONS: dict[int, tuple[str, ...]] = {
                      AND json_extract(data, '$.interaction_mode') IN ('presentation', 'meeting')
                     THEN json_extract(data, '$.interaction_mode')
                 ELSE 'assistant' END), '$.interaction_mode', '$.interaction_mode_origin')
-            WHERE json_valid(data)
+            WHERE json_valid(data) AND json_type(data) = 'object'
               AND (json_type(data, '$.board_kind') IS NULL
                    OR json_extract(data, '$.board_kind') IN ('empty', 'assistant', 'presentation', 'meeting'))
+              AND (json_type(data, '$.interaction_mode') IS NULL
+                   OR json_extract(data, '$.interaction_mode') IN ('assistant', 'presentation', 'meeting'))
+              AND (json_type(data, '$.interaction_mode_origin') IS NULL
+                   OR json_extract(data, '$.interaction_mode_origin') IN ('unset', 'migrated', 'user'))
               AND (json_type(data, '$.board_kind') IS NULL OR json_extract(data, '$.board_kind') = 'empty'
                    OR json_type(data, '$.interaction_mode') IS NOT NULL
                    OR json_type(data, '$.interaction_mode_origin') IS NOT NULL)""",

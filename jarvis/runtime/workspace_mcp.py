@@ -435,6 +435,9 @@ def build_server(target: ConsoleMcpTarget | None = None, *, tools: WorkspaceTool
 
         async def call_tool(self, name: str, arguments: dict[str, Any]):  # noqa: ANN201 - type de FastMCP
             known = {tool.name: tool for tool in await self.list_tools()}
+            if name == "board_update" and "board_kind" in (arguments or {}):
+                # Le type ne change jamais (D02) : la vraie raison, pas « argument inconnu ».
+                raise ToolError(str(ws.boards.kind_change_refused((arguments or {}).get("board_id"))))
             if name in known:
                 allowed = set(known[name].inputSchema.get("properties", {}))
                 unknown = sorted(set(arguments or {}) - allowed)

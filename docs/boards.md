@@ -680,7 +680,7 @@ set.
 | Switch transaction, speech authority | Core | `board_service.py` coordinator; gate in `brain_service.py` (Slice 04b) |
 | Board Brain processes (one agent per binding) | Control Center | `jarvis/runtime/board_brains.py` `BoardBrainPool` (Slice 04a), reached by Core through `POST /api/agent/bindings/activate` (`BoardBrainHost`, implemented by `ControlCenterBoardHost`, Slice 04b) |
 | UI / MCP entry points | Control Center | `/api/boards*`, `/api/sessions*` relaying Core `/v1/boards*`, `/v1/sessions*` (`jarvis/runtime/board_routes.py`, Slice 04b); `jarvis-workspace` MCP calls the same routes (board-session Slice 05, moved off `jarvis-console` by board-memory Slice 06) and `/api/workspace/*` |
-| Effective interaction mode | Core `InteractionModeService` | persisted selection lives on the Board row |
+| Effective interaction mode | Core `InteractionModeService` | nothing persisted: derived from the active Board's fixed type (`board_kind`, *Board type*) by `BoardService` at Core start and on every switch |
 
 There is no global reasoning Brain: Voice talks to the active Board's brain
 through Core; the runtime around it is deterministic.
@@ -755,8 +755,12 @@ second pointer would be a second truth.
 
   The legacy global setting is not read: an `unset` Board already behaved as
   assistant. Only rows still carrying legacy data are touched (a re-run changes
-  nothing); a malformed payload or an unknown kind is left as is and keeps being
-  reported by the strict decoder (`board_store_unreadable`), never repaired.
+  nothing). A row the v8 code already refused is **left exactly as is** and keeps
+  being reported by the strict decoder (`board_store_unreadable`), never
+  repaired: a payload that is not a JSON object (malformed, `[…]`, `"…"`, `42`,
+  `null`), a kind that is not one of the v8 strings, or a present
+  `interaction_mode` / `interaction_mode_origin` outside its v8 values (`7`,
+  `"Presentation"`, `null`).
   The version bump is deliberate although no DDL changes: a v8 binary would
   crash decoding `assistant`, it refuses the file instead (`state DB schema 9 is
   newer than supported 8`). Proof: `tests/unit/test_board_kind_migration_v9.py`

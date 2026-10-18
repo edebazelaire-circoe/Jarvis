@@ -483,6 +483,25 @@ async def test_through_mcp_a_refusal_is_a_tool_error_with_its_code(fake_cc):
     assert result.content[0].text.startswith("Refus board_is_active : ")
 
 
+async def test_through_mcp_board_update_with_a_type_is_refused_board_kind_immutable_before_sending(fake_cc, tmp_path):
+    """D02 : le type ne change jamais ; le cerveau lit le refus nommé et quoi faire, pas « argument inconnu »."""
+
+    from mcp.shared.memory import create_connected_server_and_client_session
+
+    fake, ws = fake_cc
+    async with create_connected_server_and_client_session(build_server(tools=ws)) as session:
+        result = await session.call_tool("board_update", {"board_id": "board_ab12", "board_kind": "presentation"})
+        alone = await session.call_tool("board_update", {"board_id": "board_ab12", "title": "X",
+                                                         "board_kind": "meeting"})
+    for refused in (result, alone):
+        text = refused.content[0].text
+        assert refused.isError and text.startswith("Refus board_kind_immutable : ")
+        assert workspace_boards.ERROR_SENTENCES["board_kind_immutable"] in text and "Arguments inconnus" not in text
+    assert fake.requests == [], "nothing is sent to the Control Center"
+    failed = _journal(tmp_path, "board.tool_failed")
+    assert failed and failed[-1]["data"]["code"] == "board_kind_immutable" and failed[-1]["level"] == "warning"
+
+
 async def test_through_mcp_unknown_or_malformed_arguments_send_nothing(fake_cc):
     from mcp.shared.memory import create_connected_server_and_client_session
 

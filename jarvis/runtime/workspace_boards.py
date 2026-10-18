@@ -135,6 +135,9 @@ ERROR_SENTENCES: dict[str, str] = {
     "workspace_failed": "Erreur interne du workspace de Core.",
 }
 
+#: Refus d'un changement de type (D02) : code de Core, repris par le garde-fou de `board_update`.
+KIND_IMMUTABLE_CODE = "board_kind_immutable"
+
 #: Codes que le relais du Control Center écrit lui-même (`board_routes.py`) : pas des refus de Core.
 RELAY_CODES = frozenset({"invalid_request", "core_unreachable", "core_unconfigured", "core_transition_timeout",
                          "core_timeout", "forbidden_origin", "http_error"})
@@ -268,6 +271,19 @@ class BoardTools:
                                                "Rien n'a été écrit.")
         return await self._board("board_update", "PATCH", _board_route(board_id), payload=payload,
                                  board_id=board_id)
+
+    def kind_change_refused(self, board_id: object) -> Exception:
+        """`board_update` porteur de `board_kind` : le refus `board_kind_immutable` de Core, dit avant tout envoi.
+
+        Le schéma de l'outil n'a plus ce champ (D02) ; sans ce refus nommé, le
+        cerveau ne lirait qu'« Arguments inconnus » et ne saurait pas qu'il faut
+        créer un autre Board. Journalisé comme tout refus d'outil.
+        """
+
+        route = _board_route(str(board_id)) if isinstance(board_id, str) else BOARDS_ROUTE
+        self._failed("board_update", KIND_IMMUTABLE_CODE, route, reason="board_kind_argument")
+        return self._error(KIND_IMMUTABLE_CODE, _refusal(
+            KIND_IMMUTABLE_CODE, "board_update n'a pas de board_kind : le type est fixé à la création", "jarvis-workspace"))
 
     async def archive_board(self, board_id: str) -> dict[str, Any]:
         return await self._board("board_archive", "POST", _board_route(board_id) + "/archive", payload={},

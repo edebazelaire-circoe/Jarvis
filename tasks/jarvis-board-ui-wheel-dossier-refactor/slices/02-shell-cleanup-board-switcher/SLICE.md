@@ -23,7 +23,7 @@ HEAD already contains orbital-ui S04-S10, which the planner did not see (`../../
 
 1. Re-read shell zones/layer registry and actual Cosmos/default theme composition.
 2. Refactor/move the canonical Board quick control (`control_center_boards.js` or successor) from top-left into a compact bottom-left Board card. Do not create a second Board state client.
-3. Card shows active Board type + icon/accent + title, with canonical pending/unavailable states and no optimistic activation.
+3. Card shows active Board type + icon/accent + title, with canonical pending/unavailable states and no optimistic activation. A Réunion Board must say on screen that its dedicated behaviour is planned and that it behaves as Assistant for now (QA 01a: `meeting_planned` is only in the trace today).
 4. Click opens the Board browser: active/recent/all Boards, create new Board with mandatory type selection, archived browsing where currently supported, new Session only if it belongs to the existing Board control contract.
 5. Remove type editing from ordinary Board edit flow. Title rename/archival stay only if still canonical.
 6. Favorites are optional: only expose if persistence exists/coheres. Do not block the Slice on inventing favorites.

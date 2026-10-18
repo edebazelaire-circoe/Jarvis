@@ -186,19 +186,59 @@ def test_the_migration_is_idempotent(migrated):
     assert sorted(p.name for p in path.parent.glob("*.bak")) == ["jarvis.sqlite3.v8.bak"]
 
 
-def test_a_damaged_or_out_of_contract_row_is_left_as_is_never_repaired(tmp_path, monkeypatch):
+def _out_of_contract_rows() -> dict[str, str]:
+    """Lignes que le code v8 refusait déjà : la v9 ne doit ni les réparer ni les toucher."""
+
+    def raw(board_id: str, **changes: object) -> str:
+        return json.dumps({**_payload(board_id, "empty", "presentation", "user"), **changes}, sort_keys=True)
+
+    return {
+        "board_broken": "{not json",
+        # JSON valide mais pas un objet.
+        "board_list": "[1,2]", "board_string": '"abc"', "board_number": "42", "board_jnull": "null",
+        # Type hors contrat v8.
+        "board_weird": raw("board_weird", board_kind="workshop"),
+        "board_null_kind": raw("board_null_kind", board_kind=None),
+        "board_number_kind": raw("board_number_kind", board_kind=3),
+        # Mode ou origine présents mais hors contrat v8 (`empty` + ces valeurs aurait donné un `assistant` valide).
+        "board_mode_number": raw("board_mode_number", interaction_mode=7),
+        "board_mode_label": raw("board_mode_label", interaction_mode="Presentation"),
+        "board_mode_null": raw("board_mode_null", interaction_mode=None),
+        "board_origin_bad": raw("board_origin_bad", interaction_mode_origin="User"),
+        "board_origin_number": raw("board_origin_number", interaction_mode_origin=1),
+        "board_absent_kind_bad_mode": json.dumps(_payload("board_absent_kind_bad_mode", None, "SIMPLE", "user")),
+        "board_kind_ok_bad_mode": raw("board_kind_ok_bad_mode", board_kind="presentation", interaction_mode=7),
+    }
+
+
+def test_a_row_the_v8_code_already_refused_is_left_exactly_as_is_never_repaired(tmp_path, monkeypatch):
     path = tmp_path / "jarvis.sqlite3"
-    weird_kind = json.dumps(_payload("board_weird", "workshop", "presentation", "user"), sort_keys=True)
-    null_kind = json.dumps({**_payload("board_null", None, "presentation", "user"), "board_kind": None})
-    rows = [("board_broken", "{not json", "active"), ("board_weird", weird_kind, "active"),
-            ("board_null", null_kind, "active"),
-            ("board_ok", json.dumps(_payload("board_ok", "empty", "meeting", "user")), "active")]
-    _v8_file(path, monkeypatch, rows)
-    asyncio.run(_open(path))  # ne lève pas : la migration ne lit que les payloads valides
+    weird = _out_of_contract_rows()
+    ok = json.dumps(_payload("board_ok", "empty", "meeting", "user"))
+    _v8_file(path, monkeypatch, [*((board_id, data, "active") for board_id, data in weird.items()),
+                                 ("board_ok", ok, "active")])
+    asyncio.run(_open(path))  # ne lève pas : la migration ne lit que les payloads du contrat v8
     after = _rows(path)
-    assert after["board_broken"] == "{not json"
-    assert after["board_weird"] == weird_kind and after["board_null"] == null_kind
+    assert {board_id: after[board_id] for board_id in weird} == weird, "an out-of-contract row was rewritten"
     assert json.loads(after["board_ok"])["board_kind"] == "meeting"
+
+
+def test_a_rerun_over_out_of_contract_rows_changes_zero_rows(tmp_path, monkeypatch):
+    path = tmp_path / "jarvis.sqlite3"
+    rows = [*((board_id, data, "active") for board_id, data in _out_of_contract_rows().items()),
+            *((board_id, json.dumps(_payload(board_id, kind, mode, origin)), "active")
+              for board_id, kind, mode, origin, _ in MATRIX)]
+    _v8_file(path, monkeypatch, rows)
+    asyncio.run(_open(path))
+    first = _rows(path)
+    conn = sqlite3.connect(path)
+    try:
+        for statement in sqlite_state._MIGRATIONS[9]:
+            assert conn.execute(statement).rowcount == 0
+        conn.commit()
+    finally:
+        conn.close()
+    assert _rows(path) == first
 
 
 def test_the_real_data_shape_of_this_pc_migrates_as_decided(tmp_path, monkeypatch):
