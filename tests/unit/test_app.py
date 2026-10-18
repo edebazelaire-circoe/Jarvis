@@ -581,3 +581,25 @@ async def test_jarvis_context_enrichment_is_on_by_default(tmp_path, monkeypatch)
     monkeypatch.setenv("JARVIS_AUDIO_RECORDING", "0")
     wiring = app._audio_recording_from_env(tmp_path / "runtime")
     assert callable(wiring["context_enrichment"]) and wiring["context_enrichment_enabled"] is True
+
+
+@pytest.mark.parametrize(
+    ("value", "expected"),
+    [(None, True), ("1", True), ("", True), ("0", False), ("false", False), (" OFF ", False), ("no", False)],
+)
+def test_open_browser_switch_defaults_to_opening_and_jarvis_open_browser_0_turns_it_off(monkeypatch, value, expected):
+    # Slice 08 (wheel-dossier) : `JARVIS_OPEN_BROWSER=0` pour les bacs à sable, défaut inchangé.
+    if value is None:
+        monkeypatch.delenv("JARVIS_OPEN_BROWSER", raising=False)
+    else:
+        monkeypatch.setenv("JARVIS_OPEN_BROWSER", value)
+    assert app._open_browser_enabled() is expected
+
+
+def test_the_control_center_opens_the_browser_only_behind_the_switch():
+    import inspect
+
+    source = inspect.getsource(app)
+    call = source.index("webbrowser.open(url)")
+    guard = source.rindex("if _open_browser_enabled():", 0, call)
+    assert source.count("webbrowser.open(") == 1 and call - guard < 80

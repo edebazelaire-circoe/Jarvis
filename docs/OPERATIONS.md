@@ -1672,6 +1672,7 @@ Main environment overrides:
 | `JARVIS_BOARD_URL` | loopback board URL only |
 | `JARVIS_VISUALIZER_ENABLED` | enable visualizer health/config |
 | `JARVIS_VISUALIZER_URL` | loopback visualizer URL only |
+| `JARVIS_OPEN_BROWSER` | Control Center opens a browser tab at start (default `1`); `0` / `false` / `no` / `off` opens none (sandboxes and tests: a tab left on a sandbox port would take Jarvis's Dossier / Variantes orders), journal `ui.browser` `opened: false` |
 | `JARVIS_DRIVE_PROVIDER` | `none` (default) or `google` |
 | `GOOGLE_DRIVE_CLIENT_SECRET` | OAuth desktop client JSON; falls back to `GOOGLE_CALENDAR_CLIENT_SECRET` |
 | `GOOGLE_DRIVE_TOKEN` | Drive token file, kept separate from the calendar token |
@@ -4279,10 +4280,14 @@ absente, Variantes à l'écran, aucune page visible).
 **Bac à sable et onglets du navigateur (exploitation).** Chaque lancement de
 `python -m jarvis control-center` ouvre un onglet du navigateur par défaut ;
 cet onglet reste ensuite à l'écoute des ordres de Jarvis (Dossier, Variantes)
-tant qu'il est ouvert, même après l'arrêt du bac à sable. Pour un bac à sable,
-posez `BROWSER` sur une commande vide (par exemple
-`$env:BROWSER = "cmd /c exit %s"`) avant de le lancer, et fermez les onglets
-laissés sur d'anciens ports.
+tant qu'il est ouvert, même après l'arrêt du bac à sable. Pour un bac à sable
+ou un test, posez `JARVIS_OPEN_BROWSER=0` (`$env:JARVIS_OPEN_BROWSER = "0"`) :
+le Control Center n'appelle alors pas `webbrowser.open` et journalise
+`ui.browser` (`opened: false`). Les valeurs `0`, `false`, `no`, `off` coupent
+l'ouverture ; sans la variable, ou avec toute autre valeur, l'onglet s'ouvre comme
+avant (comportement par défaut inchangé). Sur une version antérieure, posez
+`BROWSER` sur une commande vide (`$env:BROWSER = "cmd /c exit %s"`). Fermez les
+onglets laissés sur d'anciens ports.
 
 **Archiver les travaux terminés.** Depuis le menu d'une étoile, ou directement
 depuis la pastille « Scène pleine — archiver des travaux terminés » quand la scène
