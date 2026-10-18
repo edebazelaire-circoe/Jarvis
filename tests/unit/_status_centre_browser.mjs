@@ -75,6 +75,8 @@ const SERVER=`(()=>{
     /* Slice 09 : bandeau GPT-Live, rail, artefacts du Board, apercus. */
     live:null,railRows:null,boardArtifacts:[],previews:{},payloads:[],mode:null,presentation:null,
   },seed);
+  S.navPush=cmd=>{S.nav=S.nav||[];S.nav.push(cmd);return S.nav.length};
+  S.dsrTouch=(board,path,text)=>{const f=S.dsr.boards[board].files[path];f.text=text;f.v=(f.v||1)+10;f.sha='sha'+f.v+'_'+path;return f.sha};
   /* La route bornee des apercus, la ou la page la lit : la source d'un <img>
      (meme double que _presentation_rail_browser.mjs). Sans apercu seme, une
      image unie : la vignette existe, son contenu n'est pas l'objet du test. */
@@ -104,7 +106,7 @@ const SERVER=`(()=>{
   window.fetch=async(path,init)=>{
     const method=(init&&init.method)||'GET';
     const url=String(path);
-    if(url!=='/api/status'&&!url.startsWith('/api/captures/status'))S.calls.push(method+' '+url.split('?')[0]);
+    if(url!=='/api/status'&&!url.startsWith('/api/captures/status')&&!(url.startsWith('/api/dossier/navigation/commands?')))S.calls.push(method+' '+url.split('?')[0]);
     if(init&&init.body&&method!=='GET'){let b=null;try{b=JSON.parse(init.body)}catch(_){b=init.body}S.bodies.push({path:url,body:b})}
     if(url==='/api/status'){
       /* Slice 04 (sous-menu JARVIS) : \`statusFail\` fait tomber le battement ; \`status\` en remplace des champs. */
@@ -193,6 +195,70 @@ const SERVER=`(()=>{
         ui:{seq:0,request:null,reported:null},playing:null});
     }
     if(url==='/api/presentation-studio/rail/display-state')return json(200,{seq:0});
+    /* Slice 07 : le Dossier plein écran. \`dsr\` (graine) : {boards:{id:{board, entries, files:{path:{text, sha}}}}} ;
+       \`dsrFail\` : {route: {status, code}} (list | entry | read | write | present | move | delete | search) ;
+       \`dsrDelayMs\` : {route: ms}. Les écritures suivent le propriétaire : \`expected_sha256\` faux -> 409
+       memory_conflict. Navigation : \`__sc.navPush(cmd)\` met un ordre en attente ; la page le prend au
+       long-poll, son reçu (avec l'en-tête du jeton) va dans \`__sc.receipts\`. */
+    {
+      const D=S.dsr;
+      const m=url.match(/^\\/api\\/workspace\\/boards\\/([^/?]+)\\/(dossier|memory)(?:\\/([a-z]+))?/);
+      if(D&&m&&!(m[2]==='dossier'&&(m[3]==='backing'||m[3]==='ranger'))){
+        const id=decodeURIComponent(m[1]),B=D.boards&&D.boards[id];
+        const route=m[2]==='dossier'?(m[3]||'list'):m[3];
+        const fail=(S.dsrFail||{})[route];
+        const delay=(S.dsrDelayMs||{})[route];
+        if(delay)await new Promise(r=>setTimeout(r,delay));
+        if(fail)return json(fail.status,{error:{code:fail.code,message:fail.message||'refusé par le double'}});
+        if(!B)return json(404,{error:{code:'board_not_found',message:'no board'}});
+        const q=new URL(url,location.href).searchParams;
+        const body=init&&init.body?JSON.parse(init.body):null;
+        const writable=B.board.status!=='archived';
+        const entry=eid=>B.entries.find(e=>e.entry_id.toLowerCase()===String(eid).toLowerCase());
+        if(route==='list')return json(200,{board:B.board,entries:B.entries.slice(0,Number(q.get('limit'))||50),total:B.entries.length,
+          truncated:B.entries.length>(Number(q.get('limit'))||50),sources:{memory:{exists:true,files:B.entries.length},artifacts:{linked:0}}});
+        if(route==='entry'){const e=entry(q.get('id'));if(!e)return json(404,{error:{code:'dossier_entry_not_found',message:'not in this Dossier'}});
+          return json(200,{board:B.board,entry:q.get('advanced')==='true'?Object.assign({},e,{advanced:{locator:'boards/'+id+'/memory/'+(e.path||''),artifact_id:e.source==='artifact'?e.entry_id.slice(9):undefined}}):e})}
+        if(route==='present'){
+          if(!writable)return json(409,{error:{code:'board_archived',message:'archived'}});
+          if(id!==S.activeBoard)return json(409,{error:{code:'dossier_board_not_active',message:'not active'}});
+          const e=entry(body.entry_id);if(!e)return json(404,{error:{code:'dossier_entry_not_found',message:'no'}});
+          S.presented=S.presented||{};const again=!!S.presented[e.entry_id];S.presented[e.entry_id]=true;
+          return json(again?200:201,{board_id:id,entry_id:e.entry_id,object_id:'dossier-'+e.source+'-1',created:!again,reused:again,representation:body.representation||'window',revision:again?null:S.revision+1});
+        }
+        const file=path=>B.files&&B.files[path];
+        if(route==='read'){const f=file(q.get('path'));if(!f)return json(404,{error:{code:'memory_not_found',message:'no file'}});
+          const off=Number(q.get('offset'))||0,max=Number(q.get('max_bytes'))||65536,chunk=f.text.slice(off,off+max);
+          return json(200,{board_id:id,path:q.get('path'),text:chunk,offset:off,next_offset:off+chunk.length,size:f.text.length,eof:off+chunk.length>=f.text.length,sha256:f.sha})}
+        if(route==='search'){const needle=(q.get('q')||'').toLowerCase();const matches=[];
+          for(const [path,f] of Object.entries(B.files||{})){const i=f.text.toLowerCase().indexOf(needle);if(i>=0)matches.push({path,line:1,snippet:f.text.slice(Math.max(0,i-30),i+60)})}
+          return json(200,{board_id:id,query:q.get('q'),matches,files_scanned:Object.keys(B.files||{}).length,files_skipped:0})}
+        if(!writable)return json(409,{error:{code:'board_archived',message:'archived'}});
+        if(route==='write'){const f=file(body.path);if(!f)return json(404,{error:{code:'memory_not_found',message:'no'}});
+          if(body.expected_sha256&&body.expected_sha256!==f.sha)return json(409,{error:{code:'memory_conflict',message:'sha mismatch'}});
+          f.text=body.content;f.v=(f.v||1)+1;f.sha='sha'+f.v+'_'+body.path;S.writes=(S.writes||0)+1;
+          return json(200,{board_id:id,path:body.path,bytes:body.content.length,size:body.content.length,sha256:f.sha,activity_seq:9})}
+        if(route==='move'){const f=file(body.from);if(!f)return json(404,{error:{code:'memory_not_found',message:'no'}});
+          if(file(body.to))return json(409,{error:{code:'memory_exists',message:'exists'}});
+          B.files[body.to]=f;delete B.files[body.from];const e=entry('memory:'+body.from);
+          if(e){e.entry_id='memory:'+body.to;e.path=body.to;e.title=body.to.split('/').pop().replace(/\\.[^.]+$/,'');e.folder=body.to.includes('/')?body.to.slice(0,body.to.lastIndexOf('/')):''}
+          return json(200,{board_id:id,from:body.from,to:body.to,activity_seq:10})}
+        if(route==='delete'){if(!file(body.path))return json(404,{error:{code:'memory_not_found',message:'no'}});
+          delete B.files[body.path];B.entries=B.entries.filter(e=>e.entry_id!=='memory:'+body.path);
+          return json(200,{board_id:id,path:body.path,removed:1,activity_seq:11})}
+        return json(404,{error:{code:'http_error',message:'route du double inconnue'}});
+      }
+      if(url.startsWith('/api/dossier/navigation/commands')){
+        S.nav=S.nav||[];S.receipts=S.receipts||[];
+        const rm=url.match(/^\\/api\\/dossier\\/navigation\\/commands\\/([^/?]+)$/);
+        if(rm&&method==='POST'){const h=(init&&init.headers)||{};S.receipts.push({id:decodeURIComponent(rm[1]),token:h['X-Jarvis-Page-Token']||null,body:JSON.parse(init.body)});
+          return json(200,{command:'open_entry',id:decodeURIComponent(rm[1])})}
+        if(new URL(url,location.href).searchParams.get('visible')==='0')return json(200,{command:null});
+        for(let i=0;i<6&&!S.nav.length;i+=1)await new Promise(r=>setTimeout(r,50));
+        const c=S.nav.shift();
+        return json(200,{command:c?Object.assign({remaining_ms:4000},c):null});
+      }
+    }
     /* Slice 06 : le Dossier du Board actif. \`dossier\` (graine) : {object_id: {rangeable, code?, message?,
        backing?, stored?:{archived, code?, message?}}} ; \`dossierActive\` faux = Board non affiché ;
        \`rangerStatus\` : un refus de la demande entière (409...). Ranger applique ce que la graine dit :

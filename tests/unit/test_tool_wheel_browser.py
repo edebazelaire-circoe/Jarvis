@@ -554,7 +554,8 @@ def test_one_category_tree_visible_keyboard_and_switching(tmp_path, shots):
     assert capture["active"] == "item:screenshot"
     # Un clic sur Dossier remplace l'arbre de Capture : un seul sous-menu, une seule catégorie allumée.
     assert dossier["subs"] == 1 and dossier["head"] == "Dossier du Board" and dossier["expanded"] == ["dossier"]
-    assert [i["text"] for i in dossier["items"]] == ["Ouvrir le Dossier du Board"] and dossier["lit"] == 1
+    # Slice 07 : la catégorie Dossier est branchée (`control_center_dossier.js`), plus de gestionnaire d'attente.
+    assert [i["text"] for i in dossier["items"]][0] == "Ouvrir le Dossier" and dossier["lit"] == 1
     assert closed["open"] is False and closed["subs"] == 0 and closed["active"] == "anchor"
 
 

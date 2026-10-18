@@ -600,6 +600,8 @@
     session:'M4 5h16v11H9l-5 4V5ZM12 8v5M9.5 10.5h5',
     /* « Inspecter » : une flèche « ouvrir ailleurs », pas une loupe (lue « chercher »). */
     inspect:'M14 5h5v5M19 5l-8 8M17 14v5H5V7h5',
+    /* Slice 07 : la chemise du Dossier (même tracé que la roue). */
+    dossier:'M3.8 7.2a1.6 1.6 0 0 1 1.6-1.6h3.9l1.9 2.1h7.4a1.6 1.6 0 0 1 1.6 1.6v8.3a1.6 1.6 0 0 1-1.6 1.6H5.4a1.6 1.6 0 0 1-1.6-1.6zM3.8 10.4h16.4',
     /* Les trois types, tracés et non écrits (repris du contrôle de mode retiré) :
        une couleur seule ne distingue rien pour qui ne la voit pas. Assistant :
        une bulle de parole ; Présentation : un écran sur pied ; Réunion : trois
@@ -1257,8 +1259,26 @@ ${H} .bd-sr,${P} .bd-sr{position:absolute;width:1px;height:1px;padding:0;margin:
       const still=el('div','bd-still');
       const state=el('span','bd-state','Archivé');state.setAttribute('data-role','state');
       still.appendChild(dotOf());still.appendChild(textOf(row,state));
-      li.appendChild(still);li.appendChild(inspectButton(row));
+      li.appendChild(still);
+      /* Slice 07 (refonte roue/dossier) : le Dossier d'un Board archivé se lit en plein écran, en lecture seule. */
+      if(root.JarvisDossier&&typeof root.JarvisDossier.openBoard==='function')li.appendChild(dossierButton(row));
+      li.appendChild(inspectButton(row));
       return li;
+    }
+    function dossierButton(row){
+      const b=el('button','bd-icon');b.setAttribute('type','button');
+      b.setAttribute(DOM.boardAttribute,row.board_id);b.setAttribute(DOM.actionAttribute,'dossier');
+      const blocked=runBlocked();
+      b.setAttribute('aria-label',`Lire le Dossier de ${row.title}${blocked?` — impossible : ${RUN_BLOCKED}`:' (lecture seule)'}`);
+      b.setAttribute('title',blocked?RUN_BLOCKED:'Lire son Dossier (lecture seule)');
+      b.appendChild(icon(doc,'dossier',15));disable(b,blocked||!!pending);
+      b.addEventListener('click',()=>{
+        if(runBlocked()){refuseDuringRun('dossier',{board_id:String(row.board_id)});return}
+        log('info','boards.dossier_requested',{board_id:String(row.board_id)});
+        const r=root.JarvisDossier.openBoard(String(row.board_id),{opener:trigger});
+        if(r&&r.ok)close({focus:false});
+      });
+      return b;
     }
 
     function editRow(row){

@@ -192,11 +192,43 @@ def memory_entry_kind(path: str) -> tuple[EntryKind, OpenMode]:
     return EntryKind.FILE, OpenMode.NONE
 
 
+#: Nom d'une note écrite par Ranger : `<slug>-<empreinte de l'objet>[-<empreinte du corps>].md` (`ranger_path`).
+MAX_HEADING_CHARS = 200
+_RANGER_NAME = re.compile(r"(?P<slug>.+?)-[0-9a-f]{8}(?:-[0-9a-f]{8})?")
+#: Octets lus en tête d'une note rangée pour y trouver son titre `#` (le titre fait au plus `MAX_TITLE_CHARS`).
+RANGER_HEADING_BYTES = 1024
+
+
+def is_ranger_note(path: str) -> bool:
+    """Vrai pour une note que Ranger a pu écrire : `notes/` et le suffixe d'empreinte de `ranger_path`."""
+
+    name = PurePosixPath(path)
+    return (len(name.parts) == 2 and name.parts[0] == RANGER_FOLDER and name.suffix.casefold() == ".md"
+            and _RANGER_NAME.fullmatch(name.stem) is not None)
+
+
 def memory_entry_title(path: str) -> str:
+    """Titre humain d'un fichier de la mémoire ; jamais le suffixe d'empreinte d'une note rangée (QA S05, polish 1)."""
+
     name = PurePosixPath(path)
     if str(name).casefold() == MEMORY_SUMMARY_NAME:
         return "Résumé du Board"
+    if is_ranger_note(path):
+        words = _RANGER_NAME.fullmatch(name.stem)["slug"].replace("-", " ").strip()  # type: ignore[index]
+        return words[:1].upper() + words[1:] if words else "Note"
     return name.stem or name.name
+
+
+def heading_title(text: str) -> str | None:
+    """Le titre `# …` d'une note (première ligne non vide), tel qu'écrit ; `None` s'il n'y en a pas."""
+
+    for line in text.splitlines():
+        if not line.strip():
+            continue
+        if line.startswith("# ") and line[2:].strip():
+            return line[2:].strip()[:MAX_HEADING_CHARS]
+        return None
+    return None
 
 
 _ARTIFACT_KINDS: dict[ArtifactKind, EntryKind] = {
@@ -377,6 +409,7 @@ __all__ = [
     "ARTIFACT_PREFIX", "BackingKind", "DEFAULT_LIST_LIMIT", "DossierCode", "DossierEntryRef", "DossierError",
     "EntryKind", "EntrySource", "MAX_LINKED_SCAN", "MAX_LIST_LIMIT", "MAX_RANGER_OBJECTS", "MEMORY_PREFIX",
     "MEMORY_SCAN_DEPTH", "MEMORY_SCAN_ENTRIES", "OpenMode", "PRESENT_CATEGORY", "RANGER_FOLDER", "SceneBacking",
-    "artifact_entry_kind", "artifact_entry_title", "classify_scene_object", "memory_entry_kind",
+    "RANGER_HEADING_BYTES", "artifact_entry_kind", "artifact_entry_title", "classify_scene_object", "heading_title",
+    "is_ranger_note", "memory_entry_kind",
     "memory_entry_title", "ranger_body", "ranger_markdown", "ranger_path", "stored_body",
 ]

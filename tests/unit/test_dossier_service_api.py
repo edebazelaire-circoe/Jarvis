@@ -535,3 +535,67 @@ async def test_backing_says_when_the_board_is_not_the_displayed_one(tmp_path):
         status, archived = await get(stack, f"/boards/{w.board_archived}/dossier/backing",
                                      object_id="brain-artifact-inactive")
         assert status == 200 and archived["board_code"] == "board_archived"
+
+
+# ------------------------------------------------------------------ Slice 07 : ce que la vue plein écran lit
+
+
+async def test_a_ranged_note_is_titled_by_its_heading_never_by_its_digest(tmp_path):
+    """QA S05, polish 1 : « Pistes de financement », pas `pistes-de-financement-2352da72`."""
+
+    async with CaptureStack(tmp_path) as stack:
+        w = await on_board_a(stack)
+        await put(stack, "brain-artifact-t1", payload=RESEARCH)
+        _, body = await post(stack, f"/boards/{w.board_a}/dossier/ranger", {"object_ids": ["brain-artifact-t1"]})
+        entry_id = body["results"][0]["entry_id"]
+        _, listed = await get(stack, f"/boards/{w.board_a}/dossier")
+        [row] = [e for e in listed["entries"] if e["entry_id"] == entry_id]
+        assert row["title"] == "Pistes de financement", row
+        _, one = await get(stack, f"/boards/{w.board_a}/dossier/entry", id=entry_id)
+        assert one["entry"]["title"] == "Pistes de financement"
+
+
+def test_a_ranged_note_without_heading_drops_the_digest_suffix():
+    from jarvis.domain.dossier import heading_title, is_ranger_note, memory_entry_title
+
+    assert memory_entry_title("notes/pistes-de-financement-2352da72.md") == "Pistes de financement"
+    assert memory_entry_title("notes/budget-0123abcd-89abcdef.md") == "Budget"
+    assert memory_entry_title("notes/plan.md") == "plan", "an ordinary note keeps its stem"
+    assert not is_ranger_note("archives/budget-0123abcd.md"), "only notes/ is Ranger's folder"
+    assert heading_title("\n# Décision budget\n\ntexte") == "Décision budget"
+    assert heading_title("Pas de titre\n# plus bas") is None
+
+
+async def test_present_answers_the_entry_id_as_stored_on_disk(tmp_path):
+    """QA S05, polish 5 : `Summary.md` demandé, `summary.md` rendu (Windows ignore la casse)."""
+
+    import os
+
+    async with CaptureStack(tmp_path) as stack:
+        w = await on_board_a(stack)
+        if os.path.normcase("A") != "a":
+            pytest.skip("case-sensitive filesystem: the case-insensitive lookup is a Windows behaviour")
+        status, shown = await post(stack, f"/boards/{w.board_a}/dossier/present", {"entry_id": "memory:Notes/PLAN.md"})
+        assert status == 201 and shown["entry_id"] == "memory:notes/plan.md", shown
+        item = await active(stack, shown["object_id"])
+        assert item.payload.source_path == str(memory_file(stack, w.board_a, "notes/plan.md"))
+
+
+def test_a_board_drop_reads_as_a_drop_not_as_an_automatic_link():
+    """QA S05, polish 4 : le dépôt lie avec `origin=active_board` ; la provenance d'envoi le départage."""
+
+    from types import SimpleNamespace
+
+    from jarvis.core.dossier_service import _provenance
+    from jarvis.domain.artifacts import ArtifactKind
+    from jarvis.domain.board_artifact_links import BoardArtifactLinkOrigin
+
+    auto = SimpleNamespace(origin=BoardArtifactLinkOrigin.ACTIVE_BOARD)
+    explicit = SimpleNamespace(origin=BoardArtifactLinkOrigin.EXPLICIT)
+    drop = SimpleNamespace(kind=ArtifactKind.UPLOAD, metadata={"provenance": "board_drop"})
+    chat = SimpleNamespace(kind=ArtifactKind.UPLOAD, metadata={"provenance": "chat_attachment"})
+    shot = SimpleNamespace(kind=ArtifactKind.SCREENSHOT, metadata={})
+    assert _provenance(drop, auto) == "déposé sur le Board"
+    assert _provenance(chat, auto) == "joint dans la conversation"
+    assert _provenance(shot, auto) == "ajouté automatiquement (Board actif à sa création)"
+    assert _provenance(shot, explicit) == "ajouté au Dossier"

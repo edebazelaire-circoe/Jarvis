@@ -626,6 +626,15 @@ CAPTURE_WHEEL_SCRIPT_MARKER = "/*__CONTROL_CENTER_CAPTURE_WHEEL_JS__*/"
 #: Tool wheel. Refus d'installation rattrapé.
 JARVIS_WHEEL_SCRIPT_FILE = "control_center_jarvis_wheel.js"
 JARVIS_WHEEL_SCRIPT_MARKER = "/*__CONTROL_CENTER_JARVIS_WHEEL_JS__*/"
+#: Dossier plein écran du Board (jarvis-board-ui-wheel-dossier-refactor, Slice 07) : logique pure
+#: (`control_center_dossier_core.js`, exécutée par node) puis la vue (`control_center_dossier.js`) :
+#: organisation, lecture, édition par `memory/write` (`expected_sha256`), Afficher sur le Board par
+#: `…/dossier/present`, ouverture par Jarvis sur `/api/dossier/navigation/commands` (jeton de page).
+#: APRÈS la roue, qu'elle branche. Contrat : `docs/dossier.md` › Full-screen Dossier (UI).
+DOSSIER_CORE_SCRIPT_FILE = "control_center_dossier_core.js"
+DOSSIER_CORE_SCRIPT_MARKER = "/*__CONTROL_CENTER_DOSSIER_CORE_JS__*/"
+DOSSIER_SCRIPT_FILE = "control_center_dossier.js"
+DOSSIER_SCRIPT_MARKER = "/*__CONTROL_CENTER_DOSSIER_JS__*/"
 #: Sélection Souris / Bare Hands et reprise de la main par la souris
 #: (jarvis-board-orbital-ui-workspace-rail, Slice 03, D5) : projection du cycle
 #: de vie Bare Hands sur le secteur Sélection de la roue, sous-arc Souris /
@@ -2389,7 +2398,6 @@ class ControlCenter:
             page.with_name(STUDIO_EXPLORER_SCRIPT_FILE).read_text(encoding="utf-8"),
         )
         html = html.replace("__JARVIS_EXPLORER_PAGE_TOKEN__", self.studio_explorer.broker.page_token)   # remis AVEC la page : reçus et rapports d'état l'exigent
-        html = html.replace(DOSSIER_PAGE_TOKEN_MARKER, self.dossier_navigation.broker.page_token)   # idem pour le Dossier (marqueur posé par la Slice 07)
         html = html.replace(
             STUDIO_PLAYER_SCRIPT_MARKER,
             page.with_name(STUDIO_PLAYER_SCRIPT_FILE).read_text(encoding="utf-8"),
@@ -2434,6 +2442,11 @@ class ControlCenter:
             INPUT_ARBITRATION_SCRIPT_MARKER,
             page.with_name(INPUT_ARBITRATION_SCRIPT_FILE).read_text(encoding="utf-8"),
         )
+        for marker, file_name in ((DOSSIER_CORE_SCRIPT_MARKER, DOSSIER_CORE_SCRIPT_FILE),
+                                  (DOSSIER_SCRIPT_MARKER, DOSSIER_SCRIPT_FILE)):
+            html = html.replace(marker, page.with_name(file_name).read_text(encoding="utf-8"))
+        # Remis AVEC la page, une fois la vue du Dossier insérée (Slice 07) : ses reçus de navigation l'exigent.
+        html = html.replace(DOSSIER_PAGE_TOKEN_MARKER, self.dossier_navigation.broker.page_token)
         html = html.replace(
             BOARDS_SCRIPT_MARKER,
             page.with_name(BOARDS_SCRIPT_FILE).read_text(encoding="utf-8"),

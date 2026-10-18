@@ -464,7 +464,12 @@ class WorkspaceTools:
 
     async def dossier_view(self, board_id: str, entry_id: str) -> dict[str, Any]:
         # L'entrée existe dans CE Dossier (refus codé de Core sinon) avant de déranger l'écran.
-        await self._send("dossier_view", "GET", _board_route(board_id) + "/dossier/entry", params={"id": entry_id})
+        found = await self._send("dossier_view", "GET", _board_route(board_id) + "/dossier/entry",
+                                 params={"id": entry_id})
+        # L'identifiant tel que Core le résout (casse du fichier sur disque) : la page l'ouvre sous ce nom (QA S05, polish 5).
+        entry = found.get("entry") if isinstance(found, dict) else None
+        if isinstance(entry, dict) and isinstance(entry.get("entry_id"), str):
+            entry_id = entry["entry_id"]
         body = await self._send("dossier_view", "POST", DOSSIER_ROUTE, timeout_s=NAVIGATION_TIMEOUT_S,
                                 payload={"board_id": board_id, "entry_id": entry_id})
         state = body.get("state")

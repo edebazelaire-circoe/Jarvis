@@ -45,13 +45,15 @@ import uuid
 
 from jarvis.core.capture_api import artifact_summary, redact_paths
 from jarvis.core.workspace_service import LEDGER_FAILED, MAX_READ_BYTES, WorkspaceError
-from jarvis.domain.artifacts import Artifact, ArtifactError, ArtifactErrorCode
+from jarvis.domain.artifacts import Artifact, ArtifactError, ArtifactErrorCode, ArtifactKind
 from jarvis.domain.board_artifact_links import BoardArtifactLink, BoardArtifactLinkOrigin
 from jarvis.domain.board_memory import BoardMemoryError, BoardMemoryErrorCode, BoardMemoryPath
 from jarvis.domain.dossier import (
     DEFAULT_LIST_LIMIT, MAX_LINKED_SCAN, MAX_LIST_LIMIT, MAX_RANGER_OBJECTS, MEMORY_SCAN_DEPTH, PRESENT_CATEGORY,
+    RANGER_HEADING_BYTES,
     BackingKind, DossierCode, DossierEntryRef, EntryKind, EntrySource, artifact_entry_kind, artifact_entry_title,
-    classify_scene_object, memory_entry_kind, memory_entry_title, ranger_body, ranger_markdown, ranger_path,
+    classify_scene_object, heading_title, is_ranger_note, memory_entry_kind, memory_entry_title, ranger_body,
+    ranger_markdown, ranger_path,
     stored_body,
 )
 from jarvis.domain.scene import (
@@ -115,6 +117,26 @@ def _sentence(code: str) -> str:
         return SENTENCES[DossierCode(code)]
     except ValueError:
         return "Refusé : l'objet reste sur le Board."
+
+
+#: Sources d'un envoi (`upload_service.Provenance`) dites à l'humain : un dépôt sur le Board est un geste explicite.
+_UPLOAD_PROVENANCES = {"board_drop": "déposé sur le Board", "chat_attachment": "joint dans la conversation"}
+
+
+def _provenance(artifact: Artifact, link: BoardArtifactLink) -> str:
+    """Comment l'entrée est arrivée dans ce Dossier, honnêtement (QA S05, polish 4).
+
+    Un dépôt sur le Board crée le lien avec `origin=active_board` : le lien seul le dirait « automatique ». La
+    provenance d'envoi de l'Artifact (`metadata.provenance`) départage ; sinon l'origine du lien.
+    """
+
+    if artifact.kind is ArtifactKind.UPLOAD:
+        said = _UPLOAD_PROVENANCES.get(str(artifact.metadata.get("provenance") or ""))
+        if said:
+            return said
+    if link.origin is BoardArtifactLinkOrigin.ACTIVE_BOARD:
+        return "ajouté automatiquement (Board actif à sa création)"
+    return "ajouté au Dossier"
 
 
 def _iso(value: datetime | None) -> str | None:
@@ -202,8 +224,7 @@ class DossierService:
             "open": open_mode.value, "preview": summary.get("preview"), "state": artifact.state.value,
             "modified_at": _iso(max(artifact.updated_at, link.linked_at)), "added_at": _iso(link.linked_at),
             # Provenance humaine : comment l'élément est arrivé dans ce Dossier ; le reste est avancé.
-            "provenance": ("ajouté automatiquement (Board actif à sa création)"
-                           if link.origin is BoardArtifactLinkOrigin.ACTIVE_BOARD else "ajouté au Dossier"),
+            "provenance": _provenance(artifact, link),
         }
         if advanced:
             view["advanced"] = {"artifact_id": artifact.artifact_id, "artifact_kind": artifact.kind.value,
@@ -271,6 +292,7 @@ class DossierService:
         entries.sort(key=lambda e: (e["kind"] != EntryKind.MEMORY_SUMMARY.value,
                                     -datetime.fromisoformat(e["modified_at"]).timestamp() if e["modified_at"] else 0))
         page = entries[:limit]
+        await self._ranger_titles(board.board_id, page)
         self._read("dossier_list", started, board_id=board.board_id, count=len(page), total=len(entries))
         payload: dict[str, Any] = {
             "board": self._board_view(board), "entries": page, "total": len(entries),
@@ -289,8 +311,31 @@ class DossierService:
         started = time.monotonic()
         board = await self._board(board_id)
         view = await self._resolve_entry(board, ref, advanced=advanced)
+        await self._ranger_titles(board.board_id, [view])
         self._read("dossier_entry", started, board_id=board.board_id, source=ref.source.value)
         return {"board": self._board_view(board), "entry": view}
+
+    async def _ranger_titles(self, board_id: str, views: list[dict[str, Any]]) -> None:
+        """Une note rangée prend le titre `#` qu'elle porte (accents compris), lu en tête par le propriétaire.
+
+        Seules les notes au nom de `ranger_path` sont lues (bornées par la page) ; une tête illisible garde le titre
+        tiré du nom, sans suffixe d'empreinte (QA S05, polish 1).
+        """
+
+        for view in views:
+            if view.get("source") != EntrySource.MEMORY.value or not is_ranger_note(str(view.get("path") or "")):
+                continue
+            try:
+                head = await self._workspace.memory_read(board_id, path=view["path"], max_bytes=RANGER_HEADING_BYTES)
+            except (BoardMemoryError, BoardMemoryUnavailable, BoardError, WorkspaceError) as exc:
+                # capture: le titre du nom reste ; la cause est journalisée, la liste n'échoue pas pour un titre.
+                self._trace("core.dossier.title_unread", "Titre d'une note rangée illisible", level="warning",
+                            data={"board_id": board_id, "code": str(getattr(getattr(exc, "code", None), "value",
+                                                                             getattr(exc, "code", "unknown")))})
+                continue
+            title = heading_title(str(head.get("text") or ""))
+            if title:
+                view["title"] = title
 
     async def _resolve_entry(self, board: Board, ref: DossierEntryRef, *, advanced: bool) -> dict[str, Any]:
         if ref.source is EntrySource.MEMORY:
@@ -564,6 +609,8 @@ class DossierService:
         started = time.monotonic()
         board = await self._displayed_board(board_id)
         view = await self._resolve_entry(board, ref, advanced=False)
+        # Le nom tel que stocké (casse comprise) : la réponse et `source_path` désignent le fichier sur disque (QA S05, polish 5).
+        ref = DossierEntryRef.parse(view["entry_id"])
         source_path, artifact_id = "", ""
         if ref.source is EntrySource.MEMORY:
             source_path = str(self._memory_root(board.board_id).joinpath(*ref.key.split("/")))

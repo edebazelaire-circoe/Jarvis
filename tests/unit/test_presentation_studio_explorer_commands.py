@@ -349,6 +349,9 @@ async def test_the_served_page_carries_the_token_the_broker_requires(running, se
     token = running.control.studio_explorer.broker.page_token
     assert "__JARVIS_EXPLORER_PAGE_TOKEN__" not in html, "the placeholder is replaced when the page is served"
     assert token in html and html.count(token) == 1, "handed out with the page, once"
+    # Le Dossier (wheel-dossier-refactor, Slice 07) : son jeton est remis de même, avec la vue qui le présente.
+    dossier = running.control.dossier_navigation.broker.page_token
+    assert "__JARVIS_DOSSIER_PAGE_TOKEN__" not in html and html.count(dossier) == 1
 
 
 async def test_an_early_accepted_receipt_pushes_the_final_deadline_out_to_the_requested_work_time(running, session):

@@ -9,6 +9,8 @@ from __future__ import annotations
 
 import asyncio
 
+import pytest
+
 from jarvis.domain.scene import SceneObjectKind, ScenePayload
 from tests.fakes.capture_stack import CaptureStack
 from tests.unit.test_dossier_service_api import RESEARCH, active, memory_file, on_board_a, put
@@ -118,6 +120,21 @@ async def test_dossier_view_returns_the_receipt_of_the_page(tmp_path):
         assert "sans prétendre l'inverse" in refused["explanation"]
 
 
+async def test_dossier_view_sends_the_entry_id_as_stored(tmp_path):
+    """QA S05, polish 5 : la page reçoit le nom du fichier sur disque, pas la casse de la demande."""
+
+    import os
+
+    if os.path.normcase("A") != "a":
+        pytest.skip("case-insensitive lookup is a Windows behaviour")
+    async with CaptureStack(tmp_path) as stack, Brain(stack) as brain:
+        w = await build(stack)
+        page = asyncio.ensure_future(_page_answers(stack, {"state": "opened"}))
+        opened = await brain.call("dossier_view", {"board_id": w.board_a, "entry_id": "memory:NOTES/Plan.md"})
+        command = await page
+        assert command["entry_id"] == "memory:notes/plan.md" and opened["entry_id"] == "memory:notes/plan.md"
+
+
 async def test_dossier_view_without_a_visible_page_or_entry_is_an_honest_refusal(tmp_path):
     async with CaptureStack(tmp_path) as stack, Brain(stack) as brain:
         w = await build(stack)
@@ -128,5 +145,7 @@ async def test_dossier_view_without_a_visible_page_or_entry_is_an_honest_refusal
             "an entry that is not there never disturbs the screen"
         nobody = await brain.refused("dossier_view", {"board_id": w.board_a, "entry_id": "memory:summary.md"})
         assert nobody.startswith("Refus no_visible_page : ") and "pas ouverte" in nobody
+        # QA S05, polish 2 : aucune promesse de rouvrir « dès que l'interface est visible ».
+        assert "rien ne l'ouvrira de soi-même" in nobody and "dès que" not in nobody
         kinds = [e.get("kind") for e in stack.trace()]
         assert "dossier.navigation.requested" in kinds and "dossier.navigation.expired" in kinds

@@ -130,8 +130,9 @@ ERROR_SENTENCES: dict[str, str] = {
     "dossier_entry_not_found": "Cette entrée n'est pas dans ce Dossier : relisez dossier_list.",
     "dossier_entry_invalid": "Identifiant d'entrée mal formé : reprenez un entry_id de dossier_list.",
     "scene_unavailable": "La scène n'est pas servie en ce moment : rien n'a été rangé ni affiché.",
-    "no_visible_page": ("Aucune page du Control Center n'a répondu : l'entrée n'est pas ouverte. Dites-le, et "
-                        "proposez de l'ouvrir quand l'interface sera visible."),
+    "no_visible_page": ("Aucune page visible du Control Center n'a pris la demande : l'entrée n'est pas ouverte "
+                        "et rien ne l'ouvrira de soi-même. Dites-le sans rien promettre ; l'utilisateur l'ouvre "
+                        "depuis la roue, catégorie Dossier."),
     "command_expired": ("La page a pris la demande sans répondre : l'issue est inconnue, ne dites pas qu'elle est "
                         "ouverte."),
     "command_busy": "Une autre ouverture est en cours : réessayez dans une seconde.",

@@ -31,7 +31,7 @@ html,body{margin:0;height:100%;background:var(--bg);color:var(--text);font:15px 
    @shell-layer 38: #screenshotPreview
    @shell-layer 39: #boardsPanel
    @shell-layer 40: #recIndicators, #bgPills
-   @shell-layer 55: .tl, .tlab, .mcpi, .wsp, .pfb
+   @shell-layer 55: .tl, .tlab, .mcpi, .wsp, .pfb, #dossierView
    @shell-layer 60: .overlay
    @shell-layer 70: .toasts
    @shell-layer 75: .bgpop, #jvStudioReloadBand
@@ -1619,6 +1619,9 @@ button.wsp-ename:hover{color:var(--accent)}
    dans la vue : base = accent, base modifiée = ambre (la seule chose qui
    s'écarte de ce que JARVIS livre), fork = vert (badge, formulaire,
    provenance), custom = neutre. */
+.dsr{position:fixed;inset:0;z-index:55;display:flex;flex-direction:column;background:#060b10}
+.dsr>.dsr-body{flex:1;min-height:0}
+.dsr .sr{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}
 .pfb{position:fixed;inset:0;z-index:55;display:grid;grid-template-rows:auto minmax(0,1fr);
   background:rgba(2,6,10,.84);backdrop-filter:blur(16px) saturate(.85);-webkit-backdrop-filter:blur(16px) saturate(.85)}
 .pfb .sr{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}
@@ -2135,6 +2138,9 @@ button.wsp-ename:hover{color:var(--accent)}
   <div class="sr" id="mcpiAnnounce" aria-live="polite"></div>
 </section>
 
+<!-- Dossier plein écran (jarvis-board-ui-wheel-dossier-refactor, Slice 07) : rempli par control_center_dossier.js ;
+     rang 55 comme les autres vues plein écran ; ouvert par la roue, Jarvis ou JarvisDossier.open. -->
+<section class="dsr" id="dossierView" role="dialog" aria-modal="true" aria-labelledby="dsrTitle" hidden></section>
 <section class="wsp" id="workspaceManager" role="dialog" aria-modal="true" aria-labelledby="wspTitle" aria-describedby="wspHelp" hidden>
   <header class="tl-bar">
     <h2 class="tl-title" id="wspTitle"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4" width="7" height="7" rx="1.5"/><rect x="14" y="4" width="7" height="7" rx="1.5"/><rect x="3" y="15" width="7" height="5" rx="1.5"/><path d="M10 7.5h4M6.5 11v4M17.5 11v6.5H10"/></svg><span class="tl-tt">Sessions &amp; Boards</span></h2>
@@ -2502,7 +2508,7 @@ async function renderErrors(){const archived=errorsView==='archived';title.textC
    D05). Ils se lisent dans le sous-menu JARVIS de la roue (Slice 04,
    `control_center_jarvis_wheel.js`), que ce battement nourrit (`gate` / `statusLost`) :
    aucun second sondage. La touche reste le raccourci global de Voice. */
-async function refreshStatus(){try{const s=await api('/api/status'),online=s.voice_online===true;renderLive(s.live);try{if(window.JarvisRuntimeWheel)JarvisRuntimeWheel.gate(s)}catch(jarvisError){console.error('[jarvis] jarvis_wheel_gate_failed',jarvisError)}$('.face').style.visibility=online?'visible':'hidden';const b=$('#errorBadge');b.textContent=s.error_count;b.style.display=s.error_count?'flex':'none';renderBackgroundPills(s.background,s.boards);try{if(window.JarvisPresentationAttentionControl)JarvisPresentationAttentionControl.gate(s.background)}catch(attentionError){console.error('[attention] presentation_attention_gate_failed',attentionError)}try{if(window.JarvisScene)JarvisScene.gate(s.scene,s.scene_limits)}catch(sceneError){console.error('[scène] scene.gate_failed',sceneError)}try{if(window.JarvisBarehandsCommandChannel)JarvisBarehandsCommandChannel.gate(s.barehands)}catch(handsError){console.error('[barehands] command_gate_failed',handsError)}try{if(window.JarvisBarehands)JarvisBarehands.gate(s.barehands)}catch(switchError){console.error('[barehands] switch_gate_failed',switchError)}try{if(window.JarvisBoardsControl)JarvisBoardsControl.gate(s.boards,s.interaction_mode,s.presentation)}catch(boardsError){console.error('[boards] boards_gate_failed',boardsError)}try{if(window.JarvisPresentationRail)JarvisPresentationRail.gate(s)}catch(railError){console.error('[presentation-rail] gate_failed',railError)}AG.agent=s.agent||null;AG.cli=s.agent_cli||'';if(!(current==='agents'&&coreOk()))updateSubagentBadge(s.subagents,false);watchSubagents(s.subagents)}catch(e){try{if(window.JarvisScene)JarvisScene.statusLost()}catch(_sceneError){/* la scène ne doit pas casser le statut */}try{if(window.JarvisBarehandsCommandChannel)JarvisBarehandsCommandChannel.statusLost()}catch(_handsError){/* le canal de commandes non plus */}try{if(window.JarvisBoardsControl)JarvisBoardsControl.statusLost()}catch(_boardsError){/* la carte Board non plus : elle doit cesser d'afficher un Board et une séance que plus rien ne confirme */}try{if(window.JarvisPresentationAttentionControl)JarvisPresentationAttentionControl.statusLost()}catch(_attentionError){/* l'avertissement de vérification non plus : les cartes déjà posées décrivent un fait constaté, elles ne prétendent pas à un état vivant */}try{if(window.JarvisRuntimeWheel)JarvisRuntimeWheel.statusLost()}catch(_jarvisError){/* le sous-menu JARVIS non plus : il dit « état inconnu », jamais le dernier état connu */}$('.face').style.visibility='hidden';updateSubagentBadge(null)}}
+async function refreshStatus(){try{const s=await api('/api/status'),online=s.voice_online===true;renderLive(s.live);try{if(window.JarvisRuntimeWheel)JarvisRuntimeWheel.gate(s)}catch(jarvisError){console.error('[jarvis] jarvis_wheel_gate_failed',jarvisError)}$('.face').style.visibility=online?'visible':'hidden';const b=$('#errorBadge');b.textContent=s.error_count;b.style.display=s.error_count?'flex':'none';renderBackgroundPills(s.background,s.boards);try{if(window.JarvisPresentationAttentionControl)JarvisPresentationAttentionControl.gate(s.background)}catch(attentionError){console.error('[attention] presentation_attention_gate_failed',attentionError)}try{if(window.JarvisScene)JarvisScene.gate(s.scene,s.scene_limits)}catch(sceneError){console.error('[scène] scene.gate_failed',sceneError)}try{if(window.JarvisBarehandsCommandChannel)JarvisBarehandsCommandChannel.gate(s.barehands)}catch(handsError){console.error('[barehands] command_gate_failed',handsError)}try{if(window.JarvisBarehands)JarvisBarehands.gate(s.barehands)}catch(switchError){console.error('[barehands] switch_gate_failed',switchError)}try{if(window.JarvisBoardsControl)JarvisBoardsControl.gate(s.boards,s.interaction_mode,s.presentation)}catch(boardsError){console.error('[boards] boards_gate_failed',boardsError)}try{if(window.JarvisDossier)JarvisDossier.gate(s.boards)}catch(dossierError){console.error('[dossier] dossier_gate_failed',dossierError)}try{if(window.JarvisPresentationRail)JarvisPresentationRail.gate(s)}catch(railError){console.error('[presentation-rail] gate_failed',railError)}AG.agent=s.agent||null;AG.cli=s.agent_cli||'';if(!(current==='agents'&&coreOk()))updateSubagentBadge(s.subagents,false);watchSubagents(s.subagents)}catch(e){try{if(window.JarvisScene)JarvisScene.statusLost()}catch(_sceneError){/* la scène ne doit pas casser le statut */}try{if(window.JarvisBarehandsCommandChannel)JarvisBarehandsCommandChannel.statusLost()}catch(_handsError){/* le canal de commandes non plus */}try{if(window.JarvisBoardsControl)JarvisBoardsControl.statusLost()}catch(_boardsError){/* la carte Board non plus : elle doit cesser d'afficher un Board et une séance que plus rien ne confirme */}try{if(window.JarvisDossier)JarvisDossier.statusLost()}catch(_dossierError){/* le Dossier non plus : il dit « Core ne répond pas » et suspend ses écritures */}try{if(window.JarvisPresentationAttentionControl)JarvisPresentationAttentionControl.statusLost()}catch(_attentionError){/* l'avertissement de vérification non plus : les cartes déjà posées décrivent un fait constaté, elles ne prétendent pas à un état vivant */}try{if(window.JarvisRuntimeWheel)JarvisRuntimeWheel.statusLost()}catch(_jarvisError){/* le sous-menu JARVIS non plus : il dit « état inconnu », jamais le dernier état connu */}$('.face').style.visibility='hidden';updateSubagentBadge(null)}}
 async function openPanel(name){if(window.JarvisChat)window.JarvisChat.close();current=name;document.querySelectorAll('.dock button[data-panel]').forEach(b=>b.classList.toggle('active',b.dataset.panel===name));panel.classList.add('open');title.textContent={errors:'Errors',trace:'Trace',agents:'Agents'}[name];closeMenu(false);if(name==='agents'){openAgentsPanel();return}stopAgentsPolling();body.innerHTML='<div class="empty">Chargement…</div>';try{if(name==='errors')await renderErrors();if(name==='trace')body.innerHTML=entries(await api('/api/trace'))}catch(e){body.innerHTML=`<div class="entry error">${esc(e.message)}</div>`}}
 /* Un seul panneau latéral : fermer `#panel` ferme aussi le Chat (Échap, inspecteur du Studio). */
 function closePanel(){if(window.JarvisChat)window.JarvisChat.close();current=null;panel.classList.remove('open');document.querySelectorAll('.dock button[data-panel]').forEach(b=>b.classList.remove('active'));closeMenu(false);stopAgentsPolling()}
@@ -2635,6 +2641,12 @@ const STATUS={
    Slice 03) : `control_center_input_arbitration.js`. APRÈS la roue et le contrôle
    Bare Hands (`JarvisToolWheel`, `JarvisBarehandsHudControl`), qu'il lit au chargement. */
 /*__CONTROL_CENTER_INPUT_ARBITRATION_JS__*/
+/* Dossier plein écran (jarvis-board-ui-wheel-dossier-refactor, Slice 07) : logique pure
+   `control_center_dossier_core.js` puis la vue `control_center_dossier.js`. APRÈS la roue, qu'elle
+   branche (catégorie Dossier) ; nourrie par `refreshStatus` (`JarvisDossier.gate`) ; ouverte aussi par
+   Jarvis (`/api/dossier/navigation/commands`, jeton de page remis avec la page). */
+/*__CONTROL_CENTER_DOSSIER_CORE_JS__*/
+/*__CONTROL_CENTER_DOSSIER_JS__*/
 /* Carte Board du bas-gauche (jarvis-board-session-context-runtime, Slice 06 ; bas-gauche
    depuis la Slice 02 de jarvis-board-ui-wheel-dossier-refactor) : `control_center_boards.js`.
    Ses seules sources vivantes sont les blocs `boards`, `interaction_mode` et

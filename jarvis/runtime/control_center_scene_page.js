@@ -3796,8 +3796,17 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
         removed:report.removed.length,kept:report.kept.length,refused:report.refused.length,
         codes:body.results.filter(r=>r.code).map(r=>r.code),revision:body.revision==null?null:body.revision,ms:Date.now()-started});
       const more=report.lines.length>3?` — et ${report.lines.length-3} autres`:'';
-      notify({title:report.title,kind:report.kind,ms:report.lines.length?10000:4500,
-        sub:report.lines.length?report.lines.slice(0,3).join(' — ')+more:'Retrouvez-les dans le Dossier du Board.'});
+      /* Slice 07 : le toast ouvre le Dossier sur ce qui vient d'y entrer (une entrée : elle-même ; plusieurs : l'accueil). */
+      const stored=body.results.filter(r=>r.status==='stored'&&r.entry_id).map(r=>r.entry_id);
+      const dossier=window.JarvisDossier;
+      const openDossier=stored.length&&dossier?()=>{
+        consoleLog('info','scene.ranger_open_dossier',{entries:stored.length});
+        if(stored.length===1)dossier.openEntry({entry_id:stored[0]}).catch(error=>actionFailed('Ouverture du Dossier',ids[0],error));
+        else dossier.open();
+      }:undefined;
+      notify({title:report.title,kind:report.kind,ms:report.lines.length?10000:6000,onClick:openDossier,
+        sub:(report.lines.length?report.lines.slice(0,3).join(' — ')+more:'Retrouvez-les dans le Dossier du Board.')
+          +(openDossier?' Cliquer ici pour l’ouvrir dans le Dossier.':'')});
     }finally{
       window.clearTimeout(slow);
       inflight.delete('ranger');

@@ -261,7 +261,8 @@ def test_relative_order_of_the_old_registry_is_kept():
     # Aperçu de capture (Slice 05) : au-dessus de la roue ouverte qui l'a prise, sous le centre d'état et la visionneuse.
     assert rank_of("#toolWheel[data-open]") < rank_of("#screenshotPreview") < rank_of("#recIndicators") < rank_of(".overlay")
     assert rank_of(".ctxmenu") < rank_of("#barehandsCards") < rank_of(".cdialog-back")
-    views = {rank_of(view) for view in (".tl", ".tlab", ".mcpi", ".wsp", ".pfb")}
+    views = {rank_of(view) for view in (".tl", ".tlab", ".mcpi", ".wsp", ".pfb", "#dossierView")}
+    assert rank_of("#dossierView") < rank_of("#jvStudioExplorer"), "Variantes covers the Dossier (Slice 07)"
     assert len(views) == 1
     view = views.pop()
     for control in (".dock", ".panel", ".live-banner", "#bgPills", "#boardsPanel", "#chatTab"):

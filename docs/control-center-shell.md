@@ -220,6 +220,7 @@ The rule is written exactly as in the sheet, `${…}` interpolations included.
 | 55 | `.mcpi` | `control_center.html` | `.mcpi` | MCP inspector |
 | 55 | `.wsp` | `control_center.html` | `.wsp` | Sessions & Boards |
 | 55 | `.pfb` | `control_center.html` | `.pfb` | prefab library |
+| 55 | `#dossierView` | `control_center.html` | `.dsr` | full-screen Dossier of the Board (wheel/dossier refactor Slice 07): one full-screen view among the others; below `.overlay`, toasts and the page confirmation; Variantes (9000) covers it, so it never opens while the Studio is shown ([Dossier](#dossier-full-screen-view)) |
 | 60 | `.overlay` | `control_center.html` | `.overlay` | settings and modal overlays; the screenshot lightbox `#screenshotLightbox` and annotation editor `#screenshotAnnotate` (Slice 05) take the class, no rank of their own |
 | 70 | `.toasts` | `control_center.html` | `.toasts` | toasts |
 | 75 | `.bgpop` | `control_center.html` | `.bgpop` | background pill popover |
