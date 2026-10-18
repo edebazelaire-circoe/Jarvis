@@ -136,6 +136,9 @@ ERROR_SENTENCES: dict[str, str] = {
     "command_expired": ("La page a pris la demande sans répondre : l'issue est inconnue, ne dites pas qu'elle est "
                         "ouverte."),
     "command_busy": "Une autre ouverture est en cours : réessayez dans une seconde.",
+    "edit_in_progress": ("Une modification non enregistrée est en cours dans le Dossier : la page n'a rien ouvert, "
+                         "pour ne pas la perdre. Dites-le ; l'utilisateur enregistre ou abandonne, puis "
+                         "redemandez. Ne dites pas que l'entrée est ouverte."),
     "memory_conflict": ("Conflit : le fichier a changé depuis ta lecture (expected_sha256), ou dossier/fichier "
                         "inattendu, ou dossier non vide sans recursive. Relis puis réessaie."),
     "memory_too_large": "Trop gros (256 Kio par appel) : découpe.",

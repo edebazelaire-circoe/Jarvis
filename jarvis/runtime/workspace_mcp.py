@@ -51,7 +51,7 @@ from jarvis.runtime.capture_mcp import artifact_item
 from jarvis.runtime.journal import RuntimeJournal
 from jarvis.runtime.mcp_tool_meta import tool_annotations, tool_names
 from jarvis.runtime.settings_mcp import ConsoleMcpTarget
-from jarvis.runtime.workspace_boards import BRAIN_ORIGIN, READ_TIMEOUT_S, BoardTools, transport_failure
+from jarvis.runtime.workspace_boards import BRAIN_ORIGIN, ERROR_SENTENCES, READ_TIMEOUT_S, BoardTools, transport_failure
 
 SERVER_NAME = "jarvis-workspace"
 CONFIG_FILE_NAME = "workspace-mcp.json"
@@ -474,9 +474,13 @@ class WorkspaceTools:
                                 payload={"board_id": board_id, "entry_id": entry_id})
         state = body.get("state")
         self._done("dossier_view", str(state), board_id=board_id, state=state, code=body.get("code"))
+        # Un refus nommé de la page (edit_in_progress…) porte sa propre phrase, que l'agent peut redire telle quelle.
+        explanation = body.get("explanation")
+        if state == "refused" and body.get("code") in ERROR_SENTENCES:
+            explanation = ERROR_SENTENCES[body["code"]]
         return {"board_id": board_id, "entry_id": entry_id, "state": state,
                 **_drop_none({"code": body.get("code"), "reason": body.get("reason")}),
-                "explanation": body.get("explanation")}
+                "explanation": explanation}
 
 
 _SERVER_INSTRUCTIONS = (

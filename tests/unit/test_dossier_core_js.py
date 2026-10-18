@@ -179,3 +179,21 @@ def test_the_served_page_inserts_the_dossier_after_the_wheel_and_feeds_it_from_t
     view = (RUNTIME / "control_center_dossier.js").read_text(encoding="utf-8")
     assert "'__JARVIS_DOSSIER_PAGE_TOKEN__'" in view, "the page token marker lives in the view the broker serves"
     assert "register({id:'dossier'" in view, "the wheel's Dossier category is wired here, not a placeholder"
+
+
+def test_a_dirty_tab_is_never_evicted_and_a_full_dirty_set_refuses(tmp_path):
+    """QA S07, B2 : l'éviction saute les onglets modifiés ; tous modifiés = refus `full`, onglets inchangés."""
+
+    r = run(tmp_path, r"""
+      const tabs=[];for(let i=0;i<C.MAX_TABS;i+=1)tabs.push({entryId:'memory:'+i+'.md',opener:'user',openedAt:i,dirty:i===0});
+      const one=C.openTab(tabs,'memory:new.md',{at:99});
+      const all=tabs.map(t=>Object.assign({},t,{dirty:true}));
+      const full=C.openTab(all,'memory:new.md',{at:99,active:'memory:3.md'});
+      return {dropped:one.dropped,full:full.full,len:full.tabs.length,active:full.active,
+        guardBoard:C.editGuard({dirtyCount:1,boardId:'a',targetBoardId:'b'}),guardSame:C.editGuard({dirtyCount:1,boardId:'a',targetBoardId:'a'}),
+        guardFull:C.editGuard({dirtyCount:8,tabsFull:true}).code,clean:C.editGuard({dirtyCount:0,boardId:'a',targetBoardId:'b'}).ok};
+    """)
+    assert r["dropped"] == "memory:1.md", "the oldest *unmodified* tab leaves"
+    assert r["full"] is True and r["len"] == 8 and r["active"] == "memory:3.md"
+    assert r["guardBoard"]["code"] == "edit_in_progress" and r["guardSame"]["ok"] is True
+    assert r["guardFull"] == "edit_in_progress" and r["clean"] is True

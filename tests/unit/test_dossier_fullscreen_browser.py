@@ -225,6 +225,8 @@ def test_narrow_screen_falls_back_to_tabs_and_drawers(tmp_path):
     step = _drive(tmp_path, [{"width": 600, "height": 800, "seed": seed(), "actions": [
         ["eval", "open", "JarvisDossier.open().ok", 900], ["eval", "org", org_shown, 50],
         ["click", "drawer", "#dsrOrgToggle", 300], ["eval", "orgOpen", org_shown, 50],
+        ["eval", "onTop", "(()=>{const o=document.getElementById('dsrOrg').getBoundingClientRect();"
+         "return [...Array(6)].every((_,i)=>document.getElementById('dsrOrg').contains(document.elementFromPoint(o.left+o.width/2,o.top+40+i*90)))})()", 50],
         ["click", "notes", "#dossierView [data-section='c:notes']", 400], ["eval", "orgClosed", org_shown, 50],
         _open("memory:notes/decision-budget.md"), ["click", "back", "#dossierView [data-tab='browse']", 300],
         ["click", "drawer2", "#dsrOrgToggle", 300], ["click", "home", "#dossierView [data-section='home']", 300],
@@ -235,6 +237,7 @@ def test_narrow_screen_falls_back_to_tabs_and_drawers(tmp_path):
     ]}])[0]
     r = step["results"]
     assert r["open"] is True and r["org"] is False and r["orgOpen"] is True and r["orgClosed"] is False
+    assert r["onTop"] is True, "the drawer is drawn above the masked summary excerpt (QA S07)"
     assert r["compare"] is False and r["docs"] == ["memory:comptes-rendus/comite-14-octobre.md"], "no side by side under 900 px"
     assert r["layout"]["narrow"] is True and r["layout"]["split"] is False
     assert r["overflow"] is True, "no horizontal scroll at 600 px"
@@ -422,3 +425,74 @@ def test_evidence_captures(tmp_path, size):
     ])
     for step in steps[:2] + steps[3:]:
         _no_errors(step)
+
+
+# ------------------------------------------------------------------ QA Slice 07 : une modification ne se perd jamais en silence
+
+DRAFT = "(document.querySelector(\"#dossierView textarea[data-entry='memory:notes/decision-budget.md']\")||{}).value||''"
+
+
+def _edit_decision() -> list:
+    entry = "memory:notes/decision-budget.md"
+    return [["eval", "open", "JarvisDossier.open().ok", 900], _open(entry),
+            ["click", "edit", _act("edit", entry), 600], ["eval", "typed", TYPE, 150]]
+
+
+def test_a_jarvis_order_after_a_board_switch_never_drops_an_unsaved_edit(tmp_path):
+    """B1 : bascule (le Dossier reste sur Atlas, avis), puis Jarvis demande une entrée de Budget 2027 : refusé."""
+
+    step = _drive(tmp_path, [{"width": 1440, "height": 900, "seed": seed(), "actions": [
+        *_edit_decision(),
+        ["eval", "switch", f"window.__sc.activeBoard='{B}';1", 2600], ["eval", "held", STATE, 50],
+        _nav("memory:notes/arbitrages.md", board=B, n=7),
+        ["eval", "receipts", RECEIPTS, 50], ["eval", "after", STATE, 50], ["eval", "draft", DRAFT, 50],
+        ["eval", "notice", NOTICE, 50], ["eval", "head", HEAD, 50],
+    ]}])[0]
+    r = step["results"]
+    assert r["held"]["boardId"] == A and r["held"]["follow"] is False
+    [receipt] = r["receipts"]
+    assert receipt["body"]["state"] == "refused" and receipt["body"]["code"] == "edit_in_progress", receipt
+    assert r["after"]["boardId"] == A and "Projet Atlas" in r["head"]
+    assert r["draft"].endswith("Ajout de Clarice."), "the draft is intact"
+    assert "Jarvis voulait ouvrir" in r["notice"] and "arbitrages" in r["notice"], r["notice"]
+    assert not [c for c in step["calls"] if "/memory/write" in c]
+    _no_errors(step)
+
+
+def test_an_edited_tab_is_never_evicted_and_closing_asks_first(tmp_path):
+    """B2 : une modification, puis huit autres entrées : l'onglet modifié reste ; close() demande « Abandonner ? »."""
+
+    others = [f"memory:archives/{2020 + i % 5}/lot-{i % 7}/piece-{i:03d}.md" for i in range(8)]
+    opens = [["eval", f"o{i}", f"JarvisDossier.openEntry({{entry_id:'{e}'}}).then(r=>r.ok)", 500] for i, e in enumerate(others)]
+    step = _drive(tmp_path, [{"width": 1440, "height": 900, "seed": seed(big=True), "actions": [
+        *_edit_decision(), *opens,
+        ["eval", "tabs", "JarvisDossier.state().tabs", 50],
+        ["eval", "closed", "JarvisDossier.close()", 400], ["eval", "open", "JarvisDossier.isOpen()", 50],
+        ["eval", "ask", "!!document.querySelector(\"#dossierView [data-fk='discard-no']\")", 50],
+        ["eval", "draft", DRAFT, 50],
+    ]}])[0]
+    r = step["results"]
+    ids = [t["entryId"] for t in r["tabs"]]
+    assert len(ids) == 8 and "memory:notes/decision-budget.md" in ids, ids
+    assert [t for t in r["tabs"] if t["entryId"] == "memory:notes/decision-budget.md"][0].get("dirty") is True
+    assert r["closed"] is False and r["open"] is True and r["ask"] is True, "closing asks « Abandonner ? »"
+    assert r["draft"].endswith("Ajout de Clarice.")
+    _no_errors(step)
+
+
+def test_renaming_says_so(tmp_path):
+    """QA S07 : le message « Renommé : … » survit à la relecture du document."""
+
+    entry = "memory:notes/decision-budget.md"
+    setv = ("(()=>{const i=document.querySelector(\"#dossierView [data-fk='move-input']\");i.value='notes/decision-budget-2027.md';"
+            "i.dispatchEvent(new Event('input',{bubbles:true}));return i.value})()")
+    step = _drive(tmp_path, [{"width": 1440, "height": 900, "seed": seed(), "actions": [
+        ["eval", "open", "JarvisDossier.open().ok", 900], _open(entry),
+        ["click", "more", _act("more-menu", entry), 300], ["click", "form", "#dsrMenu [data-act='move-form']", 300],
+        ["eval", "set", setv, 100], ["click", "go", "#dossierView form[data-form='move'] button[type='submit']", 1200],
+        ["eval", "flash", FLASH, 50], ["eval", "state", STATE, 50],
+    ]}])[0]
+    r = step["results"]
+    assert any("Renommé : notes/decision-budget-2027.md" in f for f in r["flash"]), r["flash"]
+    assert r["state"]["active"] == "memory:notes/decision-budget-2027.md"
+    _no_errors(step)

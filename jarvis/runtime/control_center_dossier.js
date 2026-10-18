@@ -585,6 +585,7 @@
 
   function render(){
     if(!S.open)return;
+    markDirty();
     const active=document.activeElement;
     const fk=active&&host.contains(active)?active.dataset&&active.dataset.fk:null;
     const sel=active&&active.tagName==='TEXTAREA'?[active.selectionStart,active.selectionEnd,active.scrollTop]:null;
@@ -690,7 +691,15 @@
   /* ------------------------------------------------------------ gestes */
   function openEntry(entry,{opener='user',focus=true}={}){
     const at=now();
+    markDirty();
     const r=C.openTab(S.tabs,entry.entry_id,{opener,at,active:S.active==='browse'?null:S.active});
+    if(r.full){
+      const guard=C.editGuard({dirtyCount:S.tabs.length,tabsFull:true});
+      S.notice={tone:'warn',text:`${opener==='jarvis'?'Jarvis voulait ouvrir':'Impossible d’ouvrir'} « ${entry.title||'ce document'} » : ${guard.reason}. Enregistrez ou abandonnez une modification, puis réessayez.`};
+      log('warn','dossier.open_refused',{code:guard.code,opener,tabs:S.tabs.length});
+      render();say(S.notice.text);
+      return {ok:false,code:guard.code,reason:guard.reason};
+    }
     S.tabs=r.tabs;S.active=r.active;
     if(r.dropped){S.docs.delete(r.dropped);if(S.split&&S.split.includes(r.dropped))S.split=null}
     if(opener==='jarvis'){const pair=C.pairFor(S.tabs,entry.entry_id,at);if(pair&&layout().split)S.split=pair}
@@ -701,6 +710,7 @@
     render();
     if(focus){const t=host.querySelector(`[data-fk="title:${CSS.escape(entry.entry_id)}"]`);if(t)t.focus({preventScroll:true})}
     say(`${entry.title||'Document'} ouvert${opener==='jarvis'?' à la demande de Jarvis':''}.`);
+    return {ok:true};
   }
   function openById(id){
     const e=entryOf(id);
@@ -800,7 +810,8 @@
     if(S.active===id)S.active=newId;
     S.docs.delete(id);
     await loadList();
-    const ne=entryOf(newId);if(ne){setDoc(newId,{flash:{tone:'ok',text:`Renommé : ${answer.body.to||target}.`}});ensureDoc(ne,true)}
+    const ne=entryOf(newId);
+    if(ne){await loadDoc(ne);setDoc(newId,{flash:{tone:'ok',text:`Renommé : ${answer.body.to||target}.`}})}
     render();
   }
   async function remove(id){
@@ -845,6 +856,12 @@
       return {ok:false,code:'dossier_unavailable',reason:'Board inconnu'};
     }
     const rebinding=S.boardId!==boardId;
+    if(rebinding&&hasDirtyEdit()){
+      /* Relier le Dossier à un autre Board fermerait l'éditeur : refusé, le brouillon reste (QA S07, B1). */
+      const guard=C.editGuard({dirtyCount:1,boardId:S.boardId,targetBoardId:boardId});
+      log('warn','dossier.open_refused',{code:guard.code,from:S.boardId,to:boardId});
+      return {ok:false,code:guard.code,reason:guard.reason};
+    }
     if(rebinding)resetForBoard(boardId);
     S.follow=follow;
     if(!S.open){
@@ -866,6 +883,18 @@
     S.section='home';S.filter='';S.search={status:'idle',q:'',matches:[],error:null,since:0};S.notice=null;
   }
   function hasDirtyEdit(){for(const d of S.docs.values())if(d.edit&&d.edit.draft!==d.edit.base)return d;return null}
+  /* `dirty` sur chaque onglet : posé dès qu'un éditeur diffère du texte chargé, retiré après un enregistrement
+     confirmé ou un abandon (l'éditeur disparaît). L'éviction et les refus le lisent (QA S07, B2). */
+  function markDirty(){
+    let n=0;
+    for(const t of S.tabs){const d=docOf(t.entryId);t.dirty=!!(d&&d.edit&&d.edit.draft!==d.edit.base);if(t.dirty)n+=1}
+    return n;
+  }
+  function tabsWouldBeFull(entryId){
+    if(S.tabs.some(t=>t.entryId===entryId)||S.tabs.length<C.MAX_TABS)return false;
+    markDirty();
+    return S.tabs.every(t=>t.dirty);
+  }
   function close(options){
     if(!S.open)return true;
     const dirty=hasDirtyEdit();
@@ -958,7 +987,7 @@
     const t=event.target;
     if(t===search){S.filter=search.value;if(S.active!=='browse'){S.active='browse';S.split=null}render();return}
     if(t.dataset&&t.dataset.fk==='move-input'&&S.form){S.form.value=t.value;return}
-    if(t.tagName==='TEXTAREA'&&t.dataset.entry){const d=docOf(t.dataset.entry);if(d&&d.edit)d.edit.draft=t.value}
+    if(t.tagName==='TEXTAREA'&&t.dataset.entry){const d=docOf(t.dataset.entry);if(d&&d.edit){d.edit.draft=t.value;markDirty()}}
   });
   host.addEventListener('toggle',event=>{
     if(!event.target.classList||!event.target.classList.contains('dsr-adv'))return;
@@ -1068,11 +1097,10 @@
   /* Ouvrir sur une entrée (toast de Ranger, roue) : l'entrée est résolue par le service, jamais supposée. */
   async function openFromOutside({entry_id,board_id,opener}){
     const r=show(board_id||S.displayed,{follow:!board_id||board_id===S.displayed,opener:opener||null});
-    if(!r.ok)return r;
+    if(!r.ok){if(r.code===C.EDIT_IN_PROGRESS){S.notice={tone:'warn',text:`Rien n’a été ouvert : ${r.reason}. Votre modification est gardée.`};render()}return r}
     const answer=await client.get(C.PATHS.entry(S.boardId,entry_id,false));
     if(!answer.ok){S.notice={tone:'bad',text:`${answer.error.title}. ${answer.error.hint}`};render();return {ok:false,code:answer.error.code}}
-    openEntry(answer.body.entry);
-    return {ok:true};
+    return openEntry(answer.body.entry);
   }
 
   /* ------------------------------------------------------------ canal Jarvis -> page */
@@ -1117,9 +1145,18 @@
         if(answer.error.code==='dossier_entry_not_found'||answer.status===404)return {state:'refused',code:'entry_not_found',reason:'cette entrée n’est pas dans le Dossier de ce Board'};
         return {state:'refused',code:'dossier_unavailable',reason:`${answer.error.title} (${answer.error.code})`};
       }
+      const wanted=answer.body.entry;
+      const guard=C.editGuard({dirtyCount:hasDirtyEdit()?1:0,boardId:S.open?S.boardId:null,targetBoardId:command.board_id,
+        tabsFull:S.open&&S.boardId===command.board_id&&tabsWouldBeFull(wanted.entry_id)});
+      if(!guard.ok){
+        S.notice={tone:'warn',text:`Jarvis voulait ouvrir « ${wanted.title||'une entrée'} » : ${guard.reason}. Votre modification est gardée.`};
+        render();say(S.notice.text);
+        return {state:'refused',code:guard.code,reason:guard.reason};
+      }
       const r=show(command.board_id,{follow:true,opener:null});
       if(!r.ok)return {state:'refused',code:r.code,reason:r.reason};
-      openEntry(answer.body.entry,{opener:'jarvis'});
+      const o=openEntry(wanted,{opener:'jarvis'});
+      if(!o.ok)return {state:'refused',code:o.code,reason:o.reason};
       /* « opened » = le Dossier est visible, sur cette entrée : vérifié dans le DOM, pas supposé. */
       const shown=!host.hidden&&!!host.querySelector(`article[data-entry="${CSS.escape(answer.body.entry.entry_id)}"]`);
       return shown?{state:'opened'}:{state:'refused',code:'dossier_unavailable',reason:'la page n’a pas pu montrer l’entrée'};
@@ -1166,7 +1203,7 @@
     /* Relevé des tests et des preuves. */
     state:()=>({open:S.open,boardId:S.boardId,follow:S.follow,displayed:S.displayed,board:S.board,coreLost:S.coreLost,
       list:{status:S.list.status,count:S.list.entries.length,total:S.list.total,truncated:S.list.truncated},
-      tabs:S.tabs.map(t=>({entryId:t.entryId,opener:t.opener})),active:S.active,split:S.split,section:S.section,
+      tabs:S.tabs.map(t=>({entryId:t.entryId,opener:t.opener,...(t.dirty?{dirty:true}:{})})),active:S.active,split:S.split,section:S.section,
       ctxOpen:ctxOpen(),advanced:S.advanced,layout:layout()}),
     channel:Object.freeze({stats:channel.stats,pageId:channel.pageId,state:channel.state}),
   });
@@ -1321,7 +1358,7 @@
 #dossierView .dsr-foot{display:flex;align-items:center;justify-content:space-between;gap:16px;min-height:34px;padding:6px 18px;border-top:1px solid var(--dsr-rule);font-size:12px;color:var(--dsr-faint)}
 #dossierView .dsr-status{font-variant-numeric:tabular-nums;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 #dossierView .dsr-hint{flex:none}
-#dossierView[data-ctx-drawer="1"] .dsr-ctx{position:absolute;right:0;top:0;bottom:0;box-shadow:-24px 0 48px -24px rgba(0,0,0,.8)}
+#dossierView[data-ctx-drawer="1"] .dsr-ctx{position:absolute;right:0;top:0;bottom:0;z-index:2;box-shadow:-24px 0 48px -24px rgba(0,0,0,.8)}
 #dossierView[data-ctx-drawer="1"] .dsr-body{position:relative;grid-template-columns:var(--dsr-org-w,232px) minmax(0,1fr)}
 @media(max-width:1279px){#dossierView{--dsr-org-w:232px}#dossierView .dsr-hint{display:none}}
 @media(max-width:899px){
@@ -1336,7 +1373,7 @@
   #dossierView .dsr-close .dsr-btn-label,#dossierView .dsr-close .dsr-kbd,#dossierView .dsr-btn .dsr-btn-label{display:none}
   #dossierView #dsrCtxToggle{order:2}
   #dossierView .dsr-body,#dossierView[data-ctx-drawer="1"] .dsr-body{position:relative;grid-template-columns:minmax(0,1fr)}
-  #dossierView .dsr-org{display:none;position:absolute;left:0;top:0;bottom:0;width:min(300px,86vw);box-shadow:24px 0 48px -24px rgba(0,0,0,.8)}
+  #dossierView .dsr-org{display:none;position:absolute;left:0;top:0;bottom:0;z-index:2;width:min(300px,86vw);box-shadow:24px 0 48px -24px rgba(0,0,0,.8)}
   #dossierView[data-org=open] .dsr-org{display:block}
   #dossierView .dsr-ctx{width:min(320px,90vw)}
   #dossierView .dsr-browse,#dossierView .dsr-doc{padding:16px 14px 40px}

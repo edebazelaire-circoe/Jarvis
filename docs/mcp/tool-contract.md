@@ -1474,8 +1474,11 @@ full-screen Dossier of the Control Center page (`control_center_dossier.js`)
 takes the command and answers `opened` (the entry is shown, checked in its
 DOM) or `refused` with `board_not_displayed`, `entry_not_found` or
 `dossier_unavailable` (Variantes covers the screen, Board unknown, page
-error). It sends the page the `entry_id` Core resolved (file name as stored,
-QA S05 polish 5). Two `dossier_view` calls within 30 s are shown side by side.
+error), or `edit_in_progress` (QA S07: an unsaved edit in the Dossier would be
+lost — another Board, or 8 edited tabs; nothing opened, the draft kept); a named
+refusal comes back with its own `ERROR_SENTENCES` sentence as `explanation`. It
+sends the page the `entry_id` Core resolved (file name as stored, QA S05
+polish 5). Two `dossier_view` calls within 30 s are shown side by side.
 Descriptions sharpened for routing (« Montrer … à l'écran » for `dossier_view`,
 « Poser … sur le Board ; pour la montrer à lire : dossier_view » for
 `dossier_present`), within the existing budgets (`test_mcp_catalog.py`

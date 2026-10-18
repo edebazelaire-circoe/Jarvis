@@ -178,3 +178,23 @@ outside the acceptance of the Slice that found it.
 8. `test_brain_capability_parity` was already failing before Slice 07 (Dossier tools and `ui_intent_publish`
    absent from the brain prompt); the Dossier tools are now named, `ui_intent_publish` (display, S4 of another
    handoff) still is not.
+
+## From Slice 07 QA (full-screen Dossier) — targets Slice 08
+
+Blocking findings B1 (a Jarvis order after a Board switch dropped an unsaved edit) and B2 (the 9th tab evicted
+the edited one; `close()` did not ask) are **fixed in Slice 07** (`S7: fix - …`), with the two trivial ones
+(« Renommé : … » never shown; the 600 px organisation drawer under the masked excerpt). Recorded, not fixed:
+
+1. When Core is really stopped while the Control Center answers, `coreLost` stays false: no « Core ne répond
+   pas » notice, Afficher sur le Board gives a wrong reason (« pas le Board affiché »), Enregistrer goes to the
+   network and gets an honest 503. The wheel does say « Board inconnu ».
+2. Narrow races without a generation check remain in `openById`, `move`, `remove` and `loadAdvanced`.
+3. Link mode: the page does not re-check the URL scheme (`check_link_url` does upstream); defence in depth only.
+4. A stale « Déjà sur le Board » flash stays visible during an edit or a conflict.
+5. Brain: turns of 10-18 s, the « Your previous response had no visible output » retry, and on `created:false`
+   it says « remise en avant », a slight embellishment.
+6. `test_selection_actions_browser::test_ranger_refused_whole_or_kept…` is unstable (one failure, then two
+   passes). Also seen in the QA fix pass: `test_mcp_plugin_service::test_stop_is_bounded_even_with_a_hanging_owner`
+   failed once in a large lot, passed alone (timing under load).
+7. Outside the Slice, Issue candidate: the brain is launched with `claude … --chrome`, which may give it access
+   to the user's Chrome.

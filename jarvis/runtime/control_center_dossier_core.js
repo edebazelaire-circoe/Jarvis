@@ -279,20 +279,23 @@
   /* ------------------------------------------------------------ onglets et disposition */
 
   /* Ouvrir une entrée : un onglet existant est repris (jamais deux fois le même document), sinon un nouveau
-     après l'actif ; au-delà de MAX_TABS, le plus ancien onglet non modifié part. Rend {tabs, active, dropped}. */
+     après l'actif ; au-delà de MAX_TABS, le plus ancien onglet non modifié part. Un onglet `dirty` (modification
+     non enregistrée) ne part **jamais** : si tous le sont, l'ouverture est refusée (`full: true`, onglets
+     inchangés). Rend {tabs, active, dropped, full}. */
   function openTab(tabs,entryId,{opener='user',at=0,active=null}={}){
     const list=(Array.isArray(tabs)?tabs:[]).slice();
     const found=list.find(t=>t.entryId===entryId);
-    if(found){found.opener=opener;found.openedAt=at;return {tabs:list,active:entryId,dropped:null}}
+    if(found){found.opener=opener;found.openedAt=at;return {tabs:list,active:entryId,dropped:null,full:false}}
     const index=active?list.findIndex(t=>t.entryId===active):-1;
     const tab={entryId,opener,openedAt:at};
     list.splice(index<0?list.length:index+1,0,tab);
     let dropped=null;
     if(list.length>MAX_TABS){
       const victim=list.filter(t=>t!==tab&&!t.dirty).sort((a,b)=>a.openedAt-b.openedAt)[0];
-      if(victim){list.splice(list.indexOf(victim),1);dropped=victim.entryId}
+      if(!victim)return {tabs:(Array.isArray(tabs)?tabs:[]).slice(),active,dropped:null,full:true};
+      list.splice(list.indexOf(victim),1);dropped=victim.entryId;
     }
-    return {tabs:list,active:entryId,dropped};
+    return {tabs:list,active:entryId,dropped,full:false};
   }
   function closeTab(tabs,entryId,active){
     const list=(Array.isArray(tabs)?tabs:[]).slice();
@@ -375,6 +378,16 @@
     if(command.board_id!==displayedBoardId)return {ok:false,code:'board_not_displayed',reason:'un autre Board est affiché'};
     return {ok:true};
   }
+  /* Une modification en cours ne se perd jamais en silence (QA S07, B1/B2) : un ordre de Jarvis qui changerait
+     le Board du Dossier, ou qui n'aurait plus d'onglet à libérer, est refusé `edit_in_progress`. */
+  const EDIT_IN_PROGRESS='edit_in_progress';
+  function editGuard({dirtyCount,boardId,targetBoardId,tabsFull}){
+    if(!dirtyCount)return {ok:true};
+    if(targetBoardId&&boardId&&targetBoardId!==boardId)
+      return {ok:false,code:EDIT_IN_PROGRESS,reason:'une modification est en cours dans le Dossier (un autre Board) : rien n’a été ouvert'};
+    if(tabsFull)return {ok:false,code:EDIT_IN_PROGRESS,reason:`une modification est en cours dans les ${MAX_TABS} onglets ouverts : aucun ne peut être fermé`};
+    return {ok:true};
+  }
   /* Bascule de Board, Dossier ouvert : il suit le Board affiché (`follow`) et se relie au nouveau ; un Dossier
      ouvert sur un Board précis (archivé) ne bouge pas. Jamais le titre de A sur le contenu de B. */
   function rebindOnSwitch({follow,boardId,displayedBoardId}){
@@ -427,7 +440,7 @@
     DEADLINE_MS,LIST_LIMIT,READ_BYTES,MAX_EDIT_BYTES,MAX_TABS,PAIR_WINDOW_MS,SPLIT_MIN_PX,NARROW_PX,WIDE_PX,
     COMMAND_ROUTE,PAGE_TOKEN_HEADER,BOARD_KINDS,COLLECTIONS,KIND_LABELS,ERRORS,REPRESENTATIONS,PATHS,
     errorOf,allowed,createClient,collectionOf,organize,filterEntries,entriesOfSection,splitMachine,inline,markdownBlocks,leadHeading,
-    openTab,closeTab,layoutFor,pairFor,writeOutcome,presentOutcome,capabilities,openDecision,rebindOnSwitch,
+    openTab,closeTab,layoutFor,pairFor,editGuard,EDIT_IN_PROGRESS,writeOutcome,presentOutcome,capabilities,openDecision,rebindOnSwitch,
     relativeTime,absoluteTime,formatBytes,sourceLine,wheelItems,
   });
   root.JarvisDossierCore=api;

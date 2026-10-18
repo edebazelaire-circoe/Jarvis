@@ -257,7 +257,11 @@ answers **what it did**: `opened` once the Dossier is visible with an
 `article[data-entry=…]` of that entry in the DOM (checked, not assumed; the
 text may still be loading), or `refused` with `board_not_displayed` (another
 Board is displayed), `entry_not_found` (the page's own `…/dossier/entry` read
-says 404) or `dossier_unavailable` (Variantes covers the screen, the displayed
+says 404), `edit_in_progress` (an unsaved edit would be lost: the order would
+move the Dossier to another Board, or every one of the 8 tabs holds an unsaved
+edit; the draft stays, the Dossier's notice says which entry Jarvis wanted, and
+`dossier_view` returns the `ERROR_SENTENCES` sentence so the agent says it
+plainly) or `dossier_unavailable` (Variantes covers the screen, the displayed
 Board is unknown, a page error; `reason` says which). Several pages may poll
 (two tabs): the command goes to one of them, and its receipt is that page's.
 
@@ -315,6 +319,14 @@ refused before the network (`forbidden_route`).
   one (tabs closed, list read again; answers of the old Board dropped by a
   generation counter) and says so; a Dossier opened on a precise Board stays.
   An unsaved edit holds the Dossier on the old Board until it is closed.
+- **Unsaved edits are never dropped silently** (QA S07, B1/B2). Every tab whose
+  editor differs from the loaded text is `dirty`. A dirty tab is never evicted
+  by the 8-tab bound; when all 8 are dirty, opening another entry is refused
+  (said in the notice, `edit_in_progress` for Jarvis). Any order that would
+  rebind the Dossier to another Board (Jarvis, the wheel, `openBoard`,
+  `openEntry`) is refused `edit_in_progress` while an edit is unsaved. Closing the
+  Dossier (button, Escape, `JarvisDossier.close()`) asks « Abandonner vos
+  modifications ? » whenever **any** tab is dirty, not only the one in front.
 - **Jarvis navigation.** `open_entry` opens (or focuses) the entry's tab, marked
   « Jarvis »; two Jarvis openings within 30 s are shown side by side when the
   centre keeps 960 px, else as tabs. Manual and voice navigation share the same

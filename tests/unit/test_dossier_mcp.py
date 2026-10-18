@@ -149,3 +149,16 @@ async def test_dossier_view_without_a_visible_page_or_entry_is_an_honest_refusal
         assert "rien ne l'ouvrira de soi-même" in nobody and "dès que" not in nobody
         kinds = [e.get("kind") for e in stack.trace()]
         assert "dossier.navigation.requested" in kinds and "dossier.navigation.expired" in kinds
+
+
+async def test_a_page_keeping_an_unsaved_edit_refuses_with_its_own_sentence(tmp_path):
+    """QA S07, B1 : `edit_in_progress` revient avec une phrase que l'agent peut redire, jamais « ouvert »."""
+
+    async with CaptureStack(tmp_path) as stack, Brain(stack) as brain:
+        w = await build(stack)
+        page = asyncio.ensure_future(_page_answers(stack, {"state": "refused", "code": "edit_in_progress",
+                                                           "reason": "une modification est en cours dans le Dossier"}))
+        refused = await brain.call("dossier_view", {"board_id": w.board_a, "entry_id": "memory:notes/plan.md"})
+        await page
+        assert (refused["state"], refused["code"]) == ("refused", "edit_in_progress")
+        assert "modification non enregistrée" in refused["explanation"] and "Ne dites pas" in refused["explanation"]

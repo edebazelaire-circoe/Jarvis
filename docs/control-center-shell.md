@@ -260,6 +260,7 @@ value.
 | `#jvStudioExplorer` (9000) | `control_center_presentation_studio_explorer_core.js` | `#${HOST_ID} ` | Variantes internals |
 | `#jvStudioExplorer` (9000) | `control_center_presentation_studio_run.js` | `${H} ` | run overlay internals |
 | `.overlay` (60) | `control_center_wake_word.js` | `#wakeWordSettings ` | settings tooltip |
+| `#dossierView` (55) | `control_center_dossier.js` | `#dossierView` | its organisation and context drawers (narrow screens) above the reading pane, whose excerpt is masked (QA S07) |
 
 ### Inline ranks
 
