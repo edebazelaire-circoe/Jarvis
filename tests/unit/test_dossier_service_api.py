@@ -169,6 +169,7 @@ async def test_ranger_materializes_ephemeral_content_once_then_removes_the_repre
         expected_path = ranger_path(item).value
         assert backing["objects"] == [{"object_id": "brain-artifact-r1", "backing": "content",
                                        "entry_id": f"memory:{expected_path}", "rangeable": True}]
+        assert backing["board_active"] is True and "board_code" not in backing
         assert await active(stack, "brain-artifact-r1") is not None, "backing is a read"
 
         status, body = await post(stack, f"/boards/{w.board_a}/dossier/ranger", {"object_ids": ["brain-artifact-r1"]})
@@ -516,3 +517,21 @@ def test_the_registry_artifact_reference_is_an_optional_payload_key():
     assert REGISTRY_ARTIFACT_ID_PREFIX == ARTIFACT_ID_PREFIX, "one id shape for registry Artifacts"
     renamed = _merged_payload(bound, title="audio du lundi", summary=None, items=None)
     assert renamed.registry_artifact_id == bound.registry_artifact_id, "a brain edit keeps the Dossier link"
+
+
+async def test_backing_says_when_the_board_is_not_the_displayed_one(tmp_path):
+    """Slice 06 (polish S05 8) : l'aperçu ne promet pas « rangeable » quand Ranger refuserait 409."""
+
+    async with CaptureStack(tmp_path) as stack:
+        w = await build(stack)  # B actif
+        await put(stack, "brain-artifact-inactive", payload=RESEARCH)
+        status, backing = await get(stack, f"/boards/{w.board_a}/dossier/backing", object_id="brain-artifact-inactive")
+        assert status == 200 and backing["objects"][0]["rangeable"] is True, "per-object backing is unchanged"
+        assert backing["board_active"] is False and backing["board_code"] == "dossier_board_not_active"
+        assert "Board actif" in backing["board_message"]
+        status, refused = await post(stack, f"/boards/{w.board_a}/dossier/ranger",
+                                     {"object_ids": ["brain-artifact-inactive"]})
+        assert status == 409 and refused["error"]["code"] == "dossier_board_not_active"
+        status, archived = await get(stack, f"/boards/{w.board_archived}/dossier/backing",
+                                     object_id="brain-artifact-inactive")
+        assert status == 200 and archived["board_code"] == "board_archived"

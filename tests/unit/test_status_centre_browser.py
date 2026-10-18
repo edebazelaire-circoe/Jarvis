@@ -20,12 +20,12 @@ fichier épingle :
   1280×720, 900×600 et 600×800 ; un panneau Chat ouvert ne le couvre pas ;
 - plus de capsule « F9 · DÉMARRER » ni de ligne d'état : la touche se lit dans le
   sous-menu JARVIS de la roue (Slice 04), et reste la touche de Voice ;
-- l'œil permanent est **absent** du centre d'état (D06) ; sa mécanique est
-  gardée pour Sélection (Slice 06) : avec un hôte `#hiddenEye` rétabli par le
-  test (ce que la Slice 06 fera), `aria-pressed`, fantômes sans écriture, liste
-  des masqués à l'activation secondaire, « Réafficher » = un seul
-  `set_visibility` ; sans hôte, un réglage `showHidden` resté allumé ne dessine
-  aucun fantôme.
+- l'œil permanent est **absent** du centre d'état (D06) ; sa mécanique vit
+  dans la roue › Sélection › « Afficher les masqués (N) » (Slice 06 de la
+  refonte roue/dossier) : « Voir en fantômes » coché ou non, fantômes sans
+  écriture, la liste des masqués, « Réafficher » = un seul `set_visibility`,
+  « Tout réafficher » = un seul `patch_selection` ; un réglage `showHidden`
+  resté allumé dessine ses fantômes, puisque Sélection peut les éteindre.
 
 Preuves visuelles : `JARVIS_S06_EVIDENCE_DIR=<dossier>` y écrit les captures.
 Se saute si Chrome ou node manque.
@@ -67,15 +67,16 @@ BOXES = r"""(()=>{
     theme:document.documentElement.getAttribute('data-jarvis-theme')||''};
 })()"""
 
-#: L'hôte de l'œil, rétabli par le test comme la Slice 06 le déclarera (dans Sélection) : la mécanique
-#: gardée (`control_center_scene_page.js`) s'y branche par son id. Plus dans la page depuis la Slice 02.
-MOUNT_EYE = r"""(()=>{if(document.getElementById('hiddenEye'))return 'present';
-  const b=document.createElement('button');b.type='button';b.id='hiddenEye';b.setAttribute('aria-pressed','false');
-  b.setAttribute('aria-disabled','true');b.setAttribute('aria-label','Aucun objet masqué');b.hidden=true;
-  b.style.cssText='position:fixed;left:50%;bottom:90px;width:32px;height:32px;z-index:40';
-  b.innerHTML='<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 12s3.4-6 9-6 9 6 9 6-3.4 6-9 6-9-6-9-6z"/></svg>';
-  document.body.appendChild(b);window.dispatchEvent(new Event('resize'));return 'mounted'})()"""
-EYE_HOST = ["eval", "eyeHost", MOUNT_EYE, 1200]
+#: La roue › Sélection (Slice 06) : ouvrir l'arbre, puis « Afficher les masqués (N) ».
+OPEN_SELECTION = [["click", "wheelOpen", "#toolWheel .tw-anchor", 400],
+                  ["click", "selectionTree", "#toolWheel [data-tw-slot=selection] .tw-dot", 500]]
+OPEN_HIDDEN = [*OPEN_SELECTION, ["click", "hiddenRow", "#toolWheel .tw-item[data-tw-item=hidden]", 500]]
+#: « Voir en fantômes » : un choix, qui referme la roue.
+TOGGLE_GHOSTS = [*OPEN_HIDDEN, ["click", "ghosts", "#toolWheel .tw-item[data-tw-item=ghosts]", 900]]
+#: Les lignes du sous-menu ouvert.
+ROWS = r"""[...document.querySelectorAll('#toolWheel .tw-item')].map(b=>({id:b.dataset.twItem||null,
+  text:(b.querySelector('.tw-text')||{}).textContent||'',checked:b.getAttribute('aria-checked'),
+  disabled:b.getAttribute('aria-disabled'),kind:b.dataset.twKind||null}))"""
 
 #: Un plateau de dépôt réel (son hôte, sa feuille) avec un envoi, pour le mesurer.
 TRAY = r"""(()=>{const t=document.getElementById('boardDropTray');t.hidden=false;
@@ -327,124 +328,128 @@ def test_no_voicehint_and_f9_still_wakes(tmp_path):
     assert activation_source_for_label("F10", manual_key="f10") is ExplicitAddressSource.MANUAL_KEY
 
 
-# ------------------------------------------------------------------ l'œil
+# ------------------------------------------------------------------ les masqués
 #
 # Slice 02 de jarvis-board-ui-wheel-dossier-refactor (D06) : la page ne déclare plus
-# l'œil. Sa mécanique reste dans `control_center_scene_page.js` pour la Slice 06
-# (Sélection) ; les tests ci-dessous la tiennent avec un hôte rétabli par le test
-# (`EYE_HOST`), comme Sélection le déclarera.
+# l'œil. Slice 06 : sa mécanique vit dans la roue › Sélection › « Afficher les masqués (N) ».
 
 
-def test_without_an_eye_host_a_stored_ghost_view_draws_no_ghost(tmp_path):
-    """Un navigateur qui avait allumé l'œil garde `showHidden: true` : sans hôte, aucun fantôme ne
-    s'impose sans moyen de l'éteindre ; c'est dit une fois au journal, et le réglage est gardé."""
+def test_a_stored_ghost_view_draws_ghosts_that_selection_can_turn_off(tmp_path):
+    """Un navigateur qui avait allumé la vue garde `showHidden: true` : la roue › Sélection peut les
+    éteindre (Slice 06), donc les fantômes se dessinent ; aucun œil ne revient dans la coque."""
     ghosts = r"""[...document.querySelectorAll('#sceneLayer [data-object-id]')].map(n=>({id:n.dataset.objectId,
       ghost:n.classList.contains('sc-ghost')}))"""
     stored = "(()=>{try{return JSON.parse(localStorage.getItem('jarvis.scene.view')||'null')}catch(_){return 'refused'}})()"
     step = _drive(tmp_path, [{"width": 1440, "height": 900, "storage": {"version": 1, "view": {"showHidden": True}},
                               "actions": [["eval", "nodes", ghosts, 1500], ["eval", "stored", stored, 100],
-                                          ["eval", "eye", "!!document.getElementById('hiddenEye')", 50]]}])[0]
+                                          ["eval", "eye", "!!document.getElementById('hiddenEye')", 50],
+                                          *OPEN_HIDDEN, ["eval", "rows", ROWS, 100]]}])[0]
     r = step["results"]
     assert r["eye"] is False
-    assert [n["id"] for n in r["nodes"]] == ["jobj_star"] and not any(n["ghost"] for n in r["nodes"]), r["nodes"]
-    assert r["stored"]["view"]["showHidden"] is True, "the browser's view preference is kept for Sélection"
-    assert sum("scene.hidden_view_withheld" in line["text"] for line in step["console"]) == 1, step["console"]
+    nodes = {n["id"]: n["ghost"] for n in r["nodes"]}
+    assert nodes == {"jobj_star": False, "jobj_hidden": True, "jobj_hidden_win": True}, r["nodes"]
+    assert r["stored"]["view"]["showHidden"] is True
+    assert r["rows"][0] == {"id": "ghosts", "text": "Voir en fantômes", "checked": "true", "disabled": None, "kind": None}
+    assert not any("scene.hidden_view_withheld" in line["text"] for line in step["console"]), step["console"]
     _no_errors(step)
 
 
-def test_eye_toggle_aria_pressed_and_secondary_lists_hidden(tmp_path):
-    eye = r"""(()=>{const e=document.getElementById('hiddenEye');return {pressed:e.getAttribute('aria-pressed'),
-      label:e.getAttribute('aria-label'),disabled:e.getAttribute('aria-disabled'),hidden:e.hidden}})()"""
+def test_selection_hidden_row_counts_toggles_ghosts_and_lists_hidden(tmp_path):
+    """Slice 06 : « Afficher les masqués (3) » dans Sélection (jamais dans la coque) ; « Voir en
+    fantômes » allume la vue de ce navigateur sans rien écrire ; la liste nomme les masqués ; un fantôme
+    se réaffiche d'un seul `set_visibility` ; le compte suit (2) et la vue s'éteint du même endroit."""
     ghosts = r"""[...document.querySelectorAll('#sceneLayer [data-object-id]')].map(n=>({id:n.dataset.objectId,
       ghost:n.classList.contains('sc-ghost'),label:n.getAttribute('aria-label')}))"""
     menu = r"""(()=>{const m=document.getElementById('ctxMenu');return m.hidden?null:{title:(m.querySelector('.mhead')||{}).textContent,
       items:[...m.querySelectorAll('button[role=menuitem]')].map(b=>b.textContent)}})()"""
     stored = "(()=>{try{return JSON.parse(localStorage.getItem('jarvis.scene.view')||'null')}catch(_){return 'refused'}})()"
     step = _drive(tmp_path, [{"width": 1440, "height": 900, "actions": [
-        EYE_HOST,
-        ["eval", "before", eye, 100],
+        *OPEN_SELECTION,
+        ["eval", "first", ROWS, 100],
+        ["click", "hiddenRow", "#toolWheel .tw-item[data-tw-item=hidden]", 500],
+        ["eval", "list", ROWS, 100],
         ["eval", "nodesBefore", ghosts, 100],
-        ["click", "toggle", "#hiddenEye", 900],
-        ["eval", "on", eye, 100],
+        ["click", "ghosts", "#toolWheel .tw-item[data-tw-item=ghosts]", 900],
         ["eval", "nodesOn", ghosts, 100],
         ["eval", "stored", stored, 100],
-        *_shot("status-centre-eye-on-1440x900"),
-        ["rclick", "secondary", "#hiddenEye", 500],
-        ["eval", "list", menu, 100],
-        *_shot("status-centre-eye-list-1440x900"),
-        ["key", "esc", "Escape", 300],
-        ["eval", "closed", menu, 100],
-        ["eval", "focus", "document.getElementById('hiddenEye').focus();1", 100],
-        ["key", "shiftF10", "F10", 500, True],
-        ["eval", "listKbd", menu, 100],
-        ["key", "esc2", "Escape", 300],
+        ["eval", "eye", "!!document.getElementById('hiddenEye')", 50],
         ["rclick", "ghostMenu", '#sceneLayer [data-object-id="jobj_hidden_win"]', 500],
         ["eval", "ghostList", menu, 100],
         ["eval", "sentBefore", "window.__sc.bodies.filter(b=>b.path==='/api/scene/commands').length", 100],
-        *_shot("status-centre-ghost-menu-1440x900"),
         ["click", "reveal", '#ctxMenu [data-act="reveal"]', 2500],
         ["eval", "nodesAfter", ghosts, 100],
-        ["eval", "after", eye, 100],
-        ["click", "toggleOff", "#hiddenEye", 900],
-        ["eval", "off", eye, 100],
+        *OPEN_HIDDEN,
+        ["eval", "after", ROWS, 100],
+        ["click", "ghostsOff", "#toolWheel .tw-item[data-tw-item=ghosts]", 900],
         ["eval", "nodesOff", ghosts, 100],
     ]}])[0]
     r = step["results"]
-    assert r["before"] == {"pressed": "false", "label": "Afficher les objets masqués (3)", "disabled": "false", "hidden": False}
+    first = [row for row in r["first"] if row["id"] not in ("mouse", "bare_hands")]
+    # Sans sélection : un fait, puis le compte des masqués (une entrée qui ouvre sa liste).
+    assert [row["id"] for row in first] == ["selection-none", "hidden"], first
+    assert first[1]["text"] == "Afficher les masqués (3)"
+    assert [row["text"] for row in r["list"]] == ["Voir en fantômes", "Tout réafficher (3)", "Réafficher « Recherche masquée »",
+                                                  "Réafficher « Rapport masqué »", "Réafficher « Sans place »"]
+    assert r["list"][0]["checked"] == "false"
     assert [n["id"] for n in r["nodesBefore"]] == ["jobj_star"]
-    # Allumé : pressé, nom inverse ; deux fantômes (le masqué sans place n'en a pas), dits « masqué ».
-    assert r["on"]["pressed"] == "true" and r["on"]["label"] == "Cacher les objets masqués"
+    # Allumé : deux fantômes (le masqué sans place n'en a pas), dits « masqué ».
     ghosts_on = {n["id"]: n for n in r["nodesOn"]}
     assert set(ghosts_on) == {"jobj_star", "jobj_hidden", "jobj_hidden_win"}
     assert ghosts_on["jobj_hidden"]["ghost"] and ghosts_on["jobj_hidden_win"]["ghost"] and not ghosts_on["jobj_star"]["ghost"]
     assert ghosts_on["jobj_hidden_win"]["label"].endswith("masqué")
-    # Une décision de vue de ce navigateur : stockée là, rien d'envoyé à Core par l'œil.
-    assert r["stored"]["view"]["showHidden"] is True
-    # Activation secondaire (clic droit, puis Maj+F10 au clavier) : la liste existante.
-    expected = {"title": "3 objets masqués", "items": ["Afficher « Recherche masquée »", "Afficher « Rapport masqué »",
-                                                       "Afficher « Sans place »", "Tout réafficher (3)"]}
-    assert r["list"] == expected
-    assert r["closed"] is None
-    assert r["listKbd"] == expected
+    # Une décision de vue de ce navigateur : stockée là, rien d'envoyé à Core, aucun œil dans la coque.
+    assert r["stored"]["view"]["showHidden"] is True and r["eye"] is False
     # Un fantôme : « Réafficher » seulement, et c'est un seul `set_visibility visible`.
     assert r["ghostList"]["items"] == ["Réafficher"]
-    # Rien n'a été écrit par l'œil ni par les fantômes avant « Réafficher ».
     assert r["sentBefore"] == 0
     sent = [b["body"] for b in step["bodies"] if b["path"] == "/api/scene/commands"]
     assert [b for b in sent if b["op"] == "set_visibility"] == [
         {"schema_version": 1, "op": "set_visibility", "object_id": "jobj_hidden_win", "visibility": "visible"}]
-    # Réaffiché, l'objet redevient une fenêtre ordinaire ; sa place peut alors être
-    # validée comme celle de tout objet visible (jamais pendant qu'il était fantôme).
     assert {b["op"] for b in sent} <= {"set_visibility", "set_geometry"}
     after = {n["id"]: n for n in r["nodesAfter"]}
     assert after["jobj_hidden_win"]["ghost"] is False
-    assert r["after"]["label"] == "Cacher les objets masqués" and r["after"]["pressed"] == "true"
-    # Éteint : les fantômes partent, l'objet réaffiché reste ; le compte a baissé.
-    assert r["off"] == {"pressed": "false", "label": "Afficher les objets masqués (2)", "disabled": "false", "hidden": False}
+    # Le compte a baissé ; la vue est cochée, et s'éteint du même endroit.
+    assert r["after"][0]["checked"] == "true" and r["after"][1]["text"] == "Tout réafficher (2)"
     assert sorted(n["id"] for n in r["nodesOff"]) == ["jobj_hidden_win", "jobj_star"]
     _no_errors(step)
 
 
-def test_eye_is_inert_looking_without_hidden_objects_and_hidden_without_scene(tmp_path):
-    eye = r"""(()=>{const e=document.getElementById('hiddenEye');return {pressed:e.getAttribute('aria-pressed'),
-      label:e.getAttribute('aria-label'),disabled:e.getAttribute('aria-disabled'),hidden:e.hidden,
-      opacity:getComputedStyle(e).opacity}})()"""
+def test_show_all_hidden_is_one_atomic_patch_selection(tmp_path):
+    """« Tout réafficher (3) » : un seul `patch_selection {visibility: visible}` sur les trois, la même
+    opération que l'outil du cerveau `scene_update_many` (Slice 06)."""
+    count = "document.querySelectorAll('#sceneLayer [data-object-id]').length"
+    step = _drive(tmp_path, [{"width": 1440, "height": 900, "actions": [
+        *OPEN_HIDDEN, ["click", "showAll", "#toolWheel .tw-item[data-tw-item=show-all]", 2000],
+        ["eval", "drawn", count, 100], *OPEN_SELECTION, ["eval", "rows", ROWS, 100]]}])[0]
+    r = step["results"]
+    sent = [b["body"] for b in step["bodies"] if b["path"] == "/api/scene/commands" and b["body"]["op"] != "set_geometry"]
+    assert sent == [{"schema_version": 1, "op": "patch_selection",
+                     "selection": {"ids": ["jobj_hidden", "jobj_hidden_win", "jobj_nowhere"]},
+                     "changes": {"visibility": "visible"}}], sent
+    assert r["drawn"] == 4
+    assert [row["id"] for row in r["rows"]][-1] == "hidden-none"
+    _no_errors(step)
+
+
+def test_selection_says_no_hidden_object_and_offers_nothing_without_scene(tmp_path):
     visible_only = [{"schema_version": 1, "object_id": "jobj_star", "kind": "agent", "category": "agent", "exec_state": "running",
                      "representation": "point", "geometry": {"x": -60, "y": -30, "w": 6, "h": 6}, "layer": 100, "order": 0,
                      "visibility": "visible", "disposition": "active", "constraints": {"placed_by": "user", "pinned_by_user": False},
                      "origin": "runtime", "work_ref": None, "payload": {"title": "Analyse", "summary": "", "items": []}}]
     steps = _drive(tmp_path, [
         {"width": 1280, "height": 720, "seed": {"objects": visible_only}, "actions": [
-            EYE_HOST, ["eval", "eye", eye, 100], ["click", "click", "#hiddenEye", 600], ["eval", "after", eye, 100]]},
-        {"width": 1280, "height": 720, "seed": {"sceneOn": False}, "actions": [EYE_HOST, ["eval", "eye", eye, 100]]},
+            *OPEN_SELECTION, ["eval", "rows", ROWS, 100],
+            ["click", "inert", "#toolWheel .tw-item[data-tw-item=hidden-none]", 400],
+            ["eval", "open", "JarvisToolWheel.isOpen()", 50]]},
+        {"width": 1280, "height": 720, "seed": {"sceneOn": False}, "actions": [*OPEN_SELECTION, ["eval", "rows", ROWS, 100]]},
     ])
-    inert = steps[0]["results"]
-    # L'air inerte était la feuille de la page, retirée avec l'hôte (Slice 02) : la mécanique dit l'état par ses attributs.
-    assert inert["eye"]["label"] == "Aucun objet masqué" and inert["eye"]["disabled"] == "true"
-    assert inert["eye"]["hidden"] is False
-    # Un clic n'allume rien quand il n'y a rien à montrer.
-    assert inert["after"]["pressed"] == "false"
-    assert steps[1]["results"]["eye"]["hidden"] is True
+    rows = {row["id"]: row for row in steps[0]["results"]["rows"]}
+    # Aucun masqué : une ligne d'état (lisible, focalisable, elle n'agit pas et ne ferme pas la roue).
+    assert rows["hidden-none"] == {"id": "hidden-none", "text": "Aucun objet masqué", "checked": None,
+                                   "disabled": "true", "kind": "status"}
+    assert steps[0]["results"]["open"] is True
+    # Scène éteinte : Sélection ne propose que la méthode (Souris / Bare Hands).
+    assert [row["id"] for row in steps[1]["results"]["rows"]] == ["mouse", "bare_hands"]
     for step in steps:
         _no_errors(step)
 
@@ -529,8 +534,7 @@ def test_eye_announces_ghosts_and_ghosts_never_move(tmp_path):
     sent = "window.__sc.bodies.filter(b=>b.path==='/api/scene/commands').length"
     ghost = '#sceneLayer [data-object-id="jobj_hidden_win"]'
     step = _drive(tmp_path, [{"width": 1440, "height": 900, "actions": [
-        EYE_HOST,
-        ["click", "on", "#hiddenEye", 900],
+        *TOGGLE_GHOSTS,
         ["eval", "said", live, 100],
         ["drag", "drag", ghost, 1200, [140, 90]],
         ["eval", "afterDrag", sent, 100],
@@ -542,7 +546,7 @@ def test_eye_announces_ghosts_and_ghosts_never_move(tmp_path):
         ["eval", "keySaid", live, 100],
     ]}])[0]
     r = step["results"]
-    assert r["said"] == "2 objets masqués affichés en fantômes ; 3 dans la liste de l’œil.", r["said"]
+    assert r["said"] == "2 objets masqués affichés en fantômes ; 3 dans Sélection › Afficher les masqués.", r["said"]
     assert r["focus"] == "jobj_hidden_win"
     assert r["afterDrag"] == 0 and r["afterKeys"] == 0, r
     assert "réaffichez-le" in r["keySaid"], r["keySaid"]
@@ -570,8 +574,7 @@ def test_a_ghost_is_never_pressed_into_a_gesture_nor_held(tmp_path):
             "if(v)JarvisScene.frames.cancel('jobj_star');return {ghost:g,heldAfterGhost:held,visible:!!v,heldAfterVisible:both}})()")
     sent = "window.__sc.bodies.filter(b=>b.path==='/api/scene/commands').length"
     step = _drive(tmp_path, [{"width": 1440, "height": 900, "actions": [
-        EYE_HOST,
-        ["click", "on", "#hiddenEye", 900],
+        *TOGGLE_GHOSTS,
         ["press", "down", ghost, 200],
         ["eval", "pressed", gesture, 50],
         ["release", "up", ghost, 400],

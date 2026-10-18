@@ -407,12 +407,28 @@
         return runQuick(item.act);
       }}));
     }
+    /* Après Souris / Bare Hands, les actions sur la sélection de la scène
+       (Slice 06 de jarvis-board-ui-wheel-dossier-refactor) : Ranger, Masquer,
+       forme, Retirer du Board, Afficher les masqués (N). La scène les fournit
+       (`JarvisScene.selectionMenu`, chargée après ce module : lue à l'appel) ;
+       sa panne n'éteint pas le choix de la méthode, elle se journalise. */
+    function sceneRows(ctx){
+      const scene=root.JarvisScene;
+      if(!scene||typeof scene.selectionMenu!=='function')return [];
+      try{
+        const rows=scene.selectionMenu(ctx);
+        return Array.isArray(rows)?rows:[];
+      }catch(error){
+        log('error','selection.actions_unreadable',{error:errorText(error)});
+        return [];
+      }
+    }
     wheel.register({id:'selection',menu:true,
       onActivate:()=>{/* `menu:true` : l'activation ouvre le sous-arc. */},
-      onSecondary:()=>selectionItems(methodOf(snapshot,startSeconds())).map(item=>({...item,
-        onActivate:ctx=>choose(item.id,{source:ctx.source}),
+      onSecondary:ctx=>[...selectionItems(methodOf(snapshot,startSeconds())).map(item=>({...item,
+        onActivate:at=>choose(item.id,{source:at.source}),
         ...(item.id==='bare_hands'?{onSecondary:secondLevel}:{}),
-      })),
+      })),...sceneRows(ctx)],
     });
 
     root.JarvisInputArbitration=Object.freeze({

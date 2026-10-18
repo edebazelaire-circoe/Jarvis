@@ -82,6 +82,12 @@ SENTENCES: dict[DossierCode, str] = {
     DossierCode.ARCHIVE_FAILED: ("Le contenu est bien dans le Dossier, mais l'objet n'a pas pu être retiré du Board ; "
                                  "il reste affiché."),
 }
+#: Aperçu (`backing`) d'un Board qui n'est pas celui affiché : Ranger refuserait (409) ; l'aperçu le dit.
+BOARD_INACTIVE_SENTENCES: dict[str, str] = {
+    DossierCode.BOARD_NOT_ACTIVE.value: ("Ce Board n'est pas le Board affiché : Ranger agit seulement sur le Board "
+                                         "actif ; rien ne serait rangé."),
+    BoardErrorCode.BOARD_ARCHIVED.value: "Ce Board est archivé : son Dossier se lit, rien ne s'y range.",
+}
 
 
 @dataclass(frozen=True, slots=True)
@@ -378,8 +384,21 @@ class DossierService:
         board = await self._board(board_id)
         snapshot = await self._snapshot()
         resolved = [await self._resolve_object(board, snapshot, object_id) for object_id in ids]
-        self._read("dossier_backing", started, board_id=board.board_id, count=len(resolved))
-        return {"board_id": board.board_id, "objects": [item.view() for item in resolved]}
+        # Ranger n'agit que sur le Board affiché (`_displayed_board`) : l'aperçu le dit au lieu de promettre
+        # « rangeable » là où Ranger refuserait 409 (QA S05, polish 8 ; Slice 06).
+        if board.status is BoardStatus.ARCHIVED:
+            inactive: str | None = BoardErrorCode.BOARD_ARCHIVED.value
+        else:
+            session = await self._boards.current_session()
+            active = session is not None and session.active_board_id == board.board_id
+            inactive = None if active else DossierCode.BOARD_NOT_ACTIVE.value
+        self._read("dossier_backing", started, board_id=board.board_id, count=len(resolved),
+                   board_active=inactive is None)
+        answer: dict[str, Any] = {"board_id": board.board_id, "board_active": inactive is None,
+                                  "objects": [item.view() for item in resolved]}
+        if inactive is not None:
+            answer.update(board_code=inactive, board_message=BOARD_INACTIVE_SENTENCES[inactive])
+        return answer
 
     # ------------------------------------------------------------ 3. Ranger
 

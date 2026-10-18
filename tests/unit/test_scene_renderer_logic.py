@@ -1841,7 +1841,7 @@ def test_a_live_alert_stays_louder_than_the_finish_mark_on_the_same_star():
     page = PAGE_JS.read_text(encoding="utf-8")
     assert "if(node.alerted)classes.push('sc-alerted')" in page
     # L'alerte qui s'éteint redessine l'étoile : `alerted` est dans la signature du contenu.
-    assert "node.itemCount,node.explains,node.alerted,node.ephemeral,node.task,node.group,node.type,node.ghost]);" in page
+    assert "node.itemCount,node.explains,node.alerted,node.ephemeral,node.task,node.group,node.type,node.ghost," in page
     dimmed = re.search(
         r"\.sc-point\.sc-alerted\.sc-exec-completed \.sc-ring,\.sc-point\.sc-alerted\.sc-exec-failed \.sc-ring\{([^}]*)\}", page
     )
@@ -2117,8 +2117,10 @@ def test_one_reveal_one_set_visibility(tmp_path):
     assert "items:[{act:'reveal',label:'Réafficher'}]" in ghost_menu
     assert "if(act==='reveal')showObjects([id])" in ghost_menu
     assert ghost_menu.count("showObjects(") == 1 and "setVisibility" not in ghost_menu
-    show = page[page.index("async function showObjects(ids){"):page.index("function openHiddenMenu(anchor){")]
-    assert show.count("I.commands.setVisibility(id,'visible')") == 1
+    show = page[page.index("async function showObjects(ids){"):page.index("function ghostsShown(){")]
+    # Un objet : un `set_visibility` ; plusieurs (« Tout réafficher », Slice 06) : un `patch_selection`.
+    assert show.count("I.commands.setVisibility(chosen[0],'visible')") == 1
+    assert show.count("I.commands.patchSelection(chosen,{visibility:'visible'})") == 1
     # La commande elle-même : une opération, un objet, `visible`.
     interact = RUNTIME / "control_center_scene_interact.js"
     node = shutil.which("node")

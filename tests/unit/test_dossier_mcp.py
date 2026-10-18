@@ -57,6 +57,17 @@ async def test_dossier_ranger_previews_then_stores_as_the_brain(tmp_path):
         assert "origin=brain" in memory_file(stack, w.board_a, rows[-1]["data"]["path"]).read_text(encoding="utf-8")
 
 
+async def test_dossier_ranger_preview_on_a_board_not_displayed_promises_nothing(tmp_path):
+    async with CaptureStack(tmp_path) as stack, Brain(stack) as brain:
+        w = await build(stack)  # B actif
+        await put(stack, "brain-artifact-m2", payload=RESEARCH)
+        preview = await brain.call("dossier_ranger", {"board_id": w.board_a, "object_ids": ["brain-artifact-m2"],
+                                                      "dry_run": True})
+        only = preview["results"][0]
+        assert (only["status"], only["code"]) == ("refused", "dossier_board_not_active") and preview["refused"] == 1
+        assert "Board actif" in only["message"]
+
+
 async def test_dossier_present_and_its_refusals_carry_the_core_codes(tmp_path):
     async with CaptureStack(tmp_path) as stack, Brain(stack) as brain:
         w = await build(stack)  # B active

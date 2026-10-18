@@ -15,6 +15,7 @@
      ["eval", name, expr, waitMs]
      ["click", name, selector, waitMs]     vrai clic souris au centre
      ["rclick", name, selector, waitMs]    vrai clic droit au centre
+     ["ctrlclick", name, selector, waitMs] vrai Ctrl-clic au centre (Slice 06 : sélection multiple)
      ["key", name, key, waitMs, shift?]    vraie frappe sur l'element focalise
      ["drag", name, selector, waitMs, [dx,dy]]  vrai glisser souris depuis le centre
      ["shot", name, path, waitMs]
@@ -157,6 +158,24 @@ const SERVER=`(()=>{
         setTimeout(()=>release([put]),50);
         return json(200,{outcome:'applied',revision:S.revision});
       }
+      /* Slice 06 (Sélection de la roue) : les commandes de sélection, atomiques. \`refuse\` (graine) :
+         {op: reason} rend la commande refusée, rien n'est appliqué. */
+      if(command.op==='patch_selection'||command.op==='archive_selection'){
+        const ids=command.selection&&command.selection.ids||[];
+        const refusal=(S.refuse||{})[command.op];
+        if(refusal)return json(200,{outcome:'invalid',reason:refusal,revision:S.revision,batch:{refused:ids.map(id=>({id,reason:refusal}))}});
+        const members=ids.map(id=>S.objects.find(o=>o.object_id===id));
+        if(members.some(m=>!m))return json(200,{outcome:'invalid',reason:'unknown_object',revision:S.revision});
+        S.revision+=1;
+        const ops=[];
+        if(command.op==='archive_selection'){
+          for(const m of members){S.objects=S.objects.filter(o=>o!==m);ops.push({op:'archive_object',object:m})}
+        }else{
+          for(const m of members){Object.assign(m,command.changes);ops.push({op:'put_object',object:m})}
+        }
+        setTimeout(()=>release([{schema_version:1,revision:S.revision,ops}]),50);
+        return json(200,{outcome:'applied',revision:S.revision,batch:{matched_ids:ids,changed_ids:ids,unchanged_ids:[],skipped:[],refused:[]}});
+      }
       return json(200,{outcome:'applied',revision:S.revision});
     }
     if(url.split('?')[0]==='/api/boards')return json(200,{boards:S.boards,active_board_id:S.activeBoard});
@@ -174,6 +193,53 @@ const SERVER=`(()=>{
         ui:{seq:0,request:null,reported:null},playing:null});
     }
     if(url==='/api/presentation-studio/rail/display-state')return json(200,{seq:0});
+    /* Slice 06 : le Dossier du Board actif. \`dossier\` (graine) : {object_id: {rangeable, code?, message?,
+       backing?, stored?:{archived, code?, message?}}} ; \`dossierActive\` faux = Board non affiché ;
+       \`rangerStatus\` : un refus de la demande entière (409...). Ranger applique ce que la graine dit :
+       un objet stocké et retiré quitte la scène (patch rejoué), un refus le laisse. */
+    {
+      const m=url.match(/^\\/api\\/workspace\\/boards\\/([^/?]+)\\/dossier\\/(backing|ranger)/);
+      if(m){
+        const per=S.dossier||{};
+        if(m[2]==='backing'){
+          const ids=new URL(url,location.href).searchParams.getAll('object_id');
+          if(S.backingStatus)return json(S.backingStatus,{error:{code:'scene_unavailable',message:'down'}});
+          const active=S.dossierActive!==false;
+          return json(200,{board_id:decodeURIComponent(m[1]),board_active:active,
+            ...(active?{}:{board_code:'dossier_board_not_active',board_message:'Ce Board n’est pas le Board affiché : Ranger agit seulement sur le Board actif ; rien ne serait rangé.'}),
+            objects:ids.map(id=>{const d=per[id]||{rangeable:false,code:'dossier_not_eligible',message:'Cet objet ne se range pas dans le Dossier ; il reste sur le Board.'};
+              return {object_id:id,backing:d.rangeable?(d.backing||'content'):'refused',entry_id:null,rangeable:!!d.rangeable,
+                ...(d.rangeable?{}:{code:d.code,message:d.message,reason:''})}})});
+        }
+        if(S.rangerStatus)return json(S.rangerStatus,{error:{code:S.rangerCode||'dossier_board_not_active',message:'board is not the active board'}});
+        if(S.rangerDelayMs)await new Promise(r=>setTimeout(r,S.rangerDelayMs));
+        const body=JSON.parse(init.body);
+        const results=[],gone=[];
+        for(const id of body.object_ids){
+          const d=per[id];
+          if(!d||!d.rangeable){results.push({object_id:id,status:'refused',backing:null,action:null,entry_id:null,durable:false,archived:false,
+            code:(d&&d.code)||'dossier_not_eligible',message:(d&&d.message)||'Cet objet ne se range pas dans le Dossier ; il reste sur le Board.'});continue}
+          const st=d.stored||{archived:true};
+          results.push({object_id:id,status:'stored',backing:d.backing||'content',action:'materialized',entry_id:'memory:notes/'+id+'.md',
+            durable:true,archived:!!st.archived,...(st.code?{code:st.code,message:st.message}:{})});
+          if(st.archived)gone.push(id);
+        }
+        let revision=null;
+        if(gone.length){
+          S.revision+=1;revision=S.revision;
+          const ops=[];
+          for(const id of gone){const o=S.objects.find(x=>x.object_id===id);if(o){S.objects=S.objects.filter(x=>x!==o);ops.push({op:'archive_object',object:o})}}
+          setTimeout(()=>release([{schema_version:1,revision:S.revision,ops}]),50);
+        }
+        const stored=results.filter(r=>r.status==='stored').length;
+        return json(200,{board_id:decodeURIComponent(m[1]),stored,refused:results.length-stored,results,revision});
+      }
+    }
+    /* Slice 06 : une fenêtre d'Artifact du registre se lit dans le registre. */
+    {
+      const m=url.match(/^\\/api\\/artifacts\\/(jart_[^/?]+)(\\?|$)/);
+      if(m){const a=(S.registry||{})[m[1]];return a?json(200,{artifact:a}):json(404,{error:{code:'artifact_not_found',message:'no'}})}
+    }
     if(url.startsWith('/api/workspace/artifacts?'))return json(200,{artifacts:S.boardArtifacts,scope:{board_id:S.activeBoard},next_cursor:null});
     return json(404,{error:{code:'http_error',message:'not stubbed '+url}});
   };
@@ -221,17 +287,19 @@ try{
     if(!box)throw new Error(`selecteur absent : ${selector}`);
     return box;
   };
-  const mouse=async(selector,button)=>{
+  const mouse=async(selector,button,modifiers=0)=>{
     const {x,y}=await center(selector);
-    await send('Input.dispatchMouseEvent',{type:'mouseMoved',x,y,button:'none'});
-    await send('Input.dispatchMouseEvent',{type:'mousePressed',x,y,button,buttons:button==='right'?2:1,clickCount:1});
-    await send('Input.dispatchMouseEvent',{type:'mouseReleased',x,y,button,buttons:0,clickCount:1});
+    await send('Input.dispatchMouseEvent',{type:'mouseMoved',x,y,button:'none',modifiers});
+    await send('Input.dispatchMouseEvent',{type:'mousePressed',x,y,button,buttons:button==='right'?2:1,clickCount:1,modifiers});
+    await send('Input.dispatchMouseEvent',{type:'mouseReleased',x,y,button,buttons:0,clickCount:1,modifiers});
   };
   const KEYS={Tab:9,Enter:13,Escape:27,F10:121,ContextMenu:93,' ':32,
     End:35,Home:36,ArrowLeft:37,ArrowUp:38,ArrowRight:39,ArrowDown:40};
   const key=async(name,shift)=>{
     const code=KEYS[name]||0;
-    const base={key:name,code:name==='ContextMenu'?'ContextMenu':name,windowsVirtualKeyCode:code,nativeVirtualKeyCode:code,modifiers:shift?8:0};
+    /* `shift` : vrai = Maj ; un nombre = le masque CDP (2 = Ctrl : Ctrl+Espace, Slice 06). */
+    const mods=typeof shift==='number'?shift:shift?8:0;
+    const base={key:name,code:name==='ContextMenu'?'ContextMenu':name===' '?'Space':name,windowsVirtualKeyCode:code,nativeVirtualKeyCode:code,modifiers:mods};
     await send('Input.dispatchKeyEvent',{type:'rawKeyDown',...base});
     /* Entree active un bouton sur son caractere, comme un vrai clavier. */
     if(name==='Enter')await send('Input.dispatchKeyEvent',{type:'char',text:String.fromCharCode(13),unmodifiedText:String.fromCharCode(13),...base});
@@ -277,7 +345,8 @@ try{
         if(kind==='eval')results[name]=await evaluate(arg);
         else if(kind==='click'){await mouse(arg,'left');results[name]='ok'}
         else if(kind==='rclick'){await mouse(arg,'right');results[name]='ok'}
-        else if(kind==='key'){await key(arg,!!extra);results[name]='ok'}
+        else if(kind==='ctrlclick'){await mouse(arg,'left',2);results[name]='ok'}
+        else if(kind==='key'){await key(arg,typeof extra==='number'?extra:!!extra);results[name]='ok'}
         else if(kind==='drag'){await drag(arg,extra);results[name]='ok'}
         else if(kind==='dragto'){const from=await center(arg),to=await center(extra);await drag(arg,[to.x-from.x,to.y-from.y]);results[name]={from,to}}
         else if(kind==='press'||kind==='release'){const {x,y}=await center(arg);

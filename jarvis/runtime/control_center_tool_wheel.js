@@ -484,6 +484,17 @@
     /* ---- Slice 04 : arrêter un enregistrement, et la coche d'une capture prise ---- */
     stop:Object.freeze({paths:Object.freeze(['M7.5 7.5h9v9h-9z']),dots:Object.freeze([])}),
     done:Object.freeze({paths:Object.freeze(['M5.5 12.5l4.2 4.2 8.8-9.4']),dots:Object.freeze([])}),
+    /* ---- Slice 06 : les actions de Sélection ----
+       Œil ouvert (afficher), œil barré (masquer), un point, une capsule et un
+       cadre (changer la forme), un cadre dont sort une flèche (retirer la
+       représentation du Board). Ranger réutilise la chemise du Dossier. */
+    eye:Object.freeze({paths:Object.freeze(['M3 12s3.4-6 9-6 9 6 9 6-3.4 6-9 6-9-6-9-6z',
+      'M12 9.5a2.5 2.5 0 1 1 0 5a2.5 2.5 0 1 1 0-5z']),dots:Object.freeze([])}),
+    eye_off:Object.freeze({paths:Object.freeze(['M3 12s3.4-6 9-6c1.6 0 3 .5 4.2 1.2','M21 12s-3.4 6-9 6c-1.6 0-3-.5-4.2-1.2',
+      'M4.5 19.5l15-15']),dots:Object.freeze([])}),
+    form:Object.freeze({paths:Object.freeze(['M3.5 10.5h5a2 2 0 0 1 0 4h-5a2 2 0 0 1 0-4z',
+      'M13.5 6.5h7v11h-7z']),dots:Object.freeze([[6,6,1.2]])}),
+    remove:Object.freeze({paths:Object.freeze(['M4 5.5h9v13H4z','M11 12h9.5','M17.5 9l3 3-3 3']),dots:Object.freeze([])}),
   });
 
   const DOM=Object.freeze({hostId:'toolWheel',styleId:'toolWheelStyle',menuId:'toolWheelMenu',

@@ -96,7 +96,9 @@ def test_five_categories_in_locked_order_and_no_retired_first_level(tmp_path):
     assert set(v["ids"]) <= set(v["art"])
     assert set(v["art"]) - set(v["ids"]) == {"video", "screenshot", "audio", "chevron", "mouse", "bare_hands",
                                              "pointer", "pan", "select", "sleep", "help", "diagnostics",
-                                             "calibration", "stop", "done", "key", "agent", "subagents"}
+                                             "calibration", "stop", "done", "key", "agent", "subagents",
+                                                 # Slice 06 : les actions de Sélection.
+                                                 "eye", "eye_off", "form", "remove"}
     assert v["wedges"] == 5
     # Dossier seul garde un gestionnaire d'attente (Slices 05-07) ; JARVIS et Paramètres sont branchés
     # par `control_center_jarvis_wheel.js` depuis la Slice 04.

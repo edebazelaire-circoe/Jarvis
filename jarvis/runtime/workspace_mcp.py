@@ -431,6 +431,12 @@ class WorkspaceTools:
             results = [self._ranger_item(item, "rangeable" if item.get("rangeable") else "refused")
                        for item in self._shape("dossier_ranger", route, body.get("objects"), list)
                        if isinstance(item, Mapping)]
+            if body.get("board_active") is False:
+                # Ranger refuserait tout (409) : l'aperçu ne promet aucun « rangeable » (Slice 06, polish S05 8).
+                for item in results:
+                    if item["status"] == "rangeable":
+                        item.update(status="refused", code=str(body.get("board_code") or "dossier_board_not_active"),
+                                    message=str(body.get("board_message") or ""))
             refused = sum(1 for item in results if item["status"] == "refused")
             self._done("dossier_ranger", f"aperçu : {len(results) - refused} rangeable(s)", board_id=board_id,
                        dry_run=True, count=len(results))

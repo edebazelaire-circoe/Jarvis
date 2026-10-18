@@ -1767,6 +1767,9 @@
         box:screen,cx:drawn.cx,cy:drawn.cy,
         title:titleSpans.map(span=>span.text).join(''),titleSpans,
         summary:shape==='window'?cleanText(payload.summary,2000):'',
+        /* Fenêtre d'un Artifact du registre (Dossier, Slice 05) : son résumé est
+           vide, la page la remplit depuis le registre (Slice 06). */
+        registry:shape==='window'&&typeof payload.registry_artifact_id==='string'?payload.registry_artifact_id.slice(0,64):'',
         items:shape==='window'?itemsOf(payload):[],
         itemCount:count,
         explains:artifact?explainedTarget(state,item.object_id,errorLabels,explains):null,
