@@ -48,10 +48,10 @@ html,body{margin:0;height:100%;background:var(--bg);color:var(--text);font:15px 
    @shell-layer 2147483000: #jarvisHands */
 /* Jetons de la coque (docs/control-center-shell.md › Tokens), définis une
    seule fois ici ; miroir : JarvisShell.TOKENS (control_center_shell.js). */
-:root{--shell-gutter:18px;--shell-top-h:40px;--shell-bottom:18px;--shell-status-h:44px;--shell-control:34px;--shell-launcher-w:154px;--shell-panel-top:64px;--shell-panel-w:500px;--shell-panel-bottom:68px;--shell-rail-w:300px;--shell-anchor-w:14px;--shell-wheel-r:224px;--shell-wedge-min:48px;--shell-icon:20px;--shell-icon-sm:15px;--shell-radius:12px;--shell-glass-bg:rgba(5,11,16,.46);--shell-glass-strong:rgba(4,10,15,.80);--shell-stroke:rgba(174,205,220,.12);--shell-stroke-active:color-mix(in srgb,var(--accent) 46%,transparent);--shell-focus:var(--accent);--shell-focus-w:2px;--shell-focus-offset:2px;--sem-alert:#ff9f43;--sem-done:var(--ok);--sem-question:var(--accent);--sem-working:#4da3ff;--sem-review:#ffd166;--sem-problem:#ff6a4d;--shell-ease:cubic-bezier(.2,.7,.2,1);--shell-dur-fast:120ms;--shell-dur:180ms}
+:root{--shell-gutter:18px;--shell-bottom:18px;--shell-status-h:44px;--shell-control:34px;--shell-launcher-w:154px;--shell-panel-top:64px;--shell-panel-w:500px;--shell-panel-bottom:68px;--shell-rail-w:300px;--shell-anchor-w:14px;--shell-wheel-r:224px;--shell-wedge-min:48px;--shell-icon:20px;--shell-icon-sm:15px;--shell-radius:12px;--shell-glass-bg:rgba(5,11,16,.46);--shell-glass-strong:rgba(4,10,15,.80);--shell-stroke:rgba(174,205,220,.12);--shell-stroke-active:color-mix(in srgb,var(--accent) 46%,transparent);--shell-focus:var(--accent);--shell-focus-w:2px;--shell-focus-offset:2px;--sem-alert:#ff9f43;--sem-done:var(--ok);--sem-question:var(--accent);--sem-working:#4da3ff;--sem-review:#ffd166;--sem-problem:#ff6a4d;--shell-ease:cubic-bezier(.2,.7,.2,1);--shell-dur-fast:120ms;--shell-dur:180ms}
 @media(max-width:1099px){:root{--shell-rail-w:72px}}
 /* Étroit : le lanceur (4 boutons de 34 px depuis la Slice 04 de la refonte roue/dossier) reste une rangée à
-   toutes les largeurs ; panneaux et bandeau se reposent sous la ligne d'état. */
+   toutes les largeurs ; panneaux et bandeau se reposent sous lui. */
 @media(max-width:700px){:root{--shell-gutter:10px;--shell-panel-top:88px;--shell-rail-w:0px}}
 @media(prefers-reduced-motion:reduce){:root{--shell-dur-fast:0ms;--shell-dur:0ms}}
 /* Anneau de focus des commandes de la coque, à spécificité nulle : un module
@@ -359,13 +359,13 @@ body:has(#liveBanner:not([hidden])){--jv-live-fb:118px}
 /* Étroit (moins de 940 px), Chat ouvert : la pile passe sous l'en-tête et la ligne d'état du panneau
    (`--chat-toasts-top`, mesuré par `control_center_chat.js`) : elle ne couvre ni le composer, ni le titre, ni ×. */
 @media(max-width:939px){#app:has(.chat-panel.open)~.toasts{top:var(--chat-toasts-top,124px);bottom:auto}}
-/* 700 px de large ou moins : le bouton du mode d'interaction quitte le rail gauche (left:84px, jusqu'à ~260 px) et la
-   pile, à bottom:68px, le recouvrait (115×41 px à 500×700). Elle passe en haut : ni le bouton, ni l'onglet Chat.
+/* 700 px de large ou moins : la carte Board (avant elle le bouton du mode d'interaction) quitte le rail gauche (left:84px,
+   jusqu'à ~260 px) et la pile, à bottom:68px, la recouvrait (115×41 px à 500×700). Elle passe en haut : ni la carte, ni l'onglet Chat.
    Chat ouvert, la règle du panneau (ci-dessus) s'applique.
    Les deux thèmes partagent la géométrie de la coque (`docs/control-center-shell.md`) : le lanceur occupe le haut à
    droite (une rangée depuis la Slice 08), l'onglet du rail est dessous ; la pile passe sous cet onglet (136 px), sous
    le bandeau GPT-Live et sous le plateau de dépôt s'ils sont affichés (ancres `--jv-live`, `--jv-tray`, orbital-ui
-   Slice 09 : avec le bandeau, elle restait en bas, sur le bouton de mode hissé) ; sans `bottom:auto`, la grille
+   Slice 09 : avec le bandeau, elle restait en bas, sur le bouton hissé du bas-gauche) ; sans `bottom:auto`, la grille
    `.toasts` étirait une seule notification sur toute la hauteur. */
 @media(max-width:700px){#app:not(:has(.chat-panel.open))~.toasts{top:calc(var(--shell-panel-top) + max(48px,var(--jv-live-fb,0px)));bottom:auto}#app:has(:where(#boardDropTray:not([hidden]))):not(:has(.chat-panel.open))~.toasts{top:calc(var(--shell-panel-top) + max(48px,var(--jv-live-fb,0px)) + 8px + min(30vh,200px))}}
 @media(max-width:700px){#app:not(:has(.chat-panel.open))~.toasts{top:max(calc(var(--shell-panel-top) + 48px),calc(anchor(--jv-live bottom,0px) + 8px),calc(anchor(--jv-tray bottom,0px) + 8px));bottom:auto}}
@@ -493,8 +493,8 @@ html[data-jarvis-theme="cosmos"] .chat-tab:hover,html[data-jarvis-theme="cosmos"
 #toolWheel[data-open]{z-index:37}
 /* Centre d'état du bas (orbital-ui Slice 06, D8 / D9 ; docs/control-center-shell.md
    › Status centre) : une rangée centrée, `#bgPills` (l'œil permanent des objets masqués
-   est retiré par la Slice 02 de jarvis-board-ui-wheel-dossier-refactor, D06 ; Sélection le
-   rendra en Slice 06 ; les indicateurs de capture sont montés au haut-gauche en Slice 04).
+   est retiré par la Slice 02 de jarvis-board-ui-wheel-dossier-refactor, D06 ; le compte des
+   masqués vit dans la roue, Sélection › Masqués, depuis la Slice 06 ; les indicateurs de capture sont montés au haut-gauche en Slice 04).
    `.status-centre` n'est qu'une mise en page : ni
    rang ni transformation (une transformation ouvrirait un contexte d'empilement et
    enfermerait ses enfants sous la scène) ; chacun de ses enfants porte le rang 40 du
@@ -2616,7 +2616,7 @@ const STATUS={
 /*__CONTROL_CENTER_BAREHANDS_BENCHMARK_UI_JS__*/
 /* Barehands en mode test (pointeur à mains nues) : `control_center_barehands.js`. */
 /*__CONTROL_CENTER_BAREHANDS_JS__*/
-/* Contrôle de cycle de vie Bare Hands de la barre du haut, après le pointeur
+/* Contrôle de cycle de vie Bare Hands (caché tant que la roue est là : Sélection le porte), après le pointeur
    qui pose `window.JarvisBarehands` **et** sa couture de cycle de vie, à
    laquelle il s'abonne : `control_center_barehands_hud.js`. */
 /*__CONTROL_CENTER_BAREHANDS_HUD_JS__*/
@@ -2952,7 +2952,7 @@ async function fetchTasks(){
 }
 
 /* Badge du dock : sous-agents en cours, jamais le brain (le compte de la ligne d'état du
-   haut-gauche est parti avec elle, Slice 02 ; le sous-menu JARVIS le reprendra, Slice 04).
+   haut-gauche est parti avec elle, Slice 02 ; le sous-menu JARVIS le reprend, Slice 04).
    `fromCore` dit d'où sort le décompte : l'état normalisé de Core, ou — comme
    le bandeau dégradé de la liste — le suivi local du Control Center, qui ne
    fait pas foi. Le badge n'a pas la place de l'écrire, l'infobulle si. */

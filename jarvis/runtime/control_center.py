@@ -512,8 +512,8 @@ BAREHANDS_BENCHMARK_UI_SCRIPT_MARKER = "/*__CONTROL_CENTER_BAREHANDS_BENCHMARK_U
 #: plus son branchement navigateur. Même insertion que les scripts ci-dessus.
 BAREHANDS_SCRIPT_FILE = "control_center_barehands.js"
 BAREHANDS_SCRIPT_MARKER = "/*__CONTROL_CENTER_BAREHANDS_JS__*/"
-#: Contrôle de cycle de vie Bare Hands de la barre du haut : bouton carré à
-#: icône de main en haut à gauche et sélecteur visuel OFF/VEILLE/ACTIF
+#: Contrôle de cycle de vie Bare Hands : bouton carré à icône de main et
+#: sélecteur visuel OFF/VEILLE/ACTIF, cachés tant que la roue est là (Sélection › Bare Hands)
 #: (`window.JarvisBarehandsHud`). Inséré APRÈS le pointeur, qui pose
 #: `window.JarvisBarehands` **et** la couture de diffusion du cycle de vie
 #: (`openLifecycleSeam`) à laquelle ce contrôle s'abonne : sans elle il ne
@@ -649,10 +649,10 @@ INPUT_ARBITRATION_SCRIPT_MARKER = "/*__CONTROL_CENTER_INPUT_ARBITRATION_JS__*/"
 #: `jarvis-presentation-interaction-mode`) : une carte discrète, posée en bas de
 #: la pile d'infusions existante, pour une contradiction vérifiée. Il lit le
 #: bloc `background.attention` de `GET /api/status` — donc le même battement à
-#: 1 Hz que le contrôle de mode, et aucun second sondage — et il arbitre le
+#: 1 Hz que la carte Board, et aucun second sondage — et il arbitre le
 #: signal sonore entre onglets pour que `bgCue` ne sonne qu'une fois.
 #:
-#: Il ne dépend d'aucun autre module de page. Comme le contrôle de mode, il
+#: Il ne dépend d'aucun autre module de page. Comme la carte Board, il
 #: refuse de s'installer sous un nom cherchable si la pile d'infusions manque,
 #: et **rattrape ce refus** : la page servie concatène tous ses modules dans un
 #: seul `<script>`, et une levée qui remonterait emporterait les autres.

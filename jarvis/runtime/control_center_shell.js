@@ -72,7 +72,6 @@
      valeurs responsives sous `max-width`. */
   const TOKENS=Object.freeze({
     '--shell-gutter':'18px',
-    '--shell-top-h':'40px',
     '--shell-bottom':'18px',
     '--shell-status-h':'44px',
     '--shell-control':'34px',

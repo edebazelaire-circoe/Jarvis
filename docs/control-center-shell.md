@@ -149,7 +149,6 @@ only in the `@media` blocks listed here. `JarvisShell.TOKENS` and
 | Token | Base | Responsive | Use |
 | --- | --- | --- | --- |
 | `--shell-gutter` | `18px` | `10px` at `max-width:700px` | distance of every edge surface to the window edge |
-| `--shell-top-h` | `40px` | | height of the state line |
 | `--shell-bottom` | `18px` | | bottom baseline of bottom surfaces |
 | `--shell-status-h` | `44px` | | height of the bottom status centre (Slice 06); the drop tray and the lifted Board card sit above it |
 | `--shell-control` | `34px` | | launcher button size |

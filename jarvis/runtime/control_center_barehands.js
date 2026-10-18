@@ -5624,7 +5624,7 @@ try{
   const TAB_ID='experimental';
   /* Les sections de l'onglet qu'un appelant **extérieur** peut demander à voir
      (Slice 02, décisions 8 et 16). Elles sont nommées ici et nulle part
-     ailleurs : le menu contextuel du bouton de la barre du haut les désigne
+     ailleurs : le menu contextuel du bouton de cycle de vie Bare Hands les désigne
      par ces clés, jamais par un littéral recopié, sinon un identifiant renommé
      dans le HTML laisserait un raccourci qui ouvre l'onglet en haut sans que
      rien ne le dise. */
@@ -7204,8 +7204,8 @@ try{
   }
 
   /* ------------------------------------------------------------------
-     Réconciliation depuis le battement de statut (défaut « le bouton de la
-     barre du haut ne suit pas le serveur »).
+     Réconciliation depuis le battement de statut (défaut « le bouton de cycle de vie
+     Bare Hands ne suit pas le serveur »).
 
      `enabled` est un réglage **du serveur**, et cette page n'est pas la seule
      à l'écrire : un outil MCP, un `curl`, un second onglet ou une édition du
@@ -7867,7 +7867,7 @@ try{
        le couper ni le reconstruire. */
     if(recorder&&recorder.isRecording())return recorder.start();
     if(!view.enabled){
-      const message='Bare Hands est éteint : choisissez Veille ou Actif sur le bouton à icône de main, en haut à gauche de l’écran, avant d’enregistrer. Le cycle de vie reste à vous.';
+      const message='Bare Hands est éteint : choisissez Bare Hands dans la roue (Sélection › Bare Hands, ou sa Veille), avant d’enregistrer. Le cycle de vie reste à vous.';
       view.error=message;console.warn('[barehands] enregistrement refusé (éteint)');
       if(typeof toast==='function')
         toast({title:'Enregistrement impossible',sub:message,kind:'warn',ms:6000});
@@ -8183,7 +8183,7 @@ try{
        nom. On refuse donc, en disant quoi faire — plutôt que d'ouvrir une
        caméra que personne n'a rallumée. */
     if(!view.enabled){
-      const message='Bare Hands est éteint : choisissez Veille ou Actif sur le bouton à icône de main, en haut à gauche de l’écran, avant de lancer la calibration.';
+      const message='Bare Hands est éteint : choisissez Bare Hands dans la roue (Sélection › Bare Hands, ou sa Veille), avant de lancer la calibration.';
       view.error=message;console.warn('[barehands] calibration refusée (éteint)');
       if(typeof toast==='function')
         toast({title:'Calibration impossible',sub:message,kind:'warn',ms:6000});
@@ -8370,7 +8370,7 @@ try{
     refreshPanel();
     return {ok:false,code,reason:message};
   }
-  const BENCH_OFF_TEXT='Bare Hands est éteint : choisissez Veille ou Actif sur le bouton à icône de main, en haut à gauche de l’écran, avant de lancer le test.';
+  const BENCH_OFF_TEXT='Bare Hands est éteint : choisissez Bare Hands dans la roue (Sélection › Bare Hands, ou sa Veille), avant de lancer le test.';
   /* **La porte d'entrée de chaque run** (reprise QA, round 3) : l'ouverture
      et chaque « Relancer le test » passent par elle. Elle n'allume rien :
      Bare Hands éteint (`barehands_benchmark_lifecycle_off`) ou sans caméra
@@ -8915,7 +8915,7 @@ try{
      ressemblent — et **comment en sortir**.
 
      **Le compteur de secondes, lui, a déménagé** (Slice 01) : il vit sous le
-     bouton de la barre du haut, qui est visible même l'onglet fermé, alors que
+     bouton de cycle de vie Bare Hands, qui est visible même l'onglet fermé, alors que
      celui d'ici ne s'affichait que dans un modal ouvert. Ce battement-là reste
      pour une autre raison, et elle survit au déménagement : c'est le seul
      réveil périodique pendant `starting`, donc le seul chemin qui repasse par
@@ -9166,7 +9166,7 @@ try{
       <div class="hint" style="margin-bottom:12px">Six petits exercices, environ deux minutes, pour mesurer la qualité d’interaction de Bare Hands avec vos réglages actuels. Le test <strong>ne change aucun réglage</strong> ; refait après une calibration, il montre ce qu’elle a amélioré ou dégradé.</div>
       <div class="field inline" style="align-items:center;gap:10px">
         <button type="button" class="action small" id="barehandsBenchmark" ${off||view.busy?'disabled':''}
-          ${off?`title="${esc('Choisissez Veille ou Actif sur le bouton à icône de main pour lancer le test.')}"`:''}>Tester…</button>
+          ${off?`title="${esc('Choisissez Bare Hands dans la roue (Sélection) pour lancer le test.')}"`:''}>Tester…</button>
         <div class="hint">${off?'Bare Hands est éteint : le test a besoin de la caméra.'
           :'Les résultats (des nombres, jamais d’image) sont gardés pour comparer avant et après.'}</div>
       </div>
@@ -9297,7 +9297,7 @@ try{
         'Garde la calibration optionnelle et explicite : Bare Hands ne mesurera jamais votre main sans que vous l’ayez lancée.')}
       <div class="field inline" style="align-items:center;gap:10px;margin-top:14px">
         <button type="button" class="action small" id="barehandsReset" ${view.busy?'disabled':''}>Réinitialiser les réglages</button>
-        <div class="hint">Rend aux six réglages ci-dessus et à l’outil leur valeur d’usine. Le cycle de vie n’y touche pas : réinitialiser n’éteint pas la caméra, et le bouton à icône de main en haut à gauche reste dans l’état où il est. Le profil de calibration a son propre bouton ci-dessous : ce sont deux choses distinctes.</div>
+        <div class="hint">Rend aux six réglages ci-dessus et à l’outil leur valeur d’usine. Le cycle de vie n’y touche pas : réinitialiser n’éteint pas la caméra, et le choix Souris / Bare Hands de la roue (Sélection) reste dans l’état où il est. Le profil de calibration a son propre bouton ci-dessous : ce sont deux choses distinctes.</div>
       </div>
       ${limitsHtml()}
     </section>
@@ -9310,8 +9310,8 @@ try{
      bord d'interaction.** Trois blocs en sont sortis à la Slice 02 et ne
      doivent pas y revenir :
 
-     - l'interrupteur maître et le bandeau de cycle de vie — le bouton de la
-       barre du haut est le seul endroit où l'on allume, endort et active
+     - l'interrupteur maître et le bandeau de cycle de vie — le bouton de cycle de vie
+       Bare Hands est le seul endroit où l'on allume, endort et active
        (décision 1) ; deux commandes pour un même état se contredisent le jour
        où l'une des deux ne se rafraîchit pas ;
      - les **outils** — la Slice 03 les rend en palette de gauche, atteignable
@@ -9336,7 +9336,7 @@ try{
     const missing=assetsHtml();
     return `<section>
       <h3>Barehands · mode test</h3>
-      <div class="hint" style="margin-bottom:14px">Piloter l'interface à mains nues. La webcam suit vos mains <strong>localement</strong> (MediaPipe, aucun envoi vers un service cloud). Les réglages ci-dessous sont enregistrés immédiatement et restent actifs au prochain chargement de la page. <strong>Allumer, endormir ou activer Bare Hands</strong> se fait depuis le bouton à icône de main, en haut à gauche de l'écran principal : c'est le seul endroit où le cycle de vie se choisit.</div>
+      <div class="hint" style="margin-bottom:14px">Piloter l'interface à mains nues. La webcam suit vos mains <strong>localement</strong> (MediaPipe, aucun envoi vers un service cloud). Les réglages ci-dessous sont enregistrés immédiatement et restent actifs au prochain chargement de la page. <strong>Allumer, endormir ou activer Bare Hands</strong> se fait dans la roue, catégorie Sélection (Souris / Bare Hands, puis Bare Hands › Veille) : c'est le seul endroit où le cycle de vie se choisit.</div>
       <div id="barehandsStatus">${statusHtml()}</div>
       <div id="barehandsAssets">${missing}</div>
       <div class="hint" style="margin-top:14px">Dernière commande vocale reçue par cette page :</div>
@@ -9408,7 +9408,7 @@ try{
     const ok=typeof confirmDialog!=='function'||await confirmDialog({
       title:'Réinitialiser les réglages Bare Hands ?',
       lines:['Les réglages et l’outil reprennent leur valeur d’usine.',
-        'Le cycle de vie ne bouge pas : la caméra reste dans l’état où elle est, et le bouton à icône de main aussi.'],
+        'Le cycle de vie ne bouge pas : la caméra reste dans l’état où elle est, et le choix de la roue (Sélection) aussi.'],
       confirmLabel:'Réinitialiser'});
     if(!ok)return;
     const saved=await saveSettings({...BH.SETTINGS_DEFAULTS,enabled:view.settings.enabled});
@@ -9465,7 +9465,7 @@ try{
   /* ------------------------------------------------------------------
      Les portes d'entrée de l'onglet, ouvertes de l'**extérieur** (Slice 02).
 
-     Le menu contextuel du bouton de la barre du haut n'a pas le droit de
+     Le menu contextuel du bouton de cycle de vie Bare Hands n'a pas le droit de
      rejouer ce que fait `renderTab` : ce serait une seconde implantation de
      « montrer les réglages Bare Hands », et le jour où l'onglet apprend
      quelque chose (une relecture d'assets, une révision de rendu) l'une des
@@ -9779,7 +9779,7 @@ try{
       engine:Object.freeze({onMeasure:typeof controllerDeps.onMeasure==='function',
         keepAwake:typeof controllerDeps.keepAwake==='function'})}),
     /* **Les entrées rapides de la Slice 02** (décisions 8, 14 et 16). Ce sont
-       les portes que le menu contextuel du bouton de la barre du haut appelle,
+       les portes que le menu contextuel du bouton de cycle de vie Bare Hands appelle,
        et elles sont ici plutôt que dans le contrôle parce que c'est ce module
        qui possède l'onglet : un menu qui bricolerait `SET.tab` lui-même serait
        une seconde implantation de « montrer les réglages ».
@@ -9821,7 +9821,7 @@ try{
     measureSeam:()=>Object.freeze(measureSeamNames()),
     /* **La couture de diffusion du cycle de vie** (décision 7 de l'affinage
        d'UI). Ce que `state()` rend sur demande, celle-ci le **pousse** : tout
-       consommateur hors de ce module — le contrôle de la barre du haut, et ce
+       consommateur hors de ce module — le contrôle de cycle de vie, et ce
        que les Slices suivantes y accrocheront — s'y abonne au lieu de sonder.
        Elle rejoue l'instantané courant à l'ouverture, pour qu'un abonné
        installé après la dernière transition ne parte pas d'un état d'usine.

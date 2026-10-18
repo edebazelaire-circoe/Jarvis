@@ -909,7 +909,7 @@ html.jvr-studio.jvr-slim #${DOM.hostId}{width:44px;padding:8px 4px}
     }
     function stop(){destroyed=true;for(const t of [pollTimer,reportTimer,noticeTimer])if(t)cancelLater(t);pollTimer=reportTimer=noticeTimer=null}
 
-    /* Le statut 1 Hz de la page : Board actif (nature), mode d'interaction, état de la voix. Aucune autre vérité n'y est lue. */
+    /* Le statut 1 Hz de la page : Board actif (type), mode d'interaction (dérivé du type), état de la voix. Aucune autre vérité n'y est lue. */
     function gate(status){
       const s=status||{};
       const kind=s.boards&&s.boards.active&&s.boards.active.board_kind||null;

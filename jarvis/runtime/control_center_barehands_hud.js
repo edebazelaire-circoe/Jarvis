@@ -1,4 +1,4 @@
-/* Bare Hands — contrôle de cycle de vie de la barre du haut.
+/* Bare Hands — contrôle de cycle de vie (bouton à icône de main ; caché tant que la roue est là : Sélection › Bare Hands le porte).
 
    Décision 1 de l'affinage d'UI : Bare Hands est un contrôle de premier plan
    de l'écran principal, et non d'abord une fonction de l'onglet Expérimental.
@@ -645,7 +645,7 @@
   const ARTLESS='barehands_palette_icon_missing';
 
   /* Pourquoi la palette est en veille, par présentation. Elle ne redit
-     **jamais** le cycle de vie à l'écran : le contrôle de la barre du haut est
+     **jamais** le cycle de vie à l'écran : le contrôle de cycle de vie est
      à 100 px au-dessus, dans la même colonne, et son étiquette dit déjà
      ÉTEINT / DÉMARRAGE / INTERROMPU. Deux textes pour un même fait apprennent
      à n'en lire aucun. Ce que la palette ajoute est ce que le contrôle ne dit
@@ -843,7 +843,7 @@
     top:76,left:18,button:64,gap:7,capLine:11,
     /* Le blanc entre l'étiquette du contrôle et le haut de la palette. */
     split:10,
-    /* Sous 700 px, la barre du haut se resserre et la bannière GPT-Live occupe
+    /* Sous 700 px, le haut de la page se resserre et la bannière GPT-Live occupe
        le coin : la colonne entière descend sur le bord gauche. Le décalage du
        contrôle est celui de la Slice 01 ; la palette s'en déduit. */
     narrowLeft:10,narrowTop:-41,
@@ -865,7 +865,7 @@
   display:flex;flex-direction:column;align-items:center;gap:${GEO.gap}px;
   font:12px/1.2 ui-monospace,SFMono-Regular,Consolas,monospace;
   /* Ce contrôle rétablit les événements de pointeur chez lui : rangé un jour sous un
-     parent qui les coupe (comme la barre du haut, retirée par la Slice 02 de
+     parent qui les coupe (comme l'ancienne barre du haut, retirée par la Slice 02 de
      jarvis-board-ui-wheel-dossier-refactor, le faisait), il resterait cliquable au
      lieu de se taire. */
   pointer-events:auto}
@@ -1218,7 +1218,7 @@
   #${DOM.cardsId} .bh-card-row{flex-direction:column;gap:12px}
 }
 @media(max-width:700px){
-  /* En dessous de 700 px la barre du haut se resserre (\`left:10px\`), la marque
+  /* En dessous de 700 px le haut de la page se resserre (\`left:10px\`), la marque
      disparaît et la bannière GPT-Live vient occuper la bande juste sous elle :
      le coin haut-gauche n'est plus libre. Le contrôle descend donc sur le bord
      gauche, en miroir du dock — le même côté que la palette d'outils à venir,
@@ -2284,7 +2284,7 @@ body:has(#toolWheel:not([hidden])) #${DOM.paletteId}{display:none}`;
       }
       modes.appendChild(grid);
       modes.appendChild(el('p','bh-card-note',
-        'Le mode se choisit au clic gauche sur le bouton à icône de main, en haut à gauche.'));
+        'Le mode se choisit dans la roue : Sélection › Souris / Bare Hands, puis Bare Hands › Veille.'));
 
       const wake=block(body,model.wake.title);
       const wakeRow=el('div','bh-card-row');

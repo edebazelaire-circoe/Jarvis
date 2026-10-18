@@ -612,7 +612,7 @@ if(typeof module!=='undefined'&&module.exports)module.exports=JarvisScenePageCor
   }
 
   /* Registre d'empilement de la page (voir `control_center.html`) : visage 0,
-     canevas Cosmos 0, **scène 20**, barre du haut et indication vocale 31,
+     canevas Cosmos 0, **scène 20**, indication vocale 31,
      dock 32, panneau 33, bandeau GPT-Live 35, pastilles 40 (Cosmos : panneau
      42, barre 45, bandeau 48, dock et pastilles 50), fond des réglages 60,
      notifications 70, liste des pastilles 75, menu contextuel 80, Barehands
@@ -2622,8 +2622,8 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
     return options===null||calm||reducedMotion()?null:L.orbitField(nodesNow,vp,options);
   }
 
-  /* Hauteur des notes de la scène, publiée sur la page (`--sc-status-h`) pour le
-     bouton de mode, qui se hisse au-dessus d'une note de plusieurs lignes (S06
+  /* Hauteur des notes de la scène, publiée sur la page (`--sc-status-h`) pour la
+     carte Board du bas-gauche (avant elle le bouton de mode), qui se hisse au-dessus d'une note de plusieurs lignes (S06
      rework, QA B1 : une note coupée en points de suspension perdait sa cause). */
   function publishStatusHeight(){
     const h=statusEl&&!statusEl.hidden?Math.ceil(statusEl.getBoundingClientRect().height):0;

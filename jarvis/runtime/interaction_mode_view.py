@@ -77,8 +77,8 @@ def local_payload(fallback: InteractionMode, *, code: str, message: str) -> dict
 
     **Le repli passe par la même règle que `_decode`** : `behaving_`, donc
     jamais un mode réservé. Le mode du type du Board, Réunion compris, reste
-    publié à part (``board_mode`` dans `/api/status`), et c'est là que
-    ``REUNION`` reste visible (Décision 02).
+    publié à part (``board_mode`` dans `/api/status`, lecture de diagnostic ; la
+    carte Board dit « Réunion · prévu » d'après le type du Board, Décision 02).
     """
 
     effective = behaving_interaction_mode(fallback)

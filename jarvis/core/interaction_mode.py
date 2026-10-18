@@ -28,8 +28,8 @@ cette fonctionnalité ne doit pas introduire. Le mode change donc **à chaud**,
 par évènement, et rien ici ne touche à la composition vocale.
 
 La lecture utilisée est délibérément `behaving_interaction_mode` : cette valeur
-**pilote un comportement**. Un Board Réunion désigne ``meeting`` — le Control
-Center l'affiche comme mode du type du Board (`board_mode` de `/api/status`) —
+**pilote un comportement**. Un Board Réunion désigne ``meeting`` — la carte Board
+affiche « Réunion · prévu » d'après le type, `/api/status` le publie en `board_mode` —
 mais ``meeting`` ne peut pas devenir le mode effectif, parce qu'aucun
 comportement de réunion n'existe (Décision 02).
 """

@@ -32,7 +32,7 @@
   const FRAME=Object.freeze({halfWidth:160,halfHeight:90});
   /* Zone de composition sûre : la partie du cadre qu'aucune commande de la page
      ne recouvre à la plus petite taille 16:9 prise en charge (1280 × 720, 4 px
-     par unité), dans les deux thèmes — barre du haut et dock Cosmos en haut,
+     par unité), dans les deux thèmes — lanceur et dock Cosmos en haut,
      dock du thème circuit à droite, indication vocale et indicateurs de scène
      en bas. Plus grande fenêtre : les commandes y occupent encore moins
      d'unités. Le résolveur ne pose qu'ici ; le cerveau en reçoit les bornes.
