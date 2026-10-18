@@ -705,6 +705,12 @@ class JarvisCoreApplication:
             return
         try:
             await self.state.initialize()
+            # Une ligne par étape de migration appliquée (de, vers, lignes changées) : la seule trace, avec la
+            # sauvegarde `.v<N>.bak`, qu'une base a migré (Slice 08 de la refonte roue/Dossier).
+            for step in getattr(self.state, "migrations_applied", None) or []:
+                self._diagnostics.emit("core.state.migrated",
+                                       f"jarvis.sqlite3 migrée de v{step['from']} à v{step['to']} ({step['rows']} lignes changées)",
+                                       data=dict(step))
             # Worker d'embeddings de l'index sémantique (s'il existe) : tâche de fond, ne lève pas, ne bloque pas.
             await self.memory.start()
             # Before any route or task can admit a turn: repair user events a

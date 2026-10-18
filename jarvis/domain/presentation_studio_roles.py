@@ -186,7 +186,7 @@ class RestoreAction(StrEnum):
     NONE = "none"
     #: The mode moved meanwhile (a Board switch): the new Board's mode wins, the remembered mode is dropped.
     LEAVE_USER_CHOICE = "leave_user_choice"
-    #: Core restarted: Board preference was reapplied by `BoardService`, restoring would be a second writer.
+    #: Core restarted: the active Board type's mode was reapplied by `BoardService`, restoring would be a second writer.
     CORE_RESTARTED = "core_restarted"
 
 

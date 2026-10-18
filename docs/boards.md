@@ -777,6 +777,11 @@ second pointer would be a second truth.
   crash decoding `assistant`, it refuses the file instead (`state DB schema 9 is
   newer than supported 8`). Proof: `tests/unit/test_board_kind_migration_v9.py`
   (whole matrix, idempotence, backup, strict re-read, refusal by a v8 binary).
+  **Diagnostics** (Slice 08): Core journals one `core.state.migrated` line per
+  applied step (`{from: 8, to: 9, rows: <rows changed>}`, from
+  `SQLiteStateRepository.migrations_applied`); a database already at v9 logs
+  nothing. The `.v8.bak` copy is written in `journal_mode=DELETE`, so reading it
+  never adds `-wal` / `-shm` beside it.
   **Rollback:** stop Jarvis, set `jarvis.sqlite3` and its `-wal`/`-shm` aside
   (never delete them without a copy), restore `jarvis.sqlite3.v8.bak` as
   `jarvis.sqlite3`, run the previous code ([local-data.md](local-data.md)).

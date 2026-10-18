@@ -392,6 +392,10 @@ class SQLiteStateRepository:
         self.path = Path(path).resolve()
         self._lock = asyncio.Lock()
         self._conn: sqlite3.Connection | None = None
+        #: Steps applied by the last `initialize()`: `{from, to, rows}` (rows changed by the step, 0 for pure DDL).
+        #: Core journals one `core.state.migrated` line per step (Slice 08 of the wheel/Dossier refactor: the v9
+        #: data step left no diagnostic, only the `.v8.bak` and the version row told).
+        self.migrations_applied: list[dict[str, int]] = []
 
     async def initialize(self) -> None:
         async with self._lock:
@@ -474,7 +478,7 @@ class SQLiteStateRepository:
             CREATE UNIQUE INDEX IF NOT EXISTS idx_one_unresolved_live_session
                 ON live_sessions((1)) WHERE state <> 'stopped';
             ''')
-            self._migrate(conn, version)
+            self.migrations_applied = self._migrate(conn, version)
             quick = conn.execute("PRAGMA quick_check").fetchone()
             if not quick or quick[0] != "ok":
                 raise RuntimeError(f"state DB quick_check failed: {quick[0] if quick else 'unknown'}")
@@ -489,25 +493,32 @@ class SQLiteStateRepository:
         self._conn = conn
 
     @staticmethod
-    def _migrate(conn: sqlite3.Connection, version: int) -> None:
+    def _migrate(conn: sqlite3.Connection, version: int) -> list[dict[str, int]]:
         """Apply each pending migration atomically (DDL + version bump in one transaction).
 
         A crash mid-migration rolls the step back and the next start retries it.
         The version is re-read under the write lock, so a concurrent initializer
-        (another process on the same file) cannot apply a step twice.
+        (another process on the same file) cannot apply a step twice. Returns the
+        steps really applied, `{from, to, rows}`: `rows` counts the rows the
+        step's statements changed (the version bump excluded).
         """
+        applied: list[dict[str, int]] = []
         for target in range(version + 1, _SCHEMA_VERSION + 1):
             conn.execute("BEGIN IMMEDIATE")
             try:
                 current = int(conn.execute("SELECT version FROM schema_version LIMIT 1").fetchone()[0])
                 if current < target:
+                    before = conn.total_changes
                     for statement in _MIGRATIONS[target]:
                         conn.execute(statement)
+                    rows = conn.total_changes - before
                     conn.execute("UPDATE schema_version SET version=?", (target,))
+                    applied.append({"from": current, "to": target, "rows": rows})
                 conn.execute("COMMIT")
             except BaseException as exc:
                 rollback_after_failure(conn, exc)
                 raise
+        return applied
 
     def _backup_before_migration(self, conn: sqlite3.Connection, version: int) -> None:
         """One-time online copy of an existing DB to `<db>.v<version>.bak` before migrating it.
@@ -526,6 +537,9 @@ class SQLiteStateRepository:
             copy = sqlite3.connect(partial)
             try:
                 conn.backup(copy)
+                # The copy inherits WAL mode from the live file; a plain read would then add `-wal` / `-shm`
+                # beside the backup. A rollback copy is a single self-contained file (Slice 08 polish).
+                copy.execute("PRAGMA journal_mode=DELETE")
             finally:
                 copy.close()
             partial.replace(target)

@@ -32,6 +32,8 @@ from typing import Any
 
 from jarvis.runtime.session_context_brief import neutralize_lines
 
+#: Type de Board dit avec les mots de l'interface (`board_kind` -> libellé).
+_KIND_WORDS = {"presentation": "Présentation", "meeting": "Réunion"}
 _MAX_TITLE = 120
 _MAX_SUMMARY = 1500
 _MAX_REF = 256
@@ -89,7 +91,8 @@ def render_board_brief(board: Any) -> list[str]:
         lines.append(f"({omitted} référence(s) du Board non jointe(s) : demande board_get si tu en as besoin.)")
     kind = _text(board.get("board_kind"), 24)
     if kind and kind != "assistant":
-        lines[0] += f" Type : {kind}."
+        # Les mots de l'utilisateur, pas la valeur interne (Slice 08, polish S01a) ; une valeur inconnue reste telle quelle.
+        lines[0] += f" Type : {_KIND_WORDS.get(kind, kind)}."
     if "memory" in board:
         lines.extend(render_board_memory(board.get("memory"), str(board.get("board_id") or "")))
     return lines

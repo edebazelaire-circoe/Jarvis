@@ -602,6 +602,8 @@ class ConsoleSettingsTools:
                 or needle in str(item["label"]).lower()
                 or needle in str(item["help"]).lower()
             ]
+        if not items and any(word and "interaction" in word for word in (wanted, needle)):
+            raise self._refuse_interaction_mode("settings_describe")
         if not items:
             known = ", ".join(sorted({entry["category"] for entry in self._catalog(settings, hands)}))
             raise ConsoleToolError(
@@ -625,6 +627,8 @@ class ConsoleSettingsTools:
                 f"{len(option_ids)} identifiants demandés, {MAX_GET_IDS} au plus. "
                 "Utilise settings_describe pour une vue d'ensemble.",
             )
+        if INTERACTION_MODE_ID in option_ids:
+            raise self._refuse_interaction_mode("settings_get")
         settings, hands = await self._read_all()
         index = {item["id"]: item for item in self._catalog(settings, hands)}
         unknown = [name for name in option_ids if name not in index]
@@ -648,17 +652,23 @@ class ConsoleSettingsTools:
                    data={"tool": "settings_get", "option_ids": list(option_ids)})
         return {"settings": values}
 
+    def _refuse_interaction_mode(self, tool: str) -> ConsoleToolError:
+        """Le même refus guidant pour `settings_get`, `settings_describe` et `settings_set` (Slice 08, polish S01b :
+        `get` / `describe` répondaient « Réglage inconnu »)."""
+
+        self._emit("settings.tool_refused", f"{tool} : interaction_mode refusé (mode dérivé du Board)",
+                   level="warning", data={"tool": tool, "option_id": INTERACTION_MODE_ID,
+                                          "code": INTERACTION_MODE_DERIVED})
+        return ConsoleToolError(
+            INTERACTION_MODE_DERIVED,
+            f"{INTERACTION_MODE_DERIVED_MESSAGE} Outils : board_switch vers un Board de type "
+            "« presentation » (ou « assistant »), sinon board_create avec board_kind « presentation ».",
+        )
+
     async def set(self, option_id: str, value: Any) -> dict[str, Any]:
         option_id = str(option_id or "").strip()
         if option_id == INTERACTION_MODE_ID:
-            self._emit("settings.tool_refused", "settings_set : interaction_mode refusé (mode dérivé du Board)",
-                       level="warning", data={"tool": "settings_set", "option_id": option_id,
-                                              "code": INTERACTION_MODE_DERIVED})
-            raise ConsoleToolError(
-                INTERACTION_MODE_DERIVED,
-                f"{INTERACTION_MODE_DERIVED_MESSAGE} Outils : board_switch vers un Board de type "
-                "« presentation » (ou « assistant »), sinon board_create avec board_kind « presentation ».",
-            )
+            raise self._refuse_interaction_mode("settings_set")
         settings, hands = await self._read_all()
         index = {item["id"]: item for item in self._catalog(settings, hands)}
         item = index.get(option_id)

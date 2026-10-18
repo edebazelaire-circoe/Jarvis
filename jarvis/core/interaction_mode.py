@@ -406,6 +406,8 @@ class InteractionModeService:
         doit pas pouvoir être rempli par un champ de saisie.
         """
 
+        if value is None:
+            return "absent"  # Slice 08 (polish S01b) : un champ manquant n'est pas une valeur `NoneType`
         text = value if isinstance(value, str) else type(value).__name__
         return text[:64]
 

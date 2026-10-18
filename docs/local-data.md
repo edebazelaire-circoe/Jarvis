@@ -80,7 +80,10 @@ les migrations que Core applique au démarrage :
 
 - `jarvis.sqlite3` : `_MIGRATIONS` et `_SCHEMA_VERSION` dans
   `jarvis/adapters/sqlite_state.py`. Sauvegarde `jarvis.sqlite3.v<N>.bak` avant
-  la première étape (voir `docs/state-model.md`, procédure de retour arrière) ;
+  la première étape (voir `docs/state-model.md`, procédure de retour arrière),
+  écrite en `journal_mode=DELETE` (une lecture n'ajoute ni `-wal` ni `-shm`) ;
+  Core journalise une ligne `core.state.migrated` par étape appliquée (de, vers,
+  lignes changées) ;
 - `scene.sqlite3` : même mécanisme dans `jarvis/adapters/sqlite_scene.py`.
   Sauvegarde `scene.sqlite3.v<N>.bak`.
 

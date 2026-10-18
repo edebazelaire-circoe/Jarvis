@@ -181,6 +181,8 @@ async def test_the_board_type_is_chosen_at_creation_and_never_changed_by_an_upda
     refusals = [(level, data) for kind, level, data in journal.lines if kind == "core.board.kind_change_refused"]
     assert len(refusals) == 4 and refusals[0][0] == "warning"
     assert refusals[0][1]["board_id"] == board.board_id and refusals[0][1]["code"] == "board_kind_immutable"
+    # Slice 08 (polish S01a) : la valeur demandée est tracée brute et bornée, sans guillemets ajoutés.
+    assert [data["requested_kind"] for _, data in refusals] == ["presentation", "meeting", "Meeting", None]
 
 
 async def test_creation_defaults_to_assistant_and_maps_the_deprecated_empty_alias(world):

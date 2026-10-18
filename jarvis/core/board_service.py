@@ -361,7 +361,7 @@ class BoardService:
                 # Refus attendu d'un client hérité (ancien écran, ancien outil) : warning, pas un défaut de Core.
                 self._trace("core.board.kind_change_refused", "Type de Board non modifiable : rien n'a été écrit",
                             level="warning", data={"code": exc.code.value, "board_id": str(board_id)[:80],
-                                                   "requested_kind": preview(payload.get("board_kind"))
+                                                   "requested_kind": _bounded_raw(payload.get("board_kind"))
                                                    if isinstance(payload, dict) else None})
             raise
         async with self._lock:
@@ -585,3 +585,11 @@ class BoardService:
             self._diagnostics.emit(kind, message, level=level, data=dict(data or {}))
         except Exception:  # noqa: BLE001 - intentional: an unavailable journal must not break a Board write
             pass
+
+
+def _bounded_raw(value: object) -> object:
+    """Valeur brute bornée pour une trace (Slice 08, polish S01a : `preview` citait une chaîne, `"'presentation'"`)."""
+
+    if value is None or isinstance(value, (bool, int, float)):
+        return value
+    return str(value)[:64]

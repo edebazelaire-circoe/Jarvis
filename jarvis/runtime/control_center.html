@@ -2228,8 +2228,9 @@ const e=new Error((envelope&&envelope.message)||value.error||value.code||text||`
    qui voulait distinguer deux refus n'avait que ce texte à comparer, ce qui
    casse à la première reformulation. L'en-tête d'abord, le `code` du corps
    ensuite pour les routes qui répondent en JSON. Ajouté par la Slice 03 de
-   jarvis-presentation-interaction-mode, qui doit traiter `409` (mode réservé) et
-   `503` (mode enregistré mais pas encore appliqué) différemment l'un de l'autre. */
+   jarvis-presentation-interaction-mode ; depuis la refonte roue/Dossier, le mode
+   suit le type du Board et sa route ne fait plus que refuser
+   (`409 interaction_mode_derived`), mais d'autres refus en dépendent. */
 e.code=(r.headers&&typeof r.headers.get==='function'?r.headers.get('X-Jarvis-Error-Code'):null)||(envelope&&envelope.code)||value.code||null;throw e}return value}
 function esc(v){return String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))}
 const ICONS=[[/^tool\./,'🔧'],[/^voice\.transcript/,'🎤'],[/^voice\.assistant/,'💬'],[/^voice\.(wake|active|connecting|speech_started|input_)/,'👂'],[/^voice\./,'🎙️'],[/^audio\./,'🔊'],[/^agent\./,'🤖'],[/^calendar\./,'📅'],[/^settings\./,'⚙️'],[/^(supervisor|process)\./,'⚡'],[/^ui\./,'🖥️'],[/^provider\./,'☁️'],[/^errors\./,'🗄️']];

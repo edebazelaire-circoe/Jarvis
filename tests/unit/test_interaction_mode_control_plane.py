@@ -984,3 +984,12 @@ def test_l_evenement_ne_porte_pas_le_catalogue_des_modes():
 # ------------------------------------------------ ce que le journal compte
 
 
+
+
+def test_a_missing_mode_is_traced_absent_not_nonetype():
+    """Slice 08 (polish S01b) : un champ manquant se trace `absent`, jamais `NoneType`."""
+    from jarvis.core.interaction_mode import InteractionModeService
+
+    assert InteractionModeService._mode_value(None) == "absent"
+    assert InteractionModeService._mode_value(7) == "int"
+    assert InteractionModeService._mode_value("x" * 100) == "x" * 64

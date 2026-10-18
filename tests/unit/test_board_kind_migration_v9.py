@@ -261,3 +261,40 @@ def test_a_v8_binary_refuses_the_v9_file_instead_of_misreading_it(tmp_path, monk
     monkeypatch.setattr(sqlite_state, "_SCHEMA_VERSION", 8)
     with pytest.raises(RuntimeError, match="newer than supported"):
         asyncio.run(_open(path))
+
+
+def test_the_applied_step_is_reported_with_its_row_count_and_a_rerun_reports_nothing(tmp_path, monkeypatch):
+    """Slice 08 (polish S01a) : `migrations_applied` dit chaque étape (de, vers, lignes changées) ; Core en tire une
+    ligne `core.state.migrated`. Une base déjà migrée ne rapporte rien."""
+    path = tmp_path / "state" / "jarvis.sqlite3"
+    rows = [(board_id, json.dumps(_payload(board_id, kind, mode, origin), sort_keys=True), "active")
+            for board_id, kind, mode, origin, _ in MATRIX]
+    _v8_file(path, monkeypatch, rows)
+
+    async def run() -> list:
+        repository = SQLiteStateRepository(path)
+        await repository.initialize()
+        try:
+            return repository.migrations_applied
+        finally:
+            await repository.close()
+
+    first = asyncio.run(run())
+    assert first == [{"from": 8, "to": 9, "rows": len(MATRIX)}], first
+    assert asyncio.run(run()) == []
+
+
+def test_the_pre_migration_backup_is_a_single_file_that_a_read_never_grows(migrated):
+    """Slice 08 (polish S01a) : la copie `.v8.bak` héritait du mode WAL ; une simple lecture créait `-wal` / `-shm`
+    à côté d'elle. Elle est en `journal_mode=DELETE`."""
+    path, _ = migrated
+    backup = path.with_name("jarvis.sqlite3.v8.bak")
+    header = backup.read_bytes()[:20]
+    assert header[18] == 1 and header[19] == 1, "file format 1 = rollback journal, not WAL (2)"
+    conn = sqlite3.connect(backup)
+    try:
+        assert conn.execute("PRAGMA journal_mode").fetchone()[0] == "delete"
+        conn.execute("SELECT count(*) FROM work_boards").fetchone()
+    finally:
+        conn.close()
+    assert not backup.with_name(backup.name + "-wal").exists() and not backup.with_name(backup.name + "-shm").exists()

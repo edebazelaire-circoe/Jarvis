@@ -337,8 +337,15 @@ async def test_no_setting_describes_or_offers_a_mode(moded):
     tools, *_ = moded
     shown = await tools.describe()
     assert "interaction_mode" not in shown
+    # Slice 08 (polish S01b) : `describe` et `get` donnent le même refus guidant que `set`, plus « Réglage inconnu ».
+    for call in (lambda: tools.describe(category="interaction"), lambda: tools.describe(search="interaction_mode"),
+                 lambda: tools.get(["interaction_mode"]), lambda: tools.get(["voice_turn_mode", "interaction_mode"])):
+        with pytest.raises(ConsoleToolError) as failure:
+            await call()
+        assert failure.value.code == "interaction_mode_derived", failure.value
+        assert "board_switch" in str(failure.value)
     with pytest.raises(ConsoleToolError) as failure:
-        await tools.describe(category="interaction")
+        await tools.describe(category="cuisine")
     assert failure.value.code == "settings_no_match"
 
 
