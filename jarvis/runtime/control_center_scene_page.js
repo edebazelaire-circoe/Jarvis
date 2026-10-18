@@ -1049,6 +1049,9 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
   let selection=[],band=null;
   /* Sélection au clavier ouverte par Ctrl+Espace (Slice 06) : le focus ne la remplace plus. */
   let keySelecting=false;
+  /* Vrai le temps d'un `focus()` posé par la page après un retrait : le focus
+     se déplace, la sélection ne suit pas (QA Slice 06, polish 1). */
+  let focusWithoutSelecting=false;
   const stopping=new Map();
   const actionStats={moves:0,resizes:0,representations:0,visibility:0,pins:0,archives:0,bulkArchives:0,stops:0,menus:0,refused:0,failed:0,rolledBack:0};
   const inflight=new Set();
@@ -2203,18 +2206,29 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
     restorePendingFocus();
   }
 
-  /* Après un retrait (archivage, masquage) ou un réaffichage : la sélection va
-     à l'objet prévu dès qu'il est dessiné (2 s au plus). */
+  /* Après un réaffichage : la sélection va à l'objet prévu dès qu'il est
+     dessiné (2 s au plus). Après un retrait (archivage, masquage, Ranger ;
+     `select: false`) : seul le **focus** va au voisin. La sélection perd les
+     objets qui ne sont plus dessinés et garde ceux restés en place (un refus) ;
+     un voisin sans rapport n'est jamais sélectionné, sinon la prochaine action
+     de la roue s'appliquerait à lui (QA Slice 06, polish 1). */
   function restorePendingFocus(){
     if(!pendingFocus)return;
     if(Date.now()-pendingFocus.at>2000){pendingFocus=null;return}
     const record=pendingFocus.id&&nodes.get(pendingFocus.id);
     if(!pendingFocus.id){pendingFocus=null;return}
     if(!record)return;
-    const id=pendingFocus.id;pendingFocus=null;
-    focusId=id;select(id);
+    const {id,select:selects=true}=pendingFocus;pendingFocus=null;
+    focusId=id;
+    if(selects)select(id);
+    else{
+      const kept=selection.filter(other=>nodes.has(other));
+      if(kept.length!==selection.length)applySelection(kept);
+    }
     updateTabStop(lastModel?lastModel.nodes:[]);
-    if(!(typeof CONFIRM==='object'&&CONFIRM&&CONFIRM.resolve))record.el.focus({preventScroll:true});
+    if(typeof CONFIRM==='object'&&CONFIRM&&CONFIRM.resolve)return;
+    focusWithoutSelecting=!selects;
+    try{record.el.focus({preventScroll:true})}finally{focusWithoutSelecting=false}
   }
 
   /* Liste d'éléments entière : pas de fondu. */
@@ -2488,7 +2502,7 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
        clavier lisent ; un objet hors sélection, lui, la remplace comme avant. */
     /* Sélection au clavier ouverte (Ctrl+Espace) : le focus se promène, la
        sélection reste celle qu'on a composée. */
-    if(I&&!keySelecting)anchorSelection(focusId);
+    if(I&&!keySelecting&&!focusWithoutSelecting)anchorSelection(focusId);
     if(lastModel)updateTabStop(lastModel.nodes);
     clampLabel(el);
   }
@@ -2744,14 +2758,15 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
     if(removed.length){scheduleRender();pushCommitter()}
   }
 
-  /* Sélection à déplacer quand des objets quittent le dessin (archivage,
-     masquage) : le voisin dans l'ordre de lecture, focalisé au prochain rendu. */
+  /* Focus à déplacer quand des objets quittent le dessin (archivage,
+     masquage, Ranger) : le voisin dans l'ordre de lecture, focalisé — **sans
+     être sélectionné** — au prochain rendu. */
   function planFocusAfterRemoval(removedIds,message){
     const list=lastModel?lastModel.nodes:[];
     const active=nodeElement(document.activeElement);
     const current=active?active.dataset.objectId:(focusId||removedIds[0]);
     const next=I.focusAfterRemoval(L.spatialOrder(list).map(node=>node.id),removedIds,current);
-    pendingFocus={id:next,at:Date.now()};
+    pendingFocus={id:next,at:Date.now(),select:false};
     announce(message);
     scheduleRender();
   }

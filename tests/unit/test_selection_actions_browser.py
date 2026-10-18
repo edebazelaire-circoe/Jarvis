@@ -182,6 +182,34 @@ def test_masquer_is_one_patch_selection_and_never_reaches_the_dossier(tmp_path):
     _no_errors(step)
 
 
+FOCUSED = "(document.activeElement&&document.activeElement.dataset&&document.activeElement.dataset.objectId)||null"
+
+
+def test_after_masquer_or_retirer_the_focus_moves_but_nothing_unrelated_is_selected(tmp_path):
+    """QA Slice 06, polish 1 : le voisin reçoit le focus, jamais la sélection."""
+
+    steps = _drive(tmp_path, [
+        {"width": 1440, "height": 900, "seed": SEED, "actions": [
+            ["click", "pick", NODE.format("jobj_note"), 400], ["ctrlclick", "add", NODE.format("jobj_star"), 500],
+            *OPEN_SELECTION, OPEN_ROW("hide"), ["eval", "drawn", DRAWN, 1200],
+            ["eval", "selection", SELECTION, 50], ["eval", "focused", FOCUSED, 50]]},
+        {"width": 1440, "height": 900, "seed": SEED, "actions": [
+            ["click", "pick", NODE.format("jobj_doc"), 400],
+            *OPEN_SELECTION, OPEN_ROW("remove"), ["click", "go", "#confirmGo", 1200],
+            ["eval", "selection", SELECTION, 50], ["eval", "focused", FOCUSED, 50],
+            *OPEN_SELECTION, ["eval", "rows", ROWS, 200]]},
+    ])
+    hidden, removed = steps[0]["results"], steps[1]["results"]
+    assert "jobj_note" not in hidden["drawn"] and "jobj_star" not in hidden["drawn"]
+    assert hidden["selection"] == [], "after Masquer the selection is empty, not the neighbour"
+    assert hidden["focused"] not in (None, "jobj_note", "jobj_star"), "the focus still moves to a drawn neighbour"
+    assert removed["selection"] == [], "after Retirer the selection is empty"
+    assert removed["focused"] not in (None, "jobj_doc")
+    assert "ranger" not in _rows(removed["rows"]), "the next wheel action has no target"
+    for step in steps:
+        _no_errors(step)
+
+
 def test_changing_the_form_of_many_is_one_patch_and_carries_no_payload(tmp_path):
     step = _drive(tmp_path, [{"width": 1440, "height": 900, "seed": SEED, "actions": [
         ["click", "pick", NODE.format("jobj_note"), 400], ["ctrlclick", "add", NODE.format("jobj_reg"), 500],
