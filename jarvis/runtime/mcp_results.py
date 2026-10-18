@@ -205,6 +205,25 @@ class SceneBatchResult(ToolResult):
     scene_changed: str = None  # type: ignore[assignment]
 
 
+class ScenePurgeArchivedResult(ToolResult):
+    """`scene_purge_archived` : `step=plan` (rien d'effacé, jeton à rendre) ou `step=purged` (fait, sauvegarde d'abord).
+
+    `archived` / `history_rows` : pierres tombales et lignes d'historique qui partiraient (plan) ou parties (purged) ;
+    `kept` : ids archivés gardés parce que le runtime les suit encore (`kept_ids`, au plus 20 cités).
+    """
+
+    step: Literal["plan", "purged"]
+    revision: int
+    archived: int
+    history_rows: int
+    kept: int
+    kept_ids: list[str] = None  # type: ignore[assignment]
+    confirmation: str = None  # type: ignore[assignment]
+    expires_in_s: int = None  # type: ignore[assignment]
+    backup_path: str = None  # type: ignore[assignment]
+    note: str = None  # type: ignore[assignment]
+
+
 # ------------------------------------------------------------------ réglages
 
 class SettingValue(ToolResult):

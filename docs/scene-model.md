@@ -119,6 +119,36 @@ id again is a `duplicate`.
   reused: the brain must choose a fresh id for a new object after the user
   archived an old one.
 
+### Archive purge
+
+Archived objects are counted (`archived` of `scene_inspect`) until the user asks
+for a **definitive purge** (2026-10-18): « vire tous les trucs archivés, je veux
+vraiment que tout soit supprimé ». Two steps, `jarvis/domain/scene_purge.py`:
+
+1. **Plan** (writes nothing): which tombstones and how many `scene_history`
+   rows would go, which stay and why, and a confirmation token valid 10 minutes.
+2. **Purge** (token + `confirmed: true`): Core re-plans under its command lock;
+   the token must describe exactly that plan (same scene, same Core run, same
+   purged ids, same history count), otherwise `confirmation_stale` and nothing
+   is deleted. It then backs up the whole `scene.sqlite3` next to itself
+   (`scene.sqlite3.purge-<UTC>.bak`; if that fails, nothing is deleted), deletes
+   the purged tombstones and every history row whose id keeps no tombstone, and
+   advances the revision by one without a patch (readers resync from the
+   snapshot).
+
+What stays: active objects, pinned ones included, and every relation are not
+touched. Archived ids the **runtime still tracks** (a sub-agent or job Core's
+work state still knows, see `SceneProjector.retained_archive_ids`) keep their
+tombstone and their history: removing it would let the next observation of that
+work recreate the star the user archived. They become purgeable once the runtime
+has forgotten them. Right after a Core start the projection cannot tell yet (its
+work state restarts empty and producers have not re-reported): the plan is
+refused `runtime_settling` for `restart_grace_s`.
+
+A purged id is free again, like an evicted one: a new object may reuse it. The
+purge is definitive for the scene; only the backup file can bring the data back
+(by hand, Core stopped).
+
 ## Commands
 
 `SceneCommand {op, actor, …arguments}`. The shape is validated at construction

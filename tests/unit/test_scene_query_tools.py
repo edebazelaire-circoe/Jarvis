@@ -391,7 +391,8 @@ async def test_the_catalog_adds_two_read_tools_counted_as_display_work():
     # `f05ed24`) : `scene_archive` et `scene_pin` s'ajoutent, 13 outils.
     # Prefab-foundation Slice 07 : six outils prefab_* (quatre en lecture), 19 outils.
     # Tool Brain S4 : `ui_intent_publish` (intention d'écran, pas une action de scène), 20 outils.
-    assert names == TOOL_NAMES and len(TOOL_NAMES) == 20
+    # Purge des archivés (2026-10-18) : `scene_purge_archived`, destructif, 21 outils.
+    assert names == TOOL_NAMES and len(TOOL_NAMES) == 21
     assert READ_TOOL_NAMES == ("scene_inspect", "scene_query", "scene_get", "scene_capture", "prefab_search", "prefab_get",
         "prefab_validate", "prefab_events")
     for name in ("scene_query", "scene_get"):

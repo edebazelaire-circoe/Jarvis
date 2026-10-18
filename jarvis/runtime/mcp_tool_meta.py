@@ -188,6 +188,15 @@ DISPLAY = ServerMeta(
             ui_surface="scene", reversibility="irreversible", preconditions=_OBJ_PRE, choice_providers=_ON_IDS,
             parameter_rules=(*_SELECTOR_RULES, _READ_FIRST_RULE),
             output_notes=(_BATCH_NOTE, "cascade_ids : signaux runtime emportés avec leur étoile")),
+        # Purge définitive (2026-10-18) : hors Tool Brain (pas de ui_surface) ; deux temps, jeton de Core.
+        "scene_purge_archived": ToolMeta(
+            "Purger les archivés (définitif)", "destructive", False, "single_request", "structured",
+            parameter_rules=("sans argument : plan et jeton, rien d'effacé",
+                             "confirmation (jeton du plan) + confirmed=true après le oui de l'utilisateur : sauvegarde "
+                             "de scene.sqlite3 puis purge",
+                             "jeton périmé (10 min) ou ensemble changé : confirmation_stale, replanifier"),
+            output_notes=("ids suivis par le runtime gardés (kept) : leur étoile ne renaît pas",
+                          "backup_path : sauvegarde écrite avant toute suppression")),
         "scene_pin": ToolMeta(
             "Épingler ou désépingler", "write", True, "atomic_batch", "structured",
             ui_surface="scene", reversibility="reversible", preconditions=_OBJ_PRE, choice_providers=_ON_IDS,

@@ -37,7 +37,9 @@ Règles (voir `docs/ARCHITECTURE.md` › *Runtime scene projection*) :
   page seule en tire une marque (anneau vert et coche pour une fin normale,
   rouge et croix pour un échec) ;
 - **archivé** : une étoile archivée par l'utilisateur ne renaît jamais ; la
-  projection lit la pierre tombale avant d'écrire et n'envoie rien ;
+  projection lit la pierre tombale avant d'écrire et n'envoie rien. Une purge
+  des archivés (`SceneService.purge_archived`) garde donc la pierre tombale de
+  tout ce que la projection peut encore écrire : `retained_archive_ids` ;
 - **redémarrage de Core** (Slice 10) : au démarrage, avant la première
   réconciliation, chaque étoile runtime dont l'`exec_state` n'est pas
   terminal passe à `unknown` (« état inconnu depuis le redémarrage ») : l'état
@@ -106,6 +108,7 @@ from jarvis.domain.scene import (
 )
 from jarvis.domain.v2 import ProtocolEnvelope
 from jarvis.domain.work_state import MAX_SUMMARY_CHARS, WorkItem, WorkSnapshot, WorkStatus, clip_text
+from jarvis.domain.scene_purge import ScenePurgeCode, ScenePurgeError
 from jarvis.ports.scene import SceneStoreError
 from jarvis.ports.v2 import DiagnosticSink
 
@@ -411,6 +414,8 @@ class SceneProjector:
         #: Interruptions en cours (signal différé faute de place) : travail →
         #: (constat synthétique, étoile). Le constat est l'entrée de l'attente.
         self._unobserved: dict[tuple[str, str], tuple[WorkItem, str]] = {}
+        #: Démarrage de la boucle (`monotonic`) : base du délai de `retained_archive_ids`.
+        self._started_at: float | None = None
         self.stats = SceneProjectionStats()
 
     @property
@@ -435,6 +440,40 @@ class SceneProjector:
 
         return len(self._restart_tracked)
 
+    async def retained_archive_ids(self) -> frozenset[str]:
+        """Ids d'objets que cette projection peut encore écrire : leur pierre tombale doit survivre à une purge.
+
+        L'étoile et le signal de chaque travail connu de l'état de travail de
+        Core (un travail élagué n'y revient pas : `WorkStateStore` refuse son
+        retour), des créations différées, des étoiles suivies depuis le
+        redémarrage et des interruptions en attente. Retirer la pierre tombale
+        de l'un d'eux laisserait la prochaine observation recréer l'étoile que
+        l'utilisateur a archivée.
+
+        Fermé par défaut (`ScenePurgeError(runtime_settling)`) tant que la
+        projection ne tourne pas, que le marquage de redémarrage n'est pas
+        fait, ou pendant `restart_grace_s` après le démarrage : l'état de
+        travail repart vide à chaque démarrage de Core, et les producteurs
+        n'ont pas encore redit ce qu'ils suivent.
+        """
+
+        if not self.running or self._started_at is None:
+            raise ScenePurgeError(ScenePurgeCode.RUNTIME_SETTLING,
+                                  "the runtime scene projection is not running: retry once Core is fully started")
+        remaining = self._restart_grace_s - (self._monotonic() - self._started_at)
+        if self._restart_due or remaining > 0:
+            wait = max(remaining, 1.0)
+            raise ScenePurgeError(
+                ScenePurgeCode.RUNTIME_SETTLING,
+                f"Core started recently: the runtime has not yet re-reported the work it tracks; retry in {wait:.0f} s",
+                retry_after_s=wait,
+            )
+        work = await self._work.snapshot()
+        keys = {item.key for item in work.items} | set(self._pending) | set(self._restart_tracked) | set(self._unobserved)
+        stars = {star_object_id(source, external_id) for source, external_id in keys}
+        stars |= set(self._restart_tracked.values()) | {star for _item, star in self._unobserved.values()}
+        return frozenset(stars | {signal_object_id(star) for star in stars})
+
     # ------------------------------------------------------------ cycle de vie
 
     def start(self) -> None:
@@ -444,6 +483,7 @@ class SceneProjector:
             return
         self._queue = self._events.subscribe(max_queue=self._queue_size, lossy=True)
         self._stopping = False
+        self._started_at = self._monotonic()
         self._dirty = "start"
         self._task = asyncio.get_running_loop().create_task(self._run(self._queue), name="jarvis-scene-projector")
 
