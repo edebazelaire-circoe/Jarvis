@@ -255,7 +255,7 @@ async def test_secondary_lists_only_real_targets_single_entry_informative(stack,
     single = first["reads"]["single"]
     assert [i["label"] for i in single["items"]] == ["Écran principal — seule cible disponible"]
     assert single["items"][0]["disabled"] is None and single["items"][0]["tabindex"] == "0"
-    assert single["subLabel"] == "Capture › Vidéo"
+    assert single["subLabel"] == "Capture › Enregistrer l’écran"
     assert first["reads"]["singleFocus"]["focus"]["item"] == "Écran principal — seule cible disponible",         "l'entrée unique est focalisable"
     audio = first["reads"]["audio"]
     assert [i["label"] for i in audio["items"]] == ["Micro de Voice — seule cible disponible"]
@@ -435,7 +435,7 @@ async def test_keyboard_reaches_every_capture_action_and_stops_from_the_indicato
     ], tmp_path=tmp_path)
     r = out["reads"]
     assert r["first"]["focus"]["slot"] == "jarvis"
-    assert r["audio"]["focus"]["item"].startswith("Audio")
+    assert r["audio"]["focus"]["item"].startswith("Enregistrer l’audio")
     assert r["afterEnter"]["focus"]["anchor"] is True, "activé : la roue se replie, le focus revient à l'ancre"
     assert r["stopped"]["focus"]["anchor"] is True, "la puce partie, le focus revient à l'ancre"
     assert _open_rows(stack, AUDIO) == []
@@ -463,7 +463,12 @@ async def test_indicators_cover_no_neighbouring_control(stack, tmp_path, width, 
             overlap = min(box["r"], other["r"]) - max(box["l"], other["l"]), min(box["b"], other["b"]) - max(box["t"], other["t"])
             assert not (overlap[0] > 0.5 and overlap[1] > 0.5), (name, box, other)
     anchor = seen["anchor"]["box"]
-    assert box["l"] > anchor["r"], "jamais sur l'ancre de la roue"
+    # Haut-gauche depuis la Slice 04 : la colonne de l'ancre (centrée sur le bord gauche) est sous les puces.
+    assert box["b"] < anchor["t"] or box["l"] > anchor["r"], ("jamais sur l'ancre de la roue", box, anchor)
+    # Slice 04 de la refonte roue/dossier (docs/06 › E) : en haut à gauche, à la gouttière, sous rien.
+    gutter = 18 if width > 700 else 10
+    assert round(box["l"]) == gutter and round(box["t"]) == gutter, box
+    assert box["r"] <= seen["boxes"]["dock"]["l"], ("jamais sous le lanceur", box, seen["boxes"]["dock"])
     assert seen["overflowX"] is False
     for row in stack.core.captures.status().captures:
         await stack.core.captures.stop(row.capture_id)
@@ -523,3 +528,74 @@ async def test_axe_finds_no_violation_in_the_wheel_and_indicators(stack, tmp_pat
             rest = [v for v in violations if not (v["id"] == "label-content-name-mismatch"
                                                   and v["html"] and all('class="ri-chip"' in h.split(">", 1)[0] for h in v["html"]))]
             assert rest == [], (name, rest)
+
+
+# ------------------------------------------------------------ Slice 04 de jarvis-board-ui-wheel-dossier-refactor
+
+
+async def test_two_open_screen_recordings_primary_click_opens_the_stop_list(stack, tmp_path):
+    """QA S03, polish 3 : deux enregistrements d'écran ouverts, un clic simple sur « Enregistrer l'écran » ne
+    devine pas lequel arrêter : il ouvre la liste d'arrêt ; le choix arrête **celui-là**, par le même
+    contrôleur canonique que l'indicateur (`JarvisCaptureRail.stop`)."""
+
+    stack.core.captures._sources.target_lists[SCREEN] = _two_displays
+    await stack.call("POST", "/api/captures/start", json={"channel": "screen"})
+    await stack.call("POST", "/api/captures/start", json={"channel": "screen", "options": {"device": "display2"}})
+    out = await _drive(stack.url, [
+        _until("document.querySelectorAll('#recIndicators .ri-chip[data-ri-channel=screen][data-ri-state=active]').length===2",
+               6000, "two"),
+        *_open_capture(), {"click": ITEM.format(slot="video")}, _until(SUB, 4000, "stop-list"), {"read": "list"},
+        _shot(tmp_path, "two-recordings-stop-list"),
+        {"click": "#toolWheel .tw-item[data-tw-item^='stop:']"},
+        _until("document.querySelectorAll('#recIndicators .ri-chip[data-ri-channel=screen]').length===1", 9000, "one-left"),
+        {"read": "after"},
+    ], tmp_path=tmp_path)
+    r = out["reads"]
+    labels = [i["label"] for i in r["list"]["items"]]
+    assert r["list"]["open"] is True and r["list"]["subLabel"] == "Capture › Enregistrer l’écran"
+    stops = [label for label in labels if label.startswith("Arrêter — ")]
+    assert len(stops) == 2, labels
+    assert stops[0].startswith("Arrêter — écran principal") and stops[1].startswith("Arrêter — écran 2"), stops
+    rows = _open_rows(stack, SCREEN)
+    assert [row.device for row in rows] == ["display2"], "la première ligne a arrêté l'écran principal, seul"
+    lines = "\n".join(out["console"])
+    assert "capture_views.stop_chosen" in lines and "capture_rail.stop_requested" in lines
+    for row in rows:
+        await stack.core.captures.stop(row.capture_id)
+
+
+async def test_an_open_capture_tree_follows_core_without_being_reopened(stack, tmp_path):
+    """Le sous-menu de Capture ouvert se relit quand Core change (`JarvisToolWheel.refresh`) : une capture
+    audio démarrée ailleurs coche sa ligne, son arrêt la décoche ; le sous-menu reste ouvert, le focus
+    clavier reste sur sa ligne, et rien n'est démarré ni arrêté par la page."""
+
+    loop = asyncio.get_running_loop()
+    holder: dict = {}
+
+    def start() -> None:
+        holder["start"] = asyncio.ensure_future(stack.call("POST", "/api/captures/start", json={"channel": "audio"}))
+
+    loop.call_later(4.5, start)
+    out = await _drive(stack.url, [
+        _until(SETTLED, 5000, "settled"),
+        {"focus": ANCHOR}, {"key": "Enter"}, _until(OPENED, 3000),
+        {"key": "ArrowDown"}, {"key": "ArrowDown"}, {"key": "ArrowDown"}, {"key": "ArrowRight"},
+        _until(CAPTURE_TREE, 3000, "tree"), {"key": "ArrowDown"}, {"read": "before"},
+        _until("(document.querySelector('#toolWheel .tw-item[data-tw-item=audio]')||{}).getAttribute"
+               "&&document.querySelector('#toolWheel .tw-item[data-tw-item=audio]').getAttribute('aria-checked')==='true'",
+               12000, "checked-live"),
+        {"read": "live"}, _shot(tmp_path, "capture-tree-live-refresh"),
+    ], tmp_path=tmp_path)
+    await holder["start"]
+    r = out["reads"]
+    before = {i["id"]: i for i in r["before"]["items"]}
+    live = {i["id"]: i for i in r["live"]["items"]}
+    assert before["audio"]["label"].startswith("Enregistrer l’audio")
+    assert r["live"]["open"] is True and r["live"]["subLabel"] == "Capture", "toujours le même arbre, jamais rouvert"
+    assert live["audio"]["tone"] == "busy" and "en cours" in live["audio"]["label"]
+    assert r["before"]["focus"]["item"] == r["live"]["focus"]["item"], "le focus clavier reste sur sa ligne"
+    lines = "\n".join(out["console"])
+    assert "tool_wheel.refreshed" in lines
+    assert "capture_rail.start_requested" not in lines, "la page n'a rien démarré"
+    for row in _open_rows(stack, AUDIO):
+        await stack.core.captures.stop(row.capture_id)

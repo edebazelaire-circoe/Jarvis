@@ -1769,7 +1769,7 @@ persistence), `jarvis/core/board_attribution.py` (Core stamping),
 `jarvis/runtime/control_center_boards.js` (`alertBoardOf`, `elsewhereOf`,
 `pillLabelOf`, `goToBoardFromAlert`), `control_center.html` (pills, popover).
 **Location (orbital UI Slice 06):** the pills live in the bottom **status
-centre** (`#recIndicators | #bgPills`, rank 40; the eye was removed by the wheel/dossier refactor Slice 02,
+centre** (`#bgPills`, rank 40; the eye was removed by the wheel/dossier refactor Slice 02 and the recording indicators moved top-left in its Slice 04,
 [control-center-shell.md](control-center-shell.md) › *Status centre*), no
 longer left of the launcher; same ids (`#bgPills`, `.bgpill`, `#bgPop`), same
 code. Each pill is a 32 px round button with an inline SVG icon per category

@@ -55,13 +55,13 @@ wheel/dossier refactor), so neither skin styles it.
 
 | Zone | Surfaces today | Owner of the content |
 | --- | --- | --- |
-| `top-left` | free (wheel/dossier refactor Slice 02, D05): no Board selector, no permanent state badge; only transient cues may use it later (critical alert, recording indicators in Slice 04) | — |
-| `top-right` | `.dock` (global launcher, Slice 08: one row of five 34 px buttons, the « Plus d’outils » popover under it; see [Global launcher](#global-launcher-dock)) | page |
+| `top-left` | empty at rest (wheel/dossier refactor Slice 02, D05: no Board selector, no permanent state badge); since its Slice 04 the recording indicators `#recIndicators` (red `REC` for the screen, audio cue), only while Core lists an open capture — see [capture.md](capture.md) › *Interface* | `control_center_capture_wheel.js` |
+| `top-right` | `.dock` (global launcher, Slice 08: one row of 34 px buttons — four since the wheel/dossier refactor Slice 04 folded Réglages into « Plus d’outils » —, the « Plus d’outils » popover under it; see [Global launcher](#global-launcher-dock)) | page |
 | `top-centre` | `.live-banner` (GPT-Live, transient) | page |
 | `left-edge` | `#toolWheel` anchor and orbital tool wheel (Slice 02; live by default since Slice 04; five categories since the wheel/dossier refactor Slice 03: JARVIS, Sélection, Dossier, Capture, Paramètres); `#barehandsHud`, `#barehandsPalette` hosts stay declared but hidden while the wheel is visible (Slice 03) | their modules |
 | `left-low` | `#screenshotPreview` (Slice 05): preview of the last successful screenshot, right of the wheel anchor, its bottom 172 px above the page bottom so it clears the bottom-left context zone (Board card and scene notes stacked up to 162 px) | `control_center_screenshot_preview.js` |
 | `bottom-left` | Board card `#boardsHud` (its panel `#boardsPanel` opens above it, see [Board card](#board-card-boardshud)), `.sc-status` notes of the scene | `control_center_boards.js`, scene |
-| `bottom-centre` | status centre `#statusCentre` (Slice 06): `#recIndicators` \| `#bgPills`, see [Status centre](#status-centre-statuscentre); `#boardDropTray` above it | page, `control_center_capture_wheel.js`, `control_center_board_drop.js` |
+| `bottom-centre` | status centre `#statusCentre` (Slice 06): `#bgPills` (the recording indicators moved top-left in the wheel/dossier refactor Slice 04), see [Status centre](#status-centre-statuscentre); `#boardDropTray` above it | page, `control_center_board_drop.js` |
 | `bottom-right` | `#chatTab` | `control_center_chat.js` |
 | `right` | active workspace rail `#presentationRail` (Slice 07, see [Workspace rail](#workspace-rail-presentationrail)); side panels (`#panel`, `#chatPanel`, `#jvStudioInspector`) open over it | `control_center_presentation_rail.js`, page, modules |
 | `centre` | Board / scene (`#sceneLayer`) | scene |
@@ -72,17 +72,19 @@ Placement rules that hold in both themes (measured by
 `tests/unit/test_control_center_shell_browser.py` at 1440×900, 1280×720,
 900×600 and 600×800):
 
-- **Top-left** is empty at rest (wheel/dossier refactor Slice 02). The wake
-  key hint (`F9 · DÉMARRER`, `F9 · VOICE HORS LIGNE`…) that the removed state
-  line carried as its description is kept, not shown, in the visually hidden
-  `#wakeHint` (`.sr-only`, `setWakeHint` in `refreshStatus`), until the wheel's
-  JARVIS submenu shows it (Slice 04); the key itself is Voice's global
-  shortcut, unchanged. The voice/agent/sub-agent words of the old `.state`
-  (`VOICE SLEEP · CLAUDE RUNNING`) are not on screen meanwhile; the dock keeps
-  the sub-agent count badge (`#agentBadge`).
-- **Launcher** (`top-right`): one row of five 34 px buttons at
-  `--shell-gutter`, at every width (Slice 08); its popover opens under the
-  row, right-aligned.
+- **Top-left** is empty at rest (wheel/dossier refactor Slice 02). Since its
+  Slice 04 it holds the recording indicators `#recIndicators` while, and only
+  while, Core lists an open capture (top and left at `--shell-gutter`, chips
+  wrapping downwards, never wider than the space left of the launcher). The
+  wake key hint (`F9 · DÉMARRER`, `F9 · VOICE HORS LIGNE`…) and the
+  voice/agent/sub-agent words of the old `.state` (`VOICE SLEEP · CLAUDE
+  RUNNING`) are read in the wheel's **JARVIS** submenu (see [Tool
+  wheel](#tool-wheel-toolwheel) › *JARVIS and Paramètres*); the hidden
+  `#wakeHint` and `setWakeHint` are gone. The key itself is Voice's global
+  shortcut, unchanged; the dock keeps the sub-agent count badge (`#agentBadge`).
+- **Launcher** (`top-right`): one row of four 34 px buttons at
+  `--shell-gutter`, at every width (Slice 08; four since the wheel/dossier
+  refactor Slice 04); its popover opens under the row, right-aligned.
 - **Side panels** (`right`): `#panel`, `#chatPanel` and the Studio inspector
   `#jvStudioInspector` share the zone: top `--shell-panel-top` (under the
   launcher and the pills), bottom `--shell-panel-bottom` (above the chat tab),
@@ -151,7 +153,7 @@ only in the `@media` blocks listed here. `JarvisShell.TOKENS` and
 | `--shell-bottom` | `18px` | | bottom baseline of bottom surfaces |
 | `--shell-status-h` | `44px` | | height of the bottom status centre (Slice 06); the drop tray and the lifted Board card sit above it |
 | `--shell-control` | `34px` | | launcher button size |
-| `--shell-launcher-w` | `194px` | | launcher width: 5 buttons × 34 + 4 gaps × 6 (Slice 08: four tools and « Plus d’outils »), one row at every width |
+| `--shell-launcher-w` | `154px` | | launcher width: 4 buttons × 34 + 3 gaps × 6 (Slice 08, then wheel/dossier refactor Slice 04: three tools and « Plus d’outils »), one row at every width; also bounds the top-left recording indicators |
 | `--shell-panel-top` | `64px` | `88px` at 700 | top of side panels and of the GPT-Live banner (below the launcher; at 700 px and below, below the state line on two rows) |
 | `--shell-panel-w` | `500px` | | side panel width (capped by the window) |
 | `--shell-panel-bottom` | `68px` | | bottom of side panels: they stop above the chat tab row (18 + 40 + 10), so the tab stays whole and clickable |
@@ -211,7 +213,7 @@ The rule is written exactly as in the sheet, `${…}` interpolations included.
 | 37 | `#toolWheel[data-open]` | `control_center.html` | `#toolWheel[data-open]` | open wheel and its curved submenu: above the choosers, the wheel is the user's latest focus; never open together with `#boardsPanel` ([Exclusive surfaces](#exclusive-surfaces-wheel-and-board-panel)) |
 | 38 | `#screenshotPreview` | `control_center.html` | `#screenshotPreview` | screenshot preview (Slice 05): transient, non-modal, above the open wheel that took the shot, below the status centre, toasts and the lightbox |
 | 39 | `#boardsPanel` | `control_center.html` | `#boardsPanel` | Board chooser, opened by the user above the bottom-left Board card (wheel/dossier refactor Slice 02): it opens where the screenshot preview (38) sits and is the user's latest gesture; below the status centre (40) and the toasts. Since Slice 03 it is exclusive with the open wheel (37): opening one closes the other, so their ranks never compete |
-| 40 | `#recIndicators` | `control_center.html` | `#recIndicators` | status centre (Slice 06), left: capture indicators (Slice 04); an open recording stays visible above the open wheel, below toasts |
+| 40 | `#recIndicators` | `control_center.html` | `#recIndicators` | recording indicators (orbital UI Slice 04), top-left since the wheel/dossier refactor Slice 04 (before: left of the status centre); an open recording stays visible above the open wheel and the side panels, below toasts |
 | 40 | `#bgPills` | `control_center.html` | `.bgpills` | status centre, middle: background pills |
 | 55 | `.tl` | `control_center.html` | `.tl` | conversation timeline, full-screen launcher view |
 | 55 | `.tlab` | `control_center.html` | `.tlab` | Test Lab (one full-screen view at a time) |
@@ -332,7 +334,8 @@ controls; the wheel and the indicators are placed by the sheet instead.)
 | Host | Zone | Declared by |
 | --- | --- | --- |
 | `.dock` | top-right | page |
-| `#recIndicators`, `#bgPills` | bottom-centre (status centre) | page (hosts); content by `control_center_capture_wheel.js`, `renderBackgroundPills` |
+| `#recIndicators` | top-left (wheel/dossier refactor Slice 04) | page (host); content by `control_center_capture_wheel.js` |
+| `#bgPills` | bottom-centre (status centre) | page (host); content by `renderBackgroundPills` |
 | `.live-banner` | top-centre | page |
 | `#panel`, `#chatPanel` | right | page |
 | `#barehandsHud`, `#barehandsPalette` | left-edge (hidden while the wheel is visible) | page (hosts) |
@@ -356,8 +359,9 @@ else does.
 ## Global launcher (`.dock`)
 
 Slice 08, decision D11 of the handoff's resolved architecture. The former
-right dock of ten buttons is a compact top-right launcher: **four frequent
-tools visible, the six others in a « Plus d’outils » popover**. Nothing was
+right dock of ten buttons is a compact top-right launcher: **three frequent
+tools visible, the seven others in a « Plus d’outils » popover** (four and six
+until the wheel/dossier refactor Slice 04 folded Réglages). Nothing was
 deleted or renamed: `<nav class="dock">` keeps every button with its id, its
 label (`ERR`, `TRC`…), its attributes and its module wiring; only where the
 button sits changed. The Board control is the bottom-left Board card
@@ -373,7 +377,7 @@ shortcuts are those of `jarvis/runtime/shortcuts.py`, unchanged):
 | Conversation (timeline) | `#openTimeline` `CNV` | dock row | **visible** | — |
 | Agents (+ count badge `#agentBadge`) | `#agentsButton` `AGT` | dock row | **visible**, badge never behind a click | `a` |
 | Erreurs (+ badge `#errorBadge`) | `[data-panel=errors]` `ERR` | dock row | **visible**, badge never behind a click | `e` |
-| Réglages | `#openSettings` `SET` | dock row | **visible** | `s` |
+| Réglages | `#openSettings` `SET` | dock row | « Plus d’outils » (first line) since the wheel/dossier refactor Slice 04; the wheel's **Paramètres** category opens the same surface, one row per settings tab | `s` |
 | Trace | `[data-panel=trace]` `TRC` | dock row | « Plus d’outils » | `t` |
 | Test Lab | `#openTestLab` `LAB` | dock row | « Plus d’outils » | — |
 | MCP inspector | `#openMcpInspector` `MCP` | dock row | « Plus d’outils » | — |
@@ -383,16 +387,19 @@ shortcuts are those of `jarvis/runtime/shortcuts.py`, unchanged):
 | Board | `#boardsHud` | top state line | bottom-left Board card (wheel/dossier refactor Slice 02) | — |
 | Interaction mode | `#interactionModeHud` | bottom-left | removed (D03: the mode follows the Board type) | — |
 
-`SET` stays in the row until the wheel's Paramètres goes live (Slice 04 of
-the wheel/dossier refactor folds it into « Plus d’outils »).
+`SET` was the fourth visible tool until the wheel's Paramètres went live:
+Slice 04 of the wheel/dossier refactor folded it into « Plus d’outils » (same
+id, label, `title`, `aria-label` « Réglages », `data-dock-label`, shortcut `s`;
+the Cosmos skin keeps its icon).
 
 `Escape` (`ui_close`) closes the popover first when it is open (topmost
 transient), then the side panel as before.
 
-**Row.** `CNV`, `AGT`, `ERR`, `SET`, then `#dockMore` (three dots,
+**Row.** `CNV`, `AGT`, `ERR`, then `#dockMore` (three dots,
 `aria-label` = `title` = « Plus d’outils », `aria-expanded`,
-`aria-controls="dockMorePop"`), in this order in both themes; 5 × 34 px +
-4 × 6 px = `--shell-launcher-w` (194 px), one row at every width.
+`aria-controls="dockMorePop"`), in this order in both themes; 4 × 34 px +
+3 × 6 px = `--shell-launcher-w` (154 px), one row at every width. Popover
+order: Réglages, Trace, Test Lab, MCP, Sessions & Boards, Prefabs, Inspecteur.
 
 **Popover** `#dockMorePop` (`role="group"`, inside the launcher, hidden by
 default): a list under the row, right-aligned, each tool on one 36 px line
@@ -504,7 +511,10 @@ the bottom-centre `F9 · DÉMARRER` capsule, the background pills of the
 top-right corner and the scene's « N objets masqués » note. The permanent
 hidden-object eye it introduced was removed by Slice 02 of the wheel/dossier
 refactor (D06: hidden is temporary, not a storage area); see *Hidden objects*
-below.
+below. The recording indicators `#recIndicators`, its first item until then,
+moved to the **top-left** zone in Slice 04 of the same refactor
+(`docs/06-ui-visual-spec.md` › E of that task; [capture.md](capture.md) ›
+*Interface*): the row now holds the background pills only.
 
 **Place.** `#statusCentre` (`.status-centre`) is a **layout only**: one row,
 centred, `bottom: --shell-bottom`, `min-height: --shell-status-h` (44 px), so
@@ -518,12 +528,9 @@ shut its children under the scene); each of its children carries rank
 lifts above the row there; only the chat tab, 52 px, is left on the row). Too many chips: the row wraps upwards. With a side
 panel open and 1100 px or more, it re-centres in the free space left of the
 panel; narrower, it stays under the panel's bottom gap without touching it.
-Pointer events pass through except on its controls. **At 700 px and below** the
-row has no room for a recording chip beside the four pills (a second line
-would climb into the lifted Board card): the chips keep the
-Slice 04 right-edge column, vertically centred (measured down to 375 px with
-three recordings); with a side panel open (full width there) they come back
-into the row, below the panel. The scene's `.sc-status` notes stop before the
+Pointer events pass through except on its controls. (The right-edge column
+the recording chips took at 700 px and below is gone with them: they live
+top-left at every width since the wheel/dossier refactor Slice 04.) The scene's `.sc-status` notes stop before the
 row's reserved width above 820 px and **wrap** there (never an ellipsis: a frozen
 scene's cause, « Control Center injoignable », must stay readable; the whole
 text is also the note's `title`); they sit above the row (66 px) at 820 px and
@@ -534,8 +541,7 @@ rework, QA B1).
 
 | Order | Host | Owner | What it shows |
 | --- | --- | --- | --- |
-| 1 | `#recIndicators` | `control_center_capture_wheel.js` (view of `JarvisCaptureRail`) | (right-edge column at 700 px and below, see above) one chip per open capture: `REC` + Core duration for the screen, microphone + duration for audio; start wait, screenshot busy/done; activating a chip stops that capture. The refusal note (`.ri-note`) opens above the row, centred on the indicators; while it is shown the toasts rise above it (`--ri-note-h`, measured by the module) |
-| 2 | `#bgPills` | page, `renderBackgroundPills` (`BG` state) | one 32 px round pill per unread category, in `BG_CATS` order: `failed` (alert triangle, `--sem-alert`), `attention` (question, `--sem-question`, « points à vérifier »), `done` (check, `--sem-done`), `said` (speaker crossed out, muted, F8). Inline SVG icon, the count in a badge, `aria-label` = `title` = the `pillLabelOf` text (category + count + other-Board share); the other-Board satellite sits bottom-right. Popover `#bgPop` opens **above** the pill, centred on it and bounded to the screen; ack, sound cue, multi-tab leader, Board-elsewhere attribution and « Aller sur « X » » are unchanged (same code and ids) |
+| 1 | `#bgPills` | page, `renderBackgroundPills` (`BG` state) | one 32 px round pill per unread category, in `BG_CATS` order: `failed` (alert triangle, `--sem-alert`), `attention` (question, `--sem-question`, « points à vérifier »), `done` (check, `--sem-done`), `said` (speaker crossed out, muted, F8). Inline SVG icon, the count in a badge, `aria-label` = `title` = the `pillLabelOf` text (category + count + other-Board share); the other-Board satellite sits bottom-right. Popover `#bgPop` opens **above** the pill, centred on it and bounded to the screen; ack, sound cue, multi-tab leader, Board-elsewhere attribution and « Aller sur « X » » are unchanged (same code and ids) |
 
 **Hidden objects (no permanent control since the wheel/dossier refactor
 Slice 02).** The eye host `#hiddenEye` is no longer declared; its machinery
@@ -565,7 +571,9 @@ decision of this browser (`jarvis.scene.view`), never sent to Core
 
 **Tests.** `tests/unit/test_status_centre_browser.py` (served page, fetch
 double for status, background, ack and scene; both themes; 1440×900,
-1280×720, 900×600, 600×800), `tests/unit/test_scene_view_prefs.py`
+1280×720, 900×600, 600×800; the recording chip measured top-left, out of the
+row, overlapping none of the card, chat tab, rail, wheel anchor, launcher,
+tray or scene notes), `tests/unit/test_scene_view_prefs.py`
 (`showHidden`), `tests/unit/test_scene_renderer_logic.py` (ghosts, one
 reveal = one `set_visibility`).
 
@@ -723,11 +731,11 @@ category does comes from its registrant.
 
 | Category | Registrant | Tree today |
 | --- | --- | --- |
-| JARVIS | placeholder (`PLACEHOLDERS`, this module); wired by Slice 04 | one inert row « Voix, écoute et veille — pas encore branché » |
+| JARVIS | `control_center_jarvis_wheel.js` (Slice 04) | status rows Voix, touche d'éveil, Agent; actions Sous-agents, Réglages de la voix — see *JARVIS and Paramètres* below |
 | Sélection | `control_center_input_arbitration.js` | Souris / Bare Hands, then Bare Hands › tools, Veille, Aide, Diagnostic, Calibration |
 | Dossier | placeholder; wired by Slices 05-07 | one inert row « Ouvrir le Dossier du Board — pas encore branché » |
-| Capture | `control_center_capture_wheel.js` | Capture d'écran, Vidéo, Audio, each with its second level (stop list, then Core's real targets) — [capture.md](capture.md) › *Interface* |
-| Paramètres | placeholder; wired by Slice 04 | one inert row « Réglages de Jarvis — pas encore branché » |
+| Capture | `control_center_capture_wheel.js` | Capture d'écran, Enregistrer l'écran, Enregistrer l'audio, each with its second level (stop list, then Core's real targets); live while open (`refresh`) — [capture.md](capture.md) › *Interface* |
+| Paramètres | `control_center_jarvis_wheel.js` (Slice 04) | one row per settings tab (`settingsTabs()`), each opens the settings modal on that tab |
 
 A **placeholder** is registered through the same `register` (so the next
 Slice simply registers over it): its submenu holds one disabled row whose
@@ -757,9 +765,17 @@ pending start stays visible with the wheel closed. The wheel stores nothing
 else (journal `tool_wheel.status`).
 
 **Submenu entries.** `onSecondary` returns `[{id?, label, disabled?,
-checked?, toggle?, icon?, note?, detail?, tone?: 'error'|'wait'|'busy', menu?,
-onActivate?(ctx), onSecondary?(ctx)}]` (or a promise; « Chargement… » shows
-while it is pending). A row = an icon tile (`icon`, an `ART` key; `ART` is
+checked?, toggle?, status?, icon?, note?, detail?, tone?:
+'error'|'wait'|'busy'|'unknown'|'off', menu?, onActivate?(ctx),
+onSecondary?(ctx)}]` (or a promise; « Chargement… » shows while it is
+pending). `status:true` (Slice 04) is a **status row**: a fact, not a command
+(`data-tw-kind="status"`, `aria-disabled="true"`, still focusable and read in
+full); no tile frame, full-contrast label, the current value as an accent
+note. `tone:'unknown'` marks an unconfirmed fact (dashed tile, « ? » before
+the note), `tone:'off'` a muted value (Voice offline). Activating an inert
+entry (status row, `disabled`, or neither `onActivate` nor `onSecondary`)
+does nothing and **keeps the wheel open** (`tool_wheel.item_inert`; QA S03
+polish 1). A row = an icon tile (`icon`, an `ART` key; `ART` is
 published as `JarvisToolWheel.ART`), the label, a short muted `note` under it,
 a chevron when it has a second level (`aria-haspopup="menu"`); `detail` is the
 long sentence that goes into the accessible name and the tooltip; `tone`
@@ -769,6 +785,52 @@ exposed as `data-tw-item`. Roles: `menuitem`, or with a boolean `checked`
 `menuitemcheckbox` (something switched on, e.g. a recording). Labels go through
 `textContent`. `ArrowUp` / `ArrowDown` / `Home` / `End` move, `Esc` or
 `ArrowLeft` return to the parent category.
+
+**Live refresh.** `JarvisToolWheel.refresh(id)` (Slice 04) re-reads the
+first level of `id`'s submenu **if it is open** (not at the second level,
+whose choices may need a network read; not if the action returns a promise)
+and redraws it only when its rows changed (`tool_wheel.refreshed`), keeping
+the highlighted row and the keyboard focus on the same line. Capture calls it
+at every controller paint, JARVIS at every status beat. Returns `true` when it
+redrew.
+
+**JARVIS and Paramètres** (`jarvis/runtime/control_center_jarvis_wheel.js`,
+`window.JarvisRuntimeWheel`, served after the Capture views; Slice 04 of the
+wheel/dossier refactor, `docs/06-ui-visual-spec.md` › C and F of that task).
+At this HEAD neither Core nor the Control Center exposes a route to put Voice
+to sleep or wake it, nor any thinking / focus / autonomy mode: **the JARVIS
+submenu states, it does not pilot**. Its only source is the page's one status
+beat: `refreshStatus` calls `JarvisRuntimeWheel.gate(status)` with the
+`/api/status` body and `statusLost()` when the read fails; the module polls
+nothing and keeps no truth of its own.
+
+| Row | Kind | Source (`/api/status`) | Shown |
+| --- | --- | --- | --- |
+| Voix | status | `voice_online`, `voice_state`, `voice_stack_label` | `Veille · SLEEP`, `Attente · WAIT`, `Écoute · LISTEN`, `Parole · TALK`, `Réflexion · THINKING` (the orb words), an unknown state as is in capitals, `hors ligne` (muted) |
+| touche d'éveil | status | `manual_wake_key`, `voice_turn_mode`, `voice_state` | what the key does now (`F9 · DÉMARRER`, `F9 · ENVOYER` / `ANNULER`, `F9 · INTERROMPRE`, `F9 · VOICE HORS LIGNE`), note `tour automatique` / `tour manuel` — the former `#wakeHint` |
+| Agent : <nom> | status | `agent.name` / `agent_cli`, `agent.state`, `agent.model` | `actif`, `arrêté`, `en erreur` (error tone)…, model in the long name |
+| Sous-agents | action | `subagents.active` | `N en cours` / `aucun en cours`; opens the Agents panel (`#agentsButton`, the launcher's route) |
+| Réglages de la voix | action | — | opens the settings modal on the Voix tab (`openSettingsTab('voice')`) |
+
+Before the first beat every fact says `état inconnu` (`pas encore lu`); after
+a failed beat, `état inconnu` (`statut du Control Center illisible : rien
+n’est confirmé`), tone `unknown`: the last known state is **never** kept. The
+JARVIS category projects a short sentence on its sector and the core readout
+(`voix : veille · 2 sous-agents`, `état inconnu, statut illisible` with a muted
+« ? » that does not colour the anchor). An open JARVIS submenu follows the
+beat (`refresh`). No Veille / Réveil, Pause or mode row is drawn: a click-to-
+sleep/wake control needs a canonical Voice lifecycle route first (follow-up,
+not invented here). **Paramètres** lists the real settings tabs
+(`settingsTabs()`, the page's `TABS`, including those that modules add:
+Mot d'éveil, Apparence, Expérimental), each row opening the same modal as
+`#openSettings` on that tab (`openSettingsTab(tab)`: tab set before opening,
+or `selectTab` when already open). Journal `[jarvis] jarvis_wheel.installed`,
+`.menu`, `.settings_menu`, `.facts {read, hint}` (only when a fact changes),
+`.open_agents`, `.open_settings {tab}`, `.route_missing`, `.paint_failed`,
+`.install_failed`. Tests: `tests/unit/test_jarvis_wheel_js.py` (pure model),
+`tests/unit/test_jarvis_wheel_browser.py` (served page: three sizes, live
+beat then status lost with the submenu open and the focus kept, the two
+routes, a settings tab, no extra status read).
 
 **Second level.** An entry that carries `onSecondary` opens, on its secondary
 activation (right click, thumb + middle pinch, `ContextMenu`, `Shift+F10`), on
@@ -824,7 +886,7 @@ the accessible name.
 `.hover_blocked`, `.yield`, `.exclusive_announce_failed`, `.activate`,
 `.secondary`, `.secondary_none`, `.item`, `.item_inert`, `.item_secondary`,
 `.item_secondary_none`, `.status`, `.unbound`, `.action_failed`,
-`.install_failed`.
+`.refreshed`, `.refresh_failed`, `.install_failed`.
 
 **Tests.** `tests/unit/test_tool_wheel_js.py` (node: five categories and
 order, placeholders, geometry of the band and of the curved submenu, reducer,
@@ -1044,7 +1106,7 @@ per state (`JARVIS_S09_EVIDENCE_DIR`): 1 Board, wheel closed; 2 wheel open,
 Selection focused (opened by keyboard on JARVIS, one `ArrowDown`, since the
 five-category wheel of the wheel/dossier refactor Slice 03); 3 Selection ›
 Souris / Bare Hands; 4 audio recording;
-5 screen recording; 6 screenshot preview (taken through the wheel: Capture,
+5 screen recording (4-5: indicators top-left since the wheel/dossier refactor Slice 04); 6 screenshot preview (taken through the wheel: Capture,
 then its « Capture d’écran » row); 7 alert
 popover; 8 rail with every card state and the Board-linked items; 9 Variantes
 + rail (real isolated Core, `tests/fakes/explorer_browser.py`); 10 Board card

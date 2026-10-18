@@ -73,18 +73,19 @@ def test_control_center_keeps_pointer_visible_and_explains_configured_voice_togg
     assert "pointer-events:none;cursor:default" in html
     # Orbital UI Slice 06 (D8) : plus de capsule `#voiceHint` au bas-centre. Slice 02 de
     # jarvis-board-ui-wheel-dossier-refactor (D05) : plus de ligne d'état non plus ; la
-    # touche d'éveil reste lisible (non affichée) dans `#wakeHint`, mise à jour par
-    # chaque statut, jusqu'au sous-menu JARVIS de la roue (Slice 04).
-    assert "F9 · DÉMARRER" in html
-    assert '<p id="wakeHint" class="sr-only">F9 · DÉMARRER</p>' in html
+    # touche d'éveil, mise à jour par chaque statut, se lit dans le sous-menu JARVIS de la
+    # roue depuis la Slice 04 (`control_center_jarvis_wheel.js`, `wakeHintOf`).
+    assert 'id="wakeHint"' not in html
     assert 'class="state"' not in html
     assert "voiceHint" not in html and "voicehint" not in html
-    assert "setWakeHint(online?(" in html and "setWakeHint('VOICE HORS LIGNE')" in html
+    assert "JarvisRuntimeWheel.gate(s)" in html and "JarvisRuntimeWheel.statusLost()" in html
+    wheel = (CONTROL_CENTER_HTML.parent / "control_center_jarvis_wheel.js").read_text(encoding="utf-8")
+    assert "`${k} · DÉMARRER`" in wheel and "`${k} · VOICE HORS LIGNE`" in wheel
     # Under server VAD the key never means "send" while a turn is open: it can
     # only cancel. The "send" wording is kept for the manual turn mode.
-    assert "s.voice_turn_mode==='manual'?`${k} · ENVOYER`:`${k} · ANNULER`" in html
-    assert "`${k} · ANNULER`" in html
-    assert "`${k} · INTERROMPRE`" in html
+    assert "facts.turnMode==='manual'?`${k} · ENVOYER`:`${k} · ANNULER`" in wheel
+    assert "`${k} · ANNULER`" in wheel
+    assert "`${k} · INTERROMPRE`" in wheel
     assert "persistence==='audio_input_device'" in html
     assert "persistence==='audio_output_device'" in html
     assert "Tester micro + sortie" in html

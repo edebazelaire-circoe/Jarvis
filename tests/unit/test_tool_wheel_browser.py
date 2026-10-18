@@ -527,7 +527,7 @@ def test_one_category_tree_visible_keyboard_and_switching(tmp_path, shots):
     k = lambda key: {"a": "key", "key": key}  # noqa: E731
     v = _drive_one(tmp_path, {"width": W, "height": H, "mountPalette": True, "actions": [
         {"a": "eval", "expr": LOGS}, {"a": "focus", "selector": "#toolWheel .tw-anchor"},
-        k("Enter"), k("ArrowRight"), _tree(),                       # JARVIS : son sous-menu d'attente
+        k("Enter"), k("ArrowRight"), _tree(),                       # JARVIS : son sous-menu d'état
         {"a": "shot", "path": str(shots / "tree-jarvis.png")},
         k("Escape"), _tree(),                                       # retour sur JARVIS
         k("ArrowDown"), k("ArrowDown"), k("ArrowDown"), k("ArrowRight"), _tree(),   # Capture
@@ -539,12 +539,14 @@ def test_one_category_tree_visible_keyboard_and_switching(tmp_path, shots):
     ]})
     jarvis, back, capture, dossier, closed = (v[4], v[7], v[12], v[17], v[20])
     assert jarvis["open"] and jarvis["subs"] == 1 and jarvis["head"] == "État de Jarvis"
-    assert jarvis["items"] == [{"id": "unbound", "text": "Voix, écoute et veille", "disabled": "true",
-                                "role": "menuitem", "popup": None}]
-    assert jarvis["active"] == "item:unbound" and jarvis["expanded"] == ["jarvis"] and jarvis["lit"] == 1
-    assert jarvis["unbound"] == 1  # journal `tool_wheel.unbound`, aucune action simulée
+    # Slice 04 : JARVIS est branché (`control_center_jarvis_wheel.js`) — trois lignes d'état, deux portes.
+    assert [i["id"] for i in jarvis["items"]] == ["voice", "wake", "agent", "subagents", "voice_settings"]
+    assert [i["disabled"] for i in jarvis["items"]] == ["true", "true", "true", None, None]
+    assert jarvis["active"] == "item:voice" and jarvis["expanded"] == ["jarvis"] and jarvis["lit"] == 1
+    assert jarvis["unbound"] == 0  # plus de gestionnaire d'attente pour JARVIS
     assert back["subs"] == 0 and back["active"] == "jarvis" and back["expanded"] == []
-    # Capture garde Vidéo, Capture d'écran et Audio dans son arbre, chacun avec son second niveau (cibles).
+    # Capture garde Capture d'écran, Enregistrer l'écran et Enregistrer l'audio dans son arbre, chacun avec
+    # son second niveau (cibles).
     assert capture["subs"] == 1 and capture["head"] == "Capture" and capture["expanded"] == ["capture"]
     assert [i["id"] for i in capture["items"]] == ["screenshot", "video", "audio"]
     assert [i["role"] for i in capture["items"]] == ["menuitem", "menuitemcheckbox", "menuitemcheckbox"]

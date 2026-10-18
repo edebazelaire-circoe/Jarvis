@@ -33,12 +33,17 @@
      servira au choix Souris / Bare Hands de Sélection (S03) et aux cibles de
      capture (S04).
    - Ce que fait une catégorie est **injecté** (`register`) : Sélection par
-     `control_center_input_arbitration.js`, Capture (Vidéo, Capture d'écran,
-     Audio dans son arbre) par `control_center_capture_wheel.js`. JARVIS,
-     Dossier et Paramètres reçoivent ici des gestionnaires d'attente
-     (`PLACEHOLDERS`) : leur sous-menu dit « pas encore branché » et le
-     journal note `tool_wheel.unbound` — aucune action simulée ; les Slices
-     04 et 05-07 les remplacent par `register`. `menu` peut aussi être une
+     `control_center_input_arbitration.js`, Capture (Capture d'écran,
+     Enregistrer l'écran, Enregistrer l'audio dans son arbre) par
+     `control_center_capture_wheel.js`, JARVIS et Paramètres par
+     `control_center_jarvis_wheel.js` (Slice 04). Dossier reçoit ici un
+     gestionnaire d'attente (`PLACEHOLDERS`) : son sous-menu dit « pas encore
+     branché » et le journal note `tool_wheel.unbound` — aucune action
+     simulée ; les Slices 05-07 le remplacent par `register`. Une entrée
+     `status:true` est une ligne d'état (lisible, focalisable, elle n'agit
+     pas) ; activer une entrée inerte ne ferme pas la roue. `refresh(id)`
+     relit le premier niveau d'un sous-menu ouvert quand son état change
+     (Capture, JARVIS), sans le refermer ni déplacer le focus. `menu` peut aussi être une
      fonction relue à chaque clic ; une entrée du sous-menu qui porte
      `onSecondary` ouvre à son tour un **second niveau** à la place du premier,
      dans le même arbre (Sélection › Bare Hands ; Capture › Vidéo › cibles),
@@ -294,6 +299,10 @@
         }else if(s.open&&input.target==='item'&&s.sub&&input.menu&&s.sub.level===1){
           /* Une entrée `menu` ouvre son second niveau au lieu d'agir. */
           itemSecondary(input.index,input.source||'mouse',input.t);
+        }else if(s.open&&input.target==='item'&&s.sub&&input.inert){
+          /* Une entrée inerte (ligne d'état, entrée indisponible) : rien
+             n'agit, la roue reste ouverte (QA S03, polish 1). */
+          fx.push({do:'journal',key:'tool_wheel.item_inert',data:{slot:s.sub.slot,index:input.index}});
         }else if(s.open&&input.target==='item'&&s.sub){
           fx.push({do:'item',slot:s.sub.slot,index:input.index,source:input.source});
           close('activate',true);
@@ -462,6 +471,16 @@
     diagnostics:Object.freeze({paths:Object.freeze(['M3.5 12.5h4l2.1-5.5 4 10 2.2-4.5h4.7']),dots:Object.freeze([])}),
     calibration:Object.freeze({paths:Object.freeze(['M12 6a6 6 0 1 1 0 12a6 6 0 1 1 0-12z',
       'M12 3v3','M12 18v3','M3 12h3','M18 12h3']),dots:Object.freeze([[12,12,1]])}),
+    /* ---- jarvis-board-ui-wheel-dossier-refactor S04 : le sous-menu JARVIS ----
+       Touche d'éveil : une touche de clavier ; Agent : le brain, une tête et
+       son onde ; Sous-agents : trois nœuds reliés (le dessin du panneau). */
+    key:Object.freeze({paths:Object.freeze(['M4.5 7.5h15a1.5 1.5 0 0 1 1.5 1.5v6a1.5 1.5 0 0 1-1.5 1.5h-15A1.5 1.5 0 0 1 3 15V9a1.5 1.5 0 0 1 1.5-1.5z',
+      'M7 13.2h10']),dots:Object.freeze([[7,10.4,.8],[10.3,10.4,.8],[13.7,10.4,.8],[17,10.4,.8]])}),
+    agent:Object.freeze({paths:Object.freeze(['M12 4a6.4 6.4 0 0 1 6.4 6.4c0 2.3-1.2 4-2.6 5.2V19H8.2v-3.4A6.4 6.4 0 0 1 12 4z',
+      'M9.4 10.6h1.4l1-2 1.4 4 1-2h1']),dots:Object.freeze([])}),
+    subagents:Object.freeze({paths:Object.freeze(['M6 3.8a2.2 2.2 0 1 1 0 4.4a2.2 2.2 0 1 1 0-4.4z',
+      'M18 9.8a2.2 2.2 0 1 1 0 4.4a2.2 2.2 0 1 1 0-4.4z','M6 15.8a2.2 2.2 0 1 1 0 4.4a2.2 2.2 0 1 1 0-4.4z',
+      'M8.2 6.6 15.8 11','M8.2 17.4l7.6-4.4']),dots:Object.freeze([])}),
     /* ---- Slice 04 : arrêter un enregistrement, et la coche d'une capture prise ---- */
     stop:Object.freeze({paths:Object.freeze(['M7.5 7.5h9v9h-9z']),dots:Object.freeze([])}),
     done:Object.freeze({paths:Object.freeze(['M5.5 12.5l4.2 4.2 8.8-9.4']),dots:Object.freeze([])}),
@@ -473,12 +492,11 @@
   /* Les catégories que personne n'a encore branchées : un gestionnaire
      d'attente, injecté par le même `register` que les autres, que la Slice
      qui porte la sémantique remplace. Son sous-menu tient **une** entrée
-     inerte qui dit ce qui manque ; rien n'y fait semblant d'agir. */
+     inerte qui dit ce qui manque ; rien n'y fait semblant d'agir. JARVIS et
+     Paramètres n'en ont plus depuis la Slice 04 (`control_center_jarvis_wheel.js`). */
   const UNBOUND_DETAIL='Pas encore branché : cette commande arrive dans une prochaine version de Jarvis.';
   const PLACEHOLDERS=Object.freeze({
-    jarvis:Object.freeze({wiredBy:'jarvis-board-ui-wheel-dossier-refactor S04',label:'Voix, écoute et veille'}),
     dossier:Object.freeze({wiredBy:'jarvis-board-ui-wheel-dossier-refactor S05-S07',label:'Ouvrir le Dossier du Board'}),
-    settings:Object.freeze({wiredBy:'jarvis-board-ui-wheel-dossier-refactor S04',label:'Réglages de Jarvis'}),
   });
   function placeholderItems(id){
     const spec=PLACEHOLDERS[id];
@@ -638,6 +656,16 @@ ${H} .tw-item[data-tw-tone=busy] .tw-note{color:var(--sem-alert,#ff9f43)}
 ${H} .tw-item[aria-disabled=true]{cursor:default}
 ${H} .tw-item[aria-disabled=true] .tw-text{color:color-mix(in srgb,var(--tw-ink) 72%,transparent)}
 ${H} .tw-item[aria-disabled=true] .tw-tile{border-style:dashed;color:var(--tw-mute)}
+/* Ligne d'état (Slice 04, sous-menu JARVIS) : un fait, pas une commande. Pas de cadre de tuile ni de
+   chevron, le texte garde son contraste, la valeur courante se lit en couleur d'accent ; un fait non
+   confirmé (unknown) a une tuile pointillée et un « ? » ; hors ligne (off), la valeur est atténuée. */
+${H} .tw-item[data-tw-kind=status]{cursor:default}
+${H} .tw-item[data-tw-kind=status] .tw-text{color:var(--tw-ink)}
+${H} .tw-item[data-tw-kind=status] .tw-tile{border-style:solid;border-color:transparent;background:transparent;color:var(--tw-mute)}
+${H} .tw-item[data-tw-kind=status] .tw-note{color:color-mix(in srgb,${ACCENT} 78%,var(--tw-ink))}
+${H} .tw-item[data-tw-tone=unknown] .tw-tile{border-style:dashed;border-color:var(--tw-line)}
+${H} .tw-item[data-tw-tone=unknown] .tw-note,${H} .tw-item[data-tw-tone=off] .tw-note{color:var(--tw-mute)}
+${H} .tw-item[data-tw-tone=unknown] .tw-note::before{content:"? ";font-weight:700}
 ${H} .tw-sr{position:absolute;width:1px;height:1px;margin:-1px;padding:0;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}
 @media(prefers-reduced-motion:reduce){
   ${H} .tw-dot .tw-badge[data-tw-tone=wait]{animation:none}
@@ -950,7 +978,9 @@ ${H} .tw-sr{position:absolute;width:1px;height:1px;margin:-1px;padding:0;overflo
         b.setAttribute('role',typeof spec.checked!=='boolean'?'menuitem':spec.toggle?'menuitemcheckbox':'menuitemradio');
         if(typeof spec.checked==='boolean')b.setAttribute('aria-checked',String(spec.checked));
         if(spec.disabled)b.setAttribute('aria-disabled','true');
-        if(spec.tone==='error'||spec.tone==='wait'||spec.tone==='busy')b.setAttribute('data-tw-tone',spec.tone);
+        if(['error','wait','busy','unknown','off'].includes(spec.tone))b.setAttribute('data-tw-tone',spec.tone);
+        /* `status` : une ligne d'état, lisible au clavier, qui n'agit pas (Slice 04). */
+        if(spec.status===true){b.setAttribute('data-tw-kind','status');b.setAttribute('aria-disabled','true')}
         const text=String(spec.label==null?'':spec.label);
         const note=spec.note==null?'':String(spec.note);
         /* `detail` : la phrase longue (un motif d'indisponibilité), dans le nom
@@ -1197,12 +1227,19 @@ ${H} .tw-sr{position:absolute;width:1px;height:1px;margin:-1px;padding:0;overflo
       try{return !!action.menu()}
       catch(error){log('error','tool_wheel.menu_failed',{slot:action.id,error:errorText(error)});return false}
     }
+    /* Une entrée qui n'agit pas : désactivée, ligne d'état, ou sans action ni second niveau. */
+    function isInert(spec){
+      return !spec||spec.disabled===true||spec.status===true
+        ||(typeof spec.onActivate!=='function'&&typeof spec.onSecondary!=='function');
+    }
     function onClick(event){
       const t=targetOf(event.target);
-      if(t.target==='anchor'||t.target==='wedge'||t.target==='item')
-        dispatch({type:'click',...t,detail:event.detail,source:clickSource(event),
-          menu:t.target==='wedge'?isMenu(actions.get(SLOTS[t.index].id))
-            :t.target==='item'&&isMenu(built.itemSpecs[t.index])},event);
+      if(t.target==='anchor'||t.target==='wedge'||t.target==='item'){
+        const menu=t.target==='wedge'?isMenu(actions.get(SLOTS[t.index].id))
+          :t.target==='item'&&isMenu(built.itemSpecs[t.index]);
+        dispatch({type:'click',...t,detail:event.detail,source:clickSource(event),menu,
+          inert:t.target==='item'&&!menu&&isInert(built.itemSpecs[t.index])},event);
+      }
     }
     function onContext(event){
       const t=targetOf(event.target);
@@ -1279,8 +1316,44 @@ ${H} .tw-sr{position:absolute;width:1px;height:1px;margin:-1px;padding:0;overflo
       log('info','tool_wheel.status',{slot:id,tone:next&&next.tone,text:next&&next.text,checked:next&&next.checked});
     }
 
+    /* Relire le premier niveau du sous-menu ouvert de `id` (Slice 04) : son
+       état a changé (une capture qui démarre, la voix qui s'endort). Rien ne
+       se passe si ce sous-menu n'est pas ouvert, s'il est au second niveau
+       (ses choix peuvent dépendre d'une lecture réseau, relancée seulement
+       par l'utilisateur), si l'action rend une promesse, ou si les entrées
+       n'ont pas changé. L'entrée en avant et le focus clavier restent sur la
+       même ligne. Rend `true` quand le sous-menu a été redessiné. */
+    const signatureOf=items=>JSON.stringify(items.map(it=>[it.id,it.label,it.note,it.detail,it.checked,it.tone,it.disabled,
+      it.status,it.icon,typeof it.onSecondary==='function']));
+    function refresh(id){
+      const index=SLOT_IDS.indexOf(id);
+      if(index<0)throw Object.assign(new TypeError(`JarvisToolWheel.refresh : emplacement inconnu « ${id} »`),
+        {code:'tool_wheel_unknown_slot'});
+      if(!built||!state.open||!state.sub||state.sub.slot!==index||(state.sub.level||1)!==1||built.parentSpecs)return false;
+      const action=actions.get(id);
+      if(!action||typeof action.onSecondary!=='function')return false;
+      let items;
+      try{items=action.onSecondary({slot:id,source:'refresh'})}
+      catch(error){log('error','tool_wheel.refresh_failed',{slot:id,error:errorText(error)});return false}
+      if(!Array.isArray(items))return false;
+      const sig=signatureOf(items);
+      if(sig===signatureOf(built.itemSpecs))return false;
+      const focused=built.items.indexOf(document.activeElement);
+      const keep=state.sub.focus;
+      fillSub(index,items);
+      dispatch({type:'subOpen',slot:index,count:items.length,source:'refresh',level:1,
+        focus:keep>=0&&keep<items.length?keep:undefined});
+      if(focused>=0){
+        const el=built.items[Math.min(focused,built.items.length-1)];
+        if(el)try{el.focus({preventScroll:true})}catch(_){el.focus()}
+      }
+      log('info','tool_wheel.refreshed',{slot:id,items:items.length});
+      return true;
+    }
+
     mount();
-    /* Les gestionnaires d'attente : JARVIS, Dossier, Paramètres. */
+    /* Le gestionnaire d'attente : Dossier (JARVIS et Paramètres sont
+       branchés par `control_center_jarvis_wheel.js` depuis la Slice 04). */
     for(const id of Object.keys(PLACEHOLDERS)){
       register({id,placeholder:true,menu:true,
         onActivate:()=>{/* `menu:true` : l'activation ouvre le sous-menu. */},
@@ -1290,7 +1363,7 @@ ${H} .tw-sr{position:absolute;width:1px;height:1px;margin:-1px;padding:0;overflo
         }});
     }
     root.JarvisToolWheel=Object.freeze({
-      register,setStatus,
+      register,setStatus,refresh,
       status:id=>statuses.get(id)||null,
       open(){dispatch({type:'open'})},
       close(){dispatch({type:'close'})},

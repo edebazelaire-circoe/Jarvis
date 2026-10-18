@@ -795,7 +795,7 @@ prefixes added deliberately to `FORWARDABLE_PREFIXES`, pinned by
   value) and re-encodes each path parameter (a `%2F` never reaches another
   Core route).
 
-## Interface: the wheel's Capture category and persistent indicators (orbital UI Slice 04)
+## Interface: the wheel's Capture category and transient recording indicators (orbital UI Slice 04)
 
 Born as the left capture rail (session-context-recording Slice 10, decisions
 D14/D15); moved into the orbital tool wheel by Slice 04 of
@@ -806,13 +806,19 @@ controller and every truth rule below are kept. **Slice 03 of
 wedges Vidéo / Capture d'écran / Audio into the tree of one **Capture**
 category (five categories: JARVIS, Sélection, Dossier, Capture, Paramètres;
 [control-center-shell.md](control-center-shell.md) › *Tool wheel*); the
-behaviour of each channel is unchanged. Its capture semantics (transient
-HUD, top-left recording cues) move in Slice 04 of that task.
+behaviour of each channel is unchanged. **Slice 04 of the same task**
+(`tasks/jarvis-board-ui-wheel-dossier-refactor/docs/06-ui-visual-spec.md` › E)
+renamed the rows after what they do (Capture d'écran, Enregistrer l'écran,
+Enregistrer l'audio), made an open Capture submenu follow Core live
+(`JarvisToolWheel.refresh`), and moved the indicators out of the bottom status
+centre to the **top-left** corner as a transient HUD: red `● REC 0:12 ■` for
+the screen, microphone + wave + duration + `■` for audio, side by side, shown
+only while Core lists an open capture.
 
 | Piece | Code | Role |
 | --- | --- | --- |
 | Controller / view-model | `jarvis/runtime/control_center_capture_rail.js` (`window.JarvisCaptureRail`) | polls Core through the relay, writes, re-reads; draws nothing |
-| Views | `jarvis/runtime/control_center_capture_wheel.js` (`window.JarvisCaptureViews`) | the Capture category of `#toolWheel` (its rows Capture d'écran / Vidéo / Audio and their target lists), indicators `#recIndicators`; `channels()` returns what each channel projects |
+| Views | `jarvis/runtime/control_center_capture_wheel.js` (`window.JarvisCaptureViews`) | the Capture category of `#toolWheel` (its rows Capture d'écran / Enregistrer l'écran / Enregistrer l'audio and their target lists), indicators `#recIndicators`; `channels()` returns what each channel projects |
 | Wheel | `jarvis/runtime/control_center_tool_wheel.js` | the surface ([control-center-shell.md](control-center-shell.md) › *Tool wheel*) |
 
 These are **not** Bare Hands tools: nothing goes into `BH.TOOL`,
@@ -848,25 +854,32 @@ flight.
 **Capture category** (`JarvisToolWheel.register({id:'capture', menu:true})`,
 D3/D4). Activating Capture (click, `Enter`/`Space`, `ArrowRight`, Bare Hands
 primary pinch, or its secondary activation) opens its curved submenu, rows in
-this order: **Capture d'écran**, **Vidéo**, **Audio** (`data-tw-item` =
-`screenshot`, `video`, `audio`; `WEDGES`). The rows are rebuilt from the
-controller at each opening (`channelItemOf`). Simple activation of a row =
-the default target: **Vidéo** and **Audio** start their channel on `default`,
-or stop its open capture; with **two or more** open captures the activation
-opens the stop list instead (the row's `menu`, read at each click), it never
-guesses which one. **Capture d'écran** takes the primary display at once.
-Each row shows the controller's state: Vidéo / Audio are `menuitemcheckbox`
+this order: **Capture d'écran**, **Enregistrer l'écran**, **Enregistrer
+l'audio** (`data-tw-item` = `screenshot`, `video`, `audio`, the old channel
+ids; `WEDGES`). The rows are built from the controller at each opening
+(`channelItemOf`) and, while the submenu is open, **rebuilt at every
+controller paint** (`render` → `JarvisToolWheel.refresh('capture')`): a
+capture started or stopped elsewhere (voice, a second tab, Core) checks or
+unchecks its row without closing the submenu or moving the keyboard focus;
+nothing is redrawn when the rows did not change. Simple activation of a row =
+the default target: **Enregistrer l'écran** and **Enregistrer l'audio** start
+their channel on `default`, or stop its open capture; with **two or more**
+open captures the activation opens the stop list instead (the row's `menu`,
+read at each click), it never guesses which one. **Capture d'écran** takes
+the primary display at once. Each row shows the controller's state: the two
+recording rows are `menuitemcheckbox`
 (`toggle`), `aria-checked` = Core says a capture is open (amber tile and
 note, `tone: busy`), `wait` while starting or stopping, `error` on a refusal
 or a stuck stop; its note is the state sentence without any counter (`en
 cours`, `2 en cours`, `état inconnu, Jarvis injoignable`) or, at rest, what
-the row does (`prendre l’écran`, `enregistrer l’écran`, `enregistrer le
-micro`). The **Capture category** projects their sum (`categoryStatusOf`,
+the row does (`une image de l’écran`, `vidéo de l’écran`, `le micro de
+Voice`). The **Capture category** projects their sum (`categoryStatusOf`,
 `setStatus('capture', …)`): `live` (amber icon and filled corner dot) while a
 recording is open, the worst tone (`error` > `unknown` > `wait`), and a
-sentence per channel that has something to say, joined to the category's
-name (`Capture — Audio : en cours`). Before the first status read nothing is
-projected.
+sentence per channel that has something to say, with its short name
+(`WEDGES[].short`: `Capture — Audio : en cours`, `Écran : échec (…)`). Before
+the first status read nothing is projected. No Pause row: `CaptureService` has
+no pause state or API.
 
 **Targets** (`GET /v1/captures/targets`, D6). Secondary activation of a
 channel row (right click, Bare Hands thumb + middle pinch, `ContextMenu`,
@@ -890,28 +903,39 @@ then the other inputs of the default host API. No window capture, no
 all-displays capture, no system audio.
 
 **Indicators** `#recIndicators` (rank 40, page sheet; hidden when there is
-nothing to say). One chip per open capture: screen = `REC` + Core-derived
-duration (a breathing dot, `écran N` when not the default display), audio =
-microphone + duration; a start in flight whose row Core does not list yet is
-a wait chip (`N s`, sweep bar); a screenshot shows `N s` then a check and
-`enregistrée` for 2.5 s (the preview below shows the image). They **stay visible when the
-wheel is closed**; activating a recording chip stops **that** capture (the
-filled square says so; stuck = `!`, lost status = `?` + dashed border). The
-chip's `aria-label` never changes with the timer (`Arrêter l’enregistrement
-d’écran (écran 2)`); the duration is its description (`en cours depuis 1:05`).
-The note of the last refusal sits above the status centre (close button, `Escape`);
+nothing to say: **no recording, no HUD**). One chip per open capture, drawn
+from Core's status only (never from the click that asked for it, so a reload
+or a second tab shows the same chips and durations):
+
+| Channel | Chip | Colour |
+| --- | --- | --- |
+| screen | breathing dot, `REC`, Core duration, `écran N` when not the default display, stop square in its own box | red (`--danger`) |
+| audio | microphone, a three-bar wave (only while Core says `active`), Core duration, stop square | amber (`--sem-alert`) |
+
+A start in flight whose row Core does not list yet is a wait chip (`N s`,
+sweep bar, blue); a screenshot shows `N s` then a check and `enregistrée` for
+2.5 s (momentary; the preview, [Screenshot preview](#screenshot-preview-and-quick-actions-orbital-ui-slice-05),
+shows the image). They **stay visible when the wheel is closed**; activating a
+recording chip (click, `Enter`, `Space`, Bare Hands pinch) stops **that**
+capture through the **same controller call as the wheel** (`JarvisCaptureRail.stop(captureId)`,
+journal `capture_views.chip_stop` then `capture_rail.stop_requested`); stuck =
+`!`, lost status = `?` + dashed border, the stop still offered (privacy
+first). No Pause control (no Core pause). The chip's `aria-label` never
+changes with the timer (`REC — arrêter l’enregistrement d’écran (écran 2)`);
+the duration is its description (`en cours depuis 1:05`). The note of the last
+refusal opens **under** the chips, left-aligned (close button, `Escape`);
 state changes are announced in a polite live region. A chip that disappears
 while focused hands the focus to the next chip, else to the wheel anchor.
-**Place** (orbital UI Slice 06): the first item of the bottom **status centre**
-(`#recIndicators | #bgPills`; the eye was removed by Slice 02 of the wheel/dossier refactor, [control-center-shell.md](control-center-shell.md)
-› *Status centre*), left of the background pills, so a recording is never
-read as a counter; chips wrap upwards when the row is full. At 700 px and below
-the row cannot hold a chip beside the pills and the eye: the chips keep the
-right-edge column, vertically centred (back in the row while a full-width side
-panel is open). The refusal note opens
-above the row, centred on the indicators; while it is shown the toasts rise
-above it (`--ri-note-h`, measured by the module, so neither the note nor its ×
-is ever under a toast — QA S04 P4).
+**Place** (wheel/dossier refactor Slice 04, before: first item of the bottom
+status centre): the **top-left** zone, at `--shell-gutter` from the top and
+left edges, chips side by side and wrapping **downwards**, never wider than
+the space left of the launcher (`max-width: 100vw − 2 × gutter −
+--shell-launcher-w − 12px`). Nothing else lives there: the launcher is
+top-right, the GPT-Live banner and the side panels start at
+`--shell-panel-top`, the wheel anchor is vertically centred on the left edge
+(measured with three recordings from 1440×900 down to 375×667,
+`test_indicators_cover_no_neighbouring_control`). The bottom status centre
+holds the background pills only, so a recording is never read as a counter.
 
 Cues never rely on colour alone (checked ring + corner dot, `!`, `?` + dashes,
 filled stop square, sweep bars, counters). Under `prefers-reduced-motion` the
@@ -933,6 +957,10 @@ Journal (browser console, `[capture]`): controller `capture_rail.installed`,
 `menu` (the Capture tree opened), `activate`, `targets_offered`, `target_chosen`, `stop_chosen`, `chip_stop`,
 `wedge_paint_failed`, `install_failed`.
 
+Wheel journal (`[tool_wheel]`): `tool_wheel.refreshed {slot, items}` when an
+open Capture submenu was redrawn from a new controller state; views
+`capture_views.refresh_failed` if that redraw throws.
+
 Tests: `tests/unit/test_capture_rail_js.py` (node: pure model, several
 captures per channel, the controller with fake timers — single flight,
 cadence, hidden tab, 6 s deadline, backoff, no stale read after a write, no
@@ -947,8 +975,13 @@ toggles against `status()`, REC timer through a wheel close, a reload and a
 second tab, a real one-shot screenshot artifact, the sub-arc with one and two
 displays chosen by keyboard, Core really stopped then restarted (status
 loss), a stop sent during a page-only loss, independence, refused start,
-keyboard, no overlap at five sizes, reduced motion, forced colours,
-axe-core when `JARVIS_AXE_JS` points to `axe.min.js`).
+keyboard, no overlap and top-left place at five sizes, reduced motion, forced
+colours, axe-core when `JARVIS_AXE_JS` points to `axe.min.js`; Slice 04 of the
+wheel/dossier refactor: two open screen recordings → primary click on
+« Enregistrer l'écran » opens the stop list and stops the chosen one, an open
+Capture submenu checks its row when Core starts a capture elsewhere, focus
+kept); `tests/unit/test_status_centre_browser.py` (the chip top-left, out of
+the status centre, stops its capture).
 
 ### Screenshot preview and quick actions (orbital UI Slice 05)
 

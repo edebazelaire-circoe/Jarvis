@@ -1906,9 +1906,11 @@ chargement.
 **Les commandes de capture ne sont pas des outils** (session-context-recording,
 Slice 10, décisions D14/D15). Capture d'écran, enregistrement audio et
 enregistrement d'écran ont vécu dans un rail **frère** de la palette
-(`#captureRail`) ; depuis la Slice 04 de l'orbital UI ce sont les secteurs
-Vidéo, Capture d'écran et Audio de la roue d'outils, plus les indicateurs
-persistants `#recIndicators` (`control_center_capture_wheel.js`, sur le
+(`#captureRail`) ; depuis la Slice 04 de l'orbital UI ce sont des commandes
+de la roue d'outils (depuis la refonte roue/dossier, les lignes Capture
+d'écran, Enregistrer l'écran et Enregistrer l'audio de sa catégorie Capture),
+plus les indicateurs `#recIndicators`, au haut-gauche tant qu'un
+enregistrement est ouvert (`control_center_capture_wheel.js`, sur le
 contrôleur `control_center_capture_rail.js`). Rien n'en entre dans `TOOL`,
 `describeTools()`, `#barehandsPaletteStrip` ni `data-bh-tool` : un outil est
 un choix **exclusif** tenu par les réglages, une capture un canal

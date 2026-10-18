@@ -46,23 +46,23 @@
     Object.freeze({selector:'#presentationRail',zone:'right',createdBy:'control_center_presentation_rail.js'}),
     Object.freeze({selector:'#boardsHud',zone:'bottom-left'}),
     Object.freeze({selector:'#boardDropTray',zone:'bottom-centre'}),
-    Object.freeze({selector:'#recIndicators',zone:'bottom-centre'}),
+    Object.freeze({selector:'#recIndicators',zone:'top-left'}),
     Object.freeze({selector:'#chatTab',zone:'bottom-right'}),
     Object.freeze({selector:'#screenshotPreview',zone:'left-low'}),
   ]);
   /* Zones de la coque (docs/06 §9). `right` : le rail actif de l'espace de
      travail (Slice 07), sous les panneaux latéraux qui s'ouvrent par-dessus. */
   const ZONES=Object.freeze({
-    /* Libre depuis la Slice 02 de jarvis-board-ui-wheel-dossier-refactor (ni
-       sélecteur de Board, ni état permanent) : seuls des retours transitoires
-       (alerte critique, indicateurs d'enregistrement en Slice 04) s'y poseront. */
-    'top-left':'libre : retours transitoires seulement (alerte critique, enregistrement en cours)',
-    'top-right':'lanceur global : Conversation, Agents, Errors, Réglages, « Plus d’outils » (Slice 08)',
+    /* Libre au repos depuis la Slice 02 de jarvis-board-ui-wheel-dossier-refactor
+       (ni sélecteur de Board, ni état permanent) ; depuis la Slice 04, les
+       indicateurs d'enregistrement s'y posent tant qu'une capture est ouverte. */
+    'top-left':'indicateurs d’enregistrement (REC, audio) tant qu’une capture est ouverte ; vide au repos',
+    'top-right':'lanceur global : Conversation, Agents, Errors, « Plus d’outils » (Réglages y est replié, refonte S04)',
     'top-centre':'bandeau GPT-Live (transitoire)',
     'left-edge':'ancre et roue d’outils (JARVIS, Sélection, Dossier, Capture, Paramètres)',
     'left-low':'aperçu de la dernière capture d’écran (Slice 05), au-dessus du contexte bas-gauche',
     'bottom-left':'zone de contexte : carte Board (type, titre, bascule, présence de la voix), notes de la scène',
-    'bottom-centre':'centre d’état (Slice 06) : indicateurs de capture, pastilles d’arrière-plan ; plateau de dépôt au-dessus',
+    'bottom-centre':'centre d’état (Slice 06) : pastilles d’arrière-plan ; plateau de dépôt au-dessus',
     'bottom-right':'onglet Chat',
     'right':'rail actif de l’espace de travail (#presentationRail, Slice 07) ; panneaux latéraux par-dessus',
     'centre':'Board / scène',
@@ -76,7 +76,7 @@
     '--shell-bottom':'18px',
     '--shell-status-h':'44px',
     '--shell-control':'34px',
-    '--shell-launcher-w':'194px',
+    '--shell-launcher-w':'154px',
     '--shell-panel-top':'64px',
     '--shell-panel-w':'500px',
     '--shell-panel-bottom':'68px',

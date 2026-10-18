@@ -106,6 +106,8 @@ const SERVER=`(()=>{
     if(url!=='/api/status'&&!url.startsWith('/api/captures/status'))S.calls.push(method+' '+url.split('?')[0]);
     if(init&&init.body&&method!=='GET'){let b=null;try{b=JSON.parse(init.body)}catch(_){b=init.body}S.bodies.push({path:url,body:b})}
     if(url==='/api/status'){
+      /* Slice 04 (sous-menu JARVIS) : \`statusFail\` fait tomber le battement ; \`status\` en remplace des champs. */
+      if(S.statusFail)return Promise.reject(new TypeError('Failed to fetch'));
       const counts={};let unread=0;for(const [k,v] of Object.entries(S.counts))if(v>0){counts[k]=v;unread+=v}
       return json(200,{voice_state:'idle',voice_online:true,manual_wake_key:S.wakeKey||'f9',voice_turn_mode:'server',
         agent:{name:'claude',state:'running'},agent_cli:'claude',error_count:S.errorCount||0,subagents:S.subagents||null,
@@ -113,7 +115,7 @@ const SERVER=`(()=>{
         boards:{available:true,active:{board_id:S.activeBoard,title:(S.boards.find(b=>b.board_id===S.activeBoard)||{}).title||S.activeBoard,
           board_kind:(S.boards.find(b=>b.board_id===S.activeBoard)||{}).board_kind},jarvis_session_id:'jsess_1',bindings:[],error:null},
         scene:{enabled:S.sceneOn,source:'core'},scene_limits:{job_cancel_timeout_s:30},live:S.live,interaction_mode:S.mode||null,
-        presentation:S.presentation||null});
+        presentation:S.presentation||null,...(S.status||{})});
     }
     /* Raccourcis d'interface (valeurs par défaut de jarvis/runtime/shortcuts.py). */
     if(url==='/api/shortcuts')return json(200,{values:{ui_settings:'s',ui_close:'Escape',ui_panel_errors:'e',ui_panel_trace:'t',ui_panel_agents:'a'}});

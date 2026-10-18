@@ -613,11 +613,19 @@ CAPTURE_RAIL_SCRIPT_MARKER = "/*__CONTROL_CENTER_CAPTURE_RAIL_JS__*/"
 TOOL_WHEEL_SCRIPT_FILE = "control_center_tool_wheel.js"
 TOOL_WHEEL_SCRIPT_MARKER = "/*__CONTROL_CENTER_TOOL_WHEEL_JS__*/"
 #: Vues de capture (orbital-ui Slice 04, D6) : catégorie Capture de la roue (Capture
-#: d'écran / Vidéo / Audio dans son arbre), listes des cibles réelles, indicateurs persistants
-#: `#recIndicators` (rang 40). Lit le contrôleur et la roue : inséré APRÈS eux.
+#: d'écran / Enregistrer l'écran / Enregistrer l'audio dans son arbre), listes des cibles
+#: réelles, indicateurs transitoires `#recIndicators` (rang 40, haut-gauche). Lit le contrôleur et la roue : inséré APRÈS eux.
 #: Contrat : `docs/capture.md` › Interface. Refus d'installation rattrapé.
 CAPTURE_WHEEL_SCRIPT_FILE = "control_center_capture_wheel.js"
 CAPTURE_WHEEL_SCRIPT_MARKER = "/*__CONTROL_CENTER_CAPTURE_WHEEL_JS__*/"
+#: Catégories JARVIS et Paramètres de la roue (jarvis-board-ui-wheel-dossier-refactor,
+#: Slice 04) : l'état de la voix, de la touche d'éveil, de l'agent et des sous-agents,
+#: lu sur le seul battement `/api/status` de la page (`JarvisRuntimeWheel.gate`) ; aucune
+#: commande inventée (aucune route ne met Voice en veille). Paramètres ouvre les réglages
+#: par onglet. Lit la roue : inséré APRÈS elle. Contrat : `docs/control-center-shell.md` ›
+#: Tool wheel. Refus d'installation rattrapé.
+JARVIS_WHEEL_SCRIPT_FILE = "control_center_jarvis_wheel.js"
+JARVIS_WHEEL_SCRIPT_MARKER = "/*__CONTROL_CENTER_JARVIS_WHEEL_JS__*/"
 #: Sélection Souris / Bare Hands et reprise de la main par la souris
 #: (jarvis-board-orbital-ui-workspace-rail, Slice 03, D5) : projection du cycle
 #: de vie Bare Hands sur le secteur Sélection de la roue, sous-arc Souris /
@@ -2417,6 +2425,10 @@ class ControlCenter:
         html = html.replace(
             CAPTURE_WHEEL_SCRIPT_MARKER,
             page.with_name(CAPTURE_WHEEL_SCRIPT_FILE).read_text(encoding="utf-8"),
+        )
+        html = html.replace(
+            JARVIS_WHEEL_SCRIPT_MARKER,
+            page.with_name(JARVIS_WHEEL_SCRIPT_FILE).read_text(encoding="utf-8"),
         )
         html = html.replace(
             INPUT_ARBITRATION_SCRIPT_MARKER,

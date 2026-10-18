@@ -1,11 +1,16 @@
-/* Vues de capture : la catégorie Capture de la roue d'outils (Vidéo,
-   Capture d'écran, Audio dans son arbre), sous-menus des cibles, et
-   indicateurs persistants `#recIndicators`.
+/* Vues de capture : la catégorie Capture de la roue d'outils (Capture
+   d'écran, Enregistrer l'écran, Enregistrer l'audio dans son arbre),
+   sous-menus des cibles, et indicateurs transitoires `#recIndicators`.
 
    Refonte de la roue (`jarvis-board-ui-wheel-dossier-refactor`, Slice 03) :
    les trois anciens secteurs du premier niveau sont devenus les trois
-   entrées du sous-menu de **Capture** ; leur conduite est inchangée (la
-   sémantique de la capture migre en Slice 04).
+   entrées du sous-menu de **Capture**. Slice 04 de la même tâche
+   (`docs/06-ui-visual-spec.md` › E) : les entrées disent ce qu'elles font
+   (« Enregistrer l'écran », « Enregistrer l'audio »), un sous-menu ouvert se
+   relit quand une capture change (`JarvisToolWheel.refresh`), et les
+   indicateurs quittent le centre d'état du bas pour le **haut-gauche** :
+   `● REC 0:12 ■` rouge pour l'écran, micro + onde + durée + ■ pour l'audio,
+   côte à côte, seulement tant que Core dit une capture ouverte.
 
    Handoff `jarvis-board-orbital-ui-workspace-rail`, Slice 04 ; architecture
    résolue §5 (D6), D3, D4 (contraignantes). Contrat : `docs/capture.md` ›
@@ -34,13 +39,16 @@
      prendre (`GET /api/captures/targets`). Une seule cible : une entrée
      unique qui le dit (« Écran principal — seule cible disponible »), jamais
      omise, jamais un faux choix.
-   - **Indicateurs** `#recIndicators` (rang 40, à gauche des pastilles dans
-     le centre d'état du bas depuis la Slice 06) : une puce par
-     capture ouverte — `REC` + durée pour l'écran, micro + durée pour l'audio
-     —, qui reste quand la roue se replie ; l'activer arrête **cette**
-     capture (vie privée d'abord, statut perdu compris). Une attente de
-     démarrage, une capture d'écran en cours puis prise, et la note du
-     dernier refus s'y lisent aussi.
+   - **Indicateurs** `#recIndicators` (rang 40, zone haut-gauche depuis la
+     Slice 04 de la refonte ; avant, à gauche des pastilles du centre
+     d'état) : une puce par capture ouverte — point rouge + `REC` + durée +
+     carré d'arrêt pour l'écran, micro + onde + durée + carré d'arrêt pour
+     l'audio —, qui reste quand la roue se replie ; l'activer arrête
+     **cette** capture par le même contrôleur que la roue (`C.stop`, vie
+     privée d'abord, statut perdu compris). Une attente de démarrage, une
+     capture d'écran en cours puis prise, et la note du dernier refus (sous
+     les puces) s'y lisent aussi. Rien d'ouvert, rien à dire : l'hôte est
+     caché.
 
    Deux blocs : le **modèle pur** (`wedgeStatusOf`, `chipsOf`,
    `targetItemsOf`, exécutés par node dans `tests/unit/test_capture_rail_js.py`)
@@ -53,10 +61,11 @@
      docs/06-ui-visual-spec.md › E) -> commande du contrôleur. `slot` garde
      l'ancien nom du canal : c'est l'identifiant de l'entrée (`data-tw-item`). */
   const CATEGORY='capture';
+  /* `short` : le nom du canal dans la phrase du secteur (« Écran : en cours »). */
   const WEDGES=Object.freeze([
-    Object.freeze({slot:'screenshot',control:'screenshot',label:'Capture d’écran',hint:'prendre l’écran'}),
-    Object.freeze({slot:'video',control:'screen',label:'Vidéo',hint:'enregistrer l’écran'}),
-    Object.freeze({slot:'audio',control:'audio',label:'Audio',hint:'enregistrer le micro'}),
+    Object.freeze({slot:'screenshot',control:'screenshot',label:'Capture d’écran',short:'Capture d’écran',hint:'une image de l’écran'}),
+    Object.freeze({slot:'video',control:'screen',label:'Enregistrer l’écran',short:'Écran',hint:'vidéo de l’écran'}),
+    Object.freeze({slot:'audio',control:'audio',label:'Enregistrer l’audio',short:'Audio',hint:'le micro de Voice'}),
   ]);
   const TARGET_CHANNEL=Object.freeze({screen:'screen',screenshot:'screen',audio:'audio'});
   const DEFAULT_DEVICE='default';
@@ -122,7 +131,7 @@
     const list=WEDGES.map(w=>({w,st:isObject(byChannel)?byChannel[w.slot]:null})).filter(x=>isObject(x.st));
     const tone=['error','unknown','wait'].find(tn=>list.some(x=>x.st.tone===tn))||null;
     const live=list.some(x=>x.st.checked===true);
-    const text=list.filter(x=>x.st.text).map(x=>`${x.w.label} : ${x.st.text}`).join(' · ');
+    const text=list.filter(x=>x.st.text).map(x=>`${x.w.short} : ${x.st.text}`).join(' · ');
     if(!tone&&!live&&!text)return null;
     return {tone,live,text};
   }
@@ -247,18 +256,21 @@
 
   /* ------------------------------------------------- la feuille
 
-     Puces de verre sombre, trait fin, chiffres tabulaires. Un enregistrement
-     est **ambre** (`--sem-alert`) avec un point qui respire ; une attente
-     balaie ; une panne porte « ! » ; un état inconnu « ? » et un trait
-     pointillé — jamais la couleur seule. Aucun `z-index` ici : le rang de
-     l'hôte (40) vit dans la page et au registre. Mouvement réduit : rien ne
-     bouge, les chiffres continuent. */
+     Puces de verre sombre, trait fin, chiffres tabulaires, posées en haut à
+     gauche (Slice 04 de la refonte, `docs/06-ui-visual-spec.md` › E). L'écran
+     qui enregistre est **rouge** (`--danger`) : point qui respire, `REC`, la
+     durée, puis le carré d'arrêt dans sa case ; l'audio est **ambre**
+     (`--sem-alert`) : micro, une onde de trois barres, la durée, le carré.
+     Une attente balaie ; une panne porte « ! » ; un état inconnu « ? » et un
+     trait pointillé — jamais la couleur seule. Les puces vont côte à côte et
+     passent à la ligne vers le bas ; la note d'un refus s'ouvre sous elles.
+     Aucun `z-index` ici : le rang de l'hôte (40) vit dans la page et au
+     registre. Mouvement réduit : rien ne bouge, les chiffres continuent. */
   const H='#'+DOM.hostId;
   const STYLE=`
 ${H}{font:12px/1.2 ui-monospace,SFMono-Regular,Consolas,monospace;color:var(--text,#d8edf7)}
 ${H} [hidden]{display:none!important}
-${H} .ri-chips{display:flex;flex-wrap:wrap-reverse;justify-content:center;gap:6px}
-@media(max-width:700px){#app:not(:has(.panel.open)) ${H} .ri-chips{flex-direction:column;flex-wrap:nowrap;align-items:flex-end}}
+${H} .ri-chips{display:flex;flex-wrap:wrap;justify-content:flex-start;gap:6px}
 ${H} .ri-chip{--ri-ink:var(--sem-alert,#ff9f43);position:relative;display:inline-flex;align-items:center;gap:7px;
   height:34px;margin:0;padding:0 10px 0 9px;border:1px solid color-mix(in srgb,var(--ri-ink) 55%,transparent);
   border-radius:var(--shell-radius,12px);background:var(--shell-glass-strong,rgba(4,10,15,.8));
@@ -267,6 +279,8 @@ ${H} .ri-chip{--ri-ink:var(--sem-alert,#ff9f43);position:relative;display:inline
 ${H} .ri-chip:hover:not([aria-disabled=true]){border-color:var(--ri-ink);background:color-mix(in srgb,var(--ri-ink) 12%,var(--shell-glass-strong,rgba(4,10,15,.8)))}
 ${H} .ri-chip:focus-visible{outline:var(--shell-focus-w,2px) solid var(--shell-focus,#6ee7ff);outline-offset:2px}
 ${H} .ri-chip[aria-disabled=true]{cursor:default}
+/* L'écran qui enregistre : rouge, comme le voyant d'une caméra. */
+${H} .ri-chip[data-ri-channel=screen]{--ri-ink:var(--danger,#ff5f6d)}
 ${H} .ri-chip[data-ri-state=starting],${H} .ri-chip[data-ri-state=stopping],${H} .ri-chip[data-ri-state=busy]{--ri-ink:var(--sem-working,#4da3ff);cursor:progress}
 ${H} .ri-chip[data-ri-state=stuck]{--ri-ink:var(--sem-problem,#ff6a4d)}
 ${H} .ri-chip[data-ri-state=done]{--ri-ink:var(--sem-done,#68e0a0)}
@@ -280,25 +294,31 @@ ${H} .ri-time{font-variant-numeric:tabular-nums;color:var(--text,#d8edf7)}
 ${H} .ri-dev{color:var(--muted,#7190a0);font-size:11px}
 ${H} .ri-mark{flex:none;display:grid;place-items:center;width:15px;height:15px;border-radius:50%;
   font-size:10px;font-weight:700;line-height:1;color:#05080b;background:var(--ri-ink)}
-/* La marque d'arrêt : ce qu'activer la puce fait, un carré plein. */
-${H} .ri-stop{flex:none;width:10px;height:10px;border-radius:2px;background:currentColor;opacity:.9}
+/* La marque d'arrêt : ce qu'activer la puce fait, un carré plein dans sa case, séparé de la durée. */
+${H} .ri-stop{flex:none;position:relative;width:20px;height:20px;margin-left:2px;border-radius:6px;
+  border:1px solid color-mix(in srgb,var(--ri-ink) 55%,transparent);background:color-mix(in srgb,var(--ri-ink) 14%,transparent)}
+${H} .ri-stop::after{content:"";position:absolute;left:50%;top:50%;width:8px;height:8px;margin:-4px 0 0 -4px;border-radius:1.5px;background:var(--ri-ink)}
+${H} .ri-chip:hover:not([aria-disabled=true]) .ri-stop{background:color-mix(in srgb,var(--ri-ink) 28%,transparent)}
 ${H} .ri-chip[data-ri-state=stopping] .ri-stop{opacity:.45}
+/* L'onde de l'audio : trois barres qui respirent tant que Core dit l'enregistrement ouvert. */
+${H} .ri-wave{flex:none;display:inline-flex;align-items:center;gap:2px;height:14px}
+${H} .ri-wave i{display:block;width:2px;height:100%;border-radius:1px;background:var(--ri-ink);transform-origin:50% 50%;
+  animation:riWave 1.1s ease-in-out infinite}
+${H} .ri-wave i:nth-child(2){animation-delay:-.35s}
+${H} .ri-wave i:nth-child(3){animation-delay:-.7s}
+@keyframes riWave{0%,100%{transform:scaleY(.35)}50%{transform:scaleY(1)}}
 ${H} .ri-wait{position:absolute;left:9px;right:9px;bottom:3px;height:2px;border-radius:2px;overflow:hidden;
   background:color-mix(in srgb,var(--ri-ink) 22%,transparent)}
 ${H} .ri-wait::after{content:"";position:absolute;top:0;bottom:0;left:0;width:42%;border-radius:2px;
   background:var(--ri-ink);animation:riSweep 1.25s ease-in-out infinite}
 @keyframes riSweep{from{transform:translateX(-115%)}to{transform:translateX(255%)}}
-/* La note : la phrase d'un refus, posée au-dessus du centre d'état (Slice 06), centrée
-   sur les indicateurs ; l'hôte occupe toute la hauteur de la rangée. */
-${H}{align-self:stretch;justify-content:center}
-${H} .ri-note{position:absolute;left:50%;bottom:calc(100% + 8px);transform:translateX(-50%);
+/* La note : la phrase d'un refus, posée sous les puces, alignée sur leur bord gauche (Slice 04). */
+${H} .ri-note{position:absolute;left:0;top:calc(100% + 8px);
   width:max-content;max-width:min(420px,calc(100vw - 2 * var(--shell-gutter,18px)));margin:0;
   padding:8px 32px 8px 11px;border:1px solid var(--shell-stroke-active,rgba(110,231,255,.4));border-radius:10px;
   background:var(--panel,rgba(6,12,18,.94));color:var(--text,#d8edf7);font-size:11.5px;line-height:1.45;
   box-shadow:0 10px 28px rgba(0,0,0,.45)}
 ${H} .ri-note[hidden]{display:none}
-/* Colonne du bord droit (700 px et moins) : la note s'aligne sur son bord droit. */
-@media(max-width:700px){#app:not(:has(.panel.open)) ${H} .ri-note{left:auto;right:0;transform:none}}
 ${H} .ri-note[data-ri-tone=bad]{border-color:color-mix(in srgb,var(--sem-problem,#ff6a4d) 60%,transparent);background:rgba(35,7,12,.94)}
 ${H} .ri-note[data-ri-tone=warn]{border-color:color-mix(in srgb,var(--sem-alert,#ff9f43) 60%,transparent);background:rgba(38,23,5,.94)}
 ${H} .ri-note-close{position:absolute;right:5px;top:5px;width:22px;height:22px;display:grid;place-items:center;padding:0;
@@ -308,6 +328,7 @@ ${H} .ri-note-close:focus-visible{outline:2px solid var(--shell-focus,#6ee7ff);o
 ${H} .ri-sr{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}
 @media(prefers-reduced-motion:reduce){
   ${H} .ri-dot{animation:none;opacity:1}
+  ${H} .ri-wave i{animation:none;transform:scaleY(.7)}
   ${H} .ri-wait::after{animation:none;width:100%;opacity:.6}
   ${H} .ri-chip{transition:none}
 }
@@ -315,7 +336,8 @@ ${H} .ri-sr{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflo
   ${H} .ri-chip{border:1px solid ButtonText;color:ButtonText;background:ButtonFace}
   ${H} .ri-chip[data-ri-state=unknown]{border-style:dashed}
   ${H} .ri-chip[data-ri-state=active]{border:2px solid Highlight}
-  ${H} .ri-dot,${H} .ri-stop,${H} .ri-mark{forced-color-adjust:none;background:Highlight;color:HighlightText}
+  ${H} .ri-dot,${H} .ri-stop::after,${H} .ri-mark,${H} .ri-wave i{forced-color-adjust:none;background:Highlight;color:HighlightText}
+  ${H} .ri-stop{border-color:ButtonText;background:ButtonFace}
   ${H} .ri-time,${H} .ri-dev{color:ButtonText}
   ${H} .ri-note{border-color:CanvasText}
 }`;
@@ -398,14 +420,15 @@ ${H} .ri-sr{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflo
       el.setAttribute('data-ri-key',chip.key);el.setAttribute('data-ri-channel',chip.channel);
       const detail=document.createElement('span');detail.className='ri-sr';detail.id=`${DOM.detailPrefix}${++seq}`;
       detail.setAttribute('aria-hidden','true');
-      const parts={lead:document.createElement('span'),tag:document.createElement('span'),time:document.createElement('span'),
-        dev:document.createElement('span'),mark:document.createElement('span'),stop:document.createElement('span'),
-        wait:document.createElement('span'),detail,glyph:null};
+      const parts={lead:document.createElement('span'),tag:document.createElement('span'),wave:document.createElement('span'),
+        time:document.createElement('span'),dev:document.createElement('span'),mark:document.createElement('span'),
+        stop:document.createElement('span'),wait:document.createElement('span'),detail,glyph:null};
       parts.lead.style.display='contents';
       parts.tag.className='ri-tag';parts.time.className='ri-time';parts.dev.className='ri-dev';
       parts.mark.className='ri-mark';parts.stop.className='ri-stop';parts.wait.className='ri-wait';
-      for(const k of ['tag','time','dev','mark','stop','wait'])parts[k].setAttribute('aria-hidden','true');
-      el.append(parts.lead,parts.tag,parts.time,parts.dev,parts.mark,parts.stop,parts.wait,detail);
+      parts.wave.className='ri-wave';for(let i=0;i<3;i+=1)parts.wave.appendChild(document.createElement('i'));
+      for(const k of ['tag','wave','time','dev','mark','stop','wait'])parts[k].setAttribute('aria-hidden','true');
+      el.append(parts.lead,parts.tag,parts.wave,parts.time,parts.dev,parts.mark,parts.stop,parts.wait,detail);
       el.addEventListener('click',()=>activateChip(el.getAttribute('data-ri-key')));
       return {el,parts,chip};
     }
@@ -439,6 +462,8 @@ ${H} .ri-sr{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflo
       }
       parts.tag.textContent=chip.channel==='screen'?'REC':'';
       parts.tag.hidden=chip.channel!=='screen';
+      /* L'onde ne bat que pour un enregistrement audio que Core dit ouvert. */
+      parts.wave.hidden=!(chip.channel==='audio'&&chip.state==='active');
       parts.time.textContent=chip.state==='done'?'enregistrée':chip.timer||'';
       parts.time.hidden=!parts.time.textContent;
       parts.dev.textContent=chip.tag||'';parts.dev.hidden=!chip.tag;
@@ -466,16 +491,6 @@ ${H} .ri-sr{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflo
       });
       if(lostFocusAt!==null)focusAfterRemoval(lostFocusAt);
       return list.length;
-    }
-
-    /* La hauteur de la note, pour que les infusions (même bande, à droite)
-       montent au-dessus d'elle tant qu'elle est là (`--ri-note-h`, feuille de
-       la page ; QA S04 P4). */
-    function measureNote(){
-      const rootStyle=document.documentElement.style;
-      if(noteBox.hidden){rootStyle.removeProperty('--ri-note-h');return}
-      const h=Math.ceil(noteBox.getBoundingClientRect().height);
-      rootStyle.setProperty('--ri-note-h',`${h}px`);
     }
 
     function renderNote(view){
@@ -506,11 +521,16 @@ ${H} .ri-sr{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflo
       const count=renderChips(view);
       const noted=renderNote(view);
       host.hidden=!(count||noted);
-      measureNote();
       if(view.announce&&view.announce.seq!==lastAnnounce){
         lastAnnounce=view.announce.seq;live.textContent=view.announce.text||'';
       }
       paintWedges(view);
+      /* Le sous-menu de Capture ouvert se relit (une capture démarrée
+         ailleurs, un arrêt confirmé) ; sans changement, rien n'est redessiné. */
+      if(typeof W.refresh==='function'){
+        try{W.refresh(CATEGORY)}
+        catch(error){log('error','capture_views.refresh_failed',{error:String(error&&error.message||error)})}
+      }
     }
 
     /* ---- les secteurs ---- */
@@ -545,12 +565,13 @@ ${H} .ri-sr{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflo
     }
 
     /* La catégorie : son sous-menu relit l'état des canaux à chaque
-       ouverture. */
+       ouverture, et à chaque peinture du contrôleur tant qu'il est ouvert
+       (`render` -> `W.refresh`). */
     W.register({id:CATEGORY,menu:true,
       onActivate:()=>{/* `menu:true` : l'activation ouvre le sous-menu. */},
       onSecondary:ctx=>{
         const now=channelStatuses(C.view());
-        log('info','capture_views.menu',{source:ctx&&ctx.source||null});
+        if(!ctx||ctx.source!=='refresh')log('info','capture_views.menu',{source:ctx&&ctx.source||null});
         return WEDGES.map(w=>({...channelItemOf(w,now[w.slot]),
           /* Deux captures ouvertes ou plus : l'activation simple ne choisit pas
              laquelle arrêter, elle ouvre la liste. */

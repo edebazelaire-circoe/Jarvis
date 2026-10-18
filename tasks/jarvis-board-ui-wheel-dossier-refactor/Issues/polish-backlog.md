@@ -86,3 +86,8 @@ outside the acceptance of the Slice that found it.
    straight. Human visual check in Slice 09.
 9. Not verified at runtime: real video (no ffmpeg on the machine; error path shown correctly), audio (needs mic),
    collision with the Studio.
+   - Items 1 and 3: **resolved in Slice 04** — an inert row (status row, disabled entry) no longer closes the wheel
+     (`tool_wheel.item_inert`, `test_an_inert_row_keeps_the_wheel_open_an_active_row_closes_it`); two open screen
+     recordings → primary click opens the stop list, covered by
+     `test_capture_wheel_browser.py::test_two_open_screen_recordings_primary_click_opens_the_stop_list`. Item 4 (stop
+     row « Arrêter — écran princip… » cut, full text in the name and tooltip) and item 5 stay for Slice 08.

@@ -96,10 +96,11 @@ def test_five_categories_in_locked_order_and_no_retired_first_level(tmp_path):
     assert set(v["ids"]) <= set(v["art"])
     assert set(v["art"]) - set(v["ids"]) == {"video", "screenshot", "audio", "chevron", "mouse", "bare_hands",
                                              "pointer", "pan", "select", "sleep", "help", "diagnostics",
-                                             "calibration", "stop", "done"}
+                                             "calibration", "stop", "done", "key", "agent", "subagents"}
     assert v["wedges"] == 5
-    # JARVIS, Dossier, Paramètres : un gestionnaire d'attente, une entrée inerte qui le dit.
-    assert v["placeholders"] == ["jarvis", "dossier", "settings"]
+    # Dossier seul garde un gestionnaire d'attente (Slices 05-07) ; JARVIS et Paramètres sont branchés
+    # par `control_center_jarvis_wheel.js` depuis la Slice 04.
+    assert v["placeholders"] == ["dossier"]
     for slot, items in zip(v["ids"], v["items"]):
         if slot in v["placeholders"]:
             assert len(items) == 1 and items[0]["disabled"] is True and items[0]["note"] == "pas encore branché"
@@ -437,3 +438,32 @@ def test_escape_on_a_category_whose_tree_is_open_closes_the_tree_only(tmp_path):
       out({{once:[once.s.open,once.s.sub,once.s.focus],twice:[twice.s.open,did(twice.fx,'restoreFocus').length]}})""")
     assert v["once"] == [True, None, 3]
     assert v["twice"] == [False, 1]
+
+
+# ------------------------------------------------------------ Slice 04 (jarvis-board-ui-wheel-dossier-refactor)
+
+
+def test_an_inert_row_keeps_the_wheel_open_an_active_row_closes_it(tmp_path):
+    """QA S03, polish 1 : activer une ligne d'état ou une entrée indisponible (`inert`) ne ferme plus la
+    roue ; une entrée qui agit la ferme toujours. Le sous-menu reste celui de la catégorie."""
+
+    v = run(tmp_path, f"""
+      const opened=[{OPEN},{{type:'click',target:'wedge',index:0,menu:true,source:'mouse',t:1}},
+        {{type:'subOpen',slot:0,count:5,source:'mouse',level:1}}];
+      const inert=play([...opened,{{type:'click',target:'item',index:0,inert:true,source:'mouse'}}]);
+      const live=play([...opened,{{type:'click',target:'item',index:3,source:'mouse'}}]);
+      out({{inert:{{open:inert.s.open,sub:inert.s.sub,item:did(inert.fx,'item').length,
+        journal:did(inert.fx,'journal').map(f=>f.key)}},live:{{open:live.s.open,item:did(live.fx,'item')}}}})""")
+    assert v["inert"]["open"] is True and v["inert"]["sub"]["slot"] == 0 and v["inert"]["item"] == 0
+    assert "tool_wheel.item_inert" in v["inert"]["journal"]
+    assert v["live"]["open"] is False and v["live"]["item"] == [{"do": "item", "slot": 0, "index": 3, "source": "mouse"}]
+
+
+def test_refresh_is_published_and_never_polls():
+    source = MODULE.read_text(encoding="utf-8")
+    assert "register,setStatus,refresh," in source
+    body = source[source.index("function refresh(id){"):source.index("    mount();\n")]
+    # Relit le premier niveau seulement, sans réseau ni minuterie, et garde l'entrée en avant.
+    assert "fetch(" not in body and "setTimeout" not in body and "setInterval" not in body
+    assert "(state.sub.level||1)!==1||built.parentSpecs" in body
+    assert "source:'refresh'" in body and "focus:keep>=0&&keep<items.length?keep:undefined" in body

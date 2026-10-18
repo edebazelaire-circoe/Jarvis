@@ -40,7 +40,7 @@ supervisor ─┬─ Core ───────── SessionManager (Sessions, 
             │                 RecordingTranscriber (OpenAI STT, from the durable WAV spool)
             │                 ContextEnrichmentWorker ── restricted `claude` child per round (haiku, no tools)
             ├─ Control Center ─ capture relay (/api/captures, /api/contexts, /api/artifacts, /api/activity)
-            │                   capture controller + tool wheel wedges + #recIndicators (polls the status)
+            │                   capture controller + wheel Capture category + #recIndicators (polls the status)
             │                   Brain CLI ── `jarvis-capture` MCP server (calls the relay)
             └─ Voice ──────── nothing of the above (its microphone streams are separate)
 ```

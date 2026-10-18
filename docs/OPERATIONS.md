@@ -147,7 +147,10 @@ duration, without storing raw audio.
 
 ## La fenêtre de réglages
 
-Le bouton **SET** du Control Center (ou la touche `s`) ouvre une fenêtre
+Le bouton **SET** du Control Center (dans « Plus d’outils », les trois
+points en haut à droite, depuis la Slice 04 de la refonte roue/dossier), la
+touche `s`, ou la catégorie **Paramètres** de la roue d'outils (une ligne par
+onglet, qui ouvre la fenêtre directement sur cet onglet) ouvrent une fenêtre
 centrée, fermée par un clic à l'extérieur ou par `Échap`. Elle a six onglets :
 Mode vocal, Prompts, Agent / CLI, Config, API Keys et Raccourcis, plus
 Apparence (couche de thèmes) et Expérimental (scène constellation et Barehands en mode test).
@@ -1866,8 +1869,35 @@ au-dessus de la carte, la liste de tous les Boards ; c'est le geste de tous les
 jours, et le seul endroit où l'on change de Board au quotidien. L'inspection
 profonde reste dans `WSP` (ci-dessous). Le haut de l'écran à gauche est vide
 au repos : l'ancien bouton Board et la ligne d'état `VOICE … · CLAUDE …` n'y
-sont plus ; la touche d'éveil (F9) marche comme avant, et le sous-menu JARVIS de
-la roue la rappellera.
+sont plus ; la touche d'éveil (F9) marche comme avant. Ce que disait la ligne
+d'état se lit dans la catégorie **JARVIS** de la roue (ci-dessous).
+
+### JARVIS, Capture et Paramètres dans la roue (refonte roue/dossier, Slice 04)
+
+Approchez la souris du bord gauche (ou Entrée sur l'ancre de la roue) :
+
+- **JARVIS** montre l'état, sans rien piloter : la **voix** (Veille · SLEEP,
+  Écoute · LISTEN, Parole · TALK, Réflexion · THINKING, ou « hors ligne »), ce
+  que fait la **touche d'éveil** maintenant (« F9 · DÉMARRER », « F9 ·
+  INTERROMPRE »…), l'**agent** (Claude ou Codex, actif ou arrêté, son modèle
+  dans l'infobulle), puis deux raccourcis : **Sous-agents** (ouvre le panneau
+  Agents) et **Réglages de la voix**. Si le Control Center ne répond plus,
+  chaque ligne dit « état inconnu » : ce n'est jamais le dernier état connu.
+  Il n'y a pas de bouton Veille / Réveil : aucune route ne le permet
+  aujourd'hui ; la touche d'éveil reste le geste.
+- **Capture** propose **Capture d'écran**, **Enregistrer l'écran** et
+  **Enregistrer l'audio** (clic droit ou flèche droite sur une ligne : les
+  cibles réelles). Les deux enregistrements peuvent tourner ensemble.
+- **Paramètres** liste les onglets des réglages ; un clic ouvre la fenêtre sur
+  l'onglet choisi.
+
+**Pendant un enregistrement**, un indicateur apparaît **en haut à gauche** et
+seulement à ce moment : rouge « ● REC 0:12 ■ » pour l'écran, ambre avec un
+micro et une onde pour l'audio, côte à côte. La durée vient de Core (elle est
+la même après un rechargement de la page ou dans un second onglet). Cliquer
+l'indicateur (ou Entrée dessus) arrête **cet** enregistrement. Sans
+enregistrement, rien n'est affiché. Il n'y a pas de pause : Core ne sait pas
+suspendre une capture.
 
 - **Board Réunion** : la carte dit « Réunion · prévu » et « Agit en
   Assistant » : le comportement propre aux réunions n'existe pas encore, ce
@@ -1913,8 +1943,9 @@ vue, la liste reste ouverte et le dit (`workspace_manager_missing`).
 ### Sessions & Boards (bouton `WSP` du dock)
 
 Depuis l'orbital UI (Slice 08), `WSP` est dans « Plus d’outils » (les trois
-points, en haut à droite) avec `TRC`, `LAB`, `MCP`, `PFB` et `INS` ; restent
-visibles `CNV`, `AGT`, `ERR` et `SET` (`docs/control-center-shell.md` ›
+points, en haut à droite) avec `SET` (depuis la Slice 04 de la refonte
+roue/dossier), `TRC`, `LAB`, `MCP`, `PFB` et `INS` ; restent visibles `CNV`,
+`AGT` et `ERR` (`docs/control-center-shell.md` ›
 *Global launcher*). Le bouton **WSP** ouvre « Sessions & Boards », une vue plein écran pour vérifier
 où vit la mémoire de chaque Board et ce qu'elle contient. Tout y est lu sur le
 serveur ; « Actualiser » relit tout, Échap ferme.
@@ -2480,7 +2511,7 @@ ne prouve pas est à regarder une fois, sur un vrai écran, dans une instance is
 6. **Rechargement** : demander à Jarvis une modification de source de la scène et, pendant « Rechargement en cours », régler un curseur : l'inspecteur dit
    qu'il attend, réessaie tout seul, puis enregistre ; « Arrêter d'attendre » rend la main.
 7. **Direction artistique** : le chip montre le nom, la provenance et le contraste ; les 10 variables non livrées au cadre sont marquées « non appliqué ».
-8. **Petit écran** : fenêtre étroite (360 px) : pas de défilement horizontal, les onglets défilent, aucune cible trop petite, le lanceur (quatre outils et « Plus d’outils », une rangée dans les deux thèmes depuis l'orbital UI S08) ne recouvre pas le bouton Boards. Écran bas (600 px de haut) : l'aperçu démarre replié.
+8. **Petit écran** : fenêtre étroite (360 px) : pas de défilement horizontal, les onglets défilent, aucune cible trop petite, le lanceur (trois outils et « Plus d’outils » depuis la refonte roue/dossier S04, une rangée dans les deux thèmes depuis l'orbital UI S08) ne recouvre pas le bouton Boards. Écran bas (600 px de haut) : l'aperçu démarre replié.
    **Flèches sur un champ numérique** : cinq appuis sur ↑ dans « Inclinaison » ne laissent **qu'une** entrée d'historique (un seul `↶` les défait) ; maintenir ↑ ou rouler la molette de même ; Ctrl+Z avec un réglage en cours l'abandonne d'abord.
 9. **Mouvement réduit** (réglage système) : plus d'animation du sablier de chargement ni des transitions.
 

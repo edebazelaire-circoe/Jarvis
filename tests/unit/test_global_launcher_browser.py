@@ -54,7 +54,9 @@ OLD_DOCK = {
     "INS": ("#openStudioInspector", "(b=>b.getAttribute('aria-expanded')==='true'||(b.disabled&&!!b.title))(document.getElementById('openStudioInspector'))"),
     "AGT": ("#agentsButton", "document.getElementById('panel').classList.contains('open')&&document.getElementById('panelTitle').textContent.startsWith('Agents')"),
 }
-VISIBLE = {"CNV", "AGT", "ERR", "SET"}
+#: Réglages (`SET`) est replié dans « Plus d’outils » depuis la Slice 04 de la refonte roue/dossier : la
+#: catégorie Paramètres de la roue ouvre la même surface ; son raccourci `s` ne change pas.
+VISIBLE = {"CNV", "AGT", "ERR"}
 
 #: Un bouton est atteignable s'il a une boîte et si le point en son centre est à lui.
 HIT = r"""(sel=>{const b=document.querySelector(sel);if(!b)return {exists:false};const r=b.getBoundingClientRect();
@@ -177,7 +179,7 @@ def test_popover_keyboard_roving_escape(tmp_path):
         # Test Lab ouvert depuis le popover au clavier, fermé par Échap : le focus revient
         # sur « Plus d’outils », jamais sur son bouton replié et caché.
         ["eval", "focusMore2", "document.getElementById('dockMore').focus();1", 100],
-        ["key", "enter2", "Enter", 300], ["key", "down2", "ArrowDown", 150],
+        ["key", "enter2", "Enter", 300], ["key", "down2", "ArrowDown", 150], ["key", "down3", "ArrowDown", 150],
         ["eval", "f8", FOCUS, 50],
         ["key", "openLab", "Enter", 1500],
         ["eval", "lab", "!document.getElementById('testlab').hidden", 50],
@@ -190,11 +192,11 @@ def test_popover_keyboard_roving_escape(tmp_path):
         ["eval", "afterOutside", "!document.getElementById('dockMorePop').hidden", 50],
     ]}])[0]
     r = step["results"]
-    assert r["f1"] == "trace" and r["rove1"] == ["trace"], r
+    assert r["f1"] == "openSettings" and r["rove1"] == ["openSettings"], r
     assert r["expanded"] == "true" and r["z"] == "36"
-    assert r["f2"] == "openTestLab" and r["rove2"] == ["openTestLab"]
+    assert r["f2"] == "trace" and r["rove2"] == ["trace"]
     assert r["f3"] == "openStudioInspector" or r["f3"] == "openPrefabs", r["f3"]  # INS désactivé sans présentation
-    assert r["f4"] == "trace" and r["f5"] == r["f3"] and r["f6"] == "trace"
+    assert r["f4"] == "openSettings" and r["f5"] == r["f3"] and r["f6"] == "openSettings"
     assert r["afterEsc"] == {"open": False, "focus": "dockMore", "panel": True, "expanded": "false", "z": "32"}
     assert r["f7"] == r["f3"]
     assert r["afterTab"] is False
@@ -248,7 +250,7 @@ def test_board_control_visible_and_switches_board(tmp_path):
 
 @pytest.mark.parametrize("theme", THEMES)
 def test_mode_control_bottom_left_unchanged(tmp_path, theme):
-    """Le lanceur est une rangée de cinq en haut à droite, son popover tient dans
+    """Le lanceur est une rangée de quatre en haut à droite, son popover tient dans
     l'écran ; le bouton de mode reste en bas à gauche, hors du lanceur et du haut,
     et rien ne se chevauche — popover ouvert compris, aux quatre tailles."""
     plan = []
@@ -262,10 +264,10 @@ def test_mode_control_bottom_left_unchanged(tmp_path, theme):
     for (w, h), step in zip(VIEWPORTS, out):
         closed, opened = step["results"]["closed"], step["results"]["open"]
         gutter = 18 if w > 700 else 10
-        # Rangée : cinq boutons de 34 px, au bord, un seul rang ; noms accessibles = infobulles pour l'icône seule.
-        assert [b["id"] for b in closed["row"]] == ["openTimeline", "agentsButton", "errors", "openSettings", "dockMore"]
+        # Rangée : quatre boutons de 34 px, au bord, un seul rang ; noms accessibles = infobulles pour l'icône seule.
+        assert [b["id"] for b in closed["row"]] == ["openTimeline", "agentsButton", "errors", "dockMore"]
         assert all(b["box"] and round(b["box"]["w"]) == 34 and round(b["box"]["t"]) == gutter for b in closed["row"]), closed["row"]
-        assert round(closed["dock"]["r"]) == w - gutter and round(closed["dock"]["w"]) == 194, closed["dock"]
+        assert round(closed["dock"]["r"]) == w - gutter and round(closed["dock"]["w"]) == 154, closed["dock"]
         more = closed["row"][-1]
         assert more["name"] == more["title"] == "Plus d’outils"
         assert closed["pop"] is None and closed["z"] == "32" and closed["expanded"] == "false"
@@ -280,11 +282,12 @@ def test_mode_control_bottom_left_unchanged(tmp_path, theme):
             assert not _overlap(card, closed[other]), (other, card, closed[other])
         for chip in closed["centre"]:
             assert not _overlap(card, chip), (card, chip)
-        # Popover ouvert : six lignes nommées, sous la rangée, dans l'écran, au rang 36.
+        # Popover ouvert : sept lignes nommées (Réglages en tête), sous la rangée, dans l'écran, au rang 36.
         assert opened["expanded"] == "true" and opened["z"] == "36"
         pop = opened["pop"]
         assert pop and pop["t"] >= opened["dock"]["t"] + 34 and pop["r"] <= w and pop["l"] >= 0 and pop["b"] <= h, pop
-        assert [i["id"] for i in opened["items"]] == ["trace", "openTestLab", "openMcpInspector", "openWorkspace", "openPrefabs", "openStudioInspector"]
+        assert [i["id"] for i in opened["items"]] == ["openSettings", "trace", "openTestLab", "openMcpInspector", "openWorkspace",
+                                                      "openPrefabs", "openStudioInspector"]
         for item in opened["items"]:
             assert item["box"] and item["box"]["h"] >= 34 and item["name"], item
             assert item["text"].strip('"') == item["label"], item

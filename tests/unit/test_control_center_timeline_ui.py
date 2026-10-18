@@ -149,12 +149,12 @@ def test_the_cosmos_theme_knows_every_dock_tool_and_moves_the_pills():
         assert spec in work, spec
     assert "style.order" not in work
     # Une seule géométrie pour les deux thèmes, écrite avec les jetons de la coque. Depuis
-    # la Slice 08, la rangée tient quatre outils et « Plus d’outils » (les six autres sont
-    # dans son popover) : 5 × 34 px + 4 × 6 px = 194 px, une rangée à toutes les largeurs ;
+    # la Slice 04 de la refonte roue/dossier, la rangée tient trois outils et « Plus d’outils »
+    # (Réglages a rejoint les six autres dans son popover) : 4 × 34 px + 3 × 6 px = 154 px ;
     # la ligne d'état s'arrête 10 px avant le lanceur. Les pastilles ont quitté le
     # haut-droit pour le centre d'état du bas (Slice 06 de l'orbital UI).
     row = re.findall(r'<button (?:type="button" )?id="([^"]+)"|<button data-panel="([^"]+)"', dock[: dock.index('id="dockMorePop"')])
-    assert len(row) == 5, row
+    assert len(row) == 4, row
     tools_w = len(row) * 34 + (len(row) - 1) * 6
     assert f"--shell-launcher-w:{tools_w}px" in html and "--shell-control:34px" in html
     assert "--shell-launcher-w" not in html[html.index("@media(max-width:700px){:root"):][:200]

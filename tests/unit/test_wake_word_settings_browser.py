@@ -149,7 +149,8 @@ def got(step: dict, id: str):
 #: Ouvrir les Réglages, puis l'onglet du mot d'éveil, jusqu'à ce que la section soit chargée.
 OPEN = [
     wait("!!document.getElementById('openSettings')"),
-    click("#openSettings"),
+    # Réglages est replié dans « Plus d’outils » depuis la Slice 04 de la refonte roue/dossier.
+    click("#dockMore"), click("#openSettings"),
     wait("!!document.querySelector('#modalTabs [data-tab=wakeword]')"),
     click("#modalTabs [data-tab=wakeword]"),
     wait("!!document.getElementById('ww_save')"),
@@ -541,7 +542,8 @@ async def test_une_lecture_en_echec_se_dit_et_se_reessaie(served, monkeypatch):
     healer = asyncio.create_task(heal_later())
     out = await drive(served.url, [{"width": 1440, "height": 900, "actions": [
         wait("!!document.getElementById('openSettings')"),
-        click("#openSettings"),
+        # Réglages est replié dans « Plus d’outils » depuis la Slice 04 de la refonte roue/dossier.
+        click("#dockMore"), click("#openSettings"),
         wait("!!document.querySelector('#modalTabs [data-tab=wakeword]')"),
         click("#modalTabs [data-tab=wakeword]"),
         wait("!!document.querySelector('[data-ww-load-error]')"),
@@ -830,7 +832,8 @@ async def test_cliquer_l_onglet_pendant_l_ouverture_ne_fait_pas_clignoter_la_sec
     out = await drive(served.url, [{"width": 1440, "height": 900, "actions": [
         wait("!!document.getElementById('openSettings')"),
         eval_(slow_settings_stub()),
-        click("#openSettings"),
+        # Réglages est replié dans « Plus d’outils » depuis la Slice 04 de la refonte roue/dossier.
+        click("#dockMore"), click("#openSettings"),
         wait("!!document.querySelector('#modalTabs [data-tab=wakeword]')"),
         wait("typeof window.__gate==='function'"),
         click("#modalTabs [data-tab=wakeword]"),

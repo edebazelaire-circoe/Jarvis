@@ -61,6 +61,7 @@ BOXES = r"""(()=>{
     card:box(q('#boardsButton')),chatTab:box(q('#chatTab')),rail:box(q('#presentationRail')),
     railTab:box(q('#presentationRail .jvr-tab')),tray:box(q('#boardDropTray')),chatPanel:box(q('#chatPanel')),
     wheel:box(q('#toolWheel .tw-anchor')),scStatus:box(q('#sceneLayer>.sc-status')),toasts:box(q('#toasts .toast')),
+    dock:box(q('.dock')),liveBanner:box(q('#liveBanner')),
     overflowX:document.documentElement.scrollWidth>innerWidth,
     z:{pills:getComputedStyle(q('#bgPills')).zIndex,rec:getComputedStyle(q('#recIndicators')).zIndex},
     theme:document.documentElement.getAttribute('data-jarvis-theme')||''};
@@ -200,7 +201,7 @@ def test_recording_indicator_distinct_from_counters_and_stops(tmp_path):
     chip = r"""(()=>{const c=document.querySelector('#recIndicators .ri-chip');if(!c)return null;const r=c.getBoundingClientRect();
       const pills=document.getElementById('bgPills').getBoundingClientRect();
       return {label:c.getAttribute('aria-label'),text:c.textContent.replace(/\s+/g,' ').trim(),cls:c.className,state:c.dataset.riState,
-        bgpill:c.classList.contains('bgpill'),right:r.right,pillsLeft:pills.left,inCentre:!!c.closest('#statusCentre'),
+        bgpill:c.classList.contains('bgpill'),left:r.left,top:r.top,bottom:r.bottom,pillsTop:pills.top,inCentre:!!c.closest('#statusCentre'),
         desc:c.getAttribute('aria-describedby')?document.getElementById(c.getAttribute('aria-describedby')).textContent:null}})()"""
     step = _drive(tmp_path, [{"width": 1440, "height": 900, "seed": {"captures": [SCREEN_CAPTURE]}, "actions": [
         ["eval", "chip", chip, 1200],
@@ -211,10 +212,11 @@ def test_recording_indicator_distinct_from_counters_and_stops(tmp_path):
         ["eval", "pills", PILLS, 100],
     ]}])[0]
     first, second = step["results"]["chip"], step["results"]["chip2"]
-    assert first and first["inCentre"] and not first["bgpill"]
+    assert first and not first["inCentre"] and not first["bgpill"]
     assert first["state"] == "active" and "REC" in first["text"]
-    # À gauche des pastilles : un enregistrement ne se lit pas comme un compteur.
-    assert first["right"] <= first["pillsLeft"]
+    # Slice 04 de la refonte roue/dossier (docs/06 › E) : en haut à gauche, loin des pastilles du bas ; un
+    # enregistrement ne se lit pas comme un compteur.
+    assert round(first["left"]) == 18 and round(first["top"]) == 18 and first["bottom"] < first["pillsTop"] / 2
     # Le nom ne bouge pas avec le temps ; la durée est la description (et ce que l'œil lit).
     assert first["label"] == second["label"] and not any(ch.isdigit() for ch in first["label"])
     assert first["desc"].startswith("en cours depuis 1:0")
@@ -253,10 +255,17 @@ def test_no_overlap_with_board_card_rail_chat_tab_tray_at_1440_1280_900_600(meas
     step = measured[(theme, size)]
     seen = step["results"]["boxes"]
     assert seen["theme"] == ("cosmos" if theme == "cosmos" else seen["theme"])
-    items = seen["items"]
-    ids = [i["id"] for i in items]
-    # Tout le centre d'état est là : l'enregistrement, quatre pastilles ; au rang 40. Plus d'œil (D06, Slice 02).
+    every = seen["items"]
+    ids = [i["id"] for i in every]
+    # L'enregistrement (haut-gauche depuis la Slice 04 de la refonte), quatre pastilles ; au rang 40. Plus d'œil (D06).
     assert ids == ["jcap_s", "failed", "attention", "done", "said"], ids
+    rec = every[0]["box"]
+    gutter = 18 if seen["vw"] > 700 else 10
+    assert round(rec["l"]) == gutter and round(rec["t"]) == gutter, rec
+    for name in ("card", "chatTab", "rail", "railTab", "wheel", "dock", "tray", "scStatus"):
+        assert not _overlap(rec, seen[name]), ("enregistrement", name, rec, seen[name])
+    # Le centre d'état du bas ne tient plus que les pastilles.
+    items = every[1:]
     assert seen["eyeHost"] is False
     assert seen["z"] == {"pills": "40", "rec": "40"}
     others = {name: seen[name] for name in ("card", "chatTab", "rail", "railTab", "wheel")}
@@ -301,15 +310,16 @@ def test_status_centre_clears_open_chat_panel(tmp_path, size):
 
 
 def test_no_voicehint_and_f9_still_wakes(tmp_path):
-    """Ni capsule (orbital-ui S06) ni ligne d'état (Slice 02, D05) : la touche reste dite, non affichée."""
-    state = r"""(()=>{const s=document.getElementById('wakeHint');const r=s.getBoundingClientRect();
-      return {hint:!!document.getElementById('voiceHint')||!!document.querySelector('.voicehint'),
-        stateLine:!!document.querySelector('.topbar,.state'),text:s.textContent,visible:r.width>1&&r.height>1}})()"""
+    """Ni capsule (orbital-ui S06) ni ligne d'état (Slice 02, D05) ; depuis la Slice 04 de la refonte, la touche
+    se lit dans le sous-menu JARVIS de la roue (`test_jarvis_wheel_browser.py`), plus dans un `#wakeHint` caché."""
+    state = r"""(()=>({hint:!!document.getElementById('voiceHint')||!!document.querySelector('.voicehint'),
+        stateLine:!!document.querySelector('.topbar,.state'),wakeHint:!!document.getElementById('wakeHint'),
+        text:window.JarvisRuntimeWheel.wakeHint()}))()"""
     steps = _drive(tmp_path, [
         {"width": 1280, "height": 720, "actions": [["eval", "state", state, 100]]},
         {"width": 1280, "height": 720, "seed": {"wakeKey": "f10"}, "actions": [["eval", "state", state, 100]]},
     ])
-    assert steps[0]["results"]["state"] == {"hint": False, "stateLine": False, "text": "F9 · DÉMARRER", "visible": False}
+    assert steps[0]["results"]["state"] == {"hint": False, "stateLine": False, "wakeHint": False, "text": "F9 · DÉMARRER"}
     # Le texte suit la touche réglée, à chaque statut.
     assert steps[1]["results"]["state"]["text"] == "F10 · DÉMARRER"
     # La touche elle-même est le raccourci global de Voice : la page n'y est pour rien, et rien n'a bougé.

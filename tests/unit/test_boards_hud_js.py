@@ -1246,7 +1246,7 @@ async def test_the_served_page_has_no_retired_shell_controls(tmp_path):
     Ni barre du haut, ni sélecteur de Board en haut à gauche, ni ligne d'état
     permanente `VOICE … · CLAUDE …`, ni contrôle de mode d'interaction (ni son
     module, ni son sélecteur), ni œil permanent des objets masqués. La touche
-    d'éveil reste lisible (non affichée) jusqu'au sous-menu JARVIS (Slice 04)."""
+    d'éveil se lit dans le sous-menu JARVIS de la roue depuis la Slice 04 (plus de `#wakeHint` caché)."""
 
     control = ControlCenter(runtime_root=tmp_path, project_root=tmp_path)
     html = (await control.index(None)).text
@@ -1256,8 +1256,8 @@ async def test_the_served_page_has_no_retired_shell_controls(tmp_path):
                  "installJarvisInteractionMode", "/*__CONTROL_CENTER_INTERACTION_MODE_JS__*/"):
         assert gone not in body, gone
     assert not (RUNTIME / "control_center_interaction_mode.js").exists()
-    assert '<p id="wakeHint" class="sr-only">' in html
-    assert "document.getElementById('wakeHint')" in html
+    assert 'id="wakeHint"' not in html and "setWakeHint" not in html
+    assert "JarvisRuntimeWheel.gate(s)" in html
     # Une seule entrée quotidienne de Board : la carte. Aucun autre hôte ne porte le bouton.
     assert html.count('id="boardsHud"') == 1
 
