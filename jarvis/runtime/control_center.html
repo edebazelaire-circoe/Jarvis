@@ -40,7 +40,7 @@ html,body{margin:0;height:100%;background:var(--bg);color:var(--text);font:15px 
    @shell-layer 85: .cdialog-back
    @shell-layer 9000: #jvStudioExplorer
    @shell-layer 9100: html.jvr-studio #presentationRail
-   @shell-layer 9150: html.jvx-run #boardsHud, html.jvx-run #boardsPanel
+   @shell-layer 9150: html.jvx-run #boardsHud, html.jvx-run #boardsPanel, html.jvx-run #recIndicators
    @shell-layer 9300: .jvr-menu
    @shell-layer 9400: .jvr-dialog-back
    @shell-layer 9500: #jvFullscreenPrompt
@@ -92,9 +92,10 @@ html,body{margin:0;height:100%;background:var(--bg);color:var(--text);font:15px 
    s'ouvre dans la zone de l'aperçu de capture (38) et de la roue ouverte (37), et c'est le
    dernier geste de l'utilisateur ; sous le centre d'état (40) et les infusions. */
 #boardsPanel{position:absolute;z-index:39;left:var(--shell-gutter);bottom:96px}
-/* Lanceur global (zone haut-droit, orbital-ui Slice 08) : une rangée de cinq boutons
-   de 34 px dans les deux thèmes — Conversation, Agents, Errors, Réglages, « Plus
-   d’outils » ; le circuit imprimé y garde ses étiquettes (ERR, SET…), Cosmos ses
+/* Lanceur global (zone haut-droit, orbital-ui Slice 08) : une rangée de quatre boutons
+   de 34 px dans les deux thèmes — Conversation, Agents, Errors, « Plus d’outils » (Réglages
+   y est replié depuis la Slice 04 de jarvis-board-ui-wheel-dossier-refactor) ; le
+   circuit imprimé y garde ses étiquettes (CNV, ERR…), Cosmos ses
    icônes. Le popover « Plus d’outils » s'ouvre sous la rangée, aligné à droite ;
    ouvert, tout le lanceur passe au rang des sélecteurs (36), au-dessus des
    panneaux latéraux (33) et du bandeau (35) qu'il recouvre un instant. */
@@ -1973,8 +1974,11 @@ button.wsp-ename:hover{color:var(--accent)}
        Slice 04 de jarvis-board-ui-wheel-dossier-refactor) : rempli par
        `control_center_capture_wheel.js` depuis le contrôleur de capture ; ce qui enregistre
        reste visible et s'arrête d'un geste quand la roue est repliée ; caché tant que Core
-       ne dit aucune capture ouverte. Rang 40 au registre. -->
-  <div id="recIndicators" data-shell-control hidden></div>
+       ne dit aucune capture ouverte. Rang 40 au registre. `data-keep-live="run"` (QA S04, B1) : pendant
+       une lecture montrée dans Variantes (`html.jvx-run`), les puces restent vivantes et dessinées
+       au-dessus du Studio (rang 9150, feuille de l'explorateur) : un enregistrement se voit et
+       s'arrête sans fermer ni mettre en pause la lecture. -->
+  <div id="recIndicators" data-shell-control data-keep-live="run" hidden></div>
   <!-- Centre d'état du bas (orbital-ui Slice 06, D8 / D9 ; docs/control-center-shell.md
        › Status centre). Une mise en page sans rang ; ses commandes sont au rang 40 :
        - `#bgPills` : les pastilles d'arrière-plan (`renderBackgroundPills`), mêmes ids,
@@ -2619,7 +2623,8 @@ const STATUS={
 /*__CONTROL_CENTER_TOOL_WHEEL_JS__*/
 /* Vues de capture (orbital-ui Slice 04) : `control_center_capture_wheel.js`.
    APRÈS le contrôleur et la roue, qu'il lit au chargement : catégorie Capture
-   (Capture d'écran, Vidéo, Audio dans son arbre), listes des cibles, indicateurs `#recIndicators`. */
+   (Capture d'écran, Enregistrer l'écran, Enregistrer l'audio dans son arbre), listes des cibles,
+   indicateurs transitoires `#recIndicators` (haut-gauche). */
 /*__CONTROL_CENTER_CAPTURE_WHEEL_JS__*/
 /* Catégories JARVIS et Paramètres de la roue (jarvis-board-ui-wheel-dossier-refactor,
    Slice 04) : `control_center_jarvis_wheel.js`. APRÈS la roue, qu'il lit au chargement ;

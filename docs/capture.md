@@ -936,6 +936,20 @@ top-right, the GPT-Live banner and the side panels start at
 (measured with three recordings from 1440×900 down to 375×667,
 `test_indicators_cover_no_neighbouring_control`). The bottom status centre
 holds the background pills only, so a recording is never read as a counter.
+**During a presentation run shown in Variantes** (`html.jvx-run`; QA S04 B1)
+the Studio explorer covers the page at rank 9000 and makes it inert, except
+what carries `data-keep-live`: the host carries `data-keep-live="run"` and
+rises to rank 9150 (`html.jvx-run #recIndicators`, explorer sheet), like the
+Board card. The chips (and the refusal note, inside the host) stay visible,
+reachable and stoppable over Variantes, windowed (Studio left of the rail) as
+at full width (rail hidden); stopping a recording from its chip neither closes
+Variantes nor pauses the run. Measured at 1280×720, 1920×1032 and 600×800:
+no Studio control lies under the chips' boxes
+(`test_variants_run_browser.py::test_during_a_run_recording_chips_stay_visible_reachable_and_stop_without_touching_the_run`).
+In the stage's **native fullscreen** (`F`) only the fullscreen element is
+painted: the chips are not shown there, which is expected (leaving fullscreen
+shows them again, the recording never stopped; the browser's own fullscreen
+UI is the way out).
 
 Cues never rely on colour alone (checked ring + corner dot, `!`, `?` + dashes,
 filled stop square, sweep bars, counters). Under `prefers-reduced-motion` the

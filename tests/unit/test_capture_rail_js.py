@@ -366,7 +366,8 @@ def test_les_modules_sont_servis_dans_l_ordre_et_l_hote_des_indicateurs_est_decl
     order = [html.index(m) for m in (CAPTURE_RAIL_SCRIPT_MARKER, TOOL_WHEEL_SCRIPT_MARKER,
                                      CAPTURE_WHEEL_SCRIPT_MARKER, INPUT_ARBITRATION_SCRIPT_MARKER)]
     assert order == sorted(order), "contrôleur, roue, vues de capture, puis Sélection"
-    assert re.search(r'<div id="recIndicators" data-shell-control hidden></div>', html)
+    # QA S04 B1 : vivant pendant une lecture Variantes (`data-keep-live="run"`, rang 9150 sous `jvx-run`).
+    assert re.search(r'<div id="recIndicators" data-shell-control data-keep-live="run" hidden></div>', html)
     # L'ancien rail de gauche n'est plus déclaré : ses commandes sont dans la roue.
     assert 'id="captureRail"' not in html
     assert '<div id="toolWheel" data-shell-control hidden></div>' in html

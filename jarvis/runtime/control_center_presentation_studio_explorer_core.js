@@ -456,6 +456,10 @@
    column; its panel opens above it, right-aligned (\`place\` in control_center_boards.js). */
 html.jvx-run #boardsHud{z-index:9150}
 html.jvx-run #boardsPanel{z-index:9150}
+/* QA S04 B1 (jarvis-board-ui-wheel-dossier-refactor) : les indicateurs d'enregistrement du haut-gauche
+   (\`#recIndicators\`, \`data-keep-live="run"\`) restent visibles et cliquables au-dessus de Variantes pendant
+   une lecture : un enregistrement d'écran ou audio se voit et s'arrête sans fermer ni mettre en pause la lecture. */
+html.jvx-run #recIndicators{z-index:9150}
 html.jvx-run.jvr-studio #boardsHud{left:auto;right:12px;align-items:flex-end}
 html.jvx-run.jvr-studio #boardsHud .bd-btn{min-width:0;max-width:166px;gap:8px;padding:8px 9px}
 html.jvx-run.jvr-studio #boardsHud .bd-eyebrow,html.jvx-run.jvr-studio #boardsHud .bd-sub,html.jvx-run.jvr-studio #boardsHud .bd-pres{letter-spacing:.04em}

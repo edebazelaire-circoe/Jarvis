@@ -91,3 +91,16 @@ outside the acceptance of the Slice that found it.
      recordings → primary click opens the stop list, covered by
      `test_capture_wheel_browser.py::test_two_open_screen_recordings_primary_click_opens_the_stop_list`. Item 4 (stop
      row « Arrêter — écran princip… » cut, full text in the name and tooltip) and item 5 stay for Slice 08.
+
+## From Slice 04 QA (JARVIS, Capture, top-left recording HUD) — targets Slice 08
+
+- **P1. Under about 600 px the top-left refusal note covers the launcher** (375×667: CNV, AGT, ERR and « Plus d’outils »;
+  500×800: CNV and AGT). `test_capture_wheel_browser.py::test_indicators_cover_no_neighbouring_control` calls
+  `dismiss()` first, so it never sees the note. Lead: bound `.ri-note` by `--shell-launcher-w` like the host
+  (`max-width: calc(100vw - 2 * gutter - --shell-launcher-w - 12px)`), and measure the note in that test.
+- **P3. `test_capture_wheel_browser.py::test_audio_toggle_start_stop_matches_status` is unstable under load**: the
+  fake source is released at 4 s while « starting » is awaited within 3 s; widen the window or gate on the click.
+- **P4. During a lost status the bottom pills keep their counts** (pre-existing, before Slice 04): they should say
+  the counts are unconfirmed, as the JARVIS submenu now does.
+- **No Veille / Réveil control in the JARVIS submenu**: there is no Voice lifecycle API (sleep / wake) in Core or the
+  Control Center. Candidate for a separate Issue: a canonical Voice lifecycle route first, then a control row.

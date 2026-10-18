@@ -283,3 +283,64 @@ async def test_during_a_run_the_board_panel_opens_no_hidden_layer(run, tmp_path)
     assert reads["panelOnTop"] is True
     assert shot.stat().st_size > 1000
     _no_noise(result)
+
+
+#: QA Slice 04 (jarvis-board-ui-wheel-dossier-refactor), B1 : les indicateurs d'enregistrement du haut-gauche pendant
+#: une lecture. Pour chaque puce : visible, hors `inert`, atteinte par `elementFromPoint` ; puis, puces cachées un
+#: instant, ce que le Studio a d'interactif sous leur boîte (rien ne doit l'être : elles ne masquent aucune commande).
+REC_GEOMETRY = {"value": "rec", "expr": """(()=>{
+  const rect=el=>{const r=el.getBoundingClientRect();return {l:r.left,t:r.top,r:r.right,b:r.bottom}};
+  const host=document.getElementById('recIndicators');
+  const chips=[...host.querySelectorAll('.ri-chip')].map(c=>{const b=rect(c);
+    const hit=document.elementFromPoint((b.l+b.r)/2,(b.t+b.b)/2);let inert=false;for(let n=c;n;n=n.parentElement)if(n.inert)inert=true;
+    return {channel:c.dataset.riChannel,state:c.dataset.riState,box:b,reachable:!!hit&&c.contains(hit),inert,visible:c.checkVisibility()}});
+  const boxes=chips.map(c=>c.box);host.style.visibility='hidden';
+  const under=new Set();
+  for(const b of boxes)for(let x=b.l+2;x<b.r;x+=8)for(let y=b.t+2;y<b.b;y+=8){
+    for(const el of document.elementsFromPoint(x,y)){
+      const live=el.closest('#jvStudioExplorer button,#jvStudioExplorer [role=slider],#jvStudioExplorer input,#jvStudioExplorer select,#jvStudioExplorer a[href],#jvStudioExplorer [tabindex]:not([tabindex="-1"])');
+      if(live)under.add((live.getAttribute('aria-label')||live.textContent||live.className||live.tagName).trim().slice(0,40));
+    }}
+  host.style.visibility='';
+  return {run:document.documentElement.classList.contains('jvx-run'),z:getComputedStyle(host).zIndex,chips,under:[...under],
+    keepLive:host.getAttribute('data-keep-live')};
+})()"""}
+
+
+@pytest.mark.parametrize("viewport", ["1280x720", "1920x1032", "600x800"])
+async def test_during_a_run_recording_chips_stay_visible_reachable_and_stop_without_touching_the_run(run, viewport, tmp_path):
+    """QA Slice 04, B1 : enregistrer l'écran pendant qu'on présente est le cas le plus probable. Pendant une lecture
+    (`jvx-run`), les puces REC et audio restent au-dessus de Variantes (9150, `data-keep-live="run"`), atteintes par
+    un vrai clic, sans couvrir aucune commande du Studio ; arrêter l'écran depuis sa puce l'arrête chez Core, ne ferme
+    pas Variantes et ne met pas la lecture en pause. Plein écran natif (`F`) : seul l'élément en plein écran se voit."""
+
+    core, url = run
+    for channel in ("screen", "audio"):
+        status, body, *_ = await core.stack.call("POST", "/api/captures/start", json={"channel": channel})
+        assert status in (200, 201, 202), (status, body)
+    two = "document.querySelectorAll('#recIndicators .ri-chip[data-ri-state=active]').length===2"
+    shot = tmp_path / f"run-rec-{viewport}.png"
+    result = await drive(url, [
+        {"wait": 600}, READY, _until(two, 8000), {"wait": 600}, REC_GEOMETRY, {"shot": str(shot)},
+        {"click": "#recIndicators .ri-chip[data-ri-channel=screen]"},
+        _until("!document.querySelector('#recIndicators .ri-chip[data-ri-channel=screen]')", 9000),
+        {"wait": 300},
+        {"value": "after", "expr": f"[{EXPLORER}.state().open,{PHASE},document.documentElement.classList.contains('jvx-run')]"},
+    ], viewport=viewport)
+    reads = result["reads"]
+    assert "failed" not in reads, reads
+    assert all(v for k, v in reads.items() if k.startswith("until:")), reads
+    rec = reads["rec"]
+    assert rec["run"] is True and rec["z"] == "9150" and rec["keepLive"] == "run", rec
+    assert {c["channel"] for c in rec["chips"]} == {"screen", "audio"}
+    for chip in rec["chips"]:
+        assert chip["visible"] and chip["reachable"] and not chip["inert"], chip
+    assert rec["under"] == [], ("une puce couvre une commande du Studio", rec["under"])
+    assert reads["after"] == [True, "playing", True], "l'arrêt depuis la puce ne ferme ni ne met en pause la lecture"
+    channels = [row.channel.value for row in core.stack.core.captures.status().captures]
+    assert channels == ["audio"], channels
+    state = await core.client.presentation_studio_playback_state()
+    assert state["state"]["phase"] == "playing"
+    for row in core.stack.core.captures.status().captures:
+        await core.stack.core.captures.stop(row.capture_id)
+    _no_noise(result)

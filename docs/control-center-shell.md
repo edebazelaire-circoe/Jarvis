@@ -231,6 +231,7 @@ The rule is written exactly as in the sheet, `${…}` interpolations included.
 | 9100 | `html.jvr-studio #presentationRail` | `control_center_presentation_rail.js` | `html.jvr-studio #${DOM.hostId}` | rail docked as the right column beside the Studio |
 | 9150 | `html.jvx-run #boardsHud` | `control_center_presentation_studio_explorer_core.js` | `html.jvx-run #boardsHud` | Board card during a run shown in Variantes (Voice presence stays visible) |
 | 9150 | `html.jvx-run #boardsPanel` | `control_center_presentation_studio_explorer_core.js` | `html.jvx-run #boardsPanel` | its panel during a run, above Variantes like the card |
+| 9150 | `html.jvx-run #recIndicators` | `control_center_presentation_studio_explorer_core.js` | `html.jvx-run #recIndicators` | recording indicators during a run (`data-keep-live="run"`, wheel/dossier refactor Slice 04, QA B1): a screen or audio recording stays visible and stoppable over Variantes, top-left, over no Studio control; not shown in the stage's native fullscreen (`F`), by design |
 | 9300 | `.jvr-menu` | `control_center_presentation_rail.js` | `.jvr-menu` | rail menu |
 | 9400 | `.jvr-dialog-back` | `control_center_presentation_rail.js` | `.jvr-dialog-back` | rail dialog |
 | 9500 | `#jvFullscreenPrompt` | `control_center_fullscreen.js` | `#${PROMPT_ID}` | fullscreen prompt |
@@ -299,7 +300,7 @@ Checked on the registry rows by `test_relative_order_of_the_old_registry_is_kept
 - `.ctxmenu` (80) < `#barehandsCards` (82) < `.cdialog-back` (85);
 - full-screen launcher views (55) are above every control and below
   `.overlay` < `.toasts` < `.ctxmenu` < `.cdialog-back`;
-- Variantes 9000 < rail beside it 9100 < Board card and panel during a run 9150 <
+- Variantes 9000 < rail beside it 9100 < Board card, its panel and the recording indicators during a run 9150 <
   rail menu 9300 < rail dialog 9400;
 - `#jarvisHands` is the top of the page.
 

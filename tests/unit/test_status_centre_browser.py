@@ -12,14 +12,14 @@ fichier épingle :
   popover, dont l'acquittement efface la catégorie ;
 - chaque pastille porte une icône SVG, un compte et un nom accessible : jamais
   la couleur seule, jamais un émoji ;
-- un enregistrement se lit à gauche des pastilles, distinct d'un compteur, et
-  s'arrête d'un geste ;
+- un enregistrement se lit en haut à gauche (Slice 04 de la refonte roue/dossier), loin
+  des pastilles, distinct d'un compteur, et s'arrête d'un geste ;
 - aucune commande du centre d'état ne recouvre la carte Board (bas-gauche
   depuis la Slice 02 de jarvis-board-ui-wheel-dossier-refactor), le rail,
   l'onglet Chat ou le plateau de dépôt, dans les deux thèmes, à 1440×900,
   1280×720, 900×600 et 600×800 ; un panneau Chat ouvert ne le couvre pas ;
-- plus de capsule « F9 · DÉMARRER » ni de ligne d'état : la touche reste dite,
-  non affichée, par `#wakeHint`, et reste la touche de Voice ;
+- plus de capsule « F9 · DÉMARRER » ni de ligne d'état : la touche se lit dans le
+  sous-menu JARVIS de la roue (Slice 04), et reste la touche de Voice ;
 - l'œil permanent est **absent** du centre d'état (D06) ; sa mécanique est
   gardée pour Sélection (Slice 06) : avec un hôte `#hiddenEye` rétabli par le
   test (ce que la Slice 06 fera), `aria-pressed`, fantômes sans écriture, liste
