@@ -795,8 +795,10 @@ Every switch requests the target's (`source="board_switch"`). `BoardService`
 does not listen to `InteractionModeService` and writes no mode anywhere.
 
 **No other writer (Slice 01b).** `POST /v1/interaction-mode` (any source),
-`POST /api/interaction-mode`, `settings_set("interaction_mode")` and the HUD all
-refuse with `interaction_mode_derived` and change nothing; the Control Center's
+`POST /api/interaction-mode`, `settings_set("interaction_mode")` (and since
+Slice 08 `settings_get` / `settings_describe` for it) all refuse with
+`interaction_mode_derived` and change nothing; the mode HUD is deleted (Slice 02:
+no screen chooses a mode); the Control Center's
 global replay is deleted. The only other in-process writer is a Presentation
 Studio run, transient and restored to the Board type's mode
 ([interaction-mode.md](interaction-mode.md#persistence-owner--none-the-mode-is-derived-from-the-board-type)).
@@ -1585,7 +1587,7 @@ arrow keys / Home / End move between Boards, outside click closes):
 evolved this panel instead of adding a second selector: kind, last opening,
 archived filter, kind on create (on edit until Slice 01a of the wheel/dossier refactor), « Inspecter ». Console events added:
 `boards.filter_changed`, `boards.update_requested|_done|_failed` (the former
-`rename_*`: an edit may change the title, the kind or both),
+`rename_*`: an edit changes the title only since Slice 01a, the type is fixed at creation),
 `boards.inspect_requested`, `boards.inspect_failed`. Everyday switching stays
 here; memory, Sessions and artifacts stay in the deep manager. The move to
 the bottom-left card (wheel/dossier refactor Slice 02) was exactly that: a

@@ -459,7 +459,7 @@ unconditionally", same epoch means the monotonic guard.
 
 Interaction mode deliberately does **not** enter
 `VoiceComposition.configuration_id`. That hash decides whether the Voice process
-is restarted, and a restart on a `SIMPLE` ⇄ `PRESENTATION` toggle would cut the
+is restarted, and a restart on a `SIMPLE` ⇄ `PRESENTATION` change (a Board switch) would cut the
 audio exactly during a presentation. The mode changes live, by event, and never
 through `_apply_voice` or `POST /api/settings` — it is its own axis with its own
 key and its own apply path.
@@ -518,8 +518,9 @@ is the opposite of persisting a preparation.
 
 ```text
 Control Center                     Core                              Voice
-  read-only display                  BoardService ─► InteractionModeService   InteractionModeObserver
-  (effective + board_mode)           (Board type's mode; Studio run: transient)  (last seen mode, monotonic)
+  read-only relay in /api/status     BoardService ─► InteractionModeService   InteractionModeObserver
+  (effective + board_mode; no mode   (Board type's mode; Studio run: transient)  (last seen mode, monotonic)
+   control on screen)
         │  GET /api/status            │  GET /v1/interaction-mode         ▲
         ├────────────────────────────►│ ──► interaction.mode.changed ─────┘  (via /v1/events)
         │  POST /api/interaction-mode │  POST /v1/interaction-mode
@@ -2815,7 +2816,7 @@ display MCP ◄─────────────────────�
   title starts after the category's measured width (no overprint); windows carry
   the page's header (upper-case category · execution label), item count, pin mark,
   title, summary lines and item rows (`host label ref`), clipped to their box; theme colours read from the scene
-  layer (`--sc-*`, `--tone`, `--sc-radius`). Not drawn: dock, topbar, panels,
+  layer (`--sc-*`, `--tone`, `--sc-radius`). Not drawn: dock, launcher, panels,
   timeline, face, voice text, hover labels of points. Scaled with the viewport's
   aspect ratio to at most 1280×720 (never enlarged), on a detached `<canvas>`
   encoded **synchronously** (`JarvisSceneCapture.encodePng`: `toDataURL('image/png')`
@@ -3789,9 +3790,9 @@ wrap upwards, two rows at most in practice, never blocking): loading; "Scène
 figée · <raison>" plus a muted "N s · réessai N s" that is never truncated (a 1 s
 ticker runs only while degraded); "Scène pleine — archiver des travaux terminés"
 with "n/512", a button that opens the bulk archive confirmation (Slice 08); (the "N objets masqués" button
-of Slice 08 moved to the eye `#hiddenEye` of the bottom status centre in the orbital UI Slice 06, then into the wheel's Sélection in the wheel/dossier refactor Slice 06,
-whose permanent host the wheel/dossier refactor Slice 02 removed (D06; Sélection re-exposes it in Slice 06),
-see control-center-shell.md › Status centre); "N signaux d'échec sous des fenêtres"
+of Slice 08 moved to the eye `#hiddenEye` of the bottom status centre in the orbital UI Slice 06; the
+wheel/dossier refactor removed that permanent eye (Slice 02, D06) and the hidden count now lives in the
+wheel, Sélection › Masqués (Slice 06), see control-center-shell.md › Selection actions); "N signaux d'échec sous des fenêtres"
 and "N signaux à vérifier sous des fenêtres"; "N objets hors champ". The visible chips
 are not a live region. A separate visually hidden `role=status` region announces
 state changes only ("Scène figée · Core injoignable. Nouvel essai automatique.",

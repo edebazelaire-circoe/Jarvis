@@ -249,9 +249,9 @@ def test_board_control_visible_and_switches_board(tmp_path):
 
 
 @pytest.mark.parametrize("theme", THEMES)
-def test_mode_control_bottom_left_unchanged(tmp_path, theme):
+def test_board_card_bottom_left_unchanged(tmp_path, theme):
     """Le lanceur est une rangée de quatre en haut à droite, son popover tient dans
-    l'écran ; le bouton de mode reste en bas à gauche, hors du lanceur et du haut,
+    l’écran ; la carte Board reste en bas à gauche, hors du lanceur et du haut,
     et rien ne se chevauche — popover ouvert compris, aux quatre tailles."""
     plan = []
     for (w, h) in VIEWPORTS:

@@ -45,7 +45,7 @@ is a **skin** only: colours, borders, radii, blur, fonts, icons. The Cosmos
 no `position`, `top`, `right`, `bottom`, `left`, `inset`, `z-index`,
 `transform`, `width`, `max-width`, `flex-direction` or `flex-wrap` on a shell
 surface (`test_cosmos_overrides_no_shell_position_or_rank`). The circuit-board
-skin keeps its text labels in the launcher (`ERR`, `SET`, …), at the shared
+skin keeps its text labels in the launcher (`CNV`, `AGT`, `ERR`, `⋯`; `SET` folded into « Plus d’outils » since the wheel/dossier refactor Slice 04), at the shared
 34 px size; Cosmos swaps them for icons. The launcher's order is the page's, the
 same in both themes (since Slice 08 the Cosmos skin no longer reorders it). The top state line (`.topbar`, its
 hidden `JARVIS` brand and the `.state` badge) no longer exists (Slice 02 of the
@@ -153,7 +153,7 @@ only in the `@media` blocks listed here. `JarvisShell.TOKENS` and
 | `--shell-status-h` | `44px` | | height of the bottom status centre (Slice 06); the drop tray and the lifted Board card sit above it |
 | `--shell-control` | `34px` | | launcher button size |
 | `--shell-launcher-w` | `154px` | | launcher width: 4 buttons × 34 + 3 gaps × 6 (Slice 08, then wheel/dossier refactor Slice 04: three tools and « Plus d’outils »), one row at every width; also bounds the top-left recording indicators |
-| `--shell-panel-top` | `64px` | `88px` at 700 | top of side panels and of the GPT-Live banner (below the launcher; at 700 px and below, below the state line on two rows) |
+| `--shell-panel-top` | `64px` | `88px` at 700 | top of side panels and of the GPT-Live banner (below the launcher; at 700 px and below, 88 px: the launcher row plus the narrow gutter) |
 | `--shell-panel-w` | `500px` | | side panel width (capped by the window) |
 | `--shell-panel-bottom` | `68px` | | bottom of side panels: they stop above the chat tab row (18 + 40 + 10), so the tab stays whole and clickable |
 | `--shell-rail-w` | `300px` | `72px` at `max-width:1099px`, `0px` at 700 | workspace rail width (Slice 07); `0px` = the rail is a tab |
@@ -293,8 +293,8 @@ Checked on the registry rows by `test_relative_order_of_the_old_registry_is_kept
   Board chooser `#boardsPanel` is at 39 since it opens bottom-left, above the
   screenshot preview (38) it may cover; it is never open together with the
   wheel (37): [Exclusive surfaces](#exclusive-surfaces-wheel-and-board-panel);
-- the open wheel (37) is above the choosers and below the status centre
-  (40: capture indicators, pills), toasts and context menu; closed, its
+- the open wheel (37) is above the choosers and below rank 40 (the top-left
+  capture indicators `#recIndicators` and the status-centre pills), toasts and context menu; closed, its
   anchor is at the left-edge rank (30);
 - the screenshot preview (38) is above the open wheel and below the status
   centre (40), toasts and the lightbox (`.overlay`, 60);
@@ -312,7 +312,7 @@ theme's first commit (`2868528e`, "add Omega visual theme") and to slices
 that kept "one above the Cosmos dock" (`98f28604`, `4b99853b`); none records
 a stacking conflict. With the geometry shared, the surfaces they ordered no
 longer overlap (panel and banner start at `--shell-panel-top`, below the
-launcher row; the Board chooser opens below the pills at every width; every
+launcher row; the Board chooser opens above the bottom-left Board card at every width; every
 side panel stops at `--shell-panel-bottom`, above the chat tab, where Cosmos
 used to draw the tab over the panel's last row), so the base ranks apply to
 both themes.

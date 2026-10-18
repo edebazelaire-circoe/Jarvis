@@ -79,8 +79,8 @@ invented.
 - `is_activatable(mode)` / `activatable_interaction_modes()` — `meeting` is
   excluded.
 - `ensure_activatable(mode)` — the **explicit request** path. Refuses with the
-  stable code `interaction_mode_not_implemented`. A user who clicks `REUNION`
-  reads why nothing happened instead of silently getting another mode.
+  stable code `interaction_mode_not_implemented` (no screen asks for a mode any
+  more; the Board card says « Réunion · prévu » from the type).
 - `behaving_interaction_mode(value)` — the **behaviour** reading. Total and
   silent: a Réunion Board designates `meeting` — so an interface still shows
   REUNION as the Board type's mode — but that produces assistant behaviour
@@ -251,7 +251,7 @@ effective value, one source of the mode, and deliberately no copy anywhere.
 | --- | --- | --- |
 | Core | the **effective live mode** and its **revision** | `jarvis/core/interaction_mode.py` |
 | Core, per Board | nothing stored: the active **Board type** designates the mode (schema v9) | `jarvis/core/board_service.py`, `board_kind` of `work_boards.data` |
-| Control Center | nothing: a **read-only display** of Core's value and of the Board type's mode | `jarvis/runtime/control_center.py`, `jarvis/runtime/interaction_mode_view.py` |
+| Control Center | nothing: a **read-only relay** of Core's value and of the Board type's mode in `/api/status` (no mode control on screen; the Board card shows the type) | `jarvis/runtime/control_center.py`, `jarvis/runtime/interaction_mode_view.py` |
 | Voice | a read-only **observation** of Core's value | `jarvis/runtime/interaction_mode_observer.py` |
 
 Conformance suites: `tests/unit/test_interaction_mode_control_plane.py` and
@@ -396,9 +396,11 @@ is by `/v1/events`, payload `{mode, label, revision, epoch, source, changed_at}`
 
 Both the effective value and the Board type's mode appear in `/api/status`, and
 they are named apart (`mode` vs `board_mode`). They differ on a Réunion Board —
-`meeting`, displayable and never effective — and during a Studio run;
-publishing only one of them would either erase REUNION from the interface
-(decision 02) or make it look as though it behaves (decision 14). `board_mode`
+`meeting`, designated and never effective — and during a Studio run;
+publishing only one of them would either lose REUNION from the status (decision
+02) or make it look as though it behaves (decision 14). No page reads
+`board_mode` since the mode HUD left (Slice 02): it stays a diagnostic field of
+the status, read by tests and operators. `board_mode`
 is `null` when the active Board cannot be read (`interaction.mode.board_unknown`,
 throttled) or the Control Center knows no Core. When Core is unreachable, the
 block is the named local fallback (`source: "local"`, `core_reachable: false`,
@@ -575,8 +577,9 @@ bottom-left **Board card** (`jarvis/runtime/control_center_boards.js`,
 the control's place and envelope on the bottom-left rail. The card shows the
 Board's **type** (Assistant, Présentation, Réunion « prévu ») — the mode is not
 shown separately anymore; the `interaction_mode` block of `/api/status`
-(`mode`, `board_mode`, `board_mode_label`, `modes`) is unchanged and still
-read, by the card, for the session line.
+(`mode`, `board_mode`, `board_mode_label`, `modes`) is unchanged; the card
+reads only `mode` (and `core_reachable`) for the Voice presence line, the other
+fields are diagnostics.
 
 ### One source of truth, and it is `/api/status`
 

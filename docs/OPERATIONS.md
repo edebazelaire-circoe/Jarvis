@@ -147,8 +147,9 @@ duration, without storing raw audio.
 
 ## La fenêtre de réglages
 
-Le bouton **SET** du Control Center (dans « Plus d’outils », les trois
-points en haut à droite, depuis la Slice 04 de la refonte roue/dossier), la
+Le bouton **Réglages** du Control Center (l'ancien **SET**, dans « Plus d’outils », les trois
+points en haut à droite, depuis la Slice 04 de la refonte roue/dossier ; ce guide écrit
+« Réglages → onglet »), la
 touche `s`, ou la catégorie **Paramètres** de la roue d'outils (une ligne par
 onglet, qui ouvre la fenêtre directement sur cet onglet) ouvrent une fenêtre
 centrée, fermée par un clic à l'extérieur ou par `Échap`. Elle a six onglets :
@@ -1126,8 +1127,9 @@ principal de la page.
 
 #### Tester : vérifier qu'une calibration a aidé (calibration adaptative, Slices 08 et 09)
 
-**Lancer.** Clic droit sur le bouton à icône de main (en haut à gauche) →
-**Tester…**, ou onglet Expérimental → section **Test** → **Tester…**, ou à la
+**Lancer.** Onglet Expérimental (roue › Paramètres) → section **Test** →
+**Tester…** (le clic droit sur le bouton à icône de main → **Tester…** ne sert que
+roue masquée : ce bouton est caché tant que la roue est là), ou à la
 voix (« teste mes mains », outil `barehands_test`, Slice 10 : ouvre l'écran
 d'accueil, l'utilisateur lance le run ; un refus remonte au cerveau avec le code
 et la phrase de la porte). Bare
@@ -1322,13 +1324,13 @@ compare à rien.
 
 ##### A1 — caméra, cycle de vie, pannes
 
-- **A1.1** SET → Expérimental → cocher l'interrupteur. Attendu : invite caméra,
+- **A1.1** Réglages → Expérimental → cocher l'interrupteur. Attendu : invite caméra,
   le bandeau passe par « Démarrage… » avec son compteur de secondes, puis toast
   **« Barehands en veille »** et pastille **`MAINS · VEILLE`** en bas à gauche.
   Le bandeau lit « Cycle de vie : **En veille** », bouton « Activer
   l'interaction ». **Aucun jeton ne doit apparaître**, même en agitant les
   mains : la veille guette, elle ne pointe pas.
-- **A1.2** **Veille par le bouton, et retour.** SET → Expérimental → « Mettre en
+- **A1.2** **Veille par le bouton, et retour.** Réglages → Expérimental → « Mettre en
   veille » : jetons retirés, pastille `MAINS · VEILLE`, **le voyant caméra
   reste allumé** (c'est SLEEP, pas OFF). « Activer l'interaction » : les jetons
   reviennent sans nouvelle invite caméra. Même chose depuis la console avec
@@ -1471,7 +1473,7 @@ c'est là que le bruit des points est le plus fort.
 
 - **A5.1** Pincer franchement sur le bouton Trace : le panneau s'ouvre (onde de
   clic). Rester pincé : aucun second clic. Rouvrir puis repincer : nouveau clic.
-- **A5.2** Ouvrir SET, changer d'onglet et cocher une case au pincement.
+- **A5.2** Ouvrir Réglages, changer d'onglet et cocher une case au pincement.
 - **A5.3 — LA CAMÉRA QUI CLIGNE PENDANT UN GESTE.** Nommément demandé par la
   Slice 06 pour cette séance, mot pour mot : « le clignement de la caméra coûte
   le geste en cours ». Commencer à déplacer une étoile, puis masquer la main
@@ -2930,7 +2932,7 @@ un autre onglet ou un redémarrage retrouvent la même scène. Le travail termin
 enregistré ni variable d'environnement, la scène est rendue et le cerveau reçoit
 ses outils d'affichage à son prochain démarrage. Rien à faire pour s'en servir.
 
-1. **SET** → onglet **Expérimental** → section « Scène constellation » : la case
+1. **Réglages** → onglet **Expérimental** → section « Scène constellation » : la case
    « Afficher la scène et donner ses outils au brain » est déjà cochée. La
    décocher éteint la scène dans toutes les fenêtres ouvertes en une seconde,
    sans recharger ; la recocher la rallume aussi vite. Le choix est enregistré,
@@ -3408,7 +3410,7 @@ Détail technique : `docs/ARCHITECTURE.md`, « Brain display MCP ».
 
 **Activer.** Interrupteur `scene.enabled`, **allumé par défaut** : une
 installation neuve, sans clé `scene` dans `runtime/control-center-settings.json`
-et sans variable d'environnement, est allumée. Pour l'éteindre : **SET →
+et sans variable d'environnement, est allumée. Pour l'éteindre : **Réglages →
 Expérimental → « Scène constellation »**, décocher (enregistré immédiatement),
 ou dans `runtime/control-center-settings.json` :
 
@@ -3469,8 +3471,8 @@ Core et le **chemin** du jeton, jamais le jeton.
 
 | Symptôme | Cause probable | Action |
 | --- | --- | --- |
-| `agent.start` dit `display_mcp: false` alors que l'interrupteur est vrai | cerveau pas redémarré, `JARVIS_SCENE_ENABLED=0`, ou brain non Claude (Codex n'a jamais ces outils) | SET → Expérimental → « Redémarrer le brain… » ; lire `GET /api/status` → `agent.display_tools` et `GET /api/settings` → `scene.source` |
-| le cerveau a les outils mais ne crée pas d'artefact et ne relit pas la scène (ou cherche des outils de scène alors qu'elle est éteinte) | conversation reprise (`agent.start` `resumed: true`) qui garde la consigne de son premier tour ; `GET /api/status` → `agent.display_prompt` différent du réglage | SET → Expérimental → « Redémarrer le brain… » (nouvelle conversation), ou redémarrer JARVIS |
+| `agent.start` dit `display_mcp: false` alors que l'interrupteur est vrai | cerveau pas redémarré, `JARVIS_SCENE_ENABLED=0`, ou brain non Claude (Codex n'a jamais ces outils) | Réglages → Expérimental → « Redémarrer le brain… » ; lire `GET /api/status` → `agent.display_tools` et `GET /api/settings` → `scene.source` |
+| le cerveau a les outils mais ne crée pas d'artefact et ne relit pas la scène (ou cherche des outils de scène alors qu'elle est éteinte) | conversation reprise (`agent.start` `resumed: true`) qui garde la consigne de son premier tour ; `GET /api/status` → `agent.display_prompt` différent du réglage | Réglages → Expérimental → « Redémarrer le brain… » (nouvelle conversation), ou redémarrer JARVIS |
 | « Réglage de scène non enregistré » dans l'onglet Expérimental, code `scene_env_override` | `JARVIS_SCENE_ENABLED` est posée pour le Control Center | la retirer et relancer le Control Center, ou garder la valeur imposée |
 | `scene.display_mcp_unconfigured` (avertissement) | Control Center lancé sans coordonnées de Core (hors `python -m jarvis control-center`) | lancer par la commande normale |
 | `agent.display_mcp_failed` (erreur, panneau ERR) | `runtime/display-mcp.json` non inscriptible | corriger les droits du dossier runtime, redémarrer l'agent ; la voix marche sans l'écran en attendant |
@@ -3486,7 +3488,7 @@ Core et le **chemin** du jeton, jamais le jeton.
 | `display.tool_failed` niveau erreur `display_internal_error` | défaut du serveur | remonter le message (type et texte) |
 | erreur d'outil `scene_query (near) … reason=unplaced` | l'objet de référence n'a pas encore de géométrie enregistrée (placement automatique pas encore fait par une page) | normal : ouvrir le Control Center le place en quelques secondes ; sinon `scene_get` |
 | erreur d'outil `scene_query (explains) … reason=object_archived` | l'objet a été archivé | normal : rien à expliquer dans la scène active |
-| le cerveau répond « je ne vois que le titre » d'un artefact | cerveau lancé avec une version plus ancienne, ou conversation reprise (`agent.start` `resumed: true`) qui garde l'ancienne consigne | SET → Expérimental → « Redémarrer le brain… » ; la trace doit montrer `mcp__jarvis-display__scene_get` et `display.read` |
+| le cerveau répond « je ne vois que le titre » d'un artefact | cerveau lancé avec une version plus ancienne, ou conversation reprise (`agent.start` `resumed: true`) qui garde l'ancienne consigne | Réglages → Expérimental → « Redémarrer le brain… » ; la trace doit montrer `mcp__jarvis-display__scene_get` et `display.read` |
 | erreur d'outil `attach_artifact refusé … reason=object_archived` | l'utilisateur a archivé l'étoile du travail | normal : pas d'artefact pour un travail rangé, rien n'a été envoyé |
 
 Tous les appels laissent `display.tool` / `display.read` (lectures `scene_query`
@@ -3531,7 +3533,7 @@ prochain démarrage prend la configuration courante. Tout autre méthode que
 | `503` `mcp_server_unavailable` sur un outil `jarvis-drive` | le module ne s'importe pas (dépendance absente) ; la liste le marque `described: false` | installer les dépendances Drive, redémarrer le Control Center |
 | `404` `mcp_tool_unknown` | serveur ou outil inexistant (le corps ne répète pas la demande) | relire la liste |
 | display `configured` alors que la scène est allumée et le cerveau lancé | cerveau lancé avant l'allumage (`pending_restart: true`) | « Redémarrer le brain… » |
-| `condition_value: false` mais `next_launch: configured` | réglages modifiés dans le fichier sans passer par le Control Center : l'agent tient encore la cible | enregistrer depuis SET (ou redémarrer le Control Center) |
+| `condition_value: false` mais `next_launch: configured` | réglages modifiés dans le fichier sans passer par le Control Center : l'agent tient encore la cible | enregistrer depuis Réglages (ou redémarrer le Control Center) |
 | `advertised: null` sur un serveur natif | instantané de l'agent illisible (`mcp.availability_failed`) ou cerveau Claude sans le drapeau | lire la trace ; redémarrer le brain |
 
 `mcp.catalog_built` (info) part une fois par processus au premier catalogue.
@@ -4661,7 +4663,7 @@ enrollment, overwrite any file): it is shown read-only and changed only in the f
 
 ### What the Control Center shows for Solo Owner and echo cancellation
 
-Tab **Mode vocal** of the settings window (button **SET**), block **Qui peut
+Tab **Mode vocal** of the settings window (« Plus d’outils » › **Réglages**, or the wheel's **Paramètres**), block **Qui peut
 parler à JARVIS**, right under the architecture. The page only projects: every
 verdict comes from the server (`assess_authorization`, the function Voice uses) or
 from what Voice itself published; the page never decides who is speaking and never
@@ -5381,8 +5383,8 @@ JARVIS_LIVE_OPENAI=1 OPENAI_API_KEY=... python -m pytest -q tests/integration/te
 
 PRESENTATION est un **mode**, pas une architecture. Il suit le **type du Board
 actif** : on y entre en ouvrant (ou en créant) un Board Présentation, on en sort
-en ouvrant un Board Assistant. Le bouton du bas-gauche ne fait que l'afficher ;
-le choisir là, par `settings_set` ou par `POST /api/interaction-mode` est refusé
+en ouvrant un Board Assistant. La carte Board du bas-gauche montre le type du Board ;
+aucun écran ne choisit le mode : `settings_set` ou `POST /api/interaction-mode` est refusé
 (`interaction_mode_derived`, avec la phrase qui dit quoi faire). Il change **à
 chaud**, et il ne redémarre jamais Voice : le mode n'entre pas dans
 `VoiceComposition.configuration_id` (Décision D15). Revenir sur un Board
@@ -5498,7 +5500,7 @@ Aucun de ces événements ne porte la parole de la salle. Contrat :
 | `trigger_latency_s` grimpe | relevé + `explicit_address.stale` | la boucle d'évènements est chargée ; l'appui est **servi quand même**, jamais jeté |
 | une commande visuelle ne dit rien | `voice.speech.presentation_decided` | c'est le comportement attendu : D09, le silence est un succès |
 | JARVIS pose une question au lieu de montrer | `voice.presentation.turn_classified` | deux ressources également ancrées : il demande laquelle |
-| **le Control Center dit PRESENTATION et il n'y a aucune ligne `presentation.runtime.*`** | `interaction.mode.observed` / `interaction.mode.ignored` | **le discriminant est là et nulle part ailleurs.** `.observed` : Voice a bien vu le mode, donc regardez `entry_failed` ou `entry_refused` juste après. `.ignored` : l'évènement est arrivé abîmé, le code dit lequel. **Ni l'un ni l'autre** : Voice n'a jamais reçu le changement — flux `/v1/events` coupé, ou processus Voice démarré avant ce commit |
+| **la carte Board dit Présentation et il n'y a aucune ligne `presentation.runtime.*`** | `interaction.mode.observed` / `interaction.mode.ignored` | **le discriminant est là et nulle part ailleurs.** `.observed` : Voice a bien vu le mode, donc regardez `entry_failed` ou `entry_refused` juste après. `.ignored` : l'évènement est arrivé abîmé, le code dit lequel. **Ni l'un ni l'autre** : Voice n'a jamais reçu le changement — flux `/v1/events` coupé, ou processus Voice démarré avant ce commit |
 | PRESENTATION est refusée avant même de prendre le micro | `presentation.runtime.entry_refused`, code `presentation_architecture_unsupported` | l'architecture vocale est « un tour par appui » (`voice_arch=legacy`) : aucun tour adressé ne peut s'y ouvrir, donc le micro n'est pas pris. Choisissez une architecture continue |
 | les préparations s'arrêtent, puis reprennent par à-coups | `speculative_in_flight` au plafond dans le relevé + `presentation.speculative.preempted` | le bassin est plein (3 places par défaut, dont 1 réservée à l'explicite : 2 sous-agents spéculatifs). C'est la conception : le spéculatif est sacrificiel, et un tour adressé préempte. Rien à faire ; si cela gêne, voir *Bassin de préparation* ci-dessous |
 | « montre-moi ça » ne change pas l'écran | `voice.presentation.turn_failed`, code `presentation_reuse_without_screen` | la ressource réutilisée n'était pas un objet de scène : elle a servi, mais il n'y avait rien à dessiner. Voir *Limites connues* |

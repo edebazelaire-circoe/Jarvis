@@ -24,7 +24,7 @@ renumbered.
 
 | Page | Owns |
 | --- | --- |
-| [interaction-mode.md](interaction-mode.md) | the three modes, output disposition, the policy matrix, the control plane (Core service, routes, `interaction.mode.changed`; the mode derived from the Board type, Slice 01b), the Control Center mode display |
+| [interaction-mode.md](interaction-mode.md) | the three modes, output disposition, the policy matrix, the control plane (Core service, routes, `interaction.mode.changed`; the mode derived from the Board type, Slice 01b; no mode control on screen since Slice 02 of the wheel/Dossier refactor, the Board card shows the type) |
 | [presentation-audio-capture.md](presentation-audio-capture.md) | microphone ownership in PRESENTATION, explicit-address triggers (wake word, manual key) |
 | [presentation-ambient-lane.md](presentation-ambient-lane.md) | continuous room speech → recent text, ambient triggers |
 | [presentation-working-set.md](presentation-working-set.md) | the session working set and transcript tail, bounds, pruning |
