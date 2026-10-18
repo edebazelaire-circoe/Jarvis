@@ -76,14 +76,14 @@ def test_closed_by_default_only_anchor(tmp_path):
     source = MODULE.read_text(encoding="utf-8")
     assert "enabled" not in re.sub(r"/\*.*?\*/", "", source, flags=re.S)
     assert re.search(r"function mount\(\)\{.*?host\.hidden=false;", source, re.S)
-    assert re.search(r"\n    mount\(\);\n.*?\n    root\.JarvisToolWheel=", source, re.S)
+    assert re.search(r"\n    mount\(\);\n(?:.*?\n)?    root\.JarvisToolWheel=", source, re.S)
     assert '<div id="toolWheel" data-shell-control hidden></div>' in PAGE_HTML.read_text(encoding="utf-8")
 
 
 def test_five_categories_in_locked_order_and_no_retired_first_level(tmp_path):
     v = run(tmp_path, "out({ids:M.SLOT_IDS,labels:M.SLOTS.map(s=>s.label),art:Object.keys(M.ART),"
-                      "wedges:M.layoutWedges().length,placeholders:Object.keys(M.PLACEHOLDERS),"
-                      "items:M.SLOT_IDS.map(id=>M.placeholderItems(id))})")
+                      "wedges:M.layoutWedges().length,placeholders:'PLACEHOLDERS' in M,"
+                      "placeholderItems:'placeholderItems' in M})")
     assert v["ids"] == ["jarvis", "selection", "dossier", "capture", "settings"]
     assert v["labels"] == ["JARVIS", "Sélection", "Dossier", "Capture", "Paramètres"]
     # Plus de Vidéo / Capture d'écran / Audio au premier niveau (ils vivent dans
@@ -100,15 +100,11 @@ def test_five_categories_in_locked_order_and_no_retired_first_level(tmp_path):
                                                  # Slice 06 : les actions de Sélection.
                                                  "eye", "eye_off", "form", "remove"}
     assert v["wedges"] == 5
-    # Dossier seul garde un gestionnaire d'attente (Slices 05-07) ; JARVIS et Paramètres sont branchés
-    # par `control_center_jarvis_wheel.js` depuis la Slice 04.
-    assert v["placeholders"] == ["dossier"]
-    for slot, items in zip(v["ids"], v["items"]):
-        if slot in v["placeholders"]:
-            assert len(items) == 1 and items[0]["disabled"] is True and items[0]["note"] == "pas encore branché"
-            assert "pas encore branché" in items[0]["detail"].lower()
-        else:
-            assert items is None
+    # Slice 08 : plus aucun gestionnaire d'attente — les cinq catégories sont branchées par leur module
+    # (Sélection, Capture, JARVIS / Paramètres, Dossier depuis la Slice 07).
+    assert v["placeholders"] is False and v["placeholderItems"] is False
+    source = MODULE.read_text(encoding="utf-8")
+    assert "pas encore branché" not in source
 
 
 def test_wedge_angles_separated_by_at_least_min(tmp_path):

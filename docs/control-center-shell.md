@@ -738,17 +738,16 @@ category does comes from its registrant.
 | --- | --- | --- |
 | JARVIS | `control_center_jarvis_wheel.js` (Slice 04) | status rows Voix, touche d'éveil, Agent; actions Sous-agents, Réglages de la voix — see *JARVIS and Paramètres* below |
 | Sélection | `control_center_input_arbitration.js` (method rows) + `JarvisScene.selectionMenu` (Slice 06, action rows) | Souris / Bare Hands (then Bare Hands › tools, Veille, Aide, Diagnostic, Calibration); then the selection: a count, Ranger dans le Dossier, Masquer, Masqués (N) ›, Changer la forme ›, Retirer du Board… — or « Aucun objet sélectionné » and the hidden row — see *Selection actions* below |
-| Dossier | `control_center_dossier.js` (Slice 07; the `PLACEHOLDERS` row stays only as the fallback when that module fails to install) | « Ouvrir le Dossier » (displayed Board title as note), then up to four most recent entries (read from `…/dossier` when the tree opens, 3 s deadline; a failed read adds an error status row); disabled with its reason when the Board is unknown (status lost) or Variantes covers the screen — see [Dossier full-screen view](#dossier-full-screen-view-dossierview) |
+| Dossier | `control_center_dossier.js` (Slice 07) | « Ouvrir le Dossier » (displayed Board title as note), then up to four most recent entries (read from `…/dossier` when the tree opens, 3 s deadline; a failed read adds an error status row); disabled with its reason when the Board is unknown (status lost) or Variantes covers the screen — see [Dossier full-screen view](#dossier-full-screen-view-dossierview) |
 | Capture | `control_center_capture_wheel.js` | Capture d'écran, Enregistrer l'écran, Enregistrer l'audio, each with its second level (stop list, then Core's real targets); live while open (`refresh`) — [capture.md](capture.md) › *Interface* |
 | Paramètres | `control_center_jarvis_wheel.js` (Slice 04) | one row per settings tab (`settingsTabs()`), each opens the settings modal on that tab |
 
-A **placeholder** is registered through the same `register` (so the next
-Slice simply registers over it): its submenu holds one disabled row whose
-note says « pas encore branché » and whose accessible name and tooltip carry
-the full sentence; opening it journals `tool_wheel.unbound` (`warn`, with the
-Slice that wires it). It never fakes an action. A category with no
-registration at all is `aria-disabled`; activating it journals
-`tool_wheel.unbound` and shows a notification. A callback that throws or
+Every category is registered by its module; the wheel keeps no placeholder
+(the Slice 03 `PLACEHOLDERS` waiting rows were removed in Slice 08, once Dossier
+was wired). A category with no
+registration at all (its module failed to install, see `…install_failed` in the
+console) is `aria-disabled`; activating it journals `tool_wheel.unbound` and
+shows « <catégorie> indisponible — son module ne s'est pas chargé ». A callback that throws or
 rejects is journalled (`tool_wheel.action_failed`, real cause) and shown as a
 notification; the wheel itself is unaffected.
 
@@ -891,7 +890,18 @@ the accessible name.
 `.hover_blocked`, `.yield`, `.exclusive_announce_failed`, `.activate`,
 `.secondary`, `.secondary_none`, `.item`, `.item_inert`, `.item_secondary`,
 `.item_secondary_none`, `.status`, `.unbound`, `.action_failed`,
-`.refreshed`, `.refresh_failed`, `.install_failed`.
+`.refreshed`, `.refresh_failed`, `.install_failed`, `.hover_ignored
+{reason: pointer_still}`.
+
+**A motionless pointer never takes the keyboard focus** (Slice 08). After a
+key on the wheel, the wheel or a tree is drawn under a mouse that has not
+moved, and Chrome sends a trusted `pointerover` without any `pointermove` on
+what appears under it; the focus used to land there (ArrowRight on Capture
+focused the row under the pointer). Such a hover is ignored
+(`tool_wheel.hover_ignored`) until the first real `pointermove`, which then
+gives the hover of the target under the pointer. Bare Hands' synthetic
+pointer is not concerned (its events are not trusted). Test:
+`test_tool_wheel_browser.py::test_a_motionless_pointer_never_takes_the_keyboard_focus`.
 
 **Tests.** `tests/unit/test_tool_wheel_js.py` (node: five categories and
 order, placeholders, geometry of the band and of the curved submenu, reducer,

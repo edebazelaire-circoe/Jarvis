@@ -36,10 +36,10 @@
      `control_center_input_arbitration.js`, Capture (Capture d'écran,
      Enregistrer l'écran, Enregistrer l'audio dans son arbre) par
      `control_center_capture_wheel.js`, JARVIS et Paramètres par
-     `control_center_jarvis_wheel.js` (Slice 04). Dossier reçoit ici un
-     gestionnaire d'attente (`PLACEHOLDERS`) : son sous-menu dit « pas encore
-     branché » et le journal note `tool_wheel.unbound` — aucune action
-     simulée ; les Slices 05-07 le remplacent par `register`. Une entrée
+     `control_center_jarvis_wheel.js` (Slice 04), Dossier par
+     `control_center_dossier.js` (Slice 07). Une catégorie dont le module
+     ne s'est pas installé le dit à l'activation (`tool_wheel.unbound`,
+     « module non chargé ») : aucune action simulée. Une entrée
      `status:true` est une ligne d'état (lisible, focalisable, elle n'agit
      pas) ; activer une entrée inerte ne ferme pas la roue. `refresh(id)`
      relit le premier niveau d'un sous-menu ouvert quand son état change
@@ -500,24 +500,9 @@
   const DOM=Object.freeze({hostId:'toolWheel',styleId:'toolWheelStyle',menuId:'toolWheelMenu',
     labelId:'toolWheelLabel',hintId:'toolWheelHint',subHeadId:'toolWheelSubHead'});
 
-  /* Les catégories que personne n'a encore branchées : un gestionnaire
-     d'attente, injecté par le même `register` que les autres, que la Slice
-     qui porte la sémantique remplace. Son sous-menu tient **une** entrée
-     inerte qui dit ce qui manque ; rien n'y fait semblant d'agir. JARVIS et
-     Paramètres n'en ont plus depuis la Slice 04 (`control_center_jarvis_wheel.js`). */
-  const UNBOUND_DETAIL='Pas encore branché : cette commande arrive dans une prochaine version de Jarvis.';
-  const PLACEHOLDERS=Object.freeze({
-    dossier:Object.freeze({wiredBy:'jarvis-board-ui-wheel-dossier-refactor S05-S07',label:'Ouvrir le Dossier du Board'}),
-  });
-  function placeholderItems(id){
-    const spec=PLACEHOLDERS[id];
-    if(!spec)return null;
-    return [{id:'unbound',icon:id,label:spec.label,note:'pas encore branché',detail:UNBOUND_DETAIL,disabled:true}];
-  }
-
   const api=Object.freeze({
-    SLOTS,SLOT_IDS,GEOMETRY,ART,DOM,LEAVE_GRACE_MS,SECONDARY_DEDUPE_MS,PLACEHOLDERS,
-    minSeparationDeg,layoutWedges,sectorPolygon,sectorPath,layoutSubMenu,placeholderItems,initialState,reduce,viewOf,
+    SLOTS,SLOT_IDS,GEOMETRY,ART,DOM,LEAVE_GRACE_MS,SECONDARY_DEDUPE_MS,
+    minSeparationDeg,layoutWedges,sectorPolygon,sectorPath,layoutSubMenu,initialState,reduce,viewOf,
   });
   if(typeof module!=='undefined'&&module.exports)module.exports=api;
   if(typeof window==='undefined'||typeof document==='undefined')return;
@@ -1131,8 +1116,10 @@ ${H} .tw-sr{position:absolute;width:1px;height:1px;margin:-1px;padding:0;overflo
             const slot=SLOTS[fx.index];
             const action=actions.get(slot.id);
             if(!action){
+              /* Toutes les catégories sont branchées depuis la Slice 07 : sans gestionnaire, c'est que son
+                 module ne s'est pas installé (voir la console : `…install_failed`). */
               log('warn','tool_wheel.unbound',{slot:slot.id,source:fx.source});
-              notify(`${slot.label} : outil pas encore branché`,'Cet outil arrive dans une prochaine version.');
+              notify(`${slot.label} indisponible`,'Son module ne s’est pas chargé : rechargez la page ; le détail est dans le journal.');
               break;
             }
             log('info','tool_wheel.activate',{slot:slot.id,source:fx.source});
@@ -1216,12 +1203,33 @@ ${H} .tw-sr{position:absolute;width:1px;height:1px;margin:-1px;padding:0;overflo
     function onDocKey(event){
       if(event.key==='Escape'&&!host.contains(event.target))dispatch({type:'close',reason:'escape'},event);
     }
+    /* Pointeur immobile (Slice 08, QA S03 polish 2 et 7) : après une touche, la roue ou un sous-menu se
+       redessine sous une souris qui n'a pas bougé et Chrome envoie un `pointerover` de confiance **sans**
+       `pointermove` sur ce qui apparaît dessous ; le focus clavier y tombait (flèche droite sur Capture
+       focalisait Audio). Un tel survol est ignoré jusqu'au premier vrai mouvement, qui rend alors le survol
+       de la cible sous le pointeur. Le pointeur de Bare Hands (événements synthétiques) n'est pas concerné. */
+    let pointerStill=false,hoverKey=null;
+    function hover(event,t){
+      hoverKey=`${t.target}:${t.index}`;
+      dispatch({type:'pointerover',...t,source:pointerSource(event),
+        blocked:t.target==='anchor'&&othersOpen.size?[...othersOpen][0]:null},event);
+    }
     function onOver(event){
       lastOverId=event.pointerId===undefined?null:event.pointerId;
       const t=targetOf(event.target);
-      if(t.target==='anchor'||t.target==='wedge'||t.target==='item')
-        dispatch({type:'pointerover',...t,source:pointerSource(event),
-          blocked:t.target==='anchor'&&othersOpen.size?[...othersOpen][0]:null},event);
+      if(t.target!=='anchor'&&t.target!=='wedge'&&t.target!=='item')return;
+      if(t.target!=='anchor'&&event.isTrusted&&pointerStill){
+        log('info','tool_wheel.hover_ignored',{target:t.target,index:t.index,reason:'pointer_still'});
+        return;
+      }
+      hover(event,t);
+    }
+    function onMove(event){
+      if(!event.isTrusted)return;
+      const t=targetOf(event.target);
+      const was=pointerStill;
+      pointerStill=false;
+      if(was&&(t.target==='wedge'||t.target==='item')&&hoverKey!==`${t.target}:${t.index}`)hover(event,t);
     }
     function onOut(event){
       /* Souris : `relatedTarget` dit où va le pointeur. Bare Hands n'en donne
@@ -1260,6 +1268,7 @@ ${H} .tw-sr{position:absolute;width:1px;height:1px;margin:-1px;padding:0;overflo
     }
     function onKey(event){
       const t=targetOf(event.target);
+      if(t.target==='anchor'||t.target==='wedge'||t.target==='item'){pointerStill=true;hoverKey=null}
       if(t.target==='anchor'||t.target==='wedge'||t.target==='item')
         dispatch({type:'keydown',...t,key:event.key,shiftKey:event.shiftKey,
           menu:t.target==='wedge'&&isMenu(actions.get(SLOTS[t.index].id)),
@@ -1269,7 +1278,7 @@ ${H} .tw-sr{position:absolute;width:1px;height:1px;margin:-1px;padding:0;overflo
       const to=event.relatedTarget;
       if(state.open&&to&&!host.contains(to))dispatch({type:'focusOutside'},event);
     }
-    const LISTENERS=[['pointerover',onOver],['pointerout',onOut],['pointerdown',onDown],['click',onClick],
+    const LISTENERS=[['pointerover',onOver],['pointermove',onMove],['pointerout',onOut],['pointerdown',onDown],['click',onClick],
       ['contextmenu',onContext],['keydown',onKey],['focusout',onFocusOut]];
 
     /* La roue se construit une fois, à l'installation (Slice 04 : plus de
@@ -1292,8 +1301,7 @@ ${H} .tw-sr{position:absolute;width:1px;height:1px;margin:-1px;padding:0;overflo
        menu?, onActivate?(ctx), onSecondary?(ctx)}]`) ou une promesse de cette
        liste ; `menu:true` (ou une fonction qui le rend) ouvre ce sous-menu
        dès l'activation principale — sur une entrée, il ouvre son second
-       niveau. Un nouvel enregistrement remplace le précédent (les
-       gestionnaires d'attente de `PLACEHOLDERS` sont faits pour l'être).
+       niveau. Un nouvel enregistrement remplace le précédent.
        Rend la fonction qui débranche. */
     function register(action){
       if(!action||!SLOT_IDS.includes(action.id))
@@ -1363,16 +1371,6 @@ ${H} .tw-sr{position:absolute;width:1px;height:1px;margin:-1px;padding:0;overflo
     }
 
     mount();
-    /* Le gestionnaire d'attente : Dossier (JARVIS et Paramètres sont
-       branchés par `control_center_jarvis_wheel.js` depuis la Slice 04). */
-    for(const id of Object.keys(PLACEHOLDERS)){
-      register({id,placeholder:true,menu:true,
-        onActivate:()=>{/* `menu:true` : l'activation ouvre le sous-menu. */},
-        onSecondary:ctx=>{
-          log('warn','tool_wheel.unbound',{slot:id,source:ctx&&ctx.source||null,wired_by:PLACEHOLDERS[id].wiredBy});
-          return placeholderItems(id);
-        }});
-    }
     root.JarvisToolWheel=Object.freeze({
       register,setStatus,refresh,
       status:id=>statuses.get(id)||null,

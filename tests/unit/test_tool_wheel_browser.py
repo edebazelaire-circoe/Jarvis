@@ -590,3 +590,31 @@ def test_wheel_and_board_panel_are_never_open_together(tmp_path):
     assert api["open"] is True and api["panel"] is False
     assert any("boards.panel_yield" in line for line in api["yields"])
     assert panel_esc["panel"] is False and panel_esc["open"] is False
+
+
+def test_a_motionless_pointer_never_takes_the_keyboard_focus(tmp_path):
+    """QA S03 polish 2 et 7 (Slice 08) : la roue, puis l'arbre de Capture, se dessinent sous une souris immobile ;
+    Chrome envoie alors un `pointerover` de confiance sans `pointermove` et le focus clavier tombait sous le
+    pointeur (flèche droite sur Capture focalisait Audio, Entrée sur l'ancre laissait le focus ailleurs que sur
+    la première catégorie). Le survol ne reprend qu'au premier vrai mouvement."""
+    wedges = _geometry()
+    cx, cy = _dot(wedges, 3)  # Capture : le pointeur est garé là, roue fermée
+    k = lambda key: {"a": "key", "key": key}  # noqa: E731
+    pause = {"a": "eval", "expr": "new Promise(r=>setTimeout(()=>r(1),500))"}
+    v = _drive_one(tmp_path, {"width": W, "height": H, "mountPalette": True, "actions": [
+        {"a": "eval", "expr": LOGS},
+        {"a": "mouse", "type": "mouseMoved", "x": cx + 60, "y": cy},
+        {"a": "focus", "selector": "#toolWheel .tw-anchor"},
+        k("Enter"), pause, _tree(),                                            # 5
+        k("ArrowDown"), k("ArrowDown"), k("ArrowDown"), pause, _tree(),        # 10
+        k("ArrowRight"), pause, _tree(),                                       # 13
+        {"a": "mouse", "type": "mouseMoved", "x": cx + 2, "y": cy + 2, "settleMs": 300}, _tree(),  # 15 : vrai mouvement
+        {"a": "eval", "expr": "window.__s03logs.filter(l=>l.includes('tool_wheel.hover_ignored')).length"},
+    ]})
+    opened, capture, tree, moved, ignored = v[5], v[10], v[13], v[15], v[16]
+    assert opened["open"] and opened["active"] == "jarvis", opened
+    assert capture["active"] == "capture", capture
+    assert tree["subs"] == 1 and tree["expanded"] == ["capture"], tree
+    assert tree["active"] == "item:" + tree["items"][0]["id"], ("la première ligne, pas celle sous la souris", tree)
+    assert moved["active"] == "capture" and moved["subs"] == 1, ("un vrai mouvement rend le survol", moved)
+    assert ignored >= 1
