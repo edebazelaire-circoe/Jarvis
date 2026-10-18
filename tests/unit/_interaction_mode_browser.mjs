@@ -219,8 +219,10 @@ try{
   })()`});
   const out=[];
   for(const step of plan){
-    await send('Emulation.setEmulatedMedia',{features:step.reducedMotion
-      ?[{name:'prefers-reduced-motion',value:'reduce'}]:[]});
+    /* `forcedColors` (Slice 08 de la refonte roue/Dossier) : couleurs forcées, comme le contraste élevé de Windows. */
+    await send('Emulation.setEmulatedMedia',{features:[
+      ...(step.reducedMotion?[{name:'prefers-reduced-motion',value:'reduce'}]:[]),
+      ...(step.forcedColors?[{name:'forced-colors',value:'active'}]:[])]});
     await send('Emulation.setDeviceMetricsOverride',
       {width:step.width,height:step.height,deviceScaleFactor:1,mobile:false});
     await send('Page.navigate',{url:REMOTE?PAGE:'file:///'+PAGE.replace(/\\/g,'/')});

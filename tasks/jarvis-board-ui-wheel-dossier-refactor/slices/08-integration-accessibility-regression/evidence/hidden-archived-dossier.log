@@ -1,0 +1,10 @@
+Masquer (page: patch_selection) 200 applied None
+Afficher sur le Board (Dossier -> Board) 201 {"board_id": "board_a6ea9d38aab54a28ab30b016903787b2", "entry_id": "memory:notes/arbitrages-licences.md", "object_id": "dossier-memory-9ee7cb2afc304d61", "created": true, "reused": false, "representation": "window", "rev
+Ranger (page) de la fenêtre liée au fichier 200 [{"object_id": "dossier-memory-9ee7cb2afc304d61", "status": "stored", "backing": "memory", "action": "confirmed", "entry_id": "memory:notes/arbitrages-licences.md", "durable": true, "archived": true, "path": "notes/arbitrages-licences.md"}]
+snapshot brain-window-cachee: présent, visibility=hidden
+snapshot brain-window-brouillon: ABSENT des objets actifs (archivé ou rangé)
+snapshot user-window-idee: ABSENT des objets actifs (archivé ou rangé)
+snapshot dossier-memory-9ee7cb2afc304d61: ABSENT des objets actifs (archivé ou rangé)
+snapshot brain-artifact-pistes: présent, visibility=visible
+Dossier 200 [('memory:summary.md', 'Résumé du Board'), ('memory:notes/idee-slogan-c02b9612.md', 'Idée slogan'), ('memory:notes/decision-budget.md', 'decision-budget'), ('artifact:jart_up_5b94cc144377cc971137abbdfe4739b4fa81349e', 'schema-architecture.png'), ('memory:notes/arbitrages-licences.md', 'arbitrages-licences'), ('memory:comptes-rendus/compte-rendu-comite-14-octobre.md', 'compte-rendu-comite-14-octobre')]
+backing 200 {"board_id": "board_a6ea9d38aab54a28ab30b016903787b2", "board_active": true, "objects": [{"object_id": "brain-window-cachee", "backing": "content", "entry_id": "memory:notes/note-masquee-7c3fa1bf.md", "rangeable": true}, {"object_id": "brain-group-g1", "backing": "refused", "entry_id": null, "rangeable": false, "code": "dossier_not_eligible", "message": "Cet objet ne se range pas dans le Dossier ; il reste sur le Board.", "reason": "un groupe n'est qu'un cadre : rangez ses objets un par un"}]}

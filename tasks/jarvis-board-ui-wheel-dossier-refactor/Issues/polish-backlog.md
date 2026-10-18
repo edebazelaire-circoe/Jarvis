@@ -198,3 +198,75 @@ the edited one; `close()` did not ask) are **fixed in Slice 07** (`S7: fix - …
    failed once in a large lot, passed alone (timing under load).
 7. Outside the Slice, Issue candidate: the brain is launched with `claude … --chrome`, which may give it access
    to the user's Chrome.
+
+## Slice 08 triage (2026-10-18) — every item above
+
+`fixed in S8 (<commit>)`, `→ Issue <file>` (in `Issues/`), `won't fix: <reason>`, or `resolved in S0x` when an
+earlier Slice already closed it (said above).
+
+| Origin | Item | Outcome |
+| --- | --- | --- |
+| S01a QA | no log line for a migration | fixed in S8 (`70337449`): `core.state.migrated {from, to, rows}` per applied step (sandbox: « jarvis.sqlite3 migrée de v8 à v9 (3 lignes changées) ») |
+| S01a QA | brief writes `Type : presentation` | fixed in S8 (`70337449`): « Présentation » / « Réunion » |
+| S01a QA | `requested_kind` quoted | fixed in S8 (`70337449`): bounded raw value |
+| S01a QA | non-JSON lines in `runtime/trace.jsonl` | → Issue `pre-existing-test-failures.md` (multi-process appends, not this task) |
+| S01a QA | `.v8.bak` in WAL mode | fixed in S8 (`70337449`): backup written in `journal_mode=DELETE` (sandbox header bytes 18-19 = 1/1) |
+| S01b | no e2e test that `switch_noop` stops a Studio run | won't fix: covered at the service level (`test_board_switch.py`) and by the Studio's `foreign_change` classification tests; only the protocol can send a no-op switch (the card never, the brain answers `unchanged` first); now said in `presentation-studio.md` §6 |
+| S01b | `presentation-studio.md` §6 silent on a switch to the active Board | fixed in S8 (`70337449`) |
+| S01b | brain not told the mode was re-applied on `switch_noop` | won't fix: the brain's `board_switch` answers `unchanged` before any request when the Board is already active (`workspace_boards.py`), so no `switch_noop` comes from the brain |
+| S01b | stale comments (`control_center.html`, `presentation_studio_roles.py`) | fixed in S8 (`70337449`) |
+| S01b | `settings_get` / `settings_describe` « Réglage inconnu » for `interaction_mode` | fixed in S8 (`70337449`): same `interaction_mode_derived` refusal as `settings_set` |
+| S01b | `NoneType` in the refusal trace | fixed in S8 (`70337449`): `absent` |
+| S01b | `SOURCES.txt` lists the deleted module | fixed in S8 (`70337449`) |
+| S01b | stale « Déjà dit » after a left switch | → Issue `brain-behaviour-follow-ups.md` |
+| S05 QA | 1, 2, 4, 5, 7 | resolved in S07 |
+| S05 QA | 3 note read with `Read` | → Issue `brain-behaviour-follow-ups.md` (still seen in the S08 trace) |
+| S05 QA | 6 `memory/stat` gives no `sha256` | won't fix: the editor must read the whole file anyway (256 KiB bound) and gets the sha there; no other consumer |
+| S05 QA | 8 `dry_run` and the active Board | resolved in S06; documented in `tool-contract.md` §10.18 in S8 (`5e43882c`) |
+| S05 QA | 9 cross-Board Artifact link on Ranger | fixed in S8 (`5e43882c`): the Ranger report says « l'Artifact est désormais aussi dans le Dossier de ce Board » |
+| S05 QA | 10 `boards_of_artifact(limit=500)` | fixed in S8 (`5e43882c`): direct `link_of(board, artifact)` lookup |
+| S05 QA | 11 | resolved in S05 |
+| S05 QA | 12 brain over budget, stray text | → Issue `brain-behaviour-follow-ups.md` |
+| S02 QA | 1, 2 | resolved in S03 |
+| S02 QA | 3 long Board titles cut at 1440 / 1920 | fixed in S8 (`2c3329df`): from 1400 px the card goes to 320 px and the title to two lines; status centre insets 338 px |
+| S03 QA | 1, 3 | resolved in S04 |
+| S03 QA | 2 keyboard focus lands under a motionless pointer | fixed in S8 (`b87995c9`): a trusted `pointerover` without movement is ignored until a real `pointermove` |
+| S03 QA | 4 stop row truncated | fixed in S8 (`d7163d91`): title « Arrêter », target and timer in the note |
+| S03 QA | 5 panels flare above / below their sector | won't fix: the tree stays inside the wheel's height so every row stays on screen at 720 px; its concave edge (238 px) clears the disc (224 px) and crosses only the decorative outer ring (S08 screenshots `roue-jarvis-*`, `roue-settings-*`); for the Slice 09 visual check |
+| S03 QA | 6 `panel_yield` through `console.info` | fixed in S8 (`2c3329df`): one module journal |
+| S03 QA | 7 Enter on the anchor | fixed in S8 (`b87995c9`): with a parked pointer, Enter focuses JARVIS (browser test and real page) |
+| S03 QA | 8 visual gap to the reference | won't fix in S8: human judgement, Slice 09 (qualitative comparison in the S08 LOG entry) |
+| S03 QA | 9 real video / microphone not run | won't fix: no ffmpeg and no microphone in the sandbox; real refusal path shown (`refus-capture-*`), recordings covered with Core's fake sources |
+| S04 QA | P1 refusal note over the launcher under 600 px | fixed in S8 (`d7163d91`): the note is bounded like its host; measured at 375, 500, 600, 1280 (test and real page) |
+| S04 QA | P3 unstable audio toggle test | fixed in S8 (`d7163d91`): the fake source is released 3.5 s after Core holds the start, not 4 s after Chrome starts |
+| S04 QA | P4 pills keep their counts while the status is lost | fixed in S8 (`91974994`): « compte non confirmé » |
+| S04 QA | no Veille / Réveil | → Issue `voice-lifecycle-api.md` |
+| S06 impl | 1 page selection does not reach the brain | → Issue `page-selection-and-focus-to-brain.md` |
+| S06 impl | 2 « Réduire » ambiguous | → Issue `brain-behaviour-follow-ups.md` |
+| S06 impl | 3 | resolved in S07 |
+| S06 impl | 4 count words follow the form | won't fix: deliberate (the row says what is drawn) |
+| S06 impl | 5 brain over budget | → Issue `brain-behaviour-follow-ups.md` |
+| S06 impl | 6 Sélection holds 8 rows | won't fix: a constraint, recorded in `control-center-shell.md` › *Selection actions* |
+| S06 QA | 1 | resolved in S07 |
+| S06 QA | 2 « retire-la du Board » parity | fixed in S8 (`1e9c06ed`): the `dossier_ranger` description names `scene_archive`; real trace → `scene_archive` |
+| S06 QA | 3 registry image as a small thumbnail | fixed in S8 (`8a96ac68`): the image takes the window (aspect kept) |
+| S06 QA | 4 orphan circle by « Aucun objet masqué » | fixed in S8 (`8a96ac68`): status rows carry an icon, aligned with the others |
+| S06 QA | 5 `tool-contract` §10.18 and `dry_run` | fixed in S8 (`5e43882c`) |
+| S06 QA | 6 `backing.reason` not shown | fixed in S8 (`8a96ac68`): the reason follows the code sentence, in the row and the report; Core's own reasons now French |
+| S06 QA | 7 click on a star gave `set_representation` | won't fix: not reproduced in S08 (a click selected the object, « 1 objet sélectionné », no command) |
+| S06 QA | 8 real agent star not verified | won't fix: the `brain` actor is refused by `execution_node` by design |
+| S07 impl | 1 a browser tab at every Control Center start | fixed in S8 (`f620f736`): `JARVIS_OPEN_BROWSER=0` (journal `ui.browser`), default unchanged |
+| S07 impl | 2 parallel `dossier_view` → `command_busy` | fixed in S8 (`5e43882c`): two retries 0.6 s apart |
+| S07 impl | 3 notes read by path, English sentence, retry | → Issue `brain-behaviour-follow-ups.md` |
+| S07 impl | 4 the focused pane is not visible to the brain | → Issue `page-selection-and-focus-to-brain.md` |
+| S07 impl | 5 guess after an external archive | → Issue `brain-behaviour-follow-ups.md` |
+| S07 impl | 6 audio / video / PDF not exercised | won't fix: no recording in the sandbox; PDF in a new tab is the `frame-src` CSP choice |
+| S07 impl | 7 list titles are file stems | fixed in S8 (`0c95e5fe`): a note read once is listed by its `#` heading (the service list keeps the stem: one read per entry otherwise) |
+| S07 impl | 8 `test_brain_capability_parity` | → Issue `pre-existing-test-failures.md` |
+| S07 QA | 1 Core stopped not said, wrong reason | fixed in S8 (`0c95e5fe`): `dossier.core_lost`, « Core ne répond pas », nothing sent (test and real page) |
+| S07 QA | 2 races without a generation check | fixed in S8 (`0c95e5fe`): every answer checks `S.gen` |
+| S07 QA | 3 link scheme not re-checked | fixed in S8 (`0c95e5fe`): `safeLinkUrl`, http(s) only |
+| S07 QA | 4 stale « Déjà sur le Board » | fixed in S8 (`0c95e5fe`) |
+| S07 QA | 5 brain wording | → Issue `brain-behaviour-follow-ups.md` |
+| S07 QA | 6 unstable `test_ranger_refused_whole_or_kept…` / `test_mcp_plugin_service` | fixed in S8 (`8a96ac68`) for the Ranger test (it waits on the page, not on fixed delays); `test_mcp_plugin_service` → Issue `pre-existing-test-failures.md` (timing, not this task) |
+| S07 QA | 7 brain launched with `--chrome` | → Issue `brain-launched-with-chrome.md` |
