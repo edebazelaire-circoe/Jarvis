@@ -1,6 +1,16 @@
-"""Contrôle Boards du haut-droit, exécuté par node (handoff board-session, Slice 06).
+"""Carte Board du bas-gauche, exécutée par node (handoff board-session, Slice 06 ;
+déplacée du haut-gauche par la Slice 02 de jarvis-board-ui-wheel-dossier-refactor).
 
 Ce que ce fichier épingle :
+
+- la carte dit le **type** du Board actif (mot, icône, accent) avant son titre ;
+  un Board Réunion dit à l'écran que son comportement est prévu et qu'il agit
+  en Assistant (D24) ; le type se choisit à la création, jamais à l'édition ;
+- la ligne de séance PRESENTATION que Voice rapporte (« Refusé par la voix »,
+  séance sourde, entrée ratée, écoute), migrée du contrôle de mode retiré :
+  dérivée du statut seul, jamais d'un clic, refus périmé écarté ;
+- l'absence : plus de barre du haut, de ligne d'état, de contrôle de mode ni
+  d'œil permanent dans la page servie ;
 
 - le titre du Board actif vient **du statut** (`gate`) et reste visible ; un
   statut perdu ou un Core sans Boards se disent au lieu d'afficher un Board que
@@ -43,6 +53,7 @@ ROOT = Path(__file__).resolve().parents[2]
 RUNTIME = ROOT / "jarvis" / "runtime"
 PAGE_HTML = RUNTIME / "control_center.html"
 MODULE = RUNTIME / BOARDS_SCRIPT_FILE
+B_HINT_ID = "boardsCreateKindHint"
 
 WORLD = r"""
 const B=require(MODULE_PATH);
@@ -170,13 +181,20 @@ const mount=options=>{
     inspect:opts.inspect,
     log:(level,event,data)=>journal.push({level,event,data}),
   });
-  control.gate(opts.block===undefined?server.block():opts.block);
+  control.gate(opts.block===undefined?server.block():opts.block,opts.mode,opts.report);
   const trigger=byId(host,B.DOM.triggerId);
   return {host,panel,control,server,journal,toasts,confirms,trigger,
     answer(v){answer=v},
     refreshes:()=>refreshes,
     title:()=>byId(host,B.DOM.titleId).textContent,
     sub:()=>byId(host,B.DOM.subId).textContent,
+    eyebrow:()=>byId(host,B.DOM.kindId).textContent,
+    kind:()=>host.getAttribute(B.DOM.kindAttribute),
+    /* La ligne de séance telle que la carte la peint. */
+    presence:()=>{const p=byId(host,B.DOM.presenceId);
+      return {state:host.getAttribute(B.DOM.presenceAttribute),shown:!p.hidden,
+        text:all(p).map(n=>n.textContent).filter(Boolean).join(''),title:p.getAttribute('title')}},
+    said:()=>byId(host,B.DOM.presenceAnnounceId).textContent,
     tone:()=>host.getAttribute(B.DOM.toneAttribute),
     busy:()=>host.getAttribute(B.DOM.busyAttribute),
     note:()=>{const n=byId(panel,B.DOM.noteId);return n.hidden?'':all(n).filter(x=>x!==n).map(x=>x.textContent).filter(Boolean).join('|')},
@@ -273,7 +291,7 @@ def test_the_active_title_is_always_visible_and_follows_the_status(tmp_path):
         popup:m.trigger.getAttribute('aria-haspopup'),hidden:m.panel.hidden,calls:m.server.calls.length});
     """)
     assert result["first"] == {"title": "Jarvis", "tone": "ready",
-                               "label": "Board Jarvis : Board actif. Ouvrir la liste des Boards", "sub": ""}
+                               "label": "Assistant Jarvis : Board actif. Ouvrir la liste des Boards", "sub": ""}
     assert result["moved"] == {"title": "Projet B", "sub": "1 en arrière-plan"}
     assert result["lost"] == {"title": "Inconnu", "tone": "unknown", "sub": "Statut perdu"}
     down = result["down"]
@@ -657,8 +675,12 @@ def test_kind_words_are_the_deep_managers_and_last_opened_reads_relative(tmp_pat
     """)
     assert result["hud"] == result["manager"] == {"assistant": "Assistant", "presentation": "Présentation",
                                                   "meeting": "Réunion"}
-    assert result["kinds"] == [{"kind": "assistant", "label": "Assistant"}, {"kind": "meeting", "label": "Réunion"},
-                               {"kind": "demo", "label": "demo"}], "an unknown kind is shown as is"
+    assert result["kinds"] == [
+        {"kind": "assistant", "label": "Assistant", "planned": None},
+        {"kind": "meeting", "label": "Réunion", "planned": {
+            "tag": "prévu", "short": "Agit en Assistant",
+            "said": "Comportement Réunion prévu : ce Board se comporte en Assistant pour l’instant."}},
+        {"kind": "demo", "label": "demo", "planned": None}], "an unknown kind is shown as is"
     assert result["opened"] == ["jamais ouvert", "jamais ouvert", "ouvert à l’instant", "ouvert à l’instant",
                                 "ouvert il y a 45 min", "ouvert il y a 5 h", "ouvert il y a 2 j",
                                 "ouvert le 1 sept.", "ouvert le 1 sept. 2025"]
@@ -750,15 +772,24 @@ def test_create_sends_the_chosen_kind_and_the_default_one_is_left_to_core(tmp_pa
       m.trigger.fire('click');await settle();
       const kind=byId(m.panel,B.DOM.createKindId);
       const options=kind.children.map(o=>[o.value,o.textContent]);
-      m.createInput().value='Réunion hebdo';kind.value='meeting';
+      const hintBefore=byId(m.panel,B.DOM.createKindHintId).hidden;
+      m.createInput().value='Réunion hebdo';kind.value='meeting';kind.fire('change');
+      const hint={hidden:byId(m.panel,B.DOM.createKindHintId).hidden,text:byId(m.panel,B.DOM.createKindHintId).textContent,
+        describedBy:kind.getAttribute('aria-describedby')};
       byId(m.panel,B.DOM.createButtonId).fire('click');await settle();await settle();
       const afterMeeting={kind:kind.value,row:m.shown().find(r=>r.id==='board_new')};
       m.createInput().value='Notes';
       byId(m.panel,B.DOM.createButtonId).fire('click');await settle();await settle();
-      out({options,afterMeeting,bodies:m.server.calls.filter(c=>c.method==='POST'&&c.path==='/api/boards').map(c=>c.body),
+      out({options,hintBefore,hint,hintAfter:byId(m.panel,B.DOM.createKindHintId).hidden,afterMeeting,
+        bodies:m.server.calls.filter(c=>c.method==='POST'&&c.path==='/api/boards').map(c=>c.body),
         toast:m.toasts.map(t=>t.title)});
     """)
-    assert result["options"] == [["assistant", "Assistant"], ["presentation", "Présentation"], ["meeting", "Réunion"]]
+    # Le type Réunion se choisit en sachant qu'il est prévu (D24, QA 01a) : court dans la liste, la phrase
+    # entière dessous, tant qu'il est choisi.
+    assert result["options"] == [["assistant", "Assistant"], ["presentation", "Présentation"], ["meeting", "Réunion · prévu"]]
+    assert result["hintBefore"] is True and result["hintAfter"] is True
+    assert result["hint"] == {"hidden": False, "describedBy": B_HINT_ID,
+                              "text": "Comportement Réunion prévu : ce Board se comporte en Assistant pour l’instant."}
     assert result["bodies"] == [{"title": "Réunion hebdo", "board_kind": "meeting"}, {"title": "Notes"}]
     assert result["afterMeeting"]["kind"] == "assistant", "the selector resets after success"
     assert result["afterMeeting"]["row"]["kind"] == "meeting", "the row shows what the server kept"
@@ -917,18 +948,23 @@ async def test_the_served_page_inserts_the_module_and_declares_both_slots(tmp_pa
     html = (await control.index(None)).text
     assert BOARDS_SCRIPT_MARKER not in html
     assert "installJarvisBoards" in html
-    assert re.search(r'<div class="topbar">.*?<div id="boardsHud"[^>]*></div>.*?</div>', html)
-    assert '<div id="boardsPanel" hidden></div>' in html
-    assert "JarvisBoardsControl.gate(s.boards)" in html and "JarvisBoardsControl.statusLost()" in html
+    # La carte est un emplacement de premier rang du bas-gauche (Slice 02), vivante pendant une lecture du Studio.
+    assert '<div id="boardsHud" data-keep-live="run" data-shell-control></div>' in html
+    assert '<div id="boardsPanel" data-keep-live="run" hidden></div>' in html
+    # Une seule porte : la carte reçoit le Board, le mode et le relevé du même battement.
+    assert html.count("JarvisBoardsControl.gate(s.boards,s.interaction_mode,s.presentation)") == 1
+    assert "JarvisBoardsControl.statusLost()" in html
     source = PAGE_HTML.read_text(encoding="utf-8")
-    # Registre : docs/control-center-shell.md (Slice 01 de l'orbital UI) ; le
-    # bouton vit dans la barre (son rang), le panneau a sa propre ligne.
+    # Registre : docs/control-center-shell.md ; le bouton de la carte au rang 32, le panneau au 39 (au-dessus de
+    # l'aperçu de capture et de la roue ouverte, qu'il peut couvrir en s'ouvrant en bas à gauche).
     registry = source[:source.index("*/")]
-    assert re.search(r"@shell-layer 36:[^\n]*#boardsPanel", registry)
+    assert re.search(r"@shell-layer 32:[^\n]*#boardsHud", registry)
+    assert re.search(r"@shell-layer 39: #boardsPanel\n", registry)
     shell_doc = (PAGE_HTML.parents[2] / "docs" / "control-center-shell.md").read_text(encoding="utf-8")
-    assert "| 31 | `.topbar` |" in shell_doc and "`#boardsHud` lives inside it" in shell_doc
-    assert "| 36 | `#boardsPanel` |" in shell_doc
-    assert re.search(r"#boardsHud\{[^}]*pointer-events:auto", source)
+    assert "| 32 | `#boardsHud` | `control_center_boards.js` | `${H} .bd-btn` |" in shell_doc
+    assert "| 39 | `#boardsPanel` |" in shell_doc
+    style = run_node(tmp_path, "out(B.STYLE);", name="style")
+    assert re.search(r"#boardsHud\{position:absolute;left:18px;[^}]*pointer-events:auto", style)
 
 
 def test_a_missing_slot_is_refused_by_name_without_throwing(tmp_path):
@@ -949,3 +985,277 @@ def test_a_missing_slot_is_refused_by_name_without_throwing(tmp_path):
     assert result["control"] == "undefined"
     assert len(result["lines"]) == 1 and "boards.install_failed" in result["lines"][0]
     assert "boards_host_missing" in result["lines"][0] and "#boardsHud" in result["lines"][0]
+
+
+# ------------------------------------------------- Slice 02 : la carte Board
+
+
+def test_the_card_names_the_type_first_with_its_icon_and_a_meeting_board_says_it_is_planned(tmp_path):
+    """D04 / docs/06 › Bottom-left Board card : type (mot + icône + accent) puis titre.
+
+    Un Board Réunion dit **à l'écran** qu'il est prévu et agit en Assistant (D24 ;
+    QA 01a : `meeting_planned` n'était que dans la trace). Le type vient du statut,
+    jamais d'un clic ; inconnu (statut perdu), la carte ne prétend aucun type."""
+
+    result = run_node(tmp_path, r"""
+      const m=mount();
+      const seen={};
+      const read=tag=>{const mark=all(m.host).find(n=>n.className==='bd-mark');
+        const path=all(mark).find(n=>n.tag==='path');
+        seen[tag]={kind:m.kind(),eyebrow:m.eyebrow(),title:m.title(),sub:m.sub(),
+          icon:path?path.getAttribute('d'):null,label:m.trigger.getAttribute('aria-label'),
+          tip:m.trigger.getAttribute('title')}};
+      read('assistant');
+      m.control.gate(block('board_p','Démo client',{active:{board_id:'board_p',title:'Démo client',board_kind:'presentation'}}));
+      read('presentation');
+      m.control.gate(block('board_m','Hebdo',{active:{board_id:'board_m',title:'Hebdo',board_kind:'meeting'},
+        bindings:[{board_id:'board_m',lifecycle:'foreground'},{board_id:'default',lifecycle:'background_running'}]}));
+      read('meeting');
+      m.control.statusLost();
+      read('lost');
+      out(seen);
+    """, name="card-kind")
+    a, p, mtg, lost = (result[k] for k in ("assistant", "presentation", "meeting", "lost"))
+    assert (a["kind"], a["eyebrow"], a["title"], a["sub"]) == ("assistant", "Assistant ", "Jarvis", "")
+    assert (p["kind"], p["eyebrow"], p["title"]) == ("presentation", "Présentation ", "Démo client")
+    # Chaque type a son icône, distincte des autres (la couleur ne suffit pas).
+    assert len({a["icon"], p["icon"], mtg["icon"], lost["icon"]}) == 4
+    assert (mtg["kind"], mtg["eyebrow"]) == ("meeting", "Réunion · prévu ")
+    assert mtg["sub"] == "Agit en Assistant · 1 en arrière-plan", "planned AND visible, with the rest of the sub-line"
+    assert "Comportement Réunion prévu : ce Board se comporte en Assistant pour l’instant." in mtg["label"]
+    assert mtg["tip"] == "Board actif : Hebdo (Réunion, prévu)"
+    # Le nom accessible commence par ce que la carte montre (WCAG 2.5.3).
+    assert p["label"].startswith("Présentation Démo client : Board actif.")
+    assert (lost["kind"], lost["eyebrow"]) == ("", "Board ")
+
+
+def test_a_switch_shows_the_target_type_while_it_waits(tmp_path):
+    """La bascule montre le type de la cible déjà lue ; la carte ne le prend pour actif qu'après le serveur."""
+
+    result = run_node(tmp_path, r"""
+      const m=mount();
+      m.server.boards[1].board_kind='presentation';
+      m.server.plan['POST /api/boards/switch']=[{delay:4000}];
+      m.trigger.fire('click');await settle();
+      m.control_('board_b','switch').fire('click');await settle();
+      advance(2000);await settle();
+      const during={kind:m.kind(),eyebrow:m.eyebrow(),title:m.title(),sub:m.sub(),tone:m.tone()};
+      advance(2000);await settle();await settle();
+      m.control.gate(Object.assign(m.server.block(),{active:{board_id:'board_b',title:'Projet B',board_kind:'presentation'}}));
+      out({during,after:{kind:m.kind(),tone:m.tone(),title:m.title()}});
+    """, name="switch-kind")
+    assert result["during"] == {"kind": "presentation", "eyebrow": "Présentation ", "title": "Projet B",
+                                "sub": "Bascule · 2 s", "tone": "pending"}
+    assert result["after"] == {"kind": "presentation", "tone": "ready", "title": "Projet B"}
+
+
+#: Le relevé que Voice publie (`PresentationCoordinator.presentation_report`), dans
+#: la forme que `ControlCenter._presentation_report` relaie, et le bloc
+#: `interaction_mode` du même statut (migrés de `test_interaction_mode_hud_js.py`).
+REPORT = r"""
+const report=over=>Object.assign({
+  event:'entered',active:true,session_id:'pres-1',entered:1,entry_failures:0,left:0,
+  last_failure_code:null,blockers:0,blocker_code:null,physical_input_owners:1,
+  ambient_deaf:false,ambient_degraded:false,segments_pending:0,analysis_pending:0,
+  trigger_latency_s:null,enrichment_lag_s:null,speculative_in_flight:0,
+  speculative_free_explicit_slots:1,speculative_staged:0,attention_live:0,ts:1,
+},over||{});
+const mode=over=>Object.assign({
+  mode:'assistant',label:'SIMPLE',revision:4,epoch:'vie-1',source:'core',core_reachable:true,error:null,
+  board_mode:'assistant',board_mode_label:'SIMPLE',modes:[]},over||{});
+const PRES=mode({mode:'presentation',label:'PRESENTATION',board_mode:'presentation',board_mode_label:'PRESENTATION'});
+const offline=board=>mode({mode:board||'assistant',revision:null,epoch:null,source:'local',core_reachable:false,
+  error:{code:'core_unreachable',message:'Core ne répond pas.'}});
+"""
+
+
+def test_presentation_status_line_per_state(tmp_path):
+    """Cinq états et `null`, dérivés des clés réelles du relevé, peints sur la carte.
+
+    Migré du contrôle de mode retiré (Slice 02) : la ligne, l'attribut d'état, le
+    `title` (le code d'échec), le nom accessible et la région vivante de la carte."""
+
+    result = run_node(tmp_path, REPORT + r"""
+      const cases={
+        listening:[PRES,report()],
+        deaf:[PRES,report({event:'blocked',blockers:1,ambient_deaf:true,
+          blocker_code:'presentation_transcription_unavailable'})],
+        refused:[PRES,report({event:'refused',active:false,session_id:null,entered:0,
+          entry_failures:1,last_failure_code:'presentation_architecture_unsupported',
+          physical_input_owners:null,ambient_deaf:null})],
+        entry_failed:[PRES,report({event:'entry_failed',active:false,session_id:null,entered:0,
+          entry_failures:1,last_failure_code:'OSError',physical_input_owners:null,ambient_deaf:null})],
+        inactive_presentation:[PRES,report({event:'left',active:false,session_id:null,left:1})],
+        inactive_simple:[mode(),report({event:'left',active:false,session_id:null,left:1})],
+        /* Le relevé garde `refused` après le retour en SIMPLE : le coordinateur
+           ne republie pas quand il n'a pas de séance à fermer. */
+        stale_refusal_in_simple:[mode(),report({event:'refused',active:false,
+          last_failure_code:'presentation_architecture_unsupported'})],
+        voice_offline:[PRES,null],
+      };
+      const seen={};
+      for(const [name,[block_,rep]] of Object.entries(cases)){
+        const m=mount({mode:block_,report:rep});
+        seen[name]={...m.presence(),label:m.trigger.getAttribute('aria-label'),said:m.said(),
+          pure:(B.presenceOf(rep,block_.mode)||{state:null}).state,
+          logged:m.journal.filter(j=>j.event==='boards.voice_presence_shown').map(j=>[j.level,j.data.code])};
+      }
+      out(seen);
+    """, name="presence-states")
+
+    expected = {
+        "listening": ("listening", True, "Écoute la salle", "Séance PRESENTATION : Jarvis écoute la salle."),
+        "deaf": ("deaf", True, "Sourd à la salle", "presentation_transcription_unavailable"),
+        "refused": ("refused", True, "Refusé par la voix", "presentation_architecture_unsupported"),
+        "entry_failed": ("entry_failed", True, "Entrée échouée", "OSError"),
+        "inactive_presentation": ("inactive", True, "Séance inactive",
+                                  "Aucune séance PRESENTATION ne tourne encore."),
+        "inactive_simple": ("inactive", False, "", None),
+        "stale_refusal_in_simple": ("inactive", False, "", None),
+        "voice_offline": ("none", False, "", None),
+    }
+    for name, (state, shown, text, title) in expected.items():
+        seen = result[name]
+        assert (seen["state"], seen["shown"], seen["text"], seen["title"]) == (state, shown, text, title), (name, seen)
+        assert seen["pure"] == (None if state == "none" else state), (name, seen)
+
+    # Le nom accessible porte la séance quand elle est dite, avant l'action.
+    assert "sourde à la salle" in result["deaf"]["label"]
+    assert result["deaf"]["label"].endswith("Ouvrir la liste des Boards")
+    assert "refusé" in result["refused"]["label"]
+    assert "Séance" not in result["inactive_simple"]["label"]
+    assert result["voice_offline"]["label"] == "Assistant Jarvis : Board actif. Ouvrir la liste des Boards"
+    # La région vivante de la carte la dit aussi : un refus d'entrée s'entend.
+    assert "refusé" in result["refused"]["said"] and result["inactive_simple"]["said"] == ""
+    # Et le journal la garde, au niveau qui convient.
+    assert result["refused"]["logged"] == [["warn", "presentation_architecture_unsupported"]]
+    assert result["listening"]["logged"] == [["info", None]]
+    assert result["inactive_simple"]["logged"] == []
+
+
+def test_status_never_optimistic_after_click(tmp_path):
+    """Un clic sur la carte ne peint ni le Board ni la séance : seul le statut le fait.
+
+    La séance reste celle du **dernier statut** tant que Voice n'a pas publié autre
+    chose ; un refus publié ensuite remplace l'écoute et reste visible."""
+
+    result = run_node(tmp_path, REPORT + r"""
+      const m=mount({mode:mode(),report:report({event:'left',active:false,session_id:null,left:1})});
+      const steps=[];
+      const read=tag=>steps.push({tag,...m.presence(),kind:m.kind(),name:m.title(),
+        writes:m.server.calls.filter(c=>c.method!=='GET').length});
+      read('repos');
+      m.trigger.fire('click');await settle();
+      read('apres_clic');
+      m.control.close();
+      /* Le battement suivant apporte un Board Présentation ouvert ailleurs. */
+      const pres=Object.assign(m.server.block(),{active:{board_id:'board_p',title:'Démo',board_kind:'presentation'}});
+      m.control.gate(pres,PRES,report({event:'left',active:false,session_id:null,left:1}));
+      read('mode_confirme');
+      m.control.gate(pres,PRES,report());
+      read('seance_ouverte');
+      /* Daté de maintenant : écrit après le dernier battement SIMPLE, donc cru (p17). */
+      m.control.gate(pres,PRES,report({event:'refused',active:false,ts:clock/1000,
+        last_failure_code:'presentation_architecture_unsupported'}));
+      read('refus');
+      m.control.statusLost();
+      read('perdu');
+      out(steps);
+    """, name="presence-not-optimistic")
+
+    by = {step["tag"]: step for step in result}
+    assert (by["repos"]["kind"], by["repos"]["state"], by["repos"]["shown"]) == ("assistant", "inactive", False)
+    assert (by["apres_clic"]["kind"], by["apres_clic"]["state"], by["apres_clic"]["shown"]) == (
+        "assistant", "inactive", False)
+    assert all(step["writes"] == 0 for step in result)
+    assert (by["mode_confirme"]["kind"], by["mode_confirme"]["text"]) == ("presentation", "Séance inactive")
+    assert by["seance_ouverte"]["state"] == "listening"
+    assert (by["refus"]["state"], by["refus"]["text"], by["refus"]["title"]) == (
+        "refused", "Refusé par la voix", "presentation_architecture_unsupported")
+    assert (by["perdu"]["state"], by["perdu"]["shown"], by["perdu"]["kind"]) == ("none", False, "")
+
+
+REFUSED = "report({event:'refused',active:false,session_id:null,entered:0,entry_failures:1," \
+          "last_failure_code:'presentation_architecture_unsupported',physical_input_owners:null," \
+          "ambient_deaf:null,ts:TS})"
+
+
+def test_un_refus_ecrit_avant_la_bascule_est_ecarte(tmp_path):
+    """p17 : un `refused` daté d'avant le dernier battement SIMPLE confirmé ne peint pas de refus.
+
+    La borne est ce battement-là moins la marge, **pas** le battement qui montre
+    PRESENTATION : Voice écrit son refus en quelques millisecondes, souvent avant
+    le sondage suivant, et ce refus-là doit rester visible."""
+
+    result = run_node(tmp_path, REPORT + """
+      const refused=TS=>""" + REFUSED + r""";
+      const seen={};
+      const at=(simpleAt,ts)=>{clock=simpleAt*1000;const m=mount({mode:mode()});
+        clock+=1000;m.control.gate(m.server.block(),PRES,refused(ts));return m.presence()};
+      seen.stale=at(100,90);
+      seen.marginEdge=at(100,99);
+      seen.afterSwitch=at(100,100.5);
+      clock=100000;seen.noAnchor=mount({mode:PRES,report:refused(1)}).presence();
+      clock=100000;{const m=mount({mode:offline('assistant')});clock+=1000;
+        m.control.gate(m.server.block(),PRES,refused(50));seen.unconfirmedAnchor=m.presence()}
+      clock=100000;{const m=mount({mode:mode()});clock+=1000;
+        m.control.gate(m.server.block(),PRES,report({event:'entry_failed',active:false,last_failure_code:'OSError',ts:10}));
+        seen.staleFailure=m.presence()}
+      out({seen,margin:B.STALE_REPORT_MARGIN_S,
+        pure:B.freshReport(report({event:'refused',ts:1}),10).event,
+        pureFresh:B.freshReport(report({event:'refused',ts:9}),10).event,
+        pureListening:B.freshReport(report({ts:1}),10).event});
+    """, name="stale-refusal")
+    seen = result["seen"]
+    assert result["margin"] == 2
+    assert (seen["stale"]["state"], seen["stale"]["text"]) == ("inactive", "Séance inactive"), seen["stale"]
+    assert seen["staleFailure"]["state"] == "inactive", seen["staleFailure"]
+    for name in ("marginEdge", "afterSwitch", "noAnchor", "unconfirmedAnchor"):
+        assert seen[name]["state"] == "refused", (name, seen[name])
+        assert seen[name]["title"] == "presentation_architecture_unsupported", (name, seen[name])
+    assert (result["pure"], result["pureFresh"], result["pureListening"]) == ("stale", "refused", "entered")
+
+
+def test_no_new_settings_surface_for_the_voice_presence(tmp_path):
+    """La séance est **lue**, jamais réglée : aucune route, aucun réglage, aucune écriture.
+
+    Le module Boards n'appelle que `/api/boards*` et `/api/sessions*` ; le relevé
+    voyage dans le statut déjà sondé ; le Control Center n'expose aucune route
+    `presentation` hors du Studio et du Workspace."""
+
+    module = MODULE.read_text(encoding="utf-8")
+    assert set(re.findall(r"/api/[a-z0-9/_-]*", module)) <= {
+        "/api/boards", "/api/boards/switch", "/api/boards/", "/api/sessions", "/api/sessions/current",
+        "/api/sessions/new", "/api/status"}
+    assert "/api/settings" not in module and "/api/interaction-mode" not in module and "localStorage" not in module
+    control = ControlCenter(runtime_root=tmp_path, project_root=tmp_path)
+    paths = {route.resource.canonical for route in control._app.router.routes() if route.resource is not None}
+    studio = "/api/presentation-studio"
+    workspace = ("/api/workspace/presentation-sources/", "/api/workspace/boards/{board_id}/presentation-sources")
+    assert not [path for path in paths
+                if ("presentation" in path or "presence" in path)
+                and not (path == studio or path.startswith(studio + "/")
+                         or path.startswith(workspace[0]) or path == workspace[1])], paths
+
+
+@pytest.mark.asyncio
+async def test_the_served_page_has_no_retired_shell_controls(tmp_path):
+    """UI deletion assertions (docs/04 de la tâche) : ce que la Slice 02 retire est absent, pas caché.
+
+    Ni barre du haut, ni sélecteur de Board en haut à gauche, ni ligne d'état
+    permanente `VOICE … · CLAUDE …`, ni contrôle de mode d'interaction (ni son
+    module, ni son sélecteur), ni œil permanent des objets masqués. La touche
+    d'éveil reste lisible (non affichée) jusqu'au sous-menu JARVIS (Slice 04)."""
+
+    control = ControlCenter(runtime_root=tmp_path, project_root=tmp_path)
+    html = (await control.index(None)).text
+    body = html[html.index("<body>"):]
+    for gone in ('class="topbar"', 'class="state"', 'id="voiceState"', 'id="agentState"', 'id="subagentState"',
+                 'id="interactionModeHud"', 'id="hiddenEye"', "JarvisInteractionMode", "interactionModeButton",
+                 "installJarvisInteractionMode", "/*__CONTROL_CENTER_INTERACTION_MODE_JS__*/"):
+        assert gone not in body, gone
+    assert not (RUNTIME / "control_center_interaction_mode.js").exists()
+    assert '<p id="wakeHint" class="sr-only">' in html
+    assert "document.getElementById('wakeHint')" in html
+    # Une seule entrée quotidienne de Board : la carte. Aucun autre hôte ne porte le bouton.
+    assert html.count('id="boardsHud"') == 1

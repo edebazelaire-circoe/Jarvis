@@ -90,7 +90,11 @@ def test_the_limits_say_the_hud_stays_live_and_every_active_phase_pauses_on_clos
     for phase in ("`playing`", "`resuming`", "`detour`"):
         assert phase in sec, phase
     html = (ROOT / "jarvis" / "runtime" / "control_center.html").read_text(encoding="utf-8")
-    assert re.search(r'<div id="interactionModeHud" data-keep-live="run"[^>]*></div>', html)
+    # Slice 02 de jarvis-board-ui-wheel-dossier-refactor : la carte Board (et son panneau) prend la place du
+    # contrôle de mode retiré ; la présence de la voix reste visible pendant une lecture.
+    assert re.search(r'<div id="boardsHud" data-keep-live="run"[^>]*></div>', html)
+    assert re.search(r'<div id="boardsPanel" data-keep-live="run"[^>]*></div>', html)
+    assert 'id="interactionModeHud"' not in html
 
 
 def test_stale_viewer_wording_is_gone_and_the_handover_tolerance_is_stated():

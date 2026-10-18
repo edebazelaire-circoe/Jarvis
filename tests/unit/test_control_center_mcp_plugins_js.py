@@ -927,7 +927,7 @@ def test_a_3000_character_word_never_widens_the_plugin_view(tmp_path, api, width
     refus longs d'un seul mot ne font déborder ni la liste, ni la fiche « Gérer »
     avec la ligne d'outil ouverte, au bureau comme à 375 px."""
 
-    from tests.unit.test_interaction_mode_hud_browser import _chrome, _served_page
+    from tests.unit.test_boards_card_browser import _chrome, _served_page
 
     node = shutil.which("node")
     if node is None:

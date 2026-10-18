@@ -13,9 +13,10 @@ bascule, raccourcis, scène, rail). Ce que ce fichier épingle :
   à « Plus d’outils » avant de fermer quoi que ce soit d'autre ; un module qui
   rend le focus à son bouton replié le rend à « Plus d’outils » ;
 - les badges Errors et Agents se lisent sans rien ouvrir ;
-- le Board se change depuis la ligne d'état, hors du lanceur ;
-- le bouton de mode reste en bas à gauche, hors du lanceur, sans chevauchement,
-  dans les deux thèmes à 1440×900, 1280×720, 900×600 et 600×800.
+- le Board se change depuis la carte Board du bas-gauche, hors du lanceur
+  (Slice 02 de jarvis-board-ui-wheel-dossier-refactor : plus de ligne d'état ni
+  de contrôle de mode) ; la carte ne chevauche ni le lanceur ni le reste, dans
+  les deux thèmes à 1440×900, 1280×720, 900×600 et 600×800.
 
 Preuves visuelles : `JARVIS_S08_EVIDENCE_DIR=<dossier>` y écrit les captures.
 Se saute si Chrome ou node manque.
@@ -31,7 +32,7 @@ import subprocess
 
 import pytest
 
-from tests.unit.test_interaction_mode_hud_browser import _chrome, _served_page
+from tests.unit.test_boards_card_browser import _chrome, _served_page
 
 HARNESS = Path(__file__).parent / "_status_centre_browser.mjs"
 VIEWPORTS = ((1440, 900), (1280, 720), (900, 600), (600, 800))
@@ -69,10 +70,9 @@ GEOMETRY = r"""(()=>{const box=el=>{if(!el)return null;const cs=getComputedStyle
   return {vw:innerWidth,vh:innerHeight,row,dock:box(q('.dock')),pop:box(q('#dockMorePop')),
     items:[...document.querySelectorAll('#dockMorePop button')].map(b=>({id:b.id||b.dataset.panel,box:box(b),
       name:b.getAttribute('aria-label')||'',label:b.dataset.dockLabel,text:getComputedStyle(b,'::after').content})),
-    topbar:box(q('.topbar')),state:box(q('.topbar>.state')),boards:box(q('#boardsButton')),
-    mode:box(q('#interactionModeButton')),modeInDock:!!q('.dock #interactionModeHud'),modeInTop:!!q('.topbar #interactionModeHud'),
-    boardsInDock:!!q('.dock #boardsHud'),boardsInTop:!!q('.topbar #boardsHud'),
-    rail:box(q('#presentationRail')),panel:box(q('#panel.open')),centre:[...document.querySelectorAll('#bgPills .bgpill,#hiddenEye')].map(box).filter(Boolean),
+    retired:{topbar:!!q('.topbar'),state:!!q('.state'),mode:!!q('#interactionModeHud')},boards:box(q('#boardsButton')),
+    boardsInDock:!!q('.dock #boardsHud'),
+    rail:box(q('#presentationRail')),panel:box(q('#panel.open')),centre:[...document.querySelectorAll('#bgPills .bgpill')].map(box).filter(Boolean),
     chatTab:box(q('#chatTab')),wheel:box(q('#toolWheel .tw-anchor')),
     z:getComputedStyle(q('.dock')).zIndex,expanded:q('#dockMore').getAttribute('aria-expanded'),
     overflowX:document.documentElement.scrollWidth>innerWidth}})()"""
@@ -236,8 +236,10 @@ def test_board_control_visible_and_switches_board(tmp_path):
     ]}])[0]
     r = step["results"]
     g = r["geo"]
-    assert g["boardsInTop"] and not g["boardsInDock"], "le Board reste dans la ligne d'état (D11)"
-    assert g["boards"] and g["boards"]["l"] < g["vw"] / 2 and not _overlap(g["boards"], g["dock"])
+    assert not g["boardsInDock"], "le Board n'est pas dans le lanceur"
+    # D04 : la carte Board, en bas à gauche.
+    assert g["boards"] and g["boards"]["l"] < g["vw"] / 2 and g["boards"]["t"] > g["vh"] / 2, g["boards"]
+    assert not _overlap(g["boards"], g["dock"])
     assert r["before"] == "Jarvis" and r["after"] == "Projet Atlas", r
     switches = [b["body"] for b in step["bodies"] if b["path"] == "/api/boards/switch"]
     assert switches == [{"board_id": "board_b"}], switches
@@ -267,19 +269,17 @@ def test_mode_control_bottom_left_unchanged(tmp_path, theme):
         more = closed["row"][-1]
         assert more["name"] == more["title"] == "Plus d’outils"
         assert closed["pop"] is None and closed["z"] == "32" and closed["expanded"] == "false"
-        # La ligne d'état s'arrête avant le lanceur.
-        assert closed["topbar"]["r"] <= closed["dock"]["l"] - 9, (closed["topbar"], closed["dock"])
-        # Mode : en bas à gauche, ni dans le lanceur ni dans la ligne d'état.
-        mode = closed["mode"]
-        assert not closed["modeInDock"] and not closed["modeInTop"]
-        # Géométrie réelle (QA S08 P2) : `GEO` de control_center_interaction_mode.js — left 18, bottom 22 ; sous
-        # 700 px le bouton quitte le rail gauche (`narrowLeft` 84) et se hisse de `narrowLift` 62 au-dessus du centre d'état.
-        assert round(mode["l"]) == (84 if w <= 700 else 18), mode
-        assert round(h - mode["b"]) == (22 + 62 if w <= 700 else 22), (h - mode["b"], mode)
-        for other in ("dock", "topbar", "chatTab", "rail", "wheel"):
-            assert not _overlap(mode, closed[other]), (other, mode, closed[other])
+        # Slice 02 : ni ligne d'état ni contrôle de mode ; la carte Board tient le bas-gauche.
+        assert closed["retired"] == {"topbar": False, "state": False, "mode": False}, closed["retired"]
+        card = closed["boards"]
+        # Géométrie réelle (QA S08 P2) : `GEO` de control_center_boards.js — left 18, bottom 22 ; sous 700 px la
+        # carte quitte le rail gauche (`narrowLeft` 84) et se hisse de `narrowLift` 62 au-dessus du centre d'état.
+        assert round(card["l"]) == (84 if w <= 700 else 18), card
+        assert round(h - card["b"]) == (22 + 62 if w <= 700 else 22), (h - card["b"], card)
+        for other in ("dock", "chatTab", "rail", "wheel"):
+            assert not _overlap(card, closed[other]), (other, card, closed[other])
         for chip in closed["centre"]:
-            assert not _overlap(mode, chip), (mode, chip)
+            assert not _overlap(card, chip), (card, chip)
         # Popover ouvert : six lignes nommées, sous la rangée, dans l'écran, au rang 36.
         assert opened["expanded"] == "true" and opened["z"] == "36"
         pop = opened["pop"]
@@ -288,6 +288,6 @@ def test_mode_control_bottom_left_unchanged(tmp_path, theme):
         for item in opened["items"]:
             assert item["box"] and item["box"]["h"] >= 34 and item["name"], item
             assert item["text"].strip('"') == item["label"], item
-        assert not _overlap(pop, opened["mode"]) and not _overlap(pop, opened["boards"])
+        assert not _overlap(pop, opened["boards"])
         assert opened["overflowX"] is False and closed["overflowX"] is False
         _no_errors(step)

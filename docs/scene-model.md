@@ -87,7 +87,11 @@ is `rejected_authority` (`runtime_composition`).
   objects as **ghosts**: `showHidden` in `JarvisSceneView`
   (`control_center_scene_view.js`, stored in `jarvis.scene.view`, never sent to
   Core, like `showEphemeral`), toggled by the eye `#hiddenEye` of the status
-  centre. `JarvisSceneLayout.viewModel(..., {showHidden:true})` emits every
+  centre — a host the page no longer declares since Slice 02 of the
+  wheel/dossier refactor (D06); the wheel's Sélection re-exposes it in Slice 06.
+  Meanwhile a stored `showHidden: true` draws **no** ghost (nothing on screen
+  could turn them off), journal `scene.hidden_view_withheld`, and the preference
+  is kept. `JarvisSceneLayout.viewModel(..., {showHidden:true})` emits every
   hidden object **that has a stored geometry** with `ghost: true` at that place
   (dimmed, dashed, accessible name suffixed « masqué »), still counted in
   `hidden`; a ghost is never placed by the resolver, never an obstacle, never

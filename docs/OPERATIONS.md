@@ -1857,22 +1857,39 @@ vide, sous-agent absent, trace non trouvée, lignes illisibles) :
   Exporter avant de l'activer. Détails : [Conversation Events](conversation-events.md),
   « Operations ».
 
-### Boards : le bouton du haut (liste rapide)
+### Boards : la carte Board en bas à gauche (liste rapide)
 
-Le bouton **Board** en haut de l'écran montre toujours le Board actif, tel que
-le serveur le confirme. Un clic (ou ↓) ouvre la liste de tous les Boards ; c'est
-le geste de tous les jours. L'inspection profonde reste dans `WSP` (ci-dessous).
+La **carte Board**, en bas à gauche de l'écran, montre toujours le Board actif,
+tel que le serveur le confirme : son **type** d'abord (icône et mot :
+Assistant, Présentation, Réunion), puis son **titre**. Un clic (ou ↓) ouvre,
+au-dessus de la carte, la liste de tous les Boards ; c'est le geste de tous les
+jours, et le seul endroit où l'on change de Board au quotidien. L'inspection
+profonde reste dans `WSP` (ci-dessous). Le haut de l'écran à gauche est vide
+au repos : l'ancien bouton Board et la ligne d'état `VOICE … · CLAUDE …` n'y
+sont plus ; la touche d'éveil (F9) marche comme avant, et le sous-menu JARVIS de
+la roue la rappellera.
+
+- **Board Réunion** : la carte dit « Réunion · prévu » et « Agit en
+  Assistant » : le comportement propre aux réunions n'existe pas encore, ce
+  Board se comporte pour l'instant comme un Board Assistant.
+- **Séance de présentation** : sur un Board Présentation (ou pendant une
+  lecture du Studio), la carte ajoute une ligne qui dit ce que fait la voix :
+  « Écoute la salle », « Sourd à la salle », « Séance inactive », ou, en rouge,
+  « Refusé par la voix » / « Entrée échouée » (le code exact apparaît au survol
+  de la ligne). « Refusé par la voix » veut dire que l'architecture vocale
+  choisie ne porte pas la présentation : changez-la dans l'onglet Mode vocal.
 
 - **Lire la liste** : chaque ligne donne le titre, le type (Assistant,
   Présentation, Réunion) et la dernière ouverture (« ouvert il y a 3 h »,
   « jamais ouvert » ; l'heure exacte au survol). Le Board actif a le point
   plein, le cadre et « Actif » ; « En fond » signale un autre Board dont l'agent
   travaille encore.
-- **Basculer** : cliquer un Board. Le bouton du haut compte les secondes
+- **Basculer** : cliquer un Board. La carte compte les secondes
   (« Bascule · N s ») et ne change de titre qu'une fois le serveur d'accord ;
   un refus laisse le Board précédent et dit pourquoi.
 - **Créer** : « Nouveau Board », un titre, le type (Assistant par défaut,
-  Présentation ou Réunion), « Créer ». Le type est fixé à la création et
+  Présentation, ou « Réunion · prévu » — la phrase dessous rappelle qu'il agit
+  pour l'instant en Assistant), « Créer ». Le type est fixé à la création et
   décide du comportement de JARVIS sur ce Board (une présentation se fait sur
   un Board Présentation ; un Board Réunion se comporte pour l'instant en
   Assistant). Le Board n'est pas ouvert : choisissez-le ensuite pour y basculer.
@@ -1884,8 +1901,8 @@ le geste de tous les jours. L'inspection profonde reste dans `WSP` (ci-dessous).
   à part. Ils ne s'ouvrent plus (pas de bascule) mais restent lisibles.
 - **Inspecter** : l'icône flèche « ouvrir ailleurs » d'une ligne, archivée ou non, ouvre
   « Sessions & Boards » (bouton `WSP` du dock) directement sur ce Board
-  (mémoire, artefacts, liaisons). Échap referme la vue et rend la main au
-  bouton Board du haut.
+  (mémoire, artefacts, liaisons). Échap referme la vue et rend la main à la
+  carte Board.
 - **Archiver** : l'icône boîte, après confirmation ; impossible pour le Board
   actif (basculez d'abord ailleurs).
 
@@ -2314,7 +2331,7 @@ ne prouve pas est à regarder une fois, sur un vrai poste, dans une instance iso
 
 1. **Clavier réel** : lancer une lecture (rôle « Vous présentez »), cliquer la fenêtre de la scène, puis flèches, Espace, Début, Fin, `P`, Échap
    (pause) : la bande dit où l'on en est à chaque touche, une touche n'agit qu'une fois, et les mêmes touches avec le focus ailleurs (un champ de
-   saisie, une autre fenêtre) ne font rien. La bande ne recouvre pas l’affichage du mode (en bas à gauche).
+   saisie, une autre fenêtre) ne font rien. La bande ne recouvre pas la carte Board (en bas de la colonne de droite pendant la lecture).
 2. **Plein écran** : « Plein écran » dans la bande (un clic) ; la scène remplit l'écran, la bande n'y est pas, les touches agissent une fois ; **Échap**
    (la vraie touche) sort du plein écran, la bande revient, la lecture n'a **pas** changé d'état (ni pause surprise, ni saut).
 3. **Deux écrans** : même essai avec un second écran branché (l'invite « gestion des fenêtres » est celle de Chrome) ; la bande reste sur l'écran du Control Center.
@@ -2328,7 +2345,7 @@ ne prouve pas est à regarder une fois, sur un vrai poste, dans une instance iso
    ne le déclenche qu'une fois (suiveur : Slice 13). Noter la pile utilisée. Recette complète : *Suivi des cues à la voix* ci-dessous.
 
 8. **Suivi vocal absent** (architecture `legacy` ou `duplex`, ou pile ambiante sans suiveur) : lancer « Vous présentez » ; 10 s plus tard la bande
-   dit « Suivi vocal indisponible » avec la raison, l’affichage du mode dit « Refusé par la voix », et la lecture continue au clavier. Noter l'architecture.
+   dit « Suivi vocal indisponible » avec la raison, la carte Board dit « Refusé par la voix », et la lecture continue au clavier. Noter l'architecture.
 9. **Séquence verrouillée** : arriver à un élément qui héberge une séquence ; « Suivant » est refusé pendant qu'elle tourne (Core l'exécute, la bande
    montre l'étape et le temps) ; « Sortir de la séquence » (ou `S`) continue après elle, toujours.
 10. **Registre illisible** (instance isolée) : après un arrêt brutal, abîmer `state/presentation-studio-stage-ledger.json` (le tronquer), relancer Core : la
@@ -2932,7 +2949,7 @@ objets ») :
 | --- | --- |
 | déplacer (et donc épingler) | glisser, ou Maj+flèches |
 | épingler / désépingler | menu (clic droit, appui long au doigt ou au stylet, Maj+F10) |
-| masquer, puis réafficher | menu « Masquer » ; œil du centre d'état (bas-centre) : clic = fantômes, clic droit = liste ; « Réafficher » sur un fantôme |
+| masquer, puis réafficher | menu « Masquer » ; pour réafficher, demandez-le à Jarvis (« réaffiche … ») : l'œil permanent du centre d'état a été retiré, l'action reviendra dans la Sélection de la roue |
 | changer de forme | menu « Afficher en point / capsule / fenêtre » |
 | archiver un objet | menu « Archiver… » ; une étoile emporte ses signaux, **pas** ses artefacts |
 | archiver en groupe | « Archiver les travaux terminés (N objets)… » (terminés, en échec, annulés, interrompus) et « Archiver les artefacts orphelins (N)… » (artefacts dont l'étoile est archivée) |

@@ -298,7 +298,7 @@ le parcours séparé cesse d'être une destination, la calibration enseigne
 (décision 17).
 
 Le menu n'est pas fabriqué par le module : `control_center.html` en possède un
-seul, partagé (`.ctxmenu`, rang 80, au-dessus du sélecteur de mode qui est à 36),
+seul, partagé (`.ctxmenu`, rang 80, au-dessus des sélecteurs qui sont à 36 ; le sélecteur de mode qui y était a été retiré par la Slice 02 de jarvis-board-ui-wheel-dossier-refactor),
 et ce contrôle en devient un consommateur de plus par son point d'échappement
 `run(act)`. `showMenu` et `closeMenu` sont **injectés** comme la surface et
 l'horloge ; absents, le clic droit refuse sous `barehands_hud_menu_missing` et

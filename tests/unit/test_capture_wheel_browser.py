@@ -45,7 +45,7 @@ from jarvis.adapters.fake_capture import FakeCaptureSource
 from jarvis.domain.capture import CaptureChannel, CaptureErrorCode
 from jarvis.ports.capture import CaptureTarget
 from tests.fakes.capture_stack import CaptureStack
-from tests.unit.test_interaction_mode_hud_browser import _chrome
+from tests.unit.test_boards_card_browser import _chrome
 
 HARNESS = Path(__file__).parent / "_capture_wheel_browser.mjs"
 SCREEN, AUDIO = CaptureChannel.SCREEN, CaptureChannel.AUDIO

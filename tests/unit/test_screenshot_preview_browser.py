@@ -27,7 +27,7 @@ from jarvis.core.screenshot_annotation import PNG_MAGIC
 from jarvis.domain.artifacts import ArtifactError, ArtifactKind, ArtifactQuery
 from jarvis.domain.capture import CaptureChannel
 from tests.fakes.capture_stack import CaptureStack
-from tests.unit.test_interaction_mode_hud_browser import _chrome
+from tests.unit.test_boards_card_browser import _chrome
 from tests.unit.test_presentation_rail_e2e_browser import png
 
 HARNESS = Path(__file__).parent / "_screenshot_preview_browser.mjs"
@@ -64,9 +64,9 @@ READ = """(()=>{
       src:lbImg?lbImg.getAttribute('src'):null,href:tab?tab.getAttribute('href'):null,target:tab?tab.target:null,rel:tab?tab.rel:null,
       modal:(lb.querySelector('[role=dialog]')||{getAttribute:()=>null}).getAttribute('aria-modal'),
       focusInside:lb.contains(ae),focusText:ae?ae.textContent:null}:null,
-    boxes:{modeBtn:box(q('#interactionModeButton')),chat:box(q('#chatTab')),anchor:box(q('#toolWheel .tw-anchor')),
+    boxes:{boardCard:box(q('#boardsButton')),chat:box(q('#chatTab')),anchor:box(q('#toolWheel .tw-anchor')),
       rec:q('#recIndicators').hidden?null:box(q('#recIndicators')),tray:q('#boardDropTray')&&!q('#boardDropTray').hidden?box(q('#boardDropTray')):null,
-      scene:q('#sceneLayer>.sc-status')?box(q('#sceneLayer>.sc-status')):null,topbar:box(q('.topbar'))},
+      scene:q('#sceneLayer>.sc-status')?box(q('#sceneLayer>.sc-status')):null},
     view:window.JarvisScreenshotPreview.view(),
     inert:[...document.body.children].filter(el=>el.inert).map(el=>el.id||el.className),
     vw:innerWidth,vh:innerHeight,
@@ -135,10 +135,9 @@ async def _screenshots(stack) -> list:
 def _no_overlap_with_neighbours(read: dict) -> None:
     preview = read["box"]
     assert preview is not None
+    # Slice 02 de jarvis-board-ui-wheel-dossier-refactor : plus de ligne d'état au-dessus ; la carte Board en dessous.
+    assert preview["t"] >= 0, ("on screen", read)
     for name, other in read["boxes"].items():
-        if name == "topbar":
-            assert preview["t"] >= other["b"], ("under the state line", read)
-            continue
         assert not _overlap(preview, other), (name, preview, other, read["vw"], read["vh"])
     assert preview["l"] >= read["boxes"]["anchor"]["r"], "right of the wheel anchor"
     assert preview["b"] <= read["vh"] - 170, "above the bottom-left context zone, never bottom-centre"

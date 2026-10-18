@@ -1,4 +1,8 @@
-/* Harnais CDP pour `test_interaction_mode_hud_browser.py`.
+/* Harnais CDP partagé des tests navigateur de la page servie (né avec
+   `test_boards_card_browser.py` ; depuis la Slice 02 de
+   jarvis-board-ui-wheel-dossier-refactor, son relevé `READ` mesure la carte Board
+   du bas-gauche, `test_boards_card_browser.py`, qui a pris la place du contrôle
+   de mode d'interaction retiré).
 
    Chrome sans tete, une taille imposee, et des RECTANGLES et des STYLES
    CALCULES. Lire une feuille de style comme du texte a deja cache trois
@@ -108,7 +112,9 @@ const READ=`(()=>{
     seen[name]={l:r.left,t:r.top,r:r.right,b:r.bottom,w:r.width,h:r.height,
       z:getComputedStyle(el).zIndex};
   };
-  box('modeBtn','#interactionModeButton');
+  /* La carte Board du bas-gauche (Slice 02 ; avant elle, le bouton de mode). */
+  box('card','#boardsButton');
+  box('boardsPanel','#boardsPanel');
   box('palette','#barehandsPalette');
   box('bhHud','#barehandsHud');
   box('wheel','#toolWheel .tw-anchor');
@@ -123,39 +129,32 @@ const READ=`(()=>{
   box('composer','#chatInput');
   box('chatLock','#chatLock');
   box('liveBanner','#liveBanner');
-  box('pres','#interactionModePresence');
-  box('presText','#interactionModePresence .im-pres-text');
-  const host=document.getElementById('interactionModeHud');
-  /* La ligne de la seance (Slice 03 de 2026-10) : ce qu'elle dit, son code, et
-     si son texte est coupe (largeur de defilement > largeur visible). */
-  const pres=document.getElementById('interactionModePresence');
-  const presText=pres&&pres.querySelector('.im-pres-text');
+  box('pres','#boardsPresence');
+  box('presText','#boardsPresence .bd-pres-text');
+  const host=document.getElementById('boardsHud');
+  /* La ligne de la seance (Slice 03 de 2026-10, sur la carte Board depuis la
+     Slice 02) : ce qu'elle dit, son code, et si son texte est coupe (largeur de
+     defilement > largeur visible). */
+  const pres=document.getElementById('boardsPresence');
+  const presText=pres&&pres.querySelector('.bd-pres-text');
   seen.presence={
-    state:host&&host.getAttribute('data-im-presence'),
+    state:host&&host.getAttribute('data-bd-presence'),
     hidden:pres?pres.hidden:null,
     text:presText?presText.textContent:null,
     title:pres?pres.getAttribute('title'):null,
     clipped:presText?presText.scrollWidth>presText.clientWidth+1:null,
     color:pres?getComputedStyle(pres).color:null,
-    dot:pres?getComputedStyle(pres.querySelector('.im-pres-dot')).animationName:null,
+    dot:pres?getComputedStyle(pres.querySelector('.bd-pres-dot')).animationName:null,
   };
-  seen.mode=host&&host.getAttribute('data-im-mode');
-  const trig=document.getElementById('interactionModeButton');
-  seen.button={title:trig?trig.getAttribute('title'):null,label:trig?trig.getAttribute('aria-label'):null};
-  const hintNode=document.getElementById('interactionModeHint');
-  seen.chooserHint=hintNode?hintNode.textContent:null;
-  const mark=host&&host.querySelector('.im-mark');
-  const button=host&&host.querySelector('.im-btn');
-  const pop=host&&host.querySelector('.im-pop');
-  /* Le halo vit sur un pseudo-element : c'est le second
-     argument de getComputedStyle qui les atteint, et c'est precisement ce
-     qu'une lecture de la feuille ne peut pas faire. */
+  seen.kind=host&&host.getAttribute('data-bd-kind');
+  const trig=document.getElementById('boardsButton');
+  seen.button={title:trig?trig.getAttribute('title'):null,label:trig?trig.getAttribute('aria-label'):null,
+    eyebrow:trig&&trig.querySelector('.bd-eyebrow')?trig.querySelector('.bd-eyebrow').textContent:null,
+    border:trig?getComputedStyle(trig).borderTopColor:null};
+  const pop=document.getElementById('boardsPanel');
   seen.motion={
-    halo:mark?getComputedStyle(mark,'::after').animation:null,
-    haloOpacity:mark?getComputedStyle(mark,'::after').opacity:null,
-    glow:button?getComputedStyle(button).boxShadow:null,
-    popAnimation:pop?getComputedStyle(pop).animation:null,
-    buttonTransition:button?getComputedStyle(button).transition:null,
+    popAnimation:pop?getComputedStyle(pop).animationName:null,
+    buttonTransition:trig?getComputedStyle(trig).transition:null,
   };
   seen.viewport={w:innerWidth,h:innerHeight};
   return seen;
@@ -242,9 +241,6 @@ try{
       const said=await evaluate(MOUNT_TOAST);
       if(said!=='ok')throw new Error('infusion : '+said);
     }
-    if(step.tone)
-      await evaluate(`document.getElementById('interactionModeHud')
-        .setAttribute('data-im-tone',${JSON.stringify(step.tone)})`);
     await sleep(150);
     const seen=await evaluate(READ);
     if(step.actions){
@@ -314,7 +310,7 @@ try{
         await send('Input.dispatchKeyEvent',{type:'keyUp',...base});
         await sleep(60);
         return {a:'key',focused:await evaluate(`(()=>{const e=document.activeElement;
-          return e?(e.getAttribute('data-im-mode')||e.id||e.tagName):null})()`)};
+          return e?(e.getAttribute('data-board-id')||e.id||e.tagName):null})()`)};
       }
       case 'ax':{
         const {root}=await send('DOM.getDocument',{depth:0});

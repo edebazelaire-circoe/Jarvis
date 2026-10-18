@@ -30,7 +30,7 @@ import subprocess
 
 import pytest
 
-from tests.unit.test_interaction_mode_hud_browser import HARNESS, _chrome, _served_page
+from tests.unit.test_boards_card_browser import HARNESS, _chrome, _served_page
 
 ROOT = Path(__file__).resolve().parents[2]
 MODULE = ROOT / "jarvis" / "runtime" / "control_center_tool_wheel.js"

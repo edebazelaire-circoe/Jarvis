@@ -80,7 +80,7 @@ READY = _until(f"{EXPLORER}.state().open && !!{EXPLORER}.run.view() && !!{STRIP}
 
 GEOMETRY = {"value": "geometry", "expr": """(()=>{
   const rect=el=>{if(!el)return null;const r=el.getBoundingClientRect();return {l:Math.round(r.left),t:Math.round(r.top),r:Math.round(r.right),b:Math.round(r.bottom)}};
-  const band=document.querySelector('#jvStudioExplorer .jvx-presenter'),hud=document.getElementById('interactionModeHud');
+  const band=document.querySelector('#jvStudioExplorer .jvx-presenter'),hud=document.getElementById('boardsHud');
   const btn=hud&&hud.querySelector('button'),rail=document.getElementById('presentationRail');
   const a=rect(band),h=rect(btn||hud),r=rail&&!rail.hidden?rect(rail):null;
   const meets=(x,y)=>!!x&&!!y&&x.l<y.r&&y.l<x.r&&x.t<y.b&&y.t<x.b;
@@ -215,15 +215,16 @@ async def test_escape_closes_variants_and_pauses_the_run_which_never_reopens_it_
 
 
 @pytest.mark.parametrize("viewport", ["1280x720", "1920x1080"])
-async def test_the_presenter_strip_never_overlaps_the_mode_hud_and_stays_on_screen(run, viewport, tmp_path):
+async def test_the_presenter_strip_never_overlaps_the_board_card_and_stays_on_screen(run, viewport, tmp_path):
     core, url = run
     shot = tmp_path / f"strip-{viewport}.png"
     result = await drive(url, [{"wait": 600}, READY, {"wait": 500}, GEOMETRY, {"shot": str(shot)}], viewport=viewport)
     geometry = result["reads"]["geometry"]
-    assert geometry["hud"] is not None, "the interaction-mode HUD is part of the real page"
+    assert geometry["hud"] is not None, "the Board card is part of the real page"
     assert geometry["overlap"] is False, geometry
-    # Slice 09 rework (agent 0's decision): during a run the interaction-mode HUD stays live and drawn above Variants, in the rail's
-    # column (whose list stops above it): « Refusé par la voix » and the way out of PRESENTATION stay visible and clickable.
+    # Slice 09 rework (agent 0's decision), carried by the Board card since Slice 02 of jarvis-board-ui-wheel-dossier-refactor:
+    # during a run the card stays live and drawn above Variants, in the rail's column (whose list stops above it):
+    # « Refusé par la voix » stays visible and the card clickable.
     assert geometry["runClass"] is True and geometry["hudInert"] is False, geometry
     assert geometry["hudReachable"] is True, geometry
     assert geometry["railOverlap"] is False, geometry

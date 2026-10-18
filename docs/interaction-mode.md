@@ -289,7 +289,7 @@ Rien n'a été changé. »
 | `POST /v1/interaction-mode` (Core), any source, `presentation_studio_run` included | 409 `{"error": {"code": "interaction_mode_derived", …}}`, trace `interaction.mode.refused` (warning); `LocalCoreClient` has no write method |
 | `POST /api/interaction-mode` (Control Center) | 409, `X-Jarvis-Error-Code: interaction_mode_derived`, the sentence as body, journal `interaction.mode.refused` (warning); nothing written, nothing asked of Core |
 | `settings_set("interaction_mode", …)` (`jarvis-console` MCP) | `interaction_mode_derived`, the sentence plus the Board tools to use; journal `settings.tool_refused` |
-| the bottom-left HUD chooser | sends nothing; explains in place (see *The Control Center HUD* below) |
+| the bottom-left HUD chooser | removed with its module by Slice 02 of the wheel/dossier refactor (see *The Control Center: no mode control* below); until then it sent nothing and explained in place |
 
 The routes stay so that a page, tool or client of an older version reads a
 named refusal instead of a 404 or 405.
@@ -560,57 +560,55 @@ No mode writer outside Core, and no Presentation behaviour whatsoever (Slices
 06+). Meeting is advertised everywhere and activable nowhere; not a line of
 meeting behaviour was invented.
 
-## The Control Center HUD (Slice 03, display-only since Slice 01b)
+## The Control Center: no mode control; Voice's presence on the Board card
 
-`jarvis/runtime/control_center_interaction_mode.js` — a compact, always-visible
-mode button at the **bottom left** of the Control Center, with a detail panel
-listing the three modes. It renders canonical status and nothing else, and it
-**writes nothing**: the module receives no network door. Its visual removal is
-Slice 02's; until then it is inert by construction (below). No Presentation
-behaviour, no audio, no meeting behaviour.
+**Removed by Slice 02 of `tasks/jarvis-board-ui-wheel-dossier-refactor/`
+(D03).** The bottom-left mode button and its detail
+(`control_center_interaction_mode.js`, `#interactionModeHud`, the SIMPLE /
+PRESENTATION / REUNION chooser) are gone from the page, module and host
+included: the mode follows the active Board's type (above), so a chooser could
+only explain that it chooses nothing. What it carried that mattered — Voice's
+**presence report** of a PRESENTATION session — moved, unchanged, to the
+bottom-left **Board card** (`jarvis/runtime/control_center_boards.js`,
+[boards.md](boards.md) › *Control Center Boards control*,
+[control-center-shell.md](control-center-shell.md) › *Board card*), which took
+the control's place and envelope on the bottom-left rail. The card shows the
+Board's **type** (Assistant, Présentation, Réunion « prévu ») — the mode is not
+shown separately anymore; the `interaction_mode` block of `/api/status`
+(`mode`, `board_mode`, `board_mode_label`, `modes`) is unchanged and still
+read, by the card, for the session line.
 
 ### One source of truth, and it is `/api/status`
 
-The module holds **no mode state**. Its only input is the `interaction_mode`
-block of `GET /api/status`, handed to it by `refreshStatus` once a second
-through `JarvisInteractionModeControl.gate(block, presentation)`, plus
-`statusLost()` when that poll itself fails. The second argument is Voice's
-Presentation report from the same beat (see below). That is the same pair (`gate` / `statusLost`) that
-`JarvisScene` and `JarvisBarehandsCommandChannel` already use; the page learns
-no second vocabulary and opens no second poll.
-
-**Why the 1 Hz poll and not a pushed seam.** There is no framework, no store and
-no generic seam in this page. The only pushed channel is `openLifecycleSeam`,
-which is Bare Hands-specific (`control_center_barehands.js`). Generalising it
-would have meant editing another feature's module to invent a mechanism nothing
-else would use, to gain at most one second of latency on a mode that changes
-with a Board switch. The cost is written down instead: up to one second between
-a change made elsewhere and its appearance.
+The card holds **no mode state**. `refreshStatus` hands it, once a second,
+the `boards`, `interaction_mode` and `presentation` blocks of the **same**
+`/api/status` beat (`JarvisBoardsControl.gate(s.boards, s.interaction_mode,
+s.presentation)`), and `statusLost()` when that poll fails. Up to one second
+between a change made elsewhere and its appearance — the cost of the 1 Hz poll,
+written down rather than paid with a second channel.
 
 ### The live Presentation session (presentation-interaction-mode, Slice 03)
 
 The effective mode says what Core decided; Voice's report says what Voice did
 with it. They diverge in exactly the cases that matter — a PRESENTATION refused
 by the voice architecture, an entry that could not open the shared microphone, a
-session that runs but is deaf to the room — and without this line the button
-said `PRESENTATION` in amber while nobody was listening.
+session that runs but is deaf to the room — and without this line the page
+would show a Présentation Board while nobody was listening.
 
-`refreshStatus` hands the `presentation` block of the **same** `/api/status`
-beat to the control as a second argument: `gate(s.interaction_mode,
-s.presentation)`. That block is Voice's scalar report (`VisualSignalBus.presentation`
+The `presentation` block is Voice's scalar report (`VisualSignalBus.presentation`
 → `.voice_presentation`, published by Slice 10, P7) and is `null` whenever Voice
-is offline. Nothing else feeds it: no new route, no new setting, no second poll
-(`test_no_new_settings_surface`).
+is offline. Nothing else feeds it: no route, no setting, no second poll
+(`test_boards_hud_js.py::test_no_new_settings_surface_for_the_voice_presence`).
 
 `presenceOf(report, mode)` derives one state from the real keys:
 
-| State | Derived from | Line (third line of the button) | Mark | `title` |
+| State | Derived from | Line on the card | Mark | `title` |
 | --- | --- | --- | --- | --- |
-| *(none)* | `presentation: null` (Voice offline) | hidden, `data-im-presence="none"` | — | — |
+| *(none)* | `presentation: null` (Voice offline) | hidden, `data-bd-presence="none"` | — | — |
 | `listening` | `active: true`, `ambient_deaf` not `true` | *Écoute la salle* | filled dot, slow pulse (stops under reduced motion) | `blocker_code`, else the sentence |
 | `deaf` | `active: true`, `ambient_deaf: true` | *Sourd à la salle* | ring | `blocker_code` (e.g. `presentation_transcription_unavailable`) |
-| `refused` | `active: false`, `event: "refused"`, mode in force is PRESENTATION | *Refusé par la voix* | red square | `last_failure_code` (`presentation_architecture_unsupported`, legacy or Duplex) |
-| `entry_failed` | `active: false`, `event: "entry_failed"`, mode in force is PRESENTATION | *Entrée échouée* | red square | `last_failure_code` |
+| `refused` | `active: false`, `event: "refused"`, mode in force is PRESENTATION | *Refusé par la voix* (card stroke red) | red square | `last_failure_code` (`presentation_architecture_unsupported`, legacy or Duplex) |
+| `entry_failed` | `active: false`, `event: "entry_failed"`, mode in force is PRESENTATION | *Entrée échouée* (card stroke red) | red square | `last_failure_code` |
 | `inactive` | anything else | *Séance inactive* in PRESENTATION; **hidden** in SIMPLE (the ordinary state) | dashed ring | the sentence |
 
 **`refused` and `entry_failed` only count while PRESENTATION is in force.** The
@@ -620,207 +618,58 @@ after a refusal (there is no session to close), so the file still says
 longer true.
 
 **A refusal written before the switch is ignored (`freshReport`).** The same
-file also holds the previous session's refusal when PRESENTATION is chosen
-again, until Voice reacts to the new switch. The control records the page's
-wall-clock time of the **last beat that showed another mode confirmed by Core**
+file also holds the previous session's refusal when PRESENTATION comes back,
+until Voice reacts to the new switch. The card records the page's wall-clock
+time of the **last beat that showed another mode confirmed by Core**
 (`core_reachable: true`); a `refused` / `entry_failed` report whose `ts` is
 older than that time minus `STALE_REPORT_MARGIN_S` (2 s) is treated as no
-report at all (*Séance inactive*). The window is therefore "written at least
-2 s before the last poll that still showed SIMPLE". The bound is deliberately
-**not** the first beat showing PRESENTATION: Voice writes its refusal once,
-milliseconds after Core's event, usually before the page's next 1 Hz poll, and
-that true refusal would then be hidden for good since it is never republished.
-With no such beat (page opened while PRESENTATION was already in force) or no
-`ts`, nothing dates the report and it is believed. `ts` is Voice's clock and the
-bound the page's: both run on the same machine, since the Control Center is
-served locally.
-
-While the session is `refused` or `entry_failed`, the mode stays amber (it is in
-force) but the breathing halo and the glow are switched off: nothing listens to
-the room. The detail's footer, which shows the server's summary of the hovered
-mode, starts with what is happening now for the mode in force when the session
-is deaf, refused or failed (« En ce moment : aucune séance ne tourne… Quand sa
-séance tourne : … »), so it never contradicts the banner. The button's `title`
-is a short tooltip (`Mode : PRESENTATION · Refusé par la voix (<code>)`), never a
-copy of the long accessible name; the presence line keeps the bare code in its
-own `title`.
+report at all (*Séance inactive*). The bound is deliberately **not** the first
+beat showing PRESENTATION: Voice writes its refusal once, milliseconds after
+Core's event, usually before the page's next 1 Hz poll, and that true refusal
+would then be hidden for good since it is never republished. With no such beat
+(page opened while PRESENTATION was already in force) or no `ts`, nothing dates
+the report and it is believed. `ts` is Voice's clock and the bound the page's:
+both run on the same machine, since the Control Center is served locally.
 
 The state is shape **and** word, never colour alone. The full sentence joins the
-button's accessible name *before* its action (« … sourde à la salle … Ouvrir le
-détail du mode. »), the polite live region announces it when it changes, and the
-detail's banner states refused / entry failed / deaf with the code in
-parentheses. This critical Voice presence feedback stays visible in Slice 01b.
+card button's accessible name *before* its action (« … sourde à la salle …
+Ouvrir la liste des Boards »), the card's polite live region
+(`#boardsPresenceAnnounce`) announces it once when it changes, and the console
+keeps `[boards] boards.voice_presence_shown {state, code}` (`warn` for a
+refusal or a failed entry). The card's tooltip is short (`Board actif : <title>
+(<type>) · Refusé par la voix (<code>)`); the presence line keeps the bare code
+in its own `title`. During a Studio run shown in Variantes the card stays live
+and drawn above it (`data-keep-live="run"`, rank 9150), so a refusal stays
+visible; the way out of a run is the Studio's own stop — there is no mode
+toggle on the card.
 
-**Not optimistic, like the mode.** A click never writes the line, nor the mode,
-and sends nothing; the line changes only when a status beat brings another
-report (`test_status_never_optimistic_after_click`).
+**Not optimistic, like the mode.** A click on the card opens the Board panel
+and changes neither the mode nor the line; the line changes only when a status
+beat brings another report
+(`test_boards_hud_js.py::test_status_never_optimistic_after_click`).
 
 Checked in a real browser against a **real** Control Center
-(`test_interaction_mode_hud_browser.py`: the server is `ControlCenter._app` on
+(`tests/unit/test_boards_card_browser.py`: the server is `ControlCenter._app` on
 loopback, Core is the real `InteractionModeService`, the harness writes
 `.voice_heartbeat` / `.voice_presentation` as Voice would, and a **test-only**
 route `POST /__test/board-mode` stands for the mode change `BoardService` makes
-on a Board switch). "Within one poll" is
-counted in `/api/status` responses the page actually received (≤ 2: the one
-possibly in flight at the change, plus the next), not in milliseconds — the
-page shares its connections with its other polls, and a wall-clock bound
-measured the machine's load (2 s observed once). Accessible names are read
-from Chrome's computed accessibility tree, with real key events.
+on a Board switch). "Within one poll" is counted in `/api/status` responses the
+page actually received (≤ 2: the one possibly in flight at the change, plus the
+next), not in milliseconds. Accessible names are read from Chrome's computed
+accessibility tree, with real key events.
 
-### Four presentations for three modes
+### Placement
 
-| Presentation | When | Chip checked |
-| --- | --- | --- |
-| `assistant` | SIMPLE is in force | SIMPLE |
-| `presentation` | PRESENTATION is in force — amber and a breathing halo, because Jarvis is *not* behaving as usual | PRESENTATION |
-| `unconfirmed` | `core_reachable: false` — the displayed value is the named local fallback (`source: "local"`, `revision: null`), desaturated **and dashed** | **none** |
-| `unknown` | the status poll itself failed | **none** |
-| `other` | the server advertises a mode this page does not know, and it is in force | **none** |
-
-`other` exists so that a mode added by a newer server is not painted as though
-it were SIMPLE. It carries the ordinary text colour and no halo: it is running,
-but this page cannot claim to know what it does.
-
-The last two are states one *undergoes*, and they check nothing: checking a chip
-would present a local value as authoritative. `REUNION` belongs to the same
-family from the other end — advertised, explained, and never checked, because it
-is never in force.
-
-`board_mode_label` is the mode the active Board's type designates, `label` is
-what is running. When they diverge (a Réunion Board, or a Studio run in
-progress) the button says so on its second line — `BOARD : REUNION` — the
-option carries a `Board` tag (`data-im-board`), and the banner names both
-(« Type du Board : REUNION. En vigueur : SIMPLE. »). Neither value is arbitrated away.
-
-### Meeting is driven by data, not by its name
-
-The detail is built from the status `modes` catalogue; `implemented: false`
-makes an option reserved (dashed mark, « Réservé · prévu », pinned by tests in
-both directions).
-
-### Choosing is inert, and says why (Slice 01b)
-
-Every option is `aria-disabled="true"` — **not** `disabled`, so it stays
-reachable by keyboard and can say why it cannot be chosen. Clicking one (or
-`choose(value)`) performs **no request**: the detail reopens on the server's own
-refusal sentence (`DERIVED`, byte-identical to `INTERACTION_MODE_DERIVED_MESSAGE`,
-a test compares them), prefixed for REUNION by its reservation; the polite live
-region says it; the console keeps `[mode] interaction_mode.choice_derived` at
-`info` with `code: interaction_mode_derived`, the mode and `board_mode`. The
-tone is amber (`warn`): a rule, not a failure. The mode in force stays what the
-status says. A mode unknown to the catalogue still throws
-`interaction_mode_hud_unknown` (a page defect). The explanation is cleared when
-the detail closes or the effective mode moves; at rest the banner shows the
-neutral line `NOTE_DERIVED` (« Le mode suit le type du Board actif. Pour
-présenter, ouvrez ou créez un Board Présentation. »).
-
-There is no write path, no pending state, no write deadline and no request
-door left in the module (`test_no_new_settings_surface` checks it names only
-`/api/status` and calls neither `request(` nor `fetch(`).
-
-### Placement — a shared rail
-
-Bottom left: `left: 18px`, with the vertical offset composed from two custom
-properties, `--im-rail` (which rung of the bottom-left stack) and `--im-lift`
-(clearing the bottom status centre, which replaced the voice hint in the orbital
-UI Slice 06).
-
-**That corner is not empty, and the first version of this module wrongly said it
-was.** Three elements already live on the same rail, all of them positioned by
-stylesheets injected from JavaScript and therefore invisible to an audit that
-reads only `control_center.html`:
-
-| Element | Where | Position |
-| --- | --- | --- |
-| `#jarvisHands .jh-badge` | `control_center_barehands.js` | `left:18px; bottom:18px`, on a host at `z-index: 2147483000` — it paints over everything |
-| `#jarvisHands .jh-note` | `control_center_barehands.js` | `left:18px; bottom:46px`, the suppressed-gesture word |
-| `.sc-status` | `control_center_scene_page.js` | `left:18px; bottom:18px`, moving to `52px` when the hands badge is present |
-
-The repository already had a dodge convention for this rail —
-`body:has(#jarvisHands .jh-badge) .sc-status { bottom: 52px }`, with the badge
-selector written out because a stylesheet cannot read
-`JarvisBarehandsContracts.DOM.badgeSelector`, and a test refusing divergence.
-This module **joins that convention** rather than inventing a second offset, and
-added itself to the test that governs it
-(`tests/unit/test_barehands_contracts_js.py`).
-
-Two rungs, never a third: `railOne` (52 px) above a single occupant, `railTwo`
-(86 px) above two. Beyond that the rail itself is overloaded, and rationing it
-is not any single occupant's decision.
-
-**The second rung is engaged permanently as soon as Bare Hands mounts, and that
-is deliberate.** `shell.mount()` creates the suppressed-gesture word once and
-only toggles its `display`; `:has()` cannot see `display: none`, so
-`body:has(#jarvisHands .jh-note)` is true from the moment Bare Hands mounts.
-The control therefore goes 22 → 86 in one step at mount and never moves again,
-and the first rung is unreachable in the Bare Hands case — it serves the scene
-alone, which has no transient word. **Do not make this reactive.** A suppressed
-gesture appears exactly while the user is mid-gesture, and a control that jumped
-34 px at that instant would be far worse than one that is permanently 34 px
-over-conservative. The 34 px buys never moving under someone's hand.
-
-The bottom **status centre** (orbital UI Slice 06; it replaced the voice hint
-capsule) is centred at the bottom at every width, from `--shell-bottom` (18 px)
-over `--shell-status-h` (44 px), so up to 62 px. Above 820 px it keeps this
-button's width (236 px at most, plus the gutter and 18 px of air) free on both
-sides; at 820 px and below it only reserves the chat tab, and the control lifts
-above the row (22 + 42 = 64 px). The lift threshold, 820 px, is unchanged:
-the rungs and the `.sc-status:not([hidden])` selector are unchanged too — the
-scene's « N objets masqués » note, one of the `.sc-status` notes, is gone (the
-eye of the status centre replaced it), so the scene rung engages less often.
-History: the voice hint's longest text (`F9 · VOICE HORS LIGNE`) was 200 px and
-the button's right edge at 195 px, so they only met below ~708 px; 820 px was
-kept on purpose (being early costs nothing).
-
-**Below 700 px the left rail is abandoned entirely.** At that width the Bare
-Hands column becomes centre-relative (`top: calc(50% + …)`) and its palette's
-height depends on how many tools are installed, so no `body:has()` can compute
-the clearance — and the rail lift made it *worse*, pushing the button deeper
-into the palette. Measured in a real browser with a three-tool palette, the
-button overlapped it by 64×46 at 700×600, 64×60 at 700×750 and still 64×24 at
-700×900: at every height, not only short ones. Since the button is `z-index: 32`
-and the palette `30`, the palette's bottom tool became covered and unclickable —
-a Bare Hands regression caused by this control.
-
-The fix is horizontal, not vertical: below 700 px the control moves
-**right of the Bare Hands column**, whose width is fixed (`10 + 64 + 10 = 84 px`), which
-makes the clearance independent of the tool count. The lift rises to 62 px there
-because toasts grow upward from the bottom and bit by 12 px under 520 px wide.
-The other candidates were measured and all contested: bottom-right by toasts at
-every size, top-left by the GPT-Live banner. Free at 700×600, 700×750, 700×900,
-500×700, 420×700 and 360×640.
-
-The detail opens **upward**, and carries `max-height` plus `overflow-y: auto`
-— it is anchored to the bottom of the screen, so without them its top would
-clip off-screen with no way back, exactly as `.bgpop` guards against.
-
-Stacking ranks (32 for the button, 36 for the detail) are the same as the Bare
-Hands control's, for the same reasons, and are recorded in the layer registry of
-[control-center-shell.md](control-center-shell.md) (a mirror sits at the top of
-`control_center.html`; `tests/unit/test_control_center_shell_layers.py` compares
-both to the real sheets).
-
-Geometry and motion are asserted by `tests/unit/test_interaction_mode_hud_browser.py`,
-which composes the served page, loads it in headless Chrome and reads
-**computed** rects and styles. Three defects in this slice survived tests that
-read the stylesheet as text — the rule was present, named the right selector,
-and the cascade did the opposite.
-
-### Limits
-
-Accessibility: each option carries its own visually hidden description
-(`aria-describedby`), because the visible `.im-hint` banner was the target of no
-`aria-describedby` at all — a screen reader announced the label and the
-reservation, never what the mode actually does.
-
-The module depends on no other page module at **runtime** — not Bare Hands, not
-the scene. Its stylesheet does name their selectors, because they share the
-bottom-left rail and that is the repository's dodge convention; none of them has
-to exist for this control to install and paint. It refuses to install, under a
-searchable name, if its host element is missing;
-that refusal is caught so it cannot take the rest of the single concatenated
-`<script>` down with it. It writes no Presentation behaviour and invents no
-meeting behaviour.
+The card sits where the mode button sat, on the bottom-left rail it shares with
+the Bare Hands badge, the suppressed-gesture word and the scene notes, with the
+same two rungs (52 / 86 px), the same lift above the status centre under 820 px
+and the same move right of the Bare Hands column at 700 px and below. The
+reasoning, measured for the mode button (no third rung; the second rung engaged
+permanently once Bare Hands mounts so nothing jumps under a hand; the
+horizontal exit below 700 px because the palette's height depends on its tool
+count), is kept as the `GEO` comment of `control_center_boards.js` and in
+[control-center-shell.md](control-center-shell.md) › *Board card*; the dodge
+convention is still governed by `tests/unit/test_barehands_contracts_js.py`.
 
 ## The brain's handle: the Board tools, never a setting
 

@@ -29,7 +29,11 @@
      ["axe", name, selector, waitMs, file] axe-core (fichier `file`) sur `selector` : violations
    Options d'etape (Slice 09) : `forcedColors` (forced-colors: active), `scale`
    (deviceScaleFactor : 720x450 a l'echelle 2 = une fenetre 1440x900 zoomee a 200 %).
-   Graines (Slice 09) : `live` (bandeau GPT-Live du statut), `mode` (bloc `interaction_mode`), `railRows` (lignes du rail,
+   Une cible de souris (click, rclick, move, press, release, dragto) peut etre un point `[x, y]` au lieu d'un
+   selecteur : un endroit vide de la page (le haut-gauche, libre depuis la Slice 02 de
+   jarvis-board-ui-wheel-dossier-refactor), pour un clic « ailleurs » ou un survol qui s'eloigne.
+   Graines (Slice 09) : `live` (bandeau GPT-Live du statut), `mode` (bloc `interaction_mode`), `presentation`
+   (releve de Voice du statut, Slice 02 : la ligne de seance de la carte Board), `railRows` (lignes du rail,
    fusionnees sur une ligne type), `boardArtifacts` (artefacts du Board actif), `previews`
    ({artifact_id: svg}) ; `POST /api/captures/screenshot` rend une capture d'ecran complete,
    et la route bornee `/api/artifacts/{id}/payload` est doublee la ou la page la lit (un <img>).
@@ -68,7 +72,7 @@ const SERVER=`(()=>{
     /* Boards (test_global_launcher_browser.py) : la bascule change le Board actif du statut. */
     boards:[{board_id:'default',title:'Jarvis',status:'active'}],activeBoard:'default',
     /* Slice 09 : bandeau GPT-Live, rail, artefacts du Board, apercus. */
-    live:null,railRows:null,boardArtifacts:[],previews:{},payloads:[],mode:null,
+    live:null,railRows:null,boardArtifacts:[],previews:{},payloads:[],mode:null,presentation:null,
   },seed);
   /* La route bornee des apercus, la ou la page la lit : la source d'un <img>
      (meme double que _presentation_rail_browser.mjs). Sans apercu seme, une
@@ -106,8 +110,10 @@ const SERVER=`(()=>{
       return json(200,{voice_state:'idle',voice_online:true,manual_wake_key:S.wakeKey||'f9',voice_turn_mode:'server',
         agent:{name:'claude',state:'running'},agent_cli:'claude',error_count:S.errorCount||0,subagents:S.subagents||null,
         background:{seq:S.seq,unread,counts,sources:[]},
-        boards:{available:true,active:{board_id:S.activeBoard,title:(S.boards.find(b=>b.board_id===S.activeBoard)||{}).title||S.activeBoard},jarvis_session_id:'jsess_1',bindings:[],error:null},
-        scene:{enabled:S.sceneOn,source:'core'},scene_limits:{job_cancel_timeout_s:30},live:S.live,interaction_mode:S.mode||null});
+        boards:{available:true,active:{board_id:S.activeBoard,title:(S.boards.find(b=>b.board_id===S.activeBoard)||{}).title||S.activeBoard,
+          board_kind:(S.boards.find(b=>b.board_id===S.activeBoard)||{}).board_kind},jarvis_session_id:'jsess_1',bindings:[],error:null},
+        scene:{enabled:S.sceneOn,source:'core'},scene_limits:{job_cancel_timeout_s:30},live:S.live,interaction_mode:S.mode||null,
+        presentation:S.presentation||null});
     }
     /* Raccourcis d'interface (valeurs par défaut de jarvis/runtime/shortcuts.py). */
     if(url==='/api/shortcuts')return json(200,{values:{ui_settings:'s',ui_close:'Escape',ui_panel_errors:'e',ui_panel_trace:'t',ui_panel_agents:'a'}});
@@ -207,6 +213,7 @@ try{
     return r.result.value;
   };
   const center=async selector=>{
+    if(Array.isArray(selector))return {x:selector[0],y:selector[1]};
     const box=await evaluate(`(()=>{const el=document.querySelector(${JSON.stringify(selector)});if(!el)return null;
       const r=el.getBoundingClientRect();return {x:r.left+r.width/2,y:r.top+r.height/2}})()`);
     if(!box)throw new Error(`selecteur absent : ${selector}`);

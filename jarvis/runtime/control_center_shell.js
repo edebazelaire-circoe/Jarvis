@@ -35,8 +35,6 @@
      hôte pas encore déclaré serait listé avec la slice qui le déclarera
      (`slice`) ; l'aperçu de capture l'est depuis la Slice 05. */
   const CONTROL_HOSTS=Object.freeze([
-    Object.freeze({selector:'#boardsHud',zone:'top-left'}),
-    Object.freeze({selector:'.topbar>.state',zone:'top-left'}),
     Object.freeze({selector:'.dock',zone:'top-right'}),
     Object.freeze({selector:'#bgPills',zone:'bottom-centre'}),
     Object.freeze({selector:'.live-banner',zone:'top-centre'}),
@@ -46,23 +44,25 @@
     Object.freeze({selector:'#barehandsPalette',zone:'left-edge'}),
     Object.freeze({selector:'#toolWheel',zone:'left-edge'}),
     Object.freeze({selector:'#presentationRail',zone:'right',createdBy:'control_center_presentation_rail.js'}),
-    Object.freeze({selector:'#interactionModeHud',zone:'bottom-left'}),
+    Object.freeze({selector:'#boardsHud',zone:'bottom-left'}),
     Object.freeze({selector:'#boardDropTray',zone:'bottom-centre'}),
     Object.freeze({selector:'#recIndicators',zone:'bottom-centre'}),
-    Object.freeze({selector:'#hiddenEye',zone:'bottom-centre'}),
     Object.freeze({selector:'#chatTab',zone:'bottom-right'}),
     Object.freeze({selector:'#screenshotPreview',zone:'left-low'}),
   ]);
   /* Zones de la coque (docs/06 §9). `right` : le rail actif de l'espace de
      travail (Slice 07), sous les panneaux latéraux qui s'ouvrent par-dessus. */
   const ZONES=Object.freeze({
-    'top-left':'ligne d’état : Board, voix, agent',
+    /* Libre depuis la Slice 02 de jarvis-board-ui-wheel-dossier-refactor (ni
+       sélecteur de Board, ni état permanent) : seuls des retours transitoires
+       (alerte critique, indicateurs d'enregistrement en Slice 04) s'y poseront. */
+    'top-left':'libre : retours transitoires seulement (alerte critique, enregistrement en cours)',
     'top-right':'lanceur global : Conversation, Agents, Errors, Réglages, « Plus d’outils » (Slice 08)',
     'top-centre':'bandeau GPT-Live (transitoire)',
     'left-edge':'ancre et roue d’outils (Sélection, Vidéo, Capture d’écran, Audio)',
     'left-low':'aperçu de la dernière capture d’écran (Slice 05), au-dessus du contexte bas-gauche',
-    'bottom-left':'zone de contexte : mode d’interaction, notes de la scène',
-    'bottom-centre':'centre d’état (Slice 06) : indicateurs de capture, pastilles d’arrière-plan, œil des objets masqués ; plateau de dépôt au-dessus',
+    'bottom-left':'zone de contexte : carte Board (type, titre, bascule, présence de la voix), notes de la scène',
+    'bottom-centre':'centre d’état (Slice 06) : indicateurs de capture, pastilles d’arrière-plan ; plateau de dépôt au-dessus',
     'bottom-right':'onglet Chat',
     'right':'rail actif de l’espace de travail (#presentationRail, Slice 07) ; panneaux latéraux par-dessus',
     'centre':'Board / scène',

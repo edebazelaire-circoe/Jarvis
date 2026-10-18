@@ -956,14 +956,14 @@ ${orbitKeyframes()}
   max-width:calc(50vw - 150px);pointer-events:none}
 body:has(#jarvisHands .jh-badge) .sc-status{bottom:52px}
 /* Le centre d'état du bas (orbital-ui Slice 06, docs/control-center-shell.md › Status
-   centre) partage cette rangée. Au-dessus de 820 px il réserve la largeur du bouton de
-   mode (gouttière + 254 px) de chaque côté : les notes s'arrêtent avant et vont à la
+   centre) partage cette rangée. Au-dessus de 820 px il réserve la largeur de la carte
+   Board (gouttière + 254 px) de chaque côté : les notes s'arrêtent avant et vont à la
    ligne (S06 rework, QA B1 : coupée en points de suspension, la cause d'une scène
    figée disparaissait) ; le texte entier est aussi le \`title\` de la note, et la
-   page publie leur hauteur (\`--sc-status-h\`) pour que le bouton de mode se
+   page publie leur hauteur (\`--sc-status-h\`) pour que la carte Board se
    hisse au-dessus d'une note de plusieurs lignes. À 820 px et moins il ne réserve plus
-   que l'onglet Chat : les notes passent au-dessus de la rangée (18 + 44 + 4), comme le
-   bouton de mode, qui se hisse au-dessus d'elles (rail de \`control_center_interaction_mode.js\`). */
+   que l'onglet Chat : les notes passent au-dessus de la rangée (18 + 44 + 4), comme la
+   carte Board, qui se hisse au-dessus d'elles (rail de \`control_center_boards.js\` › GEO). */
 @media(min-width:821px){.sc-status{max-width:min(calc(50vw - 150px),calc(var(--shell-gutter,18px) + 228px))}}
 @media(max-width:820px){.sc-status,body:has(#jarvisHands .jh-badge) .sc-status{bottom:calc(var(--shell-bottom,18px) + var(--shell-status-h,44px) + 4px)}}
 .sc-status[hidden]{display:none}
@@ -3356,20 +3356,42 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
   }
 
   /* ------------------------------------------------------------------
-     L'œil des objets masqués (orbital-ui Slice 06, D9).
+     L'œil des objets masqués (orbital-ui Slice 06, D9) — **sans hôte depuis la
+     Slice 02 de jarvis-board-ui-wheel-dossier-refactor** (D06 : plus de compte
+     ni d'interrupteur permanent dans la coque).
 
-     Un bouton du centre d'état bas-centre (`#hiddenEye`, déclaré par la page,
-     rang 40), seul contrôle permanent des objets masqués. Il ne tient aucun
-     état : il projette le réglage de vue `showHidden` (`JarvisSceneView`, ce
-     navigateur, jamais envoyé à Core) et le compte `hidden` du dernier modèle
-     de vue. Activation simple : allume ou éteint les fantômes ; activation
+     La page ne déclare plus `#hiddenEye` : `syncEye` ne trouve rien et rend
+     la main, aucun écouteur n'est posé. La mécanique reste ici, intacte, parce
+     que la Slice 06 la ré-expose dans le sous-menu Sélection de la roue
+     (« Afficher les masqués (N) », « Tout réafficher ») : le réglage de vue
+     `showHidden` (`JarvisSceneView`, ce navigateur, jamais envoyé à Core) et
+     ses fantômes (`toggleEye`, qui ne dépend plus de l'élément), le compte
+     `hidden` du dernier modèle de vue (`V.hiddenEye`), et la liste
+     (`openHiddenMenu(anchor)`, réaffichage canonique `set_visibility`).
+     D'ici là, un objet masqué ne se réaffiche que par Jarvis (outils de scène),
+     état intermédiaire accepté (`slices/TODO.md` de la tâche).
+
+     Si un hôte revient (même id) : activation simple = fantômes, activation
      secondaire (clic droit, pincement pouce + majeur, `ContextMenu`,
-     `Maj+F10`) : la liste existante (`openHiddenMenu`, « Tout réafficher »).
-     Aucun objet masqué : il reste focalisable, l'air inerte, et le dit.
-     Scène éteinte : caché. */
+     `Maj+F10`) = la liste ; aucun objet masqué : focalisable, l'air inerte, et
+     le dit ; scène éteinte : caché. */
   const EYE_ID='hiddenEye';
-  let eyeKbdAt=0,eyeWired=false,eyeSig='';
+  let eyeKbdAt=0,eyeWired=false,eyeSig='',ghostsWithheld=false;
   function eyeElement(){return document.getElementById(EYE_ID)}
+  /* **Les fantômes ne se dessinent que si une commande peut les éteindre.**
+     Un navigateur qui avait allumé l'œil garde `showHidden: true` dans ses
+     réglages de vue ; sans hôte (Slice 02 → Slice 06), il verrait des fantômes
+     sans aucun moyen de les cacher. Le réglage est gardé tel quel (Sélection le
+     reprendra), il n'est simplement pas appliqué tant que rien ne l'expose ; et
+     c'est dit une fois au journal. Condition de retrait : la Slice 06 déclare
+     son hôte (ou remplace ce prédicat par sa propre commande). */
+  function ghostsShown(){
+    const wanted=!!(viewPrefs&&viewPrefs.showHidden);
+    if(!wanted)return false;
+    if(eyeElement())return true;
+    if(!ghostsWithheld){ghostsWithheld=true;consoleLog('info','scene.hidden_view_withheld',{reason:'no_eye_host'})}
+    return false;
+  }
 
   function syncEye(){
     const eye=eyeElement();
@@ -3390,8 +3412,7 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
   }
 
   function toggleEye(){
-    const eye=eyeElement();
-    if(!eye||!enabled||!V)return;
+    if(!enabled||!V)return;
     const view=V.hiddenEye(viewPrefs,lastModel?lastModel.hidden:0);
     if(view.inert){announce('Aucun objet masqué.');consoleLog('info','scene.hidden_view_inert',{});return}
     const field=V.FIELD_BY_ID.get('showHidden');
@@ -3846,7 +3867,7 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
     nextEphemeralMs=Infinity;
     lastModel=L.viewModel(viewState(),current,vp,{objectLimit:lastView?lastView.objectLimit:L.OBJECT_LIMIT,errorLabels:errorLabels(),
       animatable:node=>(freshUntil.get(node.id)||{until:0}).until>now,
-      workView:item=>workViewOf(item,now),work:workIndex,raised,showHidden:!!(viewPrefs&&viewPrefs.showHidden)});
+      workView:item=>workViewOf(item,now),work:workIndex,raised,showHidden:ghostsShown()});
     armEphemeralTimer();
     /* Gravitation : le centre, la période et le resserrement du champ sont
        calculés pour ce rendu ; le rayon et la phase, eux, appartiennent à
@@ -3971,8 +3992,9 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
     for(const entry of stopping.values()){
       notes.push({cls:'sc-busy',main:`Arrêt de ${entry.label} en cours`,meta:elapsed(Date.now()-entry.started)});
     }
-    /* Les objets masqués ne sont plus une note ici (Slice 06, D9) : l'œil du
-       centre d'état (`#hiddenEye`) les compte et les montre. */
+    /* Les objets masqués ne sont plus une note ici (orbital-ui Slice 06, D9), ni un
+       œil permanent (Slice 02, D06) : Sélection les comptera et les montrera
+       (Slice 06). `syncEye` ne fait rien tant qu'aucun hôte n'est déclaré. */
     syncEye();
     if(lastModel&&lastModel.offscreen){
       notes.push({cls:'',main:`${lastModel.offscreen} ${lastModel.offscreen>1?'objets':'objet'} hors champ`,meta:''});

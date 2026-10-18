@@ -159,7 +159,9 @@ def test_the_cosmos_theme_knows_every_dock_tool_and_moves_the_pills():
     assert f"--shell-launcher-w:{tools_w}px" in html and "--shell-control:34px" in html
     assert "--shell-launcher-w" not in html[html.index("@media(max-width:700px){:root"):][:200]
     assert ".bgpills{position:relative;z-index:40;" in html and "@media(max-width:700px){.bgpills" not in html
-    assert "right:calc(var(--shell-gutter) + var(--shell-launcher-w) + 10px);display:flex;justify-content:flex-start" in html
+    # La ligne d'état qui s'arrêtait 10 px avant le lanceur est retirée (Slice 02 de
+    # jarvis-board-ui-wheel-dossier-refactor) : rien ne se range plus à gauche du lanceur.
+    assert "right:calc(var(--shell-gutter) + var(--shell-launcher-w) + 10px)" not in html
     assert ".dock{position:absolute;z-index:32;right:var(--shell-gutter);top:var(--shell-gutter);display:flex;gap:6px}" in html
     assert 'html[data-jarvis-theme="cosmos"] .bgpills{' not in work and 'html[data-jarvis-theme="cosmos"] .topbar{' not in work
 
@@ -200,7 +202,8 @@ def test_the_cosmos_theme_keeps_the_voice_state_readable_on_a_phone():
     assert "@media(max-width:700px){.bgpills" not in html
     panel_top = int(re.search(r"@media\(max-width:700px\)\{:root\{[^}]*--shell-panel-top:(\d+)px", html).group(1))
     assert panel_top >= 18 + 34 + 6 + 28
-    assert ".topbar>.state{max-width:100%;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}" in html
+    # Slice 02 de jarvis-board-ui-wheel-dossier-refactor : plus de ligne d'état au haut-gauche (D05).
+    assert ".topbar" not in html and 'class="state"' not in html
 
 
 def test_dot_labels_are_bounded_and_never_widen_the_scroll_area():

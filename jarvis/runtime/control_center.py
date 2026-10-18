@@ -594,19 +594,6 @@ STUDIO_INSPECTOR_WIDGETS_SCRIPT_FILE = "control_center_presentation_studio_inspe
 STUDIO_INSPECTOR_WIDGETS_SCRIPT_MARKER = "/*__CONTROL_CENTER_PRESENTATION_STUDIO_INSPECTOR_WIDGETS_JS__*/"
 STUDIO_INSPECTOR_SCRIPT_FILE = "control_center_presentation_studio_inspector.js"
 STUDIO_INSPECTOR_SCRIPT_MARKER = "/*__CONTROL_CENTER_PRESENTATION_STUDIO_INSPECTOR_JS__*/"
-#: Contrôle de mode d'interaction du bas-gauche (Slice 03 de
-#: `jarvis-presentation-interaction-mode`, affichage seul depuis la Slice 01b) :
-#: bouton d'état compact montrant le mode **en vigueur** (SIMPLE / PRESENTATION)
-#: et son détail ; le mode suit le type du Board actif, aucun choix n'est envoyé.
-#: Contrairement aux modules Bare Hands, il ne dépend d'aucun autre module de
-#: page : sa seule source est le bloc `interaction_mode` de `GET /api/status`, que
-#: `refreshStatus` lui remet une fois par seconde (`gate`), et `statusLost` quand
-#: ce sondage tombe. Il n'a donc pas d'ordre d'insertion à respecter vis-à-vis
-#: des autres scripts. Son bloc navigateur **refuse de se dessiner** sous un nom
-#: cherchable si son emplacement manque, et rattrape ce refus pour ne pas
-#: emporter les autres modules avec lui.
-INTERACTION_MODE_SCRIPT_FILE = "control_center_interaction_mode.js"
-INTERACTION_MODE_SCRIPT_MARKER = "/*__CONTROL_CENTER_INTERACTION_MODE_JS__*/"
 #: Contrôleur de capture (session-context-recording Slice 10 ; découpé en
 #: orbital-ui Slice 04) : capture d'écran, enregistrement audio et
 #: enregistrement d'écran. Sa seule vérité est `GET /api/captures/status`
@@ -651,12 +638,15 @@ INPUT_ARBITRATION_SCRIPT_MARKER = "/*__CONTROL_CENTER_INPUT_ARBITRATION_JS__*/"
 #: refuse de s'installer sous un nom cherchable si la pile d'infusions manque,
 #: et **rattrape ce refus** : la page servie concatène tous ses modules dans un
 #: seul `<script>`, et une levée qui remonterait emporterait les autres.
-#: Contrôle Boards du haut-droit (handoff `jarvis-board-session-context-runtime`,
-#: Slice 06) : titre du Board actif toujours visible, liste, bascule, création,
-#: renommage, archivage, nouvelle Session. Il suit le bloc `boards` de
-#: `GET /api/status` (`gate` / `statusLost`, comme le contrôle de mode) et
-#: n'appelle que `/api/boards*` / `/api/sessions*`. Deux emplacements déclarés
-#: dans la page (`#boardsHud`, `#boardsPanel`) ; refus d'installation rattrapé.
+#: Carte Board du bas-gauche (handoff `jarvis-board-session-context-runtime`,
+#: Slice 06 ; déplacée du haut-gauche par la Slice 02 de
+#: `jarvis-board-ui-wheel-dossier-refactor`, qui y a aussi déménagé la ligne de
+#: séance PRESENTATION du contrôle de mode retiré) : type et titre du Board actif
+#: toujours visibles, liste, bascule, création (type fixé), renommage, archivage,
+#: nouvelle Session. Il suit les blocs `boards`, `interaction_mode` et
+#: `presentation` de `GET /api/status` (`gate` / `statusLost`) et n'appelle que
+#: `/api/boards*` / `/api/sessions*`. Deux emplacements déclarés dans la page
+#: (`#boardsHud`, `#boardsPanel`) ; refus d'installation rattrapé.
 BOARDS_SCRIPT_FILE = "control_center_boards.js"
 BOARDS_SCRIPT_MARKER = "/*__CONTROL_CENTER_BOARDS_JS__*/"
 PRESENTATION_ATTENTION_SCRIPT_FILE = "control_center_presentation_attention.js"
@@ -2409,10 +2399,6 @@ class ControlCenter:
         html = html.replace(
             STUDIO_INSPECTOR_SCRIPT_MARKER,
             page.with_name(STUDIO_INSPECTOR_SCRIPT_FILE).read_text(encoding="utf-8"),
-        )
-        html = html.replace(
-            INTERACTION_MODE_SCRIPT_MARKER,
-            page.with_name(INTERACTION_MODE_SCRIPT_FILE).read_text(encoding="utf-8"),
         )
         html = html.replace(
             CAPTURE_RAIL_SCRIPT_MARKER,

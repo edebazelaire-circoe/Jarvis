@@ -276,7 +276,7 @@ def render_timeline(out: Path, events_file: Path) -> dict[str, Any]:
     import pytest
 
     from tests.unit.test_control_center_timeline_browser import LANES, OPEN, _drive, _page
-    from tests.unit.test_interaction_mode_hud_browser import _shots
+    from tests.unit.test_boards_card_browser import _shots
 
     events = json.loads(events_file.read_text(encoding="utf-8"))
     with tempfile.TemporaryDirectory(prefix="tb-timeline-") as tmp:

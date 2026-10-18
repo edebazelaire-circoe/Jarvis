@@ -121,7 +121,6 @@ if(typeof module!=='undefined'&&module.exports)
     speaking:[255,151,61],
     thinking:[175,88,255],
   };
-  const STATE_LABELS={idle:'SLEEP',waiting:'WAIT',listening:'LISTEN',speaking:'TALK',thinking:'THINKING'};
 
   /* ================================================= deux couleurs, deux rôles
 
@@ -162,12 +161,6 @@ html[data-jarvis-theme="cosmos"] #app{background:
    mêmes dans les deux thèmes. Ici : couleurs, bordures, rayons, flou, icônes.
    tests/unit/test_control_center_shell_layers.py refuse toute position ou tout
    rang posé ici sur une surface de la coque. */
-html[data-jarvis-theme="cosmos"] .state{
-  border:1px solid color-mix(in srgb,var(--accent,#6ee7ff) 24%,transparent);
-  border-radius:999px;background:rgba(3,8,12,.46);backdrop-filter:blur(16px);
-  font-size:10px;padding:7px 10px;letter-spacing:.1em;color:#6f8591;
-  box-shadow:0 8px 30px rgba(0,0,0,.2)}
-html[data-jarvis-theme="cosmos"] .state strong{color:var(--accent,#6ee7ff)}
 html[data-jarvis-theme="cosmos"] .dock .tool{display:block}
 html[data-jarvis-theme="cosmos"] .dock button{
   border-radius:10px;display:grid;place-items:center;
@@ -355,8 +348,6 @@ html[data-jarvis-theme="cosmos"] .choice.theme-choice.selected{
       document.documentElement.style.setProperty('--cosmos-accent',`rgb(${c.join(',')})`);
       if(state==='listening'&&this.online)this.ensureMic();
       else if(this.micStream||this.audioContext||this.micStatus==='requesting'||this.micStatus==='active')this.stopMic();
-      const label=document.getElementById('voiceState');
-      if(label&&document.documentElement.dataset.jarvisTheme==='cosmos'&&this.online)label.textContent=STATE_LABELS[state]||state.toUpperCase();
       if(!this.online&&this.micStream)this.stopMic();
     }
     async ensureMic(){
@@ -639,8 +630,6 @@ html[data-jarvis-theme="cosmos"] .choice.theme-choice.selected{
       if(typeof next.mount==='function')next.mount(context);
       if(typeof next.setState==='function')next.setState(snapshot,context);
       if(persist){try{localStorage.setItem(STORAGE_KEY,id)}catch(_error){}}
-      const state=document.getElementById('voiceState');
-      if(state&&snapshot.online)state.textContent=id==='cosmos'?(STATE_LABELS[snapshot.state]||snapshot.state.toUpperCase()):snapshot.state.toUpperCase();
       document.dispatchEvent(new CustomEvent('jarvis-theme-changed',{detail:{id}}));
       return id;
     },
@@ -721,22 +710,10 @@ html[data-jarvis-theme="cosmos"] .choice.theme-choice.selected{
     }).catch(()=>apiObject.setState({state:'idle',online:false}));
   }
 
-  function translateStateLabel(){
-    const label=document.getElementById('voiceState');
-    if(!label)return;
-    const observer=new MutationObserver(()=>{
-      if(apiObject.current()!=='cosmos'||!snapshot.online)return;
-      const wanted=STATE_LABELS[snapshot.state]||snapshot.state.toUpperCase();
-      if(label.textContent!==wanted)label.textContent=wanted;
-    });
-    observer.observe(label,{childList:true,characterData:true,subtree:true});
-  }
-
   setTimeout(()=>{
     ensureStyle();
     installSettingsTab();
     bridgeStatusApi();
-    translateStateLabel();
     let initial='circuit-board';
     /* « Omega » s'appelle « Cosmos » depuis le 2026-09-20. Le choix déjà
        enregistré porte encore l'ancien identifiant : sans cette reprise, il

@@ -40,7 +40,7 @@ from urllib.parse import urlparse
 import pytest
 
 from jarvis.runtime import barehands_test_mode as bh_settings
-from tests.unit.test_interaction_mode_hud_browser import HARNESS, _chrome, _served_page
+from tests.unit.test_boards_card_browser import HARNESS, _chrome, _served_page
 
 ROOT = Path(__file__).resolve().parents[2]
 WHEEL = ROOT / "jarvis" / "runtime" / "control_center_tool_wheel.js"

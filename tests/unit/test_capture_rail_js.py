@@ -404,9 +404,10 @@ def test_les_indicateurs_sont_au_rang_du_centre_d_etat(tmp_path):
     html = PAGE_HTML.read_text(encoding="utf-8")
     # Slice 06 : dans le centre d'état du bas, à gauche des pastilles, au même rang.
     assert re.search(r"#recIndicators\{position:relative;z-index:40;", html)
-    assert "@shell-layer 40: #recIndicators, #bgPills, #hiddenEye" in html
+    # Slice 02 de jarvis-board-ui-wheel-dossier-refactor : l'œil permanent n'est plus au centre d'état (D06).
+    assert "@shell-layer 40: #recIndicators, #bgPills\n" in html
     centre = html[html.index('<div class="status-centre" id="statusCentre">'):]
-    assert centre.index('id="recIndicators"') < centre.index('id="bgPills"') < centre.index('id="hiddenEye"')
+    assert centre.index('id="recIndicators"') < centre.index('id="bgPills"') and 'id="hiddenEye"' not in centre
     source = VIEWS.read_text(encoding="utf-8")
     style = source[source.index("const STYLE=`"):source.index("/* ------------------------------------------------- le bloc navigateur")]
     assert "z-index" not in style, "le rang vit dans la page et au registre, pas dans la feuille du module"

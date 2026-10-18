@@ -38,7 +38,7 @@ from jarvis.domain.scene import SceneObjectKind, WorkRef
 from jarvis.runtime.scene_view import CoreSceneTransport, CoreSceneView
 from tests.fakes.capture_stack import CaptureStack
 from tests.unit.test_board_drop import NoOutboundNetwork
-from tests.unit.test_interaction_mode_hud_browser import _chrome
+from tests.unit.test_boards_card_browser import _chrome
 from tests.unit.test_scene_contracts import star
 
 HARNESS = Path(__file__).parent / "_board_drop_browser.mjs"

@@ -14,13 +14,18 @@ fichier épingle :
   la couleur seule, jamais un émoji ;
 - un enregistrement se lit à gauche des pastilles, distinct d'un compteur, et
   s'arrête d'un geste ;
-- aucune commande du centre d'état ne recouvre le bouton de mode, le rail,
+- aucune commande du centre d'état ne recouvre la carte Board (bas-gauche
+  depuis la Slice 02 de jarvis-board-ui-wheel-dossier-refactor), le rail,
   l'onglet Chat ou le plateau de dépôt, dans les deux thèmes, à 1440×900,
   1280×720, 900×600 et 600×800 ; un panneau Chat ouvert ne le couvre pas ;
-- plus de capsule « F9 · DÉMARRER » : la touche reste dite par la ligne d'état
-  et reste la touche de Voice ;
-- l'œil : `aria-pressed`, fantômes sans écriture, liste des masqués à
-  l'activation secondaire, « Réafficher » = un seul `set_visibility`.
+- plus de capsule « F9 · DÉMARRER » ni de ligne d'état : la touche reste dite,
+  non affichée, par `#wakeHint`, et reste la touche de Voice ;
+- l'œil permanent est **absent** du centre d'état (D06) ; sa mécanique est
+  gardée pour Sélection (Slice 06) : avec un hôte `#hiddenEye` rétabli par le
+  test (ce que la Slice 06 fera), `aria-pressed`, fantômes sans écriture, liste
+  des masqués à l'activation secondaire, « Réafficher » = un seul
+  `set_visibility` ; sans hôte, un réglage `showHidden` resté allumé ne dessine
+  aucun fantôme.
 
 Preuves visuelles : `JARVIS_S06_EVIDENCE_DIR=<dossier>` y écrit les captures.
 Se saute si Chrome ou node manque.
@@ -38,7 +43,7 @@ import pytest
 
 from jarvis.domain.explicit_address import ExplicitAddressSource
 from jarvis.runtime.voice_v2 import activation_source_for_label
-from tests.unit.test_interaction_mode_hud_browser import _chrome, _served_page
+from tests.unit.test_boards_card_browser import _chrome, _served_page
 
 HARNESS = Path(__file__).parent / "_status_centre_browser.mjs"
 VIEWPORTS = ((1440, 900), (1280, 720), (900, 600), (600, 800))
@@ -52,14 +57,24 @@ BOXES = r"""(()=>{
     if(!(r.width>0&&r.height>0))return null;return {l:r.left,t:r.top,r:r.right,b:r.bottom,w:r.width,h:r.height}};
   const q=s=>document.querySelector(s);
   const items=[...document.querySelectorAll('#recIndicators .ri-chip, #bgPills .bgpill, #hiddenEye')].map(el=>({id:el.id||el.dataset.bgCat||el.dataset.riKey,box:box(el)})).filter(i=>i.box);
-  return {vw:innerWidth,vh:innerHeight,items,
-    modeBtn:box(q('#interactionModeButton')),chatTab:box(q('#chatTab')),rail:box(q('#presentationRail')),
+  return {vw:innerWidth,vh:innerHeight,items,eyeHost:!!q('#hiddenEye'),
+    card:box(q('#boardsButton')),chatTab:box(q('#chatTab')),rail:box(q('#presentationRail')),
     railTab:box(q('#presentationRail .jvr-tab')),tray:box(q('#boardDropTray')),chatPanel:box(q('#chatPanel')),
     wheel:box(q('#toolWheel .tw-anchor')),scStatus:box(q('#sceneLayer>.sc-status')),toasts:box(q('#toasts .toast')),
     overflowX:document.documentElement.scrollWidth>innerWidth,
-    z:{pills:getComputedStyle(q('#bgPills')).zIndex,eye:getComputedStyle(q('#hiddenEye')).zIndex,rec:getComputedStyle(q('#recIndicators')).zIndex},
+    z:{pills:getComputedStyle(q('#bgPills')).zIndex,rec:getComputedStyle(q('#recIndicators')).zIndex},
     theme:document.documentElement.getAttribute('data-jarvis-theme')||''};
 })()"""
+
+#: L'hôte de l'œil, rétabli par le test comme la Slice 06 le déclarera (dans Sélection) : la mécanique
+#: gardée (`control_center_scene_page.js`) s'y branche par son id. Plus dans la page depuis la Slice 02.
+MOUNT_EYE = r"""(()=>{if(document.getElementById('hiddenEye'))return 'present';
+  const b=document.createElement('button');b.type='button';b.id='hiddenEye';b.setAttribute('aria-pressed','false');
+  b.setAttribute('aria-disabled','true');b.setAttribute('aria-label','Aucun objet masqué');b.hidden=true;
+  b.style.cssText='position:fixed;left:50%;bottom:90px;width:32px;height:32px;z-index:40';
+  b.innerHTML='<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 12s3.4-6 9-6 9 6 9 6-3.4 6-9 6-9-6-9-6z"/></svg>';
+  document.body.appendChild(b);window.dispatchEvent(new Event('resize'));return 'mounted'})()"""
+EYE_HOST = ["eval", "eyeHost", MOUNT_EYE, 1200]
 
 #: Un plateau de dépôt réel (son hôte, sa feuille) avec un envoi, pour le mesurer.
 TRAY = r"""(()=>{const t=document.getElementById('boardDropTray');t.hidden=false;
@@ -158,7 +173,7 @@ def test_click_opens_same_popover_and_ack_clears(tmp_path):
 
 
 def test_icons_have_label_and_count_not_colour_only(tmp_path):
-    eye = r"""(()=>{const e=document.getElementById('hiddenEye');const r=e.getBoundingClientRect();
+    eye = r"""(()=>{const e=document.getElementById('hiddenEye');if(!e)return null;const r=e.getBoundingClientRect();
       return {label:e.getAttribute('aria-label'),title:e.title,pressed:e.getAttribute('aria-pressed'),w:r.width,h:r.height,
         svgs:e.querySelectorAll('svg').length,text:e.textContent.trim()}})()"""
     steps = _drive(tmp_path, [
@@ -176,10 +191,8 @@ def test_icons_have_label_and_count_not_colour_only(tmp_path):
             assert pill["w"] >= 32 and pill["h"] >= 32, pill
             paths.add(pill["paths"])
         assert len(paths) == len(pills), "chaque catégorie a sa forme, pas seulement sa couleur"
-        eye_seen = step["results"]["eye"]
-        assert eye_seen["label"] == eye_seen["title"] == "Afficher les objets masqués (3)"
-        assert eye_seen["pressed"] == "false" and eye_seen["svgs"] == 2 and eye_seen["text"] == ""
-        assert eye_seen["w"] >= 32 and eye_seen["h"] >= 32
+        # D06 (Slice 02 de jarvis-board-ui-wheel-dossier-refactor) : plus d'œil permanent au centre d'état.
+        assert step["results"]["eye"] is None
         _no_errors(step)
 
 
@@ -236,17 +249,18 @@ def measured(tmp_path_factory) -> dict:
 
 @pytest.mark.parametrize("theme", THEMES)
 @pytest.mark.parametrize("size", VIEWPORTS)
-def test_no_overlap_with_mode_control_rail_chat_tab_tray_at_1440_1280_900_600(measured, theme, size):
+def test_no_overlap_with_board_card_rail_chat_tab_tray_at_1440_1280_900_600(measured, theme, size):
     step = measured[(theme, size)]
     seen = step["results"]["boxes"]
     assert seen["theme"] == ("cosmos" if theme == "cosmos" else seen["theme"])
     items = seen["items"]
     ids = [i["id"] for i in items]
-    # Tout le centre d'état est là : l'enregistrement, quatre pastilles, l'œil ; au rang 40.
-    assert ids[0] == "jcap_s" and ids[1:5] == ["failed", "attention", "done", "said"] and ids[-1] == "hiddenEye", ids
-    assert seen["z"] == {"pills": "40", "eye": "40", "rec": "40"}
-    others = {name: seen[name] for name in ("modeBtn", "chatTab", "rail", "railTab", "wheel")}
-    assert others["modeBtn"] and others["chatTab"] and (others["rail"] or others["railTab"]), others
+    # Tout le centre d'état est là : l'enregistrement, quatre pastilles ; au rang 40. Plus d'œil (D06, Slice 02).
+    assert ids == ["jcap_s", "failed", "attention", "done", "said"], ids
+    assert seen["eyeHost"] is False
+    assert seen["z"] == {"pills": "40", "rec": "40"}
+    others = {name: seen[name] for name in ("card", "chatTab", "rail", "railTab", "wheel")}
+    assert others["card"] and others["chatTab"] and (others["rail"] or others["railTab"]), others
     for item in items:
         box = item["box"]
         assert 0 <= box["l"] and box["r"] <= seen["vw"] and box["b"] <= seen["vh"], item
@@ -277,7 +291,7 @@ def test_status_centre_clears_open_chat_panel(tmp_path, size):
     panel = seen["chatPanel"]
     assert panel, "le panneau Chat est ouvert"
     items = seen["items"]
-    assert [i["id"] for i in items][-1] == "hiddenEye" and len(items) == 6, items
+    assert "hiddenEye" not in [i["id"] for i in items] and len(items) == 5, items
     for item in items:
         assert not _overlap(item["box"], panel), (item["id"], item["box"], panel)
     if width >= 1100:
@@ -287,22 +301,45 @@ def test_status_centre_clears_open_chat_panel(tmp_path, size):
 
 
 def test_no_voicehint_and_f9_still_wakes(tmp_path):
-    state = r"""(()=>{const s=document.querySelector('.topbar>.state');
+    """Ni capsule (orbital-ui S06) ni ligne d'état (Slice 02, D05) : la touche reste dite, non affichée."""
+    state = r"""(()=>{const s=document.getElementById('wakeHint');const r=s.getBoundingClientRect();
       return {hint:!!document.getElementById('voiceHint')||!!document.querySelector('.voicehint'),
-        desc:s.getAttribute('aria-description'),title:s.title}})()"""
+        stateLine:!!document.querySelector('.topbar,.state'),text:s.textContent,visible:r.width>1&&r.height>1}})()"""
     steps = _drive(tmp_path, [
         {"width": 1280, "height": 720, "actions": [["eval", "state", state, 100]]},
         {"width": 1280, "height": 720, "seed": {"wakeKey": "f10"}, "actions": [["eval", "state", state, 100]]},
     ])
-    assert steps[0]["results"]["state"] == {"hint": False, "desc": "F9 · DÉMARRER", "title": "F9 · DÉMARRER"}
-    # La description suit la touche réglée, à chaque statut.
-    assert steps[1]["results"]["state"]["desc"] == "F10 · DÉMARRER"
+    assert steps[0]["results"]["state"] == {"hint": False, "stateLine": False, "text": "F9 · DÉMARRER", "visible": False}
+    # Le texte suit la touche réglée, à chaque statut.
+    assert steps[1]["results"]["state"]["text"] == "F10 · DÉMARRER"
     # La touche elle-même est le raccourci global de Voice : la page n'y est pour rien, et rien n'a bougé.
     assert activation_source_for_label("f9") is ExplicitAddressSource.MANUAL_KEY
     assert activation_source_for_label("F10", manual_key="f10") is ExplicitAddressSource.MANUAL_KEY
 
 
 # ------------------------------------------------------------------ l'œil
+#
+# Slice 02 de jarvis-board-ui-wheel-dossier-refactor (D06) : la page ne déclare plus
+# l'œil. Sa mécanique reste dans `control_center_scene_page.js` pour la Slice 06
+# (Sélection) ; les tests ci-dessous la tiennent avec un hôte rétabli par le test
+# (`EYE_HOST`), comme Sélection le déclarera.
+
+
+def test_without_an_eye_host_a_stored_ghost_view_draws_no_ghost(tmp_path):
+    """Un navigateur qui avait allumé l'œil garde `showHidden: true` : sans hôte, aucun fantôme ne
+    s'impose sans moyen de l'éteindre ; c'est dit une fois au journal, et le réglage est gardé."""
+    ghosts = r"""[...document.querySelectorAll('#sceneLayer [data-object-id]')].map(n=>({id:n.dataset.objectId,
+      ghost:n.classList.contains('sc-ghost')}))"""
+    stored = "(()=>{try{return JSON.parse(localStorage.getItem('jarvis.scene.view')||'null')}catch(_){return 'refused'}})()"
+    step = _drive(tmp_path, [{"width": 1440, "height": 900, "storage": {"version": 1, "view": {"showHidden": True}},
+                              "actions": [["eval", "nodes", ghosts, 1500], ["eval", "stored", stored, 100],
+                                          ["eval", "eye", "!!document.getElementById('hiddenEye')", 50]]}])[0]
+    r = step["results"]
+    assert r["eye"] is False
+    assert [n["id"] for n in r["nodes"]] == ["jobj_star"] and not any(n["ghost"] for n in r["nodes"]), r["nodes"]
+    assert r["stored"]["view"]["showHidden"] is True, "the browser's view preference is kept for Sélection"
+    assert sum("scene.hidden_view_withheld" in line["text"] for line in step["console"]) == 1, step["console"]
+    _no_errors(step)
 
 
 def test_eye_toggle_aria_pressed_and_secondary_lists_hidden(tmp_path):
@@ -314,6 +351,7 @@ def test_eye_toggle_aria_pressed_and_secondary_lists_hidden(tmp_path):
       items:[...m.querySelectorAll('button[role=menuitem]')].map(b=>b.textContent)}})()"""
     stored = "(()=>{try{return JSON.parse(localStorage.getItem('jarvis.scene.view')||'null')}catch(_){return 'refused'}})()"
     step = _drive(tmp_path, [{"width": 1440, "height": 900, "actions": [
+        EYE_HOST,
         ["eval", "before", eye, 100],
         ["eval", "nodesBefore", ghosts, 100],
         ["click", "toggle", "#hiddenEye", 900],
@@ -387,12 +425,13 @@ def test_eye_is_inert_looking_without_hidden_objects_and_hidden_without_scene(tm
                      "origin": "runtime", "work_ref": None, "payload": {"title": "Analyse", "summary": "", "items": []}}]
     steps = _drive(tmp_path, [
         {"width": 1280, "height": 720, "seed": {"objects": visible_only}, "actions": [
-            ["eval", "eye", eye, 100], ["click", "click", "#hiddenEye", 600], ["eval", "after", eye, 100]]},
-        {"width": 1280, "height": 720, "seed": {"sceneOn": False}, "actions": [["eval", "eye", eye, 100]]},
+            EYE_HOST, ["eval", "eye", eye, 100], ["click", "click", "#hiddenEye", 600], ["eval", "after", eye, 100]]},
+        {"width": 1280, "height": 720, "seed": {"sceneOn": False}, "actions": [EYE_HOST, ["eval", "eye", eye, 100]]},
     ])
     inert = steps[0]["results"]
+    # L'air inerte était la feuille de la page, retirée avec l'hôte (Slice 02) : la mécanique dit l'état par ses attributs.
     assert inert["eye"]["label"] == "Aucun objet masqué" and inert["eye"]["disabled"] == "true"
-    assert float(inert["eye"]["opacity"]) < 0.7 and inert["eye"]["hidden"] is False
+    assert inert["eye"]["hidden"] is False
     # Un clic n'allume rien quand il n'y a rien à montrer.
     assert inert["after"]["pressed"] == "false"
     assert steps[1]["results"]["eye"]["hidden"] is True
@@ -413,7 +452,7 @@ def test_toasts_never_cover_the_capture_note_or_its_close(tmp_path, size):
       const close=document.querySelector('#recIndicatorsNote .ri-note-close');const c=close&&close.getBoundingClientRect();
       const hit=c?document.elementFromPoint(c.left+c.width/2,c.top+c.height/2):null;
       return {note:box(document.getElementById('recIndicatorsNote')),toasts:[...document.querySelectorAll('#toasts .toast')].map(box),
-        closeHit:!!(hit&&close.contains(hit)),items:[...document.querySelectorAll('#bgPills .bgpill, #hiddenEye')].map(box),
+        closeHit:!!(hit&&close.contains(hit)),items:[...document.querySelectorAll('#bgPills .bgpill')].map(box),
         text:(document.querySelector('#recIndicatorsNote span')||{}).textContent||''}})()"""
     step = _drive(tmp_path, [{"width": width, "height": height, "actions": [
         ["eval", "start", "window.JarvisCaptureRail.act('audio');1", 1500],
@@ -444,8 +483,8 @@ BREAK_SCENE = r"""(()=>{const f=window.fetch;window.fetch=(p,i)=>String(p).start
 NOTES = r"""(()=>{const box=el=>{if(!el)return null;const r=el.getBoundingClientRect();return r.width>0?{l:r.left,t:r.top,r:r.right,b:r.bottom}:null};
   return {notes:[...document.querySelectorAll('#sceneLayer>.sc-status .sc-note')].map(n=>{const m=n.querySelector('.sc-note-main');
     return {text:n.textContent,main:m.textContent,title:n.title,fits:m.scrollWidth<=m.clientWidth,box:box(n)}}),
-    mode:box(document.getElementById('interactionModeButton')),
-    centre:[...document.querySelectorAll('#recIndicators .ri-chip, #bgPills .bgpill, #hiddenEye')].map(box).filter(Boolean),
+    mode:box(document.getElementById('boardsButton')),
+    centre:[...document.querySelectorAll('#recIndicators .ri-chip, #bgPills .bgpill')].map(box).filter(Boolean),
     rail:box(document.getElementById('presentationRail')),chatTab:box(document.getElementById('chatTab'))}})()"""
 
 
@@ -453,8 +492,8 @@ NOTES = r"""(()=>{const box=el=>{if(!el)return null;const r=el.getBoundingClient
 def test_degraded_scene_note_reads_whole_cause_without_overlap(tmp_path, size):
     """B1 : au-dessus de 820 px, la note « Scène figée · <cause> » était plafonnée à
     246 px et la cause disparaissait dans les points de suspension. Elle se lit en
-    entier, son `title` porte le texte entier, et elle ne touche ni le bouton de
-    mode ni le centre d'état."""
+    entier, son `title` porte le texte entier, et elle ne touche ni la carte
+    Board (ex-bouton de mode, même place) ni le centre d'état."""
     width, height = size
     step = _drive(tmp_path, [{"width": width, "height": height, "actions": [
         ["eval", "break", BREAK_SCENE, 6000],
@@ -480,6 +519,7 @@ def test_eye_announces_ghosts_and_ghosts_never_move(tmp_path):
     sent = "window.__sc.bodies.filter(b=>b.path==='/api/scene/commands').length"
     ghost = '#sceneLayer [data-object-id="jobj_hidden_win"]'
     step = _drive(tmp_path, [{"width": 1440, "height": 900, "actions": [
+        EYE_HOST,
         ["click", "on", "#hiddenEye", 900],
         ["eval", "said", live, 100],
         ["drag", "drag", ghost, 1200, [140, 90]],
@@ -520,6 +560,7 @@ def test_a_ghost_is_never_pressed_into_a_gesture_nor_held(tmp_path):
             "if(v)JarvisScene.frames.cancel('jobj_star');return {ghost:g,heldAfterGhost:held,visible:!!v,heldAfterVisible:both}})()")
     sent = "window.__sc.bodies.filter(b=>b.path==='/api/scene/commands').length"
     step = _drive(tmp_path, [{"width": 1440, "height": 900, "actions": [
+        EYE_HOST,
         ["click", "on", "#hiddenEye", 900],
         ["press", "down", ghost, 200],
         ["eval", "pressed", gesture, 50],

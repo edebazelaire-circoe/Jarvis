@@ -885,7 +885,7 @@ The note of the last refusal sits above the status centre (close button, `Escape
 state changes are announced in a polite live region. A chip that disappears
 while focused hands the focus to the next chip, else to the wheel anchor.
 **Place** (orbital UI Slice 06): the first item of the bottom **status centre**
-(`#recIndicators | #bgPills | #hiddenEye`, [control-center-shell.md](control-center-shell.md)
+(`#recIndicators | #bgPills`; the eye was removed by Slice 02 of the wheel/dossier refactor, [control-center-shell.md](control-center-shell.md)
 › *Status centre*), left of the background pills, so a recording is never
 read as a counter; chips wrap upwards when the row is full. At 700 px and below
 the row cannot hold a chip beside the pills and the eye: the chips keep the

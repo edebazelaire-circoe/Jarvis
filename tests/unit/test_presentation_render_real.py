@@ -29,7 +29,7 @@ from jarvis.runtime.control_center import ControlCenter
 from jarvis.runtime.core_sessions import CoreSessionTransport
 from aiohttp.test_utils import TestClient, TestServer
 from tests.fakes.remotion_scene import scene_candidate
-from tests.unit.test_interaction_mode_hud_browser import _chrome
+from tests.unit.test_boards_card_browser import _chrome
 from tests.unit.test_local_capability_host import FakeRunner
 
 RUNTIME = os.environ.get("JARVIS_REMOTION_RUNTIME_DIR", "")

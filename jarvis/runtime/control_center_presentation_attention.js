@@ -74,8 +74,9 @@
 
    ## Pourquoi la carte vit dans la pile d'infusions
 
-   Le coin bas-gauche est disputé (`.jh-badge`, `.jh-note`, `.sc-status`, le
-   contrôle de mode), et il a déjà deux barreaux : en poser un troisième, la
+   Le coin bas-gauche est disputé (`.jh-badge`, `.jh-note`, `.sc-status`, la
+   carte Board — le contrôle de mode avant la Slice 02 de
+   jarvis-board-ui-wheel-dossier-refactor, même place), et il a déjà deux barreaux : en poser un troisième, la
    Slice 03 l'a écrit, n'appartient à aucun occupant pris isolément. Les quatre
    ancrages ont donc été mesurés dans un vrai navigateur à sept tailles, et
    aucun coin n'est libre à toutes.
@@ -373,10 +374,10 @@
    reste jusqu'à ce qu'on l'écarte. La colonne occupe 28 px à 30 px du bord (22
    sous 940 px) ; 52 px de marge la dégagent à toutes les tailles. */
 .${DOM.cardClass}{margin-bottom:44px;margin-right:52px}
-/* Sous 700 px le contrôle de mode quitte le rail gauche pour \`left:84px\`, où
-   il occupe la bande 84→144 au-dessus du bas — celle que la carte relevée
-   occupait. Mesuré : recouvrement de 119×31 à 500×700, carte au rang 70 contre
-   32, donc bouton de mode incliquable. La Slice 03 a été reprise pour ce
+/* Sous 700 px la carte Board (avant elle le contrôle de mode, même géométrie)
+   quitte le rail gauche pour \`left:84px\`, où elle occupe la bande 84→144 au-dessus
+   du bas — celle que la carte relevée occupait. Mesuré : recouvrement de 119×31 à
+   500×700, carte au rang 70 contre 32, donc bouton du bas-gauche incliquable. La Slice 03 a été reprise pour ce
    défaut-là dans l'autre sens ; le reproduire ici aurait été impardonnable.
 
    La sortie retenue est **verticale** et non plus horizontale : on passe

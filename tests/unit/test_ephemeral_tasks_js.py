@@ -260,7 +260,7 @@ CARD_PROBE = r"""(()=>{
 
 
 def _panel_run(tmp_path, expression: str, *, reduced: bool = False) -> Any:
-    from tests.unit.test_interaction_mode_hud_browser import _drive
+    from tests.unit.test_boards_card_browser import _drive
 
     step = {"width": 1440, "height": 900, "reducedMotion": reduced,
             "actions": [{"a": "eval", "expr": expression}]}

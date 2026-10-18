@@ -125,7 +125,7 @@ const READ=`(function(){
   /* Orbital UI Slice 04 : la roue est visible d'office, la palette quitte la vue. */
   box('wheel','#toolWheel .tw-anchor');
   box('indicators','#recIndicators');
-  box('modeBtn','#interactionModeButton');
+  box('boardCard','#boardsButton');
   /* Le centre d'état du bas (orbital UI Slice 06), à la place de l'indication vocale. */
   box('hint','#statusCentre');
   box('dock','.dock');

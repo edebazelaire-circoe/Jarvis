@@ -18,7 +18,11 @@ filled it in as they landed (wheel, Selection method, capture wedges and
 indicators, screenshot preview, status centre and eye, workspace rail, global
 launcher, integration matrix); the release check of Slice 10 re-read it
 against the code of the task branch at `9c2848cc` (every cited file, id and
-test exists).
+test exists). Slice 02 of `tasks/jarvis-board-ui-wheel-dossier-refactor/`
+then emptied the top-left zone (no Board selector, no permanent state line),
+moved the Board control to a bottom-left **Board card** in place of the
+interaction-mode control (removed with its chooser), and removed the permanent
+hidden-object eye from the status centre (decisions D03-D06 of that handoff).
 
 **Rule for every later change.** A surface that is added, moved, or gets a
 `z-index` updates, in the same commit: its row below, the stylesheet, the
@@ -43,21 +47,21 @@ no `position`, `top`, `right`, `bottom`, `left`, `inset`, `z-index`,
 surface (`test_cosmos_overrides_no_shell_position_or_rank`). The circuit-board
 skin keeps its text labels in the launcher (`ERR`, `SET`, …), at the shared
 34 px size; Cosmos swaps them for icons. The launcher's order is the page's, the
-same in both themes (since Slice 08 the Cosmos skin no longer reorders it). The `JARVIS` brand of the state line is hidden in both themes (Cosmos
-already hid it): in circuit-board it pushed the state onto a second row, over
-the Bare Hands column, from 1024 px down.
+same in both themes (since Slice 08 the Cosmos skin no longer reorders it). The top state line (`.topbar`, its
+hidden `JARVIS` brand and the `.state` badge) no longer exists (Slice 02 of the
+wheel/dossier refactor), so neither skin styles it.
 
 ## Zones
 
 | Zone | Surfaces today | Owner of the content |
 | --- | --- | --- |
-| `top-left` | `.topbar`: `#boardsHud`, `.state` (the `.brand` element stays in the markup, hidden in both themes: the target shows Board then state) | page, `control_center_boards.js` |
+| `top-left` | free (wheel/dossier refactor Slice 02, D05): no Board selector, no permanent state badge; only transient cues may use it later (critical alert, recording indicators in Slice 04) | — |
 | `top-right` | `.dock` (global launcher, Slice 08: one row of five 34 px buttons, the « Plus d’outils » popover under it; see [Global launcher](#global-launcher-dock)) | page |
 | `top-centre` | `.live-banner` (GPT-Live, transient) | page |
 | `left-edge` | `#toolWheel` anchor and orbital tool wheel (Slice 02; live by default since Slice 04: Sélection, Vidéo, Capture d'écran, Audio); `#barehandsHud`, `#barehandsPalette` hosts stay declared but hidden while the wheel is visible (Slice 03) | their modules |
-| `left-low` | `#screenshotPreview` (Slice 05): preview of the last successful screenshot, right of the wheel anchor, its bottom 172 px above the page bottom so it clears the bottom-left context zone (mode button and scene notes stacked up to 162 px) | `control_center_screenshot_preview.js` |
-| `bottom-left` | `#interactionModeHud`, `.sc-status` notes of the scene | `control_center_interaction_mode.js`, scene |
-| `bottom-centre` | status centre `#statusCentre` (Slice 06): `#recIndicators` \| `#bgPills` \| `#hiddenEye`, see [Status centre](#status-centre-statuscentre); `#boardDropTray` above it | page, `control_center_capture_wheel.js`, `control_center_scene_page.js`, `control_center_board_drop.js` |
+| `left-low` | `#screenshotPreview` (Slice 05): preview of the last successful screenshot, right of the wheel anchor, its bottom 172 px above the page bottom so it clears the bottom-left context zone (Board card and scene notes stacked up to 162 px) | `control_center_screenshot_preview.js` |
+| `bottom-left` | Board card `#boardsHud` (its panel `#boardsPanel` opens above it, see [Board card](#board-card-boardshud)), `.sc-status` notes of the scene | `control_center_boards.js`, scene |
+| `bottom-centre` | status centre `#statusCentre` (Slice 06): `#recIndicators` \| `#bgPills`, see [Status centre](#status-centre-statuscentre); `#boardDropTray` above it | page, `control_center_capture_wheel.js`, `control_center_board_drop.js` |
 | `bottom-right` | `#chatTab` | `control_center_chat.js` |
 | `right` | active workspace rail `#presentationRail` (Slice 07, see [Workspace rail](#workspace-rail-presentationrail)); side panels (`#panel`, `#chatPanel`, `#jvStudioInspector`) open over it | `control_center_presentation_rail.js`, page, modules |
 | `centre` | Board / scene (`#sceneLayer`) | scene |
@@ -68,15 +72,14 @@ Placement rules that hold in both themes (measured by
 `tests/unit/test_control_center_shell_browser.py` at 1440×900, 1280×720,
 900×600 and 600×800):
 
-- **State line** (`top-left`): one row above 700 px, ending 10 px before the
-  launcher (since Slice 06 the background pills no longer sit up here, so
-  nothing else is reserved). It carries the wake key hint (`F9 · DÉMARRER`,
-  `F9 · VOICE HORS LIGNE`…) as the `.state` description (`aria-description`
-  and `title`, `setWakeHint` in `refreshStatus`): the former `#voiceHint`
-  capsule is gone; the key itself is Voice's global shortcut, unchanged. The Board control and the state shorten (ellipsis)
-  rather than wrap onto the left-edge column, whose top is at 76 px. At 700 px
-  and below the column moves to the middle of the screen and the state may
-  wrap under the Board.
+- **Top-left** is empty at rest (wheel/dossier refactor Slice 02). The wake
+  key hint (`F9 · DÉMARRER`, `F9 · VOICE HORS LIGNE`…) that the removed state
+  line carried as its description is kept, not shown, in the visually hidden
+  `#wakeHint` (`.sr-only`, `setWakeHint` in `refreshStatus`), until the wheel's
+  JARVIS submenu shows it (Slice 04); the key itself is Voice's global
+  shortcut, unchanged. The voice/agent/sub-agent words of the old `.state`
+  (`VOICE SLEEP · CLAUDE RUNNING`) are not on screen meanwhile; the dock keeps
+  the sub-agent count badge (`#agentBadge`).
 - **Launcher** (`top-right`): one row of five 34 px buttons at
   `--shell-gutter`, at every width (Slice 08); its popover opens under the
   row, right-aligned.
@@ -90,7 +93,7 @@ Placement rules that hold in both themes (measured by
   and below it climbs under the launcher, below the rail tab row
   (`--shell-panel-top` + 40 px) and below the GPT-Live banner when it shows
   (CSS anchor `--jv-live`), + 8 px. With a side panel open it never runs
-  under the panel: from 1100 px it is centred between the mode zone
+  under the panel: from 1100 px it is centred between the Board card zone
   (gutter + 254 px) and the panel; from 761 to 1099 px it climbs top-left,
   beside the panel (Slice 09).
 - **Stacking by geometry, not by rank (Slice 09).** Surfaces whose height is
@@ -120,12 +123,12 @@ Placement rules that hold in both themes (measured by
   Without anchors nothing leaves the screen at 500-1280 px and the tray covers
   neither the launcher, the rail tab nor the banner
   (`test_without_css_anchors_the_fallbacks_hold`).
-- **Screenshot preview vs mode control.** The preview's bottom rises with the
-  scene notes exactly as the mode control's rung does
+- **Screenshot preview vs Board card.** The preview's bottom rises with the
+  scene notes exactly as the Board card's rung does
   (`+ max(0, --sc-status-h − 24px)`); at 640 px of height and below its card
   is compact (72 px thumbnail, two rows of actions) so it fits between the
-  state line and the mode control, 200 % zoom included. With the Bare Hands
-  badge shown the mode control takes the rail's second rung (86 instead of
+  top of the page and the Board card, 200 % zoom included. With the Bare Hands
+  badge shown the Board card takes the rail's second rung (86 instead of
   52 px, lifted 42 px under 820 px and 62 px at 700 px and below): the
   preview rises with it (`body:has(#jarvisHands .jh-badge)`: + 188 px under
   820 px, + 216 px at 700 px and below; QA S09 P2, matrix state 19 at
@@ -146,7 +149,7 @@ only in the `@media` blocks listed here. `JarvisShell.TOKENS` and
 | `--shell-gutter` | `18px` | `10px` at `max-width:700px` | distance of every edge surface to the window edge |
 | `--shell-top-h` | `40px` | | height of the state line |
 | `--shell-bottom` | `18px` | | bottom baseline of bottom surfaces |
-| `--shell-status-h` | `44px` | | height of the bottom status centre (Slice 06); the drop tray and the lifted mode control sit above it |
+| `--shell-status-h` | `44px` | | height of the bottom status centre (Slice 06); the drop tray and the lifted Board card sit above it |
 | `--shell-control` | `34px` | | launcher button size |
 | `--shell-launcher-w` | `194px` | | launcher width: 5 buttons × 34 + 4 gaps × 6 (Slice 08: four tools and « Plus d’outils »), one row at every width |
 | `--shell-panel-top` | `64px` | `88px` at 700 | top of side panels and of the GPT-Live banner (below the launcher; at 700 px and below, below the state line on two rows) |
@@ -193,26 +196,23 @@ The rule is written exactly as in the sheet, `${…}` interpolations included.
 | 30 | `#toolWheel` | `control_center.html` | `#toolWheel` | wheel anchor at rest |
 | 30 | `#barehandsPalette` | `control_center_barehands_hud.js` | `#${DOM.paletteId}` | below the Bare Hands control and its selector, which open over it |
 | 30 | `#presentationRail` | `control_center_presentation_rail.js` | `#${DOM.hostId}` | workspace rail (right zone) outside the Studio; side panels (33) open over it |
-| 31 | `.topbar` | `control_center.html` | `.topbar` | state line; `#boardsHud` lives inside it |
 | 32 | `.dock` | `control_center.html` | `.dock` | launcher |
 | 32 | `#chatTab` | `control_center.html` | `.chat-tab` | page control of the same class as the launcher |
 | 32 | `#barehandsHud` | `control_center_barehands_hud.js` | `#${DOM.hostId} .bh-hud-btn` | Bare Hands control button |
 | 32 | `#barehandsHud` | `control_center_barehands_hud.js` | `#${DOM.hostId} .bh-hud-cap` | its state cap |
-| 32 | `#interactionModeHud` | `control_center_interaction_mode.js` | `#${DOM.hostId} .im-btn` | mode button |
+| 32 | `#boardsHud` | `control_center_boards.js` | `${H} .bd-btn` | Board card button (bottom-left, wheel/dossier refactor Slice 02); the host has no rank of its own |
 | 33 | `.panel` | `control_center.html` | `.panel` | side panels (`#panel`, `#chatPanel`) |
 | 34 | `.board-drop-card` | `control_center.html` | `.board-drop-card` | drop card, readable over the left column at 600 px |
 | 34 | `#boardDropTray` | `control_center.html` | `.board-drop-tray` | drop tray, above the status centre and the chat tab |
 | 34 | `#jvStudioInspector` | `control_center_presentation_studio_inspector_core.js` | `#${PANEL_ID}` | Studio inspector side panel, above the panel it replaces |
 | 35 | `.live-banner` | `control_center.html` | `.live-banner` | GPT-Live banner over the controls |
-| 36 | `#boardsPanel` | `control_center.html` | `#boardsPanel` | Board chooser, opened by the user over the banner |
 | 36 | `.bh-hud-pop` | `control_center_barehands_hud.js` | `#${DOM.hostId} .bh-hud-pop` | Bare Hands lifecycle selector |
-| 36 | `.im-pop` | `control_center_interaction_mode.js` | `#${DOM.hostId} .im-pop` | mode chooser |
 | 36 | `.dock[data-more-open]` | `control_center.html` | `.dock[data-more-open]` | launcher with its « Plus d’outils » popover open (Slice 08): the whole launcher rises to the choosers' rank, over the side panels and the banner it briefly covers |
 | 37 | `#toolWheel[data-open]` | `control_center.html` | `#toolWheel[data-open]` | open wheel and its radial sub-arcs: above the choosers, the wheel is the user's latest focus |
 | 38 | `#screenshotPreview` | `control_center.html` | `#screenshotPreview` | screenshot preview (Slice 05): transient, non-modal, above the open wheel that took the shot, below the status centre, toasts and the lightbox |
+| 39 | `#boardsPanel` | `control_center.html` | `#boardsPanel` | Board chooser, opened by the user above the bottom-left Board card (wheel/dossier refactor Slice 02): it opens where the screenshot preview (38) and the open wheel (37) sit, and is the user's latest gesture; below the status centre (40) and the toasts |
 | 40 | `#recIndicators` | `control_center.html` | `#recIndicators` | status centre (Slice 06), left: capture indicators (Slice 04); an open recording stays visible above the open wheel, below toasts |
 | 40 | `#bgPills` | `control_center.html` | `.bgpills` | status centre, middle: background pills |
-| 40 | `#hiddenEye` | `control_center.html` | `#hiddenEye` | status centre, right: hidden-object eye (Slice 06, D9) |
 | 55 | `.tl` | `control_center.html` | `.tl` | conversation timeline, full-screen launcher view |
 | 55 | `.tlab` | `control_center.html` | `.tlab` | Test Lab (one full-screen view at a time) |
 | 55 | `.mcpi` | `control_center.html` | `.mcpi` | MCP inspector |
@@ -227,7 +227,8 @@ The rule is written exactly as in the sheet, `${…}` interpolations included.
 | 85 | `.cdialog-back` | `control_center.html` | `.cdialog-back` | in-page confirmation |
 | 9000 | `#jvStudioExplorer` | `control_center_presentation_studio_explorer_core.js` | `#${HOST_ID}` | Variantes (Studio explorer) |
 | 9100 | `html.jvr-studio #presentationRail` | `control_center_presentation_rail.js` | `html.jvr-studio #${DOM.hostId}` | rail docked as the right column beside the Studio |
-| 9150 | `html.jvx-run #interactionModeHud` | `control_center_presentation_studio_explorer_core.js` | `html.jvx-run #interactionModeHud` | mode control during a run shown in Variantes |
+| 9150 | `html.jvx-run #boardsHud` | `control_center_presentation_studio_explorer_core.js` | `html.jvx-run #boardsHud` | Board card during a run shown in Variantes (Voice presence stays visible) |
+| 9150 | `html.jvx-run #boardsPanel` | `control_center_presentation_studio_explorer_core.js` | `html.jvx-run #boardsPanel` | its panel during a run, above Variantes like the card |
 | 9300 | `.jvr-menu` | `control_center_presentation_rail.js` | `.jvr-menu` | rail menu |
 | 9400 | `.jvr-dialog-back` | `control_center_presentation_rail.js` | `.jvr-dialog-back` | rail dialog |
 | 9500 | `#jvFullscreenPrompt` | `control_center_fullscreen.js` | `#${PROMPT_ID}` | fullscreen prompt |
@@ -281,23 +282,25 @@ Checked on the registry rows by `test_relative_order_of_the_old_registry_is_kept
 
 - every page control is above the scene (20); the face and the Cosmos canvas
   are below it;
-- `.topbar` ≤ `.dock` < `.panel` < `.live-banner` < `#boardsPanel` <
-  `#bgPills` < `.toasts` < `.cdialog-back`;
+- `#boardsHud` (card button) ≤ `.dock` < `.panel` < `.live-banner` <
+  `#boardsPanel` < `#bgPills` < `.toasts` < `.cdialog-back`;
 - choosers (36), the open launcher popover among them, are above the GPT-Live
-  banner (35) and below the pills, toasts, context menu and confirmation;
+  banner (35) and below the pills, toasts, context menu and confirmation; the
+  Board chooser `#boardsPanel` is at 39 since it opens bottom-left, above the
+  open wheel (37) and the screenshot preview (38) it may cover;
 - the open wheel (37) is above the choosers and below the status centre
-  (40: capture indicators, pills, eye), toasts and context menu; closed, its
+  (40: capture indicators, pills), toasts and context menu; closed, its
   anchor is at the left-edge rank (30);
 - the screenshot preview (38) is above the open wheel and below the status
   centre (40), toasts and the lightbox (`.overlay`, 60);
 - `.ctxmenu` (80) < `#barehandsCards` (82) < `.cdialog-back` (85);
 - full-screen launcher views (55) are above every control and below
   `.overlay` < `.toasts` < `.ctxmenu` < `.cdialog-back`;
-- Variantes 9000 < rail beside it 9100 < mode control during a run 9150 <
+- Variantes 9000 < rail beside it 9100 < Board card and panel during a run 9150 <
   rail menu 9300 < rail dialog 9400;
 - `#jarvisHands` is the top of the page.
 
-**Cosmos rank collapse (Slice 01).** Cosmos used to raise `.topbar` 45,
+**Cosmos rank collapse (Slice 01).** Cosmos used to raise `.topbar` (removed since) 45,
 `.panel` 42, `.live-banner` 48, `.dock`/`.bgpills`/`.chat-tab` 50,
 `.board-drop-tray` 49, `#boardsPanel` 51. `git log -S` traces them to the
 theme's first commit (`2868528e`, "add Omega visual theme") and to slices
@@ -327,21 +330,20 @@ controls; the wheel and the indicators are placed by the sheet instead.)
 
 | Host | Zone | Declared by |
 | --- | --- | --- |
-| `#boardsHud`, `.topbar>.state` | top-left | page |
 | `.dock` | top-right | page |
-| `#recIndicators`, `#bgPills`, `#hiddenEye` | bottom-centre (status centre) | page (hosts); content by `control_center_capture_wheel.js`, `renderBackgroundPills`, `control_center_scene_page.js` |
+| `#recIndicators`, `#bgPills` | bottom-centre (status centre) | page (hosts); content by `control_center_capture_wheel.js`, `renderBackgroundPills` |
 | `.live-banner` | top-centre | page |
 | `#panel`, `#chatPanel` | right | page |
 | `#barehandsHud`, `#barehandsPalette` | left-edge (hidden while the wheel is visible) | page (hosts) |
 | `#toolWheel` | left-edge | page |
 | `#presentationRail` | right | `control_center_presentation_rail.js` (creates the host and the attribute) |
-| `#interactionModeHud` | bottom-left | page |
+| `#boardsHud` | bottom-left | page (host), `control_center_boards.js` (card) |
 | `#boardDropTray` | bottom-centre | page |
 | `#chatTab` | bottom-right | page |
 | `#screenshotPreview` | left-low | page (host), `control_center_screenshot_preview.js` (content) |
 
-Before Slice 01 the scene's literal list missed `#interactionModeHud`,
-`#chatTab`, `#presentationRail` and `#boardDropTray`: a held object could
+Before Slice 01 the scene's literal list missed the bottom-left control (then
+`#interactionModeHud`), `#chatTab`, `#presentationRail` and `#boardDropTray`: a held object could
 stop under them. They are now measured. Not controls: transient layers that
 open over everything by rank (choosers, menus, popovers, toasts, dialogs,
 full-screen views, `#barehandsCards`) and the Studio surfaces.
@@ -357,10 +359,10 @@ right dock of ten buttons is a compact top-right launcher: **four frequent
 tools visible, the six others in a « Plus d’outils » popover**. Nothing was
 deleted or renamed: `<nav class="dock">` keeps every button with its id, its
 label (`ERR`, `TRC`…), its attributes and its module wiring; only where the
-button sits changed. The Board control `#boardsHud` stays in the top state
-line (D11, HV-08-01 kept the approved target); the interaction-mode control
-stays bottom-left. They are two owners (`control_center_boards.js`,
-`control_center_interaction_mode.js`): the launcher holds neither.
+button sits changed. The Board control is the bottom-left Board card
+`#boardsHud` since Slice 02 of the wheel/dossier refactor (D04 answered
+HV-08-01; before, it sat in the top state line); the interaction-mode control
+was removed with its chooser (D03). The launcher holds no Board control.
 
 **Destination matrix** (before = the Slice 01 row of ten; keyboard
 shortcuts are those of `jarvis/runtime/shortcuts.py`, unchanged):
@@ -377,8 +379,11 @@ shortcuts are those of `jarvis/runtime/shortcuts.py`, unchanged):
 | Sessions & Boards | `#openWorkspace` `WSP` | dock row | « Plus d’outils » | — |
 | Prefabs | `#openPrefabs` `PFB` | dock row | « Plus d’outils » | — |
 | Studio inspector | `#openStudioInspector` `INS` | dock row | « Plus d’outils » | — |
-| Board | `#boardsHud` | top state line | top state line (unchanged) | — |
-| Interaction mode | `#interactionModeHud` | bottom-left | bottom-left (unchanged) | — |
+| Board | `#boardsHud` | top state line | bottom-left Board card (wheel/dossier refactor Slice 02) | — |
+| Interaction mode | `#interactionModeHud` | bottom-left | removed (D03: the mode follows the Board type) | — |
+
+`SET` stays in the row until the wheel's Paramètres goes live (Slice 04 of
+the wheel/dossier refactor folds it into « Plus d’outils »).
 
 `Escape` (`ui_close`) closes the popover first when it is open (topmost
 transient), then the side panel as before.
@@ -422,33 +427,91 @@ markup declares every host, so this only fires if the page itself is broken).
 **Tests.** `tests/unit/test_global_launcher_browser.py` (served page, the
 status-centre fetch double, both themes, 1440×900, 1280×720, 900×600,
 600×800): every pre-refactor tool has a route, popover keyboard (roving,
-`Escape`), badges visible closed, Board control visible and switching,
-mode control bottom-left unchanged. The dock slicers
+`Escape`), badges visible closed, Board card visible bottom-left and
+switching, no Board or mode control in the launcher. The dock slicers
 (`test_control_center_mvp.py`, `test_prefab_library.py`,
 `test_control_center_mcp_inspector_js.py`, …) keep reading
 `<nav class="dock">`.
+
+## Board card (`#boardsHud`)
+
+Slice 02 of `tasks/jarvis-board-ui-wheel-dossier-refactor/` (D04, D05, D03).
+Module `jarvis/runtime/control_center_boards.js` (`window.JarvisBoardsControl`),
+the same control that sat in the top state line, moved; contract of its data
+and actions: [boards.md](boards.md) › *Control Center Boards control*.
+
+**Place.** Zone `bottom-left`, the envelope of the interaction-mode control it
+replaces: `left: 18px`, 168 to 236 px wide (`GEO`), bottom on the shared
+bottom-left rail (`--bd-rail`: 22 px, 52 above the Bare Hands badge or a scene
+note, 86 above both or the gesture note, `max(…, --sc-status-h + 28px)` for a
+multi-line note), lifted 42 px under 820 px (above the status-centre row) and
+moved right of the Bare Hands column at 700 px and below (`left: 84px`, lift
+62 px). Same rail convention as `.sc-status`
+(`body:has(#jarvisHands .jh-badge)`, checked by
+`test_barehands_contracts_js.py`). Because the envelope is unchanged, the
+status-centre insets (gutter + 254 px), the screenshot-preview rungs and the
+drop-tray centring keep their values, re-attributed to the card. The panel
+`#boardsPanel` opens **above** the card, aligned on its edge, bounded to the
+screen (`place`).
+
+**Content** (compact, two to four short lines): the type icon (Assistant =
+speech bubble, cyan; Présentation = screen on a stand, violet; Réunion = three
+people, amber; unknown = neutral frame) and the type word, then the title.
+A Réunion Board reads « Réunion · prévu » and « Agit en Assistant » on the
+card (D24; its full sentence is in the name). The sub-line says a pending
+switch with its live counter, `Core ne répond pas`-style unavailability, the
+number of Boards working in the background. The Voice **presence line** of a
+PRESENTATION session (« Écoute la salle », « Sourd à la salle », « Refusé par
+la voix », « Entrée échouée », « Séance inactive »; code in `title`) shows
+whenever the effective mode is PRESENTATION (a Présentation Board, or a Studio
+run); refusal and failure also turn the card's stroke red. It moved here
+from the removed interaction-mode control (critical feedback kept, D05).
+
+**Studio run.** `data-keep-live="run"` on the card and its panel; during a run
+shown in Variantes both are drawn at 9150, in the rail's right column when the
+Studio is windowed (`html.jvx-run.jvr-studio #boardsHud`). The way out of a
+run is the Studio's own stop; the card adds no mode toggle.
+
+**Accessibility.** One button (`aria-haspopup="dialog"`): its name starts
+with what it shows (type then title), then the planned note and the presence
+sentence, then « Ouvrir la liste des Boards »; `ArrowDown` opens; `Escape`
+closes and returns focus. The presence has its own polite live region
+(`#boardsPresenceAnnounce`), said once per change.
+
+**Journal.** `[boards] boards.voice_presence_shown {state, code}` (`warn` for
+a refusal or failed entry, `info` otherwise), plus the existing
+`boards.*` lines.
+
+**Tests.** `tests/unit/test_boards_hud_js.py` (type, planned Réunion,
+presence per state, never optimistic, stale refusal, deletion assertions),
+`tests/unit/test_boards_card_browser.py` (geometry against the Bare Hands
+palette, toasts and status centre; presence on a real Control Center),
+`tests/unit/test_boards_hud_browser.py`.
 
 ## Status centre (`#statusCentre`)
 
 Slice 06, decisions D8 and D9 of the handoff's resolved architecture. Replaces
 the bottom-centre `F9 · DÉMARRER` capsule, the background pills of the
-top-right corner and the scene's « N objets masqués » note.
+top-right corner and the scene's « N objets masqués » note. The permanent
+hidden-object eye it introduced was removed by Slice 02 of the wheel/dossier
+refactor (D06: hidden is temporary, not a storage area); see *Hidden objects*
+below.
 
 **Place.** `#statusCentre` (`.status-centre`) is a **layout only**: one row,
 centred, `bottom: --shell-bottom`, `min-height: --shell-status-h` (44 px), so
 its top (62 px) stays below the bottom of the side panels and of the
 workspace rail (`--shell-panel-bottom`, 68 px) and below the toasts. No rank
 and no `transform` on it (a transform would open a stacking context and
-shut its children under the scene); each of its three children carries rank
+shut its children under the scene); each of its children carries rank
 40. Symmetric side insets keep it centred: `--shell-gutter` + 254 px above
-820 px (the mode control is at most 236 px wide, bottom-left), `--shell-gutter`
-+ 64 px below (the mode control lifts above the row there; only the chat tab,
-52 px, is left on the row). Too many chips: the row wraps upwards. With a side
+820 px (the Board card is at most 236 px wide, bottom-left, `GEO.maxWidth` of
+`control_center_boards.js`), `--shell-gutter` + 64 px below (the Board card
+lifts above the row there; only the chat tab, 52 px, is left on the row). Too many chips: the row wraps upwards. With a side
 panel open and 1100 px or more, it re-centres in the free space left of the
 panel; narrower, it stays under the panel's bottom gap without touching it.
 Pointer events pass through except on its controls. **At 700 px and below** the
-row has no room for a recording chip beside the four pills and the eye (a
-second line would climb into the lifted mode control): the chips keep the
+row has no room for a recording chip beside the four pills (a second line
+would climb into the lifted Board card): the chips keep the
 Slice 04 right-edge column, vertically centred (measured down to 375 px with
 three recordings); with a side panel open (full width there) they come back
 into the row, below the panel. The scene's `.sc-status` notes stop before the
@@ -456,7 +519,7 @@ row's reserved width above 820 px and **wrap** there (never an ellipsis: a froze
 scene's cause, « Control Center injoignable », must stay readable; the whole
 text is also the note's `title`); they sit above the row (66 px) at 820 px and
 below. The scene publishes their height as `--sc-status-h` on the page and the
-mode control's rung is `max(52px, --sc-status-h + 28px)` (`max(86px, … + 62px)`
+Board card's rung is `max(52px, --sc-status-h + 28px)` (`max(86px, … + 62px)`
 with the Bare Hands badge), so a multi-line note never slides under it (S06
 rework, QA B1).
 
@@ -464,7 +527,16 @@ rework, QA B1).
 | --- | --- | --- | --- |
 | 1 | `#recIndicators` | `control_center_capture_wheel.js` (view of `JarvisCaptureRail`) | (right-edge column at 700 px and below, see above) one chip per open capture: `REC` + Core duration for the screen, microphone + duration for audio; start wait, screenshot busy/done; activating a chip stops that capture. The refusal note (`.ri-note`) opens above the row, centred on the indicators; while it is shown the toasts rise above it (`--ri-note-h`, measured by the module) |
 | 2 | `#bgPills` | page, `renderBackgroundPills` (`BG` state) | one 32 px round pill per unread category, in `BG_CATS` order: `failed` (alert triangle, `--sem-alert`), `attention` (question, `--sem-question`, « points à vérifier »), `done` (check, `--sem-done`), `said` (speaker crossed out, muted, F8). Inline SVG icon, the count in a badge, `aria-label` = `title` = the `pillLabelOf` text (category + count + other-Board share); the other-Board satellite sits bottom-right. Popover `#bgPop` opens **above** the pill, centred on it and bounded to the screen; ack, sound cue, multi-tab leader, Board-elsewhere attribution and « Aller sur « X » » are unchanged (same code and ids) |
-| 3 | `#hiddenEye` | `control_center_scene_page.js` (projection of the view pref `showHidden`) | eye toggle, `aria-pressed` = `showHidden`; crossed eye = ghosts hidden, open eye on accent = ghosts shown; label and tooltip « Afficher les objets masqués (n) » / « Cacher les objets masqués » / « Aucun objet masqué » (`aria-disabled`, inert-looking, still focusable). The count is only in the label. Secondary activation (right click, Bare Hands thumb + middle pinch, `ContextMenu`, `Shift+F10`) opens the existing hidden-object list (`openHiddenMenu`, « Tout réafficher »). Hidden while the scene is off |
+
+**Hidden objects (no permanent control since the wheel/dossier refactor
+Slice 02).** The eye host `#hiddenEye` is no longer declared; its machinery
+stays in `control_center_scene_page.js` (`syncEye` returns without a host,
+`toggleEye` no longer needs the element, `openHiddenMenu(anchor)`,
+`V.hiddenEye`) for Slice 06, which re-exposes « Afficher les masqués (N) »
+and « Tout réafficher » in the wheel's Sélection submenu. Until then a hidden
+object is shown again only by Jarvis (scene tools, `set_visibility`), the
+interim state the handoff accepts. What the eye did, and what Sélection
+inherits:
 
 **Ghosts.** With the eye on, the scene draws every hidden object **that has a
 stored place** as a ghost at that place (`JarvisSceneLayout.viewModel`
@@ -513,8 +585,9 @@ launcher, the pills or the chat tab (`test_rail_right_no_overlap_launcher_chat_t
 **Studio docking** is the mirror of the old left docking: with Variants open
 (windowed) the rail is the right column (`html.jvr-studio`, rank 9100, 8 px
 from the edges) and `#jvStudioExplorer:not(:fullscreen)` stops at
-`right: 188px` (60 px when slim); during a run the interaction-mode control
-sits at the bottom of that right column (`control_center_presentation_studio_explorer_core.js`).
+`right: 188px` (60 px when slim); during a run the Board card (and its
+panel) sits at the bottom of that right column, above Variantes, so Voice's
+presence line stays visible (`control_center_presentation_studio_explorer_core.js`).
 The page under the Studio is inert; the launcher and the chat tab, which it
 covers, are not drawn meanwhile (`html.jvr-studio .dock, #chatTab
 {visibility:hidden}`: a half CNV button showed, unclickable, in the 8 px gap
@@ -836,10 +909,10 @@ command channel, latency).
   `CanvasText` and the focus ring `Highlight`.
 - **Zoom**: usable at 200 % (the narrow breakpoints apply).
 - **Label in name** (WCAG 2.5.3, checked by axe-core): the accessible name
-  starts with, or contains, the words the control shows — « Mode Assistant :
-  … », « Board Jarvis : Board actif … », the circuit-board launcher codes
+  starts with, or contains, the words the control shows — « Assistant Jarvis :
+  Board actif … » (the Board card: type, then title), the circuit-board launcher codes
   (`Trace · TRC`, completed by the launcher after every module that rewrites
-  `aria-label`). A text eyebrow ends with a space (« Mode », « Board ») so the
+  `aria-label`). A text eyebrow ends with a space (the card's type) so the
   visible text reads as two words; a wheel item's note follows its text after
   a space. A recording chip's name starts with the word it shows (« REC —
   arrêter l’enregistrement d’écran (écran 2) »); a busy target's long phrase
@@ -852,13 +925,12 @@ command channel, latency).
   shows is in the name, checked word by word) and a rail card (its name is
   the title then the state in words; the engine badge, variant count and age
   are visible extras). axe runs in both themes on the wheel (closed, open,
-  sub-arc), status centre with two recordings, mode control and chooser,
-  launcher, rail, Board control and chooser (`#boardsPanel`), a rail card
+  sub-arc), status centre with two recordings,
+  launcher, rail, Board card and chooser (`#boardsPanel`), a rail card
   menu (`.jvr-menu`), the alert popover, `#chatTab` and the screenshot
   preview; it finds nothing else.
 - **Menus and listboxes** hold only their entries in the accessibility tree:
-  the mode chooser's title, note and hint are `role="none"` (the menu is named
-  and `aria-describedby` its note and hint); a rail card's « ⋯ » button is
+  a rail card's « ⋯ » button is
   `aria-hidden` (mouse and hand only; the option itself opens the same menu
   with `ContextMenu` / `Shift+F10` / right click).
 - All French UI strings address the user as « vous ».
@@ -872,8 +944,9 @@ per state (`JARVIS_S09_EVIDENCE_DIR`): 1 Board, wheel closed; 2 wheel open,
 Selection focused; 3 Selection › Souris / Bare Hands; 4 audio recording;
 5 screen recording; 6 screenshot preview (taken through the wheel); 7 alert
 popover; 8 rail with every card state and the Board-linked items; 9 Variantes
-+ rail (real isolated Core, `tests/fakes/explorer_browser.py`); 10 mode
-chooser; 11 Board chooser; 12 800×600; 13 1280×540 with the wheel open;
++ rail (real isolated Core, `tests/fakes/explorer_browser.py`); 10 Board card
+with Voice's presence refused (was the mode chooser until the wheel/dossier
+refactor Slice 02); 11 Board chooser; 12 800×600; 13 1280×540 with the wheel open;
 14 reduced motion; 15 200 % zoom (720×450 CSS px at scale 2); 16-19 the real
 Bare Hands badge (« MAINS · ACTIF », text and rules read from
 `control_center_barehands.js`) + frozen-scene note (two lines above 700 px) +
@@ -888,7 +961,7 @@ or transitions), forced colours, axe-core (`JARVIS_AXE_JS`), 200 % zoom,
 700 px wide / 560 px high, the GPT-Live banner + drop tray + toasts + rail
 stack at four sizes with a panel closed and open (and again with every
 `anchor()` declaration removed, for the fallbacks), and a real held object
-dragged into `#chatTab`, the mode button and the rail (it stops against each).
+dragged into `#chatTab`, the Board card and the rail (it stops against each).
 
 ## Validation
 
@@ -900,4 +973,4 @@ dragged into `#chatTab`, the mode button and the rail (it stops against each).
 - Runtime: both themes at 1440×900, 1280×720, 900×600 and 600×800 in headless
   Chrome on an isolated instance (no control overlapping another, scene
   objects stop against every control including `#chatTab`,
-  `#interactionModeHud` and `#presentationRail`).
+  `#boardsHud` and `#presentationRail`).

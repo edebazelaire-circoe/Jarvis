@@ -13,8 +13,10 @@ Ce qu'il épingle :
 - une seule géométrie : chaque commande est au même endroit et au même rang
   dans les deux thèmes ;
 - les commandes que la scène mesure (`JarvisShell.CONTROL_SELECTOR`) comptent
-  `#chatTab`, `#interactionModeHud` et `#presentationRail`, et aucune n'en
-  recouvre une autre ;
+  `#chatTab`, la carte Board `#boardsHud` (bas-gauche depuis la Slice 02 de
+  jarvis-board-ui-wheel-dossier-refactor) et `#presentationRail`, et aucune n'en
+  recouvre une autre ; la ligne d'état du haut, le contrôle de mode et l'œil
+  n'existent plus ;
 - un panneau latéral ouvert reste sous le lanceur et au-dessus de l'onglet
   Chat ;
 - aucune largeur ne fait défiler la page horizontalement.
@@ -48,7 +50,7 @@ from pathlib import Path
 
 import pytest
 
-from tests.unit.test_interaction_mode_hud_browser import HARNESS, _chrome, _served_page
+from tests.unit.test_boards_card_browser import HARNESS, _chrome, _served_page
 
 VIEWPORTS = ((1440, 900), (1280, 720), (900, 600), (600, 800))
 THEMES = ("circuit-board", "cosmos")
@@ -85,7 +87,7 @@ READ = r"""(()=>{
     out.controls.push({name:el.id?'#'+el.id:'.'+el.classList[0],l:r.left,t:r.top,r:r.right,b:r.bottom});
   }
   const z=s=>{const e=document.querySelector(s);return e?getComputedStyle(e).zIndex:null};
-  out.z={topbar:z('.topbar'),dock:z('.dock'),panel:z('#panel'),pills:z('#bgPills'),chat:z('#chatTab'),
+  out.z={card:z('#boardsButton'),dock:z('.dock'),panel:z('#panel'),pills:z('#bgPills'),chat:z('#chatTab'),
     banner:z('.live-banner'),boards:z('#boardsPanel'),tray:z('#boardDropTray')};
   return out;
 })()"""
@@ -135,8 +137,8 @@ def test_one_geometry_and_one_rank_set_for_both_themes(measured, size):
     circuit, cosmos = measured[("circuit-board", size)], measured[("cosmos", size)]
     assert cosmos["theme"] == "cosmos"
     assert circuit["read"]["z"] == cosmos["read"]["z"]
-    assert circuit["read"]["z"] == {"topbar": "31", "dock": "32", "panel": "33", "pills": "40", "chat": "32",
-                                    "banner": "35", "boards": "36", "tray": "34"}
+    assert circuit["read"]["z"] == {"card": "32", "dock": "32", "panel": "33", "pills": "40", "chat": "32",
+                                    "banner": "35", "boards": "39", "tray": "34"}
     # Les zones : lanceur en haut à droite, onglet Chat en bas à droite, aux
     # mêmes bords dans les deux thèmes (la peau change, la place non).
     for theme in (circuit, cosmos):
@@ -154,9 +156,14 @@ def test_every_control_is_measured_and_none_covers_another(measured, theme, size
     read = measured[(theme, size)]["read"]
     assert read["selector"] == "[data-shell-control],#sceneLayer>.sc-status"
     names = [c["name"] for c in read["controls"]]
-    for required in ("#chatTab", "#interactionModeHud", "#presentationRail", ".dock", "#bgPills",
-                     "#toolWheel", "#boardsHud"):
+    for required in ("#chatTab", "#presentationRail", ".dock", "#bgPills", "#toolWheel", "#boardsHud"):
         assert required in names, (required, names)
+    # Slice 02 de jarvis-board-ui-wheel-dossier-refactor : ni état du haut, ni contrôle de mode, ni œil.
+    for gone in (".state", "#interactionModeHud", "#hiddenEye"):
+        assert gone not in names, (gone, names)
+    # La carte Board est en bas à gauche (D04).
+    card = next(c for c in read["controls"] if c["name"] == "#boardsHud")
+    assert card["l"] < read["vw"] / 2 and card["t"] > 300, card
     # Slice 06 : la capsule de l'indication vocale n'existe plus (centre d'état du bas).
     assert "#voiceHint" not in names
     # Slice 04 : la roue est visible d'office ; la colonne Bare Hands quitte la vue
@@ -225,7 +232,7 @@ VIDEO = {"capture_id": "jcap_s", "channel": "screen", "mode": "continuous", "sta
 BOARDS = [{"board_id": "default", "title": "Jarvis", "status": "active"},
           {"board_id": "board_b", "title": "Projet Atlas", "status": "active"},
           {"board_id": "board_c", "title": "Revue trimestrielle", "status": "active"}]
-#: Le mode d'interaction tel que Core le publie (sinon le bouton dit « statut indisponible » sur chaque capture).
+#: Le mode d'interaction tel que Core le publie (la carte Board en lit la ligne de séance de la voix).
 MODE = {"schema_version": 1, "core_reachable": True, "mode": "assistant", "label": "Assistant", "stored": "assistant", "revision": 1, "error": None,
         "modes": [{"value": "assistant", "label": "Assistant", "implemented": True, "summary": "Conversation et outils"},
                   {"value": "presentation", "label": "Présentation", "implemented": True, "summary": "Pilotage d'une présentation"}]}
@@ -420,8 +427,22 @@ BADGE = _real_badge()
 FREEZE = ("(()=>{const f=window.fetch;window.fetch=(p,i)=>String(p).startsWith('/api/scene')?Promise.reject(new TypeError('Failed to fetch'))"
           ":f(p,i);window.__sc.waiters.splice(0).forEach(fn=>fn([]));return 1})()")
 NOTE_LINES = "Math.round(document.querySelector('#sceneLayer>.sc-status').getBoundingClientRect().height)"
-#: Core perdu : le mode n'est plus confirmé non plus (bouton sur deux lignes, « statut indisponible »), le cas le plus haut.
-LOST_MODE = {"seed": {"mode": None}}
+#: La carte Board la plus haute (Slice 02, elle a pris la place du bouton de mode) : un Board Réunion (« Agit en Assistant »)
+#: tenu en PRESENTATION par une lecture du Studio, et la voix qui refuse — quatre lignes (type, titre, sous-ligne, séance).
+MODE_PRESENTATION = {**MODE, "mode": "presentation", "label": "Présentation"}
+REFUSED = {"event": "refused", "active": False, "session_id": None, "entered": 0, "entry_failures": 1,
+           "last_failure_code": "presentation_architecture_unsupported", "physical_input_owners": None, "ambient_deaf": None,
+           "ts": 4102444800}
+TALL_BOARDS = [{"board_id": "default", "title": "Point hebdo de l'équipe", "status": "active", "board_kind": "meeting"},
+               {"board_id": "board_b", "title": "Projet Atlas", "status": "active", "board_kind": "presentation"}]
+TALL_CARD = {"seed": {"mode": MODE_PRESENTATION, "presentation": REFUSED, "boards": TALL_BOARDS}}
+#: Un endroit vide de la page, pour un clic « ailleurs » ou un survol qui s'éloigne : le haut-gauche, libre depuis la
+#: Slice 02 (avant, c'était `.topbar>.state`).
+AWAY = [320, 40]
+#: La carte Board, montrant la ligne de séance refusée (matrice, état 10).
+CARD_PRESENCE = r"""(()=>{const p=document.getElementById('boardsPresence');const h=document.getElementById('boardsHud');
+  return {state:h.getAttribute('data-bd-presence'),kind:h.getAttribute('data-bd-kind'),hidden:p.hidden,text:p.textContent,
+    title:p.getAttribute('title'),eyebrow:document.getElementById('boardsKind').textContent,sub:document.getElementById('boardsSub').textContent}})()"""
 DEGRADED_SHOT = [["eval", "badge", BADGE, 300], ["eval", "freeze", FREEZE, 6000], ["eval", "noteH", NOTE_LINES, 50],
                  *WHEEL_OPEN, ["key", "v", "ArrowDown", 120], ["key", "s", "ArrowDown", 120], ["key", "shoot", "Enter", 1600]]
 
@@ -444,8 +465,10 @@ STATES = (
      [["eval", "open", OPEN_OF % json.dumps("#bgPop"), 50]]),
     ("08", "rail-mixed-items", 1440, 900, {"seed": MIXED}, [], ["#presentationRail"],
      [["eval", "cards", RAIL_CARDS, 50]]),
-    ("10", "mode-chooser", 1440, 900, {}, [["click", "mode", "#interactionModeButton", 700]], ["#interactionModeHud .im-pop"],
-     [["eval", "open", OPEN_OF % json.dumps("#interactionModeHud .im-pop"), 50]]),
+    # Slice 02 de jarvis-board-ui-wheel-dossier-refactor : le sélecteur de mode n'existe plus ; à sa place, la carte Board
+    # d'un Board Réunion tenu en PRESENTATION, dont la voix refuse la séance (le retour critique déplacé).
+    ("10", "board-card-voice-refused", 1440, 900, TALL_CARD, [], ["#boardsHud .bd-btn"],
+     [["eval", "card", CARD_PRESENCE, 50]]),
     ("11", "board-chooser", 1440, 900, {"seed": {"boards": BOARDS}}, [["click", "boards", "#boardsButton", 900]], ["#boardsPanel"],
      [["eval", "open", OPEN_OF % json.dumps("#boardsPanel"), 50]]),
     ("12", "narrow-800x600", 800, 600, {"seed": BUSY}, [], [], []),
@@ -455,11 +478,11 @@ STATES = (
       ["eval", "dur", "getComputedStyle(document.documentElement).getPropertyValue('--shell-dur').trim()", 50]]),
     ("15", "zoom-200", 720, 450, {"seed": BUSY, "scale": 2}, [], [], []),
     # QA S08 P1 : badge Bare Hands + scène figée (note sur deux lignes au-dessus de 700 px) + capture fraîche, aux quatre largeurs.
-    ("16", "badge-frozen-scene-preview-1440", 1440, 900, LOST_MODE, DEGRADED_SHOT, ["#screenshotPreview"], [["eval", "preview", PREVIEW, 50]]),
-    ("17", "badge-frozen-scene-preview-1280", 1280, 720, LOST_MODE, DEGRADED_SHOT, ["#screenshotPreview"], [["eval", "preview", PREVIEW, 50]]),
-    ("18", "badge-frozen-scene-preview-900", 900, 600, LOST_MODE, DEGRADED_SHOT, ["#screenshotPreview"], [["eval", "preview", PREVIEW, 50]]),
-    # QA S09 P2 : à 700 px et moins, sous la vraie pastille, le bouton de mode passe au second barreau du rail.
-    ("19", "badge-frozen-scene-preview-600", 600, 800, LOST_MODE, DEGRADED_SHOT, ["#screenshotPreview"], [["eval", "preview", PREVIEW, 50]]),
+    ("16", "badge-frozen-scene-preview-1440", 1440, 900, TALL_CARD, DEGRADED_SHOT, ["#screenshotPreview"], [["eval", "preview", PREVIEW, 50]]),
+    ("17", "badge-frozen-scene-preview-1280", 1280, 720, TALL_CARD, DEGRADED_SHOT, ["#screenshotPreview"], [["eval", "preview", PREVIEW, 50]]),
+    ("18", "badge-frozen-scene-preview-900", 900, 600, TALL_CARD, DEGRADED_SHOT, ["#screenshotPreview"], [["eval", "preview", PREVIEW, 50]]),
+    # QA S09 P2 : à 700 px et moins, sous la vraie pastille, la carte Board (ex-bouton de mode) passe au second barreau du rail.
+    ("19", "badge-frozen-scene-preview-600", 600, 800, TALL_CARD, DEGRADED_SHOT, ["#screenshotPreview"], [["eval", "preview", PREVIEW, 50]]),
 )
 
 
@@ -513,6 +536,11 @@ def test_runtime_matrix(matrix, number, theme):
         chips = results["chips"]
         assert len(chips) == 1 and "écran" in chips[0]["label"] and "REC" in chips[0]["text"], (label, chips)
         assert chips[0]["label"].startswith("REC — "), (label, "le nom commence par le mot montré", chips)
+    if number == "10":
+        card = results["card"]
+        assert (card["state"], card["hidden"], card["text"], card["title"]) == (
+            "refused", False, "Refusé par la voix", "presentation_architecture_unsupported"), (label, card)
+        assert (card["kind"], card["eyebrow"], card["sub"]) == ("meeting", "Réunion · prévu ", "Agit en Assistant"), (label, card)
     if number in ("16", "17", "18", "19"):
         badge = results["badge"]
         assert badge["text"] == "MAINS · ACTIF" and badge["fixed"] and badge["w"] > 90 and badge["h"] >= 20, (label, badge)
@@ -523,7 +551,7 @@ def test_runtime_matrix(matrix, number, theme):
         assert preview["shown"] and preview["loaded"] and preview["image"] == "ready", (label, preview)
         assert {"open", "send", "delete"} <= set(preview["actions"]), (label, preview)
         assert "POST /api/captures/screenshot" in step["calls"], (label, step["calls"])
-    if number in ("07", "10", "11"):
+    if number in ("07", "11"):
         assert results["open"] is True, label
     if number == "08":
         cards = results["cards"]
@@ -603,8 +631,8 @@ def _open(selector: str) -> str:
 
 
 def test_keyboard_only_full_path(tmp_path):
-    """Clavier seul, de la page chargée : Board, roue (Sélection, capture),
-    mode, lanceur, Chat, alertes, œil, rail — chaque arrêt de Tab visible avec
+    """Clavier seul, de la page chargée : carte Board, roue (Sélection, capture),
+    lanceur, Chat, alertes, rail — chaque arrêt de Tab visible avec
     son anneau, chaque surface ouverte puis refermée par Échap, le focus jamais
     sur un élément caché."""
     shots = _evidence(tmp_path)
@@ -621,9 +649,6 @@ def test_keyboard_only_full_path(tmp_path):
           ["key", "k", "ArrowRight", 450], ["key", "k", "ArrowDown", 120], ["key", "k", "ArrowDown", 120], ["key", "k", "Enter", 1600],
           ["eval", "preview", PREVIEW, 50], ["eval", "after_shot", ACTIVE, 50],
           ["shot", "shot1", str(shots / "keyboard-path-screenshot.png"), 50]]
-    tab("t_mode", "#interactionModeHud")
-    a += [["key", "k", "Enter", 600], ["eval", "mode_open", _open("#interactionModeHud .im-pop"), 50],
-          ["key", "k", "Escape", 400], ["eval", "mode_closed", f"!{_open('#interactionModeHud .im-pop')}", 50]]
     tab("t_more", "#dockMore")
     a += [["key", "k", "Enter", 500], ["eval", "more_open", _open("#dockMorePop"), 50], ["eval", "more_focus", ACTIVE, 50],
           ["key", "k", "Escape", 400], ["eval", "more_closed", f"!{_open('#dockMorePop')}", 50], ["eval", "after_more", ACTIVE, 50]]
@@ -633,16 +658,14 @@ def test_keyboard_only_full_path(tmp_path):
     tab("t_pills", "#bgPills")
     a += [["key", "k", "Enter", 800], ["eval", "pop_open", _open("#bgPop"), 50],
           ["key", "k", "Escape", 400], ["eval", "pop_closed", f"!{_open('#bgPop')}", 50]]
-    tab("t_eye", "#hiddenEye")
-    a += [["key", "k", "Enter", 600], ["eval", "eye", "document.getElementById('hiddenEye').getAttribute('aria-pressed')", 50]]
     tab("t_rail", "#presentationRail")
     a += [["eval", "rail_focus", ACTIVE, 50], ["shot", "shot2", str(shots / "keyboard-path-rail.png"), 50]]
     step = _centre(tmp_path, [{"width": 1440, "height": 900, "seed": {**MIXED, "mode": MODE, "previews": PREVIEWS}, "actions": a}])[0]
     r = step["results"]
-    for name in ("t_boards", "t_wheel", "t_mode", "t_more", "t_chat", "t_pills", "t_eye", "t_rail"):
+    for name in ("t_boards", "t_wheel", "t_more", "t_chat", "t_pills", "t_rail"):
         assert isinstance(r[name], list), (name, r[name])
-    for name, target in (("t_boards", "#boardsHud"), ("t_wheel", "#toolWheel"), ("t_mode", "#interactionModeHud"), ("t_more", "#dockMore"),
-                         ("t_chat", "#chatTab"), ("t_pills", "#bgPills"), ("t_eye", "#hiddenEye"), ("t_rail", "#presentationRail")):
+    for name, target in (("t_boards", "#boardsHud"), ("t_wheel", "#toolWheel"), ("t_more", "#dockMore"),
+                         ("t_chat", "#chatTab"), ("t_pills", "#bgPills"), ("t_rail", "#presentationRail")):
         _stops_ok(r[name], target)
     assert r["boards_open"] is True and r["boards_closed"] is True, r
     assert r["wheel"]["open"] and r["wheel"]["focus"] == "selection", r["wheel"]
@@ -650,31 +673,27 @@ def test_keyboard_only_full_path(tmp_path):
     assert r["after_wheel"] and "tw-anchor" in r["after_wheel"], ("Échap rend le focus à l'ancre", r["after_wheel"])
     assert r["preview"]["shown"] and r["preview"]["loaded"], r["preview"]
     assert "tw-anchor" in r["after_shot"], ("la capture rend le focus à l'ancre, l'aperçu ne le prend pas", r["after_shot"])
-    assert r["mode_open"] is True and r["mode_closed"] is True, r
     assert r["more_open"] is True and r["more_closed"] is True and r["after_more"] == "dockMore", r
     assert r["chat_open"] is True and r["chat_closed"] is True, r
     assert r["pop_open"] is True and r["pop_closed"] is True, r
-    assert r["eye"] == "true", r["eye"]
     assert "POST /api/captures/screenshot" in step["calls"]
     assert _errors(step) == [], _errors(step)
 
 
 def test_mouse_only_full_path(tmp_path):
     """Souris seule : survol de l'ancre (la roue s'ouvre), capture par le coin
-    Capture d'écran, aperçu et visionneuse, alertes, mode, Board (une bascule),
-    « Plus d’outils » et un outil, menu d'une carte du rail, œil, Chat."""
+    Capture d'écran, aperçu et visionneuse, alertes, carte Board (une bascule),
+    « Plus d’outils » et un outil, menu d'une carte du rail, Chat."""
     shots = _evidence(tmp_path)
     a = [["move", "hover", ANCHOR, 600], ["eval", "wheel", WHEEL_STATE, 50],
          ["click", "shoot", '#toolWheel [data-tw-slot="screenshot"]', 1600], ["eval", "preview", PREVIEW, 50],
          ["move", "rehover", ANCHOR, 600], ["eval", "wedges", WEDGES_HIT, 50], ["eval", "beside", _audit("#screenshotPreview"), 50],
-         ["move", "leave", ".topbar>.state", 900],
+         ["move", "leave", AWAY, 900],
          ["click", "open", '#screenshotPreview [data-sp-act="open"]', 700], ["eval", "lightbox", _open("#screenshotLightbox"), 50],
          ["shot", "s1", str(shots / "mouse-path-lightbox.png"), 50],
          ["click", "lbclose", "#screenshotLightbox .sp-lb-close", 500], ["eval", "lightbox_closed", f"!{_open('#screenshotLightbox')}", 50],
          ["click", "pill", '#bgPills [data-bg-cat="failed"]', 800], ["eval", "pop", _open("#bgPop"), 50],
-         ["click", "away", ".topbar>.state", 500], ["eval", "pop_closed", f"!{_open('#bgPop')}", 50],
-         ["click", "mode", "#interactionModeButton", 600], ["eval", "mode_open", _open("#interactionModeHud .im-pop"), 50],
-         ["click", "mode2", "#interactionModeButton", 500], ["eval", "mode_closed", f"!{_open('#interactionModeHud .im-pop')}", 50],
+         ["click", "away", AWAY, 500], ["eval", "pop_closed", f"!{_open('#bgPop')}", 50],
          ["click", "boards", "#boardsButton", 800], ["eval", "boards_open", _open("#boardsPanel"), 50],
          ["click", "switch", '#boardsList [data-board-id="board_b"][data-bd-action="switch"]', 2500],
          ["eval", "board", "document.getElementById('boardsTitle').textContent", 50],
@@ -684,8 +703,7 @@ def test_mouse_only_full_path(tmp_path):
          ["click", "closepanel", "#closePanel", 500],
          ["rclick", "railmenu", "#presentationRail .jvr-item", 700], ["eval", "menu", _open(".jvr-menu"), 50],
          ["shot", "s2", str(shots / "mouse-path-rail-menu.png"), 50],
-         ["click", "away2", ".topbar>.state", 500], ["eval", "menu_closed", f"!{_open('.jvr-menu')}", 50],
-         ["click", "eye", "#hiddenEye", 700], ["eval", "eye_on", "document.getElementById('hiddenEye').getAttribute('aria-pressed')", 50],
+         ["click", "away2", AWAY, 500], ["eval", "menu_closed", f"!{_open('.jvr-menu')}", 50],
          ["click", "chat", "#chatTab", 800], ["eval", "chat", "document.getElementById('chatPanel').classList.contains('open')", 50],
          ["click", "chat2", "#chatTab", 600], ["eval", "chat_closed", "!document.getElementById('chatPanel').classList.contains('open')", 50]]
     step = _centre(tmp_path, [{"width": 1440, "height": 900, "seed": {**MIXED, "mode": MODE, "previews": PREVIEWS}, "actions": a}])[0]
@@ -697,12 +715,11 @@ def test_mouse_only_full_path(tmp_path):
     _clean(r["beside"], "mouse-preview-beside-open-wheel")
     assert r["lightbox"] is True and r["lightbox_closed"] is True, r
     assert r["pop"] is True and r["pop_closed"] is True, r
-    assert r["mode_open"] is True and r["mode_closed"] is True, r
     assert r["boards_open"] is True and r["board"] == "Projet Atlas", r
     assert [b["body"] for b in step["bodies"] if b["path"] == "/api/boards/switch"] == [{"board_id": "board_b"}]
     assert r["more_open"] is True and r["panel"] is True and r["more_closed"] is True, r
     assert r["menu"] is True and r["menu_closed"] is True, r
-    assert r["eye_on"] == "true" and r["chat"] is True and r["chat_closed"] is True, r
+    assert r["chat"] is True and r["chat_closed"] is True, r
     assert "POST /api/captures/screenshot" in step["calls"]
     for value in r.values():
         assert not (isinstance(value, dict) and "error" in value), value
@@ -712,7 +729,7 @@ def test_mouse_only_full_path(tmp_path):
 # ------------------------------------------------------------------ mouvement, couleurs, axe, tailles
 
 #: Tout ce qui bouge encore dans la coque (hors scène et hors Studio) : animations et transitions calculées.
-MOVING = r"""(()=>{const out=[];const scope=[...document.querySelectorAll(window.JarvisShell.CONTROL_SELECTOR+',.im-pop,#boardsPanel,.bgpop,#dockMorePop,.toasts')];
+MOVING = r"""(()=>{const out=[];const scope=[...document.querySelectorAll(window.JarvisShell.CONTROL_SELECTOR+',#boardsPanel,.bgpop,#dockMorePop,.toasts')];
   const seen=new Set();for(const host of scope)for(const el of [host,...host.querySelectorAll('*')]){if(seen.has(el))continue;seen.add(el);
     if(el.closest('#sceneLayer'))continue;
     for(const pseudo of [null,'::before','::after']){const cs=getComputedStyle(el,pseudo);
@@ -742,7 +759,7 @@ def test_reduced_motion(tmp_path):
 FORCED = r"""(()=>{const pick=s=>[...document.querySelectorAll(s)].filter(e=>e.checkVisibility());
   const border=e=>{const cs=getComputedStyle(e);return cs.borderTopStyle!=='none'&&parseFloat(cs.borderTopWidth)>0&&cs.borderTopColor!=='rgba(0, 0, 0, 0)'};
   const out={forced:matchMedia('(forced-colors: active)').matches,noEdge:[]};
-  for(const e of pick('#toolWheel .tw-anchor,#bgPills .bgpill,#hiddenEye,#recIndicators .ri-chip,#interactionModeButton,#chatTab,.dock button,#presentationRail .jvr-item'))
+  for(const e of pick('#toolWheel .tw-anchor,#bgPills .bgpill,#recIndicators .ri-chip,#boardsButton,#chatTab,.dock button,#presentationRail .jvr-item'))
     if(!border(e))out.noEdge.push(e.id||e.className);
   out.pillIcons=pick('#bgPills .bgpill').map(p=>!!p.querySelector('svg'));
   return out})()"""
@@ -777,26 +794,24 @@ CHIP_WORDS = r"""(()=>{const norm=t=>t.toLowerCase().normalize('NFC').replace(/[
 def test_axe_when_available(tmp_path):
     """axe-core sur la coque (`JARVIS_AXE_JS` : axe.min.js ; ce n'est pas une
     dépendance du dépôt), dans les deux thèmes : état chargé (deux
-    enregistrements), roue et sous-arc ouverts, popover d'alertes, sélecteur de
-    mode, choix du Board, menu d'une carte du rail, aperçu de capture. Aucune
+    enregistrements), roue et sous-arc ouverts, popover d'alertes, carte Board
+    et son choix du Board, menu d'une carte du rail, aperçu de capture. Aucune
     violation hors des deux exceptions écrites."""
     axe = os.environ.get("JARVIS_AXE_JS")
     if not axe or not Path(axe).is_file():
         pytest.skip("JARVIS_AXE_JS absent (axe-core n'est pas une dépendance du dépôt)")
     seed = {**MIXED, "captures": [AUDIO, VIDEO], "mode": MODE, "previews": PREVIEWS}
-    hosts = ("#toolWheel", "#statusCentre", "#interactionModeHud", ".dock", "#presentationRail", "#boardsHud", "#chatTab")
+    hosts = ("#toolWheel", "#statusCentre", ".dock", "#presentationRail", "#boardsHud", "#chatTab")
     actions = [["axe", f"axe:{h}", h, 50, axe] for h in hosts]
     actions += [["eval", "chipWords", CHIP_WORDS, 50],
                 *WHEEL_OPEN, ["key", "k", "Enter", 600], ["axe", "axe:wheel-open", "#toolWheel", 50, axe],
                 ["key", "k", "Escape", 300], ["key", "k", "Escape", 300],
                 ["click", "pill", '#bgPills [data-bg-cat="failed"]', 800], ["axe", "axe:bgPop", "#bgPop", 50, axe],
-                ["click", "away", ".topbar>.state", 400],
-                ["click", "mode", "#interactionModeButton", 600], ["axe", "axe:mode-open", "#interactionModeHud", 50, axe],
-                ["key", "k", "Escape", 400],
+                ["click", "away", AWAY, 400],
                 ["click", "boards", "#boardsButton", 900], ["axe", "axe:boardsPanel", "#boardsPanel", 50, axe],
                 ["key", "k", "Escape", 400],
                 ["rclick", "railmenu", "#presentationRail .jvr-item", 700], ["axe", "axe:railMenu", ".jvr-menu", 50, axe],
-                ["key", "k", "Escape", 400], ["click", "away", ".topbar>.state", 400],
+                ["key", "k", "Escape", 400], ["click", "away", AWAY, 400],
                 *WHEEL_OPEN, ["key", "v", "ArrowDown", 120], ["key", "s", "ArrowDown", 120], ["key", "shoot", "Enter", 1600],
                 ["axe", "axe:preview", "#screenshotPreview", 50, axe]]
     steps = _centre(tmp_path, [{"width": 1440, "height": 900, "theme": theme, "seed": seed, "actions": actions} for theme in THEMES])
@@ -819,7 +834,7 @@ def test_axe_when_available(tmp_path):
                 rest = [v for v in violations if not (v["id"] == "label-content-name-mismatch"
                                                       and all(any(a in h.split(">", 1)[0] for a in allowed) for h in v["html"]))]
                 assert rest == [], (theme, name, rest)
-        assert seen == 13, (theme, results.keys())
+        assert seen == 11, (theme, results.keys())
 
 
 def test_zoom_200(tmp_path):
@@ -848,8 +863,8 @@ def test_zoom_200(tmp_path):
 def test_narrow_700_and_short_560(tmp_path, size):
     """700 px de large (dernier point de la mise en page étroite), 560 px de
     haut, et les deux : commandes toutes dans l'écran, aucune sur une autre,
-    roue ouverte entière, alertes et sélecteur de mode ouverts au premier plan,
-    dans les deux thèmes."""
+    roue ouverte entière, alertes et panneau de la carte Board ouverts au premier
+    plan, dans les deux thèmes."""
     width, height = size
     shots = _evidence(tmp_path)
     seed = {**BUSY, "mode": MODE, "previews": PREVIEWS}
@@ -857,12 +872,12 @@ def test_narrow_700_and_short_560(tmp_path, size):
         ["eval", "rest", _audit(), 50],
         *WHEEL_OPEN, ["eval", "wheel", _audit("#toolWheel .tw-panel"), 50], ["key", "k", "Escape", 300],
         ["click", "pill", '#bgPills [data-bg-cat="failed"]', 800], ["eval", "pop", _audit("#bgPop"), 50],
-        ["click", "away", ".topbar>.state", 400],
-        ["click", "mode", "#interactionModeButton", 600], ["eval", "mode", _audit("#interactionModeHud .im-pop"), 50],
+        ["click", "away", AWAY, 400],
+        ["click", "boards", "#boardsButton", 900], ["eval", "boards", _audit("#boardsPanel"), 50],
         ["shot", "shot", str(shots / f"size-{width}x{height}-{theme}.png"), 50]]} for theme in THEMES]
     for theme, step in zip(THEMES, _centre(tmp_path, plan)):
         r = step["results"]
-        for name in ("rest", "wheel", "pop", "mode"):
+        for name in ("rest", "wheel", "pop", "boards"):
             _clean(r[name], f"{width}x{height}-{theme}-{name}")
         assert _errors(step) == [], _errors(step)
 
@@ -879,9 +894,8 @@ PANEL_OPEN = "(()=>{document.getElementById('panel').classList.add('open');retur
 STACK = r"""(()=>{const box=el=>{if(!el||el.closest('[hidden]')||!el.checkVisibility())return null;const r=el.getBoundingClientRect();
   return r.width>0?{l:r.left,t:r.top,r:r.right,b:r.bottom}:null};const q=s=>document.querySelector(s);
   return {vw:innerWidth,banner:box(q('#liveBanner')),tray:box(q('#boardDropTray')),toasts:[...document.querySelectorAll('#toasts .toast')].map(box).filter(Boolean),
-    rail:box(q('#presentationRail')),mode:box(q('#interactionModeButton')),dock:box(q('.dock')),chat:box(q('#chatTab')),panel:box(q('#panel.open')),
-    centre:[...document.querySelectorAll('#bgPills .bgpill,#hiddenEye,#recIndicators .ri-chip')].map(box).filter(Boolean),
-    topbar:box(q('.topbar'))}})()"""
+    rail:box(q('#presentationRail')),card:box(q('#boardsButton')),dock:box(q('.dock')),chat:box(q('#chatTab')),panel:box(q('#panel.open')),
+    centre:[...document.querySelectorAll('#bgPills .bgpill,#recIndicators .ri-chip')].map(box).filter(Boolean)}})()"""
 
 
 def _no_overlap(a, b) -> bool:
@@ -910,23 +924,23 @@ def test_banner_tray_toasts_and_rail_never_cover_each_other(tmp_path, theme):
         c, o = r["closed"], r["opened"]
         where = (theme, w, h)
         assert c["banner"] and c["tray"] and len(c["toasts"]) == 2 and c["rail"], (where, c)
-        for name in ("rail", "tray", "dock", "topbar", "mode", "chat"):
+        for name in ("rail", "tray", "dock", "card", "chat"):
             assert _no_overlap(c["banner"], c[name]), (where, "bandeau", name, c["banner"], c[name])
-        for name in ("rail", "mode", "chat", "dock"):
+        for name in ("rail", "card", "chat", "dock"):
             assert _no_overlap(c["tray"], c[name]), (where, "plateau", name, c["tray"], c[name])
         for t in c["toasts"]:
-            for name in ("banner", "tray", "rail", "mode", "chat", "dock"):
+            for name in ("banner", "tray", "rail", "card", "chat", "dock"):
                 assert _no_overlap(t, c[name]), (where, "infusion", name, t, c[name])
             for chip in c["centre"]:
                 assert _no_overlap(t, chip), (where, "infusion", "centre d'état", t, chip)
         _clean(r["audit"], f"stack-{theme}-{w}x{h}")
         if w > 700:  # sous 700 px le panneau prend toute la largeur : bandeau et plateau passent dessus par rang (registre)
             assert _no_overlap(o["tray"], o["panel"]), (where, "plateau sur le panneau", o["tray"], o["panel"])
-            assert _no_overlap(o["tray"], o["mode"]) and _no_overlap(o["tray"], o["banner"]), (where, o)
+            assert _no_overlap(o["tray"], o["card"]) and _no_overlap(o["tray"], o["banner"]), (where, o)
             # Sous 940 px, panneau ouvert, la place manque à sa gauche : la pile reste à droite, sur le panneau, le
             # temps d'une infusion (règle d'avant cette tâche, `control_center.html`) ; au-dessus, elle passe à sa gauche.
             for t in o["toasts"]:
-                for name in (("panel", "tray", "mode", "dock") if w >= 940 else ("tray", "mode", "dock")):
+                for name in (("panel", "tray", "card", "dock") if w >= 940 else ("tray", "card", "dock")):
                     assert _no_overlap(t, o[name]), (where, "infusion, panneau ouvert", name, t, o[name])
         assert _errors(step) == [], _errors(step)
 
@@ -1015,7 +1029,7 @@ NODE_BOX = r"""(()=>{const b=s=>{const e=document.querySelector(s);const r=e.get
   return {node:b('%s'),wall:b(%s)}})()"""
 
 
-@pytest.mark.parametrize("wall", ["#chatTab", "#interactionModeHud .im-btn", "#presentationRail"])
+@pytest.mark.parametrize("wall", ["#chatTab", "#boardsHud .bd-btn", "#presentationRail"])
 def test_a_held_object_stops_against_the_control(tmp_path, wall):
     """QA S01 P4 : la preuve par un vrai objet tenu, pas par l'appartenance au
     sélecteur. Un vrai glisser souris emmène l'objet au centre de la commande ;

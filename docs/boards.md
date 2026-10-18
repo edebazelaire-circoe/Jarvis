@@ -22,7 +22,7 @@ deterministic — there is no global reasoning Brain.
 | *Board agent pool* | one CLI per binding in the Control Center | `jarvis/runtime/board_brains.py` | `test_board_brains*.py` |
 | *Switch and speech authority* | atomic switch, one speaker, Voice rebind, `board` block | `board_service.py`, `jarvis/core/speech_authority.py`, `brain_service.py`, `jarvis/runtime/board_routes.py`, `jarvis/runtime/board_brief.py` | `test_board_switch*.py`, `test_board_speech_authority.py`, `test_voice_board_rebind.py`, `test_board_brief.py` |
 | *MCP tools* | `jarvis-workspace` parity with the screen and the workspace API (Boards, Sessions, history, memory, links) | `jarvis/runtime/workspace_mcp.py`, `jarvis/runtime/workspace_boards.py` | `test_workspace_mcp.py`, `test_mcp_catalog.py` |
-| *Control Center Boards control* | top-right Boards button and panel: everyday quick browser (kind, last opening, archived filter, « Inspecter ») | `jarvis/runtime/control_center_boards.js` | `test_boards_hud_js.py`, `test_boards_hud_browser.py`, `test_boards_status.py` |
+| *Control Center Boards control* | bottom-left Board card (type, title, Voice presence line) and its panel: everyday quick browser (type, last opening, archived filter, « Inspecter ») | `jarvis/runtime/control_center_boards.js` | `test_boards_hud_js.py`, `test_boards_hud_browser.py`, `test_boards_card_browser.py`, `test_boards_status.py` |
 | *Control Center Sessions & Boards manager* | dock `WSP`: Sessions, Boards, relations, memory editor, artifacts | `jarvis/runtime/control_center_workspace.js` | `test_workspace_manager_js.py`, `test_workspace_manager_browser.py` |
 | *Alerts and absence* | Board-attributed, persisted alerts | `jarvis/runtime/background_events.py`, `jarvis/core/board_attribution.py` | `test_board_alerts*.py` |
 | *End-to-end proof* | the whole runtime, real processes | — | `tests/integration/test_board_session_e2e.py` |
@@ -235,7 +235,7 @@ below), read API (Slice 04, *Workspace inspection API* below), semantic
 mutations (Slice 05, *Board memory mutations* below), the `jarvis-workspace`
 MCP tools (Slice 06, *MCP tools* below) and the deep manager UI (Slice 07,
 *Control Center Sessions & Boards manager* below) and the quick browser in the
-top Boards control (Slice 08, *Control Center Boards control* below).**
+Board card (Slice 08, *Control Center Boards control* below).**
 Contract `jarvis/domain/board_memory.py` (pure); store
 `jarvis/adapters/board_memory_store.py` (`FileBoardMemoryStore`, port
 `jarvis/ports/board_memory.py`, folder rules: [local-data.md](local-data.md)).
@@ -1482,36 +1482,71 @@ stay on `jarvis-capture` (`artifact_get`, `artifact_search`): no duplicate.
 
 ## Control Center Boards control
 
-**Slice 06.** Module `jarvis/runtime/control_center_boards.js`
+**Slice 06**; a bottom-left **Board card** since Slice 02 of
+`tasks/jarvis-board-ui-wheel-dossier-refactor/` (D04: the only everyday Board
+switcher; D05: the top-left selector is gone). Module
+`jarvis/runtime/control_center_boards.js`
 (`window.JarvisBoards`, installed as `window.JarvisBoardsControl`), inserted by
 `ControlCenter.index` (`BOARDS_SCRIPT_MARKER`). Suites:
 `tests/unit/test_boards_hud_js.py` (node, DOM double),
 `tests/unit/test_boards_hud_browser.py` (headless Chrome, served page, `fetch`
-double), `tests/unit/test_boards_status.py` (`boards` status block, real Core +
-Control Center), z-index registry in `docs/control-center-shell.md` checked by
+double), `tests/unit/test_boards_card_browser.py` (card geometry, Voice
+presence on a real Control Center), `tests/unit/test_boards_status.py`
+(`boards` status block, real Core + Control Center), z-index registry in
+`docs/control-center-shell.md` checked by
 `tests/unit/test_control_center_shell_layers.py`.
 No Galaxy map or minimap (V1 non-goal).
 
-**Placement.** Two slots declared in `control_center.html`: `#boardsHud` inside
-`.topbar`, right next to the voice/agent state (top-left: since Slice 01 of the
-orbital UI both themes share the Cosmos geometry, `docs/control-center-shell.md`)
-— the bar cuts pointer events, the slot gives them back
-(`pointer-events:auto`); `#boardsPanel` outside the bar (z-index 36 in both
-themes: above dock, side panel and GPT-Live banner, below the pills, toasts and
-the page confirmation), anchored under the button and clamped to the
-viewport. The module refuses to install, by name (`boards.install_failed`,
-`boards_host_missing`), when a slot is missing, without breaking the other page
-modules.
+**Placement.** Two slots declared in `control_center.html`, both
+`data-keep-live="run"`: the card `#boardsHud`, bottom-left, in the envelope of
+the interaction-mode control it replaced (left 18 px, 168-236 px wide, on the
+rail shared with the Bare Hands badge and the scene notes; lifted above the
+status centre under 820 px, right of the Bare Hands column at 700 px and
+below; its button at rank 32), and `#boardsPanel` (rank 39 in both themes:
+above the open wheel and the screenshot preview it may cover, below the
+status centre, toasts and the page confirmation), opened **above** the card,
+aligned on its edge and clamped to the viewport. During a Studio run shown in
+Variantes both are drawn at 9150, in the rail's column when the Studio is
+windowed. Geometry and ranks: [control-center-shell.md](control-center-shell.md)
+› *Board card*. The module refuses to install, by name
+(`boards.install_failed`, `boards_host_missing`), when a slot is missing,
+without breaking the other page modules.
 
-**Button.** Always shows the active Board's title (`Board` label + title,
-ellipsis, full title in `title`/`aria-label`). Tones: `ready`; `pending` (a
-switch shows the target title and `Bascule · N s`, a new Session `Nouvelle
-session · N s`, with a moving bar); `unavailable` (Core without Boards or
-unreachable: `Indisponible` + a French phrase such as `Core ne répond pas`,
-dashed; the code stays in the tooltip / `aria-label`, never as body text);
-`unknown` (the status poll
-itself failed: `Inconnu`, dashed). The sub-line counts other Boards whose agent
-still works (`N en arrière-plan`).
+**Card.** Always shows the active Board's **type** (icon + word: Assistant
+speech bubble cyan, Présentation screen violet, Réunion three people amber;
+never colour alone) then its **title** (ellipsis, full title in
+`title`/`aria-label`; the name starts with what the card shows: « Assistant
+Jarvis : Board actif. … »). A Réunion Board reads `Réunion · prévu` and
+`Agit en Assistant` on the card, the full sentence « Comportement Réunion
+prévu : ce Board se comporte en Assistant pour l’instant. » in its name (D24;
+Core's `meeting_planned` was only in the trace, QA 01a); the type selector at
+creation offers `Réunion · prévu` with the full sentence on a help line under
+the row while it is selected (`#boardsCreateKindHint`, the select's
+`aria-describedby`), and a Réunion row's type badge carries the same sentence
+in its tooltip. Tones: `ready`; `pending` (a
+switch shows the target's title and type when the list knows it, and
+`Bascule · N s`, a new Session `Nouvelle session · N s`, with a moving bar);
+`unavailable` (Core without Boards or unreachable: `Indisponible` + a French
+phrase such as `Core ne répond pas`, dashed, no type claimed; the code stays
+in the tooltip / `aria-label`, never as body text); `unknown` (the status
+poll itself failed: `Inconnu`, dashed). The sub-line counts other Boards whose
+agent still works (`N en arrière-plan`).
+
+**Voice presence line (moved from the interaction-mode control, Slice 02).**
+`refreshStatus` hands the card the `boards`, `interaction_mode` and
+`presentation` blocks of the same status (`gate(boards, mode, report)`). While
+the effective mode is PRESENTATION (a Présentation Board, or a Studio run) the
+card shows Voice's session as reported (`presenceOf`, `freshReport`, unchanged
+from [interaction-mode.md](interaction-mode.md) › *The live Presentation
+session*): « Écoute la salle », « Sourd à la salle », « Refusé par la voix »,
+« Entrée échouée », « Séance inactive », each with its mark shape, the code
+(`last_failure_code` / `blocker_code`) in `title`; a refusal or failed entry
+also turns the card's stroke red. Never painted from a click; a refusal written
+before the switch is discarded (p17); `null` (Voice offline) shows nothing. The
+sentence is in the button's name and said once per change by
+`#boardsPresenceAnnounce`; journal `boards.voice_presence_shown {state, code}`.
+The card adds no mode toggle: the mode follows the Board type, and a Studio
+run ends from the Studio.
 
 **Panel** (`role="dialog"`, Escape closes and returns focus to the button,
 arrow keys / Home / End move between Boards, outside click closes):
@@ -1528,13 +1563,14 @@ arrow keys / Home / End move between Boards, outside click closes):
 
 **Slice 08 (quick browser).** `jarvis-board-memory-workspace-inspector`
 evolved this panel instead of adding a second selector: kind, last opening,
-archived filter, kind on create/edit, « Inspecter ». Console events added:
+archived filter, kind on create (on edit until Slice 01a of the wheel/dossier refactor), « Inspecter ». Console events added:
 `boards.filter_changed`, `boards.update_requested|_done|_failed` (the former
 `rename_*`: an edit may change the title, the kind or both),
 `boards.inspect_requested`, `boards.inspect_failed`. Everyday switching stays
-here; memory, Sessions and artifacts stay in the deep manager. Moving the
-control (e.g. bottom-left) is a placement change of `#boardsHud` /
-`#boardsPanel`, not another Board implementation.
+here; memory, Sessions and artifacts stay in the deep manager. The move to
+the bottom-left card (wheel/dossier refactor Slice 02) was exactly that: a
+placement change of `#boardsHud` / `#boardsPanel`, not another Board
+implementation.
 
 **No optimistic painting.** The active Board shown always comes from the
 `boards` status block (1 Hz) or the list re-read after an action. A request
@@ -1718,7 +1754,7 @@ persistence), `jarvis/core/board_attribution.py` (Core stamping),
 `jarvis/runtime/control_center_boards.js` (`alertBoardOf`, `elsewhereOf`,
 `pillLabelOf`, `goToBoardFromAlert`), `control_center.html` (pills, popover).
 **Location (orbital UI Slice 06):** the pills live in the bottom **status
-centre** (`#recIndicators | #bgPills | #hiddenEye`, rank 40,
+centre** (`#recIndicators | #bgPills`, rank 40; the eye was removed by the wheel/dossier refactor Slice 02,
 [control-center-shell.md](control-center-shell.md) › *Status centre*), no
 longer left of the launcher; same ids (`#bgPills`, `.bgpill`, `#bgPop`), same
 code. Each pill is a 32 px round button with an inline SVG icon per category

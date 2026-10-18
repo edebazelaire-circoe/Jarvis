@@ -5,7 +5,8 @@
    routes Boards : le vrai `refreshStatus` de la page nourrit donc le vrai
    module, au vrai battement d'une seconde. On releve des RECTANGLES, des
    STYLES CALCULES et `elementFromPoint` — ce qu'une lecture de la feuille ne
-   peut pas prouver (la barre du haut coupe les evenements de pointeur).
+   peut pas prouver. Depuis la Slice 02 de jarvis-board-ui-wheel-dossier-refactor,
+   le controle est la carte Board du bas-gauche (type, titre, panneau au-dessus).
 
    Usage : node _boards_browser.mjs <page.html> <chrome.exe> <planJSON>
    Sortie : un tableau JSON, un objet par etape. */
@@ -22,16 +23,18 @@ const plan=JSON.parse(PLAN);
    laisse l'etape piloter la reponse de la bascule. */
 const SERVER=`(()=>{
   const S=window.__boards={active:'default',boards:[
-    {board_id:'default',title:'Jarvis',status:'active'},
-    {board_id:'board_b',title:'Projet Atlas — refonte du tableau de bord',status:'active'}],
+    {board_id:'default',title:'Jarvis',status:'active',board_kind:'assistant'},
+    {board_id:'board_b',title:'Projet Atlas — refonte du tableau de bord',status:'active',board_kind:'presentation'},
+    {board_id:'board_m',title:'Point hebdo',status:'active',board_kind:'meeting'}],
     switchPlan:null,calls:[]};
   const json=(status,body)=>new Response(JSON.stringify(body),{status,headers:{'Content-Type':'application/json'}});
   const title=()=>S.boards.find(b=>b.board_id===S.active).title;
+  const kind=()=>S.boards.find(b=>b.board_id===S.active).board_kind;
   window.fetch=async(path,init)=>{
     const method=(init&&init.method)||'GET';S.calls.push(method+' '+path);
     if(path==='/api/status')return json(200,{voice_state:'idle',voice_online:false,agent:{name:'claude',state:'running'},
       agent_cli:'claude',error_count:0,background:null,
-      boards:{available:true,active:{board_id:S.active,title:title()},jarvis_session_id:'jsess_1',
+      boards:{available:true,active:{board_id:S.active,title:title(),board_kind:kind()},jarvis_session_id:'jsess_1',
         bindings:[{board_id:S.active,lifecycle:'foreground',agent_cli:'claude',closed:false}],error:null}});
     if(path.split('?')[0]==='/api/boards'&&method==='GET')return json(200,{boards:S.boards,active_board_id:S.active});
     if(path==='/api/sessions/current')return json(200,{session:{jarvis_session_id:'jsess_1',
@@ -55,8 +58,12 @@ const READ=`(()=>{
     seen[name]={l:r.left,t:r.top,r:r.right,b:r.bottom,w:r.width,h:r.height,z:getComputedStyle(el).zIndex};
   };
   const q=s=>document.querySelector(s);
-  box('trigger',q('#boardsButton'));box('state',q('.topbar .state'));box('dock',q('.dock'));
-  box('panel',q('#boardsPanel'));box('brand',q('.topbar .brand'));
+  box('trigger',q('#boardsButton'));box('dock',q('.dock'));
+  box('panel',q('#boardsPanel'));
+  /* Ce que la Slice 02 a retire : ni barre du haut, ni etat permanent, ni controle de mode, ni oeil. */
+  seen.retired={topbar:!!q('.topbar'),state:!!q('.state'),mode:!!q('#interactionModeHud'),eye:!!q('#hiddenEye')};
+  seen.kind=q('#boardsHud')&&q('#boardsHud').getAttribute('data-bd-kind');
+  seen.eyebrow=(q('#boardsKind')||{}).textContent||null;
   const t=q('#boardsButton');
   if(t){const r=t.getBoundingClientRect();const hit=document.elementFromPoint(r.left+r.width/2,r.top+r.height/2);
     seen.triggerHit=!!(hit&&t.contains(hit))}

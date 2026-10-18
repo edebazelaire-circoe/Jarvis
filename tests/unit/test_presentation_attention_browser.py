@@ -448,7 +448,7 @@ def test_la_carte_ne_recouvre_aucun_occupant_du_bas(tmp_path, width, height):
     # est désormais l'ancre de la roue.
     assert seen["wheel"], "l'ancre de la roue est là : sans elle ce test ne prouve rien"
     assert not seen.get("palette"), "la palette est cachée tant que la roue est visible"
-    for name in ("wheel", "modeBtn", "hint", "indicators"):
+    for name in ("wheel", "boardCard", "hint", "indicators"):
         assert _overlap(card, seen.get(name)) is None, (name, card, seen.get(name))
     # Et elle tient dans la fenêtre : une carte poussée hors écran serait un
     # avertissement perdu, ce qui est le défaut que D11 interdit.

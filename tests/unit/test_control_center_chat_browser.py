@@ -24,7 +24,7 @@ import subprocess
 
 import pytest
 
-from tests.unit.test_interaction_mode_hud_browser import _chrome, _served_page
+from tests.unit.test_boards_card_browser import _chrome, _served_page
 
 HARNESS = Path(__file__).parent / "_chat_browser.mjs"
 READ = {"value": "r"}

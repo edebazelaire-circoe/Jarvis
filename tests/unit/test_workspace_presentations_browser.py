@@ -19,7 +19,7 @@ import shutil
 import pytest
 
 from tests.fakes.capture_stack import CaptureStack
-from tests.unit.test_interaction_mode_hud_browser import _chrome
+from tests.unit.test_boards_card_browser import _chrome
 
 HARNESS = Path(__file__).parent / "_workspace_browser.mjs"
 

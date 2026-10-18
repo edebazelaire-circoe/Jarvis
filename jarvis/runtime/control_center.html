@@ -22,15 +22,15 @@ html,body{margin:0;height:100%;background:var(--bg);color:var(--text);font:15px 
    @shell-layer 20: #sceneLayer
    @shell-layer 21: .board-drop::before
    @shell-layer 30: #toolWheel, #barehandsPalette, #presentationRail
-   @shell-layer 31: .topbar
-   @shell-layer 32: .dock, #chatTab, #barehandsHud, #interactionModeHud
+   @shell-layer 32: .dock, #chatTab, #barehandsHud, #boardsHud
    @shell-layer 33: .panel
    @shell-layer 34: .board-drop-card, #boardDropTray, #jvStudioInspector
    @shell-layer 35: .live-banner
-   @shell-layer 36: #boardsPanel, .bh-hud-pop, .im-pop, .dock[data-more-open]
+   @shell-layer 36: .bh-hud-pop, .dock[data-more-open]
    @shell-layer 37: #toolWheel[data-open]
    @shell-layer 38: #screenshotPreview
-   @shell-layer 40: #recIndicators, #bgPills, #hiddenEye
+   @shell-layer 39: #boardsPanel
+   @shell-layer 40: #recIndicators, #bgPills
    @shell-layer 55: .tl, .tlab, .mcpi, .wsp, .pfb
    @shell-layer 60: .overlay
    @shell-layer 70: .toasts
@@ -40,7 +40,7 @@ html,body{margin:0;height:100%;background:var(--bg);color:var(--text);font:15px 
    @shell-layer 85: .cdialog-back
    @shell-layer 9000: #jvStudioExplorer
    @shell-layer 9100: html.jvr-studio #presentationRail
-   @shell-layer 9150: html.jvx-run #interactionModeHud
+   @shell-layer 9150: html.jvx-run #boardsHud, html.jvx-run #boardsPanel
    @shell-layer 9300: .jvr-menu
    @shell-layer 9400: .jvr-dialog-back
    @shell-layer 9500: #jvFullscreenPrompt
@@ -59,25 +59,14 @@ html,body{margin:0;height:100%;background:var(--bg);color:var(--text);font:15px 
 :where([data-shell-control]) :where(button,a,input,select,textarea,[tabindex]):focus-visible,:where([data-shell-control]):focus-visible{outline:var(--shell-focus-w) solid var(--shell-focus);outline-offset:var(--shell-focus-offset)}
 @media(forced-colors:active){:where([data-shell-control]) :where(button){border-color:CanvasText}:where([data-shell-control]) :where(button,a,[tabindex]):focus-visible{outline-color:Highlight}}
 .face{position:absolute;inset:0;z-index:0;width:100%;height:100%;border:0;background:#000;pointer-events:none;cursor:default}
-/* Ligne d'état (zone haut-gauche) : elle s'arrête 10 px avant le lanceur — et
-   avant les pastilles quand elles sont là — sans jamais glisser dessous. Une seule
-   rangée au-dessus de 700 px : le Board et l'état s'abrègent plutôt que de passer
-   à la ligne sur la colonne du bord gauche (Bare Hands en haut à 76 px). En dessous,
-   la colonne passe au centre de l'écran : l'état peut aller à la ligne. */
-.topbar{position:absolute;z-index:31;top:var(--shell-gutter);left:var(--shell-gutter);right:calc(var(--shell-gutter) + var(--shell-launcher-w) + 10px);display:flex;justify-content:flex-start;flex-wrap:nowrap;row-gap:6px;align-items:center;pointer-events:none}
-/* La marque « JARVIS » ne fait pas partie de la ligne d'état de la coque (cible
-   approuvée : Board puis état) : masquée dans les deux thèmes, comme Cosmos le
-   faisait déjà. Elle prenait la place qui faisait passer l'état à la ligne, sur
-   la colonne Bare Hands, dès 1024 px au circuit imprimé. */
-.topbar>.brand{display:none}
-.brand,.state{background:rgba(3,8,12,.72);border:1px solid rgba(110,231,255,.18);backdrop-filter:blur(10px);padding:8px 12px;letter-spacing:.14em;text-transform:uppercase}
-.state{font-size:12px;color:var(--muted)}
-.state strong{color:var(--accent)}
-/* La touche d'éveil (`F9 · DÉMARRER`, `F9 · VOICE HORS LIGNE`…) n'a plus de capsule au
-   bas-centre (orbital-ui Slice 06, D8) : la ligne d'état la porte en description
-   accessible et en infobulle (`refreshStatus`) ; la touche elle-même est le raccourci
-   global de Voice, inchangé. L'état reçoit donc le pointeur (infobulle) malgré la barre. */
-.topbar>.state{pointer-events:auto;cursor:help}
+/* Zone haut-gauche : libre depuis la Slice 02 de jarvis-board-ui-wheel-dossier-refactor
+   (D05). Le sélecteur de Board est devenu la carte Board du bas-gauche (`#boardsHud`,
+   `control_center_boards.js`) et la ligne d'état permanente `VOICE … · CLAUDE …` est
+   retirée. La touche d'éveil (`F9 · DÉMARRER`, `F9 · VOICE HORS LIGNE`…) reste lisible
+   par les technologies d'assistance dans `#wakeHint` (`setWakeHint`, `refreshStatus`)
+   jusqu'à ce que le sous-menu JARVIS de la roue la montre (Slice 04) ; la touche
+   elle-même est le raccourci global de Voice, inchangé. */
+.sr-only{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}
 /* Bandeau GPT-Live (orbital-ui Slice 09) : centré entre les deux colonnes, il ne passe jamais sur le
    rail de droite (`--shell-rail-w` : 300 / 72 px, 12 px d'air de chaque côté) ; 700 px et moins, il
    descend sous la rangée de l'onglet du rail (40 + 8 px). Ancre `--jv-live` : le plateau de dépôt et
@@ -95,11 +84,12 @@ html,body{margin:0;height:100%;background:var(--bg);color:var(--text);font:15px 
 .live-meta{margin-top:4px;font-size:11px;color:#d9b9bf;line-height:1.45}.live-banner.uncertain .live-meta{color:#ead1ae}.live-warning{display:block;color:var(--warn);margin-top:3px}
 .live-actions{display:flex;flex-direction:column;gap:6px}.live-ack{border:1px solid var(--warn);background:#2a1a05;color:#fff;padding:7px 13px;border-radius:7px;font:700 11px inherit;letter-spacing:.06em;cursor:pointer}.live-ack:hover{background:#3d2707}.live-ack.confirm{background:var(--warn);color:#1b1004}.live-ack:disabled{opacity:.6;cursor:wait}
 .live-stop{border:1px solid var(--danger);background:#26070c;color:#fff;padding:9px 13px;border-radius:7px;font:700 12px inherit;letter-spacing:.08em;cursor:pointer}.live-stop:hover{background:#3c0a12}.live-stop:disabled{opacity:.6;cursor:wait}
-/* Contrôle Boards (Slice 06) : emplacements et rangs ; l'apparence vient de
-   `control_center_boards.js`. */
-#boardsHud{pointer-events:auto;margin-left:0;margin-right:10px;min-width:0;max-width:min(340px,42vw);display:flex}
-#boardsHud~.state{flex-shrink:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-#boardsPanel{position:absolute;z-index:36;top:62px;right:18px}
+/* Carte Board (bas-gauche depuis la Slice 02) : sa place et son apparence viennent de
+   `control_center_boards.js` (rail partagé avec Bare Hands et les notes de la scène) ;
+   le panneau s'ouvre au-dessus d'elle (`place`, qui pose `left`/`bottom`). Rang 39 : il
+   s'ouvre dans la zone de l'aperçu de capture (38) et de la roue ouverte (37), et c'est le
+   dernier geste de l'utilisateur ; sous le centre d'état (40) et les infusions. */
+#boardsPanel{position:absolute;z-index:39;left:var(--shell-gutter);bottom:96px}
 /* Lanceur global (zone haut-droit, orbital-ui Slice 08) : une rangée de cinq boutons
    de 34 px dans les deux thèmes — Conversation, Agents, Errors, Réglages, « Plus
    d’outils » ; le circuit imprimé y garde ses étiquettes (ERR, SET…), Cosmos ses
@@ -131,11 +121,10 @@ html.jvr-studio .dock,html.jvr-studio #chatTab{visibility:hidden}
 .tool{position:relative}
 .panel{position:absolute;z-index:33;top:var(--shell-panel-top);right:var(--shell-gutter);bottom:var(--shell-panel-bottom);width:min(var(--shell-panel-w),calc(100% - 2 * var(--shell-gutter)));background:var(--panel);border:1px solid var(--line);backdrop-filter:blur(18px);display:none;flex-direction:column;box-shadow:0 0 50px rgba(0,0,0,.45)}
 .panel.open{display:flex}
-/* Étroit (700 px et moins) : les mêmes zones dans les deux thèmes.
-   La ligne d'état lâche la marque, le Board et l'état s'abrègent ; panneau et bandeau
+/* Étroit (700 px et moins) : les mêmes zones dans les deux thèmes. Panneau et bandeau
    prennent la largeur sous le lanceur (`--shell-panel-top`). Le lanceur, cinq
    boutons depuis la Slice 08, reste une rangée. */
-@media(max-width:700px){.topbar{flex-wrap:wrap}#boardsHud{max-width:100%}.topbar>.state{max-width:100%;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.panel{left:var(--shell-gutter);right:var(--shell-gutter);width:auto}.live-banner{top:calc(var(--shell-panel-top) + 48px);left:var(--shell-gutter);right:var(--shell-gutter);width:auto;transform:none}}
+@media(max-width:700px){.panel{left:var(--shell-gutter);right:var(--shell-gutter);width:auto}.live-banner{top:calc(var(--shell-panel-top) + 48px);left:var(--shell-gutter);right:var(--shell-gutter);width:auto;transform:none}}
 .panel header{display:flex;justify-content:space-between;align-items:center;padding:15px 17px;border-bottom:1px solid var(--line)}
 .panel header h2{font-size:14px;margin:0;letter-spacing:.12em;text-transform:uppercase}
 .panel header button{background:none;color:var(--muted);border:0;font-size:20px;cursor:pointer}
@@ -498,15 +487,18 @@ html[data-jarvis-theme="cosmos"] .chat-tab:hover,html[data-jarvis-theme="cosmos"
    le centre d'état (40). Le reste de sa feuille vit dans son module. */
 #toolWheel[data-open]{z-index:37}
 /* Centre d'état du bas (orbital-ui Slice 06, D8 / D9 ; docs/control-center-shell.md
-   › Status centre) : une rangée centrée, `#recIndicators | #bgPills | #hiddenEye`.
-   `.status-centre` n'est qu'une mise en page : ni rang ni transformation (une
-   transformation ouvrirait un contexte d'empilement et enfermerait ses enfants sous la
-   scène) ; chacun de ses trois enfants porte le rang 40 du registre. Bas
+   › Status centre) : une rangée centrée, `#recIndicators | #bgPills` (l'œil permanent
+   des objets masqués est retiré par la Slice 02 de jarvis-board-ui-wheel-dossier-refactor,
+   D06 ; Sélection le rendra en Slice 06). `.status-centre` n'est qu'une mise en page : ni
+   rang ni transformation (une transformation ouvrirait un contexte d'empilement et
+   enfermerait ses enfants sous la scène) ; chacun de ses enfants porte le rang 40 du
+   registre. Bas
    `--shell-bottom`, hauteur `--shell-status-h` (44 px) : le haut de la rangée (62 px)
    reste sous le bas des panneaux latéraux (`--shell-panel-bottom`, 68 px) et des
    infusions. Marges symétriques pour rester centré : au-dessus de 820 px, la largeur
-   du bouton de mode (236 px au plus, bas-gauche) ; en dessous, le bouton de mode se
-   hisse au-dessus de la rangée et seule compte celle de l'onglet Chat (52 px). Trop de
+   de la carte Board (236 px au plus, bas-gauche, `GEO.maxWidth` de
+   `control_center_boards.js`) ; en dessous, la carte se hisse au-dessus de la rangée et
+   seule compte celle de l'onglet Chat (52 px). Trop de
    puces : la rangée passe à la ligne vers le haut. Panneau ouvert, et la place le
    permet (1100 px et plus) : elle se recentre dans l'espace libre à gauche du panneau.
    Clic au travers ailleurs que sur ses commandes. */
@@ -520,10 +512,10 @@ html[data-jarvis-theme="cosmos"] .chat-tab:hover,html[data-jarvis-theme="cosmos"
    qu'il n'y a rien à dire. */
 #recIndicators{position:relative;z-index:40;display:flex;flex-direction:column;align-items:center;pointer-events:auto}
 #recIndicators[hidden]{display:none}
-/* 700 px et moins : la rangée n'a plus la largeur d'une puce à côté des quatre pastilles et
-   de l'œil (deux lignes monteraient dans le bouton de mode, hissé à 84 px) : les puces
+/* 700 px et moins : la rangée n'a plus la largeur d'une puce à côté des quatre pastilles
+   (deux lignes monteraient dans la carte Board, hissée à 84 px) : les puces
    gardent la colonne du bord droit, à mi-hauteur, de la Slice 04 (mesurée jusqu'à 375 px,
-   trois enregistrements). Les pastilles et l'œil restent au centre. */
+   trois enregistrements). Les pastilles restent au centre. */
 @media(max-width:700px){#recIndicators{position:fixed;right:var(--shell-gutter);top:50%;transform:translateY(-50%);max-width:calc(100vw - 2 * var(--shell-gutter) - 24px);align-items:flex-end}}
 /* Un panneau ouvert couvre alors toute la largeur : la colonne passerait sur lui (sur le
    composer du Chat). Les puces reviennent dans la rangée, sous le bas du panneau. */
@@ -534,35 +526,20 @@ html[data-jarvis-theme="cosmos"] .chat-tab:hover,html[data-jarvis-theme="cosmos"
    (QA S04 P4). */
 @media(min-width:940px){#app:has(#recIndicatorsNote:not([hidden]))~.toasts{bottom:calc(var(--shell-bottom) + var(--shell-status-h) + 16px + var(--ri-note-h,0px))}}
 @media(min-width:701px) and (max-width:939px){#app:has(#recIndicatorsNote:not([hidden])):not(:has(.chat-panel.open))~.toasts{bottom:calc(var(--shell-bottom) + var(--shell-status-h) + 16px + var(--ri-note-h,0px))}}
-/* L'œil des objets masqués (Slice 06, D9 ; `control_center_scene_page.js`) : un
-   interrupteur `aria-pressed` (réglage de vue `showHidden`, ce navigateur). Œil barré =
-   les fantômes sont cachés ; œil ouvert sur fond accent = ils sont montrés. Le compte
-   n'est que dans le nom et l'infobulle. Aucun objet masqué : focalisable, l'air inerte. */
-#hiddenEye{position:relative;z-index:40;width:32px;height:32px;padding:0;display:grid;place-items:center;border:1px solid var(--shell-stroke);border-radius:50%;background:var(--shell-glass-strong);color:var(--muted);cursor:pointer;pointer-events:auto;backdrop-filter:blur(12px);transition:color var(--shell-dur-fast) var(--shell-ease),border-color var(--shell-dur-fast) var(--shell-ease),background-color var(--shell-dur-fast) var(--shell-ease)}
-#hiddenEye[hidden]{display:none}
-#hiddenEye svg{width:var(--shell-icon);height:var(--shell-icon)}
-#hiddenEye .eye-on{display:none}
-#hiddenEye[aria-pressed=true] .eye-on{display:block}
-#hiddenEye[aria-pressed=true] .eye-off{display:none}
-#hiddenEye:hover:not([aria-disabled=true]){color:var(--text);border-color:var(--shell-stroke-active)}
-#hiddenEye[aria-pressed=true]{color:#05080b;background:var(--accent);border-color:var(--accent)}
-#hiddenEye[aria-disabled=true]{opacity:.45;cursor:default}
-#hiddenEye:focus-visible{outline:var(--shell-focus-w) solid var(--shell-focus);outline-offset:var(--shell-focus-offset)}
-@media(forced-colors:active){#hiddenEye{border-color:ButtonText;color:ButtonText}#hiddenEye[aria-pressed=true]{forced-color-adjust:none;background:Highlight;color:HighlightText}}
 /* Aperçu de capture d'écran (orbital-ui Slice 05, `control_center_screenshot_preview.js`) : zone
-   `left-low`, à droite de l'ancre de la roue et AU-DESSUS du contexte bas-gauche (bouton de mode et
-   notes de la scène, jusqu'à 162 px du bas quand ils s'empilent ; 174 px sous 700 px de large, où le
-   bouton se lève) ; jamais au centre bas. Rang 38 :
+   `left-low`, à droite de l'ancre de la roue et AU-DESSUS du contexte bas-gauche (carte Board et
+   notes de la scène, jusqu'à 162 px du bas quand elles s'empilent ; 174 px sous 700 px de large, où la
+   carte se lève) ; jamais au centre bas. Rang 38 :
    au-dessus de la roue ouverte (37), sous le centre d'état (40) et la visionneuse (60). Non modal : seule
    sa carte reçoit le pointeur. Caché tant qu'aucune capture réussie n'est à montrer. */
-/* Une note de scène sur plusieurs lignes hisse le bouton de mode de `--sc-status-h` − 24 px (son barreau,
-   `control_center_interaction_mode.js`) : l'aperçu monte d'autant (QA S08 P1, orbital-ui Slice 09). */
+/* Une note de scène sur plusieurs lignes hisse la carte Board de `--sc-status-h` − 24 px (son barreau,
+   `control_center_boards.js` › GEO) : l'aperçu monte d'autant (QA S08 P1, orbital-ui Slice 09). */
 #screenshotPreview{position:absolute;z-index:38;left:calc(var(--shell-anchor-w) + var(--shell-gutter));bottom:calc(var(--shell-bottom) + 154px + max(0px,var(--sc-status-h,24px) - 24px))}
 #screenshotPreview[hidden]{display:none}
 @media(max-width:700px){#screenshotPreview{bottom:calc(var(--shell-bottom) + 182px + max(0px,var(--sc-status-h,24px) - 24px))}}
-/* Pastille Bare Hands affichée : le bouton de mode prend le second barreau du rail (86 au lieu de 52, +34 px,
-   `control_center_interaction_mode.js` › GEO), relevé de 42 px sous 820 px et de 62 px sous 700 px ; deux lignes
-   (« MODE ? », Core perdu) = 60 px. L'aperçu monte d'autant (QA S09 P2 : 8 à 10 px de recouvrement à 600 px). */
+/* Pastille Bare Hands affichée : la carte Board prend le second barreau du rail (86 au lieu de 52, +34 px,
+   `control_center_boards.js` › GEO), relevée de 42 px sous 820 px et de 62 px sous 700 px. L'aperçu monte
+   d'autant (QA S09 P2 : 8 à 10 px de recouvrement à 600 px). */
 @media(max-width:820px){body:has(#jarvisHands .jh-badge) #screenshotPreview{bottom:calc(var(--shell-bottom) + 188px + max(0px,var(--sc-status-h,24px) - 24px))}}
 @media(max-width:700px){body:has(#jarvisHands .jh-badge) #screenshotPreview{bottom:calc(var(--shell-bottom) + 216px + max(0px,var(--sc-status-h,24px) - 24px))}}
 /* Roue rouverte pendant l'aperçu : la roue est le dernier geste, ses coins restent sous le pointeur ; l'aperçu (38, au-dessus
@@ -1898,10 +1875,13 @@ button.wsp-ename:hover{color:var(--accent)}
 <body>
 <div id="app">
   <iframe class="face" src="__VISUALIZER_URL__" title="Jarvis visualizer"></iframe>
-  <div class="topbar"><div class="brand">JARVIS</div><div id="boardsHud" data-shell-control></div><div class="state" data-shell-control title="F9 · DÉMARRER" aria-description="F9 · DÉMARRER">VOICE <strong id="voiceState">IDLE</strong> · <strong id="agentName">CLAUDE</strong> <strong id="agentState">STOPPED</strong><span id="subagentState" hidden> · <strong id="subagentCount">0</strong> <span id="subagentWord">SOUS-AGENTS</span></span></div></div>
+  <!-- Touche d'éveil de Voice (`setWakeHint`) : lue par les technologies d'assistance, pas
+       affichée, depuis le retrait de la ligne d'état du haut-gauche (Slice 02 de
+       jarvis-board-ui-wheel-dossier-refactor, D05). Le sous-menu JARVIS de la roue la
+       montrera (Slice 04). Pas de région vivante : elle change à chaque état de la voix. -->
+  <p id="wakeHint" class="sr-only">F9 · DÉMARRER</p>
   <!-- Emplacement du contrôle de cycle de vie Bare Hands : un contrôle autonome
-       du haut-gauche, hors de `.dock` (qui reste à droite) et hors de `.topbar`
-       (dont les événements de pointeur sont coupés). Il est **déclaré ici**, et
+       du haut-gauche, hors de `.dock` (qui reste à droite). Il est **déclaré ici**, et
        non fabriqué par le script, pour que son rang d'empilement vive dans le
        registre ci-dessus avec tous les autres ; `control_center_barehands_hud.js`
        le remplit, et refuse de s'installer sous un nom cherchable s'il manque.
@@ -1940,32 +1920,20 @@ button.wsp-ename:hover{color:var(--accent)}
        sous un nom cherchable si cet emplacement manque — sans emporter ni le
        contrôle de cycle de vie ni la palette. -->
   <div id="barehandsCards"></div>
-  <!-- Emplacement du contrôle de mode d'interaction (jarvis-presentation-
-       interaction-mode, Slice 03) : un bouton d'état compact du BAS-gauche, qui
-       montre le mode en vigueur (SIMPLE / PRESENTATION) et ouvre un sélecteur à
-       trois choix, REUNION y étant annoncé et réservé. Il est au bas du bord
-       gauche et non en haut parce que le haut appartient déjà au contrôle de
-       cycle de vie Bare Hands et à sa palette d'outils, dont la hauteur dépend
-       du nombre d'outils installés : s'y ranger aurait voulu dire dépendre
-       d'une longueur variable. Déclaré ici pour la même raison que les trois
-       emplacements ci-dessus : ses rangs d'empilement (32 pour le bouton, 36
-       pour le sélecteur) vivent dans le registre du haut, et non dispersés dans
-       un script. Rempli par `control_center_interaction_mode.js`, qui refuse de
-       se dessiner sous un nom cherchable si cet emplacement manque — sans
-       emporter aucun des autres modules de la page. `data-keep-live="run"`
-       (native-studio-playback-fix Slice 09) : pendant une présentation montrée
-       dans Variantes, le contrôle reste vivant et dessiné au-dessus de
-       Variantes — un « Refusé par la voix » et la sortie du mode restent
-       visibles (`control_center_presentation_studio_explorer*.js`). -->
-  <div id="interactionModeHud" data-keep-live="run" data-shell-control></div>
-  <!-- Emplacements du contrôle Boards (jarvis-board-session-context-runtime,
-       Slice 06). Le bouton `#boardsHud` est dans `.topbar` ci-dessus (titre du
-       Board actif toujours visible, en haut à droite à côté de l'état) ; son
-       panneau est ici, hors de la barre, pour que son rang (36) vive au
-       registre du haut au lieu d'être enfermé dans celui de la barre (31).
-       Remplis par `control_center_boards.js`, qui refuse de s'installer sous
-       un nom cherchable si l'un des deux manque. -->
-  <div id="boardsPanel" hidden></div>
+  <!-- Emplacements de la carte Board (jarvis-board-session-context-runtime, Slice 06 ;
+       bas-gauche depuis la Slice 02 de jarvis-board-ui-wheel-dossier-refactor, D04, à la
+       place du contrôle de mode d'interaction retiré avec son sélecteur, D03). `#boardsHud`
+       est la carte : type et titre du Board actif, bascule, et la ligne de séance
+       PRESENTATION que Voice rapporte (« Refusé par la voix », séance sourde, entrée ratée).
+       Son panneau `#boardsPanel` s'ouvre au-dessus d'elle ; leurs rangs (32 pour le bouton,
+       36 pour le panneau) vivent au registre du haut. Remplis par `control_center_boards.js`,
+       qui refuse de s'installer sous un nom cherchable si l'un des deux manque.
+       `data-keep-live="run"` (native-studio-playback-fix Slice 09) : pendant une
+       présentation montrée dans Variantes, la carte et son panneau restent vivants et
+       dessinés au-dessus de Variantes — un « Refusé par la voix » reste visible
+       (`control_center_presentation_studio_explorer*.js`). -->
+  <div id="boardsHud" data-keep-live="run" data-shell-control></div>
+  <div id="boardsPanel" data-keep-live="run" hidden></div>
   <section class="live-banner" id="liveBanner" role="status" aria-live="assertive" aria-label="État de la session GPT-Live" data-shell-control hidden>
     <span class="live-led" aria-hidden="true"></span>
     <div class="live-main"><div class="live-title">GPT-LIVE <strong id="liveState">ACTIF</strong> · <span id="liveElapsed">00:00</span></div><div class="live-meta" id="liveMeta"></div></div>
@@ -2002,18 +1970,19 @@ button.wsp-ename:hover{color:var(--accent)}
     </div>
   </nav>
   <!-- Centre d'état du bas (orbital-ui Slice 06, D8 / D9 ; docs/control-center-shell.md
-       › Status centre). Une mise en page sans rang ; ses trois commandes sont au rang 40 :
+       › Status centre). Une mise en page sans rang ; ses commandes sont au rang 40 :
        - `#recIndicators` (Slice 04, D6) : rempli par `control_center_capture_wheel.js`
          depuis le contrôleur de capture ; ce qui enregistre reste visible et s'arrête
          d'un geste quand la roue est repliée ; caché tant qu'il n'y a rien à dire ;
        - `#bgPills` : les pastilles d'arrière-plan (`renderBackgroundPills`), mêmes ids,
-         même popover `#bgPop` ;
-       - `#hiddenEye` : l'œil des objets masqués, branché par le rendu de la scène
-         (`control_center_scene_page.js`) ; caché tant que la scène est éteinte. -->
+         même popover `#bgPop`.
+       L'œil permanent des objets masqués (`#hiddenEye`) est retiré (Slice 02 de
+       jarvis-board-ui-wheel-dossier-refactor, D06) ; sa mécanique (fantômes `showHidden`,
+       liste « Tout réafficher ») reste dans `control_center_scene_page.js` et revient dans
+       le sous-menu Sélection de la roue (Slice 06). -->
   <div class="status-centre" id="statusCentre">
     <div id="recIndicators" data-shell-control hidden></div>
     <div class="bgpills" id="bgPills" data-shell-control role="group" aria-label="Notifications d’arrière-plan" hidden></div>
-    <button type="button" class="hidden-eye" id="hiddenEye" data-shell-control aria-pressed="false" aria-disabled="true" aria-label="Aucun objet masqué" title="Aucun objet masqué" data-eye="off" hidden><svg class="eye-off" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M3 12s3.4-6 9-6c1.6 0 3 .5 4.2 1.2M21 12s-3.4 6-9 6c-1.6 0-3-.5-4.2-1.2"/><path d="M9.9 9.9a3 3 0 0 0 4.2 4.2"/><path d="M4 4l16 16"/></svg><svg class="eye-on" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M3 12s3.4-6 9-6 9 6 9 6-3.4 6-9 6-9-6-9-6z"/><circle cx="12" cy="12" r="3"/></svg></button>
   </div>
   <section class="panel" id="panel" data-shell-control><header><h2 id="panelTitle">Panel</h2><button id="closePanel" aria-label="Fermer">×</button></header><div class="body" id="panelBody"></div></section>
   <!-- Chat (handoff jarvis-unified-chat-and-board-drop, Slice 06, `docs/chat.md` › Panel) :
@@ -2521,14 +2490,15 @@ document.addEventListener('keydown',e=>{
 window.addEventListener('resize',()=>{if(BG.open)closeBackgroundPop()});
 async function renderErrors(){const archived=errorsView==='archived';title.textContent=archived?'Errors · Archives':'Errors';const items=await api('/api/errors'+(archived?'?archived=1&limit=500':''));body.innerHTML=`<div class="row" style="margin-bottom:12px"><button class="action" id="toggleErrors">${archived?'Erreurs actives':'Erreurs archivées'}</button>${archived?'':'<button class="action danger" id="archiveErrors">Archiver</button>'}<span class="hint">${items.length} entrée(s)</span></div><div>${entries(items)}</div>`;$('#toggleErrors').addEventListener('click',()=>{errorsView=archived?'active':'archived';renderErrors().catch(e=>{body.innerHTML=`<div class="entry error">${esc(e.message)}</div>`})});const archive=$('#archiveErrors');if(archive)archive.addEventListener('click',async()=>{archive.disabled=true;try{await api('/api/errors/archive',{method:'POST'});await renderErrors();refreshStatus()}catch(e){toast({title:'Archivage des erreurs impossible',sub:e.message,kind:'bad'});console.error('errors_archive_failed',e)}finally{archive.disabled=false}})}
 /* La touche d'éveil et ce qu'elle fait maintenant (« F9 · DÉMARRER »…) : plus de
-   capsule au bas-centre (orbital-ui Slice 06, D8) ; la ligne d'état la porte en
-   description accessible et en infobulle. La touche reste le raccourci global de Voice. */
+   capsule au bas-centre (orbital-ui Slice 06, D8), plus de ligne d'état au haut-gauche
+   (Slice 02 de jarvis-board-ui-wheel-dossier-refactor, D05). Elle reste lisible par les
+   technologies d'assistance dans `#wakeHint`, jusqu'au sous-menu JARVIS de la roue
+   (Slice 04). La touche reste le raccourci global de Voice. */
 function setWakeHint(text){
-  const state=document.querySelector('.topbar>.state');if(!state)return;
-  if(state.getAttribute('aria-description')===text)return;
-  state.setAttribute('aria-description',text);state.title=text;
+  const hint=document.getElementById('wakeHint');if(!hint)return;
+  if(hint.textContent!==text)hint.textContent=text;
 }
-async function refreshStatus(){try{const s=await api('/api/status'),v=s.voice_state||'idle',k=String(s.manual_wake_key||'f9').toUpperCase(),online=s.voice_online===true;renderLive(s.live);$('#voiceState').textContent=online?({idle:'SLEEP',waiting:'WAIT',listening:'LISTEN',speaking:'TALK',thinking:'THINKING'}[v]||v.toUpperCase()):'OFF';const listening=s.voice_turn_mode==='manual'?`${k} · ENVOYER`:`${k} · ANNULER`;setWakeHint(online?({idle:`${k} · DÉMARRER`,waiting:listening,listening,thinking:`${k} · ANNULER`,speaking:`${k} · INTERROMPRE`}[v]||`${k} · CONTRÔLER`):`${k} · VOICE HORS LIGNE`);$('.face').style.visibility=online?'visible':'hidden';$('#agentName').textContent=String(s.agent.name||s.agent_cli||'agent').toUpperCase();$('#agentState').textContent=(s.agent.state||'stopped').toUpperCase();const b=$('#errorBadge');b.textContent=s.error_count;b.style.display=s.error_count?'flex':'none';renderBackgroundPills(s.background,s.boards);try{if(window.JarvisPresentationAttentionControl)JarvisPresentationAttentionControl.gate(s.background)}catch(attentionError){console.error('[attention] presentation_attention_gate_failed',attentionError)}try{if(window.JarvisScene)JarvisScene.gate(s.scene,s.scene_limits)}catch(sceneError){console.error('[scène] scene.gate_failed',sceneError)}try{if(window.JarvisBarehandsCommandChannel)JarvisBarehandsCommandChannel.gate(s.barehands)}catch(handsError){console.error('[barehands] command_gate_failed',handsError)}try{if(window.JarvisBarehands)JarvisBarehands.gate(s.barehands)}catch(switchError){console.error('[barehands] switch_gate_failed',switchError)}try{if(window.JarvisInteractionModeControl)JarvisInteractionModeControl.gate(s.interaction_mode,s.presentation)}catch(modeError){console.error('[mode] interaction_mode_gate_failed',modeError)}try{if(window.JarvisBoardsControl)JarvisBoardsControl.gate(s.boards)}catch(boardsError){console.error('[boards] boards_gate_failed',boardsError)}try{if(window.JarvisPresentationRail)JarvisPresentationRail.gate(s)}catch(railError){console.error('[presentation-rail] gate_failed',railError)}AG.agent=s.agent||null;AG.cli=s.agent_cli||'';if(!(current==='agents'&&coreOk()))updateSubagentBadge(s.subagents,false);watchSubagents(s.subagents)}catch(e){try{if(window.JarvisScene)JarvisScene.statusLost()}catch(_sceneError){/* la scène ne doit pas casser le statut */}try{if(window.JarvisBarehandsCommandChannel)JarvisBarehandsCommandChannel.statusLost()}catch(_handsError){/* le canal de commandes non plus */}try{if(window.JarvisInteractionModeControl)JarvisInteractionModeControl.statusLost()}catch(_modeError){/* le mode d'interaction non plus — et il doit cesser d'afficher une valeur que plus rien ne confirme */}try{if(window.JarvisBoardsControl)JarvisBoardsControl.statusLost()}catch(_boardsError){/* le contrôle Boards non plus : il doit cesser d'afficher un Board que plus rien ne confirme */}try{if(window.JarvisPresentationAttentionControl)JarvisPresentationAttentionControl.statusLost()}catch(_attentionError){/* l'avertissement de vérification non plus : les cartes déjà posées décrivent un fait constaté, elles ne prétendent pas à un état vivant */}$('#voiceState').textContent='OFFLINE';$('#agentState').textContent='OFFLINE';setWakeHint('VOICE HORS LIGNE');$('.face').style.visibility='hidden';updateSubagentBadge(null)}}
+async function refreshStatus(){try{const s=await api('/api/status'),v=s.voice_state||'idle',k=String(s.manual_wake_key||'f9').toUpperCase(),online=s.voice_online===true;renderLive(s.live);const listening=s.voice_turn_mode==='manual'?`${k} · ENVOYER`:`${k} · ANNULER`;setWakeHint(online?({idle:`${k} · DÉMARRER`,waiting:listening,listening,thinking:`${k} · ANNULER`,speaking:`${k} · INTERROMPRE`}[v]||`${k} · CONTRÔLER`):`${k} · VOICE HORS LIGNE`);$('.face').style.visibility=online?'visible':'hidden';const b=$('#errorBadge');b.textContent=s.error_count;b.style.display=s.error_count?'flex':'none';renderBackgroundPills(s.background,s.boards);try{if(window.JarvisPresentationAttentionControl)JarvisPresentationAttentionControl.gate(s.background)}catch(attentionError){console.error('[attention] presentation_attention_gate_failed',attentionError)}try{if(window.JarvisScene)JarvisScene.gate(s.scene,s.scene_limits)}catch(sceneError){console.error('[scène] scene.gate_failed',sceneError)}try{if(window.JarvisBarehandsCommandChannel)JarvisBarehandsCommandChannel.gate(s.barehands)}catch(handsError){console.error('[barehands] command_gate_failed',handsError)}try{if(window.JarvisBarehands)JarvisBarehands.gate(s.barehands)}catch(switchError){console.error('[barehands] switch_gate_failed',switchError)}try{if(window.JarvisBoardsControl)JarvisBoardsControl.gate(s.boards,s.interaction_mode,s.presentation)}catch(boardsError){console.error('[boards] boards_gate_failed',boardsError)}try{if(window.JarvisPresentationRail)JarvisPresentationRail.gate(s)}catch(railError){console.error('[presentation-rail] gate_failed',railError)}AG.agent=s.agent||null;AG.cli=s.agent_cli||'';if(!(current==='agents'&&coreOk()))updateSubagentBadge(s.subagents,false);watchSubagents(s.subagents)}catch(e){try{if(window.JarvisScene)JarvisScene.statusLost()}catch(_sceneError){/* la scène ne doit pas casser le statut */}try{if(window.JarvisBarehandsCommandChannel)JarvisBarehandsCommandChannel.statusLost()}catch(_handsError){/* le canal de commandes non plus */}try{if(window.JarvisBoardsControl)JarvisBoardsControl.statusLost()}catch(_boardsError){/* la carte Board non plus : elle doit cesser d'afficher un Board et une séance que plus rien ne confirme */}try{if(window.JarvisPresentationAttentionControl)JarvisPresentationAttentionControl.statusLost()}catch(_attentionError){/* l'avertissement de vérification non plus : les cartes déjà posées décrivent un fait constaté, elles ne prétendent pas à un état vivant */}setWakeHint('VOICE HORS LIGNE');$('.face').style.visibility='hidden';updateSubagentBadge(null)}}
 async function openPanel(name){if(window.JarvisChat)window.JarvisChat.close();current=name;document.querySelectorAll('.dock button[data-panel]').forEach(b=>b.classList.toggle('active',b.dataset.panel===name));panel.classList.add('open');title.textContent={errors:'Errors',trace:'Trace',agents:'Agents'}[name];closeMenu(false);if(name==='agents'){openAgentsPanel();return}stopAgentsPolling();body.innerHTML='<div class="empty">Chargement…</div>';try{if(name==='errors')await renderErrors();if(name==='trace')body.innerHTML=entries(await api('/api/trace'))}catch(e){body.innerHTML=`<div class="entry error">${esc(e.message)}</div>`}}
 /* Un seul panneau latéral : fermer `#panel` ferme aussi le Chat (Échap, inspecteur du Studio). */
 function closePanel(){if(window.JarvisChat)window.JarvisChat.close();current=null;panel.classList.remove('open');document.querySelectorAll('.dock button[data-panel]').forEach(b=>b.classList.remove('active'));closeMenu(false);stopAgentsPolling()}
@@ -2638,13 +2608,6 @@ const STATUS={
 /* Canal de commandes du cerveau vers Bare Hands (Slice 12), après le pointeur
    qui pose `window.JarvisBarehands` : `control_center_barehands_commands.js`. */
 /*__CONTROL_CENTER_BAREHANDS_COMMANDS_JS__*/
-/* Contrôle de mode d'interaction du bas-gauche (jarvis-presentation-interaction-
-   mode, Slice 03 ; affichage seul depuis la Slice 01b) :
-   `control_center_interaction_mode.js`. Il ne dépend d'aucun autre module de
-   page — ni Bare Hands, ni la scène : sa seule source est le bloc
-   `interaction_mode` de `/api/status`, que `refreshStatus` lui remet une fois
-   par seconde. Il n'écrit rien. */
-/*__CONTROL_CENTER_INTERACTION_MODE_JS__*/
 /* Contrôleur de capture (session-context-recording Slice 10, découpé en
    orbital-ui Slice 04) : `control_center_capture_rail.js`. Ne dessine rien : il
    sonde `/api/captures/status` lui-même et publie `JarvisCaptureRail`. */
@@ -2662,10 +2625,11 @@ const STATUS={
    Slice 03) : `control_center_input_arbitration.js`. APRÈS la roue et le contrôle
    Bare Hands (`JarvisToolWheel`, `JarvisBarehandsHudControl`), qu'il lit au chargement. */
 /*__CONTROL_CENTER_INPUT_ARBITRATION_JS__*/
-/* Contrôle Boards du haut-droit (jarvis-board-session-context-runtime, Slice 06) :
-   `control_center_boards.js`. Sa seule source vivante est le bloc `boards` de
-   `/api/status` ; il utilise `api`, `refreshStatus`, `toast` et `confirmDialog`,
-   déclarations de fonction remontées de ce même `<script>`. */
+/* Carte Board du bas-gauche (jarvis-board-session-context-runtime, Slice 06 ; bas-gauche
+   depuis la Slice 02 de jarvis-board-ui-wheel-dossier-refactor) : `control_center_boards.js`.
+   Ses seules sources vivantes sont les blocs `boards`, `interaction_mode` et
+   `presentation` de `/api/status` ; il utilise `api`, `refreshStatus`, `toast` et
+   `confirmDialog`, déclarations de fonction remontées de ce même `<script>`. */
 /*__CONTROL_CENTER_BOARDS_JS__*/
 /*__CONTROL_CENTER_PRESENTATION_ATTENTION_JS__*/
 /* Runtime des prefabs (jarvis-scene-window-prefab-foundation, Slice 03) : protocole `jv: 1` pur
@@ -2960,7 +2924,8 @@ async function fetchTasks(){
   return AG.fetching;
 }
 
-/* Badge du dock et bandeau du haut : sous-agents en cours, jamais le brain.
+/* Badge du dock : sous-agents en cours, jamais le brain (le compte de la ligne d'état du
+   haut-gauche est parti avec elle, Slice 02 ; le sous-menu JARVIS le reprendra, Slice 04).
    `fromCore` dit d'où sort le décompte : l'état normalisé de Core, ou — comme
    le bandeau dégradé de la liste — le suivi local du Control Center, qui ne
    fait pas foi. Le badge n'a pas la place de l'écrire, l'infobulle si. */
@@ -2974,10 +2939,6 @@ function updateSubagentBadge(sub,fromCore){
   badge.title=label;
   button.title=n?`Agents · ${label}`:'Agents';
   button.setAttribute('aria-label',button.title);
-  $('#subagentState').hidden=!n;
-  $('#subagentState').title=label;
-  $('#subagentCount').textContent=String(n);
-  $('#subagentWord').textContent=n>1?'SOUS-AGENTS':'SOUS-AGENT';
 }
 
 /* Panneau fermé : la liste n'est demandée que si le compteur bouge (ou toutes
