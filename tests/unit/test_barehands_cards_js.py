@@ -422,7 +422,7 @@ def test_the_card_calls_the_very_doors_the_experimental_tab_calls(tmp_path):
     assert result["direct"]["code"] == "barehands_recorder_disabled"
     assert result["shown"] == result["direct"]["reason"]
     assert result["hidden"] is False, "un refus se voit"
-    assert "en haut à gauche" in result["shown"], "il dit où aller rallumer"
+    assert "Sélection › Bare Hands" in result["shown"], "il dit où aller rallumer (la roue, Slice 08)"
     assert result["recording"] is False
 
 

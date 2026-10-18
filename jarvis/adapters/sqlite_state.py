@@ -508,10 +508,11 @@ class SQLiteStateRepository:
             try:
                 current = int(conn.execute("SELECT version FROM schema_version LIMIT 1").fetchone()[0])
                 if current < target:
-                    before = conn.total_changes
+                    rows = 0
                     for statement in _MIGRATIONS[target]:
-                        conn.execute(statement)
-                    rows = conn.total_changes - before
+                        # `rowcount` of a data statement; -1 for DDL (counted 0). Only the connection's
+                        # `execute` is used, as before (callers may pass a thin connection proxy).
+                        rows += max(conn.execute(statement).rowcount, 0)
                     conn.execute("UPDATE schema_version SET version=?", (target,))
                     applied.append({"from": current, "to": target, "rows": rows})
                 conn.execute("COMMIT")
