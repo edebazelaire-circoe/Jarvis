@@ -3,7 +3,8 @@
 Contrat : `docs/control-center-shell.md` › Tool wheel (orbital-ui Slice 02).
 `test_tool_wheel_js.py` tient le modèle pur ; ce fichier charge la page
 **servie** (composée comme `ControlCenter.index`) — la roue y est construite
-d'office depuis la Slice 04 —, branche quatre actions qui notent leurs appels, et
+d'office depuis la Slice 04 —, branche cinq actions qui notent leurs appels (les
+cinq catégories de la refonte S03 de `jarvis-board-ui-wheel-dossier-refactor`), et
 conduit la roue :
 
 - souris : de vrais `Input.dispatchMouseEvent` (CDP) vers l'ancre, un
@@ -36,8 +37,9 @@ ROOT = Path(__file__).resolve().parents[2]
 MODULE = ROOT / "jarvis" / "runtime" / "control_center_tool_wheel.js"
 W, H = 1440, 900
 
-#: Branche quatre actions qui notent leurs appels (la roue est construite d'office). Sélection
-#: propose un sous-arc à deux choix, les autres un seul choix informatif.
+#: Branche cinq actions qui notent leurs appels (la roue est construite d'office), à la place
+#: des gestionnaires réels et d'attente. Sélection propose un sous-menu à deux choix, les autres
+#: un seul choix informatif ; aucune n'a `menu` : l'activation principale agit.
 SETUP = r"""(()=>{
   const theme=%s;
   if(theme&&window.JarvisThemeAPI)window.JarvisThemeAPI.activate(theme,{persist:false});
@@ -47,10 +49,10 @@ SETUP = r"""(()=>{
   window.__tw={activate:[],secondary:[],items:[],logs:[]};
   const info=console.info.bind(console);
   console.info=(...a)=>{window.__tw.logs.push(String(a[0]));info(...a)};
-  /* Slice 04 : les vues de capture projettent l'état de Core sur Vidéo,
-     Capture d'écran et Audio ; ce fichier éprouve la roue seule. */
-  for(const id of ['video','screenshot','audio'])Wh.setStatus(id,null);
-  if(window.JarvisCaptureRail)window.JarvisCaptureRail.subscribe(()=>{for(const id of ['video','screenshot','audio'])Wh.setStatus(id,null)});
+  /* Les vues de capture projettent l'état de Core sur Capture ; ce fichier
+     éprouve la roue seule. */
+  Wh.setStatus('capture',null);
+  if(window.JarvisCaptureRail)window.JarvisCaptureRail.subscribe(()=>{Wh.setStatus('capture',null)});
   for(const id of Wh.SLOTS.map(s=>s.id))Wh.register({id,
     onActivate:ctx=>{window.__tw.activate.push(ctx)},
     onSecondary:ctx=>{window.__tw.secondary.push(ctx);
@@ -134,10 +136,24 @@ def _geometry() -> list[dict]:
     return json.loads(done.stdout)
 
 
-def _dot(wedges: list[dict], index: int, height: int = H) -> tuple[float, float]:
-    """Centre d'une pastille, roue ouverte : centre de la roue au bord gauche, à mi-hauteur."""
+def _scale(width: int, height: int) -> float:
+    """`--tw-scale` de la feuille du module pour cette fenêtre (dernière règle qui s'applique)."""
 
-    return wedges[index]["x"], height / 2 + wedges[index]["y"]
+    scale = 1.0
+    if height <= 620:
+        scale = 0.86
+    if height <= 520:
+        scale = 0.76
+    if width <= 560:
+        scale = 0.84
+    return scale
+
+
+def _dot(wedges: list[dict], index: int, height: int = H, width: int = W) -> tuple[float, float]:
+    """Centre d'une icône, roue ouverte : centre de la roue au bord gauche, à mi-hauteur."""
+
+    s = _scale(width, height)
+    return wedges[index]["x"] * s, height / 2 + wedges[index]["y"] * s
 
 
 def _move(x: float, y: float, settle: int = 40) -> dict:
@@ -172,8 +188,8 @@ def run(tmp_path_factory, shots):
     chrome = _chrome()
     wedges = _geometry()
     anchor = (7, H / 2)
-    sx, sy = _dot(wedges, 2)
-    s0x, s0y = _dot(wedges, 0)
+    sx, sy = _dot(wedges, 2)  # Dossier
+    s0x, s0y = _dot(wedges, 1)  # Sélection
     plan = {
         "mouse": {"width": W, "height": H, "mountPalette": True, "actions": [
             _setup(), _state(),
@@ -199,7 +215,7 @@ def run(tmp_path_factory, shots):
             _setup(), {"a": "focus", "selector": "#toolWheel .tw-anchor"},
             {"a": "key", "key": "Enter"}, _state(),
             {"a": "key", "key": "ArrowDown"}, {"a": "key", "key": "ArrowDown"}, {"a": "key", "key": "ArrowDown"},
-            {"a": "key", "key": "ArrowDown"}, _state(),
+            {"a": "key", "key": "ArrowDown"}, {"a": "key", "key": "ArrowDown"}, _state(),
             {"a": "key", "key": "End"}, _state(),
             {"a": "key", "key": "F10", "shift": True}, _state(),
             {"a": "key", "key": "ArrowDown"}, _state(),
@@ -214,7 +230,7 @@ def run(tmp_path_factory, shots):
             _wait(OPENED),
             {"a": "eval", "expr": BH % (
                 f"const out={{}};const el=hover({sx},{sy});out.hover=el&&el.dataset.twSlot;"
-                f"out.rim=document.elementFromPoint({wedges[2]['x'] * 185 / 122},{H / 2 + wedges[2]['y'] * 185 / 122}).closest('.tw-wedge').dataset.twSlot;"
+                f"out.rim=document.elementFromPoint({wedges[2]['x'] * 210 / 150},{H / 2 + wedges[2]['y'] * 210 / 150}).closest('.tw-wedge').dataset.twSlot;"
                 f"pinch({sx},{sy});out.after=JSON.parse(JSON.stringify(__tw.activate));out.open=JarvisToolWheel.isOpen();return out;")},
             {"a": "eval", "expr": BH % (
                 f"hover({anchor[0]},{anchor[1]});return true;")},
@@ -294,7 +310,7 @@ def run(tmp_path_factory, shots):
             {"a": "shot", "path": str(shots / f"open-focused-{theme}.png")},
         ]}
     for width, height in ((900, 600), (600, 800)):
-        nx, ny = _dot(wedges, 3, height)
+        nx, ny = _dot(wedges, 3, height, width)
         plan[f"size-{width}"] = {"width": width, "height": height, "mountPalette": True, "actions": [
             _setup(), _move(7, height / 2), _wait(OPENED), _move(nx, ny), _state(),
             {"a": "shot", "path": str(shots / f"open-{width}x{height}.png")},
@@ -327,12 +343,12 @@ def test_mouse_hotspot_opens_and_leaving_closes(run):
     assert opened["open"] is True and opened["dataOpen"] is True and opened["expanded"] == "true"
     assert opened["z"] == "37"
     assert opened["journal"][-1].startswith("[tool_wheel] tool_wheel.open") and '"reason":"mouse"' in opened["journal"][-1]
-    # Un secteur pointé : un seul libellé, le sien, à côté de sa pastille.
-    assert focus["focused"] == ["screenshot"] and focus["label"] == "Capture d’écran"
-    assert focus["labelBox"]["l"] > focus["dots"][2]["r"] - 1
+    # Un secteur pointé : un seul relevé, le sien, au cœur de la roue (à gauche des icônes).
+    assert focus["focused"] == ["dossier"] and focus["label"] == "Dossier"
+    assert 0 <= focus["labelBox"]["l"] and focus["labelBox"]["r"] < focus["dots"][2]["l"] + 1
     assert focus["calls"]["activate"] == []
     # Plus loin dans le même secteur (vers le bord) : toujours lui.
-    assert beyond["focused"] == ["screenshot"] and beyond["open"] is True
+    assert beyond["focused"] == ["dossier"] and beyond["open"] is True
     # Le pointeur part : encore ouverte juste après (délai de grâce), fermée ensuite.
     assert leaving["open"] is True
     assert waited["ok"] is True and waited["ms"] >= 250, waited
@@ -350,25 +366,25 @@ def test_mouse_hotspot_opens_and_leaving_closes(run):
 
 
 def test_keyboard_anchor_roving_enter_escape(run):
-    (setup, _f, _enter, opened, _d1, _d2, _d3, _d4, wrapped, _end, at_end, _sf10, sub, _down, in_sub,
+    (setup, _f, _enter, opened, _d1, _d2, _d3, _d4, _d5, wrapped, _end, at_end, _sf10, sub, _down, in_sub,
      _esc1, back, _esc2, closed, _r, _d, _enter2, activated, _enter3, _tab, tabbed) = run["keyboard"]
-    assert opened["open"] is True and opened["active"] == "selection" and opened["focused"] == ["selection"]
+    assert opened["open"] is True and opened["active"] == "jarvis" and opened["focused"] == ["jarvis"]
     assert '"reason":"keyboard"' in opened["journal"][-1]
-    assert wrapped["active"] == "selection"  # quatre fois vers le bas : retour au premier
-    assert at_end["active"] == "audio" and at_end["label"] == "Audio"
-    # Maj+F10 : une activation secondaire (pas deux), le sous-arc prend le focus.
-    assert sub["calls"]["secondary"] == [{"slot": "audio", "source": "keyboard"}]
+    assert wrapped["active"] == "jarvis"  # cinq fois vers le bas : retour au premier
+    assert at_end["active"] == "settings" and at_end["label"] == "Paramètres"
+    # Maj+F10 : une activation secondaire (pas deux), le sous-menu prend le focus.
+    assert sub["calls"]["secondary"] == [{"slot": "settings", "source": "keyboard"}]
     assert sub["active"] == "item:Écran principal — seule cible disponible"
     assert in_sub["active"].startswith("item:")
     # Échap : d'abord le sous-arc (retour au secteur), puis la roue (retour à l'ancre).
-    assert back["open"] is True and back["items"] == [] and back["active"] == "audio"
+    assert back["open"] is True and back["items"] == [] and back["active"] == "settings"
     assert closed["open"] is False and closed["active"] == "anchor"
     assert '"reason":"escape"' in closed["journal"][-1]
     # Flèche droite rouvre, Entrée active une fois, le focus revient à l'ancre.
-    assert activated["calls"]["activate"] == [{"slot": "video", "source": "keyboard"}]
+    assert activated["calls"]["activate"] == [{"slot": "selection", "source": "keyboard"}]
     assert activated["open"] is False and activated["active"] == "anchor"
     # Tab hors de la roue : pas de piège, la roue se ferme, rien de caché ne garde le focus.
-    assert tabbed["open"] is False and tabbed["active"] not in ("selection", "video", "screenshot", "audio")
+    assert tabbed["open"] is False and tabbed["active"] not in ("jarvis", "selection", "dossier", "capture", "settings")
     assert tabbed["activeInHiddenPanel"] is False
 
 
@@ -376,9 +392,9 @@ def test_bh_synthetic_pointer_9001_opens_and_pinch_fires_once(run):
     setup, hovered, _w, pinched, _h, _w2, context, final = run["barehands"]
     assert hovered["id"] == 9001
     assert "tw-anchor" in hovered["hit"] and hovered["open"] is True
-    assert pinched["hover"] == "screenshot" and pinched["rim"] == "screenshot"
+    assert pinched["hover"] == "dossier" and pinched["rim"] == "dossier"
     # pointerdown, mousedown, pointerup, mouseup, click : une seule activation.
-    assert pinched["after"] == [{"slot": "screenshot", "source": "barehands"}]
+    assert pinched["after"] == [{"slot": "dossier", "source": "barehands"}]
     assert pinched["open"] is False
     # Pincement pouce + majeur (vrai `contextmenu`) : le sous-arc ; pincement sur un choix : une fois.
     assert context["secondary"] == [{"slot": "selection", "source": "barehands"}]
@@ -402,11 +418,11 @@ def test_focus_never_lost_behind_scene(run):
     setup, _f, _e, _c, closed_api, _e2, _d, _m1, _m2, stays, _click, outside, _m3, _w, hits, scene_z = run["focus"]
     assert closed_api["open"] is False and closed_api["active"] == "anchor"
     # Ouverte au clavier : le pointeur qui passe ailleurs ne la ferme pas.
-    assert stays["open"] is True and stays["active"] == "video"
+    assert stays["open"] is True and stays["active"] == "selection"
     assert outside["open"] is False and outside["activeInHiddenPanel"] is False
     assert '"reason":"outside"' in outside["journal"][-1]
     # Chaque pastille, ouverte, reçoit le pointeur : rien ne la recouvre.
-    assert hits == ["selection", "video", "screenshot", "audio"]
+    assert hits == ["jarvis", "selection", "dossier", "capture", "settings"]
     # La scène (rang 20 au registre) n'est pas montée sans Core ; montée, elle est dessous.
     assert scene_z == "absent" or scene_z == "auto" or int(scene_z) < 37
 
@@ -432,7 +448,7 @@ def test_cosmos_skin_same_wheel(run):
 @pytest.mark.parametrize("width,height", ((900, 600), (600, 800)))
 def test_open_wheel_fits_small_windows(run, width, height):
     state = run[f"size-{width}"][4]
-    assert state["open"] is True and state["focused"] == ["audio"]
+    assert state["open"] is True and state["focused"] == ["capture"]
     assert state["overflowX"] is False
     for dot in state["dots"]:
         assert 0 <= dot["t"] and dot["b"] <= height and dot["r"] <= width
@@ -457,4 +473,117 @@ def test_qa_polish_bh_anchor_pinch_context_escape_space(run):
     # P3 : Échap ferme une roue ouverte à la souris quand le focus est ailleurs.
     assert escaped["open"] is False and '"reason":"escape"' in escaped["journal"][-1]
     # Espace sur l'ancre : ouverte au clavier, focus sur le premier secteur.
-    assert spaced["open"] is True and spaced["active"] == "selection"
+    assert spaced["open"] is True and spaced["active"] == "jarvis"
+
+
+# ------------------------------------------------------------ refonte S03 (jarvis-board-ui-wheel-dossier-refactor)
+
+#: Le relevé du sous-menu et de la roue, gestionnaires réels (aucun SETUP).
+TREE = r"""(()=>{
+  const host=document.getElementById('toolWheel');
+  const subs=[...host.querySelectorAll('.tw-sub')].filter(s=>!s.hidden);
+  const ae=document.activeElement;
+  const lit=[...host.querySelectorAll('.tw-sec.is-on')].length;
+  return {open:window.JarvisToolWheel.isOpen(),subs:subs.length,
+    head:(host.querySelector('.tw-subhead')||{}).textContent||null,
+    items:[...host.querySelectorAll('.tw-sub:not([hidden]) .tw-item')].map(b=>({id:b.dataset.twItem||null,
+      text:b.querySelector('.tw-text').textContent,disabled:b.getAttribute('aria-disabled'),role:b.getAttribute('role'),
+      popup:b.getAttribute('aria-haspopup')})),
+    expanded:[...host.querySelectorAll('.tw-wedge[aria-expanded=true]')].map(b=>b.dataset.twSlot),lit,
+    active:!ae||ae===document.body?'body':ae.dataset&&ae.dataset.twSlot?ae.dataset.twSlot
+      :ae.classList.contains('tw-anchor')?'anchor':ae.classList.contains('tw-item')?'item:'+(ae.dataset.twItem||''):(ae.id||ae.tagName),
+    panel:!document.getElementById('boardsPanel').hidden,
+    unbound:(window.__s03logs||[]).filter(l=>l.includes('tool_wheel.unbound')).length,
+    yields:(window.__s03logs||[]).filter(l=>/tool_wheel\.yield|boards\.panel_yield|tool_wheel\.hover_blocked/.test(l))};
+})()"""
+LOGS = ("(()=>{window.__s03logs=[];const i=console.info.bind(console),w=console.warn.bind(console);"
+        "console.info=(...a)=>{window.__s03logs.push(String(a[0]));i(...a)};"
+        "console.warn=(...a)=>{window.__s03logs.push(String(a[0]));w(...a)};return true})()")
+
+
+def _tree() -> dict:
+    return {"a": "eval", "expr": TREE}
+
+
+def _drive_one(tmp_path: Path, step: dict) -> list:
+    node = shutil.which("node")
+    if node is None:
+        pytest.skip("node absent")
+    page = _served_page(tmp_path)
+    plan_file = tmp_path / "plan.json"
+    plan_file.write_text(json.dumps([step]), encoding="utf-8")
+    done = subprocess.run([node, str(HARNESS), str(page), _chrome(), "@" + str(plan_file)],
+                          capture_output=True, text=True, encoding="utf-8", timeout=300, check=False)
+    assert done.returncode == 0, done.stderr
+    out = json.loads(done.stdout)[0]
+    errors = [c for c in out.get("console", []) if c.get("type") in ("error", "exception")]
+    assert errors == [], errors
+    return [a.get("value", a) for a in out["actions"]]
+
+
+def test_one_category_tree_visible_keyboard_and_switching(tmp_path, shots):
+    wedges = _geometry()
+    dx, dy = _dot(wedges, 2)
+    k = lambda key: {"a": "key", "key": key}  # noqa: E731
+    v = _drive_one(tmp_path, {"width": W, "height": H, "mountPalette": True, "actions": [
+        {"a": "eval", "expr": LOGS}, {"a": "focus", "selector": "#toolWheel .tw-anchor"},
+        k("Enter"), k("ArrowRight"), _tree(),                       # JARVIS : son sous-menu d'attente
+        {"a": "shot", "path": str(shots / "tree-jarvis.png")},
+        k("Escape"), _tree(),                                       # retour sur JARVIS
+        k("ArrowDown"), k("ArrowDown"), k("ArrowDown"), k("ArrowRight"), _tree(),   # Capture
+        {"a": "shot", "path": str(shots / "tree-capture.png")},
+        {"a": "mouse", "type": "mouseMoved", "x": dx, "y": dy},
+        {"a": "mouse", "type": "mousePressed", "x": dx, "y": dy, "button": "left"},
+        {"a": "mouse", "type": "mouseReleased", "x": dx, "y": dy, "button": "left", "settleMs": 200}, _tree(),  # Dossier
+        k("Escape"), k("Escape"), _tree(),
+    ]})
+    jarvis, back, capture, dossier, closed = (v[4], v[7], v[12], v[17], v[20])
+    assert jarvis["open"] and jarvis["subs"] == 1 and jarvis["head"] == "État de Jarvis"
+    assert jarvis["items"] == [{"id": "unbound", "text": "Voix, écoute et veille", "disabled": "true",
+                                "role": "menuitem", "popup": None}]
+    assert jarvis["active"] == "item:unbound" and jarvis["expanded"] == ["jarvis"] and jarvis["lit"] == 1
+    assert jarvis["unbound"] == 1  # journal `tool_wheel.unbound`, aucune action simulée
+    assert back["subs"] == 0 and back["active"] == "jarvis" and back["expanded"] == []
+    # Capture garde Vidéo, Capture d'écran et Audio dans son arbre, chacun avec son second niveau (cibles).
+    assert capture["subs"] == 1 and capture["head"] == "Capture" and capture["expanded"] == ["capture"]
+    assert [i["id"] for i in capture["items"]] == ["screenshot", "video", "audio"]
+    assert [i["role"] for i in capture["items"]] == ["menuitem", "menuitemcheckbox", "menuitemcheckbox"]
+    assert all(i["popup"] == "menu" for i in capture["items"])
+    assert capture["active"] == "item:screenshot"
+    # Un clic sur Dossier remplace l'arbre de Capture : un seul sous-menu, une seule catégorie allumée.
+    assert dossier["subs"] == 1 and dossier["head"] == "Dossier du Board" and dossier["expanded"] == ["dossier"]
+    assert [i["text"] for i in dossier["items"]] == ["Ouvrir le Dossier du Board"] and dossier["lit"] == 1
+    assert closed["open"] is False and closed["subs"] == 0 and closed["active"] == "anchor"
+
+
+def test_wheel_and_board_panel_are_never_open_together(tmp_path):
+    ax, ay = 7, H / 2
+    k = lambda key: {"a": "key", "key": key}  # noqa: E731
+    press = [{"a": "mouse", "type": "mousePressed", "x": ax, "y": ay, "button": "left"},
+             {"a": "mouse", "type": "mouseReleased", "x": ax, "y": ay, "button": "left", "settleMs": 200}]
+    v = _drive_one(tmp_path, {"width": W, "height": H, "mountPalette": True, "actions": [
+        {"a": "eval", "expr": LOGS},
+        {"a": "click", "selector": "#boardsButton"}, _tree(),                       # 2 : panneau ouvert
+        {"a": "mouse", "type": "mouseMoved", "x": 400, "y": 450},
+        {"a": "mouse", "type": "mouseMoved", "x": ax, "y": ay, "settleMs": 300}, _tree(),   # 5 : survol bloqué
+        *press, _tree(),                                                           # 8 : clic -> roue, panneau fermé
+        {"a": "click", "selector": "#boardsButton"}, _tree(),                       # 10 : panneau -> roue fermée
+        # Plus de 800 ms après le dernier appui sur la roue : Entrée se lit comme le clavier.
+        {"a": "eval", "expr": "new Promise(r=>setTimeout(()=>{document.querySelector('#toolWheel .tw-anchor').focus();r(true)},900))"},
+        k("Enter"), _tree(),  # 13 : clavier -> roue
+        k("Escape"), _tree(),                                                      # 15 : une Échap : la roue seule
+        {"a": "click", "selector": "#boardsButton"}, {"a": "eval", "expr": "JarvisToolWheel.open();true"}, _tree(),  # 18
+        {"a": "click", "selector": "#boardsButton"}, k("Escape"), _tree(),         # 21 : Échap ferme le panneau seul
+    ]})
+    opened, hovered, clicked, back, keyboard, escaped, api, panel_esc = (v[2], v[5], v[8], v[10], v[13], v[15], v[18], v[21])
+    assert opened["panel"] is True and opened["open"] is False
+    assert hovered["panel"] is True and hovered["open"] is False  # le survol ne retire pas la place
+    assert any("tool_wheel.hover_blocked" in line for line in hovered["yields"])
+    assert clicked["open"] is True and clicked["panel"] is False
+    assert back["panel"] is True and back["open"] is False
+    # À la souris, l’appui hors de la roue la ferme déjà (« outside ») avant que le panneau ne s’ouvre.
+    assert keyboard["open"] is True and keyboard["panel"] is False and keyboard["active"] == "jarvis"
+    assert escaped["open"] is False and escaped["panel"] is False and escaped["active"] == "anchor"
+    assert api["open"] is True and api["panel"] is False
+    assert any("boards.panel_yield" in line for line in api["yields"])
+    assert panel_esc["panel"] is False and panel_esc["open"] is False

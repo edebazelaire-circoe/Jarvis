@@ -1143,3 +1143,32 @@ def test_un_arret_en_attente_pendant_la_perte_n_est_pas_coche(tmp_path):
     """)
     assert v["lost"] == ["stopping", {"tone": "wait", "text": "arrêt…", "checked": False}]
     assert v["live"] == ["stopping", {"tone": "wait", "text": "arrêt…", "checked": True}]
+
+
+# ------------------------------------------------------------ catégorie Capture (refonte S03 de la roue)
+
+
+def test_la_categorie_capture_porte_ses_trois_canaux_et_leur_somme(tmp_path):
+    v = run(tmp_path, """
+      const live={tone:null,text:'en cours',checked:true},err={tone:'error',text:'échec (source_unavailable)',checked:false};
+      out({category:V.CATEGORY,order:V.WEDGES.map(w=>[w.slot,w.control,w.label]),
+        idle:V.categoryStatusOf({screenshot:null,video:{checked:false},audio:{checked:false}}),
+        audio:V.categoryStatusOf({screenshot:null,video:{checked:false},audio:live}),
+        both:V.categoryStatusOf({screenshot:null,video:err,audio:live}),
+        unknown:V.categoryStatusOf({video:{tone:'unknown',text:'état inconnu',checked:false},audio:{tone:'wait',text:'démarrage…'}}),
+        items:{idle:V.channelItemOf(V.WEDGES[1],{checked:false}),live:V.channelItemOf(V.WEDGES[2],live),
+          shot:V.channelItemOf(V.WEDGES[0],null),err:V.channelItemOf(V.WEDGES[1],err)}})""")
+    assert v["category"] == "capture"
+    # Ordre du sous-menu (docs/06 › E) ; l'identifiant d'entrée garde le nom du canal.
+    assert v["order"] == [["screenshot", "screenshot", "Capture d’écran"], ["video", "screen", "Vidéo"],
+                          ["audio", "audio", "Audio"]]
+    assert v["idle"] is None  # rien à dire au repos : aucun point, aucune phrase
+    assert v["audio"] == {"tone": None, "live": True, "text": "Audio : en cours"}
+    assert v["both"] == {"tone": "error", "live": True, "text": "Vidéo : échec (source_unavailable) · Audio : en cours"}
+    assert v["unknown"]["tone"] == "unknown"  # l'inconnu prime sur l'attente
+    items = v["items"]
+    assert items["idle"] == {"id": "video", "icon": "video", "label": "Vidéo", "note": "enregistrer l’écran",
+                             "toggle": True, "checked": False}
+    assert items["live"]["checked"] is True and items["live"]["tone"] == "busy" and items["live"]["note"] == "en cours"
+    assert "checked" not in items["shot"] and items["shot"]["note"] == "prendre l’écran"  # ponctuelle : pas une case
+    assert items["err"]["tone"] == "error" and items["err"]["checked"] is False

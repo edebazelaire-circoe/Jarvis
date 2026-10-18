@@ -1,5 +1,11 @@
-/* Vues de capture : secteurs Vidéo / Capture d'écran / Audio de la roue
-   d'outils, sous-arcs des cibles, et indicateurs persistants `#recIndicators`.
+/* Vues de capture : la catégorie Capture de la roue d'outils (Vidéo,
+   Capture d'écran, Audio dans son arbre), sous-menus des cibles, et
+   indicateurs persistants `#recIndicators`.
+
+   Refonte de la roue (`jarvis-board-ui-wheel-dossier-refactor`, Slice 03) :
+   les trois anciens secteurs du premier niveau sont devenus les trois
+   entrées du sous-menu de **Capture** ; leur conduite est inchangée (la
+   sémantique de la capture migre en Slice 04).
 
    Handoff `jarvis-board-orbital-ui-workspace-rail`, Slice 04 ; architecture
    résolue §5 (D6), D3, D4 (contraignantes). Contrat : `docs/capture.md` ›
@@ -12,16 +18,19 @@
    `stop`, `targets`). Ce ne sont pas des outils Bare Hands (D15) : aucun
    `data-bh-tool`.
 
-   - **Secteurs** (`JarvisToolWheel.register`) : activation simple = la cible
-     par défaut — Vidéo et Audio démarrent, ou arrêtent leur capture ouverte ;
-     Capture d'écran prend l'écran principal. Vidéo (ou Audio) avec **deux**
-     captures ouvertes ou plus : l'activation ouvre la liste d'arrêt (`menu`
-     relu à chaque clic). L'état du canal est projeté sur son secteur
-     (`setStatus` : coché quand Core dit une capture ouverte, attente, panne,
-     « ? » quand le statut est perdu).
-   - **Activation secondaire** (clic droit, pincement pouce + majeur,
-     `ContextMenu`, `Maj+F10` ; jamais d'appui long, D4) : le sous-arc des
-     captures ouvertes à arrêter, puis des cibles que Core sait **vraiment**
+   - **Catégorie Capture** (`JarvisToolWheel.register({id:'capture', menu:true})`) :
+     l'activer ouvre son sous-menu, une entrée par canal. Activation simple
+     d'une entrée = la cible par défaut — Vidéo et Audio démarrent, ou
+     arrêtent leur capture ouverte ; Capture d'écran prend l'écran principal.
+     Vidéo (ou Audio) avec **deux** captures ouvertes ou plus : l'activation
+     ouvre la liste d'arrêt (`menu` de l'entrée, relu à chaque clic). L'état
+     de chaque canal est projeté sur son entrée (cochée quand Core dit une
+     capture ouverte, attente, panne, « ? » quand le statut est perdu), et
+     leur somme sur le secteur Capture (`setStatus` : `live`, ton, phrase).
+   - **Activation secondaire d'une entrée** (clic droit, pincement pouce +
+     majeur, `ContextMenu`, `Maj+F10`, flèche droite ; jamais d'appui long,
+     D4) : le second niveau des captures ouvertes à arrêter, puis des cibles
+     que Core sait **vraiment**
      prendre (`GET /api/captures/targets`). Une seule cible : une entrée
      unique qui le dit (« Écran principal — seule cible disponible »), jamais
      omise, jamais un faux choix.
@@ -40,11 +49,14 @@
 (function(root){
   'use strict';
 
-  /* Secteur de la roue -> commande du contrôleur. */
+  /* La catégorie de la roue, puis ses entrées (ordre du sous-menu,
+     docs/06-ui-visual-spec.md › E) -> commande du contrôleur. `slot` garde
+     l'ancien nom du canal : c'est l'identifiant de l'entrée (`data-tw-item`). */
+  const CATEGORY='capture';
   const WEDGES=Object.freeze([
-    Object.freeze({slot:'video',control:'screen'}),
-    Object.freeze({slot:'screenshot',control:'screenshot'}),
-    Object.freeze({slot:'audio',control:'audio'}),
+    Object.freeze({slot:'screenshot',control:'screenshot',label:'Capture d’écran',hint:'prendre l’écran'}),
+    Object.freeze({slot:'video',control:'screen',label:'Vidéo',hint:'enregistrer l’écran'}),
+    Object.freeze({slot:'audio',control:'audio',label:'Audio',hint:'enregistrer le micro'}),
   ]);
   const TARGET_CHANNEL=Object.freeze({screen:'screen',screenshot:'screen',audio:'audio'});
   const DEFAULT_DEVICE='default';
@@ -98,6 +110,34 @@
         text:control.action==='stop'?'état inconnu — arrêt possible':'état inconnu, Jarvis injoignable',checked:false};
       default:return {checked:false};
     }
+  }
+
+  /* ------------------------------------------------- la catégorie
+
+     `byChannel` : `{screenshot, video, audio}` -> ce que `wedgeStatusOf` en
+     dit (ou `null`). Le secteur Capture porte leur somme : `live` quand un
+     enregistrement est ouvert, le ton le plus grave (panne, inconnu,
+     attente), et une phrase par canal qui a quelque chose à dire. */
+  function categoryStatusOf(byChannel){
+    const list=WEDGES.map(w=>({w,st:isObject(byChannel)?byChannel[w.slot]:null})).filter(x=>isObject(x.st));
+    const tone=['error','unknown','wait'].find(tn=>list.some(x=>x.st.tone===tn))||null;
+    const live=list.some(x=>x.st.checked===true);
+    const text=list.filter(x=>x.st.text).map(x=>`${x.w.label} : ${x.st.text}`).join(' · ');
+    if(!tone&&!live&&!text)return null;
+    return {tone,live,text};
+  }
+
+  /* L'entrée d'un canal dans le sous-menu de Capture, sans action (le bloc
+     navigateur la branche). Vidéo et Audio sont des cases à cocher
+     (`toggle`) : cochées quand Core dit une capture ouverte. */
+  function channelItemOf(w,status){
+    const st=isObject(status)?status:null;
+    const item={id:w.slot,icon:w.slot,label:w.label,note:st&&st.text?st.text:w.hint};
+    if(w.control!=='screenshot'){item.toggle=true;item.checked=!!(st&&st.checked)}
+    if(st&&st.tone==='error')item.tone='error';
+    else if(st&&st.tone==='wait')item.tone='wait';
+    else if(st&&st.checked)item.tone='busy';
+    return item;
   }
 
   /* ------------------------------------------------- les indicateurs
@@ -200,7 +240,8 @@
     return items;
   }
 
-  const api=Object.freeze({WEDGES,TARGET_CHANNEL,DOM,deviceTag,wedgeStatusOf,chipsOf,targetItemsOf});
+  const api=Object.freeze({CATEGORY,WEDGES,TARGET_CHANNEL,DOM,deviceTag,wedgeStatusOf,categoryStatusOf,channelItemOf,
+    chipsOf,targetItemsOf});
   if(typeof module!=='undefined'&&module.exports)module.exports=api;
   if(typeof window==='undefined'||typeof document==='undefined')return;
 
@@ -446,12 +487,19 @@ ${H} .ri-sr{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflo
       return !!note;
     }
 
+    /* Ce que chaque canal dit, gardé pour le sous-menu ; leur somme sur le
+       secteur Capture. Avant la première lecture, rien n'est su : aucun état
+       projeté. */
+    let byChannel={};
+    function channelStatuses(view){
+      const out={};
+      for(const w of WEDGES)out[w.slot]=view.settled?wedgeStatusOf(view.controls[w.control]):null;
+      return out;
+    }
     function paintWedges(view){
-      for(const w of WEDGES){
-        /* Avant la première lecture, rien n'est su : aucun état projeté. */
-        try{W.setStatus(w.slot,view.settled?wedgeStatusOf(view.controls[w.control]):null)}
-        catch(error){log('error','capture_views.wedge_paint_failed',{slot:w.slot,error:String(error&&error.message||error)})}
-      }
+      byChannel=channelStatuses(view);
+      try{W.setStatus(CATEGORY,categoryStatusOf(byChannel))}
+      catch(error){log('error','capture_views.wedge_paint_failed',{slot:CATEGORY,error:String(error&&error.message||error)})}
     }
 
     function render(view){
@@ -496,18 +544,26 @@ ${H} .ri-sr{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflo
       }}));
     }
 
-    for(const w of WEDGES){
-      W.register({id:w.slot,
-        /* Deux captures ouvertes ou plus : l'activation simple ne choisit pas
-           laquelle arrêter, elle ouvre la liste. */
-        menu:w.control==='screenshot'?false:()=>stoppable(w.control).length>=2,
-        onActivate:ctx=>activate(w,ctx),
-        onSecondary:ctx=>secondary(w,ctx)});
-    }
+    /* La catégorie : son sous-menu relit l'état des canaux à chaque
+       ouverture. */
+    W.register({id:CATEGORY,menu:true,
+      onActivate:()=>{/* `menu:true` : l'activation ouvre le sous-menu. */},
+      onSecondary:ctx=>{
+        const now=channelStatuses(C.view());
+        log('info','capture_views.menu',{source:ctx&&ctx.source||null});
+        return WEDGES.map(w=>({...channelItemOf(w,now[w.slot]),
+          /* Deux captures ouvertes ou plus : l'activation simple ne choisit pas
+             laquelle arrêter, elle ouvre la liste. */
+          menu:w.control==='screenshot'?false:()=>stoppable(w.control).length>=2,
+          onActivate:item=>activate(w,item),
+          onSecondary:item=>secondary(w,item)}));
+      }});
 
     C.subscribe(render);
-    window.JarvisCaptureViews=Object.freeze({chips:()=>chipsOf(C.view()),render:()=>render(C.view())});
-    log('info','capture_views.installed',{host:DOM.hostId,wedges:WEDGES.map(w=>w.slot)});
+    window.JarvisCaptureViews=Object.freeze({chips:()=>chipsOf(C.view()),render:()=>render(C.view()),
+      /* Ce que chaque canal projette (relevé des tests et des preuves). */
+      channels:()=>channelStatuses(C.view())});
+    log('info','capture_views.installed',{host:DOM.hostId,category:CATEGORY,items:WEDGES.map(w=>w.slot)});
   }
 
   try{installCaptureViews()}

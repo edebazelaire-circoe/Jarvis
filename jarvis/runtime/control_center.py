@@ -612,8 +612,8 @@ CAPTURE_RAIL_SCRIPT_MARKER = "/*__CONTROL_CENTER_CAPTURE_RAIL_JS__*/"
 #: Contrat : `docs/control-center-shell.md` › Roue d'outils. Refus rattrapé.
 TOOL_WHEEL_SCRIPT_FILE = "control_center_tool_wheel.js"
 TOOL_WHEEL_SCRIPT_MARKER = "/*__CONTROL_CENTER_TOOL_WHEEL_JS__*/"
-#: Vues de capture (orbital-ui Slice 04, D6) : secteurs Vidéo / Capture d'écran /
-#: Audio de la roue, sous-arcs des cibles réelles, indicateurs persistants
+#: Vues de capture (orbital-ui Slice 04, D6) : catégorie Capture de la roue (Capture
+#: d'écran / Vidéo / Audio dans son arbre), listes des cibles réelles, indicateurs persistants
 #: `#recIndicators` (rang 40). Lit le contrôleur et la roue : inséré APRÈS eux.
 #: Contrat : `docs/capture.md` › Interface. Refus d'installation rattrapé.
 CAPTURE_WHEEL_SCRIPT_FILE = "control_center_capture_wheel.js"

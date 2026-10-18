@@ -900,6 +900,15 @@ ${H} .bd-sr,${P} .bd-sr{position:absolute;width:1px;height:1px;padding:0;margin:
     /* Une lecture tient le Studio par-dessus la page : vrai tant que les couches de la page
        (confirmation, gestionnaire) seraient cachées (voir `RUN_BLOCKED`). */
     const runBlocked=typeof deps.runBlocked==='function'?()=>!!deps.runBlocked():()=>false;
+    /* Le panneau dit quand il s'ouvre ou se ferme (surfaces exclusives,
+       docs/control-center-shell.md › Exclusive surfaces : la roue d'outils lui
+       cède la place, et la lui prend). */
+    const onOpenChange=typeof deps.onOpenChange==='function'?deps.onOpenChange:null;
+    const openChanged=value=>{
+      if(!onOpenChange)return;
+      try{onOpenChange(value)}
+      catch(error){log('warn','boards.open_change_failed',{error:String(error&&error.message||error)})}
+    };
 
     let block=null,listing=null,session=null,listError=null,loading=false,loadSeq=0;
     /* La présence de la voix (Slice 02) : le bloc `interaction_mode` et le
@@ -1341,6 +1350,7 @@ ${H} .bd-sr,${P} .bd-sr{position:absolute;width:1px;height:1px;padding:0;margin:
          la liste arrive — à moins que l'utilisateur ne soit déjà ailleurs. */
       if(listing)focusActive();else panel.focus();
       log('info','boards.panel_opened',{active_board_id:activeIdOf(block,listing)});
+      openChanged(true);
       load().then(()=>{if(opened&&(doc.activeElement===panel||!doc.activeElement))focusActive()});
     }
 
@@ -1350,6 +1360,7 @@ ${H} .bd-sr,${P} .bd-sr{position:absolute;width:1px;height:1px;padding:0;margin:
       panel.hidden=true;
       trigger.setAttribute('aria-expanded','false');
       if(options&&options.focus)trigger.focus();
+      openChanged(false);
     }
 
     function focusActive(){
@@ -1881,6 +1892,12 @@ ${H} .bd-sr,${P} .bd-sr{position:absolute;width:1px;height:1px;padding:0;margin:
       const top=parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--shell-panel-top'))||64;
       pane.style.maxHeight=`${Math.max(180,Math.round(r.top-8-top))}px`;
     };
+    /* Surfaces exclusives : le panneau Board et la roue d'outils ne sont
+       jamais ouverts ensemble (docs/control-center-shell.md › Exclusive
+       surfaces). Le nom de l'événement vient de la coque ; sa copie de repli
+       est identique (testé). */
+    const EXCLUSIVE_EVENT=(window.JarvisShell&&window.JarvisShell.EXCLUSIVE_EVENT)||'jarvis:shell-exclusive';
+    const EXCLUSIVE_ID='board-panel';
     const control=createBoardsControl({
       document,host,panel,
       now:()=>Date.now(),
@@ -1896,6 +1913,7 @@ ${H} .bd-sr,${P} .bd-sr{position:absolute;width:1px;height:1px;padding:0;margin:
          il est cherché au clic, pas à l'installation. */
       /* `jvx-run` : posé par Variantes le temps d'une lecture (control_center_presentation_studio_explorer.js). */
       runBlocked:()=>document.documentElement.classList.contains('jvx-run'),
+      onOpenChange:open=>document.dispatchEvent(new CustomEvent(EXCLUSIVE_EVENT,{detail:{id:EXCLUSIVE_ID,open}})),
       inspect:(id,options)=>{
         const manager=window.JarvisWorkspace;
         if(!manager||typeof manager.openBoard!=='function')
@@ -1919,6 +1937,14 @@ ${H} .bd-sr,${P} .bd-sr{position:absolute;width:1px;height:1px;padding:0;margin:
       control.close();
     },true);
     window.addEventListener('resize',()=>{if(control.isOpen())place(panel,control.trigger)});
+    /* Une autre surface exclusive s'ouvre (la roue) : le panneau lui cède la
+       place, sans reprendre le focus (il est à elle). */
+    document.addEventListener(EXCLUSIVE_EVENT,event=>{
+      const d=event&&event.detail;
+      if(!d||d.id===EXCLUSIVE_ID||!d.open||!control.isOpen())return;
+      console.info('[boards] boards.panel_yield '+JSON.stringify({to:String(d.id)}));
+      control.close();
+    });
     /* Échap ferme aussi quand le focus a quitté le panneau (ligne retirée,
        clic sur un fond inerte). La confirmation de la page garde le sien. */
     document.addEventListener('keydown',event=>{

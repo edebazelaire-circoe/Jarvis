@@ -6,8 +6,8 @@
    workspace-rail` (architecture résolue §5, D6, D3/D4) : ce fichier ne dessine
    plus rien. Il tient le **contrôleur** (sondage, écritures, relecture) et
    publie un modèle de vue ; les vues sont dans `control_center_capture_wheel.js`
-   (secteurs Vidéo / Capture d'écran / Audio de la roue d'outils, sous-arcs de
-   cibles, indicateurs persistants `#recIndicators`). Contrat :
+   (catégorie Capture de la roue d'outils et son arbre Capture d'écran / Vidéo /
+   Audio, listes de cibles, indicateurs persistants `#recIndicators`). Contrat :
    `docs/capture.md` › *Interface*.
 
    API (`window.JarvisCaptureRail`) : `subscribe(fn)` (appelée tout de suite

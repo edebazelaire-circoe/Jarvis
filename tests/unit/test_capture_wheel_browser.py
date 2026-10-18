@@ -51,11 +51,17 @@ HARNESS = Path(__file__).parent / "_capture_wheel_browser.mjs"
 SCREEN, AUDIO = CaptureChannel.SCREEN, CaptureChannel.AUDIO
 
 DOT = "#toolWheel [data-tw-slot={slot}] .tw-dot"
+#: Refonte S03 (jarvis-board-ui-wheel-dossier-refactor) : Vidéo, Capture d'écran et Audio sont les
+#: entrées du sous-menu de la catégorie Capture, plus des secteurs du premier niveau.
+ITEM = "#toolWheel .tw-item[data-tw-item={slot}]"
+CAPTURE_TREE = "!!document.querySelector('#toolWheel .tw-item[data-tw-item=video]')"
 ANCHOR = "#toolWheel .tw-anchor"
 OPENED = "window.JarvisToolWheel.isOpen()&&getComputedStyle(document.querySelector('#toolWheel .tw-panel')).opacity==='1'"
 CLOSED = "!window.JarvisToolWheel.isOpen()"
+#: Le second niveau (les cibles d'un canal) est posé : son titre n'est plus « Capture ».
 SUB = ("document.querySelectorAll('#toolWheel .tw-item').length>0"
-       "&&!document.querySelector('#toolWheel .tw-item').textContent.startsWith('Chargement')")
+       "&&!document.querySelector('#toolWheel .tw-item').textContent.startsWith('Chargement')"
+       "&&(document.querySelector('#toolWheel .tw-subhead')||{}).textContent!=='Capture'")
 SETTLED = "window.JarvisCaptureRail.view().settled"
 
 
@@ -81,10 +87,16 @@ def _open_wheel() -> list[dict]:
     return [{"click": ANCHOR}, _until(OPENED, 3000, "opened")]
 
 
-def _activate(slot: str) -> list[dict]:
-    """Ouvrir la roue à la souris, cliquer le secteur : elle se replie."""
+def _open_capture() -> list[dict]:
+    """Ouvrir la roue à la souris, puis l'arbre de Capture."""
 
-    return [*_open_wheel(), {"click": DOT.format(slot=slot)}, _until(CLOSED, 3000, "closed")]
+    return [*_open_wheel(), {"click": DOT.format(slot="capture")}, _until(CAPTURE_TREE, 3000, "capture-tree")]
+
+
+def _activate(slot: str) -> list[dict]:
+    """Ouvrir l'arbre de Capture, cliquer l'entrée du canal : la roue se replie."""
+
+    return [*_open_capture(), {"click": ITEM.format(slot=slot)}, _until(CLOSED, 3000, "closed")]
 
 
 async def _drive(url: str, actions: list, *, width: int = 1440, height: int = 900, reduced_motion: bool = False,
@@ -150,7 +162,7 @@ async def test_audio_toggle_start_stop_matches_status(stack, tmp_path):
     loop.call_later(4.0, release)
     out = await _drive(stack.url, [
         _until(SETTLED, 5000, "settled"), {"read": "idle"}, _shot(tmp_path, "wheel-idle"),
-        *_open_wheel(), _shot(tmp_path, "wheel-open"), {"click": DOT.format(slot="audio")}, _until(CLOSED, 3000),
+        *_open_capture(), _shot(tmp_path, "wheel-open"), {"click": ITEM.format(slot="audio")}, _until(CLOSED, 3000),
         # Core tient le démarrage : la puce dit l'attente, le secteur n'est pas coché.
         _until(_chip("audio", "starting"), 3000, "starting"), {"read": "starting"},
         _until(_chip("audio"), 9000, "active"), {"wait": 1200}, {"read": "active"},
@@ -186,7 +198,7 @@ async def test_audio_toggle_start_stop_matches_status(stack, tmp_path):
     assert any(rec.capture_id == core_id and rec.state.value == "complete" for rec in recent)
     lines = "\n".join(out["console"])
     for key in ("capture_rail.start_requested", "capture_rail.started", "capture_rail.stop_requested",
-                "capture_rail.stopped", "capture_views.activate", "tool_wheel.activate"):
+                "capture_rail.stopped", "capture_views.activate", "tool_wheel.item"):
         assert key in lines, key
 
 
@@ -234,16 +246,16 @@ async def test_screenshot_one_shot_default_target(stack, tmp_path):
 async def test_secondary_lists_only_real_targets_single_entry_informative(stack, tmp_path):
     # Un seul écran (la cible par défaut) : une entrée, focalisable, qui le dit.
     first = await _drive(stack.url, [
-        *_open_wheel(), {"right": DOT.format(slot="video")}, _until(SUB, 4000, "single"), {"read": "single"},
+        *_open_capture(), {"right": ITEM.format(slot="video")}, _until(SUB, 4000, "single"), {"read": "single"},
         _shot(tmp_path, "target-subarc-single"),
         {"focus": "#toolWheel .tw-item"}, {"read": "singleFocus"}, {"key": "Escape"}, {"key": "Escape"},
         # Audio : la liste réelle de Core (micro de Voice seul ici).
-        *_open_wheel(), {"right": DOT.format(slot="audio")}, _until(SUB, 4000, "audio"), {"read": "audio"},
+        *_open_capture(), {"right": ITEM.format(slot="audio")}, _until(SUB, 4000, "audio"), {"read": "audio"},
     ], tmp_path=tmp_path)
     single = first["reads"]["single"]
     assert [i["label"] for i in single["items"]] == ["Écran principal — seule cible disponible"]
     assert single["items"][0]["disabled"] is None and single["items"][0]["tabindex"] == "0"
-    assert single["subLabel"] == "Vidéo"
+    assert single["subLabel"] == "Capture › Vidéo"
     assert first["reads"]["singleFocus"]["focus"]["item"] == "Écran principal — seule cible disponible",         "l'entrée unique est focalisable"
     audio = first["reads"]["audio"]
     assert [i["label"] for i in audio["items"]] == ["Micro de Voice — seule cible disponible"]
@@ -251,12 +263,14 @@ async def test_secondary_lists_only_real_targets_single_entry_informative(stack,
     # Deux écrans : le clavier ouvre la liste (Maj+F10) et choisit l'écran 2.
     stack.core.captures._sources.target_lists[SCREEN] = _two_displays
     out = await _drive(stack.url, [
-        {"focus": ANCHOR}, {"key": "Enter"}, _until(OPENED, 3000), {"key": "ArrowDown"},
+        {"focus": ANCHOR}, {"key": "Enter"}, _until(OPENED, 3000),
+        {"key": "ArrowDown"}, {"key": "ArrowDown"}, {"key": "ArrowDown"}, {"key": "ArrowRight"},
+        _until(CAPTURE_TREE, 3000, "kb-tree"), {"key": "ArrowDown"},
         {"key": "F10", "shift": True}, _until("document.querySelectorAll('#toolWheel .tw-item').length===2", 5000, "two"),
         {"read": "two"}, {"key": "ArrowDown"}, {"key": "Enter"}, _until(_chip("screen"), 9000, "display2"),
         {"read": "recording"},
         # L'écran 2 enregistre : son arrêt en tête, sa cible n'est plus offerte.
-        *_open_wheel(), {"right": DOT.format(slot="video")}, _until(SUB, 4000, "with-stop"), {"read": "withStop"},
+        *_open_capture(), {"right": ITEM.format(slot="video")}, _until(SUB, 4000, "with-stop"), {"read": "withStop"},
         _shot(tmp_path, "target-subarc-two-displays"),
         {"key": "Escape"}, {"key": "Escape"},
     ], tmp_path=tmp_path)
@@ -412,15 +426,16 @@ async def test_a_refused_start_is_visible_with_its_reason_and_code(stack, tmp_pa
 async def test_keyboard_reaches_every_capture_action_and_stops_from_the_indicator(stack, tmp_path):
     out = await _drive(stack.url, [
         {"focus": ANCHOR}, {"key": "Enter"}, _until(OPENED, 3000), {"read": "first"},
-        {"key": "ArrowDown"}, {"key": "ArrowDown"}, {"key": "ArrowDown"}, {"read": "audio"},
+        {"key": "ArrowDown"}, {"key": "ArrowDown"}, {"key": "ArrowDown"}, {"key": "ArrowRight"},
+        _until(CAPTURE_TREE, 3000, "kb-tree"), {"key": "ArrowDown"}, {"key": "ArrowDown"}, {"read": "audio"},
         {"key": "Enter"}, _until(_chip("audio"), 9000, "audio"), {"read": "afterEnter"},
         {"key": "Tab"}, {"read": "tabbed"},
         {"focus": "#recIndicators .ri-chip[data-ri-channel=audio]"}, {"key": " "},
         _until(_no_chip("audio"), 9000, "stopped"), {"read": "stopped"},
     ], tmp_path=tmp_path)
     r = out["reads"]
-    assert r["first"]["focus"]["slot"] == "selection"
-    assert r["audio"]["focus"]["slot"] == "audio"
+    assert r["first"]["focus"]["slot"] == "jarvis"
+    assert r["audio"]["focus"]["item"].startswith("Audio")
     assert r["afterEnter"]["focus"]["anchor"] is True, "activé : la roue se replie, le focus revient à l'ancre"
     assert r["stopped"]["focus"]["anchor"] is True, "la puce partie, le focus revient à l'ancre"
     assert _open_rows(stack, AUDIO) == []
@@ -492,7 +507,7 @@ async def test_axe_finds_no_violation_in_the_wheel_and_indicators(stack, tmp_pat
         _until("document.querySelectorAll('#recIndicators .ri-chip[data-ri-state=active]').length===2", 6000, "two"),
         {"value": "chips", "expr": targets},
         {"axe": "indicators", "file": axe, "selector": "#recIndicators"},
-        *_open_wheel(), {"right": DOT.format(slot="video")}, _until(SUB, 4000),
+        *_open_capture(), {"right": ITEM.format(slot="video")}, _until(SUB, 4000),
         {"axe": "wheel", "file": axe, "selector": "#toolWheel"},
     ], tmp_path=tmp_path)
     reads = out["reads"]

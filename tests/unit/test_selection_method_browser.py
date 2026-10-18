@@ -206,7 +206,7 @@ def _geometry() -> dict:
     if node is None:
         pytest.skip("node absent")
     script = (f"const M=require({json.dumps(str(WHEEL))});const w=M.layoutWedges();"
-              "process.stdout.write(JSON.stringify({w,sub2:M.layoutSubArc(2,w[0].midDeg)}))")
+              "process.stdout.write(JSON.stringify({w,sub2:M.layoutSubMenu(2,w[1].midDeg).rows}))")
     done = subprocess.run([node, "-e", script], capture_output=True, text=True, encoding="utf-8", timeout=60)
     assert done.returncode == 0, done.stderr
     return json.loads(done.stdout)
@@ -244,8 +244,9 @@ LEVEL1 = "!!document.querySelector('#toolWheel .tw-item[data-tw-item=bare_hands]
 LEVEL2 = "!!document.querySelector('#toolWheel .tw-item[data-tw-item=sleep]')"
 RESET_OFF = _post("/api/test/reset", {"enabled": False, "assets": True})
 #: La roue au **clavier** (aucun événement de pointeur réel : rien ne reprend la main).
+#: Refonte S03 : JARVIS est la première catégorie, Sélection la deuxième (une flèche vers le bas).
 KB_SELECTION = [{"a": "focus", "selector": "#toolWheel .tw-anchor"}, {"a": "key", "key": "Enter"},
-                {"a": "key", "key": "Enter"}]
+                {"a": "key", "key": "ArrowDown"}, {"a": "key", "key": "Enter"}]
 FLOW = "JarvisBarehands.openFlow()"
 #: Ce que le parcours montre : son nom, son écran (ses boutons), le cycle de vie, les reprises.
 FLOW_STATE = ("(()=>({flow:JarvisBarehands.openFlow(),step:JarvisBarehands.calibration().step,lifecycle:JarvisBarehands.lifecycleStatus().lifecycle,"
@@ -282,7 +283,7 @@ def run(tmp_path_factory, shots):
     base = f"http://127.0.0.1:{server.server_address[1]}/"
 
     anchor = (7, H / 2)
-    sel = (geo["w"][0]["x"], H / 2 + geo["w"][0]["y"])
+    sel = (geo["w"][1]["x"], H / 2 + geo["w"][1]["y"])  # Sélection : 2e catégorie (refonte S03)
     # Les pastilles du sous-arc partent de leur point d'ancrage vers la droite.
     mouse_item = (geo["sub2"][0]["x"] + 30, H / 2 + geo["sub2"][0]["y"])
     bh_item = (geo["sub2"][1]["x"] + 30, H / 2 + geo["sub2"][1]["y"])
@@ -312,6 +313,7 @@ def run(tmp_path_factory, shots):
             # Le choix explicite, au clavier : la souris qui irait cliquer « Souris »
             # aurait déjà repris la main en bougeant (voir le test de reprise).
             {"a": "focus", "selector": "#toolWheel .tw-anchor"}, {"a": "key", "key": "Enter"},
+            {"a": "key", "key": "ArrowDown"},
             {"a": "key", "key": "Enter"}, _wait(LEVEL1, 3000), {"a": "key", "key": "Enter"},
             _wait(OFF, 5000), _ev(STATE),
             {"a": "eval", "expr": "new Promise(r=>setTimeout(()=>r(globalThis.__fakeLandmarker.calls),1500))"},

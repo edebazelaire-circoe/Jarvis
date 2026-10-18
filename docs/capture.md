@@ -795,18 +795,24 @@ prefixes added deliberately to `FORWARDABLE_PREFIXES`, pinned by
   value) and re-encodes each path parameter (a `%2F` never reaches another
   Core route).
 
-## Interface: tool wheel wedges and persistent indicators (orbital UI Slice 04)
+## Interface: the wheel's Capture category and persistent indicators (orbital UI Slice 04)
 
 Born as the left capture rail (session-context-recording Slice 10, decisions
 D14/D15); moved into the orbital tool wheel by Slice 04 of
 `jarvis-board-orbital-ui-workspace-rail` (resolved architecture §5 D6, D3,
 D4). The rail's host `#captureRail` and its measured placement are gone; its
-controller and every truth rule below are kept.
+controller and every truth rule below are kept. **Slice 03 of
+`jarvis-board-ui-wheel-dossier-refactor`** folded the three first-level
+wedges Vidéo / Capture d'écran / Audio into the tree of one **Capture**
+category (five categories: JARVIS, Sélection, Dossier, Capture, Paramètres;
+[control-center-shell.md](control-center-shell.md) › *Tool wheel*); the
+behaviour of each channel is unchanged. Its capture semantics (transient
+HUD, top-left recording cues) move in Slice 04 of that task.
 
 | Piece | Code | Role |
 | --- | --- | --- |
 | Controller / view-model | `jarvis/runtime/control_center_capture_rail.js` (`window.JarvisCaptureRail`) | polls Core through the relay, writes, re-reads; draws nothing |
-| Views | `jarvis/runtime/control_center_capture_wheel.js` (`window.JarvisCaptureViews`) | Vidéo / Capture d'écran / Audio wedges of `#toolWheel`, target sub-arcs, indicators `#recIndicators` |
+| Views | `jarvis/runtime/control_center_capture_wheel.js` (`window.JarvisCaptureViews`) | the Capture category of `#toolWheel` (its rows Capture d'écran / Vidéo / Audio and their target lists), indicators `#recIndicators`; `channels()` returns what each channel projects |
 | Wheel | `jarvis/runtime/control_center_tool_wheel.js` | the surface ([control-center-shell.md](control-center-shell.md) › *Tool wheel*) |
 
 These are **not** Bare Hands tools: nothing goes into `BH.TOOL`,
@@ -818,7 +824,7 @@ then on every paint; returns the unsubscribe function), `start(channel,
 {device})`, `screenshot({device})` (resolves `{capture, artifact}` or `null`;
 the last result is also `view().shot` and `lastShot()`, for the preview of
 Slice 05), `stop(captureId)`, `targets()` (`GET /api/captures/targets`,
-rejects with the real code), `act(control)` (a wedge's simple activation),
+rejects with the real code), `act(control)` (a channel row's simple activation),
 `view()`, `note()`, `dismiss()`, `poll()`, `wake()`. A start or a screenshot
 without a chosen device sends no `options` (= `default`, as before); a chosen
 one sends `options.device`. Starts and screenshots are refused without a
@@ -828,39 +834,51 @@ flight.
 
 | Rule | How |
 | --- | --- |
-| Backend truth only | `GET /api/captures/status?recent=3` (the relay). Cadence: every 1 s while a capture is open, a write is in flight, or for 10 s after a write; 3 s when idle; 20 s when the tab is hidden; status lost → exponential backoff 1, 2, 4, 8, then 15 s, back to normal on the first success. 6 s deadline per read. After every write the controller waits for any read already in flight (it may carry the state from before the write), then reads again; the request stays a wait until that fresh read lands, so a start never flashes a stale idle and a stop never a stale active. A channel is said open (`pressed`, wedge `aria-checked="true"`, an indicator) **only** when that status lists an open continuous capture for it. An activation opens a visible wait; it never paints "active" |
+| Backend truth only | `GET /api/captures/status?recent=3` (the relay). Cadence: every 1 s while a capture is open, a write is in flight, or for 10 s after a write; 3 s when idle; 20 s when the tab is hidden; status lost → exponential backoff 1, 2, 4, 8, then 15 s, back to normal on the first success. 6 s deadline per read. After every write the controller waits for any read already in flight (it may carry the state from before the write), then reads again; the request stays a wait until that fresh read lands, so a start never flashes a stale idle and a stop never a stale active. A channel is said open (`pressed`, its row `aria-checked="true"`, an indicator) **only** when that status lists an open continuous capture for it. An activation opens a visible wait; it never paints "active" |
 | Several captures per channel | Core holds one open continuous capture per channel **and device** (two displays can record together): the model lists every open capture of a channel (`controls.<channel>.captures`, oldest first, each with its device, state, Core-derived timer and stop action); the channel fields describe the most recent |
 | Elapsed time | from Core's `activated_at` (else `created_at`), frozen at `stop_requested_at`; never from the local click — a reload or a second tab shows the same duration |
 | Concurrency | audio and screen are independent; the screenshot stays available while both record |
-| Failed start | the wedge gets an error mark (`!`, the wheel anchor too, so it shows with the wheel closed) and the indicators show a note `<control> non démarré — <cause> (<code>)`; `already_active` is not an error (the status shows the holder) |
+| Failed start | the channel row and the Capture category get an error mark (`!`, the wheel anchor too, so it shows with the wheel closed) and the indicators show a note `<control> non démarré — <cause> (<code>)`; `already_active` is not an error (the status shows the holder) |
 | Stop | `POST /api/captures/{id}/stop` on the id the status gave; `partial`/`failed` results say so (`arrêté mais incomplet`). Stops are tracked **per capture**: two recordings stop without waiting for each other. Also offered during this page's own start once the status lists the row as `starting` (Core accepts it); the start's failure that follows is not reported as a refusal |
 | `stuck` | a capture listed in `status.stuck` is an error (`arrêt bloqué (<code>)`); activating it stops it again |
 | Ended elsewhere | an open capture that disappears into `recent` as `partial`/`failed` without this page stopping it is announced (`interrompu — <cause>`); the label then says `précédent interrompu : <cause>`, never `dernier essai` |
-| Status lost | relay or Core unreachable, timeout, unreadable body → nothing is said open, starts are refused; every capture known open just before can still be **stopped** (privacy first: its indicator stays, dashed, with `?` and the stop mark) and is forgotten once Core accepts that stop; an activation during the loss reads the status at once (still no start). The Vidéo / Capture d'écran / Audio wedges carry a muted `?` that does **not** colour the anchor |
+| Status lost | relay or Core unreachable, timeout, unreadable body → nothing is said open, starts are refused; every capture known open just before can still be **stopped** (privacy first: its indicator stays, dashed, with `?` and the stop mark) and is forgotten once Core accepts that stop; an activation during the loss reads the status at once (still no start). The Capture category (and the rows inside) carry a muted `?` that does **not** colour the anchor |
 | Waits | every write has a 50 s deadline (relay 45 s); then the controller gives the hand back and re-reads the status (`pas de réponse à temps, issue inconnue`) |
 
-**Wedges** (`JarvisToolWheel.register`, D3/D4). Simple activation (click,
-`Enter`/`Space`, Bare Hands primary pinch) = the default target: **Vidéo**
-and **Audio** start their channel on `default`, or stop its open capture;
-with **two or more** open captures the activation opens the stop list instead
-(`menu` read at each click), it never guesses which one. **Capture d'écran**
-takes the primary display at once. Each wedge projects the controller's state
-(`setStatus`): Vidéo / Audio are `menuitemcheckbox`, `aria-checked` = Core
-says a capture is open (amber ring and filled corner dot), `wait` while
-starting or stopping, `error` on a refusal or a stuck stop, `?` when the
-status is lost; the text joins the wedge name without any counter (`Audio —
-en cours`, `Vidéo — 2 en cours`). Before the first status read nothing is
+**Capture category** (`JarvisToolWheel.register({id:'capture', menu:true})`,
+D3/D4). Activating Capture (click, `Enter`/`Space`, `ArrowRight`, Bare Hands
+primary pinch, or its secondary activation) opens its curved submenu, rows in
+this order: **Capture d'écran**, **Vidéo**, **Audio** (`data-tw-item` =
+`screenshot`, `video`, `audio`; `WEDGES`). The rows are rebuilt from the
+controller at each opening (`channelItemOf`). Simple activation of a row =
+the default target: **Vidéo** and **Audio** start their channel on `default`,
+or stop its open capture; with **two or more** open captures the activation
+opens the stop list instead (the row's `menu`, read at each click), it never
+guesses which one. **Capture d'écran** takes the primary display at once.
+Each row shows the controller's state: Vidéo / Audio are `menuitemcheckbox`
+(`toggle`), `aria-checked` = Core says a capture is open (amber tile and
+note, `tone: busy`), `wait` while starting or stopping, `error` on a refusal
+or a stuck stop; its note is the state sentence without any counter (`en
+cours`, `2 en cours`, `état inconnu, Jarvis injoignable`) or, at rest, what
+the row does (`prendre l’écran`, `enregistrer l’écran`, `enregistrer le
+micro`). The **Capture category** projects their sum (`categoryStatusOf`,
+`setStatus('capture', …)`): `live` (amber icon and filled corner dot) while a
+recording is open, the worst tone (`error` > `unknown` > `wait`), and a
+sentence per channel that has something to say, joined to the category's
+name (`Capture — Audio : en cours`). Before the first status read nothing is
 projected.
 
-**Targets** (`GET /v1/captures/targets`, D6). Secondary activation (right
-click, Bare Hands thumb + middle pinch, `ContextMenu`, `Shift+F10`; never a
-long press) opens the sub-arc: first the open captures of that channel, each
+**Targets** (`GET /v1/captures/targets`, D6). Secondary activation of a
+channel row (right click, Bare Hands thumb + middle pinch, `ContextMenu`,
+`Shift+F10`, `ArrowRight`; never a long press) opens its second level, in
+place of the three rows, inside the Capture tree (titled with the row's
+label): first the open captures of that channel, each
 with its stop (`Arrêter — écran 2`, timer as a short note), then the targets
 Core can **really** take, in Core's order. A target already recording is
 listed but `aria-disabled` (`déjà en cours d’enregistrement sur cette cible`);
 while the status is lost every target is disabled (stops are not). **Single
 entry rule:** a channel whose only target is `default` still opens its
-sub-arc with that one focusable entry, which says it
+target list with that one focusable entry, which says it
 (`Écran principal — seule cible disponible`); activating it does what the
 simple activation does. Never omitted silently, never a fake choice. A channel
 without a source shows `Aucune cible — <cause>`; an unreadable list
@@ -912,15 +930,15 @@ Journal (browser console, `[capture]`): controller `capture_rail.installed`,
 `screenshot_taken` / `screenshot_failed` / `screenshot_refused`,
 `targets_read` / `targets_failed`, `capture_interrupted`,
 `capture_ended_elsewhere`, `subscriber_failed`; views `capture_views.installed`,
-`activate`, `targets_offered`, `target_chosen`, `stop_chosen`, `chip_stop`,
+`menu` (the Capture tree opened), `activate`, `targets_offered`, `target_chosen`, `stop_chosen`, `chip_stop`,
 `wedge_paint_failed`, `install_failed`.
 
 Tests: `tests/unit/test_capture_rail_js.py` (node: pure model, several
 captures per channel, the controller with fake timers — single flight,
 cadence, hidden tab, 6 s deadline, backoff, no stale read after a write, no
 orphan timer, Core-derived timers, status-loss stop, per-capture stops,
-device-bearing starts, screenshot result —, and the pure views: wedge status,
-chips, target sub-arc and its single entry rule; insertion order);
+device-bearing starts, screenshot result —, and the pure views: channel status,
+the Capture category's sum and rows, chips, target list and its single entry rule; insertion order);
 `tests/unit/test_capture_targets.py` (Core and relay: display order, audio
 name tokens, enumeration failure, read guard);
 `tests/unit/test_capture_wheel_browser.py` (headless Chrome on a real Control

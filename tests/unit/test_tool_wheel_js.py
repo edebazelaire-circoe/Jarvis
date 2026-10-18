@@ -1,8 +1,9 @@
 """Roue d'outils orbitale, modèle pur exécuté par node (orbital-ui Slice 02).
 
 Contrat : `docs/control-center-shell.md` › Tool wheel. Ce fichier épingle la
-partie sans DOM de `control_center_tool_wheel.js` : les quatre emplacements et
-leur ordre, la géométrie (séparation des cibles), le réducteur d'événements
+partie sans DOM de `control_center_tool_wheel.js` : les cinq catégories et
+leur ordre (refonte `jarvis-board-ui-wheel-dossier-refactor` S03), le sous-menu
+courbe unique, la géométrie (séparation des cibles), le réducteur d'événements
 (fermée par défaut, activation au `click` seulement, activation secondaire par
 `contextmenu` / `ContextMenu` / `Maj+F10` sans double déclenchement, clavier,
 délai de grâce), l'absence de tout réseau et de toute boucle, et l'insertion
@@ -75,29 +76,43 @@ def test_closed_by_default_only_anchor(tmp_path):
     source = MODULE.read_text(encoding="utf-8")
     assert "enabled" not in re.sub(r"/\*.*?\*/", "", source, flags=re.S)
     assert re.search(r"function mount\(\)\{.*?host\.hidden=false;", source, re.S)
-    assert "    mount();\n    root.JarvisToolWheel=" in source
+    assert re.search(r"\n    mount\(\);\n.*?\n    root\.JarvisToolWheel=", source, re.S)
     assert '<div id="toolWheel" data-shell-control hidden></div>' in PAGE_HTML.read_text(encoding="utf-8")
 
 
-def test_four_primary_slots_in_order_selection_video_screenshot_audio(tmp_path):
+def test_five_categories_in_locked_order_and_no_retired_first_level(tmp_path):
     v = run(tmp_path, "out({ids:M.SLOT_IDS,labels:M.SLOTS.map(s=>s.label),art:Object.keys(M.ART),"
-                      "wedges:M.layoutWedges().length})")
-    assert v["ids"] == ["selection", "video", "screenshot", "audio"]
-    assert v["labels"] == ["Sélection", "Vidéo", "Capture d’écran", "Audio"]
-    # Chaque secteur a son dessin ; les autres dessins sont ceux des sous-arcs
-    # de Sélection (Slice 03) et des captures (Slice 04 : arrêter, capture
-    # prise), jamais un secteur de remplissage.
+                      "wedges:M.layoutWedges().length,placeholders:Object.keys(M.PLACEHOLDERS),"
+                      "items:M.SLOT_IDS.map(id=>M.placeholderItems(id))})")
+    assert v["ids"] == ["jarvis", "selection", "dossier", "capture", "settings"]
+    assert v["labels"] == ["JARVIS", "Sélection", "Dossier", "Capture", "Paramètres"]
+    # Plus de Vidéo / Capture d'écran / Audio au premier niveau (ils vivent dans
+    # l'arbre de Capture), et aucune catégorie retirée par le contrat.
+    for retired in ("video", "screenshot", "audio", "boards", "files", "fichiers", "search", "recherche",
+                    "tools", "outils"):
+        assert retired not in v["ids"], retired
+    # Chaque catégorie a son dessin ; les autres sont ceux des sous-menus
+    # (Sélection, captures, arrêter, capture prise, chevron), jamais un secteur de remplissage.
     assert set(v["ids"]) <= set(v["art"])
-    assert set(v["art"]) - set(v["ids"]) == {"mouse", "bare_hands", "pointer", "pan", "select",
-                                             "sleep", "help", "diagnostics", "calibration", "stop", "done"}
-    assert v["wedges"] == 4
+    assert set(v["art"]) - set(v["ids"]) == {"video", "screenshot", "audio", "chevron", "mouse", "bare_hands",
+                                             "pointer", "pan", "select", "sleep", "help", "diagnostics",
+                                             "calibration", "stop", "done"}
+    assert v["wedges"] == 5
+    # JARVIS, Dossier, Paramètres : un gestionnaire d'attente, une entrée inerte qui le dit.
+    assert v["placeholders"] == ["jarvis", "dossier", "settings"]
+    for slot, items in zip(v["ids"], v["items"]):
+        if slot in v["placeholders"]:
+            assert len(items) == 1 and items[0]["disabled"] is True and items[0]["note"] == "pas encore branché"
+            assert "pas encore branché" in items[0]["detail"].lower()
+        else:
+            assert items is None
 
 
 def test_wedge_angles_separated_by_at_least_min(tmp_path):
     v = run(tmp_path, "out({w:M.layoutWedges(),g:M.GEOMETRY,min:M.minSeparationDeg()})")
     wedges, g, minimum = v["w"], v["g"], v["min"]
     import math
-    assert g["radius"] == 200 and g["wedgeMin"] == 48  # = --shell-wheel-r, --shell-wedge-min
+    assert g["radius"] == 224 and g["wedgeMin"] == 48  # = --shell-wheel-r, --shell-wedge-min
     assert g["dot"] >= g["wedgeMin"]
     for a, b in zip(wedges, wedges[1:]):
         gap = b["midDeg"] - a["midDeg"]
@@ -219,7 +234,7 @@ def test_keyboard_roving_wraps_and_escape_returns_to_anchor(tmp_path):
       const k=(key,index,extra)=>Object.assign({type:'keydown',target:'wedge',index,key},extra||{});
       const opened=play([{type:'click',target:'anchor',detail:0}]);
       const up=play([k('ArrowUp',0)],opened.s);
-      const down=play([k('ArrowDown',3)],opened.s);
+      const down=play([k('ArrowDown',4)],opened.s);
       const end=play([k('End',0)],opened.s);
       const esc=play([k('Escape',1)],opened.s);
       const view=M.viewOf(play([k('ArrowDown',0)],opened.s).s);
@@ -227,10 +242,10 @@ def test_keyboard_roving_wraps_and_escape_returns_to_anchor(tmp_path):
            esc:{open:esc.s.open,restore:did(esc.fx,'restoreFocus').length},
            tab:view.wedges.map(w=>w.tabindex),label:view.label})""")
     assert v["first"] == [{"do": "focus", "target": "wedge", "index": 0}]
-    assert (v["up"], v["down"], v["end"]) == (3, 0, 3)
+    assert (v["up"], v["down"], v["end"]) == (4, 0, 4)
     assert v["esc"] == {"open": False, "restore": 1}
-    assert v["tab"] == [-1, 0, -1, -1]  # une seule halte de tabulation
-    assert v["label"] == "Vidéo"  # un seul libellé : celui du secteur en avant
+    assert v["tab"] == [-1, 0, -1, -1, -1]  # une seule halte de tabulation
+    assert v["label"] == "Sélection"  # un seul relevé au cœur : celui du secteur en avant
 
 
 def test_sub_arc_keyboard_and_escape_back_to_parent(tmp_path):
@@ -242,15 +257,25 @@ def test_sub_arc_keyboard_and_escape_back_to_parent(tmp_path):
       const pick=play([{{type:'click',target:'item',index:1,detail:1,source:'mouse'}}],sub.s);
       out({{focus:did(sub.fx,'focus'),wrap:down.s.sub.focus,back:{{sub:back.s.sub,focus:back.s.focus,open:back.s.open}},
            pick:did(pick.fx,'item'),closed:pick.s.open,
-           layout:M.layoutSubArc(3,M.layoutWedges()[0].midDeg),edge:M.layoutSubArc(8,M.layoutWedges()[0].midDeg)}})""")
+           layouts:M.layoutWedges().flatMap(w=>[1,3,9].map(n=>M.layoutSubMenu(n,w.midDeg))),g:M.GEOMETRY}})""")
     assert v["focus"] == [{"do": "focus", "target": "item", "index": 0}]
     assert v["wrap"] == 0
     assert v["back"] == {"sub": None, "focus": 2, "open": True}
     assert v["pick"] == [{"do": "item", "slot": 2, "index": 1, "source": "mouse"}]
     assert v["closed"] is False
-    for layout in (v["layout"], v["edge"]):
-        assert all(-78 <= item["deg"] <= 78 for item in layout)
-        assert all(item["x"] > 200 * 0.1 for item in layout)
+    g = v["g"]
+    import math
+    for layout in v["layouts"]:
+        # Le sous-menu reste dans la hauteur de la roue, au-delà de son bord, des lignes d'au moins 40 px.
+        assert -g["radius"] <= layout["top"] < layout["bottom"] <= g["radius"], layout
+        assert layout["rowH"] >= 40
+        for row in layout["rows"]:
+            near = 0 if row["top"] <= 0 <= row["top"] + row["h"] else min(abs(row["top"]), abs(row["top"] + row["h"]))
+            # Le bord gauche d'une ligne suit l'arc intérieur, hors de la bande des catégories.
+            assert row["x"] >= math.sqrt(g["subInner"] ** 2 - near ** 2) + g["subPad"] - 0.01
+            assert math.hypot(row["x"], near) > g["radius"]
+        # Assez étroit pour une fenêtre de 600 px de large.
+        assert layout["right"] <= 540
 
 
 def test_outside_pointer_and_focus_leaving_close_without_stealing_focus(tmp_path):
@@ -287,7 +312,7 @@ def test_hovering_another_wedge_closes_the_open_sub_arc(tmp_path):
       const same=play([{{type:'pointerover',target:'wedge',index:0}}],o).s;
       const other=play([{{type:'pointerover',target:'wedge',index:2}}],o).s;
       out({{same:!!same.sub,other:other.sub,label:M.viewOf(other).label}})""")
-    assert v == {"same": True, "other": None, "label": "Capture d’écran"}
+    assert v == {"same": True, "other": None, "label": "Dossier"}
 
 
 def test_bh_pinch_on_anchor_is_a_pointer_not_the_keyboard(tmp_path):
@@ -335,3 +360,69 @@ def test_the_host_is_shown_only_after_the_wheel_is_published():
     published = code.index("root.JarvisToolWheel=Object.freeze({")
     assert code.count("host.hidden=false") == 1
     assert code.index("host.hidden=false") > published
+
+
+# ------------------------------------------------------------ refonte S03 (jarvis-board-ui-wheel-dossier-refactor)
+
+
+def test_one_category_tree_at_a_time_switching_replaces_it(tmp_path):
+    v = run(tmp_path, f"""
+      const o=play([{OPEN}]).s;
+      const a=play([{{type:'click',target:'wedge',index:0,detail:1,source:'mouse',menu:true,t:10}},
+                    {{type:'subOpen',slot:0,count:1,source:'mouse',level:1}}],o).s;
+      const b=play([{{type:'click',target:'wedge',index:3,detail:1,source:'mouse',menu:true,t:20}},
+                    {{type:'subOpen',slot:3,count:3,source:'mouse',level:1}}],a);
+      const kb=play([{{type:'keydown',target:'wedge',index:2,key:'ArrowRight',menu:true,t:30}}],o);
+      const plain=play([{{type:'keydown',target:'wedge',index:2,key:'ArrowRight',t:30}}],o);
+      const view=M.viewOf(b.s);
+      out({{a:a.sub.slot,b:[b.s.sub.slot,did(b.fx,'secondary')],view:view.sub,
+           kb:did(kb.fx,'secondary'),plain:[did(plain.fx,'secondary').length,plain.s.focus]}})""")
+    # Un seul arbre : celui de Capture remplace celui de JARVIS (le modèle n'en tient qu'un).
+    assert v["a"] == 0
+    assert v["b"] == [3, [{"do": "secondary", "index": 3, "source": "mouse"}]]
+    assert v["view"] == {"slot": 3, "count": 3, "focus": -1, "level": 1}
+    # Flèche droite sur une catégorie à arbre : son sous-menu ; sans arbre : la suivante.
+    assert v["kb"] == [{"do": "secondary", "index": 2, "source": "keyboard"}]
+    assert v["plain"] == [0, 3]
+
+
+def test_menu_item_opens_its_second_level_and_arrow_right_drills_down(tmp_path):
+    v = run(tmp_path, f"""
+      const o=play([{OPEN},{{type:'click',target:'wedge',index:3,detail:1,source:'mouse',menu:true,t:10}},
+                    {{type:'subOpen',slot:3,count:3,source:'mouse',level:1}}]).s;
+      const menu=play([{{type:'click',target:'item',index:1,detail:1,source:'barehands',menu:true,t:20}}],o);
+      const plain=play([{{type:'click',target:'item',index:1,detail:1,source:'mouse',t:20}}],o);
+      const right=play([{{type:'keydown',target:'item',index:2,key:'ArrowRight',popup:true,t:30}}],o);
+      const noPopup=play([{{type:'keydown',target:'item',index:2,key:'ArrowRight',t:30}}],o);
+      out({{menu:[did(menu.fx,'itemSecondary'),did(menu.fx,'item').length,menu.s.open],
+           plain:[did(plain.fx,'item'),plain.s.open],right:did(right.fx,'itemSecondary'),
+           noPopup:did(noPopup.fx,'itemSecondary').length}})""")
+    assert v["menu"] == [[{"do": "itemSecondary", "slot": 3, "index": 1, "source": "barehands"}], 0, True]
+    assert v["plain"] == [[{"do": "item", "slot": 3, "index": 1, "source": "mouse"}], False]
+    assert v["right"] == [{"do": "itemSecondary", "slot": 3, "index": 2, "source": "keyboard"}]
+    assert v["noPopup"] == 0
+
+
+def test_exclusive_surface_blocks_hover_reveal_and_closes_an_open_wheel(tmp_path):
+    v = run(tmp_path, f"""
+      const blocked=play([{{type:'pointerover',target:'anchor',source:'mouse',blocked:'board-panel'}}]);
+      const clicked=play([{{type:'click',target:'anchor',detail:1,source:'mouse'}}]);
+      const o=play([{OPEN},{{type:'contextmenu',target:'wedge',index:1,source:'mouse',t:5}},
+                    {{type:'subOpen',slot:1,count:2,source:'mouse'}}]).s;
+      const yielded=play([{{type:'exclusive',by:'board-panel'}}],o);
+      out({{blocked:[blocked.s.open,blocked.fx.filter(f=>f.do==='journal').map(f=>f.key)],clicked:clicked.s.open,
+           yielded:[yielded.s.open,yielded.s.sub,did(yielded.fx,'restoreFocus').length,
+                    yielded.fx.filter(f=>f.key==='tool_wheel.close').map(f=>f.data.reason)]}})""")
+    # Le survol ne retire pas la place au panneau Board ; un clic explicite ouvre.
+    assert v["blocked"] == [False, ["tool_wheel.hover_blocked"]]
+    assert v["clicked"] is True
+    # Le panneau s'ouvre : la roue se ferme, sous-menu compris, sans reprendre le focus.
+    assert v["yielded"] == [False, None, 0, ["exclusive"]]
+
+
+def test_exclusive_event_name_matches_the_shell():
+    shell = (RUNTIME / "control_center_shell.js").read_text(encoding="utf-8")
+    boards = (RUNTIME / "control_center_boards.js").read_text(encoding="utf-8")
+    name = re.search(r"const EXCLUSIVE_EVENT='([^']+)'", shell).group(1)
+    for source in (MODULE.read_text(encoding="utf-8"), boards):
+        assert f"EXCLUSIVE_EVENT)||'{name}'" in source

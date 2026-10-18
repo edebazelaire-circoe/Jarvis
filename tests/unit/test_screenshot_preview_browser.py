@@ -35,7 +35,9 @@ WIDTH, HEIGHT = 480, 270
 IMAGE = png(WIDTH, HEIGHT)
 
 ANCHOR = "#toolWheel .tw-anchor"
-SHOT_WEDGE = "#toolWheel [data-tw-slot=screenshot] .tw-dot"
+#: Refonte S03 (jarvis-board-ui-wheel-dossier-refactor) : Capture d'écran est une entrée de l'arbre de Capture.
+CAPTURE_WEDGE = "#toolWheel [data-tw-slot=capture] .tw-dot"
+SHOT_WEDGE = "#toolWheel .tw-item[data-tw-item=screenshot]"
 SHOWN = ("!document.getElementById('screenshotPreview').hidden"
          "&&document.querySelector('#screenshotPreview .sp-thumb').dataset.spImage==='ready'")
 HIDDEN = "document.getElementById('screenshotPreview').hidden"
@@ -148,7 +150,8 @@ def _no_overlap_with_neighbours(read: dict) -> None:
 
 async def test_open_lightbox_and_tab(stack, tmp_path):
     out = await _drive(stack.url, [
-        {"click": ANCHOR}, _until("window.JarvisToolWheel.isOpen()", 3000, "wheel"), {"click": SHOT_WEDGE},
+        {"click": ANCHOR}, _until("window.JarvisToolWheel.isOpen()", 3000, "wheel"), {"click": CAPTURE_WEDGE},
+        _until("!!document.querySelector('#toolWheel .tw-item[data-tw-item=screenshot]')", 3000, "tree"), {"click": SHOT_WEDGE},
         _until(SHOWN, 8000, "shown"), {"wait": 200}, _read("shown"), _shot(tmp_path, "preview-1440x900"),
         {"click": "#screenshotPreview [data-sp-act=open]"},
         _until(LIGHTBOX_OPEN + "&&document.querySelector('#screenshotLightbox img').complete", 5000, "lightbox"),

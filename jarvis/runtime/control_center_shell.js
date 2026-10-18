@@ -59,7 +59,7 @@
     'top-left':'libre : retours transitoires seulement (alerte critique, enregistrement en cours)',
     'top-right':'lanceur global : Conversation, Agents, Errors, Réglages, « Plus d’outils » (Slice 08)',
     'top-centre':'bandeau GPT-Live (transitoire)',
-    'left-edge':'ancre et roue d’outils (Sélection, Vidéo, Capture d’écran, Audio)',
+    'left-edge':'ancre et roue d’outils (JARVIS, Sélection, Dossier, Capture, Paramètres)',
     'left-low':'aperçu de la dernière capture d’écran (Slice 05), au-dessus du contexte bas-gauche',
     'bottom-left':'zone de contexte : carte Board (type, titre, bascule, présence de la voix), notes de la scène',
     'bottom-centre':'centre d’état (Slice 06) : indicateurs de capture, pastilles d’arrière-plan ; plateau de dépôt au-dessus',
@@ -82,7 +82,7 @@
     '--shell-panel-bottom':'68px',
     '--shell-rail-w':'300px',
     '--shell-anchor-w':'14px',
-    '--shell-wheel-r':'200px',
+    '--shell-wheel-r':'224px',
     '--shell-wedge-min':'48px',
     '--shell-icon':'20px',
     '--shell-icon-sm':'15px',
@@ -111,8 +111,20 @@
   /* Sous `prefers-reduced-motion: reduce`, ces durées valent 0 ms. */
   const MOTION_TOKENS=Object.freeze(['--shell-dur-fast','--shell-dur']);
 
+  /* Surfaces exclusives (jarvis-board-ui-wheel-dossier-refactor, Slice 03) :
+     jamais deux ouvertes ensemble. Chacune annonce son ouverture et sa
+     fermeture par cet événement de `document` (`detail: {id, open}`) et se
+     ferme quand une autre s'ouvre. Pas d'état ici : chaque surface tient le
+     sien. Les modules gardent une copie de repli du nom, identique (testé). */
+  const EXCLUSIVE_EVENT='jarvis:shell-exclusive';
+  const EXCLUSIVE_SURFACES=Object.freeze({
+    'tool-wheel':'#toolWheel[data-open] (control_center_tool_wheel.js)',
+    'board-panel':'#boardsPanel (control_center_boards.js)',
+  });
+
   const api=Object.freeze({
     CONTROL_ATTRIBUTE,CONTROL_SELECTOR,CONTROL_HOSTS,ZONES,TOKENS,RESPONSIVE_TOKENS,MOTION_TOKENS,
+    EXCLUSIVE_EVENT,EXCLUSIVE_SURFACES,
   });
   if(typeof module!=='undefined'&&module.exports)module.exports=api;
   if(typeof window==='undefined'||typeof document==='undefined')return;

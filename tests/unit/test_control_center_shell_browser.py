@@ -252,7 +252,9 @@ BUSY = {**MIXED, "captures": [AUDIO]}
 
 ANCHOR = "#toolWheel .tw-anchor"
 FOCUS_ANCHOR = f"(()=>{{document.querySelector('{ANCHOR}').focus();return 1}})()"
-WHEEL_OPEN = [["eval", "focus", FOCUS_ANCHOR, 100], ["key", "open", "ArrowRight", 450]]
+#: Refonte S03 (jarvis-board-ui-wheel-dossier-refactor) : la roue s'ouvre sur JARVIS ; une flèche vers le bas
+#: met Sélection en avant. Capture d'écran : Sélection, ↓ Dossier, ↓ Capture, Entrée (son arbre), Entrée.
+WHEEL_OPEN = [["eval", "focus", FOCUS_ANCHOR, 100], ["key", "open", "ArrowRight", 450], ["key", "sel", "ArrowDown", 120]]
 
 #: L'audit d'un état : `keys` = les surfaces de l'état, qui doivent être entières
 #: et au premier plan (cinq points chacune) ; un contrôle couvert par l'une
@@ -444,7 +446,7 @@ CARD_PRESENCE = r"""(()=>{const p=document.getElementById('boardsPresence');cons
   return {state:h.getAttribute('data-bd-presence'),kind:h.getAttribute('data-bd-kind'),hidden:p.hidden,text:p.textContent,
     title:p.getAttribute('title'),eyebrow:document.getElementById('boardsKind').textContent,sub:document.getElementById('boardsSub').textContent}})()"""
 DEGRADED_SHOT = [["eval", "badge", BADGE, 300], ["eval", "freeze", FREEZE, 6000], ["eval", "noteH", NOTE_LINES, 50],
-                 *WHEEL_OPEN, ["key", "v", "ArrowDown", 120], ["key", "s", "ArrowDown", 120], ["key", "shoot", "Enter", 1600]]
+                 *WHEEL_OPEN, ["key", "v", "ArrowDown", 120], ["key", "s", "ArrowDown", 120], ["key", "tree", "Enter", 500], ["key", "shoot", "Enter", 1600]]
 
 STATES = (
     ("01", "board-wheel-closed", 1440, 900, {}, [], [ANCHOR],
@@ -459,7 +461,7 @@ STATES = (
     ("05", "video-active", 1440, 900, {"seed": {"captures": [VIDEO]}}, [], ["#recIndicators"],
      [["eval", "chips", CHIPS, 50]]),
     ("06", "screenshot-preview", 1440, 900, {},
-     [*WHEEL_OPEN, ["key", "v", "ArrowDown", 120], ["key", "s", "ArrowDown", 120], ["key", "shoot", "Enter", 1600]],
+     [*WHEEL_OPEN, ["key", "v", "ArrowDown", 120], ["key", "s", "ArrowDown", 120], ["key", "tree", "Enter", 500], ["key", "shoot", "Enter", 1600]],
      ["#screenshotPreview"], [["eval", "preview", PREVIEW, 50]]),
     ("07", "alert-popover", 1440, 900, {}, [["click", "pill", '#bgPills [data-bg-cat="failed"]', 900]], ["#bgPop"],
      [["eval", "open", OPEN_OF % json.dumps("#bgPop"), 50]]),
@@ -643,10 +645,11 @@ def test_keyboard_only_full_path(tmp_path):
     a += [["key", "k", "Enter", 700], ["eval", "boards_open", _open("#boardsPanel"), 50],
           ["key", "k", "Escape", 400], ["eval", "boards_closed", f"!{_open('#boardsPanel')}", 50], ["eval", "after_boards", ACTIVE, 50]]
     tab("t_wheel", "#toolWheel")
-    a += [["key", "k", "ArrowRight", 450], ["eval", "wheel", WHEEL_STATE, 50],
+    a += [["key", "k", "ArrowRight", 450], ["key", "k", "ArrowDown", 120], ["eval", "wheel", WHEEL_STATE, 50],
           ["key", "k", "Enter", 600], ["eval", "sub", SUB_ITEMS, 50],
           ["key", "k", "Escape", 300], ["key", "k", "Escape", 400], ["eval", "after_wheel", ACTIVE, 50],
-          ["key", "k", "ArrowRight", 450], ["key", "k", "ArrowDown", 120], ["key", "k", "ArrowDown", 120], ["key", "k", "Enter", 1600],
+          ["key", "k", "ArrowRight", 450], ["key", "k", "ArrowDown", 120], ["key", "k", "ArrowDown", 120],
+          ["key", "k", "ArrowDown", 120], ["key", "k", "Enter", 500], ["key", "k", "Enter", 1600],
           ["eval", "preview", PREVIEW, 50], ["eval", "after_shot", ACTIVE, 50],
           ["shot", "shot1", str(shots / "keyboard-path-screenshot.png"), 50]]
     tab("t_more", "#dockMore")
@@ -686,7 +689,8 @@ def test_mouse_only_full_path(tmp_path):
     « Plus d’outils » et un outil, menu d'une carte du rail, Chat."""
     shots = _evidence(tmp_path)
     a = [["move", "hover", ANCHOR, 600], ["eval", "wheel", WHEEL_STATE, 50],
-         ["click", "shoot", '#toolWheel [data-tw-slot="screenshot"]', 1600], ["eval", "preview", PREVIEW, 50],
+         ["click", "tree", '#toolWheel [data-tw-slot="capture"] .tw-dot', 500],
+         ["click", "shoot", '#toolWheel .tw-item[data-tw-item="screenshot"]', 1600], ["eval", "preview", PREVIEW, 50],
          ["move", "rehover", ANCHOR, 600], ["eval", "wedges", WEDGES_HIT, 50], ["eval", "beside", _audit("#screenshotPreview"), 50],
          ["move", "leave", AWAY, 900],
          ["click", "open", '#screenshotPreview [data-sp-act="open"]', 700], ["eval", "lightbox", _open("#screenshotLightbox"), 50],
@@ -812,7 +816,7 @@ def test_axe_when_available(tmp_path):
                 ["key", "k", "Escape", 400],
                 ["rclick", "railmenu", "#presentationRail .jvr-item", 700], ["axe", "axe:railMenu", ".jvr-menu", 50, axe],
                 ["key", "k", "Escape", 400], ["click", "away", AWAY, 400],
-                *WHEEL_OPEN, ["key", "v", "ArrowDown", 120], ["key", "s", "ArrowDown", 120], ["key", "shoot", "Enter", 1600],
+                *WHEEL_OPEN, ["key", "v", "ArrowDown", 120], ["key", "s", "ArrowDown", 120], ["key", "tree", "Enter", 500], ["key", "shoot", "Enter", 1600],
                 ["axe", "axe:preview", "#screenshotPreview", 50, axe]]
     steps = _centre(tmp_path, [{"width": 1440, "height": 900, "theme": theme, "seed": seed, "actions": actions} for theme in THEMES])
     for theme, step in zip(THEMES, steps):
@@ -848,7 +852,7 @@ def test_zoom_200(tmp_path):
         {"width": 720, "height": 450, "scale": 2, "theme": theme, "seed": seed, "actions": [
             ["eval", "rest", _audit(), 50],
             *WHEEL_OPEN, ["eval", "open", _audit("#toolWheel .tw-panel"), 50],
-            ["key", "v", "ArrowDown", 120], ["key", "s", "ArrowDown", 120], ["key", "shoot", "Enter", 1600],
+            ["key", "v", "ArrowDown", 120], ["key", "s", "ArrowDown", 120], ["key", "tree", "Enter", 500], ["key", "shoot", "Enter", 1600],
             ["eval", "shot_audit", _audit("#screenshotPreview"), 50],
             ["shot", "shot", str(shots / f"zoom-200-{theme}.png"), 50]]} for theme in THEMES])
     for theme, step in zip(THEMES, steps):
