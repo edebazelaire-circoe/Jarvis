@@ -67,3 +67,22 @@ outside the acceptance of the Slice that found it.
      (`docs/control-center-shell.md` › *Exclusive surfaces*). Item 3 stays open (not a wheel concern).
 3. **Long Board titles are cut at 1440 and 1920 px** (card capped at 236 px) while the same title fits at 600 px
    (`max-width: calc(100vw - 102px)` there); consider a wider cap on large screens, within the status-centre insets.
+
+## From Slice 03 QA (orbital wheel) — targets Slices 04/08
+
+1. Clicking the inert « … — pas encore branché » row closes the wheel (`item_inert` then close). Pre-existing
+   behaviour for any disabled row; goes away as Slices 04/06/07 wire the trees.
+2. Keyboard entry into a tree can focus the row under a motionless pointer (ArrowRight on Capture focused Audio at
+   1280 and 600) instead of the first row — hover→focus pattern, likely pre-existing.
+3. No browser test covers « two open recordings → stop list on primary click » through the new row menu (proved at
+   runtime only). Add one in Slice 04 when Capture is rewired.
+4. Stop row truncated (« Arrêter — écran princip… ») within the 256 px row width.
+5. JARVIS / Capture / Paramètres panels overflow above/below their sector and cover part of the outer ring (x≈94).
+6. `control_center_boards.js` logs `panel_yield` with a bare `console.info` instead of the module journal.
+7. In the QA harness, Enter on the anchor opened the wheel but left focus on the anchor (ArrowRight works; unchanged
+   code, keyboard tests pass) — recheck in Slice 08 accessibility pass.
+8. Visual gap to the reference (honest QA appraisal): smaller, sober wheel without large orb/rings; monospace
+   everywhere (reference uses a sans-serif for row titles); placeholder trees look empty; panel top/bottom edges are
+   straight. Human visual check in Slice 09.
+9. Not verified at runtime: real video (no ffmpeg on the machine; error path shown correctly), audio (needs mic),
+   collision with the Studio.
