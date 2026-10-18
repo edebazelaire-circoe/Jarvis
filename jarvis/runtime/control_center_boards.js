@@ -664,6 +664,10 @@
      = 84) et se hisse de 62 px au-dessus des infusions. */
   const GEO=Object.freeze({
     left:18,bottom:22,minWidth:168,maxWidth:236,
+    /* Slice 08 : sur grand écran le titre n'est plus coupé à 236 px : la carte va jusqu'à
+       320 px et le titre tient sur deux lignes ; le centre d'état réserve alors gutter + 338 px
+       (`control_center.html`). */
+    wideFrom:1400,wideMaxWidth:320,
     railOne:52,railTwo:86,
     badgeSelector:'#jarvisHands .jh-badge',
     noteSelector:'#jarvisHands .jh-note',
@@ -854,6 +858,10 @@ ${P} .bd-foot p[data-tone=warn]{color:${WARN}}
 ${H} .bd-sr,${P} .bd-sr{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}
 /* Le centre d'état ne réserve plus la largeur de la carte sous 820 px : elle se
    hisse au-dessus de sa rangée, avant le resserrement de 700 px (voir \`GEO\`). */
+@media(min-width:${GEO.wideFrom}px){
+  ${H} .bd-btn{max-width:${GEO.wideMaxWidth}px}
+  ${H} .bd-title{white-space:normal;overflow-wrap:anywhere;display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:2}
+}
 @media(max-width:${GEO.liftBelow}px){
   ${H}{--bd-lift:${GEO.lift}px}
 }
@@ -1890,6 +1898,15 @@ ${H} .bd-sr,${P} .bd-sr{position:absolute;width:1px;height:1px;padding:0;margin:
 
   if(typeof window==='undefined'||typeof document==='undefined')return;
 
+  /* Le journal du module : une ligne `[boards] <événement> {json}` au niveau dit (Slice 08 : `panel_yield`
+     et `hud_installed` passaient par un `console.info` à part). */
+  function journal(level,event,data){
+    const line=`[boards] ${event} ${JSON.stringify(data||{})}`;
+    if(level==='error')console.error(line);
+    else if(level==='warn')console.warn(line);
+    else console.info(line);
+  }
+
   function installJarvisBoards(){
     const host=document.getElementById(DOM.hostId),panel=document.getElementById(DOM.panelId);
     if(!host||!panel)
@@ -1941,12 +1958,7 @@ ${H} .bd-sr,${P} .bd-sr{position:absolute;width:1px;height:1px;padding:0;margin:
         return manager.openBoard(id,options);
       },
       place,
-      log:(level,event,data)=>{
-        const line=`[boards] ${event} ${JSON.stringify(data||{})}`;
-        if(level==='error')console.error(line);
-        else if(level==='warn')console.warn(line);
-        else console.info(line);
-      },
+      log:journal,
     });
     /* Clic hors du contrôle : il se ferme. La boîte de confirmation de la
        page (archivage, nouvelle session) n'est pas « dehors ». */
@@ -1962,7 +1974,7 @@ ${H} .bd-sr,${P} .bd-sr{position:absolute;width:1px;height:1px;padding:0;margin:
     document.addEventListener(EXCLUSIVE_EVENT,event=>{
       const d=event&&event.detail;
       if(!d||d.id===EXCLUSIVE_ID||!d.open||!control.isOpen())return;
-      console.info('[boards] boards.panel_yield '+JSON.stringify({to:String(d.id)}));
+      journal('info','boards.panel_yield',{to:String(d.id)});
       control.close();
     });
     /* Échap ferme aussi quand le focus a quitté le panneau (ligne retirée,
@@ -1983,7 +1995,7 @@ ${H} .bd-sr,${P} .bd-sr{position:absolute;width:1px;height:1px;padding:0;margin:
       inspect:control.inspectBoard,
       activeId:()=>activeIdOf(control.block(),null),
     });
-    console.info('[boards] boards.hud_installed '+JSON.stringify({host:DOM.hostId,panel:DOM.panelId}));
+    journal('info','boards.hud_installed',{host:DOM.hostId,panel:DOM.panelId});
   }
 
   try{installJarvisBoards()}

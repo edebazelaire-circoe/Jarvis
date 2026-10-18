@@ -177,11 +177,12 @@ def test_sous_700px_bandeau_live_et_chat_ouvert_la_notification_epargne_le_compo
 
 
 def test_a_pleine_largeur_la_carte_est_au_bord_gauche_sans_rien_recouvrir(tmp_path):
-    """La carte reprend l'enveloppe du contrôle retiré : bord gauche à 18 px, 236 px au plus, en bas."""
+    """La carte reprend l'enveloppe du contrôle retiré : bord gauche à 18 px, en bas ; 236 px au plus sous 1400 px,
+    320 px au plus à partir de 1400 px (Slice 08 : le titre n'est plus coupé sur grand écran)."""
 
     seen = _drive(tmp_path, [{"width": 1440, "height": 900, "mountPalette": True, "toast": True}])[0]
     card = seen["card"]
-    assert round(card["l"]) == 18 and card["w"] <= 236, card
+    assert round(card["l"]) == 18 and card["w"] <= 320, card
     # Le haut-gauche est libre (D05) : la carte est en bas.
     assert card["t"] > 900 / 2, card
     assert seen["wheel"] and not seen.get("palette"), (seen["wheel"], seen.get("palette"))

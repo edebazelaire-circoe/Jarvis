@@ -346,3 +346,19 @@ async def test_quick_browser_creates_edits_filters_and_inspects_against_the_real
     assert low["foot"]["hint"] == "none" and low["foot"]["described"] == "boardsNewSessionHint"
     assert low["foot"]["bottom"] <= 560 and low["foot"]["rows"] == 4
     assert small["overflow"]["panel"] <= 0 and small["overflow"]["page"] <= 0 and small["overflow"]["right"] <= 500
+
+
+@pytest.mark.parametrize("width,height", [(1440, 900), (1920, 1032)])
+def test_on_a_large_screen_a_long_board_title_is_not_cut(tmp_path, width, height):
+    """Polish S02 item 3 (Slice 08) : la carte était plafonnée à 236 px, « Projet Atlas — refonte du tableau de
+    bord » était coupé à 1440 et 1920 px. Dès 1400 px elle va jusqu'à 320 px et le titre tient sur deux lignes,
+    sans toucher le centre d'état."""
+    read = ("t", "(()=>{const t=document.querySelector('#boardsTitle'),c=document.querySelector('#boardsButton')"
+                 ".getBoundingClientRect(),s=document.querySelector('.status-centre').getBoundingClientRect();"
+                 "return {cut:t.scrollWidth>t.clientWidth+1||t.scrollHeight>t.clientHeight+1,lines:Math.round(t.getBoundingClientRect().height/parseFloat(getComputedStyle(t).lineHeight||15)),text:t.textContent,right:c.right,statusLeft:s.left}})()", 0)
+    seen = _drive(tmp_path, [{"width": width, "height": height, "actions": [
+        ("go", "window.__boards.active='board_b';'ok'", 1800), read]}])[0]
+    t = seen["results"]["t"]
+    assert t["text"] == "Projet Atlas — refonte du tableau de bord", t
+    assert t["cut"] is False, t
+    assert t["right"] <= t["statusLeft"], ("la carte reste hors du centre d'état", t)

@@ -592,9 +592,13 @@ html[data-jarvis-theme="cosmos"] .chat-tab:hover,html[data-jarvis-theme="cosmos"
 @media(max-width:760px){.board-drop-tray{top:calc(var(--shell-panel-top) + max(48px,var(--jv-live-fb,0px)))}}
 @media(max-width:760px){.board-drop-tray{top:calc(max(anchor(--jv-live bottom,0px),var(--shell-panel-top) + 40px) + 8px);bottom:auto;width:calc(100vw - 180px);max-height:min(50vh,360px)}}
 /* Panneau latéral ouvert (orbital-ui Slice 09) : le plateau (34) passait sur le bas du panneau (33). De 1100 px, il se
-   centre dans l'espace libre entre la zone du mode (bas-gauche, 254 px) et le panneau ; plus étroit, cet espace manque :
-   il monte en haut à gauche, sous la ligne d'état et le bandeau, à gauche du panneau. */
+   centre dans l'espace libre entre la carte Board (bas-gauche, 254 px ; 338 px dès 1400 px) et le panneau ; plus étroit,
+   cet espace manque : il monte en haut à gauche, sous le haut de la page et le bandeau, à gauche du panneau. */
 @media(min-width:1100px){#app:has(.panel.open) .board-drop-tray{left:calc(var(--shell-gutter) + 254px);right:calc(var(--shell-gutter) + 12px + min(var(--shell-panel-w),100vw - 2 * var(--shell-gutter)));width:auto;max-width:460px;margin-inline:auto;transform:none}}
+/* Slice 08 : à 1400 px et plus la carte Board va jusqu'à 320 px (`GEO.wideMaxWidth`) ; le centre d'état et le plateau
+   de dépôt réservent gutter + 338 px. */
+@media(min-width:1400px){.status-centre{left:calc(var(--shell-gutter) + 338px);right:calc(var(--shell-gutter) + 338px)}
+  #app:has(.panel.open) .board-drop-tray{left:calc(var(--shell-gutter) + 338px)}}
 @media(min-width:761px) and (max-width:1099px){#app:has(.panel.open) .board-drop-tray{top:calc(var(--shell-panel-top) + max(8px,var(--jv-live-fb,0px)))}}
 @media(min-width:761px) and (max-width:1099px){#app:has(.panel.open) .board-drop-tray{top:calc(max(anchor(--jv-live bottom,0px),var(--shell-panel-top)) + 8px);bottom:auto;left:var(--shell-gutter);right:calc(var(--shell-gutter) + 12px + min(var(--shell-panel-w),100vw - 2 * var(--shell-gutter)));width:auto;transform:none}}
 

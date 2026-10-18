@@ -452,7 +452,9 @@ the same control that sat in the top state line, moved; contract of its data
 and actions: [boards.md](boards.md) › *Control Center Boards control*.
 
 **Place.** Zone `bottom-left`, the envelope of the interaction-mode control it
-replaces: `left: 18px`, 168 to 236 px wide (`GEO`), bottom on the shared
+replaces: `left: 18px`, 168 to 236 px wide (`GEO`; up to 320 px from 1400 px,
+`GEO.wideMaxWidth`, the title on up to two lines, so a long title is not cut on a
+large screen), bottom on the shared
 bottom-left rail (`--bd-rail`: 22 px, 52 above the Bare Hands badge or a scene
 note, 86 above both or the gesture note, `max(…, --sc-status-h + 28px)` for a
 multi-line note), lifted 42 px under 820 px (above the status-centre row) and
@@ -527,7 +529,8 @@ and no `transform` on it (a transform would open a stacking context and
 shut its children under the scene); each of its children carries rank
 40. Symmetric side insets keep it centred: `--shell-gutter` + 254 px above
 820 px (the Board card is at most 236 px wide, bottom-left, `GEO.maxWidth` of
-`control_center_boards.js`), `--shell-gutter` + 64 px below (the Board card
+`control_center_boards.js`), `--shell-gutter` + 338 px from 1400 px (card up to
+320 px, `GEO.wideMaxWidth`), `--shell-gutter` + 64 px below (the Board card
 lifts above the row there; only the chat tab, 52 px, is left on the row). Too many chips: the row wraps upwards. With a side
 panel open and 1100 px or more, it re-centres in the free space left of the
 panel; narrower, it stays under the panel's bottom gap without touching it.
