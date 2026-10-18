@@ -518,7 +518,11 @@ refactor (D06: hidden is temporary, not a storage area); see *Hidden objects*
 below. The recording indicators `#recIndicators`, its first item until then,
 moved to the **top-left** zone in Slice 04 of the same refactor
 (`docs/06-ui-visual-spec.md` › E of that task; [capture.md](capture.md) ›
-*Interface*): the row now holds the background pills only.
+*Interface*): the row now holds the background pills only. When a status
+beat fails, the pills keep their last counts but say they are unconfirmed
+(`#bgPills[data-unconfirmed]`: dashed, dimmed, each accessible name ends with
+« compte non confirmé : Jarvis ne répond pas »), until the next beat that
+succeeds (Slice 08, `test_status_centre_browser.py::test_a_lost_status_says_the_pill_counts_are_unconfirmed`).
 
 **Place.** `#statusCentre` (`.status-centre`) is a **layout only**: one row,
 centred, `bottom: --shell-bottom`, `min-height: --shell-status-h` (44 px), so

@@ -592,3 +592,19 @@ def test_a_ghost_is_never_pressed_into_a_gesture_nor_held(tmp_path):
     assert r["hold"]["visible"] is True and r["hold"]["heldAfterVisible"] == ["jobj_star"], r["hold"]
     assert r["sent"] == 0, r
     _no_errors(step)
+
+
+def test_a_lost_status_says_the_pill_counts_are_unconfirmed(tmp_path):
+    """Polish S04 P4 (Slice 08) : statut perdu, les pastilles gardaient leurs comptes comme s'ils tenaient. Elles
+    disent maintenant qu'ils ne sont plus confirmés, puis reviennent au battement suivant qui réussit."""
+    mark = "document.getElementById('bgPills').hasAttribute('data-unconfirmed')"
+    step = _drive(tmp_path, [{"width": 1440, "height": 900, "actions": [
+        ["eval", "before", PILLS, 100], ["eval", "lose", "window.__sc.statusFail=true;1", 2200],
+        ["eval", "lostMark", mark, 50], ["eval", "lost", PILLS, 50],
+        ["eval", "heal", "window.__sc.statusFail=false;1", 2200], ["eval", "backMark", mark, 50], ["eval", "back", PILLS, 50],
+    ]}])[0]
+    r = step["results"]
+    assert r["lostMark"] is True and r["backMark"] is False
+    assert [p["count"] for p in r["lost"]] == [p["count"] for p in r["before"]], "the last counts stay, said unconfirmed"
+    assert all(p["label"].endswith("compte non confirmé : Jarvis ne répond pas") for p in r["lost"]), r["lost"]
+    assert [p["label"] for p in r["back"]] == [p["label"] for p in r["before"]]
