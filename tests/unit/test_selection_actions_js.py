@@ -131,7 +131,7 @@ def test_hidden_list_names_six_then_counts_the_rest():
     assert out["note"] == "fantômes visibles"
     assert [r["id"] for r in out["rows"]][:2] == ["ghosts", "show-all"] and out["rows"][0]["checked"] is True
     assert len(out["rows"]) == 9 and out["rows"][-1] == {"id": "hidden-more", "label": "… et 3 autres", "status": True,
-                                                         "tone": "off"}
+                                                         "tone": "off", "icon": "eye_off"}
 
 
 def test_selection_commands_are_atomic_and_carry_no_payload():
@@ -170,3 +170,25 @@ def test_durable_source_is_a_file_or_a_registry_artifact():
         I.durableSourceOf(obj('b','window','window',{payload:{source_path:'C:/m.md'}})),
         I.durableSourceOf(obj('c','artifact','window'))];""")
     assert out == ["artifact", "file", None]
+
+
+def test_ranger_says_the_precise_reason_core_gives_for_an_object():
+    """QA S06 polish 6 (Slice 08) : la raison de l'objet (`backing.reason`) suit la phrase du code, dans la ligne
+    Ranger comme dans le rapport ; une raison déjà dite n'est pas répétée."""
+    out = _node("""
+      const s=state([obj('g','group','window')]);
+      const ready={status:'ready',board_active:true,objects:{g:{rangeable:false,code:'dossier_not_eligible',
+        message:'Cet objet ne se range pas dans le Dossier ; il reste sur le Board.',
+        reason:"un groupe n'est qu'un cadre : rangez ses objets un par un"}}};
+      const row=I.selectionActions(s,['g'],{hidden:0,boardId:'b',backing:ready}).find(r=>r.id==='ranger');
+      const report=I.rangerReport({results:[{object_id:'g',status:'refused',code:'dossier_not_eligible',
+        message:'Cet objet ne se range pas dans le Dossier ; il reste sur le Board.',
+        reason:"un groupe n'est qu'un cadre : rangez ses objets un par un"}]});
+      const same=I.selectionActions(s,['g'],{hidden:0,boardId:'b',backing:{status:'ready',board_active:true,
+        objects:{g:{rangeable:false,message:'Vide.',reason:'vide'}}}}).find(r=>r.id==='ranger');
+      return {row,report,same};""")
+    assert out["row"]["disabled"] is True
+    assert out["row"]["detail"] == ("Cet objet ne se range pas dans le Dossier ; il reste sur le Board. "
+                                    "Un groupe n'est qu'un cadre : rangez ses objets un par un.")
+    assert "Un groupe n'est qu'un cadre" in json.dumps(out["report"], ensure_ascii=False)
+    assert out["same"]["detail"] == "Vide."

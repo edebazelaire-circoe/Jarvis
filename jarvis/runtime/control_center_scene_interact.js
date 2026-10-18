@@ -1190,6 +1190,15 @@
     return null;
   }
 
+  /* Pourquoi un objet ne se range pas : la phrase du code, puis la raison précise de l'objet quand Core la donne
+     (« un groupe n'est qu'un cadre : rangez ses objets un par un » ; QA S06 polish 6, Slice 08). */
+  function whyNot(o){
+    const message=String((o&&o.message)||'non rangeable');
+    const reason=o&&typeof o.reason==='string'?o.reason.trim():'';
+    if(!reason||message.toLowerCase().includes(reason.toLowerCase()))return message;
+    return `${message} ${reason.charAt(0).toUpperCase()}${reason.slice(1)}${/[.!?]$/.test(reason)?'':'.'}`;
+  }
+
   /* Ce que dit la ligne Ranger, d'après l'aperçu `backing` de la page.
      `backing` : `{status:'idle'|'loading'|'ready'|'failed', board_active?,
      board_message?, message?, objects?: {id: {rangeable, code?, message?}}}`.
@@ -1212,7 +1221,7 @@
     const per=b.objects||{};
     const refused=ids.filter(id=>!(per[id]&&per[id].rangeable));
     const ok=ids.length-refused.length;
-    const first=refused.length?String((per[refused[0]]&&per[refused[0]].message)||'non rangeable'):'';
+    const first=refused.length?whyNot(per[refused[0]]):'';
     if(!ok)return {...row,disabled:true,note:'rien à ranger',
       detail:ids.length>1?`Aucun de ces objets ne se range : ${first}`:first};
     if(refused.length)return {...row,note:`${ok} sur ${ids.length}`,
@@ -1226,7 +1235,9 @@
      masqué : une ligne d'état qui le dit. */
   function hiddenRowOf(state,context){
     const hidden=Math.max(0,Number(context.hidden)||0);
-    if(!hidden)return {id:'hidden-none',label:'Aucun objet masqué',status:true,tone:'off'};
+    /* Une icône comme les autres lignes (Slice 08, QA S06 polish 4) : sans elle, le texte partait de la colonne
+       de la tuile et la ligne paraissait orpheline, mal alignée sous les autres à 600×800. */
+    if(!hidden)return {id:'hidden-none',label:'Aucun objet masqué',status:true,tone:'off',icon:'eye_off'};
     const list=state?hiddenObjects(state):[];
     const rows=[
       {id:'ghosts',act:'ghosts',label:'Voir en fantômes',toggle:true,checked:!!context.ghosts,note:'sans réafficher',
@@ -1235,7 +1246,7 @@
     ];
     for(const entry of list.slice(0,HIDDEN_LISTED))
       rows.push({id:`show:${entry.id}`,act:`show:${entry.id}`,label:`Réafficher « ${String(entry.title||entry.id).slice(0,40)} »`});
-    if(list.length>HIDDEN_LISTED)rows.push({id:'hidden-more',label:`… et ${list.length-HIDDEN_LISTED} autres`,status:true,tone:'off'});
+    if(list.length>HIDDEN_LISTED)rows.push({id:'hidden-more',label:`… et ${list.length-HIDDEN_LISTED} autres`,status:true,tone:'off',icon:'eye_off'});
     /* Libellé court (« Afficher les masqués (N) » ne tient pas dans une ligne de
        l'arc, coupé à 1280 et 1920) ; la phrase entière est le nom accessible. */
     return {id:'hidden',label:`Masqués (${hidden})`,icon:'eye',menu:true,
@@ -1254,13 +1265,13 @@
     const items=(ids||[]).map(id=>state&&state.objects.get(id)).filter(Boolean);
     const live=items.map(item=>item.object_id);
     const hiddenRow=hiddenRowOf(state,context);
-    if(!live.length)return [{id:'selection-none',label:'Aucun objet sélectionné',status:true,tone:'off',
+    if(!live.length)return [{id:'selection-none',label:'Aucun objet sélectionné',status:true,tone:'off',icon:'pointer',
       note:'cliquez un objet',detail:'Cliquez un objet (Ctrl : plusieurs), tracez un rectangle, ou Ctrl+Espace au clavier.'},hiddenRow];
     const out=[];
     const forms={};
     for(const item of items){const r=FORM_WORDS[item.representation]?item.representation:'point';forms[r]=(forms[r]||0)+1}
     const parts=Object.entries(forms).map(([r,n])=>plural(n,FORM_WORDS[r][0],FORM_WORDS[r][1]));
-    out.push({id:'selection-count',label:plural(live.length,'objet sélectionné','objets sélectionnés'),status:true,
+    out.push({id:'selection-count',label:plural(live.length,'objet sélectionné','objets sélectionnés'),status:true,icon:'pointer',
       note:parts.join(' · ')});
     out.push(rangerRow(live,context));
     const allHidden=items.every(item=>item.visibility==='hidden');
@@ -1300,7 +1311,7 @@
     const refused=results.filter(r=>r.status!=='stored');
     const lines=[];
     for(const r of kept)lines.push(`${name(r.object_id)} : ${r.message||'gardé dans le Dossier, mais toujours sur le Board.'}`);
-    for(const r of refused)lines.push(`${name(r.object_id)} : ${r.message||r.code||'refusé'}`);
+    for(const r of refused)lines.push(`${name(r.object_id)} : ${r.message||r.reason?whyNot(r):r.code||'refusé'}`);
     const head=[];
     if(removed.length)head.push(`${plural(removed.length,'objet rangé','objets rangés')} dans le Dossier`);
     if(kept.length)head.push(`${plural(kept.length,'gardé','gardés')} sans retrait`);

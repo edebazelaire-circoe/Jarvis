@@ -392,7 +392,7 @@ class DossierService:
         item = snapshot.get_object(object_id)
         if item is None or not item.active:
             return _Resolved(object_id, "refused", code=DossierCode.OBJECT_NOT_FOUND.value,
-                             reason="no active scene object has this id")
+                             reason="aucun objet actif de la scène ne porte cet identifiant")
         backing = classify_scene_object(item)
         if backing.kind is BackingKind.REFUSED:
             assert backing.code is not None
@@ -406,19 +406,19 @@ class DossierService:
                 if exc.code is not ArtifactErrorCode.ARTIFACT_NOT_FOUND:
                     raise
                 return _Resolved(object_id, "refused", code=DossierCode.SOURCE_MISSING.value,
-                                 reason="the registry Artifact no longer exists", item=item)
+                                 reason="l'Artifact du registre n'existe plus", item=item)
             return _Resolved(object_id, "artifact", ref=DossierEntryRef.artifact(backing.artifact_id), item=item)
         path = self._memory_path_of(board.board_id, backing.source_path)
         if path is None:
             return _Resolved(object_id, "refused", code=DossierCode.SOURCE_OUTSIDE_BOARD.value,
-                             reason="source_path is outside this board's memory", item=item)
+                             reason="le fichier lié est hors de la mémoire de ce Board", item=item)
         try:
             stat = await self._workspace.memory_stat(board.board_id, path=path.value)
         except BoardMemoryError as exc:
             if exc.code is not BoardMemoryErrorCode.MEMORY_NOT_FOUND:
                 raise
             return _Resolved(object_id, "refused", code=DossierCode.SOURCE_MISSING.value,
-                             reason="the bound memory file no longer exists", item=item)
+                             reason="le fichier lié n'existe plus", item=item)
         return _Resolved(object_id, "memory", ref=DossierEntryRef.memory(stat["entry"]["path"]), item=item)
 
     async def backing(self, board_id: str, object_ids: object) -> dict[str, Any]:

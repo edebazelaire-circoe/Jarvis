@@ -73,6 +73,18 @@ CALLS = "window.__sc.calls"
 OPEN_ROW = lambda row: ["click", f"row:{row}", f"#toolWheel .tw-item[data-tw-item='{row}']", 700]  # noqa: E731
 
 
+
+def _until(name: str, condition: str, ms: int = 8000) -> list:
+    """Attend une condition de la page (jamais une durée fixe seule) ; rend sa valeur finale."""
+    return ["eval", name, ("new Promise(r=>{const t0=Date.now();const f=()=>{let v;try{v=(" + condition + ")}catch(_){v=false}"
+                           f"if(v||Date.now()-t0>{ms})r(!!v);else setTimeout(f,50)}};f()}})"), 0]
+
+
+# La ligne Ranger a reçu l'aperçu `backing` (plus « vérification… ») : un clic n'agit qu'après.
+RANGER_READY = ("(()=>{const b=document.querySelector(\"#toolWheel .tw-item[data-tw-item='ranger']\");"
+                "return !!b&&!/vérification/.test(b.textContent)})()")
+
+
 def _shot(name: str, size: tuple[int, int]) -> list:
     if not EVIDENCE:
         return []
@@ -143,18 +155,22 @@ def test_ranger_a_mixed_selection_stores_what_it_can_and_explains_each_refusal(t
 def test_ranger_refused_whole_or_kept_without_removal_leaves_the_representation(tmp_path):
     kept = {**DOSSIER, "jobj_note": {"rangeable": True, "stored": {"archived": False, "code": "dossier_changed_meanwhile",
             "message": "Le contenu a changé pendant le rangement : la version rangée est gardée, l'objet reste sur le Board."}}}
+    # Slice 08 : instable sous charge (polish S07 QA 6) — les attentes fixes sont remplacées par des conditions
+    # de la page (aperçu reçu, notification affichée).
+    toast = "document.querySelectorAll('#toasts .toast').length>0"
     steps = _drive(tmp_path, [
         {"width": 1440, "height": 900, "seed": {**SEED, "rangerStatus": 409}, "actions": [
-            ["click", "pick", NODE.format("jobj_note"), 400], *OPEN_SELECTION, OPEN_ROW("ranger"),
-            ["eval", "drawn", DRAWN, 600], ["eval", "toasts", TOASTS, 50]]},
+            ["click", "pick", NODE.format("jobj_note"), 400], *OPEN_SELECTION, _until("ready", RANGER_READY),
+            OPEN_ROW("ranger"), _until("said", toast), ["eval", "drawn", DRAWN, 200], ["eval", "toasts", TOASTS, 50]]},
         {"width": 1440, "height": 900, "seed": {**SEED, "dossier": kept}, "actions": [
-            ["click", "pick", NODE.format("jobj_note"), 400], *OPEN_SELECTION, OPEN_ROW("ranger"),
-            ["eval", "drawn", DRAWN, 600], ["eval", "toasts", TOASTS, 50]]},
+            ["click", "pick", NODE.format("jobj_note"), 400], *OPEN_SELECTION, _until("ready", RANGER_READY),
+            OPEN_ROW("ranger"), _until("said", toast), ["eval", "drawn", DRAWN, 200], ["eval", "toasts", TOASTS, 50]]},
         {"width": 1440, "height": 900, "seed": {**SEED, "dossierActive": False}, "actions": [
-            ["click", "pick", NODE.format("jobj_note"), 400], *OPEN_SELECTION, ["eval", "rows", ROWS, 1000],
-            OPEN_ROW("ranger"), ["eval", "open", "JarvisToolWheel.isOpen()", 50]]},
+            ["click", "pick", NODE.format("jobj_note"), 400], *OPEN_SELECTION, _until("ready", RANGER_READY),
+            ["eval", "rows", ROWS, 100], OPEN_ROW("ranger"), ["eval", "open", "JarvisToolWheel.isOpen()", 50]]},
     ])
     whole, changed, inactive = (s["results"] for s in steps)
+    assert whole["ready"] and changed["ready"] and inactive["ready"] and whole["said"] and changed["said"]
     assert "jobj_note" in whole["drawn"]
     assert any("Ranger agit seulement sur le Board affiché" in t for t in whole["toasts"]), whole["toasts"]
     assert "jobj_note" in changed["drawn"]
@@ -249,6 +265,25 @@ def test_a_registry_window_is_read_from_the_registry(tmp_path):
     assert step["results"]["body"] == "Bonjour, ceci est la transcription du registre."
     assert f"GET /api/artifacts/{REG}" in step["calls"]
     _no_errors(step)
+
+
+def test_a_registry_image_fills_its_window(tmp_path):
+    """QA S06 polish 3 (Slice 08) : une capture d'écran du registre tenait dans une vignette d'environ 60×34 px
+    au milieu d'une fenêtre vide. L'image prend désormais la place de la fenêtre (proportions gardées)."""
+    image = "jart_" + "b" * 32
+    objects = [_obj("jobj_img", "window", rep="window", geometry={"x": -30, "y": -30, "w": 70, "h": 90},
+                    payload={"title": "Capture d'écran", "registry_artifact_id": image})]
+    registry = {image: {"artifact_id": image, "kind": "screenshot", "mime_type": "image/png", "has_payload": True}}
+    measure = (f"(()=>{{const n=document.querySelector('{NODE.format('jobj_img')}'),i=n&&n.querySelector('.sc-registry-img');"
+               "if(!i)return null;const a=n.getBoundingClientRect(),b=i.getBoundingClientRect();"
+               "const h=n.querySelector('.sc-head,.sc-title');const t=h?h.getBoundingClientRect().bottom-a.top:0;"
+               "return {nw:a.width,nh:a.height,head:t,iw:b.width,ih:b.height}})()")
+    step = _drive(tmp_path, [{"width": 1440, "height": 900, "seed": {"objects": objects, "dossier": {}, "registry": registry},
+                              "actions": [["eval", "box", measure, 900]]}])[0]
+    box = step["results"]["box"]
+    assert box, "l'image est dessinée"
+    # L'image prend la largeur de la fenêtre (avant : environ 61 px sur 315) ; le harnais remplace ses octets.
+    assert box["iw"] >= 0.8 * box["nw"] and box["ih"] >= 0.4 * (box["nh"] - box["head"]), box
 
 
 def test_keyboard_composes_a_selection_and_the_wheel_acts_on_it(tmp_path):

@@ -874,6 +874,11 @@ ${orbitKeyframes()}
    (molette, PageHaut/PageBas) au lieu d'être coupé sans recours. Barre fine et
    discrète, la même que la liste d'un artefact. */
 .sc-registry-img{display:block;max-width:100%;max-height:100%;object-fit:contain;border-radius:4px}
+/* L'image d'un Artifact du registre prend la place de la fenêtre (Slice 08, QA S06 polish 3 : une capture d'écran
+   tenait dans une vignette d'environ 60×34 px, le résumé d'un artefact étant borné à 38 % de la hauteur). */
+.sc-window .sc-summary.sc-registry-media,.sc-kind-artifact.sc-window .sc-summary.sc-registry-media{flex:1 1 auto;max-height:none;
+  display:flex;align-items:center;justify-content:center;white-space:normal}
+.sc-registry-media .sc-registry-img{width:100%;height:100%}
 .sc-summary{flex:1 1 auto;min-height:0;padding:0 13px 10px;font-size:12px;line-height:1.5;color:#b3cbd6;white-space:pre-wrap;overflow:hidden auto;overflow-wrap:anywhere;
   overscroll-behavior:contain;scrollbar-width:thin;scrollbar-color:rgba(151,191,209,.28) transparent;
   -webkit-mask-image:linear-gradient(#000 calc(100% - 22px),transparent);mask-image:linear-gradient(#000 calc(100% - 22px),transparent)}
@@ -1827,6 +1832,7 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
       const img=document.createElement('img');
       img.className='sc-registry-img';img.alt=String(title||'Image du Dossier');img.loading='lazy';
       img.src=`/api/artifacts/${encodeURIComponent(id)}/payload`;
+      body.classList.add('sc-registry-media');
       body.append(img);
     }else if(view.text){
       appendBlocks(body,L.markdownBlocks(view.text+(view.truncated?' …':'')));
@@ -3575,7 +3581,8 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
         }else{
           const objects={};
           for(const o of body.objects)if(o&&o.object_id)
-            objects[o.object_id]={rangeable:o.rangeable===true,backing:o.backing||null,code:o.code||null,message:o.message||''};
+            objects[o.object_id]={rangeable:o.rangeable===true,backing:o.backing||null,code:o.code||null,message:o.message||'',
+              reason:typeof o.reason==='string'?o.reason:''};
           next={key,status:'ready',board_active:body.board_active!==false,board_message:body.board_message||'',objects};
           consoleLog('info','scene.selection_backing',{count:ids.length,
             rangeable:Object.values(objects).filter(o=>o.rangeable).length,board_active:next.board_active,ms:Date.now()-started});
