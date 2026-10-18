@@ -53,7 +53,7 @@
     illegal_transition:'Pas possible maintenant.',empty_score:'La partition est vide.',role_invalid:'Ce rôle ne convient pas.',
   });
   const PROBLEMS=Object.freeze({
-    mode_restore_failed:'Le mode d\'interaction n\'a pas pu être rétabli : choisissez-le dans le sélecteur de mode.',
+    mode_restore_failed:'Le mode d\'interaction n\'a pas pu être rétabli : basculez sur un autre Board puis revenez sur celui-ci pour réappliquer le mode de son type.',
     aux_retire_failed:'Une ressource annexe n\'a pas pu être retirée.',
     stage_release_failed:'La surface de lecture n\'a pas pu être libérée.',
     aux_stage_failed:'La ressource annexe n\'a pas pu s\'afficher.',score_problems:'La partition ne correspond plus aux scènes : corrigez-la.',

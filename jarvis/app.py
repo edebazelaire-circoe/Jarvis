@@ -1656,9 +1656,9 @@ async def _run_control_center_v2() -> int:
         CoreSceneTransport(host=settings.core_host, port=settings.core_port, token_file=settings.token_file),
         journal=journal,
     )
-    # Mode d'interaction (Slice 02) : Core possède la valeur effective, ce
-    # Control Center la préférence enregistrée. Sa propre connexion, pour qu'un
-    # jeton périmé ici ne ferme pas celle du panneau Agents.
+    # Mode d'interaction : Core possède la valeur effective, dérivée du type du
+    # Board actif ; ce Control Center la lit pour l'afficher (Slice 01b). Sa
+    # propre connexion, pour qu'un jeton périmé ici ne ferme pas celle du panneau Agents.
     from jarvis.runtime.interaction_mode_view import CoreInteractionModeTransport, CoreInteractionModeView
 
     interaction_mode_view = CoreInteractionModeView(

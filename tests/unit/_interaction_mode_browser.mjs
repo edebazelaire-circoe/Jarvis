@@ -20,7 +20,7 @@
    Une etape peut porter `actions`, executees dans l'ordre apres le
    chargement ; chacune pousse son resultat dans `step.actions` :
      {"a":"write","file":".voice_presentation","value":{...}|null}
-     {"a":"post","path":"/api/interaction-mode","body":{...}}   -> statut HTTP
+     {"a":"post","path":"/__test/board-mode","body":{...}}      -> statut HTTP
      {"a":"wait","expr":"...","timeoutMs":3000}                 -> {ok,ms}
      {"a":"click","selector":"..."}      (vrai clic souris, au centre)
      {"a":"focus","selector":"..."}
@@ -145,17 +145,15 @@ const READ=`(()=>{
   const hintNode=document.getElementById('interactionModeHint');
   seen.chooserHint=hintNode?hintNode.textContent:null;
   const mark=host&&host.querySelector('.im-mark');
-  const wait=host&&host.querySelector('.im-wait');
   const button=host&&host.querySelector('.im-btn');
   const pop=host&&host.querySelector('.im-pop');
-  /* Le halo et le balayage vivent sur des pseudo-elements : c'est le second
+  /* Le halo vit sur un pseudo-element : c'est le second
      argument de getComputedStyle qui les atteint, et c'est precisement ce
      qu'une lecture de la feuille ne peut pas faire. */
   seen.motion={
     halo:mark?getComputedStyle(mark,'::after').animation:null,
     haloOpacity:mark?getComputedStyle(mark,'::after').opacity:null,
     glow:button?getComputedStyle(button).boxShadow:null,
-    sweep:wait?getComputedStyle(wait,'::after').animation:null,
     popAnimation:pop?getComputedStyle(pop).animation:null,
     buttonTransition:button?getComputedStyle(button).transition:null,
   };

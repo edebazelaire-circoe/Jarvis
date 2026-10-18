@@ -777,14 +777,17 @@ the mode of the active Board's type (`source="board_restore"`, *Board type*).
 Every switch requests the target's (`source="board_switch"`). `BoardService`
 does not listen to `InteractionModeService` and writes no mode anywhere.
 
-**Accepted intermediate state (Slice 01a → 01b).** The legacy writers
-`POST /api/interaction-mode` (Control Center, HUD chooser),
-`POST /v1/interaction-mode` (any source) and `settings_set("interaction_mode")`
-can still change the **live** mode; nothing persists it, and the next switch or
-Core start re-applies the Board type's mode. The Control Center's global replay
-(`startup` / `core_restart`) never reaches a Core with Boards: any valid active
-Board owns its mode (`_core_boards_own_interaction_mode`), the replay is said
-retired once (`interaction.mode.replay_retired`). Slice 01b retires these writers.
+**No other writer (Slice 01b).** `POST /v1/interaction-mode` (any source),
+`POST /api/interaction-mode`, `settings_set("interaction_mode")` and the HUD all
+refuse with `interaction_mode_derived` and change nothing; the Control Center's
+global replay is deleted. The only other in-process writer is a Presentation
+Studio run, transient and restored to the Board type's mode
+([interaction-mode.md](interaction-mode.md#persistence-owner--none-the-mode-is-derived-from-the-board-type)).
+A switch to the Board already active (`core.board.switch_noop`, with `mode` and
+`mode_source`) re-applies the type's mode (idempotent): a way back after a failed
+Studio restore, which also stops a Studio run holding a transient mode there. The Control
+Center reads the Board type's mode once per status beat (`board_mode` of
+the `interaction_mode` block of `/api/status`, REUNION included) and writes none.
 
 Diagnostics (`runtime/trace.jsonl`): `core.board.default_created`,
 `core.board.default_absent` (warning), `core.board.created` (with

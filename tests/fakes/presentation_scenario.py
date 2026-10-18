@@ -184,7 +184,8 @@ class ScenarioCore(FakeCore):
         return dict(self.mode_state)
 
     async def set_interaction_mode(self, mode: str, *, source: str | None = None) -> dict[str, Any]:
-        """Core's mode service: new revision, then `interaction.mode.changed` on the bus."""
+        """Core's in-process mode service (`InteractionModeService.request`, a Board switch in production):
+        new revision, then `interaction.mode.changed` on the bus. Not a protocol call: none exists (Slice 01b)."""
 
         del source
         self.mode_state = {**self.mode_state, "mode": mode, "revision": self.mode_state["revision"] + 1}

@@ -117,15 +117,17 @@ async def test_a_damaged_row_is_a_500_with_its_own_code(stack):
     assert "work_boards row 'default'" in body["error"]["message"]
 
 
-async def test_a_mode_change_over_the_protocol_is_live_only_and_never_lands_on_the_board(stack):
-    """État intermédiaire 01a : `POST /v1/interaction-mode` ne change que le mode vivant."""
+async def test_a_mode_change_over_the_protocol_is_refused_and_nothing_moves(stack):
+    """Slice 01b : `POST /v1/interaction-mode` refuse toute demande ; ni le mode vivant ni le Board ne bougent."""
 
-    core, client, _ = stack
+    core, client, base = stack
     before = (await client.active_board())["board"]
-    await client.set_interaction_mode("presentation", source="control_center")
+    status, body = await _raw("POST", base + "/v1/interaction-mode",
+                              json={"mode": "presentation", "source": "control_center"})
+    assert status == 409 and body["error"]["code"] == "interaction_mode_derived"
     board = (await client.active_board())["board"]
     assert board == before and "interaction_mode" not in board and board["board_kind"] == "assistant"
-    assert core.interaction_mode.mode.value == "presentation"
+    assert core.interaction_mode.mode.value == "assistant" and core.interaction_mode.revision == 0
 
 
 async def test_board_kind_is_chosen_on_create_and_a_patch_carrying_it_is_refused(stack):

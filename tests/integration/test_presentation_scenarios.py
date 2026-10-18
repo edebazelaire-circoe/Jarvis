@@ -558,7 +558,8 @@ async def test_no_planted_room_phrase_in_any_durable_sink(tmp_path) -> None:
     try:
         async with core_stack(tmp_path / "core", backend, diagnostics=core_journal) as (core, client, port):
             conversation = (await client.create_conversation())["id"]
-            await client.set_interaction_mode("presentation", source="test")
+            # The mode is Core's, set in process (Board switch / Studio run): no protocol write exists (Slice 01b).
+            await core.interaction_mode.request("presentation", source="test")
             rig = await build_rig(
                 tmp_path / "voice", mode=InteractionMode.PRESENTATION, core=client,
                 conversation_id=conversation,
@@ -579,7 +580,9 @@ async def test_no_planted_room_phrase_in_any_durable_sink(tmp_path) -> None:
                 await until(lambda: agent.process.stdin.written, timeout=5.0)
                 await idle(core)
                 await until(lambda: rig.session.spoken, timeout=5.0)
-                await rig.set_mode(InteractionMode.ASSISTANT)
+                await core.interaction_mode.request("assistant", source="test")
+                await until(lambda: rig.observer.mode is InteractionMode.ASSISTANT, timeout=5.0)
+                await rig.settle()
                 await rig.forwarder.flush()
                 during = _sinks_containing(tmp_path, PLANTED)
             finally:

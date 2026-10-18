@@ -1139,7 +1139,7 @@ const JarvisWorkspaceCore=(function(){
         +`<dt>Contenu</dt><dd>${m.error?`<span class="wsp-bad">${esc(m.message||m.error)}</span>`:m.exists?`${plural(Number(m.files)||0,'fichier','fichiers')}, ${plural(Number(m.directories)||0,'dossier','dossiers')}, ${formatBytes(m.bytes)}${m.truncated?' (comptage borné)':''}`:'pas encore de mémoire'}</dd>`
         +`<dt>summary.md</dt><dd>${m.summary&&m.summary.present?`présent, ${formatBytes(m.summary.size)}, modifié ${formatWhen(m.summary.modified_at)}`:'absent'}</dd>`
         +`<dt>Artefacts liés</dt><dd>${Number(d.artifacts&&d.artifacts.linked)||0}</dd>`
-        +`<dt>Créé</dt><dd>${when(b.created_at)}</dd><dt>Modifié</dt><dd>${when(b.updated_at)}</dd><dt>Mode</dt><dd>${code(b.interaction_mode)}</dd></dl>`
+        +`<dt>Créé</dt><dd>${when(b.created_at)}</dd><dt>Modifié</dt><dd>${when(b.updated_at)}</dd></dl>`
         +`<div class="wsp-actions">${btn('goto',{view:'memory',board:b.board_id},'Ouvrir la mémoire')}${btn('goto',{view:'artifacts',scope:'board',id:b.board_id},'Artefacts liés')}${btn('goto',{view:'relations',scope:'board',id:b.board_id},'Relations')}${switchButtonHtml(S,b)}</div>`
         +`<section class="wsp-sect"><h4>Liaisons dans les Sessions <span class="wsp-n">${list(d.sessions&&d.sessions.items).length}</span></h4>`
         +(bindings?`<div class="wsp-scroll"><table class="catalog-table wsp-table"><thead><tr><th>Session</th><th>État</th><th>Agent</th><th>Conversation</th><th>CLI</th><th>Session d’agent</th><th>Actif dans la Session</th></tr></thead><tbody>${bindings}</tbody></table></div>`:'<p class="wsp-none">Jamais lié à une Session.</p>')

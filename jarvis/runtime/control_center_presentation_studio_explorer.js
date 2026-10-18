@@ -1823,7 +1823,7 @@
       renderAll();schedulePreview();
       const problems=(ended&&ended.problems||[]).map(code=>(root.JarvisStudioPlayerCore&&root.JarvisStudioPlayerCore.PROBLEMS[code])||`Problème : ${code}`);
       if(problems.length)say('failed',`Présentation arrêtée. ${problems.join(' ')}`);
-      else say('info',ended&&ended.reason==='mode_changed_by_user'?'Présentation arrêtée : mode changé par vous.':ended&&ended.reason==='crashed'?
+      else say('info',ended&&ended.reason==='mode_changed_by_user'?'Présentation arrêtée : le mode a changé avec le Board actif.':ended&&ended.reason==='crashed'?
         'Présentation interrompue par une erreur de Core.':'Présentation terminée : la vidéo est de nouveau à vous.');
       log('run_left',{reason:ended&&ended.reason||null});
     }

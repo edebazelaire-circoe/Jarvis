@@ -27,12 +27,19 @@ Slice 03, Core ouvre une Session à chaque démarrage sur le dernier Board actif
 (`jarvis/core/session_manager.py`). Un second pointeur serait une deuxième
 vérité ; celui-ci est celle que 03/04b écrivent.
 
-**Écrivains hérités du mode vivant (état intermédiaire Slice 01a → 01b).**
-`POST /v1/interaction-mode` (Control Center, `settings_set`, sélecteur du HUD)
-peut encore changer le mode **vivant** : rien ne l'enregistre, et la prochaine
-bascule ou le prochain démarrage de Core réappliquent le mode du type. Le
-rejeu global du Control Center ne part plus vers un Core à Boards (tout Board
-valide possède son mode). La Slice 01b retire ces écrivains.
+**Aucun autre écrivain du mode (Slice 01b).** `POST /v1/interaction-mode`
+refuse toute demande (`interaction_mode_derived`), le Control Center, le
+réglage MCP et le HUD n'écrivent plus rien. Le seul autre écrivain est une
+lecture du Presentation Studio (`source="presentation_studio_run"`, en
+processus), transitoire : elle restaure le mode d'avant, c'est-à-dire celui du
+type du Board, et une bascule pendant la lecture l'emporte (`foreign_change`).
+Une bascule vers le Board **déjà actif** (`switch_noop`, par le protocole ou
+`board_switch` du cerveau ; le contrôle Boards de la page n'en envoie pas)
+réapplique quand même le mode de son type (`source="board_switch"`,
+idempotent : rien ne bouge s'il est déjà en vigueur). C'est une reprise de plus
+quand une restauration du Studio a échoué (`mode_restore_failed`) ; le prix,
+assumé, est qu'elle arrête une lecture du Studio qui tenait un mode transitoire
+sur ce Board.
 
 **Bascule de Board (Slice 04b, `switch`).** Transaction sous
 `SpeechAuthority.lock` (le même que la nouvelle Session de `SessionManager`) :
@@ -453,8 +460,15 @@ class BoardService:
         if board.status is BoardStatus.ARCHIVED:
             raise BoardError(BoardErrorCode.BOARD_ARCHIVED, f"board {board.board_id} is archived")
         if board.board_id == session.active_board_id:
-            self._trace("core.board.switch_noop", "Bascule vers le Board déjà actif : rien à faire",
-                        data={"board_id": board.board_id, "origin": origin})
+            # Le mode du type est réappliqué (en-tête, *Aucun autre écrivain du mode*) : c'est
+            # la reprise d'une restauration du Studio ratée ; idempotent sinon.
+            try:
+                await self._request_board_mode(board, source=BOARD_SWITCH_SOURCE)
+            except InteractionModeError:
+                pass  # argued: traced at error level as `apply_failed`; a no-op switch has nothing to roll back
+            self._trace("core.board.switch_noop", "Bascule vers le Board déjà actif : mode de son type réappliqué",
+                        data={"board_id": board.board_id, "origin": origin,
+                              "mode": self._modes.state.mode.value, "mode_source": self._modes.state.source})
             return SwitchResult(session, previous, board, previous.board_id, changed=False)
         target = await sessions.binding_for(session.jarvis_session_id, board.board_id)
         self._trace("core.board.switch_started", "Bascule de Board demandée",

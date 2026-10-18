@@ -8,10 +8,10 @@ contract". Pure vocabulary: `jarvis/domain/interaction_mode.py`,
 conformance suite `tests/unit/test_interaction_mode_contract.py`. No I/O, no
 persistence, no API, no UI, no prompt, no audio.
 
-**Slice 02 — the control plane**, the last section. Who persists the
-preference, who owns the live effective value, the routes and the event, and
-why a mode change never restarts Voice. Still no UI selector (Slice 03) and no
-Presentation behaviour (Slices 06+).
+**Slice 02 — the control plane**, the last section. Who owns the live effective
+value, where the mode comes from (since Slice 01b of
+`jarvis-board-ui-wheel-dossier-refactor`: **the active Board's type, and nothing
+else**), the routes and the event, and why a mode change never restarts Voice.
 
 The **interaction mode** says how Jarvis behaves. It is not how Jarvis is
 wired, and it is not who is allowed to speak to him. Those are two other axes
@@ -37,7 +37,7 @@ cannot do it.
 | `meeting` | `REUNION` | **planned** | `silent` |
 
 `assistant` is the default, and it is the regression boundary (decision 14):
-until a mode has been chosen explicitly *and* readably, Jarvis behaves exactly
+unless the active Board's type designates another mode, Jarvis behaves exactly
 as before.
 
 `InteractionModeStatus{READY, PLANNED}` reuses the vocabulary of
@@ -82,16 +82,15 @@ invented.
   stable code `interaction_mode_not_implemented`. A user who clicks `REUNION`
   reads why nothing happened instead of silently getting another mode.
 - `behaving_interaction_mode(value)` — the **behaviour** reading. Total and
-  silent: a `meeting` left on disk stays known to `stored_interaction_mode` —
-  so an interface still shows REUNION checked — but produces assistant
-  behaviour here. It never raises and never runs meeting behaviour, because
-  there is none.
+  silent: a Réunion Board designates `meeting` — so an interface still shows
+  REUNION as the Board type's mode — but that produces assistant behaviour
+  here. It never raises and never runs meeting behaviour, because there is none.
 
 The two readings are named apart on purpose. They differ on exactly one input,
 `meeting`, and that is the input where choosing wrong is expensive: feeding a
 display from `behaving_interaction_mode` would erase REUNION from the interface,
-which is precisely what decision 02 forbids. `stored_` is what the user chose,
-`behaving_` is what actually runs.
+which is precisely what decision 02 forbids. `stored_` is what a value
+designates, `behaving_` is what actually runs.
 
 ## Output disposition
 
@@ -243,16 +242,16 @@ admits, why a preamble never fires in Presentation, and how a turn that
 completed without a word is told apart from a turn that died —
 [presentation-response-policy.md](presentation-response-policy.md).
 
-## Control plane (Slice 02)
+## Control plane (Slice 02, derived since Slice 01b)
 
-Slice 01 gave the vocabulary; this is what makes it live. Three owners, one
-effective value, and deliberately no fourth copy anywhere.
+Slice 01 gave the vocabulary; this is what makes it live. One owner of the
+effective value, one source of the mode, and deliberately no copy anywhere.
 
 | Owner | What it owns | Where |
 | --- | --- | --- |
 | Core | the **effective live mode** and its **revision** | `jarvis/core/interaction_mode.py` |
 | Core, per Board | nothing stored: the active **Board type** designates the mode (schema v9) | `jarvis/core/board_service.py`, `board_kind` of `work_boards.data` |
-| Control Center | the **legacy global preference**: no-Board fallback only | `jarvis/runtime/interaction_mode_settings.py` |
+| Control Center | nothing: a **read-only display** of Core's value and of the Board type's mode | `jarvis/runtime/control_center.py`, `jarvis/runtime/interaction_mode_view.py` |
 | Voice | a read-only **observation** of Core's value | `jarvis/runtime/interaction_mode_observer.py` |
 
 Conformance suites: `tests/unit/test_interaction_mode_control_plane.py` and
@@ -260,104 +259,75 @@ Conformance suites: `tests/unit/test_interaction_mode_control_plane.py` and
 
 ### Persistence owner — none: the mode is derived from the Board type
 
-**Since the fixed Board type (Slice 01a of `jarvis-board-ui-wheel-dossier-refactor`,
-schema v9), no mode is persisted anywhere for a Core with Boards**
-([boards.md](boards.md#board-type)). A Board has one fixed type, chosen at
-creation (`board_kind`: `assistant`, `presentation`, `meeting`); the mode it
-designates is `board_kind_mode(kind)`, and the behaviour that runs is
-`behaving_interaction_mode` of it (a Réunion Board behaves as assistant, the
-trace says `meeting_planned`). `BoardService` requests that mode through the
-same strict `request()` at Core start (`source="board_restore"`) and on every
-Board switch (`source="board_switch"`); it no longer listens to
-`InteractionModeService` and writes nothing. The v9 migration turned every
-stored per-Board mode into the Board's type once (rules in
-[boards.md](boards.md#persistence)).
+**No mode is persisted anywhere** (Slice 01a of
+`jarvis-board-ui-wheel-dossier-refactor`, schema v9; [boards.md](boards.md#board-type)).
+A Board has one fixed type, chosen at creation (`board_kind`: `assistant`,
+`presentation`, `meeting`); the mode it designates is `board_kind_mode(kind)`,
+and the behaviour that runs is `behaving_interaction_mode` of it (a Réunion
+Board behaves as assistant, the trace says `meeting_planned`). `BoardService`
+requests that mode through the strict `request()` at Core start
+(`source="board_restore"`) and on every Board switch (`source="board_switch"`).
+The v9 migration turned every stored per-Board mode into the Board's type once
+(rules in [boards.md](boards.md#persistence)).
 
-**Accepted intermediate state until Slice 01b.** The legacy writers
-(`POST /api/interaction-mode` behind the HUD chooser, `POST /v1/interaction-mode`
-with any source, `settings_set("interaction_mode")`) still change the **live**
-mode. Nothing persists that change, and the next Board switch or Core start
-re-applies the Board type's mode (tests: `test_board_service.py`,
-`test_board_switch.py`, `test_board_session_e2e.py`). Slice 01b retires them.
+**Writers (Slice 01b).** There are exactly two, both in Core's process:
 
-The Control Center's global setting below **stays** only as the no-Board
-fallback:
+| Writer | Source | Lifetime |
+| --- | --- | --- |
+| `BoardService` | `board_restore` (Core start), `board_switch` (every switch) | the mode of the active Board's type |
+| Presentation Studio run | `presentation_studio_run`, in process (`presentation_studio_playback.py` › `start` / `_restore_mode`) | **transient**: entered at run start, restored to the mode held before the run — the Board type's — at its end ([presentation-studio.md](presentation-studio.md#playback-roles-and-speech-authority-level-3-slice-01c-decision-a)) |
 
-- **retired once Core has Boards.** The Control Center asks Core
-  `GET /v1/boards/active` before any replay and before writing the global key.
-  Any active Board with a valid `board_kind` owns the mode: no replay
-  (`interaction.mode.replay_retired`, said once per process), no global write.
-  A Board without a valid type (an out-of-contract answer) is undetermined:
-  said (`interaction.mode.board_unknown`, `invalid_board_snapshot`, warning) and
-  nothing is replayed. The « stored » mode the page shows is the active Board
-  type's (`_board_stored_mode`), REUNION included.
-- **no-Board fallback.** Only a Core without Boards still replays the global
-  value at revision 0 (sources `startup` / `core_restart`, `save_retry` for a
-  click delivered late) and has the global key written by a click.
-  Legacy note: [legacy/voice-conversation-pointer.md](legacy/voice-conversation-pointer.md).
+Every former outside writer **refuses with the same stable code and sentence**
+(`INTERACTION_MODE_DERIVED` / `INTERACTION_MODE_DERIVED_MESSAGE`,
+`jarvis/domain/interaction_mode.py`): « Le mode d'interaction suit le type du
+Board actif : il ne se règle plus à part. Pour présenter, ouvrez ou créez un
+Board Présentation ; pour revenir au mode simple, ouvrez un Board Assistant.
+Rien n'a été changé. »
 
-The legacy global preference lives under its own root key in
-`runtime/control-center-settings.json`:
+| Former writer | Answer now |
+| --- | --- |
+| `POST /v1/interaction-mode` (Core), any source, `presentation_studio_run` included | 409 `{"error": {"code": "interaction_mode_derived", …}}`, trace `interaction.mode.refused` (warning); `LocalCoreClient` has no write method |
+| `POST /api/interaction-mode` (Control Center) | 409, `X-Jarvis-Error-Code: interaction_mode_derived`, the sentence as body, journal `interaction.mode.refused` (warning); nothing written, nothing asked of Core |
+| `settings_set("interaction_mode", …)` (`jarvis-console` MCP) | `interaction_mode_derived`, the sentence plus the Board tools to use; journal `settings.tool_refused` |
+| the bottom-left HUD chooser | sends nothing; explains in place (see *The Control Center HUD* below) |
 
-```json
-"interaction_mode": { "schema_version": 1, "mode": "presentation" }
-```
+The routes stay so that a page, tool or client of an older version reads a
+named refusal instead of a 404 or 405.
 
-- **Its own key and its own apply path.** It is never written through
-  `ControlCenter._apply_voice`, whose first branch is a three-way mutually
-  exclusive arm that *deletes* `voice_architecture`; an axis routed through it
-  would inherit that exclusion and a `brain_compatibility` toggle would silently
-  erase the mode. It is likewise absent from
-  `voice_settings_schema.PERSISTABLE_OPTION_IDS`, the 47-entry allow-list, which
-  is exactly why it has a route of its own instead.
-- **Never a key a voice-architecture value could land in.**
-  `VoiceArchitectureId.SIMPLE.name` is the string `"SIMPLE"`, which is also
-  `InteractionMode.ASSISTANT.label`. The stored value is an internal mode value
-  read through `parse_interaction_mode` — the door that refuses `simple` — and
-  never through the label door.
-- `load()` is the **display** reading (`stored_interaction_mode`): a stored
-  `meeting` survives, so the interface keeps showing REUNION checked.
-  `behaving()` is the **behaviour** reading; it is what gets sent to Core.
-- Missing, mistyped, empty, unknown, or written under a foreign
-  `schema_version`: the default, `assistant`, and Jarvis starts. `inspect()` and
-  `describe()` separate "default because new" from "default because unreadable",
-  and `stored_value` keeps the raw value visible instead of losing it silently.
-  A foreign block is **not** archived — there is a single word at stake, against
-  a whole archival mechanism to maintain — but it is stated, on screen and once
-  per process in the journal (`interaction.mode.foreign_version`).
+**The legacy global key.** An older `runtime/control-center-settings.json` may
+still carry `"interaction_mode": {"schema_version": 1, "mode": …}`. It is **left
+in the file** (no destructive cleanup of a user file) and is **neither read nor
+written** by anything: not the status, not `/api/settings`, not a replay. The
+module that owned it (`interaction_mode_settings.py`) and the Control Center's
+replay (`startup`, `core_restart`, `save_retry`, `interaction.mode.replay_retired`)
+are deleted. A Core without Boards (older than the board-session handoff) keeps
+its default, assistant: nothing replays a mode to it any more.
 
-Writing is strict, with stable codes carried in `X-Jarvis-Error-Code`:
-`interaction_mode_bad_payload`, `interaction_mode_missing`,
-`interaction_mode_unknown`, `interaction_mode_unknown_field`,
-`interaction_mode_schema_version_unsupported`, and
-`interaction_mode_not_implemented` for REUNION (409, not 400: the request is
-well formed and the mode exists — it is the behaviour that does not).
+**A switch to the Board already active re-applies its type's mode**
+(`switch_noop`, `board_service.py`, `source="board_switch"`; idempotent when it
+is already in force). With the outside writers gone, the live mode can differ
+from the Board type only during a Studio run or after a failed Studio restore
+(`mode_restore_failed`): the no-op switch (sent by the protocol or the brain's
+`board_switch`; the page's Boards control sends none) is one more way back, at
+the accepted cost of stopping a Studio run that held a transient mode on that
+Board. The `switch_noop` trace carries the resulting `mode` and `mode_source`.
 
 ### Live-truth owner — Core
 
 `InteractionModeService` holds one `InteractionModeState{mode, revision, source,
 changed_at}`. Nothing is persisted there: an effective mode is a fact of this
-process's life, and the preference that outlives it belongs to the active
-Board (`BoardService`, above), the Control Center's global key being only its
-migration input.
+process's life, derived from the active Board's type (`BoardService`, above).
 
-- `request(value, source)` is the **explicit** path. An unreadable value is an
-  error (`interaction_mode_unknown`), never a silent fallback; REUNION is
-  refused by Slice 01's `ensure_activatable`.
-- `request()` is the **only** entry point, and it is strict. A tolerant twin
-  lived here briefly and had no caller: the Control Center reads and normalises
-  the setting at home, so Core never sees the raw value from disk. Tolerance
-  therefore belongs to the owner of the persistence, and it is the Control
-  Center that says a setting was unreadable (`interaction.mode.defaulted`, code
-  `interaction_mode_unreadable`) — otherwise "started in SIMPLE" and "its
-  setting was corrupt" leave the same trace, and the second is a failure. Two
-  places for the same indulgence, one of them unreachable, was a promise
-  nothing kept.
-- The **disposition** (`applied` / `unchanged`) travels back with the answer to
-  a `POST`, and it is what the Control Center journals against. Comparing two
-  stored preferences instead would count a change Core never made: the
-  preference and the live value can legitimately differ, for instance after a
-  direct protocol call.
+- `request(value, source)` is the **explicit, in-process** path, called by
+  `BoardService` and the Studio only. An unreadable value is an error
+  (`interaction_mode_unknown`), never a silent fallback; REUNION is refused by
+  Slice 01's `ensure_activatable`. It returns the state and a **disposition**
+  (`applied` / `unchanged`), which `BoardService` traces.
+- `request()` is the **only** entry point, and it is strict; no tolerant twin.
+- `refuse_external_request(value, source)` is what `POST /v1/interaction-mode`
+  calls: it traces `interaction.mode.refused` (`interaction_mode_derived`, the
+  received value and source bounded to 64 characters) and returns the error the
+  route serialises. It changes nothing.
 - One `asyncio.Lock` serialises every change, so concurrent requests produce one
   revision per real change. **Idempotent**: re-requesting the current mode bumps
   nothing and publishes nothing. The revision starts at 0 (nobody has asked
@@ -413,21 +383,26 @@ migration input.
 
 | Route | Owner | Meaning |
 | --- | --- | --- |
-| `GET /v1/interaction-mode` | Core | effective mode, revision, advertised modes |
-| `POST /v1/interaction-mode` | Core | request a mode; 409 + `interaction_mode_not_implemented` for REUNION, 400 + `interaction_mode_unknown` otherwise |
-| `GET /api/interaction-mode` | Control Center | stored preference + `effective` block read from Core |
-| `POST /api/interaction-mode` | Control Center | persist the preference, then apply it live |
-| `GET /api/status` | Control Center | `interaction_mode`: effective value, revision, `stored`/`stored_label`, `modes` |
-| `GET /api/settings` | Control Center | `interaction_mode`: the stored preference only |
+| `GET /v1/interaction-mode` | Core | effective mode, revision, epoch, source, advertised modes |
+| `POST /v1/interaction-mode` | Core | **always** 409 `interaction_mode_derived` (Slice 01b), whatever the body or source |
+| `GET /api/interaction-mode` | Control Center | the same block as `interaction_mode` in `/api/status` (read-only) |
+| `POST /api/interaction-mode` | Control Center | **always** 409 `interaction_mode_derived` (Slice 01b); nothing written |
+| `GET /api/status` | Control Center | `interaction_mode`: `mode`, `label`, `revision`, `epoch`, `source` (`core` or `local`), `core_reachable`, `error`, `board_mode` / `board_mode_label`, `modes` |
+
+`/api/settings` carries no `interaction_mode` block: the mode is not a setting.
 
 The event is `interaction.mode.changed` on `CoreEventBus`, therefore relayed as
-is by `/v1/events`, payload `{mode, label, revision, source, changed_at, modes}`.
+is by `/v1/events`, payload `{mode, label, revision, epoch, source, changed_at}`.
 
-Both the effective value and the stored preference appear in `/api/status`, and
-they are named apart. They differ on exactly one input — a stored `meeting`,
-displayable and never effective — and publishing only one of them would either
-erase REUNION from the interface (decision 02) or make it look as though it
-behaves (decision 14).
+Both the effective value and the Board type's mode appear in `/api/status`, and
+they are named apart (`mode` vs `board_mode`). They differ on a Réunion Board —
+`meeting`, displayable and never effective — and during a Studio run;
+publishing only one of them would either erase REUNION from the interface
+(decision 02) or make it look as though it behaves (decision 14). `board_mode`
+is `null` when the active Board cannot be read (`interaction.mode.board_unknown`,
+throttled) or the Control Center knows no Core. When Core is unreachable, the
+block is the named local fallback (`source: "local"`, `core_reachable: false`,
+`revision: null`): the behaviour of `board_mode` when it is known, else assistant.
 
 ### No restart (decision D15)
 
@@ -482,11 +457,11 @@ voice architecture, legacy included.
   epoch/revision guard turns the second into a no-op, so listeners are called
   once.
 
-Consequence: choosing PRESENTATION in the HUD while Jarvis is idle reaches
+Consequence: switching to a Présentation Board while Jarvis is idle reaches
 `PresentationCoordinator.observe_mode` at once, and the PRESENTATION session
-(and its single microphone owner) opens without a wake. Returning to SIMPLE
-closes it and hands the microphone back to the wake stack (the resting detector,
-Porcupine or openWakeWord, reopens its own stream).
+(and its single microphone owner) opens without a wake. Switching back to an
+Assistant Board closes it and hands the microphone back to the wake stack (the
+resting detector, Porcupine or openWakeWord, reopens its own stream).
 
 **PRESENTATION requires a continuous voice architecture whose answers pass
 through JARVIS: `continuous_brain`, SIMPLE or FRONT_BRAIN.** The addressed turn
@@ -522,9 +497,9 @@ constructed, and it travels in both `GET /v1/interaction-mode` and
 
 - **different epoch, or none at all** (an older Core that does not send one):
   the state is taken **unconditionally** and the revision floor restarts from
-  it. The bias is deliberately towards freshness — between serving the mode the
-  user just chose and serving the one from before a restart, the second is the
-  failure;
+  it. The bias is deliberately towards freshness — between serving the mode of
+  the Board just opened and serving the one from before a restart, the second
+  is the failure;
 - **same epoch:** the monotonic guard. Older is discarded silently (a doubled
   message, or a resync snapshot arriving after the event it describes). Equal
   revision with a *different* mode is a Core inconsistency: discarded **and
@@ -533,25 +508,14 @@ constructed, and it travels in both `GET /v1/interaction-mode` and
 
 Without this, a Core restart made Voice serve the wrong mode permanently and
 silently: Core re-emitted revisions 1, 2, 3; the observer discarded them all as
-"older"; the user picked SIMPLE, Core applied it, Voice kept PRESENTATION. This
+"older"; the user opened an Assistant Board, Core applied SIMPLE, Voice kept PRESENTATION. This
 is the residual risk `READINESS.md` §3 G4 wrote down as D15's other half.
 
 ### Restart reconciliation
 
-- **Control Center starts:** `ControlCenter.start()` does two things, and
-  **neither waits on the network**. It names, locally and at once, a stored
-  preference that is not the one that will apply (unreadable, or reserved), and
-  it arms the replay towards Core as a background task. Awaiting the replay
-  would have delayed startup by seconds against a Core that accepts TCP and
-  then hangs, which is exactly what a setting may not do.
-- **Core starts later or restarts:** its revision is 0, the precise signal that
-  it has never been told the preference. The status poll — the page's only
-  regular heartbeat — **arms** the replay; it never performs it inline, because
-  a 1 Hz read path must not contain a write. One replay task lives at a time,
-  and it takes `INTERACTION_MODE_REPLAY_BACKOFF_S` before another poll can arm
-  the next, so a Core that refuses forever costs one attempt per window instead
-  of one per second. The warning is throttled by the same `ReportThrottle` the
-  scene uses, and says how many lines it swallowed.
+- **Control Center starts or Core restarts:** nothing is replayed (Slice 01b).
+  Core applies the active Board type's mode itself at start
+  (`source="board_restore"`), so the Control Center only reads.
 - **Voice restarts:** its observer starts at `assistant`/revision 0 and catches
   up on the **snapshot taken at each successful subscription**
   (`follow_core_mode`, from process start; also
@@ -565,11 +529,8 @@ is the residual risk `READINESS.md` §3 G4 wrote down as D15's other half.
   for. Voice holds a revision from the previous life of Core; the new life's
   epoch differs, so the first thing it says is believed, and the resync snapshot
   makes that happen at subscription time rather than at the next change.
-- **The write order is deliberate:** persist, then apply. If Core is
-  *unreachable*, the user's choice survives, a replay is armed, and the response
-  is a 503 saying the mode is *saved but not yet applied*. If Core **refuses**
-  (a version-skewed Core answering 400), the 503 says so instead and nothing is
-  retried: promising a retry that will never succeed is worse than saying no.
+- **Core restarts during a Studio run:** the run is memory and is gone; Core
+  re-applies the Board type's mode at start, never the run's transient one.
 
 ### Diagnostics
 
@@ -582,32 +543,30 @@ these emitters and then checks each line's fields against one allow-list.
 
 | Kind | Level | When |
 | --- | --- | --- |
-| `interaction.mode.requested` | info | a change is asked for |
-| `interaction.mode.applied` | info | the mode actually moved; `changed: true` |
-| `interaction.mode.unchanged` | info | idempotent write — the route was called and nothing moved; `changed: false`. Counting real mode changes means filtering `.applied`, so a no-op must not land there |
-| `interaction.mode.refused` | warning | unknown value, or REUNION |
-| `interaction.mode.not_applied` | error | saved, but Core did not take it |
-| `interaction.mode.reconciled` / `.reconcile_failed` | info / warning | startup or Core-restart replay; the failure is throttled |
-| `interaction.mode.defaulted` | warning | the stored preference is not the one that will apply (unreadable, or reserved) — said by the Control Center, the only process that sees the raw value. Both branches carry `stored_value`, bounded to `MAX_JOURNALLED_VALUE_CHARS`, so two different bad values are two different incidents in the trace |
-| `interaction.mode.foreign_version` | warning | preference written by a newer Jarvis; once per process |
+| `interaction.mode.applied` | info | Core: the mode actually moved (`source` says who: `board_restore`, `board_switch`, `presentation_studio_run`) |
+| `interaction.mode.unchanged` | info | Core: an idempotent request — nothing moved. Counting real mode changes means filtering `.applied` |
+| `interaction.mode.refused` | warning | Core: unknown value, REUNION, or any protocol request (`interaction_mode_derived`); Control Center: a refused choice (`interaction_mode_derived`, `requested` bounded to 64 characters) |
+| `interaction.mode.board_unknown` | warning | Control Center: the active Board could not be read, or has no valid type (`invalid_board_snapshot`); throttled |
 | `interaction.mode.observed` / `.ignored` | info / warning | Voice's observation (including a new Core life), and a discarded event: malformed, unknown mode, reserved mode, or an equal revision carrying a different mode |
 | `interaction.mode.resync_failed` | warning | the snapshot taken at subscription did not come back; the next event will catch up |
 | `interaction.mode.follower.outage` / `.resumed` | warning / info | Voice's process-lifetime mode follower lost its `/v1/events` subscription (once per outage, with `exception_type` when one was raised), then got it back |
-| `interaction.mode.view_invalid` | error | Core answered off-contract; the stored preference is shown instead, once per exception type |
+| `interaction.mode.view_invalid` | error | Core answered off-contract; the named local fallback is shown instead, once per exception type |
 | `interaction.mode.publish_failed` | error | the bus refused the change; the state is still held |
 | `interaction.mode.listener_failed` | error | a synchronous `add_listener` subscriber raised; the mode change still went through, and the message names the real cause, clipped to `MAX_TRACE_EXCEPTION_CHARS` |
 
 ### What this slice deliberately does not do
 
-No UI selector (Slice 03 renders canonical status, not optimistic selection) and
-no Presentation behaviour whatsoever (Slices 06+). Meeting is advertised
-everywhere and activable nowhere; not a line of meeting behaviour was invented.
+No mode writer outside Core, and no Presentation behaviour whatsoever (Slices
+06+). Meeting is advertised everywhere and activable nowhere; not a line of
+meeting behaviour was invented.
 
-## The Control Center selector (Slice 03)
+## The Control Center HUD (Slice 03, display-only since Slice 01b)
 
 `jarvis/runtime/control_center_interaction_mode.js` — a compact, always-visible
-mode button at the **bottom left** of the Control Center, with a three-choice
-selector. It renders canonical status and nothing else. No Presentation
+mode button at the **bottom left** of the Control Center, with a detail panel
+listing the three modes. It renders canonical status and nothing else, and it
+**writes nothing**: the module receives no network door. Its visual removal is
+Slice 02's; until then it is inert by construction (below). No Presentation
 behaviour, no audio, no meeting behaviour.
 
 ### One source of truth, and it is `/api/status`
@@ -624,10 +583,9 @@ no second vocabulary and opens no second poll.
 no generic seam in this page. The only pushed channel is `openLifecycleSeam`,
 which is Bare Hands-specific (`control_center_barehands.js`). Generalising it
 would have meant editing another feature's module to invent a mechanism nothing
-else would use, to gain at most one second of latency on a setting changed twice
-a day. The cost is written down instead: up to one second between a change made
-elsewhere and its appearance — except right after a click, where the module
-re-reads the status itself rather than waiting for the next beat.
+else would use, to gain at most one second of latency on a mode that changes
+with a Board switch. The cost is written down instead: up to one second between
+a change made elsewhere and its appearance.
 
 ### The live Presentation session (presentation-interaction-mode, Slice 03)
 
@@ -679,7 +637,7 @@ served locally.
 
 While the session is `refused` or `entry_failed`, the mode stays amber (it is in
 force) but the breathing halo and the glow are switched off: nothing listens to
-the room. The chooser's footer, which shows the server's summary of the hovered
+the room. The detail's footer, which shows the server's summary of the hovered
 mode, starts with what is happening now for the mode in force when the session
 is deaf, refused or failed (« En ce moment : aucune séance ne tourne… Quand sa
 séance tourne : … »), so it never contradicts the banner. The button's `title`
@@ -689,19 +647,20 @@ own `title`.
 
 The state is shape **and** word, never colour alone. The full sentence joins the
 button's accessible name *before* its action (« … sourde à la salle … Ouvrir le
-choix du mode. »), the polite live region announces it when it changes, and the
-chooser's banner states refused / entry failed / deaf with the code in
-parentheses — it is what one must know before choosing PRESENTATION again,
-because choosing again will not fix it.
+détail du mode. »), the polite live region announces it when it changes, and the
+detail's banner states refused / entry failed / deaf with the code in
+parentheses. This critical Voice presence feedback stays visible in Slice 01b.
 
-**Not optimistic, like the mode.** A click never writes the line; it changes
-only when a status beat brings another report
-(`test_status_never_optimistic_after_click`).
+**Not optimistic, like the mode.** A click never writes the line, nor the mode,
+and sends nothing; the line changes only when a status beat brings another
+report (`test_status_never_optimistic_after_click`).
 
 Checked in a real browser against a **real** Control Center
 (`test_interaction_mode_hud_browser.py`: the server is `ControlCenter._app` on
-loopback, Core is the real `InteractionModeService`, and the harness writes
-`.voice_heartbeat` / `.voice_presentation` as Voice would). "Within one poll" is
+loopback, Core is the real `InteractionModeService`, the harness writes
+`.voice_heartbeat` / `.voice_presentation` as Voice would, and a **test-only**
+route `POST /__test/board-mode` stands for the mode change `BoardService` makes
+on a Board switch). "Within one poll" is
 counted in `/api/status` responses the page actually received (≤ 2: the one
 possibly in flight at the change, plus the next), not in milliseconds — the
 page shares its connections with its other polls, and a wall-clock bound
@@ -714,7 +673,7 @@ from Chrome's computed accessibility tree, with real key events.
 | --- | --- | --- |
 | `assistant` | SIMPLE is in force | SIMPLE |
 | `presentation` | PRESENTATION is in force — amber and a breathing halo, because Jarvis is *not* behaving as usual | PRESENTATION |
-| `unconfirmed` | `core_reachable: false` — the displayed value is the named local fallback (`source: "settings"`, `revision: null`), desaturated **and dashed** | **none** |
+| `unconfirmed` | `core_reachable: false` — the displayed value is the named local fallback (`source: "local"`, `revision: null`), desaturated **and dashed** | **none** |
 | `unknown` | the status poll itself failed | **none** |
 | `other` | the server advertises a mode this page does not know, and it is in force | **none** |
 
@@ -727,69 +686,37 @@ would present a local value as authoritative. `REUNION` belongs to the same
 family from the other end — advertised, explained, and never checked, because it
 is never in force.
 
-`stored_label` is what the user chose, `label` is what is running. When they
-diverge (a stored `REUNION`, or a 503 that persisted the preference without
-applying it) the button says so on its second line — `CHOISI : REUNION` — and
-the selector's banner names both. Neither value is arbitrated away.
+`board_mode_label` is the mode the active Board's type designates, `label` is
+what is running. When they diverge (a Réunion Board, or a Studio run in
+progress) the button says so on its second line — `BOARD : REUNION` — the
+option carries a `Board` tag (`data-im-board`), and the banner names both
+(« Type du Board : REUNION. En vigueur : SIMPLE. »). Neither value is arbitrated away.
 
 ### Meeting is driven by data, not by its name
 
-The chooser is built from the status `modes` catalogue; `implemented: false`
-makes an option reserved. Declaring `meeting` implemented makes it selectable
-with no code change, and declaring `assistant` unimplemented makes it reserved —
-both are pinned by tests. A reserved option is `aria-disabled`, **not**
-`disabled`: it stays reachable so it can say why it cannot be chosen.
+The detail is built from the status `modes` catalogue; `implemented: false`
+makes an option reserved (dashed mark, « Réservé · prévu », pinned by tests in
+both directions).
 
-Clicking a reserved mode performs **no request**. The server would answer 409
-with the same meaning, and spending a round trip on a refusal known in advance
-turns a deliberate product decision into what looks like a transport failure. The
-409 branch still exists on the write path, because this page's catalogue is a
-one-second-old photograph and an older Core can refuse a mode it advertises.
+### Choosing is inert, and says why (Slice 01b)
 
-### Writing, and the absence of optimism
+Every option is `aria-disabled="true"` — **not** `disabled`, so it stays
+reachable by keyboard and can say why it cannot be chosen. Clicking one (or
+`choose(value)`) performs **no request**: the detail reopens on the server's own
+refusal sentence (`DERIVED`, byte-identical to `INTERACTION_MODE_DERIVED_MESSAGE`,
+a test compares them), prefixed for REUNION by its reservation; the polite live
+region says it; the console keeps `[mode] interaction_mode.choice_derived` at
+`info` with `code: interaction_mode_derived`, the mode and `board_mode`. The
+tone is amber (`warn`): a rule, not a failure. The mode in force stays what the
+status says. A mode unknown to the catalogue still throws
+`interaction_mode_hud_unknown` (a page defect). The explanation is cleared when
+the detail closes or the effective mode moves; at rest the banner shows the
+neutral line `NOTE_DERIVED` (« Le mode suit le type du Board actif. Pour
+présenter, ouvrez ou créez un Board Présentation. »).
 
-`POST /api/interaction-mode`, then a re-read of the canonical status. The
-selected chip never moves because of a click; it moves because the status says
-so. A failure therefore leaves the previous canonical mode selected with nothing
-to roll back. Each outcome is distinct, keyed on the stable code carried in
-`X-Jarvis-Error-Code`:
-
-| Outcome | What the user is told |
-| --- | --- |
-| 200 | the next canonical status paints the new mode |
-| 409 `interaction_mode_not_implemented` | a reservation, not a failure |
-| 503 | *saved, but not yet applied* — the preference **is** on disk, and the divergence appears at once. The server's own sentence is shown verbatim, not re-prefixed |
-| 400 (`_bad_payload`, `_missing`, `_unknown`, `_unknown_field`, `_schema_version_unsupported`) | the named refusal |
-| anything else | the server's own message, verbatim |
-
-Reaching that code required one addition to the page: `api()` now sets
-`e.code` from the `X-Jarvis-Error-Code` header (falling back to a JSON `code`).
-Before, a caller could only compare French sentences, which breaks at the first
-rewording.
-
-Each outcome also carries a **tone**, and the banner renders it: a 409 and a
-503 are amber, only a real failure is red. Painting a reservation or a deferred
-save in the danger colour would contradict the sentence beside it, and colour is
-what a reader takes in first.
-
-Two bounded waits, per RULE ZERO: a live counter on the button while a write is
-in flight, and `WRITE_DEADLINE_MS` (12 s) after which the control releases,
-says how long it waited, and lets canonical status describe what actually
-happened. A late response can no longer paint anything. Each call owns **its
-own** deadline ticket: one shared ticket let a late first request cancel a
-retry's deadline, leaving the control disarmed for the life of the page.
-
-The 12 s refusal is the one that does **not** reopen the chooser. Twelve seconds
-after the click the user has moved on, and taking the focus back would snatch
-whatever they are doing; it goes through the page's `toast()` instead, which
-four other modules already use. Every other refusal reopens the chooser on its
-reason, where the click just happened.
-
-A refusal is cleared when the chooser closes. It used to outlive everything,
-because `gate()` only drops it when the effective mode moves — deliberate for a
-503, where the mode does not move and the sentence stays true, but wrong after a
-locally refused REUNION, where the mode never moves at all and a Core that went
-unreachable afterwards stayed hidden behind a stale sentence.
+There is no write path, no pending state, no write deadline and no request
+door left in the module (`test_no_new_settings_surface` checks it names only
+`/api/status` and calls neither `request(` nor `fetch(`).
 
 ### Placement — a shared rail
 
@@ -863,11 +790,11 @@ The other candidates were measured and all contested: bottom-right by toasts at
 every size, top-left by the GPT-Live banner. Free at 700×600, 700×750, 700×900,
 500×700, 420×700 and 360×640.
 
-The selector opens **upward**, and carries `max-height` plus `overflow-y: auto`
+The detail opens **upward**, and carries `max-height` plus `overflow-y: auto`
 — it is anchored to the bottom of the screen, so without them its top would
 clip off-screen with no way back, exactly as `.bgpop` guards against.
 
-Stacking ranks (32 for the button, 36 for the selector) are the same as the Bare
+Stacking ranks (32 for the button, 36 for the detail) are the same as the Bare
 Hands control's, for the same reasons, and are recorded in the layer registry of
 [control-center-shell.md](control-center-shell.md) (a mirror sits at the top of
 `control_center.html`; `tests/unit/test_control_center_shell_layers.py` compares
@@ -895,23 +822,23 @@ that refusal is caught so it cannot take the rest of the single concatenated
 `<script>` down with it. It writes no Presentation behaviour and invents no
 meeting behaviour.
 
-## The brain's handle: `settings_set("interaction_mode", …)`
+## The brain's handle: the Board tools, never a setting
 
-The user's rule — whatever he can set in the interface, the brain can set
-through `settings_*` — applies to this selector too. The `jarvis-console` MCP
-server (`jarvis/runtime/settings_mcp.py`) lists it as `interaction_mode`,
-category `interaction`, with the values read from `/api/settings` →
-`interaction_mode.modes` (`assistant`, `presentation`, `meeting`). The screen
-labels are accepted as values too, accents and case folded (`simple`,
-`présentation`, `réunion`): the option id already names the axis, so `simple`
-cannot be mistaken for the voice architecture here.
+« Passe en mode présentation / simple / réunion » is answered with the Board
+tools of `jarvis-workspace` ([mcp/tool-contract.md](mcp/tool-contract.md)):
+`board_list` gives each Board's `board_kind`; with exactly one Board of the
+wanted type the brain switches to it (`board_switch`), with several it asks
+which, with none it proposes to create one (`board_create` with `board_kind`)
+and creates it if the user accepts. The rule is in
+`jarvis/runtime/claude_local.py` › `BRAIN_WORKSPACE_PROMPT`, with the tools it
+names; `BRAIN_SETTINGS_PROMPT` only says the mode is not a setting and points
+there (never `settings_set`).
 
-A write posts `{"mode": …}` to `POST /api/interaction-mode` — the very body the
-selector posts — so it persists, applies live through Core, and the selector
-repaints from the next `/api/status` beat. The read-back is the stored
-preference. REUNION comes back as the server's 409 sentence
-(`interaction_mode_not_implemented`); a 503 (Core unreachable) is reported as
-"saved, not yet applied", never as success.
+The `jarvis-console` MCP server (`jarvis/runtime/settings_mcp.py`) lists **no**
+`interaction_mode` item and no `interaction` category. `settings_set` called
+with `interaction_mode` anyway is refused before any request with the stable
+code `interaction_mode_derived` and the shared sentence, followed by the tools
+to use; the refusal is journalled (`settings.tool_refused`) and nothing is written.
 
 ## A sibling that reuses the pattern: Bare Hands calibration mode
 

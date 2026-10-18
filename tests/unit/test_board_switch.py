@@ -297,18 +297,35 @@ async def test_switching_to_a_meeting_board_succeeds_with_the_assistant_behaviou
     assert "core.board.switch_rolled_back" not in world.journal.kinds()
 
 
-async def test_a_legacy_live_mode_change_does_not_survive_a_switch_and_is_not_stored(world):
-    """État intermédiaire 01a : un écrivain hérité change le mode vivant, la prochaine bascule le défait."""
+async def test_a_transient_studio_mode_does_not_survive_a_switch_and_is_not_stored(world):
+    """Slice 01b : le seul écrivain hors `BoardService` est une lecture du Studio, transitoire ; une bascule la défait."""
 
-    await world.modes.request("presentation", source="control_center")
+    await world.modes.request("presentation", source="presentation_studio_run")
     b = await world.boards.create({"title": "Neuf"})
     await world.boards.switch(b.board_id)
     assert (world.modes.mode, world.modes.state.source) == (InteractionMode.ASSISTANT, "board_switch")
-    await world.modes.request("presentation", source="control_center")
+    await world.modes.request("presentation", source="presentation_studio_run")
     await world.boards.switch(DEFAULT_BOARD_ID)
     assert world.modes.mode is InteractionMode.ASSISTANT  # `default` est Assistant : rien n'a été retenu
     for board_id in (DEFAULT_BOARD_ID, b.board_id):
         assert (await world.repo.get_board(board_id)).board_kind is BoardKind.ASSISTANT
+
+
+async def test_a_switch_to_the_active_board_reapplies_its_type_mode_without_touching_anything_else(world):
+    """QA 01a (étape 8 de 01b) : `switch_noop` réapplique le mode du type (reprise d'une restauration du Studio ratée)."""
+
+    await world.modes.request("presentation", source="presentation_studio_run")  # restauration jamais faite
+    before = await snapshot(world)
+    result = await world.boards.switch(DEFAULT_BOARD_ID)
+    assert not result.changed
+    assert (world.modes.mode, world.modes.state.source) == (InteractionMode.ASSISTANT, "board_switch")
+    assert await snapshot(world) == before and world.host.calls == []
+    noop = [data for kind, _, data in world.journal.lines if kind == "core.board.switch_noop"][-1]
+    assert (noop["mode"], noop["mode_source"]) == ("assistant", "board_switch")
+    # Idempotent : une seconde bascule vers le même Board ne fait plus rien bouger.
+    revision = world.modes.revision
+    await world.boards.switch(DEFAULT_BOARD_ID)
+    assert world.modes.revision == revision
 
 
 # ------------------------------------------------------------------ nouvelle Session

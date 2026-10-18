@@ -218,18 +218,18 @@ async def test_restore_applies_the_mode_designated_by_the_active_board_type(worl
     assert "core.board.interaction_mode.apply_failed" not in journal.kinds()
 
 
-async def test_a_legacy_live_mode_change_is_never_stored_and_is_undone_by_restore_and_switch(world):
-    """État intermédiaire 01a -> 01b : les anciens écrivains ne changent que le mode vivant."""
+async def test_a_live_mode_change_is_never_stored_and_is_undone_by_restore(world):
+    """Slice 01b : seuls `BoardService` et une lecture du Studio (transitoire) changent le mode vivant ; rien ne l'enregistre."""
 
     from jarvis.domain.presentation_studio_roles import STUDIO_RUN_MODE_SOURCE
 
     service, modes, repo, journal = world
     await service.start()
     before = (await repo.get_board(DEFAULT_BOARD_ID)).to_payload()
-    for source in ("control_center", "startup", "core_restart", "save_retry", "protocol", STUDIO_RUN_MODE_SOURCE):
+    for source in ("board_switch", STUDIO_RUN_MODE_SOURCE):
         await modes.request("presentation", source=source)
         await modes.request("assistant", source=source)
-    await modes.request("presentation", source="control_center")
+    await modes.request("presentation", source=STUDIO_RUN_MODE_SOURCE)
     after = (await repo.get_board(DEFAULT_BOARD_ID)).to_payload()
     assert after == before and "interaction_mode" not in after  # rien enregistré, rien d'autre touché
     assert not any(kind.startswith("core.board.interaction_mode.persist") or kind.endswith(".migrated")
@@ -247,7 +247,7 @@ async def test_the_service_does_not_listen_to_mode_changes_any_more(world):
 # ------------------------------------------------------------------ Core de bout en bout
 
 
-async def test_the_board_type_mode_survives_a_core_restart_and_a_legacy_change_does_not(tmp_path):
+async def test_the_board_type_mode_survives_a_core_restart_and_a_transient_change_does_not(tmp_path):
     core = JarvisCoreApplication(data_root=tmp_path)
     await core.start()
     try:
@@ -256,7 +256,7 @@ async def test_the_board_type_mode_survives_a_core_restart_and_a_legacy_change_d
         await core.boards.switch(board.board_id)
         assert (core.interaction_mode.mode, core.interaction_mode.state.source) == (
             InteractionMode.PRESENTATION, "board_switch")
-        await core.interaction_mode.request("assistant", source="control_center")  # écrivain hérité : vivant seulement
+        await core.interaction_mode.request("assistant", source="presentation_studio_run")  # lecture du Studio : vivant seulement
         assert core.interaction_mode.mode is InteractionMode.ASSISTANT
     finally:
         await core.stop()

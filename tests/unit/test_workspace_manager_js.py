@@ -47,7 +47,7 @@ const binding=(session,board,lifecycle,over)=>Object.assign({jarvis_session_id:s
   created_at:'2026-10-02T09:00:00+00:00',last_active_at:'2026-10-02T10:00:00+00:00',status:'open'},over||{});
 const boardRow=(id,title,over)=>Object.assign({board_id:id,title,status:'active',board_kind:'empty',
   created_at:'2026-09-01T09:00:00+00:00',updated_at:'2026-10-01T09:00:00+00:00',last_opened_at:'2026-10-02T09:00:00+00:00',
-  artifact_refs:[],interaction_mode:'assistant'},over||{});
+  artifact_refs:[]},over||{});
 
 /* Le serveur double. `plan[path]` force une réponse : `{status, body}`, 'hang', 'network', 'html'. */
 const makeServer=()=>{

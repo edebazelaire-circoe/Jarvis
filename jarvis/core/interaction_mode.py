@@ -10,10 +10,11 @@ Le partage est donc :
 - rien n'enregistre de mode : il est **dérivé du type du Board actif**
   (`docs/boards.md` › *Board type*). `jarvis/core/board_service.py` le demande
   ici au démarrage de Core (``source="board_restore"``) et à chaque bascule
-  (``source="board_switch"``). Les écrivains hérités (Control Center, réglage
-  global `interaction_mode_settings.py`) ne changent que la valeur vivante,
-  jusqu'à la prochaine bascule ou au prochain démarrage (retirés par la
-  Slice 01b) ;
+  (``source="board_switch"``). Le seul autre écrivain est une lecture du
+  Presentation Studio, transitoire et restaurée (``source="presentation_studio_run"``,
+  appel en processus). Aucune demande venue de l'extérieur de Core n'est prise :
+  `POST /v1/interaction-mode` les refuse toutes (`refuse_external_request`,
+  ``interaction_mode_derived``) ;
 - Core possède la **valeur effective vivante** et sa **révision**, ici ;
 - Voice **observe** par l'évènement ``interaction.mode.changed`` relayé par
   ``/v1/events``, ou relit l'instantané ; il ne tient jamais un second mode.
@@ -27,10 +28,10 @@ cette fonctionnalité ne doit pas introduire. Le mode change donc **à chaud**,
 par évènement, et rien ici ne touche à la composition vocale.
 
 La lecture utilisée est délibérément `behaving_interaction_mode` : cette valeur
-**pilote un comportement**. Un ``meeting`` laissé sur le disque reste affichable
-— c'est le Control Center qui le montre, avec `stored_interaction_mode` — mais
-il ne peut pas devenir le mode effectif, parce qu'aucun comportement de réunion
-n'existe (Décision 02).
+**pilote un comportement**. Un Board Réunion désigne ``meeting`` — le Control
+Center l'affiche comme mode du type du Board (`board_mode` de `/api/status`) —
+mais ``meeting`` ne peut pas devenir le mode effectif, parce qu'aucun
+comportement de réunion n'existe (Décision 02).
 """
 
 from __future__ import annotations
@@ -43,6 +44,8 @@ from typing import Any
 
 from jarvis.domain.interaction_mode import (
     DEFAULT_INTERACTION_MODE,
+    INTERACTION_MODE_DERIVED,
+    INTERACTION_MODE_DERIVED_MESSAGE,
     INTERACTION_MODES,
     InteractionMode,
     InteractionModeError,
@@ -131,12 +134,10 @@ class InteractionModeState:
     revision: int
     epoch: str
     #: Qui a demandé ce mode. Champ libre, journalisé et transporté tel quel ;
-    #: les valeurs réellement émises sont `control_center` (un clic),
-    #: `startup` / `core_restart` / `save_retry` (les rattrapages du Control
-    #: Center), `board_restore` / `board_switch` (le mode du type du Board
-    #: actif, appliqué par `BoardService`), `presentation_studio_run` (un run
-    #: temporaire du Studio), `protocol` (un appel direct) et `default` (l'état
-    #: initial).
+    #: depuis la Slice 01b, les valeurs réellement émises sont `board_restore` /
+    #: `board_switch` (le mode du type du Board actif, appliqué par
+    #: `BoardService`), `presentation_studio_run` (un run temporaire du Studio)
+    #: et `default` (l'état initial).
     source: str
     changed_at: datetime
 
@@ -174,8 +175,8 @@ class InteractionModeState:
 class InteractionModeService:
     """Propriétaire de la valeur effective. Un seul écrivain, une seule vérité.
 
-    Toute demande passe par un verrou : deux clics simultanés, ou une
-    réconciliation de démarrage qui croise une demande de l'écran, se
+    Toute demande passe par un verrou : une bascule de Board qui croise
+    l'entrée ou la restauration d'une lecture du Studio, par exemple, se
     sérialisent au lieu de produire deux révisions pour un seul changement.
 
     Rien n'est persisté ici, à dessein. Un mode effectif est un fait de cette
@@ -183,13 +184,9 @@ class InteractionModeService:
     par ce même `request()` au démarrage de Core (`source="board_restore"`) et
     à chaque bascule (`source="board_switch"`).
 
-    **Il n'y a qu'un seul chemin d'entrée, `request()`, et il est strict.** Une
-    variante tolérante a existé ici : elle n'avait aucun appelant, parce que le
-    Control Center lit et normalise le réglage chez lui — Core ne voit jamais
-    la valeur brute du disque. La tolérance appartient donc au propriétaire de
-    la persistance, et c'est lui qui dit à l'écran et au journal qu'un réglage
-    était illisible (`interaction_mode_unreadable`). Deux endroits pour la même
-    indulgence, dont un injoignable, c'était une promesse que rien ne tenait.
+    **Il n'y a qu'un seul chemin d'entrée, `request()`, et il est strict**, appelé
+    en processus par `BoardService` et par le Presentation Studio. Le protocole
+    n'y mène plus : `refuse_external_request` dit et code son refus.
     """
 
     def __init__(self, *, events: Any, diagnostics: DiagnosticSink | None = None, epoch: str | None = None) -> None:
@@ -383,6 +380,22 @@ class InteractionModeService:
                 data={"code": "interaction_mode_publish_failed", "mode": state.mode.value,
                       "revision": state.revision},
             )
+
+    def refuse_external_request(self, value: object, *, source: object) -> InteractionModeError:
+        """Refus d'une demande venue de l'extérieur de Core (`POST /v1/interaction-mode`), tracé.
+
+        Toujours, quelle que soit la valeur ou l'origine : le mode suit le type du
+        Board actif (Slice 01b). Le Studio, seul écrivain transitoire, appelle
+        `request()` en processus et ne passe jamais par ici. Rend l'erreur, que
+        la route sérialise en 409 ; rien n'est changé.
+        """
+
+        self._trace(
+            _TRACE_REFUSED, "Demande de mode refusée : le mode suit le type du Board actif", level="warning",
+            data={"code": INTERACTION_MODE_DERIVED, "source": self._mode_value(source),
+                  "mode": self._mode_value(value)},
+        )
+        return InteractionModeError(INTERACTION_MODE_DERIVED, INTERACTION_MODE_DERIVED_MESSAGE)
 
     @staticmethod
     def _mode_value(value: object) -> str:

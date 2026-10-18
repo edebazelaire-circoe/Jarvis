@@ -1236,4 +1236,6 @@ def test_the_brain_prompt_says_how_to_look_at_another_board_without_switching():
     # 2026-10-07 : 700 -> 1000. La liste de contrôle des capacités (test_brain_capability_parity)
     # exige que chaque outil exposé au cerveau soit nommé dans sa consigne.
     # 2026-10-09 (memory-intelligence-knowledge S5b) : 1000 -> 1300, les cinq outils de `jarvis-memory` y sont nommes.
-    assert len(BRAIN_WORKSPACE_PROMPT.encode("utf-8")) <= 1300
+    # 2026-10-18 (board-ui-wheel-dossier-refactor S01b) : 1300 -> 1550, « passe en mode présentation » se répond
+    # par le type du Board (bascule / création), plus par un réglage : la règle vit ici, avec les outils qu'elle nomme.
+    assert len(BRAIN_WORKSPACE_PROMPT.encode("utf-8")) <= 1550

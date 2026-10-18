@@ -110,7 +110,7 @@ ever enters a descriptor.
 | --- | --- | --- |
 | `general` | Général | overview tab: servers, counts, availability, context budget, policies. Hosts cross-domain tools: `jarvis-tools` `list_tools` + `call_tool` *(plugin amendment, implemented by Slice 04)*; every other native tool belongs to a domain |
 | `scene` | Étoiles / Scène | all `jarvis-display` tools |
-| `settings` | Réglages | `settings_describe`, `settings_get`, `settings_set` (`jarvis-console`) |
+| `settings` | Réglages | `settings_describe`, `settings_get`, `settings_set` (`jarvis-console`). The interaction mode is **not** a setting (Slice 01b of `jarvis-board-ui-wheel-dossier-refactor`): no `interaction_mode` item or `interaction` category is listed, and `settings_set("interaction_mode", …)` is refused before any request with `interaction_mode_derived` (the shared sentence plus « board_switch … board_create avec board_kind ») and journalled `settings.tool_refused`; the mode follows the active Board's type ([../interaction-mode.md](../interaction-mode.md)) |
 | `workspace` | Boards et mémoire | the twenty `jarvis-workspace` tools (§10.12): the nine Board/Session tools (§10.9, moved from `jarvis-console`), Session history, Board inspection, Board memory, Board-artifact links, plus the five `jarvis-memory` tools (§10.16: memory and knowledge search, read, propose) |
 | `presentation` | Présentations | the fourteen `jarvis-presentation` tools (§10.15): inspect, explorer and full screen, playback, semantic edits, undo, variants, comparison, composition, templates, drafting, native scene source (`presentation_source`, native-studio-playback-fix Slice 13: read, write, preview; 20 888 B measured, budget 21 000 B, declared surface 113 700 B); master-project Slice 07: `presentation_inspect` variant names the `master` block, 20 896 B measured (declared surface 113 686 B), budgets unchanged |
 | `capture` | Captures et preuves | the nine `jarvis-capture` tools (§10.11): Contexts, recordings, screenshots, evidence search and transcript reads |
@@ -944,7 +944,9 @@ Claude Code 2.1.282, 2026-09-25, isolated Core/Control Center, evidence in
 > (`board_kind` added to `board_create` and to every Board result; since the
 > fixed Board type, Slice 01a of `jarvis-board-ui-wheel-dossier-refactor`,
 > `board_update` no longer takes it and Board results no longer carry
-> `interaction_mode`); `console_boards.py` became `workspace_boards.py` (`BoardTools`,
+> `interaction_mode`; since Slice 01b `board_switch` / `board_create` with `board_kind` are
+> how the brain changes the interaction mode, « passe en mode présentation » included);
+> `console_boards.py` became `workspace_boards.py` (`BoardTools`,
 > `WorkspaceToolError`), and no alias is left on `jarvis-console`. The facts
 > below are kept as the record of their design.
 

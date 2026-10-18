@@ -441,16 +441,18 @@ questions are never withheld, and ambient can never obtain speech. Assistant
 mode is untouched and the gate writes nothing there — see
 [presentation-response-policy.md](presentation-response-policy.md).
 
-The control plane has three owners and no fourth copy. Core owns the **live
-effective mode and its revision** (`jarvis/core/interaction_mode.py`), served by
-`GET /v1/interaction-mode` and changed by `POST /v1/interaction-mode`; every
-change is published on the bus as `interaction.mode.changed`, so Voice learns it
-through `/v1/events` it already consumes. The Control Center owns the **stored
-operator preference** (`jarvis/runtime/interaction_mode_settings.py`, key
-`interaction_mode`, schema-versioned), exposed and changed by
-`GET`/`POST /api/interaction-mode`, and replayed towards Core at startup and
-whenever a Core that started later is seen at revision 0 — always off the status
-read path, in a single backgrounded task with a backoff. Core stamps a
+The control plane has one owner and no copy. Core owns the **live effective
+mode and its revision** (`jarvis/core/interaction_mode.py`), served by
+`GET /v1/interaction-mode`; the mode is **derived from the active Board's type**
+and changed only in Core's process — by `BoardService` at Core start and on
+every Board switch, and transiently by a Presentation Studio run, which restores
+it. `POST /v1/interaction-mode`, `POST /api/interaction-mode` and
+`settings_set("interaction_mode")` refuse every request with
+`interaction_mode_derived` (Slice 01b of `jarvis-board-ui-wheel-dossier-refactor`).
+Every change is published on the bus as `interaction.mode.changed`, so Voice
+learns it through `/v1/events` it already consumes. The Control Center only
+**reads**: the `interaction_mode` block of `/api/status` carries the effective value and the
+Board type's mode (`board_mode`); nothing is replayed. Core stamps a
 per-process **epoch** beside the revision, because a revision resets on a Core
 restart while Voice's observer survives it; different epoch means "believe this
 unconditionally", same epoch means the monotonic guard.
@@ -516,11 +518,12 @@ is the opposite of persisting a preparation.
 
 ```text
 Control Center                     Core                              Voice
-  settings key `interaction_mode`    InteractionModeService            InteractionModeObserver
-  (the preference, REUNION kept)     (the effective mode + revision)   (last seen mode, monotonic)
-        │  POST /api/interaction-mode        │                                  ▲
-        ├───────────────────────────────────►│ POST /v1/interaction-mode        │
-        │  GET  /api/status ─► effective     │ ──► interaction.mode.changed ────┘  (via /v1/events)
+  read-only display                  BoardService ─► InteractionModeService   InteractionModeObserver
+  (effective + board_mode)           (Board type's mode; Studio run: transient)  (last seen mode, monotonic)
+        │  GET /api/status            │  GET /v1/interaction-mode         ▲
+        ├────────────────────────────►│ ──► interaction.mode.changed ─────┘  (via /v1/events)
+        │  POST /api/interaction-mode │  POST /v1/interaction-mode
+        └─► 409 interaction_mode_derived (nothing written)
 ```
 
 ## Surface and brain

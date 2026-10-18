@@ -19,7 +19,7 @@ Ce que ce fichier épingle :
   le défaut qui rendait son outil du bas incliquable, puisque le bouton est au
   rang 32 et la palette au rang 30 ;
 - à pleine largeur, rien n'a bougé ;
-- `prefers-reduced-motion` arrête vraiment le halo, la barre de balayage et les
+- `prefers-reduced-motion` arrête vraiment le halo, l’ouverture du détail et les
   transitions.
 
 Le test se saute proprement si Chrome est absent ; il ne se saute pas en
@@ -224,11 +224,10 @@ def test_le_mouvement_reduit_arrete_vraiment_le_halo(tmp_path):
     # vraie pour la mauvaise raison.
     assert normal["motion"]["halo"] != "none", normal["motion"]
     assert "imBreathe" in normal["motion"]["halo"]
-    assert normal["motion"]["sweep"] != "none"
+    # (La barre d'attente d'une écriture n'existe plus : le contrôle n'écrit rien, Slice 01b.)
 
-    # Mouvement réduit : les trois s'arrêtent.
+    # Mouvement réduit : le halo et l'ouverture s'arrêtent.
     assert reduced["motion"]["halo"] == "none", reduced["motion"]
-    assert reduced["motion"]["sweep"] == "none", reduced["motion"]
     assert reduced["motion"]["popAnimation"] == "none", reduced["motion"]
     assert reduced["motion"]["buttonTransition"] in ("none", "all 0s ease 0s", ""), \
         reduced["motion"]
@@ -243,6 +242,15 @@ def test_le_mouvement_reduit_arrete_vraiment_le_halo(tmp_path):
 # le transport factice que les tests du plan de contrôle utilisent déjà
 # (`ServiceReader`). Le relevé de Voice est écrit dans le dossier d'exécution
 # par le harnais, comme `VisualSignalBus.presentation` l'écrirait.
+#
+# Depuis la Slice 01b de `jarvis-board-ui-wheel-dossier-refactor`, le mode suit
+# le type du Board actif et rien dans la page ne l'écrit. Le changement de mode
+# que Core ferait sur une bascule de Board est simulé par une route **de test**,
+# `POST /__test/board-mode` (`BOARD_MODE`), ajoutée à l'application du Control
+# Center servi : elle appelle le vrai service en processus, comme `BoardService`.
+
+#: Route de test : ce que `BoardService` fait à une bascule de Board.
+BOARD_MODE = "/__test/board-mode"
 
 #: Le relevé tel que `PresentationCoordinator.presentation_report` le publie.
 LISTENING = {
@@ -309,8 +317,15 @@ async def served(tmp_path, monkeypatch):
         monkeypatch.delenv(name, raising=False)
     runtime = tmp_path / "runtime"
     runtime.mkdir()
-    view = CoreInteractionModeView(ServiceReader(InteractionModeService(events=RecordingBus())))
+    service = InteractionModeService(events=RecordingBus())
+    view = CoreInteractionModeView(ServiceReader(service))
     control = ControlCenter(runtime_root=runtime, project_root=tmp_path, interaction_mode_view=view)
+
+    async def board_mode(request: web.Request) -> web.Response:
+        await service.request((await request.json())["mode"], source="board_switch")
+        return web.json_response(service.snapshot())
+
+    control._app.router.add_post(BOARD_MODE, board_mode)
     runner = web.AppRunner(control._app)
     await runner.setup()
     site = web.TCPSite(runner, "127.0.0.1", 0)
@@ -339,14 +354,15 @@ async def _drive_live(url: str, runtime: Path, plan: list) -> list:
 
 
 async def test_le_vrai_control_center_bascule_simple_presentation_en_un_battement(served, tmp_path):
-    """Le critère d'acceptation, dans un vrai navigateur sur un vrai serveur.
+    """Le critère d'acceptation, dans un vrai navigateur sur un vrai serveur (Slice 01b).
 
-    Un clic sur PRESENTATION, puis le relevé que Voice publie en entrant : la
-    séance s'affiche au battement suivant. Puis un changement fait **ailleurs**
-    (une écriture directe sur la route, comme le ferait l'outil MCP) ramène
-    SIMPLE sans aucun clic : la page le reflète dans un battement, et la
-    séance retombe quand Voice publie sa sortie. Une seconde étape, sous
-    `prefers-reduced-motion`, vérifie que la marque d'écoute cesse de battre."""
+    Un clic sur PRESENTATION **ne change rien** : le détail se rouvre sur la
+    phrase « le mode suit le type du Board actif », et l'ancienne route
+    d'écriture répond 409. Puis une bascule vers un Board Présentation (côté
+    Core) et le relevé que Voice publie en entrant : la page le reflète dans un
+    battement. Une bascule vers un Board Assistant ramène SIMPLE sans aucun
+    clic, et la séance retombe quand Voice publie sa sortie. Une seconde étape,
+    sous `prefers-reduced-motion`, vérifie que la marque d'écoute cesse de battre."""
 
     url, runtime = served
     shots = _shots(tmp_path)
@@ -356,19 +372,25 @@ async def test_le_vrai_control_center_bascule_simple_presentation_en_un_battemen
             {"a": "eval", "expr": f"{HOST}.getAttribute('data-im-presence')"},             # 1
             {"a": "click", "selector": "#interactionModeButton"},                          # 2
             {"a": "click", "selector": ".im-opt[data-im-mode=presentation]"},              # 3
-            _mode_is("presentation"),                                                      # 4
-            {"a": "write", "file": ".voice_presentation", "value": REPORTS["listening"]},  # 5
-            _presence_is("listening"),                                                     # 6
-            {"a": "read"},                                                                 # 7
-            {"a": "shot", "path": str(shots / "s03-listening-1440.png")},                  # 8
-            {"a": "post", "path": "/api/interaction-mode", "body": {"mode": "assistant"}},  # 9
-            _mode_is("assistant"),                                                         # 10
-            {"a": "write", "file": ".voice_presentation", "value": REPORTS["left"]},       # 11
-            _presence_is("inactive"),                                                      # 12
-            {"a": "read"},                                                                 # 13
-            {"a": "shot", "path": str(shots / "s03-simple-1440.png")},                     # 14
-            {"a": "post", "path": "/api/interaction-mode", "body": {"mode": "presentation"}},  # 15
-            {"a": "write", "file": ".voice_presentation", "value": REPORTS["listening"]},  # 16
+            _wait("document.getElementById('interactionModeNote').textContent"
+                  ".includes('type du Board actif')"),                                     # 4
+            {"a": "eval", "expr": f"{HOST}.getAttribute('data-im-mode')"},                 # 5
+            {"a": "post", "path": "/api/interaction-mode", "body": {"mode": "meeting"}},   # 6
+            {"a": "shot", "path": str(shots / "s01b-derived-note-1440.png")},              # 7
+            {"a": "post", "path": BOARD_MODE, "body": {"mode": "presentation"}},           # 8
+            _mode_is("presentation"),                                                      # 9
+            {"a": "write", "file": ".voice_presentation", "value": REPORTS["listening"]},  # 10
+            _presence_is("listening"),                                                     # 11
+            {"a": "read"},                                                                 # 12
+            {"a": "shot", "path": str(shots / "s03-listening-1440.png")},                  # 13
+            {"a": "post", "path": BOARD_MODE, "body": {"mode": "assistant"}},              # 14
+            _mode_is("assistant"),                                                         # 15
+            {"a": "write", "file": ".voice_presentation", "value": REPORTS["left"]},       # 16
+            _presence_is("inactive"),                                                      # 17
+            {"a": "read"},                                                                 # 18
+            {"a": "shot", "path": str(shots / "s03-simple-1440.png")},                     # 19
+            {"a": "post", "path": BOARD_MODE, "body": {"mode": "presentation"}},           # 20
+            {"a": "write", "file": ".voice_presentation", "value": REPORTS["listening"]},  # 21
         ]},
         {"width": 1440, "height": 900, "reducedMotion": True, "actions": [
             _presence_is("listening"),
@@ -381,19 +403,24 @@ async def test_le_vrai_control_center_bascule_simple_presentation_en_un_battemen
     assert actions[0]["ok"], actions[0]
     # Voice bat mais n'a encore rien publié : aucun relevé, rien n'est dit.
     assert actions[1]["value"] == "none"
-    # Le clic : la pastille suit le statut canonique, relu juste après l'écriture.
-    assert _within_one_poll(actions[4]), actions[4]
+    # Le clic est expliqué à l'écran, et le mode n'a pas bougé ; l'ancienne route refuse.
+    assert actions[4]["ok"], actions[4]
+    assert actions[5]["value"] == "assistant"
+    assert actions[6]["status"] == 409
+    # La bascule de Board (Core) : un battement.
+    assert actions[8]["status"] == 200
+    assert _within_one_poll(actions[9]), actions[9]
     # Le relevé de Voice arrive par le sondage : dans un battement.
-    assert _within_one_poll(actions[6]), actions[6]
-    listening = actions[7]["value"]["presence"]
+    assert _within_one_poll(actions[11]), actions[11]
+    listening = actions[12]["value"]["presence"]
     assert (listening["hidden"], listening["text"], listening["clipped"]) == (False, "Écoute la salle", False)
     assert listening["dot"] == "imListen"
     # Le changement venu d'ailleurs : aucun clic, un battement.
-    assert actions[9]["status"] == 200
-    assert _within_one_poll(actions[10]), actions[10]
-    assert _within_one_poll(actions[12]), actions[12]
+    assert actions[14]["status"] == 200
+    assert _within_one_poll(actions[15]), actions[15]
+    assert _within_one_poll(actions[17]), actions[17]
     # En SIMPLE, « aucune séance » est l'état ordinaire : il n'est pas affiché.
-    assert actions[13]["value"]["presence"]["hidden"] is True
+    assert actions[18]["value"]["presence"]["hidden"] is True
     # Mouvement réduit : la marque d'écoute ne bat plus, le mot reste.
     assert reduced["actions"][0]["ok"], reduced["actions"][0]
     assert reduced["actions"][1]["value"]["presence"]["dot"] == "none"
@@ -417,7 +444,7 @@ async def test_un_releve_force_affiche_sa_ligne_et_son_code(served, tmp_path, st
     url, runtime = served
     shot = _shots(tmp_path) / f"s03-{state}-{width}.png"
     plan = [{"width": width, "height": height, "mountPalette": width < 700, "toast": True, "actions": [
-        {"a": "post", "path": "/api/interaction-mode", "body": {"mode": "presentation"}},
+        {"a": "post", "path": BOARD_MODE, "body": {"mode": "presentation"}},
         _mode_is("presentation"),
         {"a": "write", "file": ".voice_presentation", "value": REPORTS[state]},
         _presence_is(state),
@@ -446,12 +473,12 @@ async def test_clavier_et_lecteur_d_ecran_gardent_leurs_noms(served, tmp_path):
     """Les noms **calculés** par Chrome (arbre d'accessibilité), avec de vraies frappes.
 
     Le bouton annonce le mode, puis la séance, puis son action ; la flèche ouvre
-    le sélecteur et déplace le focus sans rien choisir ; Échap le referme et
+    le détail et déplace le focus sans rien choisir ; Échap le referme et
     rend le focus au bouton ; la région vivante a dit la surdité."""
 
     url, runtime = served
     plan = [{"width": 1440, "height": 900, "actions": [
-        {"a": "post", "path": "/api/interaction-mode", "body": {"mode": "presentation"}},  # 0
+        {"a": "post", "path": BOARD_MODE, "body": {"mode": "presentation"}},  # 0
         {"a": "write", "file": ".voice_presentation", "value": REPORTS["deaf"]},          # 1
         _presence_is("deaf"),                                                             # 2
         {"a": "focus", "selector": "#interactionModeButton"},                             # 3
@@ -474,7 +501,7 @@ async def test_clavier_et_lecteur_d_ecran_gardent_leurs_noms(served, tmp_path):
     assert trigger["role"] == "button"
     assert trigger["name"].startswith("Mode PRESENTATION : mode d’interaction en vigueur.")
     assert "sourde à la salle" in trigger["name"]
-    assert trigger["name"].endswith("Ouvrir le choix du mode.")
+    assert trigger["name"].endswith("Ouvrir le détail du mode.")
     # La flèche ouvre et pose le focus sur le mode en vigueur.
     assert actions[5]["focused"] == "presentation"
     option = actions[6]
@@ -508,7 +535,7 @@ async def test_refus_perime_halo_calme_infobulle_et_pied_dans_un_vrai_navigateur
     plan = [{"width": 1440, "height": 900, "actions": [
         _mode_is("assistant"),                                                             # 0
         {"a": "write", "file": ".voice_presentation", "value": stale, "ageS": 30},         # 1
-        {"a": "post", "path": "/api/interaction-mode", "body": {"mode": "presentation"}},  # 2
+        {"a": "post", "path": BOARD_MODE, "body": {"mode": "presentation"}},  # 2
         _mode_is("presentation"),                                                          # 3
         _presence_is("inactive"),                                                          # 4
         {"a": "read"},                                                                     # 5

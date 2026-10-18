@@ -16,7 +16,6 @@ from aiohttp import web
 from jarvis.adapters.control_center_brain import ControlCenterBrainBackend
 from jarvis.core.brain_service import BRAIN_SPEECH_WITHHELD_KIND
 from jarvis.domain.workspace_board import BindingStatus, BoardError, BoardErrorCode, BrainLifecycle
-from jarvis.runtime import control_center as control_center_module
 from tests.unit.test_board_brains import (
     CodexStub, Timers, binding as pool_binding, launches, make_pool, name_session, start_subagent,  # noqa: F401
 )
@@ -186,22 +185,21 @@ async def test_s2_a_failed_start_leaves_core_and_the_control_center_unchanged(st
 # ------------------------------------------------------------------ S3
 
 
-async def test_s3_the_stored_mode_shown_is_the_mode_of_the_active_board_type(stack):
-    """Slice 01a : le mode affiché « enregistré » est celui que désigne le type du Board actif."""
+async def test_s3_the_board_mode_shown_is_the_mode_of_the_active_board_type(stack):
+    """Slices 01a/01b : `board_mode` est le mode que désigne le type du Board actif, pas le mode vivant."""
 
     core = await stack.start_core()
-    settings = stack.control._settings()
-    assert settings.get("interaction_mode", {}).get("mode", "assistant") != "presentation"
     board = await core.boards.create({"title": "Démo", "board_kind": "presentation"})
     await core.boards.switch(board.board_id)
-    await core.interaction_mode.request("assistant", source="control_center")   # écrivain hérité : vivant seulement
+    await core.interaction_mode.request("assistant", source="presentation_studio_run")   # lecture du Studio : transitoire
 
-    status = await stack.control._interaction_mode_status(settings)
-    assert status["stored"] == "presentation", "the Board type's mode, not the live one nor the global preference"
+    status = await stack.control._interaction_mode_status()
+    # Ce banc ne relie pas la vue du mode à Core : `mode` est le repli local nommé, `board_mode` le type.
+    assert status["board_mode"] == "presentation" and core.interaction_mode.mode.value == "assistant"
     meeting = await core.boards.create({"title": "Réunion", "board_kind": "meeting"})
     await core.boards.switch(meeting.board_id)
-    status = await stack.control._interaction_mode_status(settings)
-    assert (status["stored"], status["mode"]) == ("meeting", "assistant")  # Réunion affichée, comportement assistant
+    status = await stack.control._interaction_mode_status()
+    assert (status["board_mode"], status["mode"]) == ("meeting", "assistant")  # Réunion affichée, comportement assistant
 
 
 # ------------------------------------------------------------------ S4
@@ -257,24 +255,6 @@ async def test_s5_resync_fans_out_to_every_pool_agent(tmp_path):
     assert sorted(o.board_id for o in ingress.offered) == sorted([first.board_id, second.board_id])
 
 
-async def test_s5_an_undetermined_board_ownership_replays_nothing(tmp_path, monkeypatch):
-    monkeypatch.setattr(control_center_module, "INTERACTION_MODE_REPLAY_BACKOFF_S", 0.0)
-    control = make_control(tmp_path)
-
-    async def unknown() -> None:
-        return None
-
-    replayed = []
-
-    async def reconcile(*args, **kwargs):  # noqa: ANN002, ANN003
-        replayed.append(kwargs)
-
-    control._core_boards_own_interaction_mode = unknown
-    control._reconcile_interaction_mode = reconcile
-    await control._replay_interaction_mode("core_restart")
-    assert replayed == []
-
-
 async def test_s5_aclose_stops_background_agents_too(tmp_path):
     control = make_control(tmp_path)
     first = await control.board_brains.activate(binding("conv-a"))
@@ -307,19 +287,6 @@ async def test_nit_a_failed_activation_undoes_the_adoption(tmp_path):
     with pytest.raises(RuntimeError):
         await control.board_brains.activate(binding("conv-a"))
     assert control.board_brains.foreground.key is None and control.board_brains.find("conv-a") is None
-
-
-async def test_nit_replay_retired_is_said_once(tmp_path, monkeypatch):
-    monkeypatch.setattr(control_center_module, "INTERACTION_MODE_REPLAY_BACKOFF_S", 0.0)
-    control = make_control(tmp_path)
-
-    async def owned() -> bool:
-        return True
-
-    control._core_boards_own_interaction_mode = owned
-    for _ in range(3):
-        await control._replay_interaction_mode("core_restart")
-    assert len(trace(tmp_path, "interaction.mode.replay_retired")) == 1
 
 
 async def test_nit_a_forgotten_binding_forgets_its_last_report(tmp_path):

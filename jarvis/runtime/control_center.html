@@ -2639,12 +2639,11 @@ const STATUS={
    qui pose `window.JarvisBarehands` : `control_center_barehands_commands.js`. */
 /*__CONTROL_CENTER_BAREHANDS_COMMANDS_JS__*/
 /* Contrôle de mode d'interaction du bas-gauche (jarvis-presentation-interaction-
-   mode, Slice 03) : `control_center_interaction_mode.js`. Il ne dépend d'aucun
-   autre module de page — ni Bare Hands, ni la scène : sa seule source est le
-   bloc `interaction_mode` de `/api/status`, que `refreshStatus` lui remet une
-   fois par seconde. Il a besoin en revanche de `api` et de `refreshStatus`,
-   deux déclarations de fonction de ce même `<script>`, donc remontées et
-   disponibles quelle que soit la position de ce marqueur. */
+   mode, Slice 03 ; affichage seul depuis la Slice 01b) :
+   `control_center_interaction_mode.js`. Il ne dépend d'aucun autre module de
+   page — ni Bare Hands, ni la scène : sa seule source est le bloc
+   `interaction_mode` de `/api/status`, que `refreshStatus` lui remet une fois
+   par seconde. Il n'écrit rien. */
 /*__CONTROL_CENTER_INTERACTION_MODE_JS__*/
 /* Contrôleur de capture (session-context-recording Slice 10, découpé en
    orbital-ui Slice 04) : `control_center_capture_rail.js`. Ne dessine rien : il

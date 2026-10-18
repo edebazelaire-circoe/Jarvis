@@ -47,17 +47,13 @@ de `ControlCenter.agent_restart` et `is_unsupported` dans
 `jarvis/runtime/core_sessions.py` ; `pending` ne subsiste alors que pour une
 liaison jamais activée.
 
-## Reste n° 3 — préférence globale du mode d'interaction (Control Center)
+## Reste n° 3 — préférence globale du mode d'interaction (Control Center) : **retiré**
 
-**Ce que c'est.** Le Control Center rejoue encore sa préférence globale vers
-Core au démarrage et quand Core repart (révision 0), et l'écrit encore sur un
-clic, **seulement** si Core n'a pas de Boards (pas de transport de Sessions,
-`GET /v1/boards/active` absent) ou si le Board actif est `unset` (entrée de
-migration, adoptée une fois). Un Core à Boards dont le Board a un mode
-(`migrated`/`user`) n'est plus rejoué (`interaction.mode.replay_retired`) et
-un clic n'écrit plus la clé globale (Slice 04a, reprise QA de la Slice 02 :
-chaque redémarrage de Core basculait le mode vivant deux fois).
-
-**Condition de retrait.** Slice 08 : supprimer `_reconcile_interaction_mode`,
-le rejeu et la clé `interaction_mode` de `control-center-settings.json` quand
-plus aucun Core sans Boards ne tourne avec ce Control Center.
+**Retiré par la Slice 01b de `jarvis-board-ui-wheel-dossier-refactor`.** Le
+mode suit le type du Board actif ; le rejeu (`startup`, `core_restart`,
+`save_retry`), `_reconcile_interaction_mode` et le module
+`interaction_mode_settings.py` sont supprimés, et `POST /api/interaction-mode`
+refuse tout choix (`interaction_mode_derived`). La clé `interaction_mode` d'un
+ancien `control-center-settings.json` reste dans le fichier (pas de nettoyage
+destructif d'un fichier de l'utilisateur), ni lue ni écrite. Un Core sans
+Boards garde son mode par défaut (assistant) : plus rien ne le lui rejoue.

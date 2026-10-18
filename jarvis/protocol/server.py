@@ -23,9 +23,7 @@ from jarvis.core.conversation_event_query import ConversationEventBusyError
 from jarvis.domain.conversation_event_store import ConversationEventStoreError
 from jarvis.domain.conversation_transcript import TranscriptTooLargeError
 from jarvis.domain.conversation_events import MAX_CONTENT_CHARS, ConversationEventError
-from jarvis.domain.interaction_mode import InteractionModeError
 from jarvis.domain.brain_context import BrainPresentationContext
-from jarvis.core.interaction_mode import supported_modes
 from jarvis.domain.v2 import PROTOCOL_VERSION, AddressingDecision, BrainTurnInput, BrainTurnSource, TurnKind, jsonable
 from jarvis.domain.work_state import WorkObservationBatch
 from jarvis.core.session_manager import DEFAULT_HISTORY_LIMIT as DEFAULT_SESSION_HISTORY_LIMIT
@@ -214,7 +212,7 @@ class LocalProtocolServer:
             web.post("/v1/work/observations", self.ingest_work_observations),
             web.get("/v1/work/snapshot", self.work_snapshot),
             web.get("/v1/interaction-mode", self.interaction_mode),
-            web.post("/v1/interaction-mode", self.set_interaction_mode),
+            web.post("/v1/interaction-mode", self.refuse_interaction_mode_request),
             # Canal vocal et état du Chat (jarvis-unified-chat-and-board-drop, Slice 04, `docs/chat.md`).
             web.post("/v1/voice/channel/report", self.voice_channel_report),
             web.post("/v1/voice/channel/disable", self.voice_channel_disable),
@@ -1109,37 +1107,24 @@ class LocalProtocolServer:
         del request
         return web.json_response(self.core.interaction_mode.snapshot())
 
-    async def set_interaction_mode(self, request: web.Request) -> web.Response:
-        """Demander un mode. Refus bruyants, à code stable, jamais de repli.
+    async def refuse_interaction_mode_request(self, request: web.Request) -> web.Response:
+        """Refuser **toute** demande de mode : 409 ``interaction_mode_derived``, tracé, rien de changé.
 
-        `interaction_mode_not_implemented` (REUNION) est un 409 : la demande est
-        bien formée et le mode existe, c'est son comportement qui n'existe pas.
-        Une valeur qui n'est pas un mode reste un 400.
-
-        **Ce chemin ne touche pas la composition vocale** (Décision D15) :
-        aucun `configuration_id` n'est recalculé, aucun redémarrage de Voice
-        n'est demandé. Voice apprend le changement par `interaction.mode.changed`
-        sur `/v1/events`.
+        Le mode suit le type du Board actif (Slice 01b de
+        `jarvis-board-ui-wheel-dossier-refactor`, `docs/interaction-mode.md` ›
+        *Control plane*). Aucune origine n'est admise, ``presentation_studio_run``
+        comprise : le Studio appelle `InteractionModeService.request` en
+        processus et ne passe jamais par HTTP. La route reste pour qu'un client
+        d'une version plus ancienne lise un refus nommé plutôt qu'un 404 ou un 405.
         """
 
-        payload = await request.json()
-        if not isinstance(payload, dict):
-            raise ValueError("interaction mode request must be an object")
-        unknown = set(payload) - {"mode", "source"}
-        if unknown:
-            raise ValueError(f"unexpected fields: {', '.join(sorted(unknown))}")
-        source = _optional_text(payload.get("source"), "source") or "protocol"
         try:
-            state, disposition = await self.core.interaction_mode.request(payload.get("mode"), source=source)
-        except InteractionModeError as exc:
-            status = 409 if exc.code == "interaction_mode_not_implemented" else 400
-            return web.json_response({"error": {"code": exc.code, "message": str(exc)}}, status=status)
-        # Construit depuis **l'état de cet appel**, pas depuis un instantané
-        # relu : mélanger un mode relu et la révision de cet appel-ci peut
-        # rendre un couple `(mode, revision)` qui n'a jamais existé, et tout ce
-        # module repose sur le fait qu'une révision ordonne des observations.
-        return web.json_response({**state.to_payload(), "modes": supported_modes(),
-                                  "disposition": disposition.value})
+            payload = await request.json()
+        except ValueError:
+            payload = None  # argued: the refusal does not depend on the body; a malformed one is refused the same way
+        body = payload if isinstance(payload, dict) else {}
+        exc = self.core.interaction_mode.refuse_external_request(body.get("mode"), source=body.get("source"))
+        return web.json_response({"error": {"code": exc.code, "message": str(exc)}}, status=409)
 
     # ------------------------------------------------------------ Canal vocal et Chat (Slice 04)
 

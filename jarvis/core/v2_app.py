@@ -175,10 +175,9 @@ class JarvisCoreApplication:
         # Mode d'interaction (handoff jarvis-presentation-interaction-mode,
         # Slice 02) : Core possède la valeur effective vivante et sa révision.
         # Le service reste en mémoire : un mode effectif est un fait de cette
-        # vie du processus. La préférence enregistrée vit sur le Board actif
-        # (handoff board-session, Slice 02, `self.boards` ci-dessous) ; le
-        # rejeu global du Control Center n'est plus qu'une entrée de
-        # migration. Décision D15 : il
+        # vie du processus, dérivé du type du Board actif (`self.boards`
+        # ci-dessous, `docs/boards.md` › *Board type*) ; aucune demande venue de
+        # l'extérieur de Core n'est prise (Slice 01b). Décision D15 : il
         # n'entre **pas** dans `VoiceComposition.configuration_id`, donc un
         # passage SIMPLE ⇄ PRESENTATION ne redémarre jamais Voice ; le
         # changement voyage par `interaction.mode.changed` sur `/v1/events`.

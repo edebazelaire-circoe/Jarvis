@@ -24,7 +24,7 @@ renumbered.
 
 | Page | Owns |
 | --- | --- |
-| [interaction-mode.md](interaction-mode.md) | the three modes, output disposition, the policy matrix, the control plane (Core service, routes, `interaction.mode.changed`), the Control Center selector |
+| [interaction-mode.md](interaction-mode.md) | the three modes, output disposition, the policy matrix, the control plane (Core service, routes, `interaction.mode.changed`; the mode derived from the Board type, Slice 01b), the Control Center mode display |
 | [presentation-audio-capture.md](presentation-audio-capture.md) | microphone ownership in PRESENTATION, explicit-address triggers (wake word, manual key) |
 | [presentation-ambient-lane.md](presentation-ambient-lane.md) | continuous room speech → recent text, ambient triggers |
 | [presentation-working-set.md](presentation-working-set.md) | the session working set and transcript tail, bounds, pruning |
@@ -47,7 +47,7 @@ One owner per concept. Reuse it; do not build a second one.
 | --- | --- | --- |
 | Mode vocabulary | `domain/interaction_mode.py` › `InteractionMode`, `DEFAULT_INTERACTION_MODE`, `behaving_interaction_mode` | [interaction-mode.md](interaction-mode.md) |
 | Live mode (Core) | `core/interaction_mode.py` › `InteractionModeService.request` / `add_listener`; event `interaction.mode.changed` | [interaction-mode.md](interaction-mode.md) › Control plane |
-| Per-Board mode | `work_boards.interaction_mode` (+ origin); Board kind is metadata only | [boards.md](boards.md) |
+| Mode of a Board | nothing stored: the fixed Board type (`board_kind`) designates it (`board_kind_mode`), applied by `BoardService` at Core start and on every switch; no other writer but a transient Studio run | [boards.md](boards.md) › *Board type* |
 | Voice copy of the mode | `runtime/interaction_mode_observer.py` › `InteractionModeObserver` (epoch + revision guard), fed for the life of the process by `follow_core_mode` (owned by `PersistentVoiceRuntime.run`, every architecture); `SpeechScheduler` also feeds it during a session | [interaction-mode.md](interaction-mode.md) |
 | Brain mode hint | `adapters/control_center_brain.py` › `_turn_context` (mode in the turn context); `runtime/control_center.py` › `BRIEF_PRESENTATION_MODE` | [interaction-mode.md](interaction-mode.md) |
 | Composition | `app.py` › `_presentation_composition`; `runtime/presentation_runtime.py` › `PresentationComposition.build`, `PresentationCoordinator` | [presentation-audio-capture.md](presentation-audio-capture.md) |

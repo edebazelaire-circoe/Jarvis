@@ -196,7 +196,11 @@ present, create or open a Présentation Board). Switching Boards changes the
 behaviour live, without restarting Voice. There is no separate mode to choose:
 the internal interaction mode is derived from the Board type
 (`docs/boards.md` › *Board type*; stored Boards were converted once by the
-`jarvis.sqlite3` v9 migration, rollback from `jarvis.sqlite3.v8.bak`).
+`jarvis.sqlite3` v9 migration, rollback from `jarvis.sqlite3.v8.bak`). The
+bottom-left mode display only shows it; the former ways to set a mode on its
+own (that display, `settings_set`, `POST /api/interaction-mode`,
+`POST /v1/interaction-mode`) refuse with `interaction_mode_derived` and say to
+open or create a Board of the wanted type (`docs/interaction-mode.md`).
 
 - **Assistant** (`assistant`, shown SIMPLE by the mode display; the default and
   the regression boundary) - exactly the behaviour described everywhere else in

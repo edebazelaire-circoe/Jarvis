@@ -54,6 +54,7 @@ from typing import Any, Mapping
 import aiohttp
 
 from jarvis.domain.barehands_calibration import CALIBRATION_ACTIVE
+from jarvis.domain.interaction_mode import INTERACTION_MODE_DERIVED, INTERACTION_MODE_DERIVED_MESSAGE
 from jarvis.runtime.journal import RuntimeJournal
 from jarvis.runtime.mcp_tool_meta import tool_annotations, tool_names
 from jarvis.v2_config import validate_loopback_host
@@ -76,11 +77,9 @@ DEFAULT_PORT = 17654
 
 SETTINGS_ROUTE = "/api/settings"
 BAREHANDS_ROUTE = "/api/barehands"
-#: Route dédiée du mode d'interaction, celle du sélecteur du bas-gauche
-#: (`control_center_interaction_mode.js`) : elle enregistre **puis** demande le
-#: mode à Core, à chaud, sans toucher à la voix. `/api/settings` ne l'écrit pas.
-INTERACTION_MODE_ROUTE = "/api/interaction-mode"
-#: Identifiant du réglage côté cerveau : la clé de persistance elle-même.
+#: Ancien identifiant du mode d'interaction. Ce n'est plus un réglage : le mode
+#: suit le type du Board actif (Slice 01b). `settings_set` le refuse avec un code
+#: stable et dit au cerveau quoi faire à la place, au lieu d'un « réglage inconnu ».
 INTERACTION_MODE_ID = "interaction_mode"
 #: Séance de calibration vue par le Control Center (Slice 06 adaptative).
 CALIBRATION_SESSION_ROUTE = "/api/barehands/calibration-session"
@@ -157,7 +156,6 @@ BAREHANDS_OPTIONS: tuple[dict[str, Any], ...] = (
 #: les familles que la projection ne nomme pas elle-même.
 EXTRA_CATEGORIES: tuple[tuple[str, str], ...] = (
     ("hands", "Bare Hands (onglet Expérimental)"),
-    ("interaction", "Mode d'interaction (sélecteur du bas-gauche)"),
     ("scene", "Scène constellation"),
     ("agent", "Agent / CLI"),
     ("self_development", "Auto-développement"),
@@ -368,8 +366,8 @@ class ConsoleSettingsTools:
             # stable voyage dans l'en-tête. On rend les deux, parce qu'un refus
             # de validation dit *pourquoi*, et que cette phrase est ce que le
             # cerveau doit répéter plutôt qu'un « ça n'a pas marché ».
-            # 503 n'est pas un refus : le mode d'interaction, par exemple, y est
-            # **enregistré** mais pas encore appliqué, et le corps le dit.
+            # 503 n'est pas un refus : la route a pu enregistrer sans appliquer
+            # encore, et le corps le dit.
             verb = "répond" if status == 503 else "a refusé"
             raise ConsoleToolError(
                 header_code or f"http_{status}",
@@ -520,8 +518,6 @@ class ConsoleSettingsTools:
             "_family": "scene",
         })
 
-        items.append(_interaction_mode_item(settings))
-
         cli = settings.get("cli") or {}
         behavior = cli.get("behavior") or {}
         items.append({
@@ -654,6 +650,15 @@ class ConsoleSettingsTools:
 
     async def set(self, option_id: str, value: Any) -> dict[str, Any]:
         option_id = str(option_id or "").strip()
+        if option_id == INTERACTION_MODE_ID:
+            self._emit("settings.tool_refused", "settings_set : interaction_mode refusé (mode dérivé du Board)",
+                       level="warning", data={"tool": "settings_set", "option_id": option_id,
+                                              "code": INTERACTION_MODE_DERIVED})
+            raise ConsoleToolError(
+                INTERACTION_MODE_DERIVED,
+                f"{INTERACTION_MODE_DERIVED_MESSAGE} Outils : board_switch vers un Board de type "
+                "« presentation » (ou « assistant »), sinon board_create avec board_kind « presentation ».",
+            )
         settings, hands = await self._read_all()
         index = {item["id"]: item for item in self._catalog(settings, hands)}
         item = index.get(option_id)
@@ -731,8 +736,6 @@ class ConsoleSettingsTools:
     def _coerce(self, item: Mapping[str, Any], value: Any) -> Any:
         kind = item.get("type") or "text"
         option_id = item["id"]
-        if item.get("_family") == "interaction_mode":
-            return _as_interaction_mode(item, value)
         if kind == "boolean":
             return _as_bool(option_id, value)
         if kind in {"number", "number-or-empty"}:
@@ -781,10 +784,6 @@ class ConsoleSettingsTools:
         if family == "scene":
             return {"scene": {"enabled": value}}, SETTINGS_ROUTE
 
-        if family == "interaction_mode":
-            # Exactement le corps que poste le sélecteur de l'écran.
-            return {"mode": value}, INTERACTION_MODE_ROUTE
-
         if family == "agenda":
             return {"agenda_reminders": {path.split(".", 1)[1]: value}}, SETTINGS_ROUTE
 
@@ -832,74 +831,6 @@ class ConsoleSettingsTools:
             self.journal.emit(kind, message, level=level, data=data)
         except OSError:
             pass  # intentional: a full disk must not turn an applied setting into a tool failure
-
-
-def _interaction_mode_item(settings: Mapping[str, Any]) -> dict[str, Any]:
-    """Le mode d'interaction, tel que `/api/settings` le décrit (`interaction_mode_settings.describe`).
-
-    Les modes, leurs étiquettes d'écran et leur disponibilité sont **lus** dans la
-    projection (`modes`), pas recopiés : REUNION, annoncé mais non activable,
-    reste listé comme à l'écran, et son refus vient du serveur.
-    """
-
-    block = settings.get(INTERACTION_MODE_ID) or {}
-    modes = [m for m in (block.get("modes") or []) if isinstance(m, dict) and m.get("value")]
-    shown = "; ".join(
-        f"{m['value']} = {m.get('label')}"
-        + ("" if m.get("implemented", True) else " (annoncé, pas encore activable : refusé)")
-        for m in modes
-    )
-    return {
-        "id": INTERACTION_MODE_ID,
-        "label": "Mode d'interaction (SIMPLE / PRÉSENTATION / RÉUNION)",
-        "help": (
-            "Comment JARVIS se comporte : simple (assistant ordinaire, il répond à voix haute), "
-            "présentation (il écoute une présentation, montre à l'écran et ne parle que si c'est utile), "
-            "réunion (réservé). C'est le sélecteur du bas-gauche de l'interface ; s'applique à chaud, "
-            f"sans couper la voix. Valeurs : {shown}. Les étiquettes (simple, présentation, réunion) "
-            "sont acceptées aussi."
-        ),
-        "type": "enum",
-        "category": "interaction",
-        "value": block.get("mode"),
-        "default": "assistant",
-        "readonly": False,
-        "options": [m["value"] for m in modes],
-        "minimum": None, "maximum": None, "step": None,
-        "runtime_status": f"behaving={block.get('behaving')}",
-        "_persistence": INTERACTION_MODE_ID,
-        "_family": "interaction_mode",
-        "_labels": {str(m.get("label") or ""): m["value"] for m in modes},
-    }
-
-
-def _fold(text: str) -> str:
-    import unicodedata
-
-    decomposed = unicodedata.normalize("NFKD", text.strip().casefold())
-    return "".join(ch for ch in decomposed if not unicodedata.combining(ch))
-
-
-def _as_interaction_mode(item: Mapping[str, Any], raw: Any) -> str:
-    """Valeur (`presentation`) ou étiquette dite (« présentation », « SIMPLE », « réunion »).
-
-    La confusion que le domaine refuse — `simple` l'architecture vocale contre
-    SIMPLE l'étiquette — n'existe pas ici : l'identifiant du réglage désigne déjà
-    l'axe, donc « simple » ne peut vouloir dire que le mode assistant.
-    """
-
-    wanted = _fold(str(raw))
-    for value in item.get("options") or []:
-        if _fold(value) == wanted:
-            return value
-    for label, value in (item.get("_labels") or {}).items():
-        if label and _fold(label) == wanted:
-            return value
-    raise ConsoleToolError(
-        "settings_bad_value",
-        f"« {item['id']} » n'accepte que : {', '.join(item.get('options') or [])} "
-        f"(ou simple, présentation, réunion). Reçu {str(raw)[:40]!r}.",
-    )
 
 
 def _plain(value: Any) -> Any:
@@ -1045,8 +976,9 @@ def build_server(target: ConsoleMcpTarget | None = None, *, tools: ConsoleSettin
     async def settings_describe(
         category: Annotated[str | None, Field(description=(
             "Famille de réglages : architecture, conversation, turn_taking, models, audio, advanced, "
-            "diagnostic (la voix) ; hands (Bare Hands) ; interaction (mode simple / présentation / "
-            "réunion) ; scene ; agent (CLI et sous-agents) ; self_development. Omis : tout."
+            "diagnostic (la voix) ; hands (Bare Hands) ; scene ; agent (CLI et sous-agents) ; "
+            "self_development. Omis : tout. Le mode d'interaction n'est pas un réglage : il suit le "
+            "type du Board actif (outils board_*)."
         ))] = None,
         search: Annotated[str | None, Field(description=(
             "Filtre plein texte sur l'identifiant, le libellé et l'aide. « barehands », « voix », « vad »…"

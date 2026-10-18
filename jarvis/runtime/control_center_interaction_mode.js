@@ -1,29 +1,27 @@
-/* Mode d'interaction — le bouton d'état du bas-gauche et son sélecteur.
+/* Mode d'interaction — le bouton d'état du bas-gauche et son détail. **Affichage seul.**
 
-   Slice 03 de `jarvis-presentation-interaction-mode`. Le contrat vit dans
-   `docs/interaction-mode.md` ; la Slice 01 a posé le vocabulaire
-   (`SIMPLE` / `PRESENTATION` / `REUNION`) et la Slice 02 le plan de contrôle
-   (`GET /api/status` → `interaction_mode`, `POST /api/interaction-mode`).
-   Ce module ne fait qu'une chose : **montrer ce que ces deux-là disent**, et
-   proposer de changer de mode par la porte qu'elles ont ouverte.
+   Slice 03 de `jarvis-presentation-interaction-mode`, rendu inerte par la Slice
+   01b de `jarvis-board-ui-wheel-dossier-refactor`. Le contrat vit dans
+   `docs/interaction-mode.md` : le mode **suit le type du Board actif** (Assistant
+   → SIMPLE, Présentation → PRESENTATION, Réunion → REUNION annoncé, qui se
+   comporte en SIMPLE). Il ne se choisit plus ici : ce module **montre** ce que
+   `GET /api/status` → `interaction_mode` dit, et la séance que Voice rapporte.
+   Le retrait visuel de ce contrôle appartient à la Slice 02.
 
-   **Aucun état local du mode, par construction.** C'est la règle que ce module
-   partage avec le contrôle de cycle de vie Bare Hands, et pour la même raison :
-   une seconde mémoire du mode dans le navigateur diverge le jour où quelqu'un
-   change le mode depuis un autre onglet, depuis le protocole, ou depuis un
-   rattrapage de démarrage — et l'écran mentirait sans que rien ne tombe. Le
-   mode affiché vient **toujours** du dernier `/api/status`, jamais d'un clic.
+   **Aucun chemin d'écriture, par construction.** Le module ne reçoit aucune
+   porte réseau. Les pastilles restent listées, atteignables au clavier et
+   marquées `aria-disabled` : choisir l'une d'elles n'envoie rien et dit, à
+   l'endroit du clic, que le mode suit le type du Board et comment présenter
+   (ouvrir ou créer un Board Présentation). Le serveur refuserait de toute
+   façon (409 `interaction_mode_derived`) ; faire l'appel ferait passer une règle
+   assumée pour une panne.
 
-   Ce que ce module tient est de l'affichage et rien d'autre : l'ouverture du
-   sélecteur, le curseur de navigation au clavier, le compteur de la demande en
-   vol (RÈGLE ZÉRO — une attente sans borne doit dire depuis combien de temps
-   elle dure) et la dernière phrase de refus.
-
-   **Aucune peinture optimiste.** Un clic n'écrit pas la pastille cochée : il
-   part en `POST`, attend la réponse, puis redemande le statut canonique et
-   laisse celui-ci peindre. Un échec laisse donc le mode canonique précédent
-   coché sans qu'il y ait quoi que ce soit à défaire — c'est le critère
-   d'acceptation de la Slice, rendu structurel plutôt que surveillé.
+   **Aucun état local du mode.** Une seconde mémoire du mode dans le navigateur
+   divergerait le jour où une bascule de Board ou une lecture du Studio le
+   change, et l'écran mentirait sans que rien ne tombe. Le mode affiché vient
+   **toujours** du dernier `/api/status`, jamais d'un clic. Ce que ce module
+   tient est de l'affichage : l'ouverture du détail, le curseur clavier et la
+   dernière phrase d'explication.
 
    Les quatre présentations, et pourquoi elles sont quatre alors qu'il n'y a que
    trois modes :
@@ -36,9 +34,9 @@
      d'habitude. Pas rouge — ce n'est pas une panne ; pas vert — ce n'est pas
      une réussite ;
    - `unconfirmed` — Core est injoignable. La valeur affichée est alors le
-     **repli local** que la Slice 02 nomme (`source: "settings"`,
-     `core_reachable: false`, `revision: null`) : une préférence enregistrée, et
-     non la vérité vivante. Gris désaturé **et bordure en tirets**, parce qu'une
+     **repli local** nommé (`source: "local"`, `core_reachable: false`,
+     `revision: null`) : le comportement du type du Board quand il est connu,
+     et non la vérité vivante. Gris désaturé **et bordure en tirets**, parce qu'une
      différence qui ne tient qu'à la couleur n'en est pas une pour tout le
      monde ;
    - `unknown` — le sondage de statut lui-même est tombé. On ne sait rien, et
@@ -53,12 +51,7 @@
 
    **`REUNION` est piloté par la donnée, pas par son nom.** La liste `modes` du
    statut porte `implemented` et `status` pour chaque mode ; c'est elle qui
-   décide ce qui est choisissable. Un mode réservé refuse **ici**, sans
-   aller-retour : le serveur répondrait 409, et faire un appel dont on connaît
-   déjà le refus ferait passer une réserve assumée pour une panne. Le 409 reste
-   traité sur le chemin d'écriture, parce que le catalogue que cette page tient
-   est une photo vieille d'une seconde et qu'un Core plus ancien peut refuser un
-   mode que cette photo annonce comme implémenté.
+   décide ce qui est dit réservé.
 
    Insertion : `control_center.py` / `control_center.html`. Ce module ne dépend
    d'**aucun** autre module de page — ni Bare Hands, ni la scène : il lit le
@@ -83,8 +76,7 @@
    et inventer un mécanisme que rien d'autre n'utiliserait, pour gagner au mieux
    une seconde de latence sur un réglage que l'on change deux fois par jour.
    Le prix payé est écrit : jusqu'à une seconde entre le changement et son
-   affichage — sauf juste après un clic, où le module redemande le statut
-   lui-même au lieu d'attendre le battement suivant. */
+   affichage. */
 (function(root){
   'use strict';
 
@@ -114,10 +106,10 @@
        de tête et son étiquette ne peuvent pas diverger. */
     toneAttribute:'data-im-tone',
     /* Ce qu'une pastille est, au-delà de « cochée » : réservée (annoncée,
-       jamais activable) et/ou enregistrée (ce que l'utilisateur a choisi, qui
-       peut différer de ce qui tourne). Deux faits distincts, deux attributs. */
+       jamais activable) et/ou désignée par le type du Board actif (qui peut
+       différer de ce qui tourne). Deux faits distincts, deux attributs. */
     reservedAttribute:'data-im-reserved',
-    storedAttribute:'data-im-stored',
+    boardAttribute:'data-im-board',
   });
 
   /* Les présentations. Les deux premières sont des modes en vigueur ; les deux
@@ -128,34 +120,14 @@
     ASSISTANT:'assistant',PRESENTATION:'presentation',
     OTHER:'other',UNCONFIRMED:'unconfirmed',UNKNOWN:'unknown'});
 
-  /* La borne de l'attente d'écriture. RÈGLE ZÉRO : aucun état d'attente ne dure
-     pour toujours. `fetch` n'a pas de délai par lui-même ; passé ce temps le
-     contrôle redit ce qu'il a attendu, rend la main, et laisse le statut
-     canonique peindre ce qui a réellement eu lieu — la réponse tardive, si elle
-     arrive, ne peut donc rien écrire à l'écran. */
-  const WRITE_DEADLINE_MS=12000;
-
-  /* La route d'écriture, écrite une seule fois. */
-  const WRITE_PATH='/api/interaction-mode';
-
-  /* Ce que chaque famille de refus veut dire pour l'utilisateur. Les codes sont
-     ceux que la Slice 02 a stabilisés et que le serveur pose dans l'en-tête
-     `X-Jarvis-Error-Code` ; le texte, lui, appartient à l'écran.
-
-     `interaction_mode_not_implemented` (409) est un **conflit** et non une
-     panne, et `503` n'est pas un échec d'enregistrement : la préférence est
-     écrite sur le disque, seule son application est différée. Dire « échec »
-     là-dessus ferait recommencer l'utilisateur pour rien. */
-  const REFUSAL=Object.freeze({
-    interaction_mode_not_implemented:
-      'Ce mode est annoncé mais n’a pas encore de comportement : rien n’a été changé.',
-    interaction_mode_unknown:'Ce mode n’existe pas pour ce serveur.',
-    interaction_mode_missing:'La demande est partie sans mode.',
-    interaction_mode_bad_payload:'La demande n’avait pas la forme attendue.',
-    interaction_mode_unknown_field:'La demande portait un champ que ce serveur ne connaît pas.',
-    interaction_mode_schema_version_unsupported:
-      'Cette page écrit une version de réglage que le serveur ne prend pas.',
-  });
+  /* Ce qu'un choix dit au lieu de partir : la phrase du refus serveur
+     (`INTERACTION_MODE_DERIVED_MESSAGE`, `jarvis/domain/interaction_mode.py`),
+     mot pour mot — un test refuse la divergence. `NOTE_DERIVED` est la ligne de
+     repos du détail, quand rien de plus urgent n'est à dire. */
+  const DERIVED='Le mode d\'interaction suit le type du Board actif : il ne se règle plus à part. '
+    +'Pour présenter, ouvrez ou créez un Board Présentation ; pour revenir au mode simple, '
+    +'ouvrez un Board Assistant. Rien n\'a été changé.';
+  const NOTE_DERIVED='Le mode suit le type du Board actif. Pour présenter, ouvrez ou créez un Board Présentation.';
 
   /* Ce que les états d'attente disent, en un mot, sous le libellé du mode. */
   const SUB=Object.freeze({
@@ -227,7 +199,7 @@
      que le serveur ajoutera apparaîtra sans que cette page change. */
   function optionsOf(block){
     const raw=isObject(block)&&Array.isArray(block.modes)?block.modes:[];
-    const stored=isObject(block)?text(block.stored):'';
+    const board=isObject(block)?text(block.board_mode):'';
     const options=[];
     for(const entry of raw){
       if(!isObject(entry))continue;
@@ -245,10 +217,11 @@
            un serveur qui omettrait le champ verrait ses modes présentés comme
            réservés, ce qui est le sens sûr des deux. */
         reserved:entry.implemented!==true,
-        /* Ce que l'utilisateur a choisi, qui n'est pas forcément ce qui tourne :
-           un `REUNION` enregistré reste visible ici alors que le mode effectif
-           rapporte SIMPLE (décision 02). */
-        stored:!!stored&&stored===value,
+        /* Le mode que désigne le type du Board actif, qui n'est pas forcément
+           ce qui tourne : un Board Réunion garde `REUNION` visible ici alors que
+           le mode effectif rapporte SIMPLE (décision 02) ; une lecture du Studio
+           tient PRESENTATION sur un Board Assistant. */
+        board:!!board&&board===value,
       }));
     }
     return Object.freeze(options);
@@ -318,14 +291,9 @@
      aucune lecture de page, aucune horloge, aucun réseau — c'est ce que les
      tests exercent sans navigateur.
 
-     `pending` est la demande en vol, quand il y en a une. Elle est passée
-     **à côté** de l'instantané plutôt que fondue dedans, parce qu'elle n'en
-     fait pas partie : c'est de l'affichage local, et le mode coché reste celui
-     que le serveur confirme pendant toute sa durée.
-
      `report` est le relevé `presentation` du **même** statut ; un clic ne
      l'écrit jamais. */
-  function viewOf(block,pending,report){
+  function viewOf(block,report){
     const has=isObject(block);
     const options=optionsOf(block);
     const mode=has?text(block.mode):'';
@@ -340,11 +308,8 @@
       :!live?TONE.UNCONFIRMED
       :mode===TONE.ASSISTANT||mode===TONE.PRESENTATION?mode
       :TONE.OTHER;
-    const stored=has?text(block.stored):'';
+    const board=has?text(block.board_mode):'';
     const error=has&&isObject(block.error)?block.error:null;
-    const waiting=isObject(pending)&&!!text(pending.mode);
-    const wanted=waiting?text(pending.mode):'';
-    const wantedOption=waiting?options.find(option=>option.value===wanted)||null:null;
     return Object.freeze({
       tone,
       mode,
@@ -354,16 +319,14 @@
          comme autoritaire une valeur que personne ne garantit. */
       selected:live&&known&&!known.reserved?known.value:null,
       live,
-      stored,
-      storedLabel:has?text(block.stored_label):'',
-      /* Enregistré et effectif divergent : c'est un fait à montrer, pas à
-         arbitrer. Il arrive pour `REUNION` (réservé, jamais effectif) et après
-         un 503 (préférence écrite, application différée). */
-      diverged:!!stored&&!!mode&&stored!==mode,
+      board,
+      boardLabel:has?text(block.board_mode_label):'',
+      /* Type du Board et mode effectif divergent : c'est un fait à montrer, pas
+         à arbitrer. Il arrive pour un Board Réunion (réservé, jamais effectif)
+         et pendant une lecture du Studio (mode transitoire, restauré). */
+      diverged:!!board&&!!mode&&board!==mode,
       reason:error?text(error.code):'',
       options,
-      busy:waiting,
-      pendingLabel:wantedOption?wantedOption.label:wanted.toUpperCase(),
       presence:presenceOf(report,mode),
     });
   }
@@ -379,27 +342,21 @@
     return view.label||view.mode.toUpperCase()||'MODE ?';
   }
 
-  /* La seconde ligne du bouton : ce qu'il faut savoir sans ouvrir le sélecteur.
-     Elle porte le **compteur** de la demande en vol : c'est la seule chose qui
-     distingue une attente qui avance d'une page figée. */
-  function subOf(view,seconds){
-    if(view.busy)return `${view.pendingLabel} · ${Math.max(0,Math.round(seconds||0))} S`;
+  /* La seconde ligne du bouton : ce qu'il faut savoir sans ouvrir le détail. */
+  function subOf(view){
     if(view.tone===TONE.UNKNOWN)return SUB.unknown;
-    const chosen=view.diverged?`CHOISI : ${view.storedLabel||view.stored.toUpperCase()}`:'';
-    /* **Les deux, et non l'un ou l'autre.** « non confirmé » sortait avant
-       « choisi », si bien qu'un REUNION enregistré disparaissait du bouton dès
-       que Core devenait injoignable — c'est-à-dire exactement quand le choix de
-       l'utilisateur est la seule chose que l'on sache encore (décision 02). */
-    if(!view.live)return chosen?`${SUB.unconfirmed} · ${chosen}`:SUB.unconfirmed;
-    return chosen;
+    const kind=view.diverged?`BOARD : ${view.boardLabel||view.board.toUpperCase()}`:'';
+    /* **Les deux, et non l'un ou l'autre** : un Board Réunion ne disparaît pas
+       du bouton quand Core devient injoignable (décision 02). */
+    if(!view.live)return kind?`${SUB.unconfirmed} · ${kind}`:SUB.unconfirmed;
+    return kind;
   }
 
   /* L'infobulle du bouton (p20) : **courte**, et jamais la copie du nom
      accessible — une phrase de trois lignes en infobulle double ce que le
      lecteur d'écran dit déjà. Elle garde le code d'échec, que l'on cherche
      dans la trace. */
-  function titleOf(view,seconds){
-    if(view.busy)return `${view.pendingLabel} demandé · ${Math.max(0,Math.round(seconds||0))} s`;
+  function titleOf(view){
     const session=presenceShown(view)?view.presence:null;
     return `Mode : ${captionOf(view)}`
       +(session?` · ${session.line}${session.code?` (${session.code})`:''}`:'');
@@ -407,77 +364,59 @@
 
   /* La phrase lue par les lecteurs d'écran. Elle dit
      l'état, sa cause quand il y en a une, et **comment en sortir**. */
-  function labelOf(view,seconds){
+  function labelOf(view){
     /* La séance, quand elle est dite, se place **avant** l'action : un lecteur
        d'écran entend l'état entier, puis ce que le bouton fait. */
     const session=presenceShown(view)?` ${view.presence.said}`:'';
-    const action=`${session} Ouvrir le choix du mode.`;
-    if(view.busy)
-      return `Passage en ${view.pendingLabel} demandé depuis `
-        +`${Math.max(0,Math.round(seconds||0))} secondes. Le mode affiché reste `
-        +`celui que le serveur confirme.${action}`;
+    const action=`${session} Ouvrir le détail du mode.`;
     if(view.tone===TONE.UNKNOWN)
       return `Mode d’interaction inconnu : le statut de Jarvis n’est pas lisible.${action}`;
     if(!view.live)
       return `Mode d’interaction : ${view.label||view.mode} — non confirmé par Core.`
-        +`${view.diverged?` ${view.storedLabel||view.stored} est le mode choisi.`:''}`
+        +`${view.diverged?` ${view.boardLabel||view.board} est le mode du type du Board.`:''}`
         +action;
     /* Le nom commence par ce que le bouton montre (« MODE » puis le libellé) : WCAG 2.5.3, la commande vocale
        « cliquer Mode Assistant » la trouve (orbital-ui Slice 09, relevé par axe-core). */
     if(view.diverged)
       return `Mode ${view.label} : mode d’interaction en vigueur ; `
-        +`${view.storedLabel||view.stored} est le mode choisi.${action}`;
+        +`${view.boardLabel||view.board} est le mode du type du Board.${action}`;
     return `Mode ${view.label} : mode d’interaction en vigueur.${action}`;
   }
 
-  /* Le bandeau du sélecteur : ce qu'il faut savoir avant de choisir. Vide quand
-     il n'y a rien à dire — un bandeau permanent cesse d'être lu. L'ordre est
-     celui de l'urgence : un refus que l'on vient de provoquer passe avant un
-     état durable. */
-  function noteOf(view,seconds,failure){
-    /* Le refus porte **son** ton. Il arrivait ici comme une simple chaîne, et le
-       bandeau le peignait en rouge quoi qu'il dise : un 503 « enregistré, mais
-       pas encore appliqué » et une réserve annoncée se lisaient comme une
-       panne. Le ton voyage donc avec le texte, depuis `refusalOf`. */
+  /* Le bandeau du détail. L'ordre est celui de l'urgence : l'explication d'un
+     choix que l'on vient de faire passe avant un état durable, et la ligne de
+     repos (`NOTE_DERIVED`) ne vient qu'en dernier. */
+  function noteOf(view,failure){
+    /* L'explication porte **son** ton : une règle assumée ne se peint pas comme
+       une panne. */
     if(failure&&failure.text)
       return Object.freeze({tone:failure.tone||'bad',text:failure.text});
-    if(view.busy)
-      return Object.freeze({tone:'wait',
-        text:`Demande de ${view.pendingLabel} en cours depuis `
-          +`${Math.max(0,Math.round(seconds||0))} s. Le mode ne changera à l’écran `
-          +'que lorsque le serveur l’aura confirmé.'});
     if(view.tone===TONE.UNKNOWN)
       return Object.freeze({tone:'bad',
-        text:'Le statut de Jarvis n’est pas lisible : le mode affiché n’est pas connu. '
-          +'Un changement demandé maintenant peut ne pas aboutir.'});
+        text:'Le statut de Jarvis n’est pas lisible : le mode affiché n’est pas connu.'});
     if(!view.live)
-      /* **Pas « ceci est la préférence enregistrée ».** C'était littéralement
-         faux quand la préférence est réservée : le serveur rend alors le mode
-         qui *s'appliquerait* (`behaving(stored)`), pas ce qui est rangé sur le
-         disque — et les deux diffèrent précisément sur REUNION, le cas que la
-         décision 02 protège. Le bandeau dit donc ce que la valeur est, et nomme
-         le choix à côté quand il en diverge. */
+      /* Le serveur rend alors le mode qui *s'appliquerait* (le comportement du
+         type du Board), pas le mode en vigueur : le bandeau dit ce que la valeur
+         est, et nomme le type du Board à côté quand il en diverge. */
       return Object.freeze({tone:'wait',
         text:'Core est injoignable. La valeur affichée est le mode qui '
           +`s’appliquerait, pas le mode en vigueur${view.reason?` (${view.reason})`:''}.`
-          +`${view.diverged?` Choisi : ${view.storedLabel||view.stored}.`:''}`
-          +' Un choix sera conservé et appliqué dès que Core répondra.'});
-    /* Un catalogue vide n'est pas un sélecteur vide sans explication : sans ce
-       mot, le menu s'ouvrirait sur rien et rien ne dirait pourquoi. */
+          +`${view.diverged?` Type du Board : ${view.boardLabel||view.board}.`:''}`
+          +' Le mode suivra le type du Board actif dès que Core répondra.'});
+    /* Un catalogue vide n'est pas un détail vide sans explication. */
     if(!view.options.length)
       return Object.freeze({tone:'warn',
-        text:'Ce serveur n’annonce aucun mode : il n’y a rien à choisir ici pour le moment.'});
-    /* Une séance refusée, ratée ou sourde est ce qu'il faut savoir avant de
-       rechoisir PRESENTATION : rechoisir ne la réparera pas. Le code suit la
-       phrase, pour qu'on le retrouve dans la trace. */
+        text:'Ce serveur n’annonce aucun mode.'});
+    /* Une séance refusée, ratée ou sourde est ce qu'il faut savoir d'abord :
+       le code suit la phrase, pour qu'on le retrouve dans la trace. */
     const session=view.presence;
     if(session&&session.shown&&(session.tone==='bad'||session.tone==='warn'))
       return Object.freeze({tone:session.tone,
         text:`${session.said}${session.code?` (${session.code})`:''}`});
     if(view.diverged)
       return Object.freeze({tone:'warn',
-        text:`Choisi : ${view.storedLabel||view.stored}. En vigueur : ${view.label}.`});
-    return null;
+        text:`Type du Board : ${view.boardLabel||view.board}. En vigueur : ${view.label}.`});
+    return Object.freeze({tone:'info',text:NOTE_DERIVED});
   }
 
   /* ------------------------------------------------------------- dessin */
@@ -728,7 +667,6 @@ body:has(${GEO.badgeSelector}):has(${GEO.sceneSelector}) #${DOM.hostId}{--im-rai
 #${DOM.hostId} .im-sub:empty{display:none}
 #${DOM.hostId}[${DOM.toneAttribute}=unconfirmed] .im-sub,
 #${DOM.hostId}[${DOM.toneAttribute}=unknown] .im-sub{color:${WARN}}
-#${DOM.hostId}[data-im-busy=true] .im-sub{color:${ACCENT}}
 /* La séance PRESENTATION, telle que Voice la rapporte. Une marque **et** un
    mot : la forme distingue les états sans la couleur — disque plein qui
    respire (écoute), anneau (sourd), carré (refus, échec), anneau en tirets
@@ -749,15 +687,6 @@ body:has(${GEO.badgeSelector}):has(${GEO.sceneSelector}) #${DOM.hostId}{--im-rai
 #${DOM.hostId} .im-pres[data-im-presence=entry_failed] .im-pres-dot{border-radius:1px;background:currentColor}
 #${DOM.hostId} .im-pres[data-im-presence=inactive] .im-pres-dot{border-style:dashed}
 @keyframes imListen{0%,100%{opacity:1}50%{opacity:.35}}
-/* RÈGLE ZÉRO : une attente se voit bouger. Le compteur de la ligne du dessous
-   monte même quand les animations sont coupées ; cette barre est le signal de
-   loin, pas le seul. */
-#${DOM.hostId} .im-wait{position:absolute;left:10px;right:10px;bottom:5px;height:2px;border-radius:2px;
-  overflow:hidden;display:none;background:color-mix(in srgb,var(--im-ink) 22%,transparent)}
-#${DOM.hostId}[data-im-busy=true] .im-wait{display:block}
-#${DOM.hostId} .im-wait::after{content:'';position:absolute;top:0;bottom:0;left:0;width:42%;
-  border-radius:2px;background:currentColor;animation:imSweep 1.25s ease-in-out infinite}
-@keyframes imSweep{from{transform:translateX(-115%)}to{transform:translateX(255%)}}
 /* Une valeur non confirmée porte une marque qu'aucun mode en vigueur ne porte. */
 #${DOM.hostId} .im-alert{position:absolute;right:-4px;top:-4px;width:11px;height:11px;border-radius:50%;
   display:none;background:${WARN};box-shadow:0 0 10px color-mix(in srgb,${WARN} 60%,transparent)}
@@ -791,9 +720,11 @@ body:has(${GEO.badgeSelector}):has(${GEO.sceneSelector}) #${DOM.hostId}{--im-rai
 #${DOM.hostId} .im-opt[disabled]{opacity:.45;cursor:not-allowed}
 #${DOM.hostId} .im-opt[aria-checked=true]{border-color:color-mix(in srgb,${ACCENT} 45%,transparent);
   background:rgba(110,231,255,.07)}
-/* Le mode réservé. \`aria-disabled\` et **pas** \`disabled\` : il reste atteignable
-   au clavier, donc capable de dire pourquoi il ne se choisit pas. Un bouton
-   que l'on ne peut pas atteindre ne peut rien expliquer. */
+/* Aucune pastille ne se choisit (le mode suit le type du Board) : toutes portent
+   \`aria-disabled\` et **pas** \`disabled\`, pour rester atteignables au clavier,
+   donc capables de dire pourquoi. Un bouton que l'on ne peut pas atteindre ne
+   peut rien expliquer. Le mode réservé garde en plus sa marque en tirets. */
+#${DOM.hostId} .im-opt[aria-disabled=true]{cursor:default}
 #${DOM.hostId} .im-opt[${DOM.reservedAttribute}=true]{cursor:not-allowed}
 #${DOM.hostId} .im-opt[${DOM.reservedAttribute}=true] .im-opt-name{color:${MUTED}}
 #${DOM.hostId} .im-opt[${DOM.reservedAttribute}=true] .im-opt-mark{border-style:dashed;color:${MUTED}}
@@ -811,14 +742,10 @@ body:has(${GEO.badgeSelector}):has(${GEO.sceneSelector}) #${DOM.hostId}{--im-rai
 #${DOM.hostId} .im-opt-tag{font-size:8.5px;letter-spacing:.14em;text-transform:uppercase;
   padding:3px 6px;border-radius:5px;border:1px solid ${LINE};color:${MUTED};white-space:nowrap}
 #${DOM.hostId} .im-opt-tag:empty{display:none;border:0;padding:0}
-#${DOM.hostId} .im-opt[${DOM.storedAttribute}=true] .im-opt-tag{color:${WARN};
+#${DOM.hostId} .im-opt[${DOM.boardAttribute}=true] .im-opt-tag{color:${WARN};
   border-color:color-mix(in srgb,${WARN} 40%,transparent)}
-/* **Trois tons, et chacun a sa règle.** Le bandeau portait \`data-im-note\` sans
-   qu'aucun sélecteur ne le lise pour \`bad\`, si bien que tout retombait sur le
-   rouge de la base : « enregistré, mais pas encore appliqué » (503) et « ce mode
-   est réservé » (409) se peignaient exactement comme « le changement a échoué ».
-   L'argument était tenu dans le texte et démenti par la couleur, qui est ce que
-   l'on lit en premier. */
+/* **Un ton par règle.** \`info\` (la ligne de repos) garde le gris de la base ;
+   une règle assumée (\`warn\`) ne se peint pas comme une panne (\`bad\`). */
 #${DOM.hostId} .im-note{margin:0 0 10px;padding:7px 9px;border-radius:8px;font-size:10px;line-height:1.5;
   color:${MUTED};border:1px solid ${LINE};background:rgba(6,12,18,.5)}
 #${DOM.hostId} .im-note[data-im-note=bad]{color:${DANGER};
@@ -850,8 +777,6 @@ body:has(${GEO.badgeSelector}):has(${GEO.sceneSelector}) #${DOM.hostId}{--im-rai
   #${DOM.hostId} .im-pop{width:min(298px,calc(100vw - ${GEO.narrowLeft + 18}px));max-width:none}
 }
 @media(prefers-reduced-motion:reduce){
-  /* Le compteur, lui, continue de monter : c'est le signal qui ne dépend
-     d'aucune animation. */
   #${DOM.hostId} .im-btn,#${DOM.hostId} .im-opt{transition:none}
   /* Le halo s'anime sous \`#hote[data-im-tone=presentation] .im-mark::after\`,
      de specificite (1,2,1). Une regle d'arret ecrite \`#hote .im-mark::after\`
@@ -861,7 +786,7 @@ body:has(${GEO.badgeSelector}):has(${GEO.sceneSelector}) #${DOM.hostId}{--im-rai
      c'est pourquoi un test qui lit la feuille comme du texte passait pendant
      que la cascade faisait le contraire. */
   #${DOM.hostId}[${DOM.toneAttribute}=presentation] .im-mark::after{animation:none}
-  #${DOM.hostId} .im-wait::after,#${DOM.hostId} .im-pop{animation:none}
+  #${DOM.hostId} .im-pop{animation:none}
   /* Même spécificité que la règle qui anime, pour la même raison que le halo. */
   #${DOM.hostId} .im-pres[data-im-presence=listening] .im-pres-dot{animation:none}
 }`;
@@ -886,37 +811,17 @@ body:has(${GEO.badgeSelector}):has(${GEO.sceneSelector}) #${DOM.hostId}{--im-rai
   function createModeControl(deps){
     const doc=deps.document,host=deps.host;
     const now=typeof deps.now==='function'?deps.now:()=>Date.now();
-    const arm=deps.setInterval,disarm=deps.clearInterval;
-    const later=deps.setTimeout,unlater=deps.clearTimeout;
+    const later=deps.setTimeout;
     const log=typeof deps.log==='function'?deps.log:function(){};
-    /* La porte d'écriture de la page (`api`), passée plutôt que prise : prise
-       dans un global, ce contrôle serait inexerçable sous node. */
-    const request=typeof deps.request==='function'?deps.request:null;
-    /* L'infusion de la page, pour dire un refus **sans** reprendre le focus.
-       Absente — une page servie à moitié —, le contrôle fonctionne quand même :
-       perdre une infusion est moins grave que perdre le mode. */
-    const toast=typeof deps.toast==='function'?deps.toast:null;
-    /* La relecture du statut canonique. Après une écriture, on ne peint pas ce
-       qu'on a demandé : on redemande ce qui est. */
-    const refresh=typeof deps.refresh==='function'?deps.refresh:null;
 
     /* **L'instantané, et rien d'autre.** `block` est le dernier
        `interaction_mode` reçu ; il n'est jamais écrit par un clic. */
-    let block=null,pending=null,report=null,view=viewOf(null,null,null);
+    let block=null,report=null,view=viewOf(null,null);
     /* Heure murale (s) du dernier battement montrant un autre mode que
        PRESENTATION, confirmé par Core. Voir `freshReport`. */
     let otherModeSeenAtS=null;
-    let opened=false,cursor=0,failure='',choosing=false;
-    let waitTimer=0,spoken='';
-    /* **Une minuterie d'echeance par appel.** Elle vivait dans une variable
-       unique, alors que deux `choose()` peuvent se chevaucher : passe le delai,
-       le premier appel rendait la main, un second partait et posait SA minuterie
-       dans la meme variable -- puis le premier, en se terminant enfin, annulait
-       ce qu'il y trouvait, c'est-a-dire l'echeance du second. Le second devenait
-       illimite, et le controle restait desarme pour la vie de la page : exactement
-       ce que `WRITE_DEADLINE_MS` existe pour empecher. Chaque appel tient donc son
-       billet dans sa fermeture. */
-    const waits=new Set();
+    let opened=false,cursor=0,failure='';
+    let spoken='';
 
     installStyle(doc);
 
@@ -960,9 +865,6 @@ body:has(${GEO.badgeSelector}):has(${GEO.sceneSelector}) #${DOM.hostId}{--im-rai
     textBox.appendChild(presence);
     trigger.appendChild(textBox);
 
-    const wait=doc.createElement('span');
-    wait.className='im-wait';wait.setAttribute('aria-hidden','true');
-    trigger.appendChild(wait);
     const alert=doc.createElement('span');
     alert.className='im-alert';alert.setAttribute('aria-hidden','true');
     trigger.appendChild(alert);
@@ -970,12 +872,9 @@ body:has(${GEO.badgeSelector}):has(${GEO.sceneSelector}) #${DOM.hostId}{--im-rai
 
     const pop=doc.createElement('div');
     pop.id=DOM.chooserId;pop.className='im-pop';
-    /* `role="menu"` + `role="menuitemradio"`, et **pas** `radiogroup` : dans un
-       menu, les flèches déplacent le focus **sans choisir**. Dans un groupe de
-       radios, traverser les options au clavier changerait le mode de Jarvis à
-       chaque touche — un aller-retour serveur et un changement de comportement
-       par flèche, que personne n'a demandé. Le contrôle Bare Hands a tranché
-       ainsi pour la caméra ; la raison vaut mot pour mot ici. */
+    /* `role="menu"` + `role="menuitemradio"` : les flèches déplacent le focus,
+       la pastille cochée dit le mode en vigueur, et chaque entrée, inerte
+       (`aria-disabled`), reste atteignable pour dire pourquoi. */
     pop.setAttribute('role','menu');
     pop.setAttribute('aria-label','Mode d’interaction de Jarvis');
     pop.hidden=true;
@@ -1067,21 +966,19 @@ body:has(${GEO.badgeSelector}):has(${GEO.sceneSelector}) #${DOM.hostId}{--im-rai
 
     /* ------------------------------------------------------------ peinture */
 
-    const waitSeconds=()=>pending?Math.max(0,(now()-pending.since)/1000):0;
-
     function optionOf(value){
       for(const option of view.options)if(option.value===value)return option;
       return null;
     }
 
-    /* Ce que chaque mode **fait**, sous le sélecteur. Le texte vient du serveur
+    /* Ce que chaque mode **fait**, sous le détail. Le texte vient du serveur
        (`summary`), pas d'une table recopiée ici : deux descriptions du même
        mode finiraient par se contredire. */
     function hintFor(value){
       const option=optionOf(value);
       if(!option)return '';
       const reserved=option.reserved
-        ?' Ce mode est annoncé et réservé : il n’a pas encore de comportement, et le choisir ne change rien.'
+        ?' Ce mode est annoncé et réservé : il n’a pas encore de comportement.'
         :'';
       /* Le pied ne contredit pas le bandeau (p18). Le résumé du serveur dit ce
          que PRESENTATION fait **quand sa séance tourne** ; une séance sourde,
@@ -1097,29 +994,11 @@ body:has(${GEO.badgeSelector}):has(${GEO.sceneSelector}) #${DOM.hostId}{--im-rai
 
     function paintHint(value){hint.textContent=hintFor(value)}
 
-    /* Le compteur de la demande en vol. Armé **par l'état**, comme le compteur
-       de démarrage du contrôle Bare Hands, et désarmé dès que l'attente cesse.
-       Il monte même quand les animations sont coupées. */
-    function paintWaitClock(){
-      if(!pending){
-        if(waitTimer){disarm(waitTimer);waitTimer=0}
-        return;
-      }
-      if(waitTimer)return;
-      waitTimer=arm(()=>{
-        if(!pending){disarm(waitTimer);waitTimer=0;return}
-        paintClockText();
-      },1000);
-    }
-
-    function paintClockText(){
-      const seconds=waitSeconds();
+    function paintCaption(){
       label.textContent=captionOf(view);
-      sub.textContent=subOf(view,seconds);
-      const said=labelOf(view,seconds);
-      trigger.setAttribute('aria-label',said);
-      trigger.setAttribute('title',titleOf(view,seconds));
-      if(opened)paintNote(seconds);
+      sub.textContent=subOf(view);
+      trigger.setAttribute('aria-label',labelOf(view));
+      trigger.setAttribute('title',titleOf(view));
     }
 
     /* La ligne de la séance. Rien ici ne vient d'un clic : elle ne change que
@@ -1137,8 +1016,8 @@ body:has(${GEO.badgeSelector}):has(${GEO.sceneSelector}) #${DOM.hostId}{--im-rai
       else presence.removeAttribute('title');
     }
 
-    function paintNote(seconds){
-      const said=noteOf(view,seconds,failure);
+    function paintNote(){
+      const said=noteOf(view,failure);
       note.hidden=!said;
       note.textContent=said?said.text:'';
       if(said)note.setAttribute('data-im-note',said.tone);
@@ -1146,22 +1025,14 @@ body:has(${GEO.badgeSelector}):has(${GEO.sceneSelector}) #${DOM.hostId}{--im-rai
     }
 
     function paint(){
-      /* **La projection est refaite ici, et nulle part ailleurs.** Elle dépend
-         de deux choses — l'instantané canonique et la demande en vol — qui
-         changent à des moments différents. La calculer seulement à l'arrivée
-         d'un statut laissait le début d'une écriture peindre une vue d'avant
-         la demande : le bouton restait immobile, sans compteur ni barre, et
-         « ça travaille » redevenait indiscernable de « c'est figé ». Trouvé
-         par `test_le_compteur_de_l_attente_monte_vraiment`. */
-      view=viewOf(block,pending,report);
+      /* **La projection est refaite ici, et nulle part ailleurs.** */
+      view=viewOf(block,report);
       buildOptions();
       host.setAttribute(DOM.toneAttribute,view.tone);
       host.setAttribute('data-im-mode',view.mode);
       host.setAttribute('data-im-live',view.live?'true':'false');
-      host.setAttribute('data-im-busy',view.busy?'true':'false');
       host.setAttribute('data-im-diverged',view.diverged?'true':'false');
       paintPresence();
-      trigger.setAttribute('aria-busy',view.busy?'true':'false');
       /* Le motif du bouton replié suit le mode **en vigueur**, et n'est refait
          que lorsque celui-ci change : le sondage repeint une fois par seconde,
          et reconstruire un SVG à chaque battement pour le même mode serait du
@@ -1172,31 +1043,26 @@ body:has(${GEO.badgeSelector}):has(${GEO.sceneSelector}) #${DOM.hostId}{--im-rai
         markGlyph=glyph(doc,view.mode,22);
         mark.appendChild(markGlyph);
       }
-      paintWaitClock();
-      paintClockText();
+      paintCaption();
       for(let i=0;i<options.length;i+=1){
         const option=options[i];
         const model=optionOf(option.value)||{};
         const on=option.value===view.selected;
         option.el.setAttribute('aria-checked',on?'true':'false');
         option.el.setAttribute(DOM.reservedAttribute,model.reserved?'true':'false');
-        option.el.setAttribute(DOM.storedAttribute,model.stored?'true':'false');
-        /* `aria-disabled` et non `disabled` pour un mode réservé : il reste
-           atteignable, donc capable de dire pourquoi. `disabled`, en revanche,
-           est juste pendant une écriture en vol : il n'y a alors rien à
-           expliquer qui ne soit déjà dans le bandeau et le compteur, et un
-           second clic partirait une seconde demande. */
-        option.el.disabled=view.busy;
-        option.el.setAttribute('aria-disabled',model.reserved||view.busy?'true':'false');
+        option.el.setAttribute(DOM.boardAttribute,model.board?'true':'false');
+        /* Inerte, pour toutes : le mode suit le type du Board (Slice 01b).
+           `aria-disabled` et non `disabled`, pour rester atteignable et dire pourquoi. */
+        option.el.setAttribute('aria-disabled','true');
         option.name.textContent=model.label||option.value;
         option.desc.textContent=hintFor(option.value);
         option.state.textContent=model.reserved
           ?`Réservé · ${model.status||'prévu'}`
           :on?'En vigueur':'';
-        option.tag.textContent=model.stored&&!on?'Choisi':'';
+        option.tag.textContent=model.board&&!on?'Board':'';
         option.el.setAttribute('aria-label',
           `${model.label||option.value}${model.reserved?' — réservé, sans comportement'
-            :on?' — mode en vigueur':''}${model.stored&&!on?' — mode enregistré':''}`);
+            :on?' — mode en vigueur':''}${model.board&&!on?' — mode du type du Board':''}`);
         option.el.setAttribute('tabindex',i===cursor?'0':'-1');
       }
       /* Le curseur vaut le mode courant tant que personne n'a déplacé le focus. */
@@ -1206,7 +1072,7 @@ body:has(${GEO.badgeSelector}):has(${GEO.sceneSelector}) #${DOM.hostId}{--im-rai
         for(let i=0;i<options.length;i+=1)
           options[i].el.setAttribute('tabindex',i===cursor?'0':'-1');
       }
-      paintNote(waitSeconds());
+      paintNote();
       if(!hint.textContent&&options.length)
         paintHint(view.selected||options[Math.min(cursor,options.length-1)].value);
       speak();
@@ -1222,10 +1088,9 @@ body:has(${GEO.badgeSelector}):has(${GEO.sceneSelector}) #${DOM.hostId}{--im-rai
          avec la phrase ordinaire : l'utilisateur d'un lecteur d'écran
          n'entendait jamais pourquoi son choix n'avait pas été pris. */
       const line=failure&&failure.text?failure.text
-        :view.busy?`Changement vers ${view.pendingLabel} demandé.`
         :view.tone===TONE.UNKNOWN?'Mode d’interaction inconnu : statut illisible.'
         :!view.live?`Mode d’interaction ${view.label} — non confirmé par Core.`
-        :view.diverged?`Mode d’interaction ${view.label} en vigueur, ${view.storedLabel} choisi.`
+        :view.diverged?`Mode d’interaction ${view.label} en vigueur, ${view.boardLabel} par le type du Board.`
         :`Mode d’interaction ${view.label}.`;
       /* La séance est dite **avec** le mode, et seulement quand elle change :
          une entrée refusée doit être entendue, pas seulement vue. */
@@ -1242,24 +1107,22 @@ body:has(${GEO.badgeSelector}):has(${GEO.sceneSelector}) #${DOM.hostId}{--im-rai
       opened=true;
       pop.hidden=false;
       trigger.setAttribute('aria-expanded','true');
-      paintNote(waitSeconds());
+      paintNote();
       if(options.length){paintHint(options[cursor].value);focusAt(cursor)}
       return true;
     }
 
     function close(options_){
       if(!opened)return false;
-      /* Le refus a été lu, ou l'utilisateur est parti : dans les deux cas il
-         cesse d'être ce qu'il y a de plus important à dire. Rien ne l'effaçait
-         tant que le mode en vigueur ne bougeait pas — et après un REUNION refusé
-         sur place le mode ne bouge jamais, si bien qu'un Core devenu injoignable
-         ensuite restait masqué derrière une phrase périmée. */
+      /* L'explication a été lue, ou l'utilisateur est parti : dans les deux cas
+         elle cesse d'être ce qu'il y a de plus important à dire, et un Core
+         devenu injoignable ensuite ne reste pas masqué derrière elle. */
       failure='';
       opened=false;
       pop.hidden=true;
       trigger.setAttribute('aria-expanded','false');
       /* Le bandeau gardait le résumé de la dernière option survolée : rouvert,
-         le sélecteur décrivait un mode que l'utilisateur n'avait pas choisi. */
+         le détail décrivait un autre mode que celui en vigueur. */
       if(options.length)paintHint(view.selected||options[0].value);
       if(options_&&options_.focus&&typeof trigger.focus==='function')
         try{trigger.focus()}catch(_error){/* retiré entre-temps */}
@@ -1311,148 +1174,33 @@ body:has(${GEO.badgeSelector}):has(${GEO.sceneSelector}) #${DOM.hostId}{--im-rai
 
     /* ------------------------------------------------------------- choix */
 
-    /* Ce qu'un refus veut dire, sous sa cause réelle. Le code stable vient de
-       l'en-tête `X-Jarvis-Error-Code` ; le message du serveur est conservé tel
-       quel derrière, parce qu'il dit des choses que cette page ne sait pas. */
-    function refusalOf(error){
-      const code=error&&error.code?String(error.code):'';
-      const status=error&&typeof error.status==='number'?error.status:0;
-      const said=(error&&error.message)||String(error||'');
-      if(status===503)
-        /* **Enregistré, pas appliqué.** Le disque a la préférence ; seul Core ne
-           l'a pas encore. Dire « échec » ferait recommencer pour rien. */
-        /* Le texte du serveur dit déjà « Mode X enregistré, mais pas encore
-           appliqué : … » ; le préfixer une seconde fois faisait un bandeau qui
-           se répétait mot pour mot. */
-        return {tone:'warn',text:said,
-          level:'warn',code:code||'interaction_mode_not_applied'};
-      if(status===409)
-        return {tone:'warn',
-          text:REFUSAL[code]||said||'Ce mode n’a pas encore de comportement.',
-          level:'warn',code:code||'interaction_mode_not_implemented'};
-      if(REFUSAL[code])
-        return {tone:'bad',text:`${REFUSAL[code]} (${code})`,level:'error',code};
-      return {tone:'bad',
-        text:`Le changement de mode a échoué : ${said}`,
-        level:'error',code:code||`http_${status||0}`};
-    }
-
-    function refuse(said,event,data,options_){
-      failure=Object.freeze({text:said.text,tone:said.tone||'bad'});
-      log(said.level||'error',event,data);
+    /* L'explication se voit **là où l'on vient de cliquer** : le détail se
+       rouvre sur la phrase, la région vivante la dit, et la console la garde. */
+    function explain(said,event,data){
+      failure=Object.freeze({text:said.text,tone:said.tone||'warn'});
+      log(said.level||'info',event,data);
       announce.textContent=said.text;spoken=said.text;
-      /* **Le refus se voit.** Le sélecteur s'était refermé sur le choix ; il se
-         rouvre sur la phrase qui dit pourquoi, là où l'utilisateur vient de
-         cliquer. Une région vivante seule ne parle qu'aux lecteurs d'écran.
-
-         Sauf quand le refus arrive **longtemps** après le geste : au bout des
-         douze secondes de l'échéance, l'utilisateur est ailleurs, et lui reprendre
-         le focus serait lui arracher ce qu'il est en train de faire. La page a une
-         infusion pour exactement cela, que quatre autres modules utilisent. */
-      if(options_&&options_.quiet===true){
-        if(toast)toast({title:'Mode d’interaction',sub:said.text,
-          kind:said.tone==='bad'?'bad':'warn'});
-      }else open();
-      paintNote(waitSeconds());
+      open();
+      paintNote();
     }
 
-    /* Choisir. Rien n'est peint d'avance : on demande, on attend la réponse,
-       puis on **redemande le statut canonique** et on laisse celui-ci peindre.
-       Un échec laisse donc le mode canonique précédent coché sans qu'il y ait
-       quoi que ce soit à défaire. */
-    async function choose(value){
-      if(choosing)return null;
+    /* Choisir **n'envoie rien** (Slice 01b) : le mode suit le type du Board
+       actif. Le choix est expliqué et journalisé, le mode affiché reste celui
+       que le statut confirme. Un mode inconnu du catalogue reste un défaut de
+       la page, qui lève. */
+    function choose(value){
       const option=optionOf(value);
       if(!option)
         throw Object.assign(new Error(`mode d’interaction inconnu : ${value}`),
           {code:'interaction_mode_hud_unknown'});
-      failure='';
-      if(option.reserved){
-        /* Réservé : refusé **ici**, sans aller-retour. Le serveur répondrait 409
-           avec le même sens ; faire l'appel ferait passer une réserve assumée
-           pour une panne, et le chemin d'écriture garde de toute façon sa
-           branche 409 pour le cas où ce catalogue vieux d'une seconde se
-           tromperait. */
-        close({focus:true});
-        refuse({text:`${option.label} : ${REFUSAL.interaction_mode_not_implemented}`,
-          tone:'warn',level:'info'},'interaction_mode.reserved_refused',
-          {mode:value,status:option.status||null});
-        paint();
-        return null;
-      }
-      if(!request){
-        close({focus:true});
-        refuse({text:'La page ne peut pas écrire le mode : la porte réseau manque.',
-          tone:'bad',level:'error'},'interaction_mode.request_gate_missing',{mode:value});
-        paint();
-        return null;
-      }
-      choosing=true;
-      pending={mode:value,since:now()};
       close({focus:true});
+      const reserved=option.reserved
+        ?`${option.label} est réservé : il n’a pas encore de comportement. `:'';
+      explain({text:`${reserved}${DERIVED}`,tone:'warn',level:'info'},
+        'interaction_mode.choice_derived',
+        {code:'interaction_mode_derived',mode:value,board_mode:view.board||null});
       paint();
-      /* RÈGLE ZÉRO, seconde mesure : l'attente a une borne. `fetch` n'en a pas,
-         et un transport « qui finit toujours par répondre » ne suffit pas — un
-         écran sans issue est le défaut. Passé le délai, on rend la main et le
-         statut canonique dira ce qui a réellement eu lieu. */
-      let expired=false;
-      const ticket=later(()=>{
-        waits.delete(ticket);
-        if(!pending)return;
-        expired=true;
-        const waited=Math.round(waitSeconds());
-        pending=null;choosing=false;
-        refuse({text:`La demande de ${option.label} n’a pas répondu au bout de ${waited} s. `
-          +'Le mode affiché reste celui que le serveur confirme ; réessayez.',
-          tone:'bad',level:'error'},'interaction_mode.request_timeout',
-          {mode:value,waited_s:waited},{quiet:true});
-        paint();
-      },WRITE_DEADLINE_MS);
-      waits.add(ticket);
-      try{
-        await request(WRITE_PATH,{
-          method:'POST',
-          headers:{'Content-Type':'application/json'},
-          body:JSON.stringify({mode:value}),
-        });
-        if(expired)return null;
-        log('info','interaction_mode.requested',{mode:value});
-        /* On ne peint pas la réponse : on redemande le statut, qui est la seule
-           source de cette page. Une écriture réussie dont le statut suivant
-           dirait autre chose doit afficher ce que dit le statut. */
-        await reread();
-        return value;
-      }catch(error){
-        if(expired)return null;
-        const said=refusalOf(error);
-        /* Le statut est relu **aussi** après un refus : un 503 a écrit la
-           préférence sur le disque, et la divergence « choisi / en vigueur »
-           doit apparaître tout de suite plutôt qu'à la seconde suivante. */
-        pending=null;
-        await reread();
-        refuse(said,'interaction_mode.refused',
-          {mode:value,code:said.code,status:(error&&error.status)||null,
-           error:String((error&&error.message)||error)});
-        return null;
-      }finally{
-        if(waits.delete(ticket))unlater(ticket);
-        if(!expired){
-          pending=null;choosing=false;
-          paint();
-        }
-      }
-    }
-
-    /* Redemander le statut canonique, sans jamais faire tomber le contrôle si
-       la page n'a pas de relecture à offrir : le sondage à 1 Hz repassera. */
-    async function reread(){
-      if(!refresh)return false;
-      try{await refresh();return true}
-      catch(error){
-        log('warn','interaction_mode.refresh_failed',
-          {error:String((error&&error.message)||error)});
-        return false;
-      }
+      return null;
     }
 
     /* ----------------------------------------------------------- couture */
@@ -1471,10 +1219,8 @@ body:has(${GEO.badgeSelector}):has(${GEO.sceneSelector}) #${DOM.hostId}{--im-rai
       /* Un refus d'avant la bascule est écarté (`freshReport`). */
       report=isObject(nextReport)?freshReport(nextReport,otherModeSeenAtS):null;
       paint();
-      /* Un refus cesse d'être vrai dès que le mode en vigueur bouge : « ce mode
-         n'a pas été pris » n'a plus de sens quand le statut montre autre chose.
-         Il survit en revanche à un 503, où le mode **ne bouge pas** et où la
-         phrase « enregistré, pas encore appliqué » reste exacte. */
+      /* Une explication cesse d'être ce qu'il faut dire dès que le mode en
+         vigueur bouge : le statut montre alors autre chose. */
       if(failure&&view.mode&&view.mode!==before){failure='';paint()}
       return view;
     }
@@ -1494,25 +1240,19 @@ body:has(${GEO.badgeSelector}):has(${GEO.sceneSelector}) #${DOM.hostId}{--im-rai
       element:host,trigger,chooser:pop,
       gate,statusLost,choose,open,close,
       isOpen:()=>opened,
-      waits:()=>waits.size,
       /* Ce que l'écran **peint**, par opposition à ce que le serveur dit : les
          deux doivent coïncider, et c'est la seule façon de le vérifier sans
          lire des pixels. */
       presentation:()=>view,
       failure:()=>failure,
-      waitSeconds,
     };
   }
 
   /* Le nom de cet export n'est **pas** `api` : la page sert tous ses modules
      dans une seule balise `<script>`, et `api` y est déjà sa porte réseau
-     (`control_center.html`). Un `const api` ici l'aurait masquée pour ce
-     module — et le bloc d'installation, qui la cherche par ce nom, aurait
-     trouvé cet objet à la place et conclu qu'aucune écriture n'était possible.
-     C'est arrivé à l'écriture de ce fichier ; le nom distinct est la
-     correction. */
+     (`control_center.html`). Un `const api` ici l'aurait masquée. */
   const MODE_API=Object.freeze({
-    DOM,TONE,GEO,STYLE,REFUSAL,SUB,GLYPH,WRITE_PATH,WRITE_DEADLINE_MS,
+    DOM,TONE,GEO,STYLE,DERIVED,NOTE_DERIVED,SUB,GLYPH,
     PRESENCE,PRESENCE_TEXT,presenceOf,freshReport,STALE_REPORT_MARGIN_S,titleOf,
     viewOf,optionsOf,captionOf,subOf,labelOf,noteOf,glyph,installStyle,createModeControl});
   root.JarvisInteractionMode=MODE_API;
@@ -1534,16 +1274,8 @@ body:has(${GEO.badgeSelector}):has(${GEO.sceneSelector}) #${DOM.hostId}{--im-rai
     const control=createModeControl({
       document,host,
       now:()=>Date.now(),
-      setInterval:(fn,ms)=>window.setInterval(fn,ms),
-      clearInterval:id=>window.clearInterval(id),
       setTimeout:(fn,ms)=>window.setTimeout(fn,ms),
-      clearTimeout:id=>window.clearTimeout(id),
-      /* Les deux portes de la page, **passées plutôt que prises**. Ce sont des
-         déclarations de fonction du même `<script>`, donc remontées ; elles sont
-         enveloppées pour que l'appel parte au clic et non à l'insertion. */
-      request:typeof api==='function'?(path,init)=>api(path,init):undefined,
-      refresh:typeof refreshStatus==='function'?()=>refreshStatus():undefined,
-      toast:typeof toast==='function'?spec=>toast(spec):undefined,
+      /* Aucune porte réseau : ce contrôle n'écrit rien (Slice 01b). */
       log:(level,event,data)=>{
         const line=`[mode] ${event} ${JSON.stringify(data)}`;
         if(level==='error')console.error(line);

@@ -141,7 +141,8 @@ class Rig:
                                                                 **(content or score_content())})
         self.mode = InteractionModeService(events=self.bus, epoch="epoch-1")
         if mode is not InteractionMode.ASSISTANT:
-            await self.mode.request(mode, source="control_center")
+            # The Board-derived baseline (a Présentation Board restored at Core start): nothing else sets a mode.
+            await self.mode.request(mode, source="board_restore")
         self.stage_ledger = StageLedger(self.ledger_store, diagnostics=env.sink)
         self.reclaimer = LegacyStageReclaimer(self.scene, self.stage_ledger, diagnostics=env.sink)
         self.stage = RunSurface(validator=env.prefabs, reclaimer=self.reclaimer, diagnostics=env.sink)
@@ -506,7 +507,7 @@ async def test_an_unreadable_old_ledger_is_an_error_row_kept_aside_and_the_scan_
 
 # ------------------------------------------------------------------ role and mode
 
-async def test_user_presenter_switches_to_presentation_and_stop_restores_without_touching_the_preference(rig):
+async def test_user_presenter_switches_to_presentation_and_stop_restores_the_board_derived_baseline(rig):
     assert rig.mode.mode is InteractionMode.ASSISTANT
     state = applied(await rig.service.start(rig.start_body("user_presenter")))
     assert rig.mode.mode is InteractionMode.PRESENTATION and rig.mode.state.source == STUDIO_RUN_MODE_SOURCE
@@ -528,7 +529,7 @@ async def test_rehearsal_with_a_speaking_jarvis_runs_in_assistant_and_a_silent_o
     applied(await rig.service.start(rig.start_body("rehearsal", jarvis_speaks=True)))
     assert rig.mode.mode is InteractionMode.ASSISTANT
     applied(await rig.run("stop"))
-    assert rig.mode.mode is InteractionMode.PRESENTATION                      # restored to what the user had
+    assert rig.mode.mode is InteractionMode.PRESENTATION                      # restored to the Board type's mode
     applied(await rig.service.start(rig.start_body("rehearsal")))
     assert rig.mode.mode is InteractionMode.PRESENTATION
     assert rig.gate.calls[-1][2] is False and rig.gate.calls[0][2] is False   # a rehearsal is not a serious run
@@ -547,14 +548,16 @@ async def test_the_brain_cannot_switch_the_mode_unless_it_declares_an_explicit_u
             await rig.service.start({**body, "origin": origin, "actor": "user"})
 
 
-async def test_a_manual_mode_change_during_the_run_stops_it_and_leaves_the_users_choice(rig):
+async def test_a_board_switch_during_the_run_stops_it_and_leaves_the_new_boards_mode(rig):
+    """Slice 01b: a Board switch is the only foreign change left (no protocol, setting or HUD writer)."""
+
     applied(await rig.service.start(rig.start_body("user_presenter")))
     applied(await rig.run("detour", title="Annexe", prefab=AUX_BLOCK))
-    await rig.mode.request("assistant", source="control_center")            # the user picks SIMPLE by hand
+    await rig.mode.request("assistant", source="board_switch")              # the user opens an Assistant Board
     await asyncio.gather(*list(rig.service._tasks))
     state = rig.service.where()
     assert state["phase"] == "stopped" and state["last_run"]["reason"] == "mode_changed_by_user"
-    assert rig.mode.mode is InteractionMode.ASSISTANT and rig.mode.state.source == "control_center"   # never forced back
+    assert rig.mode.mode is InteractionMode.ASSISTANT and rig.mode.state.source == "board_switch"   # never forced back
     assert rig.overlays() == [] and await rig.stage_object() is None
 
 

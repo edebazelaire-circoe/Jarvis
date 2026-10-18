@@ -311,7 +311,7 @@ seconde ne se déclencherait jamais et rien ne le dirait.
 
 Réglages du mot d'éveil, dans un bloc `wake_word` à la racine de
 `runtime/control-center-settings.json`, avec leur route dédiée `GET`/`POST
-/api/wake-word` (hors de `/api/settings`, comme `/api/interaction-mode`).
+/api/wake-word` (hors de `/api/settings`).
 Module : `jarvis/runtime/wake_word_settings.py`. Aucune migration SQLite : ce
 sont des réglages JSON.
 
@@ -2314,7 +2314,7 @@ ne prouve pas est à regarder une fois, sur un vrai poste, dans une instance iso
 
 1. **Clavier réel** : lancer une lecture (rôle « Vous présentez »), cliquer la fenêtre de la scène, puis flèches, Espace, Début, Fin, `P`, Échap
    (pause) : la bande dit où l'on en est à chaque touche, une touche n'agit qu'une fois, et les mêmes touches avec le focus ailleurs (un champ de
-   saisie, une autre fenêtre) ne font rien. La bande ne recouvre pas le sélecteur de mode (en bas à gauche).
+   saisie, une autre fenêtre) ne font rien. La bande ne recouvre pas l’affichage du mode (en bas à gauche).
 2. **Plein écran** : « Plein écran » dans la bande (un clic) ; la scène remplit l'écran, la bande n'y est pas, les touches agissent une fois ; **Échap**
    (la vraie touche) sort du plein écran, la bande revient, la lecture n'a **pas** changé d'état (ni pause surprise, ni saut).
 3. **Deux écrans** : même essai avec un second écran branché (l'invite « gestion des fenêtres » est celle de Chrome) ; la bande reste sur l'écran du Control Center.
@@ -2322,13 +2322,13 @@ ne prouve pas est à regarder une fois, sur un vrai poste, dans une instance iso
 5. **Arrêt brutal** : pendant un détour, tuer Core (`taskkill` de CE processus seulement, jamais le Jarvis vivant), le relancer : au démarrage, la ligne
    `core.presentation_studio.playback_reclaimed` dit combien d'objets ont été repris et la scène n'a plus ni fenêtre de stage ni fenêtre annexe ; le fichier
    `state/presentation-studio-stage-ledger.json` a disparu.
-6. **Mode** : « Jarvis présente » passe le mode en SIMPLE pendant la lecture et le rétablit à l'arrêt ; changer le mode à la main pendant la lecture
-   l'arrête (« mode changé par vous ») sans le remettre de force ; la préférence enregistrée du Board n'a pas bougé.
+6. **Mode** : « Jarvis présente » passe le mode en SIMPLE pendant la lecture et le rétablit à l'arrêt (le mode du type du Board) ; basculer de Board pendant
+   la lecture l'arrête (« le mode a changé avec le Board actif ») sans le remettre de force ; le type du Board n'a pas bougé.
 7. **Cues** (pile vocale OpenAI seulement, sinon l'écoute d'ambiance est sourde) : dire la phrase de la cue suivante déclenche l'élément, le dire deux fois
    ne le déclenche qu'une fois (suiveur : Slice 13). Noter la pile utilisée. Recette complète : *Suivi des cues à la voix* ci-dessous.
 
 8. **Suivi vocal absent** (architecture `legacy` ou `duplex`, ou pile ambiante sans suiveur) : lancer « Vous présentez » ; 10 s plus tard la bande
-   dit « Suivi vocal indisponible » avec la raison, le sélecteur de mode dit « Refusé par la voix », et la lecture continue au clavier. Noter l'architecture.
+   dit « Suivi vocal indisponible » avec la raison, l’affichage du mode dit « Refusé par la voix », et la lecture continue au clavier. Noter l'architecture.
 9. **Séquence verrouillée** : arriver à un élément qui héberge une séquence ; « Suivant » est refusé pendant qu'elle tourne (Core l'exécute, la bande
    montre l'étape et le temps) ; « Sortir de la séquence » (ou `S`) continue après elle, toujours.
 10. **Registre illisible** (instance isolée) : après un arrêt brutal, abîmer `state/presentation-studio-stage-ledger.json` (le tronquer), relancer Core : la
@@ -2499,7 +2499,7 @@ isolée (`JARVIS_DATA_ROOT` à part, jamais le Jarvis vivant), avec un casque ou
    conservés au « Continuer ») ; avec `abort_to_recovery`, « Continuer » ramène au point de reprise déclaré.
 5. **Échecs visibles** : (a) débrancher le micro/la voix ou couper Voice, lancer une ligne : au bout de 10 s la bande dit pourquoi (« La voix n'a pas commencé la
    ligne à temps ») et propose « Continuer » ; (b) redémarrer Core juste avant de lancer : « Jarvis n'a pas pu prendre la ligne » (aucune conversation en cours) ;
-   (c) dans l'instance isolée, forcer PRESENTATION à la main pendant la lecture : la lecture s'arrête (« mode changé par vous ») et Jarvis ne dit plus rien.
+   (c) dans l'instance isolée, basculer vers un Board Présentation pendant la lecture : la lecture s'arrête (« le mode a changé avec le Board actif ») et Jarvis ne dit plus rien.
 6. **Fin et arrêt** : à la dernière ligne la lecture s'arrête d'elle-même (`last_run.reason: completed`), le mode précédent est rétabli ; « Arrêter » coupe tout
    (une ligne déjà partie finit ou est coupée par votre voix) et rétablit le mode ; Core tué au milieu : au redémarrage le mode est celui du Board, jamais le
    mode temporaire.
@@ -5267,11 +5267,14 @@ JARVIS_LIVE_OPENAI=1 OPENAI_API_KEY=... python -m pytest -q tests/integration/te
 
 ## Mode PRESENTATION : runbook de l'opérateur
 
-PRESENTATION est un **mode**, pas une architecture. Il se choisit dans le
-Control Center (sélecteur de gauche, `SIMPLE` / `PRESENTATION`), il change **à
-chaud**, et il ne redémarre jamais Voice : `interaction_mode` n'entre pas dans
-`VoiceComposition.configuration_id` (Décision D15). Repasser sur `SIMPLE` rend
-le comportement d'avant, exactement.
+PRESENTATION est un **mode**, pas une architecture. Il suit le **type du Board
+actif** : on y entre en ouvrant (ou en créant) un Board Présentation, on en sort
+en ouvrant un Board Assistant. Le bouton du bas-gauche ne fait que l'afficher ;
+le choisir là, par `settings_set` ou par `POST /api/interaction-mode` est refusé
+(`interaction_mode_derived`, avec la phrase qui dit quoi faire). Il change **à
+chaud**, et il ne redémarre jamais Voice : le mode n'entre pas dans
+`VoiceComposition.configuration_id` (Décision D15). Revenir sur un Board
+Assistant rend le comportement d'avant, exactement.
 
 ### Ce qu'il faut avoir avant d'entrer en PRESENTATION
 

@@ -39,7 +39,6 @@ from jarvis.domain.v2 import BrainTurnInput, Conversation
 from jarvis.domain.workspace_board import DEFAULT_BOARD_ID, BrainLifecycle
 from jarvis.protocol.server import LocalProtocolServer
 from jarvis.runtime import claude_local
-from jarvis.runtime import interaction_mode_settings as mode_settings
 from jarvis.runtime.claude_local import ClaudeLocalAgent
 from jarvis.runtime.control_center import ControlCenter
 from jarvis.runtime.core_sessions import CoreSessionTransport
@@ -359,10 +358,10 @@ async def test_a_v2_store_migrates_to_one_assistant_default_board_that_adopts_th
     db = bench.data / "state" / "jarvis.sqlite3"
     legacy_conversation = await _v2_database(db, monkeypatch)
     assert _sql(db, "SELECT version FROM schema_version") == [(2,)]
-    # Préférence globale d'avant les Boards : réglage du Control Center.
+    # Préférence globale d'avant les Boards : clé laissée dans le fichier du Control Center.
     control = bench.build_control()
     settings = control._settings()
-    mode_settings.apply(settings, {"mode": "presentation"})
+    settings["interaction_mode"] = {"schema_version": 1, "mode": "presentation"}
     control._write_settings(settings)
 
     core = await bench.start_core()
@@ -378,8 +377,10 @@ async def test_a_v2_store_migrates_to_one_assistant_default_board_that_adopts_th
 
     board = (await bench.ok("GET", "/api/boards/active"))["board"]
     assert board["board_kind"] == "assistant" and "interaction_mode" not in board
-    await bench.until(lambda: bool(bench.trace("interaction.mode.replay_retired")), what="global replay retired")
+    status = await bench.ok("GET", "/api/status")
+    assert status["interaction_mode"]["board_mode"] == "assistant" and status["interaction_mode"]["mode"] == "assistant"
     assert core.interaction_mode.mode is InteractionMode.ASSISTANT, "the global preference is never replayed"
+    assert not bench.trace("interaction.mode.reconciled"), "nothing is replayed (Slice 01b)"
 
     # Deuxième démarrage : rien n'est adopté ni recréé, la Session est **reprise**
     # (Slice 03 session-context, D02 ; avant : une Session neuve).
@@ -532,8 +533,9 @@ async def test_inactive_board_completion_and_failure_are_attributed_alerts_that_
 # ------------------------------------------------------------------ 5. mode par Board
 
 
-async def test_each_board_applies_the_mode_of_its_type_and_a_live_screen_change_is_never_kept(bench):
-    """Slice 01a : le mode suit le type du Board actif, à chaque bascule et au démarrage de Core."""
+async def test_each_board_applies_the_mode_of_its_type_and_the_screen_cannot_change_it(bench):
+    """Slices 01a/01b : le mode suit le type du Board actif, à chaque bascule et au démarrage de Core ;
+    la route de l'écran refuse tout choix (409 `interaction_mode_derived`)."""
 
     core = await up(bench)
     b_board = (await bench.ok("POST", "/api/boards", json={"title": "Démo", "board_kind": "presentation"}))["board"]
@@ -544,9 +546,14 @@ async def test_each_board_applies_the_mode_of_its_type_and_a_live_screen_change_
     await bench.ok("POST", "/api/boards/switch", json={"board_id": b_board})
     assert core.interaction_mode.mode is InteractionMode.PRESENTATION
 
-    # Écrivain hérité (route de l'écran, retirée par 01b) : le mode vivant change, rien n'est enregistré.
-    await bench.ok("POST", "/api/interaction-mode", json={"mode": "assistant"})
-    assert core.interaction_mode.mode is InteractionMode.ASSISTANT
+    # Ancienne route de l'écran : refusée, le mode vivant ne bouge pas, rien n'est enregistré.
+    async with aiohttp.ClientSession() as http:
+        async with http.post(bench.base + "/api/interaction-mode", json={"mode": "assistant"}) as response:
+            refused = (response.status, response.headers.get("X-Jarvis-Error-Code"), await response.text())
+    assert refused[:2] == (409, "interaction_mode_derived") and "type du Board actif" in refused[2]
+    assert core.interaction_mode.mode is InteractionMode.PRESENTATION
+    shown = (await bench.ok("GET", "/api/status"))["interaction_mode"]
+    assert (shown["mode"], shown["board_mode"]) == ("presentation", "presentation")
     stored = (await bench.ok("GET", f"/api/boards/{b_board}"))["board"]
     assert stored["board_kind"] == "presentation" and "interaction_mode" not in stored
 
@@ -557,7 +564,6 @@ async def test_each_board_applies_the_mode_of_its_type_and_a_live_screen_change_
     await bench.ok("POST", "/api/boards/switch", json={"board_id": m_board})
     assert core.interaction_mode.mode is InteractionMode.ASSISTANT, "Réunion: assistant behaviour, never refused"
     await bench.ok("POST", "/api/boards/switch", json={"board_id": b_board})
-    await bench.ok("POST", "/api/interaction-mode", json={"mode": "assistant"})  # vivant seulement
 
     await bench.stop_core()                                      # Core redémarre sur B
     core = await bench.start_core()
