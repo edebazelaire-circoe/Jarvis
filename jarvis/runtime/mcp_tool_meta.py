@@ -557,9 +557,14 @@ PRESENTATION = ServerMeta(
                              "rail_* : demande d'écran, relire inspect target rail"),
             output_notes=(_SILENT_NOTE, "mode : windowed, fullscreen_armed ou fullscreen, constaté par la page")),
         "presentation_library": ToolMeta(
-            "Rail : masquer, archiver, renommer", "destructive", True, "single_request", "untyped",
-            parameter_rules=(_IDS_RULE, "archive : confirmed=true après le oui de l'utilisateur (restaurable, rien n'est supprimé)", "rename exige title"),
-            output_notes=(_SILENT_NOTE, "hidden / archived : l'état persistant après l'opération")),
+            "Rail : masquer, archiver, renommer, purger", "destructive", False, "single_request", "untyped",
+            parameter_rules=(_IDS_RULE, "archive : confirmed=true après le oui de l'utilisateur (restaurable, rien n'est supprimé)", "rename exige title",
+                             "purge (irréversible) : un premier appel sans confirmation rend le plan et le jeton, rien n'est supprimé ; après le oui "
+                             "de l'utilisateur, purge avec confirmation et confirmed=true ; seules les archivées partent, sauvegarde d'abord"),
+            output_notes=(_SILENT_NOTE, "hidden / archived : l'état persistant après l'opération",
+                          "purge : purged, deleted (comptes), backup (dossier de la sauvegarde, relatif à la racine de données)"),
+            # purge efface pour de bon (sauvegarde gardée, restauration manuelle seulement) : l'outil est classé au plus fort de ses ops
+            reversibility="irreversible"),
         "presentation_play": ToolMeta(
             "Lire, répéter, naviguer", "write", False, "single_request", "untyped",
             parameter_rules=(_IDS_RULE, "goto : exactement un de item_id, scene_id, position", "reveal / hide : anchor_id",

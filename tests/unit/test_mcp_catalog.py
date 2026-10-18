@@ -238,7 +238,11 @@ WORKSPACE_INSTRUCTIONS_BUDGET_BYTES = 950
 #: pas ce qu'il a code et ne peut pas corriger sa propre scene (BENCHMARK.md de la Slice 13) ; la consigne du serveur ne change pas.
 #: Master-project Slice 07 : `presentation_inspect` nomme le bloc `master` de la variante (+34 o, compense en partie) : 20 896 o mesures, plafond
 #: inchange ; plafond global inchange (113 686 o mesures avec `scope` de `remotion_export`).
-PRESENTATION_CONTEXT_BUDGET_BYTES = 21_000
+#: Purge definitive des presentations archivees : op `purge` de `presentation_library` et son parametre `confirmation` (le jeton du plan,
+#: exige au second appel), +188 o apres compression des textes de l'outil : 21 075 o mesures, plafond 21 100 o ; plafond global 113 900 o
+#: (113 873 mesures). Decision deliberee : l'utilisateur a demande une vraie suppression, et elle passe par un plan, un jeton et son oui
+#: (docs/presentation-studio.md > Rail des presentations > Purge definitive) ; aucun nouvel outil, la consigne du serveur ne change pas.
+PRESENTATION_CONTEXT_BUDGET_BYTES = 21_100
 #: Consigne du serveur `jarvis-presentation` : mesurée 640 o (plafond 700 o).
 PRESENTATION_INSTRUCTIONS_BUDGET_BYTES = 700
 #: Memory-intelligence-knowledge S5b : `jarvis-memory` (cinq outils) ajoute environ 3 900 o. Fusion des deux serveurs : 104 337 o mesurés
@@ -246,7 +250,7 @@ PRESENTATION_INSTRUCTIONS_BUDGET_BYTES = 700
 #: Remotion Slice 21 : `jarvis-remotion` (six outils, serveur SÉPARÉ de `jarvis-presentation` dont le plafond reste 17 100 o) ajoute 5 178 o
 #: mesurés (export 1 763, import 1 076, upgrades 948, studio 545, status 457, setup 389). Le plafond de ce gate monte de ce serveur seulement :
 #: 104 548 o avant, 109 726 o après, marge de 274 o, plafond 110 000 o. Décision délibérée (handoff Slice 21), mesure dans le LOG.
-DECLARED_CONTEXT_BUDGET_BYTES = 113_700
+DECLARED_CONTEXT_BUDGET_BYTES = 113_900
 #: `jarvis-remotion` : 5 178 o mesurés, plafond 5 400 o ; consigne du serveur (plafond 330 o). Master-project Slice 07 : `scope` (scene | master)
 #: dans les réglages de `remotion_export` : 5 335 o mesurés, plafond inchangé.
 REMOTION_CONTEXT_BUDGET_BYTES = 5_400
@@ -410,8 +414,8 @@ async def test_the_remotion_server_lists_its_tools_in_order_within_its_budget(ca
     assert sum(entry["context_bytes"] for entry in described) <= REMOTION_CONTEXT_BUDGET_BYTES
     assert len(remotion_mcp._SERVER_INSTRUCTIONS.encode("utf-8")) <= REMOTION_INSTRUCTIONS_BUDGET_BYTES
     # Le budget de `jarvis-presentation` n'a PAS bougé pour les verbes Remotion (il a bougé une fois depuis, pour `presentation_source`,
-    # native-studio-playback-fix Slice 13 : 19 300 -> 21 000 o).
-    assert PRESENTATION_CONTEXT_BUDGET_BYTES == 21_000
+    # native-studio-playback-fix Slice 13 : 19 300 -> 21 000 o ; purge des archivees : 21 000 -> 21 100 o).
+    assert PRESENTATION_CONTEXT_BUDGET_BYTES == 21_100
     for tool in wire:
         dumped = json.dumps(tool.inputSchema)
         for forbidden in ("actor", "origin", "engine", "acknowledge", "licence_ack", "authorised_boards", "concurrency"):

@@ -498,6 +498,42 @@ class SQLiteStateRepository:
                 f"state DB schema {version} -> {_SCHEMA_VERSION}: pre-migration backup to {target.name} failed, "
                 f"migration aborted and database unchanged: {type(exc).__name__}: {exc}") from exc
 
+    async def backup_to(self, target: Path) -> None:
+        """Consistent online copy of the live DB to `target` (a new file), through the sqlite3 backup API, never a file copy
+        (the DB is in WAL mode: a file copy can miss committed pages still in `-wal`). Used before an explicit deletion (purge of
+        archived presentations) so the deleted rows stay recoverable.
+
+        Runs under the repository lock (no write interleaves). The copy is written to `<target>.partial`, switched to a single
+        self-contained file (`journal_mode=DELETE`), checked (`PRAGMA quick_check` must say `ok`), then renamed: a failure never
+        leaves a `target` that looks valid. An existing `target` is never overwritten (`FileExistsError`).
+        """
+        target = Path(target)
+        if target.exists():
+            raise FileExistsError(target.name)
+        partial = target.with_name(target.name + ".partial")
+
+        def copy_now(conn: sqlite3.Connection) -> None:
+            partial.unlink(missing_ok=True)
+            copy = sqlite3.connect(partial)
+            try:
+                conn.backup(copy)
+                copy.execute("PRAGMA journal_mode=DELETE").fetchone()
+                (verdict,) = copy.execute("PRAGMA quick_check").fetchone()
+                if verdict != "ok":
+                    raise sqlite3.DatabaseError(f"backup copy failed quick_check: {verdict}")
+            finally:
+                copy.close()
+
+        try:
+            await self.run_serialized(copy_now)
+            partial.replace(target)
+        except BaseException:
+            try:
+                partial.unlink(missing_ok=True)
+            except OSError:
+                pass  # intentional: a stray .partial is never mistaken for a backup (its name says so); the error below is what counts
+            raise
+
     async def run_serialized(self, fn: Callable[[sqlite3.Connection], T]) -> T:
         """Adapter seam for sibling SQLite adapters sharing this file and connection.
 

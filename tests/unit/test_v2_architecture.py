@@ -87,6 +87,9 @@ CORE_ADAPTER_IMPORT_EXCEPTIONS: dict[str, frozenset[str]] = {
             # data root and injected into `PresentationStudioService` through its port, constructed only.
             "jarvis.adapters.file_presentation_studio_store",
             "jarvis.adapters.file_presentation_template_store",
+            # Purge of archived presentations: the backup folder store (`<data_root>/backups/`), constructed on the data root and
+            # injected into `PresentationPurge` through its `PurgeBackupStore` port, constructed only.
+            "jarvis.adapters.file_purge_backups",
             # Studio playback (Slice 12): the id-list ledger of the stage windows, constructed on the data root only.
             "jarvis.adapters.file_presentation_studio_stage_ledger",
         }

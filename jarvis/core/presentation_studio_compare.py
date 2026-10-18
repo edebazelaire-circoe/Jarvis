@@ -34,6 +34,11 @@ class PresentationStudioCompare:
         self._studio = studio
         self._states: OrderedDict[str, CompareState] = OrderedDict()
 
+    def forget(self, presentation_id: str) -> None:
+        """Purge definitive de la presentation : sa comparaison en memoire est oubliee."""
+
+        self._states.pop(presentation_id, None)
+
     # ------------------------------------------------------------ lecture
 
     async def view(self, presentation_id: str) -> dict[str, Any]:

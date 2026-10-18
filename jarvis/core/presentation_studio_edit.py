@@ -253,6 +253,14 @@ class PresentationStudioEditService:
 
         return tuple(r for r in self._authored_scenes.values() if presentation_id is None or r.presentation_id == presentation_id)
 
+    def forget_presentation(self, presentation_id: str) -> int:
+        """Purge definitive de la presentation : les permissions d'auteur de l'agent sur ses scenes sont oubliees. Rend leur nombre."""
+
+        keys = [key for key in self._authored_scenes if key[0] == presentation_id]
+        for key in keys:
+            del self._authored_scenes[key]
+        return len(keys)
+
     def drop_authored_scene(self, presentation_id: str, variant_id: str, scene_id: str, *, reason: str = "user_source_edit") -> int:
         """The user edited this scene's source (or opened it in Remotion Studio): the agent's permission on it IN THIS VARIANT ends (the user's
         work is never overwritten without a new request of the user). Returns how many permissions ended (0 or 1)."""

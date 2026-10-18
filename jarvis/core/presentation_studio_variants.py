@@ -764,9 +764,12 @@ class PresentationStudioVariants:
                                                    "error": f"{type(exc).__name__}: {exc}"[:200]})
 
     def drop_presentation(self, presentation_id: str) -> None:
-        """Aucune suppression de Presentation n'existe encore (l'archivage est le seul retrait) ; ce point d'entrée est celui que
-        l'opération future DOIT appeler (Slice 08 : `PresentationStudioHistory.drop_presentation`)."""
+        """Appelé par la purge définitive d'une Presentation archivée (`core/presentation_studio_purge.py`), après l'effacement : son
+        historique d'annulation (Slice 08 : `PresentationStudioHistory.drop_presentation`) et ce que le graphe garde d'elle en mémoire
+        (réconciliation faite, dernier bilan) sont oubliés."""
 
+        self._reconciled.discard(presentation_id)
+        self._reports.pop(presentation_id, None)
         if self._history is not None:
             self._history.drop_presentation(presentation_id)
 

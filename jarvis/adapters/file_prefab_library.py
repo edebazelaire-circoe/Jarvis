@@ -33,7 +33,11 @@ Défenses (réutilisées, jamais refaites) :
   deux fichiers ne laisse aucune version, seulement un `.staging-*` ;
 - `sweep` retire les `.staging-*` restés d'un arrêt brutal : fichiers
   ordinaires seulement ; un lien ou un sous-dossier dedans laisse le dossier
-  en place (`failed`), jamais suivi.
+  en place (`failed`), jamais suivi ;
+- **purge définitive** (`copy_ids`, `remove_ids`) : seulement pour la purge des presentations archivées
+  (`jarvis/core/presentation_studio_purge.py`) et seulement des ids `presentation-studio.*` ; le dossier d'id du catalogue et
+  son dossier `.archive/<id>/` sont copiés d'abord, puis effacés par `safe_tree.remove_tree` **seulement** s'ils sont encore
+  exactement ce qui a été copié (même nombre de fichiers, mêmes octets) ; un lien ou une jonction fait tout refuser.
 
 `FilePrefabRuntime` (Slice 03) lit le runtime injecté dans chaque cadre
 (`jarvis/prefabs/runtime/shim.js`, `shell.css`) avec les mêmes défenses de
@@ -42,6 +46,7 @@ lecture ; port `jarvis.ports.prefabs.PrefabRuntimeSource`.
 
 from __future__ import annotations
 
+from collections.abc import Iterable, Mapping
 import errno
 import hashlib
 import itertools
@@ -54,6 +59,7 @@ import stat
 
 from jarvis.adapters import safe_folders
 from jarvis.adapters.file_replace import replace_with_retry, retry_on_permission
+from jarvis.adapters.safe_tree import TreeCount, UnsafeTree, copy_tree, inventory, remove_tree
 from jarvis.domain.remotion_source import (
     ASSET_ROOT, MAX_ASSET_BYTES, MAX_ASSETS, MAX_ASSETS_TOTAL_BYTES, MAX_DEPTH,
     MAX_MODULES, MAX_MODULES_TOTAL_BYTES, MODULE_ROOT,
@@ -568,6 +574,86 @@ class FilePrefabLibrary:
         except OSError:
             pass  # intentional: the id folder still holds live versions (or is busy); an empty one is harmless
         return label
+
+    # ------------------------------------------------------------ purge définitive (sources de scène d'une presentation purgée)
+
+    def list_ids(self, prefix: str) -> tuple[str, ...]:
+        """Ids de la racine de données (catalogue **et** `.archive`) qui commencent par `prefix`, triés. Lecture seule ; un nom qui
+        n'est pas un id exact est ignoré."""
+
+        try:
+            library = safe_folders.check_existing_tree(self._data_root, [LIBRARY_DIR])
+        except safe_folders.SafeFolderError as exc:
+            raise _unsafe(exc, LIBRARY_DIR) from None
+        if library is None:
+            return ()
+        found: set[str] = set()
+        for base in (library, library / ARCHIVE_DIR):
+            try:
+                names = [entry.name for entry in os.scandir(base)]
+            except FileNotFoundError:
+                continue  # intentional: no version was ever retired
+            except OSError as exc:
+                raise PrefabStoreError(_C.STORAGE_IO, f"{LIBRARY_DIR}: cannot list: {type(exc).__name__}") from None
+            found.update(name for name in names if name.startswith(prefix) and is_prefab_id(name))
+        return tuple(sorted(found))
+
+    def _purge_folders(self, prefab_ids: Iterable[str]) -> dict[str, Path]:
+        """`{"<id>" | ".archive/<id>": dossier}` existants, pour des ids de rétention seulement."""
+
+        folders: dict[str, Path] = {}
+        for prefab_id in prefab_ids:
+            if not is_prefab_id(prefab_id) or not is_retention_id(prefab_id):
+                raise PrefabStoreError(_C.INVALID_DEFINITION, f"{prefab_id}: only presentation-studio.* sources can be purged")
+            for label, parts in ((prefab_id, [LIBRARY_DIR, prefab_id]),
+                                 (f"{ARCHIVE_DIR}/{prefab_id}", [LIBRARY_DIR, ARCHIVE_DIR, prefab_id])):
+                try:
+                    folder = safe_folders.check_existing_tree(self._data_root, parts)
+                except safe_folders.SafeFolderError as exc:
+                    raise _unsafe(exc, label) from None
+                if folder is not None:
+                    folders[label] = folder
+        return folders
+
+    def copy_ids(self, prefab_ids: Iterable[str], destination: Path) -> dict[str, TreeCount]:
+        """Copie le dossier d'id et `.archive/<id>` de chaque id dans `destination` (même disposition). Rend ce qui a été copié."""
+
+        copied: dict[str, TreeCount] = {}
+        for label, folder in self._purge_folders(prefab_ids).items():
+            try:
+                copied[label] = copy_tree(folder, Path(destination) / label)
+            except UnsafeTree as exc:
+                raise PrefabStoreError(_C.STORAGE_IO, f"{label}/{exc.where}: {exc.reason}; nothing copied") from None
+            except (OSError, safe_folders.SafeFolderError) as exc:
+                raise PrefabStoreError(_C.STORAGE_IO, f"{label}: cannot copy: {type(exc).__name__}") from None
+        return copied
+
+    def remove_ids(self, expected: Mapping[str, TreeCount]) -> tuple[str, ...]:
+        """Efface les dossiers copiés par `copy_ids`. Chacun doit être encore exactement ce qui a été copié (une version publiée
+        depuis n'est jamais effacée sans copie) : sinon rien n'est effacé. Rend les dossiers effacés."""
+
+        ids = {label.removeprefix(f"{ARCHIVE_DIR}/") for label in expected}
+        folders = {label: folder for label, folder in self._purge_folders(ids).items() if label in expected}
+        try:
+            library = safe_folders.check_existing_tree(self._data_root, [LIBRARY_DIR])
+        except safe_folders.SafeFolderError as exc:
+            raise _unsafe(exc, LIBRARY_DIR) from None
+        for label, folder in folders.items():
+            try:
+                now = inventory(folder)
+            except (UnsafeTree, OSError) as exc:
+                raise PrefabStoreError(_C.STORAGE_IO, f"{label}: {type(exc).__name__}: {exc}; nothing removed") from None
+            if (now.files, now.bytes) != (expected[label].files, expected[label].bytes):
+                raise PrefabStoreError(_C.STORAGE_IO, f"{label} changed since its backup; nothing removed")
+        removed: list[str] = []
+        for label, folder in folders.items():
+            try:
+                remove_tree(folder, within=library)
+            except (UnsafeTree, OSError) as exc:
+                raise PrefabStoreError(_C.STORAGE_IO, f"{label}: not fully removed ({type(exc).__name__}); removed before it: "
+                                                      f"{', '.join(removed) or 'none'}") from None
+            removed.append(label)
+        return tuple(removed)
 
     def sweep(self) -> SweepReport:
         try:
