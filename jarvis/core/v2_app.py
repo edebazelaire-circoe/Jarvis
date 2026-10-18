@@ -588,6 +588,8 @@ class JarvisCoreApplication:
             work=self.work_state, scene=self.scene, events=self.events, diagnostics=diagnostics,
             restart_grace_s=scene_restart_grace_s, job_outcomes=self.jobs.observe_persisted_outcomes,
         )
+        # Purge des archivés : ce que la projection peut encore écrire garde sa pierre tombale (sinon l'étoile renaîtrait).
+        self.scene.attach_archive_retention(self.scene_projector.retained_archive_ids)
         # Fenêtres liées à un fichier (`ScenePayload.source_path`) : le résumé
         # suit le fichier, sans tour du cerveau.
         self.scene_file_watcher = SceneFileWatcher(self.scene, diagnostics=diagnostics, notifier_factory=file_change_notifier_factory)

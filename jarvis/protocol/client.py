@@ -657,6 +657,28 @@ class LocalCoreClient:
         async with session.post(self.base_url + "/v1/scene/commands", headers=self.headers, json=command, **options) as response:
             return await self._bounded_json(response)
 
+    async def scene_purge_plan(self, *, actor: str = "brain", timeout_s: float = 30.0) -> dict[str, Any]:
+        """`POST /v1/scene/archived/purge-plan` : ce qu'une purge des archivés effacerait, et son jeton. N'écrit rien."""
+
+        session = await self._http()
+        body = {"schema_version": 1, "actor": actor}
+        async with session.post(self.base_url + "/v1/scene/archived/purge-plan", headers=self.headers, json=body,
+                                timeout=aiohttp.ClientTimeout(total=timeout_s)) as response:
+            return await self._bounded_json(response, 65_536)
+
+    async def scene_purge_archived(self, *, confirmation: str, actor: str = "brain", timeout_s: float = 120.0) -> dict[str, Any]:
+        """`POST /v1/scene/archived/purge` (`confirmed: true`) : sauvegarde de la base, puis purge définitive.
+
+        Refus en `CoreProtocolError` : 409 `confirmation_required` / `confirmation_stale` / `runtime_settling`,
+        503 `purge_backup_failed`. `timeout_s` large : la sauvegarde copie toute la base.
+        """
+
+        session = await self._http()
+        body = {"schema_version": 1, "actor": actor, "confirmation": confirmation, "confirmed": True}
+        async with session.post(self.base_url + "/v1/scene/archived/purge", headers=self.headers, json=body,
+                                timeout=aiohttp.ClientTimeout(total=timeout_s)) as response:
+            return await self._bounded_json(response, 65_536)
+
     async def scene_capture(self, *, connect_timeout_s: float, read_timeout_s: float) -> dict[str, Any]:
         """`POST /v1/scene/captures` (Slice 09, partie 2) : demande du cerveau, rendue quand la page a envoyé le PNG.
 

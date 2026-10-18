@@ -1055,6 +1055,91 @@ class SceneDisplayTools(SurfaceToolsMixin):
 
         return await self._guard("scene_archive", run)
 
+    async def purge_archived(self, *, confirmation: str | None = None, confirmed: bool = False) -> dict[str, Any]:
+        """Purge définitive des objets **déjà archivés** : sans jeton, le plan ; avec jeton et `confirmed`, l'exécution.
+
+        Core sauvegarde `scene.sqlite3` avant d'effacer et garde les ids que le
+        runtime suit encore. Pas délégué au Tool Brain : aucune `ui_surface`.
+        """
+
+        async def run() -> dict[str, Any]:
+            if confirmation is None:
+                if confirmed:
+                    raise DisplayToolError("confirmation_required", PURGE_EXPLANATIONS["confirmation_required"])
+                body = await self._purge_call(lambda: self.transport.scene_purge_plan(), "read")
+                return self._purge_plan_result(body)
+            if confirmed is not True:
+                raise DisplayToolError("invalid_argument", "confirmed=true est requis avec confirmation, une fois que "
+                                                           "l'utilisateur a dit oui au plan. Rien n'a été effacé.")
+            body = await self._purge_call(lambda: self.transport.scene_purge_archived(confirmation=confirmation), "command")
+            return self._purge_done_result(body)
+
+        return await self._guard("scene_purge_archived", run)
+
+    async def _purge_call(self, call: Callable[[], Awaitable[dict[str, Any]]], kind: Literal["command", "read"]) -> dict[str, Any]:
+        from jarvis.protocol.client import CoreProtocolError
+        from jarvis.runtime.scene_view import SCENE_CALL_ERRORS, classify_scene_call_failure
+
+        try:
+            body = await asyncio.wait_for(call(), timeout=PURGE_TIMEOUT_S)
+        except asyncio.CancelledError:
+            raise
+        except SCENE_CALL_ERRORS as exc:
+            if isinstance(exc, CoreProtocolError) and exc.code in PURGE_EXPLANATIONS:
+                retry = exc.details.get("retry_after_s")
+                suffix = f" Réessaie dans {retry:g} s." if isinstance(retry, (int, float)) else ""
+                raise DisplayToolError(exc.code, PURGE_EXPLANATIONS[exc.code] + suffix) from None
+            failure = classify_scene_call_failure(exc, connect_timeout_s=self.command_connect_timeout_s,
+                                                  read_timeout_s=PURGE_TIMEOUT_S, call=kind)
+            raise DisplayToolError(failure.code, _redacted(failure.message)) from None
+        if not isinstance(body, dict):
+            raise DisplayToolError("invalid_scene_response", "Réponse de purge de Core illisible.")
+        return body
+
+    @staticmethod
+    def _purge_counts(block: Any, kept: Any) -> tuple[int, int, int, list[str]]:
+        try:
+            archived, history = int(block["archived_ids"]), int(block["history_rows"])
+            kept_count, kept_ids = int(kept["archived_ids"]), [str(item) for item in kept["ids"]]
+        except (KeyError, TypeError, ValueError):
+            raise DisplayToolError("invalid_scene_response", "Réponse de purge de Core hors contrat.") from None
+        return archived, history, kept_count, kept_ids
+
+    def _purge_plan_result(self, body: dict[str, Any]) -> dict[str, Any]:
+        archived, history, kept, kept_ids = self._purge_counts(body.get("purgeable"), body.get("kept"))
+        result: dict[str, Any] = {"step": "plan", "revision": int(body.get("revision", 0)), "archived": archived,
+                                  "history_rows": history, "kept": kept}
+        if kept_ids:
+            result["kept_ids"] = kept_ids
+        token = body.get("confirmation")
+        if isinstance(token, str) and token:
+            result["confirmation"] = token
+            result["expires_in_s"] = int(body.get("ttl_s", 0))
+            result["note"] = ("Rien n'a été effacé. Dis le compte à l'utilisateur ; après son oui, rappelle avec "
+                              "confirmation et confirmed=true. " + PURGE_NOTE)
+        else:
+            result["note"] = "Rien à purger."
+        self._emit("display.purge_planned", f"scene_purge_archived : plan {archived} archivés, {kept} gardés",
+                   data={"tool": "scene_purge_archived", "archived": archived, "history_rows": history, "kept": kept})
+        return result
+
+    def _purge_done_result(self, body: dict[str, Any]) -> dict[str, Any]:
+        archived, history, kept, kept_ids = self._purge_counts(body.get("purged"), body.get("kept"))
+        revision, scene_id = int(body.get("revision", 0)), str(body.get("scene_id", ""))
+        if self._seen == (scene_id, revision - 1):
+            # La purge ne change aucun objet actif : la scène vue reste à jour, sans faux « la scène a changé ».
+            self._seen = (scene_id, revision)
+        result: dict[str, Any] = {"step": "purged", "revision": revision, "archived": archived, "history_rows": history,
+                                  "kept": kept}
+        if kept_ids:
+            result["kept_ids"] = kept_ids
+        result["backup_path"] = str(body.get("backup_path", ""))
+        result["note"] = PURGE_NOTE
+        self._emit("display.purged", f"scene_purge_archived : {archived} archivés et {history} lignes d'historique purgés",
+                   level="warning", data={"tool": "scene_purge_archived", "archived": archived, "history_rows": history,
+                                          "kept": kept, "backup": result["backup_path"]})
+        return result
+
     async def pin(
         self, *, pinned: bool, select: Mapping[str, Any] | None = None, object_ids: list[str] | None = None
     ) -> dict[str, Any]:
@@ -2088,6 +2173,18 @@ def scene_gate_reader(runtime_root: Path | None) -> Callable[[], bool] | None:
     return read
 
 
+#: Refus de `scene_purge_archived` (codes de Core) : aucun n'a rien effacé.
+PURGE_EXPLANATIONS: dict[str, str] = {
+    "confirmation_required": "confirmation_required : appelle d'abord scene_purge_archived sans argument (plan et jeton). Rien n'a été effacé.",
+    "confirmation_stale": ("confirmation_stale : le jeton a expiré ou ne décrit plus les archivés (un objet archivé depuis, "
+                           "Core redémarré) ; replanifie et redis le compte. Rien n'a été effacé."),
+    "runtime_settling": "runtime_settling : Core vient de démarrer, le runtime n'a pas encore redit ce qu'il suit. Rien n'a été effacé.",
+    "purge_backup_failed": "purge_backup_failed : la sauvegarde de la base a échoué, rien n'a été effacé.",
+}
+#: Une purge copie toute la base avant d'effacer : échéance large.
+PURGE_TIMEOUT_S = 120.0
+PURGE_NOTE = "Définitif : les objets purgés ne se restaurent qu'à la main depuis backup_path."
+
 #: Refus d'une capture, écrits pour le cerveau (Slice 09, partie 2).
 CAPTURE_EXPLANATIONS: dict[str, str] = {
     SCENE_DISABLED: "La scène est éteinte (scene.enabled) : aucune capture possible.",
@@ -2336,6 +2433,7 @@ _SERVER_INSTRUCTIONS = (
     "scene_pin épingle et désépingle. Fais-le quand il le demande, sans le renvoyer au Control Center. "
     "Un ensemble se traite en un appel (scene_update_many, scene_move, scene_archive, scene_pin : une commande, "
     "tout ou rien), jamais objet par objet. "
+    "scene_purge_archived efface pour de bon ce qui est déjà archivé : plan d'abord, confirmed=true après son oui. "
     "Composer et disposer sont silencieux : n'en fais pas un commentaire à l'oral."
 )
 _READ_FIRST = "Relis la scène avec scene_inspect dans ce tour avant de l'appeler : elle change sans toi."
@@ -2406,6 +2504,7 @@ def build_server(target: DisplayMcpTarget | None = None, *, tools: SceneDisplayT
         SceneArtifactResult,
         SceneBatchResult,
         SceneObjectResult,
+        ScenePurgeArchivedResult,
         SceneRelationResult,
         UiIntentResult,
         output_contract_fields,
@@ -2768,6 +2867,15 @@ archivé compte inchangé. Silencieux : dis seulement que c'est fait. {_READ_FIR
         object_ids: IdsField = None,
     ) -> SceneBatchResult:
         return await display.archive(select=select, object_ids=object_ids)
+
+    @mcp.tool(description="""Effacer pour de bon les objets déjà archivés, sur demande explicite. Sans argument : \
+plan (comptes, ids gardés) et jeton, rien d'effacé ; après le oui de l'utilisateur, rappelle avec confirmation et \
+confirmed=true (sauvegarde de la base d'abord).""", annotations=tool_annotations(SERVER_NAME, "scene_purge_archived"))
+    async def scene_purge_archived(
+        confirmation: Annotated[str | None, Field(max_length=96, description="Jeton du plan.")] = None,
+        confirmed: Annotated[bool, Strict()] = False,
+    ) -> ScenePurgeArchivedResult:
+        return await display.purge_archived(confirmation=confirmation, confirmed=confirmed)
 
     @mcp.tool(description=f"""Épingler ou désépingler un ensemble, y compris ce que l'utilisateur a épinglé lui-même.
 

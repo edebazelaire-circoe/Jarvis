@@ -33,6 +33,8 @@ if TYPE_CHECKING:
 #: échappée en ASCII (`\uXXXX`, paires de substitution) et avec ses autres
 #: champs, elle reste sous 64 KiB. Au-delà : 413, rien n'est lu de plus.
 MAX_SCENE_COMMAND_BYTES = 65_536
+#: Corps d'une demande de purge des archivés (`{schema_version, actor, confirmation, confirmed}`).
+MAX_PURGE_REQUEST_BYTES = 4_096
 #: Budget d'une réponse de patchs. Un patch courant pèse quelques Kio ; un
 #: archivage groupé (`archive_many`, Slice 08) ou une commande de sélection
 #: (`*_selection`, Slice 03) porte la forme historique ou complète de

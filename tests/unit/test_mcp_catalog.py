@@ -190,7 +190,7 @@ def _schema(server: str, name: str) -> dict:
 
 # ------------------------------------------------------------------ contexte du modèle
 
-def test_no_catalog_meta_tool_is_advertised_and_the_scene_stays_within_nineteen(catalog):
+def test_no_catalog_meta_tool_is_advertised_and_the_scene_stays_within_nineteen(catalog):  # 21 depuis la purge
     # Amendement plugins MCP (Slice 04, tool-contract §5.3, ARCH C5) : `jarvis-tools` est le **seul**
     # serveur de découverte, avec exactement `list_tools` et `call_tool` ; tout le reste est inchangé.
     gateway = [entry["name"] for entry in catalog["tools"] if entry["server"] == "jarvis-tools"]
@@ -203,7 +203,9 @@ def test_no_catalog_meta_tool_is_advertised_and_the_scene_stays_within_nineteen(
     # R6 : chercher, lire, valider, enregistrer, éditer une base, lire les événements). Pas d'outil d'instanciation :
     # l'argument `prefab` de scene_create_object / scene_update_object.
     # Tool Brain S4 : + `ui_intent_publish` (intention d'écran de Jarvis, `ui` nul : pas une action d'interface).
-    assert sum(1 for entry in catalog["tools"] if entry["server"] == "jarvis-display") <= 20
+    # Purge des archivés (2026-10-18, demande de l'utilisateur) : + `scene_purge_archived`. Ni `scene_archive` (délégable
+    # au Tool Brain, dont le garde-fou irréversible exige au plus 3 ids explicites) ni une lecture ne pouvaient la porter.
+    assert sum(1 for entry in catalog["tools"] if entry["server"] == "jarvis-display") <= 21
     assert [entry["name"] for entry in catalog["tools"] if entry["server"] == "jarvis-display"] == list(display_mcp.TOOL_NAMES)
     # Le module de catalogue ne construit aucun serveur MCP à lui.
     source = open(mcp_catalog.__file__, encoding="utf-8").read()
@@ -238,6 +240,10 @@ WORKSPACE_INSTRUCTIONS_BUDGET_BYTES = 950
 #: pas ce qu'il a code et ne peut pas corriger sa propre scene (BENCHMARK.md de la Slice 13) ; la consigne du serveur ne change pas.
 #: Master-project Slice 07 : `presentation_inspect` nomme le bloc `master` de la variante (+34 o, compense en partie) : 20 896 o mesures, plafond
 #: inchange ; plafond global inchange (113 686 o mesures avec `scope` de `remotion_export`).
+#: Purge des archivés de la scène (2026-10-18) : `scene_purge_archived` +502 o sur `jarvis-display` (description de trois
+#: lignes, deux arguments) : 114 187 o mesurés, plafond global 114 300 o. Décision délibérée : l'utilisateur a demandé
+#: une vraie purge définitive à la voix ; elle ne peut ni passer par `scene_archive` (garde-fou du Tool Brain) ni par la
+#: passerelle `jarvis-tools` (outils externes seulement).
 PRESENTATION_CONTEXT_BUDGET_BYTES = 21_000
 #: Consigne du serveur `jarvis-presentation` : mesurée 640 o (plafond 700 o).
 PRESENTATION_INSTRUCTIONS_BUDGET_BYTES = 700
@@ -246,7 +252,7 @@ PRESENTATION_INSTRUCTIONS_BUDGET_BYTES = 700
 #: Remotion Slice 21 : `jarvis-remotion` (six outils, serveur SÉPARÉ de `jarvis-presentation` dont le plafond reste 17 100 o) ajoute 5 178 o
 #: mesurés (export 1 763, import 1 076, upgrades 948, studio 545, status 457, setup 389). Le plafond de ce gate monte de ce serveur seulement :
 #: 104 548 o avant, 109 726 o après, marge de 274 o, plafond 110 000 o. Décision délibérée (handoff Slice 21), mesure dans le LOG.
-DECLARED_CONTEXT_BUDGET_BYTES = 113_700
+DECLARED_CONTEXT_BUDGET_BYTES = 114_300
 #: `jarvis-remotion` : 5 178 o mesurés, plafond 5 400 o ; consigne du serveur (plafond 330 o). Master-project Slice 07 : `scope` (scene | master)
 #: dans les réglages de `remotion_export` : 5 335 o mesurés, plafond inchangé.
 REMOTION_CONTEXT_BUDGET_BYTES = 5_400
@@ -425,7 +431,8 @@ async def test_the_remotion_server_lists_its_tools_in_order_within_its_budget(ca
 #: events 543) et l'argument `prefab` de scene_create_object / scene_update_object (547 o chacun). Plafond 39 000 o.
 #: Reprise S07 (QA) : 38 291 o (-160 o, détail au contrat §10.13).
 #: Tool Brain S4 (contrat tool-brain §11) : `ui_intent_publish` +1 225 o, 39 516 o mesurés. Plafond 40 000 o.
-DISPLAY_CONTEXT_BASELINE_BYTES = 40_000
+#: Purge des archivés (2026-10-18) : `scene_purge_archived` +502 o, 40 015 o mesurés. Plafond 40 300 o.
+DISPLAY_CONTEXT_BASELINE_BYTES = 40_300
 
 
 def test_the_display_context_cost_stays_within_the_slice_04_baseline(catalog):

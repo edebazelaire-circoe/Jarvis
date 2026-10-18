@@ -338,6 +338,7 @@ intent → one tool; one call → one Core command (reads: none).
 | 7 | `scene_update_many` | hide / show / fold / label / layer / recategorise **a set**, incl. « réaffiche tout » (`select {visibility: hidden}`, `visibility: visible`) | `patch_selection` | write / atomic_batch | yes | atomic; absorbs `scene_set_visibility` `scope=all_hidden`; bound 512; `confirm` guard kept |
 | 8 | `scene_move` | « déplace la constellation / ces objets vers la gauche » | `translate_selection` | write / atomic_batch | **no** (relative) | **new**: `select`\|`object_ids`, `dx`, `dy`, `pin?`; returns requested vs effective delta |
 | 9 | `scene_archive` | « supprime / archive » one or many | `archive_selection` | destructive / atomic_batch | yes (second call: `unchanged`) | atomic; bound 512 |
+| 9b | `scene_purge_archived` | « supprime vraiment les archivés » (2026-10-18) | none: `POST /v1/scene/archived/purge-plan`, then `/purge` with the plan's token and `confirmed: true` | destructive / single_request | no | plan → token; purge → counts, kept ids, `backup_path`; not delegated to the Tool Brain |
 | 10 | `scene_pin` | pin / unpin one or many | `pin_selection` / `unpin_selection` | write / atomic_batch | yes | atomic; bound 512 |
 | 11 | `scene_link` | relate two objects | `link` | write / single_command | yes (derived id → `duplicate`) | typed result |
 | 12 | `scene_unlink` | remove a relation | `unlink` | write / single_command | yes | typed result |

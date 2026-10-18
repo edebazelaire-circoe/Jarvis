@@ -3134,6 +3134,19 @@ n'a pas besoin du jeton côté page (`docs/ARCHITECTURE.md`, « Scene transport 
 | `POST /api/scene/commands` | `POST /v1/scene/commands` | une commande de scène ; côté Control Center l'acteur est toujours `user` |
 | `POST /api/scene/captures/{capture_id}` | `PUT /v1/scene/captures/{capture_id}` | envoi de l'image d'une capture par la page meneuse visible (la demande, `POST /v1/scene/captures`, ne vient que du brain) |
 | `POST /api/jobs/cancel` | `POST /v1/work/cancel` | arrêt d'une tâche de Core depuis le menu de son étoile |
+| — | `POST /v1/scene/archived/purge-plan`, `POST /v1/scene/archived/purge` | purge définitive des objets archivés (2026-10-18) : appelée par le cerveau (`scene_purge_archived`), pas encore par la page |
+
+Purge des archivés. Quand vous demandez de supprimer pour de bon les objets
+archivés, le cerveau appelle `scene_purge_archived` : il vous dit le compte
+(objets et lignes d'historique, et ceux gardés parce qu'une tâche encore suivie
+les ferait renaître), puis purge après votre oui. Core écrit d'abord une copie
+complète de la base, `scene.sqlite3.purge-<horodatage UTC>.bak`, dans le dossier
+`state` de la racine de données, à côté de `scene.sqlite3` ; elle n'est jamais
+supprimée par JARVIS. Pour revenir en arrière : arrêtez Core, mettez de côté
+`scene.sqlite3` et ses `-wal`/`-shm`, copiez la sauvegarde sous le nom
+`scene.sqlite3`, redémarrez. Juste après un démarrage de Core, la purge est
+refusée une minute (`runtime_settling`) le temps que les tâches suivies se
+redéclarent.
 
 Voir la scène brute, Core démarré :
 

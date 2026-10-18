@@ -9,6 +9,7 @@ from aiohttp import web
 
 from jarvis.core.v2_app import JarvisCoreApplication
 from jarvis.domain.scene import SceneActor, SceneCommand
+from jarvis.domain.scene_purge import ScenePurgeCode, ScenePurgeError
 from jarvis.domain.conversation_event_ingest import (
     MAX_CONVERSATION_EVENT_BATCH_BODY_BYTES, decode_conversation_event_batch, encode_append_results,
 )
@@ -255,6 +256,9 @@ class LocalProtocolServer:
             web.get("/v1/scene/snapshot", self.scene_snapshot),
             web.get("/v1/scene/patches", self.scene_patches),
             web.post("/v1/scene/commands", self.scene_command),
+            # Purge définitive des objets archivés (2026-10-18) : plan + jeton, puis exécution confirmée.
+            web.post("/v1/scene/archived/purge-plan", self.scene_purge_plan),
+            web.post("/v1/scene/archived/purge", self.scene_purge),
             web.post("/v1/scene/captures", self.scene_capture),
             web.put("/v1/scene/captures/{capture_id}", self.scene_capture_upload),
             web.post("/v1/conversation-events", self.ingest_conversation_events),
@@ -1698,6 +1702,75 @@ class LocalProtocolServer:
         except SceneStoreError as exc:
             return self._scene_failure(exc)
         return web.json_response(scene_wire.command_body(update, epoch=scene.epoch), dumps=scene_wire.compact_json)
+
+    # ------------------------------------------------------------ purge des archivés (2026-10-18)
+
+    async def _purge_request(self, request: web.Request, keys: frozenset[str]) -> tuple[dict | None, web.Response | None]:
+        if request.query:
+            raise ValueError("unexpected query")
+        try:
+            raw = await scene_wire.read_bounded_body(request, scene_wire.MAX_PURGE_REQUEST_BYTES)
+        except scene_wire.SceneBodyTooLarge:
+            return None, web.json_response(scene_wire.error_body(scene_wire.PAYLOAD_TOO_LARGE, "purge request too large"),
+                                           status=413)
+        body = loads_strict_json(raw, invalid_message="invalid purge request JSON")
+        if not isinstance(body, dict) or set(body) != keys or body["schema_version"] != 1:
+            raise ValueError(f"purge request must be exactly {sorted(keys)} with schema_version 1")
+        if body["actor"] not in (SceneActor.BRAIN.value, SceneActor.USER.value):
+            if body["actor"] == SceneActor.RUNTIME.value:
+                return None, web.json_response(
+                    scene_wire.error_body(scene_wire.SCENE_ACTOR_FORBIDDEN, "actor runtime never purges the scene"), status=403,
+                )
+            raise ValueError("actor must be brain or user")
+        return body, None
+
+    @staticmethod
+    def _purge_refusal(exc: ScenePurgeError) -> web.Response:
+        status = 503 if exc.code is ScenePurgeCode.BACKUP_FAILED else 409
+        extra = {"retry_after_s": round(exc.retry_after_s, 1)} if exc.retry_after_s is not None else {}
+        return web.json_response(scene_wire.error_body(exc.code.value, exc.message, **extra), status=status)
+
+    async def scene_purge_plan(self, request: web.Request) -> web.Response:
+        """`{schema_version: 1, actor}` -> ce qu'une purge des archivés effacerait, et le jeton pour l'exécuter. N'écrit rien.
+
+        200 `{scene_id, epoch, revision, purgeable{archived_ids, history_rows}, kept{archived_ids, history_rows, ids,
+        reason}, confirmation, expires_at, ttl_s}` (`confirmation: null` : rien à purger). 409 `runtime_settling`
+        (Core vient de démarrer) ; 403 pour `runtime` ; 503 scène non servie.
+        """
+
+        body, refused = await self._purge_request(request, frozenset({"schema_version", "actor"}))
+        if refused is not None:
+            return refused
+        scene = self.core.scene
+        try:
+            offer = await scene.plan_archive_purge(actor=SceneActor(body["actor"]))
+        except ScenePurgeError as exc:
+            return self._purge_refusal(exc)
+        except SceneStoreError as exc:
+            return self._scene_failure(exc)
+        return web.json_response(offer.to_payload(epoch=scene.epoch))
+
+    async def scene_purge(self, request: web.Request) -> web.Response:
+        """`{schema_version: 1, actor, confirmation, confirmed: true}` -> purge définitive, sauvegarde de la base d'abord.
+
+        200 `{scene_id, epoch, revision, purged{archived_ids, history_rows}, kept{…}, backup_path, compacted}`. 400 sans
+        `confirmed: true` ; 409 `confirmation_required` / `confirmation_stale` / `runtime_settling` ; 503
+        `purge_backup_failed` (rien d'effacé) ou scène non servie. Aucun refus n'efface quoi que ce soit.
+        """
+
+        body, refused = await self._purge_request(request, frozenset({"schema_version", "actor", "confirmation", "confirmed"}))
+        if refused is not None:
+            return refused
+        if body["confirmed"] is not True:
+            raise ValueError("a purge runs only with confirmed: true, after the user said yes to the plan")
+        scene = self.core.scene
+        try:
+            result = await scene.purge_archived(confirmation=body["confirmation"], actor=SceneActor(body["actor"]))
+        except ScenePurgeError as exc:
+            return self._purge_refusal(exc)
+        except SceneStoreError as exc:
+            return self._scene_failure(exc)
+        return web.json_response(result.to_payload(epoch=scene.epoch))
 
     # ------------------------------------------------------------ capture (Slice 09, partie 2)
 

@@ -20,7 +20,8 @@ suite de patchs à rejouer :
   ses pierres tombales, avec une `position` qui restitue exactement l'ordre
   des tuples de `SceneSnapshot` ;
 - `scene_history` : la forme archivée de chaque objet, écrite par les
-  opérations `archive_object`.
+  opérations `archive_object`, effacée seulement par une purge confirmée
+  (`purge_archived`, voir plus bas).
 
 Ouverture, dans cet ordre :
 
@@ -60,6 +61,21 @@ WAL) ; l'identité octet pour octet du fichier, du `-wal` et du `-shm` n'est
 pas promise. Ce que SQLite signale « pas une base » ou
 « malformé » est `corrupted` ; verrou, droits et E/S sont `storage_io`.
 
+Purge (`purge_archived`, demande de l'utilisateur du 2026-10-18) : sauvegarde
+**d'abord**, par l'API de sauvegarde de SQLite sur la connexion de Core (la
+base est en WAL : copier le fichier manquerait les pages du `-wal`), dans
+`scene.sqlite3.purge-<horodatage UTC>.bak` à côté de la base, écrite en
+`.partial` puis renommée. Si elle échoue, rien n'est effacé
+(`ScenePurgeBackupError`). Puis une transaction `BEGIN IMMEDIATE` sous
+`PRAGMA secure_delete=ON` (les octets effacés sont mis à zéro, pas seulement
+détachés) efface les pierres tombales purgées et l'historique des ids qui ne
+gardent pas la leur, vérifie révision et comptes comme `commit`, et avance la
+révision. Suivent, au mieux, `VACUUM` (le texte d'objets archivés plus tôt
+traîne dans l'espace libre des pages, effacé sans mise à zéro) et un
+`wal_checkpoint(TRUNCATE)` pour que les anciennes pages ne restent pas dans le
+`-wal` ; leur échec ne défait rien et se dit (`compacted: false`). La sauvegarde, elle, garde tout : c'est
+voulu, et c'est à l'utilisateur de la supprimer s'il veut un effacement total.
+
 Chaque `commit` est une transaction `BEGIN IMMEDIATE … COMMIT` : un arrêt
 brutal laisse la révision précédente ou la suivante, jamais une moitié. Une
 connexion restée dans une transaction après un échec (rollback impossible)
@@ -96,7 +112,14 @@ from jarvis.domain.scene import (
     SceneSnapshot,
 )
 from jarvis.domain.v2 import new_id, utc_now
-from jarvis.ports.scene import ArchivedSceneObject, SceneStoreError, SceneStoreErrorCode, SceneSweepReport
+from jarvis.ports.scene import (
+    ArchivedSceneObject,
+    ScenePurgeBackupError,
+    ScenePurgeWrite,
+    SceneStoreError,
+    SceneStoreErrorCode,
+    SceneSweepReport,
+)
 
 T = TypeVar("T")
 
@@ -679,6 +702,125 @@ class SQLiteSceneRepository:
             )
         except (TypeError, ValueError) as exc:
             raise SceneStoreError(SceneStoreErrorCode.CORRUPTED, f"stored scene history is invalid: {_clip(exc)}") from exc
+
+    async def history_counts(self, kept: frozenset[str]) -> tuple[int, int]:
+        """`(purgeables, gardées)` : lignes d'historique dont l'id est hors de `kept`, et les autres. N'écrit rien."""
+
+        rows = await self._run(
+            lambda conn: conn.execute("SELECT object_id, COUNT(*) FROM scene_history GROUP BY object_id").fetchall()
+        )
+        purgeable = sum(count for object_id, count in rows if object_id not in kept)
+        return purgeable, sum(count for object_id, count in rows if object_id in kept)
+
+    async def purge_archived(
+        self, previous: SceneSnapshot, result: SceneSnapshot, *, purge_ids: tuple[str, ...], history_rows: int,
+    ) -> ScenePurgeWrite:
+        removed = set(purge_ids)
+        if (
+            result.scene_id != previous.scene_id or result.revision != previous.revision + 1
+            or result.objects != previous.objects or result.relations != previous.relations
+            or len(removed) != len(purge_ids) or not removed <= set(previous.archived_ids)
+            or result.archived_ids != tuple(i for i in previous.archived_ids if i not in removed)
+        ):
+            raise SceneStoreError(
+                SceneStoreErrorCode.REVISION_CONFLICT,
+                f"purge does not lead from revision {previous.revision} to {result.revision} by removing tombstones only",
+            )
+        return await self._run(lambda conn: self._purge_sync(conn, previous, result, purge_ids, history_rows))
+
+    def _backup_target(self) -> Path:
+        stamp = time.strftime("%Y%m%dT%H%M%SZ", time.gmtime())
+        target = self.path.with_name(f"{self.path.name}.purge-{stamp}.bak")
+        suffix = 1
+        while os.path.lexists(target) or os.path.lexists(target.with_name(target.name + ".partial")):
+            target = self.path.with_name(f"{self.path.name}.purge-{stamp}-{suffix}.bak")
+            suffix += 1
+        return target
+
+    def _write_backup(self, conn: sqlite3.Connection, target: Path) -> None:
+        """Copie cohérente par l'API de sauvegarde (pages du `-wal` comprises), `.partial` puis renommée."""
+
+        partial = target.with_name(target.name + ".partial")
+        copy = sqlite3.connect(partial)
+        try:
+            conn.backup(copy)
+        finally:
+            copy.close()
+        os.replace(partial, target)
+
+    def _purge_sync(
+        self, conn: sqlite3.Connection, previous: SceneSnapshot, result: SceneSnapshot, purge_ids: tuple[str, ...],
+        history_rows: int,
+    ) -> ScenePurgeWrite:
+        target = self._backup_target()
+        try:
+            self._write_backup(conn, target)
+        except (OSError, sqlite3.Error) as exc:
+            error = ScenePurgeBackupError(
+                SceneStoreErrorCode.STORAGE_IO,
+                f"scene purge backup to {target.name} failed, nothing was deleted: {type(exc).__name__}: {exc}",
+            )
+            try:
+                target.with_name(target.name + ".partial").unlink(missing_ok=True)
+            except OSError as cleanup_exc:
+                error.add_note(f"partial backup not removed: {cleanup_exc}")
+            raise error from exc
+        now = utc_now().isoformat()
+        secure = conn.execute("PRAGMA secure_delete").fetchone()[0]
+        conn.execute("PRAGMA secure_delete=ON")
+        try:
+            conn.execute("BEGIN IMMEDIATE")
+            meta = conn.execute("SELECT scene_id, revision FROM scene_meta WHERE singleton = 1").fetchone()
+            if meta is None or tuple(meta) != (previous.scene_id, previous.revision):
+                stored = "no scene" if meta is None else f"revision {meta[1]}"
+                raise SceneStoreError(
+                    SceneStoreErrorCode.REVISION_CONFLICT,
+                    f"stored scene holds {stored}, Core expected revision {previous.revision}",
+                )
+            tombstones = sum(
+                conn.execute("DELETE FROM scene_tombstones WHERE object_id = ?", (object_id,)).rowcount
+                for object_id in purge_ids
+            )
+            history = conn.execute(
+                "DELETE FROM scene_history WHERE object_id NOT IN (SELECT object_id FROM scene_tombstones)"
+            ).rowcount
+            counts = tuple(
+                conn.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]
+                for table in ("scene_objects", "scene_relations", "scene_tombstones")
+            )
+            expected = (len(result.objects), len(result.relations), len(result.archived_ids))
+            if tombstones != len(purge_ids) or history != history_rows or counts != expected:
+                raise SceneStoreError(
+                    SceneStoreErrorCode.REVISION_CONFLICT,
+                    f"stored scene diverged from Core during purge (tombstones {tombstones}/{len(purge_ids)}, "
+                    f"history {history}/{history_rows}, rows {counts}, expected {expected})",
+                )
+            conn.execute(
+                "UPDATE scene_meta SET revision = ?, updated_at = ? WHERE singleton = 1", (result.revision, now)
+            )
+            conn.execute("COMMIT")
+        except BaseException as exc:
+            _rollback(conn, exc)
+            raise
+        finally:
+            try:
+                conn.execute(f"PRAGMA secure_delete={1 if secure else 0}")
+            except sqlite3.Error:
+                pass  # intentional: only the zeroing of later deletes is at stake, never the purge itself
+        # `secure_delete` ne met à zéro que ce que cette transaction efface : le texte d'un objet archivé plus
+        # tôt (sa ligne `scene_objects` supprimée sans zéro) traîne encore dans l'espace libre des pages.
+        # `VACUUM` reconstruit la base sans cet espace ; le checkpoint vide ensuite le `-wal`. Au mieux :
+        # la purge est déjà commise, un échec ici se dit (`compacted`) sans rien défaire.
+        compacted = True
+        try:
+            conn.execute("VACUUM")
+        except sqlite3.Error:
+            compacted = False
+        try:
+            conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+        except sqlite3.Error:
+            compacted = False
+        return ScenePurgeWrite(backup_path=str(target), tombstones=tombstones, history_rows=history, compacted=compacted)
 
     async def close(self) -> None:
         async with self._lock:

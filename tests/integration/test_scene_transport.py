@@ -76,8 +76,10 @@ def free_port() -> int:
 class CoreProcess:
     """Un Core réel sur la boucle locale, redémarrable sur le même dossier de données."""
 
-    def __init__(self, tmp_path, *, scene_repository=None) -> None:  # noqa: ANN001
+    def __init__(self, tmp_path, *, scene_repository=None, **core_options) -> None:  # noqa: ANN001, ANN003
         self.data_root = tmp_path / "data"
+        #: Options de plus pour `JarvisCoreApplication` (ex. `scene_restart_grace_s`).
+        self.core_options = core_options
         self.token_file = tmp_path / "core.token"
         self.port = free_port()
         self.scene_repository = scene_repository
@@ -90,7 +92,8 @@ class CoreProcess:
         self.generation += 1
         self.token = f"{self.generation}" * 48
         self.token_file.write_text(self.token, encoding="utf-8")
-        self.core = JarvisCoreApplication(data_root=self.data_root, scene_repository=self.scene_repository)
+        self.core = JarvisCoreApplication(data_root=self.data_root, scene_repository=self.scene_repository,
+                                          **self.core_options)
         await self.core.start()
         self.server = LocalProtocolServer(self.core, host="127.0.0.1", port=self.port, token=self.token)
         await self.server.start()
