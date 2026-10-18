@@ -329,6 +329,10 @@
             fx.push({do:'preventDefault'});
             s.openedBy='keyboard';s.sub=null;
             focusWedge(moves[key],true);
+          }else if(key==='Escape'&&s.sub){
+            /* Le sous-menu ouvert à la souris, focus resté sur sa catégorie :
+               Échap ferme la couche du dessus seulement. */
+            fx.push({do:'preventDefault'});s.sub=null;s.lastSecondary=null;
           }else if(key==='Escape'){fx.push({do:'preventDefault'});close('escape',true)}
         }else if(input.target==='item'&&s.sub){
           const j=input.index,m=s.sub.count;

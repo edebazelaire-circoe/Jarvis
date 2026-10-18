@@ -426,3 +426,14 @@ def test_exclusive_event_name_matches_the_shell():
     name = re.search(r"const EXCLUSIVE_EVENT='([^']+)'", shell).group(1)
     for source in (MODULE.read_text(encoding="utf-8"), boards):
         assert f"EXCLUSIVE_EVENT)||'{name}'" in source
+
+
+def test_escape_on_a_category_whose_tree_is_open_closes_the_tree_only(tmp_path):
+    v = run(tmp_path, f"""
+      const o=play([{OPEN},{{type:'click',target:'wedge',index:3,detail:1,source:'mouse',menu:true,t:10}},
+                    {{type:'subOpen',slot:3,count:3,source:'mouse',level:1}}]).s;
+      const once=play([{{type:'keydown',target:'wedge',index:3,key:'Escape'}}],o);
+      const twice=play([{{type:'keydown',target:'wedge',index:3,key:'Escape'}}],once.s);
+      out({{once:[once.s.open,once.s.sub,once.s.focus],twice:[twice.s.open,did(twice.fx,'restoreFocus').length]}})""")
+    assert v["once"] == [True, None, 3]
+    assert v["twice"] == [False, 1]

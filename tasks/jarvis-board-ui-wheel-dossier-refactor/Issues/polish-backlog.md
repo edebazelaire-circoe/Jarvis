@@ -62,5 +62,8 @@ outside the acceptance of the Slice that found it.
    wedges the panel covers cannot be reached. The wheel redesign decides which wins (close the panel when the wheel
    opens, or the reverse) and the registry follows.
 2. **One Escape closes both the wheel and the Board panel** when both are open; it should close the topmost only.
+   - Items 1 and 2: **resolved in Slice 03** — the wheel and the Board panel are exclusive surfaces (opening one
+     closes the other, anchor hover does not reveal while the panel is open), so one Escape closes the only open one
+     (`docs/control-center-shell.md` › *Exclusive surfaces*). Item 3 stays open (not a wheel concern).
 3. **Long Board titles are cut at 1440 and 1920 px** (card capped at 236 px) while the same title fits at 600 px
    (`max-width: calc(100vw - 102px)` there); consider a wider cap on large screens, within the status-centre insets.
