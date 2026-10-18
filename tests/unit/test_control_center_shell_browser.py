@@ -529,7 +529,9 @@ def test_runtime_matrix(matrix, number, theme):
         assert results["wheel"]["open"] is True and results["wheel"]["focus"] == "selection", (label, results["wheel"])
         _focus_ring(audit, label)
     if number == "03":
-        assert results["sub"] == ["Souris", "Bare Hands"], (label, results["sub"])
+        # Slice 06 (wheel/dossier) : après la méthode, les lignes de la sélection (vide ici).
+        assert results["sub"][:2] == ["Souris", "Bare Hands"], (label, results["sub"])
+        assert results["sub"][2].startswith("Aucun objet sélectionné"), (label, results["sub"])
         _focus_ring(audit, label)
     if number == "04":
         chips = results["chips"]
@@ -672,7 +674,8 @@ def test_keyboard_only_full_path(tmp_path):
         _stops_ok(r[name], target)
     assert r["boards_open"] is True and r["boards_closed"] is True, r
     assert r["wheel"]["open"] and r["wheel"]["focus"] == "selection", r["wheel"]
-    assert r["sub"] == ["Souris", "Bare Hands"], r["sub"]
+    # Slice 06 : la sélection suit (Tab a pu traverser la scène et y sélectionner un objet).
+    assert r["sub"][:2] == ["Souris", "Bare Hands"] and "sélectionné" in r["sub"][2], r["sub"]
     assert r["after_wheel"] and "tw-anchor" in r["after_wheel"], ("Échap rend le focus à l'ancre", r["after_wheel"])
     assert r["preview"]["shown"] and r["preview"]["loaded"], r["preview"]
     assert "tw-anchor" in r["after_shot"], ("la capture rend le focus à l'ancre, l'aperçu ne le prend pas", r["after_shot"])

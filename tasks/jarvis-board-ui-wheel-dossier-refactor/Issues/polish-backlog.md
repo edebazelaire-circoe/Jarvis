@@ -104,3 +104,19 @@ outside the acceptance of the Slice that found it.
   the counts are unconfirmed, as the JARVIS submenu now does.
 - **No Veille / Réveil control in the JARVIS submenu**: there is no Voice lifecycle API (sleep / wake) in Core or the
   Control Center. Candidate for a separate Issue: a canonical Voice lifecycle route first, then a control row.
+
+## From Slice 06 implementation (Sélection actions) — targets Slices 07/08
+
+1. **The page selection does not reach the brain.** « masque ça » / « range ça » are resolved by the brain from the
+   scene, not from what the user selected (no page → Core selection channel; perception `surfaces` gap G1). In the
+   sandbox, « masque ça » hid the only drawn window and the brain said « la seule fenêtre ouverte » while two
+   windows were drawn as stars. Candidate Issue: report the page selection with the turn (bounded ids), then let
+   `scene_*` / `dossier_ranger` default to it.
+2. **« Réduire » is ambiguous**: the brain maps « réduis-les » to `point` (étoile). The wheel says Capsule = « titre
+   seul » and Étoile = « réduite à un point » to stay consistent; the tool descriptions could say the same.
+3. **Focus after a removal selects the neighbour** (`planFocusAfterRemoval` → focus → `anchorSelection`): after
+   « Retirer du Board », an unrelated signal became the selection. Consider focusing without selecting.
+4. **The selection count words follow the representation** (« 2 étoiles ») and not the kind: a group drawn as a point
+   reads « étoile ». Fine for forms; a kind word may help in mixed selections.
+5. **Brain turn over budget** on « masque ça » (9.4 s vs 8 s) — pre-existing brain latency, not Slice 06 code.
+6. Sélection holds 8 rows with a selection (arc limit 9): any new action must go into a second level.

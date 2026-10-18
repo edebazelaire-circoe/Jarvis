@@ -409,7 +409,7 @@
     }
     /* Après Souris / Bare Hands, les actions sur la sélection de la scène
        (Slice 06 de jarvis-board-ui-wheel-dossier-refactor) : Ranger, Masquer,
-       forme, Retirer du Board, Afficher les masqués (N). La scène les fournit
+       forme, Retirer du Board, Masqués (N). La scène les fournit
        (`JarvisScene.selectionMenu`, chargée après ce module : lue à l'appel) ;
        sa panne n'éteint pas le choix de la méthode, elle se journalise. */
     function sceneRows(ctx){

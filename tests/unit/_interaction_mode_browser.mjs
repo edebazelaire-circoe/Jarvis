@@ -26,7 +26,7 @@
      {"a":"write","file":".voice_presentation","value":{...}|null}
      {"a":"post","path":"/__test/board-mode","body":{...}}      -> statut HTTP
      {"a":"wait","expr":"...","timeoutMs":3000}                 -> {ok,ms}
-     {"a":"click","selector":"..."}      (vrai clic souris, au centre)
+     {"a":"click","selector":"..."}      (vrai clic souris, au centre ; "modifiers":2 pour Ctrl, Slice 06)
      {"a":"focus","selector":"..."}
      {"a":"key","key":"ArrowDown"}       (vraie frappe clavier ; "shift":true pour Maj)
      {"a":"mouse","type":"mouseMoved","x":0,"y":0,"button":"none"}
@@ -287,7 +287,7 @@ try{
           if(!e)throw new Error('click : introuvable '+${JSON.stringify(JSON.stringify(action.selector))});
           const r=e.getBoundingClientRect();return {x:r.left+r.width/2,y:r.top+r.height/2}})()`);
         for(const type of ['mouseMoved','mousePressed','mouseReleased'])
-          await send('Input.dispatchMouseEvent',{type,x:box.x,y:box.y,button:'left',clickCount:1});
+          await send('Input.dispatchMouseEvent',{type,x:box.x,y:box.y,button:'left',clickCount:1,modifiers:action.modifiers||0});
         await sleep(60);
         return {a:'click'};
       }
@@ -304,7 +304,7 @@ try{
         const codes={ArrowDown:40,ArrowUp:38,ArrowLeft:37,ArrowRight:39,Escape:27,Enter:13,Tab:9,Home:36,End:35,' ':32,
           F10:121,ContextMenu:93};
         const base={key:action.key,code:action.key===' '?'Space':action.key,
-          windowsVirtualKeyCode:codes[action.key]||0,modifiers:action.shift?8:0};
+          windowsVirtualKeyCode:codes[action.key]||0,modifiers:action.modifiers||(action.shift?8:0)};
         await send('Input.dispatchKeyEvent',{type:'keyDown',...base,
           ...(action.key==='Enter'?{text:'\r'}:action.key===' '?{text:' '}:{})});
         await send('Input.dispatchKeyEvent',{type:'keyUp',...base});

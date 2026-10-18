@@ -105,7 +105,9 @@ const I={resizable:()=>true,dragThreshold:()=>4,longPressOpensMenu:()=>false,LON
   nextSelection:(current,hits,mode)=>mode==='add'?[...new Set([...current,...hits])]:hits};
 const BH={isBareHandsPointerId:()=>false};
 const raisedLog=[];const raiseWindow=id=>raisedLog.push(id);
-let enabled=true,gesture=null,band=null,keyEdit=null,selection=[],selectedId=null,focusId=null,lastModel=null;
+let enabled=true,gesture=null,band=null,keyEdit=null,selection=[],selectedId=null,focusId=null,lastModel=null,keySelecting=false;
+/* Slice 06 (wheel/dossier) : la page relit l'aperçu Dossier et le sous-menu Sélection quand la sélection change. */
+const selectionChanged=()=>{};
 const frames={cancel(){}};
 const consoleLog=(level,key,data)=>log.push([level,key,data&&data.reason||'']);
 const nodeOf=()=>({}),drawnBox=()=>({x:0,y:0,w:300,h:200}),viewState=()=>({objects:new Map([['pw-1',{representation:'window'}],['pw-2',{representation:'window'}]])});

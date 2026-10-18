@@ -545,16 +545,15 @@ rework, QA B1).
 | 1 | `#bgPills` | page, `renderBackgroundPills` (`BG` state) | one 32 px round pill per unread category, in `BG_CATS` order: `failed` (alert triangle, `--sem-alert`), `attention` (question, `--sem-question`, « points à vérifier »), `done` (check, `--sem-done`), `said` (speaker crossed out, muted, F8). Inline SVG icon, the count in a badge, `aria-label` = `title` = the `pillLabelOf` text (category + count + other-Board share); the other-Board satellite sits bottom-right. Popover `#bgPop` opens **above** the pill, centred on it and bounded to the screen; ack, sound cue, multi-tab leader, Board-elsewhere attribution and « Aller sur « X » » are unchanged (same code and ids) |
 
 **Hidden objects (no permanent control since the wheel/dossier refactor
-Slice 02).** The eye host `#hiddenEye` is no longer declared; its machinery
-stays in `control_center_scene_page.js` (`syncEye` returns without a host,
-`toggleEye` no longer needs the element, `openHiddenMenu(anchor)`,
-`V.hiddenEye`) for Slice 06, which re-exposes « Afficher les masqués (N) »
-and « Tout réafficher » in the wheel's Sélection submenu. Until then a hidden
-object is shown again only by Jarvis (scene tools, `set_visibility`), the
-interim state the handoff accepts. What the eye did, and what Sélection
-inherits:
+Slice 02, D06).** The eye `#hiddenEye` is gone for good: since Slice 06 the
+count and the commands live only in the wheel › **Sélection › « Afficher les
+masqués (N) »** (« Voir en fantômes », « Tout réafficher (N) », « Réafficher « … » »
+for up to six named objects), or « Aucun objet masqué » as a status row
+([scene-selection-batch.md](scene-selection-batch.md) › *Selection actions
+(wheel)*). The page code for the host (`syncEye`, `wireEye`, `openHiddenMenu`) is
+removed; `toggleGhosts` and `V.hiddenEye` (count, pressed) stay.
 
-**Ghosts.** With the eye on, the scene draws every hidden object **that has a
+**Ghosts.** With « Voir en fantômes » on, the scene draws every hidden object **that has a
 stored place** as a ghost at that place (`JarvisSceneLayout.viewModel`
 `options.showHidden`, `node.ghost`): 42 % opacity, desaturated, dashed ring or
 outline, no animation, accessible name suffixed « masqué ». A ghost is not
@@ -563,12 +562,12 @@ no signal, cannot be dragged or moved by keys (it has no layout placement),
 and its context menu has one entry, « Réafficher » (`showObjects([id])`: one
 `set_visibility visible`). A hidden object without stored geometry has no
 ghost (an invented place would not be its own); it stays reachable in the
-eye's list. Per-object visibility is never touched by the eye: it is a view
+Sélection list. Per-object visibility is never touched by the ghost view: it is a view
 decision of this browser (`jarvis.scene.view`), never sent to Core
 ([scene-model.md](scene-model.md) › Visibility).
 
-**Journal.** `[scène] scene.hidden_view {show, hidden}`, `.hidden_view_inert`,
-`.hidden_menu {hidden}`; pills keep `[background]` lines.
+**Journal.** `[scène] scene.hidden_view {show, hidden, ghosts}`, `.hidden_view_inert`,
+`.user_shown {asked, shown, op}`; pills keep `[background]` lines.
 
 **Tests.** `tests/unit/test_status_centre_browser.py` (served page, fetch
 double for status, background, ack and scene; both themes; 1440×900,
@@ -733,7 +732,7 @@ category does comes from its registrant.
 | Category | Registrant | Tree today |
 | --- | --- | --- |
 | JARVIS | `control_center_jarvis_wheel.js` (Slice 04) | status rows Voix, touche d'éveil, Agent; actions Sous-agents, Réglages de la voix — see *JARVIS and Paramètres* below |
-| Sélection | `control_center_input_arbitration.js` | Souris / Bare Hands, then Bare Hands › tools, Veille, Aide, Diagnostic, Calibration |
+| Sélection | `control_center_input_arbitration.js` (method rows) + `JarvisScene.selectionMenu` (Slice 06, action rows) | Souris / Bare Hands (then Bare Hands › tools, Veille, Aide, Diagnostic, Calibration); then the selection: a count, Ranger dans le Dossier, Masquer, Masqués (N) ›, Changer la forme ›, Retirer du Board… — or « Aucun objet sélectionné » and the hidden row — see *Selection actions* below |
 | Dossier | placeholder; wired by Slices 05-07 | one inert row « Ouvrir le Dossier du Board — pas encore branché » |
 | Capture | `control_center_capture_wheel.js` | Capture d'écran, Enregistrer l'écran, Enregistrer l'audio, each with its second level (stop list, then Core's real targets); live while open (`refresh`) — [capture.md](capture.md) › *Interface* |
 | Paramètres | `control_center_jarvis_wheel.js` (Slice 04) | one row per settings tab (`settingsTabs()`), each opens the settings modal on that tab |
@@ -927,6 +926,22 @@ Tests: `test_tool_wheel_js.py::test_exclusive_surface_blocks_hover_reveal_and_cl
 `::test_exclusive_event_name_matches_the_shell`,
 `test_tool_wheel_browser.py::test_wheel_and_board_panel_are_never_open_together`.
 
+### Selection actions (Slice 06)
+
+The Sélection tree shows, after the method rows, the actions on the page's
+selection: contract and table in [scene-selection-batch.md](scene-selection-batch.md)
+› *Selection actions (wheel)*. Shell rules: rows hidden when they make no sense
+(empty selection: a status row and the hidden count only); a row that cannot
+act now stays visible, `aria-disabled`, with its reason as name and tooltip
+(Ranger on a Board that is not displayed, beyond 20 objects, nothing rangeable;
+Retirer du Board during a Variantes run); status rows never close the wheel;
+the open submenu follows selection, preview and hidden count through
+`JarvisToolWheel.refresh('selection')`. Reaching the wheel (`#toolWheel`), by
+mouse or by the Bare Hands pointer, never clears the selection. At most eight
+rows with a selection (the arc holds nine): forms and the hidden list are second
+levels. Retirer du Board is the only confirmed action (page `confirmDialog`);
+there is no durable delete in the wheel.
+
 ## Selection method (`control_center_input_arbitration.js`)
 
 Slice 03, decision D5 of the handoff's resolved architecture (binding).
@@ -1064,6 +1079,12 @@ command channel, latency).
   `ContextMenu` key, `Shift+F10`. Never long press.
 - **Announcements**: one polite live region per module; urgent only for what
   the user must act on now.
+- **Scene selection by keyboard** (Slice 06): focus an object (Tab, arrows),
+  `Ctrl+Espace` starts a keyboard selection with it and then adds or removes
+  the focused object; arrows move the focus without dissolving the selection;
+  `Esc` on the object ends it. The wheel (anchor, `Enter`, `ArrowDown` to
+  Sélection, `Enter`) then acts on that selection, like the mouse
+  (click, `Ctrl`+click, rectangle) and the Bare Hands pointer.
 - **Target size**: at least `--shell-wedge-min` (48 px) for wheel wedges,
   32 px for status-centre buttons, the launcher's 34 px for launcher buttons.
 - **Reduced motion**: under `prefers-reduced-motion: reduce` the shell

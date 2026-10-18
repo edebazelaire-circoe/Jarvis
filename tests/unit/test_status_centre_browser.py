@@ -21,7 +21,7 @@ fichier épingle :
 - plus de capsule « F9 · DÉMARRER » ni de ligne d'état : la touche se lit dans le
   sous-menu JARVIS de la roue (Slice 04), et reste la touche de Voice ;
 - l'œil permanent est **absent** du centre d'état (D06) ; sa mécanique vit
-  dans la roue › Sélection › « Afficher les masqués (N) » (Slice 06 de la
+  dans la roue › Sélection › « Masqués (N) » (Slice 06 de la
   refonte roue/dossier) : « Voir en fantômes » coché ou non, fantômes sans
   écriture, la liste des masqués, « Réafficher » = un seul `set_visibility`,
   « Tout réafficher » = un seul `patch_selection` ; un réglage `showHidden`
@@ -67,7 +67,7 @@ BOXES = r"""(()=>{
     theme:document.documentElement.getAttribute('data-jarvis-theme')||''};
 })()"""
 
-#: La roue › Sélection (Slice 06) : ouvrir l'arbre, puis « Afficher les masqués (N) ».
+#: La roue › Sélection (Slice 06) : ouvrir l'arbre, puis « Masqués (N) ».
 OPEN_SELECTION = [["click", "wheelOpen", "#toolWheel .tw-anchor", 400],
                   ["click", "selectionTree", "#toolWheel [data-tw-slot=selection] .tw-dot", 500]]
 OPEN_HIDDEN = [*OPEN_SELECTION, ["click", "hiddenRow", "#toolWheel .tw-item[data-tw-item=hidden]", 500]]
@@ -331,7 +331,7 @@ def test_no_voicehint_and_f9_still_wakes(tmp_path):
 # ------------------------------------------------------------------ les masqués
 #
 # Slice 02 de jarvis-board-ui-wheel-dossier-refactor (D06) : la page ne déclare plus
-# l'œil. Slice 06 : sa mécanique vit dans la roue › Sélection › « Afficher les masqués (N) ».
+# l'œil. Slice 06 : sa mécanique vit dans la roue › Sélection › « Masqués (N) ».
 
 
 def test_a_stored_ghost_view_draws_ghosts_that_selection_can_turn_off(tmp_path):
@@ -355,7 +355,7 @@ def test_a_stored_ghost_view_draws_ghosts_that_selection_can_turn_off(tmp_path):
 
 
 def test_selection_hidden_row_counts_toggles_ghosts_and_lists_hidden(tmp_path):
-    """Slice 06 : « Afficher les masqués (3) » dans Sélection (jamais dans la coque) ; « Voir en
+    """Slice 06 : « Masqués (3) » dans Sélection (jamais dans la coque) ; « Voir en
     fantômes » allume la vue de ce navigateur sans rien écrire ; la liste nomme les masqués ; un fantôme
     se réaffiche d'un seul `set_visibility` ; le compte suit (2) et la vue s'éteint du même endroit."""
     ghosts = r"""[...document.querySelectorAll('#sceneLayer [data-object-id]')].map(n=>({id:n.dataset.objectId,
@@ -387,7 +387,7 @@ def test_selection_hidden_row_counts_toggles_ghosts_and_lists_hidden(tmp_path):
     first = [row for row in r["first"] if row["id"] not in ("mouse", "bare_hands")]
     # Sans sélection : un fait, puis le compte des masqués (une entrée qui ouvre sa liste).
     assert [row["id"] for row in first] == ["selection-none", "hidden"], first
-    assert first[1]["text"] == "Afficher les masqués (3)"
+    assert first[1]["text"] == "Masqués (3)"
     assert [row["text"] for row in r["list"]] == ["Voir en fantômes", "Tout réafficher (3)", "Réafficher « Recherche masquée »",
                                                   "Réafficher « Rapport masqué »", "Réafficher « Sans place »"]
     assert r["list"][0]["checked"] == "false"
@@ -427,7 +427,8 @@ def test_show_all_hidden_is_one_atomic_patch_selection(tmp_path):
                      "selection": {"ids": ["jobj_hidden", "jobj_hidden_win", "jobj_nowhere"]},
                      "changes": {"visibility": "visible"}}], sent
     assert r["drawn"] == 4
-    assert [row["id"] for row in r["rows"]][-1] == "hidden-none"
+    # Plus aucun masqué (le premier réaffiché a reçu le focus, donc la sélection : peu importe ici).
+    assert "hidden-none" in [row["id"] for row in r["rows"]] and "hidden" not in [row["id"] for row in r["rows"]]
     _no_errors(step)
 
 
@@ -546,7 +547,7 @@ def test_eye_announces_ghosts_and_ghosts_never_move(tmp_path):
         ["eval", "keySaid", live, 100],
     ]}])[0]
     r = step["results"]
-    assert r["said"] == "2 objets masqués affichés en fantômes ; 3 dans Sélection › Afficher les masqués.", r["said"]
+    assert r["said"] == "2 objets masqués affichés en fantômes ; 3 dans Sélection › Masqués.", r["said"]
     assert r["focus"] == "jobj_hidden_win"
     assert r["afterDrag"] == 0 and r["afterKeys"] == 0, r
     assert "réaffichez-le" in r["keySaid"], r["keySaid"]

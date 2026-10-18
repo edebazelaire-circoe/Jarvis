@@ -2980,7 +2980,8 @@ objets ») :
 | --- | --- |
 | déplacer (et donc épingler) | glisser, ou Maj+flèches |
 | épingler / désépingler | menu (clic droit, appui long au doigt ou au stylet, Maj+F10) |
-| masquer, puis réafficher | menu « Masquer » ; pour réafficher, demandez-le à Jarvis (« réaffiche … ») : l'œil permanent du centre d'état a été retiré, l'action reviendra dans la Sélection de la roue |
+| masquer, puis réafficher | menu « Masquer », ou la roue › Sélection › « Masquer » ; pour réafficher : la roue › Sélection › « Masqués (N) », ou demandez-le à Jarvis (« affiche les masqués ») |
+| agir sur plusieurs objets | sélectionnez-les (Ctrl+clic, rectangle, ou Ctrl+Espace au clavier), puis la roue › Sélection : Ranger dans le Dossier, Masquer, Changer la forme, Retirer du Board |
 | changer de forme | menu « Afficher en point / capsule / fenêtre » |
 | archiver un objet | menu « Archiver… » ; une étoile emporte ses signaux, **pas** ses artefacts |
 | archiver en groupe | « Archiver les travaux terminés (N objets)… » (terminés, en échec, annulés, interrompus) et « Archiver les artefacts orphelins (N)… » (artefacts dont l'étoile est archivée) |
@@ -4216,14 +4217,30 @@ Actions du menu :
   l'arrêt du brain entier, depuis le panneau Agents, les interrompt ;
 - **Archiver les travaux terminés (N objets)…** : voir ci-dessous.
 
-**Retrouver ce qui est masqué.** L'œil du centre d'état, en bas au centre
-(« Afficher les objets masqués (N) » au survol et pour le lecteur d'écran), le
-dit. Un clic montre les objets masqués en **fantômes** à leur place (atténués,
-en tirets) sans les réafficher ; un nouveau clic les cache. Clic droit (ou
-Maj+F10, touche Menu) : la liste, « Afficher « titre » » pour un objet, « Tout
-réafficher » pour tous. Sur un fantôme, le clic droit propose « Réafficher ».
-Un objet masqué qui n'a jamais eu de place n'a pas de fantôme : il est dans la
-liste. Ce réglage ne vaut que pour ce navigateur.
+**Retrouver ce qui est masqué.** La roue › Sélection › « Masqués (N) »
+compte les objets masqués (le compte n'est affiché nulle part ailleurs). Dedans :
+« Voir en fantômes » montre les objets masqués à leur place (atténués, en tirets)
+sans les réafficher, une seconde activation les cache (ce réglage ne vaut que pour
+ce navigateur) ; « Tout réafficher (N) » les remet tous sur le Board d'un coup ;
+« Réafficher « titre » » en remet un. Sur un fantôme, le clic droit propose
+« Réafficher ». Un objet masqué qui n'a jamais eu de place n'a pas de fantôme : il
+est dans la liste.
+
+**Masquer, Ranger, changer de forme, retirer : quatre gestes différents.**
+Sélectionnez un ou plusieurs objets, puis la roue › Sélection :
+
+- **Masquer** cache l'objet ; il reste sur le Board, récupérable, et rien n'entre
+  dans le Dossier ;
+- **Ranger dans le Dossier** garde d'abord le contenu dans le Dossier du Board
+  (une note, ou le lien vers le fichier ou l'Artifact qu'il montre), puis le retire
+  du Board ; ce qui ne se range pas (un groupe, un signal, une interface) reste,
+  et la notification dit pourquoi, objet par objet ;
+- **Changer la forme** (Étoile, Capsule, Fenêtre) change la représentation, rien
+  n'est copié ;
+- **Retirer du Board…** retire la représentation (elle reste dans l'historique)
+  après confirmation ; un document source du Dossier n'est jamais supprimé. Ce
+  qui n'était pas rangé n'est plus sur le Board : rangez-le d'abord pour le
+  garder.
 
 **Archiver les travaux terminés.** Depuis le menu d'une étoile, ou directement
 depuis la pastille « Scène pleine — archiver des travaux terminés » quand la scène

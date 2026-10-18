@@ -15,7 +15,7 @@ nothing else.
 | agent -> UI channel (Control Center) | `jarvis/runtime/dossier_navigation.py` (`/api/dossier/navigation/commands`) |
 | MCP | `jarvis-workspace`: `dossier_list`, `dossier_ranger`, `dossier_present`, `dossier_view` ([mcp/tool-contract.md](mcp/tool-contract.md) §10.18) |
 | scene reference | `ScenePayload.registry_artifact_id` (`jarvis/domain/scene.py`, [scene-model.md](scene-model.md) › *Dossier references*) |
-| tests | `tests/unit/test_dossier_service_api.py`, `test_dossier_mcp.py`, `test_dossier_navigation.py` |
+| tests | `tests/unit/test_dossier_service_api.py`, `test_dossier_mcp.py`, `test_dossier_navigation.py`; Slice 06 consumer: `test_selection_actions_js.py`, `test_selection_actions_browser.py` |
 
 ## What the Dossier is
 
@@ -86,7 +86,7 @@ give equal outcomes and codes.
 | --- | --- | --- | --- | --- |
 | 1 | composed list | `list_entries(board_id, *, limit=50, since=None, advanced=False)` | `GET /v1/workspace/boards/{id}/dossier[?limit≤100&since&advanced]` | `dossier_list` (≤ 50) |
 | 1 | one entry | `entry(board_id, entry_id, *, advanced=False)` | `GET …/dossier/entry?id=[&advanced]` | used by `dossier_view` |
-| 2 | scene -> durable backing | `backing(board_id, object_ids)` | `GET …/dossier/backing?object_id=…` (repeated, ≤ 20) | `dossier_ranger dry_run=true` |
+| 2 | scene -> durable backing | `backing(board_id, object_ids)` | `GET …/dossier/backing?object_id=…` (repeated, ≤ 20) -> `{board_id, board_active, board_code?, board_message?, objects}` | `dossier_ranger dry_run=true` |
 | 3 | Ranger | `ranger(board_id, object_ids, *, origin)` | `POST …/dossier/ranger {object_ids, origin?}` | `dossier_ranger` |
 | 4 | Afficher sur le Board | `present(board_id, entry_id, *, representation="window", origin)` | `POST …/dossier/present {entry_id, representation?, origin?}` (201 created, 200 reused) | `dossier_present` |
 | 5 | open an entry on screen | Control Center broker | `POST /api/dossier/navigation/commands {board_id, entry_id}` | `dossier_view` |
@@ -128,6 +128,14 @@ and the Artifacts are still listed; a link to a vanished Artifact is counted in
 | no title, summary nor item | refused `dossier_nothing_to_keep` | nothing |
 | anything else (scene artifact, note window) | `content` | materialize once |
 | unknown or archived id | refused `dossier_object_not_found` | nothing |
+
+The preview also says whether Ranger may run at all (Slice 06, QA S05 polish 8):
+`board_active` is false when this Board is not the displayed (active) one or is
+archived, with `board_code` (`dossier_board_not_active`, `board_archived`) and a
+« vous » sentence `board_message`. The per-object `rangeable` is unchanged; a
+consumer never shows « rangeable » on it alone. `dossier_ranger dry_run=true`
+turns every `rangeable` into `refused` with that code and sentence when the Board
+is not displayed.
 
 ### 3. Ranger
 
@@ -179,7 +187,19 @@ Dossier is a separate dimension, never a third disposition.
 No step ever destroys the only copy of content. Durable deletion stays
 `memory/delete` (explicit, confirmed policy), never Ranger nor a scene archive.
 
-### 4. Afficher sur le Board
+#### Ranger from the wheel (Slice 06)
+
+The Board's « Ranger dans le Dossier » button is the wheel › Sélection row
+([scene-selection-batch.md](scene-selection-batch.md) › *Selection actions
+(wheel)*): it posts the page selection (≤ 20) to the **active** Board's route
+with `origin: "user"`, removes nothing in advance and reports per object —
+removed, kept in the Dossier but still on the Board (`dossier_changed_meanwhile`,
+`dossier_archive_failed`: said), refused (its `message`, the object stays
+selected). Its row reads the backing preview and the displayed Board first.
+« Masquer » and « Retirer du Board » never write to the Dossier; « Retirer du
+Board » never deletes a durable source either.
+
+## 4. Afficher sur le Board
 
 Resolve the entry (`dossier_entry_not_found` 404 when it is not in this
 Dossier: missing file, a folder, an Artifact not linked to this Board), then,
@@ -193,7 +213,10 @@ or left untouched when it already is (`revision: null`). Otherwise one
   existing file watcher fills and follows the summary ([scene-model.md](scene-model.md)
   › *Windows bound to a file*); nothing is copied by this operation;
 - registry Artifact: `payload.registry_artifact_id`, empty summary: the
-  renderer (Slice 06/07) shows the Artifact from the registry.
+  page reads the Artifact from the registry (Slice 06: `GET /api/artifacts/{id}`
+  with `text_chars=2000`, an image through `/api/artifacts/{id}/payload`, once
+  per Artifact and page, journal `scene.registry_view` / `_failed`); the scene
+  payload is never rewritten by the page (no page command carries `payload`).
 
 `representation`: `window` (default), `capsule`, `point`. Same active-Board
 rule as Ranger. Ranger of a presented representation confirms its source.

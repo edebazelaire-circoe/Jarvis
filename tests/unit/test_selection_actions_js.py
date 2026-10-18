@@ -46,7 +46,7 @@ def test_no_selection_shows_a_fact_and_the_hidden_count_only():
     assert [r["id"] for r in out["some"]] == ["selection-none", "hidden"]
     assert out["some"][0]["status"] is True and out["some"][0]["tone"] == "off"
     hidden = out["some"][1]
-    assert hidden["label"] == "Afficher les masqués (1)" and hidden["menu"] is True
+    assert hidden["label"] == "Masqués (1)" and hidden["menu"] is True
     assert [r["id"] for r in hidden["rows"]] == ["ghosts", "show-all", "show:h"]
     assert hidden["rows"][0]["toggle"] is True and hidden["rows"][0]["checked"] is False
     assert [r["id"] for r in out["none"]] == ["selection-none", "hidden-none"]
@@ -58,7 +58,7 @@ def test_a_selection_offers_the_four_distinct_gestures_and_says_what_each_does()
     out = _node("""
       const s=state([obj('w','window','window',{payload:{title:'Note'}})]);
       return I.selectionActions(s,['w'],{hidden:0,boardId:'b',backing:{status:'ready',board_active:true,objects:{w:{rangeable:true}}}});""")
-    assert [r["id"] for r in out] == ["selection-count", "ranger", "hide", "form", "remove", "hidden-none"]
+    assert [r["id"] for r in out] == ["selection-count", "ranger", "hide", "hidden-none", "form", "remove"]
     rows = {r["id"]: r for r in out}
     assert rows["selection-count"]["label"] == "1 objet sélectionné" and rows["selection-count"]["note"] == "1 fenêtre"
     assert "disabled" not in rows["ranger"] and rows["ranger"]["label"] == "Ranger dans le Dossier"

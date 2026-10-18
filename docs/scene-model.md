@@ -86,21 +86,28 @@ is `rejected_authority` (`runtime_composition`).
   orbital UI Slice 06 (D9) a **view preference** of the browser can show hidden
   objects as **ghosts**: `showHidden` in `JarvisSceneView`
   (`control_center_scene_view.js`, stored in `jarvis.scene.view`, never sent to
-  Core, like `showEphemeral`), toggled by the eye `#hiddenEye` of the status
-  centre — a host the page no longer declares since Slice 02 of the
-  wheel/dossier refactor (D06); the wheel's Sélection re-exposes it in Slice 06.
-  Meanwhile a stored `showHidden: true` draws **no** ghost (nothing on screen
-  could turn them off), journal `scene.hidden_view_withheld`, and the preference
-  is kept. `JarvisSceneLayout.viewModel(..., {showHidden:true})` emits every
+  Core, like `showEphemeral`). There is no eye in the shell any more (D06,
+  Slice 02 of the wheel/dossier refactor): since Slice 06 the toggle is the
+  wheel › **Sélection › « Masqués (N) » › « Voir en fantômes »**,
+  next to « Tout réafficher (N) » and the hidden list (the count lives only in
+  that submenu). A stored `showHidden: true` draws its ghosts as long as the
+  wheel is installed (it can turn them off); without the wheel nothing could,
+  so no ghost is drawn and `scene.hidden_view_withheld` is journaled once.
+  `JarvisSceneLayout.viewModel(..., {showHidden:true})` emits every
   hidden object **that has a stored geometry** with `ghost: true` at that place
   (dimmed, dashed, accessible name suffixed « masqué »), still counted in
   `hidden`; a ghost is never placed by the resolver, never an obstacle, never
   the end of a link and never committed. Its only action is « Réafficher » =
-  one `set_visibility visible`. The eye never rewrites `visibility`: bulk
-  rewriting would lose which objects the user hid. A hidden object without
-  geometry has no ghost and stays in the eye's list (« Tout réafficher »).
-  Contract of the eye: [control-center-shell.md](control-center-shell.md) ›
-  *Status centre*.
+  one `set_visibility visible`. The ghost view never rewrites `visibility`:
+  bulk rewriting would lose which objects the user hid. « Tout réafficher »
+  does, canonically, as **one** `patch_selection {visibility: visible}` (the
+  brain's `scene_update_many` with `select.visibility = hidden` is the same
+  operation). A hidden object without geometry has no ghost and stays in the
+  list. **Hidden is never Dossier**: Masquer writes nothing durable, and
+  « Ranger dans le Dossier » is a different gesture ([dossier.md](dossier.md) ›
+  *Ranger*). Contract of the submenu:
+  [scene-selection-batch.md](scene-selection-batch.md) › *Selection actions
+  (wheel)*.
 - **Archived** = out of the active scene, kept for history. `brain` and `user`
   both archive (19/09/2026: the brain has exactly the user's hand, decision 14
   lifted). Archiving removes the object from `SceneSnapshot.objects`,

@@ -106,9 +106,9 @@ def test_the_selection_submenu_follows_the_selection_and_reaching_the_wheel_keep
     step = _drive(tmp_path, [{"width": 1440, "height": 900, "seed": SEED, "actions": actions}])[0]
     r = step["results"]
     assert list(_rows(r["empty"])) == ["selection-none", "hidden"]
-    assert _rows(r["empty"])["hidden"]["text"] == "Afficher les masqués (1)"
+    assert _rows(r["empty"])["hidden"]["text"] == "Masqués (1)"
     single = _rows(r["single"])
-    assert list(single) == ["selection-count", "ranger", "hide", "form", "remove", "hidden"]
+    assert list(single) == ["selection-count", "ranger", "hide", "hidden", "form", "remove"]
     assert r["kept"] == ["jobj_note"], "opening the wheel with the mouse keeps the selection"
     mixed = _rows(r["mixed"])
     assert mixed["selection-count"]["text"] == "2 objets sélectionnés"
@@ -178,7 +178,7 @@ def test_masquer_is_one_patch_selection_and_never_reaches_the_dossier(tmp_path):
                                 "changes": {"visibility": "hidden"}}]
     assert not any("/dossier/ranger" in b["path"] for b in step["bodies"]), "Masquer never creates Dossier content"
     assert "jobj_note" not in r["drawn"] and "jobj_star" not in r["drawn"]
-    assert _rows(r["rows"])["hidden"]["text"] == "Afficher les masqués (3)"
+    assert _rows(r["rows"])["hidden"]["text"] == "Masqués (3)"
     _no_errors(step)
 
 

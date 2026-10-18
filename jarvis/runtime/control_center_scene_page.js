@@ -3447,7 +3447,7 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
   /* ------------------------------------------------------------------
      Les masqués en fantômes (orbital-ui Slice 06, D9), **dans Sélection**
      depuis la Slice 06 de jarvis-board-ui-wheel-dossier-refactor : la roue ›
-     Sélection › « Afficher les masqués (N) » › « Voir en fantômes ». Plus
+     Sélection › « Masqués (N) » › « Voir en fantômes ». Plus
      d'œil ni de compte permanent dans la coque (D06, Slice 02). Le réglage de
      vue `showHidden` est de ce navigateur (`JarvisSceneView`, jamais envoyé à
      Core) : la vue en fantômes ne réécrit **jamais** `visibility` ; « Tout
@@ -3474,7 +3474,7 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
        liste de Sélection, qui les tient tous (QA S06, P1). */
     const state=viewState();
     const ghosts=state?[...state.objects.values()].filter(o=>o.visibility!=='visible'&&o.geometry).length:0;
-    const listed=`${view.count} dans Sélection › Afficher les masqués.`;
+    const listed=`${view.count} dans Sélection › Masqués.`;
     announce(view.pressed?'Objets masqués cachés.'
       :ghosts?`${ghosts} ${ghosts>1?'objets masqués affichés':'objet masqué affiché'} en fantômes ; ${listed}`
       :`Aucun objet masqué n’a de place enregistrée ; ${listed}`);
@@ -3633,7 +3633,7 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
     prunePending();
     applySelection(selection.filter(id=>!ids.includes(id)));
     consoleLog('info','scene.user_hidden',{count:ids.length,revision:result.revision,outcome:result.outcome});
-    notify({title:`${noun} masqués`,sub:'Ils restent sur le Board : Sélection › Afficher les masqués, ou cliquer ici.',kind:'info',
+    notify({title:`${noun} masqués`,sub:'Ils restent sur le Board : Sélection › Masqués, ou cliquer ici.',kind:'info',
       onClick:()=>showObjects(ids).catch(error=>actionFailed('Réaffichage',ids[0],error))});
   }
 
@@ -3690,7 +3690,9 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
     if(cascade.length)lines.push(cascade.length>1?`${cascade.length} signaux d’attention partent avec elles.`:'Un signal d’attention part avec elle.');
     if(running)lines.push('Le travail en cours continue, mais son étoile ne reviendra pas.');
     if(typeof confirmDialog!=='function'){consoleLog('warn','scene.confirm_unavailable',{});return}
-    const title=many?`Retirer ${items.length} objets du Board ?`:`Retirer ${quoted(items[0].object_id)} du Board ?`;
+    /* Le titre se lit avant le retrait : après, l'objet n'est plus dessiné. */
+    const label=quoted(items[0].object_id);
+    const title=many?`Retirer ${items.length} objets du Board ?`:`Retirer ${label} du Board ?`;
     if(!await confirmDialog({title,lines,confirmLabel:'Retirer du Board',danger:true})){
       consoleLog('info','scene.remove_cancelled',{count:items.length});return;
     }
@@ -3698,7 +3700,7 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
     try{
       actionStats.archives+=items.length;
       const targets=[...items.map(item=>item.object_id),...cascade];
-      planFocusAfterRemoval(targets,many?`${items.length} objets retirés du Board.`:`${quoted(items[0].object_id)} retiré du Board.`);
+      planFocusAfterRemoval(targets,many?`${items.length} objets retirés du Board.`:`${label} retiré du Board.`);
       const tokens=targets.map(target=>[target,pending.begin(target,{archived:true},Date.now())]);
       pendingChanged();
       const result=await sendCommand(I.commands.archiveSelection(items.map(item=>item.object_id)));
@@ -3711,7 +3713,7 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
       prunePending();
       applySelection(selection.filter(id=>!targets.includes(id)));
       consoleLog('info','scene.user_removed',{count:items.length,signals:cascade.length,sources,revision:result.revision,outcome:result.outcome});
-      notify({title:many?`${items.length} objets retirés du Board`:`${quoted(items[0].object_id)} retiré du Board`,
+      notify({title:many?`${items.length} objets retirés du Board`:`${label} retiré du Board`,
         sub:sources?(sources>1?'Les documents source restent dans le Dossier.':'Le document source reste dans le Dossier.'):'Gardé dans l’historique.',
         kind:'ok',ms:3500});
     }finally{inflight.delete(key)}
@@ -3739,6 +3741,8 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
     }
     inflight.add('ranger');
     const started=Date.now();
+    /* Les titres se lisent avant : un objet rangé n'est plus dessiné quand le compte rendu s'écrit. */
+    const titles=new Map(ids.map(id=>[id,titleOf(id)]));
     const noun=nounOf(ids.length);
     announce(`Rangement de ${noun} dans le Dossier…`);
     const slow=window.setTimeout(()=>notify({title:'Rangement en cours…',
@@ -3762,7 +3766,7 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
         notify({title:'Ranger refusé',sub:I.RANGER_REQUEST_REFUSALS[code]||`Rien n’a été rangé (${code}).`,kind:'bad'});
         return;
       }
-      const report=I.rangerReport(body,titleOf);
+      const report=I.rangerReport(body,id=>titles.get(id)||titleOf(id));
       /* Ce qui reste sur le Board (refusé, gardé sans retrait) reste la
          sélection : l'utilisateur voit ce qui n'est pas parti et peut agir
          dessus. Tout est parti : le focus va au voisin, comme un retrait. */
