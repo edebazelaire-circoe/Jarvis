@@ -192,3 +192,12 @@ def test_ranger_says_the_precise_reason_core_gives_for_an_object():
                                     "Un groupe n'est qu'un cadre : rangez ses objets un par un.")
     assert "Un groupe n'est qu'un cadre" in json.dumps(out["report"], ensure_ascii=False)
     assert out["same"]["detail"] == "Vide."
+
+
+def test_ranger_says_when_it_links_a_registry_artifact_to_this_board():
+    """Polish S05 9 (Slice 08) : Ranger d'une fenêtre d'Artifact que ce Board ne liait pas le dit."""
+    out = _node("""
+      return I.rangerReport({results:[{object_id:'w',status:'stored',archived:true,backing:'artifact',action:'linked'},
+        {object_id:'v',status:'stored',archived:true,backing:'artifact',action:'confirmed'}]},id=>id==='w'?'Transcription':'Plan');""")
+    assert out["kind"] == "ok" and out["removed"] == ["w", "v"]
+    assert out["lines"] == ["« Transcription » : l’Artifact est désormais aussi dans le Dossier de ce Board."]

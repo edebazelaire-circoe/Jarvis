@@ -37,6 +37,7 @@ d'un Artifact : `artifact_get` de `jarvis-capture`, pas de doublon ici).
 
 # Pas de `from __future__ import annotations` : FastMCP lit les annotations des
 # outils définis dans `build_server`, à l'exécution.
+import asyncio
 import json
 import os
 from pathlib import Path
@@ -107,6 +108,11 @@ NAVIGATION_TIMEOUT_S = 8.0
 #: `truncated: true` d'une recherche : une borne a arrêté le parcours, l'absence de résultat ne prouve rien.
 SEARCH_INCOMPLETE_NOTE = ("Recherche incomplète : une borne a arrêté le parcours (fichiers ou octets). "
                           "Ne conclus pas « rien trouvé » ; affine path.")
+
+
+#: `dossier_view` refusé `command_busy` (une autre ouverture en vol) : nouveaux essais et attente entre eux.
+DOSSIER_VIEW_BUSY_RETRIES = 2
+DOSSIER_VIEW_BUSY_WAIT_S = 0.6
 
 
 class WorkspaceToolError(Exception):
@@ -470,8 +476,20 @@ class WorkspaceTools:
         entry = found.get("entry") if isinstance(found, dict) else None
         if isinstance(entry, dict) and isinstance(entry.get("entry_id"), str):
             entry_id = entry["entry_id"]
-        body = await self._send("dossier_view", "POST", DOSSIER_ROUTE, timeout_s=NAVIGATION_TIMEOUT_S,
-                                payload={"board_id": board_id, "entry_id": entry_id})
+        # Deux `dossier_view` en parallèle se croisaient sur le canal (une commande à la fois : 409 `command_busy`).
+        # La première dure quelques centaines de millisecondes : on attend puis on réessaie, deux fois au plus
+        # (Slice 08, polish S07 2) ; au-delà, le refus codé part tel quel.
+        for attempt in range(DOSSIER_VIEW_BUSY_RETRIES + 1):
+            try:
+                body = await self._send("dossier_view", "POST", DOSSIER_ROUTE, timeout_s=NAVIGATION_TIMEOUT_S,
+                                        payload={"board_id": board_id, "entry_id": entry_id})
+                break
+            except WorkspaceToolError as exc:
+                if exc.code != "command_busy" or attempt == DOSSIER_VIEW_BUSY_RETRIES:
+                    raise
+                self._emit("board.tool", "dossier_view : canal occupé, nouvel essai", level="info",
+                           data={"tool": "dossier_view", "code": "command_busy", "attempt": attempt + 1})
+                await asyncio.sleep(DOSSIER_VIEW_BUSY_WAIT_S)
         state = body.get("state")
         self._done("dossier_view", str(state), board_id=board_id, state=state, code=body.get("code"))
         # Un refus nommé de la page (edit_in_progress…) porte sa propre phrase, que l'agent peut redire telle quelle.

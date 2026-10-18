@@ -1467,7 +1467,14 @@ Core revalidates), `representation` `window|capsule|point`. Refusals: the
 `workspace_boards.ERROR_SENTENCES` (`dossier_board_not_active`,
 `dossier_entry_not_found`, `dossier_entry_invalid`, `scene_unavailable`,
 `no_visible_page`, `command_expired`, `command_busy`); per-object refusals of
-`dossier_ranger` are results, not tool errors, each with its own sentence.
+`dossier_ranger` are results, not tool errors, each with its own sentence (and
+the object's precise `reason`). `dossier_ranger dry_run=true` answers
+`refused dossier_board_not_active` for every object when the Board is not the
+displayed one, exactly where the real Ranger would refuse 409 (Slice 06, QA S05
+polish 8); the tool schema is unchanged. **Slice 08:** `dossier_view` refused
+`command_busy` (another opening in flight on the page channel) waits 0.6 s and
+retries, twice at most (`DOSSIER_VIEW_BUSY_RETRIES`, journal `board.tool`
+`attempt`); beyond that the coded refusal is returned.
 
 **Slice 07 (2026-10-18).** `dossier_view` now really opens the entry: the
 full-screen Dossier of the Control Center page (`control_center_dossier.js`)

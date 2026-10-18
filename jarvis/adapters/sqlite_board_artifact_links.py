@@ -145,6 +145,13 @@ class SQLiteBoardArtifactLinks:
             "SELECT COUNT(*) FROM board_artifact_links WHERE board_id=?", (board_id,)).fetchone())
         return int(row[0])
 
+    async def link_of(self, board_id: str, artifact_id: str) -> BoardArtifactLink | None:
+        check_link_board_id(board_id)
+        check_artifact_id(artifact_id)
+        row = await self._run(lambda c: c.execute(
+            "SELECT * FROM board_artifact_links WHERE board_id=? AND artifact_id=?", (board_id, artifact_id)).fetchone())
+        return None if row is None else _link_row(row)
+
     async def boards_of_artifact(self, artifact_id: str, *, limit: int) -> Sequence[BoardArtifactLink]:
         check_artifact_id(artifact_id)
         check_link_limit(limit)

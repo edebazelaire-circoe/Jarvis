@@ -162,3 +162,55 @@ async def test_a_page_keeping_an_unsaved_edit_refuses_with_its_own_sentence(tmp_
         await page
         assert (refused["state"], refused["code"]) == ("refused", "edit_in_progress")
         assert "modification non enregistrée" in refused["explanation"] and "Ne dites pas" in refused["explanation"]
+
+
+
+async def test_a_busy_navigation_channel_is_retried_then_said(monkeypatch):
+    """Polish S07 impl 2 (Slice 08) : deux `dossier_view` en parallèle se croisaient sur le canal (une commande à la
+    fois, 409 `command_busy`). L'outil attend puis réessaie, deux fois au plus ; au-delà, le refus codé part."""
+    import jarvis.runtime.workspace_mcp as wm
+
+    monkeypatch.setattr(wm, "DOSSIER_VIEW_BUSY_WAIT_S", 0.01)
+    tools = object.__new__(wm.WorkspaceTools)
+    tools.journal = None
+    posts: list[int] = []
+
+    def sender(busy_times: int):
+        async def send(tool, method, route, **kwargs):
+            if method == "GET":
+                return {"entry": {"entry_id": "memory:notes/plan.md"}}
+            posts.append(1)
+            if len(posts) <= busy_times:
+                raise wm.WorkspaceToolError("command_busy", "Refus command_busy : une ouverture est en cours.")
+            return {"state": "opened"}
+        return send
+
+    tools._send = sender(2)
+    opened = await tools.dossier_view("board_a", "memory:notes/plan.md")
+    assert opened["state"] == "opened" and len(posts) == 3
+    posts.clear()
+    tools._send = sender(5)
+    with pytest.raises(wm.WorkspaceToolError) as busy:
+        await tools.dossier_view("board_a", "memory:notes/plan.md")
+    assert busy.value.code == "command_busy" and len(posts) == 3
+
+
+async def test_two_parallel_dossier_views_both_reach_the_page(tmp_path):
+    """Polish S07 impl 2 (Slice 08) : deux `dossier_view` lancés ensemble se croisaient sur le canal (une
+    commande à la fois, 409 `command_busy`). Le second attend que le premier soit répondu et passe."""
+    async with CaptureStack(tmp_path) as stack, Brain(stack) as brain:
+        w = await build(stack)
+
+        async def page_twice() -> list[dict]:
+            seen = []
+            for _ in range(2):
+                seen.append(await _page_answers(stack, {"state": "opened"}))
+            return seen
+
+        page = asyncio.ensure_future(page_twice())
+        first, second = await asyncio.gather(
+            brain.call("dossier_view", {"board_id": w.board_a, "entry_id": "memory:notes/plan.md"}),
+            brain.call("dossier_view", {"board_id": w.board_a, "entry_id": "memory:summary.md"}))
+        commands = await page
+        assert first["state"] == "opened" and second["state"] == "opened"
+        assert sorted(c["entry_id"] for c in commands) == ["memory:notes/plan.md", "memory:summary.md"]

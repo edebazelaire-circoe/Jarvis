@@ -1310,6 +1310,10 @@
     const kept=results.filter(r=>r.status==='stored'&&!r.archived);
     const refused=results.filter(r=>r.status!=='stored');
     const lines=[];
+    /* Un Artifact du registre que ce Board ne liait pas encore (présenté depuis un autre Board, par exemple) : le
+       lien créé se dit (Slice 08, polish S05 9) ; rien n'est déplacé ni copié, il reste aussi là où il était. */
+    for(const r of removed)if(r.action==='linked'&&r.backing==='artifact')
+      lines.push(`${name(r.object_id)} : l’Artifact est désormais aussi dans le Dossier de ce Board.`);
     for(const r of kept)lines.push(`${name(r.object_id)} : ${r.message||'gardé dans le Dossier, mais toujours sur le Board.'}`);
     for(const r of refused)lines.push(`${name(r.object_id)} : ${r.message||r.reason?whyNot(r):r.code||'refusé'}`);
     const head=[];

@@ -351,8 +351,9 @@ class DossierService:
                 raise WorkspaceError(DossierCode.ENTRY_NOT_FOUND.value,
                                      f"{ref.entry_id} is a folder, not a Dossier entry", status=404)
             return self._memory_view(board.board_id, stat["entry"], advanced=advanced)
-        link = next((link for link in await self._links.boards_of_artifact(ref.key, limit=500)
-                     if link.board_id == board.board_id), None)
+        # Lecture directe du lien (Slice 08, polish S05 10) : un Artifact lié à plus de 500 Boards n'est plus lu
+        # comme absent de ce Dossier.
+        link = await self._links.link_of(board.board_id, ref.key)
         if link is None:
             raise WorkspaceError(DossierCode.ENTRY_NOT_FOUND.value,
                                  f"{ref.entry_id} is not linked to board {board.board_id}", status=404)

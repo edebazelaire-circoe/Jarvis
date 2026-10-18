@@ -142,6 +142,10 @@ async def test_a_new_artifact_is_linked_to_the_active_board_of_the_open_session(
     # Le lien automatique n'ajoute aucun événement : `artifact.created` reste le fait.
     assert [e.kind for e in await ledger.list(ActivityQuery())] == [ActivityKind.ARTIFACT_CREATED]
     assert len(events) == 1
+    # Slice 08 (polish S05 10) : la lecture directe d'un lien, sans borne de liste.
+    assert await links.link_of(first.board_id, before.artifact_id) == (
+        BoardArtifactLink(first.board_id, before.artifact_id, BoardArtifactLinkOrigin.ACTIVE_BOARD, T0))
+    assert await links.link_of(second.board_id, before.artifact_id) is None
 
 
 async def test_no_link_without_an_open_session_or_for_an_artifact_of_another_session(stores):

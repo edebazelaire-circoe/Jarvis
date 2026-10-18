@@ -196,7 +196,12 @@ The Board's « Ranger dans le Dossier » button is the wheel › Sélection row
 with `origin: "user"`, removes nothing in advance and reports per object —
 removed, kept in the Dossier but still on the Board (`dossier_changed_meanwhile`,
 `dossier_archive_failed`: said), refused (its `message`, the object stays
-selected). Its row reads the backing preview and the displayed Board first.
+selected, followed by the object's precise `reason` when Core gives one, e.g.
+« un groupe n'est qu'un cadre : rangez ses objets un par un »; Slice 08). A
+registry Artifact this Board did not link yet (a window presented from another
+Board) is linked, never moved or copied, and the report says so (« l'Artifact est
+désormais aussi dans le Dossier de ce Board »; Slice 08). Its row reads the
+backing preview and the displayed Board first.
 « Masquer » and « Retirer du Board » never write to the Dossier; « Retirer du
 Board » never deletes a durable source either.
 
