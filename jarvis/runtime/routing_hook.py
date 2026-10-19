@@ -35,7 +35,6 @@ from typing import Any, Mapping, Sequence
 from jarvis.domain import agent_markers, routing
 from jarvis.domain.agent_charter import sign_brief
 from jarvis.domain.loadout_view import MANIFEST_MARK
-from jarvis.domain.memory_settings import LOADOUT_ROLES
 from jarvis.domain.subagent_roles import ROLE_MARK, ROLE_MARKERS, with_role_instructions
 # `ANNOUNCED_ROLES` : les rôles qu'une description peut annoncer (loadout, registre, alias), réexporté ici.
 from jarvis.domain.agent_markers import ANNOUNCED_ROLES, WORD_PATTERN  # noqa: F401
@@ -109,8 +108,7 @@ def read_loadout_role(tool_input: Mapping[str, Any]) -> str | None:
     Un rôle du registre sans loadout (`interviewer`, `web-research`, `concept`) garde le loadout de son
     profil : une clé `general:interviewer` n'existe pas et ferait perdre celui de `general`.
     """
-    role = read_role(tool_input)
-    return role if role in LOADOUT_ROLES else None
+    return agent_markers.read_loadout_role(tool_input)
 
 
 def read_playbook_role(tool_input: Mapping[str, Any]) -> str | None:

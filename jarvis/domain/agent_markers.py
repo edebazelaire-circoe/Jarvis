@@ -25,15 +25,18 @@ Grammaire (contrat : `docs/subagent-roles.md`, « Marqueurs de tête ») :
   sans blanc interne) suivi d'au moins un espace ou une tabulation. Il peut
   occuper n'importe quelle place de la tête, une seule fois, et il est
   transparent : il est retiré, et les mots restants se lisent comme s'il
-  n'avait jamais été là. Il ne compte que si un texte non vide reste après son
-  retrait ;
+  n'avait jamais été là. Il ne compte que si un libellé non vide reste après
+  tous les marqueurs de tête ;
 - sur les mots : le premier est toujours consommé (profil connu ou non) ; s'il
   nomme un rôle annoncé, c'est le rôle et le profil reste `general` ; s'il
   nomme un profil, le second mot est consommé s'il nomme un rôle annoncé (ou un
   rôle de production passé par `extra_consumed`), sinon il reste dans le
   libellé ;
+- les rôles annoncés sont ceux des loadouts, des rôles **actifs** du registre
+  et leurs alias : un rôle désactivé se lit comme un mot inconnu ;
 - tout le reste — casse ou accents différents, marqueur collé au libellé,
-  deux marqueurs éphémères, marqueur hors de la tête — ne déclare rien et
+  marqueur en double (même collé ou en fin de texte), marqueur hors de la
+  tête, tête sans libellé — ne déclare rien et
   laisse le texte intact : l'échec est du côté sûr, une tâche ordinaire.
 
 Le drapeau éphémère ne se lit que sur la `description` ; le repli sur la clé
@@ -51,7 +54,7 @@ from typing import Any
 
 from jarvis.domain import routing
 from jarvis.domain.memory_settings import LOADOUT_ROLES
-from jarvis.domain.subagent_roles import ROLE_ALIASES, ROLE_MARKERS, RoleResolution, resolve_role
+from jarvis.domain.subagent_roles import ROLE_ALIASES, ROLES, RoleResolution, resolve_role, role_for
 
 #: Marqueur de tâche éphémère : jeton exact, voir la grammaire du module.
 EPHEMERAL_MARKER = "[éphémère]"
@@ -65,9 +68,12 @@ WORD_PATTERN = r"[A-Za-z_-]{2,24}"
 _WORD = re.compile(r"\[\s*(" + WORD_PATTERN + r")\s*\]\s*")
 _EPHEMERAL = re.compile(re.escape(EPHEMERAL_MARKER) + r"[ \t]+")
 
-#: Les rôles qu'une description peut annoncer : ceux du loadout (`memory_settings.LOADOUT_ROLES`), ceux du
-#: registre des sous-agents (`subagent_roles.ROLE_MARKERS`) et leurs alias de compatibilité.
-ANNOUNCED_ROLES: tuple[str, ...] = tuple(dict.fromkeys((*LOADOUT_ROLES, *ROLE_MARKERS, *ROLE_ALIASES)))
+#: Les rôles qu'une description peut annoncer : ceux du loadout (`memory_settings.LOADOUT_ROLES`), les marqueurs
+#: des rôles **actifs** du registre (`subagent_roles`) et leurs alias de compatibilité. Un rôle désactivé n'est
+#: pas annoncé : son marqueur n'est pas consommé, ne masque pas le repli sur `prompt` et reste dans le libellé,
+#: exactement comme avant qu'il soit défini. L'activer (Slices 04/07) le rend lisible.
+ANNOUNCED_ROLES: tuple[str, ...] = tuple(dict.fromkeys(
+    (*LOADOUT_ROLES, *(role.marker for role in ROLES if role.enabled), *ROLE_ALIASES)))
 
 
 @dataclass(frozen=True, slots=True)
@@ -114,13 +120,16 @@ def parse_head(text: object, *, extra_consumed: Iterable[str] = ()) -> HeadMarke
         words.append((found.group(1).strip().lower(), pos, found.end()))
         pos = found.end()
 
-    # Éphémère : exactement un marqueur, et un texte non vide après son retrait. Sinon, rien n'est retiré.
-    span = ephemeral_spans[0] if len(ephemeral_spans) == 1 else None
+    # Un second marqueur juste après la tête, même mal formé (collé, en fin de texte) : c'est un doublon.
+    duplicated = len(ephemeral_spans) > 1 or (bool(ephemeral_spans) and raw.startswith(EPHEMERAL_MARKER, pos))
+    # Éphémère : exactement un marqueur, et un libellé non vide après TOUS les marqueurs de tête. Sinon, rien
+    # n'est déclaré et le texte reste intact : une tâche qu'on ne sait pas nommer ne se tait pas.
+    span = ephemeral_spans[0] if ephemeral_spans and not duplicated else None
+    if span is not None and not raw[pos:].strip():
+        span = None
     clean = raw if span is None else raw[:span[0]] + raw[span[1]:]
-    if span is not None and not clean.strip():
-        span, clean = None, raw
-    if len(ephemeral_spans) > 1:
-        # Deux marqueurs : mal formé. Le texte reste intact et sa tête s'arrête au premier marqueur.
+    if ephemeral_spans and span is None:
+        # Mal formé : la tête s'arrête au premier marqueur éphémère, qui reste dans le texte.
         words = [word for word in words if word[1] < ephemeral_spans[0][0]]
 
     consumed, profile, role = _interpret([word for word, _start, _end in words], frozenset(extra_consumed))
@@ -220,6 +229,20 @@ def read_role(tool_input: Mapping[str, Any]) -> str | None:
         if role is not None:
             return role
     return None
+
+
+def read_loadout_role(tool_input: Mapping[str, Any]) -> str | None:
+    """Le rôle de loadout du rôle annoncé (`LOADOUT_ROLES`), ou `None` : le loadout du profil s'applique.
+
+    Un rôle de loadout annoncé tel quel (`coder`, `reviewer`, `research`) est pris tel quel ; sinon le
+    `loadout_role` du contrat d'un rôle actif ; un rôle actif sans loadout (`interviewer`...) n'en a pas.
+    """
+
+    role = read_role(tool_input)
+    if role is None or role in LOADOUT_ROLES:
+        return role
+    active = role_for(role)
+    return active.loadout_role if active is not None else None
 
 
 def declaration_from_tool_input(

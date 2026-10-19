@@ -187,8 +187,8 @@ def parse_ephemeral_description(description: str) -> tuple[str, bool]:
 
     Grammaire (`agent_markers.parse_head`, la même que lit le hook) : `[éphémère]`
     exact, parmi les marqueurs de tête (avant, entre ou après `[profil] [rôle]`),
-    une seule fois, suivi d'au moins un espace ou une tabulation, avec un texte non
-    vide après son retrait. Seul ce marqueur est retiré : profil et rôle restent,
+    une seule fois, suivi d'au moins un espace ou une tabulation, avec un libellé
+    non vide après tous les marqueurs de tête. Seul ce marqueur est retiré : profil et rôle restent,
     pour que le rôle se relise sur la description gardée. Tout le reste — casse ou
     accent différents, marqueur collé au libellé, seul, au milieu du texte, en
     double — est une tâche normale et garde son texte tel quel : l'échec est du

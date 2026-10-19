@@ -33,7 +33,7 @@ from jarvis.domain.subagent_roles import PROMPT_PREFIX, ROLES
 
 SNAPSHOT_FILE = "subagent-roles.json"
 SNAPSHOT_SCHEMA = 1
-#: Cinq textes de 8 Ko au plus : au-delà, le fichier n'est pas le nôtre.
+#: Un texte de 8 Ko au plus par rôle du registre (`ROLES`), avec de la marge : au-delà, le fichier n'est pas le nôtre.
 MAX_SNAPSHOT_BYTES = 256 * 1024
 
 _ROLE_IDS = frozenset(role.id for role in ROLES)

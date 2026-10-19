@@ -130,10 +130,48 @@ def test_playbook_roles_are_read_across_the_ephemeral_marker():
     assert routing_hook.strip_profile(call["description"]) == "Cadrer"
 
 
-def test_the_announced_roles_cover_loadout_roles_registry_markers_and_aliases():
-    assert {"coder", "reviewer", "research", "interviewer", "web-research", "concept", "research-lead", "qa"} \
-        <= set(ANNOUNCED_ROLES)
+def test_the_announced_roles_cover_loadout_roles_active_registry_markers_and_aliases():
+    assert {"coder", "reviewer", "research", "interviewer", "web-research", "concept"} <= set(ANNOUNCED_ROLES)
+    # Un rôle désactivé n'est pas annoncé : il se lit comme avant d'exister.
+    assert not {"research-lead", "qa"} & set(ANNOUNCED_ROLES)
     assert routing_hook.ANNOUNCED_ROLES == ANNOUNCED_ROLES
+
+
+# ---------------------------------------------------------------- corrections QA (N1 à N4)
+
+
+@pytest.mark.parametrize("description", [
+    "[éphémère] [éphémère]", "[éphémère] [éphémère]x", "[éphémère] [éphémère] Liste",
+    "[code] [éphémère] [éphémère] x", "[code] [coder] [éphémère] [éphémère]",
+])
+def test_a_duplicated_marker_never_makes_a_task_silent(description):
+    assert parse_ephemeral_description(description) == (description.strip(), False)
+
+
+def test_a_second_marker_after_a_profile_is_a_duplicate_now():
+    # Avant : vrai, description « [code] [éphémère] x ». Désormais deux marqueurs dans la tête = doublon,
+    # tâche ordinaire : écart voulu, du côté sûr.
+    text = "[éphémère] [code] [éphémère] x"
+    assert parse_ephemeral_description(text) == (text, False)
+
+
+@pytest.mark.parametrize("description", [
+    "[ CODE ] [éphémère] ", "[éphémère] [code]", "[éphémère] [code] [coder]", "[code] [coder] [éphémère]\t",
+    "[éphémère] [code] [foo]",
+])
+def test_no_declaration_without_a_label_after_every_head_marker(description):
+    head = parse_head(description)
+    assert head.ephemeral is False and head.description == description.strip()
+
+
+def test_a_disabled_role_in_the_description_does_not_hide_the_prompt_role_nor_its_loadout():
+    call = {"description": "[code] [qa] Relire le diff", "prompt": "[code] [coder] Relis."}
+    assert routing_hook.read_role(call) == "coder"
+    assert routing_hook.read_loadout_role(call) == "coder"
+    assert routing_hook.strip_profile(call["description"]) == "[qa] Relire le diff"
+    # Le contrat sait déjà ce que vaudra `[qa]` : une résolution explicite, statut `disabled` aujourd'hui.
+    from jarvis.domain.subagent_roles import resolve_role
+    assert resolve_role("qa").status is RoleStatus.DISABLED
 
 
 # ---------------------------------------------------------------- déclaration (D25)

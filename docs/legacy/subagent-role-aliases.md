@@ -20,9 +20,11 @@ le loadout de `qa` est câblé (Slice 04), et qu'une migration des réglages a r
 
 ## Reste n° 2 — `research-lead` et `qa` définis mais désactivés
 
-**Ce que c'est.** Les deux rôles additifs sont dans `ROLES` avec `enabled=False` : marqueur lu et résolu
-(statut `disabled`), instructions éditables au catalogue des prompts, mais absents de `brain_rules` et sans
-méthode apposée par le hook.
+**Ce que c'est.** Les deux rôles additifs sont dans `ROLES` avec `enabled=False` : instructions éditables au
+catalogue des prompts, mais absents de `brain_rules`, sans méthode apposée par le hook, et absents de
+`agent_markers.ANNOUNCED_ROLES`. Leur marqueur n'est donc ni consommé ni retiré du libellé, ne masque pas le
+rôle ni le loadout de la consigne : `[code] [qa] …` se lit exactement comme avant leur définition. Seul
+`resolve_role` direct rend le statut `disabled`.
 
 **Pourquoi.** La Slice 01 fixe le contrat (ids, visuel, capacités) sans changer le comportement vivant du
 cerveau ; leur câblage appartient aux Slices 04 (méthode, loadout) et 07 (règles du cerveau).

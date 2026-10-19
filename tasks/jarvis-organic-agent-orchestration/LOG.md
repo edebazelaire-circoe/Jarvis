@@ -51,3 +51,14 @@
 - Docs: new `docs/subagent-roles.md`, `docs/work-methods.md`, `docs/legacy/subagent-role-aliases.md`; updated `docs/skills-and-loadouts.md`, `docs/ARCHITECTURE.md`. No schema change, JARVIS not started, no frontend change.
 - Pre-existing failures seen (not this Slice): `test_brain_capability_parity::test_every_tool_of_a_declared_server_is_documented_in_the_brain_prompt`, `test_brain_delegation::test_the_voice_agent_starts_with_the_rule_and_with_the_agent_tool_available`, `tests/integration/test_settings_redesign_migration.py::test_assembled_primary_navigation_has_six_tabs_and_no_legacy_navigation` (JS `SyntaxError` in the assembled settings script; Python-only Slice).
 
+
+## 2026-10-20 — Slice 01 fix pass after independent QA (PASS_WITH_NOTES)
+
+- N1 fixed: a second `[éphémère]` right after the head (even glued or at the end, `[éphémère] [éphémère]`, `[éphémère] [éphémère]x`) is a duplicate: no declaration, text intact.
+- N2 kept on the safe side and pinned: `[éphémère] [code] [éphémère] x` (was ephemeral, description `[code] [éphémère] x`) is now ordinary; `docs/subagent-roles.md` §2 lists the intended differences.
+- N3 fixed: the flag needs a non-empty label after every head marker (`[ CODE ] [éphémère] `, `[éphémère] [code]` declare nothing).
+- N4 fixed: disabled roles (`qa`, `research-lead`) are no longer in `ANNOUNCED_ROLES`, so `[code] [qa] …` reads exactly as before (marker not consumed, kept in the label, prompt role and loadout not hidden). `read_loadout_role` now lives in `agent_markers` and uses the contract's `loadout_role` for an active role whose marker is not itself a loadout role.
+- N5: docs no longer promise a reachable visible `unknown` degradation from the grammar (an unknown word is not a role and yields `undeclared`); **Slices 03 and 05 decide** whether an unknown marker must travel to Core and degrade visibly.
+- N6: docs state that `coder.tools` gains `Agent` (value change, display only). N7: snapshot size comment fixed.
+- Equivalence: `tests/unit/test_agent_markers_equivalence.py` keeps a frozen oracle of the old readers; QA corpus (`scratchpad/qa01/probe.py` + `cmp.py`, 157 927 cases) re-run: zero differences on cases without the exact `[éphémère]` token (disabled roles included); remaining differences are only the intended ones (token transparent in description and prompt, accepted beyond the first place, lost on duplicate or empty label).
+- For Slices 03/05 (not coded): **N8** several instances may carry `mission_owner=True` for the same mission (successive owners after handoff); only `Mission.owner_instance_id` names the current owner. `AgentDeclaration` still lacks `session_id`, `subagent_type`, `run_in_background`, a timestamp, announced `mission_id` / parent mission, a contract version, and the journal event `agent.declared` carrying canonical `role_id` and `role_status`.

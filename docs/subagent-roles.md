@@ -39,9 +39,11 @@ Règles :
   ne déclare aucun rôle.
 - `research-lead` et `qa` sont définis mais **désactivés** (`enabled=False`) tant que leur câblage n'est pas
   livré : méthode et loadout (Slice 04), règles du cerveau (Slice 07). Désactivé, un rôle n'apparaît pas
-  dans la section « TYPE DE DEMANDE » du cerveau (`brain_rules`) et le hook n'appose pas sa méthode ; son
-  marqueur est néanmoins lu et résolu (statut `disabled`). L'activation se fait dans la Slice qui le câble,
-  avec ses tests.
+  dans la section « TYPE DE DEMANDE » du cerveau (`brain_rules`), le hook n'appose pas sa méthode, et son
+  marqueur **n'est pas annoncé** (absent de `agent_markers.ANNOUNCED_ROLES`) : `[code] [qa] …` se lit
+  exactement comme avant que le rôle existe — `[qa]` n'est pas consommé, reste dans le libellé, ne masque
+  pas le rôle de la consigne et ne change pas le loadout. Seul un appel direct à `resolve_role("qa")` rend le
+  statut `disabled`. L'activation se fait dans la Slice qui le câble, avec ses tests.
 - Mission Owner **n'est pas un rôle** (section 5). Il n'existe ni rôle « Orchestrateur » ni rôle
   « Owner ».
 
@@ -71,8 +73,14 @@ loadout. Un alias n'est pas un rôle (`role_by_id("reviewer")` est `None`) et le
 | tout autre mot (`zorg`) | `unknown` | `unknown`, marqueur gardé (24 caractères) |
 
 `undeclared` et `unknown` sont des ids réservés (`RESERVED_ROLE_IDS`) qu'aucun rôle ne peut prendre. Une
-instance sans rôle déclaré s'affiche comme générale ; un rôle inconnu se dégrade visiblement ; ni l'un ni
-l'autre n'arrête le travail.
+instance sans rôle déclaré s'affiche comme générale et n'arrête pas le travail.
+
+Limite actuelle : la grammaire de tête (section 2) ne remonte comme rôle que les mots de
+`ANNOUNCED_ROLES` ; un mot inconnu (`[code] [zorg] …`) n'est pas un rôle, reste dans le libellé et donne
+`undeclared`. Le statut `unknown` n'est donc atteint aujourd'hui que par un appel direct à `resolve_role` ou
+par un id persisté que le registre ne connaît plus (`AgentInstance.role_known`). Faire remonter un marqueur
+inconnu jusqu'à Core pour qu'il se dégrade visiblement est une décision des Slices 03 (contrat transmis) et
+05 (câblage).
 
 ### Identité visuelle
 
@@ -101,7 +109,8 @@ Le frontend lit ces jetons, il ne les recopie pas dans des conditions.
   Slice 04 câblera.
 
 Tous ces champs paraissent dans `SubagentRole.as_dict()`, donc dans `GET /api/subagent-roles` (ajout de
-champs, rétrocompatible).
+champs, rétrocompatible). Une valeur existante change aussi : `coder.tools` gagne `Agent` (cohérence avec
+`can_spawn`). Le champ est seulement affiché ; aucun consommateur ne s'en sert pour restreindre les outils.
 
 ## 2. Les marqueurs de tête d'un appel `Agent`
 
@@ -116,15 +125,17 @@ grammaire, `agent_markers.parse_head`, lue à l'identique par le hook `PreToolUs
 - Le **premier mot** est toujours consommé. S'il nomme un rôle annoncé, c'est le rôle et le profil reste
   `general`. S'il nomme un profil (`code`, `desktop`, `fast`, `general`), le **second mot** est consommé
   s'il nomme un rôle annoncé (ou un rôle de production de présentation), sinon il reste dans le libellé.
-  Les rôles annoncés sont `agent_markers.ANNOUNCED_ROLES` : rôles de loadout, marqueurs du registre et
-  alias.
+  Les rôles annoncés sont `agent_markers.ANNOUNCED_ROLES` : rôles de loadout, marqueurs des rôles **actifs**
+  du registre et alias.
 - Le **marqueur éphémère** `[éphémère]` est un jeton exact (minuscules, accents, sans blanc interne), suivi
   d'au moins un espace ou une tabulation, une seule fois, à n'importe quelle place de la tête. Il est
   transparent : retiré, les mots restants se lisent comme s'il n'avait jamais été là. Il ne compte que si un
-  texte non vide reste après son retrait.
-- **Échec sûr** : casse ou accents différents (`[Éphémère]`, `[ephemere]`), marqueur collé au texte, deux
-  marqueurs éphémères, marqueur au milieu du libellé : rien n'est déclaré, le texte reste intact, la tâche
-  est ordinaire, visible et annoncée.
+  **libellé non vide reste après tous les marqueurs de tête** (`[éphémère] [code]`, `[ CODE ] [éphémère] `
+  ne déclarent rien : une tâche qu'on ne sait pas nommer ne se tait pas).
+- **Échec sûr** : casse ou accents différents (`[Éphémère]`, `[ephemere]`), marqueur collé au texte, marqueur
+  en double (deux dans la tête, ou un second juste après, même collé ou en fin de texte), marqueur au milieu
+  du libellé, aucun libellé après la tête : rien n'est déclaré, le texte reste intact, la tâche est
+  ordinaire, visible et annoncée.
 - Le drapeau éphémère ne se lit que sur la `description`. Le repli historique du hook sur la clé `prompt`
   ne vaut que pour le profil et le rôle.
 
@@ -138,11 +149,19 @@ grammaire, `agent_markers.parse_head`, lue à l'identique par le hook `PreToolUs
 | `[reviewer] Relire` | general | reviewer (-> `qa`) | non | Relire |
 | `[code] [inconnu] Relire` | code | aucun | non | [inconnu] Relire |
 | `[code] [coder] [Éphémère] Corriger` | code | coder | non | [Éphémère] Corriger |
+| `[éphémère] [code]` | code | aucun | non | (vide) |
+| `[code] [qa] Relire` (`qa` désactivé) | code | aucun (repli sur la consigne) | non | [qa] Relire |
 
 Avant cette grammaire commune (I-005), le suivi exigeait `[éphémère]` en premier tandis que le hook ne
 lisait que des mots ASCII en tête : `[éphémère] [code] [coder] …` perdait profil et rôle côté hook,
 `[code] [coder] [éphémère] …` perdait le drapeau côté suivi. Les descriptions déjà écrites
-(`[éphémère] Libellé`, `[profil] [rôle] Libellé`) se lisent exactement comme avant.
+(`[éphémère] Libellé`, `[profil] [rôle] Libellé`) se lisent comme avant ; sans le jeton `[éphémère]`, tous
+les lecteurs rendent exactement l'ancien résultat. Les seuls écarts, voulus, touchent ce jeton : il est lu à
+travers (profil, rôle, loadout, rôle de production et libellé, dans la description comme dans la consigne),
+il est accepté ailleurs qu'en premier, et deux formes autrefois déclarées éphémères ne le sont plus, du côté
+sûr : un second marqueur plus loin dans la tête (`[éphémère] [code] [éphémère] x`, autrefois éphémère de
+description `[code] [éphémère] x`) et une tête sans libellé (`[éphémère] [code]`). Ces écarts sont figés par
+`tests/unit/test_agent_markers_equivalence.py`, qui garde une copie de l'ancien comportement comme oracle.
 
 Le suivi des tâches garde la description sans le seul marqueur éphémère (`[code] [coder] Corriger…`), pour
 que le rôle s'y relise comme le hook le lit (`task_snapshot["role"]`).

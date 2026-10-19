@@ -444,8 +444,14 @@ def test_loadout_roles_of_the_registry_agree_with_what_the_hook_reads():
     assert routing_hook.read_loadout_role({"description": "[code] [reviewer] Relire"}) == "reviewer"
 
 
-def test_disabled_new_roles_change_nothing_live():
-    rules = brain_rules()
-    assert "[research-lead]" not in rules and "[qa]" not in rules
-    assert with_role_instructions("Consigne.", "qa") is None
-    assert with_role_instructions("Consigne.", "research-lead") is None
+@pytest.mark.parametrize("marker", ["qa", "research-lead"])
+def test_disabled_new_roles_change_nothing_live(marker):
+    assert f"[{marker}]" not in brain_rules()
+    assert with_role_instructions("Consigne.", marker) is None
+    description = f"[code] [{marker}] Relire le diff"
+    # Rôle annoncé, libellé et loadout : exactement ceux d'avant la définition du rôle.
+    assert routing_hook.read_role({"description": description}) is None
+    assert routing_hook.strip_profile(description) == f"[{marker}] Relire le diff"
+    assert routing_hook.read_loadout_role({"description": description}) is None
+    assert routing_hook.read_loadout_role({"description": description, "prompt": "[code] [coder] x"}) == "coder"
+    assert routing_hook.read_profile({"description": description}) == "code"
