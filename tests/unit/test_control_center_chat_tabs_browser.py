@@ -195,10 +195,10 @@ async def test_the_chat_adds_no_held_connection_with_three_tabs_and_a_timeline(t
     _no_chat_wait(opened)
 
 
-async def test_only_one_visible_tab_holds_the_dossier_navigation_long_poll(tmp_path):
-    """Slice 08 de la refonte roue/Dossier : le canal Jarvis -> Dossier (Slice 07) tenait un long-poll par onglet
-    visible et, à deux onglets, `/api/status` attendait 9 s. Un seul onglet, le meneur Web Locks, le tient."""
+async def test_no_tab_holds_a_dossier_navigation_long_poll(tmp_path):
+    """Slice 08 de la refonte roue/Dossier (QA B1) : le canal Jarvis -> Dossier ne tient plus aucune connexion
+    longue ; la commande se relève au battement de statut (`dossier_navigation.pending`)."""
     plan = {"chatTabs": 3, "timelineTab": False, "settleMs": 6000, "sendFrom": 2, "text": "x", "chatOpen": False}
     seen, _ = await _run(tmp_path, plan)
     holders = [urls for urls in seen["held"] if any("/api/dossier/navigation/commands" in url for url in urls)]
-    assert len(holders) == 1, seen["held"]
+    assert holders == [], seen["held"]
