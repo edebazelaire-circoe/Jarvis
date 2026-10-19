@@ -174,7 +174,7 @@ def test_jarvis_orders_are_refused_with_stable_codes_and_switches_rebind_only_a_
 def test_the_served_page_inserts_the_dossier_after_the_wheel_and_feeds_it_from_the_status():
     html = (RUNTIME / "control_center.html").read_text(encoding="utf-8")
     assert html.index(TOOL_WHEEL_SCRIPT_MARKER) < html.index(DOSSIER_CORE_SCRIPT_MARKER) < html.index(DOSSIER_SCRIPT_MARKER)
-    assert "JarvisDossier.gate(s.boards)" in html and "JarvisDossier.statusLost()" in html
+    assert "JarvisDossier.gate(s.boards,s.dossier_navigation)" in html and "JarvisDossier.statusLost()" in html
     assert 'id="dossierView"' in html
     view = (RUNTIME / "control_center_dossier.js").read_text(encoding="utf-8")
     assert "'__JARVIS_DOSSIER_PAGE_TOKEN__'" in view, "the page token marker lives in the view the broker serves"

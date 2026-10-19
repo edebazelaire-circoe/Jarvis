@@ -39,8 +39,6 @@
   const NARROW_PX=900;
   const WIDE_PX=1500;
   const COMMAND_ROUTE='/api/dossier/navigation/commands';
-  /* Verrou Web Locks du meneur du canal Jarvis -> page : un seul onglet visible tient le long-poll (Slice 08). */
-  const NAVIGATION_LOCK='jarvis.dossier.navigation';
   const PAGE_TOKEN_HEADER='X-Jarvis-Page-Token';
 
   const isObject=v=>!!v&&typeof v==='object'&&!Array.isArray(v);
@@ -450,7 +448,7 @@
 
   const api=Object.freeze({
     DEADLINE_MS,LIST_LIMIT,READ_BYTES,MAX_EDIT_BYTES,MAX_TABS,PAIR_WINDOW_MS,SPLIT_MIN_PX,NARROW_PX,WIDE_PX,
-    COMMAND_ROUTE,NAVIGATION_LOCK,PAGE_TOKEN_HEADER,BOARD_KINDS,COLLECTIONS,KIND_LABELS,ERRORS,REPRESENTATIONS,PATHS,
+    COMMAND_ROUTE,PAGE_TOKEN_HEADER,BOARD_KINDS,COLLECTIONS,KIND_LABELS,ERRORS,REPRESENTATIONS,PATHS,
     errorOf,allowed,createClient,collectionOf,organize,filterEntries,entriesOfSection,splitMachine,inline,markdownBlocks,leadHeading,
     openTab,closeTab,layoutFor,pairFor,editGuard,EDIT_IN_PROGRESS,writeOutcome,presentOutcome,capabilities,safeLinkUrl,openDecision,rebindOnSwitch,
     relativeTime,absoluteTime,formatBytes,sourceLine,wheelItems,

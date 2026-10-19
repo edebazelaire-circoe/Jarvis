@@ -7,7 +7,7 @@ unique, échéance. Plus simple qu'eux : aucun miroir d'état (le Dossier ne s'a
 
 | Control Center | Rôle |
 | --- | --- |
-| `GET /api/dossier/navigation/commands?wait_s=&page=&visible=` | long-poll de la page : la commande en attente, ou `{"command": null}` |
+| `GET /api/dossier/navigation/commands?wait_s=&page=&visible=` | relevé de la page : la commande en attente, ou `{"command": null}` (la page envoie `wait_s=0` quand `/api/status.dossier_navigation.pending` le dit, Slice 08) |
 | `POST /api/dossier/navigation/commands` | demande de l'agent : `{board_id, entry_id}` ; rend le reçu de la page |
 | `POST /api/dossier/navigation/commands/{command_id}` | reçu de la page : `{state: opened}` ou `{state: refused, code, reason?}` |
 
@@ -217,6 +217,22 @@ class DossierNavigationBroker:
         return {**receipt, "command": OPEN_ENTRY, "board_id": request.board_id, "entry_id": request.entry_id,
                 "id": short_id(pending.command_id), "duration_ms": duration_ms,
                 "explanation": EXPLANATIONS[receipt["state"]]}
+
+    def status_block(self) -> dict[str, Any]:
+        """Bloc `dossier_navigation` de `/api/status` (Slice 08) : une commande attend une page.
+
+        La page ne tient plus de long-poll : au battement de statut à 1 Hz, une page visible qui lit
+        `pending: true` relève la commande par un `GET …/commands?wait_s=0` court (remise exclusive : un seul
+        onglet l'exécute). Six connexions par origine suffisent ainsi à deux pages visibles."""
+
+        pending = self._pending
+        waiting = pending is not None and not pending.delivered and not pending.consumed
+        if waiting:
+            try:
+                waiting = asyncio.get_running_loop().time() < pending.deadline
+            except RuntimeError:
+                waiting = True
+        return {"pending": bool(waiting)}
 
     def wake_event(self) -> asyncio.Event:
         if self._wake is None:

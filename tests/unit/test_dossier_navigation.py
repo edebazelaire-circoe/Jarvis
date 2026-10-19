@@ -109,3 +109,25 @@ async def test_closing_the_control_center_answers_a_waiting_agent(channel):
     routes.close()
     status, body = await _json(await asyncio.wait_for(ask, 1.0))
     assert (status, body["error"]["code"]) == (503, "command_cancelled")
+
+
+async def test_the_status_block_says_a_command_waits_until_one_page_takes_it(channel):
+    """Slice 08 (QA B1) : la page ne tient plus de long-poll ; `/api/status.dossier_navigation.pending` lui dit
+    de relever la commande d'un GET court. Remise exclusive : un seul relevé l'obtient."""
+    client, routes = channel
+    routes.broker.deadline_s = 2.0
+    assert routes.broker.status_block() == {"pending": False}
+    asked = asyncio.ensure_future(client.post(NAV, json=ASK))
+    for _ in range(50):
+        if routes.broker.status_block()["pending"]:
+            break
+        await asyncio.sleep(0.02)
+    assert routes.broker.status_block() == {"pending": True}
+    first = await _json(await client.get(NAV, params={"wait_s": "0", "page": "pageA", "visible": "1"}))
+    second = await _json(await client.get(NAV, params={"wait_s": "0", "page": "pageB", "visible": "1"}))
+    assert first[1]["command"] is not None and second[1]["command"] is None, "a single page executes it"
+    assert routes.broker.status_block() == {"pending": False}
+    await client.post(f"{NAV}/{first[1]['command']['id']}", json={"state": "opened"},
+                      headers={PAGE_TOKEN_HEADER: routes.broker.page_token})
+    status, body = await _json(await asked)
+    assert status == 200 and body["state"] == "opened"

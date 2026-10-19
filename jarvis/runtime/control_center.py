@@ -2626,6 +2626,9 @@ class ControlCenter:
             # une bascule faite par la voix ou par MCP s'affiche au battement
             # suivant. Voir `_boards_status`.
             "boards": boards,
+            # Une ouverture du Dossier demandée par Jarvis attend une page (Slice 08 de la refonte roue/Dossier) :
+            # la page la relève d'un GET court au lieu de tenir un long-poll.
+            "dossier_navigation": self.dossier_navigation.broker.status_block(),
             # Bornes que la page affiche (Slice 08, reprise QA) : délai réel de
             # l'arrêt d'un job à travers ce Control Center, `null` sans Core.
             "scene_limits": {

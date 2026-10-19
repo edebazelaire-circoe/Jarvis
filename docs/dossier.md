@@ -257,13 +257,20 @@ and 502 to the waiting agent at once, `unknown_command_id` 404, `bad_request` /
 
 **Consumer (Slice 07).** The view `control_center_dossier.js` carries
 `__JARVIS_DOSSIER_PAGE_TOKEN__` (the Control Center replaces it once the view is
-inserted), long-polls while the tab is visible (`visible=0` when hidden) — since
-Slice 08 **one visible tab only**, the holder of the Web Locks lock
-`jarvis.dossier.navigation` (`NAVIGATION_LOCK`): one long-poll per tab took
-Chrome's six connections per origin and starved `/api/status` with two tabs
-(`test_control_center_chat_tabs_browser.py::test_only_one_visible_tab_holds_the_dossier_navigation_long_poll`);
-a hidden tab leaves the queue or gives the lock back, Jarvis's order opens in
-the leader tab; without Web Locks each visible tab polls as before — and
+inserted), and since Slice 08 **holds no long connection**: each visible page
+already holds the full-screen and explorer long-polls, the scene leader one more,
+and a Dossier long-poll (one per page, then one per Web Locks leader) took the
+sixth of Chrome's connections per origin and starved `/api/status` with two
+visible windows (median 13 s). The Control Center now says in `/api/status`
+whether an order waits (`dossier_navigation: {pending}`, `status_block()` of the
+broker); a visible page that reads `pending: true` at its 1 Hz beat takes it with
+a short `GET …/commands?wait_s=0&page=…&visible=1`. Delivery stays exclusive: one
+page executes it, the others get `{command: null}`. Opening takes one beat plus
+one short read (≈ 1 s; the broker waits 5 s). The beat itself keeps one read in
+flight and abandons it after 4 s (`STATUS_BEAT`), so a stuck status says
+« statut perdu » instead of freezing the page
+(`test_dossier_navigation_browser.py`: two visible windows, p90 < 1 s, the order
+run once). A hidden page still says `visible=0`. The page
 answers **what it did**: `opened` once the Dossier is visible with an
 `article[data-entry=…]` of that entry in the DOM (checked, not assumed; the
 text may still be loading), or `refused` with `board_not_displayed` (another

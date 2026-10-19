@@ -23,7 +23,8 @@
   if(!C||!host){console.error('[dossier] dossier.install_failed '+JSON.stringify({code:!C?'dossier_core_missing':'dossier_host_missing'}));return}
 
   const PAGE_TOKEN='__JARVIS_DOSSIER_PAGE_TOKEN__';
-  const POLL_WAIT_S=20,POLL_TIMEOUT_MS=26000,POLL_GAP_MS=400;
+  /* Relevé court d'une commande de Jarvis (Slice 08) : jamais une attente longue. */
+  const PULL_TIMEOUT_MS=4000;
   const TICK_MS=500;
   const log=(level,event,data)=>{
     const line=`[dossier] ${event} ${JSON.stringify(data||{})}`;
@@ -731,11 +732,11 @@
     const e=entryOf(id);
     if(e)return openEntry(e);
     /* Un résultat de recherche hors des 100 listées : l'entrée est résolue par le service. */
-    S.busy={label:'Ouverture',since:now()};render();
+    const mine=S.busy={label:'Ouverture',since:now()};render();
     const gen=S.gen;
     client.get(C.PATHS.entry(S.boardId,id,false)).then(answer=>{
-      if(stale(gen,'open_by_id'))return;
-      S.busy=null;
+      if(S.busy===mine)S.busy=null;  // avant le test : une réponse périmée n'affiche plus son attente (QA S08 B2)
+      if(stale(gen,'open_by_id')){render();return}
       if(answer.ok&&answer.body.entry)openEntry(answer.body.entry);
       else{S.notice={tone:'bad',text:`${answer.error.title}. ${answer.error.hint}`};render()}
     });
@@ -745,11 +746,11 @@
     const caps=C.capabilities(e,{board:S.board,displayedBoardId:S.displayed,running:running(),coreLost:S.coreLost});
     S.menu=null;
     if(!caps.present.ok){setDoc(id,{flash:{tone:'bad',text:caps.present.reason}});render();return}
-    S.busy={label:'Affichage sur le Board',since:now()};render();
+    const mine=S.busy={label:'Affichage sur le Board',since:now()};render();
     const gen=S.gen;
     const answer=await client.post(C.PATHS.present(S.boardId),{entry_id:id,representation});
-    if(stale(gen,'present'))return;
-    S.busy=null;
+    if(S.busy===mine)S.busy=null;  // avant le test : une réponse périmée n'affiche plus son attente (QA S08 B2)
+    if(stale(gen,'present')){render();return}
     const out=C.presentOutcome(answer,representation);
     log(out.kind==='ok'?'info':'warn','dossier.present',{entry:id.split(':')[0],representation,status:answer.status,created:out.created||false,code:out.error&&out.error.code||null});
     setDoc(id,{flash:{tone:out.kind==='ok'?'ok':out.kind==='unknown'?'warn':'bad',text:out.message}});
@@ -905,7 +906,7 @@
     return {ok:true};
   }
   function resetForBoard(boardId){
-    S.gen+=1;S.boardId=boardId;S.board=null;
+    S.gen+=1;S.boardId=boardId;S.board=null;S.busy=null;
     S.list={status:'idle',entries:[],total:0,truncated:false,sources:null,error:null,since:0,at:0};
     S.tabs=[];S.active='browse';S.split=null;S.docs=new Map();S.adv=new Map();S.menu=null;S.form=null;S.confirm=null;
     S.section='home';S.filter='';S.search={status:'idle',q:'',matches:[],error:null,since:0};S.notice=null;
@@ -1059,11 +1060,13 @@
 
   /* ------------------------------------------------------------ couture du statut et de la roue */
   let displayedTitle=null;
-  function gate(block){
+  function gate(block,navigation){
+    /* La commande de Jarvis en attente, relevée au battement (Slice 08) ; `channel` est posé plus bas, avant tout battement. */
+    if(navigation)channel.beat(navigation);
     const active=block&&block.active&&block.active.board_id?String(block.active.board_id):null;
     /* Core arrêté alors que le Control Center répond (Slice 08, QA S07 1) : le statut arrive, mais sans Board actif
        et avec son erreur. C'est « Core ne répond pas », pas « ce Board n'est pas le Board affiché ». */
-    if(!active&&(!block||block.available===false||block.error)){
+    if(block&&!active&&(block.available===false||block.error)){
       if(!S.coreLost)log('warn','dossier.core_lost',{code:block&&block.error&&block.error.code||null});
       statusLost();return;
     }
@@ -1141,8 +1144,7 @@
   const channel=(function(){
     const pageId='dsr'+Math.random().toString(36).slice(2,12);
     let visible=document.visibilityState!=='hidden',running=false,failures=0,controller=null;
-    const stats={polls:0,received:0,opened:0,refused:0,receiptFailed:0,leader:false};
-    const sleep=ms=>new Promise(r=>setTimeout(r,ms));
+    const stats={polls:0,received:0,opened:0,refused:0,receiptFailed:0};
     async function request(url,options){
       const ctl=typeof AbortController==='function'?new AbortController():null;
       if(options.poll)controller=ctl;
@@ -1195,60 +1197,38 @@
       const shown=!host.hidden&&!!host.querySelector(`article[data-entry="${CSS.escape(answer.body.entry.entry_id)}"]`);
       return shown?{state:'opened'}:{state:'refused',code:'dossier_unavailable',reason:'la page n’a pas pu montrer l’entrée'};
     }
-    async function loop(){
+    /* Aucune connexion longue (Slice 08, QA B1) : chaque page visible tient déjà les long-polls du plein écran et
+       de l'explorateur ; avec deux pages, celui du Dossier saturait les six connexions par origine de Chrome et
+       affamait `/api/status`. La page relève donc la commande au battement de statut à 1 Hz : quand
+       `/api/status.dossier_navigation.pending` est vrai, un `GET …/commands?wait_s=0` court. La remise du Control
+       Center est exclusive : un seul onglet reçoit la commande et l'exécute. */
+    async function pull(){
+      if(!visible||running)return;
       running=true;
       try{
-        while(visible){
-          try{
-            stats.polls+=1;
-            const t0=now();
-            const answer=await request(`${C.COMMAND_ROUTE}?wait_s=${POLL_WAIT_S}&page=${pageId}&visible=1`,{poll:true,timeoutMs:POLL_TIMEOUT_MS});
-            if(answer.status!==200)throw new Error(`HTTP ${answer.status}`);
-            const command=answer.body&&answer.body.command;
-            if(command)await handle(command);
-            else if(now()-t0<POLL_GAP_MS)await sleep(POLL_GAP_MS);
-            failures=0;
-          }catch(error){
-            if(!visible)break;
-            failures+=1;
-            if(failures===1||failures%10===0)log('warn','dossier.navigation_poll_failed',{error:String(error&&error.message||error),failures});
-            await sleep(Math.min(15000,500*Math.pow(2,Math.max(0,failures-1))));
-          }
-        }
+        stats.polls+=1;
+        const answer=await request(`${C.COMMAND_ROUTE}?wait_s=0&page=${pageId}&visible=1`,{poll:true,timeoutMs:PULL_TIMEOUT_MS});
+        if(answer.status!==200)throw new Error(`HTTP ${answer.status}`);
+        const command=answer.body&&answer.body.command;
+        if(command)await handle(command);
+        failures=0;
+      }catch(error){
+        failures+=1;
+        if(failures===1||failures%10===0)log('warn','dossier.navigation_poll_failed',{error:String(error&&error.message||error),failures});
       }finally{running=false}
     }
-    /* Un seul onglet visible tient le long-poll (Slice 08) : Chrome partage six connexions par origine entre tous
-       les onglets, et un long-poll par onglet affamait `/api/status` dès deux onglets ouverts
-       (`test_control_center_chat_tabs_browser.py`). Le meneur est le détenteur d'un verrou Web Locks ; un onglet
-       caché quitte la file ou rend le verrou, un autre onglet visible le prend. Sans Web Locks : un long-poll par
-       onglet, comme avant. L'ordre de Jarvis s'ouvre dans l'onglet meneur et le reçu dit ce que son DOM a montré. */
-    const locks=typeof navigator!=='undefined'&&navigator.locks&&typeof navigator.locks.request==='function'?navigator.locks:null;
-    let queued=null;
-    function runLoop(){return loop().catch(error=>log('error','dossier.navigation_loop_failed',{error:String(error&&error.message||error)}))}
-    function start(){
-      if(!visible||running||queued)return;
-      if(!locks){runLoop();return}
-      const ac=typeof AbortController==='function'?new AbortController():null;
-      queued=ac||{};
-      locks.request(C.NAVIGATION_LOCK,ac?{signal:ac.signal}:{},async()=>{
-        queued=null;
-        if(!visible)return;
-        stats.leader=true;log('info','dossier.navigation_leader',{page:pageId});
-        try{await runLoop()}finally{stats.leader=false}
-      }).catch(error=>{
-        if(!(error&&error.name==='AbortError'))log('error','dossier.navigation_lock_failed',{error:String(error&&error.message||error)});
-      }).finally(()=>{if(queued===(ac||queued))queued=null;if(visible&&!running)start()});
+    function beat(block){
+      if(block&&block.pending===true)pull().catch(error=>log('error','dossier.navigation_pull_failed',{error:String(error&&error.message||error)}));
     }
+    function start(){/* plus de boucle : le battement de statut appelle `beat` */}
     document.addEventListener('visibilitychange',()=>{
       const next=document.visibilityState!=='hidden';if(next===visible)return;visible=next;
       if(!visible){
-        if(queued&&typeof queued.abort==='function')try{queued.abort()}catch(_e){/* intentional: leaves the queue either way */}
         if(controller)try{controller.abort()}catch(_e){/* intentional: dropped either way */}
         request(`${C.COMMAND_ROUTE}?wait_s=0&page=${pageId}&visible=0`,{timeoutMs:4000}).catch(error=>log('warn','dossier.hidden_notice_failed',{error:String(error&&error.message||error)}));
       }
-      start();
     });
-    return {start,stats:()=>({...stats}),pageId:()=>pageId,state:()=>({visible,running,failures})};
+    return {start,beat,stats:()=>({...stats}),pageId:()=>pageId,state:()=>({visible,running,failures})};
   })();
 
   registerWheel();

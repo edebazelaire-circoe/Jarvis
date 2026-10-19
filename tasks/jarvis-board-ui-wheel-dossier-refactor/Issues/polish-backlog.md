@@ -270,3 +270,18 @@ earlier Slice already closed it (said above).
 | S07 QA | 5 brain wording | → Issue `brain-behaviour-follow-ups.md` |
 | S07 QA | 6 unstable `test_ranger_refused_whole_or_kept…` / `test_mcp_plugin_service` | fixed in S8 (`8a96ac68`) for the Ranger test (it waits on the page, not on fixed delays); `test_mcp_plugin_service` → Issue `pre-existing-test-failures.md` (timing, not this task) |
 | S07 QA | 7 brain launched with `--chrome` | → Issue `brain-launched-with-chrome.md` |
+
+## From Slice 08 QA — non-blocking (recorded, not fixed unless said)
+
+Blocking findings B1 (two visible pages starved `/api/status`: the Dossier long-poll was the sixth held
+connection; `refreshStatus` had no in-flight guard nor deadline) and B2 (« Affichage sur le Board… » left
+forever after a Board switch) are **fixed in Slice 08** (`S8: fix - …` commits after `4b6a95f9`).
+
+1. **P1** On a second page load, the registry image window is drawn small (h 21.6 scene units, about 95 px).
+2. **P2** `JarvisDossier.gate(null)` (no `boards` block in the status) was taken as « Core perdu » — **fixed in S8**
+   (B1/B2 fix commit): only a block that says `available: false` or carries an `error` means Core lost; no block
+   means nothing is known.
+3. **P3** After a page reload the Dossier list shows file stems again (headings are learnt by reading, per page).
+4. **P4** `#barehandsHud` and `#barehandsPalette` are mounted but hidden by CSS while the wheel is shown.
+5. **P5** A mixed `settings_get` list containing `interaction_mode` is refused as a whole
+   (`interaction_mode_derived`); the tool's documentation should say so.

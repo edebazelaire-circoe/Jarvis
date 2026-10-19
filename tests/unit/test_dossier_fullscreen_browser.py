@@ -552,3 +552,42 @@ def test_a_note_read_once_is_listed_by_its_heading(tmp_path):
     assert "decision-budget" in r["before"], r["before"]
     assert "Décision budget" in r["after"] and "decision-budget" not in r["after"], r["after"]
     _no_errors(step)
+
+
+def test_a_board_switch_during_afficher_sur_le_board_leaves_no_endless_wait(tmp_path):
+    """QA S08 B2 : le Board change pendant « Afficher sur le Board » ; la réponse périmée est écartée, et
+    « Affichage sur le Board… N s » ne reste pas affiché indéfiniment."""
+    entry = "memory:comptes-rendus/comite-14-octobre.md"
+    s = seed()
+    s["dsrDelayMs"] = {"present": 2500}
+    status = "(document.getElementById('dsrStatus')||document.querySelector('#dossierView .dsr-status')||{}).textContent||''"
+    step = _drive(tmp_path, [{"width": 1440, "height": 900, "seed": s, "actions": [
+        ["eval", "open", "JarvisDossier.open().ok", 900], _open(entry),
+        ["click", "menu", _act("present-menu", entry), 300],
+        ["click", "window", "#dsrMenu [data-act='present'][data-value='window']", 300],
+        ["eval", "during", status, 50],
+        ["eval", "switch", f"window.__sc.activeBoard='{B}';1", 4500],
+        ["eval", "after", status, 50], ["eval", "state", STATE, 50],
+    ]}])[0]
+    r = step["results"]
+    assert "Affichage sur le Board" in r["during"], r["during"]
+    assert r["state"]["boardId"] == B
+    assert "Affichage sur le Board" not in r["after"], r["after"]
+    _no_errors(step)
+
+
+def test_a_hanging_status_never_piles_up_and_is_said_lost(tmp_path):
+    """QA S08 B1 : `refreshStatus` n'avait ni garde ni échéance ; un statut qui ne répond pas empilait une lecture
+    par seconde et la page restait figée sans dire « statut perdu ». Une seule lecture en vol, abandonnée à 4 s."""
+    step = _drive(tmp_path, [{"width": 1440, "height": 900, "seed": seed(), "actions": [
+        ["eval", "open", "JarvisDossier.open().ok", 900],
+        ["eval", "hang", "window.__sc.statusHang=true;1", 6500],
+        ["eval", "lost", "JarvisDossier.state().coreLost", 50],
+        ["eval", "max", "window.__sc.statusMax||0", 50],
+        ["eval", "heal", "window.__sc.statusHang=false;1", 6500],
+        ["eval", "back", "JarvisDossier.state().coreLost", 50],
+    ]}])[0]
+    r = step["results"]
+    assert r["max"] == 1, ("one status read in flight at most", r["max"])
+    assert r["lost"] is True, "said lost after the 4 s deadline, never frozen on the last state"
+    assert r["back"] is False
