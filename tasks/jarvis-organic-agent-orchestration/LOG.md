@@ -75,3 +75,15 @@
 - With instances: no ephemeral participant (D08), QA reviewer must have a QA role, adversary producer must not, delegatee carries the sub-mission, handoff within one mission to a non-older instance; `check_handoff_chain`: successor receives one handoff, no cycle.
 - No schema change, no frontend, JARVIS not started.
 - For Slice 03: persist relations, participants, messages (append order = thread order) and the packet as one transaction; ids of relation and message are caller-supplied today. For Slice 05/06: participants are fixed at creation (adding a member to a communication = new relation unless Slice 06 adds a join operation); the content checks are defence in depth, the real boundary is the explicit post tool. For Slice 08: Adversary is N-party, project as pairwise links or a group without making Scene the source.
+
+## 2026-10-20 — Slice 02 fix pass after independent QA (PASS_WITH_NOTES)
+
+- 1: reasoning tags widened (`think`, any `[_-]\w*` suffix, e.g. `<thinking_process>`, `<reasoning_content>`); text normalised before matching (NFKC, zero-width and soft-hyphen removed, `html.unescape`). `[thinking]` in brackets stays accepted. QA probes turned into tests.
+- 2: JSON no longer refused as a block: every JSON fragment of a text (whole text, code block, inline quote) is parsed and its keys go through `is_forbidden_key` (`relation_private_content`). `relation_raw_payload` kept only for raw bytes and JSON nested beyond 32 levels. Accepted false positive documented: prose quoting `<thinking>` is refused; error messages say what to fix (Slice 06 returns them to the posting agent).
+- 3: freshness made honest: `check_relation_participants(..., relations=)` refuses a successor that took part in any relation of the mission created before the handoff. "Carries no work yet" is Work State and is **guaranteed by the Slice 06 handoff helper** (creates the successor for the handoff); doc §4 and docstring say so.
+- 4: fan-out forbidden: a predecessor hands off once (`handoff_fan_out`).
+- 5: mission scope applied (`relation_mission_mismatch`): communication/adversary within the mission subtree (sister sub-missions allowed), QA reviewed instance within the subtree (reviewer free), delegation delegator in the mission and delegatee too without `sub_mission_id`. Sub-missions are only recognised when `missions` is given; an instance without mission never fits.
+- 6: unknown/missing keys carry `field`; protocol keys compared case/separator-insensitively, plus `turn`, `iteration(s)`, `max_iterations`.
+- 7: `closed_by_instance_id` (required for a QA verdict = the reviewer, and for a winner); optional `reply_to_message_id` checked against the thread when `check_message(..., thread=)` gets it (`relation_reply_invalid`).
+- 8: doc §1/§9 unified: participants fixed in this contract; a possible "join" is an additive explicit operation decided by Slice 06.
+- 9: TODO back to `[ ]` (implemented, QA pending).

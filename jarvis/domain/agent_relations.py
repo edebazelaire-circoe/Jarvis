@@ -24,12 +24,13 @@ D16) ni comment la relation doit se dérouler (D12 : sémantique, pas protocole)
 - Frontière de confidentialité (D13) : aucun champ de raisonnement, de prompt
   ou de charge brute du fournisseur ; une clé privée à n'importe quelle
   profondeur d'une charge reçue est refusée (`relation_private_content`, même
-  liste que Conversation Events), un texte qui est un blob JSON brut ou porte
-  une balise de raisonnement aussi.
+  liste que Conversation Events) ; un texte normalisé qui porte une balise de
+  raisonnement aussi, ainsi qu'un JSON cité dont une clé est interdite.
 - `check_relation_participants` et `check_handoff_chain` : cohérence avec les
   instances (`missions.AgentInstance`) — participants connus, jamais
-  éphémères (D08), relecteur de rôle QA, producteurs qui ne sont pas des
-  relecteurs, successeur neuf et jamais réutilisé.
+  éphémères (D08), périmètre de mission, relecteur de rôle QA, producteurs qui
+  ne sont pas des relecteurs, successeur neuf ; les relais forment des chaînes
+  (ni successeur réutilisé, ni éventail, ni boucle).
 
 Contrat : `docs/agent-relations.md`. Module pur, sans E/S. Il n'importe ni
 `missions` ni `subagent_roles` (qui importent `work_methods`, qui importe ce
@@ -42,12 +43,14 @@ from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, replace
 from datetime import datetime
 from enum import StrEnum
+import html
 import json
 import re
 from typing import TYPE_CHECKING, Any
+import unicodedata
 
 from jarvis.domain._checks import (
-    check_aware, check_id, check_text, parse_dt, parse_enum, preview, recode, strict_keys,
+    check_aware, check_id, check_text, parse_dt, parse_enum, preview, recode,
 )
 from jarvis.domain.conversation_events import is_forbidden_key
 
@@ -188,30 +191,58 @@ class RelationMessageType(StrEnum):
 QA_REVIEWER_ROLE_IDS = frozenset({"qa"})
 
 #: Clés refusées nommément : une relation a une sémantique, pas un protocole (D12) ni un plan (D15).
+#: Comparées après normalisation (`Round`, `max-turns`, `maxTurns` comptent).
 FORBIDDEN_PROTOCOL_KEYS = frozenset({
-    "round", "rounds", "round_count", "max_rounds", "turns", "max_turns", "phase", "phases", "protocol", "steps",
-    "sequence", "order", "schedule", "plan", "workflow",
+    "round", "rounds", "round_count", "max_rounds", "turn", "turns", "max_turns", "iteration", "iterations",
+    "max_iterations", "phase", "phases", "protocol", "steps", "sequence", "order", "schedule", "plan", "workflow",
 })
+
+_CAMEL = re.compile(r"(?<=[a-z0-9])(?=[A-Z])")
+
+
+def _normal_key(key: str) -> str:
+    return _CAMEL.sub("_", key).lower().replace("-", "_").replace(" ", "_")
 
 
 # ------------------------------------------------------------------ confidentialité
 
-#: Balises de raisonnement privé : jamais recopiées sur un tableau (D13).
+#: Balises de raisonnement privé : jamais recopiées sur un tableau (D13). `think`, `thinking`, `reasoning`...,
+#: éventuellement suffixées (`<thinking_process>`, `<reasoning-content>`), ouvrantes ou fermantes. Le texte est
+#: normalisé avant (`_normalize_text`). Un mot entre crochets (`[thinking]`) n'est pas une balise.
 _PRIVATE_TAG = re.compile(
-    r"<\s*/?\s*(?:antml:)?(?:thinking|reasoning|scratchpad|chain[ _-]?of[ _-]?thought|redacted_thinking)\b",
+    r"<\s*/?\s*(?:antml:)?(?:redacted_thinking|thinking|think|reasoning|scratchpad|chain[ _-]?of[ _-]?thought)"
+    r"(?:[_-]\w*)?(?!\w)",
     re.IGNORECASE,
 )
+#: Caractères invisibles qui couperaient une balise sans la changer à l'œil (largeur nulle, trait d'union
+#: conditionnel, BOM).
+_INVISIBLE = re.compile("[\u00ad\u180e\u200b-\u200f\u2060-\u2064\ufeff]")
+#: Profondeur permise d'un JSON cité dans un texte : au-delà, il ne peut pas être vérifié, il est refusé.
+MAX_TEXT_JSON_DEPTH = 32
+#: Nombre maximal de fragments JSON examinés dans un texte (borne de coût).
+MAX_TEXT_JSON_FRAGMENTS = 64
+_JSON_START = re.compile(r"[\[{]")
+_DECODER = json.JSONDecoder()
 
 
-def scan_private_keys(payload: object, path: str = "payload", depth: int = 0) -> None:
+def _normalize_text(text: str) -> str:
+    """Forme comparée : NFKC (pleine chasse), sans caractère invisible, entités `&lt;`/`&gt;` décodées."""
+
+    return html.unescape(_INVISIBLE.sub("", unicodedata.normalize("NFKC", text)))
+
+
+def scan_private_keys(
+    payload: object, path: str = "payload", depth: int = 0, *, max_depth: int = MAX_PAYLOAD_DEPTH,
+    depth_code: str = "relation_invalid",
+) -> None:
     """Refuser une clé privée ou brute (raisonnement, prompt, jeton, arguments...) à toute profondeur.
 
     Même règle que Conversation Events (`conversation_events.is_forbidden_key`) ; le message nomme le chemin,
     jamais la valeur.
     """
 
-    if depth > MAX_PAYLOAD_DEPTH:
-        raise RelationError(f"{path}: nesting exceeds {MAX_PAYLOAD_DEPTH} levels", field=path)
+    if depth > max_depth:
+        raise RelationError(f"{path}: nesting exceeds {max_depth} levels", code=depth_code, field=path)
     if isinstance(payload, (bytes, bytearray, memoryview)):
         raise RelationError(f"{path}: raw bytes are not collaboration content", code="relation_raw_payload",
                             field=path)
@@ -223,33 +254,64 @@ def scan_private_keys(payload: object, path: str = "payload", depth: int = 0) ->
             if is_forbidden_key(key):
                 raise RelationError(f"{name}: private or raw provider data is never collaboration content",
                                     code="relation_private_content", field=name)
-            scan_private_keys(item, name, depth + 1)
+            scan_private_keys(item, name, depth + 1, max_depth=max_depth, depth_code=depth_code)
     elif isinstance(payload, (list, tuple)):
         for index, item in enumerate(payload):
-            scan_private_keys(item, f"{path}[{index}]", depth + 1)
+            scan_private_keys(item, f"{path}[{index}]", depth + 1, max_depth=max_depth, depth_code=depth_code)
+
+
+def _json_fragments(text: str) -> Iterable[tuple[int, Any]]:
+    """Les objets et tableaux JSON contenus dans `text` : le texte entier, un bloc de code, une citation."""
+
+    position, seen = 0, 0
+    while seen < MAX_TEXT_JSON_FRAGMENTS:
+        match = _JSON_START.search(text, position)
+        if match is None:
+            return
+        seen += 1
+        try:
+            value, end = _DECODER.raw_decode(text, match.start())
+        except RecursionError:
+            raise RelationError("JSON nested too deeply to be checked", code="relation_raw_payload") from None
+        except ValueError:
+            position = match.start() + 1
+            continue
+        yield match.start(), value
+        position = end
 
 
 def check_collaboration_text(name: str, value: object, limit: int, *, required: bool = True) -> None:
-    """Un texte durable de collaboration : borné, délibéré, jamais un raisonnement privé ni une charge brute."""
+    """Un texte durable de collaboration : borné, délibéré, jamais un raisonnement privé.
+
+    Un JSON cité (le texte entier ou un fragment) est permis : ses clés passent le même contrôle que les
+    charges reçues. Une prose qui cite une balise de raisonnement est refusée (faux positif accepté). Les
+    messages d'erreur disent à l'agent qui publie quoi corriger : la Slice 06 les lui rend tels quels.
+    """
 
     _check(name, check_text, value, limit, single_line=False)
     text = str(value)
     if required and not text.strip():
         raise RelationError(f"{name} is required", field=name)
-    if _PRIVATE_TAG.search(text):
-        raise RelationError(f"{name} holds a private reasoning tag", code="relation_private_content", field=name)
-    stripped = text.strip()
-    if stripped[:1] in ("{", "["):
-        try:
-            decoded = json.loads(stripped)
-        except RecursionError:
-            # Des milliers de crochets imbriqués : une charge, pas une phrase.
-            raise RelationError(f"{name} is a raw nested payload", code="relation_raw_payload", field=name) from None
-        except ValueError:
-            return
-        if isinstance(decoded, (dict, list)):
-            raise RelationError(f"{name} is a raw JSON payload, not an explicit message", code="relation_raw_payload",
-                                field=name)
+    tag = _PRIVATE_TAG.search(_normalize_text(text))
+    if tag:
+        raise RelationError(
+            f"{name} contains the private reasoning tag {tag.group(0)!r}: post only the explicit message "
+            "(proposal, critique, decision, summary...), never your reasoning; to mention such a tag, name it "
+            "without angle brackets",
+            code="relation_private_content", field=name,
+        )
+    try:
+        for offset, fragment in _json_fragments(text):
+            scan_private_keys(fragment, f"{name}@{offset}", max_depth=MAX_TEXT_JSON_DEPTH,
+                              depth_code="relation_raw_payload")
+    except RelationError as exc:
+        if exc.code == "relation_private_content":
+            raise RelationError(
+                f"{name} quotes JSON with a private field ({exc.field}): remove reasoning, prompt or raw provider "
+                "data and post only the explicit content", code=exc.code, field=name,
+            ) from None
+        raise RelationError(f"{name}: {exc} (post the content itself, not a raw payload)", code=exc.code,
+                            field=name) from None
 
 
 def _check_refs(name: str, refs: object) -> None:
@@ -265,12 +327,19 @@ def _decode(name: str, payload: object, allowed: frozenset[str], required: froze
     """Décodage strict commun : clé privée nommée comme telle, clé de protocole aussi, puis aucune clé inconnue."""
 
     scan_private_keys(payload, name)
-    if isinstance(payload, dict):
-        protocol = sorted(FORBIDDEN_PROTOCOL_KEYS & payload.keys())
-        if protocol:
-            raise RelationError(f"a relation has semantics, not a protocol: {protocol} is not allowed",
-                                code="relation_is_not_a_protocol", field=protocol[0])
-    return strict_keys(_fail, name, payload, allowed, required=required)
+    if not isinstance(payload, dict):
+        raise RelationError(f"{name} payload must be an object", field=name)
+    protocol = sorted(str(key) for key in payload if _normal_key(str(key)) in FORBIDDEN_PROTOCOL_KEYS)
+    if protocol:
+        raise RelationError(f"a relation has semantics, not a protocol: {protocol} is not allowed",
+                            code="relation_is_not_a_protocol", field=protocol[0])
+    unknown = sorted(str(key)[:40] for key in payload if key not in allowed)
+    if unknown:
+        raise RelationError(f"{name} has unknown fields: {unknown[:5]}", field=unknown[0])
+    missing = sorted(required - payload.keys())
+    if missing:
+        raise RelationError(f"{name} is missing fields: {missing}", field=missing[0])
+    return payload
 
 
 def _list(data: Mapping[str, Any], key: str) -> tuple[Any, ...]:
@@ -405,6 +474,7 @@ class AgentRelation:
     outcome: RelationOutcome | None = None
     outcome_summary: str = ""
     winner_instance_id: str | None = None
+    closed_by_instance_id: str | None = None
 
     def __post_init__(self) -> None:
         _check("relation_id", check_id, self.relation_id, required=True)
@@ -468,6 +538,7 @@ class AgentRelation:
         if not isinstance(self.status, RelationStatus):
             raise RelationError("status must be a RelationStatus", field="status")
         _check("winner_instance_id", check_id, self.winner_instance_id, required=False)
+        _check("closed_by_instance_id", check_id, self.closed_by_instance_id, required=False)
         if self.outcome is not None and not isinstance(self.outcome, RelationOutcome):
             raise RelationError("outcome must be a RelationOutcome", field="outcome")
         check_collaboration_text("outcome_summary", self.outcome_summary, MAX_OUTCOME_SUMMARY_CHARS, required=False)
@@ -475,8 +546,10 @@ class AgentRelation:
         if closed != (self.closed_at is not None) or closed != (self.outcome is not None):
             raise RelationError("closed_at and outcome are set exactly when the relation is closed",
                                 field="closed_at")
-        if not closed and (self.outcome_summary or self.winner_instance_id is not None):
-            raise RelationError("outcome_summary and winner_instance_id belong to a closed relation", field="outcome")
+        if not closed and (self.outcome_summary or self.winner_instance_id is not None
+                           or self.closed_by_instance_id is not None):
+            raise RelationError("outcome_summary, winner_instance_id and closed_by_instance_id belong to a closed "
+                                "relation", field="outcome")
         if not closed:
             return
         check_aware(_fail, "closed_at", self.closed_at)
@@ -494,6 +567,14 @@ class AgentRelation:
         if self.winner_instance_id is not None and self.winner_instance_id not in self.participant_ids:
             raise RelationError("the winner must be one of the producers", code="relation_outcome_invalid",
                                 field="winner_instance_id")
+        if self.outcome is RelationOutcome.WINNER and self.closed_by_instance_id is None:
+            raise RelationError("choosing a winner names who chose it (closed_by_instance_id)",
+                                code="relation_outcome_invalid", field="closed_by_instance_id")
+        if self.kind is AgentRelationKind.QA and self.outcome is not RelationOutcome.WITHDRAWN:
+            reviewer = self.at(ParticipantPosition.REVIEWER)[0]
+            if self.closed_by_instance_id != reviewer:
+                raise RelationError("a QA verdict is given by its reviewer (closed_by_instance_id)",
+                                    code="relation_outcome_invalid", field="closed_by_instance_id")
 
     # -------------------------------------------------------------- lecture
 
@@ -526,17 +607,21 @@ class AgentRelation:
 
     def close(
         self, outcome: RelationOutcome, at: datetime, *, summary: str = "", winner_instance_id: str | None = None,
+        closed_by: str | None = None,
     ) -> AgentRelation:
-        """Clore une relation ouverte. Une relation close ne se rouvre pas ; reclore à l'identique est sans effet."""
+        """Clore une relation ouverte. Une relation close ne se rouvre pas ; reclore à l'identique est sans effet.
+
+        `closed_by` : l'instance qui clôt ; exigée pour un verdict QA (le relecteur) et pour un vainqueur.
+        """
 
         if not self.is_open:
-            if (self.outcome, self.closed_at, self.outcome_summary, self.winner_instance_id) == (
-                    outcome, at, summary, winner_instance_id):
+            if (self.outcome, self.closed_at, self.outcome_summary, self.winner_instance_id,
+                    self.closed_by_instance_id) == (outcome, at, summary, winner_instance_id, closed_by):
                 return self
             raise RelationError(f"relation {self.relation_id} is already closed ({self.outcome.value})",
                                 code="relation_closed", field="status")
         return replace(self, status=RelationStatus.CLOSED, closed_at=at, outcome=outcome, outcome_summary=summary,
-                       winner_instance_id=winner_instance_id)
+                       winner_instance_id=winner_instance_id, closed_by_instance_id=closed_by)
 
     # -------------------------------------------------------------- codec
 
@@ -557,6 +642,7 @@ class AgentRelation:
             "outcome": self.outcome.value if self.outcome else None,
             "outcome_summary": self.outcome_summary,
             "winner_instance_id": self.winner_instance_id,
+            "closed_by_instance_id": self.closed_by_instance_id,
         }
 
     @classmethod
@@ -580,13 +666,14 @@ class AgentRelation:
             outcome=None if outcome is None else parse_enum(_fail, "outcome", outcome, RelationOutcome),
             outcome_summary=data.get("outcome_summary") or "",
             winner_instance_id=data.get("winner_instance_id"),
+            closed_by_instance_id=data.get("closed_by_instance_id"),
         )
 
 
 _RELATION_KEYS = frozenset({
     "relation_id", "kind", "mission_id", "participants", "purpose", "created_at", "created_by_instance_id",
     "sub_mission_id", "target_refs", "handoff", "status", "closed_at", "outcome", "outcome_summary",
-    "winner_instance_id",
+    "winner_instance_id", "closed_by_instance_id",
 })
 _RELATION_REQUIRED = frozenset({"relation_id", "kind", "mission_id", "participants", "purpose", "created_at"})
 
@@ -610,9 +697,14 @@ class RelationMessage:
     created_at: datetime
     audience: tuple[str, ...] = ()
     artifact_refs: tuple[str, ...] = ()
+    reply_to_message_id: str | None = None
 
     def __post_init__(self) -> None:
         _check("message_id", check_id, self.message_id, required=True)
+        _check("reply_to_message_id", check_id, self.reply_to_message_id, required=False)
+        if self.reply_to_message_id == self.message_id:
+            raise RelationError("a message cannot reply to itself", code="relation_reply_invalid",
+                                field="reply_to_message_id")
         _check("relation_id", check_id, self.relation_id, required=True)
         _check("author_instance_id", check_id, self.author_instance_id, required=True)
         if not isinstance(self.type, RelationMessageType):
@@ -640,6 +732,7 @@ class RelationMessage:
             "created_at": self.created_at.isoformat(),
             "audience": list(self.audience),
             "artifact_refs": list(self.artifact_refs),
+            "reply_to_message_id": self.reply_to_message_id,
         }
 
     @classmethod
@@ -654,20 +747,25 @@ class RelationMessage:
             created_at=parse_dt(_fail, "created_at", data["created_at"]),
             audience=_list(data, "audience"),
             artifact_refs=_list(data, "artifact_refs"),
+            reply_to_message_id=data.get("reply_to_message_id"),
         )
 
 
 _MESSAGE_KEYS = frozenset({
     "message_id", "relation_id", "author_instance_id", "type", "text", "created_at", "audience", "artifact_refs",
+    "reply_to_message_id",
 })
 _MESSAGE_REQUIRED = frozenset({"message_id", "relation_id", "author_instance_id", "type", "text", "created_at"})
 
 
-def check_message(relation: AgentRelation, message: RelationMessage) -> None:
+def check_message(
+    relation: AgentRelation, message: RelationMessage, *, thread: Iterable[RelationMessage] | None = None,
+) -> None:
     """Un message peut-il entrer sur le tableau de `relation` ?
 
     Auteur et audience parmi les participants, relation ouverte, message pas antérieur à la relation ;
-    `handoff_note` sur un relais seulement. Aucune règle d'ordre ni de nombre de messages (D12).
+    `handoff_note` sur un relais seulement. Avec le fil déjà accepté (`thread`), une réponse vise un message
+    de la même relation qui n'est pas postérieur. Aucune règle d'ordre ni de nombre de messages (D12).
     """
 
     if message.relation_id != relation.relation_id:
@@ -688,9 +786,46 @@ def check_message(relation: AgentRelation, message: RelationMessage) -> None:
     if message.type is RelationMessageType.HANDOFF_NOTE and relation.kind is not AgentRelationKind.HANDOFF:
         raise RelationError("handoff_note belongs to a handoff relation", code="relation_message_type_invalid",
                             field="type")
+    if message.reply_to_message_id is not None and thread is not None:
+        replied = next((item for item in thread if item.message_id == message.reply_to_message_id), None)
+        if replied is None or replied.relation_id != relation.relation_id or replied.created_at > message.created_at:
+            raise RelationError("reply_to_message_id names an earlier message of the same relation board",
+                                code="relation_reply_invalid", field="reply_to_message_id")
 
 
 # ------------------------------------------------------------------ cohérence avec les instances
+
+
+def _in_scope(mission_id: str | None, scope: str, missions: Mapping[str, Mission] | None) -> bool:
+    """`mission_id` est `scope` ou l'une de ses sous-missions (à toute profondeur bornée, missions fournies)."""
+
+    if mission_id == scope:
+        return True
+    if mission_id is None or missions is None:
+        return False
+    current, seen = missions.get(mission_id), 0
+    while current is not None and current.parent_mission_id is not None and seen < MAX_SCOPE_DEPTH:
+        if current.parent_mission_id == scope:
+            return True
+        current, seen = missions.get(current.parent_mission_id), seen + 1
+    return False
+
+
+#: Même borne que `missions.MAX_MISSION_DEPTH`, que ce module ne peut pas importer (vérifié par un test).
+MAX_SCOPE_DEPTH = 16
+
+
+def _require_scope(instance: AgentInstance, relation: AgentRelation, missions: Mapping[str, Mission] | None,
+                   *, exact: bool, what: str) -> None:
+    ok = instance.mission_id == relation.mission_id if exact else _in_scope(instance.mission_id,
+                                                                            relation.mission_id, missions)
+    if not ok:
+        scope = "of" if exact else "within (or a sub-mission of)"
+        hint = "" if exact or missions is not None else " (pass missions to accept a sub-mission)"
+        raise RelationError(
+            f"{what} {instance.instance_id} works for {preview(instance.mission_id)}, not {scope} mission "
+            f"{relation.mission_id}{hint}", code="relation_mission_mismatch", field="participants",
+        )
 
 
 def check_relation_participants(
@@ -698,16 +833,23 @@ def check_relation_participants(
     instances: Mapping[str, AgentInstance],
     *,
     missions: Mapping[str, Mission] | None = None,
+    relations: Iterable[AgentRelation] | None = None,
 ) -> None:
-    """La relation est cohérente avec les instances (et, si fournies, les missions) qu'elle nomme.
+    """La relation est cohérente avec les instances (et, si fournies, les missions et relations) qu'elle nomme.
 
     - chaque participant est une instance connue, jamais éphémère (D08 : une relation durable en ferait un
       nœud d'historique) ;
+    - périmètre de mission (`relation_mission_mismatch`) : communication et Adversary relient des instances
+      de la mission ou de ses sous-missions (des sous-missions sœurs comprises) ; QA relit une instance de la
+      mission ou d'une sous-mission, le relecteur n'est pas contraint ; le délégant est de la mission, le
+      délégataire aussi sans `sub_mission_id`, sinon il porte cette sous-mission, fille de la mission ;
+      relais : les deux de la mission. Une sous-mission ne se reconnaît qu'avec `missions` ;
     - QA : le relecteur a un rôle de QA (`QA_REVIEWER_ROLE_IDS`) ; Adversary : aucun producteur n'en a un
       (D10, un relecteur n'est pas un concurrent) ;
-    - délégation vers une sous-mission : le délégataire porte cette sous-mission, fille de la mission ;
-    - relais : prédécesseur et successeur sont de la même mission, le successeur est une instance neuve
-      (créée au plus tôt avec son prédécesseur). Le rôle peut changer : c'est la voie d'un changement de rôle.
+    - relais : le successeur n'est pas plus ancien que son prédécesseur et, avec `relations`, n'a pris part à
+      aucune relation de la mission nouée avant ce relais. Qu'il ne porte pas déjà de travail relève de Work
+      State : l'aide de relais (Slice 06) crée le successeur pour le relais. Le rôle peut changer : c'est la
+      voie d'un changement de rôle.
     """
 
     for participant in relation.participants:
@@ -718,27 +860,39 @@ def check_relation_participants(
         if instance.ephemeral:
             raise RelationError(f"participant {participant.instance_id} is ephemeral and leaves no history",
                                 code="ephemeral_relation_participant", field="participants")
+    if missions is not None and relation.mission_id not in missions:
+        raise RelationError(f"mission {relation.mission_id} is missing", code="relation_mission_missing",
+                            field="mission_id")
     kind = relation.kind
+    if kind in (AgentRelationKind.COMMUNICATION, AgentRelationKind.ADVERSARY):
+        for instance_id in relation.participant_ids:
+            _require_scope(instances[instance_id], relation, missions, exact=False, what="participant")
     if kind is AgentRelationKind.QA:
         reviewer = instances[relation.at(ParticipantPosition.REVIEWER)[0]]
         if reviewer.role_id not in QA_REVIEWER_ROLE_IDS:
             raise RelationError(f"a QA reviewer needs a QA role, got {preview(reviewer.role_id)}",
                                 code="qa_reviewer_role", field="participants")
+        reviewed = instances[relation.at(ParticipantPosition.REVIEWED)[0]]
+        _require_scope(reviewed, relation, missions, exact=False, what="reviewed instance")
     elif kind is AgentRelationKind.ADVERSARY:
         for instance_id in relation.participant_ids:
             if instances[instance_id].role_id in QA_REVIEWER_ROLE_IDS:
                 raise RelationError(f"adversary producer {instance_id} is a reviewer: request QA instead",
                                     code="adversary_producer_is_reviewer", field="participants")
-    elif kind is AgentRelationKind.DELEGATION and relation.sub_mission_id is not None:
-        delegatee = instances[relation.at(ParticipantPosition.DELEGATEE)[0]]
-        if delegatee.mission_id != relation.sub_mission_id:
-            raise RelationError("the delegatee carries the delegated sub-mission", code="delegation_sub_mission",
-                                field="sub_mission_id")
-        if missions is not None:
-            sub = missions.get(relation.sub_mission_id)
-            if sub is None or sub.parent_mission_id != relation.mission_id:
-                raise RelationError("the delegated sub-mission is a child of the relation's mission",
-                                    code="delegation_sub_mission", field="sub_mission_id")
+    elif kind is AgentRelationKind.DELEGATION:
+        delegator, delegatee = (instances[i] for i in relation.endpoints())
+        _require_scope(delegator, relation, missions, exact=True, what="delegator")
+        if relation.sub_mission_id is None:
+            _require_scope(delegatee, relation, missions, exact=True, what="delegatee")
+        else:
+            if delegatee.mission_id != relation.sub_mission_id:
+                raise RelationError("the delegatee carries the delegated sub-mission", code="delegation_sub_mission",
+                                    field="sub_mission_id")
+            if missions is not None:
+                sub = missions.get(relation.sub_mission_id)
+                if sub is None or sub.parent_mission_id != relation.mission_id:
+                    raise RelationError("the delegated sub-mission is a child of the relation's mission",
+                                        code="delegation_sub_mission", field="sub_mission_id")
     elif kind is AgentRelationKind.HANDOFF:
         predecessor, successor = (instances[i] for i in relation.endpoints())
         if predecessor.mission_id != relation.mission_id or successor.mission_id != relation.mission_id:
@@ -747,22 +901,32 @@ def check_relation_participants(
         if successor.created_at < predecessor.created_at:
             raise RelationError("a handoff goes to a fresh instance, not an older one",
                                 code="handoff_successor_not_fresh", field="participants")
-    if missions is not None and relation.mission_id not in missions:
-        raise RelationError(f"mission {relation.mission_id} is missing", code="relation_mission_missing",
-                            field="mission_id")
+        for other in relations or ():
+            if (other.relation_id != relation.relation_id and other.mission_id == relation.mission_id
+                    and other.created_at < relation.created_at and successor.instance_id in other.participant_ids):
+                raise RelationError(
+                    f"successor {successor.instance_id} already took part in relation {other.relation_id}: "
+                    "a handoff goes to a fresh instance", code="handoff_successor_not_fresh", field="participants",
+                )
 
 
 def check_handoff_chain(relations: Iterable[AgentRelation]) -> None:
-    """Les relais d'un ensemble forment des chaînes : un successeur ne reçoit qu'un relais, sans boucle.
+    """Les relais d'un ensemble forment des chaînes : un successeur ne reçoit qu'un relais, un prédécesseur ne
+    transmet qu'une fois (pas d'éventail : la propriété ne se transfère pas deux fois), sans boucle.
 
     Un relais retiré (`withdrawn`) ne compte pas : son successeur n'a rien reçu.
     """
 
     successor_of: dict[str, str] = {}
+    transmitted: set[str] = set()
     for relation in relations:
         if relation.kind is not AgentRelationKind.HANDOFF or relation.outcome is RelationOutcome.WITHDRAWN:
             continue
         predecessor, successor = relation.endpoints()
+        if predecessor in transmitted:
+            raise RelationError(f"instance {predecessor} already handed off; a handoff is transmitted once",
+                                code="handoff_fan_out", field="participants")
+        transmitted.add(predecessor)
         if successor in successor_of:
             raise RelationError(f"instance {successor} already received a handoff; a new context is a new instance",
                                 code="handoff_successor_reused", field="participants")

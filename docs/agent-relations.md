@@ -34,8 +34,10 @@ Chaque participant tient une **position** (`ParticipantPosition`) qui dit la for
 | `qa` | dirigée | `reviewer` -> `reviewed` | revue critique du résultat d'un autre (D11) |
 | `handoff` | dirigée | `predecessor` -> `successor` | la mission continue dans une instance neuve (D14) |
 
-Au plus `MAX_PARTICIPANTS` (12) ; une instance n'apparaît qu'une fois. Les participants sont fixés à la
-création : changer l'ensemble, c'est nouer une autre relation.
+Au plus `MAX_PARTICIPANTS` (12) ; une instance n'apparaît qu'une fois. Dans ce contrat, les participants
+sont fixés à la création : changer l'ensemble, c'est nouer une autre relation. Si la Slice 06 prouve qu'il
+faut faire entrer un membre dans une communication en cours, elle l'ajoutera comme une opération explicite et
+datée (« join ») **en plus** de ce contrat, sans réécrire l'ensemble initial ni casser son décodage.
 
 **Adversary n'est pas QA.** Adversary relie au moins deux producteurs pairs, tous en `producer`, sans
 source ni cible (`endpoints()` vaut `None`) ; QA relie exactement un `reviewer` et un `reviewed`. Aucune
@@ -56,7 +58,11 @@ QA aussi (`qa_reviewer_role`).
   - `target_refs` (QA) : les artefacts ou résultats précis relus (ids, 16 au plus) ;
   - `handoff` (relais) : le `HandoffPacket`, **exigé dès la création** ;
 - clôture : `status` `open` -> `closed` une seule fois (`close`), `closed_at`, `outcome`,
-  `outcome_summary` (1 000 caractères), `winner_instance_id`.
+  `outcome_summary` (1 000 caractères), `winner_instance_id`, `closed_by_instance_id` (l'instance qui clôt,
+  `None` pour le cerveau ou Core). `closed_by_instance_id` est **exigé** pour un verdict QA (`approved`,
+  `findings`, `correction_requested`, `rejected`), et c'est alors le relecteur ; il est exigé aussi pour le
+  choix d'un vainqueur (`winner`), où c'est l'instance qui a tranché, participante ou non
+  (`relation_outcome_invalid`).
 
 Issues permises (`OUTCOMES_BY_KIND`) ; `withdrawn` (retirée) vaut pour toutes :
 
@@ -74,7 +80,8 @@ Reclore à l'identique est sans effet ; reclore autrement lève `relation_closed
 
 Une relation a un sens, pas un déroulé. Aucun champ ne compte ni n'ordonne des tours ; une clé de protocole
 reçue (`round`, `rounds`, `max_rounds`, `turns`, `phase`, `phases`, `protocol`, `steps`, `sequence`, `order`,
-`schedule`, `plan`, `workflow`) est refusée nommément (`relation_is_not_a_protocol`). Une relation se clôt à
+`schedule`, `plan`, `workflow`, `turn`, `iteration`, `iterations`, `max_iterations`, comparées sans
+casse ni séparateur : `Round`, `maxTurns`, `max-iterations`) est refusée nommément (`relation_is_not_a_protocol`). Une relation se clôt à
 tout moment, avec ou sans messages ; une Work Method peut recommander une pratique (par exemple travailler
 d'abord indépendamment dans un Adversary), le Mission Owner décide.
 
@@ -87,15 +94,17 @@ confrontation d'un Adversary, question d'un délégataire).
 
 `RelationMessage` : `message_id`, `relation_id`, `author_instance_id`, `type`, `text` (4 000 caractères,
 requis), `created_at`, `audience` (participants visés ; vide = tous ; jamais l'auteur), `artifact_refs`
-(16 ids au plus).
+(16 ids au plus), `reply_to_message_id` (facultatif : le message auquel il répond, jamais lui-même).
 
 Types (`RelationMessageType`) : `message`, `proposal`, `critique`, `question`, `decision`,
 `result_summary`, `handoff_note` (ce dernier sur un relais seulement).
 
 `check_message(relation, message)` : auteur et audience parmi les participants
 (`relation_not_participant`), relation ouverte (`relation_closed`), message pas antérieur à la relation,
-type permis (`relation_message_type_invalid`). Aucune règle d'ordre ni de nombre : l'ordre du fil est celui
-de l'acceptation par le magasin (Slice 03/06), pas un numéro de tour.
+type permis (`relation_message_type_invalid`). Avec le fil déjà accepté (`thread=`), une réponse vise un
+message de la même relation qui ne lui est pas postérieur (`relation_reply_invalid`) ; sans le fil, la cible
+n'est pas vérifiable et le magasin (Slice 03/06) fournit le fil. Aucune règle d'ordre ni de nombre : l'ordre
+du fil est celui de l'acceptation par le magasin, pas un numéro de tour.
 
 ## 4. Le relais (D14)
 
@@ -116,39 +125,70 @@ paquet décodé sans l'une de ses clés est refusé (`handoff_packet_incomplete`
 n'est pas un paquet vide, et un successeur ne peut pas se prévaloir d'un paquet incomplet.
 
 Avec les instances (`check_relation_participants`) : prédécesseur et successeur sont de la mission de la
-relation (`handoff_mission_mismatch`) ; le successeur n'est pas plus ancien que son prédécesseur
-(`handoff_successor_not_fresh`) ; le rôle peut changer. Sur un ensemble (`check_handoff_chain`) : une
-instance ne reçoit qu'un relais (`handoff_successor_reused`) et les relais ne bouclent pas
-(`handoff_cycle`) ; un relais `withdrawn` ne compte pas. Le prédécesseur peut finir ou rester disponible :
-aucun arrêt forcé.
+relation (`handoff_mission_mismatch`) ; le rôle peut changer. **Instance neuve** (`handoff_successor_not_fresh`) :
+
+- le successeur n'est pas plus ancien que son prédécesseur ;
+- avec `relations=` (les relations connues de la mission), il n'a pris part à **aucune** relation de la
+  mission nouée avant ce relais ;
+- qu'il ne porte pas déjà de travail ne se voit pas dans ce contrat (c'est Work State) : l'aide de relais de
+  la Slice 06 garantit cette fraîcheur en créant le successeur pour le relais. Sans `relations`, un pair créé
+  après le prédécesseur et déjà au travail n'est donc pas détecté ici.
+
+Sur un ensemble (`check_handoff_chain`), les relais forment des **chaînes** : une instance ne reçoit qu'un
+relais (`handoff_successor_reused`), un prédécesseur ne transmet qu'une fois (`handoff_fan_out` : pas
+d'éventail, la propriété ne se transfère pas deux fois) et les relais ne bouclent pas (`handoff_cycle`) ; un
+relais `withdrawn` ne compte pas. Le prédécesseur peut finir ou rester disponible : aucun arrêt forcé.
 
 ## 5. Frontière de confidentialité
 
 Le contrat ne peut pas représenter un raisonnement privé (chain-of-thought), un prompt caché ni une charge
 brute du fournisseur :
 
-- **aucun champ** pour eux ; le décodage est strict (clé inconnue refusée) ;
+- **aucun champ** pour eux ; le décodage est strict : une clé inconnue est refusée (`relation_invalid`,
+  `field` = la clé), une clé de protocole aussi (§2) ;
 - une **clé privée à toute profondeur** d'une charge reçue (`reasoning`, `thinking`, `chain_of_thought`,
   `system_prompt`, `tool_input`, `raw_arguments`, `api_key`…) est refusée nommément
   (`relation_private_content`) avec la même règle que Conversation Events
   (`conversation_events.is_forbidden_key`), message sans la valeur ;
-- un **texte** (message, objet, paquet, résumé de clôture) qui porte une balise de raisonnement
-  (`<thinking>`, `<reasoning>`, `<scratchpad>`…) est refusé (`relation_private_content`) ; un texte qui *est*
-  un objet ou un tableau JSON (un événement brut recopié) aussi (`relation_raw_payload`) ; des octets bruts
-  aussi. Une prose qui contient des crochets reste acceptée.
+- un **texte** (message, objet, paquet, résumé de clôture) est normalisé (NFKC pour la pleine chasse,
+  caractères de largeur nulle et trait d'union conditionnel retirés, entités `&lt;`/`&gt;` décodées) puis
+  refusé s'il porte une balise de raisonnement : `<think>`, `<thinking>`, `<reasoning>`, `<scratchpad>`,
+  `<chain-of-thought>`, `<redacted_thinking>`, ouvrante ou fermante, éventuellement suffixée
+  (`<thinking_process>`, `<reasoning_content>`). Un mot entre crochets (`[thinking]`) n'est pas une balise ;
+- un **JSON cité** dans un texte (le texte entier, un bloc de code, une citation dans une phrase) est permis
+  — `{"winner": "A", "score": 3}`, `["A","B"]` — mais ses clés passent le même contrôle : un fragment qui
+  contient `thinking`, `reasoning` ou une autre clé interdite est refusé (`relation_private_content`). Un
+  JSON trop imbriqué pour être vérifié (plus de 32 niveaux), ou des octets bruts, sont refusés
+  (`relation_raw_payload`) ;
+- **faux positif accepté** : une prose qui *cite* une balise (« la balise <thinking> des modèles ») est
+  refusée. Les messages d'erreur disent à l'agent qui publie quoi corriger (publier le message explicite, pas
+  son raisonnement ; nommer la balise sans chevrons ; retirer le champ privé du JSON), car la Slice 06 les
+  lui renvoie tels quels. Une prose qui raconte un raisonnement sans balise (« Thinking: first… ») n'est pas
+  détectable ici.
 
 Ce contrôle du contenu est une défense en profondeur. La vraie frontière est la voie d'entrée : un message
 n'entre sur un tableau que par un outil explicite qu'un agent appelle pour le publier (Slice 06), jamais par
 une copie du flux du fournisseur (`agent.event`, blocs de réflexion).
 
-## 6. Participants : jamais éphémères (D08)
+## 6. Participants et périmètre de mission
 
-`check_relation_participants(relation, instances, missions=None)` exige des participants connus
-(`relation_participant_missing`) et **non éphémères** (`ephemeral_relation_participant`) : une relation
-durable ferait d'une instance éphémère un nœud d'historique. Un travail qui mérite une relation n'est pas
-éphémère. Délégation vers une sous-mission : le délégataire porte cette sous-mission et, si les missions
-sont fournies, elle est fille de la mission de la relation (`delegation_sub_mission`) ; la mission de la
-relation existe (`relation_mission_missing`).
+`check_relation_participants(relation, instances, missions=None, relations=None)` :
+
+- participants connus (`relation_participant_missing`) et **non éphémères**
+  (`ephemeral_relation_participant`) : une relation durable ferait d'une instance éphémère un nœud
+  d'historique (D08). Un travail qui mérite une relation n'est pas éphémère ;
+- la mission de la relation existe, si les missions sont fournies (`relation_mission_missing`) ;
+- **périmètre de mission** (`relation_mission_mismatch`), une instance sans mission n'y entre jamais :
+
+| Nature | Règle |
+| --- | --- |
+| `communication`, `adversary` | chaque participant est de la mission ou d'une de ses sous-missions, à toute profondeur : des sous-missions sœurs peuvent être reliées |
+| `qa` | l'instance relue est de la mission ou d'une sous-mission ; le relecteur n'est pas contraint |
+| `delegation` | le délégant est de la mission ; sans `sub_mission_id`, le délégataire aussi ; avec, il porte cette sous-mission, fille de la mission (`delegation_sub_mission`) |
+| `handoff` | prédécesseur et successeur de la mission (`handoff_mission_mismatch`) |
+
+Une sous-mission ne se reconnaît qu'avec `missions` : sans elles, seule l'égalité est vérifiable et le
+message d'erreur demande de les fournir.
 
 ## 7. Frontières avec l'existant
 
@@ -168,10 +208,14 @@ relation existe (`relation_mission_missing`).
 `relation_invalid` (forme, borne, clé inconnue ou manquante), `relation_participants_invalid`,
 `relation_participant_duplicate`, `relation_field_not_for_kind`, `relation_outcome_invalid`,
 `relation_closed`, `relation_is_not_a_protocol`, `relation_private_content`, `relation_raw_payload`,
-`relation_not_participant`, `relation_message_type_invalid`, `handoff_packet_incomplete`,
-`relation_participant_missing`, `ephemeral_relation_participant`, `qa_reviewer_role`,
-`adversary_producer_is_reviewer`, `delegation_sub_mission`, `relation_mission_missing`,
-`handoff_mission_mismatch`, `handoff_successor_not_fresh`, `handoff_successor_reused`, `handoff_cycle`.
+`relation_not_participant`, `relation_message_type_invalid`, `relation_reply_invalid`,
+`handoff_packet_incomplete`, `relation_participant_missing`, `ephemeral_relation_participant`,
+`qa_reviewer_role`, `adversary_producer_is_reviewer`, `delegation_sub_mission`, `relation_mission_missing`,
+`relation_mission_mismatch`, `handoff_mission_mismatch`, `handoff_successor_not_fresh`,
+`handoff_successor_reused`, `handoff_fan_out`, `handoff_cycle`.
+
+`relation_raw_payload` ne couvre plus que les octets bruts et le JSON trop imbriqué pour être vérifié : un
+JSON lisible n'est plus refusé en bloc.
 
 ## 9. Ce qui reste à câbler
 
@@ -179,6 +223,7 @@ relation existe (`relation_mission_missing`).
 | --- | --- |
 | Tables durables des relations, messages et paquets (`jarvis.sqlite3` v10), ordre du fil | Slice 03 |
 | Outils du Mission Owner qui nouent, alimentent et closent les relations | Slices 05 et 06 |
-| Ajout de participants en cours de communication, s'il s'avère utile | Slice 06 |
+| Opération « join » d'une communication en cours, si elle s'avère utile (§1) | Slice 06 |
+| Fraîcheur du successeur côté Work State (aucun travail porté), fil fourni à `check_message` | Slice 06 |
 | Projection dans la scène et styles de lien | Slice 08 |
 | Graphe et ouverture du tableau depuis une relation | Slice 09 |
