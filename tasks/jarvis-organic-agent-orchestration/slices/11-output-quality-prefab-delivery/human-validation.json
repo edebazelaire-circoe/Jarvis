@@ -1,0 +1,18 @@
+{
+  "slice_id": "11-output-quality-prefab-delivery",
+  "checks": [
+    {
+      "id": "HV-ORG-11-01",
+      "description": "Ask for a serious comparative research result and verify JARVIS delivers a polished structured comparison/report using appropriate prefab surfaces rather than an ugly raw text dump.",
+      "status": "pending",
+      "evidence": null
+    },
+    {
+      "id": "HV-ORG-11-02",
+      "description": "Ask for a trivial short result and confirm JARVIS does not force an unnecessary heavy report/prefab.",
+      "status": "pending",
+      "evidence": null
+    }
+  ],
+  "rule": "Human validation may only be marked passed by an actual human execution; QA agents record evidence but do not self-approve Human checks."
+}

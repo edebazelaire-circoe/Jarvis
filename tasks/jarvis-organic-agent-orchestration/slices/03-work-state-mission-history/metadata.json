@@ -1,0 +1,40 @@
+{
+  "slice_id": "03-work-state-mission-history",
+  "title": "Slice 03 — Work State integration & durable Mission History",
+  "task_type": "waived-by-agent-0",
+  "task_type_resolution": "RESOLVED_BY_SLICE00_2026-10-20_WAIVED_BY_AGENT_0",
+  "dependencies": [
+    "00-project-manager-readiness",
+    "01-agent-role-mission-contracts",
+    "02-agent-relation-contracts"
+  ],
+  "frontend": false,
+  "code": true,
+  "required_qa": [
+    "code-review",
+    "qa-verification",
+    "runtime-validation",
+    "agent-trace-analysis"
+  ],
+  "required_skills": [
+    "caveman",
+    "coding-guideline"
+  ],
+  "agent_routing": null,
+  "work_agent_count": 1,
+  "human_validation_file": null,
+  "task_type_blocker": "Levé par l'agent 0 (2026-10-20) : aucun vocabulaire Workspace Task Type dans le dépôt ni dans les autres handoffs ; précédent jarvis-unified-chat-and-board-drop (slices/00-project-manager/metadata.json). Aucun libellé inventé. Voir references/readiness-audit.md §3.",
+  "freshness_paths": [
+    "jarvis/domain/work_state.py",
+    "jarvis/core/work_state.py",
+    "jarvis/runtime/work_ingress.py",
+    "jarvis/runtime/agent_tasks.py",
+    "jarvis/domain/brain_context.py",
+    "jarvis/core/brain_context.py",
+    "jarvis/runtime/work_brief.py",
+    "jarvis/adapters/sqlite_state.py",
+    "jarvis/adapters/sqlite_scene.py",
+    "tests/schema"
+  ],
+  "readiness": "READY (Slice 00, 2026-10-20) ; voir references/readiness-audit.md"
+}

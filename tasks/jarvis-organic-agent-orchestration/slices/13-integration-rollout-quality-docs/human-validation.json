@@ -1,0 +1,30 @@
+{
+  "slice_id": "13-integration-rollout-quality-docs",
+  "checks": [
+    {
+      "id": "HV-ORG-13-01",
+      "description": "End-to-end: start from a code mission that organically requires research, a competing alternative, QA and Handoff; confirm the final graph tells that actual history clearly.",
+      "status": "pending",
+      "evidence": null
+    },
+    {
+      "id": "HV-ORG-13-02",
+      "description": "After mission completion, confirm non-ephemeral history remains inspectable while ephemeral one-shot agents are absent.",
+      "status": "pending",
+      "evidence": null
+    },
+    {
+      "id": "HV-ORG-13-03",
+      "description": "Review one multi-day/long-running style simulated mission and confirm nested Mission Owners are understandable without presenting Mission Owner as a role.",
+      "status": "pending",
+      "evidence": null
+    },
+    {
+      "id": "HV-ORG-13-04",
+      "description": "Review final representative report/comparison artifacts and approve visual/presentation quality.",
+      "status": "pending",
+      "evidence": null
+    }
+  ],
+  "rule": "Human validation may only be marked passed by an actual human execution; QA agents record evidence but do not self-approve Human checks."
+}

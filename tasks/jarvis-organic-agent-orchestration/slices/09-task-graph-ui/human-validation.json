@@ -1,0 +1,36 @@
+{
+  "slice_id": "09-task-graph-ui",
+  "checks": [
+    {
+      "id": "HV-ORG-09-01",
+      "description": "At a glance identify at least Developer, Web Research, Document Research and QA roles in one populated task graph without opening details.",
+      "status": "pending",
+      "evidence": null
+    },
+    {
+      "id": "HV-ORG-09-02",
+      "description": "Distinguish Delegation, Communication, Adversary, QA and Handoff links visually; confirm Adversary and QA cannot be confused.",
+      "status": "pending",
+      "evidence": null
+    },
+    {
+      "id": "HV-ORG-09-03",
+      "description": "Click/focus the Communication relation message affordance and verify the correct readable relation board opens and keyboard navigation works.",
+      "status": "pending",
+      "evidence": null
+    },
+    {
+      "id": "HV-ORG-09-04",
+      "description": "Observe a mission evolve and confirm only actual agents/relations appear; no speculative future plan nodes are shown.",
+      "status": "pending",
+      "evidence": null
+    },
+    {
+      "id": "HV-ORG-09-05",
+      "description": "At 200% zoom and a dense graph, confirm role labels, relation affordances and shell controls remain usable without major overlap.",
+      "status": "pending",
+      "evidence": null
+    }
+  ],
+  "rule": "Human validation may only be marked passed by an actual human execution; QA agents record evidence but do not self-approve Human checks."
+}

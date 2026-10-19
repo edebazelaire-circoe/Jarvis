@@ -1,0 +1,18 @@
+{
+  "slice_id": "07-interviewer-background-coordination",
+  "checks": [
+    {
+      "id": "HV-ORG-07-01",
+      "description": "Give a vague creation request, answer Interviewer questions while background research runs, and confirm interaction remains responsive and later questions can use returned evidence.",
+      "status": "pending",
+      "evidence": null
+    },
+    {
+      "id": "HV-ORG-07-02",
+      "description": "Give a clear direct bug/fix request and confirm no mandatory Interviewer ceremony is inserted.",
+      "status": "pending",
+      "evidence": null
+    }
+  ],
+  "rule": "Human validation may only be marked passed by an actual human execution; QA agents record evidence but do not self-approve Human checks."
+}

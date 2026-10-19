@@ -1,0 +1,12 @@
+{
+  "slice_id": "05-orchestration-runtime-tools",
+  "checks": [
+    {
+      "id": "HV-ORG-05-01",
+      "description": "Run one clearly trivial action and confirm JARVIS does not artificially expand it into a team solely because orchestration tools exist.",
+      "status": "pending",
+      "evidence": null
+    }
+  ],
+  "rule": "Human validation may only be marked passed by an actual human execution; QA agents record evidence but do not self-approve Human checks."
+}

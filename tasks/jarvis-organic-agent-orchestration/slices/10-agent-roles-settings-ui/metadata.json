@@ -1,0 +1,37 @@
+{
+  "slice_id": "10-agent-roles-settings-ui",
+  "title": "Slice 10 — Roles & Work Methods Settings UI",
+  "task_type": "waived-by-agent-0",
+  "task_type_resolution": "RESOLVED_BY_SLICE00_2026-10-20_WAIVED_BY_AGENT_0",
+  "dependencies": [
+    "00-project-manager-readiness",
+    "04-role-registry-loadouts-methods"
+  ],
+  "frontend": true,
+  "code": true,
+  "required_qa": [
+    "code-review",
+    "qa-verification",
+    "runtime-validation"
+  ],
+  "required_skills": [
+    "caveman",
+    "coding-guideline",
+    "impeccable"
+  ],
+  "agent_routing": {
+    "preferred": "claude",
+    "reason": "Frontend/Settings UI implementation per task doctrine; run /impeccable."
+  },
+  "work_agent_count": 1,
+  "human_validation_file": "human-validation.json",
+  "task_type_blocker": "Levé par l'agent 0 (2026-10-20) : aucun vocabulaire Workspace Task Type dans le dépôt ni dans les autres handoffs ; précédent jarvis-unified-chat-and-board-drop (slices/00-project-manager/metadata.json). Aucun libellé inventé. Voir references/readiness-audit.md §3.",
+  "freshness_paths": [
+    "jarvis/runtime/control_center.html",
+    "jarvis/runtime/control_center.py",
+    "jarvis/runtime/control_center_memory_settings.js",
+    "jarvis/domain/subagent_roles.py",
+    "docs/settings/INDEX.md"
+  ],
+  "readiness": "READY (Slice 00, 2026-10-20) ; voir references/readiness-audit.md"
+}

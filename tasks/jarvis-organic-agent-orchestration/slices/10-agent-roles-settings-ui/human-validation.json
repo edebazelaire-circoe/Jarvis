@@ -1,0 +1,18 @@
+{
+  "slice_id": "10-agent-roles-settings-ui",
+  "checks": [
+    {
+      "id": "HV-ORG-10-01",
+      "description": "Open Settings > agent roles and confirm the role catalogue is visually structured, readable and consistent with graph identity rather than a raw wall of prompt text.",
+      "status": "pending",
+      "evidence": null
+    },
+    {
+      "id": "HV-ORG-10-02",
+      "description": "Inspect a role and verify mission, skills/loadout, capabilities and Work Methods are understandable; unavailable/edit-disabled fields are honestly read-only.",
+      "status": "pending",
+      "evidence": null
+    }
+  ],
+  "rule": "Human validation may only be marked passed by an actual human execution; QA agents record evidence but do not self-approve Human checks."
+}

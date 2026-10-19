@@ -1,0 +1,18 @@
+{
+  "slice_id": "08-scene-projection-role-relations",
+  "checks": [
+    {
+      "id": "HV-ORG-08-01",
+      "description": "Complete a non-ephemeral multi-agent mission, restart isolated Core, and confirm actual role/relation history reappears without invented live status.",
+      "status": "pending",
+      "evidence": null
+    },
+    {
+      "id": "HV-ORG-08-02",
+      "description": "Complete a trivial ephemeral task and confirm no persistent constellation/history star remains afterward.",
+      "status": "pending",
+      "evidence": null
+    }
+  ],
+  "rule": "Human validation may only be marked passed by an actual human execution; QA agents record evidence but do not self-approve Human checks."
+}

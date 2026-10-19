@@ -1,0 +1,38 @@
+{
+  "slice_id": "09-task-graph-ui",
+  "title": "Slice 09 — Task/constellation graph UI for roles & relations",
+  "task_type": "waived-by-agent-0",
+  "task_type_resolution": "RESOLVED_BY_SLICE00_2026-10-20_WAIVED_BY_AGENT_0",
+  "dependencies": [
+    "00-project-manager-readiness",
+    "08-scene-projection-role-relations"
+  ],
+  "frontend": true,
+  "code": true,
+  "required_qa": [
+    "code-review",
+    "qa-verification",
+    "runtime-validation"
+  ],
+  "required_skills": [
+    "caveman",
+    "coding-guideline",
+    "impeccable"
+  ],
+  "agent_routing": {
+    "preferred": "claude",
+    "reason": "Frontend/UI implementation per task doctrine; run /impeccable and preserve Control Center shell contracts."
+  },
+  "work_agent_count": 1,
+  "human_validation_file": "human-validation.json",
+  "task_type_blocker": "Levé par l'agent 0 (2026-10-20) : aucun vocabulaire Workspace Task Type dans le dépôt ni dans les autres handoffs ; précédent jarvis-unified-chat-and-board-drop (slices/00-project-manager/metadata.json). Aucun libellé inventé. Voir references/readiness-audit.md §3.",
+  "freshness_paths": [
+    "jarvis/runtime/control_center_scene_page.js",
+    "jarvis/runtime/control_center_scene_layout.js",
+    "jarvis/runtime/control_center_scene_view.js",
+    "jarvis/runtime/control_center_work.js",
+    "jarvis/runtime/control_center.html",
+    "docs/control-center-shell.md"
+  ],
+  "readiness": "READY (Slice 00, 2026-10-20) ; voir references/readiness-audit.md"
+}

@@ -1,0 +1,47 @@
+{
+  "slice_id": "13-integration-rollout-quality-docs",
+  "title": "Slice 13 — End-to-end integration, rollout, quality gates & documentation",
+  "task_type": "waived-by-agent-0",
+  "task_type_resolution": "RESOLVED_BY_SLICE00_2026-10-20_WAIVED_BY_AGENT_0",
+  "dependencies": [
+    "00-project-manager-readiness",
+    "01-agent-role-mission-contracts",
+    "02-agent-relation-contracts",
+    "03-work-state-mission-history",
+    "04-role-registry-loadouts-methods",
+    "05-orchestration-runtime-tools",
+    "06-relations-runtime-communication",
+    "07-interviewer-background-coordination",
+    "08-scene-projection-role-relations",
+    "09-task-graph-ui",
+    "10-agent-roles-settings-ui",
+    "11-output-quality-prefab-delivery",
+    "12-work-method-learning"
+  ],
+  "frontend": true,
+  "code": true,
+  "required_qa": [
+    "code-review",
+    "qa-verification",
+    "runtime-validation",
+    "agent-trace-analysis"
+  ],
+  "required_skills": [
+    "caveman",
+    "coding-guideline",
+    "impeccable"
+  ],
+  "agent_routing": {
+    "preferred": "claude",
+    "reason": "Integration includes frontend visual QA; use Claude for frontend portions and /impeccable final review."
+  },
+  "work_agent_count": 1,
+  "human_validation_file": "human-validation.json",
+  "task_type_blocker": "Levé par l'agent 0 (2026-10-20) : aucun vocabulaire Workspace Task Type dans le dépôt ni dans les autres handoffs ; précédent jarvis-unified-chat-and-board-drop (slices/00-project-manager/metadata.json). Aucun libellé inventé. Voir references/readiness-audit.md §3.",
+  "freshness_paths": [
+    "jarvis",
+    "docs",
+    "tests"
+  ],
+  "readiness": "READY (Slice 00, 2026-10-20) ; voir references/readiness-audit.md"
+}

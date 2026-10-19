@@ -1,0 +1,31 @@
+{
+  "slice_id": "02-agent-relation-contracts",
+  "title": "Slice 02 — Typed Agent Relation & collaboration record contracts",
+  "task_type": "waived-by-agent-0",
+  "task_type_resolution": "RESOLVED_BY_SLICE00_2026-10-20_WAIVED_BY_AGENT_0",
+  "dependencies": [
+    "00-project-manager-readiness",
+    "01-agent-role-mission-contracts"
+  ],
+  "frontend": false,
+  "code": true,
+  "required_qa": [
+    "code-review",
+    "qa-verification",
+    "agent-trace-analysis"
+  ],
+  "required_skills": [
+    "caveman",
+    "coding-guideline"
+  ],
+  "agent_routing": null,
+  "work_agent_count": 1,
+  "human_validation_file": null,
+  "task_type_blocker": "Levé par l'agent 0 (2026-10-20) : aucun vocabulaire Workspace Task Type dans le dépôt ni dans les autres handoffs ; précédent jarvis-unified-chat-and-board-drop (slices/00-project-manager/metadata.json). Aucun libellé inventé. Voir references/readiness-audit.md §3.",
+  "freshness_paths": [
+    "jarvis/domain/scene.py",
+    "jarvis/domain/conversation_events.py",
+    "jarvis/domain/subagent_roles.py"
+  ],
+  "readiness": "READY (Slice 00, 2026-10-20) ; voir references/readiness-audit.md"
+}

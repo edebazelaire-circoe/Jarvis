@@ -1,0 +1,34 @@
+{
+  "id": "jarvis-organic-agent-orchestration",
+  "title": "JARVIS - Organic Multi-Agent Orchestration, Roles & Relations",
+  "project_id": "jarvis",
+  "project_name": "JARVIS",
+  "status": "to-do",
+  "priority": "P1",
+  "domain": "agent-runtime-ui",
+  "assigned_agent": "project-manager",
+  "task_type": "waived-by-agent-0",
+  "handoff_path": "Jarvis/task/to-do/jarvis-organic-agent-orchestration/README.md",
+  "baseline_ref": "main@82051c3ada7a695b88042e8772e7da35bbae2513",
+  "blockers": [],
+  "task_type_blocker": "Levé par l'agent 0 (2026-10-20) : aucun vocabulaire Workspace Task Type dans le dépôt ni dans les autres handoffs ; précédent jarvis-unified-chat-and-board-drop (slices/00-project-manager/metadata.json). Aucun libellé inventé. Voir references/readiness-audit.md §3.",
+  "readiness": {
+    "state": "READY",
+    "date": "2026-10-20",
+    "audited_head": "main@336f21be",
+    "evidence": "references/readiness-audit.md",
+    "open_questions": [
+      "Q1 avant Slice 05",
+      "Q2 non bloquante",
+      "Q3 non bloquante"
+    ]
+  },
+  "absorbs": {
+    "task": "jarvis-subagent-roles-interview",
+    "remaining_scope": [
+      "onglet Settings Sous-agents -> Slice 10",
+      "docs/subagent-roles.md -> Slices 01/04",
+      "essai en bac à sable -> Slices 07/13"
+    ]
+  }
+}

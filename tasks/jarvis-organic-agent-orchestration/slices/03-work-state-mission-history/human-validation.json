@@ -1,0 +1,5 @@
+{
+  "slice_id": "03-work-state-mission-history",
+  "checks": [],
+  "rule": "Human validation may only be marked passed by an actual human execution; QA agents record evidence but do not self-approve Human checks."
+}

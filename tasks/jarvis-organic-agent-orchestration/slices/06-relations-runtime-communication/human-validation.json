@@ -1,0 +1,24 @@
+{
+  "slice_id": "06-relations-runtime-communication",
+  "checks": [
+    {
+      "id": "HV-ORG-06-01",
+      "description": "Inspect a real Adversary run and confirm participants are competing producers defending different work, not one producer plus reviewer.",
+      "status": "pending",
+      "evidence": null
+    },
+    {
+      "id": "HV-ORG-06-02",
+      "description": "Inspect a real QA run and confirm the Quality Analyst is reviewing existing work asymmetrically.",
+      "status": "pending",
+      "evidence": null
+    },
+    {
+      "id": "HV-ORG-06-03",
+      "description": "Open a collaboration record and confirm it contains deliberate messages/decisions but no private reasoning/thinking transcript.",
+      "status": "pending",
+      "evidence": null
+    }
+  ],
+  "rule": "Human validation may only be marked passed by an actual human execution; QA agents record evidence but do not self-approve Human checks."
+}
