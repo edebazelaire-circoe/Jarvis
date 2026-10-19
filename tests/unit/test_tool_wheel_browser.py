@@ -535,9 +535,10 @@ def test_one_category_tree_visible_keyboard_and_switching(tmp_path, shots):
         {"a": "mouse", "type": "mouseMoved", "x": dx, "y": dy},
         {"a": "mouse", "type": "mousePressed", "x": dx, "y": dy, "button": "left"},
         {"a": "mouse", "type": "mouseReleased", "x": dx, "y": dy, "button": "left", "settleMs": 200}, _tree(),  # Dossier
+        {"a": "eval", "expr": "(window.__s03logs||[]).filter(l=>l.startsWith('[dossier] dossier.wheel_open')).length"},
         k("Escape"), k("Escape"), _tree(),
     ]})
-    jarvis, back, capture, dossier, closed = (v[4], v[7], v[12], v[17], v[20])
+    jarvis, back, capture, dossier, opened, closed = (v[4], v[7], v[12], v[17], v[18], v[21])
     assert jarvis["open"] and jarvis["subs"] == 1 and jarvis["head"] == "État de Jarvis"
     # Slice 04 : JARVIS est branché (`control_center_jarvis_wheel.js`) — trois lignes d'état, deux portes.
     assert [i["id"] for i in jarvis["items"]] == ["voice", "wake", "agent", "subagents", "voice_settings"]
@@ -552,10 +553,10 @@ def test_one_category_tree_visible_keyboard_and_switching(tmp_path, shots):
     assert [i["role"] for i in capture["items"]] == ["menuitem", "menuitemcheckbox", "menuitemcheckbox"]
     assert all(i["popup"] == "menu" for i in capture["items"])
     assert capture["active"] == "item:screenshot"
-    # Un clic sur Dossier remplace l'arbre de Capture : un seul sous-menu, une seule catégorie allumée.
-    assert dossier["subs"] == 1 and dossier["head"] == "Dossier du Board" and dossier["expanded"] == ["dossier"]
-    # Slice 07 : la catégorie Dossier est branchée (`control_center_dossier.js`), plus de gestionnaire d'attente.
-    assert [i["text"] for i in dossier["items"]][0] == "Ouvrir le Dossier" and dossier["lit"] == 1
+    # Correctifs avant Presentation : Dossier n'a plus d'arbre. Un clic ouvre directement le Dossier du Board
+    # affiché (`control_center_dossier.js`, même chemin qu'« Ouvrir le Dossier ») et referme la roue.
+    assert dossier["open"] is False and dossier["subs"] == 0 and dossier["expanded"] == []
+    assert opened == 1 and dossier["unbound"] == 0
     assert closed["open"] is False and closed["subs"] == 0 and closed["active"] == "anchor"
 
 

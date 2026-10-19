@@ -433,25 +433,12 @@
     if(entry.source==='memory')return `Mémoire du Board · ${text(entry.path)}`;
     return `Registre des Artifacts${entry.provenance?` · ${entry.provenance}`:''}`;
   }
-  /* Phrase d'état de la catégorie Dossier dans la roue. */
-  function wheelItems({board,recent,coreLost,covered}){
-    if(covered)return [{id:'open',icon:'dossier',label:'Ouvrir le Dossier',note:'indisponible',detail:covered,disabled:true}];
-    if(coreLost||!board)return [{id:'open',icon:'dossier',label:'Ouvrir le Dossier',note:'Board inconnu',
-      detail:'Core ne répond pas : le Board affiché n’est pas confirmé.',disabled:true}];
-    const items=[{id:'open',icon:'dossier',label:'Ouvrir le Dossier',note:text(board.title)||'Board actif',
-      detail:`Le Dossier du Board « ${text(board.title)} » en plein écran`}];
-    for(const e of (Array.isArray(recent)?recent:[]).slice(0,4))
-      items.push({id:`entry:${e.entry_id}`,entryId:e.entry_id,icon:'dossier',label:text(e.title)||'Sans titre',
-        note:KIND_LABELS[e.kind]||'',detail:`Ouvrir « ${text(e.title)} » dans le Dossier`});
-    return items;
-  }
-
   const api=Object.freeze({
     DEADLINE_MS,LIST_LIMIT,READ_BYTES,MAX_EDIT_BYTES,MAX_TABS,PAIR_WINDOW_MS,SPLIT_MIN_PX,NARROW_PX,WIDE_PX,
     COMMAND_ROUTE,PAGE_TOKEN_HEADER,BOARD_KINDS,COLLECTIONS,KIND_LABELS,ERRORS,REPRESENTATIONS,PATHS,
     errorOf,allowed,createClient,collectionOf,organize,filterEntries,entriesOfSection,splitMachine,inline,markdownBlocks,leadHeading,
     openTab,closeTab,layoutFor,pairFor,editGuard,EDIT_IN_PROGRESS,writeOutcome,presentOutcome,capabilities,safeLinkUrl,openDecision,rebindOnSwitch,
-    relativeTime,absoluteTime,formatBytes,sourceLine,wheelItems,
+    relativeTime,absoluteTime,formatBytes,sourceLine,
   });
   root.JarvisDossierCore=api;
   if(typeof module==='object'&&module&&module.exports)module.exports=api;
